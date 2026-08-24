@@ -1,0 +1,218 @@
+const DEFAULT_HEADERS = { 'Content-Type': 'application/json' }
+
+async function request(url, options = {}) {
+  const response = await fetch(url, {
+    ...options,
+    credentials: 'same-origin',
+    headers: { ...DEFAULT_HEADERS, ...(options.headers || {}) },
+  })
+  let payload
+  try {
+    payload = await response.json()
+  } catch {
+    throw new Error('服务器返回了无法识别的响应')
+  }
+  if (!response.ok || payload.success === false) {
+    const message = payload?.error?.message || payload?.detail || '请求失败，请稍后重试'
+    throw new Error(message)
+  }
+  return payload.data
+}
+
+export function getAuthStatus() {
+  return request('/api/v1/auth/status')
+}
+
+export function bootstrapAccount(payload) {
+  return request('/api/v1/auth/bootstrap', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function loginAccount(payload) {
+  return request('/api/v1/auth/login', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function logoutAccount() {
+  return request('/api/v1/auth/logout', { method: 'POST' })
+}
+
+export function listUserAccounts() {
+  return request('/api/v1/auth/users')
+}
+
+export function createUserAccount(payload) {
+  return request('/api/v1/auth/users', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function listWorkshopTasks({ reportDate, projectName = '', confirmationStatus = 'all', sortMode = 'manager', page = 1, pageSize = 20 }) {
+  const query = new URLSearchParams({
+    report_date: reportDate,
+    confirmation_status: confirmationStatus,
+    sort_mode: sortMode,
+    page,
+    page_size: pageSize,
+  })
+  if (projectName) query.set('project_name', projectName)
+  return request(`/api/v1/workshop/tasks?${query}`)
+}
+
+export function generateWorkshopDailyReport(reportDate) {
+  return request('/api/v1/workshop/reports', {
+    method: 'POST',
+    body: JSON.stringify({ report_date: reportDate }),
+  })
+}
+
+export function getLatestWorkshopProductionDate(onOrBefore) {
+  const query = new URLSearchParams({ on_or_before: onOrBefore })
+  return request(`/api/v1/workshop/latest-date?${query}`)
+}
+
+export function confirmWorkshopTask(taskId, reportDate) {
+  return request(`/api/v1/workshop/tasks/${encodeURIComponent(taskId)}/confirm`, {
+    method: 'POST',
+    body: JSON.stringify({ report_date: reportDate }),
+  })
+}
+
+export function createReport(form) {
+  return request('/api/v1/reports', {
+    method: 'POST',
+    body: JSON.stringify(form),
+  })
+}
+
+export function getReportStatus(reportId) {
+  return request(`/api/v1/reports/${encodeURIComponent(reportId)}/status`)
+}
+
+export function listReports({ page = 1, pageSize = 20 } = {}) {
+  const query = new URLSearchParams({ page, page_size: pageSize })
+  return request(`/api/v1/reports?${query}`)
+}
+
+export function listProjects(reportDate) {
+  const query = new URLSearchParams({ report_date: reportDate })
+  return request(`/api/v1/options/projects?${query}`)
+}
+
+export function listShips(reportDate, projectCode) {
+  const query = new URLSearchParams({ report_date: reportDate })
+  if (projectCode) query.set('project_code', projectCode)
+  return request(`/api/v1/options/ships?${query}`)
+}
+
+export function getDatabaseStatus() {
+  return request('/api/v1/database/status')
+}
+
+export function getSystemHealth() {
+  return request('/api/v1/health')
+}
+
+export function getLeadershipReport(reportMonth) {
+  const query = new URLSearchParams({ report_month: reportMonth })
+  return request(`/api/v1/leadership-report?${query}`)
+}
+
+export function getEquipmentReport(reportDate = '') {
+  const query = new URLSearchParams()
+  if (reportDate) query.set('report_date', reportDate)
+  const queryString = query.toString()
+  const suffix = queryString ? `?${queryString}` : ''
+  return request(`/api/v1/equipment-report${suffix}`)
+}
+
+export function analyzeReport({ reportType, reportDate, force = false }) {
+  return request('/api/v1/analysis', {
+    method: 'POST',
+    body: JSON.stringify({
+      report_type: reportType,
+      report_date: reportDate,
+      force,
+    }),
+  })
+}
+
+export function testDatabaseConnection(connection) {
+  return request('/api/v1/database/test-connection', {
+    method: 'POST',
+    body: JSON.stringify(connection),
+  })
+}
+
+export function previewDatabaseDataset(filters) {
+  return request('/api/v1/database/preview', {
+    method: 'POST',
+    body: JSON.stringify(filters),
+  })
+}
+
+export function validateWorkbenchSql(sql) {
+  return request('/api/v1/database/sql/validate', {
+    method: 'POST',
+    body: JSON.stringify({ sql }),
+  })
+}
+
+export function executeWorkbenchSql({ sql, maxRows, token }) {
+  return request('/api/v1/database/sql/execute', {
+    method: 'POST',
+    headers: token ? { 'X-SQL-Workbench-Token': token } : {},
+    body: JSON.stringify({ sql, max_rows: maxRows }),
+  })
+}
+
+function adminHeaders(token) {
+  return token ? { 'X-SQL-Workbench-Token': token } : {}
+}
+
+export function listPublishedDefinitions() {
+  return request('/api/v1/designer/published-definitions')
+}
+
+export function listDesignerResources(resource, token = '') {
+  return request(`/api/v1/designer/${resource}`, { headers: adminHeaders(token) })
+}
+
+export function saveDesignerResource(resource, payload, id = '', token = '') {
+  const url = id
+    ? `/api/v1/designer/${resource}/${encodeURIComponent(id)}`
+    : `/api/v1/designer/${resource}`
+  return request(url, {
+    method: id ? 'PUT' : 'POST',
+    headers: adminHeaders(token),
+    body: JSON.stringify(payload),
+  })
+}
+
+export function deleteDesignerResource(resource, id, token = '') {
+  return request(`/api/v1/designer/${resource}/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    headers: adminHeaders(token),
+  })
+}
+
+export function validateDesignerSql(sqlText, token = '') {
+  return request('/api/v1/designer/query-tasks/validate', {
+    method: 'POST',
+    headers: adminHeaders(token),
+    body: JSON.stringify({ sql_text: sqlText }),
+  })
+}
+
+export function previewDesignerQuery(queryTaskId, payload, token = '') {
+  return request(`/api/v1/designer/query-tasks/${encodeURIComponent(queryTaskId)}/preview`, {
+    method: 'POST',
+    headers: adminHeaders(token),
+    body: JSON.stringify(payload),
+  })
+}

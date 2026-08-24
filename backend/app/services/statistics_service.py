@@ -1,0 +1,100 @@
+from __future__ import annotations
+
+from decimal import Decimal
+from app.models.domain import (
+    AttentionItem,
+    StatisticsResult,
+    SummaryBaseRecord,
+    SummaryMetrics,
+)
+
+
+NUMERIC_FIELDS = ("cut_length", "groove_length", "work_time")
+
+
+def _valid_values(records: list[SummaryBaseRecord], field: str) -> list[Decimal]:
+    return [
+        value
+        for record in records
+        if (value := getattr(record, field)) is not None and value >= 0
+    ]
+
+
+def _average(values: list[Decimal]) -> Decimal | None:
+    if not values:
+        return None
+    return sum(values, Decimal("0")) / Decimal(len(values))
+
+
+class StatisticsService:
+    def calculate(self, records: list[SummaryBaseRecord]) -> StatisticsResult:
+        quality: list[AttentionItem] = []
+        unique_records: dict[str, SummaryBaseRecord] = {}
+        for record in records:
+            if not record.task_id:
+                quality.append(
+                    AttentionItem("error", "data_quality", None, "发现任务 ID 缺失记录")
+                )
+                continue
+            if record.task_id in unique_records:
+                quality.append(
+                    AttentionItem(
+                        "error",
+                        "data_quality",
+                        record.task_id,
+                        "汇总基础数据中发现重复任务，重复项未计入统计",
+                    )
+                )
+                continue
+            invalid_fields = [
+                field
+                for field in NUMERIC_FIELDS
+                if (value := getattr(record, field)) is not None and value < 0
+            ]
+            if invalid_fields:
+                quality.append(
+                    AttentionItem(
+                        "error",
+                        "data_quality",
+                        record.task_id,
+                        f"发现负数数据：{', '.join(invalid_fields)}；对应字段不计入统计",
+                    )
+                )
+            unique_records[record.task_id] = record
+
+        valid_records = list(unique_records.values())
+        cut_values = _valid_values(valid_records, "cut_length")
+        groove_values = _valid_values(valid_records, "groove_length")
+        work_values = _valid_values(valid_records, "work_time")
+        summary = SummaryMetrics(
+            task_count=len(valid_records),
+            total_cut_length=sum(cut_values, Decimal("0")),
+            total_groove_length=sum(groove_values, Decimal("0")),
+            total_work_time=sum(work_values, Decimal("0")),
+            avg_cut_length=_average(cut_values),
+            avg_groove_length=_average(groove_values),
+            avg_work_time=_average(work_values),
+            max_cut_length=max(cut_values, default=None),
+            min_cut_length=min(cut_values, default=None),
+            max_groove_length=max(groove_values, default=None),
+            min_groove_length=min(groove_values, default=None),
+            max_work_time=max(work_values, default=None),
+            min_work_time=min(work_values, default=None),
+        )
+
+        attention: list[AttentionItem] = []
+        for record in sorted(
+            valid_records,
+            key=lambda item: item.work_time if item.work_time is not None else Decimal("-1"),
+            reverse=True,
+        )[:5]:
+            if record.work_time is not None:
+                attention.append(
+                    AttentionItem(
+                        "info",
+                        "top_work_time",
+                        record.task_id,
+                        f"任务工时较高：{record.work_time}",
+                    )
+                )
+        return StatisticsResult(summary, valid_records, quality, attention)

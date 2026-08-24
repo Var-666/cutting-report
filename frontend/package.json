@@ -1,0 +1,21 @@
+{
+  "name": "cutting-report-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "sync:echarts": "node scripts/sync-echarts.mjs",
+    "build": "npm run sync:echarts && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "echarts": "^5.6.0",
+    "vue": "^3.5.18",
+    "vue-router": "^4.6.3"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.1",
+    "vite": "^5.4.14"
+  }
+}

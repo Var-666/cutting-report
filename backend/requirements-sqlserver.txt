@@ -1,0 +1,3 @@
+# 在正式连接 SQL Server 的 Windows 服务器上额外安装。
+pyodbc>=5.2,<6
+

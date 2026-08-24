@@ -1,0 +1,130 @@
+<script setup>
+import { computed, ref, watch } from 'vue'
+import { analyzeReport } from '../api/reports'
+
+const props = defineProps({
+  reportType: { type: String, required: true },
+  reportDate: { type: String, default: '' },
+  ready: { type: Boolean, default: false },
+  contextVersion: { type: [String, Number], default: '' },
+})
+
+const analysis = ref(null)
+const loading = ref(false)
+const error = ref('')
+let requestSequence = 0
+
+const modeLabel = computed(() => {
+  if (analysis.value?.mode === 'model') return '大模型分析'
+  if (analysis.value?.mode === 'simulated_fallback') return '真实模型不可用 · 模拟分析'
+  return '模拟大模型分析'
+})
+
+async function loadAnalysis(force = false) {
+  if (!props.ready || !props.reportDate) return
+  const sequence = ++requestSequence
+  loading.value = true
+  error.value = ''
+  try {
+    const result = await analyzeReport({
+      reportType: props.reportType,
+      reportDate: props.reportDate,
+      force,
+    })
+    if (sequence === requestSequence) analysis.value = result
+  } catch (exception) {
+    if (sequence === requestSequence) error.value = exception.message
+  } finally {
+    if (sequence === requestSequence) loading.value = false
+  }
+}
+
+watch(
+  () => [props.reportType, props.reportDate, props.ready, props.contextVersion],
+  () => {
+    if (!props.ready) {
+      analysis.value = null
+      error.value = ''
+      return
+    }
+    loadAnalysis(false)
+  },
+  { immediate: true },
+)
+</script>
+
+<template>
+  <section class="panel analysis-panel" aria-live="polite">
+    <div class="analysis-panel-head">
+      <div>
+        <span class="analysis-kicker">AI REPORT ANALYSIS</span>
+        <h2>智能分析</h2>
+        <p>基于当前报表数据生成，不影响表格和图表加载。</p>
+      </div>
+      <div class="analysis-actions">
+        <span v-if="analysis" class="analysis-mode" :class="analysis.mode">
+          {{ modeLabel }}<small v-if="analysis.cached">已缓存</small>
+        </span>
+        <button type="button" :disabled="loading || !ready" @click="loadAnalysis(true)">
+          <span v-if="loading" class="spinner dark"></span>{{ loading ? '分析中' : '重新分析' }}
+        </button>
+      </div>
+    </div>
+
+    <div v-if="loading && !analysis" class="analysis-state">正在整理报表指标并生成分析…</div>
+    <div v-else-if="error" class="analysis-error">
+      <span>{{ error }}</span><button type="button" @click="loadAnalysis(false)">重试</button>
+    </div>
+    <template v-else-if="analysis">
+      <div v-if="analysis.facts?.length" class="analysis-facts">
+        <article v-for="fact in analysis.facts" :key="fact.id">
+          <span>{{ fact.label }}</span><strong>{{ fact.value }}</strong>
+        </article>
+      </div>
+      <div class="analysis-grid">
+        <article><h3>生产概况</h3><p>{{ analysis.overview }}</p></article>
+        <article><h3>数据特征</h3><p>{{ analysis.features }}</p></article>
+        <article><h3>异常与关注点</h3><p>{{ analysis.alerts }}</p></article>
+        <article><h3>生产管理建议</h3><p>{{ analysis.suggestions }}</p></article>
+      </div>
+      <div v-if="analysis.limitations" class="analysis-limit">
+        <strong>分析边界</strong><span>{{ analysis.limitations }}</span>
+      </div>
+      <p class="analysis-time">生成时间：{{ analysis.generated_at || '--' }}</p>
+    </template>
+    <div v-else class="analysis-state">报表数据加载后将自动生成分析。</div>
+  </section>
+</template>
+
+<style scoped>
+.analysis-panel { padding:0; overflow:hidden; }
+.analysis-panel-head { display:flex; align-items:center; justify-content:space-between; gap:24px; padding:24px 28px; border-bottom:1px solid #dce5ec; }
+.analysis-panel-head h2 { margin:3px 0 4px; color:#172234; font-size:25px; }
+.analysis-panel-head p { margin:0; color:#66788a; }
+.analysis-kicker { color:#23849a; font-size:12px; font-weight:800; letter-spacing:.12em; }
+.analysis-actions { display:flex; align-items:center; gap:12px; flex-shrink:0; }
+.analysis-actions button,.analysis-error button { min-height:40px; padding:0 16px; }
+.analysis-mode { display:inline-flex; align-items:center; gap:8px; padding:7px 11px; color:#875700; background:#fff4d6; border:1px solid #f0d58a; border-radius:999px; font-weight:700; white-space:nowrap; }
+.analysis-mode.model { color:#087443; background:#e9f8f0; border-color:#9cd8b9; }
+.analysis-mode.simulated_fallback { color:#a43b22; background:#fff0ec; border-color:#efb9aa; }
+.analysis-mode small { padding-left:8px; border-left:1px solid currentColor; font-size:11px; opacity:.72; }
+.analysis-facts { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; padding:20px 28px 0; }
+.analysis-facts article { padding:12px 14px; background:#f4f8fa; border:1px solid #dbe6eb; border-radius:7px; }
+.analysis-facts span { display:block; color:#687b8d; font-size:12px; }
+.analysis-facts strong { display:block; margin-top:3px; color:#0e5277; font-size:16px; }
+.analysis-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; padding:20px 28px; }
+.analysis-grid article { min-height:126px; padding:17px 18px; border:1px solid #dce5ec; border-radius:8px; background:#fff; }
+.analysis-grid h3 { margin:0 0 8px; color:#14597e; font-size:16px; }
+.analysis-grid p { margin:0; color:#34485b; line-height:1.75; white-space:pre-wrap; }
+.analysis-limit { display:flex; gap:14px; margin:0 28px 18px; padding:13px 15px; color:#725116; background:#fff8e9; border-left:4px solid #d89a27; }
+.analysis-limit strong { flex-shrink:0; }
+.analysis-time { margin:0; padding:0 28px 20px; color:#7b8c9b; text-align:right; font-size:12px; }
+.analysis-state { padding:42px 28px; color:#6d7f90; text-align:center; }
+.analysis-error { display:flex; align-items:center; justify-content:center; gap:14px; margin:22px 28px; padding:16px; color:#a83a2b; background:#fff2ef; }
+@media (max-width:800px) {
+  .analysis-panel-head { align-items:flex-start; flex-direction:column; }
+  .analysis-actions { width:100%; justify-content:space-between; }
+  .analysis-grid { grid-template-columns:1fr; }
+  .analysis-limit { flex-direction:column; gap:4px; }
+}
+</style>

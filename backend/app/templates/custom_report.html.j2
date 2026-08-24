@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{{ report.meta.title }}</title>
+  <style>
+    :root { --primary:{{ report.custom.template.primary_color }}; --accent:{{ report.custom.template.accent_color }}; --page-bg:{{ report.custom.template.background_color }}; --line:#d8e0e6; --text:#21313d; --muted:#667681; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--page-bg); color:var(--text); font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif; }
+    .page { width:min(1240px,calc(100% - 32px)); margin:24px auto; background:#fff; box-shadow:0 8px 32px rgba(20,55,80,.12); }
+    header { padding:30px 38px; color:#fff; background:linear-gradient(120deg,var(--primary),var(--accent)); }
+    header small { display:block; margin-bottom:6px; letter-spacing:.18em; opacity:.78; } header h1 { margin:0; font-size:28px; } header p { margin:7px 0 0; opacity:.84; }
+    main { padding:28px 38px 36px; }
+    .meta { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); margin-bottom:28px; border:1px solid var(--line); }
+    .meta div { min-height:66px; padding:12px 14px; border-right:1px solid var(--line); }.meta div:last-child { border-right:0; }.meta span { display:block; margin-bottom:4px; color:var(--muted); font-size:12px; }
+    h2 { margin:28px 0 14px; padding-left:12px; border-left:4px solid var(--accent); font-size:19px; }
+    .metrics { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; }.metric { padding:18px; border:1px solid var(--line); border-radius:8px; background:linear-gradient(145deg,#fff,#f7fafc); }.metric small { color:var(--muted); }.metric strong { display:block; margin:7px 0 2px; color:var(--primary); font-size:26px; }
+    .content-grid { display:grid; gap:14px; align-items:start; }.content-grid.split { grid-template-columns:minmax(340px,.9fr) minmax(0,1.25fr); }.content-grid.chart_first,.content-grid.table_first { grid-template-columns:1fr; }.content-grid.table_first .chart-card { order:2; }
+    .chart-card,.table-wrap { border:1px solid var(--line); border-radius:8px; background:#fff; overflow:hidden; }.chart-title { padding:10px 14px; border-bottom:1px solid var(--line); color:var(--primary); font-weight:700; }.chart { width:100%; height:{{ report.custom.template.chart_height }}px; }
+    .table-wrap { max-height:{{ report.custom.template.chart_height + 42 }}px; overflow:auto; }
+    table { width:100%; min-width:680px; border-collapse:collapse; white-space:nowrap; } th,td { padding:{% if report.custom.template.table_density == 'compact' %}7px 9px{% elif report.custom.template.table_density == 'comfortable' %}13px 14px{% else %}10px 12px{% endif %}; border-bottom:1px solid #e5eaee; text-align:right; } th:first-child,td:first-child { text-align:left; } thead { position:sticky; top:0; z-index:2; } th { color:#fff; background:var(--primary); font-weight:600; } tbody tr:nth-child(even) { background:#f7fafc; }
+    .empty { padding:40px; color:var(--muted); text-align:center; }.footer { padding:18px 38px; color:var(--muted); border-top:1px solid var(--line); text-align:center; font-size:12px; }
+    .print-only { display:none; }
+    html.report-printing .content-grid,html.report-printing .content-grid.split,html.report-printing .content-grid.chart_first,html.report-printing .content-grid.table_first { display:block!important; }
+    html.report-printing .chart { width:100%!important; height:58mm!important; }
+    @media (max-width:900px) { .meta,.metrics { grid-template-columns:repeat(2,1fr); }.content-grid.split { grid-template-columns:1fr; } main,header { padding-left:20px; padding-right:20px; } }
+    @media print {
+      @page { size:A4 landscape; margin:9mm; }
+      html,body { width:auto; min-width:0; background:#fff; font-size:8.5pt; }
+      .page { width:100%; margin:0; box-shadow:none; }
+      header { padding:10mm 9mm 7mm; }
+      main { padding:7mm 0 5mm; }
+      .footer { padding:5mm 0 0; }
+      header,th { print-color-adjust:exact; -webkit-print-color-adjust:exact; }
+      .screen-only { display:none!important; }
+      .print-only { display:block!important; }
+      .print-table-page { display:block; width:100%; break-before:page; page-break-before:always; break-inside:avoid; page-break-inside:avoid; }
+      .print-table-chunk { display:table; width:100%!important; margin:0; table-layout:fixed!important; break-inside:avoid; page-break-inside:avoid; }
+      h2 { break-after:avoid-page; page-break-after:avoid; }
+      .meta,.metrics,.metric,.chart-card { break-inside:avoid; page-break-inside:avoid; }
+      .content-grid,.content-grid.split,.content-grid.chart_first,.content-grid.table_first { display:block; }
+      .content-grid.table_first .chart-card { order:initial; }
+      .chart-card { margin-bottom:5mm; }
+      .chart { width:100%; height:58mm; }
+      .table-wrap {
+        width:100%;
+        max-height:none;
+        overflow:visible;
+        border-radius:0;
+        break-inside:auto;
+        page-break-inside:auto;
+      }
+      table {
+        width:100%;
+        min-width:0;
+        table-layout:fixed;
+        white-space:normal;
+        font-size:7.5pt;
+      }
+      thead { display:table-header-group; position:static; }
+      tr { break-inside:avoid; page-break-inside:avoid; }
+      th,td {
+        padding:2.2mm 1.6mm;
+        overflow-wrap:anywhere;
+        word-break:break-word;
+        vertical-align:top;
+      }
+    }
+  </style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <small>{{ report.custom.template.logo_text }}</small>
+    <h1>{{ report.custom.template.title_prefix }} · {{ report.meta.title }}</h1>
+    <p>{{ report.definition.description or '配置驱动的自定义生产报表' }}</p>
+  </header>
+  <main>
+    {% if report.custom.template.show_meta %}
+    <section class="meta">
+      <div><span>报告周期</span>{{ report.meta.report_date }}</div>
+      <div><span>查询任务</span>{{ report.query_task.name }} · V{{ report.query_task.version }}</div>
+      <div><span>模板版本</span>{{ report.template_meta.name }} · V{{ report.template_meta.version }}</div>
+      <div><span>生成时间</span>{{ report.meta.generated_at }}</div>
+    </section>
+    {% endif %}
+
+    {% if report.custom.metrics %}
+    <h2>核心指标</h2>
+    <section class="metrics">
+      {% for metric in report.custom.metrics %}
+      <div class="metric"><small>{{ metric.label }}</small><strong>{{ metric.value|number }}</strong><small>{{ metric.unit }}</small></div>
+      {% endfor %}
+    </section>
+    {% endif %}
+
+    <h2>数据明细与图表</h2>
+    <section class="content-grid {{ report.custom.template.layout }}">
+      {% if report.custom.chart.series %}
+      <div class="chart-card"><div class="chart-title">{{ report.custom.chart_title }}</div><div id="custom-chart" class="chart" aria-label="{{ report.custom.chart_title }}"></div></div>
+      {% endif %}
+      <div class="table-wrap">
+        {% if report.custom.rows and report.custom.columns %}
+        <table class="screen-only">
+          <thead><tr>{% for column in report.custom.columns %}<th>{{ column.label }}{% if column.unit %}（{{ column.unit }}）{% endif %}</th>{% endfor %}</tr></thead>
+          <tbody>
+          {% for row in report.custom.rows %}<tr>{% for column in report.custom.columns %}<td>{% set value = row.get(column.field) %}{% if column.type == 'duration' %}{{ value|duration }}{% elif column.type == 'number' %}{{ value|number }}{% else %}{{ value if value is not none else '--' }}{% endif %}</td>{% endfor %}</tr>{% endfor %}
+          </tbody>
+        </table>
+        <div class="print-only">{% for chunk in report.custom.rows|batch(16) %}{% set chunk_index = loop.index0 %}<section class="print-table-page"><table class="print-table-chunk"><thead><tr>{% for column in report.custom.columns %}<th>{{ column.label }}{% if column.unit %}（{{ column.unit }}）{% endif %}</th>{% endfor %}</tr></thead><tbody>{% for row in chunk %}<tr>{% for column in report.custom.columns %}<td>{% set value = row.get(column.field) %}{% if column.type == 'duration' %}{{ value|duration }}{% elif column.type == 'number' %}{{ value|number }}{% else %}{{ value if value is not none else '--' }}{% endif %}</td>{% endfor %}</tr>{% endfor %}</tbody></table></section>{% endfor %}</div>
+        {% else %}<div class="empty">查询成功，暂无可展示数据</div>{% endif %}
+      </div>
+    </section>
+  </main>
+  <div class="footer">本报告由配置驱动报表引擎生成 · 报告结束</div>
+</div>
+<script>{{ echarts_source|safe }}</script>
+{% if report.custom.chart.series %}
+<script>
+  const customChart = echarts.init(document.getElementById('custom-chart'));
+  customChart.setOption({{ report.custom.chart|tojson }});
+  window.addEventListener('resize', () => customChart.resize());
+  const preparePrint = () => {
+    document.documentElement.classList.add('report-printing');
+    void document.body.offsetWidth;
+    customChart.resize();
+    customChart.setOption({ animation: false }, false);
+  };
+  const restoreScreen = () => {
+    document.documentElement.classList.remove('report-printing');
+    requestAnimationFrame(() => customChart.resize());
+  };
+  window.addEventListener('beforeprint', preparePrint);
+  window.addEventListener('afterprint', restoreScreen);
+  const printMedia = window.matchMedia('print');
+  if (printMedia.addEventListener) printMedia.addEventListener('change', event => {
+    if (event.matches) preparePrint();
+    else restoreScreen();
+  });
+  customChart.setOption({ animation: false }, false);
+  Promise.resolve(document.fonts?.ready).then(() => requestAnimationFrame(() => requestAnimationFrame(() => {
+    customChart.resize();
+    document.documentElement.dataset.reportReady = 'true';
+    window.__REPORT_READY__ = true;
+  })));
+</script>
+{% else %}
+<script>
+  Promise.resolve(document.fonts?.ready).then(() => {
+    document.documentElement.dataset.reportReady = 'true';
+    window.__REPORT_READY__ = true;
+  });
+</script>
+{% endif %}
+</body>
+</html>
