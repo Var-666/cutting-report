@@ -135,6 +135,47 @@ cd ..
 http://127.0.0.1:8000
 ```
 
+## Docker 一键部署
+
+项目提供多阶段 `Dockerfile` 和 `compose.yaml`：Node 阶段构建 Vue，Python 阶段安装后端依赖，最终镜像包含 Microsoft ODBC Driver 18。Compose 会强制使用生产模式；镜像使用非 root 用户、只读根文件系统、健康检查和日志轮转。容器内只启动一个 Uvicorn 进程，避免当前 SQLite 和报告后台线程被多进程重复使用。
+
+首次部署：
+
+```bash
+cp .env.example .env
+# 编辑 .env，填写数据源、SQL Server 和可选 LLM 配置
+docker compose up -d --build
+```
+
+查看状态和日志：
+
+```bash
+docker compose ps
+docker compose logs -f app
+```
+
+默认仅监听宿主机 `127.0.0.1:8000`，适合在前方配置 Nginx/IIS HTTPS 反向代理。只在受控内网临时直接访问时，才将 `.env` 的 `DOCKER_BIND_ADDRESS` 改为 `0.0.0.0`。
+
+Excel 联调模式需要将数据文件放到：
+
+```text
+docker/input/TASK.xlsx
+```
+
+SQL Server 模式不需要该文件。`.env`、Excel 数据和运行数据不会被写入镜像。`data`、`reports` 和 `logs` 使用 Docker 命名卷持久化，执行 `docker compose down` 不会删除；不要使用 `docker compose down -v`，除非已备份且确实需要清空数据。
+
+更新代码后重建：
+
+```bash
+docker compose up -d --build
+```
+
+停止服务：
+
+```bash
+docker compose down
+```
+
 ## 配置驱动报表设计
 
 顶部导航的“报表设计”提供三个相互独立的配置层：
