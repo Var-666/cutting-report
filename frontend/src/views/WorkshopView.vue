@@ -9,6 +9,7 @@ import {
   listWorkshopTasks,
 } from '../api/reports'
 import AnalysisPanel from '../components/AnalysisPanel.vue'
+import { session } from '../state/session'
 
 const props = defineProps({
   user: { type: Object, required: true },
@@ -29,6 +30,7 @@ const chartType = ref('bar_line')
 const confirmationFeedback = reactive({ visible: false, type: 'pending', title: '', message: '' })
 const totalPages = computed(() => Math.max(1, Math.ceil(result.value.total / result.value.page_size)))
 const isWorker = computed(() => props.mode === 'worker')
+const usesWorkerDatabase = computed(() => session.workerDatabaseAuthEnabled)
 let refreshTimer = null
 let feedbackTimer = null
 
@@ -130,9 +132,15 @@ async function addAccount() {
   error.value = ''
   notice.value = ''
   try {
-    const saved = await createUserAccount(account)
+    const payload = usesWorkerDatabase.value ? { ...account, role: 'admin' } : account
+    const saved = await createUserAccount(payload)
     notice.value = `账号 ${saved.username} 已创建`
-    Object.assign(account, { username: '', display_name: '', password: '', role: 'worker' })
+    Object.assign(account, {
+      username: '',
+      display_name: '',
+      password: '',
+      role: usesWorkerDatabase.value ? 'admin' : 'worker',
+    })
     await loadUsers()
   } catch (exception) {
     error.value = exception.message
@@ -239,8 +247,9 @@ onUnmounted(() => {
   />
 
   <section v-if="!isWorker && user.role === 'admin'" class="panel account-panel">
-    <div class="panel-title"><div><span>02</span><h2>工人账号</h2></div><p>工人登录后自动使用本人身份确认</p></div>
-    <form class="account-form" @submit.prevent="addAccount"><label><span>登录账号</span><input v-model.trim="account.username" minlength="2" maxlength="64" required /></label><label><span>工人姓名</span><input v-model.trim="account.display_name" maxlength="64" required /></label><label><span>初始密码</span><input v-model="account.password" type="password" minlength="8" maxlength="128" required /></label><label><span>角色</span><select v-model="account.role"><option value="worker">工人</option><option value="admin">管理员</option></select></label><button class="primary" :disabled="accountLoading">{{ accountLoading ? '创建中' : '创建账号' }}</button></form>
-    <div class="account-list"><span v-for="item in users" :key="item.user_id"><strong>{{ item.display_name }}</strong><small>{{ item.username }} · {{ item.role === 'admin' ? '管理员' : '工人' }}</small></span></div>
+    <div class="panel-title"><div><span>02</span><h2>{{ usesWorkerDatabase ? '登录账号' : '工人账号' }}</h2></div><p>{{ usesWorkerDatabase ? '工人首次通过HR数据库登录后自动同步身份；此处仅创建管理员' : '工人登录后自动使用本人身份确认' }}</p></div>
+    <div v-if="usesWorkerDatabase" class="workshop-notice">工人账号来自 HRbase_userInfo，本系统不会保存工人密码。</div>
+    <form class="account-form" @submit.prevent="addAccount"><label><span>{{ usesWorkerDatabase ? '管理员账号' : '登录账号' }}</span><input v-model.trim="account.username" minlength="2" maxlength="64" required /></label><label><span>{{ usesWorkerDatabase ? '管理员姓名' : '工人姓名' }}</span><input v-model.trim="account.display_name" maxlength="64" required /></label><label><span>初始密码</span><input v-model="account.password" type="password" minlength="8" maxlength="128" required /></label><label v-if="!usesWorkerDatabase"><span>角色</span><select v-model="account.role"><option value="worker">工人</option><option value="admin">管理员</option></select></label><button class="primary" :disabled="accountLoading">{{ accountLoading ? '创建中' : '创建账号' }}</button></form>
+    <div class="account-list"><span v-for="item in users" :key="item.user_id"><strong>{{ item.display_name }}</strong><small>{{ item.username }} · {{ item.role === 'admin' ? '管理员' : item.auth_source === 'hr_database' ? 'HR数据库工人' : '本地工人' }}</small></span></div>
   </section>
 </template>

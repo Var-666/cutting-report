@@ -4,6 +4,8 @@ from calendar import monthrange
 from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
+from threading import Lock
+from time import monotonic
 
 from app.config import Settings
 from app.database.sqlserver import SqlServerClient
@@ -11,6 +13,7 @@ from app.database.excel_task import ExcelTaskDataSource
 from app.models.domain import (
     LeadershipPeriodRecord,
     LeadershipReportResult,
+    ProjectDistributionRecord,
 )
 
 
@@ -46,9 +49,55 @@ class LeadershipReportService:
             / "queries"
             / "leadership_report.sql"
         )
+        self.project_query_path = (
+            Path(__file__).resolve().parents[1]
+            / "database"
+            / "queries"
+            / "leadership_projects.sql"
+        )
+        self._cache_lock = Lock()
+        self._month_locks: dict[date, Lock] = {}
+        self._cache: dict[
+            date, tuple[float, float, LeadershipReportResult]
+        ] = {}
 
-    def fetch(self, report_month: date) -> LeadershipReportResult:
+    def fetch(
+        self, report_month: date, *, force: bool = False
+    ) -> LeadershipReportResult:
         month_start = report_month.replace(day=1)
+        cache_seconds = self.settings.leadership_report_cache_seconds
+        if cache_seconds <= 0:
+            return self._fetch_uncached(month_start)
+
+        requested_at = monotonic()
+        with self._cache_lock:
+            cached = self._cache.get(month_start)
+            if not force and cached and cached[0] > requested_at:
+                return cached[2]
+            month_lock = self._month_locks.setdefault(month_start, Lock())
+
+        # 同一月份只允许一个线程查询。等待中的普通请求，以及在同一次
+        # 强制刷新期间到达的刷新请求，直接复用先完成的结果。
+        with month_lock:
+            now = monotonic()
+            with self._cache_lock:
+                cached = self._cache.get(month_start)
+                cache_is_fresh = cached and cached[0] > now
+                refreshed_after_request = cached and cached[1] >= requested_at
+                if (not force and cache_is_fresh) or refreshed_after_request:
+                    return cached[2]
+
+            result = self._fetch_uncached(month_start)
+            created_at = monotonic()
+            with self._cache_lock:
+                self._cache[month_start] = (
+                    created_at + cache_seconds,
+                    created_at,
+                    result,
+                )
+            return result
+
+    def _fetch_uncached(self, month_start: date) -> LeadershipReportResult:
         if self.settings.effective_data_source_mode == "excel":
             return self._excel_data(month_start)
         if self.settings.effective_data_source_mode == "demo":
@@ -68,19 +117,35 @@ class LeadershipReportService:
             for row in rows
             if row.get("period_type") == "monthly"
         ]
+        next_month = _previous_month(month_start, -1)
+        project_rows = self.client.fetch_all(
+            self.project_query_path.read_text(encoding="utf-8"),
+            (month_start, next_month),
+        )
+        projects = [
+            ProjectDistributionRecord(
+                project_name=str(row.get("project_name") or "未标注工程"),
+                task_count=int(row.get("task_count") or 0),
+                cut_length_m=_decimal(row.get("cut_length_m")),
+                work_time_seconds=int(_decimal(row.get("work_time_seconds"))),
+            )
+            for row in project_rows
+        ]
         return self._result(
             month_start=month_start,
             source_mode="sqlserver",
             daily_records=daily_records,
             monthly_records=monthly_records,
+            project_distribution=projects,
         )
 
     def _excel_data(self, month_start: date) -> LeadershipReportResult:
         next_month = _previous_month(month_start, -1)
-        range_start = _previous_month(month_start, 11)
+        range_start = _previous_month(month_start, 12)
         rows = self.excel.completed_rows(start=range_start, end=next_month)
         daily: dict[date, dict[str, object]] = {}
         monthly: dict[date, dict[str, object]] = {}
+        projects: dict[str, dict[str, object]] = {}
 
         def add(target: dict[date, dict[str, object]], key: date, row: dict) -> None:
             bucket = target.setdefault(
@@ -109,6 +174,15 @@ class LeadershipReportService:
             add(monthly, month_key, row)
             if month_key == month_start:
                 add(daily, production_date, row)
+                normalized = self.excel.normalized(row)
+                project_name = normalized["project_name"] or "未标注工程"
+                project = projects.setdefault(
+                    project_name,
+                    {"task_count": 0, "cut_length_m": ZERO, "work_time_seconds": 0},
+                )
+                project["task_count"] += 1
+                project["cut_length_m"] += normalized["cut_length"]
+                project["work_time_seconds"] += int(normalized["work_time"])
 
         def records(source: dict[date, dict[str, object]]) -> list[LeadershipPeriodRecord]:
             return [
@@ -132,6 +206,18 @@ class LeadershipReportService:
             source_mode="excel",
             daily_records=records(daily),
             monthly_records=records(monthly),
+            project_distribution=[
+                ProjectDistributionRecord(
+                    project_name=name,
+                    task_count=int(values["task_count"]),
+                    cut_length_m=values["cut_length_m"],
+                    work_time_seconds=int(values["work_time_seconds"]),
+                )
+                for name, values in sorted(
+                    projects.items(),
+                    key=lambda item: (-int(item[1]["task_count"]), item[0]),
+                )
+            ],
         )
 
     @staticmethod
@@ -152,6 +238,7 @@ class LeadershipReportService:
         source_mode: str,
         daily_records: list[LeadershipPeriodRecord],
         monthly_records: list[LeadershipPeriodRecord],
+        project_distribution: list[ProjectDistributionRecord] | None = None,
     ) -> LeadershipReportResult:
         total = LeadershipPeriodRecord(
             period_start=month_start,
@@ -162,6 +249,7 @@ class LeadershipReportService:
             remark=None,
         )
         monthly_by_period = {item.period_start: item for item in monthly_records}
+        year_ago_total = monthly_by_period.get(_previous_month(month_start, 12))
         complete_months = [
             monthly_by_period.get(
                 period_start,
@@ -198,6 +286,8 @@ class LeadershipReportService:
             monthly_records=complete_months,
             current_month_total=total,
             twelve_month_total=twelve_month_total,
+            year_ago_total=year_ago_total,
+            project_distribution=project_distribution or [],
         )
 
     def _demo_data(self, month_start: date) -> LeadershipReportResult:
@@ -238,7 +328,7 @@ class LeadershipReportService:
         )
 
         monthly_records: list[LeadershipPeriodRecord] = []
-        for offset in range(11, -1, -1):
+        for offset in range(12, -1, -1):
             period_start = _previous_month(month_start, offset)
             if offset == 0:
                 monthly_records.append(current_total)
@@ -263,4 +353,18 @@ class LeadershipReportService:
             source_mode="demo",
             daily_records=daily_records,
             monthly_records=monthly_records,
+            project_distribution=[
+                ProjectDistributionRecord(
+                    project_name="DEMO-A",
+                    task_count=current_total.task_count * 55 // 100,
+                    cut_length_m=(current_total.cut_length_m * Decimal("0.55")).quantize(METER_PRECISION),
+                    work_time_seconds=current_total.work_time_seconds * 55 // 100,
+                ),
+                ProjectDistributionRecord(
+                    project_name="DEMO-B",
+                    task_count=current_total.task_count - current_total.task_count * 55 // 100,
+                    cut_length_m=(current_total.cut_length_m * Decimal("0.45")).quantize(METER_PRECISION),
+                    work_time_seconds=current_total.work_time_seconds - current_total.work_time_seconds * 55 // 100,
+                ),
+            ],
         )

@@ -6,7 +6,7 @@ from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 from app.api import designer
-from app.api.auth import require_admin, require_user, require_worker
+from app.api.auth import LoginRequest, login, require_admin, require_user, require_worker
 from app.config import settings
 from app.main import app
 
@@ -20,6 +20,7 @@ ADMIN_PREFIXES = (
     "/api/v1/leadership-report",
     "/api/v1/equipment-report",
     "/api/v1/analysis",
+    "/api/v1/automation",
 )
 
 
@@ -79,6 +80,7 @@ def test_public_bootstrap_login_and_health_routes_stay_public() -> None:
         ("/api/v1/auth/status", "GET"),
         ("/api/v1/auth/bootstrap", "POST"),
         ("/api/v1/auth/login", "POST"),
+        ("/api/v1/auth/worker-login", "POST"),
         ("/api/v1/health", "GET"),
     ):
         assert require_admin not in _dependency_calls(_route(path, method))
@@ -101,6 +103,7 @@ class _SessionStub:
         "/api/v1/leadership-report?report_month=2026-08",
         "/api/v1/equipment-report?report_date=2026-08-18",
         "/api/v1/options/projects?report_date=2026-08-18",
+        "/api/v1/automation/status",
         "/reports/not-found/view",
     ],
 )
@@ -152,6 +155,78 @@ def test_worker_cannot_pass_admin_dependency() -> None:
         require_admin({"role": "worker"})
 
     assert exc_info.value.status_code == 403
+
+
+def test_hr_mode_rejects_a_legacy_local_worker_from_admin_login(monkeypatch) -> None:
+    class _LocalWorkerRepository:
+        def authenticate(self, username, password):
+            return {
+                "user_id": "usr_local_worker",
+                "username": username,
+                "display_name": "旧工人",
+                "role": "worker",
+            }
+
+    class _Request:
+        app = type("App", (), {"state": type("State", (), {"workshop": _LocalWorkerRepository()})()})()
+
+    monkeypatch.setattr(
+        "app.api.auth.settings",
+        replace(settings, worker_database_auth_enabled=True),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        login(
+            LoginRequest(username="old-worker", password="worker-password"),
+            _Request(),
+            object(),
+        )
+
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.detail == "管理员账号或密码错误"
+
+
+def test_worker_login_creates_a_session_from_hr_identity(monkeypatch) -> None:
+    class _WorkerAuthStub:
+        def authenticate(self, company_no, password):
+            assert company_no == "C0007"
+            assert password == "plain-password"
+            return {
+                "external_id": "9123",
+                "company_no": "C0007",
+                "group_no": "G0021",
+                "display_name": "张三",
+            }
+
+    class _WorkerSessionRepository:
+        def upsert_external_worker(self, **identity):
+            assert identity["external_id"] == "9123"
+            assert "password" not in identity
+            return {
+                "user_id": "usr_hr_worker",
+                "username": "C0007",
+                "display_name": "张三",
+                "role": "worker",
+                "auth_source": "hr_database",
+            }
+
+        def create_session(self, user_id, *, now, hours):
+            assert user_id == "usr_hr_worker"
+            return "safe-session-token", "2026-08-24T21:00:00+08:00"
+
+    monkeypatch.setattr(app.state, "worker_auth", _WorkerAuthStub(), raising=False)
+    monkeypatch.setattr(
+        app.state, "workshop", _WorkerSessionRepository(), raising=False
+    )
+
+    response = TestClient(app).post(
+        "/api/v1/auth/worker-login",
+        json={"company_no": "C0007", "password": "plain-password"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["user"]["role"] == "worker"
+    assert response.cookies.get("cutting_session") == "safe-session-token"
 
 
 @pytest.mark.parametrize("path", ["/admin/home", "/admin/reports/leadership"])

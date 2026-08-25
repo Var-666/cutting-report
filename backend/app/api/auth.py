@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.config import settings
 from app.database.workshop import AuthenticationError
+from app.services.worker_auth_service import WorkerAuthenticationUnavailableError
 
 
 SESSION_COOKIE = "cutting_session"
@@ -17,6 +18,19 @@ router = APIRouter(prefix="/api/v1/auth", tags=["authentication"])
 class LoginRequest(BaseModel):
     username: str = Field(min_length=2, max_length=64)
     password: str = Field(min_length=8, max_length=128)
+
+
+class WorkerLoginRequest(BaseModel):
+    company_no: str = Field(min_length=1, max_length=64)
+    password: str = Field(min_length=1, max_length=128)
+
+    @field_validator("company_no")
+    @classmethod
+    def strip_company_no(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("公司工号不能为空")
+        return cleaned
 
 
 class UserCreateRequest(LoginRequest):
@@ -92,7 +106,8 @@ def auth_status(request: Request, user: dict | None = Depends(optional_user)) ->
     return _envelope(
         request,
         {
-            "setup_required": request.app.state.workshop.user_count() == 0,
+            "setup_required": request.app.state.workshop.admin_count() == 0,
+            "worker_database_auth_enabled": settings.worker_database_auth_enabled,
             "authenticated": user is not None,
             "user": user,
         },
@@ -124,9 +139,38 @@ def login(payload: LoginRequest, request: Request, response: Response) -> dict:
         user = request.app.state.workshop.authenticate(
             payload.username, payload.password
         )
+        if settings.worker_database_auth_enabled and user["role"] != "admin":
+            raise AuthenticationError("管理员账号或密码错误")
     except AuthenticationError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
     now = _now()
+    token, expires_at = request.app.state.workshop.create_session(
+        user["user_id"], now=now, hours=settings.auth_session_hours
+    )
+    _set_session_cookie(response, token)
+    return _envelope(request, {"user": user, "expires_at": expires_at})
+
+
+@router.post("/worker-login")
+def worker_login(
+    payload: WorkerLoginRequest,
+    request: Request,
+    response: Response,
+) -> dict:
+    try:
+        identity = request.app.state.worker_auth.authenticate(
+            payload.company_no, payload.password
+        )
+    except AuthenticationError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except WorkerAuthenticationUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    now = _now()
+    user = request.app.state.workshop.upsert_external_worker(
+        **identity,
+        now=now.isoformat(timespec="seconds"),
+    )
     token, expires_at = request.app.state.workshop.create_session(
         user["user_id"], now=now, hours=settings.auth_session_hours
     )
@@ -158,6 +202,8 @@ def create_user(
     request: Request,
     _: dict = Depends(require_admin),
 ) -> dict:
+    if settings.worker_database_auth_enabled and payload.role == "worker":
+        raise HTTPException(status_code=409, detail="工人账号由HR数据库统一管理")
     try:
         user = request.app.state.workshop.create_user(
             username=payload.username,

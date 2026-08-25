@@ -43,11 +43,19 @@ def test_sqlserver_rows_are_normalized_without_portion_deduplication(
     service = LeadershipReportService(
         Settings(project_root=tmp_path, demo_mode=False, data_source_mode="sqlserver")
     )
-    captured = {}
+    captured = []
 
     def fake_fetch_all(sql, parameters):
-        captured["sql"] = sql
-        captured["parameters"] = parameters
+        captured.append({"sql": sql, "parameters": parameters})
+        if "project_name" in sql:
+            return [
+                {
+                    "project_name": "P001",
+                    "task_count": 20,
+                    "cut_length_m": Decimal("969.272"),
+                    "work_time_seconds": Decimal("7595"),
+                }
+            ]
         return [
             {
                 "period_type": "daily",
@@ -73,11 +81,57 @@ def test_sqlserver_rows_are_normalized_without_portion_deduplication(
 
     result = service.fetch(date(2025, 8, 18))
 
-    assert captured["parameters"] == (date(2025, 8, 1),)
-    assert "[dbo].[task]" in captured["sql"]
-    assert "t.[STATUS] = 2" in captured["sql"]
-    assert "COALESCE(t.[WORK_TIME], 0) >= 0" in captured["sql"]
+    assert captured[0]["parameters"] == (date(2025, 8, 1),)
+    assert captured[1]["parameters"] == (date(2025, 8, 1), date(2025, 9, 1))
+    assert "[dbo].[task]" in captured[0]["sql"]
+    assert "t.[STATUS] = 2" in captured[0]["sql"]
+    assert "COALESCE(t.[WORK_TIME], 0) >= 0" in captured[0]["sql"]
     assert result.source_mode == "sqlserver"
     assert result.current_month_total.task_count == 20
     assert result.current_month_total.cut_length_m == Decimal("969.272")
     assert result.current_month_total.work_time_seconds == 7595
+    assert result.project_distribution[0].project_name == "P001"
+
+
+def test_sqlserver_report_is_cached_by_month_and_can_be_refreshed(
+    tmp_path, monkeypatch
+) -> None:
+    service = LeadershipReportService(
+        Settings(
+            project_root=tmp_path,
+            demo_mode=False,
+            data_source_mode="sqlserver",
+            leadership_report_cache_seconds=300,
+        )
+    )
+    call_count = 0
+
+    def fake_fetch_all(sql, parameters):
+        nonlocal call_count
+        call_count += 1
+        if "project_name" in sql:
+            return []
+        return [
+            {
+                "period_type": "daily",
+                "period_start": date(2026, 8, 25),
+                "task_count": call_count,
+                "cut_length_m": Decimal("1"),
+                "groove_length_m": Decimal("0"),
+                "work_time_seconds": Decimal("1"),
+                "remark": None,
+            }
+        ]
+
+    monkeypatch.setattr(service.client, "fetch_all", fake_fetch_all)
+
+    first = service.fetch(date(2026, 8, 1))
+    second = service.fetch(date(2026, 8, 25))
+
+    assert first is second
+    assert call_count == 2
+
+    refreshed = service.fetch(date(2026, 8, 1), force=True)
+
+    assert refreshed is not first
+    assert call_count == 4

@@ -4,6 +4,7 @@ import { getAuthStatus, getSystemHealth, logoutAccount } from '../api/reports'
 export const session = reactive({
   ready: false,
   setupRequired: false,
+  workerDatabaseAuthEnabled: false,
   user: null,
   systemInfo: null,
   error: '',
@@ -20,6 +21,7 @@ export async function loadSession({ force = false } = {}) {
     try {
       const status = await getAuthStatus()
       session.setupRequired = status.setup_required
+      session.workerDatabaseAuthEnabled = Boolean(status.worker_database_auth_enabled)
       session.user = status.user
     } catch (exception) {
       session.user = null

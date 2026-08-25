@@ -168,8 +168,8 @@ onMounted(loadDashboard)
     <aside class="panel home-tools">
       <div class="home-panel-head"><div><span>MANAGEMENT</span><h2>快捷管理</h2></div></div>
       <RouterLink to="/admin/reports/center"><strong>报表生成与历史</strong><small>生成、归档和下载 HTML 报告</small><b>→</b></RouterLink>
-      <RouterLink to="/admin/database"><strong>数据库管理</strong><small>查看数据源、预览任务和编写查询</small><b>→</b></RouterLink>
-      <RouterLink to="/admin/designer"><strong>报表定义与模板</strong><small>维护查询任务、报表定义和版式</small><b>→</b></RouterLink>
+      <RouterLink to="/admin/settings"><strong>系统设置</strong><small>数据库、报表设计和自动化集中管理</small><b>→</b></RouterLink>
+      <RouterLink to="/admin/settings/database"><strong>数据源状态</strong><small>检查生产库、工人库和切割文件库</small><b>→</b></RouterLink>
     </aside>
   </section>
 </template>

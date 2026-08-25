@@ -3,7 +3,10 @@ from __future__ import annotations
 import importlib.util
 import hashlib
 import logging
+import os
+import re
 import secrets
+import tempfile
 from dataclasses import asdict
 from dataclasses import replace
 from datetime import date
@@ -51,6 +54,34 @@ class ConnectionTestRequest(BaseModel):
         return cleaned
 
 
+class SavedConnectionRequest(BaseModel):
+    host: str = Field(default="", max_length=255)
+    port: int = Field(default=1433, ge=1, le=65535)
+    database: str = Field(default="", max_length=128)
+    username: str = Field(default="", max_length=128)
+    password: SecretStr | None = Field(default=None, max_length=256)
+    driver: str = Field(default="ODBC Driver 18 for SQL Server", max_length=128)
+    encrypt: bool = True
+    trust_server_certificate: bool = True
+
+    @field_validator("host", "database", "username", "driver")
+    @classmethod
+    def clean_saved_text(cls, value: str) -> str:
+        cleaned = value.strip()
+        if any(character in cleaned for character in ("\r", "\n", "\x00")):
+            raise ValueError("不能包含换行或空字符")
+        return cleaned
+
+
+class DatabaseConfigurationRequest(BaseModel):
+    data_source_mode: Literal["demo", "excel", "sqlserver"] = "demo"
+    worker_database_auth_enabled: bool = False
+    file_database_enabled: bool = False
+    production: SavedConnectionRequest
+    worker: SavedConnectionRequest
+    file: SavedConnectionRequest
+
+
 class DatabasePreviewRequest(BaseModel):
     dataset: Literal["summary", "workshop", "equipment"]
     report_date: date
@@ -79,6 +110,7 @@ def _query_mapping_status() -> list[dict]:
     query_dir = Path(__file__).resolve().parents[1] / "database" / "queries"
     labels = {
         "leadership_report.sql": "领导报表日/月汇总",
+        "leadership_projects.sql": "领导报表工程分布",
         "summary_base.sql": "领导汇总基础数据",
         "workshop.sql": "车间生产明细",
         "equipment.sql": "设备生产/能耗数据",
@@ -96,6 +128,190 @@ def _query_mapping_status() -> list[dict]:
             }
         )
     return items
+
+
+def _database_source_status() -> list[dict]:
+    definitions = (
+        ("production", "生产报表库", settings.effective_data_source_mode == "sqlserver"),
+        ("worker", "工人 HR 库", settings.worker_database_auth_enabled),
+        ("file", "切割文件库", settings.file_database_enabled),
+    )
+    sources = []
+    for source, label, enabled in definitions:
+        config = settings.sqlserver_connection(source)
+        configured = all(
+            config[key] for key in ("host", "database", "username", "password")
+        )
+        sources.append(
+            {
+                "source": source,
+                "label": label,
+                "enabled": enabled,
+                "configured": configured,
+                "host": config["host"] or None,
+                "port": config["port"],
+                "database": config["database"] or None,
+                "driver": config["driver"],
+                "uses_primary_fallback": bool(config["uses_primary_fallback"]),
+            }
+        )
+    return sources
+
+
+def _saved_connection(source: str) -> dict:
+    prefix = "sqlserver" if source == "production" else f"{source}_sqlserver"
+    common = settings.sqlserver_connection(source)
+    password = str(getattr(settings, f"{prefix}_password"))
+    return {
+        "host": str(getattr(settings, f"{prefix}_host")),
+        "port": int(getattr(settings, f"{prefix}_port")),
+        "database": str(getattr(settings, f"{prefix}_database")),
+        "username": str(getattr(settings, f"{prefix}_username")),
+        "password_configured": bool(password),
+        "driver": str(getattr(settings, f"{prefix}_driver") or common["driver"]),
+        "encrypt": str(
+            getattr(settings, f"{prefix}_encrypt") or common["encrypt"]
+        ).strip().lower() in {"1", "true", "yes", "on"},
+        "trust_server_certificate": str(
+            getattr(settings, f"{prefix}_trust_server_certificate")
+            or common["trust_server_certificate"]
+        ).strip().lower() in {"1", "true", "yes", "on"},
+    }
+
+
+def _database_configuration_data() -> dict:
+    return {
+        "data_source_mode": settings.effective_data_source_mode,
+        "worker_database_auth_enabled": settings.worker_database_auth_enabled,
+        "file_database_enabled": settings.file_database_enabled,
+        "production": _saved_connection("production"),
+        "worker": _saved_connection("worker"),
+        "file": _saved_connection("file"),
+    }
+
+
+def _dotenv_quote(value: object) -> str:
+    text = str(value)
+    if any(character in text for character in ("\r", "\n", "\x00")):
+        raise ValueError("配置值不能包含换行或空字符")
+    return "'" + text.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
+def _write_runtime_env(values: dict[str, object]) -> None:
+    path = settings.runtime_settings_env_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    original = path.read_text(encoding="utf-8").splitlines() if path.is_file() else []
+    key_pattern = re.compile(r"^\s*([A-Z][A-Z0-9_]*)\s*=")
+    written: set[str] = set()
+    output: list[str] = []
+    for line in original:
+        match = key_pattern.match(line)
+        key = match.group(1) if match else None
+        if key in values:
+            output.append(f"{key}={_dotenv_quote(values[key])}")
+            written.add(key)
+        else:
+            output.append(line)
+    if output and output[-1] != "":
+        output.append("")
+    if not original:
+        output.extend(
+            [
+                "# 由系统设置页管理。修改后需重启服务生效。",
+                "# 文件中包含数据库密码，不要提交到代码库或对外发送。",
+                "",
+            ]
+        )
+    for key, value in values.items():
+        if key not in written:
+            output.append(f"{key}={_dotenv_quote(value)}")
+
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=".settings-",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            handle.write("\n".join(output).rstrip() + "\n")
+            temporary_path = Path(handle.name)
+        os.chmod(temporary_path, 0o600)
+        os.replace(temporary_path, path)
+    finally:
+        if temporary_path is not None and temporary_path.exists():
+            temporary_path.unlink()
+
+
+def _connection_env_values(
+    source: str, payload: SavedConnectionRequest
+) -> dict[str, object]:
+    env_prefix = "SQLSERVER" if source == "production" else f"{source.upper()}_SQLSERVER"
+    attribute_prefix = "sqlserver" if source == "production" else f"{source}_sqlserver"
+    submitted_password = (
+        payload.password.get_secret_value() if payload.password is not None else None
+    )
+    password = (
+        submitted_password
+        if submitted_password not in {None, ""}
+        else getattr(settings, f"{attribute_prefix}_password")
+    )
+    return {
+        f"{env_prefix}_HOST": payload.host,
+        f"{env_prefix}_PORT": payload.port,
+        f"{env_prefix}_DATABASE": payload.database,
+        f"{env_prefix}_USERNAME": payload.username,
+        f"{env_prefix}_PASSWORD": password,
+        f"{env_prefix}_DRIVER": payload.driver,
+        f"{env_prefix}_ENCRYPT": "yes" if payload.encrypt else "no",
+        f"{env_prefix}_TRUST_SERVER_CERTIFICATE": (
+            "yes" if payload.trust_server_certificate else "no"
+        ),
+    }
+
+
+@router.get("/configuration")
+def get_database_configuration(request: Request) -> dict:
+    return {
+        "success": True,
+        "data": _database_configuration_data(),
+        "request_id": request.state.request_id,
+    }
+
+
+@router.put("/configuration")
+def save_database_configuration(
+    payload: DatabaseConfigurationRequest, request: Request
+) -> dict:
+    values: dict[str, object] = {
+        "APP_DATA_SOURCE_MODE": payload.data_source_mode,
+        "WORKER_DATABASE_AUTH_ENABLED": str(
+            payload.worker_database_auth_enabled
+        ).lower(),
+        "FILE_DATABASE_ENABLED": str(payload.file_database_enabled).lower(),
+    }
+    for source in ("production", "worker", "file"):
+        values.update(_connection_env_values(source, getattr(payload, source)))
+    try:
+        _write_runtime_env(values)
+    except (OSError, ValueError) as exc:
+        logger.exception("failed to save runtime database configuration")
+        raise HTTPException(
+            status_code=500,
+            detail="配置保存失败，请检查 data 目录的写入权限。",
+        ) from exc
+    return {
+        "success": True,
+        "data": {
+            "saved": True,
+            "restart_required": True,
+            "path": "data/settings.env",
+            "message": "配置已安全保存，请重启服务后生效。",
+        },
+        "request_id": request.state.request_id,
+    }
 
 
 @router.get("/status")
@@ -129,6 +345,7 @@ def database_status(request: Request) -> dict:
             "configured_host": settings.sqlserver_host or None,
             "configured_database": settings.sqlserver_database or None,
             "driver": settings.sqlserver_driver,
+            "data_sources": _database_source_status(),
             "query_mappings": mappings,
             "all_queries_ready": all(item["ready"] for item in mappings),
             "arbitrary_sql_enabled": workbench_enabled,

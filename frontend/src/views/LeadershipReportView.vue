@@ -85,12 +85,12 @@ function applyChartType(series) {
   return result
 }
 
-async function loadReport() {
+async function loadReport(force = false) {
   if (!reportMonth.value) return
   loading.value = true
   error.value = ''
   try {
-    report.value = await getLeadershipReport(reportMonth.value)
+    report.value = await getLeadershipReport(reportMonth.value, { force })
     await nextTick()
     renderCharts()
   } catch (exception) {
@@ -172,11 +172,11 @@ watch(chartType, async () => {
       <h2>领导生产报表</h2>
       <p>完成任务按日汇总，当月明细与最近十二个月趋势统一展示。</p>
     </div>
-    <form class="month-query" @submit.prevent="loadReport">
+    <form class="month-query" @submit.prevent="loadReport(true)">
       <label><span>报表月份</span><input v-model="reportMonth" type="month" required /></label>
       <label><span>图表类型</span><select v-model="chartType"><option value="bar_line">柱线组合</option><option value="bar">柱状图</option><option value="line">折线图</option><option value="area">面积图</option></select></label>
       <button class="primary" type="submit" :disabled="loading">
-        <span v-if="loading" class="spinner"></span>{{ loading ? '查询中' : '查询报表' }}
+        <span v-if="loading" class="spinner"></span>{{ loading ? '查询中' : '刷新报表' }}
       </button>
       <button type="button" :disabled="loading" @click="exportReport">导出 HTML</button>
     </form>

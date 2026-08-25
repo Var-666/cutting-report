@@ -33,21 +33,35 @@ def test_three_report_types_get_distinct_simulated_analysis(tmp_path: Path) -> N
 
     leadership_analysis = service.analyze_leadership(leadership)
     workshop_analysis = service.analyze_workshop(
-        selected_date.isoformat(), bundle.workshop_records
+        selected_date.isoformat(),
+        bundle.workshop_records,
+        comparison_records=bundle.workshop_records,
+        comparison_date="2026-08-17",
+        year_ago_records=bundle.workshop_records,
+        year_ago_date="2025-08-18",
     )
+    equipment_records = sort_equipment_records(mock_energy(bundle.equipment_records))
     equipment_analysis = service.analyze_equipment(
         selected_date.isoformat(),
-        sort_equipment_records(mock_energy(bundle.equipment_records)),
+        equipment_records,
         energy_data_mode="mock",
+        comparison_records=equipment_records,
+        comparison_date="2026-08-17",
+        year_ago_records=equipment_records,
+        year_ago_date="2025-08-18",
     )
 
     assert leadership_analysis.status == "simulated"
     assert leadership_analysis.mode == "simulated"
     assert "2026-08" in leadership_analysis.overview
+    assert "同比" in leadership_analysis.features
+    assert "工程" in leadership_analysis.features
     assert "确认率" in workshop_analysis.features
+    assert "同比" in workshop_analysis.features
     assert "未完成工人确认" in workshop_analysis.alerts
     assert "模拟数据" in equipment_analysis.limitations
     assert "不进行能耗异常判定" in equipment_analysis.features
+    assert "同比" in equipment_analysis.features
     assert leadership_analysis.overview != workshop_analysis.overview
     assert workshop_analysis.overview != equipment_analysis.overview
     assert all(result.facts for result in (
@@ -55,6 +69,10 @@ def test_three_report_types_get_distinct_simulated_analysis(tmp_path: Path) -> N
         workshop_analysis,
         equipment_analysis,
     ))
+    for result in (leadership_analysis, workshop_analysis, equipment_analysis):
+        assert all(fact.get("id") and fact.get("source") for fact in result.facts)
+        referenced = result.overview + result.features + result.alerts + result.suggestions
+        assert any(f"[{fact['id']}]" in referenced for fact in result.facts)
 
 
 def test_same_analysis_input_uses_metadata_cache(tmp_path: Path) -> None:

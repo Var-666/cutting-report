@@ -1,6 +1,6 @@
 /*
   领导报表：当月按日明细 + 最近 12 个月对比。
-  参数：所选月份第一天（date）。
+  参数：所选月份第一天（date）。包含上年同月，用于同比。
   统计口径：STATUS = 2；OP_DATE 无效时回退 START_TIME；长度毫米转米；工时单位秒。
 */
 WITH report_parameters AS (
@@ -24,7 +24,7 @@ filtered_tasks AS (
     SELECT source.*
     FROM task_source AS source
     CROSS JOIN report_parameters AS parameters
-    WHERE source.production_date >= DATEADD(month, -11, parameters.month_start)
+    WHERE source.production_date >= DATEADD(month, -12, parameters.month_start)
       AND source.production_date < DATEADD(month, 1, parameters.month_start)
 ),
 daily_summary AS (

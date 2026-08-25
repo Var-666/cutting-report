@@ -49,6 +49,8 @@ TASK_EXCEL_PATH=TASK.xlsx
 
 领导报表统计口径：仅统计 `STATUS = 2` 且 `WORK_TIME >= 0` 的任务，负工时异常任务整条剔除；优先按 `OP_DATE` 归属日期，无法转换时回退 `START_TIME`；切割和坡口长度由毫米换算为米；`WORK_TIME` 按秒汇总；历史对比覆盖所选月份及其前十一个月；图表时间轴从左到右递增；不按 `PORTION_ID` 去重。
 
+首页概览与领导报表共享按月份缓存，默认有效期为 300 秒；相同月份的并发请求只执行一次数据库查询。报表页自动加载优先复用缓存，点击“刷新报表”会强制读取最新数据。可通过 `LEADERSHIP_REPORT_CACHE_SECONDS` 调整有效期，设为 `0` 关闭缓存。
+
 三类导出报告：
 
 管理员登录后默认进入独立的生产管理首页，首页展示本月核心指标、三类报表入口、最近生成记录和管理快捷入口；“生成与历史”仅作为报表栏目下的功能页保留。
@@ -72,13 +74,38 @@ TASK_EXCEL_PATH=TASK.xlsx
 
 ## 账号与车间确认
 
-系统首次启动且账号表为空时，登录页会要求创建首个管理员账号。管理员可在“车间报表”页面创建工人账号。任意已登录员工首次进入当日页面时，系统会幂等地生成或读取当日唯一报表；页面每 5 秒静默同步一次其他员工的确认结果。点击“确认是我完成”后，系统立即记录当前账号姓名和确认时间，不允许第二个人覆盖。
+系统首次启动且管理员账号表为空时，登录页会要求创建首个本地管理员账号。启用工人数据库认证后，工人使用公司工号和 HR 数据库中的密码登录，管理员仍使用本系统账号登录。任意已登录员工首次进入当日页面时，系统会幂等地生成或读取当日唯一报表；页面每 5 秒静默同步一次其他员工的确认结果。点击“确认是我完成”后，系统立即记录当前账号姓名和确认时间，不允许第二个人覆盖。
+
+工人认证读取 SQL Server 的 `dbo.HRbase_userInfo`，字段映射为：`公司工号`是登录账号、`密码`在 SQL Server 内直接比较、`_Identify`是稳定人员标识、`姓名`是显示姓名，同时读取`集团工号`、`可用`和`_Locked`。明文密码不会被查询返回、写入本地 SQLite、Session 或普通日志。工人首次登录成功时，系统只在 SQLite 创建一条不含密码的影子身份，用于会话和任务确认外键。
+
+外网开发环境无需连接 HR 数据库，可保持：
+
+```env
+WORKER_DATABASE_AUTH_ENABLED=false
+```
+
+部署到能访问内网数据库的服务器后，为 HR 库配置独立连接并启用：
+
+```env
+WORKER_SQLSERVER_HOST=10.0.0.30
+WORKER_SQLSERVER_PORT=1433
+WORKER_SQLSERVER_DATABASE=HR数据库名
+WORKER_SQLSERVER_USERNAME=HR只读账号
+WORKER_SQLSERVER_PASSWORD=HR只读密码
+WORKER_DATABASE_AUTH_ENABLED=true
+WORKER_DATABASE_AVAILABLE_VALUE=1
+WORKER_DATABASE_UNLOCKED_VALUE=0
+```
+
+后两个值必须与正式表中的实际数据一致。工号不存在、密码错误、账号不可用、账号锁定或公司工号重复时，对外统一提示“公司工号或密码错误”。数据库连接失败时返回“工人登录数据库暂时不可用”。
+
+切割文件库使用 `FILE_SQLSERVER_*` 独立配置。目前“文件派发”页仍是界面原型，在确认 `PDM_DesignDocumentInfo` / `PDM_DocumentFileInfo` 的关联键、文件内容是存于字段还是由 `FilePath` 指向 FTP/文件服务器前，`FILE_DATABASE_ENABLED` 应保持 `false`。三套库的只读账号和连接参数可在“设置 → 数据库配置”中维护；密码只能更新、不会回显。配置保存到 `data/settings.env`，重启服务后生效。
 
 登录后按角色分流：管理员进入完整管理主站，其“车间报表”页只读展示任务、确认人和确认时间，不能代替工人确认；工人账号直接进入独立的“我的任务确认”页，不显示领导报表、数据库、报表设计等管理导航。确认 API 同样限制为工人角色。
 
 后端权限与前端角色保持一致，不能通过直接调用 API 绕过菜单限制：
 
-- 公开接口仅包括账号初始化、登录、登录状态和健康检查；
+- 公开接口仅包括账号初始化、管理员登录、工人数据库登录、登录状态和健康检查；
 - 报告生成/历史/文件、领导报表、数据库管理、连接测试、查询选项和报表设计仅允许管理员访问；
 - 车间日报及任务明细允许所有已登录员工查看，任务确认只允许工人账号；
 - 演示数据模式和 Excel 模式不会绕过登录或管理员权限；
@@ -288,6 +315,31 @@ LLM_MODEL=模型名称
 ```
 
 `LLM_ENABLED=false` 时，系统基于当前报表数据生成可重现的模拟分析。改为 `true` 并配置 OpenAI 兼容的服务后，页面与导出报告会自动切换为真实模型分析。模型失败时自动降级为模拟分析，不会阻断报表数据展示。
+
+当前分析上下文已包含可用的同比/环比、统计异常点、工程分布与编号数据依据。分析文字中的 `[F001]` 类引用可与页面及导出报告中的“可追溯数据依据”对照。
+
+## 启用报表自动化
+
+管理员可在“自动化”页面配置每日、每周或每月的报表任务。系统会自动生成报表、发送 HTML 附件，失败时按指数退避策略重试，并持久保存每次发送结果。
+
+在 `.env` 配置 SMTP：
+
+```text
+AUTOMATION_ENABLED=true
+AUTOMATION_SCAN_SECONDS=15
+EMAIL_RETRY_BASE_SECONDS=60
+SMTP_ENABLED=true
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_USERNAME=report@example.com
+SMTP_PASSWORD=...
+SMTP_FROM_EMAIL=report@example.com
+SMTP_FROM_NAME=切割生产智能产报系统
+SMTP_USE_TLS=true
+SMTP_USE_SSL=false
+```
+
+587 端口通常使用 `SMTP_USE_TLS=true`；465 端口通常使用 `SMTP_USE_SSL=true` 并将 TLS 设为 `false`。修改配置后需重启服务。SMTP 未配置时定时任务仍可保存，但发送会按规则重试并在发送记录中显示失败原因。
 
 ## 上线 SQL Server 前待确认
 

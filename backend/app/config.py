@@ -8,7 +8,11 @@ from dotenv import load_dotenv
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+RUNTIME_SETTINGS_ENV_PATH = PROJECT_ROOT / "data" / "settings.env"
 load_dotenv(PROJECT_ROOT / ".env")
+# 管理界面写入的受控配置放在持久化 data 目录。后加载并覆盖
+# 项目 .env，使 Docker 命名卷和 Windows 本地部署都能在重启后生效。
+load_dotenv(RUNTIME_SETTINGS_ENV_PATH, override=True, interpolate=False)
 
 
 def _as_bool(name: str, default: bool) -> bool:
@@ -56,7 +60,59 @@ class Settings:
         "SQLSERVER_TRUST_SERVER_CERTIFICATE", "yes"
     )
     sqlserver_connect_timeout: int = _as_int("SQLSERVER_CONNECT_TIMEOUT_SECONDS", 5)
-    sqlserver_query_timeout: int = _as_int("SQLSERVER_QUERY_TIMEOUT_SECONDS", 15)
+    sqlserver_query_timeout: int = _as_int("SQLSERVER_QUERY_TIMEOUT_SECONDS", 120)
+    leadership_report_cache_seconds: int = _as_int(
+        "LEADERSHIP_REPORT_CACHE_SECONDS", 300
+    )
+
+    # HR 工人库与生产任务库可以位于不同的 SQL Server 实例。
+    # 专用地址、库名、账号或密码任意一项被配置后，该数据源就不再
+    # 混用生产库的连接字段；旧部署在完全未配置时仍可显式回退。
+    worker_sqlserver_host: str = os.getenv("WORKER_SQLSERVER_HOST", "")
+    worker_sqlserver_port: int = _as_int("WORKER_SQLSERVER_PORT", 1433)
+    worker_sqlserver_database: str = os.getenv("WORKER_SQLSERVER_DATABASE", "")
+    worker_sqlserver_username: str = os.getenv("WORKER_SQLSERVER_USERNAME", "")
+    worker_sqlserver_password: str = os.getenv("WORKER_SQLSERVER_PASSWORD", "")
+    worker_sqlserver_driver: str = os.getenv("WORKER_SQLSERVER_DRIVER", "")
+    worker_sqlserver_encrypt: str = os.getenv("WORKER_SQLSERVER_ENCRYPT", "")
+    worker_sqlserver_trust_server_certificate: str = os.getenv(
+        "WORKER_SQLSERVER_TRUST_SERVER_CERTIFICATE", ""
+    )
+    worker_sqlserver_connect_timeout: int = _as_int(
+        "WORKER_SQLSERVER_CONNECT_TIMEOUT_SECONDS", 5
+    )
+    worker_sqlserver_query_timeout: int = _as_int(
+        "WORKER_SQLSERVER_QUERY_TIMEOUT_SECONDS", 15
+    )
+
+    worker_database_auth_enabled: bool = _as_bool(
+        "WORKER_DATABASE_AUTH_ENABLED", False
+    )
+    worker_database_available_value: str = os.getenv(
+        "WORKER_DATABASE_AVAILABLE_VALUE", "1"
+    ).strip()
+    worker_database_unlocked_value: str = os.getenv(
+        "WORKER_DATABASE_UNLOCKED_VALUE", "0"
+    ).strip()
+
+    # 切割文件索引/内容库单独配置，不与生产报表或 HR 库共用账号。
+    file_database_enabled: bool = _as_bool("FILE_DATABASE_ENABLED", False)
+    file_sqlserver_host: str = os.getenv("FILE_SQLSERVER_HOST", "")
+    file_sqlserver_port: int = _as_int("FILE_SQLSERVER_PORT", 1433)
+    file_sqlserver_database: str = os.getenv("FILE_SQLSERVER_DATABASE", "")
+    file_sqlserver_username: str = os.getenv("FILE_SQLSERVER_USERNAME", "")
+    file_sqlserver_password: str = os.getenv("FILE_SQLSERVER_PASSWORD", "")
+    file_sqlserver_driver: str = os.getenv("FILE_SQLSERVER_DRIVER", "")
+    file_sqlserver_encrypt: str = os.getenv("FILE_SQLSERVER_ENCRYPT", "")
+    file_sqlserver_trust_server_certificate: str = os.getenv(
+        "FILE_SQLSERVER_TRUST_SERVER_CERTIFICATE", ""
+    )
+    file_sqlserver_connect_timeout: int = _as_int(
+        "FILE_SQLSERVER_CONNECT_TIMEOUT_SECONDS", 5
+    )
+    file_sqlserver_query_timeout: int = _as_int(
+        "FILE_SQLSERVER_QUERY_TIMEOUT_SECONDS", 15
+    )
 
     llm_enabled: bool = _as_bool("LLM_ENABLED", False)
     llm_api_key: str = os.getenv("LLM_API_KEY", "")
@@ -67,6 +123,19 @@ class Settings:
     report_max_detail_rows: int = _as_int("REPORT_MAX_DETAIL_ROWS", 1000)
     chart_top_n: int = _as_int("CHART_TOP_N", 20)
     worker_poll_seconds: float = _as_float("REPORT_WORKER_POLL_SECONDS", 0.5)
+    automation_enabled: bool = _as_bool("AUTOMATION_ENABLED", True)
+    automation_scan_seconds: float = _as_float("AUTOMATION_SCAN_SECONDS", 15)
+    email_retry_base_seconds: int = _as_int("EMAIL_RETRY_BASE_SECONDS", 60)
+    smtp_enabled: bool = _as_bool("SMTP_ENABLED", False)
+    smtp_host: str = os.getenv("SMTP_HOST", "")
+    smtp_port: int = _as_int("SMTP_PORT", 587)
+    smtp_username: str = os.getenv("SMTP_USERNAME", "")
+    smtp_password: str = os.getenv("SMTP_PASSWORD", "")
+    smtp_from_email: str = os.getenv("SMTP_FROM_EMAIL", "")
+    smtp_from_name: str = os.getenv("SMTP_FROM_NAME", "切割生产智能产报系统")
+    smtp_use_tls: bool = _as_bool("SMTP_USE_TLS", True)
+    smtp_use_ssl: bool = _as_bool("SMTP_USE_SSL", False)
+    smtp_timeout: float = _as_float("SMTP_TIMEOUT_SECONDS", 20)
     sql_workbench_enabled: bool = _as_bool("SQL_WORKBENCH_ENABLED", False)
     sql_workbench_admin_token: str = os.getenv("SQL_WORKBENCH_ADMIN_TOKEN", "")
     sql_workbench_max_rows: int = _as_int("SQL_WORKBENCH_MAX_ROWS", 200)
@@ -80,6 +149,10 @@ class Settings:
     @property
     def metadata_db_path(self) -> Path:
         return self.data_dir / "metadata.db"
+
+    @property
+    def runtime_settings_env_path(self) -> Path:
+        return self.data_dir / "settings.env"
 
     @property
     def reports_dir(self) -> Path:
@@ -106,6 +179,52 @@ class Settings:
     def task_excel_path(self) -> Path:
         path = Path(self.task_excel_file).expanduser()
         return path if path.is_absolute() else self.project_root / path
+
+    def sqlserver_connection(self, source: str = "production") -> dict[str, object]:
+        """Return one complete connection profile without mixing database identities."""
+        if source not in {"production", "worker", "file"}:
+            raise ValueError(f"不支持的数据源：{source}")
+
+        primary = {
+            "host": self.sqlserver_host,
+            "port": self.sqlserver_port,
+            "database": self.sqlserver_database,
+            "username": self.sqlserver_username,
+            "password": self.sqlserver_password,
+            "driver": self.sqlserver_driver,
+            "encrypt": self.sqlserver_encrypt,
+            "trust_server_certificate": self.sqlserver_trust_server_certificate,
+            "connect_timeout": self.sqlserver_connect_timeout,
+            "query_timeout": self.sqlserver_query_timeout,
+            "uses_primary_fallback": False,
+        }
+        if source == "production":
+            return primary
+
+        dedicated_identity = {
+            "host": getattr(self, f"{source}_sqlserver_host"),
+            "database": getattr(self, f"{source}_sqlserver_database"),
+            "username": getattr(self, f"{source}_sqlserver_username"),
+            "password": getattr(self, f"{source}_sqlserver_password"),
+        }
+        if not any(dedicated_identity.values()):
+            return {**primary, "uses_primary_fallback": True}
+
+        return {
+            **dedicated_identity,
+            "port": getattr(self, f"{source}_sqlserver_port"),
+            "driver": getattr(self, f"{source}_sqlserver_driver") or self.sqlserver_driver,
+            "encrypt": getattr(self, f"{source}_sqlserver_encrypt") or self.sqlserver_encrypt,
+            "trust_server_certificate": (
+                getattr(self, f"{source}_sqlserver_trust_server_certificate")
+                or self.sqlserver_trust_server_certificate
+            ),
+            "connect_timeout": getattr(
+                self, f"{source}_sqlserver_connect_timeout"
+            ),
+            "query_timeout": getattr(self, f"{source}_sqlserver_query_timeout"),
+            "uses_primary_fallback": False,
+        }
 
     def ensure_runtime_dirs(self) -> None:
         for path in (self.data_dir, self.reports_dir, self.logs_dir):

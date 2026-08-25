@@ -77,6 +77,14 @@ class LeadershipPeriodRecord:
 
 
 @dataclass(slots=True)
+class ProjectDistributionRecord:
+    project_name: str
+    task_count: int
+    cut_length_m: Decimal
+    work_time_seconds: int
+
+
+@dataclass(slots=True)
 class LeadershipReportResult:
     report_month: date
     source_mode: str
@@ -84,6 +92,8 @@ class LeadershipReportResult:
     monthly_records: list[LeadershipPeriodRecord]
     current_month_total: LeadershipPeriodRecord
     twelve_month_total: LeadershipPeriodRecord
+    year_ago_total: LeadershipPeriodRecord | None = None
+    project_distribution: list[ProjectDistributionRecord] = field(default_factory=list)
 
 
 @dataclass(slots=True)

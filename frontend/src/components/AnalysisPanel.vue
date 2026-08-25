@@ -78,7 +78,7 @@ watch(
     <template v-else-if="analysis">
       <div v-if="analysis.facts?.length" class="analysis-facts">
         <article v-for="fact in analysis.facts" :key="fact.id">
-          <span>{{ fact.label }}</span><strong>{{ fact.value }}</strong>
+          <span><b>{{ fact.id }}</b>{{ fact.label }}</span><strong>{{ fact.value }}</strong>
         </article>
       </div>
       <div class="analysis-grid">
@@ -90,6 +90,16 @@ watch(
       <div v-if="analysis.limitations" class="analysis-limit">
         <strong>分析边界</strong><span>{{ analysis.limitations }}</span>
       </div>
+      <details v-if="analysis.facts?.length" class="analysis-evidence">
+        <summary>查看可追溯数据依据（{{ analysis.facts.length }} 项）</summary>
+        <div class="evidence-list">
+          <article v-for="fact in analysis.facts" :key="`evidence-${fact.id}`">
+            <strong>{{ fact.id }} · {{ fact.label }}</strong>
+            <span>{{ fact.value }}</span>
+            <small>来源：{{ fact.source || '当前报表数据' }}</small>
+          </article>
+        </div>
+      </details>
       <p class="analysis-time">生成时间：{{ analysis.generated_at || '--' }}</p>
     </template>
     <div v-else class="analysis-state">报表数据加载后将自动生成分析。</div>
@@ -111,6 +121,7 @@ watch(
 .analysis-facts { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; padding:20px 28px 0; }
 .analysis-facts article { padding:12px 14px; background:#f4f8fa; border:1px solid #dbe6eb; border-radius:7px; }
 .analysis-facts span { display:block; color:#687b8d; font-size:12px; }
+.analysis-facts span b { margin-right:6px; color:#23849a; font-size:10px; }
 .analysis-facts strong { display:block; margin-top:3px; color:#0e5277; font-size:16px; }
 .analysis-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; padding:20px 28px; }
 .analysis-grid article { min-height:126px; padding:17px 18px; border:1px solid #dce5ec; border-radius:8px; background:#fff; }
@@ -118,6 +129,13 @@ watch(
 .analysis-grid p { margin:0; color:#34485b; line-height:1.75; white-space:pre-wrap; }
 .analysis-limit { display:flex; gap:14px; margin:0 28px 18px; padding:13px 15px; color:#725116; background:#fff8e9; border-left:4px solid #d89a27; }
 .analysis-limit strong { flex-shrink:0; }
+.analysis-evidence { margin:0 28px 18px; border:1px solid #dce5ec; border-radius:8px; background:#fbfcfd; }
+.analysis-evidence summary { padding:13px 15px; color:#14597e; cursor:pointer; font-weight:700; }
+.evidence-list { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:1px; border-top:1px solid #dce5ec; background:#dce5ec; }
+.evidence-list article { display:grid; gap:4px; padding:13px 15px; background:#fff; }
+.evidence-list article strong { color:#263d50; font-size:13px; }
+.evidence-list article span { color:#0e5277; font-weight:700; }
+.evidence-list article small { color:#718393; line-height:1.5; }
 .analysis-time { margin:0; padding:0 28px 20px; color:#7b8c9b; text-align:right; font-size:12px; }
 .analysis-state { padding:42px 28px; color:#6d7f90; text-align:center; }
 .analysis-error { display:flex; align-items:center; justify-content:center; gap:14px; margin:22px 28px; padding:16px; color:#a83a2b; background:#fff2ef; }
@@ -126,5 +144,6 @@ watch(
   .analysis-actions { width:100%; justify-content:space-between; }
   .analysis-grid { grid-template-columns:1fr; }
   .analysis-limit { flex-direction:column; gap:4px; }
+  .evidence-list { grid-template-columns:1fr; }
 }
 </style>

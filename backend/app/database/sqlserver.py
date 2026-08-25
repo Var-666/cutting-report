@@ -11,31 +11,42 @@ class SqlServerConfigurationError(RuntimeError):
 
 
 class SqlServerClient:
-    def __init__(self, settings: Settings) -> None:
+    SOURCE_LABELS = {
+        "production": ("SQLSERVER", "生产数据库"),
+        "worker": ("WORKER_SQLSERVER", "工人数据库"),
+        "file": ("FILE_SQLSERVER", "文件数据库"),
+    }
+
+    def __init__(self, settings: Settings, *, source: str = "production") -> None:
+        if source not in self.SOURCE_LABELS:
+            raise ValueError(f"不支持的数据源：{source}")
         self.settings = settings
+        self.source = source
 
     def _connection_string(self) -> str:
+        config = self.settings.sqlserver_connection(self.source)
+        env_prefix, source_label = self.SOURCE_LABELS[self.source]
         required = {
-            "SQLSERVER_HOST": self.settings.sqlserver_host,
-            "SQLSERVER_DATABASE": self.settings.sqlserver_database,
-            "SQLSERVER_USERNAME": self.settings.sqlserver_username,
-            "SQLSERVER_PASSWORD": self.settings.sqlserver_password,
+            f"{env_prefix}_HOST": config["host"],
+            f"{env_prefix}_DATABASE": config["database"],
+            f"{env_prefix}_USERNAME": config["username"],
+            f"{env_prefix}_PASSWORD": config["password"],
         }
         missing = [key for key, value in required.items() if not value]
         if missing:
             raise SqlServerConfigurationError(
-                f"SQL Server 配置不完整：{', '.join(missing)}"
+                f"{source_label}配置不完整：{', '.join(missing)}"
             )
         return ";".join(
             [
-                f"DRIVER={{{self.settings.sqlserver_driver}}}",
-                f"SERVER={self.settings.sqlserver_host},{self.settings.sqlserver_port}",
-                f"DATABASE={self.settings.sqlserver_database}",
-                f"UID={self.settings.sqlserver_username}",
-                f"PWD={self.settings.sqlserver_password}",
-                f"Encrypt={self.settings.sqlserver_encrypt}",
-                f"TrustServerCertificate={self.settings.sqlserver_trust_server_certificate}",
-                f"Connection Timeout={self.settings.sqlserver_connect_timeout}",
+                f"DRIVER={{{config['driver']}}}",
+                f"SERVER={config['host']},{config['port']}",
+                f"DATABASE={config['database']}",
+                f"UID={config['username']}",
+                f"PWD={config['password']}",
+                f"Encrypt={config['encrypt']}",
+                f"TrustServerCertificate={config['trust_server_certificate']}",
+                f"Connection Timeout={config['connect_timeout']}",
             ]
         )
 
@@ -49,7 +60,9 @@ class SqlServerClient:
             ) from exc
         connection = pyodbc.connect(self._connection_string())
         try:
-            connection.timeout = self.settings.sqlserver_query_timeout
+            connection.timeout = int(
+                self.settings.sqlserver_connection(self.source)["query_timeout"]
+            )
             yield connection
         finally:
             connection.close()
@@ -60,4 +73,3 @@ class SqlServerClient:
             cursor.execute(sql, parameters)
             columns = [item[0] for item in cursor.description]
             return [dict(zip(columns, row, strict=True)) for row in cursor.fetchall()]
-

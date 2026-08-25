@@ -1,4 +1,7 @@
 const DEFAULT_HEADERS = { 'Content-Type': 'application/json' }
+const LEADERSHIP_CACHE_TTL_MS = 5 * 60 * 1000
+const leadershipReportCache = new Map()
+const leadershipReportRequests = new Map()
 
 async function request(url, options = {}) {
   const response = await fetch(url, {
@@ -32,6 +35,13 @@ export function bootstrapAccount(payload) {
 
 export function loginAccount(payload) {
   return request('/api/v1/auth/login', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function workerLoginAccount(payload) {
+  return request('/api/v1/auth/worker-login', {
     method: 'POST',
     body: JSON.stringify(payload),
   })
@@ -114,13 +124,44 @@ export function getDatabaseStatus() {
   return request('/api/v1/database/status')
 }
 
+export function getDatabaseConfiguration() {
+  return request('/api/v1/database/configuration')
+}
+
+export function saveDatabaseConfiguration(payload) {
+  return request('/api/v1/database/configuration', {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  })
+}
+
 export function getSystemHealth() {
   return request('/api/v1/health')
 }
 
-export function getLeadershipReport(reportMonth) {
+export function getLeadershipReport(reportMonth, { force = false } = {}) {
+  const now = Date.now()
+  const cached = leadershipReportCache.get(reportMonth)
+  if (!force && cached && cached.expiresAt > now) {
+    return Promise.resolve(cached.data)
+  }
+  if (leadershipReportRequests.has(reportMonth)) {
+    return leadershipReportRequests.get(reportMonth)
+  }
+
   const query = new URLSearchParams({ report_month: reportMonth })
-  return request(`/api/v1/leadership-report?${query}`)
+  if (force) query.set('refresh', 'true')
+  const pending = request(`/api/v1/leadership-report?${query}`)
+    .then((data) => {
+      leadershipReportCache.set(reportMonth, {
+        data,
+        expiresAt: Date.now() + LEADERSHIP_CACHE_TTL_MS,
+      })
+      return data
+    })
+    .finally(() => leadershipReportRequests.delete(reportMonth))
+  leadershipReportRequests.set(reportMonth, pending)
+  return pending
 }
 
 export function getEquipmentReport(reportDate = '') {
@@ -139,6 +180,47 @@ export function analyzeReport({ reportType, reportDate, force = false }) {
       report_date: reportDate,
       force,
     }),
+  })
+}
+
+export function getAutomationStatus() {
+  return request('/api/v1/automation/status')
+}
+
+export function listAutomationSchedules() {
+  return request('/api/v1/automation/schedules')
+}
+
+export function saveAutomationSchedule(payload, scheduleId = '') {
+  const url = scheduleId
+    ? `/api/v1/automation/schedules/${encodeURIComponent(scheduleId)}`
+    : '/api/v1/automation/schedules'
+  return request(url, {
+    method: scheduleId ? 'PUT' : 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function deleteAutomationSchedule(scheduleId) {
+  return request(`/api/v1/automation/schedules/${encodeURIComponent(scheduleId)}`, {
+    method: 'DELETE',
+  })
+}
+
+export function runAutomationSchedule(scheduleId) {
+  return request(`/api/v1/automation/schedules/${encodeURIComponent(scheduleId)}/run`, {
+    method: 'POST',
+  })
+}
+
+export function listEmailDeliveries({ page = 1, pageSize = 20 } = {}) {
+  const query = new URLSearchParams({ page, page_size: pageSize })
+  return request(`/api/v1/automation/deliveries?${query}`)
+}
+
+export function retryEmailDelivery(deliveryId) {
+  return request(`/api/v1/automation/deliveries/${encodeURIComponent(deliveryId)}/retry`, {
+    method: 'POST',
   })
 }
 

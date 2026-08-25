@@ -84,6 +84,10 @@ class WorkshopRepository:
                     display_name TEXT NOT NULL,
                     password_hash TEXT NOT NULL,
                     role TEXT NOT NULL CHECK(role IN ('admin', 'worker')),
+                    auth_source TEXT NOT NULL DEFAULT 'local',
+                    external_id TEXT,
+                    group_no TEXT,
+                    company_no TEXT,
                     active INTEGER NOT NULL DEFAULT 1,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
@@ -149,6 +153,27 @@ class WorkshopRepository:
                     ON workshop_confirmations(worker_id, confirmed_at DESC);
                 """
             )
+            user_columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(users)").fetchall()
+            }
+            for column, definition in (
+                ("auth_source", "TEXT NOT NULL DEFAULT 'local'"),
+                ("external_id", "TEXT"),
+                ("group_no", "TEXT"),
+                ("company_no", "TEXT"),
+            ):
+                if column not in user_columns:
+                    connection.execute(
+                        f"ALTER TABLE users ADD COLUMN {column} {definition}"
+                    )
+            connection.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_users_external_identity
+                ON users(auth_source, external_id)
+                WHERE external_id IS NOT NULL
+                """
+            )
             confirmation_columns = {
                 row["name"]
                 for row in connection.execute(
@@ -168,11 +193,18 @@ class WorkshopRepository:
 
     @staticmethod
     def _public_user(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
+        keys = set(row.keys())
+        auth_source = row["auth_source"] if "auth_source" in keys else "local"
+        company_no = row["company_no"] if "company_no" in keys else None
         return {
             "user_id": row["user_id"],
-            "username": row["username"],
+            "username": company_no if auth_source == "hr_database" else row["username"],
             "display_name": row["display_name"],
             "role": row["role"],
+            "auth_source": auth_source,
+            "external_id": row["external_id"] if "external_id" in keys else None,
+            "group_no": row["group_no"] if "group_no" in keys else None,
+            "company_no": company_no,
             "active": bool(row["active"]),
             "created_at": row["created_at"],
         }
@@ -180,6 +212,14 @@ class WorkshopRepository:
     def user_count(self) -> int:
         with self.connect() as connection:
             return int(connection.execute("SELECT COUNT(*) FROM users").fetchone()[0])
+
+    def admin_count(self) -> int:
+        with self.connect() as connection:
+            return int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM users WHERE role = 'admin'"
+                ).fetchone()[0]
+            )
 
     def create_user(
         self,
@@ -223,7 +263,9 @@ class WorkshopRepository:
         user_id = f"usr_{uuid4().hex[:16]}"
         with self.connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            if connection.execute("SELECT COUNT(*) FROM users").fetchone()[0]:
+            if connection.execute(
+                "SELECT COUNT(*) FROM users WHERE role = 'admin'"
+            ).fetchone()[0]:
                 raise AuthenticationError("系统已经完成账号初始化")
             connection.execute(
                 """
@@ -249,12 +291,77 @@ class WorkshopRepository:
     def authenticate(self, username: str, password: str) -> dict[str, Any]:
         with self.connect() as connection:
             row = connection.execute(
-                "SELECT * FROM users WHERE username = ? COLLATE NOCASE AND active = 1",
+                """
+                SELECT * FROM users
+                WHERE username = ? COLLATE NOCASE
+                  AND active = 1
+                  AND auth_source = 'local'
+                """,
                 (username.strip(),),
             ).fetchone()
         if row is None or not verify_password(password, row["password_hash"]):
             raise AuthenticationError("账号或密码错误")
         return self._public_user(row)
+
+    def upsert_external_worker(
+        self,
+        *,
+        external_id: str,
+        company_no: str,
+        group_no: str,
+        display_name: str,
+        now: str,
+    ) -> dict[str, Any]:
+        """Create/update the local identity used by sessions and confirmations.
+
+        No HR password is stored. The internal username is based on the stable HR
+        identifier so a company-number change does not break history.
+        """
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT * FROM users
+                WHERE auth_source = 'hr_database' AND external_id = ?
+                """,
+                (external_id,),
+            ).fetchone()
+            if row:
+                connection.execute(
+                    """
+                    UPDATE users
+                    SET display_name = ?, group_no = ?, company_no = ?,
+                        active = 1, updated_at = ?
+                    WHERE user_id = ?
+                    """,
+                    (display_name, group_no, company_no, now, row["user_id"]),
+                )
+                user_id = row["user_id"]
+            else:
+                user_id = f"usr_{uuid4().hex[:16]}"
+                connection.execute(
+                    """
+                    INSERT INTO users (
+                        user_id, username, display_name, password_hash, role,
+                        auth_source, external_id, group_no, company_no,
+                        active, created_at, updated_at
+                    ) VALUES (?, ?, ?, '', 'worker', 'hr_database', ?, ?, ?, 1, ?, ?)
+                    """,
+                    (
+                        user_id,
+                        f"hr:{external_id}",
+                        display_name,
+                        external_id,
+                        group_no,
+                        company_no,
+                        now,
+                        now,
+                    ),
+                )
+            saved = connection.execute(
+                "SELECT * FROM users WHERE user_id = ?", (user_id,)
+            ).fetchone()
+        return self._public_user(saved)
 
     @staticmethod
     def _session_hash(token: str) -> str:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from app.config import Settings
@@ -50,6 +50,13 @@ def _job_parameters(job: dict) -> dict:
 def _chart_type(job: dict) -> str:
     value = str(_job_parameters(job).get("chart_type") or "bar_line")
     return value if value in CHART_TYPES else "bar_line"
+
+
+def _year_ago(value: date) -> date:
+    try:
+        return value.replace(year=value.year - 1)
+    except ValueError:
+        return value.replace(year=value.year - 1, day=28)
 
 
 class ReportPipeline:
@@ -255,15 +262,49 @@ class ReportPipeline:
         )
 
         self.metadata.update_status(report_id, "analyzing", "正在生成智能分析")
+        comparison_date = filters.report_date - timedelta(days=1)
         if report_type == "workshop":
+            previous_report, previous_records = (
+                self.workshop_repository.get_daily_report_records(
+                    comparison_date.isoformat()
+                )
+            )
+            year_ago_date = _year_ago(filters.report_date)
+            year_ago_report, year_ago_records = (
+                self.workshop_repository.get_daily_report_records(
+                    year_ago_date.isoformat()
+                )
+            )
             analysis = self.analysis_service.analyze_workshop(
-                filters.report_date.isoformat(), bundle.workshop_records
+                filters.report_date.isoformat(),
+                bundle.workshop_records,
+                comparison_records=previous_records if previous_report else None,
+                comparison_date=comparison_date.isoformat() if previous_report else None,
+                year_ago_records=year_ago_records if year_ago_report else None,
+                year_ago_date=year_ago_date.isoformat() if year_ago_report else None,
             )
         else:
+            previous_bundle = self.query_service.fetch_report_data(
+                ReportFilter(report_date=comparison_date)
+            )
+            previous_equipment = sort_equipment_records(
+                mock_energy(previous_bundle.equipment_records)
+            )
+            year_ago_date = _year_ago(filters.report_date)
+            year_ago_bundle = self.query_service.fetch_report_data(
+                ReportFilter(report_date=year_ago_date)
+            )
+            year_ago_equipment = sort_equipment_records(
+                mock_energy(year_ago_bundle.equipment_records)
+            )
             analysis = self.analysis_service.analyze_equipment(
                 filters.report_date.isoformat(),
                 bundle.equipment_records,
                 energy_data_mode=energy_data_mode,
+                comparison_records=previous_equipment,
+                comparison_date=comparison_date.isoformat(),
+                year_ago_records=year_ago_equipment,
+                year_ago_date=year_ago_date.isoformat(),
             )
         generated_at = datetime.now(timezone)
         report = {

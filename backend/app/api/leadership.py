@@ -38,10 +38,11 @@ def get_leadership_report(
         pattern=r"^\d{4}-(0[1-9]|1[0-2])$",
         description="报表月份，格式 YYYY-MM",
     ),
+    refresh: bool = Query(default=False, description="忽略缓存并重新查询"),
 ) -> dict:
     try:
         result = request.app.state.leadership_report_service.fetch(
-            _parse_month(report_month)
+            _parse_month(report_month), force=refresh
         )
     except SqlServerConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc

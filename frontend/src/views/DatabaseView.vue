@@ -2,8 +2,10 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import {
   executeWorkbenchSql,
+  getDatabaseConfiguration,
   getDatabaseStatus,
   previewDatabaseDataset,
+  saveDatabaseConfiguration,
   testDatabaseConnection,
   validateWorkbenchSql,
 } from '../api/reports'
@@ -11,6 +13,11 @@ import {
 const status = ref(null)
 const loadingStatus = ref(false)
 const statusError = ref('')
+const databaseConfiguration = ref(null)
+const configurationLoading = ref(false)
+const configurationSaving = ref(false)
+const configurationError = ref('')
+const configurationResult = ref(null)
 const testing = ref(false)
 const testResult = ref(null)
 const testError = ref('')
@@ -22,6 +29,11 @@ const executingSql = ref(false)
 const sqlError = ref('')
 const sqlValidation = ref(null)
 const sqlResult = ref(null)
+const configurationSources = [
+  { key: 'production', label: '生产报表库', description: 'SQLSERVER_* · dbo.task 等生产数据' },
+  { key: 'worker', label: '工人 HR 库', description: 'WORKER_SQLSERVER_* · dbo.HRbase_userInfo' },
+  { key: 'file', label: '切割文件库', description: 'FILE_SQLSERVER_* · PDM 文件索引/内容' },
+]
 
 const connection = reactive({
   host: '',
@@ -108,6 +120,57 @@ async function loadStatus() {
   }
 }
 
+async function loadConfiguration() {
+  configurationLoading.value = true
+  configurationError.value = ''
+  try {
+    databaseConfiguration.value = await getDatabaseConfiguration()
+    for (const source of configurationSources) {
+      databaseConfiguration.value[source.key].password = ''
+    }
+  } catch (exception) {
+    configurationError.value = exception.message
+  } finally {
+    configurationLoading.value = false
+  }
+}
+
+async function saveConfiguration() {
+  configurationSaving.value = true
+  configurationError.value = ''
+  configurationResult.value = null
+  try {
+    const payload = {
+      data_source_mode: databaseConfiguration.value.data_source_mode,
+      worker_database_auth_enabled: databaseConfiguration.value.worker_database_auth_enabled,
+      file_database_enabled: databaseConfiguration.value.file_database_enabled,
+    }
+    for (const source of configurationSources) {
+      const value = databaseConfiguration.value[source.key]
+      payload[source.key] = {
+        host: value.host,
+        port: value.port,
+        database: value.database,
+        username: value.username,
+        password: value.password || null,
+        driver: value.driver,
+        encrypt: value.encrypt,
+        trust_server_certificate: value.trust_server_certificate,
+      }
+    }
+    configurationResult.value = await saveDatabaseConfiguration(payload)
+    for (const source of configurationSources) {
+      const value = databaseConfiguration.value[source.key]
+      if (value.password) value.password_configured = true
+      value.password = ''
+    }
+  } catch (exception) {
+    configurationError.value = exception.message
+  } finally {
+    configurationSaving.value = false
+  }
+}
+
 async function runConnectionTest() {
   testing.value = true
   testResult.value = null
@@ -181,17 +244,59 @@ function setSqlExample(type) {
   sqlError.value = ''
 }
 
-onMounted(loadStatus)
+onMounted(() => Promise.all([loadStatus(), loadConfiguration()]))
 </script>
 
 <template>
   <section class="database-hero">
     <div>
       <span class="eyebrow">DATABASE ADMINISTRATION</span>
-      <h2>数据库管理</h2>
-      <p>当前可使用本地 TASK.xlsx 生成报表，并保留 SQL Server 连接和数据映射能力。</p>
+      <h2>数据库配置</h2>
+      <p>生产报表、工人身份和切割文件使用独立数据源，连接信息由服务器环境配置统一管理。</p>
     </div>
     <div class="security-badge"><strong>只读模式</strong><span>仅开放 SELECT / CTE</span></div>
+  </section>
+
+  <section class="panel saved-database-config">
+    <div class="panel-title"><div><span>01</span><h2>连接参数</h2></div><p>保存到 data/settings.env · 重启服务后生效</p></div>
+    <div v-if="configurationLoading" class="configuration-loading">正在读取数据库配置…</div>
+    <form v-else-if="databaseConfiguration" @submit.prevent="saveConfiguration">
+      <div class="configuration-switches">
+        <label><span>生产数据模式</span><select v-model="databaseConfiguration.data_source_mode"><option value="demo">演示数据</option><option value="excel">TASK.xlsx</option><option value="sqlserver">SQL Server</option></select></label>
+        <label class="check-label"><input v-model="databaseConfiguration.worker_database_auth_enabled" type="checkbox" /><span>启用工人 HR 库登录</span></label>
+        <label class="check-label"><input v-model="databaseConfiguration.file_database_enabled" type="checkbox" /><span>启用切割文件库</span></label>
+      </div>
+      <div class="saved-source-grid">
+        <fieldset v-for="source in configurationSources" :key="source.key">
+          <legend><strong>{{ source.label }}</strong><small>{{ source.description }}</small></legend>
+          <label><span>服务器地址</span><input v-model.trim="databaseConfiguration[source.key].host" autocomplete="off" placeholder="例如 10.0.0.20" /></label>
+          <label><span>端口</span><input v-model.number="databaseConfiguration[source.key].port" type="number" min="1" max="65535" /></label>
+          <label><span>数据库名称</span><input v-model.trim="databaseConfiguration[source.key].database" autocomplete="off" /></label>
+          <label><span>只读账号</span><input v-model.trim="databaseConfiguration[source.key].username" autocomplete="off" /></label>
+          <label><span>密码</span><input v-model="databaseConfiguration[source.key].password" type="password" autocomplete="new-password" :placeholder="databaseConfiguration[source.key].password_configured ? '已配置，留空则保留原密码' : '尚未配置'" /></label>
+          <label><span>ODBC 驱动</span><input v-model.trim="databaseConfiguration[source.key].driver" /></label>
+          <div class="saved-connection-options"><label class="check-label"><input v-model="databaseConfiguration[source.key].encrypt" type="checkbox" /><span>加密连接</span></label><label class="check-label"><input v-model="databaseConfiguration[source.key].trust_server_certificate" type="checkbox" /><span>信任服务器证书</span></label></div>
+        </fieldset>
+      </div>
+      <div class="configuration-actions">
+        <span>报表设计和自动化配置继续保存在系统 SQLite 中。</span>
+        <button class="primary" type="submit" :disabled="configurationSaving">{{ configurationSaving ? '正在保存' : '保存数据库配置' }}</button>
+      </div>
+    </form>
+    <div v-if="configurationResult" class="inline-result success"><strong>配置已写入</strong><span>{{ configurationResult.message }}</span></div>
+    <div v-if="configurationError" class="inline-result error"><strong>配置操作失败</strong><span>{{ configurationError }}</span></div>
+  </section>
+
+  <section class="panel database-sources-panel">
+    <div class="panel-title"><div><span>02</span><h2>业务数据源</h2></div><p>状态卡不显示账号和密码</p></div>
+    <div class="database-source-list">
+      <article v-for="source in status?.data_sources || []" :key="source.source">
+        <div><strong>{{ source.label }}</strong><span :class="source.enabled && source.configured ? 'ready' : 'muted'">{{ !source.enabled ? '未启用' : source.configured ? '已配置' : '配置不完整' }}</span></div>
+        <dl><div><dt>服务器</dt><dd>{{ source.host ? `${source.host}:${source.port}` : '--' }}</dd></div><div><dt>数据库</dt><dd>{{ source.database || '--' }}</dd></div></dl>
+        <small v-if="source.uses_primary_fallback" class="source-warning">当前兼容回退到生产库；正式环境请配置专用连接。</small>
+        <small v-else>已使用独立连接配置</small>
+      </article>
+    </div>
   </section>
 
   <div v-if="statusError" class="global-error"><strong>状态读取失败</strong><span>{{ statusError }}</span></div>
@@ -220,7 +325,7 @@ onMounted(loadStatus)
   </section>
 
   <section class="panel db-panel">
-    <div class="panel-title"><div><span>01</span><h2>连接测试</h2></div><p>凭据仅用于本次测试，不会保存</p></div>
+    <div class="panel-title"><div><span>03</span><h2>连接测试</h2></div><p>凭据仅用于本次测试，不会保存</p></div>
     <form class="connection-form" @submit.prevent="runConnectionTest">
       <label><span>服务器地址</span><input v-model="connection.host" required placeholder="例如 192.168.1.20" autocomplete="off" /></label>
       <label><span>端口</span><input v-model.number="connection.port" type="number" min="1" max="65535" required /></label>
@@ -241,7 +346,7 @@ onMounted(loadStatus)
   </section>
 
   <section class="panel mapping-panel">
-    <div class="panel-title"><div><span>02</span><h2>生产查询映射</h2></div><button class="text-button" :disabled="loadingStatus" @click="loadStatus">重新检查</button></div>
+    <div class="panel-title"><div><span>04</span><h2>生产查询映射</h2></div><button class="text-button" :disabled="loadingStatus" @click="loadStatus">重新检查</button></div>
     <div class="mapping-list">
       <div v-for="item in status?.query_mappings || []" :key="item.filename" class="mapping-row">
         <span class="mapping-icon" :class="{ ready: item.ready }">{{ item.ready ? '✓' : '!' }}</span>
@@ -252,7 +357,7 @@ onMounted(loadStatus)
   </section>
 
   <section class="panel preview-panel">
-    <div class="panel-title"><div><span>03</span><h2>固定数据集预览</h2></div><p>最多返回100条，不支持自定义SQL</p></div>
+    <div class="panel-title"><div><span>05</span><h2>固定数据集预览</h2></div><p>最多返回100条，不支持自定义SQL</p></div>
     <form class="preview-form" @submit.prevent="runPreview">
       <label><span>数据集</span><select v-model="preview.dataset"><option value="workshop">车间生产明细</option><option value="summary">汇总基础数据</option><option value="equipment">设备生产/能耗</option></select></label>
       <label><span>生产日期</span><input v-model="preview.report_date" type="date" required /></label>
@@ -277,7 +382,7 @@ onMounted(loadStatus)
   </section>
 
   <section class="panel sql-panel">
-    <div class="panel-title"><div><span>04</span><h2>SQL 工作台</h2></div><p>仅允许单条 SELECT / CTE，只读且限制返回行数</p></div>
+    <div class="panel-title"><div><span>06</span><h2>SQL 工作台</h2></div><p>仅允许单条 SELECT / CTE，只读且限制返回行数</p></div>
     <div class="workbench-guard" :class="{ enabled: status?.sql_workbench_enabled }">
       <div>
         <strong>{{ status?.sql_workbench_enabled ? '执行功能已启用' : '执行功能当前关闭' }}</strong>
@@ -319,3 +424,30 @@ onMounted(loadStatus)
     </div>
   </section>
 </template>
+
+<style scoped>
+.saved-database-config,.database-sources-panel { margin-bottom:22px; }
+.configuration-loading { padding:34px 24px; color:var(--muted); }
+.configuration-switches { display:flex; align-items:flex-end; gap:22px; padding:20px 24px; border-bottom:1px solid var(--line); }
+.configuration-switches > label:first-child { min-width:190px; }.configuration-switches label > span,.saved-source-grid label > span { display:block; margin-bottom:6px; color:#425767; font-size:10px; font-weight:700; }
+.configuration-switches .check-label,.saved-connection-options .check-label { display:flex; align-items:center; gap:7px; }.configuration-switches .check-label span,.saved-connection-options .check-label span { margin:0; }
+.saved-source-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; padding:20px 24px; }
+.saved-source-grid fieldset { min-width:0; display:grid; grid-template-columns:minmax(0,1fr) 92px; gap:11px; margin:0; padding:16px; border:1px solid #dbe5ea; }
+.saved-source-grid legend { width:100%; display:flex; flex-direction:column; gap:3px; padding:0 7px; color:var(--navy); }.saved-source-grid legend strong { font-size:13px; }.saved-source-grid legend small { color:var(--muted); font-size:9px; font-weight:400; }
+.saved-source-grid fieldset > label:nth-of-type(3),.saved-source-grid fieldset > label:nth-of-type(4),.saved-source-grid fieldset > label:nth-of-type(5),.saved-source-grid fieldset > label:nth-of-type(6),.saved-connection-options { grid-column:1/-1; }
+.saved-connection-options { display:flex; flex-wrap:wrap; gap:12px; padding-top:3px; }
+.configuration-actions { display:flex; align-items:center; justify-content:space-between; gap:20px; padding:0 24px 24px; }.configuration-actions > span { color:var(--muted); font-size:10px; }
+.database-source-list { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; padding:20px 24px 24px; }
+.database-source-list article { min-width:0; padding:16px; border:1px solid #dbe5ea; background:#f9fbfc; }
+.database-source-list article > div { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.database-source-list strong { color:var(--navy); font-size:13px; }
+.database-source-list article > div > span { padding:3px 7px; border-radius:999px; font-size:9px; white-space:nowrap; }
+.database-source-list .ready { color:#176e51; background:#e6f5ef; }
+.database-source-list .muted { color:#7a6a50; background:#f4eee3; }
+.database-source-list dl { margin:14px 0 10px; }
+.database-source-list dl div { display:grid; grid-template-columns:58px minmax(0,1fr); gap:8px; padding:5px 0; border-top:1px solid #e4ebef; font-size:10px; }
+.database-source-list dt { color:var(--muted); }.database-source-list dd { overflow:hidden; margin:0; color:#355266; text-overflow:ellipsis; white-space:nowrap; }
+.database-source-list small { color:#64808d; line-height:1.5; }.database-source-list .source-warning { color:#9a6718; }
+@media (max-width:1100px) { .saved-source-grid { grid-template-columns:1fr; } }
+@media (max-width:900px) { .database-source-list { grid-template-columns:1fr; }.configuration-switches,.configuration-actions { align-items:stretch; flex-direction:column; } }
+</style>

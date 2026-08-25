@@ -116,6 +116,68 @@ def test_account_session_and_single_worker_confirmation(tmp_path: Path) -> None:
     assert admin["role"] == "admin"
 
 
+def test_external_worker_is_upserted_without_storing_hr_password(tmp_path: Path) -> None:
+    repository = WorkshopRepository(tmp_path / "metadata.db")
+    repository.initialize()
+    now = "2026-08-24T09:00:00+08:00"
+
+    worker = repository.upsert_external_worker(
+        external_id="9123",
+        company_no="C0007",
+        group_no="G0021",
+        display_name="张三",
+        now=now,
+    )
+
+    assert worker["username"] == "C0007"
+    assert worker["external_id"] == "9123"
+    assert worker["auth_source"] == "hr_database"
+    assert worker["role"] == "worker"
+    with repository.connect() as connection:
+        stored = connection.execute(
+            "SELECT username, password_hash FROM users WHERE user_id = ?",
+            (worker["user_id"],),
+        ).fetchone()
+    assert stored["username"] == "hr:9123"
+    assert stored["password_hash"] == ""
+    with pytest.raises(AuthenticationError):
+        repository.authenticate("C0007", "any-password")
+
+    updated = repository.upsert_external_worker(
+        external_id="9123",
+        company_no="C0008",
+        group_no="G0021",
+        display_name="张三（新姓名）",
+        now="2026-08-24T10:00:00+08:00",
+    )
+    assert updated["user_id"] == worker["user_id"]
+    assert updated["username"] == "C0008"
+    assert updated["display_name"] == "张三（新姓名）"
+
+
+def test_external_worker_does_not_prevent_admin_bootstrap(tmp_path: Path) -> None:
+    repository = WorkshopRepository(tmp_path / "metadata.db")
+    repository.initialize()
+    now = "2026-08-24T09:00:00+08:00"
+    repository.upsert_external_worker(
+        external_id="9123",
+        company_no="C0007",
+        group_no="G0021",
+        display_name="张三",
+        now=now,
+    )
+
+    assert repository.admin_count() == 0
+    admin = repository.bootstrap_admin(
+        username="admin",
+        display_name="管理员",
+        password="admin-password",
+        now=now,
+    )
+    assert admin["role"] == "admin"
+    assert repository.admin_count() == 1
+
+
 def test_empty_daily_report_can_be_populated_when_source_data_arrives(
     tmp_path: Path,
 ) -> None:

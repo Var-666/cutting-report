@@ -18,5 +18,9 @@ async function authenticated(user) {
 </script>
 
 <template>
-  <LoginView :setup-required="session.setupRequired" @authenticated="authenticated" />
+  <LoginView
+    :setup-required="session.setupRequired"
+    :worker-database-auth-enabled="session.workerDatabaseAuthEnabled"
+    @authenticated="authenticated"
+  />
 </template>

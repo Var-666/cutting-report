@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.database import router as database_router
 from app.api.analysis import router as analysis_router
+from app.api.automation import router as automation_router
 from app.api.auth import router as auth_router
 from app.api.designer import router as designer_router
 from app.api.equipment import router as equipment_router
@@ -21,12 +22,16 @@ from app.api.reports import view_router
 from app.api.workshop import router as workshop_router
 from app.config import settings
 from app.database.metadata import MetadataRepository
+from app.database.automation import AutomationRepository
 from app.database.definitions import DefinitionRepository
 from app.database.workshop import WorkshopRepository
 from app.services.pipeline import ReportPipeline
 from app.services.leadership_report_service import LeadershipReportService
 from app.services.query_service import QueryService
 from app.services.report_analysis_service import ReportAnalysisService
+from app.services.worker_auth_service import WorkerAuthService
+from app.services.automation_service import AutomationService
+from app.services.email_service import EmailService
 from app.workers.report_worker import ReportWorker
 
 
@@ -43,14 +48,26 @@ async def lifespan(app: FastAPI):
     metadata.initialize()
     workshop = WorkshopRepository(settings.metadata_db_path)
     workshop.initialize()
+    automation = AutomationRepository(settings.metadata_db_path)
+    automation.initialize()
     definitions = DefinitionRepository(settings.metadata_db_path, settings.timezone)
     definitions.initialize()
     pipeline = ReportPipeline(settings, metadata, definitions)
-    worker = ReportWorker(settings, metadata, pipeline)
+    email_service = EmailService(settings)
+    automation_service = AutomationService(
+        settings, automation, metadata, email_service
+    )
+    worker = ReportWorker(
+        settings, metadata, pipeline, automation_service=automation_service
+    )
     app.state.metadata = metadata
     app.state.workshop = workshop
     app.state.definitions = definitions
+    app.state.automation = automation
+    app.state.automation_service = automation_service
+    app.state.email_service = email_service
     app.state.query_service = QueryService(settings)
+    app.state.worker_auth = WorkerAuthService(settings)
     app.state.leadership_report_service = LeadershipReportService(settings)
     app.state.report_analysis_service = ReportAnalysisService(settings, metadata)
     app.state.worker = worker
@@ -109,6 +126,7 @@ app.include_router(leadership_router)
 app.include_router(equipment_router)
 app.include_router(workshop_router)
 app.include_router(analysis_router)
+app.include_router(automation_router)
 app.include_router(view_router)
 
 

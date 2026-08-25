@@ -11,6 +11,7 @@ const dataSourceLabel = computed(() => ({
   sqlserver: 'SQL Server',
 }[session.systemInfo?.data_source_mode] || '数据源检查中'))
 const reportsActive = computed(() => route.path.startsWith('/admin/reports'))
+const settingsActive = computed(() => route.path.startsWith('/admin/settings'))
 
 async function logout() {
   await endSession()
@@ -28,8 +29,8 @@ async function logout() {
       <nav class="topnav" aria-label="主导航">
         <RouterLink to="/admin/home">首页</RouterLink>
         <RouterLink to="/admin/reports/leadership" :class="{ active: reportsActive }">报表</RouterLink>
-        <RouterLink to="/admin/database">数据库管理</RouterLink>
-        <RouterLink to="/admin/designer">报表设计</RouterLink>
+        <RouterLink to="/admin/cutting-dispatch">文件派发</RouterLink>
+        <RouterLink to="/admin/settings" :class="{ active: settingsActive }">设置</RouterLink>
       </nav>
       <div class="account-menu">
         <small>V{{ session.systemInfo?.version || '0.1.0' }} · {{ dataSourceLabel }}</small>
