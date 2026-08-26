@@ -5,14 +5,14 @@ import hashlib
 import hmac
 import secrets
 import sqlite3
-from contextlib import contextmanager
 from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 from uuid import uuid4
 
 from app.models.domain import WorkshopRecord
+from app.database.sqlite import SQLiteDatabase, SQLiteRepository
 
 
 PASSWORD_ITERATIONS = 310_000
@@ -57,27 +57,20 @@ def verify_password(password: str, encoded: str) -> bool:
         return False
 
 
-class WorkshopRepository:
-    def __init__(self, database_path: Path) -> None:
-        self.database_path = database_path
-
-    @contextmanager
-    def connect(self) -> Iterator[sqlite3.Connection]:
-        connection = sqlite3.connect(self.database_path, timeout=30)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys=ON")
-        try:
-            yield connection
-            connection.commit()
-        finally:
-            connection.close()
+class WorkshopRepository(SQLiteRepository):
+    def __init__(
+        self,
+        database: Path | SQLiteDatabase,
+        *,
+        connection: sqlite3.Connection | None = None,
+    ) -> None:
+        super().__init__(database, connection=connection)
 
     def initialize(self) -> None:
-        self.database_path.parent.mkdir(parents=True, exist_ok=True)
+        self.database.initialize()
         with self.connect() as connection:
             connection.executescript(
                 """
-                PRAGMA journal_mode=WAL;
                 CREATE TABLE IF NOT EXISTS users (
                     user_id TEXT PRIMARY KEY,
                     username TEXT NOT NULL UNIQUE COLLATE NOCASE,
@@ -262,7 +255,7 @@ class WorkshopRepository:
     ) -> dict[str, Any]:
         user_id = f"usr_{uuid4().hex[:16]}"
         with self.connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
+            self.begin_immediate(connection)
             if connection.execute(
                 "SELECT COUNT(*) FROM users WHERE role = 'admin'"
             ).fetchone()[0]:
@@ -318,7 +311,7 @@ class WorkshopRepository:
         identifier so a company-number change does not break history.
         """
         with self.connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
+            self.begin_immediate(connection)
             row = connection.execute(
                 """
                 SELECT * FROM users
@@ -463,7 +456,7 @@ class WorkshopRepository:
     ) -> dict[str, Any]:
         report_id = f"wdr_{uuid4().hex[:16]}"
         with self.connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
+            self.begin_immediate(connection)
             existing = connection.execute(
                 "SELECT report_id FROM workshop_reports WHERE report_date = ?",
                 (report_date,),
@@ -541,7 +534,7 @@ class WorkshopRepository:
         if not records:
             return self.get_daily_report(report_date)
         with self.connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
+            self.begin_immediate(connection)
             report = connection.execute(
                 "SELECT * FROM workshop_reports WHERE report_date = ?",
                 (report_date,),
@@ -687,7 +680,7 @@ class WorkshopRepository:
         report_id: str | None = None,
     ) -> dict[str, Any]:
         with self.connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
+            self.begin_immediate(connection)
             if report_id and not connection.execute(
                 """
                 SELECT 1 FROM workshop_report_items

@@ -1,15 +1,12 @@
 <script setup>
-import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, onActivated, onDeactivated, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import {
   confirmWorkshopTask,
-  createUserAccount,
   generateWorkshopDailyReport,
   getLatestWorkshopProductionDate,
-  listUserAccounts,
   listWorkshopTasks,
 } from '../api/reports'
 import AnalysisPanel from '../components/AnalysisPanel.vue'
-import { session } from '../state/session'
 
 const props = defineProps({
   user: { type: Object, required: true },
@@ -17,28 +14,43 @@ const props = defineProps({
 })
 const emit = defineEmits(['export'])
 const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })
+const pageSize = 10
 const filters = reactive({ reportDate: today, projectName: '', confirmationStatus: 'all' })
-const result = ref({ report: null, items: [], total: 0, page: 1, page_size: 20, project_names: [], confirmed_count: 0 })
+const result = ref({ report: null, items: [], total: 0, page: 1, page_size: pageSize, project_names: [], confirmed_count: 0 })
 const loading = ref(false)
 const confirmingId = ref('')
 const error = ref('')
-const notice = ref('')
-const users = ref([])
-const account = reactive({ username: '', display_name: '', password: '', role: 'worker' })
-const accountLoading = ref(false)
 const chartType = ref('bar_line')
 const confirmationFeedback = reactive({ visible: false, type: 'pending', title: '', message: '' })
 const totalPages = computed(() => Math.max(1, Math.ceil(result.value.total / result.value.page_size)))
 const isWorker = computed(() => props.mode === 'worker')
-const usesWorkerDatabase = computed(() => session.workerDatabaseAuthEnabled)
 let refreshTimer = null
 let feedbackTimer = null
+
+function stopRefreshTimer() {
+  if (!refreshTimer) return
+  window.clearInterval(refreshTimer)
+  refreshTimer = null
+}
+
+function startRefreshTimer() {
+  if (refreshTimer) return
+  refreshTimer = window.setInterval(() => {
+    if (
+      document.visibilityState === 'visible'
+      && result.value.report
+      && !loading.value
+      && !confirmingId.value
+    ) {
+      load(result.value.page, { silent: true, ensureReport: false })
+    }
+  }, 5000)
+}
 
 watch(() => filters.reportDate, () => {
   filters.projectName = ''
   filters.confirmationStatus = 'all'
-  result.value = { report: null, items: [], total: 0, page: 1, page_size: 20, project_names: [], confirmed_count: 0 }
-  notice.value = ''
+  result.value = { report: null, items: [], total: 0, page: 1, page_size: pageSize, project_names: [], confirmed_count: 0 }
 })
 
 function display(value) { return value || '--' }
@@ -93,7 +105,6 @@ async function confirm(row) {
   if (!isWorker.value || confirmingId.value) return
   confirmingId.value = row.task_id
   error.value = ''
-  notice.value = ''
   showConfirmationFeedback('pending', '正在确认任务', `${display(row.program_no)} · 请稍候`)
   try {
     await confirmWorkshopTask(row.task_id, filters.reportDate)
@@ -122,33 +133,6 @@ function exportReport() {
   })
 }
 
-async function loadUsers() {
-  if (props.user.role !== 'admin') return
-  try { users.value = (await listUserAccounts()).items } catch (exception) { error.value = exception.message }
-}
-
-async function addAccount() {
-  accountLoading.value = true
-  error.value = ''
-  notice.value = ''
-  try {
-    const payload = usesWorkerDatabase.value ? { ...account, role: 'admin' } : account
-    const saved = await createUserAccount(payload)
-    notice.value = `账号 ${saved.username} 已创建`
-    Object.assign(account, {
-      username: '',
-      display_name: '',
-      password: '',
-      role: usesWorkerDatabase.value ? 'admin' : 'worker',
-    })
-    await loadUsers()
-  } catch (exception) {
-    error.value = exception.message
-  } finally {
-    accountLoading.value = false
-  }
-}
-
 async function initializeReport() {
   loading.value = true
   error.value = ''
@@ -163,20 +147,16 @@ async function initializeReport() {
 
 onMounted(() => {
   initializeReport()
-  loadUsers()
-  refreshTimer = window.setInterval(() => {
-    if (
-      document.visibilityState === 'visible'
-      && result.value.report
-      && !loading.value
-      && !confirmingId.value
-    ) {
-      load(result.value.page, { silent: true, ensureReport: false })
-    }
-  }, 5000)
 })
+onActivated(() => {
+  startRefreshTimer()
+  if (result.value.report && !loading.value && !confirmingId.value) {
+    load(result.value.page, { silent: true, ensureReport: false })
+  }
+})
+onDeactivated(stopRefreshTimer)
 onUnmounted(() => {
-  if (refreshTimer) window.clearInterval(refreshTimer)
+  stopRefreshTimer()
   if (feedbackTimer) window.clearTimeout(feedbackTimer)
 })
 </script>
@@ -202,8 +182,6 @@ onUnmounted(() => {
   </section>
 
   <div v-if="error" class="global-error"><strong>操作未完成</strong><span>{{ error }}</span><button @click="error = ''">关闭</button></div>
-  <div v-if="notice" class="workshop-notice">{{ notice }}</div>
-
   <section class="panel workshop-panel">
     <div class="panel-title"><div><span>01</span><h2>{{ isWorker ? '待确认任务表' : '当日车间报表' }}</h2></div><p>{{ isWorker ? '只能确认尚未被其他工人确认的任务' : '工人确认后会在人员列自动显示' }}</p></div>
     <form class="workshop-filters" :class="{ manager: !isWorker }" @submit.prevent="load(1)">
@@ -246,10 +224,4 @@ onUnmounted(() => {
     :context-version="`${result.report?.item_count || 0}-${result.report?.confirmed_count || 0}`"
   />
 
-  <section v-if="!isWorker && user.role === 'admin'" class="panel account-panel">
-    <div class="panel-title"><div><span>02</span><h2>{{ usesWorkerDatabase ? '登录账号' : '工人账号' }}</h2></div><p>{{ usesWorkerDatabase ? '工人首次通过HR数据库登录后自动同步身份；此处仅创建管理员' : '工人登录后自动使用本人身份确认' }}</p></div>
-    <div v-if="usesWorkerDatabase" class="workshop-notice">工人账号来自 HRbase_userInfo，本系统不会保存工人密码。</div>
-    <form class="account-form" @submit.prevent="addAccount"><label><span>{{ usesWorkerDatabase ? '管理员账号' : '登录账号' }}</span><input v-model.trim="account.username" minlength="2" maxlength="64" required /></label><label><span>{{ usesWorkerDatabase ? '管理员姓名' : '工人姓名' }}</span><input v-model.trim="account.display_name" maxlength="64" required /></label><label><span>初始密码</span><input v-model="account.password" type="password" minlength="8" maxlength="128" required /></label><label v-if="!usesWorkerDatabase"><span>角色</span><select v-model="account.role"><option value="worker">工人</option><option value="admin">管理员</option></select></label><button class="primary" :disabled="accountLoading">{{ accountLoading ? '创建中' : '创建账号' }}</button></form>
-    <div class="account-list"><span v-for="item in users" :key="item.user_id"><strong>{{ item.display_name }}</strong><small>{{ item.username }} · {{ item.role === 'admin' ? '管理员' : item.auth_source === 'hr_database' ? 'HR数据库工人' : '本地工人' }}</small></span></div>
-  </section>
 </template>

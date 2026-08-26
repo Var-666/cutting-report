@@ -30,6 +30,7 @@ SQLSERVER_ENCRYPT=yes
 SQLSERVER_TRUST_SERVER_CERTIFICATE=yes
 SQLSERVER_QUERY_TIMEOUT_SECONDS=120
 LEADERSHIP_REPORT_CACHE_SECONDS=300
+REPORT_DATA_CACHE_SECONDS=300
 
 WORKER_DATABASE_AUTH_ENABLED=true
 WORKER_DATABASE_AVAILABLE_VALUE=1
@@ -141,7 +142,7 @@ Test-NetConnection 数据库IP -Port 1433
 ### 2. 解压和安装
 
 1. 将压缩包解压到固定目录，例如 `D:\CuttingReport`；
-2. 双击 `install_windows.bat`；
+2. 双击 `scripts\windows\install_windows.bat`；
 3. 安装脚本会创建 `.venv`、安装 Python 依赖，并在不存在时由 `.env.example` 创建 `.env`；
 4. 用记事本打开 `.env`，填写正式数据库连接参数。
 
@@ -185,7 +186,7 @@ WORKER_DATABASE_UNLOCKED_VALUE=0
 双击：
 
 ```text
-start_windows.bat
+scripts\windows\start_windows.bat
 ```
 
 服务器本机访问：
@@ -233,7 +234,7 @@ http://127.0.0.1:8000/api/v1/health
 
 ## 四、原生方式长期运行
 
-直接关闭 `start_windows.bat` 的命令窗口会停止服务。正式使用时，建议由运维人员使用 NSSM、WinSW 或 Windows 任务计划程序将下面的命令注册为开机启动服务，并确保工作目录是解压目录：
+直接关闭 `scripts\windows\start_windows.bat` 的命令窗口会停止服务。正式使用时，建议由运维人员使用 NSSM、WinSW 或 Windows 任务计划程序将下面的命令注册为开机启动服务，并确保工作目录是解压目录：
 
 ```text
 .venv\Scripts\python.exe -m uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port 8000 --workers 1

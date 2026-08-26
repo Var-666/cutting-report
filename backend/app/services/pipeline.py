@@ -9,6 +9,7 @@ from app.config import Settings
 from app.database.metadata import MetadataRepository
 from app.database.definitions import DefinitionRepository
 from app.database.workshop import WorkshopRepository
+from app.database.unit_of_work import UnitOfWork
 from app.models.domain import (
     QueryBundle,
     ReportFilter,
@@ -68,8 +69,9 @@ class ReportPipeline:
     ) -> None:
         self.settings = settings
         self.metadata = metadata
+        self.database = metadata.database
         self.definitions = definitions or DefinitionRepository(
-            settings.metadata_db_path, settings.timezone
+            self.database, settings.timezone
         )
         self.definitions.initialize()
         self.query_service = QueryService(settings)
@@ -79,7 +81,7 @@ class ReportPipeline:
         self.analysis_service = ReportAnalysisService(settings, metadata)
         self.report_service = ReportService(settings)
         self.custom_report_service = CustomReportService(settings)
-        self.workshop_repository = WorkshopRepository(settings.metadata_db_path)
+        self.workshop_repository = WorkshopRepository(self.database)
         self.workshop_repository.initialize()
 
     def run(self, job: dict) -> None:
@@ -389,13 +391,6 @@ class ReportPipeline:
             report=report,
             generated_at=generated_at,
         )
-        self.metadata.save_report(
-            report_id=report_id,
-            task_count=task_count,
-            generated_at=generated_at.isoformat(timespec="seconds"),
-            system_version=self.settings.app_version,
-            **file_info,
-        )
         final_status = (
             "completed_with_warnings"
             if analysis_status == "degraded"
@@ -406,10 +401,18 @@ class ReportPipeline:
             if analysis_status == "degraded"
             else "报告生成成功"
         )
-        self.metadata.update_status(
-            report_id,
-            final_status,
-            final_message,
-            ai_status=analysis_status,
-            finished_at=generated_at.isoformat(timespec="seconds"),
-        )
+        with UnitOfWork(self.database, self.settings.timezone) as unit:
+            unit.metadata.save_report(
+                report_id=report_id,
+                task_count=task_count,
+                generated_at=generated_at.isoformat(timespec="seconds"),
+                system_version=self.settings.app_version,
+                **file_info,
+            )
+            unit.metadata.update_status(
+                report_id,
+                final_status,
+                final_message,
+                ai_status=analysis_status,
+                finished_at=generated_at.isoformat(timespec="seconds"),
+            )

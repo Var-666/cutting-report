@@ -25,6 +25,7 @@ from app.database.metadata import MetadataRepository
 from app.database.automation import AutomationRepository
 from app.database.definitions import DefinitionRepository
 from app.database.workshop import WorkshopRepository
+from app.database.sqlite import SQLiteDatabase
 from app.services.pipeline import ReportPipeline
 from app.services.leadership_report_service import LeadershipReportService
 from app.services.query_service import QueryService
@@ -44,13 +45,15 @@ logging.basicConfig(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings.ensure_runtime_dirs()
-    metadata = MetadataRepository(settings.metadata_db_path)
+    database = SQLiteDatabase(settings.metadata_db_path)
+    database.initialize()
+    metadata = MetadataRepository(database)
     metadata.initialize()
-    workshop = WorkshopRepository(settings.metadata_db_path)
+    workshop = WorkshopRepository(database)
     workshop.initialize()
-    automation = AutomationRepository(settings.metadata_db_path)
+    automation = AutomationRepository(database)
     automation.initialize()
-    definitions = DefinitionRepository(settings.metadata_db_path, settings.timezone)
+    definitions = DefinitionRepository(database, settings.timezone)
     definitions.initialize()
     pipeline = ReportPipeline(settings, metadata, definitions)
     email_service = EmailService(settings)
@@ -61,6 +64,7 @@ async def lifespan(app: FastAPI):
         settings, metadata, pipeline, automation_service=automation_service
     )
     app.state.metadata = metadata
+    app.state.sqlite_database = database
     app.state.workshop = workshop
     app.state.definitions = definitions
     app.state.automation = automation

@@ -20,6 +20,34 @@ const modeLabel = computed(() => {
   return '模拟大模型分析'
 })
 
+function formatAnalysisText(value) {
+  return String(value ?? '').replace(/-?\d[\d,]*\.\d{4,}/g, (raw) => {
+    const numeric = Number(raw.replaceAll(',', ''))
+    if (!Number.isFinite(numeric)) return raw
+    return new Intl.NumberFormat('zh-CN', {
+      maximumFractionDigits: 3,
+      useGrouping: raw.includes(','),
+    }).format(numeric)
+  })
+}
+
+function analysisParts(value) {
+  const text = formatAnalysisText(value)
+  const parts = []
+  const citationPattern = /\[(F\d{3})\]/g
+  let cursor = 0
+  let match
+  while ((match = citationPattern.exec(text)) !== null) {
+    if (match.index > cursor) {
+      parts.push({ type: 'text', value: text.slice(cursor, match.index) })
+    }
+    parts.push({ type: 'citation', value: match[1] })
+    cursor = citationPattern.lastIndex
+  }
+  if (cursor < text.length) parts.push({ type: 'text', value: text.slice(cursor) })
+  return parts
+}
+
 async function loadAnalysis(force = false) {
   if (!props.ready || !props.reportDate) return
   const sequence = ++requestSequence
@@ -78,24 +106,29 @@ watch(
     <template v-else-if="analysis">
       <div v-if="analysis.facts?.length" class="analysis-facts">
         <article v-for="fact in analysis.facts" :key="fact.id">
-          <span><b>{{ fact.id }}</b>{{ fact.label }}</span><strong>{{ fact.value }}</strong>
+          <span><b>{{ fact.id }}</b>{{ fact.label }}</span><strong>{{ formatAnalysisText(fact.value) }}</strong>
         </article>
       </div>
       <div class="analysis-grid">
-        <article><h3>生产概况</h3><p>{{ analysis.overview }}</p></article>
-        <article><h3>数据特征</h3><p>{{ analysis.features }}</p></article>
-        <article><h3>异常与关注点</h3><p>{{ analysis.alerts }}</p></article>
-        <article><h3>生产管理建议</h3><p>{{ analysis.suggestions }}</p></article>
+        <article v-for="section in [
+          { key: 'overview', title: '生产概况' },
+          { key: 'features', title: '数据特征' },
+          { key: 'alerts', title: '异常与关注点' },
+          { key: 'suggestions', title: '生产管理建议' },
+        ]" :key="section.key">
+          <h3>{{ section.title }}</h3>
+          <p><template v-for="(part, index) in analysisParts(analysis[section.key])" :key="`${section.key}-${index}`"><sup v-if="part.type === 'citation'" class="analysis-citation">{{ part.value }}</sup><span v-else>{{ part.value }}</span></template></p>
+        </article>
       </div>
       <div v-if="analysis.limitations" class="analysis-limit">
-        <strong>分析边界</strong><span>{{ analysis.limitations }}</span>
+        <strong>分析边界</strong><span>{{ formatAnalysisText(analysis.limitations) }}</span>
       </div>
       <details v-if="analysis.facts?.length" class="analysis-evidence">
         <summary>查看可追溯数据依据（{{ analysis.facts.length }} 项）</summary>
         <div class="evidence-list">
           <article v-for="fact in analysis.facts" :key="`evidence-${fact.id}`">
             <strong>{{ fact.id }} · {{ fact.label }}</strong>
-            <span>{{ fact.value }}</span>
+            <span>{{ formatAnalysisText(fact.value) }}</span>
             <small>来源：{{ fact.source || '当前报表数据' }}</small>
           </article>
         </div>
@@ -127,6 +160,7 @@ watch(
 .analysis-grid article { min-height:126px; padding:17px 18px; border:1px solid #dce5ec; border-radius:8px; background:#fff; }
 .analysis-grid h3 { margin:0 0 8px; color:#14597e; font-size:16px; }
 .analysis-grid p { margin:0; color:#34485b; line-height:1.75; white-space:pre-wrap; }
+.analysis-citation { display:inline-block; margin:0 2px; padding:1px 4px; color:#1b7188; border:1px solid #b8dbe3; border-radius:4px; background:#eef8fa; font-size:9px; font-weight:800; line-height:1.2; vertical-align:super; white-space:nowrap; }
 .analysis-limit { display:flex; gap:14px; margin:0 28px 18px; padding:13px 15px; color:#725116; background:#fff8e9; border-left:4px solid #d89a27; }
 .analysis-limit strong { flex-shrink:0; }
 .analysis-evidence { margin:0 28px 18px; border:1px solid #dce5ec; border-radius:8px; background:#fbfcfd; }

@@ -2,35 +2,30 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
+
+from app.database.sqlite import SQLiteDatabase, SQLiteRepository
 
 
 TERMINAL_STATUSES = {"completed", "completed_with_warnings", "failed"}
 
 
-class MetadataRepository:
-    def __init__(self, database_path: Path) -> None:
-        self.database_path = database_path
-
-    @contextmanager
-    def connect(self) -> Iterator[sqlite3.Connection]:
-        connection = sqlite3.connect(self.database_path, timeout=30)
-        connection.row_factory = sqlite3.Row
-        try:
-            yield connection
-            connection.commit()
-        finally:
-            connection.close()
+class MetadataRepository(SQLiteRepository):
+    def __init__(
+        self,
+        database: Path | SQLiteDatabase,
+        *,
+        connection: sqlite3.Connection | None = None,
+    ) -> None:
+        super().__init__(database, connection=connection)
 
     def initialize(self) -> None:
-        self.database_path.parent.mkdir(parents=True, exist_ok=True)
+        self.database.initialize()
         with self.connect() as connection:
             connection.executescript(
                 """
-                PRAGMA journal_mode=WAL;
                 CREATE TABLE IF NOT EXISTS report_jobs (
                     report_id TEXT PRIMARY KEY,
                     report_type TEXT NOT NULL DEFAULT 'workshop',
@@ -150,7 +145,7 @@ class MetadataRepository:
 
     def claim_next_job(self, started_at: str) -> dict[str, Any] | None:
         with self.connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
+            self.begin_immediate(connection)
             row = connection.execute(
                 """
                 SELECT * FROM report_jobs

@@ -32,19 +32,19 @@ const router = createRouter({
               path: 'leadership',
               name: 'leadership-report',
               component: () => import('../views/AdminLeadershipView.vue'),
-              meta: { title: '领导报表' },
+              meta: { title: '领导报表', keepAlive: true },
             },
             {
               path: 'workshop',
               name: 'workshop-report',
               component: () => import('../views/AdminWorkshopView.vue'),
-              meta: { title: '车间报表' },
+              meta: { title: '车间报表', keepAlive: true },
             },
             {
               path: 'equipment',
               name: 'equipment-report',
               component: () => import('../views/AdminEquipmentView.vue'),
-              meta: { title: '设备报表' },
+              meta: { title: '设备报表', keepAlive: true },
             },
             {
               path: 'center',

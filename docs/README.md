@@ -1,0 +1,49 @@
+# 项目文档目录
+
+根目录只保留运行、构建和部署入口，项目说明材料统一放在本目录。
+
+## 文档结构
+
+```text
+docs/
+├── README.md                 文档总目录
+├── deployment/              安装、部署和运维说明
+├── design/                  需求与系统设计
+├── database/                数据库结构说明
+└── integrations/            PDM、FTP、激光魔盒等外部系统资料
+```
+
+## 快速入口
+
+### 部署
+
+- [Windows内网部署说明](deployment/WINDOWS部署说明.md)
+
+### 需求与设计
+
+- [需求说明书 V1.0](design/切割生产智能产报系统_需求说明书_V1.0.md)
+- [概要设计说明书 V1.0](design/切割生产智能产报系统_概要设计说明书_V1.0.md)
+- [SQLite仓储与事务设计](design/SQLite仓储与事务设计.md)
+
+### 数据库
+
+- [数据库设计说明 V2](database/数据库设计说明V2.pdf)
+
+该PDF包含内网连接配置示例，属于内部受控资料。对外分享或推送远程仓库前必须完成脱敏，并更换其中出现过的Token、Secret和密码。
+
+### 外部接口与原始资料
+
+- `integrations/激光魔盒接口文档V2.1.pdf`
+- `integrations/扬州-切割指令相关SQL.xlsx`
+- [外部系统关联说明](integrations/README.md)
+
+外部PDF和Excel属于本地参考资料，受项目 `.gitignore` 保护，默认不提交Git。其他开发环境需要单独取得授权副本。
+
+## 目录约定
+
+- 新增部署操作文档放入 `deployment/`；
+- 新增需求、流程和架构设计放入 `design/`；
+- 数据表、字段映射和数据库说明放入 `database/`；
+- 厂商接口、PDM查询样例和联调记录放入 `integrations/`；
+- 运行日志、报表输出和临时文件不得放入 `docs/`；
+- 含账号、密码、Token、Secret或生产数据的原始资料不得直接提交Git。

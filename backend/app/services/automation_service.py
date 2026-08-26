@@ -8,6 +8,7 @@ from uuid import uuid4
 from app.config import Settings
 from app.database.automation import AutomationRepository
 from app.database.metadata import MetadataRepository
+from app.database.unit_of_work import UnitOfWork
 from app.database.workshop import DailyReportExistsError, WorkshopRepository
 from app.models.domain import ReportFilter
 from app.services.email_service import EmailService
@@ -69,12 +70,15 @@ class AutomationService:
         metadata: MetadataRepository,
         email_service: EmailService,
     ) -> None:
+        if repository.database_path != metadata.database_path:
+            raise ValueError("自动化仓储与元数据仓储必须使用同一个 SQLite 数据库")
         self.settings = settings
         self.repository = repository
         self.metadata = metadata
         self.email_service = email_service
         self.query_service = QueryService(settings)
-        self.workshop = WorkshopRepository(settings.metadata_db_path)
+        self.database = metadata.database
+        self.workshop = WorkshopRepository(self.database)
 
     def enrich_schedule(self, data: dict[str, Any], now: datetime) -> dict[str, Any]:
         value = dict(data)
@@ -122,22 +126,23 @@ class AutomationService:
             if run["report_type"] == "workshop":
                 self._ensure_workshop_report(run, now)
             report_id = f"rpt_{now:%Y%m%d_%H%M%S}_{uuid4().hex[:6]}"
-            self.metadata.create_job(
-                report_id=report_id,
-                report_date=run["report_date"],
-                project_code=None,
-                ship_no=None,
-                request_id=f"automation:{run['run_id']}",
-                created_at=now.isoformat(timespec="seconds"),
-                report_type=run["report_type"],
-                parameters={
-                    "chart_type": run["chart_type"],
-                    "automation_run_id": run["run_id"],
-                },
-            )
-            self.repository.attach_report(
-                run["run_id"], report_id, now=now.isoformat(timespec="seconds")
-            )
+            with UnitOfWork(self.database, self.settings.timezone) as unit:
+                unit.metadata.create_job(
+                    report_id=report_id,
+                    report_date=run["report_date"],
+                    project_code=None,
+                    ship_no=None,
+                    request_id=f"automation:{run['run_id']}",
+                    created_at=now.isoformat(timespec="seconds"),
+                    report_type=run["report_type"],
+                    parameters={
+                        "chart_type": run["chart_type"],
+                        "automation_run_id": run["run_id"],
+                    },
+                )
+                unit.automation.attach_report(
+                    run["run_id"], report_id, now=now.isoformat(timespec="seconds")
+                )
             return True
         except Exception as exc:
             logger.exception("scheduled report enqueue failed")
@@ -172,13 +177,9 @@ class AutomationService:
         run = self.repository.delivery_for_report(report_id)
         if run is not None:
             return
-        with self.repository.connect() as connection:
-            row = connection.execute(
-                "SELECT * FROM scheduled_report_runs WHERE report_id = ?", (report_id,)
-            ).fetchone()
-        if row is None:
+        values = self.repository.get_run_for_report(report_id)
+        if values is None:
             return
-        values = dict(row)
         subject = values["subject_template"]
         replacements = {
             "{report_name}": values["schedule_name"],
@@ -192,13 +193,10 @@ class AutomationService:
         )
 
     def report_failed(self, report_id: str, error: str, now: datetime) -> None:
-        with self.repository.connect() as connection:
-            row = connection.execute(
-                "SELECT run_id FROM scheduled_report_runs WHERE report_id = ?", (report_id,)
-            ).fetchone()
-        if row:
+        run = self.repository.get_run_for_report(report_id)
+        if run:
             self.repository.mark_run(
-                row["run_id"], "failed", now=now.isoformat(timespec="seconds"), error=error
+                run["run_id"], "failed", now=now.isoformat(timespec="seconds"), error=error
             )
 
     def process_next_email(self, now: datetime) -> bool:

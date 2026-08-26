@@ -62,7 +62,7 @@ export function createUserAccount(payload) {
   })
 }
 
-export function listWorkshopTasks({ reportDate, projectName = '', confirmationStatus = 'all', sortMode = 'manager', page = 1, pageSize = 20 }) {
+export function listWorkshopTasks({ reportDate, projectName = '', confirmationStatus = 'all', sortMode = 'manager', page = 1, pageSize = 10 }) {
   const query = new URLSearchParams({
     report_date: reportDate,
     confirmation_status: confirmationStatus,
@@ -164,9 +164,10 @@ export function getLeadershipReport(reportMonth, { force = false } = {}) {
   return pending
 }
 
-export function getEquipmentReport(reportDate = '') {
+export function getEquipmentReport(reportDate = '', { force = false } = {}) {
   const query = new URLSearchParams()
   if (reportDate) query.set('report_date', reportDate)
+  if (force) query.set('refresh', 'true')
   const queryString = query.toString()
   const suffix = queryString ? `?${queryString}` : ''
   return request(`/api/v1/equipment-report${suffix}`)

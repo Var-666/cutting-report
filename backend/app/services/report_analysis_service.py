@@ -22,7 +22,7 @@ from app.services.llm_service import LlmService
 
 
 logger = logging.getLogger(__name__)
-PROMPT_VERSION = "report-analysis-v3"
+PROMPT_VERSION = "report-analysis-v4"
 
 
 def _duration(value: Decimal | int | float) -> str:
@@ -45,6 +45,16 @@ def _change(current: Decimal | int | float, previous: Decimal | int | float) -> 
 
 def _fact(identifier: str, label: str, value: str, source: str) -> dict[str, str]:
     return {"id": identifier, "label": label, "value": value, "source": source}
+
+
+def _round_context_numbers(value):
+    if isinstance(value, dict):
+        return {key: _round_context_numbers(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_round_context_numbers(item) for item in value]
+    if isinstance(value, float):
+        return round(value, 3)
+    return value
 
 
 def _project_distribution(records: list[WorkshopRecord] | list[EquipmentRecord]) -> list[dict]:
@@ -110,7 +120,7 @@ class ReportAnalysisService:
         simulator: Callable[[dict], AnalysisResult],
         force: bool,
     ) -> AnalysisResult:
-        primitive_context = to_primitive(context)
+        primitive_context = _round_context_numbers(to_primitive(context))
         canonical = json.dumps(
             primitive_context, ensure_ascii=False, sort_keys=True, separators=(",", ":")
         )
@@ -269,11 +279,15 @@ class ReportAnalysisService:
         change = context["comparisons"].get("task_mom_percent")
         year_change = context["comparisons"].get("task_yoy_percent")
         comparison = (
-            f"任务数较上月变化 {change:+.2f}% [F006]。"
+            f"任务量较上月{'上升' if change > 0 else '下降' if change < 0 else '持平'} {abs(change):.2f}% [F006]。"
             if change is not None
             else "缺少可比较的上月任务数据。"
         )
-        yoy = f"同比变化 {year_change:+.2f}% [F008]。" if year_change is not None else "缺少上年同月可比数据。"
+        yoy = (
+            f"同比{'上升' if year_change > 0 else '下降' if year_change < 0 else '持平'} {abs(year_change):.2f}% [F008]。"
+            if year_change is not None
+            else "缺少上年同月可比数据。"
+        )
         peak = f"任务峰值为 {fact['F005']} [F005]。" if "F005" in fact else "当月没有可识别的任务峰值日期。"
         project = f"任务最多工程为 {fact['F009']} [F009]。" if "F009" in fact else "未获取工程分布。"
         review_targets = [identifier for identifier in ("F005", "F009") if identifier in fact]
@@ -281,8 +295,8 @@ class ReportAnalysisService:
         return AnalysisResult(
             status="simulated",
             mode="simulated",
-            overview=f"{context['report_month']} 共完成 {fact['F001']} [F001]，切割长度 {fact['F002']} [F002]，累计切割时长 {fact['F003']} [F003]。",
-            features=f"{comparison}{yoy}{project}{peak}",
+            overview=f"{context['report_month']} 的月度任务量趋势为：{comparison}",
+            features=f"同比和任务结构方面：{yoy}{project}{peak}",
             alerts=(
                 f"检出 {fact['F010']} [F010]，需核对异常日的任务组成。"
                 if context.get("anomalies")
@@ -379,8 +393,8 @@ class ReportAnalysisService:
         return AnalysisResult(
             status="simulated",
             mode="simulated",
-            overview=f"{context['report_date']} 共 {fact['F001']} [F001]，累计切割长度 {fact['F004']} [F004]，切割时长 {fact['F005']} [F005]。",
-            features=f"当前已确认 {fact['F002']} [F002]，确认率 {context['confirmation_rate']:.2f}% [F006]。{comparison_text}{yoy_text}{project}{longest}",
+            overview=f"{context['report_date']} 的近期任务量变化为：{comparison_text}",
+            features=f"当前确认率为 {context['confirmation_rate']:.2f}% [F006]。{yoy_text}{project}{longest}",
             alerts=(f"检出 {fact['F013']} [F013]，同时仍有 {fact['F003']} 未完成工人确认 [F003]。" if context.get("anomalies") else f"未按 IQR 阈值检出工时异常（{fact['F013']}）[F013]；仍有 {fact['F003']} 未完成工人确认 [F003]。"),
             suggestions=("建议先完成未确认任务 [F003]，并优先核对最长任务 [F007] 的材料、程序和现场记录。" if "F007" in fact else "建议先完成未确认任务 [F003]，再结合现场记录复核。"),
             limitations=context["limitations"],
@@ -473,8 +487,8 @@ class ReportAnalysisService:
         return AnalysisResult(
             status="simulated",
             mode="simulated",
-            overview=f"{context['report_date']} 共 {fact['F001']} [F001]，总切割时长 {fact['F002']} [F002]。",
-            features=f"{comparison_text}{yoy_text}{project}{longest}{energy_note}",
+            overview=f"{context['report_date']} 的近期设备任务量变化为：{comparison_text}",
+            features=f"同比和任务结构方面，{yoy_text}{project}{longest}{energy_note}",
             alerts=(f"检出 {fact['F012']} [F012]；能耗为模拟值，不做能耗异常判定 [F003][F004]。" if context.get("anomalies") else f"未按 IQR 阈值检出工时异常（{fact['F012']}）[F012]；缺少真实计量和设备状态 [F003][F004]。"),
             suggestions=("建议优先复核最长切割任务 [F005]，并接入真实电表、气表及设备状态数据后建立单位工时能耗基线。" if "F005" in fact else "建议接入真实电表、气表及设备状态数据后建立能耗基线 [F003][F004]。"),
             limitations=context["limitations"],

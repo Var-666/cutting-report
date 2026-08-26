@@ -3,7 +3,7 @@ import { BarChart, LineChart } from 'echarts/charts'
 import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
 import { init, use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
 import { getLeadershipReport } from '../api/reports'
 import AnalysisPanel from '../components/AnalysisPanel.vue'
 
@@ -41,6 +41,11 @@ const monthlyTotal = computed(() => report.value?.twelve_month_total || {
   groove_length_m: 0,
   work_time_seconds: 0,
 })
+
+function roundNumber(value, digits = 3) {
+  const factor = 10 ** digits
+  return Math.round((Number(value || 0) + Number.EPSILON) * factor) / factor
+}
 
 function formatLength(value) {
   return new Intl.NumberFormat('zh-CN', {
@@ -116,9 +121,9 @@ function renderCharts() {
     xAxis: { type: 'category', data: dailyChartRecords.map((row) => row.period_start.slice(5)) },
     yAxis: [{ type: 'value', name: '长度（米）' }, { type: 'value', name: '工时（小时）' }],
     series: [
-      { name: '切割长度', type: 'bar', data: dailyChartRecords.map((row) => Number(row.cut_length_m)), itemStyle: { color: '#1769aa' } },
-      { name: '坡口长度', type: 'bar', data: dailyChartRecords.map((row) => Number(row.groove_length_m)), itemStyle: { color: '#56a3a6' } },
-      { name: '切割工时', type: 'line', yAxisIndex: 1, smooth: true, data: dailyChartRecords.map((row) => Number(row.work_time_seconds) / 3600), itemStyle: { color: '#e58e26' } },
+      { name: '切割长度', type: 'bar', data: dailyChartRecords.map((row) => roundNumber(row.cut_length_m)), tooltip: { valueFormatter: (value) => `${formatLength(value)} 米` }, itemStyle: { color: '#1769aa' } },
+      { name: '坡口长度', type: 'bar', data: dailyChartRecords.map((row) => roundNumber(row.groove_length_m)), tooltip: { valueFormatter: (value) => `${formatLength(value)} 米` }, itemStyle: { color: '#56a3a6' } },
+      { name: '切割工时', type: 'line', yAxisIndex: 1, smooth: true, data: dailyChartRecords.map((row) => roundNumber(Number(row.work_time_seconds) / 3600)), tooltip: { valueFormatter: (value) => `${formatLength(value)} 小时` }, itemStyle: { color: '#e58e26' } },
     ].map(applyChartType),
   })
   monthlyChart.setOption({
@@ -128,8 +133,8 @@ function renderCharts() {
     xAxis: { type: 'category', data: monthlyChartRecords.map((row) => row.period_start.slice(0, 7)) },
     yAxis: [{ type: 'value', name: '长度（米）' }, { type: 'value', name: '任务数' }],
     series: [
-      { name: '切割长度', type: 'bar', data: monthlyChartRecords.map((row) => Number(row.cut_length_m)), itemStyle: { color: '#1769aa' } },
-      { name: '坡口长度', type: 'bar', data: monthlyChartRecords.map((row) => Number(row.groove_length_m)), itemStyle: { color: '#56a3a6' } },
+      { name: '切割长度', type: 'bar', data: monthlyChartRecords.map((row) => roundNumber(row.cut_length_m)), tooltip: { valueFormatter: (value) => `${formatLength(value)} 米` }, itemStyle: { color: '#1769aa' } },
+      { name: '坡口长度', type: 'bar', data: monthlyChartRecords.map((row) => roundNumber(row.groove_length_m)), tooltip: { valueFormatter: (value) => `${formatLength(value)} 米` }, itemStyle: { color: '#56a3a6' } },
       { name: '完成任务', type: 'line', yAxisIndex: 1, smooth: true, data: monthlyChartRecords.map((row) => row.task_count), itemStyle: { color: '#d47f22' } },
     ].map(applyChartType),
   })
@@ -151,8 +156,15 @@ function exportReport() {
 }
 
 onMounted(() => {
-  window.addEventListener('resize', resizeCharts)
   loadReport()
+})
+onActivated(async () => {
+  window.addEventListener('resize', resizeCharts)
+  await nextTick()
+  resizeCharts()
+})
+onDeactivated(() => {
+  window.removeEventListener('resize', resizeCharts)
 })
 onBeforeUnmount(() => {
   window.removeEventListener('resize', resizeCharts)

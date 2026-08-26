@@ -1,6 +1,6 @@
 @echo off
 setlocal
-cd /d "%~dp0"
+cd /d "%~dp0\..\.."
 
 where py >nul 2>nul
 if errorlevel 1 (
@@ -31,7 +31,7 @@ if not exist ".env" (
 
 echo.
 echo Installation completed.
-echo Edit .env, then run start_windows.bat.
+echo Edit .env, then run scripts\windows\start_windows.bat.
 pause
 exit /b 0
 

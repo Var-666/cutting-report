@@ -72,23 +72,23 @@ def analyze_report(payload: AnalysisRequest, request: Request) -> dict:
                 force=payload.force,
             )
         else:
-            bundle = request.app.state.query_service.fetch_report_data(
-                ReportFilter(report_date=payload.report_date)
+            equipment_data = request.app.state.query_service.fetch_equipment_data(
+                ReportFilter(report_date=payload.report_date), force=payload.force
             )
-            records = sort_equipment_records(mock_energy(bundle.equipment_records))
+            records = sort_equipment_records(mock_energy(equipment_data.records))
             comparison_day = payload.report_date - timedelta(days=1)
-            previous_bundle = request.app.state.query_service.fetch_report_data(
-                ReportFilter(report_date=comparison_day)
+            previous_data = request.app.state.query_service.fetch_equipment_data(
+                ReportFilter(report_date=comparison_day), force=payload.force
             )
             previous_records = sort_equipment_records(
-                mock_energy(previous_bundle.equipment_records)
+                mock_energy(previous_data.records)
             )
             year_ago_day = _year_ago(payload.report_date)
-            year_ago_bundle = request.app.state.query_service.fetch_report_data(
-                ReportFilter(report_date=year_ago_day)
+            year_ago_data = request.app.state.query_service.fetch_equipment_data(
+                ReportFilter(report_date=year_ago_day), force=payload.force
             )
             year_ago_records = sort_equipment_records(
-                mock_energy(year_ago_bundle.equipment_records)
+                mock_energy(year_ago_data.records)
             )
             analysis = service.analyze_equipment(
                 report_date,

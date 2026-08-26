@@ -2,6 +2,8 @@
 
 基于 Vue 3、FastAPI、SQL Server、ECharts 和 OpenAI-Compatible LLM API 的内网生产报告系统。
 
+项目说明材料统一收录在 [`docs/`](docs/README.md)，Windows 部署请直接查看 [`docs/deployment/WINDOWS部署说明.md`](docs/deployment/WINDOWS部署说明.md)。
+
 当前版本已接入项目根目录的 `TASK.xlsx`，数据库暂时不可连接时可直接使用导出的完整任务表：
 
 ```text
@@ -49,7 +51,7 @@ TASK_EXCEL_PATH=TASK.xlsx
 
 领导报表统计口径：仅统计 `STATUS = 2` 且 `WORK_TIME >= 0` 的任务，负工时异常任务整条剔除；优先按 `OP_DATE` 归属日期，无法转换时回退 `START_TIME`；切割和坡口长度由毫米换算为米；`WORK_TIME` 按秒汇总；历史对比覆盖所选月份及其前十一个月；图表时间轴从左到右递增；不按 `PORTION_ID` 去重。
 
-首页概览与领导报表共享按月份缓存，默认有效期为 300 秒；相同月份的并发请求只执行一次数据库查询。报表页自动加载优先复用缓存，点击“刷新报表”会强制读取最新数据。可通过 `LEADERSHIP_REPORT_CACHE_SECONDS` 调整有效期，设为 `0` 关闭缓存。
+首页概览与领导报表共享按月份缓存，设备日报与智能分析共享按日期缓存，默认有效期均为 300 秒；相同月份或日期的并发请求只执行一次数据库查询。三张报表在前端切换时保留页面状态，不会因为切换重复加载或重新请求智能分析。点击“刷新报表”会强制读取最新数据。可通过 `LEADERSHIP_REPORT_CACHE_SECONDS` 和 `REPORT_DATA_CACHE_SECONDS` 分别调整缓存时间，设为 `0` 可关闭对应缓存。
 
 三类导出报告：
 
@@ -99,7 +101,7 @@ WORKER_DATABASE_UNLOCKED_VALUE=0
 
 后两个值必须与正式表中的实际数据一致。工号不存在、密码错误、账号不可用、账号锁定或公司工号重复时，对外统一提示“公司工号或密码错误”。数据库连接失败时返回“工人登录数据库暂时不可用”。
 
-切割文件库使用 `FILE_SQLSERVER_*` 独立配置。目前“文件派发”页仍是界面原型，在确认 `PDM_DesignDocumentInfo` / `PDM_DocumentFileInfo` 的关联键、文件内容是存于字段还是由 `FilePath` 指向 FTP/文件服务器前，`FILE_DATABASE_ENABLED` 应保持 `false`。三套库的只读账号和连接参数可在“设置 → 数据库配置”中维护；密码只能更新、不会回显。配置保存到 `data/settings.env`，重启服务后生效。
+切割文件库使用 `FILE_SQLSERVER_*` 独立配置。目前已确认 `PDM_DesignDocumentInfo.ID = PDM_DocumentFileInfo.DocumentID`，真实文件由 `FilePath` 指向 FTP/文件服务器；“文件派发”页仍是界面原型，在 FTP 参数、GEN 文件兼容性和魔盒领取人数据来源确认前，`FILE_DATABASE_ENABLED` 应保持 `false`。三套库的只读账号和连接参数可在“设置 → 数据库配置”中维护；密码只能更新、不会回显。配置保存到 `data/settings.env`，重启服务后生效。
 
 登录后按角色分流：管理员进入完整管理主站，其“车间报表”页只读展示任务、确认人和确认时间，不能代替工人确认；工人账号直接进入独立的“我的任务确认”页，不显示领导报表、数据库、报表设计等管理导航。确认 API 同样限制为工人角色。
 
@@ -123,6 +125,9 @@ AUTH_COOKIE_SECURE=true
 ```text
 backend/      Python/FastAPI 后端
 frontend/     Vue 3/Vite 前端
+docs/         需求、设计、部署、数据库和外部接口资料
+scripts/      安装、启动及后续维护脚本
+packages/     本地部署包；ZIP文件不提交Git
 vendor/       报告内嵌的 ECharts 资源，由前端构建脚本生成
 data/         SQLite 元数据，运行后生成
 reports/      HTML 报告，运行后生成

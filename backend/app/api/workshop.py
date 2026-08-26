@@ -135,7 +135,7 @@ def list_tasks(
     confirmation_status: Literal["all", "confirmed", "unconfirmed"] = "all",
     sort_mode: Literal["manager", "worker"] = "manager",
     page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=20, ge=10, le=100),
+    page_size: int = Query(default=10, ge=10, le=100),
     user: dict = Depends(require_user),
 ) -> dict:
     report, records = _records_for_date(request, report_date)

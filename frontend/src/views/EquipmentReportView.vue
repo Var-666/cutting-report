@@ -3,7 +3,7 @@ import { BarChart, LineChart } from 'echarts/charts'
 import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
 import { init, use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
 import { getEquipmentReport } from '../api/reports'
 import AnalysisPanel from '../components/AnalysisPanel.vue'
 
@@ -30,6 +30,11 @@ const summary = computed(() => report.value?.summary || {
 })
 const pageCount = computed(() => Math.max(1, Math.ceil(records.value.length / pageSize)))
 const pageRows = computed(() => records.value.slice((page.value - 1) * pageSize, page.value * pageSize))
+
+function roundNumber(value, digits = 3) {
+  const factor = 10 ** digits
+  return Math.round((Number(value || 0) + Number.EPSILON) * factor) / factor
+}
 
 function formatNumber(value, digits = 3) {
   return new Intl.NumberFormat('zh-CN', {
@@ -71,11 +76,11 @@ function applyChartType(series) {
   return result
 }
 
-async function loadReport() {
+async function loadReport(force = false) {
   loading.value = true
   error.value = ''
   try {
-    const result = await getEquipmentReport(reportDate.value)
+    const result = await getEquipmentReport(reportDate.value, { force })
     report.value = result
     if (result.report_date) reportDate.value = result.report_date
     page.value = 1
@@ -110,7 +115,8 @@ function renderChart() {
       {
         name: '气耗',
         type: 'bar',
-        data: rows.map((row) => Number(row.gas_consumption || 0)),
+        data: rows.map((row) => roundNumber(row.gas_consumption)),
+        tooltip: { valueFormatter: (value) => `${formatNumber(value)} Nm³` },
         itemStyle: { color: '#56a3a6' },
       },
       {
@@ -118,7 +124,8 @@ function renderChart() {
         type: 'line',
         yAxisIndex: 1,
         smooth: true,
-        data: rows.map((row) => Number(row.electricity_consumption || 0)),
+        data: rows.map((row) => roundNumber(row.electricity_consumption)),
+        tooltip: { valueFormatter: (value) => `${formatNumber(value)} kWh` },
         itemStyle: { color: '#e58e26' },
       },
     ].map(applyChartType),
@@ -141,8 +148,15 @@ function exportReport() {
 }
 
 onMounted(() => {
-  window.addEventListener('resize', resizeChart)
   loadReport()
+})
+onActivated(async () => {
+  window.addEventListener('resize', resizeChart)
+  await nextTick()
+  resizeChart()
+})
+onDeactivated(() => {
+  window.removeEventListener('resize', resizeChart)
 })
 onBeforeUnmount(() => {
   window.removeEventListener('resize', resizeChart)
@@ -161,7 +175,7 @@ watch(chartType, async () => {
       <h2>设备生产日报</h2>
       <p>进入页面自动展示最近有数据的设备日报，表格格式与生产报表保持一致。</p>
     </div>
-    <form class="equipment-query" @submit.prevent="loadReport">
+    <form class="equipment-query" @submit.prevent="loadReport(true)">
       <label><span>生产日期</span><input v-model="reportDate" type="date" required /></label>
       <label><span>图表类型</span><select v-model="chartType"><option value="bar_line">柱线组合</option><option value="bar">柱状图</option><option value="line">折线图</option><option value="area">面积图</option></select></label>
       <button class="primary" type="submit" :disabled="loading"><span v-if="loading" class="spinner"></span>{{ loading ? '查询中' : '查询报表' }}</button>

@@ -3,11 +3,12 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
-from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 from zoneinfo import ZoneInfo
+
+from app.database.sqlite import SQLiteDatabase, SQLiteRepository
 
 
 DEFAULT_TEMPLATE_CONFIG = {
@@ -29,26 +30,22 @@ DEFAULT_QUERY_COLUMNS = [
 ]
 
 
-class DefinitionRepository:
-    def __init__(self, database_path: Path, timezone: str = "Asia/Shanghai") -> None:
-        self.database_path = database_path
+class DefinitionRepository(SQLiteRepository):
+    def __init__(
+        self,
+        database: Path | SQLiteDatabase,
+        timezone: str = "Asia/Shanghai",
+        *,
+        connection: sqlite3.Connection | None = None,
+    ) -> None:
+        super().__init__(database, connection=connection)
         self.timezone = timezone
-
-    @contextmanager
-    def connect(self) -> Iterator[sqlite3.Connection]:
-        connection = sqlite3.connect(self.database_path, timeout=30)
-        connection.row_factory = sqlite3.Row
-        try:
-            yield connection
-            connection.commit()
-        finally:
-            connection.close()
 
     def _now(self) -> str:
         return datetime.now(ZoneInfo(self.timezone)).isoformat(timespec="seconds")
 
     def initialize(self) -> None:
-        self.database_path.parent.mkdir(parents=True, exist_ok=True)
+        self.database.initialize()
         with self.connect() as connection:
             connection.executescript(
                 """
@@ -380,4 +377,3 @@ class DefinitionRepository:
             if row["is_builtin"]:
                 raise PermissionError("系统内置报表定义不能删除")
             connection.execute("DELETE FROM report_definitions WHERE definition_id=?", (definition_id,))
-

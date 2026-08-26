@@ -12,5 +12,10 @@ import { RouterLink, RouterView } from 'vue-router'
       <RouterLink to="/admin/reports/center">生成与历史</RouterLink>
     </nav>
   </section>
-  <RouterView />
+  <RouterView v-slot="{ Component, route }">
+    <KeepAlive>
+      <component v-if="route.meta.keepAlive" :is="Component" :key="route.name" />
+    </KeepAlive>
+    <component v-if="!route.meta.keepAlive" :is="Component" :key="route.name" />
+  </RouterView>
 </template>

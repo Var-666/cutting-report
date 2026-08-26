@@ -29,12 +29,15 @@ router = APIRouter(
 def get_equipment_report(
     request: Request,
     report_date: date | None = Query(default=None),
+    refresh: bool = Query(default=False, description="忽略缓存并重新查询"),
 ) -> dict:
     try:
         selected_date = report_date
         if selected_date is None:
             today = datetime.now(ZoneInfo(settings.timezone)).date()
-            selected_date = request.app.state.query_service.latest_production_date(today)
+            selected_date = request.app.state.query_service.latest_production_date(
+                today, force=refresh
+            )
         if selected_date is None:
             return {
                 "success": True,
@@ -48,10 +51,10 @@ def get_equipment_report(
                 "request_id": request.state.request_id,
             }
 
-        bundle = request.app.state.query_service.fetch_report_data(
-            ReportFilter(report_date=selected_date)
+        equipment_data = request.app.state.query_service.fetch_equipment_data(
+            ReportFilter(report_date=selected_date), force=refresh
         )
-        records = sort_equipment_records(mock_energy(bundle.equipment_records))
+        records = sort_equipment_records(mock_energy(equipment_data.records))
     except SqlServerConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
@@ -64,7 +67,7 @@ def get_equipment_report(
             "report_date": selected_date.isoformat(),
             "records": to_primitive(records[: settings.report_max_detail_rows]),
             "summary": to_primitive(summarize_equipment(records, "mock")),
-            "data_updated_at": to_primitive(bundle.data_updated_at),
+            "data_updated_at": to_primitive(equipment_data.data_updated_at),
             "energy_notice": "气耗和电耗为系统生成的稳定模拟数据，仅用于联调，不可用于结算或考核。",
             "truncated": len(records) > settings.report_max_detail_rows,
         },

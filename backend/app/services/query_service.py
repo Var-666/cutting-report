@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from pathlib import Path
+from threading import Lock
+from time import monotonic
 from zoneinfo import ZoneInfo
 
 from app.config import Settings
@@ -17,6 +20,12 @@ from app.models.domain import (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class EquipmentQueryResult:
+    records: list[EquipmentRecord]
+    data_updated_at: datetime | None = None
+
+
 def _decimal(value: object) -> Decimal | None:
     if value is None or value == "":
         return None
@@ -29,6 +38,16 @@ class QueryService:
         self.client = SqlServerClient(settings)
         self.excel = ExcelTaskDataSource(settings.task_excel_path)
         self.query_dir = Path(__file__).resolve().parents[1] / "database" / "queries"
+        self._equipment_cache_lock = Lock()
+        self._equipment_cache: dict[
+            tuple[date, str | None, str | None],
+            tuple[float, float, EquipmentQueryResult],
+        ] = {}
+        self._equipment_query_locks: dict[
+            tuple[date, str | None, str | None], Lock
+        ] = {}
+        self._latest_date_lock = Lock()
+        self._latest_date_cache: dict[date, tuple[float, date | None]] = {}
 
     def fetch_report_data(self, filters: ReportFilter) -> QueryBundle:
         if self.settings.effective_data_source_mode == "excel":
@@ -36,6 +55,91 @@ class QueryService:
         if self.settings.effective_data_source_mode == "demo":
             return self._demo_data(filters)
         return self._sqlserver_data(filters)
+
+    def fetch_equipment_data(
+        self, filters: ReportFilter, *, force: bool = False
+    ) -> EquipmentQueryResult:
+        """Fetch only equipment rows and coalesce repeated per-day requests."""
+        cache_seconds = self.settings.report_data_cache_seconds
+        if cache_seconds <= 0:
+            return self._fetch_equipment_uncached(filters)
+
+        key = (filters.report_date, filters.project_code, filters.ship_no)
+        requested_at = monotonic()
+        with self._equipment_cache_lock:
+            cached = self._equipment_cache.get(key)
+            if not force and cached and cached[0] > requested_at:
+                return cached[2]
+            query_lock = self._equipment_query_locks.setdefault(key, Lock())
+
+        with query_lock:
+            now = monotonic()
+            with self._equipment_cache_lock:
+                cached = self._equipment_cache.get(key)
+                cache_is_fresh = cached and cached[0] > now
+                refreshed_after_request = cached and cached[1] >= requested_at
+                if (not force and cache_is_fresh) or refreshed_after_request:
+                    return cached[2]
+
+            result = self._fetch_equipment_uncached(filters)
+            created_at = monotonic()
+            with self._equipment_cache_lock:
+                self._equipment_cache[key] = (
+                    created_at + cache_seconds,
+                    created_at,
+                    result,
+                )
+            return result
+
+    def _fetch_equipment_uncached(self, filters: ReportFilter) -> EquipmentQueryResult:
+        if self.settings.effective_data_source_mode == "excel":
+            bundle = self._excel_data(filters)
+            return EquipmentQueryResult(bundle.equipment_records, bundle.data_updated_at)
+        if self.settings.effective_data_source_mode == "demo":
+            bundle = self._demo_data(filters)
+            return EquipmentQueryResult(bundle.equipment_records, bundle.data_updated_at)
+        return self._sqlserver_equipment_data(filters)
+
+    def _sqlserver_equipment_data(
+        self, filters: ReportFilter
+    ) -> EquipmentQueryResult:
+        timezone = ZoneInfo(self.settings.timezone)
+        start = datetime.combine(filters.report_date, time.min, tzinfo=timezone).replace(
+            tzinfo=None
+        )
+        end = start + timedelta(days=1)
+        parameters = (
+            start,
+            end,
+            filters.project_code,
+            filters.project_code,
+            filters.ship_no,
+            filters.ship_no,
+        )
+        rows = self.client.fetch_all(
+            self._read_query("equipment.sql"), parameters
+        )
+        records = [
+            EquipmentRecord(
+                task_id=str(row["task_id"]),
+                equipment_id=row.get("equipment_id"),
+                project_code=row.get("project_code"),
+                ship_no=row.get("ship_no"),
+                segment_name=row.get("segment_name"),
+                cut_length=_decimal(row.get("cut_length")),
+                work_time=_decimal(row.get("work_time")),
+                gas_consumption=_decimal(row.get("gas_consumption")),
+                electricity_consumption=_decimal(row.get("electricity_consumption")),
+                production_time=row.get("production_time"),
+                remark=row.get("remark"),
+            )
+            for row in rows
+        ]
+        latest_update = max(
+            (row.get("source_updated_at") for row in rows if row.get("source_updated_at")),
+            default=None,
+        )
+        return EquipmentQueryResult(records, latest_update)
 
     def list_projects(self, filters: ReportFilter) -> list[str]:
         if self.settings.effective_data_source_mode == "excel":
@@ -101,7 +205,23 @@ class QueryService:
         )
         return [str(row["project_name"]) for row in rows]
 
-    def latest_production_date(self, on_or_before: date) -> date | None:
+    def latest_production_date(
+        self, on_or_before: date, *, force: bool = False
+    ) -> date | None:
+        cache_seconds = self.settings.report_data_cache_seconds
+        if cache_seconds <= 0:
+            return self._latest_production_date_uncached(on_or_before)
+
+        now = monotonic()
+        with self._latest_date_lock:
+            cached = self._latest_date_cache.get(on_or_before)
+            if not force and cached and cached[0] > now:
+                return cached[1]
+            result = self._latest_production_date_uncached(on_or_before)
+            self._latest_date_cache[on_or_before] = (now + cache_seconds, result)
+            return result
+
+    def _latest_production_date_uncached(self, on_or_before: date) -> date | None:
         if self.settings.effective_data_source_mode == "excel":
             return self.excel.latest_completed_date(on_or_before)
         if self.settings.effective_data_source_mode == "demo":

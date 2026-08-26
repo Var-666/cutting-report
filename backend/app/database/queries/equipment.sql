@@ -23,6 +23,7 @@ SELECT
     CONVERT(decimal(18, 3), COALESCE(source.[OP_LENGTH_CUT], 0)) / 1000.0 AS cut_length,
     CONVERT(decimal(18, 3), COALESCE(source.[WORK_TIME], 0)) AS work_time,
     source.[START_TIME] AS production_time,
+    source.[END_TIME] AS source_updated_at,
     CAST(NULL AS decimal(18, 3)) AS gas_consumption,
     CAST(NULL AS decimal(18, 3)) AS electricity_consumption,
     NULLIF(LTRIM(RTRIM(source.[REMARK])), '') AS remark

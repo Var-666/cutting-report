@@ -64,6 +64,7 @@ class Settings:
     leadership_report_cache_seconds: int = _as_int(
         "LEADERSHIP_REPORT_CACHE_SECONDS", 300
     )
+    report_data_cache_seconds: int = _as_int("REPORT_DATA_CACHE_SECONDS", 300)
 
     # HR 工人库与生产任务库可以位于不同的 SQL Server 实例。
     # 专用地址、库名、账号或密码任意一项被配置后，该数据源就不再

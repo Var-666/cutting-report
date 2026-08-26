@@ -1,15 +1,15 @@
 @echo off
 setlocal
-cd /d "%~dp0"
+cd /d "%~dp0\..\.."
 
 if not exist ".venv\Scripts\python.exe" (
-  echo [ERROR] Application is not installed. Run install_windows.bat first.
+  echo [ERROR] Application is not installed. Run scripts\windows\install_windows.bat first.
   pause
   exit /b 1
 )
 
 if not exist ".env" (
-  echo [ERROR] .env does not exist. Run install_windows.bat and configure .env first.
+  echo [ERROR] .env does not exist. Run scripts\windows\install_windows.bat and configure .env first.
   pause
   exit /b 1
 )

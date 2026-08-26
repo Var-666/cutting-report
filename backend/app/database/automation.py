@@ -2,29 +2,24 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 from uuid import uuid4
 
+from app.database.sqlite import SQLiteDatabase, SQLiteRepository
 
-class AutomationRepository:
-    def __init__(self, database_path: Path) -> None:
-        self.database_path = database_path
 
-    @contextmanager
-    def connect(self) -> Iterator[sqlite3.Connection]:
-        connection = sqlite3.connect(self.database_path, timeout=30)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys=ON")
-        try:
-            yield connection
-            connection.commit()
-        finally:
-            connection.close()
+class AutomationRepository(SQLiteRepository):
+    def __init__(
+        self,
+        database: Path | SQLiteDatabase,
+        *,
+        connection: sqlite3.Connection | None = None,
+    ) -> None:
+        super().__init__(database, connection=connection)
 
     def initialize(self) -> None:
-        self.database_path.parent.mkdir(parents=True, exist_ok=True)
+        self.database.initialize()
         with self.connect() as connection:
             connection.executescript(
                 """
@@ -242,7 +237,7 @@ class AutomationRepository:
         run_id = f"run_{uuid4().hex[:18]}"
         try:
             with self.connect() as connection:
-                connection.execute("BEGIN IMMEDIATE")
+                self.begin_immediate(connection)
                 current = connection.execute(
                     "SELECT * FROM report_schedules WHERE schedule_id = ?",
                     (schedule["schedule_id"],),
@@ -304,16 +299,31 @@ class AutomationRepository:
         item["attach_report"] = bool(item["attach_report"])
         return item
 
+    def get_run_for_report(self, report_id: str) -> dict | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM scheduled_report_runs WHERE report_id = ?",
+                (report_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        item = dict(row)
+        item["recipients"] = json.loads(item.pop("recipients_json") or "[]")
+        item["attach_report"] = bool(item["attach_report"])
+        return item
+
     def attach_report(self, run_id: str, report_id: str, *, now: str) -> None:
         with self.connect() as connection:
-            connection.execute(
+            updated = connection.execute(
                 """
                 UPDATE scheduled_report_runs
                 SET report_id = ?, status = 'generating', updated_at = ?
-                WHERE run_id = ?
+                WHERE run_id = ? AND report_id IS NULL
                 """,
                 (report_id, now, run_id),
             )
+            if updated.rowcount != 1:
+                raise LookupError("自动化运行记录不存在或已经关联报表")
 
     def mark_run(self, run_id: str, status: str, *, now: str, error: str | None = None) -> None:
         with self.connect() as connection:
@@ -382,7 +392,7 @@ class AutomationRepository:
 
     def claim_delivery(self, now: str) -> dict | None:
         with self.connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
+            self.begin_immediate(connection)
             row = connection.execute(
                 """
                 SELECT d.*, r.schedule_name, r.report_type, r.report_date, r.attach_report,
