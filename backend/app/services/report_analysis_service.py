@@ -405,7 +405,9 @@ class ReportAnalysisService:
         report_date: str,
         records: list[EquipmentRecord],
         *,
-        energy_data_mode: str = "mock",
+        energy_data_mode: str = "unavailable",
+        energy_units: dict[str, str] | None = None,
+        energy_notice: str = "",
         comparison_records: list[EquipmentRecord] | None = None,
         comparison_date: str | None = None,
         year_ago_records: list[EquipmentRecord] | None = None,
@@ -415,8 +417,19 @@ class ReportAnalysisService:
         total_work = sum((row.work_time or Decimal("0") for row in records), Decimal("0"))
         total_gas = sum((row.gas_consumption or Decimal("0") for row in records), Decimal("0"))
         total_electricity = sum((row.electricity_consumption or Decimal("0") for row in records), Decimal("0"))
+        units = energy_units or ({"gas": "Nm³", "electricity": "kWh"} if energy_data_mode == "mock" else {"gas": "单位待确认", "electricity": "单位待确认"})
+        gas_count = sum(row.gas_consumption is not None for row in records)
+        electric_count = sum(row.electricity_consumption is not None for row in records)
+        gas_estimates = sum(row.gas_data_status == "interpolated" for row in records)
+        electric_estimates = sum(row.electricity_data_status == "interpolated" for row in records)
+
+        def energy_fact(total, count, unit, estimates):
+            if not count:
+                return "缺失（无有效读数，不视为零）"
+            suffix = "（模拟）" if energy_data_mode == "mock" else f"（已匹配 {count}/{len(records)} 项，其中 {estimates} 项插值估算；非全天总量）"
+            return f"{_number(total)} {unit}{suffix}"
         longest = max(records, key=lambda row: row.work_time or 0, default=None)
-        peak_electricity = max(records, key=lambda row: row.electricity_consumption or 0, default=None)
+        peak_electricity = max((row for row in records if row.electricity_consumption is not None), key=lambda row: row.electricity_consumption, default=None)
         projects = _project_distribution(records)
         anomalies = _work_time_outliers(records)
         previous_count = len(comparison_records) if comparison_records is not None else None
@@ -426,13 +439,13 @@ class ReportAnalysisService:
         facts = [
             _fact("F001", "任务总数", f"{len(records)} 项", f"设备日报[{report_date}].任务数"),
             _fact("F002", "总切割时长", _duration(total_work), f"设备日报[{report_date}].work_time 汇总"),
-            _fact("F003", "总气耗", f"{_number(total_gas)} Nm³" + ("（模拟）" if energy_data_mode == "mock" else ""), "设备日报.gas_consumption 汇总"),
-            _fact("F004", "总电耗", f"{_number(total_electricity)} kWh" + ("（模拟）" if energy_data_mode == "mock" else ""), "设备日报.electricity_consumption 汇总"),
+            _fact("F003", "已匹配任务气耗", energy_fact(total_gas, gas_count, units["gas"], gas_estimates), "设备日报.gas_consumption 非空记录汇总"),
+            _fact("F004", "已匹配任务电耗", energy_fact(total_electricity, electric_count, units["electricity"], electric_estimates), "设备日报.electricity_consumption 非空记录汇总"),
         ]
         if longest:
             facts.append(_fact("F005", "最长切割任务", f"{longest.production_time.strftime('%Y-%m-%d %H:%M') if longest.production_time else '--'}（{_duration(longest.work_time or 0)}）", "当日设备任务.work_time 最大值"))
         if peak_electricity:
-            facts.append(_fact("F006", "单任务最高电耗", f"{_number(peak_electricity.electricity_consumption or 0)}" + ("（模拟）" if energy_data_mode == "mock" else ""), "electricity_consumption 最大值"))
+            facts.append(_fact("F006", "已匹配任务最高电耗", f"{_number(peak_electricity.electricity_consumption)} {units['electricity']}" + ("（模拟）" if energy_data_mode == "mock" else "（仅有效记录，可能包含插值估算）"), "electricity_consumption 非空记录最大值"))
         if previous_count is not None:
             facts.append(_fact("F007", "对比日任务数", f"{previous_count} 项", f"设备日报[{comparison_date or '对比日'}].任务数"))
         if task_change is not None:
@@ -448,6 +461,9 @@ class ReportAnalysisService:
             "facts": facts,
             "report_date": report_date,
             "energy_data_mode": energy_data_mode,
+            "energy_coverage": {"gas": gas_count, "electricity": electric_count, "tasks": len(records)},
+            "energy_estimates": {"gas": gas_estimates, "electricity": electric_estimates},
+            "energy_notice": energy_notice,
             "comparisons": {
                 "comparison_date": comparison_date,
                 "task_change_percent": round(task_change, 2) if task_change is not None else None,
@@ -459,7 +475,7 @@ class ReportAnalysisService:
             "limitations": (
                 "气耗和电耗为模拟数据，不能用于能耗异常、设备故障、结算或考核判断。"
                 if energy_data_mode == "mock"
-                else "未提供设备额定参数、负载、停机和维修记录。"
+                else (energy_notice + " 缺失读数不等于零，部分记录汇总不代表设备全天总量；插值为估算，不能据此做结算或能耗异常判断。未提供设备额定参数、负载、停机和维修记录。")
             ),
         }
         return self._analyze(
@@ -482,14 +498,21 @@ class ReportAnalysisService:
         energy_note = (
             "气耗、电耗当前为模拟值，本次不进行能耗异常判定 [F003][F004]。"
             if context.get("energy_data_mode") == "mock"
-            else f"记录总气耗 {fact['F003']} [F003]、总电耗 {fact['F004']} [F004]。"
+            else f"已匹配任务气耗 {fact['F003']} [F003]、电耗 {fact['F004']} [F004]；不进行能耗异常判定。"
         )
+        mode = context.get("energy_data_mode")
+        energy_limit = ("能耗为模拟值" if mode == "mock" else "能耗尚无有效读数" if mode == "unavailable"
+                        else "能耗仅覆盖部分任务，缺失不等于零" if mode == "partial"
+                        else "已有计量数据，但缺少设备状态及能耗基准")
+        recommendation = ("接入真实电表、气表及设备状态数据" if mode == "mock"
+                          else "检查内网连接、仪表绑定和采样时间覆盖" if mode == "unavailable"
+                          else "复核缺失采样、重叠任务和插值估算，补充设备状态与能耗基准")
         return AnalysisResult(
             status="simulated",
             mode="simulated",
             overview=f"{context['report_date']} 的近期设备任务量变化为：{comparison_text}",
             features=f"同比和任务结构方面，{yoy_text}{project}{longest}{energy_note}",
-            alerts=(f"检出 {fact['F012']} [F012]；能耗为模拟值，不做能耗异常判定 [F003][F004]。" if context.get("anomalies") else f"未按 IQR 阈值检出工时异常（{fact['F012']}）[F012]；缺少真实计量和设备状态 [F003][F004]。"),
-            suggestions=("建议优先复核最长切割任务 [F005]，并接入真实电表、气表及设备状态数据后建立单位工时能耗基线。" if "F005" in fact else "建议接入真实电表、气表及设备状态数据后建立能耗基线 [F003][F004]。"),
+            alerts=(f"检出 {fact['F012']} [F012]；" if context.get("anomalies") else f"未按 IQR 阈值检出工时异常（{fact['F012']}）[F012]；") + f"{energy_limit}，不做能耗异常判定 [F003][F004]。",
+            suggestions=("建议优先复核最长切割任务 [F005]，并" if "F005" in fact else "建议") + recommendation + " [F003][F004]。",
             limitations=context["limitations"],
         )

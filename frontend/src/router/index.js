@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { loadSession, roleHome, session } from '../state/session'
+import { cuttingRoutes } from './cuttingRoutes'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -87,12 +88,7 @@ const router = createRouter({
         { path: 'database', redirect: '/admin/settings/database' },
         { path: 'designer', redirect: '/admin/settings/report-design' },
         { path: 'automation', redirect: '/admin/settings/automation' },
-        {
-          path: 'cutting-dispatch',
-          name: 'cutting-dispatch',
-          component: () => import('../views/CuttingDispatchView.vue'),
-          meta: { title: '切割文件派发' },
-        },
+        cuttingRoutes,
       ],
     },
     {

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -66,6 +66,40 @@ class Settings:
     )
     report_data_cache_seconds: int = _as_int("REPORT_DATA_CACHE_SECONDS", 300)
 
+    # 能管平台只读接入。仪表绑定、计量边界和单位必须由现场确认。
+    energy_api_enabled: bool = _as_bool("ENERGY_API_ENABLED", False)
+    energy_api_base_url: str = os.getenv("ENERGY_API_BASE_URL", "http://10.147.0.38:10091")
+    energy_api_username: str = os.getenv("ENERGY_API_USERNAME", "").strip()
+    energy_api_password: str = field(default=os.getenv("ENERGY_API_PASSWORD", ""), repr=False)
+    energy_api_timeout: float = _as_float("ENERGY_API_TIMEOUT_SECONDS", 10)
+    energy_cache_seconds: int = _as_int("ENERGY_CACHE_SECONDS", 60)
+    energy_equipment_ids: tuple[str, ...] = tuple(
+        value.strip() for value in os.getenv("ENERGY_EQUIPMENT_IDS", "").split(",") if value.strip()
+    )
+    energy_gas_parameter_id: str = os.getenv(
+        "ENERGY_GAS_PARAMETER_ID", "bd3179be-c587-f011-a2e9-000c2974f33c"
+    ).strip()
+    energy_electricity_parameter_ids: tuple[str, ...] = tuple(
+        value.strip() for value in os.getenv("ENERGY_ELECTRICITY_PARAMETER_IDS", "").split(",") if value.strip()
+    )
+    energy_gas_unit: str = os.getenv("ENERGY_GAS_UNIT", "Nm³").strip()
+    energy_electricity_unit: str = os.getenv("ENERGY_ELECTRICITY_UNIT", "").strip()
+    # 平台 Mv 已乘读数因子；以下仅用于经确认的单位转换，禁止再次乘 CT/PT。
+    energy_gas_factor: str = os.getenv("ENERGY_GAS_FACTOR", "1")
+    energy_electricity_factor: str = os.getenv("ENERGY_ELECTRICITY_FACTOR", "1")
+    energy_max_gap_seconds: int = _as_int("ENERGY_MAX_GAP_SECONDS", 300)
+    energy_allow_interpolation: bool = _as_bool("ENERGY_ALLOW_INTERPOLATION", True)
+
+    # 独立日/月能耗报表：按已确认的仪表组统计，不依赖 TASK/MACHINE_NO。
+    energy_report_electricity_parameter_ids: tuple[str, ...] = tuple(
+        value.strip() for value in os.getenv(
+            "ENERGY_REPORT_ELECTRICITY_PARAMETER_IDS",
+            "2b00e015-d987-f011-a2e9-000c2974f33c,98cbd135-d987-f011-a2e9-000c2974f33c,93fae152-d987-f011-a2e9-000c2974f33c",
+        ).split(",") if value.strip()
+    )
+    energy_report_max_gap_seconds: int = _as_int("ENERGY_REPORT_MAX_GAP_SECONDS", 1800)
+    energy_report_snapshot_ttl_seconds: int = _as_int("ENERGY_REPORT_SNAPSHOT_TTL_SECONDS", 3600)
+
     # HR 工人库与生产任务库可以位于不同的 SQL Server 实例。
     # 专用地址、库名、账号或密码任意一项被配置后，该数据源就不再
     # 混用生产库的连接字段；旧部署在完全未配置时仍可显式回退。
@@ -114,6 +148,24 @@ class Settings:
     file_sqlserver_query_timeout: int = _as_int(
         "FILE_SQLSERVER_QUERY_TIMEOUT_SECONDS", 15
     )
+    file_status_sent_value: str = os.getenv(
+        "FILE_STATUS_SENT_VALUE", "已派发"
+    ).strip()
+    file_status_failed_value: str = os.getenv(
+        "FILE_STATUS_FAILED_VALUE", "派发失败"
+    ).strip()
+    file_source_mode: str = os.getenv("FILE_SOURCE_MODE", "disabled").strip().lower()
+    file_source_local_root: str = os.getenv("FILE_SOURCE_LOCAL_ROOT", "").strip()
+    file_http_base_url: str = os.getenv("FILE_HTTP_BASE_URL", "http://10.147.0.17:8800").strip()
+    file_http_authorization: str = field(default=os.getenv("FILE_HTTP_AUTHORIZATION", ""), repr=False)
+    file_http_cookie: str = field(default=os.getenv("FILE_HTTP_COOKIE", ""), repr=False)
+    file_download_timeout: float = _as_float("FILE_DOWNLOAD_TIMEOUT_SECONDS", 60)
+    file_download_max_bytes: int = _as_int("FILE_DOWNLOAD_MAX_BYTES", 52428800)
+    file_server_host: str = os.getenv("FILE_SERVER_HOST", "10.147.0.33").strip()
+    file_server_physical_root: str = os.getenv(
+        "FILE_SERVER_PHYSICAL_ROOT", r"D:\File"
+    ).strip()
+    magic_box_enabled: bool = _as_bool("MAGIC_BOX_ENABLED", False)
 
     llm_enabled: bool = _as_bool("LLM_ENABLED", False)
     llm_api_key: str = os.getenv("LLM_API_KEY", "")
@@ -150,6 +202,10 @@ class Settings:
     @property
     def metadata_db_path(self) -> Path:
         return self.data_dir / "metadata.db"
+
+    @property
+    def cutting_downloads_dir(self) -> Path:
+        return self.data_dir / "cutting-downloads"
 
     @property
     def runtime_settings_env_path(self) -> Path:

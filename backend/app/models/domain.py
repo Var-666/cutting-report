@@ -56,6 +56,11 @@ class EquipmentRecord:
     electricity_consumption: Decimal | None
     production_time: datetime | None = None
     remark: str | None = None
+    production_end_time: datetime | None = None
+    gas_data_status: str = "missing"
+    electricity_data_status: str = "missing"
+    energy_note: str | None = None
+    energy_details: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)

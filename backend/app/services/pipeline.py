@@ -18,11 +18,8 @@ from app.models.domain import (
 )
 from app.services.chart_service import ChartService
 from app.services.custom_report_service import CustomReportService
-from app.services.equipment_service import (
-    mock_energy,
-    sort_equipment_records,
-    summarize_equipment,
-)
+from app.services.equipment_service import summarize_equipment
+from app.services.energy_service import EquipmentEnergyService
 from app.services.leadership_report_service import LeadershipReportService
 from app.services.query_service import QueryService
 from app.services.report_analysis_service import ReportAnalysisService
@@ -75,6 +72,7 @@ class ReportPipeline:
         )
         self.definitions.initialize()
         self.query_service = QueryService(settings)
+        self.energy_service = EquipmentEnergyService(settings)
         self.leadership_service = LeadershipReportService(settings)
         self.statistics_service = StatisticsService()
         self.chart_service = ChartService(settings.chart_top_n)
@@ -242,14 +240,21 @@ class ReportPipeline:
             bundle = self.query_service.fetch_report_data(filters)
 
         energy_data_mode = "unavailable"
+        energy_notice = ""
+        energy_units = {"gas": "单位待确认", "electricity": "单位待确认"}
         if report_type == "equipment":
+            context_records = None
+            if filters.project_code or filters.ship_no:
+                # Check overlaps against all tasks, including filtered-out projects.
+                context_records = self.query_service.fetch_equipment_data(
+                    ReportFilter(report_date=filters.report_date)
+                ).records
+            energy = self.energy_service.enrich(bundle.equipment_records, context_records=context_records)
             bundle = replace(
                 bundle,
-                equipment_records=sort_equipment_records(
-                    mock_energy(bundle.equipment_records)
-                ),
+                equipment_records=energy.records,
             )
-            energy_data_mode = "mock"
+            energy_data_mode, energy_notice, energy_units = energy.mode, energy.notice, energy.units
 
         self.metadata.update_status(report_id, "calculating", "正在计算统计指标")
         statistics = self.statistics_service.calculate(bundle.summary_records)
@@ -289,20 +294,20 @@ class ReportPipeline:
             previous_bundle = self.query_service.fetch_report_data(
                 ReportFilter(report_date=comparison_date)
             )
-            previous_equipment = sort_equipment_records(
-                mock_energy(previous_bundle.equipment_records)
-            )
+            # Comparisons currently concern task counts, not energy: don't make
+            # needless historical API calls or synthesize comparison energy.
+            previous_equipment = previous_bundle.equipment_records
             year_ago_date = _year_ago(filters.report_date)
             year_ago_bundle = self.query_service.fetch_report_data(
                 ReportFilter(report_date=year_ago_date)
             )
-            year_ago_equipment = sort_equipment_records(
-                mock_energy(year_ago_bundle.equipment_records)
-            )
+            year_ago_equipment = year_ago_bundle.equipment_records
             analysis = self.analysis_service.analyze_equipment(
                 filters.report_date.isoformat(),
                 bundle.equipment_records,
                 energy_data_mode=energy_data_mode,
+                energy_units=energy_units,
+                energy_notice=energy_notice,
                 comparison_records=previous_equipment,
                 comparison_date=comparison_date.isoformat(),
                 year_ago_records=year_ago_equipment,
@@ -320,9 +325,9 @@ class ReportPipeline:
             "units": {
                 "length": "米",
                 "work_time": "HH:mm:ss",
-                "gas": "Nm³（模拟）" if energy_data_mode == "mock" else "数据库原始单位",
-                "electricity": "kWh（模拟）" if energy_data_mode == "mock" else "数据库原始单位",
+                **energy_units,
             },
+            "energy_notice": energy_notice,
             "summary": to_primitive(statistics.summary),
             "equipment_summary": to_primitive(equipment_summary),
             "data_quality": to_primitive(statistics.data_quality),

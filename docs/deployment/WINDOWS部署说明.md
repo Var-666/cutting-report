@@ -2,6 +2,9 @@
 
 推荐在已经安装 Docker 的 Windows 内网机上使用 Docker 部署。这样 Node.js、Python 和 SQL Server ODBC 依赖都由镜像统一管理。部署包同时包含原生 Python 启动脚本，作为 Docker 不可用时的备用方案。
 
+2026-08-31 版已加入独立能耗日/月报。升级、能管配置和一键启动见项目根目录
+[`README-DOCKER.md`](../../README-DOCKER.md)，已有系统务必保留原 `.env` 和数据卷。
+
 ## 一、推荐方式：Docker 部署
 
 ### 1. 解压并配置
@@ -13,6 +16,8 @@ cd D:\CuttingReport
 Copy-Item .env.example .env
 notepad .env
 ```
+
+上面的复制命令仅用于首次部署；已有 `.env` 时只编辑，不要用模板覆盖它。
 
 至少修改以下配置：
 
@@ -96,6 +101,10 @@ http://Windows服务器IP:8000
 ```powershell
 docker compose restart app
 ```
+
+注意：上述 `restart` 只适用于界面保存到持久化卷中的 `data/settings.env`。
+若修改宿主机 `.env`（例如新增能管账号），执行 `docker compose up -d --force-recreate app`
+重新创建容器才能读取新环境变量；程序升级仍使用下面带 `--build` 的命令。
 
 停止服务：
 

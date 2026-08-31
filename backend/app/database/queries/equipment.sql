@@ -1,5 +1,5 @@
 /*
-  设备生产数据。气耗、电耗尚无可靠的任务/设备关联字段，因此明确返回 NULL。
+  设备生产数据。能耗由能管服务按 MACHINE_NO 和实际 START_TIME/END_TIME 补充。
   工程号和船号均按 PROJECT_NAME 原样映射。
   参数顺序：开始时间、结束时间、工程/船号、工程/船号、工程/船号、工程/船号。
 */
@@ -23,6 +23,7 @@ SELECT
     CONVERT(decimal(18, 3), COALESCE(source.[OP_LENGTH_CUT], 0)) / 1000.0 AS cut_length,
     CONVERT(decimal(18, 3), COALESCE(source.[WORK_TIME], 0)) AS work_time,
     source.[START_TIME] AS production_time,
+    source.[END_TIME] AS production_end_time,
     source.[END_TIME] AS source_updated_at,
     CAST(NULL AS decimal(18, 3)) AS gas_consumption,
     CAST(NULL AS decimal(18, 3)) AS electricity_consumption,

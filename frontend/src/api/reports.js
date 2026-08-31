@@ -173,6 +173,18 @@ export function getEquipmentReport(reportDate = '', { force = false } = {}) {
   return request(`/api/v1/equipment-report${suffix}`)
 }
 
+export function getEnergyDay(reportDate = '', { force = false, signal } = {}) {
+  const query = new URLSearchParams()
+  if (reportDate) query.set('report_date', reportDate)
+  if (force) query.set('refresh', 'true')
+  return request(`/api/v1/energy-report/day?${query}`, { signal })
+}
+
+export function getEnergyMonth(reportMonth, { signal } = {}) {
+  const query = new URLSearchParams({ report_month: reportMonth })
+  return request(`/api/v1/energy-report/month?${query}`, { signal })
+}
+
 export function analyzeReport({ reportType, reportDate, force = false }) {
   return request('/api/v1/analysis', {
     method: 'POST',
@@ -223,6 +235,81 @@ export function retryEmailDelivery(deliveryId) {
   return request(`/api/v1/automation/deliveries/${encodeURIComponent(deliveryId)}/retry`, {
     method: 'POST',
   })
+}
+
+export function getCuttingStatus() {
+  return request('/api/v1/cutting/status')
+}
+
+export function getConditionSchema(dataset) {
+  return request(`/api/v1/conditions/${encodeURIComponent(dataset)}/schema`)
+}
+
+export function searchCuttingFiles(filters, { page = 1, pageSize = 10 } = {}) {
+  return request('/api/v1/cutting/files/search', { method: 'POST', body: JSON.stringify({ filters, page, page_size: pageSize }) })
+}
+
+export function searchCuttingDownloads(filters, { page = 1, pageSize = 10 } = {}) {
+  return request('/api/v1/cutting/downloads/search', { method: 'POST', body: JSON.stringify({ filters, page, page_size: pageSize }) })
+}
+
+export function downloadCuttingFile(payload) {
+  return request('/api/v1/cutting/downloads', { method: 'POST', body: JSON.stringify(payload) })
+}
+
+export function listCuttingDownloads({ page = 1, pageSize = 10 } = {}) {
+  return request(`/api/v1/cutting/downloads?${new URLSearchParams({ page, page_size: pageSize })}`)
+}
+
+export async function saveCuttingDownload(downloadId, filename) {
+  const response = await fetch(`/api/v1/cutting/downloads/${encodeURIComponent(downloadId)}/file`, { credentials: 'same-origin' })
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null)
+    throw new Error(payload?.detail || '本地文件读取失败，请重新下载')
+  }
+  const url = URL.createObjectURL(await response.blob())
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = filename
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 60000)
+}
+
+export function listCuttingProjects(keyword = '') {
+  const query = new URLSearchParams({ limit: 100 })
+  if (keyword) query.set('keyword', keyword)
+  return request(`/api/v1/cutting/projects?${query}`)
+}
+
+export function listCuttingCatalogs(projectId) {
+  const query = new URLSearchParams({ project_id: projectId })
+  return request(`/api/v1/cutting/catalogs?${query}`)
+}
+
+export function listCuttingFiles({ projectId, catalogId = '', status = 'all', keyword = '', page = 1, pageSize = 10 }) {
+  const query = new URLSearchParams({
+    project_id: projectId,
+    status,
+    page,
+    page_size: pageSize,
+  })
+  if (catalogId) query.set('catalog_id', catalogId)
+  if (keyword) query.set('keyword', keyword)
+  return request(`/api/v1/cutting/files?${query}`)
+}
+
+export function createCuttingDispatch(payload) {
+  return request('/api/v1/cutting/dispatches', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function listCuttingDispatches({ page = 1, pageSize = 10 } = {}) {
+  const query = new URLSearchParams({ page, page_size: pageSize })
+  return request(`/api/v1/cutting/dispatches?${query}`)
 }
 
 export function testDatabaseConnection(connection) {

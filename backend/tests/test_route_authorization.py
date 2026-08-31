@@ -19,8 +19,11 @@ ADMIN_PREFIXES = (
     "/api/v1/designer",
     "/api/v1/leadership-report",
     "/api/v1/equipment-report",
+    "/api/v1/energy-report",
     "/api/v1/analysis",
     "/api/v1/automation",
+    "/api/v1/cutting",
+    "/api/v1/conditions",
 )
 
 
@@ -102,8 +105,12 @@ class _SessionStub:
         "/api/v1/designer/published-definitions",
         "/api/v1/leadership-report?report_month=2026-08",
         "/api/v1/equipment-report?report_date=2026-08-18",
+        "/api/v1/energy-report/day?report_date=2026-08-18",
+        "/api/v1/energy-report/month?report_month=2026-08",
         "/api/v1/options/projects?report_date=2026-08-18",
         "/api/v1/automation/status",
+        "/api/v1/cutting/status",
+        "/api/v1/conditions/cutting_files/schema",
         "/reports/not-found/view",
     ],
 )

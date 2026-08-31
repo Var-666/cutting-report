@@ -20,3 +20,6 @@ tmp
 *.md
 htmlcov
 .coverage
+packages
+.codex_tmp
+**/*.zip

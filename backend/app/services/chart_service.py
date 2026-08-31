@@ -108,7 +108,7 @@ class ChartService:
                     "name": "气耗",
                     "type": "bar",
                     "data": [
-                        float(item.gas_consumption or 0)
+                        float(item.gas_consumption) if item.gas_consumption is not None else None
                         for item in equipment_detail_records
                     ],
                     "itemStyle": {"color": "#6c8ebf"},
@@ -117,7 +117,7 @@ class ChartService:
                     "name": "电耗",
                     "type": "bar",
                     "data": [
-                        float(item.electricity_consumption or 0)
+                        float(item.electricity_consumption) if item.electricity_consumption is not None else None
                         for item in equipment_detail_records
                     ],
                     "itemStyle": {"color": "#d79b00"},

@@ -5,6 +5,7 @@ from types import TracebackType
 
 from app.database.automation import AutomationRepository
 from app.database.definitions import DefinitionRepository
+from app.database.dispatch import DispatchRepository
 from app.database.metadata import MetadataRepository
 from app.database.sqlite import SQLiteDatabase
 from app.database.workshop import WorkshopRepository
@@ -22,6 +23,7 @@ class UnitOfWork:
         self.workshop: WorkshopRepository
         self.automation: AutomationRepository
         self.definitions: DefinitionRepository
+        self.dispatches: DispatchRepository
 
     def __enter__(self) -> UnitOfWork:
         self._context = self.database.connect()
@@ -38,6 +40,9 @@ class UnitOfWork:
         )
         self.definitions = DefinitionRepository(
             self.database, self.timezone, connection=self.connection
+        )
+        self.dispatches = DispatchRepository(
+            self.database, connection=self.connection
         )
         return self
 

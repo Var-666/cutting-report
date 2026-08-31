@@ -42,6 +42,9 @@ def mock_energy(records: list[EquipmentRecord]) -> list[EquipmentRecord]:
                 row,
                 gas_consumption=gas,
                 electricity_consumption=electricity,
+                gas_data_status="mock",
+                electricity_data_status="mock",
+                energy_note="演示数据，不用于结算或考核",
             )
         )
     return mocked
@@ -50,27 +53,23 @@ def mock_energy(records: list[EquipmentRecord]) -> list[EquipmentRecord]:
 def summarize_equipment(
     records: list[EquipmentRecord], energy_data_mode: str = "unavailable"
 ) -> dict:
+    gas_values = [row.gas_consumption for row in records if row.gas_consumption is not None]
+    electricity_values = [row.electricity_consumption for row in records if row.electricity_consumption is not None]
     return {
         "task_count": len(records),
         "total_work_time": sum(
             (row.work_time for row in records if row.work_time is not None),
             Decimal("0"),
         ),
-        "total_gas_consumption": sum(
-            (
-                row.gas_consumption
-                for row in records
-                if row.gas_consumption is not None
-            ),
-            Decimal("0"),
-        ),
-        "total_electricity_consumption": sum(
-            (
-                row.electricity_consumption
-                for row in records
-                if row.electricity_consumption is not None
-            ),
-            Decimal("0"),
+        "total_gas_consumption": sum(gas_values, Decimal("0")) if gas_values else None,
+        "total_electricity_consumption": sum(electricity_values, Decimal("0")) if electricity_values else None,
+        "gas_record_count": len(gas_values),
+        "electricity_record_count": len(electricity_values),
+        "gas_missing_count": len(records) - len(gas_values),
+        "electricity_missing_count": len(records) - len(electricity_values),
+        "estimated_record_count": sum(
+            row.gas_data_status == "interpolated" or row.electricity_data_status == "interpolated"
+            for row in records
         ),
         "has_energy_data": any(
             row.gas_consumption is not None

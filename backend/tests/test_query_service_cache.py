@@ -98,6 +98,7 @@ def test_sqlserver_equipment_fetch_executes_only_equipment_query(
                 "cut_length": "10.125",
                 "work_time": "60",
                 "production_time": datetime(2026, 8, 25, 8, 0),
+                "production_end_time": updated_at,
                 "source_updated_at": updated_at,
                 "gas_consumption": None,
                 "electricity_consumption": None,
@@ -114,4 +115,5 @@ def test_sqlserver_equipment_fetch_executes_only_equipment_query(
     assert len(calls) == 1
     assert "MACHINE_NO" in calls[0]
     assert result.records[0].task_id == "task-1"
+    assert result.records[0].production_end_time == updated_at
     assert result.data_updated_at == updated_at

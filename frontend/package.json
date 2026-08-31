@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "test": "node --test tests/cutting-routes.test.mjs",
     "sync:echarts": "node scripts/sync-echarts.mjs",
     "build": "npm run sync:echarts && vite build",
     "preview": "vite preview"

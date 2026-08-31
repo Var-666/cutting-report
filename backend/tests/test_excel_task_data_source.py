@@ -155,6 +155,7 @@ def test_excel_task_status_and_daily_query(tmp_path) -> None:
     assert [row.task_id for row in bundle.summary_records] == ["101", "102"]
     assert bundle.workshop_records[0].project_code == "PJT-A"
     assert bundle.workshop_records[0].ship_no == "PJT-A"
+    assert bundle.equipment_records[0].production_end_time == datetime(2026, 8, 18, 9)
     assert source.list_projects() == ["PJT-A", "PJT-B"]
     assert source.latest_completed_date(date(2026, 8, 19)) == date(2026, 8, 18)
     assert source.latest_completed_date(date(2026, 8, 1)) == date(2026, 7, 31)

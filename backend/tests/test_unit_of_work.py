@@ -6,6 +6,7 @@ import pytest
 
 from app.database.automation import AutomationRepository
 from app.database.definitions import DefinitionRepository
+from app.database.dispatch import DispatchRepository
 from app.database.metadata import MetadataRepository
 from app.database.sqlite import SQLiteDatabase
 from app.database.unit_of_work import UnitOfWork
@@ -21,17 +22,19 @@ def _repositories(tmp_path: Path):
     workshop = WorkshopRepository(database)
     automation = AutomationRepository(database)
     definitions = DefinitionRepository(database)
+    dispatches = DispatchRepository(database)
     metadata.initialize()
     workshop.initialize()
     automation.initialize()
     definitions.initialize()
-    return database, metadata, workshop, automation, definitions
+    dispatches.initialize()
+    return database, metadata, workshop, automation, definitions, dispatches
 
 
 def test_every_repository_uses_the_same_connection_policy(tmp_path: Path) -> None:
-    database, metadata, workshop, automation, definitions = _repositories(tmp_path)
+    database, metadata, workshop, automation, definitions, dispatches = _repositories(tmp_path)
 
-    for repository in (metadata, workshop, automation, definitions):
+    for repository in (metadata, workshop, automation, definitions, dispatches):
         assert repository.database is database
         with repository.connect() as connection:
             assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
@@ -40,7 +43,7 @@ def test_every_repository_uses_the_same_connection_policy(tmp_path: Path) -> Non
 
 
 def test_cross_repository_unit_of_work_rolls_back_all_changes(tmp_path: Path) -> None:
-    database, metadata, workshop, automation, _definitions = _repositories(tmp_path)
+    database, metadata, workshop, automation, _definitions, _dispatches = _repositories(tmp_path)
     now = datetime(2026, 8, 25, 10, 0, tzinfo=TZ).isoformat(timespec="seconds")
     admin = workshop.create_user(
         username="admin",
@@ -102,7 +105,7 @@ def test_cross_repository_unit_of_work_rolls_back_all_changes(tmp_path: Path) ->
 def test_failed_cross_repository_link_does_not_leave_orphan_job(
     tmp_path: Path,
 ) -> None:
-    database, metadata, _workshop, _automation, _definitions = _repositories(tmp_path)
+    database, metadata, _workshop, _automation, _definitions, _dispatches = _repositories(tmp_path)
 
     with pytest.raises(LookupError):
         with UnitOfWork(database) as unit:

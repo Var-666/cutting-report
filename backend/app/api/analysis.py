@@ -10,7 +10,6 @@ from pydantic import BaseModel
 from app.api.auth import require_admin
 from app.database.sqlserver import SqlServerConfigurationError
 from app.models.domain import ReportFilter, to_primitive
-from app.services.equipment_service import mock_energy, sort_equipment_records
 
 
 logger = logging.getLogger(__name__)
@@ -75,25 +74,24 @@ def analyze_report(payload: AnalysisRequest, request: Request) -> dict:
             equipment_data = request.app.state.query_service.fetch_equipment_data(
                 ReportFilter(report_date=payload.report_date), force=payload.force
             )
-            records = sort_equipment_records(mock_energy(equipment_data.records))
+            energy = request.app.state.energy_service.enrich(equipment_data.records, force=payload.force)
+            records = energy.records
             comparison_day = payload.report_date - timedelta(days=1)
             previous_data = request.app.state.query_service.fetch_equipment_data(
                 ReportFilter(report_date=comparison_day), force=payload.force
             )
-            previous_records = sort_equipment_records(
-                mock_energy(previous_data.records)
-            )
+            previous_records = previous_data.records
             year_ago_day = _year_ago(payload.report_date)
             year_ago_data = request.app.state.query_service.fetch_equipment_data(
                 ReportFilter(report_date=year_ago_day), force=payload.force
             )
-            year_ago_records = sort_equipment_records(
-                mock_energy(year_ago_data.records)
-            )
+            year_ago_records = year_ago_data.records
             analysis = service.analyze_equipment(
                 report_date,
                 records,
-                energy_data_mode="mock",
+                energy_data_mode=energy.mode,
+                energy_units=energy.units,
+                energy_notice=energy.notice,
                 comparison_records=previous_records,
                 comparison_date=comparison_day.isoformat(),
                 year_ago_records=year_ago_records,

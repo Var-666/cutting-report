@@ -1,3 +1,9 @@
+{% macro energy_cell(row, kind) -%}
+{% set status = row[kind ~ '_data_status'] %}
+{% set value = row[kind ~ '_consumption'] %}
+<span title="{{ row.energy_note or '' }}">{{ '≈ ' if status == 'interpolated' else '' }}{{ value|number }}</span>
+{% if value is none %}<small class="energy-label">{{ {'missing':'缺边界','gap':'采样断点','counter_reset':'回零/倒退','invalid_reading':'无效读数','unconfigured':'待配置','unmapped':'未绑定','invalid_interval':'时间异常','overlap':'时间重叠','unavailable':'不可用'}.get(status, '缺失') }}</small>{% endif %}
+{%- endmacro %}
 <!doctype html>
 <html lang="zh-CN">
 <head>
@@ -7,6 +13,7 @@
   <style>
     :root { color-scheme:light; --ink:#172234; --muted:#667085; --line:#dfe5ec; --blue:#165d93; --paper:#fff; --bg:#eef2f6; --danger:#b42318; }
     * { box-sizing:border-box; }
+    .energy-label { display:block; color:#667085; font-size:10px; }
     body { margin:0; color:var(--ink); background:var(--bg); font:14px/1.55 "Microsoft YaHei","PingFang SC",Arial,sans-serif; }
     .page { width:min(1380px,calc(100% - 32px)); margin:24px auto; background:var(--paper); box-shadow:0 8px 30px rgba(20,40,70,.08); }
     header { padding:32px 38px 24px; color:#fff; background:linear-gradient(120deg,#123d61,#1769aa 62%,#2586bd); }
@@ -177,10 +184,11 @@
     <section class="metrics">
       <div class="metric"><small>任务数量</small><strong>{{ report.equipment_summary.task_count }}</strong><small>项</small></div>
       <div class="metric"><small>切割时长</small><strong>{{ report.equipment_summary.total_work_time|duration }}</strong><small>HH:mm:ss</small></div>
-      <div class="metric"><small>总气耗</small><strong>{{ report.equipment_summary.total_gas_consumption|number if report.equipment_summary.has_energy_data else '--' }}</strong><small>{{ report.units.gas if report.equipment_summary.has_energy_data else '' }}</small></div>
-      <div class="metric"><small>总电耗</small><strong>{{ report.equipment_summary.total_electricity_consumption|number if report.equipment_summary.has_energy_data else '--' }}</strong><small>{{ report.units.electricity if report.equipment_summary.has_energy_data else '' }}</small></div>
+      <div class="metric"><small>任务气耗合计</small><strong>{{ report.equipment_summary.total_gas_consumption|number }}</strong><small>{{ report.units.gas }} · 已匹配 {{ report.equipment_summary.gas_record_count }}/{{ report.equipment_summary.task_count }} 项</small></div>
+      <div class="metric"><small>任务电耗合计</small><strong>{{ report.equipment_summary.total_electricity_consumption|number }}</strong><small>{{ report.units.electricity }} · 已匹配 {{ report.equipment_summary.electricity_record_count }}/{{ report.equipment_summary.task_count }} 项</small></div>
     </section>
     <h2>二、设备生产明细与图表</h2>
+    <div class="notice">{{ report.energy_notice }} “≈”表示边界插值估算，共 {{ report.equipment_summary.estimated_record_count }} 项；缺失不等于零。</div>
     <div class="data-chart-grid equipment-grid">
       <div class="chart-stack">
         {% if report.equipment_records %}<div id="equipment-detail-chart" class="chart"></div>{% else %}<div class="empty">当前条件下暂无设备生产数据。</div>{% endif %}
@@ -188,8 +196,8 @@
       </div>
       <div class="table-wrap">
       {% if report.equipment_records %}<table class="screen-only"><colgroup><col style="width:5%"><col style="width:11%"><col style="width:11%"><col style="width:10%"><col style="width:16%"><col style="width:12%"><col style="width:10%"><col style="width:10%"><col style="width:15%"></colgroup><thead><tr><th>序号</th><th>工程号</th><th>船号</th><th>分段名</th><th>开始时间</th><th>切割时长</th><th>气耗</th><th>电耗</th><th>备注</th></tr></thead>
-      <tbody>{% for row in report.equipment_records %}<tr><td>{{ loop.index }}</td><td>{{ row.project_code or '--' }}</td><td>{{ row.ship_no or '--' }}</td><td>{{ row.segment_name or '--' }}</td><td>{{ row.production_time[:16]|replace('T',' ') if row.production_time else '--' }}</td><td>{{ row.work_time|duration }}</td><td>{{ row.gas_consumption|number }}</td><td>{{ row.electricity_consumption|number }}</td><td>{{ row.remark or '--' }}</td></tr>{% endfor %}</tbody></table>
-      <div class="print-only">{% for chunk in report.equipment_records|batch(14) %}{% set chunk_index = loop.index0 %}<section class="print-table-page"><table class="print-table-chunk"><colgroup><col style="width:5%"><col style="width:11%"><col style="width:11%"><col style="width:10%"><col style="width:16%"><col style="width:12%"><col style="width:10%"><col style="width:10%"><col style="width:15%"></colgroup><thead><tr><th>序号</th><th>工程号</th><th>船号</th><th>分段名</th><th>开始时间</th><th>切割时长</th><th>气耗</th><th>电耗</th><th>备注</th></tr></thead><tbody>{% for row in chunk %}<tr><td>{{ chunk_index * 14 + loop.index }}</td><td>{{ row.project_code or '--' }}</td><td>{{ row.ship_no or '--' }}</td><td>{{ row.segment_name or '--' }}</td><td>{{ row.production_time[:16]|replace('T',' ') if row.production_time else '--' }}</td><td>{{ row.work_time|duration }}</td><td>{{ row.gas_consumption|number }}</td><td>{{ row.electricity_consumption|number }}</td><td>{{ row.remark or '--' }}</td></tr>{% endfor %}</tbody></table></section>{% endfor %}</div>
+      <tbody>{% for row in report.equipment_records %}<tr><td>{{ loop.index }}</td><td>{{ row.project_code or '--' }}</td><td>{{ row.ship_no or '--' }}</td><td>{{ row.segment_name or '--' }}</td><td>{{ row.production_time[:16]|replace('T',' ') if row.production_time else '--' }}</td><td>{{ row.work_time|duration }}</td><td>{{ energy_cell(row, 'gas') }}</td><td>{{ energy_cell(row, 'electricity') }}</td><td>{{ row.remark or '--' }}</td></tr>{% endfor %}</tbody></table>
+      <div class="print-only">{% for chunk in report.equipment_records|batch(14) %}{% set chunk_index = loop.index0 %}<section class="print-table-page"><table class="print-table-chunk"><colgroup><col style="width:5%"><col style="width:11%"><col style="width:11%"><col style="width:10%"><col style="width:16%"><col style="width:12%"><col style="width:10%"><col style="width:10%"><col style="width:15%"></colgroup><thead><tr><th>序号</th><th>工程号</th><th>船号</th><th>分段名</th><th>开始时间</th><th>切割时长</th><th>气耗</th><th>电耗</th><th>备注</th></tr></thead><tbody>{% for row in chunk %}<tr><td>{{ chunk_index * 14 + loop.index }}</td><td>{{ row.project_code or '--' }}</td><td>{{ row.ship_no or '--' }}</td><td>{{ row.segment_name or '--' }}</td><td>{{ row.production_time[:16]|replace('T',' ') if row.production_time else '--' }}</td><td>{{ row.work_time|duration }}</td><td>{{ energy_cell(row, 'gas') }}</td><td>{{ energy_cell(row, 'electricity') }}</td><td>{{ row.remark or '--' }}</td></tr>{% endfor %}</tbody></table></section>{% endfor %}</div>
       {% else %}<div class="empty">当前条件下暂无设备生产数据。</div>{% endif %}
       </div>
     </div>

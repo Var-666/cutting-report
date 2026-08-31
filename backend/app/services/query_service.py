@@ -131,6 +131,7 @@ class QueryService:
                 gas_consumption=_decimal(row.get("gas_consumption")),
                 electricity_consumption=_decimal(row.get("electricity_consumption")),
                 production_time=row.get("production_time"),
+                production_end_time=row.get("production_end_time"),
                 remark=row.get("remark"),
             )
             for row in rows
@@ -311,6 +312,7 @@ class QueryService:
                 gas_consumption=None,
                 electricity_consumption=None,
                 production_time=row["production_time"],
+                production_end_time=row["source_updated_at"],
                 remark=row["remark"],
             )
             for row in normalized
@@ -390,6 +392,7 @@ class QueryService:
                 gas_consumption=_decimal(row.get("gas_consumption")),
                 electricity_consumption=_decimal(row.get("electricity_consumption")),
                 production_time=row.get("production_time"),
+                production_end_time=row.get("production_end_time"),
                 remark=row.get("remark"),
             )
             for row in equipment_rows

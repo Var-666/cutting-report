@@ -11,8 +11,6 @@ from app.config import settings
 from app.database.sqlserver import SqlServerConfigurationError
 from app.models.domain import ReportFilter, to_primitive
 from app.services.equipment_service import (
-    mock_energy,
-    sort_equipment_records,
     summarize_equipment,
 )
 
@@ -34,6 +32,7 @@ def get_equipment_report(
     try:
         selected_date = report_date
         if selected_date is None:
+            energy = request.app.state.energy_service.enrich([])
             today = datetime.now(ZoneInfo(settings.timezone)).date()
             selected_date = request.app.state.query_service.latest_production_date(
                 today, force=refresh
@@ -44,9 +43,10 @@ def get_equipment_report(
                 "data": {
                     "report_date": None,
                     "records": [],
-                    "summary": summarize_equipment([], "mock"),
+                    "summary": summarize_equipment([], energy.mode),
                     "data_updated_at": None,
-                    "energy_notice": "气耗和电耗为模拟数据，仅用于联调。",
+                    "energy_notice": energy.notice,
+                    "units": energy.units,
                 },
                 "request_id": request.state.request_id,
             }
@@ -54,7 +54,8 @@ def get_equipment_report(
         equipment_data = request.app.state.query_service.fetch_equipment_data(
             ReportFilter(report_date=selected_date), force=refresh
         )
-        records = sort_equipment_records(mock_energy(equipment_data.records))
+        energy = request.app.state.energy_service.enrich(equipment_data.records, force=refresh)
+        records = energy.records
     except SqlServerConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
@@ -66,9 +67,10 @@ def get_equipment_report(
         "data": {
             "report_date": selected_date.isoformat(),
             "records": to_primitive(records[: settings.report_max_detail_rows]),
-            "summary": to_primitive(summarize_equipment(records, "mock")),
+            "summary": to_primitive(summarize_equipment(records, energy.mode)),
             "data_updated_at": to_primitive(equipment_data.data_updated_at),
-            "energy_notice": "气耗和电耗为系统生成的稳定模拟数据，仅用于联调，不可用于结算或考核。",
+            "energy_notice": energy.notice,
+            "units": energy.units,
             "truncated": len(records) > settings.report_max_detail_rows,
         },
         "request_id": request.state.request_id,

@@ -25,18 +25,21 @@ const records = computed(() => report.value?.records || [])
 const summary = computed(() => report.value?.summary || {
   task_count: 0,
   total_work_time: 0,
-  total_gas_consumption: 0,
-  total_electricity_consumption: 0,
+  total_gas_consumption: null,
+  total_electricity_consumption: null,
 })
+const units = computed(() => report.value?.units || { gas: '单位待确认', electricity: '单位待确认' })
 const pageCount = computed(() => Math.max(1, Math.ceil(records.value.length / pageSize)))
 const pageRows = computed(() => records.value.slice((page.value - 1) * pageSize, page.value * pageSize))
 
 function roundNumber(value, digits = 3) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return null
   const factor = 10 ** digits
   return Math.round((Number(value || 0) + Number.EPSILON) * factor) / factor
 }
 
 function formatNumber(value, digits = 3) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return '--'
   return new Intl.NumberFormat('zh-CN', {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
@@ -108,15 +111,15 @@ function renderChart() {
       axisLabel: { hideOverlap: true },
     },
     yAxis: [
-      { type: 'value', name: '气耗 Nm³' },
-      { type: 'value', name: '电耗 kWh' },
+      { type: 'value', name: `气耗 ${units.value.gas}` },
+      { type: 'value', name: `电耗 ${units.value.electricity}` },
     ],
     series: [
       {
         name: '气耗',
         type: 'bar',
         data: rows.map((row) => roundNumber(row.gas_consumption)),
-        tooltip: { valueFormatter: (value) => `${formatNumber(value)} Nm³` },
+        tooltip: { valueFormatter: (value) => `${formatNumber(value)} ${units.value.gas}` },
         itemStyle: { color: '#56a3a6' },
       },
       {
@@ -125,7 +128,7 @@ function renderChart() {
         yAxisIndex: 1,
         smooth: true,
         data: rows.map((row) => roundNumber(row.electricity_consumption)),
-        tooltip: { valueFormatter: (value) => `${formatNumber(value)} kWh` },
+        tooltip: { valueFormatter: (value) => `${formatNumber(value)} ${units.value.electricity}` },
         itemStyle: { color: '#e58e26' },
       },
     ].map(applyChartType),
@@ -188,14 +191,16 @@ watch(chartType, async () => {
   <section class="equipment-kpis" aria-label="设备日报汇总">
     <article><span>任务数量</span><strong>{{ summary.task_count }}</strong><small>项</small></article>
     <article><span>切割时长</span><strong>{{ formatDuration(summary.total_work_time) }}</strong><small>HH:mm:ss</small></article>
-    <article><span>总气耗</span><strong>{{ formatNumber(summary.total_gas_consumption, 2) }}</strong><small>Nm³ · 模拟</small></article>
-    <article><span>总电耗</span><strong>{{ formatNumber(summary.total_electricity_consumption, 2) }}</strong><small>kWh · 模拟</small></article>
+    <article><span>任务气耗合计</span><strong>{{ formatNumber(summary.total_gas_consumption, 2) }}</strong><small>{{ units.gas }} · 已匹配 {{ summary.gas_record_count || 0 }}/{{ summary.task_count }} 项</small></article>
+    <article><span>任务电耗合计</span><strong>{{ formatNumber(summary.total_electricity_consumption, 2) }}</strong><small>{{ units.electricity }} · 已匹配 {{ summary.electricity_record_count || 0 }}/{{ summary.task_count }} 项</small></article>
   </section>
+
+  <p class="report-source-note">{{ report?.energy_notice || '尚未读取能耗数据。' }} 鼠标悬停能耗单元格可查看状态。{{ summary.estimated_record_count ? `其中 ${summary.estimated_record_count} 项包含边界插值估算。` : '' }}</p>
 
   <section class="panel equipment-panel">
     <div class="panel-title">
       <div><span>01</span><h2>设备生产明细与能耗图</h2></div>
-      <p>{{ report?.energy_notice || '气耗和电耗暂为模拟数据' }}</p>
+      <p>{{ loading ? '正在读取任务和能耗数据…' : (report?.summary?.energy_data_mode === 'mock' ? '演示模式：模拟能耗' : report?.summary?.energy_data_mode === 'unavailable' ? '能耗尚无有效读数，详见下方原因' : '仪表累计读数差值；缺失显示 --，估算显示 ≈') }}</p>
     </div>
     <div class="equipment-split">
       <div ref="chartElement" class="equipment-chart" aria-label="设备能耗图"></div>
@@ -215,8 +220,8 @@ watch(chartType, async () => {
                 <td :title="row.segment_name || ''">{{ row.segment_name || '--' }}</td>
                 <td>{{ formatDateTime(row.production_time) }}</td>
                 <td class="duration-cell">{{ formatDuration(row.work_time) }}</td>
-                <td>{{ formatNumber(row.gas_consumption) }}</td>
-                <td>{{ formatNumber(row.electricity_consumption) }}</td>
+                <td :title="row.energy_note || ''">{{ row.gas_data_status === 'interpolated' ? '≈ ' : '' }}{{ formatNumber(row.gas_consumption) }}</td>
+                <td :title="row.energy_note || ''">{{ row.electricity_data_status === 'interpolated' ? '≈ ' : '' }}{{ formatNumber(row.electricity_consumption) }}</td>
                 <td :title="row.remark || ''">{{ row.remark || '--' }}</td>
               </tr>
               <tr v-if="!loading && !pageRows.length"><td colspan="9" class="table-empty">所选日期暂无设备任务</td></tr>
@@ -235,8 +240,8 @@ watch(chartType, async () => {
     report-type="equipment"
     :report-date="reportDate"
     :ready="Boolean(report?.report_date)"
-    :context-version="`${summary.task_count}-${summary.total_work_time}-${summary.total_electricity_consumption}`"
+    :context-version="`${summary.task_count}-${summary.total_work_time}-${summary.total_gas_consumption}-${summary.total_electricity_consumption}-${summary.energy_data_mode}-${summary.gas_record_count}-${summary.electricity_record_count}-${summary.estimated_record_count}-${report?.energy_notice}`"
   />
 
-  <p class="report-source-note">数据按开始时间从早到晚排列；气耗、电耗为稳定模拟值，真实能耗表接入后再替换。</p>
+  <p v-if="report?.truncated" class="report-source-note">明细受展示条数上限限制，汇总包含全部已查询任务。</p>
 </template>

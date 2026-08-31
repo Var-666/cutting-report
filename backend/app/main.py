@@ -12,9 +12,13 @@ from fastapi.staticfiles import StaticFiles
 from app.api.database import router as database_router
 from app.api.analysis import router as analysis_router
 from app.api.automation import router as automation_router
+from app.api.cutting import router as cutting_router
+from app.api.downloads import router as downloads_router
+from app.api.conditions import router as conditions_router
 from app.api.auth import router as auth_router
 from app.api.designer import router as designer_router
 from app.api.equipment import router as equipment_router
+from app.api.energy import router as energy_router
 from app.api.leadership import router as leadership_router
 from app.api.options import router as options_router
 from app.api.reports import router as reports_router
@@ -24,6 +28,10 @@ from app.config import settings
 from app.database.metadata import MetadataRepository
 from app.database.automation import AutomationRepository
 from app.database.definitions import DefinitionRepository
+from app.database.dispatch import DispatchRepository
+from app.database.downloads import DownloadRepository
+from app.database.energy import EnergyReportRepository
+from app.database.pdm import MockPdmRepository, SqlServerPdmRepository
 from app.database.workshop import WorkshopRepository
 from app.database.sqlite import SQLiteDatabase
 from app.services.pipeline import ReportPipeline
@@ -32,7 +40,11 @@ from app.services.query_service import QueryService
 from app.services.report_analysis_service import ReportAnalysisService
 from app.services.worker_auth_service import WorkerAuthService
 from app.services.automation_service import AutomationService
+from app.services.cutting_dispatch_service import CuttingDispatchService
 from app.services.email_service import EmailService
+from app.services.file_source import build_file_source
+from app.services.file_download_service import FileDownloadService
+from app.services.energy_period_service import EnergyPeriodService
 from app.workers.report_worker import ReportWorker
 
 
@@ -55,6 +67,8 @@ async def lifespan(app: FastAPI):
     automation.initialize()
     definitions = DefinitionRepository(database, settings.timezone)
     definitions.initialize()
+    dispatches = DispatchRepository(database)
+    dispatches.initialize()
     pipeline = ReportPipeline(settings, metadata, definitions)
     email_service = EmailService(settings)
     automation_service = AutomationService(
@@ -71,9 +85,31 @@ async def lifespan(app: FastAPI):
     app.state.automation_service = automation_service
     app.state.email_service = email_service
     app.state.query_service = QueryService(settings)
+    # Page, analysis and export share the same auth/readings cache.
+    app.state.energy_service = pipeline.energy_service
+    energy_reports = EnergyReportRepository(database)
+    energy_reports.initialize()
+    app.state.energy_period_service = EnergyPeriodService(settings, energy_reports, client=pipeline.energy_service.client)
     app.state.worker_auth = WorkerAuthService(settings)
     app.state.leadership_report_service = LeadershipReportService(settings)
     app.state.report_analysis_service = ReportAnalysisService(settings, metadata)
+    pdm = (
+        SqlServerPdmRepository(settings)
+        if settings.file_database_enabled
+        else MockPdmRepository()
+    )
+    app.state.dispatches = dispatches
+    file_source = build_file_source(settings)
+    downloads = DownloadRepository(database)
+    downloads.initialize()
+    app.state.file_downloads = FileDownloadService(settings, downloads, pdm, file_source)
+    downloads.recover_interrupted(app.state.file_downloads.now())
+    app.state.cutting_dispatch = CuttingDispatchService(
+        settings,
+        pdm,
+        dispatches,
+        file_source,
+    )
     app.state.worker = worker
     worker.start()
     try:
@@ -128,9 +164,13 @@ app.include_router(database_router)
 app.include_router(designer_router)
 app.include_router(leadership_router)
 app.include_router(equipment_router)
+app.include_router(energy_router)
 app.include_router(workshop_router)
 app.include_router(analysis_router)
 app.include_router(automation_router)
+app.include_router(cutting_router)
+app.include_router(downloads_router)
+app.include_router(conditions_router)
 app.include_router(view_router)
 
 

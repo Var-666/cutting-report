@@ -16,6 +16,7 @@ tmp/
 .DS_Store
 .idea/
 .vscode/
+.codex_tmp/
 *.xlsx
 *.pdf
 *.zip
