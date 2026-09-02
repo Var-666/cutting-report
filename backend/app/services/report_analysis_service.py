@@ -422,6 +422,24 @@ class ReportAnalysisService:
         electric_count = sum(row.electricity_consumption is not None for row in records)
         gas_estimates = sum(row.gas_data_status == "interpolated" for row in records)
         electric_estimates = sum(row.electricity_data_status == "interpolated" for row in records)
+        overlap_count = sum(
+            "overlap" in {row.gas_data_status, row.electricity_data_status}
+            for row in records
+        )
+        invalid_interval_count = sum(
+            "invalid_interval" in {row.gas_data_status, row.electricity_data_status}
+            for row in records
+        )
+        sampling_issue_statuses = {
+            "missing", "gap", "counter_reset", "invalid_reading", "unavailable"
+        }
+        sampling_issue_count = sum(
+            bool(
+                {row.gas_data_status, row.electricity_data_status}
+                & sampling_issue_statuses
+            )
+            for row in records
+        )
 
         def energy_fact(total, count, unit, estimates):
             if not count:
@@ -457,12 +475,22 @@ class ReportAnalysisService:
         if projects:
             facts.append(_fact("F011", "任务最多工程", f"{projects[0]['project_name']}（{projects[0]['task_count']} 项）", "当日工程分布.task_count 最大值"))
         facts.append(_fact("F012", "工时异常任务", f"{len(anomalies)} 项", "work_time > Q3 + 1.5×IQR"))
+        facts.extend([
+            _fact("F013", "计量区间重叠任务", f"{overlap_count} 项", "任务能耗结果.overlap 状态计数"),
+            _fact("F014", "采样或读数缺口任务", f"{sampling_issue_count} 项", "任务能耗结果.missing/gap/counter_reset/invalid_reading/unavailable 状态计数"),
+            _fact("F015", "起止时间异常任务", f"{invalid_interval_count} 项", "任务能耗结果.invalid_interval 状态计数"),
+        ])
         context = {
             "facts": facts,
             "report_date": report_date,
             "energy_data_mode": energy_data_mode,
             "energy_coverage": {"gas": gas_count, "electricity": electric_count, "tasks": len(records)},
             "energy_estimates": {"gas": gas_estimates, "electricity": electric_estimates},
+            "energy_quality": {
+                "overlap": overlap_count,
+                "sampling_issue": sampling_issue_count,
+                "invalid_interval": invalid_interval_count,
+            },
             "energy_notice": energy_notice,
             "comparisons": {
                 "comparison_date": comparison_date,
@@ -500,19 +528,25 @@ class ReportAnalysisService:
             if context.get("energy_data_mode") == "mock"
             else f"已匹配任务气耗 {fact['F003']} [F003]、电耗 {fact['F004']} [F004]；不进行能耗异常判定。"
         )
+        quality = context.get("energy_quality") or {}
+        quality_alert = (
+            f"计量区间重叠 {quality.get('overlap', 0)} 项 [F013]，"
+            f"采样或读数缺口 {quality.get('sampling_issue', 0)} 项 [F014]，"
+            f"起止时间异常 {quality.get('invalid_interval', 0)} 项 [F015]。"
+        )
         mode = context.get("energy_data_mode")
         energy_limit = ("能耗为模拟值" if mode == "mock" else "能耗尚无有效读数" if mode == "unavailable"
                         else "能耗仅覆盖部分任务，缺失不等于零" if mode == "partial"
                         else "已有计量数据，但缺少设备状态及能耗基准")
         recommendation = ("接入真实电表、气表及设备状态数据" if mode == "mock"
-                          else "检查内网连接、仪表绑定和采样时间覆盖" if mode == "unavailable"
+                          else "检查内网连接、仪表参数编号和采样时间覆盖" if mode == "unavailable"
                           else "复核缺失采样、重叠任务和插值估算，补充设备状态与能耗基准")
         return AnalysisResult(
             status="simulated",
             mode="simulated",
             overview=f"{context['report_date']} 的近期设备任务量变化为：{comparison_text}",
             features=f"同比和任务结构方面，{yoy_text}{project}{longest}{energy_note}",
-            alerts=(f"检出 {fact['F012']} [F012]；" if context.get("anomalies") else f"未按 IQR 阈值检出工时异常（{fact['F012']}）[F012]；") + f"{energy_limit}，不做能耗异常判定 [F003][F004]。",
+            alerts=(f"检出 {fact['F012']} [F012]；" if context.get("anomalies") else f"未按 IQR 阈值检出工时异常（{fact['F012']}）[F012]；") + quality_alert + f"{energy_limit}，不做能耗异常判定 [F003][F004]。",
             suggestions=("建议优先复核最长切割任务 [F005]，并" if "F005" in fact else "建议") + recommendation + " [F003][F004]。",
             limitations=context["limitations"],
         )

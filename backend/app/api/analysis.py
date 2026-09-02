@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from app.api.auth import require_admin
 from app.database.sqlserver import SqlServerConfigurationError
 from app.models.domain import ReportFilter, to_primitive
+from app.services.energy_period_service import restore_task_energy_records
 
 
 logger = logging.getLogger(__name__)
@@ -74,8 +75,15 @@ def analyze_report(payload: AnalysisRequest, request: Request) -> dict:
             equipment_data = request.app.state.query_service.fetch_equipment_data(
                 ReportFilter(report_date=payload.report_date), force=payload.force
             )
-            energy = request.app.state.energy_service.enrich(equipment_data.records, force=payload.force)
-            records = energy.records
+            task_report = request.app.state.energy_period_service.get_task_day(
+                payload.report_date,
+                equipment_data.records,
+                force=payload.force,
+            )
+            records = restore_task_energy_records(
+                equipment_data.records,
+                task_report,
+            )
             comparison_day = payload.report_date - timedelta(days=1)
             previous_data = request.app.state.query_service.fetch_equipment_data(
                 ReportFilter(report_date=comparison_day), force=payload.force
@@ -89,9 +97,11 @@ def analyze_report(payload: AnalysisRequest, request: Request) -> dict:
             analysis = service.analyze_equipment(
                 report_date,
                 records,
-                energy_data_mode=energy.mode,
-                energy_units=energy.units,
-                energy_notice=energy.notice,
+                energy_data_mode=(
+                    task_report["summary"].get("energy_data_mode") or "unavailable"
+                ),
+                energy_units=task_report["units"],
+                energy_notice=task_report.get("energy_notice") or "",
                 comparison_records=previous_records,
                 comparison_date=comparison_day.isoformat(),
                 year_ago_records=year_ago_records,

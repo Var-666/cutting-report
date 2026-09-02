@@ -35,10 +35,13 @@ def download_filename(document_no, version, relative_path):
     extension = PurePosixPath(original).suffix
     if not re.fullmatch(r"\.[A-Za-z0-9]{1,12}", extension):
         extension = ".bin"
-    title = str(document_no or original)
-    if title.lower().endswith(extension.lower()):
-        title = title[:-len(extension)]
-    return f"{safe_component(title)}_版本-{safe_component(version or '未标注', 30)}{extension}"
+    # PDM DocumentNo is the user-facing file name. Keep it unchanged except for
+    # Windows-safe normalization; only recover the physical file extension when
+    # DocumentNo itself has none. Versions remain metadata, not part of the name.
+    title = safe_component(document_no or original, 110)
+    if re.fullmatch(r"\.[A-Za-z0-9]{1,12}", PurePosixPath(title).suffix):
+        return title
+    return f"{title}{extension}"
 
 
 class FileDownloadService:
@@ -156,6 +159,30 @@ class FileDownloadService:
                 pass
             finally:
                 self._slots.release()
+
+    def get_or_download(self, *, document_id, version_id, file_path, user):
+        """Reuse a verified exact-version file, otherwise create a new download."""
+        try:
+            normalized = normalize_relative_path(file_path)
+        except ValueError as exc:
+            raise DownloadError(str(exc)) from None
+        existing = self.repository.find_latest(document_id, version_id, normalized)
+        if existing is not None:
+            try:
+                item, path = self.local_file(existing["download_id"])
+                return self.public(item), path
+            except DownloadError:
+                # Keep history immutable and replace an invalid local copy with a
+                # new UUID download instead of silently uploading stale bytes.
+                pass
+        item = self.download(
+            document_id=document_id,
+            version_id=version_id,
+            file_path=normalized,
+            user=user,
+        )
+        _stored, path = self.local_file(item["download_id"])
+        return item, path
 
     def local_file(self, download_id):
         item = self.repository.get(download_id)

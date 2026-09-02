@@ -83,7 +83,7 @@ class Settings:
         value.strip() for value in os.getenv("ENERGY_ELECTRICITY_PARAMETER_IDS", "").split(",") if value.strip()
     )
     energy_gas_unit: str = os.getenv("ENERGY_GAS_UNIT", "Nm³").strip()
-    energy_electricity_unit: str = os.getenv("ENERGY_ELECTRICITY_UNIT", "").strip()
+    energy_electricity_unit: str = os.getenv("ENERGY_ELECTRICITY_UNIT", "kWh").strip()
     # 平台 Mv 已乘读数因子；以下仅用于经确认的单位转换，禁止再次乘 CT/PT。
     energy_gas_factor: str = os.getenv("ENERGY_GAS_FACTOR", "1")
     energy_electricity_factor: str = os.getenv("ENERGY_ELECTRICITY_FACTOR", "1")
@@ -166,6 +166,10 @@ class Settings:
         "FILE_SERVER_PHYSICAL_ROOT", r"D:\File"
     ).strip()
     magic_box_enabled: bool = _as_bool("MAGIC_BOX_ENABLED", False)
+    magic_box_timeout: float = _as_float("MAGIC_BOX_TIMEOUT_SECONDS", 60)
+    magic_box_config_cache_seconds: int = _as_int(
+        "MAGIC_BOX_CONFIG_CACHE_SECONDS", 60
+    )
 
     llm_enabled: bool = _as_bool("LLM_ENABLED", False)
     llm_api_key: str = os.getenv("LLM_API_KEY", "")

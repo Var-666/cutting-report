@@ -16,7 +16,7 @@ from app.services.pipeline import ReportPipeline
     [
         ("leadership", "切割生产领导月报", "leadership-daily-chart"),
         ("workshop", "切割生产车间日报", "length-chart"),
-        ("equipment", "切割生产设备日报", "equipment-detail-chart"),
+        ("equipment", "切割生产设备报表", "equipment-detail-chart"),
     ],
 )
 def test_demo_pipeline_generates_offline_report(
@@ -109,10 +109,15 @@ def test_demo_pipeline_generates_offline_report(
         assert "时间" in html
         assert "人" in html
     if report_type == "equipment":
-        assert "开始时间" in html
+        assert "任务开始" in html
+        assert "任务结束" not in html
+        assert "数据状态" not in html
         assert "气耗" in html
         assert "电耗" in html
-        assert "稳定模拟数据" in html
+        assert "月度每日能耗汇总" in html
+        assert "equipment-month-chart" in html
+        assert "≈" not in html
+        assert "稳定模拟数据" not in html
         assert "CUT-01" not in html
         assert "设备数量" not in html
         assert "切割长度</small>" not in html

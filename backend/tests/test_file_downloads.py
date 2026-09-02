@@ -123,7 +123,8 @@ def test_names_and_separate_downloads_persist_without_overwrite(tmp_path):
     service, payload = make_service(tmp_path)
     first = service.download(**payload, user=ADMIN)
     second = service.download(**payload, user=ADMIN)
-    assert first["filename"].endswith(".GEN") and "版本-" in first["filename"]
+    assert first["filename"] == "f7e50f62-d508-430e-8309-8bf309568095.GEN"
+    assert "版本-" not in first["filename"]
     assert first["filename"] == second["filename"]
     assert first["download_id"] != second["download_id"]
     assert first["sha256"] == second["sha256"] and first["size"] == 9
@@ -136,7 +137,8 @@ def test_names_and_separate_downloads_persist_without_overwrite(tmp_path):
 
 
 def test_filename_sanitizes_windows_names_and_limits_utf8():
-    assert download_filename("板件A.GEN", "A.2", "Root/a.gen") == "板件A_版本-A.2.gen"
+    assert download_filename("板件A.GEN", "A.2", "Root/a.gen") == "板件A.GEN"
+    assert download_filename("CMYZ0136-PEBC231S-AT01", "V", "Root/source.pdf") == "CMYZ0136-PEBC231S-AT01.pdf"
     assert download_filename("CON", "1", "Root/a.gen").startswith("_CON")
     name = download_filename("文件" * 100 + ".gen", "版本" * 100, "Root/a.gen")
     assert len(name.encode()) <= 240
@@ -173,6 +175,9 @@ def test_strict_version_mapping_query():
     assert "f.VersionID = a.VersionID OR (f.VersionID IS NULL AND a.VersionID IS NULL)" in SqlServerPdmRepository.FILE_FROM
     assert "COUNT(*) OVER ()" in SqlServerPdmRepository.FILE_FROM
     assert "CASE WHEN f.VersionID" not in SqlServerPdmRepository.FILE_FROM
+    assert "f.FileName" in SqlServerPdmRepository.FILE_FROM
+    assert "f.VersionCode" in SqlServerPdmRepository.FILE_FROM
+    assert "c.ClassificationType AS classification_type" in SqlServerPdmRepository.FILE_COLUMNS
 
 
 def test_missing_or_modified_local_file_not_served(tmp_path):

@@ -5,6 +5,7 @@ import pytest
 
 from app.config import settings
 from app.database.dispatch import DispatchRepository
+from app.database.downloads import DownloadRepository
 from app.database.pdm import MockPdmRepository
 from app.database.sqlite import SQLiteDatabase
 from app.database.workshop import WorkshopRepository
@@ -12,12 +13,14 @@ from app.services.cutting_dispatch_service import (
     CuttingDispatchService,
     DuplicateDispatchError,
 )
+from app.services.file_download_service import FileDownloadService
 from app.services.file_source import (
     DisabledFileSource,
     LocalFileSource,
     MockFileSource,
     normalize_relative_path,
 )
+from app.services.magic_box_service import MagicBoxConfig, MagicBoxError
 
 
 def _service(tmp_path: Path, file_source=None):
@@ -161,3 +164,154 @@ def test_enabled_mock_source_creates_ready_task_and_state_transition(tmp_path: P
         )
         is None
     )
+
+
+class FixedMagicConfig:
+    config = MagicBoxConfig(
+        gateway="http://magic.internal:8080",
+        token="token",
+        secret="secret",
+        machine_ips=("10.1.133.197",),
+    )
+
+    def get(self):
+        return self.config
+
+    def public_status(self):
+        return {
+            "configured": True,
+            "gateway": self.config.gateway,
+            "machine_ips": list(self.config.machine_ips),
+            "message": "ok",
+        }
+
+
+class RecordingMagicClient:
+    def __init__(self, *, fail_assign=False):
+        self.fail_assign = fail_assign
+        self.uploads = []
+        self.assignments = []
+
+    def sync_time(self):
+        return {"box_time": "2026-09-01T08:00:00", "offset_seconds": 0}
+
+    def list_machines(self):
+        return []
+
+    def upload_task(self, **kwargs):
+        self.uploads.append(kwargs)
+        return "magic-uuid-1"
+
+    def assign_task(self, **kwargs):
+        self.assignments.append(kwargs)
+        if self.fail_assign:
+            raise MagicBoxError("指派失败")
+
+    def cancel_assignment(self, **kwargs):
+        return None
+
+
+class TestHttpFileSource(MockFileSource):
+    mode = "http"
+
+
+def _push_service(tmp_path: Path, client: RecordingMagicClient):
+    cfg = replace(settings, project_root=tmp_path, magic_box_enabled=True)
+    database = SQLiteDatabase(tmp_path / "metadata.db")
+    workshop = WorkshopRepository(database)
+    workshop.initialize()
+    dispatches = DispatchRepository(database)
+    dispatches.initialize()
+    download_repository = DownloadRepository(database)
+    download_repository.initialize()
+    pdm = MockPdmRepository()
+    pdm.mode = "sqlserver"
+    source = TestHttpFileSource()
+    downloads = FileDownloadService(cfg, download_repository, pdm, source)
+    admin = workshop.create_user(
+        username="push-admin",
+        display_name="推送管理员",
+        password="correct-horse-battery-staple",
+        role="admin",
+        now="2026-09-01T08:00:00+08:00",
+    )
+    service = CuttingDispatchService(
+        cfg, pdm, dispatches, source, downloads, FixedMagicConfig(), lambda _: client
+    )
+    return service, dispatches, admin
+
+
+def test_real_push_uses_uploaded_file_name_as_task_name(tmp_path: Path):
+    client = RecordingMagicClient()
+    service, dispatches, admin = _push_service(tmp_path, client)
+    draft = service.create_dispatch(
+        document_id="F1A0796D-7118-4E37-8F69-B6D917BD6456",
+        machine_ip="10.1.133.197",
+        material="AH36",
+        thickness=12,
+        quantity=2,
+        user=admin,
+    )
+
+    sent = service.execute_dispatch(draft["dispatch_id"], user=admin)
+
+    assert sent["status"] == "sent"
+    assert sent["remote_task_id"] == "magic-uuid-1"
+    assert client.uploads[0]["task_name"] == client.uploads[0]["file_path"].name
+    assert client.uploads[0]["task_name"].endswith(".GEN")
+    assert client.assignments == [{
+        "task_identifier": draft["task_identifier"],
+        "machine_ip": "10.1.133.197",
+    }]
+    stored = dispatches.get(draft["dispatch_id"])
+    assert stored["stage"] == "complete" and stored["attempt_count"] == 1
+
+
+def test_push_can_start_from_selected_download_without_file_search(tmp_path: Path):
+    client = RecordingMagicClient()
+    service, _dispatches, admin = _push_service(tmp_path, client)
+    raw = service.pdm.get_file("F1A0796D-7118-4E37-8F69-B6D917BD6456")
+    downloaded = service.downloads.download(
+        document_id=raw["document_id"],
+        version_id=raw["version_id"],
+        file_path=raw["file_path"],
+        user=admin,
+    )
+
+    draft = service.create_dispatch(
+        document_id=None,
+        download_id=downloaded["download_id"],
+        machine_ip="10.1.133.197",
+        material="AH36",
+        thickness=10,
+        quantity=1,
+        user=admin,
+    )
+    sent = service.execute_dispatch(draft["dispatch_id"], user=admin)
+
+    assert draft["status"] == "downloaded"
+    assert sent["status"] == "sent"
+    assert client.uploads[0]["task_name"] == downloaded["filename"]
+
+
+def test_assign_retry_does_not_upload_file_twice(tmp_path: Path):
+    client = RecordingMagicClient(fail_assign=True)
+    service, dispatches, admin = _push_service(tmp_path, client)
+    draft = service.create_dispatch(
+        document_id="F1A0796D-7118-4E37-8F69-B6D917BD6456",
+        machine_ip="10.1.133.197",
+        material=None,
+        thickness=None,
+        quantity=1,
+        user=admin,
+    )
+    with pytest.raises(MagicBoxError):
+        service.execute_dispatch(draft["dispatch_id"], user=admin)
+    assert dispatches.get(draft["dispatch_id"])["stage"] == "assign_failed"
+
+    client.fail_assign = False
+    sent = service.execute_dispatch(draft["dispatch_id"], user=admin)
+
+    assert sent["status"] == "sent"
+    assert len(client.uploads) == 1
+    assert len(client.assignments) == 2

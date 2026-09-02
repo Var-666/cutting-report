@@ -79,7 +79,7 @@ class ReportService:
         prefix = {
             "leadership": "领导月报",
             "workshop": "车间日报",
-            "equipment": "设备日报",
+            "equipment": "设备报表",
             "custom": report["meta"]["title"],
         }[report_type]
         prefix = "".join(char for char in prefix if char not in '\\/:*?"<>|')[:50] or "自定义报表"

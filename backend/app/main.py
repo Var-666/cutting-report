@@ -30,7 +30,6 @@ from app.database.automation import AutomationRepository
 from app.database.definitions import DefinitionRepository
 from app.database.dispatch import DispatchRepository
 from app.database.downloads import DownloadRepository
-from app.database.energy import EnergyReportRepository
 from app.database.pdm import MockPdmRepository, SqlServerPdmRepository
 from app.database.workshop import WorkshopRepository
 from app.database.sqlite import SQLiteDatabase
@@ -44,7 +43,7 @@ from app.services.cutting_dispatch_service import CuttingDispatchService
 from app.services.email_service import EmailService
 from app.services.file_source import build_file_source
 from app.services.file_download_service import FileDownloadService
-from app.services.energy_period_service import EnergyPeriodService
+from app.services.magic_box_service import MagicBoxConfigProvider
 from app.workers.report_worker import ReportWorker
 
 
@@ -87,9 +86,7 @@ async def lifespan(app: FastAPI):
     app.state.query_service = QueryService(settings)
     # Page, analysis and export share the same auth/readings cache.
     app.state.energy_service = pipeline.energy_service
-    energy_reports = EnergyReportRepository(database)
-    energy_reports.initialize()
-    app.state.energy_period_service = EnergyPeriodService(settings, energy_reports, client=pipeline.energy_service.client)
+    app.state.energy_period_service = pipeline.energy_period_service
     app.state.worker_auth = WorkerAuthService(settings)
     app.state.leadership_report_service = LeadershipReportService(settings)
     app.state.report_analysis_service = ReportAnalysisService(settings, metadata)
@@ -102,14 +99,19 @@ async def lifespan(app: FastAPI):
     file_source = build_file_source(settings)
     downloads = DownloadRepository(database)
     downloads.initialize()
-    app.state.file_downloads = FileDownloadService(settings, downloads, pdm, file_source)
-    downloads.recover_interrupted(app.state.file_downloads.now())
+    file_downloads = FileDownloadService(settings, downloads, pdm, file_source)
+    app.state.file_downloads = file_downloads
+    downloads.recover_interrupted(file_downloads.now())
+    magic_config = MagicBoxConfigProvider(settings)
     app.state.cutting_dispatch = CuttingDispatchService(
         settings,
         pdm,
         dispatches,
         file_source,
+        file_downloads,
+        magic_config,
     )
+    dispatches.recover_interrupted(app.state.cutting_dispatch._now())
     app.state.worker = worker
     worker.start()
     try:

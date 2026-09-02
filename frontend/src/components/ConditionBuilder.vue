@@ -11,6 +11,15 @@ const fieldFor = (rule) => props.schema?.fields.find((field) => field.key === ru
 const listOperator = (operator) => ['in', 'not_in'].includes(operator)
 const emptyOperator = (operator) => ['is_empty', 'not_empty'].includes(operator)
 const inputType = (field) => field?.type === 'number' ? 'number' : field?.type === 'date' ? 'date' : 'text'
+function groupedFields() {
+  const groups = new Map()
+  for (const field of props.schema?.fields || []) {
+    const name = field.group || '其他'
+    if (!groups.has(name)) groups.set(name, [])
+    groups.get(name).push(field)
+  }
+  return Array.from(groups, ([name, fields]) => ({ name, fields }))
+}
 
 function replaceRules(rules) { emit('update:modelValue', { ...props.modelValue, rules }) }
 function patchRule(index, patch) { replaceRules(props.modelValue.rules.map((rule, position) => position === index ? { ...rule, ...patch } : rule)) }
@@ -49,7 +58,7 @@ function updateChoices(index, event) { patchRule(index, { value: Array.from(even
     <p v-else-if="!modelValue.rules.length" class="condition-empty">{{ schema.requires_filter ? '请添加至少一条条件后查询，不会自动加载全部文件。' : '未添加条件时，分页显示本地记录。' }}</p>
     <div v-for="(rule, index) in modelValue.rules" :key="index" class="condition-row">
       <span class="condition-index">{{ index + 1 }}</span>
-      <label><span>字段</span><select :value="rule.field" :aria-label="`${schema.label}条件${index + 1}字段`" required @change="changeField(index, $event.target.value)"><option v-for="field in schema.fields" :key="field.key" :value="field.key">{{ field.label }}</option></select></label>
+      <label><span>字段</span><select :value="rule.field" :aria-label="`${schema.label}条件${index + 1}字段`" required @change="changeField(index, $event.target.value)"><optgroup v-for="group in groupedFields()" :key="group.name" :label="group.name"><option v-for="field in group.fields" :key="field.key" :value="field.key">{{ field.label }}</option></optgroup></select></label>
       <label><span>比较方式</span><select :value="rule.operator" :aria-label="`${schema.label}条件${index + 1}比较方式`" required @change="changeOperator(index, $event.target.value)"><option v-for="operator in fieldFor(rule)?.operators || []" :key="operator.value" :value="operator.value">{{ operator.label }}</option></select></label>
       <div class="condition-value">
         <span v-if="emptyOperator(rule.operator)" class="condition-no-value">不需要填写条件值</span>
@@ -64,7 +73,7 @@ function updateChoices(index, event) { patchRule(index, { value: Array.from(even
       <button type="button" :aria-label="`删除${schema.label}条件${index + 1}`" @click="replaceRules(modelValue.rules.filter((_, position) => position !== index))">删除</button>
       <small v-if="fieldFor(rule)?.hint" class="condition-hint">{{ fieldFor(rule).hint }}</small>
     </div>
-    <small v-if="schema" class="condition-note">条件数量可增减，最多 {{ schema.max_rules }} 条；多个值最多 {{ schema.max_values }} 个。日期区间含起止日期，文件大小按字节填写。</small>
+    <small v-if="schema" class="condition-note">条件数量可增减，最多 {{ schema.max_rules }} 条；多个值最多 {{ schema.max_values }} 个。日期区间含起止日期。<span v-if="schema.dataset === 'cutting_downloads'">文件大小按字节填写。</span></small>
   </fieldset>
 </template>
 

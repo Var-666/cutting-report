@@ -180,6 +180,13 @@ export function getEnergyDay(reportDate = '', { force = false, signal } = {}) {
   return request(`/api/v1/energy-report/day?${query}`, { signal })
 }
 
+export function getTaskEnergyDay(reportDate = '', { force = false, signal } = {}) {
+  const query = new URLSearchParams()
+  if (reportDate) query.set('report_date', reportDate)
+  if (force) query.set('refresh', 'true')
+  return request(`/api/v1/energy-report/tasks?${query}`, { signal })
+}
+
 export function getEnergyMonth(reportMonth, { signal } = {}) {
   const query = new URLSearchParams({ report_month: reportMonth })
   return request(`/api/v1/energy-report/month?${query}`, { signal })
@@ -310,6 +317,22 @@ export function createCuttingDispatch(payload) {
 export function listCuttingDispatches({ page = 1, pageSize = 10 } = {}) {
   const query = new URLSearchParams({ page, page_size: pageSize })
   return request(`/api/v1/cutting/dispatches?${query}`)
+}
+
+export function listCuttingMachines() {
+  return request('/api/v1/cutting/machines')
+}
+
+export function executeCuttingDispatch(dispatchId) {
+  return request(`/api/v1/cutting/dispatches/${encodeURIComponent(dispatchId)}/execute`, {
+    method: 'POST',
+  })
+}
+
+export function cancelCuttingDispatch(dispatchId) {
+  return request(`/api/v1/cutting/dispatches/${encodeURIComponent(dispatchId)}/cancel`, {
+    method: 'POST',
+  })
 }
 
 export function testDatabaseConnection(connection) {

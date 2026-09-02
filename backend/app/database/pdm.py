@@ -41,16 +41,35 @@ class SqlServerPdmRepository:
         p.ShipNo AS ship_no,
         a.FileID AS catalog_id,
         c.Title AS catalog_title,
+        c.ParentID AS catalog_parent_id,
+        c.Type AS catalog_type,
+        c.ClassificationType AS classification_type,
         a.VersionID AS version_id,
         v.Version AS version,
         a.DocumentNo AS document_no,
+        a.DocumentCName AS document_cname,
+        a.DocumentEName AS document_ename,
+        a.DocumentState AS document_state,
         a.PBSInfo AS pbs_info,
         a.Operator AS operator,
         a.OperatorJobNo AS operator_job_no,
         a.OperateTime AS operate_time,
         a.Custom1 AS operation_type,
+        a.Custom2 AS downloaded_by,
+        a.Custom3 AS downloaded_by_job_no,
+        a.Custom4 AS downloaded_at,
+        a.Custom5 AS downloaded_version,
         a.Custom6 AS custom6,
+        physical.physical_file_id,
+        physical.physical_version_id,
         physical.VersionNo AS physical_version_no,
+        physical.FileType AS physical_file_type,
+        physical.FileName AS physical_file_name,
+        physical.FileDate AS physical_file_date,
+        physical.FileOperator AS physical_file_operator,
+        physical.FileOperatorJobNo AS physical_file_operator_job_no,
+        physical.PageSize AS physical_page_size,
+        physical.VersionCode AS physical_version_code,
         physical.physical_file_count,
         physical.FilePath AS file_path
     """
@@ -62,13 +81,22 @@ class SqlServerPdmRepository:
         LEFT JOIN dbo.JDDR_PDM_NCDocumentVersion_Data AS v ON a.VersionID = v.ID
         OUTER APPLY (
             SELECT TOP (1)
+                f.ID AS physical_file_id,
+                f.VersionID AS physical_version_id,
                 f.VersionNo,
+                f.FileType,
+                f.FileName,
+                f.FileDate,
+                f.FileOperator,
+                f.FileOperatorJobNo,
+                f.PageSize,
+                f.VersionCode,
                 COUNT(*) OVER () AS physical_file_count,
                 f.FilePath
             FROM dbo.PDM_DocumentFileInfo AS f
             WHERE f.DocumentID = a.ID
               AND (f.VersionID = a.VersionID OR (f.VersionID IS NULL AND a.VersionID IS NULL))
-            ORDER BY f.VersionNo DESC, f.FilePath
+            ORDER BY f.VersionNo DESC, f.FilePath, f.ID
         ) AS physical
     """
 
@@ -315,6 +343,33 @@ class MockPdmRepository:
                 "file_path": "CMYZ0188\\MOCK\\failed-sample.GEN",
             },
         ]
+        catalogs = {item["catalog_id"]: item for item in self.catalogs}
+        for item in self.files:
+            catalog = catalogs[item["catalog_id"]]
+            item.update(
+                {
+                    "catalog_parent_id": catalog.get("parent_id"),
+                    "catalog_type": catalog.get("catalog_type"),
+                    "classification_type": "NC",
+                    "document_cname": item["document_no"],
+                    "document_ename": None,
+                    "document_state": "生效",
+                    "downloaded_by": None,
+                    "downloaded_by_job_no": None,
+                    "downloaded_at": None,
+                    "downloaded_version": None,
+                    "physical_file_id": "PHY-" + item["document_id"],
+                    "physical_version_id": item["version_id"],
+                    "physical_file_type": "GEN",
+                    "physical_file_name": item["file_path"].replace("\\", "/").rsplit("/", 1)[-1],
+                    "physical_file_date": item["operate_time"],
+                    "physical_file_operator": item["operator"],
+                    "physical_file_operator_job_no": item["operator_job_no"],
+                    "physical_page_size": None,
+                    "physical_version_code": item["version"],
+                    "physical_file_count": 1,
+                }
+            )
 
     def list_projects(self, keyword: str = "", limit: int = 100) -> list[dict[str, Any]]:
         cleaned = keyword.strip().lower()

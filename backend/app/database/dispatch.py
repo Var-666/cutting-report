@@ -82,6 +82,37 @@ class DispatchRepository(SQLiteRepository):
                     ON cutting_dispatches(document_id, version_id, machine_ip);
                 """
             )
+            existing = {
+                row[1]
+                for row in connection.execute(
+                    "PRAGMA table_info(cutting_dispatches)"
+                ).fetchall()
+            }
+            migrations = {
+                "task_identifier": "ALTER TABLE cutting_dispatches ADD COLUMN task_identifier TEXT",
+                "download_id": "ALTER TABLE cutting_dispatches ADD COLUMN download_id TEXT",
+                "file_size": "ALTER TABLE cutting_dispatches ADD COLUMN file_size INTEGER",
+                "file_sha256": "ALTER TABLE cutting_dispatches ADD COLUMN file_sha256 TEXT",
+                "stage": "ALTER TABLE cutting_dispatches ADD COLUMN stage TEXT",
+                "attempt_count": "ALTER TABLE cutting_dispatches ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0",
+                "attempted_at": "ALTER TABLE cutting_dispatches ADD COLUMN attempted_at TEXT",
+            }
+            for column, statement in migrations.items():
+                if column not in existing:
+                    connection.execute(statement)
+            connection.execute(
+                """
+                UPDATE cutting_dispatches
+                SET task_identifier = COALESCE(task_identifier, dispatch_id),
+                    stage = COALESCE(stage,
+                        CASE status
+                            WHEN 'sent' THEN 'complete'
+                            WHEN 'downloaded' THEN 'file_ready'
+                            WHEN 'cancelled' THEN 'cancelled'
+                            ELSE 'created'
+                        END)
+                """
+            )
             connection.execute("PRAGMA optimize")
 
     @staticmethod
@@ -102,8 +133,9 @@ class DispatchRepository(SQLiteRepository):
                     catalog_id, catalog_title, version_id, version, document_no,
                     relative_path, machine_ip, material, thickness, quantity,
                     status, source_mode, is_simulation, created_by_id,
-                    created_by_name, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    created_by_name, created_at, updated_at, task_identifier,
+                    stage, attempt_count, download_id, file_size, file_sha256
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     dispatch_id,
@@ -127,6 +159,12 @@ class DispatchRepository(SQLiteRepository):
                     user["display_name"],
                     now,
                     now,
+                    dispatch_id,
+                    data.get("stage", "created"),
+                    0,
+                    data.get("download_id"),
+                    data.get("file_size"),
+                    data.get("file_sha256"),
                 ),
             )
         item = self.get(dispatch_id)
@@ -188,6 +226,11 @@ class DispatchRepository(SQLiteRepository):
         now: str,
         last_error: str | None = None,
         remote_task_id: str | None = None,
+        stage: str | None = None,
+        download_id: str | None = None,
+        file_size: int | None = None,
+        file_sha256: str | None = None,
+        increment_attempt: bool = False,
     ) -> dict[str, Any] | None:
         if status not in DISPATCH_STATUSES:
             raise ValueError("不支持的派发状态")
@@ -204,6 +247,12 @@ class DispatchRepository(SQLiteRepository):
                 UPDATE cutting_dispatches
                 SET status = ?, updated_at = ?, last_error = ?,
                     remote_task_id = COALESCE(?, remote_task_id),
+                    stage = COALESCE(?, stage),
+                    download_id = COALESCE(?, download_id),
+                    file_size = COALESCE(?, file_size),
+                    file_sha256 = COALESCE(?, file_sha256),
+                    attempt_count = attempt_count + ?,
+                    attempted_at = CASE WHEN ? = 1 THEN ? ELSE attempted_at END,
                     downloaded_at = COALESCE(?, downloaded_at),
                     sent_at = COALESCE(?, sent_at)
                 WHERE dispatch_id = ? AND status IN ({placeholders})
@@ -213,6 +262,13 @@ class DispatchRepository(SQLiteRepository):
                     now,
                     last_error,
                     remote_task_id,
+                    stage,
+                    download_id,
+                    file_size,
+                    file_sha256,
+                    int(increment_attempt),
+                    int(increment_attempt),
+                    now,
                     downloaded_at,
                     sent_at,
                     dispatch_id,
@@ -222,3 +278,56 @@ class DispatchRepository(SQLiteRepository):
             if cursor.rowcount != 1:
                 return None
         return self.get(dispatch_id)
+
+    def update_machine(
+        self,
+        dispatch_id: str,
+        *,
+        machine_ip: str,
+        expected: Iterable[str],
+        now: str,
+    ) -> dict[str, Any] | None:
+        expected_statuses = sorted(set(expected))
+        if not expected_statuses:
+            raise ValueError("必须指定允许修改的原状态")
+        placeholders = ", ".join("?" for _ in expected_statuses)
+        with self.connect() as connection:
+            cursor = connection.execute(
+                f"""
+                UPDATE cutting_dispatches
+                SET machine_ip = ?, updated_at = ?
+                WHERE dispatch_id = ? AND status IN ({placeholders})
+                """,
+                (machine_ip, now, dispatch_id, *expected_statuses),
+            )
+            if cursor.rowcount != 1:
+                return None
+        return self.get(dispatch_id)
+
+    def recover_interrupted(self, now: str) -> None:
+        """Fail closed after a restart; never re-upload an uncertain request."""
+        with self.connect() as connection:
+            connection.execute(
+                """
+                UPDATE cutting_dispatches
+                SET status = CASE
+                        WHEN status = 'downloading' THEN 'download_failed'
+                        ELSE 'push_failed'
+                    END,
+                    stage = CASE
+                        WHEN status = 'downloading' THEN 'download_interrupted'
+                        WHEN remote_task_id IS NOT NULL THEN 'assign_interrupted'
+                        ELSE 'upload_unknown'
+                    END,
+                    last_error = CASE
+                        WHEN status = 'downloading'
+                            THEN '服务重启中断文件准备，可安全重试下载'
+                        WHEN remote_task_id IS NOT NULL
+                            THEN '服务重启中断机床指派，请人工核对后重试指派'
+                        ELSE '服务重启发生在上传阶段，远端结果未知，禁止自动重复上传'
+                    END,
+                    updated_at = ?
+                WHERE status IN ('downloading', 'pushing')
+                """,
+                (now,),
+            )

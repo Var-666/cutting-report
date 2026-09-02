@@ -142,6 +142,71 @@ class ChartService:
             ),
         }
 
+    def build_energy_period(
+        self,
+        task_report: dict,
+        month_report: dict,
+        chart_type: str = "bar_line",
+    ) -> dict[str, dict]:
+        units = task_report.get("units") or {"electricity": "kWh", "gas": "Nm³"}
+        task_rows = task_report.get("records") or []
+        month_rows = month_report.get("rows") or []
+
+        def option(labels, electricity, gas):
+            return {
+                "tooltip": {"trigger": "axis", "confine": True},
+                "legend": {"data": ["电耗", "气耗"], "top": 6},
+                "grid": {"top": 70, "bottom": 58, "left": 65, "right": 65},
+                "xAxis": {
+                    "type": "category",
+                    "data": labels,
+                    "axisLabel": {"hideOverlap": True, "rotate": 28},
+                },
+                "yAxis": [
+                    {"type": "value", "name": f"电耗 {units['electricity']}"},
+                    {"type": "value", "name": f"气耗 {units['gas']}"},
+                ],
+                "series": [
+                    {
+                        "name": "电耗",
+                        "type": "bar",
+                        "yAxisIndex": 0,
+                        "data": electricity,
+                        "itemStyle": {"color": "#db8c32"},
+                    },
+                    {
+                        "name": "气耗",
+                        "type": "line",
+                        "yAxisIndex": 1,
+                        "data": gas,
+                        "connectNulls": False,
+                        "itemStyle": {"color": "#167e85"},
+                    },
+                ],
+            }
+
+        task_labels = []
+        for index, row in enumerate(task_rows):
+            start = str(row.get("production_time") or "")
+            clock = start[11:16] if len(start) >= 16 else ""
+            segment = row.get("segment_name") or row.get("project_code") or f"任务{index + 1}"
+            task_labels.append(f"{clock} {segment}".strip())
+
+        task = option(
+            task_labels,
+            [row.get("electricity_consumption") for row in task_rows],
+            [row.get("gas_consumption") for row in task_rows],
+        )
+        monthly = option(
+            [str(row.get("report_date") or "")[-2:] for row in month_rows],
+            [(row.get("electricity") or {}).get("value") for row in month_rows],
+            [(row.get("gas") or {}).get("value") for row in month_rows],
+        )
+        return {
+            "equipment_detail": self._apply_chart_type(task, chart_type),
+            "equipment_month": self._apply_chart_type(monthly, chart_type),
+        }
+
     def build_leadership(
         self, report: LeadershipReportResult, chart_type: str = "bar_line"
     ) -> dict[str, dict]:

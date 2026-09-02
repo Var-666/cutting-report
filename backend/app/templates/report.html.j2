@@ -1,7 +1,7 @@
 {% macro energy_cell(row, kind) -%}
 {% set status = row[kind ~ '_data_status'] %}
 {% set value = row[kind ~ '_consumption'] %}
-<span title="{{ row.energy_note or '' }}">{{ '≈ ' if status == 'interpolated' else '' }}{{ value|number }}</span>
+<span title="{{ row.energy_note or '' }}">{{ value|number }}</span>
 {% if value is none %}<small class="energy-label">{{ {'missing':'缺边界','gap':'采样断点','counter_reset':'回零/倒退','invalid_reading':'无效读数','unconfigured':'待配置','unmapped':'未绑定','invalid_interval':'时间异常','overlap':'时间重叠','unavailable':'不可用'}.get(status, '缺失') }}</small>{% endif %}
 {%- endmacro %}
 <!doctype html>
@@ -180,31 +180,41 @@
       </div>
     </div>
     {% else %}
-    <h2>一、设备生产指标</h2>
+    <h2>一、设备能耗指标</h2>
     <section class="metrics">
       <div class="metric"><small>任务数量</small><strong>{{ report.equipment_summary.task_count }}</strong><small>项</small></div>
       <div class="metric"><small>切割时长</small><strong>{{ report.equipment_summary.total_work_time|duration }}</strong><small>HH:mm:ss</small></div>
       <div class="metric"><small>任务气耗合计</small><strong>{{ report.equipment_summary.total_gas_consumption|number }}</strong><small>{{ report.units.gas }} · 已匹配 {{ report.equipment_summary.gas_record_count }}/{{ report.equipment_summary.task_count }} 项</small></div>
       <div class="metric"><small>任务电耗合计</small><strong>{{ report.equipment_summary.total_electricity_consumption|number }}</strong><small>{{ report.units.electricity }} · 已匹配 {{ report.equipment_summary.electricity_record_count }}/{{ report.equipment_summary.task_count }} 项</small></div>
     </section>
-    <h2>二、设备生产明细与图表</h2>
-    <div class="notice">{{ report.energy_notice }} “≈”表示边界插值估算，共 {{ report.equipment_summary.estimated_record_count }} 项；缺失不等于零。</div>
+    <h2>二、当日任务能耗明细</h2>
+    <div class="notice">{{ report.energy_notice }} 其中插值估算 {{ report.equipment_summary.estimated_record_count }} 项；缺失不等于零。</div>
     <div class="data-chart-grid equipment-grid">
-      <div class="chart-stack">
-        {% if report.equipment_records %}<div id="equipment-detail-chart" class="chart"></div>{% else %}<div class="empty">当前条件下暂无设备生产数据。</div>{% endif %}
-        {% if report.equipment_summary.energy_data_mode == 'mock' %}<div class="notice">气耗和电耗为系统生成的稳定模拟数据，不可作为生产结算或能耗考核依据。</div>{% endif %}
-      </div>
+      {% if report.equipment_records %}<div id="equipment-detail-chart" class="chart"></div>{% else %}<div class="empty">所选日期暂无任务。</div>{% endif %}
       <div class="table-wrap">
-      {% if report.equipment_records %}<table class="screen-only"><colgroup><col style="width:5%"><col style="width:11%"><col style="width:11%"><col style="width:10%"><col style="width:16%"><col style="width:12%"><col style="width:10%"><col style="width:10%"><col style="width:15%"></colgroup><thead><tr><th>序号</th><th>工程号</th><th>船号</th><th>分段名</th><th>开始时间</th><th>切割时长</th><th>气耗</th><th>电耗</th><th>备注</th></tr></thead>
-      <tbody>{% for row in report.equipment_records %}<tr><td>{{ loop.index }}</td><td>{{ row.project_code or '--' }}</td><td>{{ row.ship_no or '--' }}</td><td>{{ row.segment_name or '--' }}</td><td>{{ row.production_time[:16]|replace('T',' ') if row.production_time else '--' }}</td><td>{{ row.work_time|duration }}</td><td>{{ energy_cell(row, 'gas') }}</td><td>{{ energy_cell(row, 'electricity') }}</td><td>{{ row.remark or '--' }}</td></tr>{% endfor %}</tbody></table>
-      <div class="print-only">{% for chunk in report.equipment_records|batch(14) %}{% set chunk_index = loop.index0 %}<section class="print-table-page"><table class="print-table-chunk"><colgroup><col style="width:5%"><col style="width:11%"><col style="width:11%"><col style="width:10%"><col style="width:16%"><col style="width:12%"><col style="width:10%"><col style="width:10%"><col style="width:15%"></colgroup><thead><tr><th>序号</th><th>工程号</th><th>船号</th><th>分段名</th><th>开始时间</th><th>切割时长</th><th>气耗</th><th>电耗</th><th>备注</th></tr></thead><tbody>{% for row in chunk %}<tr><td>{{ chunk_index * 14 + loop.index }}</td><td>{{ row.project_code or '--' }}</td><td>{{ row.ship_no or '--' }}</td><td>{{ row.segment_name or '--' }}</td><td>{{ row.production_time[:16]|replace('T',' ') if row.production_time else '--' }}</td><td>{{ row.work_time|duration }}</td><td>{{ energy_cell(row, 'gas') }}</td><td>{{ energy_cell(row, 'electricity') }}</td><td>{{ row.remark or '--' }}</td></tr>{% endfor %}</tbody></table></section>{% endfor %}</div>
-      {% else %}<div class="empty">当前条件下暂无设备生产数据。</div>{% endif %}
+      {% if report.equipment_records %}<table class="screen-only"><thead><tr><th>序号</th><th>工程号</th><th>船号</th><th>分段名</th><th>任务开始</th><th>切割时长</th><th>电耗（{{ report.units.electricity }}）</th><th>气耗（{{ report.units.gas }}）</th></tr></thead>
+      <tbody>{% for row in report.equipment_records %}<tr><td>{{ loop.index }}</td><td>{{ row.project_code or '--' }}</td><td>{{ row.ship_no or '--' }}</td><td>{{ row.segment_name or '--' }}</td><td>{{ row.production_time[:19]|replace('T',' ') if row.production_time else '--' }}</td><td>{{ row.work_time|duration }}</td><td>{{ row.electricity_consumption|number }}</td><td>{{ row.gas_consumption|number }}</td></tr>{% endfor %}</tbody>
+      <tfoot><tr><th colspan="5">当日任务汇总（{{ report.equipment_summary.task_count }} 项）</th><th>{{ report.equipment_summary.total_work_time|duration }}</th><th>{{ report.equipment_summary.total_electricity_consumption|number }}</th><th>{{ report.equipment_summary.total_gas_consumption|number }}</th></tr></tfoot></table>
+      <div class="print-only">{% for chunk in report.equipment_records|batch(14) %}{% set chunk_index = loop.index0 %}<section class="print-table-page"><table class="print-table-chunk"><thead><tr><th>序号</th><th>工程号</th><th>船号</th><th>分段名</th><th>任务开始</th><th>切割时长</th><th>电耗</th><th>气耗</th></tr></thead><tbody>{% for row in chunk %}<tr><td>{{ chunk_index * 14 + loop.index }}</td><td>{{ row.project_code or '--' }}</td><td>{{ row.ship_no or '--' }}</td><td>{{ row.segment_name or '--' }}</td><td>{{ row.production_time[:19]|replace('T',' ') if row.production_time else '--' }}</td><td>{{ row.work_time|duration }}</td><td>{{ row.electricity_consumption|number }}</td><td>{{ row.gas_consumption|number }}</td></tr>{% endfor %}</tbody></table></section>{% endfor %}</div>
+      {% else %}<div class="empty">所选日期暂无任务。</div>{% endif %}
+      </div>
+    </div>
+
+    <h2>三、月度每日能耗汇总</h2>
+    <p class="section-note">统计月份：{{ report.energy_month.report_month }}；未查询或缺失日期不按零处理。</p>
+    <div class="data-chart-grid">
+      <div id="equipment-month-chart" class="chart"></div>
+      <div class="table-wrap">
+        <table class="screen-only"><thead><tr><th>日期</th><th>电耗（{{ report.units.electricity }}）</th><th>电耗覆盖</th><th>气耗（{{ report.units.gas }}）</th><th>气耗覆盖</th><th>保存状态</th></tr></thead>
+        <tbody>{% for row in report.energy_month.rows %}<tr><td>{{ row.report_date }}</td><td>{{ row.electricity.value|number }}</td><td>{{ row.electricity.label }} · {{ row.electricity.valid_count or 0 }}/{{ row.electricity.expected_count or 0 }} 小时</td><td>{{ row.gas.value|number }}</td><td>{{ row.gas.label }} · {{ row.gas.valid_count or 0 }}/{{ row.gas.expected_count or 0 }} 小时</td><td>{{ '日期未到' if row.is_future else '已保存' if row.saved else '尚未查询' }}</td></tr>{% endfor %}</tbody>
+        <tfoot><tr><th>当月汇总</th><th>{{ report.energy_month.summary.electricity.value|number }}</th><th>{{ report.energy_month.summary.electricity.label }} · {{ report.energy_month.summary.electricity.valid_count or 0 }}/{{ report.energy_month.summary.electricity.expected_count or 0 }} 天</th><th>{{ report.energy_month.summary.gas.value|number }}</th><th>{{ report.energy_month.summary.gas.label }} · {{ report.energy_month.summary.gas.valid_count or 0 }}/{{ report.energy_month.summary.gas.expected_count or 0 }} 天</th><th>{{ report.energy_month.saved_day_count }} 天已保存</th></tr></tfoot></table>
+        <div class="print-only">{% for chunk in report.energy_month.rows|batch(18) %}<section class="print-table-page"><table class="print-table-chunk"><thead><tr><th>日期</th><th>电耗（{{ report.units.electricity }}）</th><th>电耗覆盖</th><th>气耗（{{ report.units.gas }}）</th><th>气耗覆盖</th><th>保存状态</th></tr></thead><tbody>{% for row in chunk %}<tr><td>{{ row.report_date }}</td><td>{{ row.electricity.value|number }}</td><td>{{ row.electricity.label }} · {{ row.electricity.valid_count or 0 }}/{{ row.electricity.expected_count or 0 }} 小时</td><td>{{ row.gas.value|number }}</td><td>{{ row.gas.label }} · {{ row.gas.valid_count or 0 }}/{{ row.gas.expected_count or 0 }} 小时</td><td>{{ '日期未到' if row.is_future else '已保存' if row.saved else '尚未查询' }}</td></tr>{% endfor %}</tbody></table></section>{% endfor %}</div>
       </div>
     </div>
     {% endif %}
 
     {% if report.analysis %}
-    <h2>{{ '四' if report.meta.report_type in ['leadership', 'workshop'] else '三' }}、智能分析</h2>
+    <h2>{{ '四' if report.meta.report_type in ['leadership', 'workshop', 'equipment'] else '三' }}、智能分析</h2>
     <div class="analysis-head">
       <span class="analysis-mode {{ 'model' if report.analysis.mode == 'model' else '' }}">{{ '大模型分析' if report.analysis.mode == 'model' else '模拟大模型分析' }}</span>
       <span class="label">生成时间：{{ report.analysis.generated_at or '--' }}{{ '· 已使用缓存' if report.analysis.cached else '' }}</span>
@@ -232,9 +242,13 @@
   {% elif report.meta.report_type == 'workshop' and report.summary.task_count %}
   const lengthChart = echarts.init(document.getElementById('length-chart'));
   lengthChart.setOption({{ report.charts.length_combo|tojson }}); charts.push(lengthChart);
-  {% elif report.meta.report_type == 'equipment' and report.equipment_records %}
+  {% elif report.meta.report_type == 'equipment' %}
+  {% if report.equipment_records %}
   const equipmentDetailChart = echarts.init(document.getElementById('equipment-detail-chart'));
   equipmentDetailChart.setOption({{ report.charts.equipment_detail|tojson }}); charts.push(equipmentDetailChart);
+  {% endif %}
+  const equipmentMonthChart = echarts.init(document.getElementById('equipment-month-chart'));
+  equipmentMonthChart.setOption({{ report.charts.equipment_month|tojson }}); charts.push(equipmentMonthChart);
   {% endif %}
   const resizeCharts = () => charts.forEach(chart => chart.resize());
   const preparePrint = () => {

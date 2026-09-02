@@ -35,6 +35,7 @@ def test_schemas_only_expose_allowed_fields_not_sql(dataset):
     assert schema["requires_filter"] == (dataset == "cutting_files")
     assert len({field["key"] for field in schema["fields"]}) == len(schema["fields"])
     assert all("expression" not in field and "source_key" not in field for field in schema["fields"])
+    assert all(field["group"] for field in schema["fields"])
 
 
 def test_registry_supports_configured_status_values():
@@ -44,6 +45,55 @@ def test_registry_supports_configured_status_values():
     assert "a.Custom6 = ?" in where and params == ["SENT"]
     with pytest.raises(ConditionError):
         prepare(group(rule("dispatch_state", "eq", "random")), fields)
+
+
+def test_project_id_field_follows_pdm_document_mapping():
+    fields = fields_for("cutting_files")
+    project_field = next(field for field in fields if field.key == "project_id")
+    assert project_field.label == "项目ID（ProjectInfoID）"
+
+    project_id = "3E97B5EF-0E12-49E2-87E5-B9440C416022"
+    where, params = compile_conditions(
+        group(rule("project_id", "eq", project_id)),
+        fields,
+    )
+    assert where == "(a.ProjectInfoID = ?)"
+    assert params == [project_id]
+
+
+@pytest.mark.parametrize(
+    "field,operator,value,sql_expression",
+    [
+        ("catalog_id", "eq", "A00251A4-120B-4036-9F97-07A85793E891", "a.FileID = ?"),
+        ("catalog_title", "contains", "GEN", "c.Title LIKE ?"),
+        ("version_id", "eq", "VER-ID", "a.VersionID = ?"),
+        ("operation_type", "eq", "上传", "a.Custom1 = ?"),
+        ("downloaded_by", "contains", "张三", "a.Custom2 LIKE ?"),
+        ("downloaded_date", "eq", "2026-08-25", "TRY_CONVERT(date, a.Custom4) = ?"),
+        ("physical_file_name", "ends_with", ".GEN", "physical.FileName LIKE ?"),
+        ("physical_file_type", "eq", "GEN", "physical.FileType = ?"),
+        ("physical_version_code", "eq", "V1", "physical.VersionCode = ?"),
+        ("physical_file_count", "eq", 1, "TRY_CONVERT(decimal(18,4), physical.physical_file_count) = ?"),
+    ],
+)
+def test_original_yangzhou_sql_fields_are_available_as_safe_conditions(
+    field, operator, value, sql_expression
+):
+    where, params = compile_conditions(
+        group(rule(field, operator, value)), fields_for("cutting_files")
+    )
+    assert sql_expression in where
+    assert params
+
+
+def test_file_condition_labels_follow_original_sql_business_names():
+    fields = fields_for("cutting_files")
+    labels = {field.key: field.label for field in fields}
+    assert fields[0].key == "ship_no"
+    assert labels["catalog_id"] == "文件分类 / 分组ID（FileID）"
+    assert labels["catalog_title"] == "文件分类 / 分组名称"
+    assert labels["document_no"] == "文件名（DocumentNo）"
+    assert labels["pbs_info"] == "中间产品 / 分段（PBSInfo）"
 
 
 @pytest.mark.parametrize("payload", [

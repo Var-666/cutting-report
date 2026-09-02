@@ -1,5 +1,7 @@
 from dataclasses import replace
 from datetime import date, datetime, timedelta
+from decimal import Decimal
+from types import SimpleNamespace
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -11,8 +13,8 @@ from app.database.energy import EnergyReportRepository
 from app.database.sqlite import SQLiteDatabase
 from app.models.domain import to_primitive
 from app.services.energy_api import EnergyApiError
-from app.services.energy_period_service import EnergyPeriodService
-from test_energy_service import configured, GAS, ELECTRIC, MeterStub
+from app.services.energy_period_service import EnergyPeriodService, restore_task_energy_records
+from test_energy_service import configured, record, GAS, ELECTRIC, MeterStub
 
 
 DAY = date(2026, 8, 18)
@@ -80,6 +82,64 @@ def test_complete_month_sums_all_days_and_both_channels(tmp_path):
     assert result["summary"]["electricity"]["value"] == 864 * 31
     assert result["summary"]["electricity"]["status"] == "measured"
     assert result["summary"]["electricity"]["complete_count"] == 31
+
+
+def test_task_day_uses_report_meter_group_without_equipment_binding(tmp_path):
+    energy, client = service(tmp_path)
+    start = START + timedelta(hours=8)
+    task = record(
+        production_time=start,
+        production_end_time=start + timedelta(minutes=30),
+        work_time=Decimal("1800"),
+        equipment_id=None,
+    )
+
+    report = energy.get_task_day(DAY, [task])
+
+    assert report["records"][0]["gas_consumption"] == 2
+    assert report["records"][0]["electricity_consumption"] == 18
+    assert report["summary"]["total_gas_consumption"] == 2
+    assert report["summary"]["total_electricity_consumption"] == 18
+    assert report["summary"]["gas_record_count"] == 1
+    assert report["summary"]["electricity_record_count"] == 1
+    assert "不要求维护设备绑定" in report["energy_notice"]
+    assert set(client.calls[0][0]) == {GAS, *ELECTRIC}
+
+
+def test_task_report_can_restore_typed_records_for_analysis(tmp_path):
+    energy, _ = service(tmp_path)
+    start = START + timedelta(hours=8)
+    source = record(
+        production_time=start,
+        production_end_time=start + timedelta(minutes=30),
+        work_time=Decimal("1800"),
+        equipment_id=None,
+    )
+
+    report = energy.get_task_day(DAY, [source])
+    restored = restore_task_energy_records([source], report)
+
+    assert restored[0].gas_consumption == Decimal("2")
+    assert restored[0].electricity_consumption == Decimal("18")
+    assert restored[0].gas_data_status == "measured"
+    assert restored[0].electricity_data_status == "measured"
+    assert restored[0].energy_note == report["records"][0]["energy_note"]
+
+
+def test_overlapping_tasks_are_listed_but_not_double_counted(tmp_path):
+    energy, _ = service(tmp_path)
+    start = START + timedelta(hours=8)
+    rows = [
+        record("one", production_time=start, production_end_time=start + timedelta(minutes=30)),
+        record("two", production_time=start + timedelta(minutes=15), production_end_time=start + timedelta(minutes=45)),
+    ]
+
+    report = energy.get_task_day(DAY, rows)
+
+    assert report["summary"]["task_count"] == 2
+    assert report["summary"]["total_electricity_consumption"] is None
+    assert all(row["electricity_data_status"] == "overlap" for row in report["records"])
+    assert "时间重叠任务" in report["energy_notice"]
 
 
 def test_force_and_expired_cache_fetch_again(tmp_path):
@@ -241,12 +301,12 @@ def test_bad_config_is_reported_without_network(tmp_path, changes):
     assert not client.calls
 
 
-def test_unknown_electricity_unit_is_explicit_not_silently_kwh(tmp_path):
+def test_empty_legacy_electricity_unit_uses_confirmed_kwh(tmp_path):
     energy, _ = service(tmp_path, energy_electricity_unit="")
     report = energy.get_day(DAY)
-    assert report["units"]["electricity"] == "原始单位待确认"
+    assert report["units"]["electricity"] == "kWh"
     assert report["summary"]["electricity"]["value"] == 864
-    assert "不标作 kWh" in report["notice"]
+    assert "不标作 kWh" not in report["notice"]
 
 
 def test_snapshots_do_not_contain_credentials(tmp_path):
@@ -263,6 +323,12 @@ def test_day_month_routes_and_bad_month(tmp_path):
     energy, _ = service(tmp_path)
     app = FastAPI()
     app.state.energy_period_service = energy
+    start = START + timedelta(hours=8)
+    app.state.query_service = SimpleNamespace(fetch_equipment_data=lambda *_args, **_kwargs: SimpleNamespace(
+        records=[record(production_time=start, production_end_time=start + timedelta(minutes=30),
+                        work_time=Decimal("1800"), equipment_id=None)],
+        data_updated_at=start + timedelta(minutes=30),
+    ))
     app.dependency_overrides[require_admin] = lambda: {"role": "admin"}
     app.include_router(router)
 
@@ -278,6 +344,10 @@ def test_day_month_routes_and_bad_month(tmp_path):
     result = client.get("/api/v1/energy-report/month?report_month=2026-08")
     assert result.status_code == 200
     assert result.json()["data"]["saved_day_count"] == 1
+    result = client.get("/api/v1/energy-report/tasks?report_date=2026-08-18")
+    assert result.status_code == 200
+    assert result.json()["data"]["records"][0]["electricity_consumption"] == 18
+    assert result.json()["data"]["summary"]["task_count"] == 1
     for value in ("2026-13", "2026-1", "0000-01", "invalid"):
         assert client.get("/api/v1/energy-report/month", params={"report_month": value}).status_code == 422
     assert client.get("/api/v1/energy-report/day?report_date=9999-12-31").status_code == 422

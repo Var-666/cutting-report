@@ -38,6 +38,26 @@ class DownloadRepository(SQLiteRepository):
             row = connection.execute("SELECT payload FROM cutting_downloads WHERE download_id=?", (download_id,)).fetchone()
         return json.loads(row[0]) if row else None
 
+    def find_latest(self, document_id, version_id, relative_path):
+        """Return the newest exact downloaded version without requiring JSON1."""
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT payload FROM cutting_downloads
+                WHERE document_id=? AND status='downloaded'
+                ORDER BY created_at DESC, download_id DESC
+                """,
+                (document_id,),
+            ).fetchall()
+        for row in rows:
+            item = json.loads(row[0])
+            if (
+                str(item.get("version_id") or "") == str(version_id or "")
+                and str(item.get("relative_path") or "") == str(relative_path or "")
+            ):
+                return item
+        return None
+
     def list(self, page, page_size, filters=None):
         where, parameters = compile_conditions(filters or ConditionGroup(), fields_for("cutting_downloads"))
         with self.connect() as connection:

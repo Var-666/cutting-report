@@ -61,6 +61,9 @@ def test_three_report_types_get_distinct_simulated_analysis(tmp_path: Path) -> N
     assert "未完成工人确认" in workshop_analysis.alerts
     assert "模拟数据" in equipment_analysis.limitations
     assert "不进行能耗异常判定" in equipment_analysis.features
+    assert any(fact["id"] == "F013" for fact in equipment_analysis.facts)
+    assert any(fact["id"] == "F014" for fact in equipment_analysis.facts)
+    assert "计量区间重叠" in equipment_analysis.alerts
     assert "同比" in equipment_analysis.features
     assert leadership_analysis.overview != workshop_analysis.overview
     assert workshop_analysis.overview != equipment_analysis.overview

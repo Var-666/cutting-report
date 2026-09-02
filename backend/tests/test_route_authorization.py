@@ -106,6 +106,7 @@ class _SessionStub:
         "/api/v1/leadership-report?report_month=2026-08",
         "/api/v1/equipment-report?report_date=2026-08-18",
         "/api/v1/energy-report/day?report_date=2026-08-18",
+        "/api/v1/energy-report/tasks?report_date=2026-08-18",
         "/api/v1/energy-report/month?report_month=2026-08",
         "/api/v1/options/projects?report_date=2026-08-18",
         "/api/v1/automation/status",

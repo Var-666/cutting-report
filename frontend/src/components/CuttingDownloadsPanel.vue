@@ -104,7 +104,7 @@ onMounted(async () => {
 
 <template>
   <section class="panel download-panel" aria-label="本地文件下载与选择">
-    <div class="panel-title"><div><span>03</span><h2>已下载文件 · 选择文件</h2></div><p>保留文档名称与版本 · 不展示内容、不派发机床</p></div>
+    <div class="panel-title"><div><span>03</span><h2>已下载文件 · 选择文件</h2></div><p>使用数据库文档名称 · 版本单独记录 · 不展示内容、不派发机床</p></div>
     <div class="download-toolbar">
       <div class="download-source-selector"><label for="download-source-file">选择需要下载的文件（当前查询页）</label><select id="download-source-file" :value="activeFile?.document_id || ''" :disabled="!files.length || queryLoading || downloading" @change="emit('select-source', $event.target.value)"><option value="" disabled>{{ queryLoading ? '请先完成文件查询' : '请选择文件' }}</option><option v-for="file in files" :key="file.document_id" :value="file.document_id" :disabled="!file.path_available">{{ file.document_no }} · 版本 {{ file.version || file.physical_version_no || '未标注' }}{{ file.path_available ? '' : ' · 路径不可用' }}</option></select><small>与上方清单联动；更换检索条件或翻页可选择其他文件。文件先保存到部署服务器。</small></div>
       <button class="primary" type="button" :disabled="!activeFile?.path_available || !canDownload || queryLoading || downloading" @click="downloadSelected">{{ downloading ? '正在下载到本地…' : '下载所选文件到本地' }}</button>

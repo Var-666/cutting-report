@@ -43,12 +43,18 @@ def test_mock_energy_is_stable_and_summary_uses_it() -> None:
     )
 
 
-def test_equipment_records_sort_by_visible_start_time() -> None:
+def test_equipment_records_sort_by_visible_start_time_newest_first() -> None:
     later = record("task-later", "50", "1800")
     earlier = record("task-earlier", "50", "1800")
+    missing = record("task-missing", "50", "1800")
     later.production_time = datetime(2026, 8, 18, 9, 30)
     earlier.production_time = datetime(2026, 8, 18, 8, 15)
+    missing.production_time = None
 
-    ordered = sort_equipment_records([later, earlier])
+    ordered = sort_equipment_records([earlier, missing, later])
 
-    assert [row.task_id for row in ordered] == ["task-earlier", "task-later"]
+    assert [row.task_id for row in ordered] == [
+        "task-later",
+        "task-earlier",
+        "task-missing",
+    ]

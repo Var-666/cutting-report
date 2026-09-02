@@ -118,7 +118,8 @@ class EquipmentEnergyService:
             return EnergyResult(sort_equipment_records(mock_energy(records)), "mock",
                 "气耗和电耗为系统生成的稳定模拟数据，仅用于演示，不可用于结算或考核。",
                 {"gas": "Nm³（模拟）", "electricity": "kWh（模拟）"})
-        units = {"gas": cfg.energy_gas_unit or "单位待确认", "electricity": cfg.energy_electricity_unit or "单位待确认"}
+        electricity_unit = cfg.energy_electricity_unit or "kWh"
+        units = {"gas": cfg.energy_gas_unit or "单位待确认", "electricity": electricity_unit}
         clean = [replace(row, gas_consumption=None, electricity_consumption=None,
                          gas_data_status="missing", electricity_data_status="missing",
                          energy_note=None, energy_details={}) for row in records]
@@ -137,7 +138,7 @@ class EquipmentEnergyService:
         gas_id = cfg.energy_gas_parameter_id.lower()
         electric_ids = tuple(key.lower() for key in cfg.energy_electricity_parameter_ids)
         gas_ready = bool(gas_id and cfg.energy_gas_unit in {"m³", "Nm³"})
-        electric_ready = bool(electric_ids and cfg.energy_electricity_unit == "kWh")
+        electric_ready = bool(electric_ids and electricity_unit == "kWh")
         ids = ((gas_id,) if gas_ready else ()) + (electric_ids if electric_ready else ())
         try:
             if not 1 <= cfg.energy_max_gap_seconds <= 3600:

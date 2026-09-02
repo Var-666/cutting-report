@@ -1,7 +1,8 @@
-# Windows Docker 部署包 · 2026-08-31
+# Windows Docker 部署包 · 2026-09-01
 
-本包沿用之前的 Docker Compose 部署方式，已包含最新的能耗日/月报、汇总行和两张图。
-文件下载更新版还包括：按文档名和版本命名、本地持久化、下载文件下拉选择、已下载列表单选；不提供内容预览。
+本包沿用之前的 Docker Compose 部署方式，已包含最新的统一设备报表：同一页面显示
+“当日任务能耗明细”和“月度每日能耗汇总”，两组内容均为左图右表并带表尾汇总。
+文件下载更新版还包括：使用数据库文档名、本地持久化、下载文件下拉选择、已下载列表单选；版本仅作元数据记录，不拼入文件名，也不提供内容预览。
 这是源码构建包，不含离线 Docker 镜像；第一次构建需要联网下载依赖。
 Windows 上需已安装并启动 Docker，使用 Linux containers。无需单独安装 Python 或 Node.js。
 
@@ -38,13 +39,14 @@ docker compose up -d --build --wait --wait-timeout 180
 模板默认是显式演示模式。正式使用请设置 `APP_DEMO_MODE=false`，并将
 `APP_DATA_SOURCE_MODE` 改为原有的 `sqlserver` 或 `excel`。
 SQL Server 连接沿用现场配置；Excel 模式需自行将 `TASK.xlsx` 放入 `docker/input`。
-本包不带生产 Excel、历史数据库或密码。独立能耗日/月报本身不依赖任务数据源。
+本包不带生产 Excel、历史数据库或密码。任务能耗明细需要从生产数据源读取任务实际
+开始、结束时间；月度每日总耗量由能管接口查询并保存在系统数据卷中。
 
 默认本机地址为 `http://127.0.0.1:8000`。首次打开按页面提示创建管理员账号。
 如需其他内网电脑访问，在 `.env` 中设置 `DOCKER_BIND_ADDRESS=0.0.0.0`，由管理员配置
 Windows 防火墙允许所需内网来源访问 TCP 8000，然后通过 `http://服务器IP:8000` 访问。
 
-## 能耗日/月报：需要补充的配置
+## 设备报表能耗：需要补充的配置
 
 在部署目录的 `.env` 中设置以下内容。账号、密码填写当前有效值，不要填旧 AuthId：
 
@@ -56,13 +58,13 @@ ENERGY_API_PASSWORD='填写能管登录密码'
 ENERGY_REPORT_ELECTRICITY_PARAMETER_IDS=2b00e015-d987-f011-a2e9-000c2974f33c,98cbd135-d987-f011-a2e9-000c2974f33c,93fae152-d987-f011-a2e9-000c2974f33c
 ENERGY_GAS_PARAMETER_ID=bd3179be-c587-f011-a2e9-000c2974f33c
 ENERGY_GAS_UNIT=Nm³
-ENERGY_ELECTRICITY_UNIT=
+ENERGY_ELECTRICITY_UNIT=kWh
 ENERGY_REPORT_MAX_GAP_SECONDS=1800
 ENERGY_ALLOW_INTERPOLATION=true
 ```
 
-账号中的 `@` 直接写，不加反斜杠。电能单位确认是 kWh 后再填 `ENERGY_ELECTRICITY_UNIT=kWh`；
-未确认时页面标为“原始单位待确认”。日/月报不需要填写 `ENERGY_EQUIPMENT_IDS`。
+账号中的 `@` 直接写，不加反斜杠。电耗使用正常用电单位 `kWh`（1 kWh = 1 度电）。
+日/月报不需要填写 `ENERGY_EQUIPMENT_IDS`。
 程序会自动登录、获取授权和查询采集值，不需要手动复制 token。
 
 修改宿主机 `.env` 后，执行 `docker compose up -d --force-recreate app` 使容器重新读取环境变量；
@@ -70,13 +72,15 @@ ENERGY_ALLOW_INTERPOLATION=true
 若刚覆盖了程序文件，则执行前述带 `--build` 的升级命令。
 管理页面保存的数据库配置在数据卷 `data/settings.env` 中，仍优先于 `.env` 的对应数据库字段。
 
-管理员进入“设备报表 → 能耗日 / 月报”：
+管理员进入“设备报表”：
 
-- 日表：按小时查询电耗、气耗，最后一行汇总，并有对应图表。
-- 月表：点击“同步本月”查询并保存每天的数据，最后一行汇总，并有对应图表。
+- 第一张表：列出所选日期内的全部任务，按实际开始、结束时间计算每项任务的电耗和气耗，
+  最后一行汇总任务数、时长、电耗和气耗；左侧展示对应任务能耗图。
+- 第二张表：记录所选月份内每天的总电耗和总气耗，最后一行汇总整月；左侧展示逐日图。
 - 月度记录保存到原 SQLite 数据卷；不是后台定时自动采集，需主动查询/同步。
-- 缺数为 `--`，插值估算为 `≈`；部分数据的合计会明确标注，不伪造为完整实测。
-- 当天仅统计已结束小时；服务器及 Docker 容器必须能访问能管内网地址。
+- 缺数为 `--`，非精确边界按配置规则进行插值估算，数值列不添加额外符号；部分数据的合计会明确标注，不伪造为完整实测。
+- 设备页面直接使用当前仪表组，不要求维护 `ENERGY_EQUIPMENT_IDS`；重叠任务不重复分配能耗。
+- 服务器及 Docker 容器必须同时能访问生产任务数据库和能管内网地址。
 
 ## 状态和故障排查
 
@@ -88,7 +92,7 @@ ENERGY_ALLOW_INTERPOLATION=true
 每次最多50条条件、每个多值条件最多50个值；修改条件后需重新查询，旧结果不可下载。
 下载完成后，在“已下载文件”列表选择对应文件；如需拿到操作电脑，点击“另存到电脑”。
 展开“检索已下载文件”可复用同一条件编辑器，按下载日期、文件名、版本、状态等筛选本地记录。
-“文件派发 → 文件推送”单独管理待派发参数和记录，目前只保存任务，不实际调用机床；两页选择互相独立。
+“文件派发 → 文件推送”可保存草稿，也可在二次确认后将准确文件版本上传魔盒并指派到所选机床。
 
 在原 `.env` 中补充：
 
@@ -101,17 +105,21 @@ FILE_HTTP_AUTHORIZATION=
 FILE_HTTP_COOKIE=
 FILE_DOWNLOAD_TIMEOUT_SECONDS=60
 FILE_DOWNLOAD_MAX_BYTES=52428800
+MAGIC_BOX_ENABLED=true
+MAGIC_BOX_TIMEOUT_SECONDS=60
+MAGIC_BOX_CONFIG_CACHE_SECONDS=60
 ```
 
 若接口不需要认证，两项认证配置留空；若需要，在部署电脑填入该文件服务自己的认证值。
 不要把认证值发到聊天、截图或代码仓库。配置后重新构建启动（仅修改配置则重新创建容器）。
 如果管理界面曾保存 PDM 配置，`data/settings.env` 的对应数据库参数优先。
 Docker 容器必须能访问 `10.147.0.17:8800`；Apifox 测试成功不能替代容器内网联调。
+`CUTTER_GATEWAY`、`CUTTER_TOKEN`、`CUTTER_SECRET`、`CUTTER01_IP`、`CUTTER02_IP` 由后端从生产库 `dbo.SYS_CONFIG` 白名单读取，不填入前端也不返回到浏览器。Docker 容器还必须能访问 `CUTTER_GATEWAY`。
 
 文件保存在原 `cutting_data` 命名卷内 `/app/data/cutting-downloads/`，不是容器临时磁盘，
 重建程序不会清空。文件列表同时保存文档名、版本、大小、SHA-256、下载人和时间。
 每次下载有独立目录，不会覆盖旧版本；程序重启后未完成记录标为失败，可以重新下载。
-不得删除原数据卷。此功能只下载和选择，不预览内容、不发送到魔盒、不修改 PDM 派发状态。
+不得删除原数据卷。系统不预览或执行 GEN；只有“确认并推送”会调用魔盒，上传和指派分阶段记录。本版不修改 PDM 派发状态。
 
 ### 检查容器
 

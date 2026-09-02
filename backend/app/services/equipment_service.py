@@ -11,10 +11,10 @@ def sort_equipment_records(records: list[EquipmentRecord]) -> list[EquipmentReco
     return sorted(
         records,
         key=lambda row: (
-            row.production_time is None,
             row.production_time.isoformat() if row.production_time else "",
             row.task_id,
         ),
+        reverse=True,
     )
 
 

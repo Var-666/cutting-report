@@ -217,8 +217,9 @@ def test_units_and_device_binding_are_required():
     assert result.records[0].electricity_consumption == 18
     assert GAS not in stub.calls[-1][0]
     result = EquipmentEnergyService(configured(), MeterStub()).enrich([record(), record("other", equipment_id="Cutter02")])
-    assert result.records[1].gas_data_status == "unmapped"
-    assert result.records[1].gas_consumption is None
+    unmapped = next(row for row in result.records if row.task_id == "other")
+    assert unmapped.gas_data_status == "unmapped"
+    assert unmapped.gas_consumption is None
 
 
 def test_overlap_including_filtered_context_is_not_double_counted():
@@ -272,11 +273,11 @@ def test_invalid_config_fails_closed(changes):
     assert not stub.calls
 
 
-def test_page_export_and_analysis_share_real_values_and_missing_semantics(tmp_path, monkeypatch):
+def test_unified_device_page_export_and_analysis_share_meter_values(tmp_path, monkeypatch):
     from types import SimpleNamespace
-    from app.api.equipment import get_equipment_report
+    from app.api.analysis import AnalysisRequest, analyze_report
+    from app.api.energy import get_task_energy_day
     from app.database.metadata import MetadataRepository
-    from app.models.domain import QueryBundle
     from app.services.pipeline import ReportPipeline
     from app.services.query_service import EquipmentQueryResult
 
@@ -288,19 +289,30 @@ def test_page_export_and_analysis_share_real_values_and_missing_semantics(tmp_pa
     metadata = MetadataRepository(cfg.metadata_db_path)
     metadata.initialize()
     pipeline = ReportPipeline(cfg, metadata)
-    pipeline.energy_service = EquipmentEnergyService(cfg, MeterStub())
-    rows = [record(), record("other", equipment_id="Cutter02")]
-    bundle = QueryBundle([], [], rows)
-    monkeypatch.setattr(pipeline.query_service, "fetch_report_data", lambda filters: bundle)
+    pipeline.energy_period_service.client = MeterStub()
+    rows = [record()]
     monkeypatch.setattr(pipeline.query_service, "fetch_equipment_data", lambda filters, force=False: EquipmentQueryResult(rows, END))
     request = SimpleNamespace(state=SimpleNamespace(request_id="test"), app=SimpleNamespace(state=SimpleNamespace(
-        query_service=pipeline.query_service, energy_service=pipeline.energy_service)))
-    page = get_equipment_report(request=request, report_date=START.date(), refresh=True)["data"]
-    assert page["summary"]["energy_data_mode"] == "partial"
+        query_service=pipeline.query_service,
+        energy_period_service=pipeline.energy_period_service,
+        report_analysis_service=pipeline.analysis_service,
+    )))
+    page = get_task_energy_day(request=request, report_date=START.date(), refresh=True)["data"]
+    assert page["summary"]["energy_data_mode"] == "metered"
     assert page["summary"]["total_gas_consumption"] == 2
     assert page["summary"]["total_electricity_consumption"] == 18
-    assert page["records"][1]["gas_consumption"] is None
     assert page["units"] == {"gas": "Nm³", "electricity": "kWh"}
+    analysis_response = analyze_report(
+        AnalysisRequest(report_type="equipment", report_date=START.date()),
+        request,
+    )
+    page_analysis_facts = {
+        fact["id"]: fact["value"] for fact in analysis_response["data"]["facts"]
+    }
+    assert Decimal(page_analysis_facts["F003"].split()[0]) == 2
+    assert Decimal(page_analysis_facts["F004"].split()[0]) == 18
+    assert page_analysis_facts["F013"] == "0 项"
+    assert page_analysis_facts["F014"] == "0 项"
     rendered = []
     original_render = pipeline.report_service.render
 
@@ -316,20 +328,23 @@ def test_page_export_and_analysis_share_real_values_and_missing_semantics(tmp_pa
     report = rendered[0]
     assert report["equipment_summary"] == page["summary"]
     assert report["equipment_records"] == page["records"]
-    assert report["charts"]["equipment_detail"]["series"][0]["data"] == [2, None]
+    assert report["charts"]["equipment_detail"]["series"][0]["data"] == [18]
+    assert report["charts"]["equipment_detail"]["series"][1]["data"] == [2]
     job = metadata.get_job("energy_test")
     html = (cfg.reports_dir / job["relative_path"]).read_text(encoding="utf-8")
     assert "稳定模拟数据" not in html
-    assert "已匹配 1/2 项" in html
-    assert "未绑定" in html
+    assert "已匹配 1/1 项" in html
+    assert "月度每日能耗汇总" in html
+    assert "≈" not in html
     analysis = pipeline.analysis_service.analyze_equipment(START.date().isoformat(),
-        pipeline.energy_service.enrich(rows).records, energy_data_mode="partial", energy_units=page["units"])
+        [replace(rows[0], gas_consumption=Decimal("2"), electricity_consumption=Decimal("18"))],
+        energy_data_mode="metered", energy_units=page["units"])
     facts = {fact["id"]: fact["value"] for fact in analysis.facts}
     assert Decimal(facts["F003"].split()[0]) == 2
     assert "Nm³" in facts["F003"]
     assert Decimal(facts["F004"].split()[0]) == 18
     assert "kWh" in facts["F004"]
-    assert "1/2" in facts["F004"]
+    assert "1/1" in facts["F004"]
     assert "不进行能耗异常判定" in analysis.features
 
 

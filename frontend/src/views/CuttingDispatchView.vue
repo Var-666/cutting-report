@@ -3,9 +3,13 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import CuttingDownloadsPanel from '../components/CuttingDownloadsPanel.vue'
 import ConditionBuilder from '../components/ConditionBuilder.vue'
 import {
+  cancelCuttingDispatch,
   createCuttingDispatch,
+  executeCuttingDispatch,
   getCuttingStatus,
   listCuttingDispatches,
+  listCuttingDownloads,
+  listCuttingMachines,
   getConditionSchema,
   searchCuttingFiles,
 } from '../api/reports'
@@ -20,9 +24,13 @@ const dispatchForm = reactive({ machineIp: '', material: '', thickness: '', quan
 const systemStatus = ref(null)
 const rows = ref([])
 const histories = ref([])
+const machines = ref([])
+const pushFiles = ref([])
+const selectedPushFileId = ref('')
 const selectedId = ref('')
 const loading = ref(false)
 const saving = ref(false)
+const operatingId = ref('')
 const notice = ref('')
 const noticeType = ref('info')
 const page = ref(1)
@@ -30,7 +38,10 @@ const pageSize = 10
 const total = ref(0)
 
 const filtersDirty = computed(() => !appliedFilters.value || JSON.stringify(filters.value) !== JSON.stringify(appliedFilters.value))
-const activeFile = computed(() => !filtersDirty.value && !loading.value ? rows.value.find((row) => row.document_id === selectedId.value) || null : null)
+const activeFile = computed(() => {
+  if (!isDownload.value) return pushFiles.value.find((row) => row.download_id === selectedPushFileId.value) || null
+  return !filtersDirty.value && !loading.value ? rows.value.find((row) => row.document_id === selectedId.value) || null : null
+})
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize)))
 const physicalPath = computed(() => {
   if (systemStatus.value?.file_source?.mode === 'http') return ''
@@ -54,6 +65,34 @@ async function loadHistory() {
   if (isDownload.value) return
   const data = await listCuttingDispatches({ page: 1, pageSize: 10 })
   histories.value = data.items
+}
+
+async function loadMachines() {
+  if (isDownload.value || !systemStatus.value?.magic_box?.configured) return
+  try {
+    const data = await listCuttingMachines()
+    machines.value = data.items || []
+    if (!dispatchForm.machineIp && machines.value.length) {
+      dispatchForm.machineIp = machines.value[0].machine_ip
+    }
+  } catch (error) {
+    machines.value = (systemStatus.value?.magic_box?.machine_ips || []).map((machineIp) => ({
+      machine_ip: machineIp,
+      online: false,
+      configured: true,
+    }))
+    if (!dispatchForm.machineIp && machines.value.length) dispatchForm.machineIp = machines.value[0].machine_ip
+    showNotice(`机床在线状态读取失败：${error.message}。仍可选择 SYS_CONFIG 中配置的机床。`, 'error')
+  }
+}
+
+async function loadPushFiles() {
+  if (isDownload.value) return
+  const data = await listCuttingDownloads({ page: 1, pageSize: 100 })
+  pushFiles.value = (data.items || []).filter((item) => item.available && !item.is_simulation)
+  if (!pushFiles.value.some((item) => item.download_id === selectedPushFileId.value)) {
+    selectedPushFileId.value = pushFiles.value[0]?.download_id || ''
+  }
 }
 
 async function searchFiles(resetPage = true, requestedPage = page.value) {
@@ -88,27 +127,64 @@ async function changePage(nextPage) {
   await searchFiles(false, nextPage)
 }
 
-async function saveDispatch() {
+async function saveDispatch(executeNow = false) {
   if (isDownload.value || saving.value) return
   if (!activeFile.value) {
     showNotice('请先选择一个切割文件。', 'error')
     return
   }
+  if (executeNow && !window.confirm(`确认将文件“${activeFile.value.filename}”推送到机床 ${dispatchForm.machineIp}？\n任务名称将使用该文件名。`)) return
   saving.value = true
   try {
     const item = await createCuttingDispatch({
-      document_id: activeFile.value.document_id,
+      download_id: activeFile.value.download_id,
       machine_ip: dispatchForm.machineIp,
       material: dispatchForm.material || null,
       thickness: dispatchForm.thickness === '' ? null : Number(dispatchForm.thickness),
       quantity: Number(dispatchForm.quantity),
     })
-    showNotice(`已保存派发任务 ${item.dispatch_id}，当前状态：${item.status_label}。`)
+    if (executeNow) {
+      operatingId.value = item.dispatch_id
+      const completed = await executeCuttingDispatch(item.dispatch_id)
+      showNotice(`文件已上传魔盒并指派到 ${completed.machine_ip}，任务名称使用实际上传文件名。`)
+    } else {
+      showNotice(`已保存派发任务 ${item.dispatch_id}，当前状态：${item.status_label}。`)
+    }
     await loadHistory()
   } catch (error) {
     showNotice(error.message, 'error')
   } finally {
     saving.value = false
+    operatingId.value = ''
+  }
+}
+
+async function executeSaved(item) {
+  if (operatingId.value) return
+  if (!window.confirm(`确认执行任务 ${item.dispatch_id}？\n文件：${item.document_no}\n机床：${item.machine_ip}`)) return
+  operatingId.value = item.dispatch_id
+  try {
+    const completed = await executeCuttingDispatch(item.dispatch_id)
+    showNotice(`推送完成，魔盒任务 UUID：${completed.remote_task_id}`)
+  } catch (error) {
+    showNotice(error.message, 'error')
+  } finally {
+    operatingId.value = ''
+    await loadHistory()
+  }
+}
+
+async function cancelSaved(item) {
+  if (operatingId.value || !window.confirm(`确认取消任务 ${item.dispatch_id} 的机床指派？`)) return
+  operatingId.value = item.dispatch_id
+  try {
+    await cancelCuttingDispatch(item.dispatch_id)
+    showNotice('已取消魔盒机床指派。')
+  } catch (error) {
+    showNotice(error.message, 'error')
+  } finally {
+    operatingId.value = ''
+    await loadHistory()
   }
 }
 
@@ -121,10 +197,12 @@ onMounted(async () => {
   try {
     const [statusData, schema] = await Promise.all([
       getCuttingStatus(),
-      getConditionSchema('cutting_files'),
+      isDownload.value ? getConditionSchema('cutting_files') : Promise.resolve(null),
     ])
     systemStatus.value = statusData
     conditionSchema.value = schema
+    await loadPushFiles()
+    await loadMachines()
     await loadHistory()
   } catch (error) {
     showNotice(error.message, 'error')
@@ -139,7 +217,7 @@ onMounted(async () => {
     <div>
       <span class="eyebrow">{{ isDownload ? 'FILE DOWNLOAD' : 'FILE PUSH' }}</span>
       <h2>{{ isDownload ? '文件下载' : '文件推送' }}</h2>
-      <p>{{ isDownload ? '按条件检索文档，下载对应版本；管理、选择已下载的本地文件。' : '独立检索并选择待派发文档，填写目标机床和加工参数，查看派发记录。' }}</p>
+      <p>{{ isDownload ? '按条件检索文档，下载对应版本；管理、选择已下载的本地文件。' : '选择已下载文件，填写目标机床和加工参数，确认后推送。' }}</p>
     </div>
     <div class="dispatch-stage-badge">
       <span>{{ systemStatus?.safe_mode ? '安全联调模式' : '生产数据模式' }}</span>
@@ -150,20 +228,20 @@ onMounted(async () => {
 
   <div v-if="isDownload" class="dispatch-flow" aria-label="下载流程">
     <div class="active"><i>01</i><span><strong>组合条件查询</strong><small>字段 · 比较方式 · 条件值</small></span></div>
-    <div><i>02</i><span><strong>下载对应版本</strong><small>文档名称 · 版本命名</small></span></div>
+    <div><i>02</i><span><strong>下载对应版本</strong><small>数据库文档名称 · 版本单独记录</small></span></div>
     <div><i>03</i><span><strong>选择本地文件</strong><small>名称 · 版本 · 保存位置</small></span></div>
   </div>
-  <p v-else class="dispatch-push-scope" role="note">当前仅保存待派发参数，不会实际推送机床或回写 PDM；下载文件请进入“文件下载”子目录。本页选择与下载页独立，不会自动使用已下载文件。</p>
+  <p v-else class="dispatch-push-scope" role="note">确认推送后，系统会校验并复用已下载的准确版本，必要时先从 FO 下载，再上传魔盒并指派机床。每次真实推送都需要人工确认，不会按查询结果批量执行。</p>
 
   <div v-if="notice" class="dispatch-notice" :class="{ error: noticeType === 'error' }" role="status">
     <span>{{ notice }}</span>
     <button type="button" @click="notice = ''">关闭</button>
   </div>
 
-  <section class="panel dispatch-query-panel">
+  <section v-if="isDownload" class="panel dispatch-query-panel">
     <div class="panel-title">
       <div><span>01</span><h2>{{ isDownload ? '文件清单查询' : '待派发文档查询' }}</h2></div>
-      <p>SQL 数据源：PDM_DesignDocumentInfo / PDM_DocumentFileInfo</p>
+      <p>SQL 主表：PDM_DesignDocumentInfo / PDM_NCDocumentCatalog / PDM_DocumentFileInfo</p>
     </div>
     <form class="dispatch-query-dynamic" @submit.prevent="searchFiles(true)">
       <ConditionBuilder v-model="filters" :schema="conditionSchema" id-prefix="pdm-conditions" />
@@ -171,8 +249,8 @@ onMounted(async () => {
     </form>
   </section>
 
-  <div class="dispatch-workspace" :class="{ 'download-workspace': isDownload }">
-    <section class="panel dispatch-files-panel">
+  <div class="dispatch-workspace" :class="{ 'download-workspace': isDownload, 'push-workspace': !isDownload }">
+    <section v-if="isDownload" class="panel dispatch-files-panel">
       <div class="panel-title">
         <div><span>02</span><h2>{{ isDownload ? '切割文件' : '选择待派发文档' }}</h2></div>
         <p>{{ systemStatus?.pdm?.label || '文件数据源' }} · 共 {{ total }} 条 · 当前第 {{ page }} 页</p>
@@ -203,23 +281,24 @@ onMounted(async () => {
     </section>
 
     <aside v-if="!isDownload" class="panel dispatch-config-panel">
-      <div class="panel-title"><div><span>03</span><h2>派发参数</h2></div></div>
+      <div class="panel-title"><div><span>01</span><h2>派发参数</h2></div><p>仅使用已下载且通过校验的本地文件</p></div>
       <div class="dispatch-selected-file">
         <span>当前选择</span>
-        <strong>{{ activeFile?.document_no || '尚未选择文件' }}</strong>
-        <small v-if="activeFile">{{ activeFile.path_available ? '相对路径有效' : activeFile.path_error }}</small>
+        <strong>{{ activeFile?.filename || '尚未选择文件' }}</strong>
+        <small v-if="activeFile">版本 {{ activeFile.version || '--' }} · {{ activeFile.storage_path }}</small>
       </div>
-      <form class="dispatch-config" @submit.prevent="saveDispatch">
-        <label><span>任务名称</span><input :value="activeFile?.document_no || ''" disabled /></label>
-        <label><span>目标机床 IP</span><input v-model.trim="dispatchForm.machineIp" required placeholder="例如 10.1.133.196" /></label>
+      <form class="dispatch-config" @submit.prevent="saveDispatch(false)">
+        <label><span>选择已下载文件</span><select v-model="selectedPushFileId" required><option value="" disabled>请先到“文件下载”页下载文件</option><option v-for="file in pushFiles" :key="file.download_id" :value="file.download_id">{{ file.filename }} · {{ file.version || '未标注版本' }}</option></select><small>这里只列出系统本地已下载、可用且非模拟的文件。</small></label>
+        <label><span>任务名称（自动）</span><input :value="activeFile?.filename || ''" disabled /><small>taskName 与实际上传文件名一致，包含扩展名。</small></label>
+        <label><span>目标机床 IP</span><select v-model="dispatchForm.machineIp" required><option value="" disabled>请选择 SYS_CONFIG 中的机床</option><option v-for="machine in machines" :key="machine.machine_ip" :value="machine.machine_ip">{{ machine.server_name ? `${machine.server_name} · ` : '' }}{{ machine.machine_ip }}（{{ machine.online ? '在线' : '未从列表确认在线' }}）</option></select></label>
         <div class="dispatch-config-row">
           <label><span>材质</span><input v-model.trim="dispatchForm.material" placeholder="可选" /></label>
           <label><span>板厚（mm）</span><input v-model="dispatchForm.thickness" type="number" min="0" step="0.01" placeholder="0" /></label>
         </div>
         <label><span>加工数量</span><input v-model="dispatchForm.quantity" type="number" min="1" max="10000" step="1" required /></label>
         <div class="dispatch-task-id"><span>任务标识</span><code>提交时由系统生成唯一 ID</code></div>
-        <div class="dispatch-warning"><strong>当前只保存待派发任务</strong><span>保存参数不会下载文件、调用魔盒或修改 PDM 状态。实际推送尚未接入。</span></div>
-        <button class="primary dispatch-submit" type="submit" :disabled="!activeFile?.path_available || saving">{{ saving ? '保存中…' : '保存待派发任务' }}</button>
+        <div class="dispatch-warning"><strong>安全推送</strong><span>上传、指派分阶段记录。如上传超时导致结果不明，系统会停止自动重试，避免重复任务。</span></div>
+        <div class="dispatch-submit-row"><button type="submit" :disabled="!activeFile?.available || saving">保存草稿</button><button class="primary" type="button" :disabled="!activeFile?.available || !dispatchForm.machineIp || !systemStatus?.can_push || saving" @click="saveDispatch(true)">{{ saving ? '处理中…' : '确认并推送' }}</button></div>
       </form>
     </aside>
   </div>
@@ -227,9 +306,9 @@ onMounted(async () => {
   <CuttingDownloadsPanel v-if="isDownload" :active-file="activeFile" :files="rows" :query-loading="loading || filtersDirty" :can-download="!!systemStatus?.can_download" @select-source="selectFile" />
 
   <section v-if="!isDownload" class="panel dispatch-history-panel">
-    <div class="panel-title"><div><span>04</span><h2>派发记录</h2></div><p>当前记录任务参数和状态，不触发未配置的外部接口</p></div>
-    <div v-if="histories.length" class="dispatch-table-wrap"><table class="dispatch-table history-table"><thead><tr><th>任务ID</th><th>文件名</th><th>机床IP</th><th>数量</th><th>状态</th><th>创建人</th><th>创建时间</th></tr></thead><tbody><tr v-for="item in histories" :key="item.dispatch_id"><td><code>{{ item.dispatch_id }}</code></td><td>{{ item.document_no }}</td><td>{{ item.machine_ip }}</td><td>{{ item.quantity }}</td><td><span class="dispatch-status">{{ item.status_label }}</span></td><td>{{ item.created_by_name }}</td><td>{{ formatTime(item.created_at) }}</td></tr></tbody></table></div>
-    <div v-else class="dispatch-empty-history"><i>↗</i><strong>暂无派发记录</strong><span>选择文件和机床后可先保存一条待派发任务。</span></div>
+    <div class="panel-title"><div><span>02</span><h2>派发记录</h2></div><p>文件准备 → 魔盒上传 → 机床指派，各阶段独立记录</p></div>
+    <div v-if="histories.length" class="dispatch-table-wrap"><table class="dispatch-table history-table"><thead><tr><th>任务标识</th><th>文件名</th><th>机床IP</th><th>阶段 / 状态</th><th>魔盒UUID</th><th>失败原因</th><th>创建时间</th><th>操作</th></tr></thead><tbody><tr v-for="item in histories" :key="item.dispatch_id"><td><code>{{ item.task_identifier || item.dispatch_id }}</code></td><td>{{ item.document_no }}<small class="dispatch-project-name">数量 {{ item.quantity }}</small></td><td>{{ item.machine_ip }}</td><td><span class="dispatch-status" :class="item.status">{{ item.status_label }}</span><small class="dispatch-project-name">{{ item.stage_label }}</small></td><td><code>{{ item.remote_task_id || '--' }}</code></td><td class="history-error">{{ item.last_error || '--' }}</td><td>{{ formatTime(item.created_at) }}</td><td><div class="history-actions"><button v-if="item.can_execute" type="button" :disabled="!!operatingId" @click="executeSaved(item)">{{ item.remote_task_id ? '重试指派' : '执行推送' }}</button><button v-if="item.can_cancel" type="button" class="danger" :disabled="!!operatingId" @click="cancelSaved(item)">取消指派</button><span v-if="!item.can_execute && !item.can_cancel">--</span></div></td></tr></tbody></table></div>
+    <div v-else class="dispatch-empty-history"><i>↗</i><strong>暂无派发记录</strong><span>选择文件和机床后可保存草稿，或明确确认后直接推送。</span></div>
   </section>
 </template>
 
@@ -264,6 +343,7 @@ onMounted(async () => {
 .dispatch-query label > span,.dispatch-config label > span { display:block; margin-bottom:7px; color:#425767; font-size:11px; font-weight:700; }
 .dispatch-workspace { display:grid; grid-template-columns:minmax(0,1.8fr) minmax(300px,.72fr); gap:22px; align-items:start; }
 .dispatch-workspace.download-workspace { grid-template-columns:minmax(0,1fr); }
+.dispatch-workspace.push-workspace { grid-template-columns:minmax(0,1fr); }
 .dispatch-files-panel,.dispatch-config-panel { min-width:0; }
 .dispatch-table-wrap { overflow-x:auto; }
 .dispatch-table { width:100%; min-width:830px; border-collapse:collapse; }
@@ -290,11 +370,15 @@ onMounted(async () => {
 .dispatch-path-preview code { overflow-wrap:anywhere; color:#0d5d83; font:11px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace; }
 .dispatch-path-preview small { color:var(--muted); font-size:10px; }
 .dispatch-config-panel { position:sticky; top:18px; }
+.push-workspace .dispatch-config-panel { position:static; }
+.push-workspace .dispatch-config { grid-template-columns:repeat(2,minmax(0,1fr)); column-gap:20px; }
+.push-workspace .dispatch-selected-file,.push-workspace .dispatch-warning,.push-workspace .dispatch-task-id,.push-workspace .dispatch-submit-row { grid-column:1/-1; }
 .dispatch-selected-file { display:flex; flex-direction:column; gap:4px; margin:20px 22px 0; padding:14px 15px; border-left:4px solid var(--cyan); background:#eef8fa; }
 .dispatch-selected-file span { color:var(--muted); font-size:9px; letter-spacing:1px; }
 .dispatch-selected-file strong { overflow:hidden; color:var(--navy); text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
 .dispatch-selected-file small { color:#a26917; font-size:9px; }
 .dispatch-config { display:grid; gap:13px; padding:18px 22px 24px; }
+.dispatch-config label > small { display:block; margin-top:5px; color:var(--muted); font-size:9px; line-height:1.5; }
 .dispatch-config-row { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
 .dispatch-task-id { display:flex; flex-direction:column; gap:5px; padding:11px 12px; border:1px dashed #bdcbd5; background:#fafcfd; }
 .dispatch-task-id span { color:#526a79; font-size:10px; font-weight:700; }
@@ -302,14 +386,19 @@ onMounted(async () => {
 .dispatch-warning { display:flex; flex-direction:column; gap:3px; padding:11px 12px; color:#7b581d; background:#fff6e4; }
 .dispatch-warning strong { font-size:11px; }
 .dispatch-warning span { font-size:9px; line-height:1.5; }
-.dispatch-submit { width:100%; }
+.dispatch-submit-row { display:grid; grid-template-columns:.8fr 1.2fr; gap:9px; }
+.dispatch-submit-row button { width:100%; }
 .dispatch-empty-history { min-height:160px; display:flex; align-items:center; justify-content:center; flex-direction:column; padding:30px; color:var(--muted); text-align:center; }
 .dispatch-empty-history i { width:38px; height:38px; display:grid; place-items:center; margin-bottom:10px; color:var(--blue); border:1px solid #a9cad7; border-radius:50%; background:#f1fafb; font-style:normal; font-size:18px; }
 .dispatch-empty-history strong { color:#405866; font-size:13px; }
 .dispatch-empty-history span { margin-top:5px; font-size:10px; }
-.history-table { min-width:880px; }
+.history-table { min-width:1180px; }
 .dispatch-history-panel { margin-top:22px; }
 .history-table code { color:var(--blue); font-size:9px; }
+.history-error { max-width:220px; color:#8a4c45; overflow-wrap:anywhere; }
+.history-actions { display:flex; align-items:center; gap:6px; }
+.history-actions button { min-height:30px; padding:0 9px; color:var(--blue); border:1px solid #b9ccd6; background:#fff; white-space:nowrap; font-size:10px; }
+.history-actions button.danger { color:#9b3f37; border-color:#e3b8b4; }
 @media (max-width:1000px) {
   .dispatch-hero { align-items:flex-start; flex-direction:column; justify-content:center; padding:28px 0; }
   .dispatch-stage-badge { width:100%; min-width:0; }
@@ -318,6 +407,7 @@ onMounted(async () => {
   .dispatch-flow > div:nth-child(-n+2) { border-bottom:1px solid var(--line); }
   .dispatch-workspace { grid-template-columns:1fr; }
   .dispatch-config-panel { position:static; }
+  .push-workspace .dispatch-config { grid-template-columns:1fr; }
   .dispatch-query { grid-template-columns:1fr 1fr; }
 }
 @media (max-width:560px) {
