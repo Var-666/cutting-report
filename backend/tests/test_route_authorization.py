@@ -101,6 +101,7 @@ class _SessionStub:
     "path",
     [
         "/api/v1/reports",
+        "/api/v1/reports/not-found/download?format=pdf",
         "/api/v1/database/status",
         "/api/v1/designer/published-definitions",
         "/api/v1/leadership-report?report_month=2026-08",

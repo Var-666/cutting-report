@@ -72,8 +72,8 @@ class FileDownloadService:
             result["error"] = "记录仍在，但本地文件已不存在，请重新下载"
         return result
 
-    def list(self, page=1, page_size=10, filters=None):
-        items, total = self.repository.list(page, page_size, filters)
+    def list(self, page=1, page_size=10, filters=None, sort=()):
+        items, total = self.repository.list(page, page_size, filters, sort=sort)
         return {"items": [self.public(item) for item in items], "total": total, "page": page, "page_size": page_size}
 
     def download(self, *, document_id, version_id, file_path, user):

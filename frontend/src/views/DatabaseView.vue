@@ -370,7 +370,7 @@ onMounted(() => Promise.all([loadStatus(), loadConfiguration()]))
     <div v-if="previewResult" class="preview-result">
       <div class="preview-summary"><strong>{{ modeLabel(previewResult.mode) }}</strong><span>返回 {{ previewResult.returned }} / {{ previewResult.total }} 条{{ previewResult.truncated ? '（已截断）' : '' }}</span></div>
       <div class="history-wrap">
-        <table class="history-table preview-table">
+        <table v-content-table class="history-table preview-table">
           <thead><tr><th v-for="column in previewColumns" :key="column">{{ labelFor(column) }}</th></tr></thead>
           <tbody>
             <tr v-for="(row, index) in previewResult.items" :key="row.task_id || index"><td v-for="column in previewColumns" :key="column">{{ formatCell(row[column]) }}</td></tr>
@@ -413,7 +413,7 @@ onMounted(() => Promise.all([loadStatus(), loadConfiguration()]))
     <div v-if="sqlResult" class="sql-result">
       <div class="preview-summary"><strong>查询成功</strong><span>{{ sqlResult.returned }} 行 · {{ sqlResult.elapsed_ms }} ms{{ sqlResult.truncated ? ' · 结果已截断' : '' }}</span></div>
       <div class="history-wrap">
-        <table class="history-table preview-table">
+        <table v-content-table class="history-table preview-table">
           <thead><tr><th v-for="column in sqlResultColumns" :key="column">{{ column }}</th></tr></thead>
           <tbody>
             <tr v-for="(row, index) in sqlResult.items" :key="index"><td v-for="column in sqlResultColumns" :key="column">{{ formatCell(row[column]) }}</td></tr>

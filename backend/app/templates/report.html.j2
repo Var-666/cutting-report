@@ -234,11 +234,15 @@
 <script>{{ echarts_source|safe }}</script>
 <script>
   const charts = [];
-  {% if report.meta.report_type == 'leadership' and report.leadership.daily_records %}
+  {% if report.meta.report_type == 'leadership' %}
+  {% if report.leadership.daily_records %}
   const dailyTrendChart = echarts.init(document.getElementById('leadership-daily-chart'));
   dailyTrendChart.setOption({{ report.charts.daily_trend|tojson }}); charts.push(dailyTrendChart);
+  {% endif %}
+  {% if report.leadership.monthly_records %}
   const monthlyTrendChart = echarts.init(document.getElementById('leadership-monthly-chart'));
   monthlyTrendChart.setOption({{ report.charts.monthly_trend|tojson }}); charts.push(monthlyTrendChart);
+  {% endif %}
   {% elif report.meta.report_type == 'workshop' and report.summary.task_count %}
   const lengthChart = echarts.init(document.getElementById('length-chart'));
   lengthChart.setOption({{ report.charts.length_combo|tojson }}); charts.push(lengthChart);

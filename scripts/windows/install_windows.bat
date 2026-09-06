@@ -21,6 +21,9 @@ echo Installing application dependencies...
 if errorlevel 1 goto :failed
 ".venv\Scripts\python.exe" -m pip install -r backend\requirements.txt -r backend\requirements-sqlserver.txt
 if errorlevel 1 goto :failed
+echo Installing PDF rendering browser...
+".venv\Scripts\python.exe" -m playwright install chromium
+if errorlevel 1 goto :failed
 
 if not exist ".env" (
   copy /y ".env.example" ".env" >nul

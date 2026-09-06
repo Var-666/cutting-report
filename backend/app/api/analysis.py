@@ -94,6 +94,12 @@ def analyze_report(payload: AnalysisRequest, request: Request) -> dict:
                 ReportFilter(report_date=year_ago_day), force=payload.force
             )
             year_ago_records = year_ago_data.records
+            previous_records = request.app.state.energy_period_service.filter_task_records(
+                previous_records
+            )
+            year_ago_records = request.app.state.energy_period_service.filter_task_records(
+                year_ago_records
+            )
             analysis = service.analyze_equipment(
                 report_date,
                 records,

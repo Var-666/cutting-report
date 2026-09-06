@@ -84,14 +84,14 @@ def test_complete_month_sums_all_days_and_both_channels(tmp_path):
     assert result["summary"]["electricity"]["complete_count"] == 31
 
 
-def test_task_day_uses_report_meter_group_without_equipment_binding(tmp_path):
+def test_task_day_uses_report_meter_group_for_cutter01(tmp_path):
     energy, client = service(tmp_path)
     start = START + timedelta(hours=8)
     task = record(
         production_time=start,
         production_end_time=start + timedelta(minutes=30),
         work_time=Decimal("1800"),
-        equipment_id=None,
+        equipment_id=" cutter01 ",
     )
 
     report = energy.get_task_day(DAY, [task])
@@ -102,8 +102,35 @@ def test_task_day_uses_report_meter_group_without_equipment_binding(tmp_path):
     assert report["summary"]["total_electricity_consumption"] == 18
     assert report["summary"]["gas_record_count"] == 1
     assert report["summary"]["electricity_record_count"] == 1
-    assert "不要求维护设备绑定" in report["energy_notice"]
+    assert report["equipment_scope"] == ["Cutter01"]
+    assert "仅统计 Cutter01" in report["energy_notice"]
     assert set(client.calls[0][0]) == {GAS, *ELECTRIC}
+
+
+def test_task_day_excludes_cutter02_from_rows_totals_and_analysis_restore(tmp_path):
+    energy, _ = service(tmp_path)
+    start = START + timedelta(hours=8)
+    cutter01 = record(
+        "cutter01-task",
+        equipment_id="Cutter01",
+        production_time=start,
+        production_end_time=start + timedelta(minutes=30),
+    )
+    cutter02 = record(
+        "cutter02-task",
+        equipment_id="Cutter02",
+        production_time=start + timedelta(hours=1),
+        production_end_time=start + timedelta(hours=1, minutes=30),
+    )
+
+    report = energy.get_task_day(DAY, [cutter01, cutter02])
+    restored = restore_task_energy_records([cutter01, cutter02], report)
+
+    assert [row["task_id"] for row in report["records"]] == ["cutter01-task"]
+    assert report["summary"]["task_count"] == 1
+    assert report["source_task_count"] == 2
+    assert report["excluded_task_count"] == 1
+    assert [row.task_id for row in restored] == ["cutter01-task"]
 
 
 def test_task_report_can_restore_typed_records_for_analysis(tmp_path):
@@ -113,7 +140,7 @@ def test_task_report_can_restore_typed_records_for_analysis(tmp_path):
         production_time=start,
         production_end_time=start + timedelta(minutes=30),
         work_time=Decimal("1800"),
-        equipment_id=None,
+        equipment_id="Cutter01",
     )
 
     report = energy.get_task_day(DAY, [source])
@@ -269,10 +296,78 @@ def test_equal_coverage_does_not_erase_previously_valid_hours(tmp_path):
 def test_source_changes_do_not_reuse_old_meter_results(tmp_path):
     energy, _ = service(tmp_path)
     energy.get_day(DAY)
-    for key, value in [("energy_api_username", "another@example.test"), ("energy_gas_factor", "2"), ("energy_electricity_unit", "")]:
+    for key, value in [
+        ("energy_api_username", "another@example.test"),
+        ("energy_gas_factor", "2"),
+        ("energy_electricity_unit", ""),
+        ("energy_report_equipment_ids", ("Cutter01-old",)),
+    ]:
         other = EnergyPeriodService(replace(energy.settings, **{key: value}), energy.repository, clock=lambda: NOW)
         assert other.source_key != energy.source_key
         assert other.get_month("2026-08")["saved_day_count"] == 0
+
+
+def test_transition_preserves_history_but_revalidates_changed_days(tmp_path):
+    change_day = date(2026, 9, 4)
+    previous_day = change_day - timedelta(days=1)
+    now = datetime(2026, 9, 5, 12)
+    energy, client = service(tmp_path, now=now)
+    for day in (previous_day, change_day):
+        client.rows = samples(datetime.combine(day, datetime.min.time()))
+        energy.get_day(day)
+    old_key = energy.source_key
+    original = energy.repository.get_day(old_key, change_day.isoformat())
+    assert original["summary"]["gas"]["value"] == 96
+
+    energy.settings = replace(energy.settings,
+        energy_sampling_change_at="2026-09-04T00:00:00+08:00", energy_new_max_gap_seconds=180)
+    assert energy.day_source_key(previous_day) == old_key
+    month = energy.get_month("2026-09")
+    assert month["saved_day_count"] == 1
+    assert month["resync_dates"] == ["2026-09-04"]
+    assert month["rows"][2]["gas"]["value"] == 96
+    assert month["rows"][3]["gas"]["value"] is None
+
+    # A network failure must not silently restore an unvalidated permissive total.
+    client.error = EnergyApiError("offline")
+    failed = energy.get_day(change_day)
+    assert failed["summary"]["gas"]["value"] is None
+    assert "新采样规则" in failed["warning"]
+    client.error = None
+    # Same old 15-minute samples are now gaps. The old snapshot cannot mask them.
+    strict = energy.get_day(change_day, force=True)
+    assert strict["rows"][0]["gas"]["status"] == "gap"
+    assert strict["summary"]["gas"]["value"] is None
+    assert energy.repository.get_day(old_key, change_day.isoformat()) == original
+
+    client.rows = samples(datetime(2026, 9, 4), minutes=1)
+    good = energy.get_day(change_day, force=True)
+    assert good["summary"]["gas"]["valid_count"] == 24
+    month = energy.get_month("2026-09")
+    assert month["saved_day_count"] == 2
+    assert month["resync_dates"] == []
+    assert month["rows"][3]["gas"]["value"] == good["summary"]["gas"]["value"]
+    assert energy.get_day(change_day)["from_cache"]
+    energy.settings = replace(energy.settings, energy_new_max_gap_seconds=120)
+    assert energy.get_month("2026-09")["rows"][3]["gas"]["value"] is None
+    assert energy.get_month("2026-09")["rows"][2]["gas"]["value"] == 96
+
+
+def test_unified_tasks_apply_transition_by_actual_task_time(tmp_path):
+    start = datetime(2026, 9, 4, 8)
+    energy, client = service(tmp_path, now=datetime(2026, 9, 5),
+        energy_sampling_change_at="2026-09-04T00:00:00+08:00")
+    client.rows = samples(start.replace(hour=0), minutes=1)
+    task = record(production_time=start + timedelta(seconds=30),
+                  production_end_time=start + timedelta(minutes=3, seconds=30))
+    result = energy.get_task_day(date(2026, 9, 4), [task])
+    assert result["records"][0]["gas_consumption"] == 3
+    assert result["records"][0]["gas_data_status"] == "interpolated"
+    client.rows = [row for row in client.rows
+                   if not start < datetime.fromisoformat(row["Mt"]) < start + timedelta(minutes=4)]
+    result = energy.get_task_day(date(2026, 9, 4), [task])
+    assert result["records"][0]["gas_consumption"] is None
+    assert result["records"][0]["gas_data_status"] == "gap"
 
 
 def test_disabled_or_missing_login_never_fetches_or_invents_data(tmp_path):
@@ -287,10 +382,13 @@ def test_disabled_or_missing_login_never_fetches_or_invents_data(tmp_path):
 
 
 @pytest.mark.parametrize("changes", [
+    {"energy_report_equipment_ids": ()},
     {"energy_report_electricity_parameter_ids": ()},
     {"energy_report_electricity_parameter_ids": (ELECTRIC[0], ELECTRIC[0])},
     {"energy_gas_parameter_id": "bad"}, {"energy_report_max_gap_seconds": 0},
     {"energy_electricity_factor": "NaN"},
+    {"energy_sampling_change_at": "invalid"},
+    {"energy_sampling_change_at": "2026-09-04", "energy_new_max_gap_seconds": 0},
 ])
 def test_bad_config_is_reported_without_network(tmp_path, changes):
     energy, client = service(tmp_path)
@@ -326,7 +424,7 @@ def test_day_month_routes_and_bad_month(tmp_path):
     start = START + timedelta(hours=8)
     app.state.query_service = SimpleNamespace(fetch_equipment_data=lambda *_args, **_kwargs: SimpleNamespace(
         records=[record(production_time=start, production_end_time=start + timedelta(minutes=30),
-                        work_time=Decimal("1800"), equipment_id=None)],
+                        work_time=Decimal("1800"), equipment_id="Cutter01")],
         data_updated_at=start + timedelta(minutes=30),
     ))
     app.dependency_overrides[require_admin] = lambda: {"role": "admin"}

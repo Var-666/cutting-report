@@ -263,3 +263,11 @@ http://127.0.0.1:8000/api/v1/health
 - `logs`：运行日志。
 
 Docker 方式的数据保存在 `cutting_data`、`cutting_reports` 和 `cutting_logs` 命名卷中。无论采用哪种方式，升级前都应备份数据；新版本覆盖程序文件时不要删除 `.env`。
+
+## PDF 导出升级
+
+三个报表的“导出报表”下拉框可选择 HTML 或 PDF，历史列表也可下载 PDF。
+Docker 部署使用新版镜像，镜像内已包含 Chromium 和中文字体。
+原生 Python 部署请重新运行 `scripts\windows\install_windows.bat`，或在更新依赖后，
+用启动服务的同一 Windows 账号执行 `.venv\Scripts\python.exe -m playwright install chromium`。
+内网离线部署需要提前准备浏览器文件或完整镜像，不能仅复制 Python 源码。

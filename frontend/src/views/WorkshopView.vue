@@ -7,13 +7,16 @@ import {
   listWorkshopTasks,
 } from '../api/reports'
 import AnalysisPanel from '../components/AnalysisPanel.vue'
+import ReportExportMenu from '../components/ReportExportMenu.vue'
+import { reportToday } from '../api/reportDates.js'
 
 const props = defineProps({
+  exporting: Boolean,
   user: { type: Object, required: true },
   mode: { type: String, default: 'manager', validator: (value) => ['manager', 'worker'].includes(value) },
 })
 const emit = defineEmits(['export'])
-const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })
+const today = reportToday()
 const pageSize = 10
 const filters = reactive({ reportDate: today, projectName: '', confirmationStatus: 'all' })
 const result = ref({ report: null, items: [], total: 0, page: 1, page_size: pageSize, project_names: [], confirmed_count: 0 })
@@ -79,21 +82,24 @@ function closeConfirmationFeedback() {
   confirmationFeedback.visible = false
 }
 
-async function load(page = 1, { silent = false, ensureReport = true } = {}) {
+async function load(page = 1, { silent = false, ensureReport = true, force = true } = {}) {
   if (!silent) {
     loading.value = true
     error.value = ''
   }
   try {
-    if (ensureReport) {
-      await generateWorkshopDailyReport(filters.reportDate)
-    }
-    result.value = await listWorkshopTasks({
+    const query = {
       ...filters,
       sortMode: props.mode,
       page,
       pageSize: result.value.page_size,
-    })
+    }
+    let data = await listWorkshopTasks(query, { force })
+    if (ensureReport && (!data.report || !data.report.item_count)) {
+      await generateWorkshopDailyReport(query.reportDate)
+      data = await listWorkshopTasks(query, { force: true })
+    }
+    if (query.reportDate === filters.reportDate) result.value = data
   } catch (exception) {
     if (!silent) error.value = exception.message
   } finally {
@@ -123,14 +129,14 @@ async function confirm(row) {
   }
 }
 
-function exportReport() {
+function exportReport(format = 'html') {
   emit('export', {
     report_type: 'workshop',
     report_date: filters.reportDate,
     project_code: null,
     ship_no: null,
     parameters: { chart_type: chartType.value },
-  })
+  }, format)
 }
 
 async function initializeReport() {
@@ -142,7 +148,7 @@ async function initializeReport() {
   } catch (exception) {
     error.value = exception.message
   }
-  await load()
+  await load(1, { force: false })
 }
 
 onMounted(() => {
@@ -177,7 +183,7 @@ onUnmounted(() => {
       <label><span>生产日期</span><input v-model="filters.reportDate" type="date" required /></label>
       <label><span>图表类型</span><select v-model="chartType"><option value="bar_line">柱线组合</option><option value="bar">柱状图</option><option value="line">折线图</option><option value="area">面积图</option></select></label>
       <button class="primary" type="submit" :disabled="loading"><span v-if="loading" class="spinner"></span>{{ loading ? '查询中' : '查询报表' }}</button>
-      <button type="button" :disabled="loading || !result.report" @click="exportReport">导出 HTML</button>
+      <ReportExportMenu :disabled="loading || !result.report" :loading="exporting" @select="exportReport" />
     </form>
   </section>
 
@@ -194,7 +200,7 @@ onUnmounted(() => {
     <div v-else class="workshop-empty-report"><strong>{{ loading ? '正在加载最近车间报表' : '该日期暂无车间报表' }}</strong><span>{{ loading ? '系统正在查找最近有数据的生产日并加载全部明细。' : '当前源数据在该日期没有已完成任务。' }}</span></div>
     <div v-if="result.report" class="workshop-summary">当前筛选返回 {{ result.total }} 项任务，所选工程/船号已确认 {{ result.confirmed_count }} 项</div>
     <div v-if="result.report" class="history-wrap workshop-table-wrap">
-      <table class="workshop-table">
+      <table v-content-table class="workshop-table">
         <colgroup>
           <col class="col-sequence" /><col class="col-project" /><col class="col-ship" />
           <col class="col-segment" /><col class="col-program" /><col class="col-length" />

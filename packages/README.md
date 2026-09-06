@@ -5,7 +5,9 @@
 ```text
 packages/
 ├── README.md
-├── cutting-report-windows-docker-20260831-files-v2.zip  当前文件下载更新版
+├── cutting-report-windows-docker-20260903.zip       当前版本
+├── cutting-report-windows-docker-20260901.zip       上一版（保留）
+├── cutting-report-windows-docker-20260831-files-v2.zip  文件下载更新版（保留）
 ├── cutting-report-windows-docker-20260831.zip       上一版（保留）
 ├── cutting-report-windows-optimized-20260825-v2.zip  之前版本（保留）
 └── archive/                                       旧版本与重复副本
@@ -21,6 +23,8 @@ packages/
 
 最新包包含统一设备报表的当日任务表、月度每日表、表尾汇总和左右图表布局，以及
 `START_DOCKER.bat`、`README-DOCKER.md`。
+2026-09-03 版只统计 Cutter01 的设备能耗，统一 PDM 检索字段的中英文名称，并包含魔盒实际文件推送。
+只有车间报表需要工人确认，设备能耗计算不依赖确认状态。
 文件下载更新版使用数据库文档名（版本不拼入文件名），并增加本地保存、下载文件下拉选择和已下载文件单选，不包含内容预览。
 按 `scripts/build_docker_package.py` 的白名单从当前工作区生成，包含尚未提交的新功能文件。
 这是与之前同类的源码构建包，不含镜像 TAR，首次 Docker 构建需要联网。

@@ -32,7 +32,8 @@ def configured(**changes):
         energy_equipment_ids=("Cutter01",), energy_gas_parameter_id=GAS,
         energy_electricity_parameter_ids=ELECTRIC, energy_gas_unit="Nm³",
         energy_electricity_unit="kWh", energy_gas_factor="1", energy_electricity_factor="1",
-        energy_max_gap_seconds=300, energy_allow_interpolation=True, energy_cache_seconds=60)
+        energy_max_gap_seconds=300, energy_allow_interpolation=True, energy_cache_seconds=60,
+        energy_sampling_change_at="")
     return replace(cfg, **changes)
 
 
@@ -207,6 +208,43 @@ def test_duplicate_conflict_gaps_missing_and_zero():
     assert calc(rows + [{**rows[0], "Mv": 99}])["status"] == "invalid_reading"
 
 
+@pytest.mark.parametrize("left,right,status", [
+    (-900, 0, "measured"),  # historical 15-minute readings still valid
+    (0, 65, "measured"),  # one-minute sampling with timestamp jitter
+    (0, 180, "measured"),
+    (0, 181, "gap"),
+    (0, 1200, "gap"),
+    (-900, 60, "measured"),  # final historical sample + first new sample
+    (-900, 181, "gap"),
+    (-1801, 60, "gap"),
+])
+def test_sampling_transition_validates_each_side(left, right, status):
+    change = datetime(2026, 9, 4)
+    start, end = (change + timedelta(seconds=value) for value in (left, right))
+    points = ([(start, Decimal(100)), (end, Decimal(110))], False)
+    result = interval_consumption(points, start, end, max_gap_seconds=1800,
+        interpolate=True, sampling_change_at=change, new_max_gap_seconds=180)
+    assert result["status"] == status
+    assert result["value"] == (Decimal(10) if status == "measured" else None)
+
+
+def test_legacy_tasks_use_new_policy_and_keep_subminute_interpolation():
+    start = datetime(2026, 9, 4, 8)
+    rows = [{"MfId": key, "Mt": start + timedelta(minutes=i), "Mv": 100 + i}
+            for key in (GAS, *ELECTRIC) for i in range(5)]
+    # Explicit UTC time must normalize to midnight in Asia/Shanghai.
+    cfg = configured(energy_sampling_change_at="2026-09-03T16:00:00Z")
+    task = record(production_time=start + timedelta(seconds=30),
+                  production_end_time=start + timedelta(minutes=1, seconds=30))
+    result = EquipmentEnergyService(cfg, MeterStub(rows)).enrich([task])
+    assert result.records[0].gas_consumption == Decimal(1)
+    assert result.records[0].gas_data_status == "interpolated"
+    sparse = [row for row in rows if row["Mt"] in {start, start + timedelta(minutes=4)}]
+    result = EquipmentEnergyService(cfg, MeterStub(sparse)).enrich([task])
+    assert result.records[0].gas_consumption is None
+    assert result.records[0].gas_data_status == "gap"
+
+
 def test_units_and_device_binding_are_required():
     stub = MeterStub()
     result = EquipmentEnergyService(configured(energy_equipment_ids=()), stub).enrich([record()])
@@ -311,8 +349,8 @@ def test_unified_device_page_export_and_analysis_share_meter_values(tmp_path, mo
     }
     assert Decimal(page_analysis_facts["F003"].split()[0]) == 2
     assert Decimal(page_analysis_facts["F004"].split()[0]) == 18
-    assert page_analysis_facts["F013"] == "0 项"
-    assert page_analysis_facts["F014"] == "0 项"
+    assert page_analysis_facts["F006"] == "0 项"
+    assert len(page_analysis_facts) == 6
     rendered = []
     original_render = pipeline.report_service.render
 
@@ -359,4 +397,5 @@ def test_analysis_does_not_report_missing_energy_as_zero(tmp_path):
     facts = {fact["id"]: fact["value"] for fact in analysis.facts}
     assert facts["F003"].startswith("缺失")
     assert facts["F004"].startswith("缺失")
-    assert "F006" not in facts
+    assert facts["F006"] == "1 项"
+    assert len(facts) == 6

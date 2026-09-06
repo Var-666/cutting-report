@@ -89,8 +89,19 @@ class Settings:
     energy_electricity_factor: str = os.getenv("ENERGY_ELECTRICITY_FACTOR", "1")
     energy_max_gap_seconds: int = _as_int("ENERGY_MAX_GAP_SECONDS", 300)
     energy_allow_interpolation: bool = _as_bool("ENERGY_ALLOW_INTERPOLATION", True)
+    # 留空不启用新规则；时间按 APP_TIMEZONE 解释，也可显式附带时区。
+    energy_sampling_change_at: str = os.getenv(
+        "ENERGY_SAMPLING_CHANGE_AT", "2026-09-04T00:00:00+08:00"
+    ).strip()
+    energy_new_max_gap_seconds: int = _as_int("ENERGY_NEW_MAX_GAP_SECONDS", 180)
 
-    # 独立日/月能耗报表：按已确认的仪表组统计，不依赖 TASK/MACHINE_NO。
+    # 统一设备能耗报表：当前仪表组只归属一台物理设备。多个值仅用于
+    # 同一设备在 TASK.MACHINE_NO 中的历史别名，不能混入另一台设备。
+    energy_report_equipment_ids: tuple[str, ...] = tuple(
+        value.strip() for value in os.getenv(
+            "ENERGY_REPORT_EQUIPMENT_IDS", "Cutter01"
+        ).split(",") if value.strip()
+    )
     energy_report_electricity_parameter_ids: tuple[str, ...] = tuple(
         value.strip() for value in os.getenv(
             "ENERGY_REPORT_ELECTRICITY_PARAMETER_IDS",
@@ -126,10 +137,6 @@ class Settings:
     worker_database_available_value: str = os.getenv(
         "WORKER_DATABASE_AVAILABLE_VALUE", "1"
     ).strip()
-    worker_database_unlocked_value: str = os.getenv(
-        "WORKER_DATABASE_UNLOCKED_VALUE", "0"
-    ).strip()
-
     # 切割文件索引/内容库单独配置，不与生产报表或 HR 库共用账号。
     file_database_enabled: bool = _as_bool("FILE_DATABASE_ENABLED", False)
     file_sqlserver_host: str = os.getenv("FILE_SQLSERVER_HOST", "")

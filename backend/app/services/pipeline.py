@@ -255,6 +255,12 @@ class ReportPipeline:
         year_ago_records = self.query_service.fetch_equipment_data(
             ReportFilter(report_date=year_ago_date)
         ).records
+        comparison_records = self.energy_period_service.filter_task_records(
+            comparison_records
+        )
+        year_ago_records = self.energy_period_service.filter_task_records(
+            year_ago_records
+        )
         summary = task_report["summary"]
         analysis = self.analysis_service.analyze_equipment(
             report_date.isoformat(),

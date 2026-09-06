@@ -35,10 +35,10 @@ const historyTotal = ref(0)
 const historyTotalPages = computed(() => Math.max(1, Math.ceil(historyTotal.value / historyPageSize.value)))
 let pollTimer = null
 
-async function loadHistory(page = historyPage.value) {
+async function loadHistory(page = historyPage.value, force = false) {
   loadingHistory.value = true
   try {
-    const data = await listReports({ page, pageSize: historyPageSize.value })
+    const data = await listReports({ page, pageSize: historyPageSize.value, force })
     history.value = data.items
     historyPage.value = data.page
     historyPageSize.value = data.page_size
@@ -107,7 +107,7 @@ async function pollStatus(reportId) {
     const terminal = ['completed', 'completed_with_warnings', 'failed'].includes(currentJob.value.status)
     if (terminal) {
       generating.value = false
-      await loadHistory(1)
+      await loadHistory(1, true)
       return
     }
     generating.value = true
@@ -169,7 +169,7 @@ onBeforeUnmount(() => window.clearTimeout(pollTimer))
   <ReportJobStatus :job="currentJob" />
 
   <section class="panel history-panel">
-    <div class="panel-title"><div><span>02</span><h2>最近生成报告</h2></div><button class="text-button" :disabled="loadingHistory" @click="loadHistory(historyPage)">刷新列表</button></div>
+    <div class="panel-title"><div><span>02</span><h2>最近生成报告</h2></div><button class="text-button" :disabled="loadingHistory" @click="loadHistory(historyPage, true)">刷新列表</button></div>
     <ReportTable
       :items="history"
       :loading="loadingHistory"

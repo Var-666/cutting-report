@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>切割生产智能产报系统架构图</title>
+<style>
+:root { --paper:#FAFAF8; --paper-2:#F0F3F5; --ink:#282D32; --muted:#596873; --soft:#67737C; --rule:#D5DEE5; --rule-solid:#A5B2BC; --accent:#2877A0; --accent-tint:#EAF2F8; --link:#174B79; --sans:'Geist','PingFang SC','Heiti SC','Microsoft YaHei',sans-serif; --serif:'Instrument Serif','Songti SC','SimSun',serif; }
+* {box-sizing:border-box}
+body { margin:0; background:var(--paper); color:var(--ink); font-family:var(--sans); padding:40px; }
+main {max-width:1280px;margin:0 auto}
+.eyebrow {font-size:12px;color:var(--muted);letter-spacing:2px;margin:0 0 12px}
+h1 {font-family:var(--serif);font-size:40px;font-weight:600;line-height:1.3;margin:0 0 12px}
+.subtitle {font-size:16px;line-height:1.6;color:var(--muted);margin:0 0 20px}
+figure {margin:0;overflow-x:auto}
+svg {display:block;width:100%;min-width:960px;height:auto;font-family:var(--sans)}
+footer {border-top:1px solid var(--rule);padding:16px 0 0;font-size:12px;line-height:1.8;color:var(--muted)}
+@media(max-width:720px){body{padding:20px}h1{font-size:28px}}
+@media print{@page{size:A4 landscape;margin:8mm}body{padding:0}h1{font-size:28px}.eyebrow{margin-bottom:4px}.subtitle{margin-bottom:4px}figure{overflow:visible}svg{min-width:0}footer{font-size:12px;padding-top:8px}}
+</style>
+</head>
+<body><main>
+<p class="eyebrow">年度 AI 应用任务 · 项目架构</p>
+<h1>切割生产智能产报系统架构图</h1>
+<p class="subtitle">从生产资料到管理报表与现场文件派发，呈现当前系统的主要组成及相互关系。</p>
+<figure>
+<svg viewBox="0 0 1280 720" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="cutting-report-architecture-title cutting-report-architecture-desc">
+<title id="cutting-report-architecture-title">切割生产智能产报系统架构图</title>
+<desc id="cutting-report-architecture-desc">生产记录和能耗记录进入统计产报功能，由智能分析补充说明后提供领导、车间与设备报表；切割文件经版本核对和确认后发送至指定机床，工人登录与任务确认列为下一步建设。</desc>
+<defs>
+<marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#596873"/></marker>
+<marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2877A0"/></marker>
+<marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#174B79"/></marker>
+</defs>
+<rect width="1280" height="720" fill="#FAFAF8"/>
+<rect x="376" y="64" width="448" height="552" rx="8" fill="#F5F7F7" stroke="#D5DEE5" stroke-width="1"/>
+<text x="40" y="44" font-size="12" font-weight="600" fill="#67737C" text-anchor="start" class="">01</text>
+<text x="72" y="44" font-size="20" font-weight="600" fill="#282D32" text-anchor="start" class="">业务资料</text>
+<text x="400" y="44" font-size="12" font-weight="600" fill="#67737C" text-anchor="start" class="">02</text>
+<text x="432" y="44" font-size="20" font-weight="600" fill="#282D32" text-anchor="start" class="">智能产报系统</text>
+<text x="960" y="44" font-size="12" font-weight="600" fill="#67737C" text-anchor="start" class="">03</text>
+<text x="992" y="44" font-size="20" font-weight="600" fill="#282D32" text-anchor="start" class="">报表与现场应用</text>
+<path class="connector" d="M 280 144 H 400" fill="none" stroke="#174B79" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-link)"/>
+<path class="connector" d="M 280 304 H 332 Q 340 304 340 296 V 200 Q 340 192 348 192 H 400" fill="none" stroke="#174B79" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-link)"/>
+<path class="connector" d="M 592 224 V 280" fill="none" stroke="#596873" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path class="connector" d="M 800 160 H 960" fill="none" stroke="#2877A0" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-accent)"/>
+<path class="connector" d="M 800 328 H 872 Q 880 328 880 320 V 256 Q 880 248 888 248 H 960" fill="none" stroke="#596873" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path class="connector" d="M 280 516 H 400" fill="none" stroke="#174B79" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-link)"/>
+<path class="connector" d="M 800 520 H 960" fill="none" stroke="#174B79" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-link)"/>
+<g class="edge-label"><rect x="292" y="116" width="96" height="20" rx="0" fill="#FAFAF8"/>
+<text x="340.0" y="132" font-size="12" font-weight="400" fill="#596873" text-anchor="middle" class="">读取生产记录</text>
+</g>
+<g class="edge-label"><rect x="604" y="240" width="96" height="20" rx="0" fill="#FAFAF8"/>
+<text x="652.0" y="256" font-size="12" font-weight="400" fill="#596873" text-anchor="middle" class="">提供统计结果</text>
+</g>
+<g class="edge-label"><rect x="832" y="132" width="96" height="20" rx="0" fill="#FAFAF8"/>
+<text x="880.0" y="148" font-size="12" font-weight="400" fill="#596873" text-anchor="middle" class="">生成生产报表</text>
+</g>
+<g class="edge-label"><rect x="804" y="300" width="72" height="20" rx="0" fill="#FAFAF8"/>
+<text x="840.0" y="316" font-size="12" font-weight="400" fill="#596873" text-anchor="middle" class="">补充分析</text>
+</g>
+<g class="edge-label"><rect x="292" y="488" width="96" height="20" rx="0" fill="#FAFAF8"/>
+<text x="340.0" y="504" font-size="12" font-weight="400" fill="#596873" text-anchor="middle" class="">查询与下载</text>
+</g>
+<g class="edge-label"><rect x="832" y="492" width="96" height="20" rx="0" fill="#FAFAF8"/>
+<text x="880.0" y="508" font-size="12" font-weight="400" fill="#596873" text-anchor="middle" class="">确认后发送</text>
+</g>
+<g class="node input" data-node="production" data-x="40" data-y="100" data-w="240" data-h="96">
+<rect x="40" y="100" width="240" height="96" rx="8" fill="#FAFAF8"/>
+<rect class="node-shape" x="40" y="100" width="240" height="96" rx="8" fill="#F0F3F5" stroke="#A5B2BC" stroke-width="1"/>
+<text x="60" y="136" font-size="20" font-weight="600" fill="#282D32" text-anchor="start" class="">生产记录</text>
+<text x="60" y="164" font-size="16" font-weight="400" fill="#596873" text-anchor="start" class="">任务明细 · 长度 · 工时</text>
+</g>
+<g class="node input" data-node="energy" data-x="40" data-y="276" data-w="240" data-h="96">
+<rect x="40" y="276" width="240" height="96" rx="8" fill="#FAFAF8"/>
+<rect class="node-shape" x="40" y="276" width="240" height="96" rx="8" fill="#F0F3F5" stroke="#A5B2BC" stroke-width="1"/>
+<text x="60" y="312" font-size="20" font-weight="600" fill="#282D32" text-anchor="start" class="">能耗记录</text>
+<text x="60" y="340" font-size="16" font-weight="400" fill="#596873" text-anchor="start" class="">用电记录 · 用气记录</text>
+</g>
+<g class="node input" data-node="source-files" data-x="40" data-y="468" data-w="240" data-h="96">
+<rect x="40" y="468" width="240" height="96" rx="8" fill="#FAFAF8"/>
+<rect class="node-shape" x="40" y="468" width="240" height="96" rx="8" fill="#F0F3F5" stroke="#A5B2BC" stroke-width="1"/>
+<text x="60" y="504" font-size="20" font-weight="600" fill="#282D32" text-anchor="start" class="">切割文件</text>
+<text x="60" y="532" font-size="16" font-weight="400" fill="#596873" text-anchor="start" class="">文件资料 · 对应版本</text>
+</g>
+<g class="node focal" data-node="report-core" data-x="400" data-y="96" data-w="400" data-h="128">
+<rect x="400" y="96" width="400" height="128" rx="8" fill="#FAFAF8"/>
+<rect class="node-shape" x="400" y="96" width="400" height="128" rx="8" fill="#EAF2F8" stroke="#2877A0" stroke-width="2"/>
+<text x="420" y="120" font-size="12" font-weight="600" fill="#2877A0" text-anchor="start" class="">核心功能</text>
+<text x="420" y="152" font-size="20" font-weight="600" fill="#282D32" text-anchor="start" class="">统计与产报</text>
+<text x="420" y="180" font-size="16" font-weight="400" fill="#596873" text-anchor="start" class="">生产汇总 · 能耗计算 · 趋势图表</text>
+<text x="420" y="204" font-size="16" font-weight="400" fill="#596873" text-anchor="start" class="">报表生成 · 模板设置</text>
+</g>
+<g class="node normal" data-node="analysis" data-x="400" data-y="280" data-w="400" data-h="96">
+<rect x="400" y="280" width="400" height="96" rx="8" fill="#FAFAF8"/>
+<rect class="node-shape" x="400" y="280" width="400" height="96" rx="8" fill="#FFFFFF" stroke="#A5B2BC" stroke-width="1"/>
+<text x="420" y="316" font-size="20" font-weight="600" fill="#282D32" text-anchor="start" class="">智能分析</text>
+<text x="420" y="344" font-size="16" font-weight="400" fill="#596873" text-anchor="start" class="">依据统计结果提供说明与建议</text>
+</g>
+<g class="node normal" data-node="dispatch" data-x="400" data-y="464" data-w="400" data-h="112">
+<rect x="400" y="464" width="400" height="112" rx="8" fill="#FAFAF8"/>
+<rect class="node-shape" x="400" y="464" width="400" height="112" rx="8" fill="#FFFFFF" stroke="#A5B2BC" stroke-width="1"/>
+<text x="420" y="500" font-size="20" font-weight="600" fill="#282D32" text-anchor="start" class="">文件管理与派发</text>
+<text x="420" y="528" font-size="16" font-weight="400" fill="#596873" text-anchor="start" class="">条件查询 · 版本核对 · 下载保存</text>
+<text x="420" y="552" font-size="16" font-weight="400" fill="#596873" text-anchor="start" class="">选择机床 · 确认发送 · 记录结果</text>
+</g>
+<g class="node normal" data-node="reports" data-x="960" data-y="100" data-w="280" data-h="188">
+<rect x="960" y="100" width="280" height="188" rx="8" fill="#FAFAF8"/>
+<rect class="node-shape" x="960" y="100" width="280" height="188" rx="8" fill="#FFFFFF" stroke="#A5B2BC" stroke-width="1"/>
+<text x="980" y="124" font-size="12" font-weight="600" fill="#596873" text-anchor="start" class="">供管理人员查看</text>
+<text x="980" y="156" font-size="20" font-weight="600" fill="#282D32" text-anchor="start" class="">生产报表</text>
+<text x="980" y="184" font-size="16" font-weight="400" fill="#596873" text-anchor="start" class="">领导月报 · 车间日报</text>
+<text x="980" y="208" font-size="16" font-weight="400" fill="#596873" text-anchor="start" class="">设备报表 · 分析建议</text>
+<text x="980" y="232" font-size="16" font-weight="400" fill="#596873" text-anchor="start" class="">查看 · 下载 · 打印</text>
+</g>
+<g class="node planned" data-node="workers" data-x="960" data-y="332" data-w="280" data-h="96">
+<rect x="960" y="332" width="280" height="96" rx="8" fill="#FAFAF8"/>
+<rect class="node-shape" x="960" y="332" width="280" height="96" rx="8" fill="#F6F7F7" stroke="#67737C" stroke-width="1" stroke-dasharray="8 4"/>
+<text x="980" y="356" font-size="12" font-weight="600" fill="#596873" text-anchor="start" class="">下一步建设</text>
+<text x="980" y="388" font-size="20" font-weight="600" fill="#282D32" text-anchor="start" class="">工人登录与任务确认</text>
+<text x="980" y="416" font-size="16" font-weight="400" fill="#596873" text-anchor="start" class="">工号登录 · 确认本人任务</text>
+</g>
+<g class="node input" data-node="machine" data-x="960" data-y="472" data-w="280" data-h="96">
+<rect x="960" y="472" width="280" height="96" rx="8" fill="#FAFAF8"/>
+<rect class="node-shape" x="960" y="472" width="280" height="96" rx="8" fill="#F0F3F5" stroke="#A5B2BC" stroke-width="1"/>
+<text x="980" y="508" font-size="20" font-weight="600" fill="#282D32" text-anchor="start" class="">指定切割机床</text>
+<text x="980" y="536" font-size="16" font-weight="400" fill="#596873" text-anchor="start" class="">接收派发的切割文件</text>
+</g>
+<text x="400" y="600" font-size="16" font-weight="400" fill="#596873" text-anchor="start" class="">统一保存：历史报表、能耗及文件派发记录</text>
+<line x1="40" y1="644" x2="1240" y2="644" stroke="#D5DEE5"/>
+<rect x="40" y="668" width="20" height="16" rx="4" fill="white" stroke="#A5B2BC"/>
+<text x="72" y="684" font-size="16" font-weight="400" fill="#596873" text-anchor="start" class="">本阶段功能范围</text>
+<rect x="256" y="668" width="20" height="16" rx="4" fill="#F6F7F7" stroke="#67737C" stroke-dasharray="8 4"/>
+<text x="288" y="684" font-size="16" font-weight="400" fill="#596873" text-anchor="start" class="">下一步建设</text>
+<path d="M 480 676 H 520" stroke="#174B79" stroke-width="1.6" marker-end="url(#arrow-link)"/>
+<text x="536" y="684" font-size="16" font-weight="400" fill="#596873" text-anchor="start" class="">资料或结果流向</text>
+<text x="1240" y="684" font-size="16" font-weight="400" fill="#596873" text-anchor="end" class="">能耗统计目前覆盖一台设备</text>
+</svg></figure>
+<footer>说明：按本阶段汇报范围整理，工人登录与任务确认列入下一步计划。数据对接、报表准确性及机床实际接收情况仍需现场验证。</footer>
+</main></body></html>

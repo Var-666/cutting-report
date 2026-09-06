@@ -194,8 +194,8 @@ class CuttingDispatchService:
         })
         return item
 
-    def search_files(self, filters, *, page, page_size):
-        rows, total = self.pdm.search_files(filters, page=page, page_size=page_size)
+    def search_files(self, filters, *, page, page_size, sort=()):
+        rows, total = self.pdm.search_files(filters, page=page, page_size=page_size, sort=sort)
         return {"items": [self._file_item(row) for row in rows], "total": total, "page": page, "page_size": page_size}
 
     def list_files(self, project_id: str, *, catalog_id: str | None, status: str, keyword: str, page: int, page_size: int) -> dict[str, Any]:

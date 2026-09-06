@@ -44,6 +44,7 @@ from app.services.email_service import EmailService
 from app.services.file_source import build_file_source
 from app.services.file_download_service import FileDownloadService
 from app.services.magic_box_service import MagicBoxConfigProvider
+from app.services.pdf_service import PdfService
 from app.workers.report_worker import ReportWorker
 
 
@@ -113,6 +114,7 @@ async def lifespan(app: FastAPI):
     )
     dispatches.recover_interrupted(app.state.cutting_dispatch._now())
     app.state.worker = worker
+    app.state.pdf_service = PdfService()
     worker.start()
     try:
         yield

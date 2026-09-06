@@ -13,7 +13,7 @@ from app.database.workshop import (
     ConfirmationConflictError,
     DailyReportExistsError,
 )
-from app.models.domain import ReportFilter, to_primitive
+from app.models.domain import to_primitive
 
 
 router = APIRouter(prefix="/api/v1/workshop", tags=["workshop-confirmation"])
@@ -97,9 +97,7 @@ def generate_daily_report(
     )
     if existing is not None and existing["item_count"] > 0:
         return _envelope(request, existing)
-    bundle = request.app.state.query_service.fetch_report_data(
-        ReportFilter(report_date=payload.report_date)
-    )
+    bundle = request.app.state.query_service.prepare_workshop_data(payload.report_date)
     now = datetime.now(ZoneInfo(settings.timezone)).isoformat(timespec="seconds")
     if existing is not None:
         report = request.app.state.workshop.populate_empty_daily_report(
@@ -136,9 +134,12 @@ def list_tasks(
     sort_mode: Literal["manager", "worker"] = "manager",
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=10, ge=10, le=100),
+    warmup: bool = False,
     user: dict = Depends(require_user),
 ) -> dict:
     report, records = _records_for_date(request, report_date)
+    if warmup and (report is None or not report["item_count"]):
+        request.app.state.query_service.prepare_workshop_data(report_date)
     if report is None:
         return _envelope(
             request,

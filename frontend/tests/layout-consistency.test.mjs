@@ -8,6 +8,30 @@ function descriptor(name, folder = 'views') {
   return parse(source).descriptor
 }
 
+test('downloads are row actions with original names; the standalone selector is gone', () => {
+  const downloads = descriptor('CuttingDownloadsPanel', 'components')
+  const dispatch = descriptor('CuttingDispatchView')
+  assert.doesNotMatch(downloads.template.content, /download-source-file|下载所选文件|<span>03<\/span>/)
+  assert.match(dispatch.template.content, /@click="downloadFile\(row\)"/)
+  assert.match(dispatch.template.content, /<strong>\{\{ row.document_no \}\}<\/strong>/)
+  assert.match(downloads.template.content, /<h2>已下载文件<\/h2>/)
+  assert.match(downloads.template.content, /另存到电脑/)
+  assert.match(dispatch.template.content, /<option v-for="file in pushFiles"[^>]*>\{\{ file.filename \}\}<\/option>/)
+  assert.match(downloads.template.content, /<th>版本 \/ 来源<\/th>/)
+})
+
+test('query and downloaded records both expose a reusable bounded sort builder', () => {
+  for (const [name, folder] of [['CuttingDispatchView', 'views'], ['CuttingDownloadsPanel', 'components']]) {
+    const page = descriptor(name, folder)
+    assert.match(page.template.content, /<SortBuilder v-model="sort" :schema="conditionSchema"/)
+    assert.match(page.scriptSetup.content, /appliedSort/)
+  }
+  const sort = descriptor('SortBuilder', 'components')
+  assert.match(sort.template.content, /添加排序/)
+  assert.match(sort.template.content, /value="asc"/)
+  assert.match(sort.template.content, /value="desc"/)
+})
+
 test('settings reuses the same compact navigation shell as reports', () => {
   const settings = descriptor('SettingsLayout', 'layouts')
   assert.match(settings.template.content, /class="report-navigation settings-navigation"/)

@@ -12,7 +12,9 @@ from zoneinfo import ZoneInfo
 
 from app.models.domain import to_primitive
 from app.services.energy_api import EnergyApiClient, EnergyApiError
-from app.services.energy_service import STATUS_TEXT, interval_consumption, local_time, make_series
+from app.services.energy_service import (
+    STATUS_TEXT, interval_consumption, local_time, make_series, sampling_policy, sampling_notice,
+)
 from app.services.equipment_service import sort_equipment_records, summarize_equipment
 
 
@@ -49,7 +51,11 @@ def restore_task_energy_records(records, task_report):
     }
     output = []
     for source in records:
-        values = calculated_by_id.get(str(source.task_id), {})
+        values = calculated_by_id.get(str(source.task_id))
+        # The task report can intentionally exclude tasks belonging to another
+        # machine.  Do not silently re-add those rows to exports or analysis.
+        if values is None:
+            continue
         output.append(
             replace(
                 source,
@@ -75,7 +81,7 @@ def restore_task_energy_records(records, task_report):
 
 
 class EnergyPeriodService:
-    """Read-only meter queries + local daily snapshots. No production task binding.
+    """Read-only meter queries + local daily snapshots for one configured machine.
 
     An hour means [HH:00, next HH:00]. A day means local midnight to next
     midnight. Never substitute the first/last available sample for that boundary.
@@ -98,6 +104,25 @@ class EnergyPeriodService:
         return tuple(key.lower() for key in self.settings.energy_report_electricity_parameter_ids)
 
     @property
+    def equipment_ids(self):
+        return tuple(
+            value.strip() for value in self.settings.energy_report_equipment_ids
+            if value and value.strip()
+        )
+
+    @property
+    def normalized_equipment_ids(self):
+        return frozenset(value.casefold() for value in self.equipment_ids)
+
+    def filter_task_records(self, records):
+        """Keep only tasks belonging to the configured physical machine."""
+        allowed = self.normalized_equipment_ids
+        return [
+            row for row in records
+            if row.equipment_id and row.equipment_id.strip().casefold() in allowed
+        ]
+
+    @property
     def gas_id(self):
         return self.settings.energy_gas_parameter_id.lower()
 
@@ -105,22 +130,39 @@ class EnergyPeriodService:
     def source_key(self):
         cfg = self.settings
         # Credentials are never persisted. Account identity prevents cross-account reuse.
-        scope = ["hourly-v1", cfg.energy_api_base_url.rstrip("/"), cfg.energy_api_username,
+        scope = ["hourly-v2", cfg.energy_api_base_url.rstrip("/"), cfg.energy_api_username,
                  self.gas_id, sorted(self.electricity_ids), cfg.timezone,
                  cfg.energy_gas_unit, cfg.energy_electricity_unit,
                  cfg.energy_gas_factor, cfg.energy_electricity_factor,
-                 cfg.energy_report_max_gap_seconds, cfg.energy_allow_interpolation]
+                 cfg.energy_report_max_gap_seconds, cfg.energy_allow_interpolation,
+                 sorted(self.normalized_equipment_ids)]
         return sha256(json.dumps(scope, ensure_ascii=False).encode()).hexdigest()
+
+    def day_source_key(self, report_date):
+        # Preserve the exact historical namespace. Only affected days require a
+        # fresh snapshot, so old permissive results cannot pass as revalidated.
+        try:
+            policy = sampling_policy(self.settings)
+        except ValueError:
+            return self.source_key  # configuration_error handles invalid settings
+        end = datetime.combine(report_date + timedelta(days=1), time.min)
+        if not policy or end <= policy["sampling_change_at"]:
+            return self.source_key
+        scope = [self.source_key, "sampling-transition-v1",
+                 policy["sampling_change_at"].isoformat(), policy["new_max_gap_seconds"]]
+        return sha256(json.dumps(scope).encode()).hexdigest()
 
     def configuration_error(self):
         cfg = self.settings
         if not cfg.energy_api_enabled:
-            return "尚未启用能管接口，请配置 ENERGY_API_ENABLED 和内网账号；此报表无需设备绑定。"
+            return "尚未启用能管接口，请配置 ENERGY_API_ENABLED 和内网账号。"
         if not cfg.energy_api_username or not cfg.energy_api_password:
             return "尚未配置能管账号或密码。"
         try:
+            sampling_policy(cfg)
             ids = (self.gas_id, *self.electricity_ids)
-            if not self.gas_id or not self.electricity_ids or len(set(ids)) != len(ids):
+            if (not self.equipment_ids or not self.gas_id or not self.electricity_ids
+                    or len(set(ids)) != len(ids)):
                 raise ValueError()
             for key in ids:
                 UUID(key)
@@ -131,23 +173,29 @@ class EnergyPeriodService:
             if not 60 <= cfg.energy_report_max_gap_seconds <= 3600:
                 raise ValueError()
         except (ValueError, InvalidOperation):
-            return "仪表参数编号、换算因子或日/月报采样间隔配置无效。"
+            return "设备范围、仪表参数编号、换算因子、采样切换时间或间隔配置无效。"
         return None
 
     def metadata(self):
         cfg = self.settings
         unit = cfg.energy_electricity_unit or "kWh"
+        scope_name = " / ".join(self.equipment_ids)
         notice = (
-            "独立仪表组：所选电表增量相加＋累计流量；不绑定机床、不按任务分摊。"
+            f"{scope_name} 专用仪表组：所选电表增量相加＋累计流量；"
+            "其他设备任务不统计，日/月总量不按任务分摊。"
             "日表按整点小时求累计读数差，月表汇总已保存日记录。"
             "仅汇总有效时段；部分合计不代表完整全天/整月用量。"
         )
         if cfg.energy_allow_interpolation:
             notice += "非精确边界采用线性插值估算。"
-        notice += f"最大允许采样间隔 {cfg.energy_report_max_gap_seconds // 60} 分钟（与任务报表独立配置）。"
+        try:
+            notice += sampling_notice(cfg, cfg.energy_report_max_gap_seconds)
+        except ValueError:
+            notice += "采样切换配置无效，请检查切换时间和间隔上限。"
         return {"units": {"gas": cfg.energy_gas_unit or "原始单位待确认", "electricity": unit},
                 "notice": notice, "source_name": "电表合计 / 气量计", "timezone": cfg.timezone,
                 "configuration_error": self.configuration_error(),
+                "equipment_scope": list(self.equipment_ids),
                 "parameters": {"electricity": list(self.electricity_ids), "gas": self.gas_id}}
 
     def blank_day(self, report_date, *, status="not_queried"):
@@ -173,7 +221,10 @@ class EnergyPeriodService:
 
     def get_day(self, report_date: date, *, force=False):
         with self._lock:
-            cached = self.repository.get_day(self.source_key, report_date.isoformat())
+            source_key = self.day_source_key(report_date)
+            cached = self.repository.get_day(source_key, report_date.isoformat())
+            outdated = (source_key != self.source_key and not cached
+                        and self.repository.get_day(self.source_key, report_date.isoformat()))
             now = self.now()
             if report_date > now.date():
                 return to_primitive({**self.blank_day(report_date), **self.metadata(), "warning": "未来日期不查询。"})
@@ -188,13 +239,17 @@ class EnergyPeriodService:
 
             start = datetime.combine(report_date, time.min)
             end = start + timedelta(days=1)
-            padding = timedelta(seconds=self.settings.energy_report_max_gap_seconds)
+            padding = timedelta(seconds=max(self.settings.energy_report_max_gap_seconds,
+                                            sampling_policy(self.settings).get("new_max_gap_seconds", 0)))
             try:
                 readings = self.client.fetch((self.gas_id, *self.electricity_ids), start - padding,
                                              min(end + padding, now), force=force)
                 report = self.calculate_day(report_date, readings)
             except EnergyApiError as exc:
-                return to_primitive(self._failed(report_date, cached, str(exc)))
+                message = str(exc)
+                if outdated:
+                    message += " 该日旧快照已保留，但尚未通过新采样规则校验，请重新同步。"
+                return to_primitive(self._failed(report_date, cached, message))
             # A transient empty/partial response must not silently erase known data.
             if cached and any(old[key]["value"] is not None and new[key]["value"] is None
                               for old, new in zip(cached["rows"], report["rows"])
@@ -202,7 +257,7 @@ class EnergyPeriodService:
                 return to_primitive(self._failed(report_date, cached, "本次返回的有效时段减少，已保留原记录，请核对平台数据。"))
             report.update(updated_at=now.isoformat(timespec="seconds"), saved=True, sync_ok=True)
             report = to_primitive(report)
-            self.repository.save_day(self.source_key, report)
+            self.repository.save_day(source_key, report)
             return {**report, **self.metadata(), "from_cache": False}
 
     def calculate_day(self, report_date, readings):
@@ -216,7 +271,8 @@ class EnergyPeriodService:
             def calculate(key, factor):
                 result = interval_consumption(series[key], start, end,
                     max_gap_seconds=self.settings.energy_report_max_gap_seconds,
-                    interpolate=self.settings.energy_allow_interpolation, factor=Decimal(factor))
+                    interpolate=self.settings.energy_allow_interpolation, factor=Decimal(factor),
+                    **sampling_policy(self.settings))
                 return {"parameter_id": key, **result}
 
             gas = calculate(self.gas_id, self.settings.energy_gas_factor)
@@ -231,15 +287,15 @@ class EnergyPeriodService:
         return report
 
     def get_task_day(self, report_date: date, records, *, force=False):
-        """Calculate consumption for every task interval without equipment binding.
-
-        The configured report meter group is treated as one cutting machine. Tasks
-        with invalid or overlapping intervals remain visible but are not allocated.
-        """
+        """Calculate task consumption only for the configured physical machine."""
         units = self.metadata()["units"]
+        source_records = list(records)
+        selected_records = self.filter_task_records(source_records)
         clean = [replace(row, gas_consumption=None, electricity_consumption=None,
                          gas_data_status="missing", electricity_data_status="missing",
-                         energy_note=None, energy_details={}) for row in records]
+                         energy_note=None, energy_details={}) for row in selected_records]
+        excluded_count = len(source_records) - len(selected_records)
+        scope_name = " / ".join(self.equipment_ids) or "未配置设备"
 
         def result(rows, mode, notice, warning=""):
             ordered = sort_equipment_records(rows)
@@ -248,13 +304,13 @@ class EnergyPeriodService:
                 "records": ordered,
                 "summary": summarize_equipment(ordered, mode),
                 "units": units,
+                "equipment_scope": list(self.equipment_ids),
+                "source_task_count": len(source_records),
+                "excluded_task_count": excluded_count,
                 "energy_notice": notice,
                 "warning": warning,
                 "configuration_error": self.configuration_error(),
             })
-
-        if not clean:
-            return result([], "unavailable", "所选日期暂无切割任务。")
 
         error = self.configuration_error()
         if error:
@@ -262,6 +318,10 @@ class EnergyPeriodService:
                                    electricity_data_status="unavailable", energy_note=error)
                            for row in clean]
             return result(unavailable, "unavailable", error + "；缺失值不作为零值。", error)
+
+        if not clean:
+            suffix = f"，已排除 {excluded_count} 条其他设备任务" if excluded_count else ""
+            return result([], "unavailable", f"所选日期暂无 {scope_name} 切割任务{suffix}。")
 
         intervals = {}
         for row in clean:
@@ -286,7 +346,8 @@ class EnergyPeriodService:
         ids = (self.gas_id, *self.electricity_ids)
         series = {}
         if usable:
-            padding = timedelta(seconds=self.settings.energy_report_max_gap_seconds)
+            padding = timedelta(seconds=max(self.settings.energy_report_max_gap_seconds,
+                                            sampling_policy(self.settings).get("new_max_gap_seconds", 0)))
             try:
                 readings = self.client.fetch(ids, min(item[0] for item in usable.values()) - padding,
                                              max(item[1] for item in usable.values()) + padding,
@@ -317,6 +378,7 @@ class EnergyPeriodService:
                     max_gap_seconds=self.settings.energy_report_max_gap_seconds,
                     interpolate=self.settings.energy_allow_interpolation,
                     factor=Decimal(factor),
+                    **sampling_policy(self.settings),
                 )
                 return {"parameter_id": key, **measured}
 
@@ -353,11 +415,13 @@ class EnergyPeriodService:
         )
         mode = "metered" if available == 2 * len(output) else "partial" if available else "unavailable"
         notice = (
-            "按每项任务实际开始至结束时间计算累计读数差值；三块电表相加，气表独立计算。"
-            "当前仪表组直接对应本设备，不要求维护设备绑定；汇总只包含有效任务读数。"
+            f"仅统计 {scope_name} 任务；按每项任务实际开始至结束时间计算累计读数差值；"
+            "三块电表相加，气表独立计算；其他设备任务不显示、不汇总。"
+            "汇总只包含有效任务读数。"
         )
         if self.settings.energy_allow_interpolation:
             notice += "边界非采样时刻采用线性插值并标记为估算。"
+        notice += sampling_notice(self.settings, self.settings.energy_report_max_gap_seconds)
         if conflicts:
             notice += "存在时间重叠任务，无法重复分配同一仪表耗量，相关行保持缺失。"
         return result(output, mode, notice)
@@ -365,7 +429,15 @@ class EnergyPeriodService:
     def get_month(self, report_month):
         year, month = map(int, report_month.split("-"))
         count = calendar.monthrange(year, month)[1]
-        saved = {item["report_date"]: item for item in self.repository.list_month(self.source_key, report_month)}
+        legacy = {item["report_date"]: item for item in self.repository.list_month(self.source_key, report_month)}
+        saved = {}
+        keys = {self.day_source_key(date(year, month, number)) for number in range(1, count + 1)}
+        for source_key in keys:
+            candidates = legacy.values() if source_key == self.source_key else self.repository.list_month(source_key, report_month)
+            for item in candidates:
+                if self.day_source_key(date.fromisoformat(item["report_date"])) == source_key:
+                    saved[item["report_date"]] = item
+        resync_dates = sorted(set(legacy) - set(saved))
         today = self.now().date()
         rows = []
         for number in range(1, count + 1):
@@ -374,7 +446,8 @@ class EnergyPeriodService:
             state = "future" if stamp > today else "not_queried"
             row = {"report_date": stamp.isoformat(), "saved": bool(stored),
                    "updated_at": stored["updated_at"] if stored else None,
-                   "is_future": stamp > today, "is_today": stamp == today}
+                   "is_future": stamp > today, "is_today": stamp == today,
+                   "needs_resync": stamp.isoformat() in resync_dates}
             for key in CHANNELS:
                 row[key] = stored["summary"][key] if stored else channel_result(status=state,
                     valid_count=0, complete_count=0, expected_count=24, estimated_count=0)
@@ -384,4 +457,6 @@ class EnergyPeriodService:
             "summary": {key: total_channel(elapsed, key) for key in CHANNELS},
             "saved_day_count": sum(row["saved"] for row in rows),
             "elapsed_day_count": len(elapsed), "calendar_day_count": count,
-            **self.metadata(), "storage_notice": "查询单日后保存小时明细和日合计；月表读取已保存记录。点击同步本月可逐日补齐，不是后台定时采集。"})
+            "resync_dates": resync_dates,
+            **self.metadata(), "storage_notice": "查询单日后保存小时明细和日合计；月表读取已保存记录。点击同步本月可逐日补齐，不是后台定时采集。"
+            + (f" 其中 {len(resync_dates)} 天旧快照仍保留，需按新采样规则重新同步后计入合计。" if resync_dates else "")})

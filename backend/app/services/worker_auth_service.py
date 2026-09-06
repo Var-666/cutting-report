@@ -33,7 +33,6 @@ class WorkerAuthService:
             [集团工号] AS group_no,
             [公司工号] AS company_no,
             [可用] AS available_value,
-            [_Locked] AS locked_value,
             CASE WHEN [密码] = ? THEN 1 ELSE 0 END AS password_matches
         FROM [dbo].[HRbase_userInfo]
         WHERE [公司工号] = ?
@@ -68,10 +67,8 @@ class WorkerAuthService:
         available = _state_text(row.get("available_value")) == _state_text(
             self.settings.worker_database_available_value
         )
-        unlocked = _state_text(row.get("locked_value")) == _state_text(
-            self.settings.worker_database_unlocked_value
-        )
-        if not password_matches or not available or not unlocked:
+        # HR 的 _Locked 不参与本系统登录；仍校验密码和账号可用状态。
+        if not password_matches or not available:
             raise AuthenticationError("公司工号或密码错误")
 
         external_id = str(row.get("external_id") or "").strip()

@@ -6,16 +6,15 @@ import { CanvasRenderer } from 'echarts/renderers'
 import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
 import { getLeadershipReport } from '../api/reports'
 import AnalysisPanel from '../components/AnalysisPanel.vue'
+import ReportExportMenu from '../components/ReportExportMenu.vue'
+import { reportToday } from '../api/reportDates.js'
 
+defineProps({ exporting: Boolean })
 const emit = defineEmits(['export'])
 
 use([BarChart, LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
 
-const currentMonth = new Date().toLocaleDateString('en-CA', {
-  timeZone: 'Asia/Shanghai',
-  year: 'numeric',
-  month: '2-digit',
-}).slice(0, 7)
+const currentMonth = reportToday().slice(0, 7)
 
 const reportMonth = ref(currentMonth)
 const chartType = ref('bar_line')
@@ -145,14 +144,14 @@ function resizeCharts() {
   monthlyChart?.resize()
 }
 
-function exportReport() {
+function exportReport(format = 'html') {
   emit('export', {
     report_type: 'leadership',
     report_date: `${reportMonth.value}-01`,
     project_code: null,
     ship_no: null,
     parameters: { chart_type: chartType.value },
-  })
+  }, format)
 }
 
 onMounted(() => {
@@ -190,7 +189,7 @@ watch(chartType, async () => {
       <button class="primary" type="submit" :disabled="loading">
         <span v-if="loading" class="spinner"></span>{{ loading ? '查询中' : '刷新报表' }}
       </button>
-      <button type="button" :disabled="loading" @click="exportReport">导出 HTML</button>
+      <ReportExportMenu :disabled="loading || !report" :loading="exporting" @select="exportReport" />
     </form>
   </section>
 
@@ -211,7 +210,7 @@ watch(chartType, async () => {
     <div class="leadership-split">
       <div ref="dailyChartElement" class="leadership-chart" aria-label="当月每日趋势图"></div>
       <div class="leadership-table-wrap">
-        <table class="leadership-table">
+        <table v-content-table class="leadership-table">
         <colgroup><col class="col-index" /><col class="col-period" /><col class="col-count" /><col class="col-number" /><col class="col-number" /><col class="col-duration" /><col class="col-remark" /></colgroup>
         <thead><tr><th>序号</th><th>日期</th><th>任务数</th><th>切割长度</th><th>坡口长度</th><th>切割时长</th><th>备注</th></tr></thead>
         <tbody>
@@ -238,7 +237,7 @@ watch(chartType, async () => {
     <div class="leadership-split">
       <div ref="monthlyChartElement" class="leadership-chart" aria-label="最近十二个月趋势图"></div>
       <div class="leadership-table-wrap">
-        <table class="leadership-table">
+        <table v-content-table class="leadership-table">
         <colgroup><col class="col-index" /><col class="col-period" /><col class="col-count" /><col class="col-number" /><col class="col-number" /><col class="col-duration" /><col class="col-remark" /></colgroup>
         <thead><tr><th>序号</th><th>月份</th><th>任务数</th><th>切割长度</th><th>坡口长度</th><th>切割时长</th><th>备注</th></tr></thead>
         <tbody>

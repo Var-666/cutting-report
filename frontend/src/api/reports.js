@@ -1,7 +1,7 @@
+import { reportCache } from './reportCache.js'
+import { reportToday } from './reportDates.js'
+
 const DEFAULT_HEADERS = { 'Content-Type': 'application/json' }
-const LEADERSHIP_CACHE_TTL_MS = 5 * 60 * 1000
-const leadershipReportCache = new Map()
-const leadershipReportRequests = new Map()
 
 async function request(url, options = {}) {
   const response = await fetch(url, {
@@ -62,7 +62,7 @@ export function createUserAccount(payload) {
   })
 }
 
-export function listWorkshopTasks({ reportDate, projectName = '', confirmationStatus = 'all', sortMode = 'manager', page = 1, pageSize = 10 }) {
+export function listWorkshopTasks({ reportDate, projectName = '', confirmationStatus = 'all', sortMode = 'manager', page = 1, pageSize = 10 }, { force = false, signal, warmup = false } = {}) {
   const query = new URLSearchParams({
     report_date: reportDate,
     confirmation_status: confirmationStatus,
@@ -71,42 +71,44 @@ export function listWorkshopTasks({ reportDate, projectName = '', confirmationSt
     page_size: pageSize,
   })
   if (projectName) query.set('project_name', projectName)
-  return request(`/api/v1/workshop/tasks?${query}`)
+  const key = `workshop:tasks:${query}`
+  if (warmup) query.set('warmup', 'true')
+  return reportCache.read(key, (signal) => request(`/api/v1/workshop/tasks?${query}`, { signal }), { force, signal })
 }
 
 export function generateWorkshopDailyReport(reportDate) {
   return request('/api/v1/workshop/reports', {
     method: 'POST',
     body: JSON.stringify({ report_date: reportDate }),
-  })
+  }).then((data) => { reportCache.invalidate('workshop:tasks:'); return data })
 }
 
-export function getLatestWorkshopProductionDate(onOrBefore) {
+export function getLatestWorkshopProductionDate(onOrBefore, { force = false, signal } = {}) {
   const query = new URLSearchParams({ on_or_before: onOrBefore })
-  return request(`/api/v1/workshop/latest-date?${query}`)
+  return reportCache.read(`workshop:latest:${query}`, (signal) => request(`/api/v1/workshop/latest-date?${query}`, { signal }), { ttl: 60000, force, signal })
 }
 
 export function confirmWorkshopTask(taskId, reportDate) {
   return request(`/api/v1/workshop/tasks/${encodeURIComponent(taskId)}/confirm`, {
     method: 'POST',
     body: JSON.stringify({ report_date: reportDate }),
-  })
+  }).then((data) => { reportCache.invalidate('workshop:tasks:'); return data })
 }
 
 export function createReport(form) {
   return request('/api/v1/reports', {
     method: 'POST',
     body: JSON.stringify(form),
-  })
+  }).then((data) => { reportCache.invalidate('history:'); return data })
 }
 
-export function getReportStatus(reportId) {
-  return request(`/api/v1/reports/${encodeURIComponent(reportId)}/status`)
+export function getReportStatus(reportId, { signal } = {}) {
+  return request(`/api/v1/reports/${encodeURIComponent(reportId)}/status`, { signal })
 }
 
-export function listReports({ page = 1, pageSize = 20 } = {}) {
+export function listReports({ page = 1, pageSize = 20, force = false } = {}) {
   const query = new URLSearchParams({ page, page_size: pageSize })
-  return request(`/api/v1/reports?${query}`)
+  return reportCache.read(`history:${query}`, (signal) => request(`/api/v1/reports?${query}`, { signal }), { ttl: 5000, force })
 }
 
 export function listProjects(reportDate) {
@@ -139,29 +141,10 @@ export function getSystemHealth() {
   return request('/api/v1/health')
 }
 
-export function getLeadershipReport(reportMonth, { force = false } = {}) {
-  const now = Date.now()
-  const cached = leadershipReportCache.get(reportMonth)
-  if (!force && cached && cached.expiresAt > now) {
-    return Promise.resolve(cached.data)
-  }
-  if (leadershipReportRequests.has(reportMonth)) {
-    return leadershipReportRequests.get(reportMonth)
-  }
-
+export function getLeadershipReport(reportMonth, { force = false, signal } = {}) {
   const query = new URLSearchParams({ report_month: reportMonth })
   if (force) query.set('refresh', 'true')
-  const pending = request(`/api/v1/leadership-report?${query}`)
-    .then((data) => {
-      leadershipReportCache.set(reportMonth, {
-        data,
-        expiresAt: Date.now() + LEADERSHIP_CACHE_TTL_MS,
-      })
-      return data
-    })
-    .finally(() => leadershipReportRequests.delete(reportMonth))
-  leadershipReportRequests.set(reportMonth, pending)
-  return pending
+  return reportCache.read(`leadership:${reportMonth}`, (signal) => request(`/api/v1/leadership-report?${query}`, { signal }), { ttl: 300000, force, signal })
 }
 
 export function getEquipmentReport(reportDate = '', { force = false } = {}) {
@@ -174,22 +157,28 @@ export function getEquipmentReport(reportDate = '', { force = false } = {}) {
 }
 
 export function getEnergyDay(reportDate = '', { force = false, signal } = {}) {
+  reportDate ||= reportToday()
   const query = new URLSearchParams()
   if (reportDate) query.set('report_date', reportDate)
   if (force) query.set('refresh', 'true')
-  return request(`/api/v1/energy-report/day?${query}`, { signal })
+  return reportCache.read(`energy:day:${reportDate}`, async (signal) => {
+    const data = await request(`/api/v1/energy-report/day?${query}`, { signal })
+    if (!signal.aborted) reportCache.invalidate(`energy:month:${reportDate.slice(0, 7)}`)
+    return data
+  }, { ttl: 60000, force, signal })
 }
 
 export function getTaskEnergyDay(reportDate = '', { force = false, signal } = {}) {
+  reportDate ||= reportToday()
   const query = new URLSearchParams()
   if (reportDate) query.set('report_date', reportDate)
   if (force) query.set('refresh', 'true')
-  return request(`/api/v1/energy-report/tasks?${query}`, { signal })
+  return reportCache.read(`energy:tasks:${reportDate}`, (signal) => request(`/api/v1/energy-report/tasks?${query}`, { signal }), { ttl: 60000, force, signal })
 }
 
-export function getEnergyMonth(reportMonth, { signal } = {}) {
+export function getEnergyMonth(reportMonth, { force = false, signal } = {}) {
   const query = new URLSearchParams({ report_month: reportMonth })
-  return request(`/api/v1/energy-report/month?${query}`, { signal })
+  return reportCache.read(`energy:month:${reportMonth}`, (signal) => request(`/api/v1/energy-report/month?${query}`, { signal }), { ttl: 60000, force, signal })
 }
 
 export function analyzeReport({ reportType, reportDate, force = false }) {
@@ -252,12 +241,20 @@ export function getConditionSchema(dataset) {
   return request(`/api/v1/conditions/${encodeURIComponent(dataset)}/schema`)
 }
 
-export function searchCuttingFiles(filters, { page = 1, pageSize = 10 } = {}) {
-  return request('/api/v1/cutting/files/search', { method: 'POST', body: JSON.stringify({ filters, page, page_size: pageSize }) })
+export function clearCuttingFilePages() {
+  reportCache.invalidate('cutting:files:')
 }
 
-export function searchCuttingDownloads(filters, { page = 1, pageSize = 10 } = {}) {
-  return request('/api/v1/cutting/downloads/search', { method: 'POST', body: JSON.stringify({ filters, page, page_size: pageSize }) })
+export function searchCuttingFiles(filters, { page = 1, pageSize = 10, sort = [], force = false } = {}) {
+  if (force) clearCuttingFilePages()
+  const body = JSON.stringify({ filters, page, page_size: pageSize, sort })
+  return reportCache.read(`cutting:files:${body}`, (signal) => request('/api/v1/cutting/files/search', {
+    method: 'POST', body, signal,
+  }), { ttl: 60000 })
+}
+
+export function searchCuttingDownloads(filters, { page = 1, pageSize = 10, sort = [] } = {}) {
+  return request('/api/v1/cutting/downloads/search', { method: 'POST', body: JSON.stringify({ filters, page, page_size: pageSize, sort }) })
 }
 
 export function downloadCuttingFile(payload) {
@@ -268,20 +265,11 @@ export function listCuttingDownloads({ page = 1, pageSize = 10 } = {}) {
   return request(`/api/v1/cutting/downloads?${new URLSearchParams({ page, page_size: pageSize })}`)
 }
 
-export async function saveCuttingDownload(downloadId, filename) {
-  const response = await fetch(`/api/v1/cutting/downloads/${encodeURIComponent(downloadId)}/file`, { credentials: 'same-origin' })
-  if (!response.ok) {
-    const payload = await response.json().catch(() => null)
-    throw new Error(payload?.detail || '本地文件读取失败，请重新下载')
-  }
-  const url = URL.createObjectURL(await response.blob())
-  const anchor = document.createElement('a')
-  anchor.href = url
-  anchor.download = filename
-  document.body.appendChild(anchor)
-  anchor.click()
-  anchor.remove()
-  setTimeout(() => URL.revokeObjectURL(url), 60000)
+export { canChooseSaveLocation } from './saveFile.js'
+import { saveFileFromUrl } from './saveFile.js'
+
+export function saveCuttingDownload(downloadId, filename, options) {
+  return saveFileFromUrl(`/api/v1/cutting/downloads/${encodeURIComponent(downloadId)}/file`, filename, options)
 }
 
 export function listCuttingProjects(keyword = '') {

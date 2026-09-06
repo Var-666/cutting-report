@@ -53,7 +53,28 @@ def make_series(rows, ids, timezone):
     return {key: (sorted(points.items()), key in invalid) for key, points in readings.items()}
 
 
-def interval_consumption(series, start, end, *, max_gap_seconds, interpolate, factor=Decimal("1")):
+def sampling_policy(settings):
+    """Shared transition policy for legacy task and unified energy reports."""
+    if not settings.energy_sampling_change_at:
+        return {}
+    if not 60 <= settings.energy_new_max_gap_seconds <= 3600:
+        raise ValueError("新采样间隔上限必须为 60—3600 秒")
+    return {"sampling_change_at": local_time(settings.energy_sampling_change_at, settings.timezone),
+            "new_max_gap_seconds": settings.energy_new_max_gap_seconds}
+
+
+def sampling_notice(settings, historical_gap):
+    policy = sampling_policy(settings)
+    if not policy:
+        return f"最大允许采样间隔 {historical_gap} 秒。"
+    stamp = policy["sampling_change_at"].isoformat(sep=" ")
+    return (f"采样规则切换时间 {stamp}（{settings.timezone}）；"
+            f"此前允许间隔 {historical_gap} 秒，此后 {policy['new_max_gap_seconds']} 秒；"
+            "超过上限的时段标为数据缺口，不计入有效耗量。")
+
+
+def interval_consumption(series, start, end, *, max_gap_seconds, interpolate, factor=Decimal("1"),
+                         sampling_change_at=None, new_max_gap_seconds=180):
     points, invalid = series
     result = {"value": None, "status": "missing"}
     if invalid:
@@ -69,7 +90,12 @@ def interval_consumption(series, start, end, *, max_gap_seconds, interpolate, fa
     for (t0, v0), (t1, v1) in zip(selected, selected[1:]):
         if v1 < v0:
             return {**result, "status": "counter_reset"}
-        if (t1 - t0).total_seconds() > max_gap_seconds:
+        # Check each side separately when samples straddle the acquisition change.
+        # A normal final historical sample must not be judged as a one-minute sample.
+        before_end = min(t1, sampling_change_at) if sampling_change_at else t1
+        old_gap = max(0, (before_end - t0).total_seconds())
+        new_gap = max(0, (t1 - max(t0, sampling_change_at)).total_seconds()) if sampling_change_at else 0
+        if old_gap > max_gap_seconds or new_gap > new_max_gap_seconds:
             return {**result, "status": "gap"}
     estimated = start not in times or end not in times
     if estimated and not interpolate:
@@ -141,6 +167,7 @@ class EquipmentEnergyService:
         electric_ready = bool(electric_ids and electricity_unit == "kWh")
         ids = ((gas_id,) if gas_ready else ()) + (electric_ids if electric_ready else ())
         try:
+            policy = sampling_policy(cfg)
             if not 1 <= cfg.energy_max_gap_seconds <= 3600:
                 raise ValueError()
             for key in ids:
@@ -180,7 +207,7 @@ class EquipmentEnergyService:
                   if row.task_id in intervals and row.task_id not in conflicts and row.equipment_id in cfg.energy_equipment_ids}
         series = {}
         if usable:
-            padding = timedelta(seconds=cfg.energy_max_gap_seconds)
+            padding = timedelta(seconds=max(cfg.energy_max_gap_seconds, policy.get("new_max_gap_seconds", 0)))
             try:
                 readings = self.client.fetch(ids, min(t[0] for t in usable.values()) - padding,
                                              max(t[1] for t in usable.values()) + padding, force=force)
@@ -203,7 +230,7 @@ class EquipmentEnergyService:
             def calculate(key, factor):
                 return {"parameter_id": key, **interval_consumption(series[key], start, end,
                     max_gap_seconds=cfg.energy_max_gap_seconds,
-                    interpolate=cfg.energy_allow_interpolation, factor=factor)}
+                    interpolate=cfg.energy_allow_interpolation, factor=factor, **policy)}
 
             gas = calculate(gas_id, gas_factor) if gas_ready else {"value": None, "status": "unconfigured"}
             electricity = [calculate(key, electric_factor) for key in electric_ids] if electric_ready else []
@@ -223,7 +250,8 @@ class EquipmentEnergyService:
         mode = "metered" if available == 2 * len(output) else "partial" if available else "unavailable"
         notice = "按已绑定设备的实际 START_TIME / END_TIME 计算累计读数差值；汇总仅覆盖有效任务区间（含期间待机），不是整日总耗量。"
         if cfg.energy_allow_interpolation:
-            notice += f"边界非采样时刻采用线性插值并标为估算，最大采样间隔 {cfg.energy_max_gap_seconds} 秒。"
+            notice += "边界非采样时刻采用线性插值并标为估算。"
+        notice += sampling_notice(cfg, cfg.energy_max_gap_seconds)
         if mode != "metered":
             notice += "部分或全部读数缺失；仅汇总已匹配记录，不将缺失计为零。"
         return EnergyResult(sort_equipment_records(output), mode, notice, units)

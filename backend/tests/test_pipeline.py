@@ -98,6 +98,7 @@ def test_demo_pipeline_generates_offline_report(
     assert '"areaStyle"' in html
     assert "模拟大模型分析" in html
     assert "分析边界" in html
+    assert html.count('class="analysis-fact"') == 6
     if report_type in {"workshop", "equipment"}:
         assert 'class="screen-only"' in html
         assert 'class="print-table-page"' in html

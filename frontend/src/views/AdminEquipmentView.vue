@@ -1,29 +1,12 @@
 <script setup>
-import { ref } from 'vue'
-import { useRouter } from 'vue-router'
-import { createReport } from '../api/reports'
+import { useReportExport } from '../composables/useReportExport'
 import EnergyPeriodReportView from './EnergyPeriodReportView.vue'
 
-const router = useRouter()
-const exporting = ref(false)
-const error = ref('')
-
-async function exportReport(payload) {
-  exporting.value = true
-  error.value = ''
-  try {
-    const job = await createReport(payload)
-    await router.push({ name: 'report-center', query: { job: job.report_id } })
-  } catch (exception) {
-    error.value = exception.message
-  } finally {
-    exporting.value = false
-  }
-}
+const { exporting, error, progress, exportReport } = useReportExport()
 </script>
 
 <template>
-  <div v-if="error" class="global-error"><strong>导出任务创建失败</strong><span>{{ error }}</span><button @click="error = ''">关闭</button></div>
-  <div v-if="exporting" class="route-notice">正在创建设备报表生成任务...</div>
-  <EnergyPeriodReportView @export="exportReport" />
+  <div v-if="error" class="global-error" role="alert"><strong>导出未完成</strong><span>{{ error }}</span><button @click="error = ''">关闭</button></div>
+  <div v-if="progress" class="route-notice" role="status">{{ progress }}</div>
+  <EnergyPeriodReportView :exporting="exporting" @export="exportReport" />
 </template>

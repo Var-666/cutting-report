@@ -38,7 +38,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PATH=/opt/venv/bin:$PATH \
     APP_ENV=production \
     APP_HOST=0.0.0.0 \
-    APP_PORT=8000
+    APP_PORT=8000 \
+    PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -61,6 +62,10 @@ RUN groupadd --gid "${APP_GID}" app \
 WORKDIR /app
 
 COPY --from=python-builder /opt/venv /opt/venv
+RUN playwright install --with-deps chromium \
+    && apt-get install -y --no-install-recommends fonts-noto-cjk \
+    && chmod -R a+rX "$PLAYWRIGHT_BROWSERS_PATH" \
+    && rm -rf /var/lib/apt/lists/*
 COPY --chown=app:app backend ./backend
 COPY --from=frontend-builder --chown=app:app /build/frontend/dist ./frontend/dist
 COPY --from=frontend-builder --chown=app:app /build/vendor ./vendor

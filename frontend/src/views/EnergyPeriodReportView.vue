@@ -6,8 +6,10 @@ import { CanvasRenderer } from 'echarts/renderers'
 import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
 import { getEnergyDay, getEnergyMonth, getTaskEnergyDay } from '../api/reports'
 import AnalysisPanel from '../components/AnalysisPanel.vue'
+import ReportExportMenu from '../components/ReportExportMenu.vue'
 
 use([BarChart, LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
+defineProps({ exporting: Boolean })
 const emit = defineEmits(['export'])
 
 const day = ref(null)
@@ -34,6 +36,10 @@ let active = true
 const units = computed(() => taskDay.value?.units || day.value?.units || month.value?.units || { electricity: 'kWh', gas: 'Nm³' })
 const configurationError = computed(() => taskDay.value?.configuration_error || day.value?.configuration_error || month.value?.configuration_error)
 const taskRows = computed(() => taskDay.value?.records || [])
+const equipmentScopeLabel = computed(() => {
+  const scope = taskDay.value?.equipment_scope
+  return scope?.length ? scope.join(' / ') : 'Cutter01'
+})
 const taskSummary = computed(() => taskDay.value?.summary || {
   task_count: 0,
   total_work_time: 0,
@@ -101,7 +107,7 @@ function taskValue(value) {
   return format(value)
 }
 
-function exportReport() {
+function exportReport(format = 'html') {
   if (!taskDay.value || !month.value || busy.value) return
   emit('export', {
     report_type: 'equipment',
@@ -112,7 +118,7 @@ function exportReport() {
       chart_type: chartType.value,
       report_month: selectedMonth.value,
     },
-  })
+  }, format)
 }
 
 function taskLabel(row, index) {
@@ -147,14 +153,14 @@ async function loadDay(force = false, reportDate = selectedDate.value) {
   }
 }
 
-async function loadMonth() {
+async function loadMonth(force = false) {
   if (!selectedMonth.value) return
   monthController?.abort()
   const controller = new AbortController()
   monthController = controller
   monthLoading.value = true
   try {
-    const result = await getEnergyMonth(selectedMonth.value, { signal: controller.signal })
+    const result = await getEnergyMonth(selectedMonth.value, { force, signal: controller.signal })
     if (controller.signal.aborted) return
     month.value = result
     await nextTick()
@@ -275,12 +281,12 @@ watch(chartType, async () => { await nextTick(); renderCharts() })
 
 <template>
   <section class="equipment-hero">
-    <div><span class="eyebrow">EQUIPMENT ENERGY REPORT</span><h2>设备报表</h2><p>按每项任务实际起止时间统计电耗、气耗，并保留月度每日总耗量记录</p></div>
+    <div><span class="eyebrow">EQUIPMENT ENERGY REPORT</span><h2>设备报表</h2><p>当前仅统计 {{ equipmentScopeLabel }}，按任务实际起止时间统计电耗、气耗，并保留月度每日总耗量记录</p></div>
     <form class="equipment-query energy-period-query" @submit.prevent="loadDay(true)">
       <label><span>查询日期</span><input v-model="selectedDate" type="date" required :disabled="busy" /></label>
       <label><span>图表类型</span><select v-model="chartType" aria-label="图表类型"><option value="bar_line">柱线组合</option><option value="bar">双柱状图</option><option value="line">双折线图</option></select></label>
       <button class="primary" type="submit" :disabled="busy"><span v-if="dayLoading" class="spinner"></span>{{ dayLoading ? '查询中' : '查询报表' }}</button>
-      <button type="button" :disabled="busy || !taskDay || !month" @click="exportReport">导出 HTML</button>
+      <ReportExportMenu :disabled="busy || !taskDay || !month" :loading="exporting" @select="exportReport" />
     </form>
   </section>
   <div v-if="error" class="global-error"><strong>查询提示</strong><span>{{ error }}</span><button type="button" @click="error = ''">关闭</button></div>
@@ -294,22 +300,22 @@ watch(chartType, async () => { await nextTick(); renderCharts() })
       <div><span>任务电耗合计</span><strong>{{ format(taskSummary.total_electricity_consumption) }}</strong><small>{{ units.electricity }}</small></div>
       <div><span>任务气耗合计</span><strong>{{ format(taskSummary.total_gas_consumption) }}</strong><small>{{ units.gas }}</small></div>
       <div class="energy-coverage"><span>任务匹配情况</span><p>电耗 {{ taskSummary.electricity_record_count || 0 }}/{{ taskSummary.task_count || 0 }} 项</p><p>气耗 {{ taskSummary.gas_record_count || 0 }}/{{ taskSummary.task_count || 0 }} 项</p></div>
-      <div class="energy-saved"><span>当日任务</span><strong>{{ taskSummary.task_count || 0 }} 项</strong><small>累计切割时长 {{ duration(taskSummary.total_work_time) }}</small></div>
+      <div class="energy-saved"><span>{{ equipmentScopeLabel }} 当日任务</span><strong>{{ taskSummary.task_count || 0 }} 项</strong><small>累计切割时长 {{ duration(taskSummary.total_work_time) }}</small></div>
     </div>
     <p v-if="taskDay?.warning" class="energy-inline-warning" role="status">{{ taskDay.warning }}</p>
     <p class="energy-storage-note">{{ taskDay?.energy_notice || '按任务实际起止时间计算累计仪表读数差值。' }}</p>
     <div class="energy-period-split">
       <div class="energy-period-chart-wrap"><div ref="dayChartElement" class="energy-period-chart" role="img" aria-label="每项任务电耗和气耗图"></div><p>横轴为任务开始时间和分段 · 双纵轴单位不同 · 缺失不画成零</p></div>
       <div class="energy-period-table-wrap energy-task-table-wrap">
-        <table class="energy-period-table energy-task-table" aria-label="任务能耗明细表">
+        <table v-content-table class="energy-period-table energy-task-table" aria-label="任务能耗明细表">
           <thead><tr><th scope="col">序号</th><th scope="col">工程号</th><th scope="col">船号</th><th scope="col">分段名</th><th scope="col">任务开始</th><th scope="col">切割时长</th><th scope="col">电耗 <small>{{ units.electricity }}</small></th><th scope="col">气耗 <small>{{ units.gas }}</small></th></tr></thead>
           <tbody>
             <tr v-for="(row, index) in taskRows" :key="row.task_id">
               <th scope="row">{{ index + 1 }}</th><td>{{ row.project_code || '--' }}</td><td>{{ row.ship_no || '--' }}</td><td>{{ row.segment_name || '--' }}</td><td>{{ dateTime(row.production_time) }}</td><td>{{ duration(row.work_time) }}</td><td>{{ taskValue(row.electricity_consumption) }}</td><td>{{ taskValue(row.gas_consumption) }}</td>
             </tr>
-            <tr v-if="!taskRows.length"><td colspan="8" class="energy-empty">{{ dayLoading ? '正在查询任务能耗…' : '所选日期暂无任务' }}</td></tr>
+            <tr v-if="!taskRows.length"><td colspan="8" class="energy-empty">{{ dayLoading ? '正在查询任务能耗…' : `所选日期暂无 ${equipmentScopeLabel} 任务` }}</td></tr>
           </tbody>
-          <tfoot><tr><th scope="row" colspan="5">当日任务汇总（{{ taskSummary.task_count || 0 }} 项）</th><td>{{ duration(taskSummary.total_work_time) }}</td><td>{{ format(taskSummary.total_electricity_consumption) }}</td><td>{{ format(taskSummary.total_gas_consumption) }}</td></tr></tfoot>
+          <tfoot><tr><th scope="row" colspan="5">当日任务汇总 · {{ equipmentScopeLabel }}（{{ taskSummary.task_count || 0 }} 项）</th><td>{{ duration(taskSummary.total_work_time) }}</td><td>{{ format(taskSummary.total_electricity_consumption) }}</td><td>{{ format(taskSummary.total_gas_consumption) }}</td></tr></tfoot>
         </table>
       </div>
     </div>
@@ -318,7 +324,7 @@ watch(chartType, async () => { await nextTick(); renderCharts() })
   <section class="panel energy-period-panel" aria-labelledby="energy-month-title">
     <div class="energy-section-heading">
       <div><span class="energy-section-number">02</span><h2 id="energy-month-title">月度每日能耗汇总</h2><small>{{ month?.report_month || '--' }} · {{ month?.calendar_day_count || 0 }} 天</small></div>
-      <form @submit.prevent="loadMonth"><label>统计月份<input v-model="selectedMonth" type="month" required :disabled="busy" /></label><button type="submit" :disabled="busy">查看月份</button><button type="button" class="primary" :disabled="busy || !month || selectedMonth !== month.report_month || Boolean(configurationError)" @click="syncMonth(false)">同步本月</button><button type="button" :disabled="busy || !month || selectedMonth !== month.report_month || Boolean(configurationError)" @click="syncMonth(true)">重新查询本月</button><button v-if="syncing" type="button" @click="stopSync">停止同步</button></form>
+      <form @submit.prevent="loadMonth(true)"><label>统计月份<input v-model="selectedMonth" type="month" required :disabled="busy" /></label><button type="submit" :disabled="busy">查看月份</button><button type="button" class="primary" :disabled="busy || !month || selectedMonth !== month.report_month || Boolean(configurationError)" @click="syncMonth(false)">同步本月</button><button type="button" :disabled="busy || !month || selectedMonth !== month.report_month || Boolean(configurationError)" @click="syncMonth(true)">重新查询本月</button><button v-if="syncing" type="button" @click="stopSync">停止同步</button></form>
     </div>
     <div class="energy-stat-strip">
       <div><span>月度电耗{{ month?.summary?.electricity?.status === 'partial' ? ' · 部分合计' : '合计' }}</span><strong>{{ valueText(month?.summary?.electricity) }}</strong><small>{{ month?.units?.electricity || units.electricity }}</small></div>
@@ -331,7 +337,7 @@ watch(chartType, async () => { await nextTick(); renderCharts() })
     <div class="energy-period-split">
       <div class="energy-period-chart-wrap"><div ref="monthChartElement" class="energy-period-chart" role="img" aria-label="月度每日电耗和气耗图"></div><p>点击右表日期可查看当天明细 · 未查询或缺失日期显示断点 · 部分日期不是完整全天耗量</p></div>
       <div class="energy-period-table-wrap energy-month-table-wrap">
-        <table class="energy-period-table" aria-label="月度每日能耗汇总表">
+        <table v-content-table class="energy-period-table" aria-label="月度每日能耗汇总表">
           <thead><tr><th scope="col">日期</th><th scope="col">电耗 <small>{{ month?.units?.electricity || units.electricity }}</small></th><th scope="col">电耗覆盖</th><th scope="col">气耗 <small>{{ month?.units?.gas || units.gas }}</small></th><th scope="col">气耗覆盖</th><th scope="col">保存状态</th></tr></thead>
           <tbody><tr v-for="row in monthRows" :key="row.report_date" :class="{ 'energy-selected-day': row.report_date === day?.report_date }"><th scope="row"><button class="energy-date-link" type="button" :disabled="busy || row.is_future" @click="loadDay(false, row.report_date)">{{ row.report_date }}{{ row.is_today ? ' · 今日' : '' }}</button></th><td>{{ valueText(row.electricity) }}</td><td><span class="energy-status" :class="row.electricity.status">{{ statusText(row.electricity) }}</span><small>{{ coverage(row.electricity, '小时') }}</small></td><td>{{ valueText(row.gas) }}</td><td><span class="energy-status" :class="row.gas.status">{{ statusText(row.gas) }}</span><small>{{ coverage(row.gas, '小时') }}</small></td><td :title="timestamp(row.updated_at)">{{ row.is_future ? '日期未到' : row.saved ? '已保存' : '尚未查询' }}</td></tr><tr v-if="!monthRows.length"><td colspan="6" class="energy-empty">{{ monthLoading ? '读取月度记录中…' : '请选择月份查看' }}</td></tr></tbody>
           <tfoot><tr><th scope="row">当月汇总</th><td>{{ valueText(month?.summary?.electricity) }}</td><td>{{ statusText(month?.summary?.electricity) }} · {{ coverage(month?.summary?.electricity, '天') }}</td><td>{{ valueText(month?.summary?.gas) }}</td><td>{{ statusText(month?.summary?.gas) }} · {{ coverage(month?.summary?.gas, '天') }}</td><td>{{ month?.saved_day_count || 0 }} 天已保存</td></tr></tfoot>

@@ -22,7 +22,7 @@ from app.services.llm_service import LlmService
 
 
 logger = logging.getLogger(__name__)
-PROMPT_VERSION = "report-analysis-v4"
+PROMPT_VERSION = "report-analysis-v5-six-facts"
 
 
 def _duration(value: Decimal | int | float) -> str:
@@ -192,11 +192,6 @@ class ReportAnalysisService:
             if item.period_start < report.report_month
         ]
         previous = max(previous_candidates, key=lambda item: item.period_start, default=None)
-        peak = max(
-            report.daily_records,
-            key=lambda item: item.task_count,
-            default=None,
-        )
         month_change = _change(current.task_count, previous.task_count) if previous else None
         year_change = (
             _change(current.task_count, report.year_ago_total.task_count)
@@ -234,25 +229,10 @@ class ReportAnalysisService:
             _fact("F001", "当月任务数", f"{current.task_count} 项", "当月汇总.task_count"),
             _fact("F002", "当月切割长度", f"{_number(current.cut_length_m)} 米", "当月汇总.cut_length_m"),
             _fact("F003", "当月切割时长", _duration(current.work_time_seconds), "当月汇总.work_time_seconds"),
+            _fact("F004", "任务数环比", f"{month_change:+.2f}%" if month_change is not None else "无法比较（上月数据缺失或任务数为零）", "(当月任务数-上月任务数)/上月任务数"),
+            _fact("F005", "任务数同比", f"{year_change:+.2f}%" if year_change is not None else "无法比较（上年同月数据缺失或任务数为零）", "(当月任务数-上年同月任务数)/上年同月任务数"),
+            _fact("F006", "主要工程", f"{projects[0]['project_name']}（{projects[0]['task_count']} 项，占 {projects[0]['task_count'] / current.task_count * 100:.2f}%）" if projects and current.task_count else "暂无工程数据", "当月工程分布中任务最多工程及其任务数/当月任务数"),
         ]
-        if previous:
-            facts.append(_fact("F004", "上月任务数", f"{previous.task_count} 项", f"月度汇总[{previous.period_start:%Y-%m}].task_count"))
-        if peak:
-            facts.append(_fact("F005", "任务峰值日期", f"{peak.period_start.isoformat()}（{peak.task_count} 项）", "当月日汇总.task_count 最大值"))
-        if month_change is not None:
-            facts.append(_fact("F006", "任务数环比", f"{month_change:+.2f}%", "(当月-上月)/上月"))
-        if report.year_ago_total:
-            facts.append(_fact("F007", "上年同月任务数", f"{report.year_ago_total.task_count} 项", f"月度汇总[{report.year_ago_total.period_start:%Y-%m}].task_count"))
-        if year_change is not None:
-            facts.append(_fact("F008", "任务数同比", f"{year_change:+.2f}%", "(当月-上年同月)/上年同月"))
-        if projects:
-            facts.append(_fact("F009", "任务最多工程", f"{projects[0]['project_name']}（{projects[0]['task_count']} 项）", "当月工程分布.task_count 最大值"))
-        facts.append(_fact("F010", "高产量异常日", f"{len(daily_anomalies)} 天", "日任务数 > 均值 + 1.5×标准差"))
-        if length_month_change is not None:
-            facts.append(_fact("F011", "切割长度环比", f"{length_month_change:+.2f}%", "(当月-上月)/上月"))
-        if projects and current.task_count:
-            share = projects[0]["task_count"] / current.task_count * 100
-            facts.append(_fact("F012", "主要工程任务占比", f"{share:.2f}%", "任务最多工程任务数/当月任务数"))
         context = {
             "facts": facts,
             "report_month": report.report_month.isoformat()[:7],
@@ -276,37 +256,13 @@ class ReportAnalysisService:
     @staticmethod
     def _simulate_leadership(context: dict) -> AnalysisResult:
         fact = {item["id"]: item["value"] for item in context["facts"]}
-        change = context["comparisons"].get("task_mom_percent")
-        year_change = context["comparisons"].get("task_yoy_percent")
-        comparison = (
-            f"任务量较上月{'上升' if change > 0 else '下降' if change < 0 else '持平'} {abs(change):.2f}% [F006]。"
-            if change is not None
-            else "缺少可比较的上月任务数据。"
-        )
-        yoy = (
-            f"同比{'上升' if year_change > 0 else '下降' if year_change < 0 else '持平'} {abs(year_change):.2f}% [F008]。"
-            if year_change is not None
-            else "缺少上年同月可比数据。"
-        )
-        peak = f"任务峰值为 {fact['F005']} [F005]。" if "F005" in fact else "当月没有可识别的任务峰值日期。"
-        project = f"任务最多工程为 {fact['F009']} [F009]。" if "F009" in fact else "未获取工程分布。"
-        review_targets = [identifier for identifier in ("F005", "F009") if identifier in fact]
-        review_text = " ".join(f"[{identifier}]" for identifier in review_targets)
         return AnalysisResult(
             status="simulated",
             mode="simulated",
-            overview=f"{context['report_month']} 的月度任务量趋势为：{comparison}",
-            features=f"同比和任务结构方面：{yoy}{project}{peak}",
-            alerts=(
-                f"检出 {fact['F010']} [F010]，需核对异常日的任务组成。"
-                if context.get("anomalies")
-                else f"未按当前统计阈值识别到高产量异常日（{fact['F010']}）[F010]；仍不能排除未接入的停机或质量问题。"
-            ),
-            suggestions=(
-                f"建议优先复核关键日期和工程 {review_text}，并结合生产计划、班次与停机记录解释变化。"
-                if review_text
-                else "建议补充生产计划、班次与停机记录后再进行原因分析。"
-            ),
+            overview=f"{context['report_month']} 的月度任务量环比：{fact['F004']} [F004]。",
+            features=f"任务数同比：{fact['F005']} [F005]。主要工程：{fact['F006']} [F006]。",
+            alerts="任务数和切割长度反映生产规模，不能直接等同于产能利用率或计划达成率 [F001][F002]。",
+            suggestions="建议结合任务量变化与主要工程，核对生产计划和资源安排 [F004][F005][F006]。",
             limitations=context["limitations"],
         )
 
@@ -324,7 +280,6 @@ class ReportAnalysisService:
         confirmed = sum(1 for row in records if row.confirmed_by)
         total_work = sum((row.work_time or Decimal("0") for row in records), Decimal("0"))
         total_cut = sum((row.cut_length or Decimal("0") for row in records), Decimal("0"))
-        longest = max(records, key=lambda row: row.work_time or 0, default=None)
         projects = _project_distribution(records)
         anomalies = _work_time_outliers(records)
         previous_count = len(comparison_records) if comparison_records is not None else None
@@ -339,25 +294,12 @@ class ReportAnalysisService:
         year_change = _change(len(records), year_ago_count) if year_ago_count is not None else None
         facts = [
             _fact("F001", "任务总数", f"{len(records)} 项", f"车间日报[{report_date}].任务数"),
-            _fact("F002", "已确认任务", f"{confirmed} 项", f"车间日报[{report_date}].confirmed_by 非空"),
-            _fact("F003", "未确认任务", f"{len(records) - confirmed} 项", "任务总数-已确认任务"),
-            _fact("F004", "总切割长度", f"{_number(total_cut)} 米", f"车间日报[{report_date}].cut_length 汇总"),
-            _fact("F005", "总切割时长", _duration(total_work), f"车间日报[{report_date}].work_time 汇总"),
-            _fact("F006", "工人确认率", f"{confirmed / len(records) * 100:.2f}%" if records else "0.00%", "已确认任务/任务总数"),
+            _fact("F002", "总切割长度", f"{_number(total_cut)} 米", f"车间日报[{report_date}].cut_length 汇总"),
+            _fact("F003", "总切割时长", _duration(total_work), f"车间日报[{report_date}].work_time 汇总"),
+            _fact("F004", "工人确认率", f"{confirmed / len(records) * 100:.2f}%" if records else "暂无任务", "已确认任务/任务总数"),
+            _fact("F005", "未确认任务", f"{len(records) - confirmed} 项", "任务总数-已确认任务"),
+            _fact("F006", "工时异常任务", f"{len(anomalies)} 项", "work_time > Q3 + 1.5×IQR（最多列出5项）"),
         ]
-        if longest:
-            facts.append(_fact("F007", "最长任务", f"{longest.program_no or '--'}（{_duration(longest.work_time or 0)}）", "当日任务.work_time 最大值"))
-        if previous_count is not None:
-            facts.append(_fact("F008", "对比日任务数", f"{previous_count} 项", f"车间日报[{comparison_date or '对比日'}].任务数"))
-        if task_change is not None:
-            facts.append(_fact("F009", "任务数日环比", f"{task_change:+.2f}%", "(当日-对比日)/对比日"))
-        if year_ago_count is not None:
-            facts.append(_fact("F010", "上年同日任务数", f"{year_ago_count} 项", f"车间日报[{year_ago_date or '上年同日'}].任务数"))
-        if year_change is not None:
-            facts.append(_fact("F011", "任务数同比", f"{year_change:+.2f}%", "(当日-上年同日)/上年同日"))
-        if projects:
-            facts.append(_fact("F012", "任务最多工程", f"{projects[0]['project_name']}（{projects[0]['task_count']} 项）", "当日工程分布.task_count 最大值"))
-        facts.append(_fact("F013", "工时异常任务", f"{len(anomalies)} 项", "work_time > Q3 + 1.5×IQR"))
         context = {
             "facts": facts,
             "report_date": report_date,
@@ -384,19 +326,13 @@ class ReportAnalysisService:
     @staticmethod
     def _simulate_workshop(context: dict) -> AnalysisResult:
         fact = {item["id"]: item["value"] for item in context["facts"]}
-        longest = f"最长任务为 {fact['F007']} [F007]。" if "F007" in fact else "没有可识别的最长任务。"
-        comparison = context["comparisons"].get("task_change_percent")
-        comparison_text = f"任务数较对比日变化 {comparison:+.2f}% [F009]。" if comparison is not None else "暂无可用的前一日对比数据。"
-        yoy = context["comparisons"].get("task_yoy_percent")
-        yoy_text = f"任务数同比变化 {yoy:+.2f}% [F011]。" if yoy is not None else "暂无可用的上年同日数据。"
-        project = f"任务最多工程为 {fact['F012']} [F012]。" if "F012" in fact else ""
         return AnalysisResult(
             status="simulated",
             mode="simulated",
-            overview=f"{context['report_date']} 的近期任务量变化为：{comparison_text}",
-            features=f"当前确认率为 {context['confirmation_rate']:.2f}% [F006]。{yoy_text}{project}{longest}",
-            alerts=(f"检出 {fact['F013']} [F013]，同时仍有 {fact['F003']} 未完成工人确认 [F003]。" if context.get("anomalies") else f"未按 IQR 阈值检出工时异常（{fact['F013']}）[F013]；仍有 {fact['F003']} 未完成工人确认 [F003]。"),
-            suggestions=("建议先完成未确认任务 [F003]，并优先核对最长任务 [F007] 的材料、程序和现场记录。" if "F007" in fact else "建议先完成未确认任务 [F003]，再结合现场记录复核。"),
+            overview=f"{context['report_date']} 共纳入 {fact['F001']} 生产任务 [F001]。",
+            features=f"当前工人确认率：{fact['F004']} [F004]。切割长度与时长应结合任务类型评价 [F002][F003]。",
+            alerts=f"检出工时异常任务 {fact['F006']} [F006]；仍有 {fact['F005']} 未完成工人确认 [F005]。",
+            suggestions="建议优先完成未确认任务，并结合程序、材料和现场记录复核工时异常任务 [F005][F006]。",
             limitations=context["limitations"],
         )
 
@@ -446,40 +382,27 @@ class ReportAnalysisService:
                 return "缺失（无有效读数，不视为零）"
             suffix = "（模拟）" if energy_data_mode == "mock" else f"（已匹配 {count}/{len(records)} 项，其中 {estimates} 项插值估算；非全天总量）"
             return f"{_number(total)} {unit}{suffix}"
-        longest = max(records, key=lambda row: row.work_time or 0, default=None)
-        peak_electricity = max((row for row in records if row.electricity_consumption is not None), key=lambda row: row.electricity_consumption, default=None)
         projects = _project_distribution(records)
         anomalies = _work_time_outliers(records)
         previous_count = len(comparison_records) if comparison_records is not None else None
         task_change = _change(len(records), previous_count) if previous_count is not None else None
         year_ago_count = len(year_ago_records) if year_ago_records is not None else None
         year_change = _change(len(records), year_ago_count) if year_ago_count is not None else None
+        quality_statuses = sampling_issue_statuses | {"overlap", "invalid_interval", "unconfigured", "unmapped"}
+        quality_count = sum(
+            row.gas_consumption is None
+            or row.electricity_consumption is None
+            or bool({row.gas_data_status, row.electricity_data_status} & quality_statuses)
+            for row in records
+        )
         facts = [
             _fact("F001", "任务总数", f"{len(records)} 项", f"设备日报[{report_date}].任务数"),
             _fact("F002", "总切割时长", _duration(total_work), f"设备日报[{report_date}].work_time 汇总"),
             _fact("F003", "已匹配任务气耗", energy_fact(total_gas, gas_count, units["gas"], gas_estimates), "设备日报.gas_consumption 非空记录汇总"),
             _fact("F004", "已匹配任务电耗", energy_fact(total_electricity, electric_count, units["electricity"], electric_estimates), "设备日报.electricity_consumption 非空记录汇总"),
+            _fact("F005", "工时异常任务", f"{len(anomalies)} 项", "work_time > Q3 + 1.5×IQR（最多列出5项）"),
+            _fact("F006", "能耗数据待核对任务", f"{quality_count} 项", f"气耗或电耗缺失/异常的任务计数，同一任务只计一次；计量区间重叠 {overlap_count} 项，采样或读数缺口 {sampling_issue_count} 项，起止时间异常 {invalid_interval_count} 项；另含未配置/未绑定记录"),
         ]
-        if longest:
-            facts.append(_fact("F005", "最长切割任务", f"{longest.production_time.strftime('%Y-%m-%d %H:%M') if longest.production_time else '--'}（{_duration(longest.work_time or 0)}）", "当日设备任务.work_time 最大值"))
-        if peak_electricity:
-            facts.append(_fact("F006", "已匹配任务最高电耗", f"{_number(peak_electricity.electricity_consumption)} {units['electricity']}" + ("（模拟）" if energy_data_mode == "mock" else "（仅有效记录，可能包含插值估算）"), "electricity_consumption 非空记录最大值"))
-        if previous_count is not None:
-            facts.append(_fact("F007", "对比日任务数", f"{previous_count} 项", f"设备日报[{comparison_date or '对比日'}].任务数"))
-        if task_change is not None:
-            facts.append(_fact("F008", "任务数日环比", f"{task_change:+.2f}%", "(当日-对比日)/对比日"))
-        if year_ago_count is not None:
-            facts.append(_fact("F009", "上年同日任务数", f"{year_ago_count} 项", f"设备日报[{year_ago_date or '上年同日'}].任务数"))
-        if year_change is not None:
-            facts.append(_fact("F010", "任务数同比", f"{year_change:+.2f}%", "(当日-上年同日)/上年同日"))
-        if projects:
-            facts.append(_fact("F011", "任务最多工程", f"{projects[0]['project_name']}（{projects[0]['task_count']} 项）", "当日工程分布.task_count 最大值"))
-        facts.append(_fact("F012", "工时异常任务", f"{len(anomalies)} 项", "work_time > Q3 + 1.5×IQR"))
-        facts.extend([
-            _fact("F013", "计量区间重叠任务", f"{overlap_count} 项", "任务能耗结果.overlap 状态计数"),
-            _fact("F014", "采样或读数缺口任务", f"{sampling_issue_count} 项", "任务能耗结果.missing/gap/counter_reset/invalid_reading/unavailable 状态计数"),
-            _fact("F015", "起止时间异常任务", f"{invalid_interval_count} 项", "任务能耗结果.invalid_interval 状态计数"),
-        ])
         context = {
             "facts": facts,
             "report_date": report_date,
@@ -517,36 +440,25 @@ class ReportAnalysisService:
     @staticmethod
     def _simulate_equipment(context: dict) -> AnalysisResult:
         fact = {item["id"]: item["value"] for item in context["facts"]}
-        longest = f"最长切割任务为 {fact['F005']} [F005]。" if "F005" in fact else "没有可识别的最长任务。"
-        comparison = context["comparisons"].get("task_change_percent")
-        comparison_text = f"任务数较对比日变化 {comparison:+.2f}% [F008]。" if comparison is not None else "暂无可用的前一日对比数据。"
-        yoy = context["comparisons"].get("task_yoy_percent")
-        yoy_text = f"任务数同比变化 {yoy:+.2f}% [F010]。" if yoy is not None else "暂无可用的上年同日数据。"
-        project = f"任务最多工程为 {fact['F011']} [F011]。" if "F011" in fact else ""
         energy_note = (
             "气耗、电耗当前为模拟值，本次不进行能耗异常判定 [F003][F004]。"
             if context.get("energy_data_mode") == "mock"
-            else f"已匹配任务气耗 {fact['F003']} [F003]、电耗 {fact['F004']} [F004]；不进行能耗异常判定。"
-        )
-        quality = context.get("energy_quality") or {}
-        quality_alert = (
-            f"计量区间重叠 {quality.get('overlap', 0)} 项 [F013]，"
-            f"采样或读数缺口 {quality.get('sampling_issue', 0)} 项 [F014]，"
-            f"起止时间异常 {quality.get('invalid_interval', 0)} 项 [F015]。"
+            else "气耗、电耗仅汇总已匹配任务，缺失不等于零，不进行能耗异常判定 [F003][F004]。"
         )
         mode = context.get("energy_data_mode")
-        energy_limit = ("能耗为模拟值" if mode == "mock" else "能耗尚无有效读数" if mode == "unavailable"
-                        else "能耗仅覆盖部分任务，缺失不等于零" if mode == "partial"
-                        else "已有计量数据，但缺少设备状态及能耗基准")
-        recommendation = ("接入真实电表、气表及设备状态数据" if mode == "mock"
-                          else "检查内网连接、仪表参数编号和采样时间覆盖" if mode == "unavailable"
-                          else "复核缺失采样、重叠任务和插值估算，补充设备状态与能耗基准")
+        recommendation = (
+            "接入真实电表、气表及设备状态数据"
+            if mode == "mock"
+            else "检查内网连接、仪表参数编号和采样时间覆盖"
+            if mode == "unavailable"
+            else "复核缺失采样、重叠任务和插值估算，补充设备状态与能耗基准"
+        )
         return AnalysisResult(
             status="simulated",
             mode="simulated",
-            overview=f"{context['report_date']} 的近期设备任务量变化为：{comparison_text}",
-            features=f"同比和任务结构方面，{yoy_text}{project}{longest}{energy_note}",
-            alerts=(f"检出 {fact['F012']} [F012]；" if context.get("anomalies") else f"未按 IQR 阈值检出工时异常（{fact['F012']}）[F012]；") + quality_alert + f"{energy_limit}，不做能耗异常判定 [F003][F004]。",
-            suggestions=("建议优先复核最长切割任务 [F005]，并" if "F005" in fact else "建议") + recommendation + " [F003][F004]。",
+            overview=f"{context['report_date']} 共纳入 {fact['F001']} 设备任务 [F001]，总切割时长 {fact['F002']} [F002]。",
+            features=energy_note,
+            alerts=f"检出工时异常任务 {fact['F005']} [F005]；能耗数据待核对任务 {fact['F006']} [F006]。",
+            suggestions=f"建议{recommendation}，并核对工时异常任务的现场记录 [F005][F006]。",
             limitations=context["limitations"],
         )

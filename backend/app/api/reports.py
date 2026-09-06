@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse
 from app.api.auth import require_admin
 from app.config import settings
 from app.models.api import ReportCreateRequest
+from app.services.pdf_service import PdfRenderError
 
 
 router = APIRouter(
@@ -152,12 +153,26 @@ def _resolve_report_file(request: Request, report_id: str) -> tuple[dict, Path]:
 
 
 @router.get("/{report_id}/download")
-def download_report(report_id: str, request: Request) -> FileResponse:
+def download_report(
+    report_id: str,
+    request: Request,
+    format: Literal["html", "pdf"] = Query("html"),
+) -> FileResponse:
     job, path = _resolve_report_file(request, report_id)
+    if format == "pdf":
+        try:
+            path = request.app.state.pdf_service.render(path)
+        except PdfRenderError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        filename = Path(job["filename"]).with_suffix(".pdf").name
+        media_type = "application/pdf"
+    else:
+        filename = job["filename"]
+        media_type = "text/html; charset=utf-8"
     return FileResponse(
         path,
-        media_type="text/html; charset=utf-8",
-        filename=job["filename"],
+        media_type=media_type,
+        filename=filename,
         headers={
             "X-Content-Type-Options": "nosniff",
             "Cache-Control": "private, no-store",

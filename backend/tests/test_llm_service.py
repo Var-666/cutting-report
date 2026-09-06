@@ -44,3 +44,15 @@ def test_repaired_analysis_accepts_model_specific_wrapper() -> None:
 
     assert _unwrap_repaired_analysis({"facts": [], "analysis": analysis}) is analysis
     assert _unwrap_repaired_analysis(analysis) is analysis
+
+
+@pytest.mark.parametrize("section", ["suggestions", "limitations"])
+def test_removed_fact_cannot_be_referenced_in_advice_or_limitations(section):
+    content = {
+        "overview": "任务 [F001]。",
+        "features": "时长 [F002]。",
+        "alerts": "任务 [F001]。",
+        section: "依据旧编号 [F013]。",
+    }
+    with pytest.raises(ValueError, match="不存在"):
+        _validate_citations(content, CONTEXT)

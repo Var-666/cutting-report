@@ -1,10 +1,19 @@
-# Windows Docker 部署包 · 2026-09-01
+# Windows Docker 部署包 · 2026-09-03
 
 本包沿用之前的 Docker Compose 部署方式，已包含最新的统一设备报表：同一页面显示
 “当日任务能耗明细”和“月度每日能耗汇总”，两组内容均为左图右表并带表尾汇总。
 文件下载更新版还包括：使用数据库文档名、本地持久化、下载文件下拉选择、已下载列表单选；版本仅作元数据记录，不拼入文件名，也不提供内容预览。
 这是源码构建包，不含离线 Docker 镜像；第一次构建需要联网下载依赖。
 Windows 上需已安装并启动 Docker，使用 Linux containers。无需单独安装 Python 或 Node.js。
+
+## 本次更新
+
+- 设备报表只统计 `Cutter01`，`Cutter02` 不显示、不汇总；任务明细标题仍为“任务能耗明细”。
+- 任务图表、HTML 导出、智能分析及对比数据使用相同设备范围。电耗、气耗自动计算，不需要工人确认；仅车间报表由工人确认任务。
+- PDM 组合检索统一显示“中文业务名称（数据库字段名）”；移除额外项目表的船号、工程名称及计算字段“当前版本物理文件数”，保留原始连表 SQL 中的 `Version` 字段。
+- 文件下载使用数据库文档名，版本不拼入文件名；文件推送使用已下载文件的实际文件名作为 `taskName`。
+- 新增默认配置 `ENERGY_REPORT_EQUIPMENT_IDS=Cutter01`。旧 `.env` 未填写该项时也使用此默认值。
+- 设备范围纳入能耗快照隔离规则：升级后月度表若显示“尚未查询”，点击“同步本月”重新生成当前口径记录。旧快照仍保留在数据卷中，不会被删除。
 
 ## 已有旧系统：升级
 
@@ -55,6 +64,7 @@ ENERGY_API_ENABLED=true
 ENERGY_API_BASE_URL=http://10.147.0.38:10091
 ENERGY_API_USERNAME=填写能管登录账号
 ENERGY_API_PASSWORD='填写能管登录密码'
+ENERGY_REPORT_EQUIPMENT_IDS=Cutter01
 ENERGY_REPORT_ELECTRICITY_PARAMETER_IDS=2b00e015-d987-f011-a2e9-000c2974f33c,98cbd135-d987-f011-a2e9-000c2974f33c,93fae152-d987-f011-a2e9-000c2974f33c
 ENERGY_GAS_PARAMETER_ID=bd3179be-c587-f011-a2e9-000c2974f33c
 ENERGY_GAS_UNIT=Nm³
@@ -64,7 +74,9 @@ ENERGY_ALLOW_INTERPOLATION=true
 ```
 
 账号中的 `@` 直接写，不加反斜杠。电耗使用正常用电单位 `kWh`（1 kWh = 1 度电）。
-日/月报不需要填写 `ENERGY_EQUIPMENT_IDS`。
+统一设备报表使用 `ENERGY_REPORT_EQUIPMENT_IDS=Cutter01`，当前只统计 Cutter01；
+`Cutter02` 尚未配置仪表，不显示、不汇总，也不能加入同一仪表组。
+旧的 `ENERGY_EQUIPMENT_IDS` 不控制这张统一设备报表。
 程序会自动登录、获取授权和查询采集值，不需要手动复制 token。
 
 修改宿主机 `.env` 后，执行 `docker compose up -d --force-recreate app` 使容器重新读取环境变量；
@@ -74,7 +86,7 @@ ENERGY_ALLOW_INTERPOLATION=true
 
 管理员进入“设备报表”：
 
-- 第一张表：列出所选日期内的全部任务，按实际开始、结束时间计算每项任务的电耗和气耗，
+- 第一张表：只列出所选日期内 Cutter01 的任务，按实际开始、结束时间计算每项任务的电耗和气耗，
   最后一行汇总任务数、时长、电耗和气耗；左侧展示对应任务能耗图。
 - 第二张表：记录所选月份内每天的总电耗和总气耗，最后一行汇总整月；左侧展示逐日图。
 - 月度记录保存到原 SQLite 数据卷；不是后台定时自动采集，需主动查询/同步。
@@ -87,7 +99,7 @@ ENERGY_ALLOW_INTERPOLATION=true
 ### 文件下载配置
 
 管理员进入“文件派发 → 文件下载”，先添加检索条件并点击“查询文件”，再在下拉框选择文档，点击“下载所选文件到本地”。
-条件可增删，支持“全部满足 / 任一满足”；可按船号、工程、文档名、操作日期、版本等查询。
+条件可增删，支持“全部满足 / 任一满足”；只提供数据库真实字段，可按 ProjectInfoID、文档名、分组、操作日期、版本、FilePath 等查询。
 下拉框只显示当前查询页的清单（默认每页10条），不会自动加载全部 PDM 文件。
 每次最多50条条件、每个多值条件最多50个值；修改条件后需重新查询，旧结果不可下载。
 下载完成后，在“已下载文件”列表选择对应文件；如需拿到操作电脑，点击“另存到电脑”。
@@ -147,3 +159,10 @@ docker compose up -d --no-build --pull never
 ```
 
 离线部署不要运行 `START_DOCKER.bat`（它会尝试构建）。更多说明见 `docs/deployment/WINDOWS部署说明.md`。
+
+## PDF 下载依赖
+
+报表支持 HTML / PDF 两种导出格式。镜像构建会安装 Playwright Chromium、系统依赖和中文字体，
+首次构建需要联网；离线服务器请导入新版完整镜像。已有部署执行 `docker compose up -d --build`
+后生效，仅重启旧镜像不会增加 PDF 功能。PDF 保存在原报告旁，随 reports 数据卷持久化。
+Compose 的 `/tmp` 上限调整为 512 MiB，供 Chromium 临时文件使用；无需额外挂载或开放端口。

@@ -53,7 +53,7 @@ def save_download(download_id: str, request: Request):
 def search_downloads(payload: ConditionSearch, request: Request, response: Response):
     response.headers["Cache-Control"] = "no-store"
     try:
-        data = request.app.state.file_downloads.list(payload.page, payload.page_size, payload.filters)
+        data = request.app.state.file_downloads.list(payload.page, payload.page_size, payload.filters, sort=payload.sort)
     except ConditionError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
     return _envelope(request, data)

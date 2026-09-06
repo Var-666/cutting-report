@@ -1,5 +1,6 @@
 <script setup>
 import { computed } from 'vue'
+import DownloadPdfButton from './DownloadPdfButton.vue'
 
 const props = defineProps({
   items: { type: Array, default: () => [] },
@@ -44,7 +45,7 @@ const reportTypeText = {
 
 <template>
   <div class="history-wrap">
-    <table class="history-table">
+    <table v-content-table class="history-table">
       <thead><tr><th>报告类型</th><th>报告周期</th><th>工程号</th><th>船号</th><th>任务数</th><th>生成状态</th><th>生成时间</th><th>操作</th></tr></thead>
       <tbody>
         <tr v-if="loading"><td colspan="8" class="table-empty">正在加载...</td></tr>
@@ -59,7 +60,8 @@ const reportTypeText = {
           <td>{{ item.generated_at || item.created_at }}</td>
           <td class="actions-cell">
             <a v-if="item.view_url" :href="item.view_url" target="_blank" rel="noopener">打开</a>
-            <a v-if="item.download_url" :href="item.download_url">下载</a>
+            <a v-if="item.download_url" :href="item.download_url">下载 HTML</a>
+            <DownloadPdfButton v-if="item.download_url" :report-id="item.report_id" compact />
             <span v-if="!item.view_url">--</span>
           </td>
         </tr>

@@ -13,7 +13,7 @@ from app.api.downloads import router as downloads_router
 from app.config import settings
 from app.database.downloads import DownloadRepository
 from app.database.pdm import MockPdmRepository, SqlServerPdmRepository
-from app.models.conditions import ConditionGroup, ConditionSearch
+from app.models.conditions import ConditionGroup, ConditionSearch, SortRule
 from app.services.condition_service import ConditionError, compile_conditions, fields_for, matches_conditions, prepare, schema_for
 from app.services.cutting_dispatch_service import CuttingDispatchService
 from app.services.file_download_service import FileDownloadService
@@ -73,7 +73,6 @@ def test_project_id_field_follows_pdm_document_mapping():
         ("physical_file_name", "ends_with", ".GEN", "physical.FileName LIKE ?"),
         ("physical_file_type", "eq", "GEN", "physical.FileType = ?"),
         ("physical_version_code", "eq", "V1", "physical.VersionCode = ?"),
-        ("physical_file_count", "eq", 1, "TRY_CONVERT(decimal(18,4), physical.physical_file_count) = ?"),
     ],
 )
 def test_original_yangzhou_sql_fields_are_available_as_safe_conditions(
@@ -89,21 +88,28 @@ def test_original_yangzhou_sql_fields_are_available_as_safe_conditions(
 def test_file_condition_labels_follow_original_sql_business_names():
     fields = fields_for("cutting_files")
     labels = {field.key: field.label for field in fields}
-    assert fields[0].key == "ship_no"
+    assert fields[0].key == "project_id"
+    assert {"ship_no", "project_name", "physical_file_count"}.isdisjoint(labels)
     assert labels["catalog_id"] == "文件分类 / 分组ID（FileID）"
-    assert labels["catalog_title"] == "文件分类 / 分组名称"
+    assert labels["catalog_title"] == "文件分类 / 分组名称（Title）"
     assert labels["document_no"] == "文件名（DocumentNo）"
     assert labels["pbs_info"] == "中间产品 / 分段（PBSInfo）"
+    assert labels["document_id"] == "设计文档ID（ID）"
+    assert labels["operate_date"] == "操作日期（OperateTime）"
+    assert labels["dispatch_state"] == "派发状态（Custom6）"
+    assert labels["physical_file_id"] == "物理文件ID（ID）"
+    assert labels["file_path"] == "文件相对路径（FilePath）"
+    assert all("（" in label and label.endswith("）") for label in labels.values())
 
 
 @pytest.mark.parametrize("payload", [
     {"page": 0}, {"page_size": 101}, {"page": "1"}, {"page": True},
     {"sql": "SELECT * FROM secrets"},
-    {"filters": {"logic": "xor"}}, {"filters": {"rules": [rule("ship_no", "eq", "a")] * 51}},
-    {"filters": {"rules": [{**rule("ship_no", "eq", "a"), "expression": "a.ID"}]}},
-    {"filters": {"rules": [rule("ship_no", "eq", {"sql": "x"})]}},
-    {"filters": {"rules": [rule("ship_no", "eq", True)]}},
-    {"filters": {"rules": [rule("ship_no", "in", [False])]}},
+    {"filters": {"logic": "xor"}}, {"filters": {"rules": [rule("document_no", "eq", "a")] * 51}},
+    {"filters": {"rules": [{**rule("document_no", "eq", "a"), "expression": "a.ID"}]}},
+    {"filters": {"rules": [rule("document_no", "eq", {"sql": "x"})]}},
+    {"filters": {"rules": [rule("document_no", "eq", True)]}},
+    {"filters": {"rules": [rule("document_no", "in", [False])]}},
 ])
 def test_strict_bounded_contract(payload):
     with pytest.raises(ValidationError):
@@ -131,9 +137,9 @@ def test_invalid_conditions_rejected_before_query(invalid):
 
 def test_total_bind_values_bound_for_sqlserver_and_fifty_rules_supported():
     fields = fields_for("cutting_files")
-    assert len(compile_conditions(group(*[rule("ship_no", "eq", "x")] * 50), fields)[1]) == 50
+    assert len(compile_conditions(group(*[rule("document_no", "eq", "x")] * 50), fields)[1]) == 50
     with pytest.raises(ConditionError, match="1000"):
-        compile_conditions(group(*[rule("ship_no", "in", ["x"] * 50)] * 21), fields)
+        compile_conditions(group(*[rule("document_no", "in", ["x"] * 50)] * 21), fields)
 
 
 def test_sql_injection_is_only_a_bound_literal_and_like_wildcards_escaped():
@@ -145,15 +151,17 @@ def test_sql_injection_is_only_a_bound_literal_and_like_wildcards_escaped():
 
 def test_mock_and_or_pagination_and_cross_project_search():
     pdm = MockPdmRepository()
-    both = group(rule("ship_no", "eq", "CMYZ0177"), rule("dispatch_state", "is_empty"))
+    first_project = pdm.projects[0]["project_id"]
+    second_project = pdm.projects[1]["project_id"]
+    both = group(rule("project_id", "eq", first_project), rule("dispatch_state", "is_empty"))
     rows, total = pdm.search_files(both, page=1, page_size=1)
-    assert total == 1 and rows[0]["ship_no"] == "CMYZ0177" and rows[0]["custom6"] == ""
-    either = group(rule("ship_no", "eq", "CMYZ0177"), rule("ship_no", "eq", "CMYZ0188"), logic="or")
+    assert total == 1 and rows[0]["project_id"] == first_project and rows[0]["custom6"] == ""
+    either = group(rule("project_id", "eq", first_project), rule("project_id", "eq", second_project), logic="or")
     first, total = pdm.search_files(either, page=1, page_size=2)
     second, total2 = pdm.search_files(either, page=2, page_size=2)
     assert total == total2 == 3 and len(first) == 2 and len(second) == 1
     assert len({row["document_id"] for row in first + second}) == 3
-    rows, total = pdm.search_files(group(rule("ship_no", "eq", "not-a-ship")), page=1, page_size=10)
+    rows, total = pdm.search_files(group(rule("project_id", "eq", "not-a-project")), page=1, page_size=10)
     assert rows == [] and total == 0
 
 
@@ -186,15 +194,110 @@ class SqlClient:
 def test_sqlserver_count_and_page_use_identical_safe_filter():
     pdm = SqlServerPdmRepository(settings)
     pdm.client = SqlClient()
-    criteria = group(rule("ship_no", "eq", "CMYZ0177"), rule("operate_date", "between", ["2026-08-01", "2026-08-31"]), logic="or")
+    project_id = "3E97B5EF-0E12-49E2-87E5-B9440C416022"
+    criteria = group(rule("project_id", "eq", project_id), rule("operate_date", "between", ["2026-08-01", "2026-08-31"]), logic="or")
     assert pdm.search_files(criteria, page=3, page_size=2) == ([], 7)
     count, page = pdm.client.calls
     where, params = compile_conditions(criteria, fields_for("cutting_files", settings))
     assert f"WHERE {where}" in count[0] and f"WHERE {where}" in page[0]
     assert count[1] == tuple(params) and page[1] == (*params, 4, 2)
-    assert "ORDER BY c.Title, a.DocumentNo, a.ID" in page[0]
-    assert "f.VersionID = a.VersionID" in count[0] and "f.VersionID = a.VersionID" in page[0]
-    assert "CMYZ0177" not in count[0]
+    assert "ORDER BY c.Title ASC, a.DocumentNo ASC, a.ID ASC" in page[0]
+    assert "OUTER APPLY" not in count[0] and "f.VersionID = a.VersionID" in page[0]
+    assert "OUTER APPLY" not in page[0].split("ROWS ONLY")[0]
+    assert project_id not in count[0]
+
+
+def test_pdm_pages_share_count_but_new_search_and_expiry_recount(monkeypatch):
+    now = [0]
+    monkeypatch.setattr("app.database.pdm.monotonic", lambda: now[0])
+    pdm = SqlServerPdmRepository(settings)
+    pdm.client = SqlClient()
+    criteria = group(rule("document_no", "contains", ".GEN"))
+    pdm.search_files(criteria, page=1, page_size=10)
+    pdm.search_files(criteria, page=2, page_size=10)
+    pdm.search_files(criteria, page=3, page_size=10)
+    assert sum(sql.startswith("SELECT COUNT") for sql, _ in pdm.client.calls) == 1
+    pdm.search_files(criteria, page=1, page_size=10)
+    assert sum(sql.startswith("SELECT COUNT") for sql, _ in pdm.client.calls) == 2
+    now[0] = 61
+    pdm.search_files(criteria, page=2, page_size=10)
+    pdm.search_files(group(rule("document_no", "contains", ".pdf")), page=2, page_size=10)
+    assert sum(sql.startswith("SELECT COUNT") for sql, _ in pdm.client.calls) == 4
+
+
+@pytest.mark.parametrize("logic", ["and", "or"])
+def test_physical_filters_keep_version_matched_top_file_semantics(logic):
+    pdm = SqlServerPdmRepository(settings)
+    pdm.client = SqlClient()
+    criteria = group(rule("document_no", "contains", ".GEN"), rule("physical_file_name", "eq", "abc.gen"), logic=logic)
+    pdm.search_files(criteria, page=1, page_size=10)
+    count, page = pdm.client.calls
+    where, params = compile_conditions(criteria, fields_for("cutting_files", settings))
+    for sql, _ in (count, page):
+        assert f"WHERE {where}" in sql
+        assert "TOP (1)" in sql and "f.VersionID = a.VersionID" in sql
+        assert "ORDER BY f.VersionNo DESC, f.FilePath, f.ID" in sql
+    assert count[1] == tuple(params)
+    assert page[1] == (*params, 0, 10)
+
+
+def test_sqlserver_sort_is_multilevel_and_has_unique_tiebreaker():
+    pdm = SqlServerPdmRepository(settings)
+    pdm.client = SqlClient()
+    pdm.search_files(group(rule("project_id", "eq", "project")), page=2, page_size=10,
+                     sort=[SortRule(field="operate_date", direction="desc"), SortRule(field="document_no")])
+    count, page = pdm.client.calls
+    assert "ORDER BY a.OperateTime DESC, a.DocumentNo ASC, a.ID ASC" in page[0]
+    assert "ORDER BY page.sort_0 DESC, page.sort_1 ASC, page.document_id ASC" in page[0]
+    assert "a.OperateTime AS sort_0" in page[0]
+    assert "OUTER APPLY" not in count[0]
+
+
+@pytest.mark.parametrize("field,dependency", [("version", "JDDR_PDM_NCDocumentVersion_Data"), ("physical_version_no", "OUTER APPLY")])
+def test_sort_only_joins_are_not_added_to_count(field, dependency):
+    pdm = SqlServerPdmRepository(settings)
+    pdm.client = SqlClient()
+    pdm.search_files(group(rule("document_no", "contains", "GEN")), page=1, page_size=10, sort=[SortRule(field=field)])
+    count, page = pdm.client.calls
+    assert dependency not in count[0]
+    assert dependency in page[0].split("ROWS ONLY")[0]
+
+
+@pytest.mark.parametrize("sort", [
+    [{"field": "document_no; DROP TABLE x", "direction": "asc"}],
+    [{"field": "unknown", "direction": "asc"}],
+    [{"field": "document_no", "direction": "asc"}] * 2,
+])
+def test_invalid_sort_never_reaches_database(sort):
+    pdm = SqlServerPdmRepository(settings)
+    pdm.client = SqlClient()
+    with pytest.raises(ConditionError):
+        pdm.search_files(group(rule("document_no", "contains", "GEN")), page=1, page_size=10,
+                         sort=[SortRule.model_validate(item) for item in sort])
+    assert pdm.client.calls == []
+
+
+@pytest.mark.parametrize("sort", [
+    [{"field": "document_no", "direction": "asc; DROP TABLE x"}],
+    [{"field": "document_no", "expression": "a.ID"}],
+    [{"field": "document_no"}] * 6,
+])
+def test_sort_contract_rejects_injection_and_unbounded_rules(sort):
+    with pytest.raises(ValidationError):
+        ConditionSearch.model_validate({"sort": sort})
+
+
+def test_mock_sort_is_before_pagination_and_ties_are_deterministic():
+    pdm = MockPdmRepository()
+    criteria = group(rule("document_no", "contains", ".GEN"))
+    sort = [SortRule(field="operate_date", direction="desc"), SortRule(field="document_no")]
+    full, total = pdm.search_files(criteria, page=1, page_size=100, sort=sort)
+    first, _ = pdm.search_files(criteria, page=1, page_size=1, sort=sort)
+    second, _ = pdm.search_files(criteria, page=2, page_size=1, sort=sort)
+    assert total == 3
+    assert first + second == full[:2]
+    assert full[0]["operate_time"] >= full[1]["operate_time"] >= full[2]["operate_time"]
+    assert first[0]["document_id"] != second[0]["document_id"]
 
 
 def test_empty_or_invalid_pdm_query_does_not_access_database():
@@ -230,6 +333,17 @@ def test_sqlite_and_or_date_and_numeric_pagination(downloads):
     assert downloads.list(1, 10, either)[1] == 2
     assert downloads.list(1, 10, group(rule("size", "is_empty")))[0][0]["download_id"] == "2"
     assert downloads.list(1, 10, group())[1] == 3
+
+
+def test_download_sort_is_numeric_and_applied_before_pagination(downloads):
+    sort = [SortRule(field="size", direction="desc"), SortRule(field="download_date")]
+    first, total = downloads.list(1, 1, sort=sort)
+    second, _ = downloads.list(2, 1, sort=sort)
+    assert total == 3
+    assert first[0]["download_id"] == "1"
+    assert second[0]["download_id"] == "0"
+    with pytest.raises(ConditionError):
+        downloads.list(1, 1, sort=[SortRule(field="created_at;DROP")])
 
 
 @pytest.mark.parametrize("operator,value,expected", [
@@ -268,7 +382,7 @@ def test_api_search_and_schema_are_readonly_and_paged(api):
     app, client, repo = api
     response = client.get("/api/v1/conditions/cutting_files/schema")
     assert response.status_code == 200 and response.json()["data"]["requires_filter"]
-    payload = {"filters": group(rule("ship_no", "eq", "CMYZ0177")).model_dump(), "page_size": 1}
+    payload = {"filters": group(rule("project_id", "eq", app.state.cutting_dispatch.pdm.projects[0]["project_id"])).model_dump(), "page_size": 1}
     response = client.post("/api/v1/cutting/files/search", json=payload)
     assert response.status_code == 200
     data = response.json()["data"]
@@ -286,6 +400,18 @@ def test_api_rejects_invalid_conditions_and_pages(api, path):
     _, client, _ = api
     assert client.post(path, json={"page_size": 1000}).status_code == 422
     assert client.post(path, json={"filters": group(rule("private_column", "eq", "x")).model_dump()}).status_code == 422
+    assert client.post(path, json={"filters": group(rule("document_no", "contains", "GEN")).model_dump(), "sort": [{"field": "not_allowed"}]}).status_code == 422
+
+
+def test_api_passes_sort_to_repository_before_paging(api):
+    _, client, _ = api
+    base = {"filters": group(rule("document_no", "contains", "GEN")).model_dump(), "page_size": 1}
+    names = []
+    for direction in ("asc", "desc"):
+        response = client.post("/api/v1/cutting/files/search", json={**base, "sort": [{"field": "document_no", "direction": direction}]})
+        assert response.status_code == 200
+        names.append(response.json()["data"]["items"][0]["document_no"])
+    assert names[0] < names[1]
 
 
 @pytest.mark.parametrize("user,expected", [(None, 401), ({"role": "worker"}, 403)])

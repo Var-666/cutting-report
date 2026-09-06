@@ -3,12 +3,10 @@ import { computed, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { getLeadershipReport, listReports } from '../api/reports'
 import { session } from '../state/session'
+import { reportPreload } from '../state/reportPreload.js'
+import { reportToday } from '../api/reportDates.js'
 
-const reportMonth = new Date().toLocaleDateString('en-CA', {
-  timeZone: 'Asia/Shanghai',
-  year: 'numeric',
-  month: '2-digit',
-}).slice(0, 7)
+const reportMonth = reportToday().slice(0, 7)
 
 const loading = ref(true)
 const overview = ref(null)
@@ -75,7 +73,7 @@ async function loadDashboard() {
   error.value = ''
   const [overviewResult, reportsResult] = await Promise.allSettled([
     getLeadershipReport(reportMonth),
-    listReports({ page: 1, pageSize: 5 }),
+    listReports({ page: 1, pageSize: 10 }),
   ])
   if (overviewResult.status === 'fulfilled') {
     overview.value = overviewResult.value
@@ -83,7 +81,7 @@ async function loadDashboard() {
     error.value = overviewResult.reason.message
   }
   if (reportsResult.status === 'fulfilled') {
-    recentReports.value = reportsResult.value.items
+    recentReports.value = reportsResult.value.items.slice(0, 5)
     historyTotal.value = reportsResult.value.total
   } else {
     error.value ||= reportsResult.reason.message
@@ -118,6 +116,11 @@ onMounted(loadDashboard)
 
   <div v-if="error" class="global-error home-error">
     <strong>部分概览数据读取失败</strong><span>{{ error }}</span><button type="button" @click="loadDashboard">重试</button>
+  </div>
+
+  <div v-if="reportPreload.items.length" class="home-preload" role="status" aria-live="polite">
+    <strong>报表预加载</strong>
+    <span v-for="item in reportPreload.items" :key="item.key" :data-status="item.status">{{ item.label }}：{{ { loading: '加载中', ready: '已预加载', failed: '暂未加载，进入页面可重试' }[item.status] }}</span>
   </div>
 
   <section class="home-kpis" aria-label="本月生产概况">
@@ -175,6 +178,8 @@ onMounted(loadDashboard)
 </template>
 
 <style scoped>
+.home-preload { display:flex; flex-wrap:wrap; gap:10px 22px; align-items:center; margin-bottom:20px; padding:12px 16px; background:#f4fafb; border:1px solid #d4e3e9; color:#63788a; font-size:12px; }
+.home-preload strong { color:#123450; }.home-preload [data-status="ready"] { color:#18766b; }.home-preload [data-status="failed"] { color:#9b612c; }
 .home-hero { min-height:250px; display:grid; grid-template-columns:minmax(0,1fr) 330px; align-items:center; gap:48px; padding:34px 0 28px; }
 .home-eyebrow,.home-section-head span,.home-panel-head span { color:#168397; font-size:10px; font-weight:800; letter-spacing:2.4px; }
 .home-hero h1 { margin:8px 0 10px; color:#123450; font-size:clamp(30px,4vw,46px); letter-spacing:1px; }

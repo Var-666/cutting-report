@@ -1,4 +1,5 @@
 <script setup>
+import DownloadPdfButton from './DownloadPdfButton.vue'
 defineProps({ job: { type: Object, default: null } })
 
 const steps = [
@@ -38,6 +39,7 @@ function stepClass(status, stepStatus) {
     <div v-if="['completed', 'completed_with_warnings'].includes(job.status)" class="result-actions">
       <a class="button primary" :href="job.view_url" target="_blank" rel="noopener">打开报告</a>
       <a class="button" :href="job.download_url">下载 HTML</a>
+      <DownloadPdfButton :report-id="job.report_id" />
       <span>{{ job.task_count }} 个任务 · AI {{ job.ai_status }}</span>
     </div>
   </section>

@@ -1,5 +1,6 @@
 import { reactive } from 'vue'
-import { getAuthStatus, getSystemHealth, logoutAccount } from '../api/reports'
+import { getAuthStatus, getSystemHealth, logoutAccount } from '../api/reports.js'
+import { startReportPreload, stopReportPreload } from './reportPreload.js'
 
 export const session = reactive({
   ready: false,
@@ -11,19 +12,33 @@ export const session = reactive({
 })
 
 let loadingPromise = null
+let sessionGeneration = 0
+
+function refreshSystemInfo(generation) {
+  getSystemHealth().then((info) => {
+    if (generation === sessionGeneration) session.systemInfo = info
+  }).catch(() => {
+    if (generation === sessionGeneration) session.systemInfo = null
+  })
+}
 
 export async function loadSession({ force = false } = {}) {
   if (session.ready && !force) return session
   if (loadingPromise && !force) return loadingPromise
-
+  const generation = ++sessionGeneration
+  if (force) stopReportPreload()
   loadingPromise = (async () => {
     session.error = ''
     try {
       const status = await getAuthStatus()
+      if (generation !== sessionGeneration) return session
       session.setupRequired = status.setup_required
       session.workerDatabaseAuthEnabled = Boolean(status.worker_database_auth_enabled)
       session.user = status.user
+      startReportPreload(status.user)
     } catch (exception) {
+      if (generation !== sessionGeneration) return session
+      stopReportPreload()
       session.user = null
       session.systemInfo = null
       session.error = exception.message
@@ -31,14 +46,9 @@ export async function loadSession({ force = false } = {}) {
       loadingPromise = null
       return session
     }
-    try {
-      session.systemInfo = await getSystemHealth()
-    } catch {
-      session.systemInfo = null
-    } finally {
-      session.ready = true
-      loadingPromise = null
-    }
+    refreshSystemInfo(generation)
+    session.ready = true
+    loadingPromise = null
     return session
   })()
 
@@ -46,22 +56,28 @@ export async function loadSession({ force = false } = {}) {
 }
 
 export async function completeAuthentication(user) {
+  const generation = ++sessionGeneration
+  loadingPromise = null
+  stopReportPreload()
   session.user = user
+  session.ready = true
   session.setupRequired = false
   session.error = ''
-  try {
-    session.systemInfo = await getSystemHealth()
-  } catch {
-    session.systemInfo = null
-  }
+  session.systemInfo = null
+  startReportPreload(user)
+  refreshSystemInfo(generation)
 }
 
 export async function endSession() {
+  const generation = ++sessionGeneration
+  loadingPromise = null
+  stopReportPreload()
+  session.user = null
+  session.systemInfo = null
   try {
     await logoutAccount()
   } finally {
-    session.user = null
-    session.error = ''
+    if (generation === sessionGeneration) session.error = ''
   }
 }
 

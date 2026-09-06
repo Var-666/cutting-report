@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from typing import Any, Protocol
+from threading import Lock
+from time import monotonic
 
 from app.config import Settings
 from app.database.sqlserver import SqlServerClient
 from app.models.conditions import ConditionGroup
-from app.services.condition_service import ConditionError, compile_conditions, fields_for, matches_conditions, prepare
+from app.services.condition_service import ConditionError, compile_conditions, fields_for, matches_conditions, prepare, prepare_sort, sort_expression, sort_mock_rows
 
 
 class PdmRepository(Protocol):
@@ -28,7 +30,7 @@ class PdmRepository(Protocol):
 
     def get_file(self, document_id: str) -> dict[str, Any] | None: ...
 
-    def search_files(self, filters: ConditionGroup, *, page: int, page_size: int) -> tuple[list[dict[str, Any]], int]: ...
+    def search_files(self, filters: ConditionGroup, *, page: int, page_size: int, sort=()) -> tuple[list[dict[str, Any]], int]: ...
 
 
 class SqlServerPdmRepository:
@@ -74,11 +76,17 @@ class SqlServerPdmRepository:
         physical.FilePath AS file_path
     """
 
-    FILE_FROM = """
+    DOCUMENT_FROM = """
         FROM dbo.PDM_DesignDocumentInfo AS a
         JOIN dbo.PDM_NCDocumentCatalog AS c ON a.FileID = c.ID
+    """
+    PROJECT_JOIN = """
         LEFT JOIN dbo.BasicConfig_ProjectInfo AS p ON a.ProjectInfoID = p.ID
+    """
+    VERSION_JOIN = """
         LEFT JOIN dbo.JDDR_PDM_NCDocumentVersion_Data AS v ON a.VersionID = v.ID
+    """
+    PHYSICAL_APPLY = """
         OUTER APPLY (
             SELECT TOP (1)
                 f.ID AS physical_file_id,
@@ -99,10 +107,47 @@ class SqlServerPdmRepository:
             ORDER BY f.VersionNo DESC, f.FilePath, f.ID
         ) AS physical
     """
+    FILE_FROM = DOCUMENT_FROM + PROJECT_JOIN + VERSION_JOIN + PHYSICAL_APPLY
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.client = SqlServerClient(settings, source="file")
+        self._count_cache: dict[tuple, tuple[float, int]] = {}
+        self._count_cache_lock = Lock()
+        self._count_query_locks = [Lock() for _ in range(16)]
+
+    def _search_from(self, where_sql: str) -> str:
+        # Only server-owned, validated expressions appear here. Literal values
+        # remain bound parameters, so they cannot influence join selection.
+        source = self.DOCUMENT_FROM
+        if "p." in where_sql:
+            source += self.PROJECT_JOIN
+        if "v." in where_sql:
+            source += self.VERSION_JOIN
+        if "physical." in where_sql:
+            source += self.PHYSICAL_APPLY
+        return source
+
+    def _search_count(self, source: str, where_sql: str, parameters: tuple, *, refresh: bool) -> int:
+        key = (source, where_sql, parameters)
+        # Bounded striped locks coalesce adjacent-page requests without retaining
+        # an unbounded lock for each set of user-supplied conditions.
+        with self._count_query_locks[hash(key) % len(self._count_query_locks)]:
+            now = monotonic()
+            with self._count_cache_lock:
+                cached = self._count_cache.get(key)
+                if not refresh and cached and cached[0] > now:
+                    return cached[1]
+            row = self.client.fetch_all(
+                f"SELECT COUNT(*) AS total {source} WHERE {where_sql}", parameters
+            )[0]
+            total = int(row["total"] or 0)
+            with self._count_cache_lock:
+                self._count_cache = {k: v for k, v in self._count_cache.items() if v[0] > now}
+                self._count_cache[key] = (monotonic() + 60, total)
+                while len(self._count_cache) > 128:
+                    self._count_cache.pop(next(iter(self._count_cache)))
+            return total
 
     def list_projects(self, keyword: str = "", limit: int = 100) -> list[dict[str, Any]]:
         cleaned = keyword.strip()
@@ -225,14 +270,36 @@ class SqlServerPdmRepository:
         )
         return rows[0] if rows else None
 
-    def search_files(self, filters: ConditionGroup, *, page: int, page_size: int):
+    def search_files(self, filters: ConditionGroup, *, page: int, page_size: int, sort=()):
         if not filters.rules:
             raise ConditionError("请至少添加一条检索条件，不允许无条件检索全部文件")
         where_sql, parameters = compile_conditions(filters, fields_for("cutting_files", self.settings))
-        total = self.client.fetch_all(f"SELECT COUNT(*) AS total {self.FILE_FROM} WHERE {where_sql}", tuple(parameters))[0]["total"]
+        prepared_sort = prepare_sort(sort, "cutting_files", self.settings)
+        orders = [(sort_expression(field), direction) for field, direction in prepared_sort]
+        orders = orders or [("c.Title", "ASC"), ("a.DocumentNo", "ASC")]
+        sort_columns = ", ".join(f"{expression} AS sort_{i}" for i, (expression, _) in enumerate(orders))
+        order_sql = ", ".join(f"{expression} {direction}" for expression, direction in orders) + ", a.ID ASC"
+        page_order_sql = ", ".join(f"page.sort_{i} {direction}" for i, (_, direction) in enumerate(orders)) + ", page.document_id ASC"
+        source = self._search_from(where_sql)
+        # A new search (page 1) always recounts. Pagination shares a short-lived
+        # count; it never trusts a total supplied by the browser.
+        total = self._search_count(source, where_sql, tuple(parameters), refresh=page == 1)
+        page_source = self._search_from(where_sql + " " + order_sql)
+        # First select only this page's document IDs, then hydrate its display
+        # columns and physical files. Physical-field filters retain the same
+        # TOP (1), version matching and AND/OR semantics as get_file().
         rows = self.client.fetch_all(
-            f"""SELECT {self.FILE_COLUMNS} {self.FILE_FROM} WHERE {where_sql}
-                ORDER BY c.Title, a.DocumentNo, a.ID OFFSET ? ROWS FETCH NEXT ? ROWS ONLY""",
+            f"""WITH page_documents AS (
+                    SELECT a.ID AS document_id, {sort_columns}
+                    {page_source} WHERE {where_sql}
+                    ORDER BY {order_sql} OFFSET ? ROWS FETCH NEXT ? ROWS ONLY
+                )
+                SELECT {self.FILE_COLUMNS}
+                FROM page_documents AS page
+                JOIN dbo.PDM_DesignDocumentInfo AS a ON a.ID = page.document_id
+                JOIN dbo.PDM_NCDocumentCatalog AS c ON a.FileID = c.ID
+                {self.PROJECT_JOIN} {self.VERSION_JOIN} {self.PHYSICAL_APPLY}
+                ORDER BY {page_order_sql}""",
             tuple([*parameters, (page - 1) * page_size, page_size]),
         )
         return rows, int(total or 0)
@@ -418,7 +485,7 @@ class MockPdmRepository:
     def get_file(self, document_id: str) -> dict[str, Any] | None:
         return next((item for item in self.files if item["document_id"] == document_id), None)
 
-    def search_files(self, filters: ConditionGroup, *, page: int, page_size: int):
+    def search_files(self, filters: ConditionGroup, *, page: int, page_size: int, sort=()):
         if not filters.rules:
             raise ConditionError("请至少添加一条检索条件，不允许无条件检索全部文件")
         fields = fields_for("cutting_files")
@@ -430,6 +497,11 @@ class MockPdmRepository:
             row = {**item, "project_name": project.get("project_name"), "ship_no": project.get("ship_no")}
             if matches_conditions(row, filters, fields):
                 rows.append(row)
-        rows.sort(key=lambda row: (row.get("catalog_title") or "", row.get("document_no") or "", row["document_id"]))
+        prepared_sort = prepare_sort(sort, "cutting_files")
+        if prepared_sort:
+            rows.sort(key=lambda row: row["document_id"])
+            sort_mock_rows(rows, prepared_sort)
+        else:
+            rows.sort(key=lambda row: (row.get("catalog_title") or "", row.get("document_no") or "", row["document_id"]))
         offset = (page - 1) * page_size
         return rows[offset:offset + page_size], len(rows)

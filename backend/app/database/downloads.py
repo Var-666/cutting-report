@@ -4,7 +4,7 @@ import json
 
 from app.database.sqlite import SQLiteRepository
 from app.models.conditions import ConditionGroup
-from app.services.condition_service import compile_conditions, fields_for
+from app.services.condition_service import compile_conditions, fields_for, prepare_sort, sort_expression
 
 
 class DownloadRepository(SQLiteRepository):
@@ -58,12 +58,15 @@ class DownloadRepository(SQLiteRepository):
                 return item
         return None
 
-    def list(self, page, page_size, filters=None):
+    def list(self, page, page_size, filters=None, sort=()):
         where, parameters = compile_conditions(filters or ConditionGroup(), fields_for("cutting_downloads"))
+        prepared = prepare_sort(sort, "cutting_downloads")
+        order = ", ".join(f"{sort_expression(field)} {direction}" for field, direction in prepared)
+        order = f"{order}, download_id DESC" if order else "created_at DESC, download_id DESC"
         with self.connect() as connection:
             total = connection.execute(f"SELECT COUNT(*) FROM cutting_downloads WHERE {where}", parameters).fetchone()[0]
             rows = connection.execute(f"""
-                SELECT payload FROM cutting_downloads WHERE {where} ORDER BY created_at DESC, download_id DESC LIMIT ? OFFSET ?
+                SELECT payload FROM cutting_downloads WHERE {where} ORDER BY {order} LIMIT ? OFFSET ?
             """, (*parameters, page_size, (page - 1) * page_size)).fetchall()
         return [json.loads(row[0]) for row in rows], total
 

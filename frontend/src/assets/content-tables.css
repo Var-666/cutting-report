@@ -1,0 +1,42 @@
+/* Keep each page's colours, borders, alignment and chart/table arrangement.
+   Only column sizing is shared: native content-based layout, never equal widths. */
+table.content-table {
+  width:100% !important;
+  min-width:0 !important;
+  max-width:none !important;
+  table-layout:auto !important;
+}
+table.content-table col,
+table.content-table th,
+table.content-table td {
+  width:auto !important;
+  min-width:0 !important;
+  max-width:none !important;
+}
+table.content-table th { white-space:nowrap; }
+table.content-table td {
+  overflow:visible;
+  white-space:normal;
+  overflow-wrap:anywhere;
+  text-overflow:clip;
+}
+table.content-table [data-content-fit='compact'] {
+  /* Preserve complete short values, while the native layout distributes
+     remaining space by intrinsic content size rather than equal shares. */
+  white-space:nowrap !important;
+}
+table.content-table td[data-content-fit='text'] {
+  min-width:12ch !important;
+  max-width:42ch !important;
+  white-space:normal !important;
+}
+table.content-table td :is(strong, small, code, .confirmed-mark) {
+  max-width:none !important;
+  overflow:visible !important;
+  white-space:inherit !important;
+  overflow-wrap:inherit;
+  text-overflow:clip !important;
+}
+/* Contain narrow-screen overflow in the existing table scroll regions. */
+:is(.history-wrap,.workshop-table-wrap,.leadership-table-wrap,.energy-period-table-wrap,
+    .dispatch-table-wrap,.download-table-wrap,.automation-table-wrap) { min-width:0; overflow-x:auto; }

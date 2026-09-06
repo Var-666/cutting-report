@@ -34,7 +34,6 @@ def _valid_row(**changes):
         "group_no": "G0021",
         "company_no": "C0007",
         "available_value": 1,
-        "locked_value": 0,
         "password_matches": 1,
     }
     row.update(changes)
@@ -57,6 +56,8 @@ def test_worker_auth_uses_company_number_and_keeps_password_out_of_select() -> N
     assert parameters == ("plain-password", "C0007")
     assert "[密码] AS" not in sql
     assert "WHERE [公司工号] = ?" in sql
+    assert "_Locked" not in sql
+    assert "locked_value" not in sql
 
 
 @pytest.mark.parametrize(
@@ -65,7 +66,9 @@ def test_worker_auth_uses_company_number_and_keeps_password_out_of_select() -> N
         [],
         [_valid_row(password_matches=0)],
         [_valid_row(available_value=0)],
-        [_valid_row(locked_value=1)],
+        [_valid_row(available_value=None)],
+        [_valid_row(locked_value=None, password_matches=0)],
+        [_valid_row(locked_value=1, available_value=0)],
         [_valid_row(), _valid_row(external_id=9124)],
     ],
 )
@@ -76,14 +79,19 @@ def test_worker_auth_rejects_invalid_or_ambiguous_accounts(rows) -> None:
         service.authenticate("C0007", "wrong-or-disabled")
 
 
-def test_worker_auth_state_values_are_configurable() -> None:
-    client = FakeSqlServerClient(
-        [_valid_row(available_value="是", locked_value="否")]
-    )
+@pytest.mark.parametrize("locked_value", [None, 0, 1, "", "否", "是"])
+def test_worker_auth_does_not_check_locked_value(locked_value) -> None:
+    client = FakeSqlServerClient([_valid_row(locked_value=locked_value)])
+    service = WorkerAuthService(_enabled_settings(), client=client)
+
+    assert service.authenticate("C0007", "password")["external_id"] == "9123"
+
+
+def test_worker_auth_available_value_is_configurable() -> None:
+    client = FakeSqlServerClient([_valid_row(available_value="是")])
     service = WorkerAuthService(
         _enabled_settings(
             worker_database_available_value="是",
-            worker_database_unlocked_value="否",
         ),
         client=client,
     )

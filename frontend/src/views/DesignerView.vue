@@ -230,7 +230,7 @@ onMounted(loadResources)
           <button class="primary" type="button" :disabled="saving || queryDraft.is_builtin" @click="saveResource('query-tasks', queryDraft, 'query_task_id')">保存任务</button>
           <button class="danger-button" type="button" :disabled="queryDraft.is_builtin" @click="removeResource('query-tasks', queryDraft, 'query_task_id')">删除</button>
         </div>
-        <div v-if="queryPreview" class="designer-preview-table"><div>预览返回 {{ queryPreview.returned }} 行 · {{ queryPreview.mode }}</div><div class="history-wrap"><table><thead><tr><th v-for="column in queryPreview.columns" :key="column.field">{{ column.label }}</th></tr></thead><tbody><tr v-for="(row, index) in queryPreview.items" :key="index"><td v-for="column in queryPreview.columns" :key="column.field">{{ row[column.field] }}</td></tr></tbody></table></div></div>
+        <div v-if="queryPreview" class="designer-preview-table"><div>预览返回 {{ queryPreview.returned }} 行 · {{ queryPreview.mode }}</div><div class="history-wrap"><table v-content-table><thead><tr><th v-for="column in queryPreview.columns" :key="column.field">{{ column.label }}</th></tr></thead><tbody><tr v-for="(row, index) in queryPreview.items" :key="index"><td v-for="column in queryPreview.columns" :key="column.field">{{ row[column.field] }}</td></tr></tbody></table></div></div>
       </div>
     </div>
 

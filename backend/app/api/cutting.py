@@ -147,7 +147,7 @@ def create_dispatch(
 @router.post("/files/search")
 def search_files(payload: ConditionSearch, request: Request):
     try:
-        data = request.app.state.cutting_dispatch.search_files(payload.filters, page=payload.page, page_size=payload.page_size)
+        data = request.app.state.cutting_dispatch.search_files(payload.filters, page=payload.page, page_size=payload.page_size, sort=payload.sort)
     except ConditionError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
     return _envelope(request, data)

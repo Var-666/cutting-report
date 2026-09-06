@@ -48,6 +48,27 @@ class QueryService:
         ] = {}
         self._latest_date_lock = Lock()
         self._latest_date_cache: dict[date, tuple[float, date | None]] = {}
+        self._workshop_cache_lock = Lock()
+        self._workshop_cache: dict[date, tuple[float, QueryBundle]] = {}
+
+    def prepare_workshop_data(self, report_date: date) -> QueryBundle:
+        """Read-only, short-lived warmup; does not create reports or confirmations."""
+        with self._workshop_cache_lock:
+            now = monotonic()
+            cached = self._workshop_cache.get(report_date)
+            if cached and cached[0] > now:
+                return cached[1]
+            self._workshop_cache = {
+                key: value for key, value in self._workshop_cache.items() if value[0] > now
+            }
+            bundle = self.fetch_report_data(ReportFilter(report_date=report_date))
+            ttl = min(60, self.settings.report_data_cache_seconds)
+            # Empty days must be checked again when newly finished tasks arrive.
+            if ttl > 0 and bundle.workshop_records:
+                self._workshop_cache[report_date] = (monotonic() + ttl, bundle)
+                while len(self._workshop_cache) > 32:
+                    self._workshop_cache.pop(next(iter(self._workshop_cache)))
+            return bundle
 
     def fetch_report_data(self, filters: ReportFilter) -> QueryBundle:
         if self.settings.effective_data_source_mode == "excel":
@@ -450,7 +471,9 @@ class QueryService:
             equipment.append(
                 EquipmentRecord(
                     task_id=task_id,
-                    equipment_id=f"CUT-{((index - 1) % 4) + 1:02d}",
+                    # Mirror the production MACHINE_NO values so the demo also
+                    # exercises the Cutter01-only report scope.
+                    equipment_id=f"Cutter{((index - 1) % 2) + 1:02d}",
                     project_code=project_name,
                     ship_no=project_name,
                     segment_name=summary.segment_name,
