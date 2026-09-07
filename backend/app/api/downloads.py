@@ -1,5 +1,4 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.auth import require_admin
@@ -40,13 +39,6 @@ def download_file(payload: DownloadRequest, request: Request, response: Response
 def list_downloads(request: Request, response: Response, page: int = Query(1, ge=1), page_size: int = Query(10, ge=1, le=100)):
     response.headers["Cache-Control"] = "no-store"
     return _envelope(request, request.app.state.file_downloads.list(page, page_size))
-
-
-@router.get("/{download_id}/file")
-def save_download(download_id: str, request: Request):
-    item, path = _call(lambda: request.app.state.file_downloads.local_file(download_id))
-    return FileResponse(path, media_type="application/octet-stream", filename=item["filename"],
-                        headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
 
 
 @router.post("/search")

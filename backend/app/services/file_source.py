@@ -56,7 +56,7 @@ class DisabledFileSource:
             "mode": self.mode,
             "enabled": False,
             "label": "文件下载未配置",
-            "message": "请配置 FILE_SOURCE_MODE=http 接入文件下载服务；已下载文件仍可选择。",
+            "message": "请配置 FILE_SOURCE_MODE=http 接入文件下载服务；系统已保存文件仍会保留。",
         }
 
     def exists(self, relative_path: str) -> bool:
@@ -159,7 +159,7 @@ class HttpFileSource:
         try:
             self._endpoint()
             return {"mode": self.mode, "enabled": True, "label": "FO HTTP 文件服务",
-                    "message": "已配置 HTTP 下载；连通性与权限以实际下载结果为准。文件先保存到系统本地。"}
+            "message": "已配置 HTTP 下载；连通性与权限以实际保存结果为准。文件保存在系统服务器中。"}
         except FileSourceError as exc:
             return {"mode": self.mode, "enabled": False, "label": "文件接口配置无效", "message": str(exc)}
 

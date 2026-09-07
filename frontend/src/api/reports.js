@@ -241,18 +241,6 @@ export function getConditionSchema(dataset) {
   return request(`/api/v1/conditions/${encodeURIComponent(dataset)}/schema`)
 }
 
-export function clearCuttingFilePages() {
-  reportCache.invalidate('cutting:files:')
-}
-
-export function searchCuttingFiles(filters, { page = 1, pageSize = 10, sort = [], force = false } = {}) {
-  if (force) clearCuttingFilePages()
-  const body = JSON.stringify({ filters, page, page_size: pageSize, sort })
-  return reportCache.read(`cutting:files:${body}`, (signal) => request('/api/v1/cutting/files/search', {
-    method: 'POST', body, signal,
-  }), { ttl: 60000 })
-}
-
 export function searchCuttingDownloads(filters, { page = 1, pageSize = 10, sort = [] } = {}) {
   return request('/api/v1/cutting/downloads/search', { method: 'POST', body: JSON.stringify({ filters, page, page_size: pageSize, sort }) })
 }
@@ -265,15 +253,8 @@ export function listCuttingDownloads({ page = 1, pageSize = 10 } = {}) {
   return request(`/api/v1/cutting/downloads?${new URLSearchParams({ page, page_size: pageSize })}`)
 }
 
-export { canChooseSaveLocation } from './saveFile.js'
-import { saveFileFromUrl } from './saveFile.js'
-
-export function saveCuttingDownload(downloadId, filename, options) {
-  return saveFileFromUrl(`/api/v1/cutting/downloads/${encodeURIComponent(downloadId)}/file`, filename, options)
-}
-
-export function listCuttingProjects(keyword = '') {
-  const query = new URLSearchParams({ limit: 100 })
+export function listCuttingProjects(keyword = '', limit = 20) {
+  const query = new URLSearchParams({ limit: String(limit) })
   if (keyword) query.set('keyword', keyword)
   return request(`/api/v1/cutting/projects?${query}`)
 }

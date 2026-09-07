@@ -101,7 +101,7 @@ def fields_for(dataset, settings=None):
         )
     if dataset == "cutting_downloads":
         return (
-            FieldSpec("filename", "本地文件名", "text", "json_extract(payload, '$.filename')"),
+            FieldSpec("filename", "系统文件名", "text", "json_extract(payload, '$.filename')"),
             FieldSpec("document_no", "文档名称", "text", "json_extract(payload, '$.document_no')"),
             FieldSpec("version", "版本", "text", "json_extract(payload, '$.version')"),
             FieldSpec("relative_path", "来源相对路径", "text", "json_extract(payload, '$.relative_path')"),
@@ -116,7 +116,7 @@ def fields_for(dataset, settings=None):
 
 def schema_for(dataset, settings=None):
     fields = fields_for(dataset, settings)
-    return {"dataset": dataset, "label": {"cutting_files": "PDM 文件", "cutting_downloads": "已下载文件"}[dataset],
+    return {"dataset": dataset, "label": {"cutting_files": "PDM 文件", "cutting_downloads": "系统已保存文件"}[dataset],
             "requires_filter": dataset == "cutting_files", "max_rules": 50, "max_values": 50, "max_page_size": 100,
             "fields": [field.public() for field in fields],
             "max_sort_rules": 5,

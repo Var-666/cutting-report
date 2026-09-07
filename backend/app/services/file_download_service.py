@@ -52,6 +52,41 @@ class FileDownloadService:
     def now(self):
         return datetime.now(ZoneInfo(self.settings.timezone)).isoformat(timespec="seconds")
 
+    def _catalog_path(self, raw):
+        project_id = str(raw.get("project_id") or "")
+        catalog_id = str(raw.get("catalog_id") or "")
+        fallback = [{
+            "catalog_id": catalog_id,
+            "parent_id": str(raw.get("catalog_parent_id") or "") or None,
+            "title": str(raw.get("catalog_title") or "未分类"),
+            "catalog_type": raw.get("catalog_type"),
+        }] if catalog_id else []
+        if not project_id or not catalog_id:
+            return fallback
+        try:
+            catalogs = self.pdm.list_catalogs(project_id)
+        except Exception:
+            return fallback
+        by_id = {str(item.get("catalog_id") or ""): item for item in catalogs}
+        current = by_id.get(catalog_id)
+        if current is None:
+            return fallback
+        path = []
+        seen = set()
+        while current:
+            current_id = str(current.get("catalog_id") or "")
+            if not current_id or current_id in seen:
+                break
+            seen.add(current_id)
+            path.append({
+                "catalog_id": current_id,
+                "parent_id": str(current.get("parent_id") or "") or None,
+                "title": str(current.get("title") or "未分类"),
+                "catalog_type": current.get("catalog_type"),
+            })
+            current = by_id.get(str(current.get("parent_id") or ""))
+        return list(reversed(path)) or fallback
+
     def _path(self, item):
         root = self.settings.cutting_downloads_dir.resolve()
         path = root / item["download_id"] / item["filename"]
@@ -59,7 +94,7 @@ class FileDownloadService:
                 or Path(item["filename"]).name != item["filename"]
                 or "\\" in item["filename"]
                 or not path.resolve().is_relative_to(root)):
-            raise DownloadError("本地文件路径校验失败", 409)
+            raise DownloadError("系统文件路径校验失败", 409)
         return path
 
     def public(self, item):
@@ -68,8 +103,8 @@ class FileDownloadService:
         result["available"] = item["status"] == "downloaded" and self._path(item).is_file()
         result["storage_path"] = f"data/cutting-downloads/{item['download_id']}/{item['filename']}"
         if item["status"] == "downloaded" and not result["available"]:
-            result["status_label"] = "本地文件丢失"
-            result["error"] = "记录仍在，但本地文件已不存在，请重新下载"
+            result["status_label"] = "系统文件丢失"
+            result["error"] = "记录仍在，但系统文件已不存在，请重新保存"
         return result
 
     def list(self, page=1, page_size=10, filters=None, sort=()):
@@ -107,6 +142,12 @@ class FileDownloadService:
                 "version_id": str(raw.get("version_id") or ""), "version": str(version or "未标注"),
                 "document_no": str(raw.get("document_no") or ""), "relative_path": actual,
                 "project_id": str(raw.get("project_id") or ""),
+                "project_name": str(raw.get("project_name") or ""),
+                "ship_no": str(raw.get("ship_no") or ""),
+                "catalog_id": str(raw.get("catalog_id") or ""),
+                "catalog_title": str(raw.get("catalog_title") or ""),
+                "catalog_path": self._catalog_path(raw),
+                "pbs_info": str(raw.get("pbs_info") or ""),
                 "filename": download_filename(raw.get("document_no"), version, actual),
                 "source_mode": self.source.mode, "is_simulation": self.pdm.mode == "mock" or self.source.mode == "mock",
                 "created_by_name": user["display_name"], "created_by_id": user["user_id"],
@@ -143,7 +184,7 @@ class FileDownloadService:
             self.repository.save(item)
             return self.public(item)
         except (FileSourceError, OSError) as exc:
-            message = str(exc) if isinstance(exc, FileSourceError) else "本地文件保存失败，请检查可用空间与目录权限"
+            message = str(exc) if isinstance(exc, FileSourceError) else "系统文件保存失败，请检查可用空间与目录权限"
             if recorded:
                 item.update(status="failed", error=message, updated_at=self.now())
                 self.repository.save(item)
@@ -193,11 +234,11 @@ class FileDownloadService:
         path = self._path(item)
         try:
             if path.stat().st_size != item["size"]:
-                raise DownloadError("本地文件大小发生变化，请重新下载", 409)
+                raise DownloadError("系统文件大小发生变化，请重新保存", 409)
             with path.open("rb") as stream:
                 digest = hashlib.file_digest(stream, "sha256").hexdigest()
             if digest != item["sha256"]:
-                raise DownloadError("本地文件内容校验失败，请重新下载", 409)
+                raise DownloadError("系统文件内容校验失败，请重新保存", 409)
         except OSError:
-            raise DownloadError("本地文件不存在或无法读取，请重新下载", 404) from None
+            raise DownloadError("系统文件不存在或无法读取，请重新保存", 404) from None
         return item, path

@@ -223,7 +223,7 @@ class CuttingDispatchService:
                 raise CuttingDispatchError(str(exc)) from None
             document_id = str(selected_download["document_id"])
         if not document_id:
-            raise CuttingDispatchError("请选择一个已下载文件")
+            raise CuttingDispatchError("请选择一个系统已保存文件")
         raw_file = self.pdm.get_file(document_id)
         if raw_file is None:
             raise CuttingFileNotFoundError("PDM中未找到指定切割文件")
@@ -232,9 +232,9 @@ class CuttingDispatchService:
             raise CuttingDispatchError(file_item["path_error"])
         if selected_download is not None:
             if str(file_item.get("version_id") or "") != str(selected_download.get("version_id") or ""):
-                raise CuttingDispatchError("已下载文件与PDM当前版本不一致，请回到文件下载页重新下载")
+                raise CuttingDispatchError("系统已保存文件与PDM当前版本不一致，请回到文件下载页重新保存")
             if file_item["normalized_path"] != normalize_relative_path(selected_download["relative_path"]):
-                raise CuttingDispatchError("已下载文件与PDM当前路径不一致，请重新下载")
+                raise CuttingDispatchError("系统已保存文件与PDM当前路径不一致，请重新保存")
         physical_suffix = (local_path if selected_download is not None else Path(file_item["normalized_path"])).suffix.lower()
         document_suffix = Path(str(file_item["document_no"])).suffix.lower()
         if physical_suffix != ".gen" and document_suffix != ".gen":

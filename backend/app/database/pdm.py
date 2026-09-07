@@ -483,7 +483,11 @@ class MockPdmRepository:
         return items[offset : offset + page_size], len(items)
 
     def get_file(self, document_id: str) -> dict[str, Any] | None:
-        return next((item for item in self.files if item["document_id"] == document_id), None)
+        item = next((item for item in self.files if item["document_id"] == document_id), None)
+        if item is None:
+            return None
+        project = next((project for project in self.projects if project["project_id"] == item["project_id"]), {})
+        return {**item, "project_name": project.get("project_name"), "ship_no": project.get("ship_no")}
 
     def search_files(self, filters: ConditionGroup, *, page: int, page_size: int, sort=()):
         if not filters.rules:

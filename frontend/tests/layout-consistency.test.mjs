@@ -8,24 +8,31 @@ function descriptor(name, folder = 'views') {
   return parse(source).descriptor
 }
 
-test('downloads are row actions with original names; the standalone selector is gone', () => {
+test('source files are saved to the system and are not downloadable to the browser', () => {
   const downloads = descriptor('CuttingDownloadsPanel', 'components')
   const dispatch = descriptor('CuttingDispatchView')
   assert.doesNotMatch(downloads.template.content, /download-source-file|下载所选文件|<span>03<\/span>/)
   assert.match(dispatch.template.content, /@click="downloadFile\(row\)"/)
   assert.match(dispatch.template.content, /<strong>\{\{ row.document_no \}\}<\/strong>/)
-  assert.match(downloads.template.content, /<h2>已下载文件<\/h2>/)
-  assert.match(downloads.template.content, /另存到电脑/)
-  assert.match(dispatch.template.content, /<option v-for="file in pushFiles"[^>]*>\{\{ file.filename \}\}<\/option>/)
+  assert.match(downloads.template.content, /<h2>系统已保存文件<\/h2>/)
+  assert.doesNotMatch(downloads.template.content, /另存到电脑|选择电脑保存位置|downloaded-file/)
+  assert.match(dispatch.template.content, /保存到系统/)
+  assert.match(dispatch.template.content, /aria-label="可推送文件列表"/)
+  assert.match(dispatch.template.content, /v-model="pushFileDraft.keyword"/)
+  assert.match(dispatch.template.content, /v-model="pushFileDraft.projectId"/)
+  assert.match(dispatch.template.content, /v-model="pushFileDraft.catalogKey"/)
+  assert.doesNotMatch(dispatch.template.content, /v-model="pushFileDraft\.(version|owner)"/)
+  assert.match(dispatch.template.content, /@change="selectPushFile\(item\)"/)
   assert.match(downloads.template.content, /<th>版本 \/ 来源<\/th>/)
 })
 
-test('query and downloaded records both expose a reusable bounded sort builder', () => {
-  for (const [name, folder] of [['CuttingDispatchView', 'views'], ['CuttingDownloadsPanel', 'components']]) {
-    const page = descriptor(name, folder)
-    assert.match(page.template.content, /<SortBuilder v-model="sort" :schema="conditionSchema"/)
-    assert.match(page.scriptSetup.content, /appliedSort/)
-  }
+test('source files use a directory tree while downloaded records retain bounded sorting', () => {
+  const source = descriptor('CuttingDispatchView')
+  assert.match(source.template.content, /<CatalogTreeNode/)
+  assert.doesNotMatch(source.template.content, /<SortBuilder|<ConditionBuilder/)
+  const downloaded = descriptor('CuttingDownloadsPanel', 'components')
+  assert.match(downloaded.template.content, /<SortBuilder v-model="sort" :schema="conditionSchema"/)
+  assert.match(downloaded.scriptSetup.content, /appliedSort/)
   const sort = descriptor('SortBuilder', 'components')
   assert.match(sort.template.content, /添加排序/)
   assert.match(sort.template.content, /value="asc"/)
@@ -69,10 +76,13 @@ test('device report is one page with daily task and monthly daily tables', () =>
 test('file push uses downloaded-file parameters without a condition search', () => {
   const dispatch = descriptor('CuttingDispatchView')
 
-  assert.match(dispatch.template.content, /<section v-if="isDownload" class="panel dispatch-query-panel">/)
-  assert.match(dispatch.template.content, /选择已下载文件/)
+  assert.match(dispatch.template.content, /<aside v-if="isDownload" class="panel directory-panel">/)
+  assert.match(dispatch.template.content, /选择系统已保存文件/)
+  assert.match(dispatch.scriptSetup.content, /const pushFilePageSize = 20/)
+  assert.match(dispatch.scriptSetup.content, /filteredPushFiles/)
+  assert.match(dispatch.scriptSetup.content, /downloadCatalogLabel/)
   assert.match(dispatch.scriptSetup.content, /listCuttingDownloads\(\{ page: 1, pageSize: 100 \}\)/)
   assert.match(dispatch.scriptSetup.content, /download_id: activeFile\.value\.download_id/)
   assert.match(dispatch.template.content, /taskName 与实际上传文件名一致/)
-  assert.match(dispatch.template.content, /PDM_DesignDocumentInfo \/ PDM_NCDocumentCatalog \/ PDM_DocumentFileInfo/)
+  assert.match(dispatch.template.content, /PDM项目目录/)
 })

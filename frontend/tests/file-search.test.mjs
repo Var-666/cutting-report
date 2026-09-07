@@ -1,51 +1,65 @@
 import assert from 'node:assert/strict'
 import { afterEach, test } from 'node:test'
-import { searchCuttingFiles, clearCuttingFilePages } from '../src/api/reports.js'
-import { stopReportPreload } from '../src/state/reportPreload.js'
+import { readFileSync } from 'node:fs'
+import {
+  listCuttingCatalogs,
+  listCuttingFiles,
+  listCuttingProjects,
+} from '../src/api/reports.js'
 
 const originalFetch = globalThis.fetch
-const filters = { logic: 'and', rules: [{ field: 'document_no', operator: 'contains', value: '.GEN' }] }
-function mockApi() {
+afterEach(() => { globalThis.fetch = originalFetch })
+
+test('directory browser requests projects, one project tree, then one catalog page', async () => {
   const calls = []
-  globalThis.fetch = async (_, options) => {
-    const body = JSON.parse(options.body)
-    calls.push(body)
-    return { ok: true, json: async () => ({ success: true, data: { items: [body.page], total: 50 } }) }
+  globalThis.fetch = async (url) => {
+    calls.push(String(url))
+    return { ok: true, json: async () => ({ success: true, data: { items: [], tree: [], total: 0 } }) }
   }
-  return calls
-}
-afterEach(() => { clearCuttingFilePages(); globalThis.fetch = originalFetch })
 
-test('repeated and prefetched pages share requests; page and sort are cache keys', async () => {
-  const calls = mockApi()
-  await searchCuttingFiles(filters, { page: 1, force: true })
-  await Promise.all([searchCuttingFiles(filters, { page: 2 }), searchCuttingFiles(filters, { page: 2 })])
-  await searchCuttingFiles(filters, { page: 1 })
-  await searchCuttingFiles(filters, { page: 2, sort: [{ field: 'document_no', direction: 'desc' }] })
+  await listCuttingProjects('君正 25900')
+  await listCuttingCatalogs('project/id')
+  await listCuttingFiles({
+    projectId: 'project/id',
+    catalogId: 'catalog/id',
+    keyword: 'PK-301',
+    page: 2,
+    pageSize: 20,
+  })
+
   assert.equal(calls.length, 3)
-  assert.deepEqual(calls.map((call) => call.page), [1, 2, 2])
-  assert.deepEqual(calls[2].sort, [{ field: 'document_no', direction: 'desc' }])
+  assert.match(calls[0], /^\/api\/v1\/cutting\/projects\?/)
+  assert.match(calls[0], /keyword=%E5%90%9B%E6%AD%A3\+25900/)
+  assert.match(calls[0], /limit=20/)
+  assert.match(calls[1], /project_id=project%2Fid/)
+  assert.match(calls[2], /catalog_id=catalog%2Fid/)
+  assert.match(calls[2], /keyword=PK-301/)
+  assert.match(calls[2], /page=2/)
+  assert.match(calls[2], /page_size=20/)
 })
 
-test('new conditions, manual refresh and logout do not reuse stale file lists', async () => {
-  const calls = mockApi()
-  await searchCuttingFiles(filters)
-  await searchCuttingFiles(filters, { page: 2 })
-  await searchCuttingFiles(filters, { force: true })
-  await searchCuttingFiles(filters, { page: 2 })
-  await searchCuttingFiles({ logic: 'and', rules: [{ field: 'document_no', operator: 'contains', value: '.pdf' }] })
-  stopReportPreload()
-  await searchCuttingFiles(filters)
-  assert.equal(calls.length, 6)
+test('file download page uses the recursive directory tree without condition builders', () => {
+  const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
+  const node = readFileSync(new URL('../src/components/CatalogTreeNode.vue', import.meta.url), 'utf8')
+
+  assert.match(view, /<CatalogTreeNode/)
+  assert.match(view, /listCuttingProjects/)
+  assert.match(view, /listCuttingCatalogs/)
+  assert.match(view, /listCuttingFiles/)
+  assert.match(view, /项目目录/)
+  assert.match(view, /当前位置/)
+  assert.match(view, /const pageSize = 20/)
+  assert.match(view, /const projectKeyword = ref\('君正25900-9SS'\)/)
+  assert.match(view, /文件名<\/th><th>中间产品<\/th><th>文件格式<\/th><th>版本<\/th><th>操作人<\/th><th>操作人工号<\/th><th>操作时间/)
+  assert.match(view, /fileExtension\(row\)/)
+  assert.doesNotMatch(view, /ConditionBuilder|SortBuilder|searchCuttingFiles|组合条件查询/)
+  assert.match(node, /<CatalogTreeNode/)
+  assert.match(node, /node\.children/)
 })
 
-test('a failed background page can be retried when opened', async () => {
-  let failed = true
-  globalThis.fetch = async () => {
-    if (failed) throw new Error('query timeout')
-    return { ok: true, json: async () => ({ success: true, data: { items: ['retry'], total: 1 } }) }
-  }
-  await assert.rejects(searchCuttingFiles(filters, { page: 2 }), /query timeout/)
-  failed = false
-  assert.deepEqual((await searchCuttingFiles(filters, { page: 2 })).items, ['retry'])
+test('project-shaped catalog root is hidden to avoid showing the project twice', () => {
+  const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
+  assert.match(view, /roots\.length === 1/)
+  assert.match(view, /project\.project_name/)
+  assert.match(view, /roots = roots\[0\]\.children/)
 })

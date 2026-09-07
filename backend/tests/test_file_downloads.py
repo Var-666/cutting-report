@@ -3,7 +3,7 @@ from io import BytesIO
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import threading
 from urllib.error import HTTPError, URLError
-from urllib.parse import parse_qs, unquote, urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -128,6 +128,11 @@ def test_names_and_separate_downloads_persist_without_overwrite(tmp_path):
     assert first["filename"] == second["filename"]
     assert first["download_id"] != second["download_id"]
     assert first["sha256"] == second["sha256"] and first["size"] == 9
+    assert first["project_name"] == "扬州切割联调项目"
+    assert first["ship_no"] == "CMYZ0177"
+    assert first["pbs_info"] == "PK-707C1"
+    assert first["catalog_id"] == "CAT-GEN"
+    assert [node["title"] for node in first["catalog_path"]] == ["船体专业", "PK-707C1", "GEN切割文件"]
     record, local = service.local_file(first["download_id"])
     assert local.is_relative_to(service.settings.cutting_downloads_dir)
     assert local.read_bytes() == b"GEN DATA\n"
@@ -223,11 +228,10 @@ def test_download_routes_are_admin_only(tmp_path, user, expected):
     client = TestClient(app)
     assert client.post("/api/v1/cutting/downloads", json=payload).status_code == expected
     assert client.get("/api/v1/cutting/downloads").status_code == expected
-    assert client.get("/api/v1/cutting/downloads/fake/file").status_code == expected
     assert service.repository.list(1, 10)[1] == 0
 
 
-def test_api_download_returns_named_attachment_no_preview_or_content_in_list(tmp_path):
+def test_api_download_saves_record_without_exposing_file_content(tmp_path):
     service, payload = make_service(tmp_path)
     app = FastAPI()
     app.include_router(router)
@@ -243,13 +247,9 @@ def test_api_download_returns_named_attachment_no_preview_or_content_in_list(tmp
     response = client.post("/api/v1/cutting/downloads", json=payload)
     assert response.status_code == 201, response.text
     data = response.json()["data"]
-    response = client.get(f"/api/v1/cutting/downloads/{data['download_id']}/file")
-    assert response.status_code == 200 and response.content == b"GEN DATA\n"
-    assert "attachment" in response.headers["content-disposition"]
-    assert data["filename"] in unquote(response.headers["content-disposition"])
-    assert response.headers["x-content-type-options"] == "nosniff"
     listing = client.get("/api/v1/cutting/downloads").json()
     assert "GEN DATA" not in str(listing)
+    assert client.get(f"/api/v1/cutting/downloads/{data['download_id']}/file").status_code == 404
     assert client.get(f"/api/v1/cutting/downloads/{data['download_id']}/preview").status_code == 404
     assert client.post("/api/v1/cutting/downloads", json={**payload, "url": "http://untrusted/"}).status_code == 422
 
