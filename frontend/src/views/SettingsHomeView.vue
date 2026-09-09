@@ -16,11 +16,15 @@ import { RouterLink } from 'vue-router'
       <span>03</span><small>AUTOMATION</small><h2>报表自动化</h2>
       <p>配置定时生成、邮件收件人、发送频率和失败重试。</p><b>进入设置 →</b>
     </RouterLink>
+    <RouterLink to="/admin/settings/admins">
+      <span>04</span><small>ACCESS CONTROL</small><h2>管理员管理</h2>
+      <p>从 HR 人员库授予管理员权限，并保留权限变更记录。</p><b>进入设置 →</b>
+    </RouterLink>
   </section>
 </template>
 
 <style scoped>
-.settings-overview { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:18px; }
+.settings-overview { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px; }
 .settings-overview a { position:relative; min-height:245px; display:flex; flex-direction:column; padding:25px; color:var(--navy); border:1px solid var(--line); border-top:4px solid var(--cyan); background:#fff; box-shadow:0 10px 28px rgba(21,54,78,.065); text-decoration:none; transition:transform .18s ease,box-shadow .18s ease; }
 .settings-overview a:hover { transform:translateY(-3px); box-shadow:0 16px 34px rgba(21,54,78,.11); }
 .settings-overview span { position:absolute; top:16px; right:20px; color:#e0e9ed; font:42px Georgia,serif; }

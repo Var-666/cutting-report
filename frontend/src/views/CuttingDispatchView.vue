@@ -43,7 +43,20 @@ const requestedPage = ref(1)
 const pageSize = 20
 const total = ref(0)
 const projectOptions = ref([])
+const projectKeyword = ref('')
 const selectedProjectId = ref('')
+const filteredProjectOptions = computed(() => {
+  const keyword = projectKeyword.value.trim().toLowerCase()
+  if (!keyword) return projectOptions.value
+  return projectOptions.value.filter((project) => (
+    `${project.project_name || ''} ${project.ship_no || ''}`.toLowerCase().includes(keyword)
+  ))
+})
+const projectCountLabel = computed(() => (
+  projectKeyword.value.trim()
+    ? `${filteredProjectOptions.value.length} / ${projectOptions.value.length} 个支持项目`
+    : `${projectOptions.value.length} 个支持项目`
+))
 const projects = computed(() => {
   const selected = projectOptions.value.find((project) => String(project.project_id) === selectedProjectId.value)
   return selected ? [selected] : []
@@ -259,6 +272,8 @@ async function loadProjects() {
 
 function resetProjectSelection() {
   querySequence += 1
+  catalogLoading.value = false
+  loading.value = false
   selectedProject.value = null
   selectedCatalog.value = null
   projectExpanded.value = false
@@ -268,6 +283,14 @@ function resetProjectSelection() {
   total.value = 0
   page.value = 1
   notice.value = ''
+}
+
+function applyProjectKeyword() {
+  const options = filteredProjectOptions.value
+  if (!options.some((project) => String(project.project_id) === selectedProjectId.value)) {
+    selectedProjectId.value = options[0] ? String(options[0].project_id) : ''
+  }
+  resetProjectSelection()
 }
 
 async function openSelectedProject() {
@@ -498,11 +521,13 @@ onActivated(async () => {
     <aside v-if="isDownload" class="panel directory-panel">
       <div class="panel-title">
         <div><span>01</span><h2>项目目录</h2></div>
-        <p>{{ projectOptions.length }} 个支持项目</p>
+        <p>{{ projectCountLabel }}</p>
       </div>
       <form class="project-search" @submit.prevent="openSelectedProject">
-        <label for="project-selector">选择支持的项目</label>
-        <div><select id="project-selector" v-model="selectedProjectId" :disabled="projectLoading || !projectOptions.length" @change="resetProjectSelection"><option value="" disabled>{{ projectLoading ? '正在读取项目…' : '暂无支持的项目' }}</option><option v-for="project in projectOptions" :key="project.project_id" :value="String(project.project_id)">{{ project.project_name }}{{ project.ship_no ? ` · ${project.ship_no}` : '' }}</option></select><button type="submit" :disabled="projectLoading || catalogLoading || !selectedProjectId">{{ catalogLoading ? '打开中…' : '打开' }}</button></div>
+        <label for="project-keyword">项目关键词 <small>项目名称或船号</small></label>
+        <input id="project-keyword" v-model="projectKeyword" type="search" placeholder="输入关键词筛选" autocomplete="off" :disabled="projectLoading" @input="applyProjectKeyword" />
+        <label for="project-selector">支持项目</label>
+        <div class="project-select-row"><select id="project-selector" v-model="selectedProjectId" :disabled="projectLoading || !filteredProjectOptions.length" @change="resetProjectSelection"><option v-if="projectLoading" value="" disabled>正在读取项目…</option><option v-else-if="!filteredProjectOptions.length" value="" disabled>没有匹配的支持项目</option><option v-for="project in filteredProjectOptions" :key="project.project_id" :value="String(project.project_id)">{{ project.project_name }}{{ project.ship_no ? ` · ${project.ship_no}` : '' }}</option></select><button type="submit" :disabled="projectLoading || catalogLoading || !selectedProjectId">{{ catalogLoading ? '打开中…' : '打开' }}</button></div>
       </form>
       <div class="directory-scroll" :aria-busy="projectLoading || catalogLoading">
         <div v-if="projectLoading" class="directory-message">正在读取项目…</div>
@@ -652,10 +677,17 @@ onActivated(async () => {
 .download-workspace .dispatch-table-wrap { flex:1 1 auto; }
 .directory-panel { min-width:0; }
 .project-search,.file-name-search { padding:15px 18px; border-bottom:1px solid #e3eaee; background:#f8fafb; }
+.project-search { padding:13px 14px; }
 .project-search label,.file-name-search label { display:block; margin-bottom:6px; color:#506775; font-size:10px; font-weight:700; }
+.project-search label:not(:first-child) { margin-top:10px; }
+.project-search label small { margin-left:5px; color:#8a9aa5; font-size:9px; font-weight:400; }
 .project-search > div,.file-name-search > div { display:flex; gap:7px; }
-.project-search input,.file-name-search input { width:100%; min-width:0; }
+.project-search input,.project-search select,.file-name-search input { width:100%; min-width:0; }
+.project-search input,.project-search select { height:36px; padding:0 10px; font-size:12px; }
+.project-search select { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.project-search select option { font-size:12px; }
 .project-search button,.file-name-search button { min-width:58px; padding:0 11px; color:var(--blue); border:1px solid #b9ccd6; background:#fff; }
+.project-search button { min-height:36px; height:36px; font-size:11px; }
 .project-search button:disabled,.file-name-search button:disabled { opacity:.55; }
 .directory-scroll { min-height:360px; max-height:610px; overflow:auto; padding:10px 9px 15px; }
 .project-tree,.project-catalogs { margin:0; padding:0; list-style:none; }

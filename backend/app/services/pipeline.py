@@ -84,6 +84,7 @@ class ReportPipeline:
             settings,
             energy_reports,
             client=self.energy_service.client,
+            query_service=self.query_service,
         )
         self.leadership_service = LeadershipReportService(settings)
         self.statistics_service = StatisticsService()

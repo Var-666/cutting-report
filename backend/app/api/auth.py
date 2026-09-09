@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import secrets
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response
-from pydantic import BaseModel, Field, field_validator
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request, Response
+from pydantic import BaseModel, Field, SecretStr, field_validator
 
 from app.config import settings
 from app.database.workshop import AuthenticationError
@@ -48,6 +49,15 @@ class UserCreateRequest(LoginRequest):
 
 class BootstrapRequest(LoginRequest):
     display_name: str = Field(min_length=1, max_length=64)
+
+
+class AdminGrantRequest(BaseModel):
+    external_id: str = Field(min_length=1, max_length=128)
+    current_password: SecretStr = Field(min_length=1, max_length=128)
+
+
+class AdminRevokeRequest(BaseModel):
+    current_password: SecretStr = Field(min_length=1, max_length=128)
 
 
 def _now() -> datetime:
@@ -101,6 +111,35 @@ def require_worker(user: dict = Depends(require_user)) -> dict:
     return user
 
 
+def _verify_current_admin_password(
+    request: Request,
+    admin: dict,
+    password: SecretStr,
+) -> None:
+    plaintext = password.get_secret_value()
+    if admin.get("auth_source") == "hr_database":
+        try:
+            identity = request.app.state.worker_auth.authenticate(
+                admin.get("company_no") or admin.get("username") or "",
+                plaintext,
+            )
+        except AuthenticationError as exc:
+            raise HTTPException(status_code=401, detail="当前管理员密码错误") from exc
+        except WorkerAuthenticationUnavailableError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        if not secrets.compare_digest(
+            str(identity.get("external_id") or ""),
+            str(admin.get("external_id") or ""),
+        ):
+            raise HTTPException(status_code=401, detail="当前管理员密码错误")
+        return
+
+    if not request.app.state.workshop.verify_local_user_password(
+        admin["user_id"], plaintext
+    ):
+        raise HTTPException(status_code=401, detail="当前管理员密码错误")
+
+
 @router.get("/status")
 def auth_status(request: Request, user: dict | None = Depends(optional_user)) -> dict:
     return _envelope(
@@ -151,7 +190,8 @@ def login(payload: LoginRequest, request: Request, response: Response) -> dict:
     return _envelope(request, {"user": user, "expires_at": expires_at})
 
 
-@router.post("/worker-login")
+@router.post("/hr-login")
+@router.post("/worker-login", include_in_schema=False)
 def worker_login(
     payload: WorkerLoginRequest,
     request: Request,
@@ -202,14 +242,75 @@ def create_user(
     request: Request,
     _: dict = Depends(require_admin),
 ) -> dict:
-    if settings.worker_database_auth_enabled and payload.role == "worker":
-        raise HTTPException(status_code=409, detail="工人账号由HR数据库统一管理")
+    if settings.worker_database_auth_enabled:
+        raise HTTPException(status_code=409, detail="账号与管理员权限由HR数据库统一管理")
     try:
         user = request.app.state.workshop.create_user(
             username=payload.username,
             display_name=payload.display_name,
             password=payload.password,
             role=payload.role,
+            now=_now().isoformat(timespec="seconds"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _envelope(request, user)
+
+
+@router.get("/hr-directory")
+def search_hr_directory(
+    request: Request,
+    query: str = Query(min_length=1, max_length=64),
+    _: dict = Depends(require_admin),
+) -> dict:
+    try:
+        people = request.app.state.worker_auth.search_people(query)
+    except WorkerAuthenticationUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return _envelope(request, {"items": people})
+
+
+@router.get("/admins")
+def list_admins(request: Request, _: dict = Depends(require_admin)) -> dict:
+    return _envelope(request, {"items": request.app.state.workshop.list_admins()})
+
+
+@router.post("/admins", status_code=201)
+def grant_admin(
+    payload: AdminGrantRequest,
+    request: Request,
+    admin: dict = Depends(require_admin),
+) -> dict:
+    _verify_current_admin_password(request, admin, payload.current_password)
+    try:
+        identity = request.app.state.worker_auth.find_person(payload.external_id)
+    except WorkerAuthenticationUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if identity is None:
+        raise HTTPException(status_code=404, detail="HR人员不存在或账号不可用")
+    try:
+        user = request.app.state.workshop.grant_external_admin(
+            identity=identity,
+            operator=admin,
+            now=_now().isoformat(timespec="seconds"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _envelope(request, user)
+
+
+@router.post("/admins/{user_id}/revoke")
+def revoke_admin(
+    user_id: str,
+    payload: AdminRevokeRequest,
+    request: Request,
+    admin: dict = Depends(require_admin),
+) -> dict:
+    _verify_current_admin_password(request, admin, payload.current_password)
+    try:
+        user = request.app.state.workshop.revoke_external_admin(
+            user_id,
+            operator=admin,
             now=_now().isoformat(timespec="seconds"),
         )
     except ValueError as exc:

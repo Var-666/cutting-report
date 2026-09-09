@@ -84,6 +84,22 @@ def test_complete_month_sums_all_days_and_both_channels(tmp_path):
     assert result["summary"]["electricity"]["complete_count"] == 31
 
 
+def test_month_includes_configured_machine_daily_cutting_time(tmp_path):
+    energy, _ = service(tmp_path)
+    energy.query_service = SimpleNamespace(
+        fetch_equipment_month_work_times=lambda _month: {
+            "2026-08-17": Decimal("900"),
+            "2026-08-18": Decimal("1800"),
+        }
+    )
+
+    month = energy.get_month("2026-08")
+
+    assert month["rows"][16]["work_time_seconds"] == 900
+    assert month["rows"][17]["work_time_seconds"] == 1800
+    assert month["total_work_time_seconds"] == 2700
+
+
 def test_task_day_uses_report_meter_group_for_cutter01(tmp_path):
     energy, client = service(tmp_path)
     start = START + timedelta(hours=8)

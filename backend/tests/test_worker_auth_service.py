@@ -113,3 +113,35 @@ def test_worker_auth_reports_configuration_or_connection_outage() -> None:
     )
     with pytest.raises(WorkerAuthenticationUnavailableError):
         unavailable.authenticate("C0007", "password")
+
+
+def test_hr_directory_search_never_reads_or_returns_passwords() -> None:
+    client = FakeSqlServerClient([
+        _valid_row(),
+        _valid_row(external_id=9124, company_no="C0008", available_value=0),
+    ])
+    service = WorkerAuthService(_enabled_settings(), client=client)
+
+    people = service.search_people(" 张_三% ")
+
+    assert people == [{
+        "external_id": "9123",
+        "company_no": "C0007",
+        "group_no": "G0021",
+        "display_name": "张三",
+    }]
+    sql, parameters = client.calls[0]
+    assert "[密码]" not in sql
+    assert parameters == ("1", "%张[_]三[%]%", "%张[_]三[%]%")
+
+
+def test_hr_person_lookup_uses_stable_external_identity() -> None:
+    client = FakeSqlServerClient([_valid_row()])
+    service = WorkerAuthService(_enabled_settings(), client=client)
+
+    person = service.find_person(" 9123 ")
+
+    assert person["company_no"] == "C0007"
+    sql, parameters = client.calls[0]
+    assert "WHERE [_Identify] = ?" in sql
+    assert parameters == ("9123",)

@@ -14,6 +14,7 @@ import { RouterLink, RouterView } from 'vue-router'
       <RouterLink to="/admin/settings/database">数据库配置</RouterLink>
       <RouterLink to="/admin/settings/report-design">报表设计</RouterLink>
       <RouterLink to="/admin/settings/automation">报表自动化</RouterLink>
+      <RouterLink to="/admin/settings/admins">管理员管理</RouterLink>
     </nav>
   </section>
 

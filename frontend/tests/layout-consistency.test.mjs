@@ -67,6 +67,10 @@ test('device report is one page with daily task and monthly daily tables', () =>
   assert.match(energy.template.content, /月度每日能耗汇总/)
   assert.match(energy.template.content, /aria-label="任务能耗明细表"/)
   assert.match(energy.template.content, /aria-label="月度每日能耗汇总表"/)
+  assert.match(energy.template.content, /class="leadership-table energy-month-table summary-table"/)
+  assert.match(energy.template.content, /<thead><tr><th scope="col">日期<\/th><th scope="col">切割时长<\/th><th scope="col">电耗/)
+  assert.doesNotMatch(energy.template.content, /电耗覆盖|气耗覆盖|保存状态/)
+  assert.match(energy.template.content, /colspan="4" class="energy-empty"/)
   assert.doesNotMatch(energy.template.content, /任务结束/)
   assert.doesNotMatch(energy.template.content, /数据状态/)
   assert.match(energy.template.content, /colspan="8" class="energy-empty"/)
@@ -97,6 +101,7 @@ test('report tables with sticky summaries use explicit fixed column tracks', () 
 test('device report reuses the leadership report UI baseline', () => {
   const leadership = descriptor('LeadershipReportView')
   const energy = descriptor('EnergyPeriodReportView')
+  const energyScript = energy.scriptSetup.content
   const energyStyles = energy.styles.map((style) => style.content).join('\n')
 
   assert.match(leadership.template.content, /class="report-hero leadership-hero"/)
@@ -108,7 +113,27 @@ test('device report reuses the leadership report UI baseline', () => {
   assert.match(energyStyles, /\.energy-period-table-wrap\s*\{[^}]*height:300px;[^}]*max-height:300px;/)
   assert.match(energyStyles, /\.energy-period-table thead th\s*\{[^}]*background:#0b4f76;/)
   assert.match(energyStyles, /\.energy-period-table th,\.energy-period-table td\s*\{[^}]*height:47px;/)
+  assert.match(energyStyles, /\.energy-task-table tfoot th:nth-child\(2\),\.energy-task-table tfoot th:nth-child\(3\),\.energy-task-table tfoot th:nth-child\(4\)\s*\{[^}]*text-align:left;/)
+  assert.doesNotMatch(energyStyles, /\.energy-period-table tfoot th:nth-child\(2\)/)
+  assert.match(energyScript, /grid:\s*\{ left: 10, right: 12, bottom: 10, top: 44, containLabel: true \}/)
+  assert.doesNotMatch(energyScript, /grid:\s*\{ left: 58, right: 58, bottom: 52/)
   assert.match(energyStyles, /@media \(max-width:560px\)\s*\{[^}]*\.energy-period-query,\.energy-stat-strip\s*\{\s*grid-template-columns:1fr;/)
+})
+
+test('alarm center reuses the report UI baseline and padded empty states', () => {
+  const alarm = descriptor('AlarmCenterView')
+  const template = alarm.template.content
+  const styles = alarm.styles.map((style) => style.content).join('\n')
+
+  assert.match(template, /class="report-hero alarm-hero"/)
+  assert.match(template, /class="leadership-kpis alarm-kpis"/)
+  assert.equal((template.match(/class="panel alarm-list"/g) || []).length, 2)
+  assert.match(template, /class="alarm-refresh-button"/)
+  assert.equal((template.match(/class="alarm-empty-state"/g) || []).length, 4)
+  assert.match(template, /20kW 切割机当前无未解除告警/)
+  assert.match(styles, /\.alarm-page>\.panel\{margin-bottom:0\}/)
+  assert.match(styles, /\.alarm-empty-state\{[^}]*min-height:116px;[^}]*padding:26px;/)
+  assert.match(styles, /\.alarm-table-wrap td\{font-size:13px\}/)
 })
 
 test('workshop confirmations support own revocation and audited admin correction', () => {

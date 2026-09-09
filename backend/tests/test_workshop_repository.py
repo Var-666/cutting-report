@@ -17,6 +17,58 @@ from app.database.workshop import (
 from app.models.domain import WorkshopRecord
 
 
+def test_hr_admin_permission_mapping_keeps_hr_password_external(tmp_path: Path) -> None:
+    repository = WorkshopRepository(tmp_path / "metadata.db")
+    repository.initialize()
+    now = "2026-09-09T10:30:00+08:00"
+    operator = repository.bootstrap_admin(
+        username="emergency-admin",
+        display_name="应急管理员",
+        password="current-admin-password",
+        now=now,
+    )
+    identity = {
+        "external_id": "9123",
+        "company_no": "C0007",
+        "group_no": "G0021",
+        "display_name": "张三",
+    }
+
+    granted = repository.grant_external_admin(
+        identity=identity,
+        operator=operator,
+        now=now,
+    )
+
+    assert granted["role"] == "admin"
+    assert granted["auth_source"] == "hr_database"
+    assert repository.verify_local_user_password(
+        operator["user_id"], "current-admin-password"
+    )
+    assert not repository.verify_local_user_password(granted["user_id"], "anything")
+    with repository.connect() as connection:
+        row = connection.execute(
+            "SELECT password_hash FROM users WHERE user_id = ?", (granted["user_id"],)
+        ).fetchone()
+    assert row["password_hash"] == ""
+
+    refreshed = repository.upsert_external_worker(**identity, now=now)
+    assert refreshed["role"] == "admin"
+    admins = repository.list_admins()
+    mapped = next(item for item in admins if item["user_id"] == granted["user_id"])
+    assert mapped["permission_changed_by"] == "应急管理员"
+
+    with pytest.raises(ValueError, match="自己"):
+        repository.revoke_external_admin(
+            granted["user_id"], operator=granted, now=now
+        )
+
+    revoked = repository.revoke_external_admin(
+        granted["user_id"], operator=operator, now=now
+    )
+    assert revoked["role"] == "worker"
+
+
 def test_password_hash_is_salted_and_verifiable() -> None:
     first = hash_password("safe-password")
     second = hash_password("safe-password")

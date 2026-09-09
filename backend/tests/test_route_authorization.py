@@ -90,6 +90,7 @@ def test_public_bootstrap_login_and_health_routes_stay_public() -> None:
         ("/api/v1/auth/status", "GET"),
         ("/api/v1/auth/bootstrap", "POST"),
         ("/api/v1/auth/login", "POST"),
+        ("/api/v1/auth/hr-login", "POST"),
         ("/api/v1/auth/worker-login", "POST"),
         ("/api/v1/health", "GET"),
     ):

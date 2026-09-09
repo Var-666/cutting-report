@@ -47,6 +47,13 @@ export function workerLoginAccount(payload) {
   })
 }
 
+export function hrLoginAccount(payload) {
+  return request('/api/v1/auth/hr-login', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
 export function logoutAccount() {
   return request('/api/v1/auth/logout', { method: 'POST' })
 }
@@ -59,6 +66,28 @@ export function createUserAccount(payload) {
   return request('/api/v1/auth/users', {
     method: 'POST',
     body: JSON.stringify(payload),
+  })
+}
+
+export function searchHrPeople(query) {
+  return request(`/api/v1/auth/hr-directory?${new URLSearchParams({ query })}`)
+}
+
+export function listAdminAccounts() {
+  return request('/api/v1/auth/admins')
+}
+
+export function grantAdminAccess(externalId, currentPassword) {
+  return request('/api/v1/auth/admins', {
+    method: 'POST',
+    body: JSON.stringify({ external_id: externalId, current_password: currentPassword }),
+  })
+}
+
+export function revokeAdminAccess(userId, currentPassword) {
+  return request(`/api/v1/auth/admins/${encodeURIComponent(userId)}/revoke`, {
+    method: 'POST',
+    body: JSON.stringify({ current_password: currentPassword }),
   })
 }
 
@@ -292,7 +321,7 @@ export function listCuttingDownloads({ page = 1, pageSize = 10 } = {}) {
   return request(`/api/v1/cutting/downloads?${new URLSearchParams({ page, page_size: pageSize })}`)
 }
 
-export function listCuttingProjects(keyword = '', limit = 100) {
+export function listCuttingProjects(keyword = '', limit = 1000) {
   const query = new URLSearchParams({ limit: String(limit) })
   if (keyword) query.set('keyword', keyword)
   return request(`/api/v1/cutting/projects?${query}`)

@@ -112,6 +112,65 @@ class QueryService:
                 )
             return result
 
+    def fetch_equipment_month_work_times(
+        self, report_month: date
+    ) -> dict[str, Decimal]:
+        """Return configured-machine cutting seconds grouped by production day."""
+        month_start = report_month.replace(day=1)
+        month_end = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1)
+        allowed = {
+            value.strip().casefold()
+            for value in self.settings.energy_report_equipment_ids
+            if value and value.strip()
+        }
+        if not allowed:
+            return {}
+
+        totals: dict[str, Decimal] = {}
+
+        def add(report_date: object, equipment_id: object, work_time: object) -> None:
+            if not equipment_id or str(equipment_id).strip().casefold() not in allowed:
+                return
+            if isinstance(report_date, datetime):
+                stamp = report_date.date()
+            elif isinstance(report_date, date):
+                stamp = report_date
+            else:
+                try:
+                    stamp = date.fromisoformat(str(report_date)[:10])
+                except ValueError:
+                    return
+            value = _decimal(work_time) or Decimal("0")
+            if value < 0:
+                return
+            key = stamp.isoformat()
+            totals[key] = totals.get(key, Decimal("0")) + value
+
+        if self.settings.effective_data_source_mode == "excel":
+            for row in self.excel.completed_rows(start=month_start, end=month_end):
+                add(
+                    self.excel.production_date(row),
+                    row.get("MACHINE_NO"),
+                    row.get("WORK_TIME"),
+                )
+            return totals
+
+        if self.settings.effective_data_source_mode == "demo":
+            stamp = month_start
+            while stamp < month_end:
+                for row in self._demo_data(ReportFilter(report_date=stamp)).equipment_records:
+                    add(stamp, row.equipment_id, row.work_time)
+                stamp += timedelta(days=1)
+            return totals
+
+        rows = self.client.fetch_all(
+            self._read_query("equipment_month_work_time.sql"),
+            (month_start, month_end),
+        )
+        for row in rows:
+            add(row.get("report_date"), row.get("equipment_id"), row.get("work_time_seconds"))
+        return totals
+
     def _fetch_equipment_uncached(self, filters: ReportFilter) -> EquipmentQueryResult:
         if self.settings.effective_data_source_mode == "excel":
             bundle = self._excel_data(filters)
