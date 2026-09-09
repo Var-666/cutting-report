@@ -56,6 +56,12 @@ const router = createRouter({
           ],
         },
         {
+          path: 'alarms',
+          name: 'alarm-center',
+          component: () => import('../views/AlarmCenterView.vue'),
+          meta: { title: '智能告警中心' },
+        },
+        {
           path: 'settings',
           component: () => import('../layouts/SettingsLayout.vue'),
           children: [

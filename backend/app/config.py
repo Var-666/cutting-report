@@ -184,6 +184,21 @@ class Settings:
     llm_model: str = os.getenv("LLM_MODEL", "")
     llm_timeout: float = _as_float("LLM_TIMEOUT_SECONDS", 30)
 
+    # 告警源位于生产数据库；首期只监控数据库中的实际设备名“20kw切割机”。
+    alarm_monitor_enabled: bool = _as_bool("ALARM_MONITOR_ENABLED", False)
+    alarm_monitor_interval_seconds: int = _as_int(
+        "ALARM_MONITOR_INTERVAL_SECONDS", 300
+    )
+    alarm_monitor_machine_nos: tuple[str, ...] = tuple(
+        value.strip()
+        for value in os.getenv("ALARM_MONITOR_MACHINE_NOS", "20kw切割机").split(",")
+        if value.strip()
+    )
+    alarm_reopen_debounce_minutes: int = _as_int(
+        "ALARM_REOPEN_DEBOUNCE_MINUTES", 10
+    )
+    alarm_monitor_batch_size: int = _as_int("ALARM_MONITOR_BATCH_SIZE", 500)
+
     report_max_detail_rows: int = _as_int("REPORT_MAX_DETAIL_ROWS", 1000)
     chart_top_n: int = _as_int("CHART_TOP_N", 20)
     worker_poll_seconds: float = _as_float("REPORT_WORKER_POLL_SECONDS", 0.5)

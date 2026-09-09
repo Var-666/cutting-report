@@ -141,6 +141,21 @@ export function getSystemHealth() {
   return request('/api/v1/health')
 }
 
+export function getAlarmStatus() {
+  return request('/api/v1/alarms/status')
+}
+
+export function listAlarmIncidents({ status = '', limit = 100 } = {}) {
+  const query = new URLSearchParams({ limit })
+  if (status) query.set('status', status)
+  return request(`/api/v1/alarms/incidents?${query}`)
+}
+
+export function listAlarmReports({ limit = 50 } = {}) {
+  const query = new URLSearchParams({ limit })
+  return request(`/api/v1/alarms/reports?${query}`)
+}
+
 export function getLeadershipReport(reportMonth, { force = false, signal } = {}) {
   const query = new URLSearchParams({ report_month: reportMonth })
   if (force) query.set('refresh', 'true')

@@ -16,6 +16,7 @@ from app.api.cutting import router as cutting_router
 from app.api.downloads import router as downloads_router
 from app.api.conditions import router as conditions_router
 from app.api.auth import router as auth_router
+from app.api.alarms import router as alarms_router
 from app.api.designer import router as designer_router
 from app.api.equipment import router as equipment_router
 from app.api.energy import router as energy_router
@@ -26,6 +27,8 @@ from app.api.reports import view_router
 from app.api.workshop import router as workshop_router
 from app.config import settings
 from app.database.metadata import MetadataRepository
+from app.database.alarms import AlarmRepository
+from app.database.alarm_source import SqlServerAlarmSource
 from app.database.automation import AutomationRepository
 from app.database.definitions import DefinitionRepository
 from app.database.dispatch import DispatchRepository
@@ -45,7 +48,11 @@ from app.services.file_source import build_file_source
 from app.services.file_download_service import FileDownloadService
 from app.services.magic_box_service import MagicBoxConfigProvider
 from app.services.pdf_service import PdfService
+from app.services.alarm_analysis_service import AlarmAnalysisService
+from app.services.alarm_monitor_service import AlarmMonitorService
+from app.services.alarm_report_service import AlarmReportService
 from app.workers.report_worker import ReportWorker
+from app.workers.alarm_worker import AlarmWorker
 
 
 logging.basicConfig(
@@ -70,6 +77,7 @@ async def lifespan(app: FastAPI):
     dispatches = DispatchRepository(database)
     dispatches.initialize()
     pipeline = ReportPipeline(settings, metadata, definitions)
+    pdf_service = PdfService()
     email_service = EmailService(settings)
     automation_service = AutomationService(
         settings, automation, metadata, email_service
@@ -91,6 +99,19 @@ async def lifespan(app: FastAPI):
     app.state.worker_auth = WorkerAuthService(settings)
     app.state.leadership_report_service = LeadershipReportService(settings)
     app.state.report_analysis_service = ReportAnalysisService(settings, metadata)
+    alarm_repository = AlarmRepository(database)
+    alarm_repository.initialize()
+    alarm_monitor_service = AlarmMonitorService(
+        settings,
+        alarm_repository,
+        SqlServerAlarmSource(settings),
+        AlarmAnalysisService(settings),
+        AlarmReportService(settings, pdf_service),
+    )
+    alarm_worker = AlarmWorker(settings, alarm_monitor_service)
+    app.state.alarm_repository = alarm_repository
+    app.state.alarm_monitor_service = alarm_monitor_service
+    app.state.alarm_worker = alarm_worker
     pdm = (
         SqlServerPdmRepository(settings)
         if settings.file_database_enabled
@@ -114,11 +135,13 @@ async def lifespan(app: FastAPI):
     )
     dispatches.recover_interrupted(app.state.cutting_dispatch._now())
     app.state.worker = worker
-    app.state.pdf_service = PdfService()
+    app.state.pdf_service = pdf_service
     worker.start()
+    alarm_worker.start()
     try:
         yield
     finally:
+        alarm_worker.stop()
         worker.stop()
 
 
@@ -163,6 +186,7 @@ async def unexpected_error_handler(request: Request, exc: Exception):
 
 app.include_router(reports_router)
 app.include_router(auth_router)
+app.include_router(alarms_router)
 app.include_router(options_router)
 app.include_router(database_router)
 app.include_router(designer_router)
