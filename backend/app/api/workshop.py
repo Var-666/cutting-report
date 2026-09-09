@@ -59,7 +59,12 @@ def _envelope(request: Request, data: object) -> dict:
 
 
 def _records_for_date(request: Request, report_date: date):
-    return request.app.state.workshop.get_daily_report_records(report_date.isoformat())
+    report, records = request.app.state.workshop.get_daily_report_records(
+        report_date.isoformat()
+    )
+    if report and report.get("scope_machine_no") != settings.report_machine_no:
+        return None, []
+    return report, records
 
 
 def _timestamp(value: datetime | None, *, missing: float) -> float:
@@ -122,7 +127,11 @@ def generate_daily_report(
     existing = request.app.state.workshop.get_daily_report(
         payload.report_date.isoformat()
     )
-    if existing is not None and existing["item_count"] > 0:
+    if (
+        existing is not None
+        and existing["item_count"] > 0
+        and existing.get("scope_machine_no") == settings.report_machine_no
+    ):
         return _envelope(request, existing)
     bundle = request.app.state.query_service.prepare_workshop_data(payload.report_date)
     now = datetime.now(ZoneInfo(settings.timezone)).isoformat(timespec="seconds")
@@ -133,6 +142,7 @@ def generate_daily_report(
             records=bundle.workshop_records,
             user=user,
             now=now,
+            scope_machine_no=settings.report_machine_no,
         )
         return _envelope(request, report or existing)
     try:
@@ -142,6 +152,7 @@ def generate_daily_report(
             records=bundle.workshop_records,
             user=user,
             now=now,
+            scope_machine_no=settings.report_machine_no,
         )
     except DailyReportExistsError as exc:
         report = request.app.state.workshop.get_daily_report(

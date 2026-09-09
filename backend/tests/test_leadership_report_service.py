@@ -77,11 +77,16 @@ def test_sqlserver_rows_are_normalized_without_portion_deduplication(
 
     result = service.fetch(date(2025, 8, 18))
 
-    assert captured[0]["parameters"] == (date(2024, 8, 1), date(2025, 9, 1))
+    assert captured[0]["parameters"] == (
+        "Cutter01",
+        date(2024, 8, 1),
+        date(2025, 9, 1),
+    )
     assert "[dbo].[task]" in captured[0]["sql"]
     assert "#filtered_tasks" in captured[0]["sql"]
     assert "t.[STATUS] = 2" in captured[0]["sql"]
     assert "COALESCE(t.[WORK_TIME], 0) >= 0" in captured[0]["sql"]
+    assert "t.[MACHINE_NO]" in captured[0]["sql"]
     assert result.source_mode == "sqlserver"
     assert result.current_month_total.task_count == 20
     assert result.current_month_total.cut_length_m == Decimal("969.272")
@@ -185,7 +190,7 @@ def test_sqlserver_snapshots_survive_service_restart_and_fill_history(
     )
     result = restarted.fetch(date(2026, 8, 20))
 
-    assert calls == [(date(2025, 8, 1), date(2026, 9, 1))]
+    assert calls == [("Cutter01", date(2025, 8, 1), date(2026, 9, 1))]
     assert result.current_month_total.task_count == 7
     assert len(result.monthly_records) == 12
     assert result.project_distribution[0].project_name == "P001"

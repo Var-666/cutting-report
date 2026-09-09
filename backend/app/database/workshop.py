@@ -110,6 +110,7 @@ class WorkshopRepository(SQLiteRepository):
                     report_id TEXT PRIMARY KEY,
                     report_date TEXT NOT NULL UNIQUE,
                     source_mode TEXT NOT NULL,
+                    scope_machine_no TEXT,
                     item_count INTEGER NOT NULL,
                     generated_by_id TEXT NOT NULL,
                     generated_by_name TEXT NOT NULL,
@@ -175,6 +176,16 @@ class WorkshopRepository(SQLiteRepository):
                 WHERE external_id IS NOT NULL
                 """
             )
+            report_columns = {
+                row["name"]
+                for row in connection.execute(
+                    "PRAGMA table_info(workshop_reports)"
+                ).fetchall()
+            }
+            if "scope_machine_no" not in report_columns:
+                connection.execute(
+                    "ALTER TABLE workshop_reports ADD COLUMN scope_machine_no TEXT"
+                )
             confirmation_columns = {
                 row["name"]
                 for row in connection.execute(
@@ -640,6 +651,9 @@ class WorkshopRepository(SQLiteRepository):
             "report_id": row["report_id"],
             "report_date": row["report_date"],
             "source_mode": row["source_mode"],
+            "scope_machine_no": (
+                row["scope_machine_no"] if "scope_machine_no" in row.keys() else None
+            ),
             "item_count": int(row["item_count"]),
             "confirmed_count": int(row["confirmed_count"]),
             "generated_by_id": row["generated_by_id"],
@@ -671,6 +685,7 @@ class WorkshopRepository(SQLiteRepository):
         records: list[WorkshopRecord],
         user: dict[str, Any],
         now: str,
+        scope_machine_no: str | None = "Cutter01",
     ) -> dict[str, Any]:
         report_id = f"wdr_{uuid4().hex[:16]}"
         with self.connect() as connection:
@@ -694,14 +709,15 @@ class WorkshopRepository(SQLiteRepository):
             connection.execute(
                 """
                 INSERT INTO workshop_reports (
-                    report_id, report_date, source_mode, item_count,
+                    report_id, report_date, source_mode, scope_machine_no, item_count,
                     generated_by_id, generated_by_name, generated_at, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     report_id,
                     report_date,
                     source_mode,
+                    scope_machine_no,
                     len(unique_records),
                     user["user_id"],
                     user["display_name"],
@@ -748,9 +764,8 @@ class WorkshopRepository(SQLiteRepository):
         records: list[WorkshopRecord],
         user: dict[str, Any],
         now: str,
+        scope_machine_no: str | None = "Cutter01",
     ) -> dict[str, Any] | None:
-        if not records:
-            return self.get_daily_report(report_date)
         with self.connect() as connection:
             self.begin_immediate(connection)
             report = connection.execute(
@@ -759,7 +774,11 @@ class WorkshopRepository(SQLiteRepository):
             ).fetchone()
             if report is None:
                 return None
-            if int(report["item_count"]) > 0:
+            scope_matches = (
+                scope_machine_no is None
+                or report["scope_machine_no"] == scope_machine_no
+            )
+            if int(report["item_count"]) > 0 and scope_matches:
                 populated = connection.execute(
                     """
                     SELECT r.*, COUNT(c.task_id) AS confirmed_count
@@ -772,6 +791,12 @@ class WorkshopRepository(SQLiteRepository):
                     (report["report_id"],),
                 ).fetchone()
                 return self._report_dict(populated)
+
+            if not scope_matches:
+                connection.execute(
+                    "DELETE FROM workshop_report_items WHERE report_id = ?",
+                    (report["report_id"],),
+                )
 
             unique_records: list[WorkshopRecord] = []
             seen_task_ids: set[str] = set()
@@ -809,12 +834,13 @@ class WorkshopRepository(SQLiteRepository):
             connection.execute(
                 """
                 UPDATE workshop_reports
-                SET source_mode = ?, item_count = ?, generated_by_id = ?,
+                SET source_mode = ?, scope_machine_no = ?, item_count = ?, generated_by_id = ?,
                     generated_by_name = ?, generated_at = ?
                 WHERE report_id = ?
                 """,
                 (
                     source_mode,
+                    scope_machine_no,
                     len(unique_records),
                     user["user_id"],
                     user["display_name"],

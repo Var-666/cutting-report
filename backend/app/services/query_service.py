@@ -123,6 +123,7 @@ class QueryService:
             for value in self.settings.energy_report_equipment_ids
             if value and value.strip()
         }
+        allowed &= {self.settings.report_machine_no.casefold()}
         if not allowed:
             return {}
 
@@ -189,6 +190,7 @@ class QueryService:
         )
         end = start + timedelta(days=1)
         parameters = (
+            self.settings.report_machine_no,
             start,
             end,
             filters.project_code,
@@ -224,7 +226,7 @@ class QueryService:
 
     def list_projects(self, filters: ReportFilter) -> list[str]:
         if self.settings.effective_data_source_mode == "excel":
-            return self.excel.list_projects()
+            return self.excel.list_projects(self.settings.report_machine_no)
         if self.settings.effective_data_source_mode == "demo":
             return ["A001", "A002", "B101"]
         start = filters.report_date
@@ -240,6 +242,7 @@ class QueryService:
                     ) AS production_date
                 FROM [dbo].[task]
                 WHERE [STATUS] = 2
+                  AND UPPER(LTRIM(RTRIM([MACHINE_NO]))) = UPPER(?)
             )
             SELECT DISTINCT project_code
             FROM source
@@ -247,13 +250,13 @@ class QueryService:
               AND project_code IS NOT NULL
             ORDER BY project_code
             """,
-            (start, end),
+            (self.settings.report_machine_no, start, end),
         )
         return [str(row["project_code"]) for row in rows]
 
     def list_ships(self, filters: ReportFilter) -> list[str]:
         if self.settings.effective_data_source_mode == "excel":
-            names = self.excel.list_projects()
+            names = self.excel.list_projects(self.settings.report_machine_no)
             return [filters.project_code] if filters.project_code in names else names
         if self.settings.effective_data_source_mode == "demo":
             names = ["A001", "A002", "B101"]
@@ -269,6 +272,7 @@ class QueryService:
                     ) AS production_date
                 FROM [dbo].[task]
                 WHERE [STATUS] = 2
+                  AND UPPER(LTRIM(RTRIM([MACHINE_NO]))) = UPPER(?)
             )
             SELECT DISTINCT project_name
             FROM source
@@ -278,6 +282,7 @@ class QueryService:
             ORDER BY project_name
             """,
             (
+                self.settings.report_machine_no,
                 filters.report_date,
                 filters.report_date + timedelta(days=1),
                 filters.project_code,
@@ -304,7 +309,9 @@ class QueryService:
 
     def _latest_production_date_uncached(self, on_or_before: date) -> date | None:
         if self.settings.effective_data_source_mode == "excel":
-            return self.excel.latest_completed_date(on_or_before)
+            return self.excel.latest_completed_date(
+                on_or_before, self.settings.report_machine_no
+            )
         if self.settings.effective_data_source_mode == "demo":
             return on_or_before
         rows = self.client.fetch_all(
@@ -318,12 +325,13 @@ class QueryService:
                 FROM [dbo].[task]
                 WHERE [STATUS] = 2
                   AND COALESCE([WORK_TIME], 0) >= 0
+                  AND UPPER(LTRIM(RTRIM([MACHINE_NO]))) = UPPER(?)
             )
             SELECT MAX(production_date) AS latest_date
             FROM source
             WHERE production_date <= ?
             """,
-            (on_or_before,),
+            (self.settings.report_machine_no, on_or_before),
         )
         if not rows or rows[0]["latest_date"] is None:
             return None
@@ -348,6 +356,7 @@ class QueryService:
             end=filters.report_date + timedelta(days=1),
             project_code=filters.project_code,
             ship_no=filters.ship_no,
+            machine_no=self.settings.report_machine_no,
         )
         normalized = [self.excel.normalized(row) for row in rows]
         summaries = [
@@ -416,6 +425,7 @@ class QueryService:
         )
         end = start + timedelta(days=1)
         parameters = (
+            self.settings.report_machine_no,
             start,
             end,
             filters.project_code,
@@ -492,6 +502,9 @@ class QueryService:
         base_time = datetime.combine(filters.report_date, time(8), tzinfo=timezone)
         for index in range(1, 29):
             project_name = project_names[(index - 1) % len(project_names)]
+            equipment_id = f"Cutter{((index - 1) % 2) + 1:02d}"
+            if equipment_id.casefold() != self.settings.report_machine_no.casefold():
+                continue
             if filters.project_code and filters.project_code != project_name:
                 continue
             if filters.ship_no and filters.ship_no != project_name:
@@ -530,9 +543,7 @@ class QueryService:
             equipment.append(
                 EquipmentRecord(
                     task_id=task_id,
-                    # Mirror the production MACHINE_NO values so the demo also
-                    # exercises the Cutter01-only report scope.
-                    equipment_id=f"Cutter{((index - 1) % 2) + 1:02d}",
+                    equipment_id=equipment_id,
                     project_code=project_name,
                     ship_no=project_name,
                     segment_name=summary.segment_name,

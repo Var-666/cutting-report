@@ -153,7 +153,11 @@ class AutomationService:
 
     def _ensure_workshop_report(self, run: dict, now: datetime) -> None:
         report_date = run["report_date"]
-        if self.workshop.get_daily_report(report_date) is not None:
+        existing = self.workshop.get_daily_report(report_date)
+        if (
+            existing is not None
+            and existing.get("scope_machine_no") == self.settings.report_machine_no
+        ):
             return
         bundle = self.query_service.fetch_report_data(
             ReportFilter(report_date=date.fromisoformat(report_date))
@@ -163,12 +167,23 @@ class AutomationService:
             "display_name": run["created_by_name"],
         }
         try:
+            if existing is not None:
+                self.workshop.populate_empty_daily_report(
+                    report_date=report_date,
+                    source_mode=self.settings.effective_data_source_mode,
+                    records=bundle.workshop_records,
+                    user=user,
+                    now=now.isoformat(timespec="seconds"),
+                    scope_machine_no=self.settings.report_machine_no,
+                )
+                return
             self.workshop.create_daily_report(
                 report_date=report_date,
                 source_mode=self.settings.effective_data_source_mode,
                 records=bundle.workshop_records,
                 user=user,
                 now=now.isoformat(timespec="seconds"),
+                scope_machine_no=self.settings.report_machine_no,
             )
         except DailyReportExistsError:
             pass

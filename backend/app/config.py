@@ -71,6 +71,8 @@ class Settings:
         "LEADERSHIP_REPORT_RECONCILE_HOUR", 2
     )
     report_data_cache_seconds: int = _as_int("REPORT_DATA_CACHE_SECONDS", 300)
+    # 当前所有生产统计统一限定为 dbo.task.MACHINE_NO = Cutter01。
+    report_machine_no: str = os.getenv("REPORT_MACHINE_NO", "Cutter01").strip() or "Cutter01"
 
     # 能管平台只读接入。仪表绑定、计量边界和单位必须由现场确认。
     energy_api_enabled: bool = _as_bool("ENERGY_API_ENABLED", False)

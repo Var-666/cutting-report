@@ -320,7 +320,11 @@ class ReportPipeline:
                     filters.report_date.isoformat()
                 )
             )
-            if workshop_report is None:
+            if (
+                workshop_report is None
+                or workshop_report.get("scope_machine_no")
+                != self.settings.report_machine_no
+            ):
                 raise ValueError("请先生成当日车间报表，再进行导出")
             summaries = [
                 SummaryBaseRecord(
@@ -393,10 +397,34 @@ class ReportPipeline:
             analysis = self.analysis_service.analyze_workshop(
                 filters.report_date.isoformat(),
                 bundle.workshop_records,
-                comparison_records=previous_records if previous_report else None,
-                comparison_date=comparison_date.isoformat() if previous_report else None,
-                year_ago_records=year_ago_records if year_ago_report else None,
-                year_ago_date=year_ago_date.isoformat() if year_ago_report else None,
+                comparison_records=(
+                    previous_records
+                    if previous_report
+                    and previous_report.get("scope_machine_no")
+                    == self.settings.report_machine_no
+                    else None
+                ),
+                comparison_date=(
+                    comparison_date.isoformat()
+                    if previous_report
+                    and previous_report.get("scope_machine_no")
+                    == self.settings.report_machine_no
+                    else None
+                ),
+                year_ago_records=(
+                    year_ago_records
+                    if year_ago_report
+                    and year_ago_report.get("scope_machine_no")
+                    == self.settings.report_machine_no
+                    else None
+                ),
+                year_ago_date=(
+                    year_ago_date.isoformat()
+                    if year_ago_report
+                    and year_ago_report.get("scope_machine_no")
+                    == self.settings.report_machine_no
+                    else None
+                ),
             )
         else:
             previous_bundle = self.query_service.fetch_report_data(

@@ -84,10 +84,12 @@ def test_sqlserver_equipment_fetch_executes_only_equipment_query(
 ) -> None:
     service = _service(tmp_path)
     calls: list[str] = []
+    parameters_seen: list[tuple] = []
     updated_at = datetime(2026, 8, 25, 12, 0)
 
-    def fetch_all(sql: str, _parameters: tuple) -> list[dict]:
+    def fetch_all(sql: str, parameters: tuple) -> list[dict]:
         calls.append(sql)
+        parameters_seen.append(parameters)
         return [
             {
                 "task_id": "task-1",
@@ -114,6 +116,7 @@ def test_sqlserver_equipment_fetch_executes_only_equipment_query(
 
     assert len(calls) == 1
     assert "MACHINE_NO" in calls[0]
+    assert parameters_seen[0][0] == "Cutter01"
     assert result.records[0].task_id == "task-1"
     assert result.records[0].production_end_time == updated_at
     assert result.data_updated_at == updated_at

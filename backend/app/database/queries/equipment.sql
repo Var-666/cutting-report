@@ -1,7 +1,7 @@
 /*
   设备生产数据。能耗由能管服务按 MACHINE_NO 和实际 START_TIME/END_TIME 补充。
   工程号和船号均按 PROJECT_NAME 原样映射。
-  参数顺序：开始时间、结束时间、工程/船号、工程/船号、工程/船号、工程/船号。
+  参数顺序：设备编号、开始时间、结束时间、工程/船号、工程/船号、工程/船号、工程/船号。
 */
 WITH task_source AS (
     SELECT
@@ -13,6 +13,7 @@ WITH task_source AS (
     FROM [dbo].[task] AS t
     WHERE t.[STATUS] = 2
       AND COALESCE(t.[WORK_TIME], 0) >= 0
+      AND UPPER(LTRIM(RTRIM(t.[MACHINE_NO]))) = UPPER(?)
 )
 SELECT
     CONVERT(varchar(64), source.[TASK_ID]) AS task_id,

@@ -69,6 +69,59 @@ def test_hr_admin_permission_mapping_keeps_hr_password_external(tmp_path: Path) 
     assert revoked["role"] == "worker"
 
 
+def test_legacy_workshop_snapshot_is_rebuilt_for_cutter01_scope(tmp_path: Path) -> None:
+    repository = WorkshopRepository(tmp_path / "metadata.db")
+    repository.initialize()
+    now = "2026-09-09T10:30:00+08:00"
+    admin = repository.bootstrap_admin(
+        username="admin",
+        display_name="管理员",
+        password="admin-password",
+        now=now,
+    )
+    legacy = WorkshopRecord(
+        task_id="legacy-cutter02",
+        project_code="P2",
+        ship_no="P2",
+        segment_name=None,
+        program_no="OLD",
+        cut_length=Decimal("2"),
+        groove_length=Decimal("0"),
+        work_time=Decimal("20"),
+    )
+    scoped = WorkshopRecord(
+        task_id="cutter01-task",
+        project_code="P1",
+        ship_no="P1",
+        segment_name=None,
+        program_no="NEW",
+        cut_length=Decimal("1"),
+        groove_length=Decimal("0"),
+        work_time=Decimal("10"),
+    )
+    repository.create_daily_report(
+        report_date="2026-09-09",
+        source_mode="sqlserver",
+        records=[legacy],
+        user=admin,
+        now=now,
+        scope_machine_no=None,
+    )
+
+    rebuilt = repository.populate_empty_daily_report(
+        report_date="2026-09-09",
+        source_mode="sqlserver",
+        records=[scoped],
+        user=admin,
+        now=now,
+        scope_machine_no="Cutter01",
+    )
+    _, records = repository.get_daily_report_records("2026-09-09")
+
+    assert rebuilt["scope_machine_no"] == "Cutter01"
+    assert [record.task_id for record in records] == ["cutter01-task"]
+
+
 def test_password_hash_is_salted_and_verifiable() -> None:
     first = hash_password("safe-password")
     second = hash_password("safe-password")

@@ -130,6 +130,7 @@ class ExcelTaskDataSource:
         end: date,
         project_code: str | None = None,
         ship_no: str | None = None,
+        machine_no: str | None = None,
     ) -> list[dict[str, Any]]:
         result = []
         for row in self._load()[1]:
@@ -151,14 +152,21 @@ class ExcelTaskDataSource:
                 continue
             if ship_no and ship_no != project_name:
                 continue
+            if machine_no and (
+                _clean_text(row.get("MACHINE_NO")) or ""
+            ).casefold() != machine_no.strip().casefold():
+                continue
             result.append(row)
         return result
 
-    def list_projects(self) -> list[str]:
+    def list_projects(self, machine_no: str | None = None) -> list[str]:
         return sorted(
             {
                 value
                 for row in self._load()[1]
+                if not machine_no
+                or (_clean_text(row.get("MACHINE_NO")) or "").casefold()
+                == machine_no.strip().casefold()
                 if (
                     value := _clean_text(row.get("PROJECT_NAME"))
                     or _clean_text(row.get("PROJECT_CODE"))
@@ -166,7 +174,9 @@ class ExcelTaskDataSource:
             }
         )
 
-    def latest_completed_date(self, on_or_before: date) -> date | None:
+    def latest_completed_date(
+        self, on_or_before: date, machine_no: str | None = None
+    ) -> date | None:
         latest: date | None = None
         for row in self._load()[1]:
             try:
@@ -177,6 +187,11 @@ class ExcelTaskDataSource:
             if (
                 status == 2
                 and _valid_work_time(row)
+                and (
+                    not machine_no
+                    or (_clean_text(row.get("MACHINE_NO")) or "").casefold()
+                    == machine_no.strip().casefold()
+                )
                 and production_date is not None
                 and production_date <= on_or_before
                 and (latest is None or production_date > latest)

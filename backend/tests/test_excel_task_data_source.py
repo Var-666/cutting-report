@@ -152,7 +152,7 @@ def test_excel_task_status_and_daily_query(tmp_path) -> None:
     assert status["date_min"] == "2026-07-31"
     assert status["date_max"] == "2026-08-18"
     assert status["machines"] == ["Cutter01", "Cutter02"]
-    assert [row.task_id for row in bundle.summary_records] == ["101", "102"]
+    assert [row.task_id for row in bundle.summary_records] == ["101"]
     assert bundle.workshop_records[0].project_code == "PJT-A"
     assert bundle.workshop_records[0].ship_no == "PJT-A"
     assert bundle.equipment_records[0].production_end_time == datetime(2026, 8, 18, 9)
@@ -162,8 +162,8 @@ def test_excel_task_status_and_daily_query(tmp_path) -> None:
     assert sum(
         (row.cut_length or Decimal("0") for row in bundle.summary_records),
         Decimal("0"),
-    ) == Decimal("2")
-    assert bundle.data_updated_at == datetime(2026, 8, 18, 10, 30)
+    ) == Decimal("1.2")
+    assert bundle.data_updated_at == datetime(2026, 8, 18, 9)
 
 
 def test_excel_task_leadership_monthly_totals(tmp_path) -> None:
@@ -172,12 +172,12 @@ def test_excel_task_leadership_monthly_totals(tmp_path) -> None:
     result = LeadershipReportService(settings).fetch(date(2026, 8, 18))
 
     assert result.source_mode == "excel"
-    assert result.current_month_total.task_count == 2
-    assert result.current_month_total.cut_length_m == Decimal("2")
+    assert result.current_month_total.task_count == 1
+    assert result.current_month_total.cut_length_m == Decimal("1.2")
     assert result.current_month_total.groove_length_m == Decimal("0.2")
-    assert result.monthly_records[0].task_count == 2
+    assert result.monthly_records[0].task_count == 1
     assert result.monthly_records[1].task_count == 1
-    assert result.twelve_month_total.task_count == 3
+    assert result.twelve_month_total.task_count == 2
 
 
 def test_excel_equipment_month_work_time_uses_configured_machine_only(tmp_path) -> None:

@@ -46,7 +46,7 @@ def _previous_month(month_start: date, months: int) -> date:
 
 
 class LeadershipReportService:
-    SNAPSHOT_VERSION = 1
+    SNAPSHOT_VERSION = 2
 
     def __init__(
         self,
@@ -196,7 +196,7 @@ class LeadershipReportService:
         started_at = monotonic()
         result_sets = self.client.fetch_result_sets(
             self.query_path.read_text(encoding="utf-8"),
-            (range_start, range_end),
+            (self.settings.report_machine_no, range_start, range_end),
         )
         if len(result_sets) != 2:
             raise RuntimeError("领导报表批量查询未返回预期的两个结果集")
@@ -313,6 +313,7 @@ class LeadershipReportService:
                 str(connection["port"]),
                 str(connection["database"]),
                 str(connection["username"]),
+                self.settings.report_machine_no.casefold(),
                 str(self.SNAPSHOT_VERSION),
             )
         )
@@ -373,7 +374,11 @@ class LeadershipReportService:
     def _excel_data(self, month_start: date) -> LeadershipReportResult:
         next_month = _previous_month(month_start, -1)
         range_start = _previous_month(month_start, 12)
-        rows = self.excel.completed_rows(start=range_start, end=next_month)
+        rows = self.excel.completed_rows(
+            start=range_start,
+            end=next_month,
+            machine_no=self.settings.report_machine_no,
+        )
         daily: dict[date, dict[str, object]] = {}
         monthly: dict[date, dict[str, object]] = {}
         projects: dict[str, dict[str, object]] = {}

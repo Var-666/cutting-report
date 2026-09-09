@@ -1,10 +1,11 @@
 /*
   领导报表快照批量查询。
-  参数：开始月份第一天、结束月份下一月第一天（左闭右开）。
+  参数：设备编号、开始月份第一天、结束月份下一月第一天（左闭右开）。
   生产表只扫描一次；#filtered_tasks 只存在于当前只读连接的 tempdb 会话。
 */
 SET NOCOUNT ON;
 
+DECLARE @machine_no nvarchar(128) = CAST(? AS nvarchar(128));
 DECLARE @range_start date = CAST(? AS date);
 DECLARE @range_end date = CAST(? AS date);
 
@@ -25,6 +26,7 @@ CROSS APPLY (
 ) AS calculated
 WHERE t.[STATUS] = 2
   AND COALESCE(t.[WORK_TIME], 0) >= 0
+  AND UPPER(LTRIM(RTRIM(t.[MACHINE_NO]))) = UPPER(@machine_no)
   AND calculated.production_date >= @range_start
   AND calculated.production_date < @range_end;
 
