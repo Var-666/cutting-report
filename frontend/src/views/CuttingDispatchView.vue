@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, onBeforeUnmount, reactive, ref } from 'vue'
+import { computed, onActivated, onMounted, onBeforeUnmount, reactive, ref } from 'vue'
 import CatalogTreeNode from '../components/CatalogTreeNode.vue'
 import CuttingDownloadsPanel from '../components/CuttingDownloadsPanel.vue'
 import {
@@ -42,9 +42,13 @@ const page = ref(1)
 const requestedPage = ref(1)
 const pageSize = 20
 const total = ref(0)
-const projects = ref([])
+const projectOptions = ref([])
+const selectedProjectId = ref('')
+const projects = computed(() => {
+  const selected = projectOptions.value.find((project) => String(project.project_id) === selectedProjectId.value)
+  return selected ? [selected] : []
+})
 const catalogTree = ref([])
-const projectKeyword = ref('君正25900-9SS')
 const fileKeyword = ref('')
 const appliedFileKeyword = ref('')
 const selectedProject = ref(null)
@@ -231,9 +235,12 @@ async function loadProjects() {
   const sequence = ++querySequence
   projectLoading.value = true
   try {
-    const data = await listCuttingProjects(projectKeyword.value.trim())
+    const data = await listCuttingProjects()
     if (sequence !== querySequence) return
-    projects.value = data.items || []
+    projectOptions.value = data.items || []
+    if (!projectOptions.value.some((project) => String(project.project_id) === selectedProjectId.value)) {
+      selectedProjectId.value = projectOptions.value[0] ? String(projectOptions.value[0].project_id) : ''
+    }
     selectedProject.value = null
     selectedCatalog.value = null
     projectExpanded.value = false
@@ -248,6 +255,24 @@ async function loadProjects() {
   } finally {
     if (sequence === querySequence) projectLoading.value = false
   }
+}
+
+function resetProjectSelection() {
+  querySequence += 1
+  selectedProject.value = null
+  selectedCatalog.value = null
+  projectExpanded.value = false
+  catalogTree.value = []
+  expandedCatalogIds.value = new Set()
+  rows.value = []
+  total.value = 0
+  page.value = 1
+  notice.value = ''
+}
+
+async function openSelectedProject() {
+  const project = projects.value[0]
+  if (project) await selectProject(project)
 }
 
 async function selectProject(project) {
@@ -433,6 +458,15 @@ onMounted(async () => {
     loading.value = false
   }
 })
+
+onActivated(async () => {
+  if (isDownload.value) return
+  try {
+    await loadPushFiles()
+  } catch (error) {
+    showNotice(`刷新系统已保存文件失败：${error.message}`, 'error')
+  }
+})
 </script>
 
 <template>
@@ -464,11 +498,11 @@ onMounted(async () => {
     <aside v-if="isDownload" class="panel directory-panel">
       <div class="panel-title">
         <div><span>01</span><h2>项目目录</h2></div>
-        <p>{{ projects.length }} 个项目</p>
+        <p>{{ projectOptions.length }} 个支持项目</p>
       </div>
-      <form class="project-search" @submit.prevent="loadProjects">
-        <label for="project-keyword">查找项目或船号</label>
-        <div><input id="project-keyword" v-model.trim="projectKeyword" placeholder="输入项目名称或船号" /><button type="submit" :disabled="projectLoading">{{ projectLoading ? '查找中…' : '查找' }}</button></div>
+      <form class="project-search" @submit.prevent="openSelectedProject">
+        <label for="project-selector">选择支持的项目</label>
+        <div><select id="project-selector" v-model="selectedProjectId" :disabled="projectLoading || !projectOptions.length" @change="resetProjectSelection"><option value="" disabled>{{ projectLoading ? '正在读取项目…' : '暂无支持的项目' }}</option><option v-for="project in projectOptions" :key="project.project_id" :value="String(project.project_id)">{{ project.project_name }}{{ project.ship_no ? ` · ${project.ship_no}` : '' }}</option></select><button type="submit" :disabled="projectLoading || catalogLoading || !selectedProjectId">{{ catalogLoading ? '打开中…' : '打开' }}</button></div>
       </form>
       <div class="directory-scroll" :aria-busy="projectLoading || catalogLoading">
         <div v-if="projectLoading" class="directory-message">正在读取项目…</div>

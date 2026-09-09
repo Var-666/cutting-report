@@ -103,7 +103,7 @@ def test_task_day_uses_report_meter_group_for_cutter01(tmp_path):
     assert report["summary"]["gas_record_count"] == 1
     assert report["summary"]["electricity_record_count"] == 1
     assert report["equipment_scope"] == ["Cutter01"]
-    assert "仅统计 Cutter01" in report["energy_notice"]
+    assert report["energy_notice"] == ""
     assert set(client.calls[0][0]) == {GAS, *ELECTRIC}
 
 
@@ -166,7 +166,8 @@ def test_overlapping_tasks_are_listed_but_not_double_counted(tmp_path):
     assert report["summary"]["task_count"] == 2
     assert report["summary"]["total_electricity_consumption"] is None
     assert all(row["electricity_data_status"] == "overlap" for row in report["records"])
-    assert "时间重叠任务" in report["energy_notice"]
+    assert report["energy_notice"] == ""
+    assert report["warning"] == "存在时间重叠任务，相关行未计入汇总。"
 
 
 def test_force_and_expired_cache_fetch_again(tmp_path):

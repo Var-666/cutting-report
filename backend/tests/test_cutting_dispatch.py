@@ -11,6 +11,7 @@ from app.database.sqlite import SQLiteDatabase
 from app.database.workshop import WorkshopRepository
 from app.services.cutting_dispatch_service import (
     CuttingDispatchService,
+    CuttingDispatchError,
     DuplicateDispatchError,
 )
 from app.services.file_download_service import FileDownloadService
@@ -128,6 +129,42 @@ def test_saving_dispatch_is_persistent_but_does_not_download(tmp_path: Path) -> 
     with pytest.raises(DuplicateDispatchError):
         service.create_dispatch(
             document_id="F1A0796D-7118-4E37-8F69-B6D917BD6456",
+            machine_ip="10.1.133.196",
+            material=None,
+            thickness=None,
+            quantity=1,
+            user=admin,
+        )
+
+
+@pytest.mark.parametrize("suffix", [".GEN", ".gen", ".TXT", ".txt"])
+def test_dispatch_accepts_supported_file_types(tmp_path: Path, suffix: str) -> None:
+    service, _dispatches, admin = _service(tmp_path)
+    file = service.pdm.files[0]
+    file["document_no"] = f"cutting-task{suffix}"
+    file["file_path"] = f"CMYZ0177\\PK-707C1\\cutting-task{suffix}"
+
+    item = service.create_dispatch(
+        document_id=file["document_id"],
+        machine_ip="10.1.133.196",
+        material=None,
+        thickness=None,
+        quantity=1,
+        user=admin,
+    )
+
+    assert item["document_no"] == f"cutting-task{suffix}"
+
+
+def test_dispatch_rejects_unsupported_file_type(tmp_path: Path) -> None:
+    service, _dispatches, admin = _service(tmp_path)
+    file = service.pdm.files[0]
+    file["document_no"] = "drawing.PDF"
+    file["file_path"] = "CMYZ0177\\PK-707C1\\drawing.PDF"
+
+    with pytest.raises(CuttingDispatchError, match=r"\.GEN或\.TXT"):
+        service.create_dispatch(
+            document_id=file["document_id"],
             machine_ip="10.1.133.196",
             material=None,
             thickness=None,

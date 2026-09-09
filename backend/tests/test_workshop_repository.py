@@ -7,6 +7,8 @@ import pytest
 from app.database.workshop import (
     AuthenticationError,
     ConfirmationConflictError,
+    ConfirmationNotFoundError,
+    ConfirmationPermissionError,
     DailyReportExistsError,
     WorkshopRepository,
     hash_password,
@@ -112,8 +114,70 @@ def test_account_session_and_single_worker_confirmation(tmp_path: Path) -> None:
     saved_report, saved_records = repository.get_daily_report_records("2026-08-19")
     assert saved_report["confirmed_count"] == 1
     assert saved_records[0].project_code == saved_records[0].ship_no == "PJT-01"
+    assert saved_records[0].confirmed_by_id == worker["user_id"]
     assert saved_records[0].confirmed_by == "张三"
     assert admin["role"] == "admin"
+
+    with pytest.raises(ConfirmationPermissionError, match="本人"):
+        repository.revoke_confirmation(
+            task_id="24820",
+            report_id=report["report_id"],
+            user=other,
+            reason="误点了别人的任务",
+            now="2026-08-19T08:05:00+08:00",
+        )
+
+    revoked = repository.revoke_confirmation(
+        task_id="24820",
+        report_id=report["report_id"],
+        user=worker,
+        reason="误点了别人的任务",
+        now="2026-08-19T08:06:00+08:00",
+    )
+    assert revoked["action"] == "worker_revoke"
+    assert repository.get_confirmations(["24820"]) == {}
+    with pytest.raises(ConfirmationNotFoundError):
+        repository.revoke_confirmation(
+            task_id="24820",
+            report_id=report["report_id"],
+            user=worker,
+            reason="重复撤销",
+            now="2026-08-19T08:07:00+08:00",
+        )
+
+    repository.confirm_task(
+        task_id="24820",
+        report_id=report["report_id"],
+        user=worker,
+        now="2026-08-19T08:08:00+08:00",
+    )
+    reassigned = repository.correct_confirmation(
+        task_id="24820",
+        report_id=report["report_id"],
+        admin=admin,
+        reason="现场记录确认实际完成人为李四",
+        new_worker_id=other["user_id"],
+        now="2026-08-19T08:09:00+08:00",
+    )
+    assert reassigned["action"] == "admin_reassign"
+    assert repository.get_confirmations(["24820"])["24820"]["worker_name"] == "李四"
+
+    admin_revoked = repository.correct_confirmation(
+        task_id="24820",
+        report_id=report["report_id"],
+        admin=admin,
+        reason="等待现场重新确认",
+        now="2026-08-19T08:10:00+08:00",
+    )
+    assert admin_revoked["action"] == "admin_revoke"
+    assert repository.get_daily_report("2026-08-19")["confirmed_count"] == 0
+    audits = repository.list_confirmation_audits(
+        task_id="24820", report_id=report["report_id"]
+    )
+    assert [item["action"] for item in audits] == [
+        "admin_revoke", "admin_reassign", "confirm", "worker_revoke", "confirm"
+    ]
+    assert audits[0]["reason"] == "等待现场重新确认"
 
 
 def test_external_worker_is_upserted_without_storing_hr_password(tmp_path: Path) -> None:

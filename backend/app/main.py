@@ -29,6 +29,7 @@ from app.config import settings
 from app.database.metadata import MetadataRepository
 from app.database.alarms import AlarmRepository
 from app.database.alarm_source import SqlServerAlarmSource
+from app.database.leadership_snapshots import LeadershipSnapshotRepository
 from app.database.automation import AutomationRepository
 from app.database.definitions import DefinitionRepository
 from app.database.dispatch import DispatchRepository
@@ -53,6 +54,7 @@ from app.services.alarm_monitor_service import AlarmMonitorService
 from app.services.alarm_report_service import AlarmReportService
 from app.workers.report_worker import ReportWorker
 from app.workers.alarm_worker import AlarmWorker
+from app.workers.leadership_refresh_worker import LeadershipRefreshWorker
 
 
 logging.basicConfig(
@@ -68,6 +70,8 @@ async def lifespan(app: FastAPI):
     database.initialize()
     metadata = MetadataRepository(database)
     metadata.initialize()
+    leadership_snapshots = LeadershipSnapshotRepository(database)
+    leadership_snapshots.initialize()
     workshop = WorkshopRepository(database)
     workshop.initialize()
     automation = AutomationRepository(database)
@@ -97,7 +101,12 @@ async def lifespan(app: FastAPI):
     app.state.energy_service = pipeline.energy_service
     app.state.energy_period_service = pipeline.energy_period_service
     app.state.worker_auth = WorkerAuthService(settings)
-    app.state.leadership_report_service = LeadershipReportService(settings)
+    leadership_report_service = LeadershipReportService(settings, leadership_snapshots)
+    leadership_refresh_worker = LeadershipRefreshWorker(
+        settings, leadership_report_service
+    )
+    app.state.leadership_report_service = leadership_report_service
+    app.state.leadership_refresh_worker = leadership_refresh_worker
     app.state.report_analysis_service = ReportAnalysisService(settings, metadata)
     alarm_repository = AlarmRepository(database)
     alarm_repository.initialize()
@@ -137,11 +146,13 @@ async def lifespan(app: FastAPI):
     app.state.worker = worker
     app.state.pdf_service = pdf_service
     worker.start()
+    leadership_refresh_worker.start()
     alarm_worker.start()
     try:
         yield
     finally:
         alarm_worker.stop()
+        leadership_refresh_worker.stop()
         worker.stop()
 
 

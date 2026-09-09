@@ -46,8 +46,8 @@ def test_repaired_analysis_accepts_model_specific_wrapper() -> None:
     assert _unwrap_repaired_analysis(analysis) is analysis
 
 
-@pytest.mark.parametrize("section", ["suggestions", "limitations"])
-def test_removed_fact_cannot_be_referenced_in_advice_or_limitations(section):
+def test_removed_fact_cannot_be_referenced_in_advice():
+    section = "suggestions"
     content = {
         "overview": "任务 [F001]。",
         "features": "时长 [F002]。",

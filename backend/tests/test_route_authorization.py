@@ -77,6 +77,12 @@ def test_workshop_routes_keep_the_intended_role_split() -> None:
 
     confirmation = _route("/api/v1/workshop/tasks/{task_id}/confirm", "POST")
     assert require_worker in _dependency_calls(confirmation)
+    revocation = _route("/api/v1/workshop/tasks/{task_id}/revoke", "POST")
+    assert require_worker in _dependency_calls(revocation)
+    correction = _route("/api/v1/workshop/tasks/{task_id}/correct", "POST")
+    assert require_admin in _dependency_calls(correction)
+    audits = _route("/api/v1/workshop/confirmation-audits", "GET")
+    assert require_admin in _dependency_calls(audits)
 
 
 def test_public_bootstrap_login_and_health_routes_stay_public() -> None:

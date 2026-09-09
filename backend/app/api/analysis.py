@@ -43,6 +43,12 @@ def analyze_report(payload: AnalysisRequest, request: Request) -> dict:
             report = request.app.state.leadership_report_service.fetch(
                 payload.report_date.replace(day=1)
             )
+            if report.source_mode == "sqlserver" and report.snapshot.data_as_of is None:
+                # Analysis must never be generated from the empty placeholder used
+                # while the first page snapshot is warming in the background.
+                report = request.app.state.leadership_report_service.fetch(
+                    payload.report_date.replace(day=1), force=True
+                )
             analysis = service.analyze_leadership(report, force=payload.force)
         elif payload.report_type == "workshop":
             report, records = request.app.state.workshop.get_daily_report_records(

@@ -1,6 +1,7 @@
 """Build a clean Windows/Docker source ZIP from the current working tree.
 
-Includes uncommitted feature files deliberately, but never runtime data or .env.
+Includes uncommitted feature files deliberately, but never runtime data or the
+working-tree .env. When .env.deploy exists, it is added to the ZIP as .env.
 Run after tests: python scripts/build_docker_package.py --name RELEASE_NAME
 """
 from __future__ import annotations
@@ -16,15 +17,19 @@ import zipfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
+DEPLOYMENT_ENV_FILE = ".env.deploy"
 FILES = (
-    "Dockerfile", "compose.yaml", ".dockerignore", ".env.example", "README.md",
+    "Dockerfile", "compose.yaml", "compose.offline.yaml", ".dockerignore", ".env.example", "README.md",
     "README-DOCKER.md", "START_DOCKER.bat", "backend/requirements.txt",
     "backend/requirements-sqlserver.txt", "backend/pyproject.toml",
     "frontend/package.json", "frontend/package-lock.json", "frontend/index.html",
     "frontend/vite.config.js", "docs/deployment/WINDOWS部署说明.md",
+    "docs/deployment/KYLIN原生部署说明.md",
+    "docs/deployment/OFFLINE_DOCKER部署说明.md",
     "docker/input/README.md", "scripts/README.md", "scripts/check_energy.py",
     "scripts/build_docker_package.py", "scripts/windows/install_windows.bat",
-    "scripts/windows/start_windows.bat",
+    "scripts/windows/start_windows.bat", "scripts/linux/install_kylin.sh",
+    "scripts/linux/start_kylin.sh", "scripts/linux/start_offline_docker.sh",
 )
 TREES = (
     "backend/app", "frontend/src", "frontend/public", "frontend/scripts",
@@ -81,15 +86,31 @@ def collect_files(root: Path) -> dict[str, bytes]:
     return payload
 
 
+def add_deployment_env(root: Path, payload: dict[str, bytes]) -> bool:
+    """Map the local, Git-ignored deployment configuration to ZIP-root .env."""
+    source = root / DEPLOYMENT_ENV_FILE
+    if not source.exists():
+        return False
+    if source.is_symlink() or not source.is_file():
+        raise ValueError(f"{DEPLOYMENT_ENV_FILE} must be a regular file")
+    content = source.read_bytes()
+    if not content.strip():
+        raise ValueError(f"{DEPLOYMENT_ENV_FILE} cannot be empty")
+    payload[".env"] = content
+    return True
+
+
 def build_package(root: Path, name: str) -> Path:
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name):
         raise ValueError("Release name must contain only letters, numbers, dots, hyphens or underscores")
     payload = collect_files(root)
+    deployment_env_included = add_deployment_env(root, payload)
     manifest = {
         "release": name,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "kind": "docker-source-package",
         "offline_image_included": False,
+        "deployment_env_included": deployment_env_included,
         "files": {name: hashlib.sha256(content).hexdigest() for name, content in sorted(payload.items())},
     }
     payload["PACKAGE-MANIFEST.json"] = (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode()
@@ -117,6 +138,7 @@ def main() -> None:
         subprocess.run(["npm", "run", "build"], cwd=ROOT / "frontend", check=True)
     result = build_package(ROOT, args.name)
     print(f"Created: {result}")
+    print(f"Deployment .env included: {'yes' if (ROOT / DEPLOYMENT_ENV_FILE).is_file() else 'no'}")
     print(f"Size: {result.stat().st_size:,} bytes")
     print(f"SHA256: {hashlib.sha256(result.read_bytes()).hexdigest()}")
 

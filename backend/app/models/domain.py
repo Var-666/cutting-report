@@ -39,6 +39,7 @@ class WorkshopRecord:
     work_time: Decimal | None
     remark: str | None = None
     production_time: datetime | None = None
+    confirmed_by_id: str | None = None
     confirmed_by: str | None = None
     confirmed_at: datetime | None = None
 
@@ -90,6 +91,16 @@ class ProjectDistributionRecord:
 
 
 @dataclass(slots=True)
+class LeadershipSnapshotState:
+    data_as_of: datetime | None = None
+    stale: bool = False
+    refreshing: bool = False
+    cached: bool = False
+    source: str = "database"
+    query_duration_ms: int | None = None
+
+
+@dataclass(slots=True)
 class LeadershipReportResult:
     report_month: date
     source_mode: str
@@ -99,6 +110,7 @@ class LeadershipReportResult:
     twelve_month_total: LeadershipPeriodRecord
     year_ago_total: LeadershipPeriodRecord | None = None
     project_distribution: list[ProjectDistributionRecord] = field(default_factory=list)
+    snapshot: LeadershipSnapshotState = field(default_factory=LeadershipSnapshotState)
 
 
 @dataclass(slots=True)
@@ -134,7 +146,6 @@ class AnalysisResult:
     alerts: str
     suggestions: str
     mode: str = "model"
-    limitations: str = ""
     facts: list[dict[str, Any]] = field(default_factory=list)
     generated_at: str | None = None
     cached: bool = False

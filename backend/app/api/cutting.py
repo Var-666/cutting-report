@@ -89,7 +89,7 @@ def list_machines(request: Request) -> dict:
 def list_projects(
     request: Request,
     keyword: str = Query(default="", max_length=128),
-    limit: int = Query(default=20, ge=1, le=20),
+    limit: int = Query(default=100, ge=1, le=100),
 ) -> dict:
     items = request.app.state.cutting_dispatch.list_projects(keyword, limit)
     return _envelope(request, {"items": items})

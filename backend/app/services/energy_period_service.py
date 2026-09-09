@@ -13,12 +13,12 @@ from zoneinfo import ZoneInfo
 from app.models.domain import to_primitive
 from app.services.energy_api import EnergyApiClient, EnergyApiError
 from app.services.energy_service import (
-    STATUS_TEXT, interval_consumption, local_time, make_series, sampling_policy, sampling_notice,
+    STATUS_TEXT, interval_consumption, local_time, make_series, sampling_policy,
 )
 from app.services.equipment_service import sort_equipment_records, summarize_equipment
 
 
-LABELS = {**STATUS_TEXT, "partial": "部分合计", "pending": "时段未结束",
+LABELS = {**STATUS_TEXT, "partial": "已有数据", "pending": "时段未结束",
           "future": "日期未到", "not_queried": "尚未查询", "missing": "缺少有效边界读数"}
 CHANNELS = ("gas", "electricity")
 
@@ -179,21 +179,8 @@ class EnergyPeriodService:
     def metadata(self):
         cfg = self.settings
         unit = cfg.energy_electricity_unit or "kWh"
-        scope_name = " / ".join(self.equipment_ids)
-        notice = (
-            f"{scope_name} 专用仪表组：所选电表增量相加＋累计流量；"
-            "其他设备任务不统计，日/月总量不按任务分摊。"
-            "日表按整点小时求累计读数差，月表汇总已保存日记录。"
-            "仅汇总有效时段；部分合计不代表完整全天/整月用量。"
-        )
-        if cfg.energy_allow_interpolation:
-            notice += "非精确边界采用线性插值估算。"
-        try:
-            notice += sampling_notice(cfg, cfg.energy_report_max_gap_seconds)
-        except ValueError:
-            notice += "采样切换配置无效，请检查切换时间和间隔上限。"
         return {"units": {"gas": cfg.energy_gas_unit or "原始单位待确认", "electricity": unit},
-                "notice": notice, "source_name": "电表合计 / 气量计", "timezone": cfg.timezone,
+                "notice": "", "source_name": "电表合计 / 气量计", "timezone": cfg.timezone,
                 "configuration_error": self.configuration_error(),
                 "equipment_scope": list(self.equipment_ids),
                 "parameters": {"electricity": list(self.electricity_ids), "gas": self.gas_id}}
@@ -295,7 +282,6 @@ class EnergyPeriodService:
                          gas_data_status="missing", electricity_data_status="missing",
                          energy_note=None, energy_details={}) for row in selected_records]
         excluded_count = len(source_records) - len(selected_records)
-        scope_name = " / ".join(self.equipment_ids) or "未配置设备"
 
         def result(rows, mode, notice, warning=""):
             ordered = sort_equipment_records(rows)
@@ -317,11 +303,10 @@ class EnergyPeriodService:
             unavailable = [replace(row, gas_data_status="unavailable",
                                    electricity_data_status="unavailable", energy_note=error)
                            for row in clean]
-            return result(unavailable, "unavailable", error + "；缺失值不作为零值。", error)
+            return result(unavailable, "unavailable", "", error)
 
         if not clean:
-            suffix = f"，已排除 {excluded_count} 条其他设备任务" if excluded_count else ""
-            return result([], "unavailable", f"所选日期暂无 {scope_name} 切割任务{suffix}。")
+            return result([], "unavailable", "")
 
         intervals = {}
         for row in clean:
@@ -358,7 +343,7 @@ class EnergyPeriodService:
                 unavailable = [replace(row, gas_data_status="unavailable",
                                        electricity_data_status="unavailable", energy_note=message)
                                for row in clean]
-                return result(unavailable, "unavailable", message + "；缺失值不作为零值。", message)
+                return result(unavailable, "unavailable", "", message)
 
         output = []
         for row in clean:
@@ -414,17 +399,8 @@ class EnergyPeriodService:
             row.electricity_consumption is not None for row in output
         )
         mode = "metered" if available == 2 * len(output) else "partial" if available else "unavailable"
-        notice = (
-            f"仅统计 {scope_name} 任务；按每项任务实际开始至结束时间计算累计读数差值；"
-            "三块电表相加，气表独立计算；其他设备任务不显示、不汇总。"
-            "汇总只包含有效任务读数。"
-        )
-        if self.settings.energy_allow_interpolation:
-            notice += "边界非采样时刻采用线性插值并标记为估算。"
-        notice += sampling_notice(self.settings, self.settings.energy_report_max_gap_seconds)
-        if conflicts:
-            notice += "存在时间重叠任务，无法重复分配同一仪表耗量，相关行保持缺失。"
-        return result(output, mode, notice)
+        warning = "存在时间重叠任务，相关行未计入汇总。" if conflicts else ""
+        return result(output, mode, "", warning)
 
     def get_month(self, report_month):
         year, month = map(int, report_month.split("-"))
@@ -458,5 +434,4 @@ class EnergyPeriodService:
             "saved_day_count": sum(row["saved"] for row in rows),
             "elapsed_day_count": len(elapsed), "calendar_day_count": count,
             "resync_dates": resync_dates,
-            **self.metadata(), "storage_notice": "查询单日后保存小时明细和日合计；月表读取已保存记录。点击同步本月可逐日补齐，不是后台定时采集。"
-            + (f" 其中 {len(resync_dates)} 天旧快照仍保留，需按新采样规则重新同步后计入合计。" if resync_dates else "")})
+            **self.metadata(), "storage_notice": ""})

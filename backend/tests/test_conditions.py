@@ -320,7 +320,9 @@ def downloads(tmp_path):
     ]):
         repo.save({"download_id": str(index), "document_id": str(index), "filename": filename,
                    "document_no": filename, "status": status, "created_at": day + "T12:00:00+08:00",
-                   "updated_at": day, "size": size, "source_mode": "mock", "version": "V1"})
+                   "updated_at": day, "size": size, "source_mode": "mock", "version": "V1",
+                   "project_id": "P1" if index < 2 else "P2",
+                   "catalog_id": "CAT-GEN" if index < 2 else "CAT-NC"})
     return repo
 
 
@@ -344,6 +346,13 @@ def test_download_sort_is_numeric_and_applied_before_pagination(downloads):
     assert second[0]["download_id"] == "0"
     with pytest.raises(ConditionError):
         downloads.list(1, 1, sort=[SortRule(field="created_at;DROP")])
+
+
+def test_downloads_filter_by_saved_project_and_catalog_metadata(downloads):
+    criteria = group(rule("project_id", "eq", "P1"), rule("catalog_id", "eq", "CAT-GEN"))
+    rows, total = downloads.list(1, 20, criteria)
+    assert total == 2
+    assert {row["download_id"] for row in rows} == {"0", "1"}
 
 
 @pytest.mark.parametrize("operator,value,expected", [

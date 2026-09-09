@@ -2,9 +2,13 @@
 import { computed, onActivated, onDeactivated, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import {
   confirmWorkshopTask,
+  correctWorkshopTask,
   generateWorkshopDailyReport,
   getLatestWorkshopProductionDate,
+  listUserAccounts,
+  listWorkshopConfirmationAudits,
   listWorkshopTasks,
+  revokeWorkshopTask,
 } from '../api/reports'
 import AnalysisPanel from '../components/AnalysisPanel.vue'
 import ReportExportMenu from '../components/ReportExportMenu.vue'
@@ -25,8 +29,23 @@ const confirmingId = ref('')
 const error = ref('')
 const chartType = ref('bar_line')
 const confirmationFeedback = reactive({ visible: false, type: 'pending', title: '', message: '' })
+const correction = reactive({
+  visible: false,
+  row: null,
+  action: 'revoke',
+  workerId: '',
+  reason: '',
+  saving: false,
+  loading: false,
+  error: '',
+  workers: [],
+  audits: [],
+})
 const totalPages = computed(() => Math.max(1, Math.ceil(result.value.total / result.value.page_size)))
 const isWorker = computed(() => props.mode === 'worker')
+const availableWorkers = computed(() => correction.workers.filter((worker) => (
+  worker.role === 'worker' && worker.active && worker.user_id !== correction.row?.confirmed_by_id
+)))
 let refreshTimer = null
 let feedbackTimer = null
 
@@ -44,6 +63,7 @@ function startRefreshTimer() {
       && result.value.report
       && !loading.value
       && !confirmingId.value
+      && !correction.visible
     ) {
       load(result.value.page, { silent: true, ensureReport: false })
     }
@@ -129,6 +149,86 @@ async function confirm(row) {
   }
 }
 
+function isOwnConfirmation(row) {
+  return isWorker.value && row.confirmed_by_id === props.user.user_id
+}
+
+async function openCorrection(row) {
+  if (!row.confirmed_by || (isWorker.value && !isOwnConfirmation(row))) return
+  Object.assign(correction, {
+    visible: true,
+    row,
+    action: 'revoke',
+    workerId: '',
+    reason: '',
+    saving: false,
+    loading: !isWorker.value,
+    error: '',
+    workers: [],
+    audits: [],
+  })
+  if (isWorker.value) return
+  try {
+    const [users, auditResult] = await Promise.all([
+      listUserAccounts(),
+      listWorkshopConfirmationAudits({ reportDate: filters.reportDate, taskId: row.task_id }),
+    ])
+    correction.workers = users.items || []
+    correction.audits = auditResult.items || []
+  } catch (exception) {
+    correction.error = exception.message
+  } finally {
+    correction.loading = false
+  }
+}
+
+function closeCorrection() {
+  if (correction.saving) return
+  correction.visible = false
+  correction.row = null
+}
+
+async function submitCorrection() {
+  const reason = correction.reason.trim()
+  if (reason.length < 2) {
+    correction.error = '请填写至少 2 个字的原因'
+    return
+  }
+  if (!isWorker.value && correction.action === 'reassign' && !correction.workerId) {
+    correction.error = '请选择改派后的工人'
+    return
+  }
+  correction.saving = true
+  correction.error = ''
+  const row = correction.row
+  try {
+    if (isWorker.value) {
+      await revokeWorkshopTask(row.task_id, filters.reportDate, reason)
+      showConfirmationFeedback('success', '已撤销确认', `${display(row.program_no)} 已恢复为待确认`, 5000)
+    } else {
+      await correctWorkshopTask(row.task_id, {
+        reportDate: filters.reportDate,
+        action: correction.action,
+        workerId: correction.action === 'reassign' ? correction.workerId : null,
+        reason,
+      })
+      const target = correction.workers.find((worker) => worker.user_id === correction.workerId)
+      const message = correction.action === 'reassign'
+        ? `${display(row.program_no)} 已改派给 ${target?.display_name || '所选工人'}`
+        : `${display(row.program_no)} 已恢复为待确认`
+      showConfirmationFeedback('success', '更正已保存', message, 5000)
+    }
+    correction.visible = false
+    correction.row = null
+    await load(result.value.page, { silent: true, ensureReport: false })
+  } catch (exception) {
+    correction.error = exception.message
+    showConfirmationFeedback('error', '更正失败', exception.message, 7000)
+  } finally {
+    correction.saving = false
+  }
+}
+
 function exportReport(format = 'html') {
   emit('export', {
     report_type: 'workshop',
@@ -177,8 +277,26 @@ onUnmounted(() => {
     </aside>
   </Transition>
 
+  <Teleport to="body">
+    <div v-if="correction.visible" class="confirmation-dialog-backdrop" @click.self="closeCorrection">
+      <section class="confirmation-dialog" role="dialog" aria-modal="true" aria-labelledby="confirmation-dialog-title">
+        <header><div><small>{{ isWorker ? '本人撤销' : '管理员更正' }}</small><h2 id="confirmation-dialog-title">{{ isWorker ? '撤销任务确认' : '更正确认人' }}</h2></div><button type="button" aria-label="关闭" :disabled="correction.saving" @click="closeCorrection">×</button></header>
+        <div class="confirmation-dialog-task"><strong>{{ display(correction.row?.program_no) }}</strong><span>当前确认人：{{ correction.row?.confirmed_by }} · {{ time(correction.row?.confirmed_at) }}</span></div>
+        <div v-if="correction.loading" class="confirmation-dialog-loading"><span class="spinner dark"></span>正在读取工人和审计记录…</div>
+        <template v-else>
+          <label v-if="!isWorker" class="confirmation-dialog-field"><span>更正方式</span><select v-model="correction.action"><option value="revoke">撤销为待确认</option><option value="reassign">直接改派给其他工人</option></select></label>
+          <label v-if="!isWorker && correction.action === 'reassign'" class="confirmation-dialog-field"><span>目标工人</span><select v-model="correction.workerId" required><option value="" disabled>请选择工人</option><option v-for="worker in availableWorkers" :key="worker.user_id" :value="worker.user_id">{{ worker.display_name }}{{ worker.company_no || worker.username ? ` · ${worker.company_no || worker.username}` : '' }}</option></select><small v-if="!availableWorkers.length">只显示已登录过系统的可用工人账号。</small></label>
+          <label class="confirmation-dialog-field"><span>更正原因</span><textarea v-model="correction.reason" maxlength="200" rows="3" :placeholder="isWorker ? '例如：误点了别人的任务' : '例如：根据现场记录更正实际完成人'" required></textarea><small>{{ correction.reason.trim().length }} / 200</small></label>
+          <p v-if="correction.error" class="confirmation-dialog-error">{{ correction.error }}</p>
+          <section v-if="!isWorker" class="confirmation-audit-list"><h3>该任务的确认记录</h3><p v-if="!correction.audits.length">暂无历史更正记录</p><article v-for="audit in correction.audits" :key="audit.audit_id"><strong>{{ audit.action_label }}</strong><span>{{ audit.previous_worker_name || '待确认' }} → {{ audit.new_worker_name || '待确认' }}</span><small>{{ audit.operated_by_name }} · {{ time(audit.operated_at) }} · {{ audit.reason }}</small></article></section>
+        </template>
+        <footer><button type="button" :disabled="correction.saving" @click="closeCorrection">取消</button><button class="primary" type="button" :disabled="correction.loading || correction.saving || (!isWorker && correction.action === 'reassign' && !correction.workerId)" @click="submitCorrection"><span v-if="correction.saving" class="spinner"></span>{{ correction.saving ? '保存中…' : isWorker ? '确认撤销' : '保存更正' }}</button></footer>
+      </section>
+    </div>
+  </Teleport>
+
   <section class="workshop-hero">
-    <div><span class="eyebrow">{{ isWorker ? 'WORKER TASK CONFIRMATION' : 'WORKSHOP REPORT' }}</span><h2>{{ isWorker ? '我的任务确认' : '车间报表' }}</h2><p>{{ isWorker ? `当前工人：${user.display_name}。请确认本人完成的任务，其他工人的确认结果会自动同步。` : '管理端只读展示全部任务和工人确认结果，页面会自动同步更新。' }}</p></div>
+    <div><span class="eyebrow">{{ isWorker ? 'WORKER TASK CONFIRMATION' : 'WORKSHOP REPORT' }}</span><h2>{{ isWorker ? '我的任务确认' : '车间报表' }}</h2><p>{{ isWorker ? `当前工人：${user.display_name}。请确认本人完成的任务，如果误点可撤销本人确认。` : '查看全部任务和工人确认结果，必要时可撤销或改派并保留审计记录。' }}</p></div>
     <form v-if="!isWorker" class="workshop-query" @submit.prevent="load(1)">
       <label><span>生产日期</span><input v-model="filters.reportDate" type="date" required /></label>
       <label><span>图表类型</span><select v-model="chartType"><option value="bar_line">柱线组合</option><option value="bar">柱状图</option><option value="line">折线图</option><option value="area">面积图</option></select></label>
@@ -189,7 +307,7 @@ onUnmounted(() => {
 
   <div v-if="error" class="global-error"><strong>操作未完成</strong><span>{{ error }}</span><button @click="error = ''">关闭</button></div>
   <section class="panel workshop-panel">
-    <div class="panel-title"><div><span>01</span><h2>{{ isWorker ? '待确认任务表' : '当日车间报表' }}</h2></div><p>{{ isWorker ? '只能确认尚未被其他工人确认的任务' : '工人确认后会在人员列自动显示' }}</p></div>
+    <div class="panel-title"><div><span>01</span><h2>{{ isWorker ? '待确认任务表' : '当日车间报表' }}</h2></div><p>{{ isWorker ? '只能确认尚未被其他工人确认的任务' : '已确认任务可撤销或改派' }}</p></div>
     <form class="workshop-filters" :class="{ manager: !isWorker }" @submit.prevent="load(1)">
       <label v-if="isWorker"><span>生产日期</span><input v-model="filters.reportDate" type="date" required /></label>
       <label><span>工程/船号</span><select v-model="filters.projectName" :disabled="!result.report"><option value="">全部</option><option v-for="name in result.project_names" :key="name" :value="name">{{ name }}</option></select></label>
@@ -213,7 +331,7 @@ onUnmounted(() => {
           <tr v-else-if="!result.items.length"><td colspan="11" class="table-empty">当前条件下暂无任务</td></tr>
           <tr v-for="(row, index) in result.items" v-else :key="row.task_id">
             <td>{{ (result.page - 1) * result.page_size + index + 1 }}</td><td>{{ display(row.project_code) }}</td><td>{{ display(row.ship_no) }}</td><td>{{ display(row.segment_name) }}</td><td class="program-cell" :title="display(row.program_no)">{{ display(row.program_no) }}</td><td>{{ number(row.cut_length) }}</td><td>{{ number(row.groove_length) }}</td><td class="duration-cell">{{ duration(row.work_time) }}</td><td class="time-cell">{{ time(row.production_time) }}</td>
-            <td class="confirm-cell"><span v-if="row.confirmed_by" class="confirmed-mark">✓ {{ row.confirmed_by }}<small>{{ time(row.confirmed_at) }}</small></span><button v-else-if="isWorker" type="button" :disabled="Boolean(confirmingId)" @click="confirm(row)"><span v-if="confirmingId === row.task_id" class="spinner dark" aria-hidden="true"></span>{{ confirmingId === row.task_id ? '确认中' : '确认是我完成' }}</button><span v-else class="pending-confirmation">待工人确认</span></td>
+            <td class="confirm-cell"><div v-if="row.confirmed_by" class="confirmation-person"><span class="confirmed-mark">✓ {{ row.confirmed_by }}<small>{{ time(row.confirmed_at) }}</small></span><button v-if="isOwnConfirmation(row)" type="button" class="correction-button" :disabled="correction.saving" @click="openCorrection(row)">撤销我的确认</button><button v-else-if="!isWorker" type="button" class="correction-button" :disabled="correction.saving" @click="openCorrection(row)">更正确认</button></div><button v-else-if="isWorker" type="button" :disabled="Boolean(confirmingId)" @click="confirm(row)"><span v-if="confirmingId === row.task_id" class="spinner dark" aria-hidden="true"></span>{{ confirmingId === row.task_id ? '确认中' : '确认是我完成' }}</button><span v-else class="pending-confirmation">待工人确认</span></td>
             <td>{{ display(row.remark) }}</td>
           </tr>
         </tbody>

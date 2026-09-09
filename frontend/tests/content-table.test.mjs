@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { readFileSync, readdirSync } from 'node:fs'
-import { contentFit, contentTable } from '../src/directives/contentTable.js'
+import { contentFit, contentTable, contentWidthUnits } from '../src/directives/contentTable.js'
 
 test('short numbers, empty fields and timestamps shrink to their content, not fixed proportions', () => {
   assert.equal(contentFit('序号', ['1', '100']), 'compact')
@@ -30,7 +30,30 @@ test('new rows reclassify a column; summary rows cannot distort sizing', () => {
   assert.deepEqual(summary.cells[0].dataset, {})
 })
 
-test('every Vue page table opts into native content sizing', () => {
+test('column proportions use every heading and cap long program columns', () => {
+  const columns = [
+    ['序号', ['1', '10']],
+    ['工程号', ['--']],
+    ['船号', ['--']],
+    ['分段名', ['--']],
+    ['程序号', ['A_10.00004.nrp2-S201C100A004']],
+    ['切割长度', ['161.248']],
+    ['坡口长度', ['0']],
+    ['切割时长', ['00:33:10']],
+    ['时间', ['2026-09-08 01:51']],
+    ['人', ['待工人确认']],
+    ['备注', ['--']],
+  ]
+  const units = columns.map(([label, values]) => contentWidthUnits(label, values))
+  const programIndex = columns.findIndex(([label]) => label === '程序号')
+  const programShare = units[programIndex] / units.reduce((sum, value) => sum + value, 0)
+
+  assert.ok(programShare > 0.15)
+  assert.ok(programShare < 0.24)
+  assert.ok(units[programIndex] > units[columns.findIndex(([label]) => label === '切割长度')])
+})
+
+test('every Vue page table opts into shared content sizing', () => {
   let count = 0
   for (const folder of ['views', 'components']) {
     const dir = new URL(`../src/${folder}/`, import.meta.url)
@@ -44,6 +67,8 @@ test('every Vue page table opts into native content sizing', () => {
   }
   assert.ok(count >= 14)
   const css = readFileSync(new URL('../src/assets/content-tables.css', import.meta.url), 'utf8')
-  assert.match(css, /table-layout:auto !important/)
-  assert.doesNotMatch(css, /table-layout:fixed|resize:|grid-template-columns/)
+  assert.match(css, /table\.content-table:not\(\.summary-table\)[\s\S]*--content-table-min-width[\s\S]*table-layout:fixed !important/)
+  assert.match(css, /table\.content-table\.summary-table[\s\S]*table-layout:fixed !important/)
+  assert.match(css, /table\.content-table thead th[\s\S]*text-align:center !important/)
+  assert.doesNotMatch(css, /resize:|grid-template-columns/)
 })

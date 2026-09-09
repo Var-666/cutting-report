@@ -26,17 +26,23 @@ test('source files are saved to the system and are not downloadable to the brows
   assert.match(downloads.template.content, /<th>版本 \/ 来源<\/th>/)
 })
 
-test('source files use a directory tree while downloaded records retain bounded sorting', () => {
+test('source and saved files use the same directory-tree interaction', () => {
   const source = descriptor('CuttingDispatchView')
   assert.match(source.template.content, /<CatalogTreeNode/)
   assert.doesNotMatch(source.template.content, /<SortBuilder|<ConditionBuilder/)
   const downloaded = descriptor('CuttingDownloadsPanel', 'components')
-  assert.match(downloaded.template.content, /<SortBuilder v-model="sort" :schema="conditionSchema"/)
-  assert.match(downloaded.scriptSetup.content, /appliedSort/)
-  const sort = descriptor('SortBuilder', 'components')
-  assert.match(sort.template.content, /添加排序/)
-  assert.match(sort.template.content, /value="asc"/)
-  assert.match(sort.template.content, /value="desc"/)
+  assert.match(downloaded.template.content, /<CatalogTreeNode/)
+  assert.match(downloaded.scriptSetup.content, /field: 'project_id'/)
+  assert.match(downloaded.scriptSetup.content, /field: 'catalog_id'/)
+  assert.match(downloaded.template.content, /全部已保存文件/)
+  assert.match(downloaded.scriptSetup.content, /selectedCatalog\.value\s*\?\s*\[\{ field: 'catalog_id'/)
+  assert.doesNotMatch(downloaded.template.content, /<SortBuilder|<ConditionBuilder|可增减条件/)
+})
+
+test('push page refreshes saved files whenever its cached view becomes active', () => {
+  const dispatch = descriptor('CuttingDispatchView')
+  assert.match(dispatch.scriptSetup.content, /onActivated\(async \(\) =>/)
+  assert.match(dispatch.scriptSetup.content, /await loadPushFiles\(\)/)
 })
 
 test('settings reuses the same compact navigation shell as reports', () => {
@@ -52,13 +58,11 @@ test('device report is one page with daily task and monthly daily tables', () =>
 
   assert.match(container.template.content, /<EnergyPeriodReportView[\s\S]*@export="exportReport"/)
   assert.doesNotMatch(container.template.content, /EquipmentReportView|reportTab|KeepAlive/)
-  assert.match(energy.template.content, /<section class="equipment-hero">/)
-  assert.match(energy.template.content, /class="equipment-query energy-period-query"/)
+  assert.match(energy.template.content, /<section class="report-hero equipment-hero">/)
+  assert.match(energy.template.content, /class="report-query equipment-query energy-period-query"/)
   assert.doesNotMatch(energy.template.content, /报表类型|任务生产报表|change-report-tab/)
   assert.match(energy.template.content, /<h2>设备报表<\/h2>/)
   assert.match(energy.template.content, /任务能耗明细/)
-  assert.match(energy.template.content, /每行一个任务/)
-  assert.match(energy.template.content, /按开始时间由近到远/)
   assert.match(energy.template.content, /<tfoot>[\s\S]*当日任务汇总/)
   assert.match(energy.template.content, /月度每日能耗汇总/)
   assert.match(energy.template.content, /aria-label="任务能耗明细表"/)
@@ -66,11 +70,73 @@ test('device report is one page with daily task and monthly daily tables', () =>
   assert.doesNotMatch(energy.template.content, /任务结束/)
   assert.doesNotMatch(energy.template.content, /数据状态/)
   assert.match(energy.template.content, /colspan="8" class="energy-empty"/)
-  assert.match(energy.template.content, /scope="row" colspan="5">当日任务汇总/)
+  assert.doesNotMatch(energy.template.content, /scope="row" colspan="5"/)
+  assert.match(energy.template.content, /<tfoot><tr><th aria-hidden="true"><\/th><th scope="row">当日任务汇总<\/th>/)
+  assert.equal((energy.template.content.match(/summary-table/g) || []).length, 2)
+  assert.match(energy.template.content, /<colgroup>[\s\S]*energy-col-start[\s\S]*<\/colgroup>/)
   assert.match(energy.scriptSetup.content, /import AnalysisPanel from '\.\.\/components\/AnalysisPanel\.vue'/)
   assert.match(energy.template.content, /<AnalysisPanel[\s\S]*report-type="equipment"/)
   assert.match(energy.template.content, /:ready="analysisReady"/)
   assert.equal((energy.template.content.match(/class="energy-period-split"/g) || []).length, 2)
+  const energyStyles = energy.styles.map((style) => style.content).join('\n')
+  assert.match(energyStyles, /\.energy-period-query\s*\{[^}]*display:grid;[^}]*grid-template-columns:160px 140px max-content 136px;/)
+  assert.doesNotMatch(energyStyles, /\.energy-period-query\s*\{[^}]*flex-wrap:wrap;/)
+})
+
+test('report tables with sticky summaries use explicit fixed column tracks', () => {
+  const leadership = descriptor('LeadershipReportView')
+  const energy = descriptor('EnergyPeriodReportView')
+  const contentCss = readFileSync(new URL('../src/assets/content-tables.css', import.meta.url), 'utf8')
+
+  assert.equal((leadership.template.content.match(/leadership-table summary-table/g) || []).length, 2)
+  assert.equal((leadership.template.content.match(/<colgroup>/g) || []).length, 2)
+  assert.equal((energy.template.content.match(/summary-table/g) || []).length, 2)
+  assert.match(contentCss, /scrollbar-gutter:stable/)
+})
+
+test('device report reuses the leadership report UI baseline', () => {
+  const leadership = descriptor('LeadershipReportView')
+  const energy = descriptor('EnergyPeriodReportView')
+  const energyStyles = energy.styles.map((style) => style.content).join('\n')
+
+  assert.match(leadership.template.content, /class="report-hero leadership-hero"/)
+  assert.match(leadership.template.content, /class="report-query month-query"/)
+  assert.match(energy.template.content, /class="report-hero equipment-hero"/)
+  assert.match(energy.template.content, /class="report-query equipment-query energy-period-query"/)
+  assert.equal((energy.template.content.match(/class="panel-title energy-section-heading"/g) || []).length, 2)
+  assert.match(energyStyles, /\.energy-period-chart\s*\{[^}]*height:300px;/)
+  assert.match(energyStyles, /\.energy-period-table-wrap\s*\{[^}]*height:300px;[^}]*max-height:300px;/)
+  assert.match(energyStyles, /\.energy-period-table thead th\s*\{[^}]*background:#0b4f76;/)
+  assert.match(energyStyles, /\.energy-period-table th,\.energy-period-table td\s*\{[^}]*height:47px;/)
+  assert.match(energyStyles, /@media \(max-width:560px\)\s*\{[^}]*\.energy-period-query,\.energy-stat-strip\s*\{\s*grid-template-columns:1fr;/)
+})
+
+test('workshop confirmations support own revocation and audited admin correction', () => {
+  const workshop = descriptor('WorkshopView')
+  const script = workshop.scriptSetup.content
+  const template = workshop.template.content
+
+  assert.match(script, /row\.confirmed_by_id === props\.user\.user_id/)
+  assert.match(script, /revokeWorkshopTask\(row\.task_id/)
+  assert.match(script, /correctWorkshopTask\(row\.task_id/)
+  assert.match(script, /listWorkshopConfirmationAudits/)
+  assert.match(template, /撤销我的确认/)
+  assert.match(template, /更正确认/)
+  assert.match(template, /更正原因/)
+  assert.match(template, /该任务的确认记录/)
+})
+
+test('intelligent analysis omits the analysis boundary section', () => {
+  const analysis = descriptor('AnalysisPanel', 'components')
+  assert.doesNotMatch(analysis.template.content, /分析边界|analysis\.limitations|analysis-limit/)
+})
+
+test('energy report omits calculation-method and complete-day explanations', () => {
+  const energy = descriptor('EnergyPeriodReportView')
+  const template = energy.template.content
+
+  assert.doesNotMatch(template, /完整|部分合计|energy_notice|storage_notice|energy-method-note/)
+  assert.doesNotMatch(template, /累计读数差值|采样规则|线性插值/)
 })
 
 test('file push uses downloaded-file parameters without a condition search', () => {

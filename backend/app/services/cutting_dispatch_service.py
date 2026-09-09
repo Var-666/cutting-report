@@ -69,6 +69,8 @@ STAGE_LABELS = {
     "cancelled": "已取消指派",
 }
 
+PUSH_FILE_SUFFIXES = frozenset({".gen", ".txt"})
+
 
 class CuttingDispatchService:
     def __init__(
@@ -237,8 +239,8 @@ class CuttingDispatchService:
                 raise CuttingDispatchError("系统已保存文件与PDM当前路径不一致，请重新保存")
         physical_suffix = (local_path if selected_download is not None else Path(file_item["normalized_path"])).suffix.lower()
         document_suffix = Path(str(file_item["document_no"])).suffix.lower()
-        if physical_suffix != ".gen" and document_suffix != ".gen":
-            raise CuttingDispatchError("当前阶段只允许创建.GEN文件派发任务")
+        if physical_suffix not in PUSH_FILE_SUFFIXES and document_suffix not in PUSH_FILE_SUFFIXES:
+            raise CuttingDispatchError("当前只允许创建.GEN或.TXT文件派发任务")
         existing = self.dispatches.find_active(document_id, file_item.get("version_id"), machine_ip)
         if existing:
             raise DuplicateDispatchError(existing)

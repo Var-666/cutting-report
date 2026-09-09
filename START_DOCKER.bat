@@ -25,11 +25,13 @@ if not exist ".env" (
     pause
     exit /b 0
 )
+set "WEB_PORT=8088"
+for /f "tokens=1,* delims==" %%A in ('findstr /b /i "DOCKER_PORT=" ".env"') do set "WEB_PORT=%%B"
 echo Building and starting cutting-report. The initial build needs Internet access.
 docker compose up -d --build --wait --wait-timeout 180
 if errorlevel 1 goto failed
 docker compose ps
-echo Open http://127.0.0.1:8000 or use the DOCKER_PORT configured in .env.
+echo Open http://127.0.0.1:%WEB_PORT% or http://SERVER-IP:%WEB_PORT% from the intranet.
 echo You can close this window. Docker keeps the application running.
 pause
 exit /b 0

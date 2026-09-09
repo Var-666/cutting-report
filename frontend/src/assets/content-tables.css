@@ -1,19 +1,26 @@
-/* Keep each page's colours, borders, alignment and chart/table arrangement.
-   Only column sizing is shared: native content-based layout, never equal widths. */
+/* Keep each page's colours, borders and chart/table arrangement. Column widths
+   come from the content-table directive and always add up to the full table. */
 table.content-table {
   width:100% !important;
-  min-width:0 !important;
   max-width:none !important;
-  table-layout:auto !important;
 }
-table.content-table col,
+table.content-table:not(.summary-table) {
+  min-width:max(100%,var(--content-table-min-width,640px)) !important;
+  table-layout:fixed !important;
+}
+table.content-table.summary-table {
+  table-layout:fixed !important;
+}
 table.content-table th,
 table.content-table td {
-  width:auto !important;
   min-width:0 !important;
   max-width:none !important;
 }
-table.content-table th { white-space:nowrap; }
+table.content-table thead th {
+  text-align:center !important;
+  vertical-align:middle;
+  white-space:nowrap;
+}
 table.content-table td {
   overflow:visible;
   white-space:normal;
@@ -26,8 +33,6 @@ table.content-table [data-content-fit='compact'] {
   white-space:nowrap !important;
 }
 table.content-table td[data-content-fit='text'] {
-  min-width:12ch !important;
-  max-width:42ch !important;
   white-space:normal !important;
 }
 table.content-table td :is(strong, small, code, .confirmed-mark) {
@@ -40,3 +45,4 @@ table.content-table td :is(strong, small, code, .confirmed-mark) {
 /* Contain narrow-screen overflow in the existing table scroll regions. */
 :is(.history-wrap,.workshop-table-wrap,.leadership-table-wrap,.energy-period-table-wrap,
     .dispatch-table-wrap,.download-table-wrap,.automation-table-wrap) { min-width:0; overflow-x:auto; }
+:is(.leadership-table-wrap,.energy-period-table-wrap) { scrollbar-gutter:stable; }

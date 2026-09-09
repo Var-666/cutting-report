@@ -87,7 +87,6 @@ watch(
       <div>
         <span class="analysis-kicker">AI REPORT ANALYSIS</span>
         <h2>智能分析</h2>
-        <p>基于当前报表数据生成，不影响表格和图表加载。</p>
       </div>
       <div class="analysis-actions">
         <span v-if="analysis" class="analysis-mode" :class="analysis.mode">
@@ -119,9 +118,6 @@ watch(
           <h3>{{ section.title }}</h3>
           <p><template v-for="(part, index) in analysisParts(analysis[section.key])" :key="`${section.key}-${index}`"><sup v-if="part.type === 'citation'" class="analysis-citation">{{ part.value }}</sup><span v-else>{{ part.value }}</span></template></p>
         </article>
-      </div>
-      <div v-if="analysis.limitations" class="analysis-limit">
-        <strong>分析边界</strong><span>{{ formatAnalysisText(analysis.limitations) }}</span>
       </div>
       <details v-if="analysis.facts?.length" class="analysis-evidence">
         <summary>查看可追溯数据依据（{{ analysis.facts.length }} 项）</summary>
@@ -161,8 +157,6 @@ watch(
 .analysis-grid h3 { margin:0 0 8px; color:#14597e; font-size:16px; }
 .analysis-grid p { margin:0; color:#34485b; line-height:1.75; white-space:pre-wrap; }
 .analysis-citation { display:inline-block; margin:0 2px; padding:1px 4px; color:#1b7188; border:1px solid #b8dbe3; border-radius:4px; background:#eef8fa; font-size:9px; font-weight:800; line-height:1.2; vertical-align:super; white-space:nowrap; }
-.analysis-limit { display:flex; gap:14px; margin:0 28px 18px; padding:13px 15px; color:#725116; background:#fff8e9; border-left:4px solid #d89a27; }
-.analysis-limit strong { flex-shrink:0; }
 .analysis-evidence { margin:0 28px 18px; border:1px solid #dce5ec; border-radius:8px; background:#fbfcfd; }
 .analysis-evidence summary { padding:13px 15px; color:#14597e; cursor:pointer; font-weight:700; }
 .evidence-list { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:1px; border-top:1px solid #dce5ec; background:#dce5ec; }
@@ -177,7 +171,6 @@ watch(
   .analysis-panel-head { align-items:flex-start; flex-direction:column; }
   .analysis-actions { width:100%; justify-content:space-between; }
   .analysis-grid { grid-template-columns:1fr; }
-  .analysis-limit { flex-direction:column; gap:4px; }
   .evidence-list { grid-template-columns:1fr; }
 }
 </style>

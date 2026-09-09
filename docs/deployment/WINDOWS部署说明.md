@@ -36,6 +36,8 @@ SQLSERVER_ENCRYPT=yes
 SQLSERVER_TRUST_SERVER_CERTIFICATE=yes
 SQLSERVER_QUERY_TIMEOUT_SECONDS=120
 LEADERSHIP_REPORT_CACHE_SECONDS=300
+LEADERSHIP_REPORT_HISTORY_CACHE_SECONDS=86400
+LEADERSHIP_REPORT_RECONCILE_HOUR=2
 REPORT_DATA_CACHE_SECONDS=300
 
 WORKER_DATABASE_AUTH_ENABLED=true
@@ -57,7 +59,7 @@ FILE_SQLSERVER_PASSWORD=PDM只读密码
 
 # 允许同一内网其他电脑访问；只允许服务器本机访问则写 127.0.0.1
 DOCKER_BIND_ADDRESS=0.0.0.0
-DOCKER_PORT=8000
+DOCKER_PORT=8088
 ```
 
 ### 2. 构建并启动
@@ -94,7 +96,7 @@ docker compose logs --tail 100 app
 健康状态应为 `healthy`。浏览器访问：
 
 ```text
-http://Windows服务器IP:8000
+http://Windows服务器IP:8088
 ```
 
 管理员也可在“设置 → 数据库配置”中修改三套数据库参数。界面会写入持久化卷中的 `data/settings.env`，不会覆盖部署目录原有的 `.env`；密码不会在页面回显。保存后执行以下命令重启即可生效：

@@ -60,11 +60,11 @@ def test_three_report_types_get_distinct_simulated_analysis(tmp_path: Path) -> N
     assert "工程" in leadership_analysis.features
     assert "确认率" in workshop_analysis.features
     assert "未完成工人确认" in workshop_analysis.alerts
-    assert "模拟数据" in equipment_analysis.limitations
     assert "不进行能耗异常判定" in equipment_analysis.features
     assert "能耗数据待核对" in equipment_analysis.alerts
     assert leadership_analysis.overview != workshop_analysis.overview
     assert workshop_analysis.overview != equipment_analysis.overview
+    assert not hasattr(equipment_analysis, "limitations")
     assert all(result.facts for result in (
         leadership_analysis,
         workshop_analysis,

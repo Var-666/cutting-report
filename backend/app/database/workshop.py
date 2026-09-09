@@ -26,6 +26,14 @@ class ConfirmationConflictError(ValueError):
     pass
 
 
+class ConfirmationNotFoundError(ValueError):
+    pass
+
+
+class ConfirmationPermissionError(ValueError):
+    pass
+
+
 class DailyReportExistsError(ValueError):
     pass
 
@@ -180,7 +188,32 @@ class WorkshopRepository(SQLiteRepository):
             connection.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_workshop_confirmations_report
-                ON workshop_confirmations(report_id, confirmed_at DESC)
+                    ON workshop_confirmations(report_id, confirmed_at DESC)
+                """
+            )
+            connection.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS workshop_confirmation_audits (
+                    audit_id TEXT PRIMARY KEY,
+                    task_id TEXT NOT NULL,
+                    report_id TEXT,
+                    action TEXT NOT NULL CHECK(action IN (
+                        'confirm', 'worker_revoke', 'admin_revoke', 'admin_reassign'
+                    )),
+                    previous_worker_id TEXT,
+                    previous_worker_name TEXT,
+                    new_worker_id TEXT,
+                    new_worker_name TEXT,
+                    reason TEXT NOT NULL,
+                    operated_by_id TEXT NOT NULL,
+                    operated_by_name TEXT NOT NULL,
+                    operated_by_role TEXT NOT NULL,
+                    operated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_workshop_confirmation_audits_task
+                    ON workshop_confirmation_audits(task_id, operated_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_workshop_confirmation_audits_report
+                    ON workshop_confirmation_audits(report_id, operated_at DESC);
                 """
             )
 
@@ -645,6 +678,7 @@ class WorkshopRepository(SQLiteRepository):
                         if row["production_time"]
                         else None
                     ),
+                    confirmed_by_id=confirmation["worker_id"] if confirmation else None,
                     confirmed_by=confirmation["worker_name"] if confirmation else None,
                     confirmed_at=(
                         datetime.fromisoformat(confirmation["confirmed_at"])
@@ -715,7 +749,208 @@ class WorkshopRepository(SQLiteRepository):
                     now,
                 ),
             )
+            self._insert_confirmation_audit(
+                connection,
+                task_id=task_id,
+                report_id=report_id,
+                action="confirm",
+                previous=None,
+                new_worker=user,
+                reason="工人确认本人完成任务",
+                operator=user,
+                now=now,
+            )
             row = connection.execute(
                 "SELECT * FROM workshop_confirmations WHERE task_id = ?", (task_id,)
             ).fetchone()
         return dict(row)
+
+    @staticmethod
+    def _insert_confirmation_audit(
+        connection: sqlite3.Connection,
+        *,
+        task_id: str,
+        report_id: str | None,
+        action: str,
+        previous: sqlite3.Row | dict[str, Any] | None,
+        new_worker: dict[str, Any] | None,
+        reason: str,
+        operator: dict[str, Any],
+        now: str,
+    ) -> str:
+        audit_id = f"wca_{uuid4().hex[:16]}"
+        connection.execute(
+            """
+            INSERT INTO workshop_confirmation_audits (
+                audit_id, task_id, report_id, action,
+                previous_worker_id, previous_worker_name,
+                new_worker_id, new_worker_name, reason,
+                operated_by_id, operated_by_name, operated_by_role, operated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                audit_id,
+                task_id,
+                report_id,
+                action,
+                previous["worker_id"] if previous else None,
+                previous["worker_name"] if previous else None,
+                new_worker["user_id"] if new_worker else None,
+                new_worker["display_name"] if new_worker else None,
+                reason.strip(),
+                operator["user_id"],
+                operator["display_name"],
+                operator["role"],
+                now,
+            ),
+        )
+        return audit_id
+
+    @staticmethod
+    def _audit_dict(row: sqlite3.Row) -> dict[str, Any]:
+        labels = {
+            "confirm": "确认任务",
+            "worker_revoke": "工人撤销",
+            "admin_revoke": "管理员撤销",
+            "admin_reassign": "管理员改派",
+        }
+        result = dict(row)
+        result["action_label"] = labels.get(result["action"], result["action"])
+        return result
+
+    def revoke_confirmation(
+        self,
+        *,
+        task_id: str,
+        report_id: str,
+        user: dict[str, Any],
+        reason: str,
+        now: str,
+    ) -> dict[str, Any]:
+        with self.connect() as connection:
+            self.begin_immediate(connection)
+            existing = connection.execute(
+                "SELECT * FROM workshop_confirmations WHERE task_id = ?", (task_id,)
+            ).fetchone()
+            if existing is None:
+                raise ConfirmationNotFoundError("该任务尚未确认或已被撤销")
+            if existing["worker_id"] != user["user_id"]:
+                raise ConfirmationPermissionError("只能撤销本人的确认记录")
+            audit_id = self._insert_confirmation_audit(
+                connection,
+                task_id=task_id,
+                report_id=existing["report_id"] or report_id,
+                action="worker_revoke",
+                previous=existing,
+                new_worker=None,
+                reason=reason,
+                operator=user,
+                now=now,
+            )
+            connection.execute(
+                "DELETE FROM workshop_confirmations WHERE task_id = ?", (task_id,)
+            )
+            row = connection.execute(
+                "SELECT * FROM workshop_confirmation_audits WHERE audit_id = ?",
+                (audit_id,),
+            ).fetchone()
+        return self._audit_dict(row)
+
+    def correct_confirmation(
+        self,
+        *,
+        task_id: str,
+        report_id: str,
+        admin: dict[str, Any],
+        reason: str,
+        now: str,
+        new_worker_id: str | None = None,
+    ) -> dict[str, Any]:
+        with self.connect() as connection:
+            self.begin_immediate(connection)
+            existing = connection.execute(
+                "SELECT * FROM workshop_confirmations WHERE task_id = ?", (task_id,)
+            ).fetchone()
+            if existing is None:
+                raise ConfirmationNotFoundError("该任务尚未确认或已被撤销")
+
+            new_worker = None
+            action = "admin_revoke"
+            if new_worker_id:
+                target = connection.execute(
+                    "SELECT * FROM users WHERE user_id = ? AND role = 'worker' AND active = 1",
+                    (new_worker_id,),
+                ).fetchone()
+                if target is None:
+                    raise ValueError("目标工人不存在或账号已停用")
+                if target["user_id"] == existing["worker_id"]:
+                    raise ConfirmationConflictError("目标工人与当前确认人相同")
+                new_worker = self._public_user(target)
+                action = "admin_reassign"
+
+            audit_id = self._insert_confirmation_audit(
+                connection,
+                task_id=task_id,
+                report_id=existing["report_id"] or report_id,
+                action=action,
+                previous=existing,
+                new_worker=new_worker,
+                reason=reason,
+                operator=admin,
+                now=now,
+            )
+            if new_worker:
+                connection.execute(
+                    """
+                    UPDATE workshop_confirmations
+                    SET report_id = ?, worker_id = ?, worker_name = ?,
+                        confirmed_at = ?, updated_at = ?
+                    WHERE task_id = ?
+                    """,
+                    (
+                        existing["report_id"] or report_id,
+                        new_worker["user_id"],
+                        new_worker["display_name"],
+                        now,
+                        now,
+                        task_id,
+                    ),
+                )
+            else:
+                connection.execute(
+                    "DELETE FROM workshop_confirmations WHERE task_id = ?", (task_id,)
+                )
+            row = connection.execute(
+                "SELECT * FROM workshop_confirmation_audits WHERE audit_id = ?",
+                (audit_id,),
+            ).fetchone()
+        return self._audit_dict(row)
+
+    def list_confirmation_audits(
+        self,
+        *,
+        task_id: str | None = None,
+        report_id: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if task_id:
+            clauses.append("task_id = ?")
+            params.append(task_id)
+        if report_id:
+            clauses.append("report_id = ?")
+            params.append(report_id)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(limit)
+        with self.connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT * FROM workshop_confirmation_audits
+                {where}
+                ORDER BY operated_at DESC, audit_id DESC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+        return [self._audit_dict(row) for row in rows]

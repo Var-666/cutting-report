@@ -22,7 +22,7 @@ from app.services.llm_service import LlmService
 
 
 logger = logging.getLogger(__name__)
-PROMPT_VERSION = "report-analysis-v5-six-facts"
+PROMPT_VERSION = "report-analysis-v6-six-facts-no-boundary"
 
 
 def _duration(value: Decimal | int | float) -> str:
@@ -156,10 +156,6 @@ class ReportAnalysisService:
                 result = simulator(primitive_context)
                 result.status = "degraded"
                 result.mode = "simulated_fallback"
-                result.limitations = (
-                    "真实模型服务本次不可用，当前展示规则化模拟分析。"
-                    + (f" {result.limitations}" if result.limitations else "")
-                )
                 mode = "simulated_fallback"
         else:
             result = simulator(primitive_context)
@@ -243,7 +239,6 @@ class ReportAnalysisService:
             },
             "project_distribution": projects,
             "anomalies": daily_anomalies,
-            "limitations": "未提供生产计划、产能目标、停机和班次数据，不能判断计划达成率。",
         }
         return self._analyze(
             report_type="leadership",
@@ -263,7 +258,6 @@ class ReportAnalysisService:
             features=f"任务数同比：{fact['F005']} [F005]。主要工程：{fact['F006']} [F006]。",
             alerts="任务数和切割长度反映生产规模，不能直接等同于产能利用率或计划达成率 [F001][F002]。",
             suggestions="建议结合任务量变化与主要工程，核对生产计划和资源安排 [F004][F005][F006]。",
-            limitations=context["limitations"],
         )
 
     def analyze_workshop(
@@ -313,7 +307,6 @@ class ReportAnalysisService:
             },
             "project_distribution": projects[:10],
             "anomalies": anomalies,
-            "limitations": "未提供班组、计划工期、人员排班和质量结果，不能据此评价个人绩效。",
         }
         return self._analyze(
             report_type="workshop",
@@ -333,7 +326,6 @@ class ReportAnalysisService:
             features=f"当前工人确认率：{fact['F004']} [F004]。切割长度与时长应结合任务类型评价 [F002][F003]。",
             alerts=f"检出工时异常任务 {fact['F006']} [F006]；仍有 {fact['F005']} 未完成工人确认 [F005]。",
             suggestions="建议优先完成未确认任务，并结合程序、材料和现场记录复核工时异常任务 [F005][F006]。",
-            limitations=context["limitations"],
         )
 
     def analyze_equipment(
@@ -414,7 +406,6 @@ class ReportAnalysisService:
                 "sampling_issue": sampling_issue_count,
                 "invalid_interval": invalid_interval_count,
             },
-            "energy_notice": energy_notice,
             "comparisons": {
                 "comparison_date": comparison_date,
                 "task_change_percent": round(task_change, 2) if task_change is not None else None,
@@ -423,11 +414,6 @@ class ReportAnalysisService:
             },
             "project_distribution": projects[:10],
             "anomalies": anomalies,
-            "limitations": (
-                "气耗和电耗为模拟数据，不能用于能耗异常、设备故障、结算或考核判断。"
-                if energy_data_mode == "mock"
-                else (energy_notice + " 缺失读数不等于零，部分记录汇总不代表设备全天总量；插值为估算，不能据此做结算或能耗异常判断。未提供设备额定参数、负载、停机和维修记录。")
-            ),
         }
         return self._analyze(
             report_type="equipment",
@@ -460,5 +446,4 @@ class ReportAnalysisService:
             features=energy_note,
             alerts=f"检出工时异常任务 {fact['F005']} [F005]；能耗数据待核对任务 {fact['F006']} [F006]。",
             suggestions=f"建议{recommendation}，并核对工时异常任务的现场记录 [F005][F006]。",
-            limitations=context["limitations"],
         )

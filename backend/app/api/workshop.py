@@ -5,12 +5,14 @@ from typing import Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator, model_validator
 
-from app.api.auth import require_user, require_worker
+from app.api.auth import require_admin, require_user, require_worker
 from app.config import settings
 from app.database.workshop import (
     ConfirmationConflictError,
+    ConfirmationNotFoundError,
+    ConfirmationPermissionError,
     DailyReportExistsError,
 )
 from app.models.domain import to_primitive
@@ -21,6 +23,31 @@ router = APIRouter(prefix="/api/v1/workshop", tags=["workshop-confirmation"])
 
 class ConfirmTaskRequest(BaseModel):
     report_date: date
+
+
+class RevokeTaskRequest(ConfirmTaskRequest):
+    reason: str = Field(min_length=2, max_length=200)
+
+    @field_validator("reason")
+    @classmethod
+    def strip_reason(cls, value: str) -> str:
+        cleaned = value.strip()
+        if len(cleaned) < 2:
+            raise ValueError("请填写至少 2 个字的原因")
+        return cleaned
+
+
+class CorrectTaskRequest(RevokeTaskRequest):
+    action: Literal["revoke", "reassign"]
+    worker_id: str | None = Field(default=None, max_length=64)
+
+    @model_validator(mode="after")
+    def validate_target_worker(self):
+        if self.action == "reassign" and not self.worker_id:
+            raise ValueError("改派时必须选择目标工人")
+        if self.action == "revoke":
+            self.worker_id = None
+        return self
 
 
 def _envelope(request: Request, data: object) -> dict:
@@ -207,3 +234,82 @@ def confirm_task(
     except ConfirmationConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return _envelope(request, confirmation)
+
+
+@router.post("/tasks/{task_id}/revoke")
+def revoke_task_confirmation(
+    task_id: str,
+    payload: RevokeTaskRequest,
+    request: Request,
+    user: dict = Depends(require_worker),
+) -> dict:
+    report, records = _records_for_date(request, payload.report_date)
+    if report is None:
+        raise HTTPException(status_code=404, detail="当日车间报表尚未生成")
+    if not any(row.task_id == task_id for row in records):
+        raise HTTPException(status_code=404, detail="当日车间报表中没有找到该任务")
+    now = datetime.now(ZoneInfo(settings.timezone)).isoformat(timespec="seconds")
+    try:
+        audit = request.app.state.workshop.revoke_confirmation(
+            task_id=task_id,
+            report_id=report["report_id"],
+            user=user,
+            reason=payload.reason,
+            now=now,
+        )
+    except ConfirmationNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ConfirmationPermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    return _envelope(request, audit)
+
+
+@router.post("/tasks/{task_id}/correct")
+def correct_task_confirmation(
+    task_id: str,
+    payload: CorrectTaskRequest,
+    request: Request,
+    admin: dict = Depends(require_admin),
+) -> dict:
+    report, records = _records_for_date(request, payload.report_date)
+    if report is None:
+        raise HTTPException(status_code=404, detail="当日车间报表尚未生成")
+    if not any(row.task_id == task_id for row in records):
+        raise HTTPException(status_code=404, detail="当日车间报表中没有找到该任务")
+    now = datetime.now(ZoneInfo(settings.timezone)).isoformat(timespec="seconds")
+    try:
+        audit = request.app.state.workshop.correct_confirmation(
+            task_id=task_id,
+            report_id=report["report_id"],
+            admin=admin,
+            reason=payload.reason,
+            now=now,
+            new_worker_id=payload.worker_id,
+        )
+    except ConfirmationNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (ConfirmationConflictError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _envelope(request, audit)
+
+
+@router.get("/confirmation-audits")
+def list_confirmation_audits(
+    request: Request,
+    report_date: date | None = None,
+    task_id: str | None = Query(default=None, max_length=128),
+    limit: int = Query(default=30, ge=1, le=100),
+    _: dict = Depends(require_admin),
+) -> dict:
+    report_id = None
+    if report_date:
+        report = request.app.state.workshop.get_daily_report(report_date.isoformat())
+        if report is None:
+            return _envelope(request, {"items": []})
+        report_id = report["report_id"]
+    items = request.app.state.workshop.list_confirmation_audits(
+        task_id=task_id,
+        report_id=report_id,
+        limit=limit,
+    )
+    return _envelope(request, {"items": items})

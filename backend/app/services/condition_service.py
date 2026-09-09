@@ -101,6 +101,8 @@ def fields_for(dataset, settings=None):
         )
     if dataset == "cutting_downloads":
         return (
+            FieldSpec("project_id", "项目ID", "text", "json_extract(payload, '$.project_id')"),
+            FieldSpec("catalog_id", "目录ID", "text", "json_extract(payload, '$.catalog_id')"),
             FieldSpec("filename", "系统文件名", "text", "json_extract(payload, '$.filename')"),
             FieldSpec("document_no", "文档名称", "text", "json_extract(payload, '$.document_no')"),
             FieldSpec("version", "版本", "text", "json_extract(payload, '$.version')"),

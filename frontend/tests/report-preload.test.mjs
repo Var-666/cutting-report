@@ -86,23 +86,32 @@ test('different accounts do not reuse the previous account report cache', async 
   assert.equal(calls.filter((c) => c.url.includes('leadership-report')).length, 2)
 })
 
-test('explicit refresh bypasses preload; daily snapshots invalidate monthly totals', async () => {
+test('leadership refresh is an explicit background request; daily snapshots invalidate monthly totals', async () => {
   const calls = mockApi()
   await startReportPreload(admin)
-  await api.getLeadershipReport(month, { force: true })
+  await api.refreshLeadershipReport(month)
   await api.getEnergyDay(today, { force: true })
   await api.getEnergyMonth(month)
   assert.equal(calls.filter((c) => c.url.includes('leadership-report')).length, 2)
+  assert.equal(calls.find((c) => c.url.endsWith('leadership-report/refresh')).options.method, 'POST')
   assert.equal(calls.filter((c) => c.url.includes('energy-report/month')).length, 2)
-  assert.equal(calls.filter((c) => c.url.includes('refresh=true')).length, 2)
+  assert.equal(calls.filter((c) => c.url.includes('refresh=true')).length, 1)
 })
 
-test('new confirmations invalidate cached workshop rows', async () => {
+test('confirmation, revocation and correction invalidate cached workshop rows', async () => {
   const calls = mockApi()
   await startReportPreload({ user_id: 'worker-1', role: 'worker' })
   await api.confirmWorkshopTask('task-1', today)
   await api.listWorkshopTasks({ reportDate: today, sortMode: 'worker' })
-  assert.equal(calls.filter((c) => c.url.includes('/workshop/tasks?')).length, 2)
+  await api.revokeWorkshopTask('task-1', today, '误确认')
+  await api.listWorkshopTasks({ reportDate: today, sortMode: 'worker' })
+  await api.correctWorkshopTask('task-1', { reportDate: today, action: 'reassign', workerId: 'worker-2', reason: '现场更正' })
+  await api.listWorkshopTasks({ reportDate: today, sortMode: 'worker' })
+  assert.equal(calls.filter((c) => c.url.includes('/workshop/tasks?')).length, 4)
+  const revoke = calls.find((c) => c.url.endsWith('/workshop/tasks/task-1/revoke'))
+  const correction = calls.find((c) => c.url.endsWith('/workshop/tasks/task-1/correct'))
+  assert.equal(JSON.parse(revoke.options.body).reason, '误确认')
+  assert.equal(JSON.parse(correction.options.body).worker_id, 'worker-2')
 })
 
 test('login and restored sessions start background loading without waiting for report or health', async () => {

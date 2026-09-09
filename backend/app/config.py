@@ -64,6 +64,12 @@ class Settings:
     leadership_report_cache_seconds: int = _as_int(
         "LEADERSHIP_REPORT_CACHE_SECONDS", 300
     )
+    leadership_report_history_cache_seconds: int = _as_int(
+        "LEADERSHIP_REPORT_HISTORY_CACHE_SECONDS", 86400
+    )
+    leadership_report_reconcile_hour: int = _as_int(
+        "LEADERSHIP_REPORT_RECONCILE_HOUR", 2
+    )
     report_data_cache_seconds: int = _as_int("REPORT_DATA_CACHE_SECONDS", 300)
 
     # 能管平台只读接入。仪表绑定、计量边界和单位必须由现场确认。

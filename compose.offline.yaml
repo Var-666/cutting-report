@@ -1,0 +1,7 @@
+services:
+  app:
+    pull_policy: never
+    volumes:
+      - ./backend:/app/backend:ro
+      - ./frontend/dist:/app/frontend/dist:ro
+      - ./vendor:/app/vendor:ro

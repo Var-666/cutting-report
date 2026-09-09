@@ -95,6 +95,25 @@ export function confirmWorkshopTask(taskId, reportDate) {
   }).then((data) => { reportCache.invalidate('workshop:tasks:'); return data })
 }
 
+export function revokeWorkshopTask(taskId, reportDate, reason) {
+  return request(`/api/v1/workshop/tasks/${encodeURIComponent(taskId)}/revoke`, {
+    method: 'POST',
+    body: JSON.stringify({ report_date: reportDate, reason }),
+  }).then((data) => { reportCache.invalidate('workshop:tasks:'); return data })
+}
+
+export function correctWorkshopTask(taskId, { reportDate, action, workerId = null, reason }) {
+  return request(`/api/v1/workshop/tasks/${encodeURIComponent(taskId)}/correct`, {
+    method: 'POST',
+    body: JSON.stringify({ report_date: reportDate, action, worker_id: workerId, reason }),
+  }).then((data) => { reportCache.invalidate('workshop:tasks:'); return data })
+}
+
+export function listWorkshopConfirmationAudits({ reportDate, taskId, limit = 30 }) {
+  const query = new URLSearchParams({ report_date: reportDate, task_id: taskId, limit })
+  return request(`/api/v1/workshop/confirmation-audits?${query}`)
+}
+
 export function createReport(form) {
   return request('/api/v1/reports', {
     method: 'POST',
@@ -158,8 +177,17 @@ export function listAlarmReports({ limit = 50 } = {}) {
 
 export function getLeadershipReport(reportMonth, { force = false, signal } = {}) {
   const query = new URLSearchParams({ report_month: reportMonth })
-  if (force) query.set('refresh', 'true')
-  return reportCache.read(`leadership:${reportMonth}`, (signal) => request(`/api/v1/leadership-report?${query}`, { signal }), { ttl: 300000, force, signal })
+  return reportCache.read(`leadership:${reportMonth}`, (signal) => request(`/api/v1/leadership-report?${query}`, { signal }), { ttl: 30000, force, signal })
+}
+
+export function refreshLeadershipReport(reportMonth) {
+  return request('/api/v1/leadership-report/refresh', {
+    method: 'POST',
+    body: JSON.stringify({ report_month: reportMonth }),
+  }).then((data) => {
+    reportCache.invalidate(`leadership:${reportMonth}`)
+    return data
+  })
 }
 
 export function getEquipmentReport(reportDate = '', { force = false } = {}) {
@@ -252,10 +280,6 @@ export function getCuttingStatus() {
   return request('/api/v1/cutting/status')
 }
 
-export function getConditionSchema(dataset) {
-  return request(`/api/v1/conditions/${encodeURIComponent(dataset)}/schema`)
-}
-
 export function searchCuttingDownloads(filters, { page = 1, pageSize = 10, sort = [] } = {}) {
   return request('/api/v1/cutting/downloads/search', { method: 'POST', body: JSON.stringify({ filters, page, page_size: pageSize, sort }) })
 }
@@ -268,7 +292,7 @@ export function listCuttingDownloads({ page = 1, pageSize = 10 } = {}) {
   return request(`/api/v1/cutting/downloads?${new URLSearchParams({ page, page_size: pageSize })}`)
 }
 
-export function listCuttingProjects(keyword = '', limit = 20) {
+export function listCuttingProjects(keyword = '', limit = 100) {
   const query = new URLSearchParams({ limit: String(limit) })
   if (keyword) query.set('keyword', keyword)
   return request(`/api/v1/cutting/projects?${query}`)

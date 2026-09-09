@@ -97,7 +97,7 @@ def test_demo_pipeline_generates_offline_report(
     assert "report-printing" in html
     assert '"areaStyle"' in html
     assert "模拟大模型分析" in html
-    assert "分析边界" in html
+    assert "分析边界" not in html
     assert html.count('class="analysis-fact"') == 6
     if report_type in {"workshop", "equipment"}:
         assert 'class="screen-only"' in html
@@ -113,6 +113,9 @@ def test_demo_pipeline_generates_offline_report(
         assert "任务开始" in html
         assert "任务结束" not in html
         assert "数据状态" not in html
+        assert "完整全天" not in html
+        assert "采样规则切换" not in html
+        assert "边界非采样时刻" not in html
         assert "气耗" in html
         assert "电耗" in html
         assert "月度每日能耗汇总" in html
