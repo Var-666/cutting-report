@@ -21,11 +21,12 @@ const modeLabel = computed(() => {
 })
 
 function formatAnalysisText(value) {
-  return String(value ?? '').replace(/-?\d[\d,]*\.\d{4,}/g, (raw) => {
+  return String(value ?? '').replace(/-?\d[\d,]*\.\d{2,}/g, (raw) => {
     const numeric = Number(raw.replaceAll(',', ''))
     if (!Number.isFinite(numeric)) return raw
     return new Intl.NumberFormat('zh-CN', {
-      maximumFractionDigits: 3,
+      minimumFractionDigits: 1,
+      maximumFractionDigits: 1,
       useGrouping: raw.includes(','),
     }).format(numeric)
   })

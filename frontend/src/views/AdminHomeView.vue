@@ -43,7 +43,7 @@ const statusText = {
   failed: '失败',
 }
 
-function formatNumber(value, digits = 3) {
+function formatNumber(value, digits = 1) {
   return new Intl.NumberFormat('zh-CN', {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,

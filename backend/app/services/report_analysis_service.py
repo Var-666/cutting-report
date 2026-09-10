@@ -22,7 +22,7 @@ from app.services.llm_service import LlmService
 
 
 logger = logging.getLogger(__name__)
-PROMPT_VERSION = "report-analysis-v6-six-facts-no-boundary"
+PROMPT_VERSION = "report-analysis-v7-one-decimal"
 
 
 def _duration(value: Decimal | int | float) -> str:
@@ -32,7 +32,7 @@ def _duration(value: Decimal | int | float) -> str:
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 
-def _number(value: Decimal | int | float, digits: int = 3) -> str:
+def _number(value: Decimal | int | float, digits: int = 1) -> str:
     return f"{float(value or 0):,.{digits}f}"
 
 
@@ -53,7 +53,7 @@ def _round_context_numbers(value):
     if isinstance(value, list):
         return [_round_context_numbers(item) for item in value]
     if isinstance(value, float):
-        return round(value, 3)
+        return round(value, 1)
     return value
 
 
@@ -97,7 +97,7 @@ def _work_time_outliers(
             "program_no": getattr(row, "program_no", None),
             "project_name": row.project_code or row.ship_no or "未标注工程",
             "work_time": float(row.work_time or 0),
-            "threshold": round(threshold, 2),
+            "threshold": round(threshold, 1),
         }
         for row in sorted(valid, key=lambda item: item.work_time or 0, reverse=True)
         if float(row.work_time or 0) > threshold
@@ -225,7 +225,7 @@ class ReportAnalysisService:
                 {
                     "date": item.period_start.isoformat(),
                     "task_count": item.task_count,
-                    "threshold": round(threshold, 2),
+                    "threshold": round(threshold, 1),
                 }
                 for item in report.daily_records
                 if deviation > 0 and item.task_count > threshold
@@ -234,17 +234,17 @@ class ReportAnalysisService:
             _fact("F001", f"{period_name}任务数", f"{current.task_count} 项", f"{period_name}汇总.task_count"),
             _fact("F002", f"{period_name}切割长度", f"{_number(current.cut_length_m)} 米", f"{period_name}汇总.cut_length_m"),
             _fact("F003", f"{period_name}切割时长", _duration(current.work_time_seconds), f"{period_name}汇总.work_time_seconds"),
-            _fact("F004", "任务数环比", f"{month_change:+.2f}%" if month_change is not None else "无法比较（对比区间数据缺失或任务数为零）", f"({period_name}任务数-前一等长区间任务数)/前一等长区间任务数" if range_mode else "(当月任务数-上月任务数)/上月任务数"),
-            _fact("F005", "任务数同比", f"{year_change:+.2f}%" if year_change is not None else "无法比较（上年同月数据缺失或任务数为零）", "(当月任务数-上年同月任务数)/上年同月任务数"),
-            _fact("F006", "主要工程", f"{projects[0]['project_name']}（{projects[0]['task_count']} 项，占 {projects[0]['task_count'] / current.task_count * 100:.2f}%）" if projects and current.task_count else "暂无工程数据", "当月工程分布中任务最多工程及其任务数/当月任务数"),
+            _fact("F004", "任务数环比", f"{month_change:+.1f}%" if month_change is not None else "无法比较（对比区间数据缺失或任务数为零）", f"({period_name}任务数-前一等长区间任务数)/前一等长区间任务数" if range_mode else "(当月任务数-上月任务数)/上月任务数"),
+            _fact("F005", "任务数同比", f"{year_change:+.1f}%" if year_change is not None else "无法比较（上年同月数据缺失或任务数为零）", "(当月任务数-上年同月任务数)/上年同月任务数"),
+            _fact("F006", "主要工程", f"{projects[0]['project_name']}（{projects[0]['task_count']} 项，占 {projects[0]['task_count'] / current.task_count * 100:.1f}%）" if projects and current.task_count else "暂无工程数据", "当月工程分布中任务最多工程及其任务数/当月任务数"),
         ]
         context = {
             "facts": facts,
             "report_month": period_label,
             "comparisons": {
-                "task_mom_percent": round(month_change, 2) if month_change is not None else None,
-                "cut_length_mom_percent": round(length_month_change, 2) if length_month_change is not None else None,
-                "task_yoy_percent": round(year_change, 2) if year_change is not None else None,
+                "task_mom_percent": round(month_change, 1) if month_change is not None else None,
+                "cut_length_mom_percent": round(length_month_change, 1) if length_month_change is not None else None,
+                "task_yoy_percent": round(year_change, 1) if year_change is not None else None,
             },
             "project_distribution": projects,
             "anomalies": daily_anomalies,
@@ -299,20 +299,20 @@ class ReportAnalysisService:
             _fact("F001", "任务总数", f"{len(records)} 项", f"车间日报[{report_date}].任务数"),
             _fact("F002", "总切割长度", f"{_number(total_cut)} 米", f"车间日报[{report_date}].cut_length 汇总"),
             _fact("F003", "总切割时长", _duration(total_work), f"车间日报[{report_date}].work_time 汇总"),
-            _fact("F004", "工人确认率", f"{confirmed / len(records) * 100:.2f}%" if records else "暂无任务", "已确认任务/任务总数"),
+            _fact("F004", "工人确认率", f"{confirmed / len(records) * 100:.1f}%" if records else "暂无任务", "已确认任务/任务总数"),
             _fact("F005", "未确认任务", f"{len(records) - confirmed} 项", "任务总数-已确认任务"),
             _fact("F006", "工时异常任务", f"{len(anomalies)} 项", "work_time > Q3 + 1.5×IQR（最多列出5项）"),
         ]
         context = {
             "facts": facts,
             "report_date": report_date,
-            "confirmation_rate": round(confirmed / len(records) * 100, 2) if records else 0,
+            "confirmation_rate": round(confirmed / len(records) * 100, 1) if records else 0,
             "comparisons": {
                 "comparison_date": comparison_date,
-                "task_change_percent": round(task_change, 2) if task_change is not None else None,
-                "cut_length_change_percent": round(cut_change, 2) if cut_change is not None else None,
+                "task_change_percent": round(task_change, 1) if task_change is not None else None,
+                "cut_length_change_percent": round(cut_change, 1) if cut_change is not None else None,
                 "year_ago_date": year_ago_date,
-                "task_yoy_percent": round(year_change, 2) if year_change is not None else None,
+                "task_yoy_percent": round(year_change, 1) if year_change is not None else None,
             },
             "project_distribution": projects[:10],
             "anomalies": anomalies,
@@ -417,9 +417,9 @@ class ReportAnalysisService:
             },
             "comparisons": {
                 "comparison_date": comparison_date,
-                "task_change_percent": round(task_change, 2) if task_change is not None else None,
+                "task_change_percent": round(task_change, 1) if task_change is not None else None,
                 "year_ago_date": year_ago_date,
-                "task_yoy_percent": round(year_change, 2) if year_change is not None else None,
+                "task_yoy_percent": round(year_change, 1) if year_change is not None else None,
             },
             "project_distribution": projects[:10],
             "anomalies": anomalies,

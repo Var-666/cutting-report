@@ -50,7 +50,7 @@ const equipmentScopeLabel = computed(() => taskDay.value?.equipment_scope?.join(
 const configurationError = computed(() => taskDay.value?.configuration_error || '')
 const analysisReady = computed(() => Boolean(taskDay.value && periodStart.value === periodEnd.value && !loading.value))
 
-function format(value, digits = 3) {
+function format(value, digits = 1) {
   if (value === null || value === undefined || !Number.isFinite(Number(value))) return '--'
   return new Intl.NumberFormat('zh-CN', { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(Number(value))
 }
@@ -63,6 +63,10 @@ function duration(value) {
 
 function dateTime(value) { return value ? String(value).replace('T', ' ').slice(0, 19) : '--' }
 function valueText(item) { return format(item?.value) }
+function chartValue(value) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return null
+  return Number(Number(value).toFixed(1))
+}
 
 function chartOption(rows, labels) {
   const line = chartType.value === 'line'
@@ -76,8 +80,8 @@ function chartOption(rows, labels) {
       { type: 'value', name: `气耗\n${units.value.gas}`, splitLine: { show: false } },
     ],
     series: [
-      { name: '电耗', type: line ? 'line' : 'bar', yAxisIndex: 0, data: rows.map((row) => row.electricity), itemStyle: { color: '#db8c32' } },
-      { name: '气耗', type: chartType.value === 'bar' ? 'bar' : 'line', yAxisIndex: 1, data: rows.map((row) => row.gas), itemStyle: { color: '#167e85' } },
+      { name: '电耗', type: line ? 'line' : 'bar', yAxisIndex: 0, data: rows.map((row) => chartValue(row.electricity)), tooltip: { valueFormatter: (value) => format(value) }, itemStyle: { color: '#db8c32' } },
+      { name: '气耗', type: chartType.value === 'bar' ? 'bar' : 'line', yAxisIndex: 1, data: rows.map((row) => chartValue(row.gas)), tooltip: { valueFormatter: (value) => format(value) }, itemStyle: { color: '#167e85' } },
     ],
   }
 }

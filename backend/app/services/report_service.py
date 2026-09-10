@@ -19,9 +19,7 @@ def format_number(value: Any) -> str:
     if value is None:
         return "--"
     number = float(value)
-    if number.is_integer():
-        return f"{number:,.0f}"
-    return f"{number:,.2f}".rstrip("0").rstrip(".")
+    return f"{number:,.1f}"
 
 
 def format_duration(value: Any) -> str:

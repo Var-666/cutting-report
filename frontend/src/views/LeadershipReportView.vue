@@ -46,15 +46,15 @@ const monthlyTotal = computed(() => report.value?.twelve_month_total || {
 })
 const snapshot = computed(() => report.value?.snapshot || {})
 
-function roundNumber(value, digits = 3) {
+function roundNumber(value, digits = 1) {
   const factor = 10 ** digits
   return Math.round((Number(value || 0) + Number.EPSILON) * factor) / factor
 }
 
 function formatLength(value) {
   return new Intl.NumberFormat('zh-CN', {
-    minimumFractionDigits: 3,
-    maximumFractionDigits: 3,
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
   }).format(Number(value || 0))
 }
 

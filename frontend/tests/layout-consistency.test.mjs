@@ -62,6 +62,27 @@ test('three standard reports reuse the quick period popover', () => {
   assert.match(period.scriptSetup.content, /inclusiveDays > props\.maxDays/)
 })
 
+test('report values use one decimal place throughout the UI', () => {
+  const leadership = descriptor('LeadershipReportView').scriptSetup.content
+  const workshop = descriptor('WorkshopView').scriptSetup.content
+  const energy = descriptor('EnergyPeriodReportView').scriptSetup.content
+  const home = descriptor('AdminHomeView').scriptSetup.content
+  const database = descriptor('DatabaseView').scriptSetup.content
+  const analysis = descriptor('AnalysisPanel', 'components').scriptSetup.content
+
+  assert.match(leadership, /digits = 1/)
+  assert.match(leadership, /minimumFractionDigits: 1/)
+  assert.match(workshop, /minimumFractionDigits: 1, maximumFractionDigits: 1/)
+  assert.match(energy, /digits = 1/)
+  assert.match(home, /digits = 1/)
+  assert.match(database, /maximumFractionDigits: 1/)
+  assert.match(analysis, /minimumFractionDigits: 1/)
+
+  for (const source of [leadership, workshop, energy, home, database, analysis]) {
+    assert.doesNotMatch(source, /(?:minimum|maximum)FractionDigits:\s*3|digits\s*=\s*3/)
+  }
+})
+
 test('source files are saved to the system and are not downloadable to the browser', () => {
   const downloads = descriptor('CuttingDownloadsPanel', 'components')
   const dispatch = descriptor('CuttingDispatchView')

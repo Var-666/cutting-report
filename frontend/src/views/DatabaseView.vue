@@ -101,7 +101,7 @@ function labelFor(key) {
 
 function formatCell(value) {
   if (value === null || value === undefined || value === '') return '--'
-  if (typeof value === 'number') return new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 3 }).format(value)
+  if (typeof value === 'number') return new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 1 }).format(value)
   return value
 }
 
@@ -341,7 +341,7 @@ onMounted(() => Promise.all([loadStatus(), loadConfiguration()]))
         <span v-if="testing" class="spinner"></span>{{ testing ? '正在测试' : '测试连接' }}
       </button>
     </form>
-    <div v-if="testResult" class="inline-result success"><strong>连接成功</strong><span>{{ testResult.database }} · {{ testResult.elapsed_ms }} ms · 凭据未保存</span></div>
+    <div v-if="testResult" class="inline-result success"><strong>连接成功</strong><span>{{ testResult.database }} · {{ formatCell(testResult.elapsed_ms) }} ms · 凭据未保存</span></div>
     <div v-if="testError" class="inline-result error"><strong>连接失败</strong><span>{{ testError }}</span></div>
   </section>
 
@@ -411,7 +411,7 @@ onMounted(() => Promise.all([loadStatus(), loadConfiguration()]))
     <div v-if="sqlValidation" class="inline-result success"><strong>只读校验通过</strong><span>表：{{ sqlValidation.tables.join(', ') || '--' }} · 字段：{{ sqlValidation.columns.length }}</span></div>
     <div v-if="sqlError" class="inline-result error"><strong>SQL未执行</strong><span>{{ sqlError }}</span></div>
     <div v-if="sqlResult" class="sql-result">
-      <div class="preview-summary"><strong>查询成功</strong><span>{{ sqlResult.returned }} 行 · {{ sqlResult.elapsed_ms }} ms{{ sqlResult.truncated ? ' · 结果已截断' : '' }}</span></div>
+      <div class="preview-summary"><strong>查询成功</strong><span>{{ sqlResult.returned }} 行 · {{ formatCell(sqlResult.elapsed_ms) }} ms{{ sqlResult.truncated ? ' · 结果已截断' : '' }}</span></div>
       <div class="history-wrap">
         <table v-content-table class="history-table preview-table">
           <thead><tr><th v-for="column in sqlResultColumns" :key="column">{{ column }}</th></tr></thead>

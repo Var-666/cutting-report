@@ -7,6 +7,12 @@ from app.models.domain import (
 )
 
 
+def _chart_number(value) -> float | None:
+    if value is None:
+        return None
+    return round(float(value), 1)
+
+
 class ChartService:
     def __init__(self, top_n: int = 20) -> None:
         self.top_n = top_n
@@ -57,13 +63,13 @@ class ChartService:
                 {
                     "name": "切割长度",
                     "type": "bar",
-                    "data": [float(item.cut_length or 0) for item in records],
+                    "data": [_chart_number(item.cut_length or 0) for item in records],
                     "itemStyle": {"color": "#1769aa"},
                 },
                 {
                     "name": "坡口长度",
                     "type": "bar",
-                    "data": [float(item.groove_length or 0) for item in records],
+                    "data": [_chart_number(item.groove_length or 0) for item in records],
                     "itemStyle": {"color": "#56a3a6"},
                 },
                 {
@@ -71,7 +77,7 @@ class ChartService:
                     "type": "line",
                     "yAxisIndex": 1,
                     "smooth": True,
-                    "data": [round(float(item.work_time or 0) / 60, 2) for item in records],
+                    "data": [round(float(item.work_time or 0) / 60, 1) for item in records],
                     "itemStyle": {"color": "#e58e26"},
                 },
             ],
@@ -108,7 +114,7 @@ class ChartService:
                     "name": "气耗",
                     "type": "bar",
                     "data": [
-                        float(item.gas_consumption) if item.gas_consumption is not None else None
+                        _chart_number(item.gas_consumption)
                         for item in equipment_detail_records
                     ],
                     "itemStyle": {"color": "#6c8ebf"},
@@ -117,7 +123,7 @@ class ChartService:
                     "name": "电耗",
                     "type": "bar",
                     "data": [
-                        float(item.electricity_consumption) if item.electricity_consumption is not None else None
+                        _chart_number(item.electricity_consumption)
                         for item in equipment_detail_records
                     ],
                     "itemStyle": {"color": "#d79b00"},
@@ -128,7 +134,7 @@ class ChartService:
                     "yAxisIndex": 1,
                     "smooth": True,
                     "data": [
-                        round(float(item.work_time or 0) / 60, 2)
+                        round(float(item.work_time or 0) / 60, 1)
                         for item in equipment_detail_records
                     ],
                     "itemStyle": {"color": "#e58e26"},
@@ -194,13 +200,13 @@ class ChartService:
 
         task = option(
             task_labels,
-            [row.get("electricity_consumption") for row in task_rows],
-            [row.get("gas_consumption") for row in task_rows],
+            [_chart_number(row.get("electricity_consumption")) for row in task_rows],
+            [_chart_number(row.get("gas_consumption")) for row in task_rows],
         )
         monthly = option(
             [str(row.get("report_date") or "")[-2:] for row in month_rows],
-            [(row.get("electricity") or {}).get("value") for row in month_rows],
-            [(row.get("gas") or {}).get("value") for row in month_rows],
+            [_chart_number((row.get("electricity") or {}).get("value")) for row in month_rows],
+            [_chart_number((row.get("gas") or {}).get("value")) for row in month_rows],
         )
         return {
             "equipment_detail": self._apply_chart_type(task, chart_type),
@@ -229,13 +235,13 @@ class ChartService:
                 {
                     "name": "切割长度",
                     "type": "bar",
-                    "data": [float(item.cut_length_m) for item in daily],
+                    "data": [_chart_number(item.cut_length_m) for item in daily],
                     "itemStyle": {"color": "#1769aa"},
                 },
                 {
                     "name": "坡口长度",
                     "type": "bar",
-                    "data": [float(item.groove_length_m) for item in daily],
+                    "data": [_chart_number(item.groove_length_m) for item in daily],
                     "itemStyle": {"color": "#56a3a6"},
                 },
                 {
@@ -243,7 +249,7 @@ class ChartService:
                     "type": "line",
                     "yAxisIndex": 1,
                     "smooth": True,
-                    "data": [round(item.work_time_seconds / 3600, 2) for item in daily],
+                    "data": [round(item.work_time_seconds / 3600, 1) for item in daily],
                     "itemStyle": {"color": "#e58e26"},
                 },
             ],
@@ -264,13 +270,13 @@ class ChartService:
                 {
                     "name": "切割长度",
                     "type": "bar",
-                    "data": [float(item.cut_length_m) for item in monthly],
+                    "data": [_chart_number(item.cut_length_m) for item in monthly],
                     "itemStyle": {"color": "#1769aa"},
                 },
                 {
                     "name": "坡口长度",
                     "type": "bar",
-                    "data": [float(item.groove_length_m) for item in monthly],
+                    "data": [_chart_number(item.groove_length_m) for item in monthly],
                     "itemStyle": {"color": "#56a3a6"},
                 },
                 {

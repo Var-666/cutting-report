@@ -88,7 +88,7 @@ class CustomReportService:
                 field = column["field"]
                 field_type = column.get("type", "text")
                 if field_type == "number":
-                    row[field] = round((index + 1) * 128.6, 2)
+                    row[field] = round((index + 1) * 128.6, 1)
                 elif field_type == "date":
                     row[field] = (report_date - timedelta(days=index)).isoformat()
                 elif field_type == "datetime":
@@ -174,7 +174,7 @@ class CustomReportService:
                 value = min(numeric)
             else:
                 value = sum(numeric)
-            metrics.append({**metric, "value": round(value, 3) if isinstance(value, float) else value})
+            metrics.append({**metric, "value": round(value, 1) if isinstance(value, float) else value})
 
         chart_config = config.get("chart") or {}
         category_field = chart_config.get("category_field")
@@ -188,7 +188,7 @@ class CustomReportService:
                     "name": column_map[field]["label"],
                     "type": series_type,
                     "smooth": series_type == "line",
-                    "data": [self._number(row.get(field)) or 0 for row in rows],
+                    "data": [round(self._number(row.get(field)) or 0, 1) for row in rows],
                     "itemStyle": {"color": colors[index % len(colors)]},
             }
             if chart_type == "area":

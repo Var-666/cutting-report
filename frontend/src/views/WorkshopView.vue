@@ -79,7 +79,7 @@ watch(() => [filters.reportDate, filters.startDate, filters.endDate], () => {
 })
 
 function display(value) { return value || '--' }
-function number(value) { return value == null ? '--' : new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 3 }).format(value) }
+function number(value) { return value == null ? '--' : new Intl.NumberFormat('zh-CN', { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(value) }
 function duration(value) {
   if (value == null) return '--'
   const seconds = Math.max(0, Math.round(Number(value)))
