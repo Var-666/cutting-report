@@ -76,14 +76,17 @@ class ReportService:
 
         content = final_path.read_bytes()
         report_type = report["meta"]["report_type"]
+        custom_period = bool(report["meta"].get("custom_period"))
         prefix = {
-            "leadership": "领导月报",
-            "workshop": "车间日报",
+            "leadership": "领导报表" if custom_period else "领导月报",
+            "workshop": "车间报表" if custom_period else "车间日报",
             "equipment": "设备报表",
             "custom": report["meta"]["title"],
         }[report_type]
         prefix = "".join(char for char in prefix if char not in '\\/:*?"<>|')[:50] or "自定义报表"
-        period = report["meta"]["report_date"][:7] if report_type == "leadership" else report["meta"]["report_date"]
+        period_start = report["meta"].get("period_start") or report["meta"]["report_date"]
+        period_end = report["meta"].get("period_end") or period_start
+        period = period_start if period_start == period_end else f"{period_start}_至_{period_end}"
         download_filename = f"{prefix}_{period}_{generated_at:%H%M%S}.html"
         return {
             "filename": download_filename,

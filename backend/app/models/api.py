@@ -8,7 +8,9 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 class ReportCreateRequest(BaseModel):
     report_type: Literal["leadership", "workshop", "equipment", "custom"] = "workshop"
-    report_date: date
+    report_date: date | None = None
+    period_start: date | None = None
+    period_end: date | None = None
     project_code: str | None = Field(default=None, max_length=128)
     ship_no: str | None = Field(default=None, max_length=128)
     definition_id: str | None = Field(default=None, max_length=80)
@@ -28,6 +30,17 @@ class ReportCreateRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_custom_definition(self):
+        start = self.period_start or self.report_date
+        end = self.period_end or start
+        if start is None:
+            raise ValueError("请选择报表开始日期")
+        if end < start:
+            raise ValueError("结束日期不能早于开始日期")
+        if (end - start).days >= 366:
+            raise ValueError("报表查询区间最长为 366 天")
+        self.report_date = start
+        self.period_start = start
+        self.period_end = end
         if self.report_type == "custom" and not self.definition_id:
             raise ValueError("自定义报表必须选择报表定义")
         if self.report_type != "custom" and self.definition_id:

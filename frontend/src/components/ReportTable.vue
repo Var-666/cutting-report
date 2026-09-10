@@ -35,6 +35,13 @@ function display(value) {
   return value || '全部'
 }
 
+function reportPeriod(item) {
+  const start = item.period_start || item.report_date
+  const end = item.period_end || item.report_date
+  if (start && end && start !== end) return `${start} 至 ${end}`
+  return start || '--'
+}
+
 const reportTypeText = {
   leadership: '领导报表',
   workshop: '车间报表',
@@ -52,7 +59,7 @@ const reportTypeText = {
         <tr v-else-if="!items.length"><td colspan="8" class="table-empty">暂无历史报告</td></tr>
         <tr v-for="item in items" v-else :key="item.report_id">
           <td>{{ item.report_title || reportTypeText[item.report_type] || '车间报表' }}</td>
-          <td>{{ item.report_type === 'leadership' ? item.report_date.slice(0, 7) : item.report_date }}</td>
+          <td>{{ reportPeriod(item) }}</td>
           <td>{{ display(item.project_code) }}</td>
           <td>{{ display(item.ship_no) }}</td>
           <td>{{ item.task_count ?? '--' }}</td>

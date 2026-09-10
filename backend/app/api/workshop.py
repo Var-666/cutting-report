@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.api.auth import require_admin, require_user, require_worker
 from app.config import settings
+from app.database.sqlserver import SqlServerConfigurationError
 from app.database.workshop import (
     ConfirmationConflictError,
     ConfirmationNotFoundError,
@@ -218,6 +219,61 @@ def list_tasks(
             "project_names": project_names,
             "confirmed_count": confirmed_count,
             "current_user": user,
+        },
+    )
+
+
+@router.get("/range")
+def list_range_tasks(
+    request: Request,
+    start_date: date,
+    end_date: date,
+    project_name: str | None = Query(default=None, max_length=128),
+    confirmation_status: Literal["all", "confirmed", "unconfirmed"] = "all",
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=10, le=100),
+    _: dict = Depends(require_admin),
+) -> dict:
+    try:
+        bundle, records = request.app.state.range_report_service.workshop_records(
+            start_date, end_date
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SqlServerConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    project_names = sorted(
+        {row.project_code for row in records if row.project_code}
+    )
+    if project_name:
+        records = [row for row in records if row.project_code == project_name]
+    if confirmation_status == "confirmed":
+        records = [row for row in records if row.confirmed_by]
+    elif confirmation_status == "unconfirmed":
+        records = [row for row in records if not row.confirmed_by]
+    records = sort_workshop_records(records, "manager")
+    total = len(records)
+    start = (page - 1) * page_size
+    visible = records[start : start + page_size]
+    return _envelope(
+        request,
+        {
+            "report": {
+                "report_date": start_date.isoformat(),
+                "period_start": start_date.isoformat(),
+                "period_end": end_date.isoformat(),
+                "scope_machine_no": settings.report_machine_no,
+                "item_count": total,
+                "confirmed_count": sum(bool(row.confirmed_by) for row in records),
+                "generated_at": to_primitive(bundle.data_updated_at),
+            },
+            "items": to_primitive(visible),
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "project_names": project_names,
+            "confirmed_count": sum(bool(row.confirmed_by) for row in records),
         },
     )
 

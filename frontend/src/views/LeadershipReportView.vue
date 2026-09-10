@@ -4,9 +4,10 @@ import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/compon
 import { init, use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
-import { getLeadershipReport } from '../api/reports'
+import { getLeadershipRange } from '../api/reports'
 import AnalysisPanel from '../components/AnalysisPanel.vue'
 import ReportExportMenu from '../components/ReportExportMenu.vue'
+import ReportPeriodPicker from '../components/ReportPeriodPicker.vue'
 import { reportToday } from '../api/reportDates.js'
 
 defineProps({ exporting: Boolean })
@@ -14,9 +15,9 @@ const emit = defineEmits(['export'])
 
 use([BarChart, LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
 
-const currentMonth = reportToday().slice(0, 7)
-
-const reportMonth = ref(currentMonth)
+const today = reportToday()
+const periodStart = ref(`${today.slice(0, 7)}-01`)
+const periodEnd = ref(today)
 const chartType = ref('bar_line')
 const report = ref(null)
 const loading = ref(false)
@@ -103,11 +104,15 @@ function applyChartType(series) {
 }
 
 async function loadReport(force = false) {
-  if (!reportMonth.value) return
+  if (!periodStart.value || !periodEnd.value) return
+  if (periodEnd.value < periodStart.value) {
+    error.value = '结束日期不能早于开始日期'
+    return
+  }
   loading.value = true
   error.value = ''
   try {
-    report.value = await getLeadershipReport(reportMonth.value, { force })
+    report.value = await getLeadershipRange(periodStart.value, periodEnd.value, { force })
     await nextTick()
     renderCharts()
     scheduleRefreshPoll(true)
@@ -131,14 +136,14 @@ function scheduleRefreshPoll(reset = false) {
     return
   }
   refreshLoading.value = true
-  const requestedMonth = reportMonth.value
+  const requestedRange = `${periodStart.value}:${periodEnd.value}`
   refreshTimer = window.setTimeout(async () => {
-    if (requestedMonth !== reportMonth.value) {
+    if (requestedRange !== `${periodStart.value}:${periodEnd.value}`) {
       refreshLoading.value = false
       return
     }
     try {
-      report.value = await getLeadershipReport(requestedMonth, { force: true })
+      report.value = await getLeadershipRange(periodStart.value, periodEnd.value, { force: true })
       await nextTick()
       renderCharts()
       refreshPollCount += 1
@@ -197,7 +202,9 @@ function resizeCharts() {
 function exportReport(format = 'html') {
   emit('export', {
     report_type: 'leadership',
-    report_date: `${reportMonth.value}-01`,
+    report_date: periodStart.value,
+    period_start: periodStart.value,
+    period_end: periodEnd.value,
     project_code: null,
     ship_no: null,
     parameters: { chart_type: chartType.value },
@@ -234,10 +241,16 @@ watch(chartType, async () => {
     <div>
       <span class="eyebrow">MANAGEMENT OVERVIEW</span>
       <h2>领导报表</h2>
-      <p>查看月度任务、切割长度、坡口长度和切割时长趋势。</p>
+      <p>按自定义日期区间查看任务、切割长度、坡口长度和切割时长趋势。</p>
     </div>
     <form class="report-query month-query" @submit.prevent="loadReport(false)">
-      <label><span>报表月份</span><AppDatePicker v-model="reportMonth" mode="month" required /></label>
+      <ReportPeriodPicker
+        v-model:start-date="periodStart"
+        v-model:end-date="periodEnd"
+        :anchor-date="today"
+        :disabled="loading"
+        @validation-error="error = $event"
+      />
       <label><span>图表类型</span><AppSelect v-model="chartType"><option value="bar_line">柱线组合</option><option value="bar">柱状图</option><option value="line">折线图</option><option value="area">面积图</option></AppSelect></label>
       <button class="primary" type="submit" :disabled="loading">
         <span v-if="loading" class="spinner"></span>{{ loading ? '查询中' : '查询报表' }}
@@ -253,7 +266,7 @@ watch(chartType, async () => {
 
   <div v-if="error" class="global-error"><strong>报表读取失败</strong><span>{{ error }}</span><button @click="error = ''">关闭</button></div>
 
-  <section class="leadership-kpis" aria-label="当月汇总">
+  <section class="leadership-kpis" aria-label="区间汇总">
     <article><span>完成任务</span><strong>{{ total.task_count }}</strong><small>项</small></article>
     <article><span>切割长度</span><strong>{{ formatLength(total.cut_length_m) }}</strong><small>米</small></article>
     <article><span>坡口长度</span><strong>{{ formatLength(total.groove_length_m) }}</strong><small>米</small></article>
@@ -262,10 +275,10 @@ watch(chartType, async () => {
 
   <section class="panel leadership-panel">
     <div class="panel-title">
-      <div><span>01</span><h2>当月明细与趋势</h2></div>
+      <div><span>01</span><h2>区间每日明细与趋势</h2></div>
     </div>
     <div class="leadership-split">
-      <div ref="dailyChartElement" class="leadership-chart" aria-label="当月每日趋势图"></div>
+      <div ref="dailyChartElement" class="leadership-chart" aria-label="区间每日趋势图"></div>
       <div class="leadership-table-wrap">
         <table v-content-table class="leadership-table summary-table">
         <thead><tr><th>序号</th><th>日期</th><th>任务数</th><th>切割长度</th><th>坡口长度</th><th>切割时长</th><th>备注</th></tr></thead>
@@ -276,7 +289,7 @@ watch(chartType, async () => {
             <td class="duration-cell">{{ formatDuration(row.work_time_seconds) }}</td><td>{{ row.remark || '--' }}</td>
           </tr>
           <tr v-if="refreshLoading && !snapshot.data_as_of"><td colspan="7" class="table-empty">首次快照正在后台生成</td></tr>
-          <tr v-else-if="!loading && !dailyRecords.length"><td colspan="7" class="table-empty">所选月份暂无已完成任务</td></tr>
+          <tr v-else-if="!loading && !dailyRecords.length"><td colspan="7" class="table-empty">所选区间暂无已完成任务</td></tr>
         </tbody>
         <tfoot>
           <tr><th aria-hidden="true"></th><th>汇总</th><th>{{ total.task_count }}</th><th>{{ formatLength(total.cut_length_m) }}</th><th>{{ formatLength(total.groove_length_m) }}</th><th class="duration-cell">{{ formatDuration(total.work_time_seconds) }}</th><th>--</th></tr>
@@ -288,22 +301,22 @@ watch(chartType, async () => {
 
   <section class="panel leadership-panel">
     <div class="panel-title">
-      <div><span>02</span><h2>历月对比与趋势</h2></div>
-      <p>所选月份及其前十一个月</p>
+      <div><span>02</span><h2>区间按月对比与趋势</h2></div>
+      <p>{{ periodStart }} 至 {{ periodEnd }}</p>
     </div>
     <div class="leadership-split">
-      <div ref="monthlyChartElement" class="leadership-chart" aria-label="最近十二个月趋势图"></div>
+      <div ref="monthlyChartElement" class="leadership-chart" aria-label="区间月度趋势图"></div>
       <div class="leadership-table-wrap">
         <table v-content-table class="leadership-table summary-table">
         <thead><tr><th>序号</th><th>月份</th><th>任务数</th><th>切割长度</th><th>坡口长度</th><th>切割时长</th><th>备注</th></tr></thead>
         <tbody>
-          <tr v-for="(row, index) in monthlyRecords" :key="row.period_start" :class="{ 'current-period': row.period_start.startsWith(reportMonth) }">
+          <tr v-for="(row, index) in monthlyRecords" :key="row.period_start">
             <td>{{ index + 1 }}</td><td>{{ formatMonth(row.period_start) }}</td><td>{{ row.task_count }}</td>
             <td>{{ formatLength(row.cut_length_m) }}</td><td>{{ formatLength(row.groove_length_m) }}</td>
             <td class="duration-cell">{{ formatDuration(row.work_time_seconds) }}</td><td>{{ row.remark || '--' }}</td>
           </tr>
           <tr v-if="refreshLoading && !snapshot.data_as_of"><td colspan="7" class="table-empty">历史趋势正在后台生成</td></tr>
-          <tr v-else-if="!loading && !monthlyRecords.length"><td colspan="7" class="table-empty">最近十二个月暂无已完成任务</td></tr>
+          <tr v-else-if="!loading && !monthlyRecords.length"><td colspan="7" class="table-empty">所选区间暂无已完成任务</td></tr>
         </tbody>
         <tfoot>
           <tr><th aria-hidden="true"></th><th>汇总</th><th>{{ monthlyTotal.task_count }}</th><th>{{ formatLength(monthlyTotal.cut_length_m) }}</th><th>{{ formatLength(monthlyTotal.groove_length_m) }}</th><th class="duration-cell">{{ formatDuration(monthlyTotal.work_time_seconds) }}</th><th>--</th></tr>
@@ -313,11 +326,7 @@ watch(chartType, async () => {
     </div>
   </section>
 
-  <AnalysisPanel
-    report-type="leadership"
-    :report-date="`${reportMonth}-01`"
-    :ready="Boolean(report && snapshot.data_as_of && !snapshot.refreshing)"
-    :context-version="`${total.task_count}-${total.work_time_seconds}`"
-  />
+  <p v-if="periodStart !== periodEnd" class="report-source-note">区间智能分析将在导出报告时生成，并与前一个等长区间对比。</p>
+  <AnalysisPanel v-else report-type="leadership" :report-date="periodStart" :ready="Boolean(report && snapshot.data_as_of)" :context-version="`${total.task_count}-${total.work_time_seconds}`" />
 
 </template>

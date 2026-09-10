@@ -105,6 +105,19 @@ export function listWorkshopTasks({ reportDate, projectName = '', confirmationSt
   return reportCache.read(key, (signal) => request(`/api/v1/workshop/tasks?${query}`, { signal }), { force, signal })
 }
 
+export function listWorkshopRangeTasks({ startDate, endDate, projectName = '', confirmationStatus = 'all', page = 1, pageSize = 10 }, { force = false, signal } = {}) {
+  const query = new URLSearchParams({
+    start_date: startDate,
+    end_date: endDate,
+    confirmation_status: confirmationStatus,
+    page,
+    page_size: pageSize,
+  })
+  if (projectName) query.set('project_name', projectName)
+  const key = `workshop:range:${query}`
+  return reportCache.read(key, (requestSignal) => request(`/api/v1/workshop/range?${query}`, { signal: requestSignal }), { force, signal })
+}
+
 export function generateWorkshopDailyReport(reportDate) {
   return request('/api/v1/workshop/reports', {
     method: 'POST',
@@ -207,6 +220,17 @@ export function listAlarmReports({ limit = 50 } = {}) {
 export function getLeadershipReport(reportMonth, { force = false, signal } = {}) {
   const query = new URLSearchParams({ report_month: reportMonth })
   return reportCache.read(`leadership:${reportMonth}`, (signal) => request(`/api/v1/leadership-report?${query}`, { signal }), { ttl: 30000, force, signal })
+}
+
+export function getLeadershipRange(startDate, endDate, { force = false, signal } = {}) {
+  const query = new URLSearchParams({ start_date: startDate, end_date: endDate })
+  return reportCache.read(`leadership:range:${query}`, (requestSignal) => request(`/api/v1/leadership-report?${query}`, { signal: requestSignal }), { ttl: 30000, force, signal })
+}
+
+export function getEnergyRange(startDate, endDate, { force = false, signal } = {}) {
+  const query = new URLSearchParams({ start_date: startDate, end_date: endDate })
+  if (force) query.set('refresh', 'true')
+  return reportCache.read(`energy:range:${query}`, (requestSignal) => request(`/api/v1/energy-report/range?${query}`, { signal: requestSignal }), { ttl: 30000, force, signal })
 }
 
 export function refreshLeadershipReport(reportMonth) {

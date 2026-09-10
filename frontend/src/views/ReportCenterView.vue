@@ -150,7 +150,7 @@ onBeforeUnmount(() => window.clearTimeout(pollTimer))
   <section class="panel form-panel">
     <div class="panel-title">
       <div><span>01</span><h2>报表条件</h2></div>
-      <p>{{ fixedReportType ? '当前页面已固定报表类型' : '领导报表按月，车间和设备报表按日' }}</p>
+      <p>{{ fixedReportType ? '当前页面已固定报表类型' : '三类标准报表可在各自页面按自定义区间查询并导出' }}</p>
     </div>
     <ReportForm
       :loading="generating"

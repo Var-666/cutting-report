@@ -53,9 +53,35 @@ def get_leadership_report(
         pattern=r"^\d{4}-(0[1-9]|1[0-2])$",
         description="报表月份，格式 YYYY-MM",
     ),
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
     refresh: bool = Query(default=False, description="提交后台刷新并返回现有快照"),
 ) -> dict:
     try:
+        if start_date is not None or end_date is not None:
+            selected_start = start_date or end_date
+            selected_end = end_date or start_date
+            assert selected_start is not None and selected_end is not None
+            result = request.app.state.range_report_service.leadership(
+                selected_start, selected_end
+            )
+            data = to_primitive(result)
+            data.update(
+                {
+                    "period_start": selected_start.isoformat(),
+                    "period_end": selected_end.isoformat(),
+                    "aggregation": (
+                        "day"
+                        if (selected_end - selected_start).days < 90
+                        else "month"
+                    ),
+                }
+            )
+            return {
+                "success": True,
+                "data": data,
+                "request_id": request.state.request_id,
+            }
         month_start = _parse_month(report_month)
         service = request.app.state.leadership_report_service
         result = service.fetch(month_start)
@@ -66,7 +92,9 @@ def get_leadership_report(
                 bootstrap=service.needs_bootstrap(month_start),
             )
         result = _result_with_refresh_state(request, month_start, result)
-    except SqlServerConfigurationError as exc:
+    except (SqlServerConfigurationError, ValueError) as exc:
+        if isinstance(exc, ValueError):
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("leadership report query failed")

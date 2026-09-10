@@ -44,6 +44,24 @@ test('all report calendars use one shared below-field date picker', () => {
   assert.match(picker.template.content, />\{\{ mode === 'month' \? '本月' : '今天' \}\}</)
 })
 
+test('three standard reports reuse the quick period popover', () => {
+  for (const name of ['LeadershipReportView', 'WorkshopView', 'EnergyPeriodReportView']) {
+    const view = descriptor(name)
+    assert.match(view.scriptSetup.content, /import ReportPeriodPicker from/)
+    assert.match(view.template.content, /<ReportPeriodPicker/)
+  }
+
+  const period = descriptor('ReportPeriodPicker', 'components')
+  assert.match(period.template.content, /<Teleport to="body">/)
+  assert.match(period.scriptSetup.content, /单日/)
+  assert.match(period.scriptSetup.content, /最近 7 天/)
+  assert.match(period.scriptSetup.content, /跨月·近 30 天/)
+  assert.match(period.scriptSetup.content, /本季度/)
+  assert.match(period.scriptSetup.content, /上季度/)
+  assert.match(period.template.content, /@click="applyPeriod">应用/)
+  assert.match(period.scriptSetup.content, /inclusiveDays > props\.maxDays/)
+})
+
 test('source files are saved to the system and are not downloadable to the browser', () => {
   const downloads = descriptor('CuttingDownloadsPanel', 'components')
   const dispatch = descriptor('CuttingDispatchView')

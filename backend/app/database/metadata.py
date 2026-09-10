@@ -90,6 +90,8 @@ class MetadataRepository(SQLiteRepository):
                 ("definition_id", "TEXT"),
                 ("report_title", "TEXT"),
                 ("parameters_json", "TEXT NOT NULL DEFAULT '{}'"),
+                ("period_start", "TEXT"),
+                ("period_end", "TEXT"),
             ):
                 if column not in columns:
                     connection.execute(
@@ -120,14 +122,17 @@ class MetadataRepository(SQLiteRepository):
         definition_id: str | None = None,
         report_title: str | None = None,
         parameters: dict[str, Any] | None = None,
+        period_start: str | None = None,
+        period_end: str | None = None,
     ) -> None:
         with self.connect() as connection:
             connection.execute(
                 """
                 INSERT INTO report_jobs (
                     report_id, report_type, status, stage_message, report_date, project_code,
-                    ship_no, created_at, request_id, definition_id, report_title, parameters_json
-                ) VALUES (?, ?, 'pending', '等待生成', ?, ?, ?, ?, ?, ?, ?, ?)
+                    ship_no, created_at, request_id, definition_id, report_title, parameters_json,
+                    period_start, period_end
+                ) VALUES (?, ?, 'pending', '等待生成', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     report_id,
@@ -140,6 +145,8 @@ class MetadataRepository(SQLiteRepository):
                     definition_id,
                     report_title,
                     json.dumps(parameters or {}, ensure_ascii=False),
+                    period_start,
+                    period_end,
                 ),
             )
 

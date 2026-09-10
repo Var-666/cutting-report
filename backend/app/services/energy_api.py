@@ -133,8 +133,8 @@ class EnergyApiClient:
                     raise
 
     def fetch(self, ids: tuple[str, ...], start: datetime, end: datetime, *, force=False) -> list[dict]:
-        if not ids or end <= start or end - start > timedelta(days=8):
-            raise EnergyApiError("能管查询参数或时间区间无效（最多八天）")
+        if not ids or end <= start or end - start > timedelta(days=367):
+            raise EnergyApiError("能管查询参数或时间区间无效（最多 366 天）")
         with self._lock:
             if self._failure and not force and time.monotonic() < self._failure[0]:
                 raise EnergyApiError(self._failure[1])

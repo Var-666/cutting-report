@@ -40,11 +40,11 @@ class QueryService:
         self.query_dir = Path(__file__).resolve().parents[1] / "database" / "queries"
         self._equipment_cache_lock = Lock()
         self._equipment_cache: dict[
-            tuple[date, str | None, str | None],
+            tuple[date, date, str | None, str | None],
             tuple[float, float, EquipmentQueryResult],
         ] = {}
         self._equipment_query_locks: dict[
-            tuple[date, str | None, str | None], Lock
+            tuple[date, date, str | None, str | None], Lock
         ] = {}
         self._latest_date_lock = Lock()
         self._latest_date_cache: dict[date, tuple[float, date | None]] = {}
@@ -85,7 +85,12 @@ class QueryService:
         if cache_seconds <= 0:
             return self._fetch_equipment_uncached(filters)
 
-        key = (filters.report_date, filters.project_code, filters.ship_no)
+        key = (
+            filters.start_date,
+            filters.end_date,
+            filters.project_code,
+            filters.ship_no,
+        )
         requested_at = monotonic()
         with self._equipment_cache_lock:
             cached = self._equipment_cache.get(key)
@@ -208,10 +213,12 @@ class QueryService:
         self, filters: ReportFilter
     ) -> EquipmentQueryResult:
         timezone = ZoneInfo(self.settings.timezone)
-        start = datetime.combine(filters.report_date, time.min, tzinfo=timezone).replace(
+        start = datetime.combine(filters.start_date, time.min, tzinfo=timezone).replace(
             tzinfo=None
         )
-        end = start + timedelta(days=1)
+        end = datetime.combine(
+            filters.end_exclusive, time.min, tzinfo=timezone
+        ).replace(tzinfo=None)
         parameters = (
             self.settings.report_machine_no,
             start,
@@ -252,8 +259,8 @@ class QueryService:
             return self.excel.list_projects(self.settings.report_machine_no)
         if self.settings.effective_data_source_mode == "demo":
             return ["A001", "A002", "B101"]
-        start = filters.report_date
-        end = start + timedelta(days=1)
+        start = filters.start_date
+        end = filters.end_exclusive
         rows = self.client.fetch_all(
             """
             WITH source AS (
@@ -306,8 +313,8 @@ class QueryService:
             """,
             (
                 self.settings.report_machine_no,
-                filters.report_date,
-                filters.report_date + timedelta(days=1),
+                filters.start_date,
+                filters.end_exclusive,
                 filters.project_code,
                 filters.project_code,
             ),
@@ -375,8 +382,8 @@ class QueryService:
 
     def _excel_data(self, filters: ReportFilter) -> QueryBundle:
         rows = self.excel.completed_rows(
-            start=filters.report_date,
-            end=filters.report_date + timedelta(days=1),
+            start=filters.start_date,
+            end=filters.end_exclusive,
             project_code=filters.project_code,
             ship_no=filters.ship_no,
             machine_no=self.settings.report_machine_no,
@@ -443,10 +450,12 @@ class QueryService:
 
     def _sqlserver_data(self, filters: ReportFilter) -> QueryBundle:
         timezone = ZoneInfo(self.settings.timezone)
-        start = datetime.combine(filters.report_date, time.min, tzinfo=timezone).replace(
+        start = datetime.combine(filters.start_date, time.min, tzinfo=timezone).replace(
             tzinfo=None
         )
-        end = start + timedelta(days=1)
+        end = datetime.combine(
+            filters.end_exclusive, time.min, tzinfo=timezone
+        ).replace(tzinfo=None)
         parameters = (
             self.settings.report_machine_no,
             start,
@@ -522,66 +531,72 @@ class QueryService:
         workshops: list[WorkshopRecord] = []
         equipment: list[EquipmentRecord] = []
         timezone = ZoneInfo(self.settings.timezone)
-        base_time = datetime.combine(filters.report_date, time(8), tzinfo=timezone)
-        for index in range(1, 29):
-            project_name = project_names[(index - 1) % len(project_names)]
-            equipment_id = f"Cutter{((index - 1) % 2) + 1:02d}"
-            if equipment_id.casefold() != self.settings.report_machine_no.casefold():
-                continue
-            if filters.project_code and filters.project_code != project_name:
-                continue
-            if filters.ship_no and filters.ship_no != project_name:
-                continue
-            task_id = f"{filters.report_date:%Y%m%d}-{index:03d}"
-            cut_length = Decimal("42") + Decimal(index) * Decimal("3.650")
-            groove_length = Decimal("3.5") + Decimal(index % 7) * Decimal("1.650")
-            work_time = Decimal(95 + index * 13)
-            summary = SummaryBaseRecord(
-                task_id=task_id,
-                project_code=project_name,
-                ship_no=project_name,
-                segment_name=f"P{((index - 1) % 8) + 1:02d}",
-                program_no=f"OP-{index:03d}",
-                cut_length=cut_length,
-                groove_length=groove_length,
-                work_time=work_time,
-                production_time=base_time + timedelta(minutes=index * 21),
-                source_updated_at=base_time + timedelta(hours=10),
-            )
-            summaries.append(summary)
-            workshops.append(
-                WorkshopRecord(
+        stamp = filters.start_date
+        latest_update = None
+        while stamp <= filters.end_date:
+            base_time = datetime.combine(stamp, time(8), tzinfo=timezone)
+            for index in range(1, 29):
+                project_name = project_names[(index - 1) % len(project_names)]
+                equipment_id = f"Cutter{((index - 1) % 2) + 1:02d}"
+                if equipment_id.casefold() != self.settings.report_machine_no.casefold():
+                    continue
+                if filters.project_code and filters.project_code != project_name:
+                    continue
+                if filters.ship_no and filters.ship_no != project_name:
+                    continue
+                task_id = f"{stamp:%Y%m%d}-{index:03d}"
+                cut_length = Decimal("42") + Decimal(index) * Decimal("3.650")
+                groove_length = Decimal("3.5") + Decimal(index % 7) * Decimal("1.650")
+                work_time = Decimal(95 + index * 13)
+                summary = SummaryBaseRecord(
                     task_id=task_id,
                     project_code=project_name,
                     ship_no=project_name,
-                    segment_name=summary.segment_name,
-                    program_no=summary.program_no,
+                    segment_name=f"P{((index - 1) % 8) + 1:02d}",
+                    program_no=f"OP-{index:03d}",
                     cut_length=cut_length,
                     groove_length=groove_length,
                     work_time=work_time,
-                    production_time=summary.production_time,
-                    remark="演示数据",
+                    production_time=base_time + timedelta(minutes=index * 21),
+                    source_updated_at=base_time + timedelta(hours=10),
                 )
-            )
-            equipment.append(
-                EquipmentRecord(
-                    task_id=task_id,
-                    equipment_id=equipment_id,
-                    project_code=project_name,
-                    ship_no=project_name,
-                    segment_name=summary.segment_name,
-                    cut_length=cut_length,
-                    work_time=work_time,
-                    gas_consumption=Decimal("8.5") + Decimal(index) * Decimal("0.42"),
-                    electricity_consumption=Decimal("14.2")
-                    + Decimal(index) * Decimal("0.61"),
-                    production_time=summary.production_time,
-                    remark="演示数据",
+                summaries.append(summary)
+                workshops.append(
+                    WorkshopRecord(
+                        task_id=task_id,
+                        project_code=project_name,
+                        ship_no=project_name,
+                        segment_name=summary.segment_name,
+                        program_no=summary.program_no,
+                        cut_length=cut_length,
+                        groove_length=groove_length,
+                        work_time=work_time,
+                        production_time=summary.production_time,
+                        remark="演示数据",
+                    )
                 )
-            )
+                equipment.append(
+                    EquipmentRecord(
+                        task_id=task_id,
+                        equipment_id=equipment_id,
+                        project_code=project_name,
+                        ship_no=project_name,
+                        segment_name=summary.segment_name,
+                        cut_length=cut_length,
+                        work_time=work_time,
+                        gas_consumption=Decimal("8.5") + Decimal(index) * Decimal("0.42"),
+                        electricity_consumption=Decimal("14.2")
+                        + Decimal(index) * Decimal("0.61"),
+                        production_time=summary.production_time,
+                        production_end_time=summary.production_time + timedelta(seconds=float(work_time)),
+                        remark="演示数据",
+                    )
+                )
+            latest_update = base_time + timedelta(hours=10)
+            stamp += timedelta(days=1)
         return QueryBundle(
             summary_records=summaries,
             workshop_records=workshops,
             equipment_records=equipment,
-            data_updated_at=base_time + timedelta(hours=10),
+            data_updated_at=latest_update,
         )

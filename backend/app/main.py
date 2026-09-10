@@ -39,7 +39,6 @@ from app.database.workshop import WorkshopRepository
 from app.database.sqlite import SQLiteDatabase
 from app.services.pipeline import ReportPipeline
 from app.services.leadership_report_service import LeadershipReportService
-from app.services.query_service import QueryService
 from app.services.report_analysis_service import ReportAnalysisService
 from app.services.worker_auth_service import WorkerAuthService
 from app.services.automation_service import AutomationService
@@ -96,10 +95,11 @@ async def lifespan(app: FastAPI):
     app.state.automation = automation
     app.state.automation_service = automation_service
     app.state.email_service = email_service
-    app.state.query_service = QueryService(settings)
+    app.state.query_service = pipeline.query_service
     # Page, analysis and export share the same auth/readings cache.
     app.state.energy_service = pipeline.energy_service
     app.state.energy_period_service = pipeline.energy_period_service
+    app.state.range_report_service = pipeline.range_service
     app.state.worker_auth = WorkerAuthService(settings)
     leadership_report_service = LeadershipReportService(settings, leadership_snapshots)
     leadership_refresh_worker = LeadershipRefreshWorker(

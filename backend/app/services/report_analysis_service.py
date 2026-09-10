@@ -187,7 +187,16 @@ class ReportAnalysisService:
             for item in report.monthly_records
             if item.period_start < report.report_month
         ]
-        previous = max(previous_candidates, key=lambda item: item.period_start, default=None)
+        previous = report.comparison_total or max(
+            previous_candidates, key=lambda item: item.period_start, default=None
+        )
+        range_mode = report.period_start is not None and report.period_end is not None
+        period_label = (
+            f"{report.period_start.isoformat()} 至 {report.period_end.isoformat()}"
+            if range_mode
+            else report.report_month.isoformat()[:7]
+        )
+        period_name = "区间" if range_mode else "当月"
         month_change = _change(current.task_count, previous.task_count) if previous else None
         year_change = (
             _change(current.task_count, report.year_ago_total.task_count)
@@ -222,16 +231,16 @@ class ReportAnalysisService:
                 if deviation > 0 and item.task_count > threshold
             ]
         facts = [
-            _fact("F001", "当月任务数", f"{current.task_count} 项", "当月汇总.task_count"),
-            _fact("F002", "当月切割长度", f"{_number(current.cut_length_m)} 米", "当月汇总.cut_length_m"),
-            _fact("F003", "当月切割时长", _duration(current.work_time_seconds), "当月汇总.work_time_seconds"),
-            _fact("F004", "任务数环比", f"{month_change:+.2f}%" if month_change is not None else "无法比较（上月数据缺失或任务数为零）", "(当月任务数-上月任务数)/上月任务数"),
+            _fact("F001", f"{period_name}任务数", f"{current.task_count} 项", f"{period_name}汇总.task_count"),
+            _fact("F002", f"{period_name}切割长度", f"{_number(current.cut_length_m)} 米", f"{period_name}汇总.cut_length_m"),
+            _fact("F003", f"{period_name}切割时长", _duration(current.work_time_seconds), f"{period_name}汇总.work_time_seconds"),
+            _fact("F004", "任务数环比", f"{month_change:+.2f}%" if month_change is not None else "无法比较（对比区间数据缺失或任务数为零）", f"({period_name}任务数-前一等长区间任务数)/前一等长区间任务数" if range_mode else "(当月任务数-上月任务数)/上月任务数"),
             _fact("F005", "任务数同比", f"{year_change:+.2f}%" if year_change is not None else "无法比较（上年同月数据缺失或任务数为零）", "(当月任务数-上年同月任务数)/上年同月任务数"),
             _fact("F006", "主要工程", f"{projects[0]['project_name']}（{projects[0]['task_count']} 项，占 {projects[0]['task_count'] / current.task_count * 100:.2f}%）" if projects and current.task_count else "暂无工程数据", "当月工程分布中任务最多工程及其任务数/当月任务数"),
         ]
         context = {
             "facts": facts,
-            "report_month": report.report_month.isoformat()[:7],
+            "report_month": period_label,
             "comparisons": {
                 "task_mom_percent": round(month_change, 2) if month_change is not None else None,
                 "cut_length_mom_percent": round(length_month_change, 2) if length_month_change is not None else None,
@@ -242,7 +251,7 @@ class ReportAnalysisService:
         }
         return self._analyze(
             report_type="leadership",
-            report_date=report.report_month.isoformat(),
+            report_date=period_label,
             context=context,
             simulator=self._simulate_leadership,
             force=force,

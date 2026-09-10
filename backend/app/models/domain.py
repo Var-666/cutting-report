@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -11,6 +11,20 @@ class ReportFilter:
     report_date: date
     project_code: str | None = None
     ship_no: str | None = None
+    period_start: date | None = None
+    period_end: date | None = None
+
+    @property
+    def start_date(self) -> date:
+        return self.period_start or self.report_date
+
+    @property
+    def end_date(self) -> date:
+        return self.period_end or self.report_date
+
+    @property
+    def end_exclusive(self) -> date:
+        return self.end_date + timedelta(days=1)
 
 
 @dataclass(slots=True)
@@ -111,6 +125,11 @@ class LeadershipReportResult:
     year_ago_total: LeadershipPeriodRecord | None = None
     project_distribution: list[ProjectDistributionRecord] = field(default_factory=list)
     snapshot: LeadershipSnapshotState = field(default_factory=LeadershipSnapshotState)
+    period_start: date | None = None
+    period_end: date | None = None
+    comparison_total: LeadershipPeriodRecord | None = None
+    comparison_start: date | None = None
+    comparison_end: date | None = None
 
 
 @dataclass(slots=True)

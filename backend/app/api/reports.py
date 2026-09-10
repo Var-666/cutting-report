@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import calendar
 import uuid
 from datetime import date, datetime
 from pathlib import Path
@@ -29,6 +30,16 @@ def _request_id(request: Request) -> str:
 
 def _serialize_job(job: dict) -> dict:
     report_id = job["report_id"]
+    period_start = job.get("period_start") or job["report_date"]
+    period_end = job.get("period_end") or period_start
+    if (job.get("report_type") or "workshop") == "leadership" and not job.get(
+        "period_start"
+    ):
+        selected = date.fromisoformat(job["report_date"])
+        period_start = selected.replace(day=1).isoformat()
+        period_end = selected.replace(
+            day=calendar.monthrange(selected.year, selected.month)[1]
+        ).isoformat()
     result = {
         "report_id": report_id,
         "status": job["status"],
@@ -37,6 +48,8 @@ def _serialize_job(job: dict) -> dict:
         "report_title": job.get("report_title"),
         "stage_message": job["stage_message"],
         "report_date": job["report_date"],
+        "period_start": period_start,
+        "period_end": period_end,
         "project_code": job["project_code"],
         "ship_no": job["ship_no"],
         "created_at": job["created_at"],
@@ -73,6 +86,9 @@ def create_report(payload: ReportCreateRequest, request: Request) -> dict:
         definition = request.app.state.definitions.get_definition(payload.definition_id)
         if not definition or definition["is_builtin"] or not definition["enabled"]:
             raise HTTPException(status_code=400, detail="报表定义不存在或尚未启用")
+    explicit_period = bool(
+        {"period_start", "period_end"} & payload.model_fields_set
+    )
     request.app.state.metadata.create_job(
         report_id=report_id,
         report_date=payload.report_date.isoformat(),
@@ -84,6 +100,8 @@ def create_report(payload: ReportCreateRequest, request: Request) -> dict:
         definition_id=payload.definition_id,
         report_title=definition["name"] if definition else None,
         parameters=payload.parameters,
+        period_start=payload.period_start.isoformat() if explicit_period else None,
+        period_end=payload.period_end.isoformat() if explicit_period else None,
     )
     return {
         "success": True,

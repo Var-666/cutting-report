@@ -7,11 +7,13 @@ import {
   getLatestWorkshopProductionDate,
   listUserAccounts,
   listWorkshopConfirmationAudits,
+  listWorkshopRangeTasks,
   listWorkshopTasks,
   revokeWorkshopTask,
 } from '../api/reports'
 import AnalysisPanel from '../components/AnalysisPanel.vue'
 import ReportExportMenu from '../components/ReportExportMenu.vue'
+import ReportPeriodPicker from '../components/ReportPeriodPicker.vue'
 import { reportToday } from '../api/reportDates.js'
 
 const props = defineProps({
@@ -22,7 +24,7 @@ const props = defineProps({
 const emit = defineEmits(['export'])
 const today = reportToday()
 const pageSize = 10
-const filters = reactive({ reportDate: today, projectName: '', confirmationStatus: 'all' })
+const filters = reactive({ reportDate: today, startDate: today, endDate: today, projectName: '', confirmationStatus: 'all' })
 const result = ref({ report: null, items: [], total: 0, page: 1, page_size: pageSize, project_names: [], confirmed_count: 0 })
 const loading = ref(false)
 const confirmingId = ref('')
@@ -70,7 +72,7 @@ function startRefreshTimer() {
   }, 5000)
 }
 
-watch(() => filters.reportDate, () => {
+watch(() => [filters.reportDate, filters.startDate, filters.endDate], () => {
   filters.projectName = ''
   filters.confirmationStatus = 'all'
   result.value = { report: null, items: [], total: 0, page: 1, page_size: pageSize, project_names: [], confirmed_count: 0 }
@@ -84,6 +86,7 @@ function duration(value) {
   return [Math.floor(seconds / 3600), Math.floor(seconds % 3600 / 60), seconds % 60].map((item) => String(item).padStart(2, '0')).join(':')
 }
 function time(value) { return value ? String(value).replace('T', ' ').slice(0, 16) : '--' }
+function rowDate(row) { return row?.production_time ? String(row.production_time).slice(0, 10) : filters.reportDate }
 
 function showConfirmationFeedback(type, title, message, timeout = 0) {
   if (feedbackTimer) window.clearTimeout(feedbackTimer)
@@ -103,6 +106,10 @@ function closeConfirmationFeedback() {
 }
 
 async function load(page = 1, { silent = false, ensureReport = true, force = true } = {}) {
+  if (!isWorker.value && filters.endDate < filters.startDate) {
+    error.value = '结束日期不能早于开始日期'
+    return
+  }
   if (!silent) {
     loading.value = true
     error.value = ''
@@ -114,12 +121,17 @@ async function load(page = 1, { silent = false, ensureReport = true, force = tru
       page,
       pageSize: result.value.page_size,
     }
-    let data = await listWorkshopTasks(query, { force })
-    if (ensureReport && (!data.report || !data.report.item_count)) {
+    let data = isWorker.value
+      ? await listWorkshopTasks(query, { force })
+      : await listWorkshopRangeTasks(query, { force })
+    if (isWorker.value && ensureReport && (!data.report || !data.report.item_count)) {
       await generateWorkshopDailyReport(query.reportDate)
       data = await listWorkshopTasks(query, { force: true })
     }
-    if (query.reportDate === filters.reportDate) result.value = data
+    const current = isWorker.value
+      ? query.reportDate === filters.reportDate
+      : query.startDate === filters.startDate && query.endDate === filters.endDate
+    if (current) result.value = data
   } catch (exception) {
     if (!silent) error.value = exception.message
   } finally {
@@ -171,7 +183,7 @@ async function openCorrection(row) {
   try {
     const [users, auditResult] = await Promise.all([
       listUserAccounts(),
-      listWorkshopConfirmationAudits({ reportDate: filters.reportDate, taskId: row.task_id }),
+      listWorkshopConfirmationAudits({ reportDate: rowDate(row), taskId: row.task_id }),
     ])
     correction.workers = users.items || []
     correction.audits = auditResult.items || []
@@ -207,7 +219,7 @@ async function submitCorrection() {
       showConfirmationFeedback('success', '已撤销确认', `${display(row.program_no)} 已恢复为待确认`, 5000)
     } else {
       await correctWorkshopTask(row.task_id, {
-        reportDate: filters.reportDate,
+        reportDate: rowDate(row),
         action: correction.action,
         workerId: correction.action === 'reassign' ? correction.workerId : null,
         reason,
@@ -232,8 +244,10 @@ async function submitCorrection() {
 function exportReport(format = 'html') {
   emit('export', {
     report_type: 'workshop',
-    report_date: filters.reportDate,
-    project_code: null,
+    report_date: isWorker.value ? filters.reportDate : filters.startDate,
+    period_start: isWorker.value ? filters.reportDate : filters.startDate,
+    period_end: isWorker.value ? filters.reportDate : filters.endDate,
+    project_code: isWorker.value ? null : filters.projectName || null,
     ship_no: null,
     parameters: { chart_type: chartType.value },
   }, format)
@@ -244,7 +258,11 @@ async function initializeReport() {
   error.value = ''
   try {
     const latest = await getLatestWorkshopProductionDate(today)
-    if (latest.report_date) filters.reportDate = latest.report_date
+    if (latest.report_date) {
+      filters.reportDate = latest.report_date
+      filters.startDate = latest.report_date
+      filters.endDate = latest.report_date
+    }
   } catch (exception) {
     error.value = exception.message
   }
@@ -298,7 +316,13 @@ onUnmounted(() => {
   <section class="page-hero report-hero workshop-hero">
     <div><span class="eyebrow">{{ isWorker ? 'WORKER TASK CONFIRMATION' : 'WORKSHOP REPORT' }}</span><h2>{{ isWorker ? '我的任务确认' : '车间报表' }}</h2><p>{{ isWorker ? `当前工人：${user.display_name}。请确认本人完成的任务，如果误点可撤销本人确认。` : '查看全部任务和工人确认结果，必要时可撤销或改派并保留审计记录。' }}</p></div>
     <form v-if="!isWorker" class="report-query workshop-query" @submit.prevent="load(1)">
-      <label><span>生产日期</span><AppDatePicker v-model="filters.reportDate" required /></label>
+      <ReportPeriodPicker
+        v-model:start-date="filters.startDate"
+        v-model:end-date="filters.endDate"
+        :anchor-date="filters.reportDate"
+        :disabled="loading"
+        @validation-error="error = $event"
+      />
       <label><span>图表类型</span><AppSelect v-model="chartType"><option value="bar_line">柱线组合</option><option value="bar">柱状图</option><option value="line">折线图</option><option value="area">面积图</option></AppSelect></label>
       <button class="primary" type="submit" :disabled="loading"><span v-if="loading" class="spinner"></span>{{ loading ? '查询中' : '查询报表' }}</button>
       <ReportExportMenu :disabled="loading || !result.report" :loading="exporting" @select="exportReport" />
@@ -307,14 +331,14 @@ onUnmounted(() => {
 
   <div v-if="error" class="global-error"><strong>操作未完成</strong><span>{{ error }}</span><button @click="error = ''">关闭</button></div>
   <section class="panel workshop-panel">
-    <div class="panel-title"><div><span>01</span><h2>{{ isWorker ? '待确认任务表' : '当日车间报表' }}</h2></div><p>{{ isWorker ? '只能确认尚未被其他工人确认的任务' : '已确认任务可撤销或改派' }}</p></div>
+    <div class="panel-title"><div><span>01</span><h2>{{ isWorker ? '待确认任务表' : '区间车间报表' }}</h2></div><p>{{ isWorker ? '只能确认尚未被其他工人确认的任务' : '已确认任务可撤销或改派' }}</p></div>
     <form class="workshop-filters" :class="{ manager: !isWorker }" @submit.prevent="load(1)">
       <label v-if="isWorker"><span>生产日期</span><AppDatePicker v-model="filters.reportDate" required /></label>
       <label><span>工程/船号</span><AppSelect v-model="filters.projectName" :disabled="!result.report"><option value="">全部</option><option v-for="name in result.project_names" :key="name" :value="name">{{ name }}</option></AppSelect></label>
       <label><span>确认状态</span><AppSelect v-model="filters.confirmationStatus" :disabled="!result.report"><option value="all">全部</option><option value="unconfirmed">未确认</option><option value="confirmed">已确认</option></AppSelect></label>
       <button type="submit" :disabled="loading || !result.report">{{ loading ? '筛选中' : '筛选明细' }}</button>
     </form>
-    <div v-if="result.report" class="workshop-report-state"><strong>{{ result.report.report_date }} 车间报表</strong><span>生成人：{{ result.report.generated_by_name }} · 生成时间：{{ time(result.report.generated_at) }} · 总任务 {{ result.report.item_count }} 项 · 已确认 {{ result.report.confirmed_count }} 项</span></div>
+    <div v-if="result.report" class="workshop-report-state"><strong>{{ isWorker ? result.report.report_date : `${result.report.period_start} 至 ${result.report.period_end}` }} 车间报表</strong><span>{{ isWorker ? `生成人：${result.report.generated_by_name || '--'} · 生成时间：${time(result.report.generated_at)} · ` : '' }}总任务 {{ result.report.item_count }} 项 · 已确认 {{ result.report.confirmed_count }} 项</span></div>
     <div v-else class="workshop-empty-report"><strong>{{ loading ? '正在加载最近车间报表' : '该日期暂无车间报表' }}</strong><span>{{ loading ? '系统正在查找最近有数据的生产日并加载全部明细。' : '当前源数据在该日期没有已完成任务。' }}</span></div>
     <div v-if="result.report" class="workshop-summary">当前筛选返回 {{ result.total }} 项任务，所选工程/船号已确认 {{ result.confirmed_count }} 项</div>
     <div v-if="result.report" class="history-wrap workshop-table-wrap">
@@ -335,7 +359,7 @@ onUnmounted(() => {
   </section>
 
   <AnalysisPanel
-    v-if="!isWorker"
+    v-if="!isWorker && filters.startDate === filters.endDate"
     report-type="workshop"
     :report-date="filters.reportDate"
     :ready="Boolean(result.report)"
