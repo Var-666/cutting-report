@@ -183,8 +183,9 @@ test('equivalent page headers and report query bars share one layout system', ()
   for (const view of [leadership, workshop, energy]) {
     assert.match(view.template.content, /class="[^"]*report-query[^"]*"/)
   }
-  assert.match(css, /--report-query-width:\s*684px;/)
-  assert.match(css, /\.report-query\s*\{[^}]*grid-template-columns:190px 150px 140px 136px;/)
+  assert.match(css, /--report-query-width:\s*884px;/)
+  assert.match(css, /\.report-query\s*\{[^}]*grid-template-columns:repeat\(2,190px\) 140px 136px 136px;/)
+  assert.match(css, /@media \(max-width: 900px\)[\s\S]*\.report-query\s*\{[^}]*grid-template-columns:repeat\(2,minmax\(180px,1fr\)\) 140px 136px 136px;/)
   assert.doesNotMatch(css, /\.workshop-query\s*\{[^}]*display:/)
   assert.doesNotMatch(css, /\.equipment-query\s+\.app-date-picker/)
   assert.match(css, /\.report-navigation nav a:focus-visible\s*\{[^}]*box-shadow:/)
