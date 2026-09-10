@@ -257,6 +257,7 @@ test('workshop confirmations support own revocation and audited admin correction
   const workshop = descriptor('WorkshopView')
   const script = workshop.scriptSetup.content
   const template = workshop.template.content
+  const styles = readFileSync(new URL('../src/assets/style.css', import.meta.url), 'utf8')
 
   assert.match(script, /row\.confirmed_by_id === props\.user\.user_id/)
   assert.match(script, /revokeWorkshopTask\(row\.task_id/)
@@ -266,6 +267,8 @@ test('workshop confirmations support own revocation and audited admin correction
   assert.match(template, /更正确认/)
   assert.match(template, /更正原因/)
   assert.match(template, /该任务的确认记录/)
+  assert.match(styles, /\.confirmation-person\s*\{[^}]*grid-template-columns:minmax\(0,1fr\) auto;[^}]*align-items:center;/)
+  assert.match(styles, /\.correction-button\s*\{[^}]*white-space:nowrap!important;/)
 })
 
 test('intelligent analysis omits the analysis boundary section', () => {
