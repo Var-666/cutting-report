@@ -58,7 +58,27 @@ def test_workshop_warmup_and_report_generation_share_query_without_confirming(se
         assert len(calls) == 1
         assert data["total"] > 0
         assert data["confirmed_count"] == 0
+        assert data["worker_summaries"] == []
         assert all(not row["confirmed_by"] for row in data["items"])
+
+        worker = repo.upsert_external_worker(
+            external_id="hr-worker-1",
+            company_no="C0018",
+            group_no="G0018",
+            display_name="张三",
+            now="2026-09-03T09:00:00+08:00",
+        )
+        repo.confirm_task(
+            task_id=data["items"][0]["task_id"],
+            report_id=data["report"]["report_id"],
+            user=worker,
+            now="2026-09-03T09:05:00+08:00",
+        )
+        response = client.get("/api/v1/workshop/tasks", params=query)
+        worker_summary = response.json()["data"]["worker_summaries"]
+        assert worker_summary[0]["company_no"] == "C0018"
+        assert worker_summary[0]["worker_name"] == "张三"
+        assert worker_summary[0]["confirmed_task_count"] == 1
 
 
 def test_warmup_cache_expires_and_separates_dates(service, monkeypatch):

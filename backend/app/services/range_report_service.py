@@ -212,6 +212,9 @@ class RangeReportService:
                     confirmed_by=(
                         confirmation["worker_name"] if confirmation else None
                     ),
+                    confirmed_by_company_no=(
+                        confirmation["worker_company_no"] if confirmation else None
+                    ),
                     confirmed_at=(
                         datetime.fromisoformat(confirmation["confirmed_at"])
                         if confirmation

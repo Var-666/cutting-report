@@ -1,7 +1,8 @@
+from datetime import datetime
 from decimal import Decimal
 
-from app.models.domain import SummaryBaseRecord
-from app.services.statistics_service import StatisticsService
+from app.models.domain import SummaryBaseRecord, WorkshopRecord
+from app.services.statistics_service import StatisticsService, build_worker_work_summaries
 
 
 def record(
@@ -60,3 +61,45 @@ def test_negative_values_are_excluded_per_field() -> None:
     assert result.summary.total_groove_length == Decimal("20")
     assert any("负数数据" in item.message for item in result.data_quality)
 
+
+def test_worker_work_summary_uses_only_confirmed_tasks_and_company_numbers() -> None:
+    def workshop_record(
+        task_id: str,
+        work_time: str,
+        worker_id: str | None,
+        worker_name: str | None,
+        company_no: str | None,
+        confirmed_at: str | None,
+    ) -> WorkshopRecord:
+        return WorkshopRecord(
+            task_id=task_id,
+            project_code="A001",
+            ship_no="S001",
+            segment_name="P01",
+            program_no=f"OP-{task_id}",
+            cut_length=Decimal("10.5"),
+            groove_length=Decimal("2.5"),
+            work_time=Decimal(work_time),
+            confirmed_by_id=worker_id,
+            confirmed_by=worker_name,
+            confirmed_by_company_no=company_no,
+            confirmed_at=datetime.fromisoformat(confirmed_at) if confirmed_at else None,
+        )
+
+    summaries = build_worker_work_summaries(
+        [
+            workshop_record("1", "60", "worker-a", "张三", "C001", "2026-09-01T09:00:00+08:00"),
+            workshop_record("2", "120", "worker-a", "张三", "C001", "2026-09-02T10:00:00+08:00"),
+            workshop_record("3", "60", "worker-b", "李四", "C002", "2026-09-02T09:00:00+08:00"),
+            workshop_record("4", "999", None, None, None, None),
+        ]
+    )
+
+    assert [item["company_no"] for item in summaries] == ["C001", "C002"]
+    assert summaries[0]["confirmed_task_count"] == 2
+    assert summaries[0]["total_cut_length"] == Decimal("21.0")
+    assert summaries[0]["total_work_time_seconds"] == Decimal("180")
+    assert summaries[0]["work_time_share"] == 75.0
+    assert summaries[0]["last_confirmed_at"] == datetime.fromisoformat(
+        "2026-09-02T10:00:00+08:00"
+    )

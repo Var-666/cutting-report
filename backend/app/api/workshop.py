@@ -17,6 +17,7 @@ from app.database.workshop import (
     DailyReportExistsError,
 )
 from app.models.domain import to_primitive
+from app.services.statistics_service import build_worker_work_summaries
 
 
 router = APIRouter(prefix="/api/v1/workshop", tags=["workshop-confirmation"])
@@ -190,6 +191,7 @@ def list_tasks(
                 "total": 0,
                 "project_names": [],
                 "confirmed_count": 0,
+                "worker_summaries": [],
                 "current_user": user,
             },
         )
@@ -199,6 +201,9 @@ def list_tasks(
     if project_name:
         records = [row for row in records if row.project_code == project_name]
     confirmed_count = sum(1 for row in records if row.confirmed_by)
+    worker_summaries = (
+        build_worker_work_summaries(records) if user.get("role") == "admin" else []
+    )
     if confirmation_status == "confirmed":
         records = [row for row in records if row.confirmed_by]
     elif confirmation_status == "unconfirmed":
@@ -218,6 +223,7 @@ def list_tasks(
             "total": total,
             "project_names": project_names,
             "confirmed_count": confirmed_count,
+            "worker_summaries": to_primitive(worker_summaries),
             "current_user": user,
         },
     )
@@ -248,6 +254,7 @@ def list_range_tasks(
     )
     if project_name:
         records = [row for row in records if row.project_code == project_name]
+    worker_summaries = build_worker_work_summaries(records)
     if confirmation_status == "confirmed":
         records = [row for row in records if row.confirmed_by]
     elif confirmation_status == "unconfirmed":
@@ -274,6 +281,7 @@ def list_range_tasks(
             "page_size": page_size,
             "project_names": project_names,
             "confirmed_count": sum(bool(row.confirmed_by) for row in records),
+            "worker_summaries": to_primitive(worker_summaries),
         },
     )
 

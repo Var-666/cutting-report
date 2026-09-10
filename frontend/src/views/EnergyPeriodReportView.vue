@@ -9,6 +9,7 @@ import { reportToday } from '../api/reportDates.js'
 import AnalysisPanel from '../components/AnalysisPanel.vue'
 import ReportExportMenu from '../components/ReportExportMenu.vue'
 import ReportPeriodPicker from '../components/ReportPeriodPicker.vue'
+import ReportTrendPanel from '../components/ReportTrendPanel.vue'
 
 use([BarChart, LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
 defineProps({ exporting: Boolean })
@@ -25,8 +26,8 @@ const loading = ref(false)
 const error = ref('')
 const page = ref(1)
 const pageSize = 50
-const taskChartElement = ref(null)
-const periodChartElement = ref(null)
+const taskPanel = ref(null)
+const periodPanel = ref(null)
 let taskChart = null
 let periodChart = null
 let controller = null
@@ -88,14 +89,16 @@ function chartOption(rows, labels) {
 
 function renderCharts() {
   if (!active) return
-  if (taskChartElement.value && taskDay.value) {
-    taskChart ||= init(taskChartElement.value)
+  const taskChartElement = taskPanel.value?.getChartElement()
+  const periodChartElement = periodPanel.value?.getChartElement()
+  if (taskChartElement && taskDay.value) {
+    taskChart ||= init(taskChartElement)
     const rows = taskRows.value.slice(0, 50).map((row) => ({ electricity: row.electricity_consumption, gas: row.gas_consumption }))
     const labels = taskRows.value.slice(0, 50).map((row) => `${String(row.production_time || '').slice(5, 16).replace('T', ' ')} ${row.segment_name || ''}`)
     taskChart.setOption(chartOption(rows, labels), true)
   }
-  if (periodChartElement.value && periodReport.value) {
-    periodChart ||= init(periodChartElement.value)
+  if (periodChartElement && periodReport.value) {
+    periodChart ||= init(periodChartElement)
     const rows = dailyRows.value.map((row) => ({ electricity: row.electricity?.value, gas: row.gas?.value }))
     periodChart.setOption(chartOption(rows, dailyRows.value.map((row) => row.report_date.slice(5))), true)
   }
@@ -182,34 +185,28 @@ watch(chartType, async () => { await nextTick(); renderCharts() })
   <div v-if="error" class="global-error"><strong>查询提示</strong><span>{{ error }}</span><button @click="error = ''">关闭</button></div>
   <div v-if="configurationError" class="energy-config-note"><strong>能管数据提示</strong><span>{{ configurationError }}。缺失值显示 --，不按零计算。</span></div>
 
-  <section class="panel energy-period-panel">
-    <div class="panel-title energy-section-heading"><div><span>01</span><h2>区间任务能耗明细</h2><small>{{ periodStart }} 至 {{ periodEnd }}</small></div></div>
-    <div class="energy-stat-strip">
-      <div><span>任务电耗合计</span><strong>{{ format(summary.total_electricity_consumption) }}</strong><small>{{ units.electricity }}</small></div>
-      <div><span>任务气耗合计</span><strong>{{ format(summary.total_gas_consumption) }}</strong><small>{{ units.gas }}</small></div>
-      <div class="energy-coverage"><span>任务匹配情况</span><p>电耗 {{ summary.electricity_record_count || 0 }}/{{ summary.task_count || 0 }} 项</p><p>气耗 {{ summary.gas_record_count || 0 }}/{{ summary.task_count || 0 }} 项</p></div>
-      <div class="energy-saved"><span>{{ equipmentScopeLabel }} 区间任务</span><strong>{{ summary.task_count || 0 }} 项</strong><small>累计切割时长 {{ duration(summary.total_work_time) }}</small></div>
-    </div>
-    <div class="energy-period-split">
-      <div class="energy-period-chart-wrap"><div ref="taskChartElement" class="energy-period-chart" aria-label="任务能耗图"></div></div>
-      <div class="energy-period-table-wrap energy-task-table-wrap">
+  <ReportTrendPanel ref="taskPanel" number="01" title="区间任务能耗明细" :subtitle="`${periodStart} 至 ${periodEnd}`" chart-label="任务能耗图" :height="260">
+    <template #summary>
+      <div class="energy-stat-strip">
+        <div><span>任务电耗合计</span><strong>{{ format(summary.total_electricity_consumption) }}</strong><small>{{ units.electricity }}</small></div>
+        <div><span>任务气耗合计</span><strong>{{ format(summary.total_gas_consumption) }}</strong><small>{{ units.gas }}</small></div>
+        <div class="energy-coverage"><span>任务匹配情况</span><p>电耗 {{ summary.electricity_record_count || 0 }}/{{ summary.task_count || 0 }} 项</p><p>气耗 {{ summary.gas_record_count || 0 }}/{{ summary.task_count || 0 }} 项</p></div>
+        <div class="energy-saved"><span>{{ equipmentScopeLabel }} 区间任务</span><strong>{{ summary.task_count || 0 }} 项</strong><small>累计切割时长 {{ duration(summary.total_work_time) }}</small></div>
+      </div>
+    </template>
+    <template #table>
         <table v-content-table class="energy-period-table energy-task-table summary-table" aria-label="任务能耗明细表">
           <thead><tr><th scope="col">序号</th><th scope="col">工程号</th><th scope="col">船号</th><th scope="col">分段名</th><th scope="col">任务开始</th><th scope="col">切割时长</th><th scope="col">电耗</th><th scope="col">气耗</th></tr></thead>
           <tbody><tr v-for="(row, index) in visibleTaskRows" :key="row.task_id"><th scope="row">{{ (page - 1) * pageSize + index + 1 }}</th><td>{{ row.project_code || '--' }}</td><td>{{ row.ship_no || '--' }}</td><td>{{ row.segment_name || '--' }}</td><td>{{ dateTime(row.production_time) }}</td><td>{{ duration(row.work_time) }}</td><td>{{ format(row.electricity_consumption) }}</td><td>{{ format(row.gas_consumption) }}</td></tr><tr v-if="!visibleTaskRows.length"><td colspan="8" class="energy-empty">{{ loading ? '正在查询…' : '所选区间暂无任务' }}</td></tr></tbody>
           <tfoot><tr><th aria-hidden="true"></th><th scope="row">汇总</th><th>{{ equipmentScopeLabel }}</th><th>{{ summary.task_count || 0 }} 项</th><th>--</th><th>{{ duration(summary.total_work_time) }}</th><th>{{ format(summary.total_electricity_consumption) }}</th><th>{{ format(summary.total_gas_consumption) }}</th></tr></tfoot>
         </table>
-      </div>
-    </div>
-    <div v-if="taskRows.length" class="history-pagination"><span>第 {{ page }} / {{ totalPages }} 页，共 {{ taskRows.length }} 项</span><div><button :disabled="page <= 1" @click="page--">上一页</button><button :disabled="page >= totalPages" @click="page++">下一页</button></div></div>
-  </section>
+    </template>
+    <template #footer><div v-if="taskRows.length" class="history-pagination"><span>第 {{ page }} / {{ totalPages }} 页，共 {{ taskRows.length }} 项</span><div><button :disabled="page <= 1" @click="page--">上一页</button><button :disabled="page >= totalPages" @click="page++">下一页</button></div></div></template>
+  </ReportTrendPanel>
 
-  <section class="panel energy-period-panel">
-    <div class="panel-title energy-section-heading"><div><span>02</span><h2>区间每日能耗汇总</h2><small>月度每日能耗汇总口径 · {{ dailyRows.length }} 天</small></div></div>
-    <div class="energy-period-split">
-      <div class="energy-period-chart-wrap"><div ref="periodChartElement" class="energy-period-chart" aria-label="每日能耗图"></div></div>
-      <div class="energy-period-table-wrap"><table v-content-table class="leadership-table energy-month-table summary-table" aria-label="月度每日能耗汇总表"><thead><tr><th scope="col">日期</th><th scope="col">任务数</th><th scope="col">切割时长</th><th scope="col">电耗</th><th scope="col">气耗</th></tr></thead><tbody><tr v-for="row in dailyRows" :key="row.report_date"><td>{{ row.report_date }}</td><td>{{ row.task_count }}</td><td>{{ duration(row.work_time_seconds) }}</td><td>{{ valueText(row.electricity) }}</td><td>{{ valueText(row.gas) }}</td></tr><tr v-if="!dailyRows.length"><td colspan="5" class="energy-empty">{{ loading ? '正在查询…' : '所选区间暂无每日汇总' }}</td></tr></tbody><tfoot><tr><th scope="row">汇总</th><th>{{ month?.total_task_count || 0 }}</th><th>{{ duration(month?.total_work_time_seconds) }}</th><th>{{ valueText(month?.summary?.electricity) }}</th><th>{{ valueText(month?.summary?.gas) }}</th></tr></tfoot></table></div>
-    </div>
-  </section>
+  <ReportTrendPanel ref="periodPanel" number="02" title="区间每日能耗汇总" :subtitle="`月度每日能耗汇总口径 · ${dailyRows.length} 天`" chart-label="每日能耗图" :height="260">
+    <template #table><table v-content-table class="leadership-table energy-month-table summary-table" aria-label="月度每日能耗汇总表"><thead><tr><th scope="col">日期</th><th scope="col">任务数</th><th scope="col">切割时长</th><th scope="col">电耗</th><th scope="col">气耗</th></tr></thead><tbody><tr v-for="row in dailyRows" :key="row.report_date"><td>{{ row.report_date }}</td><td>{{ row.task_count }}</td><td>{{ duration(row.work_time_seconds) }}</td><td>{{ valueText(row.electricity) }}</td><td>{{ valueText(row.gas) }}</td></tr><tr v-if="!dailyRows.length"><td colspan="5" class="energy-empty">{{ loading ? '正在查询…' : '所选区间暂无每日汇总' }}</td></tr></tbody><tfoot><tr><th scope="row">汇总</th><th>{{ month?.total_task_count || 0 }}</th><th>{{ duration(month?.total_work_time_seconds) }}</th><th>{{ valueText(month?.summary?.electricity) }}</th><th>{{ valueText(month?.summary?.gas) }}</th></tr></tfoot></table></template>
+  </ReportTrendPanel>
 
   <p v-if="periodStart !== periodEnd" class="report-source-note">区间智能分析将在导出报告时生成，并与前一个等长区间对比。</p>
   <AnalysisPanel v-else report-type="equipment" :report-date="periodStart" :ready="analysisReady" :context-version="`${summary.task_count}-${summary.total_work_time}`" />
@@ -219,18 +216,11 @@ watch(chartType, async () => { await nextTick(); renderCharts() })
 .equipment-hero > div:first-child { min-width:0; flex:1 1 auto; }
 .energy-period-query { flex:0 0 auto; }
 .energy-config-note { display:grid; gap:6px; padding:14px 18px; margin-bottom:20px; background:#fff7e9; border:1px solid #eddbb6; color:#85571c; font-size:13px; }
-.energy-period-panel { margin-bottom:22px; overflow:hidden; }
-.energy-section-heading { gap:14px; flex-wrap:wrap; }
-.energy-section-heading small { color:#728595; font-size:12px; }
 .energy-stat-strip { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin:20px 18px 0; }
 .energy-stat-strip > div { min-width:0; min-height:112px; padding:18px 20px; border-top:3px solid var(--cyan); background:#fff; box-shadow:0 7px 22px rgba(21,54,78,.055); }
 .energy-stat-strip span { display:block; color:var(--muted); font-size:11px; }
 .energy-stat-strip strong { color:var(--navy); font-size:24px; display:block; margin-top:11px; }
 .energy-stat-strip small,.energy-stat-strip p { color:#687d8d; display:block; font-size:11px; margin:6px 0 0; }
-.energy-period-split { display:grid; grid-template-columns:minmax(330px,.9fr) minmax(0,1.25fr); gap:14px; padding:16px 18px 20px; }
-.energy-period-chart-wrap,.energy-period-table-wrap { min-width:0; border:1px solid #e0e7ec; background:#fff; }
-.energy-period-chart { width:100%; height:260px; }
-.energy-period-table-wrap { height:260px; max-height:260px; overflow:auto; }
 .energy-period-table { width:100%; border-collapse:collapse; font-size:12px; }
 .energy-period-table th,.energy-period-table td { height:47px; padding:10px; border-bottom:1px solid #dde5ea; text-align:center; white-space:nowrap; }
 .energy-task-table th:nth-child(2),.energy-task-table td:nth-child(2),.energy-task-table th:nth-child(3),.energy-task-table td:nth-child(3),.energy-task-table th:nth-child(4),.energy-task-table td:nth-child(4) { text-align:left; }
@@ -240,6 +230,6 @@ watch(chartType, async () => { await nextTick(); renderCharts() })
 .energy-empty { height:120px; color:#8a9aa5; }
 .history-pagination { display:flex; justify-content:space-between; align-items:center; padding:0 18px 18px; }
 .history-pagination button { margin-left:8px; }
-@media (max-width:900px) { .energy-stat-strip { grid-template-columns:1fr 1fr; }.energy-period-split { grid-template-columns:1fr; }.energy-period-table-wrap { height:auto; max-height:420px; } }
+@media (max-width:900px) { .energy-stat-strip { grid-template-columns:1fr 1fr; } }
 @media (max-width:560px) { .energy-stat-strip { grid-template-columns:1fr; } }
 </style>

@@ -891,6 +891,9 @@ class WorkshopRepository(SQLiteRepository):
                     ),
                     confirmed_by_id=confirmation["worker_id"] if confirmation else None,
                     confirmed_by=confirmation["worker_name"] if confirmation else None,
+                    confirmed_by_company_no=(
+                        confirmation["worker_company_no"] if confirmation else None
+                    ),
                     confirmed_at=(
                         datetime.fromisoformat(confirmation["confirmed_at"])
                         if confirmation
@@ -910,7 +913,12 @@ class WorkshopRepository(SQLiteRepository):
                 chunk = unique_ids[start : start + 500]
                 placeholders = ",".join("?" for _ in chunk)
                 rows = connection.execute(
-                    f"SELECT * FROM workshop_confirmations WHERE task_id IN ({placeholders})",
+                    f"""
+                    SELECT c.*, u.company_no AS worker_company_no
+                    FROM workshop_confirmations AS c
+                    LEFT JOIN users AS u ON u.user_id = c.worker_id
+                    WHERE c.task_id IN ({placeholders})
+                    """,
                     chunk,
                 ).fetchall()
                 result.update({str(row["task_id"]): dict(row) for row in rows})

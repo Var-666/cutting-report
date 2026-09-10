@@ -55,6 +55,7 @@ class WorkshopRecord:
     production_time: datetime | None = None
     confirmed_by_id: str | None = None
     confirmed_by: str | None = None
+    confirmed_by_company_no: str | None = None
     confirmed_at: datetime | None = None
 
 

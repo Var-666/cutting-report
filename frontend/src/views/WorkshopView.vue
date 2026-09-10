@@ -14,6 +14,7 @@ import {
 import AnalysisPanel from '../components/AnalysisPanel.vue'
 import ReportExportMenu from '../components/ReportExportMenu.vue'
 import ReportPeriodPicker from '../components/ReportPeriodPicker.vue'
+import ReportTrendPanel from '../components/ReportTrendPanel.vue'
 import { reportToday } from '../api/reportDates.js'
 
 const props = defineProps({
@@ -25,7 +26,7 @@ const emit = defineEmits(['export'])
 const today = reportToday()
 const pageSize = 10
 const filters = reactive({ reportDate: today, startDate: today, endDate: today, projectName: '', confirmationStatus: 'all' })
-const result = ref({ report: null, items: [], total: 0, page: 1, page_size: pageSize, project_names: [], confirmed_count: 0 })
+const result = ref({ report: null, items: [], total: 0, page: 1, page_size: pageSize, project_names: [], confirmed_count: 0, worker_summaries: [] })
 const loading = ref(false)
 const confirmingId = ref('')
 const error = ref('')
@@ -75,7 +76,7 @@ function startRefreshTimer() {
 watch(() => [filters.reportDate, filters.startDate, filters.endDate], () => {
   filters.projectName = ''
   filters.confirmationStatus = 'all'
-  result.value = { report: null, items: [], total: 0, page: 1, page_size: pageSize, project_names: [], confirmed_count: 0 }
+  result.value = { report: null, items: [], total: 0, page: 1, page_size: pageSize, project_names: [], confirmed_count: 0, worker_summaries: [] }
 })
 
 function display(value) { return value || '--' }
@@ -330,18 +331,26 @@ onUnmounted(() => {
   </section>
 
   <div v-if="error" class="global-error"><strong>操作未完成</strong><span>{{ error }}</span><button @click="error = ''">关闭</button></div>
-  <section class="panel workshop-panel">
-    <div class="panel-title"><div><span>01</span><h2>{{ isWorker ? '待确认任务表' : '区间车间报表' }}</h2></div><p>{{ isWorker ? '只能确认尚未被其他工人确认的任务' : '已确认任务可撤销或改派' }}</p></div>
-    <form class="workshop-filters" :class="{ manager: !isWorker }" @submit.prevent="load(1)">
-      <label v-if="isWorker"><span>生产日期</span><AppDatePicker v-model="filters.reportDate" required /></label>
-      <label><span>工程/船号</span><AppSelect v-model="filters.projectName" :disabled="!result.report"><option value="">全部</option><option v-for="name in result.project_names" :key="name" :value="name">{{ name }}</option></AppSelect></label>
-      <label><span>确认状态</span><AppSelect v-model="filters.confirmationStatus" :disabled="!result.report"><option value="all">全部</option><option value="unconfirmed">未确认</option><option value="confirmed">已确认</option></AppSelect></label>
-      <button type="submit" :disabled="loading || !result.report">{{ loading ? '筛选中' : '筛选明细' }}</button>
-    </form>
-    <div v-if="result.report" class="workshop-report-state"><strong>{{ isWorker ? result.report.report_date : `${result.report.period_start} 至 ${result.report.period_end}` }} 车间报表</strong><span>{{ isWorker ? `生成人：${result.report.generated_by_name || '--'} · 生成时间：${time(result.report.generated_at)} · ` : '' }}总任务 {{ result.report.item_count }} 项 · 已确认 {{ result.report.confirmed_count }} 项</span></div>
-    <div v-else class="workshop-empty-report"><strong>{{ loading ? '正在加载最近车间报表' : '该日期暂无车间报表' }}</strong><span>{{ loading ? '系统正在查找最近有数据的生产日并加载全部明细。' : '当前源数据在该日期没有已完成任务。' }}</span></div>
-    <div v-if="result.report" class="workshop-summary">当前筛选返回 {{ result.total }} 项任务，所选工程/船号已确认 {{ result.confirmed_count }} 项</div>
-    <div v-if="result.report" class="history-wrap workshop-table-wrap">
+  <ReportTrendPanel
+    class="workshop-panel"
+    number="01"
+    :title="isWorker ? '待确认任务表' : '区间车间报表'"
+    :note="isWorker ? '只能确认尚未被其他工人确认的任务' : '已确认任务可撤销或改派'"
+    :show-chart="false"
+    fit-table-content
+  >
+    <template #summary>
+      <form class="workshop-filters" :class="{ manager: !isWorker }" @submit.prevent="load(1)">
+        <label v-if="isWorker"><span>生产日期</span><AppDatePicker v-model="filters.reportDate" required /></label>
+        <label><span>工程/船号</span><AppSelect v-model="filters.projectName" :disabled="!result.report"><option value="">全部</option><option v-for="name in result.project_names" :key="name" :value="name">{{ name }}</option></AppSelect></label>
+        <label><span>确认状态</span><AppSelect v-model="filters.confirmationStatus" :disabled="!result.report"><option value="all">全部</option><option value="unconfirmed">未确认</option><option value="confirmed">已确认</option></AppSelect></label>
+        <button type="submit" :disabled="loading || !result.report">{{ loading ? '筛选中' : '筛选明细' }}</button>
+      </form>
+      <div v-if="result.report" class="workshop-report-state"><strong>{{ isWorker ? result.report.report_date : `${result.report.period_start} 至 ${result.report.period_end}` }} 车间报表</strong><span>{{ isWorker ? `生成人：${result.report.generated_by_name || '--'} · 生成时间：${time(result.report.generated_at)} · ` : '' }}总任务 {{ result.report.item_count }} 项 · 已确认 {{ result.report.confirmed_count }} 项</span></div>
+      <div v-else class="workshop-empty-report"><strong>{{ loading ? '正在加载最近车间报表' : '该日期暂无车间报表' }}</strong><span>{{ loading ? '系统正在查找最近有数据的生产日并加载全部明细。' : '当前源数据在该日期没有已完成任务。' }}</span></div>
+      <div v-if="result.report" class="workshop-summary">当前筛选返回 {{ result.total }} 项任务，所选工程/船号已确认 {{ result.confirmed_count }} 项</div>
+    </template>
+    <template #table>
       <table v-content-table class="workshop-table">
         <thead><tr><th>序号</th><th>工程号</th><th>船号</th><th>分段名</th><th>程序号</th><th>切割长度</th><th>坡口长度</th><th>切割时长</th><th>时间</th><th>人</th><th>备注</th></tr></thead>
         <tbody>
@@ -354,9 +363,30 @@ onUnmounted(() => {
           </tr>
         </tbody>
       </table>
-    </div>
-    <div v-if="result.report" class="history-pagination"><span class="history-page-summary">第 {{ result.page }} / {{ totalPages }} 页</span><div class="history-page-buttons"><button :disabled="loading || result.page <= 1" @click="load(result.page - 1)">上一页</button><button :disabled="loading || result.page >= totalPages" @click="load(result.page + 1)">下一页</button></div></div>
-  </section>
+    </template>
+    <template #footer><div v-if="result.report" class="history-pagination"><span class="history-page-summary">第 {{ result.page }} / {{ totalPages }} 页</span><div class="history-page-buttons"><button :disabled="loading || result.page <= 1" @click="load(result.page - 1)">上一页</button><button :disabled="loading || result.page >= totalPages" @click="load(result.page + 1)">下一页</button></div></div></template>
+  </ReportTrendPanel>
+
+  <ReportTrendPanel
+    v-if="!isWorker && result.worker_summaries?.length"
+    class="worker-time-summary"
+    number="02"
+    title="工人工时汇总"
+    note="按当前确认人统计，只包含已确认任务"
+    :show-chart="false"
+    fit-table-content
+  >
+    <template #table>
+      <table v-content-table class="worker-time-table">
+        <thead><tr><th>序号</th><th>工号</th><th>姓名</th><th>已确认任务</th><th>切割长度</th><th>切割时长</th><th>工时占比</th><th>最后确认时间</th></tr></thead>
+        <tbody>
+          <tr v-for="(worker, index) in result.worker_summaries" :key="worker.worker_id">
+            <td>{{ index + 1 }}</td><td>{{ worker.company_no || '--' }}</td><td>{{ worker.worker_name }}</td><td>{{ worker.confirmed_task_count }} 项</td><td>{{ number(worker.total_cut_length) }} 米</td><td class="duration-cell">{{ duration(worker.total_work_time_seconds) }}</td><td>{{ number(worker.work_time_share) }}%</td><td class="time-cell">{{ time(worker.last_confirmed_at) }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </template>
+  </ReportTrendPanel>
 
   <AnalysisPanel
     v-if="!isWorker && filters.startDate === filters.endDate"

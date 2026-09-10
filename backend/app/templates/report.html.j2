@@ -168,8 +168,8 @@
       <div><span class="label">平均切割时长</span>{{ report.summary.avg_work_time|duration }}</div>
     </section>
 
-    {% if report.data_quality %}<h2>二、数据质量提示</h2>{% for item in report.data_quality %}<div class="notice {{ 'error' if item.level == 'error' else '' }}">{{ item.task_id or '未定位任务' }}：{{ item.message }}</div>{% endfor %}{% endif %}
-    <h2>三、车间生产明细与图表</h2>
+    {% if report.data_quality %}<h2>数据质量提示</h2>{% for item in report.data_quality %}<div class="notice {{ 'error' if item.level == 'error' else '' }}">{{ item.task_id or '未定位任务' }}：{{ item.message }}</div>{% endfor %}{% endif %}
+    <h2>二、车间生产明细与图表</h2>
     <div class="data-chart-grid">
       {% if report.summary.task_count %}<div id="length-chart" class="chart"></div>{% else %}<div class="empty">当前条件下暂无可视化数据。</div>{% endif %}
       <div class="table-wrap">
@@ -179,6 +179,7 @@
       {% else %}<div class="empty">当前条件下暂无车间生产数据。</div>{% endif %}
       </div>
     </div>
+    {% if report.worker_summaries %}<h2>三、工人工时汇总</h2><div class="table-wrap"><table><thead><tr><th>序号</th><th>工号</th><th>姓名</th><th>已确认任务</th><th>切割长度（米）</th><th>切割时长</th><th>工时占比</th><th>最后确认时间</th></tr></thead><tbody>{% for worker in report.worker_summaries %}<tr><td>{{ loop.index }}</td><td>{{ worker.company_no or '--' }}</td><td>{{ worker.worker_name }}</td><td>{{ worker.confirmed_task_count }}</td><td>{{ worker.total_cut_length|number }}</td><td>{{ worker.total_work_time_seconds|duration }}</td><td>{{ worker.work_time_share|number }}%</td><td>{{ worker.last_confirmed_at[:16]|replace('T',' ') if worker.last_confirmed_at else '--' }}</td></tr>{% endfor %}</tbody></table></div>{% endif %}
     {% else %}
     <h2>一、设备能耗指标</h2>
     <section class="metrics">

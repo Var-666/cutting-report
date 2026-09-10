@@ -105,4 +105,6 @@ def test_pipeline_exports_the_selected_range(
     )
     assert "2026-08-18 至 2026-08-20" in html
     assert expected_heading in html
-
+    if report_type == "workshop":
+        assert "工人工时汇总" not in html
+        assert "所选区间暂无工人确认数据" not in html

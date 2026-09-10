@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+from datetime import datetime
 from decimal import Decimal
+from typing import Any
+
 from app.models.domain import (
     AttentionItem,
     StatisticsResult,
     SummaryBaseRecord,
     SummaryMetrics,
+    WorkshopRecord,
 )
 
 
@@ -24,6 +28,61 @@ def _average(values: list[Decimal]) -> Decimal | None:
     if not values:
         return None
     return sum(values, Decimal("0")) / Decimal(len(values))
+
+
+def build_worker_work_summaries(
+    records: list[WorkshopRecord],
+) -> list[dict[str, Any]]:
+    """Aggregate confirmed production tasks by their current worker assignment."""
+    buckets: dict[str, dict[str, Any]] = {}
+    for record in records:
+        if not record.confirmed_by_id:
+            continue
+        bucket = buckets.setdefault(
+            record.confirmed_by_id,
+            {
+                "worker_id": record.confirmed_by_id,
+                "company_no": record.confirmed_by_company_no,
+                "worker_name": record.confirmed_by or "--",
+                "confirmed_task_count": 0,
+                "total_cut_length": Decimal("0"),
+                "total_work_time_seconds": Decimal("0"),
+                "last_confirmed_at": None,
+            },
+        )
+        if not bucket["company_no"] and record.confirmed_by_company_no:
+            bucket["company_no"] = record.confirmed_by_company_no
+        bucket["confirmed_task_count"] += 1
+        if record.cut_length is not None and record.cut_length >= 0:
+            bucket["total_cut_length"] += record.cut_length
+        if record.work_time is not None and record.work_time >= 0:
+            bucket["total_work_time_seconds"] += record.work_time
+        if record.confirmed_at and (
+            bucket["last_confirmed_at"] is None
+            or record.confirmed_at > bucket["last_confirmed_at"]
+        ):
+            bucket["last_confirmed_at"] = record.confirmed_at
+
+    total_work_time = sum(
+        (item["total_work_time_seconds"] for item in buckets.values()),
+        Decimal("0"),
+    )
+    summaries = []
+    for item in buckets.values():
+        share = (
+            round(float(item["total_work_time_seconds"] / total_work_time * 100), 1)
+            if total_work_time > 0
+            else 0.0
+        )
+        summaries.append({**item, "work_time_share": share})
+    return sorted(
+        summaries,
+        key=lambda item: (
+            -item["total_work_time_seconds"],
+            item["company_no"] or "",
+            item["worker_name"],
+        ),
+    )
 
 
 class StatisticsService:

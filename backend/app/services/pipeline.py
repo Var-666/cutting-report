@@ -31,7 +31,7 @@ from app.services.query_service import QueryService
 from app.services.range_report_service import RangeReportService, previous_equal_range
 from app.services.report_analysis_service import ReportAnalysisService
 from app.services.report_service import ReportService
-from app.services.statistics_service import StatisticsService
+from app.services.statistics_service import StatisticsService, build_worker_work_summaries
 
 
 REPORT_TITLES = {
@@ -624,6 +624,11 @@ class ReportPipeline:
             "attention_items": to_primitive(statistics.attention_items),
             "workshop_records": to_primitive(
                 bundle.workshop_records[: self.settings.report_max_detail_rows]
+            ),
+            "worker_summaries": to_primitive(
+                build_worker_work_summaries(bundle.workshop_records)
+                if report_type == "workshop"
+                else []
             ),
             "equipment_records": to_primitive(
                 bundle.equipment_records[: self.settings.report_max_detail_rows]

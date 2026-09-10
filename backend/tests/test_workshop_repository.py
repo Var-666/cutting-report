@@ -221,6 +221,7 @@ def test_account_session_and_single_worker_confirmation(tmp_path: Path) -> None:
     assert saved_records[0].project_code == saved_records[0].ship_no == "PJT-01"
     assert saved_records[0].confirmed_by_id == worker["user_id"]
     assert saved_records[0].confirmed_by == "张三"
+    assert saved_records[0].confirmed_by_company_no is None
     assert admin["role"] == "admin"
 
     with pytest.raises(ConfirmationPermissionError, match="本人"):
@@ -322,6 +323,8 @@ def test_external_worker_is_upserted_without_storing_hr_password(tmp_path: Path)
     assert updated["user_id"] == worker["user_id"]
     assert updated["username"] == "C0008"
     assert updated["display_name"] == "张三（新姓名）"
+    repository.confirm_task(task_id="hr-task", user=updated, now=now)
+    assert repository.get_confirmations(["hr-task"])["hr-task"]["worker_company_no"] == "C0008"
 
 
 def test_external_worker_does_not_prevent_admin_bootstrap(tmp_path: Path) -> None:

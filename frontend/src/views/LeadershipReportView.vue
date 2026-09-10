@@ -8,6 +8,7 @@ import { getLeadershipRange } from '../api/reports'
 import AnalysisPanel from '../components/AnalysisPanel.vue'
 import ReportExportMenu from '../components/ReportExportMenu.vue'
 import ReportPeriodPicker from '../components/ReportPeriodPicker.vue'
+import ReportTrendPanel from '../components/ReportTrendPanel.vue'
 import { reportToday } from '../api/reportDates.js'
 
 defineProps({ exporting: Boolean })
@@ -23,8 +24,8 @@ const report = ref(null)
 const loading = ref(false)
 const refreshLoading = ref(false)
 const error = ref('')
-const dailyChartElement = ref(null)
-const monthlyChartElement = ref(null)
+const dailyPanel = ref(null)
+const monthlyPanel = ref(null)
 let dailyChart = null
 let monthlyChart = null
 let refreshTimer = null
@@ -160,11 +161,13 @@ function scheduleRefreshPoll(reset = false) {
 }
 
 function renderCharts() {
-  if (!dailyChartElement.value || !monthlyChartElement.value || !report.value) return
+  const dailyChartElement = dailyPanel.value?.getChartElement()
+  const monthlyChartElement = monthlyPanel.value?.getChartElement()
+  if (!dailyChartElement || !monthlyChartElement || !report.value) return
   dailyChart?.dispose()
   monthlyChart?.dispose()
-  dailyChart = init(dailyChartElement.value)
-  monthlyChart = init(monthlyChartElement.value)
+  dailyChart = init(dailyChartElement)
+  monthlyChart = init(monthlyChartElement)
   const dailyChartRecords = [...dailyRecords.value].sort((left, right) => left.period_start.localeCompare(right.period_start))
   const monthlyChartRecords = [...monthlyRecords.value].sort((left, right) => left.period_start.localeCompare(right.period_start))
 
@@ -273,13 +276,8 @@ watch(chartType, async () => {
     <article><span>切割时长</span><strong>{{ formatDuration(total.work_time_seconds) }}</strong><small>HH:mm:ss</small></article>
   </section>
 
-  <section class="panel leadership-panel">
-    <div class="panel-title">
-      <div><span>01</span><h2>区间每日明细与趋势</h2></div>
-    </div>
-    <div class="leadership-split">
-      <div ref="dailyChartElement" class="leadership-chart" aria-label="区间每日趋势图"></div>
-      <div class="leadership-table-wrap">
+  <ReportTrendPanel ref="dailyPanel" number="01" title="区间每日明细与趋势" chart-label="区间每日趋势图">
+    <template #table>
         <table v-content-table class="leadership-table summary-table">
         <thead><tr><th>序号</th><th>日期</th><th>任务数</th><th>切割长度</th><th>坡口长度</th><th>切割时长</th><th>备注</th></tr></thead>
         <tbody>
@@ -295,18 +293,11 @@ watch(chartType, async () => {
           <tr><th aria-hidden="true"></th><th>汇总</th><th>{{ total.task_count }}</th><th>{{ formatLength(total.cut_length_m) }}</th><th>{{ formatLength(total.groove_length_m) }}</th><th class="duration-cell">{{ formatDuration(total.work_time_seconds) }}</th><th>--</th></tr>
         </tfoot>
         </table>
-      </div>
-    </div>
-  </section>
+    </template>
+  </ReportTrendPanel>
 
-  <section class="panel leadership-panel">
-    <div class="panel-title">
-      <div><span>02</span><h2>区间按月对比与趋势</h2></div>
-      <p>{{ periodStart }} 至 {{ periodEnd }}</p>
-    </div>
-    <div class="leadership-split">
-      <div ref="monthlyChartElement" class="leadership-chart" aria-label="区间月度趋势图"></div>
-      <div class="leadership-table-wrap">
+  <ReportTrendPanel ref="monthlyPanel" number="02" title="区间按月对比与趋势" :note="`${periodStart} 至 ${periodEnd}`" chart-label="区间月度趋势图">
+    <template #table>
         <table v-content-table class="leadership-table summary-table">
         <thead><tr><th>序号</th><th>月份</th><th>任务数</th><th>切割长度</th><th>坡口长度</th><th>切割时长</th><th>备注</th></tr></thead>
         <tbody>
@@ -322,9 +313,8 @@ watch(chartType, async () => {
           <tr><th aria-hidden="true"></th><th>汇总</th><th>{{ monthlyTotal.task_count }}</th><th>{{ formatLength(monthlyTotal.cut_length_m) }}</th><th>{{ formatLength(monthlyTotal.groove_length_m) }}</th><th class="duration-cell">{{ formatDuration(monthlyTotal.work_time_seconds) }}</th><th>--</th></tr>
         </tfoot>
         </table>
-      </div>
-    </div>
-  </section>
+    </template>
+  </ReportTrendPanel>
 
   <p v-if="periodStart !== periodEnd" class="report-source-note">区间智能分析将在导出报告时生成，并与前一个等长区间对比。</p>
   <AnalysisPanel v-else report-type="leadership" :report-date="periodStart" :ready="Boolean(report && snapshot.data_as_of)" :context-version="`${total.task_count}-${total.work_time_seconds}`" />
