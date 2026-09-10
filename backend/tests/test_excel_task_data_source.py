@@ -182,10 +182,18 @@ def test_excel_task_leadership_monthly_totals(tmp_path) -> None:
 
 def test_excel_equipment_month_work_time_uses_configured_machine_only(tmp_path) -> None:
     settings = excel_settings(tmp_path)
+    query = QueryService(settings)
 
-    totals = QueryService(settings).fetch_equipment_month_work_times(date(2026, 8, 1))
+    totals = query.fetch_equipment_month_work_times(date(2026, 8, 1))
+    metrics = query.fetch_equipment_month_metrics(date(2026, 8, 1))
 
     assert totals == {"2026-08-18": Decimal("3600")}
+    assert metrics == {
+        "2026-08-18": {
+            "work_time_seconds": Decimal("3600"),
+            "task_count": 1,
+        }
+    }
 
 
 def test_custom_query_runs_against_excel_task_table(tmp_path) -> None:

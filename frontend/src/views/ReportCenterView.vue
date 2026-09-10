@@ -138,7 +138,7 @@ onBeforeUnmount(() => window.clearTimeout(pollTimer))
 </script>
 
 <template>
-  <section class="hero">
+  <section class="page-hero hero">
     <div>
       <span class="eyebrow">REPORT GENERATION</span>
       <h2>{{ title }}</h2>

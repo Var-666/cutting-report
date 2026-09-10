@@ -116,6 +116,15 @@ class QueryService:
         self, report_month: date
     ) -> dict[str, Decimal]:
         """Return configured-machine cutting seconds grouped by production day."""
+        return {
+            report_date: values["work_time_seconds"]
+            for report_date, values in self.fetch_equipment_month_metrics(report_month).items()
+        }
+
+    def fetch_equipment_month_metrics(
+        self, report_month: date
+    ) -> dict[str, dict[str, Decimal | int]]:
+        """Return configured-machine task counts and cutting seconds by day."""
         month_start = report_month.replace(day=1)
         month_end = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1)
         allowed = {
@@ -127,9 +136,14 @@ class QueryService:
         if not allowed:
             return {}
 
-        totals: dict[str, Decimal] = {}
+        totals: dict[str, dict[str, Decimal | int]] = {}
 
-        def add(report_date: object, equipment_id: object, work_time: object) -> None:
+        def add(
+            report_date: object,
+            equipment_id: object,
+            work_time: object,
+            task_count: object = 1,
+        ) -> None:
             if not equipment_id or str(equipment_id).strip().casefold() not in allowed:
                 return
             if isinstance(report_date, datetime):
@@ -145,7 +159,11 @@ class QueryService:
             if value < 0:
                 return
             key = stamp.isoformat()
-            totals[key] = totals.get(key, Decimal("0")) + value
+            bucket = totals.setdefault(
+                key, {"work_time_seconds": Decimal("0"), "task_count": 0}
+            )
+            bucket["work_time_seconds"] += value
+            bucket["task_count"] += max(0, int(task_count or 0))
 
         if self.settings.effective_data_source_mode == "excel":
             for row in self.excel.completed_rows(start=month_start, end=month_end):
@@ -169,7 +187,12 @@ class QueryService:
             (month_start, month_end),
         )
         for row in rows:
-            add(row.get("report_date"), row.get("equipment_id"), row.get("work_time_seconds"))
+            add(
+                row.get("report_date"),
+                row.get("equipment_id"),
+                row.get("work_time_seconds"),
+                row.get("task_count"),
+            )
         return totals
 
     def _fetch_equipment_uncached(self, filters: ReportFilter) -> EquipmentQueryResult:

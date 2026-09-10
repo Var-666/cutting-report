@@ -330,6 +330,16 @@ def test_unified_device_page_export_and_analysis_share_meter_values(tmp_path, mo
     pipeline.energy_period_service.client = MeterStub()
     rows = [record()]
     monkeypatch.setattr(pipeline.query_service, "fetch_equipment_data", lambda filters, force=False: EquipmentQueryResult(rows, END))
+    monkeypatch.setattr(
+        pipeline.query_service,
+        "fetch_equipment_month_metrics",
+        lambda _month: {
+            START.date().isoformat(): {
+                "task_count": 1,
+                "work_time_seconds": Decimal("30"),
+            }
+        },
+    )
     request = SimpleNamespace(state=SimpleNamespace(request_id="test"), app=SimpleNamespace(state=SimpleNamespace(
         query_service=pipeline.query_service,
         energy_period_service=pipeline.energy_period_service,
@@ -373,6 +383,10 @@ def test_unified_device_page_export_and_analysis_share_meter_values(tmp_path, mo
     assert "稳定模拟数据" not in html
     assert "已匹配 1/1 项" in html
     assert "月度每日能耗汇总" in html
+    assert "<th>任务数</th><th>切割时长</th>" in html
+    assert "<th>汇总</th><th>1</th><th>00:00:30</th>" in html
+    assert "当日任务汇总" not in html
+    assert "当月汇总</th>" not in html
     assert "≈" not in html
     analysis = pipeline.analysis_service.analyze_equipment(START.date().isoformat(),
         [replace(rows[0], gas_consumption=Decimal("2"), electricity_consumption=Decimal("18"))],

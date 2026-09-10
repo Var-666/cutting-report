@@ -72,11 +72,11 @@ const reportTypeText = {
     <div class="history-page-summary">共 {{ total }} 条，当前 {{ rangeStart }}–{{ rangeEnd }} 条</div>
     <label class="history-page-size">
       <span>每页</span>
-      <select :value="pageSize" :disabled="loading" @change="emit('page-size-change', $event.target.value)">
+      <AppSelect :value="pageSize" :disabled="loading" @change="emit('page-size-change', $event.target.value)">
         <option :value="10">10 条</option>
         <option :value="20">20 条</option>
         <option :value="50">50 条</option>
-      </select>
+      </AppSelect>
     </label>
     <div class="history-page-buttons">
       <button type="button" :disabled="loading || page <= 1" @click="emit('page-change', page - 1)">上一页</button>

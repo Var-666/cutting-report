@@ -18,6 +18,7 @@ WITH task_source AS (
 SELECT
     source.production_date AS report_date,
     source.equipment_id,
+    COUNT_BIG(*) AS task_count,
     SUM(source.work_time_seconds) AS work_time_seconds
 FROM task_source AS source
 WHERE source.production_date >= CONVERT(date, ?)

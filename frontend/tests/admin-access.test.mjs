@@ -34,7 +34,7 @@ test('administrator management follows the shared settings UI baseline', () => {
   const template = descriptor.template.content
   const styles = descriptor.styles.map((style) => style.content).join('\n')
 
-  assert.match(template, /class="database-hero admin-accounts-hero"/)
+  assert.match(template, /class="page-hero database-hero admin-accounts-hero"/)
   assert.match(template, /class="security-badge admin-security-badge"/)
   assert.match(template, /class="history-table account-table"/)
   assert.match(template, /仅保存管理员权限映射/)

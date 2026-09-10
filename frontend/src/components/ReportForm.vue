@@ -75,42 +75,42 @@ function reset() {
   <form class="report-form" @submit.prevent="submit">
     <label>
       <span>报告类型 <b>*</b></span>
-      <select v-model="form.report_type" :disabled="loading || lockedReportType">
+      <AppSelect v-model="form.report_type" :disabled="loading || lockedReportType">
         <option value="leadership">领导报表</option>
         <option value="workshop">车间报表</option>
         <option value="equipment">设备报表</option>
         <optgroup v-if="customDefinitions.length" label="自定义报表">
           <option v-for="item in customDefinitions" :key="item.definition_id" :value="`custom:${item.definition_id}`">{{ item.name }}</option>
         </optgroup>
-      </select>
+      </AppSelect>
     </label>
     <label v-if="!selectedDefinition">
       <span>图表类型</span>
-      <select v-model="form.chart_type" :disabled="loading">
+      <AppSelect v-model="form.chart_type" :disabled="loading">
         <option value="bar_line">柱线组合</option>
         <option value="bar">柱状图</option>
         <option value="line">折线图</option>
         <option value="area">面积图</option>
-      </select>
+      </AppSelect>
     </label>
     <label>
       <span>{{ isMonthly ? '报告月份' : '报告日期' }} <b>*</b></span>
-      <input v-if="isMonthly" v-model="form.report_month" type="month" required :disabled="loading" />
-      <input v-else v-model="form.report_date" type="date" required :disabled="loading" />
+      <AppDatePicker v-if="isMonthly" v-model="form.report_month" mode="month" required :disabled="loading" />
+      <AppDatePicker v-else v-model="form.report_date" required :disabled="loading" />
     </label>
     <label v-if="!isLeadership">
       <span>工程号</span>
-      <select v-model="form.project_code" :disabled="loading">
+      <AppSelect v-model="form.project_code" :disabled="loading">
         <option value="">全部工程</option>
         <option v-for="item in projects" :key="item" :value="item">{{ item }}</option>
-      </select>
+      </AppSelect>
     </label>
     <label v-if="!isLeadership">
       <span>船号</span>
-      <select v-model="form.ship_no" :disabled="loading">
+      <AppSelect v-model="form.ship_no" :disabled="loading">
         <option value="">全部船号</option>
         <option v-for="item in ships" :key="item" :value="item">{{ item }}</option>
-      </select>
+      </AppSelect>
     </label>
     <div class="form-actions">
       <button class="primary" type="submit" :disabled="loading || (isMonthly ? !form.report_month : !form.report_date)">

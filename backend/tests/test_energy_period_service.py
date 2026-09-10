@@ -87,16 +87,25 @@ def test_complete_month_sums_all_days_and_both_channels(tmp_path):
 def test_month_includes_configured_machine_daily_cutting_time(tmp_path):
     energy, _ = service(tmp_path)
     energy.query_service = SimpleNamespace(
-        fetch_equipment_month_work_times=lambda _month: {
-            "2026-08-17": Decimal("900"),
-            "2026-08-18": Decimal("1800"),
+        fetch_equipment_month_metrics=lambda _month: {
+            "2026-08-17": {
+                "work_time_seconds": Decimal("900"),
+                "task_count": 2,
+            },
+            "2026-08-18": {
+                "work_time_seconds": Decimal("1800"),
+                "task_count": 3,
+            },
         }
     )
 
     month = energy.get_month("2026-08")
 
+    assert month["rows"][16]["task_count"] == 2
+    assert month["rows"][17]["task_count"] == 3
     assert month["rows"][16]["work_time_seconds"] == 900
     assert month["rows"][17]["work_time_seconds"] == 1800
+    assert month["total_task_count"] == 5
     assert month["total_work_time_seconds"] == 2700
 
 

@@ -1,43 +1,53 @@
-/* Keep each page's colours, borders and chart/table arrangement. Column widths
-   come from the content-table directive and always add up to the full table. */
+/* Word-style AutoFit: content determines each column's percentage while the
+   whole table follows its window. Scroll only when readable content needs it. */
 table.content-table {
   width:100% !important;
   max-width:none !important;
+  border-collapse:collapse !important;
+  font-variant-numeric:tabular-nums;
 }
-table.content-table:not(.summary-table) {
+table.content-table {
   min-width:max(100%,var(--content-table-min-width,640px)) !important;
-  table-layout:fixed !important;
-}
-table.content-table.summary-table {
   table-layout:fixed !important;
 }
 table.content-table th,
 table.content-table td {
+  height:47px !important;
   min-width:0 !important;
   max-width:none !important;
+  padding:10px 12px !important;
+  border-bottom:1px solid #dde5ea !important;
+  vertical-align:middle !important;
+  font-size:13px !important;
 }
 table.content-table thead th {
-  text-align:center !important;
+  color:#fff !important;
+  background:#0b4f76 !important;
+  font-size:11px !important;
+  font-weight:600 !important;
+  letter-spacing:.4px !important;
   vertical-align:middle;
   white-space:nowrap;
 }
+table.content-table tbody tr:hover {
+  background:#f4f9fb;
+}
 table.content-table td {
-  overflow:visible;
+  overflow:hidden;
   white-space:normal;
   overflow-wrap:anywhere;
   text-overflow:clip;
 }
 table.content-table [data-content-fit='compact'] {
-  /* Preserve complete short values, while the native layout distributes
-     remaining space by intrinsic content size rather than equal shares. */
+  /* Preserve complete short values within the computed content-weighted track. */
   white-space:nowrap !important;
 }
 table.content-table td[data-content-fit='text'] {
   white-space:normal !important;
 }
 table.content-table td :is(strong, small, code, .confirmed-mark) {
-  max-width:none !important;
-  overflow:visible !important;
+  max-width:100% !important;
+  overflow:hidden !important;
   white-space:inherit !important;
   overflow-wrap:inherit;
   text-overflow:clip !important;

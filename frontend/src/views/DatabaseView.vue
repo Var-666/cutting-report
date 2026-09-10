@@ -248,7 +248,7 @@ onMounted(() => Promise.all([loadStatus(), loadConfiguration()]))
 </script>
 
 <template>
-  <section class="database-hero">
+  <section class="page-hero database-hero">
     <div>
       <span class="eyebrow">DATABASE ADMINISTRATION</span>
       <h2>数据库配置</h2>
@@ -262,7 +262,7 @@ onMounted(() => Promise.all([loadStatus(), loadConfiguration()]))
     <div v-if="configurationLoading" class="configuration-loading">正在读取数据库配置…</div>
     <form v-else-if="databaseConfiguration" @submit.prevent="saveConfiguration">
       <div class="configuration-switches">
-        <label><span>生产数据模式</span><select v-model="databaseConfiguration.data_source_mode"><option value="demo">演示数据</option><option value="excel">TASK.xlsx</option><option value="sqlserver">SQL Server</option></select></label>
+        <label><span>生产数据模式</span><AppSelect v-model="databaseConfiguration.data_source_mode"><option value="demo">演示数据</option><option value="excel">TASK.xlsx</option><option value="sqlserver">SQL Server</option></AppSelect></label>
         <label class="check-label"><input v-model="databaseConfiguration.worker_database_auth_enabled" type="checkbox" /><span>启用工人 HR 库登录</span></label>
         <label class="check-label"><input v-model="databaseConfiguration.file_database_enabled" type="checkbox" /><span>启用切割文件库</span></label>
       </div>
@@ -359,8 +359,8 @@ onMounted(() => Promise.all([loadStatus(), loadConfiguration()]))
   <section class="panel preview-panel">
     <div class="panel-title"><div><span>05</span><h2>固定数据集预览</h2></div><p>最多返回100条，不支持自定义SQL</p></div>
     <form class="preview-form" @submit.prevent="runPreview">
-      <label><span>数据集</span><select v-model="preview.dataset"><option value="workshop">车间生产明细</option><option value="summary">汇总基础数据</option><option value="equipment">设备生产/能耗</option></select></label>
-      <label><span>生产日期</span><input v-model="preview.report_date" type="date" required /></label>
+      <label><span>数据集</span><AppSelect v-model="preview.dataset"><option value="workshop">车间生产明细</option><option value="summary">汇总基础数据</option><option value="equipment">设备生产/能耗</option></AppSelect></label>
+      <label><span>生产日期</span><AppDatePicker v-model="preview.report_date" required /></label>
       <label><span>工程号</span><input v-model="preview.project_code" placeholder="全部" /></label>
       <label><span>船号</span><input v-model="preview.ship_no" placeholder="全部" /></label>
       <label><span>返回条数</span><input v-model.number="preview.limit" type="number" min="1" max="100" /></label>

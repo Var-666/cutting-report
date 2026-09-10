@@ -185,7 +185,7 @@ onMounted(loadResources)
 </script>
 
 <template>
-  <section class="designer-hero">
+  <section class="page-hero designer-hero">
     <div><span class="eyebrow">REPORT DESIGN STUDIO</span><h2>报表定义与查询任务管理</h2><p>将只读 SQL、字段指标、图表和离线 HTML 模板组合为可发布的新报表。</p></div>
     <label class="designer-token"><span>管理员令牌</span><input v-model="adminToken" type="password" placeholder="SQL Server 模式需填写" @change="loadResources" /></label>
   </section>
@@ -218,7 +218,7 @@ onMounted(loadResources)
           <div v-for="(column, index) in queryDraft.columns" :key="index" class="designer-field-row">
             <input v-model="column.field" placeholder="field_name" :disabled="queryDraft.is_builtin" />
             <input v-model="column.label" placeholder="显示名称" :disabled="queryDraft.is_builtin" />
-            <select v-model="column.type" :disabled="queryDraft.is_builtin"><option value="text">文本</option><option value="number">数值</option><option value="date">日期</option><option value="datetime">时间</option><option value="duration">时长</option></select>
+            <AppSelect v-model="column.type" :disabled="queryDraft.is_builtin"><option value="text">文本</option><option value="number">数值</option><option value="date">日期</option><option value="datetime">时间</option><option value="duration">时长</option></AppSelect>
             <input v-model="column.unit" placeholder="单位" :disabled="queryDraft.is_builtin" />
             <button type="button" :disabled="queryDraft.is_builtin" @click="removeColumn(index)">删除</button>
           </div>
@@ -244,21 +244,21 @@ onMounted(loadResources)
         <div class="designer-form-grid">
           <label><span>报表名称</span><input v-model="definitionDraft.name" :disabled="definitionDraft.is_builtin" /></label>
           <label><span>定义编码</span><input v-model="definitionDraft.code" :disabled="definitionDraft.is_builtin || !!definitionDraft.definition_id" placeholder="quality_daily" /></label>
-          <label><span>查询任务</span><select v-model="definitionDraft.query_task_id" :disabled="definitionDraft.is_builtin" @change="syncDefinitionFields"><option value="">请选择</option><option v-for="item in queryTasks.filter(row => row.enabled && !row.is_builtin)" :key="item.query_task_id" :value="item.query_task_id">{{ item.name }}</option></select></label>
-          <label><span>报表模板</span><select v-model="definitionDraft.template_id" :disabled="definitionDraft.is_builtin"><option v-for="item in templates.filter(row => row.enabled)" :key="item.template_id" :value="item.template_id">{{ item.name }}</option></select></label>
-          <label><span>周期类型</span><select v-model="definitionDraft.period_type" :disabled="definitionDraft.is_builtin"><option value="day">按日</option><option value="month">按月</option></select></label>
+          <label><span>查询任务</span><AppSelect v-model="definitionDraft.query_task_id" :disabled="definitionDraft.is_builtin" @change="syncDefinitionFields"><option value="">请选择</option><option v-for="item in queryTasks.filter(row => row.enabled && !row.is_builtin)" :key="item.query_task_id" :value="item.query_task_id">{{ item.name }}</option></AppSelect></label>
+          <label><span>报表模板</span><AppSelect v-model="definitionDraft.template_id" :disabled="definitionDraft.is_builtin"><option v-for="item in templates.filter(row => row.enabled)" :key="item.template_id" :value="item.template_id">{{ item.name }}</option></AppSelect></label>
+          <label><span>周期类型</span><AppSelect v-model="definitionDraft.period_type" :disabled="definitionDraft.is_builtin"><option value="day">按日</option><option value="month">按月</option></AppSelect></label>
           <label class="wide"><span>说明</span><input v-model="definitionDraft.description" :disabled="definitionDraft.is_builtin" /></label>
         </div>
         <template v-if="!definitionDraft.is_builtin">
           <div class="designer-section-title"><strong>明细表字段</strong><span>选择导出表格需要显示的列</span></div>
           <div class="designer-check-grid"><label v-for="field in definitionFields" :key="field.field"><input type="checkbox" :checked="definitionDraft.visual_config.columns.includes(field.field)" @change="toggleColumn(field.field, $event.target.checked)" />{{ field.label }}</label></div>
           <div class="designer-section-title"><strong>核心指标</strong><button type="button" @click="addMetric">增加指标</button></div>
-          <div class="designer-fields"><div v-for="(metric, index) in definitionDraft.visual_config.metrics" :key="index" class="designer-field-row metric-row"><select v-model="metric.field"><option v-for="field in definitionFields" :key="field.field" :value="field.field">{{ field.label }}</option></select><input v-model="metric.label" placeholder="指标名称" /><select v-model="metric.aggregation"><option value="sum">求和</option><option value="avg">平均</option><option value="count">计数</option><option value="max">最大值</option><option value="min">最小值</option></select><input v-model="metric.unit" placeholder="单位" /><button type="button" @click="removeMetric(index)">删除</button></div></div>
+          <div class="designer-fields"><div v-for="(metric, index) in definitionDraft.visual_config.metrics" :key="index" class="designer-field-row metric-row"><AppSelect v-model="metric.field"><option v-for="field in definitionFields" :key="field.field" :value="field.field">{{ field.label }}</option></AppSelect><input v-model="metric.label" placeholder="指标名称" /><AppSelect v-model="metric.aggregation"><option value="sum">求和</option><option value="avg">平均</option><option value="count">计数</option><option value="max">最大值</option><option value="min">最小值</option></AppSelect><input v-model="metric.unit" placeholder="单位" /><button type="button" @click="removeMetric(index)">删除</button></div></div>
           <div class="designer-section-title"><strong>图表配置</strong></div>
           <div class="designer-form-grid">
             <label><span>图表标题</span><input v-model="definitionDraft.visual_config.chart.title" /></label>
-            <label><span>图表类型</span><select v-model="definitionDraft.visual_config.chart.type"><option value="bar">柱状图</option><option value="line">折线图</option><option value="area">面积图</option><option value="bar_line">柱线组合</option></select></label>
-            <label><span>分类轴字段</span><select v-model="definitionDraft.visual_config.chart.category_field"><option v-for="field in definitionFields" :key="field.field" :value="field.field">{{ field.label }}</option></select></label>
+            <label><span>图表类型</span><AppSelect v-model="definitionDraft.visual_config.chart.type"><option value="bar">柱状图</option><option value="line">折线图</option><option value="area">面积图</option><option value="bar_line">柱线组合</option></AppSelect></label>
+            <label><span>分类轴字段</span><AppSelect v-model="definitionDraft.visual_config.chart.category_field"><option v-for="field in definitionFields" :key="field.field" :value="field.field">{{ field.label }}</option></AppSelect></label>
           </div>
           <div class="designer-check-grid"><label v-for="field in definitionFields.filter(item => item.type === 'number')" :key="field.field"><input type="checkbox" :checked="definitionDraft.visual_config.chart.value_fields.includes(field.field)" @change="toggleSeries(field.field, $event.target.checked)" />{{ field.label }}</label></div>
         </template>
@@ -284,8 +284,8 @@ onMounted(loadResources)
               <label><span>主色</span><div class="color-field"><input v-model="templateDraft.config.primary_color" type="color" :disabled="templateDraft.is_builtin" /><code>{{ templateDraft.config.primary_color }}</code></div></label>
               <label><span>强调色</span><div class="color-field"><input v-model="templateDraft.config.accent_color" type="color" :disabled="templateDraft.is_builtin" /><code>{{ templateDraft.config.accent_color }}</code></div></label>
               <label><span>页面背景</span><div class="color-field"><input v-model="templateDraft.config.background_color" type="color" :disabled="templateDraft.is_builtin" /><code>{{ templateDraft.config.background_color }}</code></div></label>
-              <label><span>内容布局</span><select v-model="templateDraft.config.layout" :disabled="templateDraft.is_builtin"><option value="split">图表与表格双栏</option><option value="chart_first">图表在前</option><option value="table_first">表格在前</option></select></label>
-              <label><span>表格密度</span><select v-model="templateDraft.config.table_density" :disabled="templateDraft.is_builtin"><option value="compact">紧凑</option><option value="normal">标准</option><option value="comfortable">宽松</option></select></label>
+              <label><span>内容布局</span><AppSelect v-model="templateDraft.config.layout" :disabled="templateDraft.is_builtin"><option value="split">图表与表格双栏</option><option value="chart_first">图表在前</option><option value="table_first">表格在前</option></AppSelect></label>
+              <label><span>表格密度</span><AppSelect v-model="templateDraft.config.table_density" :disabled="templateDraft.is_builtin"><option value="compact">紧凑</option><option value="normal">标准</option><option value="comfortable">宽松</option></AppSelect></label>
               <label><span>图表高度 {{ templateDraft.config.chart_height }}px</span><input v-model.number="templateDraft.config.chart_height" type="range" min="220" max="520" step="10" :disabled="templateDraft.is_builtin" /></label>
             </div>
             <div class="designer-actions"><label class="switch-label"><input v-model="templateDraft.config.show_meta" type="checkbox" :disabled="templateDraft.is_builtin" />显示报告元信息</label><label class="switch-label"><input v-model="templateDraft.enabled" type="checkbox" :disabled="templateDraft.is_builtin" />启用</label><button class="primary" type="button" :disabled="saving || templateDraft.is_builtin" @click="saveResource('templates', templateDraft, 'template_id')">保存模板</button><button class="danger-button" type="button" :disabled="templateDraft.is_builtin" @click="removeResource('templates', templateDraft, 'template_id')">删除</button></div>

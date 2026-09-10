@@ -211,10 +211,10 @@ function options(rows, labels, reportUnits) {
       tooltip: { valueFormatter: (value) => `${format(value)} ${reportUnits.gas}` } },
   ].map((item) => ({ ...item, connectNulls: false, smooth: false, symbolSize: 6, barMaxWidth: 22 }))
   return { tooltip: { trigger: 'axis', confine: true }, legend: { data: ['电耗', '气耗'], top: 6 },
-    grid: { left: 10, right: 12, bottom: 10, top: 44, containLabel: true },
+    grid: { left: 22, right: 28, bottom: 18, top: 54, containLabel: true },
     xAxis: { type: 'category', data: labels, axisLabel: { hideOverlap: true, margin: 7 }, axisTick: { alignWithLabel: true } },
-    yAxis: [{ type: 'value', name: `电耗\n${reportUnits.electricity}`, nameGap: 8, splitLine: { lineStyle: { color: '#edf1f4' } } },
-      { type: 'value', name: `气耗 ${reportUnits.gas}`, nameGap: 10, splitLine: { show: false } }], series }
+    yAxis: [{ type: 'value', name: `电耗\n${reportUnits.electricity}`, nameGap: 6, nameTextStyle: { lineHeight: 13 }, splitLine: { lineStyle: { color: '#edf1f4' } } },
+      { type: 'value', name: `气耗\n${reportUnits.gas}`, nameGap: 6, nameTextStyle: { lineHeight: 13 }, splitLine: { show: false } }], series }
 }
 
 function renderCharts() {
@@ -265,11 +265,11 @@ watch(chartType, async () => { await nextTick(); renderCharts() })
 </script>
 
 <template>
-  <section class="report-hero equipment-hero">
+  <section class="page-hero report-hero equipment-hero">
     <div><span class="eyebrow">EQUIPMENT ENERGY REPORT</span><h2>设备报表</h2><p>查看 {{ equipmentScopeLabel }} 的任务和月度能耗数据</p></div>
     <form class="report-query equipment-query energy-period-query" @submit.prevent="loadDay(true)">
-      <label><span>查询日期</span><input v-model="selectedDate" type="date" required :disabled="busy" /></label>
-      <label><span>图表类型</span><select v-model="chartType" aria-label="图表类型"><option value="bar_line">柱线组合</option><option value="bar">双柱状图</option><option value="line">双折线图</option></select></label>
+      <label><span>查询日期</span><AppDatePicker v-model="selectedDate" required :disabled="busy" /></label>
+      <label><span>图表类型</span><AppSelect v-model="chartType" aria-label="图表类型"><option value="bar_line">柱线组合</option><option value="bar">双柱状图</option><option value="line">双折线图</option></AppSelect></label>
       <button class="primary" type="submit" :disabled="busy"><span v-if="dayLoading" class="spinner"></span>{{ dayLoading ? '查询中' : '查询报表' }}</button>
       <ReportExportMenu :disabled="busy || !taskDay || !month" :loading="exporting" @select="exportReport" />
     </form>
@@ -292,7 +292,6 @@ watch(chartType, async () => { await nextTick(); renderCharts() })
       <div class="energy-period-chart-wrap"><div ref="dayChartElement" class="energy-period-chart" role="img" aria-label="每项任务电耗和气耗图"></div></div>
       <div class="energy-period-table-wrap energy-task-table-wrap">
         <table v-content-table class="energy-period-table energy-task-table summary-table" aria-label="任务能耗明细表">
-          <colgroup><col class="energy-col-index" /><col class="energy-col-project" /><col class="energy-col-ship" /><col class="energy-col-segment" /><col class="energy-col-start" /><col class="energy-col-duration" /><col class="energy-col-value" /><col class="energy-col-value" /></colgroup>
           <thead><tr><th scope="col">序号</th><th scope="col">工程号</th><th scope="col">船号</th><th scope="col">分段名</th><th scope="col">任务开始</th><th scope="col">切割时长</th><th scope="col">电耗 <small>{{ units.electricity }}</small></th><th scope="col">气耗 <small>{{ units.gas }}</small></th></tr></thead>
           <tbody>
             <tr v-for="(row, index) in taskRows" :key="row.task_id">
@@ -300,7 +299,7 @@ watch(chartType, async () => { await nextTick(); renderCharts() })
             </tr>
             <tr v-if="!taskRows.length"><td colspan="8" class="energy-empty">{{ dayLoading ? '正在查询任务能耗…' : `所选日期暂无 ${equipmentScopeLabel} 任务` }}</td></tr>
           </tbody>
-          <tfoot><tr><th aria-hidden="true"></th><th scope="row">当日任务汇总</th><th>{{ equipmentScopeLabel }}</th><th>{{ taskSummary.task_count || 0 }} 项</th><th>--</th><th class="duration-cell">{{ duration(taskSummary.total_work_time) }}</th><th>{{ format(taskSummary.total_electricity_consumption) }}</th><th>{{ format(taskSummary.total_gas_consumption) }}</th></tr></tfoot>
+          <tfoot><tr><th aria-hidden="true"></th><th scope="row">汇总</th><th>{{ equipmentScopeLabel }}</th><th>{{ taskSummary.task_count || 0 }} 项</th><th>--</th><th class="duration-cell">{{ duration(taskSummary.total_work_time) }}</th><th>{{ format(taskSummary.total_electricity_consumption) }}</th><th>{{ format(taskSummary.total_gas_consumption) }}</th></tr></tfoot>
         </table>
       </div>
     </div>
@@ -309,7 +308,7 @@ watch(chartType, async () => { await nextTick(); renderCharts() })
   <section class="panel energy-period-panel" aria-labelledby="energy-month-title">
     <div class="panel-title energy-section-heading">
       <div><span>02</span><h2 id="energy-month-title">月度每日能耗汇总</h2><small>{{ month?.report_month || '--' }} · {{ month?.calendar_day_count || 0 }} 天</small></div>
-      <form @submit.prevent="loadMonth(true)"><label>统计月份<input v-model="selectedMonth" type="month" required :disabled="busy" /></label><button type="submit" :disabled="busy">查看月份</button><button type="button" class="primary" :disabled="busy || !month || selectedMonth !== month.report_month || Boolean(configurationError)" @click="syncMonth(false)">同步本月</button><button type="button" :disabled="busy || !month || selectedMonth !== month.report_month || Boolean(configurationError)" @click="syncMonth(true)">重新查询本月</button><button v-if="syncing" type="button" @click="stopSync">停止同步</button></form>
+      <form @submit.prevent="loadMonth(true)"><label>统计月份<AppDatePicker v-model="selectedMonth" mode="month" required :disabled="busy" /></label><button type="submit" :disabled="busy">查看月份</button><button type="button" class="primary" :disabled="busy || !month || selectedMonth !== month.report_month || Boolean(configurationError)" @click="syncMonth(false)">同步本月</button><button type="button" :disabled="busy || !month || selectedMonth !== month.report_month || Boolean(configurationError)" @click="syncMonth(true)">重新查询本月</button><button v-if="syncing" type="button" @click="stopSync">停止同步</button></form>
     </div>
     <div class="energy-stat-strip">
       <div><span>月度电耗合计</span><strong>{{ valueText(month?.summary?.electricity) }}</strong><small>{{ month?.units?.electricity || units.electricity }}</small></div>
@@ -322,10 +321,9 @@ watch(chartType, async () => { await nextTick(); renderCharts() })
       <div class="energy-period-chart-wrap"><div ref="monthChartElement" class="energy-period-chart" role="img" aria-label="月度每日电耗和气耗图"></div></div>
       <div class="energy-period-table-wrap energy-month-table-wrap">
         <table v-content-table class="leadership-table energy-month-table summary-table" aria-label="月度每日能耗汇总表">
-          <colgroup><col class="energy-month-date" /><col class="energy-month-duration" /><col class="energy-month-value" /><col class="energy-month-value" /></colgroup>
-          <thead><tr><th scope="col">日期</th><th scope="col">切割时长</th><th scope="col">电耗 <small>{{ month?.units?.electricity || units.electricity }}</small></th><th scope="col">气耗 <small>{{ month?.units?.gas || units.gas }}</small></th></tr></thead>
-          <tbody><tr v-for="row in monthRows" :key="row.report_date" :class="{ 'current-period': row.report_date === day?.report_date }"><td><button class="energy-date-link" type="button" :disabled="busy || row.is_future" @click="loadDay(false, row.report_date)">{{ row.report_date }}{{ row.is_today ? ' · 今日' : '' }}</button></td><td class="duration-cell">{{ row.is_future ? '--' : duration(row.work_time_seconds) }}</td><td>{{ valueText(row.electricity) }}</td><td>{{ valueText(row.gas) }}</td></tr><tr v-if="!monthRows.length"><td colspan="4" class="energy-empty">{{ monthLoading ? '读取月度记录中…' : '请选择月份查看' }}</td></tr></tbody>
-          <tfoot><tr><th scope="row">当月汇总</th><th class="duration-cell">{{ duration(month?.total_work_time_seconds) }}</th><th>{{ valueText(month?.summary?.electricity) }}</th><th>{{ valueText(month?.summary?.gas) }}</th></tr></tfoot>
+          <thead><tr><th scope="col">日期</th><th scope="col">任务数</th><th scope="col">切割时长</th><th scope="col">电耗 <small>{{ month?.units?.electricity || units.electricity }}</small></th><th scope="col">气耗 <small>{{ month?.units?.gas || units.gas }}</small></th></tr></thead>
+          <tbody><tr v-for="row in monthRows" :key="row.report_date" :class="{ 'current-period': row.report_date === day?.report_date }"><td><button class="energy-date-link" type="button" :disabled="busy || row.is_future" @click="loadDay(false, row.report_date)">{{ row.report_date }}{{ row.is_today ? ' · 今日' : '' }}</button></td><td>{{ row.is_future ? '--' : row.task_count || 0 }}</td><td class="duration-cell">{{ row.is_future ? '--' : duration(row.work_time_seconds) }}</td><td>{{ valueText(row.electricity) }}</td><td>{{ valueText(row.gas) }}</td></tr><tr v-if="!monthRows.length"><td colspan="5" class="energy-empty">{{ monthLoading ? '读取月度记录中…' : '请选择月份查看' }}</td></tr></tbody>
+          <tfoot><tr><th scope="row">汇总</th><th>{{ month?.total_task_count || 0 }}</th><th class="duration-cell">{{ duration(month?.total_work_time_seconds) }}</th><th>{{ valueText(month?.summary?.electricity) }}</th><th>{{ valueText(month?.summary?.gas) }}</th></tr></tfoot>
         </table>
       </div>
     </div>
@@ -342,10 +340,8 @@ watch(chartType, async () => { await nextTick(); renderCharts() })
 
 <style scoped>
 .equipment-hero > div:first-child { min-width:0; flex:1 1 auto; }
-.energy-period-query { flex:0 0 auto; display:grid; grid-template-columns:160px 140px max-content 136px; align-items:end; justify-content:end; }
+.energy-period-query { flex:0 0 auto; }
 .energy-period-query > label { min-width:0; }
-.energy-period-query > button { padding-inline:16px; white-space:nowrap; }
-.energy-period-query :deep(.report-export-menu) { width:136px; min-width:0; }
 .energy-config-note { display:grid; gap:6px; padding:14px 18px; margin-bottom:20px; background:#fff7e9; border:1px solid #eddbb6; color:#85571c; font-size:13px; }
 .energy-period-panel { margin-bottom:22px; overflow:hidden; }
 .energy-section-heading { gap:14px; flex-wrap:wrap; }
@@ -353,7 +349,7 @@ watch(chartType, async () => { await nextTick(); renderCharts() })
 .energy-section-heading small { color:#728595; font-size:12px; }
 .energy-section-heading form { display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap; }
 .energy-section-heading label { display:grid; gap:5px; color:#687d8d; font-size:11px; }
-.energy-section-heading input { width:150px; }
+.energy-section-heading .app-date-picker { width:150px; }
 .energy-section-heading button { font-size:12px; padding:10px 13px; }
 .energy-stat-strip { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin:20px 18px 0; }
 .energy-stat-strip > div { min-width:0; min-height:126px; padding:21px 22px; border-top:3px solid var(--cyan); background:#fff; box-shadow:0 7px 22px rgba(21,54,78,.055); }
@@ -366,22 +362,13 @@ watch(chartType, async () => { await nextTick(); renderCharts() })
 .energy-sync-progress { color:#0e647e; background:#edf8fa; padding:8px 12px; }
 .energy-period-split { display:grid; grid-template-columns:minmax(330px,.9fr) minmax(0,1.25fr); gap:14px; align-items:stretch; padding:16px 18px 20px; }
 .energy-period-chart-wrap { min-width:0; margin:0; border:1px solid #e0e7ec; background:#fff; }
-.energy-period-chart { width:100%; height:300px; }
-.energy-period-table-wrap { min-width:0; height:300px; max-height:300px; margin:0; overflow:auto; border:1px solid #e0e7ec; }
-.energy-period-table { width:100%; min-width:760px; table-layout:fixed; border-collapse:collapse; font-size:13px; font-variant-numeric:tabular-nums; }
-.energy-task-table { min-width:880px; }
-.energy-task-table .energy-col-index { width:7%; }
-.energy-task-table .energy-col-project,.energy-task-table .energy-col-ship,.energy-task-table .energy-col-segment { width:11%; }
-.energy-task-table .energy-col-start { width:23%; }
-.energy-task-table .energy-col-duration { width:13%; }
-.energy-task-table .energy-col-value { width:12%; }
-.energy-month-table { min-width:760px; }
-.energy-month-table .energy-month-date { width:25%; }
-.energy-month-table .energy-month-duration { width:25%; }
-.energy-month-table .energy-month-value { width:25%; }
-.energy-task-table td:nth-child(2),.energy-task-table td:nth-child(3),.energy-task-table td:nth-child(4) { text-align:left; }
+.energy-period-chart { width:100%; height:260px; }
+.energy-period-table-wrap { min-width:0; height:260px; max-height:260px; margin:0; overflow:auto; border:1px solid #e0e7ec; }
+.energy-period-table { width:100%; border-collapse:collapse; font-size:13px; font-variant-numeric:tabular-nums; }
+.energy-task-table th:nth-child(2),.energy-task-table td:nth-child(2),.energy-task-table th:nth-child(3),.energy-task-table td:nth-child(3),.energy-task-table th:nth-child(4),.energy-task-table td:nth-child(4) { text-align:left; }
 .energy-period-table th,.energy-period-table td { height:47px; padding:10px 12px; border-bottom:1px solid #dde5ea; text-align:right; vertical-align:middle; white-space:nowrap; }
 .energy-period-table th:first-child,.energy-period-table td:first-child { text-align:center; }
+.energy-month-table th,.energy-month-table td { text-align:center!important; }
 .energy-period-table thead th { position:sticky; top:0; z-index:3; color:#fff; background:#0b4f76; font-size:11px; font-weight:600; letter-spacing:.4px; }
 .energy-period-table thead small,.energy-month-table thead small { display:inline; color:inherit; font-weight:400; margin-left:3px; font-size:10px; }
 .energy-period-table tbody th { font-weight:500; color:#526b7c; }
@@ -394,7 +381,6 @@ watch(chartType, async () => { await nextTick(); renderCharts() })
 .energy-date-link:hover { text-decoration:underline; }
 .energy-date-link:disabled { color:#91a0aa; cursor:default; }
 .energy-empty { height:130px; text-align:center!important; color:#8a9aa5; }
-@media (max-width:900px) { .energy-period-query { width:100%; grid-template-columns:minmax(160px,1fr) minmax(140px,1fr) max-content 136px; }.energy-stat-strip { grid-template-columns:1fr 1fr; }.energy-period-split { grid-template-columns:1fr; }.energy-period-table-wrap { height:auto; max-height:none; }.energy-stat-strip { margin-left:14px; margin-right:14px; } }
-@media (max-width:700px) { .energy-period-query { grid-template-columns:1fr 1fr; }.energy-period-query > button,.energy-period-query :deep(.report-export-menu) { width:100%; } }
-@media (max-width:560px) { .energy-period-query,.energy-stat-strip { grid-template-columns:1fr; }.energy-section-heading form { width:100%; }.energy-section-heading input { width:145px; }.energy-stat-strip > div { padding:12px; }.energy-stat-strip strong { font-size:21px; }.energy-period-chart { height:260px; } }
+@media (max-width:900px) { .energy-stat-strip { grid-template-columns:1fr 1fr; }.energy-period-split { grid-template-columns:1fr; }.energy-period-table-wrap { height:auto; max-height:none; }.energy-stat-strip { margin-left:14px; margin-right:14px; } }
+@media (max-width:560px) { .energy-stat-strip { grid-template-columns:1fr; }.energy-section-heading form { width:100%; }.energy-section-heading .app-date-picker { width:145px; }.energy-stat-strip > div { padding:12px; }.energy-stat-strip strong { font-size:21px; }.energy-period-chart { height:240px; } }
 </style>

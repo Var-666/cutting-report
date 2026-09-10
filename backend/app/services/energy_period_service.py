@@ -406,10 +406,19 @@ class EnergyPeriodService:
     def get_month(self, report_month):
         year, month = map(int, report_month.split("-"))
         count = calendar.monthrange(year, month)[1]
-        work_times = (
-            self.query_service.fetch_equipment_month_work_times(date(year, month, 1))
-            if self.query_service else {}
-        )
+        month_metrics = {}
+        if self.query_service:
+            if hasattr(self.query_service, "fetch_equipment_month_metrics"):
+                month_metrics = self.query_service.fetch_equipment_month_metrics(
+                    date(year, month, 1)
+                )
+            else:
+                month_metrics = {
+                    key: {"work_time_seconds": value, "task_count": 0}
+                    for key, value in self.query_service.fetch_equipment_month_work_times(
+                        date(year, month, 1)
+                    ).items()
+                }
         legacy = {item["report_date"]: item for item in self.repository.list_month(self.source_key, report_month)}
         saved = {}
         keys = {self.day_source_key(date(year, month, number)) for number in range(1, count + 1)}
@@ -424,12 +433,14 @@ class EnergyPeriodService:
         for number in range(1, count + 1):
             stamp = date(year, month, number)
             stored = saved.get(stamp.isoformat())
+            metrics = month_metrics.get(stamp.isoformat(), {})
             state = "future" if stamp > today else "not_queried"
             row = {"report_date": stamp.isoformat(), "saved": bool(stored),
                    "updated_at": stored["updated_at"] if stored else None,
                    "is_future": stamp > today, "is_today": stamp == today,
                    "needs_resync": stamp.isoformat() in resync_dates,
-                   "work_time_seconds": (None if stamp > today else int(work_times.get(stamp.isoformat(), 0)))}
+                   "task_count": (None if stamp > today else int(metrics.get("task_count", 0))),
+                   "work_time_seconds": (None if stamp > today else int(metrics.get("work_time_seconds", 0)))}
             for key in CHANNELS:
                 row[key] = stored["summary"][key] if stored else channel_result(status=state,
                     valid_count=0, complete_count=0, expected_count=24, estimated_count=0)
@@ -437,6 +448,7 @@ class EnergyPeriodService:
         elapsed = [row for row in rows if not row["is_future"]]
         return to_primitive({"report_month": report_month, "rows": rows,
             "summary": {key: total_channel(elapsed, key) for key in CHANNELS},
+            "total_task_count": sum(row["task_count"] or 0 for row in elapsed),
             "total_work_time_seconds": sum(row["work_time_seconds"] or 0 for row in elapsed),
             "saved_day_count": sum(row["saved"] for row in rows),
             "elapsed_day_count": len(elapsed), "calendar_day_count": count,

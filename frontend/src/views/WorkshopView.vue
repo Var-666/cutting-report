@@ -284,8 +284,8 @@ onUnmounted(() => {
         <div class="confirmation-dialog-task"><strong>{{ display(correction.row?.program_no) }}</strong><span>当前确认人：{{ correction.row?.confirmed_by }} · {{ time(correction.row?.confirmed_at) }}</span></div>
         <div v-if="correction.loading" class="confirmation-dialog-loading"><span class="spinner dark"></span>正在读取工人和审计记录…</div>
         <template v-else>
-          <label v-if="!isWorker" class="confirmation-dialog-field"><span>更正方式</span><select v-model="correction.action"><option value="revoke">撤销为待确认</option><option value="reassign">直接改派给其他工人</option></select></label>
-          <label v-if="!isWorker && correction.action === 'reassign'" class="confirmation-dialog-field"><span>目标工人</span><select v-model="correction.workerId" required><option value="" disabled>请选择工人</option><option v-for="worker in availableWorkers" :key="worker.user_id" :value="worker.user_id">{{ worker.display_name }}{{ worker.company_no || worker.username ? ` · ${worker.company_no || worker.username}` : '' }}</option></select><small v-if="!availableWorkers.length">只显示已登录过系统的可用工人账号。</small></label>
+          <label v-if="!isWorker" class="confirmation-dialog-field"><span>更正方式</span><AppSelect v-model="correction.action"><option value="revoke">撤销为待确认</option><option value="reassign">直接改派给其他工人</option></AppSelect></label>
+          <label v-if="!isWorker && correction.action === 'reassign'" class="confirmation-dialog-field"><span>目标工人</span><AppSelect v-model="correction.workerId" required><option value="" disabled>请选择工人</option><option v-for="worker in availableWorkers" :key="worker.user_id" :value="worker.user_id">{{ worker.display_name }}{{ worker.company_no || worker.username ? ` · ${worker.company_no || worker.username}` : '' }}</option></AppSelect><small v-if="!availableWorkers.length">只显示已登录过系统的可用工人账号。</small></label>
           <label class="confirmation-dialog-field"><span>更正原因</span><textarea v-model="correction.reason" maxlength="200" rows="3" :placeholder="isWorker ? '例如：误点了别人的任务' : '例如：根据现场记录更正实际完成人'" required></textarea><small>{{ correction.reason.trim().length }} / 200</small></label>
           <p v-if="correction.error" class="confirmation-dialog-error">{{ correction.error }}</p>
           <section v-if="!isWorker" class="confirmation-audit-list"><h3>该任务的确认记录</h3><p v-if="!correction.audits.length">暂无历史更正记录</p><article v-for="audit in correction.audits" :key="audit.audit_id"><strong>{{ audit.action_label }}</strong><span>{{ audit.previous_worker_name || '待确认' }} → {{ audit.new_worker_name || '待确认' }}</span><small>{{ audit.operated_by_name }} · {{ time(audit.operated_at) }} · {{ audit.reason }}</small></article></section>
@@ -295,11 +295,11 @@ onUnmounted(() => {
     </div>
   </Teleport>
 
-  <section class="workshop-hero">
+  <section class="page-hero report-hero workshop-hero">
     <div><span class="eyebrow">{{ isWorker ? 'WORKER TASK CONFIRMATION' : 'WORKSHOP REPORT' }}</span><h2>{{ isWorker ? '我的任务确认' : '车间报表' }}</h2><p>{{ isWorker ? `当前工人：${user.display_name}。请确认本人完成的任务，如果误点可撤销本人确认。` : '查看全部任务和工人确认结果，必要时可撤销或改派并保留审计记录。' }}</p></div>
-    <form v-if="!isWorker" class="workshop-query" @submit.prevent="load(1)">
-      <label><span>生产日期</span><input v-model="filters.reportDate" type="date" required /></label>
-      <label><span>图表类型</span><select v-model="chartType"><option value="bar_line">柱线组合</option><option value="bar">柱状图</option><option value="line">折线图</option><option value="area">面积图</option></select></label>
+    <form v-if="!isWorker" class="report-query workshop-query" @submit.prevent="load(1)">
+      <label><span>生产日期</span><AppDatePicker v-model="filters.reportDate" required /></label>
+      <label><span>图表类型</span><AppSelect v-model="chartType"><option value="bar_line">柱线组合</option><option value="bar">柱状图</option><option value="line">折线图</option><option value="area">面积图</option></AppSelect></label>
       <button class="primary" type="submit" :disabled="loading"><span v-if="loading" class="spinner"></span>{{ loading ? '查询中' : '查询报表' }}</button>
       <ReportExportMenu :disabled="loading || !result.report" :loading="exporting" @select="exportReport" />
     </form>
@@ -309,9 +309,9 @@ onUnmounted(() => {
   <section class="panel workshop-panel">
     <div class="panel-title"><div><span>01</span><h2>{{ isWorker ? '待确认任务表' : '当日车间报表' }}</h2></div><p>{{ isWorker ? '只能确认尚未被其他工人确认的任务' : '已确认任务可撤销或改派' }}</p></div>
     <form class="workshop-filters" :class="{ manager: !isWorker }" @submit.prevent="load(1)">
-      <label v-if="isWorker"><span>生产日期</span><input v-model="filters.reportDate" type="date" required /></label>
-      <label><span>工程/船号</span><select v-model="filters.projectName" :disabled="!result.report"><option value="">全部</option><option v-for="name in result.project_names" :key="name" :value="name">{{ name }}</option></select></label>
-      <label><span>确认状态</span><select v-model="filters.confirmationStatus" :disabled="!result.report"><option value="all">全部</option><option value="unconfirmed">未确认</option><option value="confirmed">已确认</option></select></label>
+      <label v-if="isWorker"><span>生产日期</span><AppDatePicker v-model="filters.reportDate" required /></label>
+      <label><span>工程/船号</span><AppSelect v-model="filters.projectName" :disabled="!result.report"><option value="">全部</option><option v-for="name in result.project_names" :key="name" :value="name">{{ name }}</option></AppSelect></label>
+      <label><span>确认状态</span><AppSelect v-model="filters.confirmationStatus" :disabled="!result.report"><option value="all">全部</option><option value="unconfirmed">未确认</option><option value="confirmed">已确认</option></AppSelect></label>
       <button type="submit" :disabled="loading || !result.report">{{ loading ? '筛选中' : '筛选明细' }}</button>
     </form>
     <div v-if="result.report" class="workshop-report-state"><strong>{{ result.report.report_date }} 车间报表</strong><span>生成人：{{ result.report.generated_by_name }} · 生成时间：{{ time(result.report.generated_at) }} · 总任务 {{ result.report.item_count }} 项 · 已确认 {{ result.report.confirmed_count }} 项</span></div>
@@ -319,12 +319,6 @@ onUnmounted(() => {
     <div v-if="result.report" class="workshop-summary">当前筛选返回 {{ result.total }} 项任务，所选工程/船号已确认 {{ result.confirmed_count }} 项</div>
     <div v-if="result.report" class="history-wrap workshop-table-wrap">
       <table v-content-table class="workshop-table">
-        <colgroup>
-          <col class="col-sequence" /><col class="col-project" /><col class="col-ship" />
-          <col class="col-segment" /><col class="col-program" /><col class="col-length" />
-          <col class="col-length" /><col class="col-duration" /><col class="col-time" />
-          <col class="col-person" /><col class="col-remark" />
-        </colgroup>
         <thead><tr><th>序号</th><th>工程号</th><th>船号</th><th>分段名</th><th>程序号</th><th>切割长度</th><th>坡口长度</th><th>切割时长</th><th>时间</th><th>人</th><th>备注</th></tr></thead>
         <tbody>
           <tr v-if="loading"><td colspan="11" class="table-empty">正在查询任务...</td></tr>

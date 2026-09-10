@@ -44,27 +44,29 @@ function leafHeaders(table) {
 }
 
 function applyColumnTracks(table, headers, rows) {
-  if (!headers.length || table.classList.contains?.('summary-table') || !table.ownerDocument) return
-  let colgroup = Array.from(table.children || []).find((child) => child.tagName === 'COLGROUP')
-  if (!colgroup) {
-    colgroup = table.ownerDocument.createElement('colgroup')
-    table.insertBefore(colgroup, table.tHead || table.firstChild)
-  }
-  while (colgroup.children.length < headers.length) {
-    colgroup.appendChild(table.ownerDocument.createElement('col'))
-  }
-  while (colgroup.children.length > headers.length) colgroup.lastElementChild.remove()
-
+  if (!headers.length) return
   const units = headers.map((header, index) => contentWidthUnits(
     header.textContent,
     rows.map((row) => row.cells[index].textContent),
     header.dataset.contentFit,
   ))
   const total = units.reduce((sum, value) => sum + value, 0) || 1
+  table.style?.setProperty('--content-table-min-width', `${Math.max(560, Math.ceil(total * 7.2))}px`)
+  if (!table.ownerDocument) return
+
+  let colgroup = Array.from(table.children || []).find((child) => child.tagName === 'COLGROUP')
+  if (!colgroup) {
+    colgroup = table.ownerDocument.createElement('colgroup')
+    colgroup.dataset.contentTableGenerated = 'true'
+    table.insertBefore(colgroup, table.tHead || table.firstChild)
+  }
+  while (colgroup.children.length < headers.length) {
+    colgroup.appendChild(table.ownerDocument.createElement('col'))
+  }
+  while (colgroup.children.length > headers.length) colgroup.lastElementChild.remove()
   Array.from(colgroup.children).forEach((column, index) => {
     column.style.setProperty('width', `${(units[index] / total * 100).toFixed(3)}%`, 'important')
   })
-  table.style.setProperty('--content-table-min-width', `${Math.max(640, Math.ceil(total * 7.2))}px`)
 }
 
 function adaptContent(table) {

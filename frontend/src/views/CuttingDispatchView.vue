@@ -493,7 +493,7 @@ onActivated(async () => {
 </script>
 
 <template>
-  <section class="dispatch-hero">
+  <section class="page-hero dispatch-hero">
     <div>
       <span class="eyebrow">{{ isDownload ? 'FILE DOWNLOAD' : 'FILE PUSH' }}</span>
       <h2>{{ isDownload ? '文件下载' : '文件推送' }}</h2>
@@ -527,7 +527,7 @@ onActivated(async () => {
         <label for="project-keyword">项目关键词 <small>项目名称或船号</small></label>
         <input id="project-keyword" v-model="projectKeyword" type="search" placeholder="输入关键词筛选" autocomplete="off" :disabled="projectLoading" @input="applyProjectKeyword" />
         <label for="project-selector">支持项目</label>
-        <div class="project-select-row"><select id="project-selector" v-model="selectedProjectId" :disabled="projectLoading || !filteredProjectOptions.length" @change="resetProjectSelection"><option v-if="projectLoading" value="" disabled>正在读取项目…</option><option v-else-if="!filteredProjectOptions.length" value="" disabled>没有匹配的支持项目</option><option v-for="project in filteredProjectOptions" :key="project.project_id" :value="String(project.project_id)">{{ project.project_name }}{{ project.ship_no ? ` · ${project.ship_no}` : '' }}</option></select><button type="submit" :disabled="projectLoading || catalogLoading || !selectedProjectId">{{ catalogLoading ? '打开中…' : '打开' }}</button></div>
+        <div class="project-select-row"><AppSelect id="project-selector" v-model="selectedProjectId" :disabled="projectLoading || !filteredProjectOptions.length" @change="resetProjectSelection"><option v-if="projectLoading" value="" disabled>正在读取项目…</option><option v-else-if="!filteredProjectOptions.length" value="" disabled>没有匹配的支持项目</option><option v-for="project in filteredProjectOptions" :key="project.project_id" :value="String(project.project_id)">{{ project.project_name }}{{ project.ship_no ? ` · ${project.ship_no}` : '' }}</option></AppSelect><button type="submit" :disabled="projectLoading || catalogLoading || !selectedProjectId">{{ catalogLoading ? '打开中…' : '打开' }}</button></div>
       </form>
       <div class="directory-scroll" :aria-busy="projectLoading || catalogLoading">
         <div v-if="projectLoading" class="directory-message">正在读取项目…</div>
@@ -589,8 +589,8 @@ onActivated(async () => {
       <div class="panel-title"><div><span>01</span><h2>选择系统已保存文件</h2></div><p>共 {{ filteredPushFiles.length }} 条可推送文件</p></div>
       <form class="push-file-filter" @submit.prevent="applyPushFileFilters">
         <label><span>文件名或来源路径</span><input v-model="pushFileDraft.keyword" placeholder="输入文件名关键字" /></label>
-        <label><span>项目 / 船号</span><select v-model="pushFileDraft.projectId" @change="pushFileDraft.catalogKey = ''"><option value="">全部项目</option><option v-for="project in pushFileProjects" :key="project.key" :value="project.key">{{ project.label }}</option></select></label>
-        <label><span>目录路径</span><select v-model="pushFileDraft.catalogKey"><option value="">全部目录</option><option v-for="catalog in pushFileCatalogs" :key="catalog.key" :value="catalog.key">{{ catalog.label }}</option></select></label>
+        <label><span>项目 / 船号</span><AppSelect v-model="pushFileDraft.projectId" @change="pushFileDraft.catalogKey = ''"><option value="">全部项目</option><option v-for="project in pushFileProjects" :key="project.key" :value="project.key">{{ project.label }}</option></AppSelect></label>
+        <label><span>目录路径</span><AppSelect v-model="pushFileDraft.catalogKey"><option value="">全部目录</option><option v-for="catalog in pushFileCatalogs" :key="catalog.key" :value="catalog.key">{{ catalog.label }}</option></AppSelect></label>
         <div class="push-filter-actions"><button type="button" @click="resetPushFileFilters">重置</button><button class="primary" type="submit">筛选</button></div>
       </form>
       <div class="dispatch-table-wrap">
@@ -622,7 +622,7 @@ onActivated(async () => {
       </div>
       <form class="dispatch-config" @submit.prevent="saveDispatch(false)">
         <label><span>任务名称（自动）</span><input :value="activeFile?.filename || ''" disabled /><small>taskName 与实际上传文件名一致，包含扩展名。</small></label>
-        <label><span>目标机床 IP</span><select v-model="dispatchForm.machineIp" required><option value="" disabled>请选择 SYS_CONFIG 中的机床</option><option v-for="machine in machines" :key="machine.machine_ip" :value="machine.machine_ip">{{ machine.server_name ? `${machine.server_name} · ` : '' }}{{ machine.machine_ip }}（{{ machine.online ? '在线' : '未从列表确认在线' }}）</option></select></label>
+        <label><span>目标机床 IP</span><AppSelect v-model="dispatchForm.machineIp" required><option value="" disabled>请选择 SYS_CONFIG 中的机床</option><option v-for="machine in machines" :key="machine.machine_ip" :value="machine.machine_ip">{{ machine.server_name ? `${machine.server_name} · ` : '' }}{{ machine.machine_ip }}（{{ machine.online ? '在线' : '未从列表确认在线' }}）</option></AppSelect></label>
         <div class="dispatch-config-row">
           <label><span>材质</span><input v-model.trim="dispatchForm.material" placeholder="可选" /></label>
           <label><span>板厚（mm）</span><input v-model="dispatchForm.thickness" type="number" min="0" step="0.01" placeholder="0" /></label>
@@ -645,10 +645,7 @@ onActivated(async () => {
 </template>
 
 <style scoped>
-.dispatch-hero { min-height:185px; display:flex; align-items:center; justify-content:space-between; gap:32px; }
 .dispatch-project-name { display:block; color:var(--muted); font-size:10px; max-width:140px; overflow-wrap:anywhere; margin-top:5px; }
-.dispatch-hero h2 { margin:8px 0 7px; font-size:34px; }
-.dispatch-hero p { margin:0; color:var(--muted); }
 .dispatch-stage-badge { min-width:310px; display:flex; flex-direction:column; padding:17px 20px; border:1px solid #e2c88f; border-right:4px solid #c78a22; background:rgba(255,250,238,.9); box-shadow:0 12px 30px rgba(62,48,20,.06); }
 .dispatch-stage-badge span { color:#a86b10; font-size:10px; font-weight:700; letter-spacing:2px; }
 .dispatch-stage-badge strong { margin:4px 0; color:#5f4928; font-size:13px; }
@@ -682,10 +679,9 @@ onActivated(async () => {
 .project-search label:not(:first-child) { margin-top:10px; }
 .project-search label small { margin-left:5px; color:#8a9aa5; font-size:9px; font-weight:400; }
 .project-search > div,.file-name-search > div { display:flex; gap:7px; }
-.project-search input,.project-search select,.file-name-search input { width:100%; min-width:0; }
-.project-search input,.project-search select { height:36px; padding:0 10px; font-size:12px; }
-.project-search select { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.project-search select option { font-size:12px; }
+.project-search input,.project-search .app-select,.file-name-search input { width:100%; min-width:0; }
+.project-search input,.project-search .app-select { height:36px; font-size:12px; }
+.project-search .app-select__trigger { padding:0 10px; }
 .project-search button,.file-name-search button { min-width:58px; padding:0 11px; color:var(--blue); border:1px solid #b9ccd6; background:#fff; }
 .project-search button { min-height:36px; height:36px; font-size:11px; }
 .project-search button:disabled,.file-name-search button:disabled { opacity:.55; }
@@ -714,7 +710,7 @@ onActivated(async () => {
 .dispatch-loading { position:absolute; z-index:2; inset:0; display:flex; align-items:flex-start; justify-content:center; padding-top:48px; background:rgba(247,251,253,.8); color:var(--blue); font-size:12px; }
 .file-download-cell { width:122px; }.file-download-cell button { min-height:32px; padding:6px 10px; border:1px solid #bdd2dd; background:#fff; color:var(--blue); font-size:11px; white-space:nowrap; cursor:pointer; }.file-download-cell button:disabled { opacity:.55; cursor:not-allowed; }.file-download-cell small { display:block; margin-top:4px; color:var(--muted); font-size:10px; }
 .dispatch-download-hint { margin:16px 22px; font-size:11px; color:var(--muted); }
-.dispatch-table { width:100%; min-width:980px; border-collapse:collapse; }
+.dispatch-table { width:100%; border-collapse:collapse; }
 .dispatch-table th,.dispatch-table td { padding:10px 12px; border-bottom:1px solid #e4eaee; text-align:left; font-size:11px; }
 .dispatch-table th { color:#dcecf2; background:#0b4f76; font-size:10px; letter-spacing:.4px; }
 .dispatch-table tbody tr { cursor:default; }
@@ -730,11 +726,10 @@ onActivated(async () => {
 .push-file-picker { min-width:0; display:flex; flex-direction:column; }
 .push-file-filter { display:grid; grid-template-columns:minmax(180px,1.2fr) minmax(150px,.9fr) minmax(190px,1.1fr) auto; align-items:end; gap:10px; padding:16px 18px; border-bottom:1px solid #e3eaee; background:#f8fafb; }
 .push-file-filter label > span { display:block; margin-bottom:6px; color:#425767; font-size:10px; font-weight:700; }
-.push-file-filter input,.push-file-filter select { width:100%; min-width:0; }
+.push-file-filter input,.push-file-filter .app-select { width:100%; min-width:0; }
 .push-filter-actions { display:flex; justify-content:flex-end; gap:7px; }
 .push-filter-actions button { min-height:38px; padding:0 13px; color:var(--blue); border:1px solid #b9ccd6; background:#fff; }
 .push-filter-actions .primary { color:#fff; border-color:var(--blue); background:var(--blue); }
-.push-file-table { min-width:880px; }
 .push-file-table tbody tr { cursor:pointer; }
 .push-radio-cell { width:48px; text-align:center!important; }
 .push-radio-cell input { width:15px; height:15px; }

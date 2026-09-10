@@ -236,7 +236,7 @@ button:disabled { opacity:.55; cursor:not-allowed; }
 .download-error { background:#fff0ee; color:#913a31; }
 .download-table-wrap { position:relative; flex:1 1 auto; min-height:160px; overflow-x:auto; }
 .saved-file-loading { position:absolute; z-index:2; inset:0; display:flex; align-items:flex-start; justify-content:center; padding-top:48px; background:rgba(247,251,253,.8); color:var(--blue); font-size:12px; }
-.download-table { border-collapse:collapse; width:100%; min-width:780px; font-size:11px; }
+.download-table { width:100%; border-collapse:collapse; font-size:11px; }
 .download-table th { padding:12px 14px; text-align:left; color:#dfedf4; background:#0b4f76; white-space:nowrap; }
 .download-table td { padding:13px 14px; border-bottom:1px solid #e4eaee; }
 .download-table td small { display:block; margin-top:4px; color:var(--muted); font-size:10px; }

@@ -4,7 +4,7 @@ import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/compon
 import { init, use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
-import { getLeadershipReport, refreshLeadershipReport } from '../api/reports'
+import { getLeadershipReport } from '../api/reports'
 import AnalysisPanel from '../components/AnalysisPanel.vue'
 import ReportExportMenu from '../components/ReportExportMenu.vue'
 import { reportToday } from '../api/reportDates.js'
@@ -115,21 +115,6 @@ async function loadReport(force = false) {
     error.value = exception.message
   } finally {
     loading.value = false
-  }
-}
-
-async function refreshReport() {
-  if (!reportMonth.value || refreshLoading.value) return
-  refreshLoading.value = true
-  error.value = ''
-  try {
-    report.value = await refreshLeadershipReport(reportMonth.value)
-    await nextTick()
-    renderCharts()
-    scheduleRefreshPoll(true)
-  } catch (exception) {
-    refreshLoading.value = false
-    error.value = exception.message
   }
 }
 
@@ -245,19 +230,17 @@ watch(chartType, async () => {
 </script>
 
 <template>
-  <section class="report-hero leadership-hero">
+  <section class="page-hero report-hero leadership-hero">
     <div>
       <span class="eyebrow">MANAGEMENT OVERVIEW</span>
       <h2>领导报表</h2>
+      <p>查看月度任务、切割长度、坡口长度和切割时长趋势。</p>
     </div>
     <form class="report-query month-query" @submit.prevent="loadReport(false)">
-      <label><span>报表月份</span><input v-model="reportMonth" type="month" required /></label>
-      <label><span>图表类型</span><select v-model="chartType"><option value="bar_line">柱线组合</option><option value="bar">柱状图</option><option value="line">折线图</option><option value="area">面积图</option></select></label>
+      <label><span>报表月份</span><AppDatePicker v-model="reportMonth" mode="month" required /></label>
+      <label><span>图表类型</span><AppSelect v-model="chartType"><option value="bar_line">柱线组合</option><option value="bar">柱状图</option><option value="line">折线图</option><option value="area">面积图</option></AppSelect></label>
       <button class="primary" type="submit" :disabled="loading">
         <span v-if="loading" class="spinner"></span>{{ loading ? '查询中' : '查询报表' }}
-      </button>
-      <button type="button" :disabled="loading || refreshLoading" @click="refreshReport">
-        <span v-if="refreshLoading" class="spinner"></span>{{ refreshLoading ? '后台刷新中' : '刷新最新数据' }}
       </button>
       <ReportExportMenu :disabled="loading || !report || !snapshot.data_as_of || snapshot.refreshing" :loading="exporting" @select="exportReport" />
     </form>
@@ -285,7 +268,6 @@ watch(chartType, async () => {
       <div ref="dailyChartElement" class="leadership-chart" aria-label="当月每日趋势图"></div>
       <div class="leadership-table-wrap">
         <table v-content-table class="leadership-table summary-table">
-        <colgroup><col class="col-index" /><col class="col-period" /><col class="col-count" /><col class="col-number" /><col class="col-number" /><col class="col-duration" /><col class="col-remark" /></colgroup>
         <thead><tr><th>序号</th><th>日期</th><th>任务数</th><th>切割长度</th><th>坡口长度</th><th>切割时长</th><th>备注</th></tr></thead>
         <tbody>
           <tr v-for="(row, index) in dailyRecords" :key="row.period_start">
@@ -313,7 +295,6 @@ watch(chartType, async () => {
       <div ref="monthlyChartElement" class="leadership-chart" aria-label="最近十二个月趋势图"></div>
       <div class="leadership-table-wrap">
         <table v-content-table class="leadership-table summary-table">
-        <colgroup><col class="col-index" /><col class="col-period" /><col class="col-count" /><col class="col-number" /><col class="col-number" /><col class="col-duration" /><col class="col-remark" /></colgroup>
         <thead><tr><th>序号</th><th>月份</th><th>任务数</th><th>切割长度</th><th>坡口长度</th><th>切割时长</th><th>备注</th></tr></thead>
         <tbody>
           <tr v-for="(row, index) in monthlyRecords" :key="row.period_start" :class="{ 'current-period': row.period_start.startsWith(reportMonth) }">

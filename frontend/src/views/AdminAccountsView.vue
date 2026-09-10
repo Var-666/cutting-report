@@ -97,7 +97,7 @@ onMounted(loadAdmins)
 
 <template>
   <div class="admin-accounts-page">
-    <section class="database-hero admin-accounts-hero">
+    <section class="page-hero database-hero admin-accounts-hero">
       <div>
         <span class="eyebrow">ACCESS CONTROL</span>
         <h2>管理员管理</h2>

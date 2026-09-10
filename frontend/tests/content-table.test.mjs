@@ -53,6 +53,43 @@ test('column proportions use every heading and cap long program columns', () => 
   assert.ok(units[programIndex] > units[columns.findIndex(([label]) => label === '切割长度')])
 })
 
+test('tables generate content-weighted percentage columns that follow the window', () => {
+  const headers = [{ textContent: '日期', dataset: {} }, { textContent: '切割时长', dataset: {} }, { textContent: '电耗 kWh', dataset: {} }]
+  const rowCells = [
+    { textContent: '2026-09-01', colSpan: 1, dataset: {} },
+    { textContent: '00:00:00', colSpan: 1, dataset: {} },
+    { textContent: '--', colSpan: 1, dataset: {} },
+  ]
+  let minimumWidth = ''
+  const children = []
+  const createElement = (tagName) => ({
+    tagName: tagName.toUpperCase(),
+    dataset: {},
+    children: [],
+    style: { values: {}, setProperty(name, value) { this.values[name] = value } },
+    appendChild(child) { this.children.push(child); this.lastElementChild = child },
+  })
+  const table = {
+    classList: { add() {} },
+    style: { setProperty: (name, value) => { if (name === '--content-table-min-width') minimumWidth = value } },
+    ownerDocument: { createElement },
+    children,
+    insertBefore(node) { children.unshift(node) },
+    tHead: { rows: [{ cells: headers }] },
+    tBodies: [{ rows: [{ cells: rowCells }] }],
+  }
+
+  contentTable.mounted(table)
+  assert.ok(headers.every((header) => header.dataset.contentFit === 'compact'))
+  assert.ok(rowCells.every((cell) => cell.dataset.contentFit === 'compact'))
+  assert.equal(minimumWidth, '560px')
+  assert.equal(children[0].tagName, 'COLGROUP')
+  assert.equal(children[0].children.length, 3)
+  const widths = children[0].children.map((column) => Number.parseFloat(column.style.values.width))
+  assert.ok(Math.abs(widths.reduce((sum, width) => sum + width, 0) - 100) < 0.01)
+  assert.ok(widths[0] > widths[2])
+})
+
 test('every Vue page table opts into shared content sizing', () => {
   let count = 0
   for (const folder of ['views', 'components']) {
@@ -67,8 +104,7 @@ test('every Vue page table opts into shared content sizing', () => {
   }
   assert.ok(count >= 14)
   const css = readFileSync(new URL('../src/assets/content-tables.css', import.meta.url), 'utf8')
-  assert.match(css, /table\.content-table:not\(\.summary-table\)[\s\S]*--content-table-min-width[\s\S]*table-layout:fixed !important/)
-  assert.match(css, /table\.content-table\.summary-table[\s\S]*table-layout:fixed !important/)
-  assert.match(css, /table\.content-table thead th[\s\S]*text-align:center !important/)
+  assert.match(css, /table\.content-table\s*\{[\s\S]*--content-table-min-width[\s\S]*table-layout:fixed !important/)
+  assert.doesNotMatch(css, /table\.content-table thead th\s*\{[^}]*text-align/)
   assert.doesNotMatch(css, /resize:|grid-template-columns/)
 })
