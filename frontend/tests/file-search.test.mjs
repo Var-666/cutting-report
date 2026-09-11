@@ -73,3 +73,17 @@ test('project-shaped catalog root is hidden to avoid showing the project twice',
   assert.match(view, /project\.project_name/)
   assert.match(view, /roots = roots\[0\]\.children/)
 })
+
+test('file download table supports multi-select and batch save', () => {
+  const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
+
+  assert.match(view, /const selectedDownloadFiles = ref\(new Map\(\)\)/)
+  assert.match(view, /function toggleVisibleDownloads/)
+  assert.match(view, /async function downloadSelectedFiles/)
+  assert.match(view, /aria-label="全选当前页可保存文件"/)
+  assert.match(view, /:aria-label="`选择文件 \$\{row\.document_no\}`"/)
+  assert.match(view, /批量保存到系统/)
+  assert.match(view, /for \(const \[index, file\] of files\.entries\(\)\)/)
+  assert.match(view, /setDownloadSelected\(file, false\)/)
+  assert.match(view, /colspan="10"/)
+})

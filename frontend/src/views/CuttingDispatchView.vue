@@ -33,6 +33,9 @@ const pushFilePageSize = 20
 const downloadsPanel = ref(null)
 const downloadingId = ref('')
 const downloadedRows = reactive({})
+const selectedDownloadFiles = ref(new Map())
+const batchDownloading = ref(false)
+const batchProgress = reactive({ completed: 0, total: 0 })
 const loading = ref(false)
 const saving = ref(false)
 const operatingId = ref('')
@@ -107,6 +110,16 @@ const visiblePushFiles = computed(() => {
   return filteredPushFiles.value.slice(start, start + pushFilePageSize)
 })
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize)))
+const selectedDownloadCount = computed(() => selectedDownloadFiles.value.size)
+const selectableRows = computed(() => rows.value.filter((row) => row.path_available && systemStatus.value?.can_download))
+const allVisibleFilesSelected = computed(() => (
+  selectableRows.value.length > 0
+  && selectableRows.value.every((row) => selectedDownloadFiles.value.has(fileKey(row)))
+))
+const someVisibleFilesSelected = computed(() => (
+  !allVisibleFilesSelected.value
+  && selectableRows.value.some((row) => selectedDownloadFiles.value.has(fileKey(row)))
+))
 const selectedPath = computed(() => {
   if (!selectedProject.value) return '请选择项目和目录'
   const catalog = selectedCatalog.value
@@ -123,19 +136,84 @@ function fileKey(file) {
   return JSON.stringify([file.document_id, file.version_id, file.normalized_path])
 }
 
+function clearSelectedDownloads() {
+  selectedDownloadFiles.value = new Map()
+}
+
+function setDownloadSelected(file, selected) {
+  const next = new Map(selectedDownloadFiles.value)
+  const key = fileKey(file)
+  if (selected) next.set(key, file)
+  else next.delete(key)
+  selectedDownloadFiles.value = next
+}
+
+function toggleVisibleDownloads(selected) {
+  const next = new Map(selectedDownloadFiles.value)
+  for (const file of selectableRows.value) {
+    const key = fileKey(file)
+    if (selected) next.set(key, file)
+    else next.delete(key)
+  }
+  selectedDownloadFiles.value = next
+}
+
+async function saveFileToSystem(file) {
+  const result = await downloadCuttingFile({ document_id: file.document_id, version_id: file.version_id || null, file_path: file.normalized_path })
+  downloadedRows[fileKey(file)] = true
+  return result
+}
+
 async function downloadFile(file) {
-  if (!isDownload.value || downloadingId.value || loading.value || !file.path_available || !systemStatus.value?.can_download) return
+  if (!isDownload.value || downloadingId.value || batchDownloading.value || loading.value || !file.path_available || !systemStatus.value?.can_download) return
   const key = fileKey(file)
   downloadingId.value = key
   showNotice(`正在将 ${file.document_no} 保存到系统…`)
   try {
-    const result = await downloadCuttingFile({ document_id: file.document_id, version_id: file.version_id || null, file_path: file.normalized_path })
-    downloadedRows[key] = true
+    const result = await saveFileToSystem(file)
+    setDownloadSelected(file, false)
     showNotice(`${result.filename} 已保存到系统，可前往“文件推送”页面使用。`)
   } catch (error) {
     showNotice(error.message, 'error')
   } finally {
     downloadingId.value = ''
+    await downloadsPanel.value?.refresh(1)
+  }
+}
+
+async function downloadSelectedFiles() {
+  if (!isDownload.value || batchDownloading.value || downloadingId.value || loading.value) return
+  const files = [...selectedDownloadFiles.value.values()].filter((file) => file.path_available)
+  if (!files.length || !systemStatus.value?.can_download) {
+    showNotice('请先选择可保存的文件。', 'error')
+    return
+  }
+  batchDownloading.value = true
+  Object.assign(batchProgress, { completed: 0, total: files.length })
+  let succeeded = 0
+  const failed = []
+  try {
+    for (const [index, file] of files.entries()) {
+      downloadingId.value = fileKey(file)
+      showNotice(`正在批量保存 ${index + 1}/${files.length}：${file.document_no}`)
+      try {
+        await saveFileToSystem(file)
+        setDownloadSelected(file, false)
+        succeeded += 1
+      } catch (error) {
+        failed.push(`${file.document_no}：${error.message}`)
+      } finally {
+        batchProgress.completed = index + 1
+      }
+    }
+    if (failed.length) {
+      showNotice(`批量保存完成：成功 ${succeeded} 项，失败 ${failed.length} 项。${failed[0]}`, 'error')
+    } else {
+      showNotice(`已将 ${succeeded} 个文件全部保存到系统，可前往“文件推送”页面使用。`)
+    }
+  } finally {
+    downloadingId.value = ''
+    batchDownloading.value = false
     await downloadsPanel.value?.refresh(1)
   }
 }
@@ -260,6 +338,7 @@ async function loadProjects() {
     catalogTree.value = []
     expandedCatalogIds.value = new Set()
     rows.value = []
+    clearSelectedDownloads()
     total.value = 0
     page.value = 1
     notice.value = ''
@@ -280,6 +359,7 @@ function resetProjectSelection() {
   catalogTree.value = []
   expandedCatalogIds.value = new Set()
   rows.value = []
+  clearSelectedDownloads()
   total.value = 0
   page.value = 1
   notice.value = ''
@@ -310,6 +390,7 @@ async function selectProject(project) {
   catalogTree.value = []
   expandedCatalogIds.value = new Set()
   rows.value = []
+  clearSelectedDownloads()
   total.value = 0
   page.value = 1
   catalogLoading.value = true
@@ -346,6 +427,12 @@ async function selectCatalog(node) {
   if (node.children?.length && !expandedCatalogIds.value.has(String(node.catalog_id))) expandCatalog(node)
   fileKeyword.value = ''
   appliedFileKeyword.value = ''
+  clearSelectedDownloads()
+  await loadFiles(1)
+}
+
+async function applyFileSearch() {
+  if (fileKeyword.value.trim() !== appliedFileKeyword.value) clearSelectedDownloads()
   await loadFiles(1)
 }
 
@@ -555,18 +642,23 @@ onActivated(async () => {
         <p>{{ selectedCatalog ? `共 ${total} 条 · 当前第 ${page} 页` : '请选择左侧目录' }}</p>
       </div>
       <div class="selected-directory"><span>当前位置</span><strong>{{ selectedPath }}</strong></div>
-      <form class="file-name-search" @submit.prevent="loadFiles(1)">
+      <form class="file-name-search" @submit.prevent="applyFileSearch">
         <label for="file-keyword">当前目录内查找文件</label>
         <div><input id="file-keyword" v-model.trim="fileKeyword" :disabled="!selectedCatalog" placeholder="输入文件名或中间产品" /><button type="submit" :disabled="!selectedCatalog || loading">{{ loading ? '查询中…' : '查询' }}</button></div>
       </form>
+      <div class="download-batch-toolbar" aria-live="polite">
+        <span>已选择 <strong>{{ selectedDownloadCount }}</strong> 项<small v-if="batchDownloading">正在保存 {{ batchProgress.completed }}/{{ batchProgress.total }}</small></span>
+        <div><button type="button" :disabled="!selectedDownloadCount || batchDownloading" @click="clearSelectedDownloads">清空选择</button><button class="primary" type="button" :disabled="!selectedDownloadCount || batchDownloading || loading || !systemStatus?.can_download" @click="downloadSelectedFiles">{{ batchDownloading ? '批量保存中…' : '批量保存到系统' }}</button></div>
+      </div>
       <div class="dispatch-table-wrap" :aria-busy="loading">
         <div v-if="loading" class="dispatch-loading" role="status">正在加载第 {{ requestedPage }} 页…</div>
         <table v-content-table class="dispatch-table" aria-label="文件查询结果">
           <thead>
-            <tr><th>文件名</th><th>中间产品</th><th>文件格式</th><th>版本</th><th>操作人</th><th>操作人工号</th><th>操作时间</th><th>切割状态</th><th>操作</th></tr>
+            <tr><th class="download-check-cell"><input type="checkbox" :checked="allVisibleFilesSelected" :indeterminate="someVisibleFilesSelected" :disabled="!selectableRows.length || loading || batchDownloading" aria-label="全选当前页可保存文件" @change="toggleVisibleDownloads($event.target.checked)" /></th><th>文件名</th><th>中间产品</th><th>文件格式</th><th>版本</th><th>操作人</th><th>操作人工号</th><th>操作时间</th><th>切割状态</th><th>操作</th></tr>
           </thead>
           <tbody>
-            <tr v-for="row in rows" :key="row.document_id">
+            <tr v-for="row in rows" :key="fileKey(row)" :class="{ selected: selectedDownloadFiles.has(fileKey(row)) }">
+              <td class="download-check-cell"><input type="checkbox" :checked="selectedDownloadFiles.has(fileKey(row))" :disabled="loading || batchDownloading || !!downloadingId || !row.path_available || !systemStatus?.can_download" :aria-label="`选择文件 ${row.document_no}`" @change="setDownloadSelected(row, $event.target.checked)" /></td>
               <td class="file-name-cell"><strong>{{ row.document_no }}</strong></td>
               <td>{{ row.pbs_info || '--' }}</td>
               <td class="file-extension">{{ fileExtension(row) }}</td>
@@ -575,9 +667,9 @@ onActivated(async () => {
               <td>{{ row.operator_job_no || row.physical_file_operator_job_no || '--' }}</td>
               <td>{{ formatTime(row.operate_time || row.physical_file_date) }}</td>
               <td><span class="dispatch-status" :class="row.status">{{ row.status_label }}</span></td>
-              <td class="file-download-cell"><button type="button" :disabled="loading || !!downloadingId || !row.path_available || !systemStatus?.can_download" :aria-label="`保存 ${row.document_no} 到系统`" @click="downloadFile(row)">{{ downloadingId === fileKey(row) ? '保存中…' : downloadedRows[fileKey(row)] ? '再次保存' : '保存到系统' }}</button><small v-if="downloadedRows[fileKey(row)]">本次已保存</small><small v-else-if="!row.path_available">{{ row.path_error || '路径不可用' }}</small></td>
+              <td class="file-download-cell"><button type="button" :disabled="loading || batchDownloading || !!downloadingId || !row.path_available || !systemStatus?.can_download" :aria-label="`保存 ${row.document_no} 到系统`" @click="downloadFile(row)">{{ downloadingId === fileKey(row) ? '保存中…' : downloadedRows[fileKey(row)] ? '再次保存' : '保存到系统' }}</button><small v-if="downloadedRows[fileKey(row)]">本次已保存</small><small v-else-if="!row.path_available">{{ row.path_error || '路径不可用' }}</small></td>
             </tr>
-            <tr v-if="!loading && rows.length === 0"><td colspan="9" class="dispatch-empty-row">{{ selectedCatalog ? appliedFileKeyword ? '当前目录没有匹配的文件' : '当前目录没有文件' : '请从左侧选择一个目录' }}</td></tr>
+            <tr v-if="!loading && rows.length === 0"><td colspan="10" class="dispatch-empty-row">{{ selectedCatalog ? appliedFileKeyword ? '当前目录没有匹配的文件' : '当前目录没有文件' : '请从左侧选择一个目录' }}</td></tr>
           </tbody>
         </table>
       </div>
@@ -706,6 +798,14 @@ onActivated(async () => {
 .file-name-search { display:flex; align-items:end; justify-content:space-between; gap:18px; }
 .file-name-search > div { width:min(430px,100%); }
 .file-name-search label { margin:0; flex:0 0 auto; }
+.download-batch-toolbar { min-height:52px; display:flex; align-items:center; justify-content:space-between; gap:14px; padding:9px 18px; border-bottom:1px solid #e3eaee; background:#f7fafb; }
+.download-batch-toolbar > span { color:var(--muted); font-size:10px; }
+.download-batch-toolbar > span strong { margin:0 3px; color:var(--blue); font-size:15px; font-variant-numeric:tabular-nums; }
+.download-batch-toolbar > span small { margin-left:10px; color:#a26917; }
+.download-batch-toolbar > div { display:flex; gap:7px; }
+.download-batch-toolbar button { min-height:34px; padding:0 12px; color:var(--blue); border:1px solid #b9ccd6; background:#fff; white-space:nowrap; }
+.download-batch-toolbar button.primary { color:#fff; border-color:var(--blue); background:var(--blue); }
+.download-batch-toolbar button:disabled { opacity:.55; cursor:not-allowed; }
 .dispatch-table-wrap { overflow-x:auto; position:relative; min-height:75px; }
 .dispatch-loading { position:absolute; z-index:2; inset:0; display:flex; align-items:flex-start; justify-content:center; padding-top:48px; background:rgba(247,251,253,.8); color:var(--blue); font-size:12px; }
 .file-download-cell { width:122px; }.file-download-cell button { min-height:32px; padding:6px 10px; border:1px solid #bdd2dd; background:#fff; color:var(--blue); font-size:11px; white-space:nowrap; cursor:pointer; }.file-download-cell button:disabled { opacity:.55; cursor:not-allowed; }.file-download-cell small { display:block; margin-top:4px; color:var(--muted); font-size:10px; }
@@ -717,6 +817,9 @@ onActivated(async () => {
 .dispatch-table tbody tr:hover { background:#f5fafb; }
 .dispatch-table tbody tr.selected { background:#eef8fa; box-shadow:inset 3px 0 var(--cyan); }
 .dispatch-table input[type='checkbox'] { width:15px; height:15px; }
+.download-check-cell { width:44px; text-align:center!important; }
+.download-check-cell input { display:block; margin:auto; accent-color:var(--blue); cursor:pointer; }
+.download-check-cell input:disabled { cursor:not-allowed; }
 .check-column { width:42px; text-align:center!important; }
 .file-name-cell { max-width:230px; }
 .file-name-cell strong,.file-name-cell small { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -798,6 +901,8 @@ onActivated(async () => {
   .dispatch-flow > div::after { display:none; }
   .file-name-search { align-items:stretch; flex-direction:column; gap:7px; }
   .file-name-search > div { width:100%; }
+  .download-batch-toolbar { align-items:stretch; flex-direction:column; }
+  .download-batch-toolbar > div button { flex:1; }
   .push-file-filter { grid-template-columns:1fr; }
   .push-filter-actions button { flex:1; }
 }
