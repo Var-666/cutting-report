@@ -932,57 +932,98 @@ class WorkshopRepository(SQLiteRepository):
         now: str,
         report_id: str | None = None,
     ) -> dict[str, Any]:
+        return self.confirm_tasks(
+            task_ids=[task_id],
+            user=user,
+            now=now,
+            report_id=report_id,
+        )[0]
+
+    def confirm_tasks(
+        self,
+        *,
+        task_ids: list[str],
+        user: dict[str, Any],
+        now: str,
+        report_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        unique_ids = list(dict.fromkeys(str(task_id) for task_id in task_ids))
+        if not unique_ids:
+            raise ValueError("至少选择一个待确认任务")
+        placeholders = ",".join("?" for _ in unique_ids)
+
         with self.connect() as connection:
             self.begin_immediate(connection)
-            if report_id and not connection.execute(
-                """
-                SELECT 1 FROM workshop_report_items
-                WHERE report_id = ? AND task_id = ?
+            if report_id:
+                report_task_ids = {
+                    str(row["task_id"])
+                    for row in connection.execute(
+                        f"""
+                        SELECT task_id FROM workshop_report_items
+                        WHERE report_id = ? AND task_id IN ({placeholders})
+                        """,
+                        (report_id, *unique_ids),
+                    ).fetchall()
+                }
+                if any(task_id not in report_task_ids for task_id in unique_ids):
+                    raise ValueError("部分任务不在当日车间报表中")
+
+            existing_rows = connection.execute(
+                f"""
+                SELECT * FROM workshop_confirmations
+                WHERE task_id IN ({placeholders})
                 """,
-                (report_id, task_id),
-            ).fetchone():
-                raise ValueError("该任务不在当日车间报表中")
-            existing = connection.execute(
-                "SELECT * FROM workshop_confirmations WHERE task_id = ?", (task_id,)
-            ).fetchone()
-            if existing:
-                if existing["worker_id"] != user["user_id"]:
+                unique_ids,
+            ).fetchall()
+            existing_by_id = {str(row["task_id"]): row for row in existing_rows}
+            for task_id in unique_ids:
+                existing = existing_by_id.get(task_id)
+                if existing and existing["worker_id"] != user["user_id"]:
                     raise ConfirmationConflictError(
                         f"该任务已由 {existing['worker_name']} 确认"
                     )
-                return dict(existing)
-            connection.execute(
-                """
-                INSERT INTO workshop_confirmations (
-                    task_id, report_id, worker_id, worker_name,
-                    confirmed_at, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+
+            for task_id in unique_ids:
+                if task_id in existing_by_id:
+                    continue
+                connection.execute(
+                    """
+                    INSERT INTO workshop_confirmations (
+                        task_id, report_id, worker_id, worker_name,
+                        confirmed_at, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        task_id,
+                        report_id,
+                        user["user_id"],
+                        user["display_name"],
+                        now,
+                        now,
+                        now,
+                    ),
+                )
+                self._insert_confirmation_audit(
+                    connection,
+                    task_id=task_id,
+                    report_id=report_id,
+                    action="confirm",
+                    previous=None,
+                    new_worker=user,
+                    reason="工人确认本人完成任务",
+                    operator=user,
+                    now=now,
+                )
+
+            saved_rows = connection.execute(
+                f"""
+                SELECT * FROM workshop_confirmations
+                WHERE task_id IN ({placeholders})
                 """,
-                (
-                    task_id,
-                    report_id,
-                    user["user_id"],
-                    user["display_name"],
-                    now,
-                    now,
-                    now,
-                ),
-            )
-            self._insert_confirmation_audit(
-                connection,
-                task_id=task_id,
-                report_id=report_id,
-                action="confirm",
-                previous=None,
-                new_worker=user,
-                reason="工人确认本人完成任务",
-                operator=user,
-                now=now,
-            )
-            row = connection.execute(
-                "SELECT * FROM workshop_confirmations WHERE task_id = ?", (task_id,)
-            ).fetchone()
-        return dict(row)
+                unique_ids,
+            ).fetchall()
+            saved_by_id = {str(row["task_id"]): dict(row) for row in saved_rows}
+        return [saved_by_id[task_id] for task_id in unique_ids]
 
     @staticmethod
     def _insert_confirmation_audit(

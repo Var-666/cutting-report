@@ -1,6 +1,6 @@
 <script setup>
 import { reactive, ref } from 'vue'
-import { bootstrapAccount, hrLoginAccount, loginAccount } from '../api/reports'
+import { bootstrapAccount, loginAccount } from '../api/reports'
 
 const props = defineProps({
   setupRequired: Boolean,
@@ -9,9 +9,7 @@ const props = defineProps({
 const emit = defineEmits(['authenticated'])
 const loading = ref(false)
 const error = ref('')
-const mode = ref(props.workerDatabaseAuthEnabled ? 'hr' : 'admin')
-const adminForm = reactive({ username: '', display_name: '', password: '' })
-const workerForm = reactive({ company_no: '', password: '' })
+const form = reactive({ username: '', display_name: '', password: '' })
 
 async function submit() {
   loading.value = true
@@ -19,13 +17,11 @@ async function submit() {
   try {
     let result
     if (props.setupRequired) {
-      result = await bootstrapAccount(adminForm)
-    } else if (mode.value === 'hr') {
-      result = await hrLoginAccount(workerForm)
+      result = await bootstrapAccount(form)
     } else {
       result = await loginAccount({
-        username: adminForm.username,
-        password: adminForm.password,
+        username: form.username,
+        password: form.password,
       })
     }
     emit('authenticated', result.user)
@@ -42,24 +38,14 @@ async function submit() {
     <section class="login-card">
       <div class="login-brand"><span></span><span></span><span></span></div>
       <p class="eyebrow">WORKSHOP PRODUCTION</p>
-      <h1>{{ setupRequired ? '初始化应急管理员' : mode === 'hr' ? 'HR账号登录' : '应急管理员登录' }}</h1>
-      <p>{{ setupRequired ? '首次使用需要创建应急管理员，日常管理员与工人均由 HR 数据库统一验证。' : mode === 'hr' ? '使用公司工号和 HR 原密码登录，系统会根据已授予的权限进入对应页面。' : '仅在 HR 数据库不可用或系统维护时使用本地应急账号。' }}</p>
-      <div v-if="!setupRequired && workerDatabaseAuthEnabled" class="login-tabs" role="tablist" aria-label="登录身份">
-        <button type="button" :class="{ active: mode === 'hr' }" @click="mode = 'hr'; error = ''">HR账号登录</button>
-        <button type="button" :class="{ active: mode === 'admin' }" @click="mode = 'admin'; error = ''">应急管理员</button>
-      </div>
+      <h1>{{ setupRequired ? '初始化管理员' : '系统登录' }}</h1>
+      <p>{{ setupRequired ? '首次使用需要创建一个本地管理员账号，完成后可从 HR 人员库继续授权管理员。' : workerDatabaseAuthEnabled ? '使用公司工号或管理员账号登录，系统会自动识别账号权限并进入对应页面。' : '使用管理员账号和密码登录。' }}</p>
       <form @submit.prevent="submit">
-        <template v-if="!setupRequired && mode === 'hr'">
-          <label><span>公司工号</span><input v-model.trim="workerForm.company_no" maxlength="64" autocomplete="username" required /></label>
-          <label><span>密码</span><input v-model="workerForm.password" type="password" maxlength="128" autocomplete="current-password" required /></label>
-        </template>
-        <template v-else>
-          <label><span>管理员账号</span><input v-model.trim="adminForm.username" minlength="2" maxlength="64" autocomplete="username" required /></label>
-          <label v-if="setupRequired"><span>显示姓名</span><input v-model.trim="adminForm.display_name" maxlength="64" required /></label>
-          <label><span>密码</span><input v-model="adminForm.password" type="password" minlength="8" maxlength="128" autocomplete="current-password" required /></label>
-        </template>
+        <label><span>{{ !setupRequired && workerDatabaseAuthEnabled ? '公司工号 / 管理员账号' : '管理员账号' }}</span><input v-model.trim="form.username" :minlength="setupRequired ? 2 : 1" maxlength="64" autocomplete="username" required /></label>
+        <label v-if="setupRequired"><span>显示姓名</span><input v-model.trim="form.display_name" maxlength="64" required /></label>
+        <label><span>密码</span><input v-model="form.password" type="password" :minlength="setupRequired ? 8 : 1" maxlength="128" autocomplete="current-password" required /></label>
         <div v-if="error" class="login-error">{{ error }}</div>
-        <button class="primary" type="submit" :disabled="loading">{{ loading ? '正在提交' : setupRequired ? '创建并登录' : mode === 'hr' ? '登录' : '应急管理员登录' }}</button>
+        <button class="primary" type="submit" :disabled="loading">{{ loading ? '正在提交' : setupRequired ? '创建并登录' : '登录' }}</button>
       </form>
     </section>
   </main>

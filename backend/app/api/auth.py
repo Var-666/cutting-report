@@ -17,6 +17,19 @@ router = APIRouter(prefix="/api/v1/auth", tags=["authentication"])
 
 
 class LoginRequest(BaseModel):
+    username: str = Field(min_length=1, max_length=64)
+    password: str = Field(min_length=1, max_length=128)
+
+    @field_validator("username")
+    @classmethod
+    def strip_username(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("账号不能为空")
+        return cleaned
+
+
+class LocalAccountRequest(BaseModel):
     username: str = Field(min_length=2, max_length=64)
     password: str = Field(min_length=8, max_length=128)
 
@@ -34,7 +47,7 @@ class WorkerLoginRequest(BaseModel):
         return cleaned
 
 
-class UserCreateRequest(LoginRequest):
+class UserCreateRequest(LocalAccountRequest):
     display_name: str = Field(min_length=1, max_length=64)
     role: str = Field(default="worker", pattern=r"^(admin|worker)$")
 
@@ -47,7 +60,7 @@ class UserCreateRequest(LoginRequest):
         return cleaned
 
 
-class BootstrapRequest(LoginRequest):
+class BootstrapRequest(LocalAccountRequest):
     display_name: str = Field(min_length=1, max_length=64)
 
 
@@ -174,14 +187,33 @@ def bootstrap(payload: BootstrapRequest, request: Request, response: Response) -
 
 @router.post("/login")
 def login(payload: LoginRequest, request: Request, response: Response) -> dict:
+    user = None
     try:
-        user = request.app.state.workshop.authenticate(
+        local_user = request.app.state.workshop.authenticate(
             payload.username, payload.password
         )
-        if settings.worker_database_auth_enabled and user["role"] != "admin":
-            raise AuthenticationError("管理员账号或密码错误")
-    except AuthenticationError as exc:
-        raise HTTPException(status_code=401, detail=str(exc)) from exc
+        if not settings.worker_database_auth_enabled or local_user["role"] == "admin":
+            user = local_user
+    except AuthenticationError:
+        pass
+
+    if user is None and settings.worker_database_auth_enabled:
+        try:
+            identity = request.app.state.worker_auth.authenticate(
+                payload.username, payload.password
+            )
+        except AuthenticationError as exc:
+            raise HTTPException(status_code=401, detail="账号或密码错误") from exc
+        except WorkerAuthenticationUnavailableError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        user = request.app.state.workshop.upsert_external_worker(
+            **identity,
+            now=_now().isoformat(timespec="seconds"),
+        )
+
+    if user is None:
+        raise HTTPException(status_code=401, detail="账号或密码错误")
+
     now = _now()
     token, expires_at = request.app.state.workshop.create_session(
         user["user_id"], now=now, hours=settings.auth_session_hours

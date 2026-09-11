@@ -137,6 +137,13 @@ export function confirmWorkshopTask(taskId, reportDate) {
   }).then((data) => { reportCache.invalidate('workshop:tasks:'); return data })
 }
 
+export function confirmWorkshopTasks(taskIds, reportDate) {
+  return request('/api/v1/workshop/tasks/confirm', {
+    method: 'POST',
+    body: JSON.stringify({ report_date: reportDate, task_ids: taskIds }),
+  }).then((data) => { reportCache.invalidate('workshop:tasks:'); return data })
+}
+
 export function revokeWorkshopTask(taskId, reportDate, reason) {
   return request(`/api/v1/workshop/tasks/${encodeURIComponent(taskId)}/revoke`, {
     method: 'POST',

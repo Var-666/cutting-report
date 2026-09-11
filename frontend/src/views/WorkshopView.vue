@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onActivated, onDeactivated, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import {
-  confirmWorkshopTask,
+  confirmWorkshopTasks,
   correctWorkshopTask,
   generateWorkshopDailyReport,
   getLatestWorkshopProductionDate,
@@ -28,9 +28,10 @@ const pageSize = 10
 const filters = reactive({ reportDate: today, startDate: today, endDate: today, projectName: '', confirmationStatus: 'all' })
 const result = ref({ report: null, items: [], total: 0, page: 1, page_size: pageSize, project_names: [], confirmed_count: 0, worker_summaries: [] })
 const loading = ref(false)
-const confirmingId = ref('')
 const error = ref('')
 const chartType = ref('bar_line')
+const selectedTasks = ref(new Map())
+const batchConfirmation = reactive({ visible: false, saving: false, error: '', tasks: [] })
 const confirmationFeedback = reactive({ visible: false, type: 'pending', title: '', message: '' })
 const correction = reactive({
   visible: false,
@@ -46,6 +47,16 @@ const correction = reactive({
 })
 const totalPages = computed(() => Math.max(1, Math.ceil(result.value.total / result.value.page_size)))
 const isWorker = computed(() => props.mode === 'worker')
+const selectableTasks = computed(() => isWorker.value ? result.value.items.filter((row) => !row.confirmed_by) : [])
+const selectedTaskCount = computed(() => selectedTasks.value.size)
+const allVisibleTasksSelected = computed(() => (
+  selectableTasks.value.length > 0
+  && selectableTasks.value.every((row) => selectedTasks.value.has(row.task_id))
+))
+const someVisibleTasksSelected = computed(() => (
+  !allVisibleTasksSelected.value
+  && selectableTasks.value.some((row) => selectedTasks.value.has(row.task_id))
+))
 const availableWorkers = computed(() => correction.workers.filter((worker) => (
   worker.role === 'worker' && worker.active && worker.user_id !== correction.row?.confirmed_by_id
 )))
@@ -65,7 +76,8 @@ function startRefreshTimer() {
       document.visibilityState === 'visible'
       && result.value.report
       && !loading.value
-      && !confirmingId.value
+      && !batchConfirmation.visible
+      && !batchConfirmation.saving
       && !correction.visible
     ) {
       load(result.value.page, { silent: true, ensureReport: false })
@@ -76,7 +88,13 @@ function startRefreshTimer() {
 watch(() => [filters.reportDate, filters.startDate, filters.endDate], () => {
   filters.projectName = ''
   filters.confirmationStatus = 'all'
+  clearSelectedTasks()
+  batchConfirmation.visible = false
   result.value = { report: null, items: [], total: 0, page: 1, page_size: pageSize, project_names: [], confirmed_count: 0, worker_summaries: [] }
+})
+watch(() => [filters.projectName, filters.confirmationStatus], () => {
+  clearSelectedTasks()
+  batchConfirmation.visible = false
 })
 
 function display(value) { return value || '--' }
@@ -88,6 +106,58 @@ function duration(value) {
 }
 function time(value) { return value ? String(value).replace('T', ' ').slice(0, 16) : '--' }
 function rowDate(row) { return row?.production_time ? String(row.production_time).slice(0, 10) : filters.reportDate }
+
+function clearSelectedTasks() {
+  selectedTasks.value = new Map()
+}
+
+function setTaskSelected(row, selected) {
+  if (!isWorker.value || row.confirmed_by || batchConfirmation.saving) return
+  const next = new Map(selectedTasks.value)
+  if (selected) next.set(row.task_id, row)
+  else next.delete(row.task_id)
+  selectedTasks.value = next
+}
+
+function toggleVisibleTasks(selected) {
+  const next = new Map(selectedTasks.value)
+  for (const row of selectableTasks.value) {
+    if (selected) next.set(row.task_id, row)
+    else next.delete(row.task_id)
+  }
+  selectedTasks.value = next
+}
+
+function reconcileVisibleTaskSelection(items) {
+  if (!selectedTasks.value.size) return
+  const next = new Map(selectedTasks.value)
+  for (const row of items) {
+    if (!next.has(row.task_id)) continue
+    if (row.confirmed_by) next.delete(row.task_id)
+    else next.set(row.task_id, row)
+  }
+  selectedTasks.value = next
+}
+
+function openBatchConfirmation(tasks = [...selectedTasks.value.values()]) {
+  const pendingTasks = tasks.filter((row) => !row.confirmed_by)
+  if (!isWorker.value || !pendingTasks.length || batchConfirmation.saving) return
+  batchConfirmation.tasks = pendingTasks
+  batchConfirmation.error = ''
+  batchConfirmation.visible = true
+}
+
+function openSingleConfirmation(row) {
+  if (row.confirmed_by) return
+  selectedTasks.value = new Map([[row.task_id, row]])
+  openBatchConfirmation([row])
+}
+
+function closeBatchConfirmation() {
+  if (batchConfirmation.saving) return
+  batchConfirmation.visible = false
+  batchConfirmation.error = ''
+}
 
 function showConfirmationFeedback(type, title, message, timeout = 0) {
   if (feedbackTimer) window.clearTimeout(feedbackTimer)
@@ -132,7 +202,10 @@ async function load(page = 1, { silent = false, ensureReport = true, force = tru
     const current = isWorker.value
       ? query.reportDate === filters.reportDate
       : query.startDate === filters.startDate && query.endDate === filters.endDate
-    if (current) result.value = data
+    if (current) {
+      result.value = data
+      reconcileVisibleTaskSelection(data.items || [])
+    }
   } catch (exception) {
     if (!silent) error.value = exception.message
   } finally {
@@ -140,25 +213,36 @@ async function load(page = 1, { silent = false, ensureReport = true, force = tru
   }
 }
 
-async function confirm(row) {
-  if (!isWorker.value || confirmingId.value) return
-  confirmingId.value = row.task_id
+function applyTaskFilters() {
+  clearSelectedTasks()
+  load(1)
+}
+
+async function submitBatchConfirmation() {
+  if (!isWorker.value || batchConfirmation.saving || !batchConfirmation.tasks.length) return
+  const tasks = [...batchConfirmation.tasks]
+  batchConfirmation.saving = true
+  batchConfirmation.error = ''
   error.value = ''
-  showConfirmationFeedback('pending', '正在确认任务', `${display(row.program_no)} · 请稍候`)
+  showConfirmationFeedback('pending', '正在确认任务', `共 ${tasks.length} 项 · 请稍候`)
   try {
-    await confirmWorkshopTask(row.task_id, filters.reportDate)
+    await confirmWorkshopTasks(tasks.map((row) => row.task_id), filters.reportDate)
+    batchConfirmation.visible = false
+    batchConfirmation.tasks = []
+    clearSelectedTasks()
     showConfirmationFeedback(
       'success',
       '确认成功',
-      `${display(row.program_no)} 已登记为由 ${props.user.display_name} 完成`,
+      `${tasks.length} 项任务已登记为由 ${props.user.display_name} 完成`,
       5000,
     )
     await load(result.value.page, { silent: true, ensureReport: false })
   } catch (exception) {
     error.value = exception.message
+    batchConfirmation.error = exception.message
     showConfirmationFeedback('error', '确认失败', exception.message, 7000)
   } finally {
-    confirmingId.value = ''
+    batchConfirmation.saving = false
   }
 }
 
@@ -275,7 +359,7 @@ onMounted(() => {
 })
 onActivated(() => {
   startRefreshTimer()
-  if (result.value.report && !loading.value && !confirmingId.value) {
+  if (result.value.report && !loading.value && !batchConfirmation.visible && !batchConfirmation.saving) {
     load(result.value.page, { silent: true, ensureReport: false })
   }
 })
@@ -297,6 +381,21 @@ onUnmounted(() => {
   </Transition>
 
   <Teleport to="body">
+    <div v-if="batchConfirmation.visible" class="confirmation-dialog-backdrop" @click.self="closeBatchConfirmation">
+      <section class="confirmation-dialog batch-confirmation-dialog" role="dialog" aria-modal="true" aria-labelledby="batch-confirmation-dialog-title">
+        <header><div><small>任务确认</small><h2 id="batch-confirmation-dialog-title">确认以下任务由我完成</h2></div><button type="button" aria-label="关闭" :disabled="batchConfirmation.saving" @click="closeBatchConfirmation">×</button></header>
+        <p class="batch-confirmation-intro">请核对以下 {{ batchConfirmation.tasks.length }} 项任务。确认后，任务将登记到当前工人“{{ user.display_name }}”名下。</p>
+        <div class="batch-confirmation-list">
+          <table v-content-table>
+            <thead><tr><th>序号</th><th>工程/船号</th><th>分段名</th><th>程序号</th><th>生产时间</th></tr></thead>
+            <tbody><tr v-for="(row, index) in batchConfirmation.tasks" :key="row.task_id"><td>{{ index + 1 }}</td><td>{{ display(row.project_code || row.ship_no) }}</td><td>{{ display(row.segment_name) }}</td><td :title="display(row.program_no)">{{ display(row.program_no) }}</td><td>{{ time(row.production_time) }}</td></tr></tbody>
+          </table>
+        </div>
+        <p v-if="batchConfirmation.error" class="confirmation-dialog-error">{{ batchConfirmation.error }}</p>
+        <footer><button type="button" :disabled="batchConfirmation.saving" @click="closeBatchConfirmation">返回检查</button><button class="primary" type="button" :disabled="batchConfirmation.saving" @click="submitBatchConfirmation"><span v-if="batchConfirmation.saving" class="spinner"></span>{{ batchConfirmation.saving ? '确认中…' : `确认这 ${batchConfirmation.tasks.length} 项任务` }}</button></footer>
+      </section>
+    </div>
+
     <div v-if="correction.visible" class="confirmation-dialog-backdrop" @click.self="closeCorrection">
       <section class="confirmation-dialog" role="dialog" aria-modal="true" aria-labelledby="confirmation-dialog-title">
         <header><div><small>{{ isWorker ? '本人撤销' : '管理员更正' }}</small><h2 id="confirmation-dialog-title">{{ isWorker ? '撤销任务确认' : '更正确认人' }}</h2></div><button type="button" aria-label="关闭" :disabled="correction.saving" @click="closeCorrection">×</button></header>
@@ -340,7 +439,7 @@ onUnmounted(() => {
     fit-table-content
   >
     <template #summary>
-      <form class="workshop-filters" :class="{ manager: !isWorker }" @submit.prevent="load(1)">
+      <form class="workshop-filters" :class="{ manager: !isWorker }" @submit.prevent="applyTaskFilters">
         <label v-if="isWorker"><span>生产日期</span><AppDatePicker v-model="filters.reportDate" required /></label>
         <label><span>工程/船号</span><AppSelect v-model="filters.projectName" :disabled="!result.report"><option value="">全部</option><option v-for="name in result.project_names" :key="name" :value="name">{{ name }}</option></AppSelect></label>
         <label><span>确认状态</span><AppSelect v-model="filters.confirmationStatus" :disabled="!result.report"><option value="all">全部</option><option value="unconfirmed">未确认</option><option value="confirmed">已确认</option></AppSelect></label>
@@ -349,16 +448,18 @@ onUnmounted(() => {
       <div v-if="result.report" class="workshop-report-state"><strong>{{ isWorker ? result.report.report_date : `${result.report.period_start} 至 ${result.report.period_end}` }} 车间报表</strong><span>{{ isWorker ? `生成人：${result.report.generated_by_name || '--'} · 生成时间：${time(result.report.generated_at)} · ` : '' }}总任务 {{ result.report.item_count }} 项 · 已确认 {{ result.report.confirmed_count }} 项</span></div>
       <div v-else class="workshop-empty-report"><strong>{{ loading ? '正在加载最近车间报表' : '该日期暂无车间报表' }}</strong><span>{{ loading ? '系统正在查找最近有数据的生产日并加载全部明细。' : '当前源数据在该日期没有已完成任务。' }}</span></div>
       <div v-if="result.report" class="workshop-summary">当前筛选返回 {{ result.total }} 项任务，所选工程/船号已确认 {{ result.confirmed_count }} 项</div>
+      <div v-if="isWorker && result.report" class="workshop-batch-actions"><span>已选择 <strong>{{ selectedTaskCount }}</strong> 项待确认任务</span><div><button type="button" :disabled="!selectedTaskCount || batchConfirmation.saving" @click="clearSelectedTasks">清空选择</button><button class="primary" type="button" :disabled="!selectedTaskCount || loading || batchConfirmation.saving" @click="openBatchConfirmation()">确认选中任务</button></div></div>
     </template>
     <template #table>
-      <table v-content-table class="workshop-table">
-        <thead><tr><th>序号</th><th>工程号</th><th>船号</th><th>分段名</th><th>程序号</th><th>切割长度</th><th>坡口长度</th><th>切割时长</th><th>时间</th><th>人</th><th>备注</th></tr></thead>
+      <table v-content-table class="workshop-table" :class="{ 'worker-workshop-table': isWorker }">
+        <thead><tr><th v-if="isWorker" class="workshop-select-cell"><input type="checkbox" :checked="allVisibleTasksSelected" :indeterminate="someVisibleTasksSelected" :disabled="!selectableTasks.length || loading || batchConfirmation.saving" aria-label="全选当前页待确认任务" @change="toggleVisibleTasks($event.target.checked)" /></th><th>序号</th><th>工程号</th><th>船号</th><th>分段名</th><th>程序号</th><th>切割长度</th><th>坡口长度</th><th>切割时长</th><th>时间</th><th>人</th><th>备注</th></tr></thead>
         <tbody>
-          <tr v-if="loading"><td colspan="11" class="table-empty">正在查询任务...</td></tr>
-          <tr v-else-if="!result.items.length"><td colspan="11" class="table-empty">当前条件下暂无任务</td></tr>
-          <tr v-for="(row, index) in result.items" v-else :key="row.task_id">
+          <tr v-if="loading"><td :colspan="isWorker ? 12 : 11" class="table-empty">正在查询任务...</td></tr>
+          <tr v-else-if="!result.items.length"><td :colspan="isWorker ? 12 : 11" class="table-empty">当前条件下暂无任务</td></tr>
+          <tr v-for="(row, index) in result.items" v-else :key="row.task_id" :class="{ selected: isWorker && selectedTasks.has(row.task_id) }">
+            <td v-if="isWorker" class="workshop-select-cell"><input type="checkbox" :checked="selectedTasks.has(row.task_id)" :disabled="Boolean(row.confirmed_by) || loading || batchConfirmation.saving" :aria-label="`选择任务 ${display(row.program_no)}`" @change="setTaskSelected(row, $event.target.checked)" /></td>
             <td>{{ (result.page - 1) * result.page_size + index + 1 }}</td><td>{{ display(row.project_code) }}</td><td>{{ display(row.ship_no) }}</td><td>{{ display(row.segment_name) }}</td><td class="program-cell" :title="display(row.program_no)">{{ display(row.program_no) }}</td><td>{{ number(row.cut_length) }}</td><td>{{ number(row.groove_length) }}</td><td class="duration-cell">{{ duration(row.work_time) }}</td><td class="time-cell">{{ time(row.production_time) }}</td>
-            <td class="confirm-cell"><div v-if="row.confirmed_by" class="confirmation-person"><span class="confirmed-mark">✓ {{ row.confirmed_by }}<small>{{ time(row.confirmed_at) }}</small></span><button v-if="isOwnConfirmation(row)" type="button" class="correction-button" :disabled="correction.saving" @click="openCorrection(row)">撤销我的确认</button><button v-else-if="!isWorker" type="button" class="correction-button" :disabled="correction.saving" @click="openCorrection(row)">更正确认</button></div><button v-else-if="isWorker" type="button" :disabled="Boolean(confirmingId)" @click="confirm(row)"><span v-if="confirmingId === row.task_id" class="spinner dark" aria-hidden="true"></span>{{ confirmingId === row.task_id ? '确认中' : '确认是我完成' }}</button><span v-else class="pending-confirmation">待工人确认</span></td>
+            <td class="confirm-cell"><div v-if="row.confirmed_by" class="confirmation-person"><span class="confirmed-mark">✓ {{ row.confirmed_by }}<small>{{ time(row.confirmed_at) }}</small></span><button v-if="isOwnConfirmation(row)" type="button" class="correction-button" :disabled="correction.saving" @click="openCorrection(row)">撤销我的确认</button><button v-else-if="!isWorker" type="button" class="correction-button" :disabled="correction.saving" @click="openCorrection(row)">更正确认</button></div><button v-else-if="isWorker" type="button" :disabled="batchConfirmation.saving" @click="openSingleConfirmation(row)">确认是我完成</button><span v-else class="pending-confirmation">待工人确认</span></td>
             <td>{{ display(row.remark) }}</td>
           </tr>
         </tbody>

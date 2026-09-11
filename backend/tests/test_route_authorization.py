@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from app.api import designer
 from app.api.auth import LoginRequest, login, require_admin, require_user, require_worker
 from app.config import settings
+from app.database.workshop import AuthenticationError
 from app.main import app
 
 
@@ -77,6 +78,8 @@ def test_workshop_routes_keep_the_intended_role_split() -> None:
 
     confirmation = _route("/api/v1/workshop/tasks/{task_id}/confirm", "POST")
     assert require_worker in _dependency_calls(confirmation)
+    batch_confirmation = _route("/api/v1/workshop/tasks/confirm", "POST")
+    assert require_worker in _dependency_calls(batch_confirmation)
     revocation = _route("/api/v1/workshop/tasks/{task_id}/revoke", "POST")
     assert require_worker in _dependency_calls(revocation)
     correction = _route("/api/v1/workshop/tasks/{task_id}/correct", "POST")
@@ -175,7 +178,7 @@ def test_worker_cannot_pass_admin_dependency() -> None:
     assert exc_info.value.status_code == 403
 
 
-def test_hr_mode_rejects_a_legacy_local_worker_from_admin_login(monkeypatch) -> None:
+def test_unified_login_rejects_a_legacy_local_worker_when_hr_credentials_fail(monkeypatch) -> None:
     class _LocalWorkerRepository:
         def authenticate(self, username, password):
             return {
@@ -185,8 +188,22 @@ def test_hr_mode_rejects_a_legacy_local_worker_from_admin_login(monkeypatch) -> 
                 "role": "worker",
             }
 
+    class _WorkerAuth:
+        def authenticate(self, company_no, password):
+            raise AuthenticationError("公司工号或密码错误")
+
     class _Request:
-        app = type("App", (), {"state": type("State", (), {"workshop": _LocalWorkerRepository()})()})()
+        app = type(
+            "App",
+            (),
+            {
+                "state": type(
+                    "State",
+                    (),
+                    {"workshop": _LocalWorkerRepository(), "worker_auth": _WorkerAuth()},
+                )()
+            },
+        )()
 
     monkeypatch.setattr(
         "app.api.auth.settings",
@@ -201,7 +218,90 @@ def test_hr_mode_rejects_a_legacy_local_worker_from_admin_login(monkeypatch) -> 
         )
 
     assert exc_info.value.status_code == 401
-    assert exc_info.value.detail == "管理员账号或密码错误"
+    assert exc_info.value.detail == "账号或密码错误"
+
+
+def test_unified_login_accepts_local_admin_without_contacting_hr(monkeypatch) -> None:
+    class _LocalAdminRepository:
+        def authenticate(self, username, password):
+            assert (username, password) == ("system-admin", "local-password")
+            return {
+                "user_id": "usr_local_admin",
+                "username": username,
+                "display_name": "系统管理员",
+                "role": "admin",
+                "auth_source": "local",
+            }
+
+        def create_session(self, user_id, *, now, hours):
+            assert user_id == "usr_local_admin"
+            return "local-session-token", "2026-09-12T09:00:00+08:00"
+
+    class _UnusedWorkerAuth:
+        def authenticate(self, company_no, password):
+            raise AssertionError("本地管理员登录不应访问HR数据库")
+
+    monkeypatch.setattr(
+        "app.api.auth.settings",
+        replace(settings, worker_database_auth_enabled=True),
+    )
+    monkeypatch.setattr(app.state, "workshop", _LocalAdminRepository(), raising=False)
+    monkeypatch.setattr(app.state, "worker_auth", _UnusedWorkerAuth(), raising=False)
+
+    response = TestClient(app).post(
+        "/api/v1/auth/login",
+        json={"username": "system-admin", "password": "local-password"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["user"]["auth_source"] == "local"
+    assert response.cookies.get("cutting_session") == "local-session-token"
+
+
+def test_unified_login_accepts_hr_account_and_keeps_granted_role(monkeypatch) -> None:
+    class _HrAccountRepository:
+        def authenticate(self, username, password):
+            raise AuthenticationError("账号或密码错误")
+
+        def upsert_external_worker(self, **identity):
+            assert identity["external_id"] == "9123"
+            return {
+                "user_id": "usr_hr_admin",
+                "username": identity["company_no"],
+                "display_name": identity["display_name"],
+                "role": "admin",
+                "auth_source": "hr_database",
+            }
+
+        def create_session(self, user_id, *, now, hours):
+            assert user_id == "usr_hr_admin"
+            return "hr-session-token", "2026-09-12T09:00:00+08:00"
+
+    class _WorkerAuth:
+        def authenticate(self, company_no, password):
+            assert (company_no, password) == ("C0007", "p")
+            return {
+                "external_id": "9123",
+                "company_no": "C0007",
+                "group_no": "G0021",
+                "display_name": "张三",
+            }
+
+    monkeypatch.setattr(
+        "app.api.auth.settings",
+        replace(settings, worker_database_auth_enabled=True),
+    )
+    monkeypatch.setattr(app.state, "workshop", _HrAccountRepository(), raising=False)
+    monkeypatch.setattr(app.state, "worker_auth", _WorkerAuth(), raising=False)
+
+    response = TestClient(app).post(
+        "/api/v1/auth/login",
+        json={"username": "C0007", "password": "p"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["user"]["role"] == "admin"
+    assert response.cookies.get("cutting_session") == "hr-session-token"
 
 
 def test_worker_login_creates_a_session_from_hr_identity(monkeypatch) -> None:

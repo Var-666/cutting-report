@@ -393,3 +393,75 @@ def test_empty_daily_report_can_be_populated_when_source_data_arrives(
     assert populated["item_count"] == 1
     _, records = repository.get_daily_report_records("2026-08-19")
     assert records[0].task_id == "new-task"
+
+
+def test_batch_confirmation_is_atomic_when_one_task_has_another_worker(
+    tmp_path: Path,
+) -> None:
+    repository = WorkshopRepository(tmp_path / "metadata.db")
+    repository.initialize()
+    now = "2026-09-11T09:00:00+08:00"
+    admin = repository.bootstrap_admin(
+        username="admin",
+        display_name="管理员",
+        password="admin-password",
+        now=now,
+    )
+    worker = repository.upsert_external_worker(
+        external_id="worker-1",
+        company_no="C0001",
+        group_no="G0001",
+        display_name="张三",
+        now=now,
+    )
+    other = repository.upsert_external_worker(
+        external_id="worker-2",
+        company_no="C0002",
+        group_no="G0002",
+        display_name="李四",
+        now=now,
+    )
+    records = [
+        WorkshopRecord(
+            task_id=f"task-{index}",
+            project_code="P001",
+            ship_no="S001",
+            segment_name="A01",
+            program_no=f"PROGRAM-{index}.GEN",
+            cut_length=Decimal("10"),
+            groove_length=Decimal("0"),
+            work_time=Decimal("60"),
+        )
+        for index in range(1, 4)
+    ]
+    report = repository.create_daily_report(
+        report_date="2026-09-11",
+        source_mode="demo",
+        records=records,
+        user=admin,
+        now=now,
+    )
+    repository.confirm_task(
+        task_id="task-2",
+        report_id=report["report_id"],
+        user=other,
+        now=now,
+    )
+
+    with pytest.raises(ConfirmationConflictError, match="李四"):
+        repository.confirm_tasks(
+            task_ids=["task-1", "task-2"],
+            report_id=report["report_id"],
+            user=worker,
+            now="2026-09-11T09:05:00+08:00",
+        )
+
+    assert "task-1" not in repository.get_confirmations(["task-1"])
+    confirmations = repository.confirm_tasks(
+        task_ids=["task-1", "task-3", "task-1"],
+        report_id=report["report_id"],
+        user=worker,
+        now="2026-09-11T09:06:00+08:00",
+    )
+    assert [item["task_id"] for item in confirmations] == ["task-1", "task-3"]
+    assert all(item["worker_name"] == "张三" for item in confirmations)

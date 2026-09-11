@@ -27,6 +27,18 @@ class ConfirmTaskRequest(BaseModel):
     report_date: date
 
 
+class ConfirmTasksRequest(ConfirmTaskRequest):
+    task_ids: list[str] = Field(min_length=1, max_length=100)
+
+    @field_validator("task_ids")
+    @classmethod
+    def normalize_task_ids(cls, values: list[str]) -> list[str]:
+        normalized = list(dict.fromkeys(str(value).strip() for value in values))
+        if any(not value or len(value) > 128 for value in normalized):
+            raise ValueError("任务编号不能为空且不能超过128个字符")
+        return normalized
+
+
 class RevokeTaskRequest(ConfirmTaskRequest):
     reason: str = Field(min_length=2, max_length=200)
 
@@ -309,6 +321,34 @@ def confirm_task(
     except ConfirmationConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return _envelope(request, confirmation)
+
+
+@router.post("/tasks/confirm")
+def confirm_tasks(
+    payload: ConfirmTasksRequest,
+    request: Request,
+    user: dict = Depends(require_worker),
+) -> dict:
+    report, records = _records_for_date(request, payload.report_date)
+    if report is None:
+        raise HTTPException(status_code=404, detail="当日车间报表尚未生成")
+    available_task_ids = {row.task_id for row in records}
+    if any(task_id not in available_task_ids for task_id in payload.task_ids):
+        raise HTTPException(status_code=404, detail="当日车间报表中没有找到部分任务")
+    now = datetime.now(ZoneInfo(settings.timezone)).isoformat(timespec="seconds")
+    try:
+        confirmations = request.app.state.workshop.confirm_tasks(
+            task_ids=payload.task_ids,
+            report_id=report["report_id"],
+            user=user,
+            now=now,
+        )
+    except ConfirmationConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _envelope(
+        request,
+        {"items": confirmations, "confirmed_count": len(confirmations)},
+    )
 
 
 @router.post("/tasks/{task_id}/revoke")

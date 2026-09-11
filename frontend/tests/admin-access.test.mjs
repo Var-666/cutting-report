@@ -42,11 +42,13 @@ test('administrator management follows the shared settings UI baseline', () => {
   assert.doesNotMatch(styles, /\.panel-title\s*\{/)
 })
 
-test('HR login uses the original HR password and routes by granted role', () => {
+test('login uses one account form and routes by the automatically resolved role', () => {
   const login = parse(source('views/LoginView.vue')).descriptor
 
-  assert.match(login.template.content, /HR账号登录/)
-  assert.match(login.template.content, /HR 原密码登录/)
-  assert.match(login.template.content, /根据已授予的权限进入对应页面/)
-  assert.match(login.scriptSetup.content, /hrLoginAccount\(workerForm\)/)
+  assert.match(login.template.content, /系统登录/)
+  assert.match(login.template.content, /公司工号 \/ 管理员账号/)
+  assert.match(login.template.content, /自动识别账号权限并进入对应页面/)
+  assert.match(login.scriptSetup.content, /loginAccount\(/)
+  assert.doesNotMatch(login.template.content, /login-tabs|HR账号登录|应急管理员登录/)
+  assert.doesNotMatch(login.scriptSetup.content, /hrLoginAccount|mode = ref/)
 })
