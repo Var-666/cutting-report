@@ -3,12 +3,12 @@ import { computed, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { getLeadershipReport, listReports } from '../api/reports'
 import { session } from '../state/session'
-import { reportPreload } from '../state/reportPreload.js'
 import { reportToday } from '../api/reportDates.js'
 
 const reportMonth = reportToday().slice(0, 7)
 
-const loading = ref(true)
+const overviewLoading = ref(true)
+const historyLoading = ref(true)
 const overview = ref(null)
 const recentReports = ref([])
 const historyTotal = ref(0)
@@ -69,24 +69,21 @@ function reportPeriod(item) {
 }
 
 async function loadDashboard() {
-  loading.value = true
+  overviewLoading.value = true
+  historyLoading.value = true
   error.value = ''
-  const [overviewResult, reportsResult] = await Promise.allSettled([
-    getLeadershipReport(reportMonth),
-    listReports({ page: 1, pageSize: 10 }),
-  ])
-  if (overviewResult.status === 'fulfilled') {
-    overview.value = overviewResult.value
-  } else {
-    error.value = overviewResult.reason.message
-  }
-  if (reportsResult.status === 'fulfilled') {
-    recentReports.value = reportsResult.value.items.slice(0, 5)
-    historyTotal.value = reportsResult.value.total
-  } else {
-    error.value ||= reportsResult.reason.message
-  }
-  loading.value = false
+  const overviewRequest = getLeadershipReport(reportMonth)
+    .then((data) => { overview.value = data })
+    .catch((exception) => { error.value = exception.message })
+    .finally(() => { overviewLoading.value = false })
+  const historyRequest = listReports({ page: 1, pageSize: 10 })
+    .then((data) => {
+      recentReports.value = data.items.slice(0, 5)
+      historyTotal.value = data.total
+    })
+    .catch((exception) => { error.value ||= exception.message })
+    .finally(() => { historyLoading.value = false })
+  await Promise.allSettled([overviewRequest, historyRequest])
 }
 
 onMounted(loadDashboard)
@@ -118,16 +115,11 @@ onMounted(loadDashboard)
     <strong>部分概览数据读取失败</strong><span>{{ error }}</span><button type="button" @click="loadDashboard">重试</button>
   </div>
 
-  <div v-if="reportPreload.items.length" class="home-preload" role="status" aria-live="polite">
-    <strong>报表预加载</strong>
-    <span v-for="item in reportPreload.items" :key="item.key" :data-status="item.status">{{ item.label }}：{{ { loading: '加载中', ready: '已预加载', failed: '暂未加载，进入页面可重试' }[item.status] }}</span>
-  </div>
-
   <section class="home-kpis" aria-label="本月生产概况">
-    <article><span>本月完成任务</span><strong>{{ loading ? '--' : total.task_count }}</strong><small>项</small></article>
-    <article><span>本月切割长度</span><strong>{{ loading ? '--' : formatNumber(total.cut_length_m) }}</strong><small>米</small></article>
-    <article><span>本月切割时长</span><strong>{{ loading ? '--' : formatDuration(total.work_time_seconds) }}</strong><small>累计工时</small></article>
-    <article><span>有生产记录日</span><strong>{{ loading ? '--' : activeDays }}</strong><small>天</small></article>
+    <article><span>本月完成任务</span><strong>{{ overviewLoading ? '--' : total.task_count }}</strong><small>项</small></article>
+    <article><span>本月切割长度</span><strong>{{ overviewLoading ? '--' : formatNumber(total.cut_length_m) }}</strong><small>米</small></article>
+    <article><span>本月切割时长</span><strong>{{ overviewLoading ? '--' : formatDuration(total.work_time_seconds) }}</strong><small>累计工时</small></article>
+    <article><span>有生产记录日</span><strong>{{ overviewLoading ? '--' : activeDays }}</strong><small>天</small></article>
   </section>
 
   <section class="home-section">
@@ -155,7 +147,7 @@ onMounted(loadDashboard)
         <RouterLink to="/admin/reports/center">查看全部 {{ historyTotal ? `(${historyTotal})` : '' }}</RouterLink>
       </div>
       <div class="home-history-list">
-        <div v-if="loading" class="home-empty">正在读取报告记录…</div>
+        <div v-if="historyLoading" class="home-empty">正在读取报告记录…</div>
         <div v-else-if="!recentReports.length" class="home-empty">暂无已生成报告，可从“生成新报告”开始。</div>
         <div v-for="item in recentReports" v-else :key="item.report_id" class="home-history-row">
           <span class="home-report-type">{{ item.report_title || reportTypeText[item.report_type] || '生产报表' }}</span>
@@ -178,8 +170,6 @@ onMounted(loadDashboard)
 </template>
 
 <style scoped>
-.home-preload { display:flex; flex-wrap:wrap; gap:10px 22px; align-items:center; margin-bottom:20px; padding:12px 16px; background:#f4fafb; border:1px solid #d4e3e9; color:#63788a; font-size:12px; }
-.home-preload strong { color:#123450; }.home-preload [data-status="ready"] { color:#18766b; }.home-preload [data-status="failed"] { color:#9b612c; }
 .home-hero { min-height:250px; display:grid; grid-template-columns:minmax(0,1fr) 330px; align-items:center; gap:48px; padding:34px 0 28px; }
 .home-eyebrow,.home-section-head span,.home-panel-head span { color:#168397; font-size:10px; font-weight:800; letter-spacing:2.4px; }
 .home-hero h1 { margin:8px 0 10px; color:#123450; font-size:clamp(30px,4vw,46px); letter-spacing:1px; }

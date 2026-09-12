@@ -83,6 +83,18 @@ test('report values use one decimal place throughout the UI', () => {
   }
 })
 
+test('home and equipment pages reveal independent results progressively', () => {
+  const home = descriptor('AdminHomeView')
+  const equipment = descriptor('EnergyPeriodReportView')
+
+  assert.match(home.scriptSetup.content, /const overviewLoading = ref\(true\)/)
+  assert.match(home.scriptSetup.content, /const historyLoading = ref\(true\)/)
+  assert.doesNotMatch(home.template.content, /报表预加载/)
+  assert.match(equipment.scriptSetup.content, /const taskRequest = getTaskEnergyDay/)
+  assert.match(equipment.scriptSetup.content, /const summaryRequest = getEnergyMonthlyRange/)
+  assert.match(equipment.scriptSetup.content, /await Promise\.allSettled\(\[taskRequest, summaryRequest\]\)/)
+})
+
 test('workshop report includes the confirmed-worker interval summary', () => {
   const workshop = descriptor('WorkshopView')
   const trendPanel = descriptor('ReportTrendPanel', 'components')

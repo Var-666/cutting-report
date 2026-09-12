@@ -407,7 +407,7 @@ export function listCuttingFiles({ projectId, catalogId = '', status = 'all', ke
   return reportCache.read(
     `cutting:files:${query}`,
     (signal) => request(url, { signal }),
-    { ttl: 60000 },
+    { ttl: 300000 },
   )
 }
 

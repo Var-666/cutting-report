@@ -162,30 +162,52 @@ async function loadDefaultRanges() {
   error.value = ''
   const selectedDate = periodStart.value
   const recentStart = recentTwelveMonthStart(selectedDate)
-  try {
-    const [, taskResult] = await Promise.all([
-      getEnergyDay(selectedDate, { signal: controller.signal }),
-      getTaskEnergyDay(selectedDate, { signal: controller.signal }),
-    ])
-    const summaryResult = await getEnergyMonthlyRange(recentStart, selectedDate, { signal: controller.signal })
-    taskDay.value = {
-      ...taskResult,
-      period_start: selectedDate,
-      period_end: selectedDate,
-    }
-    periodReport.value = summaryResult
-    appliedPeriodStart.value = selectedDate
-    appliedPeriodEnd.value = selectedDate
-    summaryPeriodStart.value = recentStart
-    summaryPeriodEnd.value = selectedDate
-    defaultSummaryView.value = true
-    await nextTick()
-    renderCharts()
-  } catch (exception) {
-    if (exception.name !== 'AbortError') error.value = exception.message
-  } finally {
-    loading.value = false
+  const signal = controller.signal
+  appliedPeriodStart.value = selectedDate
+  appliedPeriodEnd.value = selectedDate
+  summaryPeriodStart.value = recentStart
+  summaryPeriodEnd.value = selectedDate
+  defaultSummaryView.value = true
+
+  const showError = (exception) => {
+    if (exception.name !== 'AbortError') error.value ||= exception.message
   }
+  const taskRequest = getTaskEnergyDay(selectedDate, { signal })
+    .then(async (taskResult) => {
+      if (signal.aborted) return
+      taskDay.value = {
+        ...taskResult,
+        period_start: selectedDate,
+        period_end: selectedDate,
+      }
+      await nextTick()
+      renderCharts()
+    })
+    .catch(showError)
+  const summaryRequest = getEnergyMonthlyRange(recentStart, selectedDate, { signal })
+    .then(async (summaryResult) => {
+      if (signal.aborted) return
+      periodReport.value = summaryResult
+      await nextTick()
+      renderCharts()
+    })
+    .catch(showError)
+
+  // Daily meter synchronization is independent from first paint. Existing
+  // monthly snapshots render first; the current month refreshes silently once
+  // the live meter request finishes.
+  getEnergyDay(selectedDate, { signal })
+    .then(() => getEnergyMonthlyRange(recentStart, selectedDate, { signal }))
+    .then(async (summaryResult) => {
+      if (signal.aborted) return
+      periodReport.value = summaryResult
+      await nextTick()
+      renderCharts()
+    })
+    .catch(() => {})
+
+  await Promise.allSettled([taskRequest, summaryRequest])
+  if (!signal.aborted) loading.value = false
 }
 
 function exportReport(format = 'html') {
