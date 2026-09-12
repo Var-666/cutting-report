@@ -14,6 +14,7 @@ from app.database.sqlite import SQLiteDatabase
 from app.models.domain import to_primitive
 from app.services.energy_api import EnergyApiError
 from app.services.energy_period_service import EnergyPeriodService, restore_task_energy_records
+from app.workers.energy_history_worker import EnergyHistoryWorker
 from test_energy_service import configured, record, GAS, ELECTRIC, MeterStub
 
 
@@ -136,6 +137,36 @@ def test_twelve_month_summary_uses_one_metrics_query_and_saved_energy(tmp_path):
     assert result["rows"][-1]["work_time_seconds"] == 1800
     assert result["rows"][-1]["electricity"]["value"] == 864
     assert result["total_task_count"] == 3
+
+
+def test_month_backfill_persists_available_days_from_one_range_fetch(tmp_path):
+    energy, client = service(
+        tmp_path,
+        rows=samples(days=2),
+        now=datetime(2026, 8, 20, 12),
+    )
+
+    saved = energy.sync_month(date(2026, 8, 1))
+
+    assert saved == 2
+    assert len(client.calls) == 1
+    assert energy.repository.get_day(
+        energy.day_source_key(date(2026, 8, 18)), "2026-08-18"
+    )["summary"]["electricity"]["value"] == 864
+    assert energy.repository.get_day(
+        energy.day_source_key(date(2026, 8, 19)), "2026-08-19"
+    )["summary"]["gas"]["value"] == 96
+    assert energy.repository.get_day(
+        energy.day_source_key(date(2026, 8, 1)), "2026-08-01"
+    ) is None
+
+
+def test_history_worker_prioritizes_newest_missing_month(tmp_path):
+    energy, _ = service(tmp_path)
+    worker = EnergyHistoryWorker(energy.settings, energy)
+
+    assert worker.schedule_range(date(2026, 6, 1), date(2026, 8, 20))
+    assert worker._claim() == date(2026, 8, 1)
 
 
 def test_task_day_uses_report_meter_group_for_cutter01(tmp_path):
@@ -482,6 +513,11 @@ def test_day_month_routes_and_bad_month(tmp_path):
                         work_time=Decimal("1800"), equipment_id="Cutter01")],
         data_updated_at=start + timedelta(minutes=30),
     ))
+    scheduled_ranges = []
+    app.state.energy_history_worker = SimpleNamespace(
+        schedule_range=lambda start, end: scheduled_ranges.append((start, end)),
+        is_syncing_range=lambda _start, _end: True,
+    )
     app.dependency_overrides[require_admin] = lambda: {"role": "admin"}
     app.include_router(router)
 
@@ -504,6 +540,8 @@ def test_day_month_routes_and_bad_month(tmp_path):
     assert result.status_code == 200
     assert len(result.json()["data"]["rows"]) == 12
     assert result.json()["data"]["rows"][-1]["electricity"]["value"] == 864
+    assert result.json()["data"]["syncing"] is True
+    assert scheduled_ranges == [(date(2025, 9, 1), date(2026, 8, 18))]
     result = client.get("/api/v1/energy-report/tasks?report_date=2026-08-18")
     assert result.status_code == 200
     assert result.json()["data"]["records"][0]["electricity_consumption"] == 18

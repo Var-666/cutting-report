@@ -60,6 +60,12 @@ def get_energy_monthly_range(request: Request, start_date: date, end_date: date)
         data = request.app.state.energy_period_service.get_monthly_range(
             start_date, end_date
         )
+        worker = getattr(request.app.state, "energy_history_worker", None)
+        if worker is not None and data.get("missing_day_count", 0):
+            worker.schedule_range(start_date, end_date)
+            data["syncing"] = worker.is_syncing_range(start_date, end_date)
+        else:
+            data["syncing"] = False
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except SqlServerConfigurationError as exc:

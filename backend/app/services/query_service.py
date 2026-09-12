@@ -50,6 +50,11 @@ class QueryService:
             tuple[float, float, QueryBundle],
         ] = {}
         self._bundle_query_locks = [Lock() for _ in range(32)]
+        self._equipment_metrics_cache_lock = Lock()
+        self._equipment_metrics_cache: dict[
+            tuple[date, date], tuple[float, dict[str, dict[str, Decimal | int]]]
+        ] = {}
+        self._equipment_metrics_locks = [Lock() for _ in range(16)]
         self._latest_date_lock = Lock()
         self._latest_date_cache: dict[date, tuple[float, date | None]] = {}
         self._workshop_cache_lock = Lock()
@@ -240,9 +245,46 @@ class QueryService:
     def fetch_equipment_range_metrics(
         self, start_date: date, end_exclusive: date
     ) -> dict[str, dict[str, Decimal | int]]:
-        """Return daily equipment metrics for a range using one source query."""
+        """Return cached daily equipment metrics for a range."""
         if end_exclusive <= start_date:
             return {}
+        cache_seconds = self.settings.report_data_cache_seconds
+        if cache_seconds <= 0:
+            return self._fetch_equipment_range_metrics_uncached(
+                start_date, end_exclusive
+            )
+        key = (start_date, end_exclusive)
+        with self._equipment_metrics_locks[
+            hash(key) % len(self._equipment_metrics_locks)
+        ]:
+            now = monotonic()
+            with self._equipment_metrics_cache_lock:
+                cached = self._equipment_metrics_cache.get(key)
+                if cached and cached[0] > now:
+                    return cached[1]
+            result = self._fetch_equipment_range_metrics_uncached(
+                start_date, end_exclusive
+            )
+            with self._equipment_metrics_cache_lock:
+                self._equipment_metrics_cache = {
+                    cache_key: value
+                    for cache_key, value in self._equipment_metrics_cache.items()
+                    if value[0] > now
+                }
+                self._equipment_metrics_cache[key] = (
+                    monotonic() + cache_seconds,
+                    result,
+                )
+                while len(self._equipment_metrics_cache) > 32:
+                    self._equipment_metrics_cache.pop(
+                        next(iter(self._equipment_metrics_cache))
+                    )
+            return result
+
+    def _fetch_equipment_range_metrics_uncached(
+        self, start_date: date, end_exclusive: date
+    ) -> dict[str, dict[str, Decimal | int]]:
+        """Return daily equipment metrics for a range using one source query."""
         allowed = {
             value.strip().casefold()
             for value in self.settings.energy_report_equipment_ids

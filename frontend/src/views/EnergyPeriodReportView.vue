@@ -42,6 +42,8 @@ let taskChart = null
 let periodChart = null
 let controller = null
 let active = true
+let summaryRefreshTimer = null
+let summaryRefreshCount = 0
 
 const taskRows = computed(() => taskDay.value?.records || [])
 const dailyRows = computed(() => periodReport.value?.rows || [])
@@ -64,6 +66,14 @@ const summaryDateHeading = computed(() => defaultSummaryView.value ? '月份' : 
 const summaryChartLabel = computed(() => defaultSummaryView.value ? '月度能耗图' : '每日能耗图')
 const summaryTableLabel = computed(() => defaultSummaryView.value ? '近12个月月度能耗汇总表' : '区间每日能耗汇总表')
 const summaryEmptyText = computed(() => defaultSummaryView.value ? '近12个月暂无月度汇总' : '所选区间暂无每日汇总')
+const summarySubtitle = computed(() => {
+  const base = `${summaryPeriodStart.value} 至 ${summaryPeriodEnd.value} · ${summaryCountLabel.value}`
+  const missing = Number(periodReport.value?.missing_day_count || 0)
+  if (!defaultSummaryView.value || !missing) return base
+  return periodReport.value?.syncing
+    ? `${base} · 后台补齐 ${missing} 天能耗中`
+    : `${base} · ${missing} 天暂无能耗数据`
+})
 const analysisReady = computed(() => Boolean(
   taskDay.value
   && taskDay.value.period_start === appliedPeriodStart.value
@@ -132,6 +142,7 @@ async function loadRange(force = false) {
     return
   }
   controller?.abort()
+  stopSummaryRefresh()
   controller = new AbortController()
   loading.value = true
   error.value = ''
@@ -155,8 +166,43 @@ async function loadRange(force = false) {
   }
 }
 
+function stopSummaryRefresh() {
+  if (summaryRefreshTimer) window.clearTimeout(summaryRefreshTimer)
+  summaryRefreshTimer = null
+}
+
+async function applyMonthlySummary(summaryResult) {
+  periodReport.value = summaryResult
+  await nextTick()
+  renderCharts()
+  scheduleSummaryRefresh(summaryResult)
+}
+
+function scheduleSummaryRefresh(summaryResult) {
+  stopSummaryRefresh()
+  if (!active || !defaultSummaryView.value || !summaryResult?.syncing
+      || !summaryResult?.missing_day_count || summaryRefreshCount >= 60) return
+  const requestedStart = summaryPeriodStart.value
+  const requestedEnd = summaryPeriodEnd.value
+  summaryRefreshTimer = window.setTimeout(async () => {
+    summaryRefreshTimer = null
+    if (!active || !defaultSummaryView.value
+        || requestedStart !== summaryPeriodStart.value
+        || requestedEnd !== summaryPeriodEnd.value) return
+    summaryRefreshCount += 1
+    try {
+      const refreshed = await getEnergyMonthlyRange(requestedStart, requestedEnd, { force: true })
+      await applyMonthlySummary(refreshed)
+    } catch {
+      scheduleSummaryRefresh(summaryResult)
+    }
+  }, 10000)
+}
+
 async function loadDefaultRanges() {
   controller?.abort()
+  stopSummaryRefresh()
+  summaryRefreshCount = 0
   controller = new AbortController()
   loading.value = true
   error.value = ''
@@ -187,9 +233,7 @@ async function loadDefaultRanges() {
   const summaryRequest = getEnergyMonthlyRange(recentStart, selectedDate, { signal })
     .then(async (summaryResult) => {
       if (signal.aborted) return
-      periodReport.value = summaryResult
-      await nextTick()
-      renderCharts()
+      await applyMonthlySummary(summaryResult)
     })
     .catch(showError)
 
@@ -200,9 +244,7 @@ async function loadDefaultRanges() {
     .then(() => getEnergyMonthlyRange(recentStart, selectedDate, { signal }))
     .then(async (summaryResult) => {
       if (signal.aborted) return
-      periodReport.value = summaryResult
-      await nextTick()
-      renderCharts()
+      await applyMonthlySummary(summaryResult)
     })
     .catch(() => {})
 
@@ -224,7 +266,7 @@ function exportReport(format = 'html') {
 }
 
 function resizeCharts() { if (active) { taskChart?.resize(); periodChart?.resize() } }
-function pause() { active = false; controller?.abort(); window.removeEventListener('resize', resizeCharts) }
+function pause() { active = false; controller?.abort(); stopSummaryRefresh(); window.removeEventListener('resize', resizeCharts) }
 
 async function initializeReport() {
   try {
@@ -286,7 +328,7 @@ watch(chartType, async () => { await nextTick(); renderCharts() })
     </template>
   </ReportTrendPanel>
 
-  <ReportTrendPanel ref="periodPanel" number="02" :title="summaryTitle" :subtitle="`${summaryPeriodStart} 至 ${summaryPeriodEnd} · ${summaryCountLabel}`" :chart-label="summaryChartLabel">
+  <ReportTrendPanel ref="periodPanel" number="02" :title="summaryTitle" :subtitle="summarySubtitle" :chart-label="summaryChartLabel">
     <template #table><table v-content-table class="leadership-table energy-month-table summary-table" :aria-label="summaryTableLabel"><thead><tr><th scope="col">{{ summaryDateHeading }}</th><th scope="col">任务数</th><th scope="col">切割时长</th><th scope="col">电耗</th><th scope="col">气耗</th></tr></thead><tbody><tr v-for="row in summaryRows" :key="row.report_date"><td>{{ row.report_date }}</td><td>{{ row.task_count }}</td><td>{{ duration(row.work_time_seconds) }}</td><td>{{ valueText(row.electricity) }}</td><td>{{ valueText(row.gas) }}</td></tr><tr v-if="!summaryRows.length"><td colspan="5" class="energy-empty">{{ loading ? '正在查询…' : summaryEmptyText }}</td></tr></tbody><tfoot><tr><th scope="row">汇总</th><th>{{ month?.total_task_count || 0 }}</th><th>{{ duration(month?.total_work_time_seconds) }}</th><th>{{ valueText(month?.summary?.electricity) }}</th><th>{{ valueText(month?.summary?.gas) }}</th></tr></tfoot></table></template>
   </ReportTrendPanel>
 

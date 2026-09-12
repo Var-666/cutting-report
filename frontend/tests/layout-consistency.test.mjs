@@ -387,7 +387,9 @@ test('leadership and equipment second tables default to the recent twelve months
   assert.match(equipment.scriptSetup.content, /getEnergyMonthlyRange\(recentStart, selectedDate/)
   assert.match(equipment.scriptSetup.content, /summaryPeriodStart\.value = requestedStart/)
   assert.match(equipment.template.content, /:title="summaryTitle"/)
-  assert.match(equipment.template.content, /:subtitle="`\$\{summaryPeriodStart\} 至 \$\{summaryPeriodEnd\}/)
+  assert.match(equipment.template.content, /:subtitle="summarySubtitle"/)
+  assert.match(equipment.scriptSetup.content, /后台补齐 \$\{missing\} 天能耗中/)
+  assert.match(equipment.scriptSetup.content, /scheduleSummaryRefresh\(summaryResult\)/)
 })
 
 test('switching cached workshop and equipment reports does not force another query', () => {

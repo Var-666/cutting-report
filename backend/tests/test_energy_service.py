@@ -147,6 +147,20 @@ def test_long_query_chunks_and_does_not_leak_partial_result():
     assert bodies[0]["Etime"] == bodies[1]["Stime"]
 
 
+def test_historical_month_fetch_uses_week_chunks():
+    opener = OpenerStub(login(), readings(), readings())
+    client = EnergyApiClient(configured(), opener=opener)
+
+    client.fetch_month((GAS,), START, START + timedelta(days=8))
+
+    bodies = [json.loads(req.data) for req in opener.requests if req.data]
+    assert len(bodies) == 2
+    assert bodies[0]["Etime"] == (START + timedelta(days=7)).strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
+    assert bodies[0]["Etime"] == bodies[1]["Stime"]
+
+
 def test_exact_energy_uses_actual_end_time_and_configured_meter_sum():
     source = record()
     stub = MeterStub()

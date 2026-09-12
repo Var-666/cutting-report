@@ -95,6 +95,7 @@ class EnergyPeriodService:
         self.clock = clock or (lambda: datetime.now(ZoneInfo(settings.timezone)))
         self.query_service = query_service
         self._lock = threading.RLock()
+        self._month_sync_locks = [threading.Lock() for _ in range(12)]
 
     def now(self):
         stamp = self.clock()
@@ -517,5 +518,86 @@ class EnergyPeriodService:
             "saved_day_count": sum(bool(row["saved"]) for row in selected_daily_rows),
             "elapsed_day_count": sum(not row["is_future"] for row in selected_daily_rows),
             "calendar_day_count": len(selected_daily_rows),
+            "missing_day_count": sum(
+                not row["saved"] and not row["is_future"]
+                for row in selected_daily_rows
+            ),
             **self.metadata(),
         })
+
+    def sync_month(self, report_month: date, *, force: bool = False) -> int:
+        """Backfill one month's daily snapshots without blocking report reads."""
+        month_start = report_month.replace(day=1)
+        next_month = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1)
+        today = self.now().date()
+        last_day = min(next_month - timedelta(days=1), today)
+        if last_day < month_start:
+            return 0
+        error = self.configuration_error()
+        if error:
+            raise EnergyApiError(error)
+
+        sync_lock = self._month_sync_locks[
+            (month_start.year * 12 + month_start.month) % len(self._month_sync_locks)
+        ]
+        with sync_lock:
+            missing = []
+            stamp = month_start
+            while stamp <= last_day:
+                source_key = self.day_source_key(stamp)
+                if force or not self.repository.get_day(source_key, stamp.isoformat()):
+                    missing.append(stamp)
+                stamp += timedelta(days=1)
+            if not missing:
+                return 0
+
+            start = datetime.combine(month_start, time.min)
+            end = datetime.combine(last_day + timedelta(days=1), time.min)
+            now = self.now()
+            padding = timedelta(
+                seconds=max(
+                    self.settings.energy_report_max_gap_seconds,
+                    sampling_policy(self.settings).get("new_max_gap_seconds", 0),
+                )
+            )
+            fetch = getattr(self.client, "fetch_month", self.client.fetch)
+            readings = fetch(
+                (self.gas_id, *self.electricity_ids),
+                start - padding,
+                min(end + padding, now),
+                force=force,
+            )
+            updated_at = now.isoformat(timespec="seconds")
+            saved_count = 0
+            for stamp in missing:
+                day_start = datetime.combine(stamp, time.min)
+                day_end = day_start + timedelta(days=1)
+                day_readings = []
+                for row in readings:
+                    try:
+                        reading_time = local_time(row.get("Mt"), self.settings.timezone)
+                    except (TypeError, ValueError, OverflowError):
+                        continue
+                    if day_start - padding <= reading_time <= day_end + padding:
+                        day_readings.append(row)
+                # Do not turn a truncated/partial monthly response into a
+                # permanent empty snapshot. A later background pass must retry it.
+                if not day_readings:
+                    continue
+                report = self.calculate_day(stamp, day_readings)
+                if all(
+                    report["summary"][channel]["value"] is None
+                    for channel in CHANNELS
+                ):
+                    continue
+                report.update(
+                    updated_at=updated_at,
+                    saved=True,
+                    sync_ok=True,
+                    is_today=stamp == today,
+                )
+                self.repository.save_day(
+                    self.day_source_key(stamp), to_primitive(report)
+                )
+                saved_count += 1
+            return saved_count

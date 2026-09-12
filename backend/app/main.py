@@ -54,6 +54,7 @@ from app.services.alarm_report_service import AlarmReportService
 from app.workers.report_worker import ReportWorker
 from app.workers.alarm_worker import AlarmWorker
 from app.workers.leadership_refresh_worker import LeadershipRefreshWorker
+from app.workers.energy_history_worker import EnergyHistoryWorker
 from app.workers.download_cleanup_worker import DownloadCleanupWorker
 
 
@@ -106,8 +107,12 @@ async def lifespan(app: FastAPI):
     leadership_refresh_worker = LeadershipRefreshWorker(
         settings, leadership_report_service
     )
+    energy_history_worker = EnergyHistoryWorker(
+        settings, pipeline.energy_period_service
+    )
     app.state.leadership_report_service = leadership_report_service
     app.state.leadership_refresh_worker = leadership_refresh_worker
+    app.state.energy_history_worker = energy_history_worker
     app.state.report_analysis_service = ReportAnalysisService(settings, metadata)
     alarm_repository = AlarmRepository(database)
     alarm_repository.initialize()
@@ -150,11 +155,13 @@ async def lifespan(app: FastAPI):
     app.state.pdf_service = pdf_service
     worker.start()
     leadership_refresh_worker.start()
+    energy_history_worker.start()
     alarm_worker.start()
     download_cleanup_worker.start()
     try:
         yield
     finally:
+        energy_history_worker.stop()
         download_cleanup_worker.stop()
         alarm_worker.stop()
         leadership_refresh_worker.stop()

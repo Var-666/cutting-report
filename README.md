@@ -116,7 +116,7 @@ TASK_EXCEL_PATH=TASK.xlsx
 
 接口：管理员会话下 `GET /api/v1/energy-report/tasks?report_date=YYYY-MM-DD&refresh=true`
 查询任务能耗；`GET /api/v1/energy-report/day?report_date=YYYY-MM-DD&refresh=true` 查询并保存
-全天内部统计；`GET /api/v1/energy-report/month?report_month=YYYY-MM` 读取整月记录。
+全天内部统计；`GET /api/v1/energy-report/month?report_month=YYYY-MM` 读取整月记录。设备页面的近 12 个月汇总优先返回已保存快照，缺失历史月由后台线程按周分片从能管平台补齐，页面自动更新，不阻塞登录和首屏。
 
 #### 按任务能耗报表
 

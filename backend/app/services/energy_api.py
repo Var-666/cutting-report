@@ -138,6 +138,27 @@ class EnergyApiClient:
                     raise
 
     def fetch(self, ids: tuple[str, ...], start: datetime, end: datetime, *, force=False) -> list[dict]:
+        return self._fetch_chunked(
+            ids, start, end, force=force, chunk_size=timedelta(hours=24)
+        )
+
+    def fetch_month(
+        self, ids: tuple[str, ...], start: datetime, end: datetime, *, force=False
+    ) -> list[dict]:
+        """Read historical meter values in week-sized requests for backfill."""
+        return self._fetch_chunked(
+            ids, start, end, force=force, chunk_size=timedelta(days=7)
+        )
+
+    def _fetch_chunked(
+        self,
+        ids: tuple[str, ...],
+        start: datetime,
+        end: datetime,
+        *,
+        force: bool,
+        chunk_size: timedelta,
+    ) -> list[dict]:
         if not ids or end <= start or end - start > timedelta(days=367):
             raise EnergyApiError("能管查询参数或时间区间无效（最多 366 天）")
         with self._lock:
@@ -148,7 +169,7 @@ class EnergyApiClient:
         # Include fractional end seconds rather than rounding the boundary down.
         end = end.replace(microsecond=0) + (timedelta(seconds=1) if end.microsecond else timedelta())
         while cursor < end:
-            stop = min(cursor + timedelta(hours=24), end)
+            stop = min(cursor + chunk_size, end)
             key = (tuple(sorted(ids)), cursor, stop)
             query_lock = self._query_locks[hash(key) % len(self._query_locks)]
             with query_lock:

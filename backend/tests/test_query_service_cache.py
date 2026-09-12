@@ -180,3 +180,23 @@ def test_equipment_cache_and_query_locks_are_bounded(
 
     assert len(service._equipment_cache) <= 128
     assert len(service._equipment_query_locks) == 32
+
+
+def test_equipment_monthly_metrics_reuse_the_range_query(
+    tmp_path: Path, monkeypatch
+) -> None:
+    service = _service(tmp_path)
+    calls = []
+    monkeypatch.setattr(
+        service.client,
+        "fetch_all",
+        lambda sql, parameters: calls.append((sql, parameters)) or [],
+    )
+    start = date(2025, 10, 1)
+    end = date(2026, 9, 13)
+
+    first = service.fetch_equipment_range_metrics(start, end)
+    second = service.fetch_equipment_range_metrics(start, end)
+
+    assert first is second
+    assert len(calls) == 1
