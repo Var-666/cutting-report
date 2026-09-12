@@ -181,7 +181,7 @@ async function applyMonthlySummary(summaryResult) {
 function scheduleSummaryRefresh(summaryResult) {
   stopSummaryRefresh()
   if (!active || !defaultSummaryView.value || !summaryResult?.syncing
-      || !summaryResult?.missing_day_count || summaryRefreshCount >= 60) return
+      || !summaryResult?.missing_day_count || summaryRefreshCount >= 600) return
   const requestedStart = summaryPeriodStart.value
   const requestedEnd = summaryPeriodEnd.value
   summaryRefreshTimer = window.setTimeout(async () => {
@@ -196,7 +196,7 @@ function scheduleSummaryRefresh(summaryResult) {
     } catch {
       scheduleSummaryRefresh(summaryResult)
     }
-  }, 10000)
+  }, 1000)
 }
 
 async function loadDefaultRanges() {

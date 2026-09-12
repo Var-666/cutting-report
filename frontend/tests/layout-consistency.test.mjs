@@ -390,6 +390,8 @@ test('leadership and equipment second tables default to the recent twelve months
   assert.match(equipment.template.content, /:subtitle="summarySubtitle"/)
   assert.match(equipment.scriptSetup.content, /后台补齐 \$\{missing\} 天能耗中/)
   assert.match(equipment.scriptSetup.content, /scheduleSummaryRefresh\(summaryResult\)/)
+  assert.match(equipment.scriptSetup.content, /}, 1000\)/)
+  assert.match(equipment.scriptSetup.content, /summaryRefreshCount >= 600/)
 })
 
 test('switching cached workshop and equipment reports does not force another query', () => {
