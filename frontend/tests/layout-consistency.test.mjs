@@ -157,7 +157,7 @@ test('settings reuses the same compact navigation shell as reports', () => {
   assert.doesNotMatch(settings.template.content, /settings-header|settings-tabs/)
 })
 
-test('device report is one page with daily task and monthly daily tables', () => {
+test('device report is one page with task details and a default monthly summary', () => {
   const container = descriptor('AdminEquipmentView')
   const energy = descriptor('EnergyPeriodReportView')
 
@@ -170,11 +170,12 @@ test('device report is one page with daily task and monthly daily tables', () =>
   assert.match(energy.template.content, /<h2>设备报表<\/h2>/)
   assert.match(energy.template.content, /任务能耗明细/)
   assert.match(energy.template.content, /<tfoot>[\s\S]*<th scope="row">汇总<\/th>/)
-  assert.match(energy.template.content, /月度每日能耗汇总/)
+  assert.match(energy.scriptSetup.content, /近12个月月度能耗汇总/)
   assert.match(energy.template.content, /aria-label="任务能耗明细表"/)
-  assert.match(energy.template.content, /aria-label="月度每日能耗汇总表"/)
+  assert.match(energy.template.content, /:aria-label="summaryTableLabel"/)
   assert.match(energy.template.content, /class="leadership-table energy-month-table summary-table"/)
-  assert.match(energy.template.content, /<thead><tr><th scope="col">日期<\/th><th scope="col">任务数<\/th><th scope="col">切割时长<\/th><th scope="col">电耗/)
+  assert.match(energy.template.content, /<thead><tr><th scope="col">\{\{ summaryDateHeading \}\}<\/th><th scope="col">任务数<\/th><th scope="col">切割时长<\/th><th scope="col">电耗/)
+  assert.match(energy.scriptSetup.content, /aggregateEnergyRowsByMonth\(dailyRows\.value\)/)
   assert.match(energy.template.content, /month\?\.total_task_count/)
   assert.doesNotMatch(energy.template.content, /电耗覆盖|气耗覆盖|保存状态/)
   assert.match(energy.template.content, /colspan="5" class="energy-empty"/)
@@ -374,6 +375,21 @@ test('leadership and equipment second tables default to the recent twelve months
   assert.match(equipment.scriptSetup.content, /summaryPeriodStart\.value = requestedStart/)
   assert.match(equipment.template.content, /:title="summaryTitle"/)
   assert.match(equipment.template.content, /:subtitle="`\$\{summaryPeriodStart\} 至 \$\{summaryPeriodEnd\}/)
+})
+
+test('switching cached workshop and equipment reports does not force another query', () => {
+  const workshop = descriptor('WorkshopView')
+  const equipment = descriptor('EnergyPeriodReportView')
+  const preload = readFileSync(new URL('../src/state/reportPreload.js', import.meta.url), 'utf8')
+  const api = readFileSync(new URL('../src/api/reports.js', import.meta.url), 'utf8')
+
+  assert.match(workshop.scriptSetup.content, /force = false/)
+  assert.match(workshop.scriptSetup.content, /if \(!isWorker\.value \|\| refreshTimer\) return/)
+  assert.match(workshop.scriptSetup.content, /if \(isWorker\.value && result\.value\.report/)
+  assert.doesNotMatch(equipment.scriptSetup.content, /onActivated\([\s\S]{0,300}getEnergyRange/)
+  assert.match(preload, /listWorkshopRangeTasks\(\{ startDate: reportDate, endDate: reportDate \}\)/)
+  assert.match(preload, /getEnergyRange\(recentTwelveMonthStart\(reportDate\), reportDate\)/)
+  assert.match(api, /REPORT_VIEW_CACHE_TTL = 5 \* 60 \* 1000/)
 })
 
 test('energy report omits calculation-method and complete-day explanations', () => {

@@ -234,9 +234,9 @@ class ReportAnalysisService:
             _fact("F001", f"{period_name}任务数", f"{current.task_count} 项", f"{period_name}汇总.task_count"),
             _fact("F002", f"{period_name}切割长度", f"{_number(current.cut_length_m)} 米", f"{period_name}汇总.cut_length_m"),
             _fact("F003", f"{period_name}切割时长", _duration(current.work_time_seconds), f"{period_name}汇总.work_time_seconds"),
-            _fact("F004", "任务数环比", f"{month_change:+.1f}%" if month_change is not None else "无法比较（对比区间数据缺失或任务数为零）", f"({period_name}任务数-前一等长区间任务数)/前一等长区间任务数" if range_mode else "(当月任务数-上月任务数)/上月任务数"),
-            _fact("F005", "任务数同比", f"{year_change:+.1f}%" if year_change is not None else "无法比较（上年同月数据缺失或任务数为零）", "(当月任务数-上年同月任务数)/上年同月任务数"),
-            _fact("F006", "主要工程", f"{projects[0]['project_name']}（{projects[0]['task_count']} 项，占 {projects[0]['task_count'] / current.task_count * 100:.1f}%）" if projects and current.task_count else "暂无工程数据", "当月工程分布中任务最多工程及其任务数/当月任务数"),
+            _fact("F004", "任务数环比", f"{month_change:+.1f}%" if month_change is not None else "无法比较", f"({period_name}任务数-前一等长区间任务数)/前一等长区间任务数" if range_mode else "(当月任务数-上月任务数)/上月任务数"),
+            _fact("F005", "任务数同比", f"{year_change:+.1f}%" if year_change is not None else "无法比较", "(当月任务数-上年同月任务数)/上年同月任务数"),
+            _fact("F006", "主要工程", f"{projects[0]['project_name']} · {projects[0]['task_count']} 项 · {projects[0]['task_count'] / current.task_count * 100:.1f}%" if projects and current.task_count else "暂无工程数据", "当月工程分布中任务最多工程及其任务数/当月任务数"),
         ]
         context = {
             "facts": facts,
@@ -378,11 +378,10 @@ class ReportAnalysisService:
             for row in records
         )
 
-        def energy_fact(total, count, unit, estimates):
+        def energy_fact(total, count, unit):
             if not count:
-                return "缺失（无有效读数，不视为零）"
-            suffix = "（模拟）" if energy_data_mode == "mock" else f"（已匹配 {count}/{len(records)} 项，其中 {estimates} 项插值估算；非全天总量）"
-            return f"{_number(total)} {unit}{suffix}"
+                return "缺失"
+            return f"{_number(total)} {unit}"
         projects = _project_distribution(records)
         anomalies = _work_time_outliers(records)
         previous_count = len(comparison_records) if comparison_records is not None else None
@@ -399,8 +398,8 @@ class ReportAnalysisService:
         facts = [
             _fact("F001", "任务总数", f"{len(records)} 项", f"设备日报[{report_date}].任务数"),
             _fact("F002", "总切割时长", _duration(total_work), f"设备日报[{report_date}].work_time 汇总"),
-            _fact("F003", "已匹配任务气耗", energy_fact(total_gas, gas_count, units["gas"], gas_estimates), "设备日报.gas_consumption 非空记录汇总"),
-            _fact("F004", "已匹配任务电耗", energy_fact(total_electricity, electric_count, units["electricity"], electric_estimates), "设备日报.electricity_consumption 非空记录汇总"),
+            _fact("F003", "已匹配任务气耗", energy_fact(total_gas, gas_count, units["gas"]), "设备日报.gas_consumption 非空记录汇总"),
+            _fact("F004", "已匹配任务电耗", energy_fact(total_electricity, electric_count, units["electricity"]), "设备日报.electricity_consumption 非空记录汇总"),
             _fact("F005", "工时异常任务", f"{len(anomalies)} 项", "work_time > Q3 + 1.5×IQR（最多列出5项）"),
             _fact("F006", "能耗数据待核对任务", f"{quality_count} 项", f"气耗或电耗缺失/异常的任务计数，同一任务只计一次；计量区间重叠 {overlap_count} 项，采样或读数缺口 {sampling_issue_count} 项，起止时间异常 {invalid_interval_count} 项；另含未配置/未绑定记录"),
         ]

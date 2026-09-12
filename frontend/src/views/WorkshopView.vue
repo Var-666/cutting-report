@@ -77,7 +77,7 @@ function stopRefreshTimer() {
 }
 
 function startRefreshTimer() {
-  if (refreshTimer) return
+  if (!isWorker.value || refreshTimer) return
   refreshTimer = window.setInterval(() => {
     if (
       document.visibilityState === 'visible'
@@ -87,7 +87,7 @@ function startRefreshTimer() {
       && !batchConfirmation.saving
       && !correction.visible
     ) {
-      load(result.value.page, { silent: true, ensureReport: false })
+      load(result.value.page, { silent: true, ensureReport: false, force: true })
     }
   }, 5000)
 }
@@ -210,7 +210,7 @@ function applyConfirmedTasks(confirmations = []) {
   reconcileVisibleTaskSelection(items)
 }
 
-async function load(page = 1, { silent = false, ensureReport = true, force = true } = {}) {
+async function load(page = 1, { silent = false, ensureReport = true, force = false } = {}) {
   if (!isWorker.value && filters.endDate < filters.startDate) {
     error.value = '结束日期不能早于开始日期'
     return
@@ -249,7 +249,7 @@ async function load(page = 1, { silent = false, ensureReport = true, force = tru
 
 function applyTaskFilters() {
   clearSelectedTasks()
-  load(1)
+  load(1, { force: true })
 }
 
 async function submitBatchConfirmation() {
@@ -397,8 +397,8 @@ onMounted(() => {
 })
 onActivated(() => {
   startRefreshTimer()
-  if (result.value.report && !loading.value && !batchConfirmation.visible && !batchConfirmation.saving) {
-    load(result.value.page, { silent: true, ensureReport: false })
+  if (isWorker.value && result.value.report && !loading.value && !batchConfirmation.visible && !batchConfirmation.saving) {
+    load(result.value.page, { silent: true, ensureReport: false, force: true })
   }
 })
 onDeactivated(stopRefreshTimer)
@@ -453,7 +453,7 @@ onUnmounted(() => {
 
   <section class="page-hero report-hero workshop-hero">
     <div><span class="eyebrow">{{ isWorker ? 'WORKER TASK CONFIRMATION' : 'WORKSHOP REPORT' }}</span><h2>{{ isWorker ? '我的任务确认' : '车间报表' }}</h2><p>{{ isWorker ? `当前工人：${user.display_name}。请确认本人完成的任务，如果误点可撤销本人确认。` : '查看全部任务和工人确认结果，必要时可撤销或改派并保留审计记录。' }}</p></div>
-    <form v-if="!isWorker" class="report-query workshop-query" @submit.prevent="load(1)">
+    <form v-if="!isWorker" class="report-query workshop-query" @submit.prevent="applyTaskFilters">
       <ReportPeriodPicker
         v-model:start-date="filters.startDate"
         v-model:end-date="filters.endDate"

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { afterEach, test } from 'node:test'
 import { startReportPreload, stopReportPreload, reportPreload } from '../src/state/reportPreload.js'
-import { reportToday } from '../src/api/reportDates.js'
+import { recentTwelveMonthStart, reportToday } from '../src/api/reportDates.js'
 import * as api from '../src/api/reports.js'
 import { session, loadSession, completeAuthentication, endSession } from '../src/state/session.js'
 
@@ -30,15 +30,15 @@ test('admin login warms all default reports; opening pages reuses those requests
   await Promise.all([
     completion,
     api.getLeadershipReport(month),
-    api.getEnergyDay(),
-    api.getTaskEnergyDay(),
+    api.getEnergyRange(today, today),
+    api.getEnergyRange(recentTwelveMonthStart(today), today),
     api.listReports({ page: 1, pageSize: 10 }),
   ])
-  await api.listWorkshopTasks({ reportDate: today })
-  await api.getEnergyMonth(month)
-  assert.equal(calls.length, 7)
-  assert.equal(new Set(calls.map((c) => c.url)).size, 7)
-  assert.ok(calls.some((c) => c.url.includes('warmup=true')))
+  await api.listWorkshopRangeTasks({ startDate: today, endDate: today })
+  assert.equal(calls.length, 6)
+  assert.equal(new Set(calls.map((c) => c.url)).size, 6)
+  assert.equal(calls.filter((c) => c.url.includes('/energy-report/range?')).length, 2)
+  assert.equal(calls.filter((c) => c.url.includes('/workshop/range?')).length, 1)
   assert.ok(calls.every((c) => !c.options.method || c.options.method === 'GET'))
   assert.ok(calls.every((c) => !/cutting|analysis|confirm/.test(c.url.split('?')[0])))
   assert.ok(reportPreload.items.every((i) => i.status === 'ready'))
@@ -90,12 +90,29 @@ test('leadership refresh is an explicit background request; daily snapshots inva
   const calls = mockApi()
   await startReportPreload(admin)
   await api.refreshLeadershipReport(month)
+  await api.getEnergyMonth(month)
   await api.getEnergyDay(today, { force: true })
   await api.getEnergyMonth(month)
   assert.equal(calls.filter((c) => c.url.includes('leadership-report')).length, 2)
   assert.equal(calls.find((c) => c.url.endsWith('leadership-report/refresh')).options.method, 'POST')
   assert.equal(calls.filter((c) => c.url.includes('energy-report/month')).length, 2)
   assert.equal(calls.filter((c) => c.url.includes('refresh=true')).length, 1)
+})
+
+test('a forced energy range refresh replaces the normal cached view', async () => {
+  let version = 0
+  const calls = mockApi((url) => {
+    if (url.includes('/energy-report/range?')) return response({ version: ++version })
+  })
+
+  const first = await api.getEnergyRange(today, today)
+  const refreshed = await api.getEnergyRange(today, today, { force: true })
+  const reused = await api.getEnergyRange(today, today)
+
+  assert.equal(first.version, 1)
+  assert.equal(refreshed.version, 2)
+  assert.equal(reused.version, 2)
+  assert.equal(calls.filter((c) => c.url.includes('/energy-report/range?')).length, 2)
 })
 
 test('confirmation, revocation and correction invalidate cached workshop rows', async () => {

@@ -10,6 +10,7 @@ import AnalysisPanel from '../components/AnalysisPanel.vue'
 import ReportExportMenu from '../components/ReportExportMenu.vue'
 import ReportPeriodPicker from '../components/ReportPeriodPicker.vue'
 import ReportTrendPanel from '../components/ReportTrendPanel.vue'
+import { aggregateEnergyRowsByMonth } from '../utils/energySummary.js'
 import { createReportChartGrid, REPORT_CHART_COLORS } from '../utils/reportChartTheme.js'
 
 use([BarChart, LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
@@ -39,6 +40,9 @@ let active = true
 
 const taskRows = computed(() => taskDay.value?.records || [])
 const dailyRows = computed(() => periodReport.value?.rows || [])
+const summaryRows = computed(() => defaultSummaryView.value
+  ? aggregateEnergyRowsByMonth(dailyRows.value)
+  : dailyRows.value)
 const month = computed(() => periodReport.value)
 const units = computed(() => taskDay.value?.units || { electricity: 'kWh', gas: 'Nm³' })
 const summary = computed(() => taskDay.value?.summary || {
@@ -51,7 +55,12 @@ const summary = computed(() => taskDay.value?.summary || {
 })
 const equipmentScopeLabel = computed(() => taskDay.value?.equipment_scope?.join(' / ') || 'Cutter01')
 const configurationError = computed(() => taskDay.value?.configuration_error || '')
-const summaryTitle = computed(() => defaultSummaryView.value ? '近12个月每日能耗汇总' : '区间每日能耗汇总')
+const summaryTitle = computed(() => defaultSummaryView.value ? '近12个月月度能耗汇总' : '区间每日能耗汇总')
+const summaryCountLabel = computed(() => `${summaryRows.value.length} ${defaultSummaryView.value ? '个月' : '天'}`)
+const summaryDateHeading = computed(() => defaultSummaryView.value ? '月份' : '日期')
+const summaryChartLabel = computed(() => defaultSummaryView.value ? '月度能耗图' : '每日能耗图')
+const summaryTableLabel = computed(() => defaultSummaryView.value ? '近12个月月度能耗汇总表' : '区间每日能耗汇总表')
+const summaryEmptyText = computed(() => defaultSummaryView.value ? '近12个月暂无月度汇总' : '所选区间暂无每日汇总')
 const analysisReady = computed(() => Boolean(
   taskDay.value
   && taskDay.value.period_start === appliedPeriodStart.value
@@ -107,8 +116,9 @@ function renderCharts() {
   }
   if (periodChartElement && periodReport.value) {
     periodChart ||= init(periodChartElement)
-    const rows = dailyRows.value.map((row) => ({ electricity: row.electricity?.value, gas: row.gas?.value }))
-    periodChart.setOption(chartOption(rows, dailyRows.value.map((row) => row.report_date.slice(5))), true)
+    const rows = summaryRows.value.map((row) => ({ electricity: row.electricity?.value, gas: row.gas?.value }))
+    const labels = summaryRows.value.map((row) => defaultSummaryView.value ? row.report_date : row.report_date.slice(5))
+    periodChart.setOption(chartOption(rows, labels), true)
   }
 }
 
@@ -245,8 +255,8 @@ watch(chartType, async () => { await nextTick(); renderCharts() })
     </template>
   </ReportTrendPanel>
 
-  <ReportTrendPanel ref="periodPanel" number="02" :title="summaryTitle" :subtitle="`${summaryPeriodStart} 至 ${summaryPeriodEnd} · ${dailyRows.length} 天`" chart-label="每日能耗图">
-    <template #table><table v-content-table class="leadership-table energy-month-table summary-table" aria-label="月度每日能耗汇总表"><thead><tr><th scope="col">日期</th><th scope="col">任务数</th><th scope="col">切割时长</th><th scope="col">电耗</th><th scope="col">气耗</th></tr></thead><tbody><tr v-for="row in dailyRows" :key="row.report_date"><td>{{ row.report_date }}</td><td>{{ row.task_count }}</td><td>{{ duration(row.work_time_seconds) }}</td><td>{{ valueText(row.electricity) }}</td><td>{{ valueText(row.gas) }}</td></tr><tr v-if="!dailyRows.length"><td colspan="5" class="energy-empty">{{ loading ? '正在查询…' : '所选区间暂无每日汇总' }}</td></tr></tbody><tfoot><tr><th scope="row">汇总</th><th>{{ month?.total_task_count || 0 }}</th><th>{{ duration(month?.total_work_time_seconds) }}</th><th>{{ valueText(month?.summary?.electricity) }}</th><th>{{ valueText(month?.summary?.gas) }}</th></tr></tfoot></table></template>
+  <ReportTrendPanel ref="periodPanel" number="02" :title="summaryTitle" :subtitle="`${summaryPeriodStart} 至 ${summaryPeriodEnd} · ${summaryCountLabel}`" :chart-label="summaryChartLabel">
+    <template #table><table v-content-table class="leadership-table energy-month-table summary-table" :aria-label="summaryTableLabel"><thead><tr><th scope="col">{{ summaryDateHeading }}</th><th scope="col">任务数</th><th scope="col">切割时长</th><th scope="col">电耗</th><th scope="col">气耗</th></tr></thead><tbody><tr v-for="row in summaryRows" :key="row.report_date"><td>{{ row.report_date }}</td><td>{{ row.task_count }}</td><td>{{ duration(row.work_time_seconds) }}</td><td>{{ valueText(row.electricity) }}</td><td>{{ valueText(row.gas) }}</td></tr><tr v-if="!summaryRows.length"><td colspan="5" class="energy-empty">{{ loading ? '正在查询…' : summaryEmptyText }}</td></tr></tbody><tfoot><tr><th scope="row">汇总</th><th>{{ month?.total_task_count || 0 }}</th><th>{{ duration(month?.total_work_time_seconds) }}</th><th>{{ valueText(month?.summary?.electricity) }}</th><th>{{ valueText(month?.summary?.gas) }}</th></tr></tfoot></table></template>
   </ReportTrendPanel>
 
   <AnalysisPanel

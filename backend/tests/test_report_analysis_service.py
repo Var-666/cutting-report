@@ -73,6 +73,7 @@ def test_three_report_types_get_distinct_simulated_analysis(tmp_path: Path) -> N
     for result in (leadership_analysis, workshop_analysis, equipment_analysis):
         assert [fact["id"] for fact in result.facts] == [f"F{index:03}" for index in range(1, 7)]
         assert all(fact.get("id") and fact.get("source") for fact in result.facts)
+        assert all("（" not in fact["value"] and "）" not in fact["value"] for fact in result.facts)
         referenced = result.overview + result.features + result.alerts + result.suggestions
         assert set(re.findall(r"\[(F\d{3})\]", referenced)) <= {fact["id"] for fact in result.facts}
 

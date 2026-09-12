@@ -6,9 +6,14 @@ import {
   listCuttingFiles,
   listCuttingProjects,
 } from '../src/api/reports.js'
+import { reportCache } from '../src/api/reportCache.js'
+import { parseCuttingInstructionFilename } from '../src/utils/cuttingInstructionName.js'
 
 const originalFetch = globalThis.fetch
-afterEach(() => { globalThis.fetch = originalFetch })
+afterEach(() => {
+  globalThis.fetch = originalFetch
+  reportCache.invalidate('cutting:')
+})
 
 test('directory browser requests projects, one project tree, then one catalog page', async () => {
   const calls = []
@@ -36,6 +41,29 @@ test('directory browser requests projects, one project tree, then one catalog pa
   assert.match(calls[2], /keyword=PK-301/)
   assert.match(calls[2], /page=2/)
   assert.match(calls[2], /page_size=20/)
+})
+
+test('duplicate project and catalog requests share a five-minute cache', async () => {
+  const calls = []
+  globalThis.fetch = async (url) => {
+    calls.push(String(url))
+    return { ok: true, json: async () => ({ success: true, data: { items: [], tree: [] } }) }
+  }
+
+  await Promise.all([listCuttingProjects(), listCuttingProjects()])
+  await Promise.all([listCuttingCatalogs('P-CACHED'), listCuttingCatalogs('P-CACHED')])
+  const fileQuery = {
+    projectId: 'P-CACHED',
+    catalogId: 'C-CACHED',
+    page: 1,
+    pageSize: 20,
+  }
+  await Promise.all([listCuttingFiles(fileQuery), listCuttingFiles(fileQuery)])
+  await listCuttingProjects()
+  await listCuttingCatalogs('P-CACHED')
+  await listCuttingFiles(fileQuery)
+
+  assert.equal(calls.length, 3)
 })
 
 test('file download page uses the recursive directory tree without condition builders', () => {
@@ -101,4 +129,42 @@ test('file download table supports multi-select and batch save', () => {
   assert.match(view, /for \(const \[index, file\] of files\.entries\(\)\)/)
   assert.match(view, /setDownloadSelected\(file, false\)/)
   assert.match(view, /colspan="10"/)
+})
+
+test('standard cutting instruction names provide material and thickness for dispatch', () => {
+  assert.deepEqual(parseCuttingInstructionFilename('P101C100A001.GEN'), {
+    instructionType: 'P',
+    instructionTypeLabel: '拼板',
+    intermediateProduct: '101C',
+    thickness: 10,
+    materialCode: 'A0',
+    material: 'A',
+    sequence: '01',
+  })
+  assert.equal(parseCuttingInstructionFilename('s201c090a204.txt').material, 'AH32')
+  assert.equal(parseCuttingInstructionFilename('W102C125A606.GEN').material, 'AH36')
+  assert.equal(parseCuttingInstructionFilename('L301C080SS12.GEN').material, '双相不锈钢')
+  assert.equal(parseCuttingInstructionFilename('L301C080SS12.GEN').thickness, 8)
+})
+
+test('non-standard cutting instruction names are ignored', () => {
+  for (const filename of [
+    'PK-301CPS1.GEN',
+    'prefix-P101C100A001.GEN',
+    'P101C100A000.GEN',
+    'P101C100A701.GEN',
+    'P101C100A001.PDF',
+  ]) {
+    assert.equal(parseCuttingInstructionFilename(filename), null)
+  }
+})
+
+test('file push applies parsed standard-name values without changing non-standard files', () => {
+  const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
+
+  assert.match(view, /parseCuttingInstructionFilename\(activeFile\.value\?\.filename\)/)
+  assert.match(view, /dispatchForm\.material = parsed\.material/)
+  assert.match(view, /dispatchForm\.thickness = parsed\.thickness/)
+  assert.match(view, /if \(!parsed\) return/)
+  assert.match(view, /已按标准名称填充/)
 })

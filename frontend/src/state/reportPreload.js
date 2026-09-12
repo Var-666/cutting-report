@@ -1,10 +1,10 @@
 import { reactive } from 'vue'
 import {
-  getLeadershipReport, getLatestWorkshopProductionDate, listWorkshopTasks,
-  getEnergyDay, getTaskEnergyDay, getEnergyMonth, listReports,
+  getEnergyRange, getLeadershipReport, getLatestWorkshopProductionDate,
+  listReports, listWorkshopRangeTasks, listWorkshopTasks,
 } from '../api/reports.js'
 import { reportCache } from '../api/reportCache.js'
-import { reportToday } from '../api/reportDates.js'
+import { recentTwelveMonthStart, reportToday } from '../api/reportDates.js'
 
 export const reportPreload = reactive({ identity: '', items: [] })
 let generation = 0
@@ -34,14 +34,21 @@ export function startReportPreload(user) {
   const jobs = [{ key: 'workshop', label: '车间报表', load: async () => {
     const latest = await getLatestWorkshopProductionDate(today)
     if (!active()) return
-    return listWorkshopTasks({ reportDate: latest.report_date || today,
-      sortMode: user.role === 'worker' ? 'worker' : 'manager' }, { warmup: true })
+    const reportDate = latest.report_date || today
+    return user.role === 'worker'
+      ? listWorkshopTasks({ reportDate, sortMode: 'worker' }, { warmup: true })
+      : listWorkshopRangeTasks({ startDate: reportDate, endDate: reportDate })
   } }]
   if (user.role === 'admin') {
     jobs.unshift({ key: 'leadership', label: '领导报表', load: () => getLeadershipReport(month) })
     jobs.push({ key: 'equipment', label: '设备报表', load: async () => {
-      await Promise.all([getEnergyDay(today), getTaskEnergyDay(today)])
-      if (active()) return getEnergyMonth(month)
+      const latest = await getLatestWorkshopProductionDate(today)
+      if (!active()) return
+      const reportDate = latest.report_date || today
+      return Promise.all([
+        getEnergyRange(reportDate, reportDate),
+        getEnergyRange(recentTwelveMonthStart(reportDate), reportDate),
+      ])
     } })
     jobs.push({ key: 'history', label: '生成与历史', load: () => listReports({ page: 1, pageSize: 10 }) })
   }

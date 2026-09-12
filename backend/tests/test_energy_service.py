@@ -396,7 +396,9 @@ def test_unified_device_page_export_and_analysis_share_meter_values(tmp_path, mo
     assert "Nm³" in facts["F003"]
     assert Decimal(facts["F004"].split()[0]) == 18
     assert "kWh" in facts["F004"]
-    assert "1/1" in facts["F004"]
+    assert facts["F003"] == "2.0 Nm³"
+    assert facts["F004"] == "18.0 kWh"
+    assert "（" not in facts["F003"] + facts["F004"]
     assert "不进行能耗异常判定" in analysis.features
 
 
@@ -409,7 +411,7 @@ def test_analysis_does_not_report_missing_energy_as_zero(tmp_path):
     metadata.initialize()
     analysis = ReportAnalysisService(cfg, metadata).analyze_equipment(START.date().isoformat(), [record()], energy_data_mode="unavailable")
     facts = {fact["id"]: fact["value"] for fact in analysis.facts}
-    assert facts["F003"].startswith("缺失")
-    assert facts["F004"].startswith("缺失")
+    assert facts["F003"] == "缺失"
+    assert facts["F004"] == "缺失"
     assert facts["F006"] == "1 项"
     assert len(facts) == 6

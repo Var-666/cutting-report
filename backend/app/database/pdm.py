@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 from threading import Lock
 from time import monotonic
 
@@ -35,6 +35,7 @@ class PdmRepository(Protocol):
 
 class SqlServerPdmRepository:
     mode = "sqlserver"
+    DIRECTORY_CACHE_SECONDS = 300
 
     FILE_COLUMNS = """
         a.ID AS document_id,
@@ -115,6 +116,36 @@ class SqlServerPdmRepository:
         self._count_cache: dict[tuple, tuple[float, int]] = {}
         self._count_cache_lock = Lock()
         self._count_query_locks = [Lock() for _ in range(16)]
+        self._directory_cache: dict[tuple, tuple[float, tuple[dict[str, Any], ...]]] = {}
+        self._directory_cache_lock = Lock()
+        self._directory_query_locks = [Lock() for _ in range(16)]
+
+    def _cached_directory_rows(
+        self,
+        key: tuple,
+        loader: Callable[[], list[dict[str, Any]]],
+    ) -> list[dict[str, Any]]:
+        """Cache stable project/catalog rows and coalesce duplicate misses."""
+        with self._directory_query_locks[hash(key) % len(self._directory_query_locks)]:
+            now = monotonic()
+            with self._directory_cache_lock:
+                cached = self._directory_cache.get(key)
+                if cached and cached[0] > now:
+                    return [dict(row) for row in cached[1]]
+            rows = tuple(dict(row) for row in loader())
+            with self._directory_cache_lock:
+                self._directory_cache = {
+                    cache_key: value
+                    for cache_key, value in self._directory_cache.items()
+                    if value[0] > now
+                }
+                self._directory_cache[key] = (
+                    monotonic() + self.DIRECTORY_CACHE_SECONDS,
+                    rows,
+                )
+                while len(self._directory_cache) > 256:
+                    self._directory_cache.pop(next(iter(self._directory_cache)))
+            return [dict(row) for row in rows]
 
     def _search_from(self, where_sql: str) -> str:
         # Only server-owned, validated expressions appear here. Literal values
@@ -152,35 +183,41 @@ class SqlServerPdmRepository:
     def list_projects(self, keyword: str = "", limit: int = 100) -> list[dict[str, Any]]:
         cleaned = keyword.strip()
         pattern = f"%{cleaned}%"
-        return self.client.fetch_all(
-            """
-            SELECT ID AS project_id,
-                   ShipNo AS ship_no,
-                   ProjectInfoName AS project_name,
-                   State AS state
-            FROM dbo.BasicConfig_ProjectInfo
-            WHERE State IN (N'待生效', N'规划', N'结束', N'开工', N'生效', N'已进坞', N'已下水')
-              AND (? = '' OR ShipNo LIKE ? OR ProjectInfoName LIKE ?)
-            ORDER BY ShipNo
-            OFFSET 0 ROWS FETCH NEXT ? ROWS ONLY
-            """,
-            (cleaned, pattern, pattern, limit),
+        return self._cached_directory_rows(
+            ("projects", cleaned, limit),
+            lambda: self.client.fetch_all(
+                """
+                SELECT ID AS project_id,
+                       ShipNo AS ship_no,
+                       ProjectInfoName AS project_name,
+                       State AS state
+                FROM dbo.BasicConfig_ProjectInfo
+                WHERE State IN (N'待生效', N'规划', N'结束', N'开工', N'生效', N'已进坞', N'已下水')
+                  AND (? = '' OR ShipNo LIKE ? OR ProjectInfoName LIKE ?)
+                ORDER BY ShipNo
+                OFFSET 0 ROWS FETCH NEXT ? ROWS ONLY
+                """,
+                (cleaned, pattern, pattern, limit),
+            ),
         )
 
     def list_catalogs(self, project_id: str) -> list[dict[str, Any]]:
-        return self.client.fetch_all(
-            """
-            SELECT ID AS catalog_id,
-                   ProjectInfoID AS project_id,
-                   ParentID AS parent_id,
-                   Type AS catalog_type,
-                   Title AS title,
-                   SortSN AS sort_sn
-            FROM dbo.PDM_NCDocumentCatalog
-            WHERE ProjectInfoID = ?
-            ORDER BY COALESCE(SortSN, 0), Title
-            """,
-            (project_id,),
+        return self._cached_directory_rows(
+            ("catalogs", str(project_id)),
+            lambda: self.client.fetch_all(
+                """
+                SELECT ID AS catalog_id,
+                       ProjectInfoID AS project_id,
+                       ParentID AS parent_id,
+                       Type AS catalog_type,
+                       Title AS title,
+                       SortSN AS sort_sn
+                FROM dbo.PDM_NCDocumentCatalog
+                WHERE ProjectInfoID = ?
+                ORDER BY COALESCE(SortSN, 0), Title
+                """,
+                (project_id,),
+            ),
         )
 
     def _filters(

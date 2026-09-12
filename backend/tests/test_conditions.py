@@ -191,6 +191,38 @@ class SqlClient:
         return [{"total": 7}] if sql.startswith("SELECT COUNT(*) AS total") else []
 
 
+def test_pdm_project_and_catalog_queries_are_cached(monkeypatch):
+    now = [0]
+    monkeypatch.setattr("app.database.pdm.monotonic", lambda: now[0])
+    pdm = SqlServerPdmRepository(settings)
+
+    class DirectoryClient:
+        def __init__(self):
+            self.calls = []
+
+        def fetch_all(self, sql, params):
+            self.calls.append((sql, params))
+            if "BasicConfig_ProjectInfo" in sql:
+                return [{"project_id": "P1", "ship_no": "S1", "project_name": "项目一", "state": "生效"}]
+            return [{"catalog_id": "C1", "project_id": "P1", "parent_id": None, "catalog_type": "folder", "title": "船体", "sort_sn": 1}]
+
+    pdm.client = DirectoryClient()
+    first_projects = pdm.list_projects("", 1000)
+    second_projects = pdm.list_projects("", 1000)
+    first_catalogs = pdm.list_catalogs("P1")
+    second_catalogs = pdm.list_catalogs("P1")
+
+    assert first_projects == second_projects
+    assert first_catalogs == second_catalogs
+    assert len(pdm.client.calls) == 2
+    first_projects[0]["project_name"] = "页面修改不会污染缓存"
+    assert pdm.list_projects("", 1000)[0]["project_name"] == "项目一"
+    now[0] = pdm.DIRECTORY_CACHE_SECONDS + 1
+    pdm.list_projects("", 1000)
+    pdm.list_catalogs("P1")
+    assert len(pdm.client.calls) == 4
+
+
 def test_sqlserver_count_and_page_use_identical_safe_filter():
     pdm = SqlServerPdmRepository(settings)
     pdm.client = SqlClient()

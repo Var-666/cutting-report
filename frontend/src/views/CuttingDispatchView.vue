@@ -1,8 +1,9 @@
 <script setup>
-import { computed, onActivated, onMounted, onBeforeUnmount, reactive, ref } from 'vue'
+import { computed, onActivated, onMounted, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import CatalogTreeNode from '../components/CatalogTreeNode.vue'
 import CuttingDownloadsPanel from '../components/CuttingDownloadsPanel.vue'
+import { parseCuttingInstructionFilename } from '../utils/cuttingInstructionName.js'
 import {
   cancelCuttingDispatch,
   createCuttingDispatch,
@@ -29,6 +30,7 @@ const histories = ref([])
 const machines = ref([])
 const pushFiles = ref([])
 const selectedPushFileId = ref('')
+const recognizedInstruction = ref(null)
 const pushFileDraft = reactive({ keyword: '', projectId: '', catalogKey: '' })
 const pushFileFilters = ref({ keyword: '', projectId: '', catalogKey: '' })
 const pushFilePage = ref(1)
@@ -292,6 +294,14 @@ function resetPushFileFilters() {
 function selectPushFile(item) {
   selectedPushFileId.value = item.download_id
 }
+
+watch(selectedPushFileId, () => {
+  const parsed = parseCuttingInstructionFilename(activeFile.value?.filename)
+  recognizedInstruction.value = parsed
+  if (!parsed) return
+  dispatchForm.material = parsed.material
+  dispatchForm.thickness = parsed.thickness
+}, { flush: 'sync' })
 
 function changePushFilePage(nextPage) {
   if (nextPage < 1 || nextPage > pushFileTotalPages.value) return
@@ -748,6 +758,9 @@ onActivated(async () => {
         <span>当前选择</span>
         <strong>{{ activeFile?.filename || '尚未选择文件' }}</strong>
         <small v-if="activeFile">版本 {{ activeFile.version || '--' }} · {{ activeFile.storage_path }}</small>
+        <small v-if="recognizedInstruction" class="dispatch-name-recognition">
+          已按标准名称填充：{{ recognizedInstruction.instructionTypeLabel }} · 中间产品 {{ recognizedInstruction.intermediateProduct }} · {{ recognizedInstruction.material }} · {{ recognizedInstruction.thickness.toFixed(1) }} mm · 顺序 {{ recognizedInstruction.sequence }}
+        </small>
       </div>
       <form class="dispatch-config" @submit.prevent="saveDispatch(false)">
         <label><span>任务名称（自动）</span><input :value="activeFile?.filename || ''" disabled /><small>taskName 与实际上传文件名一致，包含扩展名。</small></label>
@@ -891,6 +904,7 @@ onActivated(async () => {
 .dispatch-path-preview small { color:var(--muted); font-size:10px; }
 .dispatch-config-panel { position:sticky; top:18px; }
 .push-workspace .dispatch-config-panel { position:static; }
+.dispatch-name-recognition { color:#167e85!important; font-weight:700; }
 .push-workspace .dispatch-config { grid-template-columns:1fr; }
 .push-workspace .dispatch-selected-file,.push-workspace .dispatch-warning,.push-workspace .dispatch-task-id,.push-workspace .dispatch-submit-row { grid-column:1/-1; }
 .dispatch-selected-file { display:flex; flex-direction:column; gap:4px; margin:20px 22px 0; padding:14px 15px; border-left:4px solid var(--cyan); background:#eef8fa; }

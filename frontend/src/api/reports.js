@@ -2,6 +2,12 @@ import { reportCache } from './reportCache.js'
 import { reportToday } from './reportDates.js'
 
 const DEFAULT_HEADERS = { 'Content-Type': 'application/json' }
+const REPORT_VIEW_CACHE_TTL = 5 * 60 * 1000
+
+function invalidateWorkshopReports() {
+  reportCache.invalidate('workshop:tasks:')
+  reportCache.invalidate('workshop:range:')
+}
 
 async function request(url, options = {}) {
   const response = await fetch(url, {
@@ -102,7 +108,7 @@ export function listWorkshopTasks({ reportDate, projectName = '', confirmationSt
   if (projectName) query.set('project_name', projectName)
   const key = `workshop:tasks:${query}`
   if (warmup) query.set('warmup', 'true')
-  return reportCache.read(key, (signal) => request(`/api/v1/workshop/tasks?${query}`, { signal }), { force, signal })
+  return reportCache.read(key, (signal) => request(`/api/v1/workshop/tasks?${query}`, { signal }), { ttl: REPORT_VIEW_CACHE_TTL, force, signal })
 }
 
 export function listWorkshopRangeTasks({ startDate, endDate, projectName = '', confirmationStatus = 'all', page = 1, pageSize = 10 }, { force = false, signal } = {}) {
@@ -115,47 +121,47 @@ export function listWorkshopRangeTasks({ startDate, endDate, projectName = '', c
   })
   if (projectName) query.set('project_name', projectName)
   const key = `workshop:range:${query}`
-  return reportCache.read(key, (requestSignal) => request(`/api/v1/workshop/range?${query}`, { signal: requestSignal }), { force, signal })
+  return reportCache.read(key, (requestSignal) => request(`/api/v1/workshop/range?${query}`, { signal: requestSignal }), { ttl: REPORT_VIEW_CACHE_TTL, force, signal })
 }
 
 export function generateWorkshopDailyReport(reportDate) {
   return request('/api/v1/workshop/reports', {
     method: 'POST',
     body: JSON.stringify({ report_date: reportDate }),
-  }).then((data) => { reportCache.invalidate('workshop:tasks:'); return data })
+  }).then((data) => { invalidateWorkshopReports(); return data })
 }
 
 export function getLatestWorkshopProductionDate(onOrBefore, { force = false, signal } = {}) {
   const query = new URLSearchParams({ on_or_before: onOrBefore })
-  return reportCache.read(`workshop:latest:${query}`, (signal) => request(`/api/v1/workshop/latest-date?${query}`, { signal }), { ttl: 60000, force, signal })
+  return reportCache.read(`workshop:latest:${query}`, (signal) => request(`/api/v1/workshop/latest-date?${query}`, { signal }), { ttl: REPORT_VIEW_CACHE_TTL, force, signal })
 }
 
 export function confirmWorkshopTask(taskId, reportDate) {
   return request(`/api/v1/workshop/tasks/${encodeURIComponent(taskId)}/confirm`, {
     method: 'POST',
     body: JSON.stringify({ report_date: reportDate }),
-  }).then((data) => { reportCache.invalidate('workshop:tasks:'); return data })
+  }).then((data) => { invalidateWorkshopReports(); return data })
 }
 
 export function confirmWorkshopTasks(taskIds, reportDate) {
   return request('/api/v1/workshop/tasks/confirm', {
     method: 'POST',
     body: JSON.stringify({ report_date: reportDate, task_ids: taskIds }),
-  }).then((data) => { reportCache.invalidate('workshop:tasks:'); return data })
+  }).then((data) => { invalidateWorkshopReports(); return data })
 }
 
 export function revokeWorkshopTask(taskId, reportDate, reason) {
   return request(`/api/v1/workshop/tasks/${encodeURIComponent(taskId)}/revoke`, {
     method: 'POST',
     body: JSON.stringify({ report_date: reportDate, reason }),
-  }).then((data) => { reportCache.invalidate('workshop:tasks:'); return data })
+  }).then((data) => { invalidateWorkshopReports(); return data })
 }
 
 export function correctWorkshopTask(taskId, { reportDate, action, workerId = null, reason }) {
   return request(`/api/v1/workshop/tasks/${encodeURIComponent(taskId)}/correct`, {
     method: 'POST',
     body: JSON.stringify({ report_date: reportDate, action, worker_id: workerId, reason }),
-  }).then((data) => { reportCache.invalidate('workshop:tasks:'); return data })
+  }).then((data) => { invalidateWorkshopReports(); return data })
 }
 
 export function listWorkshopConfirmationAudits({ reportDate, taskId, limit = 30 }) {
@@ -226,18 +232,19 @@ export function listAlarmReports({ limit = 50 } = {}) {
 
 export function getLeadershipReport(reportMonth, { force = false, signal } = {}) {
   const query = new URLSearchParams({ report_month: reportMonth })
-  return reportCache.read(`leadership:${reportMonth}`, (signal) => request(`/api/v1/leadership-report?${query}`, { signal }), { ttl: 30000, force, signal })
+  return reportCache.read(`leadership:${reportMonth}`, (signal) => request(`/api/v1/leadership-report?${query}`, { signal }), { ttl: REPORT_VIEW_CACHE_TTL, force, signal })
 }
 
 export function getLeadershipRange(startDate, endDate, { force = false, signal } = {}) {
   const query = new URLSearchParams({ start_date: startDate, end_date: endDate })
-  return reportCache.read(`leadership:range:${query}`, (requestSignal) => request(`/api/v1/leadership-report?${query}`, { signal: requestSignal }), { ttl: 30000, force, signal })
+  return reportCache.read(`leadership:range:${query}`, (requestSignal) => request(`/api/v1/leadership-report?${query}`, { signal: requestSignal }), { ttl: REPORT_VIEW_CACHE_TTL, force, signal })
 }
 
 export function getEnergyRange(startDate, endDate, { force = false, signal } = {}) {
   const query = new URLSearchParams({ start_date: startDate, end_date: endDate })
+  const key = `energy:range:${query}`
   if (force) query.set('refresh', 'true')
-  return reportCache.read(`energy:range:${query}`, (requestSignal) => request(`/api/v1/energy-report/range?${query}`, { signal: requestSignal }), { ttl: 30000, force, signal })
+  return reportCache.read(key, (requestSignal) => request(`/api/v1/energy-report/range?${query}`, { signal: requestSignal }), { ttl: REPORT_VIEW_CACHE_TTL, force, signal })
 }
 
 export function refreshLeadershipReport(reportMonth) {
@@ -339,7 +346,11 @@ export function retryEmailDelivery(deliveryId) {
 }
 
 export function getCuttingStatus() {
-  return request('/api/v1/cutting/status')
+  return reportCache.read(
+    'cutting:status',
+    (signal) => request('/api/v1/cutting/status', { signal }),
+    { ttl: 60000 },
+  )
 }
 
 export function searchCuttingDownloads(filters, { page = 1, pageSize = 10, sort = [] } = {}) {
@@ -357,12 +368,22 @@ export function listCuttingDownloads({ page = 1, pageSize = 10 } = {}) {
 export function listCuttingProjects(keyword = '', limit = 1000) {
   const query = new URLSearchParams({ limit: String(limit) })
   if (keyword) query.set('keyword', keyword)
-  return request(`/api/v1/cutting/projects?${query}`)
+  const url = `/api/v1/cutting/projects?${query}`
+  return reportCache.read(
+    `cutting:projects:${query}`,
+    (signal) => request(url, { signal }),
+    { ttl: 300000 },
+  )
 }
 
 export function listCuttingCatalogs(projectId) {
   const query = new URLSearchParams({ project_id: projectId })
-  return request(`/api/v1/cutting/catalogs?${query}`)
+  const url = `/api/v1/cutting/catalogs?${query}`
+  return reportCache.read(
+    `cutting:catalogs:${String(projectId)}`,
+    (signal) => request(url, { signal }),
+    { ttl: 300000 },
+  )
 }
 
 export function listCuttingFiles({ projectId, catalogId = '', status = 'all', keyword = '', page = 1, pageSize = 10 }) {
@@ -374,7 +395,12 @@ export function listCuttingFiles({ projectId, catalogId = '', status = 'all', ke
   })
   if (catalogId) query.set('catalog_id', catalogId)
   if (keyword) query.set('keyword', keyword)
-  return request(`/api/v1/cutting/files?${query}`)
+  const url = `/api/v1/cutting/files?${query}`
+  return reportCache.read(
+    `cutting:files:${query}`,
+    (signal) => request(url, { signal }),
+    { ttl: 60000 },
+  )
 }
 
 export function createCuttingDispatch(payload) {
