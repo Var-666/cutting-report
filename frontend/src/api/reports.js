@@ -274,8 +274,9 @@ export function getEnergyDay(reportDate = '', { force = false, signal } = {}) {
   return reportCache.read(`energy:day:${reportDate}`, async (signal) => {
     const data = await request(`/api/v1/energy-report/day?${query}`, { signal })
     if (!signal.aborted) reportCache.invalidate(`energy:month:${reportDate.slice(0, 7)}`)
+    if (!signal.aborted) reportCache.invalidate('energy:monthly-range:')
     return data
-  }, { ttl: 60000, force, signal })
+  }, { ttl: REPORT_VIEW_CACHE_TTL, force, signal })
 }
 
 export function getTaskEnergyDay(reportDate = '', { force = false, signal } = {}) {
@@ -283,12 +284,18 @@ export function getTaskEnergyDay(reportDate = '', { force = false, signal } = {}
   const query = new URLSearchParams()
   if (reportDate) query.set('report_date', reportDate)
   if (force) query.set('refresh', 'true')
-  return reportCache.read(`energy:tasks:${reportDate}`, (signal) => request(`/api/v1/energy-report/tasks?${query}`, { signal }), { ttl: 60000, force, signal })
+  return reportCache.read(`energy:tasks:${reportDate}`, (signal) => request(`/api/v1/energy-report/tasks?${query}`, { signal }), { ttl: REPORT_VIEW_CACHE_TTL, force, signal })
 }
 
 export function getEnergyMonth(reportMonth, { force = false, signal } = {}) {
   const query = new URLSearchParams({ report_month: reportMonth })
-  return reportCache.read(`energy:month:${reportMonth}`, (signal) => request(`/api/v1/energy-report/month?${query}`, { signal }), { ttl: 60000, force, signal })
+  return reportCache.read(`energy:month:${reportMonth}`, (signal) => request(`/api/v1/energy-report/month?${query}`, { signal }), { ttl: REPORT_VIEW_CACHE_TTL, force, signal })
+}
+
+export function getEnergyMonthlyRange(startDate, endDate, { force = false, signal } = {}) {
+  const query = new URLSearchParams({ start_date: startDate, end_date: endDate })
+  const key = `energy:monthly-range:${query}`
+  return reportCache.read(key, (requestSignal) => request(`/api/v1/energy-report/monthly-range?${query}`, { signal: requestSignal }), { ttl: REPORT_VIEW_CACHE_TTL, force, signal })
 }
 
 export function analyzeReport({ reportType, reportDate, periodStart, periodEnd, force = false }) {
@@ -345,10 +352,11 @@ export function retryEmailDelivery(deliveryId) {
   })
 }
 
-export function getCuttingStatus() {
+export function getCuttingStatus(scope = 'push') {
+  const query = new URLSearchParams({ scope })
   return reportCache.read(
-    'cutting:status',
-    (signal) => request('/api/v1/cutting/status', { signal }),
+    `cutting:status:${scope}`,
+    (signal) => request(`/api/v1/cutting/status?${query}`, { signal }),
     { ttl: 60000 },
   )
 }

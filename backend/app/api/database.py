@@ -488,19 +488,19 @@ def preview_dataset(payload: DatabasePreviewRequest, request: Request) -> dict:
         ship_no=payload.ship_no,
     )
     try:
-        bundle = request.app.state.query_service.fetch_report_data(filters)
+        query_service = request.app.state.query_service
+        if payload.dataset == "summary":
+            records = query_service.fetch_summary_data(filters).summary_records
+        elif payload.dataset == "workshop":
+            records = query_service.fetch_workshop_data(filters).workshop_records
+        else:
+            records = query_service.fetch_equipment_data(filters).records
     except SqlServerConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("database preview failed")
         raise HTTPException(status_code=500, detail="数据预览查询失败。") from exc
 
-    records_by_dataset = {
-        "summary": bundle.summary_records,
-        "workshop": bundle.workshop_records,
-        "equipment": bundle.equipment_records,
-    }
-    records = records_by_dataset[payload.dataset]
     return {
         "success": True,
         "data": {

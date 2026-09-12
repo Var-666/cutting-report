@@ -120,3 +120,63 @@ def test_sqlserver_equipment_fetch_executes_only_equipment_query(
     assert result.records[0].task_id == "task-1"
     assert result.records[0].production_end_time == updated_at
     assert result.data_updated_at == updated_at
+
+
+def test_summary_and_workshop_ranges_each_execute_one_cached_query(
+    tmp_path: Path, monkeypatch
+) -> None:
+    service = _service(tmp_path)
+    calls: list[str] = []
+    updated_at = datetime(2026, 8, 25, 12, 0)
+
+    def fetch_all(sql: str, _parameters: tuple) -> list[dict]:
+        calls.append(sql)
+        return [
+            {
+                "task_id": "task-1",
+                "project_code": "P001",
+                "ship_no": "P001",
+                "segment_name": "S01",
+                "program_no": "OP-1",
+                "cut_length": "10",
+                "groove_length": "1",
+                "work_time": "60",
+                "production_time": datetime(2026, 8, 25, 8, 0),
+                "source_updated_at": updated_at,
+                "remark": None,
+            }
+        ]
+
+    monkeypatch.setattr(service.client, "fetch_all", fetch_all)
+    filters = ReportFilter(report_date=date(2026, 8, 25))
+
+    summary = service.fetch_summary_data(filters)
+    workshop = service.fetch_workshop_data(filters)
+    assert service.fetch_summary_data(filters) is summary
+    assert service.fetch_workshop_data(filters) is workshop
+
+    assert len(calls) == 2
+    assert len(summary.summary_records) == 1
+    assert len(workshop.workshop_records) == 1
+
+
+def test_equipment_cache_and_query_locks_are_bounded(
+    tmp_path: Path, monkeypatch
+) -> None:
+    service = _service(tmp_path)
+    monkeypatch.setattr(
+        service,
+        "_sqlserver_equipment_data",
+        lambda _filters: EquipmentQueryResult([]),
+    )
+
+    for offset in range(140):
+        service.fetch_equipment_data(ReportFilter(report_date=date(2025, 1, 1)))
+        service.fetch_equipment_data(
+            ReportFilter(
+                report_date=date.fromordinal(date(2025, 1, 1).toordinal() + offset)
+            )
+        )
+
+    assert len(service._equipment_cache) <= 128
+    assert len(service._equipment_query_locks) == 32

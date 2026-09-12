@@ -159,7 +159,7 @@ class AutomationService:
             and existing.get("scope_machine_no") == self.settings.report_machine_no
         ):
             return
-        bundle = self.query_service.fetch_report_data(
+        bundle = self.query_service.fetch_workshop_data(
             ReportFilter(report_date=date.fromisoformat(report_date))
         )
         user = {

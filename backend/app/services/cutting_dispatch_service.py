@@ -100,12 +100,21 @@ class CuttingDispatchService:
     def _now(self) -> str:
         return datetime.now(ZoneInfo(self.settings.timezone)).isoformat(timespec="seconds")
 
-    def status(self) -> dict[str, Any]:
+    def status(self, *, include_magic: bool = True) -> dict[str, Any]:
         source_status = self.file_source.status()
         magic_status = (
             self.magic_config.public_status()
-            if self.magic_config is not None
-            else {"configured": False, "gateway": None, "machine_ips": [], "message": "魔盒客户端未初始化"}
+            if include_magic and self.magic_config is not None
+            else {
+                "configured": False,
+                "gateway": None,
+                "machine_ips": [],
+                "message": (
+                    "文件下载页无需检查魔盒配置。"
+                    if not include_magic
+                    else "魔盒客户端未初始化"
+                ),
+            }
         )
         can_download = bool(source_status["enabled"]) and not (
             self.file_source.mode == "http" and self.pdm.mode != "sqlserver"
@@ -125,7 +134,7 @@ class CuttingDispatchService:
             "magic_box": {**magic_status, "implemented": True},
             "can_query": True,
             "can_download": can_download,
-            "can_push": can_download and real_sources and bool(magic_status["configured"]),
+            "can_push": include_magic and can_download and real_sources and bool(magic_status["configured"]),
             "safe_mode": True,
         }
 

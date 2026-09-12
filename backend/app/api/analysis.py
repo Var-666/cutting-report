@@ -129,7 +129,7 @@ def analyze_report(payload: AnalysisRequest, request: Request) -> dict:
             range_mode = payload.period_start is not None and payload.period_end is not None
             if range_mode:
                 range_data = request.app.state.range_report_service.equipment(
-                    period_start, period_end, force=payload.force
+                    period_start, period_end
                 )
                 task_report = range_data["task_report"]
                 equipment_data = request.app.state.query_service.fetch_equipment_data(
@@ -152,7 +152,6 @@ def analyze_report(payload: AnalysisRequest, request: Request) -> dict:
                         period_start=comparison_start,
                         period_end=comparison_end,
                     ),
-                    force=payload.force,
                 )
                 year_ago_start = _year_ago(period_start)
                 year_ago_end = _year_ago(period_end)
@@ -162,18 +161,16 @@ def analyze_report(payload: AnalysisRequest, request: Request) -> dict:
                         period_start=year_ago_start,
                         period_end=year_ago_end,
                     ),
-                    force=payload.force,
                 )
                 comparison_label = _period_label(comparison_start, comparison_end)
                 year_ago_label = _period_label(year_ago_start, year_ago_end)
             else:
                 equipment_data = request.app.state.query_service.fetch_equipment_data(
-                    ReportFilter(report_date=payload.report_date), force=payload.force
+                    ReportFilter(report_date=payload.report_date)
                 )
                 task_report = request.app.state.energy_period_service.get_task_day(
                     payload.report_date,
                     equipment_data.records,
-                    force=payload.force,
                 )
                 records = restore_task_energy_records(
                     equipment_data.records,
@@ -181,11 +178,11 @@ def analyze_report(payload: AnalysisRequest, request: Request) -> dict:
                 )
                 comparison_day = payload.report_date - timedelta(days=1)
                 previous_data = request.app.state.query_service.fetch_equipment_data(
-                    ReportFilter(report_date=comparison_day), force=payload.force
+                    ReportFilter(report_date=comparison_day)
                 )
                 year_ago_day = _year_ago(payload.report_date)
                 year_ago_data = request.app.state.query_service.fetch_equipment_data(
-                    ReportFilter(report_date=year_ago_day), force=payload.force
+                    ReportFilter(report_date=year_ago_day)
                 )
                 comparison_label = comparison_day.isoformat()
                 year_ago_label = year_ago_day.isoformat()
@@ -214,6 +211,8 @@ def analyze_report(payload: AnalysisRequest, request: Request) -> dict:
             )
     except HTTPException:
         raise
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except SqlServerConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:

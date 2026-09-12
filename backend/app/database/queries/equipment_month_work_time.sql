@@ -1,7 +1,7 @@
 /*
   指定月份内，各设备每日完成任务的切割时长汇总。
   设备范围由服务层按 ENERGY_REPORT_EQUIPMENT_IDS 过滤。
-  参数顺序：月份开始日期、下月开始日期。
+  参数顺序：设备编号、月份开始日期、下月开始日期。
 */
 WITH task_source AS (
     SELECT
@@ -14,6 +14,7 @@ WITH task_source AS (
     FROM [dbo].[task] AS t
     WHERE t.[STATUS] = 2
       AND COALESCE(t.[WORK_TIME], 0) >= 0
+      AND UPPER(LTRIM(RTRIM(t.[MACHINE_NO]))) = UPPER(?)
 )
 SELECT
     source.production_date AS report_date,

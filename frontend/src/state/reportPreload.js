@@ -1,6 +1,7 @@
 import { reactive } from 'vue'
 import {
-  getEnergyRange, getLeadershipReport, getLatestWorkshopProductionDate,
+  getEnergyDay, getEnergyMonthlyRange, getLeadershipReport,
+  getLatestWorkshopProductionDate, getTaskEnergyDay,
   listReports, listWorkshopRangeTasks, listWorkshopTasks,
 } from '../api/reports.js'
 import { reportCache } from '../api/reportCache.js'
@@ -18,7 +19,10 @@ export function stopReportPreload() {
   completion = null
 }
 
-export function startReportPreload(user) {
+export function startReportPreload(
+  user,
+  { pathname = globalThis.location?.pathname || '/admin/home' } = {},
+) {
   if (!user?.user_id || !['admin', 'worker'].includes(user.role)) {
     stopReportPreload()
     return Promise.resolve([])
@@ -45,23 +49,42 @@ export function startReportPreload(user) {
       const latest = await getLatestWorkshopProductionDate(today)
       if (!active()) return
       const reportDate = latest.report_date || today
-      return Promise.all([
-        getEnergyRange(reportDate, reportDate),
-        getEnergyRange(recentTwelveMonthStart(reportDate), reportDate),
-      ])
+      await Promise.all([getEnergyDay(reportDate), getTaskEnergyDay(reportDate)])
+      if (active()) return getEnergyMonthlyRange(recentTwelveMonthStart(reportDate), reportDate)
     } })
     jobs.push({ key: 'history', label: '生成与历史', load: () => listReports({ page: 1, pageSize: 10 }) })
   }
-  reportPreload.items = jobs.map(({ key, label }) => ({ key, label, status: 'loading' }))
-  // Failures are isolated: a slow/unavailable data source never blocks login.
-  completion = Promise.allSettled(jobs.map(async (job) => {
-    try {
-      await job.load()
-      if (active()) reportPreload.items.find((item) => item.key === job.key).status = 'ready'
-    } catch (error) {
-      if (active()) reportPreload.items.find((item) => item.key === job.key).status = 'failed'
-      throw error
+  const routeKeys = user.role === 'worker'
+    ? new Set(['workshop'])
+    : pathname === '/admin/home'
+      ? new Set(['leadership', 'history'])
+      : pathname.startsWith('/admin/reports/leadership')
+        ? new Set(['leadership'])
+        : pathname.startsWith('/admin/reports/workshop')
+          ? new Set(['workshop'])
+          : pathname.startsWith('/admin/reports/equipment')
+            ? new Set(['equipment'])
+            : pathname.startsWith('/admin/reports/center')
+              ? new Set(['history'])
+              : new Set()
+  const selectedJobs = jobs.filter((job) => routeKeys.has(job.key))
+  reportPreload.items = selectedJobs.map(({ key, label }) => ({ key, label, status: 'loading' }))
+  // Only warm the current page. Run jobs serially so a refresh never creates a
+  // burst of unrelated production, energy and file-database requests.
+  completion = (async () => {
+    const results = []
+    for (const job of selectedJobs) {
+      if (!active()) break
+      try {
+        await job.load()
+        if (active()) reportPreload.items.find((item) => item.key === job.key).status = 'ready'
+        results.push({ status: 'fulfilled', value: undefined })
+      } catch (error) {
+        if (active()) reportPreload.items.find((item) => item.key === job.key).status = 'failed'
+        results.push({ status: 'rejected', reason: error })
+      }
     }
-  }))
+    return results
+  })()
   return completion
 }

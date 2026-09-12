@@ -109,6 +109,21 @@ def test_mock_pdm_supports_project_catalog_file_and_status_queries(tmp_path: Pat
     assert files["items"][0]["status_label"] == "待派发"
 
 
+def test_download_status_does_not_query_magic_box_configuration(tmp_path: Path) -> None:
+    service, _dispatches, _admin = _service(tmp_path)
+
+    class UnexpectedMagicConfig:
+        def public_status(self):
+            raise AssertionError("download status must not query production SYS_CONFIG")
+
+    service.magic_config = UnexpectedMagicConfig()
+    result = service.status(include_magic=False)
+
+    assert result["magic_box"]["configured"] is False
+    assert result["can_push"] is False
+    assert result["can_query"] is True
+
+
 def test_saving_dispatch_is_persistent_but_does_not_download(tmp_path: Path) -> None:
     service, dispatches, admin = _service(tmp_path)
 

@@ -440,7 +440,26 @@ class ReportPipeline:
                     project_code=filters.project_code,
                     ship_no=filters.ship_no,
                 )
-                bundle = replace(source_bundle, workshop_records=workshop_records)
+                summaries = [
+                    SummaryBaseRecord(
+                        task_id=row.task_id,
+                        project_code=row.project_code,
+                        ship_no=row.ship_no,
+                        segment_name=row.segment_name,
+                        program_no=row.program_no,
+                        cut_length=row.cut_length,
+                        groove_length=row.groove_length,
+                        work_time=row.work_time,
+                        production_time=row.production_time,
+                    )
+                    for row in workshop_records
+                ]
+                bundle = QueryBundle(
+                    summary_records=summaries,
+                    workshop_records=workshop_records,
+                    equipment_records=[],
+                    data_updated_at=source_bundle.data_updated_at,
+                )
             else:
                 workshop_report, workshop_records = (
                     self.workshop_repository.get_daily_report_records(

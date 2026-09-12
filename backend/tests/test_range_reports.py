@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
+from fastapi import HTTPException
 from pydantic import ValidationError
 
 from app.config import Settings
@@ -53,12 +54,59 @@ def test_report_request_normalizes_and_limits_inclusive_period() -> None:
             period_end=start + timedelta(days=366),
         )
 
+    with pytest.raises(ValidationError, match="最长为 31 天"):
+        ReportCreateRequest(
+            report_type="equipment",
+            period_start=start,
+            period_end=start + timedelta(days=31),
+        )
+
 
 def test_previous_comparison_uses_an_equal_non_overlapping_period() -> None:
     assert previous_equal_range(date(2026, 8, 18), date(2026, 8, 20)) == (
         date(2026, 8, 15),
         date(2026, 8, 17),
     )
+
+
+def test_live_equipment_energy_range_is_bounded_to_31_days(tmp_path: Path) -> None:
+    _, _, pipeline = _pipeline(tmp_path)
+    with pytest.raises(ValueError, match="31 天"):
+        pipeline.range_service.equipment(
+            date(2026, 1, 1),
+            date(2026, 2, 1),
+        )
+
+
+def test_equipment_analysis_reports_long_range_as_validation_error(tmp_path: Path) -> None:
+    _, _, pipeline = _pipeline(tmp_path)
+    request = SimpleNamespace(
+        state=SimpleNamespace(request_id="analysis-range-limit"),
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                report_analysis_service=pipeline.analysis_service,
+                range_report_service=pipeline.range_service,
+                leadership_report_service=pipeline.leadership_service,
+                workshop=pipeline.workshop_repository,
+                query_service=pipeline.query_service,
+                energy_period_service=pipeline.energy_period_service,
+            )
+        ),
+    )
+
+    with pytest.raises(HTTPException) as caught:
+        analyze_report(
+            AnalysisRequest(
+                report_type="equipment",
+                report_date=date(2026, 1, 1),
+                period_start=date(2026, 1, 1),
+                period_end=date(2026, 2, 1),
+            ),
+            request,
+        )
+
+    assert caught.value.status_code == 422
+    assert "31 天" in caught.value.detail
 
 
 @pytest.mark.parametrize(

@@ -38,6 +38,11 @@ class ReportCreateRequest(BaseModel):
             raise ValueError("结束日期不能早于开始日期")
         if (end - start).days >= 366:
             raise ValueError("报表查询区间最长为 366 天")
+        if self.report_type == "equipment" and (end - start).days >= 31:
+            raise ValueError(
+                "设备任务能耗查询区间最长为 31 天；"
+                "近 12 个月趋势请使用设备报表默认月度汇总"
+            )
         self.report_date = start
         self.period_start = start
         self.period_end = end

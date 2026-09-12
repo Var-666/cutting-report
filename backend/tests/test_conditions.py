@@ -215,12 +215,45 @@ def test_pdm_project_and_catalog_queries_are_cached(monkeypatch):
     assert first_projects == second_projects
     assert first_catalogs == second_catalogs
     assert len(pdm.client.calls) == 2
+    project_sql, project_parameters = pdm.client.calls[0]
+    assert "ShipNo LIKE" not in project_sql
+    assert project_parameters == (1000,)
     first_projects[0]["project_name"] = "页面修改不会污染缓存"
     assert pdm.list_projects("", 1000)[0]["project_name"] == "项目一"
     now[0] = pdm.DIRECTORY_CACHE_SECONDS + 1
     pdm.list_projects("", 1000)
     pdm.list_catalogs("P1")
     assert len(pdm.client.calls) == 4
+
+
+def test_pdm_directory_page_uses_one_windowed_query():
+    pdm = SqlServerPdmRepository(settings)
+
+    class PageClient:
+        def __init__(self):
+            self.calls = []
+
+        def fetch_all(self, sql, params):
+            self.calls.append((sql, params))
+            return [{"document_id": "D1", "total_count": 7}]
+
+    pdm.client = PageClient()
+    rows, total = pdm.list_files(
+        "P1",
+        catalog_id="C1",
+        status="all",
+        keyword="",
+        page=1,
+        page_size=20,
+    )
+
+    assert total == 7
+    assert rows == [{"document_id": "D1"}]
+    assert len(pdm.client.calls) == 1
+    sql, parameters = pdm.client.calls[0]
+    assert "COUNT_BIG(*) OVER () AS total_count" in sql
+    assert "OUTER APPLY" in sql.split("ROWS ONLY", 1)[1]
+    assert parameters == ("P1", "C1", 0, 20)
 
 
 def test_sqlserver_count_and_page_use_identical_safe_filter():

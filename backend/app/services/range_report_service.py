@@ -26,6 +26,7 @@ from app.services.query_service import QueryService
 
 
 MAX_REPORT_RANGE_DAYS = 366
+MAX_LIVE_ENERGY_RANGE_DAYS = 31
 
 
 def validate_report_range(start_date: date, end_date: date) -> None:
@@ -116,10 +117,32 @@ class RangeReportService:
             )
         )
 
+    def summary_bundle(self, start_date: date, end_date: date) -> QueryBundle:
+        return self.query_service.fetch_summary_data(
+            report_filter(start_date, end_date)
+        )
+
+    def workshop_bundle(
+        self,
+        start_date: date,
+        end_date: date,
+        *,
+        project_code: str | None = None,
+        ship_no: str | None = None,
+    ) -> QueryBundle:
+        return self.query_service.fetch_workshop_data(
+            report_filter(
+                start_date,
+                end_date,
+                project_code=project_code,
+                ship_no=ship_no,
+            )
+        )
+
     def leadership(
         self, start_date: date, end_date: date
     ) -> LeadershipReportResult:
-        bundle = self.bundle(start_date, end_date)
+        bundle = self.summary_bundle(start_date, end_date)
         by_day: dict[date, list] = defaultdict(list)
         by_month: dict[date, list] = defaultdict(list)
         by_project: dict[str, list] = defaultdict(list)
@@ -191,7 +214,7 @@ class RangeReportService:
         project_code: str | None = None,
         ship_no: str | None = None,
     ) -> tuple[QueryBundle, list[WorkshopRecord]]:
-        bundle = self.bundle(
+        bundle = self.workshop_bundle(
             start_date,
             end_date,
             project_code=project_code,
@@ -239,6 +262,12 @@ class RangeReportService:
         )
 
     def equipment(self, start_date: date, end_date: date, *, force: bool = False) -> dict:
+        validate_report_range(start_date, end_date)
+        if (end_date - start_date).days >= MAX_LIVE_ENERGY_RANGE_DAYS:
+            raise ValueError(
+                f"设备任务能耗查询区间最长为 {MAX_LIVE_ENERGY_RANGE_DAYS} 天；"
+                "近 12 个月趋势请使用默认月度汇总"
+            )
         filters = report_filter(start_date, end_date)
         source = self.query_service.fetch_equipment_data(filters, force=force)
         energy = self.energy_service.enrich(source.records, force=force)

@@ -52,6 +52,8 @@ class EnergyApiClient:
         self.settings = settings
         self.opener = opener or build_opener(ProxyHandler({}), _NoRedirect())
         self._lock = threading.RLock()
+        self._auth_lock = threading.Lock()
+        self._query_locks = [threading.Lock() for _ in range(32)]
         self._company_id = ""
         self._auth_id = ""
         self._auth_until = 0.0
@@ -113,7 +115,9 @@ class EnergyApiClient:
     def _query(self, ids, start, end):
         for attempt in range(2):
             if time.monotonic() >= self._auth_until:
-                self._login()
+                with self._auth_lock:
+                    if time.monotonic() >= self._auth_until:
+                        self._login()
             try:
                 data = self._request("api/CollectValue/GetCollectValueByMfIdAndDate", auth=True, body={
                     "CompanyId": self._company_id,
@@ -127,8 +131,9 @@ class EnergyApiClient:
                     raise EnergyApiError("能管采集值响应结构不符合接口说明")
                 return data
             except EnergyAuthenticationError:
-                self._auth_id = ""
-                self._auth_until = 0
+                with self._auth_lock:
+                    self._auth_id = ""
+                    self._auth_until = 0
                 if attempt:
                     raise
 
@@ -138,29 +143,39 @@ class EnergyApiClient:
         with self._lock:
             if self._failure and not force and time.monotonic() < self._failure[0]:
                 raise EnergyApiError(self._failure[1])
-            collected = []
-            cursor = start.replace(microsecond=0)
-            # Include fractional end seconds rather than rounding the boundary down.
-            end = end.replace(microsecond=0) + (timedelta(seconds=1) if end.microsecond else timedelta())
-            while cursor < end:
-                stop = min(cursor + timedelta(hours=24), end)
-                key = (tuple(sorted(ids)), cursor, stop)
-                cached = self._cache.get(key)
-                if cached and not force and time.monotonic() < cached[0]:
-                    rows = cached[1]
-                    self._cache.move_to_end(key)
-                else:
+        collected = []
+        cursor = start.replace(microsecond=0)
+        # Include fractional end seconds rather than rounding the boundary down.
+        end = end.replace(microsecond=0) + (timedelta(seconds=1) if end.microsecond else timedelta())
+        while cursor < end:
+            stop = min(cursor + timedelta(hours=24), end)
+            key = (tuple(sorted(ids)), cursor, stop)
+            query_lock = self._query_locks[hash(key) % len(self._query_locks)]
+            with query_lock:
+                with self._lock:
+                    cached = self._cache.get(key)
+                    if cached and not force and time.monotonic() < cached[0]:
+                        rows = cached[1]
+                        self._cache.move_to_end(key)
+                    else:
+                        rows = None
+                if rows is None:
                     try:
                         rows = self._query(ids, cursor, stop)
                     except EnergyApiError as exc:
-                        self._cache.pop(key, None)
-                        self._failure = (time.monotonic() + 15, str(exc))
+                        with self._lock:
+                            self._cache.pop(key, None)
+                            self._failure = (time.monotonic() + 15, str(exc))
                         raise
-                    self._failure = None
-                    self._cache[key] = (time.monotonic() + max(0, self.settings.energy_cache_seconds), rows)
-                    self._cache.move_to_end(key)
-                    while len(self._cache) > 32:
-                        self._cache.popitem(last=False)
-                collected.extend(rows)
-                cursor = stop
-            return deepcopy(collected)
+                    with self._lock:
+                        self._failure = None
+                        self._cache[key] = (
+                            time.monotonic() + max(0, self.settings.energy_cache_seconds),
+                            rows,
+                        )
+                        self._cache.move_to_end(key)
+                        while len(self._cache) > 128:
+                            self._cache.popitem(last=False)
+            collected.extend(rows)
+            cursor = stop
+        return deepcopy(collected)

@@ -54,6 +54,22 @@ def get_energy_month(request: Request, report_month: str = Query(pattern=r"^\d{4
     return {"success": True, "data": data, "request_id": request.state.request_id}
 
 
+@router.get("/monthly-range")
+def get_energy_monthly_range(request: Request, start_date: date, end_date: date):
+    try:
+        data = request.app.state.energy_period_service.get_monthly_range(
+            start_date, end_date
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SqlServerConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("equipment monthly range report query failed")
+        raise HTTPException(status_code=500, detail="设备月度汇总查询失败。") from exc
+    return {"success": True, "data": data, "request_id": request.state.request_id}
+
+
 @router.get("/range")
 def get_energy_range(
     request: Request,

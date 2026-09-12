@@ -361,8 +361,8 @@ watch(chartType, async () => {
   <AnalysisPanel
     report-type="leadership"
     :report-date="appliedPeriodStart"
-    :period-start="appliedPeriodStart"
-    :period-end="appliedPeriodEnd"
+    :period-start="defaultMonthlyView ? '' : appliedPeriodStart"
+    :period-end="defaultMonthlyView ? '' : appliedPeriodEnd"
     :ready="analysisReady"
     :context-version="`${appliedPeriodStart}-${appliedPeriodEnd}-${total.task_count}-${total.work_time_seconds}`"
   />

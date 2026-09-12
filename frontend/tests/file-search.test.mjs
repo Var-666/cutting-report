@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { afterEach, test } from 'node:test'
 import { readFileSync } from 'node:fs'
 import {
+  getCuttingStatus,
   listCuttingCatalogs,
   listCuttingFiles,
   listCuttingProjects,
@@ -66,6 +67,19 @@ test('duplicate project and catalog requests share a five-minute cache', async (
   assert.equal(calls.length, 3)
 })
 
+test('download page status uses the lightweight scope', async () => {
+  const calls = []
+  globalThis.fetch = async (url) => {
+    calls.push(String(url))
+    return { ok: true, json: async () => ({ success: true, data: {} }) }
+  }
+
+  await getCuttingStatus('download')
+
+  assert.equal(calls.length, 1)
+  assert.match(calls[0], /^\/api\/v1\/cutting\/status\?scope=download$/)
+})
+
 test('file download page uses the recursive directory tree without condition builders', () => {
   const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
   const node = readFileSync(new URL('../src/components/CatalogTreeNode.vue', import.meta.url), 'utf8')
@@ -74,6 +88,8 @@ test('file download page uses the recursive directory tree without condition bui
   assert.match(view, /listCuttingProjects/)
   assert.match(view, /listCuttingCatalogs/)
   assert.match(view, /listCuttingFiles/)
+  assert.match(view, /getCuttingStatus\('download'\)/)
+  assert.doesNotMatch(view, /isDownload\.value \? loadProjects\(\) : Promise\.resolve/)
   assert.match(view, /项目目录/)
   assert.match(view, /当前位置/)
   assert.match(view, /const pageSize = 20/)

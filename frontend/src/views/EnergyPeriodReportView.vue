@@ -4,13 +4,18 @@ import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/compon
 import { init, use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
-import { getEnergyRange, getLatestWorkshopProductionDate } from '../api/reports'
+import {
+  getEnergyDay,
+  getEnergyMonthlyRange,
+  getEnergyRange,
+  getLatestWorkshopProductionDate,
+  getTaskEnergyDay,
+} from '../api/reports'
 import { recentTwelveMonthStart, reportToday } from '../api/reportDates.js'
 import AnalysisPanel from '../components/AnalysisPanel.vue'
 import ReportExportMenu from '../components/ReportExportMenu.vue'
 import ReportPeriodPicker from '../components/ReportPeriodPicker.vue'
 import ReportTrendPanel from '../components/ReportTrendPanel.vue'
-import { aggregateEnergyRowsByMonth } from '../utils/energySummary.js'
 import { createReportChartGrid, REPORT_CHART_COLORS } from '../utils/reportChartTheme.js'
 
 use([BarChart, LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
@@ -40,9 +45,7 @@ let active = true
 
 const taskRows = computed(() => taskDay.value?.records || [])
 const dailyRows = computed(() => periodReport.value?.rows || [])
-const summaryRows = computed(() => defaultSummaryView.value
-  ? aggregateEnergyRowsByMonth(dailyRows.value)
-  : dailyRows.value)
+const summaryRows = computed(() => dailyRows.value)
 const month = computed(() => periodReport.value)
 const units = computed(() => taskDay.value?.units || { electricity: 'kWh', gas: 'Nm³' })
 const summary = computed(() => taskDay.value?.summary || {
@@ -160,12 +163,17 @@ async function loadDefaultRanges() {
   const selectedDate = periodStart.value
   const recentStart = recentTwelveMonthStart(selectedDate)
   try {
-    const [taskResult, summaryResult] = await Promise.all([
-      getEnergyRange(selectedDate, selectedDate, { signal: controller.signal }),
-      getEnergyRange(recentStart, selectedDate, { signal: controller.signal }),
+    const [, taskResult] = await Promise.all([
+      getEnergyDay(selectedDate, { signal: controller.signal }),
+      getTaskEnergyDay(selectedDate, { signal: controller.signal }),
     ])
-    taskDay.value = taskResult.task_report
-    periodReport.value = summaryResult.period_report
+    const summaryResult = await getEnergyMonthlyRange(recentStart, selectedDate, { signal: controller.signal })
+    taskDay.value = {
+      ...taskResult,
+      period_start: selectedDate,
+      period_end: selectedDate,
+    }
+    periodReport.value = summaryResult
     appliedPeriodStart.value = selectedDate
     appliedPeriodEnd.value = selectedDate
     summaryPeriodStart.value = recentStart
@@ -225,6 +233,7 @@ watch(chartType, async () => { await nextTick(); renderCharts() })
         v-model:start-date="periodStart"
         v-model:end-date="periodEnd"
         :anchor-date="anchorDate"
+        :max-days="31"
         :disabled="loading"
         @validation-error="error = $event"
       />
@@ -262,8 +271,8 @@ watch(chartType, async () => { await nextTick(); renderCharts() })
   <AnalysisPanel
     report-type="equipment"
     :report-date="appliedPeriodStart"
-    :period-start="appliedPeriodStart"
-    :period-end="appliedPeriodEnd"
+    :period-start="defaultSummaryView ? '' : appliedPeriodStart"
+    :period-end="defaultSummaryView ? '' : appliedPeriodEnd"
     :ready="analysisReady"
     :context-version="`${appliedPeriodStart}-${appliedPeriodEnd}-${summary.task_count}-${summary.total_work_time}`"
   />

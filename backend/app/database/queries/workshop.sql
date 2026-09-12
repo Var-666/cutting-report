@@ -25,7 +25,8 @@ SELECT
     CONVERT(decimal(18, 3), COALESCE(source.[OP_LENGTH_GROOVE], 0)) / 1000.0 AS groove_length,
     CONVERT(decimal(18, 3), COALESCE(source.[WORK_TIME], 0)) AS work_time,
     NULLIF(LTRIM(RTRIM(source.[REMARK])), '') AS remark,
-    source.[START_TIME] AS production_time
+    source.[START_TIME] AS production_time,
+    source.[END_TIME] AS source_updated_at
 FROM task_source AS source
 WHERE source.production_date >= CONVERT(date, ?)
   AND source.production_date < CONVERT(date, ?)

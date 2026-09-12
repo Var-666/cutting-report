@@ -599,20 +599,23 @@ function downloadSourceLabel(item) {
 }
 
 onMounted(async () => {
-  loading.value = true
   try {
-    const [statusData] = await Promise.all([
-      getCuttingStatus(),
-      isDownload.value ? loadProjects() : Promise.resolve(),
-    ])
-    systemStatus.value = statusData
-    await loadPushFiles()
-    await loadMachines()
-    await loadHistory()
+    if (isDownload.value) {
+      const [statusData] = await Promise.all([
+        getCuttingStatus('download'),
+        loadProjects(),
+      ])
+      systemStatus.value = statusData
+      return
+    }
+
+    loading.value = true
+    systemStatus.value = await getCuttingStatus('push')
+    await Promise.all([loadPushFiles(), loadMachines(), loadHistory()])
   } catch (error) {
     showNotice(error.message, 'error')
   } finally {
-    loading.value = false
+    if (!isDownload.value) loading.value = false
   }
 })
 

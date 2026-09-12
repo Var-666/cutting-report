@@ -43,9 +43,13 @@ class QueryService:
             tuple[date, date, str | None, str | None],
             tuple[float, float, EquipmentQueryResult],
         ] = {}
-        self._equipment_query_locks: dict[
-            tuple[date, date, str | None, str | None], Lock
+        self._equipment_query_locks = [Lock() for _ in range(32)]
+        self._bundle_cache_lock = Lock()
+        self._bundle_cache: dict[
+            tuple[str, date, date, str | None, str | None],
+            tuple[float, float, QueryBundle],
         ] = {}
+        self._bundle_query_locks = [Lock() for _ in range(32)]
         self._latest_date_lock = Lock()
         self._latest_date_cache: dict[date, tuple[float, date | None]] = {}
         self._workshop_cache_lock = Lock()
@@ -61,7 +65,7 @@ class QueryService:
             self._workshop_cache = {
                 key: value for key, value in self._workshop_cache.items() if value[0] > now
             }
-            bundle = self.fetch_report_data(ReportFilter(report_date=report_date))
+            bundle = self.fetch_workshop_data(ReportFilter(report_date=report_date))
             ttl = min(60, self.settings.report_data_cache_seconds)
             # Empty days must be checked again when newly finished tasks arrive.
             if ttl > 0 and bundle.workshop_records:
@@ -75,7 +79,97 @@ class QueryService:
             return self._excel_data(filters)
         if self.settings.effective_data_source_mode == "demo":
             return self._demo_data(filters)
-        return self._sqlserver_data(filters)
+        summary = self.fetch_summary_data(filters)
+        workshop = self.fetch_workshop_data(filters)
+        equipment = self.fetch_equipment_data(filters)
+        updated = [
+            value
+            for value in (
+                summary.data_updated_at,
+                workshop.data_updated_at,
+                equipment.data_updated_at,
+            )
+            if value is not None
+        ]
+        return QueryBundle(
+            summary.summary_records,
+            workshop.workshop_records,
+            equipment.records,
+            max(updated) if updated else None,
+        )
+
+    @staticmethod
+    def _cache_key(kind: str, filters: ReportFilter) -> tuple:
+        return (
+            kind,
+            filters.start_date,
+            filters.end_date,
+            filters.project_code,
+            filters.ship_no,
+        )
+
+    def _fetch_cached_bundle(
+        self,
+        kind: str,
+        filters: ReportFilter,
+        loader,
+        *,
+        force: bool = False,
+    ) -> QueryBundle:
+        cache_seconds = self.settings.report_data_cache_seconds
+        if cache_seconds <= 0:
+            return loader(filters)
+        key = self._cache_key(kind, filters)
+        requested_at = monotonic()
+        with self._bundle_cache_lock:
+            cached = self._bundle_cache.get(key)
+            if not force and cached and cached[0] > requested_at:
+                return cached[2]
+        query_lock = self._bundle_query_locks[hash(key) % len(self._bundle_query_locks)]
+        with query_lock:
+            now = monotonic()
+            with self._bundle_cache_lock:
+                cached = self._bundle_cache.get(key)
+                cache_is_fresh = cached and cached[0] > now
+                refreshed_after_request = cached and cached[1] >= requested_at
+                if (not force and cache_is_fresh) or refreshed_after_request:
+                    return cached[2]
+            result = loader(filters)
+            created_at = monotonic()
+            with self._bundle_cache_lock:
+                self._bundle_cache = {
+                    cache_key: value
+                    for cache_key, value in self._bundle_cache.items()
+                    if value[0] > created_at
+                }
+                self._bundle_cache[key] = (
+                    created_at + cache_seconds,
+                    created_at,
+                    result,
+                )
+                while len(self._bundle_cache) > 128:
+                    self._bundle_cache.pop(next(iter(self._bundle_cache)))
+            return result
+
+    def fetch_summary_data(
+        self, filters: ReportFilter, *, force: bool = False
+    ) -> QueryBundle:
+        if self.settings.effective_data_source_mode == "sqlserver":
+            return self._fetch_cached_bundle(
+                "summary", filters, self._sqlserver_summary_data, force=force
+            )
+        bundle = self.fetch_report_data(filters)
+        return QueryBundle(bundle.summary_records, [], [], bundle.data_updated_at)
+
+    def fetch_workshop_data(
+        self, filters: ReportFilter, *, force: bool = False
+    ) -> QueryBundle:
+        if self.settings.effective_data_source_mode == "sqlserver":
+            return self._fetch_cached_bundle(
+                "workshop", filters, self._sqlserver_workshop_data, force=force
+            )
+        bundle = self.fetch_report_data(filters)
+        return QueryBundle([], bundle.workshop_records, [], bundle.data_updated_at)
 
     def fetch_equipment_data(
         self, filters: ReportFilter, *, force: bool = False
@@ -96,7 +190,9 @@ class QueryService:
             cached = self._equipment_cache.get(key)
             if not force and cached and cached[0] > requested_at:
                 return cached[2]
-            query_lock = self._equipment_query_locks.setdefault(key, Lock())
+            query_lock = self._equipment_query_locks[
+                hash(key) % len(self._equipment_query_locks)
+            ]
 
         with query_lock:
             now = monotonic()
@@ -110,11 +206,18 @@ class QueryService:
             result = self._fetch_equipment_uncached(filters)
             created_at = monotonic()
             with self._equipment_cache_lock:
+                self._equipment_cache = {
+                    cache_key: value
+                    for cache_key, value in self._equipment_cache.items()
+                    if value[0] > created_at
+                }
                 self._equipment_cache[key] = (
                     created_at + cache_seconds,
                     created_at,
                     result,
                 )
+                while len(self._equipment_cache) > 128:
+                    self._equipment_cache.pop(next(iter(self._equipment_cache)))
             return result
 
     def fetch_equipment_month_work_times(
@@ -132,6 +235,14 @@ class QueryService:
         """Return configured-machine task counts and cutting seconds by day."""
         month_start = report_month.replace(day=1)
         month_end = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1)
+        return self.fetch_equipment_range_metrics(month_start, month_end)
+
+    def fetch_equipment_range_metrics(
+        self, start_date: date, end_exclusive: date
+    ) -> dict[str, dict[str, Decimal | int]]:
+        """Return daily equipment metrics for a range using one source query."""
+        if end_exclusive <= start_date:
+            return {}
         allowed = {
             value.strip().casefold()
             for value in self.settings.energy_report_equipment_ids
@@ -171,7 +282,7 @@ class QueryService:
             bucket["task_count"] += max(0, int(task_count or 0))
 
         if self.settings.effective_data_source_mode == "excel":
-            for row in self.excel.completed_rows(start=month_start, end=month_end):
+            for row in self.excel.completed_rows(start=start_date, end=end_exclusive):
                 add(
                     self.excel.production_date(row),
                     row.get("MACHINE_NO"),
@@ -180,8 +291,8 @@ class QueryService:
             return totals
 
         if self.settings.effective_data_source_mode == "demo":
-            stamp = month_start
-            while stamp < month_end:
+            stamp = start_date
+            while stamp < end_exclusive:
                 for row in self._demo_data(ReportFilter(report_date=stamp)).equipment_records:
                     add(stamp, row.equipment_id, row.work_time)
                 stamp += timedelta(days=1)
@@ -189,7 +300,7 @@ class QueryService:
 
         rows = self.client.fetch_all(
             self._read_query("equipment_month_work_time.sql"),
-            (month_start, month_end),
+            (self.settings.report_machine_no, start_date, end_exclusive),
         )
         for row in rows:
             add(
@@ -334,7 +445,14 @@ class QueryService:
             if not force and cached and cached[0] > now:
                 return cached[1]
             result = self._latest_production_date_uncached(on_or_before)
+            self._latest_date_cache = {
+                key: value
+                for key, value in self._latest_date_cache.items()
+                if value[0] > now
+            }
             self._latest_date_cache[on_or_before] = (now + cache_seconds, result)
+            while len(self._latest_date_cache) > 128:
+                self._latest_date_cache.pop(next(iter(self._latest_date_cache)))
             return result
 
     def _latest_production_date_uncached(self, on_or_before: date) -> date | None:
@@ -524,6 +642,84 @@ class QueryService:
             default=None,
         )
         return QueryBundle(summaries, workshops, equipment, latest_update)
+
+    def _sqlserver_summary_data(self, filters: ReportFilter) -> QueryBundle:
+        timezone = ZoneInfo(self.settings.timezone)
+        start = datetime.combine(filters.start_date, time.min, tzinfo=timezone).replace(
+            tzinfo=None
+        )
+        end = datetime.combine(
+            filters.end_exclusive, time.min, tzinfo=timezone
+        ).replace(tzinfo=None)
+        parameters = (
+            self.settings.report_machine_no,
+            start,
+            end,
+            filters.project_code,
+            filters.project_code,
+            filters.ship_no,
+            filters.ship_no,
+        )
+        rows = self.client.fetch_all(self._read_query("summary_base.sql"), parameters)
+        records = [
+            SummaryBaseRecord(
+                task_id=str(row["task_id"]),
+                project_code=row.get("project_code"),
+                ship_no=row.get("ship_no"),
+                segment_name=row.get("segment_name"),
+                program_no=row.get("program_no"),
+                cut_length=_decimal(row.get("cut_length")),
+                groove_length=_decimal(row.get("groove_length")),
+                work_time=_decimal(row.get("work_time")),
+                production_time=row.get("production_time"),
+                source_updated_at=row.get("source_updated_at"),
+            )
+            for row in rows
+        ]
+        latest_update = max(
+            (row.source_updated_at for row in records if row.source_updated_at),
+            default=None,
+        )
+        return QueryBundle(records, [], [], latest_update)
+
+    def _sqlserver_workshop_data(self, filters: ReportFilter) -> QueryBundle:
+        timezone = ZoneInfo(self.settings.timezone)
+        start = datetime.combine(filters.start_date, time.min, tzinfo=timezone).replace(
+            tzinfo=None
+        )
+        end = datetime.combine(
+            filters.end_exclusive, time.min, tzinfo=timezone
+        ).replace(tzinfo=None)
+        parameters = (
+            self.settings.report_machine_no,
+            start,
+            end,
+            filters.project_code,
+            filters.project_code,
+            filters.ship_no,
+            filters.ship_no,
+        )
+        rows = self.client.fetch_all(self._read_query("workshop.sql"), parameters)
+        records = [
+            WorkshopRecord(
+                task_id=str(row["task_id"]),
+                project_code=row.get("project_code"),
+                ship_no=row.get("ship_no"),
+                segment_name=row.get("segment_name"),
+                program_no=row.get("program_no"),
+                cut_length=_decimal(row.get("cut_length")),
+                groove_length=_decimal(row.get("groove_length")),
+                work_time=_decimal(row.get("work_time")),
+                remark=row.get("remark"),
+                production_time=row.get("production_time"),
+            )
+            for row in rows
+        ]
+        latest_update = max(
+            (row.get("source_updated_at") for row in rows if row.get("source_updated_at")),
+            default=None,
+        )
+        return QueryBundle([], records, [], latest_update)
 
     def _demo_data(self, filters: ReportFilter) -> QueryBundle:
         project_names = ["A001", "A001", "A002", "B101"]

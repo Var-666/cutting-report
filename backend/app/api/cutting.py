@@ -72,8 +72,14 @@ class DispatchCreateRequest(BaseModel):
 
 
 @router.get("/status")
-def cutting_status(request: Request) -> dict:
-    return _envelope(request, request.app.state.cutting_dispatch.status())
+def cutting_status(
+    request: Request,
+    scope: str = Query(default="push", pattern=r"^(download|push)$"),
+) -> dict:
+    return _envelope(
+        request,
+        request.app.state.cutting_dispatch.status(include_magic=scope == "push"),
+    )
 
 
 @router.get("/machines")

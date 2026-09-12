@@ -183,21 +183,25 @@ class SqlServerPdmRepository:
     def list_projects(self, keyword: str = "", limit: int = 100) -> list[dict[str, Any]]:
         cleaned = keyword.strip()
         pattern = f"%{cleaned}%"
+        keyword_clause = (
+            "AND (ShipNo LIKE ? OR ProjectInfoName LIKE ?)" if cleaned else ""
+        )
+        parameters = (pattern, pattern, limit) if cleaned else (limit,)
         return self._cached_directory_rows(
             ("projects", cleaned, limit),
             lambda: self.client.fetch_all(
-                """
+                f"""
                 SELECT ID AS project_id,
                        ShipNo AS ship_no,
                        ProjectInfoName AS project_name,
                        State AS state
                 FROM dbo.BasicConfig_ProjectInfo
                 WHERE State IN (N'待生效', N'规划', N'结束', N'开工', N'生效', N'已进坞', N'已下水')
-                  AND (? = '' OR ShipNo LIKE ? OR ProjectInfoName LIKE ?)
+                  {keyword_clause}
                 ORDER BY ShipNo
                 OFFSET 0 ROWS FETCH NEXT ? ROWS ONLY
                 """,
-                (cleaned, pattern, pattern, limit),
+                parameters,
             ),
         )
 
@@ -273,27 +277,34 @@ class SqlServerPdmRepository:
             status=status,
             keyword=keyword,
         )
-        total_row = self.client.fetch_all(
-            f"""
-            SELECT COUNT(*) AS total
-            FROM dbo.PDM_DesignDocumentInfo AS a
-            JOIN dbo.PDM_NCDocumentCatalog AS c ON a.FileID = c.ID
-            WHERE {where_sql}
-            """,
-            tuple(parameters),
-        )[0]
         offset = (page - 1) * page_size
         rows = self.client.fetch_all(
             f"""
-            SELECT {self.FILE_COLUMNS}
-            {self.FILE_FROM}
-            WHERE {where_sql}
-            ORDER BY c.Title, a.DocumentNo
-            OFFSET ? ROWS FETCH NEXT ? ROWS ONLY
+            WITH page_documents AS (
+                SELECT
+                    a.ID AS document_id,
+                    c.Title AS sort_catalog_title,
+                    a.DocumentNo AS sort_document_no,
+                    COUNT_BIG(*) OVER () AS total_count
+                FROM dbo.PDM_DesignDocumentInfo AS a
+                JOIN dbo.PDM_NCDocumentCatalog AS c ON a.FileID = c.ID
+                WHERE {where_sql}
+                ORDER BY c.Title, a.DocumentNo, a.ID
+                OFFSET ? ROWS FETCH NEXT ? ROWS ONLY
+            )
+            SELECT {self.FILE_COLUMNS}, page.total_count
+            FROM page_documents AS page
+            JOIN dbo.PDM_DesignDocumentInfo AS a ON a.ID = page.document_id
+            JOIN dbo.PDM_NCDocumentCatalog AS c ON a.FileID = c.ID
+            {self.PROJECT_JOIN} {self.VERSION_JOIN} {self.PHYSICAL_APPLY}
+            ORDER BY page.sort_catalog_title, page.sort_document_no, page.document_id
             """,
             tuple([*parameters, offset, page_size]),
         )
-        return rows, int(total_row["total"] or 0)
+        total = int(rows[0].pop("total_count") or 0) if rows else 0
+        for row in rows[1:]:
+            row.pop("total_count", None)
+        return rows, total
 
     def get_file(self, document_id: str) -> dict[str, Any] | None:
         where_sql, parameters = self._filters(document_id=document_id)

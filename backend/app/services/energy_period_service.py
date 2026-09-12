@@ -403,11 +403,13 @@ class EnergyPeriodService:
         warning = "存在时间重叠任务，相关行未计入汇总。" if conflicts else ""
         return result(output, mode, "", warning)
 
-    def get_month(self, report_month):
+    def get_month(self, report_month, *, month_metrics=None):
         year, month = map(int, report_month.split("-"))
         count = calendar.monthrange(year, month)[1]
-        month_metrics = {}
-        if self.query_service:
+        metrics_supplied = month_metrics is not None
+        if month_metrics is None:
+            month_metrics = {}
+        if self.query_service and not metrics_supplied:
             if hasattr(self.query_service, "fetch_equipment_month_metrics"):
                 month_metrics = self.query_service.fetch_equipment_month_metrics(
                     date(year, month, 1)
@@ -454,3 +456,66 @@ class EnergyPeriodService:
             "elapsed_day_count": len(elapsed), "calendar_day_count": count,
             "resync_dates": resync_dates,
             **self.metadata(), "storage_notice": ""})
+
+    def get_monthly_range(self, start_date: date, end_date: date):
+        if end_date < start_date:
+            raise ValueError("结束日期不能早于开始日期")
+        month_count = (
+            (end_date.year - start_date.year) * 12
+            + end_date.month - start_date.month + 1
+        )
+        if month_count > 12:
+            raise ValueError("月度汇总区间最长为 12 个月")
+        if not 1900 <= start_date.year <= 2100 or not 1900 <= end_date.year <= 2100:
+            raise ValueError("日期需在 1900—2100 年之间")
+
+        metrics = {}
+        if self.query_service:
+            if hasattr(self.query_service, "fetch_equipment_range_metrics"):
+                metrics = self.query_service.fetch_equipment_range_metrics(
+                    start_date, end_date + timedelta(days=1)
+                )
+            else:
+                current = start_date.replace(day=1)
+                while current <= end_date:
+                    metrics.update(self.query_service.fetch_equipment_month_metrics(current))
+                    current = (current.replace(day=28) + timedelta(days=4)).replace(day=1)
+
+        selected_daily_rows = []
+        monthly_rows = []
+        current = start_date.replace(day=1)
+        while current <= end_date:
+            report_month = current.strftime("%Y-%m")
+            month_metrics = {
+                key: value for key, value in metrics.items()
+                if key.startswith(report_month + "-")
+            }
+            report = self.get_month(report_month, month_metrics=month_metrics)
+            rows = [
+                row for row in report["rows"]
+                if start_date.isoformat() <= row["report_date"] <= end_date.isoformat()
+            ]
+            selected_daily_rows.extend(rows)
+            monthly_rows.append({
+                "report_date": report_month,
+                "task_count": sum(row["task_count"] or 0 for row in rows),
+                "work_time_seconds": sum(row["work_time_seconds"] or 0 for row in rows),
+                "electricity": total_channel(rows, "electricity"),
+                "gas": total_channel(rows, "gas"),
+            })
+            current = (current.replace(day=28) + timedelta(days=4)).replace(day=1)
+
+        return to_primitive({
+            "period_start": start_date.isoformat(),
+            "period_end": end_date.isoformat(),
+            "rows": monthly_rows,
+            "summary": {
+                key: total_channel(selected_daily_rows, key) for key in CHANNELS
+            },
+            "total_task_count": sum(row["task_count"] or 0 for row in selected_daily_rows),
+            "total_work_time_seconds": sum(row["work_time_seconds"] or 0 for row in selected_daily_rows),
+            "saved_day_count": sum(bool(row["saved"]) for row in selected_daily_rows),
+            "elapsed_day_count": sum(not row["is_future"] for row in selected_daily_rows),
+            "calendar_day_count": len(selected_daily_rows),
+            **self.metadata(),
+        })
