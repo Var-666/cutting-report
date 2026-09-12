@@ -18,6 +18,7 @@ from app.database.workshop import (
 )
 from app.models.domain import to_primitive
 from app.services.statistics_service import build_worker_work_summaries
+from app.services.workshop_sorting import sort_workshop_by_recency
 
 
 router = APIRouter(prefix="/api/v1/workshop", tags=["workshop-confirmation"])
@@ -81,42 +82,9 @@ def _records_for_date(request: Request, report_date: date):
     return report, records
 
 
-def _timestamp(value: datetime | None, *, missing: float) -> float:
-    if value is None:
-        return missing
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=ZoneInfo(settings.timezone))
-    return value.timestamp()
-
-
 def sort_workshop_records(records: list, sort_mode: Literal["manager", "worker"]):
-    """Put the rows that matter most to each page first."""
-    production_missing = float("inf")
-
-    if sort_mode == "worker":
-        return sorted(
-            records,
-            key=lambda row: (
-                1 if row.confirmed_by else 0,
-                -_timestamp(row.confirmed_at, missing=0.0)
-                if row.confirmed_by
-                else _timestamp(row.production_time, missing=production_missing),
-                _timestamp(row.production_time, missing=production_missing),
-                row.task_id,
-            ),
-        )
-
-    return sorted(
-        records,
-        key=lambda row: (
-            0 if row.confirmed_by else 1,
-            -_timestamp(row.confirmed_at, missing=0.0)
-            if row.confirmed_by
-            else _timestamp(row.production_time, missing=production_missing),
-            _timestamp(row.production_time, missing=production_missing),
-            row.task_id,
-        ),
-    )
+    """Keep both manager and worker tables in newest-to-oldest order."""
+    return sort_workshop_by_recency(records, settings.timezone)
 
 
 @router.get("/latest-date")

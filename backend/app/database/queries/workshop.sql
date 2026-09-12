@@ -32,4 +32,4 @@ WHERE source.production_date >= CONVERT(date, ?)
   AND source.production_date < CONVERT(date, ?)
   AND (? IS NULL OR source.[PROJECT_NAME] = ?)
   AND (? IS NULL OR source.[PROJECT_NAME] = ?)
-ORDER BY source.[START_TIME], source.[TASK_ID];
+ORDER BY source.[START_TIME] DESC, source.[TASK_ID];

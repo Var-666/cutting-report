@@ -24,7 +24,7 @@ def _record(task_id: str, production_hour: int, confirmed_hour: int | None = Non
     )
 
 
-def test_manager_sort_puts_latest_confirmations_before_unconfirmed_tasks():
+def test_manager_sort_puts_latest_production_first():
     records = [
         _record("unconfirmed-late", 12),
         _record("confirmed-old", 9, 14),
@@ -35,14 +35,14 @@ def test_manager_sort_puts_latest_confirmations_before_unconfirmed_tasks():
     ordered = sort_workshop_records(records, "manager")
 
     assert [row.task_id for row in ordered] == [
+        "unconfirmed-late",
         "confirmed-new",
         "confirmed-old",
         "unconfirmed-early",
-        "unconfirmed-late",
     ]
 
 
-def test_worker_sort_puts_unconfirmed_tasks_first_in_production_time_order():
+def test_worker_sort_puts_latest_production_first():
     records = [
         _record("confirmed-old", 9, 14),
         _record("unconfirmed-late", 12),
@@ -53,8 +53,8 @@ def test_worker_sort_puts_unconfirmed_tasks_first_in_production_time_order():
     ordered = sort_workshop_records(records, "worker")
 
     assert [row.task_id for row in ordered] == [
-        "unconfirmed-early",
         "unconfirmed-late",
         "confirmed-new",
         "confirmed-old",
+        "unconfirmed-early",
     ]

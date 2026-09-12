@@ -32,6 +32,7 @@ from app.services.range_report_service import RangeReportService, previous_equal
 from app.services.report_analysis_service import ReportAnalysisService
 from app.services.report_service import ReportService
 from app.services.statistics_service import StatisticsService, build_worker_work_summaries
+from app.services.workshop_sorting import sort_workshop_by_recency
 
 
 REPORT_TITLES = {
@@ -440,6 +441,9 @@ class ReportPipeline:
                     project_code=filters.project_code,
                     ship_no=filters.ship_no,
                 )
+                workshop_records = sort_workshop_by_recency(
+                    workshop_records, self.settings.timezone
+                )
                 summaries = [
                     SummaryBaseRecord(
                         task_id=row.task_id,
@@ -465,6 +469,9 @@ class ReportPipeline:
                     self.workshop_repository.get_daily_report_records(
                         filters.report_date.isoformat()
                     )
+                )
+                workshop_records = sort_workshop_by_recency(
+                    workshop_records, self.settings.timezone
                 )
                 if (
                     workshop_report is None
