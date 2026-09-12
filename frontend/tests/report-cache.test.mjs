@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createReportCache } from '../src/api/reportCache.js'
-import { reportToday } from '../src/api/reportDates.js'
+import { recentTwelveMonthStart, reportToday } from '../src/api/reportDates.js'
 
 function deferred() {
   let resolve
@@ -12,6 +12,11 @@ function deferred() {
 test('report date is stable in Shanghai, including month rollover', () => {
   assert.equal(reportToday(new Date('2026-08-31T16:00:01Z')), '2026-09-01')
   assert.equal(reportToday(new Date('2026-08-31T15:59:59Z')), '2026-08-31')
+})
+
+test('recent twelve-month window includes the selected month and previous eleven months', () => {
+  assert.equal(recentTwelveMonthStart('2026-09-11'), '2025-10-01')
+  assert.equal(recentTwelveMonthStart('2026-01-31'), '2025-02-01')
 })
 
 test('shares inflight requests and cached data, separates keys and expires results', async () => {

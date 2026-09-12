@@ -47,6 +47,13 @@ const correction = reactive({
 })
 const totalPages = computed(() => Math.max(1, Math.ceil(result.value.total / result.value.page_size)))
 const isWorker = computed(() => props.mode === 'worker')
+const analysisReady = computed(() => Boolean(
+  !isWorker.value
+  && result.value.report
+  && result.value.report.period_start === filters.startDate
+  && result.value.report.period_end === filters.endDate
+  && !loading.value
+))
 const selectableTasks = computed(() => isWorker.value ? result.value.items.filter((row) => !row.confirmed_by) : [])
 const selectedTaskCount = computed(() => selectedTasks.value.size)
 const allVisibleTasksSelected = computed(() => (
@@ -176,6 +183,33 @@ function closeConfirmationFeedback() {
   confirmationFeedback.visible = false
 }
 
+function applyConfirmedTasks(confirmations = []) {
+  const confirmationByTaskId = new Map(
+    confirmations.map((confirmation) => [String(confirmation.task_id), confirmation]),
+  )
+  if (!confirmationByTaskId.size) return
+
+  let newlyConfirmed = 0
+  const items = result.value.items.map((row) => {
+    const confirmation = confirmationByTaskId.get(String(row.task_id))
+    if (!confirmation) return row
+    if (!row.confirmed_by) newlyConfirmed += 1
+    return {
+      ...row,
+      confirmed_by_id: confirmation.worker_id,
+      confirmed_by: confirmation.worker_name,
+      confirmed_by_company_no: confirmation.worker_company_no ?? row.confirmed_by_company_no ?? null,
+      confirmed_at: confirmation.confirmed_at,
+    }
+  })
+  result.value = {
+    ...result.value,
+    items,
+    confirmed_count: Number(result.value.confirmed_count || 0) + newlyConfirmed,
+  }
+  reconcileVisibleTaskSelection(items)
+}
+
 async function load(page = 1, { silent = false, ensureReport = true, force = true } = {}) {
   if (!isWorker.value && filters.endDate < filters.startDate) {
     error.value = '结束日期不能早于开始日期'
@@ -226,7 +260,9 @@ async function submitBatchConfirmation() {
   error.value = ''
   showConfirmationFeedback('pending', '正在确认任务', `共 ${tasks.length} 项 · 请稍候`)
   try {
-    await confirmWorkshopTasks(tasks.map((row) => row.task_id), filters.reportDate)
+    const confirmationResult = await confirmWorkshopTasks(tasks.map((row) => row.task_id), filters.reportDate)
+    const confirmations = confirmationResult.items || []
+    applyConfirmedTasks(confirmations)
     batchConfirmation.visible = false
     batchConfirmation.tasks = []
     clearSelectedTasks()
@@ -237,6 +273,8 @@ async function submitBatchConfirmation() {
       5000,
     )
     await load(result.value.page, { silent: true, ensureReport: false })
+    // 即使后台刷新短暂返回旧快照，也不能让已确认任务重新显示待确认按钮。
+    applyConfirmedTasks(confirmations)
   } catch (exception) {
     error.value = exception.message
     batchConfirmation.error = exception.message
@@ -490,11 +528,13 @@ onUnmounted(() => {
   </ReportTrendPanel>
 
   <AnalysisPanel
-    v-if="!isWorker && filters.startDate === filters.endDate"
+    v-if="!isWorker"
     report-type="workshop"
-    :report-date="filters.reportDate"
-    :ready="Boolean(result.report)"
-    :context-version="`${result.report?.item_count || 0}-${result.report?.confirmed_count || 0}`"
+    :report-date="filters.startDate"
+    :period-start="filters.startDate"
+    :period-end="filters.endDate"
+    :ready="analysisReady"
+    :context-version="`${filters.startDate}-${filters.endDate}-${result.report?.item_count || 0}-${result.report?.confirmed_count || 0}`"
   />
 
 </template>

@@ -117,12 +117,13 @@ FILE_HTTP_AUTHORIZATION=
 FILE_HTTP_COOKIE=
 FILE_DOWNLOAD_TIMEOUT_SECONDS=60
 FILE_DOWNLOAD_MAX_BYTES=52428800
+FILE_DOWNLOAD_RETENTION_DAYS=7
 MAGIC_BOX_ENABLED=true
 MAGIC_BOX_TIMEOUT_SECONDS=60
 MAGIC_BOX_CONFIG_CACHE_SECONDS=60
 ```
 
-若接口不需要认证，两项认证配置留空；若需要，在部署电脑填入该文件服务自己的认证值。
+若接口不需要认证，两项认证配置留空；若需要，在部署电脑填入该文件服务自己的认证值。成功下载的实体文件默认保留7天，服务启动时检查一次，之后每天检查；超期只清理实体文件，下载记录继续保留。若需关闭自动清理，将 `FILE_DOWNLOAD_RETENTION_DAYS` 设为 `0`。
 不要把认证值发到聊天、截图或代码仓库。配置后重新构建启动（仅修改配置则重新创建容器）。
 如果管理界面曾保存 PDM 配置，`data/settings.env` 的对应数据库参数优先。
 Docker 容器必须能访问 `10.147.0.17:8800`；Apifox 测试成功不能替代容器内网联调。

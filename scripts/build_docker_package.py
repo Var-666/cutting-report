@@ -119,7 +119,21 @@ def build_package(root: Path, name: str) -> Path:
     # Never replace a previously delivered release archive.
     with zipfile.ZipFile(destination, "x", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
         for relative, content in sorted(payload.items()):
-            archive.writestr(f"{name}/{relative}", content)
+            archive_path = f"{name}/{relative}"
+            info = zipfile.ZipInfo(archive_path)
+            info.create_system = 3
+            # The image runs as an unprivileged user. Files mounted from a Linux
+            # host must therefore be world-readable after root extracts the ZIP.
+            # Keep the deployment environment private and make shell scripts
+            # directly executable.
+            mode = 0o600 if relative == ".env" else 0o755 if relative.endswith(".sh") else 0o644
+            info.external_attr = mode << 16
+            archive.writestr(
+                info,
+                content,
+                compress_type=zipfile.ZIP_DEFLATED,
+                compresslevel=9,
+            )
     with zipfile.ZipFile(destination) as archive:
         if archive.testzip() is not None:
             raise ValueError("ZIP integrity check failed")

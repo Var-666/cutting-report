@@ -1,11 +1,13 @@
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
 from pydantic import ValidationError
 
 from app.config import Settings
+from app.api.analysis import AnalysisRequest, analyze_report
 from app.database.metadata import MetadataRepository
 from app.models.api import ReportCreateRequest
 from app.services.pipeline import ReportPipeline
@@ -57,6 +59,49 @@ def test_previous_comparison_uses_an_equal_non_overlapping_period() -> None:
         date(2026, 8, 15),
         date(2026, 8, 17),
     )
+
+
+@pytest.mark.parametrize(
+    ("report_type", "expected_fact_label"),
+    [
+        ("leadership", "区间任务数"),
+        ("workshop", "任务总数"),
+        ("equipment", "任务总数"),
+    ],
+)
+def test_page_analysis_uses_the_selected_range(
+    tmp_path: Path,
+    report_type: str,
+    expected_fact_label: str,
+) -> None:
+    _, _, pipeline = _pipeline(tmp_path)
+    request = SimpleNamespace(
+        state=SimpleNamespace(request_id="analysis-range"),
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                report_analysis_service=pipeline.analysis_service,
+                range_report_service=pipeline.range_service,
+                leadership_report_service=pipeline.leadership_service,
+                workshop=pipeline.workshop_repository,
+                query_service=pipeline.query_service,
+                energy_period_service=pipeline.energy_period_service,
+            )
+        ),
+    )
+
+    response = analyze_report(
+        AnalysisRequest(
+            report_type=report_type,
+            report_date=date(2026, 8, 18),
+            period_start=date(2026, 8, 18),
+            period_end=date(2026, 8, 20),
+        ),
+        request,
+    )
+
+    facts = {fact["id"]: fact for fact in response["data"]["facts"]}
+    assert facts["F001"]["label"] == expected_fact_label
+    assert "2026-08-18 至 2026-08-20" in response["data"]["overview"]
 
 
 @pytest.mark.parametrize(

@@ -5,11 +5,12 @@ import { init, use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
 import { getEnergyRange, getLatestWorkshopProductionDate } from '../api/reports'
-import { reportToday } from '../api/reportDates.js'
+import { recentTwelveMonthStart, reportToday } from '../api/reportDates.js'
 import AnalysisPanel from '../components/AnalysisPanel.vue'
 import ReportExportMenu from '../components/ReportExportMenu.vue'
 import ReportPeriodPicker from '../components/ReportPeriodPicker.vue'
 import ReportTrendPanel from '../components/ReportTrendPanel.vue'
+import { createReportChartGrid, REPORT_CHART_COLORS } from '../utils/reportChartTheme.js'
 
 use([BarChart, LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
 defineProps({ exporting: Boolean })
@@ -19,13 +20,16 @@ const today = reportToday()
 const anchorDate = ref(today)
 const periodStart = ref(today)
 const periodEnd = ref(today)
+const appliedPeriodStart = ref(today)
+const appliedPeriodEnd = ref(today)
+const summaryPeriodStart = ref(recentTwelveMonthStart(today))
+const summaryPeriodEnd = ref(today)
+const defaultSummaryView = ref(true)
 const taskDay = ref(null)
 const periodReport = ref(null)
 const chartType = ref('bar_line')
 const loading = ref(false)
 const error = ref('')
-const page = ref(1)
-const pageSize = 50
 const taskPanel = ref(null)
 const periodPanel = ref(null)
 let taskChart = null
@@ -36,8 +40,6 @@ let active = true
 const taskRows = computed(() => taskDay.value?.records || [])
 const dailyRows = computed(() => periodReport.value?.rows || [])
 const month = computed(() => periodReport.value)
-const visibleTaskRows = computed(() => taskRows.value.slice((page.value - 1) * pageSize, page.value * pageSize))
-const totalPages = computed(() => Math.max(1, Math.ceil(taskRows.value.length / pageSize)))
 const units = computed(() => taskDay.value?.units || { electricity: 'kWh', gas: 'Nm³' })
 const summary = computed(() => taskDay.value?.summary || {
   task_count: 0,
@@ -49,7 +51,13 @@ const summary = computed(() => taskDay.value?.summary || {
 })
 const equipmentScopeLabel = computed(() => taskDay.value?.equipment_scope?.join(' / ') || 'Cutter01')
 const configurationError = computed(() => taskDay.value?.configuration_error || '')
-const analysisReady = computed(() => Boolean(taskDay.value && periodStart.value === periodEnd.value && !loading.value))
+const summaryTitle = computed(() => defaultSummaryView.value ? '近12个月每日能耗汇总' : '区间每日能耗汇总')
+const analysisReady = computed(() => Boolean(
+  taskDay.value
+  && taskDay.value.period_start === appliedPeriodStart.value
+  && taskDay.value.period_end === appliedPeriodEnd.value
+  && !loading.value
+))
 
 function format(value, digits = 1) {
   if (value === null || value === undefined || !Number.isFinite(Number(value))) return '--'
@@ -72,17 +80,17 @@ function chartValue(value) {
 function chartOption(rows, labels) {
   const line = chartType.value === 'line'
   return {
-    tooltip: { trigger: 'axis', confine: true },
-    legend: { data: ['电耗', '气耗'], top: 6 },
-    grid: { left: 22, right: 28, bottom: 18, top: 54, containLabel: true },
+    tooltip: { trigger: 'axis' },
+    legend: { data: ['电耗', '气耗'] },
+    grid: createReportChartGrid(),
     xAxis: { type: 'category', data: labels, axisLabel: { hideOverlap: true } },
     yAxis: [
       { type: 'value', name: `电耗\n${units.value.electricity}`, splitLine: { lineStyle: { color: '#edf1f4' } } },
       { type: 'value', name: `气耗\n${units.value.gas}`, splitLine: { show: false } },
     ],
     series: [
-      { name: '电耗', type: line ? 'line' : 'bar', yAxisIndex: 0, data: rows.map((row) => chartValue(row.electricity)), tooltip: { valueFormatter: (value) => format(value) }, itemStyle: { color: '#db8c32' } },
-      { name: '气耗', type: chartType.value === 'bar' ? 'bar' : 'line', yAxisIndex: 1, data: rows.map((row) => chartValue(row.gas)), tooltip: { valueFormatter: (value) => format(value) }, itemStyle: { color: '#167e85' } },
+      { name: '电耗', type: line ? 'line' : 'bar', yAxisIndex: 0, data: rows.map((row) => chartValue(row.electricity)), tooltip: { valueFormatter: (value) => format(value) }, itemStyle: { color: REPORT_CHART_COLORS.primary } },
+      { name: '气耗', type: chartType.value === 'bar' ? 'bar' : 'line', yAxisIndex: 1, data: rows.map((row) => chartValue(row.gas)), tooltip: { valueFormatter: (value) => format(value) }, itemStyle: { color: chartType.value === 'bar_line' ? REPORT_CHART_COLORS.accent : REPORT_CHART_COLORS.secondary } },
     ],
   }
 }
@@ -114,11 +122,45 @@ async function loadRange(force = false) {
   controller = new AbortController()
   loading.value = true
   error.value = ''
+  const requestedStart = periodStart.value
+  const requestedEnd = periodEnd.value
   try {
-    const result = await getEnergyRange(periodStart.value, periodEnd.value, { force, signal: controller.signal })
+    const result = await getEnergyRange(requestedStart, requestedEnd, { force, signal: controller.signal })
     taskDay.value = result.task_report
     periodReport.value = result.period_report
-    page.value = 1
+    appliedPeriodStart.value = requestedStart
+    appliedPeriodEnd.value = requestedEnd
+    summaryPeriodStart.value = requestedStart
+    summaryPeriodEnd.value = requestedEnd
+    defaultSummaryView.value = false
+    await nextTick()
+    renderCharts()
+  } catch (exception) {
+    if (exception.name !== 'AbortError') error.value = exception.message
+  } finally {
+    loading.value = false
+  }
+}
+
+async function loadDefaultRanges() {
+  controller?.abort()
+  controller = new AbortController()
+  loading.value = true
+  error.value = ''
+  const selectedDate = periodStart.value
+  const recentStart = recentTwelveMonthStart(selectedDate)
+  try {
+    const [taskResult, summaryResult] = await Promise.all([
+      getEnergyRange(selectedDate, selectedDate, { signal: controller.signal }),
+      getEnergyRange(recentStart, selectedDate, { signal: controller.signal }),
+    ])
+    taskDay.value = taskResult.task_report
+    periodReport.value = summaryResult.period_report
+    appliedPeriodStart.value = selectedDate
+    appliedPeriodEnd.value = selectedDate
+    summaryPeriodStart.value = recentStart
+    summaryPeriodEnd.value = selectedDate
+    defaultSummaryView.value = true
     await nextTick()
     renderCharts()
   } catch (exception) {
@@ -132,9 +174,9 @@ function exportReport(format = 'html') {
   if (!taskDay.value || loading.value) return
   emit('export', {
     report_type: 'equipment',
-    report_date: periodStart.value,
-    period_start: periodStart.value,
-    period_end: periodEnd.value,
+    report_date: appliedPeriodStart.value,
+    period_start: appliedPeriodStart.value,
+    period_end: appliedPeriodEnd.value,
     project_code: null,
     ship_no: null,
     parameters: { chart_type: chartType.value },
@@ -155,7 +197,7 @@ async function initializeReport() {
   } catch (exception) {
     error.value = exception.message
   }
-  await loadRange()
+  await loadDefaultRanges()
 }
 
 onMounted(initializeReport)
@@ -185,7 +227,7 @@ watch(chartType, async () => { await nextTick(); renderCharts() })
   <div v-if="error" class="global-error"><strong>查询提示</strong><span>{{ error }}</span><button @click="error = ''">关闭</button></div>
   <div v-if="configurationError" class="energy-config-note"><strong>能管数据提示</strong><span>{{ configurationError }}。缺失值显示 --，不按零计算。</span></div>
 
-  <ReportTrendPanel ref="taskPanel" number="01" title="区间任务能耗明细" :subtitle="`${periodStart} 至 ${periodEnd}`" chart-label="任务能耗图" :height="260">
+  <ReportTrendPanel ref="taskPanel" number="01" title="区间任务能耗明细" :subtitle="`${appliedPeriodStart} 至 ${appliedPeriodEnd}`" chart-label="任务能耗图">
     <template #summary>
       <div class="energy-stat-strip">
         <div><span>任务电耗合计</span><strong>{{ format(summary.total_electricity_consumption) }}</strong><small>{{ units.electricity }}</small></div>
@@ -197,24 +239,27 @@ watch(chartType, async () => { await nextTick(); renderCharts() })
     <template #table>
         <table v-content-table class="energy-period-table energy-task-table summary-table" aria-label="任务能耗明细表">
           <thead><tr><th scope="col">序号</th><th scope="col">工程号</th><th scope="col">船号</th><th scope="col">分段名</th><th scope="col">任务开始</th><th scope="col">切割时长</th><th scope="col">电耗</th><th scope="col">气耗</th></tr></thead>
-          <tbody><tr v-for="(row, index) in visibleTaskRows" :key="row.task_id"><th scope="row">{{ (page - 1) * pageSize + index + 1 }}</th><td>{{ row.project_code || '--' }}</td><td>{{ row.ship_no || '--' }}</td><td>{{ row.segment_name || '--' }}</td><td>{{ dateTime(row.production_time) }}</td><td>{{ duration(row.work_time) }}</td><td>{{ format(row.electricity_consumption) }}</td><td>{{ format(row.gas_consumption) }}</td></tr><tr v-if="!visibleTaskRows.length"><td colspan="8" class="energy-empty">{{ loading ? '正在查询…' : '所选区间暂无任务' }}</td></tr></tbody>
+          <tbody><tr v-for="(row, index) in taskRows" :key="row.task_id"><th scope="row">{{ index + 1 }}</th><td>{{ row.project_code || '--' }}</td><td>{{ row.ship_no || '--' }}</td><td>{{ row.segment_name || '--' }}</td><td>{{ dateTime(row.production_time) }}</td><td>{{ duration(row.work_time) }}</td><td>{{ format(row.electricity_consumption) }}</td><td>{{ format(row.gas_consumption) }}</td></tr><tr v-if="!taskRows.length"><td colspan="8" class="energy-empty">{{ loading ? '正在查询…' : '所选区间暂无任务' }}</td></tr></tbody>
           <tfoot><tr><th aria-hidden="true"></th><th scope="row">汇总</th><th>{{ equipmentScopeLabel }}</th><th>{{ summary.task_count || 0 }} 项</th><th>--</th><th>{{ duration(summary.total_work_time) }}</th><th>{{ format(summary.total_electricity_consumption) }}</th><th>{{ format(summary.total_gas_consumption) }}</th></tr></tfoot>
         </table>
     </template>
-    <template #footer><div v-if="taskRows.length" class="history-pagination"><span>第 {{ page }} / {{ totalPages }} 页，共 {{ taskRows.length }} 项</span><div><button :disabled="page <= 1" @click="page--">上一页</button><button :disabled="page >= totalPages" @click="page++">下一页</button></div></div></template>
   </ReportTrendPanel>
 
-  <ReportTrendPanel ref="periodPanel" number="02" title="区间每日能耗汇总" :subtitle="`月度每日能耗汇总口径 · ${dailyRows.length} 天`" chart-label="每日能耗图" :height="260">
+  <ReportTrendPanel ref="periodPanel" number="02" :title="summaryTitle" :subtitle="`${summaryPeriodStart} 至 ${summaryPeriodEnd} · ${dailyRows.length} 天`" chart-label="每日能耗图">
     <template #table><table v-content-table class="leadership-table energy-month-table summary-table" aria-label="月度每日能耗汇总表"><thead><tr><th scope="col">日期</th><th scope="col">任务数</th><th scope="col">切割时长</th><th scope="col">电耗</th><th scope="col">气耗</th></tr></thead><tbody><tr v-for="row in dailyRows" :key="row.report_date"><td>{{ row.report_date }}</td><td>{{ row.task_count }}</td><td>{{ duration(row.work_time_seconds) }}</td><td>{{ valueText(row.electricity) }}</td><td>{{ valueText(row.gas) }}</td></tr><tr v-if="!dailyRows.length"><td colspan="5" class="energy-empty">{{ loading ? '正在查询…' : '所选区间暂无每日汇总' }}</td></tr></tbody><tfoot><tr><th scope="row">汇总</th><th>{{ month?.total_task_count || 0 }}</th><th>{{ duration(month?.total_work_time_seconds) }}</th><th>{{ valueText(month?.summary?.electricity) }}</th><th>{{ valueText(month?.summary?.gas) }}</th></tr></tfoot></table></template>
   </ReportTrendPanel>
 
-  <p v-if="periodStart !== periodEnd" class="report-source-note">区间智能分析将在导出报告时生成，并与前一个等长区间对比。</p>
-  <AnalysisPanel v-else report-type="equipment" :report-date="periodStart" :ready="analysisReady" :context-version="`${summary.task_count}-${summary.total_work_time}`" />
+  <AnalysisPanel
+    report-type="equipment"
+    :report-date="appliedPeriodStart"
+    :period-start="appliedPeriodStart"
+    :period-end="appliedPeriodEnd"
+    :ready="analysisReady"
+    :context-version="`${appliedPeriodStart}-${appliedPeriodEnd}-${summary.task_count}-${summary.total_work_time}`"
+  />
 </template>
 
 <style scoped>
-.equipment-hero > div:first-child { min-width:0; flex:1 1 auto; }
-.energy-period-query { flex:0 0 auto; }
 .energy-config-note { display:grid; gap:6px; padding:14px 18px; margin-bottom:20px; background:#fff7e9; border:1px solid #eddbb6; color:#85571c; font-size:13px; }
 .energy-stat-strip { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin:20px 18px 0; }
 .energy-stat-strip > div { min-width:0; min-height:112px; padding:18px 20px; border-top:3px solid var(--cyan); background:#fff; box-shadow:0 7px 22px rgba(21,54,78,.055); }
@@ -228,8 +273,6 @@ watch(chartType, async () => { await nextTick(); renderCharts() })
 .energy-period-table tfoot th { position:sticky; bottom:0; background:#eef4f7; color:var(--navy); }
 .energy-task-table tfoot th:nth-child(2),.energy-task-table tfoot th:nth-child(3),.energy-task-table tfoot th:nth-child(4) { text-align:left; }
 .energy-empty { height:120px; color:#8a9aa5; }
-.history-pagination { display:flex; justify-content:space-between; align-items:center; padding:0 18px 18px; }
-.history-pagination button { margin-left:8px; }
 @media (max-width:900px) { .energy-stat-strip { grid-template-columns:1fr 1fr; } }
 @media (max-width:560px) { .energy-stat-strip { grid-template-columns:1fr; } }
 </style>

@@ -284,12 +284,14 @@ export function getEnergyMonth(reportMonth, { force = false, signal } = {}) {
   return reportCache.read(`energy:month:${reportMonth}`, (signal) => request(`/api/v1/energy-report/month?${query}`, { signal }), { ttl: 60000, force, signal })
 }
 
-export function analyzeReport({ reportType, reportDate, force = false }) {
+export function analyzeReport({ reportType, reportDate, periodStart, periodEnd, force = false }) {
   return request('/api/v1/analysis', {
     method: 'POST',
     body: JSON.stringify({
       report_type: reportType,
       report_date: reportDate,
+      period_start: periodStart,
+      period_end: periodEnd,
       force,
     }),
   })

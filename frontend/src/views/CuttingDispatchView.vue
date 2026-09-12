@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onActivated, onMounted, onBeforeUnmount, reactive, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import CatalogTreeNode from '../components/CatalogTreeNode.vue'
 import CuttingDownloadsPanel from '../components/CuttingDownloadsPanel.vue'
 import {
@@ -18,6 +19,8 @@ import {
 
 const props = defineProps({ mode: { type: String, required: true, validator: (value) => ['download', 'push'].includes(value) } })
 const isDownload = computed(() => props.mode === 'download')
+const route = useRoute()
+const router = useRouter()
 let querySequence = 0
 const dispatchForm = reactive({ machineIp: '', material: '', thickness: '', quantity: 1 })
 const systemStatus = ref(null)
@@ -47,7 +50,10 @@ const pageSize = 20
 const total = ref(0)
 const projectOptions = ref([])
 const projectKeyword = ref('')
-const selectedProjectId = ref('')
+const initialProjectId = Array.isArray(route.query.project_id)
+  ? route.query.project_id[0] || ''
+  : String(route.query.project_id || '')
+const selectedProjectId = ref(initialProjectId)
 const filteredProjectOptions = computed(() => {
   const keyword = projectKeyword.value.trim().toLowerCase()
   if (!keyword) return projectOptions.value
@@ -138,6 +144,18 @@ function fileKey(file) {
 
 function clearSelectedDownloads() {
   selectedDownloadFiles.value = new Map()
+}
+
+function rememberSelectedProject(projectId) {
+  const value = String(projectId || '')
+  const current = Array.isArray(route.query.project_id)
+    ? String(route.query.project_id[0] || '')
+    : String(route.query.project_id || '')
+  if (value === current) return
+  const query = { ...route.query }
+  if (value) query.project_id = value
+  else delete query.project_id
+  router.replace({ query })
 }
 
 function setDownloadSelected(file, selected) {
@@ -325,6 +343,7 @@ function expandCatalog(node) {
 async function loadProjects() {
   const sequence = ++querySequence
   projectLoading.value = true
+  let projectToOpen = null
   try {
     const data = await listCuttingProjects()
     if (sequence !== querySequence) return
@@ -332,6 +351,10 @@ async function loadProjects() {
     if (!projectOptions.value.some((project) => String(project.project_id) === selectedProjectId.value)) {
       selectedProjectId.value = projectOptions.value[0] ? String(projectOptions.value[0].project_id) : ''
     }
+    rememberSelectedProject(selectedProjectId.value)
+    projectToOpen = projectOptions.value.find(
+      (project) => String(project.project_id) === selectedProjectId.value,
+    ) || null
     selectedProject.value = null
     selectedCatalog.value = null
     projectExpanded.value = false
@@ -347,9 +370,11 @@ async function loadProjects() {
   } finally {
     if (sequence === querySequence) projectLoading.value = false
   }
+  if (projectToOpen && sequence === querySequence) await selectProject(projectToOpen)
 }
 
 function resetProjectSelection() {
+  rememberSelectedProject(selectedProjectId.value)
   querySequence += 1
   catalogLoading.value = false
   loading.value = false
@@ -384,6 +409,8 @@ async function selectProject(project) {
     return
   }
   const sequence = ++querySequence
+  selectedProjectId.value = String(project.project_id)
+  rememberSelectedProject(selectedProjectId.value)
   selectedProject.value = project
   projectExpanded.value = true
   selectedCatalog.value = null
@@ -412,6 +439,16 @@ async function selectProject(project) {
   } finally {
     if (sequence === querySequence) catalogLoading.value = false
   }
+}
+
+async function selectProjectById(projectId) {
+  const value = String(projectId || '')
+  selectedProjectId.value = value
+  rememberSelectedProject(value)
+  const project = projectOptions.value.find(
+    (item) => String(item.project_id) === value,
+  )
+  if (project) await selectProject(project)
 }
 
 function toggleProject(project) {
@@ -727,7 +764,7 @@ onActivated(async () => {
     </aside>
   </div>
 
-  <CuttingDownloadsPanel v-if="isDownload" ref="downloadsPanel" />
+  <CuttingDownloadsPanel v-if="isDownload" ref="downloadsPanel" :project-id="selectedProjectId" @project-change="selectProjectById" />
 
   <section v-if="!isDownload" class="panel dispatch-history-panel">
     <div class="panel-title"><div><span>03</span><h2>派发记录</h2></div><p>文件准备 → 魔盒上传 → 机床指派，各阶段独立记录</p></div>

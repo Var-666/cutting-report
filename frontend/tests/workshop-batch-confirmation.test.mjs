@@ -32,7 +32,12 @@ test('worker task table exposes multi-select and reviews tasks before confirmati
 
   assert.match(script, /const selectedTasks = ref\(new Map\(\)\)/)
   assert.match(script, /async function submitBatchConfirmation/)
-  assert.match(script, /confirmWorkshopTasks\(tasks\.map\(\(row\) => row\.task_id\)/)
+  assert.match(script, /const confirmationResult = await confirmWorkshopTasks\(tasks\.map\(\(row\) => row\.task_id\)/)
+  assert.match(script, /function applyConfirmedTasks\(confirmations = \[\]\)/)
+  assert.match(script, /confirmed_by_id: confirmation\.worker_id/)
+  assert.match(script, /confirmed_by: confirmation\.worker_name/)
+  assert.match(script, /confirmed_at: confirmation\.confirmed_at/)
+  assert.equal((script.match(/applyConfirmedTasks\(confirmations\)/g) || []).length, 2)
   assert.match(template, /aria-label="全选当前页待确认任务"/)
   assert.match(template, /确认选中任务/)
   assert.match(template, /确认以下任务由我完成/)

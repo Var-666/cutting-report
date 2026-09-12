@@ -4,12 +4,13 @@ import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/compon
 import { init, use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
-import { getLeadershipRange } from '../api/reports'
+import { getLeadershipRange, getLeadershipReport } from '../api/reports'
 import AnalysisPanel from '../components/AnalysisPanel.vue'
 import ReportExportMenu from '../components/ReportExportMenu.vue'
 import ReportPeriodPicker from '../components/ReportPeriodPicker.vue'
 import ReportTrendPanel from '../components/ReportTrendPanel.vue'
-import { reportToday } from '../api/reportDates.js'
+import { recentTwelveMonthStart, reportToday } from '../api/reportDates.js'
+import { createReportChartGrid, REPORT_CHART_COLORS } from '../utils/reportChartTheme.js'
 
 defineProps({ exporting: Boolean })
 const emit = defineEmits(['export'])
@@ -19,6 +20,11 @@ use([BarChart, LineChart, GridComponent, LegendComponent, TooltipComponent, Canv
 const today = reportToday()
 const periodStart = ref(`${today.slice(0, 7)}-01`)
 const periodEnd = ref(today)
+const appliedPeriodStart = ref(periodStart.value)
+const appliedPeriodEnd = ref(periodEnd.value)
+const monthlyPeriodStart = ref(recentTwelveMonthStart(today))
+const monthlyPeriodEnd = ref(today)
+const defaultMonthlyView = ref(true)
 const chartType = ref('bar_line')
 const report = ref(null)
 const loading = ref(false)
@@ -46,6 +52,12 @@ const monthlyTotal = computed(() => report.value?.twelve_month_total || {
   work_time_seconds: 0,
 })
 const snapshot = computed(() => report.value?.snapshot || {})
+const monthlyTitle = computed(() => defaultMonthlyView.value ? '近12个月按月对比与趋势' : '区间按月对比与趋势')
+const analysisReady = computed(() => Boolean(
+  report.value
+  && snapshot.value.data_as_of
+  && !loading.value
+))
 
 function roundNumber(value, digits = 1) {
   const factor = 10 ** digits
@@ -112,8 +124,35 @@ async function loadReport(force = false) {
   }
   loading.value = true
   error.value = ''
+  const requestedStart = periodStart.value
+  const requestedEnd = periodEnd.value
   try {
-    report.value = await getLeadershipRange(periodStart.value, periodEnd.value, { force })
+    report.value = await getLeadershipRange(requestedStart, requestedEnd, { force })
+    appliedPeriodStart.value = requestedStart
+    appliedPeriodEnd.value = requestedEnd
+    monthlyPeriodStart.value = requestedStart
+    monthlyPeriodEnd.value = requestedEnd
+    defaultMonthlyView.value = false
+    await nextTick()
+    renderCharts()
+    scheduleRefreshPoll(true)
+  } catch (exception) {
+    error.value = exception.message
+  } finally {
+    loading.value = false
+  }
+}
+
+async function loadDefaultReport() {
+  loading.value = true
+  error.value = ''
+  try {
+    report.value = await getLeadershipReport(today.slice(0, 7))
+    appliedPeriodStart.value = `${today.slice(0, 7)}-01`
+    appliedPeriodEnd.value = today
+    monthlyPeriodStart.value = recentTwelveMonthStart(today)
+    monthlyPeriodEnd.value = today
+    defaultMonthlyView.value = true
     await nextTick()
     renderCharts()
     scheduleRefreshPoll(true)
@@ -137,14 +176,17 @@ function scheduleRefreshPoll(reset = false) {
     return
   }
   refreshLoading.value = true
-  const requestedRange = `${periodStart.value}:${periodEnd.value}`
+  const requestedRange = `${appliedPeriodStart.value}:${appliedPeriodEnd.value}`
+  const requestedDefaultView = defaultMonthlyView.value
   refreshTimer = window.setTimeout(async () => {
-    if (requestedRange !== `${periodStart.value}:${periodEnd.value}`) {
+    if (requestedRange !== `${appliedPeriodStart.value}:${appliedPeriodEnd.value}` || requestedDefaultView !== defaultMonthlyView.value) {
       refreshLoading.value = false
       return
     }
     try {
-      report.value = await getLeadershipRange(periodStart.value, periodEnd.value, { force: true })
+      report.value = requestedDefaultView
+        ? await getLeadershipReport(appliedPeriodStart.value.slice(0, 7), { force: true })
+        : await getLeadershipRange(appliedPeriodStart.value, appliedPeriodEnd.value, { force: true })
       await nextTick()
       renderCharts()
       refreshPollCount += 1
@@ -174,25 +216,25 @@ function renderCharts() {
   dailyChart.setOption({
     tooltip: { trigger: 'axis' },
     legend: { data: ['切割长度', '坡口长度', '切割工时'] },
-    grid: { left: 58, right: 58, bottom: 52, top: 48 },
+    grid: createReportChartGrid(),
     xAxis: { type: 'category', data: dailyChartRecords.map((row) => row.period_start.slice(5)) },
     yAxis: [{ type: 'value', name: '长度（米）' }, { type: 'value', name: '工时（小时）' }],
     series: [
-      { name: '切割长度', type: 'bar', data: dailyChartRecords.map((row) => roundNumber(row.cut_length_m)), tooltip: { valueFormatter: (value) => `${formatLength(value)} 米` }, itemStyle: { color: '#1769aa' } },
-      { name: '坡口长度', type: 'bar', data: dailyChartRecords.map((row) => roundNumber(row.groove_length_m)), tooltip: { valueFormatter: (value) => `${formatLength(value)} 米` }, itemStyle: { color: '#56a3a6' } },
-      { name: '切割工时', type: 'line', yAxisIndex: 1, smooth: true, data: dailyChartRecords.map((row) => roundNumber(Number(row.work_time_seconds) / 3600)), tooltip: { valueFormatter: (value) => `${formatLength(value)} 小时` }, itemStyle: { color: '#e58e26' } },
+      { name: '切割长度', type: 'bar', data: dailyChartRecords.map((row) => roundNumber(row.cut_length_m)), tooltip: { valueFormatter: (value) => `${formatLength(value)} 米` }, itemStyle: { color: REPORT_CHART_COLORS.primary } },
+      { name: '坡口长度', type: 'bar', data: dailyChartRecords.map((row) => roundNumber(row.groove_length_m)), tooltip: { valueFormatter: (value) => `${formatLength(value)} 米` }, itemStyle: { color: REPORT_CHART_COLORS.secondary } },
+      { name: '切割工时', type: 'line', yAxisIndex: 1, smooth: true, data: dailyChartRecords.map((row) => roundNumber(Number(row.work_time_seconds) / 3600)), tooltip: { valueFormatter: (value) => `${formatLength(value)} 小时` }, itemStyle: { color: REPORT_CHART_COLORS.accent } },
     ].map(applyChartType),
   })
   monthlyChart.setOption({
     tooltip: { trigger: 'axis' },
     legend: { data: ['切割长度', '坡口长度', '完成任务'] },
-    grid: { left: 58, right: 58, bottom: 52, top: 48 },
+    grid: createReportChartGrid(),
     xAxis: { type: 'category', data: monthlyChartRecords.map((row) => row.period_start.slice(0, 7)) },
     yAxis: [{ type: 'value', name: '长度（米）' }, { type: 'value', name: '任务数' }],
     series: [
-      { name: '切割长度', type: 'bar', data: monthlyChartRecords.map((row) => roundNumber(row.cut_length_m)), tooltip: { valueFormatter: (value) => `${formatLength(value)} 米` }, itemStyle: { color: '#1769aa' } },
-      { name: '坡口长度', type: 'bar', data: monthlyChartRecords.map((row) => roundNumber(row.groove_length_m)), tooltip: { valueFormatter: (value) => `${formatLength(value)} 米` }, itemStyle: { color: '#56a3a6' } },
-      { name: '完成任务', type: 'line', yAxisIndex: 1, smooth: true, data: monthlyChartRecords.map((row) => row.task_count), itemStyle: { color: '#d47f22' } },
+      { name: '切割长度', type: 'bar', data: monthlyChartRecords.map((row) => roundNumber(row.cut_length_m)), tooltip: { valueFormatter: (value) => `${formatLength(value)} 米` }, itemStyle: { color: REPORT_CHART_COLORS.primary } },
+      { name: '坡口长度', type: 'bar', data: monthlyChartRecords.map((row) => roundNumber(row.groove_length_m)), tooltip: { valueFormatter: (value) => `${formatLength(value)} 米` }, itemStyle: { color: REPORT_CHART_COLORS.secondary } },
+      { name: '完成任务', type: 'line', yAxisIndex: 1, smooth: true, data: monthlyChartRecords.map((row) => row.task_count), itemStyle: { color: REPORT_CHART_COLORS.accent } },
     ].map(applyChartType),
   })
 }
@@ -205,9 +247,9 @@ function resizeCharts() {
 function exportReport(format = 'html') {
   emit('export', {
     report_type: 'leadership',
-    report_date: periodStart.value,
-    period_start: periodStart.value,
-    period_end: periodEnd.value,
+    report_date: appliedPeriodStart.value,
+    period_start: appliedPeriodStart.value,
+    period_end: appliedPeriodEnd.value,
     project_code: null,
     ship_no: null,
     parameters: { chart_type: chartType.value },
@@ -215,7 +257,7 @@ function exportReport(format = 'html') {
 }
 
 onMounted(() => {
-  loadReport()
+  loadDefaultReport()
 })
 onActivated(async () => {
   window.addEventListener('resize', resizeCharts)
@@ -296,7 +338,7 @@ watch(chartType, async () => {
     </template>
   </ReportTrendPanel>
 
-  <ReportTrendPanel ref="monthlyPanel" number="02" title="区间按月对比与趋势" :note="`${periodStart} 至 ${periodEnd}`" chart-label="区间月度趋势图">
+  <ReportTrendPanel ref="monthlyPanel" number="02" :title="monthlyTitle" :note="`${monthlyPeriodStart} 至 ${monthlyPeriodEnd}`" chart-label="区间月度趋势图">
     <template #table>
         <table v-content-table class="leadership-table summary-table">
         <thead><tr><th>序号</th><th>月份</th><th>任务数</th><th>切割长度</th><th>坡口长度</th><th>切割时长</th><th>备注</th></tr></thead>
@@ -316,7 +358,13 @@ watch(chartType, async () => {
     </template>
   </ReportTrendPanel>
 
-  <p v-if="periodStart !== periodEnd" class="report-source-note">区间智能分析将在导出报告时生成，并与前一个等长区间对比。</p>
-  <AnalysisPanel v-else report-type="leadership" :report-date="periodStart" :ready="Boolean(report && snapshot.data_as_of)" :context-version="`${total.task_count}-${total.work_time_seconds}`" />
+  <AnalysisPanel
+    report-type="leadership"
+    :report-date="appliedPeriodStart"
+    :period-start="appliedPeriodStart"
+    :period-end="appliedPeriodEnd"
+    :ready="analysisReady"
+    :context-version="`${appliedPeriodStart}-${appliedPeriodEnd}-${total.task_count}-${total.work_time_seconds}`"
+  />
 
 </template>

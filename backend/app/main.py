@@ -54,6 +54,7 @@ from app.services.alarm_report_service import AlarmReportService
 from app.workers.report_worker import ReportWorker
 from app.workers.alarm_worker import AlarmWorker
 from app.workers.leadership_refresh_worker import LeadershipRefreshWorker
+from app.workers.download_cleanup_worker import DownloadCleanupWorker
 
 
 logging.basicConfig(
@@ -133,6 +134,8 @@ async def lifespan(app: FastAPI):
     file_downloads = FileDownloadService(settings, downloads, pdm, file_source)
     app.state.file_downloads = file_downloads
     downloads.recover_interrupted(file_downloads.now())
+    download_cleanup_worker = DownloadCleanupWorker(settings, file_downloads)
+    app.state.download_cleanup_worker = download_cleanup_worker
     magic_config = MagicBoxConfigProvider(settings)
     app.state.cutting_dispatch = CuttingDispatchService(
         settings,
@@ -148,9 +151,11 @@ async def lifespan(app: FastAPI):
     worker.start()
     leadership_refresh_worker.start()
     alarm_worker.start()
+    download_cleanup_worker.start()
     try:
         yield
     finally:
+        download_cleanup_worker.stop()
         alarm_worker.stop()
         leadership_refresh_worker.stop()
         worker.stop()

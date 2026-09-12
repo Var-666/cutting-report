@@ -58,6 +58,28 @@ class DownloadRepository(SQLiteRepository):
                 return item
         return None
 
+    def list_cleanup_candidates(self, cutoff):
+        """Return completed files older than the retention cutoff.
+
+        Cleanup metadata stays inside payload so the existing SQLite schema and
+        its status constraint remain compatible with already deployed databases.
+        """
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT payload FROM cutting_downloads
+                WHERE status='downloaded' AND updated_at <= ?
+                  AND payload NOT LIKE '%"file_deleted_at"%'
+                ORDER BY updated_at, download_id
+                """,
+                (cutoff,),
+            ).fetchall()
+        return [
+            item
+            for row in rows
+            if not (item := json.loads(row[0])).get("file_deleted_at")
+        ]
+
     def list(self, page, page_size, filters=None, sort=()):
         where, parameters = compile_conditions(filters or ConditionGroup(), fields_for("cutting_downloads"))
         prepared = prepare_sort(sort, "cutting_downloads")

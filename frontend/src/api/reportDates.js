@@ -4,3 +4,11 @@ export function reportToday(stamp = new Date()) {
   }).formatToParts(stamp).map(({ type, value }) => [type, value]))
   return `${parts.year}-${parts.month}-${parts.day}`
 }
+
+export function recentTwelveMonthStart(reportDate) {
+  const [year, month] = String(reportDate).split('-').map(Number)
+  const monthIndex = year * 12 + month - 1 - 11
+  const startYear = Math.floor(monthIndex / 12)
+  const startMonth = monthIndex - startYear * 12 + 1
+  return `${startYear}-${String(startMonth).padStart(2, '0')}-01`
+}

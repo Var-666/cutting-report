@@ -134,6 +134,12 @@ test('source and saved files use the same directory-tree interaction', () => {
   assert.match(downloaded.scriptSetup.content, /field: 'project_id'/)
   assert.match(downloaded.scriptSetup.content, /field: 'catalog_id'/)
   assert.match(downloaded.template.content, /全部已保存文件/)
+  assert.match(downloaded.scriptSetup.content, /const projectOptions = ref\(\[\]\)/)
+  assert.match(downloaded.scriptSetup.content, /const selectedProjectId = ref\(props\.projectId\)/)
+  assert.match(downloaded.scriptSetup.content, /listCuttingProjects\(\)/)
+  assert.match(downloaded.template.content, /id="saved-project-selector"/)
+  assert.match(downloaded.template.content, /v-for="project in projectOptions"/)
+  assert.doesNotMatch(downloaded.scriptSetup.content, /君正25900-9SS|defaultProjectKeyword/)
   assert.match(downloaded.scriptSetup.content, /selectedCatalog\.value\s*\?\s*\[\{ field: 'catalog_id'/)
   assert.doesNotMatch(downloaded.template.content, /<SortBuilder|<ConditionBuilder|可增减条件/)
 })
@@ -205,6 +211,7 @@ test('report tables with sticky summaries use content-weighted window columns', 
   assert.doesNotMatch(energy.template.content, /<colgroup>/)
   assert.match(contentCss, /table-layout:fixed !important/)
   assert.match(trendStyles, /scrollbar-gutter:stable/)
+  assert.match(trendStyles, /report-trend-panel__content--fit-table \.report-trend-panel__table \{[^}]*overflow-y:visible;[^}]*scrollbar-gutter:auto;/)
   assert.match(contentCss, /height:47px !important/)
   assert.match(contentCss, /font-size:13px !important/)
   assert.match(contentCss, /background:#0b4f76 !important/)
@@ -225,7 +232,7 @@ test('device report reuses the leadership report UI baseline', () => {
   assert.match(energy.template.content, /class="report-query equipment-query energy-period-query"/)
   assert.equal((leadership.template.content.match(/<ReportTrendPanel/g) || []).length, 2)
   assert.equal((energy.template.content.match(/<ReportTrendPanel/g) || []).length, 2)
-  assert.equal((energy.template.content.match(/:height="260"/g) || []).length, 2)
+  assert.doesNotMatch(energy.template.content, /:height=/)
   assert.equal((energy.template.content.match(/chart-label=/g) || []).length, 2)
   assert.match(trendPanel.template.content, /class="panel report-trend-panel"/)
   assert.match(trendPanel.template.content, /class="panel-title report-trend-panel__heading"/)
@@ -243,7 +250,13 @@ test('device report reuses the leadership report UI baseline', () => {
   assert.match(energyStyles, /\.energy-task-table th:nth-child\(2\),\.energy-task-table td:nth-child\(2\)/)
   assert.match(energyStyles, /\.energy-task-table tfoot th:nth-child\(2\),\.energy-task-table tfoot th:nth-child\(3\),\.energy-task-table tfoot th:nth-child\(4\)\s*\{[^}]*text-align:left;/)
   assert.doesNotMatch(energyStyles, /\.energy-period-table tfoot th:nth-child\(2\)/)
-  assert.match(energyScript, /grid:\s*\{ left: 22, right: 28, bottom: 18, top: 54, containLabel: true \}/)
+  assert.match(energyScript, /createReportChartGrid, REPORT_CHART_COLORS/)
+  assert.match(energyScript, /grid: createReportChartGrid\(\)/)
+  assert.match(energyScript, /REPORT_CHART_COLORS\.primary/)
+  assert.match(energyScript, /REPORT_CHART_COLORS\.secondary/)
+  assert.match(energyScript, /REPORT_CHART_COLORS\.accent/)
+  assert.match(leadership.scriptSetup.content, /createReportChartGrid, REPORT_CHART_COLORS/)
+  assert.match(leadership.scriptSetup.content, /grid: createReportChartGrid\(\)/)
   assert.match(energyScript, /function renderCharts\(\)/)
   assert.match(energyStyles, /@media \(max-width:560px\)\s*\{[^}]*\.energy-stat-strip\s*\{\s*grid-template-columns:1fr;/)
 })
@@ -267,10 +280,14 @@ test('equivalent page headers and report query bars share one layout system', ()
     assert.match(view.template.content, /class="[^"]*report-query[^"]*"/)
   }
   assert.match(css, /--report-query-width:\s*884px;/)
+  assert.match(css, /html\s*\{[^}]*scrollbar-gutter:stable;/)
+  assert.match(css, /\.report-hero > div:first-child\s*\{[^}]*min-width:0;[^}]*flex:1 1 auto;/)
+  assert.match(css, /\.report-hero > \.report-query\s*\{[^}]*flex:0 0 auto;/)
   assert.match(css, /\.report-query\s*\{[^}]*grid-template-columns:repeat\(2,190px\) 140px 136px 136px;/)
   assert.match(css, /@media \(max-width: 900px\)[\s\S]*\.report-query\s*\{[^}]*grid-template-columns:repeat\(2,minmax\(180px,1fr\)\) 140px 136px 136px;/)
   assert.doesNotMatch(css, /\.workshop-query\s*\{[^}]*display:/)
   assert.doesNotMatch(css, /\.equipment-query\s+\.app-date-picker/)
+  assert.doesNotMatch(energy.styles.map((style) => style.content).join('\n'), /\.equipment-hero|\.energy-period-query/)
   assert.match(css, /\.report-navigation nav a:focus-visible\s*\{[^}]*box-shadow:/)
 })
 
@@ -320,12 +337,61 @@ test('intelligent analysis omits the analysis boundary section', () => {
   assert.doesNotMatch(analysis.template.content, /分析边界|analysis\.limitations|analysis-limit/)
 })
 
+test('all standard report analyses follow the selected report range', () => {
+  const leadership = descriptor('LeadershipReportView')
+  const workshop = descriptor('WorkshopView')
+  const equipment = descriptor('EnergyPeriodReportView')
+  const analysis = descriptor('AnalysisPanel', 'components')
+  const api = readFileSync(new URL('../src/api/reports.js', import.meta.url), 'utf8')
+
+  assert.match(leadership.template.content, /<AnalysisPanel[\s\S]*report-type="leadership"/)
+  assert.match(leadership.template.content, /:period-start="appliedPeriodStart"/)
+  assert.match(leadership.template.content, /:period-end="appliedPeriodEnd"/)
+  assert.doesNotMatch(leadership.template.content, /<AnalysisPanel v-else|区间智能分析将在导出报告时生成/)
+  assert.match(workshop.template.content, /<AnalysisPanel[\s\S]*v-if="!isWorker"[\s\S]*report-type="workshop"/)
+  assert.match(workshop.template.content, /:period-start="filters\.startDate"/)
+  assert.match(workshop.template.content, /:period-end="filters\.endDate"/)
+  assert.doesNotMatch(workshop.template.content, /filters\.startDate === filters\.endDate/)
+  assert.match(equipment.template.content, /<AnalysisPanel[\s\S]*report-type="equipment"/)
+  assert.match(equipment.template.content, /:period-start="appliedPeriodStart"/)
+  assert.match(equipment.template.content, /:period-end="appliedPeriodEnd"/)
+  assert.doesNotMatch(equipment.template.content, /<AnalysisPanel v-else|区间智能分析将在导出报告时生成/)
+  assert.match(analysis.scriptSetup.content, /periodStart: props\.periodStart \|\| undefined/)
+  assert.match(analysis.scriptSetup.content, /periodEnd: props\.periodEnd \|\| undefined/)
+  assert.match(api, /period_start: periodStart/)
+  assert.match(api, /period_end: periodEnd/)
+})
+
+test('leadership and equipment second tables default to the recent twelve months', () => {
+  const leadership = descriptor('LeadershipReportView')
+  const equipment = descriptor('EnergyPeriodReportView')
+
+  assert.match(leadership.scriptSetup.content, /getLeadershipReport\(today\.slice\(0, 7\)\)/)
+  assert.match(leadership.scriptSetup.content, /monthlyPeriodStart = ref\(recentTwelveMonthStart\(today\)\)/)
+  assert.match(leadership.template.content, /:title="monthlyTitle"/)
+  assert.match(leadership.template.content, /:note="`\$\{monthlyPeriodStart\} 至 \$\{monthlyPeriodEnd\}`"/)
+  assert.match(equipment.scriptSetup.content, /getEnergyRange\(recentStart, selectedDate/)
+  assert.match(equipment.scriptSetup.content, /summaryPeriodStart\.value = requestedStart/)
+  assert.match(equipment.template.content, /:title="summaryTitle"/)
+  assert.match(equipment.template.content, /:subtitle="`\$\{summaryPeriodStart\} 至 \$\{summaryPeriodEnd\}/)
+})
+
 test('energy report omits calculation-method and complete-day explanations', () => {
   const energy = descriptor('EnergyPeriodReportView')
   const template = energy.template.content
 
   assert.doesNotMatch(template, /完整|部分合计|energy_notice|storage_notice|energy-method-note/)
   assert.doesNotMatch(template, /累计读数差值|采样规则|线性插值/)
+})
+
+test('scrollable report tables do not add duplicate previous and next pagination', () => {
+  const energy = descriptor('EnergyPeriodReportView')
+  const script = energy.scriptSetup.content
+  const template = energy.template.content
+
+  assert.match(template, /v-for="\(row, index\) in taskRows"/)
+  assert.doesNotMatch(template, /#footer|上一页|下一页/)
+  assert.doesNotMatch(script, /visibleTaskRows|totalPages|pageSize/)
 })
 
 test('file push uses downloaded-file parameters without a condition search', () => {

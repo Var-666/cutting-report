@@ -48,7 +48,7 @@ defineExpose({ getChartElement: () => chartElement.value })
 .report-trend-panel__chart,.report-trend-panel__table { min-width:0; height:var(--report-trend-height); border:1px solid #e0e7ec; background:#fff; }
 .report-trend-panel__chart { width:100%; }
 .report-trend-panel__table { max-height:var(--report-trend-height); overflow:auto; scrollbar-gutter:stable; }
-.report-trend-panel__content--fit-table .report-trend-panel__table { height:auto; max-height:none; }
+.report-trend-panel__content--fit-table .report-trend-panel__table { height:auto; max-height:none; overflow-x:auto; overflow-y:visible; scrollbar-gutter:auto; }
 @media (max-width:900px) { .report-trend-panel__content { grid-template-columns:1fr; }.report-trend-panel__table { height:auto; max-height:420px; } }
 @media (max-width:560px) { .report-trend-panel__content { padding:12px; }.report-trend-panel__chart { height:260px; } }
 </style>

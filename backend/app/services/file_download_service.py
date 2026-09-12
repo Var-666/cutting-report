@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 import hashlib
 import json
+import logging
 from pathlib import Path, PurePosixPath
 import re
 import threading
@@ -11,6 +12,9 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from app.services.file_source import FileSourceError, normalize_relative_path
+
+
+logger = logging.getLogger(__name__)
 
 
 class DownloadError(RuntimeError):
@@ -48,6 +52,7 @@ class FileDownloadService:
     def __init__(self, settings, repository, pdm, source):
         self.settings, self.repository, self.pdm, self.source = settings, repository, pdm, source
         self._slots = threading.BoundedSemaphore(2)
+        self._cleanup_lock = threading.Lock()
 
     def now(self):
         return datetime.now(ZoneInfo(self.settings.timezone)).isoformat(timespec="seconds")
@@ -93,6 +98,7 @@ class FileDownloadService:
         if (not re.fullmatch(r"dl_[a-f0-9]{32}", item["download_id"])
                 or Path(item["filename"]).name != item["filename"]
                 or "\\" in item["filename"]
+                or path.parent.is_symlink()
                 or not path.resolve().is_relative_to(root)):
             raise DownloadError("系统文件路径校验失败", 409)
         return path
@@ -100,9 +106,21 @@ class FileDownloadService:
     def public(self, item):
         result = dict(item)
         result["status_label"] = {"downloading": "下载中", "downloaded": "已下载", "failed": "下载失败"}[item["status"]]
-        result["available"] = item["status"] == "downloaded" and self._path(item).is_file()
         result["storage_path"] = f"data/cutting-downloads/{item['download_id']}/{item['filename']}"
-        if item["status"] == "downloaded" and not result["available"]:
+        if item.get("file_deleted_at"):
+            retention_days = item.get(
+                "cleanup_retention_days",
+                self.settings.file_download_retention_days,
+            )
+            result["status_label"] = "已自动清理"
+            result["available"] = False
+            result["error"] = (
+                f"文件已超过{retention_days}天保留期，"
+                "系统已自动删除；需要时请重新保存"
+            )
+        else:
+            result["available"] = item["status"] == "downloaded" and self._path(item).is_file()
+        if item["status"] == "downloaded" and not result["available"] and not item.get("file_deleted_at"):
             result["status_label"] = "系统文件丢失"
             result["error"] = "记录仍在，但系统文件已不存在，请重新保存"
         return result
@@ -180,7 +198,14 @@ class FileDownloadService:
             # Each attempt has its own UUID directory. Existing versions are never overwritten.
             partial.replace(target)
             completed = target
-            item.update(status="downloaded", size=size, sha256=digest, updated_at=self.now())
+            downloaded_at = self.now()
+            item.update(
+                status="downloaded",
+                size=size,
+                sha256=digest,
+                downloaded_at=downloaded_at,
+                updated_at=downloaded_at,
+            )
             self.repository.save(item)
             return self.public(item)
         except (FileSourceError, OSError) as exc:
@@ -231,6 +256,15 @@ class FileDownloadService:
             raise DownloadError("下载记录不存在", 404)
         if item["status"] != "downloaded":
             raise DownloadError("该文件尚未成功下载", 409)
+        if item.get("file_deleted_at"):
+            retention_days = item.get(
+                "cleanup_retention_days",
+                self.settings.file_download_retention_days,
+            )
+            raise DownloadError(
+                f"文件已超过{retention_days}天保留期，请重新保存",
+                404,
+            )
         path = self._path(item)
         try:
             if path.stat().st_size != item["size"]:
@@ -242,3 +276,43 @@ class FileDownloadService:
         except OSError:
             raise DownloadError("系统文件不存在或无法读取，请重新保存", 404) from None
         return item, path
+
+    def cleanup_expired(self, now=None):
+        """Delete expired physical files while retaining their audit records."""
+        retention_days = self.settings.file_download_retention_days
+        result = {"cleaned": 0, "missing": 0, "failed": 0}
+        if retention_days <= 0 or not self._cleanup_lock.acquire(blocking=False):
+            return result
+        try:
+            reference = now or datetime.now(ZoneInfo(self.settings.timezone))
+            cutoff = (reference - timedelta(days=retention_days)).isoformat(timespec="seconds")
+            for item in self.repository.list_cleanup_candidates(cutoff):
+                try:
+                    path = self._path(item)
+                    existed = path.is_file()
+                    if existed:
+                        path.unlink()
+                    else:
+                        result["missing"] += 1
+                    try:
+                        path.parent.rmdir()
+                    except OSError:
+                        pass
+                    deleted_at = reference.isoformat(timespec="seconds")
+                    item.update(
+                        file_deleted_at=deleted_at,
+                        cleanup_reason="retention_expired",
+                        cleanup_retention_days=retention_days,
+                        updated_at=deleted_at,
+                    )
+                    self.repository.save(item)
+                    result["cleaned"] += 1
+                except Exception:
+                    result["failed"] += 1
+                    logger.exception(
+                        "expired cutting download cleanup failed",
+                        extra={"download_id": item.get("download_id")},
+                    )
+            return result
+        finally:
+            self._cleanup_lock.release()

@@ -1,15 +1,18 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import CatalogTreeNode from './CatalogTreeNode.vue'
 import { listCuttingCatalogs, listCuttingProjects, searchCuttingDownloads } from '../api/reports'
 
-const defaultProjectKeyword = '君正25900-9SS'
+const props = defineProps({ projectId: { type: String, default: '' } })
+const emit = defineEmits(['project-change'])
 const items = ref([])
 const page = ref(1)
 const total = ref(0)
 const loading = ref(false)
 const directoryLoading = ref(false)
 const error = ref('')
+const projectOptions = ref([])
+const selectedProjectId = ref(props.projectId)
 const selectedProject = ref(null)
 const catalogTree = ref([])
 const selectedCatalog = ref(null)
@@ -19,6 +22,7 @@ const appliedFileKeyword = ref('')
 const pageSize = 20
 const pages = computed(() => Math.max(1, Math.ceil(total.value / pageSize)))
 let querySequence = 0
+let directorySequence = 0
 
 function bytes(value) {
   if (value == null) return '--'
@@ -102,37 +106,85 @@ async function selectAllFiles() {
   await refresh(1)
 }
 
-async function loadDirectory() {
+function resetProjectResults() {
+  querySequence += 1
+  loading.value = false
+  selectedCatalog.value = null
+  catalogTree.value = []
+  expandedCatalogIds.value = new Set()
+  fileKeyword.value = ''
+  appliedFileKeyword.value = ''
+  items.value = []
+  total.value = 0
+  page.value = 1
+}
+
+async function selectProject(project, { notify = false } = {}) {
+  const sequence = ++directorySequence
+  selectedProject.value = project
+  selectedProjectId.value = project ? String(project.project_id) : ''
+  if (notify) emit('project-change', selectedProjectId.value)
+  resetProjectResults()
+  if (!project) return
   directoryLoading.value = true
   error.value = ''
   try {
-    const projectData = await listCuttingProjects(defaultProjectKeyword)
-    const projects = projectData.items || []
-    selectedProject.value = projects.find((item) =>
-      String(item.project_name || '').trim() === defaultProjectKeyword
-      || String(item.ship_no || '').trim() === defaultProjectKeyword
-    ) || projects[0] || null
-    if (!selectedProject.value) {
-      catalogTree.value = []
-      return
-    }
-    const catalogData = await listCuttingCatalogs(selectedProject.value.project_id)
+    const catalogData = await listCuttingCatalogs(project.project_id)
+    if (sequence !== directorySequence) return
     let roots = catalogData.tree || []
     if (roots.length === 1 && roots[0].children?.length
-        && String(roots[0].title || '').trim() === String(selectedProject.value.project_name || '').trim()) {
+        && String(roots[0].title || '').trim() === String(project.project_name || '').trim()) {
       roots = roots[0].children
     }
     catalogTree.value = roots
     expandedCatalogIds.value = new Set(roots.map((item) => String(item.catalog_id)))
     await refresh(1)
   } catch (reason) {
-    error.value = reason.message
+    if (sequence === directorySequence) error.value = reason.message
   } finally {
-    directoryLoading.value = false
+    if (sequence === directorySequence) directoryLoading.value = false
+  }
+}
+
+async function changeProject() {
+  const project = projectOptions.value.find(
+    (item) => String(item.project_id) === selectedProjectId.value,
+  ) || null
+  await selectProject(project, { notify: true })
+}
+
+async function loadDirectory() {
+  const sequence = ++directorySequence
+  directoryLoading.value = true
+  error.value = ''
+  try {
+    const projectData = await listCuttingProjects()
+    if (sequence !== directorySequence) return
+    projectOptions.value = projectData.items || []
+    const project = projectOptions.value.find(
+      (item) => String(item.project_id) === String(props.projectId || ''),
+    ) || projectOptions.value[0] || null
+    selectedProjectId.value = project ? String(project.project_id) : ''
+    if (!project) {
+      selectedProject.value = null
+      resetProjectResults()
+      return
+    }
+    await selectProject(project)
+  } catch (reason) {
+    if (sequence === directorySequence) error.value = reason.message
+  } finally {
+    if (sequence === directorySequence) directoryLoading.value = false
   }
 }
 
 defineExpose({ refresh: () => refresh(1) })
+watch(() => props.projectId, async (projectId) => {
+  const value = String(projectId || '')
+  if (!value || value === selectedProjectId.value || !projectOptions.value.length) return
+  const project = projectOptions.value.find((item) => String(item.project_id) === value)
+  if (project) await selectProject(project)
+})
 onMounted(loadDirectory)
 </script>
 
@@ -140,12 +192,21 @@ onMounted(loadDirectory)
   <section class="panel download-panel" aria-label="系统已保存文件目录检索">
     <div class="panel-title">
       <div><h2>系统已保存文件</h2></div>
-      <p>{{ selectedProject ? `共 ${total} 条 · 当前第 ${page} 页` : '正在读取项目' }}</p>
+      <p>{{ selectedProject ? `共 ${total} 条 · 当前第 ${page} 页` : directoryLoading ? '正在读取项目' : '暂无项目' }}</p>
+    </div>
+    <div class="saved-project-toolbar">
+      <label for="saved-project-selector">当前项目</label>
+      <AppSelect id="saved-project-selector" v-model="selectedProjectId" :disabled="directoryLoading || !projectOptions.length" @change="changeProject">
+        <option v-if="directoryLoading && !projectOptions.length" value="" disabled>正在读取项目…</option>
+        <option v-else-if="!projectOptions.length" value="" disabled>没有可用项目</option>
+        <option v-for="project in projectOptions" :key="project.project_id" :value="String(project.project_id)">{{ project.project_name }}{{ project.ship_no ? ` · ${project.ship_no}` : '' }}</option>
+      </AppSelect>
+      <small>共 {{ projectOptions.length }} 个项目；切换后显示该项目的目录和保存记录</small>
     </div>
     <div class="saved-file-workspace">
       <aside class="saved-directory-panel">
         <div class="saved-directory-title">
-          <strong>{{ selectedProject?.project_name || defaultProjectKeyword }}</strong>
+          <strong>{{ selectedProject?.project_name || '请选择项目' }}</strong>
           <small>{{ selectedProject?.ship_no || '目录检索' }}</small>
         </div>
         <div class="saved-directory-scroll" :aria-busy="directoryLoading">
@@ -175,7 +236,7 @@ onMounted(loadDirectory)
       <div class="saved-file-results">
         <div class="selected-directory">
           <span>当前位置</span>
-          <strong>{{ selectedCatalog ? `${selectedProject.project_name} / ${catalogPath(selectedCatalog)}` : `${selectedProject?.project_name || defaultProjectKeyword} / 全部已保存文件` }}</strong>
+          <strong>{{ selectedCatalog ? `${selectedProject.project_name} / ${catalogPath(selectedCatalog)}` : selectedProject ? `${selectedProject.project_name} / 全部已保存文件` : '请选择项目' }}</strong>
         </div>
         <form class="saved-file-search" @submit.prevent="refresh(1)">
           <label for="saved-file-keyword">{{ selectedCatalog ? '当前目录内查找文件' : '在已保存文件中查找' }}</label>
@@ -192,14 +253,14 @@ onMounted(loadDirectory)
                 <td>{{ item.version }}<small>{{ item.is_simulation ? '模拟文件 · 不用于生产' : item.source_mode === 'http' ? 'FO 文件服务' : '本地目录' }}</small></td>
                 <td>{{ bytes(item.size) }}</td>
                 <td>{{ item.created_at.replace('T', ' ').slice(0, 19) }}<small>{{ item.created_by_name }}</small></td>
-                <td><span class="download-badge" :class="{ failed: item.status === 'failed' || (item.status === 'downloaded' && !item.available), success: item.available }">{{ item.status_label }}</span></td>
+                <td><span class="download-badge" :class="{ failed: item.status === 'failed' || (item.status === 'downloaded' && !item.available && !item.file_deleted_at), cleaned: !!item.file_deleted_at, success: item.available }">{{ item.status_label }}</span></td>
               </tr>
               <tr v-if="!loading && !items.length"><td colspan="5" class="download-empty">{{ appliedFileKeyword ? '没有匹配的系统文件' : selectedCatalog ? '当前目录还没有保存文件' : '当前项目还没有保存文件' }}</td></tr>
             </tbody>
           </table>
         </div>
         <div class="download-pagination"><span>共 {{ total }} 条 · 第 {{ page }} / {{ pages }} 页</span><button :disabled="page <= 1 || loading" @click="refresh(page - 1)">上一页</button><button :disabled="page >= pages || loading" @click="refresh(page + 1)">下一页</button></div>
-        <p class="download-hint">这些文件保存在系统服务器中，可在“文件推送”页面选择并推送到魔盒。</p>
+        <p class="download-hint">保留期内的有效文件存放在系统服务器中，可在“文件推送”页面选择并推送到魔盒；已自动清理的记录仍可用于追溯。</p>
       </div>
     </div>
   </section>
@@ -207,6 +268,10 @@ onMounted(loadDirectory)
 
 <style scoped>
 .download-panel { margin-top:22px; min-width:0; }
+.saved-project-toolbar { display:grid; grid-template-columns:auto minmax(260px,520px) minmax(180px,1fr); align-items:center; gap:12px; padding:12px 18px; border-bottom:1px solid #dfe8ed; background:#f8fafb; }
+.saved-project-toolbar label { color:#506775; font-size:10px; font-weight:700; }
+.saved-project-toolbar .app-select { height:36px; }
+.saved-project-toolbar small { color:var(--muted); font-size:10px; }
 .saved-file-workspace { display:grid; grid-template-columns:minmax(260px,.42fr) minmax(0,1.58fr); min-height:430px; }
 .saved-directory-panel { min-width:0; border-right:1px solid #dfe8ed; background:#fbfcfd; }
 .saved-directory-title { display:flex; flex-direction:column; gap:3px; min-height:61px; padding:14px 16px; border-bottom:1px solid #e3eaee; background:#f1f8fa; }
@@ -246,9 +311,11 @@ button:disabled { opacity:.55; cursor:not-allowed; }
 .download-badge { padding:5px 8px; border-radius:20px; color:#8b5d12; background:#fff3d8; white-space:nowrap; }
 .download-badge.success { color:#267048; background:#e8f7ef; }
 .download-badge.failed { color:#963d30; background:#fff0ee; }
+.download-badge.cleaned { color:#5d6d76; background:#edf1f3; }
 .download-empty { text-align:center; padding:30px!important; color:var(--muted); }
 .download-pagination { display:flex; justify-content:flex-end; gap:12px; align-items:center; padding:15px 22px 0; font-size:11px; color:var(--muted); }
 @media(max-width:900px) {
+  .saved-project-toolbar { grid-template-columns:1fr; }
   .saved-file-workspace { grid-template-columns:1fr; }
   .saved-directory-panel { border-right:0; border-bottom:1px solid #dfe8ed; }
   .saved-directory-scroll { min-height:220px; max-height:360px; }

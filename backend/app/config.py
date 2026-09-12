@@ -176,6 +176,9 @@ class Settings:
     file_http_cookie: str = field(default=os.getenv("FILE_HTTP_COOKIE", ""), repr=False)
     file_download_timeout: float = _as_float("FILE_DOWNLOAD_TIMEOUT_SECONDS", 60)
     file_download_max_bytes: int = _as_int("FILE_DOWNLOAD_MAX_BYTES", 52428800)
+    # Successful downloads are kept on disk for this many days. Set to 0 to
+    # disable automatic physical-file cleanup while retaining all audit rows.
+    file_download_retention_days: int = _as_int("FILE_DOWNLOAD_RETENTION_DAYS", 7)
     file_server_host: str = os.getenv("FILE_SERVER_HOST", "10.147.0.33").strip()
     file_server_physical_root: str = os.getenv(
         "FILE_SERVER_PHYSICAL_ROOT", r"D:\File"

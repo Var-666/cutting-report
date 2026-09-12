@@ -1,4 +1,5 @@
 from dataclasses import replace
+from datetime import datetime, timedelta
 from io import BytesIO
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import threading
@@ -16,6 +17,7 @@ from app.database.downloads import DownloadRepository
 from app.database.pdm import MockPdmRepository, SqlServerPdmRepository
 from app.services.file_download_service import DownloadError, FileDownloadService, download_filename
 from app.services.file_source import HttpFileSource, FileSourceError, normalize_relative_path
+from app.workers.download_cleanup_worker import DownloadCleanupWorker
 
 
 ADMIN = {"user_id": "test-admin", "display_name": "管理员", "role": "admin"}
@@ -194,6 +196,89 @@ def test_missing_or_modified_local_file_not_served(tmp_path):
         service.local_file(result["download_id"])
     path.unlink()
     assert service.list()["items"][0]["available"] is False
+
+
+def test_expired_download_file_is_deleted_but_audit_record_is_retained(tmp_path):
+    service, payload = make_service(tmp_path)
+    result = service.download(**payload, user=ADMIN)
+    item, path = service.local_file(result["download_id"])
+    completed_at = datetime.fromisoformat(item["downloaded_at"])
+    old = (completed_at - timedelta(days=8)).isoformat(timespec="seconds")
+    item.update(downloaded_at=old, updated_at=old)
+    service.repository.save(item)
+
+    cleanup = service.cleanup_expired(now=completed_at)
+
+    assert cleanup == {"cleaned": 1, "missing": 0, "failed": 0}
+    assert not path.exists()
+    stored = service.repository.get(result["download_id"])
+    assert stored["status"] == "downloaded"
+    assert stored["cleanup_reason"] == "retention_expired"
+    public = service.list()["items"][0]
+    assert public["status_label"] == "已自动清理"
+    assert public["available"] is False
+    with pytest.raises(DownloadError, match="保留期"):
+        service.local_file(result["download_id"])
+    assert service.cleanup_expired(now=completed_at) == {"cleaned": 0, "missing": 0, "failed": 0}
+
+
+def test_recent_download_is_not_cleaned(tmp_path):
+    service, payload = make_service(tmp_path)
+    result = service.download(**payload, user=ADMIN)
+    item, path = service.local_file(result["download_id"])
+    completed_at = datetime.fromisoformat(item["downloaded_at"])
+
+    assert service.cleanup_expired(now=completed_at + timedelta(days=6, hours=23)) == {
+        "cleaned": 0,
+        "missing": 0,
+        "failed": 0,
+    }
+    assert path.is_file()
+
+
+def test_cleanup_never_follows_a_symlink_outside_download_root(tmp_path):
+    service, payload = make_service(tmp_path)
+    result = service.download(**payload, user=ADMIN)
+    item, path = service.local_file(result["download_id"])
+    completed_at = datetime.fromisoformat(item["downloaded_at"])
+    old = (completed_at - timedelta(days=8)).isoformat(timespec="seconds")
+    item.update(downloaded_at=old, updated_at=old)
+    service.repository.save(item)
+    external = tmp_path / "must-stay.gen"
+    external.write_bytes(path.read_bytes())
+    path.unlink()
+    path.symlink_to(external)
+
+    assert service.cleanup_expired(now=completed_at) == {
+        "cleaned": 0,
+        "missing": 0,
+        "failed": 1,
+    }
+    assert external.read_bytes() == b"GEN DATA\n"
+    assert not service.repository.get(result["download_id"]).get("file_deleted_at")
+
+
+def test_cleanup_worker_runs_immediately_and_stops_cleanly():
+    completed = threading.Event()
+
+    class Service:
+        calls = 0
+
+        def cleanup_expired(self):
+            self.calls += 1
+            completed.set()
+            return {"cleaned": 0, "missing": 0, "failed": 0}
+
+    service = Service()
+    worker = DownloadCleanupWorker(
+        replace(settings, file_download_retention_days=7),
+        service,
+    )
+    worker.start()
+    assert completed.wait(1)
+    worker.stop()
+    assert service.calls == 1
+    assert not worker.thread.is_alive()
 
 
 def test_symlink_cannot_escape_download_root(tmp_path):

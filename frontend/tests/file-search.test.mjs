@@ -52,7 +52,7 @@ test('file download page uses the recursive directory tree without condition bui
   assert.match(view, /const projectOptions = ref\(\[\]\)/)
   assert.match(view, /const projectKeyword = ref\(''\)/)
   assert.match(view, /const filteredProjectOptions = computed/)
-  assert.match(view, /const selectedProjectId = ref\(''\)/)
+  assert.match(view, /const selectedProjectId = ref\(initialProjectId\)/)
   assert.match(view, /id="project-keyword"[\s\S]*:disabled="projectLoading"[\s\S]*@input="applyProjectKeyword"/)
   assert.match(view, /<AppSelect id="project-selector"[\s\S]*v-for="project in filteredProjectOptions"/)
   assert.match(view, /支持项目/)
@@ -65,6 +65,21 @@ test('file download page uses the recursive directory tree without condition bui
   assert.doesNotMatch(view, /ConditionBuilder|SortBuilder|searchCuttingFiles|组合条件查询/)
   assert.match(node, /<CatalogTreeNode/)
   assert.match(node, /node\.children/)
+})
+
+test('selected download project survives refresh and stays synchronized', () => {
+  const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
+  const downloads = readFileSync(new URL('../src/components/CuttingDownloadsPanel.vue', import.meta.url), 'utf8')
+
+  assert.match(view, /useRoute, useRouter/)
+  assert.match(view, /route\.query\.project_id/)
+  assert.match(view, /router\.replace\(\{ query \}\)/)
+  assert.match(view, /if \(projectToOpen && sequence === querySequence\) await selectProject\(projectToOpen\)/)
+  assert.match(view, /:project-id="selectedProjectId"/)
+  assert.match(view, /@project-change="selectProjectById"/)
+  assert.match(downloads, /defineProps\(\{ projectId:/)
+  assert.match(downloads, /watch\(\(\) => props\.projectId/)
+  assert.match(downloads, /emit\('project-change', selectedProjectId\.value\)/)
 })
 
 test('project-shaped catalog root is hidden to avoid showing the project twice', () => {

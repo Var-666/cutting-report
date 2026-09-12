@@ -5,6 +5,8 @@ import { analyzeReport } from '../api/reports'
 const props = defineProps({
   reportType: { type: String, required: true },
   reportDate: { type: String, default: '' },
+  periodStart: { type: String, default: '' },
+  periodEnd: { type: String, default: '' },
   ready: { type: Boolean, default: false },
   contextVersion: { type: [String, Number], default: '' },
 })
@@ -58,6 +60,8 @@ async function loadAnalysis(force = false) {
     const result = await analyzeReport({
       reportType: props.reportType,
       reportDate: props.reportDate,
+      periodStart: props.periodStart || undefined,
+      periodEnd: props.periodEnd || undefined,
       force,
     })
     if (sequence === requestSequence) analysis.value = result
@@ -69,7 +73,7 @@ async function loadAnalysis(force = false) {
 }
 
 watch(
-  () => [props.reportType, props.reportDate, props.ready, props.contextVersion],
+  () => [props.reportType, props.reportDate, props.periodStart, props.periodEnd, props.ready, props.contextVersion],
   () => {
     if (!props.ready) {
       analysis.value = null
