@@ -418,6 +418,13 @@ export function createCuttingDispatch(payload) {
   })
 }
 
+export function createCuttingDispatchBatch(payload) {
+  return request('/api/v1/cutting/dispatches/batch', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
 export function listCuttingDispatches({ page = 1, pageSize = 10 } = {}) {
   const query = new URLSearchParams({ page, page_size: pageSize })
   return request(`/api/v1/cutting/dispatches?${query}`)

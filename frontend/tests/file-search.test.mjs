@@ -170,20 +170,18 @@ test('non-standard cutting instruction names are ignored', () => {
   }
 })
 
-test('file push resets parameters before applying values parsed from a standard name', () => {
+test('file push builds independent batch parameters and executes created tasks sequentially', () => {
   const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
-  const watcher = view.match(/watch\(selectedPushFileId, \(\) => \{([\s\S]*?)\}, \{ flush: 'sync' \}\)/)?.[1]
 
-  assert.ok(watcher)
-  assert.match(watcher, /dispatchForm\.material = ''/)
-  assert.match(watcher, /dispatchForm\.thickness = ''/)
-  assert.match(watcher, /dispatchForm\.quantity = 1/)
-  assert.match(watcher, /parseCuttingInstructionFilename\(activeFile\.value\?\.filename\)/)
-  assert.match(watcher, /dispatchForm\.material = parsed\.material/)
-  assert.match(watcher, /dispatchForm\.thickness = parsed\.thickness/)
-  assert.match(watcher, /if \(!parsed\) return/)
-  assert.ok(watcher.indexOf("dispatchForm.material = ''") < watcher.indexOf('if (!parsed) return'))
-  assert.ok(watcher.indexOf("dispatchForm.thickness = ''") < watcher.indexOf('if (!parsed) return'))
-  assert.ok(watcher.indexOf('dispatchForm.quantity = 1') < watcher.indexOf('if (!parsed) return'))
-  assert.match(view, /已按标准名称填充/)
+  assert.match(view, /const selectedPushFiles = ref\(new Map\(\)\)/)
+  assert.match(view, /next\.size >= 20/)
+  assert.match(view, /function createPushBatchItem\(file\)/)
+  assert.match(view, /const parsed = parseCuttingInstructionFilename\(file\.filename\)/)
+  assert.match(view, /material: parsed\?\.material \|\| ''/)
+  assert.match(view, /thickness: parsed\?\.thickness \?\? ''/)
+  assert.match(view, /quantity: 1/)
+  assert.match(view, /createCuttingDispatchBatch/)
+  assert.match(view, /for \(const item of createdItems\)/)
+  assert.match(view, /await executeCuttingDispatch\(item\.dispatchId\)/)
+  assert.match(view, /非标准名，请手工填写参数/)
 })

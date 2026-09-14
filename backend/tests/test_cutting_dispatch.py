@@ -2,7 +2,9 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
+from app.api.cutting import DispatchBatchCreateRequest
 from app.config import settings
 from app.database.dispatch import DispatchRepository
 from app.database.downloads import DownloadRepository
@@ -344,6 +346,79 @@ def test_push_can_start_from_selected_download_without_file_search(tmp_path: Pat
     assert draft["status"] == "downloaded"
     assert sent["status"] == "sent"
     assert client.uploads[0]["task_name"] == downloaded["filename"]
+
+
+def test_batch_creation_isolates_files_and_reports_duplicates(tmp_path: Path):
+    client = RecordingMagicClient()
+    service, _dispatches, admin = _push_service(tmp_path, client)
+    downloaded = []
+    for raw in service.pdm.files[:2]:
+        downloaded.append(
+            service.downloads.download(
+                document_id=raw["document_id"],
+                version_id=raw["version_id"],
+                file_path=raw["file_path"],
+                user=admin,
+            )
+        )
+
+    payload = [
+        {
+            "download_id": item["download_id"],
+            "material": "AH36",
+            "thickness": 10,
+            "quantity": index,
+        }
+        for index, item in enumerate(downloaded, start=1)
+    ]
+    created = service.create_dispatch_batch(
+        machine_ip="10.1.133.197", items=payload, user=admin
+    )
+
+    assert created["created_count"] == 2
+    assert created["duplicate_count"] == created["failed_count"] == 0
+    assert [item["status"] for item in created["items"]] == ["created", "created"]
+    assert [item["dispatch"]["quantity"] for item in created["items"]] == [1, 2]
+
+    repeated = service.create_dispatch_batch(
+        machine_ip="10.1.133.197", items=payload, user=admin
+    )
+
+    assert repeated["created_count"] == 0
+    assert repeated["duplicate_count"] == 2
+    assert repeated["failed_count"] == 0
+    assert all(item["dispatch"]["dispatch_id"] for item in repeated["items"])
+
+
+def test_batch_request_limits_files_and_requires_complete_parameters():
+    valid_item = {
+        "download_id": f"dl_{'a' * 32}",
+        "material": "AH36",
+        "thickness": 10,
+        "quantity": 1,
+    }
+    payload = DispatchBatchCreateRequest(
+        machine_ip="10.1.133.197",
+        items=[
+            {**valid_item, "download_id": f"dl_{index:032x}"}
+            for index in range(20)
+        ],
+    )
+    assert len(payload.items) == 20
+
+    with pytest.raises(ValidationError):
+        DispatchBatchCreateRequest(
+            machine_ip="10.1.133.197",
+            items=[
+                {**valid_item, "download_id": f"dl_{index:032x}"}
+                for index in range(21)
+            ],
+        )
+    with pytest.raises(ValidationError):
+        DispatchBatchCreateRequest(
+            machine_ip="10.1.133.197",
+            items=[{**valid_item, "material": "", "thickness": 0}],
+        )
 
 
 def test_assign_retry_does_not_upload_file_twice(tmp_path: Path):

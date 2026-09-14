@@ -276,6 +276,69 @@ class CuttingDispatchService:
         )
         return self._decorate_dispatch(dispatch)
 
+    def create_dispatch_batch(
+        self,
+        *,
+        machine_ip: str,
+        items: list[dict[str, Any]],
+        user: dict,
+    ) -> dict[str, Any]:
+        """Create independent dispatch records and isolate per-file failures.
+
+        Execution deliberately remains outside this method so the HTTP request
+        returns quickly and callers can push the created records sequentially.
+        """
+        results: list[dict[str, Any]] = []
+        for request_item in items:
+            download_id = str(request_item.get("download_id") or "")
+            try:
+                dispatch = self.create_dispatch(
+                    document_id=None,
+                    download_id=download_id,
+                    machine_ip=machine_ip,
+                    material=request_item.get("material"),
+                    thickness=request_item.get("thickness"),
+                    quantity=int(request_item.get("quantity") or 0),
+                    user=user,
+                )
+                results.append(
+                    {
+                        "download_id": download_id,
+                        "status": "created",
+                        "dispatch": dispatch,
+                        "error": None,
+                    }
+                )
+            except DuplicateDispatchError as exc:
+                results.append(
+                    {
+                        "download_id": download_id,
+                        "status": "duplicate",
+                        "dispatch": self._decorate_dispatch(exc.dispatch),
+                        "error": str(exc),
+                    }
+                )
+            except (CuttingDispatchError, ValueError) as exc:
+                results.append(
+                    {
+                        "download_id": download_id,
+                        "status": "failed",
+                        "dispatch": None,
+                        "error": str(exc),
+                    }
+                )
+
+        counts = {
+            status: sum(item["status"] == status for item in results)
+            for status in ("created", "duplicate", "failed")
+        }
+        return {
+            "items": results,
+            "created_count": counts["created"],
+            "duplicate_count": counts["duplicate"],
+            "failed_count": counts["failed"],
+        }
+
     @staticmethod
     def _decorate_dispatch(item: dict[str, Any]) -> dict[str, Any]:
         stage = item.get("stage") or "created"

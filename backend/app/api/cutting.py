@@ -71,6 +71,41 @@ class DispatchCreateRequest(BaseModel):
         return cleaned or None
 
 
+class DispatchBatchItem(BaseModel):
+    download_id: str = Field(pattern=r"^dl_[a-f0-9]{32}$")
+    material: str = Field(min_length=1, max_length=80)
+    thickness: float = Field(gt=0, le=1000)
+    quantity: int = Field(default=1, ge=1, le=10000)
+
+    @field_validator("material")
+    @classmethod
+    def normalize_material(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("材质不能为空")
+        return cleaned
+
+
+class DispatchBatchCreateRequest(BaseModel):
+    machine_ip: str = Field(min_length=3, max_length=64)
+    items: list[DispatchBatchItem] = Field(min_length=1, max_length=20)
+
+    @field_validator("machine_ip")
+    @classmethod
+    def validate_machine_ip(cls, value: str) -> str:
+        return DispatchCreateRequest.validate_machine_ip(value.strip())
+
+    @field_validator("items")
+    @classmethod
+    def reject_duplicate_downloads(
+        cls, values: list[DispatchBatchItem]
+    ) -> list[DispatchBatchItem]:
+        download_ids = [item.download_id for item in values]
+        if len(download_ids) != len(set(download_ids)):
+            raise ValueError("批量推送不能重复选择同一个文件")
+        return values
+
+
 @router.get("/status")
 def cutting_status(
     request: Request,
@@ -148,6 +183,20 @@ def create_dispatch(
     except (CuttingDispatchError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return _envelope(request, item)
+
+
+@router.post("/dispatches/batch", status_code=201)
+def create_dispatch_batch(
+    payload: DispatchBatchCreateRequest,
+    request: Request,
+    user: dict = Depends(require_admin),
+) -> dict:
+    data = request.app.state.cutting_dispatch.create_dispatch_batch(
+        machine_ip=payload.machine_ip,
+        items=[item.model_dump() for item in payload.items],
+        user=user,
+    )
+    return _envelope(request, data)
 
 
 @router.post("/files/search")

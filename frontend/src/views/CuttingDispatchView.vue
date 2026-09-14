@@ -1,11 +1,11 @@
 <script setup>
-import { computed, onActivated, onMounted, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { computed, onActivated, onMounted, onBeforeUnmount, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import CatalogTreeNode from '../components/CatalogTreeNode.vue'
 import { parseCuttingInstructionFilename } from '../utils/cuttingInstructionName.js'
 import {
   cancelCuttingDispatch,
-  createCuttingDispatch,
+  createCuttingDispatchBatch,
   executeCuttingDispatch,
   getCuttingStatus,
   listCuttingDispatches,
@@ -22,14 +22,24 @@ const isDownload = computed(() => props.mode === 'download')
 const route = useRoute()
 const router = useRouter()
 let querySequence = 0
-const dispatchForm = reactive({ machineIp: '', material: '', thickness: '', quantity: 1 })
+const dispatchForm = reactive({ machineIp: '' })
 const systemStatus = ref(null)
 const rows = ref([])
 const histories = ref([])
 const machines = ref([])
 const pushFiles = ref([])
-const selectedPushFileId = ref('')
-const recognizedInstruction = ref(null)
+const selectedPushFiles = ref(new Map())
+const bulkQuantity = ref(1)
+const pushBatch = reactive({
+  visible: false,
+  saving: false,
+  resultsReady: false,
+  items: [],
+  completed: 0,
+  total: 0,
+  currentFilename: '',
+  error: '',
+})
 const pushFileDraft = reactive({ keyword: '', projectId: '', catalogKey: '' })
 const pushFileFilters = ref({ keyword: '', projectId: '', catalogKey: '' })
 const pushFilePage = ref(1)
@@ -40,7 +50,6 @@ const selectedDownloadFiles = ref(new Map())
 const batchDownloading = ref(false)
 const batchProgress = reactive({ completed: 0, total: 0 })
 const loading = ref(false)
-const saving = ref(false)
 const operatingId = ref('')
 const notice = ref('')
 const noticeType = ref('info')
@@ -80,7 +89,6 @@ const expandedCatalogIds = ref(new Set())
 const projectLoading = ref(false)
 const catalogLoading = ref(false)
 
-const activeFile = computed(() => pushFiles.value.find((row) => row.download_id === selectedPushFileId.value) || null)
 const pushFileProjects = computed(() => {
   const options = new Map()
   pushFiles.value.forEach((item) => {
@@ -114,6 +122,24 @@ const pushFileTotalPages = computed(() => Math.max(1, Math.ceil(filteredPushFile
 const visiblePushFiles = computed(() => {
   const start = (pushFilePage.value - 1) * pushFilePageSize
   return filteredPushFiles.value.slice(start, start + pushFilePageSize)
+})
+const selectedPushCount = computed(() => selectedPushFiles.value.size)
+const allVisiblePushFilesSelected = computed(() => (
+  visiblePushFiles.value.length > 0
+  && visiblePushFiles.value.every((item) => selectedPushFiles.value.has(item.download_id))
+))
+const someVisiblePushFilesSelected = computed(() => (
+  !allVisiblePushFilesSelected.value
+  && visiblePushFiles.value.some((item) => selectedPushFiles.value.has(item.download_id))
+))
+const invalidBatchCount = computed(() => pushBatch.items.filter((item) => batchItemError(item)).length)
+const batchStatusCounts = computed(() => {
+  const counts = { saved: 0, sent: 0, duplicate: 0, failed: 0, pending: 0 }
+  pushBatch.items.forEach((item) => {
+    const key = Object.hasOwn(counts, item.status) ? item.status : 'pending'
+    counts[key] += 1
+  })
+  return counts
 })
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize)))
 const selectedDownloadCount = computed(() => selectedDownloadFiles.value.size)
@@ -263,9 +289,12 @@ async function loadPushFiles() {
   if (isDownload.value) return
   const data = await listCuttingDownloads({ page: 1, pageSize: 100 })
   pushFiles.value = (data.items || []).filter((item) => item.available && !item.is_simulation)
-  if (!pushFiles.value.some((item) => item.download_id === selectedPushFileId.value)) {
-    selectedPushFileId.value = pushFiles.value[0]?.download_id || ''
-  }
+  const availableById = new Map(pushFiles.value.map((item) => [item.download_id, item]))
+  selectedPushFiles.value = new Map(
+    [...selectedPushFiles.value.keys()]
+      .filter((downloadId) => availableById.has(downloadId))
+      .map((downloadId) => [downloadId, availableById.get(downloadId)]),
+  )
   pushFilePage.value = Math.min(pushFilePage.value, pushFileTotalPages.value)
 }
 
@@ -276,9 +305,6 @@ function applyPushFileFilters() {
     catalogKey: pushFileDraft.catalogKey,
   }
   pushFilePage.value = 1
-  if (activeFile.value && !filteredPushFiles.value.some((item) => item.download_id === activeFile.value.download_id)) {
-    selectedPushFileId.value = ''
-  }
 }
 
 function resetPushFileFilters() {
@@ -287,20 +313,116 @@ function resetPushFileFilters() {
   pushFilePage.value = 1
 }
 
-function selectPushFile(item) {
-  selectedPushFileId.value = item.download_id
+function clearSelectedPushFiles() {
+  selectedPushFiles.value = new Map()
 }
 
-watch(selectedPushFileId, () => {
-  dispatchForm.material = ''
-  dispatchForm.thickness = ''
-  dispatchForm.quantity = 1
-  const parsed = parseCuttingInstructionFilename(activeFile.value?.filename)
-  recognizedInstruction.value = parsed
-  if (!parsed) return
-  dispatchForm.material = parsed.material
-  dispatchForm.thickness = parsed.thickness
-}, { flush: 'sync' })
+function setPushFileSelected(item, selected) {
+  const next = new Map(selectedPushFiles.value)
+  if (selected && !next.has(item.download_id) && next.size >= 20) {
+    showNotice('一次最多选择 20 个文件，请先取消部分文件。', 'error')
+    return
+  }
+  if (selected) next.set(item.download_id, item)
+  else next.delete(item.download_id)
+  selectedPushFiles.value = next
+}
+
+function toggleVisiblePushFiles(selected) {
+  const next = new Map(selectedPushFiles.value)
+  if (!selected) {
+    visiblePushFiles.value.forEach((item) => next.delete(item.download_id))
+    selectedPushFiles.value = next
+    return
+  }
+  let skipped = 0
+  visiblePushFiles.value.forEach((item) => {
+    if (next.has(item.download_id)) return
+    if (next.size >= 20) {
+      skipped += 1
+      return
+    }
+    next.set(item.download_id, item)
+  })
+  selectedPushFiles.value = next
+  if (skipped) showNotice(`已选满 20 项，其余 ${skipped} 项未选中。`, 'error')
+}
+
+function createPushBatchItem(file) {
+  const parsed = parseCuttingInstructionFilename(file.filename)
+  return {
+    downloadId: file.download_id,
+    filename: file.filename,
+    version: file.version || '--',
+    parsed,
+    material: parsed?.material || '',
+    thickness: parsed?.thickness ?? '',
+    quantity: 1,
+    status: 'pending',
+    error: '',
+    dispatchId: '',
+  }
+}
+
+function batchItemError(item) {
+  if (!String(item.material || '').trim()) return '请填写材质'
+  const thickness = Number(item.thickness)
+  if (!Number.isFinite(thickness) || thickness <= 0 || thickness > 1000) return '板厚必须大于 0 且不超过 1000 mm'
+  const quantity = Number(item.quantity)
+  if (!Number.isInteger(quantity) || quantity < 1 || quantity > 10000) return '加工数量必须是 1–10000 的整数'
+  return ''
+}
+
+function openPushBatch() {
+  if (!selectedPushCount.value) {
+    showNotice('请先选择要推送的文件。', 'error')
+    return
+  }
+  pushBatch.items = [...selectedPushFiles.value.values()].map(createPushBatchItem)
+  pushBatch.completed = 0
+  pushBatch.total = pushBatch.items.length
+  pushBatch.currentFilename = ''
+  pushBatch.error = ''
+  pushBatch.resultsReady = false
+  bulkQuantity.value = 1
+  pushBatch.visible = true
+}
+
+function closePushBatch() {
+  if (pushBatch.saving) return
+  pushBatch.visible = false
+}
+
+function removePushBatchItem(item) {
+  if (pushBatch.saving || pushBatch.resultsReady) return
+  pushBatch.items = pushBatch.items.filter((candidate) => candidate.downloadId !== item.downloadId)
+  const next = new Map(selectedPushFiles.value)
+  next.delete(item.downloadId)
+  selectedPushFiles.value = next
+  pushBatch.total = pushBatch.items.length
+  if (!pushBatch.items.length) closePushBatch()
+}
+
+function applyBulkQuantity() {
+  const quantity = Number(bulkQuantity.value)
+  if (!Number.isInteger(quantity) || quantity < 1 || quantity > 10000) {
+    pushBatch.error = '统一数量必须是 1–10000 的整数。'
+    return
+  }
+  pushBatch.items.forEach((item) => { item.quantity = quantity })
+  pushBatch.error = ''
+}
+
+function batchStatusLabel(item) {
+  return {
+    pending: '待创建',
+    saved: '已保存',
+    pushing: '推送中',
+    sent: '已推送',
+    duplicate: '已有未完成任务',
+    failed: '失败',
+  }[item.status] || '待创建'
+}
 
 function changePushFilePage(nextPage) {
   if (nextPage < 1 || nextPage > pushFileTotalPages.value) return
@@ -504,34 +626,97 @@ async function changePage(nextPage) {
   await loadFiles(nextPage)
 }
 
-async function saveDispatch(executeNow = false) {
-  if (isDownload.value || saving.value) return
-  if (!activeFile.value) {
-    showNotice('请先选择一个切割文件。', 'error')
+async function submitPushBatch(executeNow = false) {
+  if (isDownload.value || pushBatch.saving) return
+  pushBatch.error = ''
+  if (!dispatchForm.machineIp) {
+    pushBatch.error = '请选择目标机床。'
     return
   }
-  if (executeNow && !window.confirm(`确认将文件“${activeFile.value.filename}”推送到机床 ${dispatchForm.machineIp}？\n任务名称将使用该文件名。`)) return
-  saving.value = true
+  if (!pushBatch.items.length) {
+    pushBatch.error = '请至少保留一个文件。'
+    return
+  }
+  if (invalidBatchCount.value) {
+    pushBatch.error = `还有 ${invalidBatchCount.value} 个文件的加工参数不完整，请先补充。`
+    return
+  }
+  if (executeNow && !systemStatus.value?.can_push) {
+    pushBatch.error = '当前推送服务不可用，可先保存任务。'
+    return
+  }
+
+  pushBatch.saving = true
+  pushBatch.resultsReady = false
+  pushBatch.completed = 0
+  pushBatch.total = pushBatch.items.length
+  pushBatch.currentFilename = '正在创建独立派发任务'
+  pushBatch.items.forEach((item) => {
+    item.status = 'pending'
+    item.error = ''
+    item.dispatchId = ''
+  })
+
   try {
-    const item = await createCuttingDispatch({
-      download_id: activeFile.value.download_id,
+    const created = await createCuttingDispatchBatch({
       machine_ip: dispatchForm.machineIp,
-      material: dispatchForm.material || null,
-      thickness: dispatchForm.thickness === '' ? null : Number(dispatchForm.thickness),
-      quantity: Number(dispatchForm.quantity),
+      items: pushBatch.items.map((item) => ({
+        download_id: item.downloadId,
+        material: String(item.material).trim(),
+        thickness: Number(item.thickness),
+        quantity: Number(item.quantity),
+      })),
     })
-    if (executeNow) {
-      operatingId.value = item.dispatch_id
-      const completed = await executeCuttingDispatch(item.dispatch_id)
-      showNotice(`文件已上传魔盒并指派到 ${completed.machine_ip}，任务名称使用实际上传文件名。`)
-    } else {
-      showNotice(`已保存派发任务 ${item.dispatch_id}，当前状态：${item.status_label}。`)
+    const createdItems = []
+    for (const result of created.items || []) {
+      const item = pushBatch.items.find((candidate) => candidate.downloadId === result.download_id)
+      if (!item) continue
+      item.dispatchId = result.dispatch?.dispatch_id || ''
+      if (result.status === 'created') {
+        item.status = executeNow ? 'pending' : 'saved'
+        createdItems.push(item)
+      } else {
+        item.status = result.status === 'duplicate' ? 'duplicate' : 'failed'
+        item.error = result.error || '任务创建失败'
+      }
     }
+
+    if (executeNow) {
+      pushBatch.completed = pushBatch.items.length - createdItems.length
+      for (const item of createdItems) {
+        item.status = 'pushing'
+        pushBatch.currentFilename = item.filename
+        operatingId.value = item.dispatchId
+        try {
+          await executeCuttingDispatch(item.dispatchId)
+          item.status = 'sent'
+        } catch (error) {
+          item.status = 'failed'
+          item.error = error.message
+        } finally {
+          pushBatch.completed += 1
+        }
+      }
+    } else {
+      pushBatch.completed = pushBatch.items.length
+    }
+
+    pushBatch.resultsReady = true
+    pushBatch.currentFilename = ''
+    clearSelectedPushFiles()
     await loadHistory()
+    const counts = batchStatusCounts.value
+    if (executeNow) {
+      const message = `批量推送完成：成功 ${counts.sent} 项，失败 ${counts.failed} 项，重复 ${counts.duplicate} 项。`
+      showNotice(message, counts.failed || counts.duplicate ? 'error' : 'info')
+    } else {
+      const message = `批量保存完成：已保存 ${counts.saved} 项，失败 ${counts.failed} 项，重复 ${counts.duplicate} 项。`
+      showNotice(message, counts.failed || counts.duplicate ? 'error' : 'info')
+    }
   } catch (error) {
-    showNotice(error.message, 'error')
+    pushBatch.error = error.message
   } finally {
-    saving.value = false
+    pushBatch.saving = false
     operatingId.value = ''
   }
 }
@@ -636,7 +821,7 @@ onActivated(async () => {
     <div class="active"><i>01</i><span><strong>选择项目目录</strong><small>项目 · 分段 · 文件分类</small></span></div>
     <div><i>02</i><span><strong>保存文件到系统</strong><small>准确版本 · 保存记录可追溯</small></span></div>
   </div>
-  <p v-else class="dispatch-push-scope" role="note">确认推送后，系统会校验并复用已下载的准确版本，必要时先从 FO 下载，再上传魔盒并指派机床。每次真实推送都需要人工确认，不会按查询结果批量执行。</p>
+  <p v-else class="dispatch-push-scope" role="note">可一次选择最多 20 个已保存文件，统一选择机床并逐个核对加工参数。系统会按顺序推送，单个文件失败不会中断其余任务。</p>
 
   <div v-if="notice" class="dispatch-notice" :class="{ error: noticeType === 'error' }" role="status">
     <span>{{ notice }}</span>
@@ -717,19 +902,23 @@ onActivated(async () => {
     </section>
 
     <section v-if="!isDownload" class="panel push-file-picker">
-      <div class="panel-title"><div><span>01</span><h2>选择系统已保存文件</h2></div><p>共 {{ filteredPushFiles.length }} 条可推送文件</p></div>
+      <div class="panel-title"><div><span>01</span><h2>选择待推送文件</h2></div><p>共 {{ filteredPushFiles.length }} 条可推送文件</p></div>
       <form class="push-file-filter" @submit.prevent="applyPushFileFilters">
         <label><span>文件名或来源路径</span><input v-model="pushFileDraft.keyword" placeholder="输入文件名关键字" /></label>
         <label><span>项目 / 船号</span><AppSelect v-model="pushFileDraft.projectId" @change="pushFileDraft.catalogKey = ''"><option value="">全部项目</option><option v-for="project in pushFileProjects" :key="project.key" :value="project.key">{{ project.label }}</option></AppSelect></label>
         <label><span>目录路径</span><AppSelect v-model="pushFileDraft.catalogKey"><option value="">全部目录</option><option v-for="catalog in pushFileCatalogs" :key="catalog.key" :value="catalog.key">{{ catalog.label }}</option></AppSelect></label>
         <div class="push-filter-actions"><button type="button" @click="resetPushFileFilters">重置</button><button class="primary" type="submit">筛选</button></div>
       </form>
+      <div class="download-batch-toolbar push-batch-toolbar" aria-live="polite">
+        <span>已选择 <strong>{{ selectedPushCount }}</strong> / 20 项<small>可跨页选择</small></span>
+        <div><button type="button" :disabled="!selectedPushCount || pushBatch.saving" @click="clearSelectedPushFiles">清空选择</button><button class="primary" type="button" :disabled="!selectedPushCount || loading || pushBatch.saving" @click="openPushBatch">设置参数并推送</button></div>
+      </div>
       <div class="dispatch-table-wrap">
         <table v-content-table class="dispatch-table push-file-table" aria-label="可推送文件列表">
-          <thead><tr><th>选择</th><th>文件名</th><th>项目 / 目录</th><th>版本 / 来源</th><th>大小</th><th>下载时间 / 下载人</th></tr></thead>
+          <thead><tr><th class="push-check-cell"><input type="checkbox" :checked="allVisiblePushFilesSelected" :indeterminate="someVisiblePushFilesSelected" :disabled="!visiblePushFiles.length || pushBatch.saving" aria-label="全选当前页可推送文件" @change="toggleVisiblePushFiles($event.target.checked)" /></th><th>文件名</th><th>项目 / 目录</th><th>版本 / 来源</th><th>大小</th><th>下载时间 / 下载人</th></tr></thead>
           <tbody>
-            <tr v-for="item in visiblePushFiles" :key="item.download_id" :class="{ selected: item.download_id === selectedPushFileId }" @click="selectPushFile(item)">
-              <td class="push-radio-cell"><input type="radio" name="push-file" :checked="item.download_id === selectedPushFileId" :aria-label="`选择推送文件 ${item.filename}`" @click.stop @change="selectPushFile(item)" /></td>
+            <tr v-for="item in visiblePushFiles" :key="item.download_id" :class="{ selected: selectedPushFiles.has(item.download_id) }" @click="setPushFileSelected(item, !selectedPushFiles.has(item.download_id))">
+              <td class="push-check-cell"><input type="checkbox" :checked="selectedPushFiles.has(item.download_id)" :disabled="pushBatch.saving" :aria-label="`选择推送文件 ${item.filename}`" @click.stop @change="setPushFileSelected(item, $event.target.checked)" /></td>
               <td class="file-name-cell"><strong>{{ item.filename }}</strong><small :title="item.relative_path">{{ item.relative_path }}</small></td>
               <td class="push-file-origin"><strong>{{ item.project_name || '未分类项目' }}</strong><small>{{ item.ship_no || '--' }} · {{ downloadCatalogLabel(item) }}</small></td>
               <td>{{ item.version || '--' }}<small class="dispatch-project-name">{{ downloadSourceLabel(item) }}</small></td>
@@ -741,32 +930,8 @@ onActivated(async () => {
         </table>
       </div>
       <div class="dispatch-pagination"><button type="button" :disabled="pushFilePage <= 1" @click="changePushFilePage(pushFilePage - 1)">上一页</button><span>第 {{ pushFilePage }} / {{ pushFileTotalPages }} 页</span><button type="button" :disabled="pushFilePage >= pushFileTotalPages" @click="changePushFilePage(pushFilePage + 1)">下一页</button></div>
-      <p class="dispatch-download-hint">这里只显示系统中存在、校验有效且非模拟的文件；筛选不会自动创建或执行推送任务。</p>
+      <p class="dispatch-download-hint">这里只显示系统中存在、校验有效且非模拟的文件；标准指令名会自动识别材质和板厚，非标准名需在下一步手工填写。</p>
     </section>
-
-    <aside v-if="!isDownload" class="panel dispatch-config-panel">
-      <div class="panel-title"><div><span>02</span><h2>派发参数</h2></div><p>选择单个文件后填写推送参数</p></div>
-      <div class="dispatch-selected-file">
-        <span>当前选择</span>
-        <strong>{{ activeFile?.filename || '尚未选择文件' }}</strong>
-        <small v-if="activeFile">版本 {{ activeFile.version || '--' }} · {{ activeFile.storage_path }}</small>
-        <small v-if="recognizedInstruction" class="dispatch-name-recognition">
-          已按标准名称填充：{{ recognizedInstruction.instructionTypeLabel }} · 中间产品 {{ recognizedInstruction.intermediateProduct }} · {{ recognizedInstruction.material }} · {{ recognizedInstruction.thickness.toFixed(1) }} mm · 顺序 {{ recognizedInstruction.sequence }}
-        </small>
-      </div>
-      <form class="dispatch-config" @submit.prevent="saveDispatch(false)">
-        <label><span>任务名称（自动）</span><input :value="activeFile?.filename || ''" disabled /><small>taskName 与实际上传文件名一致，包含扩展名。</small></label>
-        <label><span>目标机床 IP</span><AppSelect v-model="dispatchForm.machineIp" required><option value="" disabled>请选择 SYS_CONFIG 中的机床</option><option v-for="machine in machines" :key="machine.machine_ip" :value="machine.machine_ip">{{ machine.server_name ? `${machine.server_name} · ` : '' }}{{ machine.machine_ip }}（{{ machine.online ? '在线' : '未从列表确认在线' }}）</option></AppSelect></label>
-        <div class="dispatch-config-row">
-          <label><span>材质</span><input v-model.trim="dispatchForm.material" placeholder="可选" /></label>
-          <label><span>板厚（mm）</span><input v-model="dispatchForm.thickness" type="number" min="0" step="0.01" placeholder="0" /></label>
-        </div>
-        <label><span>加工数量</span><input v-model="dispatchForm.quantity" type="number" min="1" max="10000" step="1" required /></label>
-        <div class="dispatch-task-id"><span>任务标识</span><code>提交时由系统生成唯一 ID</code></div>
-        <div class="dispatch-warning"><strong>安全推送</strong><span>上传、指派分阶段记录。如上传超时导致结果不明，系统会停止自动重试，避免重复任务。</span></div>
-        <div class="dispatch-submit-row"><button type="submit" :disabled="!activeFile?.available || saving">保存草稿</button><button class="primary" type="button" :disabled="!activeFile?.available || !dispatchForm.machineIp || !systemStatus?.can_push || saving" @click="saveDispatch(true)">{{ saving ? '处理中…' : '确认并推送' }}</button></div>
-      </form>
-    </aside>
   </div>
 
   <section v-if="!isDownload" class="panel dispatch-history-panel">
@@ -774,6 +939,50 @@ onActivated(async () => {
     <div v-if="histories.length" class="dispatch-table-wrap"><table v-content-table class="dispatch-table history-table"><thead><tr><th>任务标识</th><th>文件名</th><th>机床IP</th><th>阶段 / 状态</th><th>魔盒UUID</th><th>失败原因</th><th>创建时间</th><th>操作</th></tr></thead><tbody><tr v-for="item in histories" :key="item.dispatch_id"><td><code>{{ item.task_identifier || item.dispatch_id }}</code></td><td>{{ item.document_no }}<small class="dispatch-project-name">数量 {{ item.quantity }}</small></td><td>{{ item.machine_ip }}</td><td><span class="dispatch-status" :class="item.status">{{ item.status_label }}</span><small class="dispatch-project-name">{{ item.stage_label }}</small></td><td><code>{{ item.remote_task_id || '--' }}</code></td><td class="history-error">{{ item.last_error || '--' }}</td><td>{{ formatTime(item.created_at) }}</td><td><div class="history-actions"><button v-if="item.can_execute" type="button" :disabled="!!operatingId" @click="executeSaved(item)">{{ item.remote_task_id ? '重试指派' : '执行推送' }}</button><button v-if="item.can_cancel" type="button" class="danger" :disabled="!!operatingId" @click="cancelSaved(item)">取消指派</button><span v-if="!item.can_execute && !item.can_cancel">--</span></div></td></tr></tbody></table></div>
     <div v-else class="dispatch-empty-history"><i>↗</i><strong>暂无派发记录</strong><span>选择文件和机床后可保存草稿，或明确确认后直接推送。</span></div>
   </section>
+
+  <Teleport to="body">
+    <div v-if="pushBatch.visible" class="push-batch-backdrop" role="presentation" @click.self="closePushBatch">
+      <section class="push-batch-dialog" role="dialog" aria-modal="true" aria-labelledby="push-batch-title">
+        <header class="push-batch-header">
+          <div><span>BATCH FILE PUSH</span><h2 id="push-batch-title">批量推送确认</h2><p>每个文件会生成独立任务，一项失败不影响后续文件。</p></div>
+          <button type="button" :disabled="pushBatch.saving" aria-label="关闭批量推送窗口" @click="closePushBatch">×</button>
+        </header>
+
+        <div class="push-batch-content">
+          <div class="push-batch-common">
+            <label><span>目标机床 IP</span><AppSelect v-model="dispatchForm.machineIp" :disabled="pushBatch.saving || pushBatch.resultsReady"><option value="" disabled>请选择 SYS_CONFIG 中的机床</option><option v-for="machine in machines" :key="machine.machine_ip" :value="machine.machine_ip">{{ machine.server_name ? `${machine.server_name} · ` : '' }}{{ machine.machine_ip }}（{{ machine.online ? '在线' : '未从列表确认在线' }}）</option></AppSelect></label>
+            <label><span>统一加工数量</span><div><input v-model="bulkQuantity" type="number" min="1" max="10000" step="1" :disabled="pushBatch.saving || pushBatch.resultsReady" /><button type="button" :disabled="pushBatch.saving || pushBatch.resultsReady" @click="applyBulkQuantity">应用到全部</button></div></label>
+            <div class="push-batch-summary"><strong>{{ pushBatch.items.length }}</strong><span>个文件</span><small v-if="!pushBatch.resultsReady">{{ invalidBatchCount ? `${invalidBatchCount} 项待补参数` : '参数已完整' }}</small><small v-else>已推送 {{ batchStatusCounts.sent }} · 已保存 {{ batchStatusCounts.saved }} · 失败 {{ batchStatusCounts.failed }} · 重复 {{ batchStatusCounts.duplicate }}</small></div>
+          </div>
+
+          <div v-if="pushBatch.error" class="push-batch-error" role="alert">{{ pushBatch.error }}</div>
+          <div v-if="pushBatch.saving" class="push-batch-progress" role="status"><div><strong>{{ pushBatch.currentFilename }}</strong><span>{{ pushBatch.completed }} / {{ pushBatch.total }}</span></div><progress :value="pushBatch.completed" :max="pushBatch.total"></progress><small>正在按顺序处理，请不要关闭页面。</small></div>
+
+          <div class="push-batch-table-wrap">
+            <table v-content-table class="push-batch-table">
+              <thead><tr><th>文件 / 识别结果</th><th>材质</th><th>板厚（mm）</th><th>数量</th><th>状态</th><th>操作</th></tr></thead>
+              <tbody>
+                <tr v-for="item in pushBatch.items" :key="item.downloadId" :class="{ invalid: !pushBatch.resultsReady && batchItemError(item) }">
+                  <td class="push-batch-file"><strong>{{ item.filename }}</strong><small>版本 {{ item.version }}</small><span v-if="item.parsed" class="recognized">已识别：{{ item.parsed.material }} · {{ item.parsed.thickness.toFixed(1) }} mm</span><span v-else class="manual">非标准名，请手工填写参数</span></td>
+                  <td><input v-model.trim="item.material" :disabled="pushBatch.saving || pushBatch.resultsReady" maxlength="80" placeholder="必填" /></td>
+                  <td><input v-model="item.thickness" :disabled="pushBatch.saving || pushBatch.resultsReady" type="number" min="0.01" max="1000" step="0.01" placeholder="必填" /></td>
+                  <td><input v-model="item.quantity" :disabled="pushBatch.saving || pushBatch.resultsReady" type="number" min="1" max="10000" step="1" /></td>
+                  <td class="push-batch-result"><span :class="item.status">{{ batchStatusLabel(item) }}</span><small v-if="item.error" :title="item.error">{{ item.error }}</small></td>
+                  <td><button class="push-batch-remove" type="button" :disabled="pushBatch.saving || pushBatch.resultsReady" @click="removePushBatchItem(item)">移除</button></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p v-if="!pushBatch.resultsReady" class="push-batch-safety">标准指令名已自动填充材质和板厚，请在提交前逐项核对。非标准名不会猜测参数，必须手工补全。</p>
+        </div>
+
+        <footer class="push-batch-footer">
+          <template v-if="pushBatch.resultsReady"><span>处理结果已写入派发记录，失败项可在记录中查看原因或重试。</span><button class="primary" type="button" @click="closePushBatch">完成</button></template>
+          <template v-else><span>仅保存任务不会联系魔盒；确认推送后将依次执行。</span><div><button type="button" :disabled="pushBatch.saving" @click="closePushBatch">取消</button><button type="button" :disabled="pushBatch.saving || invalidBatchCount > 0 || !dispatchForm.machineIp" @click="submitPushBatch(false)">{{ pushBatch.saving ? '处理中…' : '仅保存任务' }}</button><button class="primary" type="button" :disabled="pushBatch.saving || invalidBatchCount > 0 || !dispatchForm.machineIp || !systemStatus?.can_push" @click="submitPushBatch(true)">{{ pushBatch.saving ? '顺序推送中…' : '确认并顺序推送' }}</button></div></template>
+        </footer>
+      </section>
+    </div>
+  </Teleport>
 </template>
 
 <style scoped>
@@ -797,11 +1006,10 @@ onActivated(async () => {
 .dispatch-notice { display:flex; align-items:center; gap:12px; margin-bottom:22px; padding:13px 16px; color:#1f6570; border-left:4px solid var(--cyan); background:#edf8f9; font-size:12px; }
 .dispatch-notice.error { color:#8a342d; border-left-color:#c95a50; background:#fff0ee; }
 .dispatch-notice button { min-height:30px; margin-left:auto; padding:0 8px; color:var(--blue); border:0; background:transparent; }
-.dispatch-config label > span { display:block; margin-bottom:7px; color:#425767; font-size:11px; font-weight:700; }
 .dispatch-workspace { display:grid; grid-template-columns:minmax(0,1.8fr) minmax(300px,.72fr); gap:22px; align-items:start; }
 .dispatch-workspace.download-workspace { grid-template-columns:minmax(285px,.42fr) minmax(0,1.58fr); align-items:stretch; }
-.dispatch-workspace.push-workspace { grid-template-columns:minmax(0,1.55fr) minmax(320px,.65fr); align-items:stretch; }
-.dispatch-files-panel,.dispatch-config-panel { min-width:0; }
+.dispatch-workspace.push-workspace { grid-template-columns:1fr; align-items:stretch; }
+.dispatch-files-panel { min-width:0; }
 .download-workspace .dispatch-files-panel { display:flex; flex-direction:column; }
 .download-workspace .dispatch-table-wrap { flex:1 1 auto; }
 .directory-panel { min-width:0; }
@@ -874,8 +1082,8 @@ onActivated(async () => {
 .push-filter-actions button { min-height:38px; padding:0 13px; color:var(--blue); border:1px solid #b9ccd6; background:#fff; }
 .push-filter-actions .primary { color:#fff; border-color:var(--blue); background:var(--blue); }
 .push-file-table tbody tr { cursor:pointer; }
-.push-radio-cell { width:48px; text-align:center!important; }
-.push-radio-cell input { width:15px; height:15px; }
+.push-check-cell { width:48px; text-align:center!important; }
+.push-check-cell input { display:block; width:15px; height:15px; margin:auto; accent-color:var(--blue); cursor:pointer; }
 .push-file-origin { max-width:245px; }
 .push-file-origin strong,.push-file-origin small { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .push-file-origin strong { color:var(--navy); font-size:11px; }
@@ -888,30 +1096,6 @@ onActivated(async () => {
 .dispatch-pagination { display:flex; align-items:center; justify-content:flex-end; gap:12px; padding:14px 22px 0; color:var(--muted); font-size:10px; }
 .dispatch-pagination button { min-height:30px; padding:0 12px; color:var(--blue); border:1px solid #c8d7df; background:#fff; }
 .dispatch-pagination button:disabled { color:#9cabb4; background:#f4f6f7; cursor:not-allowed; }
-.dispatch-path-preview { display:flex; flex-direction:column; gap:7px; margin:18px 22px 22px; padding:15px 16px; border:1px solid #d8e3e8; background:#f7fafb; }
-.dispatch-path-preview > span { color:#526a79; font-size:10px; font-weight:700; letter-spacing:1px; }
-.dispatch-path-preview code { overflow-wrap:anywhere; color:#0d5d83; font:11px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace; }
-.dispatch-path-preview small { color:var(--muted); font-size:10px; }
-.dispatch-config-panel { position:sticky; top:18px; }
-.push-workspace .dispatch-config-panel { position:static; }
-.dispatch-name-recognition { color:#167e85!important; font-weight:700; }
-.push-workspace .dispatch-config { grid-template-columns:1fr; }
-.push-workspace .dispatch-selected-file,.push-workspace .dispatch-warning,.push-workspace .dispatch-task-id,.push-workspace .dispatch-submit-row { grid-column:1/-1; }
-.dispatch-selected-file { display:flex; flex-direction:column; gap:4px; margin:20px 22px 0; padding:14px 15px; border-left:4px solid var(--cyan); background:#eef8fa; }
-.dispatch-selected-file span { color:var(--muted); font-size:9px; letter-spacing:1px; }
-.dispatch-selected-file strong { overflow:hidden; color:var(--navy); text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
-.dispatch-selected-file small { color:#a26917; font-size:9px; }
-.dispatch-config { display:grid; gap:13px; padding:18px 22px 24px; }
-.dispatch-config label > small { display:block; margin-top:5px; color:var(--muted); font-size:9px; line-height:1.5; }
-.dispatch-config-row { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
-.dispatch-task-id { display:flex; flex-direction:column; gap:5px; padding:11px 12px; border:1px dashed #bdcbd5; background:#fafcfd; }
-.dispatch-task-id span { color:#526a79; font-size:10px; font-weight:700; }
-.dispatch-task-id code { color:#788a96; font-size:10px; }
-.dispatch-warning { display:flex; flex-direction:column; gap:3px; padding:11px 12px; color:#7b581d; background:#fff6e4; }
-.dispatch-warning strong { font-size:11px; }
-.dispatch-warning span { font-size:9px; line-height:1.5; }
-.dispatch-submit-row { display:grid; grid-template-columns:.8fr 1.2fr; gap:9px; }
-.dispatch-submit-row button { width:100%; }
 .dispatch-empty-history { min-height:160px; display:flex; align-items:center; justify-content:center; flex-direction:column; padding:30px; color:var(--muted); text-align:center; }
 .dispatch-empty-history i { width:38px; height:38px; display:grid; place-items:center; margin-bottom:10px; color:var(--blue); border:1px solid #a9cad7; border-radius:50%; background:#f1fafb; font-style:normal; font-size:18px; }
 .dispatch-empty-history strong { color:#405866; font-size:13px; }
@@ -923,6 +1107,57 @@ onActivated(async () => {
 .history-actions { display:flex; align-items:center; gap:6px; }
 .history-actions button { min-height:30px; padding:0 9px; color:var(--blue); border:1px solid #b9ccd6; background:#fff; white-space:nowrap; font-size:10px; }
 .history-actions button.danger { color:#9b3f37; border-color:#e3b8b4; }
+.push-batch-backdrop { position:fixed; z-index:1000; inset:0; display:grid; place-items:center; padding:24px; background:rgba(13,39,55,.6); }
+.push-batch-dialog { width:min(1180px,100%); max-height:calc(100vh - 48px); display:flex; flex-direction:column; overflow:hidden; color:#1d3444; background:#fff; box-shadow:0 24px 70px rgba(5,25,38,.28); }
+.push-batch-header { display:flex; align-items:flex-start; justify-content:space-between; gap:24px; padding:20px 24px; color:#fff; background:#0b5678; }
+.push-batch-header span { color:#a9e1eb; font-size:9px; font-weight:700; letter-spacing:2px; }
+.push-batch-header h2 { margin:3px 0 4px; font-size:20px; }
+.push-batch-header p { margin:0; color:#d6e9ef; font-size:10px; }
+.push-batch-header button { width:34px; min-height:34px; flex:0 0 34px; padding:0; color:#fff; border:1px solid rgba(255,255,255,.4); background:transparent; font-size:23px; line-height:1; }
+.push-batch-content { min-height:0; overflow:auto; padding:20px 24px; }
+.push-batch-common { display:grid; grid-template-columns:minmax(280px,1.2fr) minmax(230px,.8fr) minmax(170px,.55fr); align-items:end; gap:16px; margin-bottom:18px; }
+.push-batch-common label > span { display:block; margin-bottom:7px; color:#425767; font-size:10px; font-weight:700; }
+.push-batch-common label > div { display:flex; gap:7px; }
+.push-batch-common input,.push-batch-common .app-select { width:100%; min-width:0; }
+.push-batch-common button { flex:0 0 auto; min-height:38px; padding:0 11px; color:var(--blue); border:1px solid #b9ccd6; background:#fff; }
+.push-batch-summary { min-height:61px; display:flex; align-items:baseline; align-content:center; flex-wrap:wrap; gap:4px; padding:10px 13px; border-left:3px solid var(--cyan); background:#eef8fa; }
+.push-batch-summary strong { color:var(--blue); font-size:22px; }
+.push-batch-summary span { font-size:11px; }
+.push-batch-summary small { width:100%; color:#637b89; font-size:9px; }
+.push-batch-error { margin-bottom:14px; padding:10px 13px; color:#943d35; border-left:3px solid #c95a50; background:#fff0ee; font-size:11px; }
+.push-batch-progress { margin-bottom:14px; padding:11px 13px; background:#eef8fa; }
+.push-batch-progress > div { display:flex; align-items:center; justify-content:space-between; gap:15px; }
+.push-batch-progress strong { min-width:0; overflow:hidden; color:#155d7b; text-overflow:ellipsis; white-space:nowrap; font-size:11px; }
+.push-batch-progress span,.push-batch-progress small { color:#647b89; font-size:9px; }
+.push-batch-progress progress { width:100%; height:7px; margin:8px 0 4px; accent-color:var(--cyan); }
+.push-batch-table-wrap { overflow:auto; max-height:410px; border:1px solid #dce5ea; }
+.push-batch-table { width:100%; min-width:920px; border-collapse:collapse; }
+.push-batch-table th,.push-batch-table td { padding:10px; border-bottom:1px solid #e2e9ed; text-align:left; font-size:10px; vertical-align:middle; }
+.push-batch-table th { position:sticky; z-index:1; top:0; color:#dcecf2; background:#0b4f76; font-size:9px; }
+.push-batch-table tr.invalid { background:#fff9ef; }
+.push-batch-table input { width:100%; min-width:82px; height:34px; padding:0 9px; }
+.push-batch-file { width:290px; }
+.push-batch-file strong,.push-batch-file small,.push-batch-file span { display:block; }
+.push-batch-file strong { max-width:280px; overflow:hidden; color:var(--navy); text-overflow:ellipsis; white-space:nowrap; font-size:11px; }
+.push-batch-file small { margin-top:3px; color:var(--muted); }
+.push-batch-file span { margin-top:5px; font-size:9px; }
+.push-batch-file .recognized { color:#167e85; }
+.push-batch-file .manual { color:#a26917; }
+.push-batch-result { width:170px; }
+.push-batch-result > span { display:inline-flex; padding:4px 7px; color:#7b5d20; border-radius:999px; background:#fff3d8; white-space:nowrap; }
+.push-batch-result > span.sent,.push-batch-result > span.saved { color:#267048; background:#e8f7ef; }
+.push-batch-result > span.failed { color:#9b3f37; background:#fdecea; }
+.push-batch-result > span.pushing { color:#155d7b; background:#e5f4f8; }
+.push-batch-result > span.duplicate { color:#805a20; background:#f5ead7; }
+.push-batch-result small { display:block; max-width:170px; margin-top:5px; overflow:hidden; color:#9b3f37; text-overflow:ellipsis; white-space:nowrap; }
+.push-batch-remove { min-height:30px; padding:0 8px; color:#8b4c46; border:1px solid #dfc0bc; background:#fff; }
+.push-batch-safety { margin:14px 0 0; color:#7b581d; font-size:10px; line-height:1.7; }
+.push-batch-footer { display:flex; align-items:center; justify-content:space-between; gap:20px; padding:15px 24px; border-top:1px solid #dce5ea; background:#f7fafb; }
+.push-batch-footer > span { color:#617885; font-size:10px; line-height:1.5; }
+.push-batch-footer > div { display:flex; flex:0 0 auto; gap:8px; }
+.push-batch-footer button { min-height:38px; padding:0 16px; color:var(--blue); border:1px solid #b9ccd6; background:#fff; white-space:nowrap; }
+.push-batch-footer button.primary { color:#fff; border-color:var(--blue); background:var(--blue); }
+.push-batch-footer button:disabled,.push-batch-common button:disabled { opacity:.55; cursor:not-allowed; }
 @media (max-width:1000px) {
   .dispatch-hero { align-items:flex-start; flex-direction:column; justify-content:center; padding:28px 0; }
   .dispatch-stage-badge { width:100%; min-width:0; }
@@ -930,13 +1165,13 @@ onActivated(async () => {
   .dispatch-flow > div:nth-child(2) { border-right:0; }
   .dispatch-flow > div:nth-child(-n+2) { border-bottom:1px solid var(--line); }
   .dispatch-workspace,.dispatch-workspace.download-workspace,.dispatch-workspace.push-workspace { grid-template-columns:1fr; }
-  .dispatch-config-panel { position:static; }
-  .push-workspace .dispatch-config { grid-template-columns:1fr; }
   .directory-scroll { max-height:420px; }
   .push-file-filter { grid-template-columns:1fr 1fr; }
+  .push-batch-common { grid-template-columns:1fr 1fr; }
+  .push-batch-summary { grid-column:1/-1; }
 }
 @media (max-width:560px) {
-  .dispatch-flow,.dispatch-config-row { grid-template-columns:1fr; }
+  .dispatch-flow { grid-template-columns:1fr; }
   .dispatch-flow > div { border-right:0; border-bottom:1px solid var(--line); }
   .dispatch-flow > div:last-child { border-bottom:0; }
   .dispatch-flow > div::after { display:none; }
@@ -946,5 +1181,13 @@ onActivated(async () => {
   .download-batch-toolbar > div button { flex:1; }
   .push-file-filter { grid-template-columns:1fr; }
   .push-filter-actions button { flex:1; }
+  .push-batch-backdrop { padding:0; }
+  .push-batch-dialog { width:100%; max-height:100vh; min-height:100vh; }
+  .push-batch-header,.push-batch-content,.push-batch-footer { padding-left:15px; padding-right:15px; }
+  .push-batch-common { grid-template-columns:1fr; }
+  .push-batch-summary { grid-column:auto; }
+  .push-batch-footer { align-items:stretch; flex-direction:column; }
+  .push-batch-footer > div { display:grid; grid-template-columns:1fr 1fr; }
+  .push-batch-footer > div .primary { grid-column:1/-1; }
 }
 </style>
