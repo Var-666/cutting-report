@@ -120,13 +120,9 @@ test('workshop report includes the confirmed-worker interval summary', () => {
 })
 
 test('source files are saved to the system and are not downloadable to the browser', () => {
-  const downloads = descriptor('CuttingDownloadsPanel', 'components')
   const dispatch = descriptor('CuttingDispatchView')
-  assert.doesNotMatch(downloads.template.content, /download-source-file|下载所选文件|<span>03<\/span>/)
   assert.match(dispatch.template.content, /@click="downloadFile\(row\)"/)
   assert.match(dispatch.template.content, /<strong>\{\{ row.document_no \}\}<\/strong>/)
-  assert.match(downloads.template.content, /<h2>系统已保存文件<\/h2>/)
-  assert.doesNotMatch(downloads.template.content, /另存到电脑|选择电脑保存位置|downloaded-file/)
   assert.match(dispatch.template.content, /保存到系统/)
   assert.match(dispatch.template.content, /aria-label="可推送文件列表"/)
   assert.match(dispatch.template.content, /v-model="pushFileDraft.keyword"/)
@@ -134,26 +130,16 @@ test('source files are saved to the system and are not downloadable to the brows
   assert.match(dispatch.template.content, /v-model="pushFileDraft.catalogKey"/)
   assert.doesNotMatch(dispatch.template.content, /v-model="pushFileDraft\.(version|owner)"/)
   assert.match(dispatch.template.content, /@change="selectPushFile\(item\)"/)
-  assert.match(downloads.template.content, /<th>版本 \/ 来源<\/th>/)
+  assert.doesNotMatch(dispatch.scriptSetup.content, /CuttingDownloadsPanel|downloadsPanel/)
 })
 
-test('source and saved files use the same directory-tree interaction', () => {
+test('download page keeps one directory browser and omits the duplicate saved-file component', () => {
   const source = descriptor('CuttingDispatchView')
   assert.match(source.template.content, /<CatalogTreeNode/)
   assert.doesNotMatch(source.template.content, /<SortBuilder|<ConditionBuilder/)
-  const downloaded = descriptor('CuttingDownloadsPanel', 'components')
-  assert.match(downloaded.template.content, /<CatalogTreeNode/)
-  assert.match(downloaded.scriptSetup.content, /field: 'project_id'/)
-  assert.match(downloaded.scriptSetup.content, /field: 'catalog_id'/)
-  assert.match(downloaded.template.content, /全部已保存文件/)
-  assert.match(downloaded.scriptSetup.content, /const projectOptions = ref\(\[\]\)/)
-  assert.match(downloaded.scriptSetup.content, /const selectedProjectId = ref\(props\.projectId\)/)
-  assert.match(downloaded.scriptSetup.content, /listCuttingProjects\(\)/)
-  assert.match(downloaded.template.content, /id="saved-project-selector"/)
-  assert.match(downloaded.template.content, /v-for="project in projectOptions"/)
-  assert.doesNotMatch(downloaded.scriptSetup.content, /君正25900-9SS|defaultProjectKeyword/)
-  assert.match(downloaded.scriptSetup.content, /selectedCatalog\.value\s*\?\s*\[\{ field: 'catalog_id'/)
-  assert.doesNotMatch(downloaded.template.content, /<SortBuilder|<ConditionBuilder|可增减条件/)
+  assert.doesNotMatch(source.scriptSetup.content, /CuttingDownloadsPanel|downloadsPanel/)
+  assert.doesNotMatch(source.template.content, /<CuttingDownloadsPanel/)
+  assert.doesNotMatch(source.template.content, /<h2>系统已保存文件<\/h2>/)
 })
 
 test('push page refreshes saved files whenever its cached view becomes active', () => {

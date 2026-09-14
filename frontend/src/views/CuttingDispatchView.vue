@@ -2,7 +2,6 @@
 import { computed, onActivated, onMounted, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import CatalogTreeNode from '../components/CatalogTreeNode.vue'
-import CuttingDownloadsPanel from '../components/CuttingDownloadsPanel.vue'
 import { parseCuttingInstructionFilename } from '../utils/cuttingInstructionName.js'
 import {
   cancelCuttingDispatch,
@@ -35,7 +34,6 @@ const pushFileDraft = reactive({ keyword: '', projectId: '', catalogKey: '' })
 const pushFileFilters = ref({ keyword: '', projectId: '', catalogKey: '' })
 const pushFilePage = ref(1)
 const pushFilePageSize = 20
-const downloadsPanel = ref(null)
 const downloadingId = ref('')
 const downloadedRows = reactive({})
 const selectedDownloadFiles = ref(new Map())
@@ -197,7 +195,6 @@ async function downloadFile(file) {
     showNotice(error.message, 'error')
   } finally {
     downloadingId.value = ''
-    await downloadsPanel.value?.refresh(1)
   }
 }
 
@@ -234,7 +231,6 @@ async function downloadSelectedFiles() {
   } finally {
     downloadingId.value = ''
     batchDownloading.value = false
-    await downloadsPanel.value?.refresh(1)
   }
 }
 
@@ -452,16 +448,6 @@ async function selectProject(project) {
   } finally {
     if (sequence === querySequence) catalogLoading.value = false
   }
-}
-
-async function selectProjectById(projectId) {
-  const value = String(projectId || '')
-  selectedProjectId.value = value
-  rememberSelectedProject(value)
-  const project = projectOptions.value.find(
-    (item) => String(item.project_id) === value,
-  )
-  if (project) await selectProject(project)
 }
 
 function toggleProject(project) {
@@ -782,8 +768,6 @@ onActivated(async () => {
       </form>
     </aside>
   </div>
-
-  <CuttingDownloadsPanel v-if="isDownload" ref="downloadsPanel" :project-id="selectedProjectId" @project-change="selectProjectById" />
 
   <section v-if="!isDownload" class="panel dispatch-history-panel">
     <div class="panel-title"><div><span>03</span><h2>派发记录</h2></div><p>文件准备 → 魔盒上传 → 机床指派，各阶段独立记录</p></div>
