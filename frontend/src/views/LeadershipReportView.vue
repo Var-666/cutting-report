@@ -10,6 +10,7 @@ import ReportExportMenu from '../components/ReportExportMenu.vue'
 import ReportPeriodPicker from '../components/ReportPeriodPicker.vue'
 import ReportTrendPanel from '../components/ReportTrendPanel.vue'
 import { recentTwelveMonthStart, reportToday } from '../api/reportDates.js'
+import { formatChineseDate, formatChineseMonth } from '../utils/dateDisplay.js'
 import { createReportChartGrid, REPORT_CHART_COLORS } from '../utils/reportChartTheme.js'
 
 defineProps({ exporting: Boolean })
@@ -77,19 +78,6 @@ function formatDuration(value) {
   const minutes = Math.floor((totalSeconds % 3600) / 60)
   const seconds = totalSeconds % 60
   return [hours, minutes, seconds].map((part) => String(part).padStart(2, '0')).join(':')
-}
-
-function formatDay(value) {
-  return new Intl.DateTimeFormat('zh-CN', {
-    month: '2-digit',
-    day: '2-digit',
-    timeZone: 'Asia/Shanghai',
-  }).format(new Date(`${value}T00:00:00+08:00`))
-}
-
-function formatMonth(value) {
-  const [year, month] = value.split('-')
-  return `${year}年${Number(month)}月`
 }
 
 function formatSnapshotTime(value) {
@@ -324,7 +312,7 @@ watch(chartType, async () => {
         <thead><tr><th>序号</th><th>日期</th><th>任务数</th><th>切割长度</th><th>坡口长度</th><th>切割时长</th><th>备注</th></tr></thead>
         <tbody>
           <tr v-for="(row, index) in dailyRecords" :key="row.period_start">
-            <td>{{ index + 1 }}</td><td>{{ formatDay(row.period_start) }}</td><td>{{ row.task_count }}</td>
+            <td>{{ index + 1 }}</td><td>{{ formatChineseDate(row.period_start) }}</td><td>{{ row.task_count }}</td>
             <td>{{ formatLength(row.cut_length_m) }}</td><td>{{ formatLength(row.groove_length_m) }}</td>
             <td class="duration-cell">{{ formatDuration(row.work_time_seconds) }}</td><td>{{ row.remark || '--' }}</td>
           </tr>
@@ -344,7 +332,7 @@ watch(chartType, async () => {
         <thead><tr><th>序号</th><th>月份</th><th>任务数</th><th>切割长度</th><th>坡口长度</th><th>切割时长</th><th>备注</th></tr></thead>
         <tbody>
           <tr v-for="(row, index) in monthlyRecords" :key="row.period_start">
-            <td>{{ index + 1 }}</td><td>{{ formatMonth(row.period_start) }}</td><td>{{ row.task_count }}</td>
+            <td>{{ index + 1 }}</td><td>{{ formatChineseMonth(row.period_start) }}</td><td>{{ row.task_count }}</td>
             <td>{{ formatLength(row.cut_length_m) }}</td><td>{{ formatLength(row.groove_length_m) }}</td>
             <td class="duration-cell">{{ formatDuration(row.work_time_seconds) }}</td><td>{{ row.remark || '--' }}</td>
           </tr>

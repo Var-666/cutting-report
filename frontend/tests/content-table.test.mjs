@@ -41,7 +41,7 @@ test('column proportions use every heading and cap long program columns', () => 
     ['坡口长度', ['0']],
     ['切割时长', ['00:33:10']],
     ['时间', ['2026-09-08 01:51']],
-    ['人', ['待工人确认']],
+    ['待确认', ['待确认']],
     ['备注', ['--']],
   ]
   const units = columns.map(([label, values]) => contentWidthUnits(label, values))

@@ -9,6 +9,7 @@ import {
   runAutomationSchedule,
   saveAutomationSchedule,
 } from '../api/reports'
+import { formatChineseDate, formatChineseDateTime } from '../utils/dateDisplay.js'
 
 const status = ref(null)
 const schedules = ref([])
@@ -169,7 +170,7 @@ function scheduleText(item) {
 }
 
 function formatDateTime(value) {
-  return value ? value.replace('T', ' ').slice(0, 16) : '--'
+  return formatChineseDateTime(value)
 }
 
 onMounted(loadAll)
@@ -248,7 +249,7 @@ onMounted(loadAll)
       <div class="panel-title"><div><span>03</span><h2>邮件发送记录</h2></div><p>可查看尝试次数、失败原因并手动重发</p></div>
       <div v-if="!deliveries.length" class="empty">尚无邮件发送记录。</div>
       <div v-else class="automation-table-wrap"><table v-content-table><thead><tr><th>创建时间</th><th>任务</th><th>报表日期</th><th>收件人</th><th>状态</th><th>尝试</th><th>结果</th><th>操作</th></tr></thead>
-        <tbody><tr v-for="item in deliveries" :key="item.delivery_id"><td>{{ formatDateTime(item.created_at) }}</td><td><strong>{{ item.schedule_name }}</strong><small>{{ item.subject }}</small></td><td>{{ item.report_date }}</td><td>{{ item.recipients.join(', ') }}</td><td><span class="delivery-status" :class="item.status">{{ deliveryLabels[item.status] || item.status }}</span></td><td>{{ item.attempt_count }}/{{ item.max_attempts }}</td><td class="error-cell" :title="item.last_error || ''">{{ item.sent_at ? formatDateTime(item.sent_at) : item.last_error || '--' }}</td><td><button v-if="item.status === 'failed'" type="button" @click="retry(item)">重新发送</button><span v-else>--</span></td></tr></tbody></table></div>
+        <tbody><tr v-for="item in deliveries" :key="item.delivery_id"><td>{{ formatDateTime(item.created_at) }}</td><td><strong>{{ item.schedule_name }}</strong><small>{{ item.subject }}</small></td><td>{{ formatChineseDate(item.report_date) }}</td><td>{{ item.recipients.join(', ') }}</td><td><span class="delivery-status" :class="item.status">{{ deliveryLabels[item.status] || item.status }}</span></td><td>{{ item.attempt_count }}/{{ item.max_attempts }}</td><td class="error-cell" :title="item.last_error || ''">{{ item.sent_at ? formatDateTime(item.sent_at) : item.last_error || '--' }}</td><td><button v-if="item.status === 'failed'" type="button" @click="retry(item)">重新发送</button><span v-else>--</span></td></tr></tbody></table></div>
       <div class="automation-pagination"><span>第 {{ deliveryPage }} / {{ pageCount }} 页，共 {{ deliveryTotal }} 条</span><div><button type="button" :disabled="deliveryPage <= 1" @click="deliveryPage--; loadAll()">上一页</button><button type="button" :disabled="deliveryPage >= pageCount" @click="deliveryPage++; loadAll()">下一页</button></div></div>
     </section>
   </div>

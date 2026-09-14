@@ -7,6 +7,7 @@ import {
   saveDesignerResource,
   validateDesignerSql,
 } from '../api/reports'
+import { formatChineseDate, formatChineseDateTime, formatTableDateValue } from '../utils/dateDisplay.js'
 
 const emit = defineEmits(['definitions-change'])
 const tabs = [
@@ -33,6 +34,12 @@ const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai'
 const clone = (value) => JSON.parse(JSON.stringify(value))
 const selectedDefinitionQuery = computed(() => queryTasks.value.find((item) => item.query_task_id === definitionDraft.value?.query_task_id))
 const definitionFields = computed(() => selectedDefinitionQuery.value?.columns || [])
+
+function formatPreviewValue(value, column) {
+  if (column?.type === 'datetime') return formatChineseDateTime(value)
+  if (column?.type === 'date') return formatChineseDate(value)
+  return formatTableDateValue(value)
+}
 
 function blankQuery() {
   return {
@@ -230,7 +237,7 @@ onMounted(loadResources)
           <button class="primary" type="button" :disabled="saving || queryDraft.is_builtin" @click="saveResource('query-tasks', queryDraft, 'query_task_id')">保存任务</button>
           <button class="danger-button" type="button" :disabled="queryDraft.is_builtin" @click="removeResource('query-tasks', queryDraft, 'query_task_id')">删除</button>
         </div>
-        <div v-if="queryPreview" class="designer-preview-table"><div>预览返回 {{ queryPreview.returned }} 行 · {{ queryPreview.mode }}</div><div class="history-wrap"><table v-content-table><thead><tr><th v-for="column in queryPreview.columns" :key="column.field">{{ column.label }}</th></tr></thead><tbody><tr v-for="(row, index) in queryPreview.items" :key="index"><td v-for="column in queryPreview.columns" :key="column.field">{{ row[column.field] }}</td></tr></tbody></table></div></div>
+        <div v-if="queryPreview" class="designer-preview-table"><div>预览返回 {{ queryPreview.returned }} 行 · {{ queryPreview.mode }}</div><div class="history-wrap"><table v-content-table><thead><tr><th v-for="column in queryPreview.columns" :key="column.field">{{ column.label }}</th></tr></thead><tbody><tr v-for="(row, index) in queryPreview.items" :key="index"><td v-for="column in queryPreview.columns" :key="column.field">{{ formatPreviewValue(row[column.field], column) }}</td></tr></tbody></table></div></div>
       </div>
     </div>
 

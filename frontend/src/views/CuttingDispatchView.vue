@@ -3,6 +3,7 @@ import { computed, onActivated, onMounted, onBeforeUnmount, reactive, ref } from
 import { useRoute, useRouter } from 'vue-router'
 import CatalogTreeNode from '../components/CatalogTreeNode.vue'
 import { parseCuttingInstructionFilename } from '../utils/cuttingInstructionName.js'
+import { formatChineseDateTime } from '../utils/dateDisplay.js'
 import {
   cancelCuttingDispatch,
   createCuttingDispatchBatch,
@@ -762,9 +763,7 @@ async function cancelSaved(item) {
   }
 }
 
-function formatTime(value) {
-  return value ? String(value).replace('T', ' ').slice(0, 19) : '--'
-}
+function formatTime(value) { return formatChineseDateTime(value) }
 
 function fileExtension(row) {
   const source = String(row.document_no || row.physical_file_name || row.normalized_path || '')

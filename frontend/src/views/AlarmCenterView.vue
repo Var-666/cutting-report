@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { getAlarmStatus, listAlarmIncidents, listAlarmReports } from '../api/reports'
+import { formatChineseDateTime } from '../utils/dateDisplay.js'
 
 const status = ref(null)
 const incidents = ref([])
@@ -15,7 +16,7 @@ const severityLabels = { warning: '提示', high: '高', critical: '严重' }
 const reportStatusLabels = { generating: '生成中', completed: '已生成', failed: '生成失败' }
 
 function formatDateTime(value) {
-  return value ? value.replace('T', ' ').slice(0, 19) : '--'
+  return formatChineseDateTime(value)
 }
 
 function formatBytes(value) {

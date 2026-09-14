@@ -99,6 +99,7 @@ def test_demo_pipeline_generates_offline_report(
     assert "模拟大模型分析" in html
     assert "分析边界" not in html
     assert html.count('class="analysis-fact"') == 6
+    assert "2026年8月18日" in html
     if report_type in {"workshop", "equipment"}:
         assert 'class="screen-only"' in html
         assert 'class="print-table-page"' in html
@@ -108,7 +109,7 @@ def test_demo_pipeline_generates_offline_report(
         assert "船号" in html
         assert "✓ 测试工人" in html
         assert "时间" in html
-        assert "人" in html
+        assert "待确认" in html
     if report_type == "equipment":
         assert "任务开始" in html
         assert "任务结束" not in html

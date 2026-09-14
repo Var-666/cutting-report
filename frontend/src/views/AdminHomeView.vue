@@ -4,6 +4,7 @@ import { RouterLink } from 'vue-router'
 import { getLeadershipReport, listReports } from '../api/reports'
 import { session } from '../state/session'
 import { reportToday } from '../api/reportDates.js'
+import { formatChineseDate, formatChineseDateTime, formatChineseMonth } from '../utils/dateDisplay.js'
 
 const reportMonth = reportToday().slice(0, 7)
 
@@ -58,14 +59,14 @@ function formatDuration(value) {
 }
 
 function formatDateTime(value) {
-  return value ? String(value).replace('T', ' ').slice(0, 16) : '--'
+  return formatChineseDateTime(value)
 }
 
 function reportPeriod(item) {
   if (!item?.report_date) return '--'
   return item.report_type === 'leadership'
-    ? item.report_date.slice(0, 7)
-    : item.report_date
+    ? formatChineseMonth(item.report_date)
+    : formatChineseDate(item.report_date)
 }
 
 async function loadDashboard() {

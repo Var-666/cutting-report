@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -31,6 +32,37 @@ def format_duration(value: Any) -> str:
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 
+def _date_parts(value: Any) -> tuple[str, int, int | None] | None:
+    match = re.match(r"^(\d{4})-(\d{1,2})(?:-(\d{1,2}))?", str(value or ""))
+    if not match:
+        return None
+    return match.group(1), int(match.group(2)), int(match.group(3)) if match.group(3) else None
+
+
+def format_chinese_month(value: Any) -> str:
+    parts = _date_parts(value)
+    return f"{parts[0]}年{parts[1]}月" if parts else "--"
+
+
+def format_chinese_date(value: Any) -> str:
+    parts = _date_parts(value)
+    if not parts:
+        return "--"
+    if parts[2] is None:
+        return f"{parts[0]}年{parts[1]}月"
+    return f"{parts[0]}年{parts[1]}月{parts[2]}日"
+
+
+def format_chinese_datetime(value: Any) -> str:
+    formatted_date = format_chinese_date(value)
+    if formatted_date == "--":
+        return formatted_date
+    match = re.search(r"[T\s](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?", str(value))
+    if not match:
+        return formatted_date
+    return f"{formatted_date} {int(match.group(1)):02d}:{int(match.group(2)):02d}:{int(match.group(3) or 0):02d}"
+
+
 class ReportService:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -41,6 +73,9 @@ class ReportService:
         )
         self.environment.filters["number"] = format_number
         self.environment.filters["duration"] = format_duration
+        self.environment.filters["chinese_month"] = format_chinese_month
+        self.environment.filters["chinese_date"] = format_chinese_date
+        self.environment.filters["chinese_datetime"] = format_chinese_datetime
 
     def render(
         self,

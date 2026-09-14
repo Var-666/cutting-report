@@ -9,6 +9,7 @@ import {
   testDatabaseConnection,
   validateWorkbenchSql,
 } from '../api/reports'
+import { formatTableDateValue } from '../utils/dateDisplay.js'
 
 const status = ref(null)
 const loadingStatus = ref(false)
@@ -102,7 +103,7 @@ function labelFor(key) {
 function formatCell(value) {
   if (value === null || value === undefined || value === '') return '--'
   if (typeof value === 'number') return new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 1 }).format(value)
-  return value
+  return formatTableDateValue(value)
 }
 
 async function loadStatus() {

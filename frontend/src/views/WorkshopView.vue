@@ -16,6 +16,7 @@ import ReportExportMenu from '../components/ReportExportMenu.vue'
 import ReportPeriodPicker from '../components/ReportPeriodPicker.vue'
 import ReportTrendPanel from '../components/ReportTrendPanel.vue'
 import { reportToday } from '../api/reportDates.js'
+import { formatChineseDate, formatChineseDateTime } from '../utils/dateDisplay.js'
 
 const props = defineProps({
   exporting: Boolean,
@@ -138,7 +139,7 @@ function duration(value) {
   const seconds = Math.max(0, Math.round(Number(value)))
   return [Math.floor(seconds / 3600), Math.floor(seconds % 3600 / 60), seconds % 60].map((item) => String(item).padStart(2, '0')).join(':')
 }
-function time(value) { return value ? String(value).replace('T', ' ').slice(0, 16) : '--' }
+function time(value) { return formatChineseDateTime(value) }
 function rowDate(row) { return row?.production_time ? String(row.production_time).slice(0, 10) : filters.reportDate }
 
 function clearSelectedTasks() {
@@ -519,21 +520,21 @@ onUnmounted(() => {
         <label><span>确认状态</span><AppSelect v-model="filters.confirmationStatus" :disabled="!result.report"><option value="all">全部</option><option value="unconfirmed">未确认</option><option value="confirmed">已确认</option></AppSelect></label>
         <button type="submit" :disabled="loading || !result.report">{{ loading ? '筛选中' : '筛选明细' }}</button>
       </form>
-      <div v-if="result.report" class="workshop-report-state"><strong>{{ isWorker ? result.report.report_date : `${result.report.period_start} 至 ${result.report.period_end}` }} 车间报表</strong><span>{{ isWorker ? `生成人：${result.report.generated_by_name || '--'} · 生成时间：${time(result.report.generated_at)} · ` : '' }}总任务 {{ result.report.item_count }} 项 · 已确认 {{ result.report.confirmed_count }} 项</span></div>
+      <div v-if="result.report" class="workshop-report-state"><strong>{{ isWorker ? formatChineseDate(result.report.report_date) : `${formatChineseDate(result.report.period_start)} 至 ${formatChineseDate(result.report.period_end)}` }} 车间报表</strong><span>{{ isWorker ? `生成人：${result.report.generated_by_name || '--'} · 生成时间：${time(result.report.generated_at)} · ` : '' }}总任务 {{ result.report.item_count }} 项 · 已确认 {{ result.report.confirmed_count }} 项</span></div>
       <div v-else class="workshop-empty-report"><strong>{{ loading ? '正在加载最近车间报表' : '该日期暂无车间报表' }}</strong><span>{{ loading ? '系统正在查找最近有数据的生产日并加载全部明细。' : '当前源数据在该日期没有已完成任务。' }}</span></div>
       <div v-if="result.report" class="workshop-summary">当前筛选返回 {{ result.total }} 项任务，所选工程/船号已确认 {{ result.confirmed_count }} 项</div>
       <div v-if="isWorker && result.report" class="workshop-batch-actions"><span>已选择 <strong>{{ selectedTaskCount }}</strong> 项待确认任务</span><div><button type="button" :disabled="!selectedTaskCount || batchConfirmation.saving" @click="clearSelectedTasks">清空选择</button><button class="primary" type="button" :disabled="!selectedTaskCount || loading || batchConfirmation.saving" @click="openBatchConfirmation()">确认选中任务</button></div></div>
     </template>
     <template #table>
       <table v-content-table class="workshop-table" :class="{ 'worker-workshop-table': isWorker }">
-        <thead><tr><th v-if="isWorker" class="workshop-select-cell"><input type="checkbox" :checked="allVisibleTasksSelected" :indeterminate="someVisibleTasksSelected" :disabled="!selectableTasks.length || loading || batchConfirmation.saving" aria-label="全选当前页待确认任务" @change="toggleVisibleTasks($event.target.checked)" /></th><th>序号</th><th>工程号</th><th>船号</th><th>分段名</th><th>程序号</th><th>切割长度</th><th>坡口长度</th><th>切割时长</th><th>时间</th><th>人</th><th>备注</th></tr></thead>
+        <thead><tr><th v-if="isWorker" class="workshop-select-cell"><input type="checkbox" :checked="allVisibleTasksSelected" :indeterminate="someVisibleTasksSelected" :disabled="!selectableTasks.length || loading || batchConfirmation.saving" aria-label="全选当前页待确认任务" @change="toggleVisibleTasks($event.target.checked)" /></th><th>序号</th><th>工程号</th><th>船号</th><th>分段名</th><th>程序号</th><th>切割长度</th><th>坡口长度</th><th>切割时长</th><th>时间</th><th>待确认</th><th>备注</th></tr></thead>
         <tbody>
           <tr v-if="loading"><td :colspan="isWorker ? 12 : 11" class="table-empty">正在查询任务...</td></tr>
           <tr v-else-if="!result.items.length"><td :colspan="isWorker ? 12 : 11" class="table-empty">当前条件下暂无任务</td></tr>
           <tr v-for="(row, index) in result.items" v-else :key="row.task_id" :class="{ selected: isWorker && selectedTasks.has(row.task_id) }">
             <td v-if="isWorker" class="workshop-select-cell"><input type="checkbox" :checked="selectedTasks.has(row.task_id)" :disabled="Boolean(row.confirmed_by) || loading || batchConfirmation.saving" :aria-label="`选择任务 ${display(row.program_no)}`" @change="setTaskSelected(row, $event.target.checked)" /></td>
             <td>{{ (result.page - 1) * result.page_size + index + 1 }}</td><td>{{ display(row.project_code) }}</td><td>{{ display(row.ship_no) }}</td><td>{{ display(row.segment_name) }}</td><td class="program-cell" :title="display(row.program_no)">{{ display(row.program_no) }}</td><td>{{ number(row.cut_length) }}</td><td>{{ number(row.groove_length) }}</td><td class="duration-cell">{{ duration(row.work_time) }}</td><td class="time-cell">{{ time(row.production_time) }}</td>
-            <td class="confirm-cell"><div v-if="row.confirmed_by" class="confirmation-person"><span class="confirmed-mark">✓ {{ row.confirmed_by }}<small>{{ time(row.confirmed_at) }}</small></span><button v-if="isOwnConfirmation(row)" type="button" class="correction-button" :disabled="correction.saving" @click="openCorrection(row)">撤销我的确认</button><button v-else-if="!isWorker" type="button" class="correction-button" :disabled="correction.saving" @click="openCorrection(row)">更正确认</button></div><button v-else-if="isWorker" type="button" :disabled="batchConfirmation.saving" @click="openSingleConfirmation(row)">确认是我完成</button><span v-else class="pending-confirmation">待工人确认</span></td>
+            <td class="confirm-cell"><div v-if="row.confirmed_by" class="confirmation-person"><span class="confirmed-mark">✓ {{ row.confirmed_by }}<small>{{ time(row.confirmed_at) }}</small></span><button v-if="isOwnConfirmation(row)" type="button" class="correction-button" :disabled="correction.saving" @click="openCorrection(row)">撤销我的确认</button><button v-else-if="!isWorker" type="button" class="correction-button" :disabled="correction.saving" @click="openCorrection(row)">更正确认</button></div><button v-else-if="isWorker" type="button" :disabled="batchConfirmation.saving" @click="openSingleConfirmation(row)">确认是我完成</button><span v-else class="pending-confirmation">待确认</span></td>
             <td>{{ display(row.remark) }}</td>
           </tr>
         </tbody>

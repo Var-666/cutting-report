@@ -7,6 +7,7 @@ import {
   searchHrPeople,
 } from '../api/reports'
 import { session } from '../state/session'
+import { formatChineseDateTime } from '../utils/dateDisplay.js'
 
 const admins = ref([])
 const results = ref([])
@@ -22,8 +23,7 @@ const adminExternalIds = computed(() => new Set(
 ))
 
 function formatTime(value) {
-  if (!value) return '—'
-  return String(value).replace('T', ' ').slice(0, 19)
+  return formatChineseDateTime(value, '—')
 }
 
 async function loadAdmins() {

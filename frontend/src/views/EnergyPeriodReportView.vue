@@ -16,6 +16,7 @@ import AnalysisPanel from '../components/AnalysisPanel.vue'
 import ReportExportMenu from '../components/ReportExportMenu.vue'
 import ReportPeriodPicker from '../components/ReportPeriodPicker.vue'
 import ReportTrendPanel from '../components/ReportTrendPanel.vue'
+import { formatChineseDate, formatChineseDateTime, formatChineseMonth, sortReportPeriods } from '../utils/dateDisplay.js'
 import { createReportChartGrid, REPORT_CHART_COLORS } from '../utils/reportChartTheme.js'
 
 use([BarChart, LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
@@ -47,7 +48,12 @@ let summaryRefreshCount = 0
 
 const taskRows = computed(() => taskDay.value?.records || [])
 const dailyRows = computed(() => periodReport.value?.rows || [])
-const summaryRows = computed(() => dailyRows.value)
+const summaryRows = computed(() => {
+  return defaultSummaryView.value
+    ? sortReportPeriods(dailyRows.value, 'desc')
+    : dailyRows.value
+})
+const summaryChartRows = computed(() => sortReportPeriods(dailyRows.value))
 const month = computed(() => periodReport.value)
 const units = computed(() => taskDay.value?.units || { electricity: 'kWh', gas: 'Nm³' })
 const summary = computed(() => taskDay.value?.summary || {
@@ -92,8 +98,10 @@ function duration(value) {
     .map((item) => String(item).padStart(2, '0')).join(':')
 }
 
-function dateTime(value) { return value ? String(value).replace('T', ' ').slice(0, 19) : '--' }
 function valueText(item) { return format(item?.value) }
+function summaryPeriod(value) {
+  return defaultSummaryView.value ? formatChineseMonth(value) : formatChineseDate(value)
+}
 function chartValue(value) {
   if (value === null || value === undefined || !Number.isFinite(Number(value))) return null
   return Number(Number(value).toFixed(1))
@@ -129,8 +137,8 @@ function renderCharts() {
   }
   if (periodChartElement && periodReport.value) {
     periodChart ||= init(periodChartElement)
-    const rows = summaryRows.value.map((row) => ({ electricity: row.electricity?.value, gas: row.gas?.value }))
-    const labels = summaryRows.value.map((row) => defaultSummaryView.value ? row.report_date : row.report_date.slice(5))
+    const rows = summaryChartRows.value.map((row) => ({ electricity: row.electricity?.value, gas: row.gas?.value }))
+    const labels = summaryChartRows.value.map((row) => defaultSummaryView.value ? row.report_date : row.report_date.slice(5))
     periodChart.setOption(chartOption(rows, labels), true)
   }
 }
@@ -322,14 +330,14 @@ watch(chartType, async () => { await nextTick(); renderCharts() })
     <template #table>
         <table v-content-table class="energy-period-table energy-task-table summary-table" aria-label="任务能耗明细表">
           <thead><tr><th scope="col">序号</th><th scope="col">工程号</th><th scope="col">船号</th><th scope="col">分段名</th><th scope="col">任务开始</th><th scope="col">切割时长</th><th scope="col">电耗</th><th scope="col">气耗</th></tr></thead>
-          <tbody><tr v-for="(row, index) in taskRows" :key="row.task_id"><th scope="row">{{ index + 1 }}</th><td>{{ row.project_code || '--' }}</td><td>{{ row.ship_no || '--' }}</td><td>{{ row.segment_name || '--' }}</td><td>{{ dateTime(row.production_time) }}</td><td>{{ duration(row.work_time) }}</td><td>{{ format(row.electricity_consumption) }}</td><td>{{ format(row.gas_consumption) }}</td></tr><tr v-if="!taskRows.length"><td colspan="8" class="energy-empty">{{ loading ? '正在查询…' : '所选区间暂无任务' }}</td></tr></tbody>
+          <tbody><tr v-for="(row, index) in taskRows" :key="row.task_id"><th scope="row">{{ index + 1 }}</th><td>{{ row.project_code || '--' }}</td><td>{{ row.ship_no || '--' }}</td><td>{{ row.segment_name || '--' }}</td><td>{{ formatChineseDateTime(row.production_time) }}</td><td>{{ duration(row.work_time) }}</td><td>{{ format(row.electricity_consumption) }}</td><td>{{ format(row.gas_consumption) }}</td></tr><tr v-if="!taskRows.length"><td colspan="8" class="energy-empty">{{ loading ? '正在查询…' : '所选区间暂无任务' }}</td></tr></tbody>
           <tfoot><tr><th aria-hidden="true"></th><th scope="row">汇总</th><th>{{ equipmentScopeLabel }}</th><th>{{ summary.task_count || 0 }} 项</th><th>--</th><th>{{ duration(summary.total_work_time) }}</th><th>{{ format(summary.total_electricity_consumption) }}</th><th>{{ format(summary.total_gas_consumption) }}</th></tr></tfoot>
         </table>
     </template>
   </ReportTrendPanel>
 
   <ReportTrendPanel ref="periodPanel" number="02" :title="summaryTitle" :subtitle="summarySubtitle" :chart-label="summaryChartLabel">
-    <template #table><table v-content-table class="leadership-table energy-month-table summary-table" :aria-label="summaryTableLabel"><thead><tr><th scope="col">{{ summaryDateHeading }}</th><th scope="col">任务数</th><th scope="col">切割时长</th><th scope="col">电耗</th><th scope="col">气耗</th></tr></thead><tbody><tr v-for="row in summaryRows" :key="row.report_date"><td>{{ row.report_date }}</td><td>{{ row.task_count }}</td><td>{{ duration(row.work_time_seconds) }}</td><td>{{ valueText(row.electricity) }}</td><td>{{ valueText(row.gas) }}</td></tr><tr v-if="!summaryRows.length"><td colspan="5" class="energy-empty">{{ loading ? '正在查询…' : summaryEmptyText }}</td></tr></tbody><tfoot><tr><th scope="row">汇总</th><th>{{ month?.total_task_count || 0 }}</th><th>{{ duration(month?.total_work_time_seconds) }}</th><th>{{ valueText(month?.summary?.electricity) }}</th><th>{{ valueText(month?.summary?.gas) }}</th></tr></tfoot></table></template>
+    <template #table><table v-content-table class="leadership-table energy-month-table summary-table" :aria-label="summaryTableLabel"><thead><tr><th scope="col">{{ summaryDateHeading }}</th><th scope="col">任务数</th><th scope="col">切割时长</th><th scope="col">电耗</th><th scope="col">气耗</th></tr></thead><tbody><tr v-for="row in summaryRows" :key="row.report_date"><td>{{ summaryPeriod(row.report_date) }}</td><td>{{ row.task_count }}</td><td>{{ duration(row.work_time_seconds) }}</td><td>{{ valueText(row.electricity) }}</td><td>{{ valueText(row.gas) }}</td></tr><tr v-if="!summaryRows.length"><td colspan="5" class="energy-empty">{{ loading ? '正在查询…' : summaryEmptyText }}</td></tr></tbody><tfoot><tr><th scope="row">汇总</th><th>{{ month?.total_task_count || 0 }}</th><th>{{ duration(month?.total_work_time_seconds) }}</th><th>{{ valueText(month?.summary?.electricity) }}</th><th>{{ valueText(month?.summary?.gas) }}</th></tr></tfoot></table></template>
   </ReportTrendPanel>
 
   <AnalysisPanel

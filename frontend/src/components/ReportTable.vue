@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from 'vue'
 import DownloadPdfButton from './DownloadPdfButton.vue'
+import { formatChineseDate, formatChineseDateTime, formatChineseMonth } from '../utils/dateDisplay.js'
 
 const props = defineProps({
   items: { type: Array, default: () => [] },
@@ -38,8 +39,9 @@ function display(value) {
 function reportPeriod(item) {
   const start = item.period_start || item.report_date
   const end = item.period_end || item.report_date
-  if (start && end && start !== end) return `${start} 至 ${end}`
-  return start || '--'
+  if (start && end && start !== end) return `${formatChineseDate(start)} 至 ${formatChineseDate(end)}`
+  if (item.report_type === 'leadership') return formatChineseMonth(start)
+  return formatChineseDate(start)
 }
 
 const reportTypeText = {
@@ -64,7 +66,7 @@ const reportTypeText = {
           <td>{{ display(item.ship_no) }}</td>
           <td>{{ item.task_count ?? '--' }}</td>
           <td><span class="mini-status" :data-status="item.status">{{ statusText[item.status] || item.status }}</span></td>
-          <td>{{ item.generated_at || item.created_at }}</td>
+          <td>{{ formatChineseDateTime(item.generated_at || item.created_at) }}</td>
           <td class="actions-cell">
             <a v-if="item.view_url" :href="item.view_url" target="_blank" rel="noopener">打开</a>
             <a v-if="item.download_url" :href="item.download_url">下载 HTML</a>
