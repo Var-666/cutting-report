@@ -7,6 +7,7 @@
 ```text
 docs/
 ├── README.md                 文档总目录
+├── project/                 当前架构、约定、决策和进度
 ├── deployment/              安装、部署和运维说明
 ├── design/                  需求与系统设计
 ├── database/                数据库结构说明
@@ -14,6 +15,10 @@ docs/
 ```
 
 ## 快速入口
+
+### 当前项目记忆
+
+- [架构、后端、UI、优化、技术决策与进度](project/README.md)
 
 ### 部署
 
