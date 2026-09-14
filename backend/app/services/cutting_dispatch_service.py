@@ -457,7 +457,13 @@ class CuttingDispatchService:
             self._transition(dispatch_id, expected={"pushing"}, status="push_failed", stage="assign_failed", last_error=str(exc), now=self._now())
             raise
         item = self._transition(dispatch_id, expected={"pushing"}, status="sent", stage="complete", now=self._now())
-        return self._decorate_dispatch(item)
+        result = self._decorate_dispatch(item)
+        if self.downloads is not None and item.get("download_id"):
+            result["local_file_cleanup"] = self.downloads.delete_after_push(
+                item["download_id"],
+                dispatch_id=dispatch_id,
+            )
+        return result
 
     def cancel_dispatch(self, dispatch_id: str) -> dict[str, Any]:
         item = self.dispatches.get(dispatch_id)

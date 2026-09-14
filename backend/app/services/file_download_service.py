@@ -108,16 +108,20 @@ class FileDownloadService:
         result["status_label"] = {"downloading": "下载中", "downloaded": "已下载", "failed": "下载失败"}[item["status"]]
         result["storage_path"] = f"data/cutting-downloads/{item['download_id']}/{item['filename']}"
         if item.get("file_deleted_at"):
-            retention_days = item.get(
-                "cleanup_retention_days",
-                self.settings.file_download_retention_days,
-            )
-            result["status_label"] = "已自动清理"
             result["available"] = False
-            result["error"] = (
-                f"文件已超过{retention_days}天保留期，"
-                "系统已自动删除；需要时请重新保存"
-            )
+            if item.get("cleanup_reason") == "pushed":
+                result["status_label"] = "已推送清理"
+                result["error"] = "文件已在推送成功后从系统删除；需要时可重新保存"
+            else:
+                retention_days = item.get(
+                    "cleanup_retention_days",
+                    self.settings.file_download_retention_days,
+                )
+                result["status_label"] = "已自动清理"
+                result["error"] = (
+                    f"文件已超过{retention_days}天保留期，"
+                    "系统已自动删除；需要时请重新保存"
+                )
         else:
             result["available"] = item["status"] == "downloaded" and self._path(item).is_file()
         if item["status"] == "downloaded" and not result["available"] and not item.get("file_deleted_at"):
@@ -257,6 +261,8 @@ class FileDownloadService:
         if item["status"] != "downloaded":
             raise DownloadError("该文件尚未成功下载", 409)
         if item.get("file_deleted_at"):
+            if item.get("cleanup_reason") == "pushed":
+                raise DownloadError("文件已在推送成功后删除，请重新保存", 404)
             retention_days = item.get(
                 "cleanup_retention_days",
                 self.settings.file_download_retention_days,
@@ -276,6 +282,41 @@ class FileDownloadService:
         except OSError:
             raise DownloadError("系统文件不存在或无法读取，请重新保存", 404) from None
         return item, path
+
+    def delete_after_push(self, download_id, *, dispatch_id):
+        """Delete one successfully pushed local copy while retaining its audit row."""
+        with self._cleanup_lock:
+            item = self.repository.get(download_id)
+            if item is None:
+                return {"deleted": False, "already_deleted": False, "error": "下载记录不存在"}
+            if item.get("file_deleted_at"):
+                return {"deleted": False, "already_deleted": True, "error": None}
+            try:
+                path = self._path(item)
+                path.unlink(missing_ok=True)
+                try:
+                    path.parent.rmdir()
+                except OSError:
+                    pass
+                deleted_at = self.now()
+                item.update(
+                    file_deleted_at=deleted_at,
+                    cleanup_reason="pushed",
+                    cleanup_dispatch_id=dispatch_id,
+                    updated_at=deleted_at,
+                )
+                self.repository.save(item)
+                return {"deleted": True, "already_deleted": False, "error": None}
+            except Exception:
+                logger.exception(
+                    "successfully pushed cutting download cleanup failed",
+                    extra={"download_id": download_id, "dispatch_id": dispatch_id},
+                )
+                return {
+                    "deleted": False,
+                    "already_deleted": False,
+                    "error": "推送已成功，但系统保存文件删除失败",
+                }
 
     def cleanup_expired(self, now=None):
         """Delete expired physical files while retaining their audit records."""

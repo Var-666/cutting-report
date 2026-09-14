@@ -16,7 +16,7 @@ from app.services.cutting_dispatch_service import (
     CuttingDispatchError,
     DuplicateDispatchError,
 )
-from app.services.file_download_service import FileDownloadService
+from app.services.file_download_service import DownloadError, FileDownloadService
 from app.services.file_source import (
     DisabledFileSource,
     LocalFileSource,
@@ -346,6 +346,17 @@ def test_push_can_start_from_selected_download_without_file_search(tmp_path: Pat
     assert draft["status"] == "downloaded"
     assert sent["status"] == "sent"
     assert client.uploads[0]["task_name"] == downloaded["filename"]
+    assert sent["local_file_cleanup"] == {
+        "deleted": True,
+        "already_deleted": False,
+        "error": None,
+    }
+    stored_download = service.downloads.repository.get(downloaded["download_id"])
+    assert stored_download["cleanup_reason"] == "pushed"
+    assert stored_download["cleanup_dispatch_id"] == draft["dispatch_id"]
+    assert service.downloads.public(stored_download)["available"] is False
+    with pytest.raises(DownloadError, match="推送成功后删除"):
+        service.downloads.local_file(downloaded["download_id"])
 
 
 def test_batch_creation_isolates_files_and_reports_duplicates(tmp_path: Path):

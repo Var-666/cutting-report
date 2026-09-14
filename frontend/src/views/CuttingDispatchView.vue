@@ -688,8 +688,9 @@ async function submitPushBatch(executeNow = false) {
         pushBatch.currentFilename = item.filename
         operatingId.value = item.dispatchId
         try {
-          await executeCuttingDispatch(item.dispatchId)
+          const completed = await executeCuttingDispatch(item.dispatchId)
           item.status = 'sent'
+          if (completed.local_file_cleanup?.error) item.error = completed.local_file_cleanup.error
         } catch (error) {
           item.status = 'failed'
           item.error = error.message
@@ -704,11 +705,14 @@ async function submitPushBatch(executeNow = false) {
     pushBatch.resultsReady = true
     pushBatch.currentFilename = ''
     clearSelectedPushFiles()
-    await loadHistory()
+    const refreshes = [loadHistory()]
+    if (executeNow) refreshes.push(loadPushFiles())
+    await Promise.allSettled(refreshes)
     const counts = batchStatusCounts.value
     if (executeNow) {
-      const message = `批量推送完成：成功 ${counts.sent} 项，失败 ${counts.failed} 项，重复 ${counts.duplicate} 项。`
-      showNotice(message, counts.failed || counts.duplicate ? 'error' : 'info')
+      const cleanupWarnings = pushBatch.items.filter((item) => item.status === 'sent' && item.error).length
+      const message = `批量推送完成：成功 ${counts.sent} 项，失败 ${counts.failed} 项，重复 ${counts.duplicate} 项${cleanupWarnings ? `，本地文件清理警告 ${cleanupWarnings} 项` : ''}。`
+      showNotice(message, counts.failed || counts.duplicate || cleanupWarnings ? 'error' : 'info')
     } else {
       const message = `批量保存完成：已保存 ${counts.saved} 项，失败 ${counts.failed} 项，重复 ${counts.duplicate} 项。`
       showNotice(message, counts.failed || counts.duplicate ? 'error' : 'info')
@@ -725,14 +729,22 @@ async function executeSaved(item) {
   if (operatingId.value) return
   if (!window.confirm(`确认执行任务 ${item.dispatch_id}？\n文件：${item.document_no}\n机床：${item.machine_ip}`)) return
   operatingId.value = item.dispatch_id
+  let pushed = false
   try {
     const completed = await executeCuttingDispatch(item.dispatch_id)
-    showNotice(`推送完成，魔盒任务 UUID：${completed.remote_task_id}`)
+    pushed = true
+    if (completed.local_file_cleanup?.error) {
+      showNotice(`推送完成，但本地文件清理失败：${completed.local_file_cleanup.error}`, 'error')
+    } else {
+      showNotice(`推送完成，已删除系统中的文件副本。魔盒任务 UUID：${completed.remote_task_id}`)
+    }
   } catch (error) {
     showNotice(error.message, 'error')
   } finally {
     operatingId.value = ''
-    await loadHistory()
+    const refreshes = [loadHistory()]
+    if (pushed) refreshes.push(loadPushFiles())
+    await Promise.allSettled(refreshes)
   }
 }
 
@@ -898,7 +910,7 @@ onActivated(async () => {
         </table>
       </div>
       <div class="dispatch-pagination"><button type="button" :disabled="page <= 1 || loading" @click="changePage(page - 1)">上一页</button><span>第 {{ page }} / {{ totalPages }} 页</span><button type="button" :disabled="page >= totalPages || loading" @click="changePage(page + 1)">下一页</button></div>
-      <p class="dispatch-download-hint">文件将从 FO 文件服务保存到系统，供魔盒推送使用。保存前会重新校验文件路径与版本。{{ systemStatus && !systemStatus.can_download ? '当前文件来源未启用，暂不可保存。' : '' }}</p>
+      <p class="dispatch-download-hint">文件将从 FO 文件服务保存到系统，供魔盒推送使用。同一文件可重复保存，每次都会生成独立记录；推送成功后系统会删除对应的本地副本。保存前会重新校验文件路径与版本。{{ systemStatus && !systemStatus.can_download ? '当前文件来源未启用，暂不可保存。' : '' }}</p>
     </section>
 
     <section v-if="!isDownload" class="panel push-file-picker">

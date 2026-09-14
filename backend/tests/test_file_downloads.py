@@ -143,6 +143,30 @@ def test_names_and_separate_downloads_persist_without_overwrite(tmp_path):
     assert service.local_file(first["download_id"])[1].exists()
 
 
+def test_pushed_copy_is_deleted_and_the_same_version_can_be_downloaded_again(tmp_path):
+    service, payload = make_service(tmp_path)
+    first = service.download(**payload, user=ADMIN)
+    _record, first_path = service.local_file(first["download_id"])
+
+    cleanup = service.delete_after_push(
+        first["download_id"],
+        dispatch_id="dispatch-test-1",
+    )
+
+    assert cleanup == {"deleted": True, "already_deleted": False, "error": None}
+    assert not first_path.exists()
+    stored = service.repository.get(first["download_id"])
+    assert stored["cleanup_reason"] == "pushed"
+    assert stored["cleanup_dispatch_id"] == "dispatch-test-1"
+    assert service.public(stored)["status_label"] == "已推送清理"
+    with pytest.raises(DownloadError, match="推送成功后删除"):
+        service.local_file(first["download_id"])
+
+    repeated = service.download(**payload, user=ADMIN)
+    assert repeated["download_id"] != first["download_id"]
+    assert service.local_file(repeated["download_id"])[1].is_file()
+
+
 def test_filename_sanitizes_windows_names_and_limits_utf8():
     assert download_filename("板件A.GEN", "A.2", "Root/a.gen") == "板件A.GEN"
     assert download_filename("CMYZ0136-PEBC231S-AT01", "V", "Root/source.pdf") == "CMYZ0136-PEBC231S-AT01.pdf"

@@ -185,3 +185,14 @@ test('file push builds independent batch parameters and executes created tasks s
   assert.match(view, /await executeCuttingDispatch\(item\.dispatchId\)/)
   assert.match(view, /非标准名，请手工填写参数/)
 })
+
+test('successful pushes refresh consumed files while downloads remain repeatable', () => {
+  const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
+
+  assert.match(view, /if \(executeNow\) refreshes\.push\(loadPushFiles\(\)\)/)
+  assert.match(view, /if \(pushed\) refreshes\.push\(loadPushFiles\(\)\)/)
+  assert.match(view, /completed\.local_file_cleanup\?\.error/)
+  assert.match(view, /同一文件可重复保存/)
+  assert.match(view, /downloadedRows\[fileKey\(row\)\] \? '再次保存'/)
+  assert.doesNotMatch(view, /if \(downloadedRows\[fileKey\(file\)\]\) return/)
+})
