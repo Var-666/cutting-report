@@ -45,8 +45,32 @@ const correction = reactive({
   workers: [],
   audits: [],
 })
+const correctionReasonPresets = {
+  workerRevoke: [
+    '误选了其他工人的任务',
+    '任务并非本人完成',
+    '任务信息有误，需重新核对',
+  ],
+  adminRevoke: [
+    '原确认人选择错误',
+    '暂时无法确认实际完成人',
+    '任务记录异常，待现场核查',
+  ],
+  adminReassign: [
+    '根据现场记录更正实际完成人',
+    '班组核对后调整任务归属',
+    '原确认人误选，改派给正确人员',
+  ],
+}
+const presetReasonValues = new Set(Object.values(correctionReasonPresets).flat())
 const totalPages = computed(() => Math.max(1, Math.ceil(result.value.total / result.value.page_size)))
 const isWorker = computed(() => props.mode === 'worker')
+const visibleCorrectionReasonPresets = computed(() => {
+  if (isWorker.value) return correctionReasonPresets.workerRevoke
+  return correction.action === 'reassign'
+    ? correctionReasonPresets.adminReassign
+    : correctionReasonPresets.adminRevoke
+})
 const analysisReady = computed(() => Boolean(
   !isWorker.value
   && result.value.report
@@ -102,6 +126,9 @@ watch(() => [filters.reportDate, filters.startDate, filters.endDate], () => {
 watch(() => [filters.projectName, filters.confirmationStatus], () => {
   clearSelectedTasks()
   batchConfirmation.visible = false
+})
+watch(() => correction.action, () => {
+  if (!isWorker.value && presetReasonValues.has(correction.reason)) correction.reason = ''
 })
 
 function display(value) { return value || '--' }
@@ -323,6 +350,11 @@ function closeCorrection() {
   correction.row = null
 }
 
+function selectCorrectionReason(reason) {
+  correction.reason = reason
+  correction.error = ''
+}
+
 async function submitCorrection() {
   const reason = correction.reason.trim()
   if (reason.length < 2) {
@@ -442,7 +474,11 @@ onUnmounted(() => {
         <template v-else>
           <label v-if="!isWorker" class="confirmation-dialog-field"><span>更正方式</span><AppSelect v-model="correction.action"><option value="revoke">撤销为待确认</option><option value="reassign">直接改派给其他工人</option></AppSelect></label>
           <label v-if="!isWorker && correction.action === 'reassign'" class="confirmation-dialog-field"><span>目标工人</span><AppSelect v-model="correction.workerId" required><option value="" disabled>请选择工人</option><option v-for="worker in availableWorkers" :key="worker.user_id" :value="worker.user_id">{{ worker.display_name }}{{ worker.company_no || worker.username ? ` · ${worker.company_no || worker.username}` : '' }}</option></AppSelect><small v-if="!availableWorkers.length">只显示已登录过系统的可用工人账号。</small></label>
-          <label class="confirmation-dialog-field"><span>更正原因</span><textarea v-model="correction.reason" maxlength="200" rows="3" :placeholder="isWorker ? '例如：误点了别人的任务' : '例如：根据现场记录更正实际完成人'" required></textarea><small>{{ correction.reason.trim().length }} / 200</small></label>
+          <div class="confirmation-reason-presets" role="group" aria-label="常用更正原因">
+            <span>常用原因</span>
+            <div><button v-for="reason in visibleCorrectionReasonPresets" :key="reason" type="button" :class="{ active: correction.reason === reason }" :disabled="correction.saving" @click="selectCorrectionReason(reason)">{{ reason }}</button></div>
+          </div>
+          <label class="confirmation-dialog-field"><span>更正原因</span><textarea v-model="correction.reason" maxlength="200" rows="3" placeholder="选择常用原因，或直接填写其他原因" required></textarea><small>{{ correction.reason.trim().length }} / 200</small></label>
           <p v-if="correction.error" class="confirmation-dialog-error">{{ correction.error }}</p>
           <section v-if="!isWorker" class="confirmation-audit-list"><h3>该任务的确认记录</h3><p v-if="!correction.audits.length">暂无历史更正记录</p><article v-for="audit in correction.audits" :key="audit.audit_id"><strong>{{ audit.action_label }}</strong><span>{{ audit.previous_worker_name || '待确认' }} → {{ audit.new_worker_name || '待确认' }}</span><small>{{ audit.operated_by_name }} · {{ time(audit.operated_at) }} · {{ audit.reason }}</small></article></section>
         </template>

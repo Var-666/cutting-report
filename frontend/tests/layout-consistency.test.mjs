@@ -341,9 +341,16 @@ test('workshop confirmations support own revocation and audited admin correction
   assert.match(template, /撤销我的确认/)
   assert.match(template, /更正确认/)
   assert.match(template, /更正原因/)
+  assert.match(script, /const correctionReasonPresets =/)
+  assert.match(script, /workerRevoke:[\s\S]*adminRevoke:[\s\S]*adminReassign:/)
+  assert.match(script, /function selectCorrectionReason\(reason\)/)
+  assert.match(template, /aria-label="常用更正原因"/)
+  assert.match(template, /v-for="reason in visibleCorrectionReasonPresets"/)
+  assert.match(template, /选择常用原因，或直接填写其他原因/)
   assert.match(template, /该任务的确认记录/)
   assert.match(styles, /\.confirmation-person\s*\{[^}]*grid-template-columns:minmax\(0,1fr\) auto;[^}]*align-items:center;/)
   assert.match(styles, /\.correction-button\s*\{[^}]*white-space:nowrap!important;/)
+  assert.match(styles, /\.confirmation-reason-presets button\.active\s*\{[^}]*background:#167e85;/)
 })
 
 test('intelligent analysis omits the analysis boundary section', () => {
