@@ -216,7 +216,8 @@ test('report tables with sticky summaries use content-weighted window columns', 
   assert.match(contentCss, /height:47px !important/)
   assert.match(contentCss, /font-size:13px !important/)
   assert.match(contentCss, /background:#0b4f76 !important/)
-  assert.doesNotMatch(contentCss, /text-align:center !important/)
+  assert.match(contentCss, /text-align:center !important/)
+  assert.match(contentCss, /white-space:nowrap !important/)
 })
 
 test('device report reuses the leadership report UI baseline', () => {

@@ -1,5 +1,5 @@
-/* Word-style AutoFit: content determines each column's percentage while the
-   whole table follows its window. Scroll only when readable content needs it. */
+/* Word-style AutoFit: every column keeps its intrinsic content width, then
+   receives an equal share of the remaining window width. */
 table.content-table {
   width:100% !important;
   max-width:none !important;
@@ -17,8 +17,10 @@ table.content-table td {
   max-width:none !important;
   padding:10px 12px !important;
   border-bottom:1px solid #dde5ea !important;
+  text-align:center !important;
   vertical-align:middle !important;
   font-size:13px !important;
+  white-space:nowrap !important;
 }
 table.content-table thead th {
   color:#fff !important;
@@ -26,31 +28,40 @@ table.content-table thead th {
   font-size:11px !important;
   font-weight:600 !important;
   letter-spacing:.4px !important;
-  vertical-align:middle;
-  white-space:nowrap;
+  text-align:center !important;
+  vertical-align:middle !important;
+  white-space:nowrap !important;
 }
 table.content-table tbody tr:hover {
   background:#f4f9fb;
 }
 table.content-table td {
   overflow:hidden;
-  white-space:normal;
-  overflow-wrap:anywhere;
-  text-overflow:clip;
-}
-table.content-table [data-content-fit='compact'] {
-  /* Preserve complete short values within the computed content-weighted track. */
-  white-space:nowrap !important;
-}
-table.content-table td[data-content-fit='text'] {
-  white-space:normal !important;
+  overflow-wrap:normal;
+  text-overflow:ellipsis;
 }
 table.content-table td :is(strong, small, code, .confirmed-mark) {
   max-width:100% !important;
   overflow:hidden !important;
-  white-space:inherit !important;
-  overflow-wrap:inherit;
-  text-overflow:clip !important;
+  text-align:center !important;
+  white-space:nowrap !important;
+  overflow-wrap:normal !important;
+  text-overflow:ellipsis !important;
+}
+table.content-table td > :is(.history-actions,.row-actions,.report-actions) {
+  justify-content:center !important;
+}
+table.content-table td > .confirmation-person {
+  width:max-content !important;
+  max-width:100% !important;
+  grid-template-columns:auto auto !important;
+  justify-content:center !important;
+  justify-items:center !important;
+  margin-inline:auto !important;
+}
+table.content-table .actions-cell a,
+table.content-table .report-actions a {
+  margin-inline:7px !important;
 }
 /* Contain narrow-screen overflow in the existing table scroll regions. */
 :is(.history-wrap,.workshop-table-wrap,.dispatch-table-wrap,
