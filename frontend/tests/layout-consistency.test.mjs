@@ -314,6 +314,22 @@ test('equivalent page headers and report query bars share one layout system', ()
   assert.match(css, /\.report-navigation nav a:focus-visible\s*\{[^}]*box-shadow:/)
 })
 
+test('report automation exposes secure online runtime configuration', () => {
+  const automation = descriptor('AutomationView')
+  const template = automation.template.content
+  const script = automation.scriptSetup.content
+  const api = readFileSync(new URL('../src/api/reports.js', import.meta.url), 'utf8')
+
+  assert.match(template, /运行与邮件参数/)
+  assert.match(template, /需重启生效/)
+  assert.match(template, /configuration\.smtp_password_configured/)
+  assert.match(template, /@submit\.prevent="submitConfiguration"/)
+  assert.match(script, /smtp_password: configuration\.smtp_password \|\| null/)
+  assert.match(script, /Promise\.all\(\[loadConfiguration\(\), loadAll\(\)\]\)/)
+  assert.match(api, /export function getAutomationConfiguration\(\)/)
+  assert.match(api, /export function saveAutomationConfiguration\(payload\)/)
+})
+
 test('leadership report keeps refresh automatic and exposes only the normal query action', () => {
   const leadership = descriptor('LeadershipReportView')
   assert.doesNotMatch(leadership.template.content, /刷新最新数据|@click="refreshReport"/)

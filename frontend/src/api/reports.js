@@ -315,6 +315,17 @@ export function getAutomationStatus() {
   return request('/api/v1/automation/status')
 }
 
+export function getAutomationConfiguration() {
+  return request('/api/v1/automation/configuration')
+}
+
+export function saveAutomationConfiguration(payload) {
+  return request('/api/v1/automation/configuration', {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  })
+}
+
 export function listAutomationSchedules() {
   return request('/api/v1/automation/schedules')
 }

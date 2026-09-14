@@ -1,21 +1,70 @@
 from __future__ import annotations
 
+import logging
+import os
+import re
+import tempfile
 from datetime import datetime
+from pathlib import Path
 from typing import Literal
 from zoneinfo import ZoneInfo
 
+from dotenv import dotenv_values
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 
 from app.api.auth import require_admin
 from app.config import settings
 
 
+logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/api/v1/automation",
     tags=["report-automation"],
     dependencies=[Depends(require_admin)],
 )
+
+
+class AutomationConfigurationRequest(BaseModel):
+    automation_enabled: bool = True
+    automation_scan_seconds: float = Field(default=15, ge=1, le=3600)
+    email_retry_base_seconds: int = Field(default=60, ge=1, le=86400)
+    smtp_enabled: bool = False
+    smtp_host: str = Field(default="", max_length=255)
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    smtp_username: str = Field(default="", max_length=255)
+    smtp_password: SecretStr | None = Field(default=None, max_length=256)
+    smtp_from_email: str = Field(default="", max_length=320)
+    smtp_from_name: str = Field(default="切割生产智能产报系统", max_length=100)
+    smtp_use_tls: bool = True
+    smtp_use_ssl: bool = False
+    smtp_timeout_seconds: float = Field(default=20, ge=1, le=300)
+
+    @field_validator(
+        "smtp_host", "smtp_username", "smtp_from_email", "smtp_from_name"
+    )
+    @classmethod
+    def normalize_configuration_text(cls, value: str) -> str:
+        cleaned = value.strip()
+        if any(character in cleaned for character in ("\r", "\n", "\x00")):
+            raise ValueError("不能包含换行或空字符")
+        return cleaned
+
+    @model_validator(mode="after")
+    def validate_smtp_configuration(self):
+        if self.smtp_use_tls and self.smtp_use_ssl:
+            raise ValueError("STARTTLS 与 SSL 不能同时启用")
+        if self.smtp_enabled:
+            if not self.smtp_host:
+                raise ValueError("启用 SMTP 后必须填写服务器地址")
+            if (
+                not self.smtp_from_email
+                or "@" not in self.smtp_from_email
+                or self.smtp_from_email.startswith("@")
+                or self.smtp_from_email.endswith("@")
+            ):
+                raise ValueError("启用 SMTP 后必须填写有效的发件人邮箱")
+        return self
 
 
 class SchedulePayload(BaseModel):
@@ -85,6 +134,137 @@ def _now() -> datetime:
 
 def _envelope(request: Request, data: object) -> dict:
     return {"success": True, "data": data, "request_id": request.state.request_id}
+
+
+def _automation_configuration_data() -> dict:
+    return {
+        "automation_enabled": settings.automation_enabled,
+        "automation_scan_seconds": settings.automation_scan_seconds,
+        "email_retry_base_seconds": settings.email_retry_base_seconds,
+        "smtp_enabled": settings.smtp_enabled,
+        "smtp_host": settings.smtp_host,
+        "smtp_port": settings.smtp_port,
+        "smtp_username": settings.smtp_username,
+        "smtp_password_configured": bool(settings.smtp_password),
+        "smtp_from_email": settings.smtp_from_email,
+        "smtp_from_name": settings.smtp_from_name,
+        "smtp_use_tls": settings.smtp_use_tls,
+        "smtp_use_ssl": settings.smtp_use_ssl,
+        "smtp_timeout_seconds": settings.smtp_timeout,
+    }
+
+
+def _dotenv_quote(value: object) -> str:
+    text = str(value)
+    if any(character in text for character in ("\r", "\n", "\x00")):
+        raise ValueError("配置值不能包含换行或空字符")
+    return "'" + text.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
+def _write_automation_runtime_env(values: dict[str, object]) -> None:
+    path = settings.runtime_settings_env_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    original = path.read_text(encoding="utf-8").splitlines() if path.is_file() else []
+    key_pattern = re.compile(r"^\s*([A-Z][A-Z0-9_]*)\s*=")
+    written: set[str] = set()
+    output: list[str] = []
+    for line in original:
+        match = key_pattern.match(line)
+        key = match.group(1) if match else None
+        if key in values:
+            output.append(f"{key}={_dotenv_quote(values[key])}")
+            written.add(key)
+        else:
+            output.append(line)
+    if output and output[-1] != "":
+        output.append("")
+    if not original:
+        output.extend(
+            [
+                "# 由系统设置页管理。修改后需重启服务生效。",
+                "# 文件中包含邮箱密码，不要提交到代码库或对外发送。",
+                "",
+            ]
+        )
+    for key, value in values.items():
+        if key not in written:
+            output.append(f"{key}={_dotenv_quote(value)}")
+
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=".settings-",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            handle.write("\n".join(output).rstrip() + "\n")
+            temporary_path = Path(handle.name)
+        os.chmod(temporary_path, 0o600)
+        os.replace(temporary_path, path)
+    finally:
+        if temporary_path is not None and temporary_path.exists():
+            temporary_path.unlink()
+
+
+@router.get("/configuration")
+def get_automation_configuration(request: Request) -> dict:
+    return _envelope(request, _automation_configuration_data())
+
+
+@router.put("/configuration")
+def save_automation_configuration(
+    payload: AutomationConfigurationRequest, request: Request
+) -> dict:
+    submitted_password = (
+        payload.smtp_password.get_secret_value()
+        if payload.smtp_password is not None
+        else None
+    )
+    saved_password = None
+    if settings.runtime_settings_env_path.is_file():
+        saved_password = dotenv_values(
+            settings.runtime_settings_env_path, interpolate=False
+        ).get("SMTP_PASSWORD")
+    password = submitted_password
+    if submitted_password in {None, ""}:
+        password = (
+            saved_password if saved_password is not None else settings.smtp_password
+        )
+    values: dict[str, object] = {
+        "AUTOMATION_ENABLED": str(payload.automation_enabled).lower(),
+        "AUTOMATION_SCAN_SECONDS": payload.automation_scan_seconds,
+        "EMAIL_RETRY_BASE_SECONDS": payload.email_retry_base_seconds,
+        "SMTP_ENABLED": str(payload.smtp_enabled).lower(),
+        "SMTP_HOST": payload.smtp_host,
+        "SMTP_PORT": payload.smtp_port,
+        "SMTP_USERNAME": payload.smtp_username,
+        "SMTP_PASSWORD": password,
+        "SMTP_FROM_EMAIL": payload.smtp_from_email,
+        "SMTP_FROM_NAME": payload.smtp_from_name,
+        "SMTP_USE_TLS": str(payload.smtp_use_tls).lower(),
+        "SMTP_USE_SSL": str(payload.smtp_use_ssl).lower(),
+        "SMTP_TIMEOUT_SECONDS": payload.smtp_timeout_seconds,
+    }
+    try:
+        _write_automation_runtime_env(values)
+    except (OSError, ValueError) as exc:
+        logger.exception("failed to save report automation configuration")
+        raise HTTPException(
+            status_code=500,
+            detail="配置保存失败，请检查 data 目录的写入权限。",
+        ) from exc
+    return _envelope(
+        request,
+        {
+            "saved": True,
+            "restart_required": True,
+            "path": "data/settings.env",
+            "message": "报表自动化配置已安全保存，请重启服务后生效。",
+        },
+    )
 
 
 @router.get("/status")
