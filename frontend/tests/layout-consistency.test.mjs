@@ -62,6 +62,27 @@ test('three standard reports reuse the quick period popover', () => {
   assert.match(period.scriptSetup.content, /inclusiveDays > props\.maxDays/)
 })
 
+test('report analysis uses server source versions and a four-second debounce', () => {
+  const analysis = descriptor('AnalysisPanel', 'components')
+  const script = analysis.scriptSetup.content
+  assert.match(script, /dataVersion: \{ type: String/)
+  assert.match(script, /AUTO_ANALYSIS_DEBOUNCE_MS = 4000/)
+  assert.match(script, /window\.setTimeout\([\s\S]*AUTO_ANALYSIS_DEBOUNCE_MS/)
+  assert.match(script, /function reloadAnalysis\(\)[\s\S]*loadAnalysis\(true\)/)
+  assert.match(script, /onBeforeUnmount\([\s\S]*clearScheduledAnalysis\(\)/)
+
+  const expectedVersions = new Map([
+    ['LeadershipReportView', /:data-version="report\?\.analysis_source_version \|\| ''"/],
+    ['WorkshopView', /:data-version="result\.analysis_source_version \|\| ''"/],
+    ['EnergyPeriodReportView', /:data-version="taskDay\?\.analysis_source_version \|\| ''"/],
+  ])
+  for (const [name, pattern] of expectedVersions) {
+    const template = descriptor(name).template.content
+    assert.match(template, pattern)
+    assert.doesNotMatch(template, /context-version/)
+  }
+})
+
 test('report values use one decimal place throughout the UI', () => {
   const leadership = descriptor('LeadershipReportView').scriptSetup.content
   const workshop = descriptor('WorkshopView').scriptSetup.content

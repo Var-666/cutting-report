@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { analyzeReport } from '../api/reports'
 
 const props = defineProps({
@@ -8,13 +8,18 @@ const props = defineProps({
   periodStart: { type: String, default: '' },
   periodEnd: { type: String, default: '' },
   ready: { type: Boolean, default: false },
-  contextVersion: { type: [String, Number], default: '' },
+  dataVersion: { type: String, default: '' },
 })
 
+const AUTO_ANALYSIS_DEBOUNCE_MS = 4000
 const analysis = ref(null)
 const loading = ref(false)
+const pending = ref(false)
 const error = ref('')
 let requestSequence = 0
+let debounceTimer = null
+let activeRequestKey = ''
+let displayedRequestKey = ''
 
 const modeLabel = computed(() => {
   if (analysis.value?.mode === 'model') return '大模型分析'
@@ -51,9 +56,27 @@ function analysisParts(value) {
   return parts
 }
 
-async function loadAnalysis(force = false) {
+function requestKey() {
+  return JSON.stringify([
+    props.reportType,
+    props.reportDate,
+    props.periodStart,
+    props.periodEnd,
+    props.dataVersion,
+  ])
+}
+
+function clearScheduledAnalysis() {
+  if (debounceTimer !== null) window.clearTimeout(debounceTimer)
+  debounceTimer = null
+  pending.value = false
+}
+
+async function loadAnalysis(force = false, targetKey = requestKey()) {
   if (!props.ready || !props.reportDate) return
   const sequence = ++requestSequence
+  activeRequestKey = targetKey
+  pending.value = false
   loading.value = true
   error.value = ''
   try {
@@ -64,26 +87,67 @@ async function loadAnalysis(force = false) {
       periodEnd: props.periodEnd || undefined,
       force,
     })
-    if (sequence === requestSequence) analysis.value = result
+    if (sequence === requestSequence) {
+      analysis.value = result
+      displayedRequestKey = targetKey
+    }
   } catch (exception) {
     if (sequence === requestSequence) error.value = exception.message
   } finally {
-    if (sequence === requestSequence) loading.value = false
+    if (sequence === requestSequence) {
+      loading.value = false
+      activeRequestKey = ''
+    }
   }
 }
 
+function scheduleAutomaticAnalysis() {
+  clearScheduledAnalysis()
+  if (!props.ready || !props.reportDate) {
+    requestSequence += 1
+    activeRequestKey = ''
+    loading.value = false
+    analysis.value = null
+    displayedRequestKey = ''
+    error.value = ''
+    return
+  }
+  const targetKey = requestKey()
+  if (targetKey === displayedRequestKey || (loading.value && targetKey === activeRequestKey)) return
+
+  // This source version only schedules the request. The analysis API rebuilds the
+  // authoritative data_version and checks SQLite before it can call the model.
+  // Invalidate a response for data that changed while the request was running.
+  requestSequence += 1
+  activeRequestKey = ''
+  loading.value = false
+  pending.value = true
+  debounceTimer = window.setTimeout(() => {
+    debounceTimer = null
+    loadAnalysis(false, targetKey)
+  }, AUTO_ANALYSIS_DEBOUNCE_MS)
+}
+
+function reloadAnalysis() {
+  clearScheduledAnalysis()
+  return loadAnalysis(true)
+}
+
+function retryAnalysis() {
+  clearScheduledAnalysis()
+  return loadAnalysis(false)
+}
+
 watch(
-  () => [props.reportType, props.reportDate, props.periodStart, props.periodEnd, props.ready, props.contextVersion],
-  () => {
-    if (!props.ready) {
-      analysis.value = null
-      error.value = ''
-      return
-    }
-    loadAnalysis(false)
-  },
+  () => [props.reportType, props.reportDate, props.periodStart, props.periodEnd, props.ready, props.dataVersion],
+  scheduleAutomaticAnalysis,
   { immediate: true },
 )
+
+onBeforeUnmount(() => {
+  clearScheduledAnalysis()
+  requestSequence += 1
+})
 </script>
 
 <template>
@@ -97,15 +161,17 @@ watch(
         <span v-if="analysis" class="analysis-mode" :class="analysis.mode">
           {{ modeLabel }}<small v-if="analysis.cached">已缓存</small>
         </span>
-        <button type="button" :disabled="loading || !ready" @click="loadAnalysis(true)">
+        <span v-if="pending" class="analysis-pending">数据更新待分析</span>
+        <button type="button" :disabled="loading || !ready" @click="reloadAnalysis">
           <span v-if="loading" class="spinner dark"></span>{{ loading ? '分析中' : '重新分析' }}
         </button>
       </div>
     </div>
 
-    <div v-if="loading && !analysis" class="analysis-state">正在整理报表指标并生成分析…</div>
+    <div v-if="pending && !analysis" class="analysis-state">报表数据已加载，稳定 4 秒后自动分析…</div>
+    <div v-else-if="loading && !analysis" class="analysis-state">正在整理报表指标并生成分析…</div>
     <div v-else-if="error" class="analysis-error">
-      <span>{{ error }}</span><button type="button" @click="loadAnalysis(false)">重试</button>
+      <span>{{ error }}</span><button type="button" @click="retryAnalysis">重试</button>
     </div>
     <template v-else-if="analysis">
       <div v-if="analysis.facts?.length" class="analysis-facts">
@@ -152,6 +218,7 @@ watch(
 .analysis-mode.model { color:#087443; background:#e9f8f0; border-color:#9cd8b9; }
 .analysis-mode.simulated_fallback { color:#a43b22; background:#fff0ec; border-color:#efb9aa; }
 .analysis-mode small { padding-left:8px; border-left:1px solid currentColor; font-size:11px; opacity:.72; }
+.analysis-pending { color:#875700; font-size:12px; white-space:nowrap; }
 .analysis-facts { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; padding:20px 28px 0; }
 .analysis-facts article { padding:12px 14px; background:#f4f8fa; border:1px solid #dbe6eb; border-radius:7px; }
 .analysis-facts span { display:block; color:#687b8d; font-size:12px; }

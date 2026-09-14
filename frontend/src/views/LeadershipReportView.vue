@@ -352,7 +352,7 @@ watch(chartType, async () => {
     :period-start="defaultMonthlyView ? '' : appliedPeriodStart"
     :period-end="defaultMonthlyView ? '' : appliedPeriodEnd"
     :ready="analysisReady"
-    :context-version="`${appliedPeriodStart}-${appliedPeriodEnd}-${total.task_count}-${total.work_time_seconds}`"
+    :data-version="report?.analysis_source_version || ''"
   />
 
 </template>

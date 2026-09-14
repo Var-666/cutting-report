@@ -12,6 +12,7 @@ from app.api.auth import require_admin
 from app.config import settings
 from app.database.sqlserver import SqlServerConfigurationError
 from app.models.domain import to_primitive
+from app.services.report_analysis_service import generate_data_version
 
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,28 @@ def _result_with_refresh_state(request: Request, report_month: date, result):
     )
 
 
+def _with_analysis_source_version(data: dict) -> dict:
+    # Snapshot timestamps and refresh flags are transport state, not model input.
+    relevant = {
+        key: data.get(key)
+        for key in (
+            "report_month",
+            "period_start",
+            "period_end",
+            "daily_records",
+            "monthly_records",
+            "current_month_total",
+            "comparison_total",
+            "comparison_start",
+            "comparison_end",
+            "year_ago_total",
+            "project_distribution",
+        )
+    }
+    data["analysis_source_version"] = generate_data_version(relevant)
+    return data
+
+
 @router.get("")
 def get_leadership_report(
     request: Request,
@@ -65,7 +88,7 @@ def get_leadership_report(
             result = request.app.state.range_report_service.leadership(
                 selected_start, selected_end
             )
-            data = to_primitive(result)
+            data = _with_analysis_source_version(to_primitive(result))
             data.update(
                 {
                     "period_start": selected_start.isoformat(),
@@ -101,7 +124,7 @@ def get_leadership_report(
         raise HTTPException(status_code=500, detail="领导报表查询失败。") from exc
     return {
         "success": True,
-        "data": to_primitive(result),
+        "data": _with_analysis_source_version(to_primitive(result)),
         "request_id": request.state.request_id,
     }
 
@@ -131,6 +154,6 @@ def refresh_leadership_report(
         raise HTTPException(status_code=500, detail="领导报表刷新失败。") from exc
     return {
         "success": True,
-        "data": to_primitive(result),
+        "data": _with_analysis_source_version(to_primitive(result)),
         "request_id": request.state.request_id,
     }

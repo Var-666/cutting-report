@@ -1,6 +1,9 @@
 from datetime import date
 from dataclasses import replace
+from concurrent.futures import ThreadPoolExecutor
 import re
+import sqlite3
+import time
 from pathlib import Path
 
 from app.config import Settings
@@ -9,7 +12,7 @@ from app.models.domain import ReportFilter
 from app.services.equipment_service import mock_energy, sort_equipment_records
 from app.services.leadership_report_service import LeadershipReportService
 from app.services.query_service import QueryService
-from app.services.report_analysis_service import ReportAnalysisService
+from app.services.report_analysis_service import ReportAnalysisService, generate_data_version
 
 
 def _services(tmp_path: Path):
@@ -89,6 +92,127 @@ def test_same_analysis_input_uses_metadata_cache(tmp_path: Path) -> None:
     assert second.cached is True
     assert second.generated_at == first.generated_at
     assert second.overview == first.overview
+    assert first.data_version == second.data_version
+    assert re.fullmatch(r"[0-9a-f]{64}", first.data_version or "")
+
+
+def test_data_version_is_stable_for_key_order_and_changes_with_business_data() -> None:
+    first = {
+        "facts": [{"id": "F001", "value": "10 项"}],
+        "summary": {"work_time": 20.04, "cut_length": 30.0},
+    }
+    reordered = {
+        "summary": {"cut_length": 30.0, "work_time": 20.04},
+        "facts": [{"value": "10 项", "id": "F001"}],
+    }
+    changed = {
+        "summary": {"cut_length": 31.0, "work_time": 20.04},
+        "facts": [{"value": "10 项", "id": "F001"}],
+    }
+
+    assert generate_data_version(first) == generate_data_version(reordered)
+    assert generate_data_version(first) != generate_data_version(changed)
+
+
+def test_force_refresh_replaces_same_version_cache(tmp_path: Path) -> None:
+    settings, service = _services(tmp_path)
+    report = LeadershipReportService(settings).fetch(date(2026, 8, 1))
+
+    first = service.analyze_leadership(report)
+    forced = service.analyze_leadership(report, force=True)
+    cached = service.analyze_leadership(report)
+
+    assert forced.cached is False
+    assert forced.data_version == first.data_version
+    assert cached.cached is True
+    assert cached.data_version == forced.data_version
+
+    with sqlite3.connect(settings.metadata_db_path) as connection:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(report_analyses)")}
+        rows = connection.execute(
+            "SELECT data_version FROM report_analyses WHERE report_type = 'leadership'"
+        ).fetchall()
+    assert "data_version" in columns
+    assert rows == [(forced.data_version,)]
+
+
+def test_concurrent_same_version_requests_call_model_once(tmp_path: Path, monkeypatch) -> None:
+    settings, service = _services(tmp_path)
+    service.settings = replace(settings, llm_enabled=True)
+    report = LeadershipReportService(settings).fetch(date(2026, 8, 1))
+    calls = 0
+
+    def model(_report_type, context):
+        nonlocal calls
+        calls += 1
+        time.sleep(0.05)
+        result = service._simulate_leadership(context)
+        result.mode = "model"
+        return result
+
+    monkeypatch.setattr(service.llm, "analyze_context", model)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(lambda _: service.analyze_leadership(report), range(2)))
+
+    assert calls == 1
+    assert sorted(result.cached for result in results) == [False, True]
+    assert results[0].data_version == results[1].data_version
+
+
+def test_versions_change_when_previously_unwatched_report_values_change(tmp_path: Path) -> None:
+    settings, service = _services(tmp_path)
+    selected_date = date(2026, 8, 18)
+    report = LeadershipReportService(settings).fetch(selected_date)
+    bundle = QueryService(settings).fetch_report_data(
+        ReportFilter(report_date=selected_date)
+    )
+
+    leadership_before = service.analyze_leadership(report)
+    leadership_after = service.analyze_leadership(
+        replace(
+            report,
+            current_month_total=replace(
+                report.current_month_total,
+                cut_length_m=report.current_month_total.cut_length_m + 1,
+            ),
+        )
+    )
+
+    workshop_before = service.analyze_workshop(
+        selected_date.isoformat(), bundle.workshop_records
+    )
+    workshop_after = service.analyze_workshop(
+        selected_date.isoformat(),
+        [
+            replace(
+                bundle.workshop_records[0],
+                project_code="VERSION-CHANGED-PROJECT",
+            ),
+            *bundle.workshop_records[1:],
+        ],
+    )
+
+    equipment_records = sort_equipment_records(mock_energy(bundle.equipment_records))
+    equipment_before = service.analyze_equipment(
+        selected_date.isoformat(), equipment_records, energy_data_mode="mock"
+    )
+    equipment_after = service.analyze_equipment(
+        selected_date.isoformat(),
+        [
+            replace(
+                equipment_records[0],
+                electricity_consumption=(
+                    equipment_records[0].electricity_consumption or 0
+                ) + 1,
+            ),
+            *equipment_records[1:],
+        ],
+        energy_data_mode="mock",
+    )
+
+    assert leadership_before.data_version != leadership_after.data_version
+    assert workshop_before.data_version != workshop_after.data_version
+    assert equipment_before.data_version != equipment_after.data_version
 
 
 def test_empty_reports_keep_six_facts_without_inventing_comparisons(tmp_path):

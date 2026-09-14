@@ -6,10 +6,34 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from app.api.auth import require_admin
 from app.database.sqlserver import SqlServerConfigurationError
 from app.models.domain import ReportFilter, to_primitive
+from app.services.report_analysis_service import generate_data_version
 
 
 router = APIRouter(prefix="/api/v1/energy-report", tags=["energy-report"], dependencies=[Depends(require_admin)])
 logger = logging.getLogger(__name__)
+
+
+def _add_analysis_source_version(task_report: dict) -> dict:
+    relevant = {
+        key: task_report.get(key)
+        for key in (
+            "report_date",
+            "period_start",
+            "period_end",
+            "records",
+            "summary",
+            "units",
+            "equipment_scope",
+            "energy_notice",
+        )
+    }
+    relevant["records"] = sorted(
+        task_report.get("records") or [],
+        key=lambda row: str(row.get("task_id") or ""),
+    )
+    relevant["equipment_scope"] = sorted(task_report.get("equipment_scope") or [])
+    task_report["analysis_source_version"] = generate_data_version(relevant)
+    return task_report
 
 
 @router.get("/day")
@@ -34,6 +58,7 @@ def get_task_energy_day(request: Request, report_date: date | None = None, refre
         )
         data = service.get_task_day(selected, equipment.records, force=refresh)
         data["data_updated_at"] = to_primitive(equipment.data_updated_at)
+        _add_analysis_source_version(data)
     except SqlServerConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
@@ -87,6 +112,7 @@ def get_energy_range(
         data = request.app.state.range_report_service.equipment(
             start_date, end_date, force=refresh
         )
+        _add_analysis_source_version(data["task_report"])
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except SqlServerConfigurationError as exc:

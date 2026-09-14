@@ -346,7 +346,7 @@ watch(chartType, async () => { await nextTick(); renderCharts() })
     :period-start="defaultSummaryView ? '' : appliedPeriodStart"
     :period-end="defaultSummaryView ? '' : appliedPeriodEnd"
     :ready="analysisReady"
-    :context-version="`${appliedPeriodStart}-${appliedPeriodEnd}-${summary.task_count}-${summary.total_work_time}`"
+    :data-version="taskDay?.analysis_source_version || ''"
   />
 </template>
 

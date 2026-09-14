@@ -167,6 +167,7 @@ class AnalysisResult:
     suggestions: str
     mode: str = "model"
     facts: list[dict[str, Any]] = field(default_factory=list)
+    data_version: str | None = None
     generated_at: str | None = None
     cached: bool = False
 

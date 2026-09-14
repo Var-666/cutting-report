@@ -571,7 +571,7 @@ onUnmounted(() => {
     :period-start="filters.startDate"
     :period-end="filters.endDate"
     :ready="analysisReady"
-    :context-version="`${filters.startDate}-${filters.endDate}-${result.report?.item_count || 0}-${result.report?.confirmed_count || 0}`"
+    :data-version="result.analysis_source_version || ''"
   />
 
 </template>

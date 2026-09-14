@@ -4,6 +4,8 @@ import hashlib
 import json
 import logging
 import statistics
+import threading
+from contextlib import contextmanager
 from datetime import datetime
 from decimal import Decimal
 from typing import Callable
@@ -57,6 +59,23 @@ def _round_context_numbers(value):
     return value
 
 
+def normalize_analysis_context(context: dict) -> tuple[dict, str]:
+    """Return the exact model input and its stable, business-data-only version."""
+    normalized = _round_context_numbers(to_primitive(context))
+    canonical = json.dumps(
+        normalized,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return normalized, canonical
+
+
+def generate_data_version(context: dict) -> str:
+    _, canonical = normalize_analysis_context(context)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def _project_distribution(records: list[WorkshopRecord] | list[EquipmentRecord]) -> list[dict]:
     buckets: dict[str, dict[str, Decimal | int]] = {}
     for row in records:
@@ -104,12 +123,110 @@ def _work_time_outliers(
     ][:5]
 
 
+def _equipment_breakdown(
+    records: list[EquipmentRecord],
+    *,
+    dimension: str,
+) -> list[dict]:
+    buckets: dict[str, dict[str, Decimal | int]] = {}
+    for row in records:
+        if dimension == "equipment":
+            name = row.equipment_id or "未标注设备"
+        else:
+            name = row.project_code or row.ship_no or "未标注工程"
+        bucket = buckets.setdefault(
+            name,
+            {
+                "task_count": 0,
+                "work_time": Decimal("0"),
+                "gas": Decimal("0"),
+                "electricity": Decimal("0"),
+                "gas_count": 0,
+                "electricity_count": 0,
+            },
+        )
+        bucket["task_count"] = int(bucket["task_count"]) + 1
+        bucket["work_time"] = Decimal(bucket["work_time"]) + (
+            row.work_time or Decimal("0")
+        )
+        if row.gas_consumption is not None:
+            bucket["gas"] = Decimal(bucket["gas"]) + row.gas_consumption
+            bucket["gas_count"] = int(bucket["gas_count"]) + 1
+        if row.electricity_consumption is not None:
+            bucket["electricity"] = (
+                Decimal(bucket["electricity"]) + row.electricity_consumption
+            )
+            bucket["electricity_count"] = int(bucket["electricity_count"]) + 1
+    return [
+        {
+            f"{dimension}_name": name,
+            "task_count": int(values["task_count"]),
+            "work_time": float(values["work_time"]),
+            "gas_consumption": float(values["gas"]),
+            "electricity_consumption": float(values["electricity"]),
+            "gas_record_count": int(values["gas_count"]),
+            "electricity_record_count": int(values["electricity_count"]),
+        }
+        for name, values in sorted(
+            buckets.items(),
+            key=lambda item: (-int(item[1]["task_count"]), item[0]),
+        )
+    ]
+
+
 class ReportAnalysisService:
     def __init__(self, settings: Settings, metadata: MetadataRepository) -> None:
         self.settings = settings
         self.metadata = metadata
         self.llm = LlmService(settings)
         self.timezone = ZoneInfo(settings.timezone)
+        self._generation_guard = threading.Lock()
+        self._generation_locks: dict[str, dict] = {}
+
+    @contextmanager
+    def _single_generation(self, cache_key: str):
+        """Coalesce concurrent generation for one version inside this process."""
+        with self._generation_guard:
+            state = self._generation_locks.get(cache_key)
+            if state is None:
+                state = {"lock": threading.Lock(), "users": 0}
+                self._generation_locks[cache_key] = state
+            was_inflight = state["lock"].locked()
+            state["users"] += 1
+        state["lock"].acquire()
+        try:
+            yield was_inflight
+        finally:
+            state["lock"].release()
+            with self._generation_guard:
+                state["users"] -= 1
+                if state["users"] == 0:
+                    self._generation_locks.pop(cache_key, None)
+
+    def _get_cached_analysis(
+        self,
+        *,
+        cache_key: str,
+        report_type: str,
+        report_date: str,
+        data_version: str,
+    ) -> AnalysisResult | None:
+        cached = self.metadata.get_analysis(
+            cache_key,
+            report_type=report_type,
+            report_date=report_date,
+            data_version=data_version,
+        )
+        if not cached:
+            return None
+        allowed = {
+            key: value
+            for key, value in cached.items()
+            if key in AnalysisResult.__dataclass_fields__
+        }
+        allowed["data_version"] = data_version
+        allowed["cached"] = True
+        return AnalysisResult(**allowed)
 
     def _analyze(
         self,
@@ -120,63 +237,75 @@ class ReportAnalysisService:
         simulator: Callable[[dict], AnalysisResult],
         force: bool,
     ) -> AnalysisResult:
-        primitive_context = _round_context_numbers(to_primitive(context))
-        canonical = json.dumps(
-            primitive_context, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-        )
-        input_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        primitive_context, canonical = normalize_analysis_context(context)
+        data_version = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
         engine = (
             f"model:{self.settings.llm_model}"
             if self.settings.llm_enabled
             else "simulated"
         )
         cache_key = hashlib.sha256(
-            f"{PROMPT_VERSION}|{report_type}|{report_date}|{engine}|{input_hash}".encode(
+            f"{PROMPT_VERSION}|{report_type}|{report_date}|{engine}|{data_version}".encode(
                 "utf-8"
             )
         ).hexdigest()
         if not force:
-            cached = self.metadata.get_analysis(cache_key)
+            cached = self._get_cached_analysis(
+                cache_key=cache_key,
+                report_type=report_type,
+                report_date=report_date,
+                data_version=data_version,
+            )
             if cached:
-                allowed = {
-                    key: value
-                    for key, value in cached.items()
-                    if key in AnalysisResult.__dataclass_fields__
-                }
-                allowed["cached"] = True
-                return AnalysisResult(**allowed)
+                return cached
 
-        mode = "simulated"
-        if self.settings.llm_enabled:
-            try:
-                result = self.llm.analyze_context(report_type, primitive_context)
-                mode = "model"
-            except Exception:
-                logger.exception("LLM analysis failed; falling back to simulated analysis")
+        with self._single_generation(cache_key) as waited_for_same_version:
+            # Always recheck after acquiring the key lock. Normal requests share the
+            # cache; simultaneous forced requests share the result generated by the
+            # first waiter, while a later manual refresh still generates a new result.
+            if not force or waited_for_same_version:
+                cached = self._get_cached_analysis(
+                    cache_key=cache_key,
+                    report_type=report_type,
+                    report_date=report_date,
+                    data_version=data_version,
+                )
+                if cached:
+                    return cached
+
+            mode = "simulated"
+            if self.settings.llm_enabled:
+                try:
+                    result = self.llm.analyze_context(report_type, primitive_context)
+                    mode = "model"
+                except Exception:
+                    logger.exception("LLM analysis failed; falling back to simulated analysis")
+                    result = simulator(primitive_context)
+                    result.status = "degraded"
+                    result.mode = "simulated_fallback"
+                    mode = "simulated_fallback"
+            else:
                 result = simulator(primitive_context)
-                result.status = "degraded"
-                result.mode = "simulated_fallback"
-                mode = "simulated_fallback"
-        else:
-            result = simulator(primitive_context)
 
-        result.facts = primitive_context.get("facts", [])
-        result.generated_at = datetime.now(self.timezone).isoformat(timespec="seconds")
-        result.cached = False
-        payload = to_primitive(result)
-        self.metadata.save_analysis(
-            cache_key=cache_key,
-            report_type=report_type,
-            report_date=report_date,
-            input_hash=input_hash,
-            status=result.status,
-            mode=mode,
-            model_name=self.settings.llm_model if self.settings.llm_enabled else None,
-            prompt_version=PROMPT_VERSION,
-            result=payload,
-            generated_at=result.generated_at,
-        )
-        return result
+            result.facts = primitive_context.get("facts", [])
+            result.data_version = data_version
+            result.generated_at = datetime.now(self.timezone).isoformat(timespec="seconds")
+            result.cached = False
+            payload = to_primitive(result)
+            self.metadata.save_analysis(
+                cache_key=cache_key,
+                report_type=report_type,
+                report_date=report_date,
+                input_hash=data_version,
+                data_version=data_version,
+                status=result.status,
+                mode=mode,
+                model_name=self.settings.llm_model if self.settings.llm_enabled else None,
+                prompt_version=PROMPT_VERSION,
+                result=payload,
+                generated_at=result.generated_at,
+            )
+            return result
 
     def analyze_leadership(
         self, report: LeadershipReportResult, *, force: bool = False
@@ -407,6 +536,7 @@ class ReportAnalysisService:
             "facts": facts,
             "report_date": report_date,
             "energy_data_mode": energy_data_mode,
+            "energy_notice": energy_notice,
             "energy_coverage": {"gas": gas_count, "electricity": electric_count, "tasks": len(records)},
             "energy_estimates": {"gas": gas_estimates, "electricity": electric_estimates},
             "energy_quality": {
@@ -421,6 +551,12 @@ class ReportAnalysisService:
                 "task_yoy_percent": round(year_change, 1) if year_change is not None else None,
             },
             "project_distribution": projects[:10],
+            "energy_by_project": _equipment_breakdown(
+                records, dimension="project"
+            )[:10],
+            "equipment_distribution": _equipment_breakdown(
+                records, dimension="equipment"
+            )[:10],
             "anomalies": anomalies,
         }
         return self._analyze(

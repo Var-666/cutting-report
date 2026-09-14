@@ -18,10 +18,22 @@ from app.database.workshop import (
 )
 from app.models.domain import to_primitive
 from app.services.statistics_service import build_worker_work_summaries
+from app.services.report_analysis_service import generate_data_version
 from app.services.workshop_sorting import sort_workshop_by_recency
 
 
 router = APIRouter(prefix="/api/v1/workshop", tags=["workshop-confirmation"])
+
+
+def _workshop_analysis_source_version(report_date: str, records: list) -> str:
+    # Query order is not business data, so records are canonicalized by task ID.
+    ordered = sorted(records, key=lambda row: str(row.task_id))
+    return generate_data_version(
+        {
+            "report_date": report_date,
+            "records": to_primitive(ordered),
+        }
+    )
 
 
 class ConfirmTaskRequest(BaseModel):
@@ -172,9 +184,15 @@ def list_tasks(
                 "project_names": [],
                 "confirmed_count": 0,
                 "worker_summaries": [],
+                "analysis_source_version": generate_data_version(
+                    {"report_date": report_date.isoformat(), "records": []}
+                ),
                 "current_user": user,
             },
         )
+    analysis_source_version = _workshop_analysis_source_version(
+        report_date.isoformat(), records
+    )
     project_names = sorted(
         {row.project_code for row in records if row.project_code}
     )
@@ -204,6 +222,7 @@ def list_tasks(
             "project_names": project_names,
             "confirmed_count": confirmed_count,
             "worker_summaries": to_primitive(worker_summaries),
+            "analysis_source_version": analysis_source_version,
             "current_user": user,
         },
     )
@@ -229,6 +248,9 @@ def list_range_tasks(
     except SqlServerConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
+    analysis_source_version = _workshop_analysis_source_version(
+        f"{start_date.isoformat()} 至 {end_date.isoformat()}", records
+    )
     project_names = sorted(
         {row.project_code for row in records if row.project_code}
     )
@@ -262,6 +284,7 @@ def list_range_tasks(
             "project_names": project_names,
             "confirmed_count": sum(bool(row.confirmed_by) for row in records),
             "worker_summaries": to_primitive(worker_summaries),
+            "analysis_source_version": analysis_source_version,
         },
     )
 

@@ -67,6 +67,7 @@ class MetadataRepository(SQLiteRepository):
                     report_type TEXT NOT NULL,
                     report_date TEXT NOT NULL,
                     input_hash TEXT NOT NULL,
+                    data_version TEXT NOT NULL,
                     status TEXT NOT NULL,
                     mode TEXT NOT NULL,
                     model_name TEXT,
@@ -97,6 +98,24 @@ class MetadataRepository(SQLiteRepository):
                     connection.execute(
                         f"ALTER TABLE report_jobs ADD COLUMN {column} {definition}"
                     )
+
+            analysis_columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(report_analyses)").fetchall()
+            }
+            if "data_version" not in analysis_columns:
+                connection.execute(
+                    "ALTER TABLE report_analyses ADD COLUMN data_version TEXT"
+                )
+                connection.execute(
+                    "UPDATE report_analyses SET data_version = input_hash WHERE data_version IS NULL"
+                )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_report_analyses_version
+                ON report_analyses(report_type, report_date, data_version, generated_at DESC)
+                """
+            )
 
     def recover_interrupted_jobs(self) -> int:
         with self.connect() as connection:
@@ -253,11 +272,25 @@ class MetadataRepository(SQLiteRepository):
             ).fetchone()
             return dict(row) if row else None
 
-    def get_analysis(self, cache_key: str) -> dict[str, Any] | None:
+    def get_analysis(
+        self,
+        cache_key: str,
+        *,
+        report_type: str,
+        report_date: str,
+        data_version: str,
+    ) -> dict[str, Any] | None:
         with self.connect() as connection:
             row = connection.execute(
-                "SELECT result_json FROM report_analyses WHERE cache_key = ?",
-                (cache_key,),
+                """
+                SELECT result_json
+                FROM report_analyses
+                WHERE cache_key = ?
+                  AND report_type = ?
+                  AND report_date = ?
+                  AND COALESCE(data_version, input_hash) = ?
+                """,
+                (cache_key, report_type, report_date, data_version),
             ).fetchone()
             if row is None:
                 return None
@@ -271,6 +304,7 @@ class MetadataRepository(SQLiteRepository):
         report_type: str,
         report_date: str,
         input_hash: str,
+        data_version: str,
         status: str,
         mode: str,
         model_name: str | None,
@@ -282,10 +316,12 @@ class MetadataRepository(SQLiteRepository):
             connection.execute(
                 """
                 INSERT INTO report_analyses (
-                    cache_key, report_type, report_date, input_hash, status, mode,
+                    cache_key, report_type, report_date, input_hash, data_version, status, mode,
                     model_name, prompt_version, result_json, generated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(cache_key) DO UPDATE SET
+                    input_hash = excluded.input_hash,
+                    data_version = excluded.data_version,
                     status = excluded.status,
                     mode = excluded.mode,
                     model_name = excluded.model_name,
@@ -298,6 +334,7 @@ class MetadataRepository(SQLiteRepository):
                     report_type,
                     report_date,
                     input_hash,
+                    data_version,
                     status,
                     mode,
                     model_name,
