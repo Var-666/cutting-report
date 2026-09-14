@@ -326,16 +326,13 @@ def revoke_task_confirmation(
     request: Request,
     user: dict = Depends(require_worker),
 ) -> dict:
-    report, records = _records_for_date(request, payload.report_date)
-    if report is None:
-        raise HTTPException(status_code=404, detail="当日车间报表尚未生成")
-    if not any(row.task_id == task_id for row in records):
-        raise HTTPException(status_code=404, detail="当日车间报表中没有找到该任务")
+    # 撤销以已存在的确认记录为准。历史日报可能没有 scope_machine_no，
+    # 但确认记录仍然有效，不能因此阻止工人撤销本人的确认。
     now = datetime.now(ZoneInfo(settings.timezone)).isoformat(timespec="seconds")
     try:
         audit = request.app.state.workshop.revoke_confirmation(
             task_id=task_id,
-            report_id=report["report_id"],
+            report_id=None,
             user=user,
             reason=payload.reason,
             now=now,
@@ -354,16 +351,13 @@ def correct_task_confirmation(
     request: Request,
     admin: dict = Depends(require_admin),
 ) -> dict:
-    report, records = _records_for_date(request, payload.report_date)
-    if report is None:
-        raise HTTPException(status_code=404, detail="当日车间报表尚未生成")
-    if not any(row.task_id == task_id for row in records):
-        raise HTTPException(status_code=404, detail="当日车间报表中没有找到该任务")
+    # 管理员更正操作针对既有确认记录。优先沿用确认记录自身的 report_id，
+    # 避免旧日报快照因设备范围字段缺失而被误判为“尚未生成”。
     now = datetime.now(ZoneInfo(settings.timezone)).isoformat(timespec="seconds")
     try:
         audit = request.app.state.workshop.correct_confirmation(
             task_id=task_id,
-            report_id=report["report_id"],
+            report_id=None,
             admin=admin,
             reason=payload.reason,
             now=now,
