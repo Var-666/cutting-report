@@ -296,6 +296,9 @@ function selectPushFile(item) {
 }
 
 watch(selectedPushFileId, () => {
+  dispatchForm.material = ''
+  dispatchForm.thickness = ''
+  dispatchForm.quantity = 1
   const parsed = parseCuttingInstructionFilename(activeFile.value?.filename)
   recognizedInstruction.value = parsed
   if (!parsed) return

@@ -175,12 +175,20 @@ test('non-standard cutting instruction names are ignored', () => {
   }
 })
 
-test('file push applies parsed standard-name values without changing non-standard files', () => {
+test('file push resets parameters before applying values parsed from a standard name', () => {
   const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
+  const watcher = view.match(/watch\(selectedPushFileId, \(\) => \{([\s\S]*?)\}, \{ flush: 'sync' \}\)/)?.[1]
 
-  assert.match(view, /parseCuttingInstructionFilename\(activeFile\.value\?\.filename\)/)
-  assert.match(view, /dispatchForm\.material = parsed\.material/)
-  assert.match(view, /dispatchForm\.thickness = parsed\.thickness/)
-  assert.match(view, /if \(!parsed\) return/)
+  assert.ok(watcher)
+  assert.match(watcher, /dispatchForm\.material = ''/)
+  assert.match(watcher, /dispatchForm\.thickness = ''/)
+  assert.match(watcher, /dispatchForm\.quantity = 1/)
+  assert.match(watcher, /parseCuttingInstructionFilename\(activeFile\.value\?\.filename\)/)
+  assert.match(watcher, /dispatchForm\.material = parsed\.material/)
+  assert.match(watcher, /dispatchForm\.thickness = parsed\.thickness/)
+  assert.match(watcher, /if \(!parsed\) return/)
+  assert.ok(watcher.indexOf("dispatchForm.material = ''") < watcher.indexOf('if (!parsed) return'))
+  assert.ok(watcher.indexOf("dispatchForm.thickness = ''") < watcher.indexOf('if (!parsed) return'))
+  assert.ok(watcher.indexOf('dispatchForm.quantity = 1') < watcher.indexOf('if (!parsed) return'))
   assert.match(view, /已按标准名称填充/)
 })
