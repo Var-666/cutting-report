@@ -72,10 +72,23 @@ class DispatchCreateRequest(BaseModel):
 
 
 class DispatchBatchItem(BaseModel):
-    download_id: str = Field(pattern=r"^dl_[a-f0-9]{32}$")
+    document_id: str | None = Field(default=None, min_length=1, max_length=128)
+    download_id: str | None = Field(default=None, pattern=r"^dl_[a-f0-9]{32}$")
+    version_id: str | None = Field(default=None, max_length=128)
+    file_path: str | None = Field(default=None, min_length=1, max_length=2048)
     material: str = Field(min_length=1, max_length=80)
     thickness: float = Field(gt=0, le=1000)
     quantity: int = Field(default=1, ge=1, le=10000)
+
+    @model_validator(mode="after")
+    def require_one_file_reference(self):
+        if bool(self.document_id) == bool(self.download_id):
+            raise ValueError("document_id和download_id必须且只能填写一个")
+        if self.document_id and not self.file_path:
+            raise ValueError("直接派发PDM文件时必须提供file_path用于版本路径复核")
+        if self.download_id and (self.version_id is not None or self.file_path is not None):
+            raise ValueError("使用download_id时不能同时提供PDM版本或路径")
+        return self
 
     @field_validator("material")
     @classmethod
@@ -100,8 +113,11 @@ class DispatchBatchCreateRequest(BaseModel):
     def reject_duplicate_downloads(
         cls, values: list[DispatchBatchItem]
     ) -> list[DispatchBatchItem]:
-        download_ids = [item.download_id for item in values]
-        if len(download_ids) != len(set(download_ids)):
+        references = [
+            ("download", item.download_id) if item.download_id else ("document", item.document_id)
+            for item in values
+        ]
+        if len(references) != len(set(references)):
             raise ValueError("批量推送不能重复选择同一个文件")
         return values
 

@@ -28,26 +28,21 @@ function routerForTest() {
   })
 }
 
-test('old URL and named route both enter file downloads', async () => {
+test('file dispatch is the single canonical page', async () => {
   const router = routerForTest()
   await router.push('/admin/cutting-dispatch')
-  assert.equal(router.currentRoute.value.name, 'cutting-downloads')
-  assert.equal(router.currentRoute.value.path, '/admin/cutting-dispatch/downloads')
-  await router.push('/admin/cutting-dispatch/push')
-  await router.push({ name: 'cutting-dispatch' })
-  assert.equal(router.currentRoute.value.name, 'cutting-downloads')
+  assert.equal(router.currentRoute.value.name, 'cutting-dispatch')
+  assert.equal(router.currentRoute.value.path, '/admin/cutting-dispatch')
+  assert.equal(router.currentRoute.value.meta.title, '文件派发')
 })
 
-test('download and push pages have distinct state keys, titles and actions', async () => {
+test('old download and push deep links redirect to unified dispatch', async () => {
   const router = routerForTest()
-  for (const [path, name, title, mode] of [
-    ['downloads', 'cutting-downloads', '文件下载', 'download'],
-    ['push', 'cutting-push', '文件推送', 'push'],
-  ]) {
+  for (const path of ['downloads', 'push']) {
     await router.push(`/admin/cutting-dispatch/${path}`)
-    assert.equal(router.currentRoute.value.name, name)
-    assert.equal(router.currentRoute.value.meta.title, title)
-    assert.deepEqual(router.currentRoute.value.matched.at(-1).props.default, { mode })
+    assert.equal(router.currentRoute.value.name, 'cutting-dispatch')
+    assert.equal(router.currentRoute.value.path, '/admin/cutting-dispatch')
+    assert.equal(router.currentRoute.value.meta.title, '文件派发')
   }
 })
 
@@ -61,7 +56,7 @@ test('both nested pages inherit admin authorization', () => {
   }
 })
 
-test('refreshable deep links resolve without first visiting parent', () => {
+test('legacy deep links remain resolvable without first visiting parent', () => {
   for (const path of ['downloads', 'push']) {
     const route = routerForTest().resolve(`/admin/cutting-dispatch/${path}`)
     assert.equal(route.matched.length, 3)

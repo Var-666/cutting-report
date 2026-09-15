@@ -418,7 +418,63 @@ def test_batch_creation_isolates_files_and_reports_duplicates(tmp_path: Path):
     assert all(item["dispatch"]["dispatch_id"] for item in repeated["items"])
 
 
-def test_batch_request_limits_files_and_requires_complete_parameters():
+def test_batch_can_create_and_execute_directly_from_pdm_files(tmp_path: Path):
+    client = RecordingMagicClient()
+    service, _dispatches, admin = _push_service(tmp_path, client)
+    payload = [
+        {
+            "document_id": raw["document_id"],
+            "version_id": raw["version_id"],
+            "file_path": raw["file_path"],
+            "material": "AH36",
+            "thickness": 10,
+            "quantity": index,
+        }
+        for index, raw in enumerate(service.pdm.files[:2], start=1)
+    ]
+
+    created = service.create_dispatch_batch(
+        machine_ip="10.1.133.197", items=payload, user=admin
+    )
+    sent = [
+        service.execute_dispatch(item["dispatch"]["dispatch_id"], user=admin)
+        for item in created["items"]
+    ]
+
+    assert created["created_count"] == 2
+    assert [item["document_id"] for item in created["items"]] == [
+        item["document_id"] for item in payload
+    ]
+    assert all(item["download_id"] is None for item in created["items"])
+    assert [item["status"] for item in sent] == ["sent", "sent"]
+    assert len(client.uploads) == len(client.assignments) == 2
+
+
+def test_direct_batch_rechecks_selected_pdm_version_and_path(tmp_path: Path):
+    client = RecordingMagicClient()
+    service, _dispatches, admin = _push_service(tmp_path, client)
+    raw = service.pdm.files[0]
+    common = {
+        "document_id": raw["document_id"],
+        "version_id": raw["version_id"],
+        "file_path": raw["file_path"],
+        "material": "AH36",
+        "thickness": 10,
+        "quantity": 1,
+    }
+
+    for changed in (
+        {**common, "version_id": "stale-version"},
+        {**common, "file_path": "another/file.GEN"},
+    ):
+        result = service.create_dispatch_batch(
+            machine_ip="10.1.133.197", items=[changed], user=admin
+        )
+        assert result["failed_count"] == 1
+        assert "已变化" in result["items"][0]["error"]
+
+
+def test_batch_request_limits_files_and_validates_file_references():
     valid_item = {
         "download_id": f"dl_{'a' * 32}",
         "material": "AH36",
@@ -447,6 +503,27 @@ def test_batch_request_limits_files_and_requires_complete_parameters():
             machine_ip="10.1.133.197",
             items=[{**valid_item, "material": "", "thickness": 0}],
         )
+
+    direct_item = {
+        "document_id": "pdm-document-1",
+        "version_id": "version-1",
+        "file_path": "project/file.GEN",
+        "material": "AH36",
+        "thickness": 10,
+        "quantity": 1,
+    }
+    assert DispatchBatchCreateRequest(
+        machine_ip="10.1.133.197", items=[direct_item]
+    ).items[0].document_id == "pdm-document-1"
+    for invalid in (
+        {**direct_item, "file_path": None},
+        {**direct_item, "download_id": f"dl_{'b' * 32}"},
+        {key: value for key, value in direct_item.items() if key != "document_id"},
+    ):
+        with pytest.raises(ValidationError):
+            DispatchBatchCreateRequest(
+                machine_ip="10.1.133.197", items=[invalid]
+            )
 
 
 def test_assign_retry_does_not_upload_file_twice(tmp_path: Path):

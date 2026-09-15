@@ -67,20 +67,20 @@ test('duplicate project and catalog requests share a five-minute cache', async (
   assert.equal(calls.length, 3)
 })
 
-test('download page status uses the lightweight scope', async () => {
+test('unified dispatch page loads push readiness status', async () => {
   const calls = []
   globalThis.fetch = async (url) => {
     calls.push(String(url))
     return { ok: true, json: async () => ({ success: true, data: {} }) }
   }
 
-  await getCuttingStatus('download')
+  await getCuttingStatus('push')
 
   assert.equal(calls.length, 1)
-  assert.match(calls[0], /^\/api\/v1\/cutting\/status\?scope=download$/)
+  assert.match(calls[0], /^\/api\/v1\/cutting\/status\?scope=push$/)
 })
 
-test('file download page uses the recursive directory tree without condition builders', () => {
+test('file dispatch page uses the recursive PDM directory tree without condition builders', () => {
   const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
   const node = readFileSync(new URL('../src/components/CatalogTreeNode.vue', import.meta.url), 'utf8')
 
@@ -88,8 +88,8 @@ test('file download page uses the recursive directory tree without condition bui
   assert.match(view, /listCuttingProjects/)
   assert.match(view, /listCuttingCatalogs/)
   assert.match(view, /listCuttingFiles/)
-  assert.match(view, /getCuttingStatus\('download', \{ signal \}\)/)
-  assert.doesNotMatch(view, /isDownload\.value \? loadProjects\(\) : Promise\.resolve/)
+  assert.match(view, /getCuttingStatus\('push', \{ signal \}\)/)
+  assert.doesNotMatch(view, /defineProps|isDownload/)
   assert.match(view, /项目目录/)
   assert.match(view, /当前位置/)
   assert.match(view, /const pageSize = 20/)
@@ -104,7 +104,7 @@ test('file download page uses the recursive directory tree without condition bui
   assert.doesNotMatch(view, /<option value="" disabled>\{\{ projectLoading/)
   assert.match(view, /\.project-search input,\.project-search \.app-select \{ height:36px;[^}]*font-size:12px;/)
   assert.match(view, /\.project-search \.app-select__trigger \{ padding:0 10px; \}/)
-  assert.match(view, /文件名<\/th><th>中间产品<\/th><th>文件格式<\/th><th>版本<\/th><th>操作人<\/th><th>操作人工号<\/th><th>操作时间<\/th><th class="file-download-cell">操作/)
+  assert.match(view, /文件名<\/th><th>命名检查<\/th><th>中间产品<\/th><th>文件格式<\/th><th>版本<\/th><th>操作人<\/th><th>操作人工号<\/th><th>操作时间<\/th><th class="file-download-cell">操作/)
   assert.doesNotMatch(view, /<th>切割状态<\/th>/)
   assert.match(view, /fileExtension\(row\)/)
   assert.doesNotMatch(view, /ConditionBuilder|SortBuilder|searchCuttingFiles|组合条件查询/)
@@ -112,7 +112,7 @@ test('file download page uses the recursive directory tree without condition bui
   assert.match(node, /node\.children/)
 })
 
-test('selected download project survives refresh without a duplicate saved-file browser', () => {
+test('selected dispatch project survives refresh without a saved-file browser', () => {
   const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
 
   assert.match(view, /useRoute, useRouter/)
@@ -129,20 +129,18 @@ test('project-shaped catalog root is hidden to avoid showing the project twice',
   assert.match(view, /roots = roots\[0\]\.children/)
 })
 
-test('file download table supports multi-select and batch save', () => {
+test('PDM file table supports up to twenty selections and direct batch dispatch', () => {
   const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
 
-  assert.match(view, /const selectedDownloadFiles = ref\(new Map\(\)\)/)
-  assert.match(view, /function toggleVisibleDownloads/)
-  assert.match(view, /async function downloadSelectedFiles/)
-  assert.match(view, /aria-label="全选当前页可保存文件"/)
+  assert.match(view, /const selectedFiles = ref\(new Map\(\)\)/)
+  assert.match(view, /function toggleVisibleFiles/)
+  assert.match(view, /next\.size >= 20/)
+  assert.match(view, /aria-label="全选当前页可派发文件"/)
   assert.match(view, /:aria-label="`选择文件 \$\{row\.document_no\}`"/)
-  assert.match(view, /批量保存到系统/)
-  assert.match(view, /for \(const \[index, file\] of files\.entries\(\)\)/)
-  assert.match(view, /setDownloadSelected\(file, false\)/)
-  assert.match(view, /colspan="9"/)
-  assert.match(view, /function wasPreviouslySaved\(file\)/)
-  assert.match(view, /file\.downloaded_at/)
+  assert.match(view, /设置参数并派发/)
+  assert.match(view, /@click="openSinglePush\(row\)"/)
+  assert.match(view, /colspan="10"/)
+  assert.doesNotMatch(view, /downloadCuttingFile|保存到系统|listCuttingDownloads/)
   assert.match(view, /class="dispatch-table source-file-table"/)
 })
 
@@ -174,29 +172,31 @@ test('non-standard cutting instruction names are ignored', () => {
   }
 })
 
-test('file push builds independent batch parameters and executes created tasks sequentially', () => {
+test('direct dispatch builds independent PDM references and executes tasks sequentially', () => {
   const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
 
-  assert.match(view, /const selectedPushFiles = ref\(new Map\(\)\)/)
   assert.match(view, /next\.size >= 20/)
   assert.match(view, /function createPushBatchItem\(file\)/)
-  assert.match(view, /const parsed = parseCuttingInstructionFilename\(file\.filename\)/)
+  assert.match(view, /const parsed = parseCuttingInstructionFilename\(filename\)/)
   assert.match(view, /material: parsed\?\.material \|\| ''/)
   assert.match(view, /thickness: parsed\?\.thickness \?\? ''/)
   assert.match(view, /quantity: 1/)
   assert.match(view, /createCuttingDispatchBatch/)
+  assert.match(view, /document_id: item\.documentId/)
+  assert.match(view, /version_id: item\.versionId/)
+  assert.match(view, /file_path: item\.filePath/)
   assert.match(view, /for \(const item of createdItems\)/)
   assert.match(view, /await executeCuttingDispatch\(item\.dispatchId\)/)
   assert.match(view, /非标准名，请手工填写参数/)
 })
 
-test('successful pushes refresh consumed files while downloads remain repeatable', () => {
+test('non-standard names require explicit manual confirmation before dispatch', () => {
   const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
 
-  assert.match(view, /if \(executeNow\) refreshes\.push\(loadPushFiles\(\)\)/)
-  assert.match(view, /if \(pushed\) refreshes\.push\(loadPushFiles\(\)\)/)
+  assert.match(view, /const nonStandardBatchCount = computed/)
+  assert.match(view, /pushBatch\.nonStandardConfirmed/)
+  assert.match(view, /我已人工核对 \{\{ nonStandardBatchCount \}\} 个非标准文件名/)
+  assert.match(view, /nonStandardBatchCount > 0 && !pushBatch\.nonStandardConfirmed/)
   assert.match(view, /completed\.local_file_cleanup\?\.error/)
-  assert.match(view, /同一文件可重复保存/)
-  assert.match(view, /wasPreviouslySaved\(row\) \? '再次保存'/)
-  assert.doesNotMatch(view, /if \(downloadedRows\[fileKey\(file\)\]\) return/)
+  assert.doesNotMatch(view, /仅保存任务|批量保存|再次保存/)
 })

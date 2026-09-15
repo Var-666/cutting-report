@@ -72,6 +72,8 @@ test('report analysis uses server source versions and a four-second debounce', (
   assert.match(script, /onDeactivated\(pauseAnalysis\)/)
   assert.match(script, /requestController\?\.abort\(\)/)
   assert.match(script, /analyzeReport\([\s\S]*\}, \{ signal \}\)/)
+  assert.match(script, /const targetKey = requestKey\(\)[\s\S]*if \(!props\.ready \|\| !props\.reportDate\)/)
+  assert.match(script, /if \(!props\.reportDate \|\| targetKey !== displayedRequestKey\) \{[\s\S]*analysis\.value = null/)
 
   const expectedVersions = new Map([
     ['LeadershipReportView', /:data-version="report\?\.analysis_source_version \|\| ''"/],
@@ -142,22 +144,18 @@ test('workshop report includes the confirmed-worker interval summary', () => {
   assert.match(trendStyles, /\.report-trend-panel__content--fit-table \.report-trend-panel__table\s*\{[^}]*height:auto;[^}]*max-height:none;/)
 })
 
-test('source files are saved to the system and are not downloadable to the browser', () => {
+test('source files are dispatched directly without a manual save step', () => {
   const dispatch = descriptor('CuttingDispatchView')
-  assert.match(dispatch.template.content, /@click="downloadFile\(row\)"/)
+  assert.match(dispatch.template.content, /@click="openSinglePush\(row\)"/)
   assert.match(dispatch.template.content, /<strong>\{\{ row.document_no \}\}<\/strong>/)
-  assert.match(dispatch.template.content, /保存到系统/)
-  assert.match(dispatch.template.content, /aria-label="可推送文件列表"/)
-  assert.match(dispatch.template.content, /v-model="pushFileDraft.keyword"/)
-  assert.match(dispatch.template.content, /v-model="pushFileDraft.projectId"/)
-  assert.match(dispatch.template.content, /v-model="pushFileDraft.catalogKey"/)
-  assert.doesNotMatch(dispatch.template.content, /v-model="pushFileDraft\.(version|owner)"/)
-  assert.match(dispatch.template.content, /@change="setPushFileSelected\(item, \$event\.target\.checked\)"/)
-  assert.match(dispatch.template.content, /aria-label="全选当前页可推送文件"/)
+  assert.match(dispatch.template.content, /设置参数并派发/)
+  assert.match(dispatch.template.content, /标准名/)
+  assert.match(dispatch.template.content, /非标准名/)
+  assert.doesNotMatch(dispatch.template.content, /保存到系统|可推送文件列表/)
   assert.doesNotMatch(dispatch.scriptSetup.content, /CuttingDownloadsPanel|downloadsPanel/)
 })
 
-test('download page keeps one directory browser and omits the duplicate saved-file component', () => {
+test('dispatch page keeps one directory browser and omits the saved-file picker', () => {
   const source = descriptor('CuttingDispatchView')
   assert.match(source.template.content, /<CatalogTreeNode/)
   assert.doesNotMatch(source.template.content, /<SortBuilder|<ConditionBuilder/)
@@ -166,11 +164,11 @@ test('download page keeps one directory browser and omits the duplicate saved-fi
   assert.doesNotMatch(source.template.content, /<h2>系统已保存文件<\/h2>/)
 })
 
-test('push page loads once initially and refreshes once on later activations', () => {
+test('dispatch page loads once initially and refreshes runtime status on later activations', () => {
   const dispatch = descriptor('CuttingDispatchView')
   assert.match(dispatch.scriptSetup.content, /onMounted\(\(\) => \{\s*initializePage\(\)/)
   assert.match(dispatch.scriptSetup.content, /onActivated\(async \(\) =>/)
-  assert.match(dispatch.scriptSetup.content, /if \(firstActivation\) \{[\s\S]*?return[\s\S]*?await loadPushFiles\(\{ signal \}\)/)
+  assert.match(dispatch.scriptSetup.content, /if \(firstActivation\) \{[\s\S]*?return[\s\S]*?getCuttingStatus\('push', \{ signal \}\)/)
   assert.match(dispatch.scriptSetup.content, /onDeactivated\(pausePage\)/)
 })
 
@@ -446,6 +444,18 @@ test('switching cached workshop and equipment reports does not force another que
   assert.match(api, /REPORT_VIEW_CACHE_TTL = 5 \* 60 \* 1000/)
 })
 
+test('workshop pagination does not invalidate an unchanged analysis context', () => {
+  const view = descriptor('WorkshopView')
+  const workshop = view.scriptSetup.content
+  const template = view.template.content
+  const readyExpression = workshop.match(/const analysisReady = computed\(\(\) => Boolean\(([\s\S]*?)\n\)\)/)
+
+  assert.ok(readyExpression)
+  assert.doesNotMatch(readyExpression[1], /loading/)
+  assert.match(template, /@click="load\(result\.page - 1\)">上一页/)
+  assert.match(template, /@click="load\(result\.page \+ 1\)">下一页/)
+})
+
 test('cached report resources pause on deactivation and cache is bounded', () => {
   const layout = descriptor('ReportsLayout', 'layouts')
   const leadership = descriptor('LeadershipReportView')
@@ -486,17 +496,16 @@ test('scrollable report tables do not add duplicate previous and next pagination
   assert.doesNotMatch(script, /visibleTaskRows|totalPages|pageSize/)
 })
 
-test('file push uses downloaded-file parameters without a condition search', () => {
+test('file dispatch uses PDM references and has no saved-file prerequisite', () => {
   const dispatch = descriptor('CuttingDispatchView')
 
-  assert.match(dispatch.template.content, /<aside v-if="isDownload" class="panel directory-panel">/)
-  assert.match(dispatch.template.content, /选择待推送文件/)
-  assert.match(dispatch.scriptSetup.content, /const pushFilePageSize = 20/)
-  assert.match(dispatch.scriptSetup.content, /filteredPushFiles/)
-  assert.match(dispatch.scriptSetup.content, /downloadCatalogLabel/)
-  assert.match(dispatch.scriptSetup.content, /listCuttingDownloads\(\{ page: 1, pageSize: 100 \}, \{ signal \}\)/)
-  assert.match(dispatch.scriptSetup.content, /download_id: item\.downloadId/)
-  assert.match(dispatch.template.content, /批量推送确认/)
-  assert.match(dispatch.template.content, /确认并顺序推送/)
+  assert.match(dispatch.template.content, /<aside class="panel directory-panel">/)
+  assert.match(dispatch.template.content, /目录文件/)
+  assert.match(dispatch.scriptSetup.content, /document_id: item\.documentId/)
+  assert.match(dispatch.scriptSetup.content, /version_id: item\.versionId/)
+  assert.match(dispatch.scriptSetup.content, /file_path: item\.filePath/)
+  assert.doesNotMatch(dispatch.scriptSetup.content, /listCuttingDownloads|downloadCuttingFile/)
+  assert.match(dispatch.template.content, /批量派发确认/)
+  assert.match(dispatch.template.content, /确认并顺序派发/)
   assert.match(dispatch.template.content, /PDM项目目录/)
 })

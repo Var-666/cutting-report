@@ -215,6 +215,8 @@ class CuttingDispatchService:
         *,
         document_id: str | None,
         download_id: str | None = None,
+        expected_version_id: str | None = None,
+        expected_file_path: str | None = None,
         machine_ip: str,
         material: str | None,
         thickness: float | None,
@@ -238,9 +240,18 @@ class CuttingDispatchService:
         file_item = self._file_item(raw_file)
         if not file_item["path_available"]:
             raise CuttingDispatchError(file_item["path_error"])
+        if selected_download is None and expected_file_path is not None:
+            if str(file_item.get("version_id") or "") != str(expected_version_id or ""):
+                raise CuttingDispatchError("PDM文件版本已变化，请刷新文件清单后重新选择")
+            try:
+                expected_path = normalize_relative_path(expected_file_path)
+            except ValueError as exc:
+                raise CuttingDispatchError(str(exc)) from None
+            if file_item["normalized_path"] != expected_path:
+                raise CuttingDispatchError("PDM文件路径已变化，请刷新文件清单后重新选择")
         if selected_download is not None:
             if str(file_item.get("version_id") or "") != str(selected_download.get("version_id") or ""):
-                raise CuttingDispatchError("系统已保存文件与PDM当前版本不一致，请回到文件下载页重新保存")
+                raise CuttingDispatchError("系统已保存文件与PDM当前版本不一致，请重新选择文件后派发")
             if file_item["normalized_path"] != normalize_relative_path(selected_download["relative_path"]):
                 raise CuttingDispatchError("系统已保存文件与PDM当前路径不一致，请重新保存")
         physical_suffix = (local_path if selected_download is not None else Path(file_item["normalized_path"])).suffix.lower()
@@ -288,10 +299,13 @@ class CuttingDispatchService:
         results: list[dict[str, Any]] = []
         for request_item in items:
             download_id = str(request_item.get("download_id") or "")
+            document_id = str(request_item.get("document_id") or "")
             try:
                 dispatch = self.create_dispatch(
-                    document_id=None,
-                    download_id=download_id,
+                    document_id=document_id or None,
+                    download_id=download_id or None,
+                    expected_version_id=request_item.get("version_id"),
+                    expected_file_path=request_item.get("file_path"),
                     machine_ip=machine_ip,
                     material=request_item.get("material"),
                     thickness=request_item.get("thickness"),
@@ -300,7 +314,8 @@ class CuttingDispatchService:
                 )
                 results.append(
                     {
-                        "download_id": download_id,
+                        "download_id": download_id or None,
+                        "document_id": document_id or None,
                         "status": "created",
                         "dispatch": dispatch,
                         "error": None,
@@ -309,7 +324,8 @@ class CuttingDispatchService:
             except DuplicateDispatchError as exc:
                 results.append(
                     {
-                        "download_id": download_id,
+                        "download_id": download_id or None,
+                        "document_id": document_id or None,
                         "status": "duplicate",
                         "dispatch": self._decorate_dispatch(exc.dispatch),
                         "error": str(exc),
@@ -318,7 +334,8 @@ class CuttingDispatchService:
             except (CuttingDispatchError, ValueError) as exc:
                 results.append(
                     {
-                        "download_id": download_id,
+                        "download_id": download_id or None,
+                        "document_id": document_id or None,
                         "status": "failed",
                         "dispatch": None,
                         "error": str(exc),

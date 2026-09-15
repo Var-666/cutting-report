@@ -158,7 +158,7 @@ test('login and restored sessions only warm the active route without waiting for
 
 test('file pages do not start unrelated report preload jobs', async () => {
   const calls = mockApi()
-  const result = await startReportPreload(admin, { pathname: '/admin/cutting-dispatch/downloads' })
+  const result = await startReportPreload(admin, { pathname: '/admin/cutting-dispatch' })
   assert.deepEqual(result, [])
   assert.deepEqual(reportPreload.items, [])
   assert.equal(calls.length, 0)

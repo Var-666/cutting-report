@@ -112,18 +112,23 @@ async function loadAnalysis(force = false, targetKey = requestKey()) {
 function scheduleAutomaticAnalysis() {
   clearScheduledAnalysis()
   if (!activationTimer.isActive()) return
+  const targetKey = requestKey()
   if (!props.ready || !props.reportDate) {
     requestController?.abort()
     requestController = null
     requestSequence += 1
     activeRequestKey = ''
     loading.value = false
-    analysis.value = null
-    displayedRequestKey = ''
-    error.value = ''
+    // Pagination and cached-page deactivation can make ready false briefly even
+    // though the report range and source version are unchanged. Preserve the
+    // displayed result in that case; a changed request key still clears it.
+    if (!props.reportDate || targetKey !== displayedRequestKey) {
+      analysis.value = null
+      displayedRequestKey = ''
+      error.value = ''
+    }
     return
   }
-  const targetKey = requestKey()
   if (targetKey === displayedRequestKey || (loading.value && targetKey === activeRequestKey)) return
 
   // This source version only schedules the request. The analysis API rebuilds the

@@ -10,16 +10,12 @@ import {
   executeCuttingDispatch,
   getCuttingStatus,
   listCuttingDispatches,
-  listCuttingDownloads,
   listCuttingMachines,
   listCuttingProjects,
   listCuttingCatalogs,
   listCuttingFiles,
-  downloadCuttingFile,
 } from '../api/reports'
 
-const props = defineProps({ mode: { type: String, required: true, validator: (value) => ['download', 'push'].includes(value) } })
-const isDownload = computed(() => props.mode === 'download')
 const pageActive = ref(true)
 const route = useRoute()
 const router = useRouter()
@@ -45,8 +41,6 @@ const systemStatus = ref(null)
 const rows = ref([])
 const histories = ref([])
 const machines = ref([])
-const pushFiles = ref([])
-const selectedPushFiles = ref(new Map())
 const bulkQuantity = ref(1)
 const pushBatch = reactive({
   visible: false,
@@ -57,16 +51,9 @@ const pushBatch = reactive({
   total: 0,
   currentFilename: '',
   error: '',
+  nonStandardConfirmed: false,
 })
-const pushFileDraft = reactive({ keyword: '', projectId: '', catalogKey: '' })
-const pushFileFilters = ref({ keyword: '', projectId: '', catalogKey: '' })
-const pushFilePage = ref(1)
-const pushFilePageSize = 20
-const downloadingId = ref('')
-const downloadedRows = reactive({})
-const selectedDownloadFiles = ref(new Map())
-const batchDownloading = ref(false)
-const batchProgress = reactive({ completed: 0, total: 0 })
+const selectedFiles = ref(new Map())
 const loading = ref(false)
 const operatingId = ref('')
 const notice = ref('')
@@ -107,52 +94,10 @@ const expandedCatalogIds = ref(new Set())
 const projectLoading = ref(false)
 const catalogLoading = ref(false)
 
-const pushFileProjects = computed(() => {
-  const options = new Map()
-  pushFiles.value.forEach((item) => {
-    const key = downloadProjectKey(item)
-    const project = item.project_name || '未分类项目'
-    const label = item.ship_no ? `${project} · ${item.ship_no}` : project
-    if (!options.has(key)) options.set(key, { key, label })
-  })
-  return [...options.values()].sort((left, right) => left.label.localeCompare(right.label, 'zh-CN'))
-})
-const pushFileCatalogs = computed(() => {
-  const options = new Map()
-  pushFiles.value
-    .filter((item) => !pushFileDraft.projectId || downloadProjectKey(item) === pushFileDraft.projectId)
-    .forEach((item) => {
-      const key = downloadCatalogKey(item)
-      if (!options.has(key)) options.set(key, { key, label: downloadCatalogLabel(item) })
-    })
-  return [...options.values()].sort((left, right) => left.label.localeCompare(right.label, 'zh-CN'))
-})
-const filteredPushFiles = computed(() => {
-  const keyword = pushFileFilters.value.keyword.toLowerCase()
-  return pushFiles.value.filter((item) => {
-    const searchable = `${item.filename || ''} ${item.document_no || ''} ${item.relative_path || ''}`.toLowerCase()
-    return (!keyword || searchable.includes(keyword))
-      && (!pushFileFilters.value.projectId || downloadProjectKey(item) === pushFileFilters.value.projectId)
-      && (!pushFileFilters.value.catalogKey || downloadCatalogKey(item) === pushFileFilters.value.catalogKey)
-  })
-})
-const pushFileTotalPages = computed(() => Math.max(1, Math.ceil(filteredPushFiles.value.length / pushFilePageSize)))
-const visiblePushFiles = computed(() => {
-  const start = (pushFilePage.value - 1) * pushFilePageSize
-  return filteredPushFiles.value.slice(start, start + pushFilePageSize)
-})
-const selectedPushCount = computed(() => selectedPushFiles.value.size)
-const allVisiblePushFilesSelected = computed(() => (
-  visiblePushFiles.value.length > 0
-  && visiblePushFiles.value.every((item) => selectedPushFiles.value.has(item.download_id))
-))
-const someVisiblePushFilesSelected = computed(() => (
-  !allVisiblePushFilesSelected.value
-  && visiblePushFiles.value.some((item) => selectedPushFiles.value.has(item.download_id))
-))
 const invalidBatchCount = computed(() => pushBatch.items.filter((item) => batchItemError(item)).length)
+const nonStandardBatchCount = computed(() => pushBatch.items.filter((item) => !item.parsed).length)
 const batchStatusCounts = computed(() => {
-  const counts = { saved: 0, sent: 0, duplicate: 0, failed: 0, pending: 0 }
+  const counts = { sent: 0, duplicate: 0, failed: 0, pending: 0 }
   pushBatch.items.forEach((item) => {
     const key = Object.hasOwn(counts, item.status) ? item.status : 'pending'
     counts[key] += 1
@@ -160,15 +105,15 @@ const batchStatusCounts = computed(() => {
   return counts
 })
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize)))
-const selectedDownloadCount = computed(() => selectedDownloadFiles.value.size)
-const selectableRows = computed(() => rows.value.filter((row) => row.path_available && systemStatus.value?.can_download))
+const selectedFileCount = computed(() => selectedFiles.value.size)
+const selectableRows = computed(() => rows.value.filter((row) => row.path_available && systemStatus.value?.can_push))
 const allVisibleFilesSelected = computed(() => (
   selectableRows.value.length > 0
-  && selectableRows.value.every((row) => selectedDownloadFiles.value.has(fileKey(row)))
+  && selectableRows.value.every((row) => selectedFiles.value.has(fileKey(row)))
 ))
 const someVisibleFilesSelected = computed(() => (
   !allVisibleFilesSelected.value
-  && selectableRows.value.some((row) => selectedDownloadFiles.value.has(fileKey(row)))
+  && selectableRows.value.some((row) => selectedFiles.value.has(fileKey(row)))
 ))
 const selectedPath = computed(() => {
   if (!selectedProject.value) return '请选择项目和目录'
@@ -185,12 +130,8 @@ function fileKey(file) {
   return JSON.stringify([file.document_id, file.version_id, file.normalized_path])
 }
 
-function wasPreviouslySaved(file) {
-  return Boolean(downloadedRows[fileKey(file)] || file.downloaded_at)
-}
-
-function clearSelectedDownloads() {
-  selectedDownloadFiles.value = new Map()
+function clearSelectedFiles() {
+  selectedFiles.value = new Map()
 }
 
 function rememberSelectedProject(projectId) {
@@ -205,91 +146,48 @@ function rememberSelectedProject(projectId) {
   router.replace({ query })
 }
 
-function setDownloadSelected(file, selected) {
-  const next = new Map(selectedDownloadFiles.value)
+function setFileSelected(file, selected) {
+  const next = new Map(selectedFiles.value)
   const key = fileKey(file)
-  if (selected) next.set(key, file)
-  else next.delete(key)
-  selectedDownloadFiles.value = next
-}
-
-function toggleVisibleDownloads(selected) {
-  const next = new Map(selectedDownloadFiles.value)
-  for (const file of selectableRows.value) {
-    const key = fileKey(file)
-    if (selected) next.set(key, file)
-    else next.delete(key)
-  }
-  selectedDownloadFiles.value = next
-}
-
-async function saveFileToSystem(file) {
-  const result = await downloadCuttingFile({ document_id: file.document_id, version_id: file.version_id || null, file_path: file.normalized_path })
-  downloadedRows[fileKey(file)] = true
-  return result
-}
-
-async function downloadFile(file) {
-  if (!isDownload.value || downloadingId.value || batchDownloading.value || loading.value || !file.path_available || !systemStatus.value?.can_download) return
-  const key = fileKey(file)
-  downloadingId.value = key
-  showNotice(`正在将 ${file.document_no} 保存到系统…`)
-  try {
-    const result = await saveFileToSystem(file)
-    setDownloadSelected(file, false)
-    showNotice(`${result.filename} 已保存到系统，可前往“文件推送”页面使用。`)
-  } catch (error) {
-    showNotice(error.message, 'error')
-  } finally {
-    downloadingId.value = ''
-  }
-}
-
-async function downloadSelectedFiles() {
-  if (!isDownload.value || batchDownloading.value || downloadingId.value || loading.value) return
-  const files = [...selectedDownloadFiles.value.values()].filter((file) => file.path_available)
-  if (!files.length || !systemStatus.value?.can_download) {
-    showNotice('请先选择可保存的文件。', 'error')
+  if (selected && !next.has(key) && next.size >= 20) {
+    showNotice('一次最多选择 20 个文件，请先取消部分文件。', 'error')
     return
   }
-  batchDownloading.value = true
-  Object.assign(batchProgress, { completed: 0, total: files.length })
-  let succeeded = 0
-  const failed = []
-  try {
-    for (const [index, file] of files.entries()) {
-      downloadingId.value = fileKey(file)
-      showNotice(`正在批量保存 ${index + 1}/${files.length}：${file.document_no}`)
-      try {
-        await saveFileToSystem(file)
-        setDownloadSelected(file, false)
-        succeeded += 1
-      } catch (error) {
-        failed.push(`${file.document_no}：${error.message}`)
-      } finally {
-        batchProgress.completed = index + 1
-      }
+  if (selected) next.set(key, file)
+  else next.delete(key)
+  selectedFiles.value = next
+}
+
+function toggleVisibleFiles(selected) {
+  const next = new Map(selectedFiles.value)
+  let skipped = 0
+  for (const file of selectableRows.value) {
+    const key = fileKey(file)
+    if (!selected) {
+      next.delete(key)
+    } else if (!next.has(key) && next.size < 20) {
+      next.set(key, file)
+    } else if (!next.has(key)) {
+      skipped += 1
     }
-    if (failed.length) {
-      showNotice(`批量保存完成：成功 ${succeeded} 项，失败 ${failed.length} 项。${failed[0]}`, 'error')
-    } else {
-      showNotice(`已将 ${succeeded} 个文件全部保存到系统，可前往“文件推送”页面使用。`)
-    }
-  } finally {
-    downloadingId.value = ''
-    batchDownloading.value = false
   }
+  selectedFiles.value = next
+  if (skipped) showNotice(`已选满 20 项，其余 ${skipped} 项未选中。`, 'error')
+}
+
+function openSinglePush(file) {
+  selectedFiles.value = new Map([[fileKey(file), file]])
+  openPushBatch()
 }
 
 async function loadHistory({ signal } = {}) {
-  if (isDownload.value) return
   const data = await listCuttingDispatches({ page: 1, pageSize: 10 }, { signal })
   if (signal?.aborted || !pageActive.value) return
   histories.value = data.items
 }
 
 async function loadMachines({ signal } = {}) {
-  if (isDownload.value || !systemStatus.value?.magic_box?.configured) return
+  if (!systemStatus.value?.magic_box?.configured) return
   try {
     const data = await listCuttingMachines({ signal })
     if (signal?.aborted || !pageActive.value) return
@@ -308,76 +206,16 @@ async function loadMachines({ signal } = {}) {
   }
 }
 
-async function loadPushFiles({ signal } = {}) {
-  if (isDownload.value) return
-  const data = await listCuttingDownloads({ page: 1, pageSize: 100 }, { signal })
-  if (signal?.aborted || !pageActive.value) return
-  pushFiles.value = (data.items || []).filter((item) => item.available && !item.is_simulation)
-  const availableById = new Map(pushFiles.value.map((item) => [item.download_id, item]))
-  selectedPushFiles.value = new Map(
-    [...selectedPushFiles.value.keys()]
-      .filter((downloadId) => availableById.has(downloadId))
-      .map((downloadId) => [downloadId, availableById.get(downloadId)]),
-  )
-  pushFilePage.value = Math.min(pushFilePage.value, pushFileTotalPages.value)
-}
-
-function applyPushFileFilters() {
-  pushFileFilters.value = {
-    keyword: pushFileDraft.keyword.trim(),
-    projectId: pushFileDraft.projectId,
-    catalogKey: pushFileDraft.catalogKey,
-  }
-  pushFilePage.value = 1
-}
-
-function resetPushFileFilters() {
-  Object.assign(pushFileDraft, { keyword: '', projectId: '', catalogKey: '' })
-  pushFileFilters.value = { keyword: '', projectId: '', catalogKey: '' }
-  pushFilePage.value = 1
-}
-
-function clearSelectedPushFiles() {
-  selectedPushFiles.value = new Map()
-}
-
-function setPushFileSelected(item, selected) {
-  const next = new Map(selectedPushFiles.value)
-  if (selected && !next.has(item.download_id) && next.size >= 20) {
-    showNotice('一次最多选择 20 个文件，请先取消部分文件。', 'error')
-    return
-  }
-  if (selected) next.set(item.download_id, item)
-  else next.delete(item.download_id)
-  selectedPushFiles.value = next
-}
-
-function toggleVisiblePushFiles(selected) {
-  const next = new Map(selectedPushFiles.value)
-  if (!selected) {
-    visiblePushFiles.value.forEach((item) => next.delete(item.download_id))
-    selectedPushFiles.value = next
-    return
-  }
-  let skipped = 0
-  visiblePushFiles.value.forEach((item) => {
-    if (next.has(item.download_id)) return
-    if (next.size >= 20) {
-      skipped += 1
-      return
-    }
-    next.set(item.download_id, item)
-  })
-  selectedPushFiles.value = next
-  if (skipped) showNotice(`已选满 20 项，其余 ${skipped} 项未选中。`, 'error')
-}
-
 function createPushBatchItem(file) {
-  const parsed = parseCuttingInstructionFilename(file.filename)
+  const filename = file.document_no || file.physical_file_name || ''
+  const parsed = parseCuttingInstructionFilename(filename)
   return {
-    downloadId: file.download_id,
-    filename: file.filename,
-    version: file.version || '--',
+    referenceKey: fileKey(file),
+    documentId: String(file.document_id),
+    versionId: file.version_id || null,
+    filePath: file.normalized_path,
+    filename,
+    version: file.version || file.physical_version_code?.trim() || file.physical_version_no || '--',
     parsed,
     material: parsed?.material || '',
     thickness: parsed?.thickness ?? '',
@@ -398,15 +236,16 @@ function batchItemError(item) {
 }
 
 function openPushBatch() {
-  if (!selectedPushCount.value) {
+  if (!selectedFileCount.value) {
     showNotice('请先选择要推送的文件。', 'error')
     return
   }
-  pushBatch.items = [...selectedPushFiles.value.values()].map(createPushBatchItem)
+  pushBatch.items = [...selectedFiles.value.values()].map(createPushBatchItem)
   pushBatch.completed = 0
   pushBatch.total = pushBatch.items.length
   pushBatch.currentFilename = ''
   pushBatch.error = ''
+  pushBatch.nonStandardConfirmed = false
   pushBatch.resultsReady = false
   bulkQuantity.value = 1
   pushBatch.visible = true
@@ -419,10 +258,10 @@ function closePushBatch() {
 
 function removePushBatchItem(item) {
   if (pushBatch.saving || pushBatch.resultsReady) return
-  pushBatch.items = pushBatch.items.filter((candidate) => candidate.downloadId !== item.downloadId)
-  const next = new Map(selectedPushFiles.value)
-  next.delete(item.downloadId)
-  selectedPushFiles.value = next
+  pushBatch.items = pushBatch.items.filter((candidate) => candidate.referenceKey !== item.referenceKey)
+  const next = new Map(selectedFiles.value)
+  next.delete(item.referenceKey)
+  selectedFiles.value = next
   pushBatch.total = pushBatch.items.length
   if (!pushBatch.items.length) closePushBatch()
 }
@@ -440,36 +279,11 @@ function applyBulkQuantity() {
 function batchStatusLabel(item) {
   return {
     pending: '待创建',
-    saved: '已保存',
-    pushing: '推送中',
+    pushing: '下载并推送中',
     sent: '已推送',
     duplicate: '已有未完成任务',
     failed: '失败',
   }[item.status] || '待创建'
-}
-
-function changePushFilePage(nextPage) {
-  if (nextPage < 1 || nextPage > pushFileTotalPages.value) return
-  pushFilePage.value = nextPage
-}
-
-function downloadProjectKey(item) {
-  return String(item.project_id || '__unclassified__')
-}
-
-function downloadCatalogKey(item) {
-  if (Array.isArray(item.catalog_path) && item.catalog_path.length) {
-    return item.catalog_path.map((node) => String(node.catalog_id || node.title || '')).join('>')
-  }
-  return String(item.catalog_id || '__unclassified__')
-}
-
-function downloadCatalogLabel(item) {
-  const titles = Array.isArray(item.catalog_path)
-    ? item.catalog_path.map((node) => String(node.title || '').trim()).filter(Boolean)
-    : []
-  if (titles[0] && item.project_name && titles[0] === String(item.project_name).trim()) titles.shift()
-  return titles.join(' / ') || item.catalog_title || '未分类目录'
 }
 
 function catalogPath(node) {
@@ -517,7 +331,7 @@ async function loadProjects() {
     catalogTree.value = []
     expandedCatalogIds.value = new Set()
     rows.value = []
-    clearSelectedDownloads()
+    clearSelectedFiles()
     total.value = 0
     page.value = 1
     notice.value = ''
@@ -542,7 +356,7 @@ function resetProjectSelection() {
   catalogTree.value = []
   expandedCatalogIds.value = new Set()
   rows.value = []
-  clearSelectedDownloads()
+  clearSelectedFiles()
   total.value = 0
   page.value = 1
   notice.value = ''
@@ -576,7 +390,7 @@ async function selectProject(project) {
   catalogTree.value = []
   expandedCatalogIds.value = new Set()
   rows.value = []
-  clearSelectedDownloads()
+  clearSelectedFiles()
   total.value = 0
   page.value = 1
   catalogLoading.value = true
@@ -613,12 +427,12 @@ async function selectCatalog(node) {
   if (node.children?.length && !expandedCatalogIds.value.has(String(node.catalog_id))) expandCatalog(node)
   fileKeyword.value = ''
   appliedFileKeyword.value = ''
-  clearSelectedDownloads()
+  clearSelectedFiles()
   await loadFiles(1)
 }
 
 async function applyFileSearch() {
-  if (fileKeyword.value.trim() !== appliedFileKeyword.value) clearSelectedDownloads()
+  if (fileKeyword.value.trim() !== appliedFileKeyword.value) clearSelectedFiles()
   await loadFiles(1)
 }
 
@@ -655,8 +469,8 @@ async function changePage(nextPage) {
   await loadFiles(nextPage)
 }
 
-async function submitPushBatch(executeNow = false) {
-  if (isDownload.value || pushBatch.saving) return
+async function submitPushBatch() {
+  if (pushBatch.saving) return
   pushBatch.error = ''
   if (!dispatchForm.machineIp) {
     pushBatch.error = '请选择目标机床。'
@@ -670,8 +484,12 @@ async function submitPushBatch(executeNow = false) {
     pushBatch.error = `还有 ${invalidBatchCount.value} 个文件的加工参数不完整，请先补充。`
     return
   }
-  if (executeNow && !systemStatus.value?.can_push) {
-    pushBatch.error = '当前推送服务不可用，可先保存任务。'
+  if (nonStandardBatchCount.value && !pushBatch.nonStandardConfirmed) {
+    pushBatch.error = `请先确认已人工核对 ${nonStandardBatchCount.value} 个非标准文件名及其加工参数。`
+    return
+  }
+  if (!systemStatus.value?.can_push) {
+    pushBatch.error = '当前文件来源或推送服务不可用。'
     return
   }
 
@@ -690,7 +508,9 @@ async function submitPushBatch(executeNow = false) {
     const created = await createCuttingDispatchBatch({
       machine_ip: dispatchForm.machineIp,
       items: pushBatch.items.map((item) => ({
-        download_id: item.downloadId,
+        document_id: item.documentId,
+        version_id: item.versionId,
+        file_path: item.filePath,
         material: String(item.material).trim(),
         thickness: Number(item.thickness),
         quantity: Number(item.quantity),
@@ -698,11 +518,11 @@ async function submitPushBatch(executeNow = false) {
     })
     const createdItems = []
     for (const result of created.items || []) {
-      const item = pushBatch.items.find((candidate) => candidate.downloadId === result.download_id)
+      const item = pushBatch.items.find((candidate) => candidate.documentId === result.document_id)
       if (!item) continue
       item.dispatchId = result.dispatch?.dispatch_id || ''
       if (result.status === 'created') {
-        item.status = executeNow ? 'pending' : 'saved'
+        item.status = 'pending'
         createdItems.push(item)
       } else {
         item.status = result.status === 'duplicate' ? 'duplicate' : 'failed'
@@ -710,42 +530,31 @@ async function submitPushBatch(executeNow = false) {
       }
     }
 
-    if (executeNow) {
-      pushBatch.completed = pushBatch.items.length - createdItems.length
-      for (const item of createdItems) {
-        item.status = 'pushing'
-        pushBatch.currentFilename = item.filename
-        operatingId.value = item.dispatchId
-        try {
-          const completed = await executeCuttingDispatch(item.dispatchId)
-          item.status = 'sent'
-          if (completed.local_file_cleanup?.error) item.error = completed.local_file_cleanup.error
-        } catch (error) {
-          item.status = 'failed'
-          item.error = error.message
-        } finally {
-          pushBatch.completed += 1
-        }
+    pushBatch.completed = pushBatch.items.length - createdItems.length
+    for (const item of createdItems) {
+      item.status = 'pushing'
+      pushBatch.currentFilename = item.filename
+      operatingId.value = item.dispatchId
+      try {
+        const completed = await executeCuttingDispatch(item.dispatchId)
+        item.status = 'sent'
+        if (completed.local_file_cleanup?.error) item.error = completed.local_file_cleanup.error
+      } catch (error) {
+        item.status = 'failed'
+        item.error = error.message
+      } finally {
+        pushBatch.completed += 1
       }
-    } else {
-      pushBatch.completed = pushBatch.items.length
     }
 
     pushBatch.resultsReady = true
     pushBatch.currentFilename = ''
-    clearSelectedPushFiles()
-    const refreshes = [loadHistory()]
-    if (executeNow) refreshes.push(loadPushFiles())
-    await Promise.allSettled(refreshes)
+    clearSelectedFiles()
+    await Promise.allSettled([loadHistory()])
     const counts = batchStatusCounts.value
-    if (executeNow) {
-      const cleanupWarnings = pushBatch.items.filter((item) => item.status === 'sent' && item.error).length
-      const message = `批量推送完成：成功 ${counts.sent} 项，失败 ${counts.failed} 项，重复 ${counts.duplicate} 项${cleanupWarnings ? `，本地文件清理警告 ${cleanupWarnings} 项` : ''}。`
-      showNotice(message, counts.failed || counts.duplicate || cleanupWarnings ? 'error' : 'info')
-    } else {
-      const message = `批量保存完成：已保存 ${counts.saved} 项，失败 ${counts.failed} 项，重复 ${counts.duplicate} 项。`
-      showNotice(message, counts.failed || counts.duplicate ? 'error' : 'info')
-    }
+    const cleanupWarnings = pushBatch.items.filter((item) => item.status === 'sent' && item.error).length
+    const message = `文件派发完成：成功 ${counts.sent} 项，失败 ${counts.failed} 项，重复 ${counts.duplicate} 项${cleanupWarnings ? `，本地文件清理警告 ${cleanupWarnings} 项` : ''}。`
+    showNotice(message, counts.failed || counts.duplicate || cleanupWarnings ? 'error' : 'info')
   } catch (error) {
     pushBatch.error = error.message
   } finally {
@@ -758,10 +567,8 @@ async function executeSaved(item) {
   if (operatingId.value) return
   if (!window.confirm(`确认执行任务 ${item.dispatch_id}？\n文件：${item.document_no}\n机床：${item.machine_ip}`)) return
   operatingId.value = item.dispatch_id
-  let pushed = false
   try {
     const completed = await executeCuttingDispatch(item.dispatch_id)
-    pushed = true
     if (completed.local_file_cleanup?.error) {
       showNotice(`推送完成，但本地文件清理失败：${completed.local_file_cleanup.error}`, 'error')
     } else {
@@ -771,9 +578,7 @@ async function executeSaved(item) {
     showNotice(error.message, 'error')
   } finally {
     operatingId.value = ''
-    const refreshes = [loadHistory()]
-    if (pushed) refreshes.push(loadPushFiles())
-    await Promise.allSettled(refreshes)
+    await Promise.allSettled([loadHistory()])
   }
 }
 
@@ -800,39 +605,16 @@ function fileExtension(row) {
   return dot > 0 ? filename.slice(dot).toUpperCase() : '--'
 }
 
-function formatBytes(value) {
-  if (value == null) return '--'
-  if (value < 1024) return `${value} B`
-  if (value < 1024 ** 2) return `${(value / 1024).toFixed(1)} KB`
-  return `${(value / 1024 ** 2).toFixed(1)} MB`
-}
-
-function downloadSourceLabel(item) {
-  return item.source_mode === 'http' ? 'FO文件服务' : item.source_mode === 'local' ? '本地目录' : '其他来源'
-}
-
 async function initializePage() {
   const { sequence, signal } = beginLifecycleRequest()
   try {
-    if (isDownload.value) {
-      const [statusData] = await Promise.all([
-        getCuttingStatus('download', { signal }),
-        loadProjects(),
-      ])
-      if (signal.aborted || !pageActive.value || sequence !== lifecycleSequence) return
-      systemStatus.value = statusData
-      return
-    }
-
-    loading.value = true
     systemStatus.value = await getCuttingStatus('push', { signal })
     if (signal.aborted || !pageActive.value || sequence !== lifecycleSequence) return
-    await Promise.all([loadPushFiles({ signal }), loadMachines({ signal }), loadHistory({ signal })])
+    await Promise.all([loadProjects(), loadMachines({ signal }), loadHistory({ signal })])
   } catch (error) {
     if (error.name !== 'AbortError' && sequence === lifecycleSequence) showNotice(error.message, 'error')
   } finally {
     if (sequence === lifecycleSequence) {
-      if (!isDownload.value) loading.value = false
       lifecycleController = null
     }
   }
@@ -862,12 +644,13 @@ onActivated(async () => {
     firstActivation = false
     return
   }
-  if (isDownload.value) return
   const { sequence, signal } = beginLifecycleRequest()
   try {
-    await loadPushFiles({ signal })
+    systemStatus.value = await getCuttingStatus('push', { signal })
+    if (signal.aborted || !pageActive.value || sequence !== lifecycleSequence) return
+    await Promise.all([loadMachines({ signal }), loadHistory({ signal })])
   } catch (error) {
-    if (error.name !== 'AbortError' && sequence === lifecycleSequence) showNotice(`刷新系统已保存文件失败：${error.message}`, 'error')
+    if (error.name !== 'AbortError' && sequence === lifecycleSequence) showNotice(`刷新文件派发状态失败：${error.message}`, 'error')
   } finally {
     if (sequence === lifecycleSequence) lifecycleController = null
   }
@@ -879,9 +662,9 @@ onBeforeUnmount(pausePage)
 <template>
   <section class="page-hero dispatch-hero">
     <div>
-      <span class="eyebrow">{{ isDownload ? 'FILE DOWNLOAD' : 'FILE PUSH' }}</span>
-      <h2>{{ isDownload ? '文件下载' : '文件推送' }}</h2>
-      <p>{{ isDownload ? '按项目目录逐级定位文件，将对应版本保存到系统，供后续推送使用。' : '选择系统已保存文件，填写目标机床和加工参数，确认后推送。' }}</p>
+      <span class="eyebrow">CUTTING FILE DISPATCH</span>
+      <h2>文件派发</h2>
+      <p>从 PDM 选择切割文件，核对标准名和加工参数后，直接下载并推送到目标机床。</p>
     </div>
     <div class="dispatch-stage-badge">
       <span>{{ systemStatus?.safe_mode ? '安全联调模式' : '生产数据模式' }}</span>
@@ -890,19 +673,19 @@ onBeforeUnmount(pausePage)
     </div>
   </section>
 
-  <div v-if="isDownload" class="dispatch-flow" aria-label="下载流程">
+  <div class="dispatch-flow" aria-label="文件派发流程">
     <div class="active"><i>01</i><span><strong>选择项目目录</strong><small>项目 · 分段 · 文件分类</small></span></div>
-    <div><i>02</i><span><strong>保存文件到系统</strong><small>准确版本 · 保存记录可追溯</small></span></div>
+    <div><i>02</i><span><strong>核对并派发</strong><small>标准名 · 加工参数 · 目标机床</small></span></div>
   </div>
-  <p v-else class="dispatch-push-scope" role="note">可一次选择最多 20 个已保存文件，统一选择机床并逐个核对加工参数。系统会按顺序推送，单个文件失败不会中断其余任务。</p>
+  <p class="dispatch-push-scope" role="note">可一次选择最多 20 个 PDM 文件。标准文件名自动识别材质和板厚；非标准文件名必须人工填写参数并明确确认。系统按顺序下载和推送，单个文件失败不会中断其余任务。</p>
 
   <div v-if="notice" class="dispatch-notice" :class="{ error: noticeType === 'error' }" role="status">
     <span>{{ notice }}</span>
     <button type="button" @click="notice = ''">关闭</button>
   </div>
 
-  <div class="dispatch-workspace" :class="{ 'download-workspace': isDownload, 'push-workspace': !isDownload }">
-    <aside v-if="isDownload" class="panel directory-panel">
+  <div class="dispatch-workspace download-workspace">
+    <aside class="panel directory-panel">
       <div class="panel-title">
         <div><span>01</span><h2>项目目录</h2></div>
         <p>{{ projectCountLabel }}</p>
@@ -933,7 +716,7 @@ onBeforeUnmount(pausePage)
       </div>
     </aside>
 
-    <section v-if="isDownload" class="panel dispatch-files-panel">
+    <section class="panel dispatch-files-panel">
       <div class="panel-title">
         <div><span>02</span><h2>目录文件</h2></div>
         <p>{{ selectedCatalog ? `共 ${total} 条 · 当前第 ${page} 页` : '请选择左侧目录' }}</p>
@@ -944,79 +727,48 @@ onBeforeUnmount(pausePage)
         <div><input id="file-keyword" v-model.trim="fileKeyword" :disabled="!selectedCatalog" placeholder="输入文件名或中间产品" /><button type="submit" :disabled="!selectedCatalog || loading">{{ loading ? '查询中…' : '查询' }}</button></div>
       </form>
       <div class="download-batch-toolbar" aria-live="polite">
-        <span>已选择 <strong>{{ selectedDownloadCount }}</strong> 项<small v-if="batchDownloading">正在保存 {{ batchProgress.completed }}/{{ batchProgress.total }}</small></span>
-        <div><button type="button" :disabled="!selectedDownloadCount || batchDownloading" @click="clearSelectedDownloads">清空选择</button><button class="primary" type="button" :disabled="!selectedDownloadCount || batchDownloading || loading || !systemStatus?.can_download" @click="downloadSelectedFiles">{{ batchDownloading ? '批量保存中…' : '批量保存到系统' }}</button></div>
+        <span>已选择 <strong>{{ selectedFileCount }}</strong> / 20 项<small>可跨页选择</small></span>
+        <div><button type="button" :disabled="!selectedFileCount || pushBatch.saving" @click="clearSelectedFiles">清空选择</button><button class="primary" type="button" :disabled="!selectedFileCount || loading || pushBatch.saving || !systemStatus?.can_push" @click="openPushBatch">设置参数并派发</button></div>
       </div>
       <div class="dispatch-table-wrap" :aria-busy="loading">
         <div v-if="loading" class="dispatch-loading" role="status">正在加载第 {{ requestedPage }} 页…</div>
         <table v-content-table="pageActive" class="dispatch-table source-file-table" aria-label="文件查询结果">
           <thead>
-            <tr><th class="download-check-cell"><input type="checkbox" :checked="allVisibleFilesSelected" :indeterminate="someVisibleFilesSelected" :disabled="!selectableRows.length || loading || batchDownloading" aria-label="全选当前页可保存文件" @change="toggleVisibleDownloads($event.target.checked)" /></th><th>文件名</th><th>中间产品</th><th>文件格式</th><th>版本</th><th>操作人</th><th>操作人工号</th><th>操作时间</th><th class="file-download-cell">操作</th></tr>
+            <tr><th class="download-check-cell"><input type="checkbox" :checked="allVisibleFilesSelected" :indeterminate="someVisibleFilesSelected" :disabled="!selectableRows.length || loading || pushBatch.saving" aria-label="全选当前页可派发文件" @change="toggleVisibleFiles($event.target.checked)" /></th><th>文件名</th><th>命名检查</th><th>中间产品</th><th>文件格式</th><th>版本</th><th>操作人</th><th>操作人工号</th><th>操作时间</th><th class="file-download-cell">操作</th></tr>
           </thead>
           <tbody>
-            <tr v-for="row in rows" :key="fileKey(row)" :class="{ selected: selectedDownloadFiles.has(fileKey(row)) }">
-              <td class="download-check-cell"><input type="checkbox" :checked="selectedDownloadFiles.has(fileKey(row))" :disabled="loading || batchDownloading || !!downloadingId || !row.path_available || !systemStatus?.can_download" :aria-label="`选择文件 ${row.document_no}`" @change="setDownloadSelected(row, $event.target.checked)" /></td>
+            <tr v-for="row in rows" :key="fileKey(row)" :class="{ selected: selectedFiles.has(fileKey(row)) }">
+              <td class="download-check-cell"><input type="checkbox" :checked="selectedFiles.has(fileKey(row))" :disabled="loading || pushBatch.saving || !row.path_available || !systemStatus?.can_push" :aria-label="`选择文件 ${row.document_no}`" @change="setFileSelected(row, $event.target.checked)" /></td>
               <td class="file-name-cell"><strong>{{ row.document_no }}</strong></td>
+              <td><span class="filename-standard" :class="{ warning: !parseCuttingInstructionFilename(row.document_no) }">{{ parseCuttingInstructionFilename(row.document_no) ? '标准名' : '非标准名' }}</span></td>
               <td>{{ row.pbs_info || '--' }}</td>
               <td class="file-extension">{{ fileExtension(row) }}</td>
               <td>{{ row.version || row.physical_version_code?.trim() || row.physical_version_no || '--' }}</td>
               <td>{{ row.operator || row.physical_file_operator || '--' }}</td>
               <td>{{ row.operator_job_no || row.physical_file_operator_job_no || '--' }}</td>
               <td>{{ formatTime(row.operate_time || row.physical_file_date) }}</td>
-              <td class="file-download-cell"><button type="button" :disabled="loading || batchDownloading || !!downloadingId || !row.path_available || !systemStatus?.can_download" :aria-label="`保存 ${row.document_no} 到系统`" @click="downloadFile(row)">{{ downloadingId === fileKey(row) ? '保存中…' : wasPreviouslySaved(row) ? '再次保存' : '保存到系统' }}</button><small v-if="!row.path_available">{{ row.path_error || '路径不可用' }}</small></td>
+              <td class="file-download-cell"><button type="button" :disabled="loading || pushBatch.saving || !row.path_available || !systemStatus?.can_push" :aria-label="`派发 ${row.document_no}`" @click="openSinglePush(row)">设置并派发</button><small v-if="!row.path_available">{{ row.path_error || '路径不可用' }}</small></td>
             </tr>
-            <tr v-if="!loading && rows.length === 0"><td colspan="9" class="dispatch-empty-row">{{ selectedCatalog ? appliedFileKeyword ? '当前目录没有匹配的文件' : '当前目录没有文件' : '请从左侧选择一个目录' }}</td></tr>
+            <tr v-if="!loading && rows.length === 0"><td colspan="10" class="dispatch-empty-row">{{ selectedCatalog ? appliedFileKeyword ? '当前目录没有匹配的文件' : '当前目录没有文件' : '请从左侧选择一个目录' }}</td></tr>
           </tbody>
         </table>
       </div>
       <div class="dispatch-pagination"><button type="button" :disabled="page <= 1 || loading" @click="changePage(page - 1)">上一页</button><span>第 {{ page }} / {{ totalPages }} 页</span><button type="button" :disabled="page >= totalPages || loading" @click="changePage(page + 1)">下一页</button></div>
-      <p class="dispatch-download-hint">文件将从 FO 文件服务保存到系统，供魔盒推送使用。同一文件可重复保存，每次都会生成独立记录；推送成功后系统会删除对应的本地副本。保存前会重新校验文件路径与版本。{{ systemStatus && !systemStatus.can_download ? '当前文件来源未启用，暂不可保存。' : '' }}</p>
-    </section>
-
-    <section v-if="!isDownload" class="panel push-file-picker">
-      <div class="panel-title"><div><span>01</span><h2>选择待推送文件</h2></div><p>共 {{ filteredPushFiles.length }} 条可推送文件</p></div>
-      <form class="push-file-filter" @submit.prevent="applyPushFileFilters">
-        <label><span>文件名或来源路径</span><input v-model="pushFileDraft.keyword" placeholder="输入文件名关键字" /></label>
-        <label><span>项目 / 船号</span><AppSelect v-model="pushFileDraft.projectId" @change="pushFileDraft.catalogKey = ''"><option value="">全部项目</option><option v-for="project in pushFileProjects" :key="project.key" :value="project.key">{{ project.label }}</option></AppSelect></label>
-        <label><span>目录路径</span><AppSelect v-model="pushFileDraft.catalogKey"><option value="">全部目录</option><option v-for="catalog in pushFileCatalogs" :key="catalog.key" :value="catalog.key">{{ catalog.label }}</option></AppSelect></label>
-        <div class="push-filter-actions"><button type="button" @click="resetPushFileFilters">重置</button><button class="primary" type="submit">筛选</button></div>
-      </form>
-      <div class="download-batch-toolbar push-batch-toolbar" aria-live="polite">
-        <span>已选择 <strong>{{ selectedPushCount }}</strong> / 20 项<small>可跨页选择</small></span>
-        <div><button type="button" :disabled="!selectedPushCount || pushBatch.saving" @click="clearSelectedPushFiles">清空选择</button><button class="primary" type="button" :disabled="!selectedPushCount || loading || pushBatch.saving" @click="openPushBatch">设置参数并推送</button></div>
-      </div>
-      <div class="dispatch-table-wrap">
-        <table v-content-table="pageActive" class="dispatch-table push-file-table" aria-label="可推送文件列表">
-          <thead><tr><th class="push-check-cell"><input type="checkbox" :checked="allVisiblePushFilesSelected" :indeterminate="someVisiblePushFilesSelected" :disabled="!visiblePushFiles.length || pushBatch.saving" aria-label="全选当前页可推送文件" @change="toggleVisiblePushFiles($event.target.checked)" /></th><th>文件名</th><th>项目 / 目录</th><th>版本 / 来源</th><th>大小</th><th>下载时间 / 下载人</th></tr></thead>
-          <tbody>
-            <tr v-for="item in visiblePushFiles" :key="item.download_id" :class="{ selected: selectedPushFiles.has(item.download_id) }" @click="setPushFileSelected(item, !selectedPushFiles.has(item.download_id))">
-              <td class="push-check-cell"><input type="checkbox" :checked="selectedPushFiles.has(item.download_id)" :disabled="pushBatch.saving" :aria-label="`选择推送文件 ${item.filename}`" @click.stop @change="setPushFileSelected(item, $event.target.checked)" /></td>
-              <td class="file-name-cell"><strong>{{ item.filename }}</strong><small :title="item.relative_path">{{ item.relative_path }}</small></td>
-              <td class="push-file-origin"><strong>{{ item.project_name || '未分类项目' }}</strong><small>{{ item.ship_no || '--' }} · {{ downloadCatalogLabel(item) }}</small></td>
-              <td>{{ item.version || '--' }}<small class="dispatch-project-name">{{ downloadSourceLabel(item) }}</small></td>
-              <td>{{ formatBytes(item.size) }}</td>
-              <td>{{ formatTime(item.created_at) }}<small class="dispatch-project-name">{{ item.created_by_name || '--' }}</small></td>
-            </tr>
-            <tr v-if="!visiblePushFiles.length"><td colspan="6" class="dispatch-empty-row">{{ pushFiles.length ? '没有符合筛选条件的系统已保存文件' : '暂无可推送文件，请先到“文件下载”页面保存文件' }}</td></tr>
-          </tbody>
-        </table>
-      </div>
-      <div class="dispatch-pagination"><button type="button" :disabled="pushFilePage <= 1" @click="changePushFilePage(pushFilePage - 1)">上一页</button><span>第 {{ pushFilePage }} / {{ pushFileTotalPages }} 页</span><button type="button" :disabled="pushFilePage >= pushFileTotalPages" @click="changePushFilePage(pushFilePage + 1)">下一页</button></div>
-      <p class="dispatch-download-hint">这里只显示系统中存在、校验有效且非模拟的文件；标准指令名会自动识别材质和板厚，非标准名需在下一步手工填写。</p>
+      <p class="dispatch-download-hint">确认后系统会复核当前 PDM 版本和路径，再临时下载、校验并推送；成功后删除本地副本。{{ systemStatus && !systemStatus.can_push ? '当前文件来源或魔盒服务不可用，暂不可派发。' : '' }}</p>
     </section>
   </div>
 
-  <section v-if="!isDownload" class="panel dispatch-history-panel">
+  <section class="panel dispatch-history-panel">
     <div class="panel-title"><div><span>03</span><h2>派发记录</h2></div><p>文件准备 → 魔盒上传 → 机床指派，各阶段独立记录</p></div>
     <div v-if="histories.length" class="dispatch-table-wrap"><table v-content-table="pageActive" class="dispatch-table history-table"><thead><tr><th>任务标识</th><th>文件名</th><th>机床IP</th><th>阶段 / 状态</th><th>魔盒UUID</th><th>失败原因</th><th>创建时间</th><th>操作</th></tr></thead><tbody><tr v-for="item in histories" :key="item.dispatch_id"><td><code>{{ item.task_identifier || item.dispatch_id }}</code></td><td>{{ item.document_no }}<small class="dispatch-project-name">数量 {{ item.quantity }}</small></td><td>{{ item.machine_ip }}</td><td><span class="dispatch-status" :class="item.status">{{ item.status_label }}</span><small class="dispatch-project-name">{{ item.stage_label }}</small></td><td><code>{{ item.remote_task_id || '--' }}</code></td><td class="history-error">{{ item.last_error || '--' }}</td><td>{{ formatTime(item.created_at) }}</td><td><div class="history-actions"><button v-if="item.can_execute" type="button" :disabled="!!operatingId" @click="executeSaved(item)">{{ item.remote_task_id ? '重试指派' : '执行推送' }}</button><button v-if="item.can_cancel" type="button" class="danger" :disabled="!!operatingId" @click="cancelSaved(item)">取消指派</button><span v-if="!item.can_execute && !item.can_cancel">--</span></div></td></tr></tbody></table></div>
-    <div v-else class="dispatch-empty-history"><i>↗</i><strong>暂无派发记录</strong><span>选择文件和机床后可保存草稿，或明确确认后直接推送。</span></div>
+    <div v-else class="dispatch-empty-history"><i>↗</i><strong>暂无派发记录</strong><span>从项目目录选择文件并确认后，即可直接派发。</span></div>
   </section>
 
   <Teleport to="body">
     <div v-if="pushBatch.visible" class="push-batch-backdrop" role="presentation" @click.self="closePushBatch">
       <section class="push-batch-dialog" role="dialog" aria-modal="true" aria-labelledby="push-batch-title">
         <header class="push-batch-header">
-          <div><span>BATCH FILE PUSH</span><h2 id="push-batch-title">批量推送确认</h2><p>每个文件会生成独立任务，一项失败不影响后续文件。</p></div>
+          <div><span>FILE DISPATCH</span><h2 id="push-batch-title">{{ pushBatch.items.length === 1 ? '文件派发确认' : '批量派发确认' }}</h2><p>每个文件会生成独立任务，一项失败不影响后续文件。</p></div>
           <button type="button" :disabled="pushBatch.saving" aria-label="关闭批量推送窗口" @click="closePushBatch">×</button>
         </header>
 
@@ -1024,7 +776,7 @@ onBeforeUnmount(pausePage)
           <div class="push-batch-common">
             <label><span>目标机床 IP</span><AppSelect v-model="dispatchForm.machineIp" :disabled="pushBatch.saving || pushBatch.resultsReady"><option value="" disabled>请选择 SYS_CONFIG 中的机床</option><option v-for="machine in machines" :key="machine.machine_ip" :value="machine.machine_ip">{{ machine.server_name ? `${machine.server_name} · ` : '' }}{{ machine.machine_ip }}（{{ machine.online ? '在线' : '未从列表确认在线' }}）</option></AppSelect></label>
             <label><span>统一加工数量</span><div><input v-model="bulkQuantity" type="number" min="1" max="10000" step="1" :disabled="pushBatch.saving || pushBatch.resultsReady" /><button type="button" :disabled="pushBatch.saving || pushBatch.resultsReady" @click="applyBulkQuantity">应用到全部</button></div></label>
-            <div class="push-batch-summary"><strong>{{ pushBatch.items.length }}</strong><span>个文件</span><small v-if="!pushBatch.resultsReady">{{ invalidBatchCount ? `${invalidBatchCount} 项待补参数` : '参数已完整' }}</small><small v-else>已推送 {{ batchStatusCounts.sent }} · 已保存 {{ batchStatusCounts.saved }} · 失败 {{ batchStatusCounts.failed }} · 重复 {{ batchStatusCounts.duplicate }}</small></div>
+            <div class="push-batch-summary"><strong>{{ pushBatch.items.length }}</strong><span>个文件</span><small v-if="!pushBatch.resultsReady">{{ invalidBatchCount ? `${invalidBatchCount} 项待补参数` : nonStandardBatchCount ? `${nonStandardBatchCount} 项非标准名待确认` : '全部为标准名' }}</small><small v-else>已推送 {{ batchStatusCounts.sent }} · 失败 {{ batchStatusCounts.failed }} · 重复 {{ batchStatusCounts.duplicate }}</small></div>
           </div>
 
           <div v-if="pushBatch.error" class="push-batch-error" role="alert">{{ pushBatch.error }}</div>
@@ -1034,7 +786,7 @@ onBeforeUnmount(pausePage)
             <table v-content-table="pageActive" class="push-batch-table">
               <thead><tr><th>文件 / 识别结果</th><th>材质</th><th>板厚（mm）</th><th>数量</th><th>状态</th><th>操作</th></tr></thead>
               <tbody>
-                <tr v-for="item in pushBatch.items" :key="item.downloadId" :class="{ invalid: !pushBatch.resultsReady && batchItemError(item) }">
+                <tr v-for="item in pushBatch.items" :key="item.referenceKey" :class="{ invalid: !pushBatch.resultsReady && (batchItemError(item) || !item.parsed) }">
                   <td class="push-batch-file"><strong>{{ item.filename }}</strong><small>版本 {{ item.version }}</small><span v-if="item.parsed" class="recognized">已识别：{{ item.parsed.material }} · {{ item.parsed.thickness.toFixed(1) }} mm</span><span v-else class="manual">非标准名，请手工填写参数</span></td>
                   <td><input v-model.trim="item.material" :disabled="pushBatch.saving || pushBatch.resultsReady" maxlength="80" placeholder="必填" /></td>
                   <td><input v-model="item.thickness" :disabled="pushBatch.saving || pushBatch.resultsReady" type="number" min="0.01" max="1000" step="0.01" placeholder="必填" /></td>
@@ -1045,12 +797,15 @@ onBeforeUnmount(pausePage)
               </tbody>
             </table>
           </div>
-          <p v-if="!pushBatch.resultsReady" class="push-batch-safety">标准指令名已自动填充材质和板厚，请在提交前逐项核对。非标准名不会猜测参数，必须手工补全。</p>
+          <div v-if="!pushBatch.resultsReady" class="push-batch-safety">
+            <p>标准指令名已自动填充材质和板厚，请在提交前逐项核对。非标准名不会猜测参数，必须手工补全。</p>
+            <label v-if="nonStandardBatchCount"><input v-model="pushBatch.nonStandardConfirmed" type="checkbox" :disabled="pushBatch.saving" />我已人工核对 {{ nonStandardBatchCount }} 个非标准文件名及其材质、板厚和数量</label>
+          </div>
         </div>
 
         <footer class="push-batch-footer">
           <template v-if="pushBatch.resultsReady"><span>处理结果已写入派发记录，失败项可在记录中查看原因或重试。</span><button class="primary" type="button" @click="closePushBatch">完成</button></template>
-          <template v-else><span>仅保存任务不会联系魔盒；确认推送后将依次执行。</span><div><button type="button" :disabled="pushBatch.saving" @click="closePushBatch">取消</button><button type="button" :disabled="pushBatch.saving || invalidBatchCount > 0 || !dispatchForm.machineIp" @click="submitPushBatch(false)">{{ pushBatch.saving ? '处理中…' : '仅保存任务' }}</button><button class="primary" type="button" :disabled="pushBatch.saving || invalidBatchCount > 0 || !dispatchForm.machineIp || !systemStatus?.can_push" @click="submitPushBatch(true)">{{ pushBatch.saving ? '顺序推送中…' : '确认并顺序推送' }}</button></div></template>
+          <template v-else><span>确认后将按顺序执行下载、校验、上传和机床指派。</span><div><button type="button" :disabled="pushBatch.saving" @click="closePushBatch">取消</button><button class="primary" type="button" :disabled="pushBatch.saving || invalidBatchCount > 0 || !dispatchForm.machineIp || !systemStatus?.can_push || (nonStandardBatchCount > 0 && !pushBatch.nonStandardConfirmed)" @click="submitPushBatch">{{ pushBatch.saving ? '顺序派发中…' : pushBatch.items.length === 1 ? '确认派发' : '确认并顺序派发' }}</button></div></template>
         </footer>
       </section>
     </div>
@@ -1228,6 +983,11 @@ onBeforeUnmount(pausePage)
 .push-batch-result small { display:block; max-width:170px; margin-top:5px; overflow:hidden; color:#9b3f37; text-overflow:ellipsis; white-space:nowrap; }
 .push-batch-remove { min-height:30px; padding:0 8px; color:#8b4c46; border:1px solid #dfc0bc; background:#fff; }
 .push-batch-safety { margin:14px 0 0; color:#7b581d; font-size:10px; line-height:1.7; }
+.push-batch-safety p { margin:0; }
+.push-batch-safety label { display:flex; align-items:center; gap:7px; margin-top:8px; color:#91483e; font-weight:700; }
+.push-batch-safety input { width:15px; height:15px; accent-color:var(--blue); }
+.filename-standard { display:inline-flex; padding:3px 7px; color:#267048; border-radius:999px; background:#e8f7ef; white-space:nowrap; font-size:9px; }
+.filename-standard.warning { color:#98463d; background:#fdecea; }
 .push-batch-footer { display:flex; align-items:center; justify-content:space-between; gap:20px; padding:15px 24px; border-top:1px solid #dce5ea; background:#f7fafb; }
 .push-batch-footer > span { color:#617885; font-size:10px; line-height:1.5; }
 .push-batch-footer > div { display:flex; flex:0 0 auto; gap:8px; }

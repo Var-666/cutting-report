@@ -79,7 +79,6 @@ const analysisReady = computed(() => Boolean(
   && result.value.report
   && result.value.report.period_start === filters.startDate
   && result.value.report.period_end === filters.endDate
-  && !loading.value
 ))
 const selectableTasks = computed(() => isWorker.value ? result.value.items.filter((row) => !row.confirmed_by) : [])
 const selectedTaskCount = computed(() => selectedTasks.value.size)

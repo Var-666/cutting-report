@@ -20,7 +20,8 @@
 
 ### 切割文件批量推送
 
-- `POST /api/v1/cutting/dispatches/batch` 一次创建 1–20 个任务，每个文件独立携带材质、厚度和数量。
+- `POST /api/v1/cutting/dispatches/batch` 一次创建 1–20 个任务，支持直接携带 PDM 文档、版本和路径快照，也兼容历史 `download_id`；每个文件独立携带材质、厚度和数量。
+- 直接派发会在建任务时复核 PDM 当前版本和路径，执行时按“下载、校验、上传、指派”推进，不要求用户预先保存文件。
 - 服务返回创建、重复和失败的分项结果；前端对新创建任务顺序执行，避免同一魔盒通道并发推送。
 - 推送成功后 `FileDownloadService.delete_after_push()` 删除对应实体文件，但保留下载记录、清理原因和推送任务标识。
 - 清理失败不回滚已成功的远端推送，而是以 `local_file_cleanup.error` 警告管理员。
