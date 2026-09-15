@@ -30,6 +30,7 @@ const filters = reactive({ reportDate: today, startDate: today, endDate: today, 
 const result = ref({ report: null, items: [], total: 0, page: 1, page_size: pageSize, project_names: [], confirmed_count: 0, worker_summaries: [] })
 const loading = ref(false)
 const error = ref('')
+const pageActive = ref(true)
 const chartType = ref('bar_line')
 const selectedTasks = ref(new Map())
 const batchConfirmation = reactive({ visible: false, saving: false, error: '', tasks: [] })
@@ -73,7 +74,8 @@ const visibleCorrectionReasonPresets = computed(() => {
     : correctionReasonPresets.adminRevoke
 })
 const analysisReady = computed(() => Boolean(
-  !isWorker.value
+  pageActive.value
+  && !isWorker.value
   && result.value.report
   && result.value.report.period_start === filters.startDate
   && result.value.report.period_end === filters.endDate
@@ -94,6 +96,14 @@ const availableWorkers = computed(() => correction.workers.filter((worker) => (
 )))
 let refreshTimer = null
 let feedbackTimer = null
+let requestController = null
+let requestSequence = 0
+
+function beginRequest() {
+  requestController?.abort()
+  requestController = new AbortController()
+  return { sequence: ++requestSequence, signal: requestController.signal }
+}
 
 function stopRefreshTimer() {
   if (!refreshTimer) return
@@ -243,6 +253,7 @@ async function load(page = 1, { silent = false, ensureReport = true, force = fal
     error.value = '结束日期不能早于开始日期'
     return
   }
+  const { sequence, signal } = beginRequest()
   if (!silent) {
     loading.value = true
     error.value = ''
@@ -255,23 +266,27 @@ async function load(page = 1, { silent = false, ensureReport = true, force = fal
       pageSize: result.value.page_size,
     }
     let data = isWorker.value
-      ? await listWorkshopTasks(query, { force })
-      : await listWorkshopRangeTasks(query, { force })
+      ? await listWorkshopTasks(query, { force, signal })
+      : await listWorkshopRangeTasks(query, { force, signal })
     if (isWorker.value && ensureReport && (!data.report || !data.report.item_count)) {
       await generateWorkshopDailyReport(query.reportDate)
-      data = await listWorkshopTasks(query, { force: true })
+      if (!pageActive.value || signal.aborted || sequence !== requestSequence) return
+      data = await listWorkshopTasks(query, { force: true, signal })
     }
     const current = isWorker.value
       ? query.reportDate === filters.reportDate
       : query.startDate === filters.startDate && query.endDate === filters.endDate
-    if (current) {
+    if (pageActive.value && !signal.aborted && sequence === requestSequence && current) {
       result.value = data
       reconcileVisibleTaskSelection(data.items || [])
     }
   } catch (exception) {
-    if (!silent) error.value = exception.message
+    if (exception.name !== 'AbortError' && sequence === requestSequence && !silent) error.value = exception.message
   } finally {
-    if (!silent) loading.value = false
+    if (sequence === requestSequence) {
+      if (!silent) loading.value = false
+      requestController = null
+    }
   }
 }
 
@@ -410,34 +425,54 @@ function exportReport(format = 'html') {
 }
 
 async function initializeReport() {
+  const { sequence, signal } = beginRequest()
   loading.value = true
   error.value = ''
   try {
-    const latest = await getLatestWorkshopProductionDate(today)
+    const latest = await getLatestWorkshopProductionDate(today, { signal })
+    if (!pageActive.value || signal.aborted || sequence !== requestSequence) return
     if (latest.report_date) {
       filters.reportDate = latest.report_date
       filters.startDate = latest.report_date
       filters.endDate = latest.report_date
     }
   } catch (exception) {
-    error.value = exception.message
+    if (exception.name !== 'AbortError' && sequence === requestSequence) error.value = exception.message
   }
+  if (!pageActive.value || signal.aborted || sequence !== requestSequence) return
   await load(1, { force: false })
+}
+
+function pausePage() {
+  if (!pageActive.value) return
+  pageActive.value = false
+  requestSequence += 1
+  requestController?.abort()
+  requestController = null
+  loading.value = false
+  stopRefreshTimer()
+  if (feedbackTimer) window.clearTimeout(feedbackTimer)
+  feedbackTimer = null
 }
 
 onMounted(() => {
   initializeReport()
+  startRefreshTimer()
 })
 onActivated(() => {
+  pageActive.value = true
   startRefreshTimer()
+  if (!result.value.report && !loading.value) {
+    initializeReport()
+    return
+  }
   if (isWorker.value && result.value.report && !loading.value && !batchConfirmation.visible && !batchConfirmation.saving) {
     load(result.value.page, { silent: true, ensureReport: false, force: true })
   }
 })
-onDeactivated(stopRefreshTimer)
+onDeactivated(pausePage)
 onUnmounted(() => {
-  stopRefreshTimer()
-  if (feedbackTimer) window.clearTimeout(feedbackTimer)
+  pausePage()
 })
 </script>
 
@@ -457,7 +492,7 @@ onUnmounted(() => {
         <header><div><small>任务确认</small><h2 id="batch-confirmation-dialog-title">确认以下任务由我完成</h2></div><button type="button" aria-label="关闭" :disabled="batchConfirmation.saving" @click="closeBatchConfirmation">×</button></header>
         <p class="batch-confirmation-intro">请核对以下 {{ batchConfirmation.tasks.length }} 项任务。确认后，任务将登记到当前工人“{{ user.display_name }}”名下。</p>
         <div class="batch-confirmation-list">
-          <table v-content-table>
+          <table v-content-table="pageActive">
             <thead><tr><th>序号</th><th>工程/船号</th><th>分段名</th><th>程序号</th><th>生产时间</th></tr></thead>
             <tbody><tr v-for="(row, index) in batchConfirmation.tasks" :key="row.task_id"><td>{{ index + 1 }}</td><td>{{ display(row.project_code || row.ship_no) }}</td><td>{{ display(row.segment_name) }}</td><td :title="display(row.program_no)">{{ display(row.program_no) }}</td><td>{{ time(row.production_time) }}</td></tr></tbody>
           </table>
@@ -526,7 +561,7 @@ onUnmounted(() => {
       <div v-if="isWorker && result.report" class="workshop-batch-actions"><span>已选择 <strong>{{ selectedTaskCount }}</strong> 项待确认任务</span><div><button type="button" :disabled="!selectedTaskCount || batchConfirmation.saving" @click="clearSelectedTasks">清空选择</button><button class="primary" type="button" :disabled="!selectedTaskCount || loading || batchConfirmation.saving" @click="openBatchConfirmation()">确认选中任务</button></div></div>
     </template>
     <template #table>
-      <table v-content-table class="workshop-table" :class="{ 'worker-workshop-table': isWorker }">
+      <table v-content-table="pageActive" class="workshop-table" :class="{ 'worker-workshop-table': isWorker }">
         <thead><tr><th v-if="isWorker" class="workshop-select-cell"><input type="checkbox" :checked="allVisibleTasksSelected" :indeterminate="someVisibleTasksSelected" :disabled="!selectableTasks.length || loading || batchConfirmation.saving" aria-label="全选当前页待确认任务" @change="toggleVisibleTasks($event.target.checked)" /></th><th>序号</th><th>工程号</th><th>船号</th><th>分段名</th><th>程序号</th><th>切割长度</th><th>坡口长度</th><th>切割时长</th><th>时间</th><th>待确认</th><th>备注</th></tr></thead>
         <tbody>
           <tr v-if="loading"><td :colspan="isWorker ? 12 : 11" class="table-empty">正在查询任务...</td></tr>
@@ -553,7 +588,7 @@ onUnmounted(() => {
     fit-table-content
   >
     <template #table>
-      <table v-content-table class="worker-time-table">
+      <table v-content-table="pageActive" class="worker-time-table">
         <thead><tr><th>序号</th><th>工号</th><th>姓名</th><th>已确认任务</th><th>切割长度</th><th>切割时长</th><th>工时占比</th><th>最后确认时间</th></tr></thead>
         <tbody>
           <tr v-for="(worker, index) in result.worker_summaries" :key="worker.worker_id">

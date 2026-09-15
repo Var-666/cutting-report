@@ -96,6 +96,43 @@ test('tables preserve intrinsic widths and share remaining window width equally'
   assert.ok(additions.every((addition) => Math.abs(addition - additions[0]) < 0.001))
 })
 
+test('cached tables disconnect and restore exactly one ResizeObserver', () => {
+  const OriginalResizeObserver = globalThis.ResizeObserver
+  const observers = []
+  globalThis.ResizeObserver = class {
+    constructor(callback) {
+      this.callback = callback
+      this.connected = false
+      observers.push(this)
+    }
+    observe() { this.connected = true }
+    disconnect() { this.connected = false }
+  }
+  const table = {
+    classList: { add() {} },
+    style: { setProperty() {} },
+    parentElement: { clientWidth: 800 },
+    tHead: { rows: [{ cells: [] }] },
+    tBodies: [],
+    isConnected: true,
+  }
+
+  try {
+    contentTable.mounted(table, { value: true })
+    assert.equal(observers.filter((observer) => observer.connected).length, 1)
+    contentTable.updated(table, { value: true, oldValue: true })
+    assert.equal(observers.filter((observer) => observer.connected).length, 1)
+    contentTable.updated(table, { value: false, oldValue: true })
+    assert.equal(observers.filter((observer) => observer.connected).length, 0)
+    contentTable.updated(table, { value: true, oldValue: false })
+    assert.equal(observers.filter((observer) => observer.connected).length, 1)
+    contentTable.beforeUnmount(table)
+    assert.equal(observers.filter((observer) => observer.connected).length, 0)
+  } finally {
+    globalThis.ResizeObserver = OriginalResizeObserver
+  }
+})
+
 test('every Vue page table opts into shared content sizing', () => {
   let count = 0
   for (const folder of ['views', 'components']) {

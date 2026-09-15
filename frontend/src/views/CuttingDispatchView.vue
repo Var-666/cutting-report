@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onActivated, onMounted, onBeforeUnmount, reactive, ref } from 'vue'
+import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import CatalogTreeNode from '../components/CatalogTreeNode.vue'
 import { parseCuttingInstructionFilename } from '../utils/cuttingInstructionName.js'
@@ -20,9 +20,26 @@ import {
 
 const props = defineProps({ mode: { type: String, required: true, validator: (value) => ['download', 'push'].includes(value) } })
 const isDownload = computed(() => props.mode === 'download')
+const pageActive = ref(true)
 const route = useRoute()
 const router = useRouter()
 let querySequence = 0
+let lifecycleSequence = 0
+let lifecycleController = null
+let directoryController = null
+let firstActivation = true
+
+function beginLifecycleRequest() {
+  lifecycleController?.abort()
+  lifecycleController = new AbortController()
+  return { sequence: ++lifecycleSequence, signal: lifecycleController.signal }
+}
+
+function beginDirectoryRequest() {
+  directoryController?.abort()
+  directoryController = new AbortController()
+  return directoryController.signal
+}
 const dispatchForm = reactive({ machineIp: '' })
 const systemStatus = ref(null)
 const rows = ref([])
@@ -158,7 +175,6 @@ const selectedPath = computed(() => {
   const catalog = selectedCatalog.value
   return catalog ? `${selectedProject.value.project_name} / ${catalogPath(catalog)}` : selectedProject.value.project_name
 })
-onBeforeUnmount(() => { querySequence += 1 })
 
 function showNotice(message, type = 'info') {
   notice.value = message
@@ -265,16 +281,18 @@ async function downloadSelectedFiles() {
   }
 }
 
-async function loadHistory() {
+async function loadHistory({ signal } = {}) {
   if (isDownload.value) return
-  const data = await listCuttingDispatches({ page: 1, pageSize: 10 })
+  const data = await listCuttingDispatches({ page: 1, pageSize: 10 }, { signal })
+  if (signal?.aborted || !pageActive.value) return
   histories.value = data.items
 }
 
-async function loadMachines() {
+async function loadMachines({ signal } = {}) {
   if (isDownload.value || !systemStatus.value?.magic_box?.configured) return
   try {
-    const data = await listCuttingMachines()
+    const data = await listCuttingMachines({ signal })
+    if (signal?.aborted || !pageActive.value) return
     machines.value = data.items || []
     if (!dispatchForm.machineIp && machines.value.length) {
       dispatchForm.machineIp = machines.value[0].machine_ip
@@ -290,9 +308,10 @@ async function loadMachines() {
   }
 }
 
-async function loadPushFiles() {
+async function loadPushFiles({ signal } = {}) {
   if (isDownload.value) return
-  const data = await listCuttingDownloads({ page: 1, pageSize: 100 })
+  const data = await listCuttingDownloads({ page: 1, pageSize: 100 }, { signal })
+  if (signal?.aborted || !pageActive.value) return
   pushFiles.value = (data.items || []).filter((item) => item.available && !item.is_simulation)
   const availableById = new Map(pushFiles.value.map((item) => [item.download_id, item]))
   selectedPushFiles.value = new Map(
@@ -478,11 +497,12 @@ function expandCatalog(node) {
 
 async function loadProjects() {
   const sequence = ++querySequence
+  const signal = beginDirectoryRequest()
   projectLoading.value = true
   let projectToOpen = null
   try {
-    const data = await listCuttingProjects()
-    if (sequence !== querySequence) return
+    const data = await listCuttingProjects('', 1000, { signal })
+    if (signal.aborted || !pageActive.value || sequence !== querySequence) return
     projectOptions.value = data.items || []
     if (!projectOptions.value.some((project) => String(project.project_id) === selectedProjectId.value)) {
       selectedProjectId.value = projectOptions.value[0] ? String(projectOptions.value[0].project_id) : ''
@@ -502,16 +522,18 @@ async function loadProjects() {
     page.value = 1
     notice.value = ''
   } catch (error) {
-    if (sequence === querySequence) showNotice(error.message, 'error')
+    if (error.name !== 'AbortError' && sequence === querySequence) showNotice(error.message, 'error')
   } finally {
     if (sequence === querySequence) projectLoading.value = false
   }
-  if (projectToOpen && sequence === querySequence) await selectProject(projectToOpen)
+  if (projectToOpen && pageActive.value && !signal.aborted && sequence === querySequence) await selectProject(projectToOpen)
 }
 
 function resetProjectSelection() {
   rememberSelectedProject(selectedProjectId.value)
   querySequence += 1
+  directoryController?.abort()
+  directoryController = null
   catalogLoading.value = false
   loading.value = false
   selectedProject.value = null
@@ -545,6 +567,7 @@ async function selectProject(project) {
     return
   }
   const sequence = ++querySequence
+  const signal = beginDirectoryRequest()
   selectedProjectId.value = String(project.project_id)
   rememberSelectedProject(selectedProjectId.value)
   selectedProject.value = project
@@ -558,8 +581,8 @@ async function selectProject(project) {
   page.value = 1
   catalogLoading.value = true
   try {
-    const data = await listCuttingCatalogs(project.project_id)
-    if (sequence !== querySequence) return
+    const data = await listCuttingCatalogs(project.project_id, { signal })
+    if (signal.aborted || !pageActive.value || sequence !== querySequence) return
     let roots = data.tree || []
     // PDM may repeat the project itself as a catalog root. The project is
     // already the first visible node, so begin with its real child folders.
@@ -571,7 +594,7 @@ async function selectProject(project) {
     expandedCatalogIds.value = new Set(roots.map((item) => String(item.catalog_id)))
     notice.value = ''
   } catch (error) {
-    if (sequence === querySequence) showNotice(error.message, 'error')
+    if (error.name !== 'AbortError' && sequence === querySequence) showNotice(error.message, 'error')
   } finally {
     if (sequence === querySequence) catalogLoading.value = false
   }
@@ -602,6 +625,7 @@ async function applyFileSearch() {
 async function loadFiles(targetPage = 1) {
   if (!selectedProject.value || !selectedCatalog.value) return
   const sequence = ++querySequence
+  const signal = beginDirectoryRequest()
   loading.value = true
   requestedPage.value = targetPage
   const keyword = fileKeyword.value.trim()
@@ -612,15 +636,15 @@ async function loadFiles(targetPage = 1) {
       keyword,
       page: targetPage,
       pageSize,
-    })
-    if (sequence !== querySequence) return
+    }, { signal })
+    if (signal.aborted || !pageActive.value || sequence !== querySequence) return
     rows.value = data.items
     total.value = data.total
     page.value = targetPage
     appliedFileKeyword.value = keyword
     notice.value = ''
   } catch (error) {
-    if (sequence === querySequence) showNotice(error.message, 'error')
+    if (error.name !== 'AbortError' && sequence === querySequence) showNotice(error.message, 'error')
   } finally {
     if (sequence === querySequence) loading.value = false
   }
@@ -787,35 +811,69 @@ function downloadSourceLabel(item) {
   return item.source_mode === 'http' ? 'FO文件服务' : item.source_mode === 'local' ? '本地目录' : '其他来源'
 }
 
-onMounted(async () => {
+async function initializePage() {
+  const { sequence, signal } = beginLifecycleRequest()
   try {
     if (isDownload.value) {
       const [statusData] = await Promise.all([
-        getCuttingStatus('download'),
+        getCuttingStatus('download', { signal }),
         loadProjects(),
       ])
+      if (signal.aborted || !pageActive.value || sequence !== lifecycleSequence) return
       systemStatus.value = statusData
       return
     }
 
     loading.value = true
-    systemStatus.value = await getCuttingStatus('push')
-    await Promise.all([loadPushFiles(), loadMachines(), loadHistory()])
+    systemStatus.value = await getCuttingStatus('push', { signal })
+    if (signal.aborted || !pageActive.value || sequence !== lifecycleSequence) return
+    await Promise.all([loadPushFiles({ signal }), loadMachines({ signal }), loadHistory({ signal })])
   } catch (error) {
-    showNotice(error.message, 'error')
+    if (error.name !== 'AbortError' && sequence === lifecycleSequence) showNotice(error.message, 'error')
   } finally {
-    if (!isDownload.value) loading.value = false
+    if (sequence === lifecycleSequence) {
+      if (!isDownload.value) loading.value = false
+      lifecycleController = null
+    }
   }
+}
+
+function pausePage() {
+  if (!pageActive.value) return
+  pageActive.value = false
+  lifecycleSequence += 1
+  querySequence += 1
+  lifecycleController?.abort()
+  lifecycleController = null
+  directoryController?.abort()
+  directoryController = null
+  loading.value = false
+  projectLoading.value = false
+  catalogLoading.value = false
+}
+
+onMounted(() => {
+  initializePage()
 })
 
 onActivated(async () => {
+  pageActive.value = true
+  if (firstActivation) {
+    firstActivation = false
+    return
+  }
   if (isDownload.value) return
+  const { sequence, signal } = beginLifecycleRequest()
   try {
-    await loadPushFiles()
+    await loadPushFiles({ signal })
   } catch (error) {
-    showNotice(`刷新系统已保存文件失败：${error.message}`, 'error')
+    if (error.name !== 'AbortError' && sequence === lifecycleSequence) showNotice(`刷新系统已保存文件失败：${error.message}`, 'error')
+  } finally {
+    if (sequence === lifecycleSequence) lifecycleController = null
   }
 })
+onDeactivated(pausePage)
+onBeforeUnmount(pausePage)
 </script>
 
 <template>
@@ -891,7 +949,7 @@ onActivated(async () => {
       </div>
       <div class="dispatch-table-wrap" :aria-busy="loading">
         <div v-if="loading" class="dispatch-loading" role="status">正在加载第 {{ requestedPage }} 页…</div>
-        <table v-content-table class="dispatch-table source-file-table" aria-label="文件查询结果">
+        <table v-content-table="pageActive" class="dispatch-table source-file-table" aria-label="文件查询结果">
           <thead>
             <tr><th class="download-check-cell"><input type="checkbox" :checked="allVisibleFilesSelected" :indeterminate="someVisibleFilesSelected" :disabled="!selectableRows.length || loading || batchDownloading" aria-label="全选当前页可保存文件" @change="toggleVisibleDownloads($event.target.checked)" /></th><th>文件名</th><th>中间产品</th><th>文件格式</th><th>版本</th><th>操作人</th><th>操作人工号</th><th>操作时间</th><th class="file-download-cell">操作</th></tr>
           </thead>
@@ -928,7 +986,7 @@ onActivated(async () => {
         <div><button type="button" :disabled="!selectedPushCount || pushBatch.saving" @click="clearSelectedPushFiles">清空选择</button><button class="primary" type="button" :disabled="!selectedPushCount || loading || pushBatch.saving" @click="openPushBatch">设置参数并推送</button></div>
       </div>
       <div class="dispatch-table-wrap">
-        <table v-content-table class="dispatch-table push-file-table" aria-label="可推送文件列表">
+        <table v-content-table="pageActive" class="dispatch-table push-file-table" aria-label="可推送文件列表">
           <thead><tr><th class="push-check-cell"><input type="checkbox" :checked="allVisiblePushFilesSelected" :indeterminate="someVisiblePushFilesSelected" :disabled="!visiblePushFiles.length || pushBatch.saving" aria-label="全选当前页可推送文件" @change="toggleVisiblePushFiles($event.target.checked)" /></th><th>文件名</th><th>项目 / 目录</th><th>版本 / 来源</th><th>大小</th><th>下载时间 / 下载人</th></tr></thead>
           <tbody>
             <tr v-for="item in visiblePushFiles" :key="item.download_id" :class="{ selected: selectedPushFiles.has(item.download_id) }" @click="setPushFileSelected(item, !selectedPushFiles.has(item.download_id))">
@@ -950,7 +1008,7 @@ onActivated(async () => {
 
   <section v-if="!isDownload" class="panel dispatch-history-panel">
     <div class="panel-title"><div><span>03</span><h2>派发记录</h2></div><p>文件准备 → 魔盒上传 → 机床指派，各阶段独立记录</p></div>
-    <div v-if="histories.length" class="dispatch-table-wrap"><table v-content-table class="dispatch-table history-table"><thead><tr><th>任务标识</th><th>文件名</th><th>机床IP</th><th>阶段 / 状态</th><th>魔盒UUID</th><th>失败原因</th><th>创建时间</th><th>操作</th></tr></thead><tbody><tr v-for="item in histories" :key="item.dispatch_id"><td><code>{{ item.task_identifier || item.dispatch_id }}</code></td><td>{{ item.document_no }}<small class="dispatch-project-name">数量 {{ item.quantity }}</small></td><td>{{ item.machine_ip }}</td><td><span class="dispatch-status" :class="item.status">{{ item.status_label }}</span><small class="dispatch-project-name">{{ item.stage_label }}</small></td><td><code>{{ item.remote_task_id || '--' }}</code></td><td class="history-error">{{ item.last_error || '--' }}</td><td>{{ formatTime(item.created_at) }}</td><td><div class="history-actions"><button v-if="item.can_execute" type="button" :disabled="!!operatingId" @click="executeSaved(item)">{{ item.remote_task_id ? '重试指派' : '执行推送' }}</button><button v-if="item.can_cancel" type="button" class="danger" :disabled="!!operatingId" @click="cancelSaved(item)">取消指派</button><span v-if="!item.can_execute && !item.can_cancel">--</span></div></td></tr></tbody></table></div>
+    <div v-if="histories.length" class="dispatch-table-wrap"><table v-content-table="pageActive" class="dispatch-table history-table"><thead><tr><th>任务标识</th><th>文件名</th><th>机床IP</th><th>阶段 / 状态</th><th>魔盒UUID</th><th>失败原因</th><th>创建时间</th><th>操作</th></tr></thead><tbody><tr v-for="item in histories" :key="item.dispatch_id"><td><code>{{ item.task_identifier || item.dispatch_id }}</code></td><td>{{ item.document_no }}<small class="dispatch-project-name">数量 {{ item.quantity }}</small></td><td>{{ item.machine_ip }}</td><td><span class="dispatch-status" :class="item.status">{{ item.status_label }}</span><small class="dispatch-project-name">{{ item.stage_label }}</small></td><td><code>{{ item.remote_task_id || '--' }}</code></td><td class="history-error">{{ item.last_error || '--' }}</td><td>{{ formatTime(item.created_at) }}</td><td><div class="history-actions"><button v-if="item.can_execute" type="button" :disabled="!!operatingId" @click="executeSaved(item)">{{ item.remote_task_id ? '重试指派' : '执行推送' }}</button><button v-if="item.can_cancel" type="button" class="danger" :disabled="!!operatingId" @click="cancelSaved(item)">取消指派</button><span v-if="!item.can_execute && !item.can_cancel">--</span></div></td></tr></tbody></table></div>
     <div v-else class="dispatch-empty-history"><i>↗</i><strong>暂无派发记录</strong><span>选择文件和机床后可保存草稿，或明确确认后直接推送。</span></div>
   </section>
 
@@ -973,7 +1031,7 @@ onActivated(async () => {
           <div v-if="pushBatch.saving" class="push-batch-progress" role="status"><div><strong>{{ pushBatch.currentFilename }}</strong><span>{{ pushBatch.completed }} / {{ pushBatch.total }}</span></div><progress :value="pushBatch.completed" :max="pushBatch.total"></progress><small>正在按顺序处理，请不要关闭页面。</small></div>
 
           <div class="push-batch-table-wrap">
-            <table v-content-table class="push-batch-table">
+            <table v-content-table="pageActive" class="push-batch-table">
               <thead><tr><th>文件 / 识别结果</th><th>材质</th><th>板厚（mm）</th><th>数量</th><th>状态</th><th>操作</th></tr></thead>
               <tbody>
                 <tr v-for="item in pushBatch.items" :key="item.downloadId" :class="{ invalid: !pushBatch.resultsReady && batchItemError(item) }">

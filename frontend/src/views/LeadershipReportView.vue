@@ -33,10 +33,24 @@ const refreshLoading = ref(false)
 const error = ref('')
 const dailyPanel = ref(null)
 const monthlyPanel = ref(null)
+const pageActive = ref(true)
 let dailyChart = null
 let monthlyChart = null
 let refreshTimer = null
 let refreshPollCount = 0
+let requestController = null
+let requestSequence = 0
+let resizeListening = false
+
+function beginRequest() {
+  requestController?.abort()
+  requestController = new AbortController()
+  return { sequence: ++requestSequence, signal: requestController.signal }
+}
+
+function requestIsCurrent(sequence, signal) {
+  return pageActive.value && !signal.aborted && sequence === requestSequence
+}
 
 const dailyRecords = computed(() => report.value?.daily_records || [])
 const monthlyRecords = computed(() => report.value?.monthly_records || [])
@@ -55,6 +69,8 @@ const monthlyTotal = computed(() => report.value?.twelve_month_total || {
 const snapshot = computed(() => report.value?.snapshot || {})
 const monthlyTitle = computed(() => defaultMonthlyView.value ? '近12个月按月对比与趋势' : '区间按月对比与趋势')
 const analysisReady = computed(() => Boolean(
+  pageActive.value
+  &&
   report.value
   && snapshot.value.data_as_of
   && !loading.value
@@ -110,12 +126,15 @@ async function loadReport(force = false) {
     error.value = '结束日期不能早于开始日期'
     return
   }
+  const { sequence, signal } = beginRequest()
   loading.value = true
   error.value = ''
   const requestedStart = periodStart.value
   const requestedEnd = periodEnd.value
   try {
-    report.value = await getLeadershipRange(requestedStart, requestedEnd, { force })
+    const result = await getLeadershipRange(requestedStart, requestedEnd, { force, signal })
+    if (!requestIsCurrent(sequence, signal)) return
+    report.value = result
     appliedPeriodStart.value = requestedStart
     appliedPeriodEnd.value = requestedEnd
     monthlyPeriodStart.value = requestedStart
@@ -125,17 +144,23 @@ async function loadReport(force = false) {
     renderCharts()
     scheduleRefreshPoll(true)
   } catch (exception) {
-    error.value = exception.message
+    if (exception.name !== 'AbortError' && sequence === requestSequence) error.value = exception.message
   } finally {
-    loading.value = false
+    if (sequence === requestSequence) {
+      loading.value = false
+      requestController = null
+    }
   }
 }
 
 async function loadDefaultReport() {
+  const { sequence, signal } = beginRequest()
   loading.value = true
   error.value = ''
   try {
-    report.value = await getLeadershipReport(today.slice(0, 7))
+    const result = await getLeadershipReport(today.slice(0, 7), { signal })
+    if (!requestIsCurrent(sequence, signal)) return
+    report.value = result
     appliedPeriodStart.value = `${today.slice(0, 7)}-01`
     appliedPeriodEnd.value = today
     monthlyPeriodStart.value = recentTwelveMonthStart(today)
@@ -145,9 +170,12 @@ async function loadDefaultReport() {
     renderCharts()
     scheduleRefreshPoll(true)
   } catch (exception) {
-    error.value = exception.message
+    if (exception.name !== 'AbortError' && sequence === requestSequence) error.value = exception.message
   } finally {
-    loading.value = false
+    if (sequence === requestSequence) {
+      loading.value = false
+      requestController = null
+    }
   }
 }
 
@@ -159,7 +187,7 @@ function stopRefreshPoll() {
 function scheduleRefreshPoll(reset = false) {
   stopRefreshPoll()
   if (reset) refreshPollCount = 0
-  if (!snapshot.value.refreshing) {
+  if (!pageActive.value || !snapshot.value.refreshing) {
     refreshLoading.value = false
     return
   }
@@ -167,14 +195,17 @@ function scheduleRefreshPoll(reset = false) {
   const requestedRange = `${appliedPeriodStart.value}:${appliedPeriodEnd.value}`
   const requestedDefaultView = defaultMonthlyView.value
   refreshTimer = window.setTimeout(async () => {
-    if (requestedRange !== `${appliedPeriodStart.value}:${appliedPeriodEnd.value}` || requestedDefaultView !== defaultMonthlyView.value) {
+    if (!pageActive.value || requestedRange !== `${appliedPeriodStart.value}:${appliedPeriodEnd.value}` || requestedDefaultView !== defaultMonthlyView.value) {
       refreshLoading.value = false
       return
     }
+    const { sequence, signal } = beginRequest()
     try {
-      report.value = requestedDefaultView
-        ? await getLeadershipReport(appliedPeriodStart.value.slice(0, 7), { force: true })
-        : await getLeadershipRange(appliedPeriodStart.value, appliedPeriodEnd.value, { force: true })
+      const result = requestedDefaultView
+        ? await getLeadershipReport(appliedPeriodStart.value.slice(0, 7), { force: true, signal })
+        : await getLeadershipRange(appliedPeriodStart.value, appliedPeriodEnd.value, { force: true, signal })
+      if (!requestIsCurrent(sequence, signal)) return
+      report.value = result
       await nextTick()
       renderCharts()
       refreshPollCount += 1
@@ -185,12 +216,15 @@ function scheduleRefreshPoll(reset = false) {
       }
     } catch (exception) {
       refreshLoading.value = false
-      error.value = exception.message
+      if (exception.name !== 'AbortError' && sequence === requestSequence) error.value = exception.message
+    } finally {
+      if (sequence === requestSequence) requestController = null
     }
   }, 2000)
 }
 
 function renderCharts() {
+  if (!pageActive.value) return
   const dailyChartElement = dailyPanel.value?.getChartElement()
   const monthlyChartElement = monthlyPanel.value?.getChartElement()
   if (!dailyChartElement || !monthlyChartElement || !report.value) return
@@ -228,8 +262,42 @@ function renderCharts() {
 }
 
 function resizeCharts() {
-  dailyChart?.resize()
-  monthlyChart?.resize()
+  if (pageActive.value) {
+    dailyChart?.resize()
+    monthlyChart?.resize()
+  }
+}
+
+function disposeCharts() {
+  dailyChart?.dispose()
+  monthlyChart?.dispose()
+  dailyChart = null
+  monthlyChart = null
+}
+
+function startResizeListening() {
+  if (resizeListening) return
+  resizeListening = true
+  window.addEventListener('resize', resizeCharts)
+}
+
+function stopResizeListening() {
+  if (!resizeListening) return
+  resizeListening = false
+  window.removeEventListener('resize', resizeCharts)
+}
+
+function pausePage() {
+  if (!pageActive.value) return
+  pageActive.value = false
+  requestSequence += 1
+  requestController?.abort()
+  requestController = null
+  loading.value = false
+  refreshLoading.value = false
+  stopResizeListening()
+  stopRefreshPoll()
+  disposeCharts()
 }
 
 function exportReport(format = 'html') {
@@ -248,21 +316,16 @@ onMounted(() => {
   loadDefaultReport()
 })
 onActivated(async () => {
-  window.addEventListener('resize', resizeCharts)
+  pageActive.value = true
+  startResizeListening()
   await nextTick()
+  if (!report.value && !loading.value) await loadDefaultReport()
+  else renderCharts()
   resizeCharts()
   scheduleRefreshPoll(true)
 })
-onDeactivated(() => {
-  window.removeEventListener('resize', resizeCharts)
-  stopRefreshPoll()
-})
-onBeforeUnmount(() => {
-  window.removeEventListener('resize', resizeCharts)
-  stopRefreshPoll()
-  dailyChart?.dispose()
-  monthlyChart?.dispose()
-})
+onDeactivated(pausePage)
+onBeforeUnmount(pausePage)
 watch(chartType, async () => {
   await nextTick()
   renderCharts()
@@ -308,7 +371,7 @@ watch(chartType, async () => {
 
   <ReportTrendPanel ref="dailyPanel" number="01" title="区间每日明细与趋势" chart-label="区间每日趋势图">
     <template #table>
-        <table v-content-table class="leadership-table summary-table">
+        <table v-content-table="pageActive" class="leadership-table summary-table">
         <thead><tr><th>序号</th><th>日期</th><th>任务数</th><th>切割长度</th><th>坡口长度</th><th>切割时长</th><th>备注</th></tr></thead>
         <tbody>
           <tr v-for="(row, index) in dailyRecords" :key="row.period_start">
@@ -328,7 +391,7 @@ watch(chartType, async () => {
 
   <ReportTrendPanel ref="monthlyPanel" number="02" :title="monthlyTitle" :note="`${monthlyPeriodStart} 至 ${monthlyPeriodEnd}`" chart-label="区间月度趋势图">
     <template #table>
-        <table v-content-table class="leadership-table summary-table">
+        <table v-content-table="pageActive" class="leadership-table summary-table">
         <thead><tr><th>序号</th><th>月份</th><th>任务数</th><th>切割长度</th><th>坡口长度</th><th>切割时长</th><th>备注</th></tr></thead>
         <tbody>
           <tr v-for="(row, index) in monthlyRecords" :key="row.period_start">

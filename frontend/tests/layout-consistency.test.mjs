@@ -67,9 +67,11 @@ test('report analysis uses server source versions and a four-second debounce', (
   const script = analysis.scriptSetup.content
   assert.match(script, /dataVersion: \{ type: String/)
   assert.match(script, /AUTO_ANALYSIS_DEBOUNCE_MS = 4000/)
-  assert.match(script, /window\.setTimeout\([\s\S]*AUTO_ANALYSIS_DEBOUNCE_MS/)
+  assert.match(script, /activationTimer\.schedule\([\s\S]*AUTO_ANALYSIS_DEBOUNCE_MS/)
   assert.match(script, /function reloadAnalysis\(\)[\s\S]*loadAnalysis\(true\)/)
-  assert.match(script, /onBeforeUnmount\([\s\S]*clearScheduledAnalysis\(\)/)
+  assert.match(script, /onDeactivated\(pauseAnalysis\)/)
+  assert.match(script, /requestController\?\.abort\(\)/)
+  assert.match(script, /analyzeReport\([\s\S]*\}, \{ signal \}\)/)
 
   const expectedVersions = new Map([
     ['LeadershipReportView', /:data-version="report\?\.analysis_source_version \|\| ''"/],
@@ -164,10 +166,12 @@ test('download page keeps one directory browser and omits the duplicate saved-fi
   assert.doesNotMatch(source.template.content, /<h2>系统已保存文件<\/h2>/)
 })
 
-test('push page refreshes saved files whenever its cached view becomes active', () => {
+test('push page loads once initially and refreshes once on later activations', () => {
   const dispatch = descriptor('CuttingDispatchView')
+  assert.match(dispatch.scriptSetup.content, /onMounted\(\(\) => \{\s*initializePage\(\)/)
   assert.match(dispatch.scriptSetup.content, /onActivated\(async \(\) =>/)
-  assert.match(dispatch.scriptSetup.content, /await loadPushFiles\(\)/)
+  assert.match(dispatch.scriptSetup.content, /if \(firstActivation\) \{[\s\S]*?return[\s\S]*?await loadPushFiles\(\{ signal \}\)/)
+  assert.match(dispatch.scriptSetup.content, /onDeactivated\(pausePage\)/)
 })
 
 test('settings reuses the same compact navigation shell as reports', () => {
@@ -412,7 +416,7 @@ test('leadership and equipment second tables default to the recent twelve months
   const leadership = descriptor('LeadershipReportView')
   const equipment = descriptor('EnergyPeriodReportView')
 
-  assert.match(leadership.scriptSetup.content, /getLeadershipReport\(today\.slice\(0, 7\)\)/)
+  assert.match(leadership.scriptSetup.content, /getLeadershipReport\(today\.slice\(0, 7\), \{ signal \}\)/)
   assert.match(leadership.scriptSetup.content, /monthlyPeriodStart = ref\(recentTwelveMonthStart\(today\)\)/)
   assert.match(leadership.template.content, /:title="monthlyTitle"/)
   assert.match(leadership.template.content, /:note="`\$\{monthlyPeriodStart\} 至 \$\{monthlyPeriodEnd\}`"/)
@@ -442,6 +446,28 @@ test('switching cached workshop and equipment reports does not force another que
   assert.match(api, /REPORT_VIEW_CACHE_TTL = 5 \* 60 \* 1000/)
 })
 
+test('cached report resources pause on deactivation and cache is bounded', () => {
+  const layout = descriptor('ReportsLayout', 'layouts')
+  const leadership = descriptor('LeadershipReportView')
+  const workshop = descriptor('WorkshopView')
+  const equipment = descriptor('EnergyPeriodReportView')
+  const controls = ['AppSelect', 'AppDatePicker', 'ReportPeriodPicker']
+    .map((name) => descriptor(name, 'components').scriptSetup.content)
+
+  assert.match(layout.template.content, /<KeepAlive :max="2">/)
+  for (const view of [leadership, workshop, equipment]) {
+    assert.match(view.scriptSetup.content, /onDeactivated\(/)
+    assert.match(view.template.content, /v-content-table="pageActive"/)
+  }
+  assert.match(leadership.scriptSetup.content, /disposeCharts\(\)/)
+  assert.match(equipment.scriptSetup.content, /disposeCharts\(\)/)
+  for (const control of controls) {
+    assert.match(control, /createActivationBinding/)
+    assert.match(control, /onActivated\(listenerBinding\.activate\)/)
+    assert.match(control, /onDeactivated\(pause\)/)
+  }
+})
+
 test('energy report omits calculation-method and complete-day explanations', () => {
   const energy = descriptor('EnergyPeriodReportView')
   const template = energy.template.content
@@ -468,7 +494,7 @@ test('file push uses downloaded-file parameters without a condition search', () 
   assert.match(dispatch.scriptSetup.content, /const pushFilePageSize = 20/)
   assert.match(dispatch.scriptSetup.content, /filteredPushFiles/)
   assert.match(dispatch.scriptSetup.content, /downloadCatalogLabel/)
-  assert.match(dispatch.scriptSetup.content, /listCuttingDownloads\(\{ page: 1, pageSize: 100 \}\)/)
+  assert.match(dispatch.scriptSetup.content, /listCuttingDownloads\(\{ page: 1, pageSize: 100 \}, \{ signal \}\)/)
   assert.match(dispatch.scriptSetup.content, /download_id: item\.downloadId/)
   assert.match(dispatch.template.content, /批量推送确认/)
   assert.match(dispatch.template.content, /确认并顺序推送/)

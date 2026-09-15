@@ -1,5 +1,6 @@
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
+import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, useId, watch } from 'vue'
+import { createActivationBinding } from '../utils/activationTimer.js'
 
 const props = defineProps({
   startDate: { type: String, required: true },
@@ -198,19 +199,30 @@ watch(() => props.disabled, (disabled) => {
   if (disabled) closePanel()
 })
 
-onMounted(() => {
-  document.addEventListener('pointerdown', handleDocumentPointer)
-  document.addEventListener('keydown', handleKeydown)
-  window.addEventListener('resize', handleViewportChange)
-  window.addEventListener('scroll', handleViewportChange, true)
-})
+const listenerBinding = createActivationBinding(
+  () => {
+    document.addEventListener('pointerdown', handleDocumentPointer)
+    document.addEventListener('keydown', handleKeydown)
+    window.addEventListener('resize', handleViewportChange)
+    window.addEventListener('scroll', handleViewportChange, true)
+  },
+  () => {
+    document.removeEventListener('pointerdown', handleDocumentPointer)
+    document.removeEventListener('keydown', handleKeydown)
+    window.removeEventListener('resize', handleViewportChange)
+    window.removeEventListener('scroll', handleViewportChange, true)
+  },
+)
 
-onBeforeUnmount(() => {
-  document.removeEventListener('pointerdown', handleDocumentPointer)
-  document.removeEventListener('keydown', handleKeydown)
-  window.removeEventListener('resize', handleViewportChange)
-  window.removeEventListener('scroll', handleViewportChange, true)
-})
+function pause() {
+  closePanel()
+  listenerBinding.deactivate()
+}
+
+onMounted(listenerBinding.activate)
+onActivated(listenerBinding.activate)
+onDeactivated(pause)
+onBeforeUnmount(pause)
 </script>
 
 <template>

@@ -1,6 +1,7 @@
 <script setup>
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onActivated, onBeforeUnmount, onDeactivated, ref, watch } from 'vue'
 import { analyzeReport } from '../api/reports'
+import { createActivationTimer } from '../utils/activationTimer.js'
 
 const props = defineProps({
   reportType: { type: String, required: true },
@@ -17,9 +18,13 @@ const loading = ref(false)
 const pending = ref(false)
 const error = ref('')
 let requestSequence = 0
-let debounceTimer = null
 let activeRequestKey = ''
 let displayedRequestKey = ''
+let requestController = null
+const activationTimer = createActivationTimer({
+  setTimer: (callback, delay) => window.setTimeout(callback, delay),
+  clearTimer: (timer) => window.clearTimeout(timer),
+})
 
 const modeLabel = computed(() => {
   if (analysis.value?.mode === 'model') return '大模型分析'
@@ -67,13 +72,15 @@ function requestKey() {
 }
 
 function clearScheduledAnalysis() {
-  if (debounceTimer !== null) window.clearTimeout(debounceTimer)
-  debounceTimer = null
+  activationTimer.cancel()
   pending.value = false
 }
 
 async function loadAnalysis(force = false, targetKey = requestKey()) {
-  if (!props.ready || !props.reportDate) return
+  if (!activationTimer.isActive() || !props.ready || !props.reportDate) return
+  requestController?.abort()
+  requestController = new AbortController()
+  const signal = requestController.signal
   const sequence = ++requestSequence
   activeRequestKey = targetKey
   pending.value = false
@@ -86,24 +93,28 @@ async function loadAnalysis(force = false, targetKey = requestKey()) {
       periodStart: props.periodStart || undefined,
       periodEnd: props.periodEnd || undefined,
       force,
-    })
-    if (sequence === requestSequence) {
+    }, { signal })
+    if (activationTimer.isActive() && !signal.aborted && sequence === requestSequence) {
       analysis.value = result
       displayedRequestKey = targetKey
     }
   } catch (exception) {
-    if (sequence === requestSequence) error.value = exception.message
+    if (exception.name !== 'AbortError' && sequence === requestSequence) error.value = exception.message
   } finally {
     if (sequence === requestSequence) {
       loading.value = false
       activeRequestKey = ''
+      requestController = null
     }
   }
 }
 
 function scheduleAutomaticAnalysis() {
   clearScheduledAnalysis()
+  if (!activationTimer.isActive()) return
   if (!props.ready || !props.reportDate) {
+    requestController?.abort()
+    requestController = null
     requestSequence += 1
     activeRequestKey = ''
     loading.value = false
@@ -118,12 +129,13 @@ function scheduleAutomaticAnalysis() {
   // This source version only schedules the request. The analysis API rebuilds the
   // authoritative data_version and checks SQLite before it can call the model.
   // Invalidate a response for data that changed while the request was running.
+  requestController?.abort()
+  requestController = null
   requestSequence += 1
   activeRequestKey = ''
   loading.value = false
   pending.value = true
-  debounceTimer = window.setTimeout(() => {
-    debounceTimer = null
+  activationTimer.schedule(() => {
     loadAnalysis(false, targetKey)
   }, AUTO_ANALYSIS_DEBOUNCE_MS)
 }
@@ -144,10 +156,22 @@ watch(
   { immediate: true },
 )
 
-onBeforeUnmount(() => {
+function pauseAnalysis() {
+  activationTimer.deactivate()
   clearScheduledAnalysis()
+  requestController?.abort()
+  requestController = null
   requestSequence += 1
+  activeRequestKey = ''
+  loading.value = false
+}
+
+onActivated(() => {
+  activationTimer.activate()
+  scheduleAutomaticAnalysis()
 })
+onDeactivated(pauseAnalysis)
+onBeforeUnmount(pauseAnalysis)
 </script>
 
 <template>

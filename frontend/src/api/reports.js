@@ -18,7 +18,8 @@ async function request(url, options = {}) {
   let payload
   try {
     payload = await response.json()
-  } catch {
+  } catch (error) {
+    if (error.name === 'AbortError') throw error
     throw new Error('服务器返回了无法识别的响应')
   }
   if (!response.ok || payload.success === false) {
@@ -298,9 +299,10 @@ export function getEnergyMonthlyRange(startDate, endDate, { force = false, signa
   return reportCache.read(key, (requestSignal) => request(`/api/v1/energy-report/monthly-range?${query}`, { signal: requestSignal }), { ttl: REPORT_VIEW_CACHE_TTL, force, signal })
 }
 
-export function analyzeReport({ reportType, reportDate, periodStart, periodEnd, force = false }) {
+export function analyzeReport({ reportType, reportDate, periodStart, periodEnd, force = false }, { signal } = {}) {
   return request('/api/v1/analysis', {
     method: 'POST',
+    signal,
     body: JSON.stringify({
       report_type: reportType,
       report_date: reportDate,
@@ -363,12 +365,12 @@ export function retryEmailDelivery(deliveryId) {
   })
 }
 
-export function getCuttingStatus(scope = 'push') {
+export function getCuttingStatus(scope = 'push', { signal } = {}) {
   const query = new URLSearchParams({ scope })
   return reportCache.read(
     `cutting:status:${scope}`,
     (signal) => request(`/api/v1/cutting/status?${query}`, { signal }),
-    { ttl: 60000 },
+    { ttl: 60000, signal },
   )
 }
 
@@ -380,32 +382,32 @@ export function downloadCuttingFile(payload) {
   return request('/api/v1/cutting/downloads', { method: 'POST', body: JSON.stringify(payload) })
 }
 
-export function listCuttingDownloads({ page = 1, pageSize = 10 } = {}) {
-  return request(`/api/v1/cutting/downloads?${new URLSearchParams({ page, page_size: pageSize })}`)
+export function listCuttingDownloads({ page = 1, pageSize = 10 } = {}, { signal } = {}) {
+  return request(`/api/v1/cutting/downloads?${new URLSearchParams({ page, page_size: pageSize })}`, { signal })
 }
 
-export function listCuttingProjects(keyword = '', limit = 1000) {
+export function listCuttingProjects(keyword = '', limit = 1000, { signal } = {}) {
   const query = new URLSearchParams({ limit: String(limit) })
   if (keyword) query.set('keyword', keyword)
   const url = `/api/v1/cutting/projects?${query}`
   return reportCache.read(
     `cutting:projects:${query}`,
     (signal) => request(url, { signal }),
-    { ttl: 300000 },
+    { ttl: 300000, signal },
   )
 }
 
-export function listCuttingCatalogs(projectId) {
+export function listCuttingCatalogs(projectId, { signal } = {}) {
   const query = new URLSearchParams({ project_id: projectId })
   const url = `/api/v1/cutting/catalogs?${query}`
   return reportCache.read(
     `cutting:catalogs:${String(projectId)}`,
     (signal) => request(url, { signal }),
-    { ttl: 300000 },
+    { ttl: 300000, signal },
   )
 }
 
-export function listCuttingFiles({ projectId, catalogId = '', status = 'all', keyword = '', page = 1, pageSize = 10 }) {
+export function listCuttingFiles({ projectId, catalogId = '', status = 'all', keyword = '', page = 1, pageSize = 10 }, { signal } = {}) {
   const query = new URLSearchParams({
     project_id: projectId,
     status,
@@ -418,7 +420,7 @@ export function listCuttingFiles({ projectId, catalogId = '', status = 'all', ke
   return reportCache.read(
     `cutting:files:${query}`,
     (signal) => request(url, { signal }),
-    { ttl: 300000 },
+    { ttl: 300000, signal },
   )
 }
 
@@ -436,13 +438,13 @@ export function createCuttingDispatchBatch(payload) {
   })
 }
 
-export function listCuttingDispatches({ page = 1, pageSize = 10 } = {}) {
+export function listCuttingDispatches({ page = 1, pageSize = 10 } = {}, { signal } = {}) {
   const query = new URLSearchParams({ page, page_size: pageSize })
-  return request(`/api/v1/cutting/dispatches?${query}`)
+  return request(`/api/v1/cutting/dispatches?${query}`, { signal })
 }
 
-export function listCuttingMachines() {
-  return request('/api/v1/cutting/machines')
+export function listCuttingMachines({ signal } = {}) {
+  return request('/api/v1/cutting/machines', { signal })
 }
 
 export function executeCuttingDispatch(dispatchId) {

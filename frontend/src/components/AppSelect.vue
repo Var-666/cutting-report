@@ -2,12 +2,16 @@
 import {
   computed,
   nextTick,
+  onActivated,
   onBeforeUnmount,
+  onDeactivated,
+  onMounted,
   ref,
   useAttrs,
   useSlots,
   watch,
 } from 'vue'
+import { createActivationBinding } from '../utils/activationTimer.js'
 
 defineOptions({ inheritAttrs: false })
 
@@ -185,15 +189,28 @@ watch(currentValue, () => {
   invalid.value = false
 })
 
-document.addEventListener('pointerdown', handleDocumentPointer)
-window.addEventListener('resize', handleViewportChange)
-window.addEventListener('scroll', handleViewportChange, true)
+const listenerBinding = createActivationBinding(
+  () => {
+    document.addEventListener('pointerdown', handleDocumentPointer)
+    window.addEventListener('resize', handleViewportChange)
+    window.addEventListener('scroll', handleViewportChange, true)
+  },
+  () => {
+    document.removeEventListener('pointerdown', handleDocumentPointer)
+    window.removeEventListener('resize', handleViewportChange)
+    window.removeEventListener('scroll', handleViewportChange, true)
+  },
+)
 
-onBeforeUnmount(() => {
-  document.removeEventListener('pointerdown', handleDocumentPointer)
-  window.removeEventListener('resize', handleViewportChange)
-  window.removeEventListener('scroll', handleViewportChange, true)
-})
+function pause() {
+  closeMenu()
+  listenerBinding.deactivate()
+}
+
+onMounted(listenerBinding.activate)
+onActivated(listenerBinding.activate)
+onDeactivated(pause)
+onBeforeUnmount(pause)
 </script>
 
 <template>

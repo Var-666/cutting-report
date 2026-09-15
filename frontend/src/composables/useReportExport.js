@@ -1,4 +1,4 @@
-import { onBeforeUnmount, ref } from 'vue'
+import { onBeforeUnmount, onDeactivated, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { createReport, downloadReportPdf, waitForReport } from '../api/reportExport.js'
 
@@ -36,6 +36,8 @@ export function useReportExport() {
     }
   }
 
-  onBeforeUnmount(() => controller?.abort())
+  const pause = () => controller?.abort()
+  onDeactivated(pause)
+  onBeforeUnmount(pause)
   return { exporting, error, progress, exportReport }
 }

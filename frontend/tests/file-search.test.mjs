@@ -88,7 +88,7 @@ test('file download page uses the recursive directory tree without condition bui
   assert.match(view, /listCuttingProjects/)
   assert.match(view, /listCuttingCatalogs/)
   assert.match(view, /listCuttingFiles/)
-  assert.match(view, /getCuttingStatus\('download'\)/)
+  assert.match(view, /getCuttingStatus\('download', \{ signal \}\)/)
   assert.doesNotMatch(view, /isDownload\.value \? loadProjects\(\) : Promise\.resolve/)
   assert.match(view, /项目目录/)
   assert.match(view, /当前位置/)
@@ -118,7 +118,7 @@ test('selected download project survives refresh without a duplicate saved-file 
   assert.match(view, /useRoute, useRouter/)
   assert.match(view, /route\.query\.project_id/)
   assert.match(view, /router\.replace\(\{ query \}\)/)
-  assert.match(view, /if \(projectToOpen && sequence === querySequence\) await selectProject\(projectToOpen\)/)
+  assert.match(view, /if \(projectToOpen && pageActive\.value && !signal\.aborted && sequence === querySequence\) await selectProject\(projectToOpen\)/)
   assert.doesNotMatch(view, /CuttingDownloadsPanel|downloadsPanel|selectProjectById/)
 })
 

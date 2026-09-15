@@ -13,7 +13,7 @@ import { RouterLink, RouterView } from 'vue-router'
     </nav>
   </section>
   <RouterView v-slot="{ Component, route }">
-    <KeepAlive>
+    <KeepAlive :max="2">
       <component v-if="route.meta.keepAlive" :is="Component" :key="route.name" />
     </KeepAlive>
     <component v-if="!route.meta.keepAlive" :is="Component" :key="route.name" />

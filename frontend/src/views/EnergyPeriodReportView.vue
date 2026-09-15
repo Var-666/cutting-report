@@ -39,12 +39,32 @@ const loading = ref(false)
 const error = ref('')
 const taskPanel = ref(null)
 const periodPanel = ref(null)
+const pageActive = ref(true)
 let taskChart = null
 let periodChart = null
 let controller = null
-let active = true
+let backgroundController = null
+let refreshController = null
+let requestSequence = 0
+let refreshRequestSequence = 0
 let summaryRefreshTimer = null
 let summaryRefreshCount = 0
+let resizeListening = false
+
+function beginRequest() {
+  controller?.abort()
+  backgroundController?.abort()
+  backgroundController = null
+  refreshRequestSequence += 1
+  refreshController?.abort()
+  refreshController = null
+  controller = new AbortController()
+  return { sequence: ++requestSequence, signal: controller.signal }
+}
+
+function requestIsCurrent(sequence, signal) {
+  return pageActive.value && !signal.aborted && sequence === requestSequence
+}
 
 const taskRows = computed(() => taskDay.value?.records || [])
 const dailyRows = computed(() => periodReport.value?.rows || [])
@@ -81,7 +101,8 @@ const summarySubtitle = computed(() => {
     : `${base} · ${missing} 天暂无能耗数据`
 })
 const analysisReady = computed(() => Boolean(
-  taskDay.value
+  pageActive.value
+  && taskDay.value
   && taskDay.value.period_start === appliedPeriodStart.value
   && taskDay.value.period_end === appliedPeriodEnd.value
   && !loading.value
@@ -126,7 +147,7 @@ function chartOption(rows, labels) {
 }
 
 function renderCharts() {
-  if (!active) return
+  if (!pageActive.value) return
   const taskChartElement = taskPanel.value?.getChartElement()
   const periodChartElement = periodPanel.value?.getChartElement()
   if (taskChartElement && taskDay.value) {
@@ -149,15 +170,15 @@ async function loadRange(force = false) {
     error.value = '结束日期不能早于开始日期'
     return
   }
-  controller?.abort()
   stopSummaryRefresh()
-  controller = new AbortController()
+  const { sequence, signal } = beginRequest()
   loading.value = true
   error.value = ''
   const requestedStart = periodStart.value
   const requestedEnd = periodEnd.value
   try {
-    const result = await getEnergyRange(requestedStart, requestedEnd, { force, signal: controller.signal })
+    const result = await getEnergyRange(requestedStart, requestedEnd, { force, signal })
+    if (!requestIsCurrent(sequence, signal)) return
     taskDay.value = result.task_report
     periodReport.value = result.period_report
     appliedPeriodStart.value = requestedStart
@@ -168,9 +189,12 @@ async function loadRange(force = false) {
     await nextTick()
     renderCharts()
   } catch (exception) {
-    if (exception.name !== 'AbortError') error.value = exception.message
+    if (exception.name !== 'AbortError' && sequence === requestSequence) error.value = exception.message
   } finally {
-    loading.value = false
+    if (sequence === requestSequence) {
+      loading.value = false
+      controller = null
+    }
   }
 }
 
@@ -180,6 +204,7 @@ function stopSummaryRefresh() {
 }
 
 async function applyMonthlySummary(summaryResult) {
+  if (!pageActive.value) return
   periodReport.value = summaryResult
   await nextTick()
   renderCharts()
@@ -188,35 +213,40 @@ async function applyMonthlySummary(summaryResult) {
 
 function scheduleSummaryRefresh(summaryResult) {
   stopSummaryRefresh()
-  if (!active || !defaultSummaryView.value || !summaryResult?.syncing
+  if (!pageActive.value || !defaultSummaryView.value || !summaryResult?.syncing
       || !summaryResult?.missing_day_count || summaryRefreshCount >= 600) return
   const requestedStart = summaryPeriodStart.value
   const requestedEnd = summaryPeriodEnd.value
   summaryRefreshTimer = window.setTimeout(async () => {
     summaryRefreshTimer = null
-    if (!active || !defaultSummaryView.value
+    if (!pageActive.value || !defaultSummaryView.value
         || requestedStart !== summaryPeriodStart.value
         || requestedEnd !== summaryPeriodEnd.value) return
     summaryRefreshCount += 1
+    refreshController?.abort()
+    refreshController = new AbortController()
+    const signal = refreshController.signal
+    const sequence = ++refreshRequestSequence
     try {
-      const refreshed = await getEnergyMonthlyRange(requestedStart, requestedEnd, { force: true })
+      const refreshed = await getEnergyMonthlyRange(requestedStart, requestedEnd, { force: true, signal })
+      if (!pageActive.value || signal.aborted || sequence !== refreshRequestSequence) return
       await applyMonthlySummary(refreshed)
-    } catch {
-      scheduleSummaryRefresh(summaryResult)
+    } catch (exception) {
+      if (exception.name !== 'AbortError' && pageActive.value) scheduleSummaryRefresh(summaryResult)
+    } finally {
+      if (sequence === refreshRequestSequence) refreshController = null
     }
   }, 1000)
 }
 
 async function loadDefaultRanges() {
-  controller?.abort()
   stopSummaryRefresh()
   summaryRefreshCount = 0
-  controller = new AbortController()
+  const { sequence, signal } = beginRequest()
   loading.value = true
   error.value = ''
   const selectedDate = periodStart.value
   const recentStart = recentTwelveMonthStart(selectedDate)
-  const signal = controller.signal
   appliedPeriodStart.value = selectedDate
   appliedPeriodEnd.value = selectedDate
   summaryPeriodStart.value = recentStart
@@ -224,11 +254,11 @@ async function loadDefaultRanges() {
   defaultSummaryView.value = true
 
   const showError = (exception) => {
-    if (exception.name !== 'AbortError') error.value ||= exception.message
+    if (exception.name !== 'AbortError' && requestIsCurrent(sequence, signal)) error.value ||= exception.message
   }
   const taskRequest = getTaskEnergyDay(selectedDate, { signal })
     .then(async (taskResult) => {
-      if (signal.aborted) return
+      if (!requestIsCurrent(sequence, signal)) return
       taskDay.value = {
         ...taskResult,
         period_start: selectedDate,
@@ -240,7 +270,7 @@ async function loadDefaultRanges() {
     .catch(showError)
   const summaryRequest = getEnergyMonthlyRange(recentStart, selectedDate, { signal })
     .then(async (summaryResult) => {
-      if (signal.aborted) return
+      if (!requestIsCurrent(sequence, signal)) return
       await applyMonthlySummary(summaryResult)
     })
     .catch(showError)
@@ -248,16 +278,26 @@ async function loadDefaultRanges() {
   // Daily meter synchronization is independent from first paint. Existing
   // monthly snapshots render first; the current month refreshes silently once
   // the live meter request finishes.
-  getEnergyDay(selectedDate, { signal })
-    .then(() => getEnergyMonthlyRange(recentStart, selectedDate, { signal }))
+  backgroundController = new AbortController()
+  const syncController = backgroundController
+  const syncSignal = syncController.signal
+  getEnergyDay(selectedDate, { signal: syncSignal })
+    .then(() => getEnergyMonthlyRange(recentStart, selectedDate, { signal: syncSignal }))
     .then(async (summaryResult) => {
-      if (signal.aborted) return
+      if (!pageActive.value || syncSignal.aborted
+          || selectedDate !== periodStart.value || !defaultSummaryView.value) return
       await applyMonthlySummary(summaryResult)
     })
     .catch(() => {})
+    .finally(() => {
+      if (backgroundController === syncController) backgroundController = null
+    })
 
   await Promise.allSettled([taskRequest, summaryRequest])
-  if (!signal.aborted) loading.value = false
+  if (requestIsCurrent(sequence, signal)) {
+    loading.value = false
+    controller = null
+  }
 }
 
 function exportReport(format = 'html') {
@@ -273,27 +313,73 @@ function exportReport(format = 'html') {
   }, format)
 }
 
-function resizeCharts() { if (active) { taskChart?.resize(); periodChart?.resize() } }
-function pause() { active = false; controller?.abort(); stopSummaryRefresh(); window.removeEventListener('resize', resizeCharts) }
+function resizeCharts() { if (pageActive.value) { taskChart?.resize(); periodChart?.resize() } }
+
+function disposeCharts() {
+  taskChart?.dispose()
+  periodChart?.dispose()
+  taskChart = null
+  periodChart = null
+}
+
+function startResizeListening() {
+  if (resizeListening) return
+  resizeListening = true
+  window.addEventListener('resize', resizeCharts)
+}
+
+function stopResizeListening() {
+  if (!resizeListening) return
+  resizeListening = false
+  window.removeEventListener('resize', resizeCharts)
+}
+
+function pause() {
+  if (!pageActive.value) return
+  pageActive.value = false
+  requestSequence += 1
+  controller?.abort()
+  controller = null
+  backgroundController?.abort()
+  backgroundController = null
+  refreshRequestSequence += 1
+  refreshController?.abort()
+  refreshController = null
+  loading.value = false
+  stopSummaryRefresh()
+  stopResizeListening()
+  disposeCharts()
+}
 
 async function initializeReport() {
+  const { sequence, signal } = beginRequest()
+  loading.value = true
   try {
-    const latest = await getLatestWorkshopProductionDate(today)
+    const latest = await getLatestWorkshopProductionDate(today, { signal })
+    if (!requestIsCurrent(sequence, signal)) return
     if (latest.report_date) {
       anchorDate.value = latest.report_date
       periodStart.value = latest.report_date
       periodEnd.value = latest.report_date
     }
   } catch (exception) {
-    error.value = exception.message
+    if (exception.name !== 'AbortError' && sequence === requestSequence) error.value = exception.message
   }
+  if (!requestIsCurrent(sequence, signal)) return
   await loadDefaultRanges()
 }
 
 onMounted(initializeReport)
-onActivated(async () => { active = true; window.addEventListener('resize', resizeCharts); await nextTick(); renderCharts(); resizeCharts() })
+onActivated(async () => {
+  pageActive.value = true
+  startResizeListening()
+  await nextTick()
+  if ((!taskDay.value || !periodReport.value) && !loading.value) await initializeReport()
+  else renderCharts()
+  resizeCharts()
+})
 onDeactivated(pause)
-onBeforeUnmount(() => { pause(); taskChart?.dispose(); periodChart?.dispose() })
+onBeforeUnmount(pause)
 watch(chartType, async () => { await nextTick(); renderCharts() })
 </script>
 
@@ -328,7 +414,7 @@ watch(chartType, async () => { await nextTick(); renderCharts() })
       </div>
     </template>
     <template #table>
-        <table v-content-table class="energy-period-table energy-task-table summary-table" aria-label="任务能耗明细表">
+        <table v-content-table="pageActive" class="energy-period-table energy-task-table summary-table" aria-label="任务能耗明细表">
           <thead><tr><th scope="col">序号</th><th scope="col">工程号</th><th scope="col">船号</th><th scope="col">分段名</th><th scope="col">任务开始</th><th scope="col">切割时长</th><th scope="col">电耗</th><th scope="col">气耗</th></tr></thead>
           <tbody><tr v-for="(row, index) in taskRows" :key="row.task_id"><th scope="row">{{ index + 1 }}</th><td>{{ row.project_code || '--' }}</td><td>{{ row.ship_no || '--' }}</td><td>{{ row.segment_name || '--' }}</td><td>{{ formatChineseDateTime(row.production_time) }}</td><td>{{ duration(row.work_time) }}</td><td>{{ format(row.electricity_consumption) }}</td><td>{{ format(row.gas_consumption) }}</td></tr><tr v-if="!taskRows.length"><td colspan="8" class="energy-empty">{{ loading ? '正在查询…' : '所选区间暂无任务' }}</td></tr></tbody>
           <tfoot><tr><th aria-hidden="true"></th><th scope="row">汇总</th><th>{{ equipmentScopeLabel }}</th><th>{{ summary.task_count || 0 }} 项</th><th>--</th><th>{{ duration(summary.total_work_time) }}</th><th>{{ format(summary.total_electricity_consumption) }}</th><th>{{ format(summary.total_gas_consumption) }}</th></tr></tfoot>
@@ -337,7 +423,7 @@ watch(chartType, async () => { await nextTick(); renderCharts() })
   </ReportTrendPanel>
 
   <ReportTrendPanel ref="periodPanel" number="02" :title="summaryTitle" :subtitle="summarySubtitle" :chart-label="summaryChartLabel">
-    <template #table><table v-content-table class="leadership-table energy-month-table summary-table" :aria-label="summaryTableLabel"><thead><tr><th scope="col">{{ summaryDateHeading }}</th><th scope="col">任务数</th><th scope="col">切割时长</th><th scope="col">电耗</th><th scope="col">气耗</th></tr></thead><tbody><tr v-for="row in summaryRows" :key="row.report_date"><td>{{ summaryPeriod(row.report_date) }}</td><td>{{ row.task_count }}</td><td>{{ duration(row.work_time_seconds) }}</td><td>{{ valueText(row.electricity) }}</td><td>{{ valueText(row.gas) }}</td></tr><tr v-if="!summaryRows.length"><td colspan="5" class="energy-empty">{{ loading ? '正在查询…' : summaryEmptyText }}</td></tr></tbody><tfoot><tr><th scope="row">汇总</th><th>{{ month?.total_task_count || 0 }}</th><th>{{ duration(month?.total_work_time_seconds) }}</th><th>{{ valueText(month?.summary?.electricity) }}</th><th>{{ valueText(month?.summary?.gas) }}</th></tr></tfoot></table></template>
+    <template #table><table v-content-table="pageActive" class="leadership-table energy-month-table summary-table" :aria-label="summaryTableLabel"><thead><tr><th scope="col">{{ summaryDateHeading }}</th><th scope="col">任务数</th><th scope="col">切割时长</th><th scope="col">电耗</th><th scope="col">气耗</th></tr></thead><tbody><tr v-for="row in summaryRows" :key="row.report_date"><td>{{ summaryPeriod(row.report_date) }}</td><td>{{ row.task_count }}</td><td>{{ duration(row.work_time_seconds) }}</td><td>{{ valueText(row.electricity) }}</td><td>{{ valueText(row.gas) }}</td></tr><tr v-if="!summaryRows.length"><td colspan="5" class="energy-empty">{{ loading ? '正在查询…' : summaryEmptyText }}</td></tr></tbody><tfoot><tr><th scope="row">汇总</th><th>{{ month?.total_task_count || 0 }}</th><th>{{ duration(month?.total_work_time_seconds) }}</th><th>{{ valueText(month?.summary?.electricity) }}</th><th>{{ valueText(month?.summary?.gas) }}</th></tr></tfoot></table></template>
   </ReportTrendPanel>
 
   <AnalysisPanel

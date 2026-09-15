@@ -2,13 +2,16 @@
 import {
   computed,
   nextTick,
+  onActivated,
   onBeforeUnmount,
+  onDeactivated,
   onMounted,
   ref,
   useAttrs,
   useId,
   watch,
 } from 'vue'
+import { createActivationBinding } from '../utils/activationTimer.js'
 
 defineOptions({ inheritAttrs: false })
 
@@ -196,20 +199,32 @@ watch(() => props.disabled, (disabled) => {
   if (disabled) closePanel()
 })
 
-onMounted(() => {
-  containingForm = root.value?.closest('form') || null
-  containingForm?.addEventListener('submit', validateRequired, true)
-  document.addEventListener('pointerdown', handleDocumentPointer)
-  window.addEventListener('resize', handleViewportChange)
-  window.addEventListener('scroll', handleViewportChange, true)
-})
+const listenerBinding = createActivationBinding(
+  () => {
+    containingForm = root.value?.closest('form') || null
+    containingForm?.addEventListener('submit', validateRequired, true)
+    document.addEventListener('pointerdown', handleDocumentPointer)
+    window.addEventListener('resize', handleViewportChange)
+    window.addEventListener('scroll', handleViewportChange, true)
+  },
+  () => {
+    containingForm?.removeEventListener('submit', validateRequired, true)
+    containingForm = null
+    document.removeEventListener('pointerdown', handleDocumentPointer)
+    window.removeEventListener('resize', handleViewportChange)
+    window.removeEventListener('scroll', handleViewportChange, true)
+  },
+)
 
-onBeforeUnmount(() => {
-  containingForm?.removeEventListener('submit', validateRequired, true)
-  document.removeEventListener('pointerdown', handleDocumentPointer)
-  window.removeEventListener('resize', handleViewportChange)
-  window.removeEventListener('scroll', handleViewportChange, true)
-})
+function pause() {
+  closePanel()
+  listenerBinding.deactivate()
+}
+
+onMounted(listenerBinding.activate)
+onActivated(listenerBinding.activate)
+onDeactivated(pause)
+onBeforeUnmount(pause)
 </script>
 
 <template>

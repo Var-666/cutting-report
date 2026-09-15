@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createReportCache } from '../src/api/reportCache.js'
 import { recentTwelveMonthStart, reportToday } from '../src/api/reportDates.js'
+import { createActivationBinding, createActivationTimer } from '../src/utils/activationTimer.js'
 
 function deferred() {
   let resolve
@@ -52,6 +53,82 @@ test('navigation abort cancels only that subscriber, preserving login prefetch',
   data.resolve(42)
   assert.equal(await preload, 42)
   assert.equal(await cache.read('report', () => assert.fail('cache missed')), 42)
+})
+
+test('the final subscriber abort cancels the underlying request and stale data cannot win', async () => {
+  const cache = createReportCache()
+  const stale = deferred()
+  const controller = new AbortController()
+  let requestSignal
+  const page = cache.read('report', (signal) => {
+    requestSignal = signal
+    return stale.promise
+  }, { signal: controller.signal })
+  const rejected = assert.rejects(page, { name: 'AbortError' })
+  await Promise.resolve()
+  controller.abort()
+  await rejected
+  assert.equal(requestSignal.aborted, true)
+
+  const latest = await cache.read('report', () => 'latest')
+  stale.resolve('stale')
+  await Promise.resolve()
+  assert.equal(latest, 'latest')
+  assert.equal(await cache.read('report', () => assert.fail('latest result was overwritten')), 'latest')
+})
+
+test('activation timer keeps one timeout and never fires while deactivated', () => {
+  const scheduled = new Map()
+  let nextTimer = 0
+  let calls = 0
+  const timer = createActivationTimer({
+    setTimer(callback) {
+      const id = ++nextTimer
+      scheduled.set(id, callback)
+      return id
+    },
+    clearTimer(id) { scheduled.delete(id) },
+  })
+
+  timer.schedule(() => { calls += 1 }, 4000)
+  timer.schedule(() => { calls += 1 }, 4000)
+  assert.equal(scheduled.size, 1)
+  timer.deactivate()
+  assert.equal(scheduled.size, 0)
+  assert.equal(calls, 0)
+
+  for (let index = 0; index < 3; index += 1) {
+    timer.activate()
+    timer.schedule(() => { calls += 1 }, 4000)
+    assert.equal(scheduled.size, 1)
+    timer.deactivate()
+    assert.equal(scheduled.size, 0)
+  }
+  timer.activate()
+  timer.schedule(() => { calls += 1 }, 4000)
+  const callback = scheduled.values().next().value
+  callback()
+  assert.equal(calls, 1)
+  assert.equal(timer.isPending(), false)
+})
+
+test('activation binding never registers duplicate global listeners', () => {
+  let activeListeners = 0
+  const binding = createActivationBinding(
+    () => { activeListeners += 1 },
+    () => { activeListeners -= 1 },
+  )
+  binding.activate()
+  binding.activate()
+  binding.activate()
+  assert.equal(activeListeners, 1)
+  binding.deactivate()
+  binding.deactivate()
+  assert.equal(activeListeners, 0)
+  binding.activate()
+  assert.equal(activeListeners, 1)
+  binding.deactivate()
+  assert.equal(activeListeners, 0)
 })
 
 test('force replaces an old preload and coalesces concurrent forced refreshes', async () => {

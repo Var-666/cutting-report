@@ -101,8 +101,14 @@ function adaptContent(table) {
 }
 
 function observeContainer(table) {
-  if (typeof ResizeObserver === 'undefined' || !table.parentElement) return
-  const observer = new ResizeObserver(() => adaptContent(table))
+  if (typeof ResizeObserver === 'undefined' || !table.parentElement || tableObservers.has(table)) return
+  const observer = new ResizeObserver(() => {
+    if (table.isConnected === false) {
+      stopObserving(table)
+      return
+    }
+    adaptContent(table)
+  })
   observer.observe(table.parentElement)
   tableObservers.set(table, observer)
 }
@@ -113,10 +119,19 @@ function stopObserving(table) {
 }
 
 export const contentTable = {
-  mounted(table) {
+  mounted(table, binding) {
+    if (binding?.value === false) return
     adaptContent(table)
     observeContainer(table)
   },
-  updated: adaptContent,
+  updated(table, binding) {
+    if (binding?.value === false) {
+      stopObserving(table)
+      return
+    }
+    adaptContent(table)
+    observeContainer(table)
+  },
+  beforeUnmount: stopObserving,
   unmounted: stopObserving,
 }
