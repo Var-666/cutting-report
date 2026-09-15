@@ -177,21 +177,31 @@ def test_filename_sanitizes_windows_names_and_limits_utf8():
     assert all(char not in name for char in '/\\\r\n"')
 
 
-@pytest.mark.parametrize("changed", ["version", "path", "multiple"])
-def test_stale_or_ambiguous_selection_does_not_fetch(tmp_path, changed, monkeypatch):
+@pytest.mark.parametrize("changed", ["version", "path"])
+def test_stale_selection_does_not_fetch(tmp_path, changed, monkeypatch):
     service, payload = make_service(tmp_path)
     raw = dict(service.pdm.get_file(payload["document_id"]))
     if changed == "version":
         raw["version_id"] = "new-version"
     elif changed == "path":
         raw["file_path"] = "Root/new.gen"
-    else:
-        raw["physical_file_count"] = 2
     monkeypatch.setattr(service.pdm, "get_file", lambda _: raw)
     with pytest.raises(DownloadError) as error:
         service.download(**payload, user=ADMIN)
     assert error.value.status_code == 409
     assert not service.source.opener.requests
+
+
+def test_multiple_physical_history_rows_can_save_selected_current_path(tmp_path, monkeypatch):
+    service, payload = make_service(tmp_path)
+    raw = dict(service.pdm.get_file(payload["document_id"]))
+    raw["physical_file_count"] = 3
+    monkeypatch.setattr(service.pdm, "get_file", lambda _: raw)
+
+    result = service.download(**payload, user=ADMIN)
+
+    assert result["status"] == "downloaded"
+    assert len(service.source.opener.requests) == 1
 
 
 def test_real_service_cannot_download_mock_pdm_paths(tmp_path):

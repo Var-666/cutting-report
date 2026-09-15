@@ -139,8 +139,6 @@ class FileDownloadService:
             raise DownloadError("未找到对应文档", 404)
         if str(raw.get("version_id") or "") != str(version_id or ""):
             raise DownloadError("文档版本已变化，请刷新文件清单后重新选择", 409)
-        if int(raw.get("physical_file_count") or 0) > 1:
-            raise DownloadError("该版本对应多个文件，不能确定下载目标，请核对文件关联", 409)
         try:
             actual = normalize_relative_path(str(raw.get("file_path") or ""))
             expected = normalize_relative_path(file_path)

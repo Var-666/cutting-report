@@ -111,6 +111,23 @@ def test_mock_pdm_supports_project_catalog_file_and_status_queries(tmp_path: Pat
     assert files["items"][0]["status_label"] == "待派发"
 
 
+def test_file_list_keeps_selected_path_available_with_physical_history(tmp_path: Path) -> None:
+    service, _dispatches, _admin = _service(tmp_path)
+    service.pdm.files[0]["physical_file_count"] = 3
+
+    files = service.list_files(
+        service.pdm.projects[0]["project_id"],
+        catalog_id="CAT-GEN",
+        status="pending",
+        keyword="f7e50",
+        page=1,
+        page_size=10,
+    )
+
+    assert files["items"][0]["path_available"] is True
+    assert files["items"][0]["normalized_path"].endswith("f7e50f62-d508-430e-8309-8bf309568095.GEN")
+
+
 def test_download_status_does_not_query_magic_box_configuration(tmp_path: Path) -> None:
     service, _dispatches, _admin = _service(tmp_path)
 

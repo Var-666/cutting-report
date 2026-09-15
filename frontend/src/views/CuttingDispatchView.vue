@@ -169,6 +169,10 @@ function fileKey(file) {
   return JSON.stringify([file.document_id, file.version_id, file.normalized_path])
 }
 
+function wasPreviouslySaved(file) {
+  return Boolean(downloadedRows[fileKey(file)] || file.downloaded_at)
+}
+
 function clearSelectedDownloads() {
   selectedDownloadFiles.value = new Map()
 }
@@ -887,9 +891,9 @@ onActivated(async () => {
       </div>
       <div class="dispatch-table-wrap" :aria-busy="loading">
         <div v-if="loading" class="dispatch-loading" role="status">正在加载第 {{ requestedPage }} 页…</div>
-        <table v-content-table class="dispatch-table" aria-label="文件查询结果">
+        <table v-content-table class="dispatch-table source-file-table" aria-label="文件查询结果">
           <thead>
-            <tr><th class="download-check-cell"><input type="checkbox" :checked="allVisibleFilesSelected" :indeterminate="someVisibleFilesSelected" :disabled="!selectableRows.length || loading || batchDownloading" aria-label="全选当前页可保存文件" @change="toggleVisibleDownloads($event.target.checked)" /></th><th>文件名</th><th>中间产品</th><th>文件格式</th><th>版本</th><th>操作人</th><th>操作人工号</th><th>操作时间</th><th>切割状态</th><th>操作</th></tr>
+            <tr><th class="download-check-cell"><input type="checkbox" :checked="allVisibleFilesSelected" :indeterminate="someVisibleFilesSelected" :disabled="!selectableRows.length || loading || batchDownloading" aria-label="全选当前页可保存文件" @change="toggleVisibleDownloads($event.target.checked)" /></th><th>文件名</th><th>中间产品</th><th>文件格式</th><th>版本</th><th>操作人</th><th>操作人工号</th><th>操作时间</th><th class="file-download-cell">操作</th></tr>
           </thead>
           <tbody>
             <tr v-for="row in rows" :key="fileKey(row)" :class="{ selected: selectedDownloadFiles.has(fileKey(row)) }">
@@ -901,10 +905,9 @@ onActivated(async () => {
               <td>{{ row.operator || row.physical_file_operator || '--' }}</td>
               <td>{{ row.operator_job_no || row.physical_file_operator_job_no || '--' }}</td>
               <td>{{ formatTime(row.operate_time || row.physical_file_date) }}</td>
-              <td><span class="dispatch-status" :class="row.status">{{ row.status_label }}</span></td>
-              <td class="file-download-cell"><button type="button" :disabled="loading || batchDownloading || !!downloadingId || !row.path_available || !systemStatus?.can_download" :aria-label="`保存 ${row.document_no} 到系统`" @click="downloadFile(row)">{{ downloadingId === fileKey(row) ? '保存中…' : downloadedRows[fileKey(row)] ? '再次保存' : '保存到系统' }}</button><small v-if="downloadedRows[fileKey(row)]">本次已保存</small><small v-else-if="!row.path_available">{{ row.path_error || '路径不可用' }}</small></td>
+              <td class="file-download-cell"><button type="button" :disabled="loading || batchDownloading || !!downloadingId || !row.path_available || !systemStatus?.can_download" :aria-label="`保存 ${row.document_no} 到系统`" @click="downloadFile(row)">{{ downloadingId === fileKey(row) ? '保存中…' : wasPreviouslySaved(row) ? '再次保存' : '保存到系统' }}</button><small v-if="!row.path_available">{{ row.path_error || '路径不可用' }}</small></td>
             </tr>
-            <tr v-if="!loading && rows.length === 0"><td colspan="10" class="dispatch-empty-row">{{ selectedCatalog ? appliedFileKeyword ? '当前目录没有匹配的文件' : '当前目录没有文件' : '请从左侧选择一个目录' }}</td></tr>
+            <tr v-if="!loading && rows.length === 0"><td colspan="9" class="dispatch-empty-row">{{ selectedCatalog ? appliedFileKeyword ? '当前目录没有匹配的文件' : '当前目录没有文件' : '请从左侧选择一个目录' }}</td></tr>
           </tbody>
         </table>
       </div>
@@ -1068,6 +1071,10 @@ onActivated(async () => {
 .dispatch-table-wrap { overflow-x:auto; position:relative; min-height:75px; }
 .dispatch-loading { position:absolute; z-index:2; inset:0; display:flex; align-items:flex-start; justify-content:center; padding-top:48px; background:rgba(247,251,253,.8); color:var(--blue); font-size:12px; }
 .file-download-cell { width:122px; }.file-download-cell button { min-height:32px; padding:6px 10px; border:1px solid #bdd2dd; background:#fff; color:var(--blue); font-size:11px; white-space:nowrap; cursor:pointer; }.file-download-cell button:disabled { opacity:.55; cursor:not-allowed; }.file-download-cell small { display:block; margin-top:4px; color:var(--muted); font-size:10px; }
+.source-file-table .file-download-cell { position:sticky; z-index:1; right:0; background:#fff; box-shadow:-8px 0 12px -12px rgba(15,49,70,.65); }
+.source-file-table thead .file-download-cell { z-index:2; background:#0b4f76; }
+.source-file-table tbody tr:hover .file-download-cell { background:#f5fafb; }
+.source-file-table tbody tr.selected .file-download-cell { background:#eef8fa; }
 .dispatch-download-hint { margin:16px 22px; font-size:11px; color:var(--muted); }
 .dispatch-table { width:100%; border-collapse:collapse; }
 .dispatch-table th,.dispatch-table td { padding:10px 12px; border-bottom:1px solid #e4eaee; text-align:left; font-size:11px; }

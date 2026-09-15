@@ -193,9 +193,6 @@ class CuttingDispatchService:
                 path_error = str(exc)
         else:
             path_error = "未查询到文件相对路径"
-        if int(item.get("physical_file_count") or 0) > 1:
-            normalized_path = None
-            path_error = "当前文档版本对应多个文件，请先确认唯一的文件关联"
         item.update({
             "status": status,
             "status_label": status_label,
