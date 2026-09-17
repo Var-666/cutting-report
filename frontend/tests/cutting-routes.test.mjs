@@ -7,13 +7,13 @@ import { cuttingRoutes } from '../src/router/cuttingRoutes.js'
 
 const stub = { render: () => null }
 
-test('file submenu shares report navigation styles without a local override', () => {
-  for (const name of ['CuttingLayout', 'ReportsLayout']) {
-    const source = readFileSync(new URL(`../src/layouts/${name}.vue`, import.meta.url), 'utf8')
-    const { descriptor } = parse(source)
-    assert.match(descriptor.template.content, /<section class="report-navigation"/)
-    assert.equal(descriptor.styles.length, 0)
-  }
+test('file dispatch omits a redundant one-item submenu', () => {
+  const source = readFileSync(new URL('../src/layouts/CuttingLayout.vue', import.meta.url), 'utf8')
+  const { descriptor } = parse(source)
+
+  assert.doesNotMatch(descriptor.template.content, /report-navigation|文件派发子导航|RouterLink/)
+  assert.match(descriptor.template.content, /<RouterView/)
+  assert.equal(descriptor.styles.length, 0)
 })
 function routerForTest() {
   return createRouter({

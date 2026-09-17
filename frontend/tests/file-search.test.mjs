@@ -144,6 +144,21 @@ test('PDM file table supports up to twenty selections and direct batch dispatch'
   assert.match(view, /class="dispatch-table source-file-table"/)
 })
 
+test('file dispatch presents the four-step dashboard and persistent confirmation summary', () => {
+  const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
+
+  assert.match(view, /CUTTING FILE DISPATCH/)
+  assert.match(view, /选择项目目录/)
+  assert.match(view, /选择文件/)
+  assert.match(view, /确认派发/)
+  assert.match(view, /完成派发/)
+  assert.match(view, /class="panel dispatch-confirm-panel"/)
+  assert.match(view, /const selectedFileItems = computed/)
+  assert.match(view, /const activeDispatchStep = computed/)
+  assert.match(view, /v-for="file in selectedFileItems\.slice\(0, 5\)"/)
+  assert.match(view, /<AppIcon name="send"/)
+})
+
 test('standard cutting instruction names provide material and thickness for dispatch', () => {
   assert.deepEqual(parseCuttingInstructionFilename('P101C100A001.GEN'), {
     instructionType: 'P',

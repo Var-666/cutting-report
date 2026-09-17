@@ -12,9 +12,9 @@ import {
   revokeWorkshopTask,
 } from '../api/reports'
 import AnalysisPanel from '../components/AnalysisPanel.vue'
-import ReportExportMenu from '../components/ReportExportMenu.vue'
-import ReportPeriodPicker from '../components/ReportPeriodPicker.vue'
+import AppIcon from '../components/AppIcon.vue'
 import ReportTrendPanel from '../components/ReportTrendPanel.vue'
+import StandardReportQuery from '../components/StandardReportQuery.vue'
 import { reportToday } from '../api/reportDates.js'
 import { formatChineseDate, formatChineseDateTime } from '../utils/dateDisplay.js'
 
@@ -93,6 +93,17 @@ const someVisibleTasksSelected = computed(() => (
 const availableWorkers = computed(() => correction.workers.filter((worker) => (
   worker.role === 'worker' && worker.active && worker.user_id !== correction.row?.confirmed_by_id
 )))
+const workshopMetrics = computed(() => {
+  const taskCount = Math.max(0, Number(result.value.report?.item_count || 0))
+  const confirmedCount = Math.max(0, Number(result.value.report?.confirmed_count || 0))
+  return {
+    taskCount,
+    confirmedCount,
+    pendingCount: Math.max(0, taskCount - confirmedCount),
+    projectCount: result.value.project_names?.length || 0,
+    confirmationRate: taskCount ? Math.round((confirmedCount / taskCount) * 1000) / 10 : 0,
+  }
+})
 let refreshTimer = null
 let feedbackTimer = null
 let requestController = null
@@ -522,24 +533,63 @@ onUnmounted(() => {
     </div>
   </Teleport>
 
-  <section class="page-hero report-hero workshop-hero">
-    <div><span class="eyebrow">{{ isWorker ? 'WORKER TASK CONFIRMATION' : 'WORKSHOP REPORT' }}</span><h2>{{ isWorker ? '我的任务确认' : '车间报表' }}</h2><p>{{ isWorker ? `当前工人：${user.display_name}。请确认本人完成的任务，如果误点可撤销本人确认。` : '查看全部任务和工人确认结果，必要时可撤销或改派并保留审计记录。' }}</p></div>
-    <form v-if="!isWorker" class="report-query workshop-query" @submit.prevent="applyTaskFilters">
-      <ReportPeriodPicker
+  <div class="workshop-dashboard" :class="isWorker ? 'workshop-dashboard--worker' : 'workshop-dashboard--manager'">
+    <section class="page-hero report-hero workshop-hero" :class="{ 'report-hero--query': !isWorker }">
+      <div class="report-hero-copy workshop-hero__copy">
+        <span class="report-hero-eyebrow eyebrow">{{ isWorker ? 'WORKER TASK CONFIRMATION' : 'WORKSHOP REPORT' }}</span>
+        <h2>{{ isWorker ? '我的任务确认' : '车间报表' }}</h2>
+        <p class="report-hero-description">{{ isWorker ? `当前工人：${user.display_name}。请确认本人完成的任务，如果误点可撤销本人确认。` : '查看全部任务和工人确认结果，必要时可撤销或改派并保留审计记录。' }}</p>
+        <p v-if="!isWorker" class="report-hero-meta"><AppIcon name="calendar" size="14" />统计区间：{{ filters.startDate }} 至 {{ filters.endDate }}<span>任务确认数据</span></p>
+      </div>
+      <p v-if="!isWorker" class="workshop-hero__slogan"><strong>数据驱动制造</strong><span>让每一份生产都清晰可见</span></p>
+      <StandardReportQuery
+        v-if="!isWorker"
         v-model:start-date="filters.startDate"
         v-model:end-date="filters.endDate"
+        v-model:chart-type="chartType"
+        class="report-hero-query workshop-query-shell"
+        aria-label="车间报表查询条件"
         :anchor-date="filters.reportDate"
-        :disabled="loading"
+        :loading="loading"
+        :export-disabled="loading || !result.report"
+        :exporting="exporting"
+        @submit="applyTaskFilters"
+        @export="exportReport"
         @validation-error="error = $event"
       />
-      <label><span>图表类型</span><AppSelect v-model="chartType"><option value="bar_line">柱线组合</option><option value="bar">柱状图</option><option value="line">折线图</option><option value="area">面积图</option></AppSelect></label>
-      <button class="primary" type="submit" :disabled="loading"><span v-if="loading" class="spinner"></span>{{ loading ? '查询中' : '查询报表' }}</button>
-      <ReportExportMenu :disabled="loading || !result.report" :loading="exporting" @select="exportReport" />
-    </form>
-  </section>
+    </section>
 
-  <div v-if="error" class="global-error"><strong>操作未完成</strong><span>{{ error }}</span><button @click="error = ''">关闭</button></div>
-  <ReportTrendPanel
+    <div v-if="error" class="global-error"><strong>操作未完成</strong><span>{{ error }}</span><button @click="error = ''">关闭</button></div>
+
+    <section v-if="!isWorker" class="workshop-kpis" aria-label="车间任务概况">
+      <article class="workshop-kpi kpi-blue">
+        <span class="workshop-kpi__icon"><AppIcon name="tasks" size="21" /></span>
+        <div><span>全部任务<small>ALL TASKS</small></span><p><strong>{{ workshopMetrics.taskCount }}</strong> <small>项</small></p><em>当前查询区间</em></div>
+        <svg class="workshop-sparkline" viewBox="0 0 76 28" aria-hidden="true"><path d="M2 22 13 21 24 11 35 7 47 13 60 16 74 11"/></svg>
+      </article>
+      <article class="workshop-kpi kpi-amber">
+        <span class="workshop-kpi__icon"><AppIcon name="clock" size="21" tone="amber" /></span>
+        <div><span>待确认<small>PENDING</small></span><p><strong>{{ workshopMetrics.pendingCount }}</strong> <small>项</small></p><em>等待工人确认</em></div>
+        <svg class="workshop-sparkline" viewBox="0 0 76 28" aria-hidden="true"><path d="M2 22 13 14 24 20 35 22 47 12 59 18 74 9"/></svg>
+      </article>
+      <article class="workshop-kpi kpi-green">
+        <span class="workshop-kpi__icon"><AppIcon name="check" size="21" /></span>
+        <div><span>已确认<small>CONFIRMED</small></span><p><strong>{{ workshopMetrics.confirmedCount }}</strong> <small>项</small></p><em>已登记完成人</em></div>
+        <svg class="workshop-sparkline" viewBox="0 0 76 28" aria-hidden="true"><path d="M2 23 13 17 24 20 35 12 47 15 59 7 74 11"/></svg>
+      </article>
+      <article class="workshop-kpi kpi-red">
+        <span class="workshop-kpi__icon"><AppIcon name="briefcase" size="21" tone="red" /></span>
+        <div><span>涉及工程<small>PROJECTS</small></span><p><strong>{{ workshopMetrics.projectCount }}</strong> <small>个</small></p><em>当前区间范围</em></div>
+        <svg class="workshop-sparkline" viewBox="0 0 76 28" aria-hidden="true"><path d="M2 21 12 13 23 17 34 16 46 22 59 18 74 15"/></svg>
+      </article>
+      <article class="workshop-kpi kpi-violet">
+        <span class="workshop-kpi__icon"><AppIcon name="activity" size="21" /></span>
+        <div><span>确认率<small>CONFIRMATION RATE</small></span><p><strong>{{ number(workshopMetrics.confirmationRate) }}</strong> <small>%</small></p><em>按区间任务计算</em></div>
+        <svg class="workshop-sparkline" viewBox="0 0 76 28" aria-hidden="true"><path d="M2 23 13 19 24 21 35 15 47 9 59 15 74 8"/></svg>
+      </article>
+    </section>
+
+    <ReportTrendPanel
     class="workshop-panel"
     number="01"
     :title="isWorker ? '待确认任务表' : '区间车间报表'"
@@ -552,7 +602,7 @@ onUnmounted(() => {
         <label v-if="isWorker"><span>生产日期</span><AppDatePicker v-model="filters.reportDate" required /></label>
         <label><span>工程/船号</span><AppSelect v-model="filters.projectName" :disabled="!result.report"><option value="">全部</option><option v-for="name in result.project_names" :key="name" :value="name">{{ name }}</option></AppSelect></label>
         <label><span>确认状态</span><AppSelect v-model="filters.confirmationStatus" :disabled="!result.report"><option value="all">全部</option><option value="unconfirmed">未确认</option><option value="confirmed">已确认</option></AppSelect></label>
-        <button type="submit" :disabled="loading || !result.report">{{ loading ? '筛选中' : '筛选明细' }}</button>
+        <button type="submit" :disabled="loading || !result.report"><AppIcon name="sparkles" size="14" />{{ loading ? '筛选中' : '筛选明细' }}</button>
       </form>
       <div v-if="result.report" class="workshop-report-state"><strong>{{ isWorker ? formatChineseDate(result.report.report_date) : `${formatChineseDate(result.report.period_start)} 至 ${formatChineseDate(result.report.period_end)}` }} 车间报表</strong><span>{{ isWorker ? `生成人：${result.report.generated_by_name || '--'} · 生成时间：${time(result.report.generated_at)} · ` : '' }}总任务 {{ result.report.item_count }} 项 · 已确认 {{ result.report.confirmed_count }} 项</span></div>
       <div v-else class="workshop-empty-report"><strong>{{ loading ? '正在加载最近车间报表' : '该日期暂无车间报表' }}</strong><span>{{ loading ? '系统正在查找最近有数据的生产日并加载全部明细。' : '当前源数据在该日期没有已完成任务。' }}</span></div>
@@ -561,7 +611,7 @@ onUnmounted(() => {
     </template>
     <template #table>
       <table v-content-table="pageActive" class="workshop-table" :class="{ 'worker-workshop-table': isWorker }">
-        <thead><tr><th v-if="isWorker" class="workshop-select-cell"><input type="checkbox" :checked="allVisibleTasksSelected" :indeterminate="someVisibleTasksSelected" :disabled="!selectableTasks.length || loading || batchConfirmation.saving" aria-label="全选当前页待确认任务" @change="toggleVisibleTasks($event.target.checked)" /></th><th>序号</th><th>工程号</th><th>船号</th><th>分段名</th><th>程序号</th><th>切割长度</th><th>坡口长度</th><th>切割时长</th><th>时间</th><th>待确认</th><th>备注</th></tr></thead>
+        <thead><tr><th v-if="isWorker" class="workshop-select-cell"><input type="checkbox" :checked="allVisibleTasksSelected" :indeterminate="someVisibleTasksSelected" :disabled="!selectableTasks.length || loading || batchConfirmation.saving" aria-label="全选当前页待确认任务" @change="toggleVisibleTasks($event.target.checked)" /></th><th>序号</th><th>工程号</th><th>船号</th><th>分段名</th><th>程序号</th><th>切割长度</th><th>坡口长度</th><th>切割时长</th><th>时间</th><th>确认状态</th><th>备注</th></tr></thead>
         <tbody>
           <tr v-if="loading"><td :colspan="isWorker ? 12 : 11" class="table-empty">正在查询任务...</td></tr>
           <tr v-else-if="!result.items.length"><td :colspan="isWorker ? 12 : 11" class="table-empty">当前条件下暂无任务</td></tr>
@@ -577,7 +627,7 @@ onUnmounted(() => {
     <template #footer><div v-if="result.report" class="history-pagination"><span class="history-page-summary">第 {{ result.page }} / {{ totalPages }} 页</span><div class="history-page-buttons"><button :disabled="loading || result.page <= 1" @click="load(result.page - 1)">上一页</button><button :disabled="loading || result.page >= totalPages" @click="load(result.page + 1)">下一页</button></div></div></template>
   </ReportTrendPanel>
 
-  <ReportTrendPanel
+    <ReportTrendPanel
     v-if="!isWorker && result.worker_summaries?.length"
     class="worker-time-summary"
     number="02"
@@ -598,14 +648,48 @@ onUnmounted(() => {
     </template>
   </ReportTrendPanel>
 
-  <AnalysisPanel
-    v-if="!isWorker"
-    report-type="workshop"
-    :report-date="filters.startDate"
-    :period-start="filters.startDate"
-    :period-end="filters.endDate"
-    :ready="analysisReady"
-    :data-version="result.analysis_source_version || ''"
-  />
+    <AnalysisPanel
+      v-if="!isWorker"
+      report-type="workshop"
+      :report-date="filters.startDate"
+      :period-start="filters.startDate"
+      :period-end="filters.endDate"
+      :ready="analysisReady"
+      :data-version="result.analysis_source_version || ''"
+    />
+  </div>
 
 </template>
+
+<style scoped>
+.workshop-dashboard>.page-hero{position:relative;min-height:174px;display:flex;align-items:center;overflow:hidden;padding:25px 30px;border:1px solid rgba(255,255,255,.72);border-radius:14px;background:linear-gradient(90deg,rgba(246,252,255,.99) 0%,rgba(238,248,253,.92) 39%,rgba(7,48,76,.08) 69%),url('../assets/home-laser-cutting.webp') center 51%/cover no-repeat;box-shadow:0 12px 30px rgba(22,62,89,.07);animation:surface-in .46s cubic-bezier(.2,.75,.25,1) both}.workshop-dashboard>.page-hero::after{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(116deg,transparent 0 46%,rgba(255,255,255,.24) 46.2%,transparent 46.8%)}.workshop-hero__copy,.workshop-hero__slogan{position:relative;z-index:1}.workshop-hero__copy{max-width:560px}.workshop-hero__copy .eyebrow{display:block;margin:0 0 5px;color:#237fb7;font-size:10px;font-weight:700;letter-spacing:1.4px}.workshop-hero__copy h2{margin:0 0 7px;color:#153f5d;font-size:38px;line-height:1.08;letter-spacing:1px}.workshop-hero__copy>p{max-width:530px;margin:0;color:#607a8d;font-size:12px;line-height:1.7}.workshop-hero__slogan{margin:0 20px 0 auto;color:#effaff;text-align:right;text-shadow:0 2px 10px rgba(4,37,58,.84);transform:rotate(-6deg)}.workshop-hero__slogan strong,.workshop-hero__slogan span{display:block}.workshop-hero__slogan strong{font-size:16px;letter-spacing:3px}.workshop-hero__slogan span{margin-top:5px;font-size:11px;letter-spacing:2px}.workshop-query-shell{margin:10px 0;padding:11px 14px;border:1px solid #dbe6ec;border-radius:10px;background:#fff;box-shadow:0 7px 22px rgba(22,62,89,.05)}.workshop-query-shell .report-query{width:100%;grid-template-columns:repeat(2,minmax(170px,1fr)) minmax(160px,.7fr) 128px 128px;padding:0;border:0;background:transparent;box-shadow:none}.workshop-query-shell :deep(.report-period-picker__trigger),.workshop-query-shell :deep(.app-select__trigger),.workshop-query-shell .report-query>button{height:38px;min-height:38px;border-radius:6px;font-size:10px}.workshop-query-shell .report-query>button.primary{display:flex;align-items:center;justify-content:center;gap:6px;border-color:#1179ab;background:linear-gradient(135deg,#0e688f,#0584af);box-shadow:0 5px 12px rgba(15,111,158,.18)}.global-error{margin:10px 0 0;border-radius:9px}.workshop-kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin:10px 0}.workshop-kpi{--kpi-color:#237fb7;--kpi-soft:#eaf5fb;position:relative;min-width:0;min-height:108px;display:flex;gap:10px;overflow:hidden;padding:14px 12px;border:1px solid #dbe6ec;border-top:2px solid var(--kpi-color);border-radius:10px;background:#fff;box-shadow:0 7px 22px rgba(22,62,89,.055);transition:transform .18s ease,box-shadow .18s ease;animation:surface-in .42s cubic-bezier(.2,.75,.25,1) both}.workshop-kpi:hover{transform:translateY(-2px);box-shadow:0 11px 26px rgba(22,62,89,.09)}.workshop-kpi:nth-child(2){animation-delay:.04s}.workshop-kpi:nth-child(3){animation-delay:.08s}.workshop-kpi:nth-child(4){animation-delay:.12s}.workshop-kpi:nth-child(5){animation-delay:.16s}.workshop-kpi.kpi-amber{--kpi-color:#ee9b2f;--kpi-soft:#fff6e6}.workshop-kpi.kpi-green{--kpi-color:#19a777;--kpi-soft:#e9f8f3}.workshop-kpi.kpi-red{--kpi-color:#df5961;--kpi-soft:#fff0f1}.workshop-kpi.kpi-violet{--kpi-color:#7366db;--kpi-soft:#efedff}.workshop-kpi__icon{position:relative;z-index:1;width:35px;height:35px;display:grid;place-items:center;flex:0 0 auto;color:var(--kpi-color);border-radius:50%;background:var(--kpi-soft);transition:transform .2s ease}.workshop-kpi:hover .workshop-kpi__icon{transform:scale(1.08) rotate(-3deg)}.workshop-kpi>div{position:relative;z-index:1;min-width:0;flex:1}.workshop-kpi>div>span{display:block;color:#284a62;font-size:11px;font-weight:700;white-space:nowrap}.workshop-kpi>div>span small{display:block;margin:3px 0 0;color:#8195a4;font-size:7px;font-weight:500;letter-spacing:.45px}.workshop-kpi p{margin:8px 0 6px;color:#173f64;font-size:9px;white-space:nowrap}.workshop-kpi p strong{font-size:21px}.workshop-kpi p small{margin-left:2px;color:#6f8798;font-size:8px}.workshop-kpi em{display:block;overflow:hidden;color:#7e929f;text-overflow:ellipsis;white-space:nowrap;font-style:normal;font-size:8px}.workshop-sparkline{position:absolute;right:8px;bottom:12px;width:58px;height:25px;opacity:.72}.workshop-sparkline path{fill:none;stroke:var(--kpi-color);stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}.workshop-kpi::after{content:"";position:absolute;width:70px;height:70px;right:-28px;bottom:-41px;border-radius:50%;background:var(--kpi-soft);opacity:.72}
+:deep(.workshop-panel),:deep(.worker-time-summary){margin-bottom:10px;border:1px solid #dbe6ec;border-radius:10px;box-shadow:0 7px 22px rgba(22,62,89,.05)}:deep(.workshop-panel .report-trend-panel__heading),:deep(.worker-time-summary .report-trend-panel__heading){min-height:47px;padding:0 14px;border-bottom:1px solid #e5edf1;background:linear-gradient(90deg,#fff,#fbfdfe)}:deep(.workshop-panel .report-trend-panel__heading>div),:deep(.worker-time-summary .report-trend-panel__heading>div){gap:8px}:deep(.workshop-panel .report-trend-panel__heading>div>span),:deep(.worker-time-summary .report-trend-panel__heading>div>span){width:28px;height:24px;display:grid;place-items:center;padding:0;color:#237fb7;border:0;border-radius:7px;background:#eaf5fb;font-size:10px;font-weight:700}:deep(.workshop-panel .report-trend-panel__heading h2),:deep(.worker-time-summary .report-trend-panel__heading h2){color:#193c57;font-size:14px}:deep(.workshop-panel .report-trend-panel__heading p),:deep(.worker-time-summary .report-trend-panel__heading p){color:#6f8798;font-size:9px}.workshop-filters{grid-template-columns:1.2fr 1fr auto!important;gap:10px;padding:11px 14px 9px;border-bottom:1px solid #e6edf1}.workshop-dashboard--worker .workshop-filters{grid-template-columns:1fr 1fr 1fr auto!important}.workshop-filters label span{margin-bottom:5px;font-size:9px}.workshop-filters>button{min-height:38px;display:flex;align-items:center;justify-content:center;gap:6px;padding:0 15px;border-color:#b8cdd8;border-radius:6px;background:#f8fbfc;color:#2477a6;font-size:10px}.workshop-report-state,.workshop-empty-report{margin:0 14px 8px;padding:9px 12px;border:0;border-radius:7px;background:linear-gradient(90deg,#eef8fb,#f6fbfc);font-size:9px}.workshop-report-state strong,.workshop-empty-report strong{font-size:10px}.workshop-summary{padding:0 14px 10px;font-size:9px}:deep(.workshop-panel .report-trend-panel__content),:deep(.worker-time-summary .report-trend-panel__content){padding:0 13px 12px}:deep(.workshop-panel .report-trend-panel__table),:deep(.worker-time-summary .report-trend-panel__table){overflow-x:auto;border-color:#dfe9ee;border-radius:7px}.workshop-table th,.workshop-table td{height:36px;padding:6px 8px;font-size:10px}.workshop-table thead th{color:#fff!important;background:#0b4f76!important;font-size:9px!important}.workshop-table tbody tr:hover{background:#f4f9fb}.pending-confirmation{display:inline-flex;align-items:center;justify-content:center;min-height:22px;padding:0 9px;border-radius:999px;background:#fff4df;color:#b67719;font-weight:700}.confirmed-mark{color:#16885f}.history-pagination{min-height:45px;padding:7px 14px;border-top:1px solid #e3ebef;background:#fbfdfe}.history-page-buttons button{min-height:30px;border-radius:5px}.worker-time-table th,.worker-time-table td{height:36px;padding:6px 8px;font-size:10px}.worker-time-table thead th{background:#0b4f76}.workshop-batch-actions{margin:0 14px 9px;border:1px solid #dce7ec;border-radius:7px}:deep(.workshop-analysis){margin-bottom:0;overflow:hidden;border:1px solid #dbe6ec;border-radius:10px;box-shadow:0 7px 22px rgba(22,62,89,.05)}:deep(.workshop-analysis .analysis-panel-head){padding:12px 15px;background:linear-gradient(90deg,#fff,#fbfdfe)}:deep(.workshop-analysis .analysis-panel-icon){width:34px;height:34px}:deep(.workshop-analysis .analysis-kicker){font-size:8px}:deep(.workshop-analysis .analysis-panel-head h2){margin:2px 0 0;color:#193c57;font-size:15px}:deep(.workshop-analysis .analysis-actions button){min-height:33px;padding:0 12px;font-size:10px}:deep(.workshop-analysis .analysis-facts){gap:7px;padding:10px 13px 0}:deep(.workshop-analysis .analysis-facts article){padding:8px 10px}:deep(.workshop-analysis .analysis-facts span){font-size:9px}:deep(.workshop-analysis .analysis-facts strong){font-size:12px}:deep(.workshop-analysis .analysis-grid){grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;padding:10px 13px 13px}:deep(.workshop-analysis .analysis-grid article){min-height:88px;padding:11px 12px;border:0;border-radius:7px;background:#eff7fb}:deep(.workshop-analysis .analysis-grid article:nth-child(3)){background:#fff1f2}:deep(.workshop-analysis .analysis-grid article:nth-child(4)){background:#eef8f4}:deep(.workshop-analysis .analysis-grid h3){font-size:10px}:deep(.workshop-analysis .analysis-grid p){color:#60798b;font-size:9px;line-height:1.6;overflow-wrap:anywhere}:deep(.workshop-analysis .analysis-evidence){margin:0 13px 12px}:deep(.workshop-analysis .analysis-time){padding:0 13px 12px;font-size:9px}
+@media(max-width:1120px){.workshop-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.workshop-kpi:last-child{grid-column:1/-1}.workshop-hero__slogan{display:none}:deep(.workshop-analysis .analysis-grid){grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:900px){.workshop-query-shell .report-query{grid-template-columns:repeat(2,minmax(180px,1fr))}.workshop-query-shell :deep(.report-period-picker){grid-column:1/-1}.workshop-filters,.workshop-dashboard--worker .workshop-filters{grid-template-columns:1fr 1fr!important}}
+@media(max-width:560px){.workshop-dashboard>.page-hero{min-height:0;padding:22px 18px;background:linear-gradient(90deg,rgba(246,252,255,.97),rgba(238,248,253,.89)),url('../assets/home-laser-cutting.webp') center/cover}.workshop-hero__copy h2{font-size:31px}.workshop-query-shell .report-query,.workshop-kpis,.workshop-filters,.workshop-dashboard--worker .workshop-filters{grid-template-columns:1fr!important}.workshop-query-shell :deep(.report-period-picker),.workshop-kpi:last-child{grid-column:auto}:deep(.workshop-analysis .analysis-grid){grid-template-columns:1fr}.workshop-report-state,.workshop-empty-report{align-items:flex-start;flex-direction:column}}
+@media(prefers-reduced-motion:reduce){.workshop-dashboard>.page-hero,.workshop-kpi{animation:none}.workshop-kpi{transition:none}}
+</style>
+
+<style scoped>
+/* Match the table and panel density used by the other management reports. */
+.workshop-query-shell { position:relative; padding:12px 14px 13px; border-color:#d5e4eb; border-radius:12px; background:linear-gradient(135deg,#fff 0%,#f8fcfe 72%,#eef8fb 100%); box-shadow:0 8px 24px rgba(22,62,89,.065); }
+.workshop-query-shell::before { content:""; position:absolute; top:-1px; left:18px; width:34px; height:3px; border-radius:0 0 999px 999px; background:linear-gradient(90deg,#238bd0,#19b0b0); }
+.workshop-query-shell .standard-report-query { gap:10px; }
+:deep(.workshop-panel),
+:deep(.worker-time-summary),
+:deep(.workshop-analysis) { border-radius:var(--report-panel-radius); }
+.workshop-table th,
+.workshop-table td,
+.worker-time-table th,
+.worker-time-table td { height:35px; }
+.workshop-table thead th,
+.worker-time-table thead th {
+  color:var(--report-table-head-ink)!important;
+  background:var(--report-table-head-bg)!important;
+  font-size:10px!important;
+}
+.workshop-table tbody td,
+.workshop-table tbody th,
+.worker-time-table tbody td,
+.worker-time-table tbody th { font-size:11px!important; }
+</style>

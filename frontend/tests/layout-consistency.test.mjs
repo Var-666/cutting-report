@@ -13,6 +13,7 @@ test('all application dropdowns use the shared below-field menu', () => {
     ['LeadershipReportView'], ['WorkshopView'], ['EnergyPeriodReportView'],
     ['CuttingDispatchView'], ['AutomationView'], ['DesignerView'], ['DatabaseView'],
     ['ReportForm', 'components'], ['ReportTable', 'components'], ['ReportExportMenu', 'components'],
+    ['StandardReportQuery', 'components'],
   ]
   for (const [name, folder] of names) {
     const template = descriptor(name, folder).template.content
@@ -47,10 +48,13 @@ test('all report calendars use one shared below-field date picker', () => {
 test('three standard reports reuse the quick period popover', () => {
   for (const name of ['LeadershipReportView', 'WorkshopView', 'EnergyPeriodReportView']) {
     const view = descriptor(name)
-    assert.match(view.scriptSetup.content, /import ReportPeriodPicker from/)
-    assert.match(view.template.content, /<ReportPeriodPicker/)
+    assert.match(view.scriptSetup.content, /import StandardReportQuery from/)
+    assert.match(view.template.content, /<StandardReportQuery/)
   }
 
+  const query = descriptor('StandardReportQuery', 'components')
+  assert.match(query.scriptSetup.content, /import ReportPeriodPicker from/)
+  assert.match(query.template.content, /<ReportPeriodPicker/)
   const period = descriptor('ReportPeriodPicker', 'components')
   assert.match(period.template.content, /<Teleport to="body">/)
   assert.match(period.scriptSetup.content, /单日/)
@@ -62,12 +66,13 @@ test('three standard reports reuse the quick period popover', () => {
   assert.match(period.scriptSetup.content, /inclusiveDays > props\.maxDays/)
 })
 
-test('report analysis uses server source versions and a four-second debounce', () => {
+test('report analysis uses server source versions and starts immediately', () => {
   const analysis = descriptor('AnalysisPanel', 'components')
   const script = analysis.scriptSetup.content
   assert.match(script, /dataVersion: \{ type: String/)
-  assert.match(script, /AUTO_ANALYSIS_DEBOUNCE_MS = 4000/)
-  assert.match(script, /activationTimer\.schedule\([\s\S]*AUTO_ANALYSIS_DEBOUNCE_MS/)
+  assert.doesNotMatch(script, /AUTO_ANALYSIS_DEBOUNCE_MS|4000/)
+  assert.doesNotMatch(script, /activationTimer\.schedule\(/)
+  assert.match(script, /void loadAnalysis\(false, targetKey\)/)
   assert.match(script, /function reloadAnalysis\(\)[\s\S]*loadAnalysis\(true\)/)
   assert.match(script, /onDeactivated\(pauseAnalysis\)/)
   assert.match(script, /requestController\?\.abort\(\)/)
@@ -106,6 +111,62 @@ test('report values use one decimal place throughout the UI', () => {
   for (const source of [leadership, workshop, energy, home, database, analysis]) {
     assert.doesNotMatch(source, /(?:minimum|maximum)FractionDigits:\s*3|digits\s*=\s*3/)
   }
+})
+
+test('leadership dashboard uses verified comparison data and the home visual baseline', () => {
+  const leadership = descriptor('LeadershipReportView')
+  const template = leadership.template.content
+  const script = leadership.scriptSetup.content
+  const styles = leadership.styles.map((style) => style.content).join('\n')
+
+  assert.match(template, /class="[^"]*page-hero[^"]*report-hero--query[^"]*leadership-hero[^"]*"/)
+  assert.equal((template.match(/class="leadership-kpi /g) || []).length, 4)
+  assert.match(template, /<AnalysisPanel/)
+  assert.doesNotMatch(template, /leadership-analysis/)
+  assert.match(script, /report\.value\?\.comparison_total/)
+  assert.match(script, /function changeRate\(current, previous\)/)
+  assert.match(styles, /--leadership-hero-image/)
+  assert.match(styles, /grid-template-columns:repeat\(4,minmax\(0,1fr\)\)/)
+})
+
+test('equipment dashboard uses verified energy metrics and responsive home visuals', () => {
+  const equipment = descriptor('EnergyPeriodReportView')
+  const template = equipment.template.content
+  const script = equipment.scriptSetup.content
+  const styles = equipment.styles.map((style) => style.content).join('\n')
+
+  assert.match(template, /class="[^"]*report-hero-query[^"]*device-query-shell[^"]*"/)
+  assert.equal((template.match(/class="device-kpi /g) || []).length, 5)
+  assert.match(template, /<AppIcon name="zap"/)
+  assert.match(template, /<AppIcon name="wind"/)
+  assert.match(template, /<AppIcon name="activity"/)
+  assert.match(template, /<AppIcon name="tasks"/)
+  assert.match(template, /<AppIcon name="clock"/)
+  assert.match(script, /const energyCoverage = computed/)
+  assert.doesNotMatch(template, /设备利用率/)
+  assert.match(styles, /grid-template-columns:repeat\(5,minmax\(0,1fr\)\)/)
+  assert.match(styles, /@media\(max-width:560px\)[\s\S]*\.device-query-shell \.report-query,\.device-kpis\{grid-template-columns:1fr/)
+})
+
+test('workshop dashboard uses verified confirmation metrics and responsive home visuals', () => {
+  const workshop = descriptor('WorkshopView')
+  const template = workshop.template.content
+  const script = workshop.scriptSetup.content
+  const styles = workshop.styles.map((style) => style.content).join('\n')
+
+  assert.match(template, /class="[^"]*report-hero-query[^"]*workshop-query-shell[^"]*"/)
+  assert.equal((template.match(/class="workshop-kpi /g) || []).length, 5)
+  assert.match(template, /<AppIcon name="tasks"/)
+  assert.match(template, /<AppIcon name="clock"/)
+  assert.match(template, /<AppIcon name="check"/)
+  assert.match(template, /<AppIcon name="briefcase"/)
+  assert.match(template, /<AppIcon name="activity"/)
+  assert.match(template, /<AnalysisPanel/)
+  assert.doesNotMatch(template, /workshop-analysis/)
+  assert.match(script, /const workshopMetrics = computed/)
+  assert.doesNotMatch(template, /异常任务/)
+  assert.match(styles, /grid-template-columns:repeat\(5,minmax\(0,1fr\)\)/)
+  assert.match(styles, /@media\(max-width:560px\)[\s\S]*\.workshop-query-shell \.report-query,\.workshop-kpis/)
 })
 
 test('home and equipment pages reveal independent results progressively', () => {
@@ -179,16 +240,56 @@ test('settings reuses the same compact navigation shell as reports', () => {
   assert.doesNotMatch(settings.template.content, /settings-header|settings-tabs/)
 })
 
+test('report navigation and report pages keep a visible separation', () => {
+  const reports = descriptor('ReportsLayout', 'layouts')
+  const styles = readFileSync(new URL('../src/assets/style.css', import.meta.url), 'utf8')
+
+  assert.match(reports.template.content, /class="report-navigation reports-navigation"/)
+  assert.match(styles, /\.reports-navigation\s*\{[^}]*margin-bottom:12px;/)
+})
+
+test('standard report pages share the light table header and compact panel tokens', () => {
+  const styles = readFileSync(new URL('../src/assets/style.css', import.meta.url), 'utf8')
+  assert.match(styles, /--report-table-head-bg:\s*#d8e7ee;/)
+  assert.match(styles, /--report-table-head-ink:\s*#2f536b;/)
+  assert.match(styles, /--report-panel-radius:\s*10px;/)
+
+  for (const name of ['LeadershipReportView', 'WorkshopView', 'EnergyPeriodReportView']) {
+    const viewStyles = descriptor(name).styles.map((style) => style.content).join('\n')
+    assert.match(viewStyles, /background:var\(--report-table-head-bg\)!important;/, `${name} does not use the shared light table header`)
+    assert.match(viewStyles, /border-radius:var\(--report-panel-radius\)/, `${name} does not use the shared report panel radius`)
+  }
+})
+
+test('primary application pages share one readable typography scale', () => {
+  const styles = readFileSync(new URL('../src/assets/style.css', import.meta.url), 'utf8')
+  const tables = readFileSync(new URL('../src/assets/content-tables.css', import.meta.url), 'utf8')
+  const home = descriptor('AdminHomeView')
+  const settings = descriptor('SettingsHomeView')
+
+  assert.match(styles, /--font-page-title:\s*38px;/)
+  assert.match(styles, /--font-page-description:\s*12px;/)
+  assert.match(styles, /--font-section-title:\s*14px;/)
+  assert.match(styles, /--font-kpi-value:\s*22px;/)
+  assert.match(styles, /--font-table-head:\s*10px;/)
+  assert.match(styles, /--font-auxiliary:\s*9px;/)
+  assert.match(tables, /font-size:11px !important;/)
+  assert.match(tables, /font-size:10px !important;/)
+  assert.doesNotMatch(styles, /font-family:\s*Georgia/)
+  assert.doesNotMatch(settings.styles.map((style) => style.content).join('\n'), /Georgia/)
+  assert.match(home.scriptSetup.content, /Microsoft YaHei[\s\S]*PingFang SC[\s\S]*sans-serif/)
+})
+
 test('device report is one page with task details and a default monthly summary', () => {
   const container = descriptor('AdminEquipmentView')
   const energy = descriptor('EnergyPeriodReportView')
 
   assert.match(container.template.content, /<EnergyPeriodReportView[\s\S]*@export="exportReport"/)
   assert.doesNotMatch(container.template.content, /EquipmentReportView|reportTab|KeepAlive/)
-  assert.match(energy.template.content, /<section class="page-hero report-hero equipment-hero">/)
-  assert.match(energy.template.content, /class="report-query equipment-query energy-period-query"/)
+  assert.match(energy.template.content, /<section class="[^"]*page-hero[^"]*report-hero--query[^"]*equipment-hero[^"]*">/)
+  assert.match(energy.template.content, /<StandardReportQuery/)
   assert.doesNotMatch(energy.template.content, /报表类型|任务生产报表|change-report-tab/)
-  assert.match(energy.template.content, /<span>图表类型<\/span>/)
+  assert.match(descriptor('StandardReportQuery', 'components').template.content, /<span><AppIcon name="chart"[^>]*\/>图表类型<\/span>/)
   assert.match(energy.template.content, /<h2>设备报表<\/h2>/)
   assert.match(energy.template.content, /:max-days="31"/)
   assert.match(energy.template.content, /任务能耗明细/)
@@ -215,7 +316,7 @@ test('device report is one page with task details and a default monthly summary'
   assert.match(energy.template.content, /:ready="analysisReady"/)
   assert.equal((energy.template.content.match(/<ReportTrendPanel/g) || []).length, 2)
   assert.equal((energy.template.content.match(/chart-label=/g) || []).length, 2)
-  assert.match(energy.scriptSetup.content, /function renderCharts\(\)/)
+  assert.match(energy.scriptSetup.content, /function renderCharts\(/)
   assert.match(energy.scriptSetup.content, /taskPanel\.value\?\.getChartElement\(\)/)
   const energyStyles = energy.styles.map((style) => style.content).join('\n')
   assert.doesNotMatch(energyStyles, /\.energy-period-query\s*\{[^}]*grid-template-columns:/)
@@ -236,8 +337,15 @@ test('report tables with sticky summaries use content-weighted window columns', 
   assert.match(contentCss, /table-layout:fixed !important/)
   assert.match(trendStyles, /scrollbar-gutter:stable/)
   assert.match(trendStyles, /report-trend-panel__content--fit-table \.report-trend-panel__table \{[^}]*overflow-y:visible;[^}]*scrollbar-gutter:auto;/)
+  for (const name of ['LeadershipReportView', 'EnergyPeriodReportView']) {
+    const viewStyles = descriptor(name).styles.map((style) => style.content).join('\n')
+    assert.match(viewStyles, /\.report-trend-panel__table\)\s*\{[^}]*overflow:auto!important;[^}]*scrollbar-gutter:stable;/, `${name} trend tables must remain scrollable`)
+  }
+  const workshopStyles = descriptor('WorkshopView').styles.map((style) => style.content).join('\n')
+  assert.doesNotMatch(workshopStyles, /\.report-trend-panel__table\)\s*\{[^}]*overflow:auto!important;/)
   assert.match(contentCss, /height:47px !important/)
-  assert.match(contentCss, /font-size:13px !important/)
+  assert.match(contentCss, /font-size:11px !important/)
+  assert.match(contentCss, /thead th \{[\s\S]*font-size:10px !important/)
   assert.match(contentCss, /background:#0b4f76 !important/)
   assert.match(contentCss, /text-align:center !important/)
   assert.match(contentCss, /white-space:nowrap !important/)
@@ -251,10 +359,10 @@ test('device report reuses the leadership report UI baseline', () => {
   const energyStyles = energy.styles.map((style) => style.content).join('\n')
   const trendStyles = trendPanel.styles.map((style) => style.content).join('\n')
 
-  assert.match(leadership.template.content, /class="page-hero report-hero leadership-hero"/)
-  assert.match(leadership.template.content, /class="report-query month-query"/)
-  assert.match(energy.template.content, /class="page-hero report-hero equipment-hero"/)
-  assert.match(energy.template.content, /class="report-query equipment-query energy-period-query"/)
+  assert.match(leadership.template.content, /class="[^"]*page-hero[^"]*report-hero--query[^"]*leadership-hero[^"]*"/)
+  assert.match(leadership.template.content, /<StandardReportQuery/)
+  assert.match(energy.template.content, /class="[^"]*page-hero[^"]*report-hero--query[^"]*equipment-hero[^"]*"/)
+  assert.match(energy.template.content, /<StandardReportQuery/)
   assert.equal((leadership.template.content.match(/<ReportTrendPanel/g) || []).length, 2)
   assert.equal((energy.template.content.match(/<ReportTrendPanel/g) || []).length, 2)
   assert.doesNotMatch(energy.template.content, /:height=/)
@@ -282,8 +390,8 @@ test('device report reuses the leadership report UI baseline', () => {
   assert.match(energyScript, /REPORT_CHART_COLORS\.accent/)
   assert.match(leadership.scriptSetup.content, /createReportChartGrid, REPORT_CHART_COLORS/)
   assert.match(leadership.scriptSetup.content, /grid: createReportChartGrid\(\)/)
-  assert.match(energyScript, /function renderCharts\(\)/)
-  assert.match(energyStyles, /@media \(max-width:560px\)\s*\{[^}]*\.energy-stat-strip\s*\{\s*grid-template-columns:1fr;/)
+  assert.match(energyScript, /function renderCharts\(/)
+  assert.match(energyStyles, /@media\(max-width:560px\)[\s\S]*\.device-query-shell \.report-query,\.device-kpis\{grid-template-columns:1fr/)
 })
 
 test('equivalent page headers and report query bars share one layout system', () => {
@@ -296,19 +404,44 @@ test('equivalent page headers and report query bars share one layout system', ()
   const automation = descriptor('AutomationView')
   const accounts = descriptor('AdminAccountsView')
   const dispatch = descriptor('CuttingDispatchView')
+  const standardQuery = descriptor('StandardReportQuery', 'components')
+  const standardQueryStyles = standardQuery.styles.map((style) => style.content).join('\n')
   const css = readFileSync(new URL('../src/assets/style.css', import.meta.url), 'utf8')
 
   for (const view of [leadership, workshop, energy, alarm, database, designer, automation, accounts, dispatch]) {
     assert.match(view.template.content, /class="[^"]*page-hero[^"]*"/)
   }
   for (const view of [leadership, workshop, energy]) {
-    assert.match(view.template.content, /class="[^"]*report-query[^"]*"/)
+    assert.match(view.scriptSetup.content, /import StandardReportQuery from/)
+    assert.match(view.template.content, /<StandardReportQuery/)
+    assert.doesNotMatch(view.scriptSetup.content, /import (?:ReportPeriodPicker|ReportExportMenu) from/)
+    assert.doesNotMatch(view.template.content, /<(?:ReportPeriodPicker|ReportExportMenu)/)
+    assert.match(view.template.content, /class="[^"]*report-hero-copy[^"]*"/)
+    assert.match(view.template.content, /class="[^"]*report-hero-eyebrow[^"]*"/)
+    assert.match(view.template.content, /class="report-hero-description"/)
+    assert.match(view.template.content, /class="[^"]*report-hero-meta[^"]*"/)
   }
+  for (const view of [leadership, workshop, energy]) {
+    assert.match(view.template.content, /report-hero-query/)
+  }
+  assert.match(css, /\.report-hero\.report-hero--query\s*\{[^}]*grid-template-columns:minmax\(340px,\.72fr\) minmax\(0,1\.28fr\)!important;/)
+  assert.match(css, /\.report-hero--query > \.report-hero-query\s*\{[^}]*grid-column:2;[^}]*grid-row:2;/)
+  assert.match(css, /\.report-hero--query > \.report-hero-query\s*\{[^}]*border:1px solid #b9d0dc!important;[^}]*background:linear-gradient\(135deg,#f9fcfd 0%,#edf5f8 72%,#e2eef3 100%\)!important;[^}]*backdrop-filter:none;/)
+  assert.match(css, /\.report-hero-query > \.standard-report-query\s*\{[^}]*width:100%!important;/)
+  assert.match(css, /\.report-hero\.report-hero--query > \.report-hero-copy\s*\{[^}]*grid-template-rows:14px 48px minmax\(40px,auto\) 20px;/)
+  assert.match(css, /\.report-hero-copy > h1,\.report-hero-copy > h2\s*\{[^}]*font-size:38px!important;/)
   assert.match(css, /--report-query-width:\s*884px;/)
   assert.match(css, /html\s*\{[^}]*scrollbar-gutter:stable;/)
   assert.match(css, /\.report-hero > div:first-child\s*\{[^}]*min-width:0;[^}]*flex:1 1 auto;/)
   assert.match(css, /\.report-hero > \.report-query\s*\{[^}]*flex:0 0 auto;/)
   assert.match(css, /\.report-query\s*\{[^}]*grid-template-columns:repeat\(2,190px\) 140px 136px 136px;/)
+  assert.match(standardQuery.template.content, /class="standard-report-query"/)
+  assert.match(standardQuery.template.content, /name="search"/)
+  assert.match(standardQueryStyles, /\.standard-report-query\s*\{[^}]*grid-template-areas:"period chart query export";/)
+  assert.match(standardQueryStyles, /\.standard-report-query :deep\(\.report-period-picker\)\s*\{[^}]*grid-template-rows:14px 40px;/)
+  assert.match(standardQueryStyles, /\.standard-report-query :deep\(\.report-period-picker__trigger\),[\s\S]*?height:40px!important;[^}]*min-height:40px!important;/)
+  assert.match(standardQueryStyles, /\.standard-report-query__submit\s*\{[^}]*margin-top:20px;/)
+  assert.match(standardQueryStyles, /\.standard-report-query__export\s*\{[^}]*margin-top:20px;/)
   assert.match(css, /@media \(max-width: 900px\)[\s\S]*\.report-query\s*\{[^}]*grid-template-columns:repeat\(2,minmax\(180px,1fr\)\) 140px 136px 136px;/)
   assert.doesNotMatch(css, /\.workshop-query\s*\{[^}]*display:/)
   assert.doesNotMatch(css, /\.equipment-query\s+\.app-date-picker/)
@@ -385,6 +518,33 @@ test('intelligent analysis omits the analysis boundary section', () => {
   assert.doesNotMatch(analysis.template.content, /分析边界|analysis\.limitations|analysis-limit/)
 })
 
+test('all standard reports share the leadership analysis structure and compact colored style', () => {
+  for (const name of ['LeadershipReportView', 'WorkshopView', 'EnergyPeriodReportView']) {
+    const template = descriptor(name).template.content
+    assert.match(template, /<AnalysisPanel/)
+    assert.doesNotMatch(template, /(?:leadership|workshop|device)-analysis/)
+  }
+
+  const analysis = descriptor('AnalysisPanel', 'components')
+  const template = analysis.template.content
+  const styles = analysis.styles.map((style) => style.content).join('\n')
+  assert.match(template, /class="analysis-conclusion"/)
+  assert.match(template, /分析结论/)
+  assert.match(template, /核心指标/)
+  assert.match(template, /多维分析结果/)
+  assert.match(template, /class="analysis-facts"/)
+  assert.match(template, /class="analysis-grid"/)
+  assert.match(template, /class="analysis-evidence"/)
+  assert.equal((template.match(/key: '(?:overview|features|alerts|suggestions)'/g) || []).length, 4)
+  assert.match(styles, /\.analysis-facts\{[^}]*grid-template-columns:repeat\(6,minmax\(0,1fr\)\)/)
+  assert.match(styles, /\.analysis-grid\s*\{[^}]*grid-template-columns:repeat\(2,minmax\(0,1fr\)\)!important;/)
+  assert.match(styles, /\.analysis-panel\{[^}]*background:#fff;/)
+  assert.match(styles, /\.analysis-grid article:nth-child\(3\)\{[^}]*background:#fff0f0!important;?/)
+  assert.match(styles, /\.analysis-grid article:nth-child\(4\)\{[^}]*background:#eef8f4!important;?/)
+  assert.match(styles, /\.analysis-panel-head\{[^}]*padding:13px 16px!important;/)
+  assert.match(styles, /@media\(max-width:800px\)[\s\S]*\.analysis-grid\{[^}]*grid-template-columns:1fr!important;?/)
+})
+
 test('all standard report analyses follow the selected report range', () => {
   const leadership = descriptor('LeadershipReportView')
   const workshop = descriptor('WorkshopView')
@@ -401,8 +561,8 @@ test('all standard report analyses follow the selected report range', () => {
   assert.match(workshop.template.content, /:period-end="filters\.endDate"/)
   assert.doesNotMatch(workshop.template.content, /filters\.startDate === filters\.endDate/)
   assert.match(equipment.template.content, /<AnalysisPanel[\s\S]*report-type="equipment"/)
-  assert.match(equipment.template.content, /:period-start="defaultSummaryView \? '' : appliedPeriodStart"/)
-  assert.match(equipment.template.content, /:period-end="defaultSummaryView \? '' : appliedPeriodEnd"/)
+  assert.match(equipment.template.content, /:period-start="rangeQueryApplied \? appliedPeriodStart : ''"/)
+  assert.match(equipment.template.content, /:period-end="rangeQueryApplied \? appliedPeriodEnd : ''"/)
   assert.doesNotMatch(equipment.template.content, /<AnalysisPanel v-else|区间智能分析将在导出报告时生成/)
   assert.match(analysis.scriptSetup.content, /periodStart: props\.periodStart \|\| undefined/)
   assert.match(analysis.scriptSetup.content, /periodEnd: props\.periodEnd \|\| undefined/)
@@ -413,13 +573,23 @@ test('all standard report analyses follow the selected report range', () => {
 test('leadership and equipment second tables default to the recent twelve months', () => {
   const leadership = descriptor('LeadershipReportView')
   const equipment = descriptor('EnergyPeriodReportView')
+  const leadershipRange = leadership.scriptSetup.content.match(/async function loadReport[\s\S]*?\n}\n\nasync function loadDefaultReport/)?.[0] || ''
+  const equipmentRange = equipment.scriptSetup.content.match(/async function loadRange[\s\S]*?\n}\n\nfunction stopSummaryRefresh/)?.[0] || ''
 
   assert.match(leadership.scriptSetup.content, /getLeadershipReport\(today\.slice\(0, 7\), \{ signal \}\)/)
   assert.match(leadership.scriptSetup.content, /monthlyPeriodStart = ref\(recentTwelveMonthStart\(today\)\)/)
+  assert.match(leadership.scriptSetup.content, /const monthlyReport = ref\(null\)/)
+  assert.match(leadership.scriptSetup.content, /monthlyRecords = computed\(\(\) => monthlyReport\.value\?\.monthly_records/)
+  assert.doesNotMatch(leadershipRange, /monthlyReport\.value|monthlyPeriodStart\.value|monthlyPeriodEnd\.value/)
+  assert.match(leadershipRange, /renderCharts\(\{ monthly: false \}\)/)
   assert.match(leadership.template.content, /:title="monthlyTitle"/)
   assert.match(leadership.template.content, /:note="`\$\{monthlyPeriodStart\} 至 \$\{monthlyPeriodEnd\}`"/)
   assert.match(equipment.scriptSetup.content, /getEnergyMonthlyRange\(recentStart, selectedDate/)
-  assert.match(equipment.scriptSetup.content, /summaryPeriodStart\.value = requestedStart/)
+  assert.match(equipment.scriptSetup.content, /const monthlyReport = ref\(null\)/)
+  assert.match(equipment.scriptSetup.content, /summaryRows = computed\(\(\) => sortReportPeriods\(monthlyReport\.value\?\.rows/)
+  assert.match(equipmentRange, /beginRequest\(\{ preserveSummary: true \}\)/)
+  assert.doesNotMatch(equipmentRange, /monthlyReport\.value|summaryPeriodStart\.value|summaryPeriodEnd\.value/)
+  assert.match(equipmentRange, /renderCharts\(\{ summary: false \}\)/)
   assert.match(equipment.template.content, /:title="summaryTitle"/)
   assert.match(equipment.template.content, /:subtitle="summarySubtitle"/)
   assert.match(equipment.scriptSetup.content, /后台补齐 \$\{missing\} 天能耗中/)

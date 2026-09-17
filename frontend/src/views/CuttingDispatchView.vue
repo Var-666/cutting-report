@@ -2,6 +2,8 @@
 import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import CatalogTreeNode from '../components/CatalogTreeNode.vue'
+import AppIcon from '../components/AppIcon.vue'
+import heroImage from '../assets/home-laser-cutting.webp'
 import { parseCuttingInstructionFilename } from '../utils/cuttingInstructionName.js'
 import { formatChineseDateTime } from '../utils/dateDisplay.js'
 import {
@@ -106,6 +108,14 @@ const batchStatusCounts = computed(() => {
 })
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize)))
 const selectedFileCount = computed(() => selectedFiles.value.size)
+const selectedFileItems = computed(() => [...selectedFiles.value.values()])
+const selectedMachine = computed(() => machines.value.find((machine) => machine.machine_ip === dispatchForm.machineIp))
+const activeDispatchStep = computed(() => {
+  if (pushBatch.resultsReady) return 4
+  if (pushBatch.visible) return 3
+  if (selectedFileCount.value) return 2
+  return 1
+})
 const selectableRows = computed(() => rows.value.filter((row) => row.path_available && systemStatus.value?.can_push))
 const allVisibleFilesSelected = computed(() => (
   selectableRows.value.length > 0
@@ -660,24 +670,26 @@ onBeforeUnmount(pausePage)
 </script>
 
 <template>
-  <section class="page-hero dispatch-hero">
-    <div>
+  <section class="page-hero dispatch-hero" :style="{ '--dispatch-hero-image': `url(${heroImage})` }">
+    <div class="dispatch-hero__copy">
       <span class="eyebrow">CUTTING FILE DISPATCH</span>
-      <h2>文件派发</h2>
-      <p>从 PDM 选择切割文件，核对标准名和加工参数后，直接下载并推送到目标机床。</p>
+      <h1>文件派发</h1>
+      <p>从 PDM 选择切割文件，核对标准名称和加工参数后，直接下载并推送到目标机床。</p>
+      <div class="dispatch-source-status" aria-label="文件派发服务状态">
+        <span><i :class="{ ready: systemStatus?.can_push }"></i>{{ systemStatus?.pdm?.label || '正在检查数据源' }}</span>
+        <span>{{ systemStatus?.file_source?.label || '文件服务检查中' }}</span>
+        <span>{{ systemStatus?.safe_mode ? '安全联调模式' : '生产数据模式' }}</span>
+      </div>
     </div>
-    <div class="dispatch-stage-badge">
-      <span>{{ systemStatus?.safe_mode ? '安全联调模式' : '生产数据模式' }}</span>
-      <strong>{{ systemStatus?.pdm?.label || '正在检查数据源' }} · {{ systemStatus?.file_source?.label || '--' }}</strong>
-      <small>{{ systemStatus?.file_source?.message || '正在加载系统状态' }}</small>
-    </div>
+    <p class="dispatch-hero__slogan"><strong>精准的数据</strong><span>驱动高效的生产</span></p>
   </section>
 
   <div class="dispatch-flow" aria-label="文件派发流程">
-    <div class="active"><i>01</i><span><strong>选择项目目录</strong><small>项目 · 分段 · 文件分类</small></span></div>
-    <div><i>02</i><span><strong>核对并派发</strong><small>标准名 · 加工参数 · 目标机床</small></span></div>
+    <div v-for="step in [{ number: 1, title: '选择项目目录', hint: '项目 · 分段 · 文件分类' }, { number: 2, title: '选择文件', hint: '标准名 · 加工参数' }, { number: 3, title: '确认派发', hint: '核对清单 · 设置机床' }, { number: 4, title: '完成派发', hint: '推送至目标机床' }]" :key="step.number" :class="{ active: activeDispatchStep === step.number, complete: activeDispatchStep > step.number }">
+      <i><AppIcon v-if="activeDispatchStep > step.number" name="check" size="17" /> <template v-else>{{ step.number }}</template></i><span><strong>{{ step.title }}</strong><small>{{ step.hint }}</small></span>
+    </div>
   </div>
-  <p class="dispatch-push-scope" role="note">可一次选择最多 20 个 PDM 文件。标准文件名自动识别材质和板厚；非标准文件名必须人工填写参数并明确确认。系统按顺序下载和推送，单个文件失败不会中断其余任务。</p>
+  <p class="dispatch-push-scope" role="note"><AppIcon name="check" size="17" /><span>一次最多选择 20 个 PDM 文件；标准文件名自动识别参数，非标准文件名需人工核对。系统按顺序派发，单个文件失败不会中断其余任务。</span></p>
 
   <div v-if="notice" class="dispatch-notice" :class="{ error: noticeType === 'error' }" role="status">
     <span>{{ notice }}</span>
@@ -687,7 +699,7 @@ onBeforeUnmount(pausePage)
   <div class="dispatch-workspace download-workspace">
     <aside class="panel directory-panel">
       <div class="panel-title">
-        <div><span>01</span><h2>项目目录</h2></div>
+        <div><span class="dispatch-section-icon"><AppIcon name="briefcase" size="17" /></span><small>01</small><h2>项目目录</h2></div>
         <p>{{ projectCountLabel }}</p>
       </div>
       <form class="project-search" @submit.prevent="openSelectedProject">
@@ -718,7 +730,7 @@ onBeforeUnmount(pausePage)
 
     <section class="panel dispatch-files-panel">
       <div class="panel-title">
-        <div><span>02</span><h2>目录文件</h2></div>
+        <div><span class="dispatch-section-icon blue"><AppIcon name="file" size="17" /></span><small>02</small><h2>目录文件</h2></div>
         <p>{{ selectedCatalog ? `共 ${total} 条 · 当前第 ${page} 页` : '请选择左侧目录' }}</p>
       </div>
       <div class="selected-directory"><span>当前位置</span><strong>{{ selectedPath }}</strong></div>
@@ -756,12 +768,35 @@ onBeforeUnmount(pausePage)
       <div class="dispatch-pagination"><button type="button" :disabled="page <= 1 || loading" @click="changePage(page - 1)">上一页</button><span>第 {{ page }} / {{ totalPages }} 页</span><button type="button" :disabled="page >= totalPages || loading" @click="changePage(page + 1)">下一页</button></div>
       <p class="dispatch-download-hint">确认后系统会复核当前 PDM 版本和路径，再临时下载、校验并推送；成功后删除本地副本。{{ systemStatus && !systemStatus.can_push ? '当前文件来源或魔盒服务不可用，暂不可派发。' : '' }}</p>
     </section>
+
+    <aside class="panel dispatch-confirm-panel">
+      <div class="panel-title">
+        <div><span class="dispatch-section-icon cyan"><AppIcon name="send" size="17" /></span><small>03</small><h2>派发确认</h2></div>
+      </div>
+      <div class="dispatch-confirm-content">
+        <span class="confirm-label">已选择文件</span>
+        <p class="confirm-total"><strong>{{ selectedFileCount }}</strong> 项</p>
+        <div class="confirm-file-list" :class="{ empty: !selectedFileCount }">
+          <template v-if="selectedFileCount">
+            <span v-for="file in selectedFileItems.slice(0, 5)" :key="fileKey(file)" :title="file.document_no || file.physical_file_name">{{ file.document_no || file.physical_file_name }}</span>
+            <button v-if="selectedFileCount > 5" type="button" @click="openPushBatch">其余 {{ selectedFileCount - 5 }} 项 · 展开全部</button>
+          </template>
+          <template v-else><AppIcon name="file" size="23" /><span>请从目录文件中选择待派发文件</span></template>
+        </div>
+        <div class="confirm-machine">
+          <label for="dispatch-machine"><AppIcon name="settings" size="16" />目标机床</label>
+          <AppSelect id="dispatch-machine" v-model="dispatchForm.machineIp" :disabled="!machines.length || pushBatch.saving"><option value="" disabled>请选择目标机床</option><option v-for="machine in machines" :key="machine.machine_ip" :value="machine.machine_ip">{{ machine.server_name ? `${machine.server_name} · ` : '' }}{{ machine.machine_ip }}（{{ machine.online ? '在线' : '待确认' }}）</option></AppSelect>
+          <small><i :class="{ ready: selectedMachine?.online }"></i>{{ selectedMachine ? `${selectedMachine.machine_ip} · ${selectedMachine.online ? '机床在线' : '未从列表确认在线'}` : systemStatus?.file_source?.message || '请选择接收文件的机床' }}</small>
+        </div>
+        <button class="confirm-dispatch-button" type="button" :disabled="!selectedFileCount || loading || pushBatch.saving || !systemStatus?.can_push || !dispatchForm.machineIp" @click="openPushBatch"><AppIcon name="send" size="18" tone="light" />设置参数并派发</button>
+      </div>
+    </aside>
   </div>
 
   <section class="panel dispatch-history-panel">
-    <div class="panel-title"><div><span>03</span><h2>派发记录</h2></div><p>文件准备 → 魔盒上传 → 机床指派，各阶段独立记录</p></div>
+    <div class="panel-title"><div><span class="dispatch-section-icon green"><AppIcon name="check" size="17" /></span><small>04</small><h2>派发记录</h2></div><p>文件准备 → 魔盒上传 → 机床指派，各阶段独立记录</p></div>
     <div v-if="histories.length" class="dispatch-table-wrap"><table v-content-table="pageActive" class="dispatch-table history-table"><thead><tr><th>任务标识</th><th>文件名</th><th>机床IP</th><th>阶段 / 状态</th><th>魔盒UUID</th><th>失败原因</th><th>创建时间</th><th>操作</th></tr></thead><tbody><tr v-for="item in histories" :key="item.dispatch_id"><td><code>{{ item.task_identifier || item.dispatch_id }}</code></td><td>{{ item.document_no }}<small class="dispatch-project-name">数量 {{ item.quantity }}</small></td><td>{{ item.machine_ip }}</td><td><span class="dispatch-status" :class="item.status">{{ item.status_label }}</span><small class="dispatch-project-name">{{ item.stage_label }}</small></td><td><code>{{ item.remote_task_id || '--' }}</code></td><td class="history-error">{{ item.last_error || '--' }}</td><td>{{ formatTime(item.created_at) }}</td><td><div class="history-actions"><button v-if="item.can_execute" type="button" :disabled="!!operatingId" @click="executeSaved(item)">{{ item.remote_task_id ? '重试指派' : '执行推送' }}</button><button v-if="item.can_cancel" type="button" class="danger" :disabled="!!operatingId" @click="cancelSaved(item)">取消指派</button><span v-if="!item.can_execute && !item.can_cancel">--</span></div></td></tr></tbody></table></div>
-    <div v-else class="dispatch-empty-history"><i>↗</i><strong>暂无派发记录</strong><span>从项目目录选择文件并确认后，即可直接派发。</span></div>
+    <div v-else class="dispatch-empty-history"><i><AppIcon name="send" size="20" /></i><strong>暂无派发记录</strong><span>从项目目录选择文件并确认后，即可直接派发。</span></div>
   </section>
 
   <Teleport to="body">
@@ -1025,5 +1060,151 @@ onBeforeUnmount(pausePage)
   .push-batch-footer { align-items:stretch; flex-direction:column; }
   .push-batch-footer > div { display:grid; grid-template-columns:1fr 1fr; }
   .push-batch-footer > div .primary { grid-column:1/-1; }
+}
+
+/* 与生产指挥中心统一的文件派发视觉层 */
+.dispatch-hero { position:relative; min-height:160px; display:grid; grid-template-columns:minmax(460px,1fr) 330px; align-items:center; overflow:hidden; padding:24px 34px; border:1px solid rgba(255,255,255,.72); border-radius:14px; background:linear-gradient(90deg,rgba(246,252,255,.98) 0%,rgba(238,248,253,.9) 43%,rgba(7,48,76,.04) 70%),var(--dispatch-hero-image) center 53%/cover no-repeat; box-shadow:0 12px 30px rgba(22,62,89,.07); animation:surface-in .46s cubic-bezier(.2,.75,.25,1) both; }
+.dispatch-hero::after { content:""; position:absolute; inset:0; pointer-events:none; background:linear-gradient(116deg,transparent 0 47%,rgba(255,255,255,.28) 47.2%,transparent 47.8%); }
+.dispatch-hero__copy,.dispatch-hero__slogan { position:relative; z-index:1; }
+.dispatch-hero .eyebrow { display:block; margin:0 0 5px; color:#237fb7; font-size:10px; font-weight:700; letter-spacing:1.4px; }
+.dispatch-hero h1 { margin:0 0 7px; color:#153f5d; font-size:38px; line-height:1.08; letter-spacing:1px; }
+.dispatch-hero__copy>p { max-width:600px; margin:0; color:#607a8d; font-size:13px; line-height:1.7; }
+.dispatch-source-status { display:flex; flex-wrap:wrap; gap:7px; margin-top:12px; }
+.dispatch-source-status span { display:inline-flex; align-items:center; gap:6px; padding:4px 8px; color:#537084; border:1px solid rgba(93,145,170,.15); border-radius:999px; background:rgba(255,255,255,.68); font-size:9px; }
+.dispatch-source-status i,.confirm-machine small i { width:7px; height:7px; display:inline-block; flex:0 0 auto; border-radius:50%; background:#e49a37; box-shadow:0 0 0 3px rgba(228,154,55,.09); }
+.dispatch-source-status i.ready,.confirm-machine small i.ready { background:#18ad80; box-shadow:0 0 0 3px rgba(24,173,128,.09); }
+.dispatch-hero__slogan { justify-self:end; margin:0 12px 0 0; color:#eefaff; text-align:right; text-shadow:0 2px 10px rgba(4,37,58,.8); transform:rotate(-6deg); }
+.dispatch-hero__slogan strong,.dispatch-hero__slogan span { display:block; }
+.dispatch-hero__slogan strong { font-size:17px; letter-spacing:4px; }
+.dispatch-hero__slogan span { margin-top:5px; font-size:12px; letter-spacing:3px; }
+.dispatch-flow { grid-template-columns:repeat(4,minmax(0,1fr)); gap:0; overflow:hidden; margin:12px 0 0; border-color:#dbe6ec; border-radius:11px; box-shadow:0 7px 22px rgba(22,62,89,.05); }
+.dispatch-flow>div { min-height:64px; gap:13px; padding:12px 28px; border-right:0; background:#fff; }
+.dispatch-flow>div::after { content:""; width:82px; height:1px; right:-39px; background:repeating-linear-gradient(90deg,#bed2dd 0 4px,transparent 4px 7px); }
+.dispatch-flow i { width:32px; height:32px; color:#58788e; border-color:#bad0dd; font-size:14px; font-weight:700; }
+.dispatch-flow strong { color:#294b63; font-size:12px; }
+.dispatch-flow small { color:#7a91a1; font-size:9px; }
+.dispatch-flow .active { background:linear-gradient(135deg,#f5fbfe,#fff); }
+.dispatch-flow .active i { border-color:#258ee0; background:linear-gradient(135deg,#258ee0,#20a8e7); box-shadow:0 6px 14px rgba(37,142,224,.2); }
+.dispatch-flow .complete i { color:#fff; border-color:#22aa88; background:linear-gradient(135deg,#16a39d,#42c9a0); }
+.dispatch-push-scope { display:flex; align-items:center; gap:8px; margin:8px 0 0; padding:8px 12px; color:#607b8e; border:1px solid #dbe9ef; border-left:3px solid #16a39d; border-radius:7px; background:#f4fafb; font-size:10px; line-height:1.6; }
+.dispatch-push-scope .app-icon { color:#16a39d; }
+.dispatch-notice { margin:10px 0 0; border:1px solid #cae6e8; border-left:3px solid #16a39d; border-radius:8px; }
+.dispatch-notice.error { border-color:#f0ccca; border-left-color:#df5961; }
+.dispatch-workspace.download-workspace { grid-template-columns:minmax(250px,.72fr) minmax(580px,2fr) minmax(235px,.72fr); gap:12px; margin-top:12px; align-items:stretch; }
+.dispatch-workspace>.panel,.dispatch-history-panel { overflow:hidden; border:1px solid #dbe6ec; border-radius:11px; box-shadow:0 7px 22px rgba(22,62,89,.05); animation:surface-in .44s cubic-bezier(.2,.75,.25,1) both; }
+.dispatch-files-panel { animation-delay:.05s!important; }
+.dispatch-confirm-panel { animation-delay:.1s!important; }
+.panel-title { min-height:48px; padding:0 13px; border-bottom:1px solid #e4edf1; background:linear-gradient(90deg,#fff,#fbfdfe); }
+.panel-title>div { gap:7px; }
+.panel-title>div>small { color:#7c92a2; font-size:10px; font-weight:700; }
+.panel-title h2 { color:#193c57; font-size:14px; }
+.panel-title>p { color:#6e8799; font-size:9px; }
+.dispatch-section-icon { width:27px!important; height:27px!important; display:grid!important; place-items:center; padding:0!important; color:#16a39d!important; border:0!important; border-radius:8px!important; background:#e8f7f6!important; font-size:inherit!important; }
+.dispatch-section-icon.blue { color:#237fb7!important; background:#eaf5fb!important; }
+.dispatch-section-icon.cyan { color:#0ca6b1!important; background:#e6f7f8!important; }
+.dispatch-section-icon.green { color:#2aa473!important; background:#eaf7f1!important; }
+.project-search,.file-name-search { border-bottom-color:#e4edf1; background:#fbfdfe; }
+.project-search { padding:11px 12px; }
+.project-search input,.project-search .app-select { height:36px; border-color:#cbdde6; border-radius:7px; background:#fff; }
+.project-search button,.file-name-search button { border-color:#bdd7e4; border-radius:7px; color:#237fb7; background:#f8fcfe; }
+.directory-scroll { min-height:370px; max-height:540px; }
+.project-node-row { border-radius:7px; }
+.project-node-row:hover { background:#f2f8fb; }
+.project-node-row.selected { background:linear-gradient(90deg,#e4f6fb,#eef9fb); box-shadow:inset 3px 0 #268fd0; }
+.project-folder { border-color:#3b9be0; background:#e7f5ff; }
+.project-folder::before { border-color:#3b9be0; background:#e7f5ff; }
+.selected-directory { min-height:39px; padding:8px 13px; border-bottom-color:#dfeaf0; background:linear-gradient(90deg,#f0f8fb,#f8fcfd); }
+.selected-directory span { color:#7890a0; }
+.selected-directory strong { color:#24618a; font-size:10px; }
+.file-name-search { padding:9px 13px; }
+.file-name-search>div { width:min(355px,100%); }
+.file-name-search input { height:34px; border-color:#cbdde6; border-radius:7px; }
+.download-batch-toolbar { min-height:44px; padding:7px 13px; border-bottom-color:#e4edf1; background:#fff; }
+.download-batch-toolbar button { min-height:31px; border-color:#c9dce6; border-radius:7px; }
+.download-batch-toolbar button.primary { border-color:#258dda; background:linear-gradient(135deg,#258dda,#1ca5d7); box-shadow:0 5px 12px rgba(35,133,190,.16); }
+.source-file-table { min-width:860px; }
+.dispatch-table th,.dispatch-table td { height:39px; padding:7px 9px; border-bottom-color:#e7eef2; }
+.source-file-table th { color:#536f83; background:#f0f6f9; font-size:9px; }
+.source-file-table thead .file-download-cell { background:#f0f6f9; }
+.dispatch-table tbody tr:hover { background:#f7fbfd; }
+.dispatch-table tbody tr.selected { background:#eef8fb; box-shadow:inset 3px 0 #2696c8; }
+.file-download-cell { width:100px; }
+.file-download-cell button { min-height:29px; padding:4px 8px; border-color:#c5dbe5; border-radius:6px; background:#f9fcfd; font-size:9px; }
+.filename-standard { color:#168c67; background:#e8f7f1; }
+.filename-standard.warning { color:#d48328; background:#fff3e3; }
+.dispatch-pagination { padding:9px 13px 0; }
+.dispatch-pagination button { border-radius:6px; }
+.dispatch-download-hint { margin:11px 14px 13px; font-size:9px; line-height:1.55; }
+.dispatch-confirm-panel { min-width:0; }
+.dispatch-confirm-content { display:flex; flex-direction:column; height:calc(100% - 49px); padding:14px 15px; box-sizing:border-box; }
+.confirm-label { color:#627d90; font-size:10px; font-weight:700; }
+.confirm-total { margin:4px 0 10px; color:#234b68; font-size:12px; }
+.confirm-total strong { margin-right:3px; color:#154a70; font-size:25px; font-variant-numeric:tabular-nums; }
+.confirm-file-list { min-height:112px; display:flex; flex-direction:column; gap:7px; padding:10px 12px; border:1px solid #dbe6ec; border-radius:7px; background:#fbfdfe; }
+.confirm-file-list>span { overflow:hidden; color:#4b687d; text-overflow:ellipsis; white-space:nowrap; font-size:9px; }
+.confirm-file-list>button { align-self:flex-end; min-height:22px; margin-top:auto; padding:0; color:#2586bd; border:0; background:transparent; font-size:9px; }
+.confirm-file-list.empty { align-items:center; justify-content:center; gap:8px; color:#8aa0af; text-align:center; }
+.confirm-file-list.empty>span { color:#8aa0af; white-space:normal; line-height:1.5; }
+.confirm-machine { margin-top:13px; padding-top:12px; border-top:1px solid #e5edf1; }
+.confirm-machine label { display:flex; align-items:center; gap:6px; margin-bottom:8px; color:#294f69; font-size:11px; font-weight:700; }
+.confirm-machine .app-select { width:100%; }
+.confirm-machine small { display:flex; align-items:flex-start; gap:6px; margin-top:8px; color:#7b91a1; font-size:9px; line-height:1.45; }
+.confirm-machine small i { margin-top:3px; }
+.confirm-dispatch-button { min-height:40px; display:flex; align-items:center; justify-content:center; gap:7px; margin-top:auto; padding:0 12px; color:#fff; border:0; border-radius:7px; background:linear-gradient(135deg,#238bdb,#149fd8); box-shadow:0 8px 18px rgba(32,137,202,.22); font-size:11px; font-weight:700; }
+.confirm-dispatch-button:hover:not(:disabled) { transform:translateY(-1px); box-shadow:0 10px 22px rgba(32,137,202,.28); }
+.confirm-dispatch-button:disabled { opacity:.48; cursor:not-allowed; box-shadow:none; }
+.dispatch-history-panel { margin-top:12px; }
+.history-table th { color:#dcecf2; background:linear-gradient(90deg,#0b4f76,#075f86); }
+.dispatch-status.sent { color:#168c67; background:#e8f7f1; }
+.history-actions button { border-radius:6px; }
+.dispatch-empty-history i { color:#237fb7; border:0; background:#eaf5fb; }
+.push-batch-backdrop { backdrop-filter:blur(5px); }
+.push-batch-dialog { border:1px solid rgba(255,255,255,.25); border-radius:14px; box-shadow:0 28px 80px rgba(5,25,38,.32); }
+.push-batch-header { background:linear-gradient(120deg,#0a4e73,#087e9d); }
+.push-batch-header button,.push-batch-common button,.push-batch-remove,.push-batch-footer button { border-radius:7px; }
+.push-batch-summary,.push-batch-error,.push-batch-progress { border-radius:7px; }
+.push-batch-table-wrap { border-radius:8px; }
+.push-batch-footer button.primary { border-color:#238bd8; background:linear-gradient(135deg,#238bd8,#159fd3); }
+
+@media (max-width:1120px) {
+  .dispatch-workspace.download-workspace { grid-template-columns:minmax(245px,.65fr) minmax(560px,1.6fr); }
+  .dispatch-confirm-panel { grid-column:1/-1; }
+  .dispatch-confirm-content { display:grid; grid-template-columns:140px minmax(240px,1fr) minmax(230px,.8fr) 210px; align-items:center; gap:14px; height:auto; }
+  .confirm-label { align-self:end; }
+  .confirm-total { grid-column:1; margin:0; }
+  .confirm-file-list { grid-column:2; grid-row:1/3; min-height:86px; }
+  .confirm-machine { grid-column:3; grid-row:1/3; margin:0; padding:0; border:0; }
+  .confirm-dispatch-button { grid-column:4; grid-row:1/3; margin:0; }
+}
+@media (max-width:1000px) {
+  .dispatch-hero { grid-template-columns:1fr 260px; padding:24px; }
+  .dispatch-flow { grid-template-columns:repeat(2,1fr); }
+  .dispatch-flow>div:nth-child(2) { border-right:0; }
+  .dispatch-workspace.download-workspace { grid-template-columns:1fr; }
+  .dispatch-confirm-panel { grid-column:auto; }
+  .dispatch-confirm-content { grid-template-columns:120px minmax(220px,1fr) minmax(220px,1fr); }
+  .confirm-dispatch-button { grid-column:1/-1; grid-row:auto; }
+  .directory-scroll { max-height:410px; }
+}
+@media (max-width:680px) {
+  .dispatch-hero { grid-template-columns:1fr; min-height:190px; padding:22px 18px; background:linear-gradient(90deg,rgba(246,252,255,.97),rgba(238,248,253,.88)),var(--dispatch-hero-image) center/cover; }
+  .dispatch-hero h1 { font-size:31px; }
+  .dispatch-hero__copy>p { font-size:12px; }
+  .dispatch-hero__slogan { display:none; }
+  .dispatch-source-status { gap:5px; }
+  .dispatch-flow { grid-template-columns:1fr; }
+  .dispatch-flow>div { min-height:58px; padding:10px 18px; border-bottom:1px solid #e7eef2; }
+  .dispatch-flow>div::after { display:none; }
+  .dispatch-push-scope { align-items:flex-start; }
+  .file-name-search { align-items:stretch; }
+  .download-batch-toolbar { align-items:stretch; }
+  .dispatch-confirm-content { display:flex; height:auto; }
+  .confirm-file-list { min-height:100px; }
+  .confirm-machine { margin-top:13px; padding-top:12px; border-top:1px solid #e5edf1; }
+  .confirm-dispatch-button { margin-top:14px; }
+}
+@media (prefers-reduced-motion:reduce) {
+  .dispatch-hero,.dispatch-workspace>.panel,.dispatch-history-panel { animation:none; }
+  .confirm-dispatch-button { transition:none; }
 }
 </style>

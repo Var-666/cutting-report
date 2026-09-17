@@ -13,10 +13,10 @@ import {
 } from '../api/reports'
 import { recentTwelveMonthStart, reportToday } from '../api/reportDates.js'
 import AnalysisPanel from '../components/AnalysisPanel.vue'
-import ReportExportMenu from '../components/ReportExportMenu.vue'
-import ReportPeriodPicker from '../components/ReportPeriodPicker.vue'
+import AppIcon from '../components/AppIcon.vue'
 import ReportTrendPanel from '../components/ReportTrendPanel.vue'
-import { formatChineseDate, formatChineseDateTime, formatChineseMonth, sortReportPeriods } from '../utils/dateDisplay.js'
+import StandardReportQuery from '../components/StandardReportQuery.vue'
+import { formatChineseDateTime, formatChineseMonth, sortReportPeriods } from '../utils/dateDisplay.js'
 import { createReportChartGrid, REPORT_CHART_COLORS } from '../utils/reportChartTheme.js'
 
 use([BarChart, LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
@@ -31,11 +31,17 @@ const appliedPeriodStart = ref(today)
 const appliedPeriodEnd = ref(today)
 const summaryPeriodStart = ref(recentTwelveMonthStart(today))
 const summaryPeriodEnd = ref(today)
-const defaultSummaryView = ref(true)
+const rangeQueryApplied = ref(false)
 const taskDay = ref(null)
-const periodReport = ref(null)
+const monthlyReport = ref(null)
 const chartType = ref('bar_line')
+const energyChartOptions = [
+  { value: 'bar_line', label: '柱线组合' },
+  { value: 'bar', label: '双柱状图' },
+  { value: 'line', label: '双折线图' },
+]
 const loading = ref(false)
+const summaryLoading = ref(false)
 const error = ref('')
 const taskPanel = ref(null)
 const periodPanel = ref(null)
@@ -51,13 +57,15 @@ let summaryRefreshTimer = null
 let summaryRefreshCount = 0
 let resizeListening = false
 
-function beginRequest() {
+function beginRequest({ preserveSummary = false } = {}) {
   controller?.abort()
-  backgroundController?.abort()
-  backgroundController = null
-  refreshRequestSequence += 1
-  refreshController?.abort()
-  refreshController = null
+  if (!preserveSummary) {
+    backgroundController?.abort()
+    backgroundController = null
+    refreshRequestSequence += 1
+    refreshController?.abort()
+    refreshController = null
+  }
   controller = new AbortController()
   return { sequence: ++requestSequence, signal: controller.signal }
 }
@@ -67,14 +75,9 @@ function requestIsCurrent(sequence, signal) {
 }
 
 const taskRows = computed(() => taskDay.value?.records || [])
-const dailyRows = computed(() => periodReport.value?.rows || [])
-const summaryRows = computed(() => {
-  return defaultSummaryView.value
-    ? sortReportPeriods(dailyRows.value, 'desc')
-    : dailyRows.value
-})
-const summaryChartRows = computed(() => sortReportPeriods(dailyRows.value))
-const month = computed(() => periodReport.value)
+const summaryRows = computed(() => sortReportPeriods(monthlyReport.value?.rows || [], 'desc'))
+const summaryChartRows = computed(() => sortReportPeriods(monthlyReport.value?.rows || []))
+const month = computed(() => monthlyReport.value)
 const units = computed(() => taskDay.value?.units || { electricity: 'kWh', gas: 'Nm³' })
 const summary = computed(() => taskDay.value?.summary || {
   task_count: 0,
@@ -86,17 +89,24 @@ const summary = computed(() => taskDay.value?.summary || {
 })
 const equipmentScopeLabel = computed(() => taskDay.value?.equipment_scope?.join(' / ') || 'Cutter01')
 const configurationError = computed(() => taskDay.value?.configuration_error || '')
-const summaryTitle = computed(() => defaultSummaryView.value ? '近12个月月度能耗汇总' : '区间每日能耗汇总')
-const summaryCountLabel = computed(() => `${summaryRows.value.length} ${defaultSummaryView.value ? '个月' : '天'}`)
-const summaryDateHeading = computed(() => defaultSummaryView.value ? '月份' : '日期')
-const summaryChartLabel = computed(() => defaultSummaryView.value ? '月度能耗图' : '每日能耗图')
-const summaryTableLabel = computed(() => defaultSummaryView.value ? '近12个月月度能耗汇总表' : '区间每日能耗汇总表')
-const summaryEmptyText = computed(() => defaultSummaryView.value ? '近12个月暂无月度汇总' : '所选区间暂无每日汇总')
+const energyCoverage = computed(() => {
+  const taskCount = Number(summary.value.task_count || 0)
+  if (!taskCount) return 0
+  const matchedRecords = Number(summary.value.electricity_record_count || 0)
+    + Number(summary.value.gas_record_count || 0)
+  return Math.max(0, Math.min(100, Math.round((matchedRecords / (taskCount * 2)) * 100)))
+})
+const summaryTitle = '近12个月月度能耗汇总'
+const summaryCountLabel = computed(() => `${summaryRows.value.length} 个月`)
+const summaryDateHeading = '月份'
+const summaryChartLabel = '月度能耗图'
+const summaryTableLabel = '近12个月月度能耗汇总表'
+const summaryEmptyText = '近12个月暂无月度汇总'
 const summarySubtitle = computed(() => {
   const base = `${summaryPeriodStart.value} 至 ${summaryPeriodEnd.value} · ${summaryCountLabel.value}`
-  const missing = Number(periodReport.value?.missing_day_count || 0)
-  if (!defaultSummaryView.value || !missing) return base
-  return periodReport.value?.syncing
+  const missing = Number(monthlyReport.value?.missing_day_count || 0)
+  if (!missing) return base
+  return monthlyReport.value?.syncing
     ? `${base} · 后台补齐 ${missing} 天能耗中`
     : `${base} · ${missing} 天暂无能耗数据`
 })
@@ -120,9 +130,7 @@ function duration(value) {
 }
 
 function valueText(item) { return format(item?.value) }
-function summaryPeriod(value) {
-  return defaultSummaryView.value ? formatChineseMonth(value) : formatChineseDate(value)
-}
+function summaryPeriod(value) { return formatChineseMonth(value) }
 function chartValue(value) {
   if (value === null || value === undefined || !Number.isFinite(Number(value))) return null
   return Number(Number(value).toFixed(1))
@@ -140,13 +148,13 @@ function chartOption(rows, labels) {
       { type: 'value', name: `气耗\n${units.value.gas}`, splitLine: { show: false } },
     ],
     series: [
-      { name: '电耗', type: line ? 'line' : 'bar', yAxisIndex: 0, data: rows.map((row) => chartValue(row.electricity)), tooltip: { valueFormatter: (value) => format(value) }, itemStyle: { color: REPORT_CHART_COLORS.primary } },
-      { name: '气耗', type: chartType.value === 'bar' ? 'bar' : 'line', yAxisIndex: 1, data: rows.map((row) => chartValue(row.gas)), tooltip: { valueFormatter: (value) => format(value) }, itemStyle: { color: chartType.value === 'bar_line' ? REPORT_CHART_COLORS.accent : REPORT_CHART_COLORS.secondary } },
+      { name: '电耗', type: line ? 'line' : 'bar', smooth: line, yAxisIndex: 0, data: rows.map((row) => chartValue(row.electricity)), tooltip: { valueFormatter: (value) => format(value) }, itemStyle: { color: REPORT_CHART_COLORS.primary } },
+      { name: '气耗', type: chartType.value === 'bar' ? 'bar' : 'line', smooth: chartType.value !== 'bar', yAxisIndex: 1, data: rows.map((row) => chartValue(row.gas)), tooltip: { valueFormatter: (value) => format(value) }, itemStyle: { color: chartType.value === 'bar_line' ? REPORT_CHART_COLORS.accent : REPORT_CHART_COLORS.secondary } },
     ],
   }
 }
 
-function renderCharts() {
+function renderCharts({ summary: renderSummary = true } = {}) {
   if (!pageActive.value) return
   const taskChartElement = taskPanel.value?.getChartElement()
   const periodChartElement = periodPanel.value?.getChartElement()
@@ -156,10 +164,10 @@ function renderCharts() {
     const labels = taskRows.value.slice(0, 50).map((row) => `${String(row.production_time || '').slice(5, 16).replace('T', ' ')} ${row.segment_name || ''}`)
     taskChart.setOption(chartOption(rows, labels), true)
   }
-  if (periodChartElement && periodReport.value) {
+  if (renderSummary && periodChartElement && monthlyReport.value) {
     periodChart ||= init(periodChartElement)
     const rows = summaryChartRows.value.map((row) => ({ electricity: row.electricity?.value, gas: row.gas?.value }))
-    const labels = summaryChartRows.value.map((row) => defaultSummaryView.value ? row.report_date : row.report_date.slice(5))
+    const labels = summaryChartRows.value.map((row) => row.report_date)
     periodChart.setOption(chartOption(rows, labels), true)
   }
 }
@@ -170,8 +178,7 @@ async function loadRange(force = false) {
     error.value = '结束日期不能早于开始日期'
     return
   }
-  stopSummaryRefresh()
-  const { sequence, signal } = beginRequest()
+  const { sequence, signal } = beginRequest({ preserveSummary: true })
   loading.value = true
   error.value = ''
   const requestedStart = periodStart.value
@@ -180,14 +187,11 @@ async function loadRange(force = false) {
     const result = await getEnergyRange(requestedStart, requestedEnd, { force, signal })
     if (!requestIsCurrent(sequence, signal)) return
     taskDay.value = result.task_report
-    periodReport.value = result.period_report
     appliedPeriodStart.value = requestedStart
     appliedPeriodEnd.value = requestedEnd
-    summaryPeriodStart.value = requestedStart
-    summaryPeriodEnd.value = requestedEnd
-    defaultSummaryView.value = false
+    rangeQueryApplied.value = true
     await nextTick()
-    renderCharts()
+    renderCharts({ summary: false })
   } catch (exception) {
     if (exception.name !== 'AbortError' && sequence === requestSequence) error.value = exception.message
   } finally {
@@ -205,7 +209,7 @@ function stopSummaryRefresh() {
 
 async function applyMonthlySummary(summaryResult) {
   if (!pageActive.value) return
-  periodReport.value = summaryResult
+  monthlyReport.value = summaryResult
   await nextTick()
   renderCharts()
   scheduleSummaryRefresh(summaryResult)
@@ -213,13 +217,13 @@ async function applyMonthlySummary(summaryResult) {
 
 function scheduleSummaryRefresh(summaryResult) {
   stopSummaryRefresh()
-  if (!pageActive.value || !defaultSummaryView.value || !summaryResult?.syncing
+  if (!pageActive.value || !summaryResult?.syncing
       || !summaryResult?.missing_day_count || summaryRefreshCount >= 600) return
   const requestedStart = summaryPeriodStart.value
   const requestedEnd = summaryPeriodEnd.value
   summaryRefreshTimer = window.setTimeout(async () => {
     summaryRefreshTimer = null
-    if (!pageActive.value || !defaultSummaryView.value
+    if (!pageActive.value
         || requestedStart !== summaryPeriodStart.value
         || requestedEnd !== summaryPeriodEnd.value) return
     summaryRefreshCount += 1
@@ -244,6 +248,7 @@ async function loadDefaultRanges() {
   summaryRefreshCount = 0
   const { sequence, signal } = beginRequest()
   loading.value = true
+  summaryLoading.value = true
   error.value = ''
   const selectedDate = periodStart.value
   const recentStart = recentTwelveMonthStart(selectedDate)
@@ -251,7 +256,7 @@ async function loadDefaultRanges() {
   appliedPeriodEnd.value = selectedDate
   summaryPeriodStart.value = recentStart
   summaryPeriodEnd.value = selectedDate
-  defaultSummaryView.value = true
+  rangeQueryApplied.value = false
 
   const showError = (exception) => {
     if (exception.name !== 'AbortError' && requestIsCurrent(sequence, signal)) error.value ||= exception.message
@@ -274,6 +279,9 @@ async function loadDefaultRanges() {
       await applyMonthlySummary(summaryResult)
     })
     .catch(showError)
+    .finally(() => {
+      if (sequence === requestSequence) summaryLoading.value = false
+    })
 
   // Daily meter synchronization is independent from first paint. Existing
   // monthly snapshots render first; the current month refreshes silently once
@@ -284,8 +292,7 @@ async function loadDefaultRanges() {
   getEnergyDay(selectedDate, { signal: syncSignal })
     .then(() => getEnergyMonthlyRange(recentStart, selectedDate, { signal: syncSignal }))
     .then(async (summaryResult) => {
-      if (!pageActive.value || syncSignal.aborted
-          || selectedDate !== periodStart.value || !defaultSummaryView.value) return
+      if (!pageActive.value || syncSignal.aborted) return
       await applyMonthlySummary(summaryResult)
     })
     .catch(() => {})
@@ -346,6 +353,7 @@ function pause() {
   refreshController?.abort()
   refreshController = null
   loading.value = false
+  summaryLoading.value = false
   stopSummaryRefresh()
   stopResizeListening()
   disposeCharts()
@@ -374,7 +382,7 @@ onActivated(async () => {
   pageActive.value = true
   startResizeListening()
   await nextTick()
-  if ((!taskDay.value || !periodReport.value) && !loading.value) await initializeReport()
+  if ((!taskDay.value || !monthlyReport.value) && !loading.value) await initializeReport()
   else renderCharts()
   resizeCharts()
 })
@@ -384,35 +392,65 @@ watch(chartType, async () => { await nextTick(); renderCharts() })
 </script>
 
 <template>
-  <section class="page-hero report-hero equipment-hero">
-    <div><span class="eyebrow">EQUIPMENT ENERGY REPORT</span><h2>设备报表</h2><p>查看 {{ equipmentScopeLabel }} 在自定义区间内的任务和能耗数据</p></div>
-    <form class="report-query equipment-query energy-period-query" @submit.prevent="loadRange(true)">
-      <ReportPeriodPicker
+  <div class="device-report-shell">
+    <section class="page-hero report-hero report-hero--query equipment-hero">
+      <div class="report-hero-copy device-hero__copy">
+        <span class="report-hero-eyebrow">EQUIPMENT INTELLIGENCE</span>
+        <h2>设备报表</h2>
+        <p class="report-hero-description">多维度分析设备能耗、运行效率与任务执行情况，为生产管理与能效优化提供数据支持。</p>
+        <p class="report-hero-meta"><AppIcon name="calendar" size="14" />统计区间：{{ appliedPeriodStart }} 至 {{ appliedPeriodEnd }}<span>设备运行与能耗</span></p>
+      </div>
+      <p class="device-hero__slogan"><strong>数据驱动设备效率</strong><span>让每一台设备创造更大价值</span></p>
+      <StandardReportQuery
         v-model:start-date="periodStart"
         v-model:end-date="periodEnd"
+        v-model:chart-type="chartType"
+        class="report-hero-query device-query-shell"
+        aria-label="设备报表查询条件"
         :anchor-date="anchorDate"
         :max-days="31"
-        :disabled="loading"
+        :chart-options="energyChartOptions"
+        :loading="loading"
+        :export-disabled="loading || !taskDay"
+        :exporting="exporting"
+        @submit="loadRange(true)"
+        @export="exportReport"
         @validation-error="error = $event"
       />
-      <label><span>图表类型</span><AppSelect v-model="chartType"><option value="bar_line">柱线组合</option><option value="bar">双柱状图</option><option value="line">双折线图</option></AppSelect></label>
-      <button class="primary" type="submit" :disabled="loading"><span v-if="loading" class="spinner"></span>{{ loading ? '查询中' : '查询报表' }}</button>
-      <ReportExportMenu :disabled="loading || !taskDay" :loading="exporting" @select="exportReport" />
-    </form>
-  </section>
+    </section>
 
-  <div v-if="error" class="global-error"><strong>查询提示</strong><span>{{ error }}</span><button @click="error = ''">关闭</button></div>
-  <div v-if="configurationError" class="energy-config-note"><strong>能管数据提示</strong><span>{{ configurationError }}。缺失值显示 --，不按零计算。</span></div>
+    <div v-if="error" class="global-error"><strong>查询提示</strong><span>{{ error }}</span><button @click="error = ''">关闭</button></div>
+    <div v-if="configurationError" class="energy-config-note"><strong>能管数据提示</strong><span>{{ configurationError }}。缺失值显示 --，不按零计算。</span></div>
 
-  <ReportTrendPanel ref="taskPanel" number="01" title="区间任务能耗明细" :subtitle="`${appliedPeriodStart} 至 ${appliedPeriodEnd}`" chart-label="任务能耗图">
-    <template #summary>
-      <div class="energy-stat-strip">
-        <div><span>任务电耗合计</span><strong>{{ format(summary.total_electricity_consumption) }}</strong><small>{{ units.electricity }}</small></div>
-        <div><span>任务气耗合计</span><strong>{{ format(summary.total_gas_consumption) }}</strong><small>{{ units.gas }}</small></div>
-        <div class="energy-coverage"><span>任务匹配情况</span><p>电耗 {{ summary.electricity_record_count || 0 }}/{{ summary.task_count || 0 }} 项</p><p>气耗 {{ summary.gas_record_count || 0 }}/{{ summary.task_count || 0 }} 项</p></div>
-        <div class="energy-saved"><span>{{ equipmentScopeLabel }} 区间任务</span><strong>{{ summary.task_count || 0 }} 项</strong><small>累计切割时长 {{ duration(summary.total_work_time) }}</small></div>
-      </div>
-    </template>
+    <section class="device-kpis" aria-label="设备区间汇总">
+      <article class="device-kpi kpi-red">
+        <span class="device-kpi__icon"><AppIcon name="zap" size="21" /></span>
+        <div><span>电耗<small>POWER CONSUMPTION</small></span><p><strong>{{ format(summary.total_electricity_consumption) }}</strong> <small>{{ units.electricity }}</small></p><em>区间合计</em></div>
+        <svg class="device-sparkline" viewBox="0 0 76 28" aria-hidden="true"><path d="M2 22 11 21 20 13 29 17 39 9 49 13 60 8 74 3"/></svg>
+      </article>
+      <article class="device-kpi kpi-blue">
+        <span class="device-kpi__icon"><AppIcon name="wind" size="21" /></span>
+        <div><span>气耗<small>GAS CONSUMPTION</small></span><p><strong>{{ format(summary.total_gas_consumption) }}</strong> <small>{{ units.gas }}</small></p><em>区间合计</em></div>
+        <svg class="device-sparkline" viewBox="0 0 76 28" aria-hidden="true"><path d="M2 22 13 16 24 19 35 12 47 8 60 11 74 4"/></svg>
+      </article>
+      <article class="device-kpi kpi-teal">
+        <span class="device-kpi__icon"><AppIcon name="activity" size="21" /></span>
+        <div><span>能耗覆盖率<small>ENERGY COVERAGE</small></span><p><strong>{{ energyCoverage }}</strong> <small>%</small></p><em>电 / 气数据匹配</em></div>
+        <svg class="device-sparkline" viewBox="0 0 76 28" aria-hidden="true"><path d="M2 23 13 17 24 20 35 14 47 10 59 12 74 4"/></svg>
+      </article>
+      <article class="device-kpi kpi-violet">
+        <span class="device-kpi__icon"><AppIcon name="tasks" size="21" /></span>
+        <div><span>任务数量<small>TASK COUNT</small></span><p><strong>{{ summary.task_count || 0 }}</strong> <small>项</small></p><em>{{ equipmentScopeLabel }}</em></div>
+        <svg class="device-sparkline" viewBox="0 0 76 28" aria-hidden="true"><path d="M2 18 13 22 24 17 35 20 47 7 59 15 74 10"/></svg>
+      </article>
+      <article class="device-kpi kpi-cyan">
+        <span class="device-kpi__icon"><AppIcon name="clock" size="21" /></span>
+        <div><span>累计切割时长<small>TOTAL CUTTING TIME</small></span><p class="device-duration"><strong>{{ duration(summary.total_work_time) }}</strong></p><em>当前查询区间</em></div>
+        <svg class="device-sparkline" viewBox="0 0 76 28" aria-hidden="true"><path d="M2 23 13 18 24 15 35 19 47 12 59 10 74 3"/></svg>
+      </article>
+    </section>
+
+    <ReportTrendPanel ref="taskPanel" number="01" title="区间任务能耗明细" :subtitle="`${appliedPeriodStart} 至 ${appliedPeriodEnd}`" chart-label="任务能耗图">
     <template #table>
         <table v-content-table="pageActive" class="energy-period-table energy-task-table summary-table" aria-label="任务能耗明细表">
           <thead><tr><th scope="col">序号</th><th scope="col">工程号</th><th scope="col">船号</th><th scope="col">分段名</th><th scope="col">任务开始</th><th scope="col">切割时长</th><th scope="col">电耗</th><th scope="col">气耗</th></tr></thead>
@@ -420,29 +458,26 @@ watch(chartType, async () => { await nextTick(); renderCharts() })
           <tfoot><tr><th aria-hidden="true"></th><th scope="row">汇总</th><th>{{ equipmentScopeLabel }}</th><th>{{ summary.task_count || 0 }} 项</th><th>--</th><th>{{ duration(summary.total_work_time) }}</th><th>{{ format(summary.total_electricity_consumption) }}</th><th>{{ format(summary.total_gas_consumption) }}</th></tr></tfoot>
         </table>
     </template>
-  </ReportTrendPanel>
+    </ReportTrendPanel>
 
-  <ReportTrendPanel ref="periodPanel" number="02" :title="summaryTitle" :subtitle="summarySubtitle" :chart-label="summaryChartLabel">
-    <template #table><table v-content-table="pageActive" class="leadership-table energy-month-table summary-table" :aria-label="summaryTableLabel"><thead><tr><th scope="col">{{ summaryDateHeading }}</th><th scope="col">任务数</th><th scope="col">切割时长</th><th scope="col">电耗</th><th scope="col">气耗</th></tr></thead><tbody><tr v-for="row in summaryRows" :key="row.report_date"><td>{{ summaryPeriod(row.report_date) }}</td><td>{{ row.task_count }}</td><td>{{ duration(row.work_time_seconds) }}</td><td>{{ valueText(row.electricity) }}</td><td>{{ valueText(row.gas) }}</td></tr><tr v-if="!summaryRows.length"><td colspan="5" class="energy-empty">{{ loading ? '正在查询…' : summaryEmptyText }}</td></tr></tbody><tfoot><tr><th scope="row">汇总</th><th>{{ month?.total_task_count || 0 }}</th><th>{{ duration(month?.total_work_time_seconds) }}</th><th>{{ valueText(month?.summary?.electricity) }}</th><th>{{ valueText(month?.summary?.gas) }}</th></tr></tfoot></table></template>
-  </ReportTrendPanel>
+    <ReportTrendPanel ref="periodPanel" number="02" :title="summaryTitle" :subtitle="summarySubtitle" :chart-label="summaryChartLabel">
+    <template #table><table v-content-table="pageActive" class="leadership-table energy-month-table summary-table" :aria-label="summaryTableLabel"><thead><tr><th scope="col">{{ summaryDateHeading }}</th><th scope="col">任务数</th><th scope="col">切割时长</th><th scope="col">电耗</th><th scope="col">气耗</th></tr></thead><tbody><tr v-for="row in summaryRows" :key="row.report_date"><td>{{ summaryPeriod(row.report_date) }}</td><td>{{ row.task_count }}</td><td>{{ duration(row.work_time_seconds) }}</td><td>{{ valueText(row.electricity) }}</td><td>{{ valueText(row.gas) }}</td></tr><tr v-if="!summaryRows.length"><td colspan="5" class="energy-empty">{{ summaryLoading ? '正在查询…' : summaryEmptyText }}</td></tr></tbody><tfoot><tr><th scope="row">汇总</th><th>{{ month?.total_task_count || 0 }}</th><th>{{ duration(month?.total_work_time_seconds) }}</th><th>{{ valueText(month?.summary?.electricity) }}</th><th>{{ valueText(month?.summary?.gas) }}</th></tr></tfoot></table></template>
+    </ReportTrendPanel>
 
-  <AnalysisPanel
-    report-type="equipment"
-    :report-date="appliedPeriodStart"
-    :period-start="defaultSummaryView ? '' : appliedPeriodStart"
-    :period-end="defaultSummaryView ? '' : appliedPeriodEnd"
-    :ready="analysisReady"
-    :data-version="taskDay?.analysis_source_version || ''"
-  />
+    <AnalysisPanel
+      report-type="equipment"
+      :report-date="appliedPeriodStart"
+      :period-start="rangeQueryApplied ? appliedPeriodStart : ''"
+      :period-end="rangeQueryApplied ? appliedPeriodEnd : ''"
+      :ready="analysisReady"
+      :data-version="taskDay?.analysis_source_version || ''"
+    />
+  </div>
 </template>
 
 <style scoped>
-.energy-config-note { display:grid; gap:6px; padding:14px 18px; margin-bottom:20px; background:#fff7e9; border:1px solid #eddbb6; color:#85571c; font-size:13px; }
-.energy-stat-strip { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin:20px 18px 0; }
-.energy-stat-strip > div { min-width:0; min-height:112px; padding:18px 20px; border-top:3px solid var(--cyan); background:#fff; box-shadow:0 7px 22px rgba(21,54,78,.055); }
-.energy-stat-strip span { display:block; color:var(--muted); font-size:11px; }
-.energy-stat-strip strong { color:var(--navy); font-size:24px; display:block; margin-top:11px; }
-.energy-stat-strip small,.energy-stat-strip p { color:#687d8d; display:block; font-size:11px; margin:6px 0 0; }
+.device-report-shell>.page-hero{position:relative;min-height:174px;display:flex;align-items:center;overflow:hidden;padding:25px 30px;border:1px solid rgba(255,255,255,.72);border-radius:14px;background:linear-gradient(90deg,rgba(246,252,255,.99) 0%,rgba(238,248,253,.92) 39%,rgba(7,48,76,.08) 69%),url('../assets/home-laser-cutting.webp') center 51%/cover no-repeat;box-shadow:0 12px 30px rgba(22,62,89,.07);animation:surface-in .46s cubic-bezier(.2,.75,.25,1) both}.device-report-shell>.page-hero::after{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(116deg,transparent 0 46%,rgba(255,255,255,.24) 46.2%,transparent 46.8%)}.device-hero__copy,.device-hero__slogan{position:relative;z-index:1}.device-hero__copy{max-width:540px}.device-breadcrumb{display:block;margin-bottom:7px;color:#47708b;font-size:10px}.device-title-row{display:flex;align-items:flex-end;gap:14px}.device-title-row h2{margin:0;color:#153f5d;font-size:38px;line-height:1.08;letter-spacing:1px}.device-title-row>span{padding-bottom:5px;color:#41708e;font-size:8px;font-weight:700;letter-spacing:3px}.device-hero__copy>p{max-width:510px;margin:8px 0 0;color:#607a8d;font-size:12px;line-height:1.7}.device-hero__slogan{margin:0 20px 0 auto;color:#effaff;text-align:right;text-shadow:0 2px 10px rgba(4,37,58,.84);transform:rotate(-6deg)}.device-hero__slogan strong,.device-hero__slogan span{display:block}.device-hero__slogan strong{font-size:16px;letter-spacing:3px}.device-hero__slogan span{margin-top:5px;font-size:11px;letter-spacing:2px}.device-query-shell{margin:10px 0;padding:11px 14px;border:1px solid #dbe6ec;border-radius:10px;background:#fff;box-shadow:0 7px 22px rgba(22,62,89,.05)}.device-query-shell .report-query{width:100%;grid-template-columns:minmax(320px,1fr) minmax(180px,.55fr) 128px 128px;padding:0;border:0;background:transparent;box-shadow:none}.device-query-shell :deep(.report-period-picker){grid-column:auto}.device-query-shell :deep(.report-period-picker__trigger),.device-query-shell :deep(.app-select__trigger),.device-query-shell .report-query>button{height:38px;min-height:38px;border-radius:6px;font-size:10px}.device-query-shell .report-query>button.primary{display:flex;align-items:center;justify-content:center;gap:6px;border-color:#1179ab;background:linear-gradient(135deg,#0e688f,#0584af);box-shadow:0 5px 12px rgba(15,111,158,.18)}
+.energy-config-note{display:grid;gap:6px;padding:12px 16px;margin-bottom:10px;border:1px solid #eddbb6;border-radius:9px;background:#fff7e9;color:#85571c;font-size:11px}.device-kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin:10px 0}.device-kpi{--kpi-color:#237fb7;--kpi-soft:#eaf5fb;position:relative;min-width:0;min-height:108px;display:flex;gap:10px;overflow:hidden;padding:14px 12px;border:1px solid #dbe6ec;border-top:2px solid var(--kpi-color);border-radius:10px;background:#fff;box-shadow:0 7px 22px rgba(22,62,89,.055);transition:transform .18s ease,box-shadow .18s ease;animation:surface-in .42s cubic-bezier(.2,.75,.25,1) both}.device-kpi:hover{transform:translateY(-2px);box-shadow:0 11px 26px rgba(22,62,89,.09)}.device-kpi:nth-child(2){animation-delay:.04s}.device-kpi:nth-child(3){animation-delay:.08s}.device-kpi:nth-child(4){animation-delay:.12s}.device-kpi:nth-child(5){animation-delay:.16s}.device-kpi.kpi-red{--kpi-color:#df5961;--kpi-soft:#fff0f1}.device-kpi.kpi-teal{--kpi-color:#16a39d;--kpi-soft:#e8f7f5}.device-kpi.kpi-violet{--kpi-color:#7366db;--kpi-soft:#efedff}.device-kpi.kpi-cyan{--kpi-color:#18a8a7;--kpi-soft:#e8f8f7}.device-kpi__icon{position:relative;z-index:1;width:35px;height:35px;display:grid;place-items:center;flex:0 0 auto;color:var(--kpi-color);border-radius:50%;background:var(--kpi-soft);transition:transform .2s ease}.device-kpi:hover .device-kpi__icon{transform:scale(1.08) rotate(-3deg)}.device-kpi>div{position:relative;z-index:1;min-width:0;flex:1}.device-kpi>div>span{display:block;color:#284a62;font-size:11px;font-weight:700;white-space:nowrap}.device-kpi>div>span small{display:block;margin:3px 0 0;color:#8195a4;font-size:7px;font-weight:500;letter-spacing:.45px}.device-kpi p{margin:8px 0 6px;color:#173f64;font-size:9px;white-space:nowrap}.device-kpi p strong{font-size:21px}.device-kpi p.device-duration strong{font-size:17px}.device-kpi p small{margin-left:2px;color:#6f8798;font-size:8px}.device-kpi em{display:block;overflow:hidden;color:#7e929f;text-overflow:ellipsis;white-space:nowrap;font-style:normal;font-size:8px}.device-sparkline{position:absolute;right:8px;bottom:12px;width:58px;height:25px;opacity:.72}.device-sparkline path{fill:none;stroke:var(--kpi-color);stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}.device-kpi::after{content:"";position:absolute;width:70px;height:70px;right:-28px;bottom:-41px;border-radius:50%;background:var(--kpi-soft);opacity:.72}.global-error{margin:10px 0 0;border-radius:9px}
 .energy-period-table { width:100%; border-collapse:collapse; font-size:12px; }
 .energy-period-table th,.energy-period-table td { height:47px; padding:10px; border-bottom:1px solid #dde5ea; text-align:center; white-space:nowrap; }
 .energy-task-table th:nth-child(2),.energy-task-table td:nth-child(2),.energy-task-table th:nth-child(3),.energy-task-table td:nth-child(3),.energy-task-table th:nth-child(4),.energy-task-table td:nth-child(4) { text-align:left; }
@@ -450,6 +485,30 @@ watch(chartType, async () => { await nextTick(); renderCharts() })
 .energy-period-table tfoot th { position:sticky; bottom:0; background:#eef4f7; color:var(--navy); }
 .energy-task-table tfoot th:nth-child(2),.energy-task-table tfoot th:nth-child(3),.energy-task-table tfoot th:nth-child(4) { text-align:left; }
 .energy-empty { height:120px; color:#8a9aa5; }
-@media (max-width:900px) { .energy-stat-strip { grid-template-columns:1fr 1fr; } }
-@media (max-width:560px) { .energy-stat-strip { grid-template-columns:1fr; } }
+:deep(.report-trend-panel){margin-bottom:10px;border:1px solid #dbe6ec;border-radius:10px;box-shadow:0 7px 22px rgba(22,62,89,.05)}:deep(.report-trend-panel__heading){min-height:47px;padding:0 14px;border-bottom:1px solid #e5edf1;background:linear-gradient(90deg,#fff,#fbfdfe)}:deep(.report-trend-panel__heading>div){gap:8px}:deep(.report-trend-panel__heading>div>span){width:28px;height:24px;display:grid;place-items:center;padding:0;color:#237fb7;border:0;border-radius:7px;background:#eaf5fb;font-size:10px;font-weight:700}:deep(.report-trend-panel__heading h2){color:#193c57;font-size:14px}:deep(.report-trend-panel__heading small){color:#7c91a1;font-size:9px;font-weight:400}:deep(.report-trend-panel__heading p){color:#6f8798;font-size:9px}:deep(.report-trend-panel__content){grid-template-columns:minmax(330px,.9fr) minmax(0,1.25fr);gap:10px;padding:11px 13px 13px}:deep(.report-trend-panel__chart),:deep(.report-trend-panel__table){height:245px;overflow:hidden;border-color:#dfe9ee;border-radius:7px}:deep(table.content-table th),:deep(table.content-table td){height:35px!important;padding:6px 8px!important;font-size:10px!important}:deep(table.content-table thead th){color:#fff!important;background:#0b4f76!important;font-size:9px!important;letter-spacing:.15px!important}:deep(table.content-table tfoot th){color:#174c70!important;border-top:1px solid #cbdfe8!important;background:#eaf4f9!important}:deep(.device-analysis){margin-bottom:0;overflow:hidden;border:1px solid #dbe6ec;border-radius:10px;box-shadow:0 7px 22px rgba(22,62,89,.05)}:deep(.device-analysis .analysis-panel-head){padding:12px 15px;background:linear-gradient(90deg,#fff,#fbfdfe)}:deep(.device-analysis .analysis-panel-icon){width:34px;height:34px}:deep(.device-analysis .analysis-kicker){font-size:8px}:deep(.device-analysis .analysis-panel-head h2){margin:2px 0 0;color:#193c57;font-size:15px}:deep(.device-analysis .analysis-actions button){min-height:33px;padding:0 12px;font-size:10px}:deep(.device-analysis .analysis-facts){gap:7px;padding:10px 13px 0}:deep(.device-analysis .analysis-facts article){padding:8px 10px}:deep(.device-analysis .analysis-facts span){font-size:9px}:deep(.device-analysis .analysis-facts strong){font-size:12px}:deep(.device-analysis .analysis-grid){grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;padding:10px 13px 13px}:deep(.device-analysis .analysis-grid article){min-height:88px;padding:11px 12px;border:0;border-radius:7px;background:#eff7fb}:deep(.device-analysis .analysis-grid article:nth-child(3)){background:#fff1f2}:deep(.device-analysis .analysis-grid article:nth-child(4)){background:#eef8f4}:deep(.device-analysis .analysis-grid h3){font-size:10px}:deep(.device-analysis .analysis-grid p){color:#60798b;font-size:9px;line-height:1.6;overflow-wrap:anywhere}:deep(.device-analysis .analysis-evidence){margin:0 13px 12px}:deep(.device-analysis .analysis-time){padding:0 13px 12px;font-size:9px}
+@media(max-width:1120px){.device-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.device-kpi:last-child{grid-column:1/-1}.device-hero__slogan{display:none}:deep(.device-analysis .analysis-grid){grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:900px){.device-query-shell .report-query{grid-template-columns:repeat(2,minmax(180px,1fr))}.device-query-shell :deep(.report-period-picker){grid-column:1/-1}:deep(.report-trend-panel__content){grid-template-columns:1fr}:deep(.report-trend-panel__chart),:deep(.report-trend-panel__table){height:270px}}
+@media(max-width:560px){.device-report-shell>.page-hero{min-height:0;padding:22px 18px;background:linear-gradient(90deg,rgba(246,252,255,.97),rgba(238,248,253,.89)),url('../assets/home-laser-cutting.webp') center/cover}.device-title-row{display:block}.device-title-row h2{font-size:31px}.device-title-row>span{display:block;padding:6px 0 0}.device-query-shell .report-query,.device-kpis{grid-template-columns:1fr}.device-query-shell :deep(.report-period-picker),.device-kpi:last-child{grid-column:auto}:deep(.device-analysis .analysis-grid){grid-template-columns:1fr}}
+@media(prefers-reduced-motion:reduce){.device-report-shell>.page-hero,.device-kpi{animation:none}.device-kpi{transition:none}}
+</style>
+
+<style scoped>
+/* Report tables use the same low-contrast header treatment across all report pages. */
+.device-query-shell { position:relative; padding:12px 14px 13px; border-color:#d5e4eb; border-radius:12px; background:linear-gradient(135deg,#fff 0%,#f8fcfe 72%,#eef8fb 100%); box-shadow:0 8px 24px rgba(22,62,89,.065); }
+.device-query-shell::before { content:""; position:absolute; top:-1px; left:18px; width:34px; height:3px; border-radius:0 0 999px 999px; background:linear-gradient(90deg,#238bd0,#19b0b0); }
+.device-query-shell .standard-report-query { gap:10px; }
+:deep(.report-trend-panel),
+:deep(.device-analysis) { border-radius:var(--report-panel-radius); }
+:deep(table.content-table thead th) {
+  color:var(--report-table-head-ink)!important;
+  background:var(--report-table-head-bg)!important;
+  font-size:10px!important;
+}
+:deep(table.content-table tbody td),
+:deep(table.content-table tbody th),
+:deep(table.content-table tfoot th) { font-size:11px!important; }
+:deep(.report-trend-panel__table) {
+  overflow:auto!important;
+  scrollbar-gutter:stable;
+}
 </style>

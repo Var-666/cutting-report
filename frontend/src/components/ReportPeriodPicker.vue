@@ -1,6 +1,7 @@
 <script setup>
 import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, useId, watch } from 'vue'
 import { createActivationBinding } from '../utils/activationTimer.js'
+import AppIcon from './AppIcon.vue'
 
 const props = defineProps({
   startDate: { type: String, required: true },
@@ -227,7 +228,7 @@ onBeforeUnmount(pause)
 
 <template>
   <div ref="root" class="report-period-picker" :class="{ 'is-open': open }">
-    <span class="report-period-picker__label">统计区间</span>
+    <span class="report-period-picker__label"><AppIcon name="calendar" size="13" />统计区间</span>
     <button
       ref="trigger"
       type="button"
@@ -238,7 +239,7 @@ onBeforeUnmount(pause)
       :aria-controls="open ? panelId : undefined"
       @click="open ? closePanel() : showPanel()"
     >
-      <span>{{ buttonLabel }}</span><i aria-hidden="true"></i>
+      <span class="report-period-picker__value">{{ buttonLabel }}</span><i aria-hidden="true"></i>
     </button>
 
     <Teleport to="body">
@@ -285,9 +286,10 @@ onBeforeUnmount(pause)
 
 <style scoped>
 .report-period-picker { position:relative; min-width:0; width:100%; grid-column:span 2; }
-.report-period-picker__label { display:block; margin-bottom:7px; color:#425767; font-size:11px; font-weight:700; }
-.report-period-picker__trigger { display:flex; align-items:center; justify-content:space-between; gap:12px; width:100%; height:43px; min-height:43px; padding:0 13px; color:var(--ink); border:1px solid #bdcbd5; border-radius:3px; background:#fbfcfd; text-align:left; }
-.report-period-picker__trigger span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.report-period-picker__label { display:flex; align-items:center; gap:5px; margin-bottom:6px; color:#526d7f; font-size:10px; font-weight:700; letter-spacing:.12px; }
+.report-period-picker__trigger { display:flex; align-items:center; justify-content:space-between; gap:12px; width:100%; height:40px; min-height:40px; padding:0 12px; color:var(--ink); border:1px solid #c4d4dd; border-radius:8px; background:#fff; box-shadow:inset 0 1px 0 rgba(255,255,255,.9); text-align:left; transition:border-color .16s ease,box-shadow .16s ease,background .16s ease; }
+.report-period-picker__trigger:hover:not(:disabled) { border-color:#8fb5c5; background:#fcfeff; }
+.report-period-picker__value { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .report-period-picker__trigger i { width:8px; height:8px; flex:0 0 8px; border-right:2px solid #527082; border-bottom:2px solid #527082; transform:rotate(45deg) translateY(-2px); transition:transform .16s ease; }
 .report-period-picker.is-open .report-period-picker__trigger { border-color:var(--blue); box-shadow:0 0 0 3px rgba(13,111,158,.1); }
 .report-period-picker.is-open .report-period-picker__trigger i { transform:rotate(225deg) translate(-2px,-1px); }

@@ -3,7 +3,7 @@ import { RouterLink, RouterView } from 'vue-router'
 </script>
 
 <template>
-  <section class="report-navigation" aria-label="报表导航">
+  <section class="report-navigation reports-navigation" aria-label="报表导航">
     <div><span>REPORTS</span><strong>报表</strong></div>
     <nav>
       <RouterLink to="/admin/reports/leadership">领导报表</RouterLink>

@@ -69,7 +69,7 @@ def collect_files(root: Path) -> dict[str, bytes]:
         "frontend/src/views/EnergyPeriodReportView.vue",
         "backend/app/api/downloads.py", "backend/app/database/downloads.py",
         "backend/app/services/file_download_service.py",
-        "frontend/src/components/CuttingDownloadsPanel.vue",
+        "frontend/src/views/CuttingDispatchView.vue",
     )
     for name in required:
         if name not in payload:
