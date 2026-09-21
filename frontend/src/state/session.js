@@ -68,6 +68,16 @@ export async function completeAuthentication(user) {
   refreshSystemInfo(generation)
 }
 
+export function expireSession() {
+  sessionGeneration += 1
+  loadingPromise = null
+  stopReportPreload()
+  session.user = null
+  session.systemInfo = null
+  session.error = ''
+  session.ready = true
+}
+
 export async function endSession() {
   const generation = ++sessionGeneration
   loadingPromise = null

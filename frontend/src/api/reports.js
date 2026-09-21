@@ -1,6 +1,7 @@
 import { reportCache } from './reportCache.js'
 import { reportToday } from './reportDates.js'
 import { createRequestCancellation } from './requestCancellation.js'
+import { notifySessionExpired } from './sessionExpiry.js'
 
 const DEFAULT_HEADERS = { 'Content-Type': 'application/json' }
 const REPORT_VIEW_CACHE_TTL = 5 * 60 * 1000
@@ -28,6 +29,12 @@ async function request(url, options = {}) {
     } catch (error) {
       if (error.name === 'AbortError') throw error
       throw new Error('服务器返回了无法识别的响应')
+    }
+    if (
+      response.status === 401
+      && response.headers?.get?.('X-Session-Expired') === '1'
+    ) {
+      await notifySessionExpired().catch(() => undefined)
     }
     if (!response.ok || payload.success === false) {
       const message = payload?.error?.message || payload?.detail || '请求失败，请稍后重试'

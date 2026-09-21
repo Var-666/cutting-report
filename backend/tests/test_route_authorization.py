@@ -142,6 +142,7 @@ def test_anonymous_requests_cannot_reach_management_endpoints(
     response = TestClient(app).get(path)
 
     assert response.status_code == 401
+    assert response.headers["x-session-expired"] == "1"
 
 
 def test_worker_session_cannot_reach_management_endpoints(monkeypatch) -> None:

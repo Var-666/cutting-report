@@ -101,6 +101,7 @@ def test_wrong_current_password_cannot_grant_admin(monkeypatch) -> None:
 
     assert response.status_code == 401
     assert response.json()["detail"] == "当前管理员密码错误"
+    assert "x-session-expired" not in response.headers
     assert directory.find_calls == []
     assert repository.grants == []
 

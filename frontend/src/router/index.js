@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { loadSession, roleHome, session } from '../state/session'
+import { installSessionExpiryRedirect } from '../state/sessionExpiry.js'
 import { cuttingRoutes } from './cuttingRoutes'
 
 const router = createRouter({
@@ -147,5 +148,7 @@ router.afterEach((to) => {
     ? `${to.meta.title} - 切割生产智能产报系统`
     : '切割生产智能产报系统'
 })
+
+installSessionExpiryRedirect(router)
 
 export default router

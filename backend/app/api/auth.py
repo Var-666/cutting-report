@@ -13,6 +13,7 @@ from app.services.worker_auth_service import WorkerAuthenticationUnavailableErro
 
 
 SESSION_COOKIE = "cutting_session"
+SESSION_EXPIRED_HEADER = {"X-Session-Expired": "1"}
 router = APIRouter(prefix="/api/v1/auth", tags=["authentication"])
 
 
@@ -108,7 +109,11 @@ def optional_user(
 
 def require_user(user: dict | None = Depends(optional_user)) -> dict:
     if user is None:
-        raise HTTPException(status_code=401, detail="请先登录")
+        raise HTTPException(
+            status_code=401,
+            detail="请先登录",
+            headers=SESSION_EXPIRED_HEADER,
+        )
     return user
 
 
