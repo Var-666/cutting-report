@@ -210,6 +210,20 @@ class Settings:
     )
     alarm_monitor_batch_size: int = _as_int("ALARM_MONITOR_BATCH_SIZE", 500)
 
+    # Unified operational-data retention. A value of 0 disables cleanup for
+    # that category without disabling the remaining policies.
+    report_retention_days: int = _as_int("REPORT_RETENTION_DAYS", 365)
+    analysis_retention_days: int = _as_int("ANALYSIS_RETENTION_DAYS", 90)
+    alarm_retention_days: int = _as_int("ALARM_RETENTION_DAYS", 365)
+    dispatch_retention_days: int = _as_int("DISPATCH_RETENTION_DAYS", 365)
+    audit_retention_days: int = _as_int("AUDIT_RETENTION_DAYS", 730)
+    retention_cleanup_interval_hours: int = _as_int(
+        "RETENTION_CLEANUP_INTERVAL_HOURS", 24
+    )
+    retention_cleanup_batch_size: int = _as_int(
+        "RETENTION_CLEANUP_BATCH_SIZE", 500
+    )
+
     report_max_detail_rows: int = _as_int("REPORT_MAX_DETAIL_ROWS", 1000)
     chart_top_n: int = _as_int("CHART_TOP_N", 20)
     worker_poll_seconds: float = _as_float("REPORT_WORKER_POLL_SECONDS", 0.5)

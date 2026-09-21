@@ -118,12 +118,21 @@ FILE_HTTP_COOKIE=
 FILE_DOWNLOAD_TIMEOUT_SECONDS=60
 FILE_DOWNLOAD_MAX_BYTES=52428800
 FILE_DOWNLOAD_RETENTION_DAYS=7
+REPORT_RETENTION_DAYS=365
+ANALYSIS_RETENTION_DAYS=90
+ALARM_RETENTION_DAYS=365
+DISPATCH_RETENTION_DAYS=365
+AUDIT_RETENTION_DAYS=730
+RETENTION_CLEANUP_INTERVAL_HOURS=24
+RETENTION_CLEANUP_BATCH_SIZE=500
 MAGIC_BOX_ENABLED=true
 MAGIC_BOX_TIMEOUT_SECONDS=60
 MAGIC_BOX_CONFIG_CACHE_SECONDS=60
 ```
 
-若接口不需要认证，两项认证配置留空；若需要，在部署电脑填入该文件服务自己的认证值。成功下载的实体文件默认保留7天，服务启动时检查一次，之后每天检查；超期只清理实体文件，下载记录继续保留。若需关闭自动清理，将 `FILE_DOWNLOAD_RETENTION_DAYS` 设为 `0`。
+若接口不需要认证，两项认证配置留空；若需要，在部署电脑填入该文件服务自己的认证值。成功下载的实体文件默认保留7天，服务启动时检查一次，之后每天检查；超期先清理实体文件，相关下载记录再按派发记录保留期清理。若需关闭实体文件自动清理，将 `FILE_DOWNLOAD_RETENTION_DAYS` 设为 `0`。
+
+系统同时执行统一运行数据保留策略：报告文件、生成任务和车间任务快照默认365天、智能分析版本90天、已关闭告警365天、非活动派发记录365天、确认与管理员权限审计730天。运行中报告、待发送邮件、仍在保留期内的车间任务、活动告警和进行中派发不会删除；报告文件删除失败会保留在SQLite重试队列，下一轮继续清理。对应 `*_RETENTION_DAYS` 设为 `0` 可单独关闭该类清理，修改后需重启服务。
 不要把认证值发到聊天、截图或代码仓库。配置后重新构建启动（仅修改配置则重新创建容器）。
 如果管理界面曾保存 PDM 配置，`data/settings.env` 的对应数据库参数优先。
 Docker 容器必须能访问 `10.147.0.17:8800`；Apifox 测试成功不能替代容器内网联调。

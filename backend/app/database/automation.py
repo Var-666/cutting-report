@@ -75,6 +75,8 @@ class AutomationRepository(SQLiteRepository):
                 );
                 CREATE INDEX IF NOT EXISTS idx_scheduled_runs_status
                     ON scheduled_report_runs(status, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_scheduled_runs_retention
+                    ON scheduled_report_runs(status, updated_at, run_id);
 
                 CREATE TABLE IF NOT EXISTS email_deliveries (
                     delivery_id TEXT PRIMARY KEY,

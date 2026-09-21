@@ -22,6 +22,8 @@ class DownloadRepository(SQLiteRepository):
                 );
                 CREATE INDEX IF NOT EXISTS idx_cutting_downloads_created
                     ON cutting_downloads(created_at DESC, download_id DESC);
+                CREATE INDEX IF NOT EXISTS idx_cutting_downloads_retention
+                    ON cutting_downloads(status, updated_at, download_id);
             """)
 
     def save(self, item):

@@ -88,6 +88,8 @@ class AlarmRepository(SQLiteRepository):
                     ON alarm_incidents(first_seen_at DESC, incident_id DESC);
                 CREATE INDEX IF NOT EXISTS idx_alarm_incidents_unreported
                     ON alarm_incidents(pdf_report_id, first_seen_at);
+                CREATE INDEX IF NOT EXISTS idx_alarm_incidents_retention
+                    ON alarm_incidents(status, closed_at, incident_id);
 
                 CREATE TABLE IF NOT EXISTS alarm_source_events (
                     source_alarm_id INTEGER PRIMARY KEY,
@@ -124,6 +126,8 @@ class AlarmRepository(SQLiteRepository):
                 );
                 CREATE INDEX IF NOT EXISTS idx_alarm_reports_created
                     ON alarm_reports(created_at DESC, report_id DESC);
+                CREATE INDEX IF NOT EXISTS idx_alarm_reports_retention
+                    ON alarm_reports(status, completed_at, report_id);
                 """
             )
             connection.execute(

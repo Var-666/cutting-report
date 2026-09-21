@@ -77,6 +77,8 @@ class MetadataRepository(SQLiteRepository):
                 );
                 CREATE INDEX IF NOT EXISTS idx_report_analyses_lookup
                     ON report_analyses(report_type, report_date, generated_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_report_analyses_retention
+                    ON report_analyses(generated_at, cache_key);
                 """
             )
             columns = {

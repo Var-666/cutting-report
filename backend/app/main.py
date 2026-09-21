@@ -36,11 +36,13 @@ from app.database.definitions import DefinitionRepository
 from app.database.dispatch import DispatchRepository
 from app.database.downloads import DownloadRepository
 from app.database.pdm import MockPdmRepository, SqlServerPdmRepository
+from app.database.retention import RetentionRepository
 from app.database.workshop import WorkshopRepository
 from app.database.sqlite import SQLiteDatabase
 from app.services.pipeline import ReportPipeline
 from app.services.leadership_report_service import LeadershipReportService
 from app.services.report_analysis_service import ReportAnalysisService
+from app.services.retention_service import RetentionService
 from app.services.request_cancellation import (
     SqlRequestCancelled,
     bind_request_id,
@@ -59,6 +61,7 @@ from app.services.alarm_analysis_service import AlarmAnalysisService
 from app.services.alarm_monitor_service import AlarmMonitorService
 from app.services.alarm_report_service import AlarmReportService
 from app.workers.report_worker import ReportWorker
+from app.workers.retention_worker import RetentionWorker
 from app.workers.alarm_worker import AlarmWorker
 from app.workers.leadership_refresh_worker import LeadershipRefreshWorker
 from app.workers.energy_history_worker import EnergyHistoryWorker
@@ -148,6 +151,12 @@ async def lifespan(app: FastAPI):
     downloads.recover_interrupted(file_downloads.now())
     download_cleanup_worker = DownloadCleanupWorker(settings, file_downloads)
     app.state.download_cleanup_worker = download_cleanup_worker
+    retention_repository = RetentionRepository(database)
+    retention_repository.initialize()
+    retention_service = RetentionService(settings, retention_repository)
+    retention_worker = RetentionWorker(settings, retention_service)
+    app.state.retention_service = retention_service
+    app.state.retention_worker = retention_worker
     magic_config = MagicBoxConfigProvider(settings)
     app.state.cutting_dispatch = CuttingDispatchService(
         settings,
@@ -165,9 +174,11 @@ async def lifespan(app: FastAPI):
     energy_history_worker.start()
     alarm_worker.start()
     download_cleanup_worker.start()
+    retention_worker.start()
     try:
         yield
     finally:
+        retention_worker.stop()
         energy_history_worker.stop()
         download_cleanup_worker.stop()
         alarm_worker.stop()

@@ -153,6 +153,8 @@ class WorkshopRepository(SQLiteRepository):
                 );
                 CREATE INDEX IF NOT EXISTS idx_workshop_confirmations_worker
                     ON workshop_confirmations(worker_id, confirmed_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_workshop_confirmations_retention
+                    ON workshop_confirmations(updated_at, task_id);
                 """
             )
             user_columns = {
@@ -225,6 +227,8 @@ class WorkshopRepository(SQLiteRepository):
                     ON workshop_confirmation_audits(task_id, operated_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_workshop_confirmation_audits_report
                     ON workshop_confirmation_audits(report_id, operated_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_workshop_confirmation_audits_retention
+                    ON workshop_confirmation_audits(operated_at, audit_id);
 
                 CREATE TABLE IF NOT EXISTS admin_role_audits (
                     audit_id TEXT PRIMARY KEY,
@@ -237,6 +241,8 @@ class WorkshopRepository(SQLiteRepository):
                 );
                 CREATE INDEX IF NOT EXISTS idx_admin_role_audits_subject
                     ON admin_role_audits(subject_user_id, operated_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_admin_role_audits_retention
+                    ON admin_role_audits(operated_at, audit_id);
                 """
             )
 
