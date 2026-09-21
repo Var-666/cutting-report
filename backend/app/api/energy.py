@@ -7,6 +7,7 @@ from app.api.auth import require_admin
 from app.database.sqlserver import SqlServerConfigurationError
 from app.models.domain import ReportFilter, to_primitive
 from app.services.report_analysis_service import generate_data_version
+from app.services.request_cancellation import SqlRequestCancelled
 
 
 router = APIRouter(prefix="/api/v1/energy-report", tags=["energy-report"], dependencies=[Depends(require_admin)])
@@ -59,6 +60,8 @@ def get_task_energy_day(request: Request, report_date: date | None = None, refre
         data = service.get_task_day(selected, equipment.records, force=refresh)
         data["data_updated_at"] = to_primitive(equipment.data_updated_at)
         _add_analysis_source_version(data)
+    except SqlRequestCancelled:
+        raise
     except SqlServerConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
@@ -91,6 +94,8 @@ def get_energy_monthly_range(request: Request, start_date: date, end_date: date)
             data["syncing"] = worker.is_syncing_range(start_date, end_date)
         else:
             data["syncing"] = False
+    except SqlRequestCancelled:
+        raise
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except SqlServerConfigurationError as exc:
@@ -113,6 +118,8 @@ def get_energy_range(
             start_date, end_date, force=refresh
         )
         _add_analysis_source_version(data["task_report"])
+    except SqlRequestCancelled:
+        raise
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except SqlServerConfigurationError as exc:

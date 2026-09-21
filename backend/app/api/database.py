@@ -21,6 +21,7 @@ from app.api.auth import require_admin
 from app.config import settings
 from app.database.sqlserver import SqlServerClient, SqlServerConfigurationError
 from app.models.domain import ReportFilter, to_primitive
+from app.services.request_cancellation import SqlRequestCancelled, cancellable_cursor
 from app.services.sql_workbench_service import (
     SqlWorkbenchService,
     SqlWorkbenchValidationError,
@@ -410,6 +411,8 @@ def execute_sql(
         )
     except SqlWorkbenchValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SqlRequestCancelled:
+        raise
     except SqlServerConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
@@ -454,11 +457,13 @@ def test_connection(payload: ConnectionTestRequest, request: Request) -> dict:
     try:
         client = SqlServerClient(temporary_settings)
         with client.connect() as connection:
-            cursor = connection.cursor()
-            cursor.execute("SELECT 1 AS connection_ok")
-            row = cursor.fetchone()
+            with cancellable_cursor(connection) as cursor:
+                cursor.execute("SELECT 1 AS connection_ok")
+                row = cursor.fetchone()
         if row is None or int(row[0]) != 1:
             raise RuntimeError("数据库未返回预期结果")
+    except SqlRequestCancelled:
+        raise
     except SqlServerConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
@@ -495,6 +500,8 @@ def preview_dataset(payload: DatabasePreviewRequest, request: Request) -> dict:
             records = query_service.fetch_workshop_data(filters).workshop_records
         else:
             records = query_service.fetch_equipment_data(filters).records
+    except SqlRequestCancelled:
+        raise
     except SqlServerConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:

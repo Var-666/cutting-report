@@ -12,6 +12,7 @@ from app.database.sqlserver import SqlServerConfigurationError
 from app.models.domain import ReportFilter, to_primitive
 from app.services.energy_period_service import restore_task_energy_records
 from app.services.range_report_service import previous_equal_range, validate_report_range
+from app.services.request_cancellation import SqlRequestCancelled
 
 
 logger = logging.getLogger(__name__)
@@ -209,7 +210,7 @@ def analyze_report(payload: AnalysisRequest, request: Request) -> dict:
                 year_ago_date=year_ago_label,
                 force=payload.force,
             )
-    except HTTPException:
+    except (HTTPException, SqlRequestCancelled):
         raise
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

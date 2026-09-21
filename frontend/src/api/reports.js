@@ -1,5 +1,6 @@
 import { reportCache } from './reportCache.js'
 import { reportToday } from './reportDates.js'
+import { createRequestCancellation } from './requestCancellation.js'
 
 const DEFAULT_HEADERS = { 'Content-Type': 'application/json' }
 const REPORT_VIEW_CACHE_TTL = 5 * 60 * 1000
@@ -10,23 +11,32 @@ function invalidateWorkshopReports() {
 }
 
 async function request(url, options = {}) {
-  const response = await fetch(url, {
-    ...options,
-    credentials: 'same-origin',
-    headers: { ...DEFAULT_HEADERS, ...(options.headers || {}) },
-  })
-  let payload
+  const cancellation = createRequestCancellation(options.signal)
   try {
-    payload = await response.json()
-  } catch (error) {
-    if (error.name === 'AbortError') throw error
-    throw new Error('服务器返回了无法识别的响应')
+    const response = await fetch(url, {
+      ...options,
+      credentials: 'same-origin',
+      headers: {
+        ...DEFAULT_HEADERS,
+        ...(options.headers || {}),
+        ...cancellation.headers,
+      },
+    })
+    let payload
+    try {
+      payload = await response.json()
+    } catch (error) {
+      if (error.name === 'AbortError') throw error
+      throw new Error('服务器返回了无法识别的响应')
+    }
+    if (!response.ok || payload.success === false) {
+      const message = payload?.error?.message || payload?.detail || '请求失败，请稍后重试'
+      throw new Error(message)
+    }
+    return payload.data
+  } finally {
+    cancellation.dispose()
   }
-  if (!response.ok || payload.success === false) {
-    const message = payload?.error?.message || payload?.detail || '请求失败，请稍后重试'
-    throw new Error(message)
-  }
-  return payload.data
 }
 
 export function getAuthStatus() {

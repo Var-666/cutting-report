@@ -24,6 +24,7 @@ from app.api.leadership import router as leadership_router
 from app.api.options import router as options_router
 from app.api.reports import router as reports_router
 from app.api.reports import view_router
+from app.api.requests import REQUEST_ID_PATTERN, router as requests_router
 from app.api.workshop import router as workshop_router
 from app.config import settings
 from app.database.metadata import MetadataRepository
@@ -40,6 +41,12 @@ from app.database.sqlite import SQLiteDatabase
 from app.services.pipeline import ReportPipeline
 from app.services.leadership_report_service import LeadershipReportService
 from app.services.report_analysis_service import ReportAnalysisService
+from app.services.request_cancellation import (
+    SqlRequestCancelled,
+    bind_request_id,
+    reset_request_id,
+    sql_request_cancellations,
+)
 from app.services.worker_auth_service import WorkerAuthService
 from app.services.automation_service import AutomationService
 from app.services.cutting_dispatch_service import CuttingDispatchService
@@ -188,10 +195,34 @@ if settings.cors_origins:
 
 @app.middleware("http")
 async def request_id_middleware(request: Request, call_next):
-    request.state.request_id = request.headers.get("X-Request-ID") or f"req_{uuid.uuid4().hex[:12]}"
-    response = await call_next(request)
-    response.headers["X-Request-ID"] = request.state.request_id
-    return response
+    supplied_request_id = request.headers.get("X-Request-ID", "")
+    request_id = (
+        supplied_request_id
+        if REQUEST_ID_PATTERN.fullmatch(supplied_request_id)
+        else f"req_{uuid.uuid4().hex[:12]}"
+    )
+    request.state.request_id = request_id
+    sql_request_cancellations.activate(request_id)
+    token = bind_request_id(request_id)
+    try:
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        return response
+    finally:
+        reset_request_id(token)
+        sql_request_cancellations.finish(request_id)
+
+
+@app.exception_handler(SqlRequestCancelled)
+async def sql_request_cancelled_handler(request: Request, exc: SqlRequestCancelled):
+    return JSONResponse(
+        status_code=499,
+        content={
+            "success": False,
+            "error": {"code": "REQUEST_CANCELLED", "message": str(exc)},
+            "request_id": getattr(request.state, "request_id", "unknown"),
+        },
+    )
 
 
 @app.exception_handler(Exception)
@@ -222,6 +253,7 @@ app.include_router(automation_router)
 app.include_router(cutting_router)
 app.include_router(downloads_router)
 app.include_router(conditions_router)
+app.include_router(requests_router)
 app.include_router(view_router)
 
 

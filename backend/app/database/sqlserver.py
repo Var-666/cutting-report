@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from typing import Any, Iterator
 
 from app.config import Settings
+from app.services.request_cancellation import cancellable_cursor
 
 
 class SqlServerConfigurationError(RuntimeError):
@@ -69,28 +70,30 @@ class SqlServerClient:
 
     def fetch_all(self, sql: str, parameters: tuple[Any, ...]) -> list[dict[str, Any]]:
         with self.connect() as connection:
-            cursor = connection.cursor()
-            cursor.execute(sql, parameters)
-            columns = [item[0] for item in cursor.description]
-            return [dict(zip(columns, row, strict=True)) for row in cursor.fetchall()]
+            with cancellable_cursor(connection) as cursor:
+                cursor.execute(sql, parameters)
+                columns = [item[0] for item in cursor.description]
+                return [
+                    dict(zip(columns, row, strict=True)) for row in cursor.fetchall()
+                ]
 
     def fetch_result_sets(
         self, sql: str, parameters: tuple[Any, ...]
     ) -> list[list[dict[str, Any]]]:
         """Execute one SQL batch and return every tabular result set."""
         with self.connect() as connection:
-            cursor = connection.cursor()
-            cursor.execute(sql, parameters)
-            result_sets: list[list[dict[str, Any]]] = []
-            while True:
-                if cursor.description is not None:
-                    columns = [item[0] for item in cursor.description]
-                    result_sets.append(
-                        [
-                            dict(zip(columns, row, strict=True))
-                            for row in cursor.fetchall()
-                        ]
-                    )
-                if not cursor.nextset():
-                    break
-            return result_sets
+            with cancellable_cursor(connection) as cursor:
+                cursor.execute(sql, parameters)
+                result_sets: list[list[dict[str, Any]]] = []
+                while True:
+                    if cursor.description is not None:
+                        columns = [item[0] for item in cursor.description]
+                        result_sets.append(
+                            [
+                                dict(zip(columns, row, strict=True))
+                                for row in cursor.fetchall()
+                            ]
+                        )
+                    if not cursor.nextset():
+                        break
+                return result_sets

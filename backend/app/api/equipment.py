@@ -13,6 +13,7 @@ from app.models.domain import ReportFilter, to_primitive
 from app.services.equipment_service import (
     summarize_equipment,
 )
+from app.services.request_cancellation import SqlRequestCancelled
 
 
 logger = logging.getLogger(__name__)
@@ -56,6 +57,8 @@ def get_equipment_report(
         )
         energy = request.app.state.energy_service.enrich(equipment_data.records, force=refresh)
         records = energy.records
+    except SqlRequestCancelled:
+        raise
     except SqlServerConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:

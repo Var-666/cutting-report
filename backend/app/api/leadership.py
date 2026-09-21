@@ -13,6 +13,7 @@ from app.config import settings
 from app.database.sqlserver import SqlServerConfigurationError
 from app.models.domain import to_primitive
 from app.services.report_analysis_service import generate_data_version
+from app.services.request_cancellation import SqlRequestCancelled
 
 
 logger = logging.getLogger(__name__)
@@ -115,6 +116,8 @@ def get_leadership_report(
                 bootstrap=service.needs_bootstrap(month_start),
             )
         result = _result_with_refresh_state(request, month_start, result)
+    except SqlRequestCancelled:
+        raise
     except (SqlServerConfigurationError, ValueError) as exc:
         if isinstance(exc, ValueError):
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -147,6 +150,8 @@ def refresh_leadership_report(
             )
             result = service.fetch(month_start)
         result = _result_with_refresh_state(request, month_start, result)
+    except SqlRequestCancelled:
+        raise
     except SqlServerConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:

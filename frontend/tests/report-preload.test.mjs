@@ -74,7 +74,8 @@ test('logout during latest-date request prevents follow-on warmup even if fetch 
   stopReportPreload()
   finish(response({ report_date: today }))
   await pending
-  assert.equal(calls.length, 1)
+  assert.equal(calls.filter((call) => call.url.includes('latest-date')).length, 1)
+  assert.equal(calls.filter((call) => call.url.includes('/requests/') && call.url.endsWith('/cancel')).length, 1)
   assert.deepEqual(reportPreload.items, [])
 })
 

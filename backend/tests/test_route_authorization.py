@@ -88,6 +88,12 @@ def test_workshop_routes_keep_the_intended_role_split() -> None:
     assert require_admin in _dependency_calls(audits)
 
 
+def test_request_cancellation_requires_a_signed_in_user() -> None:
+    cancellation = _route("/api/v1/requests/{request_id}/cancel", "POST")
+
+    assert require_user in _dependency_calls(cancellation)
+
+
 def test_public_bootstrap_login_and_health_routes_stay_public() -> None:
     for path, method in (
         ("/api/v1/auth/status", "GET"),
