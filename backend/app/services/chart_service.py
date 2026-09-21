@@ -34,6 +34,53 @@ class ChartService:
                     series["areaStyle"] = {"opacity": 0.16}
         return option
 
+    @staticmethod
+    def _apply_report_theme(option: dict) -> dict:
+        """Apply the shared export-report visual language without changing data."""
+        ink = "#49677a"
+        axis = "#9eb4c0"
+        grid = "#e6edf1"
+        option["backgroundColor"] = "#ffffff"
+        option["textStyle"] = {
+            "color": ink,
+            "fontFamily": "Microsoft YaHei, PingFang SC, Noto Sans CJK SC, sans-serif",
+            "fontSize": 11,
+        }
+        option.setdefault("tooltip", {}).update(
+            {
+                "backgroundColor": "rgba(18,59,87,.94)",
+                "borderWidth": 0,
+                "textStyle": {"color": "#ffffff", "fontSize": 11},
+            }
+        )
+        option.setdefault("legend", {}).setdefault("textStyle", {"color": ink})
+
+        x_axes = option.get("xAxis", [])
+        if isinstance(x_axes, dict):
+            x_axes = [x_axes]
+        for item in x_axes:
+            item.setdefault("axisLine", {"lineStyle": {"color": axis}})
+            item.setdefault("axisTick", {"show": False})
+            item.setdefault("axisLabel", {}).setdefault("color", ink)
+
+        y_axes = option.get("yAxis", [])
+        if isinstance(y_axes, dict):
+            y_axes = [y_axes]
+        for item in y_axes:
+            item.setdefault("axisLine", {"show": False})
+            item.setdefault("axisTick", {"show": False})
+            item.setdefault("axisLabel", {}).setdefault("color", ink)
+            item.setdefault("splitLine", {"lineStyle": {"color": grid}})
+
+        for series in option.get("series", []):
+            if series.get("type") == "bar":
+                series.setdefault("barMaxWidth", 26)
+                series.setdefault("itemStyle", {}).setdefault("borderRadius", [3, 3, 0, 0])
+            elif series.get("type") == "line":
+                series.setdefault("symbolSize", 6)
+                series.setdefault("lineStyle", {}).setdefault("width", 2)
+        return option
+
     def build(
         self,
         summary_records: list[SummaryBaseRecord],
@@ -142,9 +189,11 @@ class ChartService:
             ],
         }
         return {
-            "length_combo": self._apply_chart_type(length_combo, chart_type),
+            "length_combo": self._apply_chart_type(
+                self._apply_report_theme(length_combo), chart_type
+            ),
             "equipment_detail": self._apply_chart_type(
-                equipment_detail, chart_type
+                self._apply_report_theme(equipment_detail), chart_type
             ),
         }
 
@@ -209,8 +258,12 @@ class ChartService:
             [_chart_number((row.get("gas") or {}).get("value")) for row in month_rows],
         )
         return {
-            "equipment_detail": self._apply_chart_type(task, chart_type),
-            "equipment_month": self._apply_chart_type(monthly, chart_type),
+            "equipment_detail": self._apply_chart_type(
+                self._apply_report_theme(task), chart_type
+            ),
+            "equipment_month": self._apply_chart_type(
+                self._apply_report_theme(monthly), chart_type
+            ),
         }
 
     def build_leadership(
@@ -290,6 +343,10 @@ class ChartService:
             ],
         }
         return {
-            "daily_trend": self._apply_chart_type(daily_trend, chart_type),
-            "monthly_trend": self._apply_chart_type(monthly_trend, chart_type),
+            "daily_trend": self._apply_chart_type(
+                self._apply_report_theme(daily_trend), chart_type
+            ),
+            "monthly_trend": self._apply_chart_type(
+                self._apply_report_theme(monthly_trend), chart_type
+            ),
         }

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import date, datetime
 from typing import Literal
 from zoneinfo import ZoneInfo
@@ -34,6 +35,40 @@ def _workshop_analysis_source_version(report_date: str, records: list) -> str:
             "records": to_primitive(ordered),
         }
     )
+
+
+def _workshop_trend(records: list) -> list[dict]:
+    """Aggregate the filtered report rows into truthful daily KPI samples."""
+    days: dict[str, list] = defaultdict(list)
+    for row in records:
+        production_time = getattr(row, "production_time", None)
+        if production_time is None:
+            continue
+        days[production_time.date().isoformat()].append(row)
+    result = []
+    for stamp, rows in sorted(days.items()):
+        task_count = len(rows)
+        confirmed_count = sum(bool(getattr(row, "confirmed_by", None)) for row in rows)
+        project_count = len(
+            {
+                row.project_code
+                for row in rows
+                if getattr(row, "project_code", None)
+            }
+        )
+        result.append(
+            {
+                "report_date": stamp,
+                "task_count": task_count,
+                "pending_count": task_count - confirmed_count,
+                "confirmed_count": confirmed_count,
+                "project_count": project_count,
+                "confirmation_rate": (
+                    round(confirmed_count / task_count * 100, 1) if task_count else 0
+                ),
+            }
+        )
+    return result
 
 
 class ConfirmTaskRequest(BaseModel):
@@ -261,6 +296,7 @@ def list_range_tasks(
         records = [row for row in records if row.confirmed_by]
     elif confirmation_status == "unconfirmed":
         records = [row for row in records if not row.confirmed_by]
+    trend = _workshop_trend(records)
     records = sort_workshop_records(records, "manager")
     total = len(records)
     start = (page - 1) * page_size
@@ -283,6 +319,7 @@ def list_range_tasks(
             "page_size": page_size,
             "project_names": project_names,
             "confirmed_count": sum(bool(row.confirmed_by) for row in records),
+            "trend": trend,
             "worker_summaries": to_primitive(worker_summaries),
             "analysis_source_version": analysis_source_version,
         },

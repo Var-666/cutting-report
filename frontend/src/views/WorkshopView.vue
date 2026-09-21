@@ -13,10 +13,12 @@ import {
 } from '../api/reports'
 import AnalysisPanel from '../components/AnalysisPanel.vue'
 import AppIcon from '../components/AppIcon.vue'
+import MetricSparkline from '../components/MetricSparkline.vue'
 import ReportTrendPanel from '../components/ReportTrendPanel.vue'
 import StandardReportQuery from '../components/StandardReportQuery.vue'
 import { reportToday } from '../api/reportDates.js'
 import { formatChineseDate, formatChineseDateTime } from '../utils/dateDisplay.js'
+import { useDialogFocus } from '../composables/useDialogFocus.js'
 
 const props = defineProps({
   exporting: Boolean,
@@ -34,6 +36,7 @@ const pageActive = ref(true)
 const chartType = ref('bar_line')
 const selectedTasks = ref(new Map())
 const batchConfirmation = reactive({ visible: false, saving: false, error: '', tasks: [] })
+const batchDialogElement = ref(null)
 const confirmationFeedback = reactive({ visible: false, type: 'pending', title: '', message: '' })
 const correction = reactive({
   visible: false,
@@ -47,6 +50,11 @@ const correction = reactive({
   workers: [],
   audits: [],
 })
+const correctionDialogElement = ref(null)
+const batchDialogOpen = computed(() => batchConfirmation.visible)
+const correctionDialogOpen = computed(() => correction.visible)
+useDialogFocus(batchDialogOpen, batchDialogElement, closeBatchConfirmation)
+useDialogFocus(correctionDialogOpen, correctionDialogElement, closeCorrection)
 const correctionReasonPresets = {
   workerRevoke: [
     '误选了其他工人的任务',
@@ -104,6 +112,16 @@ const workshopMetrics = computed(() => {
     confirmationRate: taskCount ? Math.round((confirmedCount / taskCount) * 1000) / 10 : 0,
   }
 })
+const workshopMetricSeries = computed(() => {
+  const rows = result.value.trend || []
+  return {
+    tasks: rows.map((row) => row.task_count),
+    pending: rows.map((row) => row.pending_count),
+    confirmed: rows.map((row) => row.confirmed_count),
+    projects: rows.map((row) => row.project_count),
+    confirmationRate: rows.map((row) => row.confirmation_rate),
+  }
+})
 let refreshTimer = null
 let feedbackTimer = null
 let requestController = null
@@ -117,23 +135,26 @@ function beginRequest() {
 
 function stopRefreshTimer() {
   if (!refreshTimer) return
-  window.clearInterval(refreshTimer)
+  window.clearTimeout(refreshTimer)
   refreshTimer = null
 }
 
 function startRefreshTimer() {
-  if (!isWorker.value || refreshTimer) return
-  refreshTimer = window.setInterval(() => {
+  if (!pageActive.value || !isWorker.value || refreshTimer) return
+  refreshTimer = window.setTimeout(async () => {
+    refreshTimer = null
     if (
-      document.visibilityState === 'visible'
+      pageActive.value
+      && document.visibilityState === 'visible'
       && result.value.report
       && !loading.value
       && !batchConfirmation.visible
       && !batchConfirmation.saving
       && !correction.visible
     ) {
-      load(result.value.page, { silent: true, ensureReport: false, force: true })
+      await load(result.value.page, { silent: true, ensureReport: false, force: true })
     }
+    startRefreshTimer()
   }, 5000)
 }
 
@@ -498,7 +519,7 @@ onUnmounted(() => {
 
   <Teleport to="body">
     <div v-if="batchConfirmation.visible" class="confirmation-dialog-backdrop" @click.self="closeBatchConfirmation">
-      <section class="confirmation-dialog batch-confirmation-dialog" role="dialog" aria-modal="true" aria-labelledby="batch-confirmation-dialog-title">
+      <section ref="batchDialogElement" class="confirmation-dialog batch-confirmation-dialog" role="dialog" aria-modal="true" aria-labelledby="batch-confirmation-dialog-title" tabindex="-1">
         <header><div><small>任务确认</small><h2 id="batch-confirmation-dialog-title">确认以下任务由我完成</h2></div><button type="button" aria-label="关闭" :disabled="batchConfirmation.saving" @click="closeBatchConfirmation">×</button></header>
         <p class="batch-confirmation-intro">请核对以下 {{ batchConfirmation.tasks.length }} 项任务。确认后，任务将登记到当前工人“{{ user.display_name }}”名下。</p>
         <div class="batch-confirmation-list">
@@ -507,13 +528,13 @@ onUnmounted(() => {
             <tbody><tr v-for="(row, index) in batchConfirmation.tasks" :key="row.task_id"><td>{{ index + 1 }}</td><td>{{ display(row.project_code || row.ship_no) }}</td><td>{{ display(row.segment_name) }}</td><td :title="display(row.program_no)">{{ display(row.program_no) }}</td><td>{{ time(row.production_time) }}</td></tr></tbody>
           </table>
         </div>
-        <p v-if="batchConfirmation.error" class="confirmation-dialog-error">{{ batchConfirmation.error }}</p>
+        <p v-if="batchConfirmation.error" class="confirmation-dialog-error" role="alert">{{ batchConfirmation.error }}</p>
         <footer><button type="button" :disabled="batchConfirmation.saving" @click="closeBatchConfirmation">返回检查</button><button class="primary" type="button" :disabled="batchConfirmation.saving" @click="submitBatchConfirmation"><span v-if="batchConfirmation.saving" class="spinner"></span>{{ batchConfirmation.saving ? '确认中…' : `确认这 ${batchConfirmation.tasks.length} 项任务` }}</button></footer>
       </section>
     </div>
 
     <div v-if="correction.visible" class="confirmation-dialog-backdrop" @click.self="closeCorrection">
-      <section class="confirmation-dialog" role="dialog" aria-modal="true" aria-labelledby="confirmation-dialog-title">
+      <section ref="correctionDialogElement" class="confirmation-dialog" role="dialog" aria-modal="true" aria-labelledby="confirmation-dialog-title" tabindex="-1">
         <header><div><small>{{ isWorker ? '本人撤销' : '管理员更正' }}</small><h2 id="confirmation-dialog-title">{{ isWorker ? '撤销任务确认' : '更正确认人' }}</h2></div><button type="button" aria-label="关闭" :disabled="correction.saving" @click="closeCorrection">×</button></header>
         <div class="confirmation-dialog-task"><strong>{{ display(correction.row?.program_no) }}</strong><span>当前确认人：{{ correction.row?.confirmed_by }} · {{ time(correction.row?.confirmed_at) }}</span></div>
         <div v-if="correction.loading" class="confirmation-dialog-loading"><span class="spinner dark"></span>正在读取工人和审计记录…</div>
@@ -524,8 +545,8 @@ onUnmounted(() => {
             <span>常用原因</span>
             <div><button v-for="reason in visibleCorrectionReasonPresets" :key="reason" type="button" :class="{ active: correction.reason === reason }" :disabled="correction.saving" @click="selectCorrectionReason(reason)">{{ reason }}</button></div>
           </div>
-          <label class="confirmation-dialog-field"><span>更正原因</span><textarea v-model="correction.reason" maxlength="200" rows="3" placeholder="选择常用原因，或直接填写其他原因" required></textarea><small>{{ correction.reason.trim().length }} / 200</small></label>
-          <p v-if="correction.error" class="confirmation-dialog-error">{{ correction.error }}</p>
+          <label class="confirmation-dialog-field"><span>更正原因</span><textarea v-model="correction.reason" name="correction_reason" autocomplete="off" maxlength="200" rows="3" placeholder="选择常用原因，或直接填写其他原因…" required></textarea><small>{{ correction.reason.trim().length }} / 200</small></label>
+          <p v-if="correction.error" class="confirmation-dialog-error" role="alert">{{ correction.error }}</p>
           <section v-if="!isWorker" class="confirmation-audit-list"><h3>该任务的确认记录</h3><p v-if="!correction.audits.length">暂无历史更正记录</p><article v-for="audit in correction.audits" :key="audit.audit_id"><strong>{{ audit.action_label }}</strong><span>{{ audit.previous_worker_name || '待确认' }} → {{ audit.new_worker_name || '待确认' }}</span><small>{{ audit.operated_by_name }} · {{ time(audit.operated_at) }} · {{ audit.reason }}</small></article></section>
         </template>
         <footer><button type="button" :disabled="correction.saving" @click="closeCorrection">取消</button><button class="primary" type="button" :disabled="correction.loading || correction.saving || (!isWorker && correction.action === 'reassign' && !correction.workerId)" @click="submitCorrection"><span v-if="correction.saving" class="spinner"></span>{{ correction.saving ? '保存中…' : isWorker ? '确认撤销' : '保存更正' }}</button></footer>
@@ -559,33 +580,33 @@ onUnmounted(() => {
       />
     </section>
 
-    <div v-if="error" class="global-error"><strong>操作未完成</strong><span>{{ error }}</span><button @click="error = ''">关闭</button></div>
+    <div v-if="error" class="global-error" role="alert"><strong>操作未完成</strong><span>{{ error }}，请检查筛选条件后重试。</span><button type="button" @click="error = ''">关闭</button></div>
 
     <section v-if="!isWorker" class="workshop-kpis" aria-label="车间任务概况">
       <article class="workshop-kpi kpi-blue">
         <span class="workshop-kpi__icon"><AppIcon name="tasks" size="21" /></span>
         <div><span>全部任务<small>ALL TASKS</small></span><p><strong>{{ workshopMetrics.taskCount }}</strong> <small>项</small></p><em>当前查询区间</em></div>
-        <svg class="workshop-sparkline" viewBox="0 0 76 28" aria-hidden="true"><path d="M2 22 13 21 24 11 35 7 47 13 60 16 74 11"/></svg>
+        <MetricSparkline class="workshop-sparkline" :values="workshopMetricSeries.tasks" label="每日任务数量趋势" />
       </article>
       <article class="workshop-kpi kpi-amber">
         <span class="workshop-kpi__icon"><AppIcon name="clock" size="21" tone="amber" /></span>
         <div><span>待确认<small>PENDING</small></span><p><strong>{{ workshopMetrics.pendingCount }}</strong> <small>项</small></p><em>等待工人确认</em></div>
-        <svg class="workshop-sparkline" viewBox="0 0 76 28" aria-hidden="true"><path d="M2 22 13 14 24 20 35 22 47 12 59 18 74 9"/></svg>
+        <MetricSparkline class="workshop-sparkline" :values="workshopMetricSeries.pending" label="每日待确认任务趋势" />
       </article>
       <article class="workshop-kpi kpi-green">
         <span class="workshop-kpi__icon"><AppIcon name="check" size="21" /></span>
         <div><span>已确认<small>CONFIRMED</small></span><p><strong>{{ workshopMetrics.confirmedCount }}</strong> <small>项</small></p><em>已登记完成人</em></div>
-        <svg class="workshop-sparkline" viewBox="0 0 76 28" aria-hidden="true"><path d="M2 23 13 17 24 20 35 12 47 15 59 7 74 11"/></svg>
+        <MetricSparkline class="workshop-sparkline" :values="workshopMetricSeries.confirmed" label="每日已确认任务趋势" />
       </article>
       <article class="workshop-kpi kpi-red">
         <span class="workshop-kpi__icon"><AppIcon name="briefcase" size="21" tone="red" /></span>
         <div><span>涉及工程<small>PROJECTS</small></span><p><strong>{{ workshopMetrics.projectCount }}</strong> <small>个</small></p><em>当前区间范围</em></div>
-        <svg class="workshop-sparkline" viewBox="0 0 76 28" aria-hidden="true"><path d="M2 21 12 13 23 17 34 16 46 22 59 18 74 15"/></svg>
+        <MetricSparkline class="workshop-sparkline" :values="workshopMetricSeries.projects" label="每日涉及工程趋势" />
       </article>
       <article class="workshop-kpi kpi-violet">
         <span class="workshop-kpi__icon"><AppIcon name="activity" size="21" /></span>
         <div><span>确认率<small>CONFIRMATION RATE</small></span><p><strong>{{ number(workshopMetrics.confirmationRate) }}</strong> <small>%</small></p><em>按区间任务计算</em></div>
-        <svg class="workshop-sparkline" viewBox="0 0 76 28" aria-hidden="true"><path d="M2 23 13 19 24 21 35 15 47 9 59 15 74 8"/></svg>
+        <MetricSparkline class="workshop-sparkline" :values="workshopMetricSeries.confirmationRate" label="每日任务确认率趋势" />
       </article>
     </section>
 
@@ -613,7 +634,7 @@ onUnmounted(() => {
       <table v-content-table="pageActive" class="workshop-table" :class="{ 'worker-workshop-table': isWorker }">
         <thead><tr><th v-if="isWorker" class="workshop-select-cell"><input type="checkbox" :checked="allVisibleTasksSelected" :indeterminate="someVisibleTasksSelected" :disabled="!selectableTasks.length || loading || batchConfirmation.saving" aria-label="全选当前页待确认任务" @change="toggleVisibleTasks($event.target.checked)" /></th><th>序号</th><th>工程号</th><th>船号</th><th>分段名</th><th>程序号</th><th>切割长度</th><th>坡口长度</th><th>切割时长</th><th>时间</th><th>确认状态</th><th>备注</th></tr></thead>
         <tbody>
-          <tr v-if="loading"><td :colspan="isWorker ? 12 : 11" class="table-empty">正在查询任务...</td></tr>
+          <tr v-if="loading"><td :colspan="isWorker ? 12 : 11" class="table-empty">正在查询任务…</td></tr>
           <tr v-else-if="!result.items.length"><td :colspan="isWorker ? 12 : 11" class="table-empty">当前条件下暂无任务</td></tr>
           <tr v-for="(row, index) in result.items" v-else :key="row.task_id" :class="{ selected: isWorker && selectedTasks.has(row.task_id) }">
             <td v-if="isWorker" class="workshop-select-cell"><input type="checkbox" :checked="selectedTasks.has(row.task_id)" :disabled="Boolean(row.confirmed_by) || loading || batchConfirmation.saving" :aria-label="`选择任务 ${display(row.program_no)}`" @change="setTaskSelected(row, $event.target.checked)" /></td>
@@ -662,7 +683,7 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.workshop-dashboard>.page-hero{position:relative;min-height:174px;display:flex;align-items:center;overflow:hidden;padding:25px 30px;border:1px solid rgba(255,255,255,.72);border-radius:14px;background:linear-gradient(90deg,rgba(246,252,255,.99) 0%,rgba(238,248,253,.92) 39%,rgba(7,48,76,.08) 69%),url('../assets/home-laser-cutting.webp') center 51%/cover no-repeat;box-shadow:0 12px 30px rgba(22,62,89,.07);animation:surface-in .46s cubic-bezier(.2,.75,.25,1) both}.workshop-dashboard>.page-hero::after{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(116deg,transparent 0 46%,rgba(255,255,255,.24) 46.2%,transparent 46.8%)}.workshop-hero__copy,.workshop-hero__slogan{position:relative;z-index:1}.workshop-hero__copy{max-width:560px}.workshop-hero__copy .eyebrow{display:block;margin:0 0 5px;color:#237fb7;font-size:10px;font-weight:700;letter-spacing:1.4px}.workshop-hero__copy h2{margin:0 0 7px;color:#153f5d;font-size:38px;line-height:1.08;letter-spacing:1px}.workshop-hero__copy>p{max-width:530px;margin:0;color:#607a8d;font-size:12px;line-height:1.7}.workshop-hero__slogan{margin:0 20px 0 auto;color:#effaff;text-align:right;text-shadow:0 2px 10px rgba(4,37,58,.84);transform:rotate(-6deg)}.workshop-hero__slogan strong,.workshop-hero__slogan span{display:block}.workshop-hero__slogan strong{font-size:16px;letter-spacing:3px}.workshop-hero__slogan span{margin-top:5px;font-size:11px;letter-spacing:2px}.workshop-query-shell{margin:10px 0;padding:11px 14px;border:1px solid #dbe6ec;border-radius:10px;background:#fff;box-shadow:0 7px 22px rgba(22,62,89,.05)}.workshop-query-shell .report-query{width:100%;grid-template-columns:repeat(2,minmax(170px,1fr)) minmax(160px,.7fr) 128px 128px;padding:0;border:0;background:transparent;box-shadow:none}.workshop-query-shell :deep(.report-period-picker__trigger),.workshop-query-shell :deep(.app-select__trigger),.workshop-query-shell .report-query>button{height:38px;min-height:38px;border-radius:6px;font-size:10px}.workshop-query-shell .report-query>button.primary{display:flex;align-items:center;justify-content:center;gap:6px;border-color:#1179ab;background:linear-gradient(135deg,#0e688f,#0584af);box-shadow:0 5px 12px rgba(15,111,158,.18)}.global-error{margin:10px 0 0;border-radius:9px}.workshop-kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin:10px 0}.workshop-kpi{--kpi-color:#237fb7;--kpi-soft:#eaf5fb;position:relative;min-width:0;min-height:108px;display:flex;gap:10px;overflow:hidden;padding:14px 12px;border:1px solid #dbe6ec;border-top:2px solid var(--kpi-color);border-radius:10px;background:#fff;box-shadow:0 7px 22px rgba(22,62,89,.055);transition:transform .18s ease,box-shadow .18s ease;animation:surface-in .42s cubic-bezier(.2,.75,.25,1) both}.workshop-kpi:hover{transform:translateY(-2px);box-shadow:0 11px 26px rgba(22,62,89,.09)}.workshop-kpi:nth-child(2){animation-delay:.04s}.workshop-kpi:nth-child(3){animation-delay:.08s}.workshop-kpi:nth-child(4){animation-delay:.12s}.workshop-kpi:nth-child(5){animation-delay:.16s}.workshop-kpi.kpi-amber{--kpi-color:#ee9b2f;--kpi-soft:#fff6e6}.workshop-kpi.kpi-green{--kpi-color:#19a777;--kpi-soft:#e9f8f3}.workshop-kpi.kpi-red{--kpi-color:#df5961;--kpi-soft:#fff0f1}.workshop-kpi.kpi-violet{--kpi-color:#7366db;--kpi-soft:#efedff}.workshop-kpi__icon{position:relative;z-index:1;width:35px;height:35px;display:grid;place-items:center;flex:0 0 auto;color:var(--kpi-color);border-radius:50%;background:var(--kpi-soft);transition:transform .2s ease}.workshop-kpi:hover .workshop-kpi__icon{transform:scale(1.08) rotate(-3deg)}.workshop-kpi>div{position:relative;z-index:1;min-width:0;flex:1}.workshop-kpi>div>span{display:block;color:#284a62;font-size:11px;font-weight:700;white-space:nowrap}.workshop-kpi>div>span small{display:block;margin:3px 0 0;color:#8195a4;font-size:7px;font-weight:500;letter-spacing:.45px}.workshop-kpi p{margin:8px 0 6px;color:#173f64;font-size:9px;white-space:nowrap}.workshop-kpi p strong{font-size:21px}.workshop-kpi p small{margin-left:2px;color:#6f8798;font-size:8px}.workshop-kpi em{display:block;overflow:hidden;color:#7e929f;text-overflow:ellipsis;white-space:nowrap;font-style:normal;font-size:8px}.workshop-sparkline{position:absolute;right:8px;bottom:12px;width:58px;height:25px;opacity:.72}.workshop-sparkline path{fill:none;stroke:var(--kpi-color);stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}.workshop-kpi::after{content:"";position:absolute;width:70px;height:70px;right:-28px;bottom:-41px;border-radius:50%;background:var(--kpi-soft);opacity:.72}
+.workshop-dashboard>.page-hero{position:relative;min-height:174px;display:flex;align-items:center;overflow:hidden;padding:25px 30px;border:1px solid rgba(255,255,255,.72);border-radius:14px;background:linear-gradient(90deg,rgba(246,252,255,.99) 0%,rgba(238,248,253,.92) 39%,rgba(7,48,76,.08) 69%),url('../assets/home-laser-cutting.webp') center 51%/cover no-repeat;box-shadow:0 12px 30px rgba(22,62,89,.07);animation:surface-in .46s cubic-bezier(.2,.75,.25,1) both}.workshop-dashboard>.page-hero::after{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(116deg,transparent 0 46%,rgba(255,255,255,.24) 46.2%,transparent 46.8%)}.workshop-hero__copy,.workshop-hero__slogan{position:relative;z-index:1}.workshop-hero__copy{max-width:560px}.workshop-hero__copy .eyebrow{display:block;margin:0 0 5px;color:#237fb7;font-size:10px;font-weight:700;letter-spacing:1.4px}.workshop-hero__copy h2{margin:0 0 7px;color:#153f5d;font-size:38px;line-height:1.08;letter-spacing:1px}.workshop-hero__copy>p{max-width:530px;margin:0;color:#607a8d;font-size:12px;line-height:1.7}.workshop-hero__slogan{margin:0 20px 0 auto;color:#effaff;text-align:right;text-shadow:0 2px 10px rgba(4,37,58,.84);transform:rotate(-6deg)}.workshop-hero__slogan strong,.workshop-hero__slogan span{display:block}.workshop-hero__slogan strong{font-size:16px;letter-spacing:3px}.workshop-hero__slogan span{margin-top:5px;font-size:11px;letter-spacing:2px}.workshop-query-shell{margin:10px 0;padding:11px 14px;border:1px solid #dbe6ec;border-radius:10px;background:#fff;box-shadow:0 7px 22px rgba(22,62,89,.05)}.workshop-query-shell .report-query{width:100%;grid-template-columns:repeat(2,minmax(170px,1fr)) minmax(160px,.7fr) 128px 128px;padding:0;border:0;background:transparent;box-shadow:none}.workshop-query-shell :deep(.report-period-picker__trigger),.workshop-query-shell :deep(.app-select__trigger),.workshop-query-shell .report-query>button{height:38px;min-height:38px;border-radius:6px;font-size:10px}.workshop-query-shell .report-query>button.primary{display:flex;align-items:center;justify-content:center;gap:6px;border-color:#1179ab;background:linear-gradient(135deg,#0e688f,#0584af);box-shadow:0 5px 12px rgba(15,111,158,.18)}.global-error{margin:10px 0 0;border-radius:9px}.workshop-kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin:10px 0}.workshop-kpi{--kpi-color:#237fb7;--kpi-soft:#eaf5fb;position:relative;min-width:0;min-height:108px;display:flex;gap:10px;overflow:hidden;padding:14px 12px;border:1px solid #dbe6ec;border-top:2px solid var(--kpi-color);border-radius:10px;background:#fff;box-shadow:0 7px 22px rgba(22,62,89,.055);transition:transform .18s ease,box-shadow .18s ease;animation:surface-in .42s cubic-bezier(.2,.75,.25,1) both}.workshop-kpi:hover{transform:translateY(-2px);box-shadow:0 11px 26px rgba(22,62,89,.09)}.workshop-kpi:nth-child(2){animation-delay:.04s}.workshop-kpi:nth-child(3){animation-delay:.08s}.workshop-kpi:nth-child(4){animation-delay:.12s}.workshop-kpi:nth-child(5){animation-delay:.16s}.workshop-kpi.kpi-amber{--kpi-color:#ee9b2f;--kpi-soft:#fff6e6}.workshop-kpi.kpi-green{--kpi-color:#19a777;--kpi-soft:#e9f8f3}.workshop-kpi.kpi-red{--kpi-color:#df5961;--kpi-soft:#fff0f1}.workshop-kpi.kpi-violet{--kpi-color:#7366db;--kpi-soft:#efedff}.workshop-kpi__icon{position:relative;z-index:1;width:35px;height:35px;display:grid;place-items:center;flex:0 0 auto;color:var(--kpi-color);border-radius:50%;background:var(--kpi-soft);transition:transform .2s ease}.workshop-kpi:hover .workshop-kpi__icon{transform:scale(1.08) rotate(-3deg)}.workshop-kpi>div{position:relative;z-index:1;min-width:0;flex:1}.workshop-kpi>div>span{display:block;color:#284a62;font-size:11px;font-weight:700;white-space:nowrap}.workshop-kpi>div>span small{display:block;margin:3px 0 0;color:#8195a4;font-size:7px;font-weight:500;letter-spacing:.45px}.workshop-kpi p{margin:8px 0 6px;color:#173f64;font-size:9px;white-space:nowrap}.workshop-kpi p strong{font-size:21px}.workshop-kpi p small{margin-left:2px;color:#6f8798;font-size:8px}.workshop-kpi em{display:block;overflow:hidden;color:#7e929f;text-overflow:ellipsis;white-space:nowrap;font-style:normal;font-size:8px}.workshop-sparkline{position:absolute;right:8px;bottom:12px;width:58px;height:25px;opacity:.72}.workshop-kpi::after{content:"";position:absolute;width:70px;height:70px;right:-28px;bottom:-41px;border-radius:50%;background:var(--kpi-soft);opacity:.72}
 :deep(.workshop-panel),:deep(.worker-time-summary){margin-bottom:10px;border:1px solid #dbe6ec;border-radius:10px;box-shadow:0 7px 22px rgba(22,62,89,.05)}:deep(.workshop-panel .report-trend-panel__heading),:deep(.worker-time-summary .report-trend-panel__heading){min-height:47px;padding:0 14px;border-bottom:1px solid #e5edf1;background:linear-gradient(90deg,#fff,#fbfdfe)}:deep(.workshop-panel .report-trend-panel__heading>div),:deep(.worker-time-summary .report-trend-panel__heading>div){gap:8px}:deep(.workshop-panel .report-trend-panel__heading>div>span),:deep(.worker-time-summary .report-trend-panel__heading>div>span){width:28px;height:24px;display:grid;place-items:center;padding:0;color:#237fb7;border:0;border-radius:7px;background:#eaf5fb;font-size:10px;font-weight:700}:deep(.workshop-panel .report-trend-panel__heading h2),:deep(.worker-time-summary .report-trend-panel__heading h2){color:#193c57;font-size:14px}:deep(.workshop-panel .report-trend-panel__heading p),:deep(.worker-time-summary .report-trend-panel__heading p){color:#6f8798;font-size:9px}.workshop-filters{grid-template-columns:1.2fr 1fr auto!important;gap:10px;padding:11px 14px 9px;border-bottom:1px solid #e6edf1}.workshop-dashboard--worker .workshop-filters{grid-template-columns:1fr 1fr 1fr auto!important}.workshop-filters label span{margin-bottom:5px;font-size:9px}.workshop-filters>button{min-height:38px;display:flex;align-items:center;justify-content:center;gap:6px;padding:0 15px;border-color:#b8cdd8;border-radius:6px;background:#f8fbfc;color:#2477a6;font-size:10px}.workshop-report-state,.workshop-empty-report{margin:0 14px 8px;padding:9px 12px;border:0;border-radius:7px;background:linear-gradient(90deg,#eef8fb,#f6fbfc);font-size:9px}.workshop-report-state strong,.workshop-empty-report strong{font-size:10px}.workshop-summary{padding:0 14px 10px;font-size:9px}:deep(.workshop-panel .report-trend-panel__content),:deep(.worker-time-summary .report-trend-panel__content){padding:0 13px 12px}:deep(.workshop-panel .report-trend-panel__table),:deep(.worker-time-summary .report-trend-panel__table){overflow-x:auto;border-color:#dfe9ee;border-radius:7px}.workshop-table th,.workshop-table td{height:36px;padding:6px 8px;font-size:10px}.workshop-table thead th{color:#fff!important;background:#0b4f76!important;font-size:9px!important}.workshop-table tbody tr:hover{background:#f4f9fb}.pending-confirmation{display:inline-flex;align-items:center;justify-content:center;min-height:22px;padding:0 9px;border-radius:999px;background:#fff4df;color:#b67719;font-weight:700}.confirmed-mark{color:#16885f}.history-pagination{min-height:45px;padding:7px 14px;border-top:1px solid #e3ebef;background:#fbfdfe}.history-page-buttons button{min-height:30px;border-radius:5px}.worker-time-table th,.worker-time-table td{height:36px;padding:6px 8px;font-size:10px}.worker-time-table thead th{background:#0b4f76}.workshop-batch-actions{margin:0 14px 9px;border:1px solid #dce7ec;border-radius:7px}:deep(.workshop-analysis){margin-bottom:0;overflow:hidden;border:1px solid #dbe6ec;border-radius:10px;box-shadow:0 7px 22px rgba(22,62,89,.05)}:deep(.workshop-analysis .analysis-panel-head){padding:12px 15px;background:linear-gradient(90deg,#fff,#fbfdfe)}:deep(.workshop-analysis .analysis-panel-icon){width:34px;height:34px}:deep(.workshop-analysis .analysis-kicker){font-size:8px}:deep(.workshop-analysis .analysis-panel-head h2){margin:2px 0 0;color:#193c57;font-size:15px}:deep(.workshop-analysis .analysis-actions button){min-height:33px;padding:0 12px;font-size:10px}:deep(.workshop-analysis .analysis-facts){gap:7px;padding:10px 13px 0}:deep(.workshop-analysis .analysis-facts article){padding:8px 10px}:deep(.workshop-analysis .analysis-facts span){font-size:9px}:deep(.workshop-analysis .analysis-facts strong){font-size:12px}:deep(.workshop-analysis .analysis-grid){grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;padding:10px 13px 13px}:deep(.workshop-analysis .analysis-grid article){min-height:88px;padding:11px 12px;border:0;border-radius:7px;background:#eff7fb}:deep(.workshop-analysis .analysis-grid article:nth-child(3)){background:#fff1f2}:deep(.workshop-analysis .analysis-grid article:nth-child(4)){background:#eef8f4}:deep(.workshop-analysis .analysis-grid h3){font-size:10px}:deep(.workshop-analysis .analysis-grid p){color:#60798b;font-size:9px;line-height:1.6;overflow-wrap:anywhere}:deep(.workshop-analysis .analysis-evidence){margin:0 13px 12px}:deep(.workshop-analysis .analysis-time){padding:0 13px 12px;font-size:9px}
 @media(max-width:1120px){.workshop-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.workshop-kpi:last-child{grid-column:1/-1}.workshop-hero__slogan{display:none}:deep(.workshop-analysis .analysis-grid){grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:900px){.workshop-query-shell .report-query{grid-template-columns:repeat(2,minmax(180px,1fr))}.workshop-query-shell :deep(.report-period-picker){grid-column:1/-1}.workshop-filters,.workshop-dashboard--worker .workshop-filters{grid-template-columns:1fr 1fr!important}}

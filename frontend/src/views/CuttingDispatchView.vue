@@ -6,6 +6,7 @@ import AppIcon from '../components/AppIcon.vue'
 import heroImage from '../assets/home-laser-cutting.webp'
 import { parseCuttingInstructionFilename } from '../utils/cuttingInstructionName.js'
 import { formatChineseDateTime } from '../utils/dateDisplay.js'
+import { useDialogFocus } from '../composables/useDialogFocus.js'
 import {
   cancelCuttingDispatch,
   createCuttingDispatchBatch,
@@ -55,6 +56,8 @@ const pushBatch = reactive({
   error: '',
   nonStandardConfirmed: false,
 })
+const pushBatchDialog = ref(null)
+const pushBatchOpen = computed(() => pushBatch.visible)
 const selectedFiles = ref(new Map())
 const loading = ref(false)
 const operatingId = ref('')
@@ -265,6 +268,8 @@ function closePushBatch() {
   if (pushBatch.saving) return
   pushBatch.visible = false
 }
+
+useDialogFocus(pushBatchOpen, pushBatchDialog, closePushBatch)
 
 function removePushBatchItem(item) {
   if (pushBatch.saving || pushBatch.resultsReady) return
@@ -704,7 +709,7 @@ onBeforeUnmount(pausePage)
       </div>
       <form class="project-search" @submit.prevent="openSelectedProject">
         <label for="project-keyword">项目关键词 <small>项目名称或船号</small></label>
-        <input id="project-keyword" v-model="projectKeyword" type="search" placeholder="输入关键词筛选" autocomplete="off" :disabled="projectLoading" @input="applyProjectKeyword" />
+        <input id="project-keyword" v-model="projectKeyword" name="project_keyword" type="search" placeholder="输入关键词筛选…" autocomplete="off" :disabled="projectLoading" @input="applyProjectKeyword" />
         <label for="project-selector">支持项目</label>
         <div class="project-select-row"><AppSelect id="project-selector" v-model="selectedProjectId" :disabled="projectLoading || !filteredProjectOptions.length" @change="resetProjectSelection"><option v-if="projectLoading" value="" disabled>正在读取项目…</option><option v-else-if="!filteredProjectOptions.length" value="" disabled>没有匹配的支持项目</option><option v-for="project in filteredProjectOptions" :key="project.project_id" :value="String(project.project_id)">{{ project.project_name }}{{ project.ship_no ? ` · ${project.ship_no}` : '' }}</option></AppSelect><button type="submit" :disabled="projectLoading || catalogLoading || !selectedProjectId">{{ catalogLoading ? '打开中…' : '打开' }}</button></div>
       </form>
@@ -736,7 +741,7 @@ onBeforeUnmount(pausePage)
       <div class="selected-directory"><span>当前位置</span><strong>{{ selectedPath }}</strong></div>
       <form class="file-name-search" @submit.prevent="applyFileSearch">
         <label for="file-keyword">当前目录内查找文件</label>
-        <div><input id="file-keyword" v-model.trim="fileKeyword" :disabled="!selectedCatalog" placeholder="输入文件名或中间产品" /><button type="submit" :disabled="!selectedCatalog || loading">{{ loading ? '查询中…' : '查询' }}</button></div>
+        <div><input id="file-keyword" v-model.trim="fileKeyword" name="file_keyword" autocomplete="off" :disabled="!selectedCatalog" placeholder="输入文件名或中间产品…" /><button type="submit" :disabled="!selectedCatalog || loading">{{ loading ? '查询中…' : '查询' }}</button></div>
       </form>
       <div class="download-batch-toolbar" aria-live="polite">
         <span>已选择 <strong>{{ selectedFileCount }}</strong> / 20 项<small>可跨页选择</small></span>
@@ -801,7 +806,7 @@ onBeforeUnmount(pausePage)
 
   <Teleport to="body">
     <div v-if="pushBatch.visible" class="push-batch-backdrop" role="presentation" @click.self="closePushBatch">
-      <section class="push-batch-dialog" role="dialog" aria-modal="true" aria-labelledby="push-batch-title">
+      <section ref="pushBatchDialog" class="push-batch-dialog" role="dialog" aria-modal="true" aria-labelledby="push-batch-title" tabindex="-1">
         <header class="push-batch-header">
           <div><span>FILE DISPATCH</span><h2 id="push-batch-title">{{ pushBatch.items.length === 1 ? '文件派发确认' : '批量派发确认' }}</h2><p>每个文件会生成独立任务，一项失败不影响后续文件。</p></div>
           <button type="button" :disabled="pushBatch.saving" aria-label="关闭批量推送窗口" @click="closePushBatch">×</button>
@@ -810,7 +815,7 @@ onBeforeUnmount(pausePage)
         <div class="push-batch-content">
           <div class="push-batch-common">
             <label><span>目标机床 IP</span><AppSelect v-model="dispatchForm.machineIp" :disabled="pushBatch.saving || pushBatch.resultsReady"><option value="" disabled>请选择 SYS_CONFIG 中的机床</option><option v-for="machine in machines" :key="machine.machine_ip" :value="machine.machine_ip">{{ machine.server_name ? `${machine.server_name} · ` : '' }}{{ machine.machine_ip }}（{{ machine.online ? '在线' : '未从列表确认在线' }}）</option></AppSelect></label>
-            <label><span>统一加工数量</span><div><input v-model="bulkQuantity" type="number" min="1" max="10000" step="1" :disabled="pushBatch.saving || pushBatch.resultsReady" /><button type="button" :disabled="pushBatch.saving || pushBatch.resultsReady" @click="applyBulkQuantity">应用到全部</button></div></label>
+            <label><span>统一加工数量</span><div><input v-model="bulkQuantity" name="bulk_quantity" type="number" min="1" max="10000" step="1" autocomplete="off" :disabled="pushBatch.saving || pushBatch.resultsReady" /><button type="button" :disabled="pushBatch.saving || pushBatch.resultsReady" @click="applyBulkQuantity">应用到全部</button></div></label>
             <div class="push-batch-summary"><strong>{{ pushBatch.items.length }}</strong><span>个文件</span><small v-if="!pushBatch.resultsReady">{{ invalidBatchCount ? `${invalidBatchCount} 项待补参数` : nonStandardBatchCount ? `${nonStandardBatchCount} 项非标准名待确认` : '全部为标准名' }}</small><small v-else>已推送 {{ batchStatusCounts.sent }} · 失败 {{ batchStatusCounts.failed }} · 重复 {{ batchStatusCounts.duplicate }}</small></div>
           </div>
 
@@ -823,9 +828,9 @@ onBeforeUnmount(pausePage)
               <tbody>
                 <tr v-for="item in pushBatch.items" :key="item.referenceKey" :class="{ invalid: !pushBatch.resultsReady && (batchItemError(item) || !item.parsed) }">
                   <td class="push-batch-file"><strong>{{ item.filename }}</strong><small>版本 {{ item.version }}</small><span v-if="item.parsed" class="recognized">已识别：{{ item.parsed.material }} · {{ item.parsed.thickness.toFixed(1) }} mm</span><span v-else class="manual">非标准名，请手工填写参数</span></td>
-                  <td><input v-model.trim="item.material" :disabled="pushBatch.saving || pushBatch.resultsReady" maxlength="80" placeholder="必填" /></td>
-                  <td><input v-model="item.thickness" :disabled="pushBatch.saving || pushBatch.resultsReady" type="number" min="0.01" max="1000" step="0.01" placeholder="必填" /></td>
-                  <td><input v-model="item.quantity" :disabled="pushBatch.saving || pushBatch.resultsReady" type="number" min="1" max="10000" step="1" /></td>
+                  <td><input v-model.trim="item.material" :name="`material_${item.referenceKey}`" :aria-label="`${item.filename} 材质`" autocomplete="off" :disabled="pushBatch.saving || pushBatch.resultsReady" maxlength="80" placeholder="例如：Q235B…" /></td>
+                  <td><input v-model="item.thickness" :name="`thickness_${item.referenceKey}`" :aria-label="`${item.filename} 板厚`" autocomplete="off" :disabled="pushBatch.saving || pushBatch.resultsReady" type="number" inputmode="decimal" min="0.01" max="1000" step="0.01" placeholder="例如：12.0…" /></td>
+                  <td><input v-model="item.quantity" :name="`quantity_${item.referenceKey}`" :aria-label="`${item.filename} 数量`" autocomplete="off" :disabled="pushBatch.saving || pushBatch.resultsReady" type="number" inputmode="numeric" min="1" max="10000" step="1" /></td>
                   <td class="push-batch-result"><span :class="item.status">{{ batchStatusLabel(item) }}</span><small v-if="item.error" :title="item.error">{{ item.error }}</small></td>
                   <td><button class="push-batch-remove" type="button" :disabled="pushBatch.saving || pushBatch.resultsReady" @click="removePushBatchItem(item)">移除</button></td>
                 </tr>
@@ -834,7 +839,7 @@ onBeforeUnmount(pausePage)
           </div>
           <div v-if="!pushBatch.resultsReady" class="push-batch-safety">
             <p>标准指令名已自动填充材质和板厚，请在提交前逐项核对。非标准名不会猜测参数，必须手工补全。</p>
-            <label v-if="nonStandardBatchCount"><input v-model="pushBatch.nonStandardConfirmed" type="checkbox" :disabled="pushBatch.saving" />我已人工核对 {{ nonStandardBatchCount }} 个非标准文件名及其材质、板厚和数量</label>
+            <label v-if="nonStandardBatchCount"><input v-model="pushBatch.nonStandardConfirmed" name="non_standard_confirmed" type="checkbox" :disabled="pushBatch.saving" />我已人工核对 {{ nonStandardBatchCount }} 个非标准文件名及其材质、板厚和数量</label>
           </div>
         </div>
 

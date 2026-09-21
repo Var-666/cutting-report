@@ -408,8 +408,12 @@ test('equivalent page headers and report query bars share one layout system', ()
   const standardQueryStyles = standardQuery.styles.map((style) => style.content).join('\n')
   const css = readFileSync(new URL('../src/assets/style.css', import.meta.url), 'utf8')
 
-  for (const view of [leadership, workshop, energy, alarm, database, designer, automation, accounts, dispatch]) {
+  for (const view of [leadership, workshop, energy, alarm, dispatch]) {
     assert.match(view.template.content, /class="[^"]*page-hero[^"]*"/)
+  }
+  for (const view of [database, designer, automation, accounts]) {
+    assert.match(view.scriptSetup.content, /import ManagementPageHero from/)
+    assert.match(view.template.content, /<ManagementPageHero/)
   }
   for (const view of [leadership, workshop, energy]) {
     assert.match(view.scriptSetup.content, /import StandardReportQuery from/)
@@ -484,6 +488,7 @@ test('alarm center reuses the report UI baseline and padded empty states', () =>
   assert.equal((template.match(/class="alarm-empty-state"/g) || []).length, 4)
   assert.match(template, /20kW 切割机当前无未解除告警/)
   assert.match(styles, /\.alarm-page>\.panel\{margin-bottom:0\}/)
+  assert.match(styles, /\.alarm-content-grid>\.panel\{margin-bottom:0\}/)
   assert.match(styles, /\.alarm-empty-state\{[^}]*min-height:116px;[^}]*padding:26px;/)
   assert.match(styles, /\.alarm-table-wrap td\{font-size:13px\}/)
 })
@@ -584,6 +589,8 @@ test('leadership and equipment second tables default to the recent twelve months
   assert.match(leadershipRange, /renderCharts\(\{ monthly: false \}\)/)
   assert.match(leadership.template.content, /:title="monthlyTitle"/)
   assert.match(leadership.template.content, /:note="`\$\{monthlyPeriodStart\} 至 \$\{monthlyPeriodEnd\}`"/)
+  assert.match(leadership.scriptSetup.content, /summary_period_start: monthlyPeriodStart\.value/)
+  assert.match(leadership.scriptSetup.content, /summary_period_end: monthlyPeriodEnd\.value/)
   assert.match(equipment.scriptSetup.content, /getEnergyMonthlyRange\(recentStart, selectedDate/)
   assert.match(equipment.scriptSetup.content, /const monthlyReport = ref\(null\)/)
   assert.match(equipment.scriptSetup.content, /summaryRows = computed\(\(\) => sortReportPeriods\(monthlyReport\.value\?\.rows/)
@@ -596,6 +603,8 @@ test('leadership and equipment second tables default to the recent twelve months
   assert.match(equipment.scriptSetup.content, /scheduleSummaryRefresh\(summaryResult\)/)
   assert.match(equipment.scriptSetup.content, /}, 1000\)/)
   assert.match(equipment.scriptSetup.content, /summaryRefreshCount >= 600/)
+  assert.match(equipment.scriptSetup.content, /summary_period_start: summaryPeriodStart\.value/)
+  assert.match(equipment.scriptSetup.content, /summary_period_end: summaryPeriodEnd\.value/)
 })
 
 test('switching cached workshop and equipment reports does not force another query', () => {
@@ -605,7 +614,7 @@ test('switching cached workshop and equipment reports does not force another que
   const api = readFileSync(new URL('../src/api/reports.js', import.meta.url), 'utf8')
 
   assert.match(workshop.scriptSetup.content, /force = false/)
-  assert.match(workshop.scriptSetup.content, /if \(!isWorker\.value \|\| refreshTimer\) return/)
+  assert.match(workshop.scriptSetup.content, /if \(!pageActive\.value \|\| !isWorker\.value \|\| refreshTimer\) return/)
   assert.match(workshop.scriptSetup.content, /if \(isWorker\.value && result\.value\.report/)
   assert.doesNotMatch(equipment.scriptSetup.content, /onActivated\([\s\S]{0,300}getEnergyRange/)
   assert.match(preload, /listWorkshopRangeTasks\(\{ startDate: reportDate, endDate: reportDate \}\)/)
@@ -634,18 +643,50 @@ test('cached report resources pause on deactivation and cache is bounded', () =>
   const controls = ['AppSelect', 'AppDatePicker', 'ReportPeriodPicker']
     .map((name) => descriptor(name, 'components').scriptSetup.content)
 
-  assert.match(layout.template.content, /<KeepAlive :max="2">/)
+  assert.match(layout.template.content, /<KeepAlive :max="3">/)
   for (const view of [leadership, workshop, equipment]) {
     assert.match(view.scriptSetup.content, /onDeactivated\(/)
     assert.match(view.template.content, /v-content-table="pageActive"/)
   }
   assert.match(leadership.scriptSetup.content, /disposeCharts\(\)/)
   assert.match(equipment.scriptSetup.content, /disposeCharts\(\)/)
+  assert.match(leadership.scriptSetup.content, /onBeforeUnmount\(\(\) => pausePage\(true\)\)/)
+  assert.match(equipment.scriptSetup.content, /onBeforeUnmount\(\(\) => pause\(true\)\)/)
+  assert.match(leadership.scriptSetup.content, /dailyChart \|\|= init\(dailyChartElement\)/)
+  assert.match(equipment.scriptSetup.content, /taskChart \|\|= init\(taskChartElement\)/)
+  assert.doesNotMatch(leadership.scriptSetup.content, /onDeactivated\([\s\S]{0,120}disposeCharts/)
+  assert.doesNotMatch(equipment.scriptSetup.content, /onDeactivated\([\s\S]{0,120}disposeCharts/)
   for (const control of controls) {
     assert.match(control, /createActivationBinding/)
     assert.match(control, /onActivated\(listenerBinding\.activate\)/)
     assert.match(control, /onDeactivated\(pause\)/)
   }
+})
+
+test('long-lived page polling is serialized and cancelled when the page leaves', () => {
+  const alarm = descriptor('AlarmCenterView').scriptSetup.content
+  const workshop = descriptor('WorkshopView').scriptSetup.content
+  const reportCenter = descriptor('ReportCenterView').scriptSetup.content
+  const api = readFileSync(new URL('../src/api/reports.js', import.meta.url), 'utf8')
+
+  assert.doesNotMatch(alarm, /setInterval\(loadData/)
+  assert.match(alarm, /if \(!pageActive \|\| requestController\) return/)
+  assert.match(alarm, /requestController\?\.abort\(\)/)
+  assert.match(alarm, /await loadData\(\)[\s\S]*scheduleRefresh\(\)/)
+  assert.match(api, /getAlarmStatus\(\{ signal \} = \{\}\)/)
+  assert.match(api, /listAlarmIncidents\([\s\S]*\{ signal \} = \{\}\)/)
+  assert.match(api, /listAlarmReports\([\s\S]*\{ signal \} = \{\}\)/)
+
+  assert.doesNotMatch(workshop, /setInterval\(/)
+  assert.match(workshop, /refreshTimer = window\.setTimeout\(async \(\) =>/)
+  assert.match(workshop, /await load\(result\.value\.page,[\s\S]*startRefreshTimer\(\)/)
+
+  assert.match(reportCenter, /function stopPolling\(\)[\s\S]*pollController\?\.abort\(\)/)
+  assert.match(reportCenter, /getReportStatus\(reportId, \{ signal: controller\.signal \}\)/)
+  assert.match(reportCenter, /if \(!pageActive \|\| controller\.signal\.aborted \|\| sequence !== pollSequence\) return/)
+  assert.match(reportCenter, /listReports\(\{ page, pageSize: historyPageSize\.value, force, signal: controller\.signal \}\)/)
+  assert.match(reportCenter, /sequence !== historySequence/)
+  assert.match(reportCenter, /onBeforeUnmount\(\(\) => \{[\s\S]*pageActive = false[\s\S]*stopPolling\(\)/)
 })
 
 test('energy report omits calculation-method and complete-day explanations', () => {

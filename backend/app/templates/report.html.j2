@@ -11,49 +11,62 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ report.meta.title }}</title>
   <style>
-    :root { color-scheme:light; --ink:#172234; --muted:#667085; --line:#dfe5ec; --blue:#165d93; --paper:#fff; --bg:#eef2f6; --danger:#b42318; }
+    :root { color-scheme:light; --ink:#203b4d; --navy:#123b57; --blue:#246f97; --teal:#159c98; --muted:#60798a; --line:#d6e2e8; --line-strong:#b9cdd7; --paper:#fff; --bg:#eaf1f4; --soft:#f4f8fa; --danger:#d9555d; --amber:#d68a2f; --green:#288d68; }
     * { box-sizing:border-box; }
-    .energy-label { display:block; color:#667085; font-size:10px; }
-    body { margin:0; color:var(--ink); background:var(--bg); font:14px/1.55 "Microsoft YaHei","PingFang SC",Arial,sans-serif; }
-    .page { width:min(1380px,calc(100% - 32px)); margin:24px auto; background:var(--paper); box-shadow:0 8px 30px rgba(20,40,70,.08); }
-    header { padding:32px 38px 24px; color:#fff; background:linear-gradient(120deg,#123d61,#1769aa 62%,#2586bd); }
-    h1 { margin:0 0 8px; font-size:28px; letter-spacing:2px; } header p { margin:0; opacity:.88; }
-    main { padding:28px 38px 36px; } h2 { margin:32px 0 16px; padding-left:12px; border-left:4px solid var(--blue); font-size:20px; }
-    .meta { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:1px; border:1px solid var(--line); background:var(--line); }
-    .meta div { padding:11px 14px; background:#fff; }.label { display:block; margin-bottom:3px; color:var(--muted); font-size:12px; }
-    .metrics { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px; }
-    .metric { padding:18px; border:1px solid #d8e4ef; border-radius:8px; background:linear-gradient(180deg,#fff,#f7fbfe); }
-    .metric strong { display:block; margin-top:4px; color:var(--blue); font-size:25px; font-variant-numeric:tabular-nums; }.metric small { color:var(--muted); }
-    .secondary { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin-top:12px; }.secondary div { padding:10px 12px; border-radius:6px; background:#f6f8fa; }
-    .chart { width:100%; height:300px; border:1px solid var(--line); border-radius:8px; }
-    .table-wrap { overflow:auto; border:1px solid var(--line); border-radius:7px; } table { width:100%; border-collapse:collapse; white-space:nowrap; font-variant-numeric:tabular-nums; }
-    th,td { height:42px; padding:8px 10px; border-bottom:1px solid var(--line); text-align:right; vertical-align:middle; } th { color:#fff; background:#315b78; font-weight:600; } thead th { position:sticky; top:0; z-index:3; } tfoot th { position:sticky; bottom:0; z-index:2; } th:first-child,td:first-child,th:nth-child(2),td:nth-child(2) { text-align:left; }
-    tbody tr:nth-child(even) { background:#f8fafc; } tfoot th { color:#163e5c; background:#eaf2f7; border-top:2px solid #7da4b6; }
-    .empty { padding:28px; color:var(--muted); text-align:center; }.notice { margin:12px 0; padding:12px 14px; border-left:4px solid #d79b00; background:#fff8e6; }.notice.error { border-left-color:var(--danger); background:#fff1f0; }
-    .analysis-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px; }.analysis-mode { display:inline-flex; align-items:center; padding:4px 10px; color:#875700; background:#fff4d6; border:1px solid #f0d58a; border-radius:999px; font-size:12px; }.analysis-mode.model { color:#087443; background:#e9f8f0; border-color:#9cd8b9; }.analysis-facts { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin-bottom:14px; }.analysis-fact { padding:10px 12px; border:1px solid var(--line); border-radius:7px; background:#f8fafc; }.analysis-fact .fact-id { color:#23849a; font-weight:700; }.analysis-fact strong,.analysis-fact small { display:block; margin-top:2px; }.analysis-fact strong { color:#164f77; }.analysis-fact small { color:#718393; line-height:1.4; }.analysis-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }.analysis-card { padding:16px 18px; border:1px solid var(--line); border-radius:8px; }.analysis-card h3 { margin:0 0 8px; color:var(--blue); }.analysis-card p { margin:0; white-space:pre-wrap; }
-    .data-chart-grid { display:grid; grid-template-columns:minmax(360px,.9fr) minmax(0,1.2fr); gap:14px; align-items:start; }.data-chart-grid .table-wrap { height:300px; max-height:300px; }.data-chart-grid table { min-width:760px; table-layout:auto; }.equipment-grid .table-wrap { height:532px; max-height:532px; }.equipment-grid table { min-width:940px; }.chart-stack { display:grid; gap:12px; }.chart-stack .chart { height:260px; }
-    .print-tip { margin:0 0 16px; color:var(--muted); text-align:right; } footer { padding:18px 38px; color:var(--muted); border-top:1px solid var(--line); text-align:center; font-size:12px; }
+    html { background:var(--bg); }
+    body { margin:0; color:var(--ink); background:linear-gradient(180deg,#edf4f7 0,#e8f0f3 100%); font:14px/1.6 "Microsoft YaHei","PingFang SC","Noto Sans CJK SC",Arial,sans-serif; -webkit-font-smoothing:antialiased; }
+    body::before { content:""; position:fixed; inset:0 0 auto; z-index:10; height:4px; background:linear-gradient(90deg,var(--navy) 0 38%,var(--blue) 38% 72%,var(--teal) 72%); }
+    .page { position:relative; width:min(1380px,calc(100% - 32px)); margin:24px auto; overflow:hidden; border:1px solid #cbdbe3; background:var(--paper); box-shadow:0 18px 54px rgba(18,59,87,.12); }
+    .report-cover { padding:0; color:#fff; background:var(--navy); }
+    .cover-brand { min-height:66px; display:flex; align-items:center; gap:12px; padding:0 38px; border-bottom:1px solid rgba(255,255,255,.16); background:rgba(5,40,61,.26); }
+    .brand-mark { width:38px; height:38px; display:flex; align-items:flex-end; justify-content:center; gap:4px; padding:8px; border:1px solid rgba(93,205,217,.45); background:#0e4c6b; }
+    .brand-mark i { width:4px; display:block; background:#35cad0; }.brand-mark i:nth-child(1){height:12px}.brand-mark i:nth-child(2){height:21px}.brand-mark i:nth-child(3){height:17px}
+    .cover-brand strong,.cover-brand small { display:block; }.cover-brand strong { font-size:16px; letter-spacing:.06em; }.cover-brand small { margin-top:2px; color:#b9d7e5; font-size:10px; letter-spacing:.08em; }
+    .cover-main { display:grid; grid-template-columns:minmax(0,1fr) 380px; min-height:174px; background:linear-gradient(112deg,var(--navy) 0 64%,#165b78 64% 100%); }
+    .cover-title { align-self:center; padding:32px 38px 36px; }.cover-title h1 { margin:0; font-size:34px; line-height:1.18; letter-spacing:.08em; }.cover-title p { max-width:720px; margin:10px 0 0; color:#c8dce6; font-size:13px; }
+    .cover-folio { display:grid; grid-template-columns:1fr 1fr; align-content:center; margin:0; padding:26px 38px 26px 32px; border-left:1px solid rgba(255,255,255,.16); background:linear-gradient(135deg,rgba(255,255,255,.06),rgba(255,255,255,.015)); }
+    .cover-folio div { min-width:0; padding:10px 12px; border-bottom:1px solid rgba(255,255,255,.12); }.cover-folio dt { color:#a9cad8; font-size:10px; }.cover-folio dd { margin:4px 0 0; overflow:hidden; font-size:12px; font-weight:600; text-overflow:ellipsis; white-space:nowrap; font-variant-numeric:tabular-nums; }
+    main { padding:26px 38px 40px; }
+    h2 { display:flex; align-items:center; gap:12px; margin:32px 0 14px; padding:0 0 10px; color:var(--navy); border-bottom:1px solid var(--line); font-size:18px; line-height:1.35; }
+    h2::after { content:""; width:52px; height:3px; order:-1; flex:0 0 auto; background:linear-gradient(90deg,var(--blue),var(--teal)); }
+    .meta { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); border:1px solid var(--line); border-top:0; background:#fff; }
+    .meta div { min-width:0; padding:13px 16px; border-top:3px solid #d9e9ef; border-right:1px solid var(--line); }.meta div:last-child{border-right:0}.label { display:block; margin-bottom:4px; color:var(--muted); font-size:11px; }
+    .metrics { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); overflow:hidden; border:1px solid var(--line-strong); background:#fff; }
+    .metric { position:relative; min-width:0; padding:18px 20px 17px; border-right:1px solid var(--line); }.metric:last-child{border-right:0}.metric::before{content:"";position:absolute;inset:0 0 auto;height:3px;background:var(--blue)}.metric:nth-child(2)::before{background:var(--teal)}.metric:nth-child(3)::before{background:#6576bf}.metric:nth-child(4)::before{background:var(--amber)}
+    .metric strong { display:block; margin:5px 0 3px; overflow:hidden; color:var(--navy); font-size:25px; line-height:1.25; text-overflow:ellipsis; white-space:nowrap; font-variant-numeric:tabular-nums; }.metric small { color:var(--muted); font-size:11px; }
+    .secondary { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); margin-top:10px; border:1px solid var(--line); background:var(--soft); }.secondary div { padding:11px 16px; border-right:1px solid var(--line); }.secondary div:last-child{border-right:0}
+    .section-note { margin:-4px 0 12px; color:var(--muted); font-size:11px; }.energy-label { display:block; color:var(--muted); font-size:9px; }
+    .chart { width:100%; height:300px; border:1px solid var(--line); background:#fff; }
+    .table-wrap { overflow:auto; border:1px solid var(--line); background:#fff; } table { width:100%; border-collapse:collapse; white-space:nowrap; font-variant-numeric:tabular-nums; }
+    th,td { height:42px; padding:8px 10px; border-bottom:1px solid #e0e8ec; text-align:right; vertical-align:middle; } th { color:#315568; background:#dceaf0; font-weight:700; } thead th { position:sticky; top:0; z-index:3; } tfoot th { position:sticky; bottom:0; z-index:2; } th:first-child,td:first-child,th:nth-child(2),td:nth-child(2) { text-align:left; }
+    tbody tr { background:#fff; } tbody tr:hover { background:#f3f8fa; } tfoot th { color:#16455f; background:#eaf3f6; border-top:2px solid #84aab9; }
+    .empty { min-height:120px; display:grid; place-items:center; padding:28px; color:var(--muted); background:var(--soft); text-align:center; }.notice { margin:10px 0; padding:11px 14px; color:#71511d; border-left:4px solid var(--amber); background:#fff7e8; }.notice.error { color:#87353a; border-left-color:var(--danger); background:#fff1f2; }
+    .analysis-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:-2px 0 12px; padding:10px 12px; border:1px solid var(--line); background:var(--soft); }.analysis-mode { display:inline-flex; align-items:center; padding:4px 10px; color:#875700; border:1px solid #e6c579; background:#fff4d6; font-size:11px; font-weight:700; }.analysis-mode.model { color:#087443; border-color:#9cd8b9; background:#e9f8f0; }.analysis-facts { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); margin-bottom:12px; border:1px solid var(--line); background:#fff; }.analysis-fact { min-width:0; padding:12px; border-right:1px solid var(--line); border-top:3px solid var(--blue); }.analysis-fact:nth-child(2){border-top-color:var(--teal)}.analysis-fact:nth-child(3){border-top-color:#6576bf}.analysis-fact:nth-child(4){border-top-color:#3b83b0}.analysis-fact:nth-child(5){border-top-color:var(--amber)}.analysis-fact:nth-child(6){border-top-color:var(--danger);border-right:0}.analysis-fact .fact-id { color:var(--blue); font-size:10px; font-weight:800; }.analysis-fact .label{display:inline;font-size:10px}.analysis-fact strong,.analysis-fact small { display:block; margin-top:4px; overflow-wrap:anywhere; }.analysis-fact strong { color:var(--navy); font-size:15px; }.analysis-fact small { color:var(--muted); font-size:9px; line-height:1.45; }
+    .analysis-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }.analysis-card { min-height:124px; padding:15px 17px; border:1px solid #cfe0e8; background:#eff6fa; }.analysis-card.features{border-color:#cde4e2;background:#edf8f7}.analysis-card.alerts{border-color:#edd4d6;background:#fff1f2}.analysis-card.suggestions{border-color:#cfe2da;background:#eef8f4}.analysis-card h3 { margin:0 0 8px; color:var(--blue); font-size:14px; }.analysis-card.features h3{color:var(--teal)}.analysis-card.alerts h3{color:var(--danger)}.analysis-card.suggestions h3{color:var(--green)}.analysis-card p { margin:0; color:#49677a; white-space:pre-wrap; }
+    .data-chart-grid { display:grid; grid-template-columns:minmax(360px,.9fr) minmax(0,1.2fr); gap:12px; align-items:start; }.data-chart-grid .table-wrap { height:300px; max-height:300px; }.data-chart-grid table { min-width:760px; table-layout:auto; }.equipment-grid .table-wrap { height:532px; max-height:532px; }.equipment-grid table { min-width:940px; }.chart-stack { display:grid; gap:12px; }.chart-stack .chart { height:260px; }
+    .print-tip { margin:0 0 12px; color:var(--muted); text-align:right; font-size:11px; } .report-footer { display:flex; justify-content:space-between; gap:20px; padding:16px 38px; color:var(--muted); border-top:1px solid var(--line); background:var(--soft); font-size:11px; }
     .print-only { display:none; }
     html.report-printing .data-chart-grid,html.report-printing .data-chart-grid.equipment-grid { display:block!important; }
     html.report-printing .chart-stack { display:block!important; }
     html.report-printing .chart,html.report-printing .chart-stack .chart { width:100%!important; height:58mm!important; margin-bottom:5mm!important; }
-    @media (max-width:1000px) { .meta,.metrics { grid-template-columns:repeat(2,1fr); }.secondary,.analysis-grid,.analysis-facts,.data-chart-grid { grid-template-columns:1fr; }.data-chart-grid .table-wrap,.equipment-grid .table-wrap { height:auto; max-height:none; } main,header { padding-left:20px; padding-right:20px; } }
+    @media (max-width:1000px) { .cover-main{grid-template-columns:1fr}.cover-folio{grid-template-columns:repeat(4,minmax(0,1fr));border-left:0;border-top:1px solid rgba(255,255,255,.16)}.meta,.metrics { grid-template-columns:repeat(2,1fr); }.metric:nth-child(2){border-right:0}.secondary,.analysis-grid,.analysis-facts,.data-chart-grid { grid-template-columns:1fr; }.analysis-fact{border-right:0;border-bottom:1px solid var(--line)}.data-chart-grid .table-wrap,.equipment-grid .table-wrap { height:auto; max-height:none; } main,.cover-brand,.cover-title { padding-left:20px; padding-right:20px; } }
     @media print {
-      @page { size:A4 landscape; margin:9mm; }
+      @page { size:A4 landscape; margin:9mm 9mm 13mm; }
       html,body { width:auto; min-width:0; background:#fff; font-size:8.5pt; }
-      .page { width:100%; margin:0; box-shadow:none; }
-      header { padding:10mm 9mm 7mm; }
-      header,th { print-color-adjust:exact; -webkit-print-color-adjust:exact; }
-      main { padding:7mm 0 5mm; }
-      footer { padding:5mm 0 0; }
+      body::before{display:none}.page { width:100%; margin:0; overflow:visible; border:0; box-shadow:none; }
+      .report-cover { print-color-adjust:exact; -webkit-print-color-adjust:exact; }
+      .cover-brand{min-height:13mm;padding:0 7mm}.brand-mark{width:9mm;height:9mm;padding:2mm}.cover-main{min-height:39mm;grid-template-columns:minmax(0,1fr) 83mm}.cover-title{padding:7mm}.cover-title h1{font-size:23pt}.cover-title p{margin-top:2mm;font-size:8pt}.cover-folio{padding:5mm 6mm}.cover-folio div{padding:2mm 2.5mm}
+      .report-cover,th,.metrics,.analysis-facts,.analysis-card { print-color-adjust:exact; -webkit-print-color-adjust:exact; }
+      main { padding:6mm 0 4mm; }
+      .report-footer { padding:4mm 0 0; background:#fff; }
       .print-tip { display:none; }
       .screen-only { display:none!important; }
       .print-only { display:block!important; }
       .print-table-page { display:block; width:100%; break-before:page; page-break-before:always; break-inside:avoid; page-break-inside:avoid; }
       .print-table-chunk { display:table; width:100%!important; margin:0; table-layout:fixed!important; break-inside:avoid; page-break-inside:avoid; }
       h2 { margin:7mm 0 3.5mm; break-after:avoid-page; page-break-after:avoid; }
-      .meta,.metrics,.secondary,.analysis-card,.notice { break-inside:avoid; page-break-inside:avoid; }
-      .metric { padding:4mm; }
+      .meta,.metrics,.secondary,.analysis-section,.analysis-card,.analysis-fact,.notice { break-inside:avoid; page-break-inside:avoid; }
+      .meta div{padding:2.6mm 3mm}.metric { padding:3.6mm 4mm; }
       .metric strong { font-size:17pt; }
       .data-chart-grid,.data-chart-grid.equipment-grid {
         display:block;
@@ -97,27 +110,40 @@
         vertical-align:top;
       }
       .secondary { grid-template-columns:repeat(3,minmax(0,1fr)); }
+      .analysis-facts { grid-template-columns:repeat(3,minmax(0,1fr)); }
+      .analysis-fact:nth-child(3){border-right:0}.analysis-fact:nth-child(6){border-right:0}
       .analysis-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+      .analysis-card{min-height:0;padding:3mm 3.5mm}
     }
   </style>
 </head>
-<body>
+<body class="report-{{ report.meta.report_type }}">
 <div class="page">
-  <header>
-    <h1>{{ report.meta.title }}</h1>
-    <p>切割生产智能产报系统 · {{ report.meta.period_start if report.meta.period_start == report.meta.period_end else report.meta.period_start ~ ' 至 ' ~ report.meta.period_end }}</p>
+  <header class="report-cover">
+    <div class="cover-brand">
+      <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+      <div><strong>切割生产智能产报系统</strong><small>Production reporting system</small></div>
+    </div>
+    <div class="cover-main">
+      <div class="cover-title">
+        <h1>{{ report.meta.title }}</h1>
+        <p>面向生产运行审阅的正式数据报告，统计口径、图表与智能分析均基于当前报告周期。</p>
+      </div>
+      <dl class="cover-folio">
+        <div><dt>报告周期</dt><dd>{{ report.meta.period_start if report.meta.period_start == report.meta.period_end else report.meta.period_start ~ ' 至 ' ~ report.meta.period_end }}</dd></div>
+        <div><dt>报告编号</dt><dd>{{ report.meta.report_id }}</dd></div>
+        <div><dt>生成时间</dt><dd>{{ report.meta.generated_at }}</dd></div>
+        <div><dt>系统版本</dt><dd>{{ report.meta.system_version }}</dd></div>
+      </dl>
+    </div>
   </header>
   <main>
     <p class="print-tip">可使用浏览器打印功能输出纸质报告或 PDF</p>
     <section class="meta">
-      <div><span class="label">报告类型</span>{{ report.meta.title }}</div>
-      <div><span class="label">报告周期</span>{{ report.meta.period_start if report.meta.period_start == report.meta.period_end else report.meta.period_start ~ ' 至 ' ~ report.meta.period_end }}</div>
-      <div><span class="label">生成时间</span>{{ report.meta.generated_at }}</div>
-      <div><span class="label">报告编号</span>{{ report.meta.report_id }}</div>
       <div><span class="label">工程号</span>{{ report.filters.project_code or '全部' }}</div>
       <div><span class="label">船号</span>{{ report.filters.ship_no or '全部' }}</div>
       <div><span class="label">数据更新时间</span>{{ report.meta.data_updated_at or '--' }}</div>
-      <div><span class="label">系统版本</span>{{ report.meta.system_version }}</div>
+      <div><span class="label">数据范围</span>{{ '自定义区间' if report.meta.custom_period else '标准报告周期' }}</div>
     </section>
 
     {% if report.meta.report_type == 'leadership' %}
@@ -142,9 +168,9 @@
       </div>
     </div>
 
-    <h2>三、{{ '区间按月对比与趋势' if report.meta.custom_period else '历月对比与趋势' }}</h2>
+    <h2>三、近 12 个月按月对比与趋势</h2>
     <div class="data-chart-grid">
-      {% if report.leadership.monthly_records %}<div id="leadership-monthly-chart" class="chart"></div>{% else %}<div class="empty">当前区间暂无月度趋势数据。</div>{% endif %}
+      {% if report.leadership.monthly_records %}<div id="leadership-monthly-chart" class="chart"></div>{% else %}<div class="empty">近 12 个月暂无月度趋势数据。</div>{% endif %}
       <div class="table-wrap">
       {% if report.leadership.monthly_records %}
       <table><colgroup><col style="width:4%"><col style="width:16%"><col style="width:8%"><col style="width:16%"><col style="width:16%"><col style="width:15%"><col style="width:25%"></colgroup><thead><tr><th>序号</th><th>月份</th><th>任务数</th><th>切割长度（米）</th><th>坡口长度（米）</th><th>切割时长</th><th>备注</th></tr></thead>
@@ -200,19 +226,20 @@
       </div>
     </div>
 
-    <h2>三、{{ '区间每日能耗汇总（月度每日能耗汇总口径）' if report.meta.custom_period else '月度每日能耗汇总' }}</h2>
+    <h2>三、{{ '近 12 个月月度能耗汇总' if report.meta.custom_period else '月度每日能耗汇总' }}</h2>
     <div class="data-chart-grid">
       <div id="equipment-month-chart" class="chart"></div>
       <div class="table-wrap">
-        <table class="screen-only"><thead><tr><th>日期</th><th>任务数</th><th>切割时长</th><th>电耗（{{ report.units.electricity }}）</th><th>气耗（{{ report.units.gas }}）</th></tr></thead>
+        <table class="screen-only"><thead><tr><th>{{ '月份' if report.meta.custom_period else '日期' }}</th><th>任务数</th><th>切割时长</th><th>电耗（{{ report.units.electricity }}）</th><th>气耗（{{ report.units.gas }}）</th></tr></thead>
         <tbody>{% for row in report.energy_month.rows %}<tr><td>{{ row.report_date|chinese_date }}</td><td>{{ '--' if row.is_future else row.task_count or 0 }}</td><td>{{ '--' if row.is_future else row.work_time_seconds|duration }}</td><td>{{ row.electricity.value|number }}</td><td>{{ row.gas.value|number }}</td></tr>{% endfor %}</tbody>
         <tfoot><tr><th>汇总</th><th>{{ report.energy_month.total_task_count }}</th><th>{{ report.energy_month.total_work_time_seconds|duration }}</th><th>{{ report.energy_month.summary.electricity.value|number }}</th><th>{{ report.energy_month.summary.gas.value|number }}</th></tr></tfoot></table>
-        <div class="print-only">{% for chunk in report.energy_month.rows|batch(18) %}<section class="print-table-page"><table class="print-table-chunk"><thead><tr><th>日期</th><th>任务数</th><th>切割时长</th><th>电耗</th><th>气耗</th></tr></thead><tbody>{% for row in chunk %}<tr><td>{{ row.report_date|chinese_date }}</td><td>{{ '--' if row.is_future else row.task_count or 0 }}</td><td>{{ '--' if row.is_future else row.work_time_seconds|duration }}</td><td>{{ row.electricity.value|number }}</td><td>{{ row.gas.value|number }}</td></tr>{% endfor %}</tbody></table></section>{% endfor %}</div>
+        <div class="print-only">{% for chunk in report.energy_month.rows|batch(18) %}<section class="print-table-page"><table class="print-table-chunk"><thead><tr><th>{{ '月份' if report.meta.custom_period else '日期' }}</th><th>任务数</th><th>切割时长</th><th>电耗</th><th>气耗</th></tr></thead><tbody>{% for row in chunk %}<tr><td>{{ row.report_date|chinese_date }}</td><td>{{ '--' if row.is_future else row.task_count or 0 }}</td><td>{{ '--' if row.is_future else row.work_time_seconds|duration }}</td><td>{{ row.electricity.value|number }}</td><td>{{ row.gas.value|number }}</td></tr>{% endfor %}</tbody></table></section>{% endfor %}</div>
       </div>
     </div>
     {% endif %}
 
     {% if report.analysis %}
+    <section class="analysis-section">
     <h2>{{ '四' if report.meta.report_type in ['leadership', 'workshop', 'equipment'] else '三' }}、智能分析</h2>
     <div class="analysis-head">
       <span class="analysis-mode {{ 'model' if report.analysis.mode == 'model' else '' }}">{{ '大模型分析' if report.analysis.mode == 'model' else '模拟大模型分析' }}</span>
@@ -220,14 +247,15 @@
     </div>
     {% if report.analysis.facts %}<section class="analysis-facts">{% for fact in report.analysis.facts %}<div class="analysis-fact"><span class="fact-id">{{ fact.id }}</span><span class="label"> · {{ fact.label }}</span><strong>{{ fact.value }}</strong><small>来源：{{ fact.source or '当前报表数据' }}</small></div>{% endfor %}</section>{% endif %}
     <section class="analysis-grid">
-      <article class="analysis-card"><h3>生产概况</h3><p>{{ report.analysis.overview }}</p></article>
-      <article class="analysis-card"><h3>数据特征</h3><p>{{ report.analysis.features }}</p></article>
-      <article class="analysis-card"><h3>异常与关注点</h3><p>{{ report.analysis.alerts }}</p></article>
-      <article class="analysis-card"><h3>生产管理建议</h3><p>{{ report.analysis.suggestions }}</p></article>
+      <article class="analysis-card overview"><h3>生产概况</h3><p>{{ report.analysis.overview }}</p></article>
+      <article class="analysis-card features"><h3>数据特征</h3><p>{{ report.analysis.features }}</p></article>
+      <article class="analysis-card alerts"><h3>异常与关注点</h3><p>{{ report.analysis.alerts }}</p></article>
+      <article class="analysis-card suggestions"><h3>生产管理建议</h3><p>{{ report.analysis.suggestions }}</p></article>
+    </section>
     </section>
     {% endif %}
   </main>
-  <footer>本报告由切割生产智能产报系统生成 · 报告结束</footer>
+  <footer class="report-footer"><span>本报告由切割生产智能产报系统生成 · 报告结束</span><span>报告编号：{{ report.meta.report_id }}</span></footer>
 </div>
 <script>{{ echarts_source|safe }}</script>
 <script>

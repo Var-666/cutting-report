@@ -24,6 +24,7 @@ async function logout() {
 
 <template>
   <div class="app-shell">
+    <a class="skip-link" href="#admin-main">跳到主要内容</a>
     <header class="topbar">
       <RouterLink class="brand-link" to="/admin/home" aria-label="返回系统首页">
         <span class="brand-mark"><span></span><span></span><span></span></span>
@@ -42,7 +43,7 @@ async function logout() {
         <button type="button" aria-label="退出系统" title="退出系统" @click="logout"><AppIcon name="logout" :size="13"/><span>退出</span></button>
       </div>
     </header>
-    <main class="admin-main"><RouterView /></main>
+    <main id="admin-main" class="admin-main" tabindex="-1"><RouterView /></main>
     <footer>切割生产智能产报系统 · 内网生产数据仅供授权人员使用</footer>
   </div>
 </template>

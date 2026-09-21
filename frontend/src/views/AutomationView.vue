@@ -12,6 +12,8 @@ import {
   saveAutomationSchedule,
 } from '../api/reports'
 import { formatChineseDate, formatChineseDateTime } from '../utils/dateDisplay.js'
+import ManagementPageHero from '../components/ManagementPageHero.vue'
+import { useUnsavedChanges } from '../composables/useUnsavedChanges.js'
 
 const status = ref(null)
 const schedules = ref([])
@@ -29,6 +31,8 @@ const configurationSaving = ref(false)
 const configurationMessage = ref('')
 const configurationError = ref('')
 const editorSection = ref(null)
+const hasUnsavedChanges = ref(false)
+useUnsavedChanges(hasUnsavedChanges, '自动化配置还有未保存的修改，确定离开吗？')
 
 const configuration = reactive({
   automation_enabled: true,
@@ -89,6 +93,7 @@ async function loadConfiguration() {
     const data = await getAutomationConfiguration()
     Object.assign(configuration, data, { smtp_password: '' })
     configurationLoaded.value = true
+    hasUnsavedChanges.value = false
   } catch (exception) {
     configurationError.value = exception.message
   } finally {
@@ -119,6 +124,7 @@ async function submitConfiguration() {
     if (configuration.smtp_password) configuration.smtp_password_configured = true
     configuration.smtp_password = ''
     configurationMessage.value = result.message
+    hasUnsavedChanges.value = false
   } catch (exception) {
     configurationError.value = exception.message
   } finally {
@@ -129,6 +135,7 @@ async function submitConfiguration() {
 function resetForm() {
   editingId.value = ''
   Object.assign(form, emptyForm())
+  hasUnsavedChanges.value = false
 }
 
 function editSchedule(item) {
@@ -254,22 +261,20 @@ onMounted(() => Promise.all([loadConfiguration(), loadAll()]))
 </script>
 
 <template>
-  <div class="automation-page">
-    <section class="page-hero hero automation-hero">
-      <div>
-        <p class="eyebrow">REPORT AUTOMATION</p>
-        <h2>报表自动化</h2>
-        <p>定时生成报表，通过邮件队列发送，失败后按退避策略重试。</p>
-      </div>
-      <div class="smtp-card" :class="{ ready: status?.smtp?.configured }">
-        <span>SMTP 服务</span>
-        <strong>{{ status?.smtp?.configured ? '已就绪' : '待配置' }}</strong>
-        <small>{{ status?.smtp?.configured ? `${status.smtp.host}:${status.smtp.port}` : '定时任务可保存，发送时会记录失败原因' }}</small>
-      </div>
-    </section>
+  <div class="automation-page management-page">
+    <ManagementPageHero
+      eyebrow="REPORT AUTOMATION"
+      title="报表自动化"
+      description="定时生成报表，通过邮件队列发送，失败后按退避策略重试。"
+      icon="activity"
+      status-label="SMTP 服务"
+      :status-value="status?.smtp?.configured ? '邮件通道已就绪' : '等待配置'"
+      :status-note="status?.smtp?.configured ? `${status.smtp.host}:${status.smtp.port}` : '计划可先保存，发送失败会完整留痕'"
+      :tone="status?.smtp?.configured ? 'green' : 'amber'"
+    />
 
-    <div v-if="message" class="automation-message success">{{ message }}</div>
-    <div v-if="error" class="automation-message error">{{ error }}</div>
+    <div v-if="message" class="automation-message success" role="status" aria-live="polite">{{ message }}</div>
+    <div v-if="error" class="automation-message error" role="alert">{{ error }}，请检查配置或稍后重试。</div>
 
     <section class="automation-kpis">
       <article><span>已启用计划</span><strong>{{ status?.summary?.schedule_enabled || 0 }}</strong></article>
@@ -284,11 +289,11 @@ onMounted(() => Promise.all([loadConfiguration(), loadAll()]))
         <p>在线保存至 data/settings.env，重启服务后生效</p>
       </div>
       <div v-if="configurationLoading" class="empty">正在读取自动化配置…</div>
-      <div v-else-if="!configurationLoaded" class="configuration-load-error">
+      <div v-else-if="!configurationLoaded" class="configuration-load-error" role="alert">
         <span>{{ configurationError || '自动化配置读取失败' }}</span>
         <button type="button" @click="loadConfiguration">重新读取</button>
       </div>
-      <form v-else class="configuration-form" @submit.prevent="submitConfiguration">
+      <form v-else class="configuration-form" @submit.prevent="submitConfiguration" @input.capture="hasUnsavedChanges = true" @change.capture="hasUnsavedChanges = true">
         <div class="configuration-notice">
           <div>
             <strong>配置保存后不会立即切换正在运行的服务</strong>
@@ -303,11 +308,11 @@ onMounted(() => Promise.all([loadConfiguration(), loadAll()]))
             <p class="card-description">控制自动化总开关、扫描频率和失败重试节奏。</p>
             <label class="setting-switch">
               <span><strong>启用报表自动化</strong><small>关闭后保留已有计划，但不再自动执行</small></span>
-              <input v-model="configuration.automation_enabled" type="checkbox">
+              <input v-model="configuration.automation_enabled" name="automation_enabled" type="checkbox">
             </label>
             <div class="setting-fields two-columns">
-              <label><span>计划扫描间隔（秒）</span><input v-model.number="configuration.automation_scan_seconds" type="number" min="1" max="3600" step="1" required><small>建议 15 秒，范围 1–3600 秒</small></label>
-              <label><span>重试基准间隔（秒）</span><input v-model.number="configuration.email_retry_base_seconds" type="number" min="1" max="86400" step="1" required><small>后续重试会按退避策略延长</small></label>
+              <label><span>计划扫描间隔（秒）</span><input v-model.number="configuration.automation_scan_seconds" name="automation_scan_seconds" type="number" inputmode="numeric" autocomplete="off" min="1" max="3600" step="1" required><small>建议 15 秒，范围 1–3600 秒</small></label>
+              <label><span>重试基准间隔（秒）</span><input v-model.number="configuration.email_retry_base_seconds" name="email_retry_base_seconds" type="number" inputmode="numeric" autocomplete="off" min="1" max="86400" step="1" required><small>后续重试会按退避策略延长</small></label>
             </div>
           </fieldset>
 
@@ -316,28 +321,28 @@ onMounted(() => Promise.all([loadConfiguration(), loadAll()]))
             <p class="card-description">配置发件服务器及安全连接方式，密码不会在页面回显。</p>
             <label class="setting-switch">
               <span><strong>启用 SMTP 发送</strong><small>关闭时仍可编辑并保存下方参数</small></span>
-              <input v-model="configuration.smtp_enabled" type="checkbox">
+              <input v-model="configuration.smtp_enabled" name="smtp_enabled" type="checkbox">
             </label>
             <div class="setting-fields smtp-fields">
-              <label class="span-two"><span>SMTP 服务器</span><input v-model.trim="configuration.smtp_host" :required="configuration.smtp_enabled" maxlength="255" placeholder="smtp.example.com"></label>
-              <label><span>端口</span><input v-model.number="configuration.smtp_port" type="number" min="1" max="65535" required></label>
-              <label><span>超时（秒）</span><input v-model.number="configuration.smtp_timeout_seconds" type="number" min="1" max="300" step="1" required></label>
-              <label><span>登录账号</span><input v-model.trim="configuration.smtp_username" maxlength="255" autocomplete="username" placeholder="可留空"></label>
-              <label><span>登录密码</span><input v-model="configuration.smtp_password" type="password" maxlength="256" autocomplete="new-password" :placeholder="configuration.smtp_password_configured ? '已配置，留空则保留原密码' : '请输入邮箱密码'"></label>
-              <label><span>发件人邮箱</span><input v-model.trim="configuration.smtp_from_email" type="email" :required="configuration.smtp_enabled" maxlength="320" placeholder="reports@example.com"></label>
-              <label><span>发件人名称</span><input v-model.trim="configuration.smtp_from_name" maxlength="100" placeholder="切割生产智能产报系统"></label>
+              <label class="span-two"><span>SMTP 服务器</span><input v-model.trim="configuration.smtp_host" name="smtp_host" autocomplete="off" spellcheck="false" :required="configuration.smtp_enabled" maxlength="255" placeholder="例如：smtp.example.com…"></label>
+              <label><span>端口</span><input v-model.number="configuration.smtp_port" name="smtp_port" type="number" inputmode="numeric" autocomplete="off" min="1" max="65535" required></label>
+              <label><span>超时（秒）</span><input v-model.number="configuration.smtp_timeout_seconds" name="smtp_timeout_seconds" type="number" inputmode="numeric" autocomplete="off" min="1" max="300" step="1" required></label>
+              <label><span>登录账号</span><input v-model.trim="configuration.smtp_username" name="smtp_username" maxlength="255" autocomplete="username" spellcheck="false" placeholder="可留空…"></label>
+              <label><span>登录密码</span><input v-model="configuration.smtp_password" name="smtp_password" type="password" maxlength="256" autocomplete="new-password" :placeholder="configuration.smtp_password_configured ? '已配置，留空则保留原密码…' : '请输入邮箱密码…'"></label>
+              <label><span>发件人邮箱</span><input v-model.trim="configuration.smtp_from_email" name="smtp_from_email" type="email" inputmode="email" spellcheck="false" autocomplete="off" :required="configuration.smtp_enabled" maxlength="320" placeholder="例如：reports@example.com…"></label>
+              <label><span>发件人名称</span><input v-model.trim="configuration.smtp_from_name" name="smtp_from_name" autocomplete="off" maxlength="100" placeholder="例如：切割生产智能产报系统…"></label>
             </div>
             <div class="security-options">
               <span>连接安全</span>
-              <label><input v-model="configuration.smtp_use_tls" type="checkbox" @change="selectTls">STARTTLS</label>
-              <label><input v-model="configuration.smtp_use_ssl" type="checkbox" @change="selectSsl">SSL/TLS</label>
+              <label><input v-model="configuration.smtp_use_tls" name="smtp_use_tls" type="checkbox" @change="selectTls">STARTTLS</label>
+              <label><input v-model="configuration.smtp_use_ssl" name="smtp_use_ssl" type="checkbox" @change="selectSsl">SSL/TLS</label>
               <small>两种安全方式只能选择一种，也可都不选。</small>
             </div>
           </fieldset>
         </div>
 
-        <div v-if="configurationMessage" class="configuration-feedback success">{{ configurationMessage }}</div>
-        <div v-if="configurationError" class="configuration-feedback error">{{ configurationError }}</div>
+        <div v-if="configurationMessage" class="configuration-feedback success" role="status" aria-live="polite">{{ configurationMessage }}</div>
+        <div v-if="configurationError" class="configuration-feedback error" role="alert">{{ configurationError }}，请检查参数后重试。</div>
         <div class="configuration-actions">
           <span>密码仅用于服务端发信，不会通过配置查询接口返回。</span>
           <button type="submit" :disabled="configurationSaving">{{ configurationSaving ? '保存中…' : '保存自动化参数' }}</button>
@@ -350,21 +355,21 @@ onMounted(() => Promise.all([loadConfiguration(), loadAll()]))
         <div><span>02</span><h2>{{ editingId ? '编辑定时任务' : '新建定时任务' }}</h2></div>
         <p>邮件发送独立重试，不会重复生成报表</p>
       </div>
-      <form class="automation-form" @submit.prevent="submit">
-        <label><span>任务名称</span><input v-model.trim="form.name" required maxlength="80"></label>
-        <label><span>报表类型</span><AppSelect v-model="form.report_type"><option v-for="(label,key) in reportLabels" :key="key" :value="key">{{ label }}</option></AppSelect></label>
-        <label><span>执行频率</span><AppSelect v-model="form.frequency"><option value="daily">每日</option><option value="weekly">每周</option><option value="monthly">每月</option></AppSelect></label>
-        <label><span>执行时间</span><input v-model="form.run_time" type="time" required></label>
-        <label v-if="form.frequency === 'weekly'"><span>星期</span><AppSelect v-model.number="form.weekday"><option v-for="(day,index) in ['一','二','三','四','五','六','日']" :key="day" :value="index + 1">星期{{ day }}</option></AppSelect></label>
-        <label v-if="form.frequency === 'monthly'"><span>每月执行日</span><input v-model.number="form.month_day" type="number" min="1" max="28"></label>
-        <label><span>报表期间</span><AppSelect v-model="form.report_period"><template v-if="form.report_type === 'leadership'"><option value="previous_month">上月</option><option value="current_month">本月</option></template><template v-else><option value="previous_day">前一日</option><option value="current_day">当日</option></template></AppSelect></label>
-        <label><span>图表类型</span><AppSelect v-model="form.chart_type"><option value="bar_line">柱线组合</option><option value="bar">柱状图</option><option value="line">折线图</option><option value="area">面积图</option></AppSelect></label>
-        <label><span>最大尝试次数</span><input v-model.number="form.max_attempts" type="number" min="1" max="10"></label>
-        <label class="wide"><span>收件人（每行一个，或用逗号分隔）</span><textarea v-model="form.recipients_text" rows="3" required placeholder="manager@example.com"></textarea></label>
-        <label class="wide"><span>邮件主题</span><input v-model.trim="form.subject_template" required><small>可用：{report_name}、{report_type}、{report_date}</small></label>
+      <form class="automation-form" @submit.prevent="submit" @input.capture="hasUnsavedChanges = true" @change.capture="hasUnsavedChanges = true">
+        <label><span>任务名称</span><input v-model.trim="form.name" name="schedule_name" autocomplete="off" required maxlength="80"></label>
+        <label><span>报表类型</span><AppSelect v-model="form.report_type" name="report_type" @change="hasUnsavedChanges = true"><option v-for="(label,key) in reportLabels" :key="key" :value="key">{{ label }}</option></AppSelect></label>
+        <label><span>执行频率</span><AppSelect v-model="form.frequency" name="frequency" @change="hasUnsavedChanges = true"><option value="daily">每日</option><option value="weekly">每周</option><option value="monthly">每月</option></AppSelect></label>
+        <label><span>执行时间</span><input v-model="form.run_time" name="run_time" type="time" autocomplete="off" required></label>
+        <label v-if="form.frequency === 'weekly'"><span>星期</span><AppSelect v-model.number="form.weekday" name="weekday" @change="hasUnsavedChanges = true"><option v-for="(day,index) in ['一','二','三','四','五','六','日']" :key="day" :value="index + 1">星期{{ day }}</option></AppSelect></label>
+        <label v-if="form.frequency === 'monthly'"><span>每月执行日</span><input v-model.number="form.month_day" name="month_day" type="number" inputmode="numeric" autocomplete="off" min="1" max="28"></label>
+        <label><span>报表期间</span><AppSelect v-model="form.report_period" name="report_period" @change="hasUnsavedChanges = true"><template v-if="form.report_type === 'leadership'"><option value="previous_month">上月</option><option value="current_month">本月</option></template><template v-else><option value="previous_day">前一日</option><option value="current_day">当日</option></template></AppSelect></label>
+        <label><span>图表类型</span><AppSelect v-model="form.chart_type" name="chart_type" @change="hasUnsavedChanges = true"><option value="bar_line">柱线组合</option><option value="bar">柱状图</option><option value="line">折线图</option><option value="area">面积图</option></AppSelect></label>
+        <label><span>最大尝试次数</span><input v-model.number="form.max_attempts" name="max_attempts" type="number" inputmode="numeric" autocomplete="off" min="1" max="10"></label>
+        <label class="wide"><span>收件人（每行一个，或用逗号分隔）</span><textarea v-model="form.recipients_text" name="recipients" inputmode="email" autocomplete="off" spellcheck="false" rows="3" required placeholder="例如：manager@example.com…"></textarea></label>
+        <label class="wide"><span>邮件主题</span><input v-model.trim="form.subject_template" name="subject_template" autocomplete="off" required><small>可用：{report_name}、{report_type}、{report_date}</small></label>
         <div class="automation-switches wide">
-          <label><input v-model="form.attach_report" type="checkbox">附加 HTML 报表</label>
-          <label><input v-model="form.enabled" type="checkbox">启用定时任务</label>
+          <label><input v-model="form.attach_report" name="attach_report" type="checkbox">附加 HTML 报表</label>
+          <label><input v-model="form.enabled" name="schedule_enabled" type="checkbox">启用定时任务</label>
         </div>
         <div class="automation-actions wide">
           <button v-if="editingId" type="button" class="secondary" @click="resetForm">取消编辑</button>
@@ -401,7 +406,7 @@ onMounted(() => Promise.all([loadConfiguration(), loadAll()]))
 
 <style scoped>
 .automation-page{display:grid;gap:18px}.smtp-card{width:300px;padding:18px 20px;border:1px solid #e0c38d;border-left:5px solid #d89a27;background:#fff9ec}.smtp-card.ready{border-color:#9acdb2;border-left-color:#2c9961;background:#f0faf4}.smtp-card span,.smtp-card small{display:block;color:var(--muted);font-size:11px}.smtp-card strong{display:block;margin:5px 0;color:var(--navy);font-size:22px}.automation-message{padding:12px 15px;border-left:4px solid}.automation-message.success{color:#236a42;border-color:#2c9961;background:#eaf7ef}.automation-message.error{color:#9f302a;border-color:#c94a43;background:#fff0ef}.automation-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}.automation-kpis article{padding:19px 22px;border-top:4px solid var(--cyan);background:#fff;box-shadow:var(--shadow)}.automation-kpis span{display:block;color:var(--muted);font-size:11px}.automation-kpis strong{display:block;margin-top:7px;color:var(--blue);font-size:28px}.automation-form{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;padding:24px}.automation-form label>span{display:block;margin-bottom:6px;color:#425767;font-size:11px;font-weight:700}.automation-form textarea{width:100%;resize:vertical;padding:10px 12px;border:1px solid #bdcbd5;background:#fbfcfd}.automation-form small{display:block;margin-top:5px;color:var(--muted);font-size:10px}.automation-form .wide{grid-column:1/-1}.automation-switches{display:flex;gap:18px}.automation-switches label{display:flex;align-items:center;gap:7px;color:#425767;font-size:11px}.automation-switches input{width:16px;height:16px}.automation-actions{display:flex;justify-content:flex-end;gap:9px;padding-top:8px;border-top:1px solid var(--line)}.automation-actions .secondary{color:var(--blue);background:#fff}.automation-table-wrap{overflow-x:auto}.automation-table-wrap table{width:100%;border-collapse:collapse}.automation-table-wrap th,.automation-table-wrap td{padding:12px 14px;border-bottom:1px solid var(--line);text-align:left;font-size:11px}.automation-table-wrap th{color:#fff;background:var(--navy)}.automation-table-wrap td strong,.automation-table-wrap td small{display:block}.automation-table-wrap td small{margin-top:3px;max-width:240px;overflow:hidden;color:var(--muted);text-overflow:ellipsis;white-space:nowrap}.status-dot{width:8px;height:8px;display:inline-block;margin-right:6px;border-radius:50%;background:#aab7bf}.status-dot.enabled{background:#2c9961}.row-actions{display:flex;gap:5px;white-space:nowrap}.row-actions button,.automation-table-wrap td>button{min-height:29px;padding:0 8px;font-size:10px}.row-actions .danger{color:#a33a32;border-color:#dfb5b1;background:#fff7f6}.delivery-status{display:inline-block;padding:4px 7px;border-radius:999px;background:#eef2f4}.delivery-status.sent{color:#1f7148;background:#e9f7ef}.delivery-status.failed{color:#9f302a;background:#fff0ef}.delivery-status.retry_wait{color:#8b5a08;background:#fff5dc}.error-cell{max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.automation-pagination{display:flex;align-items:center;justify-content:space-between;padding:13px 16px;color:var(--muted);font-size:11px}.automation-pagination div{display:flex;gap:7px}.automation-pagination button{min-height:31px;padding:0 10px}@media(max-width:900px){.smtp-card{width:100%}.automation-kpis{grid-template-columns:1fr 1fr}.automation-form{grid-template-columns:1fr 1fr}}@media(max-width:560px){.automation-kpis,.automation-form{grid-template-columns:1fr}.automation-form .wide{grid-column:auto}.automation-switches{align-items:flex-start;flex-direction:column}.automation-actions{align-items:stretch;flex-direction:column}}
-.automation-settings{overflow:hidden}.configuration-load-error{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:20px 24px;padding:14px 16px;border-left:4px solid #c94a43;color:#9f302a;background:#fff0ef;font-size:11px}.configuration-form{padding:24px;background:linear-gradient(180deg,#fff 0,#f8fbfc 100%)}.configuration-notice{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-bottom:18px;padding:14px 16px;border:1px solid #d7e4ea;border-left:4px solid var(--cyan);background:#f2f8fa}.configuration-notice strong,.configuration-notice span{display:block}.configuration-notice strong{color:var(--navy);font-size:12px}.configuration-notice div>span{margin-top:4px;color:var(--muted);font-size:10px;line-height:1.6}.restart-badge{flex:0 0 auto;padding:6px 10px;border-radius:999px;color:#895c0a;background:#fff1cc;font-size:10px;font-weight:700}.configuration-grid{display:grid;grid-template-columns:minmax(300px,.8fr) minmax(520px,1.4fr);gap:16px}.configuration-card{min-width:0;margin:0;padding:20px;border:1px solid #d9e3e9;border-top:4px solid var(--blue);background:#fff}.configuration-card legend{padding:0 9px;color:var(--navy);font-size:14px;font-weight:800}.configuration-card.smtp-configuration-card{border-top-color:var(--cyan)}.card-description{min-height:34px;margin:0 0 14px;color:var(--muted);font-size:10px;line-height:1.6}.setting-switch{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:18px;padding:13px 14px;background:#eef6f8}.setting-switch span,.setting-switch small{display:block}.setting-switch strong{color:#244b61;font-size:11px}.setting-switch small{margin-top:4px;color:var(--muted);font-size:9px;line-height:1.45}.setting-switch>input{width:18px;height:18px;flex:0 0 auto;accent-color:var(--cyan)}.setting-fields{display:grid;gap:13px}.setting-fields.two-columns,.setting-fields.smtp-fields{grid-template-columns:repeat(2,minmax(0,1fr))}.setting-fields .span-two{grid-column:1/-1}.setting-fields label>span{display:block;margin-bottom:6px;color:#425767;font-size:10px;font-weight:700}.setting-fields input{width:100%;min-height:40px;padding:0 11px;border:1px solid #bdcbd5;background:#fbfcfd;color:var(--ink)}.setting-fields input:focus{outline:2px solid rgba(24,147,166,.18);border-color:var(--cyan)}.setting-fields small{display:block;margin-top:5px;color:var(--muted);font-size:9px}.security-options{display:flex;align-items:center;flex-wrap:wrap;gap:8px 14px;margin-top:16px;padding-top:14px;border-top:1px solid var(--line);color:#425767;font-size:10px}.security-options>span{font-weight:700}.security-options label{display:flex;align-items:center;gap:5px}.security-options input{width:15px;height:15px;accent-color:var(--cyan)}.security-options small{flex:1 1 100%;color:var(--muted)}.configuration-feedback{margin-top:16px;padding:11px 13px;border-left:4px solid;font-size:11px}.configuration-feedback.success{color:#236a42;border-color:#2c9961;background:#eaf7ef}.configuration-feedback.error{color:#9f302a;border-color:#c94a43;background:#fff0ef}.configuration-actions{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-top:18px;padding-top:16px;border-top:1px solid var(--line)}.configuration-actions span{color:var(--muted);font-size:10px}.configuration-actions button{min-width:176px}.automation-editor,.automation-list{overflow:hidden}.automation-form{background:linear-gradient(180deg,#fff 0,#fbfcfd 100%)}.automation-table-wrap tbody tr{transition:background-color .15s ease}.automation-table-wrap tbody tr:hover{background:#f3f8fa}.automation-table-wrap th{white-space:nowrap}
+.automation-settings{overflow:hidden}.configuration-load-error{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:20px 24px;padding:14px 16px;border-left:4px solid #c94a43;color:#9f302a;background:#fff0ef;font-size:11px}.configuration-form{padding:24px;background:linear-gradient(180deg,#fff 0,#f8fbfc 100%)}.configuration-notice{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-bottom:18px;padding:14px 16px;border:1px solid #d7e4ea;border-left:4px solid var(--cyan);background:#f2f8fa}.configuration-notice strong,.configuration-notice span{display:block}.configuration-notice strong{color:var(--navy);font-size:12px}.configuration-notice div>span{margin-top:4px;color:var(--muted);font-size:10px;line-height:1.6}.restart-badge{flex:0 0 auto;padding:6px 10px;border-radius:999px;color:#895c0a;background:#fff1cc;font-size:10px;font-weight:700}.configuration-grid{display:grid;grid-template-columns:minmax(300px,.8fr) minmax(520px,1.4fr);gap:16px}.configuration-card{min-width:0;margin:0;padding:20px;border:1px solid #d9e3e9;border-top:4px solid var(--blue);background:#fff}.configuration-card legend{padding:0 9px;color:var(--navy);font-size:14px;font-weight:800}.configuration-card.smtp-configuration-card{border-top-color:var(--cyan)}.card-description{min-height:34px;margin:0 0 14px;color:var(--muted);font-size:10px;line-height:1.6}.setting-switch{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:18px;padding:13px 14px;background:#eef6f8}.setting-switch span,.setting-switch small{display:block}.setting-switch strong{color:#244b61;font-size:11px}.setting-switch small{margin-top:4px;color:var(--muted);font-size:9px;line-height:1.45}.setting-switch>input{width:18px;height:18px;flex:0 0 auto;accent-color:var(--cyan)}.setting-fields{display:grid;gap:13px}.setting-fields.two-columns,.setting-fields.smtp-fields{grid-template-columns:repeat(2,minmax(0,1fr))}.setting-fields .span-two{grid-column:1/-1}.setting-fields label>span{display:block;margin-bottom:6px;color:#425767;font-size:10px;font-weight:700}.setting-fields input{width:100%;min-height:40px;padding:0 11px;border:1px solid #bdcbd5;background:#fbfcfd;color:var(--ink)}.setting-fields input:focus-visible{outline:3px solid rgba(24,147,166,.18);outline-offset:1px;border-color:var(--cyan)}.setting-fields small{display:block;margin-top:5px;color:var(--muted);font-size:9px}.security-options{display:flex;align-items:center;flex-wrap:wrap;gap:8px 14px;margin-top:16px;padding-top:14px;border-top:1px solid var(--line);color:#425767;font-size:10px}.security-options>span{font-weight:700}.security-options label{display:flex;align-items:center;gap:5px}.security-options input{width:15px;height:15px;accent-color:var(--cyan)}.security-options small{flex:1 1 100%;color:var(--muted)}.configuration-feedback{margin-top:16px;padding:11px 13px;border-left:4px solid;font-size:11px}.configuration-feedback.success{color:#236a42;border-color:#2c9961;background:#eaf7ef}.configuration-feedback.error{color:#9f302a;border-color:#c94a43;background:#fff0ef}.configuration-actions{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-top:18px;padding-top:16px;border-top:1px solid var(--line)}.configuration-actions span{color:var(--muted);font-size:10px}.configuration-actions button{min-width:176px}.automation-editor,.automation-list{overflow:hidden}.automation-form{background:linear-gradient(180deg,#fff 0,#fbfcfd 100%)}.automation-table-wrap tbody tr{transition:background-color .15s ease}.automation-table-wrap tbody tr:hover{background:#f3f8fa}.automation-table-wrap th{white-space:nowrap}
 @media(max-width:1080px){.configuration-grid{grid-template-columns:1fr}.card-description{min-height:0}}
 @media(max-width:560px){.configuration-form{padding:16px}.configuration-notice,.configuration-actions{align-items:stretch;flex-direction:column}.restart-badge{align-self:flex-start}.setting-fields.two-columns,.setting-fields.smtp-fields{grid-template-columns:1fr}.setting-fields .span-two{grid-column:auto}.configuration-actions button{width:100%}}
 </style>

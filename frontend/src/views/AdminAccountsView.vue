@@ -8,6 +8,8 @@ import {
 } from '../api/reports'
 import { session } from '../state/session'
 import { formatChineseDateTime } from '../utils/dateDisplay.js'
+import ManagementPageHero from '../components/ManagementPageHero.vue'
+import { useDialogFocus } from '../composables/useDialogFocus.js'
 
 const admins = ref([])
 const results = ref([])
@@ -17,6 +19,8 @@ const searching = ref(false)
 const error = ref('')
 const notice = ref('')
 const dialog = reactive({ visible: false, action: 'grant', target: null, password: '', saving: false, error: '' })
+const dialogElement = ref(null)
+const dialogOpen = computed(() => dialog.visible)
 
 const adminExternalIds = computed(() => new Set(
   admins.value.filter((item) => item.external_id).map((item) => String(item.external_id)),
@@ -69,6 +73,8 @@ function closeDialog() {
   dialog.password = ''
 }
 
+useDialogFocus(dialogOpen, dialogElement, closeDialog)
+
 async function confirmPermissionChange() {
   if (!dialog.password) return
   dialog.saving = true
@@ -96,18 +102,17 @@ onMounted(loadAdmins)
 </script>
 
 <template>
-  <div class="admin-accounts-page">
-    <section class="page-hero database-hero admin-accounts-hero">
-      <div>
-        <span class="eyebrow">ACCESS CONTROL</span>
-        <h2>管理员管理</h2>
-        <p>从 HR 人员库授权管理员，登录继续使用本人公司工号和 HR 原密码。</p>
-      </div>
-      <div class="security-badge admin-security-badge">
-        <strong>HR 身份认证</strong>
-        <span>仅保存管理员权限映射</span>
-      </div>
-    </section>
+  <div class="admin-accounts-page management-page">
+    <ManagementPageHero
+      eyebrow="ACCESS CONTROL"
+      title="管理员管理"
+      description="从 HR 人员库授权管理员，登录继续使用本人公司工号和 HR 原密码。"
+      icon="user"
+      status-label="HR 身份认证"
+      :status-value="`${admins.length} 位管理员`"
+      status-note="系统仅保存管理员权限映射"
+      tone="violet"
+    />
 
     <p v-if="notice" class="account-notice" role="status">{{ notice }}</p>
     <p v-if="error" class="account-error" role="alert">{{ error }}</p>
@@ -147,7 +152,7 @@ onMounted(loadAdmins)
     <section class="panel account-panel">
       <div class="panel-title"><div><span>02</span><h2>从 HR 人员库添加</h2></div><p>按姓名或公司工号搜索</p></div>
       <form class="hr-search" @submit.prevent="search">
-        <label><span>HR 人员</span><input v-model.trim="keyword" maxlength="64" autocomplete="off" placeholder="输入姓名或公司工号" required /></label>
+        <label><span>HR 人员</span><input v-model.trim="keyword" name="hr_keyword" maxlength="64" autocomplete="off" spellcheck="false" placeholder="例如：张三或 10086…" required /></label>
         <button class="primary" type="submit" :disabled="searching">{{ searching ? '搜索中' : '搜索' }}</button>
       </form>
       <div v-if="results.length" class="search-results">
@@ -165,10 +170,10 @@ onMounted(loadAdmins)
     </section>
 
     <div v-if="dialog.visible" class="permission-dialog-backdrop" @click.self="closeDialog">
-      <section class="permission-dialog" role="dialog" aria-modal="true" aria-labelledby="permission-dialog-title">
+      <section ref="dialogElement" class="permission-dialog" role="dialog" aria-modal="true" aria-labelledby="permission-dialog-title" tabindex="-1">
         <header><div><small>SECURITY CHECK</small><h2 id="permission-dialog-title">{{ dialog.action === 'grant' ? '确认授予管理员权限' : '确认撤销管理员权限' }}</h2></div><button type="button" aria-label="关闭" :disabled="dialog.saving" @click="closeDialog">×</button></header>
         <p>操作对象：<strong>{{ dialog.target?.display_name }}</strong>（{{ dialog.target?.company_no || dialog.target?.username }}）</p>
-        <label><span>当前管理员密码</span><input v-model="dialog.password" type="password" maxlength="128" autocomplete="current-password" required autofocus @keyup.enter="confirmPermissionChange" /><small>用于确认是当前登录管理员本人操作，不会保存该密码。</small></label>
+        <label><span>当前管理员密码</span><input v-model="dialog.password" name="current_admin_password" type="password" maxlength="128" autocomplete="current-password" required data-dialog-initial-focus @keyup.enter="confirmPermissionChange" /><small>用于确认是当前登录管理员本人操作，不会保存该密码。</small></label>
         <p v-if="dialog.error" class="dialog-error" role="alert">{{ dialog.error }}</p>
         <footer><button type="button" :disabled="dialog.saving" @click="closeDialog">取消</button><button class="primary" type="button" :disabled="dialog.saving || !dialog.password" @click="confirmPermissionChange">{{ dialog.saving ? '验证并提交中' : '验证密码并确认' }}</button></footer>
       </section>

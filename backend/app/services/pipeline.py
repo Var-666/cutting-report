@@ -79,6 +79,18 @@ def _period_label(start: date, end: date) -> str:
     return start.isoformat() if start == end else f"{start.isoformat()} 至 {end.isoformat()}"
 
 
+def _recent_twelve_month_period(job: dict, fallback_end: date) -> tuple[date, date]:
+    """Return the independent monthly-summary window used by report exports."""
+    raw_end = _job_parameters(job).get("summary_period_end")
+    try:
+        end = date.fromisoformat(str(raw_end)) if raw_end else fallback_end
+    except ValueError:
+        end = fallback_end
+    absolute_month = end.year * 12 + end.month - 1 - 11
+    start = date(absolute_month // 12, absolute_month % 12 + 1, 1)
+    return start, end
+
+
 class ReportPipeline:
     def __init__(
         self,
@@ -198,27 +210,35 @@ class ReportPipeline:
         timezone = ZoneInfo(self.settings.timezone)
         period_start, period_end = _job_period(job)
         if _is_range_job(job):
-            leadership = self.range_service.leadership(period_start, period_end)
+            range_leadership = self.range_service.leadership(period_start, period_end)
             comparison_start, comparison_end = previous_equal_range(
                 period_start, period_end
             )
             comparison = self.range_service.leadership(
                 comparison_start, comparison_end
             )
-            leadership = replace(
-                leadership,
+            range_leadership = replace(
+                range_leadership,
                 comparison_total=comparison.current_month_total,
                 comparison_start=comparison_start,
                 comparison_end=comparison_end,
             )
+            _, summary_end = _recent_twelve_month_period(job, period_end)
+            monthly_leadership = self.leadership_service.fetch(summary_end)
+            leadership = replace(
+                range_leadership,
+                monthly_records=monthly_leadership.monthly_records,
+                twelve_month_total=monthly_leadership.twelve_month_total,
+            )
         else:
             leadership = self.leadership_service.fetch(period_start)
+            range_leadership = leadership
         chart_type = _chart_type(job)
         charts = self.chart_service.build_leadership(leadership, chart_type)
 
         self.metadata.update_status(report_id, "calculating", "正在计算月度汇总")
         self.metadata.update_status(report_id, "analyzing", "正在生成智能分析")
-        analysis = self.analysis_service.analyze_leadership(leadership)
+        analysis = self.analysis_service.analyze_leadership(range_leadership)
         generated_at = datetime.now(timezone)
         report = {
             "meta": self._meta(
@@ -262,7 +282,10 @@ class ReportPipeline:
             self.metadata.update_status(report_id, "calculating", "正在计算区间任务与能耗")
             range_data = self.range_service.equipment(report_date, period_end)
             task_report = range_data["task_report"]
-            month_report = range_data["period_report"]
+            summary_start, summary_end = _recent_twelve_month_period(job, period_end)
+            month_report = self.energy_period_service.get_monthly_range(
+                summary_start, summary_end
+            )
             chart_type = _chart_type(job)
             charts = self.chart_service.build_energy_period(
                 task_report, month_report, chart_type

@@ -26,6 +26,8 @@ const draftStart = ref(props.startDate)
 const draftEnd = ref(props.endDate)
 const validationError = ref('')
 const panelId = useId()
+const labelId = useId()
+const valueId = useId()
 
 function parseDate(value) {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value || '')
@@ -228,18 +230,19 @@ onBeforeUnmount(pause)
 
 <template>
   <div ref="root" class="report-period-picker" :class="{ 'is-open': open }">
-    <span class="report-period-picker__label"><AppIcon name="calendar" size="13" />统计区间</span>
+    <span :id="labelId" class="report-period-picker__label"><AppIcon name="calendar" size="13" />统计区间</span>
     <button
       ref="trigger"
       type="button"
       class="report-period-picker__trigger"
       :disabled="disabled"
       aria-haspopup="dialog"
+      :aria-labelledby="`${labelId} ${valueId}`"
       :aria-expanded="open"
       :aria-controls="open ? panelId : undefined"
       @click="open ? closePanel() : showPanel()"
     >
-      <span class="report-period-picker__value">{{ buttonLabel }}</span><i aria-hidden="true"></i>
+      <span :id="valueId" class="report-period-picker__value">{{ buttonLabel }}</span><i aria-hidden="true"></i>
     </button>
 
     <Teleport to="body">

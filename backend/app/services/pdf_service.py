@@ -78,6 +78,16 @@ class PdfService:
                             print_background=True,
                             prefer_css_page_size=True,
                             format="A4",
+                            display_header_footer=True,
+                            header_template="<div></div>",
+                            footer_template="""
+                                <div style="width:100%;display:flex;justify-content:space-between;
+                                    padding:0 10mm;color:#6b8291;font-size:8px;
+                                    font-family:'Microsoft YaHei','PingFang SC',sans-serif;">
+                                  <span>切割生产智能产报系统</span>
+                                  <span><span class="pageNumber"></span> / <span class="totalPages"></span></span>
+                                </div>
+                            """,
                         )
                     finally:
                         browser.close()

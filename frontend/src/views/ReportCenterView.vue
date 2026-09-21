@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import ReportForm from '../components/ReportForm.vue'
 import ReportJobStatus from '../components/ReportJobStatus.vue'
 import ReportTable from '../components/ReportTable.vue'
+import ManagementPageHero from '../components/ManagementPageHero.vue'
 import {
   createReport,
   getReportStatus,
@@ -34,19 +35,43 @@ const historyPageSize = ref(10)
 const historyTotal = ref(0)
 const historyTotalPages = computed(() => Math.max(1, Math.ceil(historyTotal.value / historyPageSize.value)))
 let pollTimer = null
+let pollController = null
+let pollSequence = 0
+let historyController = null
+let historySequence = 0
+let pageActive = false
+
+function stopPolling() {
+  window.clearTimeout(pollTimer)
+  pollTimer = null
+  pollSequence += 1
+  pollController?.abort()
+  pollController = null
+}
 
 async function loadHistory(page = historyPage.value, force = false) {
+  if (!pageActive) return
+  historyController?.abort()
+  const controller = new AbortController()
+  const sequence = ++historySequence
+  historyController = controller
   loadingHistory.value = true
   try {
-    const data = await listReports({ page, pageSize: historyPageSize.value, force })
+    const data = await listReports({ page, pageSize: historyPageSize.value, force, signal: controller.signal })
+    if (!pageActive || controller.signal.aborted || sequence !== historySequence) return
     history.value = data.items
     historyPage.value = data.page
     historyPageSize.value = data.page_size
     historyTotal.value = data.total
   } catch (exception) {
-    error.value = exception.message
+    if (exception.name !== 'AbortError' && pageActive && sequence === historySequence) {
+      error.value = exception.message
+    }
   } finally {
-    loadingHistory.value = false
+    if (sequence === historySequence) {
+      historyController = null
+      loadingHistory.value = false
+    }
   }
 }
 
@@ -88,7 +113,7 @@ async function loadCustomDefinitions() {
 }
 
 async function generate(form) {
-  window.clearTimeout(pollTimer)
+  stopPolling()
   error.value = ''
   generating.value = true
   try {
@@ -102,19 +127,34 @@ async function generate(form) {
 }
 
 async function pollStatus(reportId) {
+  if (!pageActive) return
+  window.clearTimeout(pollTimer)
+  pollTimer = null
+  pollController?.abort()
+  const controller = new AbortController()
+  const sequence = ++pollSequence
+  pollController = controller
   try {
-    currentJob.value = await getReportStatus(reportId)
-    const terminal = ['completed', 'completed_with_warnings', 'failed'].includes(currentJob.value.status)
+    const job = await getReportStatus(reportId, { signal: controller.signal })
+    if (!pageActive || controller.signal.aborted || sequence !== pollSequence) return
+    currentJob.value = job
+    const terminal = ['completed', 'completed_with_warnings', 'failed'].includes(job.status)
     if (terminal) {
       generating.value = false
       await loadHistory(1, true)
       return
     }
     generating.value = true
-    pollTimer = window.setTimeout(() => pollStatus(reportId), 1000)
+    if (pageActive && sequence === pollSequence) {
+      pollTimer = window.setTimeout(() => pollStatus(reportId), 1000)
+    }
   } catch (exception) {
-    error.value = exception.message
-    generating.value = false
+    if (exception.name !== 'AbortError' && pageActive && sequence === pollSequence) {
+      error.value = exception.message
+      generating.value = false
+    }
+  } finally {
+    if (sequence === pollSequence) pollController = null
   }
 }
 
@@ -122,30 +162,41 @@ watch(
   () => route.query.job,
   (reportId) => {
     if (typeof reportId === 'string' && reportId && reportId !== currentJob.value?.report_id) {
-      window.clearTimeout(pollTimer)
+      stopPolling()
       pollStatus(reportId)
     }
   },
 )
 
 onMounted(async () => {
+  pageActive = true
   await Promise.all([loadHistory(1), loadCustomDefinitions()])
-  if (typeof route.query.job === 'string' && route.query.job) {
+  if (pageActive && typeof route.query.job === 'string' && route.query.job) {
     await pollStatus(route.query.job)
   }
 })
-onBeforeUnmount(() => window.clearTimeout(pollTimer))
+onBeforeUnmount(() => {
+  pageActive = false
+  stopPolling()
+  historySequence += 1
+  historyController?.abort()
+  historyController = null
+  loadingHistory.value = false
+})
 </script>
 
 <template>
-  <section class="page-hero hero">
-    <div>
-      <span class="eyebrow">REPORT GENERATION</span>
-      <h2>{{ title }}</h2>
-      <p>{{ description }}</p>
-    </div>
-    <div class="hero-badge"><strong>SQL</strong><i></i><strong>统计</strong><i></i><strong>图表</strong><i></i><strong>HTML</strong></div>
-  </section>
+  <div class="management-page report-center-page">
+    <ManagementPageHero
+      eyebrow="REPORT GENERATION"
+      :title="title"
+      :description="description"
+      icon="file"
+      status-label="生成管线"
+      status-value="HTML / PDF"
+      status-note="查询、统计、图表与归档使用同一口径"
+      tone="teal"
+    />
 
   <section class="panel form-panel">
     <div class="panel-title">
@@ -165,7 +216,7 @@ onBeforeUnmount(() => window.clearTimeout(pollTimer))
     />
   </section>
 
-  <div v-if="error" class="global-error"><strong>操作未完成</strong><span>{{ error }}</span><button @click="error = ''">关闭</button></div>
+  <div v-if="error" class="global-error" role="alert"><strong>操作未完成</strong><span>{{ error }}，请检查报表条件后重试。</span><button type="button" @click="error = ''">关闭</button></div>
   <ReportJobStatus :job="currentJob" />
 
   <section class="panel history-panel">
@@ -180,4 +231,5 @@ onBeforeUnmount(() => window.clearTimeout(pollTimer))
       @page-size-change="changeHistoryPageSize"
     />
   </section>
+  </div>
 </template>

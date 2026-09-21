@@ -14,6 +14,7 @@ import {
 import { recentTwelveMonthStart, reportToday } from '../api/reportDates.js'
 import AnalysisPanel from '../components/AnalysisPanel.vue'
 import AppIcon from '../components/AppIcon.vue'
+import MetricSparkline from '../components/MetricSparkline.vue'
 import ReportTrendPanel from '../components/ReportTrendPanel.vue'
 import StandardReportQuery from '../components/StandardReportQuery.vue'
 import { formatChineseDateTime, formatChineseMonth, sortReportPeriods } from '../utils/dateDisplay.js'
@@ -95,6 +96,24 @@ const energyCoverage = computed(() => {
   const matchedRecords = Number(summary.value.electricity_record_count || 0)
     + Number(summary.value.gas_record_count || 0)
   return Math.max(0, Math.min(100, Math.round((matchedRecords / (taskCount * 2)) * 100)))
+})
+const deviceMetricSeries = computed(() => {
+  const rows = [...taskRows.value].sort((left, right) => String(left.production_time || '').localeCompare(String(right.production_time || '')))
+  const countsByDay = new Map()
+  for (const row of rows) {
+    const stamp = String(row.production_time || '').slice(0, 10)
+    if (stamp) countsByDay.set(stamp, (countsByDay.get(stamp) || 0) + 1)
+  }
+  return {
+    electricity: rows.map((row) => row.electricity_consumption),
+    gas: rows.map((row) => row.gas_consumption),
+    coverage: rows.map((row) => (
+      (row.electricity_consumption == null ? 0 : 50)
+      + (row.gas_consumption == null ? 0 : 50)
+    )),
+    tasks: [...countsByDay.values()],
+    workTime: rows.map((row) => row.work_time),
+  }
 })
 const summaryTitle = '近12个月月度能耗汇总'
 const summaryCountLabel = computed(() => `${summaryRows.value.length} 个月`)
@@ -316,7 +335,11 @@ function exportReport(format = 'html') {
     period_end: appliedPeriodEnd.value,
     project_code: null,
     ship_no: null,
-    parameters: { chart_type: chartType.value },
+    parameters: {
+      chart_type: chartType.value,
+      summary_period_start: summaryPeriodStart.value,
+      summary_period_end: summaryPeriodEnd.value,
+    },
   }, format)
 }
 
@@ -341,22 +364,23 @@ function stopResizeListening() {
   window.removeEventListener('resize', resizeCharts)
 }
 
-function pause() {
-  if (!pageActive.value) return
-  pageActive.value = false
-  requestSequence += 1
-  controller?.abort()
-  controller = null
-  backgroundController?.abort()
-  backgroundController = null
-  refreshRequestSequence += 1
-  refreshController?.abort()
-  refreshController = null
-  loading.value = false
-  summaryLoading.value = false
-  stopSummaryRefresh()
-  stopResizeListening()
-  disposeCharts()
+function pause(dispose = false) {
+  if (pageActive.value) {
+    pageActive.value = false
+    requestSequence += 1
+    controller?.abort()
+    controller = null
+    backgroundController?.abort()
+    backgroundController = null
+    refreshRequestSequence += 1
+    refreshController?.abort()
+    refreshController = null
+    loading.value = false
+    summaryLoading.value = false
+    stopSummaryRefresh()
+    stopResizeListening()
+  }
+  if (dispose) disposeCharts()
 }
 
 async function initializeReport() {
@@ -383,11 +407,11 @@ onActivated(async () => {
   startResizeListening()
   await nextTick()
   if ((!taskDay.value || !monthlyReport.value) && !loading.value) await initializeReport()
-  else renderCharts()
+  else if (!taskChart || (monthlyReport.value && !periodChart)) renderCharts()
   resizeCharts()
 })
 onDeactivated(pause)
-onBeforeUnmount(pause)
+onBeforeUnmount(() => pause(true))
 watch(chartType, async () => { await nextTick(); renderCharts() })
 </script>
 
@@ -426,27 +450,27 @@ watch(chartType, async () => { await nextTick(); renderCharts() })
       <article class="device-kpi kpi-red">
         <span class="device-kpi__icon"><AppIcon name="zap" size="21" /></span>
         <div><span>电耗<small>POWER CONSUMPTION</small></span><p><strong>{{ format(summary.total_electricity_consumption) }}</strong> <small>{{ units.electricity }}</small></p><em>区间合计</em></div>
-        <svg class="device-sparkline" viewBox="0 0 76 28" aria-hidden="true"><path d="M2 22 11 21 20 13 29 17 39 9 49 13 60 8 74 3"/></svg>
+        <MetricSparkline class="device-sparkline" :values="deviceMetricSeries.electricity" label="任务电耗趋势" />
       </article>
       <article class="device-kpi kpi-blue">
         <span class="device-kpi__icon"><AppIcon name="wind" size="21" /></span>
         <div><span>气耗<small>GAS CONSUMPTION</small></span><p><strong>{{ format(summary.total_gas_consumption) }}</strong> <small>{{ units.gas }}</small></p><em>区间合计</em></div>
-        <svg class="device-sparkline" viewBox="0 0 76 28" aria-hidden="true"><path d="M2 22 13 16 24 19 35 12 47 8 60 11 74 4"/></svg>
+        <MetricSparkline class="device-sparkline" :values="deviceMetricSeries.gas" label="任务气耗趋势" />
       </article>
       <article class="device-kpi kpi-teal">
         <span class="device-kpi__icon"><AppIcon name="activity" size="21" /></span>
         <div><span>能耗覆盖率<small>ENERGY COVERAGE</small></span><p><strong>{{ energyCoverage }}</strong> <small>%</small></p><em>电 / 气数据匹配</em></div>
-        <svg class="device-sparkline" viewBox="0 0 76 28" aria-hidden="true"><path d="M2 23 13 17 24 20 35 14 47 10 59 12 74 4"/></svg>
+        <MetricSparkline class="device-sparkline" :values="deviceMetricSeries.coverage" label="单项任务能耗覆盖率趋势" />
       </article>
       <article class="device-kpi kpi-violet">
         <span class="device-kpi__icon"><AppIcon name="tasks" size="21" /></span>
         <div><span>任务数量<small>TASK COUNT</small></span><p><strong>{{ summary.task_count || 0 }}</strong> <small>项</small></p><em>{{ equipmentScopeLabel }}</em></div>
-        <svg class="device-sparkline" viewBox="0 0 76 28" aria-hidden="true"><path d="M2 18 13 22 24 17 35 20 47 7 59 15 74 10"/></svg>
+        <MetricSparkline class="device-sparkline" :values="deviceMetricSeries.tasks" label="每日任务数量趋势" />
       </article>
       <article class="device-kpi kpi-cyan">
         <span class="device-kpi__icon"><AppIcon name="clock" size="21" /></span>
         <div><span>累计切割时长<small>TOTAL CUTTING TIME</small></span><p class="device-duration"><strong>{{ duration(summary.total_work_time) }}</strong></p><em>当前查询区间</em></div>
-        <svg class="device-sparkline" viewBox="0 0 76 28" aria-hidden="true"><path d="M2 23 13 18 24 15 35 19 47 12 59 10 74 3"/></svg>
+        <MetricSparkline class="device-sparkline" :values="deviceMetricSeries.workTime" label="单项任务切割时长趋势" />
       </article>
     </section>
 
@@ -477,7 +501,7 @@ watch(chartType, async () => { await nextTick(); renderCharts() })
 
 <style scoped>
 .device-report-shell>.page-hero{position:relative;min-height:174px;display:flex;align-items:center;overflow:hidden;padding:25px 30px;border:1px solid rgba(255,255,255,.72);border-radius:14px;background:linear-gradient(90deg,rgba(246,252,255,.99) 0%,rgba(238,248,253,.92) 39%,rgba(7,48,76,.08) 69%),url('../assets/home-laser-cutting.webp') center 51%/cover no-repeat;box-shadow:0 12px 30px rgba(22,62,89,.07);animation:surface-in .46s cubic-bezier(.2,.75,.25,1) both}.device-report-shell>.page-hero::after{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(116deg,transparent 0 46%,rgba(255,255,255,.24) 46.2%,transparent 46.8%)}.device-hero__copy,.device-hero__slogan{position:relative;z-index:1}.device-hero__copy{max-width:540px}.device-breadcrumb{display:block;margin-bottom:7px;color:#47708b;font-size:10px}.device-title-row{display:flex;align-items:flex-end;gap:14px}.device-title-row h2{margin:0;color:#153f5d;font-size:38px;line-height:1.08;letter-spacing:1px}.device-title-row>span{padding-bottom:5px;color:#41708e;font-size:8px;font-weight:700;letter-spacing:3px}.device-hero__copy>p{max-width:510px;margin:8px 0 0;color:#607a8d;font-size:12px;line-height:1.7}.device-hero__slogan{margin:0 20px 0 auto;color:#effaff;text-align:right;text-shadow:0 2px 10px rgba(4,37,58,.84);transform:rotate(-6deg)}.device-hero__slogan strong,.device-hero__slogan span{display:block}.device-hero__slogan strong{font-size:16px;letter-spacing:3px}.device-hero__slogan span{margin-top:5px;font-size:11px;letter-spacing:2px}.device-query-shell{margin:10px 0;padding:11px 14px;border:1px solid #dbe6ec;border-radius:10px;background:#fff;box-shadow:0 7px 22px rgba(22,62,89,.05)}.device-query-shell .report-query{width:100%;grid-template-columns:minmax(320px,1fr) minmax(180px,.55fr) 128px 128px;padding:0;border:0;background:transparent;box-shadow:none}.device-query-shell :deep(.report-period-picker){grid-column:auto}.device-query-shell :deep(.report-period-picker__trigger),.device-query-shell :deep(.app-select__trigger),.device-query-shell .report-query>button{height:38px;min-height:38px;border-radius:6px;font-size:10px}.device-query-shell .report-query>button.primary{display:flex;align-items:center;justify-content:center;gap:6px;border-color:#1179ab;background:linear-gradient(135deg,#0e688f,#0584af);box-shadow:0 5px 12px rgba(15,111,158,.18)}
-.energy-config-note{display:grid;gap:6px;padding:12px 16px;margin-bottom:10px;border:1px solid #eddbb6;border-radius:9px;background:#fff7e9;color:#85571c;font-size:11px}.device-kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin:10px 0}.device-kpi{--kpi-color:#237fb7;--kpi-soft:#eaf5fb;position:relative;min-width:0;min-height:108px;display:flex;gap:10px;overflow:hidden;padding:14px 12px;border:1px solid #dbe6ec;border-top:2px solid var(--kpi-color);border-radius:10px;background:#fff;box-shadow:0 7px 22px rgba(22,62,89,.055);transition:transform .18s ease,box-shadow .18s ease;animation:surface-in .42s cubic-bezier(.2,.75,.25,1) both}.device-kpi:hover{transform:translateY(-2px);box-shadow:0 11px 26px rgba(22,62,89,.09)}.device-kpi:nth-child(2){animation-delay:.04s}.device-kpi:nth-child(3){animation-delay:.08s}.device-kpi:nth-child(4){animation-delay:.12s}.device-kpi:nth-child(5){animation-delay:.16s}.device-kpi.kpi-red{--kpi-color:#df5961;--kpi-soft:#fff0f1}.device-kpi.kpi-teal{--kpi-color:#16a39d;--kpi-soft:#e8f7f5}.device-kpi.kpi-violet{--kpi-color:#7366db;--kpi-soft:#efedff}.device-kpi.kpi-cyan{--kpi-color:#18a8a7;--kpi-soft:#e8f8f7}.device-kpi__icon{position:relative;z-index:1;width:35px;height:35px;display:grid;place-items:center;flex:0 0 auto;color:var(--kpi-color);border-radius:50%;background:var(--kpi-soft);transition:transform .2s ease}.device-kpi:hover .device-kpi__icon{transform:scale(1.08) rotate(-3deg)}.device-kpi>div{position:relative;z-index:1;min-width:0;flex:1}.device-kpi>div>span{display:block;color:#284a62;font-size:11px;font-weight:700;white-space:nowrap}.device-kpi>div>span small{display:block;margin:3px 0 0;color:#8195a4;font-size:7px;font-weight:500;letter-spacing:.45px}.device-kpi p{margin:8px 0 6px;color:#173f64;font-size:9px;white-space:nowrap}.device-kpi p strong{font-size:21px}.device-kpi p.device-duration strong{font-size:17px}.device-kpi p small{margin-left:2px;color:#6f8798;font-size:8px}.device-kpi em{display:block;overflow:hidden;color:#7e929f;text-overflow:ellipsis;white-space:nowrap;font-style:normal;font-size:8px}.device-sparkline{position:absolute;right:8px;bottom:12px;width:58px;height:25px;opacity:.72}.device-sparkline path{fill:none;stroke:var(--kpi-color);stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}.device-kpi::after{content:"";position:absolute;width:70px;height:70px;right:-28px;bottom:-41px;border-radius:50%;background:var(--kpi-soft);opacity:.72}.global-error{margin:10px 0 0;border-radius:9px}
+.energy-config-note{display:grid;gap:6px;padding:12px 16px;margin-bottom:10px;border:1px solid #eddbb6;border-radius:9px;background:#fff7e9;color:#85571c;font-size:11px}.device-kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin:10px 0}.device-kpi{--kpi-color:#237fb7;--kpi-soft:#eaf5fb;position:relative;min-width:0;min-height:108px;display:flex;gap:10px;overflow:hidden;padding:14px 12px;border:1px solid #dbe6ec;border-top:2px solid var(--kpi-color);border-radius:10px;background:#fff;box-shadow:0 7px 22px rgba(22,62,89,.055);transition:transform .18s ease,box-shadow .18s ease;animation:surface-in .42s cubic-bezier(.2,.75,.25,1) both}.device-kpi:hover{transform:translateY(-2px);box-shadow:0 11px 26px rgba(22,62,89,.09)}.device-kpi:nth-child(2){animation-delay:.04s}.device-kpi:nth-child(3){animation-delay:.08s}.device-kpi:nth-child(4){animation-delay:.12s}.device-kpi:nth-child(5){animation-delay:.16s}.device-kpi.kpi-red{--kpi-color:#df5961;--kpi-soft:#fff0f1}.device-kpi.kpi-teal{--kpi-color:#16a39d;--kpi-soft:#e8f7f5}.device-kpi.kpi-violet{--kpi-color:#7366db;--kpi-soft:#efedff}.device-kpi.kpi-cyan{--kpi-color:#18a8a7;--kpi-soft:#e8f8f7}.device-kpi__icon{position:relative;z-index:1;width:35px;height:35px;display:grid;place-items:center;flex:0 0 auto;color:var(--kpi-color);border-radius:50%;background:var(--kpi-soft);transition:transform .2s ease}.device-kpi:hover .device-kpi__icon{transform:scale(1.08) rotate(-3deg)}.device-kpi>div{position:relative;z-index:1;min-width:0;flex:1}.device-kpi>div>span{display:block;color:#284a62;font-size:11px;font-weight:700;white-space:nowrap}.device-kpi>div>span small{display:block;margin:3px 0 0;color:#8195a4;font-size:7px;font-weight:500;letter-spacing:.45px}.device-kpi p{margin:8px 0 6px;color:#173f64;font-size:9px;white-space:nowrap}.device-kpi p strong{font-size:21px}.device-kpi p.device-duration strong{font-size:17px}.device-kpi p small{margin-left:2px;color:#6f8798;font-size:8px}.device-kpi em{display:block;overflow:hidden;color:#7e929f;text-overflow:ellipsis;white-space:nowrap;font-style:normal;font-size:8px}.device-sparkline{position:absolute;right:8px;bottom:12px;width:58px;height:25px;opacity:.72}.device-kpi::after{content:"";position:absolute;width:70px;height:70px;right:-28px;bottom:-41px;border-radius:50%;background:var(--kpi-soft);opacity:.72}.global-error{margin:10px 0 0;border-radius:9px}
 .energy-period-table { width:100%; border-collapse:collapse; font-size:12px; }
 .energy-period-table th,.energy-period-table td { height:47px; padding:10px; border-bottom:1px solid #dde5ea; text-align:center; white-space:nowrap; }
 .energy-task-table th:nth-child(2),.energy-task-table td:nth-child(2),.energy-task-table th:nth-child(3),.energy-task-table td:nth-child(3),.energy-task-table th:nth-child(4),.energy-task-table td:nth-child(4) { text-align:left; }

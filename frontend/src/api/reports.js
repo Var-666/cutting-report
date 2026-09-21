@@ -181,9 +181,9 @@ export function getReportStatus(reportId, { signal } = {}) {
   return request(`/api/v1/reports/${encodeURIComponent(reportId)}/status`, { signal })
 }
 
-export function listReports({ page = 1, pageSize = 20, force = false } = {}) {
+export function listReports({ page = 1, pageSize = 20, force = false, signal } = {}) {
   const query = new URLSearchParams({ page, page_size: pageSize })
-  return reportCache.read(`history:${query}`, (signal) => request(`/api/v1/reports?${query}`, { signal }), { ttl: 5000, force })
+  return reportCache.read(`history:${query}`, (signal) => request(`/api/v1/reports?${query}`, { signal }), { ttl: 5000, force, signal })
 }
 
 export function listProjects(reportDate) {
@@ -216,19 +216,19 @@ export function getSystemHealth() {
   return request('/api/v1/health')
 }
 
-export function getAlarmStatus() {
-  return request('/api/v1/alarms/status')
+export function getAlarmStatus({ signal } = {}) {
+  return request('/api/v1/alarms/status', { signal })
 }
 
-export function listAlarmIncidents({ status = '', limit = 100 } = {}) {
+export function listAlarmIncidents({ status = '', limit = 100 } = {}, { signal } = {}) {
   const query = new URLSearchParams({ limit })
   if (status) query.set('status', status)
-  return request(`/api/v1/alarms/incidents?${query}`)
+  return request(`/api/v1/alarms/incidents?${query}`, { signal })
 }
 
-export function listAlarmReports({ limit = 50 } = {}) {
+export function listAlarmReports({ limit = 50 } = {}, { signal } = {}) {
   const query = new URLSearchParams({ limit })
-  return request(`/api/v1/alarms/reports?${query}`)
+  return request(`/api/v1/alarms/reports?${query}`, { signal })
 }
 
 export function getLeadershipReport(reportMonth, { force = false, signal } = {}) {

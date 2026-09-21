@@ -95,10 +95,18 @@ def test_demo_pipeline_generates_offline_report(
     assert "@page { size:A4 landscape" in html
     assert "window.__REPORT_READY__ = true" in html
     assert "report-printing" in html
+    assert 'class="report-cover"' in html
+    assert 'class="cover-folio"' in html
+    assert 'class="report-footer"' in html
+    assert "--navy:#123b57" in html
+    assert "background:#dceaf0" in html
+    assert "tbody tr:nth-child(even)" not in html
     assert '"areaStyle"' in html
     assert "模拟大模型分析" in html
     assert "分析边界" not in html
     assert html.count('class="analysis-fact"') == 6
+    assert 'class="analysis-card alerts"' in html
+    assert 'class="analysis-card suggestions"' in html
     assert "2026年8月18日" in html
     if report_type in {"workshop", "equipment"}:
         assert 'class="screen-only"' in html
@@ -128,3 +136,62 @@ def test_demo_pipeline_generates_offline_report(
         assert "切割长度</small>" not in html
         assert "不进行能耗异常判定" in html
     assert completed["task_count"] > 0
+
+
+@pytest.mark.parametrize("report_type", ["leadership", "equipment"])
+def test_range_export_keeps_the_recent_twelve_month_summary(
+    tmp_path: Path,
+    report_type: str,
+) -> None:
+    vendor_dir = tmp_path / "vendor"
+    vendor_dir.mkdir()
+    (vendor_dir / "echarts.min.js").write_text(
+        "window.echarts={init:function(){return {setOption:function(){},resize:function(){}}}};",
+        encoding="utf-8",
+    )
+    test_settings = Settings(
+        project_root=tmp_path,
+        demo_mode=True,
+        data_source_mode="demo",
+        llm_enabled=False,
+        app_version="test",
+    )
+    test_settings.ensure_runtime_dirs()
+    metadata = MetadataRepository(test_settings.metadata_db_path)
+    metadata.initialize()
+    pipeline = ReportPipeline(test_settings, metadata)
+    now = datetime.now(ZoneInfo(test_settings.timezone)).isoformat(timespec="seconds")
+    metadata.create_job(
+        report_id=f"rpt_range_{report_type}",
+        report_date="2026-08-17",
+        period_start="2026-08-17",
+        period_end="2026-08-18",
+        project_code=None,
+        ship_no=None,
+        request_id="req_range",
+        created_at=now,
+        report_type=report_type,
+        parameters={
+            "chart_type": "bar_line",
+            "summary_period_start": "2025-09-01",
+            "summary_period_end": "2026-08-18",
+        },
+    )
+    job = metadata.claim_next_job(now)
+    assert job is not None
+
+    pipeline.run(job)
+
+    completed = metadata.get_job(f"rpt_range_{report_type}")
+    assert completed is not None
+    assert completed["status"] == "completed"
+    html = (test_settings.reports_dir / completed["relative_path"]).read_text(
+        encoding="utf-8"
+    )
+    assert "2026-08-17 至 2026-08-18" in html
+    assert "2025年9月" in html
+    if report_type == "leadership":
+        assert "近 12 个月按月对比与趋势" in html
+    else:
+        assert "近 12 个月月度能耗汇总" in html
+        assert "<th>月份</th>" in html

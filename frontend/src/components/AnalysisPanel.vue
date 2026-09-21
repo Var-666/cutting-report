@@ -16,6 +16,7 @@ const props = defineProps({
 const analysis = ref(null)
 const loading = ref(false)
 const error = ref('')
+const expandedSections = ref(new Set())
 let requestSequence = 0
 let activeRequestKey = ''
 let displayedRequestKey = ''
@@ -55,7 +56,7 @@ function sectionLead(value, fallback = '数据分析结论') {
   const text = plainAnalysisText(value)
   if (!text) return fallback
   const sentence = text.split(/[。；;！!？?]/)[0].trim()
-  return sentence.length > 34 ? `${sentence.slice(0, 34)}…` : sentence
+  return sentence
 }
 
 function sectionBody(value) {
@@ -63,6 +64,21 @@ function sectionBody(value) {
   const firstBreak = text.search(/[。；;！!？?]/)
   if (firstBreak < 0 || firstBreak >= text.length - 1) return text
   return text.slice(firstBreak + 1).trim()
+}
+
+function isLongSection(value) {
+  return plainAnalysisText(value).length > 34
+}
+
+function isSectionExpanded(key) {
+  return expandedSections.value.has(key)
+}
+
+function toggleSection(key) {
+  const next = new Set(expandedSections.value)
+  if (next.has(key)) next.delete(key)
+  else next.add(key)
+  expandedSections.value = next
 }
 
 const conclusionTitle = computed(() => sectionLead(analysis.value?.alerts || analysis.value?.overview, '生产运行分析已完成'))
@@ -162,6 +178,10 @@ watch(
   { immediate: true },
 )
 
+watch(analysis, () => {
+  expandedSections.value = new Set()
+})
+
 function pauseAnalysis() {
   activationTimer.deactivate()
   clearScheduledAnalysis()
@@ -225,7 +245,6 @@ onBeforeUnmount(pauseAnalysis)
             <strong>{{ formatAnalysisText(fact.value) }}</strong>
             <small>{{ fact.source || '当前报表数据' }}</small>
           </div>
-          <svg class="analysis-fact-sparkline" viewBox="0 0 76 28" aria-hidden="true"><path d="M2 22 12 15 23 19 34 8 45 14 57 11 74 17" /></svg>
         </article>
       </div>
 
@@ -236,10 +255,23 @@ onBeforeUnmount(pauseAnalysis)
           { key: 'features', title: '数据特征', icon: 'trend' },
           { key: 'alerts', title: '异常与关注点', icon: 'alert' },
           { key: 'suggestions', title: '生产管理建议', icon: 'lightbulb' },
-        ]" :key="section.key">
+        ]" :key="section.key" :class="{ 'is-expanded': isSectionExpanded(section.key) }">
           <header><h3><AppIcon :name="section.icon" size="20" />{{ section.title }}</h3><div><sup v-for="citation in sectionCitations(analysis[section.key])" :key="citation" class="analysis-citation">{{ citation }}</sup></div></header>
-          <h4>{{ sectionLead(analysis[section.key], section.title) }}</h4>
-          <p>{{ sectionBody(analysis[section.key]) || plainAnalysisText(analysis[section.key]) }}</p>
+          <div :id="`analysis-copy-${section.key}`" class="analysis-card-copy">
+            <h4>{{ sectionLead(analysis[section.key], section.title) }}</h4>
+            <p v-if="sectionBody(analysis[section.key])">{{ sectionBody(analysis[section.key]) }}</p>
+          </div>
+          <button
+            v-if="isLongSection(analysis[section.key])"
+            type="button"
+            class="analysis-expand"
+            :aria-expanded="isSectionExpanded(section.key)"
+            :aria-controls="`analysis-copy-${section.key}`"
+            @click="toggleSection(section.key)"
+          >
+            {{ isSectionExpanded(section.key) ? '收起' : '展开全文' }}
+            <AppIcon name="arrow-down" :size="12" />
+          </button>
         </article>
       </div>
       <details v-if="analysis.facts?.length" class="analysis-evidence">
@@ -271,8 +303,8 @@ onBeforeUnmount(pauseAnalysis)
 .analysis-conclusion__icon{width:50px;height:50px;display:grid;place-items:center;border-radius:50%;background:linear-gradient(145deg,var(--analysis-blue),#438fc6);box-shadow:0 0 0 6px rgba(35,127,183,.11),0 7px 16px rgba(22,62,89,.14)}.analysis-conclusion__copy{min-width:0}.analysis-conclusion__copy>span{color:#31536b;font-size:10px;font-weight:700}.analysis-conclusion__copy>span small{margin-left:8px;padding:3px 7px;color:var(--analysis-blue);border-radius:999px;background:#e3f1f8;font-size:8px}.analysis-conclusion h3{margin:5px 0 4px;color:var(--analysis-navy);font-size:17px;line-height:1.35}.analysis-conclusion p{margin:0;color:#607c91;font-size:10px;line-height:1.6}.analysis-conclusion blockquote{margin:0;padding:2px 0 2px 20px;color:#607c91;border-left:1px solid #c5d7e0;font-size:9px;line-height:1.75}
 .analysis-section-heading{min-height:38px;display:flex;align-items:center;justify-content:space-between;gap:20px;padding:0 15px;color:#124e74}.analysis-section-heading>div{display:flex;align-items:center;gap:8px}.analysis-section-heading h3{margin:0;color:#163e5a;font-size:14px}.analysis-section-heading>span{color:#507087;font-size:9px}.analysis-section-heading--results{margin-top:4px}
 .analysis-facts{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:9px!important;padding:0 15px 9px!important}.analysis-facts article{--fact-color:var(--analysis-blue);--fact-soft:#eaf5fb;position:relative;min-width:0;min-height:104px;display:grid;grid-template-columns:29px minmax(0,1fr);align-items:start;gap:8px;overflow:hidden;padding:11px 10px!important;border:1px solid #dbe6ec;border-top:2px solid var(--fact-color);border-radius:11px;background:#fff;box-shadow:0 7px 22px rgba(22,62,89,.055)}
-.analysis-facts article:nth-child(2){--fact-color:var(--analysis-teal);--fact-soft:#e8f7f5}.analysis-facts article:nth-child(3){--fact-color:var(--analysis-indigo);--fact-soft:#eef0fb}.analysis-facts article:nth-child(4){--fact-color:#438fc6;--fact-soft:#eaf3fa}.analysis-facts article:nth-child(5){--fact-color:#d99132;--fact-soft:#fff5e8}.analysis-facts article:nth-child(6){--fact-color:#438fc6;--fact-soft:#eaf3fa}.analysis-facts article>div{min-width:0}.analysis-fact-icon{width:28px;height:28px;display:grid!important;place-items:center;color:var(--fact-color)!important;border-radius:7px;background:var(--fact-soft)}.analysis-facts span:not(.analysis-fact-icon){display:block;overflow:hidden;color:#254760;font-size:9px!important;text-overflow:ellipsis;white-space:nowrap}.analysis-facts span b{float:right;margin:0;padding:2px 5px;color:var(--analysis-blue);border:1px solid #cfe1e9;border-radius:4px;background:#edf7fb;font-size:8px}.analysis-facts strong{display:block;margin-top:8px;overflow:hidden;color:#173f64;font-size:16px!important;text-overflow:ellipsis;white-space:nowrap}.analysis-facts small{display:block;margin-top:5px;overflow:hidden;color:#7890a1;font-size:8px;text-overflow:ellipsis;white-space:nowrap}.analysis-fact-sparkline{position:absolute;right:7px;bottom:8px;width:54px;height:20px;opacity:.64}.analysis-fact-sparkline path{fill:none;stroke:var(--fact-color);stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
-.analysis-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:9px!important;padding:0 15px 11px!important}.analysis-grid article{min-height:112px!important;padding:13px 15px!important;border:1px solid #d8e7ed!important;border-radius:8px!important;background:#eff6fc!important}.analysis-grid article:nth-child(2){border-color:#d5e8e7!important;background:#eff8fb!important}.analysis-grid article:nth-child(3){border-color:#efd9db!important;background:#fff0f0!important}.analysis-grid article:nth-child(4){border-color:#d6e7df!important;background:#eef8f4!important}.analysis-grid article>header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.analysis-grid h3{display:flex;align-items:center;gap:7px;margin:0 0 7px;color:var(--analysis-blue);font-size:12px!important}.analysis-grid h4{margin:0 0 5px;color:#193c57;font-size:13px;line-height:1.45}.analysis-grid article:nth-child(2) h3{color:var(--analysis-teal)}.analysis-grid article:nth-child(3) h3{color:var(--analysis-red)}.analysis-grid article:nth-child(4) h3{color:var(--analysis-green)}.analysis-grid p{margin:0;color:#60798b!important;font-size:10px!important;line-height:1.65!important;overflow-wrap:anywhere;white-space:pre-wrap}.analysis-citation{display:inline-block;margin:0 2px;padding:1px 4px;color:#1b7188;border:1px solid #b8dbe3;border-radius:4px;background:#eef8fa;font-size:8px;font-weight:800;line-height:1.2;vertical-align:middle;white-space:nowrap}
+.analysis-facts article:nth-child(2){--fact-color:var(--analysis-teal);--fact-soft:#e8f7f5}.analysis-facts article:nth-child(3){--fact-color:var(--analysis-indigo);--fact-soft:#eef0fb}.analysis-facts article:nth-child(4){--fact-color:#438fc6;--fact-soft:#eaf3fa}.analysis-facts article:nth-child(5){--fact-color:#d99132;--fact-soft:#fff5e8}.analysis-facts article:nth-child(6){--fact-color:#438fc6;--fact-soft:#eaf3fa}.analysis-facts article>div{min-width:0}.analysis-fact-icon{width:28px;height:28px;display:grid!important;place-items:center;color:var(--fact-color)!important;border-radius:7px;background:var(--fact-soft)}.analysis-facts span:not(.analysis-fact-icon){display:block;overflow:hidden;color:#254760;font-size:9px!important;text-overflow:ellipsis;white-space:nowrap}.analysis-facts span b{float:right;margin:0;padding:2px 5px;color:var(--analysis-blue);border:1px solid #cfe1e9;border-radius:4px;background:#edf7fb;font-size:8px}.analysis-facts strong{display:block;margin-top:8px;overflow:hidden;color:#173f64;font-size:16px!important;text-overflow:ellipsis;white-space:nowrap}.analysis-facts small{display:block;margin-top:5px;overflow:hidden;color:#7890a1;font-size:8px;text-overflow:ellipsis;white-space:nowrap}
+.analysis-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:9px!important;padding:0 15px 11px!important}.analysis-grid article{min-height:112px!important;padding:13px 15px!important;border:1px solid #d8e7ed!important;border-radius:8px!important;background:#eff6fc!important}.analysis-grid article:nth-child(2){border-color:#d5e8e7!important;background:#eff8fb!important}.analysis-grid article:nth-child(3){border-color:#efd9db!important;background:#fff0f0!important}.analysis-grid article:nth-child(4){border-color:#d6e7df!important;background:#eef8f4!important}.analysis-grid article>header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.analysis-grid h3{display:flex;align-items:center;gap:7px;margin:0 0 7px;color:var(--analysis-blue);font-size:12px!important}.analysis-card-copy{min-width:0}.analysis-grid h4{display:-webkit-box;margin:0 0 5px;overflow:hidden;color:#193c57;font-size:13px;line-height:1.45;-webkit-box-orient:vertical;-webkit-line-clamp:2}.analysis-grid article:nth-child(2) h3{color:var(--analysis-teal)}.analysis-grid article:nth-child(3) h3{color:var(--analysis-red)}.analysis-grid article:nth-child(4) h3{color:var(--analysis-green)}.analysis-grid p{display:-webkit-box;margin:0;overflow:hidden;color:#60798b!important;font-size:10px!important;line-height:1.65!important;overflow-wrap:anywhere;white-space:pre-wrap;-webkit-box-orient:vertical;-webkit-line-clamp:2}.analysis-grid article.is-expanded h4,.analysis-grid article.is-expanded p{display:block;overflow:visible;-webkit-line-clamp:unset}.analysis-expand{min-height:24px!important;display:inline-flex;align-items:center;gap:3px;margin:7px 0 -3px;padding:0!important;border:0!important;background:transparent!important;box-shadow:none!important;color:#1b7188!important;font-size:9px!important;font-weight:700}.analysis-expand svg{transition:transform .18s ease}.analysis-grid article.is-expanded .analysis-expand svg{transform:rotate(180deg)}.analysis-expand:hover{color:#0c587a!important}.analysis-expand:focus-visible{outline:2px solid rgba(35,127,183,.32);outline-offset:3px}.analysis-citation{display:inline-block;margin:0 2px;padding:1px 4px;color:#1b7188;border:1px solid #b8dbe3;border-radius:4px;background:#eef8fa;font-size:8px;font-weight:800;line-height:1.2;vertical-align:middle;white-space:nowrap}
 .analysis-evidence{margin:0 15px 9px!important;border:1px solid #dbe6ec;border-radius:8px;background:#f3f8fa}.analysis-evidence summary{min-height:39px;display:flex;align-items:center;gap:9px;padding:0 15px;color:#14597e;cursor:pointer;font-size:11px;font-weight:700}.evidence-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1px;border-top:1px solid #e1e9ed;background:#e1e9ed}.evidence-list article{display:grid;gap:4px;padding:12px 14px;background:#fff}.evidence-list article strong{color:#28465c;font-size:11px}.evidence-list article span{color:#0e5277;font-size:10px;font-weight:700}.evidence-list article small{color:#718697;font-size:9px;line-height:1.5}.analysis-time{margin:0;padding:0 15px 11px!important;color:#718697;text-align:right;font-size:9px!important}
 @media(max-width:1180px){.analysis-facts{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(max-width:800px){.analysis-panel-head{align-items:flex-start;flex-direction:column}.analysis-actions{width:100%;justify-content:space-between}.analysis-conclusion{grid-template-columns:50px 1fr}.analysis-conclusion blockquote{grid-column:1/-1;padding:9px 0 0;border-top:1px solid #7199ad;border-left:0}.analysis-grid{grid-template-columns:1fr!important}.evidence-list{grid-template-columns:1fr}}

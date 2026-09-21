@@ -10,6 +10,8 @@ import {
   validateWorkbenchSql,
 } from '../api/reports'
 import { formatTableDateValue } from '../utils/dateDisplay.js'
+import ManagementPageHero from '../components/ManagementPageHero.vue'
+import { useUnsavedChanges } from '../composables/useUnsavedChanges.js'
 
 const status = ref(null)
 const loadingStatus = ref(false)
@@ -30,6 +32,8 @@ const executingSql = ref(false)
 const sqlError = ref('')
 const sqlValidation = ref(null)
 const sqlResult = ref(null)
+const hasUnsavedChanges = ref(false)
+useUnsavedChanges(hasUnsavedChanges, '数据库连接参数还有未保存的修改，确定离开吗？')
 const configurationSources = [
   { key: 'production', label: '生产报表库', description: 'SQLSERVER_* · dbo.task 等生产数据' },
   { key: 'worker', label: '工人 HR 库', description: 'WORKER_SQLSERVER_* · dbo.HRbase_userInfo' },
@@ -129,6 +133,7 @@ async function loadConfiguration() {
     for (const source of configurationSources) {
       databaseConfiguration.value[source.key].password = ''
     }
+    hasUnsavedChanges.value = false
   } catch (exception) {
     configurationError.value = exception.message
   } finally {
@@ -165,6 +170,7 @@ async function saveConfiguration() {
       if (value.password) value.password_configured = true
       value.password = ''
     }
+    hasUnsavedChanges.value = false
   } catch (exception) {
     configurationError.value = exception.message
   } finally {
@@ -249,34 +255,37 @@ onMounted(() => Promise.all([loadStatus(), loadConfiguration()]))
 </script>
 
 <template>
-  <section class="page-hero database-hero">
-    <div>
-      <span class="eyebrow">DATABASE ADMINISTRATION</span>
-      <h2>数据库配置</h2>
-      <p>生产报表、工人身份和切割文件使用独立数据源，连接信息由服务器环境配置统一管理。</p>
-    </div>
-    <div class="security-badge"><strong>只读模式</strong><span>仅开放 SELECT / CTE</span></div>
-  </section>
+  <div class="management-page database-page">
+  <ManagementPageHero
+    eyebrow="DATABASE ADMINISTRATION"
+    title="数据库配置"
+    description="生产报表、工人身份和切割文件使用独立数据源，连接信息由服务器环境配置统一管理。"
+    icon="database"
+    status-label="数据访问"
+    :status-value="status?.mode === 'excel' ? 'TASK.xlsx' : status?.connection_configured ? '只读连接已配置' : '等待配置'"
+    status-note="仅开放 SELECT / CTE，不向生产库写入"
+    tone="teal"
+  />
 
   <section class="panel saved-database-config">
     <div class="panel-title"><div><span>01</span><h2>连接参数</h2></div><p>保存到 data/settings.env · 重启服务后生效</p></div>
     <div v-if="configurationLoading" class="configuration-loading">正在读取数据库配置…</div>
-    <form v-else-if="databaseConfiguration" @submit.prevent="saveConfiguration">
+    <form v-else-if="databaseConfiguration" @submit.prevent="saveConfiguration" @input.capture="hasUnsavedChanges = true" @change.capture="hasUnsavedChanges = true">
       <div class="configuration-switches">
-        <label><span>生产数据模式</span><AppSelect v-model="databaseConfiguration.data_source_mode"><option value="demo">演示数据</option><option value="excel">TASK.xlsx</option><option value="sqlserver">SQL Server</option></AppSelect></label>
-        <label class="check-label"><input v-model="databaseConfiguration.worker_database_auth_enabled" type="checkbox" /><span>启用工人 HR 库登录</span></label>
-        <label class="check-label"><input v-model="databaseConfiguration.file_database_enabled" type="checkbox" /><span>启用切割文件库</span></label>
+        <label><span>生产数据模式</span><AppSelect v-model="databaseConfiguration.data_source_mode" name="data_source_mode" @change="hasUnsavedChanges = true"><option value="demo">演示数据</option><option value="excel">TASK.xlsx</option><option value="sqlserver">SQL Server</option></AppSelect></label>
+        <label class="check-label"><input v-model="databaseConfiguration.worker_database_auth_enabled" name="worker_database_auth_enabled" type="checkbox" /><span>启用工人 HR 库登录</span></label>
+        <label class="check-label"><input v-model="databaseConfiguration.file_database_enabled" name="file_database_enabled" type="checkbox" /><span>启用切割文件库</span></label>
       </div>
       <div class="saved-source-grid">
         <fieldset v-for="source in configurationSources" :key="source.key">
           <legend><strong>{{ source.label }}</strong><small>{{ source.description }}</small></legend>
-          <label><span>服务器地址</span><input v-model.trim="databaseConfiguration[source.key].host" autocomplete="off" placeholder="例如 10.0.0.20" /></label>
-          <label><span>端口</span><input v-model.number="databaseConfiguration[source.key].port" type="number" min="1" max="65535" /></label>
-          <label><span>数据库名称</span><input v-model.trim="databaseConfiguration[source.key].database" autocomplete="off" /></label>
-          <label><span>只读账号</span><input v-model.trim="databaseConfiguration[source.key].username" autocomplete="off" /></label>
-          <label><span>密码</span><input v-model="databaseConfiguration[source.key].password" type="password" autocomplete="new-password" :placeholder="databaseConfiguration[source.key].password_configured ? '已配置，留空则保留原密码' : '尚未配置'" /></label>
-          <label><span>ODBC 驱动</span><input v-model.trim="databaseConfiguration[source.key].driver" /></label>
-          <div class="saved-connection-options"><label class="check-label"><input v-model="databaseConfiguration[source.key].encrypt" type="checkbox" /><span>加密连接</span></label><label class="check-label"><input v-model="databaseConfiguration[source.key].trust_server_certificate" type="checkbox" /><span>信任服务器证书</span></label></div>
+          <label><span>服务器地址</span><input v-model.trim="databaseConfiguration[source.key].host" :name="`${source.key}_host`" autocomplete="off" spellcheck="false" placeholder="例如：10.0.0.20…" /></label>
+          <label><span>端口</span><input v-model.number="databaseConfiguration[source.key].port" :name="`${source.key}_port`" type="number" inputmode="numeric" autocomplete="off" min="1" max="65535" /></label>
+          <label><span>数据库名称</span><input v-model.trim="databaseConfiguration[source.key].database" :name="`${source.key}_database`" autocomplete="off" spellcheck="false" /></label>
+          <label><span>只读账号</span><input v-model.trim="databaseConfiguration[source.key].username" :name="`${source.key}_username`" autocomplete="off" spellcheck="false" /></label>
+          <label><span>密码</span><input v-model="databaseConfiguration[source.key].password" :name="`${source.key}_password`" type="password" autocomplete="new-password" :placeholder="databaseConfiguration[source.key].password_configured ? '已配置，留空则保留原密码…' : '请输入只读密码…'" /></label>
+          <label><span>ODBC 驱动</span><input v-model.trim="databaseConfiguration[source.key].driver" :name="`${source.key}_driver`" autocomplete="off" spellcheck="false" /></label>
+          <div class="saved-connection-options"><label class="check-label"><input v-model="databaseConfiguration[source.key].encrypt" :name="`${source.key}_encrypt`" type="checkbox" /><span>加密连接</span></label><label class="check-label"><input v-model="databaseConfiguration[source.key].trust_server_certificate" :name="`${source.key}_trust_certificate`" type="checkbox" /><span>信任服务器证书</span></label></div>
         </fieldset>
       </div>
       <div class="configuration-actions">
@@ -284,8 +293,8 @@ onMounted(() => Promise.all([loadStatus(), loadConfiguration()]))
         <button class="primary" type="submit" :disabled="configurationSaving">{{ configurationSaving ? '正在保存' : '保存数据库配置' }}</button>
       </div>
     </form>
-    <div v-if="configurationResult" class="inline-result success"><strong>配置已写入</strong><span>{{ configurationResult.message }}</span></div>
-    <div v-if="configurationError" class="inline-result error"><strong>配置操作失败</strong><span>{{ configurationError }}</span></div>
+    <div v-if="configurationResult" class="inline-result success" role="status" aria-live="polite"><strong>配置已写入</strong><span>{{ configurationResult.message }}</span></div>
+    <div v-if="configurationError" class="inline-result error" role="alert"><strong>配置操作失败</strong><span>{{ configurationError }}，请检查连接参数后重试。</span></div>
   </section>
 
   <section class="panel database-sources-panel">
@@ -300,7 +309,7 @@ onMounted(() => Promise.all([loadStatus(), loadConfiguration()]))
     </div>
   </section>
 
-  <div v-if="statusError" class="global-error"><strong>状态读取失败</strong><span>{{ statusError }}</span></div>
+  <div v-if="statusError" class="global-error" role="alert"><strong>状态读取失败</strong><span>{{ statusError }}，请重新检查数据库状态。</span></div>
 
   <section class="db-status-grid" aria-label="数据库状态">
     <article class="db-status-card">
@@ -328,22 +337,22 @@ onMounted(() => Promise.all([loadStatus(), loadConfiguration()]))
   <section class="panel db-panel">
     <div class="panel-title"><div><span>03</span><h2>连接测试</h2></div><p>凭据仅用于本次测试，不会保存</p></div>
     <form class="connection-form" @submit.prevent="runConnectionTest">
-      <label><span>服务器地址</span><input v-model="connection.host" required placeholder="例如 192.168.1.20" autocomplete="off" /></label>
-      <label><span>端口</span><input v-model.number="connection.port" type="number" min="1" max="65535" required /></label>
-      <label><span>数据库名称</span><input v-model="connection.database" required autocomplete="off" /></label>
-      <label><span>只读账号</span><input v-model="connection.username" required autocomplete="username" /></label>
-      <label><span>密码</span><input v-model="connection.password" type="password" required autocomplete="current-password" /></label>
-      <label class="driver-field"><span>ODBC 驱动</span><input v-model="connection.driver" required /></label>
+      <label><span>服务器地址</span><input v-model="connection.host" name="test_host" required placeholder="例如：192.168.1.20…" autocomplete="off" spellcheck="false" /></label>
+      <label><span>端口</span><input v-model.number="connection.port" name="test_port" type="number" inputmode="numeric" autocomplete="off" min="1" max="65535" required /></label>
+      <label><span>数据库名称</span><input v-model="connection.database" name="test_database" required autocomplete="off" spellcheck="false" /></label>
+      <label><span>只读账号</span><input v-model="connection.username" name="test_username" required autocomplete="username" spellcheck="false" /></label>
+      <label><span>密码</span><input v-model="connection.password" name="test_password" type="password" required autocomplete="current-password" /></label>
+      <label class="driver-field"><span>ODBC 驱动</span><input v-model="connection.driver" name="test_driver" required autocomplete="off" spellcheck="false" /></label>
       <div class="connection-options">
-        <label class="check-label"><input v-model="connection.encrypt" type="checkbox" /><span>加密连接</span></label>
-        <label class="check-label"><input v-model="connection.trust_server_certificate" type="checkbox" /><span>信任服务器证书</span></label>
+        <label class="check-label"><input v-model="connection.encrypt" name="test_encrypt" type="checkbox" /><span>加密连接</span></label>
+        <label class="check-label"><input v-model="connection.trust_server_certificate" name="test_trust_certificate" type="checkbox" /><span>信任服务器证书</span></label>
       </div>
       <button class="primary test-button" type="submit" :disabled="testing">
         <span v-if="testing" class="spinner"></span>{{ testing ? '正在测试' : '测试连接' }}
       </button>
     </form>
-    <div v-if="testResult" class="inline-result success"><strong>连接成功</strong><span>{{ testResult.database }} · {{ formatCell(testResult.elapsed_ms) }} ms · 凭据未保存</span></div>
-    <div v-if="testError" class="inline-result error"><strong>连接失败</strong><span>{{ testError }}</span></div>
+    <div v-if="testResult" class="inline-result success" role="status" aria-live="polite"><strong>连接成功</strong><span>{{ testResult.database }} · {{ formatCell(testResult.elapsed_ms) }} ms · 凭据未保存</span></div>
+    <div v-if="testError" class="inline-result error" role="alert"><strong>连接失败</strong><span>{{ testError }}，请核对地址、账号和网络后重试。</span></div>
   </section>
 
   <section class="panel mapping-panel">
@@ -362,12 +371,12 @@ onMounted(() => Promise.all([loadStatus(), loadConfiguration()]))
     <form class="preview-form" @submit.prevent="runPreview">
       <label><span>数据集</span><AppSelect v-model="preview.dataset"><option value="workshop">车间生产明细</option><option value="summary">汇总基础数据</option><option value="equipment">设备生产/能耗</option></AppSelect></label>
       <label><span>生产日期</span><AppDatePicker v-model="preview.report_date" required /></label>
-      <label><span>工程号</span><input v-model="preview.project_code" placeholder="全部" /></label>
-      <label><span>船号</span><input v-model="preview.ship_no" placeholder="全部" /></label>
-      <label><span>返回条数</span><input v-model.number="preview.limit" type="number" min="1" max="100" /></label>
+      <label><span>工程号</span><input v-model="preview.project_code" name="preview_project_code" autocomplete="off" placeholder="全部工程…" /></label>
+      <label><span>船号</span><input v-model="preview.ship_no" name="preview_ship_no" autocomplete="off" placeholder="全部船号…" /></label>
+      <label><span>返回条数</span><input v-model.number="preview.limit" name="preview_limit" type="number" inputmode="numeric" autocomplete="off" min="1" max="100" /></label>
       <button class="primary" type="submit" :disabled="previewing"><span v-if="previewing" class="spinner"></span>{{ previewing ? '查询中' : '预览数据' }}</button>
     </form>
-    <div v-if="previewError" class="inline-result error"><strong>预览失败</strong><span>{{ previewError }}</span></div>
+    <div v-if="previewError" class="inline-result error" role="alert"><strong>预览失败</strong><span>{{ previewError }}，请调整筛选条件后重试。</span></div>
     <div v-if="previewResult" class="preview-result">
       <div class="preview-summary"><strong>{{ modeLabel(previewResult.mode) }}</strong><span>返回 {{ previewResult.returned }} / {{ previewResult.total }} 条{{ previewResult.truncated ? '（已截断）' : '' }}</span></div>
       <div class="history-wrap">
@@ -404,13 +413,13 @@ onMounted(() => Promise.all([loadStatus(), loadConfiguration()]))
       <textarea v-model="workbench.sql" class="sql-editor" spellcheck="false" aria-label="SQL编辑器"></textarea>
     </div>
     <div class="sql-actions">
-      <label><span>返回上限</span><input v-model.number="workbench.maxRows" type="number" min="1" :max="status?.sql_workbench_max_rows || 200" /></label>
-      <label v-if="status?.sql_workbench_requires_token" class="token-field"><span>管理员令牌</span><input v-model="workbench.token" type="password" autocomplete="off" placeholder="执行查询时需要" /></label>
+      <label><span>返回上限</span><input v-model.number="workbench.maxRows" name="sql_max_rows" type="number" inputmode="numeric" autocomplete="off" min="1" :max="status?.sql_workbench_max_rows || 200" /></label>
+      <label v-if="status?.sql_workbench_requires_token" class="token-field"><span>管理员令牌</span><input v-model="workbench.token" name="sql_admin_token" type="password" autocomplete="off" placeholder="执行查询时需要…" /></label>
       <button type="button" :disabled="validatingSql" @click="validateSql"><span v-if="validatingSql" class="spinner dark"></span>{{ validatingSql ? '校验中' : '校验并格式化' }}</button>
       <button class="primary" type="button" :disabled="executingSql || !status?.sql_workbench_enabled" @click="executeSql"><span v-if="executingSql" class="spinner"></span>{{ executingSql ? '执行中' : '执行查询' }}</button>
     </div>
-    <div v-if="sqlValidation" class="inline-result success"><strong>只读校验通过</strong><span>表：{{ sqlValidation.tables.join(', ') || '--' }} · 字段：{{ sqlValidation.columns.length }}</span></div>
-    <div v-if="sqlError" class="inline-result error"><strong>SQL未执行</strong><span>{{ sqlError }}</span></div>
+    <div v-if="sqlValidation" class="inline-result success" role="status" aria-live="polite"><strong>只读校验通过</strong><span>表：{{ sqlValidation.tables.join(', ') || '--' }} · 字段：{{ sqlValidation.columns.length }}</span></div>
+    <div v-if="sqlError" class="inline-result error" role="alert"><strong>SQL未执行</strong><span>{{ sqlError }}，请修正语句后重试。</span></div>
     <div v-if="sqlResult" class="sql-result">
       <div class="preview-summary"><strong>查询成功</strong><span>{{ sqlResult.returned }} 行 · {{ formatCell(sqlResult.elapsed_ms) }} ms{{ sqlResult.truncated ? ' · 结果已截断' : '' }}</span></div>
       <div class="history-wrap">
@@ -424,6 +433,7 @@ onMounted(() => Promise.all([loadStatus(), loadConfiguration()]))
       </div>
     </div>
   </section>
+  </div>
 </template>
 
 <style scoped>

@@ -45,6 +45,9 @@ def test_leadership_charts_match_daily_and_monthly_periods(tmp_path) -> None:
     assert charts["monthly_trend"]["xAxis"]["data"][-1] == "2026-08"
     assert charts["daily_trend"]["series"][2]["name"] == "切割工时"
     assert charts["monthly_trend"]["series"][2]["name"] == "完成任务"
+    assert charts["daily_trend"]["backgroundColor"] == "#ffffff"
+    assert charts["daily_trend"]["xAxis"]["axisLine"]["lineStyle"]["color"] == "#9eb4c0"
+    assert charts["daily_trend"]["series"][0]["itemStyle"]["borderRadius"] == [3, 3, 0, 0]
 
 
 def test_equipment_chart_uses_only_visible_table_fields_in_time_order() -> None:

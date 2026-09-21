@@ -1,4 +1,5 @@
 from dataclasses import replace
+import inspect
 from types import SimpleNamespace
 from urllib.parse import unquote
 
@@ -90,3 +91,10 @@ def test_cached_pdf_does_not_need_to_launch_a_browser(tmp_path):
     pdf = html.with_suffix(".pdf")
     pdf.write_bytes(b"%PDF-1.7\nexisting report")
     assert PdfService().render(html) == pdf
+
+
+def test_pdf_renderer_adds_a_consistent_page_footer():
+    source = inspect.getsource(PdfService.render)
+    assert "display_header_footer=True" in source
+    assert 'class="pageNumber"' in source
+    assert 'class="totalPages"' in source

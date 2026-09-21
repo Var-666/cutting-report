@@ -57,7 +57,7 @@ const reportTypeText = {
     <table v-content-table class="history-table">
       <thead><tr><th>报告类型</th><th>报告周期</th><th>工程号</th><th>船号</th><th>任务数</th><th>生成状态</th><th>生成时间</th><th>操作</th></tr></thead>
       <tbody>
-        <tr v-if="loading"><td colspan="8" class="table-empty">正在加载...</td></tr>
+        <tr v-if="loading"><td colspan="8" class="table-empty" role="status">正在加载…</td></tr>
         <tr v-else-if="!items.length"><td colspan="8" class="table-empty">暂无历史报告</td></tr>
         <tr v-for="item in items" v-else :key="item.report_id">
           <td>{{ item.report_title || reportTypeText[item.report_type] || '车间报表' }}</td>
