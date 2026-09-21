@@ -121,56 +121,121 @@ class DispatchRepository(SQLiteRepository):
         item["is_simulation"] = bool(item["is_simulation"])
         return item
 
+    @staticmethod
+    def _active_row(
+        connection: sqlite3.Connection,
+        document_id: str,
+        version_id: str | None,
+        machine_ip: str,
+    ) -> sqlite3.Row | None:
+        placeholders = ", ".join("?" for _ in ACTIVE_DISPATCH_STATUSES)
+        return connection.execute(
+            f"""
+            SELECT * FROM cutting_dispatches
+            WHERE document_id = ?
+              AND COALESCE(version_id, '') = COALESCE(?, '')
+              AND machine_ip = ?
+              AND status IN ({placeholders})
+            ORDER BY created_at DESC, dispatch_id DESC
+            LIMIT 1
+            """,
+            (document_id, version_id, machine_ip, *sorted(ACTIVE_DISPATCH_STATUSES)),
+        ).fetchone()
+
+    @staticmethod
+    def _insert(
+        connection: sqlite3.Connection,
+        dispatch_id: str,
+        data: dict[str, Any],
+        *,
+        user: dict,
+        now: str,
+    ) -> None:
+        connection.execute(
+            """
+            INSERT INTO cutting_dispatches (
+                dispatch_id, document_id, project_id, project_name,
+                catalog_id, catalog_title, version_id, version, document_no,
+                relative_path, machine_ip, material, thickness, quantity,
+                status, source_mode, is_simulation, created_by_id,
+                created_by_name, created_at, updated_at, task_identifier,
+                stage, attempt_count, download_id, file_size, file_sha256
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                dispatch_id,
+                data["document_id"],
+                data["project_id"],
+                data.get("project_name"),
+                data.get("catalog_id"),
+                data.get("catalog_title"),
+                data.get("version_id"),
+                data.get("version"),
+                data["document_no"],
+                data["relative_path"],
+                data["machine_ip"],
+                data.get("material"),
+                data.get("thickness"),
+                data["quantity"],
+                data["status"],
+                data["source_mode"],
+                int(data.get("is_simulation", False)),
+                user["user_id"],
+                user["display_name"],
+                now,
+                now,
+                dispatch_id,
+                data.get("stage", "created"),
+                0,
+                data.get("download_id"),
+                data.get("file_size"),
+                data.get("file_sha256"),
+            ),
+        )
+
     def create(self, data: dict[str, Any], *, user: dict, now: str) -> dict[str, Any]:
         if data["status"] not in DISPATCH_STATUSES:
             raise ValueError("不支持的派发状态")
         dispatch_id = f"dsp_{uuid4().hex[:18]}"
         with self.connect() as connection:
-            connection.execute(
-                """
-                INSERT INTO cutting_dispatches (
-                    dispatch_id, document_id, project_id, project_name,
-                    catalog_id, catalog_title, version_id, version, document_no,
-                    relative_path, machine_ip, material, thickness, quantity,
-                    status, source_mode, is_simulation, created_by_id,
-                    created_by_name, created_at, updated_at, task_identifier,
-                    stage, attempt_count, download_id, file_size, file_sha256
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    dispatch_id,
-                    data["document_id"],
-                    data["project_id"],
-                    data.get("project_name"),
-                    data.get("catalog_id"),
-                    data.get("catalog_title"),
-                    data.get("version_id"),
-                    data.get("version"),
-                    data["document_no"],
-                    data["relative_path"],
-                    data["machine_ip"],
-                    data.get("material"),
-                    data.get("thickness"),
-                    data["quantity"],
-                    data["status"],
-                    data["source_mode"],
-                    int(data.get("is_simulation", False)),
-                    user["user_id"],
-                    user["display_name"],
-                    now,
-                    now,
-                    dispatch_id,
-                    data.get("stage", "created"),
-                    0,
-                    data.get("download_id"),
-                    data.get("file_size"),
-                    data.get("file_sha256"),
-                ),
-            )
+            self._insert(connection, dispatch_id, data, user=user, now=now)
         item = self.get(dispatch_id)
         if item is None:
             raise RuntimeError("派发任务保存失败")
         return item
+
+    def create_unless_active(
+        self,
+        data: dict[str, Any],
+        *,
+        user: dict,
+        now: str,
+    ) -> tuple[dict[str, Any], bool]:
+        """Atomically return an active duplicate or create a new dispatch."""
+        if data["status"] not in DISPATCH_STATUSES:
+            raise ValueError("不支持的派发状态")
+        with self.connect() as connection:
+            # Serializing this short decision transaction closes the race between
+            # checking for an active task and inserting its replacement.
+            self.begin_immediate(connection)
+            existing = self._active_row(
+                connection,
+                data["document_id"],
+                data.get("version_id"),
+                data["machine_ip"],
+            )
+            if existing is not None:
+                return self._decode(existing), False
+
+            dispatch_id = f"dsp_{uuid4().hex[:18]}"
+            self._insert(connection, dispatch_id, data, user=user, now=now)
+            created = connection.execute(
+                "SELECT * FROM cutting_dispatches WHERE dispatch_id = ?",
+                (dispatch_id,),
+            ).fetchone()
+            if created is None:
+                raise RuntimeError("派发任务保存失败")
+            return self._decode(created), True
 
     def get(self, dispatch_id: str) -> dict[str, Any] | None:
         with self.connect() as connection:
@@ -183,20 +248,8 @@ class DispatchRepository(SQLiteRepository):
     def find_active(
         self, document_id: str, version_id: str | None, machine_ip: str
     ) -> dict[str, Any] | None:
-        placeholders = ", ".join("?" for _ in ACTIVE_DISPATCH_STATUSES)
         with self.connect() as connection:
-            row = connection.execute(
-                f"""
-                SELECT * FROM cutting_dispatches
-                WHERE document_id = ?
-                  AND COALESCE(version_id, '') = COALESCE(?, '')
-                  AND machine_ip = ?
-                  AND status IN ({placeholders})
-                ORDER BY created_at DESC
-                LIMIT 1
-                """,
-                (document_id, version_id, machine_ip, *sorted(ACTIVE_DISPATCH_STATUSES)),
-            ).fetchone()
+            row = self._active_row(connection, document_id, version_id, machine_ip)
         return self._decode(row) if row else None
 
     def list(self, *, page: int, page_size: int) -> tuple[list[dict[str, Any]], int]:

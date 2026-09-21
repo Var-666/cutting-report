@@ -258,11 +258,8 @@ class CuttingDispatchService:
         document_suffix = Path(str(file_item["document_no"])).suffix.lower()
         if physical_suffix not in PUSH_FILE_SUFFIXES and document_suffix not in PUSH_FILE_SUFFIXES:
             raise CuttingDispatchError("当前只允许创建.GEN或.TXT文件派发任务")
-        existing = self.dispatches.find_active(document_id, file_item.get("version_id"), machine_ip)
-        if existing:
-            raise DuplicateDispatchError(existing)
         project = next((item for item in self.pdm.list_projects("", 100) if str(item["project_id"]) == str(file_item["project_id"])), None)
-        dispatch = self.dispatches.create(
+        dispatch, created = self.dispatches.create_unless_active(
             {
                 **file_item,
                 "project_name": project.get("project_name") if project else None,
@@ -282,6 +279,8 @@ class CuttingDispatchService:
             user=user,
             now=self._now(),
         )
+        if not created:
+            raise DuplicateDispatchError(dispatch)
         return self._decorate_dispatch(dispatch)
 
     def create_dispatch_batch(

@@ -1,5 +1,7 @@
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
+from threading import Barrier
 
 import pytest
 from pydantic import ValidationError
@@ -169,6 +171,47 @@ def test_saving_dispatch_is_persistent_but_does_not_download(tmp_path: Path) -> 
             quantity=1,
             user=admin,
         )
+
+
+def test_concurrent_duplicate_dispatch_creation_is_atomic(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    service, dispatches, admin = _service(tmp_path)
+    original_create = dispatches.create_unless_active
+    ready = Barrier(2)
+
+    def synchronized_create(*args, **kwargs):
+        ready.wait(timeout=5)
+        return original_create(*args, **kwargs)
+
+    monkeypatch.setattr(dispatches, "create_unless_active", synchronized_create)
+
+    def create() -> tuple[str, str]:
+        try:
+            item = service.create_dispatch(
+                document_id="F1A0796D-7118-4E37-8F69-B6D917BD6456",
+                machine_ip="10.1.133.196",
+                material="AH36",
+                thickness=12.0,
+                quantity=1,
+                user=admin,
+            )
+            return "created", item["dispatch_id"]
+        except DuplicateDispatchError as exc:
+            return "duplicate", exc.dispatch["dispatch_id"]
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(lambda _index: create(), range(2)))
+
+    assert sorted(status for status, _dispatch_id in results) == [
+        "created",
+        "duplicate",
+    ]
+    assert len({dispatch_id for _status, dispatch_id in results}) == 1
+    items, total = dispatches.list(page=1, page_size=10)
+    assert total == 1
+    assert items[0]["dispatch_id"] == results[0][1]
 
 
 @pytest.mark.parametrize("suffix", [".GEN", ".gen", ".TXT", ".txt"])
