@@ -159,6 +159,11 @@ test('file dispatch presents the four-step dashboard and persistent confirmation
   assert.match(view, /const activeDispatchStep = computed/)
   assert.match(view, /v-for="file in selectedFileItems\.slice\(0, 5\)"/)
   assert.match(view, /<AppIcon name="send"/)
+  assert.match(view, /\.dispatch-workspace\.download-workspace \{ grid-template-columns:248px minmax\(0,1fr\)/)
+  assert.match(view, /\.dispatch-confirm-panel \{[^}]*grid-column:1\/-1;[^}]*align-self:start;/)
+  assert.match(view, /\.directory-panel \{[^}]*display:flex;[^}]*flex-direction:column;/)
+  assert.match(view, /\.directory-scroll \{[^}]*max-height:none;[^}]*flex:1 1 auto;/)
+  assert.match(view, /\.source-file-table \{ min-width:820px; \}/)
 })
 
 test('standard cutting instruction names provide material and thickness for dispatch', () => {
