@@ -19,7 +19,9 @@ from app.database.workshop import (
 )
 from app.models.domain import to_primitive
 from app.services.statistics_service import build_worker_work_summaries
-from app.services.report_analysis_service import generate_data_version
+from app.services.report_analysis_service import (
+    workshop_analysis_source_version,
+)
 from app.services.workshop_sorting import sort_workshop_by_recency
 
 
@@ -27,14 +29,7 @@ router = APIRouter(prefix="/api/v1/workshop", tags=["workshop-confirmation"])
 
 
 def _workshop_analysis_source_version(report_date: str, records: list) -> str:
-    # Query order is not business data, so records are canonicalized by task ID.
-    ordered = sorted(records, key=lambda row: str(row.task_id))
-    return generate_data_version(
-        {
-            "report_date": report_date,
-            "records": to_primitive(ordered),
-        }
-    )
+    return workshop_analysis_source_version(report_date, records)
 
 
 def _workshop_trend(records: list) -> list[dict]:
@@ -219,8 +214,8 @@ def list_tasks(
                 "project_names": [],
                 "confirmed_count": 0,
                 "worker_summaries": [],
-                "analysis_source_version": generate_data_version(
-                    {"report_date": report_date.isoformat(), "records": []}
+                "analysis_source_version": workshop_analysis_source_version(
+                    report_date.isoformat(), []
                 ),
                 "current_user": user,
             },

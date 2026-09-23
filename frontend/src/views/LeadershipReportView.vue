@@ -7,6 +7,7 @@ import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMoun
 import { getLeadershipRange, getLeadershipReport } from '../api/reports'
 import AnalysisPanel from '../components/AnalysisPanel.vue'
 import MetricSparkline from '../components/MetricSparkline.vue'
+import ReportFeedback from '../components/ReportFeedback.vue'
 import ReportTrendPanel from '../components/ReportTrendPanel.vue'
 import StandardReportQuery from '../components/StandardReportQuery.vue'
 import AppIcon from '../components/AppIcon.vue'
@@ -68,16 +69,16 @@ const metricSeries = computed(() => {
 })
 const monthlyRecords = computed(() => monthlyReport.value?.monthly_records || [])
 const total = computed(() => report.value?.current_month_total || {
-  task_count: 0,
-  cut_length_m: 0,
-  groove_length_m: 0,
-  work_time_seconds: 0,
+  task_count: null,
+  cut_length_m: null,
+  groove_length_m: null,
+  work_time_seconds: null,
 })
 const monthlyTotal = computed(() => monthlyReport.value?.twelve_month_total || {
-  task_count: 0,
-  cut_length_m: 0,
-  groove_length_m: 0,
-  work_time_seconds: 0,
+  task_count: null,
+  cut_length_m: null,
+  groove_length_m: null,
+  work_time_seconds: null,
 })
 const snapshot = computed(() => report.value?.snapshot || {})
 const comparisonTotal = computed(() => report.value?.comparison_total || null)
@@ -96,6 +97,7 @@ function roundNumber(value, digits = 1) {
 }
 
 function formatLength(value) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return '--'
   return new Intl.NumberFormat('zh-CN', {
     minimumFractionDigits: 1,
     maximumFractionDigits: 1,
@@ -103,6 +105,7 @@ function formatLength(value) {
 }
 
 function formatDuration(value) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return '--'
   const totalSeconds = Math.max(0, Math.round(Number(value || 0)))
   const hours = Math.floor(totalSeconds / 3600)
   const minutes = Math.floor((totalSeconds % 3600) / 60)
@@ -364,6 +367,10 @@ function exportReport(format = 'html') {
   }, format)
 }
 
+function retryReport() {
+  return report.value ? loadReport(false) : loadDefaultReport()
+}
+
 onMounted(() => {
   loadDefaultReport()
 })
@@ -401,6 +408,7 @@ watch(chartType, async () => {
       aria-label="领导报表查询条件"
       :anchor-date="today"
       :loading="loading"
+      :has-data="Boolean(report)"
       :export-disabled="loading || !report || !snapshot.data_as_of || snapshot.refreshing"
       :exporting="exporting"
       @submit="loadReport(false)"
@@ -409,12 +417,12 @@ watch(chartType, async () => {
     />
   </section>
 
-  <div v-if="error" class="global-error"><strong>报表读取失败</strong><span>{{ error }}</span><button @click="error = ''">关闭</button></div>
+  <ReportFeedback v-if="error && report" type="error" title="报表更新失败" :message="error" action-label="重新查询" dismissible @action="retryReport" @dismiss="error = ''" />
 
-  <section class="leadership-kpis" aria-label="区间汇总">
+  <section class="leadership-kpis" aria-label="区间汇总" :aria-busy="loading">
     <article class="leadership-kpi kpi-blue">
       <span class="leadership-kpi__icon"><AppIcon name="tasks" size="22" /></span>
-      <div><span>完成任务<small>COMPLETED TASKS</small></span><p><strong>{{ total.task_count }}</strong> 项</p><em :class="metricChanges.taskCount?.direction"><AppIcon v-if="metricChanges.taskCount" :name="metricChanges.taskCount.direction === 'down' ? 'arrow-down' : metricChanges.taskCount.direction === 'flat' ? 'activity' : 'arrow-up'" size="12" />{{ changeText(metricChanges.taskCount) }} <small>{{ comparisonLabel(metricChanges.taskCount) }}</small></em></div>
+      <div><span>完成任务<small>COMPLETED TASKS</small></span><p><strong>{{ total.task_count ?? '--' }}</strong> 项</p><em :class="metricChanges.taskCount?.direction"><AppIcon v-if="metricChanges.taskCount" :name="metricChanges.taskCount.direction === 'down' ? 'arrow-down' : metricChanges.taskCount.direction === 'flat' ? 'activity' : 'arrow-up'" size="12" />{{ changeText(metricChanges.taskCount) }} <small>{{ comparisonLabel(metricChanges.taskCount) }}</small></em></div>
       <MetricSparkline class="metric-sparkline" :values="metricSeries.taskCount" label="每日完成任务趋势" />
     </article>
     <article class="leadership-kpi kpi-teal">
@@ -434,7 +442,7 @@ watch(chartType, async () => {
     </article>
   </section>
 
-  <ReportTrendPanel ref="dailyPanel" number="01" title="区间每日明细与趋势" subtitle="查看所选时间段内每日任务与加工指标变化" chart-label="区间每日趋势图" :height="245">
+  <ReportTrendPanel ref="dailyPanel" number="01" title="区间每日明细与趋势" subtitle="查看所选时间段内每日任务与加工指标变化" chart-label="区间每日趋势图" :height="245" :loading="loading || (refreshLoading && !snapshot.data_as_of)" :has-data="dailyRecords.length > 0" :empty="Boolean(report) && !dailyRecords.length" :error="!report ? error : ''" loading-title="正在读取区间生产数据" loading-message="正在汇总任务、切割长度、坡口长度和切割时长。" empty-title="所选区间暂无已完成任务" empty-message="请调整日期范围，或等待生产数据完成后重新查询。" @retry="retryReport">
     <template #table>
         <table v-content-table="pageActive" class="leadership-table summary-table">
         <thead><tr><th>序号</th><th>日期</th><th>任务数</th><th>切割长度</th><th>坡口长度</th><th>切割时长</th><th>备注</th></tr></thead>
@@ -454,7 +462,7 @@ watch(chartType, async () => {
     </template>
   </ReportTrendPanel>
 
-  <ReportTrendPanel ref="monthlyPanel" number="02" :title="monthlyTitle" subtitle="查看近12个月各项数据的对比趋势" :note="`${monthlyPeriodStart} 至 ${monthlyPeriodEnd}`" chart-label="近12个月月度趋势图" :height="245">
+  <ReportTrendPanel ref="monthlyPanel" number="02" :title="monthlyTitle" subtitle="查看近12个月各项数据的对比趋势" :note="`${monthlyPeriodStart} 至 ${monthlyPeriodEnd}`" chart-label="近12个月月度趋势图" :height="245" :loading="monthlyLoading" :has-data="monthlyRecords.length > 0" :empty="Boolean(monthlyReport) && !monthlyRecords.length" :error="!monthlyReport ? error : ''" loading-title="正在读取近12个月趋势" loading-message="月度汇总独立加载，不影响当前区间明细。" empty-title="近12个月暂无已完成任务" empty-message="当前统计范围内还没有可汇总的生产任务。" @retry="loadDefaultReport">
     <template #table>
         <table v-content-table="pageActive" class="leadership-table summary-table">
         <thead><tr><th>序号</th><th>月份</th><th>任务数</th><th>切割长度</th><th>坡口长度</th><th>切割时长</th><th>备注</th></tr></thead>

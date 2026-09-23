@@ -316,7 +316,7 @@ export function getEnergyMonthlyRange(startDate, endDate, { force = false, signa
   return reportCache.read(key, (requestSignal) => request(`/api/v1/energy-report/monthly-range?${query}`, { signal: requestSignal }), { ttl: REPORT_VIEW_CACHE_TTL, force, signal })
 }
 
-export function analyzeReport({ reportType, reportDate, periodStart, periodEnd, force = false }, { signal } = {}) {
+export function analyzeReport({ reportType, reportDate, periodStart, periodEnd, dataVersion, force = false }, { signal } = {}) {
   return request('/api/v1/analysis', {
     method: 'POST',
     signal,
@@ -325,6 +325,7 @@ export function analyzeReport({ reportType, reportDate, periodStart, periodEnd, 
       report_date: reportDate,
       period_start: periodStart,
       period_end: periodEnd,
+      data_version: dataVersion || undefined,
       force,
     }),
   })
@@ -458,6 +459,10 @@ export function createCuttingDispatchBatch(payload) {
 export function listCuttingDispatches({ page = 1, pageSize = 10 } = {}, { signal } = {}) {
   const query = new URLSearchParams({ page, page_size: pageSize })
   return request(`/api/v1/cutting/dispatches?${query}`, { signal })
+}
+
+export function getCuttingDispatch(dispatchId, { signal } = {}) {
+  return request(`/api/v1/cutting/dispatches/${encodeURIComponent(dispatchId)}`, { signal })
 }
 
 export function listCuttingMachines({ signal } = {}) {

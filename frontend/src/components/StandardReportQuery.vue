@@ -20,6 +20,7 @@ const props = defineProps({
     ],
   },
   loading: Boolean,
+  hasData: Boolean,
   exportDisabled: Boolean,
   exporting: Boolean,
   ariaLabel: { type: String, default: '报表查询条件' },
@@ -50,7 +51,7 @@ const chartTypeModel = computed({
 
 <template>
   <section class="standard-report-query-shell" :aria-label="ariaLabel">
-    <form class="standard-report-query" @submit.prevent="emit('submit')">
+    <form class="standard-report-query" :aria-busy="loading" @submit.prevent="emit('submit')">
       <ReportPeriodPicker
         v-model:start-date="startDateModel"
         v-model:end-date="endDateModel"
@@ -68,7 +69,7 @@ const chartTypeModel = computed({
       <button class="primary standard-report-query__submit" type="submit" :disabled="loading">
         <span v-if="loading" class="spinner"></span>
         <AppIcon v-else name="search" size="15" tone="light" />
-        {{ loading ? '查询中' : '查询报表' }}
+        {{ loading ? '查询中' : hasData ? '更新报表' : '查询报表' }}
       </button>
       <ReportExportMenu
         class="standard-report-query__export"

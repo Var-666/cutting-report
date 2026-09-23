@@ -1,12 +1,13 @@
 <script setup>
 import { useReportExport } from '../composables/useReportExport'
+import ReportFeedback from '../components/ReportFeedback.vue'
 import LeadershipReportView from './LeadershipReportView.vue'
 
-const { exporting, error, progress, exportReport } = useReportExport()
+const { exporting, error, progress, exportReport, retryExport } = useReportExport()
 </script>
 
 <template>
-  <div v-if="error" class="global-error" role="alert"><strong>导出未完成</strong><span>{{ error }}</span><button @click="error = ''">关闭</button></div>
-  <div v-if="progress" class="route-notice" role="status">{{ progress }}</div>
+  <ReportFeedback v-if="error" type="error" title="导出未完成" :message="error" action-label="重试导出" dismissible @action="retryExport" @dismiss="error = ''" />
+  <ReportFeedback v-else-if="progress" type="info" title="导出处理中" :message="progress" />
   <LeadershipReportView :exporting="exporting" @export="exportReport" />
 </template>

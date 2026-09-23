@@ -5,13 +5,17 @@ from datetime import date, timedelta
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.api.auth import require_admin
 from app.database.sqlserver import SqlServerConfigurationError
 from app.models.domain import ReportFilter, to_primitive
 from app.services.energy_period_service import restore_task_energy_records
 from app.services.range_report_service import previous_equal_range, validate_report_range
+from app.services.report_analysis_service import (
+    AnalysisDataVersionMismatch,
+    equipment_analysis_source_version,
+)
 from app.services.request_cancellation import SqlRequestCancelled
 
 
@@ -39,6 +43,7 @@ class AnalysisRequest(BaseModel):
     report_date: date
     period_start: date | None = None
     period_end: date | None = None
+    data_version: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     force: bool = False
 
 
@@ -69,7 +74,11 @@ def analyze_report(payload: AnalysisRequest, request: Request) -> dict:
                     report = request.app.state.leadership_report_service.fetch(
                         payload.report_date.replace(day=1), force=True
                     )
-            analysis = service.analyze_leadership(report, force=payload.force)
+            analysis = service.analyze_leadership(
+                report,
+                expected_data_version=payload.data_version,
+                force=payload.force,
+            )
         elif payload.report_type == "workshop":
             if payload.period_start is not None and payload.period_end is not None:
                 period_start = payload.period_start
@@ -95,6 +104,7 @@ def analyze_report(payload: AnalysisRequest, request: Request) -> dict:
                     comparison_date=_period_label(comparison_start, comparison_end),
                     year_ago_records=year_ago_records,
                     year_ago_date=_period_label(year_ago_start, year_ago_end),
+                    expected_data_version=payload.data_version,
                     force=payload.force,
                 )
             else:
@@ -122,6 +132,7 @@ def analyze_report(payload: AnalysisRequest, request: Request) -> dict:
                     comparison_date=comparison_day.isoformat() if previous_report else None,
                     year_ago_records=year_ago_records if year_ago_report else None,
                     year_ago_date=year_ago_day.isoformat() if year_ago_report else None,
+                    expected_data_version=payload.data_version,
                     force=payload.force,
                 )
         else:
@@ -208,10 +219,14 @@ def analyze_report(payload: AnalysisRequest, request: Request) -> dict:
                 comparison_date=comparison_label,
                 year_ago_records=year_ago_records,
                 year_ago_date=year_ago_label,
+                source_data_version=equipment_analysis_source_version(task_report),
+                expected_data_version=payload.data_version,
                 force=payload.force,
             )
     except (HTTPException, SqlRequestCancelled):
         raise
+    except AnalysisDataVersionMismatch as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except SqlServerConfigurationError as exc:

@@ -2,11 +2,18 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
 from threading import Barrier
+from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 from pydantic import ValidationError
 
-from app.api.cutting import DispatchBatchCreateRequest
+from app.api.cutting import (
+    DispatchBatchCreateRequest,
+    DispatchCreateRequest,
+    create_dispatch as create_dispatch_api,
+    get_dispatch as get_dispatch_api,
+)
 from app.config import settings
 from app.database.dispatch import DispatchRepository
 from app.database.downloads import DownloadRepository
@@ -16,7 +23,10 @@ from app.database.workshop import WorkshopRepository
 from app.services.cutting_dispatch_service import (
     CuttingDispatchService,
     CuttingDispatchError,
+    DispatchConflictError,
+    DispatchNotFoundError,
     DuplicateDispatchError,
+    standard_instruction_parameters,
 )
 from app.services.file_download_service import DownloadError, FileDownloadService
 from app.services.file_source import (
@@ -439,6 +449,7 @@ def test_batch_creation_isolates_files_and_reports_duplicates(tmp_path: Path):
             "material": "AH36",
             "thickness": 10,
             "quantity": index,
+            "name_check_confirmed": True,
         }
         for index, item in enumerate(downloaded, start=1)
     ]
@@ -472,6 +483,7 @@ def test_batch_can_create_and_execute_directly_from_pdm_files(tmp_path: Path):
             "material": "AH36",
             "thickness": 10,
             "quantity": index,
+            "name_check_confirmed": True,
         }
         for index, raw in enumerate(service.pdm.files[:2], start=1)
     ]
@@ -515,6 +527,89 @@ def test_direct_batch_rechecks_selected_pdm_version_and_path(tmp_path: Path):
         )
         assert result["failed_count"] == 1
         assert "已变化" in result["items"][0]["error"]
+
+
+def test_standard_name_parser_matches_browser_rules() -> None:
+    assert standard_instruction_parameters(r"folder\P123C120A601.GEN") == ("AH36", 12.0)
+    assert standard_instruction_parameters("s001c080ss99.txt") == ("双相不锈钢", 8.0)
+    assert standard_instruction_parameters("custom.GEN") is None
+    assert standard_instruction_parameters("P123C000A601.GEN") is None
+
+
+def test_batch_requires_manual_confirmation_for_nonstandard_and_overridden_names(tmp_path: Path) -> None:
+    service, dispatches, admin = _service(tmp_path)
+    raw = service.pdm.files[0]
+    common = {
+        "document_id": raw["document_id"],
+        "version_id": raw["version_id"],
+        "file_path": raw["file_path"],
+        "material": "AH36",
+        "thickness": 12.0,
+        "quantity": 1,
+    }
+    rejected = service.create_dispatch_batch(machine_ip="10.1.133.197", items=[common], user=admin)
+    assert rejected["failed_count"] == 1
+    assert "非标准文件名" in rejected["items"][0]["error"]
+    assert dispatches.list(page=1, page_size=10)[1] == 0
+
+    raw["document_no"] = "P123C120A601.GEN"
+    standard = service.create_dispatch_batch(machine_ip="10.1.133.197", items=[common], user=admin)
+    assert standard["created_count"] == 1
+    assert service.get_dispatch(standard["items"][0]["dispatch"]["dispatch_id"])["can_execute"] is False
+    with pytest.raises(DispatchNotFoundError):
+        service.get_dispatch("missing-dispatch")
+
+
+def test_standard_name_parameter_mismatch_requires_explicit_confirmation(tmp_path: Path) -> None:
+    service, dispatches, admin = _service(tmp_path)
+    raw = service.pdm.files[0]
+    raw["document_no"] = "P123C120A601.GEN"
+    common = {
+        "document_id": raw["document_id"],
+        "version_id": raw["version_id"],
+        "file_path": raw["file_path"],
+        "material": "AH36",
+        "thickness": 10.0,
+        "quantity": 1,
+    }
+    rejected = service.create_dispatch_batch(machine_ip="10.1.133.197", items=[common], user=admin)
+    assert rejected["failed_count"] == 1
+    assert "参数与标准文件名不一致" in rejected["items"][0]["error"]
+    assert dispatches.list(page=1, page_size=10)[1] == 0
+
+    confirmed = service.create_dispatch_batch(
+        machine_ip="10.1.133.197",
+        items=[{**common, "name_check_confirmed": True}],
+        user=admin,
+    )
+    assert confirmed["created_count"] == 1
+    assert confirmed["items"][0]["dispatch"]["thickness"] == 10.0
+
+
+def test_single_dispatch_api_enforces_name_confirmation_and_exposes_current_status(tmp_path: Path) -> None:
+    service, _dispatches, admin = _service(tmp_path)
+    raw = service.pdm.files[0]
+    request = SimpleNamespace(
+        state=SimpleNamespace(request_id="dispatch-test"),
+        app=SimpleNamespace(state=SimpleNamespace(cutting_dispatch=service)),
+    )
+    payload = DispatchCreateRequest(
+        document_id=raw["document_id"],
+        machine_ip="10.1.133.197",
+        material="AH36",
+        thickness=12,
+        quantity=1,
+    )
+    with pytest.raises(HTTPException) as rejected:
+        create_dispatch_api(payload, request, admin)
+    assert rejected.value.status_code == 422
+    assert "非标准文件名" in rejected.value.detail
+
+    payload.name_check_confirmed = True
+    created = create_dispatch_api(payload, request, admin)["data"]
+    current = get_dispatch_api(created["dispatch_id"], request)["data"]
+    assert current["dispatch_id"] == created["dispatch_id"]
+    assert current["status"] == "waiting_source"
 
 
 def test_batch_request_limits_files_and_validates_file_references():
@@ -583,6 +678,7 @@ def test_assign_retry_does_not_upload_file_twice(tmp_path: Path):
     with pytest.raises(MagicBoxError):
         service.execute_dispatch(draft["dispatch_id"], user=admin)
     assert dispatches.get(draft["dispatch_id"])["stage"] == "assign_failed"
+    assert service.get_dispatch(draft["dispatch_id"])["can_execute"] is True
 
     client.fail_assign = False
     sent = service.execute_dispatch(draft["dispatch_id"], user=admin)
@@ -590,3 +686,37 @@ def test_assign_retry_does_not_upload_file_twice(tmp_path: Path):
     assert sent["status"] == "sent"
     assert len(client.uploads) == 1
     assert len(client.assignments) == 2
+
+
+def test_unknown_upload_result_cannot_be_blindly_retried(tmp_path: Path) -> None:
+    class UnknownUploadClient(RecordingMagicClient):
+        def upload_task(self, **kwargs):
+            self.uploads.append(kwargs)
+            raise MagicBoxError("上传响应丢失", outcome_unknown=True)
+
+    client = UnknownUploadClient()
+    service, _dispatches, admin = _push_service(tmp_path, client)
+    raw = service.pdm.files[0]
+    created = service.create_dispatch_batch(
+        machine_ip="10.1.133.197",
+        items=[{
+            "document_id": raw["document_id"],
+            "version_id": raw["version_id"],
+            "file_path": raw["file_path"],
+            "material": "AH36",
+            "thickness": 12,
+            "quantity": 1,
+            "name_check_confirmed": True,
+        }],
+        user=admin,
+    )
+    dispatch_id = created["items"][0]["dispatch"]["dispatch_id"]
+
+    with pytest.raises(MagicBoxError, match="上传响应丢失"):
+        service.execute_dispatch(dispatch_id, user=admin)
+    current = service.get_dispatch(dispatch_id)
+    assert current["stage"] == "upload_unknown"
+    assert current["can_execute"] is False
+    with pytest.raises(DispatchConflictError, match="禁止盲目重复上传"):
+        service.execute_dispatch(dispatch_id, user=admin)
+    assert len(client.uploads) == 1

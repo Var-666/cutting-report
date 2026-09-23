@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+import re
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
@@ -70,6 +71,22 @@ STAGE_LABELS = {
 }
 
 PUSH_FILE_SUFFIXES = frozenset({".gen", ".txt"})
+STANDARD_INSTRUCTION_NAME = re.compile(
+    r"^[PSWL]\d{3}C(?P<thickness>\d{3})(?P<material>A0|A2|A6|SS)(?:0[1-9]|[1-9]\d)(?:\.(?:GEN|TXT))?$",
+    re.IGNORECASE,
+)
+STANDARD_MATERIALS = {"A0": "A", "A2": "AH32", "A6": "AH36", "SS": "双相不锈钢"}
+
+
+def standard_instruction_parameters(filename: str) -> tuple[str, float] | None:
+    basename = str(filename).strip().replace("\\", "/").split("/")[-1]
+    match = STANDARD_INSTRUCTION_NAME.fullmatch(basename)
+    if match is None:
+        return None
+    thickness = int(match.group("thickness")) / 10
+    if thickness <= 0:
+        return None
+    return STANDARD_MATERIALS[match.group("material").upper()], thickness
 
 
 class CuttingDispatchService:
@@ -217,6 +234,8 @@ class CuttingDispatchService:
         download_id: str | None = None,
         expected_version_id: str | None = None,
         expected_file_path: str | None = None,
+        name_check_confirmed: bool = False,
+        enforce_name_check: bool = False,
         machine_ip: str,
         material: str | None,
         thickness: float | None,
@@ -258,6 +277,17 @@ class CuttingDispatchService:
         document_suffix = Path(str(file_item["document_no"])).suffix.lower()
         if physical_suffix not in PUSH_FILE_SUFFIXES and document_suffix not in PUSH_FILE_SUFFIXES:
             raise CuttingDispatchError("当前只允许创建.GEN或.TXT文件派发任务")
+        if enforce_name_check:
+            if not str(material or "").strip() or thickness is None or float(thickness) <= 0:
+                raise CuttingDispatchError("请先填写有效的材质和板厚")
+            standard = standard_instruction_parameters(str(file_item["document_no"]))
+            if standard is None and not name_check_confirmed:
+                raise CuttingDispatchError("非标准文件名必须人工核对材质、板厚和数量后确认")
+            if standard is not None:
+                material_matches = str(material).strip().casefold() == standard[0].casefold()
+                thickness_matches = abs(float(thickness) - standard[1]) < 0.000001
+                if not (material_matches and thickness_matches) and not name_check_confirmed:
+                    raise CuttingDispatchError("加工参数与标准文件名不一致，必须人工核对后确认")
         project = next((item for item in self.pdm.list_projects("", 100) if str(item["project_id"]) == str(file_item["project_id"])), None)
         dispatch, created = self.dispatches.create_unless_active(
             {
@@ -305,6 +335,8 @@ class CuttingDispatchService:
                     download_id=download_id or None,
                     expected_version_id=request_item.get("version_id"),
                     expected_file_path=request_item.get("file_path"),
+                    name_check_confirmed=bool(request_item.get("name_check_confirmed")),
+                    enforce_name_check=True,
                     machine_ip=machine_ip,
                     material=request_item.get("material"),
                     thickness=request_item.get("thickness"),
@@ -368,6 +400,12 @@ class CuttingDispatchService:
     def list_dispatches(self, *, page: int, page_size: int) -> dict[str, Any]:
         items, total = self.dispatches.list(page=page, page_size=page_size)
         return {"items": [self._decorate_dispatch(item) for item in items], "total": total, "page": page, "page_size": page_size}
+
+    def get_dispatch(self, dispatch_id: str) -> dict[str, Any]:
+        item = self.dispatches.get(dispatch_id)
+        if item is None:
+            raise DispatchNotFoundError("派发任务不存在")
+        return self._decorate_dispatch(item)
 
     def list_machines(self) -> dict[str, Any]:
         if self.magic_config is None:

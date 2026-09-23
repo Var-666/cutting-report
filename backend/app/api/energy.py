@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from app.api.auth import require_admin
 from app.database.sqlserver import SqlServerConfigurationError
 from app.models.domain import ReportFilter, to_primitive
-from app.services.report_analysis_service import generate_data_version
+from app.services.report_analysis_service import equipment_analysis_source_version
 from app.services.request_cancellation import SqlRequestCancelled
 
 
@@ -15,25 +15,9 @@ logger = logging.getLogger(__name__)
 
 
 def _add_analysis_source_version(task_report: dict) -> dict:
-    relevant = {
-        key: task_report.get(key)
-        for key in (
-            "report_date",
-            "period_start",
-            "period_end",
-            "records",
-            "summary",
-            "units",
-            "equipment_scope",
-            "energy_notice",
-        )
-    }
-    relevant["records"] = sorted(
-        task_report.get("records") or [],
-        key=lambda row: str(row.get("task_id") or ""),
+    task_report["analysis_source_version"] = equipment_analysis_source_version(
+        task_report
     )
-    relevant["equipment_scope"] = sorted(task_report.get("equipment_scope") or [])
-    task_report["analysis_source_version"] = generate_data_version(relevant)
     return task_report
 
 

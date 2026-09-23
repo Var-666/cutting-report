@@ -28,6 +28,7 @@ const activationTimer = createActivationTimer({
 
 const modeLabel = computed(() => {
   if (analysis.value?.mode === 'model') return '大模型分析'
+  if (analysis.value?.mode === 'guardrail_fallback') return '模型结果未通过校验 · 可信降级'
   if (analysis.value?.mode === 'simulated_fallback') return '真实模型不可用 · 模拟分析'
   return '模拟大模型分析'
 })
@@ -113,6 +114,7 @@ async function loadAnalysis(force = false, targetKey = requestKey()) {
       reportDate: props.reportDate,
       periodStart: props.periodStart || undefined,
       periodEnd: props.periodEnd || undefined,
+      dataVersion: props.dataVersion || undefined,
       force,
     }, { signal })
     if (activationTimer.isActive() && !signal.aborted && sequence === requestSequence) {
@@ -296,7 +298,7 @@ onBeforeUnmount(pauseAnalysis)
 .analysis-panel-title{display:flex;align-items:center;gap:11px}.analysis-panel-icon{width:38px!important;height:38px!important;display:grid;place-items:center;flex:0 0 auto;color:var(--analysis-indigo);border-radius:50%;background:#eef0fb}
 .analysis-panel-head h2{margin:2px 0 0!important;color:#153c58!important;font-size:17px!important}.analysis-kicker{color:#177f96;font-size:9px!important;font-weight:800;letter-spacing:.12em}
 .analysis-actions{display:flex;align-items:center;gap:10px;flex-shrink:0}.analysis-actions button,.analysis-error button{min-height:34px!important;padding:0 12px!important;border-radius:7px;font-size:11px!important}
-.analysis-mode{display:inline-flex;align-items:center;gap:8px;padding:7px 11px;color:#986320;border:1px solid #eed8b5;border-radius:999px;background:#fff5e8;font-weight:700;white-space:nowrap}.analysis-mode.model{color:#19845f;border-color:#c5e2d3;background:#eaf7f1}.analysis-mode.simulated_fallback{color:#c24b54;border-color:#efd4d7;background:#fff0f1}.analysis-mode small{padding-left:8px;border-left:1px solid currentColor;font-size:10px;opacity:.72}
+.analysis-mode{display:inline-flex;align-items:center;gap:8px;padding:7px 11px;color:#986320;border:1px solid #eed8b5;border-radius:999px;background:#fff5e8;font-weight:700;white-space:nowrap}.analysis-mode.model{color:#19845f;border-color:#c5e2d3;background:#eaf7f1}.analysis-mode.simulated_fallback{color:#c24b54;border-color:#efd4d7;background:#fff0f1}.analysis-mode.guardrail_fallback{color:#986320;border-color:#eed8b5;background:#fff5e8}.analysis-mode small{padding-left:8px;border-left:1px solid currentColor;font-size:10px;opacity:.72}
 .analysis-reload{display:inline-flex;align-items:center;justify-content:center;gap:7px;color:#315267;border-color:#c9dbe4;background:#f8fbfc}.analysis-reload:hover:not(:disabled){color:#fff;border-color:#0a6289;background:linear-gradient(135deg,#07557c,#087fa0)}
 .analysis-state{padding:42px 28px;color:#607c91;text-align:center;background:#fff}.analysis-error{display:flex;align-items:center;justify-content:center;gap:14px;margin:22px 28px;padding:16px;color:#b53e48;background:#fff0f1}
 .analysis-conclusion{display:grid;grid-template-columns:58px minmax(0,1fr) minmax(250px,.42fr);align-items:center;gap:18px;margin:12px 15px;padding:15px 18px;border:1px solid #c9e1eb;border-radius:9px;background:linear-gradient(105deg,#eff7fb,#f8fbfc 58%,#eef7fb);box-shadow:0 7px 18px rgba(22,62,89,.055)}

@@ -365,9 +365,14 @@ def test_unified_device_page_export_and_analysis_share_meter_values(tmp_path, mo
     assert page["summary"]["total_electricity_consumption"] == 18
     assert page["units"] == {"gas": "Nm³", "electricity": "kWh"}
     analysis_response = analyze_report(
-        AnalysisRequest(report_type="equipment", report_date=START.date()),
+        AnalysisRequest(
+            report_type="equipment",
+            report_date=START.date(),
+            data_version=page["analysis_source_version"],
+        ),
         request,
     )
+    assert analysis_response["data"]["data_version"] == page["analysis_source_version"]
     page_analysis_facts = {
         fact["id"]: fact["value"] for fact in analysis_response["data"]["facts"]
     }

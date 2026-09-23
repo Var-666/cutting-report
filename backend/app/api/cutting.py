@@ -36,6 +36,7 @@ class DispatchCreateRequest(BaseModel):
     material: str | None = Field(default=None, max_length=80)
     thickness: float | None = Field(default=None, ge=0, le=1000)
     quantity: int = Field(default=1, ge=1, le=10000)
+    name_check_confirmed: bool = False
 
     @field_validator("document_id", "machine_ip")
     @classmethod
@@ -79,6 +80,7 @@ class DispatchBatchItem(BaseModel):
     material: str = Field(min_length=1, max_length=80)
     thickness: float = Field(gt=0, le=1000)
     quantity: int = Field(default=1, ge=1, le=10000)
+    name_check_confirmed: bool = False
 
     @model_validator(mode="after")
     def require_one_file_reference(self):
@@ -190,7 +192,7 @@ def create_dispatch(
 ) -> dict:
     try:
         item = request.app.state.cutting_dispatch.create_dispatch(
-            **payload.model_dump(), user=user
+            **payload.model_dump(), enforce_name_check=True, user=user
         )
     except CuttingFileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -236,6 +238,15 @@ def list_dispatches(
             page=page, page_size=page_size
         ),
     )
+
+
+@router.get("/dispatches/{dispatch_id}")
+def get_dispatch(dispatch_id: str, request: Request) -> dict:
+    try:
+        item = request.app.state.cutting_dispatch.get_dispatch(dispatch_id)
+    except DispatchNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return _envelope(request, item)
 
 
 @router.post("/dispatches/{dispatch_id}/execute")

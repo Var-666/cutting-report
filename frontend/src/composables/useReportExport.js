@@ -8,9 +8,11 @@ export function useReportExport() {
   const error = ref('')
   const progress = ref('')
   let controller
+  let lastRequest = null
 
   async function exportReport(payload, format = 'html') {
     if (exporting.value) return
+    lastRequest = { payload, format }
     controller = new AbortController()
     const signal = controller.signal
     exporting.value = true
@@ -36,8 +38,13 @@ export function useReportExport() {
     }
   }
 
+  function retryExport() {
+    if (!lastRequest || exporting.value) return
+    return exportReport(lastRequest.payload, lastRequest.format)
+  }
+
   const pause = () => controller?.abort()
   onDeactivated(pause)
   onBeforeUnmount(pause)
-  return { exporting, error, progress, exportReport }
+  return { exporting, error, progress, exportReport, retryExport }
 }

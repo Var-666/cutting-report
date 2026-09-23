@@ -3,12 +3,14 @@ import { afterEach, test } from 'node:test'
 import { readFileSync } from 'node:fs'
 import {
   getCuttingStatus,
+  getCuttingDispatch,
   listCuttingCatalogs,
   listCuttingFiles,
   listCuttingProjects,
 } from '../src/api/reports.js'
 import { reportCache } from '../src/api/reportCache.js'
 import { parseCuttingInstructionFilename } from '../src/utils/cuttingInstructionName.js'
+import { matchesDispatchParameters } from '../src/utils/cuttingDispatchBatch.js'
 
 const originalFetch = globalThis.fetch
 afterEach(() => {
@@ -214,4 +216,54 @@ test('non-standard names require explicit manual confirmation before dispatch', 
   assert.match(view, /nonStandardBatchCount > 0 && !pushBatch\.nonStandardConfirmed/)
   assert.match(view, /completed\.local_file_cleanup\?\.error/)
   assert.doesNotMatch(view, /仅保存任务|批量保存|再次保存/)
+})
+
+test('batch confirmation checks standard-name overrides and blocks duplicate versions', () => {
+  const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
+
+  assert.match(view, /alreadySelectedDocument\(next, file\)/)
+  assert.match(view, /同一 PDM 文件只能选择一个版本/)
+  assert.match(view, /hasNameMismatch\(item\)/)
+  assert.match(view, /name_check_confirmed:/)
+  assert.match(view, /standard_override_confirmed/)
+  assert.match(view, /@input="invalidateBatchConfirmation\(item\)"/)
+  assert.match(view, /pushBatch\.nonStandardConfirmed = false/)
+  assert.match(view, /pushBatch\.overrideConfirmed = false/)
+  assert.match(view, /overrideBatchCount > 0 && !pushBatch\.overrideConfirmed/)
+  assert.match(view, /for \(const \[index, item\] of pushBatch\.items\.entries\(\)\)/)
+})
+
+test('retry only continues a matching dispatch after reading its current status', async () => {
+  const current = {
+    document_id: 'doc-1', version_id: 'v2', relative_path: 'project/file.GEN',
+    machine_ip: '10.1.133.197', material: 'AH36', thickness: 12, quantity: 2,
+  }
+  const selected = {
+    documentId: 'doc-1', versionId: 'v2', filePath: 'project\\file.GEN',
+    material: 'AH36', thickness: 12, quantity: 2,
+  }
+  assert.equal(matchesDispatchParameters(current, selected, '10.1.133.197'), true)
+  for (const changed of [
+    { version_id: 'v3' }, { relative_path: 'project/other.GEN' },
+    { machine_ip: '10.1.133.198' }, { material: 'AH32' },
+    { thickness: 10 }, { quantity: 3 },
+  ]) {
+    assert.equal(matchesDispatchParameters({ ...current, ...changed }, selected, '10.1.133.197'), false)
+  }
+
+  const calls = []
+  globalThis.fetch = async (url) => {
+    calls.push(String(url))
+    return { ok: true, json: async () => ({ success: true, data: { ...current, can_execute: false, stage: 'upload_unknown' } }) }
+  }
+  const status = await getCuttingDispatch('task/1')
+  assert.equal(status.can_execute, false)
+  assert.deepEqual(calls, ['/api/v1/cutting/dispatches/task%2F1'])
+
+  const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
+  assert.match(view, /const current = await getCuttingDispatch\(item\.dispatchId\)/)
+  assert.match(view, /if \(current\.status === 'sent' \|\| !item\.retryable\) return/)
+  assert.match(view, /上传结果待核对的任务须先检查魔盒/)
+  assert.match(view, /核对并继续已有任务/)
+  assert.match(view, /刷新清单重选/)
 })

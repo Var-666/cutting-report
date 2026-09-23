@@ -66,6 +66,56 @@ test('three standard reports reuse the quick period popover', () => {
   assert.match(period.scriptSetup.content, /inclusiveDays > props\.maxDays/)
 })
 
+test('report panels share honest loading, empty and failed states without remounting charts', () => {
+  const panel = descriptor('ReportTrendPanel', 'components')
+  const panelState = descriptor('ReportPanelState', 'components')
+  const query = descriptor('StandardReportQuery', 'components')
+
+  assert.match(panel.scriptSetup.content, /import ReportPanelState from/)
+  assert.match(panel.scriptSetup.content, /if \(props\.error && !props\.hasData\)/)
+  assert.match(panel.scriptSetup.content, /if \(props\.loading && !props\.hasData\)/)
+  assert.match(panel.scriptSetup.content, /if \(props\.empty && !props\.hasData\)/)
+  assert.match(panel.template.content, /v-if="loading && hasData"[\s\S]*正在更新/)
+  assert.match(panel.template.content, /'is-obscured': state/)
+  assert.match(panel.template.content, /<ReportPanelState v-if="state"/)
+  assert.doesNotMatch(panel.template.content, /v-if="!state"[^>]*ref="chartElement"/)
+  assert.match(panelState.template.content, /type === 'error' \? 'alert' : 'status'/)
+  assert.match(panelState.template.content, /aria-live="polite"/)
+  assert.match(query.template.content, /:aria-busy="loading"/)
+  assert.match(query.template.content, /loading \? '查询中' : hasData \? '更新报表' : '查询报表'/)
+})
+
+test('standard reports expose consistent state recovery and truthful initial metrics', () => {
+  const views = ['LeadershipReportView', 'WorkshopView', 'EnergyPeriodReportView'].map((name) => descriptor(name))
+  for (const view of views) {
+    assert.match(view.scriptSetup.content, /import ReportFeedback from/)
+    assert.match(view.template.content, /:has-data=/)
+    assert.match(view.template.content, /:loading=/)
+    assert.match(view.template.content, /:empty=/)
+    assert.match(view.template.content, /@retry=/)
+    assert.match(view.template.content, /:aria-busy="loading"/)
+  }
+
+  assert.match(views[0].template.content, /total\.task_count \?\? '--'/)
+  assert.match(views[1].template.content, /result\.report \? workshopMetrics\.taskCount : '--'/)
+  assert.match(views[2].template.content, /taskDay \? \(summary\.task_count \?\? '--'\) : '--'/)
+  assert.match(views[2].scriptSetup.content, /if \(value === null \|\| value === undefined \|\| !Number\.isFinite\(Number\(value\)\)\) return '--'/)
+})
+
+test('report export feedback can retry the exact last request', () => {
+  const exportSource = readFileSync(new URL('../src/composables/useReportExport.js', import.meta.url), 'utf8')
+  assert.match(exportSource, /lastRequest = \{ payload, format \}/)
+  assert.match(exportSource, /function retryExport\(\)[\s\S]*exportReport\(lastRequest\.payload, lastRequest\.format\)/)
+
+  for (const name of ['AdminLeadershipView', 'AdminWorkshopView', 'AdminEquipmentView']) {
+    const view = descriptor(name)
+    assert.match(view.scriptSetup.content, /retryExport/)
+    assert.match(view.template.content, /<ReportFeedback/)
+    assert.match(view.template.content, /action-label="重试导出"/)
+    assert.match(view.template.content, /@action="retryExport"/)
+  }
+})
+
 test('report analysis uses server source versions and starts immediately', () => {
   const analysis = descriptor('AnalysisPanel', 'components')
   const script = analysis.scriptSetup.content
@@ -77,6 +127,8 @@ test('report analysis uses server source versions and starts immediately', () =>
   assert.match(script, /onDeactivated\(pauseAnalysis\)/)
   assert.match(script, /requestController\?\.abort\(\)/)
   assert.match(script, /analyzeReport\([\s\S]*\}, \{ signal \}\)/)
+  assert.match(script, /dataVersion: props\.dataVersion \|\| undefined/)
+  assert.match(script, /guardrail_fallback[^\n]*模型结果未通过校验 · 可信降级/)
   assert.match(script, /const targetKey = requestKey\(\)[\s\S]*if \(!props\.ready \|\| !props\.reportDate\)/)
   assert.match(script, /if \(!props\.reportDate \|\| targetKey !== displayedRequestKey\) \{[\s\S]*analysis\.value = null/)
 
@@ -90,6 +142,10 @@ test('report analysis uses server source versions and starts immediately', () =>
     assert.match(template, pattern)
     assert.doesNotMatch(template, /context-version/)
   }
+
+  const api = readFileSync(new URL('../src/api/reports.js', import.meta.url), 'utf8')
+  assert.match(api, /analyzeReport\(\{[^}]*dataVersion[^}]*\}/)
+  assert.match(api, /data_version: dataVersion \|\| undefined/)
 })
 
 test('report values use one decimal place throughout the UI', () => {

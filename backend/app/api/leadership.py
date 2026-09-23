@@ -12,7 +12,7 @@ from app.api.auth import require_admin
 from app.config import settings
 from app.database.sqlserver import SqlServerConfigurationError
 from app.models.domain import to_primitive
-from app.services.report_analysis_service import generate_data_version
+from app.services.report_analysis_service import leadership_analysis_source_version
 from app.services.request_cancellation import SqlRequestCancelled
 
 
@@ -48,24 +48,7 @@ def _result_with_refresh_state(request: Request, report_month: date, result):
 
 
 def _with_analysis_source_version(data: dict) -> dict:
-    # Snapshot timestamps and refresh flags are transport state, not model input.
-    relevant = {
-        key: data.get(key)
-        for key in (
-            "report_month",
-            "period_start",
-            "period_end",
-            "daily_records",
-            "monthly_records",
-            "current_month_total",
-            "comparison_total",
-            "comparison_start",
-            "comparison_end",
-            "year_ago_total",
-            "project_distribution",
-        )
-    }
-    data["analysis_source_version"] = generate_data_version(relevant)
+    data["analysis_source_version"] = leadership_analysis_source_version(data)
     return data
 
 

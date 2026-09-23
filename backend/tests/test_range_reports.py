@@ -109,6 +109,41 @@ def test_equipment_analysis_reports_long_range_as_validation_error(tmp_path: Pat
     assert "31 天" in caught.value.detail
 
 
+@pytest.mark.parametrize("report_type", ["leadership", "workshop", "equipment"])
+def test_analysis_rejects_a_stale_visible_report_version(
+    tmp_path: Path, report_type: str
+) -> None:
+    _, _, pipeline = _pipeline(tmp_path)
+    request = SimpleNamespace(
+        state=SimpleNamespace(request_id="analysis-stale-version"),
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                report_analysis_service=pipeline.analysis_service,
+                range_report_service=pipeline.range_service,
+                leadership_report_service=pipeline.leadership_service,
+                workshop=pipeline.workshop_repository,
+                query_service=pipeline.query_service,
+                energy_period_service=pipeline.energy_period_service,
+            )
+        ),
+    )
+
+    with pytest.raises(HTTPException) as caught:
+        analyze_report(
+            AnalysisRequest(
+                report_type=report_type,
+                report_date=date(2026, 8, 1),
+                period_start=date(2026, 8, 1) if report_type == "workshop" else None,
+                period_end=date(2026, 8, 1) if report_type == "workshop" else None,
+                data_version="0" * 64,
+            ),
+            request,
+        )
+
+    assert caught.value.status_code == 409
+    assert "刷新当前报表" in caught.value.detail
+
+
 @pytest.mark.parametrize(
     ("report_type", "expected_fact_label"),
     [

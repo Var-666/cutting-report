@@ -5,12 +5,14 @@ import CatalogTreeNode from '../components/CatalogTreeNode.vue'
 import AppIcon from '../components/AppIcon.vue'
 import heroImage from '../assets/home-laser-cutting.webp'
 import { parseCuttingInstructionFilename } from '../utils/cuttingInstructionName.js'
+import { matchesDispatchParameters } from '../utils/cuttingDispatchBatch.js'
 import { formatChineseDateTime } from '../utils/dateDisplay.js'
 import { useDialogFocus } from '../composables/useDialogFocus.js'
 import {
   cancelCuttingDispatch,
   createCuttingDispatchBatch,
   executeCuttingDispatch,
+  getCuttingDispatch,
   getCuttingStatus,
   listCuttingDispatches,
   listCuttingMachines,
@@ -55,6 +57,7 @@ const pushBatch = reactive({
   currentFilename: '',
   error: '',
   nonStandardConfirmed: false,
+  overrideConfirmed: false,
 })
 const pushBatchDialog = ref(null)
 const pushBatchOpen = computed(() => pushBatch.visible)
@@ -101,6 +104,7 @@ const catalogLoading = ref(false)
 
 const invalidBatchCount = computed(() => pushBatch.items.filter((item) => batchItemError(item)).length)
 const nonStandardBatchCount = computed(() => pushBatch.items.filter((item) => !item.parsed).length)
+const overrideBatchCount = computed(() => pushBatch.items.filter((item) => hasNameMismatch(item)).length)
 const batchStatusCounts = computed(() => {
   const counts = { sent: 0, duplicate: 0, failed: 0, pending: 0 }
   pushBatch.items.forEach((item) => {
@@ -143,6 +147,10 @@ function fileKey(file) {
   return JSON.stringify([file.document_id, file.version_id, file.normalized_path])
 }
 
+function alreadySelectedDocument(files, file) {
+  return [...files.values()].some((selected) => String(selected.document_id) === String(file.document_id))
+}
+
 function clearSelectedFiles() {
   selectedFiles.value = new Map()
 }
@@ -166,6 +174,10 @@ function setFileSelected(file, selected) {
     showNotice('一次最多选择 20 个文件，请先取消部分文件。', 'error')
     return
   }
+  if (selected && !next.has(key) && alreadySelectedDocument(next, file)) {
+    showNotice('同一 PDM 文件只能选择一个版本，请先取消已选版本。', 'error')
+    return
+  }
   if (selected) next.set(key, file)
   else next.delete(key)
   selectedFiles.value = next
@@ -179,16 +191,18 @@ function toggleVisibleFiles(selected) {
     if (!selected) {
       next.delete(key)
     } else if (!next.has(key) && next.size < 20) {
-      next.set(key, file)
+      if (alreadySelectedDocument(next, file)) skipped += 1
+      else next.set(key, file)
     } else if (!next.has(key)) {
       skipped += 1
     }
   }
   selectedFiles.value = next
-  if (skipped) showNotice(`已选满 20 项，其余 ${skipped} 项未选中。`, 'error')
+  if (skipped) showNotice(`另有 ${skipped} 项因已满 20 项或文件版本重复而未选中。`, 'error')
 }
 
 function openSinglePush(file) {
+  if (pushBatch.saving) return
   selectedFiles.value = new Map([[fileKey(file), file]])
   openPushBatch()
 }
@@ -236,6 +250,8 @@ function createPushBatchItem(file) {
     status: 'pending',
     error: '',
     dispatchId: '',
+    retryable: false,
+    statusChecked: false,
   }
 }
 
@@ -246,6 +262,12 @@ function batchItemError(item) {
   const quantity = Number(item.quantity)
   if (!Number.isInteger(quantity) || quantity < 1 || quantity > 10000) return '加工数量必须是 1–10000 的整数'
   return ''
+}
+
+function hasNameMismatch(item) {
+  if (!item.parsed) return false
+  return String(item.material || '').trim().toLowerCase() !== item.parsed.material.toLowerCase()
+    || Number(item.thickness) !== item.parsed.thickness
 }
 
 function openPushBatch() {
@@ -259,6 +281,7 @@ function openPushBatch() {
   pushBatch.currentFilename = ''
   pushBatch.error = ''
   pushBatch.nonStandardConfirmed = false
+  pushBatch.overrideConfirmed = false
   pushBatch.resultsReady = false
   bulkQuantity.value = 1
   pushBatch.visible = true
@@ -288,7 +311,25 @@ function applyBulkQuantity() {
     return
   }
   pushBatch.items.forEach((item) => { item.quantity = quantity })
+  if (nonStandardBatchCount.value) pushBatch.nonStandardConfirmed = false
   pushBatch.error = ''
+}
+
+function invalidateBatchConfirmation(item) {
+  if (item.parsed) pushBatch.overrideConfirmed = false
+  else pushBatch.nonStandardConfirmed = false
+}
+
+function batchRequestItem(item) {
+  return {
+    document_id: item.documentId,
+    version_id: item.versionId,
+    file_path: item.filePath,
+    material: String(item.material).trim(),
+    thickness: Number(item.thickness),
+    quantity: Number(item.quantity),
+    name_check_confirmed: item.parsed ? hasNameMismatch(item) && pushBatch.overrideConfirmed : pushBatch.nonStandardConfirmed,
+  }
 }
 
 function batchStatusLabel(item) {
@@ -484,6 +525,78 @@ async function changePage(nextPage) {
   await loadFiles(nextPage)
 }
 
+function applyCreationResult(item, result) {
+  item.dispatchId = result?.dispatch?.dispatch_id || ''
+  item.retryable = false
+  item.statusChecked = false
+  if (result?.status === 'created' && item.dispatchId) {
+    item.status = 'pending'
+    item.error = ''
+    return true
+  }
+  item.status = result?.status === 'duplicate' ? 'duplicate' : 'failed'
+  item.error = result?.error || '任务创建结果不完整，请核对派发记录后重试'
+  return false
+}
+
+function isStaleFileError(item) {
+  return /版本已变化|路径已变化|PDM中未找到/.test(item.error)
+}
+
+async function syncBatchItem(item) {
+  const current = await getCuttingDispatch(item.dispatchId)
+  const matching = matchesDispatchParameters(current, item, dispatchForm.machineIp)
+  item.statusChecked = true
+  item.retryable = Boolean(current.can_execute) && matching
+  if (!matching) {
+    item.error = '已有任务的文件版本、机床或加工参数不一致，请在派发记录中核对，不要直接继续'
+  } else if (current.status === 'sent') {
+    item.status = 'sent'
+    item.error = ''
+  } else if (!current.can_execute) {
+    item.error = `${current.last_error || current.status_label}；${current.stage_label}，请核对派发记录和魔盒状态`
+  } else if (item.status === 'duplicate') {
+    item.error = '已有同参数任务，可以核对后继续执行'
+  } else {
+    item.status = 'failed'
+    item.error = current.last_error || '当前任务可安全重试'
+  }
+  return current
+}
+
+async function executeBatchItem(item) {
+  item.status = 'pushing'
+  item.retryable = false
+  item.error = ''
+  pushBatch.currentFilename = item.filename
+  operatingId.value = item.dispatchId
+  try {
+    const completed = await executeCuttingDispatch(item.dispatchId)
+    item.status = 'sent'
+    if (completed.local_file_cleanup?.error) item.error = completed.local_file_cleanup.error
+  } catch (error) {
+    item.status = 'failed'
+    item.error = error.message
+    try {
+      await syncBatchItem(item)
+    } catch {
+      item.error = `${error.message}；任务状态未知，请先核对状态，不要重复上传`
+    }
+  } finally {
+    operatingId.value = ''
+  }
+}
+
+async function refreshBatchHistory() {
+  await Promise.allSettled([loadHistory()])
+  const counts = batchStatusCounts.value
+  const cleanupWarnings = pushBatch.items.filter((item) => item.status === 'sent' && item.error).length
+  showNotice(
+    `文件派发结果：成功 ${counts.sent} 项，失败 ${counts.failed} 项，重复 ${counts.duplicate} 项${cleanupWarnings ? `，本地文件清理警告 ${cleanupWarnings} 项` : ''}。`,
+    counts.failed || counts.duplicate || cleanupWarnings ? 'error' : 'info',
+  )
+}
+
 async function submitPushBatch() {
   if (pushBatch.saving) return
   pushBatch.error = ''
@@ -503,6 +616,10 @@ async function submitPushBatch() {
     pushBatch.error = `请先确认已人工核对 ${nonStandardBatchCount.value} 个非标准文件名及其加工参数。`
     return
   }
+  if (overrideBatchCount.value && !pushBatch.overrideConfirmed) {
+    pushBatch.error = `有 ${overrideBatchCount.value} 个文件的参数与标准文件名不一致，请先人工核对并确认。`
+    return
+  }
   if (!systemStatus.value?.can_push) {
     pushBatch.error = '当前文件来源或推送服务不可用。'
     return
@@ -517,65 +634,94 @@ async function submitPushBatch() {
     item.status = 'pending'
     item.error = ''
     item.dispatchId = ''
+    item.retryable = false
+    item.statusChecked = false
   })
 
   try {
     const created = await createCuttingDispatchBatch({
       machine_ip: dispatchForm.machineIp,
-      items: pushBatch.items.map((item) => ({
-        document_id: item.documentId,
-        version_id: item.versionId,
-        file_path: item.filePath,
-        material: String(item.material).trim(),
-        thickness: Number(item.thickness),
-        quantity: Number(item.quantity),
-      })),
+      items: pushBatch.items.map(batchRequestItem),
     })
     const createdItems = []
-    for (const result of created.items || []) {
-      const item = pushBatch.items.find((candidate) => candidate.documentId === result.document_id)
-      if (!item) continue
-      item.dispatchId = result.dispatch?.dispatch_id || ''
-      if (result.status === 'created') {
-        item.status = 'pending'
-        createdItems.push(item)
-      } else {
-        item.status = result.status === 'duplicate' ? 'duplicate' : 'failed'
-        item.error = result.error || '任务创建失败'
+    for (const [index, item] of pushBatch.items.entries()) {
+      const result = created.items?.[index]
+      if (result && String(result.document_id) !== item.documentId) {
+        item.status = 'failed'
+        item.error = '任务创建结果与所选文件不一致，请核对派发记录'
+        continue
       }
+      if (applyCreationResult(item, result)) createdItems.push(item)
     }
 
     pushBatch.completed = pushBatch.items.length - createdItems.length
     for (const item of createdItems) {
-      item.status = 'pushing'
-      pushBatch.currentFilename = item.filename
-      operatingId.value = item.dispatchId
-      try {
-        const completed = await executeCuttingDispatch(item.dispatchId)
-        item.status = 'sent'
-        if (completed.local_file_cleanup?.error) item.error = completed.local_file_cleanup.error
-      } catch (error) {
-        item.status = 'failed'
-        item.error = error.message
-      } finally {
-        pushBatch.completed += 1
-      }
+      await executeBatchItem(item)
+      pushBatch.completed += 1
     }
 
     pushBatch.resultsReady = true
     pushBatch.currentFilename = ''
     clearSelectedFiles()
-    await Promise.allSettled([loadHistory()])
-    const counts = batchStatusCounts.value
-    const cleanupWarnings = pushBatch.items.filter((item) => item.status === 'sent' && item.error).length
-    const message = `文件派发完成：成功 ${counts.sent} 项，失败 ${counts.failed} 项，重复 ${counts.duplicate} 项${cleanupWarnings ? `，本地文件清理警告 ${cleanupWarnings} 项` : ''}。`
-    showNotice(message, counts.failed || counts.duplicate || cleanupWarnings ? 'error' : 'info')
+    await refreshBatchHistory()
   } catch (error) {
-    pushBatch.error = error.message
+    pushBatch.error = `任务创建结果未确认：${error.message}。重新提交时已创建的活动任务会显示为重复，请先核对其状态。`
   } finally {
     pushBatch.saving = false
     operatingId.value = ''
   }
+}
+
+async function retryBatchItem(item) {
+  if (pushBatch.saving || !['failed', 'duplicate'].includes(item.status) || isStaleFileError(item)) return
+  pushBatch.saving = true
+  pushBatch.error = ''
+  pushBatch.completed = 0
+  pushBatch.total = 1
+  pushBatch.currentFilename = item.filename
+  try {
+    if (item.dispatchId) {
+      const current = await syncBatchItem(item)
+      if (current.status === 'sent' || !item.retryable) return
+    } else {
+      const created = await createCuttingDispatchBatch({
+        machine_ip: dispatchForm.machineIp,
+        items: [batchRequestItem(item)],
+      })
+      if (!applyCreationResult(item, created.items?.[0])) return
+    }
+    await executeBatchItem(item)
+  } catch (error) {
+    item.status = 'failed'
+    item.retryable = false
+    item.error = `${error.message}；请核对任务状态后再重试`
+  } finally {
+    pushBatch.completed = 1
+    pushBatch.currentFilename = ''
+    pushBatch.saving = false
+    await refreshBatchHistory()
+  }
+}
+
+async function checkBatchItem(item) {
+  if (pushBatch.saving || !item.dispatchId) return
+  pushBatch.saving = true
+  try {
+    await syncBatchItem(item)
+  } catch (error) {
+    item.retryable = false
+    item.error = `任务状态核对失败：${error.message}`
+  } finally {
+    pushBatch.saving = false
+    await Promise.allSettled([loadHistory()])
+  }
+}
+
+async function refreshBatchCatalog() {
+  if (pushBatch.saving) return
+  closePushBatch()
+  clearSelectedFiles()
+  await loadFiles(1)
 }
 
 async function executeSaved(item) {
@@ -816,7 +962,7 @@ onBeforeUnmount(pausePage)
           <div class="push-batch-common">
             <label><span>目标机床 IP</span><AppSelect v-model="dispatchForm.machineIp" :disabled="pushBatch.saving || pushBatch.resultsReady"><option value="" disabled>请选择 SYS_CONFIG 中的机床</option><option v-for="machine in machines" :key="machine.machine_ip" :value="machine.machine_ip">{{ machine.server_name ? `${machine.server_name} · ` : '' }}{{ machine.machine_ip }}（{{ machine.online ? '在线' : '未从列表确认在线' }}）</option></AppSelect></label>
             <label><span>统一加工数量</span><div><input v-model="bulkQuantity" name="bulk_quantity" type="number" min="1" max="10000" step="1" autocomplete="off" :disabled="pushBatch.saving || pushBatch.resultsReady" /><button type="button" :disabled="pushBatch.saving || pushBatch.resultsReady" @click="applyBulkQuantity">应用到全部</button></div></label>
-            <div class="push-batch-summary"><strong>{{ pushBatch.items.length }}</strong><span>个文件</span><small v-if="!pushBatch.resultsReady">{{ invalidBatchCount ? `${invalidBatchCount} 项待补参数` : nonStandardBatchCount ? `${nonStandardBatchCount} 项非标准名待确认` : '全部为标准名' }}</small><small v-else>已推送 {{ batchStatusCounts.sent }} · 失败 {{ batchStatusCounts.failed }} · 重复 {{ batchStatusCounts.duplicate }}</small></div>
+            <div class="push-batch-summary"><strong>{{ pushBatch.items.length }}</strong><span>个文件</span><small v-if="!pushBatch.resultsReady">{{ invalidBatchCount ? `${invalidBatchCount} 项待补参数` : nonStandardBatchCount || overrideBatchCount ? `${nonStandardBatchCount} 项非标准名、${overrideBatchCount} 项参数不符待确认` : '全部为标准名' }}</small><small v-else>已推送 {{ batchStatusCounts.sent }} · 失败 {{ batchStatusCounts.failed }} · 重复 {{ batchStatusCounts.duplicate }}</small></div>
           </div>
 
           <div v-if="pushBatch.error" class="push-batch-error" role="alert">{{ pushBatch.error }}</div>
@@ -826,13 +972,13 @@ onBeforeUnmount(pausePage)
             <table v-content-table="pageActive" class="push-batch-table">
               <thead><tr><th>文件 / 识别结果</th><th>材质</th><th>板厚（mm）</th><th>数量</th><th>状态</th><th>操作</th></tr></thead>
               <tbody>
-                <tr v-for="item in pushBatch.items" :key="item.referenceKey" :class="{ invalid: !pushBatch.resultsReady && (batchItemError(item) || !item.parsed) }">
-                  <td class="push-batch-file"><strong>{{ item.filename }}</strong><small>版本 {{ item.version }}</small><span v-if="item.parsed" class="recognized">已识别：{{ item.parsed.material }} · {{ item.parsed.thickness.toFixed(1) }} mm</span><span v-else class="manual">非标准名，请手工填写参数</span></td>
-                  <td><input v-model.trim="item.material" :name="`material_${item.referenceKey}`" :aria-label="`${item.filename} 材质`" autocomplete="off" :disabled="pushBatch.saving || pushBatch.resultsReady" maxlength="80" placeholder="例如：Q235B…" /></td>
-                  <td><input v-model="item.thickness" :name="`thickness_${item.referenceKey}`" :aria-label="`${item.filename} 板厚`" autocomplete="off" :disabled="pushBatch.saving || pushBatch.resultsReady" type="number" inputmode="decimal" min="0.01" max="1000" step="0.01" placeholder="例如：12.0…" /></td>
-                  <td><input v-model="item.quantity" :name="`quantity_${item.referenceKey}`" :aria-label="`${item.filename} 数量`" autocomplete="off" :disabled="pushBatch.saving || pushBatch.resultsReady" type="number" inputmode="numeric" min="1" max="10000" step="1" /></td>
-                  <td class="push-batch-result"><span :class="item.status">{{ batchStatusLabel(item) }}</span><small v-if="item.error" :title="item.error">{{ item.error }}</small></td>
-                  <td><button class="push-batch-remove" type="button" :disabled="pushBatch.saving || pushBatch.resultsReady" @click="removePushBatchItem(item)">移除</button></td>
+                <tr v-for="item in pushBatch.items" :key="item.referenceKey" :class="{ invalid: !pushBatch.resultsReady && (batchItemError(item) || !item.parsed || hasNameMismatch(item)) }">
+                  <td class="push-batch-file"><strong>{{ item.filename }}</strong><small>版本 {{ item.version }}</small><span v-if="item.parsed" class="recognized">已识别：{{ item.parsed.material }} · {{ item.parsed.thickness.toFixed(1) }} mm</span><span v-else class="manual">非标准名，请手工填写参数</span><span v-if="hasNameMismatch(item)" class="manual">加工参数与标准名不一致，请人工复核</span></td>
+                  <td><input v-model.trim="item.material" :name="`material_${item.referenceKey}`" :aria-label="`${item.filename} 材质`" autocomplete="off" :disabled="pushBatch.saving || pushBatch.resultsReady" maxlength="80" placeholder="例如：Q235B…" @input="invalidateBatchConfirmation(item)" /></td>
+                  <td><input v-model="item.thickness" :name="`thickness_${item.referenceKey}`" :aria-label="`${item.filename} 板厚`" autocomplete="off" :disabled="pushBatch.saving || pushBatch.resultsReady" type="number" inputmode="decimal" min="0.01" max="1000" step="0.01" placeholder="例如：12.0…" @input="invalidateBatchConfirmation(item)" /></td>
+                  <td><input v-model="item.quantity" :name="`quantity_${item.referenceKey}`" :aria-label="`${item.filename} 数量`" autocomplete="off" :disabled="pushBatch.saving || pushBatch.resultsReady" type="number" inputmode="numeric" min="1" max="10000" step="1" @input="invalidateBatchConfirmation(item)" /></td>
+                  <td class="push-batch-result"><span :class="item.status">{{ batchStatusLabel(item) }}</span><small v-if="item.dispatchId" :title="item.dispatchId">任务 {{ item.dispatchId }}</small><small v-if="item.error" :title="item.error">{{ item.error }}</small></td>
+                  <td class="push-batch-actions"><template v-if="pushBatch.resultsReady"><button v-if="item.status === 'failed' && isStaleFileError(item)" type="button" :disabled="pushBatch.saving" @click="refreshBatchCatalog">刷新清单重选</button><button v-else-if="item.status === 'failed' && (!item.dispatchId || item.retryable)" type="button" :disabled="pushBatch.saving" @click="retryBatchItem(item)">{{ item.dispatchId ? '重试当前任务' : '重试创建并派发' }}</button><button v-if="item.status === 'duplicate' && item.dispatchId && (!item.statusChecked || item.retryable)" type="button" :disabled="pushBatch.saving" @click="retryBatchItem(item)">核对并继续已有任务</button><button v-if="item.dispatchId && (item.status === 'failed' || item.status === 'duplicate')" type="button" :disabled="pushBatch.saving" @click="checkBatchItem(item)">核对状态</button><span v-if="item.status === 'sent'">已完成</span></template><button v-else class="push-batch-remove" type="button" :disabled="pushBatch.saving" @click="removePushBatchItem(item)">移除</button></td>
                 </tr>
               </tbody>
             </table>
@@ -840,12 +986,13 @@ onBeforeUnmount(pausePage)
           <div v-if="!pushBatch.resultsReady" class="push-batch-safety">
             <p>标准指令名已自动填充材质和板厚，请在提交前逐项核对。非标准名不会猜测参数，必须手工补全。</p>
             <label v-if="nonStandardBatchCount"><input v-model="pushBatch.nonStandardConfirmed" name="non_standard_confirmed" type="checkbox" :disabled="pushBatch.saving" />我已人工核对 {{ nonStandardBatchCount }} 个非标准文件名及其材质、板厚和数量</label>
+            <label v-if="overrideBatchCount"><input v-model="pushBatch.overrideConfirmed" name="standard_override_confirmed" type="checkbox" :disabled="pushBatch.saving" />我已人工核对 {{ overrideBatchCount }} 个与标准名不一致的材质或板厚</label>
           </div>
         </div>
 
         <footer class="push-batch-footer">
-          <template v-if="pushBatch.resultsReady"><span>处理结果已写入派发记录，失败项可在记录中查看原因或重试。</span><button class="primary" type="button" @click="closePushBatch">完成</button></template>
-          <template v-else><span>确认后将按顺序执行下载、校验、上传和机床指派。</span><div><button type="button" :disabled="pushBatch.saving" @click="closePushBatch">取消</button><button class="primary" type="button" :disabled="pushBatch.saving || invalidBatchCount > 0 || !dispatchForm.machineIp || !systemStatus?.can_push || (nonStandardBatchCount > 0 && !pushBatch.nonStandardConfirmed)" @click="submitPushBatch">{{ pushBatch.saving ? '顺序派发中…' : pushBatch.items.length === 1 ? '确认派发' : '确认并顺序派发' }}</button></div></template>
+          <template v-if="pushBatch.resultsReady"><span>可重试安全失败项；上传结果待核对的任务须先检查魔盒，系统不会自动重复上传。</span><button class="primary" type="button" :disabled="pushBatch.saving" @click="closePushBatch">完成</button></template>
+          <template v-else><span>确认后将按顺序执行下载、校验、上传和机床指派。</span><div><button type="button" :disabled="pushBatch.saving" @click="closePushBatch">取消</button><button class="primary" type="button" :disabled="pushBatch.saving || invalidBatchCount > 0 || !dispatchForm.machineIp || !systemStatus?.can_push || (nonStandardBatchCount > 0 && !pushBatch.nonStandardConfirmed) || (overrideBatchCount > 0 && !pushBatch.overrideConfirmed)" @click="submitPushBatch">{{ pushBatch.saving ? '顺序派发中…' : pushBatch.items.length === 1 ? '确认派发' : '确认并顺序派发' }}</button></div></template>
         </footer>
       </section>
     </div>
@@ -1020,8 +1167,12 @@ onBeforeUnmount(pausePage)
 .push-batch-result > span.failed { color:#9b3f37; background:#fdecea; }
 .push-batch-result > span.pushing { color:#155d7b; background:#e5f4f8; }
 .push-batch-result > span.duplicate { color:#805a20; background:#f5ead7; }
-.push-batch-result small { display:block; max-width:170px; margin-top:5px; overflow:hidden; color:#9b3f37; text-overflow:ellipsis; white-space:nowrap; }
+.push-batch-result small { display:block; max-width:220px; margin-top:5px; color:#9b3f37; overflow-wrap:anywhere; }
 .push-batch-remove { min-height:30px; padding:0 8px; color:#8b4c46; border:1px solid #dfc0bc; background:#fff; }
+.push-batch-actions { min-width:140px; }
+.push-batch-actions button { display:block; min-height:30px; margin:3px 0; padding:0 8px; color:var(--blue); border:1px solid #b9ccd6; border-radius:7px; background:#fff; }
+.push-batch-actions button:disabled { opacity:.55; cursor:not-allowed; }
+.push-batch-actions span { color:#267048; font-size:11px; }
 .push-batch-safety { margin:14px 0 0; color:#7b581d; font-size:10px; line-height:1.7; }
 .push-batch-safety p { margin:0; }
 .push-batch-safety label { display:flex; align-items:center; gap:7px; margin-top:8px; color:#91483e; font-weight:700; }

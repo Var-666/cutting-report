@@ -14,6 +14,7 @@ import {
 import AnalysisPanel from '../components/AnalysisPanel.vue'
 import AppIcon from '../components/AppIcon.vue'
 import MetricSparkline from '../components/MetricSparkline.vue'
+import ReportFeedback from '../components/ReportFeedback.vue'
 import ReportTrendPanel from '../components/ReportTrendPanel.vue'
 import StandardReportQuery from '../components/StandardReportQuery.vue'
 import { reportToday } from '../api/reportDates.js'
@@ -572,6 +573,7 @@ onUnmounted(() => {
         aria-label="车间报表查询条件"
         :anchor-date="filters.reportDate"
         :loading="loading"
+        :has-data="Boolean(result.report)"
         :export-disabled="loading || !result.report"
         :exporting="exporting"
         @submit="applyTaskFilters"
@@ -580,32 +582,41 @@ onUnmounted(() => {
       />
     </section>
 
-    <div v-if="error" class="global-error" role="alert"><strong>操作未完成</strong><span>{{ error }}，请检查筛选条件后重试。</span><button type="button" @click="error = ''">关闭</button></div>
+    <ReportFeedback
+      v-if="error && result.report"
+      type="error"
+      :title="isWorker ? '任务操作未完成' : '车间报表读取失败'"
+      :message="error"
+      action-label="重新查询"
+      dismissible
+      @action="applyTaskFilters"
+      @dismiss="error = ''"
+    />
 
-    <section v-if="!isWorker" class="workshop-kpis" aria-label="车间任务概况">
+    <section v-if="!isWorker" class="workshop-kpis" aria-label="车间任务概况" :aria-busy="loading">
       <article class="workshop-kpi kpi-blue">
         <span class="workshop-kpi__icon"><AppIcon name="tasks" size="21" /></span>
-        <div><span>全部任务<small>ALL TASKS</small></span><p><strong>{{ workshopMetrics.taskCount }}</strong> <small>项</small></p><em>当前查询区间</em></div>
+        <div><span>全部任务<small>ALL TASKS</small></span><p><strong>{{ result.report ? workshopMetrics.taskCount : '--' }}</strong> <small>项</small></p><em>当前查询区间</em></div>
         <MetricSparkline class="workshop-sparkline" :values="workshopMetricSeries.tasks" label="每日任务数量趋势" />
       </article>
       <article class="workshop-kpi kpi-amber">
         <span class="workshop-kpi__icon"><AppIcon name="clock" size="21" tone="amber" /></span>
-        <div><span>待确认<small>PENDING</small></span><p><strong>{{ workshopMetrics.pendingCount }}</strong> <small>项</small></p><em>等待工人确认</em></div>
+        <div><span>待确认<small>PENDING</small></span><p><strong>{{ result.report ? workshopMetrics.pendingCount : '--' }}</strong> <small>项</small></p><em>等待工人确认</em></div>
         <MetricSparkline class="workshop-sparkline" :values="workshopMetricSeries.pending" label="每日待确认任务趋势" />
       </article>
       <article class="workshop-kpi kpi-green">
         <span class="workshop-kpi__icon"><AppIcon name="check" size="21" /></span>
-        <div><span>已确认<small>CONFIRMED</small></span><p><strong>{{ workshopMetrics.confirmedCount }}</strong> <small>项</small></p><em>已登记完成人</em></div>
+        <div><span>已确认<small>CONFIRMED</small></span><p><strong>{{ result.report ? workshopMetrics.confirmedCount : '--' }}</strong> <small>项</small></p><em>已登记完成人</em></div>
         <MetricSparkline class="workshop-sparkline" :values="workshopMetricSeries.confirmed" label="每日已确认任务趋势" />
       </article>
       <article class="workshop-kpi kpi-red">
         <span class="workshop-kpi__icon"><AppIcon name="briefcase" size="21" tone="red" /></span>
-        <div><span>涉及工程<small>PROJECTS</small></span><p><strong>{{ workshopMetrics.projectCount }}</strong> <small>个</small></p><em>当前区间范围</em></div>
+        <div><span>涉及工程<small>PROJECTS</small></span><p><strong>{{ result.report ? workshopMetrics.projectCount : '--' }}</strong> <small>个</small></p><em>当前区间范围</em></div>
         <MetricSparkline class="workshop-sparkline" :values="workshopMetricSeries.projects" label="每日涉及工程趋势" />
       </article>
       <article class="workshop-kpi kpi-violet">
         <span class="workshop-kpi__icon"><AppIcon name="activity" size="21" /></span>
-        <div><span>确认率<small>CONFIRMATION RATE</small></span><p><strong>{{ number(workshopMetrics.confirmationRate) }}</strong> <small>%</small></p><em>按区间任务计算</em></div>
+        <div><span>确认率<small>CONFIRMATION RATE</small></span><p><strong>{{ result.report ? number(workshopMetrics.confirmationRate) : '--' }}</strong> <small>%</small></p><em>按区间任务计算</em></div>
         <MetricSparkline class="workshop-sparkline" :values="workshopMetricSeries.confirmationRate" label="每日任务确认率趋势" />
       </article>
     </section>
@@ -616,7 +627,15 @@ onUnmounted(() => {
     :title="isWorker ? '待确认任务表' : '区间车间报表'"
     :note="isWorker ? '只能确认尚未被其他工人确认的任务' : '已确认任务可撤销或改派'"
     :show-chart="false"
+    :loading="loading"
+    :has-data="result.items.length > 0"
+    :empty="Boolean(result.report) && !result.items.length"
+    :error="!result.report ? error : ''"
+    :loading-title="isWorker ? '正在读取待确认任务' : '正在读取车间报表'"
+    :empty-title="isWorker ? '当前没有待确认任务' : '当前条件下暂无任务'"
+    :empty-message="isWorker ? '所选日期或筛选条件下没有需要展示的任务。' : '可以调整统计区间或筛选条件后重新查询。'"
     fit-table-content
+    @retry="applyTaskFilters"
   >
     <template #summary>
       <form class="workshop-filters" :class="{ manager: !isWorker }" @submit.prevent="applyTaskFilters">
@@ -626,7 +645,6 @@ onUnmounted(() => {
         <button type="submit" :disabled="loading || !result.report"><AppIcon name="sparkles" size="14" />{{ loading ? '筛选中' : '筛选明细' }}</button>
       </form>
       <div v-if="result.report" class="workshop-report-state"><strong>{{ isWorker ? formatChineseDate(result.report.report_date) : `${formatChineseDate(result.report.period_start)} 至 ${formatChineseDate(result.report.period_end)}` }} 车间报表</strong><span>{{ isWorker ? `生成人：${result.report.generated_by_name || '--'} · 生成时间：${time(result.report.generated_at)} · ` : '' }}总任务 {{ result.report.item_count }} 项 · 已确认 {{ result.report.confirmed_count }} 项</span></div>
-      <div v-else class="workshop-empty-report"><strong>{{ loading ? '正在加载最近车间报表' : '该日期暂无车间报表' }}</strong><span>{{ loading ? '系统正在查找最近有数据的生产日并加载全部明细。' : '当前源数据在该日期没有已完成任务。' }}</span></div>
       <div v-if="result.report" class="workshop-summary">当前筛选返回 {{ result.total }} 项任务，所选工程/船号已确认 {{ result.confirmed_count }} 项</div>
       <div v-if="isWorker && result.report" class="workshop-batch-actions"><span>已选择 <strong>{{ selectedTaskCount }}</strong> 项待确认任务</span><div><button type="button" :disabled="!selectedTaskCount || batchConfirmation.saving" @click="clearSelectedTasks">清空选择</button><button class="primary" type="button" :disabled="!selectedTaskCount || loading || batchConfirmation.saving" @click="openBatchConfirmation()">确认选中任务</button></div></div>
     </template>
@@ -645,7 +663,7 @@ onUnmounted(() => {
         </tbody>
       </table>
     </template>
-    <template #footer><div v-if="result.report" class="history-pagination"><span class="history-page-summary">第 {{ result.page }} / {{ totalPages }} 页</span><div class="history-page-buttons"><button :disabled="loading || result.page <= 1" @click="load(result.page - 1)">上一页</button><button :disabled="loading || result.page >= totalPages" @click="load(result.page + 1)">下一页</button></div></div></template>
+    <template #footer><div v-if="result.report && result.items.length" class="history-pagination"><span class="history-page-summary">第 {{ result.page }} / {{ totalPages }} 页</span><div class="history-page-buttons"><button :disabled="loading || result.page <= 1" @click="load(result.page - 1)">上一页</button><button :disabled="loading || result.page >= totalPages" @click="load(result.page + 1)">下一页</button></div></div></template>
   </ReportTrendPanel>
 
     <ReportTrendPanel

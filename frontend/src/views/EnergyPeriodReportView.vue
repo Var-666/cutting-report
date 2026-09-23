@@ -15,6 +15,7 @@ import { recentTwelveMonthStart, reportToday } from '../api/reportDates.js'
 import AnalysisPanel from '../components/AnalysisPanel.vue'
 import AppIcon from '../components/AppIcon.vue'
 import MetricSparkline from '../components/MetricSparkline.vue'
+import ReportFeedback from '../components/ReportFeedback.vue'
 import ReportTrendPanel from '../components/ReportTrendPanel.vue'
 import StandardReportQuery from '../components/StandardReportQuery.vue'
 import { formatChineseDateTime, formatChineseMonth, sortReportPeriods } from '../utils/dateDisplay.js'
@@ -81,8 +82,8 @@ const summaryChartRows = computed(() => sortReportPeriods(monthlyReport.value?.r
 const month = computed(() => monthlyReport.value)
 const units = computed(() => taskDay.value?.units || { electricity: 'kWh', gas: 'Nm³' })
 const summary = computed(() => taskDay.value?.summary || {
-  task_count: 0,
-  total_work_time: 0,
+  task_count: null,
+  total_work_time: null,
   total_gas_consumption: null,
   total_electricity_consumption: null,
   gas_record_count: 0,
@@ -143,7 +144,8 @@ function format(value, digits = 1) {
 }
 
 function duration(value) {
-  const seconds = Math.max(0, Math.round(Number(value || 0)))
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return '--'
+  const seconds = Math.max(0, Math.round(Number(value)))
   return [Math.floor(seconds / 3600), Math.floor(seconds % 3600 / 60), seconds % 60]
     .map((item) => String(item).padStart(2, '0')).join(':')
 }
@@ -401,6 +403,10 @@ async function initializeReport() {
   await loadDefaultRanges()
 }
 
+function retryReport() {
+  return rangeQueryApplied.value ? loadRange(false) : initializeReport()
+}
+
 onMounted(initializeReport)
 onActivated(async () => {
   pageActive.value = true
@@ -435,6 +441,7 @@ watch(chartType, async () => { await nextTick(); renderCharts() })
         :max-days="31"
         :chart-options="energyChartOptions"
         :loading="loading"
+        :has-data="Boolean(taskDay)"
         :export-disabled="loading || !taskDay"
         :exporting="exporting"
         @submit="loadRange(true)"
@@ -443,10 +450,10 @@ watch(chartType, async () => { await nextTick(); renderCharts() })
       />
     </section>
 
-    <div v-if="error" class="global-error"><strong>查询提示</strong><span>{{ error }}</span><button @click="error = ''">关闭</button></div>
-    <div v-if="configurationError" class="energy-config-note"><strong>能管数据提示</strong><span>{{ configurationError }}。缺失值显示 --，不按零计算。</span></div>
+    <ReportFeedback v-if="error && taskDay && monthlyReport" type="error" title="设备报表更新失败" :message="error" action-label="重新查询" dismissible @action="retryReport" @dismiss="error = ''" />
+    <ReportFeedback v-if="configurationError" type="warning" title="能管数据提示" :message="`${configurationError}。缺失值显示 --，不按零计算。`" />
 
-    <section class="device-kpis" aria-label="设备区间汇总">
+    <section class="device-kpis" aria-label="设备区间汇总" :aria-busy="loading">
       <article class="device-kpi kpi-red">
         <span class="device-kpi__icon"><AppIcon name="zap" size="21" /></span>
         <div><span>电耗<small>POWER CONSUMPTION</small></span><p><strong>{{ format(summary.total_electricity_consumption) }}</strong> <small>{{ units.electricity }}</small></p><em>区间合计</em></div>
@@ -459,12 +466,12 @@ watch(chartType, async () => { await nextTick(); renderCharts() })
       </article>
       <article class="device-kpi kpi-teal">
         <span class="device-kpi__icon"><AppIcon name="activity" size="21" /></span>
-        <div><span>能耗覆盖率<small>ENERGY COVERAGE</small></span><p><strong>{{ energyCoverage }}</strong> <small>%</small></p><em>电 / 气数据匹配</em></div>
+        <div><span>能耗覆盖率<small>ENERGY COVERAGE</small></span><p><strong>{{ taskDay ? energyCoverage : '--' }}</strong> <small>%</small></p><em>电 / 气数据匹配</em></div>
         <MetricSparkline class="device-sparkline" :values="deviceMetricSeries.coverage" label="单项任务能耗覆盖率趋势" />
       </article>
       <article class="device-kpi kpi-violet">
         <span class="device-kpi__icon"><AppIcon name="tasks" size="21" /></span>
-        <div><span>任务数量<small>TASK COUNT</small></span><p><strong>{{ summary.task_count || 0 }}</strong> <small>项</small></p><em>{{ equipmentScopeLabel }}</em></div>
+        <div><span>任务数量<small>TASK COUNT</small></span><p><strong>{{ taskDay ? (summary.task_count ?? '--') : '--' }}</strong> <small>项</small></p><em>{{ equipmentScopeLabel }}</em></div>
         <MetricSparkline class="device-sparkline" :values="deviceMetricSeries.tasks" label="每日任务数量趋势" />
       </article>
       <article class="device-kpi kpi-cyan">
@@ -474,7 +481,20 @@ watch(chartType, async () => { await nextTick(); renderCharts() })
       </article>
     </section>
 
-    <ReportTrendPanel ref="taskPanel" number="01" title="区间任务能耗明细" :subtitle="`${appliedPeriodStart} 至 ${appliedPeriodEnd}`" chart-label="任务能耗图">
+    <ReportTrendPanel
+      ref="taskPanel"
+      number="01"
+      title="区间任务能耗明细"
+      :subtitle="`${appliedPeriodStart} 至 ${appliedPeriodEnd}`"
+      chart-label="任务能耗图"
+      :loading="loading"
+      :has-data="taskRows.length > 0"
+      :empty="Boolean(taskDay) && !taskRows.length"
+      :error="!taskDay ? error : ''"
+      empty-title="所选区间暂无任务"
+      empty-message="当前统计区间没有可展示的设备任务，可调整日期后重新查询。"
+      @retry="retryReport"
+    >
     <template #table>
         <table v-content-table="pageActive" class="energy-period-table energy-task-table summary-table" aria-label="任务能耗明细表">
           <thead><tr><th scope="col">序号</th><th scope="col">工程号</th><th scope="col">船号</th><th scope="col">分段名</th><th scope="col">任务开始</th><th scope="col">切割时长</th><th scope="col">电耗</th><th scope="col">气耗</th></tr></thead>
@@ -484,7 +504,20 @@ watch(chartType, async () => { await nextTick(); renderCharts() })
     </template>
     </ReportTrendPanel>
 
-    <ReportTrendPanel ref="periodPanel" number="02" :title="summaryTitle" :subtitle="summarySubtitle" :chart-label="summaryChartLabel">
+    <ReportTrendPanel
+      ref="periodPanel"
+      number="02"
+      :title="summaryTitle"
+      :subtitle="summarySubtitle"
+      :chart-label="summaryChartLabel"
+      :loading="summaryLoading"
+      :has-data="summaryRows.length > 0"
+      :empty="Boolean(monthlyReport) && !summaryRows.length"
+      :error="!monthlyReport ? error : ''"
+      :empty-title="summaryEmptyText"
+      empty-message="当前月份范围没有可展示的能耗汇总。"
+      @retry="initializeReport"
+    >
     <template #table><table v-content-table="pageActive" class="leadership-table energy-month-table summary-table" :aria-label="summaryTableLabel"><thead><tr><th scope="col">{{ summaryDateHeading }}</th><th scope="col">任务数</th><th scope="col">切割时长</th><th scope="col">电耗</th><th scope="col">气耗</th></tr></thead><tbody><tr v-for="row in summaryRows" :key="row.report_date"><td>{{ summaryPeriod(row.report_date) }}</td><td>{{ row.task_count }}</td><td>{{ duration(row.work_time_seconds) }}</td><td>{{ valueText(row.electricity) }}</td><td>{{ valueText(row.gas) }}</td></tr><tr v-if="!summaryRows.length"><td colspan="5" class="energy-empty">{{ summaryLoading ? '正在查询…' : summaryEmptyText }}</td></tr></tbody><tfoot><tr><th scope="row">汇总</th><th>{{ month?.total_task_count || 0 }}</th><th>{{ duration(month?.total_work_time_seconds) }}</th><th>{{ valueText(month?.summary?.electricity) }}</th><th>{{ valueText(month?.summary?.gas) }}</th></tr></tfoot></table></template>
     </ReportTrendPanel>
 

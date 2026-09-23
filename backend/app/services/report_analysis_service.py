@@ -20,11 +20,77 @@ from app.models.domain import (
     WorkshopRecord,
     to_primitive,
 )
-from app.services.llm_service import LlmService
+from app.services.llm_service import AnalysisOutputValidationError, LlmService
 
 
 logger = logging.getLogger(__name__)
-PROMPT_VERSION = "report-analysis-v7-one-decimal"
+PROMPT_VERSION = "report-analysis-v10-grounded-units-and-trends"
+
+
+class AnalysisDataVersionMismatch(ValueError):
+    """The report shown by the browser is no longer the authoritative version."""
+
+
+def leadership_analysis_source_version(report: LeadershipReportResult | dict) -> str:
+    data = to_primitive(report)
+    relevant = {
+        key: data.get(key)
+        for key in (
+            "report_month",
+            "period_start",
+            "period_end",
+            "daily_records",
+            "monthly_records",
+            "current_month_total",
+            "comparison_total",
+            "comparison_start",
+            "comparison_end",
+            "year_ago_total",
+            "project_distribution",
+        )
+    }
+    return generate_data_version(relevant)
+
+
+def workshop_analysis_source_version(report_date: str, records: list) -> str:
+    def task_id(row) -> str:
+        if isinstance(row, dict):
+            return str(row.get("task_id") or "")
+        return str(getattr(row, "task_id", ""))
+
+    ordered = sorted(records, key=task_id)
+    return generate_data_version(
+        {"report_date": report_date, "records": to_primitive(ordered)}
+    )
+
+
+def equipment_analysis_source_version(task_report: dict) -> str:
+    relevant = {
+        key: task_report.get(key)
+        for key in (
+            "report_date",
+            "period_start",
+            "period_end",
+            "records",
+            "summary",
+            "units",
+            "equipment_scope",
+            "energy_notice",
+        )
+    }
+    relevant["records"] = sorted(
+        task_report.get("records") or [],
+        key=lambda row: str(row.get("task_id") or ""),
+    )
+    relevant["equipment_scope"] = sorted(task_report.get("equipment_scope") or [])
+    return generate_data_version(relevant)
+
+
+def _require_current_data_version(expected: str | None, actual: str) -> None:
+    if expected and expected != actual:
+        raise AnalysisDataVersionMismatch(
+            "报表数据已更新，请刷新当前报表后重新生成智能分析。"
+        )
 
 
 def _duration(value: Decimal | int | float) -> str:
@@ -43,6 +109,16 @@ def _change(current: Decimal | int | float, previous: Decimal | int | float) -> 
     if previous_value == 0:
         return None
     return (float(current or 0) - previous_value) / previous_value * 100
+
+
+def _change_label(value: float | None) -> str:
+    if value is None:
+        return "无法比较"
+    if value > 0:
+        return f"上升 {value:.1f}%"
+    if value < 0:
+        return f"下降 {abs(value):.1f}%"
+    return "持平 0.0%"
 
 
 def _fact(identifier: str, label: str, value: str, source: str) -> dict[str, str]:
@@ -236,16 +312,18 @@ class ReportAnalysisService:
         context: dict,
         simulator: Callable[[dict], AnalysisResult],
         force: bool,
+        source_data_version: str | None = None,
     ) -> AnalysisResult:
         primitive_context, canonical = normalize_analysis_context(context)
-        data_version = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        input_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        data_version = source_data_version or input_hash
         engine = (
             f"model:{self.settings.llm_model}"
             if self.settings.llm_enabled
             else "simulated"
         )
         cache_key = hashlib.sha256(
-            f"{PROMPT_VERSION}|{report_type}|{report_date}|{engine}|{data_version}".encode(
+            f"{PROMPT_VERSION}|{report_type}|{report_date}|{engine}|{data_version}|{input_hash}".encode(
                 "utf-8"
             )
         ).hexdigest()
@@ -278,6 +356,12 @@ class ReportAnalysisService:
                 try:
                     result = self.llm.analyze_context(report_type, primitive_context)
                     mode = "model"
+                except AnalysisOutputValidationError as exc:
+                    logger.warning("LLM analysis rejected by output guardrails: %s", exc)
+                    result = simulator(primitive_context)
+                    result.status = "degraded"
+                    result.mode = "guardrail_fallback"
+                    mode = "guardrail_fallback"
                 except Exception:
                     logger.exception("LLM analysis failed; falling back to simulated analysis")
                     result = simulator(primitive_context)
@@ -296,7 +380,7 @@ class ReportAnalysisService:
                 cache_key=cache_key,
                 report_type=report_type,
                 report_date=report_date,
-                input_hash=data_version,
+                input_hash=input_hash,
                 data_version=data_version,
                 status=result.status,
                 mode=mode,
@@ -308,8 +392,14 @@ class ReportAnalysisService:
             return result
 
     def analyze_leadership(
-        self, report: LeadershipReportResult, *, force: bool = False
+        self,
+        report: LeadershipReportResult,
+        *,
+        expected_data_version: str | None = None,
+        force: bool = False,
     ) -> AnalysisResult:
+        source_data_version = leadership_analysis_source_version(report)
+        _require_current_data_version(expected_data_version, source_data_version)
         current = report.current_month_total
         previous_candidates = [
             item
@@ -346,26 +436,102 @@ class ReportAnalysisService:
         ]
         daily_counts = [item.task_count for item in report.daily_records]
         daily_anomalies: list[dict] = []
+        daily_threshold: float | None = None
         if len(daily_counts) >= 5:
             average = statistics.mean(daily_counts)
             deviation = statistics.pstdev(daily_counts)
-            threshold = average + 1.5 * deviation
+            daily_threshold = average + 1.5 * deviation
             daily_anomalies = [
                 {
                     "date": item.period_start.isoformat(),
                     "task_count": item.task_count,
-                    "threshold": round(threshold, 1),
+                    "threshold": round(daily_threshold, 1),
                 }
                 for item in report.daily_records
-                if deviation > 0 and item.task_count > threshold
+                if deviation > 0 and item.task_count > daily_threshold
             ]
+        previous_label = (
+            f"{report.comparison_start.isoformat()} 至 {report.comparison_end.isoformat()}"
+            if report.comparison_start and report.comparison_end
+            else "上一对比周期"
+        )
+        year_ago_label = (
+            report.report_month.replace(year=report.report_month.year - 1).isoformat()[:7]
+            if report.year_ago_total
+            else "上年同期"
+        )
+        project_value = (
+            f"{projects[0]['project_name']} · {projects[0]['task_count']} 项 · "
+            f"{projects[0]['task_count'] / current.task_count * 100:.1f}%"
+            if projects and current.task_count
+            else "暂无工程数据"
+        )
+        anomaly_value = (
+            f"{len(daily_anomalies)} 天"
+            if len(daily_counts) >= 5
+            else "样本不足"
+        )
+        anomaly_source = (
+            f"日任务数高位阈值 {daily_threshold:.1f} 项；命中 "
+            + (
+                "、".join(
+                    f"{item['date']} {item['task_count']} 项"
+                    for item in daily_anomalies
+                )
+                if daily_anomalies
+                else "0 天"
+            )
+            if daily_threshold is not None
+            else f"当前仅 {len(daily_counts)} 个日样本，少于 5 个，暂不判定高位生产日"
+        )
         facts = [
-            _fact("F001", f"{period_name}任务数", f"{current.task_count} 项", f"{period_name}汇总.task_count"),
-            _fact("F002", f"{period_name}切割长度", f"{_number(current.cut_length_m)} 米", f"{period_name}汇总.cut_length_m"),
-            _fact("F003", f"{period_name}切割时长", _duration(current.work_time_seconds), f"{period_name}汇总.work_time_seconds"),
-            _fact("F004", "任务数环比", f"{month_change:+.1f}%" if month_change is not None else "无法比较", f"({period_name}任务数-前一等长区间任务数)/前一等长区间任务数" if range_mode else "(当月任务数-上月任务数)/上月任务数"),
-            _fact("F005", "任务数同比", f"{year_change:+.1f}%" if year_change is not None else "无法比较", "(当月任务数-上年同月任务数)/上年同月任务数"),
-            _fact("F006", "主要工程", f"{projects[0]['project_name']} · {projects[0]['task_count']} 项 · {projects[0]['task_count'] / current.task_count * 100:.1f}%" if projects and current.task_count else "暂无工程数据", "当月工程分布中任务最多工程及其任务数/当月任务数"),
+            _fact(
+                "F001",
+                f"{period_name}任务数",
+                f"{current.task_count} 项",
+                f"报表周期 {period_label}；{period_name}汇总任务 {current.task_count} 项",
+            ),
+            _fact(
+                "F002",
+                f"{period_name}切割长度",
+                f"{_number(current.cut_length_m)} 米",
+                f"报表周期 {period_label}；{period_name}汇总切割长度 {_number(current.cut_length_m)} 米",
+            ),
+            _fact(
+                "F003",
+                f"{period_name}切割时长",
+                _duration(current.work_time_seconds),
+                f"报表周期 {period_label}；{period_name}汇总切割时长 {_duration(current.work_time_seconds)}",
+            ),
+            _fact(
+                "F004",
+                "任务数环比",
+                _change_label(month_change),
+                (
+                    f"当前 {current.task_count} 项；{previous_label} "
+                    f"{previous.task_count if previous else 0} 项；任务数环比 {_change_label(month_change)}；"
+                    f"切割长度环比 {_change_label(length_month_change)}"
+                    if previous
+                    else "未取得上一可比周期数据，任务数和切割长度均无法比较"
+                ),
+            ),
+            _fact(
+                "F005",
+                "任务数同比",
+                _change_label(year_change),
+                (
+                    f"当前 {current.task_count} 项；{year_ago_label} "
+                    f"{report.year_ago_total.task_count} 项；任务数同比 {_change_label(year_change)}"
+                    if report.year_ago_total
+                    else "未取得上年同期数据，任务数无法同比"
+                ),
+            ),
+            _fact(
+                "F006",
+                "主要工程与高位日",
+                f"{project_value}，高位生产日 {anomaly_value}",
+                f"任务最多工程：{project_value}；{anomaly_source}",
+            ),
         ]
         context = {
             "facts": facts,
@@ -377,6 +543,7 @@ class ReportAnalysisService:
             },
             "project_distribution": projects,
             "anomalies": daily_anomalies,
+            "daily_sample_count": len(daily_counts),
         }
         return self._analyze(
             report_type="leadership",
@@ -384,18 +551,28 @@ class ReportAnalysisService:
             context=context,
             simulator=self._simulate_leadership,
             force=force,
+            source_data_version=source_data_version,
         )
 
     @staticmethod
     def _simulate_leadership(context: dict) -> AnalysisResult:
         fact = {item["id"]: item["value"] for item in context["facts"]}
+        if context.get("daily_sample_count", 0) < 5:
+            high_day_text = "高位生产日样本不足，当前不能形成异常日判断"
+            suggestion = "建议先补足日样本，再根据任务趋势跟踪重点工程和资源安排"
+        elif context.get("anomalies"):
+            high_day_text = "高位生产日需要结合排产、批次与数据边界核实原因"
+            suggestion = "建议复核高位日排产与批次记录，并根据任务趋势跟踪重点工程和资源安排"
+        else:
+            high_day_text = "现有规则未识别高位生产日，仍需结合任务趋势关注重点工程"
+            suggestion = "建议按任务趋势持续跟踪重点工程和资源安排"
         return AnalysisResult(
             status="simulated",
             mode="simulated",
-            overview=f"{context['report_month']} 的月度任务量环比：{fact['F004']} [F004]。",
-            features=f"任务数同比：{fact['F005']} [F005]。主要工程：{fact['F006']} [F006]。",
-            alerts="任务数和切割长度反映生产规模，不能直接等同于产能利用率或计划达成率 [F001][F002]。",
-            suggestions="建议结合任务量变化与主要工程，核对生产计划和资源安排 [F004][F005][F006]。",
+            overview=f"{context['report_month']} 共完成 {fact['F001']}，任务数环比{fact['F004']} [F001][F004]。",
+            features=f"任务数同比{fact['F005']}，主要工程与高位日分布为 {fact['F006']} [F005][F006]。",
+            alerts=f"{high_day_text}，且任务规模不能直接等同于产能利用率或计划达成率 [F001][F006]。",
+            suggestions=f"{suggestion} [F004][F005][F006]。",
         )
 
     def analyze_workshop(
@@ -407,8 +584,11 @@ class ReportAnalysisService:
         comparison_date: str | None = None,
         year_ago_records: list[WorkshopRecord] | None = None,
         year_ago_date: str | None = None,
+        expected_data_version: str | None = None,
         force: bool = False,
     ) -> AnalysisResult:
+        source_data_version = workshop_analysis_source_version(report_date, records)
+        _require_current_data_version(expected_data_version, source_data_version)
         confirmed = sum(1 for row in records if row.confirmed_by)
         total_work = sum((row.work_time or Decimal("0") for row in records), Decimal("0"))
         total_cut = sum((row.cut_length or Decimal("0") for row in records), Decimal("0"))
@@ -424,18 +604,83 @@ class ReportAnalysisService:
         cut_change = _change(total_cut, previous_cut) if previous_cut is not None else None
         year_ago_count = len(year_ago_records) if year_ago_records is not None else None
         year_change = _change(len(records), year_ago_count) if year_ago_count is not None else None
+        unconfirmed = len(records) - confirmed
+        primary_project = (
+            f"{projects[0]['project_name']} · {projects[0]['task_count']} 项"
+            if projects
+            else "暂无工程数据"
+        )
+        trend_evidence = [f"待确认 {unconfirmed} 项"]
+        if previous_count is not None:
+            trend_evidence.append(
+                f"当前 {len(records)} 项；{comparison_date or '上一可比周期'} "
+                f"{previous_count} 项；任务数环比 {_change_label(task_change)}；"
+                f"切割长度环比 {_change_label(cut_change)}"
+            )
+        else:
+            trend_evidence.append("未取得上一可比周期数据，环比无法比较")
+        if year_ago_count is not None:
+            trend_evidence.append(
+                f"{year_ago_date or '上年同期'} {year_ago_count} 项；"
+                f"任务数同比 {_change_label(year_change)}"
+            )
+        else:
+            trend_evidence.append("未取得上年同期数据，同比无法比较")
+        anomaly_details = (
+            "、".join(
+                f"任务 {item['task_id']} 工时 {_duration(item['work_time'])}"
+                for item in anomalies
+            )
+            if anomalies
+            else "0 项"
+        )
         facts = [
-            _fact("F001", "任务总数", f"{len(records)} 项", f"车间日报[{report_date}].任务数"),
-            _fact("F002", "总切割长度", f"{_number(total_cut)} 米", f"车间日报[{report_date}].cut_length 汇总"),
-            _fact("F003", "总切割时长", _duration(total_work), f"车间日报[{report_date}].work_time 汇总"),
-            _fact("F004", "工人确认率", f"{confirmed / len(records) * 100:.1f}%" if records else "暂无任务", "已确认任务/任务总数"),
-            _fact("F005", "未确认任务", f"{len(records) - confirmed} 项", "任务总数-已确认任务"),
-            _fact("F006", "工时异常任务", f"{len(anomalies)} 项", "work_time > Q3 + 1.5×IQR（最多列出5项）"),
+            _fact(
+                "F001",
+                "任务总数",
+                f"{len(records)} 项",
+                f"车间报表周期 {report_date}；共 {len(records)} 项任务",
+            ),
+            _fact(
+                "F002",
+                "总切割长度",
+                f"{_number(total_cut)} 米",
+                f"车间报表周期 {report_date}；任务切割长度合计 {_number(total_cut)} 米",
+            ),
+            _fact(
+                "F003",
+                "总切割时长",
+                _duration(total_work),
+                f"车间报表周期 {report_date}；任务切割时长合计 {_duration(total_work)}",
+            ),
+            _fact(
+                "F004",
+                "工人确认率",
+                f"{confirmed / len(records) * 100:.1f}%" if records else "暂无任务",
+                f"已确认 {confirmed} 项；任务总数 {len(records)} 项；确认率 "
+                + (f"{confirmed / len(records) * 100:.1f}%" if records else "暂无任务"),
+            ),
+            _fact(
+                "F005",
+                "待确认与任务趋势",
+                f"{unconfirmed} 项待确认，环比{_change_label(task_change)}",
+                "；".join(trend_evidence),
+            ),
+            _fact(
+                "F006",
+                "工时异常与主要工程",
+                f"{len(anomalies)} 项异常，{primary_project}",
+                f"工时高于 Q3 加 1.5 倍 IQR 的任务共 {len(anomalies)} 项，最多展示 5 项："
+                f"{anomaly_details}；任务最多工程：{primary_project}",
+            ),
         ]
         context = {
             "facts": facts,
             "report_date": report_date,
+            "task_count": len(records),
             "confirmation_rate": round(confirmed / len(records) * 100, 1) if records else 0,
+            "unconfirmed_count": unconfirmed,
+            "anomaly_count": len(anomalies),
             "comparisons": {
                 "comparison_date": comparison_date,
                 "task_change_percent": round(task_change, 1) if task_change is not None else None,
@@ -452,18 +697,43 @@ class ReportAnalysisService:
             context=context,
             simulator=self._simulate_workshop,
             force=force,
+            source_data_version=source_data_version,
         )
 
     @staticmethod
     def _simulate_workshop(context: dict) -> AnalysisResult:
         fact = {item["id"]: item["value"] for item in context["facts"]}
+        task_count = int(context.get("task_count") or 0)
+        unconfirmed_count = int(context.get("unconfirmed_count") or 0)
+        anomaly_count = int(context.get("anomaly_count") or 0)
+        if not task_count:
+            alert = "当前周期暂无任务，无法判断确认闭环与工时异常"
+            suggestion = "建议先核对查询范围和任务入库状态，再开展班组分析"
+        elif unconfirmed_count and anomaly_count:
+            alert = (
+                f"仍有 {unconfirmed_count} 项未完成工人确认，另有 {anomaly_count} 项工时离群任务，"
+                "可能与程序复杂度、等待、返工或记录边界有关，需逐项核实"
+            )
+            suggestion = "建议班组先闭环待确认任务，再对离群任务核对程序、材料、等待与现场记录"
+        elif unconfirmed_count:
+            alert = f"仍有 {unconfirmed_count} 项未完成工人确认，现有规则未识别工时离群任务"
+            suggestion = "建议班组优先闭环待确认任务，并按工程抽查程序、材料和现场记录"
+        elif anomaly_count:
+            alert = (
+                f"任务确认已闭环，但有 {anomaly_count} 项工时离群任务，"
+                "可能与程序复杂度、等待、返工或记录边界有关，需逐项核实"
+            )
+            suggestion = "建议班组对离群任务核对程序、材料、等待与现场记录"
+        else:
+            alert = "任务确认已闭环，现有规则未识别工时离群任务"
+            suggestion = "建议保持任务确认闭环，并按工程抽查程序、材料和现场记录"
         return AnalysisResult(
             status="simulated",
             mode="simulated",
-            overview=f"{context['report_date']} 共纳入 {fact['F001']} 生产任务 [F001]。",
-            features=f"当前工人确认率：{fact['F004']} [F004]。切割长度与时长应结合任务类型评价 [F002][F003]。",
-            alerts=f"检出工时异常任务 {fact['F006']} [F006]；仍有 {fact['F005']} 未完成工人确认 [F005]。",
-            suggestions="建议优先完成未确认任务，并结合程序、材料和现场记录复核工时异常任务 [F005][F006]。",
+            overview=f"{context['report_date']} 共纳入{fact['F001']}生产任务，任务趋势为{fact['F005']} [F001][F005]。",
+            features=f"工人确认率为 {fact['F004']}，工时异常和主要工程分布为 {fact['F006']} [F004][F006]。",
+            alerts=f"{alert} [F004][F005][F006]。",
+            suggestions=f"{suggestion} [F004][F005][F006]。",
         )
 
     def analyze_equipment(
@@ -478,8 +748,12 @@ class ReportAnalysisService:
         comparison_date: str | None = None,
         year_ago_records: list[EquipmentRecord] | None = None,
         year_ago_date: str | None = None,
+        source_data_version: str | None = None,
+        expected_data_version: str | None = None,
         force: bool = False,
     ) -> AnalysisResult:
+        if source_data_version is not None:
+            _require_current_data_version(expected_data_version, source_data_version)
         total_work = sum((row.work_time or Decimal("0") for row in records), Decimal("0"))
         total_gas = sum((row.gas_consumption or Decimal("0") for row in records), Decimal("0"))
         total_electricity = sum((row.electricity_consumption or Decimal("0") for row in records), Decimal("0"))
@@ -524,19 +798,86 @@ class ReportAnalysisService:
             or bool({row.gas_data_status, row.electricity_data_status} & quality_statuses)
             for row in records
         )
+        energy_mode_label = {
+            "metered": "实测",
+            "mock": "模拟",
+            "unavailable": "不可用",
+        }.get(energy_data_mode, "未知")
+        task_trend_evidence = [f"当前 {len(records)} 项"]
+        if previous_count is not None:
+            task_trend_evidence.append(
+                f"{comparison_date or '上一可比周期'} {previous_count} 项；"
+                f"任务数环比 {_change_label(task_change)}"
+            )
+        else:
+            task_trend_evidence.append("未取得上一可比周期数据，环比无法比较")
+        if year_ago_count is not None:
+            task_trend_evidence.append(
+                f"{year_ago_date or '上年同期'} {year_ago_count} 项；"
+                f"任务数同比 {_change_label(year_change)}"
+            )
+        else:
+            task_trend_evidence.append("未取得上年同期数据，同比无法比较")
+        anomaly_details = (
+            "、".join(
+                f"任务 {item['task_id']} 工时 {_duration(item['work_time'])}"
+                for item in anomalies
+            )
+            if anomalies
+            else "0 项"
+        )
         facts = [
-            _fact("F001", "任务总数", f"{len(records)} 项", f"设备日报[{report_date}].任务数"),
-            _fact("F002", "总切割时长", _duration(total_work), f"设备日报[{report_date}].work_time 汇总"),
-            _fact("F003", "已匹配任务气耗", energy_fact(total_gas, gas_count, units["gas"]), "设备日报.gas_consumption 非空记录汇总"),
-            _fact("F004", "已匹配任务电耗", energy_fact(total_electricity, electric_count, units["electricity"]), "设备日报.electricity_consumption 非空记录汇总"),
-            _fact("F005", "工时异常任务", f"{len(anomalies)} 项", "work_time > Q3 + 1.5×IQR（最多列出5项）"),
-            _fact("F006", "能耗数据待核对任务", f"{quality_count} 项", f"气耗或电耗缺失/异常的任务计数，同一任务只计一次；计量区间重叠 {overlap_count} 项，采样或读数缺口 {sampling_issue_count} 项，起止时间异常 {invalid_interval_count} 项；另含未配置/未绑定记录"),
+            _fact(
+                "F001",
+                "任务总数",
+                f"{len(records)} 项",
+                f"设备报表周期 {report_date}；共 {len(records)} 项任务",
+            ),
+            _fact(
+                "F002",
+                "总切割时长",
+                _duration(total_work),
+                f"设备报表周期 {report_date}；任务切割时长合计 {_duration(total_work)}",
+            ),
+            _fact(
+                "F003",
+                "已匹配任务气耗",
+                energy_fact(total_gas, gas_count, units["gas"]),
+                f"数据模式 {energy_mode_label}；气耗有值 {gas_count} 项，共 {len(records)} 项；非空任务气耗合计 "
+                f"{energy_fact(total_gas, gas_count, units['gas'])}；插值 {gas_estimates} 项",
+            ),
+            _fact(
+                "F004",
+                "已匹配任务电耗",
+                energy_fact(total_electricity, electric_count, units["electricity"]),
+                f"数据模式 {energy_mode_label}；电耗有值 {electric_count} 项，共 {len(records)} 项；非空任务电耗合计 "
+                f"{energy_fact(total_electricity, electric_count, units['electricity'])}；插值 {electric_estimates} 项",
+            ),
+            _fact(
+                "F005",
+                "任务趋势与工时异常",
+                f"环比{_change_label(task_change)}，{len(anomalies)} 项异常",
+                "；".join(task_trend_evidence)
+                + f"；工时高于 Q3 加 1.5 倍 IQR 的任务共 {len(anomalies)} 项，最多展示 5 项：{anomaly_details}",
+            ),
+            _fact(
+                "F006",
+                "能耗数据待核对任务",
+                f"{quality_count} 项",
+                f"气耗或电耗缺失或异常的任务共 {quality_count} 项，同一任务只计一次；"
+                f"气耗覆盖 {gas_count}/{len(records)} 项，电耗覆盖 {electric_count}/{len(records)} 项；"
+                f"计量区间重叠 {overlap_count} 项，采样或读数缺口 {sampling_issue_count} 项，"
+                f"起止时间异常 {invalid_interval_count} 项；另含未配置或未绑定记录",
+            ),
         ]
         context = {
             "facts": facts,
             "report_date": report_date,
+            "task_count": len(records),
             "energy_data_mode": energy_data_mode,
             "energy_notice": energy_notice,
+            "anomaly_count": len(anomalies),
+            "quality_count": quality_count,
             "energy_coverage": {"gas": gas_count, "electricity": electric_count, "tasks": len(records)},
             "energy_estimates": {"gas": gas_estimates, "electricity": electric_estimates},
             "energy_quality": {
@@ -565,29 +906,60 @@ class ReportAnalysisService:
             context=context,
             simulator=self._simulate_equipment,
             force=force,
+            source_data_version=source_data_version,
         )
 
     @staticmethod
     def _simulate_equipment(context: dict) -> AnalysisResult:
         fact = {item["id"]: item["value"] for item in context["facts"]}
         energy_note = (
-            "气耗、电耗当前为模拟值，本次不进行能耗异常判定 [F003][F004]。"
+            "气耗、电耗当前为模拟值，本次不进行能耗异常判定 [F003][F004][F006]。"
             if context.get("energy_data_mode") == "mock"
-            else "气耗、电耗仅汇总已匹配任务，缺失不等于零，不进行能耗异常判定 [F003][F004]。"
+            else "气耗、电耗仅汇总已匹配任务，缺失不等于零，不进行能耗异常判定 [F003][F004][F006]。"
         )
         mode = context.get("energy_data_mode")
-        recommendation = (
-            "接入真实电表、气表及设备状态数据"
-            if mode == "mock"
-            else "检查内网连接、仪表参数编号和采样时间覆盖"
-            if mode == "unavailable"
-            else "复核缺失采样、重叠任务和插值估算，补充设备状态与能耗基准"
+        task_count = int(context.get("task_count") or 0)
+        anomaly_count = int(context.get("anomaly_count") or 0)
+        quality_count = int(context.get("quality_count") or 0)
+        if not task_count:
+            alert = "当前周期暂无设备任务，无法判断工时离群和能耗数据质量"
+        elif anomaly_count and quality_count:
+            alert = (
+                f"现有规则识别 {anomaly_count} 项工时离群任务和 {quality_count} 项能耗待核对任务，"
+                "可能与采样缺口、任务边界、配置或工艺差异有关，需逐项核实"
+            )
+        elif quality_count:
+            alert = (
+                f"现有规则识别 {quality_count} 项能耗待核对任务，"
+                "可能与采样缺口、任务边界或配置有关，需逐项核实"
+            )
+        elif anomaly_count:
+            alert = (
+                f"现有规则识别 {anomaly_count} 项工时离群任务，"
+                "可能与任务边界或工艺差异有关，需逐项核实"
+            )
+        else:
+            alert = "现有规则未识别工时离群或能耗数据待核对任务"
+        if not task_count:
+            recommendation = "先核对查询范围和设备任务入库状态"
+        elif mode == "mock":
+            recommendation = "接入真实电表、气表及设备状态数据"
+        elif mode == "unavailable":
+            recommendation = "检查内网连接、仪表参数编号和采样时间覆盖"
+        elif quality_count:
+            recommendation = "复核缺失采样、重叠任务和插值估算，补充设备状态与能耗基准"
+        else:
+            recommendation = "保持仪表采样巡检和任务边界校验"
+        follow_up = (
+            "并核对工时离群任务的程序、工艺和现场记录"
+            if anomaly_count
+            else "并按设备和工程抽查程序、工艺与现场记录"
         )
         return AnalysisResult(
             status="simulated",
             mode="simulated",
-            overview=f"{context['report_date']} 共纳入 {fact['F001']} 设备任务 [F001]，总切割时长 {fact['F002']} [F002]。",
+            overview=f"{context['report_date']} 共纳入{fact['F001']}设备任务，总切割时长 {fact['F002']} [F001][F002]。",
             features=energy_note,
-            alerts=f"检出工时异常任务 {fact['F005']} [F005]；能耗数据待核对任务 {fact['F006']} [F006]。",
-            suggestions=f"建议{recommendation}，并核对工时异常任务的现场记录 [F005][F006]。",
+            alerts=f"{alert}，任务趋势为{fact['F005']} [F005][F006]。",
+            suggestions=f"建议{recommendation}，{follow_up} [F005][F006]。",
         )
