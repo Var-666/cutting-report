@@ -125,6 +125,7 @@ async function submitConfiguration() {
     configuration.smtp_password = ''
     configurationMessage.value = result.message
     hasUnsavedChanges.value = false
+    await loadAll()
   } catch (exception) {
     configurationError.value = exception.message
   } finally {
@@ -286,7 +287,7 @@ onMounted(() => Promise.all([loadConfiguration(), loadAll()]))
     <section class="panel automation-settings">
       <div class="panel-title">
         <div><span>01</span><h2>运行与邮件参数</h2></div>
-        <p>在线保存至 data/settings.env，重启服务后生效</p>
+        <p>在线保存至 data/settings.env，保存后立即生效</p>
       </div>
       <div v-if="configurationLoading" class="empty">正在读取自动化配置…</div>
       <div v-else-if="!configurationLoaded" class="configuration-load-error" role="alert">
@@ -296,10 +297,10 @@ onMounted(() => Promise.all([loadConfiguration(), loadAll()]))
       <form v-else class="configuration-form" @submit.prevent="submitConfiguration" @input.capture="hasUnsavedChanges = true" @change.capture="hasUnsavedChanges = true">
         <div class="configuration-notice">
           <div>
-            <strong>配置保存后不会立即切换正在运行的服务</strong>
-            <span>重启后，定时扫描、邮件发送和重试策略会统一使用新参数。</span>
+            <strong>保存后，新任务与新邮件发送使用最新配置</strong>
+            <span>正在执行的任务会按开始时的配置完成；无需重启服务。</span>
           </div>
-          <span class="restart-badge">需重启生效</span>
+          <span class="restart-badge">即时生效</span>
         </div>
 
         <div class="configuration-grid">

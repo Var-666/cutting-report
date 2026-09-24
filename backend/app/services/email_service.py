@@ -5,6 +5,7 @@ from email.message import EmailMessage
 from email.utils import formataddr, make_msgid
 
 from app.config import Settings
+from app.services.automation_runtime import AutomationRuntime
 
 
 class EmailConfigurationError(RuntimeError):
@@ -12,37 +13,53 @@ class EmailConfigurationError(RuntimeError):
 
 
 class EmailService:
-    def __init__(self, settings: Settings) -> None:
+    def __init__(
+        self, settings: Settings, runtime: AutomationRuntime | None = None
+    ) -> None:
         self.settings = settings
+        self.runtime = runtime or AutomationRuntime(settings)
+
+    @staticmethod
+    def _configured(settings: Settings) -> bool:
+        return bool(
+            settings.smtp_enabled
+            and settings.smtp_host
+            and settings.smtp_from_email
+        )
 
     @property
     def configured(self) -> bool:
-        return bool(
-            self.settings.smtp_enabled
-            and self.settings.smtp_host
-            and self.settings.smtp_from_email
-        )
+        settings, _ = self.runtime.snapshot()
+        return self._configured(settings)
 
-    def status(self) -> dict:
+    def status(self, *, settings_snapshot: Settings | None = None) -> dict:
+        settings = settings_snapshot or self.runtime.snapshot()[0]
         return {
-            "enabled": self.settings.smtp_enabled,
-            "configured": self.configured,
-            "host": self.settings.smtp_host or None,
-            "port": self.settings.smtp_port,
-            "from_email": self.settings.smtp_from_email or None,
-            "use_tls": self.settings.smtp_use_tls,
-            "use_ssl": self.settings.smtp_use_ssl,
+            "enabled": settings.smtp_enabled,
+            "configured": self._configured(settings),
+            "host": settings.smtp_host or None,
+            "port": settings.smtp_port,
+            "from_email": settings.smtp_from_email or None,
+            "use_tls": settings.smtp_use_tls,
+            "use_ssl": settings.smtp_use_ssl,
         }
 
-    def send(self, delivery: dict, attachment: bytes | None) -> str:
-        if not self.configured:
+    def send(
+        self,
+        delivery: dict,
+        attachment: bytes | None,
+        *,
+        settings_snapshot: Settings | None = None,
+    ) -> str:
+        settings = settings_snapshot or self.runtime.snapshot()[0]
+        if not self._configured(settings):
             raise EmailConfigurationError("SMTP 尚未配置或未启用")
 
-        message_id = make_msgid(domain=self.settings.smtp_from_email.split("@")[-1])
+        message_id = make_msgid(domain=settings.smtp_from_email.split("@")[-1])
         message = EmailMessage()
         message["Message-ID"] = message_id
         message["From"] = formataddr(
-            (self.settings.smtp_from_name, self.settings.smtp_from_email)
+            (settings.smtp_from_name, settings.smtp_from_email)
         )
         message["To"] = ", ".join(delivery["recipients"])
         message["Subject"] = delivery["subject"]
@@ -65,15 +82,15 @@ class EmailService:
                 filename=delivery["filename"],
             )
 
-        smtp_class = smtplib.SMTP_SSL if self.settings.smtp_use_ssl else smtplib.SMTP
+        smtp_class = smtplib.SMTP_SSL if settings.smtp_use_ssl else smtplib.SMTP
         with smtp_class(
-            self.settings.smtp_host,
-            self.settings.smtp_port,
-            timeout=self.settings.smtp_timeout,
+            settings.smtp_host,
+            settings.smtp_port,
+            timeout=settings.smtp_timeout,
         ) as client:
-            if not self.settings.smtp_use_ssl and self.settings.smtp_use_tls:
+            if not settings.smtp_use_ssl and settings.smtp_use_tls:
                 client.starttls()
-            if self.settings.smtp_username:
-                client.login(self.settings.smtp_username, self.settings.smtp_password)
+            if settings.smtp_username:
+                client.login(settings.smtp_username, settings.smtp_password)
             client.send_message(message)
         return message_id

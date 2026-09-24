@@ -3,10 +3,13 @@ from types import SimpleNamespace
 
 import pytest
 from dotenv import dotenv_values
+from fastapi import HTTPException
 from pydantic import ValidationError
 
 from app.api import automation
 from app.config import settings
+from app.services.automation_runtime import AutomationRuntime
+from app.services.email_service import EmailService
 
 
 def _runtime_settings(tmp_path, **changes):
@@ -30,8 +33,18 @@ def _runtime_settings(tmp_path, **changes):
     return replace(settings, **values)
 
 
-def _request():
-    return SimpleNamespace(state=SimpleNamespace(request_id="test-request"))
+def _request(runtime=None):
+    runtime = runtime or AutomationRuntime(automation.settings)
+    return SimpleNamespace(
+        state=SimpleNamespace(request_id="test-request"),
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                automation_runtime=runtime,
+                email_service=EmailService(automation.settings, runtime=runtime),
+                automation=SimpleNamespace(summary=lambda: {}),
+            )
+        ),
+    )
 
 
 def test_configuration_response_never_contains_smtp_password(
@@ -76,7 +89,7 @@ def test_configuration_save_preserves_other_settings_and_existing_password(
     response = automation.save_automation_configuration(payload, _request())
 
     saved = dotenv_values(path, interpolate=False)
-    assert response["data"]["restart_required"] is True
+    assert response["data"]["restart_required"] is False
     assert saved["SQLSERVER_HOST"] == "production-db"
     assert saved["AUTOMATION_SCAN_SECONDS"] == "30.0"
     assert saved["SMTP_HOST"] == "smtp.new.example"
@@ -84,6 +97,72 @@ def test_configuration_save_preserves_other_settings_and_existing_password(
     assert saved["SMTP_USE_TLS"] == "false"
     assert saved["SMTP_USE_SSL"] == "true"
     assert path.stat().st_mode & 0o777 == 0o600
+
+
+def test_configuration_save_updates_live_status_and_preserves_password(
+    tmp_path, monkeypatch
+) -> None:
+    runtime_settings = _runtime_settings(tmp_path)
+    monkeypatch.setattr(automation, "settings", runtime_settings)
+    runtime = AutomationRuntime(runtime_settings)
+    request = _request(runtime)
+
+    response = automation.save_automation_configuration(
+        automation.AutomationConfigurationRequest(
+            automation_enabled=False,
+            automation_scan_seconds=3,
+            email_retry_base_seconds=12,
+            smtp_enabled=True,
+            smtp_host="smtp.live.example",
+            smtp_port=465,
+            smtp_username="live-user",
+            smtp_password=None,
+            smtp_from_email="live@example.com",
+            smtp_use_tls=False,
+            smtp_use_ssl=True,
+            smtp_timeout_seconds=8,
+        ),
+        request,
+    )
+
+    live = automation.get_automation_configuration(request)["data"]
+    status = automation.status(request)["data"]
+    current, revision = runtime.snapshot()
+    assert response["data"]["restart_required"] is False
+    assert revision == 1
+    assert current.smtp_password == "existing-secret"
+    assert live["automation_enabled"] is False
+    assert live["automation_scan_seconds"] == 3
+    assert live["email_retry_base_seconds"] == 12
+    assert live["smtp_password_configured"] is True
+    assert "existing-secret" not in str(live)
+    assert status["automation_enabled"] is False
+    assert status["smtp"]["host"] == "smtp.live.example"
+    assert status["smtp"]["use_ssl"] is True
+
+
+def test_failed_save_keeps_active_configuration(tmp_path, monkeypatch) -> None:
+    runtime_settings = _runtime_settings(tmp_path)
+    monkeypatch.setattr(automation, "settings", runtime_settings)
+    runtime = AutomationRuntime(runtime_settings)
+    request = _request(runtime)
+
+    def fail_write(_values):
+        raise OSError("disk unavailable")
+
+    monkeypatch.setattr(automation, "_write_automation_runtime_env", fail_write)
+    with pytest.raises(HTTPException, match="配置保存失败"):
+        automation.save_automation_configuration(
+            automation.AutomationConfigurationRequest(
+                smtp_enabled=True,
+                smtp_host="smtp.new.example",
+                smtp_from_email="reports@example.com",
+            ),
+            request,
+        )
+    current, revision = runtime.snapshot()
+    assert revision == 0
+    assert current.smtp_host == "smtp.old.example"
 
 
 def test_configuration_rejects_conflicting_or_incomplete_smtp_settings() -> None:

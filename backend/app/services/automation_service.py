@@ -12,6 +12,7 @@ from app.database.unit_of_work import UnitOfWork
 from app.database.workshop import DailyReportExistsError, WorkshopRepository
 from app.models.domain import ReportFilter
 from app.services.email_service import EmailService
+from app.services.automation_runtime import AutomationRuntime
 from app.services.query_service import QueryService
 
 
@@ -69,6 +70,7 @@ class AutomationService:
         repository: AutomationRepository,
         metadata: MetadataRepository,
         email_service: EmailService,
+        runtime: AutomationRuntime | None = None,
     ) -> None:
         if repository.database_path != metadata.database_path:
             raise ValueError("自动化仓储与元数据仓储必须使用同一个 SQLite 数据库")
@@ -76,6 +78,7 @@ class AutomationService:
         self.repository = repository
         self.metadata = metadata
         self.email_service = email_service
+        self.runtime = runtime or AutomationRuntime(settings)
         self.query_service = QueryService(settings)
         self.database = metadata.database
         self.workshop = WorkshopRepository(self.database)
@@ -86,7 +89,8 @@ class AutomationService:
         return value
 
     def process_due_schedules(self, now: datetime) -> int:
-        if not self.settings.automation_enabled:
+        runtime_settings, _ = self.runtime.snapshot()
+        if not runtime_settings.automation_enabled:
             return 0
         count = 0
         for schedule in self.repository.due_schedules(now.isoformat(timespec="seconds")):
@@ -218,6 +222,7 @@ class AutomationService:
         delivery = self.repository.claim_delivery(now.isoformat(timespec="seconds"))
         if delivery is None:
             return False
+        runtime_settings, _ = self.runtime.snapshot()
         try:
             attachment = None
             if delivery.get("attach_report"):
@@ -226,13 +231,15 @@ class AutomationService:
                 if not path.is_relative_to(root) or not path.is_file():
                     raise FileNotFoundError("报表附件不存在")
                 attachment = path.read_bytes()
-            message_id = self.email_service.send(delivery, attachment)
+            message_id = self.email_service.send(
+                delivery, attachment, settings_snapshot=runtime_settings
+            )
             self.repository.mark_delivery_sent(
                 delivery, message_id=message_id, now=now.isoformat(timespec="seconds")
             )
         except Exception as exc:
             delay = min(
-                self.settings.email_retry_base_seconds
+                runtime_settings.email_retry_base_seconds
                 * (2 ** max(0, int(delivery["attempt_count"]) - 1)),
                 3600,
             )

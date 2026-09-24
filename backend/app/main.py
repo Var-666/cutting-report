@@ -51,6 +51,7 @@ from app.services.request_cancellation import (
 )
 from app.services.worker_auth_service import WorkerAuthService
 from app.services.automation_service import AutomationService
+from app.services.automation_runtime import AutomationRuntime
 from app.services.cutting_dispatch_service import CuttingDispatchService
 from app.services.email_service import EmailService
 from app.services.file_source import build_file_source
@@ -93,18 +94,21 @@ async def lifespan(app: FastAPI):
     dispatches.initialize()
     pipeline = ReportPipeline(settings, metadata, definitions)
     pdf_service = PdfService()
-    email_service = EmailService(settings)
+    automation_runtime = AutomationRuntime(settings)
+    email_service = EmailService(settings, runtime=automation_runtime)
     automation_service = AutomationService(
-        settings, automation, metadata, email_service
+        settings, automation, metadata, email_service, runtime=automation_runtime
     )
     worker = ReportWorker(
-        settings, metadata, pipeline, automation_service=automation_service
+        settings, metadata, pipeline, automation_service=automation_service,
+        runtime=automation_runtime,
     )
     app.state.metadata = metadata
     app.state.sqlite_database = database
     app.state.workshop = workshop
     app.state.definitions = definitions
     app.state.automation = automation
+    app.state.automation_runtime = automation_runtime
     app.state.automation_service = automation_service
     app.state.email_service = email_service
     app.state.query_service = pipeline.query_service

@@ -10,6 +10,7 @@ from app.config import Settings
 from app.database.metadata import MetadataRepository
 from app.services.pipeline import ReportPipeline
 from app.services.automation_service import AutomationService
+from app.services.automation_runtime import AutomationRuntime
 
 
 logger = logging.getLogger(__name__)
@@ -22,11 +23,13 @@ class ReportWorker:
         metadata: MetadataRepository,
         pipeline: ReportPipeline,
         automation_service: AutomationService | None = None,
+        runtime: AutomationRuntime | None = None,
     ) -> None:
         self.settings = settings
         self.metadata = metadata
         self.pipeline = pipeline
         self.automation_service = automation_service
+        self.runtime = runtime or AutomationRuntime(settings)
         self.stop_event = threading.Event()
         self.thread = threading.Thread(
             target=self._run_loop, name="report-worker", daemon=True
@@ -43,7 +46,12 @@ class ReportWorker:
     def _run_loop(self) -> None:
         timezone = ZoneInfo(self.settings.timezone)
         next_automation_scan = 0.0
+        seen_revision = -1
         while not self.stop_event.is_set():
+            runtime_settings, revision = self.runtime.snapshot()
+            if revision != seen_revision:
+                next_automation_scan = 0.0
+                seen_revision = revision
             now = datetime.now(timezone)
             if (
                 self.automation_service is not None
@@ -53,7 +61,7 @@ class ReportWorker:
                     self.automation_service.process_due_schedules(now)
                 except Exception:
                     logger.exception("automation schedule scan failed")
-                next_automation_scan = monotonic() + self.settings.automation_scan_seconds
+                next_automation_scan = monotonic() + runtime_settings.automation_scan_seconds
 
             job = self.metadata.claim_next_job(now.isoformat(timespec="seconds"))
             if job is None:
