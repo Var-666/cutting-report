@@ -20,3 +20,10 @@ test('single-sentence analysis is not repeated as both heading and body', () => 
   assert.match(source, /<p v-if="sectionBody\(analysis\[section\.key\]\)"/)
   assert.doesNotMatch(source, /sectionBody\(analysis\[section\.key\]\) \|\| plainAnalysisText/)
 })
+
+test('core metric cards omit technical source labels while evidence keeps traceability', () => {
+  assert.doesNotMatch(source, /<small>\{\{ fact\.source \|\| '当前报表数据' \}\}<\/small>/)
+  assert.match(source, /<small>来源：\{\{ fact\.source \|\| '当前报表数据' \}\}<\/small>/)
+  assert.match(source, /\.analysis-facts article\{[^}]*min-height:104px[^}]*align-items:center/)
+  assert.match(source, /\.analysis-facts strong\{[^}]*font-size:18px!important/)
+})

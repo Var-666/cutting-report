@@ -77,6 +77,9 @@ function requestIsCurrent(sequence, signal) {
 }
 
 const taskRows = computed(() => taskDay.value?.records || [])
+const taskChartRows = computed(() => taskRows.value
+  .slice(0, 50)
+  .sort((left, right) => String(left.production_time || '').localeCompare(String(right.production_time || ''))))
 const summaryRows = computed(() => sortReportPeriods(monthlyReport.value?.rows || [], 'desc'))
 const summaryChartRows = computed(() => sortReportPeriods(monthlyReport.value?.rows || []))
 const month = computed(() => monthlyReport.value)
@@ -181,8 +184,8 @@ function renderCharts({ summary: renderSummary = true } = {}) {
   const periodChartElement = periodPanel.value?.getChartElement()
   if (taskChartElement && taskDay.value) {
     taskChart ||= init(taskChartElement)
-    const rows = taskRows.value.slice(0, 50).map((row) => ({ electricity: row.electricity_consumption, gas: row.gas_consumption }))
-    const labels = taskRows.value.slice(0, 50).map((row) => `${String(row.production_time || '').slice(5, 16).replace('T', ' ')} ${row.segment_name || ''}`)
+    const rows = taskChartRows.value.map((row) => ({ electricity: row.electricity_consumption, gas: row.gas_consumption }))
+    const labels = taskChartRows.value.map((row) => `${String(row.production_time || '').slice(5, 16).replace('T', ' ')} ${row.segment_name || ''}`)
     taskChart.setOption(chartOption(rows, labels), true)
   }
   if (renderSummary && periodChartElement && monthlyReport.value) {
@@ -518,7 +521,7 @@ watch(chartType, async () => { await nextTick(); renderCharts() })
       empty-message="当前月份范围没有可展示的能耗汇总。"
       @retry="initializeReport"
     >
-    <template #table><table v-content-table="pageActive" class="leadership-table energy-month-table summary-table" :aria-label="summaryTableLabel"><thead><tr><th scope="col">{{ summaryDateHeading }}</th><th scope="col">任务数</th><th scope="col">切割时长</th><th scope="col">电耗</th><th scope="col">气耗</th></tr></thead><tbody><tr v-for="row in summaryRows" :key="row.report_date"><td>{{ summaryPeriod(row.report_date) }}</td><td>{{ row.task_count }}</td><td>{{ duration(row.work_time_seconds) }}</td><td>{{ valueText(row.electricity) }}</td><td>{{ valueText(row.gas) }}</td></tr><tr v-if="!summaryRows.length"><td colspan="5" class="energy-empty">{{ summaryLoading ? '正在查询…' : summaryEmptyText }}</td></tr></tbody><tfoot><tr><th scope="row">汇总</th><th>{{ month?.total_task_count || 0 }}</th><th>{{ duration(month?.total_work_time_seconds) }}</th><th>{{ valueText(month?.summary?.electricity) }}</th><th>{{ valueText(month?.summary?.gas) }}</th></tr></tfoot></table></template>
+    <template #table><table v-content-table="pageActive" class="leadership-table energy-month-table summary-table" :aria-label="summaryTableLabel"><thead><tr><th scope="col">序号</th><th scope="col">{{ summaryDateHeading }}</th><th scope="col">任务数</th><th scope="col">切割时长</th><th scope="col">电耗</th><th scope="col">气耗</th></tr></thead><tbody><tr v-for="(row, index) in summaryRows" :key="row.report_date"><th scope="row">{{ index + 1 }}</th><td>{{ summaryPeriod(row.report_date) }}</td><td>{{ row.task_count }}</td><td>{{ duration(row.work_time_seconds) }}</td><td>{{ valueText(row.electricity) }}</td><td>{{ valueText(row.gas) }}</td></tr><tr v-if="!summaryRows.length"><td colspan="6" class="energy-empty">{{ summaryLoading ? '正在查询…' : summaryEmptyText }}</td></tr></tbody><tfoot><tr><th aria-hidden="true"></th><th scope="row">汇总</th><th>{{ month?.total_task_count || 0 }}</th><th>{{ duration(month?.total_work_time_seconds) }}</th><th>{{ valueText(month?.summary?.electricity) }}</th><th>{{ valueText(month?.summary?.gas) }}</th></tr></tfoot></table></template>
     </ReportTrendPanel>
 
     <AnalysisPanel

@@ -20,7 +20,7 @@ async function logout() {
   <div class="worker-shell">
     <a class="skip-link" href="#worker-main">跳到主要内容</a>
     <header class="worker-topbar">
-      <div class="brand-mark"><span></span><span></span><span></span></div>
+      <img class="brand-logo" src="/project-logo.png" alt="" width="46" height="46" />
       <div><p>WORKER PORTAL</p><h1>工人任务确认系统</h1></div>
       <div class="account-menu">
         <small>V{{ session.systemInfo?.version || '0.1.0' }} · {{ dataSourceLabel }}</small>

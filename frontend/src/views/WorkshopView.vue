@@ -17,6 +17,7 @@ import MetricSparkline from '../components/MetricSparkline.vue'
 import ReportFeedback from '../components/ReportFeedback.vue'
 import ReportTrendPanel from '../components/ReportTrendPanel.vue'
 import StandardReportQuery from '../components/StandardReportQuery.vue'
+import WorkshopStructureCharts from '../components/WorkshopStructureCharts.vue'
 import { reportToday } from '../api/reportDates.js'
 import { formatChineseDate, formatChineseDateTime } from '../utils/dateDisplay.js'
 import { useDialogFocus } from '../composables/useDialogFocus.js'
@@ -30,7 +31,7 @@ const emit = defineEmits(['export'])
 const today = reportToday()
 const pageSize = 10
 const filters = reactive({ reportDate: today, startDate: today, endDate: today, projectName: '', confirmationStatus: 'all' })
-const result = ref({ report: null, items: [], total: 0, page: 1, page_size: pageSize, project_names: [], confirmed_count: 0, worker_summaries: [] })
+const result = ref({ report: null, items: [], total: 0, page: 1, page_size: pageSize, project_names: [], confirmed_count: 0, worker_summaries: [], duration_distribution: [], status_distribution: [] })
 const loading = ref(false)
 const error = ref('')
 const pageActive = ref(true)
@@ -164,7 +165,7 @@ watch(() => [filters.reportDate, filters.startDate, filters.endDate], () => {
   filters.confirmationStatus = 'all'
   clearSelectedTasks()
   batchConfirmation.visible = false
-  result.value = { report: null, items: [], total: 0, page: 1, page_size: pageSize, project_names: [], confirmed_count: 0, worker_summaries: [] }
+  result.value = { report: null, items: [], total: 0, page: 1, page_size: pageSize, project_names: [], confirmed_count: 0, worker_summaries: [], duration_distribution: [], status_distribution: [] }
 })
 watch(() => [filters.projectName, filters.confirmationStatus], () => {
   clearSelectedTasks()
@@ -620,6 +621,13 @@ onUnmounted(() => {
         <MetricSparkline class="workshop-sparkline" :values="workshopMetricSeries.confirmationRate" label="每日任务确认率趋势" />
       </article>
     </section>
+
+    <WorkshopStructureCharts
+      v-if="!isWorker && result.report"
+      :duration-distribution="result.duration_distribution || []"
+      :status-distribution="result.status_distribution || []"
+      :loading="loading"
+    />
 
     <ReportTrendPanel
     class="workshop-panel"

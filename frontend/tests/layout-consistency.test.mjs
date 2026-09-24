@@ -8,6 +8,21 @@ function descriptor(name, folder = 'views') {
   return parse(source).descriptor
 }
 
+test('the supplied project logo is reused across primary product entry points', () => {
+  const admin = descriptor('AdminLayout', 'layouts').template.content
+  const worker = descriptor('WorkerLayout', 'layouts').template.content
+  const login = descriptor('LoginView').template.content
+  const index = readFileSync(new URL('../index.html', import.meta.url), 'utf8')
+
+  for (const template of [admin, worker, login]) {
+    assert.match(template, /src="\/project-logo\.png"/)
+    assert.match(template, /class="[^"]*brand-logo/)
+    assert.doesNotMatch(template, /class="brand-mark"/)
+  }
+  assert.match(index, /rel="icon" href="\/project-logo\.png"/)
+  assert.match(index, /rel="apple-touch-icon" href="\/project-logo\.png"/)
+})
+
 test('all application dropdowns use the shared below-field menu', () => {
   const names = [
     ['LeadershipReportView'], ['WorkshopView'], ['EnergyPeriodReportView'],
@@ -22,7 +37,11 @@ test('all application dropdowns use the shared below-field menu', () => {
 
   const select = descriptor('AppSelect', 'components')
   assert.match(select.template.content, /<Teleport to="body">/)
-  assert.match(select.scriptSetup.content, /top:\s*`\$\{Math\.round\(rect\.bottom \+ gutter\)\}px`/)
+  assert.match(select.scriptSetup.content, /width:\s*'max-content'/)
+  assert.match(select.scriptSetup.content, /Math\.max\(rect\.width, menuNaturalSize\.value\.width\)/)
+  assert.match(select.scriptSetup.content, /rect\.right - width/)
+  assert.match(select.scriptSetup.content, /const openAbove = naturalHeight > availableBelow && availableAbove > availableBelow/)
+  assert.match(select.scriptSetup.content, /openAbove \? rect\.top - gutter - renderedHeight : rect\.bottom \+ gutter/)
   assert.match(select.template.content, /role="listbox"/)
   assert.match(select.template.content, /aria-haspopup="listbox"/)
 })
@@ -206,9 +225,13 @@ test('equipment dashboard uses verified energy metrics and responsive home visua
 
 test('workshop dashboard uses verified confirmation metrics and responsive home visuals', () => {
   const workshop = descriptor('WorkshopView')
+  const structure = descriptor('WorkshopStructureCharts', 'components')
   const template = workshop.template.content
   const script = workshop.scriptSetup.content
   const styles = workshop.styles.map((style) => style.content).join('\n')
+  const structureTemplate = structure.template.content
+  const structureScript = structure.scriptSetup.content
+  const structureStyles = structure.styles.map((style) => style.content).join('\n')
 
   assert.match(template, /class="[^"]*report-hero-query[^"]*workshop-query-shell[^"]*"/)
   assert.equal((template.match(/class="workshop-kpi /g) || []).length, 5)
@@ -218,9 +241,20 @@ test('workshop dashboard uses verified confirmation metrics and responsive home 
   assert.match(template, /<AppIcon name="briefcase"/)
   assert.match(template, /<AppIcon name="activity"/)
   assert.match(template, /<AnalysisPanel/)
+  assert.match(template, /<WorkshopStructureCharts/)
+  assert.match(template, /result\.duration_distribution/)
+  assert.match(template, /result\.status_distribution/)
   assert.doesNotMatch(template, /workshop-analysis/)
+  assert.match(script, /import WorkshopStructureCharts from/)
   assert.match(script, /const workshopMetrics = computed/)
   assert.doesNotMatch(template, /异常任务/)
+  assert.match(structureScript, /import \{ BarChart, PieChart \} from 'echarts\/charts'/)
+  assert.match(structureScript, /type: 'pie'/)
+  assert.match(structureScript, /type: 'bar'/)
+  assert.match(structureTemplate, /任务时长分布/)
+  assert.match(structureTemplate, /任务确认状态/)
+  assert.doesNotMatch(structureTemplate, /异常/)
+  assert.match(structureStyles, /@media\(max-width:900px\)\{\.workshop-structure__grid\{grid-template-columns:1fr\}/)
   assert.match(styles, /grid-template-columns:repeat\(5,minmax\(0,1fr\)\)/)
   assert.match(styles, /@media\(max-width:560px\)[\s\S]*\.workshop-query-shell \.report-query,\.workshop-kpis/)
 })
@@ -235,6 +269,19 @@ test('home and equipment pages reveal independent results progressively', () => 
   assert.match(equipment.scriptSetup.content, /const taskRequest = getTaskEnergyDay/)
   assert.match(equipment.scriptSetup.content, /const summaryRequest = getEnergyMonthlyRange/)
   assert.match(equipment.scriptSetup.content, /await Promise\.allSettled\(\[taskRequest, summaryRequest\]\)/)
+})
+
+test('home quick access keeps three purposeful business cards', () => {
+  const home = descriptor('AdminHomeView')
+  const template = home.template.content
+  const styles = home.styles.map((style) => style.content).join('\n')
+
+  assert.match(template, /<nav class="quick-links" aria-label="核心报表快速入口">/)
+  assert.equal((template.match(/class="quick-link quick-link--/g) || []).length, 3)
+  assert.doesNotMatch(template, /quick-card__hint/)
+  assert.doesNotMatch(template, /quick-link__copy"><strong>[^<]+<\/strong><small>/)
+  assert.match(styles, /border-top:2px solid var\(--quick-color\)/)
+  assert.match(styles, /\.quick-link__arrow/)
 })
 
 test('workshop report includes the confirmed-worker interval summary', () => {
@@ -354,11 +401,13 @@ test('device report is one page with task details and a default monthly summary'
   assert.match(energy.template.content, /aria-label="任务能耗明细表"/)
   assert.match(energy.template.content, /:aria-label="summaryTableLabel"/)
   assert.match(energy.template.content, /class="leadership-table energy-month-table summary-table"/)
-  assert.match(energy.template.content, /<thead><tr><th scope="col">\{\{ summaryDateHeading \}\}<\/th><th scope="col">任务数<\/th><th scope="col">切割时长<\/th><th scope="col">电耗/)
+  assert.match(energy.template.content, /<thead><tr><th scope="col">序号<\/th><th scope="col">\{\{ summaryDateHeading \}\}<\/th><th scope="col">任务数<\/th><th scope="col">切割时长<\/th><th scope="col">电耗/)
+  assert.match(energy.scriptSetup.content, /const taskChartRows = computed\(\(\) => taskRows\.value[\s\S]*\.slice\(0, 50\)[\s\S]*\.sort\(\(left, right\) => String\(left\.production_time \|\| ''\)\.localeCompare\(String\(right\.production_time \|\| ''\)\)\)\)/)
+  assert.match(energy.scriptSetup.content, /const labels = taskChartRows\.value\.map/)
   assert.match(energy.scriptSetup.content, /getEnergyMonthlyRange\(recentStart, selectedDate/)
   assert.match(energy.template.content, /month\?\.total_task_count/)
   assert.doesNotMatch(energy.template.content, /电耗覆盖|气耗覆盖|保存状态/)
-  assert.match(energy.template.content, /colspan="5" class="energy-empty"/)
+  assert.match(energy.template.content, /colspan="6" class="energy-empty"/)
   assert.doesNotMatch(energy.template.content, /任务结束/)
   assert.doesNotMatch(energy.template.content, /数据状态/)
   assert.match(energy.template.content, /colspan="8" class="energy-empty"/)

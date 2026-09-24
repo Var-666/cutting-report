@@ -31,6 +31,7 @@ const open = ref(false)
 const activeIndex = ref(-1)
 const invalid = ref(false)
 const menuStyle = ref({})
+const menuNaturalSize = ref({ width: 0, height: 0 })
 
 function textContent(value) {
   if (value === null || value === undefined || typeof value === 'boolean') return ''
@@ -96,24 +97,47 @@ function positionMenu() {
   const rect = trigger.value.getBoundingClientRect()
   const gutter = 6
   const viewportPadding = 10
+  const viewportWidth = window.innerWidth - viewportPadding * 2
+  const width = Math.min(Math.max(rect.width, menuNaturalSize.value.width), viewportWidth)
+  const preferredLeft = rect.left + width > window.innerWidth - viewportPadding
+    ? rect.right - width
+    : rect.left
+  const left = Math.min(Math.max(viewportPadding, preferredLeft), window.innerWidth - width - viewportPadding)
   const availableBelow = Math.max(48, window.innerHeight - rect.bottom - viewportPadding - gutter)
-  const width = Math.min(rect.width, window.innerWidth - viewportPadding * 2)
-  const left = Math.min(Math.max(viewportPadding, rect.left), window.innerWidth - width - viewportPadding)
+  const availableAbove = Math.max(48, rect.top - viewportPadding - gutter)
+  const naturalHeight = Math.min(300, menuNaturalSize.value.height || 300)
+  const openAbove = naturalHeight > availableBelow && availableAbove > availableBelow
+  const maxHeight = Math.min(300, openAbove ? availableAbove : availableBelow)
+  const renderedHeight = Math.min(naturalHeight, maxHeight)
   menuStyle.value = {
-    top: `${Math.round(rect.bottom + gutter)}px`,
+    top: `${Math.round(openAbove ? rect.top - gutter - renderedHeight : rect.bottom + gutter)}px`,
     left: `${Math.round(left)}px`,
     width: `${Math.round(width)}px`,
-    maxHeight: `${Math.min(300, Math.floor(availableBelow))}px`,
+    maxHeight: `${Math.floor(maxHeight)}px`,
+    visibility: 'visible',
   }
 }
 
 async function showMenu(preferredIndex = selectedIndex.value) {
   if (props.disabled || !options.value.length) return
+  menuStyle.value = {
+    top: '0px',
+    left: '0px',
+    width: 'max-content',
+    maxWidth: 'calc(100vw - 20px)',
+    maxHeight: '300px',
+    visibility: 'hidden',
+  }
   open.value = true
   activeIndex.value = options.value[preferredIndex]?.disabled
     ? enabledIndex(preferredIndex, 1)
     : preferredIndex >= 0 ? preferredIndex : enabledIndex(-1, 1)
   await nextTick()
+  const naturalRect = menu.value?.getBoundingClientRect()
+  menuNaturalSize.value = {
+    width: Math.ceil(Math.max(naturalRect?.width || 0, menu.value?.scrollWidth || 0)),
+    height: Math.ceil(menu.value?.scrollHeight || naturalRect?.height || 0),
+  }
   positionMenu()
   menu.value?.querySelector(`[data-option-index="${activeIndex.value}"]`)?.scrollIntoView({ block: 'nearest' })
 }

@@ -27,7 +27,7 @@ async function logout() {
     <a class="skip-link" href="#admin-main">跳到主要内容</a>
     <header class="topbar">
       <RouterLink class="brand-link" to="/admin/home" aria-label="返回系统首页">
-        <span class="brand-mark"><span></span><span></span><span></span></span>
+        <img class="brand-logo" src="/project-logo.png" alt="" width="46" height="46" />
         <span class="brand-copy"><small>PRODUCTION REPORTING</small><strong>切割生产智能产报系统</strong></span>
       </RouterLink>
       <nav class="topnav" aria-label="主导航">

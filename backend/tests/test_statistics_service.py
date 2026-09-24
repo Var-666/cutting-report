@@ -2,7 +2,11 @@ from datetime import datetime
 from decimal import Decimal
 
 from app.models.domain import SummaryBaseRecord, WorkshopRecord
-from app.services.statistics_service import StatisticsService, build_worker_work_summaries
+from app.services.statistics_service import (
+    StatisticsService,
+    build_worker_work_summaries,
+    build_workshop_task_distributions,
+)
 
 
 def record(
@@ -103,3 +107,39 @@ def test_worker_work_summary_uses_only_confirmed_tasks_and_company_numbers() -> 
     assert summaries[0]["last_confirmed_at"] == datetime.fromisoformat(
         "2026-09-02T10:00:00+08:00"
     )
+
+
+def test_workshop_task_distributions_use_complete_real_records() -> None:
+    def workshop_record(
+        task_id: str,
+        work_time: str | None,
+        confirmed_by: str | None = None,
+    ) -> WorkshopRecord:
+        return WorkshopRecord(
+            task_id=task_id,
+            project_code="A001",
+            ship_no="S001",
+            segment_name="P01",
+            program_no=f"OP-{task_id}",
+            cut_length=Decimal("10"),
+            groove_length=Decimal("0"),
+            work_time=Decimal(work_time) if work_time is not None else None,
+            confirmed_by=confirmed_by,
+        )
+
+    records = [
+        workshop_record("1", "30", "张三"),
+        workshop_record("2", "120"),
+        workshop_record("3", "600", "李四"),
+        workshop_record("4", "2400"),
+        workshop_record("5", None),
+    ]
+
+    result = build_workshop_task_distributions(records)
+
+    assert [item["count"] for item in result["duration_distribution"]] == [1, 1, 1, 1, 1]
+    assert result["duration_distribution"][-1]["label"] == "暂无时长"
+    assert result["status_distribution"] == [
+        {"key": "confirmed", "label": "已确认", "count": 2},
+        {"key": "pending", "label": "待确认", "count": 3},
+    ]

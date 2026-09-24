@@ -194,4 +194,5 @@ def test_range_export_keeps_the_recent_twelve_month_summary(
         assert "近 12 个月按月对比与趋势" in html
     else:
         assert "近 12 个月月度能耗汇总" in html
-        assert "<th>月份</th>" in html
+        assert "<th>序号</th><th>月份</th>" in html
+        assert "<td>1</td><td>2025年9月</td>" in html

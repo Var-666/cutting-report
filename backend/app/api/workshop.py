@@ -18,7 +18,10 @@ from app.database.workshop import (
     DailyReportExistsError,
 )
 from app.models.domain import to_primitive
-from app.services.statistics_service import build_worker_work_summaries
+from app.services.statistics_service import (
+    build_worker_work_summaries,
+    build_workshop_task_distributions,
+)
 from app.services.report_analysis_service import (
     workshop_analysis_source_version,
 )
@@ -214,6 +217,8 @@ def list_tasks(
                 "project_names": [],
                 "confirmed_count": 0,
                 "worker_summaries": [],
+                "duration_distribution": [],
+                "status_distribution": [],
                 "analysis_source_version": workshop_analysis_source_version(
                     report_date.isoformat(), []
                 ),
@@ -236,6 +241,7 @@ def list_tasks(
         records = [row for row in records if row.confirmed_by]
     elif confirmation_status == "unconfirmed":
         records = [row for row in records if not row.confirmed_by]
+    distributions = build_workshop_task_distributions(records)
     records = sort_workshop_records(records, sort_mode)
 
     total = len(records)
@@ -252,6 +258,7 @@ def list_tasks(
             "project_names": project_names,
             "confirmed_count": confirmed_count,
             "worker_summaries": to_primitive(worker_summaries),
+            **distributions,
             "analysis_source_version": analysis_source_version,
             "current_user": user,
         },
@@ -291,6 +298,7 @@ def list_range_tasks(
         records = [row for row in records if row.confirmed_by]
     elif confirmation_status == "unconfirmed":
         records = [row for row in records if not row.confirmed_by]
+    distributions = build_workshop_task_distributions(records)
     trend = _workshop_trend(records)
     records = sort_workshop_records(records, "manager")
     total = len(records)
@@ -316,6 +324,7 @@ def list_range_tasks(
             "confirmed_count": sum(bool(row.confirmed_by) for row in records),
             "trend": trend,
             "worker_summaries": to_primitive(worker_summaries),
+            **distributions,
             "analysis_source_version": analysis_source_version,
         },
     )

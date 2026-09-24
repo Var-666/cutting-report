@@ -21,4 +21,5 @@ tmp/
 *.xlsx
 *.pdf
 *.zip
+~$*.docx
 packages/*.tar.gz

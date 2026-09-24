@@ -85,6 +85,49 @@ def build_worker_work_summaries(
     )
 
 
+def build_workshop_task_distributions(
+    records: list[WorkshopRecord],
+) -> dict[str, list[dict[str, Any]]]:
+    """Build truthful task-duration and confirmation buckets for workshop charts."""
+    duration_buckets = [
+        {"key": "under_1m", "label": "< 1 分钟", "count": 0},
+        {"key": "1_to_5m", "label": "1–5 分钟", "count": 0},
+        {"key": "5_to_30m", "label": "5–30 分钟", "count": 0},
+        {"key": "over_30m", "label": "> 30 分钟", "count": 0},
+    ]
+    unknown_count = 0
+    confirmed_count = 0
+    for record in records:
+        if record.confirmed_by:
+            confirmed_count += 1
+        value = record.work_time
+        if value is None or value < 0:
+            unknown_count += 1
+        elif value < 60:
+            duration_buckets[0]["count"] += 1
+        elif value < 300:
+            duration_buckets[1]["count"] += 1
+        elif value <= 1800:
+            duration_buckets[2]["count"] += 1
+        else:
+            duration_buckets[3]["count"] += 1
+    if unknown_count:
+        duration_buckets.append(
+            {"key": "unknown", "label": "暂无时长", "count": unknown_count}
+        )
+    return {
+        "duration_distribution": duration_buckets,
+        "status_distribution": [
+            {"key": "confirmed", "label": "已确认", "count": confirmed_count},
+            {
+                "key": "pending",
+                "label": "待确认",
+                "count": len(records) - confirmed_count,
+            },
+        ],
+    }
+
+
 class StatisticsService:
     def calculate(self, records: list[SummaryBaseRecord]) -> StatisticsResult:
         quality: list[AttentionItem] = []
