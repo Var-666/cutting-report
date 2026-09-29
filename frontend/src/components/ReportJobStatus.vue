@@ -8,7 +8,7 @@ const steps = [
   ['analyzing', '智能分析'],
   ['rendering', '生成报告'],
 ]
-const rank = { pending: 0, querying: 1, calculating: 2, analyzing: 3, rendering: 4, completed: 5, completed_with_warnings: 5, failed: -1 }
+const rank = { pending: 0, querying: 1, calculating: 2, analyzing: 3, rendering: 4, completed: 5, failed: -1 }
 const reportTypeText = { leadership: '领导报表', workshop: '车间报表', equipment: '设备报表', custom: '自定义报表' }
 
 function stepClass(status, stepStatus) {
@@ -36,7 +36,7 @@ function stepClass(status, stepStatus) {
       </div>
     </div>
     <p v-if="job.error" class="error-message">{{ job.error.message }}</p>
-    <div v-if="['completed', 'completed_with_warnings'].includes(job.status)" class="result-actions">
+    <div v-if="job.status === 'completed'" class="result-actions">
       <a class="button primary" :href="job.view_url" target="_blank" rel="noopener">打开报告</a>
       <a class="button" :href="job.download_url">下载 HTML</a>
       <DownloadPdfButton :report-id="job.report_id" />

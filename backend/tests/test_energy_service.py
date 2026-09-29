@@ -1,5 +1,5 @@
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from io import BytesIO
 import json
@@ -13,6 +13,7 @@ from app.models.domain import EquipmentRecord
 from app.services.energy_api import EnergyApiClient, EnergyApiError, EnergyAuthenticationError
 from app.services.energy_service import EquipmentEnergyService, interval_consumption, make_series
 from app.services.equipment_service import summarize_equipment
+from tests.analysis_fakes import model_analysis
 
 
 GAS = "bd3179be-c587-f011-a2e9-000c2974f33c"
@@ -332,8 +333,12 @@ def test_unified_device_page_export_and_analysis_share_meter_values(tmp_path, mo
     from app.database.metadata import MetadataRepository
     from app.services.pipeline import ReportPipeline
     from app.services.query_service import EquipmentQueryResult
+    from app.services.report_analysis_service import (
+        analysis_table_source_version,
+        combined_analysis_source_version,
+    )
 
-    cfg = configured(project_root=tmp_path, llm_enabled=False)
+    cfg = configured(project_root=tmp_path, llm_enabled=True)
     cfg.ensure_runtime_dirs()
     vendor = tmp_path / "vendor"
     vendor.mkdir()
@@ -341,6 +346,7 @@ def test_unified_device_page_export_and_analysis_share_meter_values(tmp_path, mo
     metadata = MetadataRepository(cfg.metadata_db_path)
     metadata.initialize()
     pipeline = ReportPipeline(cfg, metadata)
+    pipeline.analysis_service.llm.analyze_context = model_analysis
     pipeline.energy_period_service.client = MeterStub()
     rows = [record()]
     monkeypatch.setattr(pipeline.query_service, "fetch_equipment_data", lambda filters, force=False: EquipmentQueryResult(rows, END))
@@ -348,6 +354,16 @@ def test_unified_device_page_export_and_analysis_share_meter_values(tmp_path, mo
         pipeline.query_service,
         "fetch_equipment_month_metrics",
         lambda _month: {
+            START.date().isoformat(): {
+                "task_count": 1,
+                "work_time_seconds": Decimal("30"),
+            }
+        },
+    )
+    monkeypatch.setattr(
+        pipeline.query_service,
+        "fetch_equipment_range_metrics",
+        lambda _start, _end: {
             START.date().isoformat(): {
                 "task_count": 1,
                 "work_time_seconds": Decimal("30"),
@@ -364,15 +380,22 @@ def test_unified_device_page_export_and_analysis_share_meter_values(tmp_path, mo
     assert page["summary"]["total_gas_consumption"] == 2
     assert page["summary"]["total_electricity_consumption"] == 18
     assert page["units"] == {"gas": "Nm³", "electricity": "kWh"}
+    summary_rows = pipeline.energy_period_service.get_monthly_range(
+        date(2025, 9, 1), START.date()
+    )["rows"]
+    visible_version = combined_analysis_source_version(
+        page["analysis_source_version"],
+        analysis_table_source_version(summary_rows),
+    )
     analysis_response = analyze_report(
         AnalysisRequest(
             report_type="equipment",
             report_date=START.date(),
-            data_version=page["analysis_source_version"],
+            data_version=visible_version,
         ),
         request,
     )
-    assert analysis_response["data"]["data_version"] == page["analysis_source_version"]
+    assert analysis_response["data"]["data_version"] == visible_version
     page_analysis_facts = {
         fact["id"]: fact["value"] for fact in analysis_response["data"]["facts"]
     }
@@ -418,17 +441,63 @@ def test_unified_device_page_export_and_analysis_share_meter_values(tmp_path, mo
     assert facts["F003"] == "2.0 Nm³"
     assert facts["F004"] == "18.0 kWh"
     assert "（" not in facts["F003"] + facts["F004"]
-    assert "不进行能耗异常判定" in analysis.features
+    assert analysis.mode == "model"
+
+
+def test_same_day_range_reuses_task_meter_scope_and_interpolation(tmp_path, monkeypatch):
+    from app.database.metadata import MetadataRepository
+    from app.services.pipeline import ReportPipeline
+    from app.services.query_service import EquipmentQueryResult
+    from app.services.report_analysis_service import equipment_analysis_source_version
+
+    cfg = replace(configured(
+        energy_equipment_ids=(),
+        energy_report_equipment_ids=("Cutter01",),
+    ), project_root=tmp_path)
+    cfg.ensure_runtime_dirs()
+    metadata = MetadataRepository(cfg.metadata_db_path)
+    metadata.initialize()
+    pipeline = ReportPipeline(cfg, metadata)
+    meter = MeterStub()
+    pipeline.energy_period_service.client = meter
+    selected = record(
+        production_time=START + timedelta(seconds=30),
+        production_end_time=START + timedelta(minutes=1, seconds=30),
+    )
+    rows = [selected, record("other", equipment_id="Cutter02")]
+    monkeypatch.setattr(
+        pipeline.query_service, "fetch_equipment_data",
+        lambda filters, force=False: EquipmentQueryResult(rows, END),
+    )
+
+    daily = pipeline.energy_period_service.get_task_day(START.date(), rows)
+    selected_range = pipeline.range_service.equipment(START.date(), START.date())
+    task_report = selected_range["task_report"]
+    period_report = selected_range["period_report"]
+
+    assert task_report["records"] == daily["records"]
+    assert task_report["summary"] == daily["summary"]
+    assert equipment_analysis_source_version(task_report) == equipment_analysis_source_version(daily)
+    assert task_report["equipment_scope"] == daily["equipment_scope"] == ["Cutter01"]
+    assert task_report["source_task_count"] == 2
+    assert task_report["excluded_task_count"] == 1
+    assert task_report["records"][0]["gas_data_status"] == "interpolated"
+    assert task_report["records"][0]["electricity_data_status"] == "interpolated"
+    assert period_report["summary"]["gas"]["status"] == "interpolated"
+    assert period_report["summary"]["electricity"]["estimated_count"] == 1
+    assert [call[0] for call in meter.calls] == [(GAS, *ELECTRIC)] * 2
 
 
 def test_analysis_does_not_report_missing_energy_as_zero(tmp_path):
     from app.database.metadata import MetadataRepository
     from app.services.report_analysis_service import ReportAnalysisService
-    cfg = configured(project_root=tmp_path, llm_enabled=False)
+    cfg = configured(project_root=tmp_path, llm_enabled=True)
     cfg.ensure_runtime_dirs()
     metadata = MetadataRepository(cfg.metadata_db_path)
     metadata.initialize()
-    analysis = ReportAnalysisService(cfg, metadata).analyze_equipment(START.date().isoformat(), [record()], energy_data_mode="unavailable")
+    service = ReportAnalysisService(cfg, metadata)
+    service.llm.analyze_context = model_analysis
+    analysis = service.analyze_equipment(START.date().isoformat(), [record()], energy_data_mode="unavailable")
     facts = {fact["id"]: fact["value"] for fact in analysis.facts}
     assert facts["F003"] == "缺失"
     assert facts["F004"] == "缺失"

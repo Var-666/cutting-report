@@ -37,6 +37,9 @@ def test_demo_report_has_daily_total_and_twelve_months(tmp_path) -> None:
     assert result.twelve_month_total.work_time_seconds == sum(
         row.work_time_seconds for row in result.monthly_records
     )
+    assert result.comparison_total == result.monthly_records[1]
+    assert result.comparison_start == date(2025, 7, 1)
+    assert result.comparison_end == date(2025, 7, 31)
     assert result.snapshot.data_as_of is not None
     assert result.snapshot.source == "demo"
 

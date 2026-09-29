@@ -58,7 +58,7 @@ def _serialize_job(job: dict) -> dict:
         "ai_status": job.get("ai_status"),
         "error": None,
     }
-    if job["status"] in {"completed", "completed_with_warnings"}:
+    if job["status"] == "completed":
         result.update(
             {
                 "filename": job.get("filename"),

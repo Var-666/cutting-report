@@ -1,6 +1,7 @@
 from dataclasses import replace
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+import re
 from types import SimpleNamespace
 
 from fastapi import FastAPI
@@ -541,6 +542,9 @@ def test_day_month_routes_and_bad_month(tmp_path):
     assert len(result.json()["data"]["rows"]) == 12
     assert result.json()["data"]["rows"][-1]["electricity"]["value"] == 864
     assert result.json()["data"]["syncing"] is True
+    assert re.fullmatch(
+        r"[0-9a-f]{64}", result.json()["data"]["analysis_source_version"]
+    )
     assert scheduled_ranges == [(date(2025, 9, 1), date(2026, 8, 18))]
     result = client.get("/api/v1/energy-report/tasks?report_date=2026-08-18")
     assert result.status_code == 200

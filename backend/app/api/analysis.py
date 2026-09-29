@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import date, timedelta
 from typing import Literal
 
@@ -14,12 +15,15 @@ from app.services.energy_period_service import restore_task_energy_records
 from app.services.range_report_service import previous_equal_range, validate_report_range
 from app.services.report_analysis_service import (
     AnalysisDataVersionMismatch,
+    AnalysisUnavailableError,
+    analysis_period_label as _period_label,
     equipment_analysis_source_version,
 )
 from app.services.request_cancellation import SqlRequestCancelled
 
 
 logger = logging.getLogger(__name__)
+ANALYSIS_DATA_VERSION_PATTERN = r"^[0-9a-f]{64}\.[0-9a-f]{64}$"
 router = APIRouter(
     prefix="/api/v1/analysis",
     tags=["report-analysis"],
@@ -34,8 +38,12 @@ def _year_ago(value: date) -> date:
         return value.replace(year=value.year - 1, day=28)
 
 
-def _period_label(start: date, end: date) -> str:
-    return start.isoformat() if start == end else f"{start.isoformat()} 至 {end.isoformat()}"
+def _summary_period(payload: "AnalysisRequest", fallback_end: date) -> tuple[date, date]:
+    end = payload.summary_period_end or fallback_end
+    if payload.summary_period_start is not None:
+        return payload.summary_period_start, end
+    absolute_month = end.year * 12 + end.month - 1 - 11
+    return date(absolute_month // 12, absolute_month % 12 + 1, 1), end
 
 
 class AnalysisRequest(BaseModel):
@@ -43,8 +51,39 @@ class AnalysisRequest(BaseModel):
     report_date: date
     period_start: date | None = None
     period_end: date | None = None
-    data_version: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    summary_period_start: date | None = None
+    summary_period_end: date | None = None
+    data_version: str | None = Field(
+        default=None,
+        pattern=ANALYSIS_DATA_VERSION_PATTERN,
+    )
     force: bool = False
+
+
+@router.get("/version")
+def get_analysis_version(
+    report_type: Literal["leadership", "workshop", "equipment"],
+    report_date: date,
+    request: Request,
+) -> dict:
+    lookup_date = (
+        report_date.strftime("%Y-%m")
+        if report_type == "leadership"
+        else report_date.isoformat()
+    )
+    version = request.app.state.metadata.get_analysis_source_version(
+        report_type=report_type,
+        report_date=lookup_date,
+    )
+    if version is not None and not re.fullmatch(
+        ANALYSIS_DATA_VERSION_PATTERN, version["data_version"]
+    ):
+        version = None
+    return {
+        "success": True,
+        "data": version,
+        "request_id": request.state.request_id,
+    }
 
 
 @router.post("")
@@ -52,6 +91,14 @@ def analyze_report(payload: AnalysisRequest, request: Request) -> dict:
     try:
         if (payload.period_start is None) != (payload.period_end is None):
             raise HTTPException(status_code=422, detail="开始日期和结束日期必须同时提供。")
+        if (payload.summary_period_start is None) != (payload.summary_period_end is None):
+            raise HTTPException(status_code=422, detail="汇总开始日期和结束日期必须同时提供。")
+        if (
+            payload.summary_period_start is not None
+            and payload.summary_period_end is not None
+            and payload.summary_period_end < payload.summary_period_start
+        ):
+            raise HTTPException(status_code=422, detail="汇总结束日期不能早于开始日期。")
         if payload.period_start is not None and payload.period_end is not None:
             try:
                 validate_report_range(payload.period_start, payload.period_end)
@@ -74,8 +121,21 @@ def analyze_report(payload: AnalysisRequest, request: Request) -> dict:
                     report = request.app.state.leadership_report_service.fetch(
                         payload.report_date.replace(day=1), force=True
                     )
+            summary_start, summary_end = _summary_period(
+                payload, payload.period_end or payload.report_date
+            )
+            monthly_report = request.app.state.leadership_report_service.fetch(
+                summary_end.replace(day=1)
+            )
+            summary_month_start = summary_start.replace(day=1)
+            monthly_records = [
+                row
+                for row in monthly_report.monthly_records
+                if summary_month_start <= row.period_start <= summary_end
+            ]
             analysis = service.analyze_leadership(
                 report,
+                monthly_records=monthly_records,
                 expected_data_version=payload.data_version,
                 force=payload.force,
             )
@@ -207,6 +267,10 @@ def analyze_report(payload: AnalysisRequest, request: Request) -> dict:
             year_ago_records = request.app.state.energy_period_service.filter_task_records(
                 year_ago_records
             )
+            summary_start, summary_end = _summary_period(payload, period_end)
+            energy_summary = request.app.state.energy_period_service.get_monthly_range(
+                summary_start, summary_end
+            )
             analysis = service.analyze_equipment(
                 _period_label(period_start, period_end),
                 records,
@@ -215,6 +279,7 @@ def analyze_report(payload: AnalysisRequest, request: Request) -> dict:
                 ),
                 energy_units=task_report["units"],
                 energy_notice=task_report.get("energy_notice") or "",
+                energy_summary_rows=energy_summary["rows"],
                 comparison_records=previous_records,
                 comparison_date=comparison_label,
                 year_ago_records=year_ago_records,
@@ -227,6 +292,8 @@ def analyze_report(payload: AnalysisRequest, request: Request) -> dict:
         raise
     except AnalysisDataVersionMismatch as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except AnalysisUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except SqlServerConfigurationError as exc:

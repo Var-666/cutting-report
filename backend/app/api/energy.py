@@ -6,7 +6,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from app.api.auth import require_admin
 from app.database.sqlserver import SqlServerConfigurationError
 from app.models.domain import ReportFilter, to_primitive
-from app.services.report_analysis_service import equipment_analysis_source_version
+from app.services.report_analysis_service import (
+    analysis_table_source_version,
+    equipment_analysis_source_version,
+)
 from app.services.request_cancellation import SqlRequestCancelled
 
 
@@ -78,6 +81,9 @@ def get_energy_monthly_range(request: Request, start_date: date, end_date: date)
             data["syncing"] = worker.is_syncing_range(start_date, end_date)
         else:
             data["syncing"] = False
+        data["analysis_source_version"] = analysis_table_source_version(
+            data.get("rows") or []
+        )
     except SqlRequestCancelled:
         raise
     except ValueError as exc:

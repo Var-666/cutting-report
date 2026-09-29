@@ -242,7 +242,7 @@
     <section class="analysis-section">
     <h2>{{ '四' if report.meta.report_type in ['leadership', 'workshop', 'equipment'] else '三' }}、智能分析</h2>
     <div class="analysis-head">
-      <span class="analysis-mode {{ 'model' if report.analysis.mode == 'model' else '' }}">{{ '大模型分析' if report.analysis.mode == 'model' else '模拟大模型分析' }}</span>
+      <span class="analysis-mode model">大模型分析</span>
       <span class="label">生成时间：{{ report.analysis.generated_at or '--' }}{{ '· 已使用缓存' if report.analysis.cached else '' }}</span>
     </div>
     {% if report.analysis.facts %}<section class="analysis-facts">{% for fact in report.analysis.facts %}<div class="analysis-fact"><span class="fact-id">{{ fact.id }}</span><span class="label"> · {{ fact.label }}</span><strong>{{ fact.value }}</strong><small>来源：{{ fact.source or '当前报表数据' }}</small></div>{% endfor %}</section>{% endif %}

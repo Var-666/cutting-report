@@ -38,7 +38,9 @@ async function request(url, options = {}) {
     }
     if (!response.ok || payload.success === false) {
       const message = payload?.error?.message || payload?.detail || '请求失败，请稍后重试'
-      throw new Error(message)
+      const error = new Error(message)
+      error.status = response.status
+      throw error
     }
     return payload.data
   } finally {
@@ -243,6 +245,13 @@ export function listAlarmIncidents({ status = '', limit = 100 } = {}, { signal }
   return request(`/api/v1/alarms/incidents?${query}`, { signal })
 }
 
+export function listAlarmIncidentPage({ status = '', severity = '', page = 1, pageSize = 15 } = {}, { signal } = {}) {
+  const query = new URLSearchParams({ page, page_size: pageSize })
+  if (status) query.set('status', status)
+  if (severity) query.set('severity', severity)
+  return request(`/api/v1/alarms/incidents/page?${query}`, { signal })
+}
+
 export function listAlarmReports({ limit = 50 } = {}, { signal } = {}) {
   const query = new URLSearchParams({ limit })
   return request(`/api/v1/alarms/reports?${query}`, { signal })
@@ -316,7 +325,7 @@ export function getEnergyMonthlyRange(startDate, endDate, { force = false, signa
   return reportCache.read(key, (requestSignal) => request(`/api/v1/energy-report/monthly-range?${query}`, { signal: requestSignal }), { ttl: REPORT_VIEW_CACHE_TTL, force, signal })
 }
 
-export function analyzeReport({ reportType, reportDate, periodStart, periodEnd, dataVersion, force = false }, { signal } = {}) {
+export function analyzeReport({ reportType, reportDate, periodStart, periodEnd, summaryPeriodStart, summaryPeriodEnd, dataVersion, force = false }, { signal } = {}) {
   return request('/api/v1/analysis', {
     method: 'POST',
     signal,
@@ -325,14 +334,28 @@ export function analyzeReport({ reportType, reportDate, periodStart, periodEnd, 
       report_date: reportDate,
       period_start: periodStart,
       period_end: periodEnd,
+      summary_period_start: summaryPeriodStart,
+      summary_period_end: summaryPeriodEnd,
       data_version: dataVersion || undefined,
       force,
     }),
   })
 }
 
+export function getAnalysisVersion({ reportType, reportDate }, { signal } = {}) {
+  const query = new URLSearchParams({
+    report_type: reportType,
+    report_date: reportDate,
+  })
+  return request(`/api/v1/analysis/version?${query}`, { signal })
+}
+
 export function getAutomationStatus() {
   return request('/api/v1/automation/status')
+}
+
+export function getLlmUsage() {
+  return request('/api/v1/llm-usage')
 }
 
 export function getAutomationConfiguration() {

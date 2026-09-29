@@ -87,8 +87,10 @@ const analysisReady = computed(() => Boolean(
   pageActive.value
   &&
   report.value
+  && monthlyReport.value?.analysis_summary_source_version
   && snapshot.value.data_as_of
   && !loading.value
+  && !monthlyLoading.value
 ))
 
 function roundNumber(value, digits = 1) {
@@ -134,7 +136,8 @@ function changeText(change) {
 }
 
 function comparisonLabel(change) {
-  return change ? '较对比区间' : '当前统计区间'
+  if (!change) return '当前统计区间'
+  return defaultMonthlyView.value ? '较上月' : '较对比区间'
 }
 
 function formatSnapshotTime(value) {
@@ -192,13 +195,13 @@ async function loadReport(force = false) {
   }
 }
 
-async function loadDefaultReport() {
+async function loadDefaultReport(force = false) {
   const { sequence, signal } = beginRequest()
   loading.value = true
   monthlyLoading.value = true
   error.value = ''
   try {
-    const result = await getLeadershipReport(today.slice(0, 7), { signal })
+    const result = await getLeadershipReport(today.slice(0, 7), { force, signal })
     if (!requestIsCurrent(sequence, signal)) return
     report.value = result
     monthlyReport.value = result
@@ -371,6 +374,38 @@ function retryReport() {
   return report.value ? loadReport(false) : loadDefaultReport()
 }
 
+async function refreshRangeAnalysisReport() {
+  const { sequence, signal } = beginRequest()
+  loading.value = true
+  monthlyLoading.value = true
+  error.value = ''
+  try {
+    const [refreshedReport, refreshedSummary] = await Promise.all([
+      getLeadershipRange(appliedPeriodStart.value, appliedPeriodEnd.value, { force: true, signal }),
+      getLeadershipReport(monthlyPeriodEnd.value.slice(0, 7), { force: true, signal }),
+    ])
+    if (!requestIsCurrent(sequence, signal)) return
+    report.value = refreshedReport
+    monthlyReport.value = refreshedSummary
+    await nextTick()
+    renderCharts()
+    scheduleRefreshPoll(true)
+  } catch (exception) {
+    if (exception.name !== 'AbortError' && sequence === requestSequence) error.value = exception.message
+  } finally {
+    if (sequence === requestSequence) {
+      loading.value = false
+      monthlyLoading.value = false
+      requestController = null
+    }
+  }
+}
+
+function refreshAnalysisReport() {
+  if (!pageActive.value || loading.value) return
+  return defaultMonthlyView.value ? loadDefaultReport(true) : refreshRangeAnalysisReport()
+}
+
 onMounted(() => {
   loadDefaultReport()
 })
@@ -487,8 +522,13 @@ watch(chartType, async () => {
     :report-date="appliedPeriodStart"
     :period-start="defaultMonthlyView ? '' : appliedPeriodStart"
     :period-end="defaultMonthlyView ? '' : appliedPeriodEnd"
+    :summary-period-start="monthlyPeriodStart"
+    :summary-period-end="monthlyPeriodEnd"
     :ready="analysisReady"
     :data-version="report?.analysis_source_version || ''"
+    :summary-data-version="monthlyReport?.analysis_summary_source_version || ''"
+    :version-check-enabled="defaultMonthlyView"
+    @refresh-report="refreshAnalysisReport"
   />
 
 </template>

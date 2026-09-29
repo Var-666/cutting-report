@@ -29,9 +29,9 @@ test('PDF server failures and wrong content types are reported instead of downlo
   await assert.rejects(downloadReportPdf('rpt_test'), /未返回 PDF/)
 })
 
-test('report polling accepts completion with warnings and propagates generation failures', async (t) => {
-  t.mock.method(globalThis, 'fetch', async () => Response.json({ success: true, data: { status: 'completed_with_warnings' } }))
-  assert.equal((await waitForReport('rpt_test')).status, 'completed_with_warnings')
+test('report polling accepts completion and propagates generation failures', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => Response.json({ success: true, data: { status: 'completed' } }))
+  assert.equal((await waitForReport('rpt_test')).status, 'completed')
   globalThis.fetch.mock.mockImplementation(async () => Response.json({ success: true, data: { status: 'failed', error: { message: '缺少车间日报' } } }))
   await assert.rejects(waitForReport('rpt_test'), /缺少车间日报/)
 })

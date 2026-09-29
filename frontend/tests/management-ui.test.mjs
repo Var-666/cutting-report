@@ -34,6 +34,17 @@ test('management panels and tables share light headers without zebra striping', 
   assert.doesNotMatch(settings.template.content, />0[1-4]</)
 })
 
+test('settings usage card distinguishes actual token counts from unreported usage', () => {
+  const settings = descriptor('SettingsHomeView')
+  assert.match(settings.scriptSetup.content, /getLlmUsage\(/)
+  assert.match(settings.template.content, /调用次数/)
+  assert.match(settings.template.content, /Token 消耗/)
+  assert.match(settings.template.content, /未返回 token 用量/)
+  assert.match(settings.template.content, /v-else-if="usageError"/)
+  assert.match(settings.template.content, /正在读取统计/)
+  assert.match(settings.styles[0].content, /flex-wrap:wrap/)
+})
+
 test('login keeps authentication behavior inside the production visual system', () => {
   const login = descriptor('LoginView')
   assert.match(login.scriptSetup.content, /home-laser-cutting\.webp/)

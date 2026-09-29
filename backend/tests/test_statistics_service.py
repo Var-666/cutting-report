@@ -4,6 +4,7 @@ from decimal import Decimal
 from app.models.domain import SummaryBaseRecord, WorkshopRecord
 from app.services.statistics_service import (
     StatisticsService,
+    build_top_cut_length_tasks,
     build_worker_work_summaries,
     build_workshop_task_distributions,
 )
@@ -143,3 +144,27 @@ def test_workshop_task_distributions_use_complete_real_records() -> None:
         {"key": "confirmed", "label": "已确认", "count": 2},
         {"key": "pending", "label": "待确认", "count": 3},
     ]
+
+
+def test_top_cut_length_tasks_skips_missing_lengths_and_keeps_a_stable_top_five() -> None:
+    def task(task_id: str, length: str | None) -> WorkshopRecord:
+        return WorkshopRecord(
+            task_id=task_id,
+            project_code="A001",
+            ship_no="S001",
+            segment_name="P01",
+            program_no=f"OP-{task_id}",
+            cut_length=Decimal(length) if length is not None else None,
+            groove_length=None,
+            work_time=None,
+        )
+
+    records = [task(str(index), str(index)) for index in range(1, 7)]
+    records.extend([task("missing", None), task("negative", "-1"), task("zero", "0")])
+    records.append(task("0", "6"))
+
+    ranked = build_top_cut_length_tasks(records)
+
+    assert [row["task_id"] for row in ranked] == ["0", "6", "5", "4", "3"]
+    assert ranked[0]["cut_length_m"] == Decimal("6")
+    assert build_top_cut_length_tasks([task("missing", None), task("zero", "0")]) == []

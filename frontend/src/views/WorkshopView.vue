@@ -31,10 +31,11 @@ const emit = defineEmits(['export'])
 const today = reportToday()
 const pageSize = 10
 const filters = reactive({ reportDate: today, startDate: today, endDate: today, projectName: '', confirmationStatus: 'all' })
-const result = ref({ report: null, items: [], total: 0, page: 1, page_size: pageSize, project_names: [], confirmed_count: 0, worker_summaries: [], duration_distribution: [], status_distribution: [] })
+const result = ref({ report: null, items: [], total: 0, page: 1, page_size: pageSize, project_names: [], confirmed_count: 0, worker_summaries: [], duration_distribution: [], status_distribution: [], top_cut_length_tasks: [] })
 const loading = ref(false)
 const error = ref('')
 const pageActive = ref(true)
+const defaultReportView = ref(true)
 const chartType = ref('bar_line')
 const selectedTasks = ref(new Map())
 const batchConfirmation = reactive({ visible: false, saving: false, error: '', tasks: [] })
@@ -89,6 +90,7 @@ const analysisReady = computed(() => Boolean(
   && result.value.report
   && result.value.report.period_start === filters.startDate
   && result.value.report.period_end === filters.endDate
+  && !loading.value
 ))
 const selectableTasks = computed(() => isWorker.value ? result.value.items.filter((row) => !row.confirmed_by) : [])
 const selectedTaskCount = computed(() => selectedTasks.value.size)
@@ -165,7 +167,7 @@ watch(() => [filters.reportDate, filters.startDate, filters.endDate], () => {
   filters.confirmationStatus = 'all'
   clearSelectedTasks()
   batchConfirmation.visible = false
-  result.value = { report: null, items: [], total: 0, page: 1, page_size: pageSize, project_names: [], confirmed_count: 0, worker_summaries: [], duration_distribution: [], status_distribution: [] }
+  result.value = { report: null, items: [], total: 0, page: 1, page_size: pageSize, project_names: [], confirmed_count: 0, worker_summaries: [], duration_distribution: [], status_distribution: [], top_cut_length_tasks: [] }
 })
 watch(() => [filters.projectName, filters.confirmationStatus], () => {
   clearSelectedTasks()
@@ -323,7 +325,13 @@ async function load(page = 1, { silent = false, ensureReport = true, force = fal
   }
 }
 
+function refreshAnalysisReport() {
+  if (!pageActive.value || isWorker.value || loading.value) return
+  return load(result.value.page, { ensureReport: false, force: true })
+}
+
 function applyTaskFilters() {
+  defaultReportView.value = false
   clearSelectedTasks()
   load(1, { force: true })
 }
@@ -469,6 +477,7 @@ async function initializeReport() {
       filters.startDate = latest.report_date
       filters.endDate = latest.report_date
     }
+    defaultReportView.value = true
   } catch (exception) {
     if (exception.name !== 'AbortError' && sequence === requestSequence) error.value = exception.message
   }
@@ -626,6 +635,7 @@ onUnmounted(() => {
       v-if="!isWorker && result.report"
       :duration-distribution="result.duration_distribution || []"
       :status-distribution="result.status_distribution || []"
+      :top-cut-length-tasks="result.top_cut_length_tasks || []"
       :loading="loading"
     />
 
@@ -703,6 +713,8 @@ onUnmounted(() => {
       :period-end="filters.endDate"
       :ready="analysisReady"
       :data-version="result.analysis_source_version || ''"
+      :version-check-enabled="defaultReportView"
+      @refresh-report="refreshAnalysisReport"
     />
   </div>
 

@@ -128,6 +128,27 @@ def build_workshop_task_distributions(
     }
 
 
+def build_top_cut_length_tasks(
+    records: list[WorkshopRecord],
+) -> list[dict[str, Any]]:
+    """Rank actual tasks from the complete filtered set, excluding missing lengths."""
+    valid = (
+        record for record in records
+        if record.cut_length is not None and record.cut_length > 0
+    )
+    return [
+        {
+            "task_id": record.task_id,
+            "program_no": record.program_no,
+            "segment_name": record.segment_name,
+            "cut_length_m": record.cut_length,
+        }
+        for record in sorted(
+            valid, key=lambda record: (-record.cut_length, str(record.task_id))
+        )[:5]
+    ]
+
+
 class StatisticsService:
     def calculate(self, records: list[SummaryBaseRecord]) -> StatisticsResult:
         quality: list[AttentionItem] = []

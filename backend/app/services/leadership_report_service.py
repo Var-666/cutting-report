@@ -507,6 +507,7 @@ class LeadershipReportService:
             work_time_seconds=sum(item.work_time_seconds for item in complete_months),
             remark=None,
         )
+        previous_month_start = _previous_month(month_start, 1)
         return LeadershipReportResult(
             report_month=month_start,
             source_mode=source_mode,
@@ -517,6 +518,13 @@ class LeadershipReportService:
             current_month_total=total,
             twelve_month_total=twelve_month_total,
             year_ago_total=year_ago_total,
+            comparison_total=complete_months[1],
+            comparison_start=previous_month_start,
+            comparison_end=date(
+                previous_month_start.year,
+                previous_month_start.month,
+                monthrange(previous_month_start.year, previous_month_start.month)[1],
+            ),
             project_distribution=project_distribution or [],
             snapshot=snapshot
             or LeadershipSnapshotState(

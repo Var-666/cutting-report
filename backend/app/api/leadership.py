@@ -12,7 +12,10 @@ from app.api.auth import require_admin
 from app.config import settings
 from app.database.sqlserver import SqlServerConfigurationError
 from app.models.domain import to_primitive
-from app.services.report_analysis_service import leadership_analysis_source_version
+from app.services.report_analysis_service import (
+    analysis_table_source_version,
+    leadership_analysis_source_version,
+)
 from app.services.request_cancellation import SqlRequestCancelled
 
 
@@ -49,6 +52,9 @@ def _result_with_refresh_state(request: Request, report_month: date, result):
 
 def _with_analysis_source_version(data: dict) -> dict:
     data["analysis_source_version"] = leadership_analysis_source_version(data)
+    data["analysis_summary_source_version"] = analysis_table_source_version(
+        data.get("monthly_records") or []
+    )
     return data
 
 

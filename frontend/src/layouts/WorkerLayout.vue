@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from 'vue'
 import { RouterView, useRouter } from 'vue-router'
+import projectLogo from '../assets/project-logo.png'
 import { endSession, session } from '../state/session'
 
 const router = useRouter()
@@ -20,7 +21,7 @@ async function logout() {
   <div class="worker-shell">
     <a class="skip-link" href="#worker-main">跳到主要内容</a>
     <header class="worker-topbar">
-      <img class="brand-logo" src="/project-logo.png" alt="" width="46" height="46" />
+      <img class="brand-logo" :src="projectLogo" alt="" width="46" height="46" />
       <div><p>WORKER PORTAL</p><h1>工人任务确认系统</h1></div>
       <div class="account-menu">
         <small>V{{ session.systemInfo?.version || '0.1.0' }} · {{ dataSourceLabel }}</small>

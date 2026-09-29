@@ -1024,7 +1024,7 @@ onBeforeUnmount(pausePage)
 .dispatch-workspace.download-workspace { grid-template-columns:minmax(285px,.42fr) minmax(0,1.58fr); align-items:stretch; }
 .dispatch-workspace.push-workspace { grid-template-columns:1fr; align-items:stretch; }
 .dispatch-files-panel { min-width:0; }
-.download-workspace .dispatch-files-panel { display:flex; flex-direction:column; }
+.download-workspace .dispatch-files-panel { display:flex; min-height:600px; flex-direction:column; }
 .download-workspace .dispatch-table-wrap { flex:1 1 auto; }
 .directory-panel { min-width:0; }
 .project-search,.file-name-search { padding:15px 18px; border-bottom:1px solid #e3eaee; background:#f8fafb; }
@@ -1263,8 +1263,11 @@ onBeforeUnmount(pausePage)
 .project-search { padding:11px 12px; }
 .project-search input,.project-search .app-select { height:36px; border-color:#cbdde6; border-radius:7px; background:#fff; }
 .project-search button,.file-name-search button { border-color:#bdd7e4; border-radius:7px; color:#237fb7; background:#f8fcfe; }
-.directory-panel { display:flex; min-height:0; flex-direction:column; }
-.directory-scroll { min-height:370px; max-height:none; flex:1 1 auto; overscroll-behavior:contain; scrollbar-gutter:stable; }
+.directory-panel { position:relative; display:grid; grid-template-columns:minmax(0,1fr); grid-template-rows:auto auto minmax(0,1fr); min-height:0; }
+.directory-panel .panel-title>div,.directory-panel .project-search { min-width:0; }
+.directory-panel .project-select-row .app-select { width:auto; min-width:0; flex:1 1 0; }
+.directory-panel .project-select-row>button { flex:0 0 auto; }
+.directory-scroll { grid-area:3 / 1 / 4 / -1; position:absolute; inset:0; min-height:0; max-height:none; overflow:auto; overscroll-behavior:contain; scrollbar-gutter:stable; }
 .project-node-row { border-radius:7px; }
 .project-node-row:hover { background:#f2f8fb; }
 .project-node-row.selected { background:linear-gradient(90deg,#e4f6fb,#eef9fb); box-shadow:inset 3px 0 #268fd0; }
@@ -1333,10 +1336,12 @@ onBeforeUnmount(pausePage)
   .dispatch-flow { grid-template-columns:repeat(2,1fr); }
   .dispatch-flow>div:nth-child(2) { border-right:0; }
   .dispatch-workspace.download-workspace { grid-template-columns:1fr; }
+  .download-workspace .dispatch-files-panel { min-height:0; }
+  .directory-panel { display:flex; flex-direction:column; }
   .dispatch-confirm-panel { grid-column:auto; }
   .dispatch-confirm-content { grid-template-columns:120px minmax(220px,1fr) minmax(220px,1fr); }
   .confirm-dispatch-button { grid-column:1/-1; grid-row:auto; margin-top:0; }
-  .directory-scroll { max-height:410px; }
+  .directory-scroll { position:static; min-height:220px; max-height:410px; flex:0 1 auto; }
 }
 @media (max-width:680px) {
   .dispatch-hero { grid-template-columns:1fr; min-height:190px; padding:22px 18px; background:linear-gradient(90deg,rgba(246,252,255,.97),rgba(238,248,253,.88)),var(--dispatch-hero-image) center/cover; }

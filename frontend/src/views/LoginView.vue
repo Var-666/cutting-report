@@ -2,6 +2,7 @@
 import { nextTick, reactive, ref } from 'vue'
 import { bootstrapAccount, loginAccount } from '../api/reports'
 import heroImage from '../assets/home-laser-cutting.webp'
+import projectLogo from '../assets/project-logo.png'
 import AppIcon from '../components/AppIcon.vue'
 
 const props = defineProps({
@@ -41,7 +42,7 @@ async function submit() {
 <template>
   <main class="login-page" :style="{ '--login-scene-image': `url(${heroImage})` }">
     <section class="login-scene" aria-label="系统介绍">
-      <div class="login-scene__brand"><img class="brand-logo brand-logo--login" src="/project-logo.png" alt="" width="54" height="54" /><strong>切割生产智能产报系统</strong></div>
+      <div class="login-scene__brand"><img class="brand-logo brand-logo--login" :src="projectLogo" alt="" width="54" height="54" /><strong>切割生产智能产报系统</strong></div>
       <div class="login-scene__copy">
         <p>PRODUCTION REPORTING</p>
         <p class="login-scene__title">数据驱动生产<br />让现场更清晰</p>

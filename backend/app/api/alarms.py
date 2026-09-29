@@ -23,12 +23,13 @@ def alarm_status(request: Request) -> dict:
     return {
         "success": True,
         "data": {
+            **repository.get_sync_state(),
             "enabled": settings.alarm_monitor_enabled,
             "machine_nos": list(settings.alarm_monitor_machine_nos),
+            "monitor_start_at": settings.alarm_monitor_start_at,
             "interval_seconds": settings.alarm_monitor_interval_seconds,
             "reopen_debounce_minutes": settings.alarm_reopen_debounce_minutes,
             "worker_running": request.app.state.alarm_worker.thread.is_alive(),
-            **repository.get_sync_state(),
         },
         "request_id": request.state.request_id,
     }
@@ -42,7 +43,32 @@ def list_alarm_incidents(
 ) -> dict:
     return {
         "success": True,
-        "data": request.app.state.alarm_repository.list_incidents(status, limit),
+        "data": request.app.state.alarm_repository.list_incidents(
+            status,
+            limit,
+            monitor_start_at=settings.alarm_monitor_start_at,
+        ),
+        "request_id": request.state.request_id,
+    }
+
+
+@router.get("/incidents/page")
+def page_alarm_incidents(
+    request: Request,
+    status: Literal["open", "closed"] | None = None,
+    severity: Literal["warning", "high", "critical"] | None = None,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(15, ge=1, le=100),
+) -> dict:
+    return {
+        "success": True,
+        "data": request.app.state.alarm_repository.page_incidents(
+            monitor_start_at=settings.alarm_monitor_start_at,
+            status=status,
+            severity=severity,
+            page=page,
+            page_size=page_size,
+        ),
         "request_id": request.state.request_id,
     }
 
@@ -51,7 +77,9 @@ def list_alarm_incidents(
 def list_alarm_reports(
     request: Request, limit: int = Query(50, ge=1, le=200)
 ) -> dict:
-    reports = request.app.state.alarm_repository.list_reports(limit)
+    reports = request.app.state.alarm_repository.list_reports(
+        limit, monitor_start_at=settings.alarm_monitor_start_at
+    )
     for report in reports:
         if report["status"] == "completed":
             report["download_url"] = f"/api/v1/alarms/reports/{report['report_id']}/pdf"

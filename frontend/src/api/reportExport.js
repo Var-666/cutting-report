@@ -34,7 +34,7 @@ export async function waitForReport(reportId, { signal, onStatus = () => {}, tim
     const job = await getReportStatus(reportId, { signal })
     signal?.throwIfAborted()
     onStatus(job.stage_message || '正在生成报告…')
-    if (['completed', 'completed_with_warnings'].includes(job.status)) return job
+    if (job.status === 'completed') return job
     if (job.status === 'failed') throw new Error(job.error?.message || '报告生成失败')
     await new Promise((resolve, reject) => {
       const abort = () => { clearTimeout(timer); reject(new DOMException('已取消导出等待', 'AbortError')) }

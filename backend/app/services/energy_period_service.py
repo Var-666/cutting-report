@@ -276,6 +276,15 @@ class EnergyPeriodService:
         return report
 
     def get_task_day(self, report_date: date, records, *, force=False):
+        return self.get_task_range(report_date, report_date, records, force=force)
+
+    def get_task_range(self, start_date: date, end_date: date, records, *, force=False):
+        report = self._calculate_task_report(start_date, records, force=force)
+        report["period_start"] = start_date.isoformat()
+        report["period_end"] = end_date.isoformat()
+        return report
+
+    def _calculate_task_report(self, report_date: date, records, *, force=False):
         """Calculate task consumption only for the configured physical machine."""
         units = self.metadata()["units"]
         source_records = list(records)

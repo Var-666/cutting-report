@@ -8,19 +8,47 @@ function descriptor(name, folder = 'views') {
   return parse(source).descriptor
 }
 
+test('all admin pages share the home content width and navigation dimensions', () => {
+  const styles = readFileSync(new URL('../src/assets/style.css', import.meta.url), 'utf8')
+  const layout = descriptor('AdminLayout', 'layouts').template.content
+
+  assert.match(layout, /class="topbar"/)
+  assert.match(layout, /<div class="app-shell">/)
+  assert.match(styles, /\.topbar \{[^}]*height:70px;[^}]*1520px/)
+  assert.match(styles, /\.app-shell\{background:#f3f6f9\}/)
+  assert.match(styles, /\.app-shell \.admin-main\{width:min\(1520px,calc\(100% - 48px\)\);padding-top:16px\}/)
+  assert.match(styles, /@media\(max-width:560px\)\{\.app-shell \.admin-main\{width:calc\(100% - 24px\)\}/)
+  assert.doesNotMatch(styles, /app-shell--home/)
+})
+
+test('first page cards clear the header without doubling their own top spacing', () => {
+  const styles = readFileSync(new URL('../src/assets/style.css', import.meta.url), 'utf8')
+  const home = readFileSync(new URL('../src/assets/admin-home.css', import.meta.url), 'utf8')
+  const dispatch = descriptor('CuttingDispatchView').styles.map((style) => style.content).join('\n')
+
+  assert.match(styles, /\.worker-main \{ padding:16px 0 24px; \}/)
+  assert.match(styles, /\.report-navigation \{[^}]*margin:0;/)
+  assert.match(home, /\.command-home \{[^}]*padding: 0 0 24px;/)
+  assert.doesNotMatch(home, /\.command-home \{ gap: 12px; padding-top:/)
+  assert.match(dispatch, /\.dispatch-flow \{[^}]*margin:12px 0 0;/)
+})
+
 test('the supplied project logo is reused across primary product entry points', () => {
   const admin = descriptor('AdminLayout', 'layouts').template.content
   const worker = descriptor('WorkerLayout', 'layouts').template.content
   const login = descriptor('LoginView').template.content
   const index = readFileSync(new URL('../index.html', import.meta.url), 'utf8')
 
+  for (const view of [descriptor('AdminLayout', 'layouts'), descriptor('WorkerLayout', 'layouts'), descriptor('LoginView')]) {
+    assert.match(view.scriptSetup.content, /import projectLogo from '\.\.\/assets\/project-logo\.png'/)
+    assert.match(view.template.content, /:src="projectLogo"/)
+  }
   for (const template of [admin, worker, login]) {
-    assert.match(template, /src="\/project-logo\.png"/)
     assert.match(template, /class="[^"]*brand-logo/)
     assert.doesNotMatch(template, /class="brand-mark"/)
   }
-  assert.match(index, /rel="icon" href="\/project-logo\.png"/)
-  assert.match(index, /rel="apple-touch-icon" href="\/project-logo\.png"/)
+  assert.match(index, /rel="icon" href="\/src\/assets\/project-logo\.png"/)
+  assert.match(index, /rel="apple-touch-icon" href="\/src\/assets\/project-logo\.png"/)
 })
 
 test('all application dropdowns use the shared below-field menu', () => {
@@ -139,6 +167,8 @@ test('report analysis uses server source versions and starts immediately', () =>
   const analysis = descriptor('AnalysisPanel', 'components')
   const script = analysis.scriptSetup.content
   assert.match(script, /dataVersion: \{ type: String/)
+  assert.match(script, /summaryDataVersion: \{ type: String/)
+  assert.match(script, /analysisDataVersion = computed/)
   assert.doesNotMatch(script, /AUTO_ANALYSIS_DEBOUNCE_MS|4000/)
   assert.doesNotMatch(script, /activationTimer\.schedule\(/)
   assert.match(script, /void loadAnalysis\(false, targetKey\)/)
@@ -146,15 +176,16 @@ test('report analysis uses server source versions and starts immediately', () =>
   assert.match(script, /onDeactivated\(pauseAnalysis\)/)
   assert.match(script, /requestController\?\.abort\(\)/)
   assert.match(script, /analyzeReport\([\s\S]*\}, \{ signal \}\)/)
-  assert.match(script, /dataVersion: props\.dataVersion \|\| undefined/)
-  assert.match(script, /guardrail_fallback[^\n]*模型结果未通过校验 · 可信降级/)
+  assert.match(script, /dataVersion: analysisDataVersion\.value \|\| undefined/)
+  assert.doesNotMatch(script, /报表数据分析|guardrail_fallback|simulated_fallback|降级/)
+  assert.match(analysis.template.content, /class="analysis-mode model"[\s\S]*AI 分析/)
   assert.match(script, /const targetKey = requestKey\(\)[\s\S]*if \(!props\.ready \|\| !props\.reportDate\)/)
   assert.match(script, /if \(!props\.reportDate \|\| targetKey !== displayedRequestKey\) \{[\s\S]*analysis\.value = null/)
 
   const expectedVersions = new Map([
-    ['LeadershipReportView', /:data-version="report\?\.analysis_source_version \|\| ''"/],
+    ['LeadershipReportView', /:summary-data-version="monthlyReport\?\.analysis_summary_source_version \|\| ''"/],
     ['WorkshopView', /:data-version="result\.analysis_source_version \|\| ''"/],
-    ['EnergyPeriodReportView', /:data-version="taskDay\?\.analysis_source_version \|\| ''"/],
+    ['EnergyPeriodReportView', /:summary-data-version="monthlyReport\?\.analysis_source_version \|\| ''"/],
   ])
   for (const [name, pattern] of expectedVersions) {
     const template = descriptor(name).template.content
@@ -165,6 +196,7 @@ test('report analysis uses server source versions and starts immediately', () =>
   const api = readFileSync(new URL('../src/api/reports.js', import.meta.url), 'utf8')
   assert.match(api, /analyzeReport\(\{[^}]*dataVersion[^}]*\}/)
   assert.match(api, /data_version: dataVersion \|\| undefined/)
+  assert.match(script, /props\.summaryPeriodStart[\s\S]*props\.summaryPeriodEnd[\s\S]*props\.summaryDataVersion/)
 })
 
 test('report values use one decimal place throughout the UI', () => {
@@ -200,6 +232,7 @@ test('leadership dashboard uses verified comparison data and the home visual bas
   assert.doesNotMatch(template, /leadership-analysis/)
   assert.match(script, /report\.value\?\.comparison_total/)
   assert.match(script, /function changeRate\(current, previous\)/)
+  assert.match(script, /defaultMonthlyView\.value \? '较上月' : '较对比区间'/)
   assert.match(styles, /--leadership-hero-image/)
   assert.match(styles, /grid-template-columns:repeat\(4,minmax\(0,1fr\)\)/)
 })
@@ -244,6 +277,7 @@ test('workshop dashboard uses verified confirmation metrics and responsive home 
   assert.match(template, /<WorkshopStructureCharts/)
   assert.match(template, /result\.duration_distribution/)
   assert.match(template, /result\.status_distribution/)
+  assert.match(template, /result\.top_cut_length_tasks/)
   assert.doesNotMatch(template, /workshop-analysis/)
   assert.match(script, /import WorkshopStructureCharts from/)
   assert.match(script, /const workshopMetrics = computed/)
@@ -251,10 +285,17 @@ test('workshop dashboard uses verified confirmation metrics and responsive home 
   assert.match(structureScript, /import \{ BarChart, PieChart \} from 'echarts\/charts'/)
   assert.match(structureScript, /type: 'pie'/)
   assert.match(structureScript, /type: 'bar'/)
+  assert.match(structureScript, /topCutLengthTasks: \{ type: Array/)
+  assert.match(structureScript, /renderMode: 'richText'/)
   assert.match(structureTemplate, /任务时长分布/)
   assert.match(structureTemplate, /任务确认状态/)
+  assert.match(structureTemplate, /切割长度 Top 5/)
+  assert.match(structureTemplate, /class="status-progress"/)
+  assert.match(structureTemplate, /当前任务暂无有效切割长度/)
   assert.doesNotMatch(structureTemplate, /异常/)
-  assert.match(structureStyles, /@media\(max-width:900px\)\{\.workshop-structure__grid\{grid-template-columns:1fr\}/)
+  assert.match(structureStyles, /grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/)
+  assert.match(structureStyles, /@media\(max-width:1100px\)\{\.workshop-structure__grid\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/)
+  assert.match(structureStyles, /@media\(max-width:760px\)\{\.workshop-structure__grid\{grid-template-columns:1fr\}/)
   assert.match(styles, /grid-template-columns:repeat\(5,minmax\(0,1fr\)\)/)
   assert.match(styles, /@media\(max-width:560px\)[\s\S]*\.workshop-query-shell \.report-query,\.workshop-kpis/)
 })
@@ -271,17 +312,41 @@ test('home and equipment pages reveal independent results progressively', () => 
   assert.match(equipment.scriptSetup.content, /await Promise\.allSettled\(\[taskRequest, summaryRequest\]\)/)
 })
 
-test('home quick access keeps three purposeful business cards', () => {
+test('home quick access keeps three report links with readable business descriptions', () => {
   const home = descriptor('AdminHomeView')
   const template = home.template.content
-  const styles = home.styles.map((style) => style.content).join('\n')
+  const styles = readFileSync(new URL('../src/assets/admin-home.css', import.meta.url), 'utf8')
 
   assert.match(template, /<nav class="quick-links" aria-label="核心报表快速入口">/)
   assert.equal((template.match(/class="quick-link quick-link--/g) || []).length, 3)
-  assert.doesNotMatch(template, /quick-card__hint/)
-  assert.doesNotMatch(template, /quick-link__copy"><strong>[^<]+<\/strong><small>/)
-  assert.match(styles, /border-top:2px solid var\(--quick-color\)/)
+  assert.equal((template.match(/quick-link__copy"><strong>[^<]+<\/strong><small>[^<]+<\/small>/g) || []).length, 3)
+  assert.match(styles, /\.quick-link \{[^}]*display: flex;/)
+  assert.match(styles, /@media \(max-width: 760px\)/)
   assert.match(styles, /\.quick-link__arrow/)
+})
+
+test('home KPI and production ring show verified data instead of decorative placeholders', () => {
+  const home = descriptor('AdminHomeView')
+  const kpi = descriptor('HomeKpiCard', 'components')
+  const template = home.template.content
+  const script = home.scriptSetup.content
+
+  assert.equal((template.match(/<HomeKpiCard /g) || []).length, 6)
+  assert.match(kpi.template.content, /<MetricSparkline[^>]+:values="series"/)
+  assert.match(script, /dailyRecords\.value\.map\(\(item\) => item\.cut_length_m\)/)
+  assert.match(script, /energy\.value\?\.rows/)
+  assert.match(script, /Number\(previous\) === 0\) return \{ text: '暂无上期对比'/)
+  assert.match(template, /class="status-visual__value"[^>]*><strong>\{\{ activeDays \}\}<\/strong>/)
+})
+
+test('home KPI values stay fully readable when the card is narrow', () => {
+  const styles = descriptor('HomeKpiCard', 'components').styles.map((style) => style.content).join('\n')
+
+  assert.match(styles, /\.home-kpi\{[^}]*min-height:146px/)
+  assert.match(styles, /\.home-kpi__reading\{[^}]*justify-content:center/)
+  assert.match(styles, /\.home-kpi__reading\{[^}]*flex-wrap:wrap/)
+  assert.match(styles, /\.home-kpi__reading strong\{[^}]*overflow-wrap:anywhere/)
+  assert.doesNotMatch(styles, /\.home-kpi__reading strong\{[^}]*text-overflow:ellipsis/)
 })
 
 test('workshop report includes the confirmed-worker interval summary', () => {
@@ -367,7 +432,6 @@ test('standard report pages share the light table header and compact panel token
 test('primary application pages share one readable typography scale', () => {
   const styles = readFileSync(new URL('../src/assets/style.css', import.meta.url), 'utf8')
   const tables = readFileSync(new URL('../src/assets/content-tables.css', import.meta.url), 'utf8')
-  const home = descriptor('AdminHomeView')
   const settings = descriptor('SettingsHomeView')
 
   assert.match(styles, /--font-page-title:\s*38px;/)
@@ -380,7 +444,7 @@ test('primary application pages share one readable typography scale', () => {
   assert.match(tables, /font-size:10px !important;/)
   assert.doesNotMatch(styles, /font-family:\s*Georgia/)
   assert.doesNotMatch(settings.styles.map((style) => style.content).join('\n'), /Georgia/)
-  assert.match(home.scriptSetup.content, /Microsoft YaHei[\s\S]*PingFang SC[\s\S]*sans-serif/)
+  assert.match(styles, /font-family: "Microsoft YaHei", "PingFang SC", Inter, Arial, sans-serif;/)
 })
 
 test('device report is one page with task details and a default monthly summary', () => {
@@ -586,12 +650,21 @@ test('leadership report keeps refresh automatic and exposes only the normal quer
 test('alarm center reuses the report UI baseline and padded empty states', () => {
   const alarm = descriptor('AlarmCenterView')
   const template = alarm.template.content
+  const script = alarm.scriptSetup.content
   const styles = alarm.styles.map((style) => style.content).join('\n')
 
   assert.match(template, /class="page-hero report-hero alarm-hero"/)
   assert.match(template, /class="leadership-kpis alarm-kpis"/)
   assert.equal((template.match(/class="panel alarm-list"/g) || []).length, 2)
   assert.match(template, /class="alarm-refresh-button"/)
+  assert.match(template, /<th>告警时间<\/th><th>发现时间<\/th>/)
+  assert.match(template, /formatShortDateTime\(item\.first_start_time\)/)
+  assert.match(template, /同步游标[\s\S]*ALARM_INFO_ID/)
+  assert.doesNotMatch(template, /已同步记录/)
+  assert.match(script, /item\?\.first_start_time \|\| item\?\.first_seen_at/)
+  assert.match(script, /listAlarmIncidentPage/)
+  assert.match(template, /class="alarm-pagination"/)
+  assert.match(template, /第 \{\{ incidentPage \}\} \/ \{\{ incidentPageCount \}\} 页，共 \{\{ incidentSummary\.total \}\} 条/)
   assert.equal((template.match(/class="alarm-empty-state"/g) || []).length, 4)
   assert.match(template, /20kW 切割机当前无未解除告警/)
   assert.match(styles, /\.alarm-page>\.panel\{margin-bottom:0\}/)
@@ -643,7 +716,7 @@ test('all standard reports share the leadership analysis structure and compact c
   assert.match(template, /class="analysis-conclusion"/)
   assert.match(template, /分析结论/)
   assert.match(template, /核心指标/)
-  assert.match(template, /多维分析结果/)
+  assert.match(template, /分析结果/)
   assert.match(template, /class="analysis-facts"/)
   assert.match(template, /class="analysis-grid"/)
   assert.match(template, /class="analysis-evidence"/)
@@ -667,6 +740,8 @@ test('all standard report analyses follow the selected report range', () => {
   assert.match(leadership.template.content, /<AnalysisPanel[\s\S]*report-type="leadership"/)
   assert.match(leadership.template.content, /:period-start="defaultMonthlyView \? '' : appliedPeriodStart"/)
   assert.match(leadership.template.content, /:period-end="defaultMonthlyView \? '' : appliedPeriodEnd"/)
+  assert.match(leadership.template.content, /:summary-period-start="monthlyPeriodStart"/)
+  assert.match(leadership.template.content, /:summary-period-end="monthlyPeriodEnd"/)
   assert.doesNotMatch(leadership.template.content, /<AnalysisPanel v-else|区间智能分析将在导出报告时生成/)
   assert.match(workshop.template.content, /<AnalysisPanel[\s\S]*v-if="!isWorker"[\s\S]*report-type="workshop"/)
   assert.match(workshop.template.content, /:period-start="filters\.startDate"/)
@@ -675,11 +750,17 @@ test('all standard report analyses follow the selected report range', () => {
   assert.match(equipment.template.content, /<AnalysisPanel[\s\S]*report-type="equipment"/)
   assert.match(equipment.template.content, /:period-start="rangeQueryApplied \? appliedPeriodStart : ''"/)
   assert.match(equipment.template.content, /:period-end="rangeQueryApplied \? appliedPeriodEnd : ''"/)
+  assert.match(equipment.template.content, /:summary-period-start="summaryPeriodStart"/)
+  assert.match(equipment.template.content, /:summary-period-end="summaryPeriodEnd"/)
   assert.doesNotMatch(equipment.template.content, /<AnalysisPanel v-else|区间智能分析将在导出报告时生成/)
   assert.match(analysis.scriptSetup.content, /periodStart: props\.periodStart \|\| undefined/)
   assert.match(analysis.scriptSetup.content, /periodEnd: props\.periodEnd \|\| undefined/)
+  assert.match(analysis.scriptSetup.content, /summaryPeriodStart: props\.summaryPeriodStart \|\| undefined/)
+  assert.match(analysis.scriptSetup.content, /summaryPeriodEnd: props\.summaryPeriodEnd \|\| undefined/)
   assert.match(api, /period_start: periodStart/)
   assert.match(api, /period_end: periodEnd/)
+  assert.match(api, /summary_period_start: summaryPeriodStart/)
+  assert.match(api, /summary_period_end: summaryPeriodEnd/)
 })
 
 test('leadership and equipment second tables default to the recent twelve months', () => {
@@ -688,7 +769,7 @@ test('leadership and equipment second tables default to the recent twelve months
   const leadershipRange = leadership.scriptSetup.content.match(/async function loadReport[\s\S]*?\n}\n\nasync function loadDefaultReport/)?.[0] || ''
   const equipmentRange = equipment.scriptSetup.content.match(/async function loadRange[\s\S]*?\n}\n\nfunction stopSummaryRefresh/)?.[0] || ''
 
-  assert.match(leadership.scriptSetup.content, /getLeadershipReport\(today\.slice\(0, 7\), \{ signal \}\)/)
+  assert.match(leadership.scriptSetup.content, /getLeadershipReport\(today\.slice\(0, 7\), \{ force, signal \}\)/)
   assert.match(leadership.scriptSetup.content, /monthlyPeriodStart = ref\(recentTwelveMonthStart\(today\)\)/)
   assert.match(leadership.scriptSetup.content, /const monthlyReport = ref\(null\)/)
   assert.match(leadership.scriptSetup.content, /monthlyRecords = computed\(\(\) => monthlyReport\.value\?\.monthly_records/)
@@ -732,12 +813,14 @@ test('switching cached workshop and equipment reports does not force another que
 
 test('workshop pagination does not invalidate an unchanged analysis context', () => {
   const view = descriptor('WorkshopView')
+  const analysis = descriptor('AnalysisPanel', 'components').scriptSetup.content
   const workshop = view.scriptSetup.content
   const template = view.template.content
   const readyExpression = workshop.match(/const analysisReady = computed\(\(\) => Boolean\(([\s\S]*?)\n\)\)/)
 
   assert.ok(readyExpression)
-  assert.doesNotMatch(readyExpression[1], /loading/)
+  assert.match(readyExpression[1], /!loading\.value/)
+  assert.match(analysis, /if \(!props\.reportDate \|\| targetKey !== displayedRequestKey\) \{[\s\S]*analysis\.value = null/)
   assert.match(template, /@click="load\(result\.page - 1\)">上一页/)
   assert.match(template, /@click="load\(result\.page \+ 1\)">下一页/)
 })
@@ -781,7 +864,7 @@ test('long-lived page polling is serialized and cancelled when the page leaves',
   assert.match(alarm, /requestController\?\.abort\(\)/)
   assert.match(alarm, /await loadData\(\)[\s\S]*scheduleRefresh\(\)/)
   assert.match(api, /getAlarmStatus\(\{ signal \} = \{\}\)/)
-  assert.match(api, /listAlarmIncidents\([\s\S]*\{ signal \} = \{\}\)/)
+  assert.match(api, /listAlarmIncidentPage\([\s\S]*\{ signal \} = \{\}\)/)
   assert.match(api, /listAlarmReports\([\s\S]*\{ signal \} = \{\}\)/)
 
   assert.doesNotMatch(workshop, /setInterval\(/)

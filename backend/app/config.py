@@ -71,6 +71,7 @@ class Settings:
         "LEADERSHIP_REPORT_RECONCILE_HOUR", 2
     )
     report_data_cache_seconds: int = _as_int("REPORT_DATA_CACHE_SECONDS", 300)
+    report_background_refresh_seconds: int = _as_int("REPORT_BACKGROUND_REFRESH_SECONDS", 300)
     # 当前所有生产统计统一限定为 dbo.task.MACHINE_NO = Cutter01。
     report_machine_no: str = os.getenv("REPORT_MACHINE_NO", "Cutter01").strip() or "Cutter01"
 
@@ -195,15 +196,19 @@ class Settings:
     llm_model: str = os.getenv("LLM_MODEL", "")
     llm_timeout: float = _as_float("LLM_TIMEOUT_SECONDS", 30)
 
-    # 告警源位于生产数据库；首期只监控数据库中的实际设备名“20kw切割机”。
+    # 告警源位于生产数据库；20kw切割机对应的 MACHINE_NO 是 Cutter01。
     alarm_monitor_enabled: bool = _as_bool("ALARM_MONITOR_ENABLED", False)
     alarm_monitor_interval_seconds: int = _as_int(
         "ALARM_MONITOR_INTERVAL_SECONDS", 300
     )
     alarm_monitor_machine_nos: tuple[str, ...] = tuple(
         value.strip()
-        for value in os.getenv("ALARM_MONITOR_MACHINE_NOS", "20kw切割机").split(",")
+        for value in os.getenv("ALARM_MONITOR_MACHINE_NOS", "Cutter01").split(",")
         if value.strip()
+    )
+    alarm_monitor_start_at: str = (
+        os.getenv("ALARM_MONITOR_START_AT", "2026-09-29 00:00:00").strip()
+        or "2026-09-29 00:00:00"
     )
     alarm_reopen_debounce_minutes: int = _as_int(
         "ALARM_REOPEN_DEBOUNCE_MINUTES", 10

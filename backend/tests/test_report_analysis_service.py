@@ -1,6 +1,7 @@
 from datetime import date
 from dataclasses import replace
 from concurrent.futures import ThreadPoolExecutor
+from decimal import Decimal
 import json
 import re
 import sqlite3
@@ -11,26 +12,86 @@ import pytest
 
 from app.config import Settings
 from app.database.metadata import MetadataRepository
-from app.models.domain import ReportFilter
+from app.models.domain import AnalysisResult, ReportFilter
 from app.services.equipment_service import mock_energy, sort_equipment_records
 from app.services.leadership_report_service import LeadershipReportService
-from app.services.llm_service import (
-    _validate_citation_relevance,
-    _validate_citations,
-    _validate_grounded_numbers,
-    _validate_scenario_boundaries,
-)
+from app.services.llm_service import LlmService
 from app.services.query_service import QueryService
 from app.services.report_analysis_service import (
     AnalysisDataVersionMismatch,
+    AnalysisUnavailableError,
     ReportAnalysisService,
+    _present_analysis,
+    analysis_table_source_version,
+    combined_analysis_source_version,
     generate_data_version,
     leadership_analysis_source_version,
     workshop_analysis_source_version,
 )
+from tests.analysis_fakes import model_analysis
+
+
+def test_analysis_presents_internal_labels_in_plain_language() -> None:
+    result = AnalysisResult(
+        status="success",
+        overview="未标注工程有 887 项任务，环比下降 14.9% [F001][F002]。",
+        features="高位生产日有 2 天，未标注设备需核对 [F003]。",
+        alerts="工时异常和数据边界需核实 [F003]。",
+        suggestions="建议核对未标注工程的原始记录 [F001]。",
+        facts=[
+            {"id": "F001", "label": "未标注工程", "value": "887 项", "source": "未标注工程共 887 项"},
+            {"id": "F002", "label": "任务数环比", "value": "下降 14.9%", "source": "任务数环比下降 14.9%"},
+            {"id": "F003", "label": "高位生产日", "value": "2 天", "source": "高位生产日 2 天"},
+        ],
+    )
+
+    presented = _present_analysis(result)
+    visible_text = " ".join(
+        [presented.overview, presented.features, presented.alerts, presented.suggestions]
+        + [str(value) for fact in presented.facts for value in fact.values()]
+    )
+    for term in ("未标注工程", "未标注设备", "高位生产日", "工时异常", "数据边界", "环比"):
+        assert term not in visible_text
+    assert "工程号未填写" in presented.overview
+    assert "887 项" in presented.overview
+    assert "下降 14.9%" in presented.overview
+    assert "[F001][F002]" in presented.overview
+
+
+def test_missing_project_identifiers_are_described_plainly_in_report_analysis(tmp_path: Path) -> None:
+    settings, service = _services(tmp_path)
+    selected_date = date(2026, 8, 18)
+    bundle = QueryService(settings).fetch_report_data(ReportFilter(report_date=selected_date))
+    workshop_row = replace(bundle.workshop_records[0], project_code=None, ship_no=None)
+    equipment_row = replace(bundle.equipment_records[0], project_code=None, ship_no=None)
+
+    workshop_result = service.analyze_workshop(selected_date.isoformat(), [workshop_row])
+    equipment_result = service.analyze_equipment(selected_date.isoformat(), [equipment_row])
+    for result in (workshop_result, equipment_result):
+        visible_text = " ".join(
+            [result.overview, result.features, result.alerts, result.suggestions]
+            + [str(value) for fact in result.facts for value in fact.values()]
+        )
+        assert "未标注工程" not in visible_text
+    assert "工程号未填写" in workshop_result.facts[-1]["value"]
 
 
 def _services(tmp_path: Path):
+    settings = Settings(
+        project_root=tmp_path,
+        demo_mode=True,
+        data_source_mode="demo",
+        llm_enabled=True,
+    )
+    settings.ensure_runtime_dirs()
+    metadata = MetadataRepository(settings.metadata_db_path)
+    metadata.initialize()
+    service = ReportAnalysisService(settings, metadata)
+    service.llm.analyze_context = model_analysis
+    return settings, service
+
+
+def test_disabled_model_does_not_generate_report_data_analysis(tmp_path: Path) -> None:
     settings = Settings(
         project_root=tmp_path,
         demo_mode=True,
@@ -40,10 +101,17 @@ def _services(tmp_path: Path):
     settings.ensure_runtime_dirs()
     metadata = MetadataRepository(settings.metadata_db_path)
     metadata.initialize()
-    return settings, ReportAnalysisService(settings, metadata)
+    service = ReportAnalysisService(settings, metadata)
+    report = LeadershipReportService(settings).fetch(date(2026, 8, 1))
+
+    with pytest.raises(AnalysisUnavailableError, match="未启用"):
+        service.analyze_leadership(report)
+
+    with sqlite3.connect(settings.metadata_db_path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM report_analyses").fetchone()[0] == 0
 
 
-def test_three_report_types_get_distinct_simulated_analysis(tmp_path: Path) -> None:
+def test_three_report_types_use_model_results_with_report_facts(tmp_path: Path) -> None:
     settings, service = _services(tmp_path)
     selected_date = date(2026, 8, 18)
     leadership = LeadershipReportService(settings).fetch(selected_date)
@@ -71,19 +139,10 @@ def test_three_report_types_get_distinct_simulated_analysis(tmp_path: Path) -> N
         year_ago_date="2025-08-18",
     )
 
-    assert leadership_analysis.status == "simulated"
-    assert leadership_analysis.mode == "simulated"
+    assert leadership_analysis.status == "success"
+    assert leadership_analysis.mode == "model"
     assert "2026-08" in leadership_analysis.overview
-    assert "同比" in leadership_analysis.features
-    assert "工程" in leadership_analysis.features
-    assert "确认率" in workshop_analysis.features
-    assert "未完成工人确认" in workshop_analysis.alerts
-    assert "不进行能耗异常判定" in equipment_analysis.features
-    assert "能耗数据待核对" in equipment_analysis.alerts
-    assert "任务趋势" in workshop_analysis.overview
-    assert "任务趋势" in equipment_analysis.alerts
     assert leadership_analysis.overview != workshop_analysis.overview
-    assert workshop_analysis.overview != equipment_analysis.overview
     assert not hasattr(equipment_analysis, "limitations")
     assert all(result.facts for result in (
         leadership_analysis,
@@ -97,20 +156,7 @@ def test_three_report_types_get_distinct_simulated_analysis(tmp_path: Path) -> N
         referenced = result.overview + result.features + result.alerts + result.suggestions
         assert set(re.findall(r"\[(F\d{3})\]", referenced)) <= {fact["id"] for fact in result.facts}
 
-    for report_type, result, analysis_context in (
-        ("leadership", leadership_analysis, {"report_month": "2026-08"}),
-        ("workshop", workshop_analysis, {"report_date": "2026-08-18"}),
-        ("equipment", equipment_analysis, {"report_date": "2026-08-18"}),
-    ):
-        content = {
-            key: getattr(result, key)
-            for key in ("overview", "features", "alerts", "suggestions")
-        }
-        context = {"facts": result.facts, **analysis_context}
-        _validate_citations(content, context)
-        _validate_grounded_numbers(content, context)
-        _validate_citation_relevance(content, context)
-        _validate_scenario_boundaries(report_type, content)
+        assert result.mode == "model"
 
 
 def test_same_analysis_input_uses_metadata_cache(tmp_path: Path) -> None:
@@ -125,13 +171,17 @@ def test_same_analysis_input_uses_metadata_cache(tmp_path: Path) -> None:
     assert second.generated_at == first.generated_at
     assert second.overview == first.overview
     assert first.data_version == second.data_version
-    assert re.fullmatch(r"[0-9a-f]{64}", first.data_version or "")
+    assert re.fullmatch(r"[0-9a-f]{64}\.[0-9a-f]{64}", first.data_version or "")
 
 
 def test_visible_report_version_must_match_analysis_source(tmp_path: Path) -> None:
     settings, service = _services(tmp_path)
     report = LeadershipReportService(settings).fetch(date(2026, 8, 1))
-    visible_version = leadership_analysis_source_version(report)
+    primary_version = leadership_analysis_source_version(report)
+    summary_version = analysis_table_source_version(report.monthly_records)
+    visible_version = combined_analysis_source_version(
+        primary_version, summary_version
+    )
 
     result = service.analyze_leadership(
         report,
@@ -142,15 +192,17 @@ def test_visible_report_version_must_match_analysis_source(tmp_path: Path) -> No
     with pytest.raises(AnalysisDataVersionMismatch, match="刷新当前报表"):
         service.analyze_leadership(
             report,
-            expected_data_version="0" * 64,
+            expected_data_version=combined_analysis_source_version(
+                primary_version, "0" * 64
+            ),
         )
 
     report_date = date(2026, 8, 18)
     records = QueryService(settings).fetch_report_data(
         ReportFilter(report_date=report_date)
     ).workshop_records
-    workshop_version = workshop_analysis_source_version(
-        report_date.isoformat(), records
+    workshop_version = combined_analysis_source_version(
+        workshop_analysis_source_version(report_date.isoformat(), records)
     )
     workshop_result = service.analyze_workshop(
         report_date.isoformat(),
@@ -158,6 +210,29 @@ def test_visible_report_version_must_match_analysis_source(tmp_path: Path) -> No
         expected_data_version=workshop_version,
     )
     assert workshop_result.data_version == workshop_version
+
+    equipment_primary = "1" * 64
+    energy_summary = [{"report_date": "2026-08", "task_count": 1}]
+    equipment_version = combined_analysis_source_version(
+        equipment_primary,
+        analysis_table_source_version(energy_summary),
+    )
+    equipment_result = service.analyze_equipment(
+        report_date.isoformat(),
+        [],
+        energy_summary_rows=energy_summary,
+        source_data_version=equipment_primary,
+        expected_data_version=equipment_version,
+    )
+    assert equipment_result.data_version == equipment_version
+    with pytest.raises(AnalysisDataVersionMismatch, match="刷新当前报表"):
+        service.analyze_equipment(
+            report_date.isoformat(),
+            [],
+            energy_summary_rows=[{"report_date": "2026-08", "task_count": 2}],
+            source_data_version=equipment_primary,
+            expected_data_version=equipment_version,
+        )
 
 
 def test_data_version_is_stable_for_key_order_and_changes_with_business_data() -> None:
@@ -198,6 +273,13 @@ def test_force_refresh_replaces_same_version_cache(tmp_path: Path) -> None:
         ).fetchall()
     assert "data_version" in columns
     assert rows == [(forced.data_version,)]
+    assert service.metadata.get_analysis_source_version(
+        report_type="leadership",
+        report_date="2026-08",
+    ) == {
+        "data_version": forced.data_version,
+        "updated_at": forced.generated_at,
+    }
 
 
 def test_concurrent_same_version_requests_call_model_once(tmp_path: Path, monkeypatch) -> None:
@@ -210,9 +292,7 @@ def test_concurrent_same_version_requests_call_model_once(tmp_path: Path, monkey
         nonlocal calls
         calls += 1
         time.sleep(0.05)
-        result = service._simulate_leadership(context)
-        result.mode = "model"
-        return result
+        return model_analysis(_report_type, context)
 
     monkeypatch.setattr(service.llm, "analyze_context", model)
     with ThreadPoolExecutor(max_workers=2) as executor:
@@ -283,7 +363,17 @@ def test_empty_reports_keep_six_facts_without_inventing_comparisons(tmp_path):
     settings, service = _services(tmp_path)
     report = LeadershipReportService(settings).fetch(date(2026, 8, 1))
     empty_total = replace(report.current_month_total, task_count=0)
-    report = replace(report, current_month_total=empty_total, monthly_records=[], daily_records=[], year_ago_total=None, project_distribution=[])
+    report = replace(
+        report,
+        current_month_total=empty_total,
+        monthly_records=[],
+        daily_records=[],
+        year_ago_total=None,
+        comparison_total=None,
+        comparison_start=None,
+        comparison_end=None,
+        project_distribution=[],
+    )
     results = [
         service.analyze_leadership(report),
         service.analyze_workshop("2026-08-01", []),
@@ -309,37 +399,177 @@ def test_energy_quality_counts_a_task_once_even_with_multiple_issues(tmp_path):
     quality = result.facts[-1]
     assert quality["id"] == "F006"
     assert quality["value"] == "1 项"
-    assert "计量区间重叠 1 项" in quality["source"]
-    assert "采样或读数缺口 1 项" in quality["source"]
+    assert "仪表记录时间重叠 1 项" in quality["source"]
+    assert "仪表记录不完整 1 项" in quality["source"]
 
 
-def test_model_and_fallback_receive_the_same_six_facts(tmp_path, monkeypatch):
+def test_partial_task_energy_facts_keep_actual_meter_source(tmp_path):
     settings, service = _services(tmp_path)
-    service.settings = replace(settings, llm_enabled=True)
+    bundle = QueryService(settings).fetch_report_data(ReportFilter(report_date=date(2026, 8, 18)))
+    measured = replace(
+        bundle.equipment_records[0],
+        gas_consumption=Decimal("12.5"),
+        electricity_consumption=Decimal("30.0"),
+        gas_data_status="interpolated",
+        electricity_data_status="measured",
+    )
+    missing = replace(
+        bundle.equipment_records[0],
+        task_id="missing-energy-task",
+        gas_consumption=None,
+        electricity_consumption=None,
+        gas_data_status="gap",
+        electricity_data_status="gap",
+    )
+
+    result = service.analyze_equipment(
+        "2026-08-18", [measured, missing],
+        energy_data_mode="partial",
+        energy_units={"gas": "Nm³", "electricity": "kWh"},
+    )
+    facts = {fact["id"]: fact for fact in result.facts}
+    for fact_id in ("F003", "F004"):
+        assert "数据来源 实际仪表数据（仅汇总有记录的任务）" in facts[fact_id]["source"]
+        assert "有" in facts[fact_id]["source"] and "记录 1 项，共 2 项" in facts[fact_id]["source"]
+        assert "来源 未知" not in facts[fact_id]["source"]
+    assert facts["F003"]["value"] == "12.5 Nm³"
+    assert facts["F004"]["value"] == "30.0 kWh"
+    assert "根据前后读数估算 1 项" in facts["F003"]["source"]
+
+
+def test_partial_energy_does_not_claim_a_missing_channel_has_meter_data(tmp_path):
+    settings, service = _services(tmp_path)
+    bundle = QueryService(settings).fetch_report_data(ReportFilter(report_date=date(2026, 8, 18)))
+    row = replace(
+        bundle.equipment_records[0],
+        gas_consumption=Decimal("12.5"),
+        electricity_consumption=None,
+        gas_data_status="measured",
+        electricity_data_status="gap",
+    )
+
+    result = service.analyze_equipment(
+        "2026-08-18", [row], energy_data_mode="partial",
+        energy_units={"gas": "Nm³", "electricity": "kWh"},
+    )
+    facts = {fact["id"]: fact for fact in result.facts}
+    assert "数据来源 实际仪表数据" in facts["F003"]["source"]
+    assert "仅汇总有记录的任务" not in facts["F003"]["source"]
+    assert facts["F004"]["value"] == "缺失"
+    assert "无有效电耗记录" in facts["F004"]["source"]
+    assert "数据来源 实际仪表数据" not in facts["F004"]["source"]
+
+
+def test_model_receives_six_facts_and_two_complete_report_tables(tmp_path, monkeypatch):
+    settings, service = _services(tmp_path)
     report = LeadershipReportService(settings).fetch(date(2026, 8, 1))
-    contexts = []
+    bundle = QueryService(settings).fetch_report_data(
+        ReportFilter(report_date=date(2026, 8, 18))
+    )
+    workshop_records = [
+        replace(
+            bundle.workshop_records[0],
+            confirmed_by_id="worker-internal-id",
+            confirmed_by="张三",
+            confirmed_by_company_no="W001",
+        ),
+        *bundle.workshop_records[1:],
+    ]
+    equipment_records = sort_equipment_records(mock_energy(bundle.equipment_records))
+    energy_summary = [
+        {
+            "report_date": "2026-08",
+            "task_count": len(equipment_records),
+            "work_time_seconds": 120,
+            "electricity": {"value": 30.0, "status": "measured"},
+            "gas": {"value": 12.5, "status": "measured"},
+        }
+    ]
+    contexts = {}
 
     def model(report_type, context):
-        contexts.append(context)
-        result = service._simulate_leadership(context)
-        result.mode = "model"
-        return result
+        contexts[report_type] = context
+        return model_analysis(report_type, context)
 
     monkeypatch.setattr(service.llm, "analyze_context", model)
-    result = service.analyze_leadership(report)
-    assert len(contexts[0]["facts"]) == len(result.facts) == 6
-    assert result.mode == "model"
+    results = {
+        "leadership": service.analyze_leadership(report),
+        "workshop": service.analyze_workshop(
+            "2026-08-18", workshop_records
+        ),
+        "equipment": service.analyze_equipment(
+            "2026-08-18",
+            equipment_records,
+            energy_data_mode="mock",
+            energy_summary_rows=energy_summary,
+        ),
+    }
 
-    def fail(*_args):
-        raise RuntimeError("model unavailable")
+    assert [table["name"] for table in contexts["leadership"]["tables"]] == [
+        "区间每日明细",
+        "近12个月月度汇总",
+    ]
+    assert contexts["leadership"]["tables"][0]["row_count"] == len(report.daily_records)
+    assert contexts["leadership"]["tables"][1]["row_count"] == len(report.monthly_records)
 
-    monkeypatch.setattr(service.llm, "analyze_context", fail)
-    fallback = service.analyze_leadership(report, force=True)
-    assert fallback.mode == "simulated_fallback"
-    assert fallback.facts == result.facts
+    workshop_tables = contexts["workshop"]["tables"]
+    assert [table["name"] for table in workshop_tables] == ["任务明细", "工人工时汇总"]
+    assert workshop_tables[0]["row_count"] == len(workshop_records)
+    assert workshop_tables[0]["rows"][0]["confirmed_by"] == "张三"
+    assert "confirmed_by_id" not in workshop_tables[0]["rows"][0]
+    assert workshop_tables[1]["rows"][0]["company_no"] == "W001"
+    assert "worker_id" not in workshop_tables[1]["rows"][0]
+
+    equipment_tables = contexts["equipment"]["tables"]
+    assert [table["name"] for table in equipment_tables] == [
+        "任务能耗明细",
+        "近12个月月度能耗汇总",
+    ]
+    assert equipment_tables[0]["row_count"] == len(equipment_records)
+    assert equipment_tables[1]["rows"] == energy_summary
+    assert "energy_details" not in equipment_tables[0]["rows"][0]
+
+    for report_type, result in results.items():
+        assert len(contexts[report_type]["facts"]) == len(result.facts) == 6
+        assert all(table["row_count"] == len(table["rows"]) for table in contexts[report_type]["tables"])
+        assert result.mode == "model"
+
+def test_failed_model_call_is_not_cached_and_next_request_retries(tmp_path, monkeypatch):
+    settings, service = _services(tmp_path)
+    report = LeadershipReportService(settings).fetch(date(2026, 8, 1))
+    calls = 0
+
+    def model(_report_type, context):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("model temporarily unavailable")
+        return model_analysis(_report_type, context)
+
+    monkeypatch.setattr(service.llm, "analyze_context", model)
+    with pytest.raises(AnalysisUnavailableError, match="暂不可用"):
+        service.analyze_leadership(report)
+
+    with sqlite3.connect(settings.metadata_db_path) as connection:
+        count = connection.execute(
+            "SELECT COUNT(*) FROM report_analyses WHERE report_type = 'leadership'"
+        ).fetchone()[0]
+    assert count == 0
+    assert service.metadata.get_analysis_source_version(
+        report_type="leadership",
+        report_date="2026-08",
+    )["data_version"] == combined_analysis_source_version(
+        leadership_analysis_source_version(report),
+        analysis_table_source_version(report.monthly_records),
+    )
+
+    recovered = service.analyze_leadership(report)
+    assert recovered.mode == "model"
+    assert recovered.cached is False
+    assert calls == 2
 
 
-def test_model_output_with_an_invented_number_is_not_exposed(tmp_path, monkeypatch):
+def test_model_output_is_used_without_content_rejection(tmp_path, monkeypatch):
     settings, service = _services(tmp_path)
     model_settings = replace(
         settings,
@@ -348,7 +578,7 @@ def test_model_output_with_an_invented_number_is_not_exposed(tmp_path, monkeypat
         llm_base_url="http://llm.test",
     )
     service.settings = model_settings
-    service.llm.settings = model_settings
+    service.llm = LlmService(model_settings)
 
     class FakeResponse:
         def raise_for_status(self):
@@ -363,6 +593,8 @@ def test_model_output_with_an_invented_number_is_not_exposed(tmp_path, monkeypat
             }
             return {"choices": [{"message": {"content": json.dumps(content)}}]}
 
+    calls = 0
+
     class FakeClient:
         def __init__(self, **_kwargs):
             pass
@@ -374,15 +606,20 @@ def test_model_output_with_an_invented_number_is_not_exposed(tmp_path, monkeypat
             return None
 
         def post(self, *_args, **_kwargs):
+            nonlocal calls
+            calls += 1
             return FakeResponse()
 
     monkeypatch.setattr("app.services.llm_service.httpx.Client", FakeClient)
     report = LeadershipReportService(settings).fetch(date(2026, 8, 1))
 
     result = service.analyze_leadership(report)
+    assert result.overview == "本期完成 999 项任务 [F001]。"
+    assert result.mode == "model"
+    assert calls == 1
 
-    assert result.status == "degraded"
-    assert result.mode == "guardrail_fallback"
-    assert "999" not in (
-        result.overview + result.features + result.alerts + result.suggestions
-    )
+    with sqlite3.connect(settings.metadata_db_path) as connection:
+        count = connection.execute(
+            "SELECT COUNT(*) FROM report_analyses WHERE report_type = 'leadership'"
+        ).fetchone()[0]
+    assert count == 1

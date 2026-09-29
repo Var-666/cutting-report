@@ -28,7 +28,6 @@ const statusText = {
   analyzing: '分析中',
   rendering: '渲染中',
   completed: '已完成',
-  completed_with_warnings: '已完成（有提示）',
   failed: '失败',
 }
 

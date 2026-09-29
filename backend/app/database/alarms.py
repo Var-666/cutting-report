@@ -34,6 +34,14 @@ def _fingerprint(record: dict[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _window_fingerprint(fingerprint: str, monitor_start_at: str | None) -> str:
+    if not monitor_start_at:
+        return fingerprint
+    return hashlib.sha256(
+        f"{fingerprint}|{monitor_start_at}".encode("utf-8")
+    ).hexdigest()
+
+
 def _source_hash(record: dict[str, Any]) -> str:
     encoded = json.dumps(record, ensure_ascii=False, sort_keys=True, default=str).encode(
         "utf-8"
@@ -59,6 +67,7 @@ class AlarmRepository(SQLiteRepository):
                     source_name TEXT PRIMARY KEY,
                     last_alarm_id INTEGER NOT NULL DEFAULT 0,
                     last_success_at TEXT,
+                    monitor_start_at TEXT,
                     lease_owner TEXT,
                     lease_until TEXT
                 );
@@ -86,6 +95,8 @@ class AlarmRepository(SQLiteRepository):
                     ON alarm_incidents(fingerprint) WHERE status = 'open';
                 CREATE INDEX IF NOT EXISTS idx_alarm_incidents_recent
                     ON alarm_incidents(first_seen_at DESC, incident_id DESC);
+                CREATE INDEX IF NOT EXISTS idx_alarm_incidents_start
+                    ON alarm_incidents(first_start_time DESC, first_seen_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_alarm_incidents_unreported
                     ON alarm_incidents(pdf_report_id, first_seen_at);
                 CREATE INDEX IF NOT EXISTS idx_alarm_incidents_retention
@@ -130,6 +141,16 @@ class AlarmRepository(SQLiteRepository):
                     ON alarm_reports(status, completed_at, report_id);
                 """
             )
+            sync_columns = {
+                row[1]
+                for row in connection.execute(
+                    "PRAGMA table_info(alarm_sync_state)"
+                ).fetchall()
+            }
+            if "monitor_start_at" not in sync_columns:
+                connection.execute(
+                    "ALTER TABLE alarm_sync_state ADD COLUMN monitor_start_at TEXT"
+                )
             connection.execute(
                 """
                 INSERT OR IGNORE INTO alarm_sync_state(source_name, last_alarm_id)
@@ -160,7 +181,7 @@ class AlarmRepository(SQLiteRepository):
         with self.connect() as connection:
             row = connection.execute(
                 """
-                SELECT source_name, last_alarm_id, last_success_at
+                SELECT source_name, last_alarm_id, last_success_at, monitor_start_at
                 FROM alarm_sync_state WHERE source_name = ?
                 """,
                 (source_name,),
@@ -169,16 +190,56 @@ class AlarmRepository(SQLiteRepository):
             "source_name": source_name,
             "last_alarm_id": 0,
             "last_success_at": None,
+            "monitor_start_at": None,
         }
 
-    def list_open_source_ids(self, limit: int = 2000) -> list[int]:
+    def configure_monitoring_window(
+        self,
+        monitor_start_at: str,
+        *,
+        force: bool = False,
+        source_name: str = "production",
+    ) -> bool:
+        with self.connect() as connection:
+            self.begin_immediate(connection)
+            row = connection.execute(
+                "SELECT monitor_start_at FROM alarm_sync_state WHERE source_name = ?",
+                (source_name,),
+            ).fetchone()
+            changed = force or row is None or row["monitor_start_at"] != monitor_start_at
+            if not changed:
+                return False
+            connection.execute(
+                """
+                INSERT INTO alarm_sync_state(
+                    source_name, last_alarm_id, last_success_at, monitor_start_at
+                ) VALUES (?, 0, NULL, ?)
+                ON CONFLICT(source_name) DO UPDATE SET
+                    last_alarm_id = 0,
+                    last_success_at = NULL,
+                    monitor_start_at = excluded.monitor_start_at
+                """,
+                (source_name, monitor_start_at),
+            )
+        return True
+
+    def list_open_source_ids(
+        self, limit: int = 2000, *, monitor_start_at: str | None = None
+    ) -> list[int]:
+        where = "WHERE is_open = 1"
+        parameters: tuple[Any, ...]
+        if monitor_start_at:
+            where += " AND start_time >= ?"
+            parameters = (monitor_start_at, limit)
+        else:
+            parameters = (limit,)
         with self.connect() as connection:
             rows = connection.execute(
-                """
+                f"""
                 SELECT source_alarm_id FROM alarm_source_events
-                WHERE is_open = 1 ORDER BY source_alarm_id LIMIT ?
+                {where} ORDER BY source_alarm_id LIMIT ?
                 """,
-                (limit,),
+                parameters,
             ).fetchall()
         return [int(row[0]) for row in rows]
 
@@ -222,6 +283,7 @@ class AlarmRepository(SQLiteRepository):
         now: datetime,
         cursor: int,
         debounce_minutes: int,
+        monitor_start_at: str | None = None,
         source_name: str = "production",
     ) -> dict[str, int]:
         now_text = now.isoformat(timespec="seconds")
@@ -245,9 +307,30 @@ class AlarmRepository(SQLiteRepository):
                 start_time = _text(record.get("start_time")) or None
                 is_open = 0 if remove_time else 1
                 existing = connection.execute(
-                    "SELECT incident_id FROM alarm_source_events WHERE source_alarm_id = ?",
+                    """
+                    SELECT e.incident_id, i.first_start_time
+                    FROM alarm_source_events e
+                    JOIN alarm_incidents i ON i.incident_id = e.incident_id
+                    WHERE e.source_alarm_id = ?
+                    """,
                     (source_alarm_id,),
                 ).fetchone()
+                if (
+                    existing
+                    and monitor_start_at
+                    and start_time
+                    and start_time >= monitor_start_at
+                    and (
+                        not existing["first_start_time"]
+                        or existing["first_start_time"] < monitor_start_at
+                    )
+                ):
+                    affected_incidents.add(str(existing["incident_id"]))
+                    connection.execute(
+                        "DELETE FROM alarm_source_events WHERE source_alarm_id = ?",
+                        (source_alarm_id,),
+                    )
+                    existing = None
                 if existing:
                     incident_id = str(existing["incident_id"])
                     connection.execute(
@@ -267,23 +350,53 @@ class AlarmRepository(SQLiteRepository):
                         ),
                     )
                 else:
-                    fingerprint = _fingerprint(record)
+                    base_fingerprint = _fingerprint(record)
+                    fingerprint = _window_fingerprint(
+                        base_fingerprint, monitor_start_at
+                    )
+                    fingerprints = (
+                        (base_fingerprint, fingerprint)
+                        if fingerprint != base_fingerprint
+                        else (fingerprint,)
+                    )
+                    placeholders = ",".join("?" for _ in fingerprints)
+                    incident_where = (
+                        f"fingerprint IN ({placeholders}) AND status = 'open'"
+                    )
+                    incident_parameters: tuple[Any, ...] = fingerprints
+                    if monitor_start_at:
+                        incident_where += " AND first_start_time >= ?"
+                        incident_parameters = (*fingerprints, monitor_start_at)
                     incident = connection.execute(
-                        """
+                        f"""
                         SELECT incident_id FROM alarm_incidents
-                        WHERE fingerprint = ? AND status = 'open'
+                        WHERE {incident_where}
                         """,
-                        (fingerprint,),
+                        incident_parameters,
                     ).fetchone()
                     if incident is None:
+                        closed_where = (
+                            f"fingerprint IN ({placeholders}) "
+                            "AND status = 'closed' AND closed_at >= ?"
+                        )
+                        closed_parameters: tuple[Any, ...] = (
+                            *fingerprints,
+                            debounce_cutoff,
+                        )
+                        if monitor_start_at:
+                            closed_where += " AND first_start_time >= ?"
+                            closed_parameters = (
+                                *fingerprints,
+                                debounce_cutoff,
+                                monitor_start_at,
+                            )
                         incident = connection.execute(
-                            """
+                            f"""
                             SELECT incident_id FROM alarm_incidents
-                            WHERE fingerprint = ? AND status = 'closed'
-                              AND closed_at >= ?
+                            WHERE {closed_where}
                             ORDER BY closed_at DESC LIMIT 1
                             """,
-                            (fingerprint, debounce_cutoff),
+                            closed_parameters,
                         ).fetchone()
                         if incident is not None:
                             connection.execute(
@@ -395,15 +508,24 @@ class AlarmRepository(SQLiteRepository):
             "last_alarm_id": max_alarm_id,
         }
 
-    def list_unreported_incidents(self, limit: int = 100) -> list[dict[str, Any]]:
+    def list_unreported_incidents(
+        self, limit: int = 100, *, monitor_start_at: str | None = None
+    ) -> list[dict[str, Any]]:
+        where = "WHERE pdf_report_id IS NULL"
+        parameters: tuple[Any, ...]
+        if monitor_start_at:
+            where += " AND first_start_time >= ?"
+            parameters = (monitor_start_at, limit)
+        else:
+            parameters = (limit,)
         with self.connect() as connection:
             rows = connection.execute(
-                """
+                f"""
                 SELECT * FROM alarm_incidents
-                WHERE pdf_report_id IS NULL
+                {where}
                 ORDER BY first_seen_at, incident_id LIMIT ?
                 """,
-                (limit,),
+                parameters,
             ).fetchall()
         return [dict(row) for row in rows]
 
@@ -513,29 +635,134 @@ class AlarmRepository(SQLiteRepository):
             ).fetchone()
         return self._decode_report(row)
 
-    def list_reports(self, limit: int = 50) -> list[dict[str, Any]]:
+    def list_reports(
+        self, limit: int = 50, *, monitor_start_at: str | None = None
+    ) -> list[dict[str, Any]]:
+        join = ""
+        where = ""
+        parameters: tuple[Any, ...]
+        if monitor_start_at:
+            join = "JOIN alarm_incidents i ON i.pdf_report_id = r.report_id"
+            where = "WHERE i.first_start_time >= ?"
+            parameters = (monitor_start_at, limit)
+        else:
+            parameters = (limit,)
         with self.connect() as connection:
             rows = connection.execute(
-                """
-                SELECT * FROM alarm_reports
-                ORDER BY created_at DESC, report_id DESC LIMIT ?
+                f"""
+                SELECT DISTINCT r.* FROM alarm_reports r
+                {join} {where}
+                ORDER BY r.created_at DESC, r.report_id DESC LIMIT ?
                 """,
-                (limit,),
+                parameters,
             ).fetchall()
         return [self._decode_report(row) for row in rows]
 
-    def list_incidents(self, status: str | None, limit: int = 100) -> list[dict[str, Any]]:
-        where = "WHERE status = ?" if status else ""
-        parameters: tuple[Any, ...] = (status, limit) if status else (limit,)
+    def list_incidents(
+        self,
+        status: str | None,
+        limit: int = 100,
+        *,
+        monitor_start_at: str | None = None,
+    ) -> list[dict[str, Any]]:
+        conditions: list[str] = []
+        values: list[Any] = []
+        if status:
+            conditions.append("status = ?")
+            values.append(status)
+        if monitor_start_at:
+            conditions.append("first_start_time >= ?")
+            values.append(monitor_start_at)
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        values.append(limit)
         with self.connect() as connection:
             rows = connection.execute(
                 f"""
                 SELECT * FROM alarm_incidents {where}
                 ORDER BY first_seen_at DESC, incident_id DESC LIMIT ?
                 """,
-                parameters,
+                tuple(values),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def page_incidents(
+        self,
+        *,
+        monitor_start_at: str,
+        status: str | None,
+        severity: str | None,
+        page: int,
+        page_size: int,
+    ) -> dict[str, Any]:
+        base_condition = "first_start_time >= ?"
+        filtered_conditions = [base_condition]
+        filtered_values: list[Any] = [monitor_start_at]
+        if status:
+            filtered_conditions.append("status = ?")
+            filtered_values.append(status)
+        if severity:
+            filtered_conditions.append("severity = ?")
+            filtered_values.append(severity)
+        filtered_where = " AND ".join(filtered_conditions)
+
+        with self.connect() as connection:
+            summary = connection.execute(
+                f"""
+                SELECT
+                    COUNT(*) AS all_total,
+                    SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) AS open_count,
+                    SUM(CASE WHEN severity = 'critical' THEN 1 ELSE 0 END) AS critical_count,
+                    SUM(CASE WHEN severity = 'high' THEN 1 ELSE 0 END) AS high_count,
+                    SUM(CASE WHEN severity = 'warning' THEN 1 ELSE 0 END) AS warning_count
+                FROM alarm_incidents WHERE {base_condition}
+                """,
+                (monitor_start_at,),
+            ).fetchone()
+            total = int(
+                connection.execute(
+                    f"SELECT COUNT(*) FROM alarm_incidents WHERE {filtered_where}",
+                    tuple(filtered_values),
+                ).fetchone()[0]
+            )
+            page_count = max(1, (total + page_size - 1) // page_size)
+            current_page = min(page, page_count)
+            rows = connection.execute(
+                f"""
+                SELECT * FROM alarm_incidents WHERE {filtered_where}
+                ORDER BY first_seen_at DESC, incident_id DESC LIMIT ? OFFSET ?
+                """,
+                (*filtered_values, page_size, (current_page - 1) * page_size),
+            ).fetchall()
+            dominant_status = (
+                "AND status = 'open'" if int(summary["open_count"] or 0) else ""
+            )
+            dominant = connection.execute(
+                f"""
+                SELECT COALESCE(NULLIF(alarm_class, ''), NULLIF(alarm_desc, ''), '其他异常') AS label,
+                       COUNT(*) AS count
+                FROM alarm_incidents
+                WHERE {base_condition}
+                  {dominant_status}
+                GROUP BY label ORDER BY count DESC, label LIMIT 1
+                """,
+                (monitor_start_at,),
+            ).fetchone()
+
+        return {
+            "items": [dict(row) for row in rows],
+            "page": current_page,
+            "page_size": page_size,
+            "page_count": page_count,
+            "total": total,
+            "all_total": int(summary["all_total"] or 0),
+            "open_count": int(summary["open_count"] or 0),
+            "severity_counts": {
+                "critical": int(summary["critical_count"] or 0),
+                "high": int(summary["high_count"] or 0),
+                "warning": int(summary["warning_count"] or 0),
+            },
+            "dominant_alarm": dict(dominant) if dominant else None,
+        }
 
     @staticmethod
     def _decode_report(row: sqlite3.Row | None) -> dict[str, Any] | None:

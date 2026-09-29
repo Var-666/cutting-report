@@ -9,6 +9,7 @@ from app.database.metadata import MetadataRepository
 from app.database.workshop import WorkshopRepository
 from app.models.domain import ReportFilter
 from app.services.pipeline import ReportPipeline
+from tests.analysis_fakes import model_analysis
 
 
 @pytest.mark.parametrize(
@@ -35,13 +36,14 @@ def test_demo_pipeline_generates_offline_report(
         project_root=tmp_path,
         demo_mode=True,
         data_source_mode="demo",
-        llm_enabled=False,
+        llm_enabled=True,
         app_version="test",
     )
     test_settings.ensure_runtime_dirs()
     metadata = MetadataRepository(test_settings.metadata_db_path)
     metadata.initialize()
     pipeline = ReportPipeline(test_settings, metadata)
+    pipeline.analysis_service.llm.analyze_context = model_analysis
     now = datetime.now(ZoneInfo(test_settings.timezone)).isoformat(timespec="seconds")
     if report_type == "workshop":
         workshop = WorkshopRepository(test_settings.metadata_db_path)
@@ -102,7 +104,8 @@ def test_demo_pipeline_generates_offline_report(
     assert "background:#dceaf0" in html
     assert "tbody tr:nth-child(even)" not in html
     assert '"areaStyle"' in html
-    assert "模拟大模型分析" in html
+    assert "大模型分析" in html
+    assert "模拟大模型分析" not in html
     assert "分析边界" not in html
     assert html.count('class="analysis-fact"') == 6
     assert 'class="analysis-card alerts"' in html
@@ -134,7 +137,7 @@ def test_demo_pipeline_generates_offline_report(
         assert "CUT-01" not in html
         assert "设备数量" not in html
         assert "切割长度</small>" not in html
-        assert "不进行能耗异常判定" in html
+        assert "当前关注项需结合现场记录核对" in html
     assert completed["task_count"] > 0
 
 
@@ -153,13 +156,14 @@ def test_range_export_keeps_the_recent_twelve_month_summary(
         project_root=tmp_path,
         demo_mode=True,
         data_source_mode="demo",
-        llm_enabled=False,
+        llm_enabled=True,
         app_version="test",
     )
     test_settings.ensure_runtime_dirs()
     metadata = MetadataRepository(test_settings.metadata_db_path)
     metadata.initialize()
     pipeline = ReportPipeline(test_settings, metadata)
+    pipeline.analysis_service.llm.analyze_context = model_analysis
     now = datetime.now(ZoneInfo(test_settings.timezone)).isoformat(timespec="seconds")
     metadata.create_job(
         report_id=f"rpt_range_{report_type}",

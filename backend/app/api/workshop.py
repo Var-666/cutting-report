@@ -19,10 +19,12 @@ from app.database.workshop import (
 )
 from app.models.domain import to_primitive
 from app.services.statistics_service import (
+    build_top_cut_length_tasks,
     build_worker_work_summaries,
     build_workshop_task_distributions,
 )
 from app.services.report_analysis_service import (
+    analysis_period_label,
     workshop_analysis_source_version,
 )
 from app.services.workshop_sorting import sort_workshop_by_recency
@@ -219,6 +221,7 @@ def list_tasks(
                 "worker_summaries": [],
                 "duration_distribution": [],
                 "status_distribution": [],
+                "top_cut_length_tasks": [],
                 "analysis_source_version": workshop_analysis_source_version(
                     report_date.isoformat(), []
                 ),
@@ -242,6 +245,7 @@ def list_tasks(
     elif confirmation_status == "unconfirmed":
         records = [row for row in records if not row.confirmed_by]
     distributions = build_workshop_task_distributions(records)
+    top_cut_length_tasks = build_top_cut_length_tasks(records)
     records = sort_workshop_records(records, sort_mode)
 
     total = len(records)
@@ -259,6 +263,7 @@ def list_tasks(
             "confirmed_count": confirmed_count,
             "worker_summaries": to_primitive(worker_summaries),
             **distributions,
+            "top_cut_length_tasks": to_primitive(top_cut_length_tasks),
             "analysis_source_version": analysis_source_version,
             "current_user": user,
         },
@@ -286,7 +291,7 @@ def list_range_tasks(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     analysis_source_version = _workshop_analysis_source_version(
-        f"{start_date.isoformat()} 至 {end_date.isoformat()}", records
+        analysis_period_label(start_date, end_date), records
     )
     project_names = sorted(
         {row.project_code for row in records if row.project_code}
@@ -299,6 +304,7 @@ def list_range_tasks(
     elif confirmation_status == "unconfirmed":
         records = [row for row in records if not row.confirmed_by]
     distributions = build_workshop_task_distributions(records)
+    top_cut_length_tasks = build_top_cut_length_tasks(records)
     trend = _workshop_trend(records)
     records = sort_workshop_records(records, "manager")
     total = len(records)
@@ -325,6 +331,7 @@ def list_range_tasks(
             "trend": trend,
             "worker_summaries": to_primitive(worker_summaries),
             **distributions,
+            "top_cut_length_tasks": to_primitive(top_cut_length_tasks),
             "analysis_source_version": analysis_source_version,
         },
     )

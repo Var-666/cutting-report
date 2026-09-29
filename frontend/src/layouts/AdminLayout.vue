@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
+import projectLogo from '../assets/project-logo.png'
 import AppIcon from '../components/AppIcon.vue'
 import { endSession, session } from '../state/session'
 
@@ -27,7 +28,7 @@ async function logout() {
     <a class="skip-link" href="#admin-main">跳到主要内容</a>
     <header class="topbar">
       <RouterLink class="brand-link" to="/admin/home" aria-label="返回系统首页">
-        <img class="brand-logo" src="/project-logo.png" alt="" width="46" height="46" />
+        <img class="brand-logo" :src="projectLogo" alt="" width="46" height="46" />
         <span class="brand-copy"><small>PRODUCTION REPORTING</small><strong>切割生产智能产报系统</strong></span>
       </RouterLink>
       <nav class="topnav" aria-label="主导航">

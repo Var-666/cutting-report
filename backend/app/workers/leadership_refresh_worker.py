@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 from app.config import Settings
 from app.services.leadership_report_service import LeadershipReportService, _previous_month
+from app.services.report_analysis_service import ReportAnalysisService
 
 
 logger = logging.getLogger(__name__)
@@ -16,9 +17,15 @@ logger = logging.getLogger(__name__)
 class LeadershipRefreshWorker:
     """Refresh SQL Server leadership snapshots without blocking HTTP requests."""
 
-    def __init__(self, settings: Settings, service: LeadershipReportService) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        service: LeadershipReportService,
+        analysis_service: ReportAnalysisService | None = None,
+    ) -> None:
         self.settings = settings
         self.service = service
+        self.analysis_service = analysis_service
         self.stop_event = threading.Event()
         self.wake_event = threading.Event()
         self._lock = threading.Lock()
@@ -88,15 +95,7 @@ class LeadershipRefreshWorker:
                 continue
             report_month, bootstrap = request
             try:
-                count = self.service.refresh(report_month, bootstrap=bootstrap)
-                logger.info(
-                    "leadership snapshots refreshed",
-                    extra={
-                        "report_month": report_month.isoformat(),
-                        "bootstrap": bootstrap,
-                        "snapshot_count": count,
-                    },
-                )
+                self._refresh(report_month, bootstrap)
             except Exception:
                 logger.exception(
                     "leadership snapshot refresh failed",
@@ -105,6 +104,28 @@ class LeadershipRefreshWorker:
             finally:
                 with self._lock:
                     self._running.discard(report_month)
+
+    def _refresh(self, report_month: date, bootstrap: bool) -> None:
+        count = self.service.refresh(report_month, bootstrap=bootstrap)
+        logger.info(
+            "leadership snapshots refreshed",
+            extra={
+                "report_month": report_month.isoformat(),
+                "bootstrap": bootstrap,
+                "snapshot_count": count,
+            },
+        )
+        if (
+            self.analysis_service is not None
+            and self.settings.llm_enabled
+            and report_month == self._now().date().replace(day=1)
+        ):
+            try:
+                self.analysis_service.analyze_leadership(
+                    self.service.fetch(report_month), force=True
+                )
+            except Exception:
+                logger.exception("leadership background analysis failed")
 
     def _claim(self) -> tuple[date, bool] | None:
         with self._lock:
@@ -122,7 +143,7 @@ class LeadershipRefreshWorker:
         if now_tick >= self._next_current_refresh:
             self.schedule(current_month)
             self._next_current_refresh = (
-                now_tick + self.service.current_refresh_seconds
+                now_tick + max(30, self.settings.report_background_refresh_seconds)
             )
 
         reconcile_hour = min(

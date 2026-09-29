@@ -20,7 +20,11 @@ from app.models.domain import (
     WorkshopRecord,
     to_primitive,
 )
-from app.services.energy_period_service import channel_result
+from app.services.energy_period_service import (
+    channel_result,
+    restore_task_energy_records,
+    total_channel,
+)
 from app.services.equipment_service import summarize_equipment
 from app.services.query_service import QueryService
 
@@ -93,12 +97,12 @@ class RangeReportService:
         settings: Settings,
         query_service: QueryService,
         workshop: WorkshopRepository,
-        energy_service,
+        energy_period_service,
     ) -> None:
         self.settings = settings
         self.query_service = query_service
         self.workshop = workshop
-        self.energy_service = energy_service
+        self.energy_period_service = energy_period_service
 
     def bundle(
         self,
@@ -249,16 +253,11 @@ class RangeReportService:
 
     @staticmethod
     def _energy_channel(records: list[EquipmentRecord], field: str) -> dict:
-        values = [getattr(row, field) for row in records]
-        valid = [value for value in values if value is not None]
-        status = "missing" if not valid else "measured" if len(valid) == len(values) else "partial"
-        return channel_result(
-            sum(valid, Decimal("0")) if valid else None,
-            status,
-            valid_count=len(valid),
-            complete_count=len(valid),
-            expected_count=len(values),
-            estimated_count=0,
+        status_field = field.replace("_consumption", "_data_status")
+        return total_channel(
+            [{field: channel_result(getattr(row, field), getattr(row, status_field))}
+             for row in records],
+            field,
         )
 
     def equipment(self, start_date: date, end_date: date, *, force: bool = False) -> dict:
@@ -270,8 +269,11 @@ class RangeReportService:
             )
         filters = report_filter(start_date, end_date)
         source = self.query_service.fetch_equipment_data(filters, force=force)
-        energy = self.energy_service.enrich(source.records, force=force)
-        records = energy.records
+        task_report = self.energy_period_service.get_task_range(
+            start_date, end_date, source.records, force=force
+        )
+        records = restore_task_energy_records(source.records, task_report)
+        mode = task_report["summary"]["energy_data_mode"]
         by_day: dict[date, list[EquipmentRecord]] = defaultdict(list)
         for row in records:
             if row.production_time is not None:
@@ -282,7 +284,7 @@ class RangeReportService:
         stamp = start_date
         while stamp <= end_date:
             rows = by_day.get(stamp, [])
-            summary = summarize_equipment(rows, energy.mode)
+            summary = summarize_equipment(rows, mode)
             daily_rows.append(
                 {
                     "report_date": stamp.isoformat(),
@@ -299,22 +301,10 @@ class RangeReportService:
             )
             stamp += timedelta(days=1)
 
-        summary = summarize_equipment(records, energy.mode)
-        task_report = {
-            "report_date": start_date.isoformat(),
-            "period_start": start_date.isoformat(),
-            "period_end": end_date.isoformat(),
-            "records": to_primitive(records),
-            "summary": to_primitive(summary),
-            "units": energy.units,
-            "equipment_scope": [self.settings.report_machine_no],
-            "source_task_count": len(source.records),
-            "excluded_task_count": len(source.records) - len(records),
-            "energy_notice": energy.notice,
-            "warning": "",
-            "configuration_error": None if energy.mode != "unavailable" else energy.notice,
+        summary = task_report["summary"]
+        task_report.update({
             "data_updated_at": to_primitive(source.data_updated_at),
-        }
+        })
         period_report = {
             "period_start": start_date.isoformat(),
             "period_end": end_date.isoformat(),
@@ -326,11 +316,11 @@ class RangeReportService:
                 "gas": self._energy_channel(records, "gas_consumption"),
             },
             "total_task_count": len(records),
-            "total_work_time_seconds": to_primitive(summary["total_work_time"]),
+            "total_work_time_seconds": summary["total_work_time"],
             "saved_day_count": 0,
             "elapsed_day_count": sum(not row["is_future"] for row in daily_rows),
             "calendar_day_count": len(daily_rows),
-            "units": energy.units,
-            "equipment_scope": [self.settings.report_machine_no],
+            "units": task_report["units"],
+            "equipment_scope": task_report["equipment_scope"],
         }
         return {"task_report": task_report, "period_report": period_report}

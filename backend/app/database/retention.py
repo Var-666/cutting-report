@@ -7,7 +7,7 @@ from typing import Any
 from app.database.sqlite import SQLiteDatabase, SQLiteRepository
 
 
-REPORT_TERMINAL_STATUSES = ("completed", "completed_with_warnings", "failed")
+REPORT_TERMINAL_STATUSES = ("completed", "failed")
 AUTOMATION_TERMINAL_STATUSES = ("sent", "failed")
 DISPATCH_TERMINAL_STATUSES = (
     "sent",

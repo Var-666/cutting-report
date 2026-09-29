@@ -127,7 +127,7 @@ class ReportPipeline:
             settings,
             self.query_service,
             self.workshop_repository,
-            self.energy_service,
+            self.energy_period_service,
         )
 
     def run(self, job: dict) -> None:
@@ -238,7 +238,10 @@ class ReportPipeline:
 
         self.metadata.update_status(report_id, "calculating", "正在计算月度汇总")
         self.metadata.update_status(report_id, "analyzing", "正在生成智能分析")
-        analysis = self.analysis_service.analyze_leadership(range_leadership)
+        analysis = self.analysis_service.analyze_leadership(
+            range_leadership,
+            monthly_records=leadership.monthly_records,
+        )
         generated_at = datetime.now(timezone)
         report = {
             "meta": self._meta(
@@ -317,6 +320,7 @@ class ReportPipeline:
                 energy_data_mode=task_report["summary"].get("energy_data_mode") or "unavailable",
                 energy_units=task_report["units"],
                 energy_notice=task_report.get("energy_notice") or "",
+                energy_summary_rows=month_report["rows"],
                 comparison_records=comparison_records,
                 comparison_date=_period_label(comparison_start, comparison_end),
             )
@@ -407,6 +411,7 @@ class ReportPipeline:
             energy_data_mode=summary.get("energy_data_mode") or "unavailable",
             energy_units=task_report["units"],
             energy_notice=task_report.get("energy_notice") or "",
+            energy_summary_rows=month_report["rows"],
             comparison_records=comparison_records,
             comparison_date=comparison_date.isoformat(),
             year_ago_records=year_ago_records,
@@ -759,16 +764,6 @@ class ReportPipeline:
             report=report,
             generated_at=generated_at,
         )
-        final_status = (
-            "completed_with_warnings"
-            if analysis_status == "degraded"
-            else "completed"
-        )
-        final_message = (
-            "报告生成完成，智能分析已降级"
-            if analysis_status == "degraded"
-            else "报告生成成功"
-        )
         with UnitOfWork(self.database, self.settings.timezone) as unit:
             unit.metadata.save_report(
                 report_id=report_id,
@@ -779,8 +774,8 @@ class ReportPipeline:
             )
             unit.metadata.update_status(
                 report_id,
-                final_status,
-                final_message,
+                "completed",
+                "报告生成成功",
                 ai_status=analysis_status,
                 finished_at=generated_at.isoformat(timespec="seconds"),
             )

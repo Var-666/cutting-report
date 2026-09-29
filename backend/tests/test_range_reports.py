@@ -1,4 +1,5 @@
 from datetime import date, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
@@ -8,11 +9,16 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from app.config import Settings
-from app.api.analysis import AnalysisRequest, analyze_report
+from app.api.analysis import AnalysisRequest, analyze_report, get_analysis_version
+from app.api.leadership import get_leadership_report
+from app.api.workshop import list_range_tasks
 from app.database.metadata import MetadataRepository
 from app.models.api import ReportCreateRequest
+from app.models.domain import WorkshopRecord
 from app.services.pipeline import ReportPipeline
 from app.services.range_report_service import previous_equal_range
+from app.services.report_analysis_service import combined_analysis_source_version
+from tests.analysis_fakes import model_analysis
 
 
 def _pipeline(tmp_path: Path) -> tuple[Settings, MetadataRepository, ReportPipeline]:
@@ -26,13 +32,15 @@ def _pipeline(tmp_path: Path) -> tuple[Settings, MetadataRepository, ReportPipel
         project_root=tmp_path,
         demo_mode=True,
         data_source_mode="demo",
-        llm_enabled=False,
+        llm_enabled=True,
         app_version="test",
     )
     settings.ensure_runtime_dirs()
     metadata = MetadataRepository(settings.metadata_db_path)
     metadata.initialize()
-    return settings, metadata, ReportPipeline(settings, metadata)
+    pipeline = ReportPipeline(settings, metadata)
+    pipeline.analysis_service.llm.analyze_context = model_analysis
+    return settings, metadata, pipeline
 
 
 def test_report_request_normalizes_and_limits_inclusive_period() -> None:
@@ -67,6 +75,53 @@ def test_previous_comparison_uses_an_equal_non_overlapping_period() -> None:
         date(2026, 8, 15),
         date(2026, 8, 17),
     )
+
+
+def test_workshop_top_lengths_use_filtered_rows_beyond_the_visible_page() -> None:
+    records = [
+        WorkshopRecord(
+            task_id=f"A{index}",
+            project_code="A001",
+            ship_no="S001",
+            segment_name="P01",
+            program_no=f"OP-{index}",
+            cut_length=Decimal(index),
+            groove_length=None,
+            work_time=Decimal("120"),
+            production_time=datetime(2026, 8, 18, 12) - timedelta(minutes=index),
+        )
+        for index in range(1, 13)
+    ]
+    records.append(
+        WorkshopRecord(
+            task_id="B1", project_code="B001", ship_no="S002",
+            segment_name="P02", program_no="OP-B1",
+            cut_length=Decimal("999"), groove_length=None,
+            work_time=Decimal("120"),
+            production_time=datetime(2026, 8, 18, 13),
+        )
+    )
+    request = SimpleNamespace(
+        state=SimpleNamespace(request_id="workshop-top-lengths"),
+        app=SimpleNamespace(state=SimpleNamespace(
+            range_report_service=SimpleNamespace(
+                workshop_records=lambda *_: (SimpleNamespace(data_updated_at=None), records)
+            )
+        )),
+    )
+
+    data = list_range_tasks(
+        request, date(2026, 8, 18), date(2026, 8, 18),
+        project_name="A001", confirmation_status="all",
+        page=1, page_size=10, _={},
+    )["data"]
+
+    assert data["total"] == 12
+    assert "A12" not in {row["task_id"] for row in data["items"]}
+    assert [row["task_id"] for row in data["top_cut_length_tasks"]] == [
+        "A12", "A11", "A10", "A9", "A8"
+    ]
+    assert data["top_cut_length_tasks"][0]["cut_length_m"] == 12.0
 
 
 def test_live_equipment_energy_range_is_bounded_to_31_days(tmp_path: Path) -> None:
@@ -109,6 +164,61 @@ def test_equipment_analysis_reports_long_range_as_validation_error(tmp_path: Pat
     assert "31 天" in caught.value.detail
 
 
+def test_analysis_api_returns_503_without_a_model_result(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _, _, pipeline = _pipeline(tmp_path)
+
+    def fail(*_args):
+        raise RuntimeError("model unavailable")
+
+    monkeypatch.setattr(pipeline.analysis_service.llm, "analyze_context", fail)
+    request = SimpleNamespace(
+        state=SimpleNamespace(request_id="analysis-model-unavailable"),
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                report_analysis_service=pipeline.analysis_service,
+                leadership_report_service=pipeline.leadership_service,
+            )
+        ),
+    )
+
+    with pytest.raises(HTTPException) as caught:
+        analyze_report(
+            AnalysisRequest(
+                report_type="leadership",
+                report_date=date(2026, 8, 1),
+            ),
+            request,
+        )
+
+    assert caught.value.status_code == 503
+    assert "大模型智能分析暂不可用" in caught.value.detail
+
+
+def test_analysis_version_check_reads_only_sqlite_metadata() -> None:
+    calls = []
+
+    class Metadata:
+        def get_analysis_source_version(self, *, report_type, report_date):
+            calls.append((report_type, report_date))
+            return {
+                "data_version": f"{'1' * 64}.{'2' * 64}",
+                "updated_at": "2026-09-29T10:00:00+08:00",
+            }
+
+    request = SimpleNamespace(
+        state=SimpleNamespace(request_id="analysis-version"),
+        app=SimpleNamespace(state=SimpleNamespace(metadata=Metadata())),
+    )
+
+    result = get_analysis_version("leadership", date(2026, 9, 29), request)
+
+    assert calls == [("leadership", "2026-09")]
+    assert result["data"]["data_version"] == f"{'1' * 64}.{'2' * 64}"
+    assert result["data"]["updated_at"] == "2026-09-29T10:00:00+08:00"
+
+
 @pytest.mark.parametrize("report_type", ["leadership", "workshop", "equipment"])
 def test_analysis_rejects_a_stale_visible_report_version(
     tmp_path: Path, report_type: str
@@ -135,7 +245,7 @@ def test_analysis_rejects_a_stale_visible_report_version(
                 report_date=date(2026, 8, 1),
                 period_start=date(2026, 8, 1) if report_type == "workshop" else None,
                 period_end=date(2026, 8, 1) if report_type == "workshop" else None,
-                data_version="0" * 64,
+                data_version=combined_analysis_source_version("0" * 64),
             ),
             request,
         )
@@ -185,6 +295,88 @@ def test_page_analysis_uses_the_selected_range(
     facts = {fact["id"]: fact for fact in response["data"]["facts"]}
     assert facts["F001"]["label"] == expected_fact_label
     assert "2026-08-18 至 2026-08-20" in response["data"]["overview"]
+
+
+@pytest.mark.parametrize("end_date", [date(2026, 8, 18), date(2026, 8, 20)])
+def test_workshop_page_version_matches_analysis_for_same_day_and_range(
+    tmp_path: Path, end_date: date
+) -> None:
+    _, _, pipeline = _pipeline(tmp_path)
+    request = SimpleNamespace(
+        state=SimpleNamespace(request_id="workshop-visible-version"),
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                range_report_service=pipeline.range_service,
+                report_analysis_service=pipeline.analysis_service,
+                workshop=pipeline.workshop_repository,
+                query_service=pipeline.query_service,
+            )
+        ),
+    )
+    start_date = date(2026, 8, 18)
+    page = list_range_tasks(
+        request,
+        start_date,
+        end_date,
+        project_name=None,
+        confirmation_status="all",
+        page=1,
+        page_size=10,
+        _={},
+    )
+    result = analyze_report(
+        AnalysisRequest(
+            report_type="workshop",
+            report_date=start_date,
+            period_start=start_date,
+            period_end=end_date,
+            data_version=combined_analysis_source_version(
+                page["data"]["analysis_source_version"]
+            ),
+        ),
+        request,
+    )
+    assert result["data"]["data_version"] == combined_analysis_source_version(
+        page["data"]["analysis_source_version"]
+    )
+
+
+def test_leadership_page_versions_cover_both_analysis_tables(tmp_path: Path) -> None:
+    _, _, pipeline = _pipeline(tmp_path)
+    request = SimpleNamespace(
+        state=SimpleNamespace(request_id="leadership-visible-version"),
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                leadership_report_service=pipeline.leadership_service,
+                range_report_service=pipeline.range_service,
+                report_analysis_service=pipeline.analysis_service,
+            )
+        ),
+    )
+    page = get_leadership_report(
+        request,
+        report_month="2026-08",
+        start_date=None,
+        end_date=None,
+        refresh=False,
+    )["data"]
+    visible_version = combined_analysis_source_version(
+        page["analysis_source_version"],
+        page["analysis_summary_source_version"],
+    )
+
+    result = analyze_report(
+        AnalysisRequest(
+            report_type="leadership",
+            report_date=date(2026, 8, 1),
+            summary_period_start=date(2025, 9, 1),
+            summary_period_end=date(2026, 8, 1),
+            data_version=visible_version,
+        ),
+        request,
+    )
+
+    assert result["data"]["data_version"] == visible_version
 
 
 @pytest.mark.parametrize(

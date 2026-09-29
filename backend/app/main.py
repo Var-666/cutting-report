@@ -17,6 +17,7 @@ from app.api.downloads import router as downloads_router
 from app.api.conditions import router as conditions_router
 from app.api.auth import router as auth_router
 from app.api.alarms import router as alarms_router
+from app.api.llm_usage import router as llm_usage_router
 from app.api.designer import router as designer_router
 from app.api.equipment import router as equipment_router
 from app.api.energy import router as energy_router
@@ -29,6 +30,7 @@ from app.api.workshop import router as workshop_router
 from app.config import settings
 from app.database.metadata import MetadataRepository
 from app.database.alarms import AlarmRepository
+from app.database.llm_usage import LlmUsageRepository
 from app.database.alarm_source import SqlServerAlarmSource
 from app.database.leadership_snapshots import LeadershipSnapshotRepository
 from app.database.automation import AutomationRepository
@@ -65,6 +67,7 @@ from app.workers.report_worker import ReportWorker
 from app.workers.retention_worker import RetentionWorker
 from app.workers.alarm_worker import AlarmWorker
 from app.workers.leadership_refresh_worker import LeadershipRefreshWorker
+from app.workers.current_report_refresh_worker import CurrentReportRefreshWorker
 from app.workers.energy_history_worker import EnergyHistoryWorker
 from app.workers.download_cleanup_worker import DownloadCleanupWorker
 
@@ -82,6 +85,9 @@ async def lifespan(app: FastAPI):
     database.initialize()
     metadata = MetadataRepository(database)
     metadata.initialize()
+    llm_usage = LlmUsageRepository(database)
+    llm_usage.initialize()
+    app.state.llm_usage = llm_usage
     leadership_snapshots = LeadershipSnapshotRepository(database)
     leadership_snapshots.initialize()
     workshop = WorkshopRepository(database)
@@ -118,8 +124,13 @@ async def lifespan(app: FastAPI):
     app.state.range_report_service = pipeline.range_service
     app.state.worker_auth = WorkerAuthService(settings)
     leadership_report_service = LeadershipReportService(settings, leadership_snapshots)
+    report_analysis_service = ReportAnalysisService(settings, metadata)
     leadership_refresh_worker = LeadershipRefreshWorker(
-        settings, leadership_report_service
+        settings, leadership_report_service, report_analysis_service
+    )
+    current_report_refresh_worker = CurrentReportRefreshWorker(
+        settings, pipeline.query_service, pipeline.range_service,
+        pipeline.energy_period_service, report_analysis_service,
     )
     energy_history_worker = EnergyHistoryWorker(
         settings, pipeline.energy_period_service
@@ -127,7 +138,8 @@ async def lifespan(app: FastAPI):
     app.state.leadership_report_service = leadership_report_service
     app.state.leadership_refresh_worker = leadership_refresh_worker
     app.state.energy_history_worker = energy_history_worker
-    app.state.report_analysis_service = ReportAnalysisService(settings, metadata)
+    app.state.report_analysis_service = report_analysis_service
+    app.state.current_report_refresh_worker = current_report_refresh_worker
     alarm_repository = AlarmRepository(database)
     alarm_repository.initialize()
     alarm_monitor_service = AlarmMonitorService(
@@ -175,6 +187,7 @@ async def lifespan(app: FastAPI):
     app.state.pdf_service = pdf_service
     worker.start()
     leadership_refresh_worker.start()
+    current_report_refresh_worker.start()
     energy_history_worker.start()
     alarm_worker.start()
     download_cleanup_worker.start()
@@ -187,6 +200,7 @@ async def lifespan(app: FastAPI):
         download_cleanup_worker.stop()
         alarm_worker.stop()
         leadership_refresh_worker.stop()
+        current_report_refresh_worker.stop()
         worker.stop()
 
 
@@ -256,6 +270,7 @@ async def unexpected_error_handler(request: Request, exc: Exception):
 app.include_router(reports_router)
 app.include_router(auth_router)
 app.include_router(alarms_router)
+app.include_router(llm_usage_router)
 app.include_router(options_router)
 app.include_router(database_router)
 app.include_router(designer_router)

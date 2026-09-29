@@ -9,7 +9,7 @@ from typing import Any
 from app.database.sqlite import SQLiteDatabase, SQLiteRepository
 
 
-TERMINAL_STATUSES = {"completed", "completed_with_warnings", "failed"}
+TERMINAL_STATUSES = {"completed", "failed"}
 
 
 class MetadataRepository(SQLiteRepository):
@@ -79,6 +79,14 @@ class MetadataRepository(SQLiteRepository):
                     ON report_analyses(report_type, report_date, generated_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_report_analyses_retention
                     ON report_analyses(generated_at, cache_key);
+
+                CREATE TABLE IF NOT EXISTS analysis_source_versions (
+                    report_type TEXT NOT NULL,
+                    report_date TEXT NOT NULL,
+                    data_version TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY(report_type, report_date)
+                );
                 """
             )
             columns = {
@@ -298,6 +306,49 @@ class MetadataRepository(SQLiteRepository):
                 return None
             value = json.loads(row["result_json"])
             return value if isinstance(value, dict) else None
+
+    def get_analysis_source_version(
+        self,
+        *,
+        report_type: str,
+        report_date: str,
+    ) -> dict[str, str] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT data_version, updated_at
+                FROM analysis_source_versions
+                WHERE report_type = ? AND report_date = ?
+                """,
+                (report_type, report_date),
+            ).fetchone()
+            if row is None:
+                return None
+            return {
+                "data_version": row["data_version"],
+                "updated_at": row["updated_at"],
+            }
+
+    def save_analysis_source_version(
+        self,
+        *,
+        report_type: str,
+        report_date: str,
+        data_version: str,
+        updated_at: str,
+    ) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO analysis_source_versions (
+                    report_type, report_date, data_version, updated_at
+                ) VALUES (?, ?, ?, ?)
+                ON CONFLICT(report_type, report_date) DO UPDATE SET
+                    data_version = excluded.data_version,
+                    updated_at = excluded.updated_at
+                """,
+                (report_type, report_date, data_version, updated_at),
+            )
 
     def save_analysis(
         self,

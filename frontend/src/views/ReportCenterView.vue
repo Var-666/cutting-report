@@ -138,7 +138,7 @@ async function pollStatus(reportId) {
     const job = await getReportStatus(reportId, { signal: controller.signal })
     if (!pageActive || controller.signal.aborted || sequence !== pollSequence) return
     currentJob.value = job
-    const terminal = ['completed', 'completed_with_warnings', 'failed'].includes(job.status)
+    const terminal = ['completed', 'failed'].includes(job.status)
     if (terminal) {
       generating.value = false
       await loadHistory(1, true)

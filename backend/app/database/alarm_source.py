@@ -29,7 +29,9 @@ class SqlServerAlarmSource:
     def machine_nos(self) -> tuple[str, ...]:
         return self.settings.alarm_monitor_machine_nos
 
-    def fetch_new(self, after_id: int, limit: int) -> list[dict[str, Any]]:
+    def fetch_new(
+        self, after_id: int, through_id: int, limit: int
+    ) -> list[dict[str, Any]]:
         if not self.machine_nos:
             return []
         safe_limit = min(5000, max(1, int(limit)))
@@ -39,11 +41,18 @@ class SqlServerAlarmSource:
             SELECT TOP {safe_limit} {ALARM_COLUMNS}
             FROM dbo.alarm_info
             WHERE ALARM_INFO_ID > ?
+              AND ALARM_INFO_ID <= ?
+              AND TRY_CONVERT(datetime2, NULLIF(LTRIM(RTRIM(START_TIME)), '')) >= ?
               AND LTRIM(RTRIM(MACHINE_NO)) IN ({placeholders})
               AND UPPER(LTRIM(RTRIM(COALESCE(ALARM_TYPE, '')))) = 'CUTTER'
             ORDER BY ALARM_INFO_ID
             """,
-            (after_id, *self.machine_nos),
+            (
+                after_id,
+                through_id,
+                self.settings.alarm_monitor_start_at,
+                *self.machine_nos,
+            ),
         )
 
     def latest_id(self) -> int:
@@ -60,23 +69,6 @@ class SqlServerAlarmSource:
             tuple(self.machine_nos),
         )
         return int(rows[0]["latest_id"] or 0) if rows else 0
-
-    def fetch_open(self, limit: int) -> list[dict[str, Any]]:
-        if not self.machine_nos:
-            return []
-        safe_limit = min(5000, max(1, int(limit)))
-        placeholders = ",".join("?" for _ in self.machine_nos)
-        return self.client.fetch_all(
-            f"""
-            SELECT TOP {safe_limit} {ALARM_COLUMNS}
-            FROM dbo.alarm_info
-            WHERE LTRIM(RTRIM(MACHINE_NO)) IN ({placeholders})
-              AND UPPER(LTRIM(RTRIM(COALESCE(ALARM_TYPE, '')))) = 'CUTTER'
-              AND NULLIF(LTRIM(RTRIM(COALESCE(REMOVE_TIME, ''))), '') IS NULL
-            ORDER BY ALARM_INFO_ID
-            """,
-            tuple(self.machine_nos),
-        )
 
     def fetch_by_ids(self, source_ids: Iterable[int]) -> list[dict[str, Any]]:
         ids = [int(value) for value in source_ids]

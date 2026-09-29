@@ -136,9 +136,11 @@ const summarySubtitle = computed(() => {
 const analysisReady = computed(() => Boolean(
   pageActive.value
   && taskDay.value
+  && monthlyReport.value?.analysis_source_version
   && taskDay.value.period_start === appliedPeriodStart.value
   && taskDay.value.period_end === appliedPeriodEnd.value
   && !loading.value
+  && !summaryLoading.value
 ))
 
 function format(value, digits = 1) {
@@ -267,7 +269,7 @@ function scheduleSummaryRefresh(summaryResult) {
   }, 1000)
 }
 
-async function loadDefaultRanges() {
+async function loadDefaultRanges(force = false) {
   stopSummaryRefresh()
   summaryRefreshCount = 0
   const { sequence, signal } = beginRequest()
@@ -285,7 +287,7 @@ async function loadDefaultRanges() {
   const showError = (exception) => {
     if (exception.name !== 'AbortError' && requestIsCurrent(sequence, signal)) error.value ||= exception.message
   }
-  const taskRequest = getTaskEnergyDay(selectedDate, { signal })
+  const taskRequest = getTaskEnergyDay(selectedDate, { force, signal })
     .then(async (taskResult) => {
       if (!requestIsCurrent(sequence, signal)) return
       taskDay.value = {
@@ -297,7 +299,7 @@ async function loadDefaultRanges() {
       renderCharts()
     })
     .catch(showError)
-  const summaryRequest = getEnergyMonthlyRange(recentStart, selectedDate, { signal })
+  const summaryRequest = getEnergyMonthlyRange(recentStart, selectedDate, { force, signal })
     .then(async (summaryResult) => {
       if (!requestIsCurrent(sequence, signal)) return
       await applyMonthlySummary(summaryResult)
@@ -408,6 +410,43 @@ async function initializeReport() {
 
 function retryReport() {
   return rangeQueryApplied.value ? loadRange(false) : initializeReport()
+}
+
+async function refreshRangeAnalysisReport() {
+  const { sequence, signal } = beginRequest()
+  loading.value = true
+  summaryLoading.value = true
+  error.value = ''
+  try {
+    const [rangeResult, summaryResult] = await Promise.all([
+      getEnergyRange(appliedPeriodStart.value, appliedPeriodEnd.value, { force: true, signal }),
+      getEnergyMonthlyRange(
+        summaryPeriodStart.value,
+        summaryPeriodEnd.value,
+        { force: true, signal },
+      ),
+    ])
+    if (!requestIsCurrent(sequence, signal)) return
+    taskDay.value = rangeResult.task_report
+    await applyMonthlySummary(summaryResult)
+    await nextTick()
+    renderCharts()
+  } catch (exception) {
+    if (exception.name !== 'AbortError' && sequence === requestSequence) error.value = exception.message
+  } finally {
+    if (sequence === requestSequence) {
+      loading.value = false
+      summaryLoading.value = false
+      controller = null
+    }
+  }
+}
+
+async function refreshAnalysisReport() {
+  if (!pageActive.value || loading.value) return
+  return rangeQueryApplied.value
+    ? refreshRangeAnalysisReport()
+    : loadDefaultRanges(true)
 }
 
 onMounted(initializeReport)
@@ -529,8 +568,13 @@ watch(chartType, async () => { await nextTick(); renderCharts() })
       :report-date="appliedPeriodStart"
       :period-start="rangeQueryApplied ? appliedPeriodStart : ''"
       :period-end="rangeQueryApplied ? appliedPeriodEnd : ''"
+      :summary-period-start="summaryPeriodStart"
+      :summary-period-end="summaryPeriodEnd"
       :ready="analysisReady"
       :data-version="taskDay?.analysis_source_version || ''"
+      :summary-data-version="monthlyReport?.analysis_source_version || ''"
+      :version-check-enabled="!rangeQueryApplied"
+      @refresh-report="refreshAnalysisReport"
     />
   </div>
 </template>
