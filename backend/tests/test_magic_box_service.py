@@ -3,12 +3,14 @@ import hashlib
 from pathlib import Path
 
 import httpx
+import pytest
 
 from app.config import settings
 from app.services.magic_box_service import (
     MagicBoxClient,
     MagicBoxConfig,
     MagicBoxConfigProvider,
+    MagicBoxError,
 )
 
 
@@ -82,3 +84,62 @@ def test_upload_uses_actual_filename_for_task_name_and_signed_headers(tmp_path: 
     assert upload.headers["sign"] == expected
     assert requests[1].headers["timestamp"] == "1001"
     assert requests[1].headers.get("secret") is None
+
+
+@pytest.mark.parametrize("fault", ["timeout", "disconnect", "non_json", "array",
+    "server_error", "missing_status", "boolean_status", "missing_uuid", "object_uuid"])
+def test_uncertain_upload_never_becomes_a_safe_retry(tmp_path, fault):
+    def handler(request):
+        if fault == "timeout":
+            raise httpx.ReadTimeout("lost response", request=request)
+        if fault == "disconnect":
+            raise httpx.ReadError("connection lost", request=request)
+        if fault == "non_json":
+            return httpx.Response(200, text="proxy response")
+        if fault == "array":
+            return httpx.Response(200, json=[])
+        if fault == "server_error":
+            return httpx.Response(503, json={"status": 1})
+        if fault == "missing_status":
+            return httpx.Response(200, json={"data": "uuid"})
+        if fault == "boolean_status":
+            return httpx.Response(200, json={"status": False, "data": "uuid"})
+        return httpx.Response(200, json={"status": 0,
+            "data": {} if fault == "object_uuid" else None})
+
+    path = tmp_path / "cut.GEN"
+    path.write_bytes(b"cut")
+    client = MagicBoxClient(MagicBoxConfig("http://magic.internal", "t", "s"),
+        transport=httpx.MockTransport(handler))
+    with pytest.raises(MagicBoxError) as error:
+        client.upload_task(task_identifier="same-id", task_name=path.name,
+            file_path=path, material=None, thickness=None, count=1)
+    assert error.value.outcome_unknown is True
+
+
+@pytest.mark.parametrize("operation", ["upload", "assign", "cancel"])
+def test_explicit_business_rejection_is_safe_but_transport_failure_is_unknown(tmp_path, operation):
+    path = tmp_path / "cut.GEN"
+    path.write_bytes(b"cut")
+    for status, unknown in [(200, False), (500, True)]:
+        client = MagicBoxClient(MagicBoxConfig("http://magic.internal", "t", "s"),
+            transport=httpx.MockTransport(lambda _: httpx.Response(status,
+                json={"status": 1001, "msg": "rejected"})))
+        with pytest.raises(MagicBoxError) as error:
+            if operation == "upload":
+                client.upload_task(task_identifier="id", task_name=path.name,
+                    file_path=path, material=None, thickness=None, count=1)
+            elif operation == "assign":
+                client.assign_task(task_identifier="id", machine_ip="10.1.1.1")
+            else:
+                client.cancel_assignment(task_identifier="id")
+        assert error.value.outcome_unknown is unknown
+
+
+def test_unreadable_file_before_request_is_safe(tmp_path):
+    client = MagicBoxClient(MagicBoxConfig("http://magic.internal", "t", "s"),
+        transport=httpx.MockTransport(lambda _: pytest.fail("must not send")))
+    with pytest.raises(MagicBoxError) as error:
+        client.upload_task(task_identifier="id", task_name="missing.GEN",
+            file_path=tmp_path / "missing.GEN", material=None, thickness=None, count=1)
+    assert error.value.outcome_unknown is False

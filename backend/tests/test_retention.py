@@ -76,6 +76,29 @@ def _alarm(source_id: int, *, closed: bool) -> dict:
     }
 
 
+def test_retention_keeps_unresolved_remote_dispatches(tmp_path):
+    *_, dispatches, downloads, retention, admin = _repositories(tmp_path)
+    protected = []
+    deletable = []
+    for stage, remote_id in [("upload_unknown", None), ("assign_failed", "remote"),
+        ("assign_unknown", "remote"), ("cancel_unknown", "remote"), ("created", None),
+        ("upload_failed", None)]:
+        item = dispatches.create(dict(document_id=f"document-{stage}", project_id="p",
+            version_id="v", document_no="cut", relative_path="cut.GEN",
+            machine_ip="10.1.1.1", quantity=1, status="push_failed", stage=stage,
+            source_mode="http"), user=admin, now=OLD)
+        if remote_id:
+            dispatches.transition(item["dispatch_id"], expected={"push_failed"},
+                status="push_failed", remote_task_id=remote_id, now=OLD)
+        (deletable if stage == "upload_failed" else protected).append(item["dispatch_id"])
+    for _ in range(2):
+        retention.cleanup_expired_records(report_cutoff=None, analysis_cutoff=None,
+            alarm_cutoff=None, dispatch_cutoff=RECENT, audit_cutoff=None,
+            queued_at=NOW.isoformat(), batch_size=100)
+    assert all(dispatches.get(identifier) for identifier in protected)
+    assert all(dispatches.get(identifier) is None for identifier in deletable)
+
+
 def test_unified_retention_removes_only_expired_terminal_data(tmp_path) -> None:
     (
         database,

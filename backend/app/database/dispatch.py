@@ -28,6 +28,22 @@ ACTIVE_DISPATCH_STATUSES = {
     "pushing",
 }
 
+# Only an explicit, pre-effect upload rejection can release the file/machine
+# identity. Legacy and uncertain failures must remain visible until reconciled.
+UNRESOLVED_DISPATCH_SQL = """(
+    status = 'push_failed' AND (
+        COALESCE(stage, '') != 'upload_failed' OR remote_task_id IS NOT NULL
+    )
+)"""
+
+
+def dispatch_retry_safe(item: dict[str, Any]) -> bool:
+    if item["status"] != "push_failed":
+        return False
+    return item.get("stage") in (
+        {"assign_failed", "uploaded"} if item.get("remote_task_id") else {"upload_failed"}
+    )
+
 
 class DispatchRepository(SQLiteRepository):
     def __init__(
@@ -127,6 +143,8 @@ class DispatchRepository(SQLiteRepository):
         document_id: str,
         version_id: str | None,
         machine_ip: str,
+        *,
+        exclude_dispatch_id: str | None = None,
     ) -> sqlite3.Row | None:
         placeholders = ", ".join("?" for _ in ACTIVE_DISPATCH_STATUSES)
         return connection.execute(
@@ -135,11 +153,13 @@ class DispatchRepository(SQLiteRepository):
             WHERE document_id = ?
               AND COALESCE(version_id, '') = COALESCE(?, '')
               AND machine_ip = ?
-              AND status IN ({placeholders})
+              AND (? IS NULL OR dispatch_id != ?)
+              AND (status IN ({placeholders}) OR {UNRESOLVED_DISPATCH_SQL})
             ORDER BY created_at DESC, dispatch_id DESC
             LIMIT 1
             """,
-            (document_id, version_id, machine_ip, *sorted(ACTIVE_DISPATCH_STATUSES)),
+            (document_id, version_id, machine_ip, exclude_dispatch_id,
+             exclude_dispatch_id, *sorted(ACTIVE_DISPATCH_STATUSES)),
         ).fetchone()
 
     @staticmethod
@@ -284,6 +304,9 @@ class DispatchRepository(SQLiteRepository):
         file_size: int | None = None,
         file_sha256: str | None = None,
         increment_attempt: bool = False,
+        expected_stage: str | None = None,
+        expected_attempt_count: int | None = None,
+        claim_exclusive: bool = False,
     ) -> dict[str, Any] | None:
         if status not in DISPATCH_STATUSES:
             raise ValueError("不支持的派发状态")
@@ -295,6 +318,15 @@ class DispatchRepository(SQLiteRepository):
         sent_at = now if status == "sent" else None
         with self.connect() as connection:
             self.begin_immediate(connection)
+            if claim_exclusive:
+                item = connection.execute(
+                    "SELECT * FROM cutting_dispatches WHERE dispatch_id = ?", (dispatch_id,)
+                ).fetchone()
+                if item is None or self._active_row(
+                    connection, item["document_id"], item["version_id"], item["machine_ip"],
+                    exclude_dispatch_id=dispatch_id,
+                ) is not None:
+                    return None
             cursor = connection.execute(
                 f"""
                 UPDATE cutting_dispatches
@@ -309,6 +341,8 @@ class DispatchRepository(SQLiteRepository):
                     downloaded_at = COALESCE(?, downloaded_at),
                     sent_at = COALESCE(?, sent_at)
                 WHERE dispatch_id = ? AND status IN ({placeholders})
+                  AND (? IS NULL OR stage = ?)
+                  AND (? IS NULL OR attempt_count = ?)
                 """,
                 (
                     status,
@@ -326,11 +360,18 @@ class DispatchRepository(SQLiteRepository):
                     sent_at,
                     dispatch_id,
                     *expected_statuses,
+                    expected_stage,
+                    expected_stage,
+                    expected_attempt_count,
+                    expected_attempt_count,
                 ),
             )
             if cursor.rowcount != 1:
                 return None
-        return self.get(dispatch_id)
+            row = connection.execute(
+                "SELECT * FROM cutting_dispatches WHERE dispatch_id = ?", (dispatch_id,)
+            ).fetchone()
+            return self._decode(row)
 
     def update_machine(
         self,
@@ -369,14 +410,20 @@ class DispatchRepository(SQLiteRepository):
                     END,
                     stage = CASE
                         WHEN status = 'downloading' THEN 'download_interrupted'
-                        WHEN remote_task_id IS NOT NULL THEN 'assign_interrupted'
+                        WHEN stage = 'cancelling' THEN 'cancel_unknown'
+                        WHEN remote_task_id IS NOT NULL AND stage = 'uploaded' THEN 'assign_failed'
+                        WHEN remote_task_id IS NOT NULL THEN 'assign_unknown'
                         ELSE 'upload_unknown'
                     END,
                     last_error = CASE
                         WHEN status = 'downloading'
                             THEN '服务重启中断文件准备，可安全重试下载'
+                        WHEN stage = 'cancelling'
+                            THEN '服务重启中断取消，远端结果未知，禁止盲目重复执行'
+                        WHEN remote_task_id IS NOT NULL AND stage = 'uploaded'
+                            THEN '文件已上传，尚未开始指派，可安全重试指派'
                         WHEN remote_task_id IS NOT NULL
-                            THEN '服务重启中断机床指派，请人工核对后重试指派'
+                            THEN '服务重启中断机床指派，远端结果未知，禁止盲目重复指派'
                         ELSE '服务重启发生在上传阶段，远端结果未知，禁止自动重复上传'
                     END,
                     updated_at = ?

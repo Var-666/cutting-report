@@ -5,6 +5,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from app.database.sqlite import SQLiteDatabase, SQLiteRepository
+from app.database.dispatch import UNRESOLVED_DISPATCH_SQL
 
 
 REPORT_TERMINAL_STATUSES = ("completed", "failed")
@@ -316,6 +317,7 @@ class RetentionRepository(SQLiteRepository):
                     WHERE dispatch_id IN (
                         SELECT dispatch_id FROM cutting_dispatches
                         WHERE status IN ({self._placeholders(list(DISPATCH_TERMINAL_STATUSES))})
+                          AND NOT {UNRESOLVED_DISPATCH_SQL}
                           AND updated_at <= ?
                         ORDER BY updated_at, dispatch_id
                         LIMIT ?

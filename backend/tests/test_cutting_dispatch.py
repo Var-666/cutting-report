@@ -1,7 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
-from threading import Barrier
+from threading import Barrier, Event, Lock
 from types import SimpleNamespace
 
 import pytest
@@ -719,4 +719,364 @@ def test_unknown_upload_result_cannot_be_blindly_retried(tmp_path: Path) -> None
     assert current["can_execute"] is False
     with pytest.raises(DispatchConflictError, match="禁止盲目重复上传"):
         service.execute_dispatch(dispatch_id, user=admin)
+    assert len(client.uploads) == 1
+
+
+def test_unknown_upload_blocks_replacement_and_survives_restart(tmp_path: Path):
+    class UnknownClient(RecordingMagicClient):
+        def upload_task(self, **kwargs):
+            self.uploads.append(kwargs)
+            raise MagicBoxError("上传响应丢失", outcome_unknown=True)
+
+    client = UnknownClient()
+    service, dispatches, admin = _push_service(tmp_path, client)
+    arguments = dict(document_id=service.pdm.files[0]["document_id"],
+                     machine_ip="10.1.133.197", material=None, thickness=None,
+                     quantity=1, user=admin)
+    first = service.create_dispatch(**arguments)
+    with pytest.raises(MagicBoxError):
+        service.execute_dispatch(first["dispatch_id"], user=admin)
+    dispatches.initialize()
+    dispatches.recover_interrupted(service._now())
+    with pytest.raises(DuplicateDispatchError) as duplicate:
+        service.create_dispatch(**arguments)
+    assert duplicate.value.dispatch["dispatch_id"] == first["dispatch_id"]
+
+    def create_again():
+        try:
+            service.create_dispatch(**arguments)
+        except DuplicateDispatchError as error:
+            return error.dispatch["dispatch_id"]
+        pytest.fail("uncertain upload must block every replacement")
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        assert list(pool.map(lambda _: create_again(), range(2))) == [first["dispatch_id"]] * 2
+    raw = service.pdm.files[0]
+    batch = service.create_dispatch_batch(machine_ip="10.1.133.197", user=admin,
+        items=[dict(document_id=raw["document_id"], version_id=raw["version_id"],
+                    file_path=raw["file_path"], material="AH36", thickness=12,
+                    quantity=1, name_check_confirmed=True)])
+    assert batch["items"][0]["status"] == "duplicate"
+    assert dispatches.list(page=1, page_size=10)[1] == 1
+    assert len(client.uploads) == 1
+
+
+def test_concurrent_assign_retries_have_one_remote_executor(tmp_path: Path):
+    client = RecordingMagicClient(fail_assign=True)
+    service, dispatches, admin = _push_service(tmp_path, client)
+    draft = service.create_dispatch(document_id=service.pdm.files[0]["document_id"],
+        machine_ip="10.1.133.197", material=None, thickness=None, quantity=1, user=admin)
+    with pytest.raises(MagicBoxError):
+        service.execute_dispatch(draft["dispatch_id"], user=admin)
+    client.fail_assign = False
+    barrier = Barrier(2)
+    client.sync_time = lambda: barrier.wait(timeout=5)
+    claim_barrier = Barrier(2)
+    claims_done = Event()
+    claims_lock = Lock()
+    completed_claims = 0
+    original_transition = dispatches.transition
+    original_assign = client.assign_task
+
+    def transition(*args, **kwargs):
+        nonlocal completed_claims
+        if kwargs.get("stage") != "assigning":
+            return original_transition(*args, **kwargs)
+        claim_barrier.wait(timeout=5)
+        try:
+            return original_transition(*args, **kwargs)
+        finally:
+            with claims_lock:
+                completed_claims += 1
+                if completed_claims == 2:
+                    claims_done.set()
+
+    def assign(**kwargs):
+        assert claims_done.wait(timeout=5)
+        original_assign(**kwargs)
+
+    dispatches.transition = transition
+    client.assign_task = assign
+
+    def execute():
+        try:
+            return service.execute_dispatch(draft["dispatch_id"], user=admin)["status"]
+        except DispatchConflictError:
+            return "conflict"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda _: execute(), range(2)))
+    assert sorted(results) == ["conflict", "sent"]
+    assert len(client.uploads) == 1
+    assert len(client.assignments) == 2  # initial rejected assignment + one retry
+    assert dispatches.get(draft["dispatch_id"])["status"] == "sent"
+
+
+def test_stale_upload_retry_cannot_cross_an_unknown_result(tmp_path: Path):
+    client = RecordingMagicClient()
+    service, dispatches, admin = _push_service(tmp_path, client)
+    raw = service.pdm.files[0]
+    downloaded = service.downloads.download(document_id=raw["document_id"],
+        version_id=raw["version_id"], file_path=raw["file_path"], user=admin)
+    draft = service.create_dispatch(document_id=None, download_id=downloaded["download_id"],
+        machine_ip="10.1.133.197", material=None, thickness=None, quantity=1, user=admin)
+
+    def changed_during_sync():
+        dispatches.transition(draft["dispatch_id"], expected={"downloaded"},
+            status="pushing", stage="uploading", increment_attempt=True, now=service._now())
+        dispatches.transition(draft["dispatch_id"], expected={"pushing"},
+            status="push_failed", stage="upload_unknown", now=service._now())
+
+    client.sync_time = changed_during_sync
+    with pytest.raises(DispatchConflictError):
+        service.execute_dispatch(draft["dispatch_id"], user=admin)
+    assert client.uploads == []
+    assert dispatches.get(draft["dispatch_id"])["stage"] == "upload_unknown"
+
+
+@pytest.mark.parametrize("stage,remote_id,recovered,retry_safe", [
+    ("uploading", None, "upload_unknown", False),
+    ("uploaded", "remote", "assign_failed", True),
+    ("assigning", "remote", "assign_unknown", False),
+    ("cancelling", "remote", "cancel_unknown", False),
+])
+def test_restart_preserves_uncertain_effects_and_only_retries_unstarted_assignment(
+    tmp_path, stage, remote_id, recovered, retry_safe,
+):
+    client = RecordingMagicClient()
+    service, dispatches, admin = _push_service(tmp_path, client)
+    arguments = dict(document_id=service.pdm.files[0]["document_id"],
+        machine_ip="10.1.133.197", material=None, thickness=None, quantity=1, user=admin)
+    draft = service.create_dispatch(**arguments)
+    dispatches.transition(draft["dispatch_id"], expected={"ready"}, status="pushing",
+        stage=stage, remote_task_id=remote_id, increment_attempt=True, now=service._now())
+    for _ in range(2):
+        dispatches.recover_interrupted(service._now())
+        assert dispatches.get(draft["dispatch_id"])["stage"] == recovered
+    assert service.get_dispatch(draft["dispatch_id"])["can_execute"] is retry_safe
+    with pytest.raises(DuplicateDispatchError):
+        service.create_dispatch(**arguments)
+    if retry_safe:
+        assert service.execute_dispatch(draft["dispatch_id"], user=admin)["status"] == "sent"
+        assert len(client.assignments) == 1
+    else:
+        with pytest.raises(DispatchConflictError):
+            service.execute_dispatch(draft["dispatch_id"], user=admin)
+        assert client.assignments == []
+    assert client.uploads == []
+
+
+def test_known_upload_rejection_retries_but_old_task_cannot_bypass_replacement(tmp_path):
+    class RejectedClient(RecordingMagicClient):
+        def upload_task(self, **kwargs):
+            self.uploads.append(kwargs)
+            raise MagicBoxError("明确拒绝上传")
+
+    client = RejectedClient()
+    service, dispatches, admin = _push_service(tmp_path, client)
+    arguments = dict(document_id=service.pdm.files[0]["document_id"],
+        machine_ip="10.1.133.197", material=None, thickness=None, quantity=1, user=admin)
+    first = service.create_dispatch(**arguments)
+    with pytest.raises(MagicBoxError):
+        service.execute_dispatch(first["dispatch_id"], user=admin)
+    assert service.get_dispatch(first["dispatch_id"])["can_execute"] is True
+    with pytest.raises(MagicBoxError):
+        service.execute_dispatch(first["dispatch_id"], user=admin)
+    assert len(client.uploads) == 2  # confirmed rejection can retry the same identity
+    replacement = service.create_dispatch(**arguments)
+    with pytest.raises(DispatchConflictError):
+        service.execute_dispatch(first["dispatch_id"], user=admin)
+    assert len(client.uploads) == 2
+    assert dispatches.get(replacement["dispatch_id"])["status"] == "ready"
+
+
+def test_attempt_version_prevents_a_stale_retry_after_status_returns_to_same_value(tmp_path):
+    service, dispatches, admin = _push_service(tmp_path, RecordingMagicClient())
+    draft = service.create_dispatch(document_id=service.pdm.files[0]["document_id"],
+        machine_ip="10.1.133.197", material=None, thickness=None, quantity=1, user=admin)
+    original = dispatches.transition(draft["dispatch_id"], expected={"ready"},
+        status="push_failed", stage="upload_failed", now=service._now())
+    dispatches.transition(draft["dispatch_id"], expected={"push_failed"},
+        status="pushing", stage="uploading", increment_attempt=True, now=service._now())
+    dispatches.transition(draft["dispatch_id"], expected={"pushing"},
+        status="push_failed", stage="upload_failed", now=service._now())
+    assert dispatches.transition(draft["dispatch_id"], expected={"push_failed"},
+        expected_stage=original["stage"], expected_attempt_count=original["attempt_count"],
+        status="pushing", stage="uploading", increment_attempt=True, now=service._now()) is None
+
+
+@pytest.mark.parametrize("operation", ["upload", "assign", "cancel"])
+def test_unexpected_side_effect_failure_is_fail_closed(tmp_path, operation):
+    client = RecordingMagicClient()
+    service, dispatches, admin = _push_service(tmp_path, client)
+    arguments = dict(document_id=service.pdm.files[0]["document_id"],
+        machine_ip="10.1.133.197", material=None, thickness=None, quantity=1, user=admin)
+    draft = service.create_dispatch(**arguments)
+    if operation == "cancel":
+        service.execute_dispatch(draft["dispatch_id"], user=admin)
+
+    def fail(**_kwargs):
+        raise RuntimeError("unexpected response failure")
+
+    setattr(client, {"upload": "upload_task", "assign": "assign_task",
+        "cancel": "cancel_assignment"}[operation], fail)
+    with pytest.raises(RuntimeError, match="unexpected"):
+        if operation == "cancel":
+            service.cancel_dispatch(draft["dispatch_id"])
+        else:
+            service.execute_dispatch(draft["dispatch_id"], user=admin)
+    assert dispatches.get(draft["dispatch_id"])["stage"] == operation + "_unknown"
+    assert service.get_dispatch(draft["dispatch_id"])["can_execute"] is False
+    with pytest.raises(DuplicateDispatchError):
+        service.create_dispatch(**arguments)
+    if operation == "cancel":
+        assert service.get_dispatch(draft["dispatch_id"])["can_cancel"] is False
+        with pytest.raises(DispatchConflictError):
+            service.cancel_dispatch(draft["dispatch_id"])
+
+
+def test_execution_and_cancellation_share_one_atomic_claim(tmp_path):
+    client = RecordingMagicClient(fail_assign=True)
+    service, dispatches, admin = _push_service(tmp_path, client)
+    draft = service.create_dispatch(document_id=service.pdm.files[0]["document_id"],
+        machine_ip="10.1.133.197", material=None, thickness=None, quantity=1, user=admin)
+    with pytest.raises(MagicBoxError):
+        service.execute_dispatch(draft["dispatch_id"], user=admin)
+    client.fail_assign = False
+    barrier = Barrier(2)
+    client.sync_time = lambda: barrier.wait(timeout=5)
+    cancellations = []
+    client.cancel_assignment = lambda **kwargs: cancellations.append(kwargs)
+
+    def operate(cancel):
+        try:
+            result = (service.cancel_dispatch(draft["dispatch_id"]) if cancel else
+                service.execute_dispatch(draft["dispatch_id"], user=admin))
+            return result["status"]
+        except DispatchConflictError:
+            return "conflict"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(operate, [False, True]))
+    assert results.count("conflict") == 1
+    assert len(client.assignments) - 1 + len(cancellations) == 1
+    assert len(client.uploads) == 1
+
+
+@pytest.mark.parametrize("operation", ["assign", "cancel"])
+def test_lost_remote_response_disables_retry_and_replacement(tmp_path, operation):
+    client = RecordingMagicClient()
+    service, dispatches, admin = _push_service(tmp_path, client)
+    arguments = dict(document_id=service.pdm.files[0]["document_id"],
+        machine_ip="10.1.133.197", material=None, thickness=None, quantity=1, user=admin)
+    draft = service.create_dispatch(**arguments)
+    if operation == "cancel":
+        service.execute_dispatch(draft["dispatch_id"], user=admin)
+
+    def lost(**_kwargs):
+        raise MagicBoxError("响应丢失", outcome_unknown=True)
+
+    setattr(client, "assign_task" if operation == "assign" else "cancel_assignment", lost)
+    with pytest.raises(MagicBoxError):
+        if operation == "cancel":
+            service.cancel_dispatch(draft["dispatch_id"])
+        else:
+            service.execute_dispatch(draft["dispatch_id"], user=admin)
+    assert dispatches.get(draft["dispatch_id"])["stage"] == operation + "_unknown"
+    with pytest.raises(DispatchConflictError):
+        service.execute_dispatch(draft["dispatch_id"], user=admin)
+    with pytest.raises(DuplicateDispatchError):
+        service.create_dispatch(**arguments)
+
+
+def test_rejected_cancellation_preserves_original_state_and_can_retry(tmp_path):
+    client = RecordingMagicClient()
+    service, dispatches, admin = _push_service(tmp_path, client)
+    draft = service.create_dispatch(document_id=service.pdm.files[0]["document_id"],
+        machine_ip="10.1.133.197", material=None, thickness=None, quantity=1, user=admin)
+    service.execute_dispatch(draft["dispatch_id"], user=admin)
+
+    def reject(**_kwargs):
+        raise MagicBoxError("明确拒绝取消")
+
+    client.cancel_assignment = reject
+    with pytest.raises(MagicBoxError):
+        service.cancel_dispatch(draft["dispatch_id"])
+    current = dispatches.get(draft["dispatch_id"])
+    assert (current["status"], current["stage"]) == ("sent", "complete")
+    client.cancel_assignment = lambda **_: None
+    assert service.cancel_dispatch(draft["dispatch_id"])["status"] == "cancelled"
+
+
+def test_concurrent_file_preparation_failure_has_one_executor(tmp_path):
+    service, dispatches, admin = _push_service(tmp_path, RecordingMagicClient())
+    draft = service.create_dispatch(document_id=service.pdm.files[0]["document_id"],
+        machine_ip="10.1.133.197", material=None, thickness=None, quantity=1, user=admin)
+    barrier = Barrier(2)
+    original_get = dispatches.get
+
+    def get(identifier):
+        snapshot = original_get(identifier)
+        if snapshot["status"] == "ready":
+            barrier.wait(timeout=5)
+        return snapshot
+
+    dispatches.get = get
+    calls = []
+
+    def fail(**_kwargs):
+        calls.append(True)
+        raise DownloadError("文件来源不可用")
+
+    service.downloads.get_or_download = fail
+
+    def execute():
+        try:
+            service.execute_dispatch(draft["dispatch_id"], user=admin)
+        except DispatchConflictError:
+            return "conflict"
+        except CuttingDispatchError:
+            return "failed"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda _: execute(), range(2)))
+    assert sorted(results) == ["conflict", "failed"]
+    assert len(calls) == 1
+    assert original_get(draft["dispatch_id"])["attempt_count"] == 1
+
+
+@pytest.mark.parametrize("failed_stage,recovered_stage", [
+    ("uploaded", "upload_unknown"), ("complete", "assign_unknown"),
+])
+def test_remote_success_with_local_commit_failure_cannot_be_repeated(
+    tmp_path, failed_stage, recovered_stage,
+):
+    client = RecordingMagicClient()
+    service, dispatches, admin = _push_service(tmp_path, client)
+    arguments = dict(document_id=service.pdm.files[0]["document_id"],
+        machine_ip="10.1.133.197", material=None, thickness=None, quantity=1, user=admin)
+    draft = service.create_dispatch(**arguments)
+    original_transition = dispatches.transition
+
+    def fail_commit(*args, **kwargs):
+        if kwargs.get("stage") == failed_stage:
+            raise RuntimeError("injected local persistence failure")
+        return original_transition(*args, **kwargs)
+
+    dispatches.transition = fail_commit
+    with pytest.raises(RuntimeError, match="persistence"):
+        service.execute_dispatch(draft["dispatch_id"], user=admin)
+    assert len(client.uploads) == 1
+    assert len(client.assignments) == (1 if failed_stage == "complete" else 0)
+    with pytest.raises(DuplicateDispatchError):
+        service.create_dispatch(**arguments)
+    with pytest.raises(DispatchConflictError):
+        service.execute_dispatch(draft["dispatch_id"], user=admin)
+    dispatches.transition = original_transition
+    dispatches.recover_interrupted(service._now())
+    assert dispatches.get(draft["dispatch_id"])["stage"] == recovered_stage
+    with pytest.raises(DuplicateDispatchError):
+        service.create_dispatch(**arguments)
+    with pytest.raises(DispatchConflictError):
+        service.execute_dispatch(draft["dispatch_id"], user=admin)
     assert len(client.uploads) == 1

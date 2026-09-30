@@ -18,6 +18,73 @@ from app.services.alarm_monitor_service import AlarmMonitorService
 TZ = ZoneInfo("Asia/Shanghai")
 
 
+def test_recent_recheck_does_not_skip_incremental_backlog(tmp_path):
+    repository = AlarmRepository(tmp_path / "metadata.db")
+    repository.initialize()
+    now = datetime(2026, 9, 30, 9, 0, tzinfo=TZ)
+    rows = [alarm(i, start_time="2026-09-28 09:00:00") for i in range(1, 22)]
+    rows.append(alarm(22, start_time="2026-09-30 08:00:00"))
+
+    class Source:
+        def latest_id(self):
+            return 22
+
+        def fetch_new(self, after, through, limit):
+            return [r for r in rows if after < r["alarm_info_id"] <= through][:limit]
+
+        def fetch_recent(self, after, through, start, end, limit):
+            return [r for r in rows if after < r["alarm_info_id"] <= through
+                    and start <= r["start_time"] <= end][:limit]
+
+        def fetch_by_ids(self, ids):
+            return [r for r in rows if r["alarm_info_id"] in ids]
+
+    service = AlarmMonitorService(SimpleNamespace(alarm_monitor_batch_size=1,
+        alarm_monitor_start_at="2026-09-01 00:00:00", alarm_reopen_debounce_minutes=10),
+        repository, Source(), SimpleNamespace(analyze=lambda _: {"facts": [], "overall_risk": "warning"}),
+        SimpleNamespace(render=lambda **_: dict(html_relative_path="alarms/a.html",
+            pdf_relative_path="alarms/a.pdf", pdf_filename="a.pdf", file_size=1, sha256="a")))
+    service.run_once(now)
+    assert repository.get_cursor() == 20  # 22 is supplemental; 21 is still unscanned.
+    restarted = AlarmRepository(repository.database_path)
+    restarted.initialize()
+    service.repository = restarted
+    service.run_once(now + timedelta(minutes=5))
+    assert restarted.get_cursor() == 22
+    with restarted.connect() as connection:
+        ids = {r[0] for r in connection.execute("SELECT source_alarm_id FROM alarm_source_events")}
+    assert ids == set(range(1, 23))
+    assert len(restarted.list_reports()) == 1
+
+
+def test_alarm_events_and_scan_boundary_rollback_and_retry_together(tmp_path, monkeypatch):
+    repository = AlarmRepository(tmp_path / "metadata.db")
+    repository.initialize()
+    now = datetime(2026, 9, 30, 9, 0, tzinfo=TZ)
+    arguments = dict(now=now, debounce_minutes=10)
+    repository.ingest([], cursor=10, **arguments)
+    from app.database import alarms as alarm_module
+    original_hash = alarm_module._source_hash
+
+    def fail_second(record):
+        if record["alarm_info_id"] == 50:
+            raise RuntimeError("injected failure after first event")
+        return original_hash(record)
+
+    monkeypatch.setattr(alarm_module, "_source_hash", fail_second)
+    with pytest.raises(RuntimeError, match="injected"):
+        repository.ingest([alarm(11), alarm(50)], cursor=11, **arguments)
+    assert repository.get_cursor() == 10
+    with repository.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM alarm_source_events").fetchone()[0] == 0
+    monkeypatch.setattr(alarm_module, "_source_hash", original_hash)
+    repository.ingest([alarm(11), alarm(50)], cursor=11, **arguments)
+    repeated = repository.ingest([alarm(11), alarm(50)], cursor=10, **arguments)
+    assert repeated["last_alarm_id"] == repository.get_cursor() == 11
+    with repository.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM alarm_source_events").fetchone()[0] == 2
+
+
 def alarm(
     source_id: int,
     *,

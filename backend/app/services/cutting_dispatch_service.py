@@ -7,7 +7,7 @@ from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
 from app.config import Settings
-from app.database.dispatch import DispatchRepository
+from app.database.dispatch import DispatchRepository, dispatch_retry_safe
 from app.database.pdm import PdmRepository
 from app.services.file_download_service import DownloadError, FileDownloadService
 from app.services.file_source import FileSource, normalize_relative_path
@@ -67,6 +67,9 @@ STAGE_LABELS = {
     "upload_unknown": "上传结果待核对",
     "assign_failed": "机床指派失败",
     "assign_interrupted": "机床指派被中断",
+    "assign_unknown": "机床指派结果待核对",
+    "cancelling": "取消机床指派",
+    "cancel_unknown": "取消结果待核对",
     "cancelled": "已取消指派",
 }
 
@@ -393,8 +396,9 @@ class CuttingDispatchService:
             "status_label": STATUS_LABELS.get(item["status"], item["status"]),
             "stage_label": STAGE_LABELS.get(stage, stage),
             "can_execute": item["status"] in {"ready", "downloaded", "download_failed"}
-            or (item["status"] == "push_failed" and stage != "upload_unknown"),
-            "can_cancel": remote_id and item["status"] in {"sent", "push_failed"},
+            or dispatch_retry_safe(item),
+            "can_cancel": remote_id and item["status"] in {"sent", "push_failed"}
+            and stage not in {"cancel_unknown", "cancel_interrupted"},
         }
 
     def list_dispatches(self, *, page: int, page_size: int) -> dict[str, Any]:
@@ -442,7 +446,12 @@ class CuttingDispatchService:
                 return item, path
             except DownloadError:
                 pass
-        item = self._transition(item["dispatch_id"], expected={item["status"]}, status="downloading", stage="downloading", now=self._now())
+        item = self._transition(
+            item["dispatch_id"], expected={item["status"]},
+            expected_stage=item.get("stage"), expected_attempt_count=item["attempt_count"],
+            status="downloading", stage="downloading", increment_attempt=True,
+            claim_exclusive=True, now=self._now(),
+        )
         try:
             downloaded, path = self.downloads.get_or_download(
                 document_id=item["document_id"],
@@ -472,6 +481,8 @@ class CuttingDispatchService:
             raise DispatchConflictError(f"当前状态“{STATUS_LABELS[item['status']]}”不允许再次推送")
         if item["status"] == "push_failed" and item.get("stage") == "upload_unknown":
             raise DispatchConflictError("上次上传结果未知，请先在魔盒中按任务标识核对，禁止盲目重复上传")
+        if item["status"] == "push_failed" and not dispatch_retry_safe(item):
+            raise DispatchConflictError("远端执行结果尚未确认，请先人工核对，禁止盲目重复执行")
         if self.magic_config is None:
             raise MagicBoxError("魔盒客户端未初始化", status_code=503)
         config = self.magic_config.get()
@@ -479,13 +490,20 @@ class CuttingDispatchService:
             raise DispatchConflictError("目标机床不在SYS_CONFIG的CUTTER01_IP/CUTTER02_IP白名单中")
 
         local_path: Path | None = None
+        initial_attempt_count = item["attempt_count"]
         if not item.get("remote_task_id"):
             item, local_path = self._prepare_local_file(item, user)
 
         client = self.magic_client_factory(config)
         client.sync_time()
         if not item.get("remote_task_id"):
-            item = self._transition(dispatch_id, expected={"downloaded", "push_failed"}, status="pushing", stage="uploading", increment_attempt=True, now=self._now())
+            item = self._transition(
+                dispatch_id, expected={item["status"]},
+                expected_stage=item.get("stage"), expected_attempt_count=item["attempt_count"],
+                status="pushing", stage="uploading",
+                increment_attempt=item["attempt_count"] == initial_attempt_count,
+                claim_exclusive=True, now=self._now(),
+            )
             try:
                 assert local_path is not None
                 remote_id = client.upload_task(
@@ -499,13 +517,24 @@ class CuttingDispatchService:
             except MagicBoxError as exc:
                 self._transition(dispatch_id, expected={"pushing"}, status="push_failed", stage="upload_unknown" if exc.outcome_unknown else "upload_failed", last_error=str(exc), now=self._now())
                 raise
+            except Exception:
+                self._transition(dispatch_id, expected={"pushing"}, status="push_failed", stage="upload_unknown", last_error="上传过程中异常退出，远端结果未知", now=self._now())
+                raise
             item = self._transition(dispatch_id, expected={"pushing"}, status="pushing", stage="uploaded", remote_task_id=remote_id, now=self._now())
 
-        item = self._transition(dispatch_id, expected={"pushing", "push_failed"}, status="pushing", stage="assigning", now=self._now())
+        item = self._transition(
+            dispatch_id, expected={item["status"]},
+            expected_stage=item.get("stage"), expected_attempt_count=item["attempt_count"],
+            status="pushing", stage="assigning",
+            increment_attempt=item["status"] == "push_failed", claim_exclusive=True, now=self._now(),
+        )
         try:
             client.assign_task(task_identifier=item["task_identifier"], machine_ip=item["machine_ip"])
         except MagicBoxError as exc:
-            self._transition(dispatch_id, expected={"pushing"}, status="push_failed", stage="assign_failed", last_error=str(exc), now=self._now())
+            self._transition(dispatch_id, expected={"pushing"}, status="push_failed", stage="assign_unknown" if exc.outcome_unknown else "assign_failed", last_error=str(exc), now=self._now())
+            raise
+        except Exception:
+            self._transition(dispatch_id, expected={"pushing"}, status="push_failed", stage="assign_unknown", last_error="指派过程中异常退出，远端结果未知", now=self._now())
             raise
         item = self._transition(dispatch_id, expected={"pushing"}, status="sent", stage="complete", now=self._now())
         result = self._decorate_dispatch(item)
@@ -522,11 +551,30 @@ class CuttingDispatchService:
             raise DispatchNotFoundError("派发任务不存在")
         if not item.get("remote_task_id") or item["status"] not in {"sent", "push_failed"}:
             raise DispatchConflictError("当前任务没有可取消的魔盒指派")
+        if item.get("stage") in {"cancel_unknown", "cancel_interrupted"}:
+            raise DispatchConflictError("取消结果未知，请先人工核对，禁止盲目重复取消")
         if self.magic_config is None:
             raise MagicBoxError("魔盒客户端未初始化", status_code=503)
         config = self.magic_config.get()
         client = self.magic_client_factory(config)
         client.sync_time()
-        client.cancel_assignment(task_identifier=item["task_identifier"])
-        item = self._transition(dispatch_id, expected={item["status"]}, status="cancelled", stage="cancelled", now=self._now())
+        previous_status, previous_stage = item["status"], item.get("stage")
+        item = self._transition(
+            dispatch_id, expected={previous_status}, expected_stage=previous_stage,
+            expected_attempt_count=item["attempt_count"], status="pushing",
+            stage="cancelling", increment_attempt=True, now=self._now(),
+        )
+        try:
+            client.cancel_assignment(task_identifier=item["task_identifier"])
+        except MagicBoxError as exc:
+            self._transition(dispatch_id, expected={"pushing"},
+                status="push_failed" if exc.outcome_unknown else previous_status,
+                stage="cancel_unknown" if exc.outcome_unknown else previous_stage,
+                last_error=str(exc), now=self._now())
+            raise
+        except Exception:
+            self._transition(dispatch_id, expected={"pushing"}, status="push_failed",
+                stage="cancel_unknown", last_error="取消过程中异常退出，远端结果未知", now=self._now())
+            raise
+        item = self._transition(dispatch_id, expected={"pushing"}, status="cancelled", stage="cancelled", now=self._now())
         return self._decorate_dispatch(item)

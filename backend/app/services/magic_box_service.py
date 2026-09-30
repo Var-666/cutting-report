@@ -220,6 +220,7 @@ class MagicBoxClient:
         *,
         authenticated: bool = True,
         upload: bool = False,
+        effect: bool = False,
         **kwargs,
     ) -> Any:
         headers = dict(kwargs.pop("headers", {}))
@@ -231,27 +232,33 @@ class MagicBoxClient:
         except httpx.TimeoutException:
             raise MagicBoxError(
                 "魔盒请求超时；上传结果无法确认时不要盲目重复上传",
-                outcome_unknown=upload,
+                outcome_unknown=upload or effect,
             ) from None
         except httpx.HTTPError:
-            raise MagicBoxError("魔盒连接失败，请检查内网地址、端口和网络") from None
+            raise MagicBoxError("魔盒连接失败，请检查内网地址、端口和网络", outcome_unknown=upload or effect) from None
         try:
             payload = response.json()
         except ValueError:
             raise MagicBoxError(
-                f"魔盒返回HTTP {response.status_code}，但响应不是JSON"
+                f"魔盒返回HTTP {response.status_code}，但响应不是JSON",
+                outcome_unknown=upload or effect,
             ) from None
         if not isinstance(payload, dict):
-            raise MagicBoxError("魔盒响应格式不正确")
+            raise MagicBoxError("魔盒响应格式不正确", outcome_unknown=upload or effect)
         remote_status = payload.get("status")
-        if response.status_code != 200 or remote_status != 0:
+        if response.status_code != 200 or type(remote_status) is not int or remote_status != 0:
             message = str(payload.get("msg") or payload.get("error") or "请求失败").strip()
             if len(message) > 180:
                 message = message[:180]
             raise MagicBoxError(
                 f"魔盒返回失败：{message or '未知错误'}",
                 remote_status=remote_status,
-                outcome_unknown=False,
+                # Only a valid business rejection proves that the operation did
+                # not take effect. Transport/server/protocol failures do not.
+                outcome_unknown=(upload or effect) and not (
+                    response.status_code == 200
+                    and type(remote_status) is int and remote_status != 0
+                ),
             )
         return payload.get("data")
 
@@ -318,8 +325,10 @@ class MagicBoxClient:
             "thickness": str(thickness if thickness is not None else 0),
             "count": str(count),
         }
+        request_started = False
         try:
             with file_path.open("rb") as stream:
+                request_started = True
                 remote_id = self._request(
                     "POST",
                     "/api/task/upload",
@@ -334,16 +343,17 @@ class MagicBoxClient:
                     upload=True,
                 )
         except OSError:
-            raise MagicBoxError("本地切割文件无法读取", status_code=409) from None
-        remote_id = str(remote_id or "").strip()
-        if not remote_id or len(remote_id) > 128:
-            raise MagicBoxError("魔盒上传成功但未返回有效任务UUID")
+            raise MagicBoxError("本地切割文件无法读取", status_code=409, outcome_unknown=request_started) from None
+        if not isinstance(remote_id, str) or not remote_id.strip() or len(remote_id.strip()) > 128:
+            raise MagicBoxError("魔盒上传成功但未返回有效任务UUID", outcome_unknown=True)
+        remote_id = remote_id.strip()
         return remote_id
 
     def assign_task(self, *, task_identifier: str, machine_ip: str) -> None:
         self._request(
             "POST",
             "/api/task/assign",
+            effect=True,
             json={"taskIdentifier": task_identifier, "machineIp": machine_ip},
         )
 
@@ -351,5 +361,6 @@ class MagicBoxClient:
         self._request(
             "POST",
             "/api/task/cancelAssign",
+            effect=True,
             json={"taskIdentifier": task_identifier},
         )

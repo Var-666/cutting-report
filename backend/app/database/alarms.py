@@ -286,6 +286,11 @@ class AlarmRepository(SQLiteRepository):
         monitor_start_at: str | None = None,
         source_name: str = "production",
     ) -> dict[str, int]:
+        """Persist events and the caller's sequential scan boundary atomically.
+
+        Supplemental rechecks may contain larger IDs without proving that the
+        intervening source rows were scanned; they must never advance cursor.
+        """
         now_text = now.isoformat(timespec="seconds")
         debounce_cutoff = (now - timedelta(minutes=max(0, debounce_minutes))).isoformat(
             timespec="seconds"
@@ -296,13 +301,11 @@ class AlarmRepository(SQLiteRepository):
         )
         affected_incidents: set[str] = set()
         created_incidents = 0
-        max_alarm_id = cursor
 
         with self.connect() as connection:
             self.begin_immediate(connection)
             for record in normalized:
                 source_alarm_id = int(record["alarm_info_id"])
-                max_alarm_id = max(max_alarm_id, source_alarm_id)
                 remove_time = _text(record.get("remove_time")) or None
                 start_time = _text(record.get("start_time")) or None
                 is_open = 0 if remove_time else 1
@@ -499,13 +502,17 @@ class AlarmRepository(SQLiteRepository):
                 SET last_alarm_id = MAX(last_alarm_id, ?), last_success_at = ?
                 WHERE source_name = ?
                 """,
-                (max_alarm_id, now_text, source_name),
+                (cursor, now_text, source_name),
             )
+            committed_cursor = int(connection.execute(
+                "SELECT last_alarm_id FROM alarm_sync_state WHERE source_name = ?",
+                (source_name,),
+            ).fetchone()[0])
 
         return {
             "records": len(normalized),
             "created_incidents": created_incidents,
-            "last_alarm_id": max_alarm_id,
+            "last_alarm_id": committed_cursor,
         }
 
     def list_unreported_incidents(
