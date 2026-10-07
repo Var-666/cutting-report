@@ -30,7 +30,6 @@ from app.services.report_analysis_service import (
     workshop_analysis_source_version,
 )
 from app.services.workshop_sorting import sort_workshop_by_recency
-from app.services.workshop_source_correction_service import WorkshopSourceCorrectionService
 
 
 router = APIRouter(prefix="/api/v1/workshop", tags=["workshop-confirmation"])
@@ -127,10 +126,6 @@ class CorrectTaskRequest(RevokeTaskRequest):
         return self
 
 
-class CorrectSourceRequest(RevokeTaskRequest):
-    expected_version: str = Field(pattern=r"^[a-f0-9]{64}$")
-
-
 def _envelope(request: Request, data: object) -> dict:
     return {
         "success": True,
@@ -190,48 +185,6 @@ def generate_daily_report(
     ) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return _envelope(request, report)
-
-
-def _source_correction_service(request: Request) -> WorkshopSourceCorrectionService:
-    return WorkshopSourceCorrectionService(settings, request.app.state.workshop, request.app.state.query_service)
-
-
-def _correction_error(exc: ValueError) -> HTTPException:
-    if isinstance(exc, ConfirmationNotFoundError):
-        return HTTPException(status_code=404, detail=str(exc))
-    if isinstance(exc, ConfirmationPermissionError):
-        return HTTPException(status_code=403, detail=str(exc))
-    return HTTPException(status_code=409, detail=str(exc))
-
-
-@router.post("/reports/source-corrections/preview")
-def preview_source_corrections(
-    payload: ConfirmTaskRequest, request: Request, _: dict = Depends(require_admin),
-) -> dict:
-    try:
-        result = _source_correction_service(request).preview(payload.report_date)
-    except SqlServerConfigurationError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except (ConfirmationNotFoundError, ConfirmationConflictError, DailyReportRecordMismatchError,
-            DailyReportScopeMismatchError, DailyReportSourceMismatchError) as exc:
-        raise _correction_error(exc) from exc
-    return _envelope(request, result)
-
-
-@router.post("/reports/source-corrections")
-def apply_source_corrections(
-    payload: CorrectSourceRequest, request: Request, admin: dict = Depends(require_admin),
-) -> dict:
-    try:
-        result = _source_correction_service(request).apply(
-            payload.report_date, expected_version=payload.expected_version, reason=payload.reason, admin=admin,
-        )
-    except SqlServerConfigurationError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except (ConfirmationNotFoundError, ConfirmationPermissionError, ConfirmationConflictError,
-            DailyReportRecordMismatchError, DailyReportScopeMismatchError, DailyReportSourceMismatchError) as exc:
-        raise _correction_error(exc) from exc
-    return _envelope(request, result)
 
 
 @router.get("/tasks")

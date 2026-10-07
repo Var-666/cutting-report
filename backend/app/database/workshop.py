@@ -3,7 +3,6 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
-import json
 import secrets
 import sqlite3
 from datetime import date, datetime, timedelta
@@ -314,21 +313,6 @@ class WorkshopRepository(SQLiteRepository):
                     ON workshop_confirmation_audits(report_id, operated_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_workshop_confirmation_audits_retention
                     ON workshop_confirmation_audits(operated_at, audit_id);
-
-                CREATE TABLE IF NOT EXISTS workshop_source_correction_audits (
-                    audit_id TEXT PRIMARY KEY,
-                    report_id TEXT NOT NULL,
-                    task_id TEXT NOT NULL,
-                    payload TEXT NOT NULL,
-                    reason TEXT NOT NULL,
-                    operated_by_id TEXT NOT NULL,
-                    operated_by_name TEXT NOT NULL,
-                    operated_at TEXT NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS idx_workshop_source_audits_report
-                    ON workshop_source_correction_audits(report_id, operated_at DESC);
-                CREATE INDEX IF NOT EXISTS idx_workshop_source_audits_retention
-                    ON workshop_source_correction_audits(operated_at, audit_id);
 
                 CREATE TABLE IF NOT EXISTS admin_role_audits (
                     audit_id TEXT PRIMARY KEY,
@@ -785,145 +769,6 @@ class WorkshopRepository(SQLiteRepository):
             ).fetchone()
         return self._report_dict(row)
 
-    def _source_correction_plan(
-        self,
-        connection: sqlite3.Connection,
-        *,
-        report_date: str,
-        source_mode: str,
-        scope_machine_no: str | None,
-        records: list[WorkshopRecord],
-    ) -> dict[str, Any]:
-        report = connection.execute(
-            "SELECT * FROM workshop_reports WHERE report_date = ?", (report_date,),
-        ).fetchone()
-        if report is None:
-            raise ConfirmationNotFoundError("当日车间报表尚未生成")
-        if report["source_mode"] != source_mode:
-            raise DailyReportSourceMismatchError("日报数据源已变化，不能通过更正混合来源")
-        if report["scope_machine_no"] != scope_machine_no:
-            raise DailyReportScopeMismatchError("日报设备范围已变化，不能通过更正改变范围")
-        incoming: dict[str, dict[str, Any]] = {}
-        for record in _unique_snapshot_records(records, report_date):
-            values = _snapshot_values(record, report_date)
-            if values["production_date"] != report_date:
-                raise DailyReportRecordMismatchError("源记录生产日期不属于当前日报，拒绝跨日更正")
-            task_id = str(record.task_id)
-            incoming[task_id] = values
-        changes = []
-        total_changes = 0
-        for row in connection.execute(
-            "SELECT * FROM workshop_report_items WHERE report_id = ? ORDER BY task_id",
-            (report["report_id"],),
-        ):
-            task_id = str(row["task_id"])
-            new = incoming.get(task_id)
-            if new is None:
-                continue  # Missing source rows never imply deletion.
-            old = {field: row[field] for field in new}
-            fields = [field for field in new if not _snapshot_field_equal(field, old[field], new[field])]
-            if not fields:
-                continue
-            total_changes += 1
-            if len(changes) >= 100:
-                continue
-            previous = connection.execute(
-                "SELECT * FROM workshop_confirmations WHERE task_id = ?", (task_id,),
-            ).fetchone()
-            if previous and previous["report_id"] not in (None, report["report_id"]):
-                raise ConfirmationConflictError("任务确认属于其他日报，请先核对任务归属")
-            changes.append({
-                "task_id": task_id, "old": old, "new": new, "fields": fields,
-                "snapshot_revision": int(row["snapshot_revision"]),
-                "previous_confirmation": dict(previous) if previous else None,
-            })
-        plan = {
-            "report_id": report["report_id"], "report_date": report_date,
-            "source_mode": source_mode, "scope_machine_no": scope_machine_no,
-            "total_changes": total_changes, "items": changes,
-        }
-        canonical = json.dumps(plan, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        plan["version"] = hashlib.sha256(canonical.encode()).hexdigest()
-        return plan
-
-    def preview_source_corrections(
-        self, *, report_date: str, source_mode: str,
-        scope_machine_no: str | None, records: list[WorkshopRecord],
-    ) -> dict[str, Any]:
-        with self.connect() as connection:
-            if not connection.in_transaction:
-                connection.execute("BEGIN")
-            plan = self._source_correction_plan(
-                connection, report_date=report_date, source_mode=source_mode,
-                scope_machine_no=scope_machine_no, records=records,
-            )
-            audits = connection.execute(
-                "SELECT * FROM workshop_source_correction_audits WHERE report_id = ? ORDER BY operated_at DESC, audit_id DESC LIMIT 20",
-                (plan["report_id"],),
-            ).fetchall()
-            plan["audits"] = [{**dict(row), "payload": json.loads(row["payload"])} for row in audits]
-            return plan
-
-    def apply_source_corrections(
-        self, *, report_date: str, source_mode: str, scope_machine_no: str | None,
-        records: list[WorkshopRecord], expected_version: str,
-        reason: str, admin: dict[str, Any], now: str,
-    ) -> dict[str, Any]:
-        if admin.get("role") != "admin":
-            raise ConfirmationPermissionError("只有管理员可以更正源记录")
-        reason = reason.strip()
-        if not 2 <= len(reason) <= 200:
-            raise ValueError("更正原因需要 2 至 200 个字")
-        with self.connect() as connection:
-            self.begin_immediate(connection)
-            plan = self._source_correction_plan(
-                connection, report_date=report_date, source_mode=source_mode,
-                scope_machine_no=scope_machine_no, records=records,
-            )
-            if plan["version"] != expected_version or not plan["items"]:
-                raise DailyReportRecordMismatchError("源记录或任务确认已变化，请重新预览后提交")
-            audit_ids = []
-            revoked_count = 0
-            for change in plan["items"]:
-                task_id = change["task_id"]
-                previous = change["previous_confirmation"]
-                if previous:
-                    self._insert_confirmation_audit(
-                        connection, task_id=task_id, report_id=plan["report_id"],
-                        action="admin_revoke", previous=previous, new_worker=None,
-                        reason=f"源记录更正：{reason}", operator=admin, now=now,
-                    )
-                    connection.execute("DELETE FROM workshop_confirmations WHERE task_id = ?", (task_id,))
-                    revoked_count += 1
-                new = change["new"]
-                assignments = ", ".join(f"{field} = ?" for field in new)
-                connection.execute(
-                    f"UPDATE workshop_report_items SET {assignments}, snapshot_revision = snapshot_revision + 1 WHERE report_id = ? AND task_id = ?",
-                    (*new.values(), plan["report_id"], task_id),
-                )
-                audit_id = f"wsa_{uuid4().hex[:20]}"
-                connection.execute(
-                    """INSERT INTO workshop_source_correction_audits (
-                        audit_id, report_id, task_id, payload, reason,
-                        operated_by_id, operated_by_name, operated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (audit_id, plan["report_id"], task_id, json.dumps({
-                        **change, "report_date": plan["report_date"],
-                        "source_mode": plan["source_mode"], "scope_machine_no": plan["scope_machine_no"],
-                    }, ensure_ascii=False),
-                     reason, admin["user_id"], admin["display_name"], now),
-                )
-                audit_ids.append(audit_id)
-            connection.execute(
-                "UPDATE workshop_reports SET generated_by_id = ?, generated_by_name = ?, generated_at = ? WHERE report_id = ?",
-                (admin["user_id"], admin["display_name"], now, plan["report_id"]),
-            )
-            return {
-                "report_id": plan["report_id"], "report_date": report_date,
-                "corrected_count": len(audit_ids), "revoked_count": revoked_count,
-                "audit_ids": audit_ids,
-            }
-
     def sync_daily_report(
         self,
         *,
@@ -1092,7 +937,7 @@ class WorkshopRepository(SQLiteRepository):
                     shown = "、".join(mismatched_task_ids[:10])
                     suffix = "等" if len(mismatched_task_ids) > 10 else ""
                     raise DailyReportRecordMismatchError(
-                        f"日报源记录已更正，拒绝静默覆盖任务：{shown}{suffix}；请执行显式更正"
+                        f"日报任务与生产源数据不一致：{shown}{suffix}；请检查数据源或采集配置"
                     )
                 if unique_records:
                     ordinal = int(connection.execute(
@@ -1345,7 +1190,7 @@ class WorkshopRepository(SQLiteRepository):
             for task_id, revision in report_revisions.items():
                 expected = (snapshot_revisions or {}).get(task_id)
                 if (revision > 1 and expected is None) or (expected is not None and expected != revision):
-                    raise ConfirmationConflictError("任务记录已更正，请刷新并核对新记录后重新确认")
+                    raise ConfirmationConflictError("日报任务版本已变化，请刷新后重新确认")
 
             existing_rows = connection.execute(
                 f"""

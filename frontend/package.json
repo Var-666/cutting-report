@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "test": "node --test tests/cutting-routes.test.mjs tests/layout-consistency.test.mjs tests/report-cache.test.mjs tests/report-preload.test.mjs tests/request-cancellation.test.mjs tests/session-expiry.test.mjs tests/email-resolution.test.mjs tests/file-search.test.mjs tests/content-table.test.mjs tests/date-display.test.mjs tests/production-date.test.mjs tests/alarm-analysis.test.mjs tests/alarm-lifecycle.test.mjs tests/report-export.test.mjs tests/report-route-state.test.mjs tests/admin-access.test.mjs tests/workshop-batch-confirmation.test.mjs tests/workshop-source-corrections.test.mjs tests/sparkline.test.mjs tests/analysis-overflow.test.mjs tests/management-ui.test.mjs tests/report-job-status.test.mjs tests/web-guidelines.test.mjs",
+    "test": "node --test tests/cutting-routes.test.mjs tests/layout-consistency.test.mjs tests/report-cache.test.mjs tests/report-preload.test.mjs tests/request-cancellation.test.mjs tests/session-expiry.test.mjs tests/email-resolution.test.mjs tests/file-search.test.mjs tests/content-table.test.mjs tests/date-display.test.mjs tests/production-date.test.mjs tests/alarm-analysis.test.mjs tests/alarm-lifecycle.test.mjs tests/report-export.test.mjs tests/report-route-state.test.mjs tests/admin-access.test.mjs tests/workshop-batch-confirmation.test.mjs tests/sparkline.test.mjs tests/analysis-overflow.test.mjs tests/management-ui.test.mjs tests/report-job-status.test.mjs tests/web-guidelines.test.mjs",
     "sync:echarts": "node scripts/sync-echarts.mjs",
     "build": "npm run sync:echarts && vite build",
     "preview": "vite preview"

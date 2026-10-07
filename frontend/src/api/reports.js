@@ -157,18 +157,6 @@ export function correctWorkshopTask(taskId, { reportDate, action, workerId = nul
   }).then((data) => { invalidateWorkshopReports(); return data })
 }
 
-export function previewWorkshopSourceCorrections(reportDate, { signal } = {}) {
-  return request('/api/v1/workshop/reports/source-corrections/preview', {
-    method: 'POST', body: JSON.stringify({ report_date: reportDate }), signal,
-  })
-}
-
-export function applyWorkshopSourceCorrections({ reportDate, expectedVersion, reason }) {
-  return request('/api/v1/workshop/reports/source-corrections', {
-    method: 'POST', body: JSON.stringify({ report_date: reportDate, expected_version: expectedVersion, reason }),
-  }).then((data) => { invalidateWorkshopReports(); return data })
-}
-
 export function listWorkshopConfirmationAudits({ reportDate, taskId, limit = 30 }) {
   const query = new URLSearchParams({ report_date: reportDate, task_id: taskId, limit })
   return request(`/api/v1/workshop/confirmation-audits?${query}`)

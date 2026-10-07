@@ -38,7 +38,6 @@ class _QueryCache(Generic[_CachedResult]):
         self._entries: dict[tuple, tuple[float, float, _CachedResult]] = {}
         self._lock = Lock()
         self._query_locks = [Lock() for _ in range(32)]
-        self._generations: dict[str, int] = {}
 
     def read(
         self, key: tuple, loader: Callable[[], _CachedResult], *, ttl: int, force: bool = False
@@ -47,7 +46,6 @@ class _QueryCache(Generic[_CachedResult]):
             return loader()
         requested_at = monotonic()
         with self._lock:
-            generation = self._generations.get(key[0], 0)
             cached = self._entries.get(key)
             if not force and cached and cached[0] > requested_at:
                 return cached[2]
@@ -63,9 +61,6 @@ class _QueryCache(Generic[_CachedResult]):
             result = loader()
             created_at = monotonic()
             with self._lock:
-                # A correction can invalidate while the external query is running.
-                if generation != self._generations.get(key[0], 0):
-                    return result
                 self._entries = {
                     cache_key: value for cache_key, value in self._entries.items()
                     if value[0] > created_at
@@ -74,12 +69,6 @@ class _QueryCache(Generic[_CachedResult]):
                 while len(self._entries) > 128:
                     self._entries.pop(next(iter(self._entries)))
             return result
-
-    def invalidate(self, kind: str) -> None:
-        with self._lock:
-            self._generations[kind] = self._generations.get(kind, 0) + 1
-            self._entries = {key: value for key, value in self._entries.items() if key[0] != kind}
-
 
 def _date(value: object) -> date | None:
     if value is None:
@@ -105,7 +94,6 @@ class QueryService:
         self.query_dir = Path(__file__).resolve().parents[1] / "database" / "queries"
         self._equipment_cache = _QueryCache[EquipmentQueryResult]()
         self._bundle_cache = _QueryCache[QueryBundle]()
-        self._workshop_cache_generation = 0
         self._equipment_metrics_cache_lock = Lock()
         self._equipment_metrics_cache: dict[
             tuple[date, date], tuple[float, dict[str, dict[str, Decimal | int]]]
@@ -129,26 +117,15 @@ class QueryService:
                 self._workshop_cache = {
                     key: value for key, value in self._workshop_cache.items() if value[0] > now
                 }
-                generation = self._workshop_cache_generation
-            # External reads must not hold the publication lock: correction can
-            # invalidate immediately while a slow warmup is still in flight.
+            # Source reads run outside the cache publication lock.
             bundle = self.fetch_workshop_data(ReportFilter(report_date=report_date))
             ttl = min(60, self.settings.report_data_cache_seconds)
             if ttl > 0 and bundle.workshop_records:
                 with self._workshop_cache_lock:
-                    if generation == self._workshop_cache_generation:
-                        self._workshop_cache[report_date] = (monotonic() + ttl, bundle)
-                        while len(self._workshop_cache) > 32:
-                            self._workshop_cache.pop(next(iter(self._workshop_cache)))
+                    self._workshop_cache[report_date] = (monotonic() + ttl, bundle)
+                    while len(self._workshop_cache) > 32:
+                        self._workshop_cache.pop(next(iter(self._workshop_cache)))
             return bundle
-
-    def invalidate_workshop_data(self) -> None:
-        """Discard warmups/ranges after explicit correction, including in-flight fills."""
-        # Warmup publication and invalidation share one lock; no source reads here.
-        with self._workshop_cache_lock:
-            self._workshop_cache_generation += 1
-            self._workshop_cache.clear()
-            self._bundle_cache.invalidate("workshop")
 
     def fetch_report_data(self, filters: ReportFilter) -> QueryBundle:
         if self.settings.effective_data_source_mode == "excel":

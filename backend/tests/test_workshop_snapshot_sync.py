@@ -36,6 +36,35 @@ def setup(tmp_path):
     return repository
 
 
+def test_source_correction_routes_are_removed_without_removing_confirmation_routes():
+    from app.api.workshop import router
+
+    app = FastAPI()
+    app.include_router(router)
+    paths = app.openapi()['paths']
+    assert '/api/v1/workshop/tasks/confirm' in paths
+    assert '/api/v1/workshop/tasks/{task_id}/revoke' in paths
+    assert '/api/v1/workshop/tasks/{task_id}/correct' in paths
+    with TestClient(app) as client:
+        for path in ('/reports/source-corrections', '/reports/source-corrections/preview'):
+            assert client.post(f'/api/v1/workshop{path}', json={}).status_code == 404
+
+
+def test_initialization_does_not_create_source_correction_records_or_delete_legacy_data(tmp_path):
+    repository = setup(tmp_path)
+    with repository.connect() as connection:
+        assert connection.execute(
+            "SELECT name FROM sqlite_master WHERE name = 'workshop_source_correction_audits'"
+        ).fetchone() is None
+        connection.execute('CREATE TABLE workshop_source_correction_audits (audit_id TEXT PRIMARY KEY, payload TEXT)')
+        connection.execute("INSERT INTO workshop_source_correction_audits VALUES ('legacy', '历史操作记录')")
+    repository.initialize()
+    with repository.connect() as connection:
+        assert connection.execute(
+            "SELECT payload FROM workshop_source_correction_audits WHERE audit_id = 'legacy'"
+        ).fetchone()[0] == '历史操作记录'
+
+
 def test_snapshot_sync_appends_new_task_ids_idempotently(tmp_path):
     repository = setup(tmp_path)
     initial = repository.create_daily_report(report_date='2026-09-30', source_mode='sqlserver',
@@ -135,7 +164,7 @@ def test_scope_change_rejects_orphaned_report_confirmation(tmp_path):
     assert repository.get_confirmations(['A'], report_id=report['report_id'])['A']['report_id'] == report['report_id']
 
 
-def test_source_record_correction_is_reported_without_silent_overwrite(tmp_path):
+def test_unexpected_source_mismatch_is_reported_without_silent_overwrite(tmp_path):
     repository = setup(tmp_path)
     repository.create_daily_report(
         report_date='2026-09-30', source_mode='sqlserver', records=[record('A')],
@@ -150,7 +179,7 @@ def test_source_record_correction_is_reported_without_silent_overwrite(tmp_path)
         scope_machine_no='Cutter01',
     )['item_count'] == 1
     corrected = record('A', work=90)
-    with pytest.raises(DailyReportRecordMismatchError, match='源记录已更正'):
+    with pytest.raises(DailyReportRecordMismatchError, match='日报任务与生产源数据不一致'):
         repository.populate_empty_daily_report(
             report_date='2026-09-30', source_mode='sqlserver',
             records=[corrected, record('B')],

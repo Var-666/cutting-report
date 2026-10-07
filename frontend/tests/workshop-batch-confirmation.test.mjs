@@ -25,7 +25,7 @@ test('batch confirmation sends all selected task ids in one request', async () =
   })
 })
 
-test('fresh task revisions accompany confirmation so corrected records cannot use an old review', async () => {
+test('task revisions accompany confirmation so a rebuilt scope cannot use an old review', async () => {
   let sent
   globalThis.fetch = async (url, options) => {
     sent = JSON.parse(options.body)
@@ -54,4 +54,12 @@ test('worker task table exposes multi-select and reviews tasks before confirmati
   assert.match(template, /v-for="\(row, index\) in batchConfirmation\.tasks"/)
   assert.match(template, /工程\/船号[\s\S]*分段名[\s\S]*程序号[\s\S]*生产时间/)
   assert.match(template, /@click="openSingleConfirmation\(row\)"/)
+})
+
+test('workshop keeps confirmation corrections while the source correction entry is removed', () => {
+  const descriptor = parse(readFileSync(new URL('../src/views/WorkshopView.vue', import.meta.url), 'utf8')).descriptor
+  assert.doesNotMatch(descriptor.scriptSetup.content, /WorkshopSourceCorrections/)
+  assert.doesNotMatch(descriptor.template.content, /更正日报源记录|WorkshopSourceCorrections/)
+  assert.match(descriptor.scriptSetup.content, /await correctWorkshopTask\(row.task_id/)
+  assert.match(descriptor.scriptSetup.content, /await revokeWorkshopTask\(row.task_id/)
 })

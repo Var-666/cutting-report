@@ -1,4 +1,3 @@
-import json
 import sqlite3
 
 import pytest
@@ -48,11 +47,9 @@ def test_scope_rebuild_never_revives_old_confirmation_revision(tmp_path, empty_r
     repository = setup(tmp_path)
     arguments = sync_arguments(repository)
     report = repository.sync_daily_report(**arguments, records=[record("A")])
-    source = {key: arguments[key] for key in ("report_date", "source_mode", "scope_machine_no")}
-    preview = repository.preview_source_corrections(**source, records=[record("A", work=90)])
-    repository.apply_source_corrections(**source, records=[record("A", work=90)],
-                                       expected_version=preview["version"], reason="核对工时",
-                                       admin=arguments["user"], now=arguments["now"])
+    with repository.connect() as connection:
+        # An upgraded database can already contain versions from earlier snapshots.
+        connection.execute("UPDATE workshop_report_items SET snapshot_revision = 2 WHERE task_id = 'A'")
     if legacy_parent:
         with repository.connect() as connection:
             connection.execute("ALTER TABLE workshop_reports DROP COLUMN snapshot_revision_floor")
@@ -73,13 +70,6 @@ def test_scope_rebuild_never_revives_old_confirmation_revision(tmp_path, empty_r
                                     now=arguments["now"], snapshot_revision=old_revision)
     repository.confirm_task(task_id="A", report_id=report["report_id"], user=worker,
                             now=arguments["now"], snapshot_revision=revision)
-    with repository.connect() as connection:
-        payload = json.loads(connection.execute(
-            "SELECT payload FROM workshop_source_correction_audits WHERE task_id = 'A'"
-        ).fetchone()[0])
-    assert payload["scope_machine_no"] == "Cutter01"
-    assert payload["source_mode"] == "sqlserver"
-    assert payload["report_date"] == arguments["report_date"]
 
 
 def test_task_added_after_empty_scope_rebuild_requires_review_of_current_revision(tmp_path):

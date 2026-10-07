@@ -19,7 +19,6 @@ import ReportFeedback from '../components/ReportFeedback.vue'
 import ReportTrendPanel from '../components/ReportTrendPanel.vue'
 import StandardReportQuery from '../components/StandardReportQuery.vue'
 import WorkshopStructureCharts from '../components/WorkshopStructureCharts.vue'
-import WorkshopSourceCorrections from '../components/WorkshopSourceCorrections.vue'
 import { reportToday, taskProductionDate } from '../api/reportDates.js'
 import { formatChineseDate, formatChineseDateTime } from '../utils/dateDisplay.js'
 import { useDialogFocus } from '../composables/useDialogFocus.js'
@@ -783,7 +782,6 @@ watch(() => route.query, async () => {
       </form>
       <div v-if="result.report" class="workshop-report-state"><strong>{{ isWorker ? formatChineseDate(result.report.report_date) : `${formatChineseDate(result.report.period_start)} 至 ${formatChineseDate(result.report.period_end)}` }} 车间报表</strong><span>{{ isWorker ? `生成人：${result.report.generated_by_name || '--'} · 生成时间：${time(result.report.generated_at)} · ` : '' }}总任务 {{ result.report.item_count }} 项 · 已确认 {{ result.report.confirmed_count }} 项</span></div>
       <div v-if="result.report" class="workshop-summary">当前筛选返回 {{ result.total }} 项任务，所选工程/船号已确认 {{ result.confirmed_count }} 项</div>
-      <WorkshopSourceCorrections v-if="!isWorker && user.role === 'admin'" :report-date="filters.startDate" :active="pageActive" @updated="load(1, { force: true, ensureReport: false })" />
       <div v-if="isWorker && result.report" class="workshop-batch-actions"><span>已选择 <strong>{{ selectedTaskCount }}</strong> 项待确认任务</span><div><button type="button" :disabled="!selectedTaskCount || batchConfirmation.saving" @click="clearSelectedTasks">清空选择</button><button class="primary" type="button" :disabled="!selectedTaskCount || loading || batchConfirmation.saving" @click="openBatchConfirmation()">确认选中任务</button></div></div>
     </template>
     <template #table>
