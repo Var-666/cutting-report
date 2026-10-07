@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from pathlib import Path
 from threading import Lock
 from time import monotonic
+from typing import Generic, TypeVar
 from zoneinfo import ZoneInfo
 
 from app.config import Settings
@@ -26,6 +28,69 @@ class EquipmentQueryResult:
     data_updated_at: datetime | None = None
 
 
+_CachedResult = TypeVar("_CachedResult")
+
+
+class _QueryCache(Generic[_CachedResult]):
+    """Bounded query cache; source reads never hold the publication lock."""
+
+    def __init__(self) -> None:
+        self._entries: dict[tuple, tuple[float, float, _CachedResult]] = {}
+        self._lock = Lock()
+        self._query_locks = [Lock() for _ in range(32)]
+        self._generations: dict[str, int] = {}
+
+    def read(
+        self, key: tuple, loader: Callable[[], _CachedResult], *, ttl: int, force: bool = False
+    ) -> _CachedResult:
+        if ttl <= 0:
+            return loader()
+        requested_at = monotonic()
+        with self._lock:
+            generation = self._generations.get(key[0], 0)
+            cached = self._entries.get(key)
+            if not force and cached and cached[0] > requested_at:
+                return cached[2]
+        query_lock = self._query_locks[hash(key) % len(self._query_locks)]
+        with query_lock:
+            now = monotonic()
+            with self._lock:
+                cached = self._entries.get(key)
+                cache_is_fresh = cached and cached[0] > now
+                refreshed_after_request = cached and cached[1] >= requested_at
+                if (not force and cache_is_fresh) or refreshed_after_request:
+                    return cached[2]
+            result = loader()
+            created_at = monotonic()
+            with self._lock:
+                # A correction can invalidate while the external query is running.
+                if generation != self._generations.get(key[0], 0):
+                    return result
+                self._entries = {
+                    cache_key: value for cache_key, value in self._entries.items()
+                    if value[0] > created_at
+                }
+                self._entries[key] = (created_at + ttl, created_at, result)
+                while len(self._entries) > 128:
+                    self._entries.pop(next(iter(self._entries)))
+            return result
+
+    def invalidate(self, kind: str) -> None:
+        with self._lock:
+            self._generations[kind] = self._generations.get(kind, 0) + 1
+            self._entries = {key: value for key, value in self._entries.items() if key[0] != kind}
+
+
+def _date(value: object) -> date | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    return date.fromisoformat(str(value)[:10])
+
+
 def _decimal(value: object) -> Decimal | None:
     if value is None or value == "":
         return None
@@ -38,18 +103,9 @@ class QueryService:
         self.client = SqlServerClient(settings)
         self.excel = ExcelTaskDataSource(settings.task_excel_path)
         self.query_dir = Path(__file__).resolve().parents[1] / "database" / "queries"
-        self._equipment_cache_lock = Lock()
-        self._equipment_cache: dict[
-            tuple[date, date, str | None, str | None],
-            tuple[float, float, EquipmentQueryResult],
-        ] = {}
-        self._equipment_query_locks = [Lock() for _ in range(32)]
-        self._bundle_cache_lock = Lock()
-        self._bundle_cache: dict[
-            tuple[str, date, date, str | None, str | None],
-            tuple[float, float, QueryBundle],
-        ] = {}
-        self._bundle_query_locks = [Lock() for _ in range(32)]
+        self._equipment_cache = _QueryCache[EquipmentQueryResult]()
+        self._bundle_cache = _QueryCache[QueryBundle]()
+        self._workshop_cache_generation = 0
         self._equipment_metrics_cache_lock = Lock()
         self._equipment_metrics_cache: dict[
             tuple[date, date], tuple[float, dict[str, dict[str, Decimal | int]]]
@@ -58,26 +114,41 @@ class QueryService:
         self._latest_date_lock = Lock()
         self._latest_date_cache: dict[date, tuple[float, date | None]] = {}
         self._workshop_cache_lock = Lock()
+        self._workshop_prepare_locks = [Lock() for _ in range(16)]
         self._workshop_cache: dict[date, tuple[float, QueryBundle]] = {}
 
     def prepare_workshop_data(self, report_date: date) -> QueryBundle:
         """Read-only, short-lived warmup; does not create reports or confirmations."""
-        with self._workshop_cache_lock:
-            now = monotonic()
-            cached = self._workshop_cache.get(report_date)
-            if cached and cached[0] > now:
-                return cached[1]
-            self._workshop_cache = {
-                key: value for key, value in self._workshop_cache.items() if value[0] > now
-            }
+        prepare_lock = self._workshop_prepare_locks[hash(report_date) % len(self._workshop_prepare_locks)]
+        with prepare_lock:
+            with self._workshop_cache_lock:
+                now = monotonic()
+                cached = self._workshop_cache.get(report_date)
+                if cached and cached[0] > now:
+                    return cached[1]
+                self._workshop_cache = {
+                    key: value for key, value in self._workshop_cache.items() if value[0] > now
+                }
+                generation = self._workshop_cache_generation
+            # External reads must not hold the publication lock: correction can
+            # invalidate immediately while a slow warmup is still in flight.
             bundle = self.fetch_workshop_data(ReportFilter(report_date=report_date))
             ttl = min(60, self.settings.report_data_cache_seconds)
-            # Empty days must be checked again when newly finished tasks arrive.
             if ttl > 0 and bundle.workshop_records:
-                self._workshop_cache[report_date] = (monotonic() + ttl, bundle)
-                while len(self._workshop_cache) > 32:
-                    self._workshop_cache.pop(next(iter(self._workshop_cache)))
+                with self._workshop_cache_lock:
+                    if generation == self._workshop_cache_generation:
+                        self._workshop_cache[report_date] = (monotonic() + ttl, bundle)
+                        while len(self._workshop_cache) > 32:
+                            self._workshop_cache.pop(next(iter(self._workshop_cache)))
             return bundle
+
+    def invalidate_workshop_data(self) -> None:
+        """Discard warmups/ranges after explicit correction, including in-flight fills."""
+        # Warmup publication and invalidation share one lock; no source reads here.
+        with self._workshop_cache_lock:
+            self._workshop_cache_generation += 1
+            self._workshop_cache.clear()
+            self._bundle_cache.invalidate("workshop")
 
     def fetch_report_data(self, filters: ReportFilter) -> QueryBundle:
         if self.settings.effective_data_source_mode == "excel":
@@ -117,44 +188,14 @@ class QueryService:
         self,
         kind: str,
         filters: ReportFilter,
-        loader,
+        loader: Callable[[ReportFilter], QueryBundle],
         *,
         force: bool = False,
     ) -> QueryBundle:
-        cache_seconds = self.settings.report_data_cache_seconds
-        if cache_seconds <= 0:
-            return loader(filters)
-        key = self._cache_key(kind, filters)
-        requested_at = monotonic()
-        with self._bundle_cache_lock:
-            cached = self._bundle_cache.get(key)
-            if not force and cached and cached[0] > requested_at:
-                return cached[2]
-        query_lock = self._bundle_query_locks[hash(key) % len(self._bundle_query_locks)]
-        with query_lock:
-            now = monotonic()
-            with self._bundle_cache_lock:
-                cached = self._bundle_cache.get(key)
-                cache_is_fresh = cached and cached[0] > now
-                refreshed_after_request = cached and cached[1] >= requested_at
-                if (not force and cache_is_fresh) or refreshed_after_request:
-                    return cached[2]
-            result = loader(filters)
-            created_at = monotonic()
-            with self._bundle_cache_lock:
-                self._bundle_cache = {
-                    cache_key: value
-                    for cache_key, value in self._bundle_cache.items()
-                    if value[0] > created_at
-                }
-                self._bundle_cache[key] = (
-                    created_at + cache_seconds,
-                    created_at,
-                    result,
-                )
-                while len(self._bundle_cache) > 128:
-                    self._bundle_cache.pop(next(iter(self._bundle_cache)))
-            return result
+        return self._bundle_cache.read(
+            self._cache_key(kind, filters), lambda: loader(filters),
+            ttl=self.settings.report_data_cache_seconds, force=force,
+        )
 
     def fetch_summary_data(
         self, filters: ReportFilter, *, force: bool = False
@@ -180,50 +221,10 @@ class QueryService:
         self, filters: ReportFilter, *, force: bool = False
     ) -> EquipmentQueryResult:
         """Fetch only equipment rows and coalesce repeated per-day requests."""
-        cache_seconds = self.settings.report_data_cache_seconds
-        if cache_seconds <= 0:
-            return self._fetch_equipment_uncached(filters)
-
-        key = (
-            filters.start_date,
-            filters.end_date,
-            filters.project_code,
-            filters.ship_no,
+        return self._equipment_cache.read(
+            self._cache_key("equipment", filters), lambda: self._fetch_equipment_uncached(filters),
+            ttl=self.settings.report_data_cache_seconds, force=force,
         )
-        requested_at = monotonic()
-        with self._equipment_cache_lock:
-            cached = self._equipment_cache.get(key)
-            if not force and cached and cached[0] > requested_at:
-                return cached[2]
-            query_lock = self._equipment_query_locks[
-                hash(key) % len(self._equipment_query_locks)
-            ]
-
-        with query_lock:
-            now = monotonic()
-            with self._equipment_cache_lock:
-                cached = self._equipment_cache.get(key)
-                cache_is_fresh = cached and cached[0] > now
-                refreshed_after_request = cached and cached[1] >= requested_at
-                if (not force and cache_is_fresh) or refreshed_after_request:
-                    return cached[2]
-
-            result = self._fetch_equipment_uncached(filters)
-            created_at = monotonic()
-            with self._equipment_cache_lock:
-                self._equipment_cache = {
-                    cache_key: value
-                    for cache_key, value in self._equipment_cache.items()
-                    if value[0] > created_at
-                }
-                self._equipment_cache[key] = (
-                    created_at + cache_seconds,
-                    created_at,
-                    result,
-                )
-                while len(self._equipment_cache) > 128:
-                    self._equipment_cache.pop(next(iter(self._equipment_cache)))
-            return result
 
     def fetch_equipment_month_work_times(
         self, report_month: date
@@ -396,6 +397,7 @@ class QueryService:
                 gas_consumption=_decimal(row.get("gas_consumption")),
                 electricity_consumption=_decimal(row.get("electricity_consumption")),
                 production_time=row.get("production_time"),
+                production_date=_date(row.get("production_date")),
                 production_end_time=row.get("production_end_time"),
                 remark=row.get("remark"),
             )
@@ -560,6 +562,7 @@ class QueryService:
                 groove_length=row["groove_length"],
                 work_time=row["work_time"],
                 production_time=row["production_time"],
+                production_date=row["production_date"],
                 source_updated_at=row["source_updated_at"],
             )
             for row in normalized
@@ -576,6 +579,7 @@ class QueryService:
                 work_time=row["work_time"],
                 remark=row["remark"],
                 production_time=row["production_time"],
+                production_date=row["production_date"],
             )
             for row in normalized
         ]
@@ -591,6 +595,7 @@ class QueryService:
                 gas_consumption=None,
                 electricity_consumption=None,
                 production_time=row["production_time"],
+                production_date=row["production_date"],
                 production_end_time=row["source_updated_at"],
                 remark=row["remark"],
             )
@@ -607,83 +612,6 @@ class QueryService:
             equipment_records=equipment,
             data_updated_at=max(updated_values) if updated_values else None,
         )
-
-    def _sqlserver_data(self, filters: ReportFilter) -> QueryBundle:
-        timezone = ZoneInfo(self.settings.timezone)
-        start = datetime.combine(filters.start_date, time.min, tzinfo=timezone).replace(
-            tzinfo=None
-        )
-        end = datetime.combine(
-            filters.end_exclusive, time.min, tzinfo=timezone
-        ).replace(tzinfo=None)
-        parameters = (
-            self.settings.report_machine_no,
-            start,
-            end,
-            filters.project_code,
-            filters.project_code,
-            filters.ship_no,
-            filters.ship_no,
-        )
-        summary_rows = self.client.fetch_all(
-            self._read_query("summary_base.sql"), parameters
-        )
-        workshop_rows = self.client.fetch_all(self._read_query("workshop.sql"), parameters)
-        equipment_rows = self.client.fetch_all(
-            self._read_query("equipment.sql"), parameters
-        )
-        summaries = [
-            SummaryBaseRecord(
-                task_id=str(row["task_id"]),
-                project_code=row.get("project_code"),
-                ship_no=row.get("ship_no"),
-                segment_name=row.get("segment_name"),
-                program_no=row.get("program_no"),
-                cut_length=_decimal(row.get("cut_length")),
-                groove_length=_decimal(row.get("groove_length")),
-                work_time=_decimal(row.get("work_time")),
-                production_time=row.get("production_time"),
-                source_updated_at=row.get("source_updated_at"),
-            )
-            for row in summary_rows
-        ]
-        workshops = [
-            WorkshopRecord(
-                task_id=str(row["task_id"]),
-                project_code=row.get("project_code"),
-                ship_no=row.get("ship_no"),
-                segment_name=row.get("segment_name"),
-                program_no=row.get("program_no"),
-                cut_length=_decimal(row.get("cut_length")),
-                groove_length=_decimal(row.get("groove_length")),
-                work_time=_decimal(row.get("work_time")),
-                remark=row.get("remark"),
-                production_time=row.get("production_time"),
-            )
-            for row in workshop_rows
-        ]
-        equipment = [
-            EquipmentRecord(
-                task_id=str(row["task_id"]),
-                equipment_id=row.get("equipment_id"),
-                project_code=row.get("project_code"),
-                ship_no=row.get("ship_no"),
-                segment_name=row.get("segment_name"),
-                cut_length=_decimal(row.get("cut_length")),
-                work_time=_decimal(row.get("work_time")),
-                gas_consumption=_decimal(row.get("gas_consumption")),
-                electricity_consumption=_decimal(row.get("electricity_consumption")),
-                production_time=row.get("production_time"),
-                production_end_time=row.get("production_end_time"),
-                remark=row.get("remark"),
-            )
-            for row in equipment_rows
-        ]
-        latest_update = max(
-            (row.source_updated_at for row in summaries if row.source_updated_at),
-            default=None,
-        )
-        return QueryBundle(summaries, workshops, equipment, latest_update)
 
     def _sqlserver_summary_data(self, filters: ReportFilter) -> QueryBundle:
         timezone = ZoneInfo(self.settings.timezone)
@@ -714,6 +642,7 @@ class QueryService:
                 groove_length=_decimal(row.get("groove_length")),
                 work_time=_decimal(row.get("work_time")),
                 production_time=row.get("production_time"),
+                production_date=_date(row.get("production_date")),
                 source_updated_at=row.get("source_updated_at"),
             )
             for row in rows
@@ -754,6 +683,7 @@ class QueryService:
                 work_time=_decimal(row.get("work_time")),
                 remark=row.get("remark"),
                 production_time=row.get("production_time"),
+                production_date=_date(row.get("production_date")),
             )
             for row in rows
         ]
@@ -796,6 +726,7 @@ class QueryService:
                     groove_length=groove_length,
                     work_time=work_time,
                     production_time=base_time + timedelta(minutes=index * 21),
+                    production_date=stamp,
                     source_updated_at=base_time + timedelta(hours=10),
                 )
                 summaries.append(summary)
@@ -810,6 +741,7 @@ class QueryService:
                         groove_length=groove_length,
                         work_time=work_time,
                         production_time=summary.production_time,
+                        production_date=summary.production_date,
                         remark="演示数据",
                     )
                 )
@@ -826,6 +758,7 @@ class QueryService:
                         electricity_consumption=Decimal("14.2")
                         + Decimal(index) * Decimal("0.61"),
                         production_time=summary.production_time,
+                        production_date=summary.production_date,
                         production_end_time=summary.production_time + timedelta(seconds=float(work_time)),
                         remark="演示数据",
                     )

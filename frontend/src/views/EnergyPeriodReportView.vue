@@ -4,6 +4,7 @@ import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/compon
 import { init, use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import {
   getEnergyDay,
   getEnergyMonthlyRange,
@@ -11,7 +12,7 @@ import {
   getLatestWorkshopProductionDate,
   getTaskEnergyDay,
 } from '../api/reports'
-import { recentTwelveMonthStart, reportToday } from '../api/reportDates.js'
+import { recentTwelveMonthStart, reportToday, taskProductionDate } from '../api/reportDates.js'
 import AnalysisPanel from '../components/AnalysisPanel.vue'
 import AppIcon from '../components/AppIcon.vue'
 import MetricSparkline from '../components/MetricSparkline.vue'
@@ -20,11 +21,14 @@ import ReportTrendPanel from '../components/ReportTrendPanel.vue'
 import StandardReportQuery from '../components/StandardReportQuery.vue'
 import { formatChineseDateTime, formatChineseMonth, sortReportPeriods } from '../utils/dateDisplay.js'
 import { createReportChartGrid, REPORT_CHART_COLORS } from '../utils/reportChartTheme.js'
+import { mergeOwnedQuery, queryChoice, queryDateRange, sameRouteQuery } from '../utils/reportRouteState.js'
 
 use([BarChart, LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
 defineProps({ exporting: Boolean })
 const emit = defineEmits(['export'])
 
+const route = useRoute()
+const router = useRouter()
 const today = reportToday()
 const anchorDate = ref(today)
 const periodStart = ref(today)
@@ -36,7 +40,7 @@ const summaryPeriodEnd = ref(today)
 const rangeQueryApplied = ref(false)
 const taskDay = ref(null)
 const monthlyReport = ref(null)
-const chartType = ref('bar_line')
+const chartType = ref(queryChoice(route.query.chart, ['bar_line', 'bar', 'line'], 'bar_line'))
 const energyChartOptions = [
   { value: 'bar_line', label: '柱线组合' },
   { value: 'bar', label: '双柱状图' },
@@ -58,6 +62,27 @@ let refreshRequestSequence = 0
 let summaryRefreshTimer = null
 let summaryRefreshCount = 0
 let resizeListening = false
+let routeStateReady = false
+let restoringRouteState = false
+
+const routeQueryKeys = ['start', 'end', 'chart']
+const dateQueryDirty = computed(() => (
+  periodStart.value !== appliedPeriodStart.value || periodEnd.value !== appliedPeriodEnd.value
+))
+
+function routeStateQuery() {
+  return mergeOwnedQuery(route.query, routeQueryKeys, {
+    start: rangeQueryApplied.value ? appliedPeriodStart.value : '',
+    end: rangeQueryApplied.value ? appliedPeriodEnd.value : '',
+    chart: chartType.value === 'bar_line' ? '' : chartType.value,
+  })
+}
+
+async function syncRouteState() {
+  const query = routeStateQuery()
+  if (sameRouteQuery(query, route.query)) return
+  await router.push({ query })
+}
 
 function beginRequest({ preserveSummary = false } = {}) {
   controller?.abort()
@@ -105,7 +130,7 @@ const deviceMetricSeries = computed(() => {
   const rows = [...taskRows.value].sort((left, right) => String(left.production_time || '').localeCompare(String(right.production_time || '')))
   const countsByDay = new Map()
   for (const row of rows) {
-    const stamp = String(row.production_time || '').slice(0, 10)
+    const stamp = taskProductionDate(row)
     if (stamp) countsByDay.set(stamp, (countsByDay.get(stamp) || 0) + 1)
   }
   return {
@@ -198,7 +223,7 @@ function renderCharts({ summary: renderSummary = true } = {}) {
   }
 }
 
-async function loadRange(force = false) {
+async function loadRange(force = false, { syncRoute = true } = {}) {
   if (!periodStart.value || !periodEnd.value) return
   if (periodEnd.value < periodStart.value) {
     error.value = '结束日期不能早于开始日期'
@@ -218,6 +243,7 @@ async function loadRange(force = false) {
     rangeQueryApplied.value = true
     await nextTick()
     renderCharts({ summary: false })
+    if (syncRoute) await syncRouteState()
   } catch (exception) {
     if (exception.name !== 'AbortError' && sequence === requestSequence) error.value = exception.message
   } finally {
@@ -390,7 +416,8 @@ function pause(dispose = false) {
   if (dispose) disposeCharts()
 }
 
-async function initializeReport() {
+async function initializeReport({ restoreQuery = false } = {}) {
+  const requestedRange = restoreQuery ? queryDateRange(route.query, { maxDays: 31 }) : null
   const { sequence, signal } = beginRequest()
   loading.value = true
   try {
@@ -406,6 +433,42 @@ async function initializeReport() {
   }
   if (!requestIsCurrent(sequence, signal)) return
   await loadDefaultRanges()
+  if (requestedRange && pageActive.value) {
+    periodStart.value = requestedRange.start
+    periodEnd.value = requestedRange.end
+    await loadRange(false, { syncRoute: false })
+  }
+}
+
+async function restoreRouteState() {
+  if (route.name !== 'equipment-report') return false
+  const range = queryDateRange(route.query, { maxDays: 31 })
+  const nextChartType = queryChoice(route.query.chart, ['bar_line', 'bar', 'line'], 'bar_line')
+  restoringRouteState = true
+  chartType.value = nextChartType
+  restoringRouteState = false
+
+  if (range) {
+    periodStart.value = range.start
+    periodEnd.value = range.end
+    if (!taskDay.value || !monthlyReport.value) {
+      await initializeReport({ restoreQuery: true })
+      return true
+    }
+    if (!rangeQueryApplied.value || appliedPeriodStart.value !== range.start || appliedPeriodEnd.value !== range.end) {
+      await loadRange(false, { syncRoute: false })
+      return true
+    }
+    return false
+  }
+
+  if (!taskDay.value || !monthlyReport.value || rangeQueryApplied.value) {
+    await initializeReport()
+    return true
+  }
+  periodStart.value = appliedPeriodStart.value
+  periodEnd.value = appliedPeriodEnd.value
+  return false
 }
 
 function retryReport() {
@@ -449,10 +512,14 @@ async function refreshAnalysisReport() {
     : loadDefaultRanges(true)
 }
 
-onMounted(initializeReport)
+onMounted(async () => {
+  await initializeReport({ restoreQuery: true })
+  routeStateReady = true
+})
 onActivated(async () => {
   pageActive.value = true
   startResizeListening()
+  if (routeStateReady && await restoreRouteState()) return
   await nextTick()
   if ((!taskDay.value || !monthlyReport.value) && !loading.value) await initializeReport()
   else if (!taskChart || (monthlyReport.value && !periodChart)) renderCharts()
@@ -460,7 +527,14 @@ onActivated(async () => {
 })
 onDeactivated(pause)
 onBeforeUnmount(() => pause(true))
-watch(chartType, async () => { await nextTick(); renderCharts() })
+watch(chartType, async () => {
+  await nextTick()
+  renderCharts()
+  if (routeStateReady && !restoringRouteState && route.name === 'equipment-report') await syncRouteState()
+})
+watch(() => route.query, async () => {
+  if (routeStateReady && pageActive.value && route.name === 'equipment-report') await restoreRouteState()
+}, { deep: true })
 </script>
 
 <template>
@@ -484,6 +558,7 @@ watch(chartType, async () => { await nextTick(); renderCharts() })
         :chart-options="energyChartOptions"
         :loading="loading"
         :has-data="Boolean(taskDay)"
+        :date-dirty="dateQueryDirty"
         :export-disabled="loading || !taskDay"
         :exporting="exporting"
         @submit="loadRange(true)"
@@ -497,27 +572,27 @@ watch(chartType, async () => { await nextTick(); renderCharts() })
 
     <section class="device-kpis" aria-label="设备区间汇总" :aria-busy="loading">
       <article class="device-kpi kpi-red">
-        <span class="device-kpi__icon"><AppIcon name="zap" size="21" /></span>
+        <span class="device-kpi__icon"><AppIcon name="zap" size="21" tone="muted" /></span>
         <div><span>电耗<small>POWER CONSUMPTION</small></span><p><strong>{{ format(summary.total_electricity_consumption) }}</strong> <small>{{ units.electricity }}</small></p><em>区间合计</em></div>
         <MetricSparkline class="device-sparkline" :values="deviceMetricSeries.electricity" label="任务电耗趋势" />
       </article>
       <article class="device-kpi kpi-blue">
-        <span class="device-kpi__icon"><AppIcon name="wind" size="21" /></span>
+        <span class="device-kpi__icon"><AppIcon name="wind" size="21" tone="muted" /></span>
         <div><span>气耗<small>GAS CONSUMPTION</small></span><p><strong>{{ format(summary.total_gas_consumption) }}</strong> <small>{{ units.gas }}</small></p><em>区间合计</em></div>
         <MetricSparkline class="device-sparkline" :values="deviceMetricSeries.gas" label="任务气耗趋势" />
       </article>
       <article class="device-kpi kpi-teal">
-        <span class="device-kpi__icon"><AppIcon name="activity" size="21" /></span>
+        <span class="device-kpi__icon"><AppIcon name="activity" size="21" tone="muted" /></span>
         <div><span>能耗覆盖率<small>ENERGY COVERAGE</small></span><p><strong>{{ taskDay ? energyCoverage : '--' }}</strong> <small>%</small></p><em>电 / 气数据匹配</em></div>
         <MetricSparkline class="device-sparkline" :values="deviceMetricSeries.coverage" label="单项任务能耗覆盖率趋势" />
       </article>
       <article class="device-kpi kpi-violet">
-        <span class="device-kpi__icon"><AppIcon name="tasks" size="21" /></span>
+        <span class="device-kpi__icon"><AppIcon name="tasks" size="21" tone="muted" /></span>
         <div><span>任务数量<small>TASK COUNT</small></span><p><strong>{{ taskDay ? (summary.task_count ?? '--') : '--' }}</strong> <small>项</small></p><em>{{ equipmentScopeLabel }}</em></div>
         <MetricSparkline class="device-sparkline" :values="deviceMetricSeries.tasks" label="每日任务数量趋势" />
       </article>
       <article class="device-kpi kpi-cyan">
-        <span class="device-kpi__icon"><AppIcon name="clock" size="21" /></span>
+        <span class="device-kpi__icon"><AppIcon name="clock" size="21" tone="muted" /></span>
         <div><span>累计切割时长<small>TOTAL CUTTING TIME</small></span><p class="device-duration"><strong>{{ duration(summary.total_work_time) }}</strong></p><em>当前查询区间</em></div>
         <MetricSparkline class="device-sparkline" :values="deviceMetricSeries.workTime" label="单项任务切割时长趋势" />
       </article>
@@ -581,7 +656,7 @@ watch(chartType, async () => { await nextTick(); renderCharts() })
 
 <style scoped>
 .device-report-shell>.page-hero{position:relative;min-height:174px;display:flex;align-items:center;overflow:hidden;padding:25px 30px;border:1px solid rgba(255,255,255,.72);border-radius:14px;background:linear-gradient(90deg,rgba(246,252,255,.99) 0%,rgba(238,248,253,.92) 39%,rgba(7,48,76,.08) 69%),url('../assets/home-laser-cutting.webp') center 51%/cover no-repeat;box-shadow:0 12px 30px rgba(22,62,89,.07);animation:surface-in .46s cubic-bezier(.2,.75,.25,1) both}.device-report-shell>.page-hero::after{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(116deg,transparent 0 46%,rgba(255,255,255,.24) 46.2%,transparent 46.8%)}.device-hero__copy,.device-hero__slogan{position:relative;z-index:1}.device-hero__copy{max-width:540px}.device-breadcrumb{display:block;margin-bottom:7px;color:#47708b;font-size:10px}.device-title-row{display:flex;align-items:flex-end;gap:14px}.device-title-row h2{margin:0;color:#153f5d;font-size:38px;line-height:1.08;letter-spacing:1px}.device-title-row>span{padding-bottom:5px;color:#41708e;font-size:8px;font-weight:700;letter-spacing:3px}.device-hero__copy>p{max-width:510px;margin:8px 0 0;color:#607a8d;font-size:12px;line-height:1.7}.device-hero__slogan{margin:0 20px 0 auto;color:#effaff;text-align:right;text-shadow:0 2px 10px rgba(4,37,58,.84);transform:rotate(-6deg)}.device-hero__slogan strong,.device-hero__slogan span{display:block}.device-hero__slogan strong{font-size:16px;letter-spacing:3px}.device-hero__slogan span{margin-top:5px;font-size:11px;letter-spacing:2px}.device-query-shell{margin:10px 0;padding:11px 14px;border:1px solid #dbe6ec;border-radius:10px;background:#fff;box-shadow:0 7px 22px rgba(22,62,89,.05)}.device-query-shell .report-query{width:100%;grid-template-columns:minmax(320px,1fr) minmax(180px,.55fr) 128px 128px;padding:0;border:0;background:transparent;box-shadow:none}.device-query-shell :deep(.report-period-picker){grid-column:auto}.device-query-shell :deep(.report-period-picker__trigger),.device-query-shell :deep(.app-select__trigger),.device-query-shell .report-query>button{height:38px;min-height:38px;border-radius:6px;font-size:10px}.device-query-shell .report-query>button.primary{display:flex;align-items:center;justify-content:center;gap:6px;border-color:#1179ab;background:linear-gradient(135deg,#0e688f,#0584af);box-shadow:0 5px 12px rgba(15,111,158,.18)}
-.energy-config-note{display:grid;gap:6px;padding:12px 16px;margin-bottom:10px;border:1px solid #eddbb6;border-radius:9px;background:#fff7e9;color:#85571c;font-size:11px}.device-kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin:10px 0}.device-kpi{--kpi-color:#237fb7;--kpi-soft:#eaf5fb;position:relative;min-width:0;min-height:108px;display:flex;gap:10px;overflow:hidden;padding:14px 12px;border:1px solid #dbe6ec;border-top:2px solid var(--kpi-color);border-radius:10px;background:#fff;box-shadow:0 7px 22px rgba(22,62,89,.055);transition:transform .18s ease,box-shadow .18s ease;animation:surface-in .42s cubic-bezier(.2,.75,.25,1) both}.device-kpi:hover{transform:translateY(-2px);box-shadow:0 11px 26px rgba(22,62,89,.09)}.device-kpi:nth-child(2){animation-delay:.04s}.device-kpi:nth-child(3){animation-delay:.08s}.device-kpi:nth-child(4){animation-delay:.12s}.device-kpi:nth-child(5){animation-delay:.16s}.device-kpi.kpi-red{--kpi-color:#df5961;--kpi-soft:#fff0f1}.device-kpi.kpi-teal{--kpi-color:#16a39d;--kpi-soft:#e8f7f5}.device-kpi.kpi-violet{--kpi-color:#7366db;--kpi-soft:#efedff}.device-kpi.kpi-cyan{--kpi-color:#18a8a7;--kpi-soft:#e8f8f7}.device-kpi__icon{position:relative;z-index:1;width:35px;height:35px;display:grid;place-items:center;flex:0 0 auto;color:var(--kpi-color);border-radius:50%;background:var(--kpi-soft);transition:transform .2s ease}.device-kpi:hover .device-kpi__icon{transform:scale(1.08) rotate(-3deg)}.device-kpi>div{position:relative;z-index:1;min-width:0;flex:1}.device-kpi>div>span{display:block;color:#284a62;font-size:11px;font-weight:700;white-space:nowrap}.device-kpi>div>span small{display:block;margin:3px 0 0;color:#8195a4;font-size:7px;font-weight:500;letter-spacing:.45px}.device-kpi p{margin:8px 0 6px;color:#173f64;font-size:9px;white-space:nowrap}.device-kpi p strong{font-size:21px}.device-kpi p.device-duration strong{font-size:17px}.device-kpi p small{margin-left:2px;color:#6f8798;font-size:8px}.device-kpi em{display:block;overflow:hidden;color:#7e929f;text-overflow:ellipsis;white-space:nowrap;font-style:normal;font-size:8px}.device-sparkline{position:absolute;right:8px;bottom:12px;width:58px;height:25px;opacity:.72}.device-kpi::after{content:"";position:absolute;width:70px;height:70px;right:-28px;bottom:-41px;border-radius:50%;background:var(--kpi-soft);opacity:.72}.global-error{margin:10px 0 0;border-radius:9px}
+.energy-config-note{display:grid;gap:6px;padding:12px 16px;margin-bottom:10px;border:1px solid #eddbb6;border-radius:9px;background:#fff7e9;color:#85571c;font-size:11px}.device-kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin:10px 0}.device-kpi{--kpi-color:#237fb7;--kpi-soft:#eaf5fb;position:relative;min-width:0;min-height:108px;display:flex;gap:10px;overflow:hidden;padding:14px 12px;border:1px solid #dbe6ec;border-top:2px solid var(--kpi-color);border-radius:10px;background:#fff;box-shadow:0 7px 22px rgba(22,62,89,.055);transition:transform .18s ease,box-shadow .18s ease;animation:surface-in .42s cubic-bezier(.2,.75,.25,1) both}.device-kpi:hover{transform:translateY(-2px);box-shadow:0 11px 26px rgba(22,62,89,.09)}.device-kpi:nth-child(2){animation-delay:.04s}.device-kpi:nth-child(3){animation-delay:.08s}.device-kpi:nth-child(4){animation-delay:.12s}.device-kpi:nth-child(5){animation-delay:.16s}.device-kpi.kpi-red{--kpi-color:#617c90;--kpi-soft:#edf3f6}.device-kpi.kpi-teal{--kpi-color:#16a39d;--kpi-soft:#e8f7f5}.device-kpi.kpi-violet{--kpi-color:#7366db;--kpi-soft:#efedff}.device-kpi.kpi-cyan{--kpi-color:#18a8a7;--kpi-soft:#e8f8f7}.device-kpi__icon{position:relative;z-index:1;width:35px;height:35px;display:grid;place-items:center;flex:0 0 auto;color:var(--kpi-color);border-radius:50%;background:var(--kpi-soft);transition:transform .2s ease}.device-kpi:hover .device-kpi__icon{transform:scale(1.08) rotate(-3deg)}.device-kpi>div{position:relative;z-index:1;min-width:0;flex:1}.device-kpi>div>span{display:block;color:#284a62;font-size:11px;font-weight:700;white-space:nowrap}.device-kpi>div>span small{display:block;margin:3px 0 0;color:var(--muted);font-size:7px;font-weight:500;letter-spacing:.45px}.device-kpi p{margin:8px 0 6px;color:#173f64;font-size:9px;white-space:nowrap}.device-kpi p strong{font-size:21px}.device-kpi p.device-duration strong{font-size:17px}.device-kpi p small{margin-left:2px;color:var(--muted);font-size:8px}.device-kpi em{display:block;overflow:hidden;color:var(--muted);text-overflow:ellipsis;white-space:nowrap;font-style:normal;font-size:8px}.device-sparkline{position:absolute;right:8px;bottom:12px;width:58px;height:25px;opacity:.72}.device-kpi::after{content:"";position:absolute;width:70px;height:70px;right:-28px;bottom:-41px;border-radius:50%;background:var(--kpi-soft);opacity:.72}.global-error{margin:10px 0 0;border-radius:9px}
 .energy-period-table { width:100%; border-collapse:collapse; font-size:12px; }
 .energy-period-table th,.energy-period-table td { height:47px; padding:10px; border-bottom:1px solid #dde5ea; text-align:center; white-space:nowrap; }
 .energy-task-table th:nth-child(2),.energy-task-table td:nth-child(2),.energy-task-table th:nth-child(3),.energy-task-table td:nth-child(3),.energy-task-table th:nth-child(4),.energy-task-table td:nth-child(4) { text-align:left; }
@@ -589,7 +664,7 @@ watch(chartType, async () => { await nextTick(); renderCharts() })
 .energy-period-table tfoot th { position:sticky; bottom:0; background:#eef4f7; color:var(--navy); }
 .energy-task-table tfoot th:nth-child(2),.energy-task-table tfoot th:nth-child(3),.energy-task-table tfoot th:nth-child(4) { text-align:left; }
 .energy-empty { height:120px; color:#8a9aa5; }
-:deep(.report-trend-panel){margin-bottom:10px;border:1px solid #dbe6ec;border-radius:10px;box-shadow:0 7px 22px rgba(22,62,89,.05)}:deep(.report-trend-panel__heading){min-height:47px;padding:0 14px;border-bottom:1px solid #e5edf1;background:linear-gradient(90deg,#fff,#fbfdfe)}:deep(.report-trend-panel__heading>div){gap:8px}:deep(.report-trend-panel__heading>div>span){width:28px;height:24px;display:grid;place-items:center;padding:0;color:#237fb7;border:0;border-radius:7px;background:#eaf5fb;font-size:10px;font-weight:700}:deep(.report-trend-panel__heading h2){color:#193c57;font-size:14px}:deep(.report-trend-panel__heading small){color:#7c91a1;font-size:9px;font-weight:400}:deep(.report-trend-panel__heading p){color:#6f8798;font-size:9px}:deep(.report-trend-panel__content){grid-template-columns:minmax(330px,.9fr) minmax(0,1.25fr);gap:10px;padding:11px 13px 13px}:deep(.report-trend-panel__chart),:deep(.report-trend-panel__table){height:245px;overflow:hidden;border-color:#dfe9ee;border-radius:7px}:deep(table.content-table th),:deep(table.content-table td){height:35px!important;padding:6px 8px!important;font-size:10px!important}:deep(table.content-table thead th){color:#fff!important;background:#0b4f76!important;font-size:9px!important;letter-spacing:.15px!important}:deep(table.content-table tfoot th){color:#174c70!important;border-top:1px solid #cbdfe8!important;background:#eaf4f9!important}:deep(.device-analysis){margin-bottom:0;overflow:hidden;border:1px solid #dbe6ec;border-radius:10px;box-shadow:0 7px 22px rgba(22,62,89,.05)}:deep(.device-analysis .analysis-panel-head){padding:12px 15px;background:linear-gradient(90deg,#fff,#fbfdfe)}:deep(.device-analysis .analysis-panel-icon){width:34px;height:34px}:deep(.device-analysis .analysis-kicker){font-size:8px}:deep(.device-analysis .analysis-panel-head h2){margin:2px 0 0;color:#193c57;font-size:15px}:deep(.device-analysis .analysis-actions button){min-height:33px;padding:0 12px;font-size:10px}:deep(.device-analysis .analysis-facts){gap:7px;padding:10px 13px 0}:deep(.device-analysis .analysis-facts article){padding:8px 10px}:deep(.device-analysis .analysis-facts span){font-size:9px}:deep(.device-analysis .analysis-facts strong){font-size:12px}:deep(.device-analysis .analysis-grid){grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;padding:10px 13px 13px}:deep(.device-analysis .analysis-grid article){min-height:88px;padding:11px 12px;border:0;border-radius:7px;background:#eff7fb}:deep(.device-analysis .analysis-grid article:nth-child(3)){background:#fff1f2}:deep(.device-analysis .analysis-grid article:nth-child(4)){background:#eef8f4}:deep(.device-analysis .analysis-grid h3){font-size:10px}:deep(.device-analysis .analysis-grid p){color:#60798b;font-size:9px;line-height:1.6;overflow-wrap:anywhere}:deep(.device-analysis .analysis-evidence){margin:0 13px 12px}:deep(.device-analysis .analysis-time){padding:0 13px 12px;font-size:9px}
+:deep(.report-trend-panel){margin-bottom:10px;border:1px solid #dbe6ec;border-radius:10px;box-shadow:0 7px 22px rgba(22,62,89,.05)}:deep(.report-trend-panel__heading){min-height:47px;padding:0 14px;border-bottom:1px solid #e5edf1;background:linear-gradient(90deg,#fff,#fbfdfe)}:deep(.report-trend-panel__heading>div){gap:8px}:deep(.report-trend-panel__heading>div>span){width:28px;height:24px;display:grid;place-items:center;padding:0;color:#237fb7;border:0;border-radius:7px;background:#eaf5fb;font-size:10px;font-weight:700}:deep(.report-trend-panel__heading h2){color:#193c57;font-size:14px}:deep(.report-trend-panel__heading small){color:var(--muted);font-size:9px;font-weight:400}:deep(.report-trend-panel__heading p){color:var(--muted);font-size:9px}:deep(.report-trend-panel__content){grid-template-columns:minmax(330px,.9fr) minmax(0,1.25fr);gap:10px;padding:11px 13px 13px}:deep(.report-trend-panel__chart),:deep(.report-trend-panel__table){height:245px;overflow:hidden;border-color:#dfe9ee;border-radius:7px}:deep(table.content-table th),:deep(table.content-table td){height:35px!important;padding:6px 8px!important;font-size:10px!important}:deep(table.content-table thead th){color:#fff!important;background:#0b4f76!important;font-size:9px!important;letter-spacing:.15px!important}:deep(table.content-table tfoot th){color:#174c70!important;border-top:1px solid #cbdfe8!important;background:#eaf4f9!important}:deep(.device-analysis){margin-bottom:0;overflow:hidden;border:1px solid #dbe6ec;border-radius:10px;box-shadow:0 7px 22px rgba(22,62,89,.05)}:deep(.device-analysis .analysis-panel-head){padding:12px 15px;background:linear-gradient(90deg,#fff,#fbfdfe)}:deep(.device-analysis .analysis-panel-icon){width:34px;height:34px}:deep(.device-analysis .analysis-kicker){font-size:8px}:deep(.device-analysis .analysis-panel-head h2){margin:2px 0 0;color:#193c57;font-size:15px}:deep(.device-analysis .analysis-actions button){min-height:33px;padding:0 12px;font-size:10px}:deep(.device-analysis .analysis-facts){gap:7px;padding:10px 13px 0}:deep(.device-analysis .analysis-facts article){padding:8px 10px}:deep(.device-analysis .analysis-facts span){font-size:9px}:deep(.device-analysis .analysis-facts strong){font-size:12px}:deep(.device-analysis .analysis-grid){grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;padding:10px 13px 13px}:deep(.device-analysis .analysis-grid article){min-height:88px;padding:11px 12px;border:0;border-radius:7px;background:#eff7fb}:deep(.device-analysis .analysis-grid article:nth-child(3)){background:#fff1f2}:deep(.device-analysis .analysis-grid article:nth-child(4)){background:#eef8f4}:deep(.device-analysis .analysis-grid h3){font-size:10px}:deep(.device-analysis .analysis-grid p){color:#60798b;font-size:9px;line-height:1.6;overflow-wrap:anywhere}:deep(.device-analysis .analysis-evidence){margin:0 13px 12px}:deep(.device-analysis .analysis-time){padding:0 13px 12px;font-size:9px}
 @media(max-width:1120px){.device-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.device-kpi:last-child{grid-column:1/-1}.device-hero__slogan{display:none}:deep(.device-analysis .analysis-grid){grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:900px){.device-query-shell .report-query{grid-template-columns:repeat(2,minmax(180px,1fr))}.device-query-shell :deep(.report-period-picker){grid-column:1/-1}:deep(.report-trend-panel__content){grid-template-columns:1fr}:deep(.report-trend-panel__chart),:deep(.report-trend-panel__table){height:270px}}
 @media(max-width:560px){.device-report-shell>.page-hero{min-height:0;padding:22px 18px;background:linear-gradient(90deg,rgba(246,252,255,.97),rgba(238,248,253,.89)),url('../assets/home-laser-cutting.webp') center/cover}.device-title-row{display:block}.device-title-row h2{font-size:31px}.device-title-row>span{display:block;padding:6px 0 0}.device-query-shell .report-query,.device-kpis{grid-template-columns:1fr}.device-query-shell :deep(.report-period-picker),.device-kpi:last-child{grid-column:auto}:deep(.device-analysis .analysis-grid){grid-template-columns:1fr}}

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from math import ceil
 from typing import Any, Iterator
 
 from app.config import Settings
 from app.services.request_cancellation import cancellable_cursor
+from app.services.report_deadline import ensure_time_remaining, remaining_seconds
 
 
 class SqlServerConfigurationError(RuntimeError):
@@ -26,6 +28,11 @@ class SqlServerClient:
 
     def _connection_string(self) -> str:
         config = self.settings.sqlserver_connection(self.source)
+        ensure_time_remaining()
+        remaining = remaining_seconds()
+        connect_timeout = config["connect_timeout"]
+        if remaining is not None:
+            connect_timeout = max(1, min(connect_timeout, ceil(remaining)))
         env_prefix, source_label = self.SOURCE_LABELS[self.source]
         required = {
             f"{env_prefix}_HOST": config["host"],
@@ -47,7 +54,7 @@ class SqlServerClient:
                 f"PWD={config['password']}",
                 f"Encrypt={config['encrypt']}",
                 f"TrustServerCertificate={config['trust_server_certificate']}",
-                f"Connection Timeout={config['connect_timeout']}",
+                f"Connection Timeout={connect_timeout}",
             ]
         )
 
@@ -61,9 +68,11 @@ class SqlServerClient:
             ) from exc
         connection = pyodbc.connect(self._connection_string())
         try:
-            connection.timeout = int(
-                self.settings.sqlserver_connection(self.source)["query_timeout"]
-            )
+            query_timeout = self.settings.sqlserver_connection(self.source)["query_timeout"]
+            remaining = remaining_seconds()
+            if remaining is not None:
+                query_timeout = max(1, min(query_timeout, ceil(remaining)))
+            connection.timeout = int(query_timeout)
             yield connection
         finally:
             connection.close()
@@ -76,6 +85,16 @@ class SqlServerClient:
                 return [
                     dict(zip(columns, row, strict=True)) for row in cursor.fetchall()
                 ]
+
+    def iter_rows(self, sql: str, parameters: tuple[Any, ...]) -> Iterator[dict[str, Any]]:
+        """Stream one result set with bounded batch memory; caller must close early exits."""
+        with self.connect() as connection:
+            with cancellable_cursor(connection) as cursor:
+                cursor.execute(sql, parameters)
+                columns = [item[0] for item in cursor.description]
+                while batch := cursor.fetchmany(500):
+                    for row in batch:
+                        yield dict(zip(columns, row, strict=True))
 
     def fetch_result_sets(
         self, sql: str, parameters: tuple[Any, ...]

@@ -39,6 +39,7 @@ class SummaryBaseRecord:
     work_time: Decimal | None
     production_time: datetime | None = None
     source_updated_at: datetime | None = None
+    production_date: date | None = None
 
 
 @dataclass(slots=True)
@@ -57,6 +58,8 @@ class WorkshopRecord:
     confirmed_by: str | None = None
     confirmed_by_company_no: str | None = None
     confirmed_at: datetime | None = None
+    production_date: date | None = None
+    snapshot_revision: int = 1
 
 
 @dataclass(slots=True)
@@ -77,6 +80,16 @@ class EquipmentRecord:
     electricity_data_status: str = "missing"
     energy_note: str | None = None
     energy_details: dict[str, Any] = field(default_factory=dict)
+    production_date: date | None = None
+
+
+def production_day(record: Any) -> date | None:
+    """OP_DATE is the business day; event time is only a legacy fallback."""
+    stamp = getattr(record, "production_date", None)
+    if stamp is not None:
+        return stamp
+    event_time = getattr(record, "production_time", None)
+    return event_time.date() if event_time is not None else None
 
 
 @dataclass(slots=True)

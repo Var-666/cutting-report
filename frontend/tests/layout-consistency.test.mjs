@@ -335,7 +335,9 @@ test('home KPI and production ring show verified data instead of decorative plac
   assert.match(kpi.template.content, /<MetricSparkline[^>]+:values="series"/)
   assert.match(script, /dailyRecords\.value\.map\(\(item\) => item\.cut_length_m\)/)
   assert.match(script, /energy\.value\?\.rows/)
-  assert.match(script, /Number\(previous\) === 0\) return \{ text: '暂无上期对比'/)
+  assert.match(script, /Number\(previous\) === 0\) return \{ text: '暂无上月对比'/)
+  assert.match(script, /change\.value\}% 较上月/)
+  assert.doesNotMatch(script, /上期/)
   assert.match(template, /class="status-visual__value"[^>]*><strong>\{\{ activeDays \}\}<\/strong>/)
 })
 
@@ -406,6 +408,7 @@ test('settings reuses the same compact navigation shell as reports', () => {
   assert.match(settings.template.content, /class="report-navigation settings-navigation"/)
   assert.match(settings.template.content, /class="settings-home-link"/)
   assert.doesNotMatch(settings.template.content, /settings-header|settings-tabs/)
+  assert.match(settings.styles.map((style) => style.content).join('\n'), /\.settings-navigation\s*\{[^}]*margin-bottom:12px;/)
 })
 
 test('report navigation and report pages keep a visible separation', () => {
@@ -647,7 +650,7 @@ test('leadership report keeps refresh automatic and exposes only the normal quer
   assert.match(leadership.scriptSetup.content, /scheduleRefreshPoll/)
 })
 
-test('alarm center reuses the report UI baseline and padded empty states', () => {
+test('alarm center uses source timestamps and presents the latest evidenced model analysis', () => {
   const alarm = descriptor('AlarmCenterView')
   const template = alarm.template.content
   const script = alarm.scriptSetup.content
@@ -661,16 +664,53 @@ test('alarm center reuses the report UI baseline and padded empty states', () =>
   assert.match(template, /formatShortDateTime\(item\.first_start_time\)/)
   assert.match(template, /同步游标[\s\S]*ALARM_INFO_ID/)
   assert.doesNotMatch(template, /已同步记录/)
-  assert.match(script, /item\?\.first_start_time \|\| item\?\.first_seen_at/)
+  assert.match(script, /const startValue = item\?\.first_start_time/)
+  assert.match(script, /item\.status === 'closed' \? item\.latest_remove_time : currentTime\.value/)
+  assert.doesNotMatch(script, /item\?\.first_start_time \|\| item\?\.first_seen_at/)
+  assert.doesNotMatch(script, /item\.closed_at \|\| item\.last_seen_at/)
   assert.match(script, /listAlarmIncidentPage/)
-  assert.match(template, /class="alarm-pagination"/)
+  assert.match(script, /latestModelAlarmReport\(reports\.value\)/)
+  assert.match(template, /latestAiAnalysis\.summary/)
+  assert.match(template, /finding\.confidence/)
+  assert.match(template, /finding\.evidence_ids/)
+  assert.match(template, /latestAiAnalysis\.facts/)
+  assert.match(template, /latestAiAnalysis\.limitations/)
+  assert.match(template, /模型结论仅用于辅助排查/)
+  assert.doesNotMatch(script, /insightSummary|insightCause/)
+  assert.doesNotMatch(template, /检查电源及急停回路|检查气压与冷却系统/)
+  assert.match(template, /class="alarm-pagination app-pagination"/)
   assert.match(template, /第 \{\{ incidentPage \}\} \/ \{\{ incidentPageCount \}\} 页，共 \{\{ incidentSummary\.total \}\} 条/)
+  assert.match(script, /const reportPageSize = 10/)
+  assert.match(script, /listAlarmReportPage\(\{ page: reportPage\.value, pageSize: reportPageSize \}/)
+  assert.match(template, /v-for="item in reportItems"/)
+  assert.match(template, /aria-label="实体告警报告分页"/)
+  assert.match(template, /第 \{\{ reportPage \}\} \/ \{\{ reportPageCount \}\} 页，共 \{\{ reportSummary\.total \}\} 份/)
   assert.equal((template.match(/class="alarm-empty-state"/g) || []).length, 4)
-  assert.match(template, /20kW 切割机当前无未解除告警/)
+  assert.match(template, /20kW 切割机当前无告警记录/)
+  assert.match(template, /当前没有状态异常的告警/)
   assert.match(styles, /\.alarm-page>\.panel\{margin-bottom:0\}/)
   assert.match(styles, /\.alarm-content-grid>\.panel\{margin-bottom:0\}/)
+  // Long model analysis must sit below the full-width table, never reserve a tall side column.
+  assert.match(styles, /\.alarm-content-grid\{[^}]*grid-template-columns:minmax\(0,1fr\);[^}]*align-items:start/)
+  assert.doesNotMatch(styles, /\.alarm-content-grid\{[^}]*3\.2fr/)
+  assert.match(template, /class="alarm-ai-columns"/)
+  assert.match(styles, /\.alarm-ai-columns\{[^}]*grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/)
+  assert.match(styles, /@media\(max-width:760px\)\{\.alarm-ai-columns\{grid-template-columns:minmax\(0,1fr\)\}/)
+  assert.match(styles, /\.alarm-content-grid \.alarm-table-wrap th:last-child,[^}]*position:sticky;right:0/)
   assert.match(styles, /\.alarm-empty-state\{[^}]*min-height:116px;[^}]*padding:26px;/)
   assert.match(styles, /\.alarm-table-wrap td\{font-size:13px\}/)
+})
+
+test('alarm current-status filter queries every open incident instead of filtering one page', () => {
+  const alarm = descriptor('AlarmCenterView')
+  const template = alarm.template.content
+  const script = alarm.scriptSetup.content
+
+  assert.match(script, /const onlyOpen = ref\(false\)/)
+  assert.match(script, /onlyOpen\.value = !onlyOpen\.value[\s\S]*incidentPage\.value = 1[\s\S]*incidents\.value = \[\][\s\S]*await loadData\(\)/)
+  assert.match(script, /listAlarmIncidentPage\(\{[\s\S]*status: onlyOpen\.value \? 'open' : ''/)
+  assert.match(template, /class="alarm-status-filter"[^>]*:aria-pressed="onlyOpen"[^>]*@click="toggleOpenFilter"/)
+  assert.match(template, /当前异常（\{\{ openCount \}\}）/)
 })
 
 test('workshop confirmations support own revocation and audited admin correction', () => {
@@ -821,8 +861,32 @@ test('workshop pagination does not invalidate an unchanged analysis context', ()
   assert.ok(readyExpression)
   assert.match(readyExpression[1], /!loading\.value/)
   assert.match(analysis, /if \(!props\.reportDate \|\| targetKey !== displayedRequestKey\) \{[\s\S]*analysis\.value = null/)
-  assert.match(template, /@click="load\(result\.page - 1\)">上一页/)
-  assert.match(template, /@click="load\(result\.page \+ 1\)">下一页/)
+  assert.match(template, /@click="changePage\(result\.page - 1\)">上一页/)
+  assert.match(template, /@click="changePage\(result\.page \+ 1\)">下一页/)
+})
+
+test('all visible pagination controls share one production-console format', () => {
+  const sources = [
+    descriptor('ReportTable', 'components').template.content,
+    descriptor('WorkshopView').template.content,
+    descriptor('AlarmCenterView').template.content,
+    descriptor('AutomationView').template.content,
+    descriptor('CuttingDispatchView').template.content,
+  ]
+  const styles = readFileSync(new URL('../src/assets/style.css', import.meta.url), 'utf8')
+
+  for (const source of sources) {
+    assert.match(source, /class="[^"]*app-pagination[^"]*"/)
+    assert.match(source, /class="[^"]*app-pagination__summary[^"]*"/)
+    assert.match(source, /class="[^"]*app-pagination__actions[^"]*"/)
+    assert.match(source, /class="[^"]*app-pagination__actions[^"]*"[\s\S]*?>上一页<\/button>[\s\S]*?class="app-pagination__summary"[\s\S]*?>下一页<\/button>/)
+  }
+
+  assert.doesNotMatch(descriptor('ReportTable', 'components').scriptSetup.content, /visiblePages|rangeStart|rangeEnd/)
+  assert.match(styles, /\.app-pagination \{[^}]*min-height:48px!important/)
+  assert.match(styles, /\.app-pagination__actions button,[^}]*min-height:32px!important/)
+  assert.match(styles, /\.app-pagination__actions button:disabled,[^}]*opacity:1!important/)
+  assert.match(styles, /@media\(max-width:560px\)\{\.app-pagination\{[^}]*flex-wrap:wrap!important/)
 })
 
 test('cached report resources pause on deactivation and cache is bounded', () => {
@@ -866,6 +930,7 @@ test('long-lived page polling is serialized and cancelled when the page leaves',
   assert.match(api, /getAlarmStatus\(\{ signal \} = \{\}\)/)
   assert.match(api, /listAlarmIncidentPage\([\s\S]*\{ signal \} = \{\}\)/)
   assert.match(api, /listAlarmReports\([\s\S]*\{ signal \} = \{\}\)/)
+  assert.match(api, /listAlarmReportPage\([\s\S]*\{ signal \} = \{\}\)/)
 
   assert.doesNotMatch(workshop, /setInterval\(/)
   assert.match(workshop, /refreshTimer = window\.setTimeout\(async \(\) =>/)
@@ -874,7 +939,7 @@ test('long-lived page polling is serialized and cancelled when the page leaves',
   assert.match(reportCenter, /function stopPolling\(\)[\s\S]*pollController\?\.abort\(\)/)
   assert.match(reportCenter, /getReportStatus\(reportId, \{ signal: controller\.signal \}\)/)
   assert.match(reportCenter, /if \(!pageActive \|\| controller\.signal\.aborted \|\| sequence !== pollSequence\) return/)
-  assert.match(reportCenter, /listReports\(\{ page, pageSize: historyPageSize\.value, force, signal: controller\.signal \}\)/)
+  assert.match(reportCenter, /listReports\(\{ page, pageSize, force, signal: controller\.signal \}\)/)
   assert.match(reportCenter, /sequence !== historySequence/)
   assert.match(reportCenter, /onBeforeUnmount\(\(\) => \{[\s\S]*pageActive = false[\s\S]*stopPolling\(\)/)
 })

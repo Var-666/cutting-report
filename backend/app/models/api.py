@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -51,20 +51,3 @@ class ReportCreateRequest(BaseModel):
         if self.report_type != "custom" and self.definition_id:
             raise ValueError("内置报表不能携带自定义定义")
         return self
-
-
-class ApiEnvelope(BaseModel):
-    success: bool = True
-    data: Any
-    request_id: str
-
-
-class ErrorDetail(BaseModel):
-    code: str
-    message: str
-
-
-class ErrorEnvelope(BaseModel):
-    success: bool = False
-    error: ErrorDetail
-    request_id: str

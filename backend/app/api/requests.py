@@ -4,8 +4,10 @@ import re
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from app.api.auth import require_user
-from app.services.request_cancellation import sql_request_cancellations
+from app.api.auth import SESSION_COOKIE, require_user
+from app.services.request_cancellation import (
+    cancellation_owner, cancellation_session_scope, sql_request_cancellations,
+)
 
 
 router = APIRouter(prefix="/api/v1/requests", tags=["requests"])
@@ -22,7 +24,10 @@ def cancel_request(
         raise HTTPException(status_code=400, detail="请求标识无效")
     # Always return accepted so the endpoint does not disclose whether another
     # request is currently running.
-    sql_request_cancellations.cancel(request_id)
+    owner = cancellation_owner(_user.get("user_id"), request.cookies.get(SESSION_COOKIE))
+    sql_request_cancellations.cancel_owned(
+        request_id, owner, cancellation_session_scope(request.cookies.get(SESSION_COOKIE)),
+    )
     return {
         "success": True,
         "data": {"accepted": True},

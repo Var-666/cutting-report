@@ -6,7 +6,7 @@ from collections import Counter
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from openpyxl import load_workbook
 
@@ -120,9 +120,6 @@ class ExcelTaskDataSource:
     def headers(self) -> list[str]:
         return list(self._load()[0])
 
-    def all_rows(self) -> list[dict[str, Any]]:
-        return list(self._load()[1])
-
     def completed_rows(
         self,
         *,
@@ -214,6 +211,7 @@ class ExcelTaskDataSource:
             "groove_length": _decimal(row.get("OP_LENGTH_GROOVE")) / Decimal("1000"),
             "work_time": _decimal(row.get("WORK_TIME")),
             "production_time": row.get("START_TIME"),
+            "production_date": ExcelTaskDataSource.production_date(row),
             "source_updated_at": row.get("END_TIME"),
             "remark": _clean_text(row.get("REMARK")),
         }
@@ -281,14 +279,17 @@ class ExcelTaskDataSource:
             self._sql_cache[self.path] = (signature, connection)
             return connection
 
-    def execute_select(
-        self,
-        sql: str,
-        parameters: tuple[Any, ...],
-        max_rows: int,
-    ) -> list[dict[str, Any]]:
-        _, rows = self.execute_select_with_columns(sql, parameters, max_rows)
-        return rows
+    def iter_select(self, sql: str, parameters: tuple[Any, ...]) -> Iterator[dict[str, Any]]:
+        # The cached connection cannot be replaced while its cursor is in use.
+        with self._lock:
+            values = tuple(self._sqlite_value(value) for value in parameters)
+            cursor = self._sqlite_connection().execute(sql, values)
+            try:
+                while batch := cursor.fetchmany(500):
+                    for row in batch:
+                        yield dict(row)
+            finally:
+                cursor.close()
 
     def execute_select_with_columns(
         self,

@@ -2,14 +2,10 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from app.database.sqlite import SQLiteDatabase, SQLiteRepository
-
-
-TERMINAL_STATUSES = {"completed", "failed"}
 
 
 class MetadataRepository(SQLiteRepository):
@@ -126,6 +122,18 @@ class MetadataRepository(SQLiteRepository):
                 ON report_analyses(report_type, report_date, data_version, generated_at DESC)
                 """
             )
+
+    def queue_observation(self) -> dict:
+        with self.connect() as connection:
+            row = connection.execute("""
+                SELECT COUNT(CASE WHEN status='pending' THEN 1 END) AS queued_count,
+                    MIN(CASE WHEN status='pending' THEN created_at END) AS oldest_queued_at,
+                    COUNT(CASE WHEN status IN ('querying','calculating','analyzing','rendering')
+                        THEN 1 END) AS running_count
+                FROM report_jobs WHERE status IN
+                    ('pending','querying','calculating','analyzing','rendering')
+            """).fetchone()
+        return dict(row)
 
     def recover_interrupted_jobs(self) -> int:
         with self.connect() as connection:

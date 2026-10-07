@@ -167,7 +167,7 @@ def test_history_worker_prioritizes_newest_missing_month(tmp_path):
     worker = EnergyHistoryWorker(energy.settings, energy)
 
     assert worker.schedule_range(date(2026, 6, 1), date(2026, 8, 20))
-    assert worker._claim() == date(2026, 8, 1)
+    assert worker._claim()["report_month"] == "2026-08-01"
 
 
 def test_task_day_uses_report_meter_group_for_cutter01(tmp_path):

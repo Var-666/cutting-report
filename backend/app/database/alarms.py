@@ -12,6 +12,10 @@ from uuid import uuid4
 from app.database.sqlite import SQLiteDatabase, SQLiteRepository
 
 
+class AlarmLeaseLostError(RuntimeError):
+    pass
+
+
 def _text(value: Any) -> str:
     return unicodedata.normalize("NFKC", str(value or "")).strip()
 
@@ -151,6 +155,14 @@ class AlarmRepository(SQLiteRepository):
                 connection.execute(
                     "ALTER TABLE alarm_sync_state ADD COLUMN monitor_start_at TEXT"
                 )
+            for column in ("open_recheck_after_id", "history_recheck_after_id"):
+                if column not in sync_columns:
+                    connection.execute(
+                        f"ALTER TABLE alarm_sync_state ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0"
+                    )
+            report_columns = {row[1] for row in connection.execute("PRAGMA table_info(alarm_reports)")}
+            if "execution_owner" not in report_columns:
+                connection.execute("ALTER TABLE alarm_reports ADD COLUMN execution_owner TEXT")
             connection.execute(
                 """
                 INSERT OR IGNORE INTO alarm_sync_state(source_name, last_alarm_id)
@@ -181,7 +193,8 @@ class AlarmRepository(SQLiteRepository):
         with self.connect() as connection:
             row = connection.execute(
                 """
-                SELECT source_name, last_alarm_id, last_success_at, monitor_start_at
+                SELECT source_name, last_alarm_id, last_success_at, monitor_start_at,
+                       open_recheck_after_id, history_recheck_after_id
                 FROM alarm_sync_state WHERE source_name = ?
                 """,
                 (source_name,),
@@ -191,6 +204,8 @@ class AlarmRepository(SQLiteRepository):
             "last_alarm_id": 0,
             "last_success_at": None,
             "monitor_start_at": None,
+            "open_recheck_after_id": 0,
+            "history_recheck_after_id": 0,
         }
 
     def configure_monitoring_window(
@@ -199,9 +214,15 @@ class AlarmRepository(SQLiteRepository):
         *,
         force: bool = False,
         source_name: str = "production",
+        lease_owner: str | None = None,
+        lease_now: datetime | None = None,
     ) -> bool:
         with self.connect() as connection:
             self.begin_immediate(connection)
+            if lease_owner is not None:
+                if lease_now is None:
+                    raise ValueError("租约保护的监控窗口修改必须提供当前时间")
+                self._require_lease(connection, lease_owner, lease_now, source_name)
             row = connection.execute(
                 "SELECT monitor_start_at FROM alarm_sync_state WHERE source_name = ?",
                 (source_name,),
@@ -216,6 +237,8 @@ class AlarmRepository(SQLiteRepository):
                 ) VALUES (?, 0, NULL, ?)
                 ON CONFLICT(source_name) DO UPDATE SET
                     last_alarm_id = 0,
+                    open_recheck_after_id = 0,
+                    history_recheck_after_id = 0,
                     last_success_at = NULL,
                     monitor_start_at = excluded.monitor_start_at
                 """,
@@ -224,15 +247,16 @@ class AlarmRepository(SQLiteRepository):
         return True
 
     def list_open_source_ids(
-        self, limit: int = 2000, *, monitor_start_at: str | None = None
+        self, limit: int = 2000, *, monitor_start_at: str | None = None,
+        after_id: int = 0,
     ) -> list[int]:
-        where = "WHERE is_open = 1"
+        where = "WHERE is_open = 1 AND source_alarm_id > ?"
         parameters: tuple[Any, ...]
         if monitor_start_at:
             where += " AND start_time >= ?"
-            parameters = (monitor_start_at, limit)
+            parameters = (after_id, monitor_start_at, limit)
         else:
-            parameters = (limit,)
+            parameters = (after_id, limit)
         with self.connect() as connection:
             rows = connection.execute(
                 f"""
@@ -260,11 +284,52 @@ class AlarmRepository(SQLiteRepository):
                 UPDATE alarm_sync_state
                 SET lease_owner = ?, lease_until = ?
                 WHERE source_name = ?
-                  AND (lease_until IS NULL OR lease_until < ? OR lease_owner = ?)
+                  AND (lease_until IS NULL OR lease_until <= ?)
                 """,
-                (owner, until, source_name, now_text, owner),
+                (owner, until, source_name, now_text),
             )
             return updated.rowcount == 1
+
+    def renew_lease(self, owner: str, now: datetime, *, ttl_seconds: int = 600,
+                    source_name: str = "production") -> bool:
+        now_text = now.isoformat(timespec="seconds")
+        until = (now + timedelta(seconds=ttl_seconds)).isoformat(timespec="seconds")
+        with self.connect() as connection:
+            updated = connection.execute(
+                """UPDATE alarm_sync_state SET lease_until = ?
+                   WHERE source_name = ? AND lease_owner = ? AND lease_until > ?""",
+                (until, source_name, owner, now_text),
+            )
+            return updated.rowcount == 1
+
+    @staticmethod
+    def _require_lease(connection: sqlite3.Connection, owner: str, now: datetime,
+                       source_name: str = "production") -> None:
+        row = connection.execute(
+            "SELECT 1 FROM alarm_sync_state WHERE source_name = ? AND lease_owner = ? AND lease_until > ?",
+            (source_name, owner, now.isoformat(timespec="seconds")),
+        ).fetchone()
+        if row is None:
+            raise AlarmLeaseLostError("告警执行租约已失效，拒绝提交结果")
+
+    def recover_interrupted_reports(self, owner: str, now: datetime, limit: int = 100) -> int:
+        with self.connect() as connection:
+            self.begin_immediate(connection)
+            self._require_lease(connection, owner, now)
+            rows = connection.execute(
+                """SELECT report_id FROM alarm_reports WHERE status = 'generating'
+                   AND (execution_owner IS NULL OR execution_owner != ?)
+                   ORDER BY created_at, report_id LIMIT ?""", (owner, limit),
+            ).fetchall()
+            for row in rows:
+                connection.execute(
+                    """UPDATE alarm_reports SET status = 'failed', execution_owner = NULL,
+                       error_message = '报告生成中断，已恢复待处理事件' WHERE report_id = ?""",
+                    (row["report_id"],),
+                )
+                connection.execute("UPDATE alarm_incidents SET pdf_report_id = NULL WHERE pdf_report_id = ?",
+                                   (row["report_id"],))
+        return len(rows)
 
     def release_lease(self, owner: str, source_name: str = "production") -> None:
         with self.connect() as connection:
@@ -285,6 +350,10 @@ class AlarmRepository(SQLiteRepository):
         debounce_minutes: int,
         monitor_start_at: str | None = None,
         source_name: str = "production",
+        open_recheck_after_id: int | None = None,
+        history_recheck_after_id: int | None = None,
+        lease_owner: str | None = None,
+        lease_now: datetime | None = None,
     ) -> dict[str, int]:
         """Persist events and the caller's sequential scan boundary atomically.
 
@@ -304,14 +373,17 @@ class AlarmRepository(SQLiteRepository):
 
         with self.connect() as connection:
             self.begin_immediate(connection)
+            if lease_owner is not None:
+                self._require_lease(connection, lease_owner, lease_now or now, source_name)
             for record in normalized:
                 source_alarm_id = int(record["alarm_info_id"])
                 remove_time = _text(record.get("remove_time")) or None
                 start_time = _text(record.get("start_time")) or None
                 is_open = 0 if remove_time else 1
+                source_hash = _source_hash(record)
                 existing = connection.execute(
                     """
-                    SELECT e.incident_id, i.first_start_time
+                    SELECT e.incident_id, e.source_hash, i.first_start_time
                     FROM alarm_source_events e
                     JOIN alarm_incidents i ON i.incident_id = e.incident_id
                     WHERE e.source_alarm_id = ?
@@ -336,23 +408,26 @@ class AlarmRepository(SQLiteRepository):
                     existing = None
                 if existing:
                     incident_id = str(existing["incident_id"])
-                    connection.execute(
-                        """
-                        UPDATE alarm_source_events
-                        SET source_hash = ?, start_time = ?, remove_time = ?,
-                            is_open = ?, last_seen_at = ?
-                        WHERE source_alarm_id = ?
-                        """,
-                        (
-                            _source_hash(record),
-                            start_time,
-                            remove_time,
-                            is_open,
-                            now_text,
-                            source_alarm_id,
-                        ),
-                    )
+                    record_changed = existing["source_hash"] != source_hash
+                    if record_changed:
+                        connection.execute(
+                            """
+                            UPDATE alarm_source_events
+                            SET source_hash = ?, start_time = ?, remove_time = ?,
+                                is_open = ?, last_seen_at = ?
+                            WHERE source_alarm_id = ?
+                            """,
+                            (
+                                source_hash,
+                                start_time,
+                                remove_time,
+                                is_open,
+                                now_text,
+                                source_alarm_id,
+                            ),
+                        )
                 else:
+                    record_changed = True
                     base_fingerprint = _fingerprint(record)
                     fingerprint = _window_fingerprint(
                         base_fingerprint, monitor_start_at
@@ -451,7 +526,7 @@ class AlarmRepository(SQLiteRepository):
                         (
                             source_alarm_id,
                             incident_id,
-                            _source_hash(record),
+                            source_hash,
                             start_time,
                             remove_time,
                             is_open,
@@ -459,16 +534,30 @@ class AlarmRepository(SQLiteRepository):
                             now_text,
                         ),
                     )
-                affected_incidents.add(incident_id)
-                connection.execute(
-                    """
-                    UPDATE alarm_incidents
-                    SET last_seen_at = ?, latest_alarm_id = MAX(latest_alarm_id, ?),
-                        latest_remove_time = COALESCE(?, latest_remove_time)
-                    WHERE incident_id = ?
-                    """,
-                    (now_text, source_alarm_id, remove_time, incident_id),
-                )
+                if record_changed:
+                    affected_incidents.add(incident_id)
+                    connection.execute(
+                        """
+                        UPDATE alarm_incidents
+                        SET last_seen_at = ?, latest_alarm_id = MAX(latest_alarm_id, ?),
+                            latest_remove_time = COALESCE(?, latest_remove_time),
+                            first_start_time = CASE
+                                WHEN ? IS NULL THEN first_start_time
+                                WHEN first_start_time IS NULL OR ? < first_start_time THEN ?
+                                ELSE first_start_time
+                            END
+                        WHERE incident_id = ?
+                        """,
+                        (
+                            now_text,
+                            source_alarm_id,
+                            remove_time,
+                            start_time,
+                            start_time,
+                            start_time,
+                            incident_id,
+                        ),
+                    )
 
             for incident_id in affected_incidents:
                 open_count = connection.execute(
@@ -499,10 +588,12 @@ class AlarmRepository(SQLiteRepository):
             connection.execute(
                 """
                 UPDATE alarm_sync_state
-                SET last_alarm_id = MAX(last_alarm_id, ?), last_success_at = ?
+                SET last_alarm_id = MAX(last_alarm_id, ?), last_success_at = ?,
+                    open_recheck_after_id = COALESCE(?, open_recheck_after_id),
+                    history_recheck_after_id = COALESCE(?, history_recheck_after_id)
                 WHERE source_name = ?
                 """,
-                (cursor, now_text, source_name),
+                (cursor, now_text, open_recheck_after_id, history_recheck_after_id, source_name),
             )
             committed_cursor = int(connection.execute(
                 "SELECT last_alarm_id FROM alarm_sync_state WHERE source_name = ?",
@@ -544,33 +635,39 @@ class AlarmRepository(SQLiteRepository):
         machine_no: str,
         incident_ids: list[str],
         now: str,
+        lease_owner: str | None = None,
+        lease_now: datetime | None = None,
     ) -> str:
         payload = json.dumps(incident_ids, ensure_ascii=False)
         with self.connect() as connection:
             self.begin_immediate(connection)
+            if lease_owner is not None:
+                self._require_lease(connection, lease_owner, lease_now or datetime.fromisoformat(now))
             existing = connection.execute(
-                "SELECT report_id FROM alarm_reports WHERE emission_key = ?",
+                "SELECT report_id, execution_owner FROM alarm_reports WHERE emission_key = ?",
                 (emission_key,),
             ).fetchone()
+            if existing and existing["execution_owner"] is not None and lease_owner is None:
+                raise AlarmLeaseLostError("已认领的告警报告必须提供执行所有权")
             report_id = str(existing["report_id"]) if existing else proposed_report_id
             if existing:
                 connection.execute(
                     """
                     UPDATE alarm_reports
-                    SET status = 'generating', error_message = NULL
+                    SET status = 'generating', error_message = NULL, execution_owner = ?
                     WHERE report_id = ? AND status != 'completed'
                     """,
-                    (report_id,),
+                    (lease_owner, report_id),
                 )
             else:
                 connection.execute(
                     """
                     INSERT INTO alarm_reports (
                         report_id, emission_key, status, machine_no,
-                        incident_ids_json, created_at
-                    ) VALUES (?, ?, 'generating', ?, ?, ?)
+                        incident_ids_json, created_at, execution_owner
+                    ) VALUES (?, ?, 'generating', ?, ?, ?, ?)
                     """,
-                    (report_id, emission_key, machine_no, payload, now),
+                    (report_id, emission_key, machine_no, payload, now, lease_owner),
                 )
             placeholders = ",".join("?" for _ in incident_ids)
             connection.execute(
@@ -594,15 +691,20 @@ class AlarmRepository(SQLiteRepository):
         sha256: str,
         model_status: str,
         completed_at: str,
+        lease_owner: str | None = None,
+        lease_now: datetime | None = None,
     ) -> None:
         with self.connect() as connection:
-            connection.execute(
+            self.begin_immediate(connection)
+            if lease_owner is not None:
+                self._require_lease(connection, lease_owner, lease_now or datetime.fromisoformat(completed_at))
+            updated = connection.execute(
                 """
                 UPDATE alarm_reports
                 SET status = 'completed', analysis_json = ?, html_relative_path = ?,
                     pdf_relative_path = ?, pdf_filename = ?, file_size = ?, sha256 = ?,
                     model_status = ?, error_message = NULL, completed_at = ?
-                WHERE report_id = ?
+                WHERE report_id = ? AND status = 'generating' AND execution_owner IS ?
                 """,
                 (
                     json.dumps(analysis, ensure_ascii=False),
@@ -614,19 +716,29 @@ class AlarmRepository(SQLiteRepository):
                     model_status,
                     completed_at,
                     report_id,
+                    lease_owner,
                 ),
             )
+            if updated.rowcount != 1:
+                raise AlarmLeaseLostError("告警报告已被其他执行接管或完成")
 
-    def fail_report(self, report_id: str, error: str) -> None:
+    def fail_report(self, report_id: str, error: str, *, lease_owner: str | None = None,
+                    lease_now: datetime | None = None) -> None:
         with self.connect() as connection:
             self.begin_immediate(connection)
-            connection.execute(
+            if lease_owner is not None:
+                if lease_now is None:
+                    raise ValueError("写入租约执行失败必须提供当前时间")
+                self._require_lease(connection, lease_owner, lease_now)
+            updated = connection.execute(
                 """
                 UPDATE alarm_reports SET status = 'failed', error_message = ?
-                WHERE report_id = ?
+                WHERE report_id = ? AND status = 'generating' AND execution_owner IS ?
                 """,
-                (error[:500], report_id),
+                (error[:500], report_id, lease_owner),
             )
+            if updated.rowcount != 1:
+                raise AlarmLeaseLostError("告警报告已被其他执行接管或完成")
             connection.execute(
                 """
                 UPDATE alarm_incidents SET pdf_report_id = NULL
@@ -649,9 +761,15 @@ class AlarmRepository(SQLiteRepository):
         where = ""
         parameters: tuple[Any, ...]
         if monitor_start_at:
-            join = "JOIN alarm_incidents i ON i.pdf_report_id = r.report_id"
-            where = "WHERE i.first_start_time >= ?"
-            parameters = (monitor_start_at, limit)
+            join = "LEFT JOIN alarm_incidents i ON i.pdf_report_id = r.report_id"
+            where = """
+                WHERE i.first_start_time >= ?
+                   OR (
+                        r.status IN ('generating', 'failed')
+                        AND substr(r.created_at, 1, 19) >= replace(substr(?, 1, 19), ' ', 'T')
+                   )
+            """
+            parameters = (monitor_start_at, monitor_start_at, limit)
         else:
             parameters = (limit,)
         with self.connect() as connection:
@@ -664,6 +782,55 @@ class AlarmRepository(SQLiteRepository):
                 parameters,
             ).fetchall()
         return [self._decode_report(row) for row in rows]
+
+    def page_reports(
+        self,
+        *,
+        monitor_start_at: str | None,
+        page: int,
+        page_size: int,
+    ) -> dict[str, Any]:
+        join = ""
+        where = ""
+        values: tuple[Any, ...] = ()
+        if monitor_start_at:
+            join = "LEFT JOIN alarm_incidents i ON i.pdf_report_id = r.report_id"
+            where = """
+                WHERE i.first_start_time >= ?
+                   OR (
+                        r.status IN ('generating', 'failed')
+                        AND substr(r.created_at, 1, 19) >= replace(substr(?, 1, 19), ' ', 'T')
+                   )
+            """
+            values = (monitor_start_at, monitor_start_at)
+        with self.connect() as connection:
+            summary = connection.execute(
+                f"""
+                SELECT COUNT(DISTINCT r.report_id) AS total,
+                       COUNT(DISTINCT CASE WHEN r.status = 'completed' THEN r.report_id END) AS completed_count
+                FROM alarm_reports r {join} {where}
+                """,
+                values,
+            ).fetchone()
+            total = int(summary["total"] or 0)
+            page_count = max(1, (total + page_size - 1) // page_size)
+            current_page = min(page, page_count)
+            rows = connection.execute(
+                f"""
+                SELECT DISTINCT r.* FROM alarm_reports r
+                {join} {where}
+                ORDER BY r.created_at DESC, r.report_id DESC LIMIT ? OFFSET ?
+                """,
+                (*values, page_size, (current_page - 1) * page_size),
+            ).fetchall()
+        return {
+            "items": [self._decode_report(row) for row in rows],
+            "page": current_page,
+            "page_size": page_size,
+            "page_count": page_count,
+            "total": total,
+            "completed_count": int(summary["completed_count"] or 0),
+        }
 
     def list_incidents(
         self,

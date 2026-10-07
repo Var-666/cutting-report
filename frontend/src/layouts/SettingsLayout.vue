@@ -22,6 +22,7 @@ import { RouterLink, RouterView } from 'vue-router'
 </template>
 
 <style scoped>
+.settings-navigation { margin-bottom:12px; }
 .settings-home-link { height:100%; display:flex; flex-direction:column; justify-content:center; color:inherit; text-decoration:none; }
 .settings-home-link:focus-visible { outline:2px solid var(--cyan); outline-offset:4px; }
 </style>

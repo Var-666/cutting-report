@@ -21,6 +21,7 @@ const props = defineProps({
   },
   loading: Boolean,
   hasData: Boolean,
+  dateDirty: Boolean,
   exportDisabled: Boolean,
   exporting: Boolean,
   ariaLabel: { type: String, default: '报表查询条件' },
@@ -52,14 +53,17 @@ const chartTypeModel = computed({
 <template>
   <section class="standard-report-query-shell" :aria-label="ariaLabel">
     <form class="standard-report-query" :aria-busy="loading" @submit.prevent="emit('submit')">
-      <ReportPeriodPicker
-        v-model:start-date="startDateModel"
-        v-model:end-date="endDateModel"
-        :anchor-date="anchorDate"
-        :max-days="maxDays"
-        :disabled="loading"
-        @validation-error="emit('validation-error', $event)"
-      />
+      <div class="standard-report-query__period">
+        <ReportPeriodPicker
+          v-model:start-date="startDateModel"
+          v-model:end-date="endDateModel"
+          :anchor-date="anchorDate"
+          :max-days="maxDays"
+          :disabled="loading"
+          @validation-error="emit('validation-error', $event)"
+        />
+        <p v-if="dateDirty && !loading" class="standard-report-query__pending" role="status" aria-live="polite">条件已修改，尚未更新报表</p>
+      </div>
       <label class="standard-report-query__chart">
         <span><AppIcon name="chart" size="13" />图表类型</span>
         <AppSelect v-model="chartTypeModel">
@@ -83,7 +87,10 @@ const chartTypeModel = computed({
 
 <style scoped>
 .standard-report-query { width:100%; display:grid; grid-template-columns:minmax(220px,1.3fr) minmax(110px,.55fr) 110px 118px; grid-template-areas:"period chart query export"; align-items:start; gap:10px; margin:0; padding:0; border:0; background:transparent; box-shadow:none; }
-.standard-report-query :deep(.report-period-picker) { grid-area:period; display:grid; grid-template-rows:14px 40px; align-self:start; row-gap:6px; }
+.standard-report-query__period { grid-area:period; min-width:0; }
+.standard-report-query :deep(.report-period-picker) { display:grid; grid-template-rows:14px 40px; align-self:start; row-gap:6px; }
+.standard-report-query__pending { min-height:16px; display:flex; align-items:center; gap:6px; margin:5px 0 0; color:#946116; font-size:10px; font-weight:600; line-height:16px; }
+.standard-report-query__pending::before { width:6px; height:6px; flex:0 0 auto; border-radius:50%; background:#d8972c; box-shadow:0 0 0 3px rgba(216,151,44,.13); content:""; }
 .standard-report-query__chart { grid-area:chart; min-width:0; display:grid; grid-template-rows:14px 40px; align-self:start; row-gap:6px; }
 .standard-report-query__chart > span,
 .standard-report-query :deep(.report-period-picker__label) { height:14px; display:flex; align-items:center; gap:5px; margin:0!important; color:#355a70!important; font-size:10px!important; font-weight:700!important; line-height:14px!important; letter-spacing:.12px!important; }

@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import calendar
 import re
+import math
+from contextlib import closing
+from itertools import islice
 from datetime import date, datetime, timedelta
 from decimal import Decimal
-from typing import Any
+from typing import Any, Iterable, Iterator
 
 from app.config import Settings
 from app.database.sqlserver import SqlServerClient
 from app.database.excel_task import ExcelTaskDataSource
 from app.services.sql_workbench_service import SqlWorkbenchService
+from app.services.report_deadline import ensure_time_remaining
 from sqlglot import transpile
 
 
@@ -112,37 +116,47 @@ class CustomReportService:
         max_rows: int | None = None,
     ) -> list[dict[str, Any]]:
         limit = min(max_rows or self.settings.report_max_detail_rows, self.settings.report_max_detail_rows)
+        with closing(self.iter_rows(
+            query_task, report_date=report_date, period_type=period_type,
+            project_code=project_code, ship_no=ship_no, parameters=parameters,
+        )) as rows:
+            return list(islice(rows, limit))
+
+    def iter_rows(
+        self,
+        query_task: dict[str, Any],
+        *,
+        report_date: date,
+        period_type: str,
+        project_code: str | None = None,
+        ship_no: str | None = None,
+        parameters: dict[str, Any] | None = None,
+    ) -> Iterator[dict[str, Any]]:
+        ensure_time_remaining()
         if self.settings.effective_data_source_mode == "demo":
-            return self._demo_rows(query_task["columns"], report_date, limit)
-        if self.settings.effective_data_source_mode == "excel":
-            sql, values = self._compile(
-                query_task["sql_text"],
-                report_date=report_date,
-                period_type=period_type,
-                project_code=project_code,
-                ship_no=ship_no,
-                parameters=parameters or {},
-            )
-            sqlite_sql = transpile(sql, read="tsql", write="sqlite")[0]
-            return self.excel.execute_select(sqlite_sql, values, limit)
+            yield from self._demo_rows(query_task["columns"], report_date, 10)
+            return
         sql, values = self._compile(
-            query_task["sql_text"],
-            report_date=report_date,
-            period_type=period_type,
-            project_code=project_code,
-            ship_no=ship_no,
-            parameters=parameters or {},
+            query_task["sql_text"], report_date=report_date, period_type=period_type,
+            project_code=project_code, ship_no=ship_no, parameters=parameters or {},
         )
-        return [
-            {key: _primitive(value) for key, value in row.items()}
-            for row in self.client.fetch_all(sql, values)[:limit]
-        ]
+        if self.settings.effective_data_source_mode == "excel":
+            sqlite_sql = transpile(sql, read="tsql", write="sqlite")[0]
+            source = self.excel.iter_select(sqlite_sql, values)
+        else:
+            source = self.client.iter_rows(sql, values)
+        with closing(source):
+            for index, row in enumerate(source, start=1):
+                if index == 1 or index % 128 == 0:
+                    ensure_time_remaining()
+                yield {key: _primitive(value) for key, value in row.items()}
 
     @staticmethod
     def _number(value: Any) -> float | None:
         try:
-            return float(value) if value not in (None, "") else None
-        except (TypeError, ValueError):
+            number = float(value) if value not in (None, "") else None
+            return number if number is not None and math.isfinite(number) else None
+        except (TypeError, ValueError, OverflowError):
             return None
 
     def build_report_data(
@@ -151,30 +165,46 @@ class CustomReportService:
         definition: dict[str, Any],
         query_task: dict[str, Any],
         template: dict[str, Any],
-        rows: list[dict[str, Any]],
+        rows: Iterable[dict[str, Any]],
     ) -> dict[str, Any]:
         config = definition.get("visual_config") or {}
         column_map = {column["field"]: column for column in query_task["columns"]}
         selected_fields = config.get("columns") or list(column_map)
         columns = [column_map[field] for field in selected_fields if field in column_map]
+        metric_configs = config.get("metrics") or []
+        totals = [{"sum": 0.0, "count": 0, "min": None, "max": None} for _ in metric_configs]
+        displayed_rows: list[dict[str, Any]] = []
+        total_row_count = 0
+        ensure_time_remaining()
+        for row in rows:
+            total_row_count += 1
+            if total_row_count % 128 == 0:
+                ensure_time_remaining()
+            if len(displayed_rows) < self.settings.report_max_detail_rows:
+                displayed_rows.append(row)
+            for metric, total in zip(metric_configs, totals, strict=True):
+                number = self._number(row.get(metric["field"]))
+                if number is None:
+                    continue
+                total["sum"] += number
+                total["count"] += 1
+                total["min"] = number if total["min"] is None else min(total["min"], number)
+                total["max"] = number if total["max"] is None else max(total["max"], number)
         metrics = []
-        for metric in config.get("metrics") or []:
-            values = [self._number(row.get(metric["field"])) for row in rows]
-            numeric = [value for value in values if value is not None]
+        for metric, total in zip(metric_configs, totals, strict=True):
             aggregation = metric.get("aggregation", "sum")
             if aggregation == "count":
-                value: float | int = len(rows)
-            elif not numeric:
+                value = total_row_count
+            elif not total["count"]:
                 value = 0
             elif aggregation == "avg":
-                value = sum(numeric) / len(numeric)
-            elif aggregation == "max":
-                value = max(numeric)
-            elif aggregation == "min":
-                value = min(numeric)
+                value = total["sum"] / total["count"]
+            elif aggregation in {"min", "max"}:
+                value = total[aggregation]
             else:
-                value = sum(numeric)
+                value = total["sum"]
             metrics.append({**metric, "value": round(value, 1) if isinstance(value, float) else value})
+        rows = displayed_rows
 
         chart_config = config.get("chart") or {}
         category_field = chart_config.get("category_field")
@@ -210,6 +240,8 @@ class CustomReportService:
             "columns": columns,
             "metrics": metrics,
             "rows": rows,
+            "total_row_count": total_row_count,
+            "truncated": total_row_count > len(rows),
             "chart": chart,
             "chart_title": chart_config.get("title") or "数据趋势",
             "template": template["config"],

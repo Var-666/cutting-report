@@ -18,6 +18,7 @@ from urllib.parse import urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 from app.config import Settings
+from app.services.report_deadline import ensure_time_remaining, remaining_seconds
 
 
 class EnergyApiError(RuntimeError):
@@ -74,9 +75,15 @@ class EnergyApiClient:
         if body is not None:
             headers["Content-Type"] = "application/json"
         request = Request(url, data=json.dumps(body).encode() if body is not None else None, headers=headers)
+        ensure_time_remaining()
+        timeout = max(1, self.settings.energy_api_timeout)
+        remaining = remaining_seconds()
+        if remaining is not None:
+            timeout = max(0.001, min(timeout, remaining))
         try:
-            with self.opener.open(request, timeout=max(1, self.settings.energy_api_timeout)) as response:
+            with self.opener.open(request, timeout=timeout) as response:
                 raw = response.read(16 * 1024 * 1024 + 1)
+            ensure_time_remaining()
         except HTTPError as exc:
             status = exc.code
             exc.close()

@@ -15,9 +15,11 @@ from app.database.workshop import (
     ConfirmationConflictError,
     ConfirmationNotFoundError,
     ConfirmationPermissionError,
-    DailyReportExistsError,
+    DailyReportRecordMismatchError,
+    DailyReportScopeMismatchError,
+    DailyReportSourceMismatchError,
 )
-from app.models.domain import to_primitive
+from app.models.domain import to_primitive, production_day
 from app.services.statistics_service import (
     build_top_cut_length_tasks,
     build_worker_work_summaries,
@@ -28,6 +30,7 @@ from app.services.report_analysis_service import (
     workshop_analysis_source_version,
 )
 from app.services.workshop_sorting import sort_workshop_by_recency
+from app.services.workshop_source_correction_service import WorkshopSourceCorrectionService
 
 
 router = APIRouter(prefix="/api/v1/workshop", tags=["workshop-confirmation"])
@@ -41,10 +44,10 @@ def _workshop_trend(records: list) -> list[dict]:
     """Aggregate the filtered report rows into truthful daily KPI samples."""
     days: dict[str, list] = defaultdict(list)
     for row in records:
-        production_time = getattr(row, "production_time", None)
-        if production_time is None:
+        stamp = production_day(row)
+        if stamp is None:
             continue
-        days[production_time.date().isoformat()].append(row)
+        days[stamp.isoformat()].append(row)
     result = []
     for stamp, rows in sorted(days.items()):
         task_count = len(rows)
@@ -75,8 +78,20 @@ class ConfirmTaskRequest(BaseModel):
     report_date: date
 
 
+class ConfirmSnapshotTaskRequest(ConfirmTaskRequest):
+    snapshot_revision: int | None = Field(default=None, ge=1)
+
+
 class ConfirmTasksRequest(ConfirmTaskRequest):
     task_ids: list[str] = Field(min_length=1, max_length=100)
+    snapshot_revisions: dict[str, int] = Field(default_factory=dict, max_length=100)
+
+    @field_validator("snapshot_revisions")
+    @classmethod
+    def validate_revisions(cls, values: dict[str, int]) -> dict[str, int]:
+        if any(not key or len(key) > 128 or value < 1 for key, value in values.items()):
+            raise ValueError("任务修订号必须为正整数")
+        return values
 
     @field_validator("task_ids")
     @classmethod
@@ -110,6 +125,10 @@ class CorrectTaskRequest(RevokeTaskRequest):
         if self.action == "revoke":
             self.worker_id = None
         return self
+
+
+class CorrectSourceRequest(RevokeTaskRequest):
+    expected_version: str = Field(pattern=r"^[a-f0-9]{64}$")
 
 
 def _envelope(request: Request, data: object) -> dict:
@@ -153,29 +172,10 @@ def generate_daily_report(
     request: Request,
     user: dict = Depends(require_user),
 ) -> dict:
-    existing = request.app.state.workshop.get_daily_report(
-        payload.report_date.isoformat()
-    )
-    if (
-        existing is not None
-        and existing["item_count"] > 0
-        and existing.get("scope_machine_no") == settings.report_machine_no
-    ):
-        return _envelope(request, existing)
     bundle = request.app.state.query_service.prepare_workshop_data(payload.report_date)
     now = datetime.now(ZoneInfo(settings.timezone)).isoformat(timespec="seconds")
-    if existing is not None:
-        report = request.app.state.workshop.populate_empty_daily_report(
-            report_date=payload.report_date.isoformat(),
-            source_mode=settings.effective_data_source_mode,
-            records=bundle.workshop_records,
-            user=user,
-            now=now,
-            scope_machine_no=settings.report_machine_no,
-        )
-        return _envelope(request, report or existing)
     try:
-        report = request.app.state.workshop.create_daily_report(
+        report = request.app.state.workshop.sync_daily_report(
             report_date=payload.report_date.isoformat(),
             source_mode=settings.effective_data_source_mode,
             records=bundle.workshop_records,
@@ -183,13 +183,55 @@ def generate_daily_report(
             now=now,
             scope_machine_no=settings.report_machine_no,
         )
-    except DailyReportExistsError as exc:
-        report = request.app.state.workshop.get_daily_report(
-            payload.report_date.isoformat()
-        )
-        if report is None:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (
+        DailyReportRecordMismatchError,
+        DailyReportScopeMismatchError,
+        DailyReportSourceMismatchError,
+    ) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return _envelope(request, report)
+
+
+def _source_correction_service(request: Request) -> WorkshopSourceCorrectionService:
+    return WorkshopSourceCorrectionService(settings, request.app.state.workshop, request.app.state.query_service)
+
+
+def _correction_error(exc: ValueError) -> HTTPException:
+    if isinstance(exc, ConfirmationNotFoundError):
+        return HTTPException(status_code=404, detail=str(exc))
+    if isinstance(exc, ConfirmationPermissionError):
+        return HTTPException(status_code=403, detail=str(exc))
+    return HTTPException(status_code=409, detail=str(exc))
+
+
+@router.post("/reports/source-corrections/preview")
+def preview_source_corrections(
+    payload: ConfirmTaskRequest, request: Request, _: dict = Depends(require_admin),
+) -> dict:
+    try:
+        result = _source_correction_service(request).preview(payload.report_date)
+    except SqlServerConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except (ConfirmationNotFoundError, ConfirmationConflictError, DailyReportRecordMismatchError,
+            DailyReportScopeMismatchError, DailyReportSourceMismatchError) as exc:
+        raise _correction_error(exc) from exc
+    return _envelope(request, result)
+
+
+@router.post("/reports/source-corrections")
+def apply_source_corrections(
+    payload: CorrectSourceRequest, request: Request, admin: dict = Depends(require_admin),
+) -> dict:
+    try:
+        result = _source_correction_service(request).apply(
+            payload.report_date, expected_version=payload.expected_version, reason=payload.reason, admin=admin,
+        )
+    except SqlServerConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except (ConfirmationNotFoundError, ConfirmationPermissionError, ConfirmationConflictError,
+            DailyReportRecordMismatchError, DailyReportScopeMismatchError, DailyReportSourceMismatchError) as exc:
+        raise _correction_error(exc) from exc
+    return _envelope(request, result)
 
 
 @router.get("/tasks")
@@ -340,7 +382,7 @@ def list_range_tasks(
 @router.post("/tasks/{task_id}/confirm")
 def confirm_task(
     task_id: str,
-    payload: ConfirmTaskRequest,
+    payload: ConfirmSnapshotTaskRequest,
     request: Request,
     user: dict = Depends(require_worker),
 ) -> dict:
@@ -356,6 +398,7 @@ def confirm_task(
             report_id=report["report_id"],
             user=user,
             now=now,
+            snapshot_revision=payload.snapshot_revision,
         )
     except ConfirmationConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -381,6 +424,7 @@ def confirm_tasks(
             report_id=report["report_id"],
             user=user,
             now=now,
+            snapshot_revisions=payload.snapshot_revisions,
         )
     except ConfirmationConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

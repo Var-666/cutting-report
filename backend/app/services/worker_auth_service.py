@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 from typing import Any
+from collections import OrderedDict
+from time import monotonic
+import threading
 
 from app.config import Settings
 from app.database.sqlserver import SqlServerClient
 from app.database.workshop import AuthenticationError
+from app.services.request_cancellation import SqlRequestCancelled
 
 
 class WorkerAuthenticationUnavailableError(RuntimeError):
@@ -68,6 +72,9 @@ class WorkerAuthService:
     def __init__(self, settings: Settings, client: SqlServerClient | None = None) -> None:
         self.settings = settings
         self.client = client or SqlServerClient(settings, source="worker")
+        self._session_checks: OrderedDict[str, tuple[float, bool | None]] = OrderedDict()
+        self._session_cache_lock = threading.Lock()
+        self._session_query_locks = [threading.Lock() for _ in range(16)]
 
     def _ensure_enabled(self) -> None:
         if not self.settings.worker_database_auth_enabled:
@@ -98,6 +105,8 @@ class WorkerAuthService:
                 self.SQL,
                 (password, normalized_company_no),
             )
+        except SqlRequestCancelled:
+            raise
         except Exception as exc:
             raise WorkerAuthenticationUnavailableError(
                 "HR人员数据库暂时不可用"
@@ -114,7 +123,36 @@ class WorkerAuthService:
         # HR 的 _Locked 不参与本系统登录；仍校验密码和账号可用状态。
         if not password_matches or identity is None:
             raise AuthenticationError("公司工号或密码错误")
+        self._cache_session_check(identity["external_id"], True, self.settings.worker_database_session_check_seconds)
         return identity
+
+    def session_identity_available(self, external_id: str, *, force: bool = False) -> bool:
+        self._ensure_enabled()
+        key = external_id.strip()
+        if not key:
+            return False
+        with self._session_query_locks[hash(key) % len(self._session_query_locks)]:
+            with self._session_cache_lock:
+                cached = self._session_checks.get(key)
+                if cached and monotonic() < cached[0] and (not force or cached[1] is None):
+                    self._session_checks.move_to_end(key)
+                    if cached[1] is None:
+                        raise WorkerAuthenticationUnavailableError("HR人员数据库暂时不可用")
+                    return cached[1]
+            try:
+                available = self.find_person(key) is not None
+            except WorkerAuthenticationUnavailableError:
+                self._cache_session_check(key, None, 15)
+                raise
+            self._cache_session_check(key, available, self.settings.worker_database_session_check_seconds)
+            return available
+
+    def _cache_session_check(self, key: str, available: bool | None, ttl: float) -> None:
+        with self._session_cache_lock:
+            self._session_checks[key] = (monotonic() + ttl, available)
+            self._session_checks.move_to_end(key)
+            while len(self._session_checks) > 256:
+                self._session_checks.popitem(last=False)
 
     def search_people(self, query: str) -> list[dict[str, str]]:
         self._ensure_enabled()
@@ -128,6 +166,8 @@ class WorkerAuthService:
                 self.DIRECTORY_SEARCH_SQL,
                 (self.settings.worker_database_available_value, pattern, pattern),
             )
+        except SqlRequestCancelled:
+            raise
         except Exception as exc:
             raise WorkerAuthenticationUnavailableError(
                 "HR人员数据库暂时不可用"
@@ -138,6 +178,8 @@ class WorkerAuthService:
         self._ensure_enabled()
         try:
             rows = self.client.fetch_all(self.PERSON_SQL, (external_id.strip(),))
+        except SqlRequestCancelled:
+            raise
         except Exception as exc:
             raise WorkerAuthenticationUnavailableError(
                 "HR人员数据库暂时不可用"

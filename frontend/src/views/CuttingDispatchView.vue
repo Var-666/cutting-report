@@ -916,7 +916,7 @@ onBeforeUnmount(pausePage)
           </tbody>
         </table>
       </div>
-      <div class="dispatch-pagination"><button type="button" :disabled="page <= 1 || loading" @click="changePage(page - 1)">上一页</button><span>第 {{ page }} / {{ totalPages }} 页</span><button type="button" :disabled="page >= totalPages || loading" @click="changePage(page + 1)">下一页</button></div>
+      <div class="dispatch-pagination app-pagination"><div class="app-pagination__actions"><button type="button" :disabled="page <= 1 || loading" @click="changePage(page - 1)">上一页</button><span class="app-pagination__summary">第 {{ page }} / {{ totalPages }} 页，共 {{ total }} 条</span><button type="button" :disabled="page >= totalPages || loading" @click="changePage(page + 1)">下一页</button></div></div>
       <p class="dispatch-download-hint">确认后系统会复核当前 PDM 版本和路径，再临时下载、校验并推送；成功后删除本地副本。{{ systemStatus && !systemStatus.can_push ? '当前文件来源或魔盒服务不可用，暂不可派发。' : '' }}</p>
     </section>
 
@@ -949,6 +949,13 @@ onBeforeUnmount(pausePage)
     <div v-if="histories.length" class="dispatch-table-wrap"><table v-content-table="pageActive" class="dispatch-table history-table"><thead><tr><th>任务标识</th><th>文件名</th><th>机床IP</th><th>阶段 / 状态</th><th>魔盒UUID</th><th>失败原因</th><th>创建时间</th><th>操作</th></tr></thead><tbody><tr v-for="item in histories" :key="item.dispatch_id"><td><code>{{ item.task_identifier || item.dispatch_id }}</code></td><td>{{ item.document_no }}<small class="dispatch-project-name">数量 {{ item.quantity }}</small></td><td>{{ item.machine_ip }}</td><td><span class="dispatch-status" :class="item.status">{{ item.status_label }}</span><small class="dispatch-project-name">{{ item.stage_label }}</small></td><td><code>{{ item.remote_task_id || '--' }}</code></td><td class="history-error">{{ item.last_error || '--' }}</td><td>{{ formatTime(item.created_at) }}</td><td><div class="history-actions"><button v-if="item.can_execute" type="button" :disabled="!!operatingId" @click="executeSaved(item)">{{ item.remote_task_id ? '重试指派' : '执行推送' }}</button><button v-if="item.can_cancel" type="button" class="danger" :disabled="!!operatingId" @click="cancelSaved(item)">取消指派</button><span v-if="!item.can_execute && !item.can_cancel">--</span></div></td></tr></tbody></table></div>
     <div v-else class="dispatch-empty-history"><i><AppIcon name="send" size="20" /></i><strong>暂无派发记录</strong><span>从项目目录选择文件并确认后，即可直接派发。</span></div>
   </section>
+
+  <div v-if="selectedFileCount && !pushBatch.visible" class="mobile-selection-bar-spacer" aria-hidden="true"></div>
+  <aside v-if="selectedFileCount && !pushBatch.visible" class="mobile-selection-bar" aria-label="已选文件操作">
+    <span><small>已选</small><strong>{{ selectedFileCount }}</strong><small>/ 20 项</small></span>
+    <button type="button" :disabled="pushBatch.saving" @click="clearSelectedFiles">清空</button>
+    <button class="primary" type="button" :disabled="loading || pushBatch.saving || !systemStatus?.can_push" @click="openPushBatch"><AppIcon name="send" size="16" tone="light" />设置参数并派发</button>
+  </aside>
 
   <Teleport to="body">
     <div v-if="pushBatch.visible" class="push-batch-backdrop" role="presentation" @click.self="closePushBatch">
@@ -1247,6 +1254,7 @@ onBeforeUnmount(pausePage)
 .dispatch-notice { margin:10px 0 0; border:1px solid #cae6e8; border-left:3px solid #16a39d; border-radius:8px; }
 .dispatch-notice.error { border-color:#f0ccca; border-left-color:#df5961; }
 .dispatch-workspace.download-workspace { grid-template-columns:248px minmax(0,1fr); gap:12px; margin-top:12px; align-items:stretch; }
+.dispatch-workspace>.panel { margin-bottom:0; }
 .dispatch-workspace>.panel,.dispatch-history-panel { overflow:hidden; border:1px solid #dbe6ec; border-radius:11px; box-shadow:0 7px 22px rgba(22,62,89,.05); animation:surface-in .44s cubic-bezier(.2,.75,.25,1) both; }
 .dispatch-files-panel { animation-delay:.05s!important; }
 .dispatch-confirm-panel { animation-delay:.1s!important; }
@@ -1282,6 +1290,7 @@ onBeforeUnmount(pausePage)
 .download-batch-toolbar { min-height:44px; padding:7px 13px; border-bottom-color:#e4edf1; background:#fff; }
 .download-batch-toolbar button { min-height:31px; border-color:#c9dce6; border-radius:7px; }
 .download-batch-toolbar button.primary { border-color:#258dda; background:linear-gradient(135deg,#258dda,#1ca5d7); box-shadow:0 5px 12px rgba(35,133,190,.16); }
+.mobile-selection-bar,.mobile-selection-bar-spacer { display:none; }
 .source-file-table { min-width:820px; }
 .dispatch-table th,.dispatch-table td { height:39px; padding:7px 9px; border-bottom-color:#e7eef2; }
 .source-file-table th { color:#536f83; background:#f0f6f9; font-size:9px; }
@@ -1359,6 +1368,14 @@ onBeforeUnmount(pausePage)
   .confirm-file-list { min-height:100px; }
   .confirm-machine { margin-top:13px; padding-top:12px; border-top:1px solid #e5edf1; }
   .confirm-dispatch-button { margin-top:14px; }
+  .mobile-selection-bar-spacer { display:block; height:calc(72px + env(safe-area-inset-bottom)); }
+  .mobile-selection-bar { position:fixed; z-index:950; right:0; bottom:0; left:0; display:grid; grid-template-columns:auto auto minmax(0,1fr); align-items:center; gap:8px; padding:10px max(12px,env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left)); border-top:1px solid #c8dbe5; background:rgba(255,255,255,.97); box-shadow:0 -10px 30px rgba(14,55,80,.16); }
+  .mobile-selection-bar>span { min-width:54px; display:flex; align-items:baseline; gap:3px; color:#6a8292; white-space:nowrap; }
+  .mobile-selection-bar>span strong { color:#176b98; font-size:20px; font-variant-numeric:tabular-nums; }
+  .mobile-selection-bar>span small { font-size:9px; }
+  .mobile-selection-bar button { min-height:44px; padding:0 12px; color:#237fb7; border:1px solid #bfd4df; border-radius:7px; background:#f8fcfe; white-space:nowrap; font-size:11px; font-weight:700; }
+  .mobile-selection-bar button.primary { min-width:0; display:flex; align-items:center; justify-content:center; gap:6px; color:#fff; border-color:#238bd8; background:linear-gradient(135deg,#238bd8,#159fd3); box-shadow:0 7px 16px rgba(32,137,202,.22); }
+  .mobile-selection-bar button:disabled { opacity:.5; cursor:not-allowed; box-shadow:none; }
 }
 @media (prefers-reduced-motion:reduce) {
   .dispatch-hero,.dispatch-workspace>.panel,.dispatch-history-panel { animation:none; }

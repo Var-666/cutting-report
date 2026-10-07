@@ -96,6 +96,21 @@ class AutomationRepository(SQLiteRepository):
                     FOREIGN KEY(run_id) REFERENCES scheduled_report_runs(run_id) ON DELETE CASCADE,
                     FOREIGN KEY(report_id) REFERENCES report_jobs(report_id) ON DELETE CASCADE
                 );
+                CREATE TABLE IF NOT EXISTS email_delivery_resolutions (
+                    resolution_id TEXT PRIMARY KEY,
+                    delivery_id TEXT NOT NULL,
+                    run_id TEXT NOT NULL,
+                    message_id TEXT NOT NULL,
+                    actor_id TEXT NOT NULL,
+                    actor_name TEXT NOT NULL,
+                    evidence_note TEXT NOT NULL,
+                    before_results_json TEXT NOT NULL,
+                    after_results_json TEXT NOT NULL,
+                    resolved_status TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_email_delivery_resolutions
+                    ON email_delivery_resolutions(delivery_id, created_at);
                 CREATE INDEX IF NOT EXISTS idx_email_deliveries_due
                     ON email_deliveries(status, next_attempt_at);
                 """
@@ -111,12 +126,35 @@ class AutomationRepository(SQLiteRepository):
                     "ALTER TABLE scheduled_report_runs "
                     "ADD COLUMN chart_type TEXT NOT NULL DEFAULT 'bar_line'"
                 )
+            delivery_columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(email_deliveries)")
+            }
+            if "recipient_results_json" not in delivery_columns:
+                connection.execute(
+                    "ALTER TABLE email_deliveries ADD COLUMN recipient_results_json TEXT NOT NULL DEFAULT '{}'"
+                )
+            interrupted = connection.execute(
+                "SELECT delivery_id, recipients_json, recipient_results_json FROM email_deliveries WHERE status = 'sending'"
+            ).fetchall()
+            for row in interrupted:
+                results = json.loads(row["recipient_results_json"] or "{}")
+                results.update({recipient: {"status": "unknown"}
+                                for recipient in json.loads(row["recipients_json"] or "[]")})
+                connection.execute(
+                    "UPDATE email_deliveries SET recipient_results_json = ? WHERE delivery_id = ?",
+                    (json.dumps(results), row["delivery_id"]),
+                )
             connection.execute(
                 """
                 UPDATE email_deliveries
-                SET status = 'retry_wait', last_error = 'Service restarted during delivery'
+                SET status = 'unknown', last_error = '发送中断，结果待核对，禁止自动重发'
                 WHERE status = 'sending'
                 """
+            )
+            connection.execute(
+                """UPDATE scheduled_report_runs SET status = 'unknown',
+                   last_error = '发送中断，结果待核对，禁止自动重发'
+                   WHERE report_id IN (SELECT report_id FROM email_deliveries WHERE status = 'unknown')"""
             )
             connection.execute("PRAGMA optimize")
 
@@ -132,6 +170,7 @@ class AutomationRepository(SQLiteRepository):
     def _decode_delivery(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
         item = dict(row)
         item["recipients"] = json.loads(item.pop("recipients_json") or "[]")
+        item["recipient_results"] = json.loads(item.pop("recipient_results_json", "{}") or "{}")
         return item
 
     def create_schedule(self, data: dict[str, Any], *, user: dict, now: str) -> dict:
@@ -219,7 +258,7 @@ class AutomationRepository(SQLiteRepository):
                 """
                 SELECT * FROM report_schedules
                 WHERE enabled = 1 AND next_run_at <= ?
-                ORDER BY next_run_at
+                ORDER BY COALESCE(last_run_at, ''), next_run_at, schedule_id
                 LIMIT ?
                 """,
                 (now, limit),
@@ -314,6 +353,27 @@ class AutomationRepository(SQLiteRepository):
         item["attach_report"] = bool(item["attach_report"])
         return item
 
+    def incomplete_runs(self, limit: int = 100) -> list[dict]:
+        """Find committed runs interrupted between durable workflow steps."""
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT r.run_id, r.report_id, j.status AS report_status, j.error_message
+                FROM scheduled_report_runs r
+                LEFT JOIN report_jobs j ON j.report_id = r.report_id
+                WHERE (r.status = 'queued' AND r.report_id IS NULL)
+                   OR (j.status = 'completed'
+                       AND EXISTS (SELECT 1 FROM reports p WHERE p.report_id = r.report_id)
+                       AND NOT EXISTS (
+                           SELECT 1 FROM email_deliveries d WHERE d.report_id = r.report_id
+                       ))
+                   OR (r.status = 'generating' AND j.status = 'failed')
+                ORDER BY r.created_at, r.run_id LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def attach_report(self, run_id: str, report_id: str, *, now: str) -> None:
         with self.connect() as connection:
             updated = connection.execute(
@@ -350,6 +410,12 @@ class AutomationRepository(SQLiteRepository):
 
     def enqueue_delivery(self, report_id: str, *, subject: str, now: str) -> dict | None:
         with self.connect() as connection:
+            self.begin_immediate(connection)
+            existing = connection.execute(
+                "SELECT delivery_id FROM email_deliveries WHERE report_id = ?", (report_id,)
+            ).fetchone()
+            if existing is not None:
+                return self.delivery_for_report(report_id)
             run = connection.execute(
                 "SELECT * FROM scheduled_report_runs WHERE report_id = ?", (report_id,)
             ).fetchone()
@@ -413,28 +479,36 @@ class AutomationRepository(SQLiteRepository):
             updated = connection.execute(
                 """
                 UPDATE email_deliveries
-                SET status = 'sending', attempt_count = attempt_count + 1, updated_at = ?
+                SET status = 'sending', attempt_count = attempt_count + 1, updated_at = ?,
+                    message_id = COALESCE(message_id, ?)
                 WHERE delivery_id = ? AND status IN ('pending', 'retry_wait')
                 """,
-                (now, row["delivery_id"]),
+                (now, f"<{row['delivery_id']}@cutting-report.local>", row["delivery_id"]),
             )
             if updated.rowcount != 1:
                 return None
             item = dict(row)
+            item["message_id"] = row["message_id"] or f"<{row['delivery_id']}@cutting-report.local>"
             item["attempt_count"] = int(item["attempt_count"]) + 1
             return self._decode_delivery(item)
 
     def mark_delivery_sent(self, delivery: dict, *, message_id: str, now: str) -> None:
         with self.connect() as connection:
-            connection.execute(
+            self.begin_immediate(connection)
+            results = dict(delivery.get("recipient_results", {}))
+            results.update({recipient: {"status": "accepted"} for recipient in delivery["recipients"]})
+            updated = connection.execute(
                 """
                 UPDATE email_deliveries
                 SET status = 'sent', message_id = ?, last_error = NULL,
-                    sent_at = ?, updated_at = ? WHERE delivery_id = ?
+                    sent_at = ?, updated_at = ?, recipient_results_json = ?
+                WHERE delivery_id = ? AND status = 'sending'
                 """,
-                (message_id, now, now, delivery["delivery_id"]),
+                (message_id, now, now, json.dumps(results), delivery["delivery_id"]),
             )
-        self.mark_run(delivery["run_id"], "sent", now=now)
+            if updated.rowcount != 1:
+                raise LookupError("邮件不在发送状态，拒绝写入迟到结果")
+            AutomationRepository(self.database, connection=connection).mark_run(delivery["run_id"], "sent", now=now)
 
     def mark_delivery_failed(
         self, delivery: dict, *, error: str, next_attempt_at: str, now: str
@@ -442,22 +516,131 @@ class AutomationRepository(SQLiteRepository):
         exhausted = int(delivery["attempt_count"]) >= int(delivery["max_attempts"])
         status = "failed" if exhausted else "retry_wait"
         with self.connect() as connection:
-            connection.execute(
+            self.begin_immediate(connection)
+            updated = connection.execute(
                 """
                 UPDATE email_deliveries
                 SET status = ?, last_error = ?, next_attempt_at = ?, updated_at = ?
-                WHERE delivery_id = ?
+                WHERE delivery_id = ? AND status = 'sending'
                 """,
                 (status, error[:500], next_attempt_at, now, delivery["delivery_id"]),
             )
-        self.mark_run(
-            delivery["run_id"], status, now=now, error=error[:500] if exhausted else None
-        )
+            if updated.rowcount != 1:
+                raise LookupError("邮件不在发送状态，拒绝写入迟到结果")
+            AutomationRepository(self.database, connection=connection).mark_run(
+                delivery["run_id"], status, now=now, error=error[:500] if exhausted else None
+            )
+
+    def mark_delivery_refused(self, delivery: dict, refused: dict, *, message_id: str,
+                             next_attempt_at: str, now: str) -> None:
+        results = dict(delivery.get("recipient_results", {}))
+        remaining = []
+        for recipient in delivery["recipients"]:
+            if recipient in refused:
+                remaining.append(recipient)
+                results[recipient] = {"status": "refused", "code": int(refused[recipient][0])}
+            else:
+                results[recipient] = {"status": "accepted"}
+        if not remaining:
+            raise ValueError("SMTP 拒收结果没有匹配的收件人")
+        with self.connect() as connection:
+            self.begin_immediate(connection)
+            connection.execute(
+                """UPDATE email_deliveries SET recipients_json = ?, recipient_results_json = ?,
+                   message_id = ? WHERE delivery_id = ? AND status = 'sending'""",
+                (json.dumps(remaining), json.dumps(results), message_id, delivery["delivery_id"]),
+            )
+            AutomationRepository(self.database, connection=connection).mark_delivery_failed(
+                delivery, error="SMTP 拒收收件人，仅重试拒收部分", next_attempt_at=next_attempt_at, now=now
+            )
+
+    def mark_delivery_unknown(self, delivery: dict, *, now: str) -> None:
+        error = "SMTP 接受结果未知，请按 Message-ID 核对服务器记录；禁止自动重发"
+        results = dict(delivery.get("recipient_results", {}))
+        results.update({recipient: {"status": "unknown"} for recipient in delivery["recipients"]})
+        with self.connect() as connection:
+            self.begin_immediate(connection)
+            updated = connection.execute(
+                """UPDATE email_deliveries SET status = 'unknown', last_error = ?,
+                   updated_at = ?, recipient_results_json = ? WHERE delivery_id = ? AND status = 'sending'""",
+                (error, now, json.dumps(results), delivery["delivery_id"]),
+            )
+            if updated.rowcount != 1:
+                raise LookupError("邮件不在发送状态，拒绝写入迟到结果")
+            AutomationRepository(self.database, connection=connection).mark_run(
+                delivery["run_id"], "unknown", now=now, error=error
+            )
+
+    def delivery_state(self, delivery_id: str) -> str | None:
+        with self.connect() as connection:
+            row = connection.execute("SELECT status FROM email_deliveries WHERE delivery_id = ?", (delivery_id,)).fetchone()
+        return row[0] if row else None
+
+    def resolve_unknown_delivery(self, delivery_id: str, *, message_id: str,
+                                 outcomes: list[dict], evidence_note: str,
+                                 user: dict, now: str) -> bool:
+        if not evidence_note.strip() or len(evidence_note) > 1000:
+            raise ValueError("必须填写不超过 1000 字的邮件服务器核对依据")
+        decisions = {item["recipient"]: item["outcome"] for item in outcomes}
+        if len(decisions) != len(outcomes) or any(value not in {"accepted", "not_accepted"}
+                                                for value in decisions.values()):
+            raise ValueError("收件人核对结果重复或无效")
+        with self.connect() as connection:
+            self.begin_immediate(connection)
+            row = connection.execute("SELECT * FROM email_deliveries WHERE delivery_id=?",
+                                     (delivery_id,)).fetchone()
+            if row is None:
+                raise LookupError("邮件发送记录不存在")
+            if row["status"] != "unknown":
+                return False
+            if not message_id or row["message_id"] != message_id:
+                raise ValueError("Message-ID 与当前发送记录不一致")
+            delivery = self._decode_delivery(row)
+            previous = delivery["recipient_results"]
+            unknown = {recipient for recipient in delivery["recipients"]
+                       if previous.get(recipient, {}).get("status") != "accepted"}
+            if not unknown or set(decisions) != unknown:
+                raise ValueError("必须逐一核对全部待确认收件人，不能修改已接收结果")
+            results = {**previous, **{recipient: {"status": outcome}
+                                     for recipient, outcome in decisions.items()}}
+            remaining = [recipient for recipient in delivery["recipients"]
+                         if decisions.get(recipient) == "not_accepted"]
+            status = "failed" if remaining else "sent"
+            error = "人工核对服务器确认未接收，等待人工重试" if remaining else None
+            connection.execute("""
+                INSERT INTO email_delivery_resolutions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (uuid4().hex, delivery_id, delivery["run_id"], message_id,
+                  user["user_id"], user["display_name"], evidence_note.strip(),
+                  json.dumps(previous), json.dumps(results), status, now))
+            connection.execute("""
+                UPDATE email_deliveries SET status=?, recipients_json=?, recipient_results_json=?,
+                    last_error=?, updated_at=? WHERE delivery_id=? AND status='unknown'
+            """, (status, json.dumps(remaining if remaining else delivery["recipients"]),
+                  json.dumps(results), error, now, delivery_id))
+            AutomationRepository(self.database, connection=connection).mark_run(
+                delivery["run_id"], status, now=now, error=error,
+            )
+        return True
+
+    def delivery_resolutions(self, delivery_id: str) -> list[dict]:
+        with self.connect() as connection:
+            rows = connection.execute("""
+                SELECT * FROM email_delivery_resolutions WHERE delivery_id=?
+                ORDER BY created_at, resolution_id
+            """, (delivery_id,)).fetchall()
+        results = []
+        for row in rows:
+            item = dict(row)
+            item["before_results"] = json.loads(item.pop("before_results_json"))
+            item["after_results"] = json.loads(item.pop("after_results_json"))
+            results.append(item)
+        return results
 
     def retry_delivery(self, delivery_id: str, *, now: str) -> bool:
         with self.connect() as connection:
+            self.begin_immediate(connection)
             row = connection.execute(
-                "SELECT run_id FROM email_deliveries WHERE delivery_id = ?", (delivery_id,)
+                "SELECT run_id FROM email_deliveries WHERE delivery_id = ? AND status = 'failed'", (delivery_id,)
             ).fetchone()
             if row is None:
                 return False
@@ -509,7 +692,8 @@ class AutomationRepository(SQLiteRepository):
                 SELECT COUNT(*) AS total,
                        SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END) AS sent,
                        SUM(CASE WHEN status IN ('pending', 'sending', 'retry_wait') THEN 1 ELSE 0 END) AS pending,
-                       SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed
+                       SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed,
+                       SUM(CASE WHEN status = 'unknown' THEN 1 ELSE 0 END) AS unknown
                 FROM email_deliveries
                 """
             ).fetchone()
@@ -520,4 +704,5 @@ class AutomationRepository(SQLiteRepository):
             "delivery_sent": int(delivery["sent"] or 0),
             "delivery_pending": int(delivery["pending"] or 0),
             "delivery_failed": int(delivery["failed"] or 0),
+            "delivery_unknown": int(delivery["unknown"] or 0),
         }

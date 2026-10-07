@@ -10,6 +10,7 @@ const steps = [
 ]
 const rank = { pending: 0, querying: 1, calculating: 2, analyzing: 3, rendering: 4, completed: 5, failed: -1 }
 const reportTypeText = { leadership: '领导报表', workshop: '车间报表', equipment: '设备报表', custom: '自定义报表' }
+const aiStatusText = { success: '已生成', unavailable: '暂不可用', skipped: '未启用' }
 
 function stepClass(status, stepStatus) {
   if (status === 'failed') return ''
@@ -40,7 +41,7 @@ function stepClass(status, stepStatus) {
       <a class="button primary" :href="job.view_url" target="_blank" rel="noopener">打开报告</a>
       <a class="button" :href="job.download_url">下载 HTML</a>
       <DownloadPdfButton :report-id="job.report_id" />
-      <span>{{ job.task_count }} 个任务 · AI {{ job.ai_status }}</span>
+      <span>{{ job.task_count }} 个任务 · AI {{ aiStatusText[job.ai_status] || job.ai_status || '--' }}</span>
     </div>
   </section>
 </template>

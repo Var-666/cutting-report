@@ -437,7 +437,8 @@ onMounted(() => Promise.all([loadStatus(), loadConfiguration()]))
 </template>
 
 <style scoped>
-.saved-database-config,.database-sources-panel { margin-bottom:22px; }
+.database-page > .db-status-grid,
+.database-page > .global-error { margin-bottom:0; }
 .configuration-loading { padding:34px 24px; color:var(--muted); }
 .configuration-switches { display:flex; align-items:flex-end; gap:22px; padding:20px 24px; border-bottom:1px solid var(--line); }
 .configuration-switches > label:first-child { min-width:190px; }.configuration-switches label > span,.saved-source-grid label > span { display:block; margin-bottom:6px; color:#425767; font-size:10px; font-weight:700; }

@@ -456,17 +456,6 @@ class LeadershipReportService:
             ],
         )
 
-    @staticmethod
-    def _record_from_row(row: dict) -> LeadershipPeriodRecord:
-        return LeadershipPeriodRecord(
-            period_start=_date(row["period_start"]),
-            task_count=int(row.get("task_count") or 0),
-            cut_length_m=_decimal(row.get("cut_length_m")),
-            groove_length_m=_decimal(row.get("groove_length_m")),
-            work_time_seconds=int(_decimal(row.get("work_time_seconds"))),
-            remark=row.get("remark"),
-        )
-
     def _result(
         self,
         *,

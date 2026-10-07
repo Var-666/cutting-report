@@ -3,10 +3,7 @@ from __future__ import annotations
 import importlib.util
 import hashlib
 import logging
-import os
-import re
 import secrets
-import tempfile
 from dataclasses import asdict
 from dataclasses import replace
 from datetime import date
@@ -18,6 +15,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field, SecretStr, field_validator
 
 from app.api.auth import require_admin
+from app.services.runtime_settings_store import read_runtime_env, write_runtime_env, runtime_settings_lock
 from app.config import settings
 from app.database.sqlserver import SqlServerClient, SqlServerConfigurationError
 from app.models.domain import ReportFilter, to_primitive
@@ -191,59 +189,8 @@ def _database_configuration_data() -> dict:
     }
 
 
-def _dotenv_quote(value: object) -> str:
-    text = str(value)
-    if any(character in text for character in ("\r", "\n", "\x00")):
-        raise ValueError("配置值不能包含换行或空字符")
-    return "'" + text.replace("\\", "\\\\").replace("'", "\\'") + "'"
-
-
 def _write_runtime_env(values: dict[str, object]) -> None:
-    path = settings.runtime_settings_env_path
-    path.parent.mkdir(parents=True, exist_ok=True)
-    original = path.read_text(encoding="utf-8").splitlines() if path.is_file() else []
-    key_pattern = re.compile(r"^\s*([A-Z][A-Z0-9_]*)\s*=")
-    written: set[str] = set()
-    output: list[str] = []
-    for line in original:
-        match = key_pattern.match(line)
-        key = match.group(1) if match else None
-        if key in values:
-            output.append(f"{key}={_dotenv_quote(values[key])}")
-            written.add(key)
-        else:
-            output.append(line)
-    if output and output[-1] != "":
-        output.append("")
-    if not original:
-        output.extend(
-            [
-                "# 由系统设置页管理。修改后需重启服务生效。",
-                "# 文件中包含数据库密码，不要提交到代码库或对外发送。",
-                "",
-            ]
-        )
-    for key, value in values.items():
-        if key not in written:
-            output.append(f"{key}={_dotenv_quote(value)}")
-
-    temporary_path: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            "w",
-            encoding="utf-8",
-            dir=path.parent,
-            prefix=".settings-",
-            suffix=".tmp",
-            delete=False,
-        ) as handle:
-            handle.write("\n".join(output).rstrip() + "\n")
-            temporary_path = Path(handle.name)
-        os.chmod(temporary_path, 0o600)
-        os.replace(temporary_path, path)
-    finally:
-        if temporary_path is not None and temporary_path.exists():
-            temporary_path.unlink()
+    write_runtime_env(settings.runtime_settings_env_path, values)
 
 
 def _connection_env_values(
@@ -254,9 +201,11 @@ def _connection_env_values(
     submitted_password = (
         payload.password.get_secret_value() if payload.password is not None else None
     )
+    saved_password = read_runtime_env(settings.runtime_settings_env_path).get(f"{env_prefix}_PASSWORD")
     password = (
         submitted_password
         if submitted_password not in {None, ""}
+        else saved_password if saved_password is not None
         else getattr(settings, f"{attribute_prefix}_password")
     )
     return {
@@ -286,23 +235,24 @@ def get_database_configuration(request: Request) -> dict:
 def save_database_configuration(
     payload: DatabaseConfigurationRequest, request: Request
 ) -> dict:
-    values: dict[str, object] = {
-        "APP_DATA_SOURCE_MODE": payload.data_source_mode,
-        "WORKER_DATABASE_AUTH_ENABLED": str(
-            payload.worker_database_auth_enabled
-        ).lower(),
-        "FILE_DATABASE_ENABLED": str(payload.file_database_enabled).lower(),
-    }
-    for source in ("production", "worker", "file"):
-        values.update(_connection_env_values(source, getattr(payload, source)))
-    try:
-        _write_runtime_env(values)
-    except (OSError, ValueError) as exc:
-        logger.exception("failed to save runtime database configuration")
-        raise HTTPException(
-            status_code=500,
-            detail="配置保存失败，请检查 data 目录的写入权限。",
-        ) from exc
+    with runtime_settings_lock:
+        values: dict[str, object] = {
+            "APP_DATA_SOURCE_MODE": payload.data_source_mode,
+            "WORKER_DATABASE_AUTH_ENABLED": str(
+                payload.worker_database_auth_enabled
+            ).lower(),
+            "FILE_DATABASE_ENABLED": str(payload.file_database_enabled).lower(),
+        }
+        for source in ("production", "worker", "file"):
+            values.update(_connection_env_values(source, getattr(payload, source)))
+        try:
+            _write_runtime_env(values)
+        except (OSError, ValueError) as exc:
+            logger.exception("failed to save runtime database configuration")
+            raise HTTPException(
+                status_code=500,
+                detail="配置保存失败，请检查 data 目录的写入权限。",
+            ) from exc
     return {
         "success": True,
         "data": {

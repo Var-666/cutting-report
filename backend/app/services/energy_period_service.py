@@ -140,6 +140,14 @@ class EnergyPeriodService:
                  sorted(self.normalized_equipment_ids)]
         return sha256(json.dumps(scope, ensure_ascii=False).encode()).hexdigest()
 
+    @property
+    def history_source_key(self):
+        try:
+            policy = sampling_policy(self.settings)
+        except ValueError:
+            policy = "invalid"
+        return sha256(json.dumps([self.source_key, policy], default=str, sort_keys=True).encode()).hexdigest()
+
     def day_source_key(self, report_date):
         # Preserve the exact historical namespace. Only affected days require a
         # fresh snapshot, so old permissive results cannot pass as revalidated.
@@ -208,6 +216,32 @@ class EnergyPeriodService:
                 "is_today": report_date == self.now().date(),
                 "warning": message + (" 显示上次已保存结果，未覆盖历史记录。" if cached else "")}
 
+    def _snapshot_due(self, report_date, cached, now):
+        if not cached:
+            return True
+        # A snapshot made before midnight is provisional even if still within TTL.
+        if report_date < now.date() and cached.get("is_today"):
+            return True
+        try:
+            age = (now - datetime.fromisoformat(cached["updated_at"])).total_seconds()
+        except (KeyError, TypeError, ValueError):
+            return True
+        ttl = self.settings.energy_report_snapshot_ttl_seconds
+        if report_date == now.date():
+            ttl = min(60, ttl)
+        return not 0 <= age < ttl
+
+    @staticmethod
+    def _loses_known_values(cached, report):
+        if not cached:
+            return False
+        new_rows = {row["start"]: row for row in report["rows"]}
+        return any(
+            old[channel]["value"] is not None
+            and new_rows.get(old["start"], {}).get(channel, {}).get("value") is None
+            for old in cached["rows"] for channel in CHANNELS
+        )
+
     def get_day(self, report_date: date, *, force=False):
         with self._lock:
             source_key = self.day_source_key(report_date)
@@ -220,11 +254,8 @@ class EnergyPeriodService:
             error = self.configuration_error()
             if error:
                 return to_primitive(self._failed(report_date, cached, error))
-            if cached and not force:
-                age = (now - datetime.fromisoformat(cached["updated_at"])).total_seconds()
-                ttl = min(60, self.settings.energy_report_snapshot_ttl_seconds) if report_date == now.date() else self.settings.energy_report_snapshot_ttl_seconds
-                if 0 <= age < ttl:
-                    return {**cached, **self.metadata(), "is_today": report_date == now.date(), "from_cache": True}
+            if cached and not force and not self._snapshot_due(report_date, cached, now):
+                return {**cached, **self.metadata(), "is_today": report_date == now.date(), "from_cache": True}
 
             start = datetime.combine(report_date, time.min)
             end = start + timedelta(days=1)
@@ -240,9 +271,7 @@ class EnergyPeriodService:
                     message += " 该日旧快照已保留，但尚未通过新采样规则校验，请重新同步。"
                 return to_primitive(self._failed(report_date, cached, message))
             # A transient empty/partial response must not silently erase known data.
-            if cached and any(old[key]["value"] is not None and new[key]["value"] is None
-                              for old, new in zip(cached["rows"], report["rows"])
-                              for key in CHANNELS):
+            if self._loses_known_values(cached, report):
                 return to_primitive(self._failed(report_date, cached, "本次返回的有效时段减少，已保留原记录，请核对平台数据。"))
             report.update(updated_at=now.isoformat(timespec="seconds"), saved=True, sync_ok=True)
             report = to_primitive(report)
@@ -551,10 +580,12 @@ class EnergyPeriodService:
         ]
         with sync_lock:
             missing = []
+            now = self.now()
             stamp = month_start
             while stamp <= last_day:
                 source_key = self.day_source_key(stamp)
-                if force or not self.repository.get_day(source_key, stamp.isoformat()):
+                cached = self.repository.get_day(source_key, stamp.isoformat())
+                if force or self._snapshot_due(stamp, cached, now):
                     missing.append(stamp)
                 stamp += timedelta(days=1)
             if not missing:
@@ -598,6 +629,9 @@ class EnergyPeriodService:
                     report["summary"][channel]["value"] is None
                     for channel in CHANNELS
                 ):
+                    continue
+                cached = self.repository.get_day(self.day_source_key(stamp), stamp.isoformat())
+                if self._loses_known_values(cached, report):
                     continue
                 report.update(
                     updated_at=updated_at,

@@ -17,6 +17,7 @@ from app.services.magic_box_service import (
     MagicBoxConfigProvider,
     MagicBoxError,
 )
+from app.services.report_deadline import operation_deadline
 
 
 class CuttingDispatchError(RuntimeError):
@@ -470,6 +471,10 @@ class CuttingDispatchService:
         return item, path
 
     def execute_dispatch(self, dispatch_id: str, *, user: dict) -> dict[str, Any]:
+        with operation_deadline(self.settings.magic_box_operation_timeout):
+            return self._execute_dispatch(dispatch_id, user=user)
+
+    def _execute_dispatch(self, dispatch_id: str, *, user: dict) -> dict[str, Any]:
         item = self.dispatches.get(dispatch_id)
         if item is None:
             raise DispatchNotFoundError("派发任务不存在")
@@ -546,6 +551,10 @@ class CuttingDispatchService:
         return result
 
     def cancel_dispatch(self, dispatch_id: str) -> dict[str, Any]:
+        with operation_deadline(self.settings.magic_box_operation_timeout):
+            return self._cancel_dispatch(dispatch_id)
+
+    def _cancel_dispatch(self, dispatch_id: str) -> dict[str, Any]:
         item = self.dispatches.get(dispatch_id)
         if item is None:
             raise DispatchNotFoundError("派发任务不存在")

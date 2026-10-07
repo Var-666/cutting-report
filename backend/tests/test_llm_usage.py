@@ -1,6 +1,7 @@
 import json
 
 import pytest
+import httpx
 
 from app.config import Settings
 from app.database.llm_usage import LlmUsageRepository
@@ -126,4 +127,42 @@ def test_failed_http_attempt_counts_without_inventing_tokens(tmp_path, monkeypat
         LlmService(settings).analyze_context("leadership", {"facts": []})
     assert LlmUsageRepository(settings.metadata_db_path).summary() == {
         "call_count": 1, "metered_count": 0, "total_tokens": 0,
+    }
+
+
+@pytest.mark.parametrize("scenario", ["report", "alarm"])
+def test_real_streamed_model_response_succeeds_and_records_usage(tmp_path, monkeypatch, scenario):
+    settings = Settings(project_root=tmp_path, llm_enabled=True,
+                        llm_api_key="test", llm_base_url="http://llm.test")
+    if scenario == "report":
+        content = {key: "分析" for key in ("overview", "features", "alerts", "suggestions")}
+    else:
+        content = {"summary": "无告警", "findings": [], "actions": [], "limitations": []}
+    envelope = {"choices": [{"message": {"content": json.dumps(content)}}],
+                "usage": {"total_tokens": 9}}
+
+    class Body(httpx.SyncByteStream):
+        closed = False
+
+        def __iter__(self):
+            yield json.dumps(envelope).encode()
+
+        def close(self):
+            self.closed = True
+
+    body = Body()
+    response = httpx.Response(200, stream=body)
+    original_client = httpx.Client
+    transport = httpx.MockTransport(lambda request: response)
+    monkeypatch.setattr("app.services.llm_service.httpx.Client",
+                        lambda **kwargs: original_client(transport=transport, **kwargs))
+    if scenario == "report":
+        assert LlmService(settings).analyze_context("leadership", {"facts": []}).status == "success"
+    else:
+        assert AlarmAnalysisService(settings).analyze([])["summary"] == "无告警"
+    assert body.closed
+    with pytest.raises(httpx.ResponseNotRead):
+        response.json()
+    assert LlmUsageRepository(settings.metadata_db_path).summary() == {
+        "call_count": 1, "metered_count": 1, "total_tokens": 9,
     }

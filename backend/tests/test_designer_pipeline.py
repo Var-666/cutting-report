@@ -2,6 +2,8 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from app.config import Settings
 from app.database.definitions import DefinitionRepository
 from app.database.metadata import MetadataRepository
@@ -91,7 +93,8 @@ def test_custom_query_named_parameters_are_compiled_safely(tmp_path: Path) -> No
     assert [value.isoformat() for value in values] == ["2026-08-18", "2026-08-19"]
 
 
-def test_custom_demo_pipeline_generates_configured_report(tmp_path: Path) -> None:
+@pytest.mark.parametrize("detail_limit", [2, 1000])
+def test_custom_demo_pipeline_generates_configured_report(tmp_path: Path, detail_limit: int) -> None:
     vendor_dir = tmp_path / "vendor"
     vendor_dir.mkdir()
     (vendor_dir / "echarts.min.js").write_text(
@@ -103,6 +106,7 @@ def test_custom_demo_pipeline_generates_configured_report(tmp_path: Path) -> Non
         demo_mode=True,
         data_source_mode="demo",
         app_version="test",
+        report_max_detail_rows=detail_limit,
     )
     settings.ensure_runtime_dirs()
     metadata = MetadataRepository(settings.metadata_db_path)
@@ -131,6 +135,11 @@ def test_custom_demo_pipeline_generates_configured_report(tmp_path: Path) -> Non
     assert completed["status"] == "completed"
     assert completed["task_count"] == 10
     html = (settings.reports_dir / completed["relative_path"]).read_text(encoding="utf-8")
+    assert "演示数据 · 非生产统计" in html
+    assert completed["filename"].startswith("演示数据_")
+    if detail_limit == 2:
+        assert "查询共 10 行，核心指标按完整查询计算" in html
+        assert "前 2 行" in html
     assert "每日产量自定义报表" in html
     assert "每日切割长度" in html
     assert 'id="custom-chart"' in html

@@ -15,7 +15,7 @@ from app.api.automation import router as automation_router
 from app.api.cutting import router as cutting_router
 from app.api.downloads import router as downloads_router
 from app.api.conditions import router as conditions_router
-from app.api.auth import router as auth_router
+from app.api.auth import SESSION_COOKIE, router as auth_router
 from app.api.alarms import router as alarms_router
 from app.api.llm_usage import router as llm_usage_router
 from app.api.designer import router as designer_router
@@ -48,6 +48,7 @@ from app.services.retention_service import RetentionService
 from app.services.request_cancellation import (
     SqlRequestCancelled,
     bind_request_id,
+    cancellation_session_scope,
     reset_request_id,
     sql_request_cancellations,
 )
@@ -99,7 +100,9 @@ async def lifespan(app: FastAPI):
     dispatches = DispatchRepository(database)
     dispatches.initialize()
     pipeline = ReportPipeline(settings, metadata, definitions)
-    pdf_service = PdfService()
+    pdf_service = PdfService(
+        operation_timeout_seconds=settings.pdf_render_timeout_seconds,
+    )
     automation_runtime = AutomationRuntime(settings)
     email_service = EmailService(settings, runtime=automation_runtime)
     automation_service = AutomationService(
@@ -231,15 +234,18 @@ async def request_id_middleware(request: Request, call_next):
         else f"req_{uuid.uuid4().hex[:12]}"
     )
     request.state.request_id = request_id
-    sql_request_cancellations.activate(request_id)
-    token = bind_request_id(request_id)
+    execution_id = sql_request_cancellations.activate(
+        request_id, cancellation_session_scope(request.cookies.get(SESSION_COOKIE)),
+    )
+    request.state.execution_id = execution_id
+    token = bind_request_id(execution_id)
     try:
         response = await call_next(request)
         response.headers["X-Request-ID"] = request_id
         return response
     finally:
         reset_request_id(token)
-        sql_request_cancellations.finish(request_id)
+        sql_request_cancellations.finish(execution_id)
 
 
 @app.exception_handler(SqlRequestCancelled)
@@ -290,10 +296,20 @@ app.include_router(view_router)
 @app.get("/api/v1/health")
 def health(request: Request) -> dict:
     mode = settings.effective_data_source_mode
-    return {
-        "success": True,
+    worker = getattr(request.app.state, "worker", None)
+    worker_status = worker.status() if worker is not None else {"report_alive": False}
+    ready = (
+        worker_status["report_alive"]
+        and worker_status.get("automation_alive") is not False
+        and worker_status.get("email_alive") is not False
+        and not worker_status.get("stalled_workers")
+        and worker_status.get("queue", {}).get("available") is not False
+    )
+    result = {
+        "success": ready,
         "data": {
-            "status": "ok",
+            "status": "ok" if ready else "degraded",
+            "workers": worker_status,
             "version": settings.app_version,
             "demo_mode": mode == "demo",
             "data_source_mode": mode,
@@ -303,6 +319,9 @@ def health(request: Request) -> dict:
         },
         "request_id": request.state.request_id,
     }
+    if not ready:
+        return JSONResponse(status_code=503, content=result)
+    return result
 
 
 assets_dir = settings.frontend_dist_dir / "assets"

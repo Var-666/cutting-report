@@ -1,19 +1,15 @@
 from __future__ import annotations
 
 import logging
-import os
-import re
-import tempfile
 from datetime import datetime
-from pathlib import Path
 from typing import Literal
 from zoneinfo import ZoneInfo
 
-from dotenv import dotenv_values
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 
 from app.api.auth import require_admin
+from app.services.runtime_settings_store import read_runtime_env, write_runtime_env
 from app.config import Settings, settings
 
 
@@ -23,6 +19,24 @@ router = APIRouter(
     tags=["report-automation"],
     dependencies=[Depends(require_admin)],
 )
+
+
+class RecipientResolution(BaseModel):
+    recipient: str = Field(min_length=1, max_length=320)
+    outcome: Literal["accepted", "not_accepted"]
+
+
+class DeliveryResolutionRequest(BaseModel):
+    message_id: str = Field(min_length=1, max_length=255)
+    outcomes: list[RecipientResolution] = Field(min_length=1, max_length=100)
+    evidence_note: str = Field(min_length=1, max_length=1000)
+
+    @field_validator("evidence_note")
+    @classmethod
+    def require_evidence(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("必须填写邮件服务器核对依据")
+        return value.strip()
 
 
 class AutomationConfigurationRequest(BaseModel):
@@ -155,60 +169,8 @@ def _automation_configuration_data(current_settings: Settings | None = None) -> 
     }
 
 
-def _dotenv_quote(value: object) -> str:
-    text = str(value)
-    if any(character in text for character in ("\r", "\n", "\x00")):
-        raise ValueError("配置值不能包含换行或空字符")
-    return "'" + text.replace("\\", "\\\\").replace("'", "\\'") + "'"
-
-
 def _write_automation_runtime_env(values: dict[str, object]) -> None:
-    path = settings.runtime_settings_env_path
-    path.parent.mkdir(parents=True, exist_ok=True)
-    original = path.read_text(encoding="utf-8").splitlines() if path.is_file() else []
-    key_pattern = re.compile(r"^\s*([A-Z][A-Z0-9_]*)\s*=")
-    written: set[str] = set()
-    output: list[str] = []
-    for line in original:
-        match = key_pattern.match(line)
-        key = match.group(1) if match else None
-        if key in values:
-            output.append(f"{key}={_dotenv_quote(values[key])}")
-            written.add(key)
-        else:
-            output.append(line)
-    if output and output[-1] != "":
-        output.append("")
-    if not original:
-        output.extend(
-            [
-                "# 由系统设置页管理。自动化与 SMTP 参数保存后即时生效。",
-                "# 文件中包含邮箱密码，不要提交到代码库或对外发送。",
-                "",
-            ]
-        )
-    for key, value in values.items():
-        if key not in written:
-            output.append(f"{key}={_dotenv_quote(value)}")
-
-    temporary_path: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            "w",
-            encoding="utf-8",
-            dir=path.parent,
-            prefix=".settings-",
-            suffix=".tmp",
-            delete=False,
-        ) as handle:
-            handle.write("\n".join(output).rstrip() + "\n")
-            temporary_path = Path(handle.name)
-        os.chmod(temporary_path, 0o600)
-        os.replace(temporary_path, path)
-    finally:
-        if temporary_path is not None and temporary_path.exists():
-            temporary_path.unlink()
-
+    write_runtime_env(settings.runtime_settings_env_path, values)
 
 @router.get("/configuration")
 def get_automation_configuration(request: Request) -> dict:
@@ -230,9 +192,7 @@ def save_automation_configuration(
         )
         saved_password = None
         if settings.runtime_settings_env_path.is_file():
-            saved_password = dotenv_values(
-                settings.runtime_settings_env_path, interpolate=False
-            ).get("SMTP_PASSWORD")
+            saved_password = read_runtime_env(settings.runtime_settings_env_path).get("SMTP_PASSWORD")
         password = submitted_password
         if submitted_password in {None, ""}:
             password = (
@@ -374,6 +334,32 @@ def list_deliveries(
 @router.post("/deliveries/{delivery_id}/retry", status_code=202)
 def retry_delivery(delivery_id: str, request: Request) -> dict:
     now = _now().isoformat(timespec="seconds")
-    if not request.app.state.automation.retry_delivery(delivery_id, now=now):
+    if request.app.state.automation.delivery_state(delivery_id) is None:
         raise HTTPException(status_code=404, detail="邮件发送记录不存在")
+    if not request.app.state.automation.retry_delivery(delivery_id, now=now):
+        raise HTTPException(status_code=409, detail="仅明确失败的邮件可重试；发送中、已发送或结果待核对的邮件不可重发")
     return _envelope(request, {"queued": True})
+
+
+@router.post("/deliveries/{delivery_id}/resolve")
+def resolve_delivery(delivery_id: str, payload: DeliveryResolutionRequest, request: Request,
+                     user: dict = Depends(require_admin)) -> dict:
+    try:
+        changed = request.app.state.automation.resolve_unknown_delivery(
+            delivery_id, message_id=payload.message_id,
+            outcomes=[item.model_dump() for item in payload.outcomes],
+            evidence_note=payload.evidence_note, user=user,
+            now=_now().isoformat(timespec="seconds"),
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if not changed:
+        raise HTTPException(status_code=409, detail="仅结果待核对的邮件可处理，请刷新当前状态")
+    return _envelope(request, {"resolved": True})
+
+
+@router.get("/deliveries/{delivery_id}/resolutions")
+def delivery_resolutions(delivery_id: str, request: Request) -> dict:
+    return _envelope(request, {"items": request.app.state.automation.delivery_resolutions(delivery_id)})

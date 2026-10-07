@@ -67,7 +67,7 @@ defineExpose({ getChartElement: () => chartElement.value })
 <style scoped>
 .report-trend-panel { margin-bottom:22px; overflow:hidden; }
 .report-trend-panel__heading { gap:14px; flex-wrap:wrap; }
-.report-trend-panel__heading small { color:#728595; font-size:12px; }
+.report-trend-panel__heading small { color:var(--muted); font-size:12px; }
 .report-trend-panel__activity{display:flex;align-items:center;gap:7px;color:#287993!important;font-weight:700}.report-trend-panel__activity .spinner{width:13px;height:13px}
 .report-trend-panel__body{position:relative;min-height:var(--report-trend-height)}
 .report-trend-panel__content { display:grid; grid-template-columns:minmax(330px,.9fr) minmax(0,1.25fr); gap:14px; align-items:stretch; padding:16px 18px 20px; }

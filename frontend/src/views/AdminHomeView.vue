@@ -82,18 +82,18 @@ function changeRate(current, previous) {
 }
 
 function comparisonStatus(current, previous) {
-  if (previous === null || previous === undefined || Number(previous) === 0) return { text: '暂无上期对比', direction: 'flat' }
+  if (previous === null || previous === undefined || Number(previous) === 0) return { text: '暂无上月对比', direction: 'flat' }
   const change = changeRate(current, previous)
-  if (change.direction === 'flat') return { text: '与上期持平', direction: 'flat' }
-  return { text: `${change.direction === 'up' ? '↑' : '↓'} ${change.value}% 较上期`, direction: change.direction }
+  if (change.direction === 'flat') return { text: '与上月持平', direction: 'flat' }
+  return { text: `${change.direction === 'up' ? '↑' : '↓'} ${change.value}% 较上月`, direction: change.direction }
 }
 
 const taskComparison = computed(() => comparisonStatus(total.value.task_count, previousTotal.value.task_count))
 const lengthComparison = computed(() => comparisonStatus(total.value.cut_length_m, previousTotal.value.cut_length_m))
 const timeComparison = computed(() => comparisonStatus(total.value.work_time_seconds, previousTotal.value.work_time_seconds))
 const insightTrend = computed(() => {
-  if (lengthComparison.value.direction === 'flat') return lengthComparison.value.text === '暂无上期对比' ? '暂无可比较的切割长度数据' : '切割长度与上期持平'
-  return `切割长度${lengthComparison.value.direction === 'up' ? '高于' : '低于'}上期 ${lengthComparison.value.text.match(/\d+%/)?.[0] || ''}`
+  if (lengthComparison.value.direction === 'flat') return lengthComparison.value.text === '暂无上月对比' ? '暂无可比较的切割长度数据' : '切割长度与上月持平'
+  return `切割长度${lengthComparison.value.direction === 'up' ? '高于' : '低于'}上月 ${lengthComparison.value.text.match(/\d+%/)?.[0] || ''}`
 })
 const insightAdvice = computed(() => openAlarms.value.length ? '优先处理未解除设备告警' : electricity.value == null || gas.value == null ? '先核对能耗数据是否完整' : '持续关注生产与能耗变化')
 
@@ -117,10 +117,10 @@ function renderCharts() {
       animationDuration: 240,
       color: ['#3284d6', '#16a3b6'],
       tooltip: { trigger: 'axis', borderWidth: 0, backgroundColor: '#12374f', textStyle: { color: '#fff', fontSize: 12 } },
-      legend: { top: 4, right: 8, itemWidth: 11, itemHeight: 7, textStyle: { color: '#64748b', fontSize: 11 } },
+      legend: { top: 4, right: 8, itemWidth: 11, itemHeight: 7, textStyle: { color: '#415e75', fontSize: 12 } },
       grid: { left: 48, right: 44, top: 38, bottom: 31 },
-      xAxis: { type: 'category', data: rows.map((item) => item.period_start.slice(5)), axisTick: { show: false }, axisLine: { lineStyle: { color: '#dfe7ee' } }, axisLabel: { color: '#64748b', fontSize: 11 } },
-      yAxis: [{ type: 'value', splitNumber: 3, splitLine: { lineStyle: { color: '#e8edf2' } }, axisLabel: { color: '#64748b', fontSize: 10 } }, { type: 'value', splitNumber: 3, splitLine: { show: false }, axisLabel: { show: false } }],
+      xAxis: { type: 'category', data: rows.map((item) => item.period_start.slice(5)), axisTick: { show: false }, axisLine: { lineStyle: { color: '#dfe7ee' } }, axisLabel: { color: '#415e75', fontSize: 12 } },
+      yAxis: [{ type: 'value', splitNumber: 3, splitLine: { lineStyle: { color: '#e8edf2' } }, axisLabel: { color: '#415e75', fontSize: 12 } }, { type: 'value', splitNumber: 3, splitLine: { show: false }, axisLabel: { show: false } }],
       series: [
         { name: '切割长度（米）', type: 'bar', barMaxWidth: 28, data: rows.map((item) => Number(item.cut_length_m || 0).toFixed(1)), itemStyle: { borderRadius: [2, 2, 0, 0] } },
         { name: '设备工时（小时）', type: 'line', yAxisIndex: 1, smooth: true, symbolSize: 6, data: rows.map((item) => (Number(item.work_time_seconds || 0) / 3600).toFixed(1)), lineStyle: { width: 2 }, areaStyle: { opacity: .06 } },
@@ -207,23 +207,23 @@ onBeforeUnmount(() => {
     <div v-if="error" class="global-error home-error" role="alert"><strong>部分概览数据读取失败</strong><span>{{ error }}</span><button type="button" @click="loadDashboard">重试</button></div>
 
     <section class="command-kpis" aria-label="本月生产概况">
-      <HomeKpiCard title="本月任务" subtitle="TASKS" icon="tasks" tone="blue" :value="total.task_count" unit="项" :status="taskComparison.text" :direction="taskComparison.direction" :series="metricSeries.tasks" :loading="overviewLoading" />
-      <HomeKpiCard title="切割长度" subtitle="CUTTING LENGTH" icon="ruler" tone="teal" :value="formatNumber(total.cut_length_m)" unit="米" :status="lengthComparison.text" :direction="lengthComparison.direction" :series="metricSeries.length" :loading="overviewLoading" />
-      <HomeKpiCard title="设备工时" subtitle="EQUIPMENT HOURS" icon="clock" tone="purple" :value="compactDuration(total.work_time_seconds)" :status="timeComparison.text" :direction="timeComparison.direction" :series="metricSeries.hours" :loading="overviewLoading" />
-      <HomeKpiCard title="生产天数" subtitle="PRODUCTION DAYS" icon="factory" tone="green" :value="activeDays" unit="天" status="本月有记录" direction="up" :series="metricSeries.days" :loading="overviewLoading" />
-      <HomeKpiCard title="电耗" subtitle="POWER CONSUMPTION" icon="zap" tone="amber" :value="formatNumber(electricity)" :unit="energy?.units?.electricity || 'kWh'" :status="electricity == null ? '暂无数据' : `已汇总 ${energy.saved_day_count || 0} 天`" :direction="electricity == null ? 'flat' : 'up'" :series="metricSeries.electricity" :loading="energyLoading" />
-      <HomeKpiCard title="气耗" subtitle="GAS CONSUMPTION" icon="wind" tone="sky" :value="formatNumber(gas)" :unit="energy?.units?.gas || 'Nm³'" :status="gas == null ? '暂无数据' : `已汇总 ${energy.saved_day_count || 0} 天`" :direction="gas == null ? 'flat' : 'up'" :series="metricSeries.gas" :loading="energyLoading" />
+      <HomeKpiCard title="本月任务" icon="tasks" tone="blue" :value="total.task_count" unit="项" :status="taskComparison.text" :direction="taskComparison.direction" :series="metricSeries.tasks" :loading="overviewLoading" />
+      <HomeKpiCard title="切割长度" icon="ruler" tone="teal" :value="formatNumber(total.cut_length_m)" unit="米" :status="lengthComparison.text" :direction="lengthComparison.direction" :series="metricSeries.length" :loading="overviewLoading" />
+      <HomeKpiCard title="设备工时" icon="clock" tone="purple" :value="compactDuration(total.work_time_seconds)" :status="timeComparison.text" :direction="timeComparison.direction" :series="metricSeries.hours" :loading="overviewLoading" />
+      <HomeKpiCard title="生产天数" icon="factory" tone="green" :value="activeDays" unit="天" status="本月有记录" direction="up" :series="metricSeries.days" :loading="overviewLoading" />
+      <HomeKpiCard title="电耗" icon="zap" tone="amber" :value="formatNumber(electricity)" :unit="energy?.units?.electricity || 'kWh'" :status="electricity == null ? '暂无数据' : `已汇总 ${energy.saved_day_count || 0} 天`" :direction="electricity == null ? 'flat' : 'up'" :series="metricSeries.electricity" :loading="energyLoading" />
+      <HomeKpiCard title="气耗" icon="wind" tone="sky" :value="formatNumber(gas)" :unit="energy?.units?.gas || 'Nm³'" :status="gas == null ? '暂无数据' : `已汇总 ${energy.saved_day_count || 0} 天`" :direction="gas == null ? 'flat' : 'up'" :series="metricSeries.gas" :loading="energyLoading" />
     </section>
 
     <section class="dashboard-grid" aria-label="生产看板">
       <article class="dashboard-card trend-card" aria-labelledby="trend-card-title">
-        <HomeSectionHeader heading-id="trend-card-title" title="生产趋势" subtitle="PRODUCTION TREND" icon="trend" to="/admin/reports/leadership" action="近7天" tone="blue" />
+        <HomeSectionHeader heading-id="trend-card-title" title="生产趋势" icon="trend" to="/admin/reports/leadership" action="近7天" tone="blue" />
         <div v-if="overviewLoading" class="card-loading" role="status">正在获取生产数据...</div>
         <div v-else-if="!overview" class="card-empty" role="status"><strong>暂无趋势数据</strong><small>请检查生产报表数据后重试</small></div>
         <div v-else ref="trendElement" class="trend-chart" role="img" aria-label="近七天切割长度与设备工时趋势图"></div>
       </article>
       <article class="dashboard-card status-card" aria-labelledby="status-card-title">
-        <HomeSectionHeader heading-id="status-card-title" title="生产状态" subtitle="PRODUCTION STATUS" icon="activity" to="/admin/reports/workshop" action="查看全部" />
+        <HomeSectionHeader heading-id="status-card-title" title="生产状态" icon="activity" to="/admin/reports/workshop" action="查看全部" />
         <div v-if="overviewLoading" class="card-loading" role="status">正在获取生产数据...</div>
         <div v-else-if="!overview" class="card-empty" role="status"><strong>暂无生产状态</strong><small>请检查车间报表数据</small></div>
         <template v-else>
@@ -232,19 +232,19 @@ onBeforeUnmount(() => {
         </template>
       </article>
       <article class="dashboard-card alarm-card" aria-labelledby="alarm-card-title">
-        <HomeSectionHeader heading-id="alarm-card-title" title="最近告警" subtitle="RECENT ALARMS" icon="bell" to="/admin/alarms" action="查看全部" tone="amber" />
+        <HomeSectionHeader heading-id="alarm-card-title" title="最近告警" icon="bell" to="/admin/alarms" action="查看全部" tone="amber" />
         <div v-if="alarmLoading" class="card-loading" role="status">正在检查设备状态...</div>
         <div v-else-if="!incidents.length" class="card-empty" role="status"><span class="card-empty__icon"><AppIcon name="bell" :size="25" /></span><strong>当前暂无告警</strong><small>{{ alarmStatus?.enabled ? '系统持续监控设备状态' : '告警监控未启用' }}</small></div>
         <div v-else class="alarm-list"><RouterLink v-for="item in incidents.slice(0, 4)" :key="item.incident_id" to="/admin/alarms" class="alarm-row"><span class="alarm-symbol" :class="item.severity"><AppIcon name="alert" :size="15" /></span><div><strong>{{ item.alarm_desc || item.alarm_code || '设备告警' }}</strong><small>{{ severityText[item.severity] || '告警' }} · {{ item.machine_no || '切割设备' }} · {{ item.alarm_class || '运行监控' }}</small></div><time>{{ shortDateTime(item.last_seen_at) }}</time><em :class="item.status">{{ item.status === 'open' ? '未解除' : '已解除' }}</em></RouterLink></div>
       </article>
       <article class="dashboard-card reports-card" aria-labelledby="reports-card-title">
-        <HomeSectionHeader heading-id="reports-card-title" title="最近生成报告" subtitle="RECENT REPORTS" icon="file" to="/admin/reports/center" :action="`查看全部${historyTotal ? ` ${historyTotal}` : ''}`" />
+        <HomeSectionHeader heading-id="reports-card-title" title="最近生成报告" icon="file" to="/admin/reports/center" :action="`查看全部${historyTotal ? ` ${historyTotal}` : ''}`" />
         <div v-if="historyLoading" class="card-loading" role="status">正在获取报告...</div>
         <div v-else-if="!recentReports.length" class="card-empty compact" role="status"><strong>暂无已生成报告</strong><small>可从报表中心生成第一份报告</small></div>
         <div v-else class="report-list"><div v-for="item in recentReports" :key="item.report_id" class="report-row"><span class="report-symbol"><AppIcon name="file" :size="16" /></span><strong>{{ item.report_title || reportTypeText[item.report_type] || '生产报表' }}</strong><span>{{ reportPeriod(item) }}</span><span>{{ item.task_count ?? '--' }} 项</span><em :data-status="item.status">{{ statusText[item.status] || item.status }}</em><time>{{ shortDateTime(item.generated_at || item.created_at) }}</time><a v-if="item.view_url" :href="item.view_url" target="_blank" rel="noopener">打开</a><span v-else>--</span></div></div>
       </article>
       <article class="dashboard-card quick-card" aria-labelledby="quick-card-title">
-        <HomeSectionHeader heading-id="quick-card-title" title="快捷入口" subtitle="QUICK ACCESS" icon="grid" />
+        <HomeSectionHeader heading-id="quick-card-title" title="快捷入口" icon="grid" />
         <nav class="quick-links" aria-label="核心报表快速入口">
           <RouterLink class="quick-link quick-link--leadership" to="/admin/reports/leadership"><span class="quick-link__icon"><AppIcon name="briefcase" :size="20" /></span><span class="quick-link__copy"><strong>领导报表</strong><small>全面掌握生产情况</small></span><span class="quick-link__arrow" aria-hidden="true"><AppIcon name="chevron-right" :size="15" /></span></RouterLink>
           <RouterLink class="quick-link quick-link--workshop" to="/admin/reports/workshop"><span class="quick-link__icon"><AppIcon name="factory" :size="20" /></span><span class="quick-link__copy"><strong>车间报表</strong><small>查看生产过程与任务记录</small></span><span class="quick-link__arrow" aria-hidden="true"><AppIcon name="chevron-right" :size="15" /></span></RouterLink>
@@ -252,7 +252,7 @@ onBeforeUnmount(() => {
         </nav>
       </article>
       <article class="dashboard-card insights-card" aria-labelledby="insights-card-title">
-        <HomeSectionHeader heading-id="insights-card-title" title="智能洞察" subtitle="AI INSIGHTS" icon="sparkles" to="/admin/reports/leadership" action="查看更多" tone="purple" />
+        <HomeSectionHeader heading-id="insights-card-title" title="智能洞察" icon="sparkles" to="/admin/reports/leadership" action="查看更多" tone="purple" />
         <div v-if="overviewLoading || alarmLoading" class="card-loading" role="status">正在分析生产数据...</div>
         <div v-else-if="!overview" class="card-empty compact" role="status"><strong>暂无生产洞察</strong><small>请检查生产数据后重试</small></div>
         <div v-else class="insight-grid"><div class="insight-item insight-item--blue"><span><AppIcon name="chart" :size="19" /></span><p><strong>生产概况</strong><small>本月完成 {{ total.task_count }} 项任务</small></p></div><div class="insight-item" :class="openAlarms.length ? 'insight-item--danger' : 'insight-item--green'"><span><AppIcon :name="openAlarms.length ? 'alert' : 'check'" :size="19" /></span><p><strong>异常发现</strong><small>{{ openAlarms.length ? `发现 ${openAlarms.length} 项未解除告警` : '当前未发现异常告警' }}</small></p></div><div class="insight-item insight-item--teal"><span><AppIcon name="trend" :size="19" /></span><p><strong>趋势变化</strong><small>{{ insightTrend }}</small></p></div><div class="insight-item insight-item--amber"><span><AppIcon name="lightbulb" :size="19" /></span><p><strong>建议关注</strong><small>{{ insightAdvice }}</small></p></div></div>

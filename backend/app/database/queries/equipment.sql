@@ -17,6 +17,7 @@ WITH task_source AS (
 )
 SELECT
     CONVERT(varchar(64), source.[TASK_ID]) AS task_id,
+    source.production_date AS production_date,
     NULLIF(LTRIM(RTRIM(source.[MACHINE_NO])), '') AS equipment_id,
     NULLIF(LTRIM(RTRIM(source.[PROJECT_NAME])), '') AS project_code,
     NULLIF(LTRIM(RTRIM(source.[PROJECT_NAME])), '') AS ship_no,

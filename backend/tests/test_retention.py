@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import pytest
 from dataclasses import replace
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -99,7 +100,8 @@ def test_retention_keeps_unresolved_remote_dispatches(tmp_path):
     assert all(dispatches.get(identifier) is None for identifier in deletable)
 
 
-def test_unified_retention_removes_only_expired_terminal_data(tmp_path) -> None:
+@pytest.mark.parametrize("delivery_status", ["pending", "unknown"])
+def test_unified_retention_removes_only_expired_terminal_data(tmp_path, delivery_status) -> None:
     (
         database,
         workshop,
@@ -423,6 +425,9 @@ def test_unified_retention_removes_only_expired_terminal_data(tmp_path) -> None:
         subject="待发送",
         now=OLD,
     ) is not None
+    if delivery_status == "unknown":
+        delivery = automation.claim_delivery(OLD)
+        automation.mark_delivery_unknown(delivery, now=OLD)
 
     with database.connect() as connection:
         connection.execute(
@@ -453,7 +458,20 @@ def test_unified_retention_removes_only_expired_terminal_data(tmp_path) -> None:
             (admin["user_id"], admin["user_id"], admin["display_name"], OLD),
         )
 
+    with database.connect() as connection:
+        connection.executemany(
+            """INSERT INTO workshop_source_correction_audits (
+                audit_id, report_id, task_id, payload, reason,
+                operated_by_id, operated_by_name, operated_at
+            ) VALUES (?, 'source-report', 'source-task', '{}', '核对后更正', ?, ?, ?)""",
+            [(audit_id, admin["user_id"], admin["display_name"], stamp)
+             for audit_id, stamp in (("source-old", OLD), ("source-recent", RECENT))],
+        )
     result = RetentionService(cfg, retention).cleanup_expired(now=NOW)
+    with database.connect() as connection:
+        assert [row[0] for row in connection.execute(
+            "SELECT audit_id FROM workshop_source_correction_audits ORDER BY audit_id"
+        ).fetchall()] == ["source-recent"]
 
     assert result["records"] == {
         "reports": 1,
@@ -468,6 +486,7 @@ def test_unified_retention_removes_only_expired_terminal_data(tmp_path) -> None:
         "dispatches": 1,
         "download_records": 1,
         "confirmation_audits": 1,
+        "source_correction_audits": 1,
         "admin_audits": 1,
     }
     assert result["files"] == {"deleted": 4, "missing": 0, "failed": 0}

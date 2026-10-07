@@ -12,3 +12,7 @@ export function recentTwelveMonthStart(reportDate) {
   const startMonth = monthIndex - startYear * 12 + 1
   return `${startYear}-${String(startMonth).padStart(2, '0')}-01`
 }
+
+export function taskProductionDate(row, fallback = '') {
+  return String(row?.production_date || row?.production_time || fallback).slice(0, 10)
+}

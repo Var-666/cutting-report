@@ -11,6 +11,7 @@ from app.config import Settings
 from app.database.workshop import WorkshopRepository
 from app.models.domain import (
     EquipmentRecord,
+    production_day,
     LeadershipPeriodRecord,
     LeadershipReportResult,
     LeadershipSnapshotState,
@@ -26,7 +27,7 @@ from app.services.energy_period_service import (
     total_channel,
 )
 from app.services.equipment_service import summarize_equipment
-from app.services.query_service import QueryService
+from app.services.query_service import EquipmentQueryResult, QueryService
 
 
 MAX_REPORT_RANGE_DAYS = 366
@@ -151,9 +152,9 @@ class RangeReportService:
         by_month: dict[date, list] = defaultdict(list)
         by_project: dict[str, list] = defaultdict(list)
         for row in bundle.summary_records:
-            if row.production_time is None:
+            stamp = production_day(row)
+            if stamp is None:
                 continue
-            stamp = row.production_time.date()
             by_day[stamp].append(row)
             by_month[stamp.replace(day=1)].append(row)
             by_project[row.project_code or "未标注工程"].append(row)
@@ -260,7 +261,10 @@ class RangeReportService:
             field,
         )
 
-    def equipment(self, start_date: date, end_date: date, *, force: bool = False) -> dict:
+    def equipment_tasks(
+        self, start_date: date, end_date: date, *, force: bool = False
+    ) -> tuple[EquipmentQueryResult, dict]:
+        """Share the authoritative task query/calculation with report exports."""
         validate_report_range(start_date, end_date)
         if (end_date - start_date).days >= MAX_LIVE_ENERGY_RANGE_DAYS:
             raise ValueError(
@@ -272,12 +276,17 @@ class RangeReportService:
         task_report = self.energy_period_service.get_task_range(
             start_date, end_date, source.records, force=force
         )
+        return source, task_report
+
+    def equipment(self, start_date: date, end_date: date, *, force: bool = False) -> dict:
+        source, task_report = self.equipment_tasks(start_date, end_date, force=force)
         records = restore_task_energy_records(source.records, task_report)
         mode = task_report["summary"]["energy_data_mode"]
         by_day: dict[date, list[EquipmentRecord]] = defaultdict(list)
         for row in records:
-            if row.production_time is not None:
-                by_day[row.production_time.date()].append(row)
+            stamp = production_day(row)
+            if stamp is not None:
+                by_day[stamp].append(row)
 
         daily_rows = []
         today = datetime.now(ZoneInfo(self.settings.timezone)).date()

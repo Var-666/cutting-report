@@ -146,6 +146,18 @@ test('PDM file table supports up to twenty selections and direct batch dispatch'
   assert.match(view, /class="dispatch-table source-file-table"/)
 })
 
+test('mobile file selection keeps batch actions reachable at the bottom of the viewport', () => {
+  const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
+
+  assert.match(view, /v-if="selectedFileCount && !pushBatch\.visible" class="mobile-selection-bar"/)
+  assert.match(view, /class="mobile-selection-bar" aria-label="已选文件操作"/)
+  assert.match(view, /class="mobile-selection-bar"[\s\S]*@click="clearSelectedFiles"[\s\S]*@click="openPushBatch"/)
+  assert.match(view, /\.mobile-selection-bar,\.mobile-selection-bar-spacer \{ display:none; \}/)
+  assert.match(view, /@media \(max-width:680px\) \{[\s\S]*?\.mobile-selection-bar \{ position:fixed;[^}]*bottom:0;[^}]*display:grid;/)
+  assert.match(view, /\.mobile-selection-bar button \{ min-height:44px;/)
+  assert.match(view, /env\(safe-area-inset-bottom\)/)
+})
+
 test('file dispatch presents the four-step dashboard and persistent confirmation summary', () => {
   const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
 

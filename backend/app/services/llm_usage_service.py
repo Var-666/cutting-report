@@ -14,12 +14,13 @@ def _token_count(value: Any) -> int | None:
     return value if type(value) is int and value >= 0 else None
 
 
-def record_llm_call(settings: Settings, response: Any | None) -> None:
+def record_llm_call(settings: Settings, response: Any | None, response_body: dict | None = None) -> None:
     """Count an HTTP attempt; use only token counts supplied by the provider."""
     total = None
     if response is not None:
         try:
-            usage = response.json().get("usage") or {}
+            body = response_body if response_body is not None else response.json()
+            usage = body.get("usage") or {}
             if isinstance(usage, dict):
                 total = _token_count(usage.get("total_tokens"))
                 if total is None:

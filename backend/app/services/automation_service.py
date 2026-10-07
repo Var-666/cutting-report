@@ -9,9 +9,12 @@ from app.config import Settings
 from app.database.automation import AutomationRepository
 from app.database.metadata import MetadataRepository
 from app.database.unit_of_work import UnitOfWork
-from app.database.workshop import DailyReportExistsError, WorkshopRepository
+from app.database.workshop import WorkshopRepository
 from app.models.domain import ReportFilter
-from app.services.email_service import EmailService
+from app.services.email_service import (
+    EmailService, EmailConfigurationError, EmailDeliveryFailure,
+    EmailRecipientsRefused,
+)
 from app.services.automation_runtime import AutomationRuntime
 from app.services.query_service import QueryService
 
@@ -94,19 +97,22 @@ class AutomationService:
             return 0
         count = 0
         for schedule in self.repository.due_schedules(now.isoformat(timespec="seconds")):
-            following = next_run_at(schedule, now)
-            run = self.repository.reserve_run(
-                schedule,
-                scheduled_for=schedule["next_run_at"],
-                report_date=report_date_for(
-                    schedule, datetime.fromisoformat(schedule["next_run_at"])
-                ).isoformat(),
-                trigger_type="scheduled",
-                now=now.isoformat(timespec="seconds"),
-                next_run_at=following.isoformat(timespec="seconds"),
-            )
-            if run and self._create_report_job(run, now):
-                count += 1
+            try:
+                scheduled_for = datetime.fromisoformat(schedule["next_run_at"])
+                following = next_run_at(schedule, scheduled_for)
+                run = self.repository.reserve_run(
+                    schedule,
+                    scheduled_for=schedule["next_run_at"],
+                    report_date=report_date_for(schedule, scheduled_for).isoformat(),
+                    trigger_type="scheduled",
+                    now=now.isoformat(timespec="seconds"),
+                    next_run_at=following.isoformat(timespec="seconds"),
+                )
+                if run and self._create_report_job(run, now):
+                    count += 1
+            except Exception:
+                logger.exception("automation schedule reservation failed",
+                                 extra={"schedule_id": schedule["schedule_id"]})
         return count
 
     def run_now(self, schedule_id: str, now: datetime) -> dict | None:
@@ -131,6 +137,9 @@ class AutomationService:
                 self._ensure_workshop_report(run, now)
             report_id = f"rpt_{now:%Y%m%d_%H%M%S}_{uuid4().hex[:6]}"
             with UnitOfWork(self.database, self.settings.timezone) as unit:
+                current = unit.automation.get_run(run["run_id"])
+                if current is None or current["report_id"] or current["status"] != "queued":
+                    return False
                 unit.metadata.create_job(
                     report_id=report_id,
                     report_date=run["report_date"],
@@ -150,19 +159,35 @@ class AutomationService:
             return True
         except Exception as exc:
             logger.exception("scheduled report enqueue failed")
-            self.repository.mark_run(
-                run["run_id"], "failed", now=now.isoformat(timespec="seconds"), error=str(exc)
-            )
+            with UnitOfWork(self.database, self.settings.timezone) as unit:
+                current = unit.automation.get_run(run["run_id"])
+                if current and not current["report_id"] and current["status"] == "queued":
+                    unit.automation.mark_run(
+                        run["run_id"], "failed", now=now.isoformat(timespec="seconds"), error=str(exc)
+                    )
             return False
+
+    def reconcile_runs(self, now: datetime) -> int:
+        """Resume only persisted gaps; never recreate jobs or redeliver mail."""
+        recovered = 0
+        for item in self.repository.incomplete_runs():
+            try:
+                if item["report_id"] is None:
+                    run = self.repository.get_run(item["run_id"])
+                    if run and self._create_report_job(run, now):
+                        recovered += 1
+                elif item["report_status"] == "completed":
+                    self.report_completed(item["report_id"], now)
+                    recovered += 1
+                elif item["report_status"] == "failed":
+                    self.report_failed(item["report_id"], item["error_message"] or "报表生成失败", now)
+                    recovered += 1
+            except Exception:
+                logger.exception("automation run recovery failed", extra={"run_id": item["run_id"]})
+        return recovered
 
     def _ensure_workshop_report(self, run: dict, now: datetime) -> None:
         report_date = run["report_date"]
-        existing = self.workshop.get_daily_report(report_date)
-        if (
-            existing is not None
-            and existing.get("scope_machine_no") == self.settings.report_machine_no
-        ):
-            return
         bundle = self.query_service.fetch_workshop_data(
             ReportFilter(report_date=date.fromisoformat(report_date))
         )
@@ -170,27 +195,14 @@ class AutomationService:
             "user_id": run["created_by_id"],
             "display_name": run["created_by_name"],
         }
-        try:
-            if existing is not None:
-                self.workshop.populate_empty_daily_report(
-                    report_date=report_date,
-                    source_mode=self.settings.effective_data_source_mode,
-                    records=bundle.workshop_records,
-                    user=user,
-                    now=now.isoformat(timespec="seconds"),
-                    scope_machine_no=self.settings.report_machine_no,
-                )
-                return
-            self.workshop.create_daily_report(
-                report_date=report_date,
-                source_mode=self.settings.effective_data_source_mode,
-                records=bundle.workshop_records,
-                user=user,
-                now=now.isoformat(timespec="seconds"),
-                scope_machine_no=self.settings.report_machine_no,
-            )
-        except DailyReportExistsError:
-            pass
+        self.workshop.sync_daily_report(
+            report_date=report_date,
+            source_mode=self.settings.effective_data_source_mode,
+            records=bundle.workshop_records,
+            user=user,
+            now=now.isoformat(timespec="seconds"),
+            scope_machine_no=self.settings.report_machine_no,
+        )
 
     def report_completed(self, report_id: str, now: datetime) -> None:
         run = self.repository.delivery_for_report(report_id)
@@ -223,6 +235,7 @@ class AutomationService:
         if delivery is None:
             return False
         runtime_settings, _ = self.runtime.snapshot()
+        send_started = False
         try:
             attachment = None
             if delivery.get("attach_report"):
@@ -231,11 +244,9 @@ class AutomationService:
                 if not path.is_relative_to(root) or not path.is_file():
                     raise FileNotFoundError("报表附件不存在")
                 attachment = path.read_bytes()
+            send_started = True
             message_id = self.email_service.send(
                 delivery, attachment, settings_snapshot=runtime_settings
-            )
-            self.repository.mark_delivery_sent(
-                delivery, message_id=message_id, now=now.isoformat(timespec="seconds")
             )
         except Exception as exc:
             delay = min(
@@ -248,10 +259,23 @@ class AutomationService:
                 "email delivery failed delivery_id=%s attempt=%s error_type=%s",
                 delivery["delivery_id"], delivery["attempt_count"], type(exc).__name__,
             )
-            self.repository.mark_delivery_failed(
-                delivery,
-                error=str(exc),
-                next_attempt_at=retry_at.isoformat(timespec="seconds"),
-                now=now.isoformat(timespec="seconds"),
-            )
+            if isinstance(exc, EmailRecipientsRefused):
+                self.repository.mark_delivery_refused(
+                    delivery, exc.recipients, message_id=exc.message_id,
+                    next_attempt_at=retry_at.isoformat(timespec="seconds"),
+                    now=now.isoformat(timespec="seconds"),
+                )
+            elif send_started and not isinstance(exc, (EmailDeliveryFailure, EmailConfigurationError)):
+                self.repository.mark_delivery_unknown(delivery, now=now.isoformat(timespec="seconds"))
+            else:
+                self.repository.mark_delivery_failed(
+                    delivery, error=str(exc), next_attempt_at=retry_at.isoformat(timespec="seconds"),
+                    now=now.isoformat(timespec="seconds"),
+                )
+            return True
+        # SMTP success followed by a database failure is an unknown durable
+        # outcome. Leave 'sending' for restart reconciliation; never retry it.
+        self.repository.mark_delivery_sent(
+            delivery, message_id=message_id, now=now.isoformat(timespec="seconds")
+        )
         return True

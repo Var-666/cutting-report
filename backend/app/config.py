@@ -62,7 +62,7 @@ class Settings:
     sqlserver_connect_timeout: int = _as_int("SQLSERVER_CONNECT_TIMEOUT_SECONDS", 5)
     sqlserver_query_timeout: int = _as_int("SQLSERVER_QUERY_TIMEOUT_SECONDS", 120)
     leadership_report_cache_seconds: int = _as_int(
-        "LEADERSHIP_REPORT_CACHE_SECONDS", 300
+        "LEADERSHIP_REPORT_CACHE_SECONDS", 600
     )
     leadership_report_history_cache_seconds: int = _as_int(
         "LEADERSHIP_REPORT_HISTORY_CACHE_SECONDS", 86400
@@ -70,8 +70,8 @@ class Settings:
     leadership_report_reconcile_hour: int = _as_int(
         "LEADERSHIP_REPORT_RECONCILE_HOUR", 2
     )
-    report_data_cache_seconds: int = _as_int("REPORT_DATA_CACHE_SECONDS", 300)
-    report_background_refresh_seconds: int = _as_int("REPORT_BACKGROUND_REFRESH_SECONDS", 300)
+    report_data_cache_seconds: int = _as_int("REPORT_DATA_CACHE_SECONDS", 600)
+    report_background_refresh_seconds: int = _as_int("REPORT_BACKGROUND_REFRESH_SECONDS", 600)
     # 当前所有生产统计统一限定为 dbo.task.MACHINE_NO = Cutter01。
     report_machine_no: str = os.getenv("REPORT_MACHINE_NO", "Cutter01").strip() or "Cutter01"
 
@@ -143,6 +143,7 @@ class Settings:
     worker_database_auth_enabled: bool = _as_bool(
         "WORKER_DATABASE_AUTH_ENABLED", False
     )
+    worker_database_session_check_seconds: float = _as_float("WORKER_DATABASE_SESSION_CHECK_SECONDS", 60)
     worker_database_available_value: str = os.getenv(
         "WORKER_DATABASE_AVAILABLE_VALUE", "1"
     ).strip()
@@ -186,6 +187,7 @@ class Settings:
     ).strip()
     magic_box_enabled: bool = _as_bool("MAGIC_BOX_ENABLED", False)
     magic_box_timeout: float = _as_float("MAGIC_BOX_TIMEOUT_SECONDS", 60)
+    magic_box_operation_timeout: float = _as_float("MAGIC_BOX_OPERATION_TIMEOUT_SECONDS", 180)
     magic_box_config_cache_seconds: int = _as_int(
         "MAGIC_BOX_CONFIG_CACHE_SECONDS", 60
     )
@@ -195,6 +197,10 @@ class Settings:
     llm_base_url: str = os.getenv("LLM_BASE_URL", "")
     llm_model: str = os.getenv("LLM_MODEL", "")
     llm_timeout: float = _as_float("LLM_TIMEOUT_SECONDS", 30)
+    llm_max_input_chars: int = _as_int("LLM_MAX_INPUT_CHARS", 500_000)
+    llm_max_output_chars: int = _as_int("LLM_MAX_OUTPUT_CHARS", 50_000)
+    llm_max_concurrent: int = _as_int("LLM_MAX_CONCURRENT", 2)
+    llm_queue_timeout_seconds: float = _as_float("LLM_QUEUE_TIMEOUT_SECONDS", 30)
 
     # 告警源位于生产数据库；20kw切割机对应的 MACHINE_NO 是 Cutter01。
     alarm_monitor_enabled: bool = _as_bool("ALARM_MONITOR_ENABLED", False)
@@ -232,6 +238,9 @@ class Settings:
     report_max_detail_rows: int = _as_int("REPORT_MAX_DETAIL_ROWS", 1000)
     chart_top_n: int = _as_int("CHART_TOP_N", 20)
     worker_poll_seconds: float = _as_float("REPORT_WORKER_POLL_SECONDS", 0.5)
+    worker_stall_timeout_seconds: float = _as_float("REPORT_WORKER_STALL_TIMEOUT_SECONDS", 900)
+    report_operation_timeout_seconds: float = _as_float("REPORT_OPERATION_TIMEOUT_SECONDS", 900)
+    pdf_render_timeout_seconds: float = _as_float("PDF_RENDER_TIMEOUT_SECONDS", 120)
     automation_enabled: bool = _as_bool("AUTOMATION_ENABLED", True)
     automation_scan_seconds: float = _as_float("AUTOMATION_SCAN_SECONDS", 15)
     email_retry_base_seconds: int = _as_int("EMAIL_RETRY_BASE_SECONDS", 60)
@@ -250,6 +259,35 @@ class Settings:
     sql_workbench_max_rows: int = _as_int("SQL_WORKBENCH_MAX_ROWS", 200)
     auth_session_hours: int = _as_int("AUTH_SESSION_HOURS", 12)
     auth_cookie_secure: bool = _as_bool("AUTH_COOKIE_SECURE", False)
+
+    def __post_init__(self) -> None:
+        if not 1000 <= self.llm_max_input_chars <= 10_000_000:
+            raise ValueError("LLM_MAX_INPUT_CHARS 必须在 1000 到 10000000 之间")
+        if not 1000 <= self.llm_max_output_chars <= 2_000_000:
+            raise ValueError("LLM_MAX_OUTPUT_CHARS 必须在 1000 到 2000000 之间")
+        if not 1 <= self.llm_max_concurrent <= 8:
+            raise ValueError("LLM_MAX_CONCURRENT 必须在 1 到 8 之间")
+        if not 1 <= self.llm_queue_timeout_seconds <= 300:
+            raise ValueError("LLM_QUEUE_TIMEOUT_SECONDS 必须在 1 到 300 秒之间")
+        if not 1 <= self.llm_timeout <= 300:
+            raise ValueError("LLM_TIMEOUT_SECONDS 必须在 1 到 300 秒之间")
+        if not 1 <= self.worker_database_session_check_seconds <= 3600:
+            raise ValueError("WORKER_DATABASE_SESSION_CHECK_SECONDS 必须在 1 到 3600 秒之间")
+        if not 1 <= self.worker_stall_timeout_seconds <= 86400:
+            raise ValueError("REPORT_WORKER_STALL_TIMEOUT_SECONDS 必须在 1 到 86400 秒之间")
+        if not 5 <= self.report_operation_timeout_seconds <= 86400:
+            raise ValueError("REPORT_OPERATION_TIMEOUT_SECONDS 必须在 5 到 86400 秒之间")
+        if not 1 <= self.pdf_render_timeout_seconds <= 1800:
+            raise ValueError("PDF_RENDER_TIMEOUT_SECONDS 必须在 1 到 1800 秒之间")
+        if not 5 <= self.magic_box_operation_timeout <= 1800:
+            raise ValueError("MAGIC_BOX_OPERATION_TIMEOUT_SECONDS 必须在 5 到 1800 秒之间")
+        if self.data_source_mode not in {"", "demo", "excel", "sqlserver"}:
+            raise ValueError("APP_DATA_SOURCE_MODE 必须是 demo、excel 或 sqlserver")
+        if (
+            self.app_env.strip().lower() in {"production", "prod"}
+            and self.demo_mode and not self.data_source_mode
+        ):
+            raise ValueError("生产环境禁止隐式演示数据；使用演示数据必须显式设置 APP_DATA_SOURCE_MODE=demo")
 
     @property
     def data_dir(self) -> Path:
@@ -286,7 +324,7 @@ class Settings:
     @property
     def effective_data_source_mode(self) -> str:
         mode = self.data_source_mode or ("demo" if self.demo_mode else "sqlserver")
-        return mode if mode in {"demo", "excel", "sqlserver"} else "demo"
+        return mode
 
     @property
     def task_excel_path(self) -> Path:

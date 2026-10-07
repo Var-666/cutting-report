@@ -33,6 +33,11 @@ class _HrDirectory:
     def __init__(self) -> None:
         self.find_calls = []
         self.auth_calls = []
+        self.session_calls = []
+
+    def session_identity_available(self, external_id, *, force=False):
+        self.session_calls.append((external_id, force))
+        return True
 
     def find_person(self, external_id):
         self.find_calls.append(external_id)
@@ -129,6 +134,7 @@ def test_hr_admin_password_is_verified_against_hr_before_grant(monkeypatch) -> N
 
     assert response.status_code == 201
     assert directory.auth_calls == [("C0001", "hr-password")]
+    assert directory.session_calls == [("7001", True)]
 
 
 def test_anonymous_user_cannot_manage_admin_permissions(monkeypatch) -> None:

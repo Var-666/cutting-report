@@ -95,7 +95,8 @@ class ReportService:
             else "report.html.j2"
         )
         template = self.environment.get_template(template_name)
-        html = template.render(report=report, echarts_source=echarts_source)
+        demo_mode = self.settings.effective_data_source_mode == "demo"
+        html = template.render(report=report, echarts_source=echarts_source, demo_mode=demo_mode)
         if "报告结束" not in html:
             raise ReportRenderError("报告模板渲染结果不完整")
 
@@ -117,6 +118,8 @@ class ReportService:
             "custom": report["meta"]["title"],
         }[report_type]
         prefix = "".join(char for char in prefix if char not in '\\/:*?"<>|')[:50] or "自定义报表"
+        if demo_mode:
+            prefix = f"演示数据_{prefix}"
         period_start = report["meta"].get("period_start") or report["meta"]["report_date"]
         period_end = report["meta"].get("period_end") or period_start
         period = period_start if period_start == period_end else f"{period_start}_至_{period_end}"

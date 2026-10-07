@@ -98,6 +98,7 @@ class RetentionRepository(SQLiteRepository):
             "dispatches": 0,
             "download_records": 0,
             "confirmation_audits": 0,
+            "source_correction_audits": 0,
             "admin_audits": 0,
         }
         with self.connect() as connection:
@@ -120,7 +121,7 @@ class RetentionRepository(SQLiteRepository):
                       AND NOT EXISTS (
                           SELECT 1 FROM email_deliveries AS delivery
                           WHERE delivery.report_id = j.report_id
-                            AND delivery.status IN ('pending', 'sending', 'retry_wait')
+                            AND delivery.status IN ('pending', 'sending', 'retry_wait', 'unknown')
                       )
                     ORDER BY COALESCE(j.finished_at, j.created_at), j.report_id
                     LIMIT ?
@@ -343,6 +344,14 @@ class RetentionRepository(SQLiteRepository):
                 ).rowcount
 
             if audit_cutoff is not None:
+                counts["source_correction_audits"] = connection.execute(
+                    """DELETE FROM workshop_source_correction_audits
+                    WHERE audit_id IN (
+                        SELECT audit_id FROM workshop_source_correction_audits
+                        WHERE operated_at <= ? ORDER BY operated_at, audit_id LIMIT ?
+                    )""",
+                    (audit_cutoff, batch_size),
+                ).rowcount
                 counts["confirmation_audits"] = connection.execute(
                     """
                     DELETE FROM workshop_confirmation_audits

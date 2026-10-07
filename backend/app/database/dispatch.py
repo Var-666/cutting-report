@@ -265,13 +265,6 @@ class DispatchRepository(SQLiteRepository):
             ).fetchone()
         return self._decode(row) if row else None
 
-    def find_active(
-        self, document_id: str, version_id: str | None, machine_ip: str
-    ) -> dict[str, Any] | None:
-        with self.connect() as connection:
-            row = self._active_row(connection, document_id, version_id, machine_ip)
-        return self._decode(row) if row else None
-
     def list(self, *, page: int, page_size: int) -> tuple[list[dict[str, Any]], int]:
         offset = (page - 1) * page_size
         with self.connect() as connection:
@@ -372,31 +365,6 @@ class DispatchRepository(SQLiteRepository):
                 "SELECT * FROM cutting_dispatches WHERE dispatch_id = ?", (dispatch_id,)
             ).fetchone()
             return self._decode(row)
-
-    def update_machine(
-        self,
-        dispatch_id: str,
-        *,
-        machine_ip: str,
-        expected: Iterable[str],
-        now: str,
-    ) -> dict[str, Any] | None:
-        expected_statuses = sorted(set(expected))
-        if not expected_statuses:
-            raise ValueError("必须指定允许修改的原状态")
-        placeholders = ", ".join("?" for _ in expected_statuses)
-        with self.connect() as connection:
-            cursor = connection.execute(
-                f"""
-                UPDATE cutting_dispatches
-                SET machine_ip = ?, updated_at = ?
-                WHERE dispatch_id = ? AND status IN ({placeholders})
-                """,
-                (machine_ip, now, dispatch_id, *expected_statuses),
-            )
-            if cursor.rowcount != 1:
-                return None
-        return self.get(dispatch_id)
 
     def recover_interrupted(self, now: str) -> None:
         """Fail closed after a restart; never re-upload an uncertain request."""

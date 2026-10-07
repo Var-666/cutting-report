@@ -1,5 +1,6 @@
 <script setup>
-import { computed, onActivated, onDeactivated, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onDeactivated, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import {
   confirmWorkshopTasks,
   correctWorkshopTask,
@@ -18,9 +19,11 @@ import ReportFeedback from '../components/ReportFeedback.vue'
 import ReportTrendPanel from '../components/ReportTrendPanel.vue'
 import StandardReportQuery from '../components/StandardReportQuery.vue'
 import WorkshopStructureCharts from '../components/WorkshopStructureCharts.vue'
-import { reportToday } from '../api/reportDates.js'
+import WorkshopSourceCorrections from '../components/WorkshopSourceCorrections.vue'
+import { reportToday, taskProductionDate } from '../api/reportDates.js'
 import { formatChineseDate, formatChineseDateTime } from '../utils/dateDisplay.js'
 import { useDialogFocus } from '../composables/useDialogFocus.js'
+import { mergeOwnedQuery, queryChoice, queryDateRange, queryPositiveInteger, queryText, sameRouteQuery } from '../utils/reportRouteState.js'
 
 const props = defineProps({
   exporting: Boolean,
@@ -28,15 +31,18 @@ const props = defineProps({
   mode: { type: String, default: 'manager', validator: (value) => ['manager', 'worker'].includes(value) },
 })
 const emit = defineEmits(['export'])
+const route = useRoute()
+const router = useRouter()
 const today = reportToday()
 const pageSize = 10
 const filters = reactive({ reportDate: today, startDate: today, endDate: today, projectName: '', confirmationStatus: 'all' })
+const appliedRouteState = reactive({ startDate: today, endDate: today, projectName: '', confirmationStatus: 'all', page: 1, defaultView: true })
 const result = ref({ report: null, items: [], total: 0, page: 1, page_size: pageSize, project_names: [], confirmed_count: 0, worker_summaries: [], duration_distribution: [], status_distribution: [], top_cut_length_tasks: [] })
 const loading = ref(false)
 const error = ref('')
 const pageActive = ref(true)
 const defaultReportView = ref(true)
-const chartType = ref('bar_line')
+const chartType = ref(props.mode === 'manager' ? queryChoice(route.query.chart, ['bar_line', 'bar', 'line', 'area'], 'bar_line') : 'bar_line')
 const selectedTasks = ref(new Map())
 const batchConfirmation = reactive({ visible: false, saving: false, error: '', tasks: [] })
 const batchDialogElement = ref(null)
@@ -78,6 +84,9 @@ const correctionReasonPresets = {
 const presetReasonValues = new Set(Object.values(correctionReasonPresets).flat())
 const totalPages = computed(() => Math.max(1, Math.ceil(result.value.total / result.value.page_size)))
 const isWorker = computed(() => props.mode === 'worker')
+const dateQueryDirty = computed(() => !isWorker.value && (
+  filters.startDate !== appliedRouteState.startDate || filters.endDate !== appliedRouteState.endDate
+))
 const visibleCorrectionReasonPresets = computed(() => {
   if (isWorker.value) return correctionReasonPresets.workerRevoke
   return correction.action === 'reassign'
@@ -130,6 +139,28 @@ let refreshTimer = null
 let feedbackTimer = null
 let requestController = null
 let requestSequence = 0
+let routeStateReady = false
+let restoringRouteState = false
+
+const routeQueryKeys = ['start', 'end', 'project', 'confirmation', 'page', 'chart']
+
+function routeStateQuery() {
+  return mergeOwnedQuery(route.query, routeQueryKeys, {
+    start: appliedRouteState.defaultView ? '' : appliedRouteState.startDate,
+    end: appliedRouteState.defaultView ? '' : appliedRouteState.endDate,
+    project: appliedRouteState.projectName,
+    confirmation: appliedRouteState.confirmationStatus === 'all' ? '' : appliedRouteState.confirmationStatus,
+    page: appliedRouteState.page === 1 ? '' : appliedRouteState.page,
+    chart: chartType.value === 'bar_line' ? '' : chartType.value,
+  })
+}
+
+async function syncRouteState() {
+  if (isWorker.value || route.name !== 'workshop-report') return
+  const query = routeStateQuery()
+  if (sameRouteQuery(query, route.query)) return
+  await router.push({ query })
+}
 
 function beginRequest() {
   requestController?.abort()
@@ -163,6 +194,7 @@ function startRefreshTimer() {
 }
 
 watch(() => [filters.reportDate, filters.startDate, filters.endDate], () => {
+  if (restoringRouteState) return
   filters.projectName = ''
   filters.confirmationStatus = 'all'
   clearSelectedTasks()
@@ -170,6 +202,7 @@ watch(() => [filters.reportDate, filters.startDate, filters.endDate], () => {
   result.value = { report: null, items: [], total: 0, page: 1, page_size: pageSize, project_names: [], confirmed_count: 0, worker_summaries: [], duration_distribution: [], status_distribution: [], top_cut_length_tasks: [] }
 })
 watch(() => [filters.projectName, filters.confirmationStatus], () => {
+  if (restoringRouteState) return
   clearSelectedTasks()
   batchConfirmation.visible = false
 })
@@ -185,7 +218,7 @@ function duration(value) {
   return [Math.floor(seconds / 3600), Math.floor(seconds % 3600 / 60), seconds % 60].map((item) => String(item).padStart(2, '0')).join(':')
 }
 function time(value) { return formatChineseDateTime(value) }
-function rowDate(row) { return row?.production_time ? String(row.production_time).slice(0, 10) : filters.reportDate }
+function rowDate(row) { return taskProductionDate(row, filters.reportDate) }
 
 function clearSelectedTasks() {
   selectedTasks.value = new Map()
@@ -283,7 +316,7 @@ function applyConfirmedTasks(confirmations = []) {
   reconcileVisibleTaskSelection(items)
 }
 
-async function load(page = 1, { silent = false, ensureReport = true, force = false } = {}) {
+async function load(page = 1, { silent = false, ensureReport = true, force = false, syncRoute = false } = {}) {
   if (!isWorker.value && filters.endDate < filters.startDate) {
     error.value = '结束日期不能早于开始日期'
     return
@@ -303,8 +336,8 @@ async function load(page = 1, { silent = false, ensureReport = true, force = fal
     let data = isWorker.value
       ? await listWorkshopTasks(query, { force, signal })
       : await listWorkshopRangeTasks(query, { force, signal })
-    if (isWorker.value && ensureReport && (!data.report || !data.report.item_count)) {
-      await generateWorkshopDailyReport(query.reportDate)
+    if (isWorker.value && ensureReport) {
+      await generateWorkshopDailyReport(query.reportDate, { signal })
       if (!pageActive.value || signal.aborted || sequence !== requestSequence) return
       data = await listWorkshopTasks(query, { force: true, signal })
     }
@@ -313,7 +346,18 @@ async function load(page = 1, { silent = false, ensureReport = true, force = fal
       : query.startDate === filters.startDate && query.endDate === filters.endDate
     if (pageActive.value && !signal.aborted && sequence === requestSequence && current) {
       result.value = data
+      if (!isWorker.value) {
+        Object.assign(appliedRouteState, {
+          startDate: query.startDate,
+          endDate: query.endDate,
+          projectName: query.projectName,
+          confirmationStatus: query.confirmationStatus,
+          page: data.page,
+          defaultView: defaultReportView.value,
+        })
+      }
       reconcileVisibleTaskSelection(data.items || [])
+      if (syncRoute) await syncRouteState()
     }
   } catch (exception) {
     if (exception.name !== 'AbortError' && sequence === requestSequence && !silent) error.value = exception.message
@@ -333,7 +377,11 @@ function refreshAnalysisReport() {
 function applyTaskFilters() {
   defaultReportView.value = false
   clearSelectedTasks()
-  load(1, { force: true })
+  load(1, { force: true, syncRoute: !isWorker.value })
+}
+
+function changePage(page) {
+  load(page, { syncRoute: !isWorker.value })
 }
 
 async function submitBatchConfirmation() {
@@ -344,7 +392,8 @@ async function submitBatchConfirmation() {
   error.value = ''
   showConfirmationFeedback('pending', '正在确认任务', `共 ${tasks.length} 项 · 请稍候`)
   try {
-    const confirmationResult = await confirmWorkshopTasks(tasks.map((row) => row.task_id), filters.reportDate)
+    const confirmationResult = await confirmWorkshopTasks(tasks.map((row) => row.task_id), filters.reportDate,
+      Object.fromEntries(tasks.map((row) => [row.task_id, row.snapshot_revision || 1])))
     const confirmations = confirmationResult.items || []
     applyConfirmedTasks(confirmations)
     batchConfirmation.visible = false
@@ -465,7 +514,32 @@ function exportReport(format = 'html') {
   }, format)
 }
 
-async function initializeReport() {
+function requestedRouteState() {
+  const range = queryDateRange(route.query)
+  return {
+    range,
+    chartType: queryChoice(route.query.chart, ['bar_line', 'bar', 'line', 'area'], 'bar_line'),
+    projectName: range ? queryText(route.query.project).trim() : '',
+    confirmationStatus: range ? queryChoice(route.query.confirmation, ['all', 'unconfirmed', 'confirmed'], 'all') : 'all',
+    page: range ? queryPositiveInteger(route.query.page) : 1,
+  }
+}
+
+async function applyRequestedRouteState(state) {
+  restoringRouteState = true
+  chartType.value = state.chartType
+  if (state.range) {
+    filters.startDate = state.range.start
+    filters.endDate = state.range.end
+    filters.projectName = state.projectName
+    filters.confirmationStatus = state.confirmationStatus
+  }
+  await nextTick()
+  restoringRouteState = false
+}
+
+async function initializeReport({ restoreQuery = false } = {}) {
+  const requested = restoreQuery && !isWorker.value ? requestedRouteState() : null
   const { sequence, signal } = beginRequest()
   loading.value = true
   error.value = ''
@@ -477,12 +551,48 @@ async function initializeReport() {
       filters.startDate = latest.report_date
       filters.endDate = latest.report_date
     }
+    if (!isWorker.value) {
+      filters.projectName = ''
+      filters.confirmationStatus = 'all'
+    }
     defaultReportView.value = true
   } catch (exception) {
     if (exception.name !== 'AbortError' && sequence === requestSequence) error.value = exception.message
   }
   if (!pageActive.value || signal.aborted || sequence !== requestSequence) return
-  await load(1, { force: false })
+  if (requested?.range) {
+    await applyRequestedRouteState(requested)
+    defaultReportView.value = false
+  }
+  await load(requested?.page || 1, { force: false })
+}
+
+async function restoreRouteState() {
+  if (isWorker.value || route.name !== 'workshop-report') return false
+  const requested = requestedRouteState()
+  await applyRequestedRouteState(requested)
+
+  if (!requested.range) {
+    if (!result.value.report || !defaultReportView.value) {
+      await initializeReport()
+      return true
+    }
+    return false
+  }
+
+  defaultReportView.value = false
+  if (
+    !result.value.report
+    || appliedRouteState.startDate !== requested.range.start
+    || appliedRouteState.endDate !== requested.range.end
+    || appliedRouteState.projectName !== requested.projectName
+    || appliedRouteState.confirmationStatus !== requested.confirmationStatus
+    || appliedRouteState.page !== requested.page
+  ) {
+    await load(requested.page, { force: false })
+    return true
+  }
+  return false
 }
 
 function pausePage() {
@@ -497,15 +607,17 @@ function pausePage() {
   feedbackTimer = null
 }
 
-onMounted(() => {
-  initializeReport()
+onMounted(async () => {
+  await initializeReport({ restoreQuery: !isWorker.value })
+  routeStateReady = true
   startRefreshTimer()
 })
-onActivated(() => {
+onActivated(async () => {
   pageActive.value = true
   startRefreshTimer()
+  if (routeStateReady && await restoreRouteState()) return
   if (!result.value.report && !loading.value) {
-    initializeReport()
+    await initializeReport({ restoreQuery: !isWorker.value })
     return
   }
   if (isWorker.value && result.value.report && !loading.value && !batchConfirmation.visible && !batchConfirmation.saving) {
@@ -516,6 +628,12 @@ onDeactivated(pausePage)
 onUnmounted(() => {
   pausePage()
 })
+watch(chartType, async () => {
+  if (routeStateReady && !restoringRouteState && !isWorker.value) await syncRouteState()
+})
+watch(() => route.query, async () => {
+  if (routeStateReady && pageActive.value && !isWorker.value && route.name === 'workshop-report') await restoreRouteState()
+}, { deep: true })
 </script>
 
 <template>
@@ -584,6 +702,7 @@ onUnmounted(() => {
         :anchor-date="filters.reportDate"
         :loading="loading"
         :has-data="Boolean(result.report)"
+        :date-dirty="dateQueryDirty"
         :export-disabled="loading || !result.report"
         :exporting="exporting"
         @submit="applyTaskFilters"
@@ -605,7 +724,7 @@ onUnmounted(() => {
 
     <section v-if="!isWorker" class="workshop-kpis" aria-label="车间任务概况" :aria-busy="loading">
       <article class="workshop-kpi kpi-blue">
-        <span class="workshop-kpi__icon"><AppIcon name="tasks" size="21" /></span>
+        <span class="workshop-kpi__icon"><AppIcon name="tasks" size="21" tone="muted" /></span>
         <div><span>全部任务<small>ALL TASKS</small></span><p><strong>{{ result.report ? workshopMetrics.taskCount : '--' }}</strong> <small>项</small></p><em>当前查询区间</em></div>
         <MetricSparkline class="workshop-sparkline" :values="workshopMetricSeries.tasks" label="每日任务数量趋势" />
       </article>
@@ -620,12 +739,12 @@ onUnmounted(() => {
         <MetricSparkline class="workshop-sparkline" :values="workshopMetricSeries.confirmed" label="每日已确认任务趋势" />
       </article>
       <article class="workshop-kpi kpi-red">
-        <span class="workshop-kpi__icon"><AppIcon name="briefcase" size="21" tone="red" /></span>
+        <span class="workshop-kpi__icon"><AppIcon name="briefcase" size="21" tone="muted" /></span>
         <div><span>涉及工程<small>PROJECTS</small></span><p><strong>{{ result.report ? workshopMetrics.projectCount : '--' }}</strong> <small>个</small></p><em>当前区间范围</em></div>
         <MetricSparkline class="workshop-sparkline" :values="workshopMetricSeries.projects" label="每日涉及工程趋势" />
       </article>
       <article class="workshop-kpi kpi-violet">
-        <span class="workshop-kpi__icon"><AppIcon name="activity" size="21" /></span>
+        <span class="workshop-kpi__icon"><AppIcon name="activity" size="21" tone="muted" /></span>
         <div><span>确认率<small>CONFIRMATION RATE</small></span><p><strong>{{ result.report ? number(workshopMetrics.confirmationRate) : '--' }}</strong> <small>%</small></p><em>按区间任务计算</em></div>
         <MetricSparkline class="workshop-sparkline" :values="workshopMetricSeries.confirmationRate" label="每日任务确认率趋势" />
       </article>
@@ -664,6 +783,7 @@ onUnmounted(() => {
       </form>
       <div v-if="result.report" class="workshop-report-state"><strong>{{ isWorker ? formatChineseDate(result.report.report_date) : `${formatChineseDate(result.report.period_start)} 至 ${formatChineseDate(result.report.period_end)}` }} 车间报表</strong><span>{{ isWorker ? `生成人：${result.report.generated_by_name || '--'} · 生成时间：${time(result.report.generated_at)} · ` : '' }}总任务 {{ result.report.item_count }} 项 · 已确认 {{ result.report.confirmed_count }} 项</span></div>
       <div v-if="result.report" class="workshop-summary">当前筛选返回 {{ result.total }} 项任务，所选工程/船号已确认 {{ result.confirmed_count }} 项</div>
+      <WorkshopSourceCorrections v-if="!isWorker && user.role === 'admin'" :report-date="filters.startDate" :active="pageActive" @updated="load(1, { force: true, ensureReport: false })" />
       <div v-if="isWorker && result.report" class="workshop-batch-actions"><span>已选择 <strong>{{ selectedTaskCount }}</strong> 项待确认任务</span><div><button type="button" :disabled="!selectedTaskCount || batchConfirmation.saving" @click="clearSelectedTasks">清空选择</button><button class="primary" type="button" :disabled="!selectedTaskCount || loading || batchConfirmation.saving" @click="openBatchConfirmation()">确认选中任务</button></div></div>
     </template>
     <template #table>
@@ -681,7 +801,7 @@ onUnmounted(() => {
         </tbody>
       </table>
     </template>
-    <template #footer><div v-if="result.report && result.items.length" class="history-pagination"><span class="history-page-summary">第 {{ result.page }} / {{ totalPages }} 页</span><div class="history-page-buttons"><button :disabled="loading || result.page <= 1" @click="load(result.page - 1)">上一页</button><button :disabled="loading || result.page >= totalPages" @click="load(result.page + 1)">下一页</button></div></div></template>
+    <template #footer><div v-if="result.report && result.items.length" class="history-pagination app-pagination"><div class="history-page-buttons app-pagination__actions"><button :disabled="loading || result.page <= 1" @click="changePage(result.page - 1)">上一页</button><span class="app-pagination__summary">第 {{ result.page }} / {{ totalPages }} 页，共 {{ result.total }} 条</span><button :disabled="loading || result.page >= totalPages" @click="changePage(result.page + 1)">下一页</button></div></div></template>
   </ReportTrendPanel>
 
     <ReportTrendPanel
@@ -721,8 +841,8 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.workshop-dashboard>.page-hero{position:relative;min-height:174px;display:flex;align-items:center;overflow:hidden;padding:25px 30px;border:1px solid rgba(255,255,255,.72);border-radius:14px;background:linear-gradient(90deg,rgba(246,252,255,.99) 0%,rgba(238,248,253,.92) 39%,rgba(7,48,76,.08) 69%),url('../assets/home-laser-cutting.webp') center 51%/cover no-repeat;box-shadow:0 12px 30px rgba(22,62,89,.07);animation:surface-in .46s cubic-bezier(.2,.75,.25,1) both}.workshop-dashboard>.page-hero::after{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(116deg,transparent 0 46%,rgba(255,255,255,.24) 46.2%,transparent 46.8%)}.workshop-hero__copy,.workshop-hero__slogan{position:relative;z-index:1}.workshop-hero__copy{max-width:560px}.workshop-hero__copy .eyebrow{display:block;margin:0 0 5px;color:#237fb7;font-size:10px;font-weight:700;letter-spacing:1.4px}.workshop-hero__copy h2{margin:0 0 7px;color:#153f5d;font-size:38px;line-height:1.08;letter-spacing:1px}.workshop-hero__copy>p{max-width:530px;margin:0;color:#607a8d;font-size:12px;line-height:1.7}.workshop-hero__slogan{margin:0 20px 0 auto;color:#effaff;text-align:right;text-shadow:0 2px 10px rgba(4,37,58,.84);transform:rotate(-6deg)}.workshop-hero__slogan strong,.workshop-hero__slogan span{display:block}.workshop-hero__slogan strong{font-size:16px;letter-spacing:3px}.workshop-hero__slogan span{margin-top:5px;font-size:11px;letter-spacing:2px}.workshop-query-shell{margin:10px 0;padding:11px 14px;border:1px solid #dbe6ec;border-radius:10px;background:#fff;box-shadow:0 7px 22px rgba(22,62,89,.05)}.workshop-query-shell .report-query{width:100%;grid-template-columns:repeat(2,minmax(170px,1fr)) minmax(160px,.7fr) 128px 128px;padding:0;border:0;background:transparent;box-shadow:none}.workshop-query-shell :deep(.report-period-picker__trigger),.workshop-query-shell :deep(.app-select__trigger),.workshop-query-shell .report-query>button{height:38px;min-height:38px;border-radius:6px;font-size:10px}.workshop-query-shell .report-query>button.primary{display:flex;align-items:center;justify-content:center;gap:6px;border-color:#1179ab;background:linear-gradient(135deg,#0e688f,#0584af);box-shadow:0 5px 12px rgba(15,111,158,.18)}.global-error{margin:10px 0 0;border-radius:9px}.workshop-kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin:10px 0}.workshop-kpi{--kpi-color:#237fb7;--kpi-soft:#eaf5fb;position:relative;min-width:0;min-height:108px;display:flex;gap:10px;overflow:hidden;padding:14px 12px;border:1px solid #dbe6ec;border-top:2px solid var(--kpi-color);border-radius:10px;background:#fff;box-shadow:0 7px 22px rgba(22,62,89,.055);transition:transform .18s ease,box-shadow .18s ease;animation:surface-in .42s cubic-bezier(.2,.75,.25,1) both}.workshop-kpi:hover{transform:translateY(-2px);box-shadow:0 11px 26px rgba(22,62,89,.09)}.workshop-kpi:nth-child(2){animation-delay:.04s}.workshop-kpi:nth-child(3){animation-delay:.08s}.workshop-kpi:nth-child(4){animation-delay:.12s}.workshop-kpi:nth-child(5){animation-delay:.16s}.workshop-kpi.kpi-amber{--kpi-color:#ee9b2f;--kpi-soft:#fff6e6}.workshop-kpi.kpi-green{--kpi-color:#19a777;--kpi-soft:#e9f8f3}.workshop-kpi.kpi-red{--kpi-color:#df5961;--kpi-soft:#fff0f1}.workshop-kpi.kpi-violet{--kpi-color:#7366db;--kpi-soft:#efedff}.workshop-kpi__icon{position:relative;z-index:1;width:35px;height:35px;display:grid;place-items:center;flex:0 0 auto;color:var(--kpi-color);border-radius:50%;background:var(--kpi-soft);transition:transform .2s ease}.workshop-kpi:hover .workshop-kpi__icon{transform:scale(1.08) rotate(-3deg)}.workshop-kpi>div{position:relative;z-index:1;min-width:0;flex:1}.workshop-kpi>div>span{display:block;color:#284a62;font-size:11px;font-weight:700;white-space:nowrap}.workshop-kpi>div>span small{display:block;margin:3px 0 0;color:#8195a4;font-size:7px;font-weight:500;letter-spacing:.45px}.workshop-kpi p{margin:8px 0 6px;color:#173f64;font-size:9px;white-space:nowrap}.workshop-kpi p strong{font-size:21px}.workshop-kpi p small{margin-left:2px;color:#6f8798;font-size:8px}.workshop-kpi em{display:block;overflow:hidden;color:#7e929f;text-overflow:ellipsis;white-space:nowrap;font-style:normal;font-size:8px}.workshop-sparkline{position:absolute;right:8px;bottom:12px;width:58px;height:25px;opacity:.72}.workshop-kpi::after{content:"";position:absolute;width:70px;height:70px;right:-28px;bottom:-41px;border-radius:50%;background:var(--kpi-soft);opacity:.72}
-:deep(.workshop-panel),:deep(.worker-time-summary){margin-bottom:10px;border:1px solid #dbe6ec;border-radius:10px;box-shadow:0 7px 22px rgba(22,62,89,.05)}:deep(.workshop-panel .report-trend-panel__heading),:deep(.worker-time-summary .report-trend-panel__heading){min-height:47px;padding:0 14px;border-bottom:1px solid #e5edf1;background:linear-gradient(90deg,#fff,#fbfdfe)}:deep(.workshop-panel .report-trend-panel__heading>div),:deep(.worker-time-summary .report-trend-panel__heading>div){gap:8px}:deep(.workshop-panel .report-trend-panel__heading>div>span),:deep(.worker-time-summary .report-trend-panel__heading>div>span){width:28px;height:24px;display:grid;place-items:center;padding:0;color:#237fb7;border:0;border-radius:7px;background:#eaf5fb;font-size:10px;font-weight:700}:deep(.workshop-panel .report-trend-panel__heading h2),:deep(.worker-time-summary .report-trend-panel__heading h2){color:#193c57;font-size:14px}:deep(.workshop-panel .report-trend-panel__heading p),:deep(.worker-time-summary .report-trend-panel__heading p){color:#6f8798;font-size:9px}.workshop-filters{grid-template-columns:1.2fr 1fr auto!important;gap:10px;padding:11px 14px 9px;border-bottom:1px solid #e6edf1}.workshop-dashboard--worker .workshop-filters{grid-template-columns:1fr 1fr 1fr auto!important}.workshop-filters label span{margin-bottom:5px;font-size:9px}.workshop-filters>button{min-height:38px;display:flex;align-items:center;justify-content:center;gap:6px;padding:0 15px;border-color:#b8cdd8;border-radius:6px;background:#f8fbfc;color:#2477a6;font-size:10px}.workshop-report-state,.workshop-empty-report{margin:0 14px 8px;padding:9px 12px;border:0;border-radius:7px;background:linear-gradient(90deg,#eef8fb,#f6fbfc);font-size:9px}.workshop-report-state strong,.workshop-empty-report strong{font-size:10px}.workshop-summary{padding:0 14px 10px;font-size:9px}:deep(.workshop-panel .report-trend-panel__content),:deep(.worker-time-summary .report-trend-panel__content){padding:0 13px 12px}:deep(.workshop-panel .report-trend-panel__table),:deep(.worker-time-summary .report-trend-panel__table){overflow-x:auto;border-color:#dfe9ee;border-radius:7px}.workshop-table th,.workshop-table td{height:36px;padding:6px 8px;font-size:10px}.workshop-table thead th{color:#fff!important;background:#0b4f76!important;font-size:9px!important}.workshop-table tbody tr:hover{background:#f4f9fb}.pending-confirmation{display:inline-flex;align-items:center;justify-content:center;min-height:22px;padding:0 9px;border-radius:999px;background:#fff4df;color:#b67719;font-weight:700}.confirmed-mark{color:#16885f}.history-pagination{min-height:45px;padding:7px 14px;border-top:1px solid #e3ebef;background:#fbfdfe}.history-page-buttons button{min-height:30px;border-radius:5px}.worker-time-table th,.worker-time-table td{height:36px;padding:6px 8px;font-size:10px}.worker-time-table thead th{background:#0b4f76}.workshop-batch-actions{margin:0 14px 9px;border:1px solid #dce7ec;border-radius:7px}:deep(.workshop-analysis){margin-bottom:0;overflow:hidden;border:1px solid #dbe6ec;border-radius:10px;box-shadow:0 7px 22px rgba(22,62,89,.05)}:deep(.workshop-analysis .analysis-panel-head){padding:12px 15px;background:linear-gradient(90deg,#fff,#fbfdfe)}:deep(.workshop-analysis .analysis-panel-icon){width:34px;height:34px}:deep(.workshop-analysis .analysis-kicker){font-size:8px}:deep(.workshop-analysis .analysis-panel-head h2){margin:2px 0 0;color:#193c57;font-size:15px}:deep(.workshop-analysis .analysis-actions button){min-height:33px;padding:0 12px;font-size:10px}:deep(.workshop-analysis .analysis-facts){gap:7px;padding:10px 13px 0}:deep(.workshop-analysis .analysis-facts article){padding:8px 10px}:deep(.workshop-analysis .analysis-facts span){font-size:9px}:deep(.workshop-analysis .analysis-facts strong){font-size:12px}:deep(.workshop-analysis .analysis-grid){grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;padding:10px 13px 13px}:deep(.workshop-analysis .analysis-grid article){min-height:88px;padding:11px 12px;border:0;border-radius:7px;background:#eff7fb}:deep(.workshop-analysis .analysis-grid article:nth-child(3)){background:#fff1f2}:deep(.workshop-analysis .analysis-grid article:nth-child(4)){background:#eef8f4}:deep(.workshop-analysis .analysis-grid h3){font-size:10px}:deep(.workshop-analysis .analysis-grid p){color:#60798b;font-size:9px;line-height:1.6;overflow-wrap:anywhere}:deep(.workshop-analysis .analysis-evidence){margin:0 13px 12px}:deep(.workshop-analysis .analysis-time){padding:0 13px 12px;font-size:9px}
+.workshop-dashboard>.page-hero{position:relative;min-height:174px;display:flex;align-items:center;overflow:hidden;padding:25px 30px;border:1px solid rgba(255,255,255,.72);border-radius:14px;background:linear-gradient(90deg,rgba(246,252,255,.99) 0%,rgba(238,248,253,.92) 39%,rgba(7,48,76,.08) 69%),url('../assets/home-laser-cutting.webp') center 51%/cover no-repeat;box-shadow:0 12px 30px rgba(22,62,89,.07);animation:surface-in .46s cubic-bezier(.2,.75,.25,1) both}.workshop-dashboard>.page-hero::after{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(116deg,transparent 0 46%,rgba(255,255,255,.24) 46.2%,transparent 46.8%)}.workshop-hero__copy,.workshop-hero__slogan{position:relative;z-index:1}.workshop-hero__copy{max-width:560px}.workshop-hero__copy .eyebrow{display:block;margin:0 0 5px;color:#237fb7;font-size:10px;font-weight:700;letter-spacing:1.4px}.workshop-hero__copy h2{margin:0 0 7px;color:#153f5d;font-size:38px;line-height:1.08;letter-spacing:1px}.workshop-hero__copy>p{max-width:530px;margin:0;color:#607a8d;font-size:12px;line-height:1.7}.workshop-hero__slogan{margin:0 20px 0 auto;color:#effaff;text-align:right;text-shadow:0 2px 10px rgba(4,37,58,.84);transform:rotate(-6deg)}.workshop-hero__slogan strong,.workshop-hero__slogan span{display:block}.workshop-hero__slogan strong{font-size:16px;letter-spacing:3px}.workshop-hero__slogan span{margin-top:5px;font-size:11px;letter-spacing:2px}.workshop-query-shell{margin:10px 0;padding:11px 14px;border:1px solid #dbe6ec;border-radius:10px;background:#fff;box-shadow:0 7px 22px rgba(22,62,89,.05)}.workshop-query-shell .report-query{width:100%;grid-template-columns:repeat(2,minmax(170px,1fr)) minmax(160px,.7fr) 128px 128px;padding:0;border:0;background:transparent;box-shadow:none}.workshop-query-shell :deep(.report-period-picker__trigger),.workshop-query-shell :deep(.app-select__trigger),.workshop-query-shell .report-query>button{height:38px;min-height:38px;border-radius:6px;font-size:10px}.workshop-query-shell .report-query>button.primary{display:flex;align-items:center;justify-content:center;gap:6px;border-color:#1179ab;background:linear-gradient(135deg,#0e688f,#0584af);box-shadow:0 5px 12px rgba(15,111,158,.18)}.global-error{margin:10px 0 0;border-radius:9px}.workshop-kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin:10px 0}.workshop-kpi{--kpi-color:#237fb7;--kpi-soft:#eaf5fb;position:relative;min-width:0;min-height:108px;display:flex;gap:10px;overflow:hidden;padding:14px 12px;border:1px solid #dbe6ec;border-top:2px solid var(--kpi-color);border-radius:10px;background:#fff;box-shadow:0 7px 22px rgba(22,62,89,.055);transition:transform .18s ease,box-shadow .18s ease;animation:surface-in .42s cubic-bezier(.2,.75,.25,1) both}.workshop-kpi:hover{transform:translateY(-2px);box-shadow:0 11px 26px rgba(22,62,89,.09)}.workshop-kpi:nth-child(2){animation-delay:.04s}.workshop-kpi:nth-child(3){animation-delay:.08s}.workshop-kpi:nth-child(4){animation-delay:.12s}.workshop-kpi:nth-child(5){animation-delay:.16s}.workshop-kpi.kpi-amber{--kpi-color:#ee9b2f;--kpi-soft:#fff6e6}.workshop-kpi.kpi-green{--kpi-color:#19a777;--kpi-soft:#e9f8f3}.workshop-kpi.kpi-red{--kpi-color:#617c90;--kpi-soft:#edf3f6}.workshop-kpi.kpi-violet{--kpi-color:#7366db;--kpi-soft:#efedff}.workshop-kpi__icon{position:relative;z-index:1;width:35px;height:35px;display:grid;place-items:center;flex:0 0 auto;color:var(--kpi-color);border-radius:50%;background:var(--kpi-soft);transition:transform .2s ease}.workshop-kpi:hover .workshop-kpi__icon{transform:scale(1.08) rotate(-3deg)}.workshop-kpi>div{position:relative;z-index:1;min-width:0;flex:1}.workshop-kpi>div>span{display:block;color:#284a62;font-size:11px;font-weight:700;white-space:nowrap}.workshop-kpi>div>span small{display:block;margin:3px 0 0;color:var(--muted);font-size:7px;font-weight:500;letter-spacing:.45px}.workshop-kpi p{margin:8px 0 6px;color:#173f64;font-size:9px;white-space:nowrap}.workshop-kpi p strong{font-size:21px}.workshop-kpi p small{margin-left:2px;color:var(--muted);font-size:8px}.workshop-kpi em{display:block;overflow:hidden;color:var(--muted);text-overflow:ellipsis;white-space:nowrap;font-style:normal;font-size:8px}.workshop-sparkline{position:absolute;right:8px;bottom:12px;width:58px;height:25px;opacity:.72}.workshop-kpi::after{content:"";position:absolute;width:70px;height:70px;right:-28px;bottom:-41px;border-radius:50%;background:var(--kpi-soft);opacity:.72}
+:deep(.workshop-panel),:deep(.worker-time-summary){margin-bottom:10px;border:1px solid #dbe6ec;border-radius:10px;box-shadow:0 7px 22px rgba(22,62,89,.05)}:deep(.workshop-panel .report-trend-panel__heading),:deep(.worker-time-summary .report-trend-panel__heading){min-height:47px;padding:0 14px;border-bottom:1px solid #e5edf1;background:linear-gradient(90deg,#fff,#fbfdfe)}:deep(.workshop-panel .report-trend-panel__heading>div),:deep(.worker-time-summary .report-trend-panel__heading>div){gap:8px}:deep(.workshop-panel .report-trend-panel__heading>div>span),:deep(.worker-time-summary .report-trend-panel__heading>div>span){width:28px;height:24px;display:grid;place-items:center;padding:0;color:#237fb7;border:0;border-radius:7px;background:#eaf5fb;font-size:10px;font-weight:700}:deep(.workshop-panel .report-trend-panel__heading h2),:deep(.worker-time-summary .report-trend-panel__heading h2){color:#193c57;font-size:14px}:deep(.workshop-panel .report-trend-panel__heading p),:deep(.worker-time-summary .report-trend-panel__heading p){color:var(--muted);font-size:9px}.workshop-filters{grid-template-columns:1.2fr 1fr auto!important;gap:10px;padding:11px 14px 9px;border-bottom:1px solid #e6edf1}.workshop-dashboard--worker .workshop-filters{grid-template-columns:1fr 1fr 1fr auto!important}.workshop-filters label span{margin-bottom:5px;font-size:9px}.workshop-filters>button{min-height:38px;display:flex;align-items:center;justify-content:center;gap:6px;padding:0 15px;border-color:#b8cdd8;border-radius:6px;background:#f8fbfc;color:#2477a6;font-size:10px}.workshop-report-state,.workshop-empty-report{margin:0 14px 8px;padding:9px 12px;border:0;border-radius:7px;background:linear-gradient(90deg,#eef8fb,#f6fbfc);font-size:9px}.workshop-report-state strong,.workshop-empty-report strong{font-size:10px}.workshop-summary{padding:0 14px 10px;font-size:9px}:deep(.workshop-panel .report-trend-panel__content),:deep(.worker-time-summary .report-trend-panel__content){padding:0 13px 12px}:deep(.workshop-panel .report-trend-panel__table),:deep(.worker-time-summary .report-trend-panel__table){overflow-x:auto;border-color:#dfe9ee;border-radius:7px}.workshop-table th,.workshop-table td{height:36px;padding:6px 8px;font-size:10px}.workshop-table thead th{color:#fff!important;background:#0b4f76!important;font-size:9px!important}.workshop-table tbody tr:hover{background:#f4f9fb}.pending-confirmation{display:inline-flex;align-items:center;justify-content:center;min-height:22px;padding:0 9px;border-radius:999px;background:#fff4df;color:#b67719;font-weight:700}.confirmed-mark{color:#16885f}.history-pagination{min-height:45px;padding:7px 14px;border-top:1px solid #e3ebef;background:#fbfdfe}.history-page-buttons button{min-height:30px;border-radius:5px}.worker-time-table th,.worker-time-table td{height:36px;padding:6px 8px;font-size:10px}.worker-time-table thead th{background:#0b4f76}.workshop-batch-actions{margin:0 14px 9px;border:1px solid #dce7ec;border-radius:7px}:deep(.workshop-analysis){margin-bottom:0;overflow:hidden;border:1px solid #dbe6ec;border-radius:10px;box-shadow:0 7px 22px rgba(22,62,89,.05)}:deep(.workshop-analysis .analysis-panel-head){padding:12px 15px;background:linear-gradient(90deg,#fff,#fbfdfe)}:deep(.workshop-analysis .analysis-panel-icon){width:34px;height:34px}:deep(.workshop-analysis .analysis-kicker){font-size:8px}:deep(.workshop-analysis .analysis-panel-head h2){margin:2px 0 0;color:#193c57;font-size:15px}:deep(.workshop-analysis .analysis-actions button){min-height:33px;padding:0 12px;font-size:10px}:deep(.workshop-analysis .analysis-facts){gap:7px;padding:10px 13px 0}:deep(.workshop-analysis .analysis-facts article){padding:8px 10px}:deep(.workshop-analysis .analysis-facts span){font-size:9px}:deep(.workshop-analysis .analysis-facts strong){font-size:12px}:deep(.workshop-analysis .analysis-grid){grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;padding:10px 13px 13px}:deep(.workshop-analysis .analysis-grid article){min-height:88px;padding:11px 12px;border:0;border-radius:7px;background:#eff7fb}:deep(.workshop-analysis .analysis-grid article:nth-child(3)){background:#fff1f2}:deep(.workshop-analysis .analysis-grid article:nth-child(4)){background:#eef8f4}:deep(.workshop-analysis .analysis-grid h3){font-size:10px}:deep(.workshop-analysis .analysis-grid p){color:#60798b;font-size:9px;line-height:1.6;overflow-wrap:anywhere}:deep(.workshop-analysis .analysis-evidence){margin:0 13px 12px}:deep(.workshop-analysis .analysis-time){padding:0 13px 12px;font-size:9px}
 @media(max-width:1120px){.workshop-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.workshop-kpi:last-child{grid-column:1/-1}.workshop-hero__slogan{display:none}:deep(.workshop-analysis .analysis-grid){grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:900px){.workshop-query-shell .report-query{grid-template-columns:repeat(2,minmax(180px,1fr))}.workshop-query-shell :deep(.report-period-picker){grid-column:1/-1}.workshop-filters,.workshop-dashboard--worker .workshop-filters{grid-template-columns:1fr 1fr!important}}
 @media(max-width:560px){.workshop-dashboard>.page-hero{min-height:0;padding:22px 18px;background:linear-gradient(90deg,rgba(246,252,255,.97),rgba(238,248,253,.89)),url('../assets/home-laser-cutting.webp') center/cover}.workshop-hero__copy h2{font-size:31px}.workshop-query-shell .report-query,.workshop-kpis,.workshop-filters,.workshop-dashboard--worker .workshop-filters{grid-template-columns:1fr!important}.workshop-query-shell :deep(.report-period-picker),.workshop-kpi:last-child{grid-column:auto}:deep(.workshop-analysis .analysis-grid){grid-template-columns:1fr}.workshop-report-state,.workshop-empty-report{align-items:flex-start;flex-direction:column}}
@@ -731,6 +851,7 @@ onUnmounted(() => {
 
 <style scoped>
 /* Match the table and panel density used by the other management reports. */
+.workshop-dashboard--worker > .page-hero { margin-bottom:10px; }
 .workshop-query-shell { position:relative; padding:12px 14px 13px; border-color:#d5e4eb; border-radius:12px; background:linear-gradient(135deg,#fff 0%,#f8fcfe 72%,#eef8fb 100%); box-shadow:0 8px 24px rgba(22,62,89,.065); }
 .workshop-query-shell::before { content:""; position:absolute; top:-1px; left:18px; width:34px; height:3px; border-radius:0 0 999px 999px; background:linear-gradient(90deg,#238bd0,#19b0b0); }
 .workshop-query-shell .standard-report-query { gap:10px; }

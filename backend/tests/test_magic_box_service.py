@@ -12,6 +12,7 @@ from app.services.magic_box_service import (
     MagicBoxConfigProvider,
     MagicBoxError,
 )
+from app.services.report_deadline import operation_deadline
 
 
 class ConfigRows:
@@ -142,4 +143,43 @@ def test_unreadable_file_before_request_is_safe(tmp_path):
     with pytest.raises(MagicBoxError) as error:
         client.upload_task(task_identifier="id", task_name="missing.GEN",
             file_path=tmp_path / "missing.GEN", material=None, thickness=None, count=1)
+    assert error.value.outcome_unknown is False
+
+
+def test_request_timeout_is_capped_by_shared_operation_deadline(monkeypatch):
+    captured = {}
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def request(self, method, path, **kwargs):
+            return httpx.Response(200, json={"status": 0, "data": []})
+
+    monkeypatch.setattr("app.services.magic_box_service.httpx.Client", FakeClient)
+    client = MagicBoxClient(
+        MagicBoxConfig("http://magic.internal", "token", "secret"), timeout=60
+    )
+
+    with operation_deadline(5):
+        assert client.list_machines() == []
+
+    assert 0 < captured["timeout"] <= 5
+
+
+def test_operation_deadline_is_reported_as_magic_box_timeout():
+    client = MagicBoxClient(
+        MagicBoxConfig("http://magic.internal", "token", "secret"), timeout=60
+    )
+
+    with operation_deadline(0), pytest.raises(MagicBoxError) as error:
+        client.list_machines()
+
+    assert error.value.status_code == 504
     assert error.value.outcome_unknown is False

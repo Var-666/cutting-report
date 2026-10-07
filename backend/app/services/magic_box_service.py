@@ -14,6 +14,11 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from app.database.sqlserver import SqlServerClient, SqlServerConfigurationError
+from app.services.report_deadline import (
+    ReportOperationTimeout,
+    ensure_time_remaining,
+    remaining_seconds,
+)
 
 
 CONFIG_KEYS = (
@@ -202,12 +207,15 @@ class MagicBoxClient:
         sign = hashlib.md5(source.encode("utf-8"), usedforsecurity=False).hexdigest()
         return {"token": self.config.token, "timestamp": timestamp, "sign": sign}
 
-    def _client(self) -> httpx.Client:
+    def _client(self, timeout: float | None = None) -> httpx.Client:
         if not 1 <= float(self.timeout) <= 300:
             raise MagicBoxConfigurationError("魔盒请求超时配置必须在1至300秒之间")
+        effective_timeout = self.timeout if timeout is None else max(
+            0.001, min(float(self.timeout), float(timeout))
+        )
         return httpx.Client(
             base_url=self.config.gateway,
-            timeout=self.timeout,
+            timeout=effective_timeout,
             follow_redirects=False,
             trust_env=False,
             transport=self.transport,
@@ -227,8 +235,18 @@ class MagicBoxClient:
         if authenticated:
             headers.update(self._headers())
         try:
-            with self._client() as client:
+            ensure_time_remaining()
+            remaining = remaining_seconds()
+            timeout = self.timeout if remaining is None else remaining
+            with self._client(timeout=timeout) as client:
                 response = client.request(method, path, headers=headers, **kwargs)
+            ensure_time_remaining()
+        except ReportOperationTimeout:
+            raise MagicBoxError(
+                "魔盒操作超过本次流程总时限，请稍后核对结果",
+                status_code=504,
+                outcome_unknown=upload or effect,
+            ) from None
         except httpx.TimeoutException:
             raise MagicBoxError(
                 "魔盒请求超时；上传结果无法确认时不要盲目重复上传",
@@ -238,6 +256,13 @@ class MagicBoxClient:
             raise MagicBoxError("魔盒连接失败，请检查内网地址、端口和网络", outcome_unknown=upload or effect) from None
         try:
             payload = response.json()
+            ensure_time_remaining()
+        except ReportOperationTimeout:
+            raise MagicBoxError(
+                "魔盒操作超过本次流程总时限，请稍后核对结果",
+                status_code=504,
+                outcome_unknown=upload or effect,
+            ) from None
         except ValueError:
             raise MagicBoxError(
                 f"魔盒返回HTTP {response.status_code}，但响应不是JSON",

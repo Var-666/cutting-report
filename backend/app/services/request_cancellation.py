@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 import threading
+from hashlib import sha256
+from uuid import uuid4
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from typing import Any, Iterator
@@ -21,12 +23,42 @@ class SqlRequestCancellationRegistry:
         self._lock = threading.Lock()
         self._requests: dict[str, dict[str, Any]] = {}
 
-    def activate(self, request_id: str) -> None:
+    def activate(self, client_request_id: str, session_scope: str | None = None) -> str:
+        execution_id = uuid4().hex
         with self._lock:
-            self._requests.setdefault(
-                request_id,
-                {"cancelled": False, "cursors": {}},
-            )
+            self._requests[execution_id] = {
+                "client_request_id": client_request_id, "owner": None, "session_scope": session_scope,
+                "cancelled": False, "cursors": {},
+            }
+        return execution_id
+
+    def set_owner(self, execution_id: str | None, owner: str | None) -> bool:
+        if execution_id is None or owner is None:
+            return True
+        with self._lock:
+            state = self._requests.get(execution_id)
+            if state is None:
+                return False
+            if state["owner"] is not None:
+                return state["owner"] == owner
+            if any(other_id != execution_id and other["owner"] == owner
+                   and other["client_request_id"] == state["client_request_id"]
+                   for other_id, other in self._requests.items()):
+                return False
+            state["owner"] = owner
+            return True
+
+    def cancel_owned(self, client_request_id: str, owner: str | None,
+                     session_scope: str | None = None) -> bool:
+        if owner is None:
+            return False
+        with self._lock:
+            execution_ids = [execution_id for execution_id, state in self._requests.items()
+                             if (state["owner"] == owner or (state["owner"] is None
+                                 and session_scope is not None and state["session_scope"] == session_scope))
+                             and state["client_request_id"] == client_request_id]
+        results = [self.cancel(execution_id) for execution_id in execution_ids]
+        return any(results)
 
     def finish(self, request_id: str) -> None:
         with self._lock:
@@ -78,6 +110,16 @@ class SqlRequestCancellationRegistry:
                     exc_info=True,
                 )
         return True
+
+
+def cancellation_session_scope(session_token: str | None) -> str | None:
+    return sha256(session_token.encode()).hexdigest() if session_token else None
+
+
+def cancellation_owner(user_id: str | None, session_token: str | None) -> str | None:
+    if not user_id or not session_token:
+        return None
+    return sha256(f"{user_id}:{session_token}".encode()).hexdigest()
 
 
 sql_request_cancellations = SqlRequestCancellationRegistry()

@@ -13,6 +13,7 @@ from app.models.domain import EquipmentRecord
 from app.services.energy_api import EnergyApiClient, EnergyApiError, EnergyAuthenticationError
 from app.services.energy_service import EquipmentEnergyService, interval_consumption, make_series
 from app.services.equipment_service import summarize_equipment
+from app.services.report_deadline import report_deadline
 from tests.analysis_fakes import model_analysis
 
 
@@ -68,13 +69,23 @@ class OpenerStub:
     def __init__(self, *responses):
         self.responses = list(responses)
         self.requests = []
+        self.timeouts = []
 
-    def open(self, request, **_kwargs):
+    def open(self, request, **kwargs):
         self.requests.append(request)
+        self.timeouts.append(kwargs.get("timeout"))
         response = self.responses.pop(0)
         if isinstance(response, Exception):
             raise response
         return BytesIO(response if isinstance(response, bytes) else json.dumps(response).encode())
+
+
+def test_energy_request_uses_remaining_report_deadline():
+    opener = OpenerStub(login())
+    client = EnergyApiClient(configured(), opener=opener)
+    with report_deadline(1):
+        client._request("api/test")
+    assert 0 < opener.timeouts[0] <= 1
 
 
 def login(token="private-test-token"):

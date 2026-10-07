@@ -138,6 +138,7 @@
     </div>
   </header>
   <main>
+    {% if demo_mode %}<p role="note" style="padding:12px;border:2px solid #b45309;color:#92400e;background:#fffbeb;font-weight:700">演示数据 · 非生产统计，请勿用于生产决策。</p>{% endif %}
     <p class="print-tip">可使用浏览器打印功能输出纸质报告或 PDF</p>
     <section class="meta">
       <div><span class="label">工程号</span>{{ report.filters.project_code or '全部' }}</div>
@@ -242,7 +243,8 @@
     <section class="analysis-section">
     <h2>{{ '四' if report.meta.report_type in ['leadership', 'workshop', 'equipment'] else '三' }}、智能分析</h2>
     <div class="analysis-head">
-      <span class="analysis-mode model">大模型分析</span>
+      {% set analysis_mode = report.analysis.mode or 'model' %}
+      <span class="analysis-mode {{ analysis_mode }}">{{ '大模型分析' if analysis_mode == 'model' else '智能分析暂不可用' }}</span>
       <span class="label">生成时间：{{ report.analysis.generated_at or '--' }}{{ '· 已使用缓存' if report.analysis.cached else '' }}</span>
     </div>
     {% if report.analysis.facts %}<section class="analysis-facts">{% for fact in report.analysis.facts %}<div class="analysis-fact"><span class="fact-id">{{ fact.id }}</span><span class="label"> · {{ fact.label }}</span><strong>{{ fact.value }}</strong><small>来源：{{ fact.source or '当前报表数据' }}</small></div>{% endfor %}</section>{% endif %}

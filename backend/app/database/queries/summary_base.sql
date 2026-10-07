@@ -17,6 +17,7 @@ WITH task_source AS (
 )
 SELECT
     CONVERT(varchar(64), source.[TASK_ID]) AS task_id,
+    source.production_date AS production_date,
     NULLIF(LTRIM(RTRIM(source.[PROJECT_NAME])), '') AS project_code,
     NULLIF(LTRIM(RTRIM(source.[PROJECT_NAME])), '') AS ship_no,
     NULLIF(LTRIM(RTRIM(source.[SEGMENT_NAME])), '') AS segment_name,
@@ -24,7 +25,7 @@ SELECT
     CONVERT(decimal(18, 3), COALESCE(source.[OP_LENGTH_CUT], 0)) / 1000.0 AS cut_length,
     CONVERT(decimal(18, 3), COALESCE(source.[OP_LENGTH_GROOVE], 0)) / 1000.0 AS groove_length,
     CONVERT(decimal(18, 3), COALESCE(source.[WORK_TIME], 0)) AS work_time,
-    COALESCE(source.[START_TIME], CONVERT(datetime2, source.production_date)) AS production_time,
+    source.[START_TIME] AS production_time,
     source.[END_TIME] AS source_updated_at
 FROM task_source AS source
 WHERE source.production_date >= CONVERT(date, ?)

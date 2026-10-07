@@ -8,6 +8,7 @@ import threading
 from contextlib import contextmanager
 from datetime import date, datetime
 from decimal import Decimal
+from time import monotonic
 from zoneinfo import ZoneInfo
 
 from app.config import Settings
@@ -21,6 +22,8 @@ from app.models.domain import (
 )
 from app.services.llm_service import AnalysisOutputValidationError, LlmService
 from app.services.statistics_service import build_worker_work_summaries
+from app.services.report_deadline import ReportOperationTimeout, ensure_time_remaining, remaining_seconds
+from app.services.request_cancellation import SqlRequestCancelled, current_request_id, sql_request_cancellations
 
 
 logger = logging.getLogger(__name__)
@@ -189,6 +192,7 @@ def _workshop_task_rows(records: list[WorkshopRecord]) -> list[dict]:
             "groove_length": row.groove_length,
             "work_time": row.work_time,
             "production_time": row.production_time,
+            "production_date": row.production_date,
             "confirmed_by": row.confirmed_by,
             "confirmed_at": row.confirmed_at,
             "remark": row.remark,
@@ -222,6 +226,7 @@ def _equipment_task_rows(records: list[EquipmentRecord]) -> list[dict]:
             "ship_no": row.ship_no,
             "segment_name": row.segment_name,
             "production_time": row.production_time,
+            "production_date": row.production_date,
             "work_time": row.work_time,
             "electricity_consumption": row.electricity_consumption,
             "gas_consumption": row.gas_consumption,
@@ -374,11 +379,27 @@ class ReportAnalysisService:
                 self._generation_locks[cache_key] = state
             was_inflight = state["lock"].locked()
             state["users"] += 1
-        state["lock"].acquire()
+        acquired = False
+        deadline = monotonic() + self.settings.llm_queue_timeout_seconds
         try:
+            while not acquired:
+                ensure_time_remaining()
+                if sql_request_cancellations.is_cancelled(current_request_id.get()):
+                    raise SqlRequestCancelled("智能分析请求已取消")
+                remaining = deadline - monotonic()
+                if remaining <= 0:
+                    raise AnalysisUnavailableError("智能分析排队超时，请稍后重试。")
+                report_remaining = remaining_seconds()
+                if report_remaining is not None:
+                    remaining = min(remaining, max(0.001, report_remaining))
+                acquired = state["lock"].acquire(timeout=min(0.1, remaining))
+            ensure_time_remaining()
+            if sql_request_cancellations.is_cancelled(current_request_id.get()):
+                raise SqlRequestCancelled("智能分析请求已取消")
             yield was_inflight
         finally:
-            state["lock"].release()
+            if acquired:
+                state["lock"].release()
             with self._generation_guard:
                 state["users"] -= 1
                 if state["users"] == 0:
@@ -467,6 +488,8 @@ class ReportAnalysisService:
                     raise AnalysisOutputValidationError(
                         "LLM 分析结果未标记为模型输出"
                     )
+            except (SqlRequestCancelled, ReportOperationTimeout):
+                raise
             except AnalysisOutputValidationError as exc:
                 logger.warning("LLM analysis response cannot be displayed: %s", exc)
                 raise AnalysisUnavailableError(

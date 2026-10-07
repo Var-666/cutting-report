@@ -25,6 +25,16 @@ test('batch confirmation sends all selected task ids in one request', async () =
   })
 })
 
+test('fresh task revisions accompany confirmation so corrected records cannot use an old review', async () => {
+  let sent
+  globalThis.fetch = async (url, options) => {
+    sent = JSON.parse(options.body)
+    return { ok: true, json: async () => ({ success: true, data: { items: [] } }) }
+  }
+  await confirmWorkshopTasks(['A', 'B'], '2026-09-30', { A: 2, B: 1 })
+  assert.deepEqual(sent.snapshot_revisions, { A: 2, B: 1 })
+})
+
 test('worker task table exposes multi-select and reviews tasks before confirmation', () => {
   const descriptor = parse(readFileSync(new URL('../src/views/WorkshopView.vue', import.meta.url), 'utf8')).descriptor
   const script = descriptor.scriptSetup.content

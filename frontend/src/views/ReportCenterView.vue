@@ -13,8 +13,9 @@ import {
   listReports,
   listShips,
 } from '../api/reports'
+import { mergeOwnedQuery, queryChoice, queryPositiveInteger, sameRouteQuery } from '../utils/reportRouteState.js'
 
-const props = defineProps({
+defineProps({
   fixedReportType: { type: String, default: '' },
   title: { type: String, default: '报表生成与历史' },
   description: { type: String, default: '领导、车间、设备及自定义报表统一生成、归档和下载。' },
@@ -40,6 +41,25 @@ let pollSequence = 0
 let historyController = null
 let historySequence = 0
 let pageActive = false
+let routeStateReady = false
+
+const routeQueryKeys = ['page', 'page_size']
+
+function requestedHistoryState() {
+  return {
+    page: queryPositiveInteger(route.query.page),
+    pageSize: Number(queryChoice(route.query.page_size, ['10', '20', '50'], '10')),
+  }
+}
+
+async function syncHistoryRouteState() {
+  const query = mergeOwnedQuery(route.query, routeQueryKeys, {
+    page: historyPage.value === 1 ? '' : historyPage.value,
+    page_size: historyPageSize.value === 10 ? '' : historyPageSize.value,
+  })
+  if (sameRouteQuery(query, route.query)) return
+  await router.push({ query })
+}
 
 function stopPolling() {
   window.clearTimeout(pollTimer)
@@ -49,7 +69,7 @@ function stopPolling() {
   pollController = null
 }
 
-async function loadHistory(page = historyPage.value, force = false) {
+async function loadHistory(page = historyPage.value, force = false, { pageSize = historyPageSize.value, syncRoute = false } = {}) {
   if (!pageActive) return
   historyController?.abort()
   const controller = new AbortController()
@@ -57,12 +77,13 @@ async function loadHistory(page = historyPage.value, force = false) {
   historyController = controller
   loadingHistory.value = true
   try {
-    const data = await listReports({ page, pageSize: historyPageSize.value, force, signal: controller.signal })
+    const data = await listReports({ page, pageSize, force, signal: controller.signal })
     if (!pageActive || controller.signal.aborted || sequence !== historySequence) return
     history.value = data.items
     historyPage.value = data.page
     historyPageSize.value = data.page_size
     historyTotal.value = data.total
+    if (syncRoute) await syncHistoryRouteState()
   } catch (exception) {
     if (exception.name !== 'AbortError' && pageActive && sequence === historySequence) {
       error.value = exception.message
@@ -77,12 +98,11 @@ async function loadHistory(page = historyPage.value, force = false) {
 
 function changeHistoryPage(page) {
   const target = Math.min(Math.max(Number(page), 1), historyTotalPages.value)
-  if (target !== historyPage.value) loadHistory(target)
+  if (target !== historyPage.value) loadHistory(target, false, { syncRoute: true })
 }
 
 function changeHistoryPageSize(pageSize) {
-  historyPageSize.value = Number(pageSize)
-  loadHistory(1)
+  loadHistory(1, false, { pageSize: Number(pageSize), syncRoute: true })
 }
 
 async function loadProjects(reportDate) {
@@ -141,7 +161,7 @@ async function pollStatus(reportId) {
     const terminal = ['completed', 'failed'].includes(job.status)
     if (terminal) {
       generating.value = false
-      await loadHistory(1, true)
+      await loadHistory(1, true, { syncRoute: true })
       return
     }
     generating.value = true
@@ -167,10 +187,25 @@ watch(
     }
   },
 )
+watch(
+  () => [route.query.page, route.query.page_size],
+  async () => {
+    if (!pageActive || !routeStateReady || route.name !== 'report-center') return
+    const requested = requestedHistoryState()
+    if (requested.page !== historyPage.value || requested.pageSize !== historyPageSize.value) {
+      await loadHistory(requested.page, false, { pageSize: requested.pageSize })
+    }
+  },
+)
 
 onMounted(async () => {
   pageActive = true
-  await Promise.all([loadHistory(1), loadCustomDefinitions()])
+  const requested = requestedHistoryState()
+  await Promise.all([
+    loadHistory(requested.page, false, { pageSize: requested.pageSize }),
+    loadCustomDefinitions(),
+  ])
+  routeStateReady = true
   if (pageActive && typeof route.query.job === 'string' && route.query.job) {
     await pollStatus(route.query.job)
   }

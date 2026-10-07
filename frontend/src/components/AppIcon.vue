@@ -9,6 +9,7 @@ const props = defineProps({
 })
 
 const palettes = {
+  muted: ['#56768c', '#829bac'],
   blue: ['#2187da', '#62c8ef'],
   teal: ['#079a9b', '#54d8bd'],
   green: ['#159d69', '#62d49a'],

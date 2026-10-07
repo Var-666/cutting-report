@@ -66,33 +66,12 @@ export function loginAccount(payload) {
   })
 }
 
-export function workerLoginAccount(payload) {
-  return request('/api/v1/auth/worker-login', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  })
-}
-
-export function hrLoginAccount(payload) {
-  return request('/api/v1/auth/hr-login', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  })
-}
-
 export function logoutAccount() {
   return request('/api/v1/auth/logout', { method: 'POST' })
 }
 
 export function listUserAccounts() {
   return request('/api/v1/auth/users')
-}
-
-export function createUserAccount(payload) {
-  return request('/api/v1/auth/users', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  })
 }
 
 export function searchHrPeople(query) {
@@ -144,10 +123,11 @@ export function listWorkshopRangeTasks({ startDate, endDate, projectName = '', c
   return reportCache.read(key, (requestSignal) => request(`/api/v1/workshop/range?${query}`, { signal: requestSignal }), { ttl: REPORT_VIEW_CACHE_TTL, force, signal })
 }
 
-export function generateWorkshopDailyReport(reportDate) {
+export function generateWorkshopDailyReport(reportDate, { signal } = {}) {
   return request('/api/v1/workshop/reports', {
     method: 'POST',
     body: JSON.stringify({ report_date: reportDate }),
+    signal,
   }).then((data) => { invalidateWorkshopReports(); return data })
 }
 
@@ -156,17 +136,10 @@ export function getLatestWorkshopProductionDate(onOrBefore, { force = false, sig
   return reportCache.read(`workshop:latest:${query}`, (signal) => request(`/api/v1/workshop/latest-date?${query}`, { signal }), { ttl: REPORT_VIEW_CACHE_TTL, force, signal })
 }
 
-export function confirmWorkshopTask(taskId, reportDate) {
-  return request(`/api/v1/workshop/tasks/${encodeURIComponent(taskId)}/confirm`, {
-    method: 'POST',
-    body: JSON.stringify({ report_date: reportDate }),
-  }).then((data) => { invalidateWorkshopReports(); return data })
-}
-
-export function confirmWorkshopTasks(taskIds, reportDate) {
+export function confirmWorkshopTasks(taskIds, reportDate, snapshotRevisions) {
   return request('/api/v1/workshop/tasks/confirm', {
     method: 'POST',
-    body: JSON.stringify({ report_date: reportDate, task_ids: taskIds }),
+    body: JSON.stringify({ report_date: reportDate, task_ids: taskIds, snapshot_revisions: snapshotRevisions }),
   }).then((data) => { invalidateWorkshopReports(); return data })
 }
 
@@ -181,6 +154,18 @@ export function correctWorkshopTask(taskId, { reportDate, action, workerId = nul
   return request(`/api/v1/workshop/tasks/${encodeURIComponent(taskId)}/correct`, {
     method: 'POST',
     body: JSON.stringify({ report_date: reportDate, action, worker_id: workerId, reason }),
+  }).then((data) => { invalidateWorkshopReports(); return data })
+}
+
+export function previewWorkshopSourceCorrections(reportDate, { signal } = {}) {
+  return request('/api/v1/workshop/reports/source-corrections/preview', {
+    method: 'POST', body: JSON.stringify({ report_date: reportDate }), signal,
+  })
+}
+
+export function applyWorkshopSourceCorrections({ reportDate, expectedVersion, reason }) {
+  return request('/api/v1/workshop/reports/source-corrections', {
+    method: 'POST', body: JSON.stringify({ report_date: reportDate, expected_version: expectedVersion, reason }),
   }).then((data) => { invalidateWorkshopReports(); return data })
 }
 
@@ -257,6 +242,11 @@ export function listAlarmReports({ limit = 50 } = {}, { signal } = {}) {
   return request(`/api/v1/alarms/reports?${query}`, { signal })
 }
 
+export function listAlarmReportPage({ page = 1, pageSize = 10 } = {}, { signal } = {}) {
+  const query = new URLSearchParams({ page, page_size: pageSize })
+  return request(`/api/v1/alarms/reports/page?${query}`, { signal })
+}
+
 export function getLeadershipReport(reportMonth, { force = false, signal } = {}) {
   const query = new URLSearchParams({ report_month: reportMonth })
   return reportCache.read(`leadership:${reportMonth}`, (signal) => request(`/api/v1/leadership-report?${query}`, { signal }), { ttl: REPORT_VIEW_CACHE_TTL, force, signal })
@@ -272,25 +262,6 @@ export function getEnergyRange(startDate, endDate, { force = false, signal } = {
   const key = `energy:range:${query}`
   if (force) query.set('refresh', 'true')
   return reportCache.read(key, (requestSignal) => request(`/api/v1/energy-report/range?${query}`, { signal: requestSignal }), { ttl: REPORT_VIEW_CACHE_TTL, force, signal })
-}
-
-export function refreshLeadershipReport(reportMonth) {
-  return request('/api/v1/leadership-report/refresh', {
-    method: 'POST',
-    body: JSON.stringify({ report_month: reportMonth }),
-  }).then((data) => {
-    reportCache.invalidate(`leadership:${reportMonth}`)
-    return data
-  })
-}
-
-export function getEquipmentReport(reportDate = '', { force = false } = {}) {
-  const query = new URLSearchParams()
-  if (reportDate) query.set('report_date', reportDate)
-  if (force) query.set('refresh', 'true')
-  const queryString = query.toString()
-  const suffix = queryString ? `?${queryString}` : ''
-  return request(`/api/v1/equipment-report${suffix}`)
 }
 
 export function getEnergyDay(reportDate = '', { force = false, signal } = {}) {
@@ -415,18 +386,6 @@ export function getCuttingStatus(scope = 'push', { signal } = {}) {
   )
 }
 
-export function searchCuttingDownloads(filters, { page = 1, pageSize = 10, sort = [] } = {}) {
-  return request('/api/v1/cutting/downloads/search', { method: 'POST', body: JSON.stringify({ filters, page, page_size: pageSize, sort }) })
-}
-
-export function downloadCuttingFile(payload) {
-  return request('/api/v1/cutting/downloads', { method: 'POST', body: JSON.stringify(payload) })
-}
-
-export function listCuttingDownloads({ page = 1, pageSize = 10 } = {}, { signal } = {}) {
-  return request(`/api/v1/cutting/downloads?${new URLSearchParams({ page, page_size: pageSize })}`, { signal })
-}
-
 export function listCuttingProjects(keyword = '', limit = 1000, { signal } = {}) {
   const query = new URLSearchParams({ limit: String(limit) })
   if (keyword) query.set('keyword', keyword)
@@ -463,13 +422,6 @@ export function listCuttingFiles({ projectId, catalogId = '', status = 'all', ke
     (signal) => request(url, { signal }),
     { ttl: 300000, signal },
   )
-}
-
-export function createCuttingDispatch(payload) {
-  return request('/api/v1/cutting/dispatches', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  })
 }
 
 export function createCuttingDispatchBatch(payload) {
@@ -577,4 +529,14 @@ export function previewDesignerQuery(queryTaskId, payload, token = '') {
     headers: adminHeaders(token),
     body: JSON.stringify(payload),
   })
+}
+
+export function resolveEmailDelivery(deliveryId, payload) {
+  return request(`/api/v1/automation/deliveries/${encodeURIComponent(deliveryId)}/resolve`, {
+    method: 'POST', body: JSON.stringify(payload),
+  })
+}
+
+export function listEmailDeliveryResolutions(deliveryId, { signal } = {}) {
+  return request(`/api/v1/automation/deliveries/${encodeURIComponent(deliveryId)}/resolutions`, { signal })
 }

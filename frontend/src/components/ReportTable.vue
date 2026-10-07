@@ -13,13 +13,6 @@ const props = defineProps({
 const emit = defineEmits(['page-change', 'page-size-change'])
 
 const totalPages = computed(() => Math.max(1, Math.ceil(props.total / props.pageSize)))
-const visiblePages = computed(() => {
-  const start = Math.max(1, Math.min(props.page - 2, totalPages.value - 4))
-  const end = Math.min(totalPages.value, start + 4)
-  return Array.from({ length: end - start + 1 }, (_, index) => start + index)
-})
-const rangeStart = computed(() => props.total ? (props.page - 1) * props.pageSize + 1 : 0)
-const rangeEnd = computed(() => Math.min(props.page * props.pageSize, props.total))
 
 const statusText = {
   pending: '等待中',
@@ -76,8 +69,7 @@ const reportTypeText = {
       </tbody>
     </table>
   </div>
-  <div class="history-pagination" aria-label="报告列表分页">
-    <div class="history-page-summary">共 {{ total }} 条，当前 {{ rangeStart }}–{{ rangeEnd }} 条</div>
+  <div class="history-pagination app-pagination" aria-label="报告列表分页">
     <label class="history-page-size">
       <span>每页</span>
       <AppSelect :value="pageSize" :disabled="loading" @change="emit('page-size-change', $event.target.value)">
@@ -86,17 +78,9 @@ const reportTypeText = {
         <option :value="50">50 条</option>
       </AppSelect>
     </label>
-    <div class="history-page-buttons">
+    <div class="history-page-buttons app-pagination__actions">
       <button type="button" :disabled="loading || page <= 1" @click="emit('page-change', page - 1)">上一页</button>
-      <button
-        v-for="pageNumber in visiblePages"
-        :key="pageNumber"
-        type="button"
-        :class="{ active: pageNumber === page }"
-        :aria-current="pageNumber === page ? 'page' : undefined"
-        :disabled="loading"
-        @click="emit('page-change', pageNumber)"
-      >{{ pageNumber }}</button>
+      <span class="app-pagination__summary">第 {{ page }} / {{ totalPages }} 页，共 {{ total }} 条</span>
       <button type="button" :disabled="loading || page >= totalPages" @click="emit('page-change', page + 1)">下一页</button>
     </div>
   </div>

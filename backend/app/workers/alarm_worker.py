@@ -48,6 +48,6 @@ class AlarmWorker:
             try:
                 self.service.run_once(datetime.now(timezone))
             except Exception:
-                logger.exception("alarm monitor cycle failed")
+                logger.exception("alarm synchronization failed")
             elapsed = monotonic() - started
             self.stop_event.wait(max(1, interval - elapsed))

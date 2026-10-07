@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import calendar
+from contextlib import closing
 import json
+import logging
 from dataclasses import replace
 from datetime import date, datetime, timedelta
+from collections.abc import Callable
 from zoneinfo import ZoneInfo
 
 from app.config import Settings
@@ -15,6 +18,8 @@ from app.database.unit_of_work import UnitOfWork
 from app.models.domain import (
     QueryBundle,
     ReportFilter,
+    AnalysisResult,
+    LeadershipReportResult,
     SummaryBaseRecord,
     to_primitive,
 )
@@ -29,7 +34,9 @@ from app.services.energy_period_service import (
 from app.services.leadership_report_service import LeadershipReportService
 from app.services.query_service import QueryService
 from app.services.range_report_service import RangeReportService, previous_equal_range
-from app.services.report_analysis_service import ReportAnalysisService
+from app.services.report_analysis_service import AnalysisUnavailableError, ReportAnalysisService
+from app.services.report_deadline import ReportOperationTimeout, ensure_time_remaining, report_deadline
+from app.services.request_cancellation import SqlRequestCancelled
 from app.services.report_service import ReportService
 from app.services.statistics_service import StatisticsService, build_worker_work_summaries
 from app.services.workshop_sorting import sort_workshop_by_recency
@@ -41,8 +48,27 @@ REPORT_TITLES = {
     "equipment": "切割生产设备报表",
 }
 
+logger = logging.getLogger(__name__)
+
+
+def _unavailable_analysis(settings: Settings) -> AnalysisResult:
+    """Keep deterministic report delivery independent from model availability."""
+    return AnalysisResult(
+        status="unavailable",
+        overview="确定性报表已生成，但大模型分析暂不可用。",
+        features="本区域未生成模型判断，页面中的指标、图表和明细仍可使用。",
+        alerts="当前没有可用的 AI 结论，不能据此判断异常、原因或趋势。",
+        suggestions="请稍后重试智能分析，并结合本报告的确定性指标和明细进行核对。",
+        mode="unavailable",
+        generated_at=datetime.now(ZoneInfo(settings.timezone)).isoformat(timespec="seconds"),
+    )
+
 
 CHART_TYPES = {"bar", "line", "area", "bar_line"}
+
+
+class ReportPipelineCancelled(RuntimeError):
+    """Raised when the report worker is shutting down between pipeline stages."""
 
 
 def _job_parameters(job: dict) -> dict:
@@ -68,6 +94,9 @@ def _year_ago(value: date) -> date:
 def _job_period(job: dict) -> tuple[date, date]:
     start = date.fromisoformat(job.get("period_start") or job["report_date"])
     end = date.fromisoformat(job.get("period_end") or job.get("period_start") or job["report_date"])
+    if job.get("report_type") == "leadership" and not _is_range_job(job):
+        start = start.replace(day=1)
+        end = start.replace(day=calendar.monthrange(start.year, start.month)[1])
     return start, end
 
 
@@ -129,19 +158,68 @@ class ReportPipeline:
             self.workshop_repository,
             self.energy_period_service,
         )
+        self._cancellation_check: Callable[[], bool] | None = None
 
-    def run(self, job: dict) -> None:
-        report_type = job.get("report_type") or "workshop"
-        if report_type == "custom" and job.get("definition_id"):
-            self._run_custom(job)
-        elif report_type == "leadership":
-            self._run_leadership(job)
-        elif report_type == "equipment":
-            self._run_equipment(job)
-        else:
-            self._run_daily(job, report_type)
+    def _ensure_active(self) -> None:
+        ensure_time_remaining()
+        if self._cancellation_check is not None and self._cancellation_check():
+            raise ReportPipelineCancelled("报表生成已因服务停止而取消")
+
+    def _analyze_or_unavailable(
+        self,
+        *,
+        report_id: str,
+        report_type: str,
+        analyze: Callable[[], AnalysisResult],
+    ) -> AnalysisResult:
+        self._ensure_active()
+        if not self.settings.llm_enabled:
+            return _unavailable_analysis(self.settings)
+        try:
+            return analyze()
+        except (ReportPipelineCancelled, ReportOperationTimeout, SqlRequestCancelled):
+            raise
+        except AnalysisUnavailableError:
+            logger.warning(
+                "report AI analysis unavailable; continuing deterministic report",
+                extra={"report_id": report_id, "report_type": report_type},
+            )
+            return _unavailable_analysis(self.settings)
+        except Exception:
+            # This callback contains only AI preparation/inference. Required
+            # report queries and rendering remain outside this failure boundary.
+            logger.exception(
+                "report AI preparation failed; continuing deterministic report",
+                extra={"report_id": report_id, "report_type": report_type},
+            )
+            self._ensure_active()
+            return _unavailable_analysis(self.settings)
+
+    def run(
+        self,
+        job: dict,
+        *,
+        cancellation_check: Callable[[], bool] | None = None,
+    ) -> None:
+        previous_check = self._cancellation_check
+        self._cancellation_check = cancellation_check
+        try:
+            with report_deadline(self.settings.report_operation_timeout_seconds):
+                self._ensure_active()
+                report_type = job.get("report_type") or "workshop"
+                if report_type == "custom" and job.get("definition_id"):
+                    self._run_custom(job)
+                elif report_type == "leadership":
+                    self._run_leadership(job)
+                elif report_type == "equipment":
+                    self._run_equipment(job)
+                else:
+                    self._run_daily(job, report_type)
+        finally:
+            self._cancellation_check = previous_check
 
     def _run_custom(self, job: dict) -> None:
+        self._ensure_active()
         report_id = job["report_id"]
         definition = self.definitions.get_definition(job["definition_id"])
         if not definition or not definition["enabled"] or definition["is_builtin"]:
@@ -153,21 +231,19 @@ class ReportPipeline:
 
         report_date = date.fromisoformat(job["report_date"])
         parameters = json.loads(job.get("parameters_json") or "{}")
-        rows = self.custom_report_service.execute(
+        self.metadata.update_status(report_id, "calculating", "正在查询并计算完整自定义指标")
+        with closing(self.custom_report_service.iter_rows(
             query_task,
             report_date=report_date,
             period_type=definition["period_type"],
             project_code=job.get("project_code"),
             ship_no=job.get("ship_no"),
             parameters=parameters,
-        )
-        self.metadata.update_status(report_id, "calculating", "正在计算自定义指标")
-        custom = self.custom_report_service.build_report_data(
-            definition=definition,
-            query_task=query_task,
-            template=template,
-            rows=rows,
-        )
+        )) as rows:
+            custom = self.custom_report_service.build_report_data(
+                definition=definition, query_task=query_task, template=template, rows=rows,
+            )
+        self._ensure_active()
         self.metadata.update_status(report_id, "analyzing", "正在应用报表模板")
         generated_at = datetime.now(ZoneInfo(self.settings.timezone))
         report = {
@@ -201,46 +277,65 @@ class ReportPipeline:
             job=job,
             report=report,
             generated_at=generated_at,
-            task_count=len(rows),
+            task_count=custom["total_row_count"],
             analysis_status="skipped",
         )
 
+    def _leadership_data(
+        self, job: dict, period_start: date, period_end: date
+    ) -> LeadershipReportResult:
+        """Adapt the legacy month query to the common period report shape."""
+        if _is_range_job(job):
+            primary = self.range_service.leadership(period_start, period_end)
+            _, summary_end = _recent_twelve_month_period(job, period_end)
+            monthly_leadership = self.leadership_service.fetch(summary_end)
+        else:
+            # Keep the aggregated month query and its natural-month comparisons.
+            monthly_leadership = self.leadership_service.fetch(period_start)
+            primary = monthly_leadership
+        return replace(
+            primary,
+            period_start=period_start,
+            period_end=period_end,
+            monthly_records=monthly_leadership.monthly_records,
+            twelve_month_total=monthly_leadership.twelve_month_total,
+        )
+
     def _run_leadership(self, job: dict) -> None:
+        self._ensure_active()
         report_id = job["report_id"]
         timezone = ZoneInfo(self.settings.timezone)
         period_start, period_end = _job_period(job)
-        if _is_range_job(job):
-            range_leadership = self.range_service.leadership(period_start, period_end)
-            comparison_start, comparison_end = previous_equal_range(
-                period_start, period_end
-            )
-            comparison = self.range_service.leadership(
-                comparison_start, comparison_end
-            )
-            range_leadership = replace(
-                range_leadership,
-                comparison_total=comparison.current_month_total,
-                comparison_start=comparison_start,
-                comparison_end=comparison_end,
-            )
-            _, summary_end = _recent_twelve_month_period(job, period_end)
-            monthly_leadership = self.leadership_service.fetch(summary_end)
-            leadership = replace(
-                range_leadership,
-                monthly_records=monthly_leadership.monthly_records,
-                twelve_month_total=monthly_leadership.twelve_month_total,
-            )
-        else:
-            leadership = self.leadership_service.fetch(period_start)
-            range_leadership = leadership
+        leadership = self._leadership_data(job, period_start, period_end)
         chart_type = _chart_type(job)
         charts = self.chart_service.build_leadership(leadership, chart_type)
+        self._ensure_active()
 
         self.metadata.update_status(report_id, "calculating", "正在计算月度汇总")
         self.metadata.update_status(report_id, "analyzing", "正在生成智能分析")
-        analysis = self.analysis_service.analyze_leadership(
-            range_leadership,
-            monthly_records=leadership.monthly_records,
+
+        def analyze_leadership() -> AnalysisResult:
+            analysis_report = leadership
+            if _is_range_job(job):
+                comparison_start, comparison_end = previous_equal_range(period_start, period_end)
+                comparison = self.range_service.leadership(comparison_start, comparison_end)
+                analysis_report = replace(
+                    analysis_report,
+                    comparison_total=comparison.current_month_total,
+                    comparison_start=comparison_start,
+                    comparison_end=comparison_end,
+                )
+            else:
+                # Preserve the legacy model's monthly label and cache identity.
+                analysis_report = replace(leadership, period_start=None, period_end=None)
+            return self.analysis_service.analyze_leadership(
+                analysis_report, monthly_records=leadership.monthly_records,
+            )
+
+        analysis = self._analyze_or_unavailable(
+            report_id=report_id,
+            report_type="leadership",
+            analyze=analyze_leadership,
         )
         generated_at = datetime.now(timezone)
         report = {
@@ -277,36 +372,39 @@ class ReportPipeline:
         )
 
     def _run_equipment(self, job: dict) -> None:
+        self._ensure_active()
         report_id = job["report_id"]
         timezone = ZoneInfo(self.settings.timezone)
-        report_date, period_end = _job_period(job)
-        parameters = _job_parameters(job)
-        if _is_range_job(job):
-            self.metadata.update_status(report_id, "calculating", "正在计算区间任务与能耗")
-            range_data = self.range_service.equipment(report_date, period_end)
-            task_report = range_data["task_report"]
+        period_start, period_end = _job_period(job)
+        legacy_day = not _is_range_job(job)
+        report_month = None
+        if legacy_day:
+            report_month = str(
+                _job_parameters(job).get("report_month") or period_start.isoformat()[:7]
+            )
+            try:
+                month_date = date.fromisoformat(report_month + "-01")
+                if not 1900 <= month_date.year <= 2100:
+                    raise ValueError()
+            except ValueError:
+                raise ValueError("设备报表导出月份无效") from None
+
+        self.metadata.update_status(report_id, "calculating", "正在计算任务与能耗")
+        equipment, task_report = self.range_service.equipment_tasks(period_start, period_end)
+        if legacy_day:
+            # The old daily format includes daily totals for one selected month.
+            month_report = self.energy_period_service.get_month(report_month)
+        else:
             summary_start, summary_end = _recent_twelve_month_period(job, period_end)
-            month_report = self.energy_period_service.get_monthly_range(
-                summary_start, summary_end
-            )
-            chart_type = _chart_type(job)
-            charts = self.chart_service.build_energy_period(
-                task_report, month_report, chart_type
-            )
-            source_records = self.query_service.fetch_equipment_data(
-                ReportFilter(
-                    report_date=report_date,
-                    period_start=report_date,
-                    period_end=period_end,
-                )
-            ).records
-            calculated_records = restore_task_energy_records(
-                source_records, task_report
-            )
-            self.metadata.update_status(report_id, "analyzing", "正在生成智能分析")
-            comparison_start, comparison_end = previous_equal_range(
-                report_date, period_end
-            )
+            month_report = self.energy_period_service.get_monthly_range(summary_start, summary_end)
+        chart_type = _chart_type(job)
+        charts = self.chart_service.build_energy_period(task_report, month_report, chart_type)
+        summary = task_report["summary"]
+        self.metadata.update_status(report_id, "analyzing", "正在生成智能分析")
+
+        def analyze_equipment() -> AnalysisResult:
+            calculated_records = restore_task_energy_records(equipment.records, task_report)
+            comparison_start, comparison_end = previous_equal_range(period_start, period_end)
             comparison_records = self.query_service.fetch_equipment_data(
                 ReportFilter(
                     report_date=comparison_start,
@@ -314,111 +412,45 @@ class ReportPipeline:
                     period_end=comparison_end,
                 )
             ).records
-            analysis = self.analysis_service.analyze_equipment(
-                _period_label(report_date, period_end),
+            year_ago_date = None
+            year_ago_records = None
+            if legacy_day:
+                comparison_records = self.energy_period_service.filter_task_records(comparison_records)
+                year_ago_date = _year_ago(period_start)
+                year_ago_records = self.energy_period_service.filter_task_records(
+                    self.query_service.fetch_equipment_data(
+                        ReportFilter(report_date=year_ago_date)
+                    ).records
+                )
+            return self.analysis_service.analyze_equipment(
+                _period_label(period_start, period_end),
                 calculated_records,
-                energy_data_mode=task_report["summary"].get("energy_data_mode") or "unavailable",
+                energy_data_mode=summary.get("energy_data_mode") or "unavailable",
                 energy_units=task_report["units"],
                 energy_notice=task_report.get("energy_notice") or "",
                 energy_summary_rows=month_report["rows"],
                 comparison_records=comparison_records,
                 comparison_date=_period_label(comparison_start, comparison_end),
+                year_ago_records=year_ago_records,
+                year_ago_date=year_ago_date.isoformat() if year_ago_date else None,
             )
-            generated_at = datetime.now(timezone)
-            report = {
-                "meta": self._meta(
-                    job=job,
-                    report_type="equipment",
-                    generated_at=generated_at,
-                    data_updated_at=(
-                        datetime.fromisoformat(task_report["data_updated_at"])
-                        if task_report.get("data_updated_at")
-                        else None
-                    ),
-                ),
-                "filters": {
-                    "report_date": report_date.isoformat(),
-                    "period_start": report_date.isoformat(),
-                    "period_end": period_end.isoformat(),
-                    "project_code": None,
-                    "ship_no": None,
-                },
-                "units": task_report["units"],
-                "energy_notice": task_report.get("energy_notice") or "",
-                "equipment_summary": task_report["summary"],
-                "equipment_records": task_report["records"],
-                "energy_month": month_report,
-                "charts": charts,
-                "visualization": {"chart_type": chart_type},
-                "analysis": to_primitive(analysis),
-            }
-            self._render_and_complete(
-                job=job,
-                report=report,
-                generated_at=generated_at,
-                task_count=task_report["summary"]["task_count"],
-                analysis_status=analysis.status,
-            )
-            return
-        report_month = str(parameters.get("report_month") or report_date.isoformat()[:7])
-        try:
-            month_date = date.fromisoformat(report_month + "-01")
-            if not 1900 <= month_date.year <= 2100:
-                raise ValueError()
-        except ValueError:
-            raise ValueError("设备报表导出月份无效") from None
 
-        self.metadata.update_status(report_id, "calculating", "正在计算任务与月度能耗")
-        equipment = self.query_service.fetch_equipment_data(
-            ReportFilter(report_date=report_date)
+        analysis = self._analyze_or_unavailable(
+            report_id=report_id,
+            report_type="equipment",
+            analyze=analyze_equipment,
         )
-        task_report = self.energy_period_service.get_task_day(
-            report_date,
-            equipment.records,
-        )
-        month_report = self.energy_period_service.get_month(report_month)
-        chart_type = _chart_type(job)
-        charts = self.chart_service.build_energy_period(
-            task_report,
-            month_report,
-            chart_type,
-        )
-
-        calculated_records = restore_task_energy_records(
-            equipment.records,
-            task_report,
-        )
-
-        self.metadata.update_status(report_id, "analyzing", "正在生成智能分析")
-        comparison_date = report_date - timedelta(days=1)
-        year_ago_date = _year_ago(report_date)
-        comparison_records = self.query_service.fetch_equipment_data(
-            ReportFilter(report_date=comparison_date)
-        ).records
-        year_ago_records = self.query_service.fetch_equipment_data(
-            ReportFilter(report_date=year_ago_date)
-        ).records
-        comparison_records = self.energy_period_service.filter_task_records(
-            comparison_records
-        )
-        year_ago_records = self.energy_period_service.filter_task_records(
-            year_ago_records
-        )
-        summary = task_report["summary"]
-        analysis = self.analysis_service.analyze_equipment(
-            report_date.isoformat(),
-            calculated_records,
-            energy_data_mode=summary.get("energy_data_mode") or "unavailable",
-            energy_units=task_report["units"],
-            energy_notice=task_report.get("energy_notice") or "",
-            energy_summary_rows=month_report["rows"],
-            comparison_records=comparison_records,
-            comparison_date=comparison_date.isoformat(),
-            year_ago_records=year_ago_records,
-            year_ago_date=year_ago_date.isoformat(),
-        )
-
+        self._ensure_active()
         generated_at = datetime.now(timezone)
+        filters = {
+            "report_date": period_start.isoformat(),
+            "period_start": period_start.isoformat(),
+            "period_end": period_end.isoformat(),
+            "project_code": None,
+            "ship_no": None,
+        }
+        if legacy_day:
+            filters["report_month"] = report_month
         report = {
             "meta": self._meta(
                 job=job,
@@ -426,12 +458,7 @@ class ReportPipeline:
                 generated_at=generated_at,
                 data_updated_at=equipment.data_updated_at,
             ),
-            "filters": {
-                "report_date": report_date.isoformat(),
-                "report_month": report_month,
-                "project_code": None,
-                "ship_no": None,
-            },
+            "filters": filters,
             "units": task_report["units"],
             "energy_notice": task_report.get("energy_notice") or "",
             "equipment_summary": summary,
@@ -450,6 +477,7 @@ class ReportPipeline:
         )
 
     def _run_daily(self, job: dict, report_type: str) -> None:
+        self._ensure_active()
         report_id = job["report_id"]
         timezone = ZoneInfo(self.settings.timezone)
         period_start, period_end = _job_period(job)
@@ -549,6 +577,7 @@ class ReportPipeline:
             )
             energy_data_mode, energy_notice, energy_units = energy.mode, energy.notice, energy.units
 
+        self._ensure_active()
         self.metadata.update_status(report_id, "calculating", "正在计算统计指标")
         statistics = self.statistics_service.calculate(bundle.summary_records)
         chart_type = _chart_type(job)
@@ -562,101 +591,110 @@ class ReportPipeline:
         )
 
         self.metadata.update_status(report_id, "analyzing", "正在生成智能分析")
-        comparison_date = filters.report_date - timedelta(days=1)
-        if report_type == "workshop":
-            if range_job:
-                comparison_start, comparison_end = previous_equal_range(
-                    period_start, period_end
-                )
-                _, previous_records = self.range_service.workshop_records(
-                    comparison_start,
-                    comparison_end,
-                    project_code=filters.project_code,
-                    ship_no=filters.ship_no,
-                )
-                year_ago_start = _year_ago(period_start)
-                year_ago_end = _year_ago(period_end)
-                _, year_ago_records = self.range_service.workshop_records(
-                    year_ago_start,
-                    year_ago_end,
-                    project_code=filters.project_code,
-                    ship_no=filters.ship_no,
-                )
-                analysis = self.analysis_service.analyze_workshop(
-                    _period_label(period_start, period_end),
-                    bundle.workshop_records,
-                    comparison_records=previous_records,
-                    comparison_date=_period_label(comparison_start, comparison_end),
-                    year_ago_records=year_ago_records,
-                    year_ago_date=_period_label(year_ago_start, year_ago_end),
-                )
+
+        def analyze_daily() -> AnalysisResult:
+            comparison_date = filters.report_date - timedelta(days=1)
+            if report_type == "workshop":
+                if range_job:
+                    comparison_start, comparison_end = previous_equal_range(
+                        period_start, period_end
+                    )
+                    _, previous_records = self.range_service.workshop_records(
+                        comparison_start,
+                        comparison_end,
+                        project_code=filters.project_code,
+                        ship_no=filters.ship_no,
+                    )
+                    year_ago_start = _year_ago(period_start)
+                    year_ago_end = _year_ago(period_end)
+                    _, year_ago_records = self.range_service.workshop_records(
+                        year_ago_start,
+                        year_ago_end,
+                        project_code=filters.project_code,
+                        ship_no=filters.ship_no,
+                    )
+                    return self.analysis_service.analyze_workshop(
+                        _period_label(period_start, period_end),
+                        bundle.workshop_records,
+                        comparison_records=previous_records,
+                        comparison_date=_period_label(comparison_start, comparison_end),
+                        year_ago_records=year_ago_records,
+                        year_ago_date=_period_label(year_ago_start, year_ago_end),
+                    )
+                else:
+                    previous_report, previous_records = (
+                        self.workshop_repository.get_daily_report_records(
+                            comparison_date.isoformat()
+                        )
+                    )
+                    year_ago_date = _year_ago(filters.report_date)
+                    year_ago_report, year_ago_records = (
+                        self.workshop_repository.get_daily_report_records(
+                            year_ago_date.isoformat()
+                        )
+                    )
+                    return self.analysis_service.analyze_workshop(
+                        filters.report_date.isoformat(),
+                        bundle.workshop_records,
+                        comparison_records=(
+                            previous_records
+                            if previous_report
+                            and previous_report.get("scope_machine_no")
+                            == self.settings.report_machine_no
+                            else None
+                        ),
+                        comparison_date=(
+                            comparison_date.isoformat()
+                            if previous_report
+                            and previous_report.get("scope_machine_no")
+                            == self.settings.report_machine_no
+                            else None
+                        ),
+                        year_ago_records=(
+                            year_ago_records
+                            if year_ago_report
+                            and year_ago_report.get("scope_machine_no")
+                            == self.settings.report_machine_no
+                            else None
+                        ),
+                        year_ago_date=(
+                            year_ago_date.isoformat()
+                            if year_ago_report
+                            and year_ago_report.get("scope_machine_no")
+                            == self.settings.report_machine_no
+                            else None
+                        ),
+                    )
             else:
-                previous_report, previous_records = (
-                    self.workshop_repository.get_daily_report_records(
-                        comparison_date.isoformat()
-                    )
+                previous_bundle = self.query_service.fetch_report_data(
+                    ReportFilter(report_date=comparison_date)
                 )
+                # Comparisons currently concern task counts, not energy: don't make
+                # needless historical API calls or synthesize comparison energy.
+                previous_equipment = previous_bundle.equipment_records
                 year_ago_date = _year_ago(filters.report_date)
-                year_ago_report, year_ago_records = (
-                    self.workshop_repository.get_daily_report_records(
-                        year_ago_date.isoformat()
-                    )
+                year_ago_bundle = self.query_service.fetch_report_data(
+                    ReportFilter(report_date=year_ago_date)
                 )
-                analysis = self.analysis_service.analyze_workshop(
+                year_ago_equipment = year_ago_bundle.equipment_records
+                return self.analysis_service.analyze_equipment(
                     filters.report_date.isoformat(),
-                    bundle.workshop_records,
-                    comparison_records=(
-                        previous_records
-                        if previous_report
-                        and previous_report.get("scope_machine_no")
-                        == self.settings.report_machine_no
-                        else None
-                    ),
-                    comparison_date=(
-                        comparison_date.isoformat()
-                        if previous_report
-                        and previous_report.get("scope_machine_no")
-                        == self.settings.report_machine_no
-                        else None
-                    ),
-                    year_ago_records=(
-                        year_ago_records
-                        if year_ago_report
-                        and year_ago_report.get("scope_machine_no")
-                        == self.settings.report_machine_no
-                        else None
-                    ),
-                    year_ago_date=(
-                        year_ago_date.isoformat()
-                        if year_ago_report
-                        and year_ago_report.get("scope_machine_no")
-                        == self.settings.report_machine_no
-                        else None
-                    ),
+                    bundle.equipment_records,
+                    energy_data_mode=energy_data_mode,
+                    energy_units=energy_units,
+                    energy_notice=energy_notice,
+                    comparison_records=previous_equipment,
+                    comparison_date=comparison_date.isoformat(),
+                    year_ago_records=year_ago_equipment,
+                    year_ago_date=year_ago_date.isoformat(),
                 )
-        else:
-            previous_bundle = self.query_service.fetch_report_data(
-                ReportFilter(report_date=comparison_date)
-            )
-            # Comparisons currently concern task counts, not energy: don't make
-            # needless historical API calls or synthesize comparison energy.
-            previous_equipment = previous_bundle.equipment_records
-            year_ago_date = _year_ago(filters.report_date)
-            year_ago_bundle = self.query_service.fetch_report_data(
-                ReportFilter(report_date=year_ago_date)
-            )
-            year_ago_equipment = year_ago_bundle.equipment_records
-            analysis = self.analysis_service.analyze_equipment(
-                filters.report_date.isoformat(),
-                bundle.equipment_records,
-                energy_data_mode=energy_data_mode,
-                energy_units=energy_units,
-                energy_notice=energy_notice,
-                comparison_records=previous_equipment,
-                comparison_date=comparison_date.isoformat(),
-                year_ago_records=year_ago_equipment,
-                year_ago_date=year_ago_date.isoformat(),
-            )
+
+        analysis = self._analyze_or_unavailable(
+            report_id=report_id,
+            report_type=report_type,
+            analyze=analyze_daily,
+        )
+        self._ensure_active()
         generated_at = datetime.now(timezone)
         report = {
             "meta": self._meta(
@@ -712,15 +750,9 @@ class ReportPipeline:
         data_updated_at: datetime | None,
         title: str | None = None,
     ) -> dict:
-        period_start = job.get("period_start") or job["report_date"]
-        period_end = job.get("period_end") or period_start
+        start, end = _job_period(job)
+        period_start, period_end = start.isoformat(), end.isoformat()
         custom_period = _is_range_job(job)
-        if report_type == "leadership" and not job.get("period_start"):
-            selected = date.fromisoformat(job["report_date"])
-            period_start = selected.replace(day=1).isoformat()
-            period_end = selected.replace(
-                day=calendar.monthrange(selected.year, selected.month)[1]
-            ).isoformat()
         resolved_title = title or REPORT_TITLES.get(report_type, report_type)
         if custom_period:
             resolved_title = {
@@ -752,6 +784,7 @@ class ReportPipeline:
         task_count: int,
         analysis_status: str,
     ) -> None:
+        self._ensure_active()
         report_id = job["report_id"]
         self.metadata.update_status(
             report_id,
@@ -764,6 +797,7 @@ class ReportPipeline:
             report=report,
             generated_at=generated_at,
         )
+        self._ensure_active()
         with UnitOfWork(self.database, self.settings.timezone) as unit:
             unit.metadata.save_report(
                 report_id=report_id,

@@ -7,6 +7,7 @@ import re
 import sqlite3
 import time
 from pathlib import Path
+from threading import Event
 
 import pytest
 
@@ -29,6 +30,10 @@ from app.services.report_analysis_service import (
     workshop_analysis_source_version,
 )
 from tests.analysis_fakes import model_analysis
+from app.services.report_deadline import ReportOperationTimeout, report_deadline
+from app.services.request_cancellation import (
+    SqlRequestCancelled, bind_request_id, reset_request_id, sql_request_cancellations,
+)
 
 
 def test_analysis_presents_internal_labels_in_plain_language() -> None:
@@ -301,6 +306,88 @@ def test_concurrent_same_version_requests_call_model_once(tmp_path: Path, monkey
     assert calls == 1
     assert sorted(result.cached for result in results) == [False, True]
     assert results[0].data_version == results[1].data_version
+
+
+@pytest.mark.parametrize("stop", ["timeout", "cancel", "report_deadline"])
+def test_same_version_wait_can_stop_without_releasing_active_generation(tmp_path, monkeypatch, stop):
+    settings, service = _services(tmp_path)
+    service.settings = replace(settings, llm_queue_timeout_seconds=1)
+    report = LeadershipReportService(settings).fetch(date(2026, 8, 1))
+    entered, release = Event(), Event()
+    calls = 0
+
+    def model(report_type, context):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            entered.set()
+            assert release.wait(4)
+        return model_analysis(report_type, context)
+
+    monkeypatch.setattr(service.llm, "analyze_context", model)
+    execution = sql_request_cancellations.activate("same-version")
+
+    def waiting_request():
+        token = bind_request_id(execution)
+        try:
+            if stop == "report_deadline":
+                with report_deadline(0.05):
+                    return service.analyze_leadership(report)
+            return service.analyze_leadership(report)
+        finally:
+            reset_request_id(token)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(service.analyze_leadership, report)
+        try:
+            assert entered.wait(1)
+            waiter = executor.submit(waiting_request)
+            if stop == "cancel":
+                deadline = time.monotonic() + 1
+                while time.monotonic() < deadline:
+                    with service._generation_guard:
+                        waiting = any(state["users"] == 2 for state in service._generation_locks.values())
+                    if waiting:
+                        break
+                    time.sleep(0.005)
+                assert waiting
+                sql_request_cancellations.cancel(execution)
+            expected = {
+                "timeout": AnalysisUnavailableError,
+                "cancel": SqlRequestCancelled,
+                "report_deadline": ReportOperationTimeout,
+            }[stop]
+            with pytest.raises(expected):
+                waiter.result(timeout=2)
+            assert calls == 1
+            assert not first.done()
+            with service._generation_guard:
+                assert [state["users"] for state in service._generation_locks.values()] == [1]
+        finally:
+            release.set()
+            first.result(timeout=2)
+            sql_request_cancellations.finish(execution)
+
+    assert service._generation_locks == {}
+    assert service.analyze_leadership(report).cached is True
+    assert service.analyze_leadership(report, force=True).cached is False
+    assert calls == 2
+
+
+@pytest.mark.parametrize("error", [SqlRequestCancelled, ReportOperationTimeout])
+def test_model_cancellation_and_report_deadline_are_not_ai_unavailability(tmp_path, monkeypatch, error):
+    settings, service = _services(tmp_path)
+    report = LeadershipReportService(settings).fetch(date(2026, 8, 1))
+
+    def interrupted(*args):
+        raise error("stopped")
+
+    monkeypatch.setattr(service.llm, "analyze_context", interrupted)
+    with pytest.raises(error, match="stopped"):
+        service.analyze_leadership(report)
+    assert service._generation_locks == {}
+    monkeypatch.setattr(service.llm, "analyze_context", model_analysis)
+    assert service.analyze_leadership(report).cached is False
 
 
 def test_versions_change_when_previously_unwatched_report_values_change(tmp_path: Path) -> None:

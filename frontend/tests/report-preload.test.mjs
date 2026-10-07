@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
 import { afterEach, test } from 'node:test'
+import { readFileSync } from 'node:fs'
+import { ref } from 'vue'
 import { startReportPreload, stopReportPreload, reportPreload } from '../src/state/reportPreload.js'
 import { recentTwelveMonthStart, reportToday } from '../src/api/reportDates.js'
 import * as api from '../src/api/reports.js'
@@ -23,6 +25,42 @@ function mockApi(override = () => undefined) {
   return calls
 }
 afterEach(() => { stopReportPreload(); globalThis.fetch = originalFetch })
+
+test('worker load syncs a nonempty snapshot while background polling remains read-only', async () => {
+  const source = readFileSync(new URL('../src/views/WorkshopView.vue', import.meta.url), 'utf8')
+  const loadSource = source.slice(source.indexOf('async function load('), source.indexOf('\nfunction refreshAnalysisReport('))
+  const signal = new AbortController().signal
+  const calls = []
+  const rows = (count) => ({ report: { item_count: count }, items: [], page: 1, page_size: 10 })
+  const bindings = {
+    isWorker: ref(true), filters: { reportDate: today }, props: { mode: 'worker' },
+    beginRequest: () => ({ sequence: 1, signal }), requestSequence: 1, requestController: null,
+    pageActive: ref(true), loading: ref(false), error: ref(''), result: ref(rows(1)),
+    listWorkshopTasks: async (_query, options) => { calls.push(['read', options]); return rows(calls.length > 1 ? 2 : 1) },
+    generateWorkshopDailyReport: async (_date, options) => { calls.push(['sync', options]); return rows(2) },
+    reconcileVisibleTaskSelection: () => {},
+  }
+  const load = new Function(...Object.keys(bindings), `${loadSource}; return load`)(...Object.values(bindings))
+  await load()
+  assert.deepEqual(calls.map(([kind]) => kind), ['read', 'sync', 'read'])
+  assert.equal(calls[1][1].signal, signal)
+  assert.equal(bindings.result.value.report.item_count, 2)
+  calls.length = 0
+  await load(1, { silent: true, ensureReport: false, force: true })
+  assert.deepEqual(calls.map(([kind]) => kind), ['read'])
+})
+
+test('snapshot synchronization forwards cancellation and invalidates the task cache', async () => {
+  const calls = mockApi()
+  await api.listWorkshopTasks({ reportDate: today })
+  const controller = new AbortController()
+  await api.generateWorkshopDailyReport(today, { signal: controller.signal })
+  await api.listWorkshopTasks({ reportDate: today })
+  const sync = calls.find((call) => call.url === '/api/v1/workshop/reports')
+  assert.equal(sync.options.signal, controller.signal)
+  assert.equal(sync.options.method, 'POST')
+  assert.equal(calls.filter((call) => call.url.includes('/workshop/tasks?')).length, 2)
+})
 
 test('admin home warms only its own overview and history', async () => {
   const calls = mockApi()
@@ -86,15 +124,16 @@ test('different accounts do not reuse the previous account report cache', async 
   assert.equal(calls.filter((c) => c.url.includes('leadership-report')).length, 2)
 })
 
-test('leadership refresh is an explicit background request; daily snapshots invalidate monthly totals', async () => {
+test('forced leadership reads bypass preload cache; daily snapshots invalidate monthly totals', async () => {
   const calls = mockApi()
   await startReportPreload(admin, { pathname: '/admin/home' })
-  await api.refreshLeadershipReport(month)
+  await api.getLeadershipReport(month, { force: true })
+  await api.getLeadershipReport(month)
   await api.getEnergyMonth(month)
   await api.getEnergyDay(today, { force: true })
   await api.getEnergyMonth(month)
   assert.equal(calls.filter((c) => c.url.includes('leadership-report')).length, 2)
-  assert.equal(calls.find((c) => c.url.endsWith('leadership-report/refresh')).options.method, 'POST')
+  assert.ok(calls.filter((c) => c.url.includes('leadership-report')).every((c) => (c.options.method || 'GET') === 'GET'))
   assert.equal(calls.filter((c) => c.url.includes('energy-report/month?')).length, 2)
   assert.equal(calls.filter((c) => c.url.includes('refresh=true')).length, 1)
 })
@@ -118,7 +157,7 @@ test('a forced energy range refresh replaces the normal cached view', async () =
 test('confirmation, revocation and correction invalidate cached workshop rows', async () => {
   const calls = mockApi()
   await startReportPreload({ user_id: 'worker-1', role: 'worker' })
-  await api.confirmWorkshopTask('task-1', today)
+  await api.confirmWorkshopTasks(['task-1'], today, { 'task-1': 1 })
   await api.listWorkshopTasks({ reportDate: today, sortMode: 'worker' })
   await api.revokeWorkshopTask('task-1', today, '误确认')
   await api.listWorkshopTasks({ reportDate: today, sortMode: 'worker' })

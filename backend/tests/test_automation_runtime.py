@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 from app.config import settings
 from app.services.automation_runtime import AutomationRuntime
 from app.services.automation_service import AutomationService
-from app.services.email_service import EmailService
+from app.services.email_service import EmailService, EmailDeliveryFailure
 from app.workers.report_worker import ReportWorker
 
 
@@ -106,7 +106,7 @@ def test_automation_enable_and_retry_delay_use_live_configuration() -> None:
 
     class FailingEmail:
         def send(self, _delivery, _attachment, *, settings_snapshot):
-            raise ConnectionError("SMTP unavailable")
+            raise EmailDeliveryFailure("SMTP connection unavailable before submission")
 
     repository = Repository()
     service = object.__new__(AutomationService)
@@ -134,6 +134,9 @@ def test_report_worker_rescans_after_live_interval_change() -> None:
     scans = 0
 
     class Metadata:
+        def queue_observation(self):
+            return {"queued_count": 0, "oldest_queued_at": None, "running_count": 0}
+
         def recover_interrupted_jobs(self):
             return None
 
@@ -141,6 +144,9 @@ def test_report_worker_rescans_after_live_interval_change() -> None:
             return None
 
     class Automation:
+        def reconcile_runs(self, _now):
+            return 0
+
         def process_due_schedules(self, _now):
             nonlocal scans
             with scan_lock:

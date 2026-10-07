@@ -91,6 +91,28 @@ def list_alarm_reports(
     }
 
 
+@router.get("/reports/page")
+def page_alarm_reports(
+    request: Request,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=100),
+) -> dict:
+    result = request.app.state.alarm_repository.page_reports(
+        monitor_start_at=settings.alarm_monitor_start_at,
+        page=page,
+        page_size=page_size,
+    )
+    for report in result["items"]:
+        if report["status"] == "completed":
+            report["download_url"] = f"/api/v1/alarms/reports/{report['report_id']}/pdf"
+            report["view_url"] = f"/api/v1/alarms/reports/{report['report_id']}/view"
+    return {
+        "success": True,
+        "data": result,
+        "request_id": request.state.request_id,
+    }
+
+
 def _report_path(request: Request, report_id: str, field: str) -> tuple[dict, Path]:
     report = request.app.state.alarm_repository.get_report(report_id)
     if report is None:

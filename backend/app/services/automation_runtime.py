@@ -1,16 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from threading import RLock
 
 from app.config import Settings
+from app.services.runtime_settings_store import runtime_settings_lock
 
 
 class AutomationRuntime:
     """Publish one immutable automation/SMTP configuration to live services."""
 
     def __init__(self, settings: Settings) -> None:
-        self.update_lock = RLock()
+        self.update_lock = runtime_settings_lock
         self._settings = settings
         self._revision = 0
 

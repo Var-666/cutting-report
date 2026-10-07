@@ -55,6 +55,33 @@ class SqlServerAlarmSource:
             ),
         )
 
+    def fetch_recent(
+        self,
+        after_id: int,
+        through_id: int,
+        start_at: str,
+        end_at: str,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        if not self.machine_nos:
+            return []
+        safe_limit = min(5000, max(1, int(limit)))
+        placeholders = ",".join("?" for _ in self.machine_nos)
+        return self.client.fetch_all(
+            f"""
+            SELECT TOP {safe_limit} {ALARM_COLUMNS}
+            FROM dbo.alarm_info
+            WHERE ALARM_INFO_ID > ?
+              AND ALARM_INFO_ID <= ?
+              AND TRY_CONVERT(datetime2, NULLIF(LTRIM(RTRIM(START_TIME)), '')) >= ?
+              AND TRY_CONVERT(datetime2, NULLIF(LTRIM(RTRIM(START_TIME)), '')) <= ?
+              AND LTRIM(RTRIM(MACHINE_NO)) IN ({placeholders})
+              AND UPPER(LTRIM(RTRIM(COALESCE(ALARM_TYPE, '')))) = 'CUTTER'
+            ORDER BY ALARM_INFO_ID
+            """,
+            (after_id, through_id, start_at, end_at, *self.machine_nos),
+        )
+
     def latest_id(self) -> int:
         if not self.machine_nos:
             return 0

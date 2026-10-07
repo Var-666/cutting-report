@@ -30,7 +30,7 @@ test('analysis checks for newer report data and asks the current report to sync 
   const api = readFileSync(new URL('../src/api/reports.js', import.meta.url), 'utf8')
   assert.match(api, /error\.status = response\.status/)
   assert.match(api, /export function getAnalysisVersion[\s\S]*\/api\/v1\/analysis\/version/)
-  assert.match(source, /SOURCE_CHECK_INTERVAL_MS = 30_000/)
+  assert.match(source, /SOURCE_CHECK_INTERVAL_MS = 600_000/)
   assert.match(source, /async function revalidateSource\(\)/)
   const revalidateSource = source.match(/async function revalidateSource\(\)[\s\S]*?\n}\n\nasync function loadAnalysis/)[0]
   assert.match(revalidateSource, /getAnalysisVersion\(/)

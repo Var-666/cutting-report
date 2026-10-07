@@ -8,6 +8,9 @@ from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request, R
 from pydantic import BaseModel, Field, SecretStr, field_validator
 
 from app.config import settings
+from app.services.request_cancellation import (
+    cancellation_owner, current_request_id, sql_request_cancellations,
+)
 from app.database.workshop import AuthenticationError
 from app.services.worker_auth_service import WorkerAuthenticationUnavailableError
 
@@ -102,9 +105,25 @@ def optional_user(
     request: Request,
     session_token: str | None = Cookie(default=None, alias=SESSION_COOKIE),
 ) -> dict | None:
-    return request.app.state.workshop.user_for_session(
+    user = request.app.state.workshop.user_for_session(
         session_token, now=_now().isoformat(timespec="seconds")
     )
+    if user is not None and user.get("auth_source") == "hr_database":
+        try:
+            available = request.app.state.worker_auth.session_identity_available(
+                user.get("external_id") or "",
+                force=request.method not in {"GET", "HEAD", "OPTIONS"},
+            )
+        except WorkerAuthenticationUnavailableError as exc:
+            raise HTTPException(status_code=503, detail="HR人员数据库暂时不可用，请稍后重试") from exc
+        if not available:
+            request.app.state.workshop.revoke_user_sessions(user["user_id"])
+            user = None
+    if user is not None and not sql_request_cancellations.set_owner(
+        current_request_id.get(), cancellation_owner(user.get("user_id"), session_token),
+    ):
+        raise HTTPException(status_code=409, detail="请求标识已在当前会话使用，请重新发起请求")
+    return user
 
 
 def require_user(user: dict | None = Depends(optional_user)) -> dict:
