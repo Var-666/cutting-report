@@ -1,0 +1,133 @@
+from __future__ import annotations
+
+import importlib.util
+import json
+import sys
+from copy import deepcopy
+from pathlib import Path
+
+import pytest
+
+from app.device_config import load_device_catalog
+
+
+ROOT = Path(__file__).resolve().parents[2]
+PROFILE = ROOT / "backend/app/configuration/devices.json"
+LEGACY_KEYS = (
+    "REPORT_MACHINE_NO", "ENERGY_GAS_PARAMETER_ID", "ENERGY_REPORT_EQUIPMENT_IDS",
+    "ENERGY_REPORT_ELECTRICITY_PARAMETER_IDS", "ALARM_MONITOR_MACHINE_NOS", "ALARM_MONITOR_START_AT",
+)
+
+
+def payload():
+    return json.loads(PROFILE.read_text(encoding="utf-8"))
+
+
+def save(tmp_path, value):
+    path = tmp_path / "devices.json"
+    path.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+def settings_from(monkeypatch, path, **overrides):
+    # Isolate configuration loading from deployment secrets and other tests.
+    monkeypatch.setattr("dotenv.load_dotenv", lambda *_args, **_kwargs: None)
+    for key in LEGACY_KEYS:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("DEVICE_CONFIG_PATH", str(path))
+    for key, value in overrides.items():
+        monkeypatch.setenv(key, value)
+    spec = importlib.util.spec_from_file_location("_device_config_test_settings", ROOT / "backend/app/config.py")
+    module = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, spec.name, module)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_cutter01_profile_preserves_confirmed_identity_meters_and_alarm_window(monkeypatch, tmp_path):
+    # Device configuration must survive startup from a different working folder.
+    monkeypatch.chdir(tmp_path)
+    module = settings_from(monkeypatch, PROFILE.relative_to(ROOT),
+                           ENERGY_API_ENABLED="false", ALARM_MONITOR_ENABLED="false")
+    cfg = module.settings
+    device = module.DEVICE_CATALOG.default_device
+    assert [(line.id, line.name) for line in module.DEVICE_CATALOG.production_lines] == [("Cutter01", "20KW切割机")]
+    assert [(item.id, item.name) for item in module.DEVICE_CATALOG.devices] == [("Cutter01", "20KW切割机")]
+    assert device.data_source == "production"
+    assert cfg.report_machine_no == "Cutter01"
+    assert cfg.energy_report_equipment_ids == ("Cutter01",)
+    assert cfg.energy_gas_parameter_id == "bd3179be-c587-f011-a2e9-000c2974f33c"
+    assert cfg.energy_report_electricity_parameter_ids == (
+        "2b00e015-d987-f011-a2e9-000c2974f33c", "98cbd135-d987-f011-a2e9-000c2974f33c",
+        "93fae152-d987-f011-a2e9-000c2974f33c",
+    )
+    assert cfg.alarm_monitor_machine_nos == ("Cutter01",)
+    assert cfg.alarm_monitor_start_at == "2026-09-29 00:00:00"
+    assert not cfg.energy_api_enabled and not cfg.alarm_monitor_enabled
+
+
+def test_json_values_actually_feed_runtime_and_explicit_legacy_overrides_still_win(monkeypatch, tmp_path):
+    value = payload()
+    device = value["devices"][0]
+    device["machine_no"] = "FixtureDevice"
+    device["energy"]["equipment_ids"] = ["FixtureDevice"]
+    device["energy"]["gas_parameter_id"] = "00000000-0000-4000-8000-000000000001"
+    device["energy"]["electricity_parameter_ids"] = ["00000000-0000-4000-8000-000000000002"]
+    device["alarm"]["start_at"] = "2026-10-01 00:00:00"
+    path = save(tmp_path, value)
+    cfg = settings_from(monkeypatch, path).settings
+    assert cfg.report_machine_no == "FixtureDevice"
+    assert cfg.energy_report_equipment_ids == ("FixtureDevice",)
+    assert cfg.energy_gas_parameter_id == device["energy"]["gas_parameter_id"]
+    assert cfg.energy_report_electricity_parameter_ids == tuple(device["energy"]["electricity_parameter_ids"])
+    assert cfg.alarm_monitor_machine_nos == ("FixtureDevice",)
+    assert cfg.alarm_monitor_start_at == "2026-10-01 00:00:00"
+    cfg = settings_from(monkeypatch, path, REPORT_MACHINE_NO="ExistingDevice",
+        ENERGY_REPORT_EQUIPMENT_IDS="ExistingDevice", ENERGY_GAS_PARAMETER_ID="existing-gas",
+        ENERGY_REPORT_ELECTRICITY_PARAMETER_IDS="existing-electricity",
+        ALARM_MONITOR_MACHINE_NOS="ExistingDevice", ALARM_MONITOR_START_AT="2026-09-29 00:00:00").settings
+    assert cfg.report_machine_no == "ExistingDevice"
+    assert cfg.energy_report_equipment_ids == ("ExistingDevice",)
+    assert cfg.energy_gas_parameter_id == "existing-gas"
+    assert cfg.energy_report_electricity_parameter_ids == ("existing-electricity",)
+    assert cfg.alarm_monitor_machine_nos == ("ExistingDevice",)
+    assert cfg.alarm_monitor_start_at == "2026-09-29 00:00:00"
+
+
+@pytest.mark.parametrize("fault", [
+    "default", "line_reference", "duplicate_device", "duplicate_line", "gas_id",
+    "duplicate_meter", "empty_meter", "wrong_scope", "alarm_date", "unknown_field", "version",
+])
+def test_invalid_profile_cannot_silently_select_a_device_or_wrong_meter(tmp_path, fault):
+    value = payload()
+    device = value["devices"][0]
+    if fault == "default": value["default_device_id"] = "missing"
+    if fault == "line_reference": device["production_line_id"] = "missing"
+    if fault == "duplicate_device": value["devices"].append({**deepcopy(device), "id": "cutter01"})
+    if fault == "duplicate_line": value["production_lines"].append({"id": "cutter01", "name": "重复"})
+    if fault == "gas_id": device["energy"]["gas_parameter_id"] = "invalid"
+    if fault == "duplicate_meter": device["energy"]["electricity_parameter_ids"].append(device["energy"]["gas_parameter_id"])
+    if fault == "empty_meter": device["energy"]["electricity_parameter_ids"] = []
+    if fault == "wrong_scope": device["energy"]["equipment_ids"] = ["Cutter02"]
+    if fault == "alarm_date": device["alarm"]["start_at"] = "2026-02-30 00:00:00"
+    if fault == "unknown_field": device["password"] = "must-not-appear-in-error"
+    if fault == "version": value["schema_version"] = 99
+    with pytest.raises(ValueError, match="设备配置文件校验失败") as raised:
+        load_device_catalog(save(tmp_path, value))
+    assert "must-not-appear-in-error" not in str(raised.value)
+
+
+def test_missing_or_broken_json_fails_instead_of_falling_back_to_cutter01(tmp_path):
+    path = tmp_path / "devices.json"
+    with pytest.raises(ValueError, match="无法读取设备配置文件"):
+        load_device_catalog(path)
+    path.write_text("{broken json", encoding="utf-8")
+    with pytest.raises(ValueError, match="设备配置文件校验失败"):
+        load_device_catalog(path)
+
+
+def test_device_config_is_included_in_the_existing_source_package():
+    from scripts.build_docker_package import collect_files
+    files = collect_files(ROOT)
+    assert files["backend/app/configuration/devices.json"] == PROFILE.read_bytes()
+    assert "backend/app/device_config.py" in files

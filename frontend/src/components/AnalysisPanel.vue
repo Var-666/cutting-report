@@ -3,6 +3,7 @@ import { computed, onActivated, onBeforeUnmount, onDeactivated, ref, watch } fro
 import { analyzeReport, getAnalysisVersion } from '../api/reports'
 import { createActivationTimer } from '../utils/activationTimer.js'
 import { compactAnalysisFactLabel, compactAnalysisFactValue } from '../utils/analysisFactDisplay.js'
+import { formatDeviceDisplay } from '../utils/deviceDisplay.js'
 import AppIcon from './AppIcon.vue'
 
 const props = defineProps({
@@ -36,7 +37,7 @@ const activationTimer = createActivationTimer({
 })
 
 function formatAnalysisText(value) {
-  return String(value ?? '').replace(/-?\d[\d,]*\.\d{2,}/g, (raw) => {
+  return formatDeviceDisplay(value).replace(/-?\d[\d,]*\.\d{2,}/g, (raw) => {
     const numeric = Number(raw.replaceAll(',', ''))
     if (!Number.isFinite(numeric)) return raw
     return new Intl.NumberFormat('zh-CN', {

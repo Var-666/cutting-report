@@ -28,6 +28,7 @@ let querySequence = 0
 let lifecycleSequence = 0
 let lifecycleController = null
 let directoryController = null
+let historyController = null
 let firstActivation = true
 
 function beginLifecycleRequest() {
@@ -45,6 +46,12 @@ const dispatchForm = reactive({ machineIp: '' })
 const systemStatus = ref(null)
 const rows = ref([])
 const histories = ref([])
+const historyPage = ref(1)
+const historyPageSize = 10
+const historyTotal = ref(0)
+const historyLoading = ref(false)
+const historyError = ref('')
+const historyPageCount = computed(() => Math.max(1, Math.ceil(historyTotal.value / historyPageSize)))
 const machines = ref([])
 const bulkQuantity = ref(1)
 const pushBatch = reactive({
@@ -117,6 +124,15 @@ const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize))
 const selectedFileCount = computed(() => selectedFiles.value.size)
 const selectedFileItems = computed(() => [...selectedFiles.value.values()])
 const selectedMachine = computed(() => machines.value.find((machine) => machine.machine_ip === dispatchForm.machineIp))
+
+function machineName(machineIp) {
+  const names = {
+    '10.147.1.40': '20kW 切割机',
+    '10.147.1.38': '30kW 切割机',
+  }
+  return names[machineIp] || machines.value.find((machine) => machine.machine_ip === machineIp)?.server_name || '未命名机床'
+}
+
 const activeDispatchStep = computed(() => {
   if (pushBatch.resultsReady) return 4
   if (pushBatch.visible) return 3
@@ -207,10 +223,43 @@ function openSinglePush(file) {
   openPushBatch()
 }
 
-async function loadHistory({ signal } = {}) {
-  const data = await listCuttingDispatches({ page: 1, pageSize: 10 }, { signal })
-  if (signal?.aborted || !pageActive.value) return
-  histories.value = data.items
+async function loadHistory({ signal, page: targetPage = historyPage.value } = {}) {
+  if (!pageActive.value || signal?.aborted) return
+  historyController?.abort()
+  const controller = new AbortController()
+  historyController = controller
+  const abort = () => controller.abort()
+  signal?.addEventListener('abort', abort, { once: true })
+  historyLoading.value = true
+  historyError.value = ''
+  try {
+    let data = await listCuttingDispatches({ page: targetPage, pageSize: historyPageSize }, { signal: controller.signal })
+    if (controller.signal.aborted || !pageActive.value || historyController !== controller) return
+    const lastPage = Math.max(1, Math.ceil(data.total / historyPageSize))
+    if (targetPage > lastPage) {
+      targetPage = lastPage
+      data = await listCuttingDispatches({ page: targetPage, pageSize: historyPageSize }, { signal: controller.signal })
+    }
+    if (controller.signal.aborted || !pageActive.value || historyController !== controller) return
+    histories.value = data.items
+    historyTotal.value = data.total
+    historyPage.value = data.page
+  } catch (error) {
+    if (error.name !== 'AbortError' && !controller.signal.aborted && pageActive.value && historyController === controller) {
+      historyError.value = error.message
+    }
+  } finally {
+    signal?.removeEventListener('abort', abort)
+    if (historyController === controller) {
+      historyLoading.value = false
+      historyController = null
+    }
+  }
+}
+
+async function changeHistoryPage(value) {
+  if (historyLoading.value || operatingId.value || pushBatch.saving || value < 1 || value > historyPageCount.value) return
+  await loadHistory({ page: value })
 }
 
 async function loadMachines({ signal } = {}) {
@@ -726,7 +775,7 @@ async function refreshBatchCatalog() {
 
 async function executeSaved(item) {
   if (operatingId.value) return
-  if (!window.confirm(`确认执行任务 ${item.dispatch_id}？\n文件：${item.document_no}\n机床：${item.machine_ip}`)) return
+  if (!window.confirm(`确认执行任务 ${item.dispatch_id}？\n文件：${item.document_no}\n机床：${machineName(item.machine_ip)}`)) return
   operatingId.value = item.dispatch_id
   try {
     const completed = await executeCuttingDispatch(item.dispatch_id)
@@ -790,6 +839,9 @@ function pausePage() {
   lifecycleController = null
   directoryController?.abort()
   directoryController = null
+  historyController?.abort()
+  historyController = null
+  historyLoading.value = false
   loading.value = false
   projectLoading.value = false
   catalogLoading.value = false
@@ -936,18 +988,27 @@ onBeforeUnmount(pausePage)
         </div>
         <div class="confirm-machine">
           <label for="dispatch-machine"><AppIcon name="settings" size="16" />目标机床</label>
-          <AppSelect id="dispatch-machine" v-model="dispatchForm.machineIp" :disabled="!machines.length || pushBatch.saving"><option value="" disabled>请选择目标机床</option><option v-for="machine in machines" :key="machine.machine_ip" :value="machine.machine_ip">{{ machine.server_name ? `${machine.server_name} · ` : '' }}{{ machine.machine_ip }}（{{ machine.online ? '在线' : '待确认' }}）</option></AppSelect>
-          <small><i :class="{ ready: selectedMachine?.online }"></i>{{ selectedMachine ? `${selectedMachine.machine_ip} · ${selectedMachine.online ? '机床在线' : '未从列表确认在线'}` : systemStatus?.file_source?.message || '请选择接收文件的机床' }}</small>
+          <AppSelect id="dispatch-machine" v-model="dispatchForm.machineIp" :disabled="!machines.length || pushBatch.saving"><option value="" disabled>请选择目标机床</option><option v-for="machine in machines" :key="machine.machine_ip" :value="machine.machine_ip">{{ machineName(machine.machine_ip) }}（{{ machine.online ? '在线' : '待确认' }}）</option></AppSelect>
+          <small><i :class="{ ready: selectedMachine?.online }"></i>{{ selectedMachine ? `${machineName(selectedMachine.machine_ip)} · ${selectedMachine.online ? '机床在线' : '未从列表确认在线'}` : systemStatus?.file_source?.message || '请选择接收文件的机床' }}</small>
         </div>
         <button class="confirm-dispatch-button" type="button" :disabled="!selectedFileCount || loading || pushBatch.saving || !systemStatus?.can_push || !dispatchForm.machineIp" @click="openPushBatch"><AppIcon name="send" size="18" tone="light" />设置参数并派发</button>
       </div>
     </aside>
   </div>
 
-  <section class="panel dispatch-history-panel">
+  <section class="panel dispatch-history-panel" :aria-busy="historyLoading">
     <div class="panel-title"><div><span class="dispatch-section-icon green"><AppIcon name="check" size="17" /></span><small>04</small><h2>派发记录</h2></div><p>文件准备 → 魔盒上传 → 机床指派，各阶段独立记录</p></div>
-    <div v-if="histories.length" class="dispatch-table-wrap"><table v-content-table="pageActive" class="dispatch-table history-table"><thead><tr><th>任务标识</th><th>文件名</th><th>机床IP</th><th>阶段 / 状态</th><th>魔盒UUID</th><th>失败原因</th><th>创建时间</th><th>操作</th></tr></thead><tbody><tr v-for="item in histories" :key="item.dispatch_id"><td><code>{{ item.task_identifier || item.dispatch_id }}</code></td><td>{{ item.document_no }}<small class="dispatch-project-name">数量 {{ item.quantity }}</small></td><td>{{ item.machine_ip }}</td><td><span class="dispatch-status" :class="item.status">{{ item.status_label }}</span><small class="dispatch-project-name">{{ item.stage_label }}</small></td><td><code>{{ item.remote_task_id || '--' }}</code></td><td class="history-error">{{ item.last_error || '--' }}</td><td>{{ formatTime(item.created_at) }}</td><td><div class="history-actions"><button v-if="item.can_execute" type="button" :disabled="!!operatingId" @click="executeSaved(item)">{{ item.remote_task_id ? '重试指派' : '执行推送' }}</button><button v-if="item.can_cancel" type="button" class="danger" :disabled="!!operatingId" @click="cancelSaved(item)">取消指派</button><span v-if="!item.can_execute && !item.can_cancel">--</span></div></td></tr></tbody></table></div>
-    <div v-else class="dispatch-empty-history"><i><AppIcon name="send" size="20" /></i><strong>暂无派发记录</strong><span>从项目目录选择文件并确认后，即可直接派发。</span></div>
+    <div v-if="historyError" class="global-error" role="alert"><span>派发记录读取失败：{{ historyError }}</span><button type="button" :disabled="historyLoading" @click="loadHistory()">重试</button></div>
+    <div v-if="historyLoading && !histories.length" class="dispatch-empty-history" role="status"><span class="spinner dark" aria-hidden="true"></span><strong>正在读取派发记录</strong></div>
+    <div v-else-if="histories.length" class="dispatch-table-wrap"><table v-content-table="pageActive" class="dispatch-table history-table"><thead><tr><th>任务标识</th><th>文件名</th><th>目标机床</th><th>阶段 / 状态</th><th>魔盒UUID</th><th>失败原因</th><th>创建时间</th><th>操作</th></tr></thead><tbody><tr v-for="item in histories" :key="item.dispatch_id"><td><code>{{ item.task_identifier || item.dispatch_id }}</code></td><td>{{ item.document_no }}<small class="dispatch-project-name">数量 {{ item.quantity }}</small></td><td>{{ machineName(item.machine_ip) }}</td><td><span class="dispatch-status" :class="item.status">{{ item.status_label }}</span><small class="dispatch-project-name">{{ item.stage_label }}</small></td><td><code>{{ item.remote_task_id || '--' }}</code></td><td class="history-error">{{ item.last_error || '--' }}</td><td>{{ formatTime(item.created_at) }}</td><td><div class="history-actions"><button v-if="item.can_execute" type="button" :disabled="!!operatingId || historyLoading" @click="executeSaved(item)">{{ item.remote_task_id ? '重试指派' : '执行推送' }}</button><button v-if="item.can_cancel" type="button" class="danger" :disabled="!!operatingId || historyLoading" @click="cancelSaved(item)">取消指派</button><span v-if="!item.can_execute && !item.can_cancel">--</span></div></td></tr></tbody></table></div>
+    <div v-else-if="!historyError" class="dispatch-empty-history"><i><AppIcon name="send" size="20" /></i><strong>暂无派发记录</strong><span>从项目目录选择文件并确认后，即可直接派发。</span></div>
+    <div v-if="historyTotal > 0" class="dispatch-pagination app-pagination" aria-label="派发记录分页">
+      <div class="app-pagination__actions">
+        <button type="button" :disabled="historyPage <= 1 || historyLoading || !!operatingId || pushBatch.saving" @click="changeHistoryPage(historyPage - 1)">上一页</button>
+        <span class="app-pagination__summary">第 {{ historyPage }} / {{ historyPageCount }} 页，共 {{ historyTotal }} 条</span>
+        <button type="button" :disabled="historyPage >= historyPageCount || historyLoading || !!operatingId || pushBatch.saving" @click="changeHistoryPage(historyPage + 1)">下一页</button>
+      </div>
+    </div>
   </section>
 
   <div v-if="selectedFileCount && !pushBatch.visible" class="mobile-selection-bar-spacer" aria-hidden="true"></div>
@@ -967,7 +1028,7 @@ onBeforeUnmount(pausePage)
 
         <div class="push-batch-content">
           <div class="push-batch-common">
-            <label><span>目标机床 IP</span><AppSelect v-model="dispatchForm.machineIp" :disabled="pushBatch.saving || pushBatch.resultsReady"><option value="" disabled>请选择 SYS_CONFIG 中的机床</option><option v-for="machine in machines" :key="machine.machine_ip" :value="machine.machine_ip">{{ machine.server_name ? `${machine.server_name} · ` : '' }}{{ machine.machine_ip }}（{{ machine.online ? '在线' : '未从列表确认在线' }}）</option></AppSelect></label>
+            <label><span>目标机床</span><AppSelect v-model="dispatchForm.machineIp" :disabled="pushBatch.saving || pushBatch.resultsReady"><option value="" disabled>请选择目标机床</option><option v-for="machine in machines" :key="machine.machine_ip" :value="machine.machine_ip">{{ machineName(machine.machine_ip) }}（{{ machine.online ? '在线' : '未从列表确认在线' }}）</option></AppSelect></label>
             <label><span>统一加工数量</span><div><input v-model="bulkQuantity" name="bulk_quantity" type="number" min="1" max="10000" step="1" autocomplete="off" :disabled="pushBatch.saving || pushBatch.resultsReady" /><button type="button" :disabled="pushBatch.saving || pushBatch.resultsReady" @click="applyBulkQuantity">应用到全部</button></div></label>
             <div class="push-batch-summary"><strong>{{ pushBatch.items.length }}</strong><span>个文件</span><small v-if="!pushBatch.resultsReady">{{ invalidBatchCount ? `${invalidBatchCount} 项待补参数` : nonStandardBatchCount || overrideBatchCount ? `${nonStandardBatchCount} 项非标准名、${overrideBatchCount} 项参数不符待确认` : '全部为标准名' }}</small><small v-else>已推送 {{ batchStatusCounts.sent }} · 失败 {{ batchStatusCounts.failed }} · 重复 {{ batchStatusCounts.duplicate }}</small></div>
           </div>

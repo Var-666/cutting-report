@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict'
 import { afterEach, test } from 'node:test'
 import { readFileSync } from 'node:fs'
+import { computed, ref } from 'vue'
 import {
   getCuttingStatus,
   getCuttingDispatch,
   listCuttingCatalogs,
   listCuttingFiles,
   listCuttingProjects,
+  listCuttingDispatches,
 } from '../src/api/reports.js'
 import { reportCache } from '../src/api/reportCache.js'
 import { parseCuttingInstructionFilename } from '../src/utils/cuttingInstructionName.js'
@@ -16,6 +18,91 @@ const originalFetch = globalThis.fetch
 afterEach(() => {
   globalThis.fetch = originalFetch
   reportCache.invalidate('cutting:')
+})
+
+function historyPagination() {
+  const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
+  const source = view.slice(view.indexOf('async function loadHistory('), view.indexOf('async function loadMachines('))
+  const bindings = {
+    pageActive: ref(true), histories: ref([]), historyPage: ref(1), historyPageSize: 10,
+    historyTotal: ref(0), historyLoading: ref(false), historyError: ref(''),
+    operatingId: ref(''), pushBatch: { saving: false }, listCuttingDispatches,
+  }
+  bindings.historyPageCount = computed(() => Math.max(1, Math.ceil(bindings.historyTotal.value / 10)))
+  const functions = new Function(...Object.keys(bindings), `let historyController = null; ${source}; return { loadHistory, changeHistoryPage }`)(...Object.values(bindings))
+  return { ...bindings, ...functions }
+}
+
+test('dispatch history pages through all records in ten-row pages independently of file selection', async () => {
+  const calls = []
+  globalThis.fetch = async (url) => {
+    const query = new URL(String(url), 'http://localhost').searchParams
+    const page = Number(query.get('page'))
+    calls.push({ page, size: Number(query.get('page_size')) })
+    const items = Array.from({ length: page === 3 ? 3 : 10 }, (_, index) => ({ dispatch_id: `${page}-${index}` }))
+    return { ok: true, json: async () => ({ success: true, data: { items, total: 23, page } }) }
+  }
+  const history = historyPagination()
+  await history.loadHistory()
+  await history.changeHistoryPage(2)
+  assert.equal(history.historyPage.value, 2)
+  assert.equal(history.histories.value.length, 10)
+  await history.changeHistoryPage(3)
+  assert.equal(history.histories.value.length, 3)
+  await history.changeHistoryPage(4)
+  await history.loadHistory()
+  assert.deepEqual(calls, [{ page: 1, size: 10 }, { page: 2, size: 10 }, { page: 3, size: 10 }, { page: 3, size: 10 }])
+  assert.equal(history.historyPageCount.value, 3)
+  const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
+  assert.match(view, /aria-label="派发记录分页"[\s\S]*?>上一页<\/button>[\s\S]*?historyPageCount[\s\S]*?>下一页<\/button>/)
+})
+
+test('a failed history page keeps the displayed rows and page number instead of showing a false empty state', async () => {
+  const history = historyPagination()
+  history.histories.value = [{ dispatch_id: 'existing' }]
+  history.historyTotal.value = 23
+  globalThis.fetch = async () => { throw new Error('网络中断') }
+  await history.changeHistoryPage(2)
+  assert.equal(history.historyPage.value, 1)
+  assert.equal(history.histories.value[0].dispatch_id, 'existing')
+  assert.equal(history.historyTotal.value, 23)
+  assert.equal(history.historyError.value, '网络中断')
+  assert.equal(history.historyLoading.value, false)
+})
+
+test('history retention cannot strand the user on an empty out-of-range page', async () => {
+  const pages = []
+  globalThis.fetch = async (url) => {
+    const page = Number(new URL(String(url), 'http://localhost').searchParams.get('page'))
+    pages.push(page)
+    return { ok: true, json: async () => ({ success: true, data: { items: page === 1 ? [{ dispatch_id: 'remaining' }] : [], total: 1, page } }) }
+  }
+  const history = historyPagination()
+  history.historyPage.value = 3
+  await history.loadHistory()
+  assert.deepEqual(pages, [3, 1])
+  assert.equal(history.historyPage.value, 1)
+  assert.equal(history.histories.value[0].dispatch_id, 'remaining')
+})
+
+test('aborted history requests cannot overwrite the page after leaving the view', async () => {
+  let resolveResponse
+  let requestSignal
+  globalThis.fetch = (url, options) => {
+    if (String(url).includes('/requests/')) return Promise.resolve({ ok: true })
+    requestSignal = options.signal
+    return new Promise((resolve) => { resolveResponse = resolve })
+  }
+  const history = historyPagination()
+  const controller = new AbortController()
+  const pending = history.loadHistory({ signal: controller.signal })
+  controller.abort()
+  assert.equal(requestSignal.aborted, true)
+  resolveResponse({ ok: true, json: async () => ({ success: true, data: { items: [{ dispatch_id: 'late' }], total: 1, page: 1 } }) })
+  await pending
+  assert.equal(history.histories.value.length, 0)
+  assert.equal(history.historyError.value, '')
+  assert.equal(history.historyLoading.value, false)
 })
 
 test('directory browser requests projects, one project tree, then one catalog page', async () => {
@@ -80,6 +167,23 @@ test('unified dispatch page loads push readiness status', async () => {
 
   assert.equal(calls.length, 1)
   assert.match(calls[0], /^\/api\/v1\/cutting\/status\?scope=push$/)
+})
+
+test('machine power names identify the correct targets while dispatch still uses their IPs', () => {
+  const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
+  const source = view.match(/function machineName\(machineIp\) \{[\s\S]*?\n\}/)[0]
+  const machines = { value: [{ machine_ip: '10.147.1.41', server_name: '其他机床' }] }
+  const machineName = new Function('machines', `${source}\nreturn machineName`)(machines)
+
+  assert.equal(machineName('10.147.1.40'), '20kW 切割机')
+  assert.equal(machineName('10.147.1.38'), '30kW 切割机')
+  assert.equal(machineName('10.147.1.41'), '其他机床')
+  assert.equal(machineName('10.147.1.42'), '未命名机床')
+  assert.equal((view.match(/:value="machine.machine_ip"/g) || []).length, 2)
+  assert.equal((view.match(/\{\{ machineName\(machine.machine_ip\) \}\}/g) || []).length, 2)
+  assert.match(view, /machine_ip: dispatchForm.machineIp/)
+  assert.match(view, /<td>\{\{ machineName\(item.machine_ip\) \}\}<\/td>/)
+  assert.doesNotMatch(view, /目标机床 IP|<th>机床IP<\/th>|\{\{ machine.machine_ip \}\}/)
 })
 
 test('file dispatch page uses the recursive PDM directory tree without condition builders', () => {
@@ -204,12 +308,26 @@ test('non-standard cutting instruction names are ignored', () => {
   for (const filename of [
     'PK-301CPS1.GEN',
     'prefix-P101C100A001.GEN',
-    'P101C100A000.GEN',
+    'P101C000A001.GEN',
+    'P403P08A601.GEN',
+    'P403P080.GEN',
     'P101C100A701.GEN',
     'P101C100A001.PDF',
   ]) {
     assert.equal(parseCuttingInstructionFilename(filename), null)
   }
+})
+
+test('dispatch parameters depend on material and thickness, not the product code or suffix', () => {
+  for (const filename of ['P403P080A601', 'P403P080A601B.gen', 'P403P080A6', 'P403P080A600.gen', 'P12X080A601AB.txt', 'folder\\P403P080A601C.GEN']) {
+    const parsed = parseCuttingInstructionFilename(filename)
+    assert.equal(parsed.material, 'AH36', filename)
+    assert.equal(parsed.thickness, 8, filename)
+  }
+  const parsed = parseCuttingInstructionFilename('p403p135a001b.gen')
+  assert.equal(parsed.material, 'A')
+  assert.equal(parsed.thickness, 13.5)
+  assert.equal(parseCuttingInstructionFilename('P403P080A601B135A001.gen').thickness, 8, 'the first parameter prefix wins')
 })
 
 test('direct dispatch builds independent PDM references and executes tasks sequentially', () => {

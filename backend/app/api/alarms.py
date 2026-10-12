@@ -60,15 +60,23 @@ def page_alarm_incidents(
     page: int = Query(1, ge=1),
     page_size: int = Query(15, ge=1, le=100),
 ) -> dict:
+    result = request.app.state.alarm_repository.page_incidents(
+        monitor_start_at=settings.alarm_monitor_start_at,
+        status=status,
+        severity=severity,
+        page=page,
+        page_size=page_size,
+    )
+    for incident in result["items"]:
+        has_html = incident.pop("report_has_html", False)
+        incident["report_view_url"] = (
+            f"/api/v1/alarms/reports/{incident['pdf_report_id']}/view"
+            if incident["report_status"] == "completed" and has_html
+            else None
+        )
     return {
         "success": True,
-        "data": request.app.state.alarm_repository.page_incidents(
-            monitor_start_at=settings.alarm_monitor_start_at,
-            status=status,
-            severity=severity,
-            page=page,
-            page_size=page_size,
-        ),
+        "data": result,
         "request_id": request.state.request_id,
     }
 

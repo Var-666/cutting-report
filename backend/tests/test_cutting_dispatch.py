@@ -536,7 +536,25 @@ def test_standard_name_parser_matches_browser_rules() -> None:
     assert standard_instruction_parameters("P123C000A601.GEN") is None
 
 
-def test_batch_requires_manual_confirmation_for_nonstandard_and_overridden_names(tmp_path: Path) -> None:
+@pytest.mark.parametrize("filename", [
+    "P403P080A601", "P403P080A601B.gen", "P403P080A6",
+    "P403P080A600.gen", "P12X080A601AB.txt", r"folder\P403P080A601C.GEN",
+    "P403P080A601B135A001.gen",
+])
+def test_name_parameters_ignore_product_code_and_trailing_suffix(filename: str) -> None:
+    assert standard_instruction_parameters(filename) == ("AH36", 8.0)
+
+
+@pytest.mark.parametrize("filename", [
+    "prefix-P403P080A601.gen", "P403P000A601.gen", "P403P08A601.gen",
+    "P403P080.gen", "P403P080A701.gen", "P403P080A601.pdf",
+])
+def test_unreadable_name_parameters_still_require_manual_input(filename: str) -> None:
+    assert standard_instruction_parameters(filename) is None
+
+
+@pytest.mark.parametrize("filename", ["P123C120A601.GEN", "P403P120A601.GEN", "P403P120A601B.GEN"])
+def test_batch_requires_manual_confirmation_for_nonstandard_and_overridden_names(tmp_path: Path, filename: str) -> None:
     service, dispatches, admin = _service(tmp_path)
     raw = service.pdm.files[0]
     common = {
@@ -552,7 +570,7 @@ def test_batch_requires_manual_confirmation_for_nonstandard_and_overridden_names
     assert "非标准文件名" in rejected["items"][0]["error"]
     assert dispatches.list(page=1, page_size=10)[1] == 0
 
-    raw["document_no"] = "P123C120A601.GEN"
+    raw["document_no"] = filename
     standard = service.create_dispatch_batch(machine_ip="10.1.133.197", items=[common], user=admin)
     assert standard["created_count"] == 1
     assert service.get_dispatch(standard["items"][0]["dispatch"]["dispatch_id"])["can_execute"] is False

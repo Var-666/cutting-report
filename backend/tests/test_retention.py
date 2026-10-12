@@ -3,7 +3,7 @@ from __future__ import annotations
 import threading
 import pytest
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from app.config import settings
@@ -98,6 +98,65 @@ def test_retention_keeps_unresolved_remote_dispatches(tmp_path):
             queued_at=NOW.isoformat(), batch_size=100)
     assert all(dispatches.get(identifier) for identifier in protected)
     assert all(dispatches.get(identifier) is None for identifier in deletable)
+
+
+def test_alarm_retention_uses_occurrence_and_preserves_reports_with_unresolved_members(tmp_path):
+    database, _workshop, _metadata, _automation, alarms, *_rest, retention, _admin = _repositories(tmp_path)
+    cutoff = NOW - timedelta(days=30)
+    # Old alarms may only have been discovered or resolved today. Neither date
+    # should extend the requested retention period measured from occurrence.
+    rows = [
+        {**_alarm(1, closed=True), "remove_time": NOW.isoformat()},
+        _alarm(2, closed=False),
+        {**_alarm(3, closed=True), "start_time": RECENT},
+        {**_alarm(4, closed=True), "start_time": cutoff.strftime("%Y-%m-%d %H:%M:%S")},
+        {**_alarm(5, closed=True), "start_time": (cutoff - timedelta(seconds=1)).isoformat()},
+    ]
+    alarms.ingest(rows, now=NOW, cursor=5, debounce_minutes=10)
+    ids = {item["first_alarm_id"]: item["incident_id"] for item in alarms.list_incidents(None)}
+    cfg = replace(settings, project_root=tmp_path, alarm_retention_days=30,
+                  report_retention_days=0, analysis_retention_days=0,
+                  dispatch_retention_days=0, audit_retention_days=0)
+
+    def report(identifier, members, *, failed=False):
+        alarms.reserve_report(proposed_report_id=identifier, emission_key=identifier,
+            machine_no="Cutter01", incident_ids=[ids[i] for i in members], now=OLD)
+        if failed:
+            alarms.fail_report(identifier, "生成失败后关联被解除")
+            return
+        html = cfg.reports_dir / "alarms" / f"{identifier}.html"
+        html.parent.mkdir(parents=True, exist_ok=True)
+        html.write_text("report", encoding="utf-8")
+        html.with_suffix(".pdf").write_bytes(b"pdf")
+        alarms.complete_report(identifier, analysis={}, model_status="model",
+            completed_at=NOW.isoformat(), html_relative_path=f"alarms/{identifier}.html",
+            pdf_relative_path=f"alarms/{identifier}.pdf", pdf_filename=f"{identifier}.pdf",
+            file_size=3, sha256="test")
+
+    report("expired", [1, 5])
+    report("failed-open", [2], failed=True)
+    report("shared", [1, 2, 3])
+    report("boundary", [4])
+    result = RetentionService(cfg, retention).cleanup_expired(now=NOW)
+
+    assert result["records"]["alarm_incidents"] == 2
+    assert result["records"]["alarm_events"] == 2
+    assert result["records"]["alarm_reports"] == 1
+    assert result["files"] == {"deleted": 2, "missing": 0, "failed": 0}
+    assert alarms.get_report("expired") is None
+    assert {item["first_alarm_id"] for item in alarms.list_incidents(None)} == {2, 3, 4}
+    for identifier in ("failed-open", "shared", "boundary"):
+        assert alarms.get_report(identifier) is not None
+    assert (cfg.reports_dir / "alarms/shared.pdf").is_file()
+    assert not (cfg.reports_dir / "alarms/expired.pdf").exists()
+
+    # A shared report is retained until every member is resolved and expired.
+    with database.connect() as connection:
+        connection.execute("UPDATE alarm_incidents SET status = 'closed'")
+    later = RetentionService(cfg, retention).cleanup_expired(now=NOW + timedelta(days=31))
+    assert later["records"]["alarm_reports"] == 3
+    assert alarms.list_incidents(None) == []
+    assert alarms.list_reports() == []
 
 
 @pytest.mark.parametrize("delivery_status", ["pending", "unknown"])

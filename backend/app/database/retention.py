@@ -17,6 +17,15 @@ DISPATCH_TERMINAL_STATUSES = (
     "cancelled",
 )
 
+# Source START_TIME is local wall time; application timestamps use ISO format.
+ALARM_OCCURRED_AT_SQL = """replace(substr(COALESCE(
+    NULLIF(incident.first_start_time, ''), incident.first_seen_at
+), 1, 19), 'T', ' ')"""
+ALARM_REPORT_LINK_SQL = """(
+    incident.pdf_report_id = report.report_id
+    OR incident.incident_id IN (SELECT value FROM json_each(report.incident_ids_json))
+)"""
+
 
 class RetentionRepository(SQLiteRepository):
     """Persistence boundary for bounded operational-history retention."""
@@ -249,24 +258,31 @@ class RetentionRepository(SQLiteRepository):
                 ).rowcount
 
             if alarm_cutoff is not None:
+                alarm_time_cutoff = alarm_cutoff[:19].replace("T", " ")
                 alarm_reports = connection.execute(
-                    """
+                    f"""
                     SELECT report_id, html_relative_path, pdf_relative_path
                     FROM alarm_reports AS report
                     WHERE report.status IN ('completed', 'failed')
-                      AND COALESCE(report.completed_at, report.created_at) <= ?
+                      AND (
+                          COALESCE(report.completed_at, report.created_at) < ?
+                          OR EXISTS (
+                              SELECT 1 FROM alarm_incidents AS incident
+                              WHERE {ALARM_REPORT_LINK_SQL}
+                          )
+                      )
                       AND NOT EXISTS (
                           SELECT 1 FROM alarm_incidents AS incident
-                          WHERE incident.pdf_report_id = report.report_id
+                          WHERE {ALARM_REPORT_LINK_SQL}
                             AND (
                                 incident.status <> 'closed'
-                                OR COALESCE(incident.closed_at, incident.last_seen_at) > ?
+                                OR {ALARM_OCCURRED_AT_SQL} >= ?
                             )
                       )
                     ORDER BY COALESCE(report.completed_at, report.created_at), report.report_id
                     LIMIT ?
                     """,
-                    (alarm_cutoff, alarm_cutoff, batch_size),
+                    (alarm_cutoff, alarm_time_cutoff, batch_size),
                 ).fetchall()
                 alarm_report_ids = [str(row["report_id"]) for row in alarm_reports]
                 for row in alarm_reports:
@@ -283,14 +299,14 @@ class RetentionRepository(SQLiteRepository):
                         queued_at=queued_at,
                     )
                 old_incidents = connection.execute(
-                    """
-                    SELECT incident_id FROM alarm_incidents
+                    f"""
+                    SELECT incident_id FROM alarm_incidents AS incident
                     WHERE status = 'closed'
-                      AND COALESCE(closed_at, last_seen_at) <= ?
-                    ORDER BY COALESCE(closed_at, last_seen_at), incident_id
+                      AND {ALARM_OCCURRED_AT_SQL} < ?
+                    ORDER BY {ALARM_OCCURRED_AT_SQL}, incident_id
                     LIMIT ?
                     """,
-                    (alarm_cutoff, batch_size),
+                    (alarm_time_cutoff, batch_size),
                 ).fetchall()
                 incident_ids = [str(row["incident_id"]) for row in old_incidents]
                 if incident_ids:

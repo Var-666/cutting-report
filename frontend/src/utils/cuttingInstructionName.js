@@ -12,11 +12,16 @@ const MATERIALS = Object.freeze({
   SS: '双相不锈钢',
 })
 
-const STANDARD_NAME = /^([PSWL])(\d{3}C)(\d{3})(A0|A2|A6|SS)(0[1-9]|[1-9]\d)(?:\.(GEN|TXT))?$/i
+// Match the parameter prefix; product codes and trailing sequence/letters do not
+// determine whether material and thickness can be filled automatically.
+const STANDARD_NAME = /^([PSWL])([A-Z0-9]*?[A-Z])(\d{3})(A0|A2|A6|SS)(\d{2})?/i
 
 export function parseCuttingInstructionFilename(value) {
   const filename = String(value || '').trim().split(/[\\/]/).pop() || ''
-  const match = STANDARD_NAME.exec(filename)
+  const extensionIndex = filename.lastIndexOf('.')
+  if (extensionIndex >= 0 && !/\.(GEN|TXT)$/i.test(filename)) return null
+  const stem = extensionIndex >= 0 ? filename.slice(0, extensionIndex) : filename
+  const match = STANDARD_NAME.exec(stem)
   if (!match) return null
 
   const instructionType = match[1].toUpperCase()
@@ -31,6 +36,6 @@ export function parseCuttingInstructionFilename(value) {
     thickness,
     materialCode,
     material: MATERIALS[materialCode],
-    sequence: match[5],
+    sequence: match[5] || '',
   }
 }

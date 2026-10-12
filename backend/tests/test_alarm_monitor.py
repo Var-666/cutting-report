@@ -39,7 +39,7 @@ def test_recent_recheck_does_not_skip_incremental_backlog(tmp_path):
         def fetch_by_ids(self, ids):
             return [r for r in rows if r["alarm_info_id"] in ids]
 
-    service = AlarmMonitorService(SimpleNamespace(alarm_monitor_batch_size=1,
+    service = AlarmMonitorService(SimpleNamespace(alarm_retention_days=30, alarm_monitor_batch_size=1,
         alarm_monitor_start_at="2026-09-01 00:00:00", alarm_reopen_debounce_minutes=10),
         repository, Source(), SimpleNamespace(analyze=lambda _: {"facts": [], "overall_risk": "warning"}),
         SimpleNamespace(render=lambda **_: dict(html_relative_path="alarms/a.html",
@@ -200,7 +200,7 @@ def test_alarm_analysis_keeps_rule_fields_deterministic_and_normalizes_limitatio
     monkeypatch.setattr("app.services.alarm_analysis_service.httpx.Client", Client)
     monkeypatch.setattr(
         "app.services.alarm_analysis_service.record_llm_call",
-        lambda *_args: None,
+        lambda *_args, **_kwargs: None,
     )
 
     result = AlarmAnalysisService(
@@ -267,7 +267,7 @@ def test_alarm_analysis_adds_rule_fields_when_model_omits_them(monkeypatch) -> N
 
     monkeypatch.setattr("app.services.alarm_analysis_service.httpx.Client", Client)
     monkeypatch.setattr(
-        "app.services.alarm_analysis_service.record_llm_call", lambda *_args: None
+        "app.services.alarm_analysis_service.record_llm_call", lambda *_args, **_kwargs: None
     )
 
     result = AlarmAnalysisService(
@@ -471,6 +471,7 @@ def test_monitor_calls_model_and_reporter_only_for_unreported_problem(tmp_path) 
     service = AlarmMonitorService(
         SimpleNamespace(
             alarm_monitor_batch_size=500,
+            alarm_retention_days=30,
             alarm_monitor_start_at="2026-09-09 00:00:00",
             alarm_reopen_debounce_minutes=10,
         ),
@@ -516,6 +517,7 @@ def test_first_start_backfills_only_the_configured_monitoring_window(tmp_path) -
     service = AlarmMonitorService(
         SimpleNamespace(
             alarm_monitor_batch_size=500,
+            alarm_retention_days=30,
             alarm_monitor_start_at="2026-09-29 00:00:00",
             alarm_reopen_debounce_minutes=10,
         ),
@@ -652,6 +654,7 @@ def test_recent_recheck_captures_late_rows_once_and_applies_delayed_updates(
     service = AlarmMonitorService(
         SimpleNamespace(
             alarm_monitor_batch_size=500,
+            alarm_retention_days=30,
             alarm_monitor_start_at="2026-09-29 00:00:00",
             alarm_reopen_debounce_minutes=10,
         ),
@@ -717,6 +720,7 @@ def test_report_failure_does_not_mark_successful_alarm_sync_as_failed(tmp_path) 
     service = AlarmMonitorService(
         SimpleNamespace(
             alarm_monitor_batch_size=500,
+            alarm_retention_days=30,
             alarm_monitor_start_at="2026-09-29 00:00:00",
             alarm_reopen_debounce_minutes=10,
         ),
@@ -810,6 +814,59 @@ def test_incident_page_excludes_alarms_before_start_and_keeps_full_counts(tmp_pa
     }
     assert critical_page["total"] == 1
     assert critical_page["all_total"] == 17
+
+
+def test_incident_page_exposes_report_state_without_a_recent_report_limit(tmp_path, monkeypatch) -> None:
+    from app.api import alarms as alarm_api
+
+    repository = AlarmRepository(tmp_path / "metadata.db")
+    repository.initialize()
+    cutoff = "2026-09-29 00:00:00"
+    now = datetime(2026, 10, 7, 9, 0, tzinfo=TZ)
+    repository.ingest(
+        [alarm(index, start_time="2026-10-07 08:00:00", alarm_code=index) for index in range(1, 7)],
+        now=now, cursor=6, debounce_minutes=10,
+    )
+    incidents = {item["alarm_code"]: item for item in repository.list_incidents(None)}
+    for code, report_id in [("1", "old-completed"), ("2", "generating"), ("3", "legacy-failed"), ("4", "no-file")]:
+        repository.reserve_report(
+            proposed_report_id=report_id, emission_key=report_id, machine_no="Cutter01",
+            incident_ids=[incidents[code]["incident_id"]], now="2026-10-01T09:00:00+08:00",
+        )
+    repository.complete_report(
+        "old-completed", analysis={"summary": "older report"},
+        html_relative_path="alarms/old.html", pdf_relative_path="alarms/old.pdf",
+        pdf_filename="old.pdf", file_size=100, sha256="sha", model_status="model",
+        completed_at="2026-10-01T09:01:00+08:00",
+    )
+    with repository.connect() as connection:
+        # Cover legacy/inconsistent associations without changing failure recovery.
+        connection.execute("UPDATE alarm_reports SET status = 'failed', error_message = '模型服务不可用' WHERE report_id = 'legacy-failed'")
+        connection.execute("UPDATE alarm_reports SET status = 'completed' WHERE report_id = 'no-file'")
+        connection.execute("UPDATE alarm_incidents SET pdf_report_id = 'missing' WHERE incident_id = ?", (incidents["5"]["incident_id"],))
+    for index in range(51):
+        repository.reserve_report(
+            proposed_report_id=f"new-{index}", emission_key=f"new-{index}", machine_no="Cutter01",
+            incident_ids=[f"other-{index}"], now=f"2026-10-07T08:{index:02d}:00+08:00",
+        )
+    assert "old-completed" not in {item["report_id"] for item in repository.list_reports(50)}
+    monkeypatch.setattr(alarm_api, "settings", SimpleNamespace(alarm_monitor_start_at=cutoff))
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(alarm_repository=repository)), state=SimpleNamespace(request_id="test"))
+    result = alarm_api.page_alarm_incidents(request, page=1, page_size=15)["data"]
+    by_code = {item["alarm_code"]: item for item in result["items"]}
+    assert result["total"] == result["all_total"] == result["open_count"] == 6
+    assert by_code["1"]["report_status"] == "completed"
+    assert by_code["1"]["report_view_url"] == "/api/v1/alarms/reports/old-completed/view"
+    assert by_code["1"]["status"] == "open", "report completion cannot resolve the equipment alarm"
+    assert by_code["2"]["report_status"] == "generating"
+    assert by_code["3"]["report_status"] == "failed"
+    assert by_code["3"]["report_error_message"] == "模型服务不可用"
+    assert by_code["4"]["report_status"] == "completed"
+    assert by_code["5"]["report_status"] is None
+    assert by_code["5"]["pdf_report_id"] == "missing"
+    assert by_code["6"]["pdf_report_id"] is None
+    assert all(by_code[code]["report_view_url"] is None for code in ["2", "3", "4", "5", "6"])
+    assert all("report_has_html" not in item for item in result["items"])
 
 
 def test_alarm_report_page_returns_ten_items_and_full_counts(tmp_path) -> None:

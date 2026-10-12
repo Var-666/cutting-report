@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { formatDeviceDisplay } from '../src/utils/deviceDisplay.js'
 import {
   alarmConfidencePercent,
   latestModelAlarmReport,
@@ -21,6 +22,21 @@ function report(overrides = {}) {
     ...overrides,
   }
 }
+
+test('device aliases improve page readability without changing source identifiers or report links', () => {
+  const source = {
+    machine_no: 'Cutter01',
+    pdf_filename: 'Cutter01_智能告警报告_20261007.pdf',
+    download_url: '/api/alarm-reports/Cutter01/download',
+  }
+  const before = structuredClone(source)
+  assert.equal(formatDeviceDisplay(source.machine_no), '20KW切割机')
+  assert.equal(formatDeviceDisplay(source.pdf_filename), '20KW切割机_智能告警报告_20261007.pdf')
+  assert.equal(formatDeviceDisplay('监控Cutter01运行，cutter01告警 [E001]'), '监控20KW切割机运行，20KW切割机告警 [E001]')
+  assert.equal(formatDeviceDisplay('Cutter02、Cutter010、OtherCutter01、Cutter01A'), 'Cutter02、Cutter010、OtherCutter01、Cutter01A')
+  assert.equal(formatDeviceDisplay(null), '')
+  assert.deepEqual(source, before, 'aliases must never rewrite API data or real filenames and links')
+})
 
 test('alarm center selects the newest completed model result instead of generated or failed reports', () => {
   const newest = report({ report_id: 'newest', completed_at: '2026-09-29T10:00:00+08:00' })

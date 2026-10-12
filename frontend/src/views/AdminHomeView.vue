@@ -12,6 +12,7 @@ import HomeKpiCard from '../components/HomeKpiCard.vue'
 import HomeSectionHeader from '../components/HomeSectionHeader.vue'
 import { session } from '../state/session'
 import { formatChineseDate, formatChineseDateTime, formatChineseMonth } from '../utils/dateDisplay.js'
+import { formatDeviceDisplay } from '../utils/deviceDisplay.js'
 import heroImage from '../assets/home-laser-cutting.webp'
 
 use([BarChart, LineChart, PieChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
@@ -235,7 +236,7 @@ onBeforeUnmount(() => {
         <HomeSectionHeader heading-id="alarm-card-title" title="最近告警" icon="bell" to="/admin/alarms" action="查看全部" tone="amber" />
         <div v-if="alarmLoading" class="card-loading" role="status">正在检查设备状态...</div>
         <div v-else-if="!incidents.length" class="card-empty" role="status"><span class="card-empty__icon"><AppIcon name="bell" :size="25" /></span><strong>当前暂无告警</strong><small>{{ alarmStatus?.enabled ? '系统持续监控设备状态' : '告警监控未启用' }}</small></div>
-        <div v-else class="alarm-list"><RouterLink v-for="item in incidents.slice(0, 4)" :key="item.incident_id" to="/admin/alarms" class="alarm-row"><span class="alarm-symbol" :class="item.severity"><AppIcon name="alert" :size="15" /></span><div><strong>{{ item.alarm_desc || item.alarm_code || '设备告警' }}</strong><small>{{ severityText[item.severity] || '告警' }} · {{ item.machine_no || '切割设备' }} · {{ item.alarm_class || '运行监控' }}</small></div><time>{{ shortDateTime(item.last_seen_at) }}</time><em :class="item.status">{{ item.status === 'open' ? '未解除' : '已解除' }}</em></RouterLink></div>
+        <div v-else class="alarm-list"><RouterLink v-for="item in incidents.slice(0, 4)" :key="item.incident_id" to="/admin/alarms" class="alarm-row"><span class="alarm-symbol" :class="item.severity"><AppIcon name="alert" :size="15" /></span><div><strong>{{ item.alarm_desc || item.alarm_code || '设备告警' }}</strong><small>{{ severityText[item.severity] || '告警' }} · {{ formatDeviceDisplay(item.machine_no) || '切割设备' }} · {{ item.alarm_class || '运行监控' }}</small></div><time>{{ shortDateTime(item.last_seen_at) }}</time><em :class="item.status">{{ item.status === 'open' ? '未解除' : '已解除' }}</em></RouterLink></div>
       </article>
       <article class="dashboard-card reports-card" aria-labelledby="reports-card-title">
         <HomeSectionHeader heading-id="reports-card-title" title="最近生成报告" icon="file" to="/admin/reports/center" :action="`查看全部${historyTotal ? ` ${historyTotal}` : ''}`" />

@@ -6,6 +6,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from app.device_config import load_device_catalog
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RUNTIME_SETTINGS_ENV_PATH = PROJECT_ROOT / "data" / "settings.env"
@@ -13,6 +15,14 @@ load_dotenv(PROJECT_ROOT / ".env")
 # 管理界面写入的受控配置放在持久化 data 目录。后加载并覆盖
 # 项目 .env，使 Docker 命名卷和 Windows 本地部署都能在重启后生效。
 load_dotenv(RUNTIME_SETTINGS_ENV_PATH, override=True, interpolate=False)
+
+# JSON provides device defaults; explicit legacy environment settings retain
+# priority during migration. Credentials and global feature switches stay in env.
+DEVICE_CONFIG_PATH = Path(os.getenv("DEVICE_CONFIG_PATH", "backend/app/configuration/devices.json")).expanduser()
+if not DEVICE_CONFIG_PATH.is_absolute():
+    DEVICE_CONFIG_PATH = PROJECT_ROOT / DEVICE_CONFIG_PATH
+DEVICE_CATALOG = load_device_catalog(DEVICE_CONFIG_PATH)
+DEFAULT_DEVICE = DEVICE_CATALOG.default_device
 
 
 def _as_bool(name: str, default: bool) -> bool:
@@ -72,8 +82,8 @@ class Settings:
     )
     report_data_cache_seconds: int = _as_int("REPORT_DATA_CACHE_SECONDS", 600)
     report_background_refresh_seconds: int = _as_int("REPORT_BACKGROUND_REFRESH_SECONDS", 600)
-    # 当前所有生产统计统一限定为 dbo.task.MACHINE_NO = Cutter01。
-    report_machine_no: str = os.getenv("REPORT_MACHINE_NO", "Cutter01").strip() or "Cutter01"
+    # 当前运行默认设备；多设备切换需另外打通请求、缓存和快照范围。
+    report_machine_no: str = os.getenv("REPORT_MACHINE_NO", DEFAULT_DEVICE.machine_no).strip() or DEFAULT_DEVICE.machine_no
 
     # 能管平台只读接入。仪表绑定、计量边界和单位必须由现场确认。
     energy_api_enabled: bool = _as_bool("ENERGY_API_ENABLED", False)
@@ -86,7 +96,7 @@ class Settings:
         value.strip() for value in os.getenv("ENERGY_EQUIPMENT_IDS", "").split(",") if value.strip()
     )
     energy_gas_parameter_id: str = os.getenv(
-        "ENERGY_GAS_PARAMETER_ID", "bd3179be-c587-f011-a2e9-000c2974f33c"
+        "ENERGY_GAS_PARAMETER_ID", str(DEFAULT_DEVICE.energy.gas_parameter_id)
     ).strip()
     energy_electricity_parameter_ids: tuple[str, ...] = tuple(
         value.strip() for value in os.getenv("ENERGY_ELECTRICITY_PARAMETER_IDS", "").split(",") if value.strip()
@@ -108,13 +118,13 @@ class Settings:
     # 同一设备在 TASK.MACHINE_NO 中的历史别名，不能混入另一台设备。
     energy_report_equipment_ids: tuple[str, ...] = tuple(
         value.strip() for value in os.getenv(
-            "ENERGY_REPORT_EQUIPMENT_IDS", "Cutter01"
+            "ENERGY_REPORT_EQUIPMENT_IDS", ",".join(DEFAULT_DEVICE.energy.equipment_ids)
         ).split(",") if value.strip()
     )
     energy_report_electricity_parameter_ids: tuple[str, ...] = tuple(
         value.strip() for value in os.getenv(
             "ENERGY_REPORT_ELECTRICITY_PARAMETER_IDS",
-            "2b00e015-d987-f011-a2e9-000c2974f33c,98cbd135-d987-f011-a2e9-000c2974f33c,93fae152-d987-f011-a2e9-000c2974f33c",
+            ",".join(map(str, DEFAULT_DEVICE.energy.electricity_parameter_ids)),
         ).split(",") if value.strip()
     )
     energy_report_max_gap_seconds: int = _as_int("ENERGY_REPORT_MAX_GAP_SECONDS", 1800)
@@ -202,19 +212,19 @@ class Settings:
     llm_max_concurrent: int = _as_int("LLM_MAX_CONCURRENT", 2)
     llm_queue_timeout_seconds: float = _as_float("LLM_QUEUE_TIMEOUT_SECONDS", 30)
 
-    # 告警源位于生产数据库；20kw切割机对应的 MACHINE_NO 是 Cutter01。
+    # 告警源沿用生产数据库和默认设备编号。
     alarm_monitor_enabled: bool = _as_bool("ALARM_MONITOR_ENABLED", False)
     alarm_monitor_interval_seconds: int = _as_int(
         "ALARM_MONITOR_INTERVAL_SECONDS", 300
     )
     alarm_monitor_machine_nos: tuple[str, ...] = tuple(
         value.strip()
-        for value in os.getenv("ALARM_MONITOR_MACHINE_NOS", "Cutter01").split(",")
+        for value in os.getenv("ALARM_MONITOR_MACHINE_NOS", DEFAULT_DEVICE.machine_no).split(",")
         if value.strip()
     )
     alarm_monitor_start_at: str = (
-        os.getenv("ALARM_MONITOR_START_AT", "2026-09-29 00:00:00").strip()
-        or "2026-09-29 00:00:00"
+        os.getenv("ALARM_MONITOR_START_AT", DEFAULT_DEVICE.alarm.start_at).strip()
+        or DEFAULT_DEVICE.alarm.start_at
     )
     alarm_reopen_debounce_minutes: int = _as_int(
         "ALARM_REOPEN_DEBOUNCE_MINUTES", 10
@@ -225,7 +235,7 @@ class Settings:
     # that category without disabling the remaining policies.
     report_retention_days: int = _as_int("REPORT_RETENTION_DAYS", 365)
     analysis_retention_days: int = _as_int("ANALYSIS_RETENTION_DAYS", 90)
-    alarm_retention_days: int = _as_int("ALARM_RETENTION_DAYS", 365)
+    alarm_retention_days: int = _as_int("ALARM_RETENTION_DAYS", 30)
     dispatch_retention_days: int = _as_int("DISPATCH_RETENTION_DAYS", 365)
     audit_retention_days: int = _as_int("AUDIT_RETENTION_DAYS", 730)
     retention_cleanup_interval_hours: int = _as_int(

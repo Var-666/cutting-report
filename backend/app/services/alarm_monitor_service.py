@@ -201,6 +201,8 @@ class AlarmMonitorService:
             monitor_start_at=self.settings.alarm_monitor_start_at,
             open_recheck_after_id=open_cursor,
             history_recheck_after_id=next_history_cursor,
+            expired_before=(now - timedelta(days=self.settings.alarm_retention_days)
+                            if self.settings.alarm_retention_days > 0 else None),
             lease_owner=owner, lease_now=lease_now(),
         )
         self._check_lease(owner, lease_now, lost)

@@ -76,7 +76,7 @@ STAGE_LABELS = {
 
 PUSH_FILE_SUFFIXES = frozenset({".gen", ".txt"})
 STANDARD_INSTRUCTION_NAME = re.compile(
-    r"^[PSWL]\d{3}C(?P<thickness>\d{3})(?P<material>A0|A2|A6|SS)(?:0[1-9]|[1-9]\d)(?:\.(?:GEN|TXT))?$",
+    r"^[PSWL][A-Z0-9]*?[A-Z](?P<thickness>\d{3})(?P<material>A0|A2|A6|SS)",
     re.IGNORECASE,
 )
 STANDARD_MATERIALS = {"A0": "A", "A2": "AH32", "A6": "AH36", "SS": "双相不锈钢"}
@@ -84,7 +84,11 @@ STANDARD_MATERIALS = {"A0": "A", "A2": "AH32", "A6": "AH36", "SS": "双相不锈
 
 def standard_instruction_parameters(filename: str) -> tuple[str, float] | None:
     basename = str(filename).strip().replace("\\", "/").split("/")[-1]
-    match = STANDARD_INSTRUCTION_NAME.fullmatch(basename)
+    stem, separator, extension = basename.rpartition(".")
+    if separator and extension.lower() not in {"gen", "txt"}:
+        return None
+    # Only the parameter prefix matters; product codes and suffixes are ignored.
+    match = STANDARD_INSTRUCTION_NAME.match(stem if separator else basename)
     if match is None:
         return None
     thickness = int(match.group("thickness")) / 10

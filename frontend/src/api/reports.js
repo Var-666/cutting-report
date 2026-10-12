@@ -317,6 +317,11 @@ export function getLlmUsage() {
   return request('/api/v1/llm-usage')
 }
 
+export function getLlmUsageReport({ startDate, endDate, granularity = 'day', scene = '' }, { signal } = {}) {
+  const query = new URLSearchParams({ start_date: startDate, end_date: endDate, granularity, scene })
+  return request(`/api/v1/llm-usage/report?${query}`, { signal })
+}
+
 export function getAutomationConfiguration() {
   return request('/api/v1/automation/configuration')
 }

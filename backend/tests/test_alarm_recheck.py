@@ -1,9 +1,10 @@
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 from app.database.alarms import AlarmRepository
+from app.database.retention import RetentionRepository
 from app.services.alarm_monitor_service import AlarmMonitorService
 from test_alarm_monitor import alarm
 
@@ -12,12 +13,57 @@ NOW = datetime(2026, 9, 30, 9, tzinfo=ZoneInfo("Asia/Shanghai"))
 START = "2026-09-01 00:00:00"
 
 
-def monitor(repository, source, batch_size=100):
-    return AlarmMonitorService(SimpleNamespace(alarm_monitor_batch_size=batch_size,
+def monitor(repository, source, batch_size=100, retention_days=30):
+    return AlarmMonitorService(SimpleNamespace(alarm_retention_days=retention_days, alarm_monitor_batch_size=batch_size,
         alarm_monitor_start_at=START, alarm_reopen_debounce_minutes=10), repository, source,
         SimpleNamespace(analyze=lambda _: {"facts": [], "overall_risk": "warning"}),
         SimpleNamespace(render=lambda **_: dict(html_relative_path="alarms/a.html",
             pdf_relative_path="alarms/a.pdf", pdf_filename="a.pdf", file_size=1, sha256="a")))
+
+
+def test_expired_open_alarm_updates_then_stays_deleted_after_history_recheck(tmp_path):
+    repository = AlarmRepository(tmp_path / "metadata.db")
+    repository.initialize()
+    retention = RetentionRepository(repository.database)
+    retention.initialize()
+    now = NOW + timedelta(days=40)
+    row = alarm(1, start_time="2026-09-01 09:00:00")
+
+    class Source:
+        def latest_id(self): return 1
+        def fetch_new(self, after, *_args): return [row] if after < 1 else []
+        def fetch_recent(self, *_args): return [row]
+        def fetch_by_ids(self, ids): return [row] if 1 in ids else []
+
+    service = monitor(repository, Source())
+    assert service.run_once(now)["report_status"] == "completed"
+    assert repository.list_incidents("open")
+    row["remove_time"] = now.strftime("%Y-%m-%d %H:%M:%S")
+    assert service.run_once(now)["report_status"] == "idle"
+    assert repository.list_incidents("closed"), "removal updates must reach old open alarms"
+    result = retention.cleanup_expired_records(report_cutoff=None, analysis_cutoff=None,
+        alarm_cutoff=(now - timedelta(days=30)).isoformat(), dispatch_cutoff=None,
+        audit_cutoff=None, queued_at=now.isoformat(), batch_size=100)
+    assert result["alarm_incidents"] == result["alarm_reports"] == 1
+    assert service.run_once(now)["report_status"] == "idle"
+    assert repository.list_incidents(None) == []
+    assert repository.list_reports() == []
+    assert repository.get_cursor() == 1, "discarded history still advances the scan boundary"
+
+
+def test_disabled_retention_still_imports_old_resolved_history(tmp_path):
+    repository = AlarmRepository(tmp_path / "metadata.db")
+    repository.initialize()
+    row = alarm(1, remove_time="2026-09-01 10:00:00", start_time="2026-09-01 09:00:00")
+
+    class Source:
+        def latest_id(self): return 1
+        def fetch_new(self, after, *_args): return [row] if after < 1 else []
+        def fetch_recent(self, *_args): return [row]
+        def fetch_by_ids(self, _ids): return []
+
+    assert monitor(repository, Source(), retention_days=0).run_once(NOW + timedelta(days=40))["report_status"] == "completed"
+    assert len(repository.list_incidents("closed")) == 1
 
 
 def test_open_recheck_reaches_page_after_2000_even_after_restart(tmp_path):

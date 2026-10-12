@@ -5,6 +5,7 @@ import heroImage from '../assets/home-laser-cutting.webp'
 import AppIcon from '../components/AppIcon.vue'
 import { alarmConfidencePercent, latestModelAlarmReport } from '../utils/alarmAnalysis.js'
 import { formatChineseDateTime } from '../utils/dateDisplay.js'
+import { formatDeviceDisplay } from '../utils/deviceDisplay.js'
 
 const status = ref(null)
 const incidents = ref([])
@@ -39,7 +40,7 @@ const completedCount = computed(() => reportSummary.value.completed_count || 0)
 const severityLabels = { warning: '提示', high: '一般', critical: '严重' }
 const reportStatusLabels = { generating: '生成中', completed: '已生成', failed: '生成失败' }
 const monitorReady = computed(() => Boolean(status.value?.enabled && status.value?.worker_running))
-const machineLabel = computed(() => status.value?.machine_nos?.join('、') || '未配置设备')
+const machineLabel = computed(() => formatDeviceDisplay(status.value?.machine_nos?.join('、')) || '未配置设备')
 
 const severityTabs = computed(() => [
   { value: 'all', label: '全部', count: incidentSummary.value.all_total || 0 },
@@ -48,7 +49,10 @@ const severityTabs = computed(() => [
   { value: 'warning', label: '提示', count: incidentSummary.value.severity_counts?.warning || 0 },
 ])
 
-const filteredIncidents = computed(() => incidents.value)
+const filteredIncidents = computed(() => incidents.value.map((item) => ({
+  ...item,
+  reportDisplay: incidentReportDisplay(item),
+})))
 const incidentPageCount = computed(() => incidentSummary.value.page_count || 1)
 const reportPageCount = computed(() => reportSummary.value.page_count || 1)
 const latestAiReport = computed(() => latestModelAlarmReport(reports.value))
@@ -88,11 +92,22 @@ function possibleCause(item) {
 }
 
 function reportName(item) {
-  return item.pdf_filename || `${item.machine_no || '设备'}_告警报告_${String(item.created_at || '').slice(0, 10).replaceAll('-', '')}.pdf`
+  return formatDeviceDisplay(item.pdf_filename || `${item.machine_no || '设备'}_告警报告_${String(item.created_at || '').slice(0, 10).replaceAll('-', '')}.pdf`)
 }
 
-function linkedReport(item) {
-  return reports.value.find((report) => report.report_id === item.pdf_report_id)
+function incidentReportDisplay(item) {
+  if (!item.pdf_report_id) return { label: '待生成', title: '尚未关联报告，等待系统生成', state: 'pending' }
+  if (!item.report_status) return { label: '报告不存在', title: '关联的报告记录不存在', state: 'unavailable' }
+  if (item.report_status === 'completed') {
+    return item.report_view_url
+      ? { label: '查看', url: item.report_view_url, title: '查看已生成的告警报告', state: 'completed' }
+      : { label: '报告不可用', title: '报告记录已完成，但尚无可用的查看文件', state: 'unavailable' }
+  }
+  return {
+    label: reportStatusLabels[item.report_status] || '状态未知',
+    title: item.report_error_message || (item.report_status === 'generating' ? '报告正在生成，完成后可查看' : '请查看下方实体告警报告记录'),
+    state: item.report_status,
+  }
 }
 
 function evidenceLabel(ids) {
@@ -281,14 +296,14 @@ onBeforeUnmount(() => {
           <span class="spinner dark" aria-hidden="true"></span><strong>正在读取告警事件</strong>
         </div>
         <div v-else-if="!filteredIncidents.length" class="alarm-empty-state" role="status">
-          <span class="empty-icon"><AppIcon name="check" size="24" /></span><strong>当前筛选下暂无告警</strong><span>{{ onlyOpen ? '当前没有状态异常的告警，系统将持续监控。' : activeSeverity === 'all' ? '20kW 切割机当前无告警记录，系统将持续监控。' : '当前级别暂无告警，系统将持续监控切割机运行状态。' }}</span>
+          <span class="empty-icon"><AppIcon name="check" size="24" /></span><strong>当前筛选下暂无告警</strong><span>{{ onlyOpen ? '当前没有状态异常的告警，系统将持续监控。' : activeSeverity === 'all' ? '20KW切割机当前无告警记录，系统将持续监控。' : '当前级别暂无告警，系统将持续监控切割机运行状态。' }}</span>
         </div>
         <div v-else class="alarm-table-wrap">
           <table v-content-table aria-label="切割机告警事件">
             <thead><tr><th>告警级别</th><th>设备名称</th><th>异常类型</th><th>告警时间</th><th>发现时间</th><th>持续时长</th><th>当前状态</th><th>可能原因</th><th>处理状态</th><th>操作</th></tr></thead>
             <tbody><tr v-for="item in filteredIncidents" :key="item.incident_id">
               <td><span class="severity-badge" :class="item.severity"><span>!</span>{{ severityLabels[item.severity] || item.severity }}</span></td>
-              <td>{{ item.machine_no || '--' }}</td>
+              <td>{{ formatDeviceDisplay(item.machine_no) || '--' }}</td>
               <td><strong class="alarm-name">{{ item.alarm_desc || '--' }}</strong><small>{{ item.alarm_code || item.alarm_type || '--' }}</small></td>
               <td>{{ formatShortDateTime(item.first_start_time) }}</td>
               <td>{{ formatShortDateTime(item.first_seen_at) }}</td>
@@ -296,7 +311,7 @@ onBeforeUnmount(() => {
               <td><span class="live-state" :class="item.status"><i></i>{{ item.status === 'open' ? '异常' : '正常' }}</span></td>
               <td class="cause-cell">{{ possibleCause(item) }}</td>
               <td><span class="incident-state" :class="item.status">{{ item.status === 'open' ? '待处理' : '已处理' }}</span></td>
-              <td class="report-actions"><a v-if="linkedReport(item)?.view_url" :href="linkedReport(item).view_url" target="_blank" rel="noopener">查看</a><span v-else>{{ item.pdf_report_id ? '已归档' : '待生成' }}</span></td>
+              <td class="report-actions"><a v-if="item.reportDisplay.url" :href="item.reportDisplay.url" :title="item.reportDisplay.title" target="_blank" rel="noopener">{{ item.reportDisplay.label }}</a><span v-else class="report-status" :class="item.reportDisplay.state" :title="item.reportDisplay.title">{{ item.reportDisplay.label }}</span></td>
             </tr></tbody>
           </table>
         </div>
@@ -318,7 +333,7 @@ onBeforeUnmount(() => {
         <template v-else-if="latestAiAnalysis">
           <div class="alarm-ai-summary">
             <div><span class="alarm-ai-risk" :class="latestAiAnalysis.overall_risk">{{ severityLabels[latestAiAnalysis.overall_risk] || latestAiAnalysis.overall_risk }}</span><strong>最新模型结论</strong></div>
-            <p>{{ latestAiAnalysis.summary }}</p>
+            <p>{{ formatDeviceDisplay(latestAiAnalysis.summary) }}</p>
             <a v-if="latestAiReport.view_url" :href="latestAiReport.view_url" target="_blank" rel="noopener">查看完整报告</a>
           </div>
 
@@ -326,31 +341,31 @@ onBeforeUnmount(() => {
             <section v-if="latestAiAnalysis.findings.length" class="alarm-ai-section" aria-labelledby="alarm-ai-findings-title">
               <h3 id="alarm-ai-findings-title">分析发现</h3>
               <article v-for="(finding, index) in latestAiAnalysis.findings" :key="`${finding.title}-${index}`" class="alarm-ai-finding" :class="finding.severity">
-                <header><strong>{{ finding.title }}</strong><span v-if="alarmConfidencePercent(finding.confidence) !== null">置信度 {{ alarmConfidencePercent(finding.confidence) }}%</span></header>
-                <p>{{ finding.analysis }}</p>
-                <p v-if="finding.possible_causes?.length" class="alarm-ai-causes"><strong>可能原因</strong>{{ finding.possible_causes.join('；') }}</p>
+                <header><strong>{{ formatDeviceDisplay(finding.title) }}</strong><span v-if="alarmConfidencePercent(finding.confidence) !== null">置信度 {{ alarmConfidencePercent(finding.confidence) }}%</span></header>
+                <p>{{ formatDeviceDisplay(finding.analysis) }}</p>
+                <p v-if="finding.possible_causes?.length" class="alarm-ai-causes"><strong>可能原因</strong>{{ formatDeviceDisplay(finding.possible_causes.join('；')) }}</p>
                 <small>依据 {{ evidenceLabel(finding.evidence_ids) }}</small>
               </article>
             </section>
 
             <section v-if="latestAiAnalysis.actions.length" class="alarm-ai-section alarm-ai-actions" aria-labelledby="alarm-ai-actions-title">
               <h3 id="alarm-ai-actions-title">建议措施</h3>
-              <ol><li v-for="(action, index) in latestAiAnalysis.actions" :key="`${action.priority}-${index}`"><span>{{ priorityLabel(action.priority) }}</span><p>{{ action.action }}</p><small>依据 {{ evidenceLabel(action.evidence_ids) }}</small></li></ol>
+              <ol><li v-for="(action, index) in latestAiAnalysis.actions" :key="`${action.priority}-${index}`"><span>{{ priorityLabel(action.priority) }}</span><p>{{ formatDeviceDisplay(action.action) }}</p><small>依据 {{ evidenceLabel(action.evidence_ids) }}</small></li></ol>
             </section>
           </div>
 
           <details v-if="latestAiAnalysis.facts.length" class="alarm-ai-evidence">
             <summary>查看证据记录（{{ latestAiAnalysis.facts.length }} 条）</summary>
             <article v-for="fact in latestAiAnalysis.facts" :key="fact.id">
-              <strong>[{{ fact.id }}] {{ fact.alarm_desc || fact.alarm_class }}</strong>
-              <span>{{ fact.machine_no }} · {{ severityLabels[fact.severity] || fact.severity }} · {{ fact.alarm_code || '无编码' }}</span>
+              <strong>[{{ fact.id }}] {{ formatDeviceDisplay(fact.alarm_desc || fact.alarm_class) }}</strong>
+              <span>{{ formatDeviceDisplay(fact.machine_no) }} · {{ severityLabels[fact.severity] || fact.severity }} · {{ fact.alarm_code || '无编码' }}</span>
               <small>{{ formatDateTime(fact.start_time) }} · {{ fact.status === 'open' ? '未解除' : '已解除' }}</small>
             </article>
           </details>
 
           <section v-if="latestAiAnalysis.limitations.length" class="alarm-ai-limitations" aria-labelledby="alarm-ai-limitations-title">
             <h3 id="alarm-ai-limitations-title">分析边界</h3>
-            <ul><li v-for="item in latestAiAnalysis.limitations" :key="item">{{ item }}</li></ul>
+            <ul><li v-for="item in latestAiAnalysis.limitations" :key="item">{{ formatDeviceDisplay(item) }}</li></ul>
           </section>
           <p class="alarm-ai-disclaimer">模型结论仅用于辅助排查，安全处置以现场规程和授权人员判断为准。</p>
         </template>
@@ -374,7 +389,7 @@ onBeforeUnmount(() => {
           <thead><tr><th>报告名称</th><th>关联事件</th><th>生成时间</th><th>文件大小</th><th>状态</th><th>操作</th></tr></thead>
           <tbody><tr v-for="item in reportItems" :key="item.report_id">
             <td><span class="report-name"><AppIcon name="file" size="16" tone="red" />{{ reportName(item) }}</span></td>
-            <td>{{ item.incident_ids.length }} 项 · {{ item.machine_no || '--' }}</td>
+            <td>{{ item.incident_ids.length }} 项 · {{ formatDeviceDisplay(item.machine_no) || '--' }}</td>
             <td>{{ formatShortDateTime(item.created_at) }}</td>
             <td>{{ formatBytes(item.file_size) }}</td>
             <td><span class="report-status" :class="item.status">{{ reportStatusLabels[item.status] || item.status }}</span></td>
@@ -411,4 +426,18 @@ onBeforeUnmount(() => {
 .alarm-ai-summary{padding:15px;border-bottom:1px solid #e5edf1;background:linear-gradient(135deg,#f5fafc,#fff)}.alarm-ai-summary>div{display:flex;align-items:center;gap:8px}.alarm-ai-summary>div>strong{color:#234a63;font-size:12px}.alarm-ai-summary>p{margin:9px 0 0;color:#506c7f;font-size:11px;line-height:1.7;overflow-wrap:anywhere}.alarm-ai-summary>a{display:inline-flex;margin-top:9px;color:var(--alarm-blue);font-size:10px;font-weight:700;text-decoration:none}.alarm-ai-summary>a:hover{text-decoration:underline}.alarm-ai-risk{display:inline-flex;align-items:center;min-height:23px;padding:0 8px;border-radius:999px;color:#a06112;background:#fff2dc;font-size:9px;font-weight:700}.alarm-ai-risk.high{color:#c26d1c;background:#fff0df}.alarm-ai-risk.critical{color:#c83e48;background:#ffebed}.alarm-ai-section{padding:13px 15px 0}.alarm-ai-section>h3,.alarm-ai-limitations>h3{margin:0 0 8px;color:#36576d;font-size:11px}.alarm-ai-finding{margin-top:8px;padding:11px 12px;border:1px solid #dce8ee;border-left:3px solid var(--alarm-blue);border-radius:7px;background:#fbfdfe}.alarm-ai-finding.high{border-left-color:var(--alarm-amber)}.alarm-ai-finding.critical{border-left-color:var(--alarm-red)}.alarm-ai-finding>header{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}.alarm-ai-finding>header strong{color:#294d64;font-size:11px}.alarm-ai-finding>header span{flex:0 0 auto;color:#48697e;font-size:9px;font-variant-numeric:tabular-nums}.alarm-ai-finding>p{margin:7px 0 0;color:#5f7687;font-size:10px;line-height:1.65;overflow-wrap:anywhere}.alarm-ai-finding>.alarm-ai-causes{padding-top:7px;border-top:1px dashed #d9e4ea}.alarm-ai-causes>strong{margin-right:6px;color:#405f73}.alarm-ai-finding>small,.alarm-ai-actions li>small{display:block;margin-top:6px;color:#798d9a;font-size:9px}.alarm-ai-actions ol{display:grid;gap:7px;margin:0;padding:0;list-style:none}.alarm-ai-actions li{padding:10px 11px;border-radius:7px;background:#fff8ed}.alarm-ai-actions li>span{color:#ae701d;font-size:9px;font-weight:700}.alarm-ai-actions li>p{margin:4px 0 0;color:#5d6f7b;font-size:10px;line-height:1.6;overflow-wrap:anywhere}.alarm-ai-evidence{margin:13px 15px 0;border:1px solid #dce7ec;border-radius:7px;background:#f8fbfc}.alarm-ai-evidence summary{padding:10px 11px;color:#37627a;font-size:10px;font-weight:700;cursor:pointer}.alarm-ai-evidence article{display:grid;gap:3px;padding:9px 11px;border-top:1px solid #e2eaee}.alarm-ai-evidence article strong{color:#38576b;font-size:10px;overflow-wrap:anywhere}.alarm-ai-evidence article span,.alarm-ai-evidence article small{color:#718795;font-size:9px}.alarm-ai-limitations{margin:13px 15px 0;padding:10px 11px;border-radius:7px;background:#f4f6f8}.alarm-ai-limitations ul{margin:0;padding-left:17px;color:#667986;font-size:9px;line-height:1.6}.alarm-ai-disclaimer{margin:12px 15px 14px;color:#7a8c98;font-size:9px;line-height:1.6}.alarm-ai-empty{min-height:210px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:7px;padding:24px 18px;text-align:center}.alarm-ai-empty strong{color:#39576a;font-size:12px}.alarm-ai-empty>span:last-child{max-width:270px;color:#728895;font-size:10px;line-height:1.6}
 @media(max-width:900px){.alarm-ai-panel{display:block}.alarm-ai-summary,.alarm-ai-section,.alarm-ai-limitations,.alarm-ai-disclaimer,.alarm-ai-evidence{max-width:none}}
 @media(prefers-reduced-motion:reduce){.alarm-hero,.alarm-kpi,.alarm-list,.alarm-insights{animation:none}.alarm-kpi,.monitor-card,.alarm-tabs button{transition:none}}
+/* This page uses a larger reading scale; keep shared compact tables unchanged. */
+.alarm-page{--font-section-title:16px;--font-auxiliary:12px}
+.alarm-page .alarm-table-wrap th{font-size:13px!important}
+.alarm-page .alarm-table-wrap td{font-size:14px!important}
+.alarm-page .alarm-name{font-size:14px}
+.alarm-page .alarm-table-wrap td small,.alarm-page .severity-badge,.alarm-page .incident-state,.alarm-page .report-status{font-size:12px}
+.alarm-page .alarm-section-title h2,.alarm-page .alarm-ai-summary>div>strong,.alarm-page .alarm-ai-section>h3,.alarm-page .alarm-ai-limitations>h3,.alarm-page .alarm-ai-finding>header strong{font-size:16px}
+.alarm-page .alarm-ai-summary>p,.alarm-page .alarm-ai-finding>p,.alarm-page .alarm-ai-actions li>p,.alarm-page .alarm-ai-limitations ul,.alarm-page .alarm-ai-evidence article strong{font-size:14px;line-height:1.75}
+.alarm-page .alarm-ai-summary>a,.alarm-page .alarm-ai-risk,.alarm-page .alarm-ai-finding>header span,.alarm-page .alarm-ai-finding>small,.alarm-page .alarm-ai-actions li>small,.alarm-page .alarm-ai-actions li>span,.alarm-page .alarm-ai-evidence summary,.alarm-page .alarm-ai-evidence article span,.alarm-page .alarm-ai-evidence article small,.alarm-page .alarm-ai-disclaimer,.alarm-page .alarm-insights>header>span,.alarm-page .report-count,.alarm-page .monitor-card dl div,.alarm-page .alarm-kpi em{font-size:12px}
+.alarm-page .alarm-tabs button,.alarm-page .alarm-status-filter,.alarm-page .alarm-refresh-button{font-size:13px}
+.alarm-page .alarm-ai-empty strong{font-size:16px}
+.alarm-page .alarm-ai-empty>span:last-child,.alarm-page .alarm-empty-state>span:not(.spinner):not(.empty-icon){font-size:14px}
+.alarm-page .alarm-ai-finding>header,.alarm-page .alarm-insights>header{flex-wrap:wrap}
+.alarm-page .alarm-ai-evidence article{overflow-wrap:anywhere}
 </style>

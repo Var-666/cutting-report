@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import threading
 from contextlib import contextmanager
+from datetime import datetime
 from time import monotonic
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -196,6 +198,8 @@ class LlmService:
             with httpx.Client(timeout=self.settings.llm_timeout) as client:
                 response = None
                 response_body = None
+                occurred_at = datetime.now(ZoneInfo(self.settings.timezone))
+                started = monotonic()
                 try:
                     response, response_body = post_llm_json(
                         client,
@@ -208,7 +212,10 @@ class LlmService:
                         max_response_bytes=12 * self.settings.llm_max_output_chars + 65536,
                     )
                 finally:
-                    record_llm_call(self.settings, response, response_body)
+                    record_llm_call(
+                        self.settings, response, response_body, scene=report_type,
+                        occurred_at=occurred_at, duration_ms=round((monotonic() - started) * 1000),
+                    )
         raw_content = response_body["choices"][0]["message"]["content"]
         if not isinstance(raw_content, str) or len(raw_content) > self.settings.llm_max_output_chars:
             raise AnalysisOutputValidationError("大模型返回内容超过配置容量")

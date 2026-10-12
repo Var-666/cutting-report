@@ -96,6 +96,12 @@ const router = createRouter({
               component: () => import('../views/AdminAccountsView.vue'),
               meta: { title: '管理员管理' },
             },
+            {
+              path: 'model-usage',
+              name: 'model-usage',
+              component: () => import('../views/ModelUsageView.vue'),
+              meta: { title: '模型用量' },
+            },
           ],
         },
         { path: 'database', redirect: '/admin/settings/database' },

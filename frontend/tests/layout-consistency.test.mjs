@@ -686,7 +686,7 @@ test('alarm center uses source timestamps and presents the latest evidenced mode
   assert.match(template, /aria-label="实体告警报告分页"/)
   assert.match(template, /第 \{\{ reportPage \}\} \/ \{\{ reportPageCount \}\} 页，共 \{\{ reportSummary\.total \}\} 份/)
   assert.equal((template.match(/class="alarm-empty-state"/g) || []).length, 4)
-  assert.match(template, /20kW 切割机当前无告警记录/)
+  assert.match(template, /20KW切割机当前无告警记录/)
   assert.match(template, /当前没有状态异常的告警/)
   assert.match(styles, /\.alarm-page>\.panel\{margin-bottom:0\}/)
   assert.match(styles, /\.alarm-content-grid>\.panel\{margin-bottom:0\}/)

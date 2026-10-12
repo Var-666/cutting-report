@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "default_device_id": "Cutter01",
+  "production_lines": [
+    {"id": "Cutter01", "name": "20KW切割机"}
+  ],
+  "devices": [
+    {
+      "id": "Cutter01",
+      "name": "20KW切割机",
+      "production_line_id": "Cutter01",
+      "data_source": "production",
+      "machine_no": "Cutter01",
+      "energy": {
+        "equipment_ids": ["Cutter01"],
+        "gas_parameter_id": "bd3179be-c587-f011-a2e9-000c2974f33c",
+        "electricity_parameter_ids": [
+          "2b00e015-d987-f011-a2e9-000c2974f33c",
+          "98cbd135-d987-f011-a2e9-000c2974f33c",
+          "93fae152-d987-f011-a2e9-000c2974f33c"
+        ]
+      },
+      "alarm": {"start_at": "2026-09-29 00:00:00"}
+    }
+  ]
+}

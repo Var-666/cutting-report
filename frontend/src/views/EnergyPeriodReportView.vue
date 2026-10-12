@@ -20,6 +20,7 @@ import ReportFeedback from '../components/ReportFeedback.vue'
 import ReportTrendPanel from '../components/ReportTrendPanel.vue'
 import StandardReportQuery from '../components/StandardReportQuery.vue'
 import { formatChineseDateTime, formatChineseMonth, sortReportPeriods } from '../utils/dateDisplay.js'
+import { formatDeviceDisplay } from '../utils/deviceDisplay.js'
 import { createReportChartGrid, REPORT_CHART_COLORS } from '../utils/reportChartTheme.js'
 import { mergeOwnedQuery, queryChoice, queryDateRange, sameRouteQuery } from '../utils/reportRouteState.js'
 
@@ -117,7 +118,7 @@ const summary = computed(() => taskDay.value?.summary || {
   gas_record_count: 0,
   electricity_record_count: 0,
 })
-const equipmentScopeLabel = computed(() => taskDay.value?.equipment_scope?.join(' / ') || 'Cutter01')
+const equipmentScopeLabel = computed(() => formatDeviceDisplay(taskDay.value?.equipment_scope?.join(' / ') || 'Cutter01'))
 const configurationError = computed(() => taskDay.value?.configuration_error || '')
 const energyCoverage = computed(() => {
   const taskCount = Number(summary.value.task_count || 0)

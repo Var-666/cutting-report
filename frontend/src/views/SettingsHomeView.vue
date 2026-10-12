@@ -25,12 +25,13 @@ const modules = [
   { to: '/admin/settings/report-design', eyebrow: 'REPORT DESIGN', title: '报表设计', description: '维护查询任务、字段映射、报表定义和输出模板。', icon: 'grid', tone: 'violet' },
   { to: '/admin/settings/automation', eyebrow: 'AUTOMATION', title: '报表自动化', description: '配置定时生成、邮件收件人、发送频率和失败重试。', icon: 'activity', tone: 'teal' },
   { to: '/admin/settings/admins', eyebrow: 'ACCESS CONTROL', title: '管理员管理', description: '从 HR 人员库授予管理员权限，并保留权限变更记录。', icon: 'user', tone: 'green' },
+  { to: '/admin/settings/model-usage', eyebrow: 'MODEL USAGE', title: '模型用量', description: '查看每日、每月 token 消耗趋势，按业务场景和模型汇总使用情况。', icon: 'sparkles', tone: 'violet' },
 ]
 </script>
 
 <template>
   <div class="management-page settings-home-page">
-    <ManagementPageHero eyebrow="SYSTEM SETTINGS" title="系统设置" description="集中维护生产数据源、报表定义、自动发送和管理员权限，所有配置均保留清晰的安全边界。" icon="settings" status-label="配置中心" status-value="4 个管理模块" status-note="数据源、报表、自动化与权限" tone="teal" />
+    <ManagementPageHero eyebrow="SYSTEM SETTINGS" title="系统设置" description="集中维护生产数据源、报表定义、自动发送、管理员权限和模型用量。" icon="settings" status-label="配置中心" status-value="5 个管理模块" status-note="数据源、报表、自动化、权限与用量" tone="teal" />
     <section class="llm-usage-card" aria-label="大模型使用统计">
       <div class="llm-usage-heading"><span class="llm-usage-icon"><AppIcon name="sparkles" :size="18" /></span><div><h2>大模型使用统计</h2><p>报表智能分析与告警智能分析 · 自启用统计起累计</p></div></div>
       <div v-if="usage" class="llm-usage-values">
@@ -40,6 +41,7 @@ const modules = [
       <div v-else-if="usageError" class="llm-usage-state" role="alert">{{ usageError }} <button type="button" @click="loadUsage">重试</button></div>
       <div v-else class="llm-usage-state" role="status">正在读取统计…</div>
       <p v-if="usage && usage.call_count > usage.metered_count" class="llm-usage-note">{{ numberFormat.format(usage.call_count - usage.metered_count) }} 次调用未返回 token 用量，合计仅包含已返回的用量。</p>
+      <RouterLink to="/admin/settings/model-usage">查看每日 / 每月明细</RouterLink>
     </section>
     <section class="settings-overview" aria-label="系统设置模块">
       <RouterLink v-for="item in modules" :key="item.to" :to="item.to" :class="`tone-${item.tone}`">

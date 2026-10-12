@@ -352,6 +352,7 @@ class AlarmRepository(SQLiteRepository):
         source_name: str = "production",
         open_recheck_after_id: int | None = None,
         history_recheck_after_id: int | None = None,
+        expired_before: datetime | None = None,
         lease_owner: str | None = None,
         lease_now: datetime | None = None,
     ) -> dict[str, int]:
@@ -390,6 +391,17 @@ class AlarmRepository(SQLiteRepository):
                     """,
                     (source_alarm_id,),
                 ).fetchone()
+                # History rechecks must not recreate expired, resolved events.
+                # Existing open events still need their removal update persisted.
+                if existing is None and remove_time and start_time and expired_before:
+                    try:
+                        started_at = datetime.fromisoformat(start_time)
+                        if started_at.tzinfo is None:
+                            started_at = started_at.replace(tzinfo=expired_before.tzinfo)
+                        if started_at < expired_before:
+                            continue
+                    except ValueError:
+                        pass
                 if (
                     existing
                     and monitor_start_at
@@ -902,8 +914,16 @@ class AlarmRepository(SQLiteRepository):
             current_page = min(page, page_count)
             rows = connection.execute(
                 f"""
-                SELECT * FROM alarm_incidents WHERE {filtered_where}
-                ORDER BY first_seen_at DESC, incident_id DESC LIMIT ? OFFSET ?
+                SELECT i.*, r.status AS report_status,
+                       r.error_message AS report_error_message,
+                       CASE WHEN COALESCE(r.html_relative_path, '') != ''
+                            THEN 1 ELSE 0 END AS report_has_html
+                FROM (
+                    SELECT * FROM alarm_incidents WHERE {filtered_where}
+                    ORDER BY first_seen_at DESC, incident_id DESC LIMIT ? OFFSET ?
+                ) i
+                LEFT JOIN alarm_reports r ON r.report_id = i.pdf_report_id
+                ORDER BY i.first_seen_at DESC, i.incident_id DESC
                 """,
                 (*filtered_values, page_size, (current_page - 1) * page_size),
             ).fetchall()
