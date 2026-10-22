@@ -5,4 +5,3 @@ services:
       - ./backend:/app/backend:ro,Z
       - ./frontend/dist:/app/frontend/dist:ro,Z
       - ./vendor:/app/vendor:ro,Z
-      - ./docker/input:/app/input:ro,Z

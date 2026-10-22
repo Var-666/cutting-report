@@ -15,7 +15,6 @@ services:
       APP_ENV: production
       APP_HOST: 0.0.0.0
       APP_PORT: 8000
-      TASK_EXCEL_PATH: /app/input/TASK.xlsx
       TZ: ${APP_TIMEZONE:-Asia/Shanghai}
     ports:
       - "${DOCKER_BIND_ADDRESS:-127.0.0.1}:${DOCKER_PORT:-8088}:8000"
@@ -23,7 +22,6 @@ services:
       - cutting_data:/app/data
       - cutting_reports:/app/reports
       - cutting_logs:/app/logs
-      - ./docker/input:/app/input:ro
     read_only: true
     tmpfs:
       - /tmp:size=512m,mode=1777

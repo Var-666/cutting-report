@@ -115,6 +115,10 @@ class AutomationRepository(SQLiteRepository):
                     ON email_deliveries(status, next_attempt_at);
                 """
             )
+            for table in ('report_schedules', 'scheduled_report_runs'):
+                columns = {row['name'] for row in connection.execute(f'PRAGMA table_info({table})')}
+                if 'device_id' not in columns:
+                    connection.execute(f"ALTER TABLE {table} ADD COLUMN device_id TEXT NOT NULL DEFAULT 'Cutter01'")
             run_columns = {
                 row["name"]
                 for row in connection.execute(
@@ -182,8 +186,8 @@ class AutomationRepository(SQLiteRepository):
                     schedule_id, name, report_type, frequency, run_time, weekday,
                     month_day, report_period, recipients_json, subject_template,
                     chart_type, attach_report, max_attempts, enabled, next_run_at,
-                    created_by_id, created_by_name, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    created_by_id, created_by_name, created_at, updated_at, device_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     schedule_id,
@@ -193,7 +197,7 @@ class AutomationRepository(SQLiteRepository):
                     data["subject_template"], data["chart_type"],
                     int(data["attach_report"]), data["max_attempts"],
                     int(data["enabled"]), data["next_run_at"],
-                    user["user_id"], user["display_name"], now, now,
+                    user["user_id"], user["display_name"], now, now, data.get("device_id", "Cutter01"),
                 ),
             )
         return self.get_schedule(schedule_id)
@@ -206,7 +210,7 @@ class AutomationRepository(SQLiteRepository):
                 SET name = ?, report_type = ?, frequency = ?, run_time = ?,
                     weekday = ?, month_day = ?, report_period = ?, recipients_json = ?,
                     subject_template = ?, chart_type = ?, attach_report = ?,
-                    max_attempts = ?, enabled = ?, next_run_at = ?, updated_at = ?
+                    max_attempts = ?, enabled = ?, next_run_at = ?, updated_at = ?, device_id = ?
                 WHERE schedule_id = ?
                 """,
                 (
@@ -215,7 +219,7 @@ class AutomationRepository(SQLiteRepository):
                     data["report_period"], json.dumps(data["recipients"], ensure_ascii=False),
                     data["subject_template"], data["chart_type"], int(data["attach_report"]),
                     data["max_attempts"], int(data["enabled"]), data["next_run_at"],
-                    now, schedule_id,
+                    now, data.get("device_id", "Cutter01"), schedule_id,
                 ),
             )
             if cursor.rowcount != 1:
@@ -311,8 +315,8 @@ class AutomationRepository(SQLiteRepository):
                         run_id, schedule_id, schedule_name, report_type, report_date,
                         scheduled_for, trigger_type, status, recipients_json,
                         subject_template, chart_type, attach_report, max_attempts, created_by_id,
-                        created_by_name, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        created_by_name, created_at, updated_at, device_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         run_id, schedule["schedule_id"], schedule["name"],
@@ -321,7 +325,7 @@ class AutomationRepository(SQLiteRepository):
                         schedule["subject_template"], schedule["chart_type"],
                         int(schedule["attach_report"]),
                         schedule["max_attempts"], schedule["created_by_id"],
-                        schedule["created_by_name"], now, now,
+                        schedule["created_by_name"], now, now, current["device_id"],
                     ),
                 )
         except sqlite3.IntegrityError:

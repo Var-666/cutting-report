@@ -70,8 +70,8 @@ COPY --chown=app:app backend ./backend
 COPY --from=frontend-builder --chown=app:app /build/frontend/dist ./frontend/dist
 COPY --from=frontend-builder --chown=app:app /build/vendor ./vendor
 
-RUN mkdir -p /app/data /app/reports /app/logs /app/input \
-    && chown -R app:app /app/data /app/reports /app/logs /app/input
+RUN mkdir -p /app/data /app/reports /app/logs \
+    && chown -R app:app /app/data /app/reports /app/logs
 
 USER app
 

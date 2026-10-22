@@ -77,6 +77,35 @@ def _alarm(source_id: int, *, closed: bool) -> dict:
     }
 
 
+def test_dispatch_summary_survives_history_retention_and_still_appears_in_file_list(tmp_path):
+    from app.database.pdm import MockPdmRepository
+    from app.services.cutting_dispatch_service import CuttingDispatchService
+    from app.services.file_source import DisabledFileSource
+
+    *_, dispatches, _downloads, retention, admin = _repositories(tmp_path)
+    pdm = MockPdmRepository()
+    source = pdm.files[0]
+    task = dispatches.create(dict(
+        document_id=source["document_id"], version_id=source["version_id"],
+        project_id=source["project_id"], document_no=source["document_no"],
+        relative_path="cut.GEN", machine_ip="10.1.1.1", quantity=1,
+        status="sent", stage="complete", source_mode="http",
+    ), user=admin, now=OLD)
+    result = retention.cleanup_expired_records(
+        report_cutoff=None, analysis_cutoff=None, alarm_cutoff=None,
+        dispatch_cutoff=RECENT, audit_cutoff=None, queued_at=NOW.isoformat(), batch_size=100,
+    )
+    assert result["dispatches"] == 1
+    assert dispatches.get(task["dispatch_id"]) is None
+    service = CuttingDispatchService(settings, pdm, dispatches, DisabledFileSource())
+    rows = service.list_files(source["project_id"], catalog_id=None, status="all",
+                              keyword="", page=1, page_size=20)["items"]
+    item = next(item for item in rows if item["document_id"] == source["document_id"])
+    assert item["dispatch_status"] == {"status": "sent", "status_label": "已派发", "stage_label": "推送完成"}
+    dispatches.initialize()
+    assert dispatches.latest_for_files([(source["document_id"], source["version_id"])])
+
+
 def test_retention_keeps_unresolved_remote_dispatches(tmp_path):
     *_, dispatches, downloads, retention, admin = _repositories(tmp_path)
     protected = []

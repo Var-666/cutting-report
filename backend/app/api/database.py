@@ -73,7 +73,7 @@ class SavedConnectionRequest(BaseModel):
 
 
 class DatabaseConfigurationRequest(BaseModel):
-    data_source_mode: Literal["demo", "excel", "sqlserver"] = "demo"
+    data_source_mode: Literal["demo", "sqlserver"] = "demo"
     worker_database_auth_enabled: bool = False
     file_database_enabled: bool = False
     production: SavedConnectionRequest
@@ -269,21 +269,12 @@ def save_database_configuration(
 def database_status(request: Request) -> dict:
     mappings = _query_mapping_status()
     mode = settings.effective_data_source_mode
-    workbench_enabled = mode == "excel" or settings.sql_workbench_enabled
-    excel_status = None
-    excel_error = None
-    if mode == "excel":
-        try:
-            excel_status = request.app.state.query_service.excel.status()
-        except Exception as exc:
-            excel_error = str(exc)
+    workbench_enabled = mode == "sqlserver" and settings.sql_workbench_enabled
     return {
         "success": True,
         "data": {
             "mode": mode,
             "demo_mode": mode == "demo",
-            "excel_status": excel_status,
-            "excel_error": excel_error,
             "pyodbc_installed": importlib.util.find_spec("pyodbc") is not None,
             "connection_configured": all(
                 [
@@ -344,21 +335,13 @@ def execute_sql(
             workbench_token, settings.sql_workbench_admin_token
         ):
             raise HTTPException(status_code=401, detail="SQL 工作台管理员令牌无效")
-    elif mode != "excel":
+    else:
         raise HTTPException(status_code=409, detail="演示数据模式不能执行 SQL 查询")
 
     query_hash = hashlib.sha256(payload.sql.encode("utf-8")).hexdigest()[:16]
     try:
         service = SqlWorkbenchService(settings)
-        result = (
-            service.execute_excel(
-                request.app.state.query_service.excel,
-                payload.sql,
-                payload.max_rows,
-            )
-            if mode == "excel"
-            else service.execute(payload.sql, payload.max_rows)
-        )
+        result = service.execute(payload.sql, payload.max_rows)
     except SqlWorkbenchValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except SqlRequestCancelled:

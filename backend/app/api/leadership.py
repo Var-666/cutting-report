@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
+from app.api.devices import device_state, device_settings
 from app.api.auth import require_admin
 from app.config import settings
 from app.database.sqlserver import SqlServerConfigurationError
@@ -42,7 +43,7 @@ def _parse_month(value: str | None) -> date:
 
 
 def _result_with_refresh_state(request: Request, report_month: date, result):
-    worker = getattr(request.app.state, "leadership_refresh_worker", None)
+    worker = getattr(device_state(request), "leadership_refresh_worker", None)
     refreshing = bool(worker and worker.is_refreshing(report_month))
     return replace(
         result,
@@ -56,6 +57,9 @@ def _with_analysis_source_version(data: dict) -> dict:
         data.get("monthly_records") or []
     )
     return data
+
+
+router.dependencies.append(Depends(device_state))
 
 
 @router.get("")
@@ -75,7 +79,7 @@ def get_leadership_report(
             selected_start = start_date or end_date
             selected_end = end_date or start_date
             assert selected_start is not None and selected_end is not None
-            result = request.app.state.range_report_service.leadership(
+            result = device_state(request).range_report_service.leadership(
                 selected_start, selected_end
             )
             data = _with_analysis_source_version(to_primitive(result))
@@ -96,9 +100,9 @@ def get_leadership_report(
                 "request_id": request.state.request_id,
             }
         month_start = _parse_month(report_month)
-        service = request.app.state.leadership_report_service
+        service = device_state(request).leadership_report_service
         result = service.fetch(month_start)
-        worker = getattr(request.app.state, "leadership_refresh_worker", None)
+        worker = getattr(device_state(request), "leadership_refresh_worker", None)
         if worker is not None and (refresh or result.snapshot.stale):
             worker.schedule(
                 month_start,
@@ -128,8 +132,8 @@ def refresh_leadership_report(
 ) -> dict:
     try:
         month_start = _parse_month(payload.report_month)
-        service = request.app.state.leadership_report_service
-        worker = getattr(request.app.state, "leadership_refresh_worker", None)
+        service = device_state(request).leadership_report_service
+        worker = getattr(device_state(request), "leadership_refresh_worker", None)
         if worker is None:
             result = service.fetch(month_start, force=True)
         else:

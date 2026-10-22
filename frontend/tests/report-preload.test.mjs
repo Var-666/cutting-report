@@ -6,6 +6,7 @@ import { startReportPreload, stopReportPreload, reportPreload } from '../src/sta
 import { recentTwelveMonthStart, reportToday } from '../src/api/reportDates.js'
 import * as api from '../src/api/reports.js'
 import { session, loadSession, completeAuthentication, endSession } from '../src/state/session.js'
+import { resetDeviceContext, setDeviceCatalog, selectDevice } from '../src/api/deviceContext.js'
 
 const originalFetch = globalThis.fetch
 const admin = { user_id: 'admin-1', role: 'admin' }
@@ -20,11 +21,12 @@ function mockApi(override = () => undefined) {
     if (custom !== undefined) return custom
     if (url.includes('latest-date')) return response({ report_date: today })
     if (url === '/api/v1/auth/status') return response({ user: admin, setup_required: false })
+    if (url === '/api/v1/devices') return response({ default_device_id: 'Cutter01', items: [{ id: 'Cutter01' }] })
     return response({ report_date: today, items: [], total: 0 })
   }
   return calls
 }
-afterEach(() => { stopReportPreload(); globalThis.fetch = originalFetch })
+afterEach(() => { stopReportPreload(); resetDeviceContext(); globalThis.fetch = originalFetch })
 
 test('worker load syncs a nonempty snapshot while background polling remains read-only', async () => {
   const source = readFileSync(new URL('../src/views/WorkshopView.vue', import.meta.url), 'utf8')
@@ -189,11 +191,43 @@ test('login and restored sessions only warm the active route without waiting for
   assert.equal(reportPreload.identity, '')
   await loadSession({ force: true })
   assert.equal(session.user.user_id, admin.user_id)
+  await new Promise((done) => setImmediate(done))
   assert.equal(reportPreload.identity, `admin:${admin.user_id}`)
   await startReportPreload(admin)
   finishHealth(response({ version: 'current' }))
   await new Promise((done) => setImmediate(done))
   assert.equal(session.systemInfo.version, 'current')
+})
+
+test('session restoration validates the saved device before any report warmup', async () => {
+  setDeviceCatalog({ default_device_id: 'Cutter01', items: [{ id: 'Cutter01' }, { id: 'Cutter02' }] })
+  selectDevice('Cutter02')
+  let finishCatalog
+  const calls = mockApi((url) => {
+    if (url === '/api/v1/devices') return new Promise((done) => { finishCatalog = done })
+  })
+  await loadSession({ force: true })
+  assert.equal(session.ready, true)
+  assert.equal(reportPreload.identity, '')
+  assert.ok(calls.every((call) => !/leadership-report|\/reports\?/.test(call.url)))
+  finishCatalog(response({ default_device_id: 'Cutter01', items: [{ id: 'Cutter01' }, { id: 'Cutter02' }] }))
+  await new Promise((done) => setImmediate(done))
+  await startReportPreload(admin)
+  const reports = calls.filter((call) => /leadership-report|\/reports\?/.test(call.url))
+  assert.equal(reports.length, 2)
+  assert.ok(reports.every((call) => new URL(call.url, 'http://test').searchParams.get('device_id') === 'Cutter02'))
+})
+
+test('a device removed from configuration is never used for restored report warmup', async () => {
+  setDeviceCatalog({ default_device_id: 'Cutter01', items: [{ id: 'Cutter01' }, { id: 'Cutter02' }] })
+  selectDevice('Cutter02')
+  const calls = mockApi()
+  await loadSession({ force: true })
+  await new Promise((done) => setImmediate(done))
+  await startReportPreload(admin)
+  const reports = calls.filter((call) => /leadership-report|\/reports\?/.test(call.url))
+  assert.equal(reports.length, 2)
+  assert.ok(reports.every((call) => !call.url.includes('device_id=Cutter02')))
 })
 
 test('file pages do not start unrelated report preload jobs', async () => {

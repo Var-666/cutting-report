@@ -190,7 +190,7 @@ footer { padding:23px; color:#738592; text-align:center; font-size:11px; }
 .leadership-table th:first-child,.leadership-table td:first-child { width:70px; text-align:center; }.leadership-table th:nth-child(2),.leadership-table td:nth-child(2),.leadership-table th:last-child,.leadership-table td:last-child { text-align:left; }
 .leadership-table tbody tr:hover { background:#f4f9fb; }.leadership-table tbody tr.current-period { background:#eaf6f7; }
 .leadership-table tfoot th { color:var(--navy); border-top:2px solid #7da4b6; border-bottom:0; background:#eef4f7; }
-.duration-cell { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+.duration-cell { font-family:inherit; }
 .report-source-note { margin:-7px 3px 24px; color:#738592; font-size:11px; }
 
 .designer-token { width:280px; padding:16px 18px; border:1px solid rgba(13,111,158,.14); background:rgba(255,255,255,.72); }.designer-token span { display:block; margin-bottom:7px; color:#425767; font-size:11px; font-weight:700; }
@@ -358,7 +358,14 @@ h1,h2,h3{text-wrap:balance;scroll-margin-top:88px}
 /* Admin pages share the command center content track and surface. */
 .app-shell{background:#f3f6f9}
 .app-shell .admin-main{width:min(1520px,calc(100% - 48px));padding-top:16px}
+.topbar-actions{display:flex;align-items:center;gap:16px;margin-left:auto;min-width:0}
+.topbar-actions .account-menu{margin-left:0;flex:0 0 auto}
+.topbar-actions .account-name{max-width:108px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media(max-width:1360px){.topbar-actions .account-menu small{display:none}}
 @media(max-width:1180px){.app-shell .topbar{gap:10px}.app-shell .topnav{margin-left:8px;gap:1px}.app-shell .topnav a{padding:0 8px}.app-shell .account-menu small{display:none}}
+@media(max-width:1180px){.app-shell .brand-copy{display:none}.topbar-actions{gap:12px}}
 @media(max-width:900px){.app-shell .topnav{margin-left:auto}}
+@media(max-width:800px){.app-shell .topnav a{justify-content:center;min-width:38px}.app-shell .topnav a span,.topbar-actions .account-name{display:none}.topbar-actions .account-menu button{width:34px;padding:0}.topbar-actions .account-menu button span{display:none}}
 @media(max-width:560px){.app-shell .admin-main{width:calc(100% - 24px)}.app-shell .topbar{height:66px;padding:0 12px}.app-shell .brand-logo{width:36px;height:36px}.app-shell .topnav{margin-left:0}.app-shell .topnav a{min-width:37px;padding:0 7px}.app-shell .account-menu{gap:3px}}
+@media(max-width:560px){.app-shell .topbar{height:auto;display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px 12px;padding:10px 12px 6px}.app-shell .topbar-actions{justify-self:end;gap:10px}.app-shell .topnav{grid-column:1/-1;grid-row:2;justify-content:space-between;align-self:auto;margin:0;overflow:visible}.app-shell .topnav a{min-width:0;min-height:34px;gap:5px;padding:0 6px;font-size:11px}.app-shell .topnav a span{display:inline}.app-shell .topnav a .app-icon{width:15px;height:15px}.worker-topbar{padding:10px 12px;gap:10px}.worker-topbar .account-menu>span{display:none}.worker-topbar .account-menu button{width:auto;padding:0 10px;font-size:11px}}
 @media(max-width:560px){.app-pagination{align-items:center!important;flex-direction:row!important;flex-wrap:wrap!important;padding:10px 12px!important}.app-pagination__summary{width:auto!important;padding-inline:2px}.app-pagination__actions{max-width:100%;overflow-x:auto}}

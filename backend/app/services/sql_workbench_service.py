@@ -7,11 +7,10 @@ from time import perf_counter
 from typing import Any
 from uuid import UUID
 
-from sqlglot import exp, parse, transpile
+from sqlglot import exp, parse
 from sqlglot.errors import ParseError
 
 from app.config import Settings
-from app.database.excel_task import ExcelTaskDataSource
 from app.database.sqlserver import SqlServerClient
 from app.services.request_cancellation import cancellable_cursor
 
@@ -153,48 +152,6 @@ class SqlWorkbenchService:
         items = [
             {column: _json_value(value) for column, value in zip(columns, row, strict=True)}
             for row in rows
-        ]
-        return QueryResult(
-            columns=columns,
-            items=items,
-            returned=len(items),
-            truncated=truncated,
-            elapsed_ms=round((perf_counter() - started) * 1000, 2),
-        )
-
-    def execute_excel(
-        self,
-        source: ExcelTaskDataSource,
-        sql: str,
-        max_rows: int,
-    ) -> QueryResult:
-        validated = self.validate(sql)
-        limit = max(1, min(max_rows, self.settings.sql_workbench_max_rows))
-        try:
-            sqlite_sql = transpile(
-                validated.formatted_sql,
-                read="tsql",
-                write="sqlite",
-            )[0]
-        except Exception as exc:
-            raise SqlWorkbenchValidationError(
-                "该 T-SQL 语法暂不能在本地 TASK.xlsx 模式执行"
-            ) from exc
-        started = perf_counter()
-        try:
-            columns, rows = source.execute_select_with_columns(
-                sqlite_sql,
-                (),
-                limit + 1,
-            )
-        except Exception as exc:
-            raise SqlWorkbenchValidationError(
-                f"本地查询执行失败：{exc}"
-            ) from exc
-        truncated = len(rows) > limit
-        items = [
-            {key: _json_value(value) for key, value in row.items()}
-            for row in rows[:limit]
         ]
         return QueryResult(
             columns=columns,

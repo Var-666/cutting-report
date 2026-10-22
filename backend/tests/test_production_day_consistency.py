@@ -7,7 +7,6 @@ import pytest
 
 from app.api.workshop import _workshop_trend
 from app.config import settings
-from app.database.excel_task import ExcelTaskDataSource
 from app.database.workshop import WorkshopRepository
 from app.models.domain import QueryBundle, ReportFilter, SummaryBaseRecord, WorkshopRecord, to_primitive
 from app.services.query_service import QueryService
@@ -49,22 +48,12 @@ def test_sqlserver_mapping_retains_business_day_for_all_report_paths(date_value)
     bundles = [service.fetch_report_data(filters), service.fetch_summary_data(filters), service.fetch_workshop_data(filters)]
     records = [record for bundle in bundles for group in
                (bundle.summary_records, bundle.workshop_records, bundle.equipment_records) for record in group]
-    records += service.fetch_equipment_data(filters).records
+    equipment = service.fetch_equipment_data(filters).records
+    records += equipment
     assert len(queries) == 6
     assert all(record.production_date == DAY for record in records)
     assert all(record.production_time == START for record in records)
-
-
-def test_excel_mapping_preserves_op_date_and_actual_energy_interval():
-    raw = dict(TASK_ID="night-shift", PROJECT_NAME="P", MACHINE_NO="Cutter01", OP_DATE="2026-09-30",
-               START_TIME=START, END_TIME=END, OP_LENGTH_CUT=10000, OP_LENGTH_GROOVE=1000, WORK_TIME=5400)
-    service = QueryService(replace(settings, data_source_mode="excel"))
-    service.excel = SimpleNamespace(completed_rows=lambda **kwargs: [raw], normalized=ExcelTaskDataSource.normalized)
-    bundle = service._excel_data(ReportFilter(report_date=DAY))
-    for record in [*bundle.summary_records, *bundle.workshop_records, *bundle.equipment_records]:
-        assert record.production_date == DAY
-        assert record.production_time == START
-    assert bundle.equipment_records[0].production_end_time == END
+    assert equipment[0].production_end_time == END
 
 
 def test_leadership_daily_totals_and_workshop_trend_use_business_day_without_start_time():

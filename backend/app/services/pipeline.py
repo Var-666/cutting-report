@@ -150,7 +150,7 @@ class ReportPipeline:
         self.analysis_service = ReportAnalysisService(settings, metadata)
         self.report_service = ReportService(settings)
         self.custom_report_service = CustomReportService(settings)
-        self.workshop_repository = WorkshopRepository(self.database)
+        self.workshop_repository = WorkshopRepository(self.database, scope_machine_no=settings.report_machine_no)
         self.workshop_repository.initialize()
         self.range_service = RangeReportService(
             settings,
@@ -798,7 +798,7 @@ class ReportPipeline:
             generated_at=generated_at,
         )
         self._ensure_active()
-        with UnitOfWork(self.database, self.settings.timezone) as unit:
+        with UnitOfWork(self.database, self.settings.timezone, device_id=self.settings.device_id) as unit:
             unit.metadata.save_report(
                 report_id=report_id,
                 task_count=task_count,

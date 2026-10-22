@@ -4,6 +4,7 @@ from datetime import date
 
 from fastapi import APIRouter, Depends, Query, Request
 
+from app.api.devices import device_state
 from app.api.auth import require_admin
 from app.models.domain import ReportFilter
 
@@ -15,12 +16,15 @@ router = APIRouter(
 )
 
 
+router.dependencies.append(Depends(device_state))
+
+
 @router.get("/projects")
 def list_projects(report_date: date, request: Request) -> dict:
     filters = ReportFilter(report_date=report_date)
     return {
         "success": True,
-        "data": {"items": request.app.state.query_service.list_projects(filters)},
+        "data": {"items": device_state(request).query_service.list_projects(filters)},
         "request_id": request.state.request_id,
     }
 
@@ -34,6 +38,6 @@ def list_ships(
     filters = ReportFilter(report_date=report_date, project_code=project_code)
     return {
         "success": True,
-        "data": {"items": request.app.state.query_service.list_ships(filters)},
+        "data": {"items": device_state(request).query_service.list_ships(filters)},
         "request_id": request.state.request_id,
     }

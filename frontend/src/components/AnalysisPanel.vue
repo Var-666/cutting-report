@@ -1,10 +1,11 @@
 <script setup>
 import { computed, onActivated, onBeforeUnmount, onDeactivated, ref, watch } from 'vue'
-import { analyzeReport, getAnalysisVersion } from '../api/reports'
+import { analyzeReport, getAnalysisVersion, getLatestAnalysis } from '../api/reports'
 import { createActivationTimer } from '../utils/activationTimer.js'
 import { compactAnalysisFactLabel, compactAnalysisFactValue } from '../utils/analysisFactDisplay.js'
 import { formatDeviceDisplay } from '../utils/deviceDisplay.js'
 import AppIcon from './AppIcon.vue'
+import { getDeviceId, subscribeDevices } from '../api/deviceContext.js'
 
 const props = defineProps({
   reportType: { type: String, required: true },
@@ -19,17 +20,23 @@ const props = defineProps({
   versionCheckEnabled: { type: Boolean, default: false },
 })
 const emit = defineEmits(['refresh-report'])
-const SOURCE_CHECK_INTERVAL_MS = 600_000
+const SOURCE_CHECK_INTERVAL_MS = 300_000
+const RESULT_CHECK_INTERVAL_MS = 10_000
 
 const analysis = ref(null)
 const loading = ref(false)
+const readingLatest = ref(false)
 const error = ref('')
 let requestSequence = 0
 let activeRequestKey = ''
 let displayedRequestKey = ''
+let displayedScope = ''
+const deviceId = ref(getDeviceId())
+const unsubscribeDevice = subscribeDevices(() => { deviceId.value = getDeviceId() })
 let requestController = null
 let sourceCheckController = null
 let sourceCheckTimer = null
+let resultCheckTimer = null
 let refreshRequestedKey = ''
 const activationTimer = createActivationTimer({
   setTimer: (callback, delay) => window.setTimeout(callback, delay),
@@ -73,14 +80,20 @@ const analysisDataVersion = computed(() => {
   return `${props.dataVersion}.${props.summaryDataVersion || props.dataVersion}`
 })
 
+function queryScope() {
+  return JSON.stringify([deviceId.value, props.reportType, props.reportDate, props.periodStart, props.periodEnd, props.summaryPeriodStart, props.summaryPeriodEnd, props.versionCheckEnabled])
+}
+
 function requestKey() {
   return JSON.stringify([
+    deviceId.value,
     props.reportType,
     props.reportDate,
     props.periodStart,
     props.periodEnd,
     props.summaryPeriodStart,
     props.summaryPeriodEnd,
+    props.versionCheckEnabled,
     analysisDataVersion.value,
   ])
 }
@@ -92,8 +105,6 @@ function clearScheduledAnalysis() {
 function requestReportRefresh(targetKey) {
   if (targetKey !== requestKey() || refreshRequestedKey === targetKey) return
   refreshRequestedKey = targetKey
-  analysis.value = null
-  displayedRequestKey = ''
   error.value = '报表数据已更新，正在同步后重新分析…'
   emit('refresh-report')
 }
@@ -135,11 +146,16 @@ async function loadAnalysis(force = false, targetKey = requestKey()) {
   requestController = new AbortController()
   const signal = requestController.signal
   const sequence = ++requestSequence
+  const latestOnly = props.versionCheckEnabled && !force
   activeRequestKey = targetKey
   loading.value = true
+  readingLatest.value = latestOnly
   error.value = ''
   try {
-    const result = await analyzeReport({
+    const result = latestOnly ? await getLatestAnalysis({
+      reportType: props.reportType,
+      reportDate: props.reportDate,
+    }, { signal }) : await analyzeReport({
       reportType: props.reportType,
       reportDate: props.reportDate,
       periodStart: props.periodStart || undefined,
@@ -150,8 +166,10 @@ async function loadAnalysis(force = false, targetKey = requestKey()) {
       force,
     }, { signal })
     if (activationTimer.isActive() && !signal.aborted && sequence === requestSequence) {
-      analysis.value = result
+      if (result && (!latestOnly || !analysis.value?.generated_at || !result.generated_at
+          || result.generated_at >= analysis.value.generated_at)) analysis.value = result
       displayedRequestKey = targetKey
+      displayedScope = queryScope()
     }
   } catch (exception) {
     if (exception.name !== 'AbortError' && sequence === requestSequence) {
@@ -161,10 +179,17 @@ async function loadAnalysis(force = false, targetKey = requestKey()) {
   } finally {
     if (sequence === requestSequence) {
       loading.value = false
+      readingLatest.value = false
       activeRequestKey = ''
       requestController = null
     }
   }
+}
+
+function pollLatestAnalysis() {
+  if (!activationTimer.isActive() || document.visibilityState !== 'visible'
+      || !props.versionCheckEnabled || loading.value || sourceCheckController) return
+  void loadAnalysis(false)
 }
 
 function scheduleAutomaticAnalysis() {
@@ -183,7 +208,7 @@ function scheduleAutomaticAnalysis() {
     // Pagination and cached-page deactivation can make ready false briefly even
     // though the report range and source version are unchanged. Preserve the
     // displayed result in that case; a changed request key still clears it.
-    if (!props.reportDate || targetKey !== displayedRequestKey) {
+    if (!props.reportDate || queryScope() !== displayedScope) {
       analysis.value = null
       displayedRequestKey = ''
       error.value = ''
@@ -199,8 +224,10 @@ function scheduleAutomaticAnalysis() {
   requestSequence += 1
   activeRequestKey = ''
   loading.value = false
-  analysis.value = null
-  displayedRequestKey = ''
+  if (queryScope() !== displayedScope) {
+    analysis.value = null
+    displayedRequestKey = ''
+  }
   void loadAnalysis(false, targetKey)
 }
 
@@ -218,6 +245,7 @@ function retryAnalysis() {
 
 watch(
   () => [
+    deviceId.value,
     props.reportType,
     props.reportDate,
     props.periodStart,
@@ -227,6 +255,7 @@ watch(
     props.ready,
     props.dataVersion,
     props.summaryDataVersion,
+    props.versionCheckEnabled,
   ],
   scheduleAutomaticAnalysis,
   { immediate: true },
@@ -237,6 +266,8 @@ function pauseAnalysis() {
   clearScheduledAnalysis()
   if (sourceCheckTimer) window.clearInterval(sourceCheckTimer)
   sourceCheckTimer = null
+  if (resultCheckTimer) window.clearInterval(resultCheckTimer)
+  resultCheckTimer = null
   sourceCheckController?.abort()
   sourceCheckController = null
   requestController?.abort()
@@ -250,9 +281,10 @@ onActivated(() => {
   activationTimer.activate()
   scheduleAutomaticAnalysis()
   if (!sourceCheckTimer) sourceCheckTimer = window.setInterval(() => { void revalidateSource() }, SOURCE_CHECK_INTERVAL_MS)
+  if (!resultCheckTimer) resultCheckTimer = window.setInterval(pollLatestAnalysis, RESULT_CHECK_INTERVAL_MS)
 })
 onDeactivated(pauseAnalysis)
-onBeforeUnmount(pauseAnalysis)
+onBeforeUnmount(() => { pauseAnalysis(); unsubscribeDevice() })
 </script>
 
 <template>
@@ -271,16 +303,19 @@ onBeforeUnmount(pauseAnalysis)
         </span>
         <button type="button" class="analysis-reload" :disabled="loading || !ready" @click="reloadAnalysis">
           <AppIcon v-if="!loading" name="activity" :size="14" />
-          <span v-if="loading" class="spinner dark"></span>{{ loading ? '分析中' : '重新分析' }}
+          <span v-if="loading" class="spinner dark"></span>{{ loading ? (readingLatest ? '读取中' : '分析中') : '重新分析' }}
         </button>
       </div>
     </div>
 
-    <div v-if="loading && !analysis" class="analysis-state">正在整理报表指标并生成分析…</div>
+    <div v-if="loading && !analysis" class="analysis-state">{{ readingLatest ? '正在读取最近一次已完成的分析…' : '正在整理报表指标并生成分析…' }}</div>
     <div v-else-if="error" class="analysis-error">
       <span>{{ error }}</span><button type="button" @click="retryAnalysis">重试</button>
     </div>
-    <template v-else-if="analysis">
+    <div v-if="analysis && (loading || error || analysis.data_version !== analysisDataVersion)" class="analysis-state">
+      上次分析时间：{{ analysis.generated_at || '时间未记录' }}。此结果基于上次数据，{{ versionCheckEnabled && (!loading || readingLatest) ? '后台新结果完成后自动更新' : loading ? '正在更新…' : '等待更新' }}
+    </div>
+    <template v-if="analysis">
       <section class="analysis-conclusion" aria-labelledby="analysis-conclusion-title">
         <span class="analysis-conclusion__icon"><AppIcon name="sparkles" :size="31" tone="light" /></span>
         <div class="analysis-conclusion__copy">
@@ -329,7 +364,7 @@ onBeforeUnmount(pauseAnalysis)
       </details>
       <p class="analysis-time">生成时间：{{ analysis.generated_at || '--' }}</p>
     </template>
-    <div v-else class="analysis-state">报表数据加载后将自动生成分析。</div>
+    <div v-else-if="!loading && !error" class="analysis-state">{{ versionCheckEnabled && ready ? '后台尚无已完成的分析，生成后将自动显示。' : '报表数据加载后将自动生成分析。' }}</div>
   </section>
 </template>
 

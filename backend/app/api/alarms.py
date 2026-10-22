@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 from pathlib import Path
+from urllib.parse import urlencode
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 
+from app.api.devices import device_state, device_settings
 from app.api.auth import require_admin
-from app.config import settings
+from app.config import DEVICE_CATALOG, settings
 
 
 router = APIRouter(
@@ -17,19 +19,28 @@ router = APIRouter(
 )
 
 
+router.dependencies.append(Depends(device_state))
+
+
+def _device_url(request: Request, url: str) -> str:
+    cfg = device_settings(request, settings)
+    device_id = getattr(cfg, 'device_id', DEVICE_CATALOG.default_device_id)
+    return url if device_id == DEVICE_CATALOG.default_device_id else url + '?' + urlencode({'device_id': device_id})
+
+
 @router.get("/status")
 def alarm_status(request: Request) -> dict:
-    repository = request.app.state.alarm_repository
+    repository = device_state(request).alarm_repository
     return {
         "success": True,
         "data": {
             **repository.get_sync_state(),
-            "enabled": settings.alarm_monitor_enabled,
-            "machine_nos": list(settings.alarm_monitor_machine_nos),
-            "monitor_start_at": settings.alarm_monitor_start_at,
-            "interval_seconds": settings.alarm_monitor_interval_seconds,
-            "reopen_debounce_minutes": settings.alarm_reopen_debounce_minutes,
-            "worker_running": request.app.state.alarm_worker.thread.is_alive(),
+            "enabled": device_settings(request, settings).alarm_monitor_enabled,
+            "machine_nos": list(device_settings(request, settings).alarm_monitor_machine_nos),
+            "monitor_start_at": device_settings(request, settings).alarm_monitor_start_at,
+            "interval_seconds": device_settings(request, settings).alarm_monitor_interval_seconds,
+            "reopen_debounce_minutes": device_settings(request, settings).alarm_reopen_debounce_minutes,
+            "worker_running": device_state(request).alarm_worker.thread.is_alive(),
         },
         "request_id": request.state.request_id,
     }
@@ -43,10 +54,10 @@ def list_alarm_incidents(
 ) -> dict:
     return {
         "success": True,
-        "data": request.app.state.alarm_repository.list_incidents(
+        "data": device_state(request).alarm_repository.list_incidents(
             status,
             limit,
-            monitor_start_at=settings.alarm_monitor_start_at,
+            monitor_start_at=device_settings(request, settings).alarm_monitor_start_at,
         ),
         "request_id": request.state.request_id,
     }
@@ -60,8 +71,8 @@ def page_alarm_incidents(
     page: int = Query(1, ge=1),
     page_size: int = Query(15, ge=1, le=100),
 ) -> dict:
-    result = request.app.state.alarm_repository.page_incidents(
-        monitor_start_at=settings.alarm_monitor_start_at,
+    result = device_state(request).alarm_repository.page_incidents(
+        monitor_start_at=device_settings(request, settings).alarm_monitor_start_at,
         status=status,
         severity=severity,
         page=page,
@@ -70,7 +81,7 @@ def page_alarm_incidents(
     for incident in result["items"]:
         has_html = incident.pop("report_has_html", False)
         incident["report_view_url"] = (
-            f"/api/v1/alarms/reports/{incident['pdf_report_id']}/view"
+            _device_url(request, f"/api/v1/alarms/reports/{incident['pdf_report_id']}/view")
             if incident["report_status"] == "completed" and has_html
             else None
         )
@@ -85,13 +96,13 @@ def page_alarm_incidents(
 def list_alarm_reports(
     request: Request, limit: int = Query(50, ge=1, le=200)
 ) -> dict:
-    reports = request.app.state.alarm_repository.list_reports(
-        limit, monitor_start_at=settings.alarm_monitor_start_at
+    reports = device_state(request).alarm_repository.list_reports(
+        limit, monitor_start_at=device_settings(request, settings).alarm_monitor_start_at
     )
     for report in reports:
         if report["status"] == "completed":
-            report["download_url"] = f"/api/v1/alarms/reports/{report['report_id']}/pdf"
-            report["view_url"] = f"/api/v1/alarms/reports/{report['report_id']}/view"
+            report["download_url"] = _device_url(request, f"/api/v1/alarms/reports/{report['report_id']}/pdf")
+            report["view_url"] = _device_url(request, f"/api/v1/alarms/reports/{report['report_id']}/view")
     return {
         "success": True,
         "data": reports,
@@ -105,15 +116,15 @@ def page_alarm_reports(
     page: int = Query(1, ge=1),
     page_size: int = Query(10, ge=1, le=100),
 ) -> dict:
-    result = request.app.state.alarm_repository.page_reports(
-        monitor_start_at=settings.alarm_monitor_start_at,
+    result = device_state(request).alarm_repository.page_reports(
+        monitor_start_at=device_settings(request, settings).alarm_monitor_start_at,
         page=page,
         page_size=page_size,
     )
     for report in result["items"]:
         if report["status"] == "completed":
-            report["download_url"] = f"/api/v1/alarms/reports/{report['report_id']}/pdf"
-            report["view_url"] = f"/api/v1/alarms/reports/{report['report_id']}/view"
+            report["download_url"] = _device_url(request, f"/api/v1/alarms/reports/{report['report_id']}/pdf")
+            report["view_url"] = _device_url(request, f"/api/v1/alarms/reports/{report['report_id']}/view")
     return {
         "success": True,
         "data": result,
@@ -122,7 +133,7 @@ def page_alarm_reports(
 
 
 def _report_path(request: Request, report_id: str, field: str) -> tuple[dict, Path]:
-    report = request.app.state.alarm_repository.get_report(report_id)
+    report = device_state(request).alarm_repository.get_report(report_id)
     if report is None:
         raise HTTPException(status_code=404, detail="告警报告不存在")
     relative_path = report.get(field)

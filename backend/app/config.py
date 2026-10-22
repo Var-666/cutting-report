@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -44,6 +44,9 @@ def _as_float(name: str, default: float) -> float:
 
 @dataclass(frozen=True, slots=True)
 class Settings:
+    device_id: str = DEFAULT_DEVICE.id
+    device_name: str = DEFAULT_DEVICE.name
+    energy_connected: bool = DEFAULT_DEVICE.energy is not None
     project_root: Path = PROJECT_ROOT
     app_env: str = os.getenv("APP_ENV", "development")
     app_host: str = os.getenv("APP_HOST", "127.0.0.1")
@@ -52,7 +55,6 @@ class Settings:
     app_version: str = os.getenv("APP_VERSION", "0.1.0")
     demo_mode: bool = _as_bool("APP_DEMO_MODE", True)
     data_source_mode: str = os.getenv("APP_DATA_SOURCE_MODE", "").strip().lower()
-    task_excel_file: str = os.getenv("TASK_EXCEL_PATH", "TASK.xlsx")
     cors_origins: tuple[str, ...] = tuple(
         item.strip()
         for item in os.getenv("APP_CORS_ORIGINS", "http://localhost:5173").split(",")
@@ -81,7 +83,7 @@ class Settings:
         "LEADERSHIP_REPORT_RECONCILE_HOUR", 2
     )
     report_data_cache_seconds: int = _as_int("REPORT_DATA_CACHE_SECONDS", 600)
-    report_background_refresh_seconds: int = _as_int("REPORT_BACKGROUND_REFRESH_SECONDS", 600)
+    report_background_refresh_seconds: int = _as_int("REPORT_BACKGROUND_REFRESH_SECONDS", 300)
     # 当前运行默认设备；多设备切换需另外打通请求、缓存和快照范围。
     report_machine_no: str = os.getenv("REPORT_MACHINE_NO", DEFAULT_DEVICE.machine_no).strip() or DEFAULT_DEVICE.machine_no
 
@@ -96,7 +98,7 @@ class Settings:
         value.strip() for value in os.getenv("ENERGY_EQUIPMENT_IDS", "").split(",") if value.strip()
     )
     energy_gas_parameter_id: str = os.getenv(
-        "ENERGY_GAS_PARAMETER_ID", str(DEFAULT_DEVICE.energy.gas_parameter_id)
+        "ENERGY_GAS_PARAMETER_ID", str(DEFAULT_DEVICE.energy.gas_parameter_id if DEFAULT_DEVICE.energy else "")
     ).strip()
     energy_electricity_parameter_ids: tuple[str, ...] = tuple(
         value.strip() for value in os.getenv("ENERGY_ELECTRICITY_PARAMETER_IDS", "").split(",") if value.strip()
@@ -118,13 +120,13 @@ class Settings:
     # 同一设备在 TASK.MACHINE_NO 中的历史别名，不能混入另一台设备。
     energy_report_equipment_ids: tuple[str, ...] = tuple(
         value.strip() for value in os.getenv(
-            "ENERGY_REPORT_EQUIPMENT_IDS", ",".join(DEFAULT_DEVICE.energy.equipment_ids)
+            "ENERGY_REPORT_EQUIPMENT_IDS", ",".join(DEFAULT_DEVICE.energy.equipment_ids) if DEFAULT_DEVICE.energy else DEFAULT_DEVICE.machine_no
         ).split(",") if value.strip()
     )
     energy_report_electricity_parameter_ids: tuple[str, ...] = tuple(
         value.strip() for value in os.getenv(
             "ENERGY_REPORT_ELECTRICITY_PARAMETER_IDS",
-            ",".join(map(str, DEFAULT_DEVICE.energy.electricity_parameter_ids)),
+            ",".join(map(str, DEFAULT_DEVICE.energy.electricity_parameter_ids)) if DEFAULT_DEVICE.energy else "",
         ).split(",") if value.strip()
     )
     energy_report_max_gap_seconds: int = _as_int("ENERGY_REPORT_MAX_GAP_SECONDS", 1800)
@@ -206,11 +208,11 @@ class Settings:
     llm_api_key: str = os.getenv("LLM_API_KEY", "")
     llm_base_url: str = os.getenv("LLM_BASE_URL", "")
     llm_model: str = os.getenv("LLM_MODEL", "")
-    llm_timeout: float = _as_float("LLM_TIMEOUT_SECONDS", 30)
+    llm_timeout: float = _as_float("LLM_TIMEOUT_SECONDS", 180)
     llm_max_input_chars: int = _as_int("LLM_MAX_INPUT_CHARS", 500_000)
     llm_max_output_chars: int = _as_int("LLM_MAX_OUTPUT_CHARS", 50_000)
-    llm_max_concurrent: int = _as_int("LLM_MAX_CONCURRENT", 2)
-    llm_queue_timeout_seconds: float = _as_float("LLM_QUEUE_TIMEOUT_SECONDS", 30)
+    llm_max_concurrent: int = _as_int("LLM_MAX_CONCURRENT", 10)
+    llm_queue_timeout_seconds: float = _as_float("LLM_QUEUE_TIMEOUT_SECONDS", 120)
 
     # 告警源沿用生产数据库和默认设备编号。
     alarm_monitor_enabled: bool = _as_bool("ALARM_MONITOR_ENABLED", False)
@@ -275,8 +277,8 @@ class Settings:
             raise ValueError("LLM_MAX_INPUT_CHARS 必须在 1000 到 10000000 之间")
         if not 1000 <= self.llm_max_output_chars <= 2_000_000:
             raise ValueError("LLM_MAX_OUTPUT_CHARS 必须在 1000 到 2000000 之间")
-        if not 1 <= self.llm_max_concurrent <= 8:
-            raise ValueError("LLM_MAX_CONCURRENT 必须在 1 到 8 之间")
+        if not 1 <= self.llm_max_concurrent <= 10:
+            raise ValueError("LLM_MAX_CONCURRENT 必须在 1 到 10 之间")
         if not 1 <= self.llm_queue_timeout_seconds <= 300:
             raise ValueError("LLM_QUEUE_TIMEOUT_SECONDS 必须在 1 到 300 秒之间")
         if not 1 <= self.llm_timeout <= 300:
@@ -291,8 +293,8 @@ class Settings:
             raise ValueError("PDF_RENDER_TIMEOUT_SECONDS 必须在 1 到 1800 秒之间")
         if not 5 <= self.magic_box_operation_timeout <= 1800:
             raise ValueError("MAGIC_BOX_OPERATION_TIMEOUT_SECONDS 必须在 5 到 1800 秒之间")
-        if self.data_source_mode not in {"", "demo", "excel", "sqlserver"}:
-            raise ValueError("APP_DATA_SOURCE_MODE 必须是 demo、excel 或 sqlserver")
+        if self.data_source_mode not in {"", "demo", "sqlserver"}:
+            raise ValueError("APP_DATA_SOURCE_MODE 必须是 demo 或 sqlserver；Excel 数据源已移除，请使用 SQL Server")
         if (
             self.app_env.strip().lower() in {"production", "prod"}
             and self.demo_mode and not self.data_source_mode
@@ -335,11 +337,6 @@ class Settings:
     def effective_data_source_mode(self) -> str:
         mode = self.data_source_mode or ("demo" if self.demo_mode else "sqlserver")
         return mode
-
-    @property
-    def task_excel_path(self) -> Path:
-        path = Path(self.task_excel_file).expanduser()
-        return path if path.is_absolute() else self.project_root / path
 
     def sqlserver_connection(self, source: str = "production") -> dict[str, object]:
         """Return one complete connection profile without mixing database identities."""
@@ -390,6 +387,28 @@ class Settings:
     def ensure_runtime_dirs(self) -> None:
         for path in (self.data_dir, self.reports_dir, self.logs_dir):
             path.mkdir(parents=True, exist_ok=True)
+
+
+def settings_for_device(base: Settings, device_id: str) -> Settings:
+    device = next((item for item in DEVICE_CATALOG.devices if item.id == device_id), None)
+    if device is None:
+        raise ValueError("设备不存在")
+    if device.id == DEVICE_CATALOG.default_device_id:
+        # Legacy explicit overrides apply only to the original default device.
+        return replace(base, device_id=device.id, device_name=device.name,
+                       energy_connected=device.energy is not None)
+    energy = device.energy
+    return replace(
+        base, device_id=device.id, device_name=device.name,
+        report_machine_no=device.machine_no, energy_connected=energy is not None,
+        energy_api_enabled=base.energy_api_enabled and energy is not None,
+        energy_gas_parameter_id=str(energy.gas_parameter_id) if energy else "",
+        energy_report_equipment_ids=energy.equipment_ids if energy else (device.machine_no,),
+        energy_report_electricity_parameter_ids=tuple(map(str, energy.electricity_parameter_ids)) if energy else (),
+        energy_equipment_ids=(), energy_electricity_parameter_ids=(),
+        alarm_monitor_machine_nos=(device.machine_no,),
+        alarm_monitor_start_at=device.alarm.start_at,
+    )
 
 
 settings = Settings()

@@ -140,7 +140,7 @@ class EquipmentEnergyService:
 
     def enrich(self, records: list[EquipmentRecord], *, force=False, context_records=None) -> EnergyResult:
         cfg = self.settings
-        if cfg.effective_data_source_mode == "demo":
+        if cfg.effective_data_source_mode == "demo" and cfg.energy_connected:
             return EnergyResult(sort_equipment_records(mock_energy(records)), "mock",
                 "气耗和电耗为系统生成的稳定模拟数据，仅用于演示，不可用于结算或考核。",
                 {"gas": "Nm³（模拟）", "electricity": "kWh（模拟）"})
@@ -155,6 +155,8 @@ class EquipmentEnergyService:
                 replace(row, gas_data_status="unavailable", electricity_data_status="unavailable", energy_note=message)
                 for row in clean]), "unavailable", message + "；缺失值不作为零值或模拟值。", units)
 
+        if not cfg.energy_connected:
+            return unavailable("暂未接入")
         if not clean:
             return EnergyResult([], "unavailable", "所选日期暂无设备任务。", units)
         if not cfg.energy_api_enabled:

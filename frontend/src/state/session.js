@@ -1,6 +1,8 @@
+import { resetDeviceContext } from '../api/deviceContext.js'
 import { reactive } from 'vue'
 import { getAuthStatus, getSystemHealth, logoutAccount } from '../api/reports.js'
 import { startReportPreload, stopReportPreload } from './reportPreload.js'
+import { deviceSelection, loadDevices } from './devices.js'
 
 export const session = reactive({
   ready: false,
@@ -13,6 +15,14 @@ export const session = reactive({
 
 let loadingPromise = null
 let sessionGeneration = 0
+
+function preloadDeviceReports(user, generation) {
+  if (!user) { stopReportPreload(); return }
+  // Validate the remembered device before any production report warmup starts.
+  loadDevices().then(() => {
+    if (generation === sessionGeneration && deviceSelection.ready) startReportPreload(user)
+  })
+}
 
 function refreshSystemInfo(generation) {
   getSystemHealth().then((info) => {
@@ -35,7 +45,7 @@ export async function loadSession({ force = false } = {}) {
       session.setupRequired = status.setup_required
       session.workerDatabaseAuthEnabled = Boolean(status.worker_database_auth_enabled)
       session.user = status.user
-      startReportPreload(status.user)
+      preloadDeviceReports(status.user, generation)
     } catch (exception) {
       if (generation !== sessionGeneration) return session
       stopReportPreload()
@@ -64,11 +74,12 @@ export async function completeAuthentication(user) {
   session.setupRequired = false
   session.error = ''
   session.systemInfo = null
-  startReportPreload(user)
+  preloadDeviceReports(user, generation)
   refreshSystemInfo(generation)
 }
 
 export function expireSession() {
+  resetDeviceContext()
   sessionGeneration += 1
   loadingPromise = null
   stopReportPreload()
@@ -79,6 +90,7 @@ export function expireSession() {
 }
 
 export async function endSession() {
+  resetDeviceContext()
   const generation = ++sessionGeneration
   loadingPromise = null
   stopReportPreload()

@@ -14,9 +14,10 @@ from app.database.workshop import WorkshopRepository
 class UnitOfWork:
     """Share one SQLite transaction across repository boundaries."""
 
-    def __init__(self, database: SQLiteDatabase, timezone: str = "Asia/Shanghai") -> None:
+    def __init__(self, database: SQLiteDatabase, timezone: str = "Asia/Shanghai", *, device_id: str | None = None) -> None:
         self.database = database
         self.timezone = timezone
+        self.device_id = device_id
         self._context = None
         self.connection: sqlite3.Connection | None = None
         self.metadata: MetadataRepository
@@ -30,7 +31,7 @@ class UnitOfWork:
         self.connection = self._context.__enter__()
         self.connection.execute("BEGIN IMMEDIATE")
         self.metadata = MetadataRepository(
-            self.database, connection=self.connection
+            self.database, connection=self.connection, device_id=self.device_id
         )
         self.workshop = WorkshopRepository(
             self.database, connection=self.connection

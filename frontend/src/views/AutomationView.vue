@@ -11,6 +11,8 @@ import {
   saveAutomationConfiguration,
   saveAutomationSchedule,
 } from '../api/reports'
+import { deviceSelection } from '../state/devices.js'
+import { formatDeviceDisplay } from '../utils/deviceDisplay.js'
 import { formatChineseDate, formatChineseDateTime } from '../utils/dateDisplay.js'
 import ManagementPageHero from '../components/ManagementPageHero.vue'
 import AppIcon from '../components/AppIcon.vue'
@@ -56,6 +58,7 @@ const configuration = reactive({
 })
 
 const emptyForm = () => ({
+  device_id: deviceSelection.id,
   name: '每日车间报表',
   report_type: 'workshop',
   frequency: 'daily',
@@ -147,6 +150,7 @@ function resetForm() {
 function editSchedule(item) {
   editingId.value = item.schedule_id
   Object.assign(form, {
+    device_id: item.device_id || 'Cutter01',
     name: item.name,
     report_type: item.report_type,
     frequency: item.frequency,
@@ -166,6 +170,7 @@ function editSchedule(item) {
 
 function payload() {
   return {
+    device_id: form.device_id,
     name: form.name,
     report_type: form.report_type,
     frequency: form.frequency,
@@ -371,6 +376,7 @@ onMounted(() => Promise.all([loadConfiguration(), loadAll()]))
         </div>
         <form class="automation-form" @submit.prevent="submit" @input.capture="hasUnsavedChanges = true" @change.capture="hasUnsavedChanges = true">
           <label class="wide"><span>任务名称</span><input v-model.trim="form.name" name="schedule_name" autocomplete="off" required maxlength="80"></label>
+          <label><span>设备</span><AppSelect v-model="form.device_id" name="schedule_device" required @change="hasUnsavedChanges = true"><option v-for="item in deviceSelection.items" :key="item.id" :value="item.id">{{ item.name }}</option></AppSelect><small>计划固定使用此设备。</small></label>
           <label><span>报表类型</span><AppSelect v-model="form.report_type" name="report_type" @change="hasUnsavedChanges = true"><option v-for="(label,key) in reportLabels" :key="key" :value="key">{{ label }}</option></AppSelect></label>
           <label><span>报表期间</span><AppSelect v-model="form.report_period" name="report_period" @change="hasUnsavedChanges = true"><template v-if="form.report_type === 'leadership'"><option value="previous_month">上月</option><option value="current_month">本月</option></template><template v-else><option value="previous_day">前一日</option><option value="current_day">当日</option></template></AppSelect></label>
           <label><span>执行频率</span><AppSelect v-model="form.frequency" name="frequency" @change="hasUnsavedChanges = true"><option value="daily">每日</option><option value="weekly">每周</option><option value="monthly">每月</option></AppSelect></label>
@@ -402,7 +408,7 @@ onMounted(() => Promise.all([loadConfiguration(), loadAll()]))
         <table v-content-table><thead><tr><th>状态</th><th>任务</th><th>报表</th><th>计划</th><th>下次执行</th><th>收件人</th><th>发送 / 失败</th><th>操作</th></tr></thead>
           <tbody><tr v-for="item in schedules" :key="item.schedule_id">
             <td><span class="schedule-status" :class="{ enabled: item.enabled }"><i></i>{{ item.enabled ? '启用' : '停用' }}</span></td>
-            <td class="task-cell"><strong>{{ item.name }}</strong><small>{{ scheduleLabels[item.last_status] || item.last_status || '尚未执行' }}</small></td>
+            <td class="task-cell"><strong>{{ item.name }}</strong><small>{{ formatDeviceDisplay(item.device_id) }}</small><small>{{ scheduleLabels[item.last_status] || item.last_status || '尚未执行' }}</small></td>
             <td>{{ reportLabels[item.report_type] }}</td><td>{{ scheduleText(item) }}</td><td>{{ formatDateTime(item.next_run_at) }}</td>
             <td :title="item.recipients.join(', ')">{{ item.recipients.length }} 人</td><td>{{ item.sent_count || 0 }} / {{ item.failed_count || 0 }}</td>
             <td><div class="row-actions"><button type="button" @click="runNow(item)">立即执行</button><button type="button" @click="editSchedule(item)">编辑</button><button type="button" class="danger" @click="remove(item)">删除</button></div></td>

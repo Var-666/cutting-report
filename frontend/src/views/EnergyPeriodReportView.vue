@@ -20,8 +20,10 @@ import ReportFeedback from '../components/ReportFeedback.vue'
 import ReportTrendPanel from '../components/ReportTrendPanel.vue'
 import StandardReportQuery from '../components/StandardReportQuery.vue'
 import { formatChineseDateTime, formatChineseMonth, sortReportPeriods } from '../utils/dateDisplay.js'
+import { deviceSelection } from '../state/devices.js'
 import { formatDeviceDisplay } from '../utils/deviceDisplay.js'
 import { createReportChartGrid, REPORT_CHART_COLORS } from '../utils/reportChartTheme.js'
+import { useDeviceSwitchQuery } from '../composables/useDeviceSwitchQuery.js'
 import { mergeOwnedQuery, queryChoice, queryDateRange, sameRouteQuery } from '../utils/reportRouteState.js'
 
 use([BarChart, LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
@@ -79,6 +81,10 @@ function routeStateQuery() {
   })
 }
 
+useDeviceSwitchQuery('equipment-report', () => ({
+  ...routeStateQuery(), start: appliedPeriodStart.value, end: appliedPeriodEnd.value,
+}))
+
 async function syncRouteState() {
   const query = routeStateQuery()
   if (sameRouteQuery(query, route.query)) return
@@ -118,7 +124,8 @@ const summary = computed(() => taskDay.value?.summary || {
   gas_record_count: 0,
   electricity_record_count: 0,
 })
-const equipmentScopeLabel = computed(() => formatDeviceDisplay(taskDay.value?.equipment_scope?.join(' / ') || 'Cutter01'))
+const equipmentScopeLabel = computed(() => formatDeviceDisplay(taskDay.value?.equipment_scope?.join(' / ') || deviceSelection.id))
+const energyConnected = computed(() => taskDay.value?.energy_connected !== false)
 const configurationError = computed(() => taskDay.value?.configuration_error || '')
 const energyCoverage = computed(() => {
   const taskCount = Number(summary.value.task_count || 0)
@@ -153,6 +160,7 @@ const summaryTableLabel = '近12个月月度能耗汇总表'
 const summaryEmptyText = '近12个月暂无月度汇总'
 const summarySubtitle = computed(() => {
   const base = `${summaryPeriodStart.value} 至 ${summaryPeriodEnd.value} · ${summaryCountLabel.value}`
+  if (!energyConnected.value) return `${base} · 能耗暂未接入`
   const missing = Number(monthlyReport.value?.missing_day_count || 0)
   if (!missing) return base
   return monthlyReport.value?.syncing
@@ -170,6 +178,7 @@ const analysisReady = computed(() => Boolean(
 ))
 
 function format(value, digits = 1) {
+  if (!energyConnected.value && value == null) return '暂未接入'
   if (value === null || value === undefined || !Number.isFinite(Number(value))) return '--'
   return new Intl.NumberFormat('zh-CN', { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(Number(value))
 }
@@ -569,7 +578,8 @@ watch(() => route.query, async () => {
     </section>
 
     <ReportFeedback v-if="error && taskDay && monthlyReport" type="error" title="设备报表更新失败" :message="error" action-label="重新查询" dismissible @action="retryReport" @dismiss="error = ''" />
-    <ReportFeedback v-if="configurationError" type="warning" title="能管数据提示" :message="`${configurationError}。缺失值显示 --，不按零计算。`" />
+    <ReportFeedback v-if="!energyConnected" type="info" title="能耗暂未接入" message="当前设备暂未接入电表和气表，生产任务与工时正常统计。" />
+    <ReportFeedback v-else-if="configurationError" type="warning" title="能管数据提示" :message="`${configurationError}。缺失值显示 --，不按零计算。`" />
 
     <section class="device-kpis" aria-label="设备区间汇总" :aria-busy="loading">
       <article class="device-kpi kpi-red">

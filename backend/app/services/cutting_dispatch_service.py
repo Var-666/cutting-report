@@ -76,10 +76,9 @@ STAGE_LABELS = {
 
 PUSH_FILE_SUFFIXES = frozenset({".gen", ".txt"})
 STANDARD_INSTRUCTION_NAME = re.compile(
-    r"^[PSWL][A-Z0-9]*?[A-Z](?P<thickness>\d{3})(?P<material>A0|A2|A6|SS)",
+    r"^[PSWLZ][A-Z0-9]*?[A-Z](?P<thickness>\d{3})(?P<material>.{2})",
     re.IGNORECASE,
 )
-STANDARD_MATERIALS = {"A0": "A", "A2": "AH32", "A6": "AH36", "SS": "双相不锈钢"}
 
 
 def standard_instruction_parameters(filename: str) -> tuple[str, float] | None:
@@ -94,7 +93,7 @@ def standard_instruction_parameters(filename: str) -> tuple[str, float] | None:
     thickness = int(match.group("thickness")) / 10
     if thickness <= 0:
         return None
-    return STANDARD_MATERIALS[match.group("material").upper()], thickness
+    return match.group("material"), thickness
 
 
 class CuttingDispatchService:
@@ -233,7 +232,18 @@ class CuttingDispatchService:
 
     def list_files(self, project_id: str, *, catalog_id: str | None, status: str, keyword: str, page: int, page_size: int) -> dict[str, Any]:
         rows, total = self.pdm.list_files(project_id, catalog_id=catalog_id, status=status, keyword=keyword, page=page, page_size=page_size)
-        return {"items": [self._file_item(row) for row in rows], "total": total, "page": page, "page_size": page_size}
+        items = [self._file_item(row) for row in rows]
+        latest = self.dispatches.latest_for_files(
+            (str(item["document_id"]), str(item.get("version_id") or "")) for item in items
+        )
+        for item in items:
+            dispatch = latest.get((str(item["document_id"]), str(item.get("version_id") or "")))
+            item["dispatch_status"] = {
+                "status": dispatch["status"],
+                "status_label": STATUS_LABELS.get(dispatch["status"], dispatch["status"]),
+                "stage_label": STAGE_LABELS.get(dispatch["stage"], dispatch["stage"]),
+            } if dispatch else None
+        return {"items": items, "total": total, "page": page, "page_size": page_size}
 
     def create_dispatch(
         self,

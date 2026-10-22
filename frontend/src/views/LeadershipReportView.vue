@@ -16,6 +16,7 @@ import heroImage from '../assets/home-laser-cutting.webp'
 import { recentTwelveMonthStart, reportToday } from '../api/reportDates.js'
 import { formatChineseDate, formatChineseMonth } from '../utils/dateDisplay.js'
 import { createReportChartGrid, REPORT_CHART_COLORS } from '../utils/reportChartTheme.js'
+import { useDeviceSwitchQuery } from '../composables/useDeviceSwitchQuery.js'
 import { mergeOwnedQuery, queryChoice, queryDateRange, sameRouteQuery } from '../utils/reportRouteState.js'
 
 defineProps({ exporting: Boolean })
@@ -67,6 +68,8 @@ function routeStateQuery() {
     chart: chartType.value === 'bar_line' ? '' : chartType.value,
   })
 }
+
+useDeviceSwitchQuery('leadership-report', routeStateQuery)
 
 async function syncRouteState() {
   const query = routeStateQuery()

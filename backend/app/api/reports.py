@@ -4,16 +4,19 @@ import calendar
 import uuid
 from datetime import date, datetime
 from pathlib import Path
+from urllib.parse import urlencode
 from typing import Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 
+from app.api.devices import device_state, device_settings
 from app.api.auth import require_admin
-from app.config import settings
+from app.config import DEVICE_CATALOG, settings
 from app.models.api import ReportCreateRequest
 from app.services.pdf_service import PdfRenderError
+from app.services.custom_report_service import PARAMETER_PATTERN
 
 
 router = APIRouter(
@@ -74,7 +77,16 @@ def _serialize_job(job: dict) -> dict:
             "code": job.get("error_code") or "REPORT_GENERATION_FAILED",
             "message": job.get("stage_message") or "报告生成失败",
         }
+    result['device_id'] = job.get('device_id', 'Cutter01')
+    if result['device_id'] != DEVICE_CATALOG.default_device_id:
+        for field in ('view_url', 'download_url'):
+            if result.get(field):
+                result[field] += '?' + urlencode({'device_id': result['device_id']})
     return result
+
+
+router.dependencies.append(Depends(device_state))
+view_router.dependencies.append(Depends(device_state))
 
 
 @router.post("", status_code=202)
@@ -86,10 +98,14 @@ def create_report(payload: ReportCreateRequest, request: Request) -> dict:
         definition = request.app.state.definitions.get_definition(payload.definition_id)
         if not definition or definition["is_builtin"] or not definition["enabled"]:
             raise HTTPException(status_code=400, detail="报表定义不存在或尚未启用")
+        if device_settings(request, settings).device_id != 'Cutter01':
+            query = request.app.state.definitions.get_query_task(definition['query_task_id'])
+            if query is None or 'machine_no' not in PARAMETER_PATTERN.findall(query['sql_text']):
+                raise HTTPException(status_code=400, detail='该自定义报表尚未声明设备参数，请使用标准报表或更新 SQL 定义')
     explicit_period = bool(
         {"period_start", "period_end"} & payload.model_fields_set
     )
-    request.app.state.metadata.create_job(
+    device_state(request).metadata.create_job(
         report_id=report_id,
         report_date=payload.report_date.isoformat(),
         project_code=payload.project_code,
@@ -108,7 +124,7 @@ def create_report(payload: ReportCreateRequest, request: Request) -> dict:
         "data": {
             "report_id": report_id,
             "status": "pending",
-            "status_url": f"/api/v1/reports/{report_id}/status",
+            "status_url": f"/api/v1/reports/{report_id}/status" + ("?" + urlencode({"device_id": device_settings(request, settings).device_id}) if device_settings(request, settings).device_id != DEVICE_CATALOG.default_device_id else ""),
         },
         "request_id": _request_id(request),
     }
@@ -116,7 +132,7 @@ def create_report(payload: ReportCreateRequest, request: Request) -> dict:
 
 @router.get("/{report_id}/status")
 def get_report_status(report_id: str, request: Request) -> dict:
-    job = request.app.state.metadata.get_job(report_id)
+    job = device_state(request).metadata.get_job(report_id)
     if job is None:
         raise HTTPException(status_code=404, detail="报告不存在")
     return {
@@ -136,7 +152,7 @@ def list_reports(
     ship_no: str | None = Query(None, max_length=128),
     report_type: Literal["leadership", "workshop", "equipment", "custom"] | None = None,
 ) -> dict:
-    items, total = request.app.state.metadata.list_reports(
+    items, total = device_state(request).metadata.list_reports(
         page=page,
         page_size=page_size,
         report_date=report_date.isoformat() if report_date else None,
@@ -157,7 +173,7 @@ def list_reports(
 
 
 def _resolve_report_file(request: Request, report_id: str) -> tuple[dict, Path]:
-    job = request.app.state.metadata.get_job(report_id)
+    job = device_state(request).metadata.get_job(report_id)
     if job is None:
         raise HTTPException(status_code=404, detail="报告不存在")
     relative_path = job.get("relative_path")

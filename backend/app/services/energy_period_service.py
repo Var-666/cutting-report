@@ -164,6 +164,8 @@ class EnergyPeriodService:
 
     def configuration_error(self):
         cfg = self.settings
+        if not cfg.energy_connected:
+            return "暂未接入"
         if not cfg.energy_api_enabled:
             return "尚未启用能管接口，请配置 ENERGY_API_ENABLED 和内网账号。"
         if not cfg.energy_api_username or not cfg.energy_api_password:
@@ -192,6 +194,7 @@ class EnergyPeriodService:
         return {"units": {"gas": cfg.energy_gas_unit or "原始单位待确认", "electricity": unit},
                 "notice": "", "source_name": "电表合计 / 气量计", "timezone": cfg.timezone,
                 "configuration_error": self.configuration_error(),
+                "energy_connected": cfg.energy_connected,
                 "equipment_scope": list(self.equipment_ids),
                 "parameters": {"electricity": list(self.electricity_ids), "gas": self.gas_id}}
 
@@ -336,12 +339,14 @@ class EnergyPeriodService:
                 "energy_notice": notice,
                 "warning": warning,
                 "configuration_error": self.configuration_error(),
+                "energy_connected": self.settings.energy_connected,
             })
 
         error = self.configuration_error()
         if error:
-            unavailable = [replace(row, gas_data_status="unavailable",
-                                   electricity_data_status="unavailable", energy_note=error)
+            status = "unavailable" if self.settings.energy_connected else "not_connected"
+            unavailable = [replace(row, gas_data_status=status,
+                                   electricity_data_status=status, energy_note=error)
                            for row in clean]
             return result(unavailable, "unavailable", "", error)
 

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from app.database.sqlite import SQLiteDatabase, SQLiteRepository
+from app.database.device_migrations import rebuild_table
 
 
 class MetadataRepository(SQLiteRepository):
@@ -14,8 +15,10 @@ class MetadataRepository(SQLiteRepository):
         database: Path | SQLiteDatabase,
         *,
         connection: sqlite3.Connection | None = None,
+        device_id: str | None = None,
     ) -> None:
         super().__init__(database, connection=connection)
+        self.device_id = device_id
 
     def initialize(self) -> None:
         self.database.initialize()
@@ -99,6 +102,7 @@ class MetadataRepository(SQLiteRepository):
                 ("parameters_json", "TEXT NOT NULL DEFAULT '{}'"),
                 ("period_start", "TEXT"),
                 ("period_end", "TEXT"),
+                ("device_id", "TEXT NOT NULL DEFAULT 'Cutter01'"),
             ):
                 if column not in columns:
                     connection.execute(
@@ -116,12 +120,25 @@ class MetadataRepository(SQLiteRepository):
                 connection.execute(
                     "UPDATE report_analyses SET data_version = input_hash WHERE data_version IS NULL"
                 )
+            if "display_scope" not in analysis_columns:
+                connection.execute("ALTER TABLE report_analyses ADD COLUMN display_scope TEXT")
+            connection.execute(
+                """CREATE INDEX IF NOT EXISTS idx_report_analyses_display
+                ON report_analyses(display_scope, report_type, report_date, generated_at DESC)"""
+            )
             connection.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_report_analyses_version
                 ON report_analyses(report_type, report_date, data_version, generated_at DESC)
                 """
             )
+
+        with self.connect() as connection:
+            columns = {row['name'] for row in connection.execute('PRAGMA table_info(analysis_source_versions)')}
+            if 'device_id' not in columns:
+                connection.execute("ALTER TABLE analysis_source_versions ADD COLUMN device_id TEXT NOT NULL DEFAULT 'Cutter01'")
+        rebuild_table(self.database, 'analysis_source_versions', lambda sql: sql.replace(
+            'PRIMARY KEY(report_type, report_date)', 'PRIMARY KEY(report_type, report_date, device_id)'))
 
     def queue_observation(self) -> dict:
         with self.connect() as connection:
@@ -161,6 +178,7 @@ class MetadataRepository(SQLiteRepository):
         parameters: dict[str, Any] | None = None,
         period_start: str | None = None,
         period_end: str | None = None,
+        device_id: str | None = None,
     ) -> None:
         with self.connect() as connection:
             connection.execute(
@@ -168,8 +186,8 @@ class MetadataRepository(SQLiteRepository):
                 INSERT INTO report_jobs (
                     report_id, report_type, status, stage_message, report_date, project_code,
                     ship_no, created_at, request_id, definition_id, report_title, parameters_json,
-                    period_start, period_end
-                ) VALUES (?, ?, 'pending', '等待生成', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    period_start, period_end, device_id
+                ) VALUES (?, ?, 'pending', '等待生成', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     report_id,
@@ -184,6 +202,7 @@ class MetadataRepository(SQLiteRepository):
                     json.dumps(parameters or {}, ensure_ascii=False),
                     period_start,
                     period_end,
+                    device_id or self.device_id or "Cutter01",
                 ),
             )
 
@@ -284,9 +303,9 @@ class MetadataRepository(SQLiteRepository):
                        r.generated_at, r.sha256
                 FROM report_jobs j
                 LEFT JOIN reports r ON r.report_id = j.report_id
-                WHERE j.report_id = ?
+                WHERE j.report_id = ? AND (? IS NULL OR j.device_id = ?)
                 """,
-                (report_id,),
+                (report_id, self.device_id, self.device_id),
             ).fetchone()
             return dict(row) if row else None
 
@@ -315,6 +334,22 @@ class MetadataRepository(SQLiteRepository):
             value = json.loads(row["result_json"])
             return value if isinstance(value, dict) else None
 
+    def get_latest_analysis(
+        self, *, report_type: str, report_date: str, model_name: str, prompt_version: str,
+    ) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT result_json FROM report_analyses
+                WHERE display_scope = ? AND report_type = ? AND report_date = ?
+                  AND model_name = ? AND prompt_version = ? AND mode = 'model'
+                ORDER BY generated_at DESC, rowid DESC LIMIT 1
+                """,
+                (self.device_id or "Cutter01", report_type, report_date, model_name, prompt_version),
+            ).fetchone()
+            value = json.loads(row["result_json"]) if row else None
+            return value if isinstance(value, dict) else None
+
     def get_analysis_source_version(
         self,
         *,
@@ -326,9 +361,9 @@ class MetadataRepository(SQLiteRepository):
                 """
                 SELECT data_version, updated_at
                 FROM analysis_source_versions
-                WHERE report_type = ? AND report_date = ?
+                WHERE report_type = ? AND report_date = ? AND device_id = ?
                 """,
-                (report_type, report_date),
+                (report_type, report_date, self.device_id or "Cutter01"),
             ).fetchone()
             if row is None:
                 return None
@@ -349,13 +384,13 @@ class MetadataRepository(SQLiteRepository):
             connection.execute(
                 """
                 INSERT INTO analysis_source_versions (
-                    report_type, report_date, data_version, updated_at
-                ) VALUES (?, ?, ?, ?)
-                ON CONFLICT(report_type, report_date) DO UPDATE SET
+                    report_type, report_date, data_version, updated_at, device_id
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(report_type, report_date, device_id) DO UPDATE SET
                     data_version = excluded.data_version,
                     updated_at = excluded.updated_at
                 """,
-                (report_type, report_date, data_version, updated_at),
+                (report_type, report_date, data_version, updated_at, self.device_id or "Cutter01"),
             )
 
     def save_analysis(
@@ -372,14 +407,15 @@ class MetadataRepository(SQLiteRepository):
         prompt_version: str,
         result: dict[str, Any],
         generated_at: str,
+        publish_latest: bool = False,
     ) -> None:
         with self.connect() as connection:
             connection.execute(
                 """
                 INSERT INTO report_analyses (
                     cache_key, report_type, report_date, input_hash, data_version, status, mode,
-                    model_name, prompt_version, result_json, generated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    model_name, prompt_version, result_json, generated_at, display_scope
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(cache_key) DO UPDATE SET
                     input_hash = excluded.input_hash,
                     data_version = excluded.data_version,
@@ -388,7 +424,9 @@ class MetadataRepository(SQLiteRepository):
                     model_name = excluded.model_name,
                     prompt_version = excluded.prompt_version,
                     result_json = excluded.result_json,
-                    generated_at = excluded.generated_at
+                    generated_at = excluded.generated_at,
+                    display_scope = COALESCE(excluded.display_scope, report_analyses.display_scope)
+                WHERE excluded.generated_at >= report_analyses.generated_at
                 """,
                 (
                     cache_key,
@@ -402,6 +440,7 @@ class MetadataRepository(SQLiteRepository):
                     prompt_version,
                     json.dumps(result, ensure_ascii=False),
                     generated_at,
+                    (self.device_id or "Cutter01") if publish_latest else None,
                 ),
             )
 
@@ -417,6 +456,9 @@ class MetadataRepository(SQLiteRepository):
     ) -> tuple[list[dict[str, Any]], int]:
         filters: list[str] = []
         parameters: list[Any] = []
+        if self.device_id is not None:
+            filters.append("j.device_id = ?")
+            parameters.append(self.device_id)
         for column, value in (
             ("j.report_date", report_date),
             ("j.project_code", project_code),

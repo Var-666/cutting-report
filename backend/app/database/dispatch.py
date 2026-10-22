@@ -129,7 +129,60 @@ class DispatchRepository(SQLiteRepository):
                         END)
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS cutting_file_dispatch_status (
+                    document_id TEXT NOT NULL,
+                    version_id TEXT NOT NULL,
+                    dispatch_id TEXT NOT NULL,
+                    machine_ip TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    stage TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    sent_at TEXT,
+                    PRIMARY KEY (document_id, version_id)
+                )
+                """
+            )
+            # No foreign key to history: retention must not erase file status.
+            self._sync_file_summaries(connection)
             connection.execute("PRAGMA optimize")
+
+    @staticmethod
+    def _sync_file_summaries(connection: sqlite3.Connection, dispatch_id: str | None = None) -> None:
+        where = "WHERE dispatch_id = ?" if dispatch_id is not None else ""
+        connection.execute(
+            f"""
+            INSERT INTO cutting_file_dispatch_status (
+                document_id, version_id, dispatch_id, machine_ip, status, stage,
+                created_at, updated_at, sent_at
+            )
+            SELECT document_id, COALESCE(version_id, ''), dispatch_id, machine_ip,
+                   status, COALESCE(stage, 'created'), created_at, updated_at, sent_at
+            FROM (
+                SELECT *, ROW_NUMBER() OVER (
+                    PARTITION BY document_id, COALESCE(version_id, '')
+                    ORDER BY created_at DESC, updated_at DESC, dispatch_id DESC
+                ) AS file_rank
+                FROM cutting_dispatches
+                {where}
+            ) WHERE file_rank = 1
+            ON CONFLICT(document_id, version_id) DO UPDATE SET
+                dispatch_id = excluded.dispatch_id,
+                machine_ip = excluded.machine_ip,
+                status = excluded.status,
+                stage = excluded.stage,
+                created_at = excluded.created_at,
+                updated_at = excluded.updated_at,
+                sent_at = excluded.sent_at
+            WHERE excluded.dispatch_id = cutting_file_dispatch_status.dispatch_id
+               OR (excluded.created_at, excluded.updated_at, excluded.dispatch_id) >
+                  (cutting_file_dispatch_status.created_at,
+                   cutting_file_dispatch_status.updated_at, cutting_file_dispatch_status.dispatch_id)
+            """,
+            (dispatch_id,) if dispatch_id is not None else (),
+        )
 
     @staticmethod
     def _decode(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
@@ -212,6 +265,7 @@ class DispatchRepository(SQLiteRepository):
                 data.get("file_sha256"),
             ),
         )
+        DispatchRepository._sync_file_summaries(connection, dispatch_id)
 
     def create(self, data: dict[str, Any], *, user: dict, now: str) -> dict[str, Any]:
         if data["status"] not in DISPATCH_STATUSES:
@@ -282,6 +336,24 @@ class DispatchRepository(SQLiteRepository):
                 (page_size, offset),
             ).fetchall()
         return [self._decode(row) for row in rows], total
+
+    def latest_for_files(self, files: Iterable[tuple[str, str]]) -> dict[tuple[str, str], dict[str, Any]]:
+        keys = list(dict.fromkeys(files))
+        if not keys:
+            return {}
+        placeholders = ", ".join("(?, ?)" for _ in keys)
+        with self.connect() as connection:
+            rows = connection.execute(
+                f"""
+                WITH requested(document_id, version_id) AS (VALUES {placeholders})
+                SELECT summary.* FROM requested
+                JOIN cutting_file_dispatch_status AS summary
+                  ON summary.document_id = requested.document_id
+                 AND summary.version_id = requested.version_id
+                """,
+                tuple(value for key in keys for value in key),
+            ).fetchall()
+        return {(row["document_id"], row["version_id"]): dict(row) for row in rows}
 
     def transition(
         self,
@@ -364,12 +436,13 @@ class DispatchRepository(SQLiteRepository):
             row = connection.execute(
                 "SELECT * FROM cutting_dispatches WHERE dispatch_id = ?", (dispatch_id,)
             ).fetchone()
+            self._sync_file_summaries(connection, dispatch_id)
             return self._decode(row)
 
     def recover_interrupted(self, now: str) -> None:
         """Fail closed after a restart; never re-upload an uncertain request."""
         with self.connect() as connection:
-            connection.execute(
+            cursor = connection.execute(
                 """
                 UPDATE cutting_dispatches
                 SET status = CASE
@@ -399,3 +472,5 @@ class DispatchRepository(SQLiteRepository):
                 """,
                 (now,),
             )
+            if cursor.rowcount:
+                self._sync_file_summaries(connection)

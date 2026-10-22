@@ -43,10 +43,11 @@ const dailyRecords = computed(() => [...(overview.value?.daily_records || [])].s
 const activeDays = computed(() => dailyRecords.value.filter((item) => Number(item.task_count) > 0).length)
 const elapsedDays = computed(() => Math.max(activeDays.value, Number(energy.value?.elapsed_day_count || reportDate.slice(8))))
 const energySummary = computed(() => energy.value?.summary || {})
+const energyConnected = computed(() => energy.value?.energy_connected !== false)
 const electricity = computed(() => energySummary.value.electricity?.value)
 const gas = computed(() => energySummary.value.gas?.value)
 const openAlarms = computed(() => incidents.value.filter((item) => item.status === 'open'))
-const dataSourceLabel = computed(() => ({ demo: '演示数据', excel: 'TASK.xlsx', sqlserver: 'SQL Server' }[session.systemInfo?.data_source_mode] || '正在检查'))
+const dataSourceLabel = computed(() => ({ demo: '演示数据', sqlserver: 'SQL Server' }[session.systemInfo?.data_source_mode] || '正在检查'))
 const displayDate = computed(() => new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short', timeZone: 'Asia/Shanghai' }).format(currentTime.value))
 const displayTime = computed(() => new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZone: 'Asia/Shanghai' }).format(currentTime.value))
 const sourceUpdateTime = computed(() => formatChineseDateTime(overview.value?.snapshot?.data_as_of).split(' ').at(-1))
@@ -96,7 +97,7 @@ const insightTrend = computed(() => {
   if (lengthComparison.value.direction === 'flat') return lengthComparison.value.text === '暂无上月对比' ? '暂无可比较的切割长度数据' : '切割长度与上月持平'
   return `切割长度${lengthComparison.value.direction === 'up' ? '高于' : '低于'}上月 ${lengthComparison.value.text.match(/\d+%/)?.[0] || ''}`
 })
-const insightAdvice = computed(() => openAlarms.value.length ? '优先处理未解除设备告警' : electricity.value == null || gas.value == null ? '先核对能耗数据是否完整' : '持续关注生产与能耗变化')
+const insightAdvice = computed(() => openAlarms.value.length ? '优先处理未解除设备告警' : !energyConnected.value ? '当前设备尚未接入能耗仪表' : electricity.value == null || gas.value == null ? '先核对能耗数据是否完整' : '持续关注生产与能耗变化')
 
 function reportPeriod(item) {
   if (!item?.report_date) return '--'
@@ -212,8 +213,8 @@ onBeforeUnmount(() => {
       <HomeKpiCard title="切割长度" icon="ruler" tone="teal" :value="formatNumber(total.cut_length_m)" unit="米" :status="lengthComparison.text" :direction="lengthComparison.direction" :series="metricSeries.length" :loading="overviewLoading" />
       <HomeKpiCard title="设备工时" icon="clock" tone="purple" :value="compactDuration(total.work_time_seconds)" :status="timeComparison.text" :direction="timeComparison.direction" :series="metricSeries.hours" :loading="overviewLoading" />
       <HomeKpiCard title="生产天数" icon="factory" tone="green" :value="activeDays" unit="天" status="本月有记录" direction="up" :series="metricSeries.days" :loading="overviewLoading" />
-      <HomeKpiCard title="电耗" icon="zap" tone="amber" :value="formatNumber(electricity)" :unit="energy?.units?.electricity || 'kWh'" :status="electricity == null ? '暂无数据' : `已汇总 ${energy.saved_day_count || 0} 天`" :direction="electricity == null ? 'flat' : 'up'" :series="metricSeries.electricity" :loading="energyLoading" />
-      <HomeKpiCard title="气耗" icon="wind" tone="sky" :value="formatNumber(gas)" :unit="energy?.units?.gas || 'Nm³'" :status="gas == null ? '暂无数据' : `已汇总 ${energy.saved_day_count || 0} 天`" :direction="gas == null ? 'flat' : 'up'" :series="metricSeries.gas" :loading="energyLoading" />
+      <HomeKpiCard title="电耗" icon="zap" tone="amber" :value="energyConnected ? formatNumber(electricity) : '暂未接入'" :unit="energy?.units?.electricity || 'kWh'" :status="!energyConnected ? '电表暂未接入' : electricity == null ? '暂无数据' : `已汇总 ${energy.saved_day_count || 0} 天`" :direction="electricity == null ? 'flat' : 'up'" :series="metricSeries.electricity" :loading="energyLoading" />
+      <HomeKpiCard title="气耗" icon="wind" tone="sky" :value="energyConnected ? formatNumber(gas) : '暂未接入'" :unit="energy?.units?.gas || 'Nm³'" :status="!energyConnected ? '气表暂未接入' : gas == null ? '暂无数据' : `已汇总 ${energy.saved_day_count || 0} 天`" :direction="gas == null ? 'flat' : 'up'" :series="metricSeries.gas" :loading="energyLoading" />
     </section>
 
     <section class="dashboard-grid" aria-label="生产看板">

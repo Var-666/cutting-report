@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from collections import deque
 from datetime import date, datetime
 from time import monotonic
 from zoneinfo import ZoneInfo
@@ -9,6 +10,8 @@ from zoneinfo import ZoneInfo
 from app.config import Settings
 from app.services.leadership_report_service import LeadershipReportService, _previous_month
 from app.services.report_analysis_service import ReportAnalysisService
+from app.services.llm_service import background_llm_work
+from app.workers.parallel_analysis import ParallelAnalysisTasks
 
 
 logger = logging.getLogger(__name__)
@@ -31,6 +34,10 @@ class LeadershipRefreshWorker:
         self._lock = threading.Lock()
         self._requests: dict[date, bool] = {}
         self._running: set[date] = set()
+        self._analysis_pending: deque[date] = deque()
+        self._analysis_tasks = ParallelAnalysisTasks()
+        self._analysis_wake = threading.Event()
+        self.analysis_thread = threading.Thread(target=self._analysis_loop, name="leadership-analysis-worker", daemon=True)
         self._last_reconcile_date: date | None = None
         self._next_current_refresh = 0.0
         self.thread = threading.Thread(
@@ -57,14 +64,21 @@ class LeadershipRefreshWorker:
         )
         # The startup bootstrap already covers the reconciliation window.
         self._last_reconcile_date = today
+        self.analysis_thread.start()
         self.thread.start()
 
     def stop(self) -> None:
-        if not self.thread.is_alive():
-            return
+        deadline = monotonic() + 5
         self.stop_event.set()
+        self._analysis_tasks.stop(timeout=0)
+        self._analysis_wake.set()
         self.wake_event.set()
-        self.thread.join(timeout=5)
+        with self._lock:
+            self._analysis_pending.clear()
+        for thread in (self.thread, self.analysis_thread):
+            if thread.is_alive():
+                thread.join(timeout=max(0, deadline - monotonic()))
+        self._analysis_tasks.stop(timeout=max(0, deadline - monotonic()))
 
     def schedule(self, report_month: date, *, bootstrap: bool = False) -> bool:
         if not self.enabled:
@@ -105,6 +119,7 @@ class LeadershipRefreshWorker:
                 with self._lock:
                     self._running.discard(report_month)
 
+    @background_llm_work()
     def _refresh(self, report_month: date, bootstrap: bool) -> None:
         count = self.service.refresh(report_month, bootstrap=bootstrap)
         logger.info(
@@ -120,12 +135,27 @@ class LeadershipRefreshWorker:
             and self.settings.llm_enabled
             and report_month == self._now().date().replace(day=1)
         ):
-            try:
-                self.analysis_service.analyze_leadership(
-                    self.service.fetch(report_month), force=True
-                )
-            except Exception:
-                logger.exception("leadership background analysis failed")
+            with self._lock:
+                self._analysis_pending.append(report_month)
+            self._analysis_wake.set()
+
+    @background_llm_work()
+    def _analysis_loop(self) -> None:
+        while not self.stop_event.is_set():
+            self._analysis_wake.wait(1)
+            self._analysis_wake.clear()
+            with self._lock:
+                if not self._analysis_pending or self.stop_event.is_set():
+                    continue
+                report_month = self._analysis_pending.popleft()
+                if self._analysis_pending:
+                    self._analysis_wake.set()
+            self._analysis_tasks.start(self._analyze, report_month)
+
+    def _analyze(self, report_month: date) -> None:
+        self.analysis_service.analyze_leadership(
+            self.service.fetch(report_month), force=True, publish_latest=True
+        )
 
     def _claim(self) -> tuple[date, bool] | None:
         with self._lock:

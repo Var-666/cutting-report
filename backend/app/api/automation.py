@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field, SecretStr, field_validator, model_validat
 
 from app.api.auth import require_admin
 from app.services.runtime_settings_store import read_runtime_env, write_runtime_env
-from app.config import Settings, settings
+from app.config import DEVICE_CATALOG, Settings, settings
 
 
 logger = logging.getLogger(__name__)
@@ -82,6 +82,15 @@ class AutomationConfigurationRequest(BaseModel):
 
 
 class SchedulePayload(BaseModel):
+    device_id: str = "Cutter01"
+
+    @field_validator("device_id")
+    @classmethod
+    def validate_device(cls, value: str) -> str:
+        if value not in {item.id for item in DEVICE_CATALOG.devices}:
+            raise ValueError("设备不存在")
+        return value
+
     name: str = Field(min_length=2, max_length=80)
     report_type: Literal["leadership", "workshop", "equipment"]
     frequency: Literal["daily", "weekly", "monthly"] = "daily"

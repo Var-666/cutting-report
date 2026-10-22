@@ -180,7 +180,7 @@ test('report analysis uses server source versions and starts immediately', () =>
   assert.doesNotMatch(script, /报表数据分析|guardrail_fallback|simulated_fallback|降级/)
   assert.match(analysis.template.content, /class="analysis-mode model"[\s\S]*AI 分析/)
   assert.match(script, /const targetKey = requestKey\(\)[\s\S]*if \(!props\.ready \|\| !props\.reportDate\)/)
-  assert.match(script, /if \(!props\.reportDate \|\| targetKey !== displayedRequestKey\) \{[\s\S]*analysis\.value = null/)
+  assert.match(script, /if \(!props\.reportDate \|\| queryScope\(\) !== displayedScope\) \{[\s\S]*analysis\.value = null/)
 
   const expectedVersions = new Map([
     ['LeadershipReportView', /:summary-data-version="monthlyReport\?\.analysis_summary_source_version \|\| ''"/],
@@ -399,7 +399,7 @@ test('dispatch page loads once initially and refreshes runtime status on later a
   const dispatch = descriptor('CuttingDispatchView')
   assert.match(dispatch.scriptSetup.content, /onMounted\(\(\) => \{\s*initializePage\(\)/)
   assert.match(dispatch.scriptSetup.content, /onActivated\(async \(\) =>/)
-  assert.match(dispatch.scriptSetup.content, /if \(firstActivation\) \{[\s\S]*?return[\s\S]*?getCuttingStatus\('push', \{ signal \}\)/)
+  assert.match(dispatch.scriptSetup.content, /if \(firstActivation\) \{[\s\S]*?return[\s\S]*?initializePage\(\{ refreshProjects: !projectsLoaded \}\)/)
   assert.match(dispatch.scriptSetup.content, /onDeactivated\(pausePage\)/)
 })
 
@@ -686,7 +686,7 @@ test('alarm center uses source timestamps and presents the latest evidenced mode
   assert.match(template, /aria-label="实体告警报告分页"/)
   assert.match(template, /第 \{\{ reportPage \}\} \/ \{\{ reportPageCount \}\} 页，共 \{\{ reportSummary\.total \}\} 份/)
   assert.equal((template.match(/class="alarm-empty-state"/g) || []).length, 4)
-  assert.match(template, /20KW切割机当前无告警记录/)
+  assert.match(template, /当前设备暂无告警记录/)
   assert.match(template, /当前没有状态异常的告警/)
   assert.match(styles, /\.alarm-page>\.panel\{margin-bottom:0\}/)
   assert.match(styles, /\.alarm-content-grid>\.panel\{margin-bottom:0\}/)
@@ -698,7 +698,9 @@ test('alarm center uses source timestamps and presents the latest evidenced mode
   assert.match(styles, /@media\(max-width:760px\)\{\.alarm-ai-columns\{grid-template-columns:minmax\(0,1fr\)\}/)
   assert.match(styles, /\.alarm-content-grid \.alarm-table-wrap th:last-child,[^}]*position:sticky;right:0/)
   assert.match(styles, /\.alarm-empty-state\{[^}]*min-height:116px;[^}]*padding:26px;/)
-  assert.match(styles, /\.alarm-table-wrap td\{font-size:13px\}/)
+  // Incident rows must inherit the standard table scale, including nested text.
+  assert.doesNotMatch(styles, /\.alarm-page \.alarm-table-wrap (?:th|td)\{font-size:/)
+  assert.match(styles, /\.alarm-table-wrap:not\(\.report-table-wrap\) :is\([^}]*font-size:inherit/)
 })
 
 test('alarm current-status filter queries every open incident instead of filtering one page', () => {
@@ -860,7 +862,7 @@ test('workshop pagination does not invalidate an unchanged analysis context', ()
 
   assert.ok(readyExpression)
   assert.match(readyExpression[1], /!loading\.value/)
-  assert.match(analysis, /if \(!props\.reportDate \|\| targetKey !== displayedRequestKey\) \{[\s\S]*analysis\.value = null/)
+  assert.match(analysis, /if \(!props\.reportDate \|\| queryScope\(\) !== displayedScope\) \{[\s\S]*analysis\.value = null/)
   assert.match(template, /@click="changePage\(result\.page - 1\)">上一页/)
   assert.match(template, /@click="changePage\(result\.page \+ 1\)">下一页/)
 })

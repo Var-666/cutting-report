@@ -1,5 +1,6 @@
+import { getDeviceId } from './deviceContext.js'
 // Session-local read cache. Never persist production data to browser storage.
-export function createReportCache({ now = Date.now, limit = 128 } = {}) {
+export function createReportCache({ now = Date.now, limit = 128, scope = () => '' } = {}) {
   const entries = new Map()
   const pending = new Map()
   const aborted = () => new DOMException('请求已取消', 'AbortError')
@@ -41,6 +42,7 @@ export function createReportCache({ now = Date.now, limit = 128 } = {}) {
   }
 
   function read(key, loader, { ttl = 30000, force = false, signal } = {}) {
+    key = `${key}|device:${scope()}`
     if (signal?.aborted) return Promise.reject(aborted())
     const cached = entries.get(key)
     if (!force && cached && cached.expires > now()) {
@@ -77,4 +79,4 @@ export function createReportCache({ now = Date.now, limit = 128 } = {}) {
   return { read, invalidate, clear: () => invalidate() }
 }
 
-export const reportCache = createReportCache()
+export const reportCache = createReportCache({ scope: getDeviceId })

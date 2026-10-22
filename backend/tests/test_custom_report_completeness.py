@@ -1,11 +1,9 @@
 from contextlib import closing, contextmanager
 from datetime import date
-import sqlite3
 
 import pytest
 
 from app.config import Settings
-from app.database.excel_task import ExcelTaskDataSource
 from app.database.sqlserver import SqlServerClient
 from app.services.custom_report_service import CustomReportService
 from app.services.report_deadline import report_deadline
@@ -117,21 +115,22 @@ def test_sqlserver_stream_uses_batches_and_releases_cursor(tmp_path, monkeypatch
     assert events == ["execute", "cursor closed", "connection closed"]
 
 
-def test_excel_stream_aggregates_beyond_display_limit(tmp_path, monkeypatch):
-    connection = sqlite3.connect(":memory:")
-    connection.row_factory = sqlite3.Row
-    connection.execute("CREATE TABLE task(amount)")
-    connection.executemany("INSERT INTO task VALUES (?)", [(i,) for i in range(1100)])
-    source = ExcelTaskDataSource(tmp_path / "task.xlsx")
-    monkeypatch.setattr(source, "_sqlite_connection", lambda: connection)
-    service = CustomReportService(Settings(project_root=tmp_path, report_max_detail_rows=2))
-    try:
-        with closing(source.iter_select("SELECT amount FROM task", ())) as rows:
-            result = service.build_report_data(definition=DEFINITION, query_task=QUERY,
-                                              template=TEMPLATE, rows=rows)
-        assert result["total_row_count"] == 1100
-        assert result["metrics"][0]["value"] == sum(range(1100))
-        assert len(result["rows"]) == 2
-        assert connection.execute("SELECT COUNT(*) FROM task").fetchone()[0] == 1100
-    finally:
-        connection.close()
+def test_sqlserver_report_aggregates_full_stream_beyond_display_limit(tmp_path, monkeypatch):
+    service = CustomReportService(Settings(project_root=tmp_path, data_source_mode="sqlserver", report_max_detail_rows=2))
+    closed = []
+
+    def source(sql, values):
+        assert "dbo.task" in sql
+        try:
+            yield from ({"amount": i} for i in range(1100))
+        finally:
+            closed.append(True)
+
+    monkeypatch.setattr(service.client, "iter_rows", source)
+    with closing(service.iter_rows(QUERY, report_date=date(2026, 9, 1), period_type="day")) as rows:
+        result = service.build_report_data(definition=DEFINITION, query_task=QUERY,
+                                          template=TEMPLATE, rows=rows)
+    assert result["total_row_count"] == 1100
+    assert result["metrics"][0]["value"] == sum(range(1100))
+    assert len(result["rows"]) == 2
+    assert closed == [True]

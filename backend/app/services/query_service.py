@@ -12,7 +12,6 @@ from zoneinfo import ZoneInfo
 
 from app.config import Settings
 from app.database.sqlserver import SqlServerClient, SqlServerConfigurationError
-from app.database.excel_task import ExcelTaskDataSource
 from app.models.domain import (
     EquipmentRecord,
     QueryBundle,
@@ -90,7 +89,6 @@ class QueryService:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.client = SqlServerClient(settings)
-        self.excel = ExcelTaskDataSource(settings.task_excel_path)
         self.query_dir = Path(__file__).resolve().parents[1] / "database" / "queries"
         self._equipment_cache = _QueryCache[EquipmentQueryResult]()
         self._bundle_cache = _QueryCache[QueryBundle]()
@@ -128,8 +126,6 @@ class QueryService:
             return bundle
 
     def fetch_report_data(self, filters: ReportFilter) -> QueryBundle:
-        if self.settings.effective_data_source_mode == "excel":
-            return self._excel_data(filters)
         if self.settings.effective_data_source_mode == "demo":
             return self._demo_data(filters)
         summary = self.fetch_summary_data(filters)
@@ -301,15 +297,6 @@ class QueryService:
             bucket["work_time_seconds"] += value
             bucket["task_count"] += max(0, int(task_count or 0))
 
-        if self.settings.effective_data_source_mode == "excel":
-            for row in self.excel.completed_rows(start=start_date, end=end_exclusive):
-                add(
-                    self.excel.production_date(row),
-                    row.get("MACHINE_NO"),
-                    row.get("WORK_TIME"),
-                )
-            return totals
-
         if self.settings.effective_data_source_mode == "demo":
             stamp = start_date
             while stamp < end_exclusive:
@@ -332,9 +319,6 @@ class QueryService:
         return totals
 
     def _fetch_equipment_uncached(self, filters: ReportFilter) -> EquipmentQueryResult:
-        if self.settings.effective_data_source_mode == "excel":
-            bundle = self._excel_data(filters)
-            return EquipmentQueryResult(bundle.equipment_records, bundle.data_updated_at)
         if self.settings.effective_data_source_mode == "demo":
             bundle = self._demo_data(filters)
             return EquipmentQueryResult(bundle.equipment_records, bundle.data_updated_at)
@@ -387,8 +371,6 @@ class QueryService:
         return EquipmentQueryResult(records, latest_update)
 
     def list_projects(self, filters: ReportFilter) -> list[str]:
-        if self.settings.effective_data_source_mode == "excel":
-            return self.excel.list_projects(self.settings.report_machine_no)
         if self.settings.effective_data_source_mode == "demo":
             return ["A001", "A002", "B101"]
         start = filters.start_date
@@ -417,9 +399,6 @@ class QueryService:
         return [str(row["project_code"]) for row in rows]
 
     def list_ships(self, filters: ReportFilter) -> list[str]:
-        if self.settings.effective_data_source_mode == "excel":
-            names = self.excel.list_projects(self.settings.report_machine_no)
-            return [filters.project_code] if filters.project_code in names else names
         if self.settings.effective_data_source_mode == "demo":
             names = ["A001", "A002", "B101"]
             return [filters.project_code] if filters.project_code in names else names
@@ -477,10 +456,6 @@ class QueryService:
             return result
 
     def _latest_production_date_uncached(self, on_or_before: date) -> date | None:
-        if self.settings.effective_data_source_mode == "excel":
-            return self.excel.latest_completed_date(
-                on_or_before, self.settings.report_machine_no
-            )
         if self.settings.effective_data_source_mode == "demo":
             return on_or_before
         rows = self.client.fetch_all(
@@ -518,77 +493,6 @@ class QueryService:
                 f"{name} 尚未映射实际 SQL Server 表结构，不能关闭演示模式"
             )
         return sql
-
-    def _excel_data(self, filters: ReportFilter) -> QueryBundle:
-        rows = self.excel.completed_rows(
-            start=filters.start_date,
-            end=filters.end_exclusive,
-            project_code=filters.project_code,
-            ship_no=filters.ship_no,
-            machine_no=self.settings.report_machine_no,
-        )
-        normalized = [self.excel.normalized(row) for row in rows]
-        summaries = [
-            SummaryBaseRecord(
-                task_id=row["task_id"],
-                project_code=row["project_name"],
-                ship_no=row["project_name"],
-                segment_name=row["segment_name"],
-                program_no=row["program_no"],
-                cut_length=row["cut_length"],
-                groove_length=row["groove_length"],
-                work_time=row["work_time"],
-                production_time=row["production_time"],
-                production_date=row["production_date"],
-                source_updated_at=row["source_updated_at"],
-            )
-            for row in normalized
-        ]
-        workshops = [
-            WorkshopRecord(
-                task_id=row["task_id"],
-                project_code=row["project_name"],
-                ship_no=row["project_name"],
-                segment_name=row["segment_name"],
-                program_no=row["program_no"],
-                cut_length=row["cut_length"],
-                groove_length=row["groove_length"],
-                work_time=row["work_time"],
-                remark=row["remark"],
-                production_time=row["production_time"],
-                production_date=row["production_date"],
-            )
-            for row in normalized
-        ]
-        equipment = [
-            EquipmentRecord(
-                task_id=row["task_id"],
-                equipment_id=row["equipment_id"],
-                project_code=row["project_name"],
-                ship_no=row["project_name"],
-                segment_name=row["segment_name"],
-                cut_length=row["cut_length"],
-                work_time=row["work_time"],
-                gas_consumption=None,
-                electricity_consumption=None,
-                production_time=row["production_time"],
-                production_date=row["production_date"],
-                production_end_time=row["source_updated_at"],
-                remark=row["remark"],
-            )
-            for row in normalized
-        ]
-        updated_values = [
-            row["source_updated_at"]
-            for row in normalized
-            if isinstance(row["source_updated_at"], datetime)
-        ]
-        return QueryBundle(
-            summary_records=summaries,
-            workshop_records=workshops,
-            equipment_records=equipment,
-            data_updated_at=max(updated_values) if updated_values else None,
-        )
 
     def _sqlserver_summary_data(self, filters: ReportFilter) -> QueryBundle:
         timezone = ZoneInfo(self.settings.timezone)

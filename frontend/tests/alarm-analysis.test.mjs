@@ -33,7 +33,7 @@ test('device aliases improve page readability without changing source identifier
   assert.equal(formatDeviceDisplay(source.machine_no), '20KW切割机')
   assert.equal(formatDeviceDisplay(source.pdf_filename), '20KW切割机_智能告警报告_20261007.pdf')
   assert.equal(formatDeviceDisplay('监控Cutter01运行，cutter01告警 [E001]'), '监控20KW切割机运行，20KW切割机告警 [E001]')
-  assert.equal(formatDeviceDisplay('Cutter02、Cutter010、OtherCutter01、Cutter01A'), 'Cutter02、Cutter010、OtherCutter01、Cutter01A')
+  assert.equal(formatDeviceDisplay('Cutter02、Cutter010、OtherCutter01、Cutter01A'), '30KW切割机、Cutter010、OtherCutter01、Cutter01A')
   assert.equal(formatDeviceDisplay(null), '')
   assert.deepEqual(source, before, 'aliases must never rewrite API data or real filenames and links')
 })

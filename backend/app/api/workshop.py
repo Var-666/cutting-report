@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from app.api.devices import device_state, device_settings
 from app.api.auth import require_admin, require_user, require_worker
 from app.config import settings
 from app.database.sqlserver import SqlServerConfigurationError
@@ -135,10 +136,10 @@ def _envelope(request: Request, data: object) -> dict:
 
 
 def _records_for_date(request: Request, report_date: date):
-    report, records = request.app.state.workshop.get_daily_report_records(
+    report, records = device_state(request).workshop.get_daily_report_records(
         report_date.isoformat()
     )
-    if report and report.get("scope_machine_no") != settings.report_machine_no:
+    if report and report.get("scope_machine_no") != device_settings(request, settings).report_machine_no:
         return None, []
     return report, records
 
@@ -148,13 +149,16 @@ def sort_workshop_records(records: list, sort_mode: Literal["manager", "worker"]
     return sort_workshop_by_recency(records, settings.timezone)
 
 
+router.dependencies.append(Depends(device_state))
+
+
 @router.get("/latest-date")
 def latest_production_date(
     request: Request,
     on_or_before: date,
     user: dict = Depends(require_user),
 ) -> dict:
-    latest = request.app.state.query_service.latest_production_date(on_or_before)
+    latest = device_state(request).query_service.latest_production_date(on_or_before)
     return _envelope(
         request,
         {"report_date": latest.isoformat() if latest else None},
@@ -167,16 +171,16 @@ def generate_daily_report(
     request: Request,
     user: dict = Depends(require_user),
 ) -> dict:
-    bundle = request.app.state.query_service.prepare_workshop_data(payload.report_date)
+    bundle = device_state(request).query_service.prepare_workshop_data(payload.report_date)
     now = datetime.now(ZoneInfo(settings.timezone)).isoformat(timespec="seconds")
     try:
-        report = request.app.state.workshop.sync_daily_report(
+        report = device_state(request).workshop.sync_daily_report(
             report_date=payload.report_date.isoformat(),
-            source_mode=settings.effective_data_source_mode,
+            source_mode=device_settings(request, settings).effective_data_source_mode,
             records=bundle.workshop_records,
             user=user,
             now=now,
-            scope_machine_no=settings.report_machine_no,
+            scope_machine_no=device_settings(request, settings).report_machine_no,
         )
     except (
         DailyReportRecordMismatchError,
@@ -201,7 +205,7 @@ def list_tasks(
 ) -> dict:
     report, records = _records_for_date(request, report_date)
     if warmup and (report is None or not report["item_count"]):
-        request.app.state.query_service.prepare_workshop_data(report_date)
+        device_state(request).query_service.prepare_workshop_data(report_date)
     if report is None:
         return _envelope(
             request,
@@ -277,7 +281,7 @@ def list_range_tasks(
     _: dict = Depends(require_admin),
 ) -> dict:
     try:
-        bundle, records = request.app.state.range_report_service.workshop_records(
+        bundle, records = device_state(request).range_report_service.workshop_records(
             start_date, end_date
         )
     except ValueError as exc:
@@ -312,7 +316,7 @@ def list_range_tasks(
                 "report_date": start_date.isoformat(),
                 "period_start": start_date.isoformat(),
                 "period_end": end_date.isoformat(),
-                "scope_machine_no": settings.report_machine_no,
+                "scope_machine_no": device_settings(request, settings).report_machine_no,
                 "item_count": total,
                 "confirmed_count": sum(bool(row.confirmed_by) for row in records),
                 "generated_at": to_primitive(bundle.data_updated_at),
@@ -346,7 +350,7 @@ def confirm_task(
         raise HTTPException(status_code=404, detail="当日车间报表中没有找到该任务")
     now = datetime.now(ZoneInfo(settings.timezone)).isoformat(timespec="seconds")
     try:
-        confirmation = request.app.state.workshop.confirm_task(
+        confirmation = device_state(request).workshop.confirm_task(
             task_id=task_id,
             report_id=report["report_id"],
             user=user,
@@ -372,7 +376,7 @@ def confirm_tasks(
         raise HTTPException(status_code=404, detail="当日车间报表中没有找到部分任务")
     now = datetime.now(ZoneInfo(settings.timezone)).isoformat(timespec="seconds")
     try:
-        confirmations = request.app.state.workshop.confirm_tasks(
+        confirmations = device_state(request).workshop.confirm_tasks(
             task_ids=payload.task_ids,
             report_id=report["report_id"],
             user=user,
@@ -398,7 +402,7 @@ def revoke_task_confirmation(
     # 但确认记录仍然有效，不能因此阻止工人撤销本人的确认。
     now = datetime.now(ZoneInfo(settings.timezone)).isoformat(timespec="seconds")
     try:
-        audit = request.app.state.workshop.revoke_confirmation(
+        audit = device_state(request).workshop.revoke_confirmation(
             task_id=task_id,
             report_id=None,
             user=user,
@@ -423,7 +427,7 @@ def correct_task_confirmation(
     # 避免旧日报快照因设备范围字段缺失而被误判为“尚未生成”。
     now = datetime.now(ZoneInfo(settings.timezone)).isoformat(timespec="seconds")
     try:
-        audit = request.app.state.workshop.correct_confirmation(
+        audit = device_state(request).workshop.correct_confirmation(
             task_id=task_id,
             report_id=None,
             admin=admin,
@@ -448,11 +452,11 @@ def list_confirmation_audits(
 ) -> dict:
     report_id = None
     if report_date:
-        report = request.app.state.workshop.get_daily_report(report_date.isoformat())
+        report = device_state(request).workshop.get_daily_report(report_date.isoformat())
         if report is None:
             return _envelope(request, {"items": []})
         report_id = report["report_id"]
-    items = request.app.state.workshop.list_confirmation_audits(
+    items = device_state(request).workshop.list_confirmation_audits(
         task_id=task_id,
         report_id=report_id,
         limit=limit,

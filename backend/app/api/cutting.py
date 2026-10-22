@@ -103,7 +103,7 @@ class DispatchBatchItem(BaseModel):
 
 class DispatchBatchCreateRequest(BaseModel):
     machine_ip: str = Field(min_length=3, max_length=64)
-    items: list[DispatchBatchItem] = Field(min_length=1, max_length=20)
+    items: list[DispatchBatchItem] = Field(min_length=1, max_length=100)
 
     @field_validator("machine_ip")
     @classmethod

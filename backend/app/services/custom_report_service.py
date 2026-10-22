@@ -11,10 +11,8 @@ from typing import Any, Iterable, Iterator
 
 from app.config import Settings
 from app.database.sqlserver import SqlServerClient
-from app.database.excel_task import ExcelTaskDataSource
 from app.services.sql_workbench_service import SqlWorkbenchService
 from app.services.report_deadline import ensure_time_remaining
-from sqlglot import transpile
 
 
 PARAMETER_PATTERN = re.compile(r":([A-Za-z_][A-Za-z0-9_]*)")
@@ -32,7 +30,6 @@ class CustomReportService:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.client = SqlServerClient(settings)
-        self.excel = ExcelTaskDataSource(settings.task_excel_path)
         self.validator = SqlWorkbenchService(settings)
 
     def validate(self, sql_text: str) -> dict[str, Any]:
@@ -63,6 +60,8 @@ class CustomReportService:
         parameters: dict[str, Any],
     ) -> tuple[str, tuple[Any, ...]]:
         validated = self.validator.validate(sql_text)
+        if self.settings.device_id != "Cutter01" and "machine_no" not in PARAMETER_PATTERN.findall(validated.formatted_sql):
+            raise ValueError("自定义 SQL 未声明 :machine_no 设备参数，不能用于当前设备")
         available = {
             "report_date": report_date,
             "period_start": report_date,
@@ -70,6 +69,7 @@ class CustomReportService:
             "project_code": project_code,
             "ship_no": ship_no,
             **parameters,
+            "machine_no": self.settings.report_machine_no,
         }
         values: list[Any] = []
 
@@ -140,11 +140,7 @@ class CustomReportService:
             query_task["sql_text"], report_date=report_date, period_type=period_type,
             project_code=project_code, ship_no=ship_no, parameters=parameters or {},
         )
-        if self.settings.effective_data_source_mode == "excel":
-            sqlite_sql = transpile(sql, read="tsql", write="sqlite")[0]
-            source = self.excel.iter_select(sqlite_sql, values)
-        else:
-            source = self.client.iter_rows(sql, values)
+        source = self.client.iter_rows(sql, values)
         with closing(source):
             for index, row in enumerate(source, start=1):
                 if index == 1 or index % 128 == 0:

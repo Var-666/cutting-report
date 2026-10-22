@@ -27,11 +27,12 @@ from app.api.reports import router as reports_router
 from app.api.reports import view_router
 from app.api.requests import REQUEST_ID_PATTERN, router as requests_router
 from app.api.workshop import router as workshop_router
-from app.config import settings
+from app.config import DEVICE_CATALOG, settings, settings_for_device
+from app.api.devices import router as devices_router
+from app.services.device_runtime import build_device_runtime
+from app.database.device_migrations import backup_before_device_upgrade
 from app.database.metadata import MetadataRepository
-from app.database.alarms import AlarmRepository
 from app.database.llm_usage import LlmUsageRepository
-from app.database.alarm_source import SqlServerAlarmSource
 from app.database.leadership_snapshots import LeadershipSnapshotRepository
 from app.database.automation import AutomationRepository
 from app.database.definitions import DefinitionRepository
@@ -41,9 +42,6 @@ from app.database.pdm import MockPdmRepository, SqlServerPdmRepository
 from app.database.retention import RetentionRepository
 from app.database.workshop import WorkshopRepository
 from app.database.sqlite import SQLiteDatabase
-from app.services.pipeline import ReportPipeline
-from app.services.leadership_report_service import LeadershipReportService
-from app.services.report_analysis_service import ReportAnalysisService
 from app.services.retention_service import RetentionService
 from app.services.request_cancellation import (
     SqlRequestCancelled,
@@ -61,15 +59,8 @@ from app.services.file_source import build_file_source
 from app.services.file_download_service import FileDownloadService
 from app.services.magic_box_service import MagicBoxConfigProvider
 from app.services.pdf_service import PdfService
-from app.services.alarm_analysis_service import AlarmAnalysisService
-from app.services.alarm_monitor_service import AlarmMonitorService
-from app.services.alarm_report_service import AlarmReportService
 from app.workers.report_worker import ReportWorker
 from app.workers.retention_worker import RetentionWorker
-from app.workers.alarm_worker import AlarmWorker
-from app.workers.leadership_refresh_worker import LeadershipRefreshWorker
-from app.workers.current_report_refresh_worker import CurrentReportRefreshWorker
-from app.workers.energy_history_worker import EnergyHistoryWorker
 from app.workers.download_cleanup_worker import DownloadCleanupWorker
 
 
@@ -83,6 +74,7 @@ logging.basicConfig(
 async def lifespan(app: FastAPI):
     settings.ensure_runtime_dirs()
     database = SQLiteDatabase(settings.metadata_db_path)
+    backup_before_device_upgrade(database)
     database.initialize()
     metadata = MetadataRepository(database)
     metadata.initialize()
@@ -99,63 +91,38 @@ async def lifespan(app: FastAPI):
     definitions.initialize()
     dispatches = DispatchRepository(database)
     dispatches.initialize()
-    pipeline = ReportPipeline(settings, metadata, definitions)
-    pdf_service = PdfService(
-        operation_timeout_seconds=settings.pdf_render_timeout_seconds,
-    )
+    pdf_service = PdfService(operation_timeout_seconds=settings.pdf_render_timeout_seconds)
+    devices = {
+        device.id: build_device_runtime(settings_for_device(settings, device.id), database,
+                                        definitions, leadership_snapshots, pdf_service)
+        for device in DEVICE_CATALOG.devices
+    }
+    app.state.devices = devices
+    default = devices[DEVICE_CATALOG.default_device_id]
     automation_runtime = AutomationRuntime(settings)
     email_service = EmailService(settings, runtime=automation_runtime)
     automation_service = AutomationService(
-        settings, automation, metadata, email_service, runtime=automation_runtime
+        settings, automation, metadata, email_service, runtime=automation_runtime,
     )
+    automation_service.device_services = devices
     worker = ReportWorker(
-        settings, metadata, pipeline, automation_service=automation_service,
-        runtime=automation_runtime,
+        settings, metadata, default.pipeline, automation_service=automation_service,
+        runtime=automation_runtime, pipelines={key: value.pipeline for key, value in devices.items()},
     )
     app.state.metadata = metadata
     app.state.sqlite_database = database
-    app.state.workshop = workshop
+    app.state.workshop = workshop  # Authentication and users are shared across devices.
     app.state.definitions = definitions
     app.state.automation = automation
     app.state.automation_runtime = automation_runtime
     app.state.automation_service = automation_service
     app.state.email_service = email_service
-    app.state.query_service = pipeline.query_service
-    # Page, analysis and export share the same auth/readings cache.
-    app.state.energy_service = pipeline.energy_service
-    app.state.energy_period_service = pipeline.energy_period_service
-    app.state.range_report_service = pipeline.range_service
     app.state.worker_auth = WorkerAuthService(settings)
-    leadership_report_service = LeadershipReportService(settings, leadership_snapshots)
-    report_analysis_service = ReportAnalysisService(settings, metadata)
-    leadership_refresh_worker = LeadershipRefreshWorker(
-        settings, leadership_report_service, report_analysis_service
-    )
-    current_report_refresh_worker = CurrentReportRefreshWorker(
-        settings, pipeline.query_service, pipeline.range_service,
-        pipeline.energy_period_service, report_analysis_service,
-    )
-    energy_history_worker = EnergyHistoryWorker(
-        settings, pipeline.energy_period_service
-    )
-    app.state.leadership_report_service = leadership_report_service
-    app.state.leadership_refresh_worker = leadership_refresh_worker
-    app.state.energy_history_worker = energy_history_worker
-    app.state.report_analysis_service = report_analysis_service
-    app.state.current_report_refresh_worker = current_report_refresh_worker
-    alarm_repository = AlarmRepository(database)
-    alarm_repository.initialize()
-    alarm_monitor_service = AlarmMonitorService(
-        settings,
-        alarm_repository,
-        SqlServerAlarmSource(settings),
-        AlarmAnalysisService(settings),
-        AlarmReportService(settings, pdf_service),
-    )
-    alarm_worker = AlarmWorker(settings, alarm_monitor_service)
-    app.state.alarm_repository = alarm_repository
-    app.state.alarm_monitor_service = alarm_monitor_service
-    app.state.alarm_worker = alarm_worker
+    for name in ('query_service', 'energy_service', 'energy_period_service', 'range_report_service',
+                 'leadership_report_service', 'report_analysis_service', 'leadership_refresh_worker',
+                 'current_report_refresh_worker', 'energy_history_worker', 'alarm_repository',
+                 'alarm_monitor_service', 'alarm_worker'):
+        setattr(app.state, name, getattr(default, name))
     pdm = (
         SqlServerPdmRepository(settings)
         if settings.file_database_enabled
@@ -188,23 +155,17 @@ async def lifespan(app: FastAPI):
     dispatches.recover_interrupted(app.state.cutting_dispatch._now())
     app.state.worker = worker
     app.state.pdf_service = pdf_service
-    worker.start()
-    leadership_refresh_worker.start()
-    current_report_refresh_worker.start()
-    energy_history_worker.start()
-    alarm_worker.start()
-    download_cleanup_worker.start()
-    retention_worker.start()
+    background_workers = [worker, *(task for device in devices.values() for task in device.workers),
+                          download_cleanup_worker, retention_worker]
+    started_workers = []
     try:
+        for task in background_workers:
+            started_workers.append(task)
+            task.start()
         yield
     finally:
-        retention_worker.stop()
-        energy_history_worker.stop()
-        download_cleanup_worker.stop()
-        alarm_worker.stop()
-        leadership_refresh_worker.stop()
-        current_report_refresh_worker.stop()
-        worker.stop()
+        for task in reversed(started_workers):
+            task.stop()
 
 
 app = FastAPI(
@@ -273,6 +234,7 @@ async def unexpected_error_handler(request: Request, exc: Exception):
     )
 
 
+app.include_router(devices_router)
 app.include_router(reports_router)
 app.include_router(auth_router)
 app.include_router(alarms_router)
@@ -314,7 +276,7 @@ def health(request: Request) -> dict:
             "demo_mode": mode == "demo",
             "data_source_mode": mode,
             "data_source_name": (
-                settings.task_excel_path.name if mode == "excel" else "SQL Server" if mode == "sqlserver" else "演示数据"
+                "SQL Server" if mode == "sqlserver" else "演示数据"
             ),
         },
         "request_id": request.state.request_id,

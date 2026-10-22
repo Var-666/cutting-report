@@ -3,6 +3,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from app.api.devices import device_state
 from app.api.auth import require_admin
 from app.database.sqlserver import SqlServerConfigurationError
 from app.models.domain import ReportFilter, to_primitive
@@ -24,9 +25,12 @@ def _add_analysis_source_version(task_report: dict) -> dict:
     return task_report
 
 
+router.dependencies.append(Depends(device_state))
+
+
 @router.get("/day")
 def get_energy_day(request: Request, report_date: date | None = None, refresh: bool = False):
-    service = request.app.state.energy_period_service
+    service = device_state(request).energy_period_service
     selected = report_date or service.now().date()
     if not 1900 <= selected.year <= 2100:
         raise HTTPException(status_code=422, detail="日期需在 1900—2100 年之间")
@@ -36,12 +40,12 @@ def get_energy_day(request: Request, report_date: date | None = None, refresh: b
 
 @router.get("/tasks")
 def get_task_energy_day(request: Request, report_date: date | None = None, refresh: bool = False):
-    service = request.app.state.energy_period_service
+    service = device_state(request).energy_period_service
     selected = report_date or service.now().date()
     if not 1900 <= selected.year <= 2100:
         raise HTTPException(status_code=422, detail="日期需在 1900—2100 年之间")
     try:
-        equipment = request.app.state.query_service.fetch_equipment_data(
+        equipment = device_state(request).query_service.fetch_equipment_data(
             ReportFilter(report_date=selected), force=refresh
         )
         data = service.get_task_day(selected, equipment.records, force=refresh)
@@ -65,17 +69,17 @@ def get_energy_month(request: Request, report_month: str = Query(pattern=r"^\d{4
             raise ValueError()
     except ValueError:
         raise HTTPException(status_code=422, detail="月份无效") from None
-    data = request.app.state.energy_period_service.get_month(report_month)
+    data = device_state(request).energy_period_service.get_month(report_month)
     return {"success": True, "data": data, "request_id": request.state.request_id}
 
 
 @router.get("/monthly-range")
 def get_energy_monthly_range(request: Request, start_date: date, end_date: date):
     try:
-        data = request.app.state.energy_period_service.get_monthly_range(
+        data = device_state(request).energy_period_service.get_monthly_range(
             start_date, end_date
         )
-        worker = getattr(request.app.state, "energy_history_worker", None)
+        worker = getattr(device_state(request), "energy_history_worker", None)
         if worker is not None and data.get("missing_day_count", 0):
             worker.schedule_range(start_date, end_date)
             data["syncing"] = worker.is_syncing_range(start_date, end_date)
@@ -104,7 +108,7 @@ def get_energy_range(
     refresh: bool = False,
 ):
     try:
-        data = request.app.state.range_report_service.equipment(
+        data = device_state(request).range_report_service.equipment(
             start_date, end_date, force=refresh
         )
         _add_analysis_source_version(data["task_report"])

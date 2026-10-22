@@ -127,6 +127,7 @@ class _SessionStub:
         "/api/v1/energy-report/day?report_date=2026-08-18",
         "/api/v1/energy-report/tasks?report_date=2026-08-18",
         "/api/v1/energy-report/month?report_month=2026-08",
+        "/api/v1/analysis/latest?report_type=workshop&report_date=2026-08-18",
         "/api/v1/options/projects?report_date=2026-08-18",
         "/api/v1/automation/status",
         "/api/v1/alarms/status",
@@ -147,7 +148,11 @@ def test_anonymous_requests_cannot_reach_management_endpoints(
     assert response.headers["x-session-expired"] == "1"
 
 
-def test_worker_session_cannot_reach_management_endpoints(monkeypatch) -> None:
+@pytest.mark.parametrize('path', [
+    '/api/v1/database/status',
+    '/api/v1/analysis/latest?report_type=workshop&report_date=2026-08-18',
+])
+def test_worker_session_cannot_reach_management_endpoints(monkeypatch, path) -> None:
     worker = {
         "user_id": "usr_worker",
         "username": "worker",
@@ -160,7 +165,7 @@ def test_worker_session_cannot_reach_management_endpoints(monkeypatch) -> None:
     client = TestClient(app)
     client.cookies.set("cutting_session", "worker-session")
 
-    response = client.get("/api/v1/database/status")
+    response = client.get(path)
 
     assert response.status_code == 403
 
@@ -386,13 +391,13 @@ def test_demo_flag_never_bypasses_sqlserver_designer_token(monkeypatch) -> None:
     assert exc_info.value.status_code == 503
 
 
-def test_excel_designer_uses_admin_session_without_a_second_token(monkeypatch) -> None:
-    excel_settings = replace(
+def test_demo_designer_uses_admin_session_without_a_second_token(monkeypatch) -> None:
+    demo_settings = replace(
         settings,
-        data_source_mode="excel",
+        data_source_mode="demo",
         demo_mode=True,
         sql_workbench_admin_token="",
     )
-    monkeypatch.setattr(designer, "settings", excel_settings)
+    monkeypatch.setattr(designer, "settings", demo_settings)
 
     assert designer._require_admin_token(None) is None

@@ -84,7 +84,8 @@ class AutomationService:
         self.runtime = runtime or AutomationRuntime(settings)
         self.query_service = QueryService(settings)
         self.database = metadata.database
-        self.workshop = WorkshopRepository(self.database)
+        self.workshop = WorkshopRepository(self.database, scope_machine_no=settings.report_machine_no)
+        self.device_services = {}
 
     def enrich_schedule(self, data: dict[str, Any], now: datetime) -> dict[str, Any]:
         value = dict(data)
@@ -133,10 +134,12 @@ class AutomationService:
 
     def _create_report_job(self, run: dict, now: datetime) -> bool:
         try:
+            if self.device_services and run.get("device_id", "Cutter01") not in self.device_services:
+                raise ValueError("计划设备已移除，拒绝生成其他设备报表")
             if run["report_type"] == "workshop":
                 self._ensure_workshop_report(run, now)
             report_id = f"rpt_{now:%Y%m%d_%H%M%S}_{uuid4().hex[:6]}"
-            with UnitOfWork(self.database, self.settings.timezone) as unit:
+            with UnitOfWork(self.database, self.settings.timezone, device_id=run.get("device_id", "Cutter01")) as unit:
                 current = unit.automation.get_run(run["run_id"])
                 if current is None or current["report_id"] or current["status"] != "queued":
                     return False
@@ -159,7 +162,7 @@ class AutomationService:
             return True
         except Exception as exc:
             logger.exception("scheduled report enqueue failed")
-            with UnitOfWork(self.database, self.settings.timezone) as unit:
+            with UnitOfWork(self.database, self.settings.timezone, device_id=run.get("device_id", "Cutter01")) as unit:
                 current = unit.automation.get_run(run["run_id"])
                 if current and not current["report_id"] and current["status"] == "queued":
                     unit.automation.mark_run(
@@ -188,20 +191,24 @@ class AutomationService:
 
     def _ensure_workshop_report(self, run: dict, now: datetime) -> None:
         report_date = run["report_date"]
-        bundle = self.query_service.fetch_workshop_data(
+        device = self.device_services.get(run.get("device_id", "Cutter01"))
+        cfg = device.settings if device else self.settings
+        query = device.query_service if device else self.query_service
+        workshop = device.workshop if device else self.workshop
+        bundle = query.fetch_workshop_data(
             ReportFilter(report_date=date.fromisoformat(report_date))
         )
         user = {
             "user_id": run["created_by_id"],
             "display_name": run["created_by_name"],
         }
-        self.workshop.sync_daily_report(
+        workshop.sync_daily_report(
             report_date=report_date,
-            source_mode=self.settings.effective_data_source_mode,
+            source_mode=cfg.effective_data_source_mode,
             records=bundle.workshop_records,
             user=user,
             now=now.isoformat(timespec="seconds"),
-            scope_machine_no=self.settings.report_machine_no,
+            scope_machine_no=cfg.report_machine_no,
         )
 
     def report_completed(self, report_id: str, now: datetime) -> None:

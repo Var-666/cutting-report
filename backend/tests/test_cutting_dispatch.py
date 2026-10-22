@@ -140,6 +140,134 @@ def test_file_list_keeps_selected_path_available_with_physical_history(tmp_path:
     assert files["items"][0]["normalized_path"].endswith("f7e50f62-d508-430e-8309-8bf309568095.GEN")
 
 
+@pytest.mark.parametrize(
+    ("status", "stage", "label"),
+    [("sent", "complete", "已派发"), ("push_failed", "assign_failed", "推送失败"),
+     ("pushing", "assigning", "正在推送")],
+)
+def test_file_list_dispatch_status_matches_local_record(tmp_path: Path, status: str, stage: str, label: str) -> None:
+    service, dispatches, admin = _service(tmp_path)
+    source = service.pdm.files[0]
+    task = service.create_dispatch(
+        document_id=source["document_id"], machine_ip="10.1.133.196",
+        material="AH36", thickness=12, quantity=1, user=admin,
+    )
+    dispatches.transition(task["dispatch_id"], expected={task["status"]}, status=status,
+                          stage=stage, now="2026-10-21T10:00:00+08:00")
+    result = service.list_files(source["project_id"], catalog_id=None, status="all",
+                                keyword="", page=1, page_size=20)
+    item = next(item for item in result["items"] if item["document_id"] == source["document_id"])
+    assert item["dispatch_status"] == {
+        "status": status, "status_label": label,
+        "stage_label": service.get_dispatch(task["dispatch_id"])["stage_label"],
+    }
+    assert source["custom6"] == "", "listing status must not write to PDM"
+    assert item["status_label"] == "待派发", "keep the existing PDM status contract"
+
+
+def test_file_list_uses_latest_matching_version_outside_history_page(tmp_path: Path) -> None:
+    service, dispatches, admin = _service(tmp_path)
+    source = service.pdm.files[0]
+    task = service.create_dispatch(
+        document_id=source["document_id"], machine_ip="10.1.133.196",
+        material="AH36", thickness=12, quantity=1, user=admin,
+    )
+    dispatches.create({**task, "status": "sent", "stage": "complete"}, user=admin, now="2090-01-01")
+    for index in range(12):
+        dispatches.create({**task, "document_id": f"other-{index}"}, user=admin, now="2091-01-01")
+    assert all(item["document_id"] != source["document_id"] for item in dispatches.list(page=1, page_size=10)[0])
+
+    def listed():
+        return service.list_files(source["project_id"], catalog_id=None, status="all", keyword="",
+                                  page=1, page_size=20)["items"]
+
+    rows = listed()
+    assert next(item for item in rows if item["document_id"] == source["document_id"])["dispatch_status"]["status"] == "sent"
+    assert all(item["dispatch_status"] is None for item in rows if item["document_id"] != source["document_id"])
+    source["version_id"] = "NEW-VERSION"
+    assert next(item for item in listed() if item["document_id"] == source["document_id"])["dispatch_status"] is None
+    assert dispatches.latest_for_files([]) == {}
+
+
+def test_dispatch_summary_backfills_existing_history_and_survives_restart(tmp_path: Path) -> None:
+    service, dispatches, admin = _service(tmp_path)
+    source = service.pdm.files[0]
+    task = service.create_dispatch(
+        document_id=source["document_id"], machine_ip="10.1.133.196",
+        material="AH36", thickness=12, quantity=1, user=admin,
+    )
+    sent = dispatches.create({**task, "status": "sent", "stage": "complete"},
+                             user=admin, now="2090-01-01")
+    key = (source["document_id"], source["version_id"])
+    with dispatches.connect() as connection:
+        connection.execute("DROP TABLE cutting_file_dispatch_status")
+    dispatches.initialize()
+    summary = dispatches.latest_for_files([key])[key]
+    assert summary["dispatch_id"] == sent["dispatch_id"]
+    assert summary["status"] == "sent"
+    assert summary["machine_ip"] == sent["machine_ip"]
+    assert summary["updated_at"] == sent["updated_at"]
+    with dispatches.connect() as connection:
+        connection.execute("DELETE FROM cutting_dispatches WHERE dispatch_id = ?", (sent["dispatch_id"],))
+    dispatches.initialize()
+    assert dispatches.latest_for_files([key])[key] == summary, "older surviving history must not replace the summary"
+    with dispatches.connect() as connection:
+        connection.execute("DELETE FROM cutting_dispatches")
+    restarted = DispatchRepository(dispatches.database)
+    restarted.initialize()
+    restarted.recover_interrupted("2091-01-01")
+    assert restarted.latest_for_files([key])[key] == summary
+    assert restarted.list(page=1, page_size=10)[1] == 0
+
+
+def test_dispatch_summary_ignores_older_task_updates_and_keeps_versions_separate(tmp_path: Path) -> None:
+    service, dispatches, admin = _service(tmp_path)
+    source = service.pdm.files[0]
+    older = service.create_dispatch(
+        document_id=source["document_id"], machine_ip="10.1.133.196",
+        material="AH36", thickness=12, quantity=1, user=admin,
+    )
+    newer = dispatches.create({**older, "status": "pushing", "stage": "uploaded",
+                               "machine_ip": "10.1.133.197"}, user=admin, now="2090-01-01")
+    dispatches.transition(older["dispatch_id"], expected={older["status"]}, status="sent",
+                          stage="complete", now="2092-01-01")
+    key = (source["document_id"], source["version_id"])
+    assert dispatches.latest_for_files([key])[key]["dispatch_id"] == newer["dispatch_id"]
+    dispatches.recover_interrupted("2093-01-01")
+    summary = dispatches.latest_for_files([key])[key]
+    assert summary["dispatch_id"] == newer["dispatch_id"]
+    assert summary["status"] == "push_failed"
+    assert summary["stage"] == "upload_unknown"
+    for version in (None, "v2"):
+        dispatches.create({**older, "version_id": version, "status": "sent", "stage": "complete"},
+                           user=admin, now="2094-01-01")
+    summaries = dispatches.latest_for_files([key, (key[0], ""), (key[0], "v2")])
+    assert len(summaries) == 3
+    assert summaries[key] == summary
+    assert summaries[(key[0], "")]["status"] == "sent"
+
+
+def test_dispatch_summary_rolls_back_with_history_changes(tmp_path: Path) -> None:
+    service, dispatches, admin = _service(tmp_path)
+    source = service.pdm.files[0]
+    task = service.create_dispatch(
+        document_id=source["document_id"], machine_ip="10.1.133.196",
+        material="AH36", thickness=12, quantity=1, user=admin,
+    )
+    key = (source["document_id"], source["version_id"])
+    summary = dispatches.latest_for_files([key])[key]
+    with pytest.raises(RuntimeError, match="rollback"):
+        with dispatches.database.connect() as connection:
+            bound = DispatchRepository(dispatches.database, connection=connection)
+            bound.transition(task["dispatch_id"], expected={task["status"]}, status="sent",
+                             stage="complete", now="2090-01-01")
+            bound.create({**task, "document_id": "rolled-back"}, user=admin, now="2091-01-01")
+            raise RuntimeError("rollback")
+    assert dispatches.latest_for_files([key])[key] == summary
+    assert dispatches.latest_for_files([("rolled-back", key[1])]) == {}
+    assert dispatches.get(task["dispatch_id"])["status"] == task["status"]
+
+
 def test_download_status_does_not_query_magic_box_configuration(tmp_path: Path) -> None:
     service, _dispatches, _admin = _service(tmp_path)
 
@@ -530,10 +658,29 @@ def test_direct_batch_rechecks_selected_pdm_version_and_path(tmp_path: Path):
 
 
 def test_standard_name_parser_matches_browser_rules() -> None:
-    assert standard_instruction_parameters(r"folder\P123C120A601.GEN") == ("AH36", 12.0)
-    assert standard_instruction_parameters("s001c080ss99.txt") == ("双相不锈钢", 8.0)
+    assert standard_instruction_parameters(r"folder\P123C120A601.GEN") == ("A6", 12.0)
+    assert standard_instruction_parameters("s001c080ss99.txt") == ("ss", 8.0)
     assert standard_instruction_parameters("custom.GEN") is None
     assert standard_instruction_parameters("P123C000A601.GEN") is None
+
+
+@pytest.mark.parametrize("sequence", range(1, 6))
+def test_z_prefix_is_standard_and_batch_accepts_matching_parameters_without_manual_confirmation(tmp_path: Path, sequence: int) -> None:
+    filename = f"Z806C080A0{sequence:02d}.gen"
+    assert standard_instruction_parameters(filename) == ("A0", 8.0)
+    assert standard_instruction_parameters(filename.lower()) == ("a0", 8.0)
+    service, dispatches, admin = _service(tmp_path)
+    raw = service.pdm.files[0]
+    raw["document_no"] = filename
+    common = {"document_id": raw["document_id"], "version_id": raw["version_id"],
+              "file_path": raw["file_path"], "material": "A0", "thickness": 8.0, "quantity": 1}
+    rejected = service.create_dispatch_batch(machine_ip="10.1.133.197",
+        items=[{**common, "thickness": 10.0}], user=admin)
+    assert rejected["failed_count"] == 1
+    assert "加工参数与标准文件名不一致" in rejected["items"][0]["error"]
+    assert dispatches.list(page=1, page_size=10)[1] == 0
+    accepted = service.create_dispatch_batch(machine_ip="10.1.133.197", items=[common], user=admin)
+    assert accepted["created_count"] == 1
 
 
 @pytest.mark.parametrize("filename", [
@@ -542,15 +689,39 @@ def test_standard_name_parser_matches_browser_rules() -> None:
     "P403P080A601B135A001.gen",
 ])
 def test_name_parameters_ignore_product_code_and_trailing_suffix(filename: str) -> None:
-    assert standard_instruction_parameters(filename) == ("AH36", 8.0)
+    assert standard_instruction_parameters(filename) == ("A6", 8.0)
 
 
 @pytest.mark.parametrize("filename", [
     "prefix-P403P080A601.gen", "P403P000A601.gen", "P403P08A601.gen",
-    "P403P080.gen", "P403P080A701.gen", "P403P080A601.pdf",
+    "P403P080.gen", "P403P080A.gen", "P403P080A601.pdf",
+    "Z806C000A001.gen", "Z806C080B.gen", "Z806C080A001.pdf", "X806C080A001.gen",
 ])
 def test_unreadable_name_parameters_still_require_manual_input(filename: str) -> None:
     assert standard_instruction_parameters(filename) is None
+
+
+@pytest.mark.parametrize('code', ['A0', 'A2', 'A6', 'SS', 'B0', 'A7', 'X9', '7X', '00', 'q7', '@0', '中钢', '🧪0'])
+def test_material_code_is_stored_checked_and_uploaded_verbatim(tmp_path: Path, code: str) -> None:
+    filename = f'S803C320{code}01L.gen'
+    assert standard_instruction_parameters(filename) == (code, 32.0)
+    client = RecordingMagicClient()
+    service, _dispatches, admin = _push_service(tmp_path, client)
+    raw = service.pdm.files[0]
+    raw['document_no'] = filename
+    item = {'document_id': raw['document_id'], 'version_id': raw['version_id'],
+            'file_path': raw['file_path'], 'material': code, 'thickness': 32, 'quantity': 1}
+    rejected = service.create_dispatch_batch(machine_ip='10.1.133.197',
+        items=[{**item, 'material': 'different-code'}], user=admin)
+    assert rejected['failed_count'] == 1
+    assert '加工参数与标准文件名不一致' in rejected['items'][0]['error']
+    created = service.create_dispatch_batch(machine_ip='10.1.133.197', items=[item], user=admin)
+    assert created['created_count'] == 1, created
+    dispatch = created['items'][0]['dispatch']
+    assert dispatch['material'] == code
+    result = service.execute_dispatch(dispatch['dispatch_id'], user=admin)
+    assert result['status'] == 'sent'
+    assert client.uploads[0]['material'] == code
 
 
 @pytest.mark.parametrize("filename", ["P123C120A601.GEN", "P403P120A601.GEN", "P403P120A601B.GEN"])
@@ -561,7 +732,7 @@ def test_batch_requires_manual_confirmation_for_nonstandard_and_overridden_names
         "document_id": raw["document_id"],
         "version_id": raw["version_id"],
         "file_path": raw["file_path"],
-        "material": "AH36",
+        "material": "A6",
         "thickness": 12.0,
         "quantity": 1,
     }
@@ -586,7 +757,7 @@ def test_standard_name_parameter_mismatch_requires_explicit_confirmation(tmp_pat
         "document_id": raw["document_id"],
         "version_id": raw["version_id"],
         "file_path": raw["file_path"],
-        "material": "AH36",
+        "material": "A6",
         "thickness": 10.0,
         "quantity": 1,
     }
@@ -641,19 +812,21 @@ def test_batch_request_limits_files_and_validates_file_references():
         machine_ip="10.1.133.197",
         items=[
             {**valid_item, "download_id": f"dl_{index:032x}"}
-            for index in range(20)
+            for index in range(100)
         ],
     )
-    assert len(payload.items) == 20
+    assert len(payload.items) == 100
 
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError) as too_many:
         DispatchBatchCreateRequest(
             machine_ip="10.1.133.197",
             items=[
                 {**valid_item, "download_id": f"dl_{index:032x}"}
-                for index in range(21)
+                for index in range(101)
             ],
         )
+    assert too_many.value.errors()[0]["loc"] == ("items",)
+    assert too_many.value.errors()[0]["type"] == "too_long"
     with pytest.raises(ValidationError):
         DispatchBatchCreateRequest(
             machine_ip="10.1.133.197",

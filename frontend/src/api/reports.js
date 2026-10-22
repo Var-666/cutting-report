@@ -1,3 +1,4 @@
+import { deviceUrl } from './deviceContext.js'
 import { reportCache } from './reportCache.js'
 import { reportToday } from './reportDates.js'
 import { createRequestCancellation } from './requestCancellation.js'
@@ -12,6 +13,7 @@ function invalidateWorkshopReports() {
 }
 
 async function request(url, options = {}) {
+  url = deviceUrl(url)
   const cancellation = createRequestCancellation(options.signal)
   try {
     const response = await fetch(url, {
@@ -301,6 +303,11 @@ export function analyzeReport({ reportType, reportDate, periodStart, periodEnd, 
   })
 }
 
+export function getLatestAnalysis({ reportType, reportDate }, { signal } = {}) {
+  const query = new URLSearchParams({ report_type: reportType, report_date: reportDate })
+  return request(`/api/v1/analysis/latest?${query}`, { signal })
+}
+
 export function getAnalysisVersion({ reportType, reportDate }, { signal } = {}) {
   const query = new URLSearchParams({
     report_type: reportType,
@@ -370,12 +377,12 @@ export function retryEmailDelivery(deliveryId) {
   })
 }
 
-export function getCuttingStatus(scope = 'push', { signal } = {}) {
+export function getCuttingStatus(scope = 'push', { signal, force = false } = {}) {
   const query = new URLSearchParams({ scope })
   return reportCache.read(
     `cutting:status:${scope}`,
     (signal) => request(`/api/v1/cutting/status?${query}`, { signal }),
-    { ttl: 60000, signal },
+    { ttl: 60000, signal, force },
   )
 }
 
@@ -400,7 +407,7 @@ export function listCuttingCatalogs(projectId, { signal } = {}) {
   )
 }
 
-export function listCuttingFiles({ projectId, catalogId = '', status = 'all', keyword = '', page = 1, pageSize = 10 }, { signal } = {}) {
+export function listCuttingFiles({ projectId, catalogId = '', status = 'all', keyword = '', page = 1, pageSize = 10 }, { signal, force = false } = {}) {
   const query = new URLSearchParams({
     project_id: projectId,
     status,
@@ -413,7 +420,7 @@ export function listCuttingFiles({ projectId, catalogId = '', status = 'all', ke
   return reportCache.read(
     `cutting:files:${query}`,
     (signal) => request(url, { signal }),
-    { ttl: 300000, signal },
+    { ttl: 300000, signal, force },
   )
 }
 
@@ -421,7 +428,7 @@ export function createCuttingDispatchBatch(payload) {
   return request('/api/v1/cutting/dispatches/batch', {
     method: 'POST',
     body: JSON.stringify(payload),
-  })
+  }).finally(() => reportCache.invalidate('cutting:files:'))
 }
 
 export function listCuttingDispatches({ page = 1, pageSize = 10 } = {}, { signal } = {}) {
@@ -440,13 +447,7 @@ export function listCuttingMachines({ signal } = {}) {
 export function executeCuttingDispatch(dispatchId) {
   return request(`/api/v1/cutting/dispatches/${encodeURIComponent(dispatchId)}/execute`, {
     method: 'POST',
-  })
-}
-
-export function cancelCuttingDispatch(dispatchId) {
-  return request(`/api/v1/cutting/dispatches/${encodeURIComponent(dispatchId)}/cancel`, {
-    method: 'POST',
-  })
+  }).finally(() => reportCache.invalidate('cutting:files:'))
 }
 
 export function testDatabaseConnection(connection) {
@@ -533,3 +534,5 @@ export function resolveEmailDelivery(deliveryId, payload) {
 export function listEmailDeliveryResolutions(deliveryId, { signal } = {}) {
   return request(`/api/v1/automation/deliveries/${encodeURIComponent(deliveryId)}/resolutions`, { signal })
 }
+
+export function getDeviceCatalog() { return request('/api/v1/devices') }

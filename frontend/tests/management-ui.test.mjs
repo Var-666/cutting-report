@@ -52,3 +52,9 @@ test('login keeps authentication behavior inside the production visual system', 
   assert.match(login.template.content, /<AppIcon name="chart"/)
   assert.match(login.template.content, /@submit\.prevent="submit"/)
 })
+
+test('database source selector offers SQL Server and demo without the removed Excel source', () => {
+  const database = descriptor('DatabaseView')
+  const selector = database.template.content.match(/<AppSelect[^>]*name="data_source_mode"[^>]*>(.*?)<\/AppSelect>/s)[1]
+  assert.deepEqual([...selector.matchAll(/<option value="([^"]+)"/g)].map((match) => match[1]), ['demo', 'sqlserver'])
+})

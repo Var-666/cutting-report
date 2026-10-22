@@ -6,6 +6,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from app.database.sqlite import SQLiteDatabase, SQLiteRepository
+from app.database.device_migrations import rebuild_table
 from app.models.domain import LeadershipPeriodRecord, ProjectDistributionRecord
 
 
@@ -86,6 +87,11 @@ class LeadershipSnapshotRepository(SQLiteRepository):
                 )
                 """
             )
+
+        rebuild_table(self.database, 'leadership_month_snapshots', lambda sql: sql.replace(
+            'report_month TEXT PRIMARY KEY', 'report_month TEXT NOT NULL').replace(
+            'snapshot_version INTEGER NOT NULL DEFAULT 1',
+            'snapshot_version INTEGER NOT NULL DEFAULT 1, PRIMARY KEY(report_month, source_fingerprint)') if 'report_month TEXT PRIMARY KEY' in sql else sql)
 
     def get(
         self,
@@ -169,7 +175,7 @@ class LeadershipSnapshotRepository(SQLiteRepository):
                     data_as_of, refreshed_at, expires_at, query_duration_ms,
                     source_fingerprint, snapshot_version
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(report_month) DO UPDATE SET
+                ON CONFLICT(report_month, source_fingerprint) DO UPDATE SET
                     daily_json = excluded.daily_json,
                     project_json = excluded.project_json,
                     total_json = excluded.total_json,

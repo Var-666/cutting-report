@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 from app.config import Settings
 from app.services.alarm_monitor_service import AlarmMonitorService
+from app.services.llm_service import background_llm_work
 
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,7 @@ class AlarmWorker:
         self.stop_event.set()
         self.thread.join(timeout=5)
 
+    @background_llm_work()
     def _run_loop(self) -> None:
         timezone = ZoneInfo(self.settings.timezone)
         interval = max(30, self.settings.alarm_monitor_interval_seconds)

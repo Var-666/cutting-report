@@ -1,7 +1,8 @@
+import { deviceUrl } from './deviceContext.js'
 import { createReport, getReportStatus } from './reports.js'
 
 export async function downloadReportPdf(reportId, { signal } = {}) {
-  const response = await fetch(`/api/v1/reports/${encodeURIComponent(reportId)}/download?format=pdf`, {
+  const response = await fetch(deviceUrl(`/api/v1/reports/${encodeURIComponent(reportId)}/download?format=pdf`), {
     credentials: 'same-origin', signal,
   })
   if (!response.ok) {

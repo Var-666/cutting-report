@@ -2,7 +2,7 @@
 {% set status = row[kind ~ '_data_status'] %}
 {% set value = row[kind ~ '_consumption'] %}
 <span title="{{ row.energy_note or '' }}">{{ value|number }}</span>
-{% if value is none %}<small class="energy-label">{{ {'missing':'缺边界','gap':'采样断点','counter_reset':'回零/倒退','invalid_reading':'无效读数','unconfigured':'待配置','unmapped':'未绑定','invalid_interval':'时间异常','overlap':'时间重叠','unavailable':'不可用'}.get(status, '缺失') }}</small>{% endif %}
+{% if value is none %}<small class="energy-label">{{ {'missing':'缺边界','gap':'采样断点','counter_reset':'回零/倒退','invalid_reading':'无效读数','unconfigured':'待配置','unmapped':'未绑定','invalid_interval':'时间异常','overlap':'时间重叠','unavailable':'不可用','not_connected':'暂未接入'}.get(status, '缺失') }}</small>{% endif %}
 {%- endmacro %}
 <!doctype html>
 <html lang="zh-CN">
@@ -127,6 +127,7 @@
     <div class="cover-main">
       <div class="cover-title">
         <h1>{{ report.meta.title }}</h1>
+        <p>设备：{{ device_name }}</p>
         <p>面向生产运行审阅的正式数据报告，统计口径、图表与智能分析均基于当前报告周期。</p>
       </div>
       <dl class="cover-folio">
@@ -209,6 +210,7 @@
     {% if report.worker_summaries %}<h2>三、工人工时汇总</h2><div class="table-wrap"><table><thead><tr><th>序号</th><th>工号</th><th>姓名</th><th>已确认任务</th><th>切割长度（米）</th><th>切割时长</th><th>工时占比</th><th>最后确认时间</th></tr></thead><tbody>{% for worker in report.worker_summaries %}<tr><td>{{ loop.index }}</td><td>{{ worker.company_no or '--' }}</td><td>{{ worker.worker_name }}</td><td>{{ worker.confirmed_task_count }}</td><td>{{ worker.total_cut_length|number }}</td><td>{{ worker.total_work_time_seconds|duration }}</td><td>{{ worker.work_time_share|number }}%</td><td>{{ worker.last_confirmed_at|chinese_datetime }}</td></tr>{% endfor %}</tbody></table></div>{% endif %}
     {% else %}
     <h2>一、设备能耗指标</h2>
+    {% if not energy_connected %}<p class="notice">能耗暂未接入，电耗与气耗暂无数据。</p>{% endif %}
     <section class="metrics">
       <div class="metric"><small>任务数量</small><strong>{{ report.equipment_summary.task_count }}</strong><small>项</small></div>
       <div class="metric"><small>切割时长</small><strong>{{ report.equipment_summary.total_work_time|duration }}</strong><small>HH:mm:ss</small></div>

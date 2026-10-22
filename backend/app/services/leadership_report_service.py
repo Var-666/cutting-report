@@ -15,7 +15,6 @@ from app.database.leadership_snapshots import (
     LeadershipSnapshotRepository,
 )
 from app.database.sqlserver import SqlServerClient
-from app.database.excel_task import ExcelTaskDataSource
 from app.models.domain import (
     LeadershipPeriodRecord,
     LeadershipReportResult,
@@ -55,7 +54,6 @@ class LeadershipReportService:
     ) -> None:
         self.settings = settings
         self.client = SqlServerClient(settings)
-        self.excel = ExcelTaskDataSource(settings.task_excel_path)
         self.snapshots = snapshots
         self.query_path = (
             Path(__file__).resolve().parents[1]
@@ -117,8 +115,6 @@ class LeadershipReportService:
             return result
 
     def _fetch_uncached(self, month_start: date) -> LeadershipReportResult:
-        if self.settings.effective_data_source_mode == "excel":
-            return self._excel_data(month_start)
         if self.settings.effective_data_source_mode == "demo":
             return self._demo_data(month_start)
 
@@ -369,91 +365,6 @@ class LeadershipReportService:
             ),
             work_time_seconds=sum(item.work_time_seconds for item in daily_records),
             remark=f"含 {remark_count} 条任务备注" if remark_count else None,
-        )
-
-    def _excel_data(self, month_start: date) -> LeadershipReportResult:
-        next_month = _previous_month(month_start, -1)
-        range_start = _previous_month(month_start, 12)
-        rows = self.excel.completed_rows(
-            start=range_start,
-            end=next_month,
-            machine_no=self.settings.report_machine_no,
-        )
-        daily: dict[date, dict[str, object]] = {}
-        monthly: dict[date, dict[str, object]] = {}
-        projects: dict[str, dict[str, object]] = {}
-
-        def add(target: dict[date, dict[str, object]], key: date, row: dict) -> None:
-            bucket = target.setdefault(
-                key,
-                {
-                    "task_count": 0,
-                    "cut_length_m": ZERO,
-                    "groove_length_m": ZERO,
-                    "work_time_seconds": 0,
-                    "remark_count": 0,
-                },
-            )
-            normalized = self.excel.normalized(row)
-            bucket["task_count"] += 1
-            bucket["cut_length_m"] += normalized["cut_length"]
-            bucket["groove_length_m"] += normalized["groove_length"]
-            bucket["work_time_seconds"] += int(normalized["work_time"])
-            if normalized["remark"]:
-                bucket["remark_count"] += 1
-
-        for row in rows:
-            production_date = self.excel.production_date(row)
-            if production_date is None:
-                continue
-            month_key = production_date.replace(day=1)
-            add(monthly, month_key, row)
-            if month_key == month_start:
-                add(daily, production_date, row)
-                normalized = self.excel.normalized(row)
-                project_name = normalized["project_name"] or "未标注工程"
-                project = projects.setdefault(
-                    project_name,
-                    {"task_count": 0, "cut_length_m": ZERO, "work_time_seconds": 0},
-                )
-                project["task_count"] += 1
-                project["cut_length_m"] += normalized["cut_length"]
-                project["work_time_seconds"] += int(normalized["work_time"])
-
-        def records(source: dict[date, dict[str, object]]) -> list[LeadershipPeriodRecord]:
-            return [
-                LeadershipPeriodRecord(
-                    period_start=period,
-                    task_count=int(values["task_count"]),
-                    cut_length_m=values["cut_length_m"],
-                    groove_length_m=values["groove_length_m"],
-                    work_time_seconds=int(values["work_time_seconds"]),
-                    remark=(
-                        f"含 {values['remark_count']} 条任务备注"
-                        if values["remark_count"]
-                        else None
-                    ),
-                )
-                for period, values in source.items()
-            ]
-
-        return self._result(
-            month_start=month_start,
-            source_mode="excel",
-            daily_records=records(daily),
-            monthly_records=records(monthly),
-            project_distribution=[
-                ProjectDistributionRecord(
-                    project_name=name,
-                    task_count=int(values["task_count"]),
-                    cut_length_m=values["cut_length_m"],
-                    work_time_seconds=int(values["work_time_seconds"]),
-                )
-                for name, values in sorted(
-                    projects.items(),
-                    key=lambda item: (-int(item[1]["task_count"]), item[0]),
-                )
-            ],
         )
 
     def _result(

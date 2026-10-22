@@ -1,6 +1,7 @@
-from datetime import date
+from datetime import date, datetime, timedelta
 from dataclasses import replace
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
 from decimal import Decimal
 import json
 import re
@@ -10,13 +11,17 @@ from pathlib import Path
 from threading import Event
 
 import pytest
+import httpx
 
 from app.config import Settings
 from app.database.metadata import MetadataRepository
 from app.models.domain import AnalysisResult, ReportFilter
 from app.services.equipment_service import mock_energy, sort_equipment_records
 from app.services.leadership_report_service import LeadershipReportService
-from app.services.llm_service import LlmService
+from app.services.llm_service import (
+    AnalysisCapacityError, AnalysisInputTooLarge, LlmRequestTimeout, LlmService,
+    _LlmCapacity, background_llm_work, llm_capacity,
+)
 from app.services.query_service import QueryService
 from app.services.report_analysis_service import (
     AnalysisDataVersionMismatch,
@@ -258,18 +263,76 @@ def test_data_version_is_stable_for_key_order_and_changes_with_business_data() -
     assert generate_data_version(first) != generate_data_version(changed)
 
 
-def test_force_refresh_replaces_same_version_cache(tmp_path: Path) -> None:
+def test_delayed_cache_write_cannot_replace_a_newer_completed_analysis(tmp_path, monkeypatch):
+    _, service = _services(tmp_path)
+    now = datetime(2026, 10, 19, 8, tzinfo=service.timezone)
+    old_stamp = now.isoformat(timespec='seconds')
+    waiting, release = Event(), Event()
+    save = service.metadata.save_analysis
+    calls = []
+
+    class Clock:
+        @staticmethod
+        def now(_timezone):
+            return now
+
+    def model(*args):
+        calls.append(1)
+        return AnalysisResult(status='success', mode='model', overview=f'第{len(calls)}次分析',
+                              features='特征', alerts='关注', suggestions='建议')
+
+    def delayed_save(**kwargs):
+        if kwargs['generated_at'] == old_stamp:
+            waiting.set()
+            assert release.wait(3)
+        save(**kwargs)
+
+    def analyze(force):
+        with background_llm_work():
+            return service._analyze(report_type='workshop', report_date='2026-10-19',
+                                    context={'facts': []}, force=force)
+
+    monkeypatch.setattr('app.services.report_analysis_service.datetime', Clock)
+    monkeypatch.setattr(service.llm, 'analyze_context', model)
+    monkeypatch.setattr(service.metadata, 'save_analysis', delayed_save)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        old = executor.submit(analyze, True)
+        try:
+            assert waiting.wait(1)
+            now += timedelta(seconds=1)
+            newer = executor.submit(analyze, True).result(timeout=2)
+        finally:
+            release.set()
+        old.result(timeout=2)
+    cached = analyze(False)
+    assert cached.generated_at == newer.generated_at
+    assert cached.overview == newer.overview
+    assert len(calls) == 2, 'both periodic calls must run while subsequent reads reuse the newest completed result'
+
+
+def test_force_refresh_replaces_same_version_cache(tmp_path: Path, monkeypatch) -> None:
     settings, service = _services(tmp_path)
     report = LeadershipReportService(settings).fetch(date(2026, 8, 1))
+    now = datetime(2026, 8, 1, 8, tzinfo=service.timezone)
+
+    class Clock:
+        @staticmethod
+        def now(_timezone):
+            return now
+
+    monkeypatch.setattr('app.services.report_analysis_service.datetime', Clock)
 
     first = service.analyze_leadership(report)
+    now += timedelta(seconds=1)
     forced = service.analyze_leadership(report, force=True)
+    now += timedelta(seconds=1)
     cached = service.analyze_leadership(report)
 
     assert forced.cached is False
     assert forced.data_version == first.data_version
     assert cached.cached is True
     assert cached.data_version == forced.data_version
+    assert cached.generated_at == forced.generated_at
 
     with sqlite3.connect(settings.metadata_db_path) as connection:
         columns = {row[1] for row in connection.execute("PRAGMA table_info(report_analyses)")}
@@ -283,7 +346,8 @@ def test_force_refresh_replaces_same_version_cache(tmp_path: Path) -> None:
         report_date="2026-08",
     ) == {
         "data_version": forced.data_version,
-        "updated_at": forced.generated_at,
+        # Source checks publish their own time, even when the model result is cached.
+        "updated_at": now.isoformat(timespec="seconds"),
     }
 
 
@@ -306,6 +370,156 @@ def test_concurrent_same_version_requests_call_model_once(tmp_path: Path, monkey
     assert calls == 1
     assert sorted(result.cached for result in results) == [False, True]
     assert results[0].data_version == results[1].data_version
+
+
+def test_page_promotes_queued_background_analysis_without_duplicate_model(tmp_path, monkeypatch, caplog):
+    settings, service = _services(tmp_path)
+    settings = replace(settings, llm_max_concurrent=4)
+    service.settings = settings
+    report = LeadershipReportService(settings).fetch(date(2026, 8, 1))
+    capacity = _LlmCapacity()
+    monkeypatch.setattr("app.services.llm_service._LLM_CAPACITY", capacity)
+    started, admitted, finish = Event(), Event(), Event()
+    calls = 0
+    caplog.set_level("INFO", logger="app.services.analysis_execution")
+
+    def model(report_type, context):
+        nonlocal calls
+        calls += 1
+        started.set()
+        with llm_capacity(settings):
+            admitted.set()
+            assert finish.wait(3)
+            return model_analysis(report_type, context)
+
+    def background():
+        with background_llm_work():
+            return service.analyze_leadership(report)
+
+    monkeypatch.setattr(service.llm, "analyze_context", model)
+    # Other automatic work fills the two background slots; two page slots remain.
+    with background_llm_work(), llm_capacity(settings), llm_capacity(settings):
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            producer = executor.submit(background)
+            try:
+                assert started.wait(1)
+                assert not admitted.wait(0.1)
+                page = executor.submit(service.analyze_leadership, report)
+                assert admitted.wait(1), "page must promote its existing background producer into a free slot"
+                assert calls == 1
+            finally:
+                finish.set()
+            assert producer.result(timeout=2).cached is False
+            assert page.result(timeout=2).cached is True
+    assert capacity._active == capacity._background_active == capacity._foreground_waiting == 0
+    assert service._generation_locks == {}
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("background=True" in message and "promoted=True" in message for message in messages)
+    assert any("cache=shared" in message for message in messages)
+
+
+@pytest.mark.parametrize("failure, expected, message", [
+    (LlmRequestTimeout, AnalysisUnavailableError, "模型响应超时"),
+    (ReportOperationTimeout, ReportOperationTimeout, "timeout"),
+])
+def test_waiters_share_failed_attempt_but_later_retry_can_recover(tmp_path, monkeypatch, failure, expected, message):
+    settings, service = _services(tmp_path)
+    report = LeadershipReportService(settings).fetch(date(2026, 8, 1))
+    started, finish = Event(), Event()
+    calls = 0
+
+    def model(report_type, context):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            started.set()
+            assert finish.wait(3)
+            raise failure("timeout")
+        return model_analysis(report_type, context)
+
+    monkeypatch.setattr(service.llm, "analyze_context", model)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        producer = executor.submit(service.analyze_leadership, report)
+        try:
+            assert started.wait(1)
+            page = executor.submit(service.analyze_leadership, report)
+            deadline = time.monotonic() + 1
+            waiting = False
+            while time.monotonic() < deadline:
+                with service._generation_guard:
+                    waiting = any(state["users"] == 2 for state in service._generation_locks.values())
+                if waiting:
+                    break
+                time.sleep(0.005)
+            assert waiting
+        finally:
+            finish.set()
+        for future in (producer, page):
+            with pytest.raises(expected, match=message):
+                future.result(timeout=2)
+    assert calls == 1, "a waiting page must not silently pay for a second full attempt"
+    assert service._generation_locks == {}
+    assert service.analyze_leadership(report).cached is False
+    assert service.analyze_leadership(report).cached is True
+    assert calls == 2
+
+
+def test_cancelled_page_retracts_priority_without_cancelling_shared_background_work(tmp_path, monkeypatch):
+    settings, service = _services(tmp_path)
+    settings = replace(settings, llm_max_concurrent=4)
+    service.settings = settings
+    report = LeadershipReportService(settings).fetch(date(2026, 8, 1))
+    capacity = _LlmCapacity()
+    monkeypatch.setattr("app.services.llm_service._LLM_CAPACITY", capacity)
+    started, admitted = Event(), Event()
+
+    def model(report_type, context):
+        started.set()
+        with llm_capacity(settings):
+            admitted.set()
+            return model_analysis(report_type, context)
+
+    def background():
+        with background_llm_work():
+            return service.analyze_leadership(report)
+
+    execution = sql_request_cancellations.activate("page-leaves")
+
+    def page_request():
+        token = bind_request_id(execution)
+        try:
+            return service.analyze_leadership(report)
+        finally:
+            reset_request_id(token)
+
+    monkeypatch.setattr(service.llm, "analyze_context", model)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            with ExitStack() as bg_slots, ExitStack() as fg_slots:
+                with background_llm_work():
+                    for _ in range(2):
+                        bg_slots.enter_context(llm_capacity(settings))
+                for _ in range(2):
+                    fg_slots.enter_context(llm_capacity(settings))
+                producer = executor.submit(background)
+                assert started.wait(1)
+                page = executor.submit(page_request)
+                with capacity._condition:
+                    assert capacity._condition.wait_for(lambda: capacity._foreground_waiting == 1, timeout=1)
+                sql_request_cancellations.cancel(execution)
+                with pytest.raises(SqlRequestCancelled):
+                    page.result(timeout=2)
+                with capacity._condition:
+                    assert capacity._condition.wait_for(lambda: capacity._foreground_waiting == 0, timeout=1)
+                fg_slots.close()
+                assert not admitted.wait(0.15), "departed page must not leave background work using page priority"
+                assert not producer.done()
+            assert producer.result(timeout=2).cached is False
+    finally:
+        sql_request_cancellations.finish(execution)
+    assert admitted.is_set()
+    assert capacity._active == capacity._background_active == capacity._foreground_waiting == 0
+    assert service._generation_locks == {}
 
 
 @pytest.mark.parametrize("stop", ["timeout", "cancel", "report_deadline"])
@@ -654,6 +868,72 @@ def test_failed_model_call_is_not_cached_and_next_request_retries(tmp_path, monk
     assert recovered.mode == "model"
     assert recovered.cached is False
     assert calls == 2
+
+
+@pytest.mark.parametrize('error, message', [
+    (AnalysisCapacityError('智能分析排队超时，请稍后重试。'), '排队超时'),
+    (LlmRequestTimeout('deadline'), '模型响应超时'),
+    (httpx.ReadTimeout('read'), '模型响应超时'),
+    (httpx.ConnectError('connect'), '无法连接模型接口'),
+    *[(httpx.HTTPStatusError('provider error', request=httpx.Request('POST', 'http://llm.local'),
+                            response=httpx.Response(status)), message)
+      for status, message in [(429, '限流'), (401, '认证失败'), (403, '认证失败'), (503, 'HTTP 503')]],
+])
+def test_model_failure_explains_recovery_action_and_does_not_poison_cache(tmp_path, monkeypatch, caplog, error, message):
+    settings, service = _services(tmp_path)
+    report = LeadershipReportService(settings).fetch(date(2026, 8, 1))
+
+    def fail(*args, **kwargs):
+        raise error
+
+    monkeypatch.setattr(service.llm, 'analyze_context', fail)
+    with pytest.raises(AnalysisUnavailableError, match=message):
+        service.analyze_leadership(report)
+    assert 'device=Cutter01' in caplog.text
+    assert 'report_type=leadership' in caplog.text
+    monkeypatch.setattr(service.llm, 'analyze_context', model_analysis)
+    assert service.analyze_leadership(report).cached is False
+    assert service.analyze_leadership(report).cached is True
+
+
+def test_oversized_report_explains_input_problem_instead_of_model_outage(tmp_path, monkeypatch):
+    settings, service = _services(tmp_path)
+    report = LeadershipReportService(settings).fetch(date(2026, 8, 1))
+
+    def fail(*args, **kwargs):
+        raise AnalysisInputTooLarge('智能分析输入超过配置容量，请缩小报表范围后重试。')
+
+    monkeypatch.setattr(service.llm, 'analyze_context', fail)
+    with pytest.raises(AnalysisUnavailableError, match='缩小报表范围'):
+        service.analyze_leadership(report)
+
+
+@pytest.mark.parametrize('report_type', ['leadership', 'workshop', 'equipment'])
+def test_response_header_timeout_is_explained_and_all_report_types_can_recover(tmp_path, monkeypatch, report_type):
+    settings, service = _services(tmp_path)
+    service.llm = LlmService(replace(settings, llm_api_key='test-key', llm_base_url='http://llm.test', llm_timeout=90))
+    original_client = httpx.Client
+    attempts = []
+
+    def respond(request):
+        attempts.append(request)
+        assert request.extensions['timeout']['read'] > 30
+        if len(attempts) == 1:
+            # The deployed failure occurs before any response headers arrive.
+            raise httpx.ReadTimeout('The read operation timed out', request=request)
+        content = {field: '连接恢复后的分析。' for field in ('overview', 'features', 'alerts', 'suggestions')}
+        return httpx.Response(200, json={'choices': [{'message': {'content': json.dumps(content)}}]})
+
+    transport = httpx.MockTransport(respond)
+    monkeypatch.setattr('app.services.llm_service.httpx.Client',
+                        lambda **kwargs: original_client(transport=transport, **kwargs))
+    parameters = dict(report_type=report_type, report_date='2026-10-13',
+                      context={'report_date': '2026-10-13', 'facts': [], 'tables': []}, force=False)
+    with pytest.raises(AnalysisUnavailableError, match='模型响应超时'):
+        service._analyze(**parameters)
+    assert service._analyze(**parameters).cached is False
+    assert service._analyze(**parameters).cached is True
+    assert len(attempts) == 2
 
 
 def test_model_output_is_used_without_content_rejection(tmp_path, monkeypatch):

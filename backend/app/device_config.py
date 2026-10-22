@@ -54,7 +54,7 @@ class DeviceConfig(ConfigModel):
     production_line_id: ConfigText
     data_source: Literal["production"]
     machine_no: ConfigText
-    energy: DeviceEnergyConfig
+    energy: DeviceEnergyConfig | None = None
     alarm: DeviceAlarmConfig
 
 
@@ -76,7 +76,7 @@ class DeviceCatalog(ConfigModel):
         for device in self.devices:
             if device.production_line_id not in line_ids:
                 raise ValueError("设备引用的产线不存在")
-            if device.machine_no.casefold() not in {alias.casefold() for alias in device.energy.equipment_ids}:
+            if device.energy is not None and device.machine_no.casefold() not in {alias.casefold() for alias in device.energy.equipment_ids}:
                 raise ValueError("能耗设备范围必须包含生产设备编号")
         return self
 

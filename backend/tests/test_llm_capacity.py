@@ -9,7 +9,7 @@ import httpx
 from app.config import Settings
 from app.services.llm_service import (
     AnalysisCapacityError, AnalysisInputTooLarge, AnalysisOutputValidationError, LlmRequestTimeout, LlmService,
-    llm_capacity, post_llm_json,
+    _LlmCapacity, background_llm_work, llm_capacity, post_llm_json,
 )
 from app.services.alarm_analysis_service import AlarmAnalysisService
 from app.services.request_cancellation import (
@@ -45,20 +45,26 @@ def test_alarm_input_budget_rejects_before_network(tmp_path, monkeypatch):
         service.analyze([incident])
 
 
-def test_capacity_limits_concurrent_model_calls(tmp_path):
-    settings = config(tmp_path, llm_max_concurrent=1, llm_queue_timeout_seconds=1)
-    entered, release = Event(), Event()
-    def task():
+@pytest.mark.parametrize('limit', [1, 10])
+def test_capacity_limits_concurrent_model_calls(tmp_path, limit):
+    settings = config(tmp_path, llm_max_concurrent=limit, llm_queue_timeout_seconds=1)
+    entered = [Event() for _ in range(limit)]
+    release = Event()
+    def task(index):
         with llm_capacity(settings):
-            entered.set()
-            release.wait(2)
-    first = ThreadPoolExecutor(max_workers=2)
-    future = first.submit(task)
-    assert entered.wait(1)
-    with pytest.raises(AnalysisCapacityError):
-        with llm_capacity(settings):
-            pass
-    release.set(); future.result(); first.shutdown()
+            entered[index].set()
+            assert release.wait(5)
+    with ThreadPoolExecutor(max_workers=limit) as executor:
+        futures = [executor.submit(task, index) for index in range(limit)]
+        try:
+            assert all(event.wait(1) for event in entered), 'all configured slots must be usable'
+            with pytest.raises(AnalysisCapacityError):
+                with llm_capacity(settings):
+                    pytest.fail('an extra call must not exceed the shared model limit')
+        finally:
+            release.set()
+        for future in futures:
+            future.result(timeout=2)
     with llm_capacity(settings):
         pass
 
@@ -79,9 +85,90 @@ def test_capacity_cancellation_does_not_consume_slot(tmp_path):
         pass
 
 
+def test_two_devices_background_calls_leave_two_slots_for_foreground(tmp_path, monkeypatch):
+    capacity = _LlmCapacity()
+    monkeypatch.setattr('app.services.llm_service._LLM_CAPACITY', capacity)
+    settings = config(tmp_path, llm_max_concurrent=4, llm_queue_timeout_seconds=2)
+    background_entered = [Event(), Event(), Event()]
+    foreground_entered = [Event(), Event()]
+    release = Event()
+
+    def background(index):
+        device = replace(settings, device_id=f'Cutter0{index + 1}')
+        with background_llm_work(), llm_capacity(device):
+            background_entered[index].set()
+            assert release.wait(3)
+
+    def foreground(index):
+        with llm_capacity(settings):
+            foreground_entered[index].set()
+            assert release.wait(3)
+
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        futures = [executor.submit(background, index) for index in range(2)]
+        try:
+            assert all(event.wait(1) for event in background_entered[:2])
+            futures.append(executor.submit(background, 2))
+            futures.extend(executor.submit(foreground, index) for index in range(2))
+            assert all(event.wait(1) for event in foreground_entered)
+            assert not background_entered[2].is_set()
+        finally:
+            release.set()
+        for future in futures:
+            future.result(timeout=2)
+    assert background_entered[2].is_set()
+    assert capacity._active == capacity._background_active == capacity._foreground_waiting == 0
+
+
+def test_foreground_waiter_precedes_background_even_with_one_configured_slot(tmp_path, monkeypatch):
+    capacity = _LlmCapacity()
+    monkeypatch.setattr('app.services.llm_service._LLM_CAPACITY', capacity)
+    settings = config(tmp_path, llm_max_concurrent=1, llm_queue_timeout_seconds=2)
+    order = []
+
+    def background():
+        with background_llm_work(), llm_capacity(settings):
+            order.append('background')
+
+    def foreground():
+        with llm_capacity(settings):
+            order.append('foreground')
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        with llm_capacity(settings):
+            bg = executor.submit(background)
+            fg = executor.submit(foreground)
+            with capacity._condition:
+                assert capacity._condition.wait_for(lambda: capacity._foreground_waiting == 1, timeout=1)
+        fg.result(timeout=2)
+        bg.result(timeout=2)
+    assert order == ['foreground', 'background']
+
+
+def test_cancelled_foreground_does_not_leave_background_permanently_blocked(tmp_path, monkeypatch):
+    capacity = _LlmCapacity()
+    monkeypatch.setattr('app.services.llm_service._LLM_CAPACITY', capacity)
+    settings = config(tmp_path, llm_max_concurrent=1, llm_queue_timeout_seconds=2)
+    with llm_capacity(settings):
+        execution = sql_request_cancellations.activate('foreground')
+        token = bind_request_id(execution)
+        try:
+            sql_request_cancellations.cancel(execution)
+            with pytest.raises(SqlRequestCancelled):
+                with llm_capacity(settings):
+                    pytest.fail('cancelled waiter must not acquire capacity')
+        finally:
+            reset_request_id(token)
+            sql_request_cancellations.finish(execution)
+    with background_llm_work(), llm_capacity(settings):
+        assert capacity._background_active == 1
+    with llm_capacity(settings):
+        assert capacity._background_active == 0
+
+
 @pytest.mark.parametrize('kwargs', [
     {'llm_max_input_chars': 999}, {'llm_max_output_chars': 999},
-    {'llm_max_concurrent': 0}, {'llm_max_concurrent': 9},
+    {'llm_max_concurrent': 0}, {'llm_max_concurrent': 11},
     {'llm_queue_timeout_seconds': 0}, {'llm_queue_timeout_seconds': 301},
     {'llm_timeout': 0}, {'llm_timeout': 301},
 ])

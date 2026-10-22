@@ -26,7 +26,7 @@ FILES = (
     "frontend/vite.config.js", "docs/deployment/WINDOWS部署说明.md",
     "docs/deployment/KYLIN原生部署说明.md",
     "docs/deployment/OFFLINE_DOCKER部署说明.md",
-    "docker/input/README.md", "scripts/README.md", "scripts/check_energy.py",
+    "scripts/README.md", "scripts/check_energy.py",
     "scripts/build_docker_package.py", "scripts/prepare_alarm_monitor.py",
     "scripts/windows/install_windows.bat",
     "scripts/windows/start_windows.bat", "scripts/linux/install_kylin.sh",

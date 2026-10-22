@@ -9,7 +9,6 @@ import { matchesDispatchParameters } from '../utils/cuttingDispatchBatch.js'
 import { formatChineseDateTime } from '../utils/dateDisplay.js'
 import { useDialogFocus } from '../composables/useDialogFocus.js'
 import {
-  cancelCuttingDispatch,
   createCuttingDispatchBatch,
   executeCuttingDispatch,
   getCuttingDispatch,
@@ -29,7 +28,10 @@ let lifecycleSequence = 0
 let lifecycleController = null
 let directoryController = null
 let historyController = null
+let statusController = null
 let firstActivation = true
+let projectsLoaded = false
+const STATUS_CHECK_TIMEOUT_MS = 30_000
 
 function beginLifecycleRequest() {
   lifecycleController?.abort()
@@ -38,12 +40,16 @@ function beginLifecycleRequest() {
 }
 
 function beginDirectoryRequest() {
+  selectingAll.value = false
+  loading.value = false
   directoryController?.abort()
   directoryController = new AbortController()
   return directoryController.signal
 }
 const dispatchForm = reactive({ machineIp: '' })
 const systemStatus = ref(null)
+const statusLoading = ref(false)
+const statusError = ref('')
 const rows = ref([])
 const histories = ref([])
 const historyPage = ref(1)
@@ -69,6 +75,8 @@ const pushBatch = reactive({
 const pushBatchDialog = ref(null)
 const pushBatchOpen = computed(() => pushBatch.visible)
 const selectedFiles = ref(new Map())
+const catalogSelectionRows = ref(null)
+const selectingAll = ref(false)
 const loading = ref(false)
 const operatingId = ref('')
 const notice = ref('')
@@ -139,14 +147,15 @@ const activeDispatchStep = computed(() => {
   if (selectedFileCount.value) return 2
   return 1
 })
-const selectableRows = computed(() => rows.value.filter((row) => row.path_available && systemStatus.value?.can_push))
-const allVisibleFilesSelected = computed(() => (
-  selectableRows.value.length > 0
+const selectableRows = computed(() => (catalogSelectionRows.value ?? rows.value).filter((row) => row.path_available && systemStatus.value?.can_push))
+const allCatalogFilesSelected = computed(() => (
+  (catalogSelectionRows.value !== null || total.value <= rows.value.length)
+  && selectableRows.value.length > 0
   && selectableRows.value.every((row) => selectedFiles.value.has(fileKey(row)))
 ))
-const someVisibleFilesSelected = computed(() => (
-  !allVisibleFilesSelected.value
-  && selectableRows.value.some((row) => selectedFiles.value.has(fileKey(row)))
+const someCatalogFilesSelected = computed(() => (
+  !allCatalogFilesSelected.value
+  && selectedFiles.value.size > 0
 ))
 const selectedPath = computed(() => {
   if (!selectedProject.value) return '请选择项目和目录'
@@ -168,6 +177,13 @@ function alreadySelectedDocument(files, file) {
 }
 
 function clearSelectedFiles() {
+  if (selectingAll.value) {
+    querySequence += 1
+    directoryController?.abort()
+    selectingAll.value = false
+    loading.value = false
+  }
+  catalogSelectionRows.value = null
   selectedFiles.value = new Map()
 }
 
@@ -183,14 +199,18 @@ function rememberSelectedProject(projectId) {
   router.replace({ query })
 }
 
-function setFileSelected(file, selected) {
+function setFileSelected(file, event) {
+  const input = event.target
+  const selected = input.checked
   const next = new Map(selectedFiles.value)
   const key = fileKey(file)
-  if (selected && !next.has(key) && next.size >= 20) {
-    showNotice('一次最多选择 20 个文件，请先取消部分文件。', 'error')
+  if (selected && !next.has(key) && next.size >= 100) {
+    input.checked = false
+    showNotice('已达 100 项上限，请先取消部分文件后再选择。', 'error')
     return
   }
   if (selected && !next.has(key) && alreadySelectedDocument(next, file)) {
+    input.checked = false
     showNotice('同一 PDM 文件只能选择一个版本，请先取消已选版本。', 'error')
     return
   }
@@ -199,22 +219,65 @@ function setFileSelected(file, selected) {
   selectedFiles.value = next
 }
 
-function toggleVisibleFiles(selected) {
-  const next = new Map(selectedFiles.value)
-  let skipped = 0
-  for (const file of selectableRows.value) {
-    const key = fileKey(file)
-    if (!selected) {
-      next.delete(key)
-    } else if (!next.has(key) && next.size < 20) {
-      if (alreadySelectedDocument(next, file)) skipped += 1
-      else next.set(key, file)
-    } else if (!next.has(key)) {
-      skipped += 1
+async function toggleCatalogFiles(event) {
+  const input = event.target
+  const selected = input.checked
+  if (loading.value || pushBatch.saving || !systemStatus.value?.can_push) return
+  const sequence = ++querySequence
+  const signal = beginDirectoryRequest()
+  loading.value = true
+  selectingAll.value = true
+  try {
+    if (catalogSelectionRows.value === null) {
+      let files = rows.value
+      if (total.value > rows.value.length) {
+        files = []
+        let filePage = 1
+        let fileTotal = total.value
+        do {
+          const data = await listCuttingFiles({
+            projectId: selectedProject.value.project_id,
+            catalogId: selectedCatalog.value.catalog_id,
+            keyword: appliedFileKeyword.value,
+            page: filePage,
+            pageSize: 100,
+          }, { signal })
+          if (signal.aborted || !pageActive.value || sequence !== querySequence) return
+          if (!data.items.length && files.length < data.total) throw new Error('文件列表发生变化，请重新查询后全选。')
+          files.push(...data.items)
+          fileTotal = data.total
+          filePage += 1
+        } while ((filePage - 1) * 100 < fileTotal)
+      }
+      catalogSelectionRows.value = files
+    }
+    if (!systemStatus.value?.can_push) return
+    const next = new Map(selectedFiles.value)
+    let skipped = 0
+    for (const file of selectableRows.value) {
+      const key = fileKey(file)
+      if (!selected) {
+        next.delete(key)
+      } else if (!next.has(key) && next.size < 100) {
+        if (alreadySelectedDocument(next, file)) skipped += 1
+        else next.set(key, file)
+      } else if (!next.has(key)) {
+        skipped += 1
+      }
+    }
+    selectedFiles.value = next
+    if (skipped) showNotice(`另有 ${skipped} 项因已达 100 项上限或文件版本重复而未选中，请取消部分文件或已选版本后再选择。`, 'error')
+  } catch (error) {
+    if (error.name !== 'AbortError' && sequence === querySequence) showNotice(`全选失败：${error.message}`, 'error')
+  } finally {
+    if (sequence === querySequence) {
+      loading.value = false
+      selectingAll.value = false
+      // Restore native checkbox state even when the computed value did not change.
+      input.checked = allCatalogFilesSelected.value
+      input.indeterminate = someCatalogFilesSelected.value
     }
   }
-  selectedFiles.value = next
-  if (skipped) showNotice(`另有 ${skipped} 项因已满 20 项或文件版本重复而未选中。`, 'error')
 }
 
 function openSinglePush(file) {
@@ -272,6 +335,7 @@ async function loadMachines({ signal } = {}) {
       dispatchForm.machineIp = machines.value[0].machine_ip
     }
   } catch (error) {
+    if (signal?.aborted || !pageActive.value || error.name === 'AbortError') return
     machines.value = (systemStatus.value?.magic_box?.machine_ips || []).map((machineIp) => ({
       machine_ip: machineIp,
       online: false,
@@ -423,6 +487,7 @@ async function loadProjects() {
     const data = await listCuttingProjects('', 1000, { signal })
     if (signal.aborted || !pageActive.value || sequence !== querySequence) return
     projectOptions.value = data.items || []
+    projectsLoaded = true
     if (!projectOptions.value.some((project) => String(project.project_id) === selectedProjectId.value)) {
       selectedProjectId.value = projectOptions.value[0] ? String(projectOptions.value[0].project_id) : ''
     }
@@ -542,6 +607,7 @@ async function applyFileSearch() {
 }
 
 async function loadFiles(targetPage = 1) {
+  selectingAll.value = false
   if (!selectedProject.value || !selectedCatalog.value) return
   const sequence = ++querySequence
   const signal = beginDirectoryRequest()
@@ -636,8 +702,25 @@ async function executeBatchItem(item) {
   }
 }
 
+async function refreshVisibleFileStatuses() {
+  if (!selectedProject.value || !selectedCatalog.value || !pageActive.value) return
+  const sequence = querySequence
+  const data = await listCuttingFiles({
+    projectId: selectedProject.value.project_id,
+    catalogId: selectedCatalog.value.catalog_id,
+    keyword: appliedFileKeyword.value,
+    page: page.value,
+    pageSize,
+  }, { force: true })
+  if (!pageActive.value || sequence !== querySequence) return
+  const statuses = new Map(data.items.map((row) => [fileKey(row), row.dispatch_status]))
+  rows.value = rows.value.map((row) => statuses.has(fileKey(row))
+    ? { ...row, dispatch_status: statuses.get(fileKey(row)) }
+    : row)
+}
+
 async function refreshBatchHistory() {
-  await Promise.allSettled([loadHistory()])
+  await Promise.allSettled([loadHistory(), refreshVisibleFileStatuses()])
   const counts = batchStatusCounts.value
   const cleanupWarnings = pushBatch.items.filter((item) => item.status === 'sent' && item.error).length
   showNotice(
@@ -762,7 +845,7 @@ async function checkBatchItem(item) {
     item.error = `任务状态核对失败：${error.message}`
   } finally {
     pushBatch.saving = false
-    await Promise.allSettled([loadHistory()])
+    await Promise.allSettled([loadHistory(), refreshVisibleFileStatuses()])
   }
 }
 
@@ -788,21 +871,7 @@ async function executeSaved(item) {
     showNotice(error.message, 'error')
   } finally {
     operatingId.value = ''
-    await Promise.allSettled([loadHistory()])
-  }
-}
-
-async function cancelSaved(item) {
-  if (operatingId.value || !window.confirm(`确认取消任务 ${item.dispatch_id} 的机床指派？`)) return
-  operatingId.value = item.dispatch_id
-  try {
-    await cancelCuttingDispatch(item.dispatch_id)
-    showNotice('已取消魔盒机床指派。')
-  } catch (error) {
-    showNotice(error.message, 'error')
-  } finally {
-    operatingId.value = ''
-    await loadHistory()
+    await Promise.allSettled([loadHistory(), refreshVisibleFileStatuses()])
   }
 }
 
@@ -815,12 +884,56 @@ function fileExtension(row) {
   return dot > 0 ? filename.slice(dot).toUpperCase() : '--'
 }
 
-async function initializePage() {
+async function loadRuntimeStatus({ signal, force = false } = {}) {
+  if (!pageActive.value || signal?.aborted) return
+  statusController?.abort()
+  const controller = new AbortController()
+  statusController = controller
+  const sequence = lifecycleSequence
+  const cancel = () => controller.abort()
+  signal?.addEventListener('abort', cancel, { once: true })
+  let timedOut = false
+  const timer = window.setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, STATUS_CHECK_TIMEOUT_MS)
+  statusLoading.value = true
+  statusError.value = ''
+  try {
+    const data = await getCuttingStatus('push', { signal: controller.signal, force })
+    if (controller.signal.aborted || !pageActive.value || sequence !== lifecycleSequence
+        || statusController !== controller) return
+    systemStatus.value = data
+    window.clearTimeout(timer)
+    statusLoading.value = false
+    await loadMachines({ signal: controller.signal })
+  } catch (error) {
+    if (!pageActive.value || signal?.aborted || sequence !== lifecycleSequence
+        || statusController !== controller) return
+    if (timedOut || error.name !== 'AbortError') {
+      systemStatus.value = null
+      statusError.value = timedOut
+        ? '文件派发状态检查超时（30秒），项目目录可继续浏览，请重新检查后再派发。'
+        : `文件派发状态检查失败：${error.message}`
+    }
+  } finally {
+    window.clearTimeout(timer)
+    signal?.removeEventListener('abort', cancel)
+    if (statusController === controller) {
+      statusLoading.value = false
+      statusController = null
+    }
+  }
+}
+
+async function initializePage({ refreshProjects = true } = {}) {
   const { sequence, signal } = beginLifecycleRequest()
   try {
-    systemStatus.value = await getCuttingStatus('push', { signal })
-    if (signal.aborted || !pageActive.value || sequence !== lifecycleSequence) return
-    await Promise.all([loadProjects(), loadMachines({ signal }), loadHistory({ signal })])
+    await Promise.allSettled([
+      loadRuntimeStatus({ signal }),
+      ...(refreshProjects ? [loadProjects()] : []),
+      loadHistory({ signal }),
+    ])
   } catch (error) {
     if (error.name !== 'AbortError' && sequence === lifecycleSequence) showNotice(error.message, 'error')
   } finally {
@@ -837,6 +950,10 @@ function pausePage() {
   querySequence += 1
   lifecycleController?.abort()
   lifecycleController = null
+  statusController?.abort()
+  statusController = null
+  statusLoading.value = false
+  selectingAll.value = false
   directoryController?.abort()
   directoryController = null
   historyController?.abort()
@@ -857,16 +974,7 @@ onActivated(async () => {
     firstActivation = false
     return
   }
-  const { sequence, signal } = beginLifecycleRequest()
-  try {
-    systemStatus.value = await getCuttingStatus('push', { signal })
-    if (signal.aborted || !pageActive.value || sequence !== lifecycleSequence) return
-    await Promise.all([loadMachines({ signal }), loadHistory({ signal })])
-  } catch (error) {
-    if (error.name !== 'AbortError' && sequence === lifecycleSequence) showNotice(`刷新文件派发状态失败：${error.message}`, 'error')
-  } finally {
-    if (sequence === lifecycleSequence) lifecycleController = null
-  }
+  await initializePage({ refreshProjects: !projectsLoaded })
 })
 onDeactivated(pausePage)
 onBeforeUnmount(pausePage)
@@ -879,8 +987,8 @@ onBeforeUnmount(pausePage)
       <h1>文件派发</h1>
       <p>从 PDM 选择切割文件，核对标准名称和加工参数后，直接下载并推送到目标机床。</p>
       <div class="dispatch-source-status" aria-label="文件派发服务状态">
-        <span><i :class="{ ready: systemStatus?.can_push }"></i>{{ systemStatus?.pdm?.label || '正在检查数据源' }}</span>
-        <span>{{ systemStatus?.file_source?.label || '文件服务检查中' }}</span>
+        <span><i :class="{ ready: systemStatus?.can_push }"></i>{{ systemStatus?.pdm?.label || (statusError ? '数据源检查失败' : '正在检查数据源') }}</span>
+        <span>{{ systemStatus?.file_source?.label || (statusError ? '文件服务状态未确认' : '文件服务检查中') }}</span>
         <span>{{ systemStatus?.safe_mode ? '安全联调模式' : '生产数据模式' }}</span>
       </div>
     </div>
@@ -892,8 +1000,12 @@ onBeforeUnmount(pausePage)
       <i><AppIcon v-if="activeDispatchStep > step.number" name="check" size="17" /> <template v-else>{{ step.number }}</template></i><span><strong>{{ step.title }}</strong><small>{{ step.hint }}</small></span>
     </div>
   </div>
-  <p class="dispatch-push-scope" role="note"><AppIcon name="check" size="17" /><span>一次最多选择 20 个 PDM 文件；标准文件名自动识别参数，非标准文件名需人工核对。系统按顺序派发，单个文件失败不会中断其余任务。</span></p>
+  <p class="dispatch-push-scope" role="note"><AppIcon name="check" size="17" /><span>一次最多选择 100 个 PDM 文件；标准文件名自动识别参数，非标准文件名需人工核对。系统按顺序派发，单个文件失败不会中断其余任务。</span></p>
 
+  <div v-if="statusError" class="dispatch-notice error" role="alert">
+    <span>{{ statusError }}</span>
+    <button type="button" :disabled="statusLoading" @click="loadRuntimeStatus({ force: true })">重新检查</button>
+  </div>
   <div v-if="notice" class="dispatch-notice" :class="{ error: noticeType === 'error' }" role="status">
     <span>{{ notice }}</span>
     <button type="button" @click="notice = ''">关闭</button>
@@ -942,18 +1054,18 @@ onBeforeUnmount(pausePage)
         <div><input id="file-keyword" v-model.trim="fileKeyword" name="file_keyword" autocomplete="off" :disabled="!selectedCatalog" placeholder="输入文件名或中间产品…" /><button type="submit" :disabled="!selectedCatalog || loading">{{ loading ? '查询中…' : '查询' }}</button></div>
       </form>
       <div class="download-batch-toolbar" aria-live="polite">
-        <span>已选择 <strong>{{ selectedFileCount }}</strong> / 20 项<small>可跨页选择</small></span>
+        <span>已选择 <strong>{{ selectedFileCount }}</strong> / 100 项<small>全选包含所有分页</small></span>
         <div><button type="button" :disabled="!selectedFileCount || pushBatch.saving" @click="clearSelectedFiles">清空选择</button><button class="primary" type="button" :disabled="!selectedFileCount || loading || pushBatch.saving || !systemStatus?.can_push" @click="openPushBatch">设置参数并派发</button></div>
       </div>
       <div class="dispatch-table-wrap" :aria-busy="loading">
-        <div v-if="loading" class="dispatch-loading" role="status">正在加载第 {{ requestedPage }} 页…</div>
+        <div v-if="loading" class="dispatch-loading" role="status">{{ selectingAll ? '正在选择所有分页的文件…' : `正在加载第 ${requestedPage} 页…` }}</div>
         <table v-content-table="pageActive" class="dispatch-table source-file-table" aria-label="文件查询结果">
           <thead>
-            <tr><th class="download-check-cell"><input type="checkbox" :checked="allVisibleFilesSelected" :indeterminate="someVisibleFilesSelected" :disabled="!selectableRows.length || loading || pushBatch.saving" aria-label="全选当前页可派发文件" @change="toggleVisibleFiles($event.target.checked)" /></th><th>文件名</th><th>命名检查</th><th>中间产品</th><th>文件格式</th><th>版本</th><th>操作人</th><th>操作人工号</th><th>操作时间</th><th class="file-download-cell">操作</th></tr>
+            <tr><th class="download-check-cell"><input type="checkbox" :checked="allCatalogFilesSelected" :indeterminate="someCatalogFilesSelected" :disabled="!total || !systemStatus?.can_push || loading || pushBatch.saving" aria-label="全选当前目录所有分页的可派发文件" @change="toggleCatalogFiles($event)" /></th><th>文件名</th><th>命名检查</th><th>中间产品</th><th>文件格式</th><th>版本</th><th>操作人</th><th>操作人工号</th><th>操作时间</th><th>派发状态</th><th class="file-download-cell">操作</th></tr>
           </thead>
           <tbody>
             <tr v-for="row in rows" :key="fileKey(row)" :class="{ selected: selectedFiles.has(fileKey(row)) }">
-              <td class="download-check-cell"><input type="checkbox" :checked="selectedFiles.has(fileKey(row))" :disabled="loading || pushBatch.saving || !row.path_available || !systemStatus?.can_push" :aria-label="`选择文件 ${row.document_no}`" @change="setFileSelected(row, $event.target.checked)" /></td>
+              <td class="download-check-cell"><input type="checkbox" :checked="selectedFiles.has(fileKey(row))" :disabled="loading || pushBatch.saving || !row.path_available || !systemStatus?.can_push" :aria-label="`选择文件 ${row.document_no}`" @change="setFileSelected(row, $event)" /></td>
               <td class="file-name-cell"><strong>{{ row.document_no }}</strong></td>
               <td><span class="filename-standard" :class="{ warning: !parseCuttingInstructionFilename(row.document_no) }">{{ parseCuttingInstructionFilename(row.document_no) ? '标准名' : '非标准名' }}</span></td>
               <td>{{ row.pbs_info || '--' }}</td>
@@ -962,9 +1074,10 @@ onBeforeUnmount(pausePage)
               <td>{{ row.operator || row.physical_file_operator || '--' }}</td>
               <td>{{ row.operator_job_no || row.physical_file_operator_job_no || '--' }}</td>
               <td>{{ formatTime(row.operate_time || row.physical_file_date) }}</td>
+              <td><template v-if="row.dispatch_status"><span class="dispatch-status" :class="row.dispatch_status.status">{{ row.dispatch_status.status_label }}</span><small class="dispatch-project-name">{{ row.dispatch_status.stage_label }}</small></template><span v-else class="dispatch-project-name">暂无记录</span></td>
               <td class="file-download-cell"><button type="button" :disabled="loading || pushBatch.saving || !row.path_available || !systemStatus?.can_push" :aria-label="`派发 ${row.document_no}`" @click="openSinglePush(row)">设置并派发</button><small v-if="!row.path_available">{{ row.path_error || '路径不可用' }}</small></td>
             </tr>
-            <tr v-if="!loading && rows.length === 0"><td colspan="10" class="dispatch-empty-row">{{ selectedCatalog ? appliedFileKeyword ? '当前目录没有匹配的文件' : '当前目录没有文件' : '请从左侧选择一个目录' }}</td></tr>
+            <tr v-if="!loading && rows.length === 0"><td colspan="11" class="dispatch-empty-row">{{ selectedCatalog ? appliedFileKeyword ? '当前目录没有匹配的文件' : '当前目录没有文件' : '请从左侧选择一个目录' }}</td></tr>
           </tbody>
         </table>
       </div>
@@ -988,7 +1101,7 @@ onBeforeUnmount(pausePage)
         </div>
         <div class="confirm-machine">
           <label for="dispatch-machine"><AppIcon name="settings" size="16" />目标机床</label>
-          <AppSelect id="dispatch-machine" v-model="dispatchForm.machineIp" :disabled="!machines.length || pushBatch.saving"><option value="" disabled>请选择目标机床</option><option v-for="machine in machines" :key="machine.machine_ip" :value="machine.machine_ip">{{ machineName(machine.machine_ip) }}（{{ machine.online ? '在线' : '待确认' }}）</option></AppSelect>
+          <AppSelect id="dispatch-machine" v-model="dispatchForm.machineIp" :disabled="!machines.length || pushBatch.saving"><option value="" disabled>请选择目标机床</option><option v-for="machine in machines" :key="machine.machine_ip" :value="machine.machine_ip">{{ machineName(machine.machine_ip) }} · {{ machine.machine_ip }}（{{ machine.online ? '在线' : '待确认' }}）</option></AppSelect>
           <small><i :class="{ ready: selectedMachine?.online }"></i>{{ selectedMachine ? `${machineName(selectedMachine.machine_ip)} · ${selectedMachine.online ? '机床在线' : '未从列表确认在线'}` : systemStatus?.file_source?.message || '请选择接收文件的机床' }}</small>
         </div>
         <button class="confirm-dispatch-button" type="button" :disabled="!selectedFileCount || loading || pushBatch.saving || !systemStatus?.can_push || !dispatchForm.machineIp" @click="openPushBatch"><AppIcon name="send" size="18" tone="light" />设置参数并派发</button>
@@ -1000,7 +1113,7 @@ onBeforeUnmount(pausePage)
     <div class="panel-title"><div><span class="dispatch-section-icon green"><AppIcon name="check" size="17" /></span><small>04</small><h2>派发记录</h2></div><p>文件准备 → 魔盒上传 → 机床指派，各阶段独立记录</p></div>
     <div v-if="historyError" class="global-error" role="alert"><span>派发记录读取失败：{{ historyError }}</span><button type="button" :disabled="historyLoading" @click="loadHistory()">重试</button></div>
     <div v-if="historyLoading && !histories.length" class="dispatch-empty-history" role="status"><span class="spinner dark" aria-hidden="true"></span><strong>正在读取派发记录</strong></div>
-    <div v-else-if="histories.length" class="dispatch-table-wrap"><table v-content-table="pageActive" class="dispatch-table history-table"><thead><tr><th>任务标识</th><th>文件名</th><th>目标机床</th><th>阶段 / 状态</th><th>魔盒UUID</th><th>失败原因</th><th>创建时间</th><th>操作</th></tr></thead><tbody><tr v-for="item in histories" :key="item.dispatch_id"><td><code>{{ item.task_identifier || item.dispatch_id }}</code></td><td>{{ item.document_no }}<small class="dispatch-project-name">数量 {{ item.quantity }}</small></td><td>{{ machineName(item.machine_ip) }}</td><td><span class="dispatch-status" :class="item.status">{{ item.status_label }}</span><small class="dispatch-project-name">{{ item.stage_label }}</small></td><td><code>{{ item.remote_task_id || '--' }}</code></td><td class="history-error">{{ item.last_error || '--' }}</td><td>{{ formatTime(item.created_at) }}</td><td><div class="history-actions"><button v-if="item.can_execute" type="button" :disabled="!!operatingId || historyLoading" @click="executeSaved(item)">{{ item.remote_task_id ? '重试指派' : '执行推送' }}</button><button v-if="item.can_cancel" type="button" class="danger" :disabled="!!operatingId || historyLoading" @click="cancelSaved(item)">取消指派</button><span v-if="!item.can_execute && !item.can_cancel">--</span></div></td></tr></tbody></table></div>
+    <div v-else-if="histories.length" class="dispatch-table-wrap"><table v-content-table="pageActive" class="dispatch-table history-table"><thead><tr><th>任务标识</th><th>文件名</th><th>目标机床</th><th>阶段 / 状态</th><th>魔盒UUID</th><th>失败原因</th><th>创建时间</th><th>操作</th></tr></thead><tbody><tr v-for="item in histories" :key="item.dispatch_id"><td><code>{{ item.task_identifier || item.dispatch_id }}</code></td><td>{{ item.document_no }}<small class="dispatch-project-name">数量 {{ item.quantity }}</small></td><td>{{ machineName(item.machine_ip) }}</td><td><span class="dispatch-status" :class="item.status">{{ item.status_label }}</span><small class="dispatch-project-name">{{ item.stage_label }}</small></td><td><code>{{ item.remote_task_id || '--' }}</code></td><td class="history-error">{{ item.last_error || '--' }}</td><td>{{ formatTime(item.created_at) }}</td><td><div class="history-actions"><button v-if="item.can_execute" type="button" :disabled="!!operatingId || historyLoading" @click="executeSaved(item)">{{ item.remote_task_id ? '重试指派' : '执行推送' }}</button><span v-if="!item.can_execute">--</span></div></td></tr></tbody></table></div>
     <div v-else-if="!historyError" class="dispatch-empty-history"><i><AppIcon name="send" size="20" /></i><strong>暂无派发记录</strong><span>从项目目录选择文件并确认后，即可直接派发。</span></div>
     <div v-if="historyTotal > 0" class="dispatch-pagination app-pagination" aria-label="派发记录分页">
       <div class="app-pagination__actions">
@@ -1013,7 +1126,7 @@ onBeforeUnmount(pausePage)
 
   <div v-if="selectedFileCount && !pushBatch.visible" class="mobile-selection-bar-spacer" aria-hidden="true"></div>
   <aside v-if="selectedFileCount && !pushBatch.visible" class="mobile-selection-bar" aria-label="已选文件操作">
-    <span><small>已选</small><strong>{{ selectedFileCount }}</strong><small>/ 20 项</small></span>
+    <span><small>已选</small><strong>{{ selectedFileCount }}</strong><small>/ 100 项</small></span>
     <button type="button" :disabled="pushBatch.saving" @click="clearSelectedFiles">清空</button>
     <button class="primary" type="button" :disabled="loading || pushBatch.saving || !systemStatus?.can_push" @click="openPushBatch"><AppIcon name="send" size="16" tone="light" />设置参数并派发</button>
   </aside>
@@ -1028,7 +1141,7 @@ onBeforeUnmount(pausePage)
 
         <div class="push-batch-content">
           <div class="push-batch-common">
-            <label><span>目标机床</span><AppSelect v-model="dispatchForm.machineIp" :disabled="pushBatch.saving || pushBatch.resultsReady"><option value="" disabled>请选择目标机床</option><option v-for="machine in machines" :key="machine.machine_ip" :value="machine.machine_ip">{{ machineName(machine.machine_ip) }}（{{ machine.online ? '在线' : '未从列表确认在线' }}）</option></AppSelect></label>
+            <label><span>目标机床</span><AppSelect v-model="dispatchForm.machineIp" :disabled="pushBatch.saving || pushBatch.resultsReady"><option value="" disabled>请选择目标机床</option><option v-for="machine in machines" :key="machine.machine_ip" :value="machine.machine_ip">{{ machineName(machine.machine_ip) }} · {{ machine.machine_ip }}（{{ machine.online ? '在线' : '未从列表确认在线' }}）</option></AppSelect></label>
             <label><span>统一加工数量</span><div><input v-model="bulkQuantity" name="bulk_quantity" type="number" min="1" max="10000" step="1" autocomplete="off" :disabled="pushBatch.saving || pushBatch.resultsReady" /><button type="button" :disabled="pushBatch.saving || pushBatch.resultsReady" @click="applyBulkQuantity">应用到全部</button></div></label>
             <div class="push-batch-summary"><strong>{{ pushBatch.items.length }}</strong><span>个文件</span><small v-if="!pushBatch.resultsReady">{{ invalidBatchCount ? `${invalidBatchCount} 项待补参数` : nonStandardBatchCount || overrideBatchCount ? `${nonStandardBatchCount} 项非标准名、${overrideBatchCount} 项参数不符待确认` : '全部为标准名' }}</small><small v-else>已推送 {{ batchStatusCounts.sent }} · 失败 {{ batchStatusCounts.failed }} · 重复 {{ batchStatusCounts.duplicate }}</small></div>
           </div>
@@ -1042,7 +1155,7 @@ onBeforeUnmount(pausePage)
               <tbody>
                 <tr v-for="item in pushBatch.items" :key="item.referenceKey" :class="{ invalid: !pushBatch.resultsReady && (batchItemError(item) || !item.parsed || hasNameMismatch(item)) }">
                   <td class="push-batch-file"><strong>{{ item.filename }}</strong><small>版本 {{ item.version }}</small><span v-if="item.parsed" class="recognized">已识别：{{ item.parsed.material }} · {{ item.parsed.thickness.toFixed(1) }} mm</span><span v-else class="manual">非标准名，请手工填写参数</span><span v-if="hasNameMismatch(item)" class="manual">加工参数与标准名不一致，请人工复核</span></td>
-                  <td><input v-model.trim="item.material" :name="`material_${item.referenceKey}`" :aria-label="`${item.filename} 材质`" autocomplete="off" :disabled="pushBatch.saving || pushBatch.resultsReady" maxlength="80" placeholder="例如：Q235B…" @input="invalidateBatchConfirmation(item)" /></td>
+                  <td><input v-model.trim="item.material" :name="`material_${item.referenceKey}`" :aria-label="`${item.filename} 材质`" autocomplete="off" :disabled="pushBatch.saving || pushBatch.resultsReady" maxlength="80" placeholder="例如：A0、B0、SS" @input="invalidateBatchConfirmation(item)" /></td>
                   <td><input v-model="item.thickness" :name="`thickness_${item.referenceKey}`" :aria-label="`${item.filename} 板厚`" autocomplete="off" :disabled="pushBatch.saving || pushBatch.resultsReady" type="number" inputmode="decimal" min="0.01" max="1000" step="0.01" placeholder="例如：12.0…" @input="invalidateBatchConfirmation(item)" /></td>
                   <td><input v-model="item.quantity" :name="`quantity_${item.referenceKey}`" :aria-label="`${item.filename} 数量`" autocomplete="off" :disabled="pushBatch.saving || pushBatch.resultsReady" type="number" inputmode="numeric" min="1" max="10000" step="1" @input="invalidateBatchConfirmation(item)" /></td>
                   <td class="push-batch-result"><span :class="item.status">{{ batchStatusLabel(item) }}</span><small v-if="item.dispatchId" :title="item.dispatchId">任务 {{ item.dispatchId }}</small><small v-if="item.error" :title="item.error">{{ item.error }}</small></td>
@@ -1192,7 +1305,6 @@ onBeforeUnmount(pausePage)
 .history-error { max-width:220px; color:#8a4c45; overflow-wrap:anywhere; }
 .history-actions { display:flex; align-items:center; gap:6px; }
 .history-actions button { min-height:30px; padding:0 9px; color:var(--blue); border:1px solid #b9ccd6; background:#fff; white-space:nowrap; font-size:10px; }
-.history-actions button.danger { color:#9b3f37; border-color:#e3b8b4; }
 .push-batch-backdrop { position:fixed; z-index:1000; inset:0; display:grid; place-items:center; padding:24px; background:rgba(13,39,55,.6); }
 .push-batch-dialog { width:min(1180px,100%); max-height:calc(100vh - 48px); display:flex; flex-direction:column; overflow:hidden; color:#1d3444; background:#fff; box-shadow:0 24px 70px rgba(5,25,38,.28); }
 .push-batch-header { display:flex; align-items:flex-start; justify-content:space-between; gap:24px; padding:20px 24px; color:#fff; background:#0b5678; }

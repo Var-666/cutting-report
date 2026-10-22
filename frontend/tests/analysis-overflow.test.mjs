@@ -10,7 +10,7 @@ test('report model text uses the same device alias without changing numeric form
   const formatter = source.slice(source.indexOf('function formatAnalysisText('), source.indexOf('function plainAnalysisText('))
   const format = new Function('formatDeviceDisplay', `${formatter}; return formatAnalysisText`)(formatDeviceDisplay)
   assert.equal(format('Cutter01电耗 1,234.567 kWh [F001]'), '20KW切割机电耗 1,234.6 kWh [F001]')
-  assert.equal(format('Cutter02电耗 12.345 kWh'), 'Cutter02电耗 12.3 kWh')
+  assert.equal(format('Cutter02电耗 12.345 kWh'), '30KW切割机电耗 12.3 kWh')
 })
 
 test('analysis text is visible by default without a collapsed-card action', () => {
@@ -38,7 +38,7 @@ test('analysis checks for newer report data and asks the current report to sync 
   const api = readFileSync(new URL('../src/api/reports.js', import.meta.url), 'utf8')
   assert.match(api, /error\.status = response\.status/)
   assert.match(api, /export function getAnalysisVersion[\s\S]*\/api\/v1\/analysis\/version/)
-  assert.match(source, /SOURCE_CHECK_INTERVAL_MS = 600_000/)
+  assert.match(source, /SOURCE_CHECK_INTERVAL_MS = 300_000/)
   assert.match(source, /async function revalidateSource\(\)/)
   const revalidateSource = source.match(/async function revalidateSource\(\)[\s\S]*?\n}\n\nasync function loadAnalysis/)[0]
   assert.match(revalidateSource, /getAnalysisVersion\(/)

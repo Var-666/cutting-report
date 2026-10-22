@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict'
 import { afterEach, test } from 'node:test'
 import { readFileSync } from 'node:fs'
-import { computed, ref } from 'vue'
+import vm from 'node:vm'
+import { computed, reactive, ref } from 'vue'
 import {
   getCuttingStatus,
+  executeCuttingDispatch,
+  createCuttingDispatchBatch,
   getCuttingDispatch,
   listCuttingCatalogs,
   listCuttingFiles,
@@ -20,6 +23,124 @@ afterEach(() => {
   reportCache.invalidate('cutting:')
 })
 
+function dispatchLifecycle({ status, projects, listMachines } = {}) {
+  const source = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
+  const calls = { status: [], projects: 0, history: 0 }
+  const timers = new Map()
+  let mounted, activated, timerId = 0
+  const context = vm.createContext({
+    ref, reactive, computed, AbortController,
+    useRoute: () => ({ query: {} }), useRouter: () => ({ replace() {} }), useDialogFocus() {},
+    onMounted: fn => { mounted = fn }, onActivated: fn => { activated = fn }, onDeactivated() {}, onBeforeUnmount() {},
+    getCuttingStatus: (_scope, options) => { calls.status.push(options); return status(options, calls.status.length) },
+    listCuttingProjects: (...args) => { calls.projects += 1; return projects ? projects(...args) : Promise.resolve({ items: [{ project_id: 'P1', project_name: 'P1' }] }) },
+    listCuttingCatalogs: async () => ({ tree: [] }),
+    listCuttingMachines: listMachines || (async () => ({ items: [] })),
+    listCuttingDispatches: async () => { calls.history += 1; return { items: [], total: 0 } },
+    window: {
+      setTimeout: (callback, delay) => { const id = ++timerId; timers.set(id, { callback, delay }); return id },
+      clearTimeout: id => timers.delete(id),
+    },
+  })
+  const script = source.match(/<script setup>([\s\S]*?)<\/script>/)[1].replace(/^import[\s\S]*?from ['"][^'"]+['"]\n/gm, '')
+  vm.runInContext(script + '\nthis.page = { initializePage, loadRuntimeStatus, loadMachines, pausePage, systemStatus, statusError, statusLoading, projectOptions, notice, machines };', context)
+  return { ...context.page, calls, timers, context, mounted: () => mounted(), activated: () => activated() }
+}
+
+const flushDispatch = () => new Promise(resolve => setImmediate(resolve))
+
+test('a slow readiness check cannot block the project directory or dispatch history after refresh', async () => {
+  let completeStatus
+  const page = dispatchLifecycle({ status: () => new Promise(resolve => { completeStatus = resolve }) })
+  const initial = page.initializePage()
+  await flushDispatch()
+  try {
+    assert.equal(page.projectOptions.value.length, 1, 'PDM browsing must not wait for the separate production SYS_CONFIG check')
+    assert.equal(page.calls.history, 1)
+  } finally {
+    completeStatus({ can_push: true, magic_box: { configured: false } })
+    await initial
+  }
+})
+
+test('a timed-out readiness check offers a fresh retry while keeping the loaded project directory', async () => {
+  const page = dispatchLifecycle({ status: ({ signal }, attempt) => attempt === 1
+    ? new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new DOMException('cancelled', 'AbortError')), { once: true }))
+    : Promise.resolve({ can_push: true, magic_box: { configured: false } }) })
+  const initial = page.initializePage()
+  await flushDispatch()
+  const timer = [...page.timers.values()][0]
+  assert.equal(timer.delay, 30_000)
+  timer.callback()
+  await initial
+  assert.match(page.statusError.value, /超时/)
+  assert.equal(page.statusLoading.value, false)
+  assert.equal(page.systemStatus.value, null, 'readiness failure must not leave dispatch enabled')
+  assert.equal(page.projectOptions.value.length, 1)
+  await page.loadRuntimeStatus({ force: true })
+  assert.equal(page.statusError.value, '')
+  assert.equal(page.systemStatus.value.can_push, true)
+  assert.equal(page.calls.status[1].force, true)
+  assert.equal(page.calls.projects, 1, 'retrying readiness must not reset directory or file selection')
+  assert.equal(page.timers.size, 0)
+})
+
+test('a failed readiness check does not present a false empty project list', async () => {
+  const page = dispatchLifecycle({ status: async () => { throw new Error('SYS_CONFIG unavailable') } })
+  await page.initializePage()
+  assert.equal(page.projectOptions.value.length, 1)
+  assert.equal(page.calls.history, 1)
+  assert.match(page.statusError.value, /SYS_CONFIG unavailable/)
+  assert.equal(page.systemStatus.value, null)
+  assert.equal(page.timers.size, 0)
+})
+
+test('returning after an interrupted first load retries the directory and ignores late old responses', async () => {
+  let oldStatus, oldProjects
+  const page = dispatchLifecycle({
+    status: (_options, attempt) => attempt === 1 ? new Promise(resolve => { oldStatus = resolve })
+      : Promise.resolve({ can_push: true, magic_box: { configured: false } }),
+    projects: () => page.calls.projects === 1 ? new Promise(resolve => { oldProjects = resolve })
+      : Promise.resolve({ items: [{ project_id: 'new', project_name: 'new' }] }),
+  })
+  const initial = page.initializePage()
+  await page.activated()
+  page.pausePage()
+  const resumed = page.activated()
+  await flushDispatch()
+  assert.equal(page.calls.projects, 2)
+  assert.equal(page.projectOptions.value[0].project_id, 'new')
+  oldStatus({ can_push: false })
+  oldProjects({ items: [{ project_id: 'old', project_name: 'old' }] })
+  await Promise.all([initial, resumed])
+  assert.equal(page.systemStatus.value.can_push, true)
+  assert.equal(page.projectOptions.value[0].project_id, 'new')
+  assert.equal(page.statusError.value, '')
+})
+
+test('a completed empty project list is preserved on reactivation', async () => {
+  const page = dispatchLifecycle({ status: async () => ({ can_push: false }), projects: async () => ({ items: [] }) })
+  await page.initializePage()
+  await page.activated()
+  page.pausePage()
+  await page.activated()
+  assert.equal(page.calls.projects, 1)
+  assert.equal(page.calls.status.length, 2)
+})
+
+test('cancelling machine status cannot write a stale fallback or error notice after leaving', async () => {
+  let fail
+  const page = dispatchLifecycle({ listMachines: () => new Promise((_resolve, reject) => { fail = reject }) })
+  page.systemStatus.value = { magic_box: { configured: true, machine_ips: ['10.147.1.40'] } }
+  const controller = new AbortController()
+  const pending = page.loadMachines({ signal: controller.signal })
+  controller.abort()
+  fail(new DOMException('cancelled', 'AbortError'))
+  await pending
+  assert.equal(page.machines.value.length, 0)
+  assert.equal(page.notice.value, '')
+})
+
 function historyPagination() {
   const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
   const source = view.slice(view.indexOf('async function loadHistory('), view.indexOf('async function loadMachines('))
@@ -32,6 +153,16 @@ function historyPagination() {
   const functions = new Function(...Object.keys(bindings), `let historyController = null; ${source}; return { loadHistory, changeHistoryPage }`)(...Object.values(bindings))
   return { ...bindings, ...functions }
 }
+
+test('dispatch history removes the ineffective cancel action while keeping safe execution retries', () => {
+  const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
+  const history = view.slice(view.indexOf('<section class="panel dispatch-history-panel"'), view.indexOf('<div v-if="selectedFileCount && !pushBatch.visible" class="mobile-selection-bar-spacer"'))
+
+  assert.doesNotMatch(view, /取消指派|cancelSaved|cancelCuttingDispatch|can_cancel/)
+  assert.match(history, /v-if="item.can_execute"[^>]*@click="executeSaved\(item\)"/)
+  assert.match(history, /item.remote_task_id \? '重试指派' : '执行推送'/)
+  assert.match(history, /<span v-if="!item.can_execute">--<\/span>/)
+})
 
 test('dispatch history pages through all records in ten-row pages independently of file selection', async () => {
   const calls = []
@@ -169,7 +300,16 @@ test('unified dispatch page loads push readiness status', async () => {
   assert.match(calls[0], /^\/api\/v1\/cutting\/status\?scope=push$/)
 })
 
-test('machine power names identify the correct targets while dispatch still uses their IPs', () => {
+test('an explicit readiness retry bypasses a cached unconfigured status', async () => {
+  let requests = 0
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ success: true, data: { can_push: ++requests > 1 } }) })
+  assert.equal((await getCuttingStatus('push')).can_push, false)
+  assert.equal((await getCuttingStatus('push')).can_push, false)
+  assert.equal((await getCuttingStatus('push', { force: true })).can_push, true)
+  assert.equal(requests, 2)
+})
+
+test('machine selectors show Chinese names and IPs while dispatch still uses their IPs', () => {
   const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
   const source = view.match(/function machineName\(machineIp\) \{[\s\S]*?\n\}/)[0]
   const machines = { value: [{ machine_ip: '10.147.1.41', server_name: '其他机床' }] }
@@ -183,7 +323,8 @@ test('machine power names identify the correct targets while dispatch still uses
   assert.equal((view.match(/\{\{ machineName\(machine.machine_ip\) \}\}/g) || []).length, 2)
   assert.match(view, /machine_ip: dispatchForm.machineIp/)
   assert.match(view, /<td>\{\{ machineName\(item.machine_ip\) \}\}<\/td>/)
-  assert.doesNotMatch(view, /目标机床 IP|<th>机床IP<\/th>|\{\{ machine.machine_ip \}\}/)
+  assert.equal((view.match(/\{\{ machineName\(machine.machine_ip\) \}\} · \{\{ machine.machine_ip \}\}（/g) || []).length, 2)
+  assert.doesNotMatch(view, /目标机床 IP|<th>机床IP<\/th>/)
 })
 
 test('file dispatch page uses the recursive PDM directory tree without condition builders', () => {
@@ -194,7 +335,7 @@ test('file dispatch page uses the recursive PDM directory tree without condition
   assert.match(view, /listCuttingProjects/)
   assert.match(view, /listCuttingCatalogs/)
   assert.match(view, /listCuttingFiles/)
-  assert.match(view, /getCuttingStatus\('push', \{ signal \}\)/)
+  assert.match(view, /getCuttingStatus\('push', \{ signal: controller\.signal, force \}\)/)
   assert.doesNotMatch(view, /defineProps|isDownload/)
   assert.match(view, /项目目录/)
   assert.match(view, /当前位置/)
@@ -210,7 +351,7 @@ test('file dispatch page uses the recursive PDM directory tree without condition
   assert.doesNotMatch(view, /<option value="" disabled>\{\{ projectLoading/)
   assert.match(view, /\.project-search input,\.project-search \.app-select \{ height:36px;[^}]*font-size:12px;/)
   assert.match(view, /\.project-search \.app-select__trigger \{ padding:0 10px; \}/)
-  assert.match(view, /文件名<\/th><th>命名检查<\/th><th>中间产品<\/th><th>文件格式<\/th><th>版本<\/th><th>操作人<\/th><th>操作人工号<\/th><th>操作时间<\/th><th class="file-download-cell">操作/)
+  assert.match(view, /文件名<\/th><th>命名检查<\/th><th>中间产品<\/th><th>文件格式<\/th><th>版本<\/th><th>操作人<\/th><th>操作人工号<\/th><th>操作时间<\/th><th>派发状态<\/th><th class="file-download-cell">操作/)
   assert.doesNotMatch(view, /<th>切割状态<\/th>/)
   assert.match(view, /fileExtension\(row\)/)
   assert.doesNotMatch(view, /ConditionBuilder|SortBuilder|searchCuttingFiles|组合条件查询/)
@@ -235,17 +376,281 @@ test('project-shaped catalog root is hidden to avoid showing the project twice',
   assert.match(view, /roots = roots\[0\]\.children/)
 })
 
-test('PDM file table supports up to twenty selections and direct batch dispatch', () => {
+test('file dispatch status is displayed after operation time with the history badge and empty state', () => {
+  const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
+  assert.match(view, /<th>操作时间<\/th><th>派发状态<\/th><th class="file-download-cell">操作/)
+  assert.match(view, /class="dispatch-status" :class="row.dispatch_status.status"/)
+  assert.match(view, /row.dispatch_status.status_label/)
+  assert.match(view, /row.dispatch_status.stage_label/)
+  assert.match(view, /v-else class="dispatch-project-name">暂无记录/)
+  assert.match(view, /colspan="11" class="dispatch-empty-row"/)
+  assert.match(view, /Promise.allSettled\(\[loadHistory\(\), refreshVisibleFileStatuses\(\)\]\)/)
+})
+
+test('file status refresh preserves selections and ignores responses after a directory switch', async () => {
+  const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
+  const source = view.slice(view.indexOf('async function refreshVisibleFileStatuses('), view.indexOf('async function refreshBatchHistory('))
+  let complete
+  const calls = []
+  const file = { document_id: 'doc', version_id: 'v1', normalized_path: 'file.gen' }
+  const bindings = {
+    selectedProject: ref({ project_id: 'P1' }), selectedCatalog: ref({ catalog_id: 'C1' }),
+    pageActive: ref(true), appliedFileKeyword: ref('307C'), page: ref(3), pageSize: 20,
+    rows: ref([file]), fileKey: row => JSON.stringify([row.document_id, row.version_id, row.normalized_path]),
+    listCuttingFiles: (query, options) => { calls.push({ query, options }); return new Promise(resolve => { complete = resolve }) },
+  }
+  const methods = new Function(...Object.keys(bindings), `let querySequence = 0; ${source}; return { refreshVisibleFileStatuses, switchDirectory: () => { querySequence += 1 } }`)(...Object.values(bindings))
+  const pending = methods.refreshVisibleFileStatuses()
+  const status = { status: 'sent', status_label: '已派发', stage_label: '推送完成' }
+  complete({ items: [{ ...file, dispatch_status: status }] })
+  await pending
+  assert.deepEqual(bindings.rows.value[0].dispatch_status, status)
+  assert.deepEqual(calls[0], { query: { projectId: 'P1', catalogId: 'C1', keyword: '307C', page: 3, pageSize: 20 }, options: { force: true } })
+  const late = methods.refreshVisibleFileStatuses()
+  methods.switchDirectory()
+  complete({ items: [{ ...file, dispatch_status: null }] })
+  await late
+  assert.deepEqual(bindings.rows.value[0].dispatch_status, status)
+})
+
+test('dispatch mutations invalidate cached file status even when execution fails', async () => {
+  let reads = 0
+  globalThis.fetch = async (url, options) => {
+    if (options.method === 'POST') {
+      if (String(url).endsWith('/execute')) throw new Error('推送失败')
+      return { ok: true, json: async () => ({ success: true, data: {} }) }
+    }
+    reads += 1
+    return { ok: true, json: async () => ({ success: true, data: { items: [], total: reads } }) }
+  }
+  const query = { projectId: 'P1', catalogId: 'C1' }
+  await listCuttingFiles(query)
+  await listCuttingFiles(query)
+  assert.equal(reads, 1)
+  await createCuttingDispatchBatch({ items: [] })
+  await listCuttingFiles(query)
+  assert.equal(reads, 2)
+  await assert.rejects(executeCuttingDispatch('task1'), /推送失败/)
+  await listCuttingFiles(query)
+  assert.equal(reads, 3)
+  await listCuttingFiles(query, { force: true })
+  assert.equal(reads, 4)
+})
+
+function fileSelection(files = [], { total = files.length, listFiles } = {}) {
+  const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
+  const states = view.slice(view.indexOf('const selectableRows ='), view.indexOf('const selectedPath ='))
+  const handlers = view.slice(view.indexOf('function fileKey('), view.indexOf('function openSinglePush('))
+  const notices = []
+  const bindings = {
+    computed, rows: ref(files), total: ref(total), selectedFiles: ref(new Map()),
+    catalogSelectionRows: ref(null), selectingAll: ref(false), loading: ref(false),
+    pushBatch: { saving: false }, pageActive: ref(true),
+    selectedProject: ref({ project_id: 'P1' }), selectedCatalog: ref({ catalog_id: 'C1' }),
+    appliedFileKeyword: ref(''), listCuttingFiles: listFiles,
+    systemStatus: ref({ can_push: true }), showNotice: text => notices.push(text),
+  }
+  const selection = new Function(...Object.keys(bindings), `let querySequence = 0, directoryController;
+    function beginDirectoryRequest() {
+      directoryController?.abort(); directoryController = new AbortController(); return directoryController.signal
+    }
+    ${states}\n${handlers}\nreturn { fileKey, setFileSelected, clearSelectedFiles, toggleCatalogFiles, allCatalogFilesSelected, someCatalogFilesSelected }`)(...Object.values(bindings))
+  return { ...bindings, ...selection, notices }
+}
+
+const selectableFile = (id, documentNo = 'S806C080A001.gen') => ({ document_id: String(id), version_id: 'v1', normalized_path: `files/${id}.gen`, document_no: documentNo, path_available: true })
+const checkboxEvent = checked => ({ target: { checked, indeterminate: false } })
+
+test('select-all includes nonstandard names and skips unavailable paths; clearing affects the loaded directory scope', async () => {
+  const files = [selectableFile(1), selectableFile(2, 'custom-cutting.gen'), { ...selectableFile(3), path_available: false }]
+  const selection = fileSelection(files)
+  const otherPage = selectableFile(4)
+  selection.selectedFiles.value.set(selection.fileKey(otherPage), otherPage)
+  const event = checkboxEvent(true)
+  await selection.toggleCatalogFiles(event)
+  assert.equal(selection.selectedFiles.value.size, 3)
+  assert.equal(selection.selectedFiles.value.has(selection.fileKey(files[1])), true)
+  assert.equal(event.target.checked, true)
+  assert.equal(event.target.indeterminate, false)
+  event.target.checked = false
+  await selection.toggleCatalogFiles(event)
+  assert.equal(selection.selectedFiles.value.size, 1)
+  assert.equal(selection.selectedFiles.value.has(selection.fileKey(otherPage)), true)
+})
+
+test('a full selection on another page cannot leave a false checked header or row', async () => {
+  const selection = fileSelection([selectableFile(101, 'custom-cutting.gen')])
+  for (let i = 1; i <= 100; i += 1) selection.setFileSelected(selectableFile(i), checkboxEvent(true))
+  assert.deepEqual(selection.notices, [], 'selecting exactly 100 files must not show a limit warning')
+  const header = checkboxEvent(true)
+  await selection.toggleCatalogFiles(header)
+  assert.equal(header.target.checked, false)
+  assert.equal(header.target.indeterminate, true)
+  const row = checkboxEvent(true)
+  selection.setFileSelected(selection.rows.value[0], row)
+  assert.equal(row.target.checked, false)
+  assert.equal(selection.selectedFiles.value.size, 100)
+  assert.match(selection.notices.at(-1), /已达 100 项上限/)
+})
+
+test('select-all accepts exactly 100 files quietly and warns only for an extra file', async () => {
+  const selection = fileSelection(Array.from({ length: 100 }, (_, i) => selectableFile(i)))
+  const header = checkboxEvent(true)
+  await selection.toggleCatalogFiles(header)
+  assert.equal(selection.selectedFiles.value.size, 100)
+  assert.equal(header.target.checked, true)
+  assert.deepEqual(selection.notices, [])
+  const extra = checkboxEvent(true)
+  selection.setFileSelected(selectableFile(101), extra)
+  assert.equal(selection.selectedFiles.value.size, 100)
+  assert.equal(extra.target.checked, false)
+  assert.match(selection.notices.at(-1), /已达 100 项上限/)
+})
+
+test('select-all shows partial state when only remaining capacity fits and preserves off-page selections', async () => {
+  const selection = fileSelection([selectableFile(101), selectableFile(102, 'custom-cutting.gen'), selectableFile(103)])
+  for (let i = 1; i <= 98; i += 1) selection.setFileSelected(selectableFile(i), checkboxEvent(true))
+  const header = checkboxEvent(true)
+  await selection.toggleCatalogFiles(header)
+  assert.equal(selection.selectedFiles.value.size, 100)
+  assert.equal(header.target.checked, false)
+  assert.equal(header.target.indeterminate, true)
+  header.target.checked = false
+  await selection.toggleCatalogFiles(header)
+  assert.equal(selection.selectedFiles.value.size, 98)
+  assert.equal(header.target.checked, false)
+  assert.equal(header.target.indeterminate, true)
+})
+
+test('duplicate versions cannot leave false checkbox state or replace a previously selected version', async () => {
+  const original = selectableFile(1)
+  const changedVersion = { ...original, version_id: 'v2', normalized_path: 'files/1-v2.gen' }
+  const selection = fileSelection([changedVersion])
+  selection.setFileSelected(original, checkboxEvent(true))
+  const header = checkboxEvent(true)
+  await selection.toggleCatalogFiles(header)
+  assert.equal(header.target.checked, false)
+  const row = checkboxEvent(true)
+  selection.setFileSelected(changedVersion, row)
+  assert.equal(row.target.checked, false)
+  assert.equal(selection.selectedFiles.value.size, 1)
+  assert.equal(selection.selectedFiles.value.has(selection.fileKey(original)), true)
+  assert.match(selection.notices.at(-1), /只能选择一个版本/)
+})
+
+test('directory select-all loads every page with the applied filter and stays selected after paging', async () => {
+  const files = Array.from({ length: 42 }, (_, i) => selectableFile(i))
+  const calls = []
+  const selection = fileSelection(files.slice(40), { total: 42, listFiles: async (query) => {
+    calls.push(query)
+    return { items: files, total: 42 }
+  } })
+  selection.appliedFileKeyword.value = '307C'
+  const header = checkboxEvent(true)
+  await selection.toggleCatalogFiles(header)
+  assert.equal(selection.selectedFiles.value.size, 42)
+  assert.equal(header.target.checked, true)
+  assert.deepEqual(calls, [{ projectId: 'P1', catalogId: 'C1', keyword: '307C', page: 1, pageSize: 100 }])
+  selection.rows.value = files.slice(0, 20)
+  assert.equal(selection.allCatalogFilesSelected.value, true)
+  selection.setFileSelected(files[41], checkboxEvent(false))
+  assert.equal(selection.allCatalogFilesSelected.value, false)
+  assert.equal(selection.someCatalogFilesSelected.value, true)
+  await selection.toggleCatalogFiles(checkboxEvent(true))
+  assert.equal(selection.selectedFiles.value.size, 42)
+  await selection.toggleCatalogFiles(checkboxEvent(false))
+  assert.equal(selection.selectedFiles.value.size, 0)
+  assert.equal(calls.length, 1)
+})
+
+test('directory select-all fetches beyond 100 rows, skips unavailable paths and duplicate versions, and reports the limit', async () => {
+  const files = Array.from({ length: 103 }, (_, i) => selectableFile(i))
+  files[1] = { ...files[0], version_id: 'v2' }
+  files[2].path_available = false
+  const pages = []
+  const selection = fileSelection(files.slice(0, 20), { total: files.length, listFiles: async ({ page, pageSize }) => {
+    pages.push(page)
+    return { items: files.slice((page - 1) * pageSize, page * pageSize), total: files.length }
+  } })
+  const header = checkboxEvent(true)
+  await selection.toggleCatalogFiles(header)
+  assert.deepEqual(pages, [1, 2])
+  assert.equal(selection.selectedFiles.value.size, 100)
+  assert.equal(selection.selectedFiles.value.has(selection.fileKey(files[1])), false)
+  assert.equal(selection.selectedFiles.value.has(selection.fileKey(files[2])), false)
+  assert.equal(header.target.checked, false)
+  assert.equal(header.target.indeterminate, true)
+  assert.match(selection.notices.at(-1), /另有 2 项/)
+})
+
+test('failed directory select-all preserves previous selections without committing partial pages', async () => {
+  const files = Array.from({ length: 101 }, (_, i) => selectableFile(i))
+  const selection = fileSelection(files.slice(0, 20), { total: files.length, listFiles: async ({ page }) => {
+    if (page === 2) throw new Error('网络中断')
+    return { items: files.slice(0, 100), total: files.length }
+  } })
+  selection.setFileSelected(files[0], checkboxEvent(true))
+  const header = checkboxEvent(true)
+  const pending = selection.toggleCatalogFiles(header)
+  assert.equal(selection.loading.value, true)
+  await pending
+  assert.equal(selection.loading.value, false)
+  assert.equal(selection.selectedFiles.value.size, 1)
+  assert.equal(header.target.checked, false)
+  assert.equal(header.target.indeterminate, true)
+  assert.match(selection.notices.at(-1), /全选失败.*网络中断/)
+})
+
+test('clearing or switching directory during select-all discards late results and resets the scope', async () => {
+  let complete, signal
+  const files = Array.from({ length: 42 }, (_, i) => selectableFile(i))
+  const selection = fileSelection(files.slice(0, 20), { total: 42, listFiles: (_query, options) => {
+    signal = options.signal
+    return new Promise(resolve => { complete = resolve })
+  } })
+  const pending = selection.toggleCatalogFiles(checkboxEvent(true))
+  selection.clearSelectedFiles()
+  selection.selectedCatalog.value = { catalog_id: 'C2' }
+  complete({ items: files, total: 42 })
+  await pending
+  assert.equal(signal.aborted, true)
+  assert.equal(selection.selectedFiles.value.size, 0)
+  assert.equal(selection.catalogSelectionRows.value, null)
+  assert.equal(selection.loading.value, false)
+})
+
+test('empty and unavailable-only pages do not falsely indicate full directory selection', async () => {
+  const empty = fileSelection([])
+  const header = checkboxEvent(true)
+  await empty.toggleCatalogFiles(header)
+  assert.equal(header.target.checked, false)
+  assert.equal(header.target.indeterminate, false)
+  const available = selectableFile(21)
+  const selection = fileSelection([{ ...selectableFile(1), path_available: false }], {
+    total: 21, listFiles: async () => ({ items: [available], total: 1 }),
+  })
+  await selection.toggleCatalogFiles(checkboxEvent(true))
+  assert.equal(selection.selectedFiles.value.size, 1)
+  assert.equal(selection.allCatalogFilesSelected.value, true)
+  const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
+  assert.match(view, /:disabled="!total \|\| !systemStatus\?\.can_push \|\| loading \|\| pushBatch\.saving"/)
+  assert.match(view, /正在选择所有分页的文件/)
+})
+
+test('PDM file table supports up to one hundred selections and direct batch dispatch', () => {
   const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
 
   assert.match(view, /const selectedFiles = ref\(new Map\(\)\)/)
-  assert.match(view, /function toggleVisibleFiles/)
-  assert.match(view, /next\.size >= 20/)
-  assert.match(view, /aria-label="全选当前页可派发文件"/)
+  assert.match(view, /function toggleCatalogFiles/)
+  assert.match(view, /next\.size >= 100/)
+  assert.match(view, /aria-label="全选当前目录所有分页的可派发文件"/)
+  assert.match(view, /@change="toggleCatalogFiles\(\$event\)"/)
+  assert.match(view, /@change="setFileSelected\(row, \$event\)"/)
+  assert.doesNotMatch(view, /selectedFileCount >= 100" role="status"/)
   assert.match(view, /:aria-label="`选择文件 \$\{row\.document_no\}`"/)
   assert.match(view, /设置参数并派发/)
   assert.match(view, /@click="openSinglePush\(row\)"/)
-  assert.match(view, /colspan="10"/)
+  assert.match(view, /colspan="11"/)
   assert.doesNotMatch(view, /downloadCuttingFile|保存到系统|listCuttingDownloads/)
   assert.match(view, /class="dispatch-table source-file-table"/)
 })
@@ -295,13 +700,24 @@ test('standard cutting instruction names provide material and thickness for disp
     intermediateProduct: '101C',
     thickness: 10,
     materialCode: 'A0',
-    material: 'A',
+    material: 'A0',
     sequence: '01',
   })
-  assert.equal(parseCuttingInstructionFilename('s201c090a204.txt').material, 'AH32')
-  assert.equal(parseCuttingInstructionFilename('W102C125A606.GEN').material, 'AH36')
-  assert.equal(parseCuttingInstructionFilename('L301C080SS12.GEN').material, '双相不锈钢')
+  assert.equal(parseCuttingInstructionFilename('s201c090a204.txt').material, 'a2')
+  assert.equal(parseCuttingInstructionFilename('W102C125A606.GEN').material, 'A6')
+  assert.equal(parseCuttingInstructionFilename('L301C080SS12.GEN').material, 'SS')
   assert.equal(parseCuttingInstructionFilename('L301C080SS12.GEN').thickness, 8)
+})
+
+test('confirmed Z-prefixed files use standard material and thickness without manual input', () => {
+  for (let sequence = 1; sequence <= 5; sequence += 1) {
+    const filename = `Z806C080A0${String(sequence).padStart(2, '0')}.gen`
+    assert.deepEqual(parseCuttingInstructionFilename(filename), {
+      instructionType: 'Z', instructionTypeLabel: 'Z', intermediateProduct: '806C',
+      thickness: 8, materialCode: 'A0', material: 'A0', sequence: String(sequence).padStart(2, '0'),
+    })
+    assert.equal(parseCuttingInstructionFilename(filename.toLowerCase()).thickness, 8)
+  }
 })
 
 test('non-standard cutting instruction names are ignored', () => {
@@ -311,8 +727,12 @@ test('non-standard cutting instruction names are ignored', () => {
     'P101C000A001.GEN',
     'P403P08A601.GEN',
     'P403P080.GEN',
-    'P101C100A701.GEN',
+    'P101C100A.GEN',
     'P101C100A001.PDF',
+    'Z806C000A001.gen',
+    'Z806C080B.gen',
+    'Z806C080A001.pdf',
+    'X806C080A001.gen',
   ]) {
     assert.equal(parseCuttingInstructionFilename(filename), null)
   }
@@ -321,19 +741,39 @@ test('non-standard cutting instruction names are ignored', () => {
 test('dispatch parameters depend on material and thickness, not the product code or suffix', () => {
   for (const filename of ['P403P080A601', 'P403P080A601B.gen', 'P403P080A6', 'P403P080A600.gen', 'P12X080A601AB.txt', 'folder\\P403P080A601C.GEN']) {
     const parsed = parseCuttingInstructionFilename(filename)
-    assert.equal(parsed.material, 'AH36', filename)
+    assert.equal(parsed.material, 'A6', filename)
     assert.equal(parsed.thickness, 8, filename)
   }
   const parsed = parseCuttingInstructionFilename('p403p135a001b.gen')
-  assert.equal(parsed.material, 'A')
+  assert.equal(parsed.material, 'a0')
   assert.equal(parsed.thickness, 13.5)
   assert.equal(parseCuttingInstructionFilename('P403P080A601B135A001.gen').thickness, 8, 'the first parameter prefix wins')
+})
+
+test('any two-character material code is filled verbatim without a grade mapping or manual override', () => {
+  const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
+  const createSource = view.slice(view.indexOf('function createPushBatchItem('), view.indexOf('function batchItemError('))
+  const mismatchSource = view.slice(view.indexOf('function hasNameMismatch('), view.indexOf('function openPushBatch('))
+  const { createPushBatchItem, hasNameMismatch } = new Function('parseCuttingInstructionFilename', 'fileKey',
+    `${createSource}\n${mismatchSource}\nreturn {createPushBatchItem, hasNameMismatch}`)(parseCuttingInstructionFilename, file => file.document_id)
+  for (const code of ['A0', 'A2', 'A6', 'SS', 'B0', 'A7', 'X9', '7X', '00', 'q7', '@0', '中钢', '🧪0']) {
+    const filename = `S803C320${code}01L.gen`
+    const parsed = parseCuttingInstructionFilename(filename)
+    assert.equal(parsed.materialCode, code)
+    assert.equal(parsed.material, code)
+    assert.equal(parsed.thickness, 32)
+    const item = createPushBatchItem({ document_no: filename, document_id: code, normalized_path: filename })
+    assert.equal(item.material, code)
+    assert.equal(hasNameMismatch(item), false)
+    assert.equal(hasNameMismatch({ ...item, material: `${code}-changed` }), true)
+  }
+  assert.equal(parseCuttingInstructionFilename('S306C095A602L.gen').material, 'A6')
 })
 
 test('direct dispatch builds independent PDM references and executes tasks sequentially', () => {
   const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
 
-  assert.match(view, /next\.size >= 20/)
+  assert.match(view, /next\.size >= 100/)
   assert.match(view, /function createPushBatchItem\(file\)/)
   assert.match(view, /const parsed = parseCuttingInstructionFilename\(filename\)/)
   assert.match(view, /material: parsed\?\.material \|\| ''/)

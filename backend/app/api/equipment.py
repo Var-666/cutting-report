@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from app.api.devices import device_state, device_settings
 from app.api.auth import require_admin
 from app.config import settings
 from app.database.sqlserver import SqlServerConfigurationError
@@ -24,6 +25,9 @@ router = APIRouter(
 )
 
 
+router.dependencies.append(Depends(device_state))
+
+
 @router.get("")
 def get_equipment_report(
     request: Request,
@@ -33,9 +37,9 @@ def get_equipment_report(
     try:
         selected_date = report_date
         if selected_date is None:
-            energy = request.app.state.energy_service.enrich([])
+            energy = device_state(request).energy_service.enrich([])
             today = datetime.now(ZoneInfo(settings.timezone)).date()
-            selected_date = request.app.state.query_service.latest_production_date(
+            selected_date = device_state(request).query_service.latest_production_date(
                 today, force=refresh
             )
         if selected_date is None:
@@ -52,10 +56,10 @@ def get_equipment_report(
                 "request_id": request.state.request_id,
             }
 
-        equipment_data = request.app.state.query_service.fetch_equipment_data(
+        equipment_data = device_state(request).query_service.fetch_equipment_data(
             ReportFilter(report_date=selected_date), force=refresh
         )
-        energy = request.app.state.energy_service.enrich(equipment_data.records, force=refresh)
+        energy = device_state(request).energy_service.enrich(equipment_data.records, force=refresh)
         records = energy.records
     except SqlRequestCancelled:
         raise

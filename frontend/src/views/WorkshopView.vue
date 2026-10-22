@@ -22,6 +22,7 @@ import WorkshopStructureCharts from '../components/WorkshopStructureCharts.vue'
 import { reportToday, taskProductionDate } from '../api/reportDates.js'
 import { formatChineseDate, formatChineseDateTime } from '../utils/dateDisplay.js'
 import { useDialogFocus } from '../composables/useDialogFocus.js'
+import { useDeviceSwitchQuery } from '../composables/useDeviceSwitchQuery.js'
 import { mergeOwnedQuery, queryChoice, queryDateRange, queryPositiveInteger, queryText, sameRouteQuery } from '../utils/reportRouteState.js'
 
 const props = defineProps({
@@ -153,6 +154,12 @@ function routeStateQuery() {
     chart: chartType.value === 'bar_line' ? '' : chartType.value,
   })
 }
+
+useDeviceSwitchQuery(isWorker.value ? 'worker-tasks' : 'workshop-report', () => ({
+  ...routeStateQuery(),
+  start: isWorker.value ? filters.reportDate : appliedRouteState.startDate,
+  end: isWorker.value ? filters.reportDate : appliedRouteState.endDate,
+}))
 
 async function syncRouteState() {
   if (isWorker.value || route.name !== 'workshop-report') return
@@ -528,6 +535,7 @@ async function applyRequestedRouteState(state) {
   restoringRouteState = true
   chartType.value = state.chartType
   if (state.range) {
+    if (isWorker.value) filters.reportDate = state.range.start
     filters.startDate = state.range.start
     filters.endDate = state.range.end
     filters.projectName = state.projectName
@@ -538,7 +546,7 @@ async function applyRequestedRouteState(state) {
 }
 
 async function initializeReport({ restoreQuery = false } = {}) {
-  const requested = restoreQuery && !isWorker.value ? requestedRouteState() : null
+  const requested = restoreQuery ? requestedRouteState() : null
   const { sequence, signal } = beginRequest()
   loading.value = true
   error.value = ''
@@ -607,7 +615,7 @@ function pausePage() {
 }
 
 onMounted(async () => {
-  await initializeReport({ restoreQuery: !isWorker.value })
+  await initializeReport({ restoreQuery: true })
   routeStateReady = true
   startRefreshTimer()
 })
@@ -616,7 +624,7 @@ onActivated(async () => {
   startRefreshTimer()
   if (routeStateReady && await restoreRouteState()) return
   if (!result.value.report && !loading.value) {
-    await initializeReport({ restoreQuery: !isWorker.value })
+    await initializeReport({ restoreQuery: true })
     return
   }
   if (isWorker.value && result.value.report && !loading.value && !batchConfirmation.visible && !batchConfirmation.saving) {

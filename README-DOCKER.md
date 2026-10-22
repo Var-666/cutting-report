@@ -46,8 +46,8 @@ docker compose up -d --build --wait --wait-timeout 180
 ```
 
 模板默认是显式演示模式。正式使用请设置 `APP_DEMO_MODE=false`，并将
-`APP_DATA_SOURCE_MODE` 改为原有的 `sqlserver` 或 `excel`。
-SQL Server 连接沿用现场配置；Excel 模式需自行将 `TASK.xlsx` 放入 `docker/input`。
+`APP_DATA_SOURCE_MODE` 设置为 `sqlserver`，SQL Server 连接沿用现场配置。
+Excel 数据源已移除；旧 Excel 部署须先配置生产库只读连接，再重启新版程序。原始 Excel 资料保留备份，无需挂载输入目录。
 本包不带生产 Excel、历史数据库或密码。任务能耗明细需要从生产数据源读取任务实际
 开始、结束时间；月度每日总耗量由能管接口查询并保存在系统数据卷中。
 
@@ -83,6 +83,19 @@ ENERGY_ALLOW_INTERPOLATION=true
 只执行 `docker compose restart` 不会更新由 `.env` 注入的环境变量。
 若刚覆盖了程序文件，则执行前述带 `--build` 的升级命令。
 管理页面保存的数据库配置在数据卷 `data/settings.env` 中，仍优先于 `.env` 的对应数据库字段。
+
+双设备部署的模型参数建议同步为：
+
+```env
+LLM_MAX_CONCURRENT=10
+LLM_TIMEOUT_SECONDS=180
+LLM_QUEUE_TIMEOUT_SECONDS=120
+```
+
+定时报表可使用全部10路模型并发；告警等其他后台分析最多占用一半，前台排队时优先处理前台。
+响应时限为180秒，连接超时最多10秒。仅HTTP429自动重试两次：优先遵守Retry-After，否则等待约5秒、10秒并加少量随机延迟。退避不占并发，重试仍受同轮总预算限制，每次尝试分别记录用量，下一轮定时任务独立启动。
+已有 `.env` 或 `data/settings.env` 中的旧值会覆盖代码默认值，升级时需核对；
+更新配置和代码后按上述方式构建并重建容器。
 
 管理员进入“设备报表”：
 

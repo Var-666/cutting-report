@@ -80,17 +80,12 @@ const previewColumns = computed(() => {
   return first ? Object.keys(first) : []
 })
 const sqlResultColumns = computed(() => sqlResult.value?.columns || [])
-const sourceName = computed(() => ({ demo: '演示数据', excel: 'TASK.xlsx', sqlserver: 'SQL Server' }[status.value?.mode] || '正在检查') )
+const sourceName = computed(() => ({ demo: '演示数据', sqlserver: 'SQL Server' }[status.value?.mode] || '正在检查') )
 const sourceDescription = computed(() => {
-  if (status.value?.mode === 'excel') {
-    const usable = status.value.excel_status?.reportable_completed_count || 0
-    const excluded = status.value.excel_status?.excluded_negative_work_time_count || 0
-    return `${usable} 条可用于报表${excluded ? ` · 已剔除 ${excluded} 条负工时` : ''}`
-  }
   if (status.value?.mode === 'sqlserver') return '生产查询模式'
   return '尚未连接生产库'
 })
-const modeLabel = (mode) => ({ demo: '演示数据', excel: 'TASK.xlsx 本地表', sqlserver: 'SQL Server' }[mode] || '未知数据源')
+const modeLabel = (mode) => ({ demo: '演示数据', sqlserver: 'SQL Server' }[mode] || '未知数据源')
 
 const fieldLabels = {
   task_id: '任务ID', project_code: '工程号', ship_no: '船号', segment_name: '分段',
@@ -262,7 +257,7 @@ onMounted(() => Promise.all([loadStatus(), loadConfiguration()]))
     description="生产报表、工人身份和切割文件使用独立数据源，连接信息由服务器环境配置统一管理。"
     icon="database"
     status-label="数据访问"
-    :status-value="status?.mode === 'excel' ? 'TASK.xlsx' : status?.connection_configured ? '只读连接已配置' : '等待配置'"
+    :status-value="status?.connection_configured ? '只读连接已配置' : '等待配置'"
     status-note="仅开放 SELECT / CTE，不向生产库写入"
     tone="teal"
   />
@@ -272,7 +267,7 @@ onMounted(() => Promise.all([loadStatus(), loadConfiguration()]))
     <div v-if="configurationLoading" class="configuration-loading">正在读取数据库配置…</div>
     <form v-else-if="databaseConfiguration" @submit.prevent="saveConfiguration" @input.capture="hasUnsavedChanges = true" @change.capture="hasUnsavedChanges = true">
       <div class="configuration-switches">
-        <label><span>生产数据模式</span><AppSelect v-model="databaseConfiguration.data_source_mode" name="data_source_mode" @change="hasUnsavedChanges = true"><option value="demo">演示数据</option><option value="excel">TASK.xlsx</option><option value="sqlserver">SQL Server</option></AppSelect></label>
+        <label><span>生产数据模式</span><AppSelect v-model="databaseConfiguration.data_source_mode" name="data_source_mode" @change="hasUnsavedChanges = true"><option value="demo">演示数据</option><option value="sqlserver">SQL Server</option></AppSelect></label>
         <label class="check-label"><input v-model="databaseConfiguration.worker_database_auth_enabled" name="worker_database_auth_enabled" type="checkbox" /><span>启用工人 HR 库登录</span></label>
         <label class="check-label"><input v-model="databaseConfiguration.file_database_enabled" name="file_database_enabled" type="checkbox" /><span>启用切割文件库</span></label>
       </div>
@@ -318,9 +313,9 @@ onMounted(() => Promise.all([loadStatus(), loadConfiguration()]))
       <small>{{ sourceDescription }}</small>
     </article>
     <article class="db-status-card">
-      <span>{{ status?.mode === 'excel' ? '本地任务数据' : 'ODBC 驱动' }}</span>
-      <strong :class="status?.mode === 'excel' || status?.pyodbc_installed ? 'ok-text' : 'warn-text'">{{ status?.mode === 'excel' ? `${status?.excel_status?.row_count || 0} 行` : status?.pyodbc_installed ? '已安装' : '未安装' }}</strong>
-      <small>{{ status?.mode === 'excel' ? `${status?.excel_status?.date_min || '--'} 至 ${status?.excel_status?.date_max || '--'}` : status?.driver || '正在检查' }}</small>
+      <span>ODBC 驱动</span>
+      <strong :class="status?.pyodbc_installed ? 'ok-text' : 'warn-text'">{{ status?.pyodbc_installed ? '已安装' : '未安装' }}</strong>
+      <small>{{ status?.driver || '正在检查' }}</small>
     </article>
     <article class="db-status-card">
       <span>连接配置</span>
@@ -397,7 +392,6 @@ onMounted(() => Promise.all([loadStatus(), loadConfiguration()]))
       <div>
         <strong>{{ status?.sql_workbench_enabled ? '执行功能已启用' : '执行功能当前关闭' }}</strong>
         <span v-if="!status?.sql_workbench_enabled">管理员需在服务器配置中显式开启，语法校验仍可使用。</span>
-        <span v-else-if="status?.mode === 'excel'">查询在 TASK.xlsx 的本地只读副本中执行，不会修改原文件。</span>
         <span v-else>执行时必须提供管理员令牌，并使用服务器配置的只读数据库账号。</span>
       </div>
       <small>最大返回 {{ status?.sql_workbench_max_rows || 200 }} 行 · 禁止 INSERT / UPDATE / DELETE / DDL / EXEC</small>
@@ -409,7 +403,7 @@ onMounted(() => Promise.all([loadStatus(), loadConfiguration()]))
       <button type="button" @click="setSqlExample('cte')">CTE查询</button>
     </div>
     <div class="sql-editor-wrap">
-      <div class="sql-editor-head"><span>{{ status?.mode === 'excel' ? 'T-SQL Editor · 本地兼容模式' : 'T-SQL Editor' }}</span><small>SQL内容不会写入普通业务日志</small></div>
+      <div class="sql-editor-head"><span>T-SQL Editor</span><small>SQL内容不会写入普通业务日志</small></div>
       <textarea v-model="workbench.sql" class="sql-editor" spellcheck="false" aria-label="SQL编辑器"></textarea>
     </div>
     <div class="sql-actions">

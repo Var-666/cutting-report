@@ -96,7 +96,10 @@ class ReportService:
         )
         template = self.environment.get_template(template_name)
         demo_mode = self.settings.effective_data_source_mode == "demo"
-        html = template.render(report=report, echarts_source=echarts_source, demo_mode=demo_mode)
+        html = template.render(
+            report=report, echarts_source=echarts_source, demo_mode=demo_mode,
+            device_name=self.settings.device_name, energy_connected=self.settings.energy_connected,
+        )
         if "报告结束" not in html:
             raise ReportRenderError("报告模板渲染结果不完整")
 
@@ -123,7 +126,8 @@ class ReportService:
         period_start = report["meta"].get("period_start") or report["meta"]["report_date"]
         period_end = report["meta"].get("period_end") or period_start
         period = period_start if period_start == period_end else f"{period_start}_至_{period_end}"
-        download_filename = f"{prefix}_{period}_{generated_at:%H%M%S}.html"
+        safe_device = "".join(char for char in self.settings.device_name if char not in '\\/:*?"<>|')[:50]
+        download_filename = f"{prefix}_{safe_device}_{period}_{generated_at:%H%M%S}.html"
         return {
             "filename": download_filename,
             "relative_path": final_path.relative_to(self.settings.reports_dir).as_posix(),

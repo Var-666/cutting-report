@@ -59,8 +59,12 @@ class AlarmRepository(SQLiteRepository):
         database: Path | SQLiteDatabase,
         *,
         connection: sqlite3.Connection | None = None,
+        machine_no: str | None = None,
+        source_name: str = "production",
     ) -> None:
         super().__init__(database, connection=connection)
+        self.machine_no = machine_no
+        self.source_name = source_name
 
     def initialize(self) -> None:
         self.database.initialize()
@@ -166,8 +170,8 @@ class AlarmRepository(SQLiteRepository):
             connection.execute(
                 """
                 INSERT OR IGNORE INTO alarm_sync_state(source_name, last_alarm_id)
-                VALUES ('production', 0)
-                """
+                VALUES (?, 0)
+                """, (self.source_name,)
             )
 
     @staticmethod
@@ -181,7 +185,8 @@ class AlarmRepository(SQLiteRepository):
             return "high"
         return "warning"
 
-    def get_cursor(self, source_name: str = "production") -> int:
+    def get_cursor(self, source_name: str | None = None) -> int:
+        source_name = source_name or self.source_name
         with self.connect() as connection:
             row = connection.execute(
                 "SELECT last_alarm_id FROM alarm_sync_state WHERE source_name = ?",
@@ -189,7 +194,8 @@ class AlarmRepository(SQLiteRepository):
             ).fetchone()
         return int(row[0]) if row else 0
 
-    def get_sync_state(self, source_name: str = "production") -> dict[str, Any]:
+    def get_sync_state(self, source_name: str | None = None) -> dict[str, Any]:
+        source_name = source_name or self.source_name
         with self.connect() as connection:
             row = connection.execute(
                 """
@@ -213,10 +219,11 @@ class AlarmRepository(SQLiteRepository):
         monitor_start_at: str,
         *,
         force: bool = False,
-        source_name: str = "production",
+        source_name: str | None = None,
         lease_owner: str | None = None,
         lease_now: datetime | None = None,
     ) -> bool:
+        source_name = source_name or self.source_name
         with self.connect() as connection:
             self.begin_immediate(connection)
             if lease_owner is not None:
@@ -251,12 +258,14 @@ class AlarmRepository(SQLiteRepository):
         after_id: int = 0,
     ) -> list[int]:
         where = "WHERE is_open = 1 AND source_alarm_id > ?"
+        if self.machine_no is not None:
+            where += " AND incident_id IN (SELECT incident_id FROM alarm_incidents WHERE machine_no = ? COLLATE NOCASE)"
         parameters: tuple[Any, ...]
         if monitor_start_at:
             where += " AND start_time >= ?"
-            parameters = (after_id, monitor_start_at, limit)
+            parameters = (after_id, *((self.machine_no,) if self.machine_no is not None else ()), monitor_start_at, limit)
         else:
-            parameters = (after_id, limit)
+            parameters = (after_id, *((self.machine_no,) if self.machine_no is not None else ()), limit)
         with self.connect() as connection:
             rows = connection.execute(
                 f"""
@@ -273,8 +282,9 @@ class AlarmRepository(SQLiteRepository):
         now: datetime,
         *,
         ttl_seconds: int = 600,
-        source_name: str = "production",
+        source_name: str | None = None,
     ) -> bool:
+        source_name = source_name or self.source_name
         now_text = now.isoformat(timespec="seconds")
         until = (now + timedelta(seconds=ttl_seconds)).isoformat(timespec="seconds")
         with self.connect() as connection:
@@ -291,7 +301,8 @@ class AlarmRepository(SQLiteRepository):
             return updated.rowcount == 1
 
     def renew_lease(self, owner: str, now: datetime, *, ttl_seconds: int = 600,
-                    source_name: str = "production") -> bool:
+                    source_name: str | None = None) -> bool:
+        source_name = source_name or self.source_name
         now_text = now.isoformat(timespec="seconds")
         until = (now + timedelta(seconds=ttl_seconds)).isoformat(timespec="seconds")
         with self.connect() as connection:
@@ -302,9 +313,9 @@ class AlarmRepository(SQLiteRepository):
             )
             return updated.rowcount == 1
 
-    @staticmethod
-    def _require_lease(connection: sqlite3.Connection, owner: str, now: datetime,
-                       source_name: str = "production") -> None:
+    def _require_lease(self, connection: sqlite3.Connection, owner: str, now: datetime,
+                       source_name: str | None = None) -> None:
+        source_name = source_name or self.source_name
         row = connection.execute(
             "SELECT 1 FROM alarm_sync_state WHERE source_name = ? AND lease_owner = ? AND lease_until > ?",
             (source_name, owner, now.isoformat(timespec="seconds")),
@@ -319,7 +330,8 @@ class AlarmRepository(SQLiteRepository):
             rows = connection.execute(
                 """SELECT report_id FROM alarm_reports WHERE status = 'generating'
                    AND (execution_owner IS NULL OR execution_owner != ?)
-                   ORDER BY created_at, report_id LIMIT ?""", (owner, limit),
+                   AND (? IS NULL OR machine_no = ? COLLATE NOCASE)
+                   ORDER BY created_at, report_id LIMIT ?""", (owner, self.machine_no, self.machine_no, limit),
             ).fetchall()
             for row in rows:
                 connection.execute(
@@ -331,7 +343,8 @@ class AlarmRepository(SQLiteRepository):
                                    (row["report_id"],))
         return len(rows)
 
-    def release_lease(self, owner: str, source_name: str = "production") -> None:
+    def release_lease(self, owner: str, source_name: str | None = None) -> None:
+        source_name = source_name or self.source_name
         with self.connect() as connection:
             connection.execute(
                 """
@@ -349,7 +362,7 @@ class AlarmRepository(SQLiteRepository):
         cursor: int,
         debounce_minutes: int,
         monitor_start_at: str | None = None,
-        source_name: str = "production",
+        source_name: str | None = None,
         open_recheck_after_id: int | None = None,
         history_recheck_after_id: int | None = None,
         expired_before: datetime | None = None,
@@ -361,12 +374,13 @@ class AlarmRepository(SQLiteRepository):
         Supplemental rechecks may contain larger IDs without proving that the
         intervening source rows were scanned; they must never advance cursor.
         """
+        source_name = source_name or self.source_name
         now_text = now.isoformat(timespec="seconds")
         debounce_cutoff = (now - timedelta(minutes=max(0, debounce_minutes))).isoformat(
             timespec="seconds"
         )
         normalized = sorted(
-            (dict(item) for item in records),
+            (dict(item) for item in records if self.machine_no is None or _text(item.get("machine_no")).casefold() == self.machine_no.casefold()),
             key=lambda item: int(item["alarm_info_id"]),
         )
         affected_incidents: set[str] = set()
@@ -622,12 +636,14 @@ class AlarmRepository(SQLiteRepository):
         self, limit: int = 100, *, monitor_start_at: str | None = None
     ) -> list[dict[str, Any]]:
         where = "WHERE pdf_report_id IS NULL"
+        if self.machine_no is not None:
+            where += " AND machine_no = ? COLLATE NOCASE"
         parameters: tuple[Any, ...]
         if monitor_start_at:
             where += " AND first_start_time >= ?"
-            parameters = (monitor_start_at, limit)
+            parameters = (*((self.machine_no,) if self.machine_no is not None else ()), monitor_start_at, limit)
         else:
-            parameters = (limit,)
+            parameters = (*((self.machine_no,) if self.machine_no is not None else ()), limit)
         with self.connect() as connection:
             rows = connection.execute(
                 f"""
@@ -762,7 +778,7 @@ class AlarmRepository(SQLiteRepository):
     def get_report(self, report_id: str) -> dict[str, Any] | None:
         with self.connect() as connection:
             row = connection.execute(
-                "SELECT * FROM alarm_reports WHERE report_id = ?", (report_id,)
+                "SELECT * FROM alarm_reports WHERE report_id = ? AND (? IS NULL OR machine_no = ? COLLATE NOCASE)", (report_id, self.machine_no, self.machine_no)
             ).fetchone()
         return self._decode_report(row)
 
@@ -784,6 +800,9 @@ class AlarmRepository(SQLiteRepository):
             parameters = (monitor_start_at, monitor_start_at, limit)
         else:
             parameters = (limit,)
+        if self.machine_no is not None:
+            where = ("WHERE (" + where.strip()[6:] + ") AND r.machine_no = ? COLLATE NOCASE") if where else "WHERE r.machine_no = ? COLLATE NOCASE"
+            parameters = (*parameters[:-1], self.machine_no, parameters[-1])
         with self.connect() as connection:
             rows = connection.execute(
                 f"""
@@ -815,6 +834,9 @@ class AlarmRepository(SQLiteRepository):
                    )
             """
             values = (monitor_start_at, monitor_start_at)
+        if self.machine_no is not None:
+            where = ("WHERE (" + where.strip()[6:] + ") AND r.machine_no = ? COLLATE NOCASE") if where else "WHERE r.machine_no = ? COLLATE NOCASE"
+            values = (*values, self.machine_no)
         with self.connect() as connection:
             summary = connection.execute(
                 f"""
@@ -853,6 +875,9 @@ class AlarmRepository(SQLiteRepository):
     ) -> list[dict[str, Any]]:
         conditions: list[str] = []
         values: list[Any] = []
+        if self.machine_no is not None:
+            conditions.append("machine_no = ? COLLATE NOCASE")
+            values.append(self.machine_no)
         if status:
             conditions.append("status = ?")
             values.append(status)
@@ -881,8 +906,12 @@ class AlarmRepository(SQLiteRepository):
         page_size: int,
     ) -> dict[str, Any]:
         base_condition = "first_start_time >= ?"
+        base_values: list[Any] = [monitor_start_at]
+        if self.machine_no is not None:
+            base_condition += " AND machine_no = ? COLLATE NOCASE"
+            base_values.append(self.machine_no)
         filtered_conditions = [base_condition]
-        filtered_values: list[Any] = [monitor_start_at]
+        filtered_values: list[Any] = list(base_values)
         if status:
             filtered_conditions.append("status = ?")
             filtered_values.append(status)
@@ -902,7 +931,7 @@ class AlarmRepository(SQLiteRepository):
                     SUM(CASE WHEN severity = 'warning' THEN 1 ELSE 0 END) AS warning_count
                 FROM alarm_incidents WHERE {base_condition}
                 """,
-                (monitor_start_at,),
+                tuple(base_values),
             ).fetchone()
             total = int(
                 connection.execute(
@@ -939,7 +968,7 @@ class AlarmRepository(SQLiteRepository):
                   {dominant_status}
                 GROUP BY label ORDER BY count DESC, label LIMIT 1
                 """,
-                (monitor_start_at,),
+                tuple(base_values),
             ).fetchone()
 
         return {

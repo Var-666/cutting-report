@@ -25,10 +25,12 @@ class ReportWorker:
         pipeline: ReportPipeline,
         automation_service: AutomationService | None = None,
         runtime: AutomationRuntime | None = None,
+        pipelines: dict[str, ReportPipeline] | None = None,
     ) -> None:
         self.settings = settings
         self.metadata = metadata
         self.pipeline = pipeline
+        self.pipelines = pipelines
         self.automation_service = automation_service
         self.runtime = runtime or AutomationRuntime(settings)
         self.stop_event = threading.Event()
@@ -144,7 +146,8 @@ class ReportWorker:
         report_id = job["report_id"]
         try:
             logger.info("report generation started", extra={"report_id": report_id})
-            run = self.pipeline.run
+            pipeline = self.pipeline if self.pipelines is None else self.pipelines[job.get("device_id") or "Cutter01"]
+            run = pipeline.run
             parameters = inspect.signature(run).parameters
             if "cancellation_check" in parameters:
                 run(job, cancellation_check=self.stop_event.is_set)

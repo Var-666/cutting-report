@@ -44,6 +44,36 @@ def settings_from(monkeypatch, path, **overrides):
     return module
 
 
+@pytest.mark.parametrize(("override", "expected"), [(None, 300), (450, 450)])
+def test_analysis_refresh_defaults_to_five_minutes_and_preserves_deployment_override(monkeypatch, override, expected):
+    monkeypatch.delenv("REPORT_BACKGROUND_REFRESH_SECONDS", raising=False)
+    overrides = {} if override is None else {"REPORT_BACKGROUND_REFRESH_SECONDS": str(override)}
+    cfg = settings_from(monkeypatch, PROFILE, **overrides).settings
+    assert cfg.report_background_refresh_seconds == expected
+    example = (ROOT / ".env.example").read_text(encoding="utf-8")
+    assert "\nREPORT_BACKGROUND_REFRESH_SECONDS=300\n" in example
+
+
+@pytest.mark.parametrize(("override", "expected"), [(None, 10), (4, 4), (10, 10)])
+def test_model_capacity_defaults_to_ten_and_preserves_deployment_override(monkeypatch, override, expected):
+    monkeypatch.delenv("LLM_MAX_CONCURRENT", raising=False)
+    overrides = {} if override is None else {"LLM_MAX_CONCURRENT": str(override)}
+    cfg = settings_from(monkeypatch, PROFILE, **overrides).settings
+    assert cfg.llm_max_concurrent == expected
+    example = (ROOT / ".env.example").read_text(encoding="utf-8")
+    assert "\nLLM_MAX_CONCURRENT=10\n" in example
+
+
+@pytest.mark.parametrize(("override", "expected"), [(None, 180), (90, 90), (180, 180)])
+def test_model_response_timeout_defaults_to_three_minutes_and_preserves_deployment_override(monkeypatch, override, expected):
+    monkeypatch.delenv("LLM_TIMEOUT_SECONDS", raising=False)
+    overrides = {} if override is None else {"LLM_TIMEOUT_SECONDS": str(override)}
+    cfg = settings_from(monkeypatch, PROFILE, **overrides).settings
+    assert cfg.llm_timeout == expected
+    example = (ROOT / ".env.example").read_text(encoding="utf-8")
+    assert "\nLLM_TIMEOUT_SECONDS=180\n" in example
+
+
 def test_cutter01_profile_preserves_confirmed_identity_meters_and_alarm_window(monkeypatch, tmp_path):
     # Device configuration must survive startup from a different working folder.
     monkeypatch.chdir(tmp_path)
@@ -51,8 +81,8 @@ def test_cutter01_profile_preserves_confirmed_identity_meters_and_alarm_window(m
                            ENERGY_API_ENABLED="false", ALARM_MONITOR_ENABLED="false")
     cfg = module.settings
     device = module.DEVICE_CATALOG.default_device
-    assert [(line.id, line.name) for line in module.DEVICE_CATALOG.production_lines] == [("Cutter01", "20KW切割机")]
-    assert [(item.id, item.name) for item in module.DEVICE_CATALOG.devices] == [("Cutter01", "20KW切割机")]
+    assert [(line.id, line.name) for line in module.DEVICE_CATALOG.production_lines] == [("Cutter01", "20KW切割机"), ("Cutter02", "30KW切割机")]
+    assert [(item.id, item.name) for item in module.DEVICE_CATALOG.devices] == [("Cutter01", "20KW切割机"), ("Cutter02", "30KW切割机")]
     assert device.data_source == "production"
     assert cfg.report_machine_no == "Cutter01"
     assert cfg.energy_report_equipment_ids == ("Cutter01",)

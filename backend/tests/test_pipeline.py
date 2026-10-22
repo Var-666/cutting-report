@@ -1,10 +1,10 @@
 from datetime import date, datetime
 from copy import deepcopy
+from decimal import Decimal
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
-from openpyxl import Workbook
 
 from app.config import Settings
 from app.database.metadata import MetadataRepository
@@ -252,13 +252,8 @@ def test_range_export_keeps_the_recent_twelve_month_summary(
 
 @pytest.fixture
 def report_flow(tmp_path, monkeypatch):
-    """Use real Excel queries and HTML output to protect period/format semantics."""
-    workbook = Workbook()
-    sheet = workbook.active
-    sheet.title = "TASK"
-    sheet.append(["TASK_ID", "PROJECT_NAME", "MACHINE_NO", "STATUS", "OP_DATE",
-                  "START_TIME", "END_TIME", "WORK_TIME", "OP_LENGTH_CUT", "OP_LENGTH_GROOVE",
-                  "OP_PROGRAM", "PROJECT_CODE", "REMARK", "SEGMENT_NAME"])
+    """Use SQL Server result fixtures and real HTML to protect period/format semantics."""
+    source_rows = []
     for task_id, stamp, machine, status in (
         (1, date(2023, 2, 28), "Cutter01", 2),
         (2, date(2024, 1, 31), "Cutter01", 2),
@@ -271,21 +266,60 @@ def report_flow(tmp_path, monkeypatch):
         # The Feb 1 task started the previous day; OP_DATE owns the report day.
         start = datetime(2024, 1, 31, 23, 50) if task_id == 3 else datetime.combine(stamp, datetime.min.time())
         end = datetime.combine(stamp, datetime.min.time()).replace(hour=1)
-        sheet.append([task_id, "PJT-A", machine, status, stamp.isoformat(), start, end, 3600, 1200, 200,
-                      "P-01", None, None, "S-01"])
-    workbook.save(tmp_path / "TASK.xlsx")
-    workbook.close()
+        source_rows.append(dict(task_id=task_id, project_code="PJT-A", ship_no="PJT-A",
+                                equipment_id=machine, status=status, production_date=stamp,
+                                production_time=start, production_end_time=end, source_updated_at=end,
+                                work_time=Decimal("3600"), cut_length=Decimal("1.2"),
+                                groove_length=Decimal("0.2"), program_no="P-01", remark=None,
+                                segment_name="S-01"))
     vendor_dir = tmp_path / "vendor"
     vendor_dir.mkdir()
     (vendor_dir / "echarts.min.js").write_text("window.echarts={};")
-    settings = Settings(project_root=tmp_path, data_source_mode="excel", demo_mode=False,
-                        task_excel_file="TASK.xlsx", report_machine_no="Cutter01",
+    settings = Settings(project_root=tmp_path, data_source_mode="sqlserver", demo_mode=False,
+                        report_machine_no="Cutter01",
                         energy_report_equipment_ids=("Cutter01",), energy_api_enabled=False,
                         llm_enabled=True, app_version="test")
     settings.ensure_runtime_dirs()
     metadata = MetadataRepository(settings.metadata_db_path)
     metadata.initialize()
     pipeline = ReportPipeline(settings, metadata)
+
+    def selected_rows(parameters):
+        machine, start, end = parameters[:3]
+        assert machine == "Cutter01"
+        start = start.date() if isinstance(start, datetime) else start
+        end = end.date() if isinstance(end, datetime) else end
+        return [row for row in source_rows if row["equipment_id"] == machine and row["status"] == 2
+                and start <= row["production_date"] < end]
+
+    def fetch_all(sql, parameters):
+        assert "[dbo].[task]" in sql
+        rows = selected_rows(parameters)
+        if "GROUP BY source.production_date, source.equipment_id" in sql:
+            return [dict(report_date=row["production_date"], equipment_id=row["equipment_id"],
+                         task_count=1, work_time_seconds=row["work_time"]) for row in rows]
+        return rows
+
+    def fetch_result_sets(sql, parameters):
+        assert "#filtered_tasks" in sql
+        rows = selected_rows(parameters)
+        daily = []
+        for stamp in sorted({row["production_date"] for row in rows}):
+            tasks = [row for row in rows if row["production_date"] == stamp]
+            daily.append(dict(period_start=stamp, task_count=len(tasks),
+                              cut_length_m=sum(row["cut_length"] for row in tasks),
+                              groove_length_m=sum(row["groove_length"] for row in tasks),
+                              work_time_seconds=sum(row["work_time"] for row in tasks), remark_count=0))
+        projects = []
+        for month in sorted({row["production_date"].replace(day=1) for row in rows}):
+            tasks = [row for row in rows if row["production_date"].replace(day=1) == month]
+            projects.append(dict(period_start=month, project_name="PJT-A", task_count=len(tasks),
+                                 cut_length_m=sum(row["cut_length"] for row in tasks),
+                                 work_time_seconds=sum(row["work_time"] for row in tasks)))
+        return [daily, projects]
+
+    monkeypatch.setattr(pipeline.query_service.client, "fetch_all", fetch_all)
+    monkeypatch.setattr(pipeline.leadership_service.client, "fetch_result_sets", fetch_result_sets)
     pipeline.analysis_service.llm.analyze_context = model_analysis
     reports, analyses = {}, []
     original_render = pipeline.report_service.render

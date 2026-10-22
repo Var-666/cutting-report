@@ -8,7 +8,7 @@
 
 - 前端：Vue 3、Vue Router、Vite、ECharts。
 - 后端：Python、FastAPI、Pydantic、Uvicorn、Jinja2。
-- 数据：SQL Server/Excel 作为生产数据源，SQLite 保存系统元数据、快照和操作记录。
+- 数据：SQL Server 作为生产数据源，SQLite 保存系统元数据、快照和操作记录。
 - 报表：单文件 HTML、ECharts、Playwright/Chromium PDF 转换，可选 OpenAI-Compatible LLM 分析。
 - 测试：Pytest 和 Node.js 内置测试运行器。
 
@@ -16,7 +16,7 @@
 
 - `backend/app/api/`：HTTP 路由、请求校验和权限边界。
 - `backend/app/services/`：业务流程、统计、外部集成和报表生成。
-- `backend/app/database/`：SQL Server、Excel 和 SQLite 仓储。
+- `backend/app/database/`：SQL Server 和 SQLite 仓储。
 - `backend/app/workers/`：报表、告警、缓存刷新和清理后台任务。
 - `backend/tests/`：后端回归测试。
 - `frontend/src/views/`：页面；`components/` 为可复用组件；`layouts/` 为角色/功能布局。

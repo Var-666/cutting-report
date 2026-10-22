@@ -5,11 +5,14 @@ import json
 import logging
 import statistics
 import threading
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import date, datetime
 from decimal import Decimal
+from functools import wraps
 from time import monotonic
 from zoneinfo import ZoneInfo
+
+import httpx
 
 from app.config import Settings
 from app.database.metadata import MetadataRepository
@@ -20,7 +23,13 @@ from app.models.domain import (
     WorkshopRecord,
     to_primitive,
 )
-from app.services.llm_service import AnalysisOutputValidationError, LlmService
+from app.services.llm_service import (
+    AnalysisCapacityError, AnalysisInputTooLarge, AnalysisOutputValidationError,
+    LlmRequestTimeout, LlmService, generation_priority, is_background_llm_work,
+)
+from app.services.analysis_execution import (
+    analysis_observation, analysis_operation, analysis_prepared, analysis_queue_remaining, analysis_stage,
+)
 from app.services.statistics_service import build_worker_work_summaries
 from app.services.report_deadline import ReportOperationTimeout, ensure_time_remaining, remaining_seconds
 from app.services.request_cancellation import SqlRequestCancelled, current_request_id, sql_request_cancellations
@@ -360,6 +369,19 @@ def _equipment_breakdown(
     ]
 
 
+def _report_analysis_operation(report_type: str):
+    def decorate(method):
+        @wraps(method)
+        def wrapped(self, *args, **kwargs):
+            value = args[0] if args else kwargs.get("report", kwargs.get("report_date", ""))
+            report_date = str(value.report_month) if report_type == "leadership" else str(value)
+            with analysis_operation(self.settings, report_type, report_date,
+                                    background=is_background_llm_work()):
+                return method(self, *args, **kwargs)
+        return wrapped
+    return decorate
+
+
 class ReportAnalysisService:
     def __init__(self, settings: Settings, metadata: MetadataRepository) -> None:
         self.settings = settings
@@ -375,35 +397,71 @@ class ReportAnalysisService:
         with self._generation_guard:
             state = self._generation_locks.get(cache_key)
             if state is None:
-                state = {"lock": threading.Lock(), "users": 0}
+                state = {"lock": threading.Lock(), "users": 0, "foreground_users": 0,
+                         "priority": threading.Event(), "error": None}
                 self._generation_locks[cache_key] = state
-            was_inflight = state["lock"].locked()
+            was_inflight = state["users"] > 0
             state["users"] += 1
-        acquired = False
-        deadline = monotonic() + self.settings.llm_queue_timeout_seconds
+            foreground = not is_background_llm_work()
+            if foreground:
+                state["foreground_users"] += 1
+                state["priority"].set()
+            # Reserve the first producer while registering it, so a later forced
+            # caller cannot overtake it and cause two generations of one version.
+            acquired = state["lock"].acquire(blocking=False)
+        deadline = monotonic() + analysis_queue_remaining(self.settings)
         try:
-            while not acquired:
-                ensure_time_remaining()
-                if sql_request_cancellations.is_cancelled(current_request_id.get()):
-                    raise SqlRequestCancelled("智能分析请求已取消")
-                remaining = deadline - monotonic()
-                if remaining <= 0:
-                    raise AnalysisUnavailableError("智能分析排队超时，请稍后重试。")
-                report_remaining = remaining_seconds()
-                if report_remaining is not None:
-                    remaining = min(remaining, max(0.001, report_remaining))
-                acquired = state["lock"].acquire(timeout=min(0.1, remaining))
+            with analysis_stage("same_version_wait"):
+                while not acquired:
+                    ensure_time_remaining()
+                    if sql_request_cancellations.is_cancelled(current_request_id.get()):
+                        raise SqlRequestCancelled("智能分析请求已取消")
+                    remaining = deadline - monotonic()
+                    if remaining <= 0:
+                        raise AnalysisUnavailableError("智能分析排队超时，请稍后重试。")
+                    report_remaining = remaining_seconds()
+                    if report_remaining is not None:
+                        remaining = min(remaining, max(0.001, report_remaining))
+                    acquired = state["lock"].acquire(timeout=min(0.1, remaining))
             ensure_time_remaining()
             if sql_request_cancellations.is_cancelled(current_request_id.get()):
                 raise SqlRequestCancelled("智能分析请求已取消")
-            yield was_inflight
+            if was_inflight and state["error"] is not None:
+                # Share this attempt's failure only with its current waiters.
+                # Once they leave, a later explicit retry creates a fresh state.
+                error_type, message = state["error"]
+                raise error_type(message)
+            with generation_priority(state["priority"]):
+                try:
+                    yield was_inflight
+                except (AnalysisUnavailableError, ReportOperationTimeout) as exc:
+                    state["error"] = (type(exc), str(exc))
+                    raise
         finally:
             if acquired:
                 state["lock"].release()
             with self._generation_guard:
+                if foreground:
+                    state["foreground_users"] -= 1
+                    if state["foreground_users"] == 0:
+                        state["priority"].clear()
                 state["users"] -= 1
                 if state["users"] == 0:
                     self._generation_locks.pop(cache_key, None)
+
+    def latest_default_analysis(self, report_type: str, report_date: date) -> AnalysisResult | None:
+        lookup_date = report_date.strftime("%Y-%m") if report_type == "leadership" else report_date.isoformat()
+        cached = self.metadata.get_latest_analysis(
+            report_type=report_type, report_date=lookup_date,
+            model_name=self.settings.llm_model, prompt_version=PROMPT_VERSION,
+        )
+        return self._cached_result(cached) if cached else None
+
+    @staticmethod
+    def _cached_result(cached: dict) -> AnalysisResult:
+        allowed = {key: value for key, value in cached.items() if key in AnalysisResult.__dataclass_fields__}
+        allowed["cached"] = True
+        return _present_analysis(AnalysisResult(**allowed))
 
     def _get_cached_analysis(
         self,
@@ -413,22 +471,18 @@ class ReportAnalysisService:
         report_date: str,
         data_version: str,
     ) -> AnalysisResult | None:
-        cached = self.metadata.get_analysis(
-            cache_key,
-            report_type=report_type,
-            report_date=report_date,
-            data_version=data_version,
-        )
+        with analysis_stage("cache"):
+            cached = self.metadata.get_analysis(
+                cache_key,
+                report_type=report_type,
+                report_date=report_date,
+                data_version=data_version,
+            )
         if not cached:
             return None
-        allowed = {
-            key: value
-            for key, value in cached.items()
-            if key in AnalysisResult.__dataclass_fields__
-        }
-        allowed["data_version"] = data_version
-        allowed["cached"] = True
-        return _present_analysis(AnalysisResult(**allowed))
+        cached["data_version"] = data_version
+        analysis_observation(cache="hit")
+        return self._cached_result(cached)
 
     def _analyze(
         self,
@@ -438,6 +492,7 @@ class ReportAnalysisService:
         context: dict,
         force: bool,
         source_data_version: str | None = None,
+        publish_latest: bool = False,
     ) -> AnalysisResult:
         if not self.settings.llm_enabled:
             raise AnalysisUnavailableError(
@@ -448,10 +503,11 @@ class ReportAnalysisService:
         data_version = source_data_version or input_hash
         engine = f"model:{self.settings.llm_model}"
         cache_key = hashlib.sha256(
-            f"{PROMPT_VERSION}|{report_type}|{report_date}|{engine}|{data_version}|{input_hash}".encode(
+            f"{self.settings.device_id}|{PROMPT_VERSION}|{report_type}|{report_date}|{engine}|{data_version}|{input_hash}".encode(
                 "utf-8"
             )
         ).hexdigest()
+        analysis_prepared()
         self.metadata.save_analysis_source_version(
             report_type=report_type,
             report_date=report_date,
@@ -468,7 +524,11 @@ class ReportAnalysisService:
             if cached:
                 return cached
 
-        with self._single_generation(cache_key) as waited_for_same_version:
+        # Periodic rounds must each call the model even if an older round for
+        # this exact input is still running. Page/manual callers keep single-flight.
+        generation = (nullcontext(False) if force and is_background_llm_work()
+                      else self._single_generation(cache_key))
+        with generation as waited_for_same_version:
             # Always recheck after acquiring the key lock. Normal requests share the
             # cache; simultaneous forced requests share the result generated by the
             # first waiter, while a later manual refresh still generates a new result.
@@ -480,16 +540,40 @@ class ReportAnalysisService:
                     data_version=data_version,
                 )
                 if cached:
+                    if waited_for_same_version:
+                        analysis_observation(cache="shared")
                     return cached
 
             try:
                 result = self.llm.analyze_context(report_type, primitive_context)
+                ensure_time_remaining()
                 if result.mode != "model":
                     raise AnalysisOutputValidationError(
                         "LLM 分析结果未标记为模型输出"
                     )
             except (SqlRequestCancelled, ReportOperationTimeout):
                 raise
+            except AnalysisInputTooLarge as exc:
+                raise AnalysisUnavailableError(str(exc)) from exc
+            except (AnalysisCapacityError, LlmRequestTimeout, httpx.HTTPError) as exc:
+                status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
+                logger.warning(
+                    "report model request failed: device=%s report_type=%s report_date=%s error_type=%s upstream_status=%s",
+                    self.settings.device_id, report_type, report_date, type(exc).__name__, status,
+                )
+                if isinstance(exc, AnalysisCapacityError):
+                    message = str(exc)
+                elif isinstance(exc, (LlmRequestTimeout, httpx.TimeoutException)):
+                    message = "模型响应超时，请稍后重试。"
+                elif status == 429:
+                    message = "模型接口限流，请稍后重试。"
+                elif status in {401, 403}:
+                    message = "模型接口认证失败，请管理员检查密钥和访问权限。"
+                elif status is not None:
+                    message = f"模型接口返回错误（HTTP {status}），请稍后重试。"
+                else:
+                    message = "无法连接模型接口，请检查网络或联系管理员。"
+                raise AnalysisUnavailableError(message) from exc
             except AnalysisOutputValidationError as exc:
                 logger.warning("LLM analysis response cannot be displayed: %s", exc)
                 raise AnalysisUnavailableError(
@@ -506,6 +590,7 @@ class ReportAnalysisService:
             result.data_version = data_version
             result.generated_at = datetime.now(self.timezone).isoformat(timespec="seconds")
             result.cached = False
+            analysis_observation(cache="generated")
             payload = to_primitive(result)
             self.metadata.save_analysis(
                 cache_key=cache_key,
@@ -519,9 +604,11 @@ class ReportAnalysisService:
                 prompt_version=PROMPT_VERSION,
                 result=payload,
                 generated_at=result.generated_at,
+                publish_latest=publish_latest,
             )
             return result
 
+    @_report_analysis_operation("leadership")
     def analyze_leadership(
         self,
         report: LeadershipReportResult,
@@ -529,6 +616,7 @@ class ReportAnalysisService:
         monthly_records: list | None = None,
         expected_data_version: str | None = None,
         force: bool = False,
+        publish_latest: bool = False,
     ) -> AnalysisResult:
         summary_rows = report.monthly_records if monthly_records is None else monthly_records
         source_data_version = combined_analysis_source_version(
@@ -694,8 +782,10 @@ class ReportAnalysisService:
             context=context,
             force=force,
             source_data_version=source_data_version,
+            publish_latest=publish_latest,
         )
 
+    @_report_analysis_operation("workshop")
     def analyze_workshop(
         self,
         report_date: str,
@@ -707,6 +797,7 @@ class ReportAnalysisService:
         year_ago_date: str | None = None,
         expected_data_version: str | None = None,
         force: bool = False,
+        publish_latest: bool = False,
     ) -> AnalysisResult:
         source_data_version = combined_analysis_source_version(
             workshop_analysis_source_version(report_date, records)
@@ -824,8 +915,10 @@ class ReportAnalysisService:
             context=context,
             force=force,
             source_data_version=source_data_version,
+            publish_latest=publish_latest,
         )
 
+    @_report_analysis_operation("equipment")
     def analyze_equipment(
         self,
         report_date: str,
@@ -842,6 +935,7 @@ class ReportAnalysisService:
         source_data_version: str | None = None,
         expected_data_version: str | None = None,
         force: bool = False,
+        publish_latest: bool = False,
     ) -> AnalysisResult:
         if source_data_version is not None:
             source_data_version = combined_analysis_source_version(
@@ -1012,4 +1106,5 @@ class ReportAnalysisService:
             context=context,
             force=force,
             source_data_version=source_data_version,
+            publish_latest=publish_latest,
         )
