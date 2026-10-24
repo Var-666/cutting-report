@@ -84,12 +84,7 @@ const router = createRouter({
               component: () => import('../views/DatabaseView.vue'),
               meta: { title: '数据库配置', icon: 'database' },
             },
-            {
-              path: 'report-design',
-              name: 'designer',
-              component: () => import('../views/DesignerView.vue'),
-              meta: { title: '报表设计', icon: 'grid' },
-            },
+            { path: 'report-design', redirect: '/admin/settings' },
             {
               path: 'automation',
               name: 'automation',
@@ -111,7 +106,7 @@ const router = createRouter({
           ],
         },
         { path: 'database', redirect: '/admin/settings/database' },
-        { path: 'designer', redirect: '/admin/settings/report-design' },
+        { path: 'designer', redirect: '/admin/settings' },
         { path: 'automation', redirect: '/admin/settings/automation' },
         { path: 'admins', redirect: '/admin/settings/admins' },
       ],

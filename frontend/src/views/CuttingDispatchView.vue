@@ -86,23 +86,10 @@ const requestedPage = ref(1)
 const pageSize = 20
 const total = ref(0)
 const projectOptions = ref([])
-const projectKeyword = ref('')
 const initialProjectId = Array.isArray(route.query.project_id)
   ? route.query.project_id[0] || ''
   : String(route.query.project_id || '')
 const selectedProjectId = ref(initialProjectId)
-const filteredProjectOptions = computed(() => {
-  const keyword = projectKeyword.value.trim().toLowerCase()
-  if (!keyword) return projectOptions.value
-  return projectOptions.value.filter((project) => (
-    `${project.project_name || ''} ${project.ship_no || ''}`.toLowerCase().includes(keyword)
-  ))
-})
-const projectCountLabel = computed(() => (
-  projectKeyword.value.trim()
-    ? `${filteredProjectOptions.value.length} / ${projectOptions.value.length} 个支持项目`
-    : `${projectOptions.value.length} 个支持项目`
-))
 const projects = computed(() => {
   const selected = projectOptions.value.find((project) => String(project.project_id) === selectedProjectId.value)
   return selected ? [selected] : []
@@ -511,33 +498,6 @@ async function loadProjects() {
     if (sequence === querySequence) projectLoading.value = false
   }
   if (projectToOpen && pageActive.value && !signal.aborted && sequence === querySequence) await selectProject(projectToOpen)
-}
-
-function resetProjectSelection() {
-  rememberSelectedProject(selectedProjectId.value)
-  querySequence += 1
-  directoryController?.abort()
-  directoryController = null
-  catalogLoading.value = false
-  loading.value = false
-  selectedProject.value = null
-  selectedCatalog.value = null
-  projectExpanded.value = false
-  catalogTree.value = []
-  expandedCatalogIds.value = new Set()
-  rows.value = []
-  clearSelectedFiles()
-  total.value = 0
-  page.value = 1
-  notice.value = ''
-}
-
-function applyProjectKeyword() {
-  const options = filteredProjectOptions.value
-  if (!options.some((project) => String(project.project_id) === selectedProjectId.value)) {
-    selectedProjectId.value = options[0] ? String(options[0].project_id) : ''
-  }
-  resetProjectSelection()
 }
 
 async function openSelectedProject() {
@@ -1012,14 +972,14 @@ onBeforeUnmount(pausePage)
     <aside class="panel directory-panel">
       <div class="panel-title">
         <div><span class="dispatch-section-icon"><AppIcon name="briefcase" size="17" /></span><small>01</small><h2>项目目录</h2></div>
-        <p>{{ projectCountLabel }}</p>
+        <p>{{ projectOptions.length }} 个支持项目</p>
       </div>
-      <form class="project-search" @submit.prevent="openSelectedProject">
-        <label for="project-keyword">项目关键词 <small>项目名称或船号</small></label>
-        <input id="project-keyword" v-model="projectKeyword" name="project_keyword" type="search" placeholder="输入关键词筛选…" autocomplete="off" :disabled="projectLoading" @input="applyProjectKeyword" />
-        <label for="project-selector">支持项目</label>
-        <div class="project-select-row"><AppSelect id="project-selector" v-model="selectedProjectId" :disabled="projectLoading || !filteredProjectOptions.length" @change="resetProjectSelection"><option v-if="projectLoading" value="" disabled>正在读取项目…</option><option v-else-if="!filteredProjectOptions.length" value="" disabled>没有匹配的支持项目</option><option v-for="project in filteredProjectOptions" :key="project.project_id" :value="String(project.project_id)">{{ project.project_name }}{{ project.ship_no ? ` · ${project.ship_no}` : '' }}</option></AppSelect><button type="submit" :disabled="projectLoading || catalogLoading || !selectedProjectId">{{ catalogLoading ? '打开中…' : '打开' }}</button></div>
-      </form>
+      <div class="project-search">
+        <label for="project-selector">支持项目 <small>输入项目名称或船号搜索</small></label>
+        <AppSelect id="project-selector" v-model="selectedProjectId" name="cutting_project" aria-label="搜索并选择支持项目" filterable :disabled="projectLoading || !projectOptions.length" :placeholder="projectLoading ? '正在读取项目…' : projectOptions.length ? '输入项目名称或船号…' : '暂无支持项目'" @change="openSelectedProject">
+          <option v-for="project in projectOptions" :key="project.project_id" :value="String(project.project_id)">{{ project.project_name }}{{ project.ship_no ? ` · ${project.ship_no}` : '' }}</option>
+        </AppSelect>
+      </div>
       <div class="directory-scroll" :aria-busy="projectLoading || catalogLoading">
         <div v-if="projectLoading" class="directory-message">正在读取项目…</div>
         <ul v-else-if="projects.length" class="project-tree" role="tree" aria-label="PDM项目目录">
@@ -1206,7 +1166,6 @@ onBeforeUnmount(pausePage)
 .project-search,.file-name-search { padding:15px 18px; border-bottom:1px solid var(--theme-border-color); background:var(--theme-hover-color); }
 .project-search { padding:13px 14px; }
 .project-search label,.file-name-search label { display:block; margin-bottom:6px; color:var(--text-color-2); font-size:10px; font-weight:700; }
-.project-search label:not(:first-child) { margin-top:10px; }
 .project-search label small { margin-left:5px; color:var(--text-color-3); font-size:9px; font-weight:400; }
 .project-search > div,.file-name-search > div { display:flex; gap:7px; }
 .project-search input,.project-search .app-select,.file-name-search input { width:100%; min-width:0; }
@@ -1433,8 +1392,6 @@ onBeforeUnmount(pausePage)
 .project-search button,.file-name-search button { border-color:var(--theme-border-color); border-radius:7px; color:rgb(var(--info-color)); background:rgb(var(--info-color) / .1); }
 .directory-panel { position:relative; display:grid; grid-template-columns:minmax(0,1fr); grid-template-rows:auto auto minmax(0,1fr); min-height:0; }
 .directory-panel .panel-title>div,.directory-panel .project-search { min-width:0; }
-.directory-panel .project-select-row .app-select { width:auto; min-width:0; flex:1 1 0; }
-.directory-panel .project-select-row>button { flex:0 0 auto; }
 .directory-scroll { grid-area:3 / 1 / 4 / -1; position:absolute; inset:0; min-height:0; max-height:none; overflow:auto; overscroll-behavior:contain; scrollbar-gutter:stable; }
 .project-node-row { border-radius:7px; }
 .project-node-row:hover { background:var(--theme-hover-color); }

@@ -17,7 +17,7 @@ const idByPath = path => getTabIdByRoute(router.resolve(path))
 const activeId = computed(() => getTabIdByRoute(route))
 const tabs = computed(() => [...new Map([...new Set(['/admin/home', ...paths.value])].flatMap(path => {
   const resolved = router.resolve(path)
-  return resolved.matched.some(record => record.meta.role === 'admin') && resolved.meta.title
+    return resolved.matched.some(record => record.meta.role === 'admin') && !resolved.matched.some(record => record.redirect) && resolved.meta.title
     ? [[idByPath(path), { id: idByPath(path), path, label: resolved.meta.title, icon: resolved.meta.icon }]] : []
 })).values()])
 watch(() => route.fullPath, async path => {

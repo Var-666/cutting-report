@@ -36,7 +36,11 @@ test('sidebar exposes admin routes, excludes redirects and resets the new conten
     assert.ok(item.icon, `${item.label} needs a menu icon to keep icon and text columns aligned`)
     return item.children ? [...(item.routeName ? [item.routeName] : []), ...flatten(item.children)] : item.key
   })
-  assert.deepEqual(flatten(menus), ['admin-home', 'leadership-report', 'workshop-report', 'equipment-report', 'report-center', 'alarm-center', 'cutting-dispatch', 'settings', 'database', 'designer', 'automation', 'admin-accounts', 'model-usage'])
+  assert.deepEqual(flatten(menus), ['admin-home', 'leadership-report', 'workshop-report', 'equipment-report', 'report-center', 'alarm-center', 'cutting-dispatch', 'settings', 'database', 'automation', 'admin-accounts', 'model-usage'])
+  const adminRoutes = router.routes.find(route => route.path === '/admin').children
+  assert.equal(adminRoutes.find(route => route.path === 'designer').redirect, '/admin/settings')
+  assert.equal(adminRoutes.find(route => route.path === 'settings').children.find(route => route.path === 'report-design').redirect, '/admin/settings')
+  assert.doesNotMatch(source, /import\('\.\.\/views\/DesignerView.vue'\)/)
   assert.equal(menus.at(-1).key, '/admin/settings')
   assert.equal(menus.at(-1).routeName, 'settings')
   assert.ok(menus.at(-1).children.every((item) => item.key !== 'settings'))
@@ -78,9 +82,9 @@ test('native PageTab adapter honors cached paths, middle-click setting and activ
   const source = parse(readFileSync(new URL('../src/layouts/modules/ThemeTabs.vue', import.meta.url), 'utf8')).descriptor.scriptSetup.content.replace(/^import .*$/gm, '')
   const route = reactive({ fullPath: '/admin/reports/leadership', path: '/admin/reports/leadership', meta: {} })
   const theme = reactive({ tab: { cache: true, closeTabByMiddleClick: false } })
-  const stored = new Map([['tabs', ['/admin/settings', '/outside', '/admin/not-a-route']]])
+  const stored = new Map([['tabs', ['/admin/settings', '/outside', '/admin/not-a-route', '/admin/settings/report-design']]])
   const destinations = []
-  const router = { push: path => destinations.push(path), resolve: path => ({ path: path.split('?')[0], query: Object.fromEntries(new URLSearchParams(path.split('?')[1] || '')), matched: path === '/admin/not-a-route' ? [] : [{ meta: { role: 'admin' } }], meta: { title: path, icon: 'home' } }) }
+  const router = { push: path => destinations.push(path), resolve: path => ({ path: path.split('?')[0], query: Object.fromEntries(new URLSearchParams(path.split('?')[1] || '')), matched: path === '/admin/not-a-route' ? [] : [{ meta: { role: 'admin' }, ...(path === '/admin/settings/report-design' ? { redirect: '/admin/settings' } : {}) }], meta: { title: path, icon: 'home' } }) }
   const localStg = { get: key => stored.get(key), set: (key, value) => stored.set(key, [...value]), remove: key => stored.delete(key) }
   const api = new Function('computed', 'nextTick', 'ref', 'watch', 'useRoute', 'useRouter', 'useThemeStore', 'localStg', 'getTabIdByRoute', `${source}\nreturn { tabs, close, middleClick, scrollTabs }`)(computed, nextTick, ref, watch, () => route, () => router, () => theme, localStg, getTabIdByRoute)
   await nextTick()
@@ -134,6 +138,9 @@ test('select option slots retain fragments, groups, disabled options and origina
 test('select retains v-model, value-only actions and the existing change event contract', () => {
   const select = parse(readFileSync(new URL('../src/components/AppSelect.vue', import.meta.url), 'utf8')).descriptor
   assert.match(select.template.content, /<div class="app-select"[^>]*@click\.prevent>/, 'wrapping labels must not focus the hidden native select and close the menu')
+  assert.match(select.scriptSetup.content, /filterable: Boolean/)
+  assert.match(select.template.content, /:filterable="filterable"/)
+  assert.match(select.template.content, /:placeholder="\$attrs.placeholder"/)
   const props = reactive({ modelValue: 2 })
   const { state, emitted, deactivate } = setupControl('AppSelect', props, {}, { default: () => [h('option', { value: '' }, '导出'), h('option', { value: 2 }, '设备二')] })
   assert.equal(state.selectedValue.value, 1)

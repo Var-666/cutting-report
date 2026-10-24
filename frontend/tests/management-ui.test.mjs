@@ -38,7 +38,8 @@ test('settings overview omits usage summary requests and explanatory text', () =
   const settings = descriptor('SettingsHomeView')
   assert.doesNotMatch(settings.scriptSetup.content, /getLlmUsage|loadUsage|onMounted|description:/)
   assert.doesNotMatch(settings.template.content, /llm-usage-card|<p|description=|status-note=/)
-  assert.match(settings.template.content, /status-value="5 个管理模块"/)
+  assert.match(settings.template.content, /status-value="4 个管理模块"/)
+  assert.doesNotMatch(settings.scriptSetup.content, /report-design|报表设计/)
 })
 
 test('management hero status styles do not override Naive tag internals', () => {
@@ -60,4 +61,15 @@ test('database source selector offers SQL Server and demo without the removed Ex
   const database = descriptor('DatabaseView')
   const selector = database.template.content.match(/<AppSelect[^>]*name="data_source_mode"[^>]*>(.*?)<\/AppSelect>/s)[1]
   assert.deepEqual([...selector.matchAll(/<option value="([^"]+)"/g)].map((match) => match[1]), ['demo', 'sqlserver'])
+})
+
+test('database configuration retains sections 01–03 and omits mapping, preview and SQL workbench', () => {
+  const database = descriptor('DatabaseView')
+  const template = database.template.content
+  assert.deepEqual([...template.matchAll(/<div class="panel-title"><div><span>(\d+)<\/span>/g)].map(match => match[1]), ['01', '02', '03'])
+  assert.match(template, /@submit.prevent="saveConfiguration"/)
+  assert.match(template, /@submit.prevent="runConnectionTest"/)
+  assert.match(template, /aria-label="数据库状态"/)
+  assert.doesNotMatch(template, /生产查询映射|固定数据集预览|SQL 工作台|mapping-panel|preview-panel|sql-panel/)
+  assert.doesNotMatch(database.scriptSetup.content, /previewDatabaseDataset|executeWorkbenchSql|validateWorkbenchSql|runPreview|setSqlExample|previewResult|sqlResult|query_mappings/)
 })

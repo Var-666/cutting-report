@@ -23,7 +23,7 @@ afterEach(() => {
   reportCache.invalidate('cutting:')
 })
 
-function dispatchLifecycle({ status, projects, listMachines } = {}) {
+function dispatchLifecycle({ status, projects, listMachines, catalogs } = {}) {
   const source = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
   const calls = { status: [], projects: 0, history: 0 }
   const timers = new Map()
@@ -34,7 +34,7 @@ function dispatchLifecycle({ status, projects, listMachines } = {}) {
     onMounted: fn => { mounted = fn }, onActivated: fn => { activated = fn }, onDeactivated() {}, onBeforeUnmount() {},
     getCuttingStatus: (_scope, options) => { calls.status.push(options); return status(options, calls.status.length) },
     listCuttingProjects: (...args) => { calls.projects += 1; return projects ? projects(...args) : Promise.resolve({ items: [{ project_id: 'P1', project_name: 'P1' }] }) },
-    listCuttingCatalogs: async () => ({ tree: [] }),
+    listCuttingCatalogs: catalogs || (async () => ({ tree: [] })),
     listCuttingMachines: listMachines || (async () => ({ items: [] })),
     listCuttingDispatches: async () => { calls.history += 1; return { items: [], total: 0 } },
     window: {
@@ -341,11 +341,10 @@ test('file dispatch page uses the recursive PDM directory tree without condition
   assert.match(view, /当前位置/)
   assert.match(view, /const pageSize = 20/)
   assert.match(view, /const projectOptions = ref\(\[\]\)/)
-  assert.match(view, /const projectKeyword = ref\(''\)/)
-  assert.match(view, /const filteredProjectOptions = computed/)
   assert.match(view, /const selectedProjectId = ref\(initialProjectId\)/)
-  assert.match(view, /id="project-keyword"[\s\S]*:disabled="projectLoading"[\s\S]*@input="applyProjectKeyword"/)
-  assert.match(view, /<AppSelect id="project-selector"[\s\S]*v-for="project in filteredProjectOptions"/)
+  assert.match(view, /<AppSelect id="project-selector"[^>]*filterable[^>]*@change="openSelectedProject"/)
+  assert.match(view, /v-for="project in projectOptions"/)
+  assert.doesNotMatch(view, /project-keyword|projectKeyword|filteredProjectOptions|applyProjectKeyword|resetProjectSelection|project-select-row/)
   assert.match(view, /支持项目/)
   assert.match(view, /项目名称或船号/)
   assert.doesNotMatch(view, /<option value="" disabled>\{\{ projectLoading/)
@@ -357,6 +356,37 @@ test('file dispatch page uses the recursive PDM directory tree without condition
   assert.doesNotMatch(view, /ConditionBuilder|SortBuilder|searchCuttingFiles|组合条件查询/)
   assert.match(node, /<CatalogTreeNode/)
   assert.match(node, /node\.children/)
+})
+
+test('confirming a project opens it immediately, preserves same-project selection and ignores superseded catalogs', async () => {
+  const requests = []
+  let finishOld
+  const page = dispatchLifecycle({ catalogs: (id, { signal }) => {
+    requests.push({ id, signal })
+    return id === 'P2' ? new Promise(resolve => { finishOld = resolve }) : Promise.resolve({ tree: [{ catalog_id: `C-${id}`, title: id }] })
+  } })
+  const state = vm.runInContext('({ projectOptions, selectedProjectId, selectedProject, selectedCatalog, selectedFiles, rows, catalogTree, openSelectedProject })', page.context)
+  state.projectOptions.value = ['P1', 'P2', 'P3'].map(id => ({ project_id: id, project_name: id }))
+  state.selectedProjectId.value = 'P1'
+  await state.openSelectedProject()
+  state.selectedCatalog.value = { catalog_id: 'C-P1' }
+  state.selectedFiles.value.set('file-1', { document_id: 'file-1' })
+  state.rows.value = [{ document_id: 'file-1' }]
+  await state.openSelectedProject()
+  assert.equal(requests.length, 1)
+  assert.equal(state.selectedFiles.value.size, 1)
+  state.selectedProjectId.value = 'P2'
+  const pending = state.openSelectedProject()
+  assert.equal(state.selectedFiles.value.size, 0)
+  assert.equal(state.selectedCatalog.value, null)
+  assert.equal(state.rows.value.length, 0)
+  state.selectedProjectId.value = 'P3'
+  await state.openSelectedProject()
+  assert.equal(requests[1].signal.aborted, true)
+  finishOld({ tree: [{ catalog_id: 'stale', title: 'old' }] })
+  await pending
+  assert.equal(state.selectedProject.value.project_id, 'P3')
+  assert.equal(state.catalogTree.value[0].catalog_id, 'C-P3')
 })
 
 test('selected dispatch project survives refresh without a saved-file browser', () => {
