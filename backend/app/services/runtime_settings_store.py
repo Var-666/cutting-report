@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path
 from threading import RLock
 
-from dotenv import dotenv_values
+from app.configuration_sources import read_env_file
 from app.services.process_lock import settings_file_lock
 
 
@@ -16,7 +16,10 @@ runtime_settings_lock = RLock()
 
 def read_runtime_env(path: Path) -> dict:
     with runtime_settings_lock, settings_file_lock(path):
-        return dict(dotenv_values(path, interpolate=False)) if path.is_file() else {}
+        values, errors = read_env_file(path, environment={}, interpolate=False)
+        if errors:
+            raise ValueError("运行配置文件无法读取或格式无效")
+        return values
 
 
 def _dotenv_quote(value: object) -> str:

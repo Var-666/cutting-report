@@ -107,10 +107,7 @@ APP_DATA_SOURCE_MODE=sqlserver
 
 启动真实查询最少需在内网部署 `.env` 配置 `ENERGY_API_ENABLED=true`、
 `ENERGY_API_BASE_URL`、`ENERGY_API_USERNAME`、`ENERGY_API_PASSWORD`；
-电表组默认值见 `.env.example` 的 `ENERGY_REPORT_ELECTRICITY_PARAMETER_IDS`，
-气表仍使用 `ENERGY_GAS_PARAMETER_ID`。统一设备报表通过
-`ENERGY_REPORT_EQUIPMENT_IDS=Cutter01` 只统计 Cutter01；Cutter02 尚未配置，不能加入同一仪表组。
-旧的 `ENERGY_EQUIPMENT_IDS` 不控制这张统一设备报表。
+设备范围和气表、电表组统一取 `backend/app/configuration/devices.json`。Cutter01 的仪表组只统计 Cutter01；Cutter02 尚未绑定仪表，不能加入同一仪表组。旧的 `ENERGY_*_IDS` 等设备环境变量仅做启动一致性核对，冲突会拒绝启动，不覆盖目录。
 
 接口：管理员会话下 `GET /api/v1/energy-report/tasks?report_date=YYYY-MM-DD&refresh=true`
 查询任务能耗；`GET /api/v1/energy-report/day?report_date=YYYY-MM-DD&refresh=true` 查询并保存
@@ -128,12 +125,8 @@ ENERGY_API_ENABLED=true
 ENERGY_API_BASE_URL=http://10.147.0.38:10091
 ENERGY_API_USERNAME=填写能管账号
 ENERGY_API_PASSWORD=填写当前有效密码
-# 先确认是 Cutter01 还是 Cutter02；不可把同一套仪表绑定给两台物理设备。
-ENERGY_EQUIPMENT_IDS=填写2万瓦设备的实际MACHINE_NO
-ENERGY_GAS_PARAMETER_ID=bd3179be-c587-f011-a2e9-000c2974f33c
+# 设备、别名和仪表绑定维护在 devices.json；不可把同一套仪表绑定给两台设备。
 ENERGY_GAS_UNIT=Nm³
-# 仅填确认需要相加的电表参数ID，逗号分隔；总表和分表不能重复计量。
-ENERGY_ELECTRICITY_PARAMETER_IDS=填写经确认的参数ID列表
 # 确认电能原始单位/转换因子后填 kWh。
 ENERGY_ELECTRICITY_UNIT=kWh
 ENERGY_GAS_FACTOR=1
@@ -251,7 +244,7 @@ GET /api/v1/cutting/projects
 - 保存记录列表只用于查询和追溯；文件选择与派发参数统一在“文件推送”页面完成。当前允许推送 `.GEN` 和 `.TXT` 文件，不提供内容预览、不执行文件内容，也不会自动生成派发任务。
 - 页面及保存接口仅管理员可用。推送读取系统文件前会校验路径、大小和 SHA-256；接口错误页、空文件、不完整文件不标记为保存成功。
 - 默认单文件上限50MiB、单次请求超时60秒、最多同时2个下载。程序重启将未完成记录标为失败。成功下载的实体文件默认保留7天，服务启动时及此后每天检查并自动清理；SQLite下载记录继续保留到派发记录保留期，需要时可重新保存。`FILE_DOWNLOAD_RETENTION_DAYS=0` 可关闭实体文件自动清理。
-- 统一保留任务每天清理已终结的运行数据：报告文件、生成任务和车间任务快照默认365天、智能分析版本90天、已关闭告警365天、非活动派发记录365天、确认与管理员权限审计730天。各项可通过 `REPORT_RETENTION_DAYS`、`ANALYSIS_RETENTION_DAYS`、`ALARM_RETENTION_DAYS`、`DISPATCH_RETENTION_DAYS`、`AUDIT_RETENTION_DAYS` 调整，设为0只关闭对应类别。
+- 统一保留任务每天清理已终结的运行数据：报告文件、生成任务和车间任务快照默认365天、智能分析版本90天、告警按发生时间30天（仅已解除记录）、非活动派发记录365天、确认与管理员权限审计730天。各项可通过 `REPORT_RETENTION_DAYS`、`ANALYSIS_RETENTION_DAYS`、`ALARM_RETENTION_DAYS`、`DISPATCH_RETENTION_DAYS`、`AUDIT_RETENTION_DAYS` 调整，设为0只关闭对应类别。
 - 文件服务认证只放后端 `.env` 的 `FILE_HTTP_AUTHORIZATION` / `FILE_HTTP_COOKIE`；若接口不需要则留空。不会复用能管授权码，不向前端输出凭据，不自动跟随下载重定向。
 
 部署配置见 [`README-DOCKER.md`](README-DOCKER.md) 的“文件下载配置”。
@@ -473,7 +466,7 @@ npm run build
 
 生产库账号必须为只读账号，不应使用 `sa`。
 
-可以先在网页的“数据库管理”中填写连接参数并执行一次性连接测试。测试成功后，再由管理员将正式参数写入服务器 `.env`；当前版本有意不从匿名内网页面持久化数据库密码。
+可以先在网页的“数据库管理”中填写连接参数并执行一次性连接测试。测试成功后，管理员可在“系统设置 → 数据库配置”保存正式参数到 `data/settings.env`，密码不回显且留空保留原值；重启 Web 和 Worker 后生效，匿名用户无权保存。
 
 ### 启用SQL工作台执行功能
 
@@ -498,7 +491,7 @@ LLM_BASE_URL=https://模型服务地址/v1
 LLM_MODEL=模型名称
 ```
 
-`LLM_ENABLED=false` 时，系统基于当前报表数据生成可重现的模拟分析。改为 `true` 并配置 OpenAI 兼容的服务后，页面与导出报告会自动切换为真实模型分析。模型失败时自动降级为模拟分析，不会阻断报表数据展示。
+`LLM_ENABLED=false` 或模型未配置时，智能分析明确显示不可用，不生成模拟分析。启用并配置服务后需重启 Web 和 Worker；模型失败时保留失败状态或可用的历史分析，不阻断报表业务数据展示。默认并发10、响应时限180秒、容量排队120秒，部署中的显式值继续优先。
 
 每个报表的智能分析只保留六项核心数据依据，统一编号 F001–F006：
 
@@ -512,8 +505,7 @@ LLM_MODEL=模型名称
 
 ## 启用智能告警
 
-智能告警从生产库 `dbo.alarm_info` 只读采集，首期只监控正式名称“20kw切割机”对应的
-`MACHINE_NO=Cutter01`，不包含 Cutter02。后台每五分钟检查一次，但只有发现新的告警问题时才调用大模型并立即生成实体
+智能告警从生产库 `dbo.alarm_info` 只读采集，按 `devices.json` 中各设备机号及起点独立监控 Cutter01、Cutter02。后台每五分钟检查一次，但只有发现新的告警问题时才调用大模型并立即生成实体
 PDF；同一问题持续未解除时只更新事件状态，不重复生成。问题解除后十分钟内复发视为抖动，
 仍归入原事件；超过该窗口再次出现才生成新报告。系统只采集配置起始时间及之后的
 `START_TIME`，首次启用该口径时自动从起点补录，后续按 `ALARM_INFO_ID` 游标增量读取。
@@ -523,8 +515,7 @@ PDF；同一问题持续未解除时只更新事件状态，不重复生成。�
 ```text
 ALARM_MONITOR_ENABLED=true
 ALARM_MONITOR_INTERVAL_SECONDS=300
-ALARM_MONITOR_MACHINE_NOS=Cutter01
-ALARM_MONITOR_START_AT=2026-09-29 00:00:00
+# 设备范围与起点统一取 devices.json，旧同名环境变量仅做一致性核对。
 ALARM_REOPEN_DEBOUNCE_MINUTES=10
 ALARM_MONITOR_BATCH_SIZE=500
 ```
@@ -559,7 +550,7 @@ SMTP_USE_TLS=true
 SMTP_USE_SSL=false
 ```
 
-587 端口通常使用 `SMTP_USE_TLS=true`；465 端口通常使用 `SMTP_USE_SSL=true` 并将 TLS 设为 `false`。修改配置后需重启服务。SMTP 未配置时定时任务仍可保存，但发送会按规则重试并在发送记录中显示失败原因。
+587 端口通常使用 `SMTP_USE_TLS=true`；465 端口通常使用 `SMTP_USE_SSL=true` 并将 TLS 设为 `false`。修改 `.env` 后需重启 Web 和 Worker（Docker 需重建两个容器）；从管理页保存的自动化/SMTP 配置写入 `data/settings.env`，Web 发布新快照，Worker 在下一轮操作加载，已开始发送的邮件保留旧快照。SMTP 未配置时定时任务仍可保存，但发送会按规则重试并在发送记录中显示失败原因。
 
 ## 上线 SQL Server 前待确认
 
@@ -569,3 +560,22 @@ SMTP_USE_SSL=false
 - 能管仪表对应的 MACHINE_NO、DH01～DH03 的独立计量边界及转换因子；
 - 正式异常阈值；
 - 内网身份认证与报告保留策略。
+
+
+## 配置来源与生效诊断
+
+统一优先级保持为 `data/settings.env > 进程环境变量 > 项目 .env > 程序默认值`。管理页面只是写入 `data/settings.env` 的入口，不存在第四份存储。项目 `.env` 使用原有变量展开规则（进程环境优先）；`settings.env` 的值按字面读取，不展开 `${...}`。保留 `PYTHON_DOTENV_DISABLED` 的启动禁用行为。
+
+设备机号、产线、别名、仪表绑定及告警起点只取 `DEVICE_CONFIG_PATH` 指定的 `devices.json`；每台设备应用同一归属规则。全局能管开关再受设备是否绑定仪表限制。旧设备环境参数只做目录一致性断言，冲突拒绝启动；不会静默切换数据库、设备映射或模型。
+
+- 自动化与 SMTP：管理保存后 Web 原子发布运行快照，Worker 按文件版本在下一轮操作加载；在途操作保持原快照。无效文件或参数保留上次可用热配置并显示异常。
+- 数据库、模型、能管、文件服务、告警/保留策略及其他启动参数：重启 Web、Worker 生效；设备目录也保持启动加载。
+- Docker 宿主机 `.env` 变更：执行 `docker compose up -d --force-recreate app worker`；源码更新需加 `--build`。`restart` 不会刷新已有容器的环境。先检查 `data/settings.env` 是否覆盖同名参数，不删除配置或数据卷。
+
+管理员打开“系统设置 → 配置诊断”（`GET /api/v1/configuration/diagnostics`）可按分类、名称和状态筛选，分别查看 Web/Worker 当前快照、来源、已保存目标、加载批次和热修订。`connections.*` 展示三套数据库实际连接的继承结果，原 `*_SQLSERVER_*` 行表示声明参数。密码、账号、密钥、Token、Cookie、URL 等只返回已配置/未配置；不返回明文或内部逐项比较指纹。
+
+“已生效”表示实际快照与该进程环境下的保存目标一致；冷配置差异显示“待重启”，无效参数、热配置未加载或 Web/Worker 值不同显示“配置异常”。Worker 使用独立心跳，缺失、停止、过期或旧版本未上报时显示未知/异常，不借用 Web 快照。界面版本号标识加载批次，一致性通过实际值逐项比较（包含凭据变化），不能比较脱敏文字或仅看版本号。
+
+诊断接口只读，不触发热加载、重连数据库或后台操作，也不验证外部服务连通性。宿主机尚未注入容器的新 `.env` 不可从容器内获知；先重建两个容器，再用诊断页核对来源、两进程状态和覆盖项。诊断异常不会阻断登录或普通报表查询。
+
+现行保留默认值为报告365天、分析90天、告警发生后30天且已解除、非活动派发365天、审计730天、下载实体7天；对应天数0关闭该类清理。此处仅纠正文档，不修改已有清理策略。

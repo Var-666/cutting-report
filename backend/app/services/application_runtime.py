@@ -18,6 +18,7 @@ from app.services.retention_service import RetentionService
 from app.services.worker_auth_service import WorkerAuthService
 from app.services.automation_service import AutomationService
 from app.services.automation_runtime import AutomationRuntime
+from app.services.configuration_diagnostics import ConfigurationDiagnostics
 from app.services.cutting_dispatch_service import CuttingDispatchService
 from app.services.email_service import EmailService
 from app.services.file_source import build_file_source
@@ -84,6 +85,7 @@ def _build_runtime(settings: Settings, *, role: str) -> SimpleNamespace:
     state.definitions = definitions
     state.automation = automation
     state.automation_runtime = automation_runtime
+    state.configuration_diagnostics = ConfigurationDiagnostics(settings, automation_runtime)
     state.automation_service = automation_service
     state.email_service = email_service
     state.worker_auth = WorkerAuthService(settings)

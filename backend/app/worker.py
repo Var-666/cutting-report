@@ -83,6 +83,12 @@ class WorkerProcess:
         status["background_queue"] = self.repository.task_counts()
         status["active_tasks"] = len(running)
         status["device_ids"] = list(self.runtime.devices)
+        diagnostics = getattr(self.runtime, "configuration_diagnostics", None)
+        if diagnostics is not None:
+            try:
+                status["configuration"] = diagnostics.observed(self.owner)
+            except Exception:
+                status["configuration"] = {"error": "配置快照暂不可用"}
         if not self.repository.renew("worker", self.owner, ttl=self.LEASE_SECONDS, status=status):
             raise ExecutionLeaseLost("Worker 租约失效，停止提交新任务")
         self._next_heartbeat = monotonic() + 5
@@ -243,7 +249,7 @@ def main() -> int:
     if args.health:
         try:
             status = CoordinationRepository(SQLiteDatabase(settings.metadata_db_path, timeout_seconds=1)).worker_status()
-            print(json.dumps(status, ensure_ascii=False))
+            print(json.dumps({key: value for key, value in status.items() if key != "configuration"}, ensure_ascii=False))
             return 0 if status.get("state") == "running" and background_ready(status) else 1
         except Exception:
             return 1

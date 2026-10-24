@@ -84,6 +84,12 @@ const router = createRouter({
               component: () => import('../views/DatabaseView.vue'),
               meta: { title: '数据库配置', icon: 'database' },
             },
+            {
+              path: 'configuration-diagnostics',
+              name: 'configuration-diagnostics',
+              component: () => import('../views/ConfigurationDiagnosticsView.vue'),
+              meta: { title: '配置诊断', icon: 'settings' },
+            },
             { path: 'report-design', redirect: '/admin/settings' },
             {
               path: 'automation',

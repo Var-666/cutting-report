@@ -58,3 +58,16 @@ Repository / 外部系统客户端
 - 密码、Token、Cookie 和 LLM/API 密钥不返回浏览器、不进入报表或普通日志。
 
 设备隔离迁移、备份、回滚及待核实历史记录见 [多设备隔离修复与升级](multi-device-isolation.md)。
+
+
+## 配置解析与只读诊断
+
+`configuration_sources.load_environment` 统一解析启动和保存目标，保持 `settings.env > process > .env > defaults`。`Settings` 字段工厂及环境键元数据复用于目标解析，避免复制默认值/转换规则；启动同时捕获真实来源。设备目录保持单一业务来源，原环境断言不变。
+
+`ConfigurationDiagnostics` 从启动 Settings、设备目录和 `AutomationRuntime.inspect()` 读取实际快照；inspect 不调用会加载文件的 snapshot。自动化请求边界与热加载共用 `AutomationConfigurationRequest` 验证，异常热配置保留旧快照。数据库连接展示复用 `Settings.sqlserver_connection()`，包含专用库回退及驱动继承。
+
+Worker 每5秒将自身安全快照和内部逐项 HMAC 比较值附在原租约心跳；Web 用该租约上下文生成自身比较值，包含凭据变化的差异也可识别。API/公开健康接口/健康命令不输出逐项指纹，页面版本为不含配置内容的加载批次号与热修订。失效或缺失 Worker 状态不能视为已生效；诊断采集失败不阻断 Worker 心跳。
+
+新增管理员只读 `GET /api/v1/configuration/diagnostics` 和系统设置子页，不增加一级菜单或编辑能力。状态包含已生效、待重启、异常、可选未配置；按分类/名称/状态筛选，分别显示运行值、目标值、来源和生效规则。仅核对配置结构和运行快照，不连接外部系统。密码、账号、密钥、认证头、Cookie、URL 等仅显示安全状态，异常不透传原始输入。
+
+部署仍为一个 Web 与一个 Worker，共享原数据卷；不增加配置中心或数据库表。冷配置及目录重启两个进程，宿主机 `.env` 更新重建 app/worker，管理保存的自动化/SMTP 在下一轮操作热加载。诊断状态无法替代宿主机注入检查或外部连通性验收。现行保留默认值与 `.env.example` 一致：告警发生后30天且已解除，其他保留策略不变。

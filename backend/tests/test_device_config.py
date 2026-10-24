@@ -31,7 +31,8 @@ def save(tmp_path, value):
 
 def settings_from(monkeypatch, path, **overrides):
     # Isolate configuration loading from deployment secrets and other tests.
-    monkeypatch.setattr("dotenv.load_dotenv", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("app.configuration_sources.load_environment",
+                        lambda _root, process: (process, dict.fromkeys(process, "process"), []))
     for key in LEGACY_KEYS:
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("DEVICE_CONFIG_PATH", str(path))

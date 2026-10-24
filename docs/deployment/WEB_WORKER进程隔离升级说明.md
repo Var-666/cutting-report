@@ -29,7 +29,7 @@ docker compose exec worker python -m app.worker --health
 
 Web 重启不会恢复或重排后台任务。Worker 非正常退出后，等待旧租约失效（通常最多 30 秒）再启动；不要手工清除有效租约来制造并发消费者。正常停止会在消费者结束后释放租约；在途操作未结束时留待租约到期和围栏处理。
 
-修改 data/settings.env 的自动化/SMTP 参数通过文件版本传播，下一轮操作使用新快照，已开始的操作保留原快照。修改宿主机 .env 或数据库、LLM、设备配置，需要重建/重启**两个**服务，保持配置一致，例如 `docker compose up -d --force-recreate app worker`。
+管理员可在“系统设置 → 配置诊断”查看两进程各自的实际来源、保存目标、加载时间与待重启/异常状态；诊断读取不触发配置更新。修改 data/settings.env 的自动化/SMTP 参数通过文件版本传播，下一轮操作使用新快照，已开始的操作保留原快照。修改宿主机 .env 或数据库、LLM、设备配置，需要重建/重启**两个**服务，保持配置一致，例如 `docker compose up -d --force-recreate app worker`。
 
 ## 原生部署
 

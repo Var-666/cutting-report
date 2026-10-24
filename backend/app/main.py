@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.api.configuration import router as configuration_router
 from app.api.database import router as database_router
 from app.api.analysis import router as analysis_router
 from app.api.automation import router as automation_router
@@ -135,6 +136,7 @@ app.include_router(alarms_router)
 app.include_router(llm_usage_router)
 app.include_router(options_router)
 app.include_router(database_router)
+app.include_router(configuration_router)
 app.include_router(designer_router)
 app.include_router(leadership_router)
 app.include_router(equipment_router)
@@ -162,7 +164,7 @@ async def health(request: Request) -> dict:
             "status": "ok" if web_ready else "degraded",
             "background_ready": ready,
             "background_status": worker_status.get("state", "running" if ready else "degraded"),
-            "workers": worker_status,
+            "workers": {key: value for key, value in worker_status.items() if key != "configuration"},
             "version": settings.app_version,
             "demo_mode": mode == "demo",
             "data_source_mode": mode,

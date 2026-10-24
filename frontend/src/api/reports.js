@@ -536,3 +536,7 @@ export function listEmailDeliveryResolutions(deliveryId, { signal } = {}) {
 }
 
 export function getDeviceCatalog() { return request('/api/v1/devices') }
+
+export function getConfigurationDiagnostics({ signal } = {}) {
+  return request('/api/v1/configuration/diagnostics', { signal })
+}

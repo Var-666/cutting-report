@@ -66,9 +66,7 @@ ENERGY_API_ENABLED=true
 ENERGY_API_BASE_URL=http://10.147.0.38:10091
 ENERGY_API_USERNAME=填写能管登录账号
 ENERGY_API_PASSWORD='填写能管登录密码'
-ENERGY_REPORT_EQUIPMENT_IDS=Cutter01
-ENERGY_REPORT_ELECTRICITY_PARAMETER_IDS=2b00e015-d987-f011-a2e9-000c2974f33c,98cbd135-d987-f011-a2e9-000c2974f33c,93fae152-d987-f011-a2e9-000c2974f33c
-ENERGY_GAS_PARAMETER_ID=bd3179be-c587-f011-a2e9-000c2974f33c
+# 设备范围与仪表绑定只在 backend/app/configuration/devices.json 中维护。
 ENERGY_GAS_UNIT=Nm³
 ENERGY_ELECTRICITY_UNIT=kWh
 ENERGY_REPORT_MAX_GAP_SECONDS=1800
@@ -76,12 +74,12 @@ ENERGY_ALLOW_INTERPOLATION=true
 ```
 
 账号中的 `@` 直接写，不加反斜杠。电耗使用正常用电单位 `kWh`（1 kWh = 1 度电）。
-统一设备报表使用 `ENERGY_REPORT_EQUIPMENT_IDS=Cutter01`，当前只统计 Cutter01；
-`Cutter02` 尚未配置仪表，不显示、不汇总，也不能加入同一仪表组。
-旧的 `ENERGY_EQUIPMENT_IDS` 不控制这张统一设备报表。
+统一设备报表按 `devices.json` 的每台设备范围和仪表绑定统计。Cutter01 已绑定仪表；
+`Cutter02` 尚未配置仪表，能耗不显示、不汇总，也不能加入同一仪表组。
+旧的 `ENERGY_*_IDS` 等设备环境参数仅做启动一致性核对，不覆盖目录。
 程序会自动登录、获取授权和查询采集值，不需要手动复制 token。
 
-修改宿主机 `.env` 后，执行 `docker compose up -d --force-recreate app` 使容器重新读取环境变量；
+修改宿主机 `.env` 后，执行 `docker compose up -d --force-recreate app worker` 使容器重新读取环境变量；
 只执行 `docker compose restart` 不会更新由 `.env` 注入的环境变量。
 若刚覆盖了程序文件，则执行前述带 `--build` 的升级命令。
 管理页面保存的数据库配置在数据卷 `data/settings.env` 中，仍优先于 `.env` 的对应数据库字段。
@@ -135,7 +133,7 @@ FILE_DOWNLOAD_MAX_BYTES=52428800
 FILE_DOWNLOAD_RETENTION_DAYS=7
 REPORT_RETENTION_DAYS=365
 ANALYSIS_RETENTION_DAYS=90
-ALARM_RETENTION_DAYS=365
+ALARM_RETENTION_DAYS=30
 DISPATCH_RETENTION_DAYS=365
 AUDIT_RETENTION_DAYS=730
 RETENTION_CLEANUP_INTERVAL_HOURS=24
@@ -147,7 +145,7 @@ MAGIC_BOX_CONFIG_CACHE_SECONDS=60
 
 若接口不需要认证，两项认证配置留空；若需要，在部署电脑填入该文件服务自己的认证值。成功下载的实体文件默认保留7天，服务启动时检查一次，之后每天检查；超期先清理实体文件，相关下载记录再按派发记录保留期清理。若需关闭实体文件自动清理，将 `FILE_DOWNLOAD_RETENTION_DAYS` 设为 `0`。
 
-系统同时执行统一运行数据保留策略：报告文件、生成任务和车间任务快照默认365天、智能分析版本90天、已关闭告警365天、非活动派发记录365天、确认与管理员权限审计730天。运行中报告、待发送邮件、仍在保留期内的车间任务、活动告警和进行中派发不会删除；报告文件删除失败会保留在SQLite重试队列，下一轮继续清理。对应 `*_RETENTION_DAYS` 设为 `0` 可单独关闭该类清理，修改后需重启服务。
+系统同时执行统一运行数据保留策略：报告文件、生成任务和车间任务快照默认365天、智能分析版本90天、告警按发生时间30天（仅已解除记录）、非活动派发记录365天、确认与管理员权限审计730天。运行中报告、待发送邮件、仍在保留期内的车间任务、活动告警和进行中派发不会删除；报告文件删除失败会保留在SQLite重试队列，下一轮继续清理。对应 `*_RETENTION_DAYS` 设为 `0` 可单独关闭该类清理，修改后需重启服务。
 不要把认证值发到聊天、截图或代码仓库。配置后重新构建启动（仅修改配置则重新创建容器）。
 如果管理界面曾保存 PDM 配置，`data/settings.env` 的对应数据库参数优先。
 Docker 容器必须能访问 `10.147.0.17:8800`；Apifox 测试成功不能替代容器内网联调。
@@ -191,3 +189,14 @@ docker compose up -d --no-build --pull never
 首次构建需要联网；离线服务器请导入新版完整镜像。已有部署执行 `docker compose up -d --build`
 后生效，仅重启旧镜像不会增加 PDF 功能。PDF 保存在原报告旁，随 reports 数据卷持久化。
 Compose 的 `/tmp` 上限调整为 512 MiB，供 Chromium 临时文件使用；无需额外挂载或开放端口。
+
+
+## 配置诊断与双进程生效
+
+优先级为 `data/settings.env > 进程环境变量 > .env > 默认值`；设备业务参数只取 `devices.json`。管理页保存到共享 data 卷，不是另一配置来源。HR/PDM 专用身份全部为空时沿用生产连接，专用驱动/加密字段为空时按代码继承生产策略，不能将示例值误当成强制默认。
+
+从管理页保存的自动化/SMTP 在 Web 发布快照，Worker 下一轮操作按文件版本加载；在途操作保留旧配置。数据库、模型、设备目录及其他启动参数需要两个进程重启。修改宿主机 `.env` 必须执行 `docker compose up -d --force-recreate app worker`，只重建 app 或执行 restart 都不能保证两进程一致。源码更新使用 `docker compose up -d --build app worker`。
+
+管理员进入“系统设置 → 配置诊断”，查看每项 Web/Worker 的当前值或安全状态、实际来源、已保存目标及加载时间。`connections.*` 是实际数据库连接及继承来源；账号、密码、密钥、URL 与其他认证信息均脱敏。待重启表示冷配置未加载；配置异常包括目标无效、热快照未更新、两进程值不同或 Worker 心跳不可用。加载批次号不同不直接表示值不同，页面按实际值逐项判定。
+
+容器内只能核对已注入的环境，无法读取宿主机尚未注入的新 `.env`；重建后仍被覆盖时检查 `data/settings.env`，保留数据卷和原配置，不使用 `down -v`。诊断接口只读，不触发热加载、连接测试或任务；异常不影响普通查询与登录。

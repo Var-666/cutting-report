@@ -17,6 +17,7 @@ ADMIN_PREFIXES = (
     "/reports/",
     "/api/v1/options",
     "/api/v1/database",
+    "/api/v1/configuration",
     "/api/v1/designer",
     "/api/v1/leadership-report",
     "/api/v1/equipment-report",

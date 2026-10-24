@@ -4,6 +4,7 @@ import AppIcon from '../components/AppIcon.vue'
 import ManagementPageHero from '../components/ManagementPageHero.vue'
 
 const modules = [
+  { to: '/admin/settings/configuration-diagnostics', eyebrow: 'CONFIGURATION DIAGNOSTICS', title: '配置诊断', icon: 'settings', tone: 'teal' },
   { to: '/admin/settings/database', eyebrow: 'DATA SOURCES', title: '数据库配置', icon: 'database', tone: 'blue' },
   { to: '/admin/settings/automation', eyebrow: 'AUTOMATION', title: '报表自动化', icon: 'activity', tone: 'teal' },
   { to: '/admin/settings/admins', eyebrow: 'ACCESS CONTROL', title: '管理员管理', icon: 'user', tone: 'green' },
@@ -13,7 +14,7 @@ const modules = [
 
 <template>
   <div class="management-page settings-home-page">
-    <ManagementPageHero eyebrow="SYSTEM SETTINGS" title="系统设置" icon="settings" status-label="配置中心" status-value="4 个管理模块" tone="teal" />
+    <ManagementPageHero eyebrow="SYSTEM SETTINGS" title="系统设置" icon="settings" status-label="配置中心" status-value="5 个管理模块" tone="teal" />
     <section class="settings-overview" aria-label="系统设置模块">
       <RouterLink v-for="item in modules" :key="item.to" :to="item.to" :class="`tone-${item.tone}`">
         <span class="settings-module-icon"><AppIcon :name="item.icon" :size="23" /></span>

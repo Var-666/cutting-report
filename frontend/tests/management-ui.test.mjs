@@ -38,7 +38,7 @@ test('settings overview omits usage summary requests and explanatory text', () =
   const settings = descriptor('SettingsHomeView')
   assert.doesNotMatch(settings.scriptSetup.content, /getLlmUsage|loadUsage|onMounted|description:/)
   assert.doesNotMatch(settings.template.content, /llm-usage-card|<p|description=|status-note=/)
-  assert.match(settings.template.content, /status-value="4 个管理模块"/)
+  assert.match(settings.template.content, /status-value="5 个管理模块"/)
   assert.doesNotMatch(settings.scriptSetup.content, /report-design|报表设计/)
 })
 
