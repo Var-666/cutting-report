@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict'
 import { afterEach, test } from 'node:test'
 import { readFileSync } from 'node:fs'
-import { ref } from 'vue'
+import { nextTick, ref, watch } from 'vue'
 import { startReportPreload, stopReportPreload, reportPreload } from '../src/state/reportPreload.js'
 import { recentTwelveMonthStart, reportToday } from '../src/api/reportDates.js'
 import * as api from '../src/api/reports.js'
 import { session, loadSession, completeAuthentication, endSession } from '../src/state/session.js'
 import { resetDeviceContext, setDeviceCatalog, selectDevice, getDeviceId } from '../src/api/deviceContext.js'
+import { deviceSelection } from '../src/state/devices.js'
 
 const originalFetch = globalThis.fetch
 const admin = { user_id: 'admin-1', role: 'admin' }
@@ -217,6 +218,46 @@ test('session restoration validates the saved device before any report warmup', 
   const reports = calls.filter((call) => /leadership-report|\/reports\?/.test(call.url))
   assert.equal(reports.length, 2)
   assert.ok(reports.every((call) => new URL(call.url, 'http://test').searchParams.get('device_id') === 'Cutter02'))
+})
+
+test('restored-session preload shares home queries already started when the device becomes ready', async () => {
+  let finishCatalog
+  const pending = []
+  const calls = mockApi((url, options) => {
+    if (url === '/api/v1/devices') return new Promise((done) => { finishCatalog = done })
+    if (/leadership-report|\/reports\?|energy-report\/month\?/.test(url)) {
+      return new Promise((resolve, reject) => {
+        pending.push({ url, resolve, signal: options.signal })
+        options.signal.addEventListener('abort', () => reject(new DOMException('请求已取消', 'AbortError')), { once: true })
+      })
+    }
+  })
+  let home
+  const stop = watch(() => deviceSelection.ready, (ready) => {
+    if (ready) home = Promise.allSettled([
+      api.getLeadershipReport(month),
+      api.listReports({ page: 1, pageSize: 10 }),
+      api.getEnergyMonth(month),
+    ])
+  })
+  try {
+    await loadSession({ force: true })
+    finishCatalog(response({ default_device_id: 'Cutter01', items: [{ id: 'Cutter01' }] }))
+    await new Promise((done) => setImmediate(done))
+    await nextTick()
+    assert.ok(home, 'the home page must start loading after device readiness')
+    assert.equal(pending.length, 3, 'preload must reuse the three pending home queries')
+    assert.ok(pending.every((item) => !item.signal.aborted), 'starting preload must not cancel home data reads')
+    for (const item of pending) item.resolve(response({ items: [], total: 0 }))
+    assert.ok((await home).every((result) => result.status === 'fulfilled'))
+    await startReportPreload(admin)
+    assert.ok(reportPreload.items.every((item) => item.status === 'ready'))
+    assert.equal(calls.filter((call) => /leadership-report|\/reports\?|energy-report\/month\?/.test(call.url)).length, 3)
+  } finally {
+    stop()
+    for (const item of pending) item.resolve(response({ items: [], total: 0 }))
+    await home
+  }
 })
 
 test('a device removed from configuration is never used for restored report warmup', async () => {

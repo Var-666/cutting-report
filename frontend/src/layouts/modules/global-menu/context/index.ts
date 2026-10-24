@@ -56,7 +56,6 @@ function useMixMenu() {
   function handleSelectFirstLevelMenu(key: RouteKey) {
     setActiveFirstLevelMenuKey(key);
 
-    // The settings parent is also a business route in this application.
     if (!isActiveFirstLevelMenuHasChildren.value || allMenus.value.find(menu => menu.key === key)?.routeName) {
       routerPushByKeyWithMetaQuery(key);
     }

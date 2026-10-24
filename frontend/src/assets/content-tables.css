@@ -47,12 +47,30 @@ table.content-table td {
   text-overflow:ellipsis;
 }
 table.content-table td :is(strong, small, code, .confirmed-mark) {
+  display:inline-block !important;
   max-width:100% !important;
+  margin-block:0 !important;
+  vertical-align:middle !important;
   overflow:hidden !important;
   text-align:center !important;
   white-space:nowrap !important;
   overflow-wrap:normal !important;
   text-overflow:ellipsis !important;
+}
+table.content-table td > :is(div,p,span) {
+  display:inline-flex !important;
+  flex-flow:row nowrap !important;
+  align-items:center !important;
+  gap:6px;
+  margin-block:0 !important;
+  vertical-align:middle;
+}
+table.content-table td :is(button,a) { white-space:nowrap !important; }
+table.content-table td small:not(:first-child) { margin-left:6px !important; }
+table.content-table td :is(.push-batch-file > span,.error-cell > span) {
+  display:inline-block !important;
+  white-space:nowrap !important;
+  overflow-wrap:normal !important;
 }
 table.content-table td > :is(.history-actions,.row-actions,.report-actions) {
   justify-content:center !important;

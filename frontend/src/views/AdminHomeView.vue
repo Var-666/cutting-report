@@ -5,10 +5,11 @@ import { init, use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
-import { NAlert, NButton, NCard, NEmpty, NNumberAnimation, NSpin, NTag, NText, useThemeVars } from 'naive-ui'
+import { NAlert, NButton, NCard, NEmpty, NNumberAnimation, NSkeleton, NSpin, NStatistic, NTag, NText, useThemeVars } from 'naive-ui'
 import { getAlarmStatus, getEnergyMonth, getLeadershipReport, listAlarmIncidents, listReports } from '../api/reports'
 import { reportToday } from '../api/reportDates.js'
 import AppIcon from '../components/AppIcon.vue'
+import homeWelcomeIllustration from '../assets/home-welcome-illustration.png'
 import HomeKpiCard from '../components/HomeKpiCard.vue'
 import HomeSectionHeader from '../components/HomeSectionHeader.vue'
 import { session } from '../state/session'
@@ -55,10 +56,7 @@ const displayTime = computed(() => new Intl.DateTimeFormat('zh-CN', { hour: '2-d
 const metricSeries = computed(() => ({
   tasks: dailyRecords.value.map((item) => item.task_count),
   length: dailyRecords.value.map((item) => item.cut_length_m),
-  hours: dailyRecords.value.map((item) => Number(item.work_time_seconds || 0) / 3600),
-  days: dailyRecords.value.map((item) => Number(item.task_count) > 0 ? 1 : 0),
-  electricity: (energy.value?.rows || []).filter((item) => !item.is_future).map((item) => item.electricity?.value),
-  gas: (energy.value?.rows || []).filter((item) => !item.is_future).map((item) => item.gas?.value),
+  hours: dailyRecords.value.map((item) => item.work_time_seconds == null ? null : Number(item.work_time_seconds) / 3600),
 }))
 
 const quickLinks = [
@@ -74,19 +72,13 @@ const workSeconds = computed(() => Math.max(0, Math.round(Number(total.value.wor
 const workHours = computed(() => Math.floor(workSeconds.value / 3600))
 const workUnit = computed(() => `小时 ${String(Math.floor((workSeconds.value % 3600) / 60)).padStart(2, '0')}分`)
 
-function changeRate(current, previous) {
-  const now = Number(current || 0)
-  const before = Number(previous || 0)
-  if (!before) return { value: now ? 100 : 0, direction: now ? 'up' : 'flat' }
-  const value = Math.round(((now - before) / Math.abs(before)) * 100)
-  return { value: Math.abs(value), direction: value > 0 ? 'up' : value < 0 ? 'down' : 'flat' }
-}
-
 function comparisonStatus(current, previous) {
-  if (previous === null || previous === undefined || Number(previous) === 0) return { text: '暂无上月对比', direction: 'flat' }
-  const change = changeRate(current, previous)
-  if (change.direction === 'flat') return { text: '与上月持平', direction: 'flat' }
-  return { text: `${change.direction === 'up' ? '↑' : '↓'} ${change.value}% 较上月`, direction: change.direction }
+  if ([current, previous].some((value) => value == null || value === '' || !Number.isFinite(Number(value))) || Number(previous) <= 0) return { text: '暂无上月对比', direction: 'flat' }
+  const change = (Number(current) - Number(previous)) / Number(previous) * 100
+  if (change === 0) return { text: '与上月持平', direction: 'flat' }
+  const direction = change > 0 ? 'up' : 'down'
+  const percent = Math.abs(change) < 0.1 ? '<0.1' : Number(Math.abs(change).toFixed(1))
+  return { text: `${direction === 'up' ? '↑' : '↓'} ${percent}% 较上月`, direction }
 }
 
 const taskComparison = computed(() => comparisonStatus(total.value.task_count, previousTotal.value.task_count))
@@ -94,7 +86,7 @@ const lengthComparison = computed(() => comparisonStatus(total.value.cut_length_
 const timeComparison = computed(() => comparisonStatus(total.value.work_time_seconds, previousTotal.value.work_time_seconds))
 const insightTrend = computed(() => {
   if (lengthComparison.value.direction === 'flat') return lengthComparison.value.text === '暂无上月对比' ? '暂无可比较的切割长度数据' : '切割长度与上月持平'
-  return `切割长度${lengthComparison.value.direction === 'up' ? '高于' : '低于'}上月 ${lengthComparison.value.text.match(/\d+%/)?.[0] || ''}`
+  return `切割长度${lengthComparison.value.direction === 'up' ? '高于' : '低于'}上月 ${lengthComparison.value.text.match(/<?\d+(?:\.\d+)?%/)?.[0] || ''}`
 })
 const insightAdvice = computed(() => openAlarms.value.length ? '优先处理未解除设备告警' : !energyConnected.value ? '当前设备尚未接入能耗仪表' : electricity.value == null || gas.value == null ? '先核对能耗数据是否完整' : '持续关注生产与能耗变化')
 
@@ -191,11 +183,14 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="min-h-500px flex-col-stretch gap-16px overflow-hidden bg-layout lt-sm:overflow-auto">
-    <NCard :bordered="false" size="small" class="card-wrapper bg-container">
-      <div class="flex-col-stretch gap-12px">
-        <h1 class="m-0 text-22px font-semibold">生产指挥中心</h1>
-        <NText depth="3">{{ session.user?.display_name }}，欢迎回来</NText>
-        <div class="flex-y-center flex-wrap gap-8px text-12px text-gray-500 dark:text-gray-400"><AppIcon name="calendar" :size="16" tone="current" />{{ displayDate }}<time>{{ displayTime }}</time></div>
+    <NCard :bordered="false" size="small" class="card-wrapper bg-container home-welcome">
+      <div class="flex-y-center justify-between gap-16px">
+        <div class="min-w-0 flex-col-stretch gap-12px">
+          <h1 class="m-0 text-22px font-semibold">生产指挥中心</h1>
+          <NText depth="3">{{ session.user?.display_name }}，欢迎回来</NText>
+          <div class="flex-y-center flex-wrap gap-8px text-12px text-gray-500 dark:text-gray-400"><AppIcon name="calendar" :size="16" tone="current" />{{ displayDate }}<time>{{ displayTime }}</time></div>
+        </div>
+        <img :src="homeWelcomeIllustration" alt="" width="800" height="600" class="h-auto w-120px shrink-0 object-contain sm:w-200px">
       </div>
     </NCard>
 
@@ -204,14 +199,26 @@ onBeforeUnmount(() => {
       <template #action><NButton size="small" type="error" secondary @click="loadDashboard">重试</NButton></template>
     </NAlert>
 
-    <section class="grid grid-cols-1 gap-16px sm:grid-cols-2 xl:grid-cols-3" aria-label="本月生产概况">
-      <HomeKpiCard title="本月任务" icon="tasks" :value="total.task_count" unit="项" :status="taskComparison.text" :direction="taskComparison.direction" :series="metricSeries.tasks" :loading="overviewLoading" />
-      <HomeKpiCard title="切割长度" icon="ruler" :value="total.cut_length_m" :precision="1" unit="米" :status="lengthComparison.text" :direction="lengthComparison.direction" :series="metricSeries.length" :loading="overviewLoading" />
-      <HomeKpiCard title="设备工时" icon="clock" :value="workHours" :unit="workUnit" :status="timeComparison.text" :direction="timeComparison.direction" :series="metricSeries.hours" :loading="overviewLoading" />
-      <HomeKpiCard title="生产天数" icon="factory" :value="activeDays" unit="天" status="本月有记录" direction="up" :series="metricSeries.days" :loading="overviewLoading" />
-      <HomeKpiCard title="电耗" icon="zap" :value="energyConnected ? electricity : '暂未接入'" :precision="1" :unit="energy?.units?.electricity || 'kWh'" :status="!energyConnected ? '电表暂未接入' : electricity == null ? '暂无数据' : `已汇总 ${energy.saved_day_count || 0} 天`" :direction="electricity == null ? 'flat' : 'up'" :series="metricSeries.electricity" :loading="energyLoading" />
-      <HomeKpiCard title="气耗" icon="wind" :value="energyConnected ? gas : '暂未接入'" :precision="1" :unit="energy?.units?.gas || 'Nm³'" :status="!energyConnected ? '气表暂未接入' : gas == null ? '暂无数据' : `已汇总 ${energy.saved_day_count || 0} 天`" :direction="gas == null ? 'flat' : 'up'" :series="metricSeries.gas" :loading="energyLoading" />
-    </section>
+    <NCard :bordered="false" class="card-wrapper bg-container" content-style="padding: 0">
+      <section class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4" aria-label="本月生产概况">
+        <HomeKpiCard class="border-0 border-b border-solid border-[var(--theme-divider-color)] sm:border-r xl:border-b-0" title="本月任务" :value="overview ? total.task_count : null" unit="项" :status="taskComparison.text" :direction="taskComparison.direction" :series="metricSeries.tasks" :loading="overviewLoading" />
+        <HomeKpiCard class="border-0 border-b border-solid border-[var(--theme-divider-color)] xl:border-r xl:border-b-0" title="切割长度" color="rgb(var(--success-color))" :value="overview ? total.cut_length_m : null" :precision="1" unit="米" :status="lengthComparison.text" :direction="lengthComparison.direction" :series="metricSeries.length" :loading="overviewLoading" />
+        <HomeKpiCard class="border-0 border-b border-solid border-[var(--theme-divider-color)] sm:border-b-0 sm:border-r" title="设备工时" color="rgb(var(--info-color))" :value="overview ? workHours : null" :unit="overview ? workUnit : ''" :status="timeComparison.text" :direction="timeComparison.direction" :series="metricSeries.hours" :loading="overviewLoading" />
+        <div class="min-w-0 flex-col-stretch justify-center gap-8px p-16px" aria-label="生产天数与能耗">
+          <div class="flex-y-center justify-between gap-8px border border-solid border-[var(--theme-divider-color)] rd-12px px-12px py-8px">
+            <div class="flex-col-stretch gap-4px"><NText depth="3" class="text-12px">生产天数</NText><NSkeleton v-if="overviewLoading" height="24px" width="48px" /><NText v-else class="text-18px font-medium">{{ overview ? activeDays : '--' }} <NText depth="3" class="text-12px">天</NText></NText></div>
+            <NTag v-if="!overviewLoading && overview" round size="small" :bordered="false" :type="activeDays ? 'success' : 'default'">{{ activeDays ? '本月有记录' : '本月暂无记录' }}</NTag>
+          </div>
+          <div class="grid grid-cols-2 gap-8px">
+            <div v-for="item in [{ label: '电耗', icon: 'zap', value: electricity, unit: energy?.units?.electricity || 'kWh' }, { label: '气耗', icon: 'wind', value: gas, unit: energy?.units?.gas || 'Nm³' }]" :key="item.label" class="min-w-0 border border-dashed border-[var(--theme-divider-color)] rd-12px px-12px py-8px" :aria-label="item.label">
+              <div class="mb-4px flex-y-center gap-4px"><NText depth="3" class="text-12px">{{ item.label }}</NText><AppIcon :name="item.icon" :size="14" tone="muted" /></div>
+              <NSkeleton v-if="energyLoading" height="22px" width="80%" aria-label="正在获取能耗数据" role="status" />
+              <NStatistic v-else tabular-nums :value="!energyConnected ? '暂未接入' : item.value == null ? '暂无数据' : item.value.toLocaleString('zh-CN', { minimumFractionDigits: 1, maximumFractionDigits: 1 })" :theme-overrides="{ valueFontSize: '14px' }" class="break-words"><template #suffix><NText depth="3" class="text-11px">{{ item.unit }}</NText></template></NStatistic>
+            </div>
+          </div>
+        </div>
+      </section>
+    </NCard>
 
     <section class="grid grid-cols-1 gap-16px xl:grid-cols-3" aria-label="生产看板">
       <NCard :bordered="false" size="small" class="card-wrapper bg-container xl:col-span-2" aria-labelledby="trend-card-title">
@@ -237,28 +244,28 @@ onBeforeUnmount(() => {
           </div>
         </Transition>
       </NCard>
-      <NCard :bordered="false" size="small" class="card-wrapper bg-container" aria-labelledby="alarm-card-title">
+      <NCard :bordered="false" size="small" class="card-wrapper bg-container xl:max-h-300px" content-class="min-h-0 overflow-hidden" aria-labelledby="alarm-card-title">
         <template #header><HomeSectionHeader heading-id="alarm-card-title" title="最近告警" icon="bell" to="/admin/alarms" action="查看全部" /></template>
         <Transition name="fade" mode="out-in">
-          <div v-if="alarmLoading" key="loading" class="min-h-180px flex-center" role="status"><NSpin size="small" /></div>
-          <NEmpty v-else-if="!incidents.length" key="empty" class="py-24px" :description="alarmStatus?.enabled ? '当前暂无告警' : '告警监控未启用'" />
-          <div v-else key="alarms" class="flex-col-stretch gap-16px">
-            <RouterLink v-for="item in incidents.slice(0, 4)" :key="item.incident_id" to="/admin/alarms" class="flex-col-stretch gap-8px rd-8px p-8px no-underline transition-all-300 hover:bg-primary/10">
-              <div class="flex-y-center justify-between gap-8px"><NText class="min-w-0 break-words">{{ item.alarm_desc || item.alarm_code || '设备告警' }}</NText><NTag size="small" :bordered="false" :type="item.status === 'open' ? 'error' : 'success'">{{ item.status === 'open' ? '未解除' : '已解除' }}</NTag></div>
-              <NText depth="3" class="text-12px">{{ severityText[item.severity] || '告警' }} · {{ formatDeviceDisplay(item.machine_no) || '切割设备' }} · {{ item.alarm_class || '运行监控' }}</NText>
-              <NText depth="3" class="text-12px">{{ shortDateTime(item.last_seen_at) }}</NText>
+          <div v-if="alarmLoading" key="loading" class="h-full min-h-180px flex-center" role="status"><NSpin size="small" /></div>
+          <NEmpty v-else-if="!incidents.length" key="empty" class="h-full min-h-120px flex-center" :description="alarmStatus?.enabled ? '当前暂无告警' : '告警监控未启用'" />
+          <div v-else key="alarms" class="flex-col-stretch gap-8px">
+            <RouterLink v-for="item in incidents.slice(0, 3)" :key="item.incident_id" to="/admin/alarms" class="h-72px min-w-0 flex-col-stretch gap-4px rd-8px p-4px no-underline transition-all-300 hover:bg-primary/10">
+              <div class="flex-y-center justify-between gap-8px"><NText class="min-w-0 flex-1 truncate">{{ item.alarm_desc || item.alarm_code || '设备告警' }}</NText><NTag size="small" :bordered="false" :type="item.status === 'open' ? 'error' : 'success'">{{ item.status === 'open' ? '未解除' : '已解除' }}</NTag></div>
+              <NText depth="3" class="truncate text-12px leading-16px">{{ severityText[item.severity] || '告警' }} · {{ formatDeviceDisplay(item.machine_no) || '切割设备' }} · {{ item.alarm_class || '运行监控' }}</NText>
+              <NText depth="3" class="truncate text-12px leading-16px">{{ shortDateTime(item.last_seen_at) }}</NText>
             </RouterLink>
           </div>
         </Transition>
       </NCard>
-      <NCard :bordered="false" size="small" class="card-wrapper bg-container xl:col-span-2" aria-labelledby="reports-card-title">
+      <NCard :bordered="false" size="small" class="card-wrapper bg-container xl:max-h-300px xl:col-span-2" content-class="min-h-0 overflow-hidden" aria-labelledby="reports-card-title">
         <template #header><HomeSectionHeader heading-id="reports-card-title" title="最近生成报告" icon="file" to="/admin/reports/center" :action="`查看全部${historyTotal ? ` ${historyTotal}` : ''}`" /></template>
         <Transition name="fade" mode="out-in">
-          <div v-if="historyLoading" key="loading" class="min-h-180px flex-center" role="status"><NSpin size="small" /></div>
-          <NEmpty v-else-if="!recentReports.length" key="empty" class="py-24px" description="暂无已生成报告" />
-          <div v-else key="reports" class="flex-col-stretch gap-16px">
-            <div v-for="item in recentReports" :key="item.report_id" class="flex-y-center flex-wrap justify-between gap-12px">
-              <div class="min-w-0 flex-1 flex-col-stretch gap-8px"><NText class="break-words">{{ item.report_title || reportTypeText[item.report_type] || '生产报表' }}</NText><NText depth="3" class="text-12px">{{ reportPeriod(item) }} · {{ item.task_count ?? '--' }} 项 · {{ shortDateTime(item.generated_at || item.created_at) }}</NText></div>
+          <div v-if="historyLoading" key="loading" class="h-full min-h-180px flex-center" role="status"><NSpin size="small" /></div>
+          <NEmpty v-else-if="!recentReports.length" key="empty" class="h-full min-h-120px flex-center" description="暂无已生成报告" />
+          <div v-else key="reports" class="flex-col-stretch gap-8px">
+            <div v-for="item in recentReports" :key="item.report_id" class="h-72px min-w-0 flex-y-center justify-between gap-12px">
+              <div class="min-w-0 flex-1 flex-col-stretch gap-4px"><NText class="line-clamp-2 break-words leading-20px">{{ item.report_title || reportTypeText[item.report_type] || '生产报表' }}</NText><NText depth="3" class="truncate text-12px leading-16px">{{ reportPeriod(item) }} · {{ item.task_count ?? '--' }} 项 · {{ shortDateTime(item.generated_at || item.created_at) }}</NText></div>
               <NTag size="small" :bordered="false" :type="item.status === 'completed' ? 'success' : item.status === 'failed' ? 'error' : 'info'">{{ statusText[item.status] || item.status }}</NTag>
               <NButton v-if="item.view_url" tag="a" :href="item.view_url" target="_blank" rel="noopener" text type="primary">打开</NButton><NText v-else depth="3">—</NText>
             </div>
@@ -273,7 +280,7 @@ onBeforeUnmount(() => {
           </RouterLink>
         </nav>
       </NCard>
-      <NCard :bordered="false" size="small" class="card-wrapper bg-container xl:col-span-2" aria-labelledby="insights-card-title">
+      <NCard :bordered="false" size="small" class="card-wrapper bg-container xl:col-span-2" header-style="padding-bottom: 0" content-style="padding-top: var(--n-padding-bottom)" content-class="flex flex-col justify-center" aria-labelledby="insights-card-title">
         <template #header><HomeSectionHeader heading-id="insights-card-title" title="智能洞察" icon="sparkles" to="/admin/reports/leadership" action="查看更多" /></template>
         <Transition name="fade" mode="out-in">
           <div v-if="overviewLoading || alarmLoading" key="loading" class="min-h-180px flex-center" role="status"><NSpin size="small" /></div>

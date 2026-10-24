@@ -108,6 +108,7 @@ async function saveConfiguration() {
       value.password = ''
     }
     hasUnsavedChanges.value = false
+    await Promise.all([loadStatus(), loadConfiguration()])
   } catch (exception) {
     configurationError.value = exception.message
   } finally {
@@ -145,7 +146,7 @@ onMounted(() => Promise.all([loadStatus(), loadConfiguration()]))
   />
 
   <section class="panel saved-database-config">
-    <div class="panel-title"><div><span>01</span><h2>连接参数</h2></div><p>保存到 data/settings.env · 重启服务后生效</p></div>
+    <div class="panel-title"><div><span>01</span><h2>连接参数</h2></div><p>保存后自动热加载 · 无需重启容器</p></div>
     <div v-if="configurationLoading" class="configuration-loading">正在读取数据库配置…</div>
     <form v-else-if="databaseConfiguration" @submit.prevent="saveConfiguration" @input.capture="hasUnsavedChanges = true" @change.capture="hasUnsavedChanges = true">
       <div class="configuration-switches">

@@ -7,6 +7,7 @@ from time import monotonic
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from contextlib import nullcontext
+from collections.abc import Callable
 
 from app.config import Settings
 from app.database.metadata import MetadataRepository
@@ -27,7 +28,7 @@ class ReportWorker:
         pipeline: ReportPipeline | None = None,
         automation_service: AutomationService | None = None,
         runtime: AutomationRuntime | None = None,
-        pipelines: dict[str, ReportPipeline] | None = None,
+        pipelines: dict[str, ReportPipeline] | Callable[[], dict[str, ReportPipeline]] | None = None,
         execution_context=None,
     ) -> None:
         self.settings = settings
@@ -156,7 +157,8 @@ class ReportWorker:
         report_id = job["report_id"]
         try:
             logger.info("report generation started", extra={"report_id": report_id})
-            pipeline = self.pipeline if self.pipelines is None else self.pipelines[job["device_id"]]
+            pipelines = self.pipelines() if callable(self.pipelines) else self.pipelines
+            pipeline = self.pipeline if pipelines is None else pipelines[job["device_id"]]
             run = pipeline.run
             parameters = inspect.signature(run).parameters
             if "cancellation_check" in parameters:

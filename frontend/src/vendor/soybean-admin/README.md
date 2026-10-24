@@ -7,6 +7,8 @@ Pinned commit: `ab40c08992807e303dd8aabb6ec43d7e2334b24f`.
 The complete `src/store/modules/theme/`, `src/layouts/modules/theme-drawer/`,
 `src/theme/settings.ts`, `vars.ts` and all four preset JSON files are migrated.
 All 20 drawer files, token definitions and presets are unchanged upstream source.
+Application defaults use a light slate canvas; the token helper maps the prior
+upstream canvas color in cached settings and presets to this current default.
 Application defaults select vertical-mix with a 64px rail (48px icon-only when collapsed) and 180px child menu;
 the source manifest records this customization and verifies the migrated files.
 The store retains every upstream setting/action, including automatic dark mode,

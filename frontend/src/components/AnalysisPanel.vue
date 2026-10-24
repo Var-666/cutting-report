@@ -312,9 +312,6 @@ onBeforeUnmount(() => { pauseAnalysis(); unsubscribeDevice() })
     <div v-else-if="error" class="analysis-error">
       <span>{{ error }}</span><button type="button" @click="retryAnalysis">重试</button>
     </div>
-    <div v-if="analysis && (loading || error || analysis.data_version !== analysisDataVersion)" class="analysis-state">
-      上次分析时间：{{ analysis.generated_at || '时间未记录' }}。此结果基于上次数据，{{ versionCheckEnabled && (!loading || readingLatest) ? '后台新结果完成后自动更新' : loading ? '正在更新…' : '等待更新' }}
-    </div>
     <template v-if="analysis">
       <section class="analysis-conclusion" aria-labelledby="analysis-conclusion-title">
         <span class="analysis-conclusion__icon"><AppIcon name="sparkles" :size="31" tone="current" /></span>

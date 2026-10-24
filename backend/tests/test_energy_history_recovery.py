@@ -98,6 +98,33 @@ def test_completion_write_retry_does_not_repeat_external_query(tmp_path, monkeyp
     assert worker._claim() is None
 
 
+def test_hot_snapshots_share_one_serialized_completion_retry(tmp_path, monkeypatch):
+    from threading import Event
+    worker, _ = worker_and_clock(tmp_path)
+    replacement = EnergyHistoryWorker(worker.settings, worker.service)
+    replacement._completion = worker._completion
+    worker._pending_finish = ({'report_month': '2026-08-01'}, 'later', 'now', None)
+    entered, release = Event(), Event()
+    calls = []
+
+    def finish(*args):
+        calls.append(args)
+        entered.set()
+        assert release.wait(2)
+        return True
+
+    monkeypatch.setattr(worker.repository, 'reschedule_history_month', finish)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        old = pool.submit(worker._flush_pending_finish)
+        assert entered.wait(1)
+        new = pool.submit(replacement._flush_pending_finish)
+        release.set()
+        old.result(timeout=2)
+        new.result(timeout=2)
+    assert len(calls) == 1
+    assert worker._pending_finish is replacement._pending_finish is None
+
+
 def test_sampling_configuration_isolates_persisted_queue(tmp_path):
     from dataclasses import replace
     from app.services.energy_period_service import EnergyPeriodService

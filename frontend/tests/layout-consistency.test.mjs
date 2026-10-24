@@ -109,6 +109,32 @@ test('all application dropdowns use the shared below-field menu', () => {
 
 })
 
+test('alarm severity colors agree and dispatch project names can display in full', () => {
+  const alarm = descriptor('AlarmCenterView').styles[0].content
+  for (const [severity, color] of [['critical', 'error'], ['high', 'warning'], ['warning', 'info']]) {
+    assert.ok(alarm.includes(`.severity-badge.${severity}{color:rgb(var(--${color}-color));`))
+    assert.ok(alarm.includes(`.severity-badge.${severity}>span{background:rgb(var(--${color}-color))}`))
+  }
+  assert.match(alarm, /\.severity-badge>span\{[^}]*color:var\(--theme-on-primary-color\)/)
+  const dispatch = descriptor('CuttingDispatchView')
+  assert.match(dispatch.template.content, /<NAutoComplete[^\n]*class="project-selector"[^\n]*maxWidth: 'calc\(100vw - 24px\)'/)
+  assert.match(dispatch.styles[0].content, /:global\(\.dispatch-project-menu \.n-base-select-option__content\) \{ min-width:0; white-space:normal!important; overflow-wrap:anywhere;/)
+  assert.match(dispatch.styles[0].content, /\.dispatch-workspace\.download-workspace \{ grid-template-columns:280px minmax\(0,1fr\)/)
+  assert.match(dispatch.styles[0].content, /\.project-search :deep\(\.n-input\) \{ height:36px;/)
+  assert.match(dispatch.styles[0].content, /\.project-label strong \{[^}]*white-space:normal;/)
+  for (const name of ['project-folder', 'project-folder::before']) {
+    assert.ok(dispatch.styles[0].content.includes(`.${name} { border-color:#d99a22; background:#f7c85b; }`))
+  }
+  const catalog = descriptor('CatalogTreeNode', 'components').styles[0].content
+  for (const rule of catalog.matchAll(/\.catalog-folder(?:::before)? \{([^}]+)\}/g)) {
+    assert.match(rule[1], /border:1px solid #d99a22;/)
+    assert.match(rule[1], /background:#f7c85b;/)
+  }
+  const select = descriptor('AppSelect', 'components')
+  assert.match(select.template.content, /:consistent-menu-width="consistentMenuWidth" :menu-props="menuProps"/)
+  assert.match(select.scriptSetup.content, /consistentMenuWidth: \{ type: Boolean, default: true \}/)
+})
+
 test('all report calendars use one shared below-field date picker', () => {
   const names = [
     ['LeadershipReportView'], ['WorkshopView'], ['EnergyPeriodReportView'], ['DatabaseView'],
@@ -362,12 +388,14 @@ test('home KPI and production ring show verified data instead of decorative plac
   const template = home.template.content
   const script = home.scriptSetup.content
 
-  assert.equal((template.match(/<HomeKpiCard /g) || []).length, 6)
-  assert.match(kpi.template.content, /<MetricSparkline[^>]+:values="series"/)
+  assert.equal((template.match(/<HomeKpiCard /g) || []).length, 3)
+  assert.match(template, /grid-cols-1 sm:grid-cols-2 xl:grid-cols-4/)
+  assert.match(template, /aria-label="生产天数与能耗"/)
+  assert.match(kpi.template.content, /<MetricSparkline[^>]+variant="bar"[^>]+:values="series"/)
+  assert.match(kpi.template.content, /<NBadge dot[^>]+:processing="!loading && numericValue !== null && !app.reducedMotion"/)
   assert.match(script, /dailyRecords\.value\.map\(\(item\) => item\.cut_length_m\)/)
-  assert.match(script, /energy\.value\?\.rows/)
-  assert.match(script, /Number\(previous\) === 0\) return \{ text: '暂无上月对比'/)
-  assert.match(script, /change\.value\}% 较上月/)
+  assert.match(script, /Number\(previous\) <= 0\) return \{ text: '暂无上月对比'/)
+  assert.match(script, /percent\}% 较上月/)
   assert.doesNotMatch(script, /上期/)
   assert.match(template, /<NNumberAnimation[^>]*:to="activeDays"/)
 })
@@ -467,7 +495,6 @@ test('standard report pages share theme-aware table header and compact panel tok
 test('primary application pages share one readable typography scale', () => {
   const styles = readFileSync(new URL('../src/assets/style.css', import.meta.url), 'utf8')
   const tables = readFileSync(new URL('../src/assets/content-tables.css', import.meta.url), 'utf8')
-  const settings = descriptor('SettingsHomeView')
 
   assert.match(styles, /--font-page-title:\s*38px;/)
   assert.match(styles, /--font-page-description:\s*12px;/)
@@ -478,7 +505,6 @@ test('primary application pages share one readable typography scale', () => {
   assert.match(tables, /font-size:11px !important;/)
   assert.match(tables, /font-size:10px !important;/)
   assert.doesNotMatch(styles, /font-family:\s*Georgia/)
-  assert.doesNotMatch(settings.styles.map((style) => style.content).join('\n'), /Georgia/)
   assert.match(styles, /font-family: "Microsoft YaHei", "PingFang SC", Inter, Arial, sans-serif;/)
 })
 
@@ -907,6 +933,7 @@ test('all visible pagination controls share one production-console format', () =
     descriptor('AlarmCenterView').template.content,
     descriptor('AutomationView').template.content,
     descriptor('CuttingDispatchView').template.content,
+    descriptor('ConfigurationDiagnosticsView').template.content,
   ]
   const styles = readFileSync(new URL('../src/assets/style.css', import.meta.url), 'utf8')
 
@@ -1009,4 +1036,23 @@ test('file dispatch uses PDM references and has no saved-file prerequisite', () 
   assert.match(dispatch.template.content, /批量派发确认/)
   assert.match(dispatch.template.content, /确认并顺序派发/)
   assert.match(dispatch.template.content, /PDM项目目录/)
+})
+
+test('home alarm and report previews share a bounded desktop height and insight spacing stays balanced', () => {
+  const template = descriptor('AdminHomeView').template.content
+  for (const title of ['alarm', 'reports']) {
+    const card = template.match(new RegExp(`<NCard[^>]+aria-labelledby="${title}-card-title"`))[0]
+    assert.match(card, /xl:max-h-300px/)
+    assert.match(card, /content-class="min-h-0 overflow-hidden"/)
+    assert.doesNotMatch(card, /self-start/)
+  }
+  assert.match(template, /incidents.slice\(0, 3\)/)
+  assert.match(template, /key="alarms" class="flex-col-stretch gap-8px"/)
+  assert.match(template, /key="reports" class="flex-col-stretch gap-8px"/)
+  assert.equal((template.match(/class="h-72px min-w-0/g) || []).length, 2)
+  for (const route of ['/admin/alarms', '/admin/reports/center']) assert.ok(template.includes(`to="${route}"`))
+  const insight = template.match(/<NCard[^>]+aria-labelledby="insights-card-title"/)[0]
+  assert.match(insight, /header-style="padding-bottom: 0"/)
+  assert.match(insight, /content-style="padding-top: var\(--n-padding-bottom\)"/)
+  assert.match(insight, /content-class="flex flex-col justify-center"/)
 })

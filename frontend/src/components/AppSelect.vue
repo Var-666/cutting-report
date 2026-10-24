@@ -8,6 +8,8 @@ const props = defineProps({
   modelValue: { type: [String, Number, Boolean], default: undefined },
   disabled: Boolean,
   filterable: Boolean,
+  consistentMenuWidth: { type: Boolean, default: true },
+  menuProps: { type: Object, default: undefined },
   required: Boolean,
   id: { type: String, default: undefined },
 })
@@ -42,7 +44,7 @@ onDeactivated(() => { open.value = false })
 <template>
   <!-- Prevent wrapping labels from moving focus to the hidden validation select. -->
   <div class="app-select" :class="[$attrs.class, { 'is-invalid': invalid }]" :style="$attrs.style" @click.prevent>
-    <NSelect ref="control" :input-props="{ id, 'aria-label': $attrs['aria-label'] }" v-model:show="open" :value="selectedValue" :options="options" :disabled="disabled" :filterable="filterable" :placeholder="$attrs.placeholder" :status="invalid ? 'error' : undefined" @update:value="choose" />
+    <NSelect ref="control" :input-props="{ id, 'aria-label': $attrs['aria-label'] }" v-model:show="open" :value="selectedValue" :options="options" :consistent-menu-width="consistentMenuWidth" :menu-props="menuProps" :disabled="disabled" :filterable="filterable" :placeholder="$attrs.placeholder" :status="invalid ? 'error' : undefined" @update:value="choose" />
     <select class="app-control-native" :name="$attrs.name" :value="currentValue" :required="required" :disabled="disabled" tabindex="-1" aria-hidden="true" @invalid.prevent="handleInvalid"><slot /></select>
   </div>
 </template>

@@ -5,6 +5,7 @@ import ipaddress
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from app.api.runtime import runtime_state
 from app.api.auth import require_admin
 from app.models.conditions import ConditionSearch
 from app.services.condition_service import ConditionError
@@ -131,14 +132,14 @@ def cutting_status(
 ) -> dict:
     return _envelope(
         request,
-        request.app.state.cutting_dispatch.status(include_magic=scope == "push"),
+        runtime_state(request).cutting_dispatch.status(include_magic=scope == "push"),
     )
 
 
 @router.get("/machines")
 def list_machines(request: Request) -> dict:
     try:
-        data = request.app.state.cutting_dispatch.list_machines()
+        data = runtime_state(request).cutting_dispatch.list_machines()
     except MagicBoxError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     return _envelope(request, data)
@@ -150,7 +151,7 @@ def list_projects(
     keyword: str = Query(default="", max_length=128),
     limit: int = Query(default=1000, ge=1, le=1000),
 ) -> dict:
-    items = request.app.state.cutting_dispatch.list_projects(keyword, limit)
+    items = runtime_state(request).cutting_dispatch.list_projects(keyword, limit)
     return _envelope(request, {"items": items})
 
 
@@ -159,7 +160,7 @@ def list_catalogs(
     request: Request,
     project_id: str = Query(min_length=1, max_length=128),
 ) -> dict:
-    data = request.app.state.cutting_dispatch.list_catalogs(project_id)
+    data = runtime_state(request).cutting_dispatch.list_catalogs(project_id)
     return _envelope(request, data)
 
 
@@ -173,7 +174,7 @@ def list_files(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=10, ge=1, le=100),
 ) -> dict:
-    data = request.app.state.cutting_dispatch.list_files(
+    data = runtime_state(request).cutting_dispatch.list_files(
         project_id,
         catalog_id=catalog_id,
         status=status,
@@ -191,7 +192,7 @@ def create_dispatch(
     user: dict = Depends(require_admin),
 ) -> dict:
     try:
-        item = request.app.state.cutting_dispatch.create_dispatch(
+        item = runtime_state(request).cutting_dispatch.create_dispatch(
             **payload.model_dump(), enforce_name_check=True, user=user
         )
     except CuttingFileNotFoundError as exc:
@@ -209,7 +210,7 @@ def create_dispatch_batch(
     request: Request,
     user: dict = Depends(require_admin),
 ) -> dict:
-    data = request.app.state.cutting_dispatch.create_dispatch_batch(
+    data = runtime_state(request).cutting_dispatch.create_dispatch_batch(
         machine_ip=payload.machine_ip,
         items=[item.model_dump() for item in payload.items],
         user=user,
@@ -220,7 +221,7 @@ def create_dispatch_batch(
 @router.post("/files/search")
 def search_files(payload: ConditionSearch, request: Request):
     try:
-        data = request.app.state.cutting_dispatch.search_files(payload.filters, page=payload.page, page_size=payload.page_size, sort=payload.sort)
+        data = runtime_state(request).cutting_dispatch.search_files(payload.filters, page=payload.page, page_size=payload.page_size, sort=payload.sort)
     except ConditionError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
     return _envelope(request, data)
@@ -234,7 +235,7 @@ def list_dispatches(
 ) -> dict:
     return _envelope(
         request,
-        request.app.state.cutting_dispatch.list_dispatches(
+        runtime_state(request).cutting_dispatch.list_dispatches(
             page=page, page_size=page_size
         ),
     )
@@ -243,7 +244,7 @@ def list_dispatches(
 @router.get("/dispatches/{dispatch_id}")
 def get_dispatch(dispatch_id: str, request: Request) -> dict:
     try:
-        item = request.app.state.cutting_dispatch.get_dispatch(dispatch_id)
+        item = runtime_state(request).cutting_dispatch.get_dispatch(dispatch_id)
     except DispatchNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return _envelope(request, item)
@@ -256,7 +257,7 @@ def execute_dispatch(
     user: dict = Depends(require_admin),
 ) -> dict:
     try:
-        item = request.app.state.cutting_dispatch.execute_dispatch(
+        item = runtime_state(request).cutting_dispatch.execute_dispatch(
             dispatch_id, user=user
         )
     except DispatchNotFoundError as exc:
@@ -273,7 +274,7 @@ def execute_dispatch(
 @router.post("/dispatches/{dispatch_id}/cancel")
 def cancel_dispatch(dispatch_id: str, request: Request) -> dict:
     try:
-        item = request.app.state.cutting_dispatch.cancel_dispatch(dispatch_id)
+        item = runtime_state(request).cutting_dispatch.cancel_dispatch(dispatch_id)
     except DispatchNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except DispatchConflictError as exc:

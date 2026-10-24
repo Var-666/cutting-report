@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { NAutoComplete } from 'naive-ui'
 import CatalogTreeNode from '../components/CatalogTreeNode.vue'
 import AppIcon from '../components/AppIcon.vue'
 import heroImage from '../assets/home-laser-cutting.webp'
@@ -86,6 +87,13 @@ const requestedPage = ref(1)
 const pageSize = 20
 const total = ref(0)
 const projectOptions = ref([])
+const projectSearch = ref('')
+const projectSuggestions = computed(() => {
+  const keyword = (projectSearch.value || '').trim().toLocaleLowerCase()
+  return projectOptions.value
+    .map((project) => ({ value: String(project.project_id), displayLabel: `${project.project_name}${project.ship_no ? ` · ${project.ship_no}` : ''}` }))
+    .filter((option) => option.displayLabel.toLocaleLowerCase().includes(keyword))
+})
 const initialProjectId = Array.isArray(route.query.project_id)
   ? route.query.project_id[0] || ''
   : String(route.query.project_id || '')
@@ -500,8 +508,8 @@ async function loadProjects() {
   if (projectToOpen && pageActive.value && !signal.aborted && sequence === querySequence) await selectProject(projectToOpen)
 }
 
-async function openSelectedProject() {
-  const project = projects.value[0]
+async function openSelectedProject(projectId = selectedProjectId.value) {
+  const project = projectOptions.value.find((item) => String(item.project_id) === projectId)
   if (project) await selectProject(project)
 }
 
@@ -976,9 +984,10 @@ onBeforeUnmount(pausePage)
       </div>
       <div class="project-search">
         <label for="project-selector">支持项目 <small>输入项目名称或船号搜索</small></label>
-        <AppSelect id="project-selector" v-model="selectedProjectId" name="cutting_project" aria-label="搜索并选择支持项目" filterable :disabled="projectLoading || !projectOptions.length" :placeholder="projectLoading ? '正在读取项目…' : projectOptions.length ? '输入项目名称或船号…' : '暂无支持项目'" @change="openSelectedProject">
-          <option v-for="project in projectOptions" :key="project.project_id" :value="String(project.project_id)">{{ project.project_name }}{{ project.ship_no ? ` · ${project.ship_no}` : '' }}</option>
-        </AppSelect>
+        <!-- Suggestions omit label so selecting a project keeps the search text editable. -->
+        <NAutoComplete v-model:value="projectSearch" class="project-selector" :input-props="{ id: 'project-selector', 'aria-label': '搜索并选择支持项目', name: 'cutting_project' }" :options="projectSuggestions" :get-show="() => true" :render-label="option => option.displayLabel" :menu-props="{ class: 'dispatch-project-menu', style: { width: 'max-content', maxWidth: 'calc(100vw - 24px)' } }" clearable show-empty :disabled="projectLoading || !projectOptions.length" :placeholder="projectLoading ? '正在读取项目…' : projectOptions.length ? '输入项目名称或船号…' : '暂无支持项目'" @select="openSelectedProject">
+          <template #empty>没有匹配的支持项目</template>
+        </NAutoComplete>
       </div>
       <div class="directory-scroll" :aria-busy="projectLoading || catalogLoading">
         <div v-if="projectLoading" class="directory-message">正在读取项目…</div>
@@ -987,7 +996,7 @@ onBeforeUnmount(pausePage)
             <div class="project-node-row" :class="{ selected: selectedProject?.project_id === project.project_id && !selectedCatalog }">
               <button class="project-toggle" type="button" :aria-label="`${selectedProject?.project_id === project.project_id && projectExpanded ? '收起' : '展开'}${project.project_name}`" @click="toggleProject(project)"><span :class="{ expanded: selectedProject?.project_id === project.project_id && projectExpanded }">›</span></button>
               <span class="project-folder" aria-hidden="true"></span>
-              <button class="project-label" type="button" @click="selectProject(project)"><strong>{{ project.project_name }}</strong><small>{{ project.ship_no || '未标注船号' }}</small></button>
+              <button class="project-label" type="button" :title="project.project_name" @click="selectProject(project)"><strong>{{ project.project_name }}</strong><small>{{ project.ship_no || '未标注船号' }}</small></button>
             </div>
             <ul v-if="selectedProject?.project_id === project.project_id && projectExpanded" class="project-catalogs" role="group">
               <li v-if="catalogLoading" class="directory-message">正在读取目录…</li>
@@ -1168,9 +1177,10 @@ onBeforeUnmount(pausePage)
 .project-search label,.file-name-search label { display:block; margin-bottom:6px; color:var(--text-color-2); font-size:10px; font-weight:700; }
 .project-search label small { margin-left:5px; color:var(--text-color-3); font-size:9px; font-weight:400; }
 .project-search > div,.file-name-search > div { display:flex; gap:7px; }
-.project-search input,.project-search .app-select,.file-name-search input { width:100%; min-width:0; }
-.project-search input,.project-search .app-select { height:36px; font-size:12px; }
-.project-search .app-select__trigger { padding:0 10px; }
+.project-search .project-selector,.file-name-search input { width:100%; min-width:0; }
+.project-search .project-selector { height:36px; font-size:12px; }
+.project-search :deep(.n-input) { height:36px; font-size:12px; }
+:global(.dispatch-project-menu .n-base-select-option__content) { min-width:0; white-space:normal!important; overflow-wrap:anywhere; }
 .project-search button,.file-name-search button { min-width:58px; padding:0 11px; color:var(--blue); border:1px solid var(--theme-border-color); background:rgb(var(--container-bg-color)); }
 .project-search button { min-height:36px; height:36px; font-size:11px; }
 .project-search button:disabled,.file-name-search button:disabled { opacity:.55; }
@@ -1186,7 +1196,7 @@ onBeforeUnmount(pausePage)
 .project-folder { position:relative; width:19px; height:13px; flex:0 0 19px; margin:0 8px 0 1px; border:1px solid var(--theme-border-color); border-radius:2px; background:rgb(var(--info-color) / .1); }
 .project-folder::before { content:''; position:absolute; left:1px; top:-5px; width:9px; height:4px; border:1px solid var(--theme-border-color); border-bottom:0; border-radius:2px 2px 0 0; background:rgb(var(--info-color) / .1); }
 .project-label { min-width:0; display:flex; align-items:flex-start; flex-direction:column; padding:6px 2px; border:0; background:transparent; text-align:left; cursor:pointer; }
-.project-label strong { max-width:100%; overflow:hidden; color:var(--text-color-1); text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
+.project-label strong { max-width:100%; color:var(--text-color-1); overflow-wrap:anywhere; white-space:normal; font-size:12px; }
 .project-label small { margin-top:2px; color:var(--text-color-3); font-size:9px; }
 .directory-message { padding:18px 12px; color:var(--muted); text-align:center; font-size:11px; }
 .selected-directory { display:flex; align-items:center; gap:10px; padding:12px 18px; border-bottom:1px solid rgb(var(--primary-color)); background:rgb(var(--info-color) / .1); }
@@ -1372,7 +1382,7 @@ onBeforeUnmount(pausePage)
 .dispatch-flow .complete i { color:var(--theme-on-primary-color); border-color:var(--theme-border-color); background:rgb(var(--info-color)); }
 .dispatch-notice { margin:10px 0 0; border:1px solid var(--theme-border-color); border-left:3px solid var(--theme-border-color); border-radius:8px; }
 .dispatch-notice.error { border-color:rgb(var(--error-color)); border-left-color:rgb(var(--error-color)); }
-.dispatch-workspace.download-workspace { grid-template-columns:248px minmax(0,1fr); gap:12px; margin-top:12px; align-items:stretch; }
+.dispatch-workspace.download-workspace { grid-template-columns:280px minmax(0,1fr); gap:12px; margin-top:12px; align-items:stretch; }
 .dispatch-workspace>.panel { margin-bottom:0; }
 .dispatch-workspace>.panel,.dispatch-history-panel { overflow:hidden; border:1px solid var(--theme-border-color); border-radius:11px; box-shadow:var(--theme-shadow); animation:surface-in .44s cubic-bezier(.2,.75,.25,1) both; }
 .dispatch-files-panel { animation-delay:.05s!important; }
@@ -1388,7 +1398,6 @@ onBeforeUnmount(pausePage)
 .dispatch-section-icon.green { color:rgb(var(--success-color))!important; background:rgb(var(--success-color) / .1)!important; }
 .project-search,.file-name-search { border-bottom-color:var(--theme-border-color); background:rgb(var(--container-bg-color)); }
 .project-search { padding:11px 12px; }
-.project-search input,.project-search .app-select { height:36px; border-color:var(--theme-border-color); border-radius:7px; background:rgb(var(--container-bg-color)); }
 .project-search button,.file-name-search button { border-color:var(--theme-border-color); border-radius:7px; color:rgb(var(--info-color)); background:rgb(var(--info-color) / .1); }
 .directory-panel { position:relative; display:grid; grid-template-columns:minmax(0,1fr); grid-template-rows:auto auto minmax(0,1fr); min-height:0; }
 .directory-panel .panel-title>div,.directory-panel .project-search { min-width:0; }
@@ -1396,8 +1405,8 @@ onBeforeUnmount(pausePage)
 .project-node-row { border-radius:7px; }
 .project-node-row:hover { background:var(--theme-hover-color); }
 .project-node-row.selected { background:rgb(var(--container-bg-color)); box-shadow:inset 3px 0 rgb(var(--info-color)); }
-.project-folder { border-color:var(--theme-border-color); background:rgb(var(--primary-color) / .1); }
-.project-folder::before { border-color:var(--theme-border-color); background:rgb(var(--primary-color) / .1); }
+.project-folder { border-color:#d99a22; background:#f7c85b; }
+.project-folder::before { border-color:#d99a22; background:#f7c85b; }
 .selected-directory { min-height:39px; padding:8px 13px; border-bottom-color:rgb(var(--primary-color)); background:rgb(var(--container-bg-color)); }
 .selected-directory span { color:var(--text-color-3); }
 .selected-directory strong { color:rgb(var(--info-color)); font-size:10px; }
@@ -1454,7 +1463,6 @@ onBeforeUnmount(pausePage)
 .push-batch-footer button.primary { border-color:var(--theme-border-color); background:rgb(var(--primary-color)); }
 
 @media (max-width:1120px) {
-  .dispatch-workspace.download-workspace { grid-template-columns:232px minmax(0,1fr); }
   .dispatch-confirm-content { grid-template-columns:120px minmax(220px,1fr) minmax(210px,.8fr) 190px; }
 }
 @media (max-width:1000px) {

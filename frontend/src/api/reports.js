@@ -203,6 +203,9 @@ export function saveDatabaseConfiguration(payload) {
   return request('/api/v1/database/configuration', {
     method: 'PUT',
     body: JSON.stringify(payload),
+  }).then((result) => {
+    reportCache.clear()
+    return result
   })
 }
 

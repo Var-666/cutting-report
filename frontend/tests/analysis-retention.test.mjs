@@ -6,6 +6,14 @@ import { createActivationTimer } from '../src/utils/activationTimer.js'
 
 const source = readFileSync(new URL('../src/components/AnalysisPanel.vue', import.meta.url), 'utf8')
 
+test('analysis omits the previous-result notice and retains loading and error feedback', () => {
+  const template = source.match(/<template>([\s\S]*?)<\/template>/)[1]
+  assert.doesNotMatch(template, /上次分析时间|此结果基于上次数据|后台新结果完成后自动更新|等待更新/)
+  assert.match(template, /v-if="loading && !analysis" class="analysis-state"/)
+  assert.match(template, /v-else-if="error" class="analysis-error"/)
+  assert.match(template, /<template v-if="analysis">/)
+})
+
 test('visible analysis checks every five minutes, refreshes only changed data and stops when deactivated', async () => {
   const props = { reportType: 'leadership', reportDate: '2026-10-19', ready: true, dataVersion: 'v1', versionCheckEnabled: true }
   const intervals = new Map(), events = []

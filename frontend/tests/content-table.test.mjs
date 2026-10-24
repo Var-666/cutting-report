@@ -161,3 +161,13 @@ test('header and summary cells paint a solid theme surface below their tint whil
   assert.match(footer, /color:var\(--text-color-1\) !important/)
   assert.match(footer, /background:linear-gradient\([^;]+\),rgb\(var\(--container-bg-color\)\) !important/)
 })
+
+test('table details and action groups stay on the same line', () => {
+  const css = readFileSync(new URL('../src/assets/content-tables.css', import.meta.url), 'utf8')
+  assert.match(css, /td :is\(strong, small, code, \.confirmed-mark\)\s*\{[^}]*display:inline-block !important;[^}]*margin-block:0 !important;/)
+  assert.match(css, /td > :is\(div,p,span\)\s*\{[^}]*display:inline-flex !important;[^}]*flex-flow:row nowrap !important;/)
+  assert.match(css, /:is\(\.push-batch-file > span,\.error-cell > span\)\s*\{[^}]*display:inline-block !important;[^}]*white-space:nowrap !important;/)
+  assert.match(css, /td :is\(button,a\) \{ white-space:nowrap !important;/)
+  const automation = readFileSync(new URL('../src/views/AutomationView.vue', import.meta.url), 'utf8')
+  assert.match(automation, /td\.error-cell \{ white-space: nowrap !important; \}/)
+})

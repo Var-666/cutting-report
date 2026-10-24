@@ -46,12 +46,16 @@ test('standard report surfaces, controls and feedback contain no fixed light col
 })
 
 test('other business pages and shared states use theme colors, preserving only the export preview palette', () => {
-  for (const path of ['views/AlarmCenterView.vue','views/CuttingDispatchView.vue','views/DatabaseView.vue','views/AutomationView.vue','views/AdminAccountsView.vue','views/SettingsHomeView.vue','views/ModelUsageView.vue','components/ManagementPageHero.vue','components/CatalogTreeNode.vue','components/EmailDeliveryResolution.vue','components/DownloadPdfButton.vue','components/AppIcon.vue','assets/style.css']) {
+  for (const path of ['views/AlarmCenterView.vue','views/CuttingDispatchView.vue','views/DatabaseView.vue','views/AutomationView.vue','views/AdminAccountsView.vue','views/ModelUsageView.vue','components/ManagementPageHero.vue','components/CatalogTreeNode.vue','components/EmailDeliveryResolution.vue','components/DownloadPdfButton.vue','components/AppIcon.vue','assets/style.css']) {
     const source = read(path)
     const css = path.endsWith('.css') ? source : parse(source).descriptor.styles.map(style => style.content).join('\n')
     postcss.parse(css).walkRules(rule => {
       if (/template-preview|fake-chart|fake-table/.test(rule.selector)) return
-      rule.walkDecls(decl => assert.doesNotMatch(decl.value, /#[a-f0-9]{3,8}\b|rgba?\(\s*[\d.]/i, `${path}: ${rule.selector} ${decl.prop}`))
+      rule.walkDecls(decl => {
+        const value = /\.(?:project|catalog)-folder/.test(rule.selector)
+          ? decl.value.replace(/#(?:d99a22|f7c85b)\b/gi, '') : decl.value
+        assert.doesNotMatch(value, /#[a-f0-9]{3,8}\b|rgba?\(\s*[\d.]/i, `${path}: ${rule.selector} ${decl.prop}`)
+      })
     })
   }
   assert.doesNotMatch(read('components/AppIcon.vue'), /#[a-f0-9]{3,8}\b/i)

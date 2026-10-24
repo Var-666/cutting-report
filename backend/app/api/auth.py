@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, SecretStr, field_validator
 from starlette.concurrency import run_in_threadpool
 
 from app.api.workloads import authentication_requests
+from app.api.runtime import runtime_state
 from app.config import settings
 from app.services.request_cancellation import (
     cancellation_owner, current_request_id, sql_request_cancellations,
@@ -113,7 +114,7 @@ async def optional_user(
     )
     if user is not None and user.get("auth_source") == "hr_database":
         try:
-            service = request.app.state.worker_auth
+            service = (await run_in_threadpool(runtime_state, request)).worker_auth
             external_id = user.get("external_id") or ""
             force = request.method not in {"GET", "HEAD", "OPTIONS"}
             available = service.cached_session_identity_available(external_id, force=force)
@@ -163,7 +164,7 @@ def _verify_current_admin_password(
     plaintext = password.get_secret_value()
     if admin.get("auth_source") == "hr_database":
         try:
-            identity = request.app.state.worker_auth.authenticate(
+            identity = runtime_state(request).worker_auth.authenticate(
                 admin.get("company_no") or admin.get("username") or "",
                 plaintext,
             )
@@ -190,7 +191,7 @@ def auth_status(request: Request, user: dict | None = Depends(optional_user)) ->
         request,
         {
             "setup_required": request.app.state.workshop.admin_count() == 0,
-            "worker_database_auth_enabled": settings.worker_database_auth_enabled,
+            "worker_database_auth_enabled": getattr(runtime_state(request), "settings", settings).worker_database_auth_enabled,
             "authenticated": user is not None,
             "user": user,
         },
@@ -223,14 +224,14 @@ def login(payload: LoginRequest, request: Request, response: Response) -> dict:
         local_user = request.app.state.workshop.authenticate(
             payload.username, payload.password
         )
-        if not settings.worker_database_auth_enabled or local_user["role"] == "admin":
+        if not getattr(runtime_state(request), "settings", settings).worker_database_auth_enabled or local_user["role"] == "admin":
             user = local_user
     except AuthenticationError:
         pass
 
-    if user is None and settings.worker_database_auth_enabled:
+    if user is None and getattr(runtime_state(request), "settings", settings).worker_database_auth_enabled:
         try:
-            identity = request.app.state.worker_auth.authenticate(
+            identity = runtime_state(request).worker_auth.authenticate(
                 payload.username, payload.password
             )
         except AuthenticationError as exc:
@@ -261,7 +262,7 @@ def worker_login(
     response: Response,
 ) -> dict:
     try:
-        identity = request.app.state.worker_auth.authenticate(
+        identity = runtime_state(request).worker_auth.authenticate(
             payload.company_no, payload.password
         )
     except AuthenticationError as exc:
@@ -305,7 +306,7 @@ def create_user(
     request: Request,
     _: dict = Depends(require_admin),
 ) -> dict:
-    if settings.worker_database_auth_enabled:
+    if getattr(runtime_state(request), "settings", settings).worker_database_auth_enabled:
         raise HTTPException(status_code=409, detail="账号与管理员权限由HR数据库统一管理")
     try:
         user = request.app.state.workshop.create_user(
@@ -327,7 +328,7 @@ def search_hr_directory(
     _: dict = Depends(require_admin),
 ) -> dict:
     try:
-        people = request.app.state.worker_auth.search_people(query)
+        people = runtime_state(request).worker_auth.search_people(query)
     except WorkerAuthenticationUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return _envelope(request, {"items": people})
@@ -346,7 +347,7 @@ def grant_admin(
 ) -> dict:
     _verify_current_admin_password(request, admin, payload.current_password)
     try:
-        identity = request.app.state.worker_auth.find_person(payload.external_id)
+        identity = runtime_state(request).worker_auth.find_person(payload.external_id)
     except WorkerAuthenticationUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     if identity is None:

@@ -5,6 +5,7 @@ import { sparklineGeometry } from '../utils/sparkline.js'
 const props = defineProps({
   values: { type: Array, default: () => [] },
   label: { type: String, default: '指标趋势' },
+  variant: { type: String, default: 'line' },
   maxPoints: { type: Number, default: 12 },
 })
 
@@ -23,9 +24,12 @@ const accessibleLabel = computed(() => geometry.value.count
     :aria-label="accessibleLabel"
   >
     <line class="data-sparkline__baseline" x1="3" y1="25" x2="73" y2="25" />
-    <path v-if="geometry.path" class="data-sparkline__line" :d="geometry.path" />
+    <g v-if="variant === 'bar'" fill="currentColor">
+      <rect v-for="(bar, index) in geometry.bars" :key="index" :x="bar.x" :y="bar.y" :width="bar.width" :height="bar.height" rx="1" />
+    </g>
+    <path v-else-if="geometry.path" class="data-sparkline__line" :d="geometry.path" />
     <circle
-      v-if="geometry.lastPoint"
+      v-if="variant !== 'bar' && geometry.lastPoint"
       class="data-sparkline__point"
       :cx="geometry.lastPoint.x"
       :cy="geometry.lastPoint.y"

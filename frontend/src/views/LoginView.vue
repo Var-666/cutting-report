@@ -2,9 +2,8 @@
 import { nextTick, reactive, ref } from 'vue'
 import { NButton, NInput } from 'naive-ui'
 import { bootstrapAccount, loginAccount } from '../api/reports'
-import heroImage from '../assets/home-laser-cutting.webp'
+import loginIllustration from '../assets/login-illustration.png'
 import projectLogo from '../assets/project-logo.png'
-import AppIcon from '../components/AppIcon.vue'
 
 const props = defineProps({
   setupRequired: Boolean,
@@ -43,19 +42,10 @@ async function submit() {
 </script>
 
 <template>
-  <main class="login-page" :style="{ '--login-scene-image': `url(${heroImage})` }">
-    <section class="login-scene" aria-label="系统介绍">
+  <main class="login-page">
+    <section class="login-scene" aria-label="生产报表数据可视化">
       <div class="login-scene__brand"><img class="brand-logo brand-logo--login" :src="projectLogo" alt="" width="54" height="54" /><strong>切割生产智能产报系统</strong></div>
-      <div class="login-scene__copy">
-        <p>PRODUCTION REPORTING</p>
-        <p class="login-scene__title">数据驱动生产<br />让现场更清晰</p>
-        <span>汇集生产报表、设备能耗、告警洞察与文件派发，形成统一的内网生产工作台。</span>
-      </div>
-      <ul>
-        <li><AppIcon name="chart" :size="17" /><span><strong>生产报表</strong><small>统一统计与导出口径</small></span></li>
-        <li><AppIcon name="bell" :size="17" /><span><strong>智能告警</strong><small>异常分析与实体报告</small></span></li>
-        <li><AppIcon name="send" :size="17" /><span><strong>文件派发</strong><small>PDM 文件校验与推送</small></span></li>
-      </ul>
+      <img class="login-scene__illustration" :src="loginIllustration" alt="生产报表与数据分析插画" width="2048" height="2048" />
     </section>
     <section class="login-card">
       <p class="eyebrow">WORKSHOP PRODUCTION</p>

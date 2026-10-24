@@ -75,8 +75,7 @@ const router = createRouter({
             {
               path: '',
               name: 'settings',
-              component: () => import('../views/SettingsHomeView.vue'),
-              meta: { title: '系统设置' },
+              redirect: '/admin/settings/database',
             },
             {
               path: 'database',

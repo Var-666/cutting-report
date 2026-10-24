@@ -28,6 +28,7 @@ FILES = (
     "docs/deployment/OFFLINE_DOCKER部署说明.md",
     "docs/deployment/WEB_WORKER进程隔离升级说明.md",
     "docs/deployment/配置参考.md", "docs/project/功能与接口参考.md",
+    "docs/project/multi-device-isolation.md",
     "docs/project/changelog.md",
     "scripts/README.md", "scripts/check_energy.py",
     "scripts/build_docker_package.py", "scripts/prepare_alarm_monitor.py",

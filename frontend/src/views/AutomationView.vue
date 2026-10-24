@@ -376,21 +376,23 @@ onMounted(() => Promise.all([loadConfiguration(), loadAll()]))
           <p>{{ editingId ? '修改后保存生效' : '设置报表与发送计划' }}</p>
         </div>
         <form class="automation-form" @submit.prevent="submit" @input.capture="hasUnsavedChanges = true" @change.capture="hasUnsavedChanges = true">
-          <label class="wide"><span>任务名称</span><input v-model.trim="form.name" name="schedule_name" autocomplete="off" required maxlength="80"></label>
-          <label><span>设备</span><AppSelect v-model="form.device_id" name="schedule_device" required @change="hasUnsavedChanges = true"><option v-for="item in deviceSelection.items" :key="item.id" :value="item.id">{{ item.name }}</option></AppSelect><small>计划固定使用此设备。</small></label>
-          <label><span>报表类型</span><AppSelect v-model="form.report_type" name="report_type" @change="hasUnsavedChanges = true"><option v-for="(label,key) in reportLabels" :key="key" :value="key">{{ label }}</option></AppSelect></label>
-          <label><span>报表期间</span><AppSelect v-model="form.report_period" name="report_period" @change="hasUnsavedChanges = true"><template v-if="form.report_type === 'leadership'"><option value="previous_month">上月</option><option value="current_month">本月</option></template><template v-else><option value="previous_day">前一日</option><option value="current_day">当日</option></template></AppSelect></label>
-          <label><span>执行频率</span><AppSelect v-model="form.frequency" name="frequency" @change="hasUnsavedChanges = true"><option value="daily">每日</option><option value="weekly">每周</option><option value="monthly">每月</option></AppSelect></label>
-          <label><span>执行时间</span><input v-model="form.run_time" name="run_time" type="time" autocomplete="off" required></label>
-          <label v-if="form.frequency === 'weekly'" class="wide"><span>星期</span><AppSelect v-model.number="form.weekday" name="weekday" @change="hasUnsavedChanges = true"><option v-for="(day,index) in ['一','二','三','四','五','六','日']" :key="day" :value="index + 1">星期{{ day }}</option></AppSelect></label>
-          <label v-if="form.frequency === 'monthly'" class="wide"><span>每月执行日</span><input v-model.number="form.month_day" name="month_day" type="number" inputmode="numeric" autocomplete="off" min="1" max="28"></label>
-          <label><span>图表类型</span><AppSelect v-model="form.chart_type" name="chart_type" @change="hasUnsavedChanges = true"><option value="bar_line">柱线组合</option><option value="bar">柱状图</option><option value="line">折线图</option><option value="area">面积图</option></AppSelect></label>
-          <label><span>最大尝试次数</span><input v-model.number="form.max_attempts" name="max_attempts" type="number" inputmode="numeric" autocomplete="off" min="1" max="10"></label>
-          <label class="wide"><span>收件人</span><textarea v-model="form.recipients_text" name="recipients" inputmode="email" autocomplete="off" spellcheck="false" rows="3" required placeholder="例如：manager@example.com"></textarea><small>每行一个邮箱，或用逗号分隔。</small></label>
-          <label class="wide"><span>邮件主题</span><input v-model.trim="form.subject_template" name="subject_template" autocomplete="off" required><small>可用：{report_name}、{report_type}、{report_date}</small></label>
-          <div class="automation-switches wide">
-            <label><input v-model="form.attach_report" name="attach_report" type="checkbox">附加 HTML 报表</label>
-            <label><input v-model="form.enabled" name="schedule_enabled" type="checkbox">启用定时任务</label>
+          <div class="automation-fields">
+            <label class="wide"><span>任务名称</span><input v-model.trim="form.name" name="schedule_name" autocomplete="off" required maxlength="80"></label>
+            <label><span>设备</span><AppSelect v-model="form.device_id" name="schedule_device" required @change="hasUnsavedChanges = true"><option v-for="item in deviceSelection.items" :key="item.id" :value="item.id">{{ item.name }}</option></AppSelect><small>计划固定使用此设备。</small></label>
+            <label><span>报表类型</span><AppSelect v-model="form.report_type" name="report_type" @change="hasUnsavedChanges = true"><option v-for="(label,key) in reportLabels" :key="key" :value="key">{{ label }}</option></AppSelect></label>
+            <label><span>报表期间</span><AppSelect v-model="form.report_period" name="report_period" @change="hasUnsavedChanges = true"><template v-if="form.report_type === 'leadership'"><option value="previous_month">上月</option><option value="current_month">本月</option></template><template v-else><option value="previous_day">前一日</option><option value="current_day">当日</option></template></AppSelect></label>
+            <label><span>执行频率</span><AppSelect v-model="form.frequency" name="frequency" @change="hasUnsavedChanges = true"><option value="daily">每日</option><option value="weekly">每周</option><option value="monthly">每月</option></AppSelect></label>
+            <label><span>执行时间</span><input v-model="form.run_time" name="run_time" type="time" autocomplete="off" required></label>
+            <label v-if="form.frequency === 'weekly'" class="wide"><span>星期</span><AppSelect v-model.number="form.weekday" name="weekday" @change="hasUnsavedChanges = true"><option v-for="(day,index) in ['一','二','三','四','五','六','日']" :key="day" :value="index + 1">星期{{ day }}</option></AppSelect></label>
+            <label v-if="form.frequency === 'monthly'" class="wide"><span>每月执行日</span><input v-model.number="form.month_day" name="month_day" type="number" inputmode="numeric" autocomplete="off" min="1" max="28"></label>
+            <label><span>图表类型</span><AppSelect v-model="form.chart_type" name="chart_type" @change="hasUnsavedChanges = true"><option value="bar_line">柱线组合</option><option value="bar">柱状图</option><option value="line">折线图</option><option value="area">面积图</option></AppSelect></label>
+            <label><span>最大尝试次数</span><input v-model.number="form.max_attempts" name="max_attempts" type="number" inputmode="numeric" autocomplete="off" min="1" max="10"></label>
+            <label class="wide"><span>收件人</span><textarea v-model="form.recipients_text" name="recipients" inputmode="email" autocomplete="off" spellcheck="false" rows="3" required placeholder="例如：manager@example.com"></textarea><small>每行一个邮箱，或用逗号分隔。</small></label>
+            <label class="wide"><span>邮件主题</span><input v-model.trim="form.subject_template" name="subject_template" autocomplete="off" required><small>可用：{report_name}、{report_type}、{report_date}</small></label>
+            <div class="automation-switches wide">
+              <label><input v-model="form.attach_report" name="attach_report" type="checkbox">附加 HTML 报表</label>
+              <label><input v-model="form.enabled" name="schedule_enabled" type="checkbox">启用定时任务</label>
+            </div>
           </div>
           <div class="automation-actions wide">
             <span>邮件失败独立重试，不重复生成报表。</span>
@@ -456,15 +458,15 @@ onMounted(() => Promise.all([loadConfiguration(), loadAll()]))
 .automation-kpis span { color: var(--muted); font-size: 11px; }
 .automation-page .automation-kpis strong { display: block; margin-top: 5px; color: var(--text-color-1); font-size: 24px; line-height: 1.25; font-variant-numeric: tabular-nums; }
 .automation-kpis em { color: var(--text-color-3); font-size: 18px; font-style: normal; font-weight: 400; }
-.automation-workspace { min-width: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 12px; }
-.automation-workspace > .panel { min-width: 0; margin: 0; border-color: var(--automation-border); border-radius: 10px; background: rgb(var(--container-bg-color)); box-shadow: var(--theme-shadow); }
+.automation-workspace { min-width: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; gap: 12px; }
+.automation-workspace > .panel { display: flex; flex-direction: column; min-width: 0; margin: 0; border-color: var(--automation-border); border-radius: 10px; background: rgb(var(--container-bg-color)); box-shadow: var(--theme-shadow); }
 .automation-settings, .automation-editor, .automation-list { min-width: 0; overflow: hidden; }
 .automation-page > :deep(.resolution-panel) { margin-top: 0; }
 .automation-editor { scroll-margin-top: 82px; }
-.configuration-form, .automation-form { padding: 18px; background: rgb(var(--container-bg-color)); }
+.configuration-form, .automation-form { display: flex; flex-direction: column; flex: 1; padding: 18px; background: rgb(var(--container-bg-color)); }
 .configuration-notice { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 18px; padding: 10px 12px; border-radius: 7px; color: var(--muted); background: rgb(var(--primary-color) / .1); font-size: 11px; line-height: 1.6; }
 .configuration-notice .app-icon { flex: 0 0 auto; margin-top: 1px; }
-.configuration-grid { display: grid; gap: 18px; }
+.configuration-grid { display: grid; gap: 18px; margin-bottom: 16px; }
 .configuration-card { min-width: 0; margin: 0; padding: 0; border: 0; }
 .configuration-card legend { margin-bottom: 12px; padding: 0; color: var(--text-color-1); font-size: 13px; font-weight: 700; }
 .smtp-configuration-card { padding-top: 16px; border-top: 1px solid var(--theme-border-color); }
@@ -475,7 +477,7 @@ onMounted(() => Promise.all([loadConfiguration(), loadAll()]))
 .setting-switch > input { width: 18px; height: 18px; flex: 0 0 auto; accent-color: var(--cyan); }
 .setting-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .setting-fields .span-two, .automation-form .wide { grid-column: 1 / -1; }
-.setting-fields label, .automation-form > label { min-width: 0; }
+.setting-fields label, .automation-fields > label { min-width: 0; }
 .setting-fields label > span, .automation-form label > span { display: block; margin-bottom: 6px; color: var(--text-color-2); font-size: 11px; font-weight: 650; }
 .setting-fields input, .automation-form input { width: 100%; height: 36px; min-width: 0; padding: 0 10px; }
 .automation-form :deep(.app-select) { height: 36px; }
@@ -487,13 +489,13 @@ onMounted(() => Promise.all([loadConfiguration(), loadAll()]))
 .security-options input { width: 16px; height: 16px; accent-color: var(--cyan); }
 .security-options small { flex: 1 1 100%; color: var(--muted); font-size: 11px; line-height: 1.5; }
 .configuration-feedback { margin-top: 14px; }
-.configuration-actions, .automation-actions { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--theme-border-color); }
+.configuration-actions, .automation-actions { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-top: auto; padding-top: 14px; border-top: 1px solid var(--theme-border-color); }
 .configuration-actions > span, .automation-actions > span { color: var(--muted); font-size: 11px; line-height: 1.5; }
 .configuration-actions button, .automation-actions button { min-height: 36px; padding: 0 14px; }
 .configuration-actions button { margin-left: auto; }
-.automation-actions { margin-top: 0; }
 .automation-actions > div { display: flex; gap: 8px; margin-left: auto; }
-.automation-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 12px; }
+.automation-form { gap: 14px; }
+.automation-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 12px; }
 .automation-form textarea { width: 100%; min-height: 80px; resize: vertical; padding: 9px 10px; border: 1px solid var(--theme-border-color); border-radius: 7px; color: var(--ink); background: rgb(var(--container-bg-color)); font: inherit; font-size: 11px; }
 .automation-switches { display: flex; flex-wrap: wrap; gap: 12px 18px; padding: 12px; border-radius: 7px; background: rgb(var(--info-color) / .1); }
 .automation-switches label { display: flex; align-items: center; gap: 7px; color: var(--text-color-2); font-size: 11px; }
@@ -510,7 +512,7 @@ onMounted(() => Promise.all([loadConfiguration(), loadAll()]))
 .automation-table-wrap td small { margin-top: 4px; color: var(--muted); font-size: 11px; }
 .automation-page .automation-table-wrap td.task-cell, .automation-page .automation-table-wrap td.recipient-cell, .automation-page .automation-table-wrap td.error-cell { text-align: left !important; }
 .automation-page .automation-table-wrap td.task-cell strong, .automation-page .automation-table-wrap td.task-cell small, .automation-page .automation-table-wrap td.recipient-cell small { text-align: left !important; }
-.automation-page .automation-table-wrap td.error-cell { white-space: normal !important; }
+.automation-page .automation-table-wrap td.error-cell { white-space: nowrap !important; }
 .error-cell > span { display: block; color: var(--muted); line-height: 1.6; overflow-wrap: anywhere; }
 .schedule-status { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 5px; color: var(--muted); background: rgb(var(--primary-color) / .1); }
 .schedule-status i { width: 6px; height: 6px; border-radius: 50%; background: var(--theme-hover-color); }
@@ -546,7 +548,7 @@ onMounted(() => Promise.all([loadConfiguration(), loadAll()]))
   .automation-page .automation-kpis article { gap: 8px; padding: 12px 10px; }
   .automation-kpis .kpi-icon { width: 28px; height: 28px; }
   .automation-page .automation-kpis strong { font-size: 22px; }
-  .setting-fields, .automation-form { grid-template-columns: 1fr; }
+  .setting-fields, .automation-fields { grid-template-columns: 1fr; }
   .setting-fields .span-two, .automation-form .wide { grid-column: auto; }
   .configuration-actions, .automation-actions { align-items: stretch; flex-direction: column; }
   .configuration-actions button, .automation-actions > div { width: 100%; margin-left: 0; }

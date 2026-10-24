@@ -175,3 +175,17 @@ test('reset and preset overrides preserve native behavior and watermark modes ar
     assert.equal(store.naiveTheme.common.borderRadius, '6px')
   } finally { app.close() }
 })
+
+test('light canvas separates white cards and migrates only the former default token', async () => {
+  assert.equal(themeSettings.tokens.light.colors.layout, 'rgb(241, 245, 249)')
+  for (const [savedColor, expected] of [['rgb(247, 250, 252)', '241 245 249'], ['rgb(230, 231, 232)', '230 231 232']]) {
+    const app = mountTheme({ tokens: { light: { colors: { layout: savedColor } } } })
+    try {
+      assert.ok(app.style().includes(`--layout-bg-color: ${expected}`))
+      assert.match(app.style(), /--layout-bg-color: 18 18 18/)
+      app.store.setThemeScheme('dark')
+      await flush()
+      assert.equal(app.store.darkMode, true)
+    } finally { app.close() }
+  }
+})

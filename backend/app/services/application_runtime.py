@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from copy import copy
 
 from app.config import DEVICE_CATALOG, Settings, settings_for_device
 from app.services.device_runtime import build_device_runtime
@@ -31,6 +32,7 @@ from app.workers.download_cleanup_worker import DownloadCleanupWorker
 from app.database.coordination import CoordinationRepository, backup_before_process_upgrade
 from app.services.process_lock import FileLock
 from app.services.worker_status import WorkerStatusReader
+from app.services.database_runtime import DatabaseRuntime
 
 
 def build_runtime(settings: Settings, *, role: str) -> SimpleNamespace:
@@ -122,4 +124,29 @@ def _build_runtime(settings: Settings, *, role: str) -> SimpleNamespace:
     if role == "web":
         dispatches.recover_interrupted(state.cutting_dispatch._now())
     state.pdf_service = pdf_service
+
+    def rebuild_database_services(configuration: Settings) -> SimpleNamespace:
+        updated_devices = {
+            device.id: build_device_runtime(settings_for_device(configuration, device.id), database,
+                                            definitions, leadership_snapshots, pdf_service, task_queue=coordination)
+            for device in DEVICE_CATALOG.devices
+        }
+        for device_id, device in updated_devices.items():
+            device.energy_history_worker._completion = devices[device_id].energy_history_worker._completion
+        updated_pdm = SqlServerPdmRepository(configuration) if configuration.file_database_enabled else MockPdmRepository()
+        # Keep the existing download concurrency and cleanup locks across snapshots.
+        updated_downloads = copy(file_downloads)
+        updated_downloads.settings = configuration
+        updated_downloads.pdm = updated_pdm
+        return SimpleNamespace(settings=configuration, devices=updated_devices,
+            worker_auth=WorkerAuthService(configuration), file_downloads=updated_downloads,
+            cutting_dispatch=CuttingDispatchService(configuration, updated_pdm, dispatches,
+                                                   file_source, updated_downloads, magic_config))
+
+    state.database_runtime = DatabaseRuntime(settings, SimpleNamespace(
+        settings=settings, devices=devices, worker_auth=state.worker_auth,
+        file_downloads=file_downloads, cutting_dispatch=state.cutting_dispatch,
+    ), rebuild_database_services, automation_runtime)
+    state.configuration_diagnostics.database_runtime = state.database_runtime
+    automation_service.database_runtime = state.database_runtime
     return state

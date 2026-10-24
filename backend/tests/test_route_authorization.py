@@ -1,4 +1,5 @@
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -208,6 +209,7 @@ def test_unified_login_rejects_a_legacy_local_worker_when_hr_credentials_fail(mo
             raise AuthenticationError("公司工号或密码错误")
 
     class _Request:
+        state = SimpleNamespace()
         app = type(
             "App",
             (),

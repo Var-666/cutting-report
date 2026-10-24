@@ -36,33 +36,35 @@ test('sidebar exposes admin routes, excludes redirects and resets the new conten
     assert.ok(item.icon, `${item.label} needs a menu icon to keep icon and text columns aligned`)
     return item.children ? [...(item.routeName ? [item.routeName] : []), ...flatten(item.children)] : item.key
   })
-  assert.deepEqual(flatten(menus), ['admin-home', 'leadership-report', 'workshop-report', 'equipment-report', 'report-center', 'alarm-center', 'cutting-dispatch', 'settings', 'database', 'automation', 'admin-accounts', 'model-usage'])
+  assert.deepEqual(flatten(menus), ['admin-home', 'leadership-report', 'workshop-report', 'equipment-report', 'report-center', 'alarm-center', 'cutting-dispatch', 'database', 'configuration-diagnostics', 'automation', 'admin-accounts', 'model-usage'])
   const adminRoutes = router.routes.find(route => route.path === '/admin').children
   assert.equal(adminRoutes.find(route => route.path === 'designer').redirect, '/admin/settings')
   assert.equal(adminRoutes.find(route => route.path === 'settings').children.find(route => route.path === 'report-design').redirect, '/admin/settings')
   assert.doesNotMatch(source, /import\('\.\.\/views\/DesignerView.vue'\)/)
   assert.equal(menus.at(-1).key, '/admin/settings')
-  assert.equal(menus.at(-1).routeName, 'settings')
+  assert.equal(menus.at(-1).routeName, undefined)
+  assert.equal(adminRoutes.find(route => route.path === 'settings').children.find(route => route.path === '').redirect, '/admin/settings/database')
+  assert.doesNotMatch(source, /SettingsHomeView/)
   assert.ok(menus.at(-1).children.every((item) => item.key !== 'settings'))
   assert.deepEqual(menus.filter((menu) => menu.children).map((menu) => menu.key), ['/admin/reports', '/admin/settings'])
   assert.deepEqual(router.scrollBehavior(), { top: 0 })
   assert.deepEqual(scrolls, [{ top: 0 }])
 })
 
-test('official menu adapter retains parent navigation, child icons and the actual route hierarchy', () => {
+test('official menu adapter keeps settings as a group with child icons and actual route hierarchy', () => {
   const source = readFileSync(new URL('../src/store/modules/route/index.js', import.meta.url), 'utf8').replace(/^import .*$/gm, '').replace('export const', 'const')
   const navigations = []
   const router = { options: { routes: [{ path: '/admin', children: [] }] }, resolve: to => ({ path: typeof to === 'string' ? to : '/admin/' + to.name }), push: to => navigations.push(to) }
-  const items = [{ key: '/admin/settings', label: '系统设置', icon: 'settings', routeName: 'settings', children: [{ key: 'database', label: '数据库配置', icon: 'database' }] }]
+  const items = [{ key: '/admin/settings', label: '系统设置', icon: 'settings', children: [{ key: 'database', label: '数据库配置', icon: 'database' }] }]
   setActivePinia(createPinia())
   const useStore = new Function('computed', 'h', 'defineStore', 'router', 'adminMenus', 'AppIcon', `${source}\nreturn useRouteStore`)(computed, h, defineStore, router, () => items, 'i')
   const store = useStore()
-  store.menus[0].onClick()
-  assert.deepEqual(navigations, [{ name: 'settings' }])
+  assert.equal(store.menus[0].onClick, undefined)
+  assert.deepEqual(navigations, [])
   assert.deepEqual(store.getSelectedMenuKeyPath('database'), ['/admin/settings', 'database'])
-  assert.equal(store.findMenu('settings').routeKey, '/admin/settings')
+  assert.equal(store.findMenu('/admin/settings').routeKey, '/admin/settings')
   assert.equal(store.menus[0].children[0].icon().props.name, 'database')
-  assert.equal(store.searchMenus.length, 2)
+  assert.equal(store.searchMenus.length, 1)
 })
 
 test('responsive sidebar closes on entering mobile and reopens when returning to desktop', () => {
@@ -79,16 +81,20 @@ test('responsive sidebar closes on entering mobile and reopens when returning to
 })
 
 test('native PageTab adapter honors cached paths, middle-click setting and active-tab fallback', async () => {
-  const source = parse(readFileSync(new URL('../src/layouts/modules/ThemeTabs.vue', import.meta.url), 'utf8')).descriptor.scriptSetup.content.replace(/^import .*$/gm, '')
+  const tabs = parse(readFileSync(new URL('../src/layouts/modules/ThemeTabs.vue', import.meta.url), 'utf8')).descriptor
+  assert.match(tabs.template.content, /class="theme-tabs [^"]*overflow-x-auto/)
+  assert.match(tabs.styles[0].content, /\.theme-tabs \{ scrollbar-width:none; \}/)
+  assert.match(tabs.styles[0].content, /\.theme-tabs::-webkit-scrollbar \{ display:none; \}/)
+  const source = tabs.scriptSetup.content.replace(/^import .*$/gm, '')
   const route = reactive({ fullPath: '/admin/reports/leadership', path: '/admin/reports/leadership', meta: {} })
   const theme = reactive({ tab: { cache: true, closeTabByMiddleClick: false } })
-  const stored = new Map([['tabs', ['/admin/settings', '/outside', '/admin/not-a-route', '/admin/settings/report-design']]])
+  const stored = new Map([['tabs', ['/admin/settings', '/admin/settings/database', '/outside', '/admin/not-a-route', '/admin/settings/report-design']]])
   const destinations = []
-  const router = { push: path => destinations.push(path), resolve: path => ({ path: path.split('?')[0], query: Object.fromEntries(new URLSearchParams(path.split('?')[1] || '')), matched: path === '/admin/not-a-route' ? [] : [{ meta: { role: 'admin' }, ...(path === '/admin/settings/report-design' ? { redirect: '/admin/settings' } : {}) }], meta: { title: path, icon: 'home' } }) }
+  const router = { push: path => destinations.push(path), resolve: path => ({ path: path.split('?')[0], query: Object.fromEntries(new URLSearchParams(path.split('?')[1] || '')), matched: path === '/admin/not-a-route' ? [] : [{ meta: { role: 'admin' }, ...(['/admin/settings', '/admin/settings/report-design'].includes(path) ? { redirect: '/admin/settings' } : {}) }], meta: { title: path, icon: 'home' } }) }
   const localStg = { get: key => stored.get(key), set: (key, value) => stored.set(key, [...value]), remove: key => stored.delete(key) }
   const api = new Function('computed', 'nextTick', 'ref', 'watch', 'useRoute', 'useRouter', 'useThemeStore', 'localStg', 'getTabIdByRoute', `${source}\nreturn { tabs, close, middleClick, scrollTabs }`)(computed, nextTick, ref, watch, () => route, () => router, () => theme, localStg, getTabIdByRoute)
   await nextTick()
-  assert.deepEqual(api.tabs.value.map(tab => tab.path), ['/admin/home', '/admin/settings', '/admin/reports/leadership'])
+  assert.deepEqual(api.tabs.value.map(tab => tab.path), ['/admin/home', '/admin/settings/database', '/admin/reports/leadership'])
   route.fullPath = '/admin/reports/leadership?start_date=2026-10-01'
   await nextTick()
   assert.equal(api.tabs.value.length, 3, 'changing report filters must not open a duplicate tab')
@@ -100,7 +106,7 @@ test('native PageTab adapter honors cached paths, middle-click setting and activ
   theme.tab.closeTabByMiddleClick = true
   api.middleClick(event, route.path)
   assert.equal(prevented, true)
-  assert.deepEqual(destinations, ['/admin/settings'])
+  assert.deepEqual(destinations, ['/admin/settings/database'])
   api.close('/admin/home')
   assert.ok(api.tabs.value.some(tab => tab.path === '/admin/home'))
   theme.tab.cache = false

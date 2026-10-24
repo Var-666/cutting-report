@@ -16,6 +16,7 @@ from app.database.coordination import CoordinationRepository
 from app.database.sqlite import SQLiteDatabase, ExecutionLeaseLost, execution_scope
 from app.models.domain import ReportFilter
 from app.services.application_runtime import build_runtime
+from app.services.database_runtime import database_context
 from app.services.llm_service import background_llm_work, generation_priority
 from app.services.leadership_report_service import _previous_month
 from app.services.worker_status import background_ready
@@ -54,7 +55,7 @@ class WorkerProcess:
             with self.scope():
                 self.repository.recover_tasks(self.owner)
                 self.runtime.automation.recover_interrupted_deliveries()
-                for device in self.runtime.devices.values():
+                for device in database_context(self.runtime).devices.values():
                     history = device.energy_history_worker
                     if history.enabled:
                         history.repository.recover_history_queue(history.source_key, history._now())
@@ -64,7 +65,7 @@ class WorkerProcess:
                 self.report_worker = ReportWorker(
                     self.settings, self.runtime.metadata,
                     automation_service=self.runtime.automation_service, runtime=self.runtime.automation_runtime,
-                    pipelines={key: value.pipeline for key, value in self.runtime.devices.items()},
+                    pipelines=lambda: {key: value.pipeline for key, value in database_context(self.runtime).devices.items()},
                     execution_context=self.scope,
                 )
                 self.report_worker.start()
@@ -117,7 +118,7 @@ class WorkerProcess:
 
     def _schedule(self) -> None:
         now = datetime.now(ZoneInfo(self.settings.timezone))
-        for device_id, device in self.runtime.devices.items():
+        for device_id, device in database_context(self.runtime).devices.items():
             if device.current_report_refresh_worker.enabled:
                 interval = max(30, device.settings.report_background_refresh_seconds)
                 self.repository.schedule("current_refresh", device_id, {"date": now.date().isoformat()}, interval)
@@ -134,6 +135,8 @@ class WorkerProcess:
                         self.repository.enqueue("leadership_refresh", device_id, {"date": selected.isoformat(), "bootstrap": False},
                             key=f"reconcile:{device_id}:{now.date()}:{selected}")
             history = device.energy_history_worker
+            if history._pending_finish is not None:
+                history._flush_pending_finish()
             if (history.enabled and (history._pending_finish is not None or history.repository.history_ready(history.source_key, history._now()))
                     and not self.repository.active("energy_sync", device_id, {})):
                 self.repository.enqueue("energy_sync", device_id, {})
@@ -181,9 +184,9 @@ class WorkerProcess:
             self.repository.cleanup_completed()
             return
         if kind == "download_cleanup":
-            self.runtime.file_downloads.cleanup_expired()
+            database_context(self.runtime).file_downloads.cleanup_expired()
             return
-        device = self.runtime.devices[task["device_id"]]
+        device = database_context(self.runtime).devices[task["device_id"]]
         current = device.current_report_refresh_worker
         if kind == "current_refresh":
             current.run_once(date.fromisoformat(payload["date"]))

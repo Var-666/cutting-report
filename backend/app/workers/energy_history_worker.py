@@ -26,12 +26,22 @@ class EnergyHistoryWorker:
         self.wake_event = threading.Event()
         self.repository = service.repository
         self.source_key = service.history_source_key
-        self._pending_finish: tuple | None = None
+        self._completion = {'pending': None, 'lock': threading.RLock()}
         self.thread = threading.Thread(
             target=self._run_loop,
             name="energy-history-worker",
             daemon=True,
         ) if not managed else None
+
+    @property
+    def _pending_finish(self) -> tuple | None:
+        with self._completion['lock']:
+            return self._completion['pending']
+
+    @_pending_finish.setter
+    def _pending_finish(self, value: tuple | None) -> None:
+        with self._completion['lock']:
+            self._completion['pending'] = value
 
     @property
     def enabled(self) -> bool:
@@ -108,12 +118,13 @@ class EnergyHistoryWorker:
         self._flush_pending_finish()
 
     def _flush_pending_finish(self) -> None:
-        if self._pending_finish is None:
-            return
-        claim, next_attempt, now, error_code = self._pending_finish
-        if not self.repository.reschedule_history_month(claim, next_attempt, now, error_code):
-            logger.warning("energy history claim no longer owned: %s", claim["report_month"])
-        self._pending_finish = None
+        with self._completion['lock']:
+            if self._pending_finish is None:
+                return
+            claim, next_attempt, now, error_code = self._pending_finish
+            if not self.repository.reschedule_history_month(claim, next_attempt, now, error_code):
+                logger.warning("energy history claim no longer owned: %s", claim["report_month"])
+            self._pending_finish = None
 
     def _run_loop(self) -> None:
         while not self.stop_event.is_set():

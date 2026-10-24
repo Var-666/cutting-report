@@ -29,7 +29,8 @@ export function startReportPreload(
   }
   const identity = `${user.role}:${user.user_id}`
   if (identity === reportPreload.identity) return completion
-  stopReportPreload()
+  // Initial warmup must share reads already started when the device became ready.
+  if (reportPreload.identity) stopReportPreload()
   reportPreload.identity = identity
   const run = generation
   const today = reportToday()

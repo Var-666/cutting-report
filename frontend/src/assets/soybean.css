@@ -47,3 +47,14 @@ html, body { color:rgb(var(--base-text-color)); background:rgb(var(--layout-bg-c
 
 .soybean-header-actions { gap:8px; }
 .soybean-header > .soybean-brand { height:100%; padding:0; }
+
+.card-wrapper { border:1px solid #e2e8f0; }
+.dark .card-wrapper { border-color:var(--theme-border-color); }
+.home-welcome.card-wrapper {
+  background:radial-gradient(ellipse at left bottom, rgb(var(--primary-color) / .055), transparent 55%), linear-gradient(105deg, #eef2ff 0%, #f8fafc 55%, #fff 100%);
+  border-color:#e0e7ff;
+}
+.dark .home-welcome.card-wrapper {
+  background:radial-gradient(ellipse at left bottom, rgb(var(--primary-color) / .12), transparent 55%), linear-gradient(105deg, rgb(var(--container-bg-color)) 0%, rgb(var(--layout-bg-color)) 55%, rgb(var(--container-bg-color)) 100%);
+  border-color:rgb(var(--primary-color) / .25);
+}

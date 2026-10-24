@@ -84,6 +84,7 @@ class AutomationService:
         self.runtime = runtime or AutomationRuntime(settings)
         self.database = metadata.database
         self.device_services = {}
+        self.database_runtime = None
 
     def enrich_schedule(self, data: dict[str, Any], now: datetime) -> dict[str, Any]:
         value = dict(data)
@@ -189,7 +190,8 @@ class AutomationService:
 
     def _ensure_workshop_report(self, run: dict, now: datetime) -> None:
         report_date = run["report_date"]
-        device = self.device_services.get(run["device_id"])
+        services = self.database_runtime.snapshot().devices if self.database_runtime else self.device_services
+        device = services.get(run["device_id"])
         cfg = device.settings if device else settings_for_device(self.settings, run["device_id"])
         query = device.query_service if device else QueryService(cfg)
         workshop = device.workshop if device else WorkshopRepository(self.database, scope_machine_no=cfg.report_machine_no)

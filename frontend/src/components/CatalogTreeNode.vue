@@ -45,8 +45,8 @@ const hasChildren = () => Boolean(props.node.children?.length)
 .catalog-toggle { display:grid; place-items:center; padding:0; border:0; color:var(--text-color-2); background:transparent; cursor:pointer; }
 .catalog-toggle span { display:block; font-size:20px; line-height:1; transform:rotate(0); transition:transform .15s ease; }
 .catalog-toggle span.expanded { transform:rotate(90deg); }
-.catalog-folder { position:relative; width:17px; height:12px; flex:0 0 17px; margin:0 7px 0 1px; border:1px solid var(--theme-border-color); border-radius:2px; background:rgb(var(--info-color) / .1); }
-.catalog-folder::before { content:''; position:absolute; left:1px; top:-5px; width:8px; height:4px; border:1px solid var(--theme-border-color); border-bottom:0; border-radius:2px 2px 0 0; background:rgb(var(--info-color) / .1); }
+.catalog-folder { position:relative; width:17px; height:12px; flex:0 0 17px; margin:0 7px 0 1px; border:1px solid #d99a22; border-radius:2px; background:#f7c85b; }
+.catalog-folder::before { content:''; position:absolute; left:1px; top:-5px; width:8px; height:4px; border:1px solid #d99a22; border-bottom:0; border-radius:2px 2px 0 0; background:#f7c85b; }
 .catalog-label { min-width:0; overflow:hidden; padding:6px 2px; border:0; color:var(--text-color-1); background:transparent; text-align:left; text-overflow:ellipsis; white-space:nowrap; cursor:pointer; font-size:12px; }
 .catalog-node-row.selected .catalog-label { color:var(--text-color-1); font-weight:700; }
 </style>

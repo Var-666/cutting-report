@@ -53,7 +53,7 @@ function scrollTabs(event) {
 </script>
 <template>
   <DarkModeContainer class="h-full min-w-0 flex-y-center px-16px shadow-tab">
-    <div ref="root" class="h-full min-w-0 flex flex-1 overflow-x-auto" :class="theme.tab.mode === 'button' ? 'items-center gap-12px' : 'items-end'" role="tablist" aria-label="已打开页面" @wheel="scrollTabs">
+    <div ref="root" class="theme-tabs h-full min-w-0 flex flex-1 overflow-x-auto" :class="theme.tab.mode === 'button' ? 'items-center gap-12px' : 'items-end'" role="tablist" aria-label="已打开页面" @wheel="scrollTabs">
       <PageTab v-for="tab in tabs" :key="tab.id" class="flex-shrink-0" :mode="theme.tab.mode" :dark-mode="theme.darkMode" :active="tab.id === activeId" :active-color="theme.themeColor" :closable="tab.id !== '/admin/home'" :data-active="tab.id === activeId" role="tab" :aria-selected="tab.id === activeId" tabindex="0" @click="router.push(tab.path)" @keydown.enter="router.push(tab.path)" @keydown.delete="close(tab.id)" @mousedown="middleClick($event, tab.id)" @close="close(tab.id)">
         <template #prefix><AppIcon :name="tab.icon" :size="16" tone="current" /></template>
         <span class="max-w-240px ellipsis-text">{{ tab.label }}</span>
@@ -61,3 +61,8 @@ function scrollTabs(event) {
     </div>
   </DarkModeContainer>
 </template>
+
+<style scoped>
+.theme-tabs { scrollbar-width:none; }
+.theme-tabs::-webkit-scrollbar { display:none; }
+</style>

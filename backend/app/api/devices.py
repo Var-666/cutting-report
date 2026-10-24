@@ -4,12 +4,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.api.auth import require_user
 from app.config import DEVICE_CATALOG, Settings
+from app.api.runtime import runtime_state
 
 router = APIRouter(prefix='/api/v1/devices', tags=['devices'], dependencies=[Depends(require_user)])
 
 
 def device_state(request: Request) -> Any:
-    runtimes = getattr(request.app.state, 'devices', None)
+    runtimes = getattr(runtime_state(request), 'devices', None)
     values = request.query_params.getlist('device_id') if hasattr(request.query_params, 'getlist') else [request.query_params.get('device_id')]
     if len(values) != 1 or not values[0]:
         raise HTTPException(status_code=422, detail='必须明确指定唯一的 device_id')
@@ -28,7 +29,7 @@ def device_settings(request: Request) -> Settings:
 
 @router.get('')
 def list_devices(request: Request) -> dict[str, Any]:
-    runtimes = getattr(request.app.state, 'devices', {})
+    runtimes = getattr(runtime_state(request), 'devices', {})
     items = []
     for item in DEVICE_CATALOG.devices:
         cfg = runtimes[item.id].settings if item.id in runtimes else None

@@ -20,6 +20,7 @@ from app.configuration_sources import load_environment
 from app.device_config import load_device_catalog
 from app.services.automation_runtime import HOT_SETTINGS
 from app.services.automation_configuration import AutomationConfigurationRequest
+from app.services.database_runtime import DATABASE_FIELDS, DATABASE_DIAGNOSTIC_KEYS
 from pydantic import ValidationError
 
 
@@ -161,6 +162,7 @@ def validate_values(settings: Settings, values: dict) -> set[str]:
 class ConfigurationDiagnostics:
     def __init__(self, settings: Settings, runtime, *, process=None, sources=None, catalog=DEVICE_CATALOG):
         self.settings = settings
+        self.database_runtime = None
         self.runtime = runtime
         self.process = dict(PROCESS_ENVIRONMENT if process is None else process)
         self.sources = dict(LOADED_SOURCES if sources is None else sources)
@@ -176,22 +178,27 @@ class ConfigurationDiagnostics:
 
     def observed(self, comparison_key: str) -> dict:
         hot = self.runtime.inspect()
+        database = self.database_runtime.inspect() if self.database_runtime else None
+        database_settings = database['settings'] if database else self.settings
+        database_sources = {**self.sources, **database['sources']} if database else self.sources
         items = {}
         for name, item in ENV_FIELDS.items():
             key = item.metadata["env"]
-            value = getattr(hot["settings"] if name in HOT_FIELDS else self.settings, name)
-            source = hot["sources"].get(name, "default") if name in HOT_FIELDS else self.sources.get(key, "default")
+            configuration = database_settings if name in DATABASE_FIELDS else hot["settings"] if name in HOT_FIELDS else self.settings
+            value = getattr(configuration, name)
+            source = database_sources.get(key, "default") if name in DATABASE_FIELDS else hot["sources"].get(name, "default") if name in HOT_FIELDS else self.sources.get(key, "default")
             items[key] = {"value": safe_value(value, key), "source": source, "digest": fingerprint(value, comparison_key)}
-        for key, (value, source, _) in connection_values(self.settings, self.sources).items():
+        for key, (value, source, _) in connection_values(database_settings, database_sources).items():
             items[key] = {"value": safe_value(value, key), "source": source, "digest": fingerprint(value, comparison_key)}
         items["DEVICE_CONFIG_PATH"] = {"value": "已配置", "source": self.sources.get("DEVICE_CONFIG_PATH", "default"),
                                        "digest": fingerprint(str(DEVICE_CONFIG_PATH), comparison_key)}
         for key, value in catalog_values(self.catalog, self.settings.energy_api_enabled).items():
             source = self.sources.get("ENERGY_API_ENABLED", "default") + "+devices.json" if key.endswith(".energy_api_enabled") else "devices.json"
             items[key] = {"value": value, "source": source, "digest": fingerprint(value, comparison_key)}
-        return {"items": items, "loaded_at": self.loaded_at, "hot_loaded_at": hot["loaded_at"],
+        return {"items": items, "loaded_at": self.loaded_at, "hot_loaded_at": max(hot["loaded_at"], database['loaded_at']) if database else hot["loaded_at"],
                 "hot_revision": hot["revision"], "error": hot["error"],
-                "version": f"{self.version}:{hot['revision']}"}
+                "database_error": database['error'] if database else None,
+                "version": f"{self.version}:{hot['revision']}:{database['revision'] if database else 0}"}
 
     def target(self) -> tuple[dict, set[str], list[str]]:
         values, sources, errors = load_environment(self.settings.project_root, self.process)
@@ -258,12 +265,13 @@ class ConfigurationDiagnostics:
         for key in sorted(set(web["items"]) | set(targets) | set(other.get("items", {}) if worker_available else {})):
             target_value, target_source = targets.get(key, (None, "devices.json"))
             desired = fingerprint(target_value, comparison_key)
-            hot = key in HOT_SETTINGS
+            database_hot = self.database_runtime is not None and key in DATABASE_DIAGNOSTIC_KEYS
+            hot = key in HOT_SETTINGS or database_hot
             processes = {}
             for role, snapshot in [("web", web), ("worker", other if worker_available else None)]:
                 item = snapshot.get("items", {}).get(key) if snapshot else None
                 matches = item is not None and key in targets and item["digest"] == desired
-                abnormal = key in invalid or bool(errors) or not item or bool(snapshot.get("error") and hot)
+                abnormal = key in invalid or bool(errors) or not item or bool(snapshot.get("database_error" if database_hot else "error") and hot)
                 status = "error" if abnormal else "unconfigured" if matches and item["value"] == "未配置" else "effective" if matches else "pending" if not hot else "error"
                 processes[role] = {"value": item["value"] if item else "未知", "source": source_label(item["source"]) if item else "未知",
                                    "matches_saved": matches, "status": status}
@@ -277,7 +285,8 @@ class ConfigurationDiagnostics:
                          "saved_source": source_label(target_source), "status": state,
                          "valid": key not in invalid and not errors, "process_mismatch": mismatch,
                          "restart_required": not hot and any(item["status"] == "pending" for item in processes.values()),
-                         "rule": "保存后由各进程下一轮自动化/邮件操作加载；在途操作保留旧快照" if hot else
+                         "rule": "保存后新请求和后台操作自动加载；在途操作保留旧配置，无需重启容器" if database_hot else
+                         "保存后由各进程下一轮自动化/邮件操作加载；在途操作保留旧快照" if hot else
                          ("数据库声明参数，实际连接及继承来源见 connections.*；" if "SQLSERVER_" in key else "")
                          + "重启 Web 和 Worker；Docker 环境变量变更需重新创建两个容器"})
         return {"categories": CATEGORIES, "items": rows, "errors": errors,

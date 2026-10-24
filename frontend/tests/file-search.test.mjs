@@ -342,14 +342,15 @@ test('file dispatch page uses the recursive PDM directory tree without condition
   assert.match(view, /const pageSize = 20/)
   assert.match(view, /const projectOptions = ref\(\[\]\)/)
   assert.match(view, /const selectedProjectId = ref\(initialProjectId\)/)
-  assert.match(view, /<AppSelect id="project-selector"[^>]*filterable[^>]*@change="openSelectedProject"/)
-  assert.match(view, /v-for="project in projectOptions"/)
+  assert.match(view, /<NAutoComplete[^\n]*v-model:value="projectSearch"[^\n]*@select="openSelectedProject"/)
+  assert.match(view, /:options="projectSuggestions"/)
+  assert.match(view, /:get-show="\(\) => true"/)
   assert.doesNotMatch(view, /project-keyword|projectKeyword|filteredProjectOptions|applyProjectKeyword|resetProjectSelection|project-select-row/)
   assert.match(view, /支持项目/)
   assert.match(view, /项目名称或船号/)
   assert.doesNotMatch(view, /<option value="" disabled>\{\{ projectLoading/)
-  assert.match(view, /\.project-search input,\.project-search \.app-select \{ height:36px;[^}]*font-size:12px;/)
-  assert.match(view, /\.project-search \.app-select__trigger \{ padding:0 10px; \}/)
+  assert.match(view, /\.project-search \.project-selector \{ height:36px;[^}]*font-size:12px;/)
+  assert.match(view, /:render-label="option => option.displayLabel"/)
   assert.match(view, /文件名<\/th><th>命名检查<\/th><th>中间产品<\/th><th>文件格式<\/th><th>版本<\/th><th>操作人<\/th><th>操作人工号<\/th><th>操作时间<\/th><th>派发状态<\/th><th class="file-download-cell">操作/)
   assert.doesNotMatch(view, /<th>切割状态<\/th>/)
   assert.match(view, /fileExtension\(row\)/)
@@ -710,11 +711,11 @@ test('file dispatch presents the four-step dashboard and persistent confirmation
   assert.match(view, /const activeDispatchStep = computed/)
   assert.match(view, /v-for="file in selectedFileItems\.slice\(0, 5\)"/)
   assert.match(view, /<AppIcon name="send"/)
-  assert.match(view, /\.dispatch-workspace\.download-workspace \{ grid-template-columns:248px minmax\(0,1fr\)/)
+  assert.match(view, /\.dispatch-workspace\.download-workspace \{ grid-template-columns:280px minmax\(0,1fr\)/)
   assert.match(view, /\.dispatch-confirm-panel \{[^}]*grid-column:1\/-1;[^}]*align-self:start;/)
   assert.match(view, /\.directory-panel \{[^}]*display:grid;[^}]*grid-template-rows:auto auto minmax\(0,1fr\);/)
   assert.match(view, /\.directory-panel \{[^}]*grid-template-columns:minmax\(0,1fr\);/)
-  assert.match(view, /\.directory-panel \.project-select-row \.app-select \{[^}]*flex:1 1 0;/)
+  assert.match(view, /\.project-search \.project-selector,\.file-name-search input \{ width:100%; min-width:0;/)
   assert.match(view, /\.download-workspace \.dispatch-files-panel \{[^}]*min-height:600px;/)
   assert.match(view, /\.directory-scroll \{[^}]*grid-area:3 \/ 1 \/ 4 \/ -1;[^}]*position:absolute;[^}]*overflow:auto;/)
   assert.match(view, /@media \(max-width:1000px\) \{[\s\S]*?\.directory-panel \{ display:flex; flex-direction:column; \}/)
@@ -877,4 +878,29 @@ test('retry only continues a matching dispatch after reading its current status'
   assert.match(view, /上传结果待核对的任务须先检查魔盒/)
   assert.match(view, /核对并继续已有任务/)
   assert.match(view, /刷新清单重选/)
+})
+
+test('project suggestions preserve the typed search while selecting and switching projects', async () => {
+  const page = dispatchLifecycle()
+  const state = vm.runInContext('({ projectOptions, projectSearch, projectSuggestions, selectedProject, openSelectedProject })', page.context)
+  state.projectOptions.value = [
+    { project_id: 'P1', project_name: '扬州切割联调项目', ship_no: 'CMYZ0177' },
+    { project_id: 'P2', project_name: '文件派发模拟项目', ship_no: 'CMYZ0188' },
+  ]
+  state.projectSearch.value = '  cmyz0177  '
+  assert.equal(state.projectSuggestions.value.length, 1)
+  const option = state.projectSuggestions.value[0]
+  assert.equal(option.displayLabel, '扬州切割联调项目 · CMYZ0177')
+  assert.equal(Object.hasOwn(option, 'label'), false, 'autocomplete must not replace the typed query on selection')
+  await state.openSelectedProject(option.value)
+  assert.equal(state.projectSearch.value, '  cmyz0177  ')
+  assert.equal(state.selectedProject.value.project_id, 'P1')
+  state.projectSearch.value = '模拟'
+  await state.openSelectedProject(state.projectSuggestions.value[0].value)
+  assert.equal(state.projectSearch.value, '模拟')
+  assert.equal(state.selectedProject.value.project_id, 'P2')
+  state.projectSearch.value = '不存在'
+  assert.equal(state.projectSuggestions.value.length, 0)
+  state.projectSearch.value = null
+  assert.equal(state.projectSuggestions.value.length, 2)
 })

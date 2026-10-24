@@ -17,9 +17,10 @@ from pydantic import BaseModel, Field, SecretStr, field_validator
 from app.api.workloads import query_requests
 from app.services.process_lock import settings_file_lock
 from app.api.devices import device_state
+from app.api.runtime import runtime_state
 from app.api.auth import require_admin
 from app.services.runtime_settings_store import read_runtime_env, write_runtime_env, runtime_settings_lock
-from app.config import settings
+from app.config import Settings, settings
 from app.database.sqlserver import SqlServerClient, SqlServerConfigurationError
 from app.models.domain import ReportFilter, to_primitive
 from app.services.request_cancellation import SqlRequestCancelled, cancellable_cursor
@@ -132,15 +133,16 @@ def _query_mapping_status() -> list[dict]:
     return items
 
 
-def _database_source_status() -> list[dict]:
+def _database_source_status(configuration: Settings | None = None) -> list[dict]:
+    configuration = configuration or settings
     definitions = (
-        ("production", "生产报表库", settings.effective_data_source_mode == "sqlserver"),
-        ("worker", "工人 HR 库", settings.worker_database_auth_enabled),
-        ("file", "切割文件库", settings.file_database_enabled),
+        ("production", "生产报表库", configuration.effective_data_source_mode == "sqlserver"),
+        ("worker", "工人 HR 库", configuration.worker_database_auth_enabled),
+        ("file", "切割文件库", configuration.file_database_enabled),
     )
     sources = []
     for source, label, enabled in definitions:
-        config = settings.sqlserver_connection(source)
+        config = configuration.sqlserver_connection(source)
         configured = all(
             config[key] for key in ("host", "database", "username", "password")
         )
@@ -160,36 +162,42 @@ def _database_source_status() -> list[dict]:
     return sources
 
 
-def _saved_connection(source: str) -> dict:
+def _saved_connection(source: str, configuration: Settings | None = None) -> dict:
+    configuration = configuration or settings
     prefix = "sqlserver" if source == "production" else f"{source}_sqlserver"
-    common = settings.sqlserver_connection(source)
-    password = str(getattr(settings, f"{prefix}_password"))
+    common = configuration.sqlserver_connection(source)
+    password = str(getattr(configuration, f"{prefix}_password"))
     return {
-        "host": str(getattr(settings, f"{prefix}_host")),
-        "port": int(getattr(settings, f"{prefix}_port")),
-        "database": str(getattr(settings, f"{prefix}_database")),
-        "username": str(getattr(settings, f"{prefix}_username")),
+        "host": str(getattr(configuration, f"{prefix}_host")),
+        "port": int(getattr(configuration, f"{prefix}_port")),
+        "database": str(getattr(configuration, f"{prefix}_database")),
+        "username": str(getattr(configuration, f"{prefix}_username")),
         "password_configured": bool(password),
-        "driver": str(getattr(settings, f"{prefix}_driver") or common["driver"]),
+        "driver": str(getattr(configuration, f"{prefix}_driver") or common["driver"]),
         "encrypt": str(
-            getattr(settings, f"{prefix}_encrypt") or common["encrypt"]
+            getattr(configuration, f"{prefix}_encrypt") or common["encrypt"]
         ).strip().lower() in {"1", "true", "yes", "on"},
         "trust_server_certificate": str(
-            getattr(settings, f"{prefix}_trust_server_certificate")
+            getattr(configuration, f"{prefix}_trust_server_certificate")
             or common["trust_server_certificate"]
         ).strip().lower() in {"1", "true", "yes", "on"},
     }
 
 
-def _database_configuration_data() -> dict:
+def _database_configuration_data(configuration: Settings | None = None) -> dict:
+    configuration = configuration or settings
     return {
-        "data_source_mode": settings.effective_data_source_mode,
-        "worker_database_auth_enabled": settings.worker_database_auth_enabled,
-        "file_database_enabled": settings.file_database_enabled,
-        "production": _saved_connection("production"),
-        "worker": _saved_connection("worker"),
-        "file": _saved_connection("file"),
+        "data_source_mode": configuration.effective_data_source_mode,
+        "worker_database_auth_enabled": configuration.worker_database_auth_enabled,
+        "file_database_enabled": configuration.file_database_enabled,
+        "production": _saved_connection("production", configuration),
+        "worker": _saved_connection("worker", configuration),
+        "file": _saved_connection("file", configuration),
     }
+
+
+def _active_settings(request: Request) -> Settings:
+    return getattr(runtime_state(request), "settings", settings) if hasattr(request, 'app') else settings
 
 
 def _write_runtime_env(values: dict[str, object]) -> None:
@@ -229,7 +237,7 @@ def _connection_env_values(
 def get_database_configuration(request: Request) -> dict:
     return {
         "success": True,
-        "data": _database_configuration_data(),
+        "data": _database_configuration_data(_active_settings(request)),
         "request_id": request.state.request_id,
     }
 
@@ -238,6 +246,7 @@ def get_database_configuration(request: Request) -> dict:
 def save_database_configuration(
     payload: DatabaseConfigurationRequest, request: Request
 ) -> dict:
+    runtime = request.app.state.database_runtime
     with runtime_settings_lock, settings_file_lock(settings.runtime_settings_env_path):
         values: dict[str, object] = {
             "APP_DATA_SOURCE_MODE": payload.data_source_mode,
@@ -249,6 +258,13 @@ def save_database_configuration(
         for source in ("production", "worker", "file"):
             values.update(_connection_env_values(source, getattr(payload, source)))
         try:
+            merged = {**read_runtime_env(settings.runtime_settings_env_path), **values}
+            prepared = runtime.prepare(merged)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="数据库配置无效，请核对启用的数据源、连接参数及密码。") from None
+        except Exception:
+            raise HTTPException(status_code=503, detail="数据库配置暂无法加载，当前运行配置未改变。") from None
+        try:
             _write_runtime_env(values)
         except (OSError, ValueError) as exc:
             logger.exception("failed to save runtime database configuration")
@@ -256,13 +272,14 @@ def save_database_configuration(
                 status_code=500,
                 detail="配置保存失败，请检查 data 目录的写入权限。",
             ) from exc
+        runtime.publish(prepared, merged)
     return {
         "success": True,
         "data": {
             "saved": True,
-            "restart_required": True,
+            "restart_required": False,
             "path": "data/settings.env",
-            "message": "配置已安全保存，请重启服务后生效。",
+            "message": "配置已保存并热加载，Web 新请求立即生效，Worker 下一次操作自动加载；在途操作继续使用原配置。",
         },
         "request_id": request.state.request_id,
     }
@@ -270,6 +287,7 @@ def save_database_configuration(
 
 @router.get("/status")
 def database_status(request: Request) -> dict:
+    settings = _active_settings(request)
     mappings = _query_mapping_status()
     mode = settings.effective_data_source_mode
     workbench_enabled = mode == "sqlserver" and settings.sql_workbench_enabled
@@ -290,7 +308,7 @@ def database_status(request: Request) -> dict:
             "configured_host": settings.sqlserver_host or None,
             "configured_database": settings.sqlserver_database or None,
             "driver": settings.sqlserver_driver,
-            "data_sources": _database_source_status(),
+            "data_sources": _database_source_status(settings),
             "query_mappings": mappings,
             "all_queries_ready": all(item["ready"] for item in mappings),
             "arbitrary_sql_enabled": workbench_enabled,
@@ -306,7 +324,7 @@ def database_status(request: Request) -> dict:
 @router.post("/sql/validate")
 def validate_sql(payload: SqlValidateRequest, request: Request) -> dict:
     try:
-        validated = SqlWorkbenchService(settings).validate(payload.sql)
+        validated = SqlWorkbenchService(_active_settings(request)).validate(payload.sql)
     except SqlWorkbenchValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {
@@ -328,6 +346,7 @@ def execute_sql(
     request: Request,
     workbench_token: str | None = Header(default=None, alias="X-SQL-Workbench-Token"),
 ) -> dict:
+    settings = _active_settings(request)
     mode = settings.effective_data_source_mode
     if mode == "sqlserver":
         if not settings.sql_workbench_enabled:
@@ -377,7 +396,7 @@ def execute_sql(
 @query_requests.route(router.post("/test-connection"))
 def test_connection(payload: ConnectionTestRequest, request: Request) -> dict:
     temporary_settings = replace(
-        settings,
+        _active_settings(request),
         sqlserver_host=payload.host,
         sqlserver_port=payload.port,
         sqlserver_database=payload.database,
@@ -448,7 +467,7 @@ def preview_dataset(payload: DatabasePreviewRequest, request: Request) -> dict:
         "success": True,
         "data": {
             "dataset": payload.dataset,
-            "mode": settings.effective_data_source_mode,
+            "mode": device_state(request).settings.effective_data_source_mode,
             "items": to_primitive(records[: payload.limit]),
             "returned": min(len(records), payload.limit),
             "total": len(records),

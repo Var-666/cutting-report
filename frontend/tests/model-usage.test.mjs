@@ -43,7 +43,6 @@ const flush = async () => { await Promise.resolve(); await Vue.nextTick(); await
 
 test('model usage remains a settings destination and uses the shared authenticated API', () => {
   assert.match(read('../src/router/index.js'), /path: 'model-usage'[\s\S]*ModelUsageView\.vue/)
-  assert.match(read('../src/views/SettingsHomeView.vue'), /status-value="5 个管理模块"/)
   assert.match(read('../src/api/reports.js'), /getLlmUsageReport[\s\S]*request\(`\/api\/v1\/llm-usage\/report\?\$\{query\}`, \{ signal \}\)/)
   assert.match(source, /消耗趋势与周期汇总/)
   assert.match(source, /场景与模型分布/)

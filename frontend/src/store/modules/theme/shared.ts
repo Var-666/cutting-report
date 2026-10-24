@@ -59,6 +59,11 @@ export function createThemeToken(
     }
   };
 
+  // Keep cached settings and upstream presets on the application's current default canvas.
+  if (themeTokens.colors.layout === 'rgb(247, 250, 252)') {
+    themeTokens.colors.layout = themeSettings.tokens.light.colors.layout;
+  }
+
   const darkThemeTokens: App.Theme.ThemeTokenCSSVars = {
     colors: {
       ...themeTokens.colors,

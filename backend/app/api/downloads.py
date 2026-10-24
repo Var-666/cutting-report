@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.api.runtime import runtime_state
 from app.api.auth import require_admin
 from app.services.file_download_service import DownloadError
 from app.models.conditions import ConditionSearch
@@ -31,21 +32,21 @@ def _call(operation):
 @router.post("", status_code=201)
 def download_file(payload: DownloadRequest, request: Request, response: Response, user: dict = Depends(require_admin)):
     response.headers["Cache-Control"] = "no-store"
-    item = _call(lambda: request.app.state.file_downloads.download(**payload.model_dump(), user=user))
+    item = _call(lambda: runtime_state(request).file_downloads.download(**payload.model_dump(), user=user))
     return _envelope(request, item)
 
 
 @router.get("")
 def list_downloads(request: Request, response: Response, page: int = Query(1, ge=1), page_size: int = Query(10, ge=1, le=100)):
     response.headers["Cache-Control"] = "no-store"
-    return _envelope(request, request.app.state.file_downloads.list(page, page_size))
+    return _envelope(request, runtime_state(request).file_downloads.list(page, page_size))
 
 
 @router.post("/search")
 def search_downloads(payload: ConditionSearch, request: Request, response: Response):
     response.headers["Cache-Control"] = "no-store"
     try:
-        data = request.app.state.file_downloads.list(payload.page, payload.page_size, payload.filters, sort=payload.sort)
+        data = runtime_state(request).file_downloads.list(payload.page, payload.page_size, payload.filters, sort=payload.sort)
     except ConditionError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
     return _envelope(request, data)

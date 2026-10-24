@@ -9,6 +9,7 @@ import { createGenerator } from 'unocss'
 import { loadConfigFromFile } from 'vite'
 import { fileURLToPath } from 'node:url'
 import { parse } from '@vue/compiler-sfc'
+import { sparklineGeometry } from '../src/utils/sparkline.js'
 
 const read = (path) => readFileSync(new URL(`../src/${path}`, import.meta.url), 'utf8')
 const { config: unoConfig } = await loadConfigFromFile({ command: 'build', mode: 'test' }, fileURLToPath(new URL('../uno.config.js', import.meta.url)))
@@ -47,7 +48,7 @@ function mountHome(overrides = {}) {
   }
   const source = parse(read('views/AdminHomeView.vue')).descriptor.scriptSetup.content.replace(/^import .*$/gm, '')
   const entries = Object.entries(bindings).filter(([key]) => /^[\w$]+$/.test(key))
-  const setup = new Function(...entries.map(([key]) => key), `${source}\nreturn { overviewLoading, historyLoading, energyLoading, alarmLoading, overview, total, error, recentReports, loadDashboard, workHours, workUnit, trendElement, statusElement }`)
+  const setup = new Function(...entries.map(([key]) => key), `${source}\nreturn { overviewLoading, historyLoading, energyLoading, alarmLoading, overview, total, error, recentReports, loadDashboard, workHours, workUnit, trendElement, statusElement, metricSeries, comparisonStatus, taskComparison, lengthComparison, timeComparison, insightTrend }`)
   const renderer = Vue.createRenderer({
     createComment: () => ({}), createText: () => ({}), createElement: () => ({}), insert() {}, remove() {}, setText() {}, setElementText() {}, parentNode: () => null, nextSibling: () => null, patchProp() {},
   })
@@ -105,4 +106,77 @@ test('home failure and empty data preserve successful independent modules and fi
     assert.equal(home.state.energyLoading.value, false)
     assert.equal(home.state.total.value.task_count, 0)
   } finally { home.close() }
+})
+
+test('home KPI keeps precision and separators with reduced motion, and missing values stay unknown', () => {
+  const props = Vue.reactive({ value: 9714.2, precision: 1 })
+  const source = parse(read('components/HomeKpiCard.vue')).descriptor.scriptSetup.content.replace(/^import .*$/gm, '')
+  const setup = new Function('computed', 'defineProps', 'useAppStore', `${source}\nreturn { numericValue, formattedValue }`)
+  const state = setup(Vue.computed, () => props, () => ({ reducedMotion: true }))
+  assert.equal(state.formattedValue.value, '9,714.2')
+  props.value = 0
+  assert.equal(state.formattedValue.value, '0.0')
+  props.value = null
+  assert.equal(state.numericValue.value, null)
+  assert.equal(state.formattedValue.value, '--')
+})
+
+test('home bars and comparisons react independently to returned production data', async () => {
+  const home = mountHome({ getLeadershipReport: async () => ({
+    current_month_total: { task_count: 25, cut_length_m: 50, work_time_seconds: 39600 },
+    comparison_total: { task_count: 20, cut_length_m: 100, work_time_seconds: 36000 },
+    daily_records: [
+      { period_start: '2026-10-03', task_count: 10, cut_length_m: 5, work_time_seconds: 7200 },
+      { period_start: '2026-10-01', task_count: 4, cut_length_m: 20, work_time_seconds: 3600 },
+      { period_start: '2026-10-02', task_count: 1, cut_length_m: 10, work_time_seconds: null },
+    ],
+  }) })
+  try {
+    await flush()
+    const state = home.state
+    assert.deepEqual(state.metricSeries.value.tasks, [4, 1, 10])
+    assert.deepEqual(state.metricSeries.value.length, [20, 10, 5])
+    assert.deepEqual(state.metricSeries.value.hours, [1, null, 2])
+    assert.deepEqual(state.taskComparison.value, { text: '↑ 25% 较上月', direction: 'up' })
+    assert.deepEqual(state.lengthComparison.value, { text: '↓ 50% 较上月', direction: 'down' })
+    assert.deepEqual(state.timeComparison.value, { text: '↑ 10% 较上月', direction: 'up' })
+    const before = sparklineGeometry(state.metricSeries.value.tasks).bars.map(bar => bar.height)
+    state.overview.value.daily_records[1].task_count = 20
+    const after = sparklineGeometry(state.metricSeries.value.tasks).bars.map(bar => bar.height)
+    assert.ok(before[0] < before[2])
+    assert.ok(after[0] > after[2])
+    state.overview.value.current_month_total.cut_length_m = 100.2
+    assert.equal(state.lengthComparison.value.text, '↑ 0.2% 较上月')
+    assert.equal(state.insightTrend.value, '切割长度高于上月 0.2%')
+  } finally { home.close() }
+})
+
+test('home comparison distinguishes tiny changes, true equality and unavailable data', async () => {
+  const home = mountHome()
+  try {
+    await flush()
+    const compare = home.state.comparisonStatus
+    for (const previous of [null, undefined, 0, '', 'invalid', NaN, Infinity]) {
+      assert.deepEqual(compare(10, previous), { text: '暂无上月对比', direction: 'flat' })
+    }
+    assert.equal(compare(null, 10).text, '暂无上月对比')
+    assert.equal(compare(100.01, 100).text, '↑ <0.1% 较上月')
+    assert.equal(compare(99.99, 100).text, '↓ <0.1% 较上月')
+    assert.equal(compare(100, 100).text, '与上月持平')
+    assert.equal(compare(0, 100).text, '↓ 100% 较上月')
+  } finally { home.close() }
+})
+
+test('cards and the welcome banner have distinct light surfaces with dark theme overrides', () => {
+  const css = read('assets/soybean.css')
+  const template = parse(read('views/AdminHomeView.vue')).descriptor.template.content
+  assert.match(template, /class="card-wrapper bg-container home-welcome"/)
+  assert.match(css, /\.card-wrapper \{ border:1px solid #e2e8f0;/)
+  assert.match(css, /\.dark \.card-wrapper \{ border-color:var\(--theme-border-color\)/)
+  assert.match(css, /linear-gradient\(105deg, #eef2ff 0%, #f8fafc 55%, #fff 100%\)/)
+  assert.match(css, /\.home-welcome\.card-wrapper \{[^}]*border-color:#e0e7ff;/s)
+  const dark = css.match(/\.dark \.home-welcome\.card-wrapper \{([^}]+)\}/)[1]
+  assert.match(dark, /--container-bg-color/)
+  assert.match(dark, /--layout-bg-color/)
+  assert.doesNotMatch(dark, /#[a-f0-9]+/i)
 })

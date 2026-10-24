@@ -81,7 +81,7 @@ def test_process_migration_backs_up_and_preserves_legacy_business_rows(tmp_path)
     configured = configuration(tmp_path)
     legacy = build_runtime(configured, role="worker")
     legacy.metadata.create_job(report_id="legacy", report_date="2026-10-24", project_code=None, ship_no=None,
-                               request_id="legacy", created_at="2026-10-24T10:00:00+08:00")
+                               request_id="legacy", created_at="2026-10-24T10:00:00+08:00", device_id="Cutter01")
     legacy.metadata.update_status("legacy", "analyzing", "legacy progress")
     legacy.workshop.bootstrap_admin(username="old-admin", display_name="原管理员", password="test-password",
                                     now="2026-10-24T10:00:00+08:00")

@@ -30,6 +30,7 @@ from app.api.requests import REQUEST_ID_PATTERN, router as requests_router
 from app.api.workshop import router as workshop_router
 from app.config import settings
 from app.api.devices import router as devices_router
+from app.api.runtime import runtime_state
 from app.services.application_runtime import build_runtime
 from app.services.process_lock import FileLock
 from app.services.worker_status import background_ready
@@ -153,7 +154,8 @@ app.include_router(view_router)
 
 @app.get("/api/v1/health")
 async def health(request: Request) -> dict:
-    mode = settings.effective_data_source_mode
+    configuration = await to_thread.run_sync(runtime_state, request, limiter=_health_threads)
+    mode = getattr(configuration, "settings", settings).effective_data_source_mode
     reader = getattr(request.app.state, "worker_status_reader", None)
     worker_status = await to_thread.run_sync(reader.status, limiter=_health_threads) if reader else {"state": "missing", "report_alive": False}
     ready = background_ready(worker_status)
