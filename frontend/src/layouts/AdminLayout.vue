@@ -1,57 +1,176 @@
-<script setup>
-import { computed } from 'vue'
-import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
-import projectLogo from '../assets/project-logo.png'
+<script setup lang="ts">
+import { computed, defineAsyncComponent, ref, watch } from 'vue'
+import { RouterView, useRoute, useRouter } from 'vue-router'
+import { NBreadcrumb, NBreadcrumbItem, NButton, NWatermark } from 'naive-ui'
+import SoybeanAdminLayout from '../vendor/soybean-admin/index.vue'
+import type { LayoutMode } from '../vendor/soybean-admin/types'
 import AppIcon from '../components/AppIcon.vue'
 import DeviceSwitcher from '../components/DeviceSwitcher.vue'
+import ThemeSettings from '../components/ThemeSettings.vue'
+import { useDialogFocus } from '../composables/useDialogFocus.js'
+import { useAppStore } from '../state/app.js'
+import { useThemeStore } from '../store/modules/theme'
 import { deviceSelection } from '../state/devices.js'
-import { endSession, session } from '../state/session'
+import { endSession } from '../state/session'
+import { GLOBAL_HEADER_MENU_ID } from '../constants/app'
+import { provideMixMenuContext } from './modules/global-menu/context'
+import GlobalSider from './modules/global-sider/index.vue'
+import GlobalLogo from './modules/global-logo/index.vue'
+import ThemeDrawer from './modules/theme-drawer/index.vue'
+import ThemeHeaderTools from './modules/ThemeHeaderTools.vue'
+import ThemeTabs from './modules/ThemeTabs.vue'
 
+const appStore = useAppStore()
+const GlobalMenu = defineAsyncComponent(() => import('./modules/global-menu/index.vue'))
+const themeStore = useThemeStore()
 const route = useRoute()
 const router = useRouter()
-const dataSourceLabel = computed(() => ({
-  demo: '演示模式',
-  sqlserver: 'SQL Server',
-}[session.systemInfo?.data_source_mode] || '数据源检查中'))
+const sider = ref(null)
+const { childLevelMenus, isActiveFirstLevelMenuHasChildren } = provideMixMenuContext()
 const devicePage = computed(() => route.path === '/admin/home' || route.path.startsWith('/admin/reports') || route.path.startsWith('/admin/alarms'))
-const reportsActive = computed(() => route.path.startsWith('/admin/reports'))
-const alarmsActive = computed(() => route.path.startsWith('/admin/alarms'))
-const settingsActive = computed(() => route.path.startsWith('/admin/settings'))
-const cuttingActive = computed(() => route.path.startsWith('/admin/cutting-dispatch'))
+const mobileMenuOpen = computed(() => appStore.isMobile && !appStore.siderCollapse)
+const breadcrumbs = computed(() => route.matched.filter((record, index, records) => record.meta.title && record.path !== records[index + 1]?.path))
+const transitionName = computed(() => !appStore.reducedMotion && themeStore.page.animate ? themeStore.page.animateMode : '')
+watch(() => route.fullPath, () => { if (appStore.isMobile) appStore.siderCollapse = true })
+useDialogFocus(mobileMenuOpen, sider, () => { appStore.siderCollapse = true })
+async function logout() { await endSession(); await router.replace('/login') }
+const layoutMode = computed(() => {
+  const vertical: LayoutMode = 'vertical';
+  const horizontal: LayoutMode = 'horizontal';
+  return themeStore.layout.mode.includes(vertical) ? vertical : horizontal;
+});
 
-async function logout() {
-  await endSession()
-  await router.replace('/login')
+const headerProps = computed(() => {
+  const { mode } = themeStore.layout;
+
+  const headerPropsConfig: Record<UnionKey.ThemeLayoutMode, App.Global.HeaderProps> = {
+    vertical: {
+      showLogo: false,
+      showMenu: false,
+      showMenuToggler: true
+    },
+    'vertical-mix': {
+      showLogo: false,
+      showMenu: false,
+      showMenuToggler: true
+    },
+    'vertical-hybrid-header-first': {
+      showLogo: !isActiveFirstLevelMenuHasChildren.value,
+      showMenu: true,
+      showMenuToggler: false
+    },
+    horizontal: {
+      showLogo: true,
+      showMenu: true,
+      showMenuToggler: false
+    },
+    'top-hybrid-sidebar-first': {
+      showLogo: true,
+      showMenu: true,
+      showMenuToggler: false
+    },
+    'top-hybrid-header-first': {
+      showLogo: true,
+      showMenu: true,
+      showMenuToggler: isActiveFirstLevelMenuHasChildren.value
+    }
+  };
+
+  return headerPropsConfig[mode];
+});
+
+const siderVisible = computed(() => themeStore.layout.mode !== 'horizontal');
+
+const isVerticalMix = computed(() => themeStore.layout.mode === 'vertical-mix');
+
+const isVerticalHybridHeaderFirst = computed(() => themeStore.layout.mode === 'vertical-hybrid-header-first');
+
+const isTopHybridSidebarFirst = computed(() => themeStore.layout.mode === 'top-hybrid-sidebar-first');
+
+const isTopHybridHeaderFirst = computed(() => themeStore.layout.mode === 'top-hybrid-header-first');
+
+const siderWidth = computed(() => getSiderAndCollapsedWidth(false));
+
+const siderCollapsedWidth = computed(() => getSiderAndCollapsedWidth(true));
+
+function getSiderAndCollapsedWidth(isCollapsed: boolean) {
+  const {
+    mixChildMenuWidth,
+    collapsedWidth,
+    width: themeWidth,
+    mixCollapsedWidth,
+    mixWidth: themeMixWidth
+  } = themeStore.sider;
+
+  const width = isCollapsed ? collapsedWidth : themeWidth;
+  const mixWidth = isCollapsed ? mixCollapsedWidth : themeMixWidth;
+
+  if (appStore.isMobile) return width;
+
+  if (isTopHybridHeaderFirst.value) {
+    return isActiveFirstLevelMenuHasChildren.value ? width : 0;
+  }
+
+  if (isVerticalHybridHeaderFirst.value && !isActiveFirstLevelMenuHasChildren.value) {
+    return 0;
+  }
+
+  const isMixMode = isVerticalMix.value || isTopHybridSidebarFirst.value || isVerticalHybridHeaderFirst.value;
+  let finalWidth = isMixMode ? mixWidth : width;
+
+  if (isVerticalMix.value && appStore.mixSiderFixed) {
+    finalWidth += mixChildMenuWidth;
+  }
+
+  if (isVerticalHybridHeaderFirst.value && appStore.mixSiderFixed && childLevelMenus.value.length) {
+    finalWidth += mixChildMenuWidth;
+  }
+
+  return finalWidth;
 }
 </script>
-
 <template>
-  <div class="app-shell">
+  <div class="app-shell soybean-shell">
     <a class="skip-link" href="#admin-main">跳到主要内容</a>
-    <header class="topbar">
-      <RouterLink class="brand-link" to="/admin/home" aria-label="返回系统首页">
-        <img class="brand-logo" :src="projectLogo" alt="" width="46" height="46" />
-        <span class="brand-copy"><small>PRODUCTION REPORTING</small><strong>切割生产智能产报系统</strong></span>
-      </RouterLink>
-      <nav class="topnav" aria-label="主导航">
-        <RouterLink to="/admin/home" aria-label="首页" title="首页"><AppIcon name="home" :size="15"/><span>首页</span></RouterLink>
-        <RouterLink to="/admin/reports/leadership" :class="{ active: reportsActive }" aria-label="报表" title="报表"><AppIcon name="report" :size="15"/><span>报表</span></RouterLink>
-        <RouterLink to="/admin/alarms" :class="{ active: alarmsActive }" aria-label="告警" title="告警"><AppIcon name="bell" :size="15"/><span>告警</span></RouterLink>
-        <RouterLink to="/admin/cutting-dispatch" :class="{ active: cuttingActive }" aria-label="文件派发" title="文件派发"><AppIcon name="send" :size="15"/><span>文件派发</span></RouterLink>
-        <RouterLink to="/admin/settings" :class="{ active: settingsActive }" aria-label="设置" title="设置"><AppIcon name="settings" :size="15"/><span>设置</span></RouterLink>
-      </nav>
-      <div class="topbar-actions">
-        <DeviceSwitcher />
-        <div class="account-menu">
-          <small>V{{ session.systemInfo?.version || '0.1.0' }} · {{ dataSourceLabel }}</small>
-          <span class="account-name"><AppIcon name="user" :size="14"/>{{ session.user?.display_name }}</span>
-          <button type="button" aria-label="退出系统" title="退出系统" @click="logout"><AppIcon name="logout" :size="13"/><span>退出</span></button>
+    <SoybeanAdminLayout v-model:sider-collapse="appStore.siderCollapse" class="soybean-layout" scroll-el-id="admin-main"
+      :mode="appStore.isMobile ? 'vertical' : layoutMode" :scroll-mode="themeStore.layout.scrollMode"
+      :is-mobile="appStore.isMobile" :fixed-top="themeStore.fixedHeaderAndTab"
+      :header-height="appStore.isMobile ? Math.max(104, themeStore.header.height) : themeStore.header.height"
+      :tab-visible="themeStore.tab.visible" :tab-height="themeStore.tab.height"
+      :sider-visible="siderVisible" :sider-width="siderWidth" :sider-collapsed-width="siderCollapsedWidth"
+      :footer-visible="themeStore.footer.visible" :footer-height="themeStore.footer.height"
+      :fixed-footer="themeStore.footer.fixed" :right-footer="themeStore.footer.right" content-class="min-w-0">
+      <template #header>
+        <div class="soybean-header">
+          <GlobalLogo v-if="headerProps.showLogo && !appStore.isMobile" :show-title="false" />
+          <MenuToggler v-if="headerProps.showMenuToggler || appStore.isMobile" :collapsed="appStore.siderCollapse" :aria-label="isVerticalMix && !appStore.isMobile ? (appStore.siderCollapse ? '展开设备栏' : '收起设备栏') : (appStore.siderCollapse ? '展开菜单' : '收起菜单')" :aria-expanded="!appStore.siderCollapse" :aria-controls="isVerticalMix && !appStore.isMobile ? 'admin-device-rail' : 'admin-navigation'" @click="appStore.toggleSiderCollapse" />
+          <div v-if="headerProps.showMenu" :id="GLOBAL_HEADER_MENU_ID" class="h-full flex-y-center flex-1-hidden" />
+          <NBreadcrumb v-else-if="themeStore.header.breadcrumb.visible" class="soybean-breadcrumb" aria-label="当前位置">
+            <NBreadcrumbItem v-for="item in breadcrumbs" :key="item.path">
+              <span class="flex-y-center gap-6px"><AppIcon v-if="themeStore.header.breadcrumb.showIcon && item.meta.icon" :name="item.meta.icon" :size="18" tone="current" />{{ item.meta.title }}</span>
+            </NBreadcrumbItem>
+          </NBreadcrumb>
+          <div class="soybean-header-actions">
+            <ThemeHeaderTools />
+            <ThemeSettings />
+            <DeviceSwitcher v-if="!isVerticalMix || appStore.isMobile" />
+            <NButton quaternary class="soybean-logout" aria-label="退出登录" @click="logout"><template #icon><AppIcon name="logout" :size="20" tone="current" /></template><span class="lt-sm:hidden">退出登录</span></NButton>
+          </div>
         </div>
+      </template>
+      <template #sider>
+        <div id="admin-navigation" ref="sider" class="h-full" :inert="appStore.isMobile && appStore.siderCollapse" :aria-hidden="appStore.isMobile && appStore.siderCollapse || undefined" :role="mobileMenuOpen ? 'dialog' : undefined" :aria-modal="mobileMenuOpen ? true : undefined" aria-label="管理员导航" tabindex="-1"><GlobalSider /></div>
+      </template>
+      <template #tab><ThemeTabs /></template>
+      <div class="admin-main soybean-page">
+        <RouterView v-if="!devicePage || deviceSelection.ready" v-slot="{ Component }" :key="devicePage ? deviceSelection.id : undefined">
+          <Transition :name="transitionName" mode="out-in"><div :key="route.matched[1]?.path" class="min-w-0"><component :is="Component" /></div></Transition>
+        </RouterView>
       </div>
-    </header>
-    <main id="admin-main" class="admin-main" tabindex="-1">
-      <RouterView v-if="!devicePage || deviceSelection.ready" :key="devicePage ? deviceSelection.id : undefined" />
-    </main>
-    <footer>切割生产智能产报系统 · 内网生产数据仅供授权人员使用</footer>
+      <GlobalMenu />
+      <ThemeDrawer />
+      <template #footer><DarkModeContainer class="h-full flex-center text-12px">切割生产智能产报</DarkModeContainer></template>
+    </SoybeanAdminLayout>
+    <NWatermark v-if="themeStore.watermark.visible" :content="themeStore.watermarkContent" cross fullscreen :font-size="16" :line-height="16" :width="384" :height="384" :x-offset="12" :y-offset="60" :rotate="-15" />
   </div>
 </template>

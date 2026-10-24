@@ -1,0 +1,37 @@
+{
+  "repository": "https://github.com/soybeanjs/soybean-admin",
+  "tag": "v2.3.0",
+  "commit": "ab40c08992807e303dd8aabb6ec43d7e2334b24f",
+  "files": {
+    "src/layouts/modules/theme-drawer/index.vue": "acdd51f305abfbeb47401a6c5e881480182600e9acf620f1f064b039f98f55c8",
+    "src/layouts/modules/theme-drawer/components/layout-mode-card.vue": "0939b187140ff7767d197428f707f18404a7919b5413750e436b3ca2e640aa72",
+    "src/layouts/modules/theme-drawer/components/setting-item.vue": "0bc320a557108f5a660c822be322ec83cdd41059de26eaf86c238e7f21a65776",
+    "src/layouts/modules/theme-drawer/modules/config-operation.vue": "bf56b408c6974118e8a34ecc8e991c18ad85ad9a9fa7535491c66cce60ab3670",
+    "src/layouts/modules/theme-drawer/modules/preset/index.vue": "83d7e09ce8511712aec8584cce87490804d469d42d7d884953481b8faa7d766d",
+    "src/layouts/modules/theme-drawer/modules/general/index.vue": "4b57e5400802a2d5e6e46f1e11245547e56f1d45bbfb178d33bad88e65dbb2f5",
+    "src/layouts/modules/theme-drawer/modules/appearance/index.vue": "18a5b1523676c977980f6eb2c2440db21f0e18dd475aaa80ebae043b0a8fe57f",
+    "src/layouts/modules/theme-drawer/modules/layout/index.vue": "add4dd5a7860a39824d26d5c137cd49ce0f2ee6ddcfca0e9433184ed1ec85aa2",
+    "src/layouts/modules/theme-drawer/modules/layout/modules/layout-mode.vue": "48e34eb59507c4713940ffe47a935abcac2cd4c9a51f4eb0087e7399d4695e9a",
+    "src/layouts/modules/theme-drawer/modules/layout/modules/sider-settings.vue": "6326577d2c6a1e702f81b20bdfe6db332e37bc79bb0184f3a2f4cf25981b3d67",
+    "src/layouts/modules/theme-drawer/modules/layout/modules/tab-settings.vue": "904b04db426e16039fa5d8ac45845c52729785164e7d9e7f4a64a410d0a3e109",
+    "src/layouts/modules/theme-drawer/modules/layout/modules/content-settings.vue": "ae90b70c0da9bded3dc846eb5d1d6584fa2c6460da94eec854f238a9400933ff",
+    "src/layouts/modules/theme-drawer/modules/layout/modules/header-settings.vue": "fcd43e6b5042ee07d3157c02ad3ab65db202076ab72f9691af8e5a4f039cab90",
+    "src/layouts/modules/theme-drawer/modules/layout/modules/footer-settings.vue": "1a88a9b3cacf8a7f062de7f25c288d87169ab29eaae3f9ef0aa7bfac5d4d91a8",
+    "src/layouts/modules/theme-drawer/modules/appearance/modules/theme-color.vue": "e375d7382cbdcd3b2bd8395829408df2755a33d9d65daedc7d5b7814a41aaa45",
+    "src/layouts/modules/theme-drawer/modules/appearance/modules/theme-radius.vue": "72835432d7612a959b6e9850721cf94ea3c29fa28fe67f29e8b934292a3a875d",
+    "src/layouts/modules/theme-drawer/modules/appearance/modules/theme-schema.vue": "1b5c9351f2a79853243412cd8f67d1f04f0d6137341362fd7cc965d7a866b480",
+    "src/layouts/modules/theme-drawer/modules/general/modules/watermark-settings.vue": "e88940c6d2848f1710aaf0c60aa8721e7d5d1c26cbb2ec66e3d86efa66fd9ddf",
+    "src/layouts/modules/theme-drawer/modules/general/modules/global-settings.vue": "f64ee3934f11f755a10adb5a645b3e8fa9cab0118d8bbd2deaf5e7f3577cd220",
+    "src/layouts/modules/theme-drawer/modules/preset/modules/theme-preset.vue": "7319eb9d2ac006e438bf1127b17664690535be96a52bfa3273254789d05f674f",
+    "src/store/modules/theme/shared.ts": "2d7b90701458e789dde299db674f3f19b0e7523413ced6b9bb26ece07be8454b",
+    "src/theme/settings.ts": "9e6b1c1dbfb6708df5b01de80363f1fd5120fcc59b5a0001e66d92a1ebab351a",
+    "src/theme/vars.ts": "ffee3850149a3533d283b251949fa3e5536dda7577dd0ad6abd877611bdc1519",
+    "src/theme/preset/azir.json": "b3bd32f157145fc83482b929ff935982e354e8a5be840acfadd5c82126a6fa0f",
+    "src/theme/preset/compact.json": "eacf80f1fee2212b1178e3e5a54149d4c5137741d8a51d8097f4b5fb14dab484",
+    "src/theme/preset/default.json": "3c01d354b9c5d5b0a7bae055159fe0d4d4db3b6c706e290b5c2072335f814b40",
+    "src/theme/preset/dark.json": "b8e265a2925b033ccfcf16c0307379fb74925d9ce7987ab05c15e57f4b25a74a"
+  },
+  "application_customizations": [
+    "src/theme/settings.ts: default vertical-mix layout, 64px rail, 48px collapsed rail and 180px child menu"
+  ]
+}

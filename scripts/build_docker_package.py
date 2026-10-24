@@ -23,7 +23,7 @@ FILES = (
     "README-DOCKER.md", "START_DOCKER.bat", "backend/requirements.txt",
     "backend/requirements-sqlserver.txt", "backend/pyproject.toml",
     "frontend/package.json", "frontend/package-lock.json", "frontend/index.html",
-    "frontend/vite.config.js", "docs/deployment/WINDOWS部署说明.md",
+    "frontend/vite.config.js", "frontend/uno.config.js", "docs/deployment/WINDOWS部署说明.md",
     "docs/deployment/KYLIN原生部署说明.md",
     "docs/deployment/OFFLINE_DOCKER部署说明.md",
     "scripts/README.md", "scripts/check_energy.py",
@@ -65,6 +65,7 @@ def collect_files(root: Path) -> dict[str, bytes]:
         payload[relative.as_posix()] = content
     required = (
         "frontend/dist/index.html", "vendor/echarts.min.js",
+        "frontend/dist/licenses/soybean-admin/LICENSE",
         "backend/app/api/energy.py", "backend/app/database/energy.py",
         "backend/app/services/energy_period_service.py",
         "frontend/src/views/EnergyPeriodReportView.vue",
@@ -76,7 +77,7 @@ def collect_files(root: Path) -> dict[str, bytes]:
         if name not in payload:
             raise ValueError(f"Missing required build/feature file: {name}")
     # Retain notices for the browser runtime libraries already included in the build.
-    for package in ("vue", "vue-router", "echarts", "zrender", "tslib"):
+    for package in ("vue", "vue-router", "echarts", "zrender", "tslib", "naive-ui", "pinia"):
         package_root = root / "frontend" / "node_modules" / package
         notices = [path for path in package_root.glob("*")
                    if path.is_file() and path.name.upper().startswith(("LICENSE", "COPYING", "NOTICE"))]

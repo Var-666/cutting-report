@@ -5,18 +5,38 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "test": "node --test tests/cutting-routes.test.mjs tests/layout-consistency.test.mjs tests/report-cache.test.mjs tests/report-preload.test.mjs tests/request-cancellation.test.mjs tests/session-expiry.test.mjs tests/email-resolution.test.mjs tests/file-search.test.mjs tests/content-table.test.mjs tests/date-display.test.mjs tests/production-date.test.mjs tests/alarm-analysis.test.mjs tests/alarm-lifecycle.test.mjs tests/report-export.test.mjs tests/report-route-state.test.mjs tests/admin-access.test.mjs tests/workshop-batch-confirmation.test.mjs tests/sparkline.test.mjs tests/analysis-overflow.test.mjs tests/management-ui.test.mjs tests/model-usage.test.mjs tests/report-job-status.test.mjs tests/web-guidelines.test.mjs tests/multi-device.test.mjs tests/analysis-retention.test.mjs",
+    "test": "node --test tests/cutting-routes.test.mjs tests/layout-consistency.test.mjs tests/report-cache.test.mjs tests/report-preload.test.mjs tests/request-cancellation.test.mjs tests/session-expiry.test.mjs tests/email-resolution.test.mjs tests/file-search.test.mjs tests/content-table.test.mjs tests/date-display.test.mjs tests/production-date.test.mjs tests/alarm-analysis.test.mjs tests/alarm-lifecycle.test.mjs tests/report-export.test.mjs tests/report-route-state.test.mjs tests/admin-access.test.mjs tests/workshop-batch-confirmation.test.mjs tests/sparkline.test.mjs tests/analysis-overflow.test.mjs tests/management-ui.test.mjs tests/model-usage.test.mjs tests/report-job-status.test.mjs tests/web-guidelines.test.mjs tests/multi-device.test.mjs tests/analysis-retention.test.mjs tests/soybean-migration.test.mjs tests/home-theme.test.mjs tests/theme-store.test.mjs tests/report-theme.test.mjs",
     "sync:echarts": "node scripts/sync-echarts.mjs",
-    "build": "npm run sync:echarts && vite build",
+    "build": "npm run sync:echarts && vite build && node scripts/copy-notices.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@iconify-icons/line-md": "^2.0.0",
+    "@iconify-icons/material-symbols": "^2.0.6",
+    "@iconify-icons/mdi": "^2.0.0",
+    "@iconify-icons/ph": "^2.0.0",
+    "@iconify/vue": "^5.0.3",
+    "@vueuse/core": "^15.0.0",
+    "clipboard": "^2.0.11",
+    "colord": "^2.10.0",
+    "defu": "^6.1.7",
     "echarts": "^5.6.0",
+    "klona": "2.0.6",
+    "naive-ui": "2.45.3",
+    "pinia": "3.0.4",
+    "simplebar-vue": "^2.4.2",
+    "tailwind-merge": "^3.7.0",
     "vue": "^3.5.18",
+    "vue-i18n": "^11.4.13",
     "vue-router": "^4.6.3"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.2.1",
+    "typescript": "5.9.3",
+    "unocss": "66.6.0",
     "vite": "^5.4.14"
+  },
+  "engines": {
+    "node": ">=20.19.0"
   }
 }

@@ -1,5 +1,6 @@
 <script setup>
 import { computed } from 'vue'
+import { NButton } from 'naive-ui'
 import AppIcon from './AppIcon.vue'
 import ReportExportMenu from './ReportExportMenu.vue'
 import ReportPeriodPicker from './ReportPeriodPicker.vue'
@@ -65,16 +66,16 @@ const chartTypeModel = computed({
         <p v-if="dateDirty && !loading" class="standard-report-query__pending" role="status" aria-live="polite">条件已修改，尚未更新报表</p>
       </div>
       <label class="standard-report-query__chart">
-        <span><AppIcon name="chart" size="13" />图表类型</span>
+        <span><AppIcon name="chart" size="13" tone="current" />图表类型</span>
         <AppSelect v-model="chartTypeModel">
           <option v-for="option in chartOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
         </AppSelect>
       </label>
-      <button class="primary standard-report-query__submit" type="submit" :disabled="loading">
+      <NButton class="standard-report-query__submit" type="primary" attr-type="submit" :disabled="loading">
         <span v-if="loading" class="spinner"></span>
-        <AppIcon v-else name="search" size="15" tone="light" />
+        <AppIcon v-else name="search" size="15" tone="current" />
         {{ loading ? '查询中' : hasData ? '更新报表' : '查询报表' }}
-      </button>
+      </NButton>
       <ReportExportMenu
         class="standard-report-query__export"
         :disabled="exportDisabled"
@@ -89,21 +90,20 @@ const chartTypeModel = computed({
 .standard-report-query { width:100%; display:grid; grid-template-columns:minmax(220px,1.3fr) minmax(110px,.55fr) 110px 118px; grid-template-areas:"period chart query export"; align-items:start; gap:10px; margin:0; padding:0; border:0; background:transparent; box-shadow:none; }
 .standard-report-query__period { grid-area:period; min-width:0; }
 .standard-report-query :deep(.report-period-picker) { display:grid; grid-template-rows:14px 40px; align-self:start; row-gap:6px; }
-.standard-report-query__pending { min-height:16px; display:flex; align-items:center; gap:6px; margin:5px 0 0; color:#946116; font-size:10px; font-weight:600; line-height:16px; }
-.standard-report-query__pending::before { width:6px; height:6px; flex:0 0 auto; border-radius:50%; background:#d8972c; box-shadow:0 0 0 3px rgba(216,151,44,.13); content:""; }
+.standard-report-query__pending { min-height:16px; display:flex; align-items:center; gap:6px; margin:5px 0 0; color:rgb(var(--warning-color)); font-size:10px; font-weight:600; line-height:16px; }
+.standard-report-query__pending::before { width:6px; height:6px; flex:0 0 auto; border-radius:50%; background:rgb(var(--warning-color)); box-shadow:var(--theme-shadow); content:""; }
 .standard-report-query__chart { grid-area:chart; min-width:0; display:grid; grid-template-rows:14px 40px; align-self:start; row-gap:6px; }
 .standard-report-query__chart > span,
-.standard-report-query :deep(.report-period-picker__label) { height:14px; display:flex; align-items:center; gap:5px; margin:0!important; color:#355a70!important; font-size:10px!important; font-weight:700!important; line-height:14px!important; letter-spacing:.12px!important; }
+.standard-report-query :deep(.report-period-picker__label) { height:14px; display:flex; align-items:center; gap:5px; margin:0!important; color:rgb(var(--info-color))!important; font-size:10px!important; font-weight:700!important; line-height:14px!important; letter-spacing:.12px!important; }
 .standard-report-query__chart > .app-select { width:100%; height:40px; }
+.standard-report-query :deep(.n-base-selection) { --n-height:40px!important; }
 .standard-report-query :deep(.report-period-picker__trigger),
-.standard-report-query__chart :deep(.app-select__trigger) { width:100%; height:40px!important; min-height:40px!important; border-color:#a9c0cc!important; border-radius:8px!important; background:#f7fafc!important; color:#183d54!important; font-size:11px!important; font-weight:600!important; }
+.standard-report-query__chart :deep(.n-base-selection) { width:100%; height:40px!important; min-height:40px!important; border-color:var(--theme-border-color)!important; border-radius:8px!important; background:rgb(var(--info-color) / .1)!important; color:var(--text-color-1)!important; font-size:11px!important; font-weight:600!important; }
 .standard-report-query :deep(.report-period-picker__trigger:hover),
-.standard-report-query__chart :deep(.app-select__trigger:hover) { border-color:#729cad!important; background:#edf5f8!important; }
-.standard-report-query__submit { grid-area:query; width:100%; height:40px!important; min-height:40px!important; align-self:start; margin-top:20px; padding:0 12px; border-color:#0d789f!important; border-radius:8px!important; background:linear-gradient(135deg,#0d668d,#0796b7)!important; box-shadow:0 6px 14px rgba(12,117,156,.2)!important; font-size:11px!important; font-weight:700!important; }
-.standard-report-query__submit:not(:disabled):hover { border-color:#138db4!important; background:linear-gradient(135deg,#0b7199,#0aa5c4)!important; box-shadow:0 8px 18px rgba(12,117,156,.25)!important; transform:translateY(-1px); }
-.standard-report-query__submit .app-icon { filter:drop-shadow(0 1px 2px rgba(0,35,53,.18)); }
+.standard-report-query__chart :deep(.n-base-selection:hover) { border-color:var(--theme-border-color)!important; background:rgb(var(--info-color) / .1)!important; }
+.standard-report-query__submit { grid-area:query; width:100%; height:40px!important; min-height:40px!important; align-self:start; margin-top:20px; padding:0 12px; border-radius:8px!important; font-size:11px!important; }
 .standard-report-query__export { grid-area:export; align-self:start; margin-top:20px; }
-.standard-report-query__export :deep(.app-select__trigger) { height:40px!important; min-height:40px!important; border-color:#a9c0cc!important; border-radius:8px!important; background:#f7fafc!important; color:#183d54!important; font-size:11px!important; font-weight:700!important; }
+.standard-report-query__export :deep(.n-base-selection) { height:40px!important; min-height:40px!important; border-radius:8px!important; font-size:11px!important; font-weight:700!important; }
 @media (max-width:900px) {
   .standard-report-query { grid-template-columns:minmax(0,1fr) 110px 118px; grid-template-areas:"period period period" "chart query export"; }
 }

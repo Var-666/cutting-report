@@ -9,12 +9,11 @@ function source(path) {
 
 test('settings exposes HR-backed administrator management', () => {
   const router = source('router/index.js')
-  const layout = source('layouts/SettingsLayout.vue')
   const home = source('views/SettingsHomeView.vue')
 
   assert.match(router, /path: 'admins'[\s\S]*AdminAccountsView\.vue/)
-  assert.match(layout, /\/admin\/settings\/admins">管理员管理/)
-  assert.match(home, /从 HR 人员库授予管理员权限/)
+  assert.match(router, /path: 'admins'[\s\S]*?meta: \{ title: '管理员管理'/)
+  assert.match(home, /to: '\/admin\/settings\/admins'[^\n]*title: '管理员管理'/)
 })
 
 test('administrator permission changes require the current administrator password', () => {

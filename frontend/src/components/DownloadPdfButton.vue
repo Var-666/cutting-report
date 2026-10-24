@@ -29,6 +29,6 @@ async function download() {
 
 <style scoped>
 .pdf-download { display:inline-flex; flex-wrap:wrap; align-items:center; gap:6px; }
-button.compact { min-height:0; height:auto; padding:0; border:0; background:transparent; color:#1769aa; font:inherit; cursor:pointer; white-space:nowrap; }
-.pdf-error { max-width:280px; color:#b42318; font-size:12px; white-space:normal; }
+button.compact { min-height:0; height:auto; padding:0; border:0; background:transparent; color:rgb(var(--primary-color)); font:inherit; cursor:pointer; white-space:nowrap; }
+.pdf-error { max-width:280px; color:rgb(var(--error-color)); font-size:12px; white-space:normal; }
 </style>

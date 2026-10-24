@@ -13,7 +13,7 @@ function select(event) {
 
 <template>
   <div class="report-export-menu" :class="{ 'is-disabled': disabled || loading }">
-    <AppIcon name="download" size="15" />
+    <AppIcon name="download" size="15" tone="current" />
     <AppSelect class="report-export-menu__select" aria-label="导出报表" :disabled="disabled || loading" value="" @change="select">
       <option value="" disabled>{{ loading ? '正在导出…' : '导出报表' }}</option>
       <option value="html">导出 HTML</option>
@@ -26,7 +26,7 @@ function select(event) {
 .report-export-menu { position:relative; width:100%; min-width:0; height:40px; }
 .report-export-menu > .app-icon { position:absolute; top:50%; left:12px; z-index:2; pointer-events:none; transform:translateY(-50%); }
 .report-export-menu__select { width:100%; height:100%; }
-.report-export-menu :deep(.app-select__trigger) { padding-left:36px; border-color:#c4d4dd; border-radius:8px; background:#fff; color:#29475b; font-size:11px; font-weight:700; }
-.report-export-menu :deep(.app-select__trigger:hover) { border-color:#8fb5c5; background:#f8fcfe; }
+.report-export-menu :deep(.n-base-selection) { --n-height:40px!important; }
+.report-export-menu :deep(.n-base-selection-label) { padding-left:36px; border-radius:8px; font-size:11px; font-weight:700; }
 .report-export-menu.is-disabled { cursor:wait; opacity:.6; }
 </style>

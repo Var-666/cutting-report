@@ -289,6 +289,8 @@ logs/         日志目录
 
 ## 首次安装
 
+构建前端需要 Node.js 20.19 或更高版本。前端使用 Soybean Admin v2.3.0 的布局基础与 Naive UI，继续通过 npm 安装和构建。
+
 在项目根目录执行：
 
 ```bash

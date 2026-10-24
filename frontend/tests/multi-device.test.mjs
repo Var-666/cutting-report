@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { ref } from 'vue'
 import { getDeviceId, deviceUrl, selectDevice, setDeviceCatalog, resetDeviceContext, registerDeviceSwitchQuery, deviceSwitchQuery } from '../src/api/deviceContext.js'
 import { createReportCache, reportCache } from '../src/api/reportCache.js'
 import { listWorkshopTasks, createReport, getDeviceCatalog } from '../src/api/reports.js'
@@ -187,6 +188,37 @@ test('shells use the selected device to discard cached views, while keeping rout
   assert.match(source('components/DeviceSwitcher.vue'), /role="alert"/)
   assert.match(source('components/DeviceSwitcher.vue'), /正在读取设备/)
   assert.doesNotMatch(source('state/devices.js'), /router\.(push|replace)/)
+})
+
+test('both device selectors preserve displayed filters before switching and reject overlapping switches', async () => {
+  const script = source('composables/useDeviceSelection.js').replace(/^import .*$/gm, '').replace('export function', 'function')
+  const selection = { id: 'Cutter01' }
+  const changes = []
+  let completeNavigation
+  let failNavigation = false
+  const route = { name: 'workshop-report', query: { project: 'P1' } }
+  const router = { replace: to => {
+    changes.push(to)
+    if (failNavigation) return Promise.reject(new Error('navigation failed'))
+    return new Promise(resolve => { completeNavigation = resolve })
+  } }
+  const api = new Function('ref', 'onMounted', 'useRoute', 'useRouter', 'deviceSwitchQuery', 'changeDevice', 'deviceSelection', 'loadDevices', `${script}\nreturn useDeviceSelection()`)(ref, () => {}, () => route, () => router, () => ({ start_date: '2026-10-12' }), id => { selection.id = id }, selection, () => {})
+  await api.switchDevice('Cutter01')
+  assert.equal(changes.length, 0)
+  const pending = api.switchDevice('Cutter02')
+  await api.switchDevice('Cutter02')
+  assert.equal(api.switching.value, true)
+  assert.equal(selection.id, 'Cutter01')
+  assert.deepEqual(changes, [{ query: { project: 'P1', start_date: '2026-10-12' } }])
+  completeNavigation()
+  await pending
+  assert.equal(selection.id, 'Cutter02')
+  assert.equal(api.switching.value, false)
+  failNavigation = true
+  await assert.rejects(api.switchDevice('Cutter01'), /navigation failed/)
+  assert.equal(selection.id, 'Cutter02')
+  assert.equal(api.switching.value, false)
+  for (const path of ['components/DeviceSwitcher.vue', 'layouts/modules/global-menu/modules/vertical-mix-menu.vue']) assert.match(source(path), /useDeviceSelection\(\)/)
 })
 
 test('scheduled reports store a fixed device and disconnected energy is explicitly labelled', () => {

@@ -16,15 +16,15 @@ table.content-table td {
   min-width:0 !important;
   max-width:none !important;
   padding:10px 12px !important;
-  border-bottom:1px solid #dde5ea !important;
+  border-bottom:1px solid var(--theme-border-color) !important;
   text-align:center !important;
   vertical-align:middle !important;
   font-size:11px !important;
   white-space:nowrap !important;
 }
 table.content-table thead th {
-  color:#fff !important;
-  background:#0b4f76 !important;
+  color:var(--report-table-head-ink) !important;
+  background:linear-gradient(var(--report-table-head-bg),var(--report-table-head-bg)),rgb(var(--container-bg-color)) !important;
   font-size:10px !important;
   font-weight:600 !important;
   letter-spacing:.4px !important;
@@ -33,7 +33,13 @@ table.content-table thead th {
   white-space:nowrap !important;
 }
 table.content-table tbody tr:hover {
-  background:#f4f9fb;
+  background:rgb(var(--info-color) / .1);
+}
+/* Sticky totals need an opaque surface beneath the theme tint, like the header. */
+table.content-table tfoot th,
+table.content-table tfoot td {
+  color:var(--text-color-1) !important;
+  background:linear-gradient(rgb(var(--primary-color) / .08),rgb(var(--primary-color) / .08)),rgb(var(--container-bg-color)) !important;
 }
 table.content-table td {
   overflow:hidden;

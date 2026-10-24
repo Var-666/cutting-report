@@ -17,16 +17,16 @@ test('remaining management pages use one production hero and density system', ()
   }
 
   const hero = descriptor('ManagementPageHero', 'components')
-  assert.match(hero.scriptSetup.content, /home-laser-cutting\.webp/)
+  assert.match(hero.scriptSetup.content, /NCard, NTag/)
   assert.match(hero.template.content, /<AppIcon/)
-  assert.match(hero.styles[0].content, /grid-template-columns:minmax\(420px,1fr\) 270px/)
+  assert.match(hero.template.content, /<NCard/)
   assert.match(hero.styles[0].content, /@media\(max-width:900px\)/)
 })
 
-test('management panels and tables share light headers without zebra striping', () => {
+test('management panels and tables share themed headers without zebra striping', () => {
   const css = readFileSync(new URL('../src/assets/style.css', import.meta.url), 'utf8')
   assert.match(css, /\.management-page \.panel-title/)
-  assert.match(css, /\.management-page \.history-table th[\s\S]*background:#eef5f9!important/)
+  assert.match(css, /\.management-page \.history-table th[\s\S]*background:var\(--theme-table-header-color\)!important/)
   assert.doesNotMatch(css, /\.management-page[^}]*tbody tr:nth-child/)
 
   const settings = descriptor('SettingsHomeView')
@@ -34,15 +34,18 @@ test('management panels and tables share light headers without zebra striping', 
   assert.doesNotMatch(settings.template.content, />0[1-4]</)
 })
 
-test('settings usage card distinguishes actual token counts from unreported usage', () => {
+test('settings overview omits usage summary requests and explanatory text', () => {
   const settings = descriptor('SettingsHomeView')
-  assert.match(settings.scriptSetup.content, /getLlmUsage\(/)
-  assert.match(settings.template.content, /调用次数/)
-  assert.match(settings.template.content, /Token 消耗/)
-  assert.match(settings.template.content, /未返回 token 用量/)
-  assert.match(settings.template.content, /v-else-if="usageError"/)
-  assert.match(settings.template.content, /正在读取统计/)
-  assert.match(settings.styles[0].content, /flex-wrap:wrap/)
+  assert.doesNotMatch(settings.scriptSetup.content, /getLlmUsage|loadUsage|onMounted|description:/)
+  assert.doesNotMatch(settings.template.content, /llm-usage-card|<p|description=|status-note=/)
+  assert.match(settings.template.content, /status-value="5 个管理模块"/)
+})
+
+test('management hero status styles do not override Naive tag internals', () => {
+  const hero = descriptor('ManagementPageHero', 'components')
+  assert.match(hero.template.content, /<p v-if="description">/)
+  assert.match(hero.styles[0].content, /\.management-hero__status > div\{/)
+  assert.doesNotMatch(hero.styles[0].content, /\.management-hero__status div\{/)
 })
 
 test('login keeps authentication behavior inside the production visual system', () => {

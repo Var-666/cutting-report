@@ -9,15 +9,16 @@ const props = defineProps({
 })
 
 const palettes = {
-  muted: ['#56768c', '#829bac'],
-  blue: ['#2187da', '#62c8ef'],
-  teal: ['#079a9b', '#54d8bd'],
-  green: ['#159d69', '#62d49a'],
-  amber: ['#e18424', '#ffc45c'],
-  red: ['#df4f5d', '#ff8f7d'],
-  violet: ['#6458d6', '#a38cf4'],
-  sky: ['#2479ce', '#55b9ed'],
-  light: ['#ffffff', '#bff5ff'],
+  current: ['currentColor', 'currentColor'],
+  muted: ['var(--text-color-2)', 'var(--text-color-3)'],
+  blue: ['rgb(var(--primary-color))', 'rgb(var(--primary-color) / .65)'],
+  teal: ['rgb(var(--info-color))', 'rgb(var(--info-color) / .65)'],
+  green: ['rgb(var(--success-color))', 'rgb(var(--success-color) / .65)'],
+  amber: ['rgb(var(--warning-color))', 'rgb(var(--warning-color) / .65)'],
+  red: ['rgb(var(--error-color))', 'rgb(var(--error-color) / .65)'],
+  violet: ['rgb(var(--primary-color))', 'rgb(var(--primary-color) / .65)'],
+  sky: ['rgb(var(--primary-color))', 'rgb(var(--primary-color) / .65)'],
+  light: ['var(--theme-on-primary-color)', 'var(--theme-on-primary-color)'],
 }
 
 const iconTones = {
@@ -95,5 +96,5 @@ const iconStyle = computed(() => ({
 </template>
 
 <style scoped>
-.app-icon{display:block;overflow:visible;flex:0 0 auto;filter:drop-shadow(0 1px 1px rgba(15,56,80,.1))}
+.app-icon{display:block;overflow:visible;flex:0 0 auto}
 </style>

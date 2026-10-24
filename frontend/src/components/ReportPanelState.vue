@@ -18,7 +18,7 @@ const icon = computed(() => ({ loading: 'activity', empty: 'database', error: 'a
   <div class="report-panel-state" :class="`report-panel-state--${type}`" :role="type === 'error' ? 'alert' : 'status'" aria-live="polite">
     <span class="report-panel-state__icon">
       <span v-if="type === 'loading'" class="spinner dark" aria-hidden="true"></span>
-      <AppIcon v-else :name="icon" :size="20" />
+      <AppIcon v-else :name="icon" :size="20" tone="current" />
     </span>
     <div>
       <strong>{{ title }}</strong>
@@ -29,10 +29,10 @@ const icon = computed(() => ({ loading: 'activity', empty: 'database', error: 'a
 </template>
 
 <style scoped>
-.report-panel-state{min-height:var(--report-trend-height,240px);display:flex;align-items:center;justify-content:center;gap:12px;padding:28px;color:#526f82;text-align:left;background:#fff}
-.report-panel-state__icon{width:38px;height:38px;display:grid;place-items:center;flex:0 0 auto;color:#247fa5;border:1px solid #cfe0e7;border-radius:10px;background:#fff;box-shadow:0 6px 16px rgba(22,62,89,.07)}
-.report-panel-state>div{max-width:430px}.report-panel-state strong{display:block;color:#23485f;font-size:13px}.report-panel-state p{margin:4px 0 0;color:var(--muted);font-size:11px;line-height:1.6}
-.report-panel-state button{min-height:32px;margin-left:8px;padding:0 12px;color:#1d6e91;border-color:#a9c8d6;border-radius:7px;background:#fff;font-size:10px;font-weight:700}
-.report-panel-state--error{color:#b8494f;background:#fff6f6}.report-panel-state--error .report-panel-state__icon{color:#cf4e55;border-color:#efd4d6;background:#fff}.report-panel-state--error strong{color:#9d3339}.report-panel-state--error p{color:#9a5b60}
+.report-panel-state{min-height:var(--report-trend-height,240px);display:flex;align-items:center;justify-content:center;gap:12px;padding:28px;color:var(--text-color-3);text-align:left;background:rgb(var(--container-bg-color))}
+.report-panel-state__icon{width:38px;height:38px;display:grid;place-items:center;flex:0 0 auto;color:rgb(var(--info-color));border:1px solid var(--theme-border-color);border-radius:10px;background:rgb(var(--container-bg-color));box-shadow:var(--theme-shadow)}
+.report-panel-state>div{max-width:430px}.report-panel-state strong{display:block;color:var(--text-color-1);font-size:13px}.report-panel-state p{margin:4px 0 0;color:var(--muted);font-size:11px;line-height:1.6}
+.report-panel-state button{min-height:32px;margin-left:8px;padding:0 12px;color:rgb(var(--info-color));border-color:var(--theme-border-color);border-radius:7px;background:rgb(var(--container-bg-color));font-size:10px;font-weight:700}
+.report-panel-state--error{color:rgb(var(--error-color));background:rgb(var(--error-color) / .1)}.report-panel-state--error .report-panel-state__icon{color:rgb(var(--error-color));border-color:var(--theme-border-color);background:rgb(var(--container-bg-color))}.report-panel-state--error strong{color:rgb(var(--error-color))}.report-panel-state--error p{color:var(--text-color-3)}
 @media(max-width:560px){.report-panel-state{min-height:210px;align-items:flex-start;flex-direction:column}.report-panel-state button{width:100%;margin:4px 0 0}}
 </style>

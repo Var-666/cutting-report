@@ -152,3 +152,12 @@ test('every Vue page table opts into shared content sizing', () => {
   assert.match(css, /white-space:nowrap !important/)
   assert.doesNotMatch(css, /resize:/)
 })
+
+test('header and summary cells paint a solid theme surface below their tint while rows scroll underneath', () => {
+  const css = readFileSync(new URL('../src/assets/content-tables.css', import.meta.url), 'utf8')
+  const header = css.match(/table\.content-table thead th\s*\{([^}]+)\}/)[1]
+  assert.match(header, /background:linear-gradient\(var\(--report-table-head-bg\),var\(--report-table-head-bg\)\),rgb\(var\(--container-bg-color\)\) !important/)
+  const footer = css.match(/table\.content-table tfoot th,\s*table\.content-table tfoot td\s*\{([^}]+)\}/)[1]
+  assert.match(footer, /color:var\(--text-color-1\) !important/)
+  assert.match(footer, /background:linear-gradient\([^;]+\),rgb\(var\(--container-bg-color\)\) !important/)
+})

@@ -6,7 +6,7 @@ export const cuttingRoutes = {
       path: '',
       name: 'cutting-dispatch',
       component: () => import('../views/CuttingDispatchView.vue'),
-      meta: { title: '文件派发' },
+      meta: { title: '文件派发', icon: 'send' },
     },
     {
       path: 'downloads',

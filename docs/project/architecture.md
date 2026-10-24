@@ -1,6 +1,6 @@
 # 当前系统架构
 
-> 更新日期：2026-10-13。本文档记录当前实现，详细需求与 V1 设计仍以 `docs/design/` 为准。
+> 更新日期：2026-10-23。本文档记录当前实现，详细需求与 V1 设计仍以 `docs/design/` 为准。
 
 ## 总体结构
 
@@ -22,6 +22,8 @@ Repository / 外部系统客户端
 ```
 
 生产式部署由 FastAPI 同源提供前端静态资源和 API。报表、告警、历史缓存、临时文件清理和统一数据保留使用应用内后台线程，因此当前维持单 Uvicorn worker。
+
+前端接入 Soybean Admin v2.3.0 的布局基础及完整官方主题 store/设置抽屉，使用 Naive UI、Pinia 与 UnoCSS；上游代码和许可在 `frontend/src/vendor/soybean-admin/`。保留既有 Vue Router 静态路由、同源 Cookie 认证、设备上下文和业务服务，不使用模板演示 API 或 Token 认证。主题由官方 theme store 注入完整 UnoCSS RGB 色阶，并驱动 NConfigProvider；外观、六种布局、标签栏、通用设置及四套预设全部接入，业务路由与会话使用适配层；首页 ECharts 监听主题重绘，切色不触发数据查询。既有 JavaScript 业务与上游 TypeScript 布局并存，仍以单一 npm 工程构建；构建和源码包携带第三方许可。
 
 ## 主要模块关系
 

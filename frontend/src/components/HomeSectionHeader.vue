@@ -1,5 +1,6 @@
 <script setup>
 import { RouterLink } from 'vue-router'
+import { NButton, NText } from 'naive-ui'
 import AppIcon from './AppIcon.vue'
 
 defineProps({
@@ -8,18 +9,16 @@ defineProps({
   icon: { type: String, required: true },
   to: { type: String, default: '' },
   action: { type: String, default: '' },
-  tone: { type: String, default: 'teal' },
 })
 </script>
 
 <template>
-  <header class="home-section-head" :class="`home-section-head--${tone}`">
-    <div class="home-section-head__title"><span class="home-section-head__icon"><AppIcon :name="icon" :size="18" /></span><h2 :id="headingId">{{ title }}</h2></div>
-    <RouterLink v-if="to" :to="to">{{ action }} <AppIcon name="chevron-right" :size="13" /></RouterLink>
+  <header class="flex-y-center justify-between gap-12px">
+    <h2 :id="headingId" class="m-0 min-w-0 flex-y-center gap-8px text-16px font-medium">
+      <AppIcon :name="icon" :size="18" tone="current" class="text-primary" /><NText>{{ title }}</NText>
+    </h2>
+    <RouterLink v-if="to" v-slot="{ href, navigate }" :to="to" custom>
+      <NButton text type="primary" tag="a" :href="href" class="shrink-0 transition-all-300" @click="navigate">{{ action }}<AppIcon name="chevron-right" :size="14" tone="current" /></NButton>
+    </RouterLink>
   </header>
 </template>
-
-<style scoped>
-.home-section-head{--heading-color:#1687a7;min-height:52px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 16px;border-bottom:1px solid #e6edf2}.home-section-head--blue{--heading-color:#3284d6}.home-section-head--amber{--heading-color:#d99020}.home-section-head--purple{--heading-color:#7668e5}
-.home-section-head__title{min-width:0;display:flex;align-items:center;gap:9px}.home-section-head__icon{width:28px;height:28px;display:grid;place-items:center;flex:0 0 auto;color:var(--heading-color);border-radius:7px;background:color-mix(in srgb,var(--heading-color) 10%,white)}.home-section-head h2{min-width:0;display:flex;align-items:baseline;gap:9px;overflow:hidden;margin:0;color:#16324a;font-size:16px;font-weight:650;white-space:nowrap}.home-section-head a{min-height:34px;display:inline-flex;align-items:center;gap:3px;flex:0 0 auto;padding:0 4px;color:#0f5d7a;border-radius:5px;font-size:12px;font-weight:600;text-decoration:none}.home-section-head a:hover{color:#0b4e68;text-decoration:underline}.home-section-head a:focus-visible{outline:2px solid #3284d6;outline-offset:2px}
-</style>

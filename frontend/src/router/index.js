@@ -5,7 +5,10 @@ import { cuttingRoutes } from './cuttingRoutes'
 
 const router = createRouter({
   history: createWebHistory(),
-  scrollBehavior: () => ({ top: 0 }),
+  scrollBehavior: () => {
+    document.querySelector('.soybean-layout main')?.scrollTo({ top: 0 })
+    return { top: 0 }
+  },
   routes: [
     {
       path: '/login',
@@ -23,36 +26,37 @@ const router = createRouter({
           path: 'home',
           name: 'admin-home',
           component: () => import('../views/AdminHomeView.vue'),
-          meta: { title: '系统首页' },
+          meta: { title: '系统首页', icon: 'home' },
         },
         {
           path: 'reports',
           component: () => import('../layouts/ReportsLayout.vue'),
+          meta: { title: '生产报表', icon: 'report' },
           children: [
             { path: '', redirect: '/admin/reports/leadership' },
             {
               path: 'leadership',
               name: 'leadership-report',
               component: () => import('../views/AdminLeadershipView.vue'),
-              meta: { title: '领导报表', keepAlive: true },
+              meta: { title: '领导报表', icon: 'chart', keepAlive: true },
             },
             {
               path: 'workshop',
               name: 'workshop-report',
               component: () => import('../views/AdminWorkshopView.vue'),
-              meta: { title: '车间报表', keepAlive: true },
+              meta: { title: '车间报表', icon: 'factory', keepAlive: true },
             },
             {
               path: 'equipment',
               name: 'equipment-report',
               component: () => import('../views/AdminEquipmentView.vue'),
-              meta: { title: '设备报表', keepAlive: true },
+              meta: { title: '设备报表', icon: 'zap', keepAlive: true },
             },
             {
               path: 'center',
               name: 'report-center',
               component: () => import('../views/ReportCenterView.vue'),
-              meta: { title: '生成与历史' },
+              meta: { title: '生成与历史', icon: 'clock' },
             },
           ],
         },
@@ -60,11 +64,13 @@ const router = createRouter({
           path: 'alarms',
           name: 'alarm-center',
           component: () => import('../views/AlarmCenterView.vue'),
-          meta: { title: '智能告警中心' },
+          meta: { title: '智能告警中心', icon: 'bell' },
         },
+        cuttingRoutes,
         {
           path: 'settings',
           component: () => import('../layouts/SettingsLayout.vue'),
+          meta: { title: '系统设置', icon: 'settings' },
           children: [
             {
               path: '',
@@ -76,31 +82,31 @@ const router = createRouter({
               path: 'database',
               name: 'database',
               component: () => import('../views/DatabaseView.vue'),
-              meta: { title: '数据库配置' },
+              meta: { title: '数据库配置', icon: 'database' },
             },
             {
               path: 'report-design',
               name: 'designer',
               component: () => import('../views/DesignerView.vue'),
-              meta: { title: '报表设计' },
+              meta: { title: '报表设计', icon: 'grid' },
             },
             {
               path: 'automation',
               name: 'automation',
               component: () => import('../views/AutomationView.vue'),
-              meta: { title: '报表自动化' },
+              meta: { title: '报表自动化', icon: 'activity' },
             },
             {
               path: 'admins',
               name: 'admin-accounts',
               component: () => import('../views/AdminAccountsView.vue'),
-              meta: { title: '管理员管理' },
+              meta: { title: '管理员管理', icon: 'user' },
             },
             {
               path: 'model-usage',
               name: 'model-usage',
               component: () => import('../views/ModelUsageView.vue'),
-              meta: { title: '模型用量' },
+              meta: { title: '模型用量', icon: 'sparkles' },
             },
           ],
         },
@@ -108,7 +114,6 @@ const router = createRouter({
         { path: 'designer', redirect: '/admin/settings/report-design' },
         { path: 'automation', redirect: '/admin/settings/automation' },
         { path: 'admins', redirect: '/admin/settings/admins' },
-        cuttingRoutes,
       ],
     },
     {

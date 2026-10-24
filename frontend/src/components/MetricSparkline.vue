@@ -36,10 +36,10 @@ const accessibleLabel = computed(() => geometry.value.count
 </template>
 
 <style scoped>
-.data-sparkline{display:block;overflow:visible;color:var(--kpi-color,#237fb7)}
+.data-sparkline{display:block;overflow:visible;color:var(--kpi-color,rgb(var(--primary-color)))}
 .data-sparkline__baseline{stroke:currentColor;stroke-width:1;opacity:.14}
 .data-sparkline__line{fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;vector-effect:non-scaling-stroke}
-.data-sparkline__point{fill:#fff;stroke:currentColor;stroke-width:1.6;vector-effect:non-scaling-stroke}
-.data-sparkline text{fill:var(--muted);font-size:7px}
+.data-sparkline__point{fill:rgb(var(--container-bg-color));stroke:currentColor;stroke-width:1.6;vector-effect:non-scaling-stroke}
+.data-sparkline text{fill:var(--text-color-3);font-size:11px}
 .data-sparkline.is-empty{opacity:.76}
 </style>

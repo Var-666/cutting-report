@@ -1,0 +1,6 @@
+/* Keep legacy business styles below the component library's own styles. */
+@import './style.css' layer(legacy);
+@import './content-tables.css' layer(legacy);
+@import './soybean.css';
+
+@import '../vendor/soybean-admin/transition.css';

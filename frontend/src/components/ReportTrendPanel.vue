@@ -68,13 +68,13 @@ defineExpose({ getChartElement: () => chartElement.value })
 .report-trend-panel { margin-bottom:22px; overflow:hidden; }
 .report-trend-panel__heading { gap:14px; flex-wrap:wrap; }
 .report-trend-panel__heading small { color:var(--muted); font-size:12px; }
-.report-trend-panel__activity{display:flex;align-items:center;gap:7px;color:#287993!important;font-weight:700}.report-trend-panel__activity .spinner{width:13px;height:13px}
+.report-trend-panel__activity{display:flex;align-items:center;gap:7px;color:rgb(var(--info-color))!important;font-weight:700}.report-trend-panel__activity .spinner{width:13px;height:13px}
 .report-trend-panel__body{position:relative;min-height:var(--report-trend-height)}
 .report-trend-panel__content { display:grid; grid-template-columns:minmax(330px,.9fr) minmax(0,1.25fr); gap:14px; align-items:stretch; padding:16px 18px 20px; }
 .report-trend-panel__content.is-obscured{visibility:hidden;pointer-events:none}
-.report-trend-panel__state{position:absolute;z-index:2;inset:0;margin:16px 18px 20px;border:1px solid #e0e7ec;border-radius:8px}
+.report-trend-panel__state{position:absolute;z-index:2;inset:0;margin:16px 18px 20px;border:1px solid var(--theme-border-color);border-radius:8px}
 .report-trend-panel__content--table-only { grid-template-columns:minmax(0,1fr); }
-.report-trend-panel__chart,.report-trend-panel__table { min-width:0; height:var(--report-trend-height); border:1px solid #e0e7ec; background:#fff; }
+.report-trend-panel__chart,.report-trend-panel__table { min-width:0; height:var(--report-trend-height); border:1px solid var(--theme-border-color); background:rgb(var(--container-bg-color)); }
 .report-trend-panel__chart { width:100%; }
 .report-trend-panel__table { max-height:var(--report-trend-height); overflow:auto; scrollbar-gutter:stable; }
 .report-trend-panel__content--fit-table .report-trend-panel__table { height:auto; max-height:none; overflow-x:auto; overflow-y:visible; scrollbar-gutter:auto; }

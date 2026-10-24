@@ -26,6 +26,35 @@ def test_allows_required_files(name):
     assert packager.is_allowed(Path(name))
 
 
+def test_source_package_keeps_soybean_build_configuration_and_license(tmp_path):
+    required = (
+        "frontend/dist/index.html", "vendor/echarts.min.js",
+        "frontend/dist/licenses/soybean-admin/LICENSE",
+        "backend/app/api/energy.py", "backend/app/database/energy.py",
+        "backend/app/services/energy_period_service.py",
+        "frontend/src/views/EnergyPeriodReportView.vue",
+        "backend/app/api/downloads.py", "backend/app/database/downloads.py",
+        "backend/app/services/file_download_service.py",
+        "frontend/src/views/CuttingDispatchView.vue",
+        "frontend/src/vendor/soybean-admin/LICENSE",
+    )
+    for name in (*packager.FILES, *required):
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("fixture")
+    for name in ("vue", "vue-router", "echarts", "zrender", "tslib", "naive-ui", "pinia"):
+        path = tmp_path / "frontend/node_modules" / name / "LICENSE"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"{name} license")
+
+    payload = packager.collect_files(tmp_path)
+    assert payload["frontend/uno.config.js"] == b"fixture"
+    assert payload["frontend/src/vendor/soybean-admin/LICENSE"] == b"fixture"
+    assert payload["frontend/dist/licenses/soybean-admin/LICENSE"] == b"fixture"
+    assert payload["licenses/naive-ui/LICENSE"] == b"naive-ui license"
+    assert payload["licenses/pinia/LICENSE"] == b"pinia license"
+
+
 def test_archive_has_manifest_and_does_not_replace_existing_release(tmp_path, monkeypatch):
     payload = {"backend/app/api/energy.py": b"# feature\n", ".env.example": b"PASSWORD=\n"}
     monkeypatch.setattr(packager, "collect_files", lambda root: payload.copy())
