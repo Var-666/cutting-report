@@ -54,6 +54,8 @@ def test_source_package_keeps_soybean_build_configuration_and_license(tmp_path):
     assert payload["frontend/dist/licenses/soybean-admin/LICENSE"] == b"fixture"
     assert payload["licenses/naive-ui/LICENSE"] == b"naive-ui license"
     assert payload["licenses/pinia/LICENSE"] == b"pinia license"
+    for name in ("docs/deployment/配置参考.md", "docs/project/功能与接口参考.md", "docs/project/changelog.md"):
+        assert payload[name] == b"fixture"
 
 
 def test_archive_has_manifest_and_does_not_replace_existing_release(tmp_path, monkeypatch):

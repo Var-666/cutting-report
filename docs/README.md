@@ -8,7 +8,7 @@
 docs/
 ├── README.md                 文档总目录
 ├── project/                 当前架构、约定、决策和进度
-├── deployment/              安装、部署和运维说明
+├── deployment/              安装、部署、配置参数和运维说明
 ├── design/                  需求与系统设计
 ├── database/                数据库结构说明
 └── integrations/            PDM、FTP、激光魔盒等外部系统资料
@@ -16,13 +16,24 @@ docs/
 
 ## 快速入口
 
+### 使用与配置
+
+- [快速上手](../README.md)
+- [配置参考](deployment/配置参考.md)
+- [功能与接口参考](project/功能与接口参考.md)
+- [当前进度](project/progress.md) · [历史变更记录](project/changelog.md)
+
 ### 当前项目记忆
 
 - [架构、后端、UI、优化、技术决策与进度](project/README.md)
 
 ### 部署
 
-- [Windows内网部署说明](deployment/WINDOWS部署说明.md)
+- [Docker 部署](../README-DOCKER.md)
+- [Windows 内网部署](deployment/WINDOWS部署说明.md)
+- [麒麟原生部署](deployment/KYLIN原生部署说明.md)
+- [离线 Docker 部署](deployment/OFFLINE_DOCKER部署说明.md)
+- [Web/Worker 升级与回滚](deployment/WEB_WORKER进程隔离升级说明.md)
 
 ### 需求与设计
 
