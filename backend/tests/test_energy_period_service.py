@@ -508,6 +508,7 @@ def test_day_month_routes_and_bad_month(tmp_path):
     energy, _ = service(tmp_path)
     app = FastAPI()
     app.state.energy_period_service = energy
+    app.state.devices = {"Cutter01": app.state}
     start = START + timedelta(hours=8)
     app.state.query_service = SimpleNamespace(fetch_equipment_data=lambda *_args, **_kwargs: SimpleNamespace(
         records=[record(production_time=start, production_end_time=start + timedelta(minutes=30),
@@ -528,15 +529,15 @@ def test_day_month_routes_and_bad_month(tmp_path):
         return await call_next(request)
 
     client = TestClient(app)
-    result = client.get("/api/v1/energy-report/day?report_date=2026-08-18&refresh=true")
+    result = client.get("/api/v1/energy-report/day?report_date=2026-08-18&refresh=true&device_id=Cutter01")
     assert result.status_code == 200
     assert result.json()["data"]["summary"]["gas"]["value"] == 96
-    result = client.get("/api/v1/energy-report/month?report_month=2026-08")
+    result = client.get("/api/v1/energy-report/month?report_month=2026-08&device_id=Cutter01")
     assert result.status_code == 200
     assert result.json()["data"]["saved_day_count"] == 1
     result = client.get(
         "/api/v1/energy-report/monthly-range",
-        params={"start_date": "2025-09-01", "end_date": "2026-08-18"},
+        params={"device_id": "Cutter01", "start_date": "2025-09-01", "end_date": "2026-08-18"},
     )
     assert result.status_code == 200
     assert len(result.json()["data"]["rows"]) == 12
@@ -546,14 +547,14 @@ def test_day_month_routes_and_bad_month(tmp_path):
         r"[0-9a-f]{64}", result.json()["data"]["analysis_source_version"]
     )
     assert scheduled_ranges == [(date(2025, 9, 1), date(2026, 8, 18))]
-    result = client.get("/api/v1/energy-report/tasks?report_date=2026-08-18")
+    result = client.get("/api/v1/energy-report/tasks?report_date=2026-08-18&device_id=Cutter01")
     assert result.status_code == 200
     assert result.json()["data"]["records"][0]["electricity_consumption"] == 18
     assert result.json()["data"]["summary"]["task_count"] == 1
     for value in ("2026-13", "2026-1", "0000-01", "invalid"):
-        assert client.get("/api/v1/energy-report/month", params={"report_month": value}).status_code == 422
+        assert client.get("/api/v1/energy-report/month", params={"device_id": "Cutter01", "report_month": value}).status_code == 422
     assert client.get(
         "/api/v1/energy-report/monthly-range",
-        params={"start_date": "2025-08-01", "end_date": "2026-08-18"},
+        params={"device_id": "Cutter01", "start_date": "2025-08-01", "end_date": "2026-08-18"},
     ).status_code == 422
-    assert client.get("/api/v1/energy-report/day?report_date=9999-12-31").status_code == 422
+    assert client.get("/api/v1/energy-report/day?report_date=9999-12-31&device_id=Cutter01").status_code == 422

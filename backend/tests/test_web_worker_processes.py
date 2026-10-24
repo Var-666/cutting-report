@@ -145,7 +145,7 @@ def _analysis_child(root, output, background):
     from app.services.report_analysis_service import ReportAnalysisService
     from tests.analysis_fakes import model_analysis
     configured = replace(configuration(root), llm_enabled=True, llm_max_concurrent=2, llm_queue_timeout_seconds=5)
-    service = ReportAnalysisService(configured, MetadataRepository(configured.metadata_db_path))
+    service = ReportAnalysisService(configured, MetadataRepository(configured.metadata_db_path, device_id='Cutter01'))
 
     def model(report_type, context):
         output.put("model_started")
@@ -171,7 +171,7 @@ def test_web_restarts_do_not_reset_worker_and_crashed_worker_report_recovers(tmp
     runtime = build_runtime(configuration(tmp_path), role="worker")
     runtime.workshop.bootstrap_admin(username="process-admin", display_name="进程测试", password="test-password",
                                     now="2026-10-24T10:00:00+08:00")
-    runtime.metadata.create_job(report_id="restart-test", report_type="equipment", report_date="2026-08-18",
+    runtime.devices["Cutter01"].metadata.create_job(report_id="restart-test", report_type="equipment", report_date="2026-08-18",
         project_code=None, ship_no=None, request_id="test", created_at="2026-10-24T10:00:00+08:00")
     stop, entered, release = context.Event(), context.Event(), context.Event()
     worker = context.Process(target=_worker, args=(str(tmp_path), stop, entered, release))
@@ -347,8 +347,8 @@ def test_worker_refresh_invalidates_only_its_device_local_caches(tmp_path, monke
     filters = ReportFilter(report_date=date(2026, 10, 24))
     one, two = first.fetch_equipment_data(filters), second.fetch_equipment_data(filters)
     assert first.fetch_equipment_data(filters) is one
-    leader = LeadershipReportService(configured, runtime.leadership_report_service.snapshots)
-    base = runtime.leadership_report_service.fetch(date(2026, 10, 1))
+    leader = LeadershipReportService(configured, runtime.devices["Cutter01"].leadership_report_service.snapshots)
+    base = runtime.devices["Cutter01"].leadership_report_service.fetch(date(2026, 10, 1))
     monkeypatch.setattr(leader, "_compose_snapshot_report", lambda *_, **__: replace(base))
     # The isolated demo result has a fresh snapshot, so the second call uses local cache.
     report = leader._fetch_snapshot_report(date(2026, 10, 1))

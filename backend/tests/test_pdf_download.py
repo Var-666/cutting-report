@@ -29,17 +29,19 @@ def report_client(tmp_path, monkeypatch):
     app.include_router(reports.router)
     app.dependency_overrides[require_admin] = lambda: {"role": "admin"}
     app.state.metadata = SimpleNamespace(get_job=lambda report_id: job if report_id == "saved" else None)
+    app.state.devices = {'Cutter01': SimpleNamespace(metadata=app.state.metadata)}
     app.state.pdf_service = SimpleNamespace(render=render)
     monkeypatch.setattr(reports, "settings", replace(reports.settings, project_root=tmp_path))
     # Settings resolves report files under project_root/reports.
     (tmp_path / "reports").mkdir()
     html = html.rename(tmp_path / "reports" / html.name)
-    return TestClient(app), job, calls, html
+    client = TestClient(app)
+    return client, job, calls, html
 
 
 def test_html_download_stays_unchanged_and_does_not_render_pdf(report_client):
     client, _, calls, html = report_client
-    response = client.get("/api/v1/reports/saved/download")
+    response = client.get('/api/v1/reports/saved/download?device_id=Cutter01')
     assert response.status_code == 200
     assert response.content == html.read_bytes()
     assert response.headers["content-type"].startswith("text/html")
@@ -48,7 +50,7 @@ def test_html_download_stays_unchanged_and_does_not_render_pdf(report_client):
 
 def test_pdf_download_has_pdf_bytes_type_and_chinese_filename(report_client):
     client, _, calls, html = report_client
-    response = client.get("/api/v1/reports/saved/download?format=pdf")
+    response = client.get('/api/v1/reports/saved/download?format=pdf&device_id=Cutter01')
     assert response.status_code == 200
     assert response.content.startswith(b"%PDF-")
     assert response.headers["content-type"] == "application/pdf"
@@ -64,16 +66,16 @@ def test_pdf_render_failure_is_actionable_and_html_is_still_available(report_cli
         raise PdfRenderError("服务器未安装 PDF 渲染依赖")
 
     client.app.state.pdf_service.render = fail
-    response = client.get("/api/v1/reports/saved/download?format=pdf")
+    response = client.get('/api/v1/reports/saved/download?format=pdf&device_id=Cutter01')
     assert response.status_code == 503
     assert "渲染依赖" in response.json()["detail"]
-    assert client.get("/api/v1/reports/saved/download").status_code == 200
+    assert client.get('/api/v1/reports/saved/download?device_id=Cutter01').status_code == 200
 
 
 def test_missing_report_and_invalid_format_do_not_render(report_client):
     client, _, calls, _ = report_client
-    assert client.get("/api/v1/reports/missing/download?format=pdf").status_code == 404
-    assert client.get("/api/v1/reports/saved/download?format=exe").status_code == 422
+    assert client.get('/api/v1/reports/missing/download?format=pdf&device_id=Cutter01').status_code == 404
+    assert client.get('/api/v1/reports/saved/download?format=exe&device_id=Cutter01').status_code == 422
     assert calls == []
 
 
@@ -81,7 +83,7 @@ def test_pdf_cannot_resolve_a_report_outside_the_report_directory(report_client,
     client, job, calls, _ = report_client
     (tmp_path / "outside.html").write_text("secret")
     job["relative_path"] = "../outside.html"
-    assert client.get("/api/v1/reports/saved/download?format=pdf").status_code == 404
+    assert client.get('/api/v1/reports/saved/download?format=pdf&device_id=Cutter01').status_code == 404
     assert calls == []
 
 

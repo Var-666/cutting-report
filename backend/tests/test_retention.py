@@ -27,10 +27,10 @@ NOW = datetime(2026, 9, 21, 8, 0, tzinfo=TZ)
 
 def _repositories(tmp_path):
     database = SQLiteDatabase(tmp_path / "data" / "metadata.db")
-    workshop = WorkshopRepository(database)
-    metadata = MetadataRepository(database)
+    workshop = WorkshopRepository(database, scope_machine_no='Cutter01')
+    metadata = MetadataRepository(database, device_id='Cutter01')
     automation = AutomationRepository(database)
-    alarms = AlarmRepository(database)
+    alarms = AlarmRepository(database, source_name="production")
     dispatches = DispatchRepository(database)
     downloads = DownloadRepository(database)
     retention = RetentionRepository(database)
@@ -402,8 +402,8 @@ def test_unified_retention_removes_only_expired_terminal_data(tmp_path, delivery
                 """
                 INSERT INTO workshop_confirmations (
                     task_id, report_id, worker_id, worker_name,
-                    confirmed_at, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    confirmed_at, created_at, updated_at, scope_machine_no
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'Cutter01')
                 """,
                 (
                     task_id,
@@ -433,14 +433,15 @@ def test_unified_retention_removes_only_expired_terminal_data(tmp_path, delivery
             """
             INSERT INTO workshop_confirmations (
                 task_id, report_id, worker_id, worker_name,
-                confirmed_at, created_at, updated_at
-            ) VALUES ('task-shared', 'workshop-old', ?, ?, ?, ?, ?)
+                confirmed_at, created_at, updated_at, scope_machine_no
+            ) VALUES ('task-shared', 'workshop-old', ?, ?, ?, ?, ?, 'Cutter01')
             """,
             (admin["user_id"], admin["display_name"], OLD, OLD, OLD),
         )
 
     schedule = automation.create_schedule(
         {
+            "device_id": "Cutter01",
             "name": "旧任务",
             "report_type": "equipment",
             "frequency": "daily",
@@ -522,8 +523,8 @@ def test_unified_retention_removes_only_expired_terminal_data(tmp_path, delivery
             """
             INSERT INTO workshop_confirmation_audits (
                 audit_id, task_id, action, reason, operated_by_id,
-                operated_by_name, operated_by_role, operated_at
-            ) VALUES ('audit-old', 'task-old', 'admin_revoke', 'old', ?, ?, 'admin', ?)
+                operated_by_name, operated_by_role, operated_at, scope_machine_no
+            ) VALUES ('audit-old', 'task-old', 'admin_revoke', 'old', ?, ?, 'admin', ?, 'Cutter01')
             """,
             (admin["user_id"], admin["display_name"], OLD),
         )
@@ -531,8 +532,8 @@ def test_unified_retention_removes_only_expired_terminal_data(tmp_path, delivery
             """
             INSERT INTO workshop_confirmation_audits (
                 audit_id, task_id, action, reason, operated_by_id,
-                operated_by_name, operated_by_role, operated_at
-            ) VALUES ('audit-recent', 'task-recent', 'admin_revoke', 'recent', ?, ?, 'admin', ?)
+                operated_by_name, operated_by_role, operated_at, scope_machine_no
+            ) VALUES ('audit-recent', 'task-recent', 'admin_revoke', 'recent', ?, ?, 'admin', ?, 'Cutter01')
             """,
             (admin["user_id"], admin["display_name"], RECENT),
         )
@@ -687,3 +688,18 @@ def test_retention_worker_runs_immediately_and_stops_cleanly() -> None:
 
     service.pending = True
     assert RetentionWorker(disabled.settings, service).enabled
+
+
+def test_retention_removes_only_expired_device_confirmation_when_task_numbers_match(tmp_path):
+    from test_workshop_snapshot_sync import record
+    database, one, metadata, automation, alarms, dispatches, downloads, retention, admin = _repositories(tmp_path)
+    two = WorkshopRepository(database, scope_machine_no='Cutter02')
+    for repo, generated in ((one, OLD), (two, RECENT)):
+        report = repo.create_daily_report(report_date='2026-09-20', source_mode='sqlserver', records=[record('same')], user=admin, now=generated)
+        repo.confirm_task(task_id='same', report_id=report['report_id'], user=admin, now=OLD)
+    result = retention.cleanup_expired_records(report_cutoff='2026-01-01', analysis_cutoff=None, alarm_cutoff=None,
+        dispatch_cutoff=None, audit_cutoff=None, queued_at=RECENT, batch_size=100)
+    assert result['workshop_confirmations'] == 1
+    assert one.get_confirmations(['same']) == {}
+    assert two.get_daily_report('2026-09-20')['confirmed_count'] == 1
+    assert len(two.list_confirmation_audits(task_id='same')) == 1

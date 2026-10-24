@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { setDeviceCatalog, resetDeviceContext } from '../src/api/deviceContext.js'
 import { downloadReportPdf, waitForReport } from '../src/api/reportExport.js'
+
+test.beforeEach(() => setDeviceCatalog({ default_device_id: 'Cutter01', items: [{ id: 'Cutter01' }] }))
+test.afterEach(resetDeviceContext)
 
 test('PDF download preserves the Chinese filename and uses an authenticated request', async (t) => {
   let clicked = false
@@ -9,7 +13,7 @@ test('PDF download preserves the Chinese filename and uses an authenticated requ
   globalThis.document = { createElement: () => link, body: { appendChild() {} } }
   t.after(() => { globalThis.document = previousDocument })
   t.mock.method(globalThis, 'fetch', async (url, options) => {
-    assert.equal(url, '/api/v1/reports/rpt_test/download?format=pdf')
+    assert.equal(url, '/api/v1/reports/rpt_test/download?format=pdf&device_id=Cutter01')
     assert.equal(options.credentials, 'same-origin')
     return new Response(new Blob(['%PDF-1.7']), { headers: {
       'Content-Type': 'application/pdf',

@@ -35,9 +35,9 @@ def test_report_period_resolves_without_locale_assumptions() -> None:
 
 def test_schedule_and_email_retry_history_are_persisted(tmp_path) -> None:
     database_path = tmp_path / "metadata.db"
-    metadata = MetadataRepository(database_path)
+    metadata = MetadataRepository(database_path, device_id='Cutter01')
     metadata.initialize()
-    workshop = WorkshopRepository(database_path)
+    workshop = WorkshopRepository(database_path, scope_machine_no='Cutter01')
     workshop.initialize()
     repository = AutomationRepository(database_path)
     repository.initialize()
@@ -51,6 +51,7 @@ def test_schedule_and_email_retry_history_are_persisted(tmp_path) -> None:
     )
     schedule = repository.create_schedule(
         {
+            "device_id": "Cutter01",
             "name": "每日车间报表",
             "report_type": "workshop",
             "frequency": "daily",

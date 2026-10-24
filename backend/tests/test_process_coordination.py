@@ -140,7 +140,7 @@ def test_report_claim_is_atomic_between_processes(tmp_path):
     database = SQLiteDatabase(tmp_path / "metadata.db")
     repository = CoordinationRepository(database)
     repository.initialize()
-    metadata = MetadataRepository(database)
+    metadata = MetadataRepository(database, device_id='Cutter01')
     metadata.initialize()
     metadata.create_job(report_id="one", report_date="2026-10-24", project_code=None, ship_no=None,
                         request_id="one", created_at="2026-10-24T10:00:00+08:00")

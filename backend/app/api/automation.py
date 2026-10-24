@@ -83,7 +83,7 @@ class AutomationConfigurationRequest(BaseModel):
 
 
 class SchedulePayload(BaseModel):
-    device_id: str = "Cutter01"
+    device_id: str
 
     @field_validator("device_id")
     @classmethod

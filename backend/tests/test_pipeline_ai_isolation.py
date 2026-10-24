@@ -25,7 +25,7 @@ def pipeline_job(tmp_path, report_type, interval, *, llm_enabled=True):
     vendor_dir = tmp_path / "vendor"
     vendor_dir.mkdir(exist_ok=True)
     (vendor_dir / "echarts.min.js").write_text("window.echarts={};")
-    metadata = MetadataRepository(settings.metadata_db_path)
+    metadata = MetadataRepository(settings.metadata_db_path, device_id='Cutter01')
     metadata.initialize()
     pipeline = ReportPipeline(settings, metadata)
     now = datetime.now(ZoneInfo(settings.timezone)).isoformat(timespec="seconds")

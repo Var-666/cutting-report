@@ -24,7 +24,7 @@ class ReportWorker:
         self,
         settings: Settings,
         metadata: MetadataRepository,
-        pipeline: ReportPipeline,
+        pipeline: ReportPipeline | None = None,
         automation_service: AutomationService | None = None,
         runtime: AutomationRuntime | None = None,
         pipelines: dict[str, ReportPipeline] | None = None,
@@ -156,7 +156,7 @@ class ReportWorker:
         report_id = job["report_id"]
         try:
             logger.info("report generation started", extra={"report_id": report_id})
-            pipeline = self.pipeline if self.pipelines is None else self.pipelines[job.get("device_id") or "Cutter01"]
+            pipeline = self.pipeline if self.pipelines is None else self.pipelines[job["device_id"]]
             run = pipeline.run
             parameters = inspect.signature(run).parameters
             if "cancellation_check" in parameters:

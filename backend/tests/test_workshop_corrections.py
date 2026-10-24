@@ -1,10 +1,12 @@
+from app.config import Settings
+from types import SimpleNamespace
 from datetime import datetime
 from decimal import Decimal
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.api.auth import require_admin, require_worker
+from app.api.auth import require_admin, require_user, require_worker
 from app.api.workshop import router
 from app.database.workshop import WorkshopRepository
 from app.models.domain import WorkshopRecord
@@ -13,7 +15,7 @@ from app.models.domain import WorkshopRecord
 def test_legacy_snapshot_does_not_block_worker_revoke_or_admin_correction(
     tmp_path,
 ) -> None:
-    repository = WorkshopRepository(tmp_path / "metadata.db")
+    repository = WorkshopRepository(tmp_path / "metadata.db", scope_machine_no='Cutter01')
     repository.initialize()
     confirmed_at = "2026-09-09T16:15:00+08:00"
     admin = repository.bootstrap_admin(
@@ -59,6 +61,10 @@ def test_legacy_snapshot_does_not_block_worker_revoke_or_admin_correction(
     app = FastAPI()
     app.include_router(router)
     app.state.workshop = repository
+    app.state.devices = {'Cutter01': SimpleNamespace(
+        settings=Settings(data_source_mode='sqlserver'), workshop=app.state.workshop,
+        query_service=getattr(app.state, 'query_service', None))}
+    app.dependency_overrides[require_user] = lambda: worker
     app.dependency_overrides[require_worker] = lambda: worker
     app.dependency_overrides[require_admin] = lambda: admin
 
@@ -69,7 +75,7 @@ def test_legacy_snapshot_does_not_block_worker_revoke_or_admin_correction(
 
     with TestClient(app) as client:
         response = client.post(
-            "/api/v1/workshop/tasks/legacy-task/revoke",
+            '/api/v1/workshop/tasks/legacy-task/revoke?device_id=Cutter01',
             json={"report_date": "2026-09-09", "reason": "误点了其他任务"},
         )
         assert response.status_code == 200
@@ -83,7 +89,7 @@ def test_legacy_snapshot_does_not_block_worker_revoke_or_admin_correction(
             now="2026-09-09T16:20:00+08:00",
         )
         response = client.post(
-            "/api/v1/workshop/tasks/legacy-task/correct",
+            '/api/v1/workshop/tasks/legacy-task/correct?device_id=Cutter01',
             json={
                 "report_date": "2026-09-09",
                 "action": "revoke",

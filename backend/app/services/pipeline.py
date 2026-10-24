@@ -201,6 +201,8 @@ class ReportPipeline:
         *,
         cancellation_check: Callable[[], bool] | None = None,
     ) -> None:
+        if job.get("device_id") != self.settings.device_id:
+            raise ValueError("报表任务与执行设备不一致")
         previous_check = self._cancellation_check
         self._cancellation_check = cancellation_check
         try:

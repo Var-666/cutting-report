@@ -22,7 +22,7 @@ def monitor(repository, source, batch_size=100, retention_days=30):
 
 
 def test_expired_open_alarm_updates_then_stays_deleted_after_history_recheck(tmp_path):
-    repository = AlarmRepository(tmp_path / "metadata.db")
+    repository = AlarmRepository(tmp_path / "metadata.db", source_name="production")
     repository.initialize()
     retention = RetentionRepository(repository.database)
     retention.initialize()
@@ -52,7 +52,7 @@ def test_expired_open_alarm_updates_then_stays_deleted_after_history_recheck(tmp
 
 
 def test_disabled_retention_still_imports_old_resolved_history(tmp_path):
-    repository = AlarmRepository(tmp_path / "metadata.db")
+    repository = AlarmRepository(tmp_path / "metadata.db", source_name="production")
     repository.initialize()
     row = alarm(1, remove_time="2026-09-01 10:00:00", start_time="2026-09-01 09:00:00")
 
@@ -67,7 +67,7 @@ def test_disabled_retention_still_imports_old_resolved_history(tmp_path):
 
 
 def test_open_recheck_reaches_page_after_2000_even_after_restart(tmp_path):
-    repository = AlarmRepository(tmp_path / "metadata.db")
+    repository = AlarmRepository(tmp_path / "metadata.db", source_name="production")
     repository.initialize()
     repository.configure_monitoring_window(START)
     repository.ingest([alarm(i) for i in range(1, 2002)], now=NOW, cursor=2001, debounce_minutes=10)
@@ -87,7 +87,7 @@ def test_open_recheck_reaches_page_after_2000_even_after_restart(tmp_path):
 
     monitor(repository, Source()).run_once(NOW)
     assert repository.get_sync_state()["open_recheck_after_id"] == 2000
-    restarted = AlarmRepository(repository.database_path)
+    restarted = AlarmRepository(repository.database_path, source_name="production")
     restarted.initialize()
     monitor(restarted, Source()).run_once(NOW)
     with restarted.connect() as connection:
@@ -97,7 +97,7 @@ def test_open_recheck_reaches_page_after_2000_even_after_restart(tmp_path):
 
 
 def test_late_old_alarm_is_found_without_advancing_incremental_cursor(tmp_path):
-    repository = AlarmRepository(tmp_path / "metadata.db")
+    repository = AlarmRepository(tmp_path / "metadata.db", source_name="production")
     repository.initialize()
     repository.configure_monitoring_window(START)
     rows = [alarm(i, remove_time="2026-09-10 10:00:00") for i in (1, 2, 100)]
@@ -121,7 +121,7 @@ def test_late_old_alarm_is_found_without_advancing_incremental_cursor(tmp_path):
     monitor(repository, source, 1).run_once(NOW)
     assert repository.get_sync_state()["history_recheck_after_id"] == 1
     rows.insert(2, alarm(3, remove_time="2026-09-10 10:00:00"))
-    restarted = AlarmRepository(repository.database_path)
+    restarted = AlarmRepository(repository.database_path, source_name="production")
     restarted.initialize()
     service = monitor(restarted, source, 1)
     service.run_once(NOW)
@@ -139,7 +139,7 @@ def test_existing_sync_table_migrates_and_window_reset_resets_all_scan_positions
             source_name TEXT PRIMARY KEY, last_alarm_id INTEGER NOT NULL DEFAULT 0,
             last_success_at TEXT, lease_owner TEXT, lease_until TEXT)""")
         connection.execute("INSERT INTO alarm_sync_state(source_name,last_alarm_id) VALUES ('production',42)")
-    repository = AlarmRepository(path)
+    repository = AlarmRepository(path, source_name="production")
     repository.initialize()
     repository.initialize()
     state = repository.get_sync_state()

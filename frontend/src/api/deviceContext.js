@@ -11,7 +11,7 @@ function rememberDevice(id) {
   } catch { /* Storage restrictions must not prevent device queries or switching. */ }
 }
 let rememberedId = storedDeviceId()
-let defaultDeviceId = 'Cutter01'
+let defaultDeviceId = ''
 let selectedId = rememberedId || defaultDeviceId
 let catalog = []
 const subscribers = new Set()
@@ -35,12 +35,15 @@ export function selectDevice(id) {
   rememberDevice(id)
   notify()
 }
-export function resetDeviceContext() { rememberDevice(null); rememberedId = ''; defaultDeviceId = 'Cutter01'; selectedId = defaultDeviceId; catalog = []; switchQueries.clear(); notify() }
+export function resetDeviceContext() { rememberDevice(null); rememberedId = ''; defaultDeviceId = ''; selectedId = defaultDeviceId; catalog = []; switchQueries.clear(); notify() }
 export function deviceUrl(url, deviceId = selectedId) {
-  if (!/^\/api\/v1\/(workshop|leadership-report|equipment-report|energy-report|analysis|options|projects|ships|reports|conditions|alarms)(?:[/?]|$)/.test(url)) return url
+  if (!/^\/api\/v1\/(workshop|leadership-report|equipment-report|energy-report|analysis|options|projects|ships|reports|conditions|alarms)(?:[/?]|$)|^\/api\/v1\/database\/preview(?:[?]|$)|^\/api\/v1\/designer\/query-tasks\/[^/?]+\/preview(?:[?]|$)/.test(url)) return url
   const [path, query = ''] = url.split('?')
   const values = new URLSearchParams(query)
-  if (!values.has('device_id') && deviceId !== defaultDeviceId) values.set('device_id', deviceId)
+  if (!values.has('device_id')) {
+    if (!deviceId) throw new Error('设备目录尚未加载，请稍后重试')
+    values.set('device_id', deviceId)
+  }
   return values.size ? `${path}?${values}` : path
 }
 

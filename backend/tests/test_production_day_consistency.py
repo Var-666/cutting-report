@@ -89,7 +89,7 @@ def test_equipment_daily_rows_keep_cross_day_task_in_selected_day():
 
 
 def test_daily_snapshot_restart_and_legacy_migration_preserve_business_date_and_confirmation(tmp_path):
-    repository = WorkshopRepository(tmp_path / "metadata.db")
+    repository = WorkshopRepository(tmp_path / "metadata.db", scope_machine_no='Cutter01')
     repository.initialize()
     user = repository.bootstrap_admin(username="admin", display_name="admin", password="test-password", now=END.isoformat())
     report = repository.create_daily_report(report_date=DAY.isoformat(), source_mode="sqlserver",
@@ -99,7 +99,7 @@ def test_daily_snapshot_restart_and_legacy_migration_preserve_business_date_and_
     # business day is authoritative, even when the task started the night before.
     with repository.connect() as connection:
         connection.execute("UPDATE workshop_report_items SET production_date = NULL")
-    restarted = WorkshopRepository(repository.database_path)
+    restarted = WorkshopRepository(repository.database_path, scope_machine_no='Cutter01')
     restarted.initialize()
     state, records = restarted.get_daily_report_records(DAY.isoformat())
     assert records[0].production_date == DAY

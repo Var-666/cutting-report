@@ -19,7 +19,7 @@ TZ = ZoneInfo("Asia/Shanghai")
 
 
 def test_recent_recheck_does_not_skip_incremental_backlog(tmp_path):
-    repository = AlarmRepository(tmp_path / "metadata.db")
+    repository = AlarmRepository(tmp_path / "metadata.db", source_name="production")
     repository.initialize()
     now = datetime(2026, 9, 30, 9, 0, tzinfo=TZ)
     rows = [alarm(i, start_time="2026-09-28 09:00:00") for i in range(1, 22)]
@@ -46,7 +46,7 @@ def test_recent_recheck_does_not_skip_incremental_backlog(tmp_path):
             pdf_relative_path="alarms/a.pdf", pdf_filename="a.pdf", file_size=1, sha256="a")))
     service.run_once(now)
     assert repository.get_cursor() == 20  # 22 is supplemental; 21 is still unscanned.
-    restarted = AlarmRepository(repository.database_path)
+    restarted = AlarmRepository(repository.database_path, source_name="production")
     restarted.initialize()
     service.repository = restarted
     service.run_once(now + timedelta(minutes=5))
@@ -58,7 +58,7 @@ def test_recent_recheck_does_not_skip_incremental_backlog(tmp_path):
 
 
 def test_alarm_events_and_scan_boundary_rollback_and_retry_together(tmp_path, monkeypatch):
-    repository = AlarmRepository(tmp_path / "metadata.db")
+    repository = AlarmRepository(tmp_path / "metadata.db", source_name="production")
     repository.initialize()
     now = datetime(2026, 9, 30, 9, 0, tzinfo=TZ)
     arguments = dict(now=now, debounce_minutes=10)
@@ -317,7 +317,7 @@ def test_alarm_analysis_repairs_summary_from_validated_item_evidence() -> None:
 
 
 def test_same_open_problem_emits_once_and_real_recurrence_emits_again(tmp_path) -> None:
-    repository = AlarmRepository(tmp_path / "metadata.db")
+    repository = AlarmRepository(tmp_path / "metadata.db", source_name="production")
     repository.initialize()
     now = datetime(2026, 9, 9, 9, 0, tzinfo=TZ)
 
@@ -365,7 +365,7 @@ def test_same_open_problem_emits_once_and_real_recurrence_emits_again(tmp_path) 
 
 
 def test_recurrence_inside_debounce_window_does_not_emit_again(tmp_path) -> None:
-    repository = AlarmRepository(tmp_path / "metadata.db")
+    repository = AlarmRepository(tmp_path / "metadata.db", source_name="production")
     repository.initialize()
     now = datetime(2026, 9, 9, 9, 0, tzinfo=TZ)
     repository.ingest([alarm(1)], now=now, cursor=1, debounce_minutes=10)
@@ -393,7 +393,7 @@ def test_recurrence_inside_debounce_window_does_not_emit_again(tmp_path) -> None
 def test_failed_report_remains_visible_after_incidents_are_released_for_retry(
     tmp_path,
 ) -> None:
-    repository = AlarmRepository(tmp_path / "metadata.db")
+    repository = AlarmRepository(tmp_path / "metadata.db", source_name="production")
     repository.initialize()
     cutoff = "2026-09-29 00:00:00"
     now = datetime(2026, 9, 29, 9, 0, tzinfo=TZ)
@@ -423,7 +423,7 @@ def test_failed_report_remains_visible_after_incidents_are_released_for_retry(
 
 
 def test_monitor_calls_model_and_reporter_only_for_unreported_problem(tmp_path) -> None:
-    repository = AlarmRepository(tmp_path / "metadata.db")
+    repository = AlarmRepository(tmp_path / "metadata.db", source_name="production")
     repository.initialize()
 
     class Source:
@@ -494,7 +494,7 @@ def test_monitor_calls_model_and_reporter_only_for_unreported_problem(tmp_path) 
 
 
 def test_first_start_backfills_only_the_configured_monitoring_window(tmp_path) -> None:
-    repository = AlarmRepository(tmp_path / "metadata.db")
+    repository = AlarmRepository(tmp_path / "metadata.db", source_name="production")
     repository.initialize()
 
     class Source:
@@ -595,7 +595,7 @@ def test_sql_source_rechecks_the_bounded_recent_window() -> None:
 def test_recent_recheck_captures_late_rows_once_and_applies_delayed_updates(
     tmp_path,
 ) -> None:
-    repository = AlarmRepository(tmp_path / "metadata.db")
+    repository = AlarmRepository(tmp_path / "metadata.db", source_name="production")
     repository.initialize()
     now = datetime(2026, 9, 30, 9, 0, tzinfo=TZ)
     repository.configure_monitoring_window("2026-09-29 00:00:00")
@@ -695,7 +695,7 @@ def test_recent_recheck_captures_late_rows_once_and_applies_delayed_updates(
 
 
 def test_report_failure_does_not_mark_successful_alarm_sync_as_failed(tmp_path) -> None:
-    repository = AlarmRepository(tmp_path / "metadata.db")
+    repository = AlarmRepository(tmp_path / "metadata.db", source_name="production")
     repository.initialize()
     now = datetime(2026, 9, 30, 9, 0, tzinfo=TZ)
 
@@ -761,7 +761,7 @@ def test_report_failure_does_not_mark_successful_alarm_sync_as_failed(tmp_path) 
 
 
 def test_incident_page_excludes_alarms_before_start_and_keeps_full_counts(tmp_path) -> None:
-    repository = AlarmRepository(tmp_path / "metadata.db")
+    repository = AlarmRepository(tmp_path / "metadata.db", source_name="production")
     repository.initialize()
     cutoff = "2026-09-29 00:00:00"
     now = datetime(2026, 9, 29, 10, 0, tzinfo=TZ)
@@ -819,7 +819,7 @@ def test_incident_page_excludes_alarms_before_start_and_keeps_full_counts(tmp_pa
 def test_incident_page_exposes_report_state_without_a_recent_report_limit(tmp_path, monkeypatch) -> None:
     from app.api import alarms as alarm_api
 
-    repository = AlarmRepository(tmp_path / "metadata.db")
+    repository = AlarmRepository(tmp_path / "metadata.db", source_name="production")
     repository.initialize()
     cutoff = "2026-09-29 00:00:00"
     now = datetime(2026, 10, 7, 9, 0, tzinfo=TZ)
@@ -851,12 +851,13 @@ def test_incident_page_exposes_report_state_without_a_recent_report_limit(tmp_pa
         )
     assert "old-completed" not in {item["report_id"] for item in repository.list_reports(50)}
     monkeypatch.setattr(alarm_api, "settings", SimpleNamespace(alarm_monitor_start_at=cutoff))
-    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(alarm_repository=repository)), state=SimpleNamespace(request_id="test"))
+    runtime = SimpleNamespace(alarm_repository=repository, settings=SimpleNamespace(device_id="Cutter01", alarm_monitor_start_at=cutoff))
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(devices={"Cutter01": runtime})), query_params={"device_id": "Cutter01"}, state=SimpleNamespace(request_id="test"))
     result = alarm_api.page_alarm_incidents(request, page=1, page_size=15)["data"]
     by_code = {item["alarm_code"]: item for item in result["items"]}
     assert result["total"] == result["all_total"] == result["open_count"] == 6
     assert by_code["1"]["report_status"] == "completed"
-    assert by_code["1"]["report_view_url"] == "/api/v1/alarms/reports/old-completed/view"
+    assert by_code["1"]["report_view_url"] == "/api/v1/alarms/reports/old-completed/view?device_id=Cutter01"
     assert by_code["1"]["status"] == "open", "report completion cannot resolve the equipment alarm"
     assert by_code["2"]["report_status"] == "generating"
     assert by_code["3"]["report_status"] == "failed"
@@ -870,7 +871,7 @@ def test_incident_page_exposes_report_state_without_a_recent_report_limit(tmp_pa
 
 
 def test_alarm_report_page_returns_ten_items_and_full_counts(tmp_path) -> None:
-    repository = AlarmRepository(tmp_path / "metadata.db")
+    repository = AlarmRepository(tmp_path / "metadata.db", source_name="production")
     repository.initialize()
     for index in range(23):
         report_id = f"report-{index:02d}"
@@ -918,7 +919,7 @@ def test_alarm_report_page_returns_ten_items_and_full_counts(tmp_path) -> None:
 
 
 def test_window_resync_detaches_eligible_source_row_from_older_incident(tmp_path) -> None:
-    repository = AlarmRepository(tmp_path / "metadata.db")
+    repository = AlarmRepository(tmp_path / "metadata.db", source_name="production")
     repository.initialize()
     cutoff = "2026-09-29 00:00:00"
     now = datetime(2026, 9, 29, 10, 0, tzinfo=TZ)

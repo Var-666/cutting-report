@@ -11,7 +11,7 @@ from threading import Event, Lock
 from time import monotonic, time
 from zoneinfo import ZoneInfo
 
-from app.config import DEVICE_CATALOG, settings
+from app.config import settings
 from app.database.coordination import CoordinationRepository
 from app.database.sqlite import SQLiteDatabase, ExecutionLeaseLost, execution_scope
 from app.models.domain import ReportFilter
@@ -61,9 +61,8 @@ class WorkerProcess:
                         today = history.service.now().date()
                         from app.workers.energy_history_worker import _shift_month
                         history.schedule_range(_shift_month(today.replace(day=1), -11), today)
-                default = self.runtime.devices[DEVICE_CATALOG.default_device_id]
                 self.report_worker = ReportWorker(
-                    self.settings, self.runtime.metadata, default.pipeline,
+                    self.settings, self.runtime.metadata,
                     automation_service=self.runtime.automation_service, runtime=self.runtime.automation_runtime,
                     pipelines={key: value.pipeline for key, value in self.runtime.devices.items()},
                     execution_context=self.scope,

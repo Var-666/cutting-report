@@ -5,8 +5,8 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from app.config import DEVICE_CATALOG
 from app.database.sqlite import SQLiteDatabase, SQLiteRepository, execution_owner, require_worker_recovery
-from app.database.device_migrations import rebuild_table
 
 
 class MetadataRepository(SQLiteRepository):
@@ -20,6 +20,12 @@ class MetadataRepository(SQLiteRepository):
         super().__init__(database, connection=connection)
         self.device_id = device_id
 
+    def require_device_id(self, device_id: str | None = None) -> str:
+        selected = device_id if device_id is not None else self.device_id
+        if selected not in {item.id for item in DEVICE_CATALOG.devices} or (self.device_id is not None and selected != self.device_id):
+            raise ValueError("必须指定一致的设备上下文")
+        return selected
+
     def initialize(self) -> None:
         self.database.initialize()
         with self.connect() as connection:
@@ -27,6 +33,7 @@ class MetadataRepository(SQLiteRepository):
                 """
                 CREATE TABLE IF NOT EXISTS report_jobs (
                     report_id TEXT PRIMARY KEY,
+                    device_id TEXT NOT NULL,
                     report_type TEXT NOT NULL DEFAULT 'workshop',
                     status TEXT NOT NULL,
                     stage_message TEXT NOT NULL,
@@ -84,7 +91,8 @@ class MetadataRepository(SQLiteRepository):
                     report_date TEXT NOT NULL,
                     data_version TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
-                    PRIMARY KEY(report_type, report_date)
+                    device_id TEXT NOT NULL,
+                    PRIMARY KEY(report_type, report_date, device_id)
                 );
                 """
             )
@@ -102,7 +110,6 @@ class MetadataRepository(SQLiteRepository):
                 ("parameters_json", "TEXT NOT NULL DEFAULT '{}'"),
                 ("period_start", "TEXT"),
                 ("period_end", "TEXT"),
-                ("device_id", "TEXT NOT NULL DEFAULT 'Cutter01'"),
             ):
                 if column not in columns:
                     connection.execute(
@@ -132,13 +139,6 @@ class MetadataRepository(SQLiteRepository):
                 ON report_analyses(report_type, report_date, data_version, generated_at DESC)
                 """
             )
-
-        with self.connect() as connection:
-            columns = {row['name'] for row in connection.execute('PRAGMA table_info(analysis_source_versions)')}
-            if 'device_id' not in columns:
-                connection.execute("ALTER TABLE analysis_source_versions ADD COLUMN device_id TEXT NOT NULL DEFAULT 'Cutter01'")
-        rebuild_table(self.database, 'analysis_source_versions', lambda sql: sql.replace(
-            'PRIMARY KEY(report_type, report_date)', 'PRIMARY KEY(report_type, report_date, device_id)'))
 
         with self.connect() as connection:
             columns = {row['name'] for row in connection.execute('PRAGMA table_info(report_jobs)')}
@@ -231,7 +231,7 @@ class MetadataRepository(SQLiteRepository):
                     json.dumps(parameters or {}, ensure_ascii=False),
                     period_start,
                     period_end,
-                    device_id or self.device_id or "Cutter01",
+                    self.require_device_id(device_id),
                 ),
             )
 
@@ -241,10 +241,10 @@ class MetadataRepository(SQLiteRepository):
             row = connection.execute(
                 """
                 SELECT * FROM report_jobs
-                WHERE status = 'pending'
+                WHERE status = 'pending' AND (? IS NULL OR device_id = ?)
                 ORDER BY created_at ASC
                 LIMIT 1
-                """
+                """, (self.device_id, self.device_id),
             ).fetchone()
             if row is None:
                 return None
@@ -279,7 +279,7 @@ class MetadataRepository(SQLiteRepository):
                     ai_status = COALESCE(?, ai_status),
                     finished_at = COALESCE(?, finished_at),
                     error_code = ?, error_message = ?
-                WHERE report_id = ?
+                WHERE report_id = ? AND (? IS NULL OR device_id = ?)
                 """,
                 (
                     status,
@@ -288,7 +288,7 @@ class MetadataRepository(SQLiteRepository):
                     finished_at,
                     error_code,
                     error_message,
-                    report_id,
+                    report_id, self.device_id, self.device_id,
                 ),
             )
 
@@ -304,6 +304,8 @@ class MetadataRepository(SQLiteRepository):
         generated_at: str,
         system_version: str,
     ) -> None:
+        if self.device_id is not None and self.get_job(report_id) is None:
+            raise ValueError("报告不属于当前设备")
         with self.connect() as connection:
             connection.execute(
                 """
@@ -374,7 +376,7 @@ class MetadataRepository(SQLiteRepository):
                   AND model_name = ? AND prompt_version = ? AND mode = 'model'
                 ORDER BY generated_at DESC, rowid DESC LIMIT 1
                 """,
-                (self.device_id or "Cutter01", report_type, report_date, model_name, prompt_version),
+                (self.require_device_id(), report_type, report_date, model_name, prompt_version),
             ).fetchone()
             value = json.loads(row["result_json"]) if row else None
             return value if isinstance(value, dict) else None
@@ -392,7 +394,7 @@ class MetadataRepository(SQLiteRepository):
                 FROM analysis_source_versions
                 WHERE report_type = ? AND report_date = ? AND device_id = ?
                 """,
-                (report_type, report_date, self.device_id or "Cutter01"),
+                (report_type, report_date, self.require_device_id()),
             ).fetchone()
             if row is None:
                 return None
@@ -419,7 +421,7 @@ class MetadataRepository(SQLiteRepository):
                     data_version = excluded.data_version,
                     updated_at = excluded.updated_at
                 """,
-                (report_type, report_date, data_version, updated_at, self.device_id or "Cutter01"),
+                (report_type, report_date, data_version, updated_at, self.require_device_id()),
             )
 
     def save_analysis(
@@ -469,7 +471,7 @@ class MetadataRepository(SQLiteRepository):
                     prompt_version,
                     json.dumps(result, ensure_ascii=False),
                     generated_at,
-                    (self.device_id or "Cutter01") if publish_latest else None,
+                    self.require_device_id() if publish_latest else None,
                 ),
             )
 

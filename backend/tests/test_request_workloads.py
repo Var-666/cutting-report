@@ -52,9 +52,9 @@ def test_busy_analysis_pdf_and_queries_leave_default_threads_and_fast_routes_fre
     async def exercise():
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
             requests = (
-                ("POST", "/api/v1/analysis", {"report_type": "workshop", "report_date": "2026-10-24"}),
-                ("GET", "/api/v1/reports/saved/download?format=pdf", None),
-                ("GET", "/api/v1/energy-report/day?report_date=2026-10-24", None),
+                ("POST", "/api/v1/analysis?device_id=Cutter01", {"report_type": "workshop", "report_date": "2026-10-24"}),
+                ("GET", "/api/v1/reports/saved/download?format=pdf&device_id=Cutter01", None),
+                ("GET", "/api/v1/energy-report/day?report_date=2026-10-24&device_id=Cutter01", None),
             )
             responses = []
 
@@ -76,7 +76,7 @@ def test_busy_analysis_pdf_and_queries_leave_default_threads_and_fast_routes_fre
                             assert busy.headers["retry-after"] == "1"
                         assert (await client.get("/api/v1/health")).status_code == 200
                         assert (await client.get("/api/v1/devices")).status_code == 200
-                        assert (await client.get("/api/v1/reports/saved/download")).status_code == 200
+                        assert (await client.get("/api/v1/reports/saved/download?device_id=Cutter01")).status_code == 200
                         login = await client.post("/api/v1/auth/login", json={"username": "admin", "password": "password"})
                         assert login.status_code == 200
                         assert login.cookies["cutting_session"] == "session"

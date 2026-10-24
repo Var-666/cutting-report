@@ -28,7 +28,7 @@ def record(task_id, *, project='P', work=60):
 
 
 def setup(tmp_path):
-    repository = WorkshopRepository(tmp_path / 'meta.db')
+    repository = WorkshopRepository(tmp_path / 'meta.db', scope_machine_no='Cutter01')
     repository.initialize()
     admin = repository.create_user(username='admin', display_name='管理员', password='password', role='admin', now='2026-10-01T00:00:00')
     worker = repository.create_user(username='w', display_name='工人', password='password', role='worker', now='2026-10-01T00:00:00')
@@ -212,6 +212,9 @@ def test_http_generation_syncs_nonempty_snapshot_or_reports_source_conflict(tmp_
     app.state.query_service = SimpleNamespace(prepare_workshop_data=lambda _: QueryBundle(
         [], [record('A', work=90 if corrected else 60), record('B')], [],
     ))
+    app.state.devices = {'Cutter01': SimpleNamespace(
+        settings=Settings(data_source_mode='sqlserver'), workshop=app.state.workshop,
+        query_service=getattr(app.state, 'query_service', None))}
     app.dependency_overrides[require_user] = lambda: admin
 
     @app.middleware('http')
@@ -220,12 +223,12 @@ def test_http_generation_syncs_nonempty_snapshot_or_reports_source_conflict(tmp_
         return await call_next(request)
 
     with TestClient(app) as client:
-        response = client.post('/api/v1/workshop/reports', json={'report_date': '2026-09-30'})
+        response = client.post('/api/v1/workshop/reports?device_id=Cutter01', json={'report_date': '2026-09-30'})
         assert response.status_code == (409 if corrected else 200)
         if not corrected:
             assert response.json()['data']['item_count'] == 2
             assert response.json()['data']['confirmed_count'] == 1
-            repeated = client.post('/api/v1/workshop/reports', json={'report_date': '2026-09-30'})
+            repeated = client.post('/api/v1/workshop/reports?device_id=Cutter01', json={'report_date': '2026-09-30'})
             assert repeated.json()['data']['item_count'] == 2
     _, stored = repository.get_daily_report_records('2026-09-30')
     assert [row.task_id for row in stored] == (['A'] if corrected else ['A', 'B'])
@@ -242,7 +245,7 @@ def test_automation_preparation_syncs_existing_snapshot(tmp_path):
 
     workshop = setup(tmp_path)
     cfg = Settings(project_root=tmp_path, data_source_mode='sqlserver', demo_mode=False)
-    metadata = MetadataRepository(workshop.database)
+    metadata = MetadataRepository(workshop.database, device_id='Cutter01')
     metadata.initialize()
     automation = AutomationRepository(workshop.database)
     automation.initialize()
@@ -250,10 +253,10 @@ def test_automation_preparation_syncs_existing_snapshot(tmp_path):
     workshop.sync_daily_report(report_date='2026-09-30', source_mode='sqlserver',
                               records=[record('A')], user=user, now='2026-10-01T01:00:00')
     service = AutomationService(cfg, automation, metadata, object())
-    service.query_service = SimpleNamespace(fetch_workshop_data=lambda _: QueryBundle(
+    service.device_services = {'Cutter01': SimpleNamespace(settings=cfg, workshop=workshop, query_service=SimpleNamespace(fetch_workshop_data=lambda _: QueryBundle(
         [], [record('A'), record('B')], [],
-    ))
-    run = {'report_date': '2026-09-30', 'created_by_id': user['user_id'], 'created_by_name': user['display_name']}
+    )))}
+    run = {'device_id': 'Cutter01', 'report_date': '2026-09-30', 'created_by_id': user['user_id'], 'created_by_name': user['display_name']}
     service._ensure_workshop_report(run, datetime(2026, 10, 1, 2))
     service._ensure_workshop_report(run, datetime(2026, 10, 1, 3))
     assert [row.task_id for row in workshop.get_daily_report_records('2026-09-30')[1]] == ['A', 'B']

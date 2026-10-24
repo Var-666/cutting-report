@@ -74,8 +74,7 @@ def build_device_runtime(
     pipeline = ReportPipeline(settings, metadata, definitions)
     leadership = LeadershipReportService(settings, snapshots)
     analysis = pipeline.analysis_service
-    # Keep the original cursor for Cutter01; every added device owns its cursor and lease.
-    source_name = 'production' if settings.device_id == 'Cutter01' else f'production:{settings.device_id}'
+    source_name = f'{settings.production_data_source}:{settings.device_id}'
     alarms = AlarmRepository(database, machine_no=settings.report_machine_no, source_name=source_name)
     alarms.initialize()
     monitor = AlarmMonitorService(settings, alarms, SqlServerAlarmSource(settings),

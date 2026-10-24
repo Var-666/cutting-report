@@ -69,8 +69,8 @@ def test_hr_admin_permission_mapping_keeps_hr_password_external(tmp_path: Path) 
     assert revoked["role"] == "worker"
 
 
-def test_legacy_workshop_snapshot_is_rebuilt_for_cutter01_scope(tmp_path: Path) -> None:
-    repository = WorkshopRepository(tmp_path / "metadata.db")
+def test_scoped_snapshot_keeps_existing_rows_when_new_tasks_arrive(tmp_path: Path) -> None:
+    repository = WorkshopRepository(tmp_path / "metadata.db", scope_machine_no='Cutter01')
     repository.initialize()
     now = "2026-09-09T10:30:00+08:00"
     admin = repository.bootstrap_admin(
@@ -119,7 +119,7 @@ def test_legacy_workshop_snapshot_is_rebuilt_for_cutter01_scope(tmp_path: Path) 
     _, records = repository.get_daily_report_records("2026-09-09")
 
     assert rebuilt["scope_machine_no"] == "Cutter01"
-    assert [record.task_id for record in records] == ["cutter01-task"]
+    assert [record.task_id for record in records] == ["legacy-cutter02", "cutter01-task"]
 
 
 def test_password_hash_is_salted_and_verifiable() -> None:
@@ -132,7 +132,7 @@ def test_password_hash_is_salted_and_verifiable() -> None:
 
 
 def test_account_session_and_single_worker_confirmation(tmp_path: Path) -> None:
-    repository = WorkshopRepository(tmp_path / "metadata.db")
+    repository = WorkshopRepository(tmp_path / "metadata.db", scope_machine_no='Cutter01')
     repository.initialize()
     now = "2026-08-19T08:00:00+08:00"
     admin = repository.bootstrap_admin(
@@ -353,7 +353,7 @@ def test_external_worker_does_not_prevent_admin_bootstrap(tmp_path: Path) -> Non
 def test_empty_daily_report_can_be_populated_when_source_data_arrives(
     tmp_path: Path,
 ) -> None:
-    repository = WorkshopRepository(tmp_path / "metadata.db")
+    repository = WorkshopRepository(tmp_path / "metadata.db", scope_machine_no='Cutter01')
     repository.initialize()
     now = "2026-08-19T08:00:00+08:00"
     admin = repository.bootstrap_admin(
@@ -398,7 +398,7 @@ def test_empty_daily_report_can_be_populated_when_source_data_arrives(
 def test_batch_confirmation_is_atomic_when_one_task_has_another_worker(
     tmp_path: Path,
 ) -> None:
-    repository = WorkshopRepository(tmp_path / "metadata.db")
+    repository = WorkshopRepository(tmp_path / "metadata.db", scope_machine_no='Cutter01')
     repository.initialize()
     now = "2026-09-11T09:00:00+08:00"
     admin = repository.bootstrap_admin(

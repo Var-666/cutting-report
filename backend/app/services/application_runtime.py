@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 from app.config import DEVICE_CATALOG, Settings, settings_for_device
 from app.services.device_runtime import build_device_runtime
-from app.database.device_migrations import backup_before_device_upgrade
+from app.database.device_migrations import migrate_device_isolation
 from app.database.metadata import MetadataRepository
 from app.database.llm_usage import LlmUsageRepository
 from app.database.leadership_snapshots import LeadershipSnapshotRepository
@@ -43,7 +43,7 @@ def _build_runtime(settings: Settings, *, role: str) -> SimpleNamespace:
     settings.ensure_runtime_dirs()
     database = SQLiteDatabase(settings.metadata_db_path)
     backup_before_process_upgrade(database)
-    backup_before_device_upgrade(database)
+    migrate_device_isolation(database, DEVICE_CATALOG)
     database.initialize()
     coordination = CoordinationRepository(database)
     coordination.initialize()
@@ -72,7 +72,6 @@ def _build_runtime(settings: Settings, *, role: str) -> SimpleNamespace:
         for device in DEVICE_CATALOG.devices
     }
     state.devices = devices
-    default = devices[DEVICE_CATALOG.default_device_id]
     automation_runtime = AutomationRuntime(settings)
     email_service = EmailService(settings, runtime=automation_runtime)
     automation_service = AutomationService(
@@ -88,11 +87,6 @@ def _build_runtime(settings: Settings, *, role: str) -> SimpleNamespace:
     state.automation_service = automation_service
     state.email_service = email_service
     state.worker_auth = WorkerAuthService(settings)
-    for name in ('query_service', 'energy_service', 'energy_period_service', 'range_report_service',
-                 'leadership_report_service', 'report_analysis_service', 'leadership_refresh_worker',
-                 'current_report_refresh_worker', 'energy_history_worker', 'alarm_repository',
-                 'alarm_monitor_service', 'alarm_worker'):
-        setattr(state, name, getattr(default, name))
     pdm = (
         SqlServerPdmRepository(settings)
         if settings.file_database_enabled

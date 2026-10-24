@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 PROFILE = ROOT / "backend/app/configuration/devices.json"
 LEGACY_KEYS = (
     "REPORT_MACHINE_NO", "ENERGY_GAS_PARAMETER_ID", "ENERGY_REPORT_EQUIPMENT_IDS",
-    "ENERGY_REPORT_ELECTRICITY_PARAMETER_IDS", "ALARM_MONITOR_MACHINE_NOS", "ALARM_MONITOR_START_AT",
+    "ENERGY_REPORT_ELECTRICITY_PARAMETER_IDS", "ALARM_MONITOR_MACHINE_NOS", "ALARM_MONITOR_START_AT", "ENERGY_EQUIPMENT_IDS", "ENERGY_ELECTRICITY_PARAMETER_IDS",
 )
 
 
@@ -96,7 +96,7 @@ def test_cutter01_profile_preserves_confirmed_identity_meters_and_alarm_window(m
     assert not cfg.energy_api_enabled and not cfg.alarm_monitor_enabled
 
 
-def test_json_values_actually_feed_runtime_and_explicit_legacy_overrides_still_win(monkeypatch, tmp_path):
+def test_json_values_feed_runtime_and_conflicting_legacy_overrides_stop_startup(monkeypatch, tmp_path):
     value = payload()
     device = value["devices"][0]
     device["machine_no"] = "FixtureDevice"
@@ -112,21 +112,20 @@ def test_json_values_actually_feed_runtime_and_explicit_legacy_overrides_still_w
     assert cfg.energy_report_electricity_parameter_ids == tuple(device["energy"]["electricity_parameter_ids"])
     assert cfg.alarm_monitor_machine_nos == ("FixtureDevice",)
     assert cfg.alarm_monitor_start_at == "2026-10-01 00:00:00"
-    cfg = settings_from(monkeypatch, path, REPORT_MACHINE_NO="ExistingDevice",
-        ENERGY_REPORT_EQUIPMENT_IDS="ExistingDevice", ENERGY_GAS_PARAMETER_ID="existing-gas",
-        ENERGY_REPORT_ELECTRICITY_PARAMETER_IDS="existing-electricity",
-        ALARM_MONITOR_MACHINE_NOS="ExistingDevice", ALARM_MONITOR_START_AT="2026-09-29 00:00:00").settings
-    assert cfg.report_machine_no == "ExistingDevice"
-    assert cfg.energy_report_equipment_ids == ("ExistingDevice",)
-    assert cfg.energy_gas_parameter_id == "existing-gas"
-    assert cfg.energy_report_electricity_parameter_ids == ("existing-electricity",)
-    assert cfg.alarm_monitor_machine_nos == ("ExistingDevice",)
-    assert cfg.alarm_monitor_start_at == "2026-09-29 00:00:00"
+    with pytest.raises(ValueError, match="旧设备环境配置与设备目录冲突") as error:
+        settings_from(monkeypatch, path, REPORT_MACHINE_NO="ExistingDevice",
+            ENERGY_REPORT_EQUIPMENT_IDS="ExistingDevice", ENERGY_GAS_PARAMETER_ID="existing-gas",
+            ENERGY_REPORT_ELECTRICITY_PARAMETER_IDS="existing-electricity",
+            ALARM_MONITOR_MACHINE_NOS="ExistingDevice", ALARM_MONITOR_START_AT="2026-09-29 00:00:00")
+    assert "REPORT_MACHINE_NO" in str(error.value) and "ExistingDevice" in str(error.value)
+    cfg = settings_from(monkeypatch, path, REPORT_MACHINE_NO="FixtureDevice").settings
+    assert cfg.report_machine_no == "FixtureDevice"
+
 
 
 @pytest.mark.parametrize("fault", [
     "default", "line_reference", "duplicate_device", "duplicate_line", "gas_id",
-    "duplicate_meter", "empty_meter", "wrong_scope", "alarm_date", "unknown_field", "version",
+    "duplicate_meter", "empty_meter", "wrong_scope", "alarm_date", "unknown_field", "version", "shared_scope", "shared_meter",
 ])
 def test_invalid_profile_cannot_silently_select_a_device_or_wrong_meter(tmp_path, fault):
     value = payload()
@@ -142,6 +141,8 @@ def test_invalid_profile_cannot_silently_select_a_device_or_wrong_meter(tmp_path
     if fault == "alarm_date": device["alarm"]["start_at"] = "2026-02-30 00:00:00"
     if fault == "unknown_field": device["password"] = "must-not-appear-in-error"
     if fault == "version": value["schema_version"] = 99
+    if fault == "shared_scope": value["devices"][1]["machine_no"] = device["machine_no"]
+    if fault == "shared_meter": value["devices"][1]["energy"] = {**deepcopy(device["energy"]), "equipment_ids": ["Cutter02"]}
     with pytest.raises(ValueError, match="设备配置文件校验失败") as raised:
         load_device_catalog(save(tmp_path, value))
     assert "must-not-appear-in-error" not in str(raised.value)
@@ -161,3 +162,28 @@ def test_device_config_is_included_in_the_existing_source_package():
     files = collect_files(ROOT)
     assert files["backend/app/configuration/devices.json"] == PROFILE.read_bytes()
     assert "backend/app/device_config.py" in files
+
+
+def test_every_device_resolves_catalog_fields_even_when_base_has_legacy_values(monkeypatch):
+    module = settings_from(monkeypatch, PROFILE)
+    base = module.Settings(report_machine_no="old", alarm_monitor_machine_nos=("old",),
+        energy_gas_parameter_id="old", energy_equipment_ids=("old",),
+        alarm_monitor_start_at="2000-01-01 00:00:00")
+    for device in module.DEVICE_CATALOG.devices:
+        cfg = module.settings_for_device(base, device.id)
+        assert cfg.report_machine_no == device.machine_no
+        assert cfg.production_line_id == device.production_line_id
+        assert cfg.production_data_source == device.data_source
+        assert cfg.alarm_monitor_machine_nos == (device.machine_no,)
+        assert cfg.alarm_monitor_start_at == device.alarm.start_at
+        assert cfg.energy_gas_parameter_id == (str(device.energy.gas_parameter_id) if device.energy else "")
+        assert not cfg.energy_equipment_ids
+
+
+def test_energy_diagnostic_rejects_device_without_meters_before_query(monkeypatch):
+    from scripts import check_energy
+    monkeypatch.setattr("sys.argv", ["check_energy.py", "--device-id", "Cutter02", "--date", "2026-10-24"])
+    monkeypatch.setattr(check_energy, "EnergyApiClient", lambda _: pytest.fail("must not query another device's meters"))
+    with pytest.raises(SystemExit) as exc:
+        check_energy.main()
+    assert exc.value.code == 2

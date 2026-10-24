@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse
 
 from app.api.devices import device_state, device_settings
 from app.api.auth import require_admin
-from app.config import DEVICE_CATALOG, settings
+from app.config import settings
 
 
 router = APIRouter(
@@ -23,9 +23,9 @@ router.dependencies.append(Depends(device_state))
 
 
 def _device_url(request: Request, url: str) -> str:
-    cfg = device_settings(request, settings)
-    device_id = getattr(cfg, 'device_id', DEVICE_CATALOG.default_device_id)
-    return url if device_id == DEVICE_CATALOG.default_device_id else url + '?' + urlencode({'device_id': device_id})
+    cfg = device_settings(request)
+    device_id = cfg.device_id
+    return url + '?' + urlencode({'device_id': device_id})
 
 
 @router.get("/status")
@@ -35,11 +35,11 @@ def alarm_status(request: Request) -> dict:
         "success": True,
         "data": {
             **repository.get_sync_state(),
-            "enabled": device_settings(request, settings).alarm_monitor_enabled,
-            "machine_nos": list(device_settings(request, settings).alarm_monitor_machine_nos),
-            "monitor_start_at": device_settings(request, settings).alarm_monitor_start_at,
-            "interval_seconds": device_settings(request, settings).alarm_monitor_interval_seconds,
-            "reopen_debounce_minutes": device_settings(request, settings).alarm_reopen_debounce_minutes,
+            "enabled": device_settings(request).alarm_monitor_enabled,
+            "machine_nos": list(device_settings(request).alarm_monitor_machine_nos),
+            "monitor_start_at": device_settings(request).alarm_monitor_start_at,
+            "interval_seconds": device_settings(request).alarm_monitor_interval_seconds,
+            "reopen_debounce_minutes": device_settings(request).alarm_reopen_debounce_minutes,
             "worker_running": (
                 device_state(request).alarm_worker.enabled
                 and request.app.state.worker_status_reader.status().get("state") in {"running", "stalled"}
@@ -62,7 +62,7 @@ def list_alarm_incidents(
         "data": device_state(request).alarm_repository.list_incidents(
             status,
             limit,
-            monitor_start_at=device_settings(request, settings).alarm_monitor_start_at,
+            monitor_start_at=device_settings(request).alarm_monitor_start_at,
         ),
         "request_id": request.state.request_id,
     }
@@ -77,7 +77,7 @@ def page_alarm_incidents(
     page_size: int = Query(15, ge=1, le=100),
 ) -> dict:
     result = device_state(request).alarm_repository.page_incidents(
-        monitor_start_at=device_settings(request, settings).alarm_monitor_start_at,
+        monitor_start_at=device_settings(request).alarm_monitor_start_at,
         status=status,
         severity=severity,
         page=page,
@@ -102,7 +102,7 @@ def list_alarm_reports(
     request: Request, limit: int = Query(50, ge=1, le=200)
 ) -> dict:
     reports = device_state(request).alarm_repository.list_reports(
-        limit, monitor_start_at=device_settings(request, settings).alarm_monitor_start_at
+        limit, monitor_start_at=device_settings(request).alarm_monitor_start_at
     )
     for report in reports:
         if report["status"] == "completed":
@@ -122,7 +122,7 @@ def page_alarm_reports(
     page_size: int = Query(10, ge=1, le=100),
 ) -> dict:
     result = device_state(request).alarm_repository.page_reports(
-        monitor_start_at=device_settings(request, settings).alarm_monitor_start_at,
+        monitor_start_at=device_settings(request).alarm_monitor_start_at,
         page=page,
         page_size=page_size,
     )

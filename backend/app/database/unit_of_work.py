@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 from types import TracebackType
 
+from app.config import DEVICE_CATALOG
 from app.database.automation import AutomationRepository
 from app.database.definitions import DefinitionRepository
 from app.database.dispatch import DispatchRepository
@@ -18,6 +19,12 @@ class UnitOfWork:
         self.database = database
         self.timezone = timezone
         self.device_id = device_id
+        self.scope_machine_no = None
+        if device_id is not None:
+            device = next((item for item in DEVICE_CATALOG.devices if item.id == device_id), None)
+            if device is None:
+                raise ValueError("设备不存在")
+            self.scope_machine_no = device.machine_no
         self._context = None
         self.connection: sqlite3.Connection | None = None
         self.metadata: MetadataRepository
@@ -34,7 +41,7 @@ class UnitOfWork:
             self.database, connection=self.connection, device_id=self.device_id
         )
         self.workshop = WorkshopRepository(
-            self.database, connection=self.connection
+            self.database, connection=self.connection, scope_machine_no=self.scope_machine_no
         )
         self.automation = AutomationRepository(
             self.database, connection=self.connection

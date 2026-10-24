@@ -8,7 +8,7 @@ from scripts import prepare_alarm_monitor
 
 def test_monitoring_window_preview_and_apply_reset_cursor(monkeypatch, tmp_path) -> None:
     configured = replace(settings, project_root=tmp_path, alarm_monitor_machine_nos=("Cutter01",))
-    repository = AlarmRepository(configured.metadata_db_path)
+    repository = AlarmRepository(configured.metadata_db_path, machine_no="Cutter01", source_name="production:Cutter01")
     repository.initialize()
     monkeypatch.setattr(prepare_alarm_monitor, "settings", configured)
 
@@ -20,11 +20,11 @@ def test_monitoring_window_preview_and_apply_reset_cursor(monkeypatch, tmp_path)
             return 43224
 
     monkeypatch.setattr(prepare_alarm_monitor, "SqlServerAlarmSource", Source)
-    monkeypatch.setattr("sys.argv", ["prepare_alarm_monitor.py"])
+    monkeypatch.setattr("sys.argv", ["prepare_alarm_monitor.py", "--device-id", "Cutter01"])
     assert prepare_alarm_monitor.main() == 0
     assert repository.get_sync_state()["last_success_at"] is None
 
-    monkeypatch.setattr("sys.argv", ["prepare_alarm_monitor.py", "--apply"])
+    monkeypatch.setattr("sys.argv", ["prepare_alarm_monitor.py", "--device-id", "Cutter01", "--apply"])
     assert prepare_alarm_monitor.main() == 0
     state = repository.get_sync_state()
     assert state["last_alarm_id"] == 0
@@ -33,10 +33,10 @@ def test_monitoring_window_preview_and_apply_reset_cursor(monkeypatch, tmp_path)
     assert repository.list_incidents(None) == []
 
 
-def test_monitoring_window_reset_requires_cutter01_scope(monkeypatch, tmp_path) -> None:
+def test_monitoring_window_reset_requires_known_device(monkeypatch, tmp_path) -> None:
     configured = replace(settings, project_root=tmp_path, alarm_monitor_machine_nos=("20kw切割机",))
     monkeypatch.setattr(prepare_alarm_monitor, "settings", configured)
-    monkeypatch.setattr("sys.argv", ["prepare_alarm_monitor.py", "--apply"])
+    monkeypatch.setattr("sys.argv", ["prepare_alarm_monitor.py", "--device-id", "missing", "--apply"])
     try:
         prepare_alarm_monitor.main()
     except SystemExit as exc:

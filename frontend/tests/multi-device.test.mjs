@@ -54,7 +54,7 @@ test('a removed saved device falls back to the catalog default and session reset
   assert.equal(storage.getItem('cutting-report.device-id'), 'Cutter01')
   context.selectDevice('Cutter02')
   context.resetDeviceContext()
-  assert.equal(context.getDeviceId(), 'Cutter01')
+  assert.equal(context.getDeviceId(), '')
   assert.equal(storage.getItem('cutting-report.device-id'), null)
 })
 
@@ -62,12 +62,12 @@ test('blocked browser storage does not prevent loading and switching equipment',
   const storage = mockSessionStorage(t)
   for (const method of ['getItem', 'setItem', 'removeItem']) storage[method] = () => { throw new Error('storage blocked') }
   const context = await import('../src/api/deviceContext.js?blocked-storage')
-  assert.equal(context.getDeviceId(), 'Cutter01')
+  assert.equal(context.getDeviceId(), '')
   context.setDeviceCatalog(catalog)
   context.selectDevice('Cutter02')
   assert.equal(context.getDeviceId(), 'Cutter02')
   context.resetDeviceContext()
-  assert.equal(context.getDeviceId(), 'Cutter01')
+  assert.equal(context.getDeviceId(), '')
 })
 
 test('device context rejects unknown equipment and preserves existing report filters in scoped URLs', () => {
@@ -240,4 +240,16 @@ test('device switch captures the displayed latest day so another machine cannot 
   assert.equal(deviceSwitchQuery('equipment-report'), undefined)
   unregisterNew()
   assert.equal(deviceSwitchQuery('workshop-report'), undefined)
+})
+
+
+test('every device including catalog default is explicit in previews exports and polling', () => {
+  assert.throws(() => deviceUrl('/api/v1/workshop/tasks'), /设备目录尚未加载/)
+  setDeviceCatalog(catalog)
+  for (const id of ['Cutter01', 'Cutter02']) {
+    selectDevice(id)
+    for (const path of ['/api/v1/workshop/tasks', '/api/v1/reports/r1/status', '/api/v1/reports/r1/download?format=pdf', '/api/v1/database/preview', '/api/v1/designer/query-tasks/q1/preview']) {
+      assert.equal(new URL(deviceUrl(path), 'http://test').searchParams.get('device_id'), id)
+    }
+  }
 })

@@ -60,7 +60,7 @@ class AlarmRepository(SQLiteRepository):
         *,
         connection: sqlite3.Connection | None = None,
         machine_no: str | None = None,
-        source_name: str = "production",
+        source_name: str,
     ) -> None:
         super().__init__(database, connection=connection)
         self.machine_no = machine_no

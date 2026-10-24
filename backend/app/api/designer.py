@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from app.api.workloads import query_requests
 from app.api.auth import require_admin
+from app.api.devices import device_state, device_settings
 from app.config import settings
 from app.models.designer import (
     DefinitionUpsert,
@@ -118,14 +119,14 @@ def delete_query_task(query_task_id: str, request: Request, token: AdminToken = 
     return _envelope(request, {"deleted": True})
 
 
-@query_requests.route(router.post("/query-tasks/{query_task_id}/preview"))
+@query_requests.route(router.post("/query-tasks/{query_task_id}/preview", dependencies=[Depends(device_state)]))
 def preview_query_task(query_task_id: str, payload: QueryPreviewRequest, request: Request, token: AdminToken = None):
     _require_admin_token(token)
     task = request.app.state.definitions.get_query_task(query_task_id)
     if not task:
         raise HTTPException(status_code=404, detail="查询任务不存在")
     try:
-        rows = CustomReportService(settings).execute(
+        rows = CustomReportService(device_settings(request)).execute(
             task,
             report_date=payload.report_date,
             period_type="day",

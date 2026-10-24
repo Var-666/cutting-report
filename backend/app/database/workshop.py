@@ -13,7 +13,6 @@ from uuid import uuid4
 
 from app.models.domain import WorkshopRecord
 from app.database.sqlite import SQLiteDatabase, SQLiteRepository
-from app.database.device_migrations import rebuild_table
 
 
 PASSWORD_ITERATIONS = 310_000
@@ -144,6 +143,18 @@ class WorkshopRepository(SQLiteRepository):
         super().__init__(database, connection=connection)
         self.scope_machine_no = scope_machine_no
 
+    def require_scope(self) -> str:
+        if not self.scope_machine_no:
+            raise ValueError("必须指定设备生产数据范围")
+        return self.scope_machine_no
+
+    def _check_report_scope(self, connection: sqlite3.Connection, report_id: str | None) -> None:
+        if report_id and connection.execute(
+            "SELECT 1 FROM workshop_reports WHERE report_id=? AND scope_machine_no=? COLLATE NOCASE",
+            (report_id, self.require_scope()),
+        ).fetchone() is None:
+            raise ValueError("日报不属于当前设备")
+
     def initialize(self) -> None:
         self.database.initialize()
         with self.connect() as connection:
@@ -178,9 +189,9 @@ class WorkshopRepository(SQLiteRepository):
 
                 CREATE TABLE IF NOT EXISTS workshop_reports (
                     report_id TEXT PRIMARY KEY,
-                    report_date TEXT NOT NULL UNIQUE,
+                    report_date TEXT NOT NULL,
                     source_mode TEXT NOT NULL,
-                    scope_machine_no TEXT,
+                    scope_machine_no TEXT NOT NULL,
                     item_count INTEGER NOT NULL,
                     generated_by_id TEXT NOT NULL,
                     generated_by_name TEXT NOT NULL,
@@ -212,13 +223,15 @@ class WorkshopRepository(SQLiteRepository):
                     ON workshop_report_items(report_id, ordinal);
 
                 CREATE TABLE IF NOT EXISTS workshop_confirmations (
-                    task_id TEXT PRIMARY KEY,
+                    task_id TEXT NOT NULL,
+                    scope_machine_no TEXT NOT NULL,
                     report_id TEXT,
                     worker_id TEXT NOT NULL,
                     worker_name TEXT NOT NULL,
                     confirmed_at TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
+                    PRIMARY KEY(scope_machine_no, task_id),
                     FOREIGN KEY(worker_id) REFERENCES users(user_id)
                 );
                 CREATE INDEX IF NOT EXISTS idx_workshop_confirmations_worker
@@ -295,6 +308,7 @@ class WorkshopRepository(SQLiteRepository):
                 """
                 CREATE TABLE IF NOT EXISTS workshop_confirmation_audits (
                     audit_id TEXT PRIMARY KEY,
+                    scope_machine_no TEXT NOT NULL,
                     task_id TEXT NOT NULL,
                     report_id TEXT,
                     action TEXT NOT NULL CHECK(action IN (
@@ -334,18 +348,8 @@ class WorkshopRepository(SQLiteRepository):
             )
 
         with self.connect() as connection:
-            for table in ('workshop_confirmations', 'workshop_confirmation_audits'):
-                columns = {row['name'] for row in connection.execute(f'PRAGMA table_info({table})')}
-                if 'scope_machine_no' not in columns:
-                    connection.execute(f"ALTER TABLE {table} ADD COLUMN scope_machine_no TEXT NOT NULL DEFAULT 'Cutter01'")
-                    connection.execute(f"""UPDATE {table} SET scope_machine_no = COALESCE(
-                        (SELECT scope_machine_no FROM workshop_reports r WHERE r.report_id = {table}.report_id),
-                        'Cutter01')""")
-        rebuild_table(self.database, "workshop_reports", lambda sql: sql.replace(
-            "report_date TEXT NOT NULL UNIQUE", "report_date TEXT NOT NULL"))
-        with self.connect() as connection:
             connection.execute("""CREATE UNIQUE INDEX IF NOT EXISTS idx_workshop_reports_device_date
-                ON workshop_reports(report_date, COALESCE(scope_machine_no, 'Cutter01') COLLATE NOCASE)""")
+                ON workshop_reports(report_date, scope_machine_no COLLATE NOCASE)""")
 
     @staticmethod
     def _public_user(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
@@ -778,12 +782,13 @@ class WorkshopRepository(SQLiteRepository):
                 LEFT JOIN workshop_report_items AS i ON i.report_id = r.report_id
                 LEFT JOIN workshop_confirmations AS c
                     ON c.task_id = i.task_id
+                    AND c.scope_machine_no = r.scope_machine_no COLLATE NOCASE
                     AND (c.report_id = r.report_id OR c.report_id IS NULL)
                 WHERE r.report_date = ?
-                  AND (? IS NULL OR COALESCE(r.scope_machine_no, 'Cutter01') = ? COLLATE NOCASE)
+                  AND r.scope_machine_no = ? COLLATE NOCASE
                 GROUP BY r.report_id
                 """,
-                (report_date, self.scope_machine_no, self.scope_machine_no),
+                (report_date, self.require_scope()),
             ).fetchone()
         return self._report_dict(row)
 
@@ -795,9 +800,13 @@ class WorkshopRepository(SQLiteRepository):
         records: list[WorkshopRecord],
         user: dict[str, Any],
         now: str,
-        scope_machine_no: str | None = "Cutter01",
+        scope_machine_no: str | None = None,
     ) -> dict[str, Any]:
         """Create or append a snapshot in one transaction, including first-create races."""
+        selected_scope = self.require_scope()
+        if scope_machine_no is not None and scope_machine_no != selected_scope:
+            raise DailyReportScopeMismatchError("日报范围与设备上下文不一致")
+        scope_machine_no = selected_scope
         with self.connect() as connection:
             self.begin_immediate(connection)
             repository = WorkshopRepository(self.database, connection=connection, scope_machine_no=self.scope_machine_no)
@@ -822,14 +831,18 @@ class WorkshopRepository(SQLiteRepository):
         records: list[WorkshopRecord],
         user: dict[str, Any],
         now: str,
-        scope_machine_no: str | None = "Cutter01",
+        scope_machine_no: str | None = None,
     ) -> dict[str, Any]:
         report_id = f"wdr_{uuid4().hex[:16]}"
+        selected_scope = self.require_scope()
+        if scope_machine_no is not None and scope_machine_no != selected_scope:
+            raise DailyReportScopeMismatchError("日报范围与设备上下文不一致")
+        scope_machine_no = selected_scope
         with self.connect() as connection:
             self.begin_immediate(connection)
             existing = connection.execute(
-                "SELECT report_id FROM workshop_reports WHERE report_date = ? AND (? IS NULL OR COALESCE(scope_machine_no, 'Cutter01') = ? COLLATE NOCASE)",
-                (report_date, self.scope_machine_no, self.scope_machine_no),
+                "SELECT report_id FROM workshop_reports WHERE report_date = ? AND scope_machine_no = ? COLLATE NOCASE",
+                (report_date, self.require_scope()),
             ).fetchone()
             if existing:
                 raise DailyReportExistsError("当日车间报表已经生成")
@@ -895,44 +908,25 @@ class WorkshopRepository(SQLiteRepository):
         records: list[WorkshopRecord],
         user: dict[str, Any],
         now: str,
-        scope_machine_no: str | None = "Cutter01",
+        scope_machine_no: str | None = None,
     ) -> dict[str, Any] | None:
+        selected_scope = self.require_scope()
+        if scope_machine_no is not None and scope_machine_no != selected_scope:
+            raise DailyReportScopeMismatchError("日报范围与设备上下文不一致")
+        scope_machine_no = selected_scope
         with self.connect() as connection:
             self.begin_immediate(connection)
             report = connection.execute(
-                "SELECT * FROM workshop_reports WHERE report_date = ? AND (? IS NULL OR COALESCE(scope_machine_no, 'Cutter01') = ? COLLATE NOCASE)",
-                (report_date, self.scope_machine_no, self.scope_machine_no),
+                "SELECT * FROM workshop_reports WHERE report_date = ? AND scope_machine_no = ? COLLATE NOCASE",
+                (report_date, self.require_scope()),
             ).fetchone()
             if report is None:
                 return None
-            scope_matches = (
-                scope_machine_no is None
-                or report["scope_machine_no"] == scope_machine_no
-            )
             if report["source_mode"] != source_mode:
                 raise DailyReportSourceMismatchError("日报数据源已变化，拒绝混合同一日报快照")
-            if not scope_matches:
-                confirmed_count = connection.execute(
-                    """
-                    SELECT COUNT(*)
-                    FROM workshop_confirmations AS c
-                    WHERE c.report_id = ?
-                       OR (
-                           c.report_id IS NULL
-                           AND EXISTS (
-                               SELECT 1
-                               FROM workshop_report_items AS i
-                               WHERE i.report_id = ? AND i.task_id = c.task_id
-                           )
-                       )
-                    """,
-                    (report["report_id"], report["report_id"]),
-                ).fetchone()[0]
-                if int(confirmed_count) > 0:
-                    raise DailyReportScopeMismatchError("日报范围已变化，已有确认记录，拒绝覆盖旧快照")
             records = _unique_snapshot_records(records, report_date)
             snapshot_revision = int(report["snapshot_revision_floor"])
-            if int(report["item_count"]) > 0 and scope_matches:
+            if int(report["item_count"]) > 0:
                 existing_rows = {
                     str(row["task_id"]): dict(row)
                     for row in connection.execute(
@@ -998,24 +992,12 @@ class WorkshopRepository(SQLiteRepository):
                     LEFT JOIN workshop_report_items AS i ON i.report_id = r.report_id
                     LEFT JOIN workshop_confirmations AS c
                         ON c.task_id = i.task_id
+                        AND c.scope_machine_no = r.scope_machine_no COLLATE NOCASE
                         AND (c.report_id = r.report_id OR c.report_id IS NULL)
                     WHERE r.report_id = ? GROUP BY r.report_id
                     """, (report["report_id"],),
                 ).fetchone()
                 return self._report_dict(populated)
-
-            if not scope_matches:
-                # Persist a report-wide barrier even if the new scope is empty:
-                # later filling/appending must not revive an old page's revision.
-                latest_revision = int(connection.execute(
-                    "SELECT COALESCE(MAX(snapshot_revision), 1) FROM workshop_report_items WHERE report_id = ?",
-                    (report["report_id"],),
-                ).fetchone()[0])
-                snapshot_revision = max(snapshot_revision, latest_revision) + 1
-                connection.execute(
-                    "DELETE FROM workshop_report_items WHERE report_id = ?",
-                    (report["report_id"],),
-                )
 
             unique_records = records
             connection.executemany(
@@ -1126,6 +1108,7 @@ class WorkshopRepository(SQLiteRepository):
     def get_confirmations(
         self, task_ids: list[str], *, report_id: str | None = None
     ) -> dict[str, dict[str, Any]]:
+        self.require_scope()
         unique_ids = list(dict.fromkeys(str(task_id) for task_id in task_ids))
         if not unique_ids:
             return {}
@@ -1180,6 +1163,7 @@ class WorkshopRepository(SQLiteRepository):
         report_id: str | None = None,
         snapshot_revisions: dict[str, int] | None = None,
     ) -> list[dict[str, Any]]:
+        self.require_scope()
         unique_ids = list(dict.fromkeys(str(task_id) for task_id in task_ids))
         if not unique_ids:
             raise ValueError("至少选择一个待确认任务")
@@ -1187,6 +1171,7 @@ class WorkshopRepository(SQLiteRepository):
 
         with self.connect() as connection:
             self.begin_immediate(connection)
+            self._check_report_scope(connection, report_id)
             if report_id:
                 report_revisions = {
                     str(row["task_id"]): int(row["snapshot_revision"])
@@ -1204,8 +1189,8 @@ class WorkshopRepository(SQLiteRepository):
                 report_revisions = {
                     str(row["task_id"]): int(row["snapshot_revision"])
                     for row in connection.execute(
-                        f"SELECT task_id, MAX(snapshot_revision) AS snapshot_revision FROM workshop_report_items WHERE task_id IN ({placeholders}) GROUP BY task_id",
-                        unique_ids,
+                        f"SELECT i.task_id, MAX(i.snapshot_revision) AS snapshot_revision FROM workshop_report_items i JOIN workshop_reports r ON r.report_id=i.report_id WHERE i.task_id IN ({placeholders}) AND r.scope_machine_no=? COLLATE NOCASE GROUP BY i.task_id",
+                        (*unique_ids, self.require_scope()),
                     ).fetchall()
                 }
             for task_id, revision in report_revisions.items():
@@ -1216,15 +1201,13 @@ class WorkshopRepository(SQLiteRepository):
             existing_rows = connection.execute(
                 f"""
                 SELECT * FROM workshop_confirmations
-                WHERE task_id IN ({placeholders})
+                WHERE task_id IN ({placeholders}) AND scope_machine_no=? COLLATE NOCASE
                 """,
-                unique_ids,
+                (*unique_ids, self.require_scope()),
             ).fetchall()
             existing_by_id = {str(row["task_id"]): row for row in existing_rows}
             for task_id in unique_ids:
                 existing = existing_by_id.get(task_id)
-                if existing and self.scope_machine_no and existing["scope_machine_no"].lower() != self.scope_machine_no.lower():
-                    raise ConfirmationConflictError("任务编号已用于其他设备，请核对生产数据")
                 if existing and existing["worker_id"] != user["user_id"]:
                     raise ConfirmationConflictError(
                         f"该任务已由 {existing['worker_name']} 确认"
@@ -1248,7 +1231,7 @@ class WorkshopRepository(SQLiteRepository):
                         now,
                         now,
                         now,
-                        self.scope_machine_no or "Cutter01",
+                        self.require_scope(),
                     ),
                 )
                 self._insert_confirmation_audit(
@@ -1266,9 +1249,9 @@ class WorkshopRepository(SQLiteRepository):
             saved_rows = connection.execute(
                 f"""
                 SELECT * FROM workshop_confirmations
-                WHERE task_id IN ({placeholders})
+                WHERE task_id IN ({placeholders}) AND scope_machine_no=? COLLATE NOCASE
                 """,
-                unique_ids,
+                (*unique_ids, self.require_scope()),
             ).fetchall()
             saved_by_id = {str(row["task_id"]): dict(row) for row in saved_rows}
         return [saved_by_id[task_id] for task_id in unique_ids]
@@ -1309,7 +1292,7 @@ class WorkshopRepository(SQLiteRepository):
                 operator["display_name"],
                 operator["role"],
                 now,
-                previous["scope_machine_no"] if previous else self.scope_machine_no or "Cutter01",
+                previous["scope_machine_no"] if previous else self.require_scope(),
             ),
         )
         return audit_id
@@ -1337,8 +1320,9 @@ class WorkshopRepository(SQLiteRepository):
     ) -> dict[str, Any]:
         with self.connect() as connection:
             self.begin_immediate(connection)
+            self._check_report_scope(connection, report_id)
             existing = connection.execute(
-                "SELECT * FROM workshop_confirmations WHERE task_id = ? AND (? IS NULL OR scope_machine_no = ? COLLATE NOCASE)", (task_id, self.scope_machine_no, self.scope_machine_no)
+                "SELECT * FROM workshop_confirmations WHERE task_id = ? AND scope_machine_no = ? COLLATE NOCASE", (task_id, self.require_scope())
             ).fetchone()
             if existing is None:
                 raise ConfirmationNotFoundError("该任务尚未确认或已被撤销")
@@ -1356,7 +1340,7 @@ class WorkshopRepository(SQLiteRepository):
                 now=now,
             )
             connection.execute(
-                "DELETE FROM workshop_confirmations WHERE task_id = ?", (task_id,)
+                "DELETE FROM workshop_confirmations WHERE task_id = ? AND scope_machine_no=? COLLATE NOCASE", (task_id, self.require_scope())
             )
             row = connection.execute(
                 "SELECT * FROM workshop_confirmation_audits WHERE audit_id = ?",
@@ -1376,8 +1360,9 @@ class WorkshopRepository(SQLiteRepository):
     ) -> dict[str, Any]:
         with self.connect() as connection:
             self.begin_immediate(connection)
+            self._check_report_scope(connection, report_id)
             existing = connection.execute(
-                "SELECT * FROM workshop_confirmations WHERE task_id = ? AND (? IS NULL OR scope_machine_no = ? COLLATE NOCASE)", (task_id, self.scope_machine_no, self.scope_machine_no)
+                "SELECT * FROM workshop_confirmations WHERE task_id = ? AND scope_machine_no = ? COLLATE NOCASE", (task_id, self.require_scope())
             ).fetchone()
             if existing is None:
                 raise ConfirmationNotFoundError("该任务尚未确认或已被撤销")
@@ -1413,7 +1398,7 @@ class WorkshopRepository(SQLiteRepository):
                     UPDATE workshop_confirmations
                     SET report_id = ?, worker_id = ?, worker_name = ?,
                         confirmed_at = ?, updated_at = ?
-                    WHERE task_id = ?
+                    WHERE task_id = ? AND scope_machine_no=? COLLATE NOCASE
                     """,
                     (
                         existing["report_id"] or report_id,
@@ -1421,12 +1406,12 @@ class WorkshopRepository(SQLiteRepository):
                         new_worker["display_name"],
                         now,
                         now,
-                        task_id,
+                        task_id, self.require_scope(),
                     ),
                 )
             else:
                 connection.execute(
-                    "DELETE FROM workshop_confirmations WHERE task_id = ?", (task_id,)
+                    "DELETE FROM workshop_confirmations WHERE task_id = ? AND scope_machine_no=? COLLATE NOCASE", (task_id, self.require_scope())
                 )
             row = connection.execute(
                 "SELECT * FROM workshop_confirmation_audits WHERE audit_id = ?",
@@ -1441,6 +1426,7 @@ class WorkshopRepository(SQLiteRepository):
         report_id: str | None = None,
         limit: int = 50,
     ) -> list[dict[str, Any]]:
+        self.require_scope()
         clauses: list[str] = []
         params: list[Any] = []
         if self.scope_machine_no is not None:

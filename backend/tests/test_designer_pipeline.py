@@ -19,7 +19,7 @@ QUERY_PAYLOAD = {
         SELECT OP_DATE AS production_date, TASK_ID AS task_id,
                CUT_LENGTH AS cut_length
         FROM dbo.task
-        WHERE OP_DATE >= :period_start AND OP_DATE < :period_end
+        WHERE OP_DATE >= :period_start AND OP_DATE < :period_end AND MACHINE_NO = :machine_no
     """,
     "columns": [
         {"field": "production_date", "label": "日期", "type": "date", "unit": ""},
@@ -89,8 +89,9 @@ def test_custom_query_named_parameters_are_compiled_safely(tmp_path: Path) -> No
     )
 
     assert ":period_start" not in sql
-    assert sql.count("?") == 2
-    assert [value.isoformat() for value in values] == ["2026-08-18", "2026-08-19"]
+    assert sql.count("?") == 3
+    assert [value.isoformat() for value in values[:2]] == ["2026-08-18", "2026-08-19"]
+    assert values[2] == "Cutter01"
 
 
 @pytest.mark.parametrize("detail_limit", [2, 1000])
@@ -109,7 +110,7 @@ def test_custom_demo_pipeline_generates_configured_report(tmp_path: Path, detail
         report_max_detail_rows=detail_limit,
     )
     settings.ensure_runtime_dirs()
-    metadata = MetadataRepository(settings.metadata_db_path)
+    metadata = MetadataRepository(settings.metadata_db_path, device_id='Cutter01')
     metadata.initialize()
     definitions = DefinitionRepository(settings.metadata_db_path, settings.timezone)
     definitions.initialize()

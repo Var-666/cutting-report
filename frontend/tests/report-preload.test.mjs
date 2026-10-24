@@ -6,7 +6,7 @@ import { startReportPreload, stopReportPreload, reportPreload } from '../src/sta
 import { recentTwelveMonthStart, reportToday } from '../src/api/reportDates.js'
 import * as api from '../src/api/reports.js'
 import { session, loadSession, completeAuthentication, endSession } from '../src/state/session.js'
-import { resetDeviceContext, setDeviceCatalog, selectDevice } from '../src/api/deviceContext.js'
+import { resetDeviceContext, setDeviceCatalog, selectDevice, getDeviceId } from '../src/api/deviceContext.js'
 
 const originalFetch = globalThis.fetch
 const admin = { user_id: 'admin-1', role: 'admin' }
@@ -15,6 +15,7 @@ const month = today.slice(0, 7)
 const response = (data) => ({ ok: true, json: async () => ({ success: true, data }) })
 function mockApi(override = () => undefined) {
   const calls = []
+  if (!getDeviceId()) setDeviceCatalog({ default_device_id: 'Cutter01', items: [{ id: 'Cutter01' }] })
   globalThis.fetch = async (url, options) => {
     calls.push({ url, options })
     const custom = override(url, options)
@@ -58,7 +59,7 @@ test('snapshot synchronization forwards cancellation and invalidates the task ca
   const controller = new AbortController()
   await api.generateWorkshopDailyReport(today, { signal: controller.signal })
   await api.listWorkshopTasks({ reportDate: today })
-  const sync = calls.find((call) => call.url === '/api/v1/workshop/reports')
+  const sync = calls.find((call) => call.url === '/api/v1/workshop/reports?device_id=Cutter01')
   assert.equal(sync.options.signal, controller.signal)
   assert.equal(sync.options.method, 'POST')
   assert.equal(calls.filter((call) => call.url.includes('/workshop/tasks?')).length, 2)
@@ -166,8 +167,8 @@ test('confirmation, revocation and correction invalidate cached workshop rows', 
   await api.correctWorkshopTask('task-1', { reportDate: today, action: 'reassign', workerId: 'worker-2', reason: '现场更正' })
   await api.listWorkshopTasks({ reportDate: today, sortMode: 'worker' })
   assert.equal(calls.filter((c) => c.url.includes('/workshop/tasks?')).length, 4)
-  const revoke = calls.find((c) => c.url.endsWith('/workshop/tasks/task-1/revoke'))
-  const correction = calls.find((c) => c.url.endsWith('/workshop/tasks/task-1/correct'))
+  const revoke = calls.find((c) => c.url.includes('/workshop/tasks/task-1/revoke?'))
+  const correction = calls.find((c) => c.url.includes('/workshop/tasks/task-1/correct?'))
   assert.equal(JSON.parse(revoke.options.body).reason, '误确认')
   assert.equal(JSON.parse(correction.options.body).worker_id, 'worker-2')
 })

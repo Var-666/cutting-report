@@ -354,7 +354,7 @@ def test_unified_device_page_export_and_analysis_share_meter_values(tmp_path, mo
     vendor = tmp_path / "vendor"
     vendor.mkdir()
     (vendor / "echarts.min.js").write_text("window.echarts={};", encoding="utf-8")
-    metadata = MetadataRepository(cfg.metadata_db_path)
+    metadata = MetadataRepository(cfg.metadata_db_path, device_id='Cutter01')
     metadata.initialize()
     pipeline = ReportPipeline(cfg, metadata)
     pipeline.analysis_service.llm.analyze_context = model_analysis
@@ -386,6 +386,8 @@ def test_unified_device_page_export_and_analysis_share_meter_values(tmp_path, mo
         energy_period_service=pipeline.energy_period_service,
         report_analysis_service=pipeline.analysis_service,
     )))
+    request.query_params = {'device_id': 'Cutter01'}
+    request.app.state.devices = {'Cutter01': request.app.state}
     page = get_task_energy_day(request=request, report_date=START.date(), refresh=True)["data"]
     assert page["summary"]["energy_data_mode"] == "metered"
     assert page["summary"]["total_gas_consumption"] == 2
@@ -466,7 +468,7 @@ def test_same_day_range_reuses_task_meter_scope_and_interpolation(tmp_path, monk
         energy_report_equipment_ids=("Cutter01",),
     ), project_root=tmp_path)
     cfg.ensure_runtime_dirs()
-    metadata = MetadataRepository(cfg.metadata_db_path)
+    metadata = MetadataRepository(cfg.metadata_db_path, device_id='Cutter01')
     metadata.initialize()
     pipeline = ReportPipeline(cfg, metadata)
     meter = MeterStub()
@@ -504,7 +506,7 @@ def test_analysis_does_not_report_missing_energy_as_zero(tmp_path):
     from app.services.report_analysis_service import ReportAnalysisService
     cfg = configured(project_root=tmp_path, llm_enabled=True)
     cfg.ensure_runtime_dirs()
-    metadata = MetadataRepository(cfg.metadata_db_path)
+    metadata = MetadataRepository(cfg.metadata_db_path, device_id='Cutter01')
     metadata.initialize()
     service = ReportAnalysisService(cfg, metadata)
     service.llm.analyze_context = model_analysis

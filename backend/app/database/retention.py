@@ -228,13 +228,15 @@ class RetentionRepository(SQLiteRepository):
                 counts["workshop_confirmations"] = connection.execute(
                     """
                     DELETE FROM workshop_confirmations
-                    WHERE task_id IN (
-                        SELECT confirmation.task_id
+                    WHERE (scope_machine_no, task_id) IN (
+                        SELECT confirmation.scope_machine_no, confirmation.task_id
                         FROM workshop_confirmations AS confirmation
                         WHERE confirmation.updated_at <= ?
                           AND NOT EXISTS (
                               SELECT 1 FROM workshop_report_items AS item
+                              JOIN workshop_reports AS report ON report.report_id=item.report_id
                               WHERE item.task_id = confirmation.task_id
+                                AND report.scope_machine_no=confirmation.scope_machine_no COLLATE NOCASE
                           )
                         ORDER BY confirmation.updated_at, confirmation.task_id
                         LIMIT ?

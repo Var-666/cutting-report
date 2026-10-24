@@ -3,27 +3,27 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.api.auth import require_user
-from app.config import DEVICE_CATALOG, Settings, settings
+from app.config import DEVICE_CATALOG, Settings
 
 router = APIRouter(prefix='/api/v1/devices', tags=['devices'], dependencies=[Depends(require_user)])
 
 
 def device_state(request: Request) -> Any:
     runtimes = getattr(request.app.state, 'devices', None)
-    device_id = getattr(request, 'query_params', {}).get('device_id', DEVICE_CATALOG.default_device_id)
+    values = request.query_params.getlist('device_id') if hasattr(request.query_params, 'getlist') else [request.query_params.get('device_id')]
+    if len(values) != 1 or not values[0]:
+        raise HTTPException(status_code=422, detail='必须明确指定唯一的 device_id')
+    device_id = values[0]
     if runtimes is None:
-        # Small API test apps and integrations may still bind a single runtime.
-        if device_id != DEVICE_CATALOG.default_device_id:
-            raise HTTPException(status_code=422, detail='设备不存在或尚未接入')
-        return request.app.state
+        raise HTTPException(status_code=503, detail='设备上下文尚未初始化')
     runtime = runtimes.get(device_id)
     if runtime is None:
         raise HTTPException(status_code=422, detail='设备不存在或尚未接入')
     return runtime
 
 
-def device_settings(request: Request, fallback: Settings | None = None) -> Settings:
-    return getattr(device_state(request), 'settings', fallback or settings)
+def device_settings(request: Request) -> Settings:
+    return device_state(request).settings
 
 
 @router.get('')

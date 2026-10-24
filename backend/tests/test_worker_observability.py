@@ -86,7 +86,7 @@ def test_live_but_blocked_consumer_degrades_health_and_recovers(monkeypatch, blo
 
 
 def test_queue_observation_counts_only_nonterminal_jobs(tmp_path):
-    metadata = MetadataRepository(tmp_path / "metadata.db")
+    metadata = MetadataRepository(tmp_path / "metadata.db", device_id='Cutter01')
     metadata.initialize()
     for index in range(4):
         metadata.create_job(report_id=f"r{index}", report_date="2026-09-30",

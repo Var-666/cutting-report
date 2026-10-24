@@ -19,15 +19,16 @@ STAMP = NOW.isoformat(timespec="seconds")
 @pytest.fixture
 def workflow(tmp_path):
     path = tmp_path / "metadata.db"
-    metadata = MetadataRepository(path)
+    metadata = MetadataRepository(path, device_id='Cutter01')
     metadata.initialize()
-    workshop = WorkshopRepository(path)
+    workshop = WorkshopRepository(path, scope_machine_no='Cutter01')
     workshop.initialize()
     repository = AutomationRepository(path)
     repository.initialize()
     user = workshop.create_user(username="admin", display_name="管理员", password="test-password",
                                 role="admin", now=STAMP)
     schedule = repository.create_schedule({
+            "device_id": "Cutter01",
         "name": "领导报表", "report_type": "leadership", "frequency": "daily",
         "run_time": "09:00", "weekday": None, "month_day": None,
         "report_period": "previous_day", "recipients": ["manager@example.com"],
@@ -93,3 +94,13 @@ def test_recovery_isolates_callback_failure_and_repairs_failed_run(workflow, mon
     assert repository.delivery_for_report(report_id) is None
     monkeypatch.setattr(service, "report_completed", original)
     assert service.reconcile_runs(NOW) == 1
+
+
+def test_unknown_device_fails_reserved_run_without_creating_a_job(workflow):
+    repository, metadata, service, run = workflow
+    with repository.connect() as connection:
+        connection.execute("UPDATE scheduled_report_runs SET device_id='missing' WHERE run_id=?", (run['run_id'],))
+    run = repository.get_run(run['run_id'])
+    assert not service._create_report_job(run, NOW)
+    assert repository.get_run(run['run_id'])['status'] == 'failed'
+    assert metadata.list_reports(page=1, page_size=10)[1] == 0

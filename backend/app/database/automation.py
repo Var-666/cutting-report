@@ -25,6 +25,7 @@ class AutomationRepository(SQLiteRepository):
                 """
                 CREATE TABLE IF NOT EXISTS report_schedules (
                     schedule_id TEXT PRIMARY KEY,
+                    device_id TEXT NOT NULL,
                     name TEXT NOT NULL,
                     report_type TEXT NOT NULL CHECK(report_type IN ('leadership', 'workshop', 'equipment')),
                     frequency TEXT NOT NULL CHECK(frequency IN ('daily', 'weekly', 'monthly')),
@@ -52,6 +53,7 @@ class AutomationRepository(SQLiteRepository):
 
                 CREATE TABLE IF NOT EXISTS scheduled_report_runs (
                     run_id TEXT PRIMARY KEY,
+                    device_id TEXT NOT NULL,
                     schedule_id TEXT,
                     schedule_name TEXT NOT NULL,
                     report_type TEXT NOT NULL,
@@ -115,10 +117,6 @@ class AutomationRepository(SQLiteRepository):
                     ON email_deliveries(status, next_attempt_at);
                 """
             )
-            for table in ('report_schedules', 'scheduled_report_runs'):
-                columns = {row['name'] for row in connection.execute(f'PRAGMA table_info({table})')}
-                if 'device_id' not in columns:
-                    connection.execute(f"ALTER TABLE {table} ADD COLUMN device_id TEXT NOT NULL DEFAULT 'Cutter01'")
             run_columns = {
                 row["name"]
                 for row in connection.execute(
@@ -206,7 +204,7 @@ class AutomationRepository(SQLiteRepository):
                     data["subject_template"], data["chart_type"],
                     int(data["attach_report"]), data["max_attempts"],
                     int(data["enabled"]), data["next_run_at"],
-                    user["user_id"], user["display_name"], now, now, data.get("device_id", "Cutter01"),
+                    user["user_id"], user["display_name"], now, now, data["device_id"],
                 ),
             )
         return self.get_schedule(schedule_id)
@@ -228,7 +226,7 @@ class AutomationRepository(SQLiteRepository):
                     data["report_period"], json.dumps(data["recipients"], ensure_ascii=False),
                     data["subject_template"], data["chart_type"], int(data["attach_report"]),
                     data["max_attempts"], int(data["enabled"]), data["next_run_at"],
-                    now, data.get("device_id", "Cutter01"), schedule_id,
+                    now, data["device_id"], schedule_id,
                 ),
             )
             if cursor.rowcount != 1:

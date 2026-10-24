@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field, SecretStr, field_validator
 
 from app.api.workloads import query_requests
 from app.services.process_lock import settings_file_lock
+from app.api.devices import device_state
 from app.api.auth import require_admin
 from app.services.runtime_settings_store import read_runtime_env, write_runtime_env, runtime_settings_lock
 from app.config import settings
@@ -420,7 +421,7 @@ def test_connection(payload: ConnectionTestRequest, request: Request) -> dict:
     }
 
 
-@query_requests.route(router.post("/preview"))
+@query_requests.route(router.post("/preview", dependencies=[Depends(device_state)]))
 def preview_dataset(payload: DatabasePreviewRequest, request: Request) -> dict:
     filters = ReportFilter(
         report_date=payload.report_date,
@@ -428,7 +429,7 @@ def preview_dataset(payload: DatabasePreviewRequest, request: Request) -> dict:
         ship_no=payload.ship_no,
     )
     try:
-        query_service = request.app.state.query_service
+        query_service = device_state(request).query_service
         if payload.dataset == "summary":
             records = query_service.fetch_summary_data(filters).summary_records
         elif payload.dataset == "workshop":

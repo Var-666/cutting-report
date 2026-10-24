@@ -74,6 +74,7 @@ const emptyForm = () => ({
   enabled: true,
 })
 const form = reactive(emptyForm())
+watch(() => deviceSelection.id, (id) => { if (!form.device_id) form.device_id = id })
 
 const pageCount = computed(() => Math.max(1, Math.ceil(deliveryTotal.value / 20)))
 const reportLabels = { leadership: '领导报表', workshop: '车间报表', equipment: '设备报表' }
@@ -150,7 +151,7 @@ function resetForm() {
 function editSchedule(item) {
   editingId.value = item.schedule_id
   Object.assign(form, {
-    device_id: item.device_id || 'Cutter01',
+    device_id: item.device_id,
     name: item.name,
     report_type: item.report_type,
     frequency: item.frequency,

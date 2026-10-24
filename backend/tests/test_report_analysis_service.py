@@ -94,7 +94,7 @@ def _services(tmp_path: Path):
         llm_enabled=True,
     )
     settings.ensure_runtime_dirs()
-    metadata = MetadataRepository(settings.metadata_db_path)
+    metadata = MetadataRepository(settings.metadata_db_path, device_id='Cutter01')
     metadata.initialize()
     service = ReportAnalysisService(settings, metadata)
     service.llm.analyze_context = model_analysis
@@ -109,7 +109,7 @@ def test_disabled_model_does_not_generate_report_data_analysis(tmp_path: Path) -
         llm_enabled=False,
     )
     settings.ensure_runtime_dirs()
-    metadata = MetadataRepository(settings.metadata_db_path)
+    metadata = MetadataRepository(settings.metadata_db_path, device_id='Cutter01')
     metadata.initialize()
     service = ReportAnalysisService(settings, metadata)
     report = LeadershipReportService(settings).fetch(date(2026, 8, 1))

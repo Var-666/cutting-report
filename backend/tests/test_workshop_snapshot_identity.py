@@ -2,7 +2,7 @@ import sqlite3
 
 import pytest
 
-from app.database.workshop import ConfirmationConflictError, DailyReportRecordMismatchError
+from app.database.workshop import ConfirmationConflictError, DailyReportRecordMismatchError, DailyReportScopeMismatchError
 from test_workshop_snapshot_sync import record, setup
 
 
@@ -15,10 +15,10 @@ def sync_arguments(repository):
 def prepare_phase(repository, arguments, phase):
     if phase != "new":
         repository.sync_daily_report(**arguments, records=[] if phase == "empty" else [record("S")])
-    return {**arguments, "scope_machine_no": "Cutter02"} if phase == "scope_change" else arguments
+    return arguments
 
 
-@pytest.mark.parametrize("phase", ["new", "empty", "existing", "scope_change"])
+@pytest.mark.parametrize("phase", ["new", "empty", "existing"])
 def test_ambiguous_task_ids_reject_entire_sync_without_selecting_first_row(tmp_path, phase):
     repository = setup(tmp_path)
     arguments = prepare_phase(repository, sync_arguments(repository), phase)
@@ -30,7 +30,7 @@ def test_ambiguous_task_ids_reject_entire_sync_without_selecting_first_row(tmp_p
     assert after_records == before_records
 
 
-@pytest.mark.parametrize("phase", ["new", "empty", "existing", "scope_change"])
+@pytest.mark.parametrize("phase", ["new", "empty", "existing"])
 def test_numerically_equivalent_duplicates_remain_idempotent(tmp_path, phase):
     repository = setup(tmp_path)
     arguments = prepare_phase(repository, sync_arguments(repository), phase)
@@ -43,62 +43,40 @@ def test_numerically_equivalent_duplicates_remain_idempotent(tmp_path, phase):
 
 @pytest.mark.parametrize("empty_rebuild", [False, True])
 @pytest.mark.parametrize("legacy_parent", [False, True])
-def test_scope_rebuild_never_revives_old_confirmation_revision(tmp_path, empty_rebuild, legacy_parent):
+def test_scope_change_is_rejected_without_touching_snapshot_revision(tmp_path, empty_rebuild, legacy_parent):
     repository = setup(tmp_path)
     arguments = sync_arguments(repository)
     report = repository.sync_daily_report(**arguments, records=[record("A")])
     with repository.connect() as connection:
-        # An upgraded database can already contain versions from earlier snapshots.
         connection.execute("UPDATE workshop_report_items SET snapshot_revision = 2 WHERE task_id = 'A'")
     if legacy_parent:
         with repository.connect() as connection:
             connection.execute("ALTER TABLE workshop_reports DROP COLUMN snapshot_revision_floor")
         repository.initialize()
-    rebuilt_arguments = {**arguments, "scope_machine_no": "Cutter02"}
-    if empty_rebuild:
-        repository.sync_daily_report(**rebuilt_arguments, records=[])
-        # A restart between rebuilding and filling must preserve the revision barrier.
-        repository.initialize()
-    repository.sync_daily_report(**rebuilt_arguments, records=[record("A", work=120)])
-    _, rows = repository.get_daily_report_records(arguments["report_date"])
-    revision = rows[0].snapshot_revision
-    assert revision > 2
+    before = repository.get_daily_report_records(arguments["report_date"])
+    with pytest.raises(DailyReportScopeMismatchError):
+        repository.sync_daily_report(**{**arguments, "scope_machine_no": "Cutter02"},
+                                     records=[] if empty_rebuild else [record("A", work=120)])
+    assert repository.get_daily_report_records(arguments["report_date"]) == before
     worker = {"user_id": repository.test_worker_id, "display_name": "工人", "role": "worker"}
-    for old_revision in (None, 1, 2):
+    for old_revision in (None, 1):
         with pytest.raises(ConfirmationConflictError):
             repository.confirm_task(task_id="A", report_id=report["report_id"], user=worker,
                                     now=arguments["now"], snapshot_revision=old_revision)
     repository.confirm_task(task_id="A", report_id=report["report_id"], user=worker,
-                            now=arguments["now"], snapshot_revision=revision)
+                            now=arguments["now"], snapshot_revision=2)
 
 
-def test_task_added_after_empty_scope_rebuild_requires_review_of_current_revision(tmp_path):
-    repository = setup(tmp_path)
-    arguments = sync_arguments(repository)
-    report = repository.sync_daily_report(**arguments, records=[record("A")])
-    arguments = {**arguments, "scope_machine_no": "Cutter02"}
-    repository.sync_daily_report(**arguments, records=[])
-    repository.sync_daily_report(**arguments, records=[record("B")])
-    repository.sync_daily_report(**arguments, records=[record("B"), record("A", work=120)])
-    _, rows = repository.get_daily_report_records(arguments["report_date"])
-    assert all(row.snapshot_revision > 1 for row in rows)
-    worker = {"user_id": repository.test_worker_id, "display_name": "工人", "role": "worker"}
-    with pytest.raises(ConfirmationConflictError):
-        repository.confirm_task(task_id="A", report_id=report["report_id"], user=worker,
-                                now=arguments["now"], snapshot_revision=1)
-
-
-def test_failed_scope_rebuild_restores_items_and_revision_barrier(tmp_path):
+def test_failed_append_restores_items_and_revision_barrier(tmp_path):
     repository = setup(tmp_path)
     arguments = sync_arguments(repository)
     repository.sync_daily_report(**arguments, records=[record("A")])
     before = repository.get_daily_report_records(arguments["report_date"])
     with repository.connect() as connection:
-        connection.execute("""CREATE TRIGGER fail_rebuild BEFORE INSERT ON workshop_report_items
+        connection.execute("""CREATE TRIGGER fail_append BEFORE INSERT ON workshop_report_items
             WHEN NEW.task_id = 'B' BEGIN SELECT RAISE(ABORT, 'insert unavailable'); END""")
     with pytest.raises(sqlite3.IntegrityError, match="insert unavailable"):
-        repository.sync_daily_report(**{**arguments, "scope_machine_no": "Cutter02"},
-                                     records=[record("A", work=120), record("B")])
+        repository.sync_daily_report(**arguments, records=[record("A"), record("B")])
     assert repository.get_daily_report_records(arguments["report_date"]) == before
     with repository.connect() as connection:
         assert connection.execute("SELECT snapshot_revision_floor FROM workshop_reports").fetchone()[0] == 1

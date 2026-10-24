@@ -16,13 +16,38 @@ load_dotenv(PROJECT_ROOT / ".env")
 # 项目 .env，使 Docker 命名卷和 Windows 本地部署都能在重启后生效。
 load_dotenv(RUNTIME_SETTINGS_ENV_PATH, override=True, interpolate=False)
 
-# JSON provides device defaults; explicit legacy environment settings retain
-# priority during migration. Credentials and global feature switches stay in env.
+# Device business settings come only from the catalog; credentials stay in env.
 DEVICE_CONFIG_PATH = Path(os.getenv("DEVICE_CONFIG_PATH", "backend/app/configuration/devices.json")).expanduser()
 if not DEVICE_CONFIG_PATH.is_absolute():
     DEVICE_CONFIG_PATH = PROJECT_ROOT / DEVICE_CONFIG_PATH
 DEVICE_CATALOG = load_device_catalog(DEVICE_CONFIG_PATH)
 DEFAULT_DEVICE = DEVICE_CATALOG.default_device
+
+
+def validate_legacy_device_environment() -> None:
+    """Refuse to discard an effective deployment override during catalog migration."""
+    device = DEVICE_CATALOG.default_device
+    energy = device.energy
+    expected = {
+        "REPORT_MACHINE_NO": device.machine_no,
+        "ENERGY_EQUIPMENT_IDS": ",".join(energy.equipment_ids) if energy else "",
+        "ENERGY_REPORT_EQUIPMENT_IDS": ",".join(energy.equipment_ids) if energy else device.machine_no,
+        "ENERGY_GAS_PARAMETER_ID": str(energy.gas_parameter_id) if energy else "",
+        "ENERGY_ELECTRICITY_PARAMETER_IDS": ",".join(map(str, energy.electricity_parameter_ids)) if energy else "",
+        "ENERGY_REPORT_ELECTRICITY_PARAMETER_IDS": ",".join(map(str, energy.electricity_parameter_ids)) if energy else "",
+        "ALARM_MONITOR_MACHINE_NOS": device.machine_no,
+        "ALARM_MONITOR_START_AT": device.alarm.start_at,
+    }
+    conflicts = []
+    for key, value in expected.items():
+        actual = os.getenv(key, "").strip()
+        if actual and tuple(part.strip() for part in actual.split(",")) != tuple(value.split(",")):
+            conflicts.append(f"{key}: 环境={actual!r}，目录={value!r}")
+    if conflicts:
+        raise ValueError("旧设备环境配置与设备目录冲突；请核对并迁入设备目录后移除旧变量：" + "; ".join(conflicts))
+
+
+validate_legacy_device_environment()
 
 
 def _as_bool(name: str, default: bool) -> bool:
@@ -46,6 +71,8 @@ def _as_float(name: str, default: float) -> float:
 class Settings:
     device_id: str = DEFAULT_DEVICE.id
     device_name: str = DEFAULT_DEVICE.name
+    production_line_id: str = DEFAULT_DEVICE.production_line_id
+    production_data_source: str = DEFAULT_DEVICE.data_source
     energy_connected: bool = DEFAULT_DEVICE.energy is not None
     project_root: Path = PROJECT_ROOT
     app_env: str = os.getenv("APP_ENV", "development")
@@ -84,8 +111,7 @@ class Settings:
     )
     report_data_cache_seconds: int = _as_int("REPORT_DATA_CACHE_SECONDS", 600)
     report_background_refresh_seconds: int = _as_int("REPORT_BACKGROUND_REFRESH_SECONDS", 300)
-    # 当前运行默认设备；多设备切换需另外打通请求、缓存和快照范围。
-    report_machine_no: str = os.getenv("REPORT_MACHINE_NO", DEFAULT_DEVICE.machine_no).strip() or DEFAULT_DEVICE.machine_no
+    report_machine_no: str = DEFAULT_DEVICE.machine_no
 
     # 能管平台只读接入。仪表绑定、计量边界和单位必须由现场确认。
     energy_api_enabled: bool = _as_bool("ENERGY_API_ENABLED", False)
@@ -94,15 +120,9 @@ class Settings:
     energy_api_password: str = field(default=os.getenv("ENERGY_API_PASSWORD", ""), repr=False)
     energy_api_timeout: float = _as_float("ENERGY_API_TIMEOUT_SECONDS", 10)
     energy_cache_seconds: int = _as_int("ENERGY_CACHE_SECONDS", 60)
-    energy_equipment_ids: tuple[str, ...] = tuple(
-        value.strip() for value in os.getenv("ENERGY_EQUIPMENT_IDS", "").split(",") if value.strip()
-    )
-    energy_gas_parameter_id: str = os.getenv(
-        "ENERGY_GAS_PARAMETER_ID", str(DEFAULT_DEVICE.energy.gas_parameter_id if DEFAULT_DEVICE.energy else "")
-    ).strip()
-    energy_electricity_parameter_ids: tuple[str, ...] = tuple(
-        value.strip() for value in os.getenv("ENERGY_ELECTRICITY_PARAMETER_IDS", "").split(",") if value.strip()
-    )
+    energy_equipment_ids: tuple[str, ...] = ()
+    energy_gas_parameter_id: str = str(DEFAULT_DEVICE.energy.gas_parameter_id) if DEFAULT_DEVICE.energy else ""
+    energy_electricity_parameter_ids: tuple[str, ...] = ()
     energy_gas_unit: str = os.getenv("ENERGY_GAS_UNIT", "Nm³").strip()
     energy_electricity_unit: str = os.getenv("ENERGY_ELECTRICITY_UNIT", "kWh").strip()
     # 平台 Mv 已乘读数因子；以下仅用于经确认的单位转换，禁止再次乘 CT/PT。
@@ -118,17 +138,8 @@ class Settings:
 
     # 统一设备能耗报表：当前仪表组只归属一台物理设备。多个值仅用于
     # 同一设备在 TASK.MACHINE_NO 中的历史别名，不能混入另一台设备。
-    energy_report_equipment_ids: tuple[str, ...] = tuple(
-        value.strip() for value in os.getenv(
-            "ENERGY_REPORT_EQUIPMENT_IDS", ",".join(DEFAULT_DEVICE.energy.equipment_ids) if DEFAULT_DEVICE.energy else DEFAULT_DEVICE.machine_no
-        ).split(",") if value.strip()
-    )
-    energy_report_electricity_parameter_ids: tuple[str, ...] = tuple(
-        value.strip() for value in os.getenv(
-            "ENERGY_REPORT_ELECTRICITY_PARAMETER_IDS",
-            ",".join(map(str, DEFAULT_DEVICE.energy.electricity_parameter_ids)) if DEFAULT_DEVICE.energy else "",
-        ).split(",") if value.strip()
-    )
+    energy_report_equipment_ids: tuple[str, ...] = DEFAULT_DEVICE.energy.equipment_ids if DEFAULT_DEVICE.energy else (DEFAULT_DEVICE.machine_no,)
+    energy_report_electricity_parameter_ids: tuple[str, ...] = tuple(map(str, DEFAULT_DEVICE.energy.electricity_parameter_ids)) if DEFAULT_DEVICE.energy else ()
     energy_report_max_gap_seconds: int = _as_int("ENERGY_REPORT_MAX_GAP_SECONDS", 1800)
     energy_report_snapshot_ttl_seconds: int = _as_int("ENERGY_REPORT_SNAPSHOT_TTL_SECONDS", 3600)
 
@@ -214,20 +225,13 @@ class Settings:
     llm_max_concurrent: int = _as_int("LLM_MAX_CONCURRENT", 10)
     llm_queue_timeout_seconds: float = _as_float("LLM_QUEUE_TIMEOUT_SECONDS", 120)
 
-    # 告警源沿用生产数据库和默认设备编号。
+    # 告警源沿用生产数据库，设备范围由目录提供。
     alarm_monitor_enabled: bool = _as_bool("ALARM_MONITOR_ENABLED", False)
     alarm_monitor_interval_seconds: int = _as_int(
         "ALARM_MONITOR_INTERVAL_SECONDS", 300
     )
-    alarm_monitor_machine_nos: tuple[str, ...] = tuple(
-        value.strip()
-        for value in os.getenv("ALARM_MONITOR_MACHINE_NOS", DEFAULT_DEVICE.machine_no).split(",")
-        if value.strip()
-    )
-    alarm_monitor_start_at: str = (
-        os.getenv("ALARM_MONITOR_START_AT", DEFAULT_DEVICE.alarm.start_at).strip()
-        or DEFAULT_DEVICE.alarm.start_at
-    )
+    alarm_monitor_machine_nos: tuple[str, ...] = (DEFAULT_DEVICE.machine_no,)
+    alarm_monitor_start_at: str = DEFAULT_DEVICE.alarm.start_at
     alarm_reopen_debounce_minutes: int = _as_int(
         "ALARM_REOPEN_DEBOUNCE_MINUTES", 10
     )
@@ -393,13 +397,10 @@ def settings_for_device(base: Settings, device_id: str) -> Settings:
     device = next((item for item in DEVICE_CATALOG.devices if item.id == device_id), None)
     if device is None:
         raise ValueError("设备不存在")
-    if device.id == DEVICE_CATALOG.default_device_id:
-        # Legacy explicit overrides apply only to the original default device.
-        return replace(base, device_id=device.id, device_name=device.name,
-                       energy_connected=device.energy is not None)
     energy = device.energy
     return replace(
         base, device_id=device.id, device_name=device.name,
+        production_line_id=device.production_line_id, production_data_source=device.data_source,
         report_machine_no=device.machine_no, energy_connected=energy is not None,
         energy_api_enabled=base.energy_api_enabled and energy is not None,
         energy_gas_parameter_id=str(energy.gas_parameter_id) if energy else "",

@@ -42,13 +42,13 @@ def test_demo_pipeline_generates_offline_report(
         app_version="test",
     )
     test_settings.ensure_runtime_dirs()
-    metadata = MetadataRepository(test_settings.metadata_db_path)
+    metadata = MetadataRepository(test_settings.metadata_db_path, device_id='Cutter01')
     metadata.initialize()
     pipeline = ReportPipeline(test_settings, metadata)
     pipeline.analysis_service.llm.analyze_context = model_analysis
     now = datetime.now(ZoneInfo(test_settings.timezone)).isoformat(timespec="seconds")
     if report_type == "workshop":
-        workshop = WorkshopRepository(test_settings.metadata_db_path)
+        workshop = WorkshopRepository(test_settings.metadata_db_path, scope_machine_no='Cutter01')
         workshop.initialize()
         user = workshop.bootstrap_admin(
             username="tester",
@@ -160,7 +160,7 @@ def test_pipeline_completes_deterministic_report_when_ai_is_unavailable(tmp_path
         app_version="test",
     )
     test_settings.ensure_runtime_dirs()
-    metadata = MetadataRepository(test_settings.metadata_db_path)
+    metadata = MetadataRepository(test_settings.metadata_db_path, device_id='Cutter01')
     metadata.initialize()
     pipeline = ReportPipeline(test_settings, metadata)
     now = datetime.now(ZoneInfo(test_settings.timezone)).isoformat(timespec="seconds")
@@ -208,7 +208,7 @@ def test_range_export_keeps_the_recent_twelve_month_summary(
         app_version="test",
     )
     test_settings.ensure_runtime_dirs()
-    metadata = MetadataRepository(test_settings.metadata_db_path)
+    metadata = MetadataRepository(test_settings.metadata_db_path, device_id='Cutter01')
     metadata.initialize()
     pipeline = ReportPipeline(test_settings, metadata)
     pipeline.analysis_service.llm.analyze_context = model_analysis
@@ -280,7 +280,7 @@ def report_flow(tmp_path, monkeypatch):
                         energy_report_equipment_ids=("Cutter01",), energy_api_enabled=False,
                         llm_enabled=True, app_version="test")
     settings.ensure_runtime_dirs()
-    metadata = MetadataRepository(settings.metadata_db_path)
+    metadata = MetadataRepository(settings.metadata_db_path, device_id='Cutter01')
     metadata.initialize()
     pipeline = ReportPipeline(settings, metadata)
 

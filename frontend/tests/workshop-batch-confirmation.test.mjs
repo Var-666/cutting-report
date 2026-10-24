@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict'
-import { afterEach, test } from 'node:test'
+import { afterEach, beforeEach, test } from 'node:test'
 import { readFileSync } from 'node:fs'
 import { parse } from '@vue/compiler-sfc'
 import { confirmWorkshopTasks } from '../src/api/reports.js'
 
+import { setDeviceCatalog, resetDeviceContext } from '../src/api/deviceContext.js'
+
+beforeEach(() => setDeviceCatalog({ default_device_id: 'Cutter01', items: [{ id: 'Cutter01' }] }))
 const originalFetch = globalThis.fetch
-afterEach(() => { globalThis.fetch = originalFetch })
+afterEach(() => { globalThis.fetch = originalFetch; resetDeviceContext() })
 
 test('batch confirmation sends all selected task ids in one request', async () => {
   const calls = []
@@ -17,7 +20,7 @@ test('batch confirmation sends all selected task ids in one request', async () =
   await confirmWorkshopTasks(['task-1', 'task-2'], '2026-09-11')
 
   assert.equal(calls.length, 1)
-  assert.equal(calls[0].url, '/api/v1/workshop/tasks/confirm')
+  assert.equal(calls[0].url, '/api/v1/workshop/tasks/confirm?device_id=Cutter01')
   assert.equal(calls[0].options.method, 'POST')
   assert.deepEqual(JSON.parse(calls[0].options.body), {
     report_date: '2026-09-11',

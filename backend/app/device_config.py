@@ -73,6 +73,18 @@ class DeviceCatalog(ConfigModel):
             raise ValueError("产线编号和设备编号分别必须唯一")
         if self.default_device_id not in device_ids:
             raise ValueError("默认设备不存在")
+        machine_owners: dict[str, str] = {}
+        meter_owners: dict[UUID, str] = {}
+        for device in self.devices:
+            for alias in (device.machine_no, *(device.energy.equipment_ids if device.energy else ())):
+                owner = machine_owners.setdefault(alias.casefold(), device.id)
+                if owner != device.id:
+                    raise ValueError("不同设备的生产数据范围不能重叠")
+            if device.energy:
+                for meter in (device.energy.gas_parameter_id, *device.energy.electricity_parameter_ids):
+                    if meter in meter_owners:
+                        raise ValueError("不同设备不能共用同一仪表")
+                    meter_owners[meter] = device.id
         for device in self.devices:
             if device.production_line_id not in line_ids:
                 raise ValueError("设备引用的产线不存在")

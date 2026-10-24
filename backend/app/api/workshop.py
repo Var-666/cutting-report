@@ -34,7 +34,7 @@ from app.services.report_analysis_service import (
 from app.services.workshop_sorting import sort_workshop_by_recency
 
 
-router = APIRouter(prefix="/api/v1/workshop", tags=["workshop-confirmation"])
+router = APIRouter(prefix="/api/v1/workshop", tags=["workshop-confirmation"], dependencies=[Depends(require_user)])
 
 
 def _workshop_analysis_source_version(report_date: str, records: list) -> str:
@@ -140,7 +140,7 @@ def _records_for_date(request: Request, report_date: date):
     report, records = device_state(request).workshop.get_daily_report_records(
         report_date.isoformat()
     )
-    if report and report.get("scope_machine_no") != device_settings(request, settings).report_machine_no:
+    if report and report.get("scope_machine_no") != device_settings(request).report_machine_no:
         return None, []
     return report, records
 
@@ -177,11 +177,11 @@ def generate_daily_report(
     try:
         report = device_state(request).workshop.sync_daily_report(
             report_date=payload.report_date.isoformat(),
-            source_mode=device_settings(request, settings).effective_data_source_mode,
+            source_mode=device_settings(request).effective_data_source_mode,
             records=bundle.workshop_records,
             user=user,
             now=now,
-            scope_machine_no=device_settings(request, settings).report_machine_no,
+            scope_machine_no=device_settings(request).report_machine_no,
         )
     except (
         DailyReportRecordMismatchError,
@@ -317,7 +317,7 @@ def list_range_tasks(
                 "report_date": start_date.isoformat(),
                 "period_start": start_date.isoformat(),
                 "period_end": end_date.isoformat(),
-                "scope_machine_no": device_settings(request, settings).report_machine_no,
+                "scope_machine_no": device_settings(request).report_machine_no,
                 "item_count": total,
                 "confirmed_count": sum(bool(row.confirmed_by) for row in records),
                 "generated_at": to_primitive(bundle.data_updated_at),
@@ -399,8 +399,7 @@ def revoke_task_confirmation(
     request: Request,
     user: dict = Depends(require_worker),
 ) -> dict:
-    # 撤销以已存在的确认记录为准。历史日报可能没有 scope_machine_no，
-    # 但确认记录仍然有效，不能因此阻止工人撤销本人的确认。
+    # 以当前设备的既有确认记录为准，保留其原始日报关联。
     now = datetime.now(ZoneInfo(settings.timezone)).isoformat(timespec="seconds")
     try:
         audit = device_state(request).workshop.revoke_confirmation(
@@ -424,8 +423,7 @@ def correct_task_confirmation(
     request: Request,
     admin: dict = Depends(require_admin),
 ) -> dict:
-    # 管理员更正操作针对既有确认记录。优先沿用确认记录自身的 report_id，
-    # 避免旧日报快照因设备范围字段缺失而被误判为“尚未生成”。
+    # 管理员更正沿用当前设备确认记录的原始日报关联。
     now = datetime.now(ZoneInfo(settings.timezone)).isoformat(timespec="seconds")
     try:
         audit = device_state(request).workshop.correct_confirmation(

@@ -5,7 +5,7 @@ from datetime import date, datetime, time, timedelta
 from typing import Any
 from uuid import uuid4
 
-from app.config import Settings
+from app.config import DEVICE_CATALOG, Settings, settings_for_device
 from app.database.automation import AutomationRepository
 from app.database.metadata import MetadataRepository
 from app.database.unit_of_work import UnitOfWork
@@ -82,9 +82,7 @@ class AutomationService:
         self.metadata = metadata
         self.email_service = email_service
         self.runtime = runtime or AutomationRuntime(settings)
-        self.query_service = QueryService(settings)
         self.database = metadata.database
-        self.workshop = WorkshopRepository(self.database, scope_machine_no=settings.report_machine_no)
         self.device_services = {}
 
     def enrich_schedule(self, data: dict[str, Any], now: datetime) -> dict[str, Any]:
@@ -134,12 +132,12 @@ class AutomationService:
 
     def _create_report_job(self, run: dict, now: datetime) -> bool:
         try:
-            if self.device_services and run.get("device_id", "Cutter01") not in self.device_services:
+            if run["device_id"] not in {item.id for item in DEVICE_CATALOG.devices} or (self.device_services and run["device_id"] not in self.device_services):
                 raise ValueError("计划设备已移除，拒绝生成其他设备报表")
             if run["report_type"] == "workshop":
                 self._ensure_workshop_report(run, now)
             report_id = f"rpt_{now:%Y%m%d_%H%M%S}_{uuid4().hex[:6]}"
-            with UnitOfWork(self.database, self.settings.timezone, device_id=run.get("device_id", "Cutter01")) as unit:
+            with UnitOfWork(self.database, self.settings.timezone, device_id=run["device_id"]) as unit:
                 current = unit.automation.get_run(run["run_id"])
                 if current is None or current["report_id"] or current["status"] != "queued":
                     return False
@@ -162,7 +160,7 @@ class AutomationService:
             return True
         except Exception as exc:
             logger.exception("scheduled report enqueue failed")
-            with UnitOfWork(self.database, self.settings.timezone, device_id=run.get("device_id", "Cutter01")) as unit:
+            with UnitOfWork(self.database, self.settings.timezone) as unit:
                 current = unit.automation.get_run(run["run_id"])
                 if current and not current["report_id"] and current["status"] == "queued":
                     unit.automation.mark_run(
@@ -191,10 +189,10 @@ class AutomationService:
 
     def _ensure_workshop_report(self, run: dict, now: datetime) -> None:
         report_date = run["report_date"]
-        device = self.device_services.get(run.get("device_id", "Cutter01"))
-        cfg = device.settings if device else self.settings
-        query = device.query_service if device else self.query_service
-        workshop = device.workshop if device else self.workshop
+        device = self.device_services.get(run["device_id"])
+        cfg = device.settings if device else settings_for_device(self.settings, run["device_id"])
+        query = device.query_service if device else QueryService(cfg)
+        workshop = device.workshop if device else WorkshopRepository(self.database, scope_machine_no=cfg.report_machine_no)
         bundle = query.fetch_workshop_data(
             ReportFilter(report_date=date.fromisoformat(report_date))
         )

@@ -14,12 +14,12 @@ from app.api.auth import require_admin, require_user
 from app.api.devices import router as devices_router
 from app.api.options import router as options_router
 from app.api.reports import router as reports_router
-from app.config import Settings, settings_for_device
+from app.config import DEVICE_CATALOG, Settings, settings_for_device
 from app.database.alarms import AlarmRepository
 from app.database.alarm_source import SqlServerAlarmSource
 from app.database.automation import AutomationRepository
 from app.database.definitions import DefinitionRepository
-from app.database.device_migrations import backup_before_device_upgrade, rebuild_table
+from app.database.device_migrations import rebuild_table, migrate_device_isolation
 from app.database.leadership_snapshots import LeadershipMonthSnapshot, LeadershipSnapshotRepository
 from app.database.metadata import MetadataRepository
 from app.database.sqlite import SQLiteDatabase
@@ -89,15 +89,15 @@ def test_two_devices_can_keep_same_day_snapshots_confirmations_and_corrections_s
         one.correct_confirmation(task_id='task-2', admin=admin, reason='不能跨设备更正', now=STAMP)
     with pytest.raises(ConfirmationNotFoundError):
         one.revoke_confirmation(task_id='task-2', user=admin, reason='不能跨设备撤销', now=STAMP)
-    with pytest.raises(ConfirmationConflictError, match='其他设备'):
-        one.confirm_task(task_id='task-2', user=admin, now=STAMP)
+    one.confirm_task(task_id='task-2', user=admin, now=STAMP)
+    assert one.get_confirmations(['task-2'])['task-2']['scope_machine_no'] == 'Cutter01'
     two.revoke_confirmation(task_id='task-2', user=admin, reason='本人撤销', now=STAMP)
     assert one.get_confirmations(['task-1'])['task-1']['worker_id'] == admin['user_id']
 
 
 def test_upgrade_preserves_legacy_snapshot_children_and_confirmations(database):
     db, admin = database
-    legacy = WorkshopRepository(db)
+    legacy = WorkshopRepository(db, scope_machine_no='Cutter01')
     report = legacy.create_daily_report(report_date=DAY, source_mode='sqlserver', records=[workshop_record('old')],
                                         user=admin, now=STAMP, scope_machine_no=None)
     legacy.confirm_task(task_id='old', report_id=report['report_id'], user=admin, now=STAMP)
@@ -105,6 +105,7 @@ def test_upgrade_preserves_legacy_snapshot_children_and_confirmations(database):
     with db.connect() as connection:
         connection.execute('DROP INDEX idx_workshop_reports_device_date')
     rebuild_table(db, 'workshop_reports', lambda sql: sql.replace('report_date TEXT NOT NULL', 'report_date TEXT NOT NULL UNIQUE'))
+    migrate_device_isolation(db, DEVICE_CATALOG)
     legacy.initialize()
     one = WorkshopRepository(db, scope_machine_no='Cutter01')
     two = WorkshopRepository(db, scope_machine_no='Cutter02')
@@ -116,22 +117,6 @@ def test_upgrade_preserves_legacy_snapshot_children_and_confirmations(database):
     with db.connect() as connection:
         assert connection.execute('SELECT COUNT(*) FROM workshop_report_items').fetchone()[0] == 2
         assert connection.execute('PRAGMA foreign_key_check').fetchall() == []
-
-
-def test_pre_upgrade_backup_is_readable_and_not_repeated_after_upgrade(tmp_path):
-    db = SQLiteDatabase(tmp_path / 'metadata.db')
-    with db.connect() as connection:
-        connection.execute('CREATE TABLE report_jobs(report_id TEXT PRIMARY KEY)')
-        connection.execute("INSERT INTO report_jobs VALUES ('historical-job')")
-    backup_before_device_upgrade(db)
-    copies = list((tmp_path / 'backups').glob('*.db'))
-    assert len(copies) == 1
-    with sqlite3.connect(copies[0]) as connection:
-        assert connection.execute('SELECT report_id FROM report_jobs').fetchone()[0] == 'historical-job'
-    with db.connect() as connection:
-        connection.execute("ALTER TABLE report_jobs ADD COLUMN device_id TEXT DEFAULT 'Cutter01'")
-    backup_before_device_upgrade(db)
-    assert list((tmp_path / 'backups').glob('*.db')) == copies
 
 
 def test_analysis_versions_and_report_history_do_not_overwrite_other_device(database):
@@ -169,7 +154,7 @@ def alarm_event(key, machine):
 
 def test_alarm_cursors_leases_recovery_and_page_totals_are_device_scoped(database):
     db, _ = database
-    one = AlarmRepository(db, machine_no='Cutter01')
+    one = AlarmRepository(db, machine_no='Cutter01', source_name='production:Cutter01')
     two = AlarmRepository(db, machine_no='Cutter02', source_name='production:Cutter02')
     for repo, key, owner in [(one, 100, 'owner-1'), (two, 200, 'owner-2')]:
         repo.initialize()
@@ -281,7 +266,7 @@ def test_schedule_run_and_queue_keep_fixed_device_even_after_schedule_edit(datab
 def test_device_api_validates_selection_and_scopes_history_and_exports(database, monkeypatch, default_device_id, device_id):
     from app.api import devices as devices_api, reports as reports_api, alarms as alarms_api
     configured_catalog = devices_api.DEVICE_CATALOG.model_copy(update={'default_device_id': default_device_id})
-    for module in (devices_api, reports_api, alarms_api):
+    for module in (devices_api,):
         monkeypatch.setattr(module, 'DEVICE_CATALOG', configured_catalog)
     db, admin = database
     app = FastAPI()
@@ -304,7 +289,8 @@ def test_device_api_validates_selection_and_scopes_history_and_exports(database,
         assert [(item['id'], item['energy_connected']) for item in catalog['items']] == [('Cutter01', True), ('Cutter02', False)]
         assert 'password' not in str(catalog).lower()
         assert client.get(f'/api/v1/options/projects?report_date={DAY}&device_id=Cutter02').json()['data']['items'] == ['Cutter02']
-        assert client.get(f'/api/v1/options/projects?report_date={DAY}&device_id=missing').status_code == 422
+        for query in ('', '&device_id=missing', '&device_id=', '&device_id=Cutter01&device_id=Cutter02'):
+            assert client.get(f'/api/v1/options/projects?report_date={DAY}{query}').status_code == 422
         created = client.post(f'/api/v1/reports?device_id={device_id}', json={'report_type': 'equipment', 'report_date': DAY})
         assert created.status_code == 202
         report_id = created.json()['data']['report_id']
@@ -317,7 +303,7 @@ def test_device_api_validates_selection_and_scopes_history_and_exports(database,
         serialized = reports_api._serialize_job(job)
         alarm_url = alarms_api._device_url(SimpleNamespace(app=app, query_params={'device_id': device_id}), '/api/v1/alarms/reports/a1/view')
         for url in (serialized['view_url'], serialized['download_url'], alarm_url):
-            resolved_device = parse_qs(urlsplit(url).query).get('device_id', [default_device_id])[0]
+            resolved_device = parse_qs(urlsplit(url).query)['device_id'][0]
             assert resolved_device == device_id, 'report links must resolve to their owner under either default'
 
 
@@ -331,6 +317,8 @@ def test_device_runtime_has_independent_caches_and_disables_only_cutter02_energy
                     energy_api_enabled=True, alarm_monitor_enabled=True)
     one, two = [build_device_runtime(settings_for_device(base, key), db, definitions, snapshots, SimpleNamespace())
                 for key in ('Cutter01', 'Cutter02')]
+    assert one.alarm_repository.source_name == 'production:Cutter01'
+    assert two.alarm_repository.source_name == 'production:Cutter02'
     assert one.query_service is not two.query_service
     assert one.report_analysis_service is not two.report_analysis_service
     for runtime in (one, two):
@@ -343,3 +331,139 @@ def test_device_runtime_has_independent_caches_and_disables_only_cutter02_energy
     assert one.energy_history_worker.enabled and not two.energy_history_worker.enabled
     assert two.current_report_refresh_worker.settings.report_machine_no == 'Cutter02'
     assert two.pipeline.settings.device_id == 'Cutter02'
+
+
+def test_identical_task_numbers_isolate_confirm_reassign_revoke_counts_and_audits(database):
+    db, admin = database
+    one, two = [WorkshopRepository(db, scope_machine_no=key) for key in ('Cutter01', 'Cutter02')]
+    users = WorkshopRepository(db)
+    workers = [users.create_user(username=f'worker{i}', display_name=f'工人{i}', password='worker-password', role='worker', now=STAMP) for i in range(3)]
+    reports = []
+    for repo, worker in zip((one, two), workers):
+        report = repo.sync_daily_report(report_date=DAY, source_mode='sqlserver', records=[workshop_record('same')], user=admin, now=STAMP)
+        reports.append(report)
+        repo.confirm_task(task_id='same', report_id=report['report_id'], user=worker, now=STAMP)
+        assert repo.get_daily_report(DAY)['confirmed_count'] == 1
+    with pytest.raises(ValueError, match='不属于当前设备'):
+        one.confirm_task(task_id='same', report_id=reports[1]['report_id'], user=workers[0], now=STAMP)
+    two.correct_confirmation(task_id='same', admin=admin, reason='管理员更正', new_worker_id=workers[2]['user_id'], now=STAMP)
+    assert one.get_confirmations(['same'])['same']['worker_id'] == workers[0]['user_id']
+    one.revoke_confirmation(task_id='same', user=workers[0], reason='本人撤销', now=STAMP)
+    assert one.get_daily_report(DAY)['confirmed_count'] == 0
+    assert two.get_daily_report(DAY)['confirmed_count'] == 1
+    assert two.get_daily_report_records(DAY)[1][0].confirmed_by_id == workers[2]['user_id']
+    assert [row['action'] for row in one.list_confirmation_audits()].count('worker_revoke') == 1
+    assert {row['action'] for row in two.list_confirmation_audits()} == {'confirm', 'admin_reassign'}
+    two.correct_confirmation(task_id='same', admin=admin, reason='管理员撤销', now=STAMP)
+    assert not two.get_confirmations(['same'])
+
+
+def test_global_repositories_cannot_implicitly_create_device_data(database):
+    db, admin = database
+    with pytest.raises(ValueError, match='设备上下文'):
+        MetadataRepository(db).create_job(report_id='missing', report_date=DAY, project_code=None, ship_no=None, request_id='r', created_at=STAMP)
+    with pytest.raises(ValueError, match='设备生产数据范围'):
+        WorkshopRepository(db).confirm_task(task_id='missing', user=admin, now=STAMP)
+
+
+def test_all_device_api_boundaries_reject_missing_unknown_and_duplicate_context(database):
+    from app.api import alarms, analysis, conditions, database as database_api, designer, energy, equipment, leadership, workshop
+    db, admin = database
+    app = FastAPI()
+    for router in (devices_router, options_router, reports_router, alarms.router, analysis.router, conditions.router,
+                   database_api.router, designer.router, energy.router, equipment.router, leadership.router, workshop.router):
+        app.include_router(router)
+    app.dependency_overrides[require_user] = lambda: admin
+    app.dependency_overrides[require_admin] = lambda: admin
+    app.state.devices = {key: SimpleNamespace(settings=settings_for_device(Settings(), key)) for key in ('Cutter01','Cutter02')}
+    @app.middleware('http')
+    async def request_id(request, call_next):
+        request.state.request_id = 'boundary'
+        return await call_next(request)
+    cases = [('GET', '/api/v1/workshop/tasks'), ('GET', '/api/v1/leadership-report'),
+             ('GET','/api/v1/equipment-report'), ('GET','/api/v1/energy-report/day'),
+             ('GET','/api/v1/analysis/latest'), ('GET','/api/v1/conditions/workshop/schema'),
+             ('GET','/api/v1/alarms/status'), ('GET','/api/v1/reports/r/status'),
+             ('POST','/api/v1/database/preview'), ('POST','/api/v1/designer/query-tasks/q/preview')]
+    with TestClient(app) as client:
+        assert client.get('/api/v1/devices').status_code == 200
+        for method,path in cases:
+            for query in ('', '?device_id=missing', '?device_id=', '?device_id=Cutter01&device_id=Cutter02'):
+                response = client.request(method,path+query)
+                assert response.status_code == 422, (method,path,query,response.text)
+                assert 'device_id' in response.text or '设备不存在' in response.text
+
+
+def test_database_preview_and_pdf_download_use_only_the_requested_runtime(database, tmp_path, monkeypatch):
+    from app.api import database as database_api, reports
+    db, admin = database
+    app = FastAPI()
+    app.include_router(database_api.router)
+    app.include_router(reports_router)
+    app.include_router(reports.view_router)
+    app.dependency_overrides[require_admin] = lambda: admin
+    base = Settings(project_root=tmp_path)
+    base.ensure_runtime_dirs()
+    monkeypatch.setattr(reports,'settings',base)
+    app.state.devices = {}
+    render_calls = []
+    def render(path):
+        render_calls.append(path)
+        pdf = path.with_suffix('.pdf')
+        pdf.write_bytes(b'%PDF-1.7 test')
+        return pdf
+    app.state.pdf_service = SimpleNamespace(render=render)
+    for key in ('Cutter01','Cutter02'):
+        metadata = MetadataRepository(db,device_id=key)
+        metadata.create_job(report_id=key,report_date=DAY,project_code=None,ship_no=None,request_id=key,created_at=STAMP)
+        path = base.reports_dir / f'{key}.html'
+        path.write_text(key)
+        metadata.save_report(report_id=key,filename=path.name,relative_path=path.name,file_size=len(key),sha256='0'*64,task_count=1,generated_at=STAMP,system_version='test')
+        app.state.devices[key] = SimpleNamespace(settings=settings_for_device(base,key),metadata=metadata,
+            query_service=SimpleNamespace(fetch_summary_data=lambda _,key=key: SimpleNamespace(summary_records=[{'device':key}])))
+    @app.middleware('http')
+    async def request_id(request,call_next):
+        request.state.request_id='preview'
+        return await call_next(request)
+    with TestClient(app) as client:
+        for key in ('Cutter01','Cutter02'):
+            response = client.post(f'/api/v1/database/preview?device_id={key}',json={'dataset':'summary','report_date':DAY})
+            assert response.status_code == 200
+            assert key in response.text
+            other = 'Cutter02' if key == 'Cutter01' else 'Cutter01'
+            assert client.get(f'/api/v1/reports/{key}/download?format=pdf&device_id={other}').status_code == 404
+            assert client.get(f'/reports/{key}/view?device_id={other}').status_code == 404
+            assert client.get(f'/api/v1/reports/{key}/download?format=pdf&device_id={key}').content.startswith(b'%PDF-')
+            assert client.get(f'/reports/{key}/view?device_id={key}').text == key
+    assert [path.stem for path in render_calls] == ['Cutter01','Cutter02']
+
+
+def test_analysis_cache_and_source_versions_are_distinct_for_identical_input(database, tmp_path):
+    from app.services.report_analysis_service import ReportAnalysisService
+    from tests.analysis_fakes import model_analysis
+    db, _ = database
+    calls=[]
+    services=[]
+    for key in ('Cutter01','Cutter02'):
+        cfg=settings_for_device(Settings(project_root=tmp_path,llm_enabled=True),key)
+        service=ReportAnalysisService(cfg,MetadataRepository(db,device_id=key))
+        def analyze(kind,context,**kwargs):
+            calls.append(kind)
+            return model_analysis(kind,context,**kwargs)
+        service.llm.analyze_context=analyze
+        services.append(service)
+        assert not service._analyze(report_type='workshop',report_date=DAY,context={'facts':[]},force=False,publish_latest=True).cached
+    assert len(calls)==2
+    for service in services:
+        assert service._analyze(report_type='workshop',report_date=DAY,context={'facts':[]},force=False,publish_latest=True).cached
+    assert len(calls)==2
+    with db.connect() as connection:
+        assert {row[0] for row in connection.execute('SELECT display_scope FROM report_analyses')}=={'Cutter01','Cutter02'}
+
+
+def test_pipeline_rejects_a_job_owned_by_another_device_before_query(database, tmp_path):
+    db, _ = database
+    cfg = settings_for_device(Settings(project_root=tmp_path), 'Cutter01')
+    pipeline = ReportPipeline(cfg, MetadataRepository(db, device_id='Cutter01'))
+    with pytest.raises(ValueError, match='执行设备不一致'):
+        pipeline.run({'device_id': 'Cutter02', 'report_id': 'wrong-device'})

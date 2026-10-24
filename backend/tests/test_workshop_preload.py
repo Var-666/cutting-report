@@ -19,7 +19,7 @@ def service(tmp_path):
 
 
 def test_workshop_warmup_and_report_generation_share_query_without_confirming(service, tmp_path, monkeypatch):
-    repo = WorkshopRepository(tmp_path / "metadata.db")
+    repo = WorkshopRepository(tmp_path / "metadata.db", scope_machine_no='Cutter01')
     repo.initialize()
     admin = repo.bootstrap_admin(username="testadmin", display_name="测试管理员",
                                  password="test-only-password", now="2026-09-03T08:00:00+08:00")
@@ -27,6 +27,9 @@ def test_workshop_warmup_and_report_generation_share_query_without_confirming(se
     app.include_router(router)
     app.state.workshop = repo
     app.state.query_service = service
+    app.state.devices = {'Cutter01': SimpleNamespace(
+        settings=service.settings, workshop=app.state.workshop,
+        query_service=getattr(app.state, 'query_service', None))}
     app.dependency_overrides[require_user] = lambda: admin
 
     @app.middleware("http")
@@ -43,17 +46,17 @@ def test_workshop_warmup_and_report_generation_share_query_without_confirming(se
 
     monkeypatch.setattr(service, "fetch_report_data", spy)
     with TestClient(app) as client:
-        query = {"report_date": "2026-09-03", "warmup": "true"}
-        response = client.get("/api/v1/workshop/tasks", params=query)
+        query = {"report_date": "2026-09-03", "warmup": "true", "device_id": "Cutter01"}
+        response = client.get('/api/v1/workshop/tasks?device_id=Cutter01', params=query)
         assert response.status_code == 200
         assert response.json()["data"]["report"] is None
         assert repo.get_daily_report("2026-09-03") is None
         assert len(calls) == 1
-        response = client.post("/api/v1/workshop/reports", json={"report_date": "2026-09-03"})
+        response = client.post('/api/v1/workshop/reports?device_id=Cutter01', json={"report_date": "2026-09-03"})
         assert response.status_code == 200
         assert response.json()["data"]["item_count"] > 0
         assert len(calls) == 1
-        response = client.get("/api/v1/workshop/tasks", params=query)
+        response = client.get('/api/v1/workshop/tasks?device_id=Cutter01', params=query)
         data = response.json()["data"]
         assert len(calls) == 1
         assert data["total"] > 0
@@ -74,7 +77,7 @@ def test_workshop_warmup_and_report_generation_share_query_without_confirming(se
             user=worker,
             now="2026-09-03T09:05:00+08:00",
         )
-        response = client.get("/api/v1/workshop/tasks", params=query)
+        response = client.get('/api/v1/workshop/tasks?device_id=Cutter01', params=query)
         worker_summary = response.json()["data"]["worker_summaries"]
         assert worker_summary[0]["company_no"] == "C0018"
         assert worker_summary[0]["worker_name"] == "张三"

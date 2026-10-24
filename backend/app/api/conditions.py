@@ -15,7 +15,7 @@ router.dependencies.append(Depends(device_state))
 @router.get("/{dataset}/schema")
 def condition_schema(dataset: str, request: Request):
     try:
-        data = schema_for(dataset, device_settings(request, settings))
+        data = schema_for(dataset, device_settings(request))
     except ConditionError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from None
     return {"success": True, "data": data, "request_id": request.state.request_id}

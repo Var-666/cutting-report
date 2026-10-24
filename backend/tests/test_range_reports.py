@@ -36,7 +36,7 @@ def _pipeline(tmp_path: Path) -> tuple[Settings, MetadataRepository, ReportPipel
         app_version="test",
     )
     settings.ensure_runtime_dirs()
-    metadata = MetadataRepository(settings.metadata_db_path)
+    metadata = MetadataRepository(settings.metadata_db_path, device_id='Cutter01')
     metadata.initialize()
     pipeline = ReportPipeline(settings, metadata)
     pipeline.analysis_service.llm.analyze_context = model_analysis
@@ -109,6 +109,9 @@ def test_workshop_top_lengths_use_filtered_rows_beyond_the_visible_page() -> Non
             )
         )),
     )
+    request.query_params = {'device_id': 'Cutter01'}
+    request.app.state.settings = Settings()
+    request.app.state.devices = {'Cutter01': request.app.state}
 
     data = list_range_tasks(
         request, date(2026, 8, 18), date(2026, 8, 18),
@@ -148,6 +151,9 @@ def test_equipment_analysis_reports_long_range_as_validation_error(tmp_path: Pat
             )
         ),
     )
+    request.query_params = {'device_id': 'Cutter01'}
+    request.app.state.settings = Settings()
+    request.app.state.devices = {'Cutter01': request.app.state}
 
     with pytest.raises(HTTPException) as caught:
         analyze_report(
@@ -182,6 +188,9 @@ def test_analysis_api_returns_503_without_a_model_result(
             )
         ),
     )
+    request.query_params = {'device_id': 'Cutter01'}
+    request.app.state.settings = Settings()
+    request.app.state.devices = {'Cutter01': request.app.state}
 
     with pytest.raises(HTTPException) as caught:
         analyze_report(
@@ -211,6 +220,9 @@ def test_analysis_version_check_reads_only_sqlite_metadata() -> None:
         state=SimpleNamespace(request_id="analysis-version"),
         app=SimpleNamespace(state=SimpleNamespace(metadata=Metadata())),
     )
+    request.query_params = {'device_id': 'Cutter01'}
+    request.app.state.settings = Settings()
+    request.app.state.devices = {'Cutter01': request.app.state}
 
     result = get_analysis_version("leadership", date(2026, 9, 29), request)
 
@@ -237,6 +249,9 @@ def test_analysis_rejects_a_stale_visible_report_version(
             )
         ),
     )
+    request.query_params = {'device_id': 'Cutter01'}
+    request.app.state.settings = Settings()
+    request.app.state.devices = {'Cutter01': request.app.state}
 
     with pytest.raises(HTTPException) as caught:
         analyze_report(
@@ -281,6 +296,9 @@ def test_page_analysis_uses_the_selected_range(
             )
         ),
     )
+    request.query_params = {'device_id': 'Cutter01'}
+    request.app.state.settings = Settings()
+    request.app.state.devices = {'Cutter01': request.app.state}
 
     response = analyze_report(
         AnalysisRequest(
@@ -313,6 +331,9 @@ def test_workshop_page_version_matches_analysis_for_same_day_and_range(
             )
         ),
     )
+    request.query_params = {'device_id': 'Cutter01'}
+    request.app.state.settings = Settings()
+    request.app.state.devices = {'Cutter01': request.app.state}
     start_date = date(2026, 8, 18)
     page = list_range_tasks(
         request,
@@ -353,6 +374,9 @@ def test_leadership_page_versions_cover_both_analysis_tables(tmp_path: Path) -> 
             )
         ),
     )
+    request.query_params = {'device_id': 'Cutter01'}
+    request.app.state.settings = Settings()
+    request.app.state.devices = {'Cutter01': request.app.state}
     page = get_leadership_report(
         request,
         report_month="2026-08",

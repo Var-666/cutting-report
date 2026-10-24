@@ -60,7 +60,7 @@ class CustomReportService:
         parameters: dict[str, Any],
     ) -> tuple[str, tuple[Any, ...]]:
         validated = self.validator.validate(sql_text)
-        if self.settings.device_id != "Cutter01" and "machine_no" not in PARAMETER_PATTERN.findall(validated.formatted_sql):
+        if "machine_no" not in PARAMETER_PATTERN.findall(validated.formatted_sql):
             raise ValueError("自定义 SQL 未声明 :machine_no 设备参数，不能用于当前设备")
         available = {
             "report_date": report_date,
