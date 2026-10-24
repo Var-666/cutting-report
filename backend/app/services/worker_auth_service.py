@@ -126,19 +126,30 @@ class WorkerAuthService:
         self._cache_session_check(identity["external_id"], True, self.settings.worker_database_session_check_seconds)
         return identity
 
+    def cached_session_identity_available(self, external_id: str, *, force: bool = False) -> bool | None:
+        """Return a cached decision (including outage); None requires an HR query."""
+        self._ensure_enabled()
+        key = external_id.strip()
+        if not key:
+            return False
+        with self._session_cache_lock:
+            cached = self._session_checks.get(key)
+            if cached and monotonic() < cached[0] and (not force or cached[1] is None):
+                self._session_checks.move_to_end(key)
+                if cached[1] is None:
+                    raise WorkerAuthenticationUnavailableError("HR人员数据库暂时不可用")
+                return cached[1]
+        return None
+
     def session_identity_available(self, external_id: str, *, force: bool = False) -> bool:
         self._ensure_enabled()
         key = external_id.strip()
         if not key:
             return False
         with self._session_query_locks[hash(key) % len(self._session_query_locks)]:
-            with self._session_cache_lock:
-                cached = self._session_checks.get(key)
-                if cached and monotonic() < cached[0] and (not force or cached[1] is None):
-                    self._session_checks.move_to_end(key)
-                    if cached[1] is None:
-                        raise WorkerAuthenticationUnavailableError("HR人员数据库暂时不可用")
-                    return cached[1]
+            cached = self.cached_session_identity_available(key, force=force)
+            if cached is not None:
+                return cached
             try:
                 available = self.find_person(key) is not None
             except WorkerAuthenticationUnavailableError:

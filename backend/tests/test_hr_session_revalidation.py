@@ -6,6 +6,7 @@ from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
 from app.api.auth import require_user
+from app.api.workloads import authentication_requests
 from app.database.workshop import WorkshopRepository
 from app.services.request_cancellation import SqlRequestCancelled
 from app.services.worker_auth_service import WorkerAuthService
@@ -127,3 +128,25 @@ def test_successful_login_replaces_previous_disabled_cache():
     assert auth.authenticate("C0007", "password")["external_id"] == "9123"
     assert auth.session_identity_available("9123")
     assert len(source.calls) == 2
+
+
+@pytest.mark.parametrize(("cached", "expected"), [(True, 200), (False, 401), (None, 503)])
+def test_cached_hr_decisions_bypass_full_authentication_capacity(hr_sessions, cached, expected):
+    client, repository, source, service, _, first, second, _ = hr_sessions
+    service._cache_session_check("9123", cached, 60 if cached is not None else 15)
+    for _ in range(8):
+        assert authentication_requests._slots.acquire(blocking=False)
+    try:
+        response = client.get("/protected")
+        assert response.status_code == expected
+        assert source.calls == []
+        if cached is None:
+            assert "Retry-After" not in response.headers
+            assert "X-Session-Expired" not in response.headers
+        if cached is False:
+            stamp = datetime.now(ZoneInfo("Asia/Shanghai")).isoformat()
+            assert repository.user_for_session(first, now=stamp) is None
+            assert repository.user_for_session(second, now=stamp) is None
+    finally:
+        for _ in range(8):
+            authentication_requests._slots.release()

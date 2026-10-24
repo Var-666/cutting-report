@@ -1,3 +1,4 @@
+import asyncio
 from contextvars import ContextVar
 from threading import BoundedSemaphore, Event
 from types import SimpleNamespace
@@ -88,7 +89,7 @@ def test_busy_analysis_pdf_and_queries_leave_default_threads_and_fast_routes_fre
     anyio.run(exercise)
 
 
-@pytest.mark.parametrize("error", [ValueError("failed"), HTTPException(409, "conflict"), SqlRequestCancelled("cancelled")])
+@pytest.mark.parametrize("error", [ValueError("failed"), HTTPException(409, "conflict"), TimeoutError("external timeout"), SqlRequestCancelled("cancelled")])
 def test_isolation_preserves_context_and_exceptions_and_releases_slots(error):
     workload = workloads.RequestWorkload(1, "测试")
     context = ContextVar("workload-test", default=None)
@@ -122,7 +123,10 @@ def test_slow_hr_dependency_does_not_borrow_default_thread_tokens(monkeypatch):
         return True
 
     monkeypatch.setattr(app.state, "workshop", SimpleNamespace(user_for_session=lambda *_, **__: user), raising=False)
-    monkeypatch.setattr(app.state, "worker_auth", SimpleNamespace(session_identity_available=revalidate), raising=False)
+    monkeypatch.setattr(app.state, "worker_auth", SimpleNamespace(
+        cached_session_identity_available=lambda *_, **__: None,
+        session_identity_available=revalidate,
+    ), raising=False)
     monkeypatch.setattr(app.state, "worker", SimpleNamespace(status=lambda: {"report_alive": True}), raising=False)
     monkeypatch.setattr(app.state, "devices", {}, raising=False)
 
@@ -176,5 +180,66 @@ def test_cancelling_request_keeps_capacity_until_sync_work_finishes():
             finally:
                 release.set()
         assert await workload.wrap(lambda: "recovered")() == "recovered"
+
+    anyio.run(exercise)
+
+
+def test_native_asyncio_cancellation_keeps_capacity_until_worker_finishes():
+    workload = workloads.RequestWorkload(1, "测试")
+    entered, release, finished = Event(), Event(), Event()
+
+    def blocking():
+        entered.set()
+        try:
+            assert release.wait(5)
+        finally:
+            finished.set()
+
+    async def exercise():
+        request = asyncio.create_task(workload.run_sync(blocking))
+        try:
+            with anyio.fail_after(2):
+                while not entered.is_set():
+                    await anyio.sleep(0.01)
+            request.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await request
+            with pytest.raises(HTTPException) as caught:
+                await workload.run_sync(lambda: None)
+            assert caught.value.status_code == 503
+            assert not finished.is_set()
+        finally:
+            release.set()
+        with anyio.fail_after(2):
+            while not workload._slots.acquire(blocking=False):
+                await anyio.sleep(0.01)
+        workload._slots.release()
+        assert await workload.run_sync(lambda: "recovered") == "recovered"
+        assert finished.is_set()
+
+    anyio.run(exercise)
+
+
+def test_cancelled_dispatch_releases_capacity_and_never_runs_later():
+    workload = workloads.RequestWorkload(1, "测试")
+    executed = Event()
+
+    async def exercise():
+        # Occupy only the dispatch limiter so the operation has not started yet.
+        await workload._threads.acquire()
+        try:
+            request = asyncio.create_task(workload.run_sync(executed.set))
+            with anyio.fail_after(2):
+                while workload._threads.statistics().tasks_waiting == 0:
+                    await anyio.sleep(0.01)
+            request.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await request
+            assert workload._slots.acquire(blocking=False)
+            workload._slots.release()
+        finally:
+            workload._threads.release()
+        assert await workload.run_sync(lambda: "recovered") == "recovered"
+        assert not executed.is_set()
 
     anyio.run(exercise)

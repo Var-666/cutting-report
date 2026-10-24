@@ -1,4 +1,8 @@
+from threading import BoundedSemaphore
+
 from fastapi.testclient import TestClient
+
+from app.api.workloads import authentication_requests
 
 from app.main import app
 
@@ -34,6 +38,9 @@ class _HrDirectory:
         self.find_calls = []
         self.auth_calls = []
         self.session_calls = []
+
+    def cached_session_identity_available(self, external_id, *, force=False):
+        return None
 
     def session_identity_available(self, external_id, *, force=False):
         self.session_calls.append((external_id, force))
@@ -112,6 +119,8 @@ def test_wrong_current_password_cannot_grant_admin(monkeypatch) -> None:
 
 
 def test_hr_admin_password_is_verified_against_hr_before_grant(monkeypatch) -> None:
+    # Dependency HR revalidation must release its slot before endpoint reauthentication.
+    monkeypatch.setattr(authentication_requests, "_slots", BoundedSemaphore(1))
     current = {
         **_local_admin(),
         "user_id": "usr_current_hr_admin",

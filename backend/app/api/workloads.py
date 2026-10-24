@@ -1,7 +1,7 @@
 """Bound blocking HTTP work without borrowing FastAPI's default thread tokens."""
-from functools import partial, wraps
+from functools import wraps
 from inspect import signature
-from threading import BoundedSemaphore
+from threading import BoundedSemaphore, Lock
 from typing import Any, Callable
 
 from anyio import CapacityLimiter, to_thread
@@ -22,12 +22,28 @@ class RequestWorkload:
                 detail=f"{self.label}请求繁忙，请稍后重试。",
                 headers={"Retry-After": "1"},
             )
+        pending = True
+        dispatch_lock = Lock()
+
+        def execute() -> Any:
+            nonlocal pending
+            with dispatch_lock:
+                if not pending:
+                    return None
+                pending = False
+            try:
+                return operation(*args, **kwargs)
+            finally:
+                # Native asyncio cancellation can abandon the await, not the thread.
+                self._slots.release()
+
         try:
-            return await to_thread.run_sync(
-                partial(operation, *args, **kwargs), limiter=self._threads,
-            )
+            return await to_thread.run_sync(execute, limiter=self._threads)
         finally:
-            self._slots.release()
+            with dispatch_lock:
+                if pending:
+                    pending = False
+                    self._slots.release()
 
     def wrap(self, endpoint: Callable[..., Any]) -> Callable[..., Any]:
         @wraps(endpoint)

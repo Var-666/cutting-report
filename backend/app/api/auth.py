@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field, SecretStr, field_validator
+from starlette.concurrency import run_in_threadpool
 
 from app.api.workloads import authentication_requests
 from app.config import settings
@@ -102,24 +103,28 @@ def _set_session_cookie(response: Response, token: str) -> None:
     )
 
 
-@authentication_requests.wrap
-def optional_user(
+async def optional_user(
     request: Request,
     session_token: str | None = Cookie(default=None, alias=SESSION_COOKIE),
 ) -> dict | None:
-    user = request.app.state.workshop.user_for_session(
-        session_token, now=_now().isoformat(timespec="seconds")
+    user = await run_in_threadpool(
+        request.app.state.workshop.user_for_session,
+        session_token, now=_now().isoformat(timespec="seconds"),
     )
     if user is not None and user.get("auth_source") == "hr_database":
         try:
-            available = request.app.state.worker_auth.session_identity_available(
-                user.get("external_id") or "",
-                force=request.method not in {"GET", "HEAD", "OPTIONS"},
-            )
+            service = request.app.state.worker_auth
+            external_id = user.get("external_id") or ""
+            force = request.method not in {"GET", "HEAD", "OPTIONS"}
+            available = service.cached_session_identity_available(external_id, force=force)
+            if available is None:
+                available = await authentication_requests.run_sync(
+                    service.session_identity_available, external_id, force=force,
+                )
         except WorkerAuthenticationUnavailableError as exc:
             raise HTTPException(status_code=503, detail="HR人员数据库暂时不可用，请稍后重试") from exc
         if not available:
-            request.app.state.workshop.revoke_user_sessions(user["user_id"])
+            await run_in_threadpool(request.app.state.workshop.revoke_user_sessions, user["user_id"])
             user = None
     if user is not None and not sql_request_cancellations.set_owner(
         current_request_id.get(), cancellation_owner(user.get("user_id"), session_token),
@@ -192,7 +197,7 @@ def auth_status(request: Request, user: dict | None = Depends(optional_user)) ->
     )
 
 
-@router.post("/bootstrap")
+@authentication_requests.route(router.post("/bootstrap"))
 def bootstrap(payload: BootstrapRequest, request: Request, response: Response) -> dict:
     now = _now()
     try:
@@ -294,7 +299,7 @@ def list_users(
     return _envelope(request, {"items": request.app.state.workshop.list_users()})
 
 
-@router.post("/users", status_code=201)
+@authentication_requests.route(router.post("/users", status_code=201))
 def create_user(
     payload: UserCreateRequest,
     request: Request,

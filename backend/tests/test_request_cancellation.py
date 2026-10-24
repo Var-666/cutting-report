@@ -120,11 +120,11 @@ def test_http_request_id_reaches_sync_query_thread(monkeypatch) -> None:
             return SimpleNamespace(records=[])
 
     query_service = _QueryService()
-    monkeypatch.setattr(app.state, "query_service", query_service, raising=False)
+    monkeypatch.setattr(app.state, "devices", {"Cutter01": SimpleNamespace(query_service=query_service)}, raising=False)
     app.dependency_overrides[require_admin] = lambda: {"role": "admin"}
     try:
         response = TestClient(app).post(
-            "/api/v1/database/preview",
+            "/api/v1/database/preview?device_id=Cutter01",
             headers={"X-Request-ID": "test_context_propagation"},
             json={
                 "dataset": "equipment",
@@ -222,7 +222,7 @@ def test_real_http_auth_binds_cancel_to_user_and_session(monkeypatch, foreign_se
                 return SimpleNamespace(records=[])
 
     monkeypatch.setattr(app.state, "workshop", Workshop(), raising=False)
-    monkeypatch.setattr(app.state, "query_service", Query(), raising=False)
+    monkeypatch.setattr(app.state, "devices", {"Cutter01": SimpleNamespace(query_service=Query())}, raising=False)
     own = TestClient(app)
     own.cookies.set("cutting_session", "user1-session")
     foreign = TestClient(app)
@@ -231,7 +231,7 @@ def test_real_http_auth_binds_cancel_to_user_and_session(monkeypatch, foreign_se
     duplicate.cookies.set("cutting_session", "user1-session")
     payload = {"dataset": "equipment", "report_date": "2026-09-21", "limit": 10}
     with ThreadPoolExecutor(max_workers=1) as pool:
-        pending = pool.submit(own.post, "/api/v1/database/preview",
+        pending = pool.submit(own.post, "/api/v1/database/preview?device_id=Cutter01",
                               headers={"X-Request-ID": "owned-query"}, json=payload)
         try:
             assert started.wait(1)
@@ -239,7 +239,7 @@ def test_real_http_auth_binds_cancel_to_user_and_session(monkeypatch, foreign_se
             assert denied.status_code == 200  # Do not reveal another session's active requests.
             assert denied.json()["data"] == {"accepted": True}
             assert cursor.cancel_calls == 0
-            collision = duplicate.post("/api/v1/database/preview",
+            collision = duplicate.post("/api/v1/database/preview?device_id=Cutter01",
                                        headers={"X-Request-ID": "owned-query"}, json=payload)
             assert collision.status_code == 409
             accepted = own.post("/api/v1/requests/owned-query/cancel")
