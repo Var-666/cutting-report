@@ -1,4 +1,4 @@
-"""Build a clean Windows/Docker source ZIP from the current working tree.
+"""Build a clean Linux/Docker source ZIP from the current working tree.
 
 Includes uncommitted feature files deliberately, but never runtime data or the
 working-tree .env. When .env.deploy exists, it is added to the ZIP as .env.
@@ -20,10 +20,10 @@ ROOT = Path(__file__).resolve().parents[1]
 DEPLOYMENT_ENV_FILE = ".env.deploy"
 FILES = (
     "Dockerfile", "compose.yaml", "compose.offline.yaml", ".dockerignore", ".env.example", "README.md",
-    "README-DOCKER.md", "START_DOCKER.bat", "backend/requirements.txt",
+    "README-DOCKER.md", "backend/requirements.txt",
     "backend/requirements-sqlserver.txt", "backend/pyproject.toml",
     "frontend/package.json", "frontend/package-lock.json", "frontend/index.html",
-    "frontend/vite.config.js", "frontend/uno.config.js", "docs/deployment/WINDOWS部署说明.md",
+    "frontend/vite.config.js", "frontend/uno.config.js",
     "docs/deployment/KYLIN原生部署说明.md",
     "docs/deployment/OFFLINE_DOCKER部署说明.md",
     "docs/deployment/WEB_WORKER进程隔离升级说明.md",
@@ -31,8 +31,7 @@ FILES = (
     "docs/project/changelog.md",
     "scripts/README.md", "scripts/check_energy.py",
     "scripts/build_docker_package.py", "scripts/prepare_alarm_monitor.py",
-    "scripts/windows/install_windows.bat",
-    "scripts/windows/start_windows.bat", "scripts/linux/install_kylin.sh",
+    "scripts/linux/install_kylin.sh",
     "scripts/linux/start_kylin.sh", "scripts/linux/start_offline_docker.sh",
 )
 TREES = (
@@ -63,8 +62,6 @@ def collect_files(root: Path) -> dict[str, bytes]:
         if path.is_symlink() or not path.resolve().is_relative_to(root.resolve()):
             raise ValueError(f"Cannot package symlink: {relative}")
         content = path.read_bytes()
-        if path.suffix == ".bat":
-            content = content.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
         payload[relative.as_posix()] = content
     required = (
         "backend/app/worker.py", "backend/app/database/coordination.py", "backend/app/api/workloads.py",

@@ -39,6 +39,13 @@ def test_source_package_keeps_soybean_build_configuration_and_license(tmp_path):
         "frontend/src/views/CuttingDispatchView.vue",
         "frontend/src/vendor/soybean-admin/LICENSE",
     )
+    removed = (
+        "START_DOCKER.bat", "scripts/windows/install_windows.bat", "scripts/windows/start_windows.bat",
+        "docs/deployment/WINDOWS部署说明.md",
+    )
+    assert not set(removed).intersection(packager.FILES)
+    for name in packager.FILES:
+        assert (ROOT / name).is_file(), name
     for name in (*packager.FILES, *required):
         path = tmp_path / name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -49,6 +56,9 @@ def test_source_package_keeps_soybean_build_configuration_and_license(tmp_path):
         path.write_text(f"{name} license")
 
     payload = packager.collect_files(tmp_path)
+    assert not set(removed).intersection(payload)
+    assert payload["scripts/linux/start_kylin.sh"] == b"fixture"
+    assert payload["scripts/linux/start_offline_docker.sh"] == b"fixture"
     assert payload["frontend/uno.config.js"] == b"fixture"
     assert payload["frontend/src/vendor/soybean-admin/LICENSE"] == b"fixture"
     assert payload["frontend/dist/licenses/soybean-admin/LICENSE"] == b"fixture"

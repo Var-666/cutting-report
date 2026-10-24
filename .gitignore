@@ -22,4 +22,5 @@ tmp/
 *.pdf
 *.zip
 ~$*.docx
-packages/*.tar.gz
+/docs/
+/packages/

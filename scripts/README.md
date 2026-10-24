@@ -1,33 +1,26 @@
 # 脚本目录
 
-Windows Docker 部署优先使用根目录 `START_DOCKER.bat`，操作说明见 `README-DOCKER.md`。
-麒麟 V10 可使用 `scripts/linux/` 下的脚本进行原生 Python 部署，不受 Docker Hub 拉取失败影响。
-原生部署需要独立 Web/Worker：分别运行启动脚本及同一脚本的 `worker` 参数。两个进程应注册为不同系统服务；升级、健康和回滚见 `docs/deployment/WEB_WORKER进程隔离升级说明.md`。
-打包当前程序（包含未提交的新功能文件，不包含运行数据）：
+Linux/Docker 部署见 [Docker 说明](../README-DOCKER.md)，麒麟原生部署见 [安装说明](../docs/deployment/KYLIN原生部署说明.md)。原生环境分别运行启动脚本及同一脚本的 `worker` 参数，将两个进程注册为独立服务；升级、健康和回滚见 [Web/Worker 说明](../docs/deployment/WEB_WORKER进程隔离升级说明.md)。
 
-```sh
-python scripts/build_docker_package.py --name cutting-report-windows-docker-YYYYMMDD
+## 生成源码部署包
+
+```bash
+python3 scripts/build_docker_package.py --name cutting-report-linux-docker-YYYYMMDD
 ```
 
-脚本会先构建前端，再生成带 SHA-256 文件清单的源码 ZIP；不生成离线 Docker 镜像。
+脚本先构建前端，再按清单收录当前工作区文件，生成含 SHA-256 清单的 ZIP；不生成离线镜像，也不包含运行数据库和日志。
 
-根目录存在 `.env.deploy` 时，打包脚本会将它以 `.env` 的名称写入部署包。`.env.deploy` 已被 Git 忽略，不会进入代码仓库。由于部署包会含有数据库密码和接口密钥，应将压缩包按敏感文件保管。
+根目录存在 `.env.deploy` 时会以 `.env` 名称写入部署包。该文件不提交 Git；含部署配置的 ZIP 可能包含密码和密钥，需按敏感文件保管。已有部署包不覆盖。
 
 ```text
 scripts/
-├── windows/
-│   ├── install_windows.bat  创建虚拟环境并安装依赖
-│   └── start_windows.bat    使用 Uvicorn 启动本地服务
+├── build_docker_package.py       构建前端并打包源码
+├── check_energy.py               只读能管联调
+├── prepare_alarm_monitor.py      告警监控配置检查与维护
 └── linux/
-    ├── install_kylin.sh     在麒麟创建虚拟环境并安装依赖
-    ├── start_kylin.sh       按 .env 的地址和端口启动服务
-    └── start_offline_docker.sh  使用离线镜像和当前目录代码启动服务
+    ├── install_kylin.sh          创建虚拟环境并安装依赖
+    ├── start_kylin.sh            启动 Web；worker 参数启动后台
+    └── start_offline_docker.sh   使用离线镜像和当前程序启动
 ```
 
-两个批处理脚本会自动从自身目录返回项目根目录，因此必须保留当前相对目录结构。
-
-Docker部署不需要运行这些脚本，直接在项目根目录使用：
-
-```cmd
-docker compose up -d --build
-```
+Shell 脚本会从自身目录定位项目根目录，部署时保留相对目录结构。常规 Docker 构建直接在项目根目录执行 `docker compose up -d --build`。

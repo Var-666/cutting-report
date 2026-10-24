@@ -22,7 +22,7 @@ docker compose logs -f app worker
 
 ## 本地开发
 
-需要 Python 3.12+、Node.js 20.19+。以下为 macOS/Linux 命令；Windows 和麒麟安装步骤见下方部署文档。
+需要 Python 3.12+、Node.js 20.19+。以下为 macOS/Linux 命令；麒麟安装步骤见下方部署文档。
 
 ```bash
 cp .env.example .env
@@ -58,7 +58,6 @@ npm run dev
 生产式本地运行先在 `frontend/` 执行 `npm run build`，再启动一个 Web 和一个 Worker；Web 去掉 `--reload`。前端构建会同步报告所需 ECharts 资源。正式环境将两个进程注册为独立服务。
 
 - [Docker 部署与更新](README-DOCKER.md)
-- [Windows 部署](docs/deployment/WINDOWS部署说明.md)
 - [麒麟原生部署](docs/deployment/KYLIN原生部署说明.md)
 - [Web/Worker 升级与回滚](docs/deployment/WEB_WORKER进程隔离升级说明.md)
 - [多设备数据迁移](docs/project/multi-device-isolation.md)
