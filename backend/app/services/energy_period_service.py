@@ -278,7 +278,9 @@ class EnergyPeriodService:
                 return to_primitive(self._failed(report_date, cached, "本次返回的有效时段减少，已保留原记录，请核对平台数据。"))
             report.update(updated_at=now.isoformat(timespec="seconds"), saved=True, sync_ok=True)
             report = to_primitive(report)
-            self.repository.save_day(source_key, report)
+            if not self.repository.save_day(source_key, report, previous=cached):
+                latest = self.repository.get_day(source_key, report_date.isoformat())
+                return {**latest, **self.metadata(), "from_cache": True}
             return {**report, **self.metadata(), "from_cache": False}
 
     def calculate_day(self, report_date, readings):
@@ -644,8 +646,6 @@ class EnergyPeriodService:
                     sync_ok=True,
                     is_today=stamp == today,
                 )
-                self.repository.save_day(
-                    self.day_source_key(stamp), to_primitive(report)
-                )
-                saved_count += 1
+                if self.repository.save_day(self.day_source_key(stamp), to_primitive(report), previous=cached):
+                    saved_count += 1
             return saved_count

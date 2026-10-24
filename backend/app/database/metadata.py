@@ -5,7 +5,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from app.database.sqlite import SQLiteDatabase, SQLiteRepository
+from app.database.sqlite import SQLiteDatabase, SQLiteRepository, execution_owner, require_worker_recovery
 from app.database.device_migrations import rebuild_table
 
 
@@ -140,6 +140,33 @@ class MetadataRepository(SQLiteRepository):
         rebuild_table(self.database, 'analysis_source_versions', lambda sql: sql.replace(
             'PRIMARY KEY(report_type, report_date)', 'PRIMARY KEY(report_type, report_date, device_id)'))
 
+        with self.connect() as connection:
+            columns = {row['name'] for row in connection.execute('PRAGMA table_info(report_jobs)')}
+            if 'execution_owner' not in columns:
+                connection.execute('ALTER TABLE report_jobs ADD COLUMN execution_owner TEXT')
+            connection.execute("""CREATE TABLE IF NOT EXISTS analysis_generations (
+                cache_key TEXT PRIMARY KEY, attempt_id TEXT NOT NULL, status TEXT NOT NULL,
+                updated_at REAL NOT NULL, error_type TEXT, error_message TEXT
+            )""")
+
+    def generation(self, cache_key: str) -> dict | None:
+        with self.connect() as connection:
+            row = connection.execute("SELECT * FROM analysis_generations WHERE cache_key=?", (cache_key,)).fetchone()
+            return dict(row) if row else None
+
+    def start_generation(self, cache_key: str, attempt_id: str, now: float) -> None:
+        with self.connect() as connection:
+            connection.execute("""INSERT INTO analysis_generations VALUES (?, ?, 'running', ?, NULL, NULL)
+                ON CONFLICT(cache_key) DO UPDATE SET attempt_id=excluded.attempt_id,
+                    status='running', updated_at=excluded.updated_at, error_type=NULL, error_message=NULL""",
+                (cache_key, attempt_id, now))
+
+    def finish_generation(self, cache_key: str, attempt_id: str, status: str, now: float,
+                          error_type: str | None = None, error_message: str | None = None) -> None:
+        with self.connect() as connection:
+            connection.execute("""UPDATE analysis_generations SET status=?, updated_at=?, error_type=?, error_message=?
+                WHERE cache_key=? AND attempt_id=?""", (status, now, error_type, error_message, cache_key, attempt_id))
+
     def queue_observation(self) -> dict:
         with self.connect() as connection:
             row = connection.execute("""
@@ -154,10 +181,12 @@ class MetadataRepository(SQLiteRepository):
 
     def recover_interrupted_jobs(self) -> int:
         with self.connect() as connection:
+            self.begin_immediate(connection)
+            require_worker_recovery(connection)
             cursor = connection.execute(
                 """
                 UPDATE report_jobs
-                SET status = 'pending', stage_message = '服务已恢复，等待重新生成', started_at = NULL
+                SET status = 'pending', stage_message = '服务已恢复，等待重新生成', started_at = NULL, execution_owner = NULL
                 WHERE status IN ('querying', 'calculating', 'analyzing', 'rendering')
                 """
             )
@@ -222,14 +251,14 @@ class MetadataRepository(SQLiteRepository):
             updated = connection.execute(
                 """
                 UPDATE report_jobs
-                SET status = 'querying', stage_message = '正在查询生产数据', started_at = ?
+                SET status = 'querying', stage_message = '正在查询生产数据', started_at = ?, execution_owner = ?
                 WHERE report_id = ? AND status = 'pending'
                 """,
-                (started_at, row["report_id"]),
+                (started_at, execution_owner(), row["report_id"]),
             )
             if updated.rowcount != 1:
                 return None
-            return dict(row)
+            return {**dict(row), "execution_owner": execution_owner()}
 
     def update_status(
         self,

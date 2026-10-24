@@ -9,7 +9,8 @@ from contextlib import contextmanager, nullcontext
 from datetime import date, datetime
 from decimal import Decimal
 from functools import wraps
-from time import monotonic
+from time import monotonic, time
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -392,6 +393,66 @@ class ReportAnalysisService:
         self._generation_locks: dict[str, dict] = {}
 
     @contextmanager
+    def _process_generation(self, cache_key: str, priority):
+        from app.services.process_lock import FileLock
+        lock = FileLock(self.settings.metadata_db_path.parent / ".coordination" / f"analysis-{cache_key}.lock")
+        priority_path = lock.path.with_suffix(".foreground.lock")
+        foreground_lock = FileLock(priority_path) if not is_background_llm_work() else None
+
+        class SharedPriority:
+            def is_set(self):
+                if priority.is_set():
+                    return True
+                probe = FileLock(priority_path)
+                if probe.acquire(blocking=False):
+                    probe.release()
+                    return False
+                return True
+
+        deadline = monotonic() + analysis_queue_remaining(self.settings)
+        waited = False
+        try:
+            if foreground_lock:
+                foreground_lock.acquire(blocking=False)
+            with analysis_stage("same_version_wait"):
+                while not lock.acquire(blocking=False):
+                    waited = True
+                    if foreground_lock and foreground_lock.handle is None:
+                        foreground_lock.acquire(blocking=False)
+                    ensure_time_remaining()
+                    if sql_request_cancellations.is_cancelled(current_request_id.get()):
+                        raise SqlRequestCancelled("智能分析请求已取消")
+                    if monotonic() >= deadline:
+                        raise AnalysisUnavailableError("智能分析排队超时，请稍后重试。")
+                    threading.Event().wait(0.05)
+            previous = self.metadata.generation(cache_key) if waited else None
+            if previous and previous["status"] == "failed":
+                error_type = {"AnalysisUnavailableError": AnalysisUnavailableError,
+                              "ReportOperationTimeout": ReportOperationTimeout}[previous["error_type"]]
+                raise error_type(previous["error_message"])
+            shared = bool(previous and previous["status"] == "completed")
+            attempt = uuid4().hex
+            if not shared:
+                self.metadata.start_generation(cache_key, attempt, time())
+            status, error_type, message = "completed", None, None
+            try:
+                with generation_priority(SharedPriority()):
+                    yield shared
+            except (AnalysisUnavailableError, ReportOperationTimeout) as exc:
+                status, error_type, message = "failed", type(exc).__name__, str(exc)
+                raise
+            except BaseException:
+                status = "interrupted"
+                raise
+            finally:
+                if not shared:
+                    self.metadata.finish_generation(cache_key, attempt, status, time(), error_type, message)
+        finally:
+            lock.release()
+            if foreground_lock:
+                foreground_lock.release()
+
+    @contextmanager
     def _single_generation(self, cache_key: str):
         """Coalesce concurrent generation for one version inside this process."""
         with self._generation_guard:
@@ -431,9 +492,9 @@ class ReportAnalysisService:
                 # Once they leave, a later explicit retry creates a fresh state.
                 error_type, message = state["error"]
                 raise error_type(message)
-            with generation_priority(state["priority"]):
+            with self._process_generation(cache_key, state["priority"]) as cross_process_wait:
                 try:
-                    yield was_inflight
+                    yield was_inflight or cross_process_wait
                 except (AnalysisUnavailableError, ReportOperationTimeout) as exc:
                     state["error"] = (type(exc), str(exc))
                     raise

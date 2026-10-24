@@ -1,5 +1,7 @@
 # Windows 内网部署说明
 
+进程隔离版本需独立启动 Web 与 Worker；首次升级、配置传播和回滚以 [Web/Worker 升级说明](WEB_WORKER进程隔离升级说明.md) 为准。原生启动脚本使用 `worker` 参数启动后台，分别注册为系统服务。
+
 推荐在已经安装 Docker 的 Windows 内网机上使用 Docker 部署。这样 Node.js、Python 和 SQL Server ODBC 依赖都由镜像统一管理。部署包同时包含原生 Python 启动脚本，作为 Docker 不可用时的备用方案。
 
 2026-09-01 版已加入统一设备能耗报表：同一页面包含当日任务能耗表和月度每日汇总表，
@@ -253,7 +255,7 @@ http://127.0.0.1:8000/api/v1/health
 .venv\Scripts\python.exe -m uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port 8000 --workers 1
 ```
 
-必须保持 `--workers 1`，因为当前系统使用本地 SQLite 保存管理员、会话、日报快照和工人确认记录。
+Web 保持 `--workers 1`，HTTP 请求取消仍属于一个 Web 进程；后台使用独立的 `scripts\windows\start_windows.bat worker` 服务，不能用增加 Uvicorn workers 代替。
 
 生产环境建议在 IIS/Nginx 前配置 HTTPS。启用 HTTPS 后将 `.env` 中的 `AUTH_COOKIE_SECURE` 改为 `true`。
 

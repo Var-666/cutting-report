@@ -12,6 +12,7 @@ from app.services.leadership_report_service import LeadershipReportService, _pre
 from app.services.report_analysis_service import ReportAnalysisService
 from app.services.llm_service import background_llm_work
 from app.workers.parallel_analysis import ParallelAnalysisTasks
+from app.workers.bounded_executor import ExecutionQueueFull
 
 
 logger = logging.getLogger(__name__)
@@ -25,26 +26,28 @@ class LeadershipRefreshWorker:
         settings: Settings,
         service: LeadershipReportService,
         analysis_service: ReportAnalysisService | None = None,
+        task_queue=None,
     ) -> None:
         self.settings = settings
         self.service = service
         self.analysis_service = analysis_service
+        self.task_queue = task_queue
         self.stop_event = threading.Event()
         self.wake_event = threading.Event()
         self._lock = threading.Lock()
         self._requests: dict[date, bool] = {}
         self._running: set[date] = set()
         self._analysis_pending: deque[date] = deque()
-        self._analysis_tasks = ParallelAnalysisTasks()
+        self._analysis_tasks = ParallelAnalysisTasks() if task_queue is None else None
         self._analysis_wake = threading.Event()
-        self.analysis_thread = threading.Thread(target=self._analysis_loop, name="leadership-analysis-worker", daemon=True)
+        self.analysis_thread = threading.Thread(target=self._analysis_loop, name="leadership-analysis-worker", daemon=True) if task_queue is None else None
         self._last_reconcile_date: date | None = None
         self._next_current_refresh = 0.0
         self.thread = threading.Thread(
             target=self._run_loop,
             name="leadership-refresh-worker",
             daemon=True,
-        )
+        ) if task_queue is None else None
 
     @property
     def enabled(self) -> bool:
@@ -84,6 +87,8 @@ class LeadershipRefreshWorker:
         if not self.enabled:
             return False
         month_start = report_month.replace(day=1)
+        if self.task_queue is not None:
+            return self.task_queue.request_refresh(self.settings.device_id, month_start.isoformat(), bootstrap=bootstrap)
         with self._lock:
             already_scheduled = month_start in self._requests or month_start in self._running
             if month_start in self._running:
@@ -96,6 +101,8 @@ class LeadershipRefreshWorker:
 
     def is_refreshing(self, report_month: date) -> bool:
         month_start = report_month.replace(day=1)
+        if self.task_queue is not None:
+            return self.task_queue.refresh_active(self.settings.device_id, month_start.isoformat())
         with self._lock:
             return month_start in self._requests or month_start in self._running
 
@@ -135,6 +142,9 @@ class LeadershipRefreshWorker:
             and self.settings.llm_enabled
             and report_month == self._now().date().replace(day=1)
         ):
+            if self.task_queue is not None:
+                self.task_queue.enqueue("analysis_leadership", self.settings.device_id, {"date": report_month.isoformat()})
+                return
             with self._lock:
                 self._analysis_pending.append(report_month)
             self._analysis_wake.set()
@@ -150,7 +160,14 @@ class LeadershipRefreshWorker:
                 report_month = self._analysis_pending.popleft()
                 if self._analysis_pending:
                     self._analysis_wake.set()
-            self._analysis_tasks.start(self._analyze, report_month)
+            try:
+                self._analysis_tasks.start(self._analyze, report_month)
+            except ExecutionQueueFull:
+                logger.warning("periodic leadership analysis capacity full; retaining pending task")
+                with self._lock:
+                    self._analysis_pending.appendleft(report_month)
+                self.stop_event.wait(1)
+                self._analysis_wake.set()
 
     def _analyze(self, report_month: date) -> None:
         self.analysis_service.analyze_leadership(

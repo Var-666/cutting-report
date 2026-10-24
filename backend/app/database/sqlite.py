@@ -2,8 +2,53 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
+from time import time
 from typing import Iterator
+
+
+class ExecutionLeaseLost(RuntimeError):
+    pass
+
+
+_execution: ContextVar[tuple | None] = ContextVar("sqlite_execution_lease", default=None)
+
+
+@contextmanager
+def execution_scope(path: Path, name: str, owner: str):
+    token = _execution.set((path.resolve(), name, owner))
+    try:
+        yield
+    finally:
+        _execution.reset(token)
+
+
+def execution_owner() -> str | None:
+    current = _execution.get()
+    return current[2] if current else None
+
+
+def require_execution_lease(connection: sqlite3.Connection, path: Path) -> None:
+    current = _execution.get()
+    if current is None or current[0] != path.resolve():
+        return
+    row = connection.execute(
+        "SELECT 1 FROM process_leases WHERE name=? AND owner=? AND expires_at>?",
+        (current[1], current[2], time()),
+    ).fetchone()
+    if row is None:
+        raise ExecutionLeaseLost("后台执行租约已失效，拒绝旧执行者读取或提交")
+
+
+def require_worker_recovery(connection: sqlite3.Connection) -> None:
+    if connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='process_leases'").fetchone() is None:
+        return
+    current = _execution.get()
+    if current is None or current[1] != 'worker' or connection.execute(
+        "SELECT 1 FROM process_leases WHERE name='worker' AND owner=? AND expires_at>?", (current[2], time())
+    ).fetchone() is None:
+        raise ExecutionLeaseLost("只有持有有效租约的 Worker 可以恢复后台运行态")
 
 
 class SQLiteDatabase:
@@ -26,7 +71,11 @@ class SQLiteDatabase:
         connection.execute("PRAGMA foreign_keys=ON")
         connection.execute(f"PRAGMA busy_timeout={self.timeout_seconds * 1000}")
         try:
+            require_execution_lease(connection, self.path)
             yield connection
+            # Writes hold SQLite's transaction lock through this check and commit.
+            if connection.in_transaction:
+                require_execution_lease(connection, self.path)
             connection.commit()
         except Exception:
             connection.rollback()

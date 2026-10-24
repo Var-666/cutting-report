@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from app.api.workloads import query_requests
 from app.api.devices import device_state, device_settings
 from app.api.auth import require_admin, require_user, require_worker
 from app.config import settings
@@ -152,7 +153,7 @@ def sort_workshop_records(records: list, sort_mode: Literal["manager", "worker"]
 router.dependencies.append(Depends(device_state))
 
 
-@router.get("/latest-date")
+@query_requests.route(router.get("/latest-date"))
 def latest_production_date(
     request: Request,
     on_or_before: date,
@@ -165,7 +166,7 @@ def latest_production_date(
     )
 
 
-@router.post("/reports")
+@query_requests.route(router.post("/reports"))
 def generate_daily_report(
     payload: ConfirmTaskRequest,
     request: Request,
@@ -191,7 +192,7 @@ def generate_daily_report(
     return _envelope(request, report)
 
 
-@router.get("/tasks")
+@query_requests.route(router.get("/tasks"))
 def list_tasks(
     request: Request,
     report_date: date,
@@ -269,7 +270,7 @@ def list_tasks(
     )
 
 
-@router.get("/range")
+@query_requests.route(router.get("/range"))
 def list_range_tasks(
     request: Request,
     start_date: date,

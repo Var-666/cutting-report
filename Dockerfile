@@ -39,6 +39,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     APP_ENV=production \
     APP_HOST=0.0.0.0 \
     APP_PORT=8000 \
+    PYTHONPATH=/app/backend \
     PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
 
 RUN apt-get update \

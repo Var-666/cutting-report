@@ -28,6 +28,7 @@ def test_allows_required_files(name):
 
 def test_source_package_keeps_soybean_build_configuration_and_license(tmp_path):
     required = (
+        "backend/app/worker.py", "backend/app/database/coordination.py", "backend/app/api/workloads.py",
         "frontend/dist/index.html", "vendor/echarts.min.js",
         "frontend/dist/licenses/soybean-admin/LICENSE",
         "backend/app/api/energy.py", "backend/app/database/energy.py",

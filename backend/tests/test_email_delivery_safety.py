@@ -158,11 +158,40 @@ def test_success_then_database_failure_is_not_automatically_resent(workflow, mon
     assert repository.delivery_for_report(report_id)["status"] == "sending"
     restarted = AutomationRepository(repository.database_path)
     restarted.initialize()
+    assert restarted.delivery_for_report(report_id)["status"] == "sending", "Web schema initialization must not disturb live SMTP"
+    restarted.recover_interrupted_deliveries()
     record = restarted.delivery_for_report(report_id)
     assert record["status"] == "unknown"
     assert record["message_id"]
     assert restarted.claim_delivery("2026-10-01T09:00:00+08:00") is None
     assert not restarted.retry_delivery(record["delivery_id"], now=STAMP)
+
+
+def test_only_new_worker_can_recover_unknown_smtp_and_old_owner_cannot_mark_sent(workflow):
+    from app.database.coordination import CoordinationRepository
+    from app.database.sqlite import ExecutionLeaseLost, execution_scope
+    repository, _, report_id = ready(workflow)
+    coordination = CoordinationRepository(repository.database)
+    coordination.initialize()
+    owner = coordination.acquire("worker", ttl=30)
+    with execution_scope(repository.database_path, "worker", owner):
+        delivery = repository.claim_delivery(STAMP)
+    # Web initialization neither resets sending nor allows recovery without a Worker lease.
+    repository.initialize()
+    assert repository.delivery_for_report(report_id)["status"] == "sending"
+    with pytest.raises(ExecutionLeaseLost):
+        repository.recover_interrupted_deliveries()
+    with repository.connect() as connection:
+        connection.execute("UPDATE process_leases SET expires_at=0")
+    replacement = coordination.acquire("worker", ttl=30)
+    with execution_scope(repository.database_path, "worker", replacement):
+        repository.recover_interrupted_deliveries()
+    assert repository.delivery_for_report(report_id)["status"] == "unknown"
+    assert repository.claim_delivery(STAMP) is None
+    assert not repository.retry_delivery(delivery["delivery_id"], now=STAMP)
+    with execution_scope(repository.database_path, "worker", owner), pytest.raises(ExecutionLeaseLost):
+        repository.mark_delivery_sent(delivery, message_id=delivery["message_id"], now=STAMP)
+    assert repository.delivery_for_report(report_id)["status"] == "unknown"
 
 
 @pytest.mark.parametrize("status", ["pending", "sending", "sent", "retry_wait", "unknown"])

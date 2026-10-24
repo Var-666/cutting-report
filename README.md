@@ -316,6 +316,12 @@ cd ..
   --port 8000
 ```
 
+另开一个终端启动后台进程；正式部署应注册为独立系统服务：
+
+```bash
+PYTHONPATH=backend ./.venv/bin/python -m app.worker
+```
+
 浏览器打开：
 
 ```text
@@ -324,7 +330,7 @@ http://127.0.0.1:8000
 
 ## Docker 一键部署
 
-项目提供多阶段 `Dockerfile` 和 `compose.yaml`：Node 阶段构建 Vue，Python 阶段安装后端依赖，最终镜像包含 Microsoft ODBC Driver 18。Compose 会强制使用生产模式；镜像使用非 root 用户、只读根文件系统、健康检查和日志轮转。容器内只启动一个 Uvicorn 进程，避免当前 SQLite 和报告后台线程被多进程重复使用。
+项目提供多阶段 `Dockerfile` 和 `compose.yaml`：Node 阶段构建 Vue，Python 阶段安装后端依赖，最终镜像包含 Microsoft ODBC Driver 18。Compose 会强制使用生产模式；镜像使用非 root 用户、只读根文件系统、健康检查和日志轮转。Compose 分别运行 `app`（一个 Uvicorn Web 进程）与 `worker`，共享原有数据卷，各自健康检查和重启。首次升级必须先停止旧单进程服务；详见 [Web/Worker 升级与回滚](docs/deployment/WEB_WORKER进程隔离升级说明.md)。
 
 首次部署：
 
@@ -338,7 +344,7 @@ docker compose up -d --build
 
 ```bash
 docker compose ps
-docker compose logs -f app
+docker compose logs -f app worker
 ```
 
 Docker 默认仅监听宿主机 `127.0.0.1:8088`，适合在前方配置 Nginx/IIS HTTPS 反向代理。只在受控内网临时直接访问时，才将 `.env` 的 `DOCKER_BIND_ADDRESS` 改为 `0.0.0.0`。容器内部服务端口仍为 `8000`。

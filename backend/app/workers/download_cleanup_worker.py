@@ -15,7 +15,7 @@ class DownloadCleanupWorker:
 
     INTERVAL_SECONDS = 24 * 60 * 60
 
-    def __init__(self, settings: Settings, service: FileDownloadService) -> None:
+    def __init__(self, settings: Settings, service: FileDownloadService, *, managed: bool = False) -> None:
         self.settings = settings
         self.service = service
         self.stop_event = threading.Event()
@@ -23,7 +23,7 @@ class DownloadCleanupWorker:
             target=self._run_loop,
             name="download-cleanup-worker",
             daemon=True,
-        )
+        ) if not managed else None
 
     @property
     def enabled(self) -> bool:

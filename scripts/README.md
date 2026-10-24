@@ -2,6 +2,7 @@
 
 Windows Docker 部署优先使用根目录 `START_DOCKER.bat`，操作说明见 `README-DOCKER.md`。
 麒麟 V10 可使用 `scripts/linux/` 下的脚本进行原生 Python 部署，不受 Docker Hub 拉取失败影响。
+原生部署需要独立 Web/Worker：分别运行启动脚本及同一脚本的 `worker` 参数。两个进程应注册为不同系统服务；升级、健康和回滚见 `docs/deployment/WEB_WORKER进程隔离升级说明.md`。
 打包当前程序（包含未提交的新功能文件，不包含运行数据）：
 
 ```sh

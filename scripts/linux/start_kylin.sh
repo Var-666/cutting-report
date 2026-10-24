@@ -17,6 +17,10 @@ if [[ ! -f .env ]]; then
   exit 1
 fi
 
+if [[ "${1:-web}" == "worker" ]]; then
+  exec env PYTHONPATH="${PROJECT_ROOT}/backend" "${PYTHON_BIN}" -m app.worker
+fi
+
 mapfile -t APP_BIND < <(
   PYTHONPATH="${PROJECT_ROOT}/backend" "${PYTHON_BIN}" - <<'PY'
 from app.config import settings
@@ -31,6 +35,7 @@ APP_PORT_VALUE="${APP_BIND[1]:-8000}"
 
 echo "启动切割生产智能产报系统：http://${APP_HOST_VALUE}:${APP_PORT_VALUE}"
 echo "按 Ctrl+C 停止。"
+echo "后台任务需独立启动：./scripts/linux/start_kylin.sh worker"
 
 exec "${PYTHON_BIN}" -m uvicorn app.main:app \
   --app-dir backend \

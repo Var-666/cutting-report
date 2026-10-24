@@ -5,3 +5,8 @@ services:
       - ./backend:/app/backend:ro,Z
       - ./frontend/dist:/app/frontend/dist:ro,Z
       - ./vendor:/app/vendor:ro,Z
+  worker:
+    pull_policy: never
+    volumes:
+      - ./backend:/app/backend:ro,Z
+      - ./vendor:/app/vendor:ro,Z

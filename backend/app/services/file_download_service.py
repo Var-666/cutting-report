@@ -12,6 +12,7 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from app.services.file_source import FileSourceError, normalize_relative_path
+from app.services.process_lock import FileLock
 
 
 logger = logging.getLogger(__name__)
@@ -53,6 +54,7 @@ class FileDownloadService:
         self.settings, self.repository, self.pdm, self.source = settings, repository, pdm, source
         self._slots = threading.BoundedSemaphore(2)
         self._cleanup_lock = threading.Lock()
+        self._cleanup_path = settings.data_dir / ".coordination" / "download-cleanup.lock"
 
     def now(self):
         return datetime.now(ZoneInfo(self.settings.timezone)).isoformat(timespec="seconds")
@@ -283,7 +285,7 @@ class FileDownloadService:
 
     def delete_after_push(self, download_id, *, dispatch_id):
         """Delete one successfully pushed local copy while retaining its audit row."""
-        with self._cleanup_lock:
+        with self._cleanup_lock, FileLock(self._cleanup_path):
             item = self.repository.get(download_id)
             if item is None:
                 return {"deleted": False, "already_deleted": False, "error": "下载记录不存在"}
@@ -322,7 +324,9 @@ class FileDownloadService:
         result = {"cleaned": 0, "missing": 0, "failed": 0}
         if retention_days <= 0 or not self._cleanup_lock.acquire(blocking=False):
             return result
+        process_lock = FileLock(self._cleanup_path)
         try:
+            process_lock.acquire()
             reference = now or datetime.now(ZoneInfo(self.settings.timezone))
             cutoff = (reference - timedelta(days=retention_days)).isoformat(timespec="seconds")
             for item in self.repository.list_cleanup_candidates(cutoff):
@@ -354,4 +358,5 @@ class FileDownloadService:
                     )
             return result
         finally:
+            process_lock.release()
             self._cleanup_lock.release()

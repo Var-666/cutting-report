@@ -7,7 +7,7 @@
 - `app/api/`：FastAPI 路由、Pydantic 输入校验、权限与响应封装。
 - `app/services/`：业务规则、统计、报表、外部系统协调。
 - `app/database/`：SQLite repository、SQL Server/PDM 客户端。
-- `app/workers/`：应用生命周期内的单进程后台工作线程。
+- `app/workers/`：独立 `app.worker` 进程内的有界后台消费者；Web 不启动后台线程。
 
 ## 2026-10-13 移除 Excel 数据源
 
@@ -29,7 +29,7 @@
 - `config.py` 在启动时通过现有 Pydantic 读取并校验 JSON，将默认设备的生产编号、能耗绑定、告警设备编号和起始时间作为 `Settings` 默认值。无效 JSON、重复编号、无效产线引用、无效或重复仪表编号均明确报错，不静默切回 Cutter01。
 - `DEVICE_CONFIG_PATH` 可指定文件，默认路径如上；相对路径按项目根目录解释，与启动工作目录无关。JSON 随既有 Docker 和源码部署包携带，修改后重启生效。
 - 兼容期保留旧 `REPORT_MACHINE_NO`、`ENERGY_GAS_PARAMETER_ID`、`ENERGY_REPORT_EQUIPMENT_IDS`、`ENERGY_REPORT_ELECTRICITY_PARAMETER_IDS`、`ALARM_MONITOR_MACHINE_NOS`、`ALARM_MONITOR_START_AT` 的显式环境覆盖；加载仍遵循 `data/settings.env` 覆盖项目 `.env` 的现有机制，最终显式值仅对默认设备优先于 JSON 默认。新 `.env.example` 将这些映射改为注释，避免新部署维护两套默认值；旧覆盖项与 JSON 并存属于兼容模式，后续统一收敛。
-- `DeviceRuntime` 为每台设备创建独立查询缓存、分析服务、报表流水线及刷新/告警消费者；SQLite、认证、定义、邮件和文件派发服务共享，单 Uvicorn worker 约定不变。启用的两台设备后台持续运行，不由浏览器选择决定。
+- `DeviceRuntime` 为每台设备创建独立查询缓存、分析服务、报表流水线及刷新/告警消费者；SQLite、认证、定义、邮件和文件派发服务共享，Web 保持一个 Uvicorn 进程，后台由独立 Worker 的共享执行池持续运行，不由浏览器选择决定；执行围栏和部署边界见 D-038。
 - 已登录用户可读取 `GET /api/v1/devices`。报表、工人任务/确认、告警与导出接口使用 `device_id` 查询参数，缺省取目录默认设备，未知设备返回 422；权限保持原管理员/工人边界。非默认设备的报告链接携带设备参数，另一设备无法读取该报告。
 - 请求缺省设备实际取目录的`default_device_id`（当前仍为Cutter01）。创建报告后的状态链接、报告查看/下载链接和告警链接都按该默认值补充device_id，目录默认值改为Cutter02时选择Cutter01仍正确路由；历史无设备记录继续按迁移约定归属Cutter01。
 - SQLite 升级补充任务、计划/运行、分析源版本及确认/审计设备字段；历史缺省 Cutter01。日报唯一键改为日期与设备，领导快照改为月份与来源指纹；重建事务提交前检查外键，原日报子项与确认保留。启动前若 `report_jobs` 尚无设备字段，先用 SQLite backup 写入 `data/backups/`。
@@ -95,7 +95,7 @@
 
 ### 统一数据保留
 
-- `RetentionWorker` 在服务启动时执行一次，此后按 `RETENTION_CLEANUP_INTERVAL_HOURS` 周期运行；部署仍保持单 Uvicorn worker。
+- 保留清理由独立 Worker 在启动后入队，此后按 `RETENTION_CLEANUP_INTERVAL_HOURS` 调度；不在 Web 生命周期内执行。
 - 默认保留期：报告文件、生成任务、车间任务快照和孤立确认365天，分析版本90天，告警记录及关联告警报告按发生时间30天（仅已解除告警可清理），非活动派发与已清理下载记录365天，确认和权限审计730天；对应天数设为0可单独关闭。
 - 告警按 `first_start_time` 起算，缺失时使用 `first_seen_at`；严格超过30天且已解除才删除，不从解除时间起算。共享告警报告必须所有仍存在的成员均已解除且过期；生成失败后已解除当前关联的报告仍按保存的告警 ID 核对。历史回查跳过已过期且已解除、未在本地保存的源事件，避免清理后重复补录和生成报告；已保存的未解除事件仍接收解除更新。普通生产报表保留期保持365天。
 - `cutting_file_dispatch_status` 按文档 ID + 版本 ID 保存最近派发摘要（任务标识、状态、阶段、目标机床、创建/更新时间和成功时间），不参与明细保留期清理，不以外键关联可删除的派发记录。创建、状态转换与重启恢复在同一 SQLite 事务内同步摘要；初始化从尚存明细补齐，保留比剩余明细更新的摘要。目录文件状态读取摘要，派发记录仍读取原明细；摘要不参与任务执行授权或重复派发拦截。

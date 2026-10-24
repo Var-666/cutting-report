@@ -7,15 +7,15 @@ from pathlib import Path
 from threading import RLock
 
 from dotenv import dotenv_values
+from app.services.process_lock import settings_file_lock
 
 
-# The application is a single-process service. All settings readers/writers
-# and runtime publication share this reentrant lock, including password reuse.
+# Keep thread reentrancy as well as the per-file interprocess lock.
 runtime_settings_lock = RLock()
 
 
 def read_runtime_env(path: Path) -> dict:
-    with runtime_settings_lock:
+    with runtime_settings_lock, settings_file_lock(path):
         return dict(dotenv_values(path, interpolate=False)) if path.is_file() else {}
 
 
@@ -27,7 +27,7 @@ def _dotenv_quote(value: object) -> str:
 
 
 def write_runtime_env(path: Path, values: dict[str, object]) -> None:
-    with runtime_settings_lock:
+    with runtime_settings_lock, settings_file_lock(path):
         path.parent.mkdir(parents=True, exist_ok=True)
         original = path.read_text(encoding="utf-8").splitlines() if path.is_file() else []
         key_pattern = re.compile(r"^\s*([A-Z][A-Z0-9_]*)\s*=")

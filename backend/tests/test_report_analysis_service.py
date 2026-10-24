@@ -374,7 +374,7 @@ def test_concurrent_same_version_requests_call_model_once(tmp_path: Path, monkey
 
 def test_page_promotes_queued_background_analysis_without_duplicate_model(tmp_path, monkeypatch, caplog):
     settings, service = _services(tmp_path)
-    settings = replace(settings, llm_max_concurrent=4)
+    settings = replace(settings, llm_max_concurrent=4, llm_queue_timeout_seconds=2)
     service.settings = settings
     report = LeadershipReportService(settings).fetch(date(2026, 8, 1))
     capacity = _LlmCapacity()

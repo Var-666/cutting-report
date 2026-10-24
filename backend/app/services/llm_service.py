@@ -22,6 +22,7 @@ from app.services.llm_usage_service import record_llm_call
 from app.services.request_cancellation import SqlRequestCancelled, current_request_id, sql_request_cancellations
 from app.services.report_deadline import ensure_time_remaining, operation_deadline, remaining_seconds
 from app.services.analysis_execution import analysis_observation, analysis_queue_remaining, analysis_stage, current_analysis_id
+from app.services.model_coordination import model_slot
 
 
 logger = logging.getLogger(__name__)
@@ -143,12 +144,21 @@ _LLM_CAPACITY = _LlmCapacity()
 @contextmanager
 def llm_capacity(settings: Settings):
     background = _BACKGROUND_LLM.get()
-    with analysis_stage("capacity_wait"):
-        admitted_background = _LLM_CAPACITY.acquire(settings, background=background)
-    try:
-        yield
-    finally:
-        _LLM_CAPACITY.release(background=admitted_background)
+    priority = _GENERATION_PRIORITY.get()
+    with model_slot(settings, background=background, promoted=lambda: bool(priority and priority.is_set()),
+                    budget=analysis_queue_remaining(settings)) as slot:
+        with analysis_stage("capacity_wait"):
+            admitted_background = _LLM_CAPACITY.acquire(settings, background=background)
+            try:
+                if slot:
+                    slot.acquire()
+            except BaseException:
+                _LLM_CAPACITY.release(background=admitted_background)
+                raise
+        try:
+            yield
+        finally:
+            _LLM_CAPACITY.release(background=admitted_background)
 
 
 def post_llm_json(

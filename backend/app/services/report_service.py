@@ -10,6 +10,7 @@ from typing import Any
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from app.config import Settings
+from app.database.sqlite import execution_owner
 
 
 class ReportRenderError(RuntimeError):
@@ -105,7 +106,8 @@ class ReportService:
 
         folder = self.settings.reports_dir / f"{generated_at:%Y}" / f"{generated_at:%m}"
         folder.mkdir(parents=True, exist_ok=True)
-        internal_filename = f"{report_id}.html"
+        owner = execution_owner()
+        internal_filename = f"{report_id}_{owner}.html" if owner else f"{report_id}.html"
         final_path = folder / internal_filename
         temporary_path = folder / f".{internal_filename}.tmp"
         temporary_path.write_text(html, encoding="utf-8")

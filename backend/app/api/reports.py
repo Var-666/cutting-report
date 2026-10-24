@@ -10,7 +10,9 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse
+from starlette.concurrency import run_in_threadpool
 
+from app.api.workloads import pdf_requests
 from app.api.devices import device_state, device_settings
 from app.api.auth import require_admin
 from app.config import DEVICE_CATALOG, settings
@@ -187,15 +189,15 @@ def _resolve_report_file(request: Request, report_id: str) -> tuple[dict, Path]:
 
 
 @router.get("/{report_id}/download")
-def download_report(
+async def download_report(
     report_id: str,
     request: Request,
     format: Literal["html", "pdf"] = Query("html"),
 ) -> FileResponse:
-    job, path = _resolve_report_file(request, report_id)
+    job, path = await run_in_threadpool(_resolve_report_file, request, report_id)
     if format == "pdf":
         try:
-            path = request.app.state.pdf_service.render(path)
+            path = await pdf_requests.run_sync(request.app.state.pdf_service.render, path)
         except PdfRenderError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         filename = Path(job["filename"]).with_suffix(".pdf").name

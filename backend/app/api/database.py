@@ -14,6 +14,8 @@ from typing import Literal
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field, SecretStr, field_validator
 
+from app.api.workloads import query_requests
+from app.services.process_lock import settings_file_lock
 from app.api.auth import require_admin
 from app.services.runtime_settings_store import read_runtime_env, write_runtime_env, runtime_settings_lock
 from app.config import settings
@@ -235,7 +237,7 @@ def get_database_configuration(request: Request) -> dict:
 def save_database_configuration(
     payload: DatabaseConfigurationRequest, request: Request
 ) -> dict:
-    with runtime_settings_lock:
+    with runtime_settings_lock, settings_file_lock(settings.runtime_settings_env_path):
         values: dict[str, object] = {
             "APP_DATA_SOURCE_MODE": payload.data_source_mode,
             "WORKER_DATABASE_AUTH_ENABLED": str(
@@ -319,7 +321,7 @@ def validate_sql(payload: SqlValidateRequest, request: Request) -> dict:
     }
 
 
-@router.post("/sql/execute")
+@query_requests.route(router.post("/sql/execute"))
 def execute_sql(
     payload: SqlExecuteRequest,
     request: Request,
@@ -371,7 +373,7 @@ def execute_sql(
     }
 
 
-@router.post("/test-connection")
+@query_requests.route(router.post("/test-connection"))
 def test_connection(payload: ConnectionTestRequest, request: Request) -> dict:
     temporary_settings = replace(
         settings,
@@ -418,7 +420,7 @@ def test_connection(payload: ConnectionTestRequest, request: Request) -> dict:
     }
 
 
-@router.post("/preview")
+@query_requests.route(router.post("/preview"))
 def preview_dataset(payload: DatabasePreviewRequest, request: Request) -> dict:
     filters = ReportFilter(
         report_date=payload.report_date,

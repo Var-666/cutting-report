@@ -19,7 +19,7 @@ def _shift_month(month_start: date, offset: int) -> date:
 class EnergyHistoryWorker:
     """Fill persisted daily energy snapshots outside user-facing requests."""
 
-    def __init__(self, settings: Settings, service: EnergyPeriodService) -> None:
+    def __init__(self, settings: Settings, service: EnergyPeriodService, *, managed: bool = False) -> None:
         self.settings = settings
         self.service = service
         self.stop_event = threading.Event()
@@ -31,7 +31,7 @@ class EnergyHistoryWorker:
             target=self._run_loop,
             name="energy-history-worker",
             daemon=True,
-        )
+        ) if not managed else None
 
     @property
     def enabled(self) -> bool:

@@ -6,12 +6,14 @@ import threading
 from time import monotonic
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from contextlib import nullcontext
 
 from app.config import Settings
 from app.database.metadata import MetadataRepository
 from app.services.pipeline import ReportPipeline, ReportPipelineCancelled
 from app.services.automation_service import AutomationService
 from app.services.automation_runtime import AutomationRuntime
+from app.services.llm_service import background_llm_work
 
 
 logger = logging.getLogger(__name__)
@@ -26,11 +28,13 @@ class ReportWorker:
         automation_service: AutomationService | None = None,
         runtime: AutomationRuntime | None = None,
         pipelines: dict[str, ReportPipeline] | None = None,
+        execution_context=None,
     ) -> None:
         self.settings = settings
         self.metadata = metadata
         self.pipeline = pipeline
         self.pipelines = pipelines
+        self.execution_context = execution_context or nullcontext
         self.automation_service = automation_service
         self.runtime = runtime or AutomationRuntime(settings)
         self.stop_event = threading.Event()
@@ -40,16 +44,16 @@ class ReportWorker:
         self._queue_observed_at: float | None = None
         self._next_queue_observation = 0.0
         self.thread = threading.Thread(
-            target=self._run_loop, name="report-worker", daemon=True
+            target=self._owned, args=(self._run_loop,), name="report-worker", daemon=True
         )
 
         self.automation_thread = (
-            threading.Thread(target=self._automation_loop, name="automation-worker", daemon=True)
+            threading.Thread(target=self._owned, args=(self._automation_loop,), name="automation-worker", daemon=True)
             if automation_service is not None else None
         )
 
         self.email_thread = (
-            threading.Thread(target=self._email_loop, name="email-worker", daemon=True)
+            threading.Thread(target=self._owned, args=(self._email_loop,), name="email-worker", daemon=True)
             if automation_service is not None else None
         )
 
@@ -60,12 +64,17 @@ class ReportWorker:
 
     def start(self) -> None:
         try:
-            self.metadata.recover_interrupted_jobs()
+            with self.execution_context():
+                self.metadata.recover_interrupted_jobs()
             for thread in self._threads():
                 thread.start()
         except Exception:
             self.stop()
             raise
+
+    def _owned(self, handler) -> None:
+        with self.execution_context():
+            handler()
 
     def stop(self) -> None:
         self.stop_event.set()
@@ -142,6 +151,7 @@ class ReportWorker:
                 self._checkpoint("report", "idle")
             self.stop_event.wait(self.settings.worker_poll_seconds)
 
+    @background_llm_work()
     def _process_report(self, job: dict, timezone: ZoneInfo) -> None:
         report_id = job["report_id"]
         try:

@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field, SecretStr, field_validator
 
+from app.api.workloads import authentication_requests
 from app.config import settings
 from app.services.request_cancellation import (
     cancellation_owner, current_request_id, sql_request_cancellations,
@@ -101,6 +102,7 @@ def _set_session_cookie(response: Response, token: str) -> None:
     )
 
 
+@authentication_requests.wrap
 def optional_user(
     request: Request,
     session_token: str | None = Cookie(default=None, alias=SESSION_COOKIE),
@@ -209,7 +211,7 @@ def bootstrap(payload: BootstrapRequest, request: Request, response: Response) -
     return _envelope(request, {"user": user, "expires_at": expires_at})
 
 
-@router.post("/login")
+@authentication_requests.route(router.post("/login"))
 def login(payload: LoginRequest, request: Request, response: Response) -> dict:
     user = None
     try:
@@ -246,8 +248,8 @@ def login(payload: LoginRequest, request: Request, response: Response) -> dict:
     return _envelope(request, {"user": user, "expires_at": expires_at})
 
 
-@router.post("/hr-login")
-@router.post("/worker-login", include_in_schema=False)
+@authentication_requests.route(router.post("/hr-login"))
+@authentication_requests.route(router.post("/worker-login", include_in_schema=False))
 def worker_login(
     payload: WorkerLoginRequest,
     request: Request,
@@ -313,7 +315,7 @@ def create_user(
     return _envelope(request, user)
 
 
-@router.get("/hr-directory")
+@authentication_requests.route(router.get("/hr-directory"))
 def search_hr_directory(
     request: Request,
     query: str = Query(min_length=1, max_length=64),
@@ -331,7 +333,7 @@ def list_admins(request: Request, _: dict = Depends(require_admin)) -> dict:
     return _envelope(request, {"items": request.app.state.workshop.list_admins()})
 
 
-@router.post("/admins", status_code=201)
+@authentication_requests.route(router.post("/admins", status_code=201))
 def grant_admin(
     payload: AdminGrantRequest,
     request: Request,
@@ -355,7 +357,7 @@ def grant_admin(
     return _envelope(request, user)
 
 
-@router.post("/admins/{user_id}/revoke")
+@authentication_requests.route(router.post("/admins/{user_id}/revoke"))
 def revoke_admin(
     user_id: str,
     payload: AdminRevokeRequest,

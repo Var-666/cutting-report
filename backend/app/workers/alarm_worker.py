@@ -15,13 +15,13 @@ logger = logging.getLogger(__name__)
 
 
 class AlarmWorker:
-    def __init__(self, settings: Settings, service: AlarmMonitorService) -> None:
+    def __init__(self, settings: Settings, service: AlarmMonitorService, *, managed: bool = False) -> None:
         self.settings = settings
         self.service = service
         self.stop_event = threading.Event()
         self.thread = threading.Thread(
             target=self._run_loop, name="alarm-monitor-worker", daemon=True
-        )
+        ) if not managed else None
 
     @property
     def enabled(self) -> bool:

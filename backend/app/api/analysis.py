@@ -8,6 +8,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from app.api.workloads import analysis_requests
 from app.api.devices import device_state
 from app.api.auth import require_admin
 from app.database.sqlserver import SqlServerConfigurationError
@@ -120,7 +121,7 @@ def get_analysis_version(
     }
 
 
-@router.post("")
+@analysis_requests.route(router.post(""))
 def analyze_report(payload: AnalysisRequest, request: Request) -> dict:
     settings = device_state(request).report_analysis_service.settings
     try:

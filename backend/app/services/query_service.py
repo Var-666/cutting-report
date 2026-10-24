@@ -11,6 +11,7 @@ from typing import Generic, TypeVar
 from zoneinfo import ZoneInfo
 
 from app.config import Settings
+from app.services.cache_revision import CacheRevision
 from app.database.sqlserver import SqlServerClient, SqlServerConfigurationError
 from app.models.domain import (
     EquipmentRecord,
@@ -88,28 +89,30 @@ def _decimal(value: object) -> Decimal | None:
 class QueryService:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
+        self.cache_revision = CacheRevision(settings, "production")
         self.client = SqlServerClient(settings)
         self.query_dir = Path(__file__).resolve().parents[1] / "database" / "queries"
         self._equipment_cache = _QueryCache[EquipmentQueryResult]()
         self._bundle_cache = _QueryCache[QueryBundle]()
         self._equipment_metrics_cache_lock = Lock()
         self._equipment_metrics_cache: dict[
-            tuple[date, date], tuple[float, dict[str, dict[str, Decimal | int]]]
+            tuple, tuple[float, dict[str, dict[str, Decimal | int]]]
         ] = {}
         self._equipment_metrics_locks = [Lock() for _ in range(16)]
         self._latest_date_lock = Lock()
-        self._latest_date_cache: dict[date, tuple[float, date | None]] = {}
+        self._latest_date_cache: dict[tuple, tuple[float, date | None]] = {}
         self._workshop_cache_lock = Lock()
         self._workshop_prepare_locks = [Lock() for _ in range(16)]
-        self._workshop_cache: dict[date, tuple[float, QueryBundle]] = {}
+        self._workshop_cache: dict[tuple, tuple[float, QueryBundle]] = {}
 
     def prepare_workshop_data(self, report_date: date) -> QueryBundle:
         """Read-only, short-lived warmup; does not create reports or confirmations."""
         prepare_lock = self._workshop_prepare_locks[hash(report_date) % len(self._workshop_prepare_locks)]
         with prepare_lock:
+            cache_key = (report_date, self.cache_revision.version())
             with self._workshop_cache_lock:
                 now = monotonic()
-                cached = self._workshop_cache.get(report_date)
+                cached = self._workshop_cache.get(cache_key)
                 if cached and cached[0] > now:
                     return cached[1]
                 self._workshop_cache = {
@@ -120,7 +123,7 @@ class QueryService:
             ttl = min(60, self.settings.report_data_cache_seconds)
             if ttl > 0 and bundle.workshop_records:
                 with self._workshop_cache_lock:
-                    self._workshop_cache[report_date] = (monotonic() + ttl, bundle)
+                    self._workshop_cache[cache_key] = (monotonic() + ttl, bundle)
                     while len(self._workshop_cache) > 32:
                         self._workshop_cache.pop(next(iter(self._workshop_cache)))
             return bundle
@@ -147,14 +150,14 @@ class QueryService:
             max(updated) if updated else None,
         )
 
-    @staticmethod
-    def _cache_key(kind: str, filters: ReportFilter) -> tuple:
+    def _cache_key(self, kind: str, filters: ReportFilter) -> tuple:
         return (
             kind,
             filters.start_date,
             filters.end_date,
             filters.project_code,
             filters.ship_no,
+            self.cache_revision.version(),
         )
 
     def _fetch_cached_bundle(
@@ -227,7 +230,7 @@ class QueryService:
             return self._fetch_equipment_range_metrics_uncached(
                 start_date, end_exclusive
             )
-        key = (start_date, end_exclusive)
+        key = (start_date, end_exclusive, self.cache_revision.version())
         with self._equipment_metrics_locks[
             hash(key) % len(self._equipment_metrics_locks)
         ]:
@@ -440,8 +443,9 @@ class QueryService:
             return self._latest_production_date_uncached(on_or_before)
 
         now = monotonic()
+        cache_key = (on_or_before, self.cache_revision.version())
         with self._latest_date_lock:
-            cached = self._latest_date_cache.get(on_or_before)
+            cached = self._latest_date_cache.get(cache_key)
             if not force and cached and cached[0] > now:
                 return cached[1]
             result = self._latest_production_date_uncached(on_or_before)
@@ -450,7 +454,7 @@ class QueryService:
                 for key, value in self._latest_date_cache.items()
                 if value[0] > now
             }
-            self._latest_date_cache[on_or_before] = (now + cache_seconds, result)
+            self._latest_date_cache[cache_key] = (now + cache_seconds, result)
             while len(self._latest_date_cache) > 128:
                 self._latest_date_cache.pop(next(iter(self._latest_date_cache)))
             return result

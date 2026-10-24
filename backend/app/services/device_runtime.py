@@ -60,13 +60,14 @@ class DeviceRuntime:
 
     @property
     def workers(self) -> tuple[LeadershipRefreshWorker, CurrentReportRefreshWorker, EnergyHistoryWorker, AlarmWorker]:
-        return (self.leadership_refresh_worker, self.current_report_refresh_worker,
-                self.energy_history_worker, self.alarm_worker)
+        return tuple(worker for worker in (self.leadership_refresh_worker, self.current_report_refresh_worker,
+                self.energy_history_worker, self.alarm_worker) if worker.thread is not None)
 
 
 def build_device_runtime(
     settings: Settings, database: SQLiteDatabase, definitions: DefinitionRepository,
     snapshots: LeadershipSnapshotRepository, pdf_service: PdfService,
+    *, task_queue=None,
 ) -> DeviceRuntime:
     metadata = MetadataRepository(database, device_id=settings.device_id)
     workshop = WorkshopRepository(database, scope_machine_no=settings.report_machine_no)
@@ -81,9 +82,9 @@ def build_device_runtime(
                                   AlarmAnalysisService(settings), AlarmReportService(settings, pdf_service))
     return DeviceRuntime(
         settings, metadata, workshop, pipeline, leadership, analysis,
-        LeadershipRefreshWorker(settings, leadership, analysis),
+        LeadershipRefreshWorker(settings, leadership, analysis, task_queue=task_queue),
         CurrentReportRefreshWorker(settings, pipeline.query_service, pipeline.range_service,
-                                   pipeline.energy_period_service, analysis),
-        EnergyHistoryWorker(settings, pipeline.energy_period_service),
-        alarms, monitor, AlarmWorker(settings, monitor),
+                                   pipeline.energy_period_service, analysis, task_queue=task_queue),
+        EnergyHistoryWorker(settings, pipeline.energy_period_service, managed=task_queue is not None),
+        alarms, monitor, AlarmWorker(settings, monitor, managed=task_queue is not None),
     )

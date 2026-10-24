@@ -13,6 +13,7 @@ from app.services.request_cancellation import (
     SqlRequestCancelled, current_request_id, sql_request_cancellations,
 )
 from pathlib import Path
+from app.services.process_lock import FileLock
 
 
 class PdfRenderError(RuntimeError):
@@ -38,6 +39,7 @@ class PdfService:
         max_waiters: int = 4,
         queue_timeout_seconds: float = 30,
         operation_timeout_seconds: float | None = None,
+        coordination_path: Path | None = None,
     ) -> None:
         if isinstance(max_waiters, bool) or not isinstance(max_waiters, int) or not 0 <= max_waiters <= 100:
             raise ValueError("PDF 最大等待数量必须在 0 到 100 之间")
@@ -47,8 +49,10 @@ class PdfService:
             raise ValueError("PDF 渲染期限必须在 1 到 1800 秒之间")
         self._lock = threading.Lock()
         self._slots = threading.BoundedSemaphore(max_waiters + 1)
+        self._admission_count = max_waiters + 1
         self.queue_timeout_seconds = queue_timeout_seconds
         self.operation_timeout_seconds = operation_timeout_seconds
+        self.coordination_path = coordination_path
 
     @staticmethod
     def _check_cancelled() -> None:
@@ -60,7 +64,21 @@ class PdfService:
         self._check_cancelled()
         if not self._slots.acquire(blocking=False):
             raise PdfRenderError("PDF 生成队列已满，请稍后重试。")
+        process_admission = None
+        if self.coordination_path:
+            try:
+                for index in range(self._admission_count):
+                    candidate = FileLock(self.coordination_path.with_name(f"pdf-admission-{index}.lock"))
+                    if candidate.acquire(blocking=False):
+                        process_admission = candidate
+                        break
+                if process_admission is None:
+                    raise PdfRenderError("PDF 生成队列已满，请稍后重试。")
+            except BaseException:
+                self._slots.release()
+                raise
         acquired = False
+        process_lock = FileLock(self.coordination_path) if self.coordination_path else None
         deadline = monotonic() + self.queue_timeout_seconds
         try:
             while True:
@@ -71,9 +89,19 @@ class PdfService:
                 if self._lock.acquire(timeout=min(0.1, remaining)):
                     acquired = True
                     self._check_cancelled()
+                    if process_lock is not None:
+                        while not process_lock.acquire(blocking=False):
+                            self._check_cancelled()
+                            if monotonic() >= deadline:
+                                raise PdfRenderError("PDF 生成排队超时，请稍后重试。")
+                            threading.Event().wait(0.1)
                     yield
                     return
         finally:
+            if process_lock:
+                process_lock.release()
+            if process_admission:
+                process_admission.release()
             if acquired:
                 self._lock.release()
             self._slots.release()

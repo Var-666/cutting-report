@@ -1,5 +1,7 @@
 # 麒麟 V10 原生部署说明
 
+进程隔离版本需独立启动 Web 与 Worker；首次升级、配置传播和回滚以 [Web/Worker 升级说明](WEB_WORKER进程隔离升级说明.md) 为准。原生启动脚本使用 `worker` 参数启动后台，分别注册为系统服务。
+
 本方式不使用 Docker。Docker Hub 无法拉取 `hello-world` 不影响原生部署，但服务器仍需能够安装 Python 依赖和 Playwright Chromium。
 
 ## 服务器准备

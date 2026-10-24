@@ -2,6 +2,7 @@ from dataclasses import replace
 from threading import Event
 from types import SimpleNamespace
 
+import anyio
 import pytest
 
 from app.config import settings
@@ -12,7 +13,7 @@ from test_report_worker_resilience import IdleMetadata
 
 
 def health_request(worker):
-    return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(worker=worker)),
+    return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(worker_status_reader=worker)),
                            state=SimpleNamespace(request_id="health-test"))
 
 
@@ -72,7 +73,10 @@ def test_live_but_blocked_consumer_degrades_health_and_recovers(monkeypatch, blo
         status = worker.status()
         assert status[f"{blocked_worker}_alive"] is True
         assert blocked_worker in status["stalled_workers"]
-        assert health(health_request(worker)).status_code == 503
+        health_result = anyio.run(health, health_request(worker))
+        assert health_result["success"] is True
+        assert health_result["data"]["background_ready"] is False
+        assert blocked_worker in health_result["data"]["workers"]["stalled_workers"]
         release.set()
         assert returned.wait(1)
         assert blocked_worker not in worker.status()["stalled_workers"]

@@ -3,6 +3,7 @@ from threading import Event
 from types import SimpleNamespace
 import json
 
+import anyio
 import pytest
 
 from app.config import settings
@@ -110,16 +111,18 @@ def test_health_is_degraded_when_background_thread_stopped(stopped):
     from app.main import health
 
     request = SimpleNamespace(
-        app=SimpleNamespace(state=SimpleNamespace(worker=SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(worker_status_reader=SimpleNamespace(
             status=lambda: {key: key != stopped for key in (
                 "report_alive", "automation_alive", "email_alive"
             )}
         ))),
         state=SimpleNamespace(request_id="test-health"),
     )
-    response = health(request)
-    assert response.status_code == 503
-    assert json.loads(response.body)["data"]["status"] == "degraded"
+    response = anyio.run(health, request)
+    assert response["success"] is True
+    assert response["data"]["status"] == "ok"
+    assert response["data"]["background_ready"] is False
+    assert response["data"]["workers"][stopped] is False
 
 
 class IdleMetadata:

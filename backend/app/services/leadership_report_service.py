@@ -10,6 +10,7 @@ from time import monotonic
 from zoneinfo import ZoneInfo
 
 from app.config import Settings
+from app.services.cache_revision import CacheRevision
 from app.database.leadership_snapshots import (
     LeadershipMonthSnapshot,
     LeadershipSnapshotRepository,
@@ -53,6 +54,7 @@ class LeadershipReportService:
         snapshots: LeadershipSnapshotRepository | None = None,
     ) -> None:
         self.settings = settings
+        self.cache_revision = CacheRevision(settings, "leadership")
         self.client = SqlServerClient(settings)
         self.snapshots = snapshots
         self.query_path = (
@@ -64,7 +66,7 @@ class LeadershipReportService:
         self._cache_lock = Lock()
         self._month_locks: dict[date, Lock] = {}
         self._cache: dict[
-            date, tuple[float, float, LeadershipReportResult]
+            date | tuple, tuple[float, float, LeadershipReportResult]
         ] = {}
 
     def fetch(
@@ -138,15 +140,17 @@ class LeadershipReportService:
         snapshots = self._query_snapshots(range_start, range_end)
         if self.snapshots is not None:
             self.snapshots.upsert_many(list(snapshots.values()))
+            self.cache_revision.publish()
         with self._cache_lock:
             self._cache.clear()
         return len(snapshots)
 
     def _fetch_snapshot_report(self, month_start: date) -> LeadershipReportResult:
+        cache_key = (month_start, self.cache_revision.version())
         cache_seconds = self.current_refresh_seconds
         now_tick = monotonic()
         with self._cache_lock:
-            cached = self._cache.get(month_start)
+            cached = self._cache.get(cache_key)
             if cached and cached[0] > now_tick:
                 return cached[2]
 
@@ -172,7 +176,9 @@ class LeadershipReportService:
         )
         created_at = monotonic()
         with self._cache_lock:
-            self._cache[month_start] = (created_at + ttl, created_at, result)
+            self._cache = {key: value for key, value in self._cache.items()
+                           if not isinstance(key, tuple) or key[0] != month_start}
+            self._cache[cache_key] = (created_at + ttl, created_at, result)
         return result
 
     def _load_snapshots(

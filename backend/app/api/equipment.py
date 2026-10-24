@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from app.api.workloads import query_requests
 from app.api.devices import device_state, device_settings
 from app.api.auth import require_admin
 from app.config import settings
@@ -28,7 +29,7 @@ router = APIRouter(
 router.dependencies.append(Depends(device_state))
 
 
-@router.get("")
+@query_requests.route(router.get(""))
 def get_equipment_report(
     request: Request,
     report_date: date | None = Query(default=None),

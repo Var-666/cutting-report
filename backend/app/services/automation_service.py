@@ -129,7 +129,7 @@ class AutomationService:
         )
         if run is None:
             return None
-        self._create_report_job(run, now)
+        # Worker reconciliation prepares the report; HTTP only reserves durable work.
         return self.repository.get_run(run["run_id"])
 
     def _create_report_job(self, run: dict, now: datetime) -> bool:

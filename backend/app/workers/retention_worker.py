@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 class RetentionWorker:
     """Apply all configured operational-data retention policies periodically."""
 
-    def __init__(self, settings: Settings, service: RetentionService) -> None:
+    def __init__(self, settings: Settings, service: RetentionService, *, managed: bool = False) -> None:
         self.settings = settings
         self.service = service
         self.stop_event = threading.Event()
@@ -21,7 +21,7 @@ class RetentionWorker:
             target=self._run_loop,
             name="retention-worker",
             daemon=True,
-        )
+        ) if not managed else None
 
     @property
     def enabled(self) -> bool:

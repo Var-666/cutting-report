@@ -2,37 +2,36 @@ from __future__ import annotations
 
 import logging
 import threading
-from time import monotonic
+from concurrent.futures import wait
 from typing import Callable
 
 from app.services.llm_service import background_llm_work, generation_priority
+from app.workers.bounded_executor import BoundedExecutor
 
 
 logger = logging.getLogger(__name__)
+_executor = BoundedExecutor(10, 32, "periodic-analysis")
 
 
 class ParallelAnalysisTasks:
-    """Run each scheduled analysis independently, including overlapping rounds."""
+    """Share fixed execution capacity across devices and overlapping rounds."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._stopped = False
-        self._threads: set[threading.Thread] = set()
+        self._futures = set()
 
     def start(self, handler: Callable, *args) -> None:
         with self._lock:
             if self._stopped:
                 return
-            thread = threading.Thread(
-                target=self._run, args=(handler, args),
-                name=f"periodic-analysis-{handler.__name__}", daemon=True,
-            )
-            self._threads.add(thread)
-            try:
-                thread.start()
-            except Exception:
-                self._threads.discard(thread)
-                raise
+            future = _executor.submit(self._run, handler, args)
+            self._futures.add(future)
+        future.add_done_callback(self._finished)
+
+    def _finished(self, future):
+        with self._lock:
+            self._futures.discard(future)
 
     @background_llm_work()
     def _run(self, handler: Callable, args: tuple) -> None:
@@ -45,14 +44,9 @@ class ParallelAnalysisTasks:
                 handler(*args)
         except Exception:
             logger.exception("periodic analysis failed: %s", handler.__name__)
-        finally:
-            with self._lock:
-                self._threads.discard(threading.current_thread())
 
     def stop(self, timeout: float = 5) -> None:
         with self._lock:
             self._stopped = True
-            threads = tuple(self._threads)
-        deadline = monotonic() + timeout
-        for thread in threads:
-            thread.join(timeout=max(0, deadline - monotonic()))
+            futures = tuple(self._futures)
+        wait(futures, timeout=timeout)

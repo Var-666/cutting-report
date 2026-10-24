@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 
 from app.api.auth import require_admin
+from app.services.process_lock import settings_file_lock
 from app.services.runtime_settings_store import read_runtime_env, write_runtime_env
 from app.config import DEVICE_CATALOG, Settings, settings
 
@@ -192,7 +193,7 @@ def save_automation_configuration(
     payload: AutomationConfigurationRequest, request: Request
 ) -> dict:
     runtime = request.app.state.automation_runtime
-    with runtime.update_lock:
+    with runtime.update_lock, settings_file_lock(settings.runtime_settings_env_path):
         current_settings, _ = runtime.snapshot()
         submitted_password = (
             payload.smtp_password.get_secret_value()

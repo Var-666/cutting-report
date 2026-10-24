@@ -19,6 +19,7 @@ from app.services.report_analysis_service import (
     equipment_analysis_source_version,
 )
 from app.workers.parallel_analysis import ParallelAnalysisTasks
+from app.workers.bounded_executor import ExecutionQueueFull
 
 
 logger = logging.getLogger(__name__)
@@ -43,19 +44,20 @@ class CurrentReportRefreshWorker:
     range_service: RangeReportService
     energy_service: EnergyPeriodService
     analysis_service: ReportAnalysisService
+    task_queue: object | None = None
 
     def __post_init__(self) -> None:
         self.stop_event = threading.Event()
         self._analysis_lock = threading.Lock()
         self._analysis_wake = threading.Event()
         self._analysis_pending: deque[tuple[str, tuple]] = deque()
-        self._analysis_tasks = ParallelAnalysisTasks()
+        self._analysis_tasks = ParallelAnalysisTasks() if self.task_queue is None else None
         self.analysis_thread = threading.Thread(
             target=self._analysis_loop, name="current-report-analysis-worker", daemon=True
-        )
+        ) if self.task_queue is None else None
         self.thread = threading.Thread(
             target=self._run_loop, name="current-report-refresh-worker", daemon=True
-        )
+        ) if self.task_queue is None else None
 
     @property
     def enabled(self) -> bool:
@@ -173,6 +175,10 @@ class CurrentReportRefreshWorker:
     def _schedule_analysis(self, report_type: str, args: tuple) -> None:
         if not self.settings.llm_enabled:
             return
+        if self.task_queue is not None:
+            self.task_queue.enqueue(f"analysis_{report_type}", self.settings.device_id,
+                                    {"date": args[0].isoformat()})
+            return
         with self._analysis_lock:
             if self.stop_event.is_set():
                 return
@@ -191,4 +197,11 @@ class CurrentReportRefreshWorker:
                 report_type, args = self._analysis_pending.popleft()
                 if self._analysis_pending:
                     self._analysis_wake.set()
-            self._analysis_tasks.start(handlers[report_type], *args)
+            try:
+                self._analysis_tasks.start(handlers[report_type], *args)
+            except ExecutionQueueFull:
+                logger.warning("periodic analysis capacity full; retaining pending %s task", report_type)
+                with self._analysis_lock:
+                    self._analysis_pending.appendleft((report_type, args))
+                self.stop_event.wait(1)
+                self._analysis_wake.set()

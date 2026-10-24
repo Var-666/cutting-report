@@ -2,6 +2,8 @@
 
 离线镜像包含 Python、Microsoft ODBC Driver 18、Playwright Chromium、中文字体和应用依赖。麒麟服务器只在首次部署或依赖变化时导入镜像；普通功能更新只替换程序文件。
 
+2026-10-24 起运行 app/worker 双服务。首次升级先停止旧单进程服务并备份，再按 [进程隔离升级说明](WEB_WORKER进程隔离升级说明.md) 启动；必须同时更新 compose.yaml 和 compose.offline.yaml，不能只替换 backend。后文较早版本记录不改变此升级要求。
+
 ## 首次部署
 
 把镜像包和程序 ZIP 放在同一目录：

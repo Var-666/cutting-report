@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 from uuid import uuid4
 
-from app.database.sqlite import SQLiteRepository
+from app.database.sqlite import SQLiteRepository, execution_owner, require_worker_recovery
+
+_UNCONDITIONAL = object()
 
 
 class EnergyReportRepository(SQLiteRepository):
@@ -36,6 +38,10 @@ class EnergyReportRepository(SQLiteRepository):
                 )
             """)
 
+            columns = {row['name'] for row in connection.execute('PRAGMA table_info(energy_history_queue)')}
+            if 'execution_owner' not in columns:
+                connection.execute('ALTER TABLE energy_history_queue ADD COLUMN execution_owner TEXT')
+
     def enqueue_months(self, source_key, months, now):
         with self.connect() as connection:
             count = 0
@@ -49,8 +55,10 @@ class EnergyReportRepository(SQLiteRepository):
             return count
 
     def recover_history_queue(self, source_key, now):
-        # Called only at startup of the single application process.
+        # Production calls this only after acquiring the exclusive Worker lease.
         with self.connect() as connection:
+            self.begin_immediate(connection)
+            require_worker_recovery(connection)
             connection.execute("""
                 UPDATE energy_history_queue SET status='pending', claim_token=NULL,
                     next_attempt_at=?, updated_at=?, last_error_code='INTERRUPTED'
@@ -69,11 +77,17 @@ class EnergyReportRepository(SQLiteRepository):
                 return None
             token = uuid4().hex
             connection.execute("""
-                UPDATE energy_history_queue SET status='running', claim_token=?,
+                UPDATE energy_history_queue SET status='running', claim_token=?, execution_owner=?,
                     attempt_count=attempt_count+1, updated_at=?
                 WHERE source_key=? AND report_month=?
-            """, (token, now, source_key, row["report_month"]))
+            """, (token, execution_owner(), now, source_key, row["report_month"]))
             return {**dict(row), "claim_token": token, "attempt_count": row["attempt_count"] + 1}
+
+    def history_ready(self, source_key, now):
+        with self.connect() as connection:
+            return connection.execute("""SELECT 1 FROM energy_history_queue
+                WHERE source_key=? AND status='pending' AND next_attempt_at<=? LIMIT 1""",
+                (source_key, now)).fetchone() is not None
 
     def reschedule_history_month(self, claim, next_attempt_at, now, error_code=None):
         with self.connect() as connection:
@@ -110,8 +124,15 @@ class EnergyReportRepository(SQLiteRepository):
             ).fetchall()
         return [json.loads(row["report_json"]) for row in rows]
 
-    def save_day(self, source_key, report):
+    def save_day(self, source_key, report, *, previous=_UNCONDITIONAL):
         with self.connect() as connection:
+            self.begin_immediate(connection)
+            if previous is not _UNCONDITIONAL:
+                row = connection.execute("SELECT report_json FROM energy_daily_snapshots WHERE source_key=? AND report_date=?",
+                                         (source_key, report["report_date"])).fetchone()
+                current = json.loads(row[0]) if row else None
+                if current != previous:
+                    return False
             connection.execute("""
                 INSERT INTO energy_daily_snapshots (source_key, report_date, updated_at, report_json)
                 VALUES (?, ?, ?, ?)
@@ -119,3 +140,4 @@ class EnergyReportRepository(SQLiteRepository):
                     updated_at = excluded.updated_at, report_json = excluded.report_json
             """, (source_key, report["report_date"], report["updated_at"],
                   json.dumps(report, ensure_ascii=False, allow_nan=False)))
+            return True

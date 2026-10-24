@@ -7,6 +7,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from app.api.workloads import query_requests
 from app.api.auth import require_admin
 from app.config import settings
 from app.models.designer import (
@@ -117,7 +118,7 @@ def delete_query_task(query_task_id: str, request: Request, token: AdminToken = 
     return _envelope(request, {"deleted": True})
 
 
-@router.post("/query-tasks/{query_task_id}/preview")
+@query_requests.route(router.post("/query-tasks/{query_task_id}/preview"))
 def preview_query_task(query_task_id: str, payload: QueryPreviewRequest, request: Request, token: AdminToken = None):
     _require_admin_token(token)
     task = request.app.state.definitions.get_query_task(query_task_id)

@@ -40,7 +40,12 @@ def alarm_status(request: Request) -> dict:
             "monitor_start_at": device_settings(request, settings).alarm_monitor_start_at,
             "interval_seconds": device_settings(request, settings).alarm_monitor_interval_seconds,
             "reopen_debounce_minutes": device_settings(request, settings).alarm_reopen_debounce_minutes,
-            "worker_running": device_state(request).alarm_worker.thread.is_alive(),
+            "worker_running": (
+                device_state(request).alarm_worker.enabled
+                and request.app.state.worker_status_reader.status().get("state") in {"running", "stalled"}
+                if device_state(request).alarm_worker.thread is None
+                else device_state(request).alarm_worker.thread.is_alive()
+            ),
         },
         "request_id": request.state.request_id,
     }

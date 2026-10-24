@@ -4,6 +4,7 @@ from datetime import date
 
 from fastapi import APIRouter, Depends, Query, Request
 
+from app.api.workloads import query_requests
 from app.api.devices import device_state
 from app.api.auth import require_admin
 from app.models.domain import ReportFilter
@@ -19,7 +20,7 @@ router = APIRouter(
 router.dependencies.append(Depends(device_state))
 
 
-@router.get("/projects")
+@query_requests.route(router.get("/projects"))
 def list_projects(report_date: date, request: Request) -> dict:
     filters = ReportFilter(report_date=report_date)
     return {
@@ -29,7 +30,7 @@ def list_projects(report_date: date, request: Request) -> dict:
     }
 
 
-@router.get("/ships")
+@query_requests.route(router.get("/ships"))
 def list_ships(
     report_date: date,
     request: Request,

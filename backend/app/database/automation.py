@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from app.database.sqlite import SQLiteDatabase, SQLiteRepository
+from app.database.sqlite import SQLiteDatabase, SQLiteRepository, execution_owner, require_worker_recovery
 
 
 class AutomationRepository(SQLiteRepository):
@@ -137,6 +137,15 @@ class AutomationRepository(SQLiteRepository):
                 connection.execute(
                     "ALTER TABLE email_deliveries ADD COLUMN recipient_results_json TEXT NOT NULL DEFAULT '{}'"
                 )
+            if "execution_owner" not in delivery_columns:
+                connection.execute("ALTER TABLE email_deliveries ADD COLUMN execution_owner TEXT")
+            connection.execute("PRAGMA optimize")
+
+    def recover_interrupted_deliveries(self) -> None:
+        """Only the newly elected Worker may classify abandoned SMTP attempts."""
+        with self.connect() as connection:
+            self.begin_immediate(connection)
+            require_worker_recovery(connection)
             interrupted = connection.execute(
                 "SELECT delivery_id, recipients_json, recipient_results_json FROM email_deliveries WHERE status = 'sending'"
             ).fetchall()
@@ -160,7 +169,6 @@ class AutomationRepository(SQLiteRepository):
                    last_error = '发送中断，结果待核对，禁止自动重发'
                    WHERE report_id IN (SELECT report_id FROM email_deliveries WHERE status = 'unknown')"""
             )
-            connection.execute("PRAGMA optimize")
 
     @staticmethod
     def _decode_schedule(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
@@ -173,6 +181,7 @@ class AutomationRepository(SQLiteRepository):
     @staticmethod
     def _decode_delivery(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
         item = dict(row)
+        item.pop("execution_owner", None)
         item["recipients"] = json.loads(item.pop("recipients_json") or "[]")
         item["recipient_results"] = json.loads(item.pop("recipient_results_json", "{}") or "{}")
         return item
@@ -484,10 +493,10 @@ class AutomationRepository(SQLiteRepository):
                 """
                 UPDATE email_deliveries
                 SET status = 'sending', attempt_count = attempt_count + 1, updated_at = ?,
-                    message_id = COALESCE(message_id, ?)
+                    message_id = COALESCE(message_id, ?), execution_owner = ?
                 WHERE delivery_id = ? AND status IN ('pending', 'retry_wait')
                 """,
-                (now, f"<{row['delivery_id']}@cutting-report.local>", row["delivery_id"]),
+                (now, f"<{row['delivery_id']}@cutting-report.local>", execution_owner(), row["delivery_id"]),
             )
             if updated.rowcount != 1:
                 return None

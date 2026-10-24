@@ -3,6 +3,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from app.api.workloads import query_requests
 from app.api.devices import device_state
 from app.api.auth import require_admin
 from app.database.sqlserver import SqlServerConfigurationError
@@ -28,7 +29,7 @@ def _add_analysis_source_version(task_report: dict) -> dict:
 router.dependencies.append(Depends(device_state))
 
 
-@router.get("/day")
+@query_requests.route(router.get("/day"))
 def get_energy_day(request: Request, report_date: date | None = None, refresh: bool = False):
     service = device_state(request).energy_period_service
     selected = report_date or service.now().date()
@@ -38,7 +39,7 @@ def get_energy_day(request: Request, report_date: date | None = None, refresh: b
     return {"success": True, "data": data, "request_id": request.state.request_id}
 
 
-@router.get("/tasks")
+@query_requests.route(router.get("/tasks"))
 def get_task_energy_day(request: Request, report_date: date | None = None, refresh: bool = False):
     service = device_state(request).energy_period_service
     selected = report_date or service.now().date()
@@ -61,7 +62,7 @@ def get_task_energy_day(request: Request, report_date: date | None = None, refre
     return {"success": True, "data": data, "request_id": request.state.request_id}
 
 
-@router.get("/month")
+@query_requests.route(router.get("/month"))
 def get_energy_month(request: Request, report_month: str = Query(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")):
     try:
         selected = date.fromisoformat(report_month + "-01")
@@ -73,7 +74,7 @@ def get_energy_month(request: Request, report_month: str = Query(pattern=r"^\d{4
     return {"success": True, "data": data, "request_id": request.state.request_id}
 
 
-@router.get("/monthly-range")
+@query_requests.route(router.get("/monthly-range"))
 def get_energy_monthly_range(request: Request, start_date: date, end_date: date):
     try:
         data = device_state(request).energy_period_service.get_monthly_range(
@@ -100,7 +101,7 @@ def get_energy_monthly_range(request: Request, start_date: date, end_date: date)
     return {"success": True, "data": data, "request_id": request.state.request_id}
 
 
-@router.get("/range")
+@query_requests.route(router.get("/range"))
 def get_energy_range(
     request: Request,
     start_date: date,
