@@ -44,7 +44,7 @@ def test_config_provider_reads_whitelist_and_hides_secrets():
     assert "secret-value" not in repr(public)
 
 
-def test_upload_uses_actual_filename_for_task_name_and_signed_headers(tmp_path: Path):
+def test_upload_keeps_composite_task_name_separate_from_filename_and_signed_headers(tmp_path: Path):
     requests = []
 
     def handler(request: httpx.Request):
@@ -65,7 +65,7 @@ def test_upload_uses_actual_filename_for_task_name_and_signed_headers(tmp_path: 
 
     assert client.upload_task(
         task_identifier="dsp_unique",
-        task_name=path.name,
+        task_name="CMIP-F262004_806C_PANEL-001.GEN",
         file_path=path,
         material="AH36",
         thickness=12,
@@ -75,7 +75,7 @@ def test_upload_uses_actual_filename_for_task_name_and_signed_headers(tmp_path: 
 
     upload = requests[0]
     body = upload.content
-    assert b'name="taskName"' in body and b"PANEL-001.GEN" in body
+    assert b'name="taskName"\r\n\r\nCMIP-F262004_806C_PANEL-001.GEN' in body
     assert b'name="taskFile"; filename="PANEL-001.GEN"' in body
     assert b'name="taskIdentifier"' in body and b"dsp_unique" in body
     assert upload.headers["timestamp"] == "1000"

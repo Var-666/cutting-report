@@ -73,6 +73,20 @@ class DispatchCreateRequest(BaseModel):
         return cleaned or None
 
 
+class DispatchExecuteRequest(BaseModel):
+    segment_name: str | None = Field(default=None, max_length=80)
+
+    @field_validator("segment_name")
+    @classmethod
+    def normalize_segment(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        if not cleaned or any(ord(char) < 32 or ord(char) == 127 for char in value):
+            raise ValueError("分段名不能为空或包含控制字符")
+        return cleaned
+
+
 class DispatchBatchItem(BaseModel):
     document_id: str | None = Field(default=None, min_length=1, max_length=128)
     download_id: str | None = Field(default=None, pattern=r"^dl_[a-f0-9]{32}$")
@@ -254,11 +268,12 @@ def get_dispatch(dispatch_id: str, request: Request) -> dict:
 def execute_dispatch(
     dispatch_id: str,
     request: Request,
+    payload: DispatchExecuteRequest | None = None,
     user: dict = Depends(require_admin),
 ) -> dict:
     try:
         item = runtime_state(request).cutting_dispatch.execute_dispatch(
-            dispatch_id, user=user
+            dispatch_id, user=user, segment_name=payload.segment_name if payload else None
         )
     except DispatchNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

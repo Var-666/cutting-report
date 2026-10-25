@@ -76,7 +76,7 @@ STAGE_LABELS = {
 
 PUSH_FILE_SUFFIXES = frozenset({".gen", ".txt"})
 STANDARD_INSTRUCTION_NAME = re.compile(
-    r"^[PSWLZ][A-Z0-9]*?[A-Z](?P<thickness>\d{3})(?P<material>.{2})",
+    r"^[PSWLZ](?P<segment>[A-Z0-9]*?[A-Z])(?P<thickness>\d{3})(?P<material>.{2})",
     re.IGNORECASE,
 )
 
@@ -94,6 +94,13 @@ def standard_instruction_parameters(filename: str) -> tuple[str, float] | None:
     if thickness <= 0:
         return None
     return match.group("material"), thickness
+
+
+def standard_instruction_segment(filename: str) -> str | None:
+    basename = str(filename).strip().replace("\\", "/").split("/")[-1]
+    if standard_instruction_parameters(basename) is None:
+        return None
+    return STANDARD_INSTRUCTION_NAME.match(basename).group("segment").upper()
 
 
 class CuttingDispatchService:
@@ -484,11 +491,11 @@ class CuttingDispatchService:
         )
         return item, path
 
-    def execute_dispatch(self, dispatch_id: str, *, user: dict) -> dict[str, Any]:
+    def execute_dispatch(self, dispatch_id: str, *, user: dict, segment_name: str | None = None) -> dict[str, Any]:
         with operation_deadline(self.settings.magic_box_operation_timeout):
-            return self._execute_dispatch(dispatch_id, user=user)
+            return self._execute_dispatch(dispatch_id, user=user, segment_name=segment_name)
 
-    def _execute_dispatch(self, dispatch_id: str, *, user: dict) -> dict[str, Any]:
+    def _execute_dispatch(self, dispatch_id: str, *, user: dict, segment_name: str | None = None) -> dict[str, Any]:
         item = self.dispatches.get(dispatch_id)
         if item is None:
             raise DispatchNotFoundError("派发任务不存在")
@@ -507,6 +514,20 @@ class CuttingDispatchService:
         config = self.magic_config.get()
         if item["machine_ip"] not in config.machine_ips:
             raise DispatchConflictError("目标机床不在SYS_CONFIG的CUTTER01_IP/CUTTER02_IP白名单中")
+
+        ship_no = ""
+        if not item.get("remote_task_id"):
+            raw_file = self.pdm.get_file(item["document_id"])
+            if raw_file is None:
+                raise CuttingFileNotFoundError("PDM中未找到指定切割文件")
+            ship_no = str(raw_file.get("ship_no") or "").strip()
+            if not ship_no or any(ord(char) < 32 or ord(char) == 127 for char in ship_no):
+                raise CuttingDispatchError("未查询到有效船号，请先核对项目船号后再推送")
+            segment_name = standard_instruction_segment(item["document_no"]) or str(segment_name or "").strip()
+            if not segment_name:
+                raise CuttingDispatchError("非标准文件名缺少分段名，请重新选择文件并在派发确认中补齐分段")
+            if len(segment_name) > 80 or any(ord(char) < 32 or ord(char) == 127 for char in segment_name):
+                raise CuttingDispatchError("分段名不能超过80字或包含控制字符")
 
         local_path: Path | None = None
         initial_attempt_count = item["attempt_count"]
@@ -527,7 +548,7 @@ class CuttingDispatchService:
                 assert local_path is not None
                 remote_id = client.upload_task(
                     task_identifier=item["task_identifier"],
-                    task_name=local_path.name,
+                    task_name=f"{ship_no}_{segment_name}_{local_path.name}",
                     file_path=local_path,
                     material=item.get("material"),
                     thickness=item.get("thickness"),

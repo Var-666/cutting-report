@@ -11,6 +11,8 @@ from pydantic import ValidationError
 from app.api.cutting import (
     DispatchBatchCreateRequest,
     DispatchCreateRequest,
+    DispatchExecuteRequest,
+    execute_dispatch as execute_dispatch_api,
     create_dispatch as create_dispatch_api,
     get_dispatch as get_dispatch_api,
 )
@@ -27,6 +29,7 @@ from app.services.cutting_dispatch_service import (
     DispatchNotFoundError,
     DuplicateDispatchError,
     standard_instruction_parameters,
+    standard_instruction_segment,
 )
 from app.services.file_download_service import DownloadError, FileDownloadService
 from app.services.file_source import (
@@ -478,6 +481,8 @@ def _push_service(tmp_path: Path, client: RecordingMagicClient):
     download_repository.initialize()
     pdm = MockPdmRepository()
     pdm.mode = "sqlserver"
+    for index, file in enumerate(pdm.files):
+        file["document_no"] = f"Z{806 + index}C080A0{index + 1:02d}.GEN"
     source = TestHttpFileSource()
     downloads = FileDownloadService(cfg, download_repository, pdm, source)
     admin = workshop.create_user(
@@ -493,7 +498,7 @@ def _push_service(tmp_path: Path, client: RecordingMagicClient):
     return service, dispatches, admin
 
 
-def test_real_push_uses_uploaded_file_name_as_task_name(tmp_path: Path):
+def test_real_push_combines_ship_segment_and_uploaded_filename_in_task_name(tmp_path: Path):
     client = RecordingMagicClient()
     service, dispatches, admin = _push_service(tmp_path, client)
     draft = service.create_dispatch(
@@ -509,7 +514,7 @@ def test_real_push_uses_uploaded_file_name_as_task_name(tmp_path: Path):
 
     assert sent["status"] == "sent"
     assert sent["remote_task_id"] == "magic-uuid-1"
-    assert client.uploads[0]["task_name"] == client.uploads[0]["file_path"].name
+    assert client.uploads[0]["task_name"] == f"CMYZ0177_806C_{client.uploads[0]['file_path'].name}"
     assert client.uploads[0]["task_name"].endswith(".GEN")
     assert client.assignments == [{
         "task_identifier": draft["task_identifier"],
@@ -543,7 +548,7 @@ def test_push_can_start_from_selected_download_without_file_search(tmp_path: Pat
 
     assert draft["status"] == "downloaded"
     assert sent["status"] == "sent"
-    assert client.uploads[0]["task_name"] == downloaded["filename"]
+    assert client.uploads[0]["task_name"] == f"CMYZ0177_806C_{downloaded['filename']}"
     assert sent["local_file_cleanup"] == {
         "deleted": True,
         "already_deleted": False,
@@ -1271,3 +1276,68 @@ def test_remote_success_with_local_commit_failure_cannot_be_repeated(
     with pytest.raises(DispatchConflictError):
         service.execute_dispatch(draft["dispatch_id"], user=admin)
     assert len(client.uploads) == 1
+
+
+@pytest.mark.parametrize("filename,expected", [
+    ("Z806C080A001.gen", "806C"), (r"folder\s306c095A602L.GEN", "306C"),
+    ("P403P080A601B.gen", "403P"), ("custom.GEN", None),
+    ("Z806C000A001.gen", None), ("Z806C080A001.pdf", None),
+])
+def test_task_segment_uses_the_existing_instruction_name_rules(filename, expected):
+    assert standard_instruction_segment(filename) == expected
+
+
+def test_task_name_uses_ship_number_not_project_display_name(tmp_path):
+    client = RecordingMagicClient()
+    service, _, admin = _push_service(tmp_path, client)
+    service.pdm.projects[0]["ship_no"] = "CMIP-F262004"
+    service.pdm.projects[0]["project_name"] = "3800m³LEG罐-1"
+    draft = service.create_dispatch(document_id=service.pdm.files[0]["document_id"],
+        machine_ip="10.1.133.197", material="A0", thickness=8, quantity=1, user=admin)
+    service.execute_dispatch(draft["dispatch_id"], user=admin, segment_name="ignored-for-standard")
+    assert client.uploads[0]["task_name"] == "CMIP-F262004_806C_Z806C080A001.GEN"
+    assert client.uploads[0]["file_path"].name == "Z806C080A001.GEN"
+
+
+def test_nonstandard_task_requires_manual_segment_before_downloading_or_uploading(tmp_path):
+    client = RecordingMagicClient()
+    service, _, admin = _push_service(tmp_path, client)
+    service.pdm.files[0]["document_no"] = "custom.GEN"
+    draft = service.create_dispatch(document_id=service.pdm.files[0]["document_id"],
+        machine_ip="10.1.133.197", material="A0", thickness=8, quantity=1, user=admin)
+    with pytest.raises(CuttingDispatchError, match="补齐分段"):
+        service.execute_dispatch(draft["dispatch_id"], user=admin)
+    assert not client.uploads
+    assert not client.assignments
+    assert service.downloads.repository.list(page=1, page_size=10)[1] == 0
+    service.execute_dispatch(draft["dispatch_id"], user=admin, segment_name=" 806C ")
+    assert client.uploads[0]["task_name"] == "CMYZ0177_806C_custom.GEN"
+
+
+def test_missing_ship_number_stops_upload_instead_of_guessing_from_project_name(tmp_path):
+    client = RecordingMagicClient()
+    service, _, admin = _push_service(tmp_path, client)
+    service.pdm.projects[0]["ship_no"] = ""
+    draft = service.create_dispatch(document_id=service.pdm.files[0]["document_id"],
+        machine_ip="10.1.133.197", material="A0", thickness=8, quantity=1, user=admin)
+    with pytest.raises(CuttingDispatchError, match="船号"):
+        service.execute_dispatch(draft["dispatch_id"], user=admin)
+    assert not client.uploads
+
+
+@pytest.mark.parametrize("value", ["", "  ", "806C\n", "806\x00C", "x" * 81])
+def test_execute_request_rejects_invalid_manual_segments(value):
+    with pytest.raises(ValidationError):
+        DispatchExecuteRequest(segment_name=value)
+
+
+def test_execute_api_forwards_manual_segment_and_keeps_body_optional():
+    calls = []
+    service = SimpleNamespace(execute_dispatch=lambda dispatch_id, **kwargs: calls.append((dispatch_id, kwargs)) or {})
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(cutting_dispatch=service)),
+                              state=SimpleNamespace(request_id="segment-test"))
+    user = {"role": "admin"}
+    execute_dispatch_api("task-1", request, DispatchExecuteRequest(segment_name=" 806C "), user=user)
+    execute_dispatch_api("task-2", request, user=user)
+    assert calls == [("task-1", {"user": user, "segment_name": "806C"}),
+                     ("task-2", {"user": user, "segment_name": None})]

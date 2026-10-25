@@ -815,7 +815,7 @@ test('direct dispatch builds independent PDM references and executes tasks seque
   assert.match(view, /version_id: item\.versionId/)
   assert.match(view, /file_path: item\.filePath/)
   assert.match(view, /for \(const item of createdItems\)/)
-  assert.match(view, /await executeCuttingDispatch\(item\.dispatchId\)/)
+  assert.match(view, /await executeCuttingDispatch\(item\.dispatchId, item\.segmentName\)/)
   assert.match(view, /非标准名，请手工填写参数/)
 })
 
@@ -903,4 +903,48 @@ test('project suggestions preserve the typed search while selecting and switchin
   assert.equal(state.projectSuggestions.value.length, 0)
   state.projectSearch.value = null
   assert.equal(state.projectSuggestions.value.length, 2)
+})
+
+test('dispatch segments are recognized or required before a nonstandard file can be pushed', () => {
+  const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
+  const source = view.slice(view.indexOf('function createPushBatchItem('), view.indexOf('function hasNameMismatch('))
+  const { createPushBatchItem, batchItemError } = new Function('parseCuttingInstructionFilename', 'fileKey', `${source}\nreturn { createPushBatchItem, batchItemError }`)(parseCuttingInstructionFilename, file => file.document_id)
+  const standard = createPushBatchItem({ document_id: 'standard', document_no: 'Z806C080A001.gen' })
+  assert.equal(standard.segmentName, '806C')
+  assert.equal(batchItemError(standard), '')
+  const manual = { ...createPushBatchItem({ document_id: 'manual', document_no: 'custom.gen' }), material: 'A0', thickness: 8 }
+  assert.equal(batchItemError(manual), '请填写分段名')
+  manual.segmentName = '806C'
+  assert.equal(batchItemError(manual), '')
+  manual.segmentName = '806\nC'
+  assert.match(batchItemError(manual), /控制字符/)
+  assert.match(view, /<th>分段名<\/th>/)
+  assert.match(view, /v-else v-model.trim="item.segmentName"/)
+})
+
+test('execute API sends the manual segment without changing the file reference', async () => {
+  const calls = []
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url: String(url), body: options.body })
+    return { ok: true, json: async () => ({ success: true, data: { status: 'sent' } }) }
+  }
+  await executeCuttingDispatch('task/1', '806C')
+  assert.deepEqual(calls, [{ url: '/api/v1/cutting/dispatches/task%2F1/execute', body: JSON.stringify({ segment_name: '806C' }) }])
+})
+
+test('history retries collect a segment for nonstandard files and cancellation never executes', async () => {
+  const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
+  const source = view.slice(view.indexOf('async function executeSaved('), view.indexOf('function formatTime('))
+  const calls = []
+  let answer = '806C'
+  const window = { confirm: () => true, prompt: () => answer }
+  const operatingId = ref('')
+  const executeSaved = new Function('window', 'operatingId', 'machineName', 'parseCuttingInstructionFilename', 'executeCuttingDispatch', 'showNotice', 'loadHistory', 'refreshVisibleFileStatuses', `${source}\nreturn executeSaved`)(window, operatingId, String, parseCuttingInstructionFilename, async (...args) => { calls.push(args); return { remote_task_id: 'remote' } }, () => {}, async () => {}, async () => {})
+  await executeSaved({ dispatch_id: 'old-manual', document_no: 'custom.gen', machine_ip: '10.1.1.2' })
+  assert.deepEqual(calls, [['old-manual', '806C']])
+  answer = null
+  await executeSaved({ dispatch_id: 'cancelled', document_no: 'custom.gen', machine_ip: '10.1.1.2' })
+  assert.equal(calls.length, 1)
+  await executeSaved({ dispatch_id: 'uploaded', document_no: 'custom.gen', remote_task_id: 'remote', machine_ip: '10.1.1.2' })
+  assert.deepEqual(calls[1], ['uploaded', undefined])
 })

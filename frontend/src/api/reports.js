@@ -447,9 +447,10 @@ export function listCuttingMachines({ signal } = {}) {
   return request('/api/v1/cutting/machines', { signal })
 }
 
-export function executeCuttingDispatch(dispatchId) {
+export function executeCuttingDispatch(dispatchId, segmentName) {
   return request(`/api/v1/cutting/dispatches/${encodeURIComponent(dispatchId)}/execute`, {
     method: 'POST',
+    ...(segmentName ? { body: JSON.stringify({ segment_name: segmentName }) } : {}),
   }).finally(() => reportCache.invalidate('cutting:files:'))
 }
 

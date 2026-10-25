@@ -352,6 +352,7 @@ function createPushBatchItem(file) {
     filename,
     version: file.version || file.physical_version_code?.trim() || file.physical_version_no || '--',
     parsed,
+    segmentName: parsed?.intermediateProduct || '',
     material: parsed?.material || '',
     thickness: parsed?.thickness ?? '',
     quantity: 1,
@@ -364,6 +365,9 @@ function createPushBatchItem(file) {
 }
 
 function batchItemError(item) {
+  const segment = String(item.segmentName || '').trim()
+  if (!segment) return '请填写分段名'
+  if (segment.length > 80 || /[\u0000-\u001f\u007f]/.test(segment)) return '分段名不能超过80字或包含控制字符'
   if (!String(item.material || '').trim()) return '请填写材质'
   const thickness = Number(item.thickness)
   if (!Number.isFinite(thickness) || thickness <= 0 || thickness > 1000) return '板厚必须大于 0 且不超过 1000 mm'
@@ -654,7 +658,7 @@ async function executeBatchItem(item) {
   pushBatch.currentFilename = item.filename
   operatingId.value = item.dispatchId
   try {
-    const completed = await executeCuttingDispatch(item.dispatchId)
+    const completed = await executeCuttingDispatch(item.dispatchId, item.segmentName)
     item.status = 'sent'
     if (completed.local_file_cleanup?.error) item.error = completed.local_file_cleanup.error
   } catch (error) {
@@ -827,9 +831,12 @@ async function refreshBatchCatalog() {
 async function executeSaved(item) {
   if (operatingId.value) return
   if (!window.confirm(`确认执行任务 ${item.dispatch_id}？\n文件：${item.document_no}\n机床：${machineName(item.machine_ip)}`)) return
+  const segmentName = !item.remote_task_id && !parseCuttingInstructionFilename(item.document_no)
+    ? window.prompt('非标准文件名，请填写分段名（例如：806C）：') : undefined
+  if (segmentName === null) return
   operatingId.value = item.dispatch_id
   try {
-    const completed = await executeCuttingDispatch(item.dispatch_id)
+    const completed = await executeCuttingDispatch(item.dispatch_id, segmentName)
     if (completed.local_file_cleanup?.error) {
       showNotice(`推送完成，但本地文件清理失败：${completed.local_file_cleanup.error}`, 'error')
     } else {
@@ -1117,10 +1124,11 @@ onBeforeUnmount(pausePage)
 
           <div class="push-batch-table-wrap">
             <table v-content-table="pageActive" class="push-batch-table">
-              <thead><tr><th>文件 / 识别结果</th><th>材质</th><th>板厚（mm）</th><th>数量</th><th>状态</th><th>操作</th></tr></thead>
+              <thead><tr><th>文件 / 识别结果</th><th>分段名</th><th>材质</th><th>板厚（mm）</th><th>数量</th><th>状态</th><th>操作</th></tr></thead>
               <tbody>
                 <tr v-for="item in pushBatch.items" :key="item.referenceKey" :class="{ invalid: !pushBatch.resultsReady && (batchItemError(item) || !item.parsed || hasNameMismatch(item)) }">
                   <td class="push-batch-file"><strong>{{ item.filename }}</strong><small>版本 {{ item.version }}</small><span v-if="item.parsed" class="recognized">已识别：{{ item.parsed.material }} · {{ item.parsed.thickness.toFixed(1) }} mm</span><span v-else class="manual">非标准名，请手工填写参数</span><span v-if="hasNameMismatch(item)" class="manual">加工参数与标准名不一致，请人工复核</span></td>
+                  <td><span v-if="item.parsed">{{ item.segmentName }}</span><input v-else v-model.trim="item.segmentName" :name="`segment_${item.referenceKey}`" :aria-label="`${item.filename} 分段名`" autocomplete="off" :disabled="pushBatch.saving || pushBatch.resultsReady" maxlength="80" placeholder="例如：806C" @input="invalidateBatchConfirmation(item)" /></td>
                   <td><input v-model.trim="item.material" :name="`material_${item.referenceKey}`" :aria-label="`${item.filename} 材质`" autocomplete="off" :disabled="pushBatch.saving || pushBatch.resultsReady" maxlength="80" placeholder="例如：A0、B0、SS" @input="invalidateBatchConfirmation(item)" /></td>
                   <td><input v-model="item.thickness" :name="`thickness_${item.referenceKey}`" :aria-label="`${item.filename} 板厚`" autocomplete="off" :disabled="pushBatch.saving || pushBatch.resultsReady" type="number" inputmode="decimal" min="0.01" max="1000" step="0.01" placeholder="例如：12.0…" @input="invalidateBatchConfirmation(item)" /></td>
                   <td><input v-model="item.quantity" :name="`quantity_${item.referenceKey}`" :aria-label="`${item.filename} 数量`" autocomplete="off" :disabled="pushBatch.saving || pushBatch.resultsReady" type="number" inputmode="numeric" min="1" max="10000" step="1" @input="invalidateBatchConfirmation(item)" /></td>
@@ -1131,8 +1139,8 @@ onBeforeUnmount(pausePage)
             </table>
           </div>
           <div v-if="!pushBatch.resultsReady" class="push-batch-safety">
-            <p>标准指令名已自动填充材质和板厚，请在提交前逐项核对。非标准名不会猜测参数，必须手工补全。</p>
-            <label v-if="nonStandardBatchCount"><input v-model="pushBatch.nonStandardConfirmed" name="non_standard_confirmed" type="checkbox" :disabled="pushBatch.saving" />我已人工核对 {{ nonStandardBatchCount }} 个非标准文件名及其材质、板厚和数量</label>
+            <p>标准指令名已自动识别分段并填充材质和板厚，请在提交前逐项核对。非标准名不会猜测参数，必须手工补全。</p>
+            <label v-if="nonStandardBatchCount"><input v-model="pushBatch.nonStandardConfirmed" name="non_standard_confirmed" type="checkbox" :disabled="pushBatch.saving" />我已人工核对 {{ nonStandardBatchCount }} 个非标准文件名及其分段、材质、板厚和数量</label>
             <label v-if="overrideBatchCount"><input v-model="pushBatch.overrideConfirmed" name="standard_override_confirmed" type="checkbox" :disabled="pushBatch.saving" />我已人工核对 {{ overrideBatchCount }} 个与标准名不一致的材质或板厚</label>
           </div>
         </div>
