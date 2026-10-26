@@ -10,7 +10,8 @@ from pydantic import ValidationError
 
 from app.api.auth import require_admin
 from app.api.runtime import runtime_state
-from app.api.workloads import RequestWorkload, analysis_requests
+from app.api.workloads import RequestWorkload, analysis_requests, pdf_requests
+from app.config import settings
 from app.models.domain import to_primitive
 from app.models.welding import WeldingAnalysisRequest, WeldingQuery
 from app.database.welding import WeldingUnavailable
@@ -22,7 +23,8 @@ from app.services.welding_export import WeldingExport, csv_bytes, COLUMNS
 
 
 router = APIRouter(prefix='/api/v1/welding', tags=['welding'], dependencies=[Depends(require_admin)])
-welding_requests = RequestWorkload(2, '焊接数据查询')
+# Explicit smaller connection pools also lower execution capacity after restart.
+welding_requests = RequestWorkload(max(1, min(4, settings.weld_db_pool_size)), '焊接数据查询', max_waiters=12, queue_timeout_seconds=5)
 
 
 def service(request: Request):
@@ -37,7 +39,7 @@ def source_errors():
     try:
         yield
     except WeldingUnavailable as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from None
+        raise HTTPException(status_code=503, detail=str(exc), headers={'X-Welding-Error': exc.category}) from None
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
     except PdfRenderError:
@@ -136,27 +138,34 @@ def seam_export(request: Request, part_id: int):
     return Response(content, media_type='text/csv; charset=utf-8', headers={'Content-Disposition': f'attachment; filename="welding-seams-{part_id}.csv"'})
 
 
-@welding_requests.route(router.get('/export'))
-def export(request: Request, report_type: Literal['daily', 'parts', 'jobs', 'equipment'], format: Literal['csv', 'html', 'pdf'] = 'csv'):
+@router.get('/export')
+async def export(request: Request, report_type: Literal['daily', 'parts', 'jobs', 'equipment'], format: Literal['csv', 'html', 'pdf'] = 'csv'):
     query = parse_query(request)
     instance = service(request)
+    exporter = WeldingExport(instance.settings, instance, request.app.state.pdf_service)
     with source_errors():
-        content, media = WeldingExport(instance.settings, instance, request.app.state.pdf_service).generate(report_type, query, format)
+        content, media = await welding_requests.run_sync(exporter.prepare, report_type, query, format, _request=request)
+        if format == 'pdf':
+            content, media = await pdf_requests.run_sync(exporter.render_pdf, content)
     return Response(content, media_type=media, headers={'Content-Disposition': f'attachment; filename="welding-{report_type}-{query.start}-{query.end}.{format}"'})
 
 
-@analysis_requests.route(router.post('/analysis'))
-def analysis(request: Request, payload: WeldingAnalysisRequest):
+@router.post('/analysis')
+async def analysis(request: Request, payload: WeldingAnalysisRequest):
     instance = service(request)
     with source_errors():
-        report = instance.report(payload.report_type, payload.query)
+        report = await welding_requests.run_sync(instance.report, payload.report_type, payload.query, _request=request)
+    return response(request, await analysis_requests.run_sync(_analyze, instance, report, payload))
+
+
+def _analyze(instance, report: dict, payload: WeldingAnalysisRequest):
     if report['data_version'] != payload.data_version:
         raise HTTPException(status_code=409, detail='报表数据已更新，请刷新后重新生成分析')
     if not instance.settings.llm_enabled:
         raise HTTPException(status_code=503, detail='智能分析模型尚未启用，常规报表可继续使用')
     cached = instance.cached_analysis(report['data_version'])
     if cached is not None:
-        return response(request, {**to_primitive(cached), 'cached': True})
+        return {**to_primitive(cached), 'cached': True}
     context = {'report_date': f'{payload.query.start} 至 {payload.query.end}',
                'facts': [{'label': key, 'value': value} for key, value in report['summary'].items()],
                'tables': [{'name': '按日汇总', 'rows': report['daily']}, {'name': '设备机器人工位', 'rows': report['equipment']},
@@ -171,4 +180,4 @@ def analysis(request: Request, payload: WeldingAnalysisRequest):
     result.data_version = report['data_version']
     result.generated_at = report['meta']['calculated_at']
     instance.remember_analysis(report['data_version'], result)
-    return response(request, result)
+    return result

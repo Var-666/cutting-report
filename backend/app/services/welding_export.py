@@ -60,6 +60,10 @@ class WeldingExport:
         self.settings, self.service, self.pdf = settings, service, pdf
 
     def generate(self, kind: ReportType, query: WeldingQuery, format: str) -> tuple[bytes, str]:
+        content, media = self.prepare(kind, query, format)
+        return self.render_pdf(content) if format == 'pdf' else (content, media)
+
+    def prepare(self, kind: ReportType, query: WeldingQuery, format: str) -> tuple[bytes, str]:
         limit = 100000 if format == 'csv' else 5000
         report = self.service.report(kind, query, export_limit=limit + 1)
         if report['total'] > limit or len(report['items']) > limit:
@@ -84,9 +88,10 @@ class WeldingExport:
             title=REPORT_TITLES[kind], columns=COLUMNS[kind], report=report, metadata=metadata,
             echarts=chart_path.read_text(encoding='utf-8') if chart_path.is_file() else '',
         )
-        if format == 'html':
-            return html.encode('utf-8'), 'text/html; charset=utf-8'
+        return html.encode('utf-8'), 'text/html; charset=utf-8'
+
+    def render_pdf(self, html: bytes) -> tuple[bytes, str]:
         with TemporaryDirectory(prefix='welding-report-') as folder:
             path = Path(folder) / 'report.html'
-            path.write_text(html, encoding='utf-8')
+            path.write_bytes(html)
             return self.pdf.render(path).read_bytes(), 'application/pdf'

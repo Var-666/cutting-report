@@ -136,7 +136,7 @@ class WeldingService:
                 projects = session.fetch(f'SELECT p.project_no, MIN(p.project_name) AS project_name, COUNT(*) AS part_count, SUM(CASE WHEN p.reality_lenght >= 0 THEN p.reality_lenght ELSE 0 END) / 1000 AS cumulative_actual_length_m FROM weld_part_info_table p WHERE (SELECT COUNT(*) FROM weld_part_info_table owner WHERE owner.serial_number = p.serial_number) = 1 AND EXISTS (SELECT 1 FROM weld_info_table j WHERE {where} AND {valid_time("j.end_time")} AND j.serial_number = p.serial_number AND {valid_serial("p.serial_number")}) GROUP BY p.project_no ORDER BY part_count DESC, p.project_no LIMIT 101', values, limit=101)
             speeds = session.fetch(f"SELECT CASE WHEN j.weld_speed IS NULL OR j.weld_speed <= 0 THEN '未记录或无效' WHEN j.weld_speed < 300 THEN '<300' WHEN j.weld_speed < 600 THEN '300–599' ELSE '≥600' END AS speed_band, COUNT(*) AS job_count FROM weld_info_table j WHERE {where} AND {valid_time('j.end_time')} GROUP BY speed_band ORDER BY speed_band", values, limit=5) if kind == 'jobs' else []
             if kind == 'jobs':
-                raw, total = repo.jobs(session, query, limit=export_limit)
+                raw, total = repo.jobs(session, query, limit=export_limit, total=summary['source_rows'])
             elif kind == 'parts':
                 raw, total = repo.parts(session, query, limit=export_limit)
             else:

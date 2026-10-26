@@ -22,7 +22,9 @@ TABLES = ('weld_info_table', 'weld_part_info_table', 'welding_seam_info_table')
 
 
 class WeldingUnavailable(RuntimeError):
-    pass
+    def __init__(self, message: str, *, category: str = 'source_unavailable') -> None:
+        super().__init__(message)
+        self.category = category
 
 
 class WeldingSession:
@@ -36,7 +38,7 @@ class WeldingSession:
         started = monotonic()
         remaining = remaining_seconds()
         if remaining is not None and remaining <= 0:
-            raise WeldingUnavailable('焊接查询超时，请缩小日期或筛选范围后重试')
+            raise WeldingUnavailable('焊接查询超时，请缩小日期或筛选范围后重试', category='query_timeout')
         timeout = self.timeout if remaining is None else max(1, min(self.timeout, ceil(remaining)))
         query_id = hashlib.sha256(sql.encode()).hexdigest()[:12]
         cursor = self.connection.cursor(dictionary=True, read_timeout=timeout, write_timeout=timeout)
@@ -46,11 +48,11 @@ class WeldingSession:
             rows = cursor.fetchmany(limit)
             if sql_request_cancellations.is_cancelled(current_request_id.get()):
                 raise SqlRequestCancelled('焊接查询已取消')
-            logger.info('welding query id=%s elapsed_ms=%d rows=%d', query_id, round((monotonic() - started) * 1000), len(rows))
+            logger.info('welding query request_id=%s id=%s elapsed_ms=%d rows=%d', current_request_id.get(), query_id, round((monotonic() - started) * 1000), len(rows))
             return rows
         except Exception as exc:
             failed = True
-            logger.warning('welding query failed id=%s type=%s errno=%s elapsed_ms=%d', query_id, type(exc).__name__, getattr(exc, 'errno', None), round((monotonic() - started) * 1000))
+            logger.warning('welding query failed request_id=%s id=%s type=%s errno=%s elapsed_ms=%d', current_request_id.get(), query_id, type(exc).__name__, getattr(exc, 'errno', None), round((monotonic() - started) * 1000))
             raise
         finally:
             try:
@@ -111,14 +113,23 @@ class WeldingClient:
         except Exception as exc:
             # Driver messages can contain credentials, SQL values and host addresses.
             discard_pool = True
-            logger.warning('welding source failure type=%s errno=%s', type(exc).__name__, getattr(exc, 'errno', None))
+            logger.warning('welding source failure request_id=%s type=%s errno=%s', current_request_id.get(), type(exc).__name__, getattr(exc, 'errno', None))
             code = getattr(exc, 'errno', None)
+            if type(exc).__name__ == 'PoolError':
+                discard_pool = False
+                raise WeldingUnavailable('焊接数据库连接池已耗尽，请稍后重试', category='connection_pool_exhausted') from None
+            if isinstance(exc, TimeoutError) or type(exc).__name__ in ('ReadTimeoutError', 'WriteTimeoutError') or code in (1205, 1317, 3024):
+                raise WeldingUnavailable('焊接数据库查询超时，请缩小筛选范围或联系管理员核查SQL耗时', category='query_timeout') from None
             if code == 1045:
-                raise WeldingUnavailable('焊接数据库认证失败，请检查账号和密码') from None
+                raise WeldingUnavailable('焊接数据库认证失败，请检查账号和密码', category='authentication_failed') from None
             if code in (1142, 1143, 1227):
-                raise WeldingUnavailable('焊接数据库只读查询权限不足，请联系管理员核对授权') from None
+                raise WeldingUnavailable('焊接数据库只读查询权限不足，请联系管理员核对授权', category='permission_denied') from None
             if code in (1049, 1054, 1146):
-                raise WeldingUnavailable('焊接数据库或表结构与预期不符，请核对数据库和字段映射') from None
+                raise WeldingUnavailable('焊接数据库或表结构与预期不符，请核对数据库和字段映射', category='schema_mismatch') from None
+            if code in (1064, 1149):
+                raise WeldingUnavailable('焊接SQL执行失败，请联系管理员核查查询语句', category='sql_error') from None
+            if code in (2002, 2003, 2005, 2006, 2013, 2055):
+                raise WeldingUnavailable('焊接数据库连接失败或连接中断，请核查网络及数据库服务', category='connection_failed') from None
             if isinstance(exc, ImportError):
                 raise WeldingUnavailable('服务器尚未安装焊接MySQL驱动，请更新部署依赖') from None
             raise WeldingUnavailable('焊接数据源暂不可用或查询超时，请稍后重试') from None
@@ -237,9 +248,10 @@ class WeldingRepository:
         source, values = job_source(query)
         return session.fetch(f'SELECT j.device_no, j.robot_no, {job_aggregate()} FROM {source} GROUP BY j.device_no, j.robot_no ORDER BY j.device_no, j.robot_no LIMIT 10001', values, limit=10001)
 
-    def jobs(self, session: WeldingSession, query: WeldingQuery, *, limit: int | None = None) -> tuple[list[dict], int]:
+    def jobs(self, session: WeldingSession, query: WeldingQuery, *, limit: int | None = None, total: int | None = None) -> tuple[list[dict], int]:
         where, values = job_conditions(query)
-        total = session.fetch(f'SELECT COUNT(*) AS total FROM weld_info_table j WHERE {where}', values, limit=1)[0]['total']
+        if total is None:
+            total = session.fetch(f'SELECT COUNT(*) AS total FROM weld_info_table j WHERE {where}', values, limit=1)[0]['total']
         if limit is not None and total >= limit:
             return [], total
         column = {'time': 'end_time', 'length': 'weld_lenght', 'id': 'id'}[query.sort_by]

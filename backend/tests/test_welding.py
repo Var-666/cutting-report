@@ -408,3 +408,230 @@ def test_source_audit_keeps_core_results_when_optional_tables_are_not_authorized
     assert result['tables']['weld_info_table']['total'] == 0
     assert result['tables']['production_stats']['error_code'] == 1142
     assert 'private-driver-details' not in json.dumps(result)
+
+
+def test_connection_pool_default_matches_execution_capacity_and_remains_readonly(monkeypatch):
+    import mysql.connector.pooling
+    from contextvars import ContextVar
+    from app import config
+    from app.api.welding import welding_requests
+    monkeypatch.setattr(config, '_environment', ContextVar('test-welding-config', default={}))
+    captured = {}
+    class Connection:
+        def start_transaction(self, **values):
+            captured['transaction'] = values
+        def rollback(self):
+            captured['rollback'] = True
+        def close(self):
+            captured['closed'] = True
+    def pool(**values):
+        captured.update(values)
+        return SimpleNamespace(get_connection=Connection)
+    monkeypatch.setattr(mysql.connector.pooling, 'MySQLConnectionPool', pool)
+    cfg = Settings(weld_enabled=True, weld_db_host='test', weld_db_user='reader', weld_db_password='private')
+    assert cfg.weld_db_pool_size == 4
+    assert welding_requests._threads.total_tokens == max(1, min(4, config.settings.weld_db_pool_size))
+    assert welding_requests.max_waiters == 12 and welding_requests.queue_timeout_seconds == 5
+    with WeldingClient(cfg).snapshot() as session:
+        assert session.timeout == 120
+    assert captured['pool_size'] == 4 and captured['use_pure']
+    assert captured['transaction'] == {'isolation_level': 'REPEATABLE READ', 'consistent_snapshot': True, 'readonly': True}
+    assert captured['rollback'] and captured['closed']
+
+
+@pytest.mark.parametrize('name,code,category', [
+    ('PoolError', None, 'connection_pool_exhausted'),
+    ('ReadTimeoutError', None, 'query_timeout'),
+    ('DriverError', 3024, 'query_timeout'),
+    ('DriverError', 1064, 'sql_error'),
+    ('DriverError', 2003, 'connection_failed'),
+    ('DriverError', 1054, 'schema_mismatch'),
+])
+def test_source_capacity_timeout_sql_and_connection_errors_remain_distinct(name, code, category, caplog):
+    error = type(name, (RuntimeError,), {'errno': code})('private-credentials-and-SQL')
+    def broken():
+        raise error
+    client = WeldingClient(Settings())
+    pool = SimpleNamespace(get_connection=broken)
+    client._pool = pool
+    client._get_pool = lambda: pool
+    with pytest.raises(WeldingUnavailable) as caught:
+        with client.snapshot():
+            pytest.fail('broken source must not yield')
+    assert caught.value.category == category
+    assert 'private' not in str(caught.value) + caplog.text
+    assert (client._pool is pool) == (category == 'connection_pool_exhausted')
+
+
+def test_jobs_reuse_snapshot_source_count_including_invalid_time_candidates():
+    calls = []
+    class Session:
+        def fetch(self, sql, values=(), **kwargs):
+            calls.append((sql, values))
+            assert not sql.startswith('SELECT COUNT')
+            return [{'id': 2}]
+    rows, total = WeldingRepository(None).jobs(Session(), query(page=2, page_size=1), total=3)
+    assert total == 3 and rows == [{'id': 2}] and len(calls) == 1
+    assert calls[0][1][-2:] == (1, 1)
+    assert WeldingRepository(None).jobs(Session(), query(), total=3, limit=3) == ([], 3)
+    assert len(calls) == 1
+
+
+def test_report_passes_the_same_snapshot_count_to_paginated_jobs():
+    class Session:
+        def fetch(self, sql, *args, **kwargs):
+            return [{'unlinked': 0, 'ambiguous': 0}] if 'AS unlinked' in sql else []
+    class Client:
+        @contextmanager
+        def snapshot(self):
+            yield Session()
+    class Repository:
+        client = Client()
+        def summary(self, session, selected):
+            return {'source_rows': 3, 'job_count': 2, **dict.fromkeys([
+                'invalid_time_rows', 'invalid_serial_rows', 'invalid_length_rows',
+                'invalid_duration_rows', 'unverified_state_rows'], 0)}
+        def daily(self, *args):
+            return []
+        def equipment(self, *args):
+            return []
+        def source_info(self, *args):
+            return {'devices': [], 'updated_at': {}}
+        def jobs(self, session, selected, *, limit, total):
+            assert total == 3 and selected.page == 2 and limit is None
+            return [{'id': 2, 'serial_number': 'part'}], total
+    report = WeldingService(Settings(), Repository()).report('jobs', query(page=2, page_size=1))
+    assert report['total'] == 3 and report['summary']['job_count'] == 2
+    assert report['items'][0]['id'] == 2 and report['data_version']
+
+
+def test_http_source_error_keeps_safe_category_without_retry_header(api):
+    def failed(*args, **kwargs):
+        raise WeldingUnavailable('焊接SQL执行失败', category='sql_error')
+    api.app.state.welding.report = failed
+    result = api.get('/api/v1/welding/jobs?start=2026-10-01&end=2026-10-02')
+    assert result.status_code == 503
+    assert result.headers['X-Welding-Error'] == 'sql_error'
+    assert 'Retry-After' not in result.headers
+
+
+@pytest.mark.parametrize('stage', ['pdf', 'analysis'])
+def test_pdf_and_ai_release_welding_capacity_before_slow_processing(api, monkeypatch, stage):
+    import asyncio
+    import anyio
+    import httpx
+    from threading import BoundedSemaphore, Event
+    from app.api import welding
+    from app.api.workloads import RequestWorkload
+    from app.models.domain import AnalysisResult
+    entered, release = Event(), Event()
+    # Registered synchronous routes retain the original workload object.
+    pool = welding.welding_requests
+    monkeypatch.setattr(pool, '_slots', BoundedSemaphore(1))
+    monkeypatch.setattr(pool, '_threads', anyio.CapacityLimiter(1))
+    monkeypatch.setattr(pool, 'max_waiters', 2)
+    monkeypatch.setattr(pool, 'queue_timeout_seconds', 0.1)
+    monkeypatch.setattr(welding, 'pdf_requests', RequestWorkload(1, 'PDF'))
+    monkeypatch.setattr(welding, 'analysis_requests', RequestWorkload(1, '分析'))
+    data = {**report_data(), 'equipment': [], 'data_version': 'a' * 64}
+    source = {'open': False}
+    def report(*args, **kwargs):
+        source['open'] = True
+        try:
+            return data
+        finally:
+            source['open'] = False
+    instance = WeldingService(Settings(weld_enabled=True, llm_enabled=True), None)
+    instance.report = report
+    api.app.state.welding = instance
+    def slow():
+        assert not source['open']
+        entered.set()
+        assert release.wait(5)
+    class Pdf:
+        def render(self, path):
+            slow()
+            result = path.with_suffix('.pdf')
+            result.write_bytes(b'%PDF-test')
+            return result
+    api.app.state.pdf_service = Pdf()
+    def model(*args):
+        slow()
+        return AnalysisResult(status='success', overview='ok', features='ok', alerts='ok', suggestions='ok')
+    monkeypatch.setattr(welding.LlmService, 'analyze_context', model)
+
+    async def exercise():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=api.app), base_url='http://test') as client:
+            if stage == 'pdf':
+                operation = client.get('/api/v1/welding/export?report_type=jobs&format=pdf&start=2026-10-01&end=2026-10-31')
+            else:
+                operation = client.post('/api/v1/welding/analysis', json={'query': query().model_dump(mode='json'), 'report_type': 'jobs', 'data_version': 'a' * 64})
+            task = asyncio.create_task(operation)
+            try:
+                with anyio.fail_after(2):
+                    while not entered.is_set():
+                        await anyio.sleep(0.001)
+                assert pool._slots.acquire(blocking=False)
+                pool._slots.release()
+                with anyio.fail_after(1):
+                    response = await client.get('/api/v1/welding/jobs?start=2026-10-01&end=2026-10-31')
+                assert response.status_code == 200 and response.json()['data']['data_version'] == 'a' * 64
+            finally:
+                release.set()
+                result = await task
+            assert result.status_code == 200
+            if stage == 'pdf':
+                assert result.content == b'%PDF-test'
+            else:
+                assert result.json()['data']['overview'] == 'ok'
+    anyio.run(exercise)
+
+
+def test_four_http_queries_execute_and_fifth_waits_for_a_slot(api, monkeypatch):
+    import asyncio
+    import anyio
+    import httpx
+    from threading import BoundedSemaphore, Event, Lock
+    from app.api import welding
+    pool = welding.welding_requests
+    monkeypatch.setattr(pool, '_slots', BoundedSemaphore(4))
+    monkeypatch.setattr(pool, '_threads', anyio.CapacityLimiter(4))
+    monkeypatch.setattr(pool, 'max_waiters', 12)
+    monkeypatch.setattr(pool, 'queue_timeout_seconds', 5)
+    release, lock = Event(), Lock()
+    counts = {'running': 0, 'peak': 0}
+    def report(*args):
+        with lock:
+            counts['running'] += 1
+            counts['peak'] = max(counts['peak'], counts['running'])
+        try:
+            assert release.wait(5)
+            return {'data_version': 'ok'}
+        finally:
+            with lock:
+                counts['running'] -= 1
+    api.app.state.welding.report = report
+    async def exercise():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=api.app), base_url='http://test') as client:
+            tasks = [asyncio.create_task(client.get('/api/v1/welding/jobs?start=2026-10-01&end=2026-10-02')) for _ in range(5)]
+            try:
+                with anyio.fail_after(2):
+                    while counts['running'] != 4 or len(pool._queue) != 1:
+                        await anyio.sleep(0.001)
+                assert not any(task.done() for task in tasks)
+            finally:
+                release.set()
+                responses = await asyncio.gather(*tasks)
+            assert all(response.status_code == 200 for response in responses)
+            assert counts['peak'] == 4 and not pool._queue
+    anyio.run(exercise)
+
+
+@pytest.mark.parametrize('format,media', [('csv', 'text/csv'), ('html', 'text/html')])
+def test_http_csv_and_html_export_preserve_data_without_pdf(api, format, media):
+    api.app.state.welding.report = lambda *args, **kwargs: report_data()
+    api.app.state.pdf_service = SimpleNamespace(render=lambda _: pytest.fail('CSV/HTML must not render PDF'))
+    result = api.get(f'/api/v1/welding/export?report_type=jobs&format={format}&start=2026-10-01&end=2026-10-31')
+    assert result.status_code == 200 and media in result.headers['content-type']
+    assert f'.{format}' in result.headers['content-disposition']
+    assert '工件流水号' in result.content.decode('utf-8-sig')

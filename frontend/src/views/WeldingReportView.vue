@@ -6,6 +6,7 @@ import AppDatePicker from '../components/AppDatePicker.vue'
 import AppSelect from '../components/AppSelect.vue'
 import HomeKpiCard from '../components/HomeKpiCard.vue'
 import ReportFeedback from '../components/ReportFeedback.vue'
+import ReportPanelState from '../components/ReportPanelState.vue'
 import ReportExportMenu from '../components/ReportExportMenu.vue'
 import WeldingCharts from '../components/WeldingCharts.vue'
 import WeldingTable from '../components/WeldingTable.vue'
@@ -41,6 +42,7 @@ const sourceEnabled = computed(() => deviceSelection.items?.find(item => item.id
 let controller, detailController, exportController, analysisController
 let generation = 0
 let detailGeneration = 0
+let pendingRead
 const reportKind = computed(() => props.kind === 'dashboard' ? 'jobs' : props.kind)
 const cards = computed(() => weldingKpis(props.kind, report.value))
 const title = computed(() => weldingTitles[props.kind])
@@ -48,7 +50,15 @@ const sourceUpdated = computed(() => Object.entries(report.value?.meta?.data_upd
 const qualityLabels = { invalid_time_rows: '区间候选记录中结束时间无效', invalid_serial_rows: '流水号无效', invalid_length_rows: '长度为空或非正', invalid_duration_rows: '用时为空或非正', unverified_state_rows: '状态含义待确认' }
 const analysisSections = [['overview', '生产概况'], ['features', '产出特点'], ['alerts', '数据关注点'], ['suggestions', '核查建议']]
 
-async function read(values) {
+function read(values) {
+  const key = JSON.stringify([props.kind, Object.entries(weldingQuery(values)).sort(([a], [b]) => a.localeCompare(b))])
+  if (pendingRead?.key === key && !controller?.signal.aborted) return pendingRead.promise
+  const promise = load(values)
+  pendingRead = { key, promise }
+  promise.finally(() => { if (pendingRead?.promise === promise) pendingRead = null })
+  return promise
+}
+async function load(values) {
   controller?.abort()
   analysisController?.abort()
   const run = ++generation
@@ -164,7 +174,7 @@ onBeforeUnmount(cancel)
     </section>
     <ReportFeedback v-if="!sourceEnabled" title="焊接数据库尚未启用" message="请先保存数据库连接参数并启用小组立焊接线。" action-label="配置数据库" @action="router.push('/admin/settings/database')" />
     <ReportFeedback v-else-if="error" type="error" title="焊接数据读取失败" :message="`${error}${report ? '；当前保留上次成功查询结果。' : ''}`" action-label="重试" @action="submit" />
-    <ReportFeedback v-else-if="loading && !report" title="正在读取焊接数据" message="数据返回后更新指标、图表和明细。" />
+    <ReportPanelState v-else-if="loading" type="loading" title="正在读取焊接数据" message="正在查询，繁忙时由服务器短暂排队。" />
     <ReportFeedback v-if="actionError" type="error" title="操作未完成" :message="actionError" dismissible @dismiss="actionError = ''" />
     <ReportFeedback v-if="actionNotice" title="操作完成" :message="actionNotice" dismissible @dismiss="actionNotice = ''" />
     <div v-if="sourceEnabled" class="welding-kpis"><NCard v-for="card in cards" :key="card.key" :bordered="false"><HomeKpiCard :title="card.title" :value="card.value" :unit="card.unit" :precision="card.unit === 'm' || card.unit === 'h' || card.unit === 'm/h' ? 2 : 0" :loading="loading" :status="card.pending ? '口径待核实' : ''" :series="report?.daily?.map(row => row[card.key] ?? 0) || []" /></NCard></div>
@@ -179,7 +189,7 @@ onBeforeUnmount(cancel)
     </template>
     <NModal v-model:show="detailOpen" preset="card" :title="detailJob ? '焊接作业详情' : '工件与焊缝详情'" class="welding-modal" :style="{ width: 'min(1200px, 94vw)' }">
       <ReportFeedback v-if="detailError" type="error" title="详情读取失败" :message="detailError" />
-      <p v-if="detailLoading" role="status">正在读取详情…</p>
+      <ReportPanelState v-if="detailLoading" type="loading" title="正在读取详情" message="正在查询，繁忙时由服务器短暂排队。" />
       <template v-if="detailJob"><dl class="welding-record"><template v-for="[key, label] in weldingColumns.jobs" :key="key"><dt>{{ label }}</dt><dd>{{ weldingDisplay(detailJob[key], key) }}</dd></template></dl><button type="button" :disabled="!detailJob.serial_number" @click="goToPart">查询该流水号的工件</button></template>
       <template v-if="details"><dl class="welding-record"><template v-for="[key, label] in weldingColumns.parts" :key="key"><dt>{{ label }}</dt><dd>{{ weldingDisplay(details.part[key], key) }}</dd></template></dl><ReportFeedback :type="details.association_status === 'pending_verification' ? 'warning' : 'info'" title="焊缝关联说明" :message="details.notice" /><button type="button" :disabled="exporting || details.association_status === 'pending_verification'" @click="exportSeams">导出该工件全部焊缝 CSV</button><WeldingTable kind="seams" :items="details.items" :total="details.total" :page="seamPage" :loading="detailLoading" @page="openDetail(details.part, $event)" /></template>
     </NModal>

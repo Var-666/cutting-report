@@ -90,8 +90,9 @@ def test_busy_analysis_pdf_and_queries_leave_default_threads_and_fast_routes_fre
 
 
 @pytest.mark.parametrize("error", [ValueError("failed"), HTTPException(409, "conflict"), TimeoutError("external timeout"), SqlRequestCancelled("cancelled")])
-def test_isolation_preserves_context_and_exceptions_and_releases_slots(error):
-    workload = workloads.RequestWorkload(1, "测试")
+@pytest.mark.parametrize('max_waiters', [0, 2])
+def test_isolation_preserves_context_and_exceptions_and_releases_slots(error, max_waiters):
+    workload = workloads.RequestWorkload(1, "测试", max_waiters=max_waiters)
     context = ContextVar("workload-test", default=None)
 
     def fail():
@@ -184,8 +185,9 @@ def test_cancelling_request_keeps_capacity_until_sync_work_finishes():
     anyio.run(exercise)
 
 
-def test_native_asyncio_cancellation_keeps_capacity_until_worker_finishes():
-    workload = workloads.RequestWorkload(1, "测试")
+@pytest.mark.parametrize('max_waiters', [0, 2])
+def test_native_asyncio_cancellation_keeps_capacity_until_worker_finishes(max_waiters):
+    workload = workloads.RequestWorkload(1, "测试", max_waiters=max_waiters, queue_timeout_seconds=0.05)
     entered, release, finished = Event(), Event(), Event()
 
     def blocking():
@@ -220,8 +222,9 @@ def test_native_asyncio_cancellation_keeps_capacity_until_worker_finishes():
     anyio.run(exercise)
 
 
-def test_cancelled_dispatch_releases_capacity_and_never_runs_later():
-    workload = workloads.RequestWorkload(1, "测试")
+@pytest.mark.parametrize('max_waiters', [0, 2])
+def test_cancelled_dispatch_releases_capacity_and_never_runs_later(max_waiters):
+    workload = workloads.RequestWorkload(1, "测试", max_waiters=max_waiters)
     executed = Event()
 
     async def exercise():
@@ -240,6 +243,92 @@ def test_cancelled_dispatch_releases_capacity_and_never_runs_later():
         finally:
             workload._threads.release()
         assert await workload.run_sync(lambda: "recovered") == "recovered"
+        assert not executed.is_set()
+
+    anyio.run(exercise)
+
+
+def test_bounded_queue_is_fifo_without_threads_and_rejects_only_overflow():
+    workload = workloads.RequestWorkload(1, '焊接', max_waiters=2)
+    entered, release = Event(), Event()
+    order = []
+
+    def first():
+        entered.set()
+        assert release.wait(5)
+        order.append(0)
+
+    async def exercise():
+        running = asyncio.create_task(workload.run_sync(first))
+        queued = []
+        try:
+            with anyio.fail_after(2):
+                while not entered.is_set():
+                    await anyio.sleep(0.001)
+                for index in (1, 2):
+                    queued.append(asyncio.create_task(workload.run_sync(lambda i=index: order.append(i))))
+                    while len(workload._queue) < index:
+                        await anyio.sleep(0.001)
+            assert anyio.to_thread.current_default_thread_limiter().borrowed_tokens == 0
+            assert workload._threads.borrowed_tokens == 1
+            with pytest.raises(HTTPException) as caught:
+                await workload.run_sync(lambda: pytest.fail('overflow must not execute'))
+            assert caught.value.status_code == 503
+            assert caught.value.headers['X-Workload-Error'] == 'queue_full'
+        finally:
+            release.set()
+            await asyncio.gather(running, *queued)
+        assert order == [0, 1, 2]
+        assert not workload._queue
+        assert await workload.run_sync(lambda: 'recovered') == 'recovered'
+
+    anyio.run(exercise)
+
+
+@pytest.mark.parametrize('cancellation', ['timeout', 'native', 'registry', 'disconnect'])
+def test_waiting_requests_cancel_or_timeout_without_late_execution(cancellation):
+    from fastapi import Request
+    from app.services.request_cancellation import bind_request_id, reset_request_id, sql_request_cancellations
+    workload = workloads.RequestWorkload(1, '焊接', max_waiters=1, queue_timeout_seconds=0.075)
+    entered, release, executed = Event(), Event(), Event()
+
+    def blocking():
+        entered.set()
+        assert release.wait(5)
+
+    async def disconnected():
+        return {'type': 'http.disconnect'}
+
+    async def exercise():
+        running = asyncio.create_task(workload.run_sync(blocking))
+        execution_id = sql_request_cancellations.activate('queued-test')
+        token = bind_request_id(execution_id)
+        try:
+            with anyio.fail_after(2):
+                while not entered.is_set():
+                    await anyio.sleep(0.001)
+            request = Request({'type': 'http'}, receive=disconnected) if cancellation == 'disconnect' else None
+            queued = asyncio.create_task(workload.run_sync(executed.set, _request=request))
+            if cancellation != 'disconnect':
+                with anyio.fail_after(2):
+                    while not workload._queue:
+                        await anyio.sleep(0.001)
+            if cancellation == 'native':
+                queued.cancel()
+            elif cancellation == 'registry':
+                sql_request_cancellations.cancel(execution_id)
+            expected = HTTPException if cancellation == 'timeout' else asyncio.CancelledError if cancellation == 'native' else SqlRequestCancelled
+            with pytest.raises(expected) as caught:
+                await queued
+            if cancellation == 'timeout':
+                assert caught.value.headers['X-Workload-Error'] == 'queue_timeout'
+            assert not workload._queue and not executed.is_set()
+        finally:
+            reset_request_id(token)
+            sql_request_cancellations.finish(execution_id)
+            release.set()
+            await running
+        assert await workload.run_sync(lambda: 'recovered') == 'recovered'
         assert not executed.is_set()
 
     anyio.run(exercise)

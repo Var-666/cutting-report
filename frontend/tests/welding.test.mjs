@@ -5,7 +5,7 @@ import { computed, reactive, ref } from 'vue'
 import { parse, compileScript, compileTemplate } from '@vue/compiler-sfc'
 import { productionGroups, selectedLineType } from '../src/utils/productionLines.js'
 import { adminMenus } from '../src/router/menus.js'
-import { downloadWelding, weldingQuery } from '../src/api/welding.js'
+import { analyzeWelding, downloadWelding, getWeldingPart, getWeldingReport, weldingQuery } from '../src/api/welding.js'
 import { weldingColumns, weldingDisplay, weldingKpis, weldingTitles } from '../src/utils/weldingReport.js'
 import { weldingRoutes } from '../src/router/weldingRoutes.js'
 import { queryDateRange } from '../src/utils/reportRouteState.js'
@@ -78,13 +78,92 @@ function view(readReport, options = {}) {
   const script = parse(source('views/WeldingReportView.vue')).descriptor.scriptSetup.content.replace(/^import .*$/gm, '')
   const cleanup = []
   const bindings = {
-    computed, reactive, ref, watch: () => {}, onBeforeUnmount: fn => cleanup.push(fn),
+    computed, reactive, ref, watch: (source, callback, config) => { if (options.watchers) { options.watchers.push({ source, callback }); if (config?.immediate) callback(source()) } }, onBeforeUnmount: fn => cleanup.push(fn),
     defineProps: () => ({ kind: 'jobs' }), useRoute: () => options.route || ({ query: {} }), useRouter: () => options.router || ({ push() {} }), queryDateRange,
     reportToday: () => '2026-10-26', getWeldingReport: readReport,
     deviceSelection: { id: 'welding', items: [{ id: 'welding', enabled: options.enabled ?? true }] }, weldingTitles, weldingKpis, weldingColumns, weldingDisplay, weldingQuery,
   }
-  return { ...new Function(...Object.keys(bindings), `${script}; return { read, report, loading, error, activeQuery, draft, detailJob, goToPart };`)(...Object.values(bindings)), cleanup }
+  return { ...new Function(...Object.keys(bindings), `${script}; return { read, submit, changePage, changePageSize, report, loading, error, activeQuery, draft, detailJob, goToPart };`)(...Object.values(bindings)), cleanup }
 }
+
+const busyResponse = (retryAfter = '1') => Response.json({ detail: '焊接数据查询请求繁忙，请稍后重试。' }, { status: 503, headers: { 'Retry-After': retryAfter } })
+const settle = () => new Promise(resolve => setImmediate(resolve))
+
+test('one welding request stays pending while the server queues it', async t => {
+  let finish
+  const fetchMock = t.mock.method(globalThis, 'fetch', () => new Promise(resolve => { finish = resolve }))
+  const app = view(getWeldingReport)
+  const pending = app.read({ device_no: 0 })
+  await settle()
+  assert.equal(app.loading.value, true)
+  assert.equal(app.error.value, '')
+  assert.equal(fetchMock.mock.callCount(), 1)
+  finish(Response.json({ success: true, data: { query: { device_no: 0 }, data_version: 'ok' } }))
+  await pending
+  assert.equal(app.report.value.data_version, 'ok')
+  assert.equal(app.loading.value, false)
+})
+
+test('leaving a welding page cancels the pending request without replay', async t => {
+  let reads = 0
+  t.mock.method(globalThis, 'fetch', (url, options) => {
+    if (url.includes('/requests/')) return Promise.resolve(Response.json({ success: true }))
+    reads += 1
+    return new Promise((resolve, reject) => options.signal.addEventListener('abort', () => reject(new DOMException('cancelled', 'AbortError')), { once: true }))
+  })
+  const app = view(getWeldingReport)
+  const pending = app.read({})
+  await settle()
+  app.cleanup.forEach(fn => fn())
+  await pending
+  assert.equal(reads, 1)
+  assert.equal(app.error.value, '')
+  assert.equal(app.report.value, null)
+})
+
+test('queue overflow is shown once and retains the last successful report', async t => {
+  let calls = 0
+  t.mock.method(globalThis, 'fetch', async () => ++calls === 1 ? Response.json({ success: true, data: { query: { device_no: 0 }, data_version: 'previous' } }) : busyResponse())
+  const app = view(getWeldingReport)
+  await app.read({ device_no: 0 })
+  await app.read({ device_no: 1 })
+  assert.equal(calls, 2)
+  assert.match(app.error.value, /请求繁忙/)
+  assert.equal(app.loading.value, false)
+  assert.equal(app.report.value.data_version, 'previous')
+  assert.equal(app.activeQuery.value.device_no, 0)
+})
+
+test('source, authentication and network failures remain visible without replay', async t => {
+  const responses = [
+    () => Response.json({ detail: '数据源超时' }, { status: 503 }),
+    () => Response.json({ detail: '权限不足' }, { status: 403, headers: { 'Retry-After': '1' } }),
+    () => busyResponse('invalid'),
+    () => busyResponse('0'),
+    () => busyResponse('-1'),
+    () => { throw new TypeError('network failure') },
+  ]
+  for (const response of responses) {
+    const fetchMock = t.mock.method(globalThis, 'fetch', async () => response())
+    await assert.rejects(getWeldingReport('jobs', {}))
+    assert.equal(fetchMock.mock.callCount(), 1)
+    fetchMock.mock.restore()
+  }
+})
+
+test('reports, details, downloads and analysis never replay a capacity rejection', async t => {
+  for (const read of [
+    ...['dashboard', 'daily', 'parts', 'jobs', 'equipment'].map(kind => () => getWeldingReport(kind, {})),
+    () => getWeldingPart(1, 1),
+    () => downloadWelding('/api/v1/welding/export', 'report.pdf'),
+    () => analyzeWelding('jobs', {}, 'version'),
+  ]) {
+    const fetchMock = t.mock.method(globalThis, 'fetch', async () => busyResponse())
+    await assert.rejects(read(), /请求繁忙/)
+    assert.equal(fetchMock.mock.callCount(), 1)
+    fetchMock.mock.restore()
+  }
+})
 
 test('job to part drilldown retains the applied historical production period', () => {
   const destinations = []
@@ -151,5 +230,43 @@ test('welding templates compile with loading, error, pending, detail and respons
   assert.match(page, /max-width:600px/)
   assert.match(page, /NModal/)
   assert.match(page, /data_version/)
+  assert.match(page, /ReportPanelState v-else-if="loading" type="loading"/)
   assert.match(source('views/DatabaseView.vue'), /weld_password[\s\S]*type="password"/)
+})
+
+test('identical in-flight filters reuse the query and a later explicit refresh still runs', async () => {
+  const pending = []
+  const app = view((kind, values, signal) => new Promise(resolve => pending.push({ values, signal, resolve })))
+  const first = app.read({ device_no: 0, page: 1 })
+  const same = app.read({ page: 1, device_no: 0, serial_number: '' })
+  assert.equal(same, first)
+  assert.equal(pending.length, 1)
+  assert.equal(pending[0].signal.aborted, false)
+  pending[0].resolve({ query: pending[0].values, data_version: 'first' })
+  await first
+  const refresh = app.read({ device_no: 0, page: 1 })
+  assert.equal(pending.length, 2)
+  pending[1].resolve({ query: pending[1].values, data_version: 'refreshed' })
+  await refresh
+  assert.equal(app.report.value.data_version, 'refreshed')
+})
+
+test('initial watcher and repeated submit share one active request; pagination sends the new page once', async () => {
+  const pending = []
+  const watchers = []
+  const app = view((kind, values, signal) => new Promise(resolve => pending.push({ values, signal, resolve })), { watchers })
+  assert.equal(pending.length, 1)
+  const initial = app.read({ ...app.draft, page: 1, page_size: 20 })
+  app.submit()
+  assert.equal(pending.length, 1)
+  assert.equal(pending[0].signal.aborted, false)
+  pending[0].resolve({ query: pending[0].values, data_version: 'first' })
+  await initial
+  app.changePage(2)
+  const next = app.read({ ...app.activeQuery.value, page: 2 })
+  assert.equal(pending.length, 2)
+  assert.equal(pending[1].values.page, 2)
+  pending[1].resolve({ query: pending[1].values, data_version: 'second' })
+  await next
+  assert.equal(app.activeQuery.value.page, 2)
 })

@@ -44,6 +44,8 @@ export async function request(url, options = {}) {
       const message = payload?.error?.message || payload?.detail || '请求失败，请稍后重试'
       const error = new Error(message)
       error.status = response.status
+      const retryAfter = Number(response.headers?.get?.('Retry-After'))
+      if (Number.isFinite(retryAfter) && retryAfter > 0) error.retryAfterMs = retryAfter * 1000
       throw error
     }
     return payload.data

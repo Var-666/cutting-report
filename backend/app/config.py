@@ -133,7 +133,7 @@ class Settings:
     weld_db_user: str = configuration_field("WELD_DB_USER", lambda: _environment.get().get("WELD_DB_USER", ""), hidden=True)
     weld_db_password: str = configuration_field("WELD_DB_PASSWORD", lambda: _environment.get().get("WELD_DB_PASSWORD", ""))
     weld_db_timezone: str = configuration_field("WELD_DB_TIMEZONE", lambda: _environment.get().get("WELD_DB_TIMEZONE", "Asia/Shanghai"))
-    weld_db_pool_size: int = configuration_field("WELD_DB_POOL_SIZE", lambda: _as_int("WELD_DB_POOL_SIZE", 2))
+    weld_db_pool_size: int = configuration_field("WELD_DB_POOL_SIZE", lambda: _as_int("WELD_DB_POOL_SIZE", 4))
     weld_db_connect_timeout: int = configuration_field("WELD_DB_CONNECT_TIMEOUT_SECONDS", lambda: _as_int("WELD_DB_CONNECT_TIMEOUT_SECONDS", 5))
     weld_db_query_timeout: int = configuration_field("WELD_DB_QUERY_TIMEOUT_SECONDS", lambda: _as_int("WELD_DB_QUERY_TIMEOUT_SECONDS", 120))
 
