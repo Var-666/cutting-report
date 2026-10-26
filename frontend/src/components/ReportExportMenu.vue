@@ -28,6 +28,6 @@ function select(event) {
 .report-export-menu > .app-icon { position:absolute; top:50%; left:12px; z-index:2; pointer-events:none; transform:translateY(-50%); }
 .report-export-menu__select { width:100%; height:100%; }
 .report-export-menu :deep(.n-base-selection) { --n-height:40px!important; }
-.report-export-menu :deep(.n-base-selection-label) { padding-left:36px; border-radius:8px; font-size:11px; font-weight:700; }
+.report-export-menu :deep(.n-base-selection-label) { padding-left:36px; border-radius:8px; font-size:var(--font-auxiliary); font-weight:700; }
 .report-export-menu.is-disabled { cursor:wait; opacity:.6; }
 </style>

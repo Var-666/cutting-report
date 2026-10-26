@@ -408,7 +408,7 @@ onMounted(() => Promise.all([loadConfiguration(), loadAll()]))
       <div v-else-if="!status && error" class="configuration-load-error" role="alert"><span>定时任务暂时无法读取。</span><button type="button" @click="loadAll">重新读取</button></div>
       <div v-else-if="!schedules.length" class="empty">尚未创建定时任务，可在上方设置并创建。</div>
       <div v-else class="automation-table-wrap" tabindex="0" role="region" aria-label="定时任务列表，可滚动查看">
-        <table v-content-table><thead><tr><th>状态</th><th>任务</th><th>报表</th><th>计划</th><th>下次执行</th><th>收件人</th><th>发送 / 失败</th><th>操作</th></tr></thead>
+        <table v-content-table data-content-columns="center left left left left right right actions"><thead><tr><th>状态</th><th>任务</th><th>报表</th><th>计划</th><th>下次执行</th><th>收件人</th><th>发送 / 失败</th><th>操作</th></tr></thead>
           <tbody><tr v-for="item in schedules" :key="item.schedule_id">
             <td><span class="schedule-status" :class="{ enabled: item.enabled }"><i></i>{{ item.enabled ? '启用' : '停用' }}</span></td>
             <td class="task-cell"><strong>{{ item.name }}</strong><small>{{ formatDeviceDisplay(item.device_id) }}</small><small>{{ scheduleLabels[item.last_status] || item.last_status || '尚未执行' }}</small></td>
@@ -425,7 +425,7 @@ onMounted(() => Promise.all([loadConfiguration(), loadAll()]))
       <div v-else-if="!status && error" class="configuration-load-error" role="alert"><span>邮件发送记录暂时无法读取。</span><button type="button" @click="loadAll">重新读取</button></div>
       <div v-else-if="!deliveries.length" class="empty">尚无邮件发送记录，任务执行后会显示在这里。</div>
       <div v-else class="automation-table-wrap delivery-table-wrap" tabindex="0" role="region" aria-label="邮件发送记录，可滚动查看">
-        <table v-content-table><thead><tr><th>创建时间</th><th>任务</th><th>报表日期</th><th>收件人</th><th>状态</th><th>尝试</th><th>结果</th><th>操作</th></tr></thead>
+        <table v-content-table data-content-columns="left left left left center right left actions"><thead><tr><th>创建时间</th><th>任务</th><th>报表日期</th><th>收件人</th><th>状态</th><th>尝试</th><th>结果</th><th>操作</th></tr></thead>
           <tbody><tr v-for="item in deliveries" :key="item.delivery_id">
             <td>{{ formatDateTime(item.created_at) }}</td>
             <td class="task-cell"><strong>{{ item.schedule_name }}</strong><small :title="item.subject">{{ item.subject }}</small></td>
@@ -446,7 +446,7 @@ onMounted(() => Promise.all([loadConfiguration(), loadAll()]))
 <style scoped>
 .automation-page { --automation-border: var(--theme-border-color); }
 .automation-page .panel-title { gap: 12px; }
-.automation-page .panel-title p { margin: 0; font-size: 11px; line-height: 1.5; text-align: right; }
+.automation-page .panel-title p { margin: 0; font-size: var(--font-auxiliary); line-height: 1.5; text-align: right; }
 .table-scroll-hint { display: none; }
 .automation-message, .configuration-feedback { padding: 12px 14px; border: 1px solid; border-radius: 7px; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
 .automation-message.success, .configuration-feedback.success { color: rgb(var(--success-color)); border-color: rgb(var(--success-color)); background: rgb(var(--success-color) / .1); }
@@ -455,7 +455,7 @@ onMounted(() => Promise.all([loadConfiguration(), loadAll()]))
 .automation-page .automation-kpis article { min-width: 0; display: flex; align-items: center; gap: 14px; padding: 16px 18px; border: 1px solid var(--automation-border); border-radius: 10px; background: rgb(var(--container-bg-color)); box-shadow: var(--theme-shadow); }
 .automation-kpis article > div { min-width: 0; }
 .automation-kpis .kpi-icon { width: 38px; height: 38px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 9px; background: rgb(var(--info-color) / .1); }
-.automation-kpis span { color: var(--muted); font-size: 11px; }
+.automation-kpis span { color: var(--muted); font-size: var(--font-auxiliary); }
 .automation-page .automation-kpis strong { display: block; margin-top: 5px; color: var(--text-color-1); font-size: 24px; line-height: 1.25; font-variant-numeric: tabular-nums; }
 .automation-kpis em { color: var(--text-color-3); font-size: 18px; font-style: normal; font-weight: 400; }
 .automation-workspace { min-width: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; gap: 12px; }
@@ -464,7 +464,7 @@ onMounted(() => Promise.all([loadConfiguration(), loadAll()]))
 .automation-page > :deep(.resolution-panel) { margin-top: 0; }
 .automation-editor { scroll-margin-top: 82px; }
 .configuration-form, .automation-form { display: flex; flex-direction: column; flex: 1; padding: 18px; background: rgb(var(--container-bg-color)); }
-.configuration-notice { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 18px; padding: 10px 12px; border-radius: 7px; color: var(--muted); background: rgb(var(--primary-color) / .1); font-size: 11px; line-height: 1.6; }
+.configuration-notice { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 18px; padding: 10px 12px; border-radius: 7px; color: var(--muted); background: rgb(var(--primary-color) / .1); font-size: var(--font-auxiliary); line-height: 1.6; }
 .configuration-notice .app-icon { flex: 0 0 auto; margin-top: 1px; }
 .configuration-grid { display: grid; gap: 18px; margin-bottom: 16px; }
 .configuration-card { min-width: 0; margin: 0; padding: 0; border: 0; }
@@ -473,32 +473,32 @@ onMounted(() => Promise.all([loadConfiguration(), loadAll()]))
 .setting-switch { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; padding: 10px 12px; border: 1px solid var(--theme-border-color); border-radius: 7px; background: rgb(var(--info-color) / .1); }
 .setting-switch strong, .setting-switch small { display: block; }
 .setting-switch strong { color: var(--text-color-1); font-size: 12px; }
-.setting-switch small { margin-top: 3px; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.setting-switch small { margin-top: 3px; color: var(--muted); font-size: var(--font-auxiliary); line-height: 1.5; }
 .setting-switch > input { width: 18px; height: 18px; flex: 0 0 auto; accent-color: var(--cyan); }
 .setting-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .setting-fields .span-two, .automation-form .wide { grid-column: 1 / -1; }
 .setting-fields label, .automation-fields > label { min-width: 0; }
-.setting-fields label > span, .automation-form label > span { display: block; margin-bottom: 6px; color: var(--text-color-2); font-size: 11px; font-weight: 650; }
+.setting-fields label > span, .automation-form label > span { display: block; margin-bottom: 6px; color: var(--text-color-2); font-size: var(--font-auxiliary); font-weight: 650; }
 .setting-fields input, .automation-form input { width: 100%; height: 36px; min-width: 0; padding: 0 10px; }
 .automation-form :deep(.app-select) { height: 36px; }
 .automation-form :deep(.app-select__trigger) { padding: 0 10px; }
-.setting-fields small, .automation-form small { display: block; margin-top: 5px; color: var(--muted); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
-.security-options { display: flex; align-items: center; flex-wrap: wrap; gap: 9px 14px; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--theme-border-color); color: var(--text-color-2); font-size: 11px; }
+.setting-fields small, .automation-form small { display: block; margin-top: 5px; color: var(--muted); font-size: var(--font-auxiliary); line-height: 1.5; overflow-wrap: anywhere; }
+.security-options { display: flex; align-items: center; flex-wrap: wrap; gap: 9px 14px; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--theme-border-color); color: var(--text-color-2); font-size: var(--font-auxiliary); }
 .security-options > span { font-weight: 650; }
 .security-options label { display: flex; align-items: center; gap: 6px; }
 .security-options input { width: 16px; height: 16px; accent-color: var(--cyan); }
-.security-options small { flex: 1 1 100%; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.security-options small { flex: 1 1 100%; color: var(--muted); font-size: var(--font-auxiliary); line-height: 1.5; }
 .configuration-feedback { margin-top: 14px; }
 .configuration-actions, .automation-actions { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-top: auto; padding-top: 14px; border-top: 1px solid var(--theme-border-color); }
-.configuration-actions > span, .automation-actions > span { color: var(--muted); font-size: 11px; line-height: 1.5; }
+.configuration-actions > span, .automation-actions > span { color: var(--muted); font-size: var(--font-auxiliary); line-height: 1.5; }
 .configuration-actions button, .automation-actions button { min-height: 36px; padding: 0 14px; }
 .configuration-actions button { margin-left: auto; }
 .automation-actions > div { display: flex; gap: 8px; margin-left: auto; }
 .automation-form { gap: 14px; }
 .automation-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 12px; }
-.automation-form textarea { width: 100%; min-height: 80px; resize: vertical; padding: 9px 10px; border: 1px solid var(--theme-border-color); border-radius: 7px; color: var(--ink); background: rgb(var(--container-bg-color)); font: inherit; font-size: 11px; }
+.automation-form textarea { width: 100%; min-height: 80px; resize: vertical; padding: 9px 10px; border: 1px solid var(--theme-border-color); border-radius: 7px; color: var(--ink); background: rgb(var(--container-bg-color)); font: inherit; font-size: var(--font-auxiliary); }
 .automation-switches { display: flex; flex-wrap: wrap; gap: 12px 18px; padding: 12px; border-radius: 7px; background: rgb(var(--info-color) / .1); }
-.automation-switches label { display: flex; align-items: center; gap: 7px; color: var(--text-color-2); font-size: 11px; }
+.automation-switches label { display: flex; align-items: center; gap: 7px; color: var(--text-color-2); font-size: var(--font-auxiliary); }
 .automation-switches input { width: 16px; height: 16px; accent-color: var(--cyan); }
 .configuration-load-error { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin: 18px; padding: 12px; border: 1px solid rgb(var(--error-color)); border-radius: 7px; color: rgb(var(--error-color)); background: rgb(var(--error-color) / .1); font-size: 12px; }
 .configuration-load-error button { min-height: 32px; padding: 0 10px; }
@@ -507,9 +507,9 @@ onMounted(() => Promise.all([loadConfiguration(), loadAll()]))
 .delivery-table-wrap { max-height: 440px; }
 .automation-table-wrap:focus-visible { outline: 2px solid rgb(var(--primary-color) / .3); outline-offset: -2px; }
 .automation-table-wrap table { width: 100%; border-collapse: collapse; }
-.automation-page .automation-table-wrap th { position: sticky; z-index: 1; top: 0; font-size: 10px !important; }
+.automation-page .automation-table-wrap th { position: sticky; z-index: 1; top: 0; font-size: var(--font-auxiliary) !important; }
 .automation-table-wrap td strong, .automation-table-wrap td small { display: block; }
-.automation-table-wrap td small { margin-top: 4px; color: var(--muted); font-size: 11px; }
+.automation-table-wrap td small { margin-top: 4px; color: var(--muted); font-size: var(--font-auxiliary); }
 .automation-page .automation-table-wrap td.task-cell, .automation-page .automation-table-wrap td.recipient-cell, .automation-page .automation-table-wrap td.error-cell { text-align: left !important; }
 .automation-page .automation-table-wrap td.task-cell strong, .automation-page .automation-table-wrap td.task-cell small, .automation-page .automation-table-wrap td.recipient-cell small { text-align: left !important; }
 .automation-page .automation-table-wrap td.error-cell { white-space: nowrap !important; }
@@ -519,14 +519,14 @@ onMounted(() => Promise.all([loadConfiguration(), loadAll()]))
 .schedule-status.enabled { color: var(--text-color-1); background: rgb(var(--success-color) / .1); }
 .schedule-status.enabled i { background: rgb(var(--success-color)); }
 .row-actions, .delivery-actions { display: flex; justify-content: center; gap: 6px; }
-.row-actions button, .delivery-actions button { min-height: 30px; padding: 0 9px; font-size: 11px; white-space: nowrap; }
+.row-actions button, .delivery-actions button { min-height: 30px; padding: 0 9px; font-size: var(--font-auxiliary); white-space: nowrap; }
 .row-actions .danger { color: rgb(var(--error-color)); border-color: rgb(var(--error-color)); background: rgb(var(--error-color) / .1); }
 .delivery-status { display: inline-block; padding: 4px 8px; border-radius: 5px; color: var(--muted); background: rgb(var(--info-color) / .1); }
 .delivery-status.sent { color: var(--text-color-1); background: rgb(var(--success-color) / .1); }
 .delivery-status.failed { color: rgb(var(--error-color)); background: rgb(var(--error-color) / .1); }
 .delivery-status.retry_wait, .delivery-status.unknown { color: var(--text-color-1); background: rgb(var(--warning-color) / .1); }
 .delivery-status.sending { color: rgb(var(--info-color)); background: rgb(var(--info-color) / .1); }
-.automation-pagination { display: flex; align-items: center; justify-content: flex-end; padding: 12px 16px; border-top: 1px solid var(--theme-border-color); color: var(--muted); font-size: 11px; }
+.automation-pagination { display: flex; align-items: center; justify-content: flex-end; padding: 12px 16px; border-top: 1px solid var(--theme-border-color); color: var(--muted); font-size: var(--font-auxiliary); }
 .automation-pagination button { min-height: 32px; padding: 0 10px; }
 @media (max-width: 1100px) {
   .automation-workspace { grid-template-columns: 1fr; }
@@ -536,7 +536,7 @@ onMounted(() => Promise.all([loadConfiguration(), loadAll()]))
 @media (max-width: 760px) {
   .automation-page .panel-title { align-items: flex-start; flex-direction: column; justify-content: center; gap: 5px; padding-block: 12px; }
   .automation-page .panel-title p { text-align: left; }
-  .automation-page .panel-title .table-scroll-hint { display: inline-block; margin-left: 10px; color: var(--muted); font-size: 11px; font-weight: 400; }
+  .automation-page .panel-title .table-scroll-hint { display: inline-block; margin-left: 10px; color: var(--muted); font-size: var(--font-auxiliary); font-weight: 400; }
   .automation-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .automation-page .automation-kpis article { gap: 10px; padding: 14px 12px; }
   .automation-kpis .kpi-icon { width: 32px; height: 32px; }

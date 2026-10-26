@@ -15,22 +15,44 @@ table.content-table td {
   height:47px !important;
   min-width:0 !important;
   max-width:none !important;
-  padding:10px 12px !important;
+  padding:8px 12px !important;
   border-bottom:1px solid var(--theme-border-color) !important;
-  text-align:center !important;
+  text-align:left !important;
   vertical-align:middle !important;
-  font-size:var(--content-table-font-size,11px) !important;
+  font-size:var(--content-table-font-size,13px) !important;
   white-space:nowrap !important;
 }
 table.content-table thead th {
   color:var(--report-table-head-ink) !important;
   background:linear-gradient(var(--report-table-head-bg),var(--report-table-head-bg)),rgb(var(--container-bg-color)) !important;
-  font-size:var(--content-table-header-font-size,10px) !important;
+  font-size:var(--content-table-header-font-size,12px) !important;
   font-weight:600 !important;
   letter-spacing:.4px !important;
-  text-align:center !important;
   vertical-align:middle !important;
   white-space:nowrap !important;
+}
+/* Alignment belongs to the field definition, including missing values and totals. */
+table.content-table :is(th,td)[data-content-align="right"] {
+  text-align:right !important;
+  font-variant-numeric:tabular-nums;
+}
+table.content-table :is(th,td)[data-content-align="center"],
+table.content-table :is(.table-empty,.energy-empty,.dispatch-empty-row,.usage-empty,.diagnostics-empty,.empty-cell) {
+  text-align:center !important;
+}
+table.content-table td :is(strong,small,code,button,input,span) {
+  font-size:inherit !important;
+}
+table.content-table [data-content-action="true"] {
+  position:sticky;
+  right:0;
+  z-index:1;
+}
+table.content-table tbody [data-content-action="true"] {
+  background:rgb(var(--container-bg-color));
+}
+table.content-table thead [data-content-action="true"] {
+  z-index:3;
 }
 table.content-table tbody tr:hover {
   background:rgb(var(--info-color) / .1);
@@ -52,7 +74,7 @@ table.content-table td :is(strong, small, code, .confirmed-mark) {
   margin-block:0 !important;
   vertical-align:middle !important;
   overflow:hidden !important;
-  text-align:center !important;
+  text-align:inherit !important;
   white-space:nowrap !important;
   overflow-wrap:normal !important;
   text-overflow:ellipsis !important;
@@ -61,12 +83,12 @@ table.content-table td > :is(div,p,span) {
   display:inline-flex !important;
   flex-flow:row nowrap !important;
   align-items:center !important;
-  gap:6px;
+  gap:8px;
   margin-block:0 !important;
   vertical-align:middle;
 }
 table.content-table td :is(button,a) { white-space:nowrap !important; }
-table.content-table td small:not(:first-child) { margin-left:6px !important; }
+table.content-table td small:not(:first-child) { margin-left:8px !important; }
 table.content-table td :is(.push-batch-file > span,.error-cell > span) {
   display:inline-block !important;
   white-space:nowrap !important;
@@ -85,7 +107,7 @@ table.content-table td > .confirmation-person {
 }
 table.content-table .actions-cell a,
 table.content-table .report-actions a {
-  margin-inline:7px !important;
+  margin-inline:8px !important;
 }
 /* Contain narrow-screen overflow in the existing table scroll regions. */
 :is(.history-wrap,.workshop-table-wrap,.dispatch-table-wrap,

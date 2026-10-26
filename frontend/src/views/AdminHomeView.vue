@@ -213,7 +213,7 @@ onBeforeUnmount(() => {
             <div v-for="item in [{ label: '电耗', icon: 'zap', value: electricity, unit: energy?.units?.electricity || 'kWh' }, { label: '气耗', icon: 'wind', value: gas, unit: energy?.units?.gas || 'Nm³' }]" :key="item.label" class="min-w-0 border border-dashed border-[var(--theme-divider-color)] rd-12px px-12px py-8px" :aria-label="item.label">
               <div class="mb-4px flex-y-center gap-4px"><NText depth="3" class="text-12px">{{ item.label }}</NText><AppIcon :name="item.icon" :size="14" tone="muted" /></div>
               <NSkeleton v-if="energyLoading" height="22px" width="80%" aria-label="正在获取能耗数据" role="status" />
-              <NStatistic v-else tabular-nums :value="!energyConnected ? '暂未接入' : item.value == null ? '暂无数据' : item.value.toLocaleString('zh-CN', { minimumFractionDigits: 1, maximumFractionDigits: 1 })" :theme-overrides="{ valueFontSize: '14px' }" class="break-words"><template #suffix><NText depth="3" class="text-11px">{{ item.unit }}</NText></template></NStatistic>
+              <NStatistic v-else tabular-nums :value="!energyConnected ? '暂未接入' : item.value == null ? '暂无数据' : item.value.toLocaleString('zh-CN', { minimumFractionDigits: 1, maximumFractionDigits: 1 })" :theme-overrides="{ valueFontSize: '14px' }" class="break-words"><template #suffix><NText depth="3" class="text-12px">{{ item.unit }}</NText></template></NStatistic>
             </div>
           </div>
         </div>

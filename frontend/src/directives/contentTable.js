@@ -2,7 +2,7 @@
 // remaining container width to every track. A real table plus a generated
 // colgroup keeps headers, body cells and summary rows on exactly the same grid.
 const MIN_TABLE_WIDTH = 560
-const PIXELS_PER_UNIT = 7.2
+const PIXELS_PER_UNIT = 7.8
 const tableObservers = new WeakMap()
 
 export function contentFit(label, values) {
@@ -59,11 +59,22 @@ function leafHeaders(table) {
 
 function applyColumnTracks(table, headers, rows) {
   if (!headers.length) return
-  const units = headers.map((header, index) => contentWidthUnits(
-    header.textContent,
-    rows.map((row) => row.cells[index].textContent),
-    header.dataset.contentFit,
-  ))
+  const units = headers.map((header, index) => {
+    const contentUnits = contentWidthUnits(header.textContent, rows.map((row) => row.cells[index].textContent), header.dataset.contentFit)
+    const view = table.ownerDocument?.defaultView
+    if (header.dataset.contentAction !== 'true' || !view) return contentUnits
+    // Button padding and gaps are wider than their labels; reserve their actual width.
+    const actionWidths = rows.map((row) => {
+      const cell = row.cells[index]
+      const style = view.getComputedStyle(cell)
+      const width = Array.from(cell.children).reduce((total, child) => {
+        const childStyle = view.getComputedStyle(child)
+        return total + child.getBoundingClientRect().width + (parseFloat(childStyle.marginLeft) || 0) + (parseFloat(childStyle.marginRight) || 0)
+      }, 0)
+      return width + parseFloat(style.paddingLeft) + parseFloat(style.paddingRight)
+    })
+    return Math.max(contentUnits, ...actionWidths.map((width) => width / PIXELS_PER_UNIT))
+  })
   const availableWidth = table.parentElement?.clientWidth || table.clientWidth || 0
   const tracks = distributeColumnWidths(units, availableWidth)
   table.style?.setProperty('--content-table-min-width', `${tracks.tableWidth}px`)
@@ -92,10 +103,24 @@ function adaptContent(table) {
   const sections = [...Array.from(table.tBodies), table.tFoot].filter(Boolean)
   const rows = sections.flatMap((section) => Array.from(section.rows))
     .filter((row) => row.cells.length === headers.length && Array.from(row.cells).every((cell) => cell.colSpan === 1))
+  const columns = table.dataset?.contentColumns?.split(' ') || []
   headers.forEach((header, index) => {
     const fit = contentFit(header.textContent, rows.map((row) => row.cells[index].textContent))
+    const column = columns[index] || 'left'
+    const align = column === 'actions' ? 'center' : column
+    header.dataset.contentAlign = align
+    header.dataset.contentAction = column === 'actions' ? 'true' : ''
     header.dataset.contentFit = fit
-    for (const row of rows) row.cells[index].dataset.contentFit = fit
+    for (const row of rows) {
+      const cell = row.cells[index]
+      cell.dataset.contentFit = fit
+      cell.dataset.contentAlign = align
+      cell.dataset.contentAction = header.dataset.contentAction || ''
+      if (!cell.title || cell.title === cell.dataset.contentTitle) {
+        cell.title = cell.textContent.trim()
+        cell.dataset.contentTitle = cell.title
+      }
+    }
   })
   applyColumnTracks(table, headers, rows)
 }

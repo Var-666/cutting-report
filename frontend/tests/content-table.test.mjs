@@ -148,7 +148,7 @@ test('every Vue page table opts into shared content sizing', () => {
   assert.ok(count >= 14)
   const css = readFileSync(new URL('../src/assets/content-tables.css', import.meta.url), 'utf8')
   assert.match(css, /table\.content-table\s*\{[\s\S]*--content-table-min-width[\s\S]*table-layout:fixed !important/)
-  assert.match(css, /table\.content-table th,[\s\S]*text-align:center !important/)
+  assert.match(css, /table\.content-table th,\s*table\.content-table td\s*\{[^}]*text-align:left !important/)
   assert.match(css, /white-space:nowrap !important/)
   assert.doesNotMatch(css, /resize:/)
 })
@@ -170,4 +170,54 @@ test('table details and action groups stay on the same line', () => {
   assert.match(css, /td :is\(button,a\) \{ white-space:nowrap !important;/)
   const automation = readFileSync(new URL('../src/views/AutomationView.vue', import.meta.url), 'utf8')
   assert.match(automation, /td\.error-cell \{ white-space: nowrap !important; \}/)
+})
+
+test('explicit field alignment reaches headings, placeholders and totals with safe hover text', () => {
+  const cell = (textContent, align) => ({ textContent, colSpan: 1, dataset: align ? { contentAlign: align } : {} })
+  const headers = [cell('船号'), cell('切割时长', 'right'), cell('状态', 'center'), cell('操作', 'center')]
+  headers[3].dataset.contentAction = 'true'
+  const cells = [cell('00123456'), cell('--'), cell('已完成'), cell('编辑')]
+  cells[0].title = '现有的完整船号说明'
+  const totals = [cell('汇总'), cell('12345:59:59'), cell('--'), cell('--')]
+  const empty = cell('暂无数据'); empty.colSpan = 4
+  const table = { dataset: { contentColumns: 'left right center actions' }, classList: { add() {} }, tHead: { rows: [{ cells: headers }] }, tBodies: [{ rows: [{ cells }, { cells: [empty] }] }], tFoot: { rows: [{ cells: totals }] } }
+  contentTable.mounted(table)
+  for (const row of [headers, cells, totals]) assert.deepEqual(row.map(c => c.dataset.contentAlign), ['left', 'right', 'center', 'center'])
+  assert.equal(cells[3].dataset.contentAction, 'true')
+  assert.equal(cells[0].title, '现有的完整船号说明')
+  assert.equal(cells[1].title, '--')
+  cells[1].textContent = '99999:59:59'
+  contentTable.updated(table)
+  assert.equal(cells[1].title, '99999:59:59')
+  assert.equal(totals[1].title, '12345:59:59')
+  assert.deepEqual(empty.dataset, {})
+})
+
+test('alignment and frozen actions use explicit column definitions', () => {
+  const css = readFileSync(new URL('../src/assets/content-tables.css', import.meta.url), 'utf8')
+  assert.match(css, /\[data-content-align="right"\]\s*\{[^}]*text-align:right !important;[^}]*font-variant-numeric:tabular-nums/)
+  assert.match(css, /\[data-content-action="true"\]\s*\{[^}]*position:sticky;[^}]*right:0;/)
+  assert.match(css, /:is\(\.table-empty,\.energy-empty,[^}]*text-align:center !important/)
+  for (const name of ['LeadershipReportView', 'WorkshopView', 'EnergyPeriodReportView', 'AlarmCenterView', 'CuttingDispatchView', 'AutomationView', 'ModelUsageView', 'AdminAccountsView', 'ConfigurationDiagnosticsView', 'DesignerView']) {
+    const source = readFileSync(new URL(`../src/views/${name}.vue`, import.meta.url), 'utf8')
+    for (const [table] of source.matchAll(/<table\b[\s\S]*?<thead>/g)) assert.match(table, /data-content-columns=/, name)
+  }
+})
+
+test('action tracks reserve the complete button group including padding and margins', () => {
+  const cell = textContent => ({ textContent, colSpan: 1, dataset: {}, children: [] })
+  const headers = [cell('文件名'), cell('程序号'), cell('操作')]
+  const cells = [cell('A'.repeat(40)), cell('B'.repeat(40)), cell('立即执行 编辑 删除')]
+  cells[2].children = [{ getBoundingClientRect: () => ({ width: 176 }) }]
+  const createElement = tag => ({ tagName: tag.toUpperCase(), dataset: {}, children: [], style: { setProperty() {} }, appendChild(child) { this.children.push(child) } })
+  let minimumWidth = 0
+  const table = {
+    dataset: { contentColumns: 'left left actions' }, classList: { add() {} },
+    style: { setProperty: (name, value) => { if (name === '--content-table-min-width') minimumWidth = parseFloat(value) } },
+    parentElement: { clientWidth: 600 }, children: [], insertBefore(node) { this.children.push(node) },
+    ownerDocument: { createElement, defaultView: { getComputedStyle: () => ({ paddingLeft: '12px', paddingRight: '12px', marginLeft: '4px', marginRight: '4px' }) } },
+    tHead: { rows: [{ cells: headers }] }, tBodies: [{ rows: [{ cells }] }],
+  }
+  contentTable.mounted(table)
+  assert.ok(minimumWidth >= 864, 'two long identifiers plus the complete action group must fit without clipping')
 })

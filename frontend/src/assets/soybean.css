@@ -8,8 +8,8 @@ html, body { color:rgb(var(--base-text-color)); background:rgb(var(--layout-bg-c
 .soybean-header { height:100%; display:flex; align-items:center; gap:16px; padding:0 20px; background:rgb(var(--container-bg-color)); box-shadow:var(--header-box-shadow); }
 .soybean-menu-toggle { flex:0 0 auto; }
 .soybean-logout { height:36px; min-height:36px; padding:0 12px; border-radius:8px; font-weight:500; }
-.soybean-breadcrumb { min-width:0; }
-.soybean-header-actions { display:flex; align-items:center; gap:16px; margin-left:auto; min-width:0; }
+.soybean-breadcrumb { min-width:0; flex:1; overflow:hidden; white-space:nowrap; }
+.soybean-header-actions { display:flex; flex-shrink:0; align-items:center; gap:16px; margin-left:auto; min-width:0; }
 .soybean-account { display:flex; align-items:center; gap:6px; max-width:150px; font-size:13px; color:var(--text-color-3); }
 .soybean-account > span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .soybean-sider { background:rgb(var(--container-bg-color)); box-shadow:var(--sider-box-shadow); }

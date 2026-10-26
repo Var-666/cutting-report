@@ -44,6 +44,6 @@ const accessibleLabel = computed(() => geometry.value.count
 .data-sparkline__baseline{stroke:currentColor;stroke-width:1;opacity:.14}
 .data-sparkline__line{fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;vector-effect:non-scaling-stroke}
 .data-sparkline__point{fill:rgb(var(--container-bg-color));stroke:currentColor;stroke-width:1.6;vector-effect:non-scaling-stroke}
-.data-sparkline text{fill:var(--text-color-3);font-size:11px}
+.data-sparkline text{fill:var(--text-color-3);font-size:var(--font-auxiliary)}
 .data-sparkline.is-empty{opacity:.76}
 </style>

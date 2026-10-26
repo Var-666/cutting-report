@@ -31,7 +31,7 @@ const icon = computed(() => ({ loading: 'activity', empty: 'database', error: 'a
 <style scoped>
 .report-panel-state{min-width:0;display:flex;align-items:center;justify-content:center;gap:12px;padding:28px;color:var(--text-color-3);text-align:left;background:rgb(var(--container-bg-color))}
 .report-panel-state__icon{width:38px;height:38px;display:grid;place-items:center;flex:0 0 auto;color:rgb(var(--info-color));border:1px solid var(--theme-border-color);border-radius:10px;background:rgb(var(--container-bg-color));box-shadow:var(--theme-shadow)}
-.report-panel-state>div{min-width:0;max-width:430px;overflow-wrap:anywhere}.report-panel-state strong{display:block;color:var(--text-color-1);font-size:13px}.report-panel-state p{margin:4px 0 0;color:var(--muted);font-size:11px;line-height:1.6}
-.report-panel-state button{min-height:32px;margin-left:8px;padding:0 12px;color:rgb(var(--info-color));border-color:var(--theme-border-color);border-radius:7px;background:rgb(var(--container-bg-color));font-size:10px;font-weight:700}
+.report-panel-state>div{min-width:0;max-width:430px;overflow-wrap:anywhere}.report-panel-state strong{display:block;color:var(--text-color-1);font-size:13px}.report-panel-state p{margin:4px 0 0;color:var(--muted);font-size:var(--font-auxiliary);line-height:1.6}
+.report-panel-state button{min-height:32px;margin-left:8px;padding:0 12px;color:rgb(var(--info-color));border-color:var(--theme-border-color);border-radius:7px;background:rgb(var(--container-bg-color));font-size:var(--font-auxiliary);font-weight:700}
 @media(max-width:560px){.report-panel-state{align-items:flex-start;flex-direction:column;padding:20px}.report-panel-state button{width:100%;margin:4px 0 0}}
 </style>
