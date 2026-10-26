@@ -19,8 +19,8 @@ let sessionGeneration = 0
 function preloadDeviceReports(user, generation) {
   if (!user) { stopReportPreload(); return }
   // Validate the remembered device before any production report warmup starts.
-  loadDevices().then(() => {
-    if (generation === sessionGeneration && deviceSelection.ready) startReportPreload(user)
+  loadDevices({ includeLines: user.role === 'admin' }).then(() => {
+    if (generation === sessionGeneration && deviceSelection.ready && deviceSelection.id !== 'welding') startReportPreload(user)
   })
 }
 

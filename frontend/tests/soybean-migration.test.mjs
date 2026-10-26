@@ -5,6 +5,8 @@ import { computed, h, Fragment, ref, reactive, watch, nextTick } from 'vue'
 import { createPinia, setActivePinia, defineStore } from 'pinia'
 import { parse } from '@vue/compiler-sfc'
 import { cuttingRoutes } from '../src/router/cuttingRoutes.js'
+import { weldingRoutes } from '../src/router/weldingRoutes.js'
+import { selectedLineType } from '../src/utils/productionLines.js'
 import { adminMenus } from '../src/router/menus.js'
 import { selectOptions } from '../src/utils/selectOptions.js'
 import { useAppStore } from '../src/state/app.js'
@@ -30,7 +32,7 @@ test('sidebar exposes admin routes, excludes redirects and resets the new conten
   const expression = source.slice(source.indexOf('const router = createRouter('), source.indexOf('\nrouter.beforeEach'))
   const scrolls = []
   const document = { querySelector: () => ({ scrollTo: (value) => scrolls.push(value) }) }
-  const router = new Function('createRouter', 'createWebHistory', 'cuttingRoutes', 'document', `${expression}\nreturn router`)((options) => options, () => ({}), cuttingRoutes, document)
+  const router = new Function('createRouter', 'createWebHistory', 'cuttingRoutes', 'weldingRoutes', 'document', `${expression}\nreturn router`)((options) => options, () => ({}), cuttingRoutes, weldingRoutes, document)
   const menus = adminMenus(router.routes.find((route) => route.path === '/admin').children)
   const flatten = (items) => items.flatMap((item) => {
     assert.ok(item.icon, `${item.label} needs a menu icon to keep icon and text columns aligned`)
@@ -57,7 +59,7 @@ test('official menu adapter keeps settings as a group with child icons and actua
   const router = { options: { routes: [{ path: '/admin', children: [] }] }, resolve: to => ({ path: typeof to === 'string' ? to : '/admin/' + to.name }), push: to => navigations.push(to) }
   const items = [{ key: '/admin/settings', label: '系统设置', icon: 'settings', children: [{ key: 'database', label: '数据库配置', icon: 'database' }] }]
   setActivePinia(createPinia())
-  const useStore = new Function('computed', 'h', 'defineStore', 'router', 'adminMenus', 'AppIcon', `${source}\nreturn useRouteStore`)(computed, h, defineStore, router, () => items, 'i')
+  const useStore = new Function('computed', 'h', 'defineStore', 'router', 'adminMenus', 'AppIcon', 'deviceSelection', 'selectedLineType', `${source}\nreturn useRouteStore`)(computed, h, defineStore, router, () => items, 'i', { items: [], id: 'Cutter01' }, selectedLineType)
   const store = useStore()
   assert.equal(store.menus[0].onClick, undefined)
   assert.deepEqual(navigations, [])
@@ -92,7 +94,7 @@ test('native PageTab adapter honors cached paths, middle-click setting and activ
   const destinations = []
   const router = { push: path => destinations.push(path), resolve: path => ({ path: path.split('?')[0], query: Object.fromEntries(new URLSearchParams(path.split('?')[1] || '')), matched: path === '/admin/not-a-route' ? [] : [{ meta: { role: 'admin' }, ...(['/admin/settings', '/admin/settings/report-design'].includes(path) ? { redirect: '/admin/settings' } : {}) }], meta: { title: path, icon: 'home' } }) }
   const localStg = { get: key => stored.get(key), set: (key, value) => stored.set(key, [...value]), remove: key => stored.delete(key) }
-  const api = new Function('computed', 'nextTick', 'ref', 'watch', 'useRoute', 'useRouter', 'useThemeStore', 'localStg', 'getTabIdByRoute', `${source}\nreturn { tabs, close, middleClick, scrollTabs }`)(computed, nextTick, ref, watch, () => route, () => router, () => theme, localStg, getTabIdByRoute)
+  const api = new Function('computed', 'nextTick', 'ref', 'watch', 'useRoute', 'useRouter', 'useThemeStore', 'localStg', 'getTabIdByRoute', 'deviceSelection', `${source}\nreturn { tabs, close, middleClick, scrollTabs }`)(computed, nextTick, ref, watch, () => route, () => router, () => theme, localStg, getTabIdByRoute, { id: 'Cutter01' })
   await nextTick()
   assert.deepEqual(api.tabs.value.map(tab => tab.path), ['/admin/home', '/admin/settings/database', '/admin/reports/leadership'])
   route.fullPath = '/admin/reports/leadership?start_date=2026-10-01'

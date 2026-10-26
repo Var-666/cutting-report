@@ -1,8 +1,8 @@
-export function adminMenus(routes, parent = '/admin') {
-  return routes.filter((route) => !route.redirect).flatMap((route) => {
+export function adminMenus(routes, parent = '/admin', line = 'cutting') {
+  return routes.filter((route) => !route.redirect && (!route.meta?.line || route.meta.line === line)).flatMap((route) => {
     const path = `${parent}/${route.path}`.replace(/\/$/, '')
-    const children = route.children ? adminMenus(route.children, path) : []
-    if (children.length === 1 && !route.meta?.title) return children
+    const children = route.children ? adminMenus(route.children, path, line) : []
+    if (children.length && !route.meta?.title) return children
     if (children.length) {
       const indexRoute = route.children.find((child) => child.path === '' && child.name && !child.redirect)
       return [{

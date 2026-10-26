@@ -27,7 +27,7 @@ const route = useRoute()
 const router = useRouter()
 const sider = ref(null)
 const { childLevelMenus, isActiveFirstLevelMenuHasChildren } = provideMixMenuContext()
-const devicePage = computed(() => route.path === '/admin/home' || route.path.startsWith('/admin/reports') || route.path.startsWith('/admin/alarms'))
+const devicePage = computed(() => route.path === '/admin/home' || route.path.startsWith('/admin/reports') || route.path.startsWith('/admin/alarms') || route.path.startsWith('/admin/welding'))
 const mobileMenuOpen = computed(() => appStore.isMobile && !appStore.siderCollapse)
 const breadcrumbs = computed(() => route.matched.filter((record, index, records) => record.meta.title && record.path !== records[index + 1]?.path))
 const transitionName = computed(() => !appStore.reducedMotion && themeStore.page.animate ? themeStore.page.animateMode : '')
@@ -116,7 +116,7 @@ function getSiderAndCollapsedWidth(isCollapsed: boolean) {
   }
 
   const isMixMode = isVerticalMix.value || isTopHybridSidebarFirst.value || isVerticalHybridHeaderFirst.value;
-  let finalWidth = isMixMode ? mixWidth : width;
+  let finalWidth = isVerticalMix.value && !isCollapsed ? Math.max(themeMixWidth, mixChildMenuWidth) : isMixMode ? mixWidth : width;
 
   if (isVerticalMix.value && appStore.mixSiderFixed) {
     finalWidth += mixChildMenuWidth;

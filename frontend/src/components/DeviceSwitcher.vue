@@ -1,18 +1,19 @@
 <script setup>
-import AppSelect from './AppSelect.vue'
+import { computed } from 'vue'
+import { NSelect } from 'naive-ui'
 import AppIcon from './AppIcon.vue'
 import { useDeviceSelection } from '../composables/useDeviceSelection.js'
+import { productionGroups } from '../utils/productionLines.js'
 
 const { deviceSelection, switching, switchDevice, loadDevices } = useDeviceSelection()
+const options = computed(() => productionGroups(deviceSelection.items).map(group => ({ type: 'group', label: group.name, key: group.id, children: group.items.map(item => ({ value: item.id, label: item.name })) })))
 </script>
 
 <template>
   <section class="device-switcher" aria-label="当前设备">
     <label v-if="deviceSelection.ready" class="device-switcher__field">
       <AppIcon class="device-switcher__icon" name="factory" :size="16" tone="current" />
-      <AppSelect :model-value="deviceSelection.id" name="current_device" aria-label="切换当前设备" :disabled="switching" @update:model-value="switchDevice">
-        <option v-for="item in deviceSelection.items" :key="item.id" :value="item.id">{{ item.name }}</option>
-      </AppSelect>
+      <NSelect :value="deviceSelection.id" :options="options" :input-props="{ 'aria-label': '按设备类型选择产线或设备' }" :disabled="switching" @update:value="switchDevice" />
     </label>
     <span v-else-if="deviceSelection.loading" class="device-switcher__loading" role="status"><AppIcon name="factory" :size="16" tone="current" />正在读取设备…</span>
     <div v-else-if="deviceSelection.error" class="device-switcher__error" role="alert" :title="deviceSelection.error">

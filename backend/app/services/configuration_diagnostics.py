@@ -42,7 +42,7 @@ def source_label(source: str) -> str:
 def category(key: str) -> str:
     if key in HOT_SETTINGS:
         return CATEGORIES[5]
-    if key.startswith(("connections.", "SQLSERVER_", "WORKER_SQLSERVER_", "WORKER_DATABASE_", "FILE_SQLSERVER_", "FILE_DATABASE_", "SQL_WORKBENCH_")):
+    if key.startswith(("connections.", "WELD_", "SQLSERVER_", "WORKER_SQLSERVER_", "WORKER_DATABASE_", "FILE_SQLSERVER_", "FILE_DATABASE_", "SQL_WORKBENCH_")):
         return CATEGORIES[1]
     if key.startswith("LLM_"):
         return CATEGORIES[3]
@@ -141,6 +141,17 @@ def validate_values(settings: Settings, values: dict) -> set[str]:
         required.extend([("SMTP_HOST", settings.smtp_host), ("SMTP_FROM_EMAIL", settings.smtp_from_email if "@" in settings.smtp_from_email else "")])
     if settings.llm_enabled:
         required.extend((key, getattr(settings, name)) for key, name in [("LLM_API_KEY", "llm_api_key"), ("LLM_BASE_URL", "llm_base_url"), ("LLM_MODEL", "llm_model")])
+    if settings.weld_enabled:
+        required.extend((key, getattr(settings, name)) for key, name in [('WELD_DB_HOST', 'weld_db_host'), ('WELD_DB_NAME', 'weld_db_name'), ('WELD_DB_USER', 'weld_db_user'), ('WELD_DB_PASSWORD', 'weld_db_password')])
+        try:
+            ZoneInfo(settings.weld_db_timezone)
+        except (ValueError, ZoneInfoNotFoundError):
+            invalid.add('WELD_DB_TIMEZONE')
+        for key, valid in [('WELD_DB_POOL_SIZE', 1 <= settings.weld_db_pool_size <= 4),
+                           ('WELD_DB_CONNECT_TIMEOUT_SECONDS', 1 <= settings.weld_db_connect_timeout <= 60),
+                           ('WELD_DB_QUERY_TIMEOUT_SECONDS', 1 <= settings.weld_db_query_timeout <= 300)]:
+            if not valid:
+                invalid.add(key)
     for source, enabled in [("production", settings.effective_data_source_mode == "sqlserver"),
                             ("worker", settings.worker_database_auth_enabled), ("file", settings.file_database_enabled)]:
         if enabled:

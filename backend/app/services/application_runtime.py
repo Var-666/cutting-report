@@ -32,7 +32,9 @@ from app.workers.download_cleanup_worker import DownloadCleanupWorker
 from app.database.coordination import CoordinationRepository, backup_before_process_upgrade
 from app.services.process_lock import FileLock
 from app.services.worker_status import WorkerStatusReader
-from app.services.database_runtime import DatabaseRuntime
+from app.services.database_runtime import DatabaseRuntime, DATABASE_FIELDS, WELD_FIELDS
+from app.database.welding import WeldingClient, WeldingRepository
+from app.services.welding_service import WeldingService
 
 
 def build_runtime(settings: Settings, *, role: str) -> SimpleNamespace:
@@ -124,8 +126,15 @@ def _build_runtime(settings: Settings, *, role: str) -> SimpleNamespace:
     if role == "web":
         dispatches.recover_interrupted(state.cutting_dispatch._now())
     state.pdf_service = pdf_service
+    state.welding = WeldingService(settings, WeldingRepository(WeldingClient(settings)))
 
     def rebuild_database_services(configuration: Settings) -> SimpleNamespace:
+        previous = state.database_runtime.current_context
+        welding = previous.welding if all(getattr(previous.settings, name) == getattr(configuration, name) for name in WELD_FIELDS) else WeldingService(configuration, WeldingRepository(WeldingClient(configuration)))
+        if all(getattr(previous.settings, name) == getattr(configuration, name) for name in DATABASE_FIELDS - WELD_FIELDS):
+            updated = copy(previous)
+            updated.settings, updated.welding = configuration, welding
+            return updated
         updated_devices = {
             device.id: build_device_runtime(settings_for_device(configuration, device.id), database,
                                             definitions, leadership_snapshots, pdf_service, task_queue=coordination)
@@ -139,12 +148,13 @@ def _build_runtime(settings: Settings, *, role: str) -> SimpleNamespace:
         updated_downloads.settings = configuration
         updated_downloads.pdm = updated_pdm
         return SimpleNamespace(settings=configuration, devices=updated_devices,
+            welding=welding,
             worker_auth=WorkerAuthService(configuration), file_downloads=updated_downloads,
             cutting_dispatch=CuttingDispatchService(configuration, updated_pdm, dispatches,
                                                    file_source, updated_downloads, magic_config))
 
     state.database_runtime = DatabaseRuntime(settings, SimpleNamespace(
-        settings=settings, devices=devices, worker_auth=state.worker_auth,
+        settings=settings, devices=devices, welding=state.welding, worker_auth=state.worker_auth,
         file_downloads=file_downloads, cutting_dispatch=state.cutting_dispatch,
     ), rebuild_database_services, automation_runtime)
     state.configuration_diagnostics.database_runtime = state.database_runtime

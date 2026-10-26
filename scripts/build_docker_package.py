@@ -29,8 +29,10 @@ FILES = (
     "docs/deployment/WEB_WORKER进程隔离升级说明.md",
     "docs/deployment/配置参考.md", "docs/project/功能与接口参考.md",
     "docs/project/multi-device-isolation.md",
+    "docs/project/welding-integration.md",
     "docs/project/changelog.md",
     "scripts/README.md", "scripts/check_energy.py",
+    "scripts/check_welding.py",
     "scripts/build_docker_package.py", "scripts/prepare_alarm_monitor.py",
     "scripts/linux/install_kylin.sh",
     "scripts/linux/start_kylin.sh", "scripts/linux/start_offline_docker.sh",
@@ -74,6 +76,8 @@ def collect_files(root: Path) -> dict[str, bytes]:
         "backend/app/api/downloads.py", "backend/app/database/downloads.py",
         "backend/app/services/file_download_service.py",
         "frontend/src/views/CuttingDispatchView.vue",
+        "backend/app/api/welding.py", "backend/app/database/welding.py",
+        "backend/app/services/welding_service.py", "frontend/src/views/WeldingReportView.vue",
     )
     for name in required:
         if name not in payload:

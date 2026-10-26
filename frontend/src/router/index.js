@@ -2,6 +2,8 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { loadSession, roleHome, session } from '../state/session'
 import { installSessionExpiryRedirect } from '../state/sessionExpiry.js'
 import { cuttingRoutes } from './cuttingRoutes'
+import { weldingRoutes } from './weldingRoutes.js'
+import { changeDevice, deviceSelection, loadDevices } from '../state/devices.js'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -26,12 +28,12 @@ const router = createRouter({
           path: 'home',
           name: 'admin-home',
           component: () => import('../views/AdminHomeView.vue'),
-          meta: { title: '系统首页', icon: 'home' },
+          meta: { title: '系统首页', icon: 'home', line: 'cutting' },
         },
         {
           path: 'reports',
           component: () => import('../layouts/ReportsLayout.vue'),
-          meta: { title: '生产报表', icon: 'report' },
+          meta: { title: '生产报表', icon: 'report', line: 'cutting' },
           children: [
             { path: '', redirect: '/admin/reports/leadership' },
             {
@@ -64,9 +66,10 @@ const router = createRouter({
           path: 'alarms',
           name: 'alarm-center',
           component: () => import('../views/AlarmCenterView.vue'),
-          meta: { title: '智能告警中心', icon: 'bell' },
+          meta: { title: '智能告警中心', icon: 'bell', line: 'cutting' },
         },
         cuttingRoutes,
+        weldingRoutes,
         {
           path: 'settings',
           component: () => import('../layouts/SettingsLayout.vue'),
@@ -94,7 +97,7 @@ const router = createRouter({
               path: 'automation',
               name: 'automation',
               component: () => import('../views/AutomationView.vue'),
-              meta: { title: '报表自动化', icon: 'activity' },
+              meta: { title: '报表自动化', icon: 'activity', line: 'cutting' },
             },
             {
               path: 'admins',
@@ -150,6 +153,16 @@ router.beforeEach(async (to) => {
   const requiredRole = to.matched.find((record) => record.meta.role)?.meta.role
   if (requiredRole && session.user.role !== requiredRole) {
     return roleHome(session.user.role)
+  }
+  if (requiredRole === 'admin') {
+    await loadDevices({ includeLines: true })
+    const weldingPage = to.matched.some(record => record.meta.line === 'welding')
+    if (weldingPage) {
+      if (!deviceSelection.items.some(item => item.id === 'welding')) return '/admin/home'
+      if (deviceSelection.id !== 'welding') changeDevice('welding')
+    } else if (deviceSelection.id === 'welding' && to.matched.some(record => record.meta.line === 'cutting')) {
+      return '/admin/welding/home'
+    }
   }
   return true
 })

@@ -1,0 +1,174 @@
+from __future__ import annotations
+
+from contextlib import contextmanager
+from datetime import datetime
+from zoneinfo import ZoneInfo
+from typing import Literal
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from pydantic import ValidationError
+
+from app.api.auth import require_admin
+from app.api.runtime import runtime_state
+from app.api.workloads import RequestWorkload, analysis_requests
+from app.models.domain import to_primitive
+from app.models.welding import WeldingAnalysisRequest, WeldingQuery
+from app.database.welding import WeldingUnavailable
+from app.services.analysis_execution import analysis_operation
+from app.services.llm_service import LlmService
+from app.services.pdf_service import PdfRenderError
+from app.services.request_cancellation import SqlRequestCancelled
+from app.services.welding_export import WeldingExport, csv_bytes, COLUMNS
+
+
+router = APIRouter(prefix='/api/v1/welding', tags=['welding'], dependencies=[Depends(require_admin)])
+welding_requests = RequestWorkload(2, '焊接数据查询')
+
+
+def service(request: Request):
+    instance = getattr(runtime_state(request), 'welding', None)
+    if instance is None or not instance.settings.weld_enabled:
+        raise HTTPException(status_code=503, detail='小组立焊接线尚未启用')
+    return instance
+
+
+@contextmanager
+def source_errors():
+    try:
+        yield
+    except WeldingUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from None
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    except PdfRenderError:
+        raise HTTPException(status_code=503, detail='PDF生成失败或服务繁忙，请重试或导出HTML') from None
+
+
+def parse_query(request: Request) -> WeldingQuery:
+    ignored = {'format', 'report_type'}
+    values = {}
+    for key in request.query_params:
+        entries = request.query_params.getlist(key)
+        if len(entries) != 1:
+            raise HTTPException(status_code=422, detail='查询参数不允许重复')
+        if key not in ignored:
+            values[key] = entries[0]
+    try:
+        return WeldingQuery.model_validate(values)
+    except ValidationError:
+        raise HTTPException(status_code=422, detail='日期、分页或筛选参数无效，请检查查询条件') from None
+
+
+def response(request: Request, data) -> dict:
+    return {'success': True, 'data': to_primitive(data), 'request_id': getattr(request.state, 'request_id', '')}
+
+
+@welding_requests.route(router.get('/health'))
+def health(request: Request):
+    with source_errors():
+        return response(request, service(request).health())
+
+
+@welding_requests.route(router.get('/dashboard'))
+def dashboard(request: Request):
+    query = parse_query(request)
+    with source_errors():
+        return response(request, service(request).dashboard(query))
+
+
+@welding_requests.route(router.get('/statistics/daily'))
+def daily(request: Request):
+    query = parse_query(request)
+    with source_errors():
+        return response(request, service(request).report('daily', query))
+
+
+@welding_requests.route(router.get('/parts'))
+def parts(request: Request):
+    query = parse_query(request)
+    with source_errors():
+        return response(request, service(request).report('parts', query))
+
+
+@welding_requests.route(router.get('/jobs'))
+def jobs(request: Request):
+    query = parse_query(request)
+    with source_errors():
+        return response(request, service(request).report('jobs', query))
+
+
+@welding_requests.route(router.get('/equipment/summary'))
+def equipment(request: Request):
+    query = parse_query(request)
+    with source_errors():
+        return response(request, service(request).report('equipment', query))
+
+
+@welding_requests.route(router.get('/parts/{part_id}'))
+@welding_requests.route(router.get('/parts/{part_id}/seams'))
+def part(request: Request, part_id: int, page: int = Query(1, ge=1, le=100000), page_size: int = Query(20, ge=1, le=100)):
+    with source_errors():
+        data = service(request).part(part_id, page, page_size)
+    if data is None:
+        raise HTTPException(status_code=404, detail='工件不存在')
+    return response(request, data)
+
+
+@welding_requests.route(router.get('/parts/{part_id}/seams/export'))
+def seam_export(request: Request, part_id: int):
+    instance = service(request)
+    with source_errors():
+        with instance.repository.client.snapshot() as session:
+            raw = instance.repository.part(session, part_id)
+            data = None if raw is None else instance.repository.seams(session, raw, 1, 100001)
+    if data is None:
+        raise HTTPException(status_code=404, detail='工件不存在')
+    rows, total, ambiguous = data
+    if ambiguous:
+        raise HTTPException(status_code=409, detail='工件关联待核实，暂不能导出焊缝')
+    if total > 100000:
+        raise HTTPException(status_code=422, detail='焊缝超过100,000行，请缩小范围')
+    from app.services.welding_service import mapped_row
+    content = csv_bytes(COLUMNS['seams'], [mapped_row(row, 'seams') for row in rows],
+                        [('数据来源', '小组立焊接线'), ('工件ID', str(part_id)),
+                         ('生成时间', datetime.now(ZoneInfo(instance.settings.weld_db_timezone)).isoformat()),
+                         ('工件更新时间', str(raw.get('update_date') or '未记录')), ('单位', '长度m，用时h；状态待核实')])
+    return Response(content, media_type='text/csv; charset=utf-8', headers={'Content-Disposition': f'attachment; filename="welding-seams-{part_id}.csv"'})
+
+
+@welding_requests.route(router.get('/export'))
+def export(request: Request, report_type: Literal['daily', 'parts', 'jobs', 'equipment'], format: Literal['csv', 'html', 'pdf'] = 'csv'):
+    query = parse_query(request)
+    instance = service(request)
+    with source_errors():
+        content, media = WeldingExport(instance.settings, instance, request.app.state.pdf_service).generate(report_type, query, format)
+    return Response(content, media_type=media, headers={'Content-Disposition': f'attachment; filename="welding-{report_type}-{query.start}-{query.end}.{format}"'})
+
+
+@analysis_requests.route(router.post('/analysis'))
+def analysis(request: Request, payload: WeldingAnalysisRequest):
+    instance = service(request)
+    with source_errors():
+        report = instance.report(payload.report_type, payload.query)
+    if report['data_version'] != payload.data_version:
+        raise HTTPException(status_code=409, detail='报表数据已更新，请刷新后重新生成分析')
+    if not instance.settings.llm_enabled:
+        raise HTTPException(status_code=503, detail='智能分析模型尚未启用，常规报表可继续使用')
+    cached = instance.cached_analysis(report['data_version'])
+    if cached is not None:
+        return response(request, {**to_primitive(cached), 'cached': True})
+    context = {'report_date': f'{payload.query.start} 至 {payload.query.end}',
+               'facts': [{'label': key, 'value': value} for key, value in report['summary'].items()],
+               'tables': [{'name': '按日汇总', 'rows': report['daily']}, {'name': '设备机器人工位', 'rows': report['equipment']},
+                          {'name': '统计口径和数据质量', 'rows': [report['meta']]}]}
+    try:
+        with analysis_operation(instance.settings, 'welding', context['report_date']):
+            result = LlmService(instance.settings).analyze_context('welding', context)
+    except SqlRequestCancelled:
+        raise
+    except Exception:
+        raise HTTPException(status_code=503, detail='智能分析暂不可用，请稍后重试；常规报表不受影响') from None
+    result.data_version = report['data_version']
+    result.generated_at = report['meta']['calculated_at']
+    instance.remember_analysis(report['data_version'], result)
+    return response(request, result)

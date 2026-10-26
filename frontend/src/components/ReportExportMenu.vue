@@ -1,7 +1,7 @@
 <script setup>
 import AppIcon from './AppIcon.vue'
 
-defineProps({ disabled: Boolean, loading: Boolean })
+defineProps({ disabled: Boolean, loading: Boolean, formats: { type: Array, default: () => ['html', 'pdf'] } })
 const emit = defineEmits(['select'])
 
 function select(event) {
@@ -16,6 +16,7 @@ function select(event) {
     <AppIcon name="download" size="15" tone="current" />
     <AppSelect class="report-export-menu__select" aria-label="导出报表" :disabled="disabled || loading" value="" @change="select">
       <option value="" disabled>{{ loading ? '正在导出…' : '导出报表' }}</option>
+      <option v-if="formats.includes('csv')" value="csv">导出 CSV 明细</option>
       <option value="html">导出 HTML</option>
       <option value="pdf">下载 PDF</option>
     </AppSelect>

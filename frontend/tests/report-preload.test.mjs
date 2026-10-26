@@ -23,7 +23,7 @@ function mockApi(override = () => undefined) {
     if (custom !== undefined) return custom
     if (url.includes('latest-date')) return response({ report_date: today })
     if (url === '/api/v1/auth/status') return response({ user: admin, setup_required: false })
-    if (url === '/api/v1/devices') return response({ default_device_id: 'Cutter01', items: [{ id: 'Cutter01' }] })
+    if (url === '/api/v1/devices' || url === '/api/v1/production-lines') return response({ default_device_id: 'Cutter01', items: [{ id: 'Cutter01' }] })
     return response({ report_date: today, items: [], total: 0 })
   }
   return calls
@@ -206,7 +206,7 @@ test('session restoration validates the saved device before any report warmup', 
   selectDevice('Cutter02')
   let finishCatalog
   const calls = mockApi((url) => {
-    if (url === '/api/v1/devices') return new Promise((done) => { finishCatalog = done })
+    if (url === '/api/v1/production-lines') return new Promise((done) => { finishCatalog = done })
   })
   await loadSession({ force: true })
   assert.equal(session.ready, true)
@@ -224,7 +224,7 @@ test('restored-session preload shares home queries already started when the devi
   let finishCatalog
   const pending = []
   const calls = mockApi((url, options) => {
-    if (url === '/api/v1/devices') return new Promise((done) => { finishCatalog = done })
+    if (url === '/api/v1/production-lines') return new Promise((done) => { finishCatalog = done })
     if (/leadership-report|\/reports\?|energy-report\/month\?/.test(url)) {
       return new Promise((resolve, reject) => {
         pending.push({ url, resolve, signal: options.signal })

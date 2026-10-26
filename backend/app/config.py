@@ -126,6 +126,17 @@ class Settings:
     report_background_refresh_seconds: int = configuration_field("REPORT_BACKGROUND_REFRESH_SECONDS", lambda: _as_int("REPORT_BACKGROUND_REFRESH_SECONDS", 300))
     report_machine_no: str = DEFAULT_DEVICE.machine_no
 
+    weld_enabled: bool = configuration_field("WELD_ENABLED", lambda: _as_bool("WELD_ENABLED", False))
+    weld_db_host: str = configuration_field("WELD_DB_HOST", lambda: _environment.get().get("WELD_DB_HOST", ""))
+    weld_db_port: int = configuration_field("WELD_DB_PORT", lambda: _as_int("WELD_DB_PORT", 3306))
+    weld_db_name: str = configuration_field("WELD_DB_NAME", lambda: _environment.get().get("WELD_DB_NAME", "weld_production_data"))
+    weld_db_user: str = configuration_field("WELD_DB_USER", lambda: _environment.get().get("WELD_DB_USER", ""), hidden=True)
+    weld_db_password: str = configuration_field("WELD_DB_PASSWORD", lambda: _environment.get().get("WELD_DB_PASSWORD", ""))
+    weld_db_timezone: str = configuration_field("WELD_DB_TIMEZONE", lambda: _environment.get().get("WELD_DB_TIMEZONE", "Asia/Shanghai"))
+    weld_db_pool_size: int = configuration_field("WELD_DB_POOL_SIZE", lambda: _as_int("WELD_DB_POOL_SIZE", 2))
+    weld_db_connect_timeout: int = configuration_field("WELD_DB_CONNECT_TIMEOUT_SECONDS", lambda: _as_int("WELD_DB_CONNECT_TIMEOUT_SECONDS", 5))
+    weld_db_query_timeout: int = configuration_field("WELD_DB_QUERY_TIMEOUT_SECONDS", lambda: _as_int("WELD_DB_QUERY_TIMEOUT_SECONDS", 120))
+
     # 能管平台只读接入。仪表绑定、计量边界和单位必须由现场确认。
     energy_api_enabled: bool = configuration_field("ENERGY_API_ENABLED", lambda: _as_bool("ENERGY_API_ENABLED", False))
     energy_api_base_url: str = configuration_field("ENERGY_API_BASE_URL", lambda: _environment.get().get("ENERGY_API_BASE_URL", "http://10.147.0.38:10091"))

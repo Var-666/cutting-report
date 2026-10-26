@@ -1,4 +1,4 @@
-import { deviceUrl } from './deviceContext.js'
+import { deviceUrl, getDeviceId } from './deviceContext.js'
 import { reportCache } from './reportCache.js'
 import { reportToday } from './reportDates.js'
 import { createRequestCancellation } from './requestCancellation.js'
@@ -12,7 +12,7 @@ function invalidateWorkshopReports() {
   reportCache.invalidate('workshop:range:')
 }
 
-async function request(url, options = {}) {
+export async function request(url, options = {}) {
   url = deviceUrl(url)
   const cancellation = createRequestCancellation(options.signal)
   try {
@@ -21,10 +21,12 @@ async function request(url, options = {}) {
       credentials: 'same-origin',
       headers: {
         ...DEFAULT_HEADERS,
+        ...(getDeviceId() ? { 'X-Production-Line': getDeviceId() } : {}),
         ...(options.headers || {}),
         ...cancellation.headers,
       },
     })
+    if (options.responseType === 'blob' && response.ok) return { blob: await response.blob(), headers: response.headers }
     let payload
     try {
       payload = await response.json()
@@ -540,6 +542,9 @@ export function listEmailDeliveryResolutions(deliveryId, { signal } = {}) {
 }
 
 export function getDeviceCatalog() { return request('/api/v1/devices') }
+export function getProductionLines() { return request('/api/v1/production-lines') }
+export function testWeldingConnection(payload) { return request('/api/v1/database/welding/test-connection', { method: 'POST', body: JSON.stringify(payload) }) }
+export function saveWeldingConfiguration(payload) { return request('/api/v1/database/welding/configuration', { method: 'PUT', body: JSON.stringify(payload) }) }
 
 export function getConfigurationDiagnostics({ signal } = {}) {
   return request('/api/v1/configuration/diagnostics', { signal })

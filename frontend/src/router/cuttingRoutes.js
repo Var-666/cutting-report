@@ -1,5 +1,6 @@
 export const cuttingRoutes = {
   path: 'cutting-dispatch',
+  meta: { line: 'cutting' },
   component: () => import('../layouts/CuttingLayout.vue'),
   children: [
     {

@@ -29,7 +29,7 @@ def llm_usage(request: Request) -> dict:
 def usage_report(
     request: Request, start_date: date, end_date: date,
     granularity: Literal["day", "month"] = "day",
-    scene: Literal["", "leadership", "workshop", "equipment", "alarm", "custom", "other"] = "",
+    scene: Literal["", "leadership", "workshop", "equipment", "alarm", "custom", "welding", "other"] = "",
     page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100),
 ) -> dict:
     if not 1900 <= start_date.year <= end_date.year <= 2100 or end_date < start_date:

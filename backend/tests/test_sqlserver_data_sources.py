@@ -118,3 +118,20 @@ def test_database_configuration_response_never_contains_passwords(monkeypatch) -
     assert "password" not in payload["production"]
     assert "prod-secret" not in str(payload)
     assert "worker-secret" not in str(payload)
+
+
+@pytest.mark.parametrize(('enabled', 'configured'), [(False, False), (True, False), (False, True), (True, True)])
+def test_welding_source_status_matches_connection_configuration_without_secrets(enabled, configured):
+    configuration = _production_settings(
+        weld_enabled=enabled, weld_db_host='weld-db', weld_db_port=3307,
+        weld_db_name='welding', weld_db_user='weld-reader',
+        weld_db_password='weld-private' if configured else '',
+    )
+    sources = database._database_source_status(configuration)
+    assert [source['source'] for source in sources] == ['production', 'worker', 'file', 'welding']
+    welding = sources[-1]
+    assert welding['enabled'] is enabled and welding['configured'] is configured
+    assert (welding['host'], welding['port'], welding['database']) == ('weld-db', 3307, 'welding')
+    assert welding['uses_primary_fallback'] is False
+    assert 'password' not in welding and 'username' not in welding
+    assert 'weld-private' not in str(sources) and 'weld-reader' not in str(sources)

@@ -11,10 +11,12 @@ from app.services.process_lock import settings_file_lock
 
 CONNECTION_FIELDS = ('host', 'port', 'database', 'username', 'password', 'driver',
                      'encrypt', 'trust_server_certificate')
+WELD_FIELDS = {'weld_enabled', 'weld_db_host', 'weld_db_port', 'weld_db_name', 'weld_db_user',
+               'weld_db_password', 'weld_db_timezone'}
 DATABASE_FIELDS = {'data_source_mode', 'worker_database_auth_enabled', 'file_database_enabled'} | {
     f'{prefix}_{field}' for prefix in ('sqlserver', 'worker_sqlserver', 'file_sqlserver')
     for field in CONNECTION_FIELDS
-}
+} | WELD_FIELDS
 DATABASE_SETTINGS = {item.metadata['env']: item.name for item in fields(Settings) if item.name in DATABASE_FIELDS}
 DATABASE_DIAGNOSTIC_KEYS = set(DATABASE_SETTINGS) | {'APP_EFFECTIVE_DATA_SOURCE_MODE'} | {
     f'connections.{source}.{name}' for source in ('production', 'worker', 'file')
@@ -28,7 +30,7 @@ def parse_database_settings(base: Settings, values: dict[str, object]) -> Settin
         if key not in values:
             continue
         value = str(values[key])
-        if name in {'worker_database_auth_enabled', 'file_database_enabled'}:
+        if name in {'worker_database_auth_enabled', 'file_database_enabled', 'weld_enabled'}:
             if value.lower() not in {'1', 'true', 'yes', 'on', '0', 'false', 'no', 'off'}:
                 raise ValueError('数据库启用状态无效')
             value = value.lower() in {'1', 'true', 'yes', 'on'}
@@ -43,6 +45,17 @@ def parse_database_settings(base: Settings, values: dict[str, object]) -> Settin
             raise ValueError('数据库配置不能包含控制字符')
         changes[name] = value
     updated = replace(base, **changes)
+    if updated.weld_enabled:
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+        if not all((updated.weld_db_host, updated.weld_db_name, updated.weld_db_user, updated.weld_db_password)):
+            raise ValueError('焊接连接配置不完整')
+        try:
+            ZoneInfo(updated.weld_db_timezone)
+        except (ValueError, ZoneInfoNotFoundError):
+            raise ValueError('生产时区无效') from None
+    # A welding-only save preserves SQL Server profiles, including an unconfigured local preview.
+    if changes and changes.keys() <= WELD_FIELDS:
+        return updated
     for source, enabled in [('production', updated.effective_data_source_mode == 'sqlserver'),
                             ('worker', updated.worker_database_auth_enabled), ('file', updated.file_database_enabled)]:
         profile = updated.sqlserver_connection(source)
@@ -64,6 +77,12 @@ class DatabaseRuntime:
         self._base_sources = {key: LOADED_SOURCES.get(key, 'default') for key in DATABASE_SETTINGS}
         self._sources = dict(self._base_sources)
         self._error = None
+
+    @property
+    def current_context(self) -> SimpleNamespace:
+        """Read the published services without triggering a nested configuration reload."""
+        with runtime_settings_lock:
+            return self._context
 
     def _version(self) -> tuple[int, int, int] | None:
         try:

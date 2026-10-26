@@ -22,7 +22,7 @@ const report = ref(null)
 const loading = ref(false)
 const error = ref('')
 const chartElement = ref(null)
-const scenes = { leadership: '领导报表', workshop: '车间报表', equipment: '设备报表', alarm: '告警分析', custom: '自定义报表', other: '其他调用' }
+const scenes = { leadership: '领导报表', workshop: '车间报表', equipment: '设备报表', alarm: '告警分析', custom: '自定义报表', welding: '焊接分析', other: '其他调用' }
 const formatter = new Intl.NumberFormat('zh-CN')
 const summary = computed(() => report.value?.summary)
 const series = computed(() => (report.value?.series || []).filter(row => row.call_count > 0))

@@ -19,7 +19,7 @@ const props = defineProps({
   loadingMessage: { type: String, default: '数据返回后将自动更新图表和明细。' },
   emptyTitle: { type: String, default: '当前条件下暂无数据' },
   emptyMessage: { type: String, default: '可以调整统计区间或筛选条件后重新查询。' },
-  errorTitle: { type: String, default: '报表数据读取失败' },
+  errorTitle: { type: String, default: '等待报表数据' },
   retryLabel: { type: String, default: '重新查询' },
 })
 
@@ -65,19 +65,19 @@ defineExpose({ getChartElement: () => chartElement.value })
 </template>
 
 <style scoped>
-.report-trend-panel { margin-bottom:22px; overflow:hidden; }
+.report-trend-panel { --report-panel-padding:14px; margin-bottom:22px; overflow:hidden; }
 .report-trend-panel__heading { gap:14px; flex-wrap:wrap; }
 .report-trend-panel__heading small { color:var(--muted); font-size:12px; }
 .report-trend-panel__activity{display:flex;align-items:center;gap:7px;color:rgb(var(--info-color))!important;font-weight:700}.report-trend-panel__activity .spinner{width:13px;height:13px}
-.report-trend-panel__body{position:relative;min-height:var(--report-trend-height)}
-.report-trend-panel__content { display:grid; grid-template-columns:minmax(330px,.9fr) minmax(0,1.25fr); gap:14px; align-items:stretch; padding:16px 18px 20px; }
+.report-trend-panel__body{display:grid;min-height:var(--report-trend-height)}
+.report-trend-panel__content { grid-area:1/1; display:grid; grid-template-columns:minmax(330px,.9fr) minmax(0,1.25fr); gap:14px; align-items:stretch; padding:var(--report-panel-padding); }
 .report-trend-panel__content.is-obscured{visibility:hidden;pointer-events:none}
-.report-trend-panel__state{position:absolute;z-index:2;inset:0;margin:16px 18px 20px;border:1px solid var(--theme-border-color);border-radius:8px}
+.report-trend-panel__state{grid-area:1/1;z-index:2;margin:var(--report-panel-padding);border:1px solid var(--theme-border-color);border-radius:8px}
 .report-trend-panel__content--table-only { grid-template-columns:minmax(0,1fr); }
 .report-trend-panel__chart,.report-trend-panel__table { min-width:0; height:var(--report-trend-height); border:1px solid var(--theme-border-color); background:rgb(var(--container-bg-color)); }
 .report-trend-panel__chart { width:100%; }
 .report-trend-panel__table { max-height:var(--report-trend-height); overflow:auto; scrollbar-gutter:stable; }
 .report-trend-panel__content--fit-table .report-trend-panel__table { height:auto; max-height:none; overflow-x:auto; overflow-y:visible; scrollbar-gutter:auto; }
 @media (max-width:900px) { .report-trend-panel__content { grid-template-columns:1fr; }.report-trend-panel__table { height:auto; max-height:420px; } }
-@media (max-width:560px) { .report-trend-panel__content { padding:12px; }.report-trend-panel__chart { height:260px; }.report-trend-panel__state{margin:12px} }
+@media (max-width:560px) { .report-trend-panel { --report-panel-padding:12px; }.report-trend-panel__chart { height:260px; } }
 </style>

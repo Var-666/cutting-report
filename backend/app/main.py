@@ -5,6 +5,8 @@ import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -31,6 +33,8 @@ from app.api.workshop import router as workshop_router
 from app.config import settings
 from app.api.devices import router as devices_router
 from app.api.runtime import runtime_state
+from app.api.welding import router as welding_router
+from app.api.production_lines import router as production_lines_router
 from app.services.application_runtime import build_runtime
 from app.services.process_lock import FileLock
 from app.services.worker_status import background_ready
@@ -72,6 +76,13 @@ app = FastAPI(
     redoc_url=None,
 )
 
+
+@app.exception_handler(RequestValidationError)
+async def safe_connection_validation(request: Request, exc: RequestValidationError):
+    if request.url.path.startswith(('/api/v1/welding', '/api/v1/database/welding/')) or request.url.path == '/api/v1/database/configuration':
+        return JSONResponse(status_code=422, content={'success': False, 'error': {'code': 'VALIDATION_ERROR', 'message': '请求参数无效，请检查日期、筛选或连接配置'}})
+    return await request_validation_exception_handler(request, exc)
+
 if settings.cors_origins:
     app.add_middleware(
         CORSMiddleware,
@@ -84,6 +95,12 @@ if settings.cors_origins:
 
 @app.middleware("http")
 async def request_id_middleware(request: Request, call_next):
+    if request.headers.get('X-Production-Line') == 'welding' and any(
+        request.url.path == f'/api/v1/{module}' or request.url.path.startswith(f'/api/v1/{module}/')
+        for module in ('cutting', 'downloads', 'alarms', 'automation', 'workshop', 'leadership-report',
+                       'equipment-report', 'energy-report', 'analysis', 'reports', 'options', 'projects', 'ships', 'conditions', 'designer')
+    ):
+        return JSONResponse(status_code=403, content={'success': False, 'error': {'code': 'LINE_CAPABILITY_DENIED', 'message': '当前产线不支持此功能'}})
     supplied_request_id = request.headers.get("X-Request-ID", "")
     request_id = (
         supplied_request_id
@@ -131,6 +148,8 @@ async def unexpected_error_handler(request: Request, exc: Exception):
 
 
 app.include_router(devices_router)
+app.include_router(production_lines_router)
+app.include_router(welding_router)
 app.include_router(reports_router)
 app.include_router(auth_router)
 app.include_router(alarms_router)

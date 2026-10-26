@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{{ title }}</title>
+<style>
+body{font:13px/1.65 system-ui,"Noto Sans CJK SC",sans-serif;color:#243447;margin:28px}h1{font-size:24px}dl{display:grid;grid-template-columns:110px 1fr;gap:5px 12px}dt{color:#53677b}dd{margin:0;overflow-wrap:anywhere}table{border-collapse:collapse;width:100%;font-size:11px}th,td{padding:8px;border-bottom:1px solid #dce3eb;text-align:right;overflow-wrap:anywhere}th{background:#edf2f8}td:first-child{text-align:left}thead{display:table-header-group}.chart{height:240px}.scroll{overflow:auto}.quality{padding:12px;background:#f3f6fa}@page{size:A4 landscape;margin:14mm}@media print{body{margin:0}tr{break-inside:avoid}.scroll{overflow:visible}#trend{break-inside:avoid}}
+</style></head><body>
+<h1>小组立焊接线 · {{ title }}</h1>
+<dl>{% for label,value in metadata %}<dt>{{ label }}</dt><dd>{{ value }}</dd>{% endfor %}</dl>
+<p>区间焊接长度：{{ report.summary.weld_length_m }} m；参与工件数：{{ report.summary.involved_part_count }}；累计作业用时：{{ report.summary.working_hours }} h</p>
+<div class="quality">{% for notice in report.meta.notices %}<div>{{ notice }}</div>{% endfor %}<div>异常原因计数：{{ report.meta.quality }}；未关联工件流水号：{{ report.meta.unlinked_part_count }}</div></div>
+{% if echarts %}<div id="trend" class="chart" role="img" aria-label="按日焊接长度趋势"></div>
+<script>{{ echarts|safe }}</script><script>
+const trend={{ report.daily|tojson }};
+echarts.init(document.getElementById('trend'),null,{renderer:'svg'}).setOption({animation:false,grid:{left:65,right:25,top:30,bottom:40},tooltip:{trigger:'axis'},xAxis:{type:'category',data:trend.map(r=>r.production_date)},yAxis:{type:'value',name:'焊接长度(m)'},series:[{type:'bar',data:trend.map(r=>r.weld_length_m),itemStyle:{color:'#386fc7'}}]});
+</script>{% endif %}
+<h2>{{ title }}（{{ report.total }}行）</h2><div class="scroll"><table><thead><tr>{% for key,label in columns %}<th>{{ label }}</th>{% endfor %}</tr></thead><tbody>
+{% for row in report['items'] %}<tr>{% for key,label in columns %}<td>{{ row.get(key) if row.get(key) is not none else '待核实/未记录' }}</td>{% endfor %}</tr>{% else %}<tr><td colspan="{{ columns|length }}">当前筛选条件下暂无数据</td></tr>{% endfor %}
+</tbody></table></div></body></html>

@@ -64,6 +64,25 @@ test('database source selector offers SQL Server and demo without the removed Ex
   assert.deepEqual([...selector.matchAll(/<option value="([^"]+)"/g)].map((match) => match[1]), ['demo', 'sqlserver'])
 })
 
+test('welding connection uses the same source card grid and full-width field layout as SQL Server', () => {
+  const database = descriptor('DatabaseView')
+  const grid = database.template.content.slice(database.template.content.indexOf('class="saved-source-grid"'), database.template.content.indexOf('<div class="configuration-actions">'))
+  assert.match(grid, /fieldset v-for="source in configurationSources"/)
+  assert.match(grid, /class="welding-connection"/)
+  const welding = grid.slice(grid.indexOf('<fieldset v-if="databaseConfiguration.welding"'))
+  assert.doesNotMatch(welding, /class="connection-form"/)
+  assert.doesNotMatch(welding, /<button|测试焊接只读连接|保存焊接连接/)
+  assert.match(database.template.content, /class="configuration-switches"[\s\S]*name="weld_enabled"/)
+  assert.match(welding, /name="weld_host"[^>]*:required="databaseConfiguration.welding.enabled"[^>]*placeholder="请输入地址，例如 10.147.1.21"/)
+  assert.match(welding, /name="weld_password"[^>]*:required="databaseConfiguration.welding.enabled && !databaseConfiguration.welding.password_configured"/)
+  assert.match(database.template.content, /v-else-if="source.configured">已使用独立连接配置/)
+  assert.match(database.template.content, /连接参数尚未保存完整/)
+  assert.match(database.styles[0].content, /\.saved-source-grid fieldset \{ min-width:0; display:grid; grid-template-columns:minmax\(0,1fr\) 92px;/)
+  assert.match(database.styles[0].content, /\.saved-source-grid--welding \{ grid-template-columns:1fr;/)
+  assert.match(database.styles[0].content, /\.saved-source-grid \{ display:grid; grid-template-columns:repeat\(2,minmax\(0,1fr\)\);/)
+  assert.match(database.styles[0].content, /@media \(max-width:1100px\) \{ \.saved-source-grid \{ grid-template-columns:1fr;/)
+})
+
 test('database save reloads active settings and status without a restart prompt', async () => {
   const { computed, reactive, ref } = await import('vue')
   const view = descriptor('DatabaseView')
@@ -72,7 +91,8 @@ test('database save reloads active settings and status without a restart prompt'
     driver: 'ODBC Driver 18 for SQL Server', encrypt: true, trust_server_certificate: false }
   const current = { data_source_mode: 'sqlserver', worker_database_auth_enabled: true, file_database_enabled: true,
     production: { ...connection }, worker: { ...connection }, file: { ...connection } }
-  const bindings = { computed, reactive, ref, onMounted() {}, useUnsavedChanges() {}, formatTableDateValue: String,
+  const bindings = { computed, reactive, ref, watch() {}, onMounted() {}, useUnsavedChanges() {}, formatTableDateValue: String,
+    deviceSelection: { id: 'Cutter01' }, loadDevices: async () => { calls.push('catalog') },
     getDatabaseStatus: async () => { calls.push('status'); return { mode: 'sqlserver', driver: connection.driver } },
     getDatabaseConfiguration: async () => { calls.push('configuration'); return structuredClone(current) },
     saveDatabaseConfiguration: async (body) => { calls.push(body); return { saved: true, restart_required: false, message: '配置已保存并热加载' } },
@@ -88,7 +108,7 @@ test('database save reloads active settings and status without a restart prompt'
   assert.equal(page.configurationError.value, '')
   assert.equal(page.hasUnsavedChanges.value, false)
   assert.equal(calls[0].production.password, 'new-private')
-  assert.deepEqual(calls.slice(1).sort(), ['configuration', 'status'])
+  assert.deepEqual(calls.slice(1).sort(), ['catalog', 'configuration', 'status'])
   assert.ok(['production', 'worker', 'file'].every(source => page.databaseConfiguration.value[source].password === ''))
   assert.match(view.template.content, /保存后自动热加载 · 无需重启容器/)
   assert.doesNotMatch(view.template.content, /重启服务后生效/)
@@ -113,9 +133,49 @@ test('database configuration retains sections 01–03 and omits mapping, preview
   const database = descriptor('DatabaseView')
   const template = database.template.content
   assert.deepEqual([...template.matchAll(/<div class="panel-title"><div><span>(\d+)<\/span>/g)].map(match => match[1]), ['01', '02', '03'])
-  assert.match(template, /@submit.prevent="saveConfiguration"/)
+  assert.match(template, /@submit.prevent="saveConfiguration\(weldingScope\)"/)
   assert.match(template, /@submit.prevent="runConnectionTest"/)
   assert.match(template, /aria-label="数据库状态"/)
   assert.doesNotMatch(template, /生产查询映射|固定数据集预览|SQL 工作台|mapping-panel|preview-panel|sql-panel/)
   assert.doesNotMatch(database.scriptSetup.content, /previewDatabaseDataset|executeWorkbenchSql|validateWorkbenchSql|runPreview|setSqlExample|previewResult|sqlResult|query_mappings/)
+})
+
+test('shared connection test selects SQL Server or MySQL without saving either draft', async () => {
+  const { computed, reactive, ref } = await import('vue')
+  const view = descriptor('DatabaseView')
+  const calls = []
+  const selection = reactive({ id: 'Cutter01' })
+  const bindings = { computed, reactive, ref, watch() {}, onMounted() {}, useUnsavedChanges() {}, formatTableDateValue: String,
+    deviceSelection: selection,
+    testDatabaseConnection: async body => { calls.push(['sqlserver', body]); return { database: body.database, elapsed_ms: 1 } },
+    testWeldingConnection: async body => { calls.push(['welding', body]); return { connected: true, elapsed_ms: 2 } },
+  }
+  const script = view.scriptSetup.content.replace(/^import[\s\S]*?from ['"][^'"]+['"]\s*$/gm, '')
+  const page = new Function(...Object.keys(bindings), `${script}\nreturn { connection, weldingConnection, testSource, runConnectionTest, testResult, testError, testing, databaseConfiguration, dataSources, status, hasUnsavedChanges }`)(...Object.values(bindings))
+  Object.assign(page.connection, { host: 'sql.test', database: 'cutting', username: 'reader', password: 'test-sql-only' })
+  await page.runConnectionTest()
+  assert.equal(calls[0][0], 'sqlserver')
+  page.databaseConfiguration.value = { welding: { host: 'saved.test', database: 'saved-weld', enabled: false } }
+  Object.assign(page.weldingConnection, { host: 'mysql.test', database: 'welding', username: 'reader' })
+  page.testSource.value = 'welding'
+  await page.runConnectionTest()
+  assert.equal(calls[1][0], 'welding')
+  assert.equal(calls[1][1].password, null)
+  assert.equal(calls[1][1].port, 3306)
+  assert.equal(page.testResult.value.database, 'welding')
+  assert.equal(page.databaseConfiguration.value.welding.host, 'saved.test')
+  assert.equal(page.databaseConfiguration.value.welding.enabled, false)
+  assert.equal(page.hasUnsavedChanges.value, false)
+  assert.equal(page.testing.value, false)
+  page.status.value = { data_sources: [{ source: 'production' }, { source: 'welding' }] }
+  assert.equal(page.dataSources.value.length, 2)
+  selection.id = 'welding'
+  page.testSource.value = 'sqlserver'
+  assert.deepEqual(page.dataSources.value, [{ source: 'welding' }])
+  await page.runConnectionTest()
+  assert.equal(calls[2][0], 'welding')
+  const testSection = view.template.content.slice(view.template.content.indexOf('class="panel db-panel"'))
+  assert.match(testSection, /name="test_source"[\s\S]*value="sqlserver"[\s\S]*value="welding"/)
+  assert.match(testSection, /v-model="activeTestConnection.host"/)
+  assert.match(testSection, /v-if="testIsWelding"[\s\S]*name="test_timezone"/)
 })

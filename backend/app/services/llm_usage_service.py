@@ -46,7 +46,7 @@ def record_llm_call(
         repository.initialize()
         repository.record_call(
             total, occurred_at=(occurred_at or datetime.now(ZoneInfo(settings.timezone))).astimezone(ZoneInfo(settings.timezone)),
-            scene=scene if scene in {"leadership", "workshop", "equipment", "alarm", "custom"} else "other",
+            scene=scene if scene in {"leadership", "workshop", "equipment", "alarm", "custom", "welding"} else "other",
             model=settings.llm_model[:256], status="responded" if response is not None else "failed",
             duration_ms=max(0, duration_ms), input_tokens=prompt, output_tokens=completion,
             cached_tokens=cached, reasoning_tokens=reasoning,

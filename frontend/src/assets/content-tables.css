@@ -19,13 +19,13 @@ table.content-table td {
   border-bottom:1px solid var(--theme-border-color) !important;
   text-align:center !important;
   vertical-align:middle !important;
-  font-size:11px !important;
+  font-size:var(--content-table-font-size,11px) !important;
   white-space:nowrap !important;
 }
 table.content-table thead th {
   color:var(--report-table-head-ink) !important;
   background:linear-gradient(var(--report-table-head-bg),var(--report-table-head-bg)),rgb(var(--container-bg-color)) !important;
-  font-size:10px !important;
+  font-size:var(--content-table-header-font-size,10px) !important;
   font-weight:600 !important;
   letter-spacing:.4px !important;
   text-align:center !important;

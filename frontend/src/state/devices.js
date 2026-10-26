@@ -1,11 +1,12 @@
 import { reactive } from 'vue'
-import { getDeviceCatalog } from '../api/reports.js'
+import { getDeviceCatalog, getProductionLines } from '../api/reports.js'
 import { getDeviceId, getDevices, selectDevice, setDeviceCatalog, subscribeDevices } from '../api/deviceContext.js'
 import { stopReportPreload } from './reportPreload.js'
 
 export const deviceSelection = reactive({ id: getDeviceId(), items: getDevices(), ready: false, loading: false, error: '' })
 let loading = null
 let generation = 0
+let includesLines = false
 subscribeDevices(() => {
   deviceSelection.id = getDeviceId()
   deviceSelection.items = getDevices()
@@ -15,17 +16,19 @@ subscribeDevices(() => {
     deviceSelection.ready = false
     deviceSelection.loading = false
     deviceSelection.error = ''
+    includesLines = false
   }
 })
-export async function loadDevices() {
-  if (deviceSelection.ready) return
+export async function loadDevices({ force = false, includeLines = includesLines } = {}) {
+  if (deviceSelection.ready && !force && (!includeLines || includesLines)) return
   if (loading) return loading
   deviceSelection.loading = true
   deviceSelection.error = ''
   const run = generation
-  loading = getDeviceCatalog().then((data) => {
+  loading = (includeLines ? getProductionLines() : getDeviceCatalog()).then((data) => {
     if (run !== generation) return
     setDeviceCatalog(data)
+    includesLines = includeLines
     deviceSelection.ready = true
   }).catch((error) => {
     if (run !== generation) return

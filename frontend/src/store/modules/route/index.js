@@ -3,6 +3,8 @@ import { defineStore } from 'pinia'
 import router from '../../../router'
 import { adminMenus } from '../../../router/menus.js'
 import AppIcon from '../../../components/AppIcon.vue'
+import { deviceSelection } from '../../../state/devices.js'
+import { selectedLineType } from '../../../utils/productionLines.js'
 
 export const useRouteStore = defineStore('theme-route-adapter', () => {
   const menus = computed(() => {
@@ -16,7 +18,7 @@ export const useRouteStore = defineStore('theme-route-adapter', () => {
         children: item.children ? convert(item.children) : undefined,
       }))
     }
-    return convert(adminMenus(router.options.routes.find(item => item.path === '/admin').children))
+    return convert(adminMenus(router.options.routes.find(item => item.path === '/admin').children, '/admin', selectedLineType(deviceSelection.items, deviceSelection.id)))
   })
   function getSelectedMenuKeyPath(key, items = menus.value, parents = []) {
     for (const item of items) {

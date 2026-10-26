@@ -37,6 +37,8 @@ def test_source_package_keeps_soybean_build_configuration_and_license(tmp_path):
         "backend/app/api/downloads.py", "backend/app/database/downloads.py",
         "backend/app/services/file_download_service.py",
         "frontend/src/views/CuttingDispatchView.vue",
+        "backend/app/api/welding.py", "backend/app/database/welding.py",
+        "backend/app/services/welding_service.py", "frontend/src/views/WeldingReportView.vue",
         "frontend/src/vendor/soybean-admin/LICENSE",
     )
     removed = (
@@ -64,6 +66,9 @@ def test_source_package_keeps_soybean_build_configuration_and_license(tmp_path):
     assert payload["frontend/dist/licenses/soybean-admin/LICENSE"] == b"fixture"
     assert payload["licenses/naive-ui/LICENSE"] == b"naive-ui license"
     assert payload["licenses/pinia/LICENSE"] == b"pinia license"
+    assert payload['scripts/check_welding.py'] == b'fixture'
+    assert payload['docs/project/welding-integration.md'] == b'fixture'
+    assert payload['backend/app/api/welding.py'] == b'fixture'
     for name in ("docs/deployment/配置参考.md", "docs/project/功能与接口参考.md", "docs/project/changelog.md"):
         assert payload[name] == b"fixture"
 

@@ -76,6 +76,33 @@ class SavedConnectionRequest(BaseModel):
         return cleaned
 
 
+class WeldingConnectionRequest(BaseModel):
+    enabled: bool = False
+    host: str = Field(default='', max_length=255)
+    port: int = Field(default=3306, ge=1, le=65535)
+    database: str = Field(default='weld_production_data', max_length=128)
+    username: str = Field(default='', max_length=128)
+    password: SecretStr | None = Field(default=None, max_length=256)
+    timezone: str = Field(default='Asia/Shanghai', max_length=64)
+
+    @field_validator('host', 'database', 'username', 'timezone')
+    @classmethod
+    def clean_text(cls, value: str) -> str:
+        if any(char in value for char in ('\r', '\n', '\x00')):
+            raise ValueError('不能包含控制字符')
+        return value.strip()
+
+    @field_validator('timezone')
+    @classmethod
+    def validate_timezone(cls, value: str) -> str:
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+        try:
+            ZoneInfo(value)
+        except (ValueError, ZoneInfoNotFoundError):
+            raise ValueError('生产时区无效') from None
+        return value
+
+
 class DatabaseConfigurationRequest(BaseModel):
     data_source_mode: Literal["demo", "sqlserver"] = "demo"
     worker_database_auth_enabled: bool = False
@@ -83,6 +110,7 @@ class DatabaseConfigurationRequest(BaseModel):
     production: SavedConnectionRequest
     worker: SavedConnectionRequest
     file: SavedConnectionRequest
+    welding: WeldingConnectionRequest | None = None
 
 
 class DatabasePreviewRequest(BaseModel):
@@ -159,6 +187,15 @@ def _database_source_status(configuration: Settings | None = None) -> list[dict]
                 "uses_primary_fallback": bool(config["uses_primary_fallback"]),
             }
         )
+    sources.append({
+        'source': 'welding', 'label': '小组立焊接线 · MySQL',
+        'enabled': configuration.weld_enabled,
+        'configured': all((configuration.weld_db_host, configuration.weld_db_name,
+                           configuration.weld_db_user, configuration.weld_db_password)),
+        'host': configuration.weld_db_host or None, 'port': configuration.weld_db_port,
+        'database': configuration.weld_db_name or None, 'driver': 'MySQL Connector/Python',
+        'uses_primary_fallback': False,
+    })
     return sources
 
 
@@ -193,6 +230,12 @@ def _database_configuration_data(configuration: Settings | None = None) -> dict:
         "production": _saved_connection("production", configuration),
         "worker": _saved_connection("worker", configuration),
         "file": _saved_connection("file", configuration),
+        "welding": {
+            'enabled': configuration.weld_enabled, 'host': configuration.weld_db_host,
+            'port': configuration.weld_db_port, 'database': configuration.weld_db_name,
+            'username': configuration.weld_db_user, 'password_configured': bool(configuration.weld_db_password),
+            'timezone': configuration.weld_db_timezone,
+        },
     }
 
 
@@ -233,6 +276,15 @@ def _connection_env_values(
     }
 
 
+def _welding_env_values(payload: WeldingConnectionRequest, configuration: Settings) -> dict[str, object]:
+    password = payload.password.get_secret_value() if payload.password else ''
+    saved = read_runtime_env(settings.runtime_settings_env_path).get('WELD_DB_PASSWORD', configuration.weld_db_password)
+    return {'WELD_ENABLED': str(payload.enabled).lower(), 'WELD_DB_HOST': payload.host,
+            'WELD_DB_PORT': payload.port, 'WELD_DB_NAME': payload.database,
+            'WELD_DB_USER': payload.username, 'WELD_DB_PASSWORD': password or saved,
+            'WELD_DB_TIMEZONE': payload.timezone}
+
+
 @router.get("/configuration")
 def get_database_configuration(request: Request) -> dict:
     return {
@@ -246,8 +298,12 @@ def get_database_configuration(request: Request) -> dict:
 def save_database_configuration(
     payload: DatabaseConfigurationRequest, request: Request
 ) -> dict:
-    runtime = request.app.state.database_runtime
     with runtime_settings_lock, settings_file_lock(settings.runtime_settings_env_path):
+        current = _active_settings(request)
+        if payload.welding is not None:
+            unchanged = DatabaseConfigurationRequest.model_validate({**_database_configuration_data(current), 'welding': None})
+            if payload.model_copy(update={'welding': None}) == unchanged:
+                return _publish_database_configuration(request, _welding_env_values(payload.welding, current))
         values: dict[str, object] = {
             "APP_DATA_SOURCE_MODE": payload.data_source_mode,
             "WORKER_DATABASE_AUTH_ENABLED": str(
@@ -257,22 +313,33 @@ def save_database_configuration(
         }
         for source in ("production", "worker", "file"):
             values.update(_connection_env_values(source, getattr(payload, source)))
-        try:
-            merged = {**read_runtime_env(settings.runtime_settings_env_path), **values}
-            prepared = runtime.prepare(merged)
-        except ValueError:
-            raise HTTPException(status_code=422, detail="数据库配置无效，请核对启用的数据源、连接参数及密码。") from None
-        except Exception:
-            raise HTTPException(status_code=503, detail="数据库配置暂无法加载，当前运行配置未改变。") from None
-        try:
-            _write_runtime_env(values)
-        except (OSError, ValueError) as exc:
-            logger.exception("failed to save runtime database configuration")
-            raise HTTPException(
-                status_code=500,
-                detail="配置保存失败，请检查 data 目录的写入权限。",
-            ) from exc
-        runtime.publish(prepared, merged)
+        if payload.welding is not None:
+            values.update(_welding_env_values(payload.welding, current))
+        return _publish_database_configuration(request, values)
+
+
+@router.put('/welding/configuration')
+def save_welding_configuration(payload: WeldingConnectionRequest, request: Request) -> dict:
+    with runtime_settings_lock, settings_file_lock(settings.runtime_settings_env_path):
+        return _publish_database_configuration(request, _welding_env_values(payload, _active_settings(request)))
+
+
+def _publish_database_configuration(request: Request, values: dict[str, object]) -> dict:
+    # Both callers hold the settings and file locks through prepare, save and publication.
+    runtime = request.app.state.database_runtime
+    try:
+        merged = {**read_runtime_env(settings.runtime_settings_env_path), **values}
+        prepared = runtime.prepare(merged)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="数据库配置无效，请核对启用的数据源、连接参数及密码。") from None
+    except Exception:
+        raise HTTPException(status_code=503, detail="数据库配置暂无法加载，当前运行配置未改变。") from None
+    try:
+        _write_runtime_env(values)
+    except (OSError, ValueError):
+        logger.error("failed to save runtime database configuration")
+        raise HTTPException(status_code=500, detail="配置保存失败，请检查 data 目录的写入权限。") from None
+    runtime.publish(prepared, merged)
     return {
         "success": True,
         "data": {
@@ -283,6 +350,27 @@ def save_database_configuration(
         },
         "request_id": request.state.request_id,
     }
+
+
+@query_requests.route(router.post('/welding/test-connection'))
+def test_welding_connection(payload: WeldingConnectionRequest, request: Request) -> dict:
+    from app.database.welding import WeldingClient, WeldingUnavailable
+    from app.services.database_runtime import DATABASE_SETTINGS
+    try:
+        base = _active_settings(request)
+        changes = {DATABASE_SETTINGS[key]: value for key, value in _welding_env_values(payload, base).items()}
+        changes['weld_enabled'] = True
+        candidate = replace(base, **changes)
+        client = WeldingClient(replace(candidate, weld_db_pool_size=1))
+        started = perf_counter()
+        with client.snapshot() as session:
+            session.fetch('SELECT 1 AS connected', limit=1)
+        return {'success': True, 'data': {'connected': True, 'elapsed_ms': round((perf_counter() - started) * 1000),
+                'message': '只读事务连接测试成功；表结构、权限范围及指标仍需核验'}, 'request_id': request.state.request_id}
+    except ValueError:
+        raise HTTPException(status_code=422, detail='焊接连接参数不完整或无效，请核对账号、密码及时区') from None
+    except WeldingUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from None
 
 
 @router.get("/status")

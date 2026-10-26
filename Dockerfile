@@ -68,6 +68,7 @@ RUN playwright install --with-deps chromium \
     && chmod -R a+rX "$PLAYWRIGHT_BROWSERS_PATH" \
     && rm -rf /var/lib/apt/lists/*
 COPY --chown=app:app backend ./backend
+COPY --chown=app:app scripts/check_welding.py ./scripts/check_welding.py
 COPY --from=frontend-builder --chown=app:app /build/frontend/dist ./frontend/dist
 COPY --from=frontend-builder --chown=app:app /build/vendor ./vendor
 

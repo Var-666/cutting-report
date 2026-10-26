@@ -1457,8 +1457,10 @@ onBeforeUnmount(pausePage)
 .confirm-dispatch-button { min-height:40px; display:flex; align-items:center; justify-content:center; grid-column:4; grid-row:1/3; gap:7px; margin:0; padding:0 12px; color:var(--theme-on-primary-color); border:0; border-radius:7px; background:rgb(var(--primary-color)); box-shadow:var(--theme-shadow); font-size:11px; font-weight:700; }
 .confirm-dispatch-button:hover:not(:disabled) { transform:translateY(-1px); box-shadow:var(--theme-shadow); }
 .confirm-dispatch-button:disabled { opacity:.48; cursor:not-allowed; box-shadow:none; }
-.dispatch-history-panel { margin-top:12px; }
+.dispatch-history-panel { --content-table-font-size:13px; --content-table-header-font-size:12px; margin-top:12px; }
 .history-table th { color:var(--theme-on-primary-color); background:var(--theme-table-header-color); }
+.history-table :is(code,.dispatch-status,.history-actions button) { font-size:inherit; }
+.history-table .dispatch-project-name { font-size:12px; }
 .dispatch-status.sent { color:rgb(var(--success-color)); background:rgb(var(--success-color) / .1); }
 .history-actions button { border-radius:6px; }
 .dispatch-empty-history i { color:rgb(var(--info-color)); border:0; background:rgb(var(--info-color) / .1); }

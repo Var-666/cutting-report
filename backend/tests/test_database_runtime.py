@@ -41,6 +41,76 @@ def payload(**changes):
     return database.DatabaseConfigurationRequest.model_validate(values)
 
 
+def test_welding_settings_publish_without_rebuilding_cutting_or_echoing_password(environment):
+    cfg, state = environment
+    old_request = request(state)
+    old = runtime_state(old_request)
+    body = payload(data_source_mode='demo', worker_database_auth_enabled=False, file_database_enabled=False,
+                   welding={'enabled': True, 'host': 'weld.test', 'port': 3307, 'database': 'weld', 'username': 'readonly', 'password': 'weld-private'})
+    database.save_welding_configuration(body.welding, request(state))
+    fresh = runtime_state(request(state))
+    assert fresh.devices is old.devices
+    assert fresh.cutting_dispatch is old.cutting_dispatch
+    assert fresh.welding is not old.welding
+    assert fresh.welding.settings.weld_db_port == 3307
+    assert fresh.welding.repository.client._pool is None
+    assert not old.welding.settings.weld_enabled
+    assert runtime_state(old_request) is old
+    visible = database.get_database_configuration(request(state))['data']['welding']
+    assert visible['password_configured'] is True and 'password' not in visible
+    body.welding.password = None
+    database.save_welding_configuration(body.welding, request(state))
+    assert runtime_state(request(state)).settings.weld_db_password == 'weld-private'
+
+
+def test_welding_only_save_and_reload_preserve_an_incomplete_cutting_profile(environment, monkeypatch):
+    cfg, _ = environment
+    cfg = replace(cfg, data_source_mode='sqlserver')
+    monkeypatch.setattr(database, 'settings', cfg)
+    state = build_runtime(cfg, role='web')
+    original = database_context(state)
+    body = database.WeldingConnectionRequest(enabled=True, host='weld.test', database='weld',
+        username='readonly', password='weld-private')
+    result = database.save_welding_configuration(body, request(state))
+    active = database_context(state)
+    assert result['data']['saved'] is True
+    assert active.settings.weld_enabled
+    assert active.devices is original.devices
+    assert active.settings.effective_data_source_mode == 'sqlserver'
+    assert active.settings.sqlserver_host == ''
+    assert active.welding.repository.client._pool is None
+    saved = read_runtime_env(cfg.runtime_settings_env_path)
+    assert saved['WELD_ENABLED'] == 'true' and not any(key.startswith('SQLSERVER_') for key in saved)
+    worker = build_runtime(cfg, role='worker')
+    assert database_context(worker).settings.weld_enabled
+    assert worker.database_runtime.inspect()['error'] is None
+    body.enabled = False
+    body.password = None
+    database.save_welding_configuration(body, request(state))
+    assert not database_context(state).settings.weld_enabled
+    assert database_context(state).settings.weld_db_password == 'weld-private'
+    assert not database_context(worker).settings.weld_enabled
+
+
+def test_unified_save_accepts_only_welding_changes_without_saving_incomplete_cutting_fields(environment, monkeypatch):
+    cfg, _ = environment
+    cfg = replace(cfg, data_source_mode='sqlserver')
+    monkeypatch.setattr(database, 'settings', cfg)
+    state = build_runtime(cfg, role='web')
+    body = database.DatabaseConfigurationRequest.model_validate(database._database_configuration_data(cfg))
+    body.welding = database.WeldingConnectionRequest(enabled=True, host='weld.test', database='weld',
+        username='readonly', password='weld-private')
+    database.save_database_configuration(body, request(state))
+    assert database_context(state).settings.weld_enabled
+    assert read_runtime_env(cfg.runtime_settings_env_path)['WELD_ENABLED'] == 'true'
+    assert 'APP_DATA_SOURCE_MODE' not in read_runtime_env(cfg.runtime_settings_env_path)
+    body.production.host = 'changed-cutting-profile'
+    with pytest.raises(HTTPException) as exc:
+        database.save_database_configuration(body, request(state))
+    assert exc.value.status_code == 422
+    assert database_context(state).settings.sqlserver_host == ''
+
+
 def test_save_publishes_all_database_controls_and_new_clients_without_changing_inflight_context(environment):
     cfg, state = environment
     old_request = request(state)
@@ -241,7 +311,10 @@ def test_http_save_stays_admin_only_and_never_echoes_credentials(environment):
         assert config.status_code == 200 and config.json()['data']['data_source_mode'] == 'sqlserver'
         assert 'private' not in config.text
         status = client.get('/api/v1/database/status')
-        assert status.status_code == 200 and all(item['enabled'] for item in status.json()['data']['data_sources'])
+        assert status.status_code == 200
+        sources = status.json()['data']['data_sources']
+        assert all(item['enabled'] for item in sources if item['source'] != 'welding')
+        assert next(item for item in sources if item['source'] == 'welding')['enabled'] is False
         assert client.get('/api/v1/auth/status').json()['data']['worker_database_auth_enabled'] is True
 
 

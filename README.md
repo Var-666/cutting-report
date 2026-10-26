@@ -53,6 +53,8 @@ npm run dev
 
 打开 [http://127.0.0.1:5173](http://127.0.0.1:5173)，Vite 代理 API 和报告请求。SQL Server 驱动、可选模型、能管、文件服务及 PDF 浏览器依赖见 [配置参考](docs/deployment/配置参考.md)。
 
+本机连接真实 SQL Server 时，另执行 `./.venv/bin/python -m pip install -r backend/requirements-sqlserver.txt`，并安装操作系统对应的 Microsoft ODBC Driver 18；macOS 按[微软官方步骤](https://learn.microsoft.com/en-us/sql/connect/odbc/linux-mac/install-microsoft-odbc-driver-sql-server-macos)安装，Homebrew 会带入 unixODBC。可用 `./.venv/bin/python -c "import pyodbc; print(pyodbc.drivers())"` 检查驱动能否实际加载。Docker 镜像已安装上述两层依赖。未提供连接参数时需在网页数据库配置中保存真实连接，不能将空报表当作连接成功。
+
 ## 构建与部署
 
 生产式本地运行先在 `frontend/` 执行 `npm run build`，再启动一个 Web 和一个 Worker；Web 去掉 `--reload`。前端构建会同步报告所需 ECharts 资源。正式环境将两个进程注册为独立服务。

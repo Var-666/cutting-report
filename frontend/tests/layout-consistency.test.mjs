@@ -29,26 +29,37 @@ test('vertical-mix reserves both device columns on every page and uses a single 
   const inactive = computed(() => false)
   const code = transformSync(script, { loader: 'ts' }).code
   const width = new Function('themeStore', 'appStore', 'isVerticalMix', 'isTopHybridSidebarFirst', 'isTopHybridHeaderFirst', 'isVerticalHybridHeaderFirst', `${code}\nreturn getSiderAndCollapsedWidth`)(themeStore, appStore, isVerticalMix, inactive, inactive, inactive)
-  assert.equal(width(false), 244)
+  assert.equal(width(false), 360)
   assert.equal(width(true), 228)
   appStore.mixSiderFixed = false
-  assert.equal(width(false), 64)
+  assert.equal(width(false), 180)
   assert.equal(width(true), 48)
   appStore.isMobile = true
   assert.equal(width(false), 220)
   assert.equal(width(true), 64)
   const menu = descriptor('vertical-mix-menu', 'layouts/modules/global-menu/modules')
   assert.match(menu.template.content, /:options="routeStore.menus"/)
-  assert.match(menu.template.content, /v-for="item in deviceSelection.items"/)
-  assert.match(menu.template.content, /:aria-pressed="item.id === deviceSelection.id"/)
+  assert.match(menu.template.content, /:options="deviceMenus"/)
+  assert.match(menu.template.content, /:value="deviceSelection.id"/)
+  assert.match(menu.template.content, /v-model:expanded-keys="expandedTypes"/)
+  assert.match(menu.template.content, /Math.max\(themeStore.sider.mixWidth, themeStore.sider.mixChildMenuWidth\)/)
   assert.match(menu.styles[0].content, /\.n-submenu-children/)
   assert.match(menu.styles[0].content, /\.n-submenu-children\)::before[^}]*z-index:1/)
   assert.match(menu.scriptSetup.content, /showDrawer = computed\(\(\) => drawerVisible.value \|\| appStore.mixSiderFixed\)/)
   assert.doesNotMatch(menu.scriptSetup.content, /if \(appStore.siderCollapse/)
-  assert.match(menu.template.content, /<span v-show="!appStore.siderCollapse">/)
+  assert.match(menu.template.content, /:collapsed="appStore.siderCollapse"/)
   assert.match(descriptor('menu-toggler', 'components/common').template.content, /:tooltip-content="\$attrs\['aria-label'\]/)
   assert.match(layout.scriptSetup.content, /'vertical-mix': \{\s*showLogo: false,\s*showMenu: false,\s*showMenuToggler: true/)
   assert.match(descriptor('index', 'layouts/modules/global-menu').scriptSetup.content, /if \(appStore.isMobile\) return VerticalMenu/)
+})
+
+test('dispatch history uses readable body text and inherits it for identifiers, status and actions', () => {
+  const dispatch = descriptor('CuttingDispatchView').styles.map(style => style.content).join('\n')
+  const shared = readFileSync(new URL('../src/assets/content-tables.css', import.meta.url), 'utf8')
+  assert.match(dispatch, /\.dispatch-history-panel \{ --content-table-font-size:13px; --content-table-header-font-size:12px;/)
+  assert.match(dispatch, /\.history-table :is\(code,\.dispatch-status,\.history-actions button\) \{ font-size:inherit;/)
+  assert.match(shared, /font-size:var\(--content-table-font-size,11px\) !important/)
+  assert.match(shared, /font-size:var\(--content-table-header-font-size,10px\) !important/)
 })
 
 test('report form and history pagination retain horizontal text and consistent control heights', () => {
@@ -209,6 +220,18 @@ test('standard reports expose consistent state recovery and truthful initial met
   assert.match(views[1].template.content, /result\.report \? workshopMetrics\.taskCount : '--'/)
   assert.match(views[2].template.content, /taskDay \? \(summary\.task_count \?\? '--'\) : '--'/)
   assert.match(views[2].scriptSetup.content, /if \(value === null \|\| value === undefined \|\| !Number\.isFinite\(Number\(value\)\)\) return '--'/)
+})
+
+test('unavailable report data shares the loading spinner while preserving the reason and retry action', () => {
+  const panel = descriptor('ReportTrendPanel', 'components')
+  const state = descriptor('ReportPanelState', 'components')
+  assert.match(state.template.content, /v-if="type === 'loading' \|\| type === 'error'" class="spinner dark"/)
+  assert.doesNotMatch(state.styles[0].content, /report-panel-state--error/)
+  assert.match(panel.scriptSetup.content, /errorTitle: \{ type: String, default: '等待报表数据' \}/)
+  assert.match(panel.scriptSetup.content, /type: 'error', title: props.errorTitle, message: props.error, actionLabel: props.retryLabel/)
+  assert.match(state.template.content, /v-if="actionLabel"[\s\S]*\$emit\('action'\)/)
+  assert.match(state.template.content, /type === 'error' \? 'alert' : 'status'/)
+  assert.match(state.template.content, /<p v-if="message">\{\{ message \}\}<\/p>/)
 })
 
 test('report export feedback can retry the exact last request', () => {
@@ -502,8 +525,8 @@ test('primary application pages share one readable typography scale', () => {
   assert.match(styles, /--font-kpi-value:\s*22px;/)
   assert.match(styles, /--font-table-head:\s*10px;/)
   assert.match(styles, /--font-auxiliary:\s*9px;/)
-  assert.match(tables, /font-size:11px !important;/)
-  assert.match(tables, /font-size:10px !important;/)
+  assert.match(tables, /font-size:var\(--content-table-font-size,11px\) !important;/)
+  assert.match(tables, /font-size:var\(--content-table-header-font-size,10px\) !important;/)
   assert.doesNotMatch(styles, /font-family:\s*Georgia/)
   assert.match(styles, /font-family: "Microsoft YaHei", "PingFang SC", Inter, Arial, sans-serif;/)
 })
@@ -574,8 +597,8 @@ test('report tables with sticky summaries use content-weighted window columns', 
   const workshopStyles = descriptor('WorkshopView').styles.map((style) => style.content).join('\n')
   assert.doesNotMatch(workshopStyles, /\.report-trend-panel__table\)\s*\{[^}]*overflow:auto!important;/)
   assert.match(contentCss, /height:47px !important/)
-  assert.match(contentCss, /font-size:11px !important/)
-  assert.match(contentCss, /thead th \{[\s\S]*font-size:10px !important/)
+  assert.match(contentCss, /font-size:var\(--content-table-font-size,11px\) !important/)
+  assert.match(contentCss, /thead th \{[\s\S]*font-size:var\(--content-table-header-font-size,10px\) !important/)
   assert.match(contentCss, /background:linear-gradient\(var\(--report-table-head-bg\),var\(--report-table-head-bg\)\),rgb\(var\(--container-bg-color\)\) !important/)
   assert.match(contentCss, /text-align:center !important/)
   assert.match(contentCss, /white-space:nowrap !important/)
@@ -1055,4 +1078,50 @@ test('home alarm and report previews share a bounded desktop height and insight 
   assert.match(insight, /header-style="padding-bottom: 0"/)
   assert.match(insight, /content-style="padding-top: var\(--n-padding-bottom\)"/)
   assert.match(insight, /content-class="flex flex-col justify-center"/)
+})
+
+test('report loading, empty and error overlays share the same inset as report content', () => {
+  const panel = descriptor('ReportTrendPanel', 'components')
+  const state = descriptor('ReportPanelState', 'components')
+  const css = panel.styles[0].content
+  assert.match(css, /\.report-trend-panel \{ --report-panel-padding:14px;/)
+  assert.match(css, /\.report-trend-panel__body\{display:grid;min-height:var\(--report-trend-height\)/)
+  assert.match(css, /\.report-trend-panel__content \{[^}]*grid-area:1\/1;[^}]*padding:var\(--report-panel-padding\);/)
+  assert.match(css, /\.report-trend-panel__state\{grid-area:1\/1;[^}]*margin:var\(--report-panel-padding\);/)
+  assert.match(css, /@media \(max-width:560px\)[^\n]*--report-panel-padding:12px/)
+  assert.doesNotMatch(state.styles[0].content, /\.report-panel-state\{[^}]*min-height:/)
+  assert.match(state.styles[0].content, /overflow-wrap:anywhere/)
+  for (const name of ['LeadershipReportView', 'EnergyPeriodReportView', 'WorkshopView']) {
+    const styles = descriptor(name).styles.map(style => style.content).join('\n')
+    assert.doesNotMatch(styles, /report-trend-panel__content[^{}]*\)\s*\{[^}]*padding:/, name)
+  }
+  const props = reactive({ error: '', hasData: false, loading: true, empty: false, loadingTitle: '加载', loadingMessage: '读取中', errorTitle: '失败', emptyTitle: '空数据', retryLabel: '重试' })
+  const code = panel.scriptSetup.content.slice(panel.scriptSetup.content.indexOf('const state = computed'), panel.scriptSetup.content.indexOf('defineExpose'))
+  const current = new Function('computed', 'props', `${code}; return state`)(computed, props)
+  assert.equal(current.value.type, 'loading')
+  props.loading = false
+  props.empty = true
+  assert.equal(current.value.type, 'empty')
+  props.error = '读取失败'
+  assert.equal(current.value.type, 'error')
+  props.hasData = true
+  assert.equal(current.value, null)
+})
+
+test('report and alarm KPI labels wrap while alarm cards fit the actual available width', () => {
+  for (const [name, prefix] of [['LeadershipReportView', 'leadership'], ['EnergyPeriodReportView', 'device'], ['WorkshopView', 'workshop'], ['AlarmCenterView', 'alarm']]) {
+    const styles = descriptor(name).styles.map(style => style.content).join('\n')
+    const label = styles.match(new RegExp(`\\.${prefix}-kpi>div>span\\{([^}]+)\\}`))[1]
+    assert.match(label, /white-space:normal;overflow-wrap:anywhere/)
+  }
+  const css = descriptor('AlarmCenterView').styles[0].content
+  assert.match(css, /\.alarm-hero\{[^}]*display:flex;flex-wrap:wrap;/)
+  assert.doesNotMatch(css, /\.alarm-hero\{[^}]*grid-template-columns:/)
+  assert.match(css, /\.alarm-hero__copy\{flex:1 1 320px;min-width:0/)
+  assert.match(css, /\.monitor-card\{flex:1 1 260px;min-width:0;max-width:320px/)
+  assert.match(css, /\.monitor-card dd\{[^}]*white-space:normal;overflow-wrap:anywhere/)
+  const grids = [...css.matchAll(/\.alarm-kpis\{([^}]+)\}/g)]
+  assert.equal(grids.length, 1)
+  assert.match(grids[0][1], /grid-template-columns:repeat\(auto-fit,minmax\(min\(100%,240px\),1fr\)\)/)
+  assert.doesNotMatch(css, /\.alarm-kpi--wide\{grid-column:span 2/)
 })
