@@ -57,15 +57,15 @@ const sourceUpdated = computed(() => Object.entries(report.value?.meta?.data_upd
 const qualityLabels = { invalid_time_rows: '区间候选记录中结束时间无效', invalid_serial_rows: '流水号无效', invalid_length_rows: '长度为空或非正', invalid_duration_rows: '用时为空或非正', unverified_state_rows: '状态含义待确认' }
 const analysisSections = [['overview', '生产概况'], ['features', '产出特点'], ['alerts', '数据关注点'], ['suggestions', '核查建议']] as const
 
-function read(values: WeldingQuery) {
+function read(values: WeldingQuery, force = false) {
   const key = JSON.stringify([props.kind, Object.entries(weldingQuery(values)).sort(([a], [b]) => a.localeCompare(b))])
   if (pendingRead?.key === key && !controller?.signal.aborted) return pendingRead.promise
-  const promise = load(values)
+  const promise = load(values, force)
   pendingRead = { key, promise }
   promise.finally(() => { if (pendingRead?.promise === promise) pendingRead = null })
   return promise
 }
-async function load(values: WeldingQuery) {
+async function load(values: WeldingQuery, force: boolean) {
   controller?.abort()
   analysisController?.abort()
   const run = ++generation
@@ -80,7 +80,7 @@ async function load(values: WeldingQuery) {
     return
   }
   try {
-    const value = await getWeldingReport(props.kind, values, controller.signal)
+    const value = await getWeldingReport(props.kind, values, controller.signal, force)
     if (run !== generation || selectedLineType(deviceSelection.items, deviceSelection.id) !== 'welding') return
     report.value = value
     activeQuery.value = value.query
@@ -91,11 +91,11 @@ async function load(values: WeldingQuery) {
     if (run === generation) loading.value = false
   }
 }
-function submit() {
+function submit(force = false) {
   const range = queryDateRange({ start: draft.start, end: draft.end })
   if (!range) { actionError.value = '请选择有效日期区间，最长366天'; return }
   actionError.value = ''
-  read({ ...draft, ...range, page: 1, page_size: activeQuery.value?.page_size || 20 })
+  read({ ...draft, ...range, page: 1, page_size: activeQuery.value?.page_size || 20 }, force)
 }
 function changePage(page: number) { if (!activeQuery.value) return; read({ ...activeQuery.value, page }) }
 function changePageSize(page_size: number) { if (!activeQuery.value) return; read({ ...activeQuery.value, page: 1, page_size }) }
@@ -172,7 +172,7 @@ function cancel() {
 }
 watch(detailOpen, open => { if (!open) { detailController?.abort(); detailGeneration += 1 } })
 watch(() => deviceSelection.id, id => { if (selectedLineType(deviceSelection.items, id) !== 'welding') { cancel(); report.value = null; detailOpen.value = false } })
-watch(() => [props.kind, sourceEnabled.value], submit, { immediate: true })
+watch(() => [props.kind, sourceEnabled.value], () => submit(), { immediate: true })
 onBeforeUnmount(cancel)
 </script>
 
@@ -180,7 +180,7 @@ onBeforeUnmount(cancel)
   <div class="welding-page">
     <header class="welding-heading"><div><h1>{{ title }}</h1><p>{{ lineName }} · {{ kind === 'dashboard' ? '今日指标与最近7天动态' : '按作业结束时间统计，北京时间' }}</p></div><ReportExportMenu :formats="['csv', 'html', 'pdf']" :disabled="!report || loading" :loading="exporting" @select="exportReport" /></header>
     <section v-if="sourceEnabled" class="panel welding-filter-panel">
-      <form class="welding-filters" @submit.prevent="submit">
+      <form class="welding-filters" @submit.prevent="submit(true)">
         <template v-if="kind !== 'dashboard'"><label><span>开始日期</span><AppDatePicker v-model="draft.start" required /></label><label><span>结束日期</span><AppDatePicker v-model="draft.end" :min="draft.start" required /></label></template>
         <label><span>设备</span><AppSelect v-model="draft.device_no"><option value="">全部设备</option><option v-for="device in report?.meta?.devices || []" :key="device" :value="device">设备 {{ device }}</option></AppSelect></label>
         <label v-if="['jobs', 'equipment'].includes(kind)"><span>机器人编号</span><input v-model="draft.robot_no" type="number" min="0" step="1" placeholder="全部" /></label>
@@ -194,13 +194,13 @@ onBeforeUnmount(cancel)
       </form>
     </section>
     <ReportFeedback v-if="!sourceEnabled" title="焊接数据库尚未启用" message="请先保存数据库连接参数并启用小组立焊接线。" action-label="配置数据库" @action="router.push('/admin/settings/database')" />
-    <ReportFeedback v-else-if="error" type="error" title="焊接数据读取失败" :message="`${error}${report ? '；当前保留上次成功查询结果。' : ''}`" action-label="重试" @action="submit" />
+    <ReportFeedback v-else-if="error" type="error" title="焊接数据读取失败" :message="`${error}${report ? '；当前保留上次成功查询结果。' : ''}`" action-label="重试" @action="submit(true)" />
     <ReportPanelState v-else-if="loading" type="loading" title="正在读取焊接数据" message="正在查询，繁忙时由服务器短暂排队。" />
     <ReportFeedback v-if="actionError" type="error" title="操作未完成" :message="actionError" dismissible @dismiss="actionError = ''" />
     <ReportFeedback v-if="actionNotice" title="操作完成" :message="actionNotice" dismissible @dismiss="actionNotice = ''" />
     <div v-if="sourceEnabled" class="welding-kpis"><NCard v-for="card in cards" :key="card.key" :bordered="false"><HomeKpiCard :title="card.title" :value="card.value" :unit="card.unit" :precision="card.unit === 'm' || card.unit === 'h' || card.unit === 'm/h' ? 2 : 0" :loading="loading" :status="card.pending ? '口径待核实' : ''" :series="report?.daily?.map(row => row[card.key as keyof WeldingMetrics] ?? 0) || []" /></NCard></div>
     <template v-if="report && activeQuery">
-      <div class="welding-freshness"><strong>源库最新更新时间</strong><span>{{ sourceUpdated }}</span><span>本次计算：{{ report.meta.calculated_at }}</span></div>
+      <div class="welding-freshness"><strong>源库最新更新时间</strong><span>{{ sourceUpdated }}</span><span>本次计算：{{ report.meta.calculated_at }}</span><template v-if="report.meta.report_data"><span>统计来源：{{ { snapshot: '持久化快照', cache: '内存缓存', database: '源库查询' }[report.meta.report_data.source] }}</span><span>统计截止：{{ report.meta.report_data.data_as_of }}</span><strong v-if="report.meta.report_data.stale">统计已过期</strong><span v-if="report.meta.report_data.refreshing">后台刷新排队中</span><span v-if="report.meta.report_data.refresh_failed">刷新失败，保留上次统计</span></template></div>
       <ReportFeedback v-if="!report.summary.job_count" title="当前区间暂无可归属的作业记录" message="可调整日期或设备后重新查询；无效时间候选记录见数据核查说明。" />
       <WeldingCharts v-else :kind="kind" :report="report" />
       <section class="panel welding-detail-table"><header><h2>{{ kind === 'dashboard' ? '最近7天最新焊接动态' : title }}</h2><span>当前查询：{{ activeQuery.start }} 至 {{ activeQuery.end }}；服务器分页</span></header><WeldingTable :paginate="kind !== 'dashboard'" :kind="reportKind" :items="report.items" :total="report.total" :page="activeQuery.page" :page-size="kind === 'dashboard' ? 10 : activeQuery.page_size" :loading="loading" @page="changePage" @page-size="changePageSize" @detail="openDetail" @copy="copy" /></section>

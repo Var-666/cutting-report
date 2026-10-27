@@ -355,3 +355,31 @@ test('new line types keep registered labels and destinations', () => {
   assert.equal(lineHome(items, 'paint-1'), '/admin/coating/home')
   assert.equal(productionGroups([{ ...items[0], type_name: '' }])[0].name, 'coating')
 })
+
+test('explicit refresh requests fresh statistics while initial reads and pagination reuse snapshots', async t => {
+  const urls = []
+  t.mock.method(globalThis, 'fetch', async url => { urls.push(new URL(url, 'http://test')); return Response.json({ success: true, data: {} }) })
+  await getWeldingReport('daily', period)
+  await getWeldingReport('daily', period, undefined, true)
+  assert.equal(urls[0].searchParams.has('refresh'), false)
+  assert.equal(urls[1].searchParams.get('refresh'), 'true')
+  assert.equal(urls[1].searchParams.get('start'), period.start)
+  const calls = []
+  const meta = { source: 'snapshot', stale: true, refreshing: true, data_as_of: '2026-10-26T08:00:00Z' }
+  const app = view(async (kind, values, signal, force) => { calls.push(force); return { query: values, data_version: 'same', meta: { report_data: meta } } })
+  await app.read(period)
+  assert.equal(calls[0], false)
+  assert.equal(app.report.value.meta.report_data.stale, true)
+  app.submit(true)
+  await settle()
+  assert.equal(calls[1], true)
+  app.changePage(2)
+  await settle()
+  assert.equal(calls[2], false)
+  assert.equal(app.report.value.meta.report_data.data_as_of, meta.data_as_of)
+  assert.equal(calls.length, 3, 'freshness metadata must not create another refresh loop')
+  assert.match(source('views/WeldingReportView.vue'), /统计截止/)
+  assert.match(source('views/WeldingReportView.vue'), /统计已过期/)
+  assert.match(source('views/WeldingReportView.vue'), /后台刷新排队中/)
+  assert.match(source('views/WeldingReportView.vue'), /刷新失败，保留上次统计/)
+})

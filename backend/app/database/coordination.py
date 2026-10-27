@@ -225,3 +225,37 @@ class CoordinationRepository(SQLiteRepository):
                             connection.execute("UPDATE background_tasks SET payload=? WHERE task_id=?", (json.dumps(payload), row["task_id"]))
                 return False
             return bound.enqueue("leadership_refresh", device_id, {"date": month, "bootstrap": bootstrap})
+
+    @staticmethod
+    def _snapshot_task_key(line_id: str, payload: dict) -> str:
+        from app.database.report_snapshots import fingerprint
+        identity = {key: payload[key] for key in ('report_type', 'query', 'source_fingerprint')}
+        return f'report_snapshot:{line_id}:{fingerprint(identity)}'
+
+    def snapshot_refresh_active(self, line_id: str, payload: dict) -> bool:
+        with self.connect() as connection:
+            return connection.execute('''SELECT 1 FROM background_tasks WHERE dedup_key=?
+                AND status IN ('pending', 'running', 'deferred')''',
+                (self._snapshot_task_key(line_id, payload),)).fetchone() is not None
+
+    def request_snapshot_refresh(self, line_id: str, payload: dict, *, interval: float | None = None) -> bool:
+        key = self._snapshot_task_key(line_id, payload)
+        now = time()
+        with self.connect() as connection:
+            self.begin_immediate(connection)
+            existing = connection.execute('SELECT status, updated_at FROM background_tasks WHERE dedup_key=?', (key,)).fetchone()
+            if existing and (existing['status'] != 'completed' or interval is not None and existing['updated_at'] + interval > now):
+                return False
+            active = connection.execute("SELECT COUNT(*) FROM background_tasks WHERE kind='report_snapshot_refresh' AND status!='completed'").fetchone()[0]
+            if active >= 64:
+                return False
+            count = connection.execute("SELECT COUNT(*) FROM background_tasks WHERE status='pending'").fetchone()[0]
+            status = 'pending' if count < 256 else 'deferred'
+            if existing:
+                connection.execute('''UPDATE background_tasks SET status=?, owner=NULL, attempts=0,
+                    created_at=?, updated_at=?, next_attempt=?, last_error=NULL WHERE dedup_key=?''', (status, now, now, now, key))
+                return True
+            return connection.execute('''INSERT INTO background_tasks
+                (task_id, kind, device_id, payload, dedup_key, status, created_at, updated_at, next_attempt)
+                VALUES (?, 'report_snapshot_refresh', ?, ?, ?, ?, ?, ?, ?)''',
+                (uuid4().hex, line_id, json.dumps(payload), key, status, now, now, now)).rowcount == 1

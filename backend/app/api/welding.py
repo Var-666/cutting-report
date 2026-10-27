@@ -10,7 +10,8 @@ from pydantic import ValidationError
 
 from app.api.auth import require_admin
 from app.api.runtime import runtime_state
-from app.services.production_lines import SERVICE_LINES
+from app.services.production_lines import SERVICE_LINES, resolve_line_service
+from app.services.report_snapshots import SnapshotRefreshBusy
 from app.api.workloads import RequestWorkload, analysis_requests, pdf_requests
 from app.config import settings
 from app.models.domain import to_primitive
@@ -33,7 +34,7 @@ def service(request: Request):
     line = next((item for item in SERVICE_LINES if item['type'] == 'welding' and (not selected or item['id'] == selected)), None)
     if line is None:
         raise HTTPException(status_code=422, detail='焊接产线上下文无效')
-    instance = getattr(runtime_state(request), line['service_key'], None)
+    instance = resolve_line_service(runtime_state(request), line['id'])
     if instance is None or not instance.settings.weld_enabled:
         raise HTTPException(status_code=503, detail=f'{line["name"]}尚未启用')
     return instance
@@ -43,6 +44,8 @@ def service(request: Request):
 def source_errors():
     try:
         yield
+    except SnapshotRefreshBusy as exc:
+        raise HTTPException(status_code=503, detail=str(exc), headers={'Retry-After': '1'}) from None
     except WeldingUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc), headers={'X-Welding-Error': exc.category}) from None
     except ValueError as exc:
@@ -52,12 +55,14 @@ def source_errors():
 
 
 def parse_query(request: Request) -> WeldingQuery:
-    ignored = {'format', 'report_type'}
+    ignored = {'format', 'report_type', 'refresh'}
     values = {}
     for key in request.query_params:
         entries = request.query_params.getlist(key)
         if len(entries) != 1:
             raise HTTPException(status_code=422, detail='查询参数不允许重复')
+        if key == 'refresh' and entries[0] not in ('true', 'false'):
+            raise HTTPException(status_code=422, detail='刷新参数无效')
         if key not in ignored:
             values[key] = entries[0]
     try:
@@ -80,35 +85,35 @@ def health(request: Request):
 def dashboard(request: Request):
     query = parse_query(request)
     with source_errors():
-        return response(request, service(request).dashboard(query))
+        return response(request, service(request).dashboard(query, **({'force': True} if request.query_params.get('refresh') == 'true' else {})))
 
 
 @welding_requests.route(router.get('/statistics/daily'))
 def daily(request: Request):
     query = parse_query(request)
     with source_errors():
-        return response(request, service(request).report('daily', query))
+        return response(request, service(request).report('daily', query, **({'force': True} if request.query_params.get('refresh') == 'true' else {})))
 
 
 @welding_requests.route(router.get('/parts'))
 def parts(request: Request):
     query = parse_query(request)
     with source_errors():
-        return response(request, service(request).report('parts', query))
+        return response(request, service(request).report('parts', query, **({'force': True} if request.query_params.get('refresh') == 'true' else {})))
 
 
 @welding_requests.route(router.get('/jobs'))
 def jobs(request: Request):
     query = parse_query(request)
     with source_errors():
-        return response(request, service(request).report('jobs', query))
+        return response(request, service(request).report('jobs', query, **({'force': True} if request.query_params.get('refresh') == 'true' else {})))
 
 
 @welding_requests.route(router.get('/equipment/summary'))
 def equipment(request: Request):
     query = parse_query(request)
     with source_errors():
-        return response(request, service(request).report('equipment', query))
+        return response(request, service(request).report('equipment', query, **({'force': True} if request.query_params.get('refresh') == 'true' else {})))
 
 
 @welding_requests.route(router.get('/parts/{part_id}'))

@@ -43,6 +43,7 @@ def test_welding_api_resolves_the_registered_service_and_keeps_caches_separate(m
     second = {'id': 'weld-2', 'name': '第二焊接线', 'type': 'welding',
               'service_key': 'weld_2', 'enabled_setting': 'weld_enabled'}
     definitions = (*production_lines.SERVICE_LINES, second)
+    monkeypatch.setattr(production_lines, 'SERVICE_LINES', definitions)
     monkeypatch.setattr(welding, 'SERVICE_LINES', definitions)
     monkeypatch.setattr(welding_service, 'SERVICE_LINES', definitions)
     app = FastAPI()

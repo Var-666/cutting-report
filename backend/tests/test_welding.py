@@ -635,3 +635,15 @@ def test_http_csv_and_html_export_preserve_data_without_pdf(api, format, media):
     assert result.status_code == 200 and media in result.headers['content-type']
     assert f'.{format}' in result.headers['content-disposition']
     assert '工件流水号' in result.content.decode('utf-8-sig')
+
+
+def test_refresh_control_is_validated_and_excluded_from_business_filters(api):
+    calls = []
+    api.app.state.welding.report = lambda kind, selected, **kwargs: calls.append((selected, kwargs)) or {'items': []}
+    url = '/api/v1/welding/jobs?start=2026-10-01&end=2026-10-02'
+    assert api.get(url + '&refresh=true').status_code == 200
+    assert calls[-1][1] == {'force': True}
+    assert api.get(url + '&refresh=false').status_code == 200
+    assert calls[-1][1] == {}
+    assert api.get(url + '&refresh=unexpected').status_code == 422
+    assert api.get(url + '&refresh=true&refresh=true').status_code == 422

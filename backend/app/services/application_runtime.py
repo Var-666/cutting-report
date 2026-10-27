@@ -7,6 +7,7 @@ from app.database.device_migrations import migrate_device_isolation
 from app.database.metadata import MetadataRepository
 from app.database.llm_usage import LlmUsageRepository
 from app.database.leadership_snapshots import LeadershipSnapshotRepository
+from app.database.report_snapshots import ReportSnapshotRepository
 from app.database.automation import AutomationRepository
 from app.database.definitions import DefinitionRepository
 from app.database.dispatch import DispatchRepository
@@ -61,6 +62,9 @@ def _build_runtime(settings: Settings, *, role: str) -> SimpleNamespace:
     state.llm_usage = llm_usage
     leadership_snapshots = LeadershipSnapshotRepository(database)
     leadership_snapshots.initialize()
+    report_snapshots = ReportSnapshotRepository(database)
+    report_snapshots.initialize()
+    state.report_snapshots = report_snapshots
     workshop = WorkshopRepository(database)
     workshop.initialize()
     automation = AutomationRepository(database)
@@ -126,11 +130,11 @@ def _build_runtime(settings: Settings, *, role: str) -> SimpleNamespace:
     if role == "web":
         dispatches.recover_interrupted(state.cutting_dispatch._now())
     state.pdf_service = pdf_service
-    state.welding = WeldingService(settings, WeldingRepository(WeldingClient(settings)))
+    state.welding = WeldingService(settings, WeldingRepository(WeldingClient(settings)), snapshots=report_snapshots, coordination=coordination)
 
     def rebuild_database_services(configuration: Settings) -> SimpleNamespace:
         previous = state.database_runtime.current_context
-        welding = previous.welding if all(getattr(previous.settings, name) == getattr(configuration, name) for name in WELD_FIELDS) else WeldingService(configuration, WeldingRepository(WeldingClient(configuration)))
+        welding = previous.welding if all(getattr(previous.settings, name) == getattr(configuration, name) for name in WELD_FIELDS) else WeldingService(configuration, WeldingRepository(WeldingClient(configuration)), snapshots=report_snapshots, coordination=coordination)
         if all(getattr(previous.settings, name) == getattr(configuration, name) for name in DATABASE_FIELDS - WELD_FIELDS):
             updated = copy(previous)
             updated.settings, updated.welding = configuration, welding

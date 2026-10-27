@@ -1,3 +1,4 @@
+import type { ReportDataMeta } from './reportData'
 import type { AnalysisResult } from './reports'
 
 export type WeldingReportType = 'daily' | 'parts' | 'jobs' | 'equipment'
@@ -100,6 +101,7 @@ export interface WeldingRows {
 }
 export type WeldingRow = WeldingRows[WeldingReportType] | WeldingSeamRow
 export interface WeldingMeta {
+  report_data?: ReportDataMeta
   calculated_at: string
   data_updated_at: Record<string, string | null>
   devices: number[]

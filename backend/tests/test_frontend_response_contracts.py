@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 
 from app.api import auth, leadership, welding
 from app.config import Settings
-from app.database.welding import JOB_FIELDS, PART_FIELDS, SEAM_FIELDS
+from app.database.welding import JOB_FIELDS, PART_FIELDS, SEAM_FIELDS, WeldingRepository
 from app.database.workshop import WorkshopRepository
 from app.services.leadership_report_service import LeadershipReportService
 from app.services.welding_service import WeldingService
@@ -95,7 +95,7 @@ def test_cutting_report_response_contract(client):
     assert isinstance(report['analysis_source_version'], str)
 
 
-class WeldingSource:
+class WeldingSource(WeldingRepository):
     """Repository-shaped source with nullable details and Decimal aggregates."""
     def __init__(self, empty=False):
         self.client = self
@@ -119,7 +119,7 @@ class WeldingSource:
         if 'AS unlinked' in sql:
             return [{'unlinked': 0, 'ambiguous': 0}]
         if 'AS part_actual_length_m' in sql:
-            return [{'part_actual_length_m': None, 'ambiguous_part_rows': 0, 'invalid_part_rows': 0}]
+            return [{'part_row_count': 0 if self.empty else 1, 'part_actual_length_m': None, 'ambiguous_part_rows': 0, 'invalid_part_rows': 0}]
         if 'GROUP BY p.project_no' in sql:
             return []
         if 'speed_band' in sql:

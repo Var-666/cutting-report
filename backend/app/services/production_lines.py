@@ -39,3 +39,15 @@ def supports_path(line_id: str, path: str) -> bool:
         return True
     line = next((item for item in registered_lines() if item['id'] == line_id), None)
     return bool(line and module in LINE_TYPES[line['type']]['api_modules'])
+
+
+def resolve_line_service(context: Any, line_id: str) -> Any:
+    device = getattr(context, 'devices', {}).get(line_id)
+    if device is not None:
+        return device
+    line = next((item for item in SERVICE_LINES if item['id'] == line_id), None)
+    if line is None:
+        if any(device.id == line_id for device in DEVICE_CATALOG.devices):
+            return None
+        raise ValueError('产线未登记')
+    return getattr(context, line['service_key'], None)

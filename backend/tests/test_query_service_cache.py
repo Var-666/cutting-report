@@ -221,6 +221,7 @@ def test_query_cache_expiry_and_force_refresh_keep_the_latest_result(tmp_path, m
     service = _service(tmp_path)
     clock = [1000.0]
     monkeypatch.setattr("app.services.query_service.monotonic", lambda: clock[0])
+    monkeypatch.setattr("app.services.query_cache.monotonic", lambda: clock[0])
     calls = []
 
     def load(filters):

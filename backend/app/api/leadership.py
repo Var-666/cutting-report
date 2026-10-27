@@ -19,6 +19,7 @@ from app.services.report_analysis_service import (
     leadership_analysis_source_version,
 )
 from app.services.request_cancellation import SqlRequestCancelled
+from app.services.production_reports import CuttingReportProvider
 
 
 logger = logging.getLogger(__name__)
@@ -102,7 +103,8 @@ def get_leadership_report(
             }
         month_start = _parse_month(report_month)
         service = device_state(request).leadership_report_service
-        result = service.fetch(month_start)
+        provider = getattr(device_state(request), 'report_provider', None) or CuttingReportProvider(service)
+        result = provider.fetch_summary('leadership', {'report_month': month_start}).payload
         worker = getattr(device_state(request), "leadership_refresh_worker", None)
         if worker is not None and (refresh or result.snapshot.stale):
             worker.schedule(

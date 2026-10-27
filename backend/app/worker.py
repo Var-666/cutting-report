@@ -20,6 +20,7 @@ from app.services.database_runtime import database_context
 from app.services.llm_service import background_llm_work, generation_priority
 from app.services.leadership_report_service import _previous_month
 from app.services.worker_status import background_ready
+from app.services.production_reports import report_provider, report_providers
 from app.workers.bounded_executor import BoundedExecutor
 from app.workers.report_worker import ReportWorker
 
@@ -118,7 +119,8 @@ class WorkerProcess:
 
     def _schedule(self) -> None:
         now = datetime.now(ZoneInfo(self.settings.timezone))
-        for device_id, device in database_context(self.runtime).devices.items():
+        context = database_context(self.runtime)
+        for device_id, device in context.devices.items():
             if device.current_report_refresh_worker.enabled:
                 interval = max(30, device.settings.report_background_refresh_seconds)
                 self.repository.schedule("current_refresh", device_id, {"date": now.date().isoformat()}, interval)
@@ -142,6 +144,9 @@ class WorkerProcess:
                 self.repository.enqueue("energy_sync", device_id, {})
             if device.alarm_worker.enabled:
                 self.repository.schedule("alarm", device_id, {}, max(30, device.settings.alarm_monitor_interval_seconds))
+        for line_id, provider in report_providers(context):
+            for payload, interval in provider.refresh_plan():
+                self.repository.request_snapshot_refresh(line_id, payload, interval=interval)
         self.repository.schedule("retention", "", {}, max(1, self.settings.retention_cleanup_interval_hours) * 3600)
         if self.runtime.download_cleanup_worker.enabled:
             self.repository.schedule("download_cleanup", "", {}, 86400)
@@ -185,6 +190,12 @@ class WorkerProcess:
             return
         if kind == "download_cleanup":
             database_context(self.runtime).file_downloads.cleanup_expired()
+            return
+        if kind == 'report_snapshot_refresh':
+            provider = report_provider(database_context(self.runtime), task['device_id'])
+            # Queued work from an old connection must not populate the new source's snapshots.
+            if payload['source_fingerprint'] == provider.source_identity():
+                provider.refresh_summary(payload['report_type'], payload['query'], requested_at=task['created_at'])
             return
         device = database_context(self.runtime).devices[task["device_id"]]
         current = device.current_report_refresh_worker

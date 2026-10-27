@@ -14,6 +14,7 @@ from app.services.alarm_analysis_service import AlarmAnalysisService
 from app.services.alarm_monitor_service import AlarmMonitorService
 from app.services.alarm_report_service import AlarmReportService
 from app.services.leadership_report_service import LeadershipReportService
+from app.services.production_reports import CuttingReportProvider
 from app.services.pipeline import ReportPipeline
 from app.services.report_analysis_service import ReportAnalysisService
 from app.services.pdf_service import PdfService
@@ -41,6 +42,7 @@ class DeviceRuntime:
     alarm_repository: AlarmRepository
     alarm_monitor_service: AlarmMonitorService
     alarm_worker: AlarmWorker
+    report_provider: CuttingReportProvider | None = None
 
     @property
     def query_service(self) -> QueryService:
@@ -86,4 +88,5 @@ def build_device_runtime(
                                    pipeline.energy_period_service, analysis, task_queue=task_queue),
         EnergyHistoryWorker(settings, pipeline.energy_period_service, managed=task_queue is not None),
         alarms, monitor, AlarmWorker(settings, monitor, managed=task_queue is not None),
+        CuttingReportProvider(leadership),
     )

@@ -3,18 +3,21 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from contextlib import nullcontext
 from dataclasses import replace
 from copy import deepcopy
 from collections import OrderedDict
 from threading import Lock
 from time import monotonic
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
 from app.config import Settings
 from app.services.production_lines import SERVICE_LINES
-from app.database.welding import WeldingRepository, WeldingSession, job_aggregate, job_conditions, job_source, valid_serial, valid_time
+from app.database.report_snapshots import ReportKey, fingerprint
+from app.services.report_snapshots import ReportData, ReportSnapshotService
+from app.database.welding import WeldingRepository, WeldingSession, WeldingUnavailable, job_aggregate, job_conditions, job_source, valid_serial, valid_time
 from app.models.domain import to_primitive
 from app.models.welding import ReportType, WeldingQuery, WELD_TYPES
 
@@ -90,7 +93,7 @@ def summary_values(row: dict) -> dict:
 
 
 class WeldingService:
-    def __init__(self, settings: Settings, repository: WeldingRepository, *, line_id: str | None = None) -> None:
+    def __init__(self, settings: Settings, repository: WeldingRepository, *, line_id: str | None = None, snapshots=None, coordination=None) -> None:
         line = next(item for item in SERVICE_LINES if item['type'] == 'welding' and (line_id is None or item['id'] == line_id))
         self.settings = replace(settings, device_id=line['id'], device_name=line['name'], production_line_id=line['id'], production_data_source=line['type'])
         self.repository = repository
@@ -98,6 +101,8 @@ class WeldingService:
         self._analysis_lock = Lock()
         self._statistics = OrderedDict()
         self._statistics_lock = Lock()
+        self.snapshot_service = ReportSnapshotService(self.settings, snapshots, coordination, unavailable_errors=(WeldingUnavailable,)) if snapshots else None
+        self.report_provider = self
 
     def cached_analysis(self, version: str):
         with self._analysis_lock:
@@ -111,27 +116,42 @@ class WeldingService:
             while len(self._analyses) > 16:
                 self._analyses.popitem(last=False)
 
-    def report(self, kind: ReportType, query: WeldingQuery, *, export_limit: int | None = None, dashboard: bool = False) -> dict:
+    def report(self, kind: ReportType, query: WeldingQuery, *, export_limit: int | None = None, dashboard: bool = False, force: bool = False) -> dict:
         repo = self.repository
         if kind == 'parts':
             query = query.model_copy(update={'part_state': query.part_state if query.part_state is not None else query.state, 'state': None})
-        with repo.client.snapshot() as session:
-            info = repo.source_info(session)
-            filters = query.model_dump(mode='json', exclude={'page', 'page_size', 'sort_by', 'descending'})
-            key = json.dumps({'filters': filters, 'source': to_primitive(info)}, sort_keys=True)
-            use_cache = export_limit is None and any(value is not None for value in info['updated_at'].values())
-            common = self._cached_statistics(('common', key), lambda: self._common_statistics(session, query), use_cache=use_cache)
+        statistics = self.fetch_summary(kind, query, force=force) if self.snapshot_service and export_limit is None else None
+        today_summary = None
+        if statistics is not None and dashboard:
+            today = datetime.now(ZoneInfo(self.settings.weld_db_timezone)).date()
+            today_query = query.model_copy(update={'start': today, 'end': today})
+            today_data = statistics if query.start == today == query.end else self.fetch_summary('daily', today_query, force=force)
+            today_summary = today_data.payload['common'][0]
+            statistics.meta['today_data_as_of'] = today_data.meta['data_as_of']
+            statistics.meta['stale'] |= today_data.meta['stale']
+            statistics.meta['refreshing'] |= today_data.meta['refreshing']
+        scope = repo.client.snapshot() if statistics is None or kind in ('jobs', 'parts') else nullcontext(None)
+        with scope as session:
+            if statistics is not None:
+                common = statistics.payload['common']
+                info = statistics.payload['info']
+                projects, speeds, totals = statistics.payload['reports'][kind]
+            else:
+                info = repo.source_info(session)
+                filters = query.model_dump(mode='json', exclude={'page', 'page_size', 'sort_by', 'descending'})
+                key = json.dumps({'filters': filters, 'source': to_primitive(info)}, sort_keys=True)
+                use_cache = not force and export_limit is None and any(value is not None for value in info['updated_at'].values())
+                common = self._cached_statistics(('common', key), lambda: self._common_statistics(session, query), use_cache=use_cache)
+                projects, speeds, totals = self._cached_statistics((kind, key), lambda: self._report_statistics(session, kind, query), use_cache=use_cache)
             summary, daily, equipment, devices, association = common
-            projects, speeds, totals = self._cached_statistics((kind, key), lambda: self._report_statistics(session, kind, query), use_cache=use_cache)
             summary.update(totals)
-            today_summary = None
-            if dashboard:
+            if dashboard and statistics is None:
                 today = datetime.now(ZoneInfo(self.settings.weld_db_timezone)).date()
                 today_summary = summary_values(repo.summary(session, query.model_copy(update={'start': today, 'end': today})))
             if kind == 'jobs':
-                raw, total = repo.jobs(session, query, limit=export_limit, total=summary['source_rows'])
+                raw, total = repo.jobs(session, query, limit=export_limit, total=None if statistics is not None else summary['source_rows'])
             elif kind == 'parts':
-                raw, total = repo.parts(session, query, limit=export_limit, total=summary['part_row_count'])
+                raw, total = repo.parts(session, query, limit=export_limit, total=None if statistics is not None else summary['part_row_count'])
             else:
                 raw = daily if kind == 'daily' else equipment
                 column = {'time': 'production_date' if kind == 'daily' else 'device_no',
@@ -167,7 +187,69 @@ class WeldingService:
                                 'projects_truncated': len(projects) > 100, 'speed_distribution': speeds,
                                 'items': rows, 'total': total, 'meta': meta})
         payload['data_version'] = self.version(payload)
+        if statistics is not None:
+            payload['meta']['calculated_at'] = statistics.meta['refreshed_at']
+            payload['meta']['report_data'] = {**statistics.meta, 'report_type': kind, 'data_version': payload['data_version'],
+                'details_source': 'database' if kind in ('jobs', 'parts') else statistics.meta['source']}
         return payload
+
+    report_types = ('daily', 'jobs', 'parts', 'equipment', 'dashboard')
+
+    def source_identity(self) -> str:
+        return fingerprint({name: getattr(self.settings, name) for name in
+            ('device_id', 'weld_enabled', 'weld_db_host', 'weld_db_port', 'weld_db_name',
+             'weld_db_user', 'weld_db_password', 'weld_db_timezone')})
+
+    @staticmethod
+    def snapshot_eligible(query: WeldingQuery) -> bool:
+        excluded = {'page', 'page_size', 'sort_by', 'descending'}
+        return query.model_dump(exclude=excluded) == WeldingQuery(start=query.start, end=query.end).model_dump(exclude=excluded)
+
+    def _snapshot_key(self, query: WeldingQuery, report_type: str = 'statistics') -> ReportKey:
+        filters = query.model_dump(mode='json', exclude={'start', 'end', 'page', 'page_size', 'sort_by', 'descending'})
+        return ReportKey(self.settings.device_id, 'statistics' if self.snapshot_eligible(query) else report_type, query.start.isoformat(), query.end.isoformat(), filters, self.source_identity())
+
+    def _snapshot_ttl(self, query: WeldingQuery) -> int:
+        if not self.snapshot_eligible(query):
+            return max(1, min(30, self.settings.report_data_cache_seconds))
+        today = datetime.now(ZoneInfo(self.settings.weld_db_timezone)).date()
+        return max(30, self.settings.report_background_refresh_seconds) if query.end >= today.replace(day=1) else max(30, self.settings.leadership_report_history_cache_seconds)
+
+    def _load_statistics_snapshot(self, query: WeldingQuery, report_type: str) -> dict:
+        with self.repository.client.snapshot() as session:
+            info = self.repository.source_info(session)
+            common = self._common_statistics(session, query)
+            kinds = ('daily', 'jobs', 'parts', 'equipment') if self.snapshot_eligible(query) else (report_type,)
+            reports = {kind: self._report_statistics(session, kind, query) for kind in kinds}
+        return to_primitive({'common': common, 'info': info, 'reports': reports})
+
+    def fetch_summary(self, report_type: str, query, *, force: bool = False, requested_at: float | None = None) -> ReportData:
+        if report_type not in (*self.report_types, 'statistics'):
+            raise ValueError('焊接报表类型不支持')
+        if not isinstance(query, WeldingQuery):
+            query = WeldingQuery.model_validate(query)
+        if self.snapshot_service is None:
+            raise ValueError('当前查询不支持统计快照')
+        return self.snapshot_service.read(self._snapshot_key(query, report_type), lambda: self._load_statistics_snapshot(query, report_type),
+                                          ttl=self._snapshot_ttl(query), force=force, requested_at=requested_at, background=requested_at is not None)
+
+    def fetch_detail(self, report_type: str, query) -> dict:
+        if report_type not in self.report_types:
+            raise ValueError('焊接报表类型不支持')
+        if not isinstance(query, WeldingQuery):
+            query = WeldingQuery.model_validate(query)
+        return self.dashboard(query) if report_type == 'dashboard' else self.report(report_type, query)
+
+    def refresh_summary(self, report_type: str, query: dict, *, requested_at: float | None = None) -> None:
+        self.fetch_summary(report_type, query, force=True, requested_at=requested_at)
+
+    def refresh_plan(self) -> list[tuple[dict, int]]:
+        if not self.settings.weld_enabled or self.snapshot_service is None:
+            return []
+        today = datetime.now(ZoneInfo(self.settings.weld_db_timezone)).date()
+        periods = {(today, today), (today - timedelta(days=6), today), (today.replace(day=1), today)}
+        return [(self.snapshot_service.task_payload(self._snapshot_key(WeldingQuery(start=start, end=end))),
+                 max(30, self.settings.report_background_refresh_seconds)) for start, end in sorted(periods)]
 
     def _cached_statistics(self, key: tuple[str, str], load: Callable[[], Any], *, use_cache: bool = True) -> Any:
         if not use_cache:
@@ -230,8 +312,8 @@ class WeldingService:
         relevant['filters'] = {key: value for key, value in payload['query'].items() if key not in ('page', 'page_size', 'sort_by', 'descending')}
         return hashlib.sha256(json.dumps(relevant, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
-    def dashboard(self, query: WeldingQuery) -> dict:
-        return self.report('jobs', query.model_copy(update={'page': 1, 'page_size': 10}), dashboard=True)
+    def dashboard(self, query: WeldingQuery, *, force: bool = False) -> dict:
+        return self.report('jobs', query.model_copy(update={'page': 1, 'page_size': 10}), dashboard=True, force=force)
 
     def part(self, part_id: int, page: int = 1, page_size: int = 20) -> dict | None:
         repo = self.repository
