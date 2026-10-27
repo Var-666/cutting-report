@@ -46,7 +46,7 @@ export function deviceUrl(url: string, deviceId = selectedId) {
     if (!deviceId) throw new Error('设备目录尚未加载，请稍后重试')
     values.set('device_id', deviceId)
   }
-  return values.size ? `${path}?${values}` : path
+  return `${path}?${values}`
 }
 
 export function registerDeviceSwitchQuery(routeName: RouteRecordName | null | undefined, reader: () => LocationQueryRaw) {

@@ -7,6 +7,7 @@ import { ref } from 'vue'
 import { getDeviceId, deviceUrl, selectDevice, setDeviceCatalog, resetDeviceContext, registerDeviceSwitchQuery, deviceSwitchQuery } from '../src/api/deviceContext.ts'
 import { createReportCache, reportCache } from '../src/api/reportCache.ts'
 import { listWorkshopTasks, createReport, getDeviceCatalog } from '../src/api/reports.ts'
+import { listWorkshopRangeTasks } from '../src/api/cutting.ts'
 import { changeDevice, deviceSelection, loadDevices } from '../src/state/devices.ts'
 import { formatDeviceDisplay } from '../src/utils/deviceDisplay.ts'
 
@@ -254,4 +255,30 @@ test('every device including catalog default is explicit in previews exports and
       assert.equal(new URL(deviceUrl(path), 'http://test').searchParams.get('device_id'), id)
     }
   }
+})
+
+test('browsers without URLSearchParams.size retain device and report query parameters', async t => {
+  const descriptor = Object.getOwnPropertyDescriptor(URLSearchParams.prototype, 'size')
+  delete URLSearchParams.prototype.size
+  t.after(() => Object.defineProperty(URLSearchParams.prototype, 'size', descriptor))
+  assert.equal(new URLSearchParams('device_id=Cutter02').size, undefined)
+  setDeviceCatalog(catalog)
+  selectDevice('Cutter02')
+  for (const path of ['/api/v1/workshop/range', '/api/v1/leadership-report', '/api/v1/energy-report/day', '/api/v1/analysis/version', '/api/v1/reports/r1/download']) {
+    const url = new URL(deviceUrl(`${path}?start_date=2026-10-01&format=pdf`), 'http://test')
+    assert.equal(url.searchParams.get('device_id'), 'Cutter02')
+    assert.equal(url.searchParams.get('start_date'), '2026-10-01')
+    assert.equal(url.searchParams.get('format'), 'pdf')
+  }
+  assert.equal(deviceUrl('/api/v1/reports/r1/status?device_id=Cutter01'), '/api/v1/reports/r1/status?device_id=Cutter01')
+  const requests = []
+  t.mock.method(globalThis, 'fetch', async url => { requests.push(url); return response({ items: [] }) })
+  await listWorkshopRangeTasks({ startDate: '2026-10-01', endDate: '2026-10-27', projectName: 'P1', page: 2 })
+  assert.equal(requests.length, 1)
+  const params = new URL(requests[0], 'http://test').searchParams
+  assert.equal(params.get('device_id'), 'Cutter02')
+  assert.equal(params.get('start_date'), '2026-10-01')
+  assert.equal(params.get('end_date'), '2026-10-27')
+  assert.equal(params.get('project_name'), 'P1')
+  assert.equal(params.get('page'), '2')
 })
