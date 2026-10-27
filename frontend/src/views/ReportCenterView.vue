@@ -24,6 +24,12 @@ const currentJob = ref<ReportJob | null>(null)
 const history = ref<ReportJob[]>([])
 const projects = ref<string[]>([])
 const ships = ref<string[]>([])
+const projectsLoading = ref(false)
+const shipsLoading = ref(false)
+let projectsController: AbortController | null = null
+let shipsController: AbortController | null = null
+let optionsDate = ''
+let optionsDisposed = false
 const customDefinitions = ref<ReportDefinition[]>([])
 const generating = ref(false)
 const loadingHistory = ref(false)
@@ -104,23 +110,44 @@ function changeHistoryPageSize(pageSize: string | number) {
 }
 
 async function loadProjects(reportDate: string) {
-  if (!reportDate) return
+  projectsController?.abort()
+  const controller = new AbortController()
+  projectsController = controller
+  optionsDate = reportDate
+  projects.value = []
+  projectsLoading.value = Boolean(reportDate)
+  error.value = ''
+  const shipsRequest = loadShips({ reportDate, projectCode: '' })
   try {
-    projects.value = (await listProjects(reportDate)).items
-    ships.value = (await listShips(reportDate, '')).items
+    if (!reportDate || optionsDisposed) return
+    const data = await listProjects(reportDate, { signal: controller.signal })
+    if (!optionsDisposed && !controller.signal.aborted && projectsController === controller) projects.value = data.items
   } catch (caught) {
     const exception = toError(caught)
-    error.value = exception.message
+    if (!optionsDisposed && !controller.signal.aborted && projectsController === controller && exception.name !== 'AbortError') error.value = exception.message
+  } finally {
+    if (projectsController === controller) { projectsLoading.value = false; projectsController = null }
   }
+  await shipsRequest
 }
 
 async function loadShips({ reportDate, projectCode }: { reportDate: string; projectCode: string }) {
-  if (!reportDate) return
+  if (reportDate !== optionsDate || optionsDisposed) return
+  shipsController?.abort()
+  const controller = new AbortController()
+  shipsController = controller
+  ships.value = []
+  shipsLoading.value = Boolean(reportDate)
+  error.value = ''
   try {
-    ships.value = (await listShips(reportDate, projectCode)).items
+    if (!reportDate) return
+    const data = await listShips(reportDate, projectCode, { signal: controller.signal })
+    if (!optionsDisposed && !controller.signal.aborted && shipsController === controller) ships.value = data.items
   } catch (caught) {
     const exception = toError(caught)
-    error.value = exception.message
+    if (!optionsDisposed && !controller.signal.aborted && shipsController === controller && exception.name !== 'AbortError') error.value = exception.message
+  } finally {
+    if (shipsController === controller) { shipsLoading.value = false; shipsController = null }
   }
 }
 
@@ -215,6 +242,9 @@ onMounted(async () => {
 })
 onBeforeUnmount(() => {
   pageActive = false
+  optionsDisposed = true
+  projectsController?.abort()
+  shipsController?.abort()
   stopPolling()
   historySequence += 1
   historyController?.abort()
@@ -244,6 +274,8 @@ onBeforeUnmount(() => {
     <ReportForm
       :loading="generating"
       :projects="projects"
+      :projects-loading="projectsLoading"
+      :ships-loading="shipsLoading"
       :ships="ships"
       :custom-definitions="customDefinitions"
       :initial-report-type="fixedReportType || 'leadership'"

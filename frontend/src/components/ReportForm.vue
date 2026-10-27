@@ -8,6 +8,8 @@ import { computed, reactive, watch } from 'vue'
 
 const props = defineProps({
   loading: Boolean,
+  projectsLoading: Boolean,
+  shipsLoading: Boolean,
   projects: { type: Array as PropType<string[]>, default: () => [] },
   ships: { type: Array as PropType<string[]>, default: () => [] },
   customDefinitions: { type: Array as PropType<ReportDefinition[]>, default: () => [] },
@@ -41,25 +43,26 @@ watch(
   },
 )
 
-watch(
-  () => form.report_date,
-  (value) => emit('date-change', value),
-  { immediate: true },
-)
-watch(
-  () => form.project_code,
-  (value) => {
-    form.ship_no = ''
-    emit('project-change', { reportDate: form.report_date, projectCode: value })
-  },
-)
+const reportDate = computed(() => isMonthly.value ? `${form.report_month}-01` : form.report_date)
+let resettingFilters = false
+watch(reportDate, (value) => {
+  resettingFilters = true
+  form.project_code = ''
+  form.ship_no = ''
+  resettingFilters = false
+  emit('date-change', value)
+}, { immediate: true, flush: 'sync' })
+watch(() => form.project_code, (value) => {
+  form.ship_no = ''
+  if (!resettingFilters) emit('project-change', { reportDate: reportDate.value, projectCode: value })
+}, { flush: 'sync' })
 
 function submit() {
   const definition = selectedDefinition.value
   emit('submit', {
     report_type: (definition ? 'custom' : form.report_type) as ReportType,
     definition_id: definition?.definition_id || null,
-    report_date: isMonthly.value ? `${form.report_month}-01` : form.report_date,
+    report_date: reportDate.value,
     project_code: isLeadership.value ? null : form.project_code || null,
     ship_no: isLeadership.value ? null : form.ship_no || null,
     parameters: definition ? {} : { chart_type: form.chart_type },
@@ -105,14 +108,14 @@ function reset() {
     </label>
     <label v-if="!isLeadership">
       <span>工程号</span>
-      <AppSelect v-model="form.project_code" :disabled="loading">
+      <AppSelect v-model="form.project_code" :disabled="loading || projectsLoading">
         <option value="">全部工程</option>
         <option v-for="item in projects" :key="item" :value="item">{{ item }}</option>
       </AppSelect>
     </label>
     <label v-if="!isLeadership">
       <span>船号</span>
-      <AppSelect v-model="form.ship_no" :disabled="loading">
+      <AppSelect v-model="form.ship_no" :disabled="loading || shipsLoading">
         <option value="">全部船号</option>
         <option v-for="item in ships" :key="item" :value="item">{{ item }}</option>
       </AppSelect>

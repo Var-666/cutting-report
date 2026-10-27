@@ -96,18 +96,19 @@ function reportResult(start = '2026-10-01', end = '2026-10-27', id = 'initial', 
 }
 
 // Run the page's real setup/watch/lifecycle code with memory-history navigation.
-async function mountReport(t, kind, { query = {}, refreshing = false } = {}) {
+async function mountReport(t, kind, { query = {}, refreshing = false, syncing = false } = {}) {
   const name = kind === 'leadership' ? 'leadership-report' : 'equipment-report'
   const pending = []
   const timers = new Map()
-  const held = { range: false, monthly: false }
+  const held = { range: false, monthly: false, summary: false }
+  const chartUpdates = []
   let timerId = 0
   let state
   let mounts = 0
   const previousWindow = globalThis.window
   globalThis.window = { setTimeout: callback => { timers.set(++timerId, callback); return timerId }, clearTimeout: id => timers.delete(id), addEventListener() {}, removeEventListener() {} }
   const read = (type, start, end, options = {}) => {
-    if (!held[type]) return Promise.resolve(reportResult(start, end, 'initial', refreshing))
+    if (!held[type]) return Promise.resolve({ ...reportResult(start, end, 'initial', refreshing), ...(type === 'summary' ? { syncing, missing_day_count: syncing ? 2 : 0 } : {}) })
     return new Promise((resolve, reject) => pending.push({ type, start, end, signal: options.signal, resolve: data => resolve(type === 'range' && kind === 'equipment' ? { task_report: data } : data), reject }))
   }
   const bindings = {
@@ -119,7 +120,8 @@ async function mountReport(t, kind, { query = {}, refreshing = false } = {}) {
     getEnergyRange: async (start, end, options) => held.range ? read('range', start, end, options) : { task_report: reportResult(start, end) },
     getLatestWorkshopProductionDate: async () => ({ report_date: '2026-10-27' }),
     getEnergyDay: async () => ({}), getTaskEnergyDay: async () => reportResult('2026-10-27', '2026-10-27'),
-    getEnergyMonthlyRange: async () => reportResult(),
+    getEnergyMonthlyRange: (start, end, options) => read('summary', start, end, options),
+    init: () => ({ setOption: option => chartUpdates.push(option), dispose() {}, resize() {} }), createReportChartGrid: () => ({}),
     reportToday: () => '2026-10-27', recentTwelveMonthStart: () => '2025-11-01',
     formatChineseDate: String, formatChineseMonth: String, formatChineseDateTime: String, formatDeviceDisplay: String,
     sortReportPeriods: rows => rows, taskProductionDate: () => '2026-10-27', deviceSelection: { id: 'Cutter01' },
@@ -128,7 +130,7 @@ async function mountReport(t, kind, { query = {}, refreshing = false } = {}) {
   const source = viewSource(kind === 'leadership' ? 'LeadershipReportView.vue' : 'EnergyPeriodReportView.vue').replace(/^import .*$/gm, '')
   const data = kind === 'leadership' ? 'report' : 'taskDay'
   const load = kind === 'leadership' ? 'loadReport' : 'loadRange'
-  const setup = scriptFunction(...Object.keys(bindings), `${source}\nreturn { data: ${data}, load: ${load}, periodStart, periodEnd, appliedPeriodStart, appliedPeriodEnd, chartType, changeChartType, loading, error, pageActive, dateQueryDirty${kind === 'leadership' ? ', refreshLoading, monthlyLoading, retryReport' : ''} }`)
+  const setup = scriptFunction(...Object.keys(bindings), `${source}\nreturn { data: ${data}, load: ${load}, periodStart, periodEnd, appliedPeriodStart, appliedPeriodEnd, chartType, changeChartType, loading, error, pageActive, dateQueryDirty${kind === 'leadership' ? ', refreshLoading, monthlyLoading, retryReport' : ', monthlyReport, summaryPeriodStart, summaryPeriodEnd, loadDefaultRanges, periodPanel, getSummaryCount: () => summaryRefreshCount, setSummaryCount: value => { summaryRefreshCount = value }'} }`)
   const page = { setup() { mounts++; state = setup(...Object.values(bindings)); return () => Vue.h('div') } }
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/report', name, component: page }, { path: '/other', component: { render: () => Vue.h('div') } }] })
   await router.push({ name, query })
@@ -140,8 +142,76 @@ async function mountReport(t, kind, { query = {}, refreshing = false } = {}) {
   const unmount = () => { if (mounted) { app.unmount(); mounted = false } }
   t.after(() => { unmount(); if (previousWindow === undefined) delete globalThis.window; else globalThis.window = previousWindow })
   await flushReport()
-  return { state, router, pending, held, timers, unmount, mounts: () => mounts, fire() { const [id, callback] = timers.entries().next().value; timers.delete(id); return callback() } }
+  return { state, router, pending, held, timers, chartUpdates, unmount, mounts: () => mounts, fire() { const [id, callback] = timers.entries().next().value; timers.delete(id); return callback() } }
 }
+
+test('equipment summary: KeepAlive resumes one missing-data poll and completion updates the chart', async t => {
+  const page = await mountReport(t, 'equipment', { syncing: true })
+  const { state, router, held, pending, timers, chartUpdates } = page
+  assert.equal(timers.size, 1)
+  await router.push('/other'); await flushReport()
+  assert.equal(timers.size, 0)
+  await router.push('/report'); await flushReport()
+  assert.equal(page.mounts(), 1)
+  assert.equal(timers.size, 1)
+  state.chartType.value = 'line'; await flushReport()
+  assert.equal(timers.size, 1)
+  held.summary = true
+  state.periodPanel.value = { getChartElement: () => ({}) }
+  const poll = page.fire()
+  state.chartType.value = 'bar'; await flushReport()
+  assert.equal(timers.size, 0, 'a running poll must not create a second timer')
+  assert.equal(pending.length, 1)
+  pending[0].resolve({ ...reportResult(), id: 'complete', syncing: false, missing_day_count: 0, rows: [{ report_date: '2026-10', electricity: { value: 42 }, gas: { value: 8 } }] })
+  await poll; await flushReport()
+  assert.equal(state.monthlyReport.value.id, 'complete')
+  assert.deepEqual(chartUpdates.at(-1).series[0].data, [42])
+  assert.equal(timers.size, 0)
+  await router.push('/other'); await router.push('/report'); await flushReport()
+  assert.equal(timers.size, 0, 'completed summaries do not resume polling')
+})
+
+test('equipment summary: failures retain data and the attempt cap survives reactivation', async t => {
+  const page = await mountReport(t, 'equipment', { syncing: true })
+  const { state, router, held, pending, timers } = page
+  const previous = state.monthlyReport.value
+  state.setSummaryCount(599)
+  held.summary = true
+  const poll = page.fire()
+  pending[0].reject(new Error('meter unavailable')); await poll
+  assert.equal(state.monthlyReport.value, previous)
+  assert.equal(state.getSummaryCount(), 600)
+  assert.equal(timers.size, 0)
+  for (let index = 0; index < 2; index++) { await router.push('/other'); await router.push('/report'); await flushReport() }
+  assert.equal(state.getSummaryCount(), 600)
+  assert.equal(timers.size, 0)
+})
+
+test('equipment summary: a new summary interval and unmount invalidate old responses and timers', async t => {
+  const page = await mountReport(t, 'equipment', { syncing: true })
+  const { state, held, pending, timers } = page
+  held.summary = true
+  const poll = page.fire()
+  state.periodStart.value = '2026-09-15'
+  const load = state.loadDefaultRanges()
+  await flushReport()
+  assert.equal(pending[0].signal.aborted, true)
+  assert.equal(state.getSummaryCount(), 0)
+  for (const call of pending.slice(1)) call.resolve({ ...reportResult(call.start, call.end, 'new-scope'), syncing: true, missing_day_count: 1 })
+  await load; await flushReport()
+  pending[0].resolve({ ...reportResult(), id: 'obsolete-scope', syncing: false })
+  await poll
+  assert.equal(state.monthlyReport.value.id, 'new-scope')
+  assert.equal(state.summaryPeriodEnd.value, '2026-09-15')
+  assert.equal(timers.size, 1)
+  const next = page.fire()
+  const last = pending.at(-1)
+  page.unmount()
+  assert.equal(last.signal.aborted, true)
+  last.resolve({ ...reportResult(), id: 'after-unmount' }); await next
+  assert.equal(timers.size, 0)
+  assert.equal(state.monthlyReport.value.id, 'new-scope')
+})
 
 for (const kind of ['leadership', 'equipment']) {
   test(`${kind}: date/chart history restores without writing old applied dates, including late responses`, async t => {

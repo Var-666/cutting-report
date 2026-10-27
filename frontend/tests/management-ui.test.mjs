@@ -4,11 +4,121 @@ import test from 'node:test'
 import { readFileSync } from 'node:fs'
 import { parse } from '@vue/compiler-sfc'
 import { selectedLineType } from '../src/utils/productionLines.ts'
+import * as Vue from 'vue'
 
 function descriptor(name, folder = 'views') {
   const source = readFileSync(new URL(`../src/${folder}/${name}.vue`, import.meta.url), 'utf8')
   return parse(source).descriptor
 }
+
+const flushAutomation = async () => { await new Promise(resolve => setImmediate(resolve)); await Vue.nextTick() }
+async function mountAutomation(t) {
+  const calls = { status: 0, schedules: 0, emails: [], actions: [] }
+  let held = false
+  const result = (page, total = 60) => ({ items: total ? [{ delivery_id: `page-${page}` }] : [], total, page, page_size: 20 })
+  const bindings = {
+    ...Vue, useUnsavedChanges() {}, deviceSelection: Vue.reactive({ id: 'Cutter02', items: [{ id: 'Cutter02' }] }),
+    getAutomationConfiguration: async () => ({}),
+    getAutomationStatus: async () => { calls.status++; return { revision: calls.status } },
+    listAutomationSchedules: async () => { calls.schedules++; return { items: [{ schedule_id: 'saved' }] } },
+    listEmailDeliveries: (query, options) => {
+      if (!held) { calls.emails.push({ ...query, signal: options.signal }); return Promise.resolve(result(query.page)) }
+      return new Promise((resolve, reject) => calls.emails.push({ ...query, signal: options.signal, resolve: (total = 60) => resolve(result(query.page, total)), reject }))
+    },
+    saveAutomationSchedule: async () => calls.actions.push('save'), retryEmailDelivery: async () => calls.actions.push('retry'),
+    deleteAutomationSchedule: async () => calls.actions.push('delete'), runAutomationSchedule: async () => { calls.actions.push('run'); return { status: 'queued' } },
+    saveAutomationConfiguration: async () => { calls.actions.push('config'); return { message: 'saved' } },
+  }
+  const code = descriptor('AutomationView').scriptSetup.content.replace(/^import .*$/gm, '')
+  const setup = scriptFunction(...Object.keys(bindings), `${code}; return { loadDeliveries, changeDeliveryPage, deliveryPage, deliveries, deliveryTotal, deliveryLoading, pageCount, error, loadAll, retry, submit, submitConfiguration, remove, runNow, deliveryResolved, form }`)
+  let state
+  const renderer = Vue.createRenderer({ createComment: () => ({}), createText: () => ({}), createElement: () => ({}), insert() {}, remove() {}, setText() {}, setElementText() {}, parentNode: () => null, nextSibling: () => null, patchProp() {} })
+  const app = renderer.createApp({ setup() { state = setup(...Object.values(bindings)); return () => null } })
+  app.mount({})
+  let mounted = true
+  const unmount = () => { if (mounted) { mounted = false; app.unmount() } }
+  t.after(unmount)
+  await flushAutomation()
+  return { state, calls, unmount, hold() { held = true } }
+}
+
+test('email paging: latest request wins and page is committed together with records', async t => {
+  const { state, calls, hold } = await mountAutomation(t)
+  hold()
+  const second = state.loadDeliveries(2)
+  const third = state.loadDeliveries(3)
+  assert.equal(state.deliveryPage.value, 1)
+  assert.equal(state.deliveries.value[0].delivery_id, 'page-1')
+  assert.equal(calls.emails[1].signal.aborted, true)
+  calls.emails[2].resolve(); await third
+  calls.emails[1].resolve(); await second
+  assert.equal(state.deliveryPage.value, 3)
+  assert.equal(state.deliveries.value[0].delivery_id, 'page-3')
+  assert.equal(state.deliveryLoading.value, false)
+  assert.equal(calls.status, 1)
+  assert.equal(calls.schedules, 1)
+})
+
+test('email paging: repeated clicks and invalid targets are ignored; failure keeps the applied page', async t => {
+  const { state, calls, hold } = await mountAutomation(t)
+  hold()
+  const pending = state.changeDeliveryPage(2)
+  state.changeDeliveryPage(3)
+  assert.equal(calls.emails.length, 2)
+  calls.emails[1].reject(new Error('email read failed')); await pending
+  assert.equal(state.deliveryPage.value, 1)
+  assert.equal(state.deliveries.value[0].delivery_id, 'page-1')
+  assert.match(state.error.value, /email read failed/)
+  state.changeDeliveryPage(0); state.changeDeliveryPage(4); state.changeDeliveryPage(1)
+  assert.equal(calls.emails.length, 2)
+})
+
+test('email paging: a shrinking final page is re-read at a valid page, including zero records', async t => {
+  const { state, calls, hold } = await mountAutomation(t)
+  await state.changeDeliveryPage(3)
+  hold()
+  const pending = state.loadDeliveries()
+  calls.emails[2].resolve(21)
+  await flushAutomation()
+  assert.equal(calls.emails[3].page, 2)
+  assert.equal(state.deliveryPage.value, 3, 'keep the valid old page until replacement succeeds')
+  calls.emails[3].resolve(0)
+  await flushAutomation()
+  assert.equal(calls.emails[4].page, 1)
+  calls.emails[4].resolve(0); await pending
+  assert.equal(state.deliveryPage.value, 1)
+  assert.equal(state.pageCount.value, 1)
+  assert.deepEqual(state.deliveries.value, [])
+})
+
+test('email paging: unmount cancels reads and ignores late failures', async t => {
+  const { state, calls, hold, unmount } = await mountAutomation(t)
+  hold()
+  const pending = state.loadDeliveries(2)
+  unmount()
+  assert.equal(calls.emails[1].signal.aborted, true)
+  calls.emails[1].reject(new Error('late')); await pending
+  assert.equal(state.deliveryPage.value, 1)
+  assert.equal(state.error.value, '')
+})
+
+test('automation mutations still refresh status, schedules and current email page', async t => {
+  const previous = globalThis.window
+  globalThis.window = { confirm: () => true }
+  t.after(() => { if (previous === undefined) delete globalThis.window; else globalThis.window = previous })
+  const { state, calls } = await mountAutomation(t)
+  await state.changeDeliveryPage(2)
+  await state.retry({ delivery_id: 'failed' })
+  await state.submit()
+  await state.submitConfiguration()
+  await state.runNow({ schedule_id: 'saved', name: 'saved' })
+  await state.remove({ schedule_id: 'saved', name: 'saved' })
+  await state.deliveryResolved()
+  assert.deepEqual(calls.actions, ['retry', 'save', 'config', 'run', 'delete'])
+  assert.equal(calls.status, 7)
+  assert.equal(calls.schedules, 7)
+  assert.ok(calls.emails.slice(1).every(call => call.page === 2))
+})
 
 test('remaining management pages use one production hero and density system', () => {
   for (const name of ['ReportCenterView', 'DatabaseView', 'DesignerView', 'AutomationView', 'AdminAccountsView']) {
@@ -189,10 +299,10 @@ for (const [reportType, period] of [['leadership', 'current_month'], ['leadershi
     const scope = Vue.effectScope()
     const script = descriptor('AutomationView').scriptSetup.content.replace(/^import .*$/gm, '')
     const bindings = {
-      ...Vue, onMounted() {}, useUnsavedChanges() {}, deviceSelection: Vue.reactive({ id: 'Cutter02' }),
+      ...Vue, onMounted() {}, onBeforeUnmount() {}, useUnsavedChanges() {}, deviceSelection: Vue.reactive({ id: 'Cutter02' }),
       saveAutomationSchedule: async (body, id) => saved.push({ body, id }),
       getAutomationStatus: async () => ({}), listAutomationSchedules: async () => ({ items: [] }),
-      listEmailDeliveries: async () => ({ items: [], total: 0 }),
+      listEmailDeliveries: async () => ({ items: [], total: 0, page: 1, page_size: 20 }),
     }
     const page = scope.run(() => scriptFunction(...Object.keys(bindings), `${script}\nreturn { form, editSchedule, changeReportType, submit, hasUnsavedChanges }`)(...Object.values(bindings)))
     try {

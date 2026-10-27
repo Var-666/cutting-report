@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { DataRow } from '../types/api'
 import type { PropType } from 'vue'
-import type { WeldingAnalysis, WeldingPart, WeldingQuery, WeldingFilterDraft, WeldingReport, WeldingReportKind, WeldingJobRow, WeldingPartRow, WeldingMetrics } from '../types/welding'
+import type { WeldingAnalysis, WeldingPart, WeldingQuery, WeldingReport, WeldingReportKind, WeldingJobRow, WeldingPartRow, WeldingMetrics } from '../types/welding'
 import { toError } from '../utils/errors'
 import { selectedLineType } from '../utils/productionLines.ts'
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
@@ -17,7 +17,8 @@ import WeldingCharts from '../components/WeldingCharts.vue'
 import WeldingTable from '../components/WeldingTable.vue'
 import { analyzeWelding, downloadWelding, getWeldingPart, getWeldingReport, weldingQuery } from '../api/welding.ts'
 import { reportToday } from '../api/reportDates.ts'
-import { queryDateRange } from '../utils/reportRouteState.ts'
+import { queryDateRange, sameRouteQuery } from '../utils/reportRouteState.ts'
+import { parseWeldingRouteQuery, weldingRouteQuery } from '../utils/weldingRouteState.ts'
 import { deviceSelection } from '../state/devices.ts'
 import { weldingColumns, weldingDisplay, weldingKpis, weldingTitles } from '../utils/weldingReport.ts'
 
@@ -25,9 +26,7 @@ const props = defineProps({ kind: { type: String as PropType<WeldingReportKind>,
 const route = useRoute()
 const router = useRouter()
 const today = reportToday()
-const weekStart = new Date(Date.parse(`${today}T00:00:00Z`) - 6 * 86400000).toISOString().slice(0, 10)
-const initialRange = props.kind === 'dashboard' ? null : queryDateRange(route.query)
-const draft = reactive({ start: initialRange?.start || (props.kind === 'dashboard' ? weekStart : today), end: initialRange?.end || today, device_no: '', robot_no: '', weld_type: '', state: '', serial_number: typeof route.query.serial_number === 'string' ? route.query.serial_number : '', project_no: '', section_no: '', part_no: '', anomalies_only: false, sort_by: 'time' as NonNullable<WeldingQuery['sort_by']>, descending: true } satisfies WeldingFilterDraft)
+const draft = reactive(parseWeldingRouteQuery(route.query, props.kind, today))
 const report = ref<WeldingReport | null>(null)
 const activeQuery = ref<WeldingQuery | null>(null)
 const loading = ref(false)
@@ -46,6 +45,9 @@ const seamPage = ref(1)
 const lineName = computed(() => deviceSelection.items.find(item => item.id === deviceSelection.id)?.name || '焊接生产线')
 const sourceEnabled = computed(() => deviceSelection.items?.find(item => item.id === deviceSelection.id)?.enabled !== false)
 let controller: AbortController | undefined, detailController: AbortController | undefined, exportController: AbortController | undefined, analysisController: AbortController | undefined
+let disposed = false
+let appliedKind: WeldingReportKind | undefined
+let appliedLine = ''
 let generation = 0
 let detailGeneration = 0
 let pendingRead: { key: string; promise: Promise<void> } | null | undefined
@@ -57,15 +59,21 @@ const sourceUpdated = computed(() => Object.entries(report.value?.meta?.data_upd
 const qualityLabels = { invalid_time_rows: '区间候选记录中结束时间无效', invalid_serial_rows: '流水号无效', invalid_length_rows: '长度为空或非正', invalid_duration_rows: '用时为空或非正', unverified_state_rows: '状态含义待确认' }
 const analysisSections = [['overview', '生产概况'], ['features', '产出特点'], ['alerts', '数据关注点'], ['suggestions', '核查建议']] as const
 
-function read(values: WeldingQuery, force = false) {
-  const key = JSON.stringify([props.kind, Object.entries(weldingQuery(values)).sort(([a], [b]) => a.localeCompare(b))])
+function queryKey(values: WeldingQuery) {
+  return JSON.stringify([props.kind, deviceSelection.id, parseWeldingRouteQuery(weldingRouteQuery({}, values), props.kind, today)])
+}
+function read(values: WeldingQuery, force = false, syncRoute = true) {
+  const key = queryKey(values)
   if (pendingRead?.key === key && !controller?.signal.aborted) return pendingRead.promise
-  const promise = load(values, force)
+  const promise = load(values, force, syncRoute)
   pendingRead = { key, promise }
   promise.finally(() => { if (pendingRead?.promise === promise) pendingRead = null })
   return promise
 }
-async function load(values: WeldingQuery, force: boolean) {
+async function load(values: WeldingQuery, force: boolean, syncRoute: boolean) {
+  if (disposed) return
+  const kind = props.kind
+  const line = deviceSelection.id
   controller?.abort()
   analysisController?.abort()
   const run = ++generation
@@ -81,9 +89,16 @@ async function load(values: WeldingQuery, force: boolean) {
   }
   try {
     const value = await getWeldingReport(props.kind, values, controller.signal, force)
-    if (run !== generation || selectedLineType(deviceSelection.items, deviceSelection.id) !== 'welding') return
+    if (disposed || run !== generation || line !== deviceSelection.id || kind !== props.kind || selectedLineType(deviceSelection.items, deviceSelection.id) !== 'welding') return
     report.value = value
     activeQuery.value = value.query
+    appliedKind = kind
+    appliedLine = line
+    const query = weldingRouteQuery(route.query, parseWeldingRouteQuery(weldingRouteQuery({}, value.query), kind, today))
+    if (!sameRouteQuery(query, route.query)) {
+      if (syncRoute) await router.push({ query })
+      else await router.replace({ query })
+    }
   } catch (caught) {
     const exception = toError(caught)
     if (run === generation && exception.name !== 'AbortError') error.value = exception.message
@@ -95,10 +110,10 @@ function submit(force = false) {
   const range = queryDateRange({ start: draft.start, end: draft.end })
   if (!range) { actionError.value = '请选择有效日期区间，最长366天'; return }
   actionError.value = ''
-  read({ ...draft, ...range, page: 1, page_size: activeQuery.value?.page_size || 20 }, force)
+  return read({ ...draft, ...range, page: 1, page_size: activeQuery.value?.page_size || (props.kind === 'dashboard' ? 10 : 20) }, force)
 }
-function changePage(page: number) { if (!activeQuery.value) return; read({ ...activeQuery.value, page }) }
-function changePageSize(page_size: number) { if (!activeQuery.value) return; read({ ...activeQuery.value, page: 1, page_size }) }
+function changePage(page: number) { if (!activeQuery.value) return; return read({ ...activeQuery.value, page }) }
+function changePageSize(page_size: number) { if (!activeQuery.value) return; return read({ ...activeQuery.value, page: 1, page_size }) }
 function goToPart() {
   if (!detailJob.value || !activeQuery.value) return
   router.push({ name: 'welding-parts', query: { serial_number: detailJob.value.serial_number || undefined, start: activeQuery.value.start, end: activeQuery.value.end } })
@@ -171,9 +186,41 @@ function cancel() {
   for (const request of [controller, detailController, exportController, analysisController]) request?.abort()
 }
 watch(detailOpen, open => { if (!open) { detailController?.abort(); detailGeneration += 1 } })
-watch(() => deviceSelection.id, id => { if (selectedLineType(deviceSelection.items, id) !== 'welding') { cancel(); report.value = null; detailOpen.value = false } })
-watch(() => [props.kind, sourceEnabled.value], () => submit(), { immediate: true })
-onBeforeUnmount(cancel)
+function restoreRouteState() {
+  if (disposed) return
+  if (!sourceEnabled.value) {
+    cancel()
+    loading.value = false
+    report.value = null
+    activeQuery.value = null
+    return
+  }
+  const values = parseWeldingRouteQuery(route.query, props.kind, today)
+  const key = queryKey(values)
+  const sameScope = appliedKind === props.kind && appliedLine === deviceSelection.id
+  if (sameScope && activeQuery.value && queryKey(activeQuery.value) === key) {
+    error.value = ''
+    if (pendingRead && pendingRead.key !== key) {
+      controller?.abort()
+      generation += 1
+      loading.value = false
+      Object.assign(draft, values)
+    }
+    return
+  }
+  if (pendingRead?.key === key && !controller?.signal.aborted) return pendingRead.promise
+  if (!sameScope) {
+    cancel()
+    report.value = null
+    activeQuery.value = null
+    detailOpen.value = false
+  }
+  Object.assign(draft, values)
+  if (selectedLineType(deviceSelection.items, deviceSelection.id) !== 'welding') return
+  return read(values, false, false)
+}
+watch(() => [props.kind, sourceEnabled.value, deviceSelection.id, route.query], restoreRouteState, { immediate: true })
+onBeforeUnmount(() => { disposed = true; cancel() })
 </script>
 
 <template>

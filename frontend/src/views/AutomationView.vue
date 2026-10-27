@@ -2,7 +2,7 @@
 import type { AutomationSchedule, AutomationStatus, EmailDelivery } from '../types/automation'
 
 import { toError } from '../utils/errors'
-import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { deleteAutomationSchedule, getAutomationConfiguration, getAutomationStatus, listAutomationSchedules, listEmailDeliveries, retryEmailDelivery, runAutomationSchedule, saveAutomationConfiguration, saveAutomationSchedule } from '../api/automation.ts'
 import { deviceSelection } from '../state/devices.ts'
 import { formatDeviceDisplay } from '../utils/deviceDisplay.ts'
@@ -17,6 +17,11 @@ const schedules = ref<AutomationSchedule[]>([])
 const deliveries = ref<EmailDelivery[]>([])
 const deliveryPage = ref(1)
 const deliveryTotal = ref(0)
+const deliveryLoading = ref(false)
+let deliveryController: AbortController | null = null
+let deliverySequence = 0
+let loadSequence = 0
+let disposed = false
 const loading = ref(false)
 const saving = ref(false)
 const message = ref('')
@@ -185,24 +190,58 @@ function payload() {
   }
 }
 
+async function loadDeliveries(page = deliveryPage.value) {
+  if (disposed || !Number.isSafeInteger(page)) return
+  let target = Math.min(Math.max(page, 1), pageCount.value)
+  deliveryController?.abort()
+  const controller = new AbortController()
+  const sequence = ++deliverySequence
+  deliveryController = controller
+  deliveryLoading.value = true
+  error.value = ''
+  const current = () => !disposed && !controller.signal.aborted && sequence === deliverySequence
+  try {
+    let data = await listEmailDeliveries({ page: target, pageSize: 20 }, { signal: controller.signal })
+    while (current() && target > Math.max(1, Math.ceil(data.total / 20))) {
+      target = Math.max(1, Math.ceil(data.total / 20))
+      data = await listEmailDeliveries({ page: target, pageSize: 20 }, { signal: controller.signal })
+    }
+    if (!current()) return
+    deliveries.value = data.items
+    deliveryTotal.value = data.total
+    deliveryPage.value = data.page
+  } catch (caught) {
+    const exception = toError(caught)
+    if (current() && exception.name !== 'AbortError') error.value = exception.message
+  } finally {
+    if (sequence === deliverySequence) { deliveryLoading.value = false; deliveryController = null }
+  }
+}
+
+function changeDeliveryPage(page: number) {
+  if (deliveryLoading.value || page < 1 || page > pageCount.value || page === deliveryPage.value) return
+  return loadDeliveries(page)
+}
+
 async function loadAll() {
+  if (disposed) return
+  const sequence = ++loadSequence
   loading.value = true
   error.value = ''
   try {
-    const [statusData, scheduleData, deliveryData] = await Promise.all([
+    const [statusData, scheduleData] = await Promise.all([
       getAutomationStatus(),
       listAutomationSchedules(),
-      listEmailDeliveries({ page: deliveryPage.value, pageSize: 20 }),
+      loadDeliveries(),
     ])
+    if (disposed || sequence !== loadSequence) return
     status.value = statusData
     schedules.value = scheduleData.items
-    deliveries.value = deliveryData.items
-    deliveryTotal.value = deliveryData.total
   } catch (caught) {
     const exception = toError(caught)
-    error.value = exception.message
+    if (!disposed && sequence === loadSequence) error.value = exception.message
   } finally {
-    loading.value = false
+    if (sequence === loadSequence) loading.value = false
   }
 }
 
@@ -284,6 +323,12 @@ function formatDateTime(value: unknown) {
 }
 
 onMounted(() => Promise.all([loadConfiguration(), loadAll()]))
+onBeforeUnmount(() => {
+  disposed = true
+  loadSequence += 1
+  deliverySequence += 1
+  deliveryController?.abort()
+})
 </script>
 
 <template>
@@ -423,8 +468,8 @@ onMounted(() => Promise.all([loadConfiguration(), loadAll()]))
 
     <section class="panel automation-list" aria-labelledby="automation-deliveries-title">
       <div class="panel-title"><div><span><AppIcon name="send" tone="muted" :size="17" /></span><h2 id="automation-deliveries-title">邮件发送记录</h2></div><p>失败可重发，未知结果先核对<span class="table-scroll-hint">左右滑动查看完整表格</span></p></div>
-      <div v-if="loading && !deliveries.length" class="empty" role="status">正在读取邮件发送记录…</div>
-      <div v-else-if="!status && error" class="configuration-load-error" role="alert"><span>邮件发送记录暂时无法读取。</span><button type="button" @click="loadAll">重新读取</button></div>
+      <div v-if="deliveryLoading && !deliveries.length" class="empty" role="status">正在读取邮件发送记录…</div>
+      <div v-else-if="error && !deliveries.length" class="configuration-load-error" role="alert"><span>邮件发送记录暂时无法读取。</span><button type="button" @click="loadAll">重新读取</button></div>
       <div v-else-if="!deliveries.length" class="empty">尚无邮件发送记录，任务执行后会显示在这里。</div>
       <div v-else class="automation-table-wrap delivery-table-wrap" tabindex="0" role="region" aria-label="邮件发送记录，可滚动查看">
         <table v-content-table data-content-columns="left left left left center right left actions"><thead><tr><th>创建时间</th><th>任务</th><th>报表日期</th><th>收件人</th><th>状态</th><th>尝试</th><th>结果</th><th>操作</th></tr></thead>
@@ -439,7 +484,7 @@ onMounted(() => Promise.all([loadConfiguration(), loadAll()]))
             <td><div class="delivery-actions"><button v-if="item.status === 'failed'" type="button" @click="retry(item)">重新发送</button><button type="button" @click="openDelivery(item)">{{ item.status === 'unknown' ? '核对结果' : '核对记录' }}</button></div><small v-if="item.status === 'unknown'" :title="item.message_id">{{ item.message_id || '无历史 Message-ID' }}</small></td>
           </tr></tbody></table>
       </div>
-      <div v-if="status" class="automation-pagination app-pagination"><div class="app-pagination__actions"><button type="button" :disabled="deliveryPage <= 1" @click="deliveryPage--; loadAll()">上一页</button><span class="app-pagination__summary">第 {{ deliveryPage }} / {{ pageCount }} 页，共 {{ deliveryTotal }} 条</span><button type="button" :disabled="deliveryPage >= pageCount" @click="deliveryPage++; loadAll()">下一页</button></div></div>
+      <div v-if="status" class="automation-pagination app-pagination"><div class="app-pagination__actions"><button type="button" :disabled="deliveryLoading || deliveryPage <= 1" @click="changeDeliveryPage(deliveryPage - 1)">上一页</button><span class="app-pagination__summary">第 {{ deliveryPage }} / {{ pageCount }} 页，共 {{ deliveryTotal }} 条</span><button type="button" :disabled="deliveryLoading || deliveryPage >= pageCount" @click="changeDeliveryPage(deliveryPage + 1)">下一页</button></div></div>
     </section>
     <EmailDeliveryResolution v-if="selectedDelivery" :key="selectedDelivery.delivery_id" :delivery="selectedDelivery" @dirty="resolutionDirty = $event" @resolved="deliveryResolved" @close="selectedDelivery = null; resolutionDirty = false" />
   </div>

@@ -92,15 +92,15 @@ export function listReports({ page = 1, pageSize = 20, force = false, signal }: 
   return reportCache.read(`history:${query}`, (signal) => request<Page<ReportJob>>(`/api/v1/reports?${query}`, { signal }), { ttl: 5000, force, signal })
 }
 
-export function listProjects(reportDate: string) {
+export function listProjects(reportDate: string, { signal }: ReadOptions = {}) {
   const query = new URLSearchParams({ report_date: reportDate })
-  return request<Items<string>>(`/api/v1/options/projects?${query}`)
+  return request<Items<string>>(`/api/v1/options/projects?${query}`, { signal })
 }
 
-export function listShips(reportDate: string, projectCode: string) {
+export function listShips(reportDate: string, projectCode: string, { signal }: ReadOptions = {}) {
   const query = new URLSearchParams({ report_date: reportDate })
   if (projectCode) query.set('project_code', projectCode)
-  return request<Items<string>>(`/api/v1/options/ships?${query}`)
+  return request<Items<string>>(`/api/v1/options/ships?${query}`, { signal })
 }
 
 export function getLeadershipReport(reportMonth: string, { force = false, signal }: ReadOptions = {}) {

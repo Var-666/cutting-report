@@ -114,11 +114,9 @@ async function changeChartType(value: string) {
 function beginRequest({ preserveSummary = false } = {}) {
   cancelReportRequest()
   if (!preserveSummary) {
+    stopSummaryRefresh()
     backgroundController?.abort()
     backgroundController = null
-    refreshRequestSequence += 1
-    refreshController?.abort()
-    refreshController = null
   }
   controller = new AbortController()
   return { sequence: requestSequence, signal: controller.signal }
@@ -290,6 +288,9 @@ async function loadRange(force = false, { syncRoute = true } = {}) {
 function stopSummaryRefresh() {
   if (summaryRefreshTimer) window.clearTimeout(summaryRefreshTimer)
   summaryRefreshTimer = null
+  refreshRequestSequence += 1
+  refreshController?.abort()
+  refreshController = null
 }
 
 async function applyMonthlySummary(summaryResult: EnergyPeriodReport) {
@@ -301,30 +302,32 @@ async function applyMonthlySummary(summaryResult: EnergyPeriodReport) {
 }
 
 function scheduleSummaryRefresh(summaryResult: EnergyPeriodReport) {
-  stopSummaryRefresh()
-  if (!pageActive.value || !summaryResult?.syncing
+  if (summaryRefreshTimer || refreshController || !pageActive.value || !summaryResult?.syncing
       || !summaryResult?.missing_day_count || summaryRefreshCount >= 600) return
   const requestedStart = summaryPeriodStart.value
   const requestedEnd = summaryPeriodEnd.value
+  const sequence = refreshRequestSequence
+  const current = () => pageActive.value && sequence === refreshRequestSequence
+    && requestedStart === summaryPeriodStart.value && requestedEnd === summaryPeriodEnd.value
   summaryRefreshTimer = window.setTimeout(async () => {
+    if (!current()) return
     summaryRefreshTimer = null
-    if (!pageActive.value
-        || requestedStart !== summaryPeriodStart.value
-        || requestedEnd !== summaryPeriodEnd.value) return
     summaryRefreshCount += 1
-    refreshController?.abort()
-    refreshController = new AbortController()
-    const signal = refreshController.signal
-    const sequence = ++refreshRequestSequence
+    const controller = new AbortController()
+    refreshController = controller
     try {
-      const refreshed = await getEnergyMonthlyRange(requestedStart, requestedEnd, { force: true, signal })
-      if (!pageActive.value || signal.aborted || sequence !== refreshRequestSequence) return
+      const refreshed = await getEnergyMonthlyRange(requestedStart, requestedEnd, { force: true, signal: controller.signal })
+      if (!current() || controller.signal.aborted) return
       await applyMonthlySummary(refreshed)
     } catch (caught) {
-    const exception = toError(caught)
-      if (exception.name !== 'AbortError' && pageActive.value) scheduleSummaryRefresh(summaryResult)
+      const exception = toError(caught)
+      if (exception.name === 'AbortError') return
+      // Keep the last valid summary and retry within the existing attempt limit.
     } finally {
-      if (sequence === refreshRequestSequence) refreshController = null
+      if (refreshController === controller) {
+        refreshController = null
+        if (current() && !controller.signal.aborted) scheduleSummaryRefresh(monthlyReport.value || summaryResult)
+      }
     }
   }, 1000)
 }
@@ -437,9 +440,6 @@ function pause(dispose = false) {
     cancelReportRequest()
     backgroundController?.abort()
     backgroundController = null
-    refreshRequestSequence += 1
-    refreshController?.abort()
-    refreshController = null
     loading.value = false
     summaryLoading.value = false
     stopSummaryRefresh()
@@ -565,6 +565,7 @@ onActivated(async () => {
   if ((!taskDay.value || !monthlyReport.value) && !loading.value) await initializeReport()
   else if (!taskChart || (monthlyReport.value && !periodChart)) renderCharts()
   resizeCharts()
+  if (monthlyReport.value) scheduleSummaryRefresh(monthlyReport.value)
 })
 onDeactivated(pause)
 onBeforeUnmount(() => pause(true))

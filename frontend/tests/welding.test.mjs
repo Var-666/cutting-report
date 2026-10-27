@@ -3,13 +3,16 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { computed, h, reactive, ref } from 'vue'
+import * as Vue from 'vue'
+import { createMemoryHistory, createRouter, RouterView, useRoute, useRouter } from 'vue-router'
 import { parse, compileScript, compileTemplate } from '@vue/compiler-sfc'
 import { lineHome, productionGroups, selectedLineType } from '../src/utils/productionLines.ts'
 import { adminMenus } from '../src/router/menus.ts'
 import { analyzeWelding, downloadWelding, getWeldingPart, getWeldingReport, weldingQuery } from '../src/api/welding.ts'
 import { weldingColumns, weldingDisplay, weldingKpis, weldingTitles } from '../src/utils/weldingReport.ts'
 import { weldingRoutes } from '../src/router/weldingRoutes.ts'
-import { queryDateRange } from '../src/utils/reportRouteState.ts'
+import { queryDateRange, sameRouteQuery } from '../src/utils/reportRouteState.ts'
+import { parseWeldingRouteQuery, weldingRouteQuery } from '../src/utils/weldingRouteState.ts'
 
 const source = path => readFileSync(new URL(`../src/${path}`, import.meta.url), 'utf8')
 
@@ -86,7 +89,7 @@ function view(readReport, options = {}) {
   const cleanup = []
   const bindings = {
     selectedLineType, computed, reactive, ref, watch: (source, callback, config) => { if (options.watchers) { options.watchers.push({ source, callback }); if (config?.immediate) callback(source()) } }, onBeforeUnmount: fn => cleanup.push(fn),
-    defineProps: () => ({ kind: 'jobs' }), useRoute: () => options.route || ({ query: {} }), useRouter: () => options.router || ({ push() {} }), queryDateRange,
+    defineProps: () => ({ kind: 'jobs' }), useRoute: () => options.route || ({ query: {} }), useRouter: () => options.router || ({ push() {}, replace() {} }), queryDateRange, sameRouteQuery, parseWeldingRouteQuery, weldingRouteQuery,
     reportToday: () => '2026-10-26', getWeldingReport: readReport,
     deviceSelection: { id: 'welding', items: [{ id: 'welding', type: 'welding', enabled: options.enabled ?? true }] }, weldingTitles, weldingKpis, weldingColumns, weldingDisplay, weldingQuery,
   }
@@ -96,6 +99,192 @@ function view(readReport, options = {}) {
 const period = { start: '2026-10-26', end: '2026-10-26' }
 const busyResponse = (retryAfter = '1') => Response.json({ detail: '焊接数据查询请求繁忙，请稍后重试。' }, { status: 503, headers: { 'Retry-After': retryAfter } })
 const settle = () => new Promise(resolve => setImmediate(resolve))
+
+test('welding route parsing validates all boundaries, preserves numeric zero and drops incompatible filters', () => {
+  const all = { start: '2026-09-01', end: '2026-09-02', device_no: '0', robot_no: '0', weld_type: '0', state: '0', part_state: '0', serial_number: 'S', project_no: 'P', section_no: 'SEC', part_no: 'PART', anomalies_only: 'true', sort_by: 'length', descending: 'false', page: '3', page_size: '50', unrelated: 'keep' }
+  const jobs = parseWeldingRouteQuery(all, 'jobs', '2026-10-26')
+  assert.deepEqual([jobs.device_no, jobs.robot_no, jobs.weld_type, jobs.state], [0, 0, 0, 0])
+  assert.equal(jobs.anomalies_only, true)
+  assert.equal(jobs.descending, false)
+  const parts = parseWeldingRouteQuery(all, 'parts', '2026-10-26')
+  assert.deepEqual([parts.project_no, parts.section_no, parts.part_no, parts.part_state], ['P', 'SEC', 'PART', 0])
+  assert.equal(parts.robot_no, '')
+  for (const kind of ['daily', 'equipment', 'dashboard']) {
+    const parsed = parseWeldingRouteQuery(all, kind, '2026-10-26')
+    assert.equal(parsed.serial_number, '')
+    assert.equal(parsed.project_no, '')
+    assert.equal(parsed.anomalies_only, false)
+    assert.equal(parsed.robot_no, kind === 'equipment' ? 0 : '')
+  }
+  for (const value of ['', ' ', '0x10', '1e2', '1.2', '-1', '9007199254740992', ['0', '1'], null]) {
+    const parsed = parseWeldingRouteQuery({ ...all, device_no: value, robot_no: value }, 'jobs', '2026-10-26')
+    assert.equal(parsed.device_no, '', `invalid device ${value}`)
+    assert.equal(parsed.robot_no, '')
+  }
+  const invalid = parseWeldingRouteQuery({ start: '2025-01-01', end: '2026-10-26', serial_number: '\u0000bad', page: '100001', page_size: '101', state: 'no', sort_by: 'bad', anomalies_only: '1', descending: '0' }, 'jobs', '2026-10-26')
+  assert.deepEqual([invalid.start, invalid.end, invalid.page, invalid.page_size, invalid.state, invalid.serial_number, invalid.sort_by, invalid.anomalies_only, invalid.descending], ['2026-10-26', '2026-10-26', 1, 20, '', '', 'time', false, true])
+  const query = weldingRouteQuery(all, jobs)
+  assert.equal(query.unrelated, 'keep')
+  assert.equal(query.device_no, '0')
+  assert.equal(query.anomalies_only, 'true')
+  assert.equal(query.descending, 'false')
+  assert.equal('project_no' in query, false)
+  assert.deepEqual(parseWeldingRouteQuery(query, 'jobs', '2026-10-26'), jobs)
+})
+
+const flushWelding = async () => { await settle(); await Vue.nextTick() }
+async function mountWelding(t, kind = 'jobs', query = {}) {
+  const calls = [], downloads = [], analyses = []
+  let held = false, state
+  const selection = Vue.reactive({ id: 'welding', items: [{ id: 'welding', type: 'welding' }, { id: 'line-b', type: 'welding' }, { id: 'Cutter01', type: 'cutting' }] })
+  let router
+  const bindings = {
+    ...Vue, useRoute, useRouter, defineProps: () => ({ get kind() { return router.currentRoute.value.meta.kind } }),
+    selectedLineType, deviceSelection: selection, queryDateRange, sameRouteQuery, parseWeldingRouteQuery, weldingRouteQuery,
+    reportToday: () => '2026-10-26', weldingTitles, weldingKpis, weldingColumns, weldingDisplay, weldingQuery,
+    getWeldingReport: (kind, values, signal) => {
+      const response = { query: { ...values }, data_version: `version-${calls.length + 1}`, report_type: kind === 'dashboard' ? 'jobs' : kind, summary: {}, rows: [], meta: {} }
+      const call = { kind, query: { ...values }, line: selection.id, signal }
+      calls.push(call)
+      if (!held) return Promise.resolve(response)
+      return new Promise((resolve, reject) => { call.resolve = () => resolve(response); call.reject = reject })
+    },
+    downloadWelding: async (url, filename) => downloads.push({ url: new URL(url, 'http://test'), filename }),
+    analyzeWelding: async (kind, query, version) => { analyses.push({ kind, query: { ...query }, version }); return { overview: 'ok' } },
+    getWeldingPart: async (id, page) => ({ part: { id }, seams: { page, items: [] } }),
+  }
+  const code = parse(source('views/WeldingReportView.vue')).descriptor.scriptSetup.content.replace(/^import .*$/gm, '')
+  const setup = scriptFunction(...Object.keys(bindings), `${code}; return { draft, activeQuery, report, submit, changePage, changePageSize, loading, error, exportReport, runAnalysis, analysis, openDetail, details, detailJob, goToPart }`)
+  const page = { setup() { state = setup(...Object.values(bindings)); return () => null } }
+  router = createRouter({ history: createMemoryHistory(), routes: ['dashboard', 'daily', 'parts', 'jobs', 'equipment'].map(kind => ({ path: kind === 'dashboard' ? '/admin/welding/home' : `/admin/welding/reports/${kind}`, name: `welding-${kind}`, meta: { kind }, component: page })) })
+  await router.push({ name: `welding-${kind}`, query })
+  const renderer = Vue.createRenderer({ createComment: () => ({}), createText: () => ({}), createElement: () => ({}), insert() {}, remove() {}, setText() {}, setElementText() {}, parentNode: () => null, nextSibling: () => null, patchProp() {} })
+  const app = renderer.createApp({ render: () => Vue.h(RouterView) })
+  app.use(router); app.mount({})
+  let mounted = true
+  const unmount = () => { if (mounted) { mounted = false; app.unmount() } }
+  t.after(unmount)
+  await flushWelding()
+  return { state, calls, router, selection, downloads, analyses, unmount, hold() { held = true } }
+}
+
+for (const kind of ['dashboard', 'daily', 'parts', 'jobs', 'equipment']) {
+  test(`welding ${kind}: copied links restore supported filters and pagination with exactly one request`, async t => {
+    const query = { start: '2026-09-01', end: '2026-09-02', device_no: '0', robot_no: '0', weld_type: '2', state: '3', part_state: '4', serial_number: 'S', project_no: 'P', section_no: 'SEC', part_no: 'PART', anomalies_only: 'true', sort_by: 'length', descending: 'false', page: '3', page_size: '50', unrelated: 'keep' }
+    const { state, calls, router } = await mountWelding(t, kind, query)
+    const expected = parseWeldingRouteQuery(query, kind, '2026-10-26')
+    assert.equal(calls.length, 1)
+    assert.deepEqual(calls[0].query, expected)
+    assert.deepEqual({ ...state.draft }, expected)
+    assert.deepEqual(state.activeQuery.value, expected)
+    assert.deepEqual(router.currentRoute.value.query, weldingRouteQuery(query, expected))
+    await flushWelding()
+    assert.equal(calls.length, 1, 'normalizing the URL does not replay the query')
+  })
+}
+
+test('welding queries: successful submit, sorting and pagination sync URL while preserving unsubmitted drafts', async t => {
+  const page = await mountWelding(t, 'jobs', { ...period, unrelated: 'keep' })
+  const { state, calls, router, hold } = page
+  Object.assign(state.draft, { device_no: 0, robot_no: 0, weld_type: 2, state: 3, serial_number: 'S', anomalies_only: true, sort_by: 'length', descending: false })
+  assert.equal(router.currentRoute.value.query.serial_number, undefined)
+  hold()
+  const pending = state.submit()
+  assert.equal(router.currentRoute.value.query.serial_number, undefined, 'only successful queries change the URL')
+  state.draft.serial_number = 'unsaved'
+  calls[1].resolve(); await pending; await flushWelding()
+  assert.equal(calls.length, 2)
+  assert.equal(state.draft.serial_number, 'unsaved')
+  for (const [key, value] of Object.entries({ device_no: '0', robot_no: '0', weld_type: '2', state: '3', serial_number: 'S', anomalies_only: 'true', sort_by: 'length', descending: 'false', unrelated: 'keep' })) assert.equal(router.currentRoute.value.query[key], value)
+  const second = state.changePage(3)
+  assert.equal(calls[2].query.serial_number, 'S')
+  calls[2].resolve(); await second; await flushWelding()
+  assert.equal(router.currentRoute.value.query.page, '3')
+  const resized = state.changePageSize(50)
+  assert.equal(calls[3].query.page, 1)
+  assert.equal(calls[3].query.serial_number, 'S')
+  calls[3].resolve(); await resized; await flushWelding()
+  assert.equal(router.currentRoute.value.query.page_size, '50')
+  assert.equal(state.draft.serial_number, 'unsaved')
+  const failed = state.changePage(2)
+  calls[4].reject(new Error('query failed')); await failed
+  assert.equal(router.currentRoute.value.query.page, '1')
+  assert.equal(state.activeQuery.value.page, 1)
+  assert.match(state.error.value, /query failed/)
+})
+
+test('welding history: back and forward restore filters; late requests cannot replace the navigation target', async t => {
+  const { state, calls, router, hold } = await mountWelding(t, 'jobs', { ...period, device_no: '0' })
+  state.draft.device_no = 2
+  await state.submit(); await flushWelding()
+  assert.equal(calls.length, 2)
+  hold()
+  router.back(); await flushWelding()
+  assert.equal(calls[2].query.device_no, 0)
+  assert.equal(state.draft.device_no, 0)
+  router.forward(); await flushWelding()
+  assert.equal(calls[2].signal.aborted, true)
+  assert.equal(state.loading.value, false)
+  assert.equal(state.draft.device_no, 2)
+  calls[2].resolve(); await flushWelding()
+  assert.equal(state.activeQuery.value.device_no, 2)
+  router.back(); await flushWelding()
+  calls[3].resolve(); await flushWelding()
+  assert.equal(state.activeQuery.value.device_no, 0)
+  router.forward(); await flushWelding()
+  assert.equal(calls[4].query.device_no, 2)
+  await router.push({ query: { ...router.currentRoute.value.query, device_no: '3' } }); await flushWelding()
+  calls[5].resolve(); await flushWelding()
+  calls[4].resolve(); await flushWelding()
+  assert.equal(calls[4].signal.aborted, true)
+  assert.equal(state.activeQuery.value.device_no, 3)
+  assert.equal(router.currentRoute.value.query.device_no, '3')
+  assert.equal(calls.length, 6)
+})
+
+test('welding exports, analysis and part drilldown use the successful snapshot after draft edits', async t => {
+  const { state, downloads, analyses, calls, router } = await mountWelding(t, 'jobs', { start: '2026-09-01', end: '2026-09-02', device_no: '0', robot_no: '0', serial_number: 'S', page: '2', sort_by: 'id' })
+  Object.assign(state.draft, { start: '2026-10-26', end: '2026-10-26', serial_number: 'unsaved', device_no: 7 })
+  for (const format of ['csv', 'html', 'pdf']) await state.exportReport(format)
+  await state.runAnalysis()
+  for (const { url, filename } of downloads) {
+    assert.equal(url.searchParams.get('start'), '2026-09-01')
+    assert.equal(url.searchParams.get('device_no'), '0')
+    assert.equal(url.searchParams.get('serial_number'), 'S')
+    assert.equal(url.searchParams.get('page'), '2')
+    assert.match(filename, /2026-09-01-2026-09-02/)
+  }
+  assert.deepEqual(analyses[0], { kind: 'jobs', query: { ...state.activeQuery.value }, version: 'version-1' })
+  await state.openDetail({ id: 1, serial_number: 'S', weld_type_label: 'weld' })
+  state.goToPart(); await flushWelding()
+  assert.equal(router.currentRoute.value.name, 'welding-parts')
+  assert.equal(calls.at(-1).query.serial_number, 'S')
+  assert.equal(calls.at(-1).query.start, '2026-09-01')
+  await state.openDetail({ id: 9 })
+  assert.equal(state.details.value.part.id, 9)
+})
+
+test('welding scope changes: report kinds and production lines cannot reuse obsolete responses', async t => {
+  const { state, calls, router, selection, hold, unmount } = await mountWelding(t, 'jobs', { ...period, robot_no: '0', anomalies_only: 'true' })
+  hold()
+  const pending = state.changePage(2)
+  await router.push({ name: 'welding-parts', query: { ...period, project_no: 'P', robot_no: '0' } }); await flushWelding()
+  assert.equal(calls[1].signal.aborted, true)
+  assert.equal(state.report.value, null)
+  assert.equal(calls[2].query.robot_no, '')
+  selection.id = 'line-b'; await flushWelding()
+  assert.equal(calls[2].signal.aborted, true)
+  assert.equal(calls[3].line, 'line-b')
+  calls[3].resolve(); await flushWelding()
+  calls[2].resolve(); calls[1].resolve(); await pending; await flushWelding()
+  assert.equal(state.report.value.data_version, 'version-4')
+  assert.equal(state.activeQuery.value.project_no, 'P')
+  const final = state.changePage(2)
+  unmount()
+  assert.equal(calls[4].signal.aborted, true)
+  calls[4].resolve(); await final
+  assert.equal(state.report.value.data_version, 'version-4')
+})
 
 test('one welding request stays pending while the server queues it', async t => {
   let finish

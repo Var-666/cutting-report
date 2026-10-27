@@ -44,9 +44,9 @@ export function runAutomationSchedule(scheduleId: string) {
   })
 }
 
-export function listEmailDeliveries({ page = 1, pageSize = 20 } = {}) {
+export function listEmailDeliveries({ page = 1, pageSize = 20 } = {}, { signal }: ReadOptions = {}) {
   const query = new URLSearchParams({ page: String(page), page_size: String(pageSize) })
-  return request<Page<EmailDelivery>>(`/api/v1/automation/deliveries?${query}`)
+  return request<Page<EmailDelivery>>(`/api/v1/automation/deliveries?${query}`, { signal })
 }
 
 export function retryEmailDelivery(deliveryId: string) {
