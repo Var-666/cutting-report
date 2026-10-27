@@ -72,7 +72,6 @@ let summaryRefreshTimer: number | null = null
 let summaryRefreshCount = 0
 let resizeListening = false
 let routeStateReady = false
-let restoringRouteState = false
 
 const routeQueryKeys = ['start', 'end', 'chart']
 const dateQueryDirty = computed(() => (
@@ -97,8 +96,23 @@ async function syncRouteState() {
   await router.push({ query })
 }
 
-function beginRequest({ preserveSummary = false } = {}) {
+function cancelReportRequest() {
+  requestSequence += 1
   controller?.abort()
+  controller = null
+  loading.value = false
+  summaryLoading.value = false
+}
+
+async function changeChartType(value: string) {
+  chartType.value = value
+  const query = mergeOwnedQuery(route.query, ['chart'], { chart: value === 'bar_line' ? '' : value })
+  if (loading.value) Object.assign(query, { start: periodStart.value, end: periodEnd.value })
+  if (pageActive.value && !sameRouteQuery(query, route.query)) await router.push({ query })
+}
+
+function beginRequest({ preserveSummary = false } = {}) {
+  cancelReportRequest()
   if (!preserveSummary) {
     backgroundController?.abort()
     backgroundController = null
@@ -107,7 +121,7 @@ function beginRequest({ preserveSummary = false } = {}) {
     refreshController = null
   }
   controller = new AbortController()
-  return { sequence: ++requestSequence, signal: controller.signal }
+  return { sequence: requestSequence, signal: controller.signal }
 }
 
 function requestIsCurrent(sequence: number, signal: AbortSignal) {
@@ -259,6 +273,7 @@ async function loadRange(force = false, { syncRoute = true } = {}) {
     appliedPeriodEnd.value = requestedEnd
     rangeQueryApplied.value = true
     await nextTick()
+    if (!requestIsCurrent(sequence, signal)) return
     renderCharts({ summary: false })
     if (syncRoute) await syncRouteState()
   } catch (caught) {
@@ -419,9 +434,7 @@ function stopResizeListening() {
 function pause(dispose = false) {
   if (pageActive.value) {
     pageActive.value = false
-    requestSequence += 1
-    controller?.abort()
-    controller = null
+    cancelReportRequest()
     backgroundController?.abort()
     backgroundController = null
     refreshRequestSequence += 1
@@ -436,6 +449,7 @@ function pause(dispose = false) {
 }
 
 async function initializeReport({ restoreQuery = false } = {}) {
+  const requestedQuery = route.query
   const requestedRange = restoreQuery ? queryDateRange(route.query, { maxDays: 31 }) : null
   const { sequence, signal } = beginRequest()
   loading.value = true
@@ -453,24 +467,26 @@ async function initializeReport({ restoreQuery = false } = {}) {
   }
   if (!requestIsCurrent(sequence, signal)) return
   await loadDefaultRanges()
-  if (requestedRange && pageActive.value) {
+  if (requestedRange && pageActive.value && route.query === requestedQuery) {
     periodStart.value = requestedRange.start
     periodEnd.value = requestedRange.end
     await loadRange(false, { syncRoute: false })
   }
 }
 
-async function restoreRouteState() {
+async function restoreRouteState({ preserveDraft = false } = {}) {
   if (route.name !== 'equipment-report') return false
+  cancelReportRequest()
   const range = queryDateRange(route.query, { maxDays: 31 })
   const nextChartType = queryChoice(route.query.chart, ['bar_line', 'bar', 'line'], 'bar_line')
-  restoringRouteState = true
   chartType.value = nextChartType
-  restoringRouteState = false
 
   if (range) {
-    periodStart.value = range.start
-    periodEnd.value = range.end
+    const needsLoad = !taskDay.value || !monthlyReport.value || !rangeQueryApplied.value || appliedPeriodStart.value !== range.start || appliedPeriodEnd.value !== range.end
+    if (!preserveDraft || needsLoad) {
+      periodStart.value = range.start
+      periodEnd.value = range.end
+    }
     if (!taskDay.value || !monthlyReport.value) {
       await initializeReport({ restoreQuery: true })
       return true
@@ -486,8 +502,10 @@ async function restoreRouteState() {
     await initializeReport()
     return true
   }
-  periodStart.value = appliedPeriodStart.value
-  periodEnd.value = appliedPeriodEnd.value
+  if (!preserveDraft) {
+    periodStart.value = appliedPeriodStart.value
+    periodEnd.value = appliedPeriodEnd.value
+  }
   return false
 }
 
@@ -534,8 +552,10 @@ async function refreshAnalysisReport() {
 }
 
 onMounted(async () => {
+  const initialQuery = route.query
   await initializeReport({ restoreQuery: true })
   routeStateReady = true
+  if (pageActive.value && route.query !== initialQuery) await restoreRouteState()
 })
 onActivated(async () => {
   pageActive.value = true
@@ -551,10 +571,11 @@ onBeforeUnmount(() => pause(true))
 watch(chartType, async () => {
   await nextTick()
   renderCharts()
-  if (routeStateReady && !restoringRouteState && route.name === 'equipment-report') await syncRouteState()
 })
-watch(() => route.query, async () => {
-  if (routeStateReady && pageActive.value && route.name === 'equipment-report') await restoreRouteState()
+watch(() => route.query, async (query, previous) => {
+  if (routeStateReady && pageActive.value && route.name === 'equipment-report') {
+    await restoreRouteState({ preserveDraft: query.start === previous.start && query.end === previous.end })
+  }
 }, { deep: true })
 </script>
 
@@ -568,7 +589,8 @@ watch(() => route.query, async () => {
       <StandardReportQuery
         v-model:start-date="periodStart"
         v-model:end-date="periodEnd"
-        v-model:chart-type="chartType"
+        :chart-type="chartType"
+        @update:chart-type="changeChartType"
         class="report-hero-query device-query-shell"
         aria-label="设备报表查询条件"
         :anchor-date="anchorDate"

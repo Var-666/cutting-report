@@ -76,9 +76,11 @@ const deliveryLabels: Record<string, string> = {
 }
 const scheduleLabels: Record<string, string> = { ...deliveryLabels, queued: '等待生成报表' }
 
-watch(() => form.report_type, (type) => {
-  form.report_period = type === 'leadership' ? 'previous_month' : 'previous_day'
-})
+function changeReportType() {
+  const periods = form.report_type === 'leadership' ? ['previous_month', 'current_month'] : ['previous_day', 'current_day']
+  if (!periods.includes(form.report_period)) form.report_period = periods[0]
+  hasUnsavedChanges.value = true
+}
 
 function selectTls() {
   if (configuration.smtp_use_tls) configuration.smtp_use_ssl = false
@@ -379,7 +381,7 @@ onMounted(() => Promise.all([loadConfiguration(), loadAll()]))
           <div class="automation-fields">
             <label class="wide"><span>任务名称</span><input v-model.trim="form.name" name="schedule_name" autocomplete="off" required maxlength="80"></label>
             <label><span>设备</span><AppSelect v-model="form.device_id" name="schedule_device" required @change="hasUnsavedChanges = true"><option v-for="item in deviceSelection.items.filter(item => !item.type || item.type === 'cutting')" :key="item.id" :value="item.id">{{ item.name }}</option></AppSelect><small>计划固定使用此设备。</small></label>
-            <label><span>报表类型</span><AppSelect v-model="form.report_type" name="report_type" @change="hasUnsavedChanges = true"><option v-for="(label,key) in reportLabels" :key="key" :value="key">{{ label }}</option></AppSelect></label>
+            <label><span>报表类型</span><AppSelect v-model="form.report_type" name="report_type" @change="changeReportType"><option v-for="(label,key) in reportLabels" :key="key" :value="key">{{ label }}</option></AppSelect></label>
             <label><span>报表期间</span><AppSelect v-model="form.report_period" name="report_period" @change="hasUnsavedChanges = true"><template v-if="form.report_type === 'leadership'"><option value="previous_month">上月</option><option value="current_month">本月</option></template><template v-else><option value="previous_day">前一日</option><option value="current_day">当日</option></template></AppSelect></label>
             <label><span>执行频率</span><AppSelect v-model="form.frequency" name="frequency" @change="hasUnsavedChanges = true"><option value="daily">每日</option><option value="weekly">每周</option><option value="monthly">每月</option></AppSelect></label>
             <label><span>执行时间</span><input v-model="form.run_time" name="run_time" type="time" autocomplete="off" required></label>

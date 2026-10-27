@@ -67,7 +67,6 @@ let requestController: AbortController | null = null
 let requestSequence = 0
 let resizeListening = false
 let routeStateReady = false
-let restoringRouteState = false
 
 const routeQueryKeys = ['start', 'end', 'chart']
 const dateQueryDirty = computed(() => (
@@ -90,10 +89,27 @@ async function syncRouteState() {
   await router.push({ query })
 }
 
-function beginRequest() {
+function cancelReportRequest() {
+  stopRefreshPoll()
+  requestSequence += 1
   requestController?.abort()
+  requestController = null
+  loading.value = false
+  monthlyLoading.value = false
+  refreshLoading.value = false
+}
+
+async function changeChartType(value: string) {
+  chartType.value = value
+  const query = mergeOwnedQuery(route.query, ['chart'], { chart: value === 'bar_line' ? '' : value })
+  if (loading.value) Object.assign(query, { start: periodStart.value, end: periodEnd.value })
+  if (pageActive.value && !sameRouteQuery(query, route.query)) await router.push({ query })
+}
+
+function beginRequest() {
+  cancelReportRequest()
   requestController = new AbortController()
-  return { sequence: ++requestSequence, signal: requestController.signal }
+  return { sequence: requestSequence, signal: requestController.signal }
 }
 
 function requestIsCurrent(sequence: number, signal: AbortSignal) {
@@ -217,6 +233,7 @@ async function loadReport(force = false, { syncRoute = true } = {}) {
     appliedPeriodEnd.value = requestedEnd
     defaultMonthlyView.value = false
     await nextTick()
+    if (!requestIsCurrent(sequence, signal)) return
     renderCharts({ monthly: false })
     scheduleRefreshPoll(true)
     if (syncRoute) await syncRouteState()
@@ -231,26 +248,30 @@ async function loadReport(force = false, { syncRoute = true } = {}) {
   }
 }
 
-async function restoreRouteState() {
+async function restoreRouteState({ preserveDraft = false } = {}) {
   if (route.name !== 'leadership-report') return false
+  cancelReportRequest()
   const range = queryDateRange(route.query)
   const nextChartType = queryChoice(route.query.chart, ['bar_line', 'bar', 'line', 'area'], 'bar_line')
-  restoringRouteState = true
   chartType.value = nextChartType
-  restoringRouteState = false
 
   if (range) {
-    periodStart.value = range.start
-    periodEnd.value = range.end
-    if (!report.value || defaultMonthlyView.value || appliedPeriodStart.value !== range.start || appliedPeriodEnd.value !== range.end) {
+    const needsLoad = !report.value || defaultMonthlyView.value || appliedPeriodStart.value !== range.start || appliedPeriodEnd.value !== range.end
+    if (!preserveDraft || needsLoad) {
+      periodStart.value = range.start
+      periodEnd.value = range.end
+    }
+    if (needsLoad) {
       await loadReport(false, { syncRoute: false })
       return true
     }
     return false
   }
 
-  periodStart.value = defaultPeriodStart
-  periodEnd.value = today
+  if (!preserveDraft || !report.value || !defaultMonthlyView.value) {
+    periodStart.value = defaultPeriodStart
+    periodEnd.value = today
+  }
   if (!report.value || !defaultMonthlyView.value) {
     await loadDefaultReport()
     return true
@@ -274,6 +295,7 @@ async function loadDefaultReport(force = false) {
     monthlyPeriodEnd.value = today
     defaultMonthlyView.value = true
     await nextTick()
+    if (!requestIsCurrent(sequence, signal)) return
     renderCharts()
     scheduleRefreshPoll(true)
   } catch (caught) {
@@ -301,22 +323,28 @@ function scheduleRefreshPoll(reset = false) {
     return
   }
   refreshLoading.value = true
-  const requestedRange = `${appliedPeriodStart.value}:${appliedPeriodEnd.value}`
+  const sequence = requestSequence
+  const requestedStart = appliedPeriodStart.value
+  const requestedEnd = appliedPeriodEnd.value
+  const requestedRange = `${requestedStart}:${requestedEnd}`
   const requestedDefaultView = defaultMonthlyView.value
   refreshTimer = window.setTimeout(async () => {
-    if (!pageActive.value || requestedRange !== `${appliedPeriodStart.value}:${appliedPeriodEnd.value}` || requestedDefaultView !== defaultMonthlyView.value) {
-      refreshLoading.value = false
+    if (!pageActive.value || sequence !== requestSequence || loading.value || monthlyLoading.value || requestedRange !== `${appliedPeriodStart.value}:${appliedPeriodEnd.value}` || requestedDefaultView !== defaultMonthlyView.value) {
       return
     }
-    const { sequence, signal } = beginRequest()
+    refreshTimer = null
+    const controller = new AbortController()
+    requestController = controller
+    const signal = controller.signal
     try {
       const result = requestedDefaultView
-        ? await getLeadershipReport(appliedPeriodStart.value.slice(0, 7), { force: true, signal })
-        : await getLeadershipRange(appliedPeriodStart.value, appliedPeriodEnd.value, { force: true, signal })
+        ? await getLeadershipReport(requestedStart.slice(0, 7), { force: true, signal })
+        : await getLeadershipRange(requestedStart, requestedEnd, { force: true, signal })
       if (!requestIsCurrent(sequence, signal)) return
       report.value = result
       if (requestedDefaultView) monthlyReport.value = result
       await nextTick()
+      if (!requestIsCurrent(sequence, signal)) return
       renderCharts({ monthly: requestedDefaultView })
       refreshPollCount += 1
       if (snapshot.value.refreshing && refreshPollCount < 75) {
@@ -326,10 +354,12 @@ function scheduleRefreshPoll(reset = false) {
       }
     } catch (caught) {
     const exception = toError(caught)
-      refreshLoading.value = false
-      if (exception.name !== 'AbortError' && sequence === requestSequence) error.value = exception.message
+      if (sequence === requestSequence) {
+        refreshLoading.value = false
+        if (exception.name !== 'AbortError') error.value = exception.message
+      }
     } finally {
-      if (sequence === requestSequence) requestController = null
+      if (requestController === controller) requestController = null
     }
   }, 2000)
 }
@@ -409,14 +439,8 @@ function stopResizeListening() {
 function pausePage(dispose = false) {
   if (pageActive.value) {
     pageActive.value = false
-    requestSequence += 1
-    requestController?.abort()
-    requestController = null
-    loading.value = false
-    monthlyLoading.value = false
-    refreshLoading.value = false
+    cancelReportRequest()
     stopResizeListening()
-    stopRefreshPoll()
   }
   if (dispose) disposeCharts()
 }
@@ -455,6 +479,7 @@ async function refreshRangeAnalysisReport() {
     report.value = refreshedReport
     monthlyReport.value = refreshedSummary
     await nextTick()
+    if (!requestIsCurrent(sequence, signal)) return
     renderCharts()
     scheduleRefreshPoll(true)
   } catch (caught) {
@@ -475,9 +500,12 @@ function refreshAnalysisReport() {
 }
 
 onMounted(async () => {
+  const initialQuery = route.query
   await loadDefaultReport()
-  if (routeRange && pageActive.value) await restoreRouteState()
   routeStateReady = true
+  if (pageActive.value && (routeRange || route.query !== initialQuery)) {
+    if (!await restoreRouteState()) scheduleRefreshPoll()
+  }
 })
 onActivated(async () => {
   pageActive.value = true
@@ -494,10 +522,12 @@ onBeforeUnmount(() => pausePage(true))
 watch(chartType, async () => {
   await nextTick()
   renderCharts()
-  if (routeStateReady && !restoringRouteState && route.name === 'leadership-report') await syncRouteState()
 })
-watch(() => route.query, async () => {
-  if (routeStateReady && pageActive.value && route.name === 'leadership-report') await restoreRouteState()
+watch(() => route.query, async (query, previous) => {
+  if (routeStateReady && pageActive.value && route.name === 'leadership-report') {
+    const preserveDraft = query.start === previous.start && query.end === previous.end
+    if (!await restoreRouteState({ preserveDraft })) scheduleRefreshPoll()
+  }
 }, { deep: true })
 </script>
 
@@ -510,7 +540,8 @@ watch(() => route.query, async () => {
     <StandardReportQuery
       v-model:start-date="periodStart"
       v-model:end-date="periodEnd"
-      v-model:chart-type="chartType"
+      :chart-type="chartType"
+      @update:chart-type="changeChartType"
       class="report-hero-query leadership-query-shell"
       aria-label="领导报表查询条件"
       :anchor-date="today"

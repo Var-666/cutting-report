@@ -2,7 +2,17 @@
 export type StorageType = 'local' | 'session';
 
 export function createStorage<T extends object>(type: StorageType, storagePrefix: string) {
-  const stg = type === 'session' ? window.sessionStorage : window.localStorage;
+  const memory = new Map<string, string>();
+  let stg: Storage | undefined;
+  try { stg = type === 'session' ? window.sessionStorage : window.localStorage; } catch {}
+
+  function access(action: (target: Storage) => void) {
+    if (!stg) return;
+    try { action(stg); } catch {
+      // Stay in memory until reload so recovered storage keeps its saved preferences.
+      stg = undefined;
+    }
+  }
 
   const storage = {
     /**
@@ -14,7 +24,9 @@ export function createStorage<T extends object>(type: StorageType, storagePrefix
     set<K extends keyof T>(key: K, value: T[K]) {
       const json = JSON.stringify(value);
 
-      stg.setItem(`${storagePrefix}${key as string}`, json);
+      const name = `${storagePrefix}${key as string}`;
+      memory.set(name, json);
+      access(target => target.setItem(name, json));
     },
     /**
      * Get session
@@ -22,7 +34,13 @@ export function createStorage<T extends object>(type: StorageType, storagePrefix
      * @param key Session key
      */
     get<K extends keyof T>(key: K): T[K] | null {
-      const json = stg.getItem(`${storagePrefix}${key as string}`);
+      const name = `${storagePrefix}${key as string}`;
+      access(target => {
+        const value = target.getItem(name);
+        if (value === null) memory.delete(name);
+        else memory.set(name, value);
+      });
+      const json = memory.get(name);
       if (json) {
         let storageData: T[K] | null = null;
 
@@ -36,15 +54,16 @@ export function createStorage<T extends object>(type: StorageType, storagePrefix
         }
       }
 
-      stg.removeItem(`${storagePrefix}${key as string}`);
-
       return null;
     },
     remove(key: keyof T) {
-      stg.removeItem(`${storagePrefix}${key as string}`);
+      const name = `${storagePrefix}${key as string}`;
+      memory.delete(name);
+      access(target => target.removeItem(name));
     },
     clear() {
-      stg.clear();
+      memory.clear();
+      access(target => target.clear());
     }
   };
   return storage;

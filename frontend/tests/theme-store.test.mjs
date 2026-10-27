@@ -27,9 +27,9 @@ const { themeSettings } = nativeModule('theme/settings.ts', {}, 'themeSettings')
 const { themeVars } = nativeModule('theme/vars.ts', {}, 'themeVars')
 const flush = () => Vue.nextTick()
 
-function mountTheme(saved) {
+function mountTheme(saved, storageAdapter) {
   const values = new Map(saved ? [['themeSettings', saved]] : [])
-  const localStg = { get: key => values.get(key) ?? null, set: (key, value) => values.set(key, JSON.parse(JSON.stringify(value))) }
+  const localStg = storageAdapter || { get: key => values.get(key) ?? null, set: (key, value) => values.set(key, JSON.parse(JSON.stringify(value))) }
   const classes = new Set()
   let style
   const document = { documentElement: { style: {}, classList: { add: name => classes.add(name), remove: name => classes.delete(name) } }, querySelector: () => style, createElement: () => ({}), head: { appendChild: element => { style = element } } }
@@ -189,4 +189,89 @@ test('light canvas separates white cards and migrates only the former default to
       assert.equal(app.store.darkMode, true)
     } finally { app.close() }
   }
+})
+
+function browserStorage(initial = {}) {
+  const values = new Map(Object.entries(initial))
+  const fail = { getItem: false, setItem: false, removeItem: false, clear: false }
+  const guard = method => { if (fail[method]) throw new DOMException('storage blocked', method === 'setItem' ? 'QuotaExceededError' : 'SecurityError') }
+  return { values, fail, storage: {
+    getItem(key) { guard('getItem'); return values.get(key) ?? null },
+    setItem(key, value) { guard('setItem'); values.set(key, value) },
+    removeItem(key) { guard('removeItem'); values.delete(key) },
+    clear() { guard('clear'); values.clear() },
+  } }
+}
+
+for (const type of ['local', 'session']) {
+  test(`${type} storage acquisition failures allow module initialization and memory-only theme startup`, async () => {
+    const browser = browserStorage({ 'cutting:themeSettings': JSON.stringify({ themeScheme: 'dark', themeRadius: 17 }) })
+    let blocked = true
+    const window = {}
+    for (const property of ['localStorage', 'sessionStorage']) Object.defineProperty(window, property, { get() { if (blocked) throw new DOMException('blocked', 'SecurityError'); return browser.storage } })
+    const adapters = nativeModule('utils/storage.ts', { window }, 'localStg, sessionStg')
+    const storage = type === 'local' ? adapters.localStg : adapters.sessionStg
+    storage.set('themeColor', '#123456')
+    assert.equal(storage.get('themeColor'), '#123456')
+    storage.remove('themeColor')
+    assert.equal(storage.get('themeColor'), null)
+    const app = mountTheme(undefined, adapters.localStg)
+    try {
+      app.store.setThemeScheme('dark')
+      await Vue.nextTick()
+      assert.equal(app.store.darkMode, true)
+      blocked = false
+      app.events.beforeunload()
+      assert.equal(JSON.parse(browser.values.get('cutting:themeSettings')).themeRadius, 17, 'recovering storage must not persist fallback defaults over a saved theme')
+      assert.equal(browser.values.size, 1)
+      const reloaded = nativeModule('utils/storage.ts', { window }, 'localStg')
+      assert.equal(reloaded.localStg.get('themeSettings').themeRadius, 17)
+    } finally { app.close() }
+  })
+
+  for (const method of ['getItem', 'setItem', 'removeItem', 'clear']) {
+    test(`${type} ${method} failures keep cached values in memory and preserve native data after recovery`, () => {
+      const browser = browserStorage({ 'cutting:themeColor': JSON.stringify('#18a058'), unrelated: 'preserve' })
+      const window = { localStorage: browser.storage, sessionStorage: browser.storage }
+      const adapters = nativeModule('utils/storage.ts', { window }, 'localStg, sessionStg')
+      const storage = type === 'local' ? adapters.localStg : adapters.sessionStg
+      assert.equal(storage.get('themeColor'), '#18a058')
+      browser.fail[method] = true
+      if (method === 'getItem') assert.equal(storage.get('themeColor'), '#18a058')
+      if (method === 'setItem') { storage.set('themeColor', '#123456'); assert.equal(storage.get('themeColor'), '#123456') }
+      if (method === 'removeItem') { storage.remove('themeColor'); assert.equal(storage.get('themeColor'), null) }
+      if (method === 'clear') { storage.clear(); assert.equal(storage.get('themeColor'), null) }
+      browser.fail[method] = false
+      storage.set('themeColor', '#abcdef')
+      assert.equal(storage.get('themeColor'), '#abcdef')
+      storage.remove('themeColor')
+      assert.equal(storage.get('themeColor'), null)
+      assert.equal(JSON.parse(browser.values.get('cutting:themeColor')), '#18a058')
+      assert.equal(browser.values.get('unrelated'), 'preserve')
+    })
+  }
+}
+
+test('a read SecurityError during module initialization cannot break theme or device context startup', async () => {
+  const browser = browserStorage({ 'cutting:themeSettings': JSON.stringify({ themeScheme: 'dark', themeRadius: 19 }) })
+  browser.fail.getItem = true
+  const window = { localStorage: browser.storage, sessionStorage: browser.storage }
+  const adapters = nativeModule('utils/storage.ts', { window }, 'localStg, sessionStg')
+  const app = mountTheme(undefined, adapters.localStg)
+  try {
+    await Vue.nextTick()
+    assert.equal(typeof app.store.darkMode, 'boolean')
+    const code = src('api/deviceContext.ts').replace(/^import .*$/gm, '').replace(/\bexport /g, '')
+    const context = scriptFunction('globalThis', `${code}\nreturn { setDeviceCatalog, selectDevice, deviceUrl }`)({ sessionStorage: browser.storage })
+    context.setDeviceCatalog({ default_device_id: 'Cutter01', items: [{ id: 'Cutter01' }, { id: 'Cutter02' }] })
+    context.selectDevice('Cutter02')
+    assert.match(context.deviceUrl('/api/v1/workshop/tasks?report_date=2026-10-27'), /device_id=Cutter02/)
+    browser.fail.getItem = false
+    app.events.beforeunload()
+    assert.equal(JSON.parse(browser.values.get('cutting:themeSettings')).themeRadius, 19)
+    const fresh = nativeModule('utils/storage.ts', { window }, 'localStg')
+    const restored = mountTheme(undefined, fresh.localStg)
+    try { assert.equal(restored.store.themeRadius, 19); assert.equal(restored.store.darkMode, true) }
+    finally { restored.close() }
+  } finally { app.close() }
 })

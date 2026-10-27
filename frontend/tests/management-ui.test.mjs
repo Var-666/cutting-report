@@ -180,3 +180,50 @@ test('shared connection test selects SQL Server or MySQL without saving either d
   assert.match(testSection, /v-model="activeTestConnection.host"/)
   assert.match(testSection, /v-if="testIsWelding"[\s\S]*name="test_timezone"/)
 })
+
+for (const [reportType, period] of [['leadership', 'current_month'], ['leadership', 'previous_month'], ['workshop', 'current_day'], ['equipment', 'previous_day']]) {
+  test(`editing ${reportType}/${period} preserves the stored period through a name-only save`, async () => {
+    const Vue = await import('vue')
+    const saved = []
+    const scope = Vue.effectScope()
+    const script = descriptor('AutomationView').scriptSetup.content.replace(/^import .*$/gm, '')
+    const bindings = {
+      ...Vue, onMounted() {}, useUnsavedChanges() {}, deviceSelection: Vue.reactive({ id: 'Cutter02' }),
+      saveAutomationSchedule: async (body, id) => saved.push({ body, id }),
+      getAutomationStatus: async () => ({}), listAutomationSchedules: async () => ({ items: [] }),
+      listEmailDeliveries: async () => ({ items: [], total: 0 }),
+    }
+    const page = scope.run(() => scriptFunction(...Object.keys(bindings), `${script}\nreturn { form, editSchedule, changeReportType, submit, hasUnsavedChanges }`)(...Object.values(bindings)))
+    try {
+      const item = { schedule_id: 'schedule-1', device_id: 'Cutter02', name: 'Saved plan', report_type: reportType, report_period: period, frequency: 'weekly', run_time: '16:30', weekday: 2, month_day: null, recipients: ['worker@example.com'], subject_template: '{report_name}', chart_type: 'line', attach_report: true, max_attempts: 3, enabled: true }
+      // Make every case cross a type boundary before editing, then flush real watchers.
+      page.form.report_type = reportType === 'leadership' ? 'workshop' : 'leadership'
+      await Vue.nextTick()
+      page.editSchedule(item)
+      await Vue.nextTick()
+      assert.equal(page.form.report_period, period)
+      page.form.name = 'Renamed plan'
+      await Vue.nextTick()
+      await page.submit()
+      assert.equal(saved.length, 1)
+      assert.equal(saved[0].id, item.schedule_id)
+      assert.deepEqual(saved[0].body, {
+        device_id: item.device_id, name: 'Renamed plan', report_type: reportType, report_period: period,
+        frequency: 'weekly', run_time: item.run_time, weekday: 2, month_day: null,
+        recipients: item.recipients, subject_template: item.subject_template, chart_type: item.chart_type,
+        attach_report: true, max_attempts: 3, enabled: true,
+      })
+      for (const [type, current, expected] of [
+        ['equipment', 'current_day', 'current_day'], ['workshop', 'previous_day', 'previous_day'],
+        ['leadership', 'current_month', 'current_month'], ['leadership', 'previous_month', 'previous_month'],
+        ['leadership', 'current_day', 'previous_month'], ['workshop', 'current_month', 'previous_day'],
+      ]) {
+        Object.assign(page.form, { report_type: type, report_period: current })
+        page.changeReportType()
+        await Vue.nextTick()
+        assert.equal(page.form.report_period, expected)
+        assert.equal(page.hasUnsavedChanges.value, true)
+      }
+    } finally { scope.stop() }
+  })
+}
