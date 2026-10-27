@@ -1,6 +1,7 @@
 <script setup lang="ts">
+import type { DataRow } from '../types/api'
 import type { PropType } from 'vue'
-import type { WeldingAnalysis, WeldingPart, WeldingQuery, WeldingReport, WeldingReportKind, WeldingRow } from '../types/welding'
+import type { WeldingAnalysis, WeldingPart, WeldingQuery, WeldingReport, WeldingReportKind, WeldingJobRow, WeldingPartRow, WeldingMetrics } from '../types/welding'
 import { toError } from '../utils/errors'
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -25,7 +26,7 @@ const router = useRouter()
 const today = reportToday()
 const weekStart = new Date(Date.parse(`${today}T00:00:00Z`) - 6 * 86400000).toISOString().slice(0, 10)
 const initialRange = props.kind === 'dashboard' ? null : queryDateRange(route.query)
-const draft = reactive({ start: initialRange?.start || (props.kind === 'dashboard' ? weekStart : today), end: initialRange?.end || today, device_no: '', robot_no: '', weld_type: '', state: '', serial_number: typeof route.query.serial_number === 'string' ? route.query.serial_number : '', project_no: '', section_no: '', part_no: '', anomalies_only: false, sort_by: 'time', descending: true })
+const draft = reactive({ start: initialRange?.start || (props.kind === 'dashboard' ? weekStart : today), end: initialRange?.end || today, device_no: '', robot_no: '', weld_type: '', state: '', serial_number: typeof route.query.serial_number === 'string' ? route.query.serial_number : '', project_no: '', section_no: '', part_no: '', anomalies_only: false, sort_by: 'time' as NonNullable<WeldingQuery['sort_by']>, descending: true })
 const report = ref<WeldingReport | null>(null)
 const activeQuery = ref<WeldingQuery | null>(null)
 const loading = ref(false)
@@ -37,7 +38,7 @@ const analyzing = ref(false)
 const analysis = ref<WeldingAnalysis | null>(null)
 const detailOpen = ref(false)
 const details = ref<WeldingPart | null>(null)
-const detailJob = ref<WeldingRow | null>(null)
+const detailJob = ref<WeldingJobRow | null>(null)
 const detailLoading = ref(false)
 const detailError = ref('')
 const seamPage = ref(1)
@@ -93,7 +94,7 @@ function changePage(page: number) { read({ ...activeQuery.value, page }) }
 function changePageSize(page_size: number) { read({ ...activeQuery.value, page: 1, page_size }) }
 function goToPart() {
   if (!detailJob.value || !activeQuery.value) return
-  router.push({ name: 'welding-parts', query: { serial_number: detailJob.value.serial_number, start: activeQuery.value.start, end: activeQuery.value.end } })
+  router.push({ name: 'welding-parts', query: { serial_number: detailJob.value.serial_number || undefined, start: activeQuery.value.start, end: activeQuery.value.end } })
   detailOpen.value = false
 }
 async function copy(value: string | null | undefined) {
@@ -101,14 +102,14 @@ async function copy(value: string | null | undefined) {
   try { await navigator.clipboard.writeText(value); actionNotice.value = '流水号已复制' }
   catch { actionError.value = '复制失败，请选择流水号后手动复制' }
 }
-async function openDetail(row: WeldingRow, page = 1) {
+async function openDetail(row: WeldingJobRow | WeldingPartRow, page = 1) {
   detailController?.abort()
   const run = ++detailGeneration
   detailController = new AbortController()
   detailOpen.value = true
   detailError.value = ''
   seamPage.value = page
-  if (reportKind.value === 'jobs') { detailJob.value = row; details.value = null; return }
+  if ('weld_type_label' in row) { detailJob.value = row; details.value = null; return }
   detailJob.value = null
   details.value = null
   detailLoading.value = true
@@ -190,7 +191,7 @@ onBeforeUnmount(cancel)
     <ReportPanelState v-else-if="loading" type="loading" title="正在读取焊接数据" message="正在查询，繁忙时由服务器短暂排队。" />
     <ReportFeedback v-if="actionError" type="error" title="操作未完成" :message="actionError" dismissible @dismiss="actionError = ''" />
     <ReportFeedback v-if="actionNotice" title="操作完成" :message="actionNotice" dismissible @dismiss="actionNotice = ''" />
-    <div v-if="sourceEnabled" class="welding-kpis"><NCard v-for="card in cards" :key="card.key" :bordered="false"><HomeKpiCard :title="card.title" :value="card.value" :unit="card.unit" :precision="card.unit === 'm' || card.unit === 'h' || card.unit === 'm/h' ? 2 : 0" :loading="loading" :status="card.pending ? '口径待核实' : ''" :series="report?.daily?.map(row => row[card.key] ?? 0) || []" /></NCard></div>
+    <div v-if="sourceEnabled" class="welding-kpis"><NCard v-for="card in cards" :key="card.key" :bordered="false"><HomeKpiCard :title="card.title" :value="card.value" :unit="card.unit" :precision="card.unit === 'm' || card.unit === 'h' || card.unit === 'm/h' ? 2 : 0" :loading="loading" :status="card.pending ? '口径待核实' : ''" :series="report?.daily?.map(row => row[card.key as keyof WeldingMetrics] ?? 0) || []" /></NCard></div>
     <template v-if="report && activeQuery">
       <div class="welding-freshness"><strong>源库最新更新时间</strong><span>{{ sourceUpdated }}</span><span>本次计算：{{ report.meta.calculated_at }}</span></div>
       <ReportFeedback v-if="!report.summary.job_count" title="当前区间暂无可归属的作业记录" message="可调整日期或设备后重新查询；无效时间候选记录见数据核查说明。" />
@@ -203,8 +204,8 @@ onBeforeUnmount(cancel)
     <NModal v-model:show="detailOpen" preset="card" :title="detailJob ? '焊接作业详情' : '工件与焊缝详情'" class="welding-modal" :style="{ width: 'min(1200px, 94vw)' }">
       <ReportFeedback v-if="detailError" type="error" title="详情读取失败" :message="detailError" />
       <ReportPanelState v-if="detailLoading" type="loading" title="正在读取详情" message="正在查询，繁忙时由服务器短暂排队。" />
-      <template v-if="detailJob"><dl class="welding-record"><template v-for="[key, label] in weldingColumns.jobs" :key="key"><dt>{{ label }}</dt><dd>{{ weldingDisplay(detailJob[key], key) }}</dd></template></dl><button type="button" :disabled="!detailJob.serial_number" @click="goToPart">查询该流水号的工件</button></template>
-      <template v-if="details"><dl class="welding-record"><template v-for="[key, label] in weldingColumns.parts" :key="key"><dt>{{ label }}</dt><dd>{{ weldingDisplay(details.part[key], key) }}</dd></template></dl><ReportFeedback :type="details.association_status === 'pending_verification' ? 'warning' : 'info'" title="焊缝关联说明" :message="details.notice" /><button type="button" :disabled="exporting || details.association_status === 'pending_verification'" @click="exportSeams">导出该工件全部焊缝 CSV</button><WeldingTable kind="seams" :items="details.items" :total="details.total" :page="seamPage" :loading="detailLoading" @page="openDetail(details.part, $event)" /></template>
+      <template v-if="detailJob"><dl class="welding-record"><template v-for="[key, label] in weldingColumns.jobs" :key="key"><dt>{{ label }}</dt><dd>{{ weldingDisplay((detailJob as DataRow)[key], key) }}</dd></template></dl><button type="button" :disabled="!detailJob.serial_number" @click="goToPart">查询该流水号的工件</button></template>
+      <template v-if="details"><dl class="welding-record"><template v-for="[key, label] in weldingColumns.parts" :key="key"><dt>{{ label }}</dt><dd>{{ weldingDisplay((details.part as DataRow)[key], key) }}</dd></template></dl><ReportFeedback :type="details.association_status === 'pending_verification' ? 'warning' : 'info'" title="焊缝关联说明" :message="details.notice" /><button type="button" :disabled="exporting || details.association_status === 'pending_verification'" @click="exportSeams">导出该工件全部焊缝 CSV</button><WeldingTable kind="seams" :items="details.items" :total="details.total" :page="seamPage" :loading="detailLoading" @page="openDetail(details.part, $event)" /></template>
     </NModal>
   </div>
 </template>

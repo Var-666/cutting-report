@@ -7,8 +7,8 @@ export function weldingQuery<T extends object>(values: T): Partial<T> {
   return Object.fromEntries(Object.entries(values).filter(([, value]) => value !== '' && value !== null && value !== undefined)) as Partial<T>
 }
 
-export function getWeldingReport(kind: WeldingReportKind, values: WeldingQuery, signal?: AbortSignal) {
-  return request<WeldingReport>(`/api/v1/welding/${paths[kind]}?${new URLSearchParams(Object.entries(weldingQuery(values)).map(([key, value]) => [key, String(value)]))}`, { signal })
+export function getWeldingReport<K extends WeldingReportKind>(kind: K, values: WeldingQuery, signal?: AbortSignal) {
+  return request<WeldingReport<K extends 'dashboard' ? 'jobs' : K>>(`/api/v1/welding/${paths[kind]}?${new URLSearchParams(Object.entries(weldingQuery(values)).map(([key, value]) => [key, String(value)]))}`, { signal })
 }
 export function getWeldingPart(id: number, page: number, signal?: AbortSignal) {
   return request<WeldingPart>(`/api/v1/welding/parts/${encodeURIComponent(id)}?page=${page}&page_size=20`, { signal })

@@ -2,7 +2,7 @@ import { scriptFunction } from './typescript-helpers.mjs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { computed, reactive, ref } from 'vue'
+import { computed, h, reactive, ref } from 'vue'
 import { parse, compileScript, compileTemplate } from '@vue/compiler-sfc'
 import { productionGroups, selectedLineType } from '../src/utils/productionLines.ts'
 import { adminMenus } from '../src/router/menus.ts'
@@ -270,4 +270,27 @@ test('initial watcher and repeated submit share one active request; pagination s
   pending[1].resolve({ query: pending[1].values, data_version: 'second' })
   await next
   assert.equal(app.activeQuery.value.page, 2)
+})
+
+test('welding table keys and detail events respect aggregate, job, part and seam shapes', () => {
+  const script = parse(source('components/WeldingTable.vue')).descriptor.scriptSetup.content.replace(/^import .*$/gm, '')
+  for (const [kind, row, key] of [
+    ['daily', { production_date: '2026-10-01' }, '2026-10-01'],
+    ['equipment', { device_no: 0, robot_no: null }, '0:null'],
+    ['jobs', { id: 1, serial_number: null, weld_type_label: '平焊' }, 1],
+    ['parts', { id: 2, project_no: null }, 2],
+    ['seams', { id: 3, robot_no: null }, 3],
+  ]) {
+    const events = []
+    const bindings = { computed, h, NButton: 'button', weldingColumns, weldingDisplay,
+      defineProps: () => ({ kind }), defineEmits: () => (...args) => events.push(args) }
+    const table = scriptFunction(...Object.keys(bindings), `${script}; return { columns, rowKey };`)(...Object.values(bindings))
+    assert.equal(table.rowKey(row), key)
+    const action = table.columns.value.find(column => column.key === 'actions')
+    if (kind === 'jobs' || kind === 'parts') {
+      action.render(row).props.onClick()
+      assert.deepEqual(events, [['detail', row]])
+      assert.equal(action.render({ production_date: '2026-10-01' }), null)
+    } else assert.equal(action, undefined)
+  }
 })

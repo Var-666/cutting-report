@@ -32,7 +32,7 @@ test('maintained source uses TypeScript with strict checking and no blanket supp
 
 test('business contracts reject invalid roles, line capabilities, report types and email outcomes', () => {
   const fixture = fileURLToPath(new URL('./fixtures/type-contracts.ts', import.meta.url))
-  const program = ts.createProgram([fixture], { strict: true, noEmit: true, skipLibCheck: true, target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler })
+  const program = ts.createProgram([fixture], { strict: true, noEmit: true, skipLibCheck: true, allowImportingTsExtensions: true, target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler })
   const diagnostics = ts.getPreEmitDiagnostics(program)
   assert.deepEqual(diagnostics.map(item => ts.flattenDiagnosticMessageText(item.messageText, '\n')), [])
 })
@@ -42,4 +42,11 @@ test('caught errors retain cancellation and server retry metadata', () => {
   assert.equal(toError(failure), failure)
   assert.equal(toError(new DOMException('取消', 'AbortError')).name, 'AbortError')
   assert.equal(toError('失败').message, '失败')
+})
+
+test('production builds require type checking and the frontend suite before bundling', () => {
+  const { scripts } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+  const steps = scripts.build.split(' && ')
+  assert.deepEqual(steps.slice(0, 2), ['npm run typecheck', 'npm test'])
+  assert.ok(steps.indexOf('vite build') > 1)
 })

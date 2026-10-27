@@ -27,3 +27,45 @@ const resolution: DeliveryResolutionRequest = { message_id: 'mail-id', evidence_
 // @ts-expect-error An uncertain result cannot be submitted as a manual resolution.
 resolution.outcomes.push({ recipient: 'worker@example.com', outcome: 'unknown' })
 void [role, invalidRole, invalidWelding, deviceLabel, report, invalidReport, history, resolution]
+
+import type { WeldingDailyRow, WeldingEquipmentRow, WeldingJobRow, WeldingPartRow, WeldingPart, WeldingQuery, WeldingReport } from '../../src/types/welding'
+import { getWeldingReport } from '../../src/api/welding'
+
+const weldingSort: WeldingQuery = { sort_by: 'length' }
+// @ts-expect-error Sort keys must match the backend whitelist.
+weldingSort.sort_by = 'serial_number'
+function weldingRows(daily: WeldingDailyRow, equipment: WeldingEquipmentRow, job: WeldingJobRow, part: WeldingPartRow, detail: WeldingPart) {
+  const date: string = daily.production_date
+  const robot: number | null = equipment.robot_no
+  const id: number = job.id
+  const serial: string | null = part.serial_number
+  // @ts-expect-error Daily aggregates have no detail ID.
+  daily.id
+  // @ts-expect-error Equipment aggregates have no production date.
+  equipment.production_date
+  // @ts-expect-error Part records do not contain a robot number.
+  part.robot_no
+  // @ts-expect-error Seams are not job rows.
+  const seamJob: WeldingJobRow = detail.items[0]
+  return [date, robot, id, serial, seamJob]
+}
+function weldingReport(report: WeldingReport) {
+  if (report.report_type === 'daily') {
+    const daily: WeldingDailyRow[] = report.items
+    // @ts-expect-error Daily reports cannot be treated as job details.
+    const jobs: WeldingJobRow[] = report.items
+    return [daily, jobs]
+  }
+  if (report.report_type === 'parts') {
+    const parts: WeldingPartRow[] = report.items
+    return parts
+  }
+}
+async function weldingApi() {
+  const daily: WeldingReport<'daily'> = await getWeldingReport('daily', {})
+  const dashboard: WeldingReport<'jobs'> = await getWeldingReport('dashboard', {})
+  // @ts-expect-error Endpoint-specific return types cannot be interchanged.
+  const jobs: WeldingReport<'jobs'> = await getWeldingReport('equipment', {})
+  return [daily, dashboard, jobs]
+}
+void [weldingRows, weldingReport, weldingSort, weldingApi]
