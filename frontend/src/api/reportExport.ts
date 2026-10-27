@@ -1,8 +1,10 @@
 import type { ReadOptions } from '../types/api'
 import { deviceUrl } from './deviceContext.ts'
 import { createReport, getReportStatus } from './cutting.ts'
+import { throwIfAborted } from '../utils/abort.ts'
 
 export async function downloadReportPdf(reportId: string, { signal }: ReadOptions = {}) {
+  throwIfAborted(signal)
   const response = await fetch(deviceUrl(`/api/v1/reports/${encodeURIComponent(reportId)}/download?format=pdf`), {
     credentials: 'same-origin', signal,
   })
@@ -14,7 +16,7 @@ export async function downloadReportPdf(reportId: string, { signal }: ReadOption
     throw new Error('服务器未返回 PDF 文件，请重试')
   }
   const blob = await response.blob()
-  signal?.throwIfAborted()
+  throwIfAborted(signal)
   const disposition = response.headers.get('content-disposition') || ''
   const encodedName = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1]
   const plainName = disposition.match(/filename="([^"]+)"/i)?.[1]
@@ -32,9 +34,9 @@ export async function downloadReportPdf(reportId: string, { signal }: ReadOption
 export async function waitForReport(reportId: string, { signal, onStatus = () => {}, timeoutMs = 300_000 }: ReadOptions & { onStatus?: (message: string) => void; timeoutMs?: number } = {}) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
-    signal?.throwIfAborted()
+    throwIfAborted(signal)
     const job = await getReportStatus(reportId, { signal })
-    signal?.throwIfAborted()
+    throwIfAborted(signal)
     onStatus(job.stage_message || '正在生成报告…')
     if (job.status === 'completed') return job
     if (job.status === 'failed') throw new Error(job.error?.message || '报告生成失败')

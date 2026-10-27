@@ -11,6 +11,7 @@ from app.database.report_snapshots import ReportSnapshotRepository
 from app.database.sqlite import SQLiteDatabase, execution_scope
 from app.database.coordination import CoordinationRepository
 from app.database.welding import WeldingUnavailable
+from app.database.welding import JOB_FIELDS, PART_FIELDS, WeldingRepository
 from app.models.welding import WeldingQuery
 from app.services.application_runtime import build_runtime
 from app.services.database_runtime import database_context
@@ -44,6 +45,51 @@ class Source(Repository):
     def parts(self, session, query, *, limit, total):
         self.calls['parts'] += 1
         return [{'id': query.page, 'serial_number': 'part'}], self.count if total is None else total
+
+
+@pytest.mark.parametrize('kind', ['jobs', 'parts'])
+def test_paging_uses_one_live_count_with_identical_predicates_and_keeps_cached_statistics(configured, kind):
+    _, _, _, source, service = configured
+    sql_calls = []
+    original_fetch = source.fetch
+    def fetch(sql, values=(), **kwargs):
+        sql_calls.append((sql, values))
+        if sql.startswith('SELECT COUNT(*) AS total FROM '):
+            return [{'total': source.count}]
+        if sql.startswith(f'SELECT {JOB_FIELDS}') or sql.startswith(f'SELECT {PART_FIELDS}'):
+            return [{'id': values[-1] + 1, 'serial_number': 'part'}]
+        return original_fetch(sql, values, **kwargs)
+    source.fetch = fetch
+    source.jobs = lambda session, selected, **kwargs: WeldingRepository.jobs(source, session, selected, **kwargs)
+    source.parts = lambda session, selected, **kwargs: WeldingRepository.parts(source, session, selected, **kwargs)
+    # Real repository predicates, including zero state, are shared by COUNT and page rows.
+    selected = query(device_no=0, state=0, serial_number='part', page_size=1)
+    first = service.report(kind, selected)
+    statistics_reads = source.calls['summary']
+    source.count = 7
+    sql_calls.clear()
+    second = service.report(kind, selected.model_copy(update={'page': 2, 'sort_by': 'length'}))
+    assert source.calls['summary'] == statistics_reads == 1
+    assert second['data_version'] == first['data_version']
+    assert second['total'] == 7, 'live detail totals cannot reuse an older statistics snapshot count'
+    assert len(sql_calls) == 2
+    count_sql, count_values = sql_calls[0]
+    rows_sql, row_values = sql_calls[1]
+    assert count_sql.startswith('SELECT COUNT(*) AS total')
+    assert count_sql.split(' WHERE ', 1)[1] == rows_sql.split(' WHERE ', 1)[1].rsplit(' ORDER BY ', 1)[0]
+    assert row_values[:-2] == count_values
+    assert row_values[-2:] == (1, 1)
+    assert ('j.state = %s' if kind == 'jobs' else 'p.state = %s') in rows_sql
+    assert 'LIMIT %s OFFSET %s' in rows_sql and ', id DESC' in rows_sql
+    assert second['meta']['report_data']['details_source'] == 'database'
+
+
+@pytest.mark.parametrize(('legacy', 'part_state', 'expected'), [(0, None, 0), (3, None, 3), (4, 0, 0), (4, 3, 3), (None, None, None)])
+def test_parts_state_response_keeps_legacy_compatibility_and_canonical_precedence(configured, legacy, part_state, expected):
+    _, _, _, _, service = configured
+    result = service.report('parts', query(state=legacy, part_state=part_state))
+    assert result['query']['state'] is None
+    assert result['query']['part_state'] == expected
 
 
 def query(**changes):

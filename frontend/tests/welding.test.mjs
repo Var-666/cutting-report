@@ -143,7 +143,9 @@ async function mountWelding(t, kind = 'jobs', query = {}) {
     selectedLineType, deviceSelection: selection, queryDateRange, sameRouteQuery, parseWeldingRouteQuery, weldingRouteQuery,
     reportToday: () => '2026-10-26', weldingTitles, weldingKpis, weldingColumns, weldingDisplay, weldingQuery,
     getWeldingReport: (kind, values, signal) => {
-      const response = { query: { ...values }, data_version: `version-${calls.length + 1}`, report_type: kind === 'dashboard' ? 'jobs' : kind, summary: {}, rows: [], meta: {} }
+      // Match the backend's parts query normalization instead of echoing conflicting state fields.
+      const normalized = kind === 'parts' ? { ...values, state: null, part_state: values.part_state !== '' && values.part_state != null ? values.part_state : values.state === '' ? null : values.state } : { ...values }
+      const response = { query: normalized, data_version: `version-${calls.length + 1}`, report_type: kind === 'dashboard' ? 'jobs' : kind, summary: {}, rows: [], meta: {} }
       const call = { kind, query: { ...values }, line: selection.id, signal }
       calls.push(call)
       if (!held) return Promise.resolve(response)
@@ -176,12 +178,91 @@ for (const kind of ['dashboard', 'daily', 'parts', 'jobs', 'equipment']) {
     assert.equal(calls.length, 1)
     assert.deepEqual(calls[0].query, expected)
     assert.deepEqual({ ...state.draft }, expected)
-    assert.deepEqual(state.activeQuery.value, expected)
+    assert.deepEqual(state.activeQuery.value, kind === 'parts' ? { ...expected, state: null, part_state: expected.part_state === '' ? null : expected.part_state } : expected)
     assert.deepEqual(router.currentRoute.value.query, weldingRouteQuery(query, expected))
     await flushWelding()
     assert.equal(calls.length, 1, 'normalizing the URL does not replay the query')
   })
 }
+
+for (const [query, expected] of [
+  [{ part_state: '0' }, 0], [{ part_state: '3' }, 3], [{ state: '0' }, 0], [{ state: '3' }, 3],
+  [{ state: '4', part_state: '0' }, 0], [{ state: '4', part_state: '3' }, 3],
+  [{ state: '4', part_state: '' }, ''], [{ state: '4', part_state: 'invalid' }, ''],
+]) {
+  test(`parts state links normalize ${JSON.stringify(query)} without hidden job state`, async t => {
+    const { state, calls, router } = await mountWelding(t, 'parts', { ...period, ...query })
+    assert.equal(state.draft.part_state, expected)
+    assert.equal(state.draft.state, '')
+    assert.equal(calls[0].query.part_state, expected)
+    assert.equal(calls[0].query.state, '')
+    assert.equal(state.activeQuery.value.part_state, expected === '' ? null : expected)
+    assert.equal(router.currentRoute.value.query.part_state, expected === '' ? undefined : String(expected))
+    assert.equal('state' in router.currentRoute.value.query, false)
+    assert.equal(calls.length, 1)
+  })
+}
+
+test('parts state editing, clearing, failure and history keep one applied state for queries, exports and analysis', async t => {
+  const { state, calls, router, downloads, analyses, hold } = await mountWelding(t, 'parts', { ...period, part_state: '3', unrelated: 'keep' })
+  state.draft.part_state = 0
+  assert.equal(state.activeQuery.value.part_state, 3)
+  assert.equal(router.currentRoute.value.query.part_state, '3')
+  await state.submit(); await flushWelding()
+  assert.equal(state.activeQuery.value.part_state, 0)
+  assert.equal(router.currentRoute.value.query.part_state, '0')
+  state.draft.part_state = 4
+  for (const format of ['csv', 'html', 'pdf']) await state.exportReport(format)
+  await state.runAnalysis()
+  assert.ok(downloads.every(({ url }) => url.searchParams.get('part_state') === '0' && !url.searchParams.has('state')))
+  assert.equal(analyses[0].query.part_state, 0)
+  assert.equal(analyses[0].query.state, null)
+  assert.equal(analyses[0].version, state.report.value.data_version)
+  await state.submit(); await flushWelding()
+  assert.equal(state.activeQuery.value.part_state, 4)
+  state.draft.part_state = ''
+  await state.submit(); await flushWelding()
+  assert.equal(state.activeQuery.value.part_state, null)
+  assert.equal('part_state' in router.currentRoute.value.query, false)
+  assert.equal('state' in router.currentRoute.value.query, false)
+  router.back(); await flushWelding()
+  assert.equal(state.draft.part_state, 4)
+  assert.equal(state.activeQuery.value.part_state, 4)
+  router.back(); await flushWelding()
+  assert.equal(state.draft.part_state, 0)
+  assert.equal(state.activeQuery.value.part_state, 0)
+  router.forward(); await flushWelding()
+  assert.equal(state.draft.part_state, 4)
+  const version = state.report.value.data_version
+  const previousQuery = { ...router.currentRoute.value.query }
+  hold()
+  state.draft.part_state = 5
+  const failed = state.submit()
+  calls.at(-1).reject(new Error('state read failed')); await failed
+  assert.equal(state.draft.part_state, 5)
+  assert.equal(state.activeQuery.value.part_state, 4)
+  assert.equal(state.report.value.data_version, version)
+  assert.deepEqual(router.currentRoute.value.query, previousQuery)
+  assert.equal(previousQuery.unrelated, 'keep')
+  await state.exportReport('csv')
+  await state.runAnalysis()
+  assert.equal(downloads.at(-1).url.searchParams.get('part_state'), '4')
+  assert.equal(analyses.at(-1).query.part_state, 4)
+})
+
+test('jobs state keeps its meaning and ignores a parts state from a copied link', async t => {
+  const { state, calls, router } = await mountWelding(t, 'jobs', { ...period, state: '0', part_state: '3', robot_no: '0', device_no: '0' })
+  assert.equal(state.draft.state, 0)
+  assert.equal(state.draft.part_state, '')
+  assert.equal(state.activeQuery.value.robot_no, 0)
+  assert.equal(state.activeQuery.value.device_no, 0)
+  state.draft.state = 3
+  await state.submit(); await flushWelding()
+  assert.equal(calls.at(-1).query.state, 3)
+  assert.equal(state.activeQuery.value.state, 3)
+  assert.equal(router.currentRoute.value.query.state, '3')
+  assert.equal('part_state' in router.currentRoute.value.query, false)
+})
 
 test('welding queries: successful submit, sorting and pagination sync URL while preserving unsubmitted drafts', async t => {
   const page = await mountWelding(t, 'jobs', { ...period, unrelated: 'keep' })

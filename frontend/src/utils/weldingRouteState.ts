@@ -32,11 +32,11 @@ export function parseWeldingRouteQuery(query: LocationQuery, kind: WeldingReport
     result.weld_type = integer(query.weld_type, Number.MIN_SAFE_INTEGER)
   }
   if (kind === 'jobs' || kind === 'parts') {
-    result.state = integer(query.state, Number.MIN_SAFE_INTEGER)
     result.serial_number = text(query.serial_number)
   }
+  if (kind === 'jobs') result.state = integer(query.state, Number.MIN_SAFE_INTEGER)
   if (kind === 'parts') {
-    result.part_state = integer(query.part_state, Number.MIN_SAFE_INTEGER)
+    result.part_state = integer('part_state' in query ? query.part_state : query.state, Number.MIN_SAFE_INTEGER)
     result.project_no = text(query.project_no)
     result.section_no = text(query.section_no)
     result.part_no = text(query.part_no)

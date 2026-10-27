@@ -1,4 +1,5 @@
 import { toError } from '../utils/errors'
+import { throwIfAborted } from '../utils/abort.ts'
 import type { ExportFormat } from '../types/api'
 import type { ReportCreateRequest } from '../types/reports'
 import { onBeforeUnmount, onDeactivated, ref } from 'vue'
@@ -23,7 +24,7 @@ export function useReportExport() {
     progress.value = '正在创建报告…'
     try {
       const job = await createReport(payload)
-      signal.throwIfAborted()
+      throwIfAborted(signal)
       if (format === 'html') {
         progress.value = ''
         await router.push({ name: 'report-center', query: { job: job.report_id } })

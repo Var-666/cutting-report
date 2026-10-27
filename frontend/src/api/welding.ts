@@ -1,5 +1,6 @@
 import type { WeldingAnalysis, WeldingPart, WeldingQuery, WeldingReport, WeldingReportKind } from '../types/welding'
 import { request } from './client.ts'
+import { throwIfAborted } from '../utils/abort.ts'
 
 const paths = { dashboard: 'dashboard', daily: 'statistics/daily', parts: 'parts', jobs: 'jobs', equipment: 'equipment/summary' }
 
@@ -17,8 +18,9 @@ export function analyzeWelding(reportType: Exclude<WeldingReportKind, 'dashboard
   return request<WeldingAnalysis>('/api/v1/welding/analysis', { method: 'POST', body: JSON.stringify({ report_type: reportType, query: weldingQuery(query), data_version: version }), signal })
 }
 export async function downloadWelding(url: string, filename: string, signal?: AbortSignal) {
+  throwIfAborted(signal)
   const { blob } = await request(url, { signal, responseType: 'blob' })
-  signal?.throwIfAborted()
+  throwIfAborted(signal)
   const extension = filename.split('.').pop()
   const formats: Record<string, string> = { pdf: 'application/pdf', csv: 'text/csv', html: 'text/html' }
   const expected = formats[extension || '']
