@@ -19,19 +19,18 @@
     "types": [
       "vite/client"
     ],
-    "baseUrl": ".",
     "paths": {
       "@/*": [
-        "src/*"
+        "./src/*"
       ],
       "@sa/color": [
-        "src/vendor/soybean-admin/packages/color/index.ts"
+        "./src/vendor/soybean-admin/packages/color/index.ts"
       ],
       "@sa/hooks": [
-        "src/vendor/soybean-admin/hooks/index.ts"
+        "./src/vendor/soybean-admin/hooks/index.ts"
       ],
       "@sa/materials": [
-        "src/vendor/soybean-admin/materials/index.ts"
+        "./src/vendor/soybean-admin/materials/index.ts"
       ]
     }
   },

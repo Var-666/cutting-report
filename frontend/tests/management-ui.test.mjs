@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { readFileSync } from 'node:fs'
 import { parse } from '@vue/compiler-sfc'
+import { selectedLineType } from '../src/utils/productionLines.ts'
 
 function descriptor(name, folder = 'views') {
   const source = readFileSync(new URL(`../src/${folder}/${name}.vue`, import.meta.url), 'utf8')
@@ -145,9 +146,9 @@ test('shared connection test selects SQL Server or MySQL without saving either d
   const { computed, reactive, ref } = await import('vue')
   const view = descriptor('DatabaseView')
   const calls = []
-  const selection = reactive({ id: 'Cutter01' })
+  const selection = reactive({ id: 'Cutter01', items: [{ id: 'Cutter01', type: 'cutting' }, { id: 'welding', type: 'welding' }] })
   const bindings = { computed, reactive, ref, watch() {}, onMounted() {}, useUnsavedChanges() {}, formatTableDateValue: String,
-    deviceSelection: selection,
+    deviceSelection: selection, selectedLineType,
     testDatabaseConnection: async body => { calls.push(['sqlserver', body]); return { database: body.database, elapsed_ms: 1 } },
     testWeldingConnection: async body => { calls.push(['welding', body]); return { connected: true, elapsed_ms: 2 } },
   }
