@@ -3,7 +3,7 @@ import test from 'node:test'
 import { readFileSync } from 'node:fs'
 import { parse } from '@vue/compiler-sfc'
 import { createMemoryHistory, createRouter } from 'vue-router'
-import { cuttingRoutes } from '../src/router/cuttingRoutes.js'
+import { cuttingRoutes } from '../src/router/cuttingRoutes.ts'
 
 const stub = { render: () => null }
 

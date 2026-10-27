@@ -1,4 +1,6 @@
-<script setup>
+<script setup lang="ts">
+import type { User } from '../types/auth'
+
 import { useRoute, useRouter } from 'vue-router'
 import LoginView from './LoginView.vue'
 import { completeAuthentication, roleHome, session } from '../state/session'
@@ -6,7 +8,7 @@ import { completeAuthentication, roleHome, session } from '../state/session'
 const route = useRoute()
 const router = useRouter()
 
-async function authenticated(user) {
+async function authenticated(user: User) {
   await completeAuthentication(user)
   const redirect = typeof route.query.redirect === 'string'
     && route.query.redirect.startsWith('/')

@@ -1,3 +1,4 @@
+import { scriptFunction } from './typescript-helpers.mjs'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { readFileSync } from 'node:fs'
@@ -6,15 +7,15 @@ import { parse } from '@vue/compiler-sfc'
 import postcss from 'postcss'
 import { renderToString } from '@vue/server-renderer'
 import { NConfigProvider, darkTheme, useThemeVars } from 'naive-ui'
-import { reportThemeVariables } from '../src/theme/reportVariables.js'
-import { createReportChartGrid } from '../src/utils/reportChartTheme.js'
-import { mergeOwnedQuery, queryChoice, queryDateRange, sameRouteQuery } from '../src/utils/reportRouteState.js'
+import { reportThemeVariables } from '../src/theme/reportVariables.ts'
+import { createReportChartGrid } from '../src/utils/reportChartTheme.ts'
+import { mergeOwnedQuery, queryChoice, queryDateRange, sameRouteQuery } from '../src/utils/reportRouteState.ts'
 
 const read = path => readFileSync(new URL(`../src/${path}`, import.meta.url), 'utf8')
 const flush = async () => { for (let i = 0; i < 6; i++) { await Promise.resolve(); await Vue.nextTick() } }
-const hookSource = read('composables/useReportChartTheme.js').replace(/^import .*$/gm, '').replace('export function', 'function')
+const hookSource = read('composables/useReportChartTheme.ts').replace(/^import .*$/gm, '').replace('export function', 'function')
 function chartThemeHook(theme, vars) {
-  return new Function('computed', 'watch', 'useThemeVars', 'useThemeStore', `${hookSource}\nreturn useReportChartTheme`)(Vue.computed, Vue.watch, () => vars, () => theme)
+  return scriptFunction('computed', 'watch', 'useThemeVars', 'useThemeStore', `${hookSource}\nreturn useReportChartTheme`)(Vue.computed, Vue.watch, () => vars, () => theme)
 }
 
 test('report CSS aliases use actual Naive light/dark surfaces, text, borders and primary contrast', async () => {
@@ -92,7 +93,7 @@ function mountCharts(name) {
   const script = parse(read(`${folder}/${name}.vue`)).descriptor.scriptSetup.content.replace(/^import[\s\S]*?from ['"][^'"]+['"];?\s*$/gm, '')
   const names = name === 'LeadershipReportView' ? 'dailyPanel, monthlyPanel' : name === 'EnergyPeriodReportView' ? 'taskPanel, periodPanel' : 'durationElement, topElement'
   const entries = Object.entries(bindings).filter(([key]) => /^[\w$]+$/.test(key))
-  const setup = new Function(...entries.map(([key]) => key), `${script}\nreturn { ${names}, pageActive, renderCharts }`)
+  const setup = scriptFunction(...entries.map(([key]) => key), `${script}\nreturn { ${names}, pageActive, renderCharts }`)
   let state
   const renderer = Vue.createRenderer({ createComment: () => ({}), createText: () => ({}), createElement: () => ({}), insert() {}, remove() {}, setText() {}, setElementText() {}, parentNode: () => null, nextSibling: () => null, patchProp() {} })
   const app = renderer.createApp({ setup() { state = setup(...entries.map(([, value]) => value)); return () => null } })

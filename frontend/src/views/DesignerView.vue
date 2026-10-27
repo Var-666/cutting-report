@@ -1,4 +1,6 @@
-<script setup>
+<script setup lang="ts">
+import type { ColumnDefinition, DesignerDefinition, DesignerResource, DesignerResources, QueryPreview, QueryTask, ReportTemplate, SqlValidation } from '../types/designer'
+import { toError } from '../utils/errors'
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
@@ -8,11 +10,11 @@ import {
   saveDesignerResource,
   validateDesignerSql,
 } from '../api/reports'
-import { formatChineseDate, formatChineseDateTime, formatTableDateValue } from '../utils/dateDisplay.js'
+import { formatChineseDate, formatChineseDateTime, formatTableDateValue } from '../utils/dateDisplay.ts'
 import ManagementPageHero from '../components/ManagementPageHero.vue'
-import { useUnsavedChanges } from '../composables/useUnsavedChanges.js'
+import { useUnsavedChanges } from '../composables/useUnsavedChanges.ts'
 
-const emit = defineEmits(['definitions-change'])
+const emit = defineEmits<{ 'definitions-change': [] }>()
 const tabs = [
   { id: 'queries', label: '查询任务' },
   { id: 'definitions', label: '报表定义' },
@@ -23,14 +25,14 @@ const router = useRouter()
 const activeTab = ref(tabs.some((item) => item.id === route.query.tab) ? route.query.tab : 'queries')
 const hasUnsavedChanges = ref(false)
 const adminToken = ref('')
-const queryTasks = ref([])
-const templates = ref([])
-const definitions = ref([])
-const queryDraft = ref(null)
-const templateDraft = ref(null)
-const definitionDraft = ref(null)
-const queryValidation = ref(null)
-const queryPreview = ref(null)
+const queryTasks = ref<QueryTask[]>([])
+const templates = ref<ReportTemplate[]>([])
+const definitions = ref<DesignerDefinition[]>([])
+const queryDraft = ref<QueryTask | null>(null)
+const templateDraft = ref<ReportTemplate | null>(null)
+const definitionDraft = ref<DesignerDefinition | null>(null)
+const queryValidation = ref<SqlValidation | null>(null)
+const queryPreview = ref<QueryPreview | null>(null)
 const loading = ref(false)
 const saving = ref(false)
 const error = ref('')
@@ -49,11 +51,11 @@ watch(() => route.query.tab, (tab) => {
   if (tabs.some((item) => item.id === tab)) activeTab.value = tab
 })
 
-function selectTab(tab) {
+function selectTab(tab: string) {
   activeTab.value = tab
 }
 
-function moveTab(event, index) {
+function moveTab(event: KeyboardEvent, index: number) {
   if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
   event.preventDefault()
   const nextIndex = event.key === 'Home' ? 0
@@ -63,17 +65,17 @@ function moveTab(event, index) {
   nextTick(() => document.getElementById(`designer-tab-${tabs[nextIndex].id}`)?.focus())
 }
 
-const clone = (value) => JSON.parse(JSON.stringify(value))
+const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value))
 const selectedDefinitionQuery = computed(() => queryTasks.value.find((item) => item.query_task_id === definitionDraft.value?.query_task_id))
 const definitionFields = computed(() => selectedDefinitionQuery.value?.columns || [])
 
-function formatPreviewValue(value, column) {
+function formatPreviewValue(value: unknown, column: ColumnDefinition) {
   if (column?.type === 'datetime') return formatChineseDateTime(value)
   if (column?.type === 'date') return formatChineseDate(value)
   return formatTableDateValue(value)
 }
 
-function blankQuery() {
+function blankQuery(): QueryTask {
   return {
     query_task_id: '', code: '', name: '', description: '', enabled: true, is_builtin: false,
     sql_text: `SELECT
@@ -93,7 +95,7 @@ ORDER BY t.[OP_DATE] DESC`,
   }
 }
 
-function blankTemplate(source = null) {
+function blankTemplate(source: ReportTemplate | null = null): ReportTemplate {
   const config = source?.config || {
     title_prefix: '切割生产', logo_text: 'PRODUCTION REPORT', primary_color: '#1f4e78',
     accent_color: '#56a3a6', background_color: '#eef3f7', layout: 'split',
@@ -105,7 +107,7 @@ function blankTemplate(source = null) {
   }
 }
 
-function blankDefinition() {
+function blankDefinition(): DesignerDefinition {
   const query = queryTasks.value.find((item) => !item.is_builtin && item.enabled)
   const template = templates.value.find((item) => item.enabled)
   const fields = query?.columns || []
@@ -141,7 +143,8 @@ async function loadResources() {
     if (!definitionDraft.value) definitionDraft.value = blankDefinition()
     await nextTick()
     hasUnsavedChanges.value = false
-  } catch (exception) {
+  } catch (caught) {
+    const exception = toError(caught)
     error.value = exception.message
   } finally {
     loading.value = false
@@ -149,28 +152,34 @@ async function loadResources() {
 }
 
 function mayReplaceDraft() { return !hasUnsavedChanges.value || window.confirm('当前设计有未保存的修改，确定放弃吗？') }
-function chooseQuery(item) { if (!mayReplaceDraft()) return; queryDraft.value = clone(item); queryValidation.value = null; queryPreview.value = null; error.value = ''; notice.value = ''; nextTick(() => { hasUnsavedChanges.value = false }) }
-function chooseTemplate(item) { if (!mayReplaceDraft()) return; templateDraft.value = clone(item); error.value = ''; notice.value = ''; nextTick(() => { hasUnsavedChanges.value = false }) }
-function chooseDefinition(item) { if (!mayReplaceDraft()) return; definitionDraft.value = clone(item); error.value = ''; notice.value = ''; nextTick(() => { hasUnsavedChanges.value = false }) }
+function chooseQuery(item: QueryTask) { if (!mayReplaceDraft()) return; queryDraft.value = clone(item); queryValidation.value = null; queryPreview.value = null; error.value = ''; notice.value = ''; nextTick(() => { hasUnsavedChanges.value = false }) }
+function chooseTemplate(item: ReportTemplate) { if (!mayReplaceDraft()) return; templateDraft.value = clone(item); error.value = ''; notice.value = ''; nextTick(() => { hasUnsavedChanges.value = false }) }
+function chooseDefinition(item: DesignerDefinition) { if (!mayReplaceDraft()) return; definitionDraft.value = clone(item); error.value = ''; notice.value = ''; nextTick(() => { hasUnsavedChanges.value = false }) }
 
-function addColumn() { queryDraft.value.columns.push({ field: '', label: '', type: 'text', unit: '' }) }
-function removeColumn(index) { queryDraft.value.columns.splice(index, 1) }
+function addColumn() { if (!queryDraft.value) return; queryDraft.value.columns.push({ field: '', label: '', type: 'text', unit: '' }) }
+function removeColumn(index: number) { if (!queryDraft.value) return; queryDraft.value.columns.splice(index, 1) }
 function addMetric() {
+  if (!definitionDraft.value) return
   const field = definitionFields.value.find((item) => item.type === 'number') || definitionFields.value[0]
   if (field) definitionDraft.value.visual_config.metrics.push({ field: field.field, label: field.label, aggregation: 'sum', unit: field.unit })
 }
-function removeMetric(index) { definitionDraft.value.visual_config.metrics.splice(index, 1) }
-function toggleColumn(field, checked) {
+function removeMetric(index: number) {
+  if (!definitionDraft.value) return
+  definitionDraft.value.visual_config.metrics.splice(index, 1) }
+function toggleColumn(field: string, checked: boolean) {
+  if (!definitionDraft.value) return
   const columns = definitionDraft.value.visual_config.columns
   if (checked && !columns.includes(field)) columns.push(field)
   if (!checked) definitionDraft.value.visual_config.columns = columns.filter((item) => item !== field)
 }
-function toggleSeries(field, checked) {
+function toggleSeries(field: string, checked: boolean) {
+  if (!definitionDraft.value) return
   const fields = definitionDraft.value.visual_config.chart.value_fields
   if (checked && !fields.includes(field)) fields.push(field)
   if (!checked) definitionDraft.value.visual_config.chart.value_fields = fields.filter((item) => item !== field)
 }
 function syncDefinitionFields() {
+  if (!definitionDraft.value) return
   const fields = definitionFields.value
   definitionDraft.value.visual_config.columns = fields.map((item) => item.field)
   definitionDraft.value.visual_config.metrics = []
@@ -179,31 +188,36 @@ function syncDefinitionFields() {
 }
 
 async function validateQuery() {
+  if (!queryDraft.value) return
   error.value = ''; notice.value = ''; queryValidation.value = null
   try {
     queryValidation.value = await validateDesignerSql(queryDraft.value.sql_text, adminToken.value)
     queryDraft.value.sql_text = queryValidation.value.formatted_sql
     notice.value = `SQL只读校验通过，识别到 ${queryValidation.value.tables.length} 个数据表`
-  } catch (exception) { error.value = exception.message }
+  } catch (caught) {
+    const exception = toError(caught)
+    error.value = exception.message }
 }
 
-async function saveResource(resource, draft, idKey) {
+async function saveResource(resource: keyof DesignerResources, draft: DesignerResource, idKey: string) {
   saving.value = true; error.value = ''; notice.value = ''
   try {
-    const id = draft[idKey] || ''
+    const id = String(Reflect.get(draft, idKey) || '')
     const saved = await saveDesignerResource(resource, draft, id, adminToken.value)
-    if (resource === 'query-tasks') queryDraft.value = clone(saved)
-    if (resource === 'templates') templateDraft.value = clone(saved)
-    if (resource === 'definitions') definitionDraft.value = clone(saved)
+    if (resource === 'query-tasks' && 'sql_text' in saved) queryDraft.value = clone(saved)
+    if (resource === 'templates' && 'config' in saved) templateDraft.value = clone(saved)
+    if (resource === 'definitions' && 'visual_config' in saved) definitionDraft.value = clone(saved)
     notice.value = '保存成功，配置版本已更新'
     await loadResources()
     hasUnsavedChanges.value = false
     if (resource === 'definitions') emit('definitions-change')
-  } catch (exception) { error.value = exception.message } finally { saving.value = false }
+  } catch (caught) {
+    const exception = toError(caught)
+    error.value = exception.message } finally { saving.value = false }
 }
 
-async function removeResource(resource, draft, idKey) {
-  const id = draft?.[idKey]
+async function removeResource(resource: keyof DesignerResources, draft: DesignerResource, idKey: string) {
+  const id = String(Reflect.get(draft, idKey) || '')
   if (!id || draft.is_builtin || !window.confirm(`确认删除“${draft.name}”？`)) return
   saving.value = true; error.value = ''; notice.value = ''
   try {
@@ -214,15 +228,20 @@ async function removeResource(resource, draft, idKey) {
     if (resource === 'definitions') { definitionDraft.value = blankDefinition(); emit('definitions-change') }
     await loadResources()
     hasUnsavedChanges.value = false
-  } catch (exception) { error.value = exception.message } finally { saving.value = false }
+  } catch (caught) {
+    const exception = toError(caught)
+    error.value = exception.message } finally { saving.value = false }
 }
 
 async function previewQuery() {
+  if (!queryDraft.value) return
   if (!queryDraft.value.query_task_id) { error.value = '请先保存查询任务，再执行数据预览'; return }
   error.value = ''; queryPreview.value = null
   try {
     queryPreview.value = await previewDesignerQuery(queryDraft.value.query_task_id, { report_date: today, project_code: null, ship_no: null, parameters: {}, max_rows: 10 }, adminToken.value)
-  } catch (exception) { error.value = exception.message }
+  } catch (caught) {
+    const exception = toError(caught)
+    error.value = exception.message }
 }
 
 onMounted(loadResources)
@@ -306,7 +325,7 @@ onMounted(loadResources)
         </div>
         <template v-if="!definitionDraft.is_builtin">
           <div class="designer-section-title"><strong>明细表字段</strong><span>选择导出表格需要显示的列</span></div>
-          <div class="designer-check-grid"><label v-for="field in definitionFields" :key="field.field"><input :name="`definition_column_${field.field}`" type="checkbox" :checked="definitionDraft.visual_config.columns.includes(field.field)" @change="toggleColumn(field.field, $event.target.checked)" />{{ field.label }}</label></div>
+          <div class="designer-check-grid"><label v-for="field in definitionFields" :key="field.field"><input :name="`definition_column_${field.field}`" type="checkbox" :checked="definitionDraft.visual_config.columns.includes(field.field)" @change="toggleColumn(field.field, ($event.target as HTMLInputElement).checked)" />{{ field.label }}</label></div>
           <div class="designer-section-title"><strong>核心指标</strong><button type="button" @click="addMetric">增加指标</button></div>
           <div class="designer-fields"><div v-for="(metric, index) in definitionDraft.visual_config.metrics" :key="index" class="designer-field-row metric-row"><AppSelect v-model="metric.field" :aria-label="`核心指标 ${index + 1} 字段`"><option v-for="field in definitionFields" :key="field.field" :value="field.field">{{ field.label }}</option></AppSelect><input v-model="metric.label" :name="`metric_label_${index}`" :aria-label="`核心指标 ${index + 1} 名称`" autocomplete="off" placeholder="例如：总切割长度…" /><AppSelect v-model="metric.aggregation" :aria-label="`核心指标 ${index + 1} 聚合方式`"><option value="sum">求和</option><option value="avg">平均</option><option value="count">计数</option><option value="max">最大值</option><option value="min">最小值</option></AppSelect><input v-model="metric.unit" :name="`metric_unit_${index}`" :aria-label="`核心指标 ${index + 1} 单位`" autocomplete="off" placeholder="例如：米…" /><button type="button" @click="removeMetric(index)">删除</button></div></div>
           <div class="designer-section-title"><strong>图表配置</strong></div>
@@ -315,7 +334,7 @@ onMounted(loadResources)
             <label><span>图表类型</span><AppSelect v-model="definitionDraft.visual_config.chart.type"><option value="bar">柱状图</option><option value="line">折线图</option><option value="area">面积图</option><option value="bar_line">柱线组合</option></AppSelect></label>
             <label><span>分类轴字段</span><AppSelect v-model="definitionDraft.visual_config.chart.category_field"><option v-for="field in definitionFields" :key="field.field" :value="field.field">{{ field.label }}</option></AppSelect></label>
           </div>
-          <div class="designer-check-grid"><label v-for="field in definitionFields.filter(item => item.type === 'number')" :key="field.field"><input :name="`chart_series_${field.field}`" type="checkbox" :checked="definitionDraft.visual_config.chart.value_fields.includes(field.field)" @change="toggleSeries(field.field, $event.target.checked)" />{{ field.label }}</label></div>
+          <div class="designer-check-grid"><label v-for="field in definitionFields.filter(item => item.type === 'number')" :key="field.field"><input :name="`chart_series_${field.field}`" type="checkbox" :checked="definitionDraft.visual_config.chart.value_fields.includes(field.field)" @change="toggleSeries(field.field, ($event.target as HTMLInputElement).checked)" />{{ field.label }}</label></div>
         </template>
         <div class="designer-actions"><label class="switch-label"><input v-model="definitionDraft.enabled" name="definition_enabled" type="checkbox" :disabled="definitionDraft.is_builtin" />发布并启用</label><button class="primary" type="button" :disabled="saving || definitionDraft.is_builtin" @click="saveResource('definitions', definitionDraft, 'definition_id')">保存定义</button><button class="danger-button" type="button" :disabled="definitionDraft.is_builtin" @click="removeResource('definitions', definitionDraft, 'definition_id')">删除</button></div>
       </div>

@@ -1,19 +1,24 @@
-<script setup>
+<script setup lang="ts">
+import type { PropType } from 'vue'
+import type { EChartsOption, SeriesOption } from 'echarts'
+import type { EChartsType as ECharts } from 'echarts/core'
+import type { WeldingReport } from '../types/welding'
+
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { init, use } from 'echarts/core'
 import { BarChart, LineChart, PieChart } from 'echarts/charts'
 import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
 import { SVGRenderer } from 'echarts/renderers'
-import { useReportChartTheme } from '../composables/useReportChartTheme.js'
+import { useReportChartTheme } from '../composables/useReportChartTheme.ts'
 
-const props = defineProps({ report: { type: Object, required: true }, kind: { type: String, required: true } })
+const props = defineProps({ report: { type: Object as PropType<WeldingReport>, required: true }, kind: { type: String, required: true } })
 use([BarChart, LineChart, PieChart, GridComponent, LegendComponent, TooltipComponent, SVGRenderer])
-const first = ref(null)
-const second = ref(null)
-let charts = []
-let observer
+const first = ref<HTMLElement | null>(null)
+const second = ref<HTMLElement | null>(null)
+let charts: ECharts[] = []
+let observer: ResizeObserver | undefined
 const { darkMode, colors } = useReportChartTheme(draw)
-const bar = (names, values, unit, seriesName) => ({ animation: false, grid: { top: 40, right: 28, bottom: 70, left: 70 }, tooltip: { trigger: 'axis' }, xAxis: { type: 'category', data: names, axisLabel: { rotate: names.length > 8 ? 25 : 0 } }, yAxis: { type: 'value', name: unit }, series: [{ type: 'bar', name: seriesName, data: values, itemStyle: { color: colors.value.primary } }] })
+const bar = (names: (string | number)[], values: (number | null)[], unit: string, seriesName: string): EChartsOption & { series: SeriesOption[] } => ({ animation: false, grid: { top: 40, right: 28, bottom: 70, left: 70 }, tooltip: { trigger: 'axis' }, xAxis: { type: 'category', data: names, axisLabel: { rotate: names.length > 8 ? 25 : 0 } }, yAxis: { type: 'value', name: unit }, series: [{ type: 'bar', name: seriesName, data: values, itemStyle: { color: colors.value.primary } }] })
 function draw() {
   if (!first.value || !second.value) return
   charts.forEach(chart => chart.dispose())
@@ -42,11 +47,11 @@ function draw() {
     }
     charts[0].setOption(trend)
     const summary = data.summary || {}
-    charts[1].setOption({ animation: false, tooltip: { trigger: 'item', valueFormatter: value => `${value} m` }, legend: { bottom: 0 }, series: [{ type: 'pie', radius: ['35%', '65%'], center: ['50%', '42%'], data: [['flat_length_m', '平焊'], ['vertical_length_m', '立焊'], ['flat_wrap_length_m', '平焊包角'], ['vertical_wrap_length_m', '立焊包角'], ['unknown_length_m', '未知类型']].map(([key, name]) => ({ name, value: summary[key] ?? 0 })).filter(item => item.value > 0) }] })
+    charts[1].setOption<EChartsOption>({ animation: false, tooltip: { trigger: 'item', valueFormatter: value => `${value} m` }, legend: { bottom: 0 }, series: [{ type: 'pie', radius: ['35%', '65%'], center: ['50%', '42%'], data: [['flat_length_m', '平焊'], ['vertical_length_m', '立焊'], ['flat_wrap_length_m', '平焊包角'], ['vertical_wrap_length_m', '立焊包角'], ['unknown_length_m', '未知类型']].map(([key, name]) => ({ name, value: summary[key] ?? 0 })).filter(item => item.value > 0) }] })
   }
 }
 watch(() => [props.report, props.kind], () => nextTick(draw))
-onMounted(() => { draw(); observer = new ResizeObserver(() => charts.forEach(chart => chart.resize())); observer.observe(first.value); observer.observe(second.value) })
+onMounted(() => { draw(); observer = new ResizeObserver(() => charts.forEach(chart => chart.resize())); observer.observe(first.value!); observer.observe(second.value!) })
 onBeforeUnmount(() => { observer?.disconnect(); charts.forEach(chart => chart.dispose()); charts = [] })
 </script>
 <template>

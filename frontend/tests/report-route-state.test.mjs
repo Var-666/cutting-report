@@ -9,7 +9,7 @@ import {
   queryDateRange,
   queryPositiveInteger,
   sameRouteQuery,
-} from '../src/utils/reportRouteState.js'
+} from '../src/utils/reportRouteState.ts'
 
 function viewSource(name) {
   const source = readFileSync(new URL(`../src/views/${name}`, import.meta.url), 'utf8')

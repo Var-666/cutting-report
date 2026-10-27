@@ -1,9 +1,9 @@
-<script setup>
+<script setup lang="ts">
 import { computed } from 'vue'
 import { NSelect } from 'naive-ui'
 import AppIcon from './AppIcon.vue'
-import { useDeviceSelection } from '../composables/useDeviceSelection.js'
-import { productionGroups } from '../utils/productionLines.js'
+import { useDeviceSelection } from '../composables/useDeviceSelection.ts'
+import { productionGroups } from '../utils/productionLines.ts'
 
 const { deviceSelection, switching, switchDevice, loadDevices } = useDeviceSelection()
 const options = computed(() => productionGroups(deviceSelection.items).map(group => ({ type: 'group', label: group.name, key: group.id, children: group.items.map(item => ({ value: item.id, label: item.name })) })))
@@ -17,7 +17,7 @@ const options = computed(() => productionGroups(deviceSelection.items).map(group
     </label>
     <span v-else-if="deviceSelection.loading" class="device-switcher__loading" role="status"><AppIcon name="factory" :size="16" tone="current" />正在读取设备…</span>
     <div v-else-if="deviceSelection.error" class="device-switcher__error" role="alert" :title="deviceSelection.error">
-      <span>设备读取失败</span><button type="button" @click="loadDevices">重试</button>
+      <span>设备读取失败</span><button type="button" @click="loadDevices()">重试</button>
     </div>
   </section>
 </template>

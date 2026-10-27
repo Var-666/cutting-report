@@ -1,8 +1,9 @@
+import { runTypeScript } from './typescript-helpers.mjs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
-import { createActivationTimer } from '../src/utils/activationTimer.js'
+import { createActivationTimer } from '../src/utils/activationTimer.ts'
 
 const source = readFileSync(new URL('../src/components/AnalysisPanel.vue', import.meta.url), 'utf8')
 
@@ -32,7 +33,7 @@ test('visible analysis checks every five minutes, refreshes only changed data an
     },
     document: { visibilityState: 'visible' }, AbortController, console,
   })
-  vm.runInContext(source.match(/<script setup>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm, ''), context)
+  runTypeScript(source.match(/<script setup(?: lang="ts")?>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm, ''), context)
   activate()
   await new Promise(resolve => setImmediate(resolve))
   assert.equal(intervals.size, 2)
@@ -70,7 +71,7 @@ function panelFixture({ defaultView = true, read, analyze } = {}) {
     analyzeReport: (query, options) => { calls.push({ query, options }); return analyze(query, options) },
     document: { visibilityState: 'visible' }, AbortController, console,
   })
-  vm.runInContext(source.match(/<script setup>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm, '')
+  runTypeScript(source.match(/<script setup(?: lang="ts")?>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm, '')
     + '\nthis.panel = { loadAnalysis, scheduleAutomaticAnalysis, pollLatestAnalysis, reloadAnalysis, retryAnalysis, analysis, loading, readingLatest, error }', context)
   return { ...context.panel, props, reads, calls, switchDevice(id) { device = id; subscriber() } }
 }
@@ -179,7 +180,7 @@ test('same-query update and failure retain the previous result; device or range 
     analyzeReport: () => ++calls === 1 ? Promise.resolve({ overview: 'previous', generated_at: '2026-10-14T10:00:00' }) : new Promise((_, fail) => { reject = fail }),
     AbortController, console,
   })
-  vm.runInContext(source.match(/<script setup>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm, '') + '\nthis.panel = { loadAnalysis, scheduleAutomaticAnalysis, analysis, error }', context)
+  runTypeScript(source.match(/<script setup(?: lang="ts")?>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm, '') + '\nthis.panel = { loadAnalysis, scheduleAutomaticAnalysis, analysis, error }', context)
   const panel = context.panel
   await panel.loadAnalysis()
   props.dataVersion = 'v2'

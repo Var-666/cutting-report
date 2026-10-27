@@ -1,3 +1,4 @@
+import { scriptFunction } from './typescript-helpers.mjs'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
@@ -17,7 +18,7 @@ const data = { categories: ['数据库连接配置', 'AI 模型配置'], items: 
 function mount(fetcher) {
   let state
   const bindings = { computed: Vue.computed, onBeforeUnmount: Vue.onBeforeUnmount, onMounted: Vue.onMounted, ref: Vue.ref, watch: Vue.watch, getConfigurationDiagnostics: fetcher }
-  const setup = new Function(...Object.keys(bindings), `${script}\nreturn { report, loading, error, category, search, rows, visibleRows, page, pageSize, totalPages, load, display }`)
+  const setup = scriptFunction(...Object.keys(bindings), `${script}\nreturn { report, loading, error, category, search, rows, visibleRows, page, pageSize, totalPages, load, display }`)
   const renderer = Vue.createRenderer({ createComment: () => ({}), createText: () => ({}), createElement: () => ({}), insert() {}, remove() {}, setText() {}, setElementText() {}, parentNode: () => null, nextSibling: () => null, patchProp() {} })
   const app = renderer.createApp({ setup() { state = setup(...Object.values(bindings)); return () => null } })
   app.mount({})
@@ -26,9 +27,9 @@ function mount(fetcher) {
 const flush = async () => { await Promise.resolve(); await Vue.nextTick() }
 
 test('diagnostics is an admin settings child and uses the shared read-only API', () => {
-  const router = read('../src/router/index.js')
+  const router = read('../src/router/index.ts')
   assert.match(router, /path: '\/admin'[\s\S]*meta: \{ role: 'admin' \}[\s\S]*path: 'settings'[\s\S]*path: 'configuration-diagnostics'[\s\S]*ConfigurationDiagnosticsView/)
-  assert.match(read('../src/api/reports.js'), /getConfigurationDiagnostics[\s\S]*request\('\/api\/v1\/configuration\/diagnostics', \{ signal \}\)/)
+  assert.match(read('../src/api/reports.ts'), /getConfigurationDiagnostics[\s\S]*request<ConfigurationDiagnostics>\('\/api\/v1\/configuration\/diagnostics', \{ signal \}\)/)
   assert.doesNotMatch(script, /fetch\(|method:|saveConfiguration|\.snapshot\(/)
 })
 

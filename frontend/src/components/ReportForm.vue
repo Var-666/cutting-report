@@ -1,11 +1,16 @@
-<script setup>
+<script setup lang="ts">
+import type { ReportCreateRequest, ReportType } from '../types/reports'
+
+import type { PropType } from 'vue'
+import type { ReportDefinition } from '../types/reports'
+
 import { computed, reactive, watch } from 'vue'
 
 const props = defineProps({
   loading: Boolean,
-  projects: { type: Array, default: () => [] },
-  ships: { type: Array, default: () => [] },
-  customDefinitions: { type: Array, default: () => [] },
+  projects: { type: Array as PropType<string[]>, default: () => [] },
+  ships: { type: Array as PropType<string[]>, default: () => [] },
+  customDefinitions: { type: Array as PropType<ReportDefinition[]>, default: () => [] },
   initialReportType: { type: String, default: 'leadership' },
   lockedReportType: Boolean,
 })
@@ -17,7 +22,7 @@ const selectedDefinition = computed(() => {
 })
 const isMonthly = computed(() => form.report_type === 'leadership' || selectedDefinition.value?.period_type === 'month')
 const isLeadership = computed(() => form.report_type === 'leadership')
-const emit = defineEmits(['submit', 'date-change', 'project-change'])
+const emit = defineEmits<{ submit: [payload: ReportCreateRequest]; 'date-change': [date: string]; 'project-change': [query: { reportDate: string; projectCode: string }] }>()
 
 const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })
 const form = reactive({
@@ -52,7 +57,7 @@ watch(
 function submit() {
   const definition = selectedDefinition.value
   emit('submit', {
-    report_type: definition ? 'custom' : form.report_type,
+    report_type: (definition ? 'custom' : form.report_type) as ReportType,
     definition_id: definition?.definition_id || null,
     report_date: isMonthly.value ? `${form.report_month}-01` : form.report_date,
     project_code: isLeadership.value ? null : form.project_code || null,

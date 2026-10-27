@@ -1,6 +1,6 @@
 import { computed, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
-import type { RouteKey } from '@elegant-router/types';
+type RouteKey = string;
 import { useContext } from '@sa/hooks';
 import { useRouteStore } from '@/store/modules/route';
 import { useThemeStore } from '@/store/modules/theme';

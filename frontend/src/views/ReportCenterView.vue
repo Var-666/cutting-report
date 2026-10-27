@@ -1,4 +1,7 @@
-<script setup>
+<script setup lang="ts">
+import type { ReportCreateRequest, ReportDefinition, ReportJob } from '../types/reports'
+
+import { toError } from '../utils/errors'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import ReportForm from '../components/ReportForm.vue'
@@ -13,7 +16,7 @@ import {
   listReports,
   listShips,
 } from '../api/reports'
-import { mergeOwnedQuery, queryChoice, queryPositiveInteger, sameRouteQuery } from '../utils/reportRouteState.js'
+import { mergeOwnedQuery, queryChoice, queryPositiveInteger, sameRouteQuery } from '../utils/reportRouteState.ts'
 
 defineProps({
   fixedReportType: { type: String, default: '' },
@@ -23,11 +26,11 @@ defineProps({
 
 const route = useRoute()
 const router = useRouter()
-const currentJob = ref(null)
-const history = ref([])
-const projects = ref([])
-const ships = ref([])
-const customDefinitions = ref([])
+const currentJob = ref<ReportJob | null>(null)
+const history = ref<ReportJob[]>([])
+const projects = ref<string[]>([])
+const ships = ref<string[]>([])
+const customDefinitions = ref<ReportDefinition[]>([])
 const generating = ref(false)
 const loadingHistory = ref(false)
 const error = ref('')
@@ -35,10 +38,10 @@ const historyPage = ref(1)
 const historyPageSize = ref(10)
 const historyTotal = ref(0)
 const historyTotalPages = computed(() => Math.max(1, Math.ceil(historyTotal.value / historyPageSize.value)))
-let pollTimer = null
-let pollController = null
+let pollTimer: number | null = null
+let pollController: AbortController | null = null
 let pollSequence = 0
-let historyController = null
+let historyController: AbortController | null = null
 let historySequence = 0
 let pageActive = false
 let routeStateReady = false
@@ -62,7 +65,7 @@ async function syncHistoryRouteState() {
 }
 
 function stopPolling() {
-  window.clearTimeout(pollTimer)
+  window.clearTimeout(pollTimer ?? undefined)
   pollTimer = null
   pollSequence += 1
   pollController?.abort()
@@ -84,7 +87,8 @@ async function loadHistory(page = historyPage.value, force = false, { pageSize =
     historyPageSize.value = data.page_size
     historyTotal.value = data.total
     if (syncRoute) await syncHistoryRouteState()
-  } catch (exception) {
+  } catch (caught) {
+    const exception = toError(caught)
     if (exception.name !== 'AbortError' && pageActive && sequence === historySequence) {
       error.value = exception.message
     }
@@ -96,30 +100,32 @@ async function loadHistory(page = historyPage.value, force = false, { pageSize =
   }
 }
 
-function changeHistoryPage(page) {
+function changeHistoryPage(page: number) {
   const target = Math.min(Math.max(Number(page), 1), historyTotalPages.value)
   if (target !== historyPage.value) loadHistory(target, false, { syncRoute: true })
 }
 
-function changeHistoryPageSize(pageSize) {
+function changeHistoryPageSize(pageSize: string | number) {
   loadHistory(1, false, { pageSize: Number(pageSize), syncRoute: true })
 }
 
-async function loadProjects(reportDate) {
+async function loadProjects(reportDate: string) {
   if (!reportDate) return
   try {
     projects.value = (await listProjects(reportDate)).items
     ships.value = (await listShips(reportDate, '')).items
-  } catch (exception) {
+  } catch (caught) {
+    const exception = toError(caught)
     error.value = exception.message
   }
 }
 
-async function loadShips({ reportDate, projectCode }) {
+async function loadShips({ reportDate, projectCode }: { reportDate: string; projectCode: string }) {
   if (!reportDate) return
   try {
     ships.value = (await listShips(reportDate, projectCode)).items
-  } catch (exception) {
+  } catch (caught) {
+    const exception = toError(caught)
     error.value = exception.message
   }
 }
@@ -127,12 +133,13 @@ async function loadShips({ reportDate, projectCode }) {
 async function loadCustomDefinitions() {
   try {
     customDefinitions.value = (await listPublishedDefinitions()).items
-  } catch (exception) {
+  } catch (caught) {
+    const exception = toError(caught)
     error.value = exception.message
   }
 }
 
-async function generate(form) {
+async function generate(form: ReportCreateRequest) {
   stopPolling()
   error.value = ''
   generating.value = true
@@ -140,15 +147,16 @@ async function generate(form) {
     currentJob.value = await createReport(form)
     await router.replace({ query: { ...route.query, job: currentJob.value.report_id } })
     await pollStatus(currentJob.value.report_id)
-  } catch (exception) {
+  } catch (caught) {
+    const exception = toError(caught)
     error.value = exception.message
     generating.value = false
   }
 }
 
-async function pollStatus(reportId) {
+async function pollStatus(reportId: string) {
   if (!pageActive) return
-  window.clearTimeout(pollTimer)
+  window.clearTimeout(pollTimer ?? undefined)
   pollTimer = null
   pollController?.abort()
   const controller = new AbortController()
@@ -168,7 +176,8 @@ async function pollStatus(reportId) {
     if (pageActive && sequence === pollSequence) {
       pollTimer = window.setTimeout(() => pollStatus(reportId), 1000)
     }
-  } catch (exception) {
+  } catch (caught) {
+    const exception = toError(caught)
     if (exception.name !== 'AbortError' && pageActive && sequence === pollSequence) {
       error.value = exception.message
       generating.value = false

@@ -1,4 +1,7 @@
-<script setup>
+<script setup lang="ts">
+import type { User } from '../types/auth'
+
+import { toError } from '../utils/errors'
 import { nextTick, reactive, ref } from 'vue'
 import { NButton, NInput } from 'naive-ui'
 import { bootstrapAccount, loginAccount } from '../api/reports'
@@ -9,10 +12,10 @@ const props = defineProps({
   setupRequired: Boolean,
   workerDatabaseAuthEnabled: Boolean,
 })
-const emit = defineEmits(['authenticated'])
+const emit = defineEmits<{ authenticated: [user: User] }>()
 const loading = ref(false)
 const error = ref('')
-const errorElement = ref(null)
+const errorElement = ref<HTMLElement | null>(null)
 const form = reactive({ username: '', display_name: '', password: '' })
 
 async function submit() {
@@ -31,7 +34,8 @@ async function submit() {
       })
     }
     emit('authenticated', result.user)
-  } catch (exception) {
+  } catch (caught) {
+    const exception = toError(caught)
     error.value = exception.message
     await nextTick()
     errorElement.value?.focus()

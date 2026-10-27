@@ -1,3 +1,4 @@
+import { scriptFunction } from './typescript-helpers.mjs'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
@@ -12,8 +13,8 @@ function mount(getReport) {
   let state
   const theme = Vue.reactive({ darkMode: false })
   const vars = Vue.ref({ primaryColor: 'primary', successColor: 'success', warningColor: 'warning', textColor1: 'text', textColor2: 'text2', dividerColor: 'divider', borderColor: 'border', popoverColor: 'popover' })
-  const hookSource = read('../src/composables/useReportChartTheme.js').replace(/^import .*$/gm, '').replace('export function', 'function')
-  const chartThemeHook = new Function('computed', 'watch', 'useThemeVars', 'useThemeStore', `${hookSource}\nreturn useReportChartTheme`)(Vue.computed, Vue.watch, () => vars, () => theme)
+  const hookSource = read('../src/composables/useReportChartTheme.ts').replace(/^import .*$/gm, '').replace('export function', 'function')
+  const chartThemeHook = scriptFunction('computed', 'watch', 'useThemeVars', 'useThemeStore', `${hookSource}\nreturn useReportChartTheme`)(Vue.computed, Vue.watch, () => vars, () => theme)
   const charts = []
   const observers = []
   const oldObserver = globalThis.ResizeObserver
@@ -25,7 +26,7 @@ function mount(getReport) {
     useReportChartTheme: chartThemeHook,
     init: (dom, scheme) => { const chart = { scheme, options: [], setOption(option) { this.options.push(option) }, resize() {}, dispose() { this.disposed = true } }; charts.push(chart); return chart },
   }
-  const setup = new Function(...Object.keys(bindings), `${script}\nreturn { draft, applied, report, loading, error, load, query, changeGranularity, preset, number, chartElement, drawChart, series, periods }`)
+  const setup = scriptFunction(...Object.keys(bindings), `${script}\nreturn { draft, applied, report, loading, error, load, query, changeGranularity, preset, number, chartElement, drawChart, series, periods }`)
   const renderer = Vue.createRenderer({
     createComment: () => ({}), createText: () => ({}), createElement: () => ({}),
     insert: () => {}, remove: () => {}, setText: () => {}, setElementText: () => {},
@@ -42,8 +43,8 @@ const result = (marker = 1) => ({ summary: { call_count: 21, metered_count: 20 }
 const flush = async () => { await Promise.resolve(); await Vue.nextTick(); await Promise.resolve() }
 
 test('model usage remains a settings destination and uses the shared authenticated API', () => {
-  assert.match(read('../src/router/index.js'), /path: 'model-usage'[\s\S]*ModelUsageView\.vue/)
-  assert.match(read('../src/api/reports.js'), /getLlmUsageReport[\s\S]*request\(`\/api\/v1\/llm-usage\/report\?\$\{query\}`, \{ signal \}\)/)
+  assert.match(read('../src/router/index.ts'), /path: 'model-usage'[\s\S]*ModelUsageView\.vue/)
+  assert.match(read('../src/api/reports.ts'), /getLlmUsageReport[\s\S]*request<UsageReport>\(`\/api\/v1\/llm-usage\/report\?\$\{query\}`, \{ signal \}\)/)
   assert.match(source, /消耗趋势与周期汇总/)
   assert.match(source, /场景与模型分布/)
   assert.doesNotMatch(source, /逐次调用明细|report\.calls|app-pagination/)

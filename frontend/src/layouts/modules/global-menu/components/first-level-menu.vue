@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { createReusableTemplate } from '@vueuse/core';
-import type { RouteKey } from '@elegant-router/types';
+type RouteKey = string;
 import { transformColorWithOpacity } from '@sa/color';
 import { SimpleScrollbar } from '@sa/materials';
 

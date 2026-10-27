@@ -1,5 +1,5 @@
-<script setup>
-import { useAppStore } from '../state/app.js'
+<script setup lang="ts">
+import { useAppStore } from '../state/app.ts'
 const app = useAppStore()
 </script>
 

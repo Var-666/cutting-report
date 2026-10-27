@@ -6,10 +6,11 @@ declare namespace StorageType {
     // /**
     //  * the theme settings
     //  */
-    // themeSettings: App.Theme.ThemeSetting;
+    // themeSettings: Partial<App.Theme.ThemeSetting>;
   }
 
   interface Local {
+    tabs: string[];
     /** The i18n language */
     lang: App.I18n.LangType;
     /** The token */
@@ -23,7 +24,7 @@ declare namespace StorageType {
     /** The dark mode */
     darkMode: boolean;
     /** The theme settings */
-    themeSettings: App.Theme.ThemeSetting;
+    themeSettings: Partial<App.Theme.ThemeSetting>;
     /**
      * The override theme flags
      *

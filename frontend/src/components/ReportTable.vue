@@ -1,16 +1,19 @@
-<script setup>
+<script setup lang="ts">
+import type { PropType } from 'vue'
+import type { ReportJob } from '../types/reports'
+
 import { computed } from 'vue'
 import DownloadPdfButton from './DownloadPdfButton.vue'
-import { formatChineseDate, formatChineseDateTime, formatChineseMonth } from '../utils/dateDisplay.js'
+import { formatChineseDate, formatChineseDateTime, formatChineseMonth } from '../utils/dateDisplay.ts'
 
 const props = defineProps({
-  items: { type: Array, default: () => [] },
+  items: { type: Array as PropType<ReportJob[]>, default: () => [] },
   loading: Boolean,
   page: { type: Number, default: 1 },
   pageSize: { type: Number, default: 10 },
   total: { type: Number, default: 0 },
 })
-const emit = defineEmits(['page-change', 'page-size-change'])
+const emit = defineEmits<{ 'page-change': [page: number]; 'page-size-change': [size: string | number] }>()
 
 const totalPages = computed(() => Math.max(1, Math.ceil(props.total / props.pageSize)))
 
@@ -24,11 +27,11 @@ const statusText = {
   failed: '失败',
 }
 
-function display(value) {
+function display(value: unknown) {
   return value || '全部'
 }
 
-function reportPeriod(item) {
+function reportPeriod(item: ReportJob) {
   const start = item.period_start || item.report_date
   const end = item.period_end || item.report_date
   if (start && end && start !== end) return `${formatChineseDate(start)} 至 ${formatChineseDate(end)}`

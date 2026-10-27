@@ -1,4 +1,7 @@
-<script setup>
+<script setup lang="ts">
+import type { PropType } from 'vue'
+import type { WeldingAnalysis, WeldingPart, WeldingQuery, WeldingReport, WeldingReportKind, WeldingRow } from '../types/welding'
+import { toError } from '../utils/errors'
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { NCard, NModal } from 'naive-ui'
@@ -10,47 +13,48 @@ import ReportPanelState from '../components/ReportPanelState.vue'
 import ReportExportMenu from '../components/ReportExportMenu.vue'
 import WeldingCharts from '../components/WeldingCharts.vue'
 import WeldingTable from '../components/WeldingTable.vue'
-import { analyzeWelding, downloadWelding, getWeldingPart, getWeldingReport, weldingQuery } from '../api/welding.js'
-import { reportToday } from '../api/reportDates.js'
-import { queryDateRange } from '../utils/reportRouteState.js'
-import { deviceSelection } from '../state/devices.js'
-import { weldingColumns, weldingDisplay, weldingKpis, weldingTitles } from '../utils/weldingReport.js'
+import { analyzeWelding, downloadWelding, getWeldingPart, getWeldingReport, weldingQuery } from '../api/welding.ts'
+import { reportToday } from '../api/reportDates.ts'
+import { queryDateRange } from '../utils/reportRouteState.ts'
+import { deviceSelection } from '../state/devices.ts'
+import { weldingColumns, weldingDisplay, weldingKpis, weldingTitles } from '../utils/weldingReport.ts'
 
-const props = defineProps({ kind: { type: String, required: true } })
+const props = defineProps({ kind: { type: String as PropType<WeldingReportKind>, required: true } })
 const route = useRoute()
 const router = useRouter()
 const today = reportToday()
 const weekStart = new Date(Date.parse(`${today}T00:00:00Z`) - 6 * 86400000).toISOString().slice(0, 10)
 const initialRange = props.kind === 'dashboard' ? null : queryDateRange(route.query)
 const draft = reactive({ start: initialRange?.start || (props.kind === 'dashboard' ? weekStart : today), end: initialRange?.end || today, device_no: '', robot_no: '', weld_type: '', state: '', serial_number: typeof route.query.serial_number === 'string' ? route.query.serial_number : '', project_no: '', section_no: '', part_no: '', anomalies_only: false, sort_by: 'time', descending: true })
-const report = ref(null)
-const activeQuery = ref(null)
+const report = ref<WeldingReport | null>(null)
+const activeQuery = ref<WeldingQuery | null>(null)
 const loading = ref(false)
 const error = ref('')
 const actionError = ref('')
 const actionNotice = ref('')
 const exporting = ref(false)
 const analyzing = ref(false)
-const analysis = ref(null)
+const analysis = ref<WeldingAnalysis | null>(null)
 const detailOpen = ref(false)
-const details = ref(null)
-const detailJob = ref(null)
+const details = ref<WeldingPart | null>(null)
+const detailJob = ref<WeldingRow | null>(null)
 const detailLoading = ref(false)
 const detailError = ref('')
 const seamPage = ref(1)
 const sourceEnabled = computed(() => deviceSelection.items?.find(item => item.id === 'welding')?.enabled !== false)
-let controller, detailController, exportController, analysisController
+let controller: AbortController | undefined, detailController: AbortController | undefined, exportController: AbortController | undefined, analysisController: AbortController | undefined
 let generation = 0
 let detailGeneration = 0
-let pendingRead
+let pendingRead: { key: string; promise: Promise<void> } | null | undefined
 const reportKind = computed(() => props.kind === 'dashboard' ? 'jobs' : props.kind)
 const cards = computed(() => weldingKpis(props.kind, report.value))
 const title = computed(() => weldingTitles[props.kind])
-const sourceUpdated = computed(() => Object.entries(report.value?.meta?.data_updated_at || {}).map(([key, value]) => `${({ weld_info_table: '作业', weld_part_info_table: '工件', welding_seam_info_table: '焊缝' })[key]}：${value || '未记录'}`).join('；'))
+const sourceLabels: Record<string, string> = { weld_info_table: '作业', weld_part_info_table: '工件', welding_seam_info_table: '焊缝' }
+const sourceUpdated = computed(() => Object.entries(report.value?.meta?.data_updated_at || {}).map(([key, value]) => `${sourceLabels[key]}：${value || '未记录'}`).join('；'))
 const qualityLabels = { invalid_time_rows: '区间候选记录中结束时间无效', invalid_serial_rows: '流水号无效', invalid_length_rows: '长度为空或非正', invalid_duration_rows: '用时为空或非正', unverified_state_rows: '状态含义待确认' }
-const analysisSections = [['overview', '生产概况'], ['features', '产出特点'], ['alerts', '数据关注点'], ['suggestions', '核查建议']]
+const analysisSections = [['overview', '生产概况'], ['features', '产出特点'], ['alerts', '数据关注点'], ['suggestions', '核查建议']] as const
 
-function read(values) {
+function read(values: WeldingQuery) {
   const key = JSON.stringify([props.kind, Object.entries(weldingQuery(values)).sort(([a], [b]) => a.localeCompare(b))])
   if (pendingRead?.key === key && !controller?.signal.aborted) return pendingRead.promise
   const promise = load(values)
@@ -58,7 +62,7 @@ function read(values) {
   promise.finally(() => { if (pendingRead?.promise === promise) pendingRead = null })
   return promise
 }
-async function load(values) {
+async function load(values: WeldingQuery) {
   controller?.abort()
   analysisController?.abort()
   const run = ++generation
@@ -77,25 +81,27 @@ async function load(values) {
     if (run !== generation || deviceSelection.id !== 'welding') return
     report.value = value
     activeQuery.value = value.query
-  } catch (exception) {
+  } catch (caught) {
+    const exception = toError(caught)
     if (run === generation && exception.name !== 'AbortError') error.value = exception.message
   } finally {
     if (run === generation) loading.value = false
   }
 }
 function submit() { read({ ...draft, page: 1, page_size: activeQuery.value?.page_size || 20 }) }
-function changePage(page) { read({ ...activeQuery.value, page }) }
-function changePageSize(page_size) { read({ ...activeQuery.value, page: 1, page_size }) }
+function changePage(page: number) { read({ ...activeQuery.value, page }) }
+function changePageSize(page_size: number) { read({ ...activeQuery.value, page: 1, page_size }) }
 function goToPart() {
+  if (!detailJob.value || !activeQuery.value) return
   router.push({ name: 'welding-parts', query: { serial_number: detailJob.value.serial_number, start: activeQuery.value.start, end: activeQuery.value.end } })
   detailOpen.value = false
 }
-async function copy(value) {
+async function copy(value: string | null | undefined) {
   if (!value) return
   try { await navigator.clipboard.writeText(value); actionNotice.value = '流水号已复制' }
   catch { actionError.value = '复制失败，请选择流水号后手动复制' }
 }
-async function openDetail(row, page = 1) {
+async function openDetail(row: WeldingRow, page = 1) {
   detailController?.abort()
   const run = ++detailGeneration
   detailController = new AbortController()
@@ -109,19 +115,22 @@ async function openDetail(row, page = 1) {
   try {
     const value = await getWeldingPart(row.id, page, detailController.signal)
     if (run === detailGeneration) details.value = value
-  } catch (exception) {
+  } catch (caught) {
+    const exception = toError(caught)
     if (run === detailGeneration && exception.name !== 'AbortError') detailError.value = exception.message
   } finally { if (run === detailGeneration) detailLoading.value = false }
 }
-async function exportReport(format) {
+async function exportReport(format: string) {
   if (!activeQuery.value || exporting.value) return
   exportController = new AbortController()
   exporting.value = true
   actionError.value = ''
   try {
-    const query = new URLSearchParams({ ...weldingQuery(activeQuery.value), report_type: reportKind.value, format })
+    const query = new URLSearchParams(Object.entries({ ...weldingQuery(activeQuery.value), report_type: reportKind.value, format }).map(([key, value]) => [key, String(value)]))
     await downloadWelding(`/api/v1/welding/export?${query}`, `小组立焊接线-${title.value}-${activeQuery.value.start}-${activeQuery.value.end}.${format}`, exportController.signal)
-  } catch (exception) { if (exception.name !== 'AbortError') actionError.value = exception.message }
+  } catch (caught) {
+    const exception = toError(caught)
+    if (exception.name !== 'AbortError') actionError.value = exception.message }
   finally { exporting.value = false }
 }
 async function exportSeams() {
@@ -129,11 +138,13 @@ async function exportSeams() {
   exportController = new AbortController()
   exporting.value = true
   try { await downloadWelding(`/api/v1/welding/parts/${details.value.part.id}/seams/export`, `工件-${details.value.part.id}-焊缝.csv`, exportController.signal) }
-  catch (exception) { if (exception.name !== 'AbortError') detailError.value = exception.message }
+  catch (caught) {
+    const exception = toError(caught)
+    if (exception.name !== 'AbortError') detailError.value = exception.message }
   finally { exporting.value = false }
 }
 async function runAnalysis() {
-  if (!report.value || analyzing.value) return
+  if (!report.value || !activeQuery.value || analyzing.value) return
   analysisController = new AbortController()
   analyzing.value = true
   actionError.value = ''
@@ -141,7 +152,9 @@ async function runAnalysis() {
   try {
     const result = await analyzeWelding(reportKind.value, activeQuery.value, version, analysisController.signal)
     if (report.value?.data_version === version) analysis.value = result
-  } catch (exception) { if (exception.name !== 'AbortError') actionError.value = exception.message }
+  } catch (caught) {
+    const exception = toError(caught)
+    if (exception.name !== 'AbortError') actionError.value = exception.message }
   finally { analyzing.value = false }
 }
 function cancel() {
@@ -178,7 +191,7 @@ onBeforeUnmount(cancel)
     <ReportFeedback v-if="actionError" type="error" title="操作未完成" :message="actionError" dismissible @dismiss="actionError = ''" />
     <ReportFeedback v-if="actionNotice" title="操作完成" :message="actionNotice" dismissible @dismiss="actionNotice = ''" />
     <div v-if="sourceEnabled" class="welding-kpis"><NCard v-for="card in cards" :key="card.key" :bordered="false"><HomeKpiCard :title="card.title" :value="card.value" :unit="card.unit" :precision="card.unit === 'm' || card.unit === 'h' || card.unit === 'm/h' ? 2 : 0" :loading="loading" :status="card.pending ? '口径待核实' : ''" :series="report?.daily?.map(row => row[card.key] ?? 0) || []" /></NCard></div>
-    <template v-if="report">
+    <template v-if="report && activeQuery">
       <div class="welding-freshness"><strong>源库最新更新时间</strong><span>{{ sourceUpdated }}</span><span>本次计算：{{ report.meta.calculated_at }}</span></div>
       <ReportFeedback v-if="!report.summary.job_count" title="当前区间暂无可归属的作业记录" message="可调整日期或设备后重新查询；无效时间候选记录见数据核查说明。" />
       <WeldingCharts v-else :kind="kind" :report="report" />

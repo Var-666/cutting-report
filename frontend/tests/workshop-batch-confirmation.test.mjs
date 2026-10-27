@@ -2,9 +2,9 @@ import assert from 'node:assert/strict'
 import { afterEach, beforeEach, test } from 'node:test'
 import { readFileSync } from 'node:fs'
 import { parse } from '@vue/compiler-sfc'
-import { confirmWorkshopTasks } from '../src/api/reports.js'
+import { confirmWorkshopTasks } from '../src/api/reports.ts'
 
-import { setDeviceCatalog, resetDeviceContext } from '../src/api/deviceContext.js'
+import { setDeviceCatalog, resetDeviceContext } from '../src/api/deviceContext.ts'
 
 beforeEach(() => setDeviceCatalog({ default_device_id: 'Cutter01', items: [{ id: 'Cutter01' }] }))
 const originalFetch = globalThis.fetch
@@ -43,10 +43,10 @@ test('worker task table exposes multi-select and reviews tasks before confirmati
   const script = descriptor.scriptSetup.content
   const template = descriptor.template.content
 
-  assert.match(script, /const selectedTasks = ref\(new Map\(\)\)/)
+  assert.match(script, /const selectedTasks = ref\(new Map<string, WorkshopTask>\(\)\)/)
   assert.match(script, /async function submitBatchConfirmation/)
   assert.match(script, /const confirmationResult = await confirmWorkshopTasks\(tasks\.map\(\(row\) => row\.task_id\)/)
-  assert.match(script, /function applyConfirmedTasks\(confirmations = \[\]\)/)
+  assert.match(script, /function applyConfirmedTasks\(confirmations: TaskConfirmation\[\] = \[\]\)/)
   assert.match(script, /confirmed_by_id: confirmation\.worker_id/)
   assert.match(script, /confirmed_by: confirmation\.worker_name/)
   assert.match(script, /confirmed_at: confirmation\.confirmed_at/)

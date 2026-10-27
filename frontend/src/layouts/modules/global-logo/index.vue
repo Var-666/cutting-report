@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 import { RouterLink } from 'vue-router'
 import projectLogo from '../../../assets/project-logo.png'
 defineProps({ showTitle: { type: Boolean, default: true } })

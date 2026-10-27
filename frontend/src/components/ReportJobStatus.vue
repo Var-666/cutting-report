@@ -1,6 +1,9 @@
-<script setup>
+<script setup lang="ts">
+import type { PropType } from 'vue'
+import type { ReportJob } from '../types/reports'
+
 import DownloadPdfButton from './DownloadPdfButton.vue'
-defineProps({ job: { type: Object, default: null } })
+defineProps({ job: { type: Object as PropType<ReportJob | null>, default: null } })
 
 const steps = [
   ['querying', '查询数据'],
@@ -8,11 +11,11 @@ const steps = [
   ['analyzing', '智能分析'],
   ['rendering', '生成报告'],
 ]
-const rank = { pending: 0, querying: 1, calculating: 2, analyzing: 3, rendering: 4, completed: 5, failed: -1 }
+const rank: Record<string, number> = { pending: 0, querying: 1, calculating: 2, analyzing: 3, rendering: 4, completed: 5, failed: -1 }
 const reportTypeText = { leadership: '领导报表', workshop: '车间报表', equipment: '设备报表', custom: '自定义报表' }
-const aiStatusText = { success: '已生成', unavailable: '暂不可用', skipped: '未启用' }
+const aiStatusText: Record<string, string> = { success: '已生成', unavailable: '暂不可用', skipped: '未启用' }
 
-function stepClass(status, stepStatus) {
+function stepClass(status: string, stepStatus: string) {
   if (status === 'failed') return ''
   const current = rank[status] || 0
   const step = rank[stepStatus]
@@ -38,10 +41,10 @@ function stepClass(status, stepStatus) {
     </div>
     <p v-if="job.error" class="error-message">{{ job.error.message }}</p>
     <div v-if="job.status === 'completed'" class="result-actions">
-      <a class="button primary" :href="job.view_url" target="_blank" rel="noopener">打开报告</a>
-      <a class="button" :href="job.download_url">下载 HTML</a>
+      <a class="button primary" :href="job.view_url || undefined" target="_blank" rel="noopener">打开报告</a>
+      <a class="button" :href="job.download_url || undefined">下载 HTML</a>
       <DownloadPdfButton :report-id="job.report_id" />
-      <span>{{ job.task_count }} 个任务 · AI {{ aiStatusText[job.ai_status] || job.ai_status || '--' }}</span>
+      <span>{{ job.task_count }} 个任务 · AI {{ aiStatusText[job.ai_status || ''] || job.ai_status || '--' }}</span>
     </div>
   </section>
 </template>

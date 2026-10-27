@@ -1,14 +1,15 @@
+import { scriptFunction } from './typescript-helpers.mjs'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
-import { compactAnalysisFactLabel, compactAnalysisFactValue } from '../src/utils/analysisFactDisplay.js'
-import { formatDeviceDisplay } from '../src/utils/deviceDisplay.js'
+import { compactAnalysisFactLabel, compactAnalysisFactValue } from '../src/utils/analysisFactDisplay.ts'
+import { formatDeviceDisplay } from '../src/utils/deviceDisplay.ts'
 
 const source = readFileSync(new URL('../src/components/AnalysisPanel.vue', import.meta.url), 'utf8')
 
 test('report model text uses the same device alias without changing numeric formatting or evidence', () => {
   const formatter = source.slice(source.indexOf('function formatAnalysisText('), source.indexOf('function plainAnalysisText('))
-  const format = new Function('formatDeviceDisplay', `${formatter}; return formatAnalysisText`)(formatDeviceDisplay)
+  const format = scriptFunction('formatDeviceDisplay', `${formatter}; return formatAnalysisText`)(formatDeviceDisplay)
   assert.equal(format('Cutter01电耗 1,234.567 kWh [F001]'), '20KW切割机电耗 1,234.6 kWh [F001]')
   assert.equal(format('Cutter02电耗 12.345 kWh'), '30KW切割机电耗 12.3 kWh')
 })
@@ -35,7 +36,7 @@ test('model-only analysis hides reference codes but keeps evidence available', (
 })
 
 test('analysis checks for newer report data and asks the current report to sync automatically', () => {
-  const api = readFileSync(new URL('../src/api/reports.js', import.meta.url), 'utf8')
+  const api = readFileSync(new URL('../src/api/reports.ts', import.meta.url), 'utf8')
   assert.match(api, /error\.status = response\.status/)
   assert.match(api, /export function getAnalysisVersion[\s\S]*\/api\/v1\/analysis\/version/)
   assert.match(source, /SOURCE_CHECK_INTERVAL_MS = 300_000/)

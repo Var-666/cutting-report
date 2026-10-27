@@ -1,16 +1,21 @@
-<script setup>
+<script setup lang="ts">
+import type { PropType } from 'vue'
+import type { EmailDelivery, EmailResolution, RecipientOutcome } from '../types/automation'
+
+import { toError } from '../utils/errors'
+
 import { computed, onActivated, onDeactivated, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { listEmailDeliveryResolutions, resolveEmailDelivery } from '../api/reports'
-import { formatChineseDateTime } from '../utils/dateDisplay.js'
+import { formatChineseDateTime } from '../utils/dateDisplay.ts'
 
-const props = defineProps({ delivery: { type: Object, required: true } })
-const emit = defineEmits(['resolved', 'close', 'dirty'])
-const outcomes = reactive({})
+const props = defineProps({ delivery: { type: Object as PropType<EmailDelivery>, required: true } })
+const emit = defineEmits<{ resolved: []; close: []; dirty: [value: boolean] }>()
+const outcomes = reactive<Record<string, RecipientOutcome>>({})
 const evidence = ref('')
 const saving = ref(false)
 const resolved = ref(false)
 const error = ref('')
-const audits = ref([])
+const audits = ref<EmailResolution[]>([])
 const auditLoading = ref(false)
 const auditError = ref('')
 const pendingRecipients = computed(() => props.delivery.recipients.filter(
@@ -23,7 +28,7 @@ const canSubmit = computed(() => props.delivery.status === 'unknown' && props.de
 watch(dirty, (value) => emit('dirty', value))
 let active = true
 let mounted = true
-let auditController
+let auditController: AbortController | undefined
 let auditGeneration = 0
 
 async function loadAudit() {
@@ -35,7 +40,8 @@ async function loadAudit() {
   try {
     const response = await listEmailDeliveryResolutions(props.delivery.delivery_id, { signal: auditController.signal })
     if (active && generation === auditGeneration) audits.value = response.items || []
-  } catch (exception) {
+  } catch (caught) {
+    const exception = toError(caught)
     if (active && generation === auditGeneration && exception.name !== 'AbortError') auditError.value = exception.message
   } finally {
     if (active && generation === auditGeneration) auditLoading.value = false
@@ -59,7 +65,8 @@ async function submit() {
       emit('resolved')
       await loadAudit()
     }
-  } catch (exception) {
+  } catch (caught) {
+    const exception = toError(caught)
     if (mounted) error.value = exception.message
   } finally {
     saving.value = false
@@ -71,8 +78,9 @@ function close() {
   if (!resolved.value && dirty.value && !window.confirm('核对内容尚未保存，确定关闭吗？')) return
   emit('close')
 }
-function outcomeText(status) {
-  return { accepted: '服务器已接收', not_accepted: '服务器未接收', unknown: '结果待核对', refused: '服务器拒收' }[status] || status
+function outcomeText(status: string) {
+  const labels: Record<string, string> = { accepted: '服务器已接收', not_accepted: '服务器未接收', unknown: '结果待核对', refused: '服务器拒收' }
+  return labels[status] || status
 }
 onMounted(loadAudit)
 onDeactivated(() => { active = false; auditController?.abort() })

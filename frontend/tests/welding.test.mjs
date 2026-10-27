@@ -1,14 +1,15 @@
+import { scriptFunction } from './typescript-helpers.mjs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { computed, reactive, ref } from 'vue'
 import { parse, compileScript, compileTemplate } from '@vue/compiler-sfc'
-import { productionGroups, selectedLineType } from '../src/utils/productionLines.js'
-import { adminMenus } from '../src/router/menus.js'
-import { analyzeWelding, downloadWelding, getWeldingPart, getWeldingReport, weldingQuery } from '../src/api/welding.js'
-import { weldingColumns, weldingDisplay, weldingKpis, weldingTitles } from '../src/utils/weldingReport.js'
-import { weldingRoutes } from '../src/router/weldingRoutes.js'
-import { queryDateRange } from '../src/utils/reportRouteState.js'
+import { productionGroups, selectedLineType } from '../src/utils/productionLines.ts'
+import { adminMenus } from '../src/router/menus.ts'
+import { analyzeWelding, downloadWelding, getWeldingPart, getWeldingReport, weldingQuery } from '../src/api/welding.ts'
+import { weldingColumns, weldingDisplay, weldingKpis, weldingTitles } from '../src/utils/weldingReport.ts'
+import { weldingRoutes } from '../src/router/weldingRoutes.ts'
+import { queryDateRange } from '../src/utils/reportRouteState.ts'
 
 const source = path => readFileSync(new URL(`../src/${path}`, import.meta.url), 'utf8')
 
@@ -21,14 +22,14 @@ test('device types contain independent welding lines without adding a third navi
 })
 
 test('cross-line switching enters the correct home and restores selection if navigation is cancelled', async () => {
-  const script = source('composables/useDeviceSelection.js').replace(/^import .*$/gm, '').replace('export function', 'function')
+  const script = source('composables/useDeviceSelection.ts').replace(/^import .*$/gm, '').replace('export function', 'function')
   const selection = { id: 'Cutter01' }
   const destinations = []
   let cancel = false
   const router = { replace: async to => { destinations.push(to); return cancel ? { type: 4 } : undefined } }
   const bindings = { ref, onMounted() {}, useRoute: () => ({ name: 'admin-home', query: {} }), useRouter: () => router,
     deviceSwitchQuery: () => null, changeDevice: id => { selection.id = id }, deviceSelection: selection, loadDevices() {} }
-  const app = new Function(...Object.keys(bindings), `${script}; return useDeviceSelection();`)(...Object.values(bindings))
+  const app = scriptFunction(...Object.keys(bindings), `${script}; return useDeviceSelection();`)(...Object.values(bindings))
   await app.switchDevice('welding')
   assert.equal(selection.id, 'welding')
   assert.equal(destinations.at(-1), '/admin/welding/home')
@@ -83,7 +84,7 @@ function view(readReport, options = {}) {
     reportToday: () => '2026-10-26', getWeldingReport: readReport,
     deviceSelection: { id: 'welding', items: [{ id: 'welding', enabled: options.enabled ?? true }] }, weldingTitles, weldingKpis, weldingColumns, weldingDisplay, weldingQuery,
   }
-  return { ...new Function(...Object.keys(bindings), `${script}; return { read, submit, changePage, changePageSize, report, loading, error, activeQuery, draft, detailJob, goToPart };`)(...Object.values(bindings)), cleanup }
+  return { ...scriptFunction(...Object.keys(bindings), `${script}; return { read, submit, changePage, changePageSize, report, loading, error, activeQuery, draft, detailJob, goToPart };`)(...Object.values(bindings)), cleanup }
 }
 
 const busyResponse = (retryAfter = '1') => Response.json({ detail: '焊接数据查询请求繁忙，请稍后重试。' }, { status: 503, headers: { 'Retry-After': retryAfter } })

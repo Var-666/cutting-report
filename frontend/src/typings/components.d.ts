@@ -1,0 +1,33 @@
+import 'vue'
+declare module 'vue' {
+  interface GlobalComponents {
+    NBadge: typeof import('naive-ui')['NBadge']
+    NButton: typeof import('naive-ui')['NButton']
+    NCheckbox: typeof import('naive-ui')['NCheckbox']
+    NColorPicker: typeof import('naive-ui')['NColorPicker']
+    NDivider: typeof import('naive-ui')['NDivider']
+    NDrawer: typeof import('naive-ui')['NDrawer']
+    NDrawerContent: typeof import('naive-ui')['NDrawerContent']
+    NInput: typeof import('naive-ui')['NInput']
+    NInputNumber: typeof import('naive-ui')['NInputNumber']
+    NMenu: typeof import('naive-ui')['NMenu']
+    NSelect: typeof import('naive-ui')['NSelect']
+    NSwitch: typeof import('naive-ui')['NSwitch']
+    NTab: typeof import('naive-ui')['NTab']
+    NTabs: typeof import('naive-ui')['NTabs']
+    NTooltip: typeof import('naive-ui')['NTooltip']
+    NModal: typeof import('naive-ui')['NModal']
+    NEmpty: typeof import('naive-ui')['NEmpty']
+    NInputGroup: typeof import('naive-ui')['NInputGroup']
+    NScrollbar: typeof import('naive-ui')['NScrollbar']
+    NDropdown: typeof import('naive-ui')['NDropdown']
+    AppSelect: typeof import('../components/AppSelect.vue')['default']
+    AppDatePicker: typeof import('../components/AppDatePicker.vue')['default']
+    SvgIcon: typeof import('../components/custom/svg-icon.vue')['default']
+    IconTooltip: typeof import('../components/common/icon-tooltip.vue')['default']
+    DarkModeContainer: typeof import('../components/common/dark-mode-container.vue')['default']
+    ButtonIcon: typeof import('../components/custom/button-icon.vue')['default']
+    MenuToggler: typeof import('../components/common/menu-toggler.vue')['default']
+    PinToggler: typeof import('../components/common/pin-toggler.vue')['default']
+  }
+}

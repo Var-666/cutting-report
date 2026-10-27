@@ -1,3 +1,4 @@
+import { scriptFunction } from './typescript-helpers.mjs'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { readFileSync, readdirSync } from 'node:fs'
@@ -9,18 +10,18 @@ import { createPinia, defineStore, setActivePinia } from 'pinia'
 import { NConfigProvider, darkTheme, useThemeVars } from 'naive-ui'
 import { renderToString } from '@vue/server-renderer'
 import { defu } from 'defu'
-import { resetSetupStore } from '../src/store/plugins/index.js'
+import { resetSetupStore } from '../src/store/plugins/index.ts'
 
 const src = path => readFileSync(new URL(`../src/${path}`, import.meta.url), 'utf8')
 function nativeModule(path, bindings, names) {
   const source = src(path).replace(/^import[\s\S]*?from ['"][^'"]+['"];?\s*$/gm, '').replace(/\bexport /g, '')
   const code = transformSync(source, { loader: 'ts', define: { 'import.meta.env.PROD': 'true', BUILD_TIME: '"test-build"' } }).code
   const entries = Object.entries(bindings).filter(([key]) => /^[\w$]+$/.test(key))
-  return new Function(...entries.map(([key]) => key), `${code}\nreturn { ${names} }`)(...entries.map(([, value]) => value))
+  return scriptFunction(...entries.map(([key]) => key), `${code}\nreturn { ${names} }`)(...entries.map(([, value]) => value))
 }
 const colorsBundle = buildSync({ entryPoints: [fileURLToPath(new URL('../src/vendor/soybean-admin/packages/color/index.ts', import.meta.url))], bundle: true, write: false, format: 'cjs', platform: 'node' }).outputFiles[0].text
 const colorModule = { exports: {} }
-new Function('module', 'exports', colorsBundle)(colorModule, colorModule.exports)
+scriptFunction('module', 'exports', colorsBundle)(colorModule, colorModule.exports)
 const colors = colorModule.exports
 const { themeSettings } = nativeModule('theme/settings.ts', {}, 'themeSettings')
 const { themeVars } = nativeModule('theme/vars.ts', {}, 'themeVars')
@@ -69,7 +70,7 @@ test('official drawer, application defaults, presets and token helpers match the
 })
 
 test('all Naive components required by the native drawer and companion modules are registered', () => {
-  const registry = src('vendor/soybean-admin/components.js')
+  const registry = src('vendor/soybean-admin/components.ts')
   function check(folder) {
     for (const item of readdirSync(new URL(`../src/${folder}`, import.meta.url), { withFileTypes: true })) {
       if (item.isDirectory()) check(`${folder}/${item.name}`)

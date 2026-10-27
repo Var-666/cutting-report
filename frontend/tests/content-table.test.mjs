@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { readFileSync, readdirSync } from 'node:fs'
-import { contentFit, contentTable, contentWidthUnits, distributeColumnWidths } from '../src/directives/contentTable.js'
+import { contentFit, contentTable, contentWidthUnits, distributeColumnWidths } from '../src/directives/contentTable.ts'
 
 test('short numbers, empty fields and timestamps shrink to their content, not fixed proportions', () => {
   assert.equal(contentFit('序号', ['1', '100']), 'compact')

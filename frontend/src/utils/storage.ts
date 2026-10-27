@@ -52,8 +52,8 @@ export function createStorage<T extends object>(type: StorageType, storagePrefix
 
 
 const storagePrefix = "cutting:";
-export const localStg = createStorage<any>("local", storagePrefix);
-export const sessionStg = createStorage<any>("session", storagePrefix);
+export const localStg = createStorage<StorageType.Local>("local", storagePrefix);
+export const sessionStg = createStorage<StorageType.Session>("session", storagePrefix);
 
 // Preserve the theme selected before the official store was installed.
 if (!localStg.get('themeSettings')) {

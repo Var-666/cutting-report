@@ -1,12 +1,15 @@
-<script setup>
+<script setup lang="ts">
+import type { PropType } from 'vue'
+import type { CuttingCatalog } from '../types/cutting'
+
 defineOptions({ name: 'CatalogTreeNode' })
 
 const props = defineProps({
-  node: { type: Object, required: true },
+  node: { type: Object as PropType<CuttingCatalog>, required: true },
   selectedId: { type: String, default: '' },
-  expandedIds: { type: Object, required: true },
+  expandedIds: { type: Object as PropType<Set<string>>, required: true },
 })
-const emit = defineEmits(['select', 'toggle'])
+const emit = defineEmits<{ select: [node: CuttingCatalog]; toggle: [node: CuttingCatalog] }>()
 
 const hasChildren = () => Boolean(props.node.children?.length)
 </script>

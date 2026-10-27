@@ -1,13 +1,13 @@
-<script setup>
+<script setup lang="ts">
 import { RouterView } from 'vue-router'
 import { NConfigProvider, NMessageProvider, darkTheme, zhCN, dateZhCN, enUS, dateEnUS, useMessage, useThemeVars } from 'naive-ui'
 import { computed, defineComponent, nextTick, onBeforeUnmount, watch, watchEffect } from 'vue'
 import { loadSession, session } from './state/session'
-import { useAppStore } from './state/app.js'
+import { useAppStore } from './state/app.ts'
 import { useThemeStore } from './store/modules/theme'
 import { getLocale } from './locales'
 import { localStg } from './utils/storage'
-import { reportThemeVariables } from './theme/reportVariables.js'
+import { reportThemeVariables } from './theme/reportVariables.ts'
 
 const app = useAppStore()
 const theme = useThemeStore()

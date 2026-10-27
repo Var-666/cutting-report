@@ -1,13 +1,14 @@
+import { scriptFunction } from './typescript-helpers.mjs'
 import assert from 'node:assert/strict'
 import { afterEach, test } from 'node:test'
 import { readFileSync } from 'node:fs'
 import { nextTick, ref, watch } from 'vue'
-import { startReportPreload, stopReportPreload, reportPreload } from '../src/state/reportPreload.js'
-import { recentTwelveMonthStart, reportToday } from '../src/api/reportDates.js'
-import * as api from '../src/api/reports.js'
-import { session, loadSession, completeAuthentication, endSession } from '../src/state/session.js'
-import { resetDeviceContext, setDeviceCatalog, selectDevice, getDeviceId } from '../src/api/deviceContext.js'
-import { deviceSelection } from '../src/state/devices.js'
+import { startReportPreload, stopReportPreload, reportPreload } from '../src/state/reportPreload.ts'
+import { recentTwelveMonthStart, reportToday } from '../src/api/reportDates.ts'
+import * as api from '../src/api/reports.ts'
+import { session, loadSession, completeAuthentication, endSession } from '../src/state/session.ts'
+import { resetDeviceContext, setDeviceCatalog, selectDevice, getDeviceId } from '../src/api/deviceContext.ts'
+import { deviceSelection } from '../src/state/devices.ts'
 
 const originalFetch = globalThis.fetch
 const admin = { user_id: 'admin-1', role: 'admin' }
@@ -44,7 +45,7 @@ test('worker load syncs a nonempty snapshot while background polling remains rea
     generateWorkshopDailyReport: async (_date, options) => { calls.push(['sync', options]); return rows(2) },
     reconcileVisibleTaskSelection: () => {},
   }
-  const load = new Function(...Object.keys(bindings), `${loadSource}; return load`)(...Object.values(bindings))
+  const load = scriptFunction(...Object.keys(bindings), `${loadSource}; return load`)(...Object.values(bindings))
   await load()
   assert.deepEqual(calls.map(([kind]) => kind), ['read', 'sync', 'read'])
   assert.equal(calls[1][1].signal, signal)

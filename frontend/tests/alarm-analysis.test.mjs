@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { formatDeviceDisplay } from '../src/utils/deviceDisplay.js'
+import { formatDeviceDisplay } from '../src/utils/deviceDisplay.ts'
 import {
   alarmConfidencePercent,
   latestModelAlarmReport,
-} from '../src/utils/alarmAnalysis.js'
+} from '../src/utils/alarmAnalysis.ts'
 
 function report(overrides = {}) {
   return {

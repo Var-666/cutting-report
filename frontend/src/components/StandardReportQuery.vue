@@ -1,4 +1,8 @@
-<script setup>
+<script setup lang="ts">
+import type { ExportFormat } from '../types/api'
+
+import type { PropType } from 'vue'
+
 import { computed } from 'vue'
 import { NButton } from 'naive-ui'
 import AppIcon from './AppIcon.vue'
@@ -12,7 +16,7 @@ const props = defineProps({
   maxDays: { type: Number, default: 366 },
   chartType: { type: String, required: true },
   chartOptions: {
-    type: Array,
+    type: Array as PropType<{ value: string; label: string }[]>,
     default: () => [
       { value: 'bar_line', label: '柱线组合' },
       { value: 'bar', label: '柱状图' },
@@ -28,14 +32,7 @@ const props = defineProps({
   ariaLabel: { type: String, default: '报表查询条件' },
 })
 
-const emit = defineEmits([
-  'update:startDate',
-  'update:endDate',
-  'update:chartType',
-  'submit',
-  'export',
-  'validation-error',
-])
+const emit = defineEmits<{ 'update:startDate': [date: string]; 'update:endDate': [date: string]; 'update:chartType': [chart: string]; submit: []; export: [format: ExportFormat]; 'validation-error': [message: string] }>()
 
 const startDateModel = computed({
   get: () => props.startDate,
@@ -80,7 +77,7 @@ const chartTypeModel = computed({
         class="standard-report-query__export"
         :disabled="exportDisabled"
         :loading="exporting"
-        @select="emit('export', $event)"
+        @select="emit('export', $event as ExportFormat)"
       />
     </form>
   </section>

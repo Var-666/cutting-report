@@ -1,4 +1,4 @@
-const local: App.I18n.Schema = {
+const local: Pick<App.I18n.Schema, 'system' | 'common' | 'request' | 'theme' | 'icon'> = {
   system: {
     title: 'SoybeanAdmin',
     updateTitle: 'System Version Update Notification',

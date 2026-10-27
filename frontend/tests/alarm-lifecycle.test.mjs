@@ -1,3 +1,4 @@
+import { scriptFunction } from './typescript-helpers.mjs'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
@@ -5,9 +6,9 @@ import * as Vue from 'vue'
 import { parse } from '@vue/compiler-sfc'
 import { compile } from '@vue/compiler-dom'
 import { renderToString } from '@vue/server-renderer'
-import { alarmConfidencePercent, latestModelAlarmReport } from '../src/utils/alarmAnalysis.js'
-import { formatChineseDateTime } from '../src/utils/dateDisplay.js'
-import { formatDeviceDisplay } from '../src/utils/deviceDisplay.js'
+import { alarmConfidencePercent, latestModelAlarmReport } from '../src/utils/alarmAnalysis.ts'
+import { formatChineseDateTime } from '../src/utils/dateDisplay.ts'
+import { formatDeviceDisplay } from '../src/utils/deviceDisplay.ts'
 
 const source = readFileSync(new URL('../src/views/AlarmCenterView.vue', import.meta.url), 'utf8')
 const script = parse(source).descriptor.scriptSetup.content.replace(/^import .*$/gm, '')
@@ -28,8 +29,8 @@ test('alarm page uses the device alias in every displayed section while preservi
   const originalReport = structuredClone(report)
   const bindings = { ...Vue, heroImage: '', AppIcon: { render: () => null }, alarmConfidencePercent, latestModelAlarmReport, formatChineseDateTime, formatDeviceDisplay, incident, report }
   const names = [...script.matchAll(/^(?:const|let|(?:async )?function) (\w+)/gm)].map((match) => match[1])
-  const setup = new Function(...Object.keys(bindings), `${script}\nstatus.value = { machine_nos: ['Cutter01'] }; incidents.value = [incident]; reports.value = [report]; reportItems.value = [report]; return { ${names.join(',')}, heroImage, AppIcon, alarmConfidencePercent, formatDeviceDisplay };`)
-  const render = new Function('Vue', compile(parse(source).descriptor.template.content, { prefixIdentifiers: true }).code)(Vue)
+  const setup = scriptFunction(...Object.keys(bindings), `${script}\nstatus.value = { machine_nos: ['Cutter01'] }; incidents.value = [incident]; reports.value = [report]; reportItems.value = [report]; return { ${names.join(',')}, heroImage, AppIcon, alarmConfidencePercent, formatDeviceDisplay };`)
+  const render = scriptFunction('Vue', compile(parse(source).descriptor.template.content, { prefixIdentifiers: true }).code)(Vue)
   const app = Vue.createSSRApp({ setup: () => setup(...Object.values(bindings)), render })
   app.component('AppIcon', bindings.AppIcon)
   app.directive('content-table', {})
@@ -57,8 +58,8 @@ test('incident report status is independent of alarm resolution and the recent r
   const items = cases.map((item) => ({ ...item, machine_no: 'Cutter01', severity: 'warning', status: 'open' }))
   const bindings = { ...Vue, heroImage: '', AppIcon: { render: () => null }, alarmConfidencePercent, latestModelAlarmReport, formatChineseDateTime, formatDeviceDisplay, items }
   const names = [...script.matchAll(/^(?:const|let|(?:async )?function) (\w+)/gm)].map((match) => match[1])
-  const setup = new Function(...Object.keys(bindings), `${script}; incidents.value = items; return { ${names.join(',')}, heroImage, alarmConfidencePercent, formatDeviceDisplay };`)
-  const render = new Function('Vue', compile(parse(source).descriptor.template.content, { prefixIdentifiers: true }).code)(Vue)
+  const setup = scriptFunction(...Object.keys(bindings), `${script}; incidents.value = items; return { ${names.join(',')}, heroImage, alarmConfidencePercent, formatDeviceDisplay };`)
+  const render = scriptFunction('Vue', compile(parse(source).descriptor.template.content, { prefixIdentifiers: true }).code)(Vue)
   const app = Vue.createSSRApp({ setup: () => setup(...Object.values(bindings)), render })
   app.component('AppIcon', bindings.AppIcon)
   app.directive('content-table', {})
@@ -99,7 +100,7 @@ test('unmounting during alarm initialization aborts the request and cannot recre
   }
   // Execute the actual SFC setup using Vue's renderer. Only API and asset
   // imports are supplied by the test; lifecycle and reactivity are real Vue.
-  const setup = new Function(...Object.keys(bindings), script)
+  const setup = scriptFunction(...Object.keys(bindings), script)
   const renderer = Vue.createRenderer({
     createComment: () => ({}), createText: () => ({}), createElement: () => ({}),
     insert: () => {}, remove: () => {}, setText: () => {}, setElementText: () => {},

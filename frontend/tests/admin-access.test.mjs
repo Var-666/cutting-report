@@ -8,7 +8,7 @@ function source(path) {
 }
 
 test('settings exposes HR-backed administrator management', () => {
-  const router = source('router/index.js')
+  const router = source('router/index.ts')
 
   assert.match(router, /path: 'admins'[\s\S]*AdminAccountsView\.vue/)
   assert.match(router, /path: 'admins'[\s\S]*?meta: \{ title: '管理员管理'/)

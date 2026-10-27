@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict'
 import { afterEach, test } from 'node:test'
 
-import { getDatabaseStatus, executeWorkbenchSql } from '../src/api/reports.js'
+import { getDatabaseStatus, executeWorkbenchSql } from '../src/api/reports.ts'
 import {
   notifySessionExpired,
   setSessionExpiredHandler,
-} from '../src/api/sessionExpiry.js'
-import { reportCache } from '../src/api/reportCache.js'
-import { session } from '../src/state/session.js'
-import { installSessionExpiryRedirect } from '../src/state/sessionExpiry.js'
+} from '../src/api/sessionExpiry.ts'
+import { reportCache } from '../src/api/reportCache.ts'
+import { session } from '../src/state/session.ts'
+import { installSessionExpiryRedirect } from '../src/state/sessionExpiry.ts'
 
 const originalFetch = globalThis.fetch
 let restoreHandler = () => {}

@@ -1,3 +1,4 @@
+import { scriptFunction } from './typescript-helpers.mjs'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { readFileSync } from 'node:fs'
@@ -32,7 +33,7 @@ test('management panels and tables share themed headers without zebra striping',
 })
 
 test('settings entry redirects to database and omits the repeated overview page', () => {
-  const router = readFileSync(new URL('../src/router/index.js', import.meta.url), 'utf8')
+  const router = readFileSync(new URL('../src/router/index.ts', import.meta.url), 'utf8')
   assert.match(router, /path: '',\s*name: 'settings',\s*redirect: '\/admin\/settings\/database'/)
   assert.doesNotMatch(router, /SettingsHomeView/)
 })
@@ -98,7 +99,7 @@ test('database save reloads active settings and status without a restart prompt'
     saveDatabaseConfiguration: async (body) => { calls.push(body); return { saved: true, restart_required: false, message: '配置已保存并热加载' } },
   }
   const script = view.scriptSetup.content.replace(/^import[\s\S]*?from ['"][^'"]+['"]\s*$/gm, '')
-  const page = new Function(...Object.keys(bindings), `${script}\nreturn { databaseConfiguration, configurationSaving, configurationResult, configurationError, hasUnsavedChanges, saveConfiguration }`)(...Object.values(bindings))
+  const page = scriptFunction(...Object.keys(bindings), `${script}\nreturn { databaseConfiguration, configurationSaving, configurationResult, configurationError, hasUnsavedChanges, saveConfiguration }`)(...Object.values(bindings))
   page.databaseConfiguration.value = structuredClone(current)
   for (const source of ['production', 'worker', 'file']) page.databaseConfiguration.value[source].password = 'new-private'
   page.hasUnsavedChanges.value = true
@@ -115,8 +116,8 @@ test('database save reloads active settings and status without a restart prompt'
 })
 
 test('successful database saves clear old report reads and failed saves preserve them', async () => {
-  const { reportCache } = await import('../src/api/reportCache.js')
-  const { saveDatabaseConfiguration } = await import('../src/api/reports.js')
+  const { reportCache } = await import('../src/api/reportCache.ts')
+  const { saveDatabaseConfiguration } = await import('../src/api/reports.ts')
   const originalFetch = globalThis.fetch
   try {
     await reportCache.read('database-runtime-test', () => 'old')
@@ -151,7 +152,7 @@ test('shared connection test selects SQL Server or MySQL without saving either d
     testWeldingConnection: async body => { calls.push(['welding', body]); return { connected: true, elapsed_ms: 2 } },
   }
   const script = view.scriptSetup.content.replace(/^import[\s\S]*?from ['"][^'"]+['"]\s*$/gm, '')
-  const page = new Function(...Object.keys(bindings), `${script}\nreturn { connection, weldingConnection, testSource, runConnectionTest, testResult, testError, testing, databaseConfiguration, dataSources, status, hasUnsavedChanges }`)(...Object.values(bindings))
+  const page = scriptFunction(...Object.keys(bindings), `${script}\nreturn { connection, weldingConnection, testSource, runConnectionTest, testResult, testError, testing, databaseConfiguration, dataSources, status, hasUnsavedChanges }`)(...Object.values(bindings))
   Object.assign(page.connection, { host: 'sql.test', database: 'cutting', username: 'reader', password: 'test-sql-only' })
   await page.runConnectionTest()
   assert.equal(calls[0][0], 'sqlserver')

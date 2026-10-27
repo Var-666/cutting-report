@@ -61,7 +61,7 @@ def test_source_package_keeps_soybean_build_configuration_and_license(tmp_path):
     assert not set(removed).intersection(payload)
     assert payload["scripts/linux/start_kylin.sh"] == b"fixture"
     assert payload["scripts/linux/start_offline_docker.sh"] == b"fixture"
-    assert payload["frontend/uno.config.js"] == b"fixture"
+    assert payload["frontend/uno.config.ts"] == b"fixture"
     assert payload["frontend/src/vendor/soybean-admin/LICENSE"] == b"fixture"
     assert payload["frontend/dist/licenses/soybean-admin/LICENSE"] == b"fixture"
     assert payload["licenses/naive-ui/LICENSE"] == b"naive-ui license"

@@ -187,10 +187,10 @@ declare namespace App {
   namespace Global {
     type VNode = import('vue').VNode;
     type RouteLocationNormalizedLoaded = import('vue-router').RouteLocationNormalizedLoaded;
-    type RouteKey = import('@elegant-router/types').RouteKey;
-    type RouteMap = import('@elegant-router/types').RouteMap;
-    type RoutePath = import('@elegant-router/types').RoutePath;
-    type LastLevelRouteKey = import('@elegant-router/types').LastLevelRouteKey;
+    type RouteKey = string;
+    type RouteMap = Record<string, string>;
+    type RoutePath = string;
+    type LastLevelRouteKey = string;
 
     /** The router push options */
     type RouterPushOptions = {
@@ -229,6 +229,8 @@ declare namespace App {
       icon?: () => VNode;
       /** The menu children */
       children?: Menu[];
+      routeName?: import('vue-router').RouteRecordName;
+      onClick?: () => unknown;
     };
 
     type Breadcrumb = Omit<Menu, 'children'> & {
@@ -294,7 +296,7 @@ declare namespace App {
    * Locales type
    */
   namespace I18n {
-    type RouteKey = import('@elegant-router/types').RouteKey;
+    type RouteKey = string;
 
     type LangType = 'en-US' | 'zh-CN';
 

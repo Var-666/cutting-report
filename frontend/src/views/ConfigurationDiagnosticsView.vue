@@ -1,11 +1,15 @@
-<script setup>
+<script setup lang="ts">
+import type { TagProps } from 'naive-ui'
+import type { ConfigurationDiagnostics, DiagnosticStatus } from '../types/configuration'
+
+import { toError } from '../utils/errors'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { NAlert, NButton, NCard, NInput, NTag } from 'naive-ui'
-import { getConfigurationDiagnostics } from '../api/reports.js'
+import { getConfigurationDiagnostics } from '../api/reports.ts'
 import AppSelect from '../components/AppSelect.vue'
 import ManagementPageHero from '../components/ManagementPageHero.vue'
 
-const report = ref(null)
+const report = ref<ConfigurationDiagnostics | null>(null)
 const loading = ref(false)
 const error = ref('')
 const category = ref('')
@@ -13,7 +17,7 @@ const search = ref('')
 const page = ref(1)
 const pageSize = ref(10)
 const statuses = { effective: '已生效', pending: '待重启', error: '配置异常', unconfigured: '未配置' }
-const tones = { effective: 'success', pending: 'warning', error: 'error', unconfigured: 'default' }
+const tones: Record<DiagnosticStatus, TagProps['type']> = { effective: 'success', pending: 'warning', error: 'error', unconfigured: 'default' }
 const rows = computed(() => (report.value?.items || []).filter(item =>
   item.status === 'error'
   && (!category.value || item.category === category.value)
@@ -22,10 +26,10 @@ const rows = computed(() => (report.value?.items || []).filter(item =>
 const totalPages = computed(() => Math.max(1, Math.ceil(rows.value.length / pageSize.value)))
 const visibleRows = computed(() => rows.value.slice((page.value - 1) * pageSize.value, page.value * pageSize.value))
 watch([category, search, pageSize, report], () => { page.value = 1 })
-let controller
+let controller: AbortController | undefined
 let sequence = 0
 
-function display(value) {
+function display(value: unknown) {
   if (value === null || value === undefined) return '未配置'
   if (typeof value === 'boolean') return value ? '启用' : '关闭'
   return Array.isArray(value) ? value.join('、') : String(value)
@@ -40,7 +44,8 @@ async function load() {
   try {
     const data = await getConfigurationDiagnostics({ signal: controller.signal })
     if (current === sequence) report.value = data
-  } catch (exception) {
+  } catch (caught) {
+    const exception = toError(caught)
     if (current === sequence && exception.name !== 'AbortError') error.value = '配置诊断读取失败，请稍后重试。'
   } finally {
     if (current === sequence) loading.value = false
@@ -61,7 +66,7 @@ onBeforeUnmount(() => { sequence++; controller?.abort() })
       <NAlert v-if="!report.processes.worker.available" type="warning" role="status">Worker 快照不可用（{{ report.processes.worker.state }}），请检查独立 Worker 进程与心跳。</NAlert>
       <NCard :bordered="false" title="进程加载状态">
         <div class="processes">
-          <div v-for="role in ['web', 'worker']" :key="role"><strong>{{ role === 'web' ? 'Web' : 'Worker' }}</strong><p>配置版本：{{ report.processes[role].version || '未知' }}</p><p>启动加载：{{ report.processes[role].loaded_at || '未知' }}</p><p>热更新：{{ report.processes[role].hot_loaded_at || '未知' }} · 修订 {{ report.processes[role].hot_revision ?? '未知' }}</p></div>
+          <div v-for="role in (['web', 'worker'] as const)" :key="role"><strong>{{ role === 'web' ? 'Web' : 'Worker' }}</strong><p>配置版本：{{ report.processes[role].version || '未知' }}</p><p>启动加载：{{ report.processes[role].loaded_at || '未知' }}</p><p>热更新：{{ report.processes[role].hot_loaded_at || '未知' }} · 修订 {{ report.processes[role].hot_revision ?? '未知' }}</p></div>
         </div>
       </NCard>
       <NCard :bordered="false" title="异常配置项">
@@ -73,7 +78,7 @@ onBeforeUnmount(() => { sequence++; controller?.abort() })
         <div class="history-wrap diagnostics-table"><table v-content-table class="history-table" data-content-columns="left left left left left"><caption class="sr-only">Web、Worker 配置来源和生效状态</caption><thead><tr><th>配置项</th><th>Web 当前生效值 / 来源</th><th>Worker 当前生效值 / 来源</th><th>已保存目标 / 来源</th><th>生效状态及规则</th></tr></thead><tbody>
           <tr v-for="row in visibleRows" :key="row.key">
             <td><div class="diagnostic-cell"><strong :title="row.key">{{ row.key }}</strong><small :title="row.category">{{ row.category }}</small></div></td>
-            <td v-for="role in ['web', 'worker']" :key="role"><div class="diagnostic-cell"><NTag size="small" :type="tones[row.processes[role].status]">{{ statuses[row.processes[role].status] }}</NTag><span class="diagnostic-value" :title="display(row.processes[role].value)">{{ display(row.processes[role].value) }}</span><small class="diagnostic-source" :title="row.processes[role].source">来源：{{ row.processes[role].source }}</small></div></td>
+            <td v-for="role in (['web', 'worker'] as const)" :key="role"><div class="diagnostic-cell"><NTag size="small" :type="tones[row.processes[role].status]">{{ statuses[row.processes[role].status] }}</NTag><span class="diagnostic-value" :title="display(row.processes[role].value)">{{ display(row.processes[role].value) }}</span><small class="diagnostic-source" :title="row.processes[role].source">来源：{{ row.processes[role].source }}</small></div></td>
             <td><div class="diagnostic-cell"><span class="diagnostic-value" :title="display(row.saved_value)">{{ display(row.saved_value) }}</span><small class="diagnostic-source" :title="row.saved_source">来源：{{ row.saved_source }}</small></div></td>
             <td><div class="diagnostic-cell"><NTag size="small" :type="tones[row.status]">{{ statuses[row.status] }}</NTag><small v-if="row.process_mismatch">Web / Worker 配置版本不一致</small><small v-if="!row.valid">目标配置无效，请核对对应配置项及文件</small><small :title="row.rule">{{ row.rule }}</small></div></td>
           </tr>

@@ -1,4 +1,13 @@
-<script setup>
+<script setup lang="ts">
+import type { ReportCreateRequest } from '../types/reports'
+
+import type { EnergyChannel, EnergyPeriodReport, TaskEnergyReport } from '../types/energy'
+import type { ExportFormat } from '../types/api'
+
+import type { EChartsType as ECharts } from 'echarts/core'
+import type { EChartsOption } from 'echarts'
+
+import { toError } from '../utils/errors'
 import { BarChart, LineChart } from 'echarts/charts'
 import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
 import { init, use } from 'echarts/core'
@@ -12,24 +21,24 @@ import {
   getLatestWorkshopProductionDate,
   getTaskEnergyDay,
 } from '../api/reports'
-import { recentTwelveMonthStart, reportToday, taskProductionDate } from '../api/reportDates.js'
+import { recentTwelveMonthStart, reportToday, taskProductionDate } from '../api/reportDates.ts'
 import AnalysisPanel from '../components/AnalysisPanel.vue'
 import AppIcon from '../components/AppIcon.vue'
 import MetricSparkline from '../components/MetricSparkline.vue'
 import ReportFeedback from '../components/ReportFeedback.vue'
 import ReportTrendPanel from '../components/ReportTrendPanel.vue'
 import StandardReportQuery from '../components/StandardReportQuery.vue'
-import { formatChineseDateTime, formatChineseMonth, sortReportPeriods } from '../utils/dateDisplay.js'
-import { deviceSelection } from '../state/devices.js'
-import { formatDeviceDisplay } from '../utils/deviceDisplay.js'
-import { createReportChartGrid } from '../utils/reportChartTheme.js'
-import { useReportChartTheme } from '../composables/useReportChartTheme.js'
-import { useDeviceSwitchQuery } from '../composables/useDeviceSwitchQuery.js'
-import { mergeOwnedQuery, queryChoice, queryDateRange, sameRouteQuery } from '../utils/reportRouteState.js'
+import { formatChineseDateTime, formatChineseMonth, sortReportPeriods } from '../utils/dateDisplay.ts'
+import { deviceSelection } from '../state/devices.ts'
+import { formatDeviceDisplay } from '../utils/deviceDisplay.ts'
+import { createReportChartGrid } from '../utils/reportChartTheme.ts'
+import { useReportChartTheme } from '../composables/useReportChartTheme.ts'
+import { useDeviceSwitchQuery } from '../composables/useDeviceSwitchQuery.ts'
+import { mergeOwnedQuery, queryChoice, queryDateRange, sameRouteQuery } from '../utils/reportRouteState.ts'
 
 use([BarChart, LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
 defineProps({ exporting: Boolean })
-const emit = defineEmits(['export'])
+const emit = defineEmits<{ export: [payload: ReportCreateRequest, format: ExportFormat] }>()
 
 const chartTheme = useReportChartTheme(() => { disposeCharts(); renderCharts() })
 const route = useRoute()
@@ -43,8 +52,8 @@ const appliedPeriodEnd = ref(today)
 const summaryPeriodStart = ref(recentTwelveMonthStart(today))
 const summaryPeriodEnd = ref(today)
 const rangeQueryApplied = ref(false)
-const taskDay = ref(null)
-const monthlyReport = ref(null)
+const taskDay = ref<TaskEnergyReport | null>(null)
+const monthlyReport = ref<EnergyPeriodReport | null>(null)
 const chartType = ref(queryChoice(route.query.chart, ['bar_line', 'bar', 'line'], 'bar_line'))
 const energyChartOptions = [
   { value: 'bar_line', label: '柱线组合' },
@@ -54,17 +63,17 @@ const energyChartOptions = [
 const loading = ref(false)
 const summaryLoading = ref(false)
 const error = ref('')
-const taskPanel = ref(null)
-const periodPanel = ref(null)
+const taskPanel = ref<InstanceType<typeof ReportTrendPanel> | null>(null)
+const periodPanel = ref<InstanceType<typeof ReportTrendPanel> | null>(null)
 const pageActive = ref(true)
-let taskChart = null
-let periodChart = null
-let controller = null
-let backgroundController = null
-let refreshController = null
+let taskChart: ECharts | null = null
+let periodChart: ECharts | null = null
+let controller: AbortController | null = null
+let backgroundController: AbortController | null = null
+let refreshController: AbortController | null = null
 let requestSequence = 0
 let refreshRequestSequence = 0
-let summaryRefreshTimer = null
+let summaryRefreshTimer: number | null = null
 let summaryRefreshCount = 0
 let resizeListening = false
 let routeStateReady = false
@@ -106,7 +115,7 @@ function beginRequest({ preserveSummary = false } = {}) {
   return { sequence: ++requestSequence, signal: controller.signal }
 }
 
-function requestIsCurrent(sequence, signal) {
+function requestIsCurrent(sequence: number, signal: AbortSignal) {
   return pageActive.value && !signal.aborted && sequence === requestSequence
 }
 
@@ -138,7 +147,7 @@ const energyCoverage = computed(() => {
 })
 const deviceMetricSeries = computed(() => {
   const rows = [...taskRows.value].sort((left, right) => String(left.production_time || '').localeCompare(String(right.production_time || '')))
-  const countsByDay = new Map()
+  const countsByDay = new Map<string, number>()
   for (const row of rows) {
     const stamp = taskProductionDate(row)
     if (stamp) countsByDay.set(stamp, (countsByDay.get(stamp) || 0) + 1)
@@ -179,27 +188,27 @@ const analysisReady = computed(() => Boolean(
   && !summaryLoading.value
 ))
 
-function format(value, digits = 1) {
+function format(value: unknown, digits = 1) {
   if (!energyConnected.value && value == null) return '暂未接入'
   if (value === null || value === undefined || !Number.isFinite(Number(value))) return '--'
   return new Intl.NumberFormat('zh-CN', { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(Number(value))
 }
 
-function duration(value) {
+function duration(value: unknown) {
   if (value === null || value === undefined || !Number.isFinite(Number(value))) return '--'
   const seconds = Math.max(0, Math.round(Number(value)))
   return [Math.floor(seconds / 3600), Math.floor(seconds % 3600 / 60), seconds % 60]
     .map((item) => String(item).padStart(2, '0')).join(':')
 }
 
-function valueText(item) { return format(item?.value) }
-function summaryPeriod(value) { return formatChineseMonth(value) }
-function chartValue(value) {
+function valueText(item: EnergyChannel | null | undefined) { return format(item?.value) }
+function summaryPeriod(value: unknown) { return formatChineseMonth(value) }
+function chartValue(value: unknown) {
   if (value === null || value === undefined || !Number.isFinite(Number(value))) return null
   return Number(Number(value).toFixed(1))
 }
 
-function chartOption(rows, labels) {
+function chartOption(rows: { electricity: number | null; gas: number | null }[], labels: string[]): EChartsOption {
   const line = chartType.value === 'line'
   return {
     backgroundColor: 'transparent',
@@ -257,7 +266,8 @@ async function loadRange(force = false, { syncRoute = true } = {}) {
     await nextTick()
     renderCharts({ summary: false })
     if (syncRoute) await syncRouteState()
-  } catch (exception) {
+  } catch (caught) {
+    const exception = toError(caught)
     if (exception.name !== 'AbortError' && sequence === requestSequence) error.value = exception.message
   } finally {
     if (sequence === requestSequence) {
@@ -272,7 +282,7 @@ function stopSummaryRefresh() {
   summaryRefreshTimer = null
 }
 
-async function applyMonthlySummary(summaryResult) {
+async function applyMonthlySummary(summaryResult: EnergyPeriodReport) {
   if (!pageActive.value) return
   monthlyReport.value = summaryResult
   await nextTick()
@@ -280,7 +290,7 @@ async function applyMonthlySummary(summaryResult) {
   scheduleSummaryRefresh(summaryResult)
 }
 
-function scheduleSummaryRefresh(summaryResult) {
+function scheduleSummaryRefresh(summaryResult: EnergyPeriodReport) {
   stopSummaryRefresh()
   if (!pageActive.value || !summaryResult?.syncing
       || !summaryResult?.missing_day_count || summaryRefreshCount >= 600) return
@@ -300,7 +310,8 @@ function scheduleSummaryRefresh(summaryResult) {
       const refreshed = await getEnergyMonthlyRange(requestedStart, requestedEnd, { force: true, signal })
       if (!pageActive.value || signal.aborted || sequence !== refreshRequestSequence) return
       await applyMonthlySummary(refreshed)
-    } catch (exception) {
+    } catch (caught) {
+    const exception = toError(caught)
       if (exception.name !== 'AbortError' && pageActive.value) scheduleSummaryRefresh(summaryResult)
     } finally {
       if (sequence === refreshRequestSequence) refreshController = null
@@ -323,7 +334,7 @@ async function loadDefaultRanges(force = false) {
   summaryPeriodEnd.value = selectedDate
   rangeQueryApplied.value = false
 
-  const showError = (exception) => {
+  const showError = (exception: Error) => {
     if (exception.name !== 'AbortError' && requestIsCurrent(sequence, signal)) error.value ||= exception.message
   }
   const taskRequest = getTaskEnergyDay(selectedDate, { force, signal })
@@ -372,7 +383,7 @@ async function loadDefaultRanges(force = false) {
   }
 }
 
-function exportReport(format = 'html') {
+function exportReport(format: ExportFormat = 'html') {
   if (!taskDay.value || loading.value) return
   emit('export', {
     report_type: 'equipment',
@@ -441,7 +452,8 @@ async function initializeReport({ restoreQuery = false } = {}) {
       periodStart.value = latest.report_date
       periodEnd.value = latest.report_date
     }
-  } catch (exception) {
+  } catch (caught) {
+    const exception = toError(caught)
     if (exception.name !== 'AbortError' && sequence === requestSequence) error.value = exception.message
   }
   if (!requestIsCurrent(sequence, signal)) return
@@ -507,7 +519,8 @@ async function refreshRangeAnalysisReport() {
     await applyMonthlySummary(summaryResult)
     await nextTick()
     renderCharts()
-  } catch (exception) {
+  } catch (caught) {
+    const exception = toError(caught)
     if (exception.name !== 'AbortError' && sequence === requestSequence) error.value = exception.message
   } finally {
     if (sequence === requestSequence) {

@@ -1,43 +1,48 @@
-<script setup>
+<script setup lang="ts">
+import type { PropType } from 'vue'
+import type { EChartsOption } from 'echarts'
+import type { EChartsType as ECharts } from 'echarts/core'
+import type { DistributionItem, TopCutTask } from '../types/reports'
+
 import { BarChart, PieChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent } from 'echarts/components'
 import { init, use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
 import AppIcon from './AppIcon.vue'
-import { useReportChartTheme } from '../composables/useReportChartTheme.js'
+import { useReportChartTheme } from '../composables/useReportChartTheme.ts'
 
 use([BarChart, PieChart, GridComponent, TooltipComponent, CanvasRenderer])
 
 const props = defineProps({
-  durationDistribution: { type: Array, default: () => [] },
-  statusDistribution: { type: Array, default: () => [] },
-  topCutLengthTasks: { type: Array, default: () => [] },
+  durationDistribution: { type: Array as PropType<DistributionItem[]>, default: () => [] },
+  statusDistribution: { type: Array as PropType<DistributionItem[]>, default: () => [] },
+  topCutLengthTasks: { type: Array as PropType<TopCutTask[]>, default: () => [] },
   loading: Boolean,
 })
 
 const chartTheme = useReportChartTheme(() => { disposeCharts(); renderCharts() })
 const pageActive = ref(true)
-const root = ref(null)
-const durationElement = ref(null)
-const topElement = ref(null)
+const root = ref<HTMLElement | null>(null)
+const durationElement = ref<HTMLElement | null>(null)
+const topElement = ref<HTMLElement | null>(null)
 const durationColors = computed(() => [chartTheme.colors.value.primary, chartTheme.vars.value.infoColor, chartTheme.colors.value.accent, chartTheme.colors.value.secondary, chartTheme.vars.value.textColor3])
-const statusColors = computed(() => ({ confirmed: chartTheme.colors.value.secondary, pending: chartTheme.colors.value.accent }))
+const statusColors = computed<Record<string, string>>(() => ({ confirmed: chartTheme.colors.value.secondary, pending: chartTheme.colors.value.accent }))
 const durationItems = computed(() => props.durationDistribution.filter((item) => Number(item.count) > 0))
 const statusItems = computed(() => props.statusDistribution)
 const topItems = computed(() => props.topCutLengthTasks.filter((item) => Number(item.cut_length_m) > 0).slice(0, 5))
 const durationTotal = computed(() => durationItems.value.reduce((sum, item) => sum + Number(item.count), 0))
 const statusTotal = computed(() => statusItems.value.reduce((sum, item) => sum + Number(item.count), 0))
 const hasData = computed(() => durationTotal.value > 0 || statusTotal.value > 0 || topItems.value.length > 0)
-let durationChart = null
-let topChart = null
-let resizeObserver = null
+let durationChart: ECharts | null = null
+let topChart: ECharts | null = null
+let resizeObserver: ResizeObserver | null = null
 
-function percent(count, total) {
+function percent(count: number, total: number) {
   return total ? `${(Number(count) / total * 100).toFixed(1)}%` : '0.0%'
 }
 
-function length(value) {
+function length(value: unknown) {
   return Number(value).toLocaleString('zh-CN', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
 }
 
@@ -60,13 +65,13 @@ function renderCharts() {
       durationChart?.dispose()
       durationChart = init(durationElement.value, chartTheme.darkMode.value ? 'dark' : undefined)
     }
-    durationChart.setOption({
+    durationChart.setOption<EChartsOption>({
       animation: !reducedMotion,
       backgroundColor: 'transparent',
       color: durationColors.value,
       tooltip: {
         trigger: 'item',
-        formatter: ({ name, value, percent: ratio }) => `${name}<br>${value} 项（${ratio}%）`,
+        formatter: (params) => { const { name, value, percent: ratio } = Array.isArray(params) ? params[0] : params; return `${name}<br>${value} 项（${ratio}%）` },
       },
       series: [{
         name: '任务时长',
@@ -86,13 +91,14 @@ function renderCharts() {
       topChart?.dispose()
       topChart = init(topElement.value, chartTheme.darkMode.value ? 'dark' : undefined)
     }
-    topChart.setOption({
+    topChart.setOption<EChartsOption>({
       animation: !reducedMotion,
       backgroundColor: 'transparent',
       tooltip: {
         renderMode: 'richText',
         trigger: 'item',
-        formatter: ({ dataIndex }) => {
+        formatter: (params) => {
+          const { dataIndex } = Array.isArray(params) ? params[0] : params
           const item = topItems.value[dataIndex]
           return `${item.program_no || item.task_id}\n任务 ${item.task_id}\n切割长度 ${length(item.cut_length_m)} 米`
         },

@@ -1,3 +1,4 @@
+import { scriptFunction } from './typescript-helpers.mjs'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
@@ -18,7 +19,7 @@ function mount({ resolve = async () => ({}), list = async () => ({ items: [] }),
     resolveEmailDelivery: resolve,
     formatChineseDateTime: (value) => value,
   }
-  const setup = new Function(...Object.keys(bindings), `${script}\nreturn { outcomes, evidence, submit, error, audits, auditError, saving, resolved }`)
+  const setup = scriptFunction(...Object.keys(bindings), `${script}\nreturn { outcomes, evidence, submit, error, audits, auditError, saving, resolved }`)
   const renderer = Vue.createRenderer({
     createComment: () => ({}), createText: () => ({}), createElement: () => ({}),
     insert: () => {}, remove: () => {}, setText: () => {}, setElementText: () => {},

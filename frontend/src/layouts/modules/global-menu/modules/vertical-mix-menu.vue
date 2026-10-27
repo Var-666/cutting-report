@@ -10,9 +10,9 @@ import { useThemeStore } from '@/store/modules/theme';
 import { useRouterPush } from '@/hooks/common/router';
 import { useMenu } from '../context';
 import AppIcon from '@/components/AppIcon.vue';
-import { useDeviceSelection } from '@/composables/useDeviceSelection.js';
+import { useDeviceSelection } from '@/composables/useDeviceSelection.ts';
 import GlobalLogo from '../../global-logo/index.vue';
-import { productionGroups } from '@/utils/productionLines.js';
+import { productionGroups } from '@/utils/productionLines.ts';
 
 defineOptions({
   name: 'VerticalMixMenu'
@@ -68,7 +68,7 @@ watch(
 
 <template>
   <Teleport :to="`#${GLOBAL_SIDER_MENU_ID}`">
-    <div class="vertical-mix-navigation h-full flex" @mouseleave="handleResetActiveMenu" @focusout="event => { if (!event.currentTarget.contains(event.relatedTarget)) handleResetActiveMenu() }">
+    <div class="vertical-mix-navigation h-full flex" @mouseleave="handleResetActiveMenu" @focusout="event => { if (!(event.currentTarget as HTMLElement).contains(event.relatedTarget as Node | null)) handleResetActiveMenu() }">
       <DarkModeContainer id="admin-device-rail" class="device-rail h-full flex-col-stretch" :style="{ width: (appStore.siderCollapse ? themeStore.sider.mixCollapsedWidth : Math.max(themeStore.sider.mixWidth, themeStore.sider.mixChildMenuWidth)) + 'px' }" @mouseenter="setDrawerVisible(true)" @focusin="setDrawerVisible(true)">
         <GlobalLogo :show-title="false" :style="{ height: themeStore.header.height + 'px' }" />
         <SimpleScrollbar>
@@ -85,7 +85,7 @@ watch(
               @update:value="switchDevice"
             />
             <span v-if="deviceSelection.loading" class="device-rail-state" role="status">加载中…</span>
-            <div v-else-if="deviceSelection.error" class="device-rail-state" role="alert" :title="deviceSelection.error">加载失败<button type="button" @click="loadDevices">重试</button></div>
+            <div v-else-if="deviceSelection.error" class="device-rail-state" role="alert" :title="deviceSelection.error">加载失败<button type="button" @click="loadDevices()">重试</button></div>
             <span v-else-if="deviceSelection.ready && !deviceSelection.items.length" class="device-rail-state" role="status">暂无设备</span>
           </nav>
         </SimpleScrollbar>

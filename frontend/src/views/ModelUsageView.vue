@@ -1,14 +1,19 @@
-<script setup>
+<script setup lang="ts">
+import type { EChartsType as ECharts } from 'echarts/core'
+import type { EChartsOption } from 'echarts'
+import type { UsageReport } from '../types/usage'
+
+import { toError } from '../utils/errors'
 import { NAlert, NButton, NCard, NStatistic } from 'naive-ui'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { BarChart, LineChart } from 'echarts/charts'
 import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
 import { init, use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
-import { getLlmUsageReport } from '../api/reports.js'
-import { recentTwelveMonthStart, reportToday } from '../api/reportDates.js'
-import { formatChineseDate, formatChineseMonth } from '../utils/dateDisplay.js'
-import { useReportChartTheme } from '../composables/useReportChartTheme.js'
+import { getLlmUsageReport } from '../api/reports.ts'
+import { recentTwelveMonthStart, reportToday } from '../api/reportDates.ts'
+import { formatChineseDate, formatChineseMonth } from '../utils/dateDisplay.ts'
+import { useReportChartTheme } from '../composables/useReportChartTheme.ts'
 import AppDatePicker from '../components/AppDatePicker.vue'
 import AppSelect from '../components/AppSelect.vue'
 import ManagementPageHero from '../components/ManagementPageHero.vue'
@@ -18,21 +23,21 @@ use([BarChart, LineChart, GridComponent, LegendComponent, TooltipComponent, Canv
 const today = reportToday()
 const draft = reactive({ startDate: `${today.slice(0, 7)}-01`, endDate: today, scene: '', granularity: 'day' })
 const applied = ref({ ...draft })
-const report = ref(null)
+const report = ref<UsageReport | null>(null)
 const loading = ref(false)
 const error = ref('')
-const chartElement = ref(null)
-const scenes = { leadership: '领导报表', workshop: '车间报表', equipment: '设备报表', alarm: '告警分析', custom: '自定义报表', welding: '焊接分析', other: '其他调用' }
+const chartElement = ref<HTMLElement | null>(null)
+const scenes: Record<string, string> = { leadership: '领导报表', workshop: '车间报表', equipment: '设备报表', alarm: '告警分析', custom: '自定义报表', welding: '焊接分析', other: '其他调用' }
 const formatter = new Intl.NumberFormat('zh-CN')
 const summary = computed(() => report.value?.summary)
-const series = computed(() => (report.value?.series || []).filter(row => row.call_count > 0))
+const series = computed(() => (report.value?.series || []).filter(row => row.call_count !== null && row.call_count > 0))
 const periods = computed(() => [...series.value].reverse())
 const missingCount = computed(() => summary.value ? summary.value.call_count - summary.value.metered_count : 0)
-let controller = null
+let controller: AbortController | null = null
 let sequence = 0
 let disposed = false
-let chart = null
-let observer = null
+let chart: ECharts | null = null
+let observer: ResizeObserver | null = null
 const chartTheme = useReportChartTheme(() => { disposeChart(); drawChart() })
 
 function disposeChart() {
@@ -42,19 +47,19 @@ function disposeChart() {
   chart = null
 }
 
-function number(value) {
+function number(value: number | null | undefined) {
   return value === null || value === undefined ? '—' : formatter.format(value)
 }
 
-function seconds(value) {
+function seconds(value: number | null | undefined) {
   return value === null || value === undefined ? '—' : `${(value / 1000).toFixed(2)} 秒`
 }
 
-function sceneName(value) {
+function sceneName(value: string) {
   return scenes[value] || '其他调用'
 }
 
-function preset(value) {
+function preset(value: string) {
   draft.endDate = today
   if (value === 'month') draft.startDate = `${today.slice(0, 7)}-01`
   if (value === 'year') draft.startDate = `${today.slice(0, 4)}-01-01`
@@ -76,7 +81,7 @@ function drawChart() {
     observer.observe(chartElement.value)
   }
   const rows = series.value
-  chart.setOption({
+  chart.setOption<EChartsOption>({
     animation: false,
     backgroundColor: 'transparent',
     color: [chartTheme.colors.value.primary, chartTheme.colors.value.secondary, chartTheme.colors.value.accent],
@@ -84,7 +89,7 @@ function drawChart() {
     tooltip: { trigger: 'axis', renderMode: 'richText', confine: true, backgroundColor: chartTheme.vars.value.popoverColor, borderColor: chartTheme.vars.value.borderColor, textStyle: { color: chartTheme.vars.value.textColor1 } },
     legend: { top: 8, data: ['总 token', '输入 token', '输出 token'] },
     grid: { left: 16, right: 16, top: 48, bottom: 16, containLabel: true },
-    xAxis: { type: 'category', data: rows.map((row) => report.value.granularity === 'day' ? row.period.slice(5) : row.period), axisTick: { show: false } },
+    xAxis: { type: 'category', data: rows.map((row) => report.value?.granularity === 'day' ? row.period.slice(5) : row.period), axisTick: { show: false } },
     yAxis: { type: 'value', minInterval: 1, splitLine: { lineStyle: { color: chartTheme.vars.value.dividerColor } } },
     series: [
       { name: '总 token', type: 'line', data: rows.map((row) => row.total_tokens), connectNulls: false, symbolSize: 5 },
@@ -106,7 +111,8 @@ async function load() {
     report.value = result
     await nextTick()
     drawChart()
-  } catch (exception) {
+  } catch (caught) {
+    const exception = toError(caught)
     if (!disposed && current === sequence && exception.name !== 'AbortError') error.value = exception.message || '模型用量读取失败'
   } finally {
     if (!disposed && current === sequence) loading.value = false
@@ -126,7 +132,7 @@ function query() {
   void load()
 }
 
-function changeGranularity(value) {
+function changeGranularity(value: string) {
   draft.granularity = value
   applied.value = { ...applied.value, granularity: value }
   void load()
@@ -158,7 +164,7 @@ onBeforeUnmount(() => {
     <NAlert v-if="error" type="error" class="usage-message error" role="alert">{{ error }}<span v-if="report">，以下保留上次成功查询的数据。</span><NButton :disabled="loading" @click="load()">重试</NButton></NAlert>
     <p v-if="loading" class="usage-message" role="status">{{ report ? '正在更新用量，暂保留已显示的数据…' : '正在读取模型用量…' }}</p>
 
-    <template v-if="report">
+    <template v-if="report && summary">
       <div class="usage-range"><strong>{{ formatChineseDate(report.start_date) }} 至 {{ formatChineseDate(report.end_date) }}</strong><span>{{ report.scene ? sceneName(report.scene) : '全部场景' }} · {{ report.timezone }} · 按请求开始时间归属日期</span></div>
       <section class="usage-kpis" aria-label="区间用量概览">
         <NCard class="usage-total" :bordered="false"><NStatistic label="已记录总 token" :value="number(summary.total_tokens)" /><small>{{ number(summary.metered_count) }} / {{ number(summary.call_count) }} 次请求返回总用量</small></NCard>

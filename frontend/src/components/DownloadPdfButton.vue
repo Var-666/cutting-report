@@ -1,6 +1,8 @@
-<script setup>
+<script setup lang="ts">
+import { toError } from '../utils/errors'
+
 import { ref } from 'vue'
-import { downloadReportPdf } from '../api/reportExport.js'
+import { downloadReportPdf } from '../api/reportExport.ts'
 
 const props = defineProps({ reportId: { type: String, required: true }, compact: Boolean })
 const loading = ref(false)
@@ -12,7 +14,8 @@ async function download() {
   error.value = ''
   try {
     await downloadReportPdf(props.reportId)
-  } catch (exception) {
+  } catch (caught) {
+    const exception = toError(caught)
     error.value = exception.message
   } finally {
     loading.value = false

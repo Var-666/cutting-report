@@ -1,16 +1,19 @@
-<script setup>
+<script setup lang="ts">
+import type { AlarmIncident, AlarmIncidentSummary, AlarmReport, AlarmStatus } from '../types/alarms'
+
+import { toError } from '../utils/errors'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { getAlarmStatus, listAlarmIncidentPage, listAlarmReportPage, listAlarmReports } from '../api/reports'
 import heroImage from '../assets/home-laser-cutting.webp'
 import AppIcon from '../components/AppIcon.vue'
-import { alarmConfidencePercent, latestModelAlarmReport } from '../utils/alarmAnalysis.js'
-import { formatChineseDateTime } from '../utils/dateDisplay.js'
-import { formatDeviceDisplay } from '../utils/deviceDisplay.js'
+import { alarmConfidencePercent, latestModelAlarmReport } from '../utils/alarmAnalysis.ts'
+import { formatChineseDateTime } from '../utils/dateDisplay.ts'
+import { formatDeviceDisplay } from '../utils/deviceDisplay.ts'
 
-const status = ref(null)
-const incidents = ref([])
-const reports = ref([])
-const reportItems = ref([])
+const status = ref<AlarmStatus | null>(null)
+const incidents = ref<AlarmIncident[]>([])
+const reports = ref<AlarmReport[]>([])
+const reportItems = ref<AlarmReport[]>([])
 const loading = ref(false)
 const error = ref('')
 const activeSeverity = ref('all')
@@ -20,7 +23,7 @@ const incidentPageSize = 15
 const reportPage = ref(1)
 const reportPageSize = 10
 const reportSummary = ref({ total: 0, completed_count: 0, page_count: 1 })
-const incidentSummary = ref({
+const incidentSummary = ref<AlarmIncidentSummary>({
   total: 0,
   all_total: 0,
   open_count: 0,
@@ -29,16 +32,16 @@ const incidentSummary = ref({
   dominant_alarm: null,
 })
 const currentTime = ref(new Date())
-let refreshTimer = null
-let clockTimer = null
-let requestController = null
+let refreshTimer: number | null = null
+let clockTimer: number | null = null
+let requestController: AbortController | null = null
 let requestSequence = 0
 let pageActive = false
 
 const openCount = computed(() => incidentSummary.value.open_count || 0)
 const completedCount = computed(() => reportSummary.value.completed_count || 0)
-const severityLabels = { warning: '提示', high: '一般', critical: '严重' }
-const reportStatusLabels = { generating: '生成中', completed: '已生成', failed: '生成失败' }
+const severityLabels: Record<string, string> = { warning: '提示', high: '一般', critical: '严重' }
+const reportStatusLabels: Record<string, string> = { generating: '生成中', completed: '已生成', failed: '生成失败' }
 const monitorReady = computed(() => Boolean(status.value?.enabled && status.value?.worker_running))
 const machineLabel = computed(() => formatDeviceDisplay(status.value?.machine_nos?.join('、')) || '未配置设备')
 
@@ -58,21 +61,21 @@ const reportPageCount = computed(() => reportSummary.value.page_count || 1)
 const latestAiReport = computed(() => latestModelAlarmReport(reports.value))
 const latestAiAnalysis = computed(() => latestAiReport.value?.analysis || null)
 
-function formatDateTime(value) {
+function formatDateTime(value: unknown) {
   return formatChineseDateTime(value)
 }
 
-function formatShortDateTime(value) {
+function formatShortDateTime(value: unknown) {
   if (!value) return '--'
   return formatDateTime(value).replace(/年|月/g, '-').replace('日', '')
 }
 
-function formatBytes(value) {
+function formatBytes(value: number | null | undefined) {
   if (!value) return '--'
   return value >= 1024 * 1024 ? `${(value / 1024 / 1024).toFixed(1)} MB` : `${Math.ceil(value / 1024)} KB`
 }
 
-function durationLabel(item) {
+function durationLabel(item: AlarmIncident) {
   const startValue = item?.first_start_time
   if (!startValue) return '--'
   const start = new Date(startValue).getTime()
@@ -87,15 +90,15 @@ function durationLabel(item) {
   return hours < 24 ? `${hours} 小时 ${remain} 分钟` : `${Math.floor(hours / 24)} 天 ${hours % 24} 小时`
 }
 
-function possibleCause(item) {
+function possibleCause(item: AlarmIncident) {
   return item.alarm_class || item.alarm_desc || '等待进一步分析'
 }
 
-function reportName(item) {
+function reportName(item: AlarmReport) {
   return formatDeviceDisplay(item.pdf_filename || `${item.machine_no || '设备'}_告警报告_${String(item.created_at || '').slice(0, 10).replaceAll('-', '')}.pdf`)
 }
 
-function incidentReportDisplay(item) {
+function incidentReportDisplay(item: AlarmIncident) {
   if (!item.pdf_report_id) return { label: '待生成', title: '尚未关联报告，等待系统生成', state: 'pending' }
   if (!item.report_status) return { label: '报告不存在', title: '关联的报告记录不存在', state: 'unavailable' }
   if (item.report_status === 'completed') {
@@ -110,16 +113,16 @@ function incidentReportDisplay(item) {
   }
 }
 
-function evidenceLabel(ids) {
+function evidenceLabel(ids: unknown) {
   return (Array.isArray(ids) ? ids : []).map((id) => `[${id}]`).join('、') || '未提供'
 }
 
-function priorityLabel(value) {
+function priorityLabel(value: unknown) {
   const number = Number(value)
   return Number.isFinite(number) ? `优先级 ${number}` : '建议措施'
 }
 
-function relativeSyncTime(value) {
+function relativeSyncTime(value: string | null | undefined) {
   if (!value) return '尚未完成检测'
   const diff = Math.max(0, currentTime.value.getTime() - new Date(value).getTime())
   const minutes = Math.floor(diff / 60_000)
@@ -128,7 +131,7 @@ function relativeSyncTime(value) {
   return `${Math.floor(minutes / 60)} 小时前`
 }
 
-async function selectSeverity(value) {
+async function selectSeverity(value: string) {
   if (loading.value || activeSeverity.value === value) return
   activeSeverity.value = value
   incidentPage.value = 1
@@ -144,13 +147,13 @@ async function toggleOpenFilter() {
   await loadData()
 }
 
-async function changeIncidentPage(value) {
+async function changeIncidentPage(value: number) {
   if (loading.value || value < 1 || value > incidentPageCount.value) return
   incidentPage.value = value
   await loadData()
 }
 
-async function changeReportPage(value) {
+async function changeReportPage(value: number) {
   if (loading.value || value < 1 || value > reportPageCount.value) return
   reportPage.value = value
   await loadData()
@@ -201,7 +204,8 @@ async function loadData() {
     reportPage.value = reportPageData.page
     reportSummary.value = reportPageData
     currentTime.value = new Date()
-  } catch (exception) {
+  } catch (caught) {
+    const exception = toError(caught)
     if (exception.name !== 'AbortError' && pageActive && sequence === requestSequence) {
       error.value = exception.message
     }
@@ -223,7 +227,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   pageActive = false
   stopRefreshTimer()
-  window.clearInterval(clockTimer)
+  window.clearInterval(clockTimer ?? undefined)
   clockTimer = null
   requestSequence += 1
   requestController?.abort()
@@ -393,7 +397,7 @@ onBeforeUnmount(() => {
             <td>{{ formatShortDateTime(item.created_at) }}</td>
             <td>{{ formatBytes(item.file_size) }}</td>
             <td><span class="report-status" :class="item.status">{{ reportStatusLabels[item.status] || item.status }}</span></td>
-            <td class="report-actions"><template v-if="item.status === 'completed'"><a :href="item.download_url">下载</a><a :href="item.view_url" target="_blank" rel="noopener">预览</a></template><span v-else :title="item.error_message || ''">{{ item.error_message || '--' }}</span></td>
+            <td class="report-actions"><template v-if="item.status === 'completed'"><a :href="item.download_url || undefined">下载</a><a :href="item.view_url || undefined" target="_blank" rel="noopener">预览</a></template><span v-else :title="item.error_message || ''">{{ item.error_message || '--' }}</span></td>
           </tr></tbody>
         </table>
       </div>

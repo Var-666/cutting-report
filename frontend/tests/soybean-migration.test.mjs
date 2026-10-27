@@ -1,16 +1,17 @@
+import { scriptFunction } from './typescript-helpers.mjs'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { readFileSync } from 'node:fs'
 import { computed, h, Fragment, ref, reactive, watch, nextTick } from 'vue'
 import { createPinia, setActivePinia, defineStore } from 'pinia'
 import { parse } from '@vue/compiler-sfc'
-import { cuttingRoutes } from '../src/router/cuttingRoutes.js'
-import { weldingRoutes } from '../src/router/weldingRoutes.js'
-import { selectedLineType } from '../src/utils/productionLines.js'
-import { adminMenus } from '../src/router/menus.js'
-import { selectOptions } from '../src/utils/selectOptions.js'
-import { useAppStore } from '../src/state/app.js'
-import { getTabIdByRoute } from '../src/utils/themeTabs.js'
+import { cuttingRoutes } from '../src/router/cuttingRoutes.ts'
+import { weldingRoutes } from '../src/router/weldingRoutes.ts'
+import { selectedLineType } from '../src/utils/productionLines.ts'
+import { adminMenus } from '../src/router/menus.ts'
+import { selectOptions } from '../src/utils/selectOptions.ts'
+import { useAppStore } from '../src/state/app.ts'
+import { getTabIdByRoute } from '../src/utils/themeTabs.ts'
 
 function setupControl(name, props, attrs = {}, slots = {}) {
   const emitted = []
@@ -18,21 +19,21 @@ function setupControl(name, props, attrs = {}, slots = {}) {
   const source = readFileSync(new URL(`../src/components/${name}.vue`, import.meta.url), 'utf8')
   const script = parse(source).descriptor.scriptSetup.content.replace(/^import .*$/gm, '')
   const bindings = {
-    computed, ref, watch, selectOptions, defineOptions: () => {}, defineProps: () => props,
+    computed, ref, watch, selectOptions, defineOptions: () => {}, defineProps: () => { if ('value' in attrs) props.value = attrs.value; return props },
     defineEmits: () => (...event) => emitted.push(event), useAttrs: () => attrs, useSlots: () => slots,
     onDeactivated: (callback) => { deactivate = callback },
   }
   const api = name === 'AppSelect' ? 'options, selectedValue, choose' : 'isOutsideBounds, commit'
-  const state = new Function(...Object.keys(bindings), `${script}\nreturn { open, control, invalid, handleInvalid, ${api} }`)(...Object.values(bindings))
+  const state = scriptFunction(...Object.keys(bindings), `${script}\nreturn { open, control, invalid, handleInvalid, ${api} }`)(...Object.values(bindings))
   return { state, emitted, deactivate: () => deactivate() }
 }
 
 test('sidebar exposes admin routes, excludes redirects and resets the new content scroller', () => {
-  const source = readFileSync(new URL('../src/router/index.js', import.meta.url), 'utf8')
+  const source = readFileSync(new URL('../src/router/index.ts', import.meta.url), 'utf8')
   const expression = source.slice(source.indexOf('const router = createRouter('), source.indexOf('\nrouter.beforeEach'))
   const scrolls = []
   const document = { querySelector: () => ({ scrollTo: (value) => scrolls.push(value) }) }
-  const router = new Function('createRouter', 'createWebHistory', 'cuttingRoutes', 'weldingRoutes', 'document', `${expression}\nreturn router`)((options) => options, () => ({}), cuttingRoutes, weldingRoutes, document)
+  const router = scriptFunction('createRouter', 'createWebHistory', 'cuttingRoutes', 'weldingRoutes', 'document', `${expression}\nreturn router`)((options) => options, () => ({}), cuttingRoutes, weldingRoutes, document)
   const menus = adminMenus(router.routes.find((route) => route.path === '/admin').children)
   const flatten = (items) => items.flatMap((item) => {
     assert.ok(item.icon, `${item.label} needs a menu icon to keep icon and text columns aligned`)
@@ -54,12 +55,12 @@ test('sidebar exposes admin routes, excludes redirects and resets the new conten
 })
 
 test('official menu adapter keeps settings as a group with child icons and actual route hierarchy', () => {
-  const source = readFileSync(new URL('../src/store/modules/route/index.js', import.meta.url), 'utf8').replace(/^import .*$/gm, '').replace('export const', 'const')
+  const source = readFileSync(new URL('../src/store/modules/route/index.ts', import.meta.url), 'utf8').replace(/^import .*$/gm, '').replace('export const', 'const')
   const navigations = []
   const router = { options: { routes: [{ path: '/admin', children: [] }] }, resolve: to => ({ path: typeof to === 'string' ? to : '/admin/' + to.name }), push: to => navigations.push(to) }
   const items = [{ key: '/admin/settings', label: '系统设置', icon: 'settings', children: [{ key: 'database', label: '数据库配置', icon: 'database' }] }]
   setActivePinia(createPinia())
-  const useStore = new Function('computed', 'h', 'defineStore', 'router', 'adminMenus', 'AppIcon', 'deviceSelection', 'selectedLineType', `${source}\nreturn useRouteStore`)(computed, h, defineStore, router, () => items, 'i', { items: [], id: 'Cutter01' }, selectedLineType)
+  const useStore = scriptFunction('computed', 'h', 'defineStore', 'router', 'adminMenus', 'AppIcon', 'deviceSelection', 'selectedLineType', `${source}\nreturn useRouteStore`)(computed, h, defineStore, router, () => items, 'i', { items: [], id: 'Cutter01' }, selectedLineType)
   const store = useStore()
   assert.equal(store.menus[0].onClick, undefined)
   assert.deepEqual(navigations, [])
@@ -94,7 +95,7 @@ test('native PageTab adapter honors cached paths, middle-click setting and activ
   const destinations = []
   const router = { push: path => destinations.push(path), resolve: path => ({ path: path.split('?')[0], query: Object.fromEntries(new URLSearchParams(path.split('?')[1] || '')), matched: path === '/admin/not-a-route' ? [] : [{ meta: { role: 'admin' }, ...(['/admin/settings', '/admin/settings/report-design'].includes(path) ? { redirect: '/admin/settings' } : {}) }], meta: { title: path, icon: 'home' } }) }
   const localStg = { get: key => stored.get(key), set: (key, value) => stored.set(key, [...value]), remove: key => stored.delete(key) }
-  const api = new Function('computed', 'nextTick', 'ref', 'watch', 'useRoute', 'useRouter', 'useThemeStore', 'localStg', 'getTabIdByRoute', 'deviceSelection', `${source}\nreturn { tabs, close, middleClick, scrollTabs }`)(computed, nextTick, ref, watch, () => route, () => router, () => theme, localStg, getTabIdByRoute, { id: 'Cutter01' })
+  const api = scriptFunction('computed', 'nextTick', 'ref', 'watch', 'useRoute', 'useRouter', 'useThemeStore', 'localStg', 'getTabIdByRoute', 'deviceSelection', `${source}\nreturn { tabs, close, middleClick, scrollTabs }`)(computed, nextTick, ref, watch, () => route, () => router, () => theme, localStg, getTabIdByRoute, { id: 'Cutter01' })
   await nextTick()
   assert.deepEqual(api.tabs.value.map(tab => tab.path), ['/admin/home', '/admin/settings/database', '/admin/reports/leadership'])
   route.fullPath = '/admin/reports/leadership?start_date=2026-10-01'
@@ -146,9 +147,9 @@ test('select option slots retain fragments, groups, disabled options and origina
 test('select retains v-model, value-only actions and the existing change event contract', () => {
   const select = parse(readFileSync(new URL('../src/components/AppSelect.vue', import.meta.url), 'utf8')).descriptor
   assert.match(select.template.content, /<div class="app-select"[^>]*@click\.prevent>/, 'wrapping labels must not focus the hidden native select and close the menu')
-  assert.match(select.scriptSetup.content, /filterable: Boolean/)
+  assert.match(select.scriptSetup.content, /filterable\?: boolean/)
   assert.match(select.template.content, /:filterable="filterable"/)
-  assert.match(select.template.content, /:placeholder="\$attrs.placeholder"/)
+  assert.match(select.template.content, /:placeholder="\$attrs.placeholder as string \| undefined"/)
   const props = reactive({ modelValue: 2 })
   const { state, emitted, deactivate } = setupControl('AppSelect', props, {}, { default: () => [h('option', { value: '' }, '导出'), h('option', { value: 2 }, '设备二')] })
   assert.equal(state.selectedValue.value, 1)

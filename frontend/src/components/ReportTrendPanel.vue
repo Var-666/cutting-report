@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 import { computed, ref, useId } from 'vue'
 import ReportPanelState from './ReportPanelState.vue'
 
@@ -23,11 +23,11 @@ const props = defineProps({
   retryLabel: { type: String, default: '重新查询' },
 })
 
-defineEmits(['retry'])
+defineEmits<{ retry: [] }>()
 
 const titleId = useId()
-const chartElement = ref(null)
-const state = computed(() => {
+const chartElement = ref<HTMLElement | null>(null)
+const state = computed<{ type: 'error' | 'loading' | 'empty'; title: string; message: string; actionLabel: string } | null>(() => {
   if (props.error && !props.hasData) return { type: 'error', title: props.errorTitle, message: props.error, actionLabel: props.retryLabel }
   if (props.loading && !props.hasData) return { type: 'loading', title: props.loadingTitle, message: props.loadingMessage, actionLabel: '' }
   if (props.empty && !props.hasData) return { type: 'empty', title: props.emptyTitle, message: props.emptyMessage, actionLabel: props.retryLabel }

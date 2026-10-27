@@ -1,14 +1,15 @@
+import { scriptFunction } from './typescript-helpers.mjs'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
-import { taskProductionDate } from '../src/api/reportDates.js'
+import { taskProductionDate } from '../src/api/reportDates.ts'
 
 test('night-shift task actions target the production day rather than its start day', () => {
   const task = { production_date: '2026-09-30', production_time: '2026-09-29T23:30:00' }
   assert.equal(taskProductionDate(task), '2026-09-30')
   const source = readFileSync(new URL('../src/views/WorkshopView.vue', import.meta.url), 'utf8')
-  const body = source.match(/function rowDate\(row\) \{([^}]+)\}/)[1]
-  const actualRowDate = new Function('taskProductionDate', 'filters', 'row', body)
+  const body = source.match(/function rowDate\(row: WorkshopTask\) \{([^}]+)\}/)[1]
+  const actualRowDate = scriptFunction('taskProductionDate', 'filters', 'row', body)
   assert.equal(actualRowDate(taskProductionDate, { reportDate: '2026-10-01' }, task), '2026-09-30')
 })
 

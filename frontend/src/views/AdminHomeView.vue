@@ -1,4 +1,11 @@
-<script setup>
+<script setup lang="ts">
+import type { LeadershipReport, ReportJob } from '../types/reports'
+import type { EnergyMonthReport } from '../types/energy'
+import type { AlarmIncident, AlarmStatus } from '../types/alarms'
+
+import type { EChartsType as ECharts } from 'echarts/core'
+import type { EChartsOption } from 'echarts'
+
 import { BarChart, LineChart, PieChart } from 'echarts/charts'
 import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
 import { init, use } from 'echarts/core'
@@ -7,15 +14,15 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import { NAlert, NButton, NCard, NEmpty, NNumberAnimation, NSkeleton, NSpin, NStatistic, NTag, NText, useThemeVars } from 'naive-ui'
 import { getAlarmStatus, getEnergyMonth, getLeadershipReport, listAlarmIncidents, listReports } from '../api/reports'
-import { reportToday } from '../api/reportDates.js'
+import { reportToday } from '../api/reportDates.ts'
 import AppIcon from '../components/AppIcon.vue'
 import homeWelcomeIllustration from '../assets/home-welcome-illustration.png'
 import HomeKpiCard from '../components/HomeKpiCard.vue'
 import HomeSectionHeader from '../components/HomeSectionHeader.vue'
 import { session } from '../state/session'
-import { formatChineseDate, formatChineseDateTime, formatChineseMonth } from '../utils/dateDisplay.js'
-import { formatDeviceDisplay } from '../utils/deviceDisplay.js'
-import { useAppStore } from '../state/app.js'
+import { formatChineseDate, formatChineseDateTime, formatChineseMonth } from '../utils/dateDisplay.ts'
+import { formatDeviceDisplay } from '../utils/deviceDisplay.ts'
+import { useAppStore } from '../state/app.ts'
 
 use([BarChart, LineChart, PieChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
 
@@ -27,26 +34,26 @@ const overviewLoading = ref(true)
 const historyLoading = ref(true)
 const energyLoading = ref(true)
 const alarmLoading = ref(true)
-const overview = ref(null)
-const energy = ref(null)
-const alarmStatus = ref(null)
-const incidents = ref([])
-const recentReports = ref([])
+const overview = ref<LeadershipReport | null>(null)
+const energy = ref<EnergyMonthReport | null>(null)
+const alarmStatus = ref<AlarmStatus | null>(null)
+const incidents = ref<AlarmIncident[]>([])
+const recentReports = ref<ReportJob[]>([])
 const historyTotal = ref(0)
 const error = ref('')
 const currentTime = ref(new Date())
-const trendElement = ref(null)
-const statusElement = ref(null)
-let trendChart = null
-let statusChart = null
-let clockTimer = null
+const trendElement = ref<HTMLElement | null>(null)
+const statusElement = ref<HTMLElement | null>(null)
+let trendChart: ECharts | null = null
+let statusChart: ECharts | null = null
+let clockTimer: number | null = null
 
 const total = computed(() => overview.value?.current_month_total || { task_count: 0, cut_length_m: 0, work_time_seconds: 0 })
-const previousTotal = computed(() => overview.value?.comparison_total || {})
+const previousTotal = computed<Partial<LeadershipReport['current_month_total']>>(() => overview.value?.comparison_total || {})
 const dailyRecords = computed(() => [...(overview.value?.daily_records || [])].sort((left, right) => left.period_start.localeCompare(right.period_start)))
 const activeDays = computed(() => dailyRecords.value.filter((item) => Number(item.task_count) > 0).length)
 const elapsedDays = computed(() => Math.max(activeDays.value, Number(energy.value?.elapsed_day_count || reportDate.slice(8))))
-const energySummary = computed(() => energy.value?.summary || {})
+const energySummary = computed<Partial<EnergyMonthReport['summary']>>(() => energy.value?.summary || {})
 const energyConnected = computed(() => energy.value?.energy_connected !== false)
 const electricity = computed(() => energySummary.value.electricity?.value)
 const gas = computed(() => energySummary.value.gas?.value)
@@ -66,13 +73,13 @@ const quickLinks = [
 ]
 const reportTypeText = { leadership: '领导报表', workshop: '车间报表', equipment: '设备报表', custom: '自定义报表' }
 const statusText = { pending: '等待中', querying: '查询中', calculating: '统计中', analyzing: '分析中', rendering: '渲染中', completed: '已完成', failed: '失败' }
-const severityText = { critical: '严重', high: '高', medium: '一般', low: '提示' }
+const severityText: Record<string, string> = { critical: '严重', high: '高', medium: '一般', low: '提示' }
 
 const workSeconds = computed(() => Math.max(0, Math.round(Number(total.value.work_time_seconds || 0))))
 const workHours = computed(() => Math.floor(workSeconds.value / 3600))
 const workUnit = computed(() => `小时 ${String(Math.floor((workSeconds.value % 3600) / 60)).padStart(2, '0')}分`)
 
-function comparisonStatus(current, previous) {
+function comparisonStatus(current: unknown, previous: unknown) {
   if ([current, previous].some((value) => value == null || value === '' || !Number.isFinite(Number(value))) || Number(previous) <= 0) return { text: '暂无上月对比', direction: 'flat' }
   const change = (Number(current) - Number(previous)) / Number(previous) * 100
   if (change === 0) return { text: '与上月持平', direction: 'flat' }
@@ -90,12 +97,12 @@ const insightTrend = computed(() => {
 })
 const insightAdvice = computed(() => openAlarms.value.length ? '优先处理未解除设备告警' : !energyConnected.value ? '当前设备尚未接入能耗仪表' : electricity.value == null || gas.value == null ? '先核对能耗数据是否完整' : '持续关注生产与能耗变化')
 
-function reportPeriod(item) {
+function reportPeriod(item: ReportJob | null) {
   if (!item?.report_date) return '--'
   return item.report_type === 'leadership' ? formatChineseMonth(item.report_date) : formatChineseDate(item.report_date)
 }
 
-function shortDateTime(value) {
+function shortDateTime(value: unknown) {
   if (!value) return '--'
   return formatChineseDateTime(value).replace(/年|月/g, '-').replace('日', '')
 }
@@ -104,14 +111,14 @@ function resizeCharts() { trendChart?.resize(); statusChart?.resize() }
 const chartResizeObserver = new ResizeObserver(resizeCharts)
 watch([trendElement, statusElement], (elements) => {
   chartResizeObserver.disconnect()
-  elements.filter(Boolean).forEach((element) => chartResizeObserver.observe(element))
+  elements.filter((element): element is HTMLElement => Boolean(element)).forEach((element) => chartResizeObserver.observe(element))
 }, { flush: 'post' })
 
 function renderCharts() {
   if (trendElement.value && overview.value) {
     trendChart ||= init(trendElement.value)
     const rows = dailyRecords.value.slice(-7)
-    trendChart.setOption({
+    trendChart.setOption<EChartsOption>({
       animationDuration: app.reducedMotion ? 0 : 300,
       color: [theme.value.primaryColor, theme.value.successColor],
       tooltip: { trigger: 'axis', borderWidth: 0, backgroundColor: theme.value.popoverColor, textStyle: { color: theme.value.textColor1, fontSize: 12 } },
@@ -129,7 +136,7 @@ function renderCharts() {
     statusChart ||= init(statusElement.value)
     const active = activeDays.value
     const idle = Math.max(0, elapsedDays.value - active)
-    statusChart.setOption({
+    statusChart.setOption<EChartsOption>({
       animationDuration: app.reducedMotion ? 0 : 300,
       color: [theme.value.successColor, theme.value.dividerColor],
       tooltip: { backgroundColor: theme.value.popoverColor, borderColor: theme.value.borderColor, textStyle: { color: theme.value.textColor1 }, trigger: 'item', formatter: '{b}：{c} 天' },
@@ -174,7 +181,7 @@ onMounted(() => {
   clockTimer = window.setInterval(() => { currentTime.value = new Date() }, 1000)
 })
 onBeforeUnmount(() => {
-  window.clearInterval(clockTimer)
+  window.clearInterval(clockTimer ?? undefined)
   chartResizeObserver.disconnect()
   trendChart?.dispose()
   statusChart?.dispose()
@@ -196,7 +203,6 @@ onBeforeUnmount(() => {
 
     <NAlert v-if="error" title="部分概览数据读取失败" type="error" role="alert">
       {{ error }}
-      <template #action><NButton size="small" type="error" secondary @click="loadDashboard">重试</NButton></template>
     </NAlert>
 
     <NCard :bordered="false" class="card-wrapper bg-container" content-style="padding: 0">

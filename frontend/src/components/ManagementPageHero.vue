@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 import { NCard, NTag } from 'naive-ui'
 import AppIcon from './AppIcon.vue'
 

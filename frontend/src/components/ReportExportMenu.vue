@@ -1,13 +1,18 @@
-<script setup>
+<script setup lang="ts">
+import type { ExportFormat } from '../types/api'
+
+import type { PropType } from 'vue'
+import type { ChangeEvent } from '../types/api'
+
 import AppIcon from './AppIcon.vue'
 
-defineProps({ disabled: Boolean, loading: Boolean, formats: { type: Array, default: () => ['html', 'pdf'] } })
-const emit = defineEmits(['select'])
+defineProps({ disabled: Boolean, loading: Boolean, formats: { type: Array as PropType<string[]>, default: () => ['html', 'pdf'] } })
+const emit = defineEmits<{ select: [format: ExportFormat | 'csv'] }>()
 
-function select(event) {
+function select(event: ChangeEvent) {
   const format = event.target.value
   event.target.value = ''
-  if (format) emit('select', format)
+  if (format === 'html' || format === 'pdf' || format === 'csv') emit('select', format)
 }
 </script>
 

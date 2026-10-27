@@ -6,7 +6,7 @@ import {
   formatChineseMonth,
   formatTableDateValue,
   sortReportPeriods,
-} from '../src/utils/dateDisplay.js'
+} from '../src/utils/dateDisplay.ts'
 
 test('table dates share Chinese month, date and date-time formats', () => {
   assert.equal(formatChineseMonth('2026-09'), '2026年9月')

@@ -1,15 +1,17 @@
-<script setup>
+<script setup lang="ts">
+import type { PropType } from 'vue'
+
 import { computed } from 'vue'
 import AppIcon from './AppIcon.vue'
 
 const props = defineProps({
-  type: { type: String, default: 'empty', validator: (value) => ['loading', 'empty', 'error'].includes(value) },
+  type: { type: String as PropType<'loading' | 'empty' | 'error'>, default: 'empty', validator: (value: unknown) => ['loading', 'empty', 'error'].includes(String(value)) },
   title: { type: String, required: true },
   message: { type: String, default: '' },
   actionLabel: { type: String, default: '' },
 })
 
-defineEmits(['action'])
+defineEmits<{ action: [] }>()
 
 const icon = computed(() => ({ loading: 'activity', empty: 'database', error: 'alert' }[props.type]))
 </script>

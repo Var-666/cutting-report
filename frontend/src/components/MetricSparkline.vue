@@ -1,6 +1,6 @@
-<script setup>
+<script setup lang="ts">
 import { computed } from 'vue'
-import { sparklineGeometry } from '../utils/sparkline.js'
+import { sparklineGeometry } from '../utils/sparkline.ts'
 
 const props = defineProps({
   values: { type: Array, default: () => [] },

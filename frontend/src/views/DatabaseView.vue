@@ -1,4 +1,7 @@
-<script setup>
+<script setup lang="ts">
+import type { ConnectionTestResult, DatabaseConfiguration, DatabaseSource, DatabaseStatus, SaveResult, SqlConnection, WeldingConnection } from '../types/configuration'
+
+import { toError } from '../utils/errors'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import {
   getDatabaseConfiguration,
@@ -8,20 +11,20 @@ import {
   testWeldingConnection,
   saveWeldingConfiguration,
 } from '../api/reports'
-import { deviceSelection, loadDevices } from '../state/devices.js'
-import { formatTableDateValue } from '../utils/dateDisplay.js'
+import { deviceSelection, loadDevices } from '../state/devices.ts'
+import { formatTableDateValue } from '../utils/dateDisplay.ts'
 import ManagementPageHero from '../components/ManagementPageHero.vue'
-import { useUnsavedChanges } from '../composables/useUnsavedChanges.js'
+import { useUnsavedChanges } from '../composables/useUnsavedChanges.ts'
 
-const status = ref(null)
+const status = ref<DatabaseStatus | null>(null)
 const statusError = ref('')
-const databaseConfiguration = ref(null)
+const databaseConfiguration = ref<DatabaseConfiguration | null>(null)
 const configurationLoading = ref(false)
 const configurationSaving = ref(false)
 const configurationError = ref('')
-const configurationResult = ref(null)
+const configurationResult = ref<SaveResult | null>(null)
 const testing = ref(false)
-const testResult = ref(null)
+const testResult = ref<ConnectionTestResult | null>(null)
 const testError = ref('')
 const weldingScope = computed(() => deviceSelection.id === 'welding')
 const testSource = ref('sqlserver')
@@ -32,7 +35,7 @@ const connectionStatus = computed(() => weldingScope.value
   : status.value?.connection_configured ? '只读连接已配置' : '等待配置')
 const hasUnsavedChanges = ref(false)
 useUnsavedChanges(hasUnsavedChanges, '数据库连接参数还有未保存的修改，确定离开吗？')
-const configurationSources = [
+const configurationSources: { key: DatabaseSource; label: string; description: string }[] = [
   { key: 'production', label: '生产报表库', description: 'SQLSERVER_* · dbo.task 等生产数据' },
   { key: 'worker', label: '工人 HR 库', description: 'WORKER_SQLSERVER_* · dbo.HRbase_userInfo' },
   { key: 'file', label: '切割文件库', description: 'FILE_SQLSERVER_* · PDM 文件索引/内容' },
@@ -52,12 +55,13 @@ const weldingConnection = reactive({ host: '', port: 3306, database: 'weld_produ
 const activeTestConnection = computed(() => testIsWelding.value ? weldingConnection : connection)
 watch(testIsWelding, () => { testResult.value = null; testError.value = '' })
 
-const sourceName = computed(() => ({ demo: '演示数据', sqlserver: 'SQL Server' }[status.value?.mode] || '正在检查') )
+const sourceLabels: Record<string, string> = { demo: '演示数据', sqlserver: 'SQL Server' }
+const sourceName = computed(() => (sourceLabels[status.value?.mode || ''] || '正在检查') )
 const sourceDescription = computed(() => {
   if (status.value?.mode === 'sqlserver') return '生产查询模式'
   return '尚未连接生产库'
 })
-function formatCell(value) {
+function formatCell(value: unknown) {
   if (value === null || value === undefined || value === '') return '--'
   if (typeof value === 'number') return new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 1 }).format(value)
   return formatTableDateValue(value)
@@ -70,7 +74,8 @@ async function loadStatus() {
     connection.driver = status.value.driver
     connection.host = status.value.configured_host || ''
     connection.database = status.value.configured_database || ''
-  } catch (exception) {
+  } catch (caught) {
+    const exception = toError(caught)
     statusError.value = exception.message
   }
 }
@@ -85,10 +90,11 @@ async function loadConfiguration() {
     }
     if (databaseConfiguration.value.welding) {
       databaseConfiguration.value.welding.password = ''
-      for (const key of Object.keys(weldingConnection)) weldingConnection[key] = databaseConfiguration.value.welding[key]
+      for (const key of Object.keys(weldingConnection)) Object.assign(weldingConnection, { [key]: databaseConfiguration.value.welding[key as keyof WeldingConnection] })
     }
     hasUnsavedChanges.value = false
-  } catch (exception) {
+  } catch (caught) {
+    const exception = toError(caught)
     configurationError.value = exception.message
   } finally {
     configurationLoading.value = false
@@ -100,7 +106,9 @@ async function saveConfiguration(weldingOnly = false) {
   configurationError.value = ''
   configurationResult.value = null
   try {
-    const payload = {
+    if (!databaseConfiguration.value) return
+    const payload: DatabaseConfiguration = {
+      production: databaseConfiguration.value.production, worker: databaseConfiguration.value.worker, file: databaseConfiguration.value.file,
       data_source_mode: databaseConfiguration.value.data_source_mode,
       worker_database_auth_enabled: databaseConfiguration.value.worker_database_auth_enabled,
       file_database_enabled: databaseConfiguration.value.file_database_enabled,
@@ -128,7 +136,8 @@ async function saveConfiguration(weldingOnly = false) {
     hasUnsavedChanges.value = false
     await Promise.all([loadStatus(), loadConfiguration()])
     await loadDevices({ force: true })
-  } catch (exception) {
+  } catch (caught) {
+    const exception = toError(caught)
     configurationError.value = exception.message
   } finally {
     configurationSaving.value = false
@@ -143,10 +152,11 @@ async function runConnectionTest() {
   testError.value = ''
   try {
     const result = welding
-      ? { ...await testWeldingConnection({ ...profile, password: profile.password || null }), database: profile.database }
-      : await testDatabaseConnection(profile)
+      ? { ...await testWeldingConnection({ ...profile as WeldingConnection, password: profile.password || null }), database: profile.database }
+      : await testDatabaseConnection(profile as SqlConnection)
     if (welding === testIsWelding.value) testResult.value = result
-  } catch (exception) {
+  } catch (caught) {
+    const exception = toError(caught)
     if (welding === testIsWelding.value) testError.value = exception.message
   } finally {
     testing.value = false

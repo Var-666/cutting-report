@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 import { computed, useId } from 'vue'
 
 const props = defineProps({
@@ -8,7 +8,7 @@ const props = defineProps({
   tone: { type: String, default: '' },
 })
 
-const palettes = {
+const palettes: Record<string, string[]> = {
   current: ['currentColor', 'currentColor'],
   muted: ['var(--text-color-2)', 'var(--text-color-3)'],
   blue: ['rgb(var(--primary-color))', 'rgb(var(--primary-color) / .65)'],
@@ -21,7 +21,7 @@ const palettes = {
   light: ['var(--theme-on-primary-color)', 'var(--theme-on-primary-color)'],
 }
 
-const iconTones = {
+const iconTones: Record<string, string> = {
   home: 'sky', report: 'blue', bell: 'amber', send: 'violet', settings: 'teal',
   calendar: 'blue', tasks: 'sky', ruler: 'teal', clock: 'violet', factory: 'green',
   zap: 'amber', wind: 'sky', trend: 'teal', activity: 'violet', file: 'teal',

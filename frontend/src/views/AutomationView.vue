@@ -1,4 +1,7 @@
-<script setup>
+<script setup lang="ts">
+import type { AutomationSchedule, AutomationStatus, EmailDelivery } from '../types/automation'
+
+import { toError } from '../utils/errors'
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import {
   deleteAutomationSchedule,
@@ -11,17 +14,17 @@ import {
   saveAutomationConfiguration,
   saveAutomationSchedule,
 } from '../api/reports'
-import { deviceSelection } from '../state/devices.js'
-import { formatDeviceDisplay } from '../utils/deviceDisplay.js'
-import { formatChineseDate, formatChineseDateTime } from '../utils/dateDisplay.js'
+import { deviceSelection } from '../state/devices.ts'
+import { formatDeviceDisplay } from '../utils/deviceDisplay.ts'
+import { formatChineseDate, formatChineseDateTime } from '../utils/dateDisplay.ts'
 import ManagementPageHero from '../components/ManagementPageHero.vue'
 import AppIcon from '../components/AppIcon.vue'
 import EmailDeliveryResolution from '../components/EmailDeliveryResolution.vue'
-import { useUnsavedChanges } from '../composables/useUnsavedChanges.js'
+import { useUnsavedChanges } from '../composables/useUnsavedChanges.ts'
 
-const status = ref(null)
-const schedules = ref([])
-const deliveries = ref([])
+const status = ref<AutomationStatus | null>(null)
+const schedules = ref<AutomationSchedule[]>([])
+const deliveries = ref<EmailDelivery[]>([])
 const deliveryPage = ref(1)
 const deliveryTotal = ref(0)
 const loading = ref(false)
@@ -34,9 +37,9 @@ const configurationLoaded = ref(false)
 const configurationSaving = ref(false)
 const configurationMessage = ref('')
 const configurationError = ref('')
-const editorSection = ref(null)
+const editorSection = ref<HTMLElement | null>(null)
 const hasUnsavedChanges = ref(false)
-const selectedDelivery = ref(null)
+const selectedDelivery = ref<EmailDelivery | null>(null)
 const resolutionDirty = ref(false)
 useUnsavedChanges(computed(() => hasUnsavedChanges.value || resolutionDirty.value), '自动化配置还有未保存的修改，确定离开吗？')
 
@@ -77,11 +80,11 @@ const form = reactive(emptyForm())
 watch(() => deviceSelection.id, (id) => { if (!form.device_id) form.device_id = id })
 
 const pageCount = computed(() => Math.max(1, Math.ceil(deliveryTotal.value / 20)))
-const reportLabels = { leadership: '领导报表', workshop: '车间报表', equipment: '设备报表' }
-const deliveryLabels = {
+const reportLabels: Record<string, string> = { leadership: '领导报表', workshop: '车间报表', equipment: '设备报表' }
+const deliveryLabels: Record<string, string> = {
   pending: '等待发送', sending: '发送中', retry_wait: '等待重试', sent: '已发送', failed: '发送失败', unknown: '结果待核对',
 }
-const scheduleLabels = { ...deliveryLabels, queued: '等待生成报表' }
+const scheduleLabels: Record<string, string> = { ...deliveryLabels, queued: '等待生成报表' }
 
 watch(() => form.report_type, (type) => {
   form.report_period = type === 'leadership' ? 'previous_month' : 'previous_day'
@@ -103,7 +106,8 @@ async function loadConfiguration() {
     Object.assign(configuration, data, { smtp_password: '' })
     configurationLoaded.value = true
     hasUnsavedChanges.value = false
-  } catch (exception) {
+  } catch (caught) {
+    const exception = toError(caught)
     configurationError.value = exception.message
   } finally {
     configurationLoading.value = false
@@ -135,7 +139,8 @@ async function submitConfiguration() {
     configurationMessage.value = result.message
     hasUnsavedChanges.value = false
     await loadAll()
-  } catch (exception) {
+  } catch (caught) {
+    const exception = toError(caught)
     configurationError.value = exception.message
   } finally {
     configurationSaving.value = false
@@ -148,7 +153,7 @@ function resetForm() {
   hasUnsavedChanges.value = false
 }
 
-function editSchedule(item) {
+function editSchedule(item: AutomationSchedule) {
   editingId.value = item.schedule_id
   Object.assign(form, {
     device_id: item.device_id,
@@ -201,7 +206,8 @@ async function loadAll() {
     schedules.value = scheduleData.items
     deliveries.value = deliveryData.items
     deliveryTotal.value = deliveryData.total
-  } catch (exception) {
+  } catch (caught) {
+    const exception = toError(caught)
     error.value = exception.message
   } finally {
     loading.value = false
@@ -217,14 +223,15 @@ async function submit() {
     message.value = editingId.value ? '定时任务已更新' : '定时任务已创建'
     resetForm()
     await loadAll()
-  } catch (exception) {
+  } catch (caught) {
+    const exception = toError(caught)
     error.value = exception.message
   } finally {
     saving.value = false
   }
 }
 
-async function runNow(item) {
+async function runNow(item: AutomationSchedule) {
   error.value = ''
   message.value = ''
   try {
@@ -232,34 +239,37 @@ async function runNow(item) {
     if (run.status === 'failed') throw new Error(run.last_error || '报表任务创建失败')
     message.value = `已提交“${item.name}”，报表生成后将自动发送。`
     await loadAll()
-  } catch (exception) {
+  } catch (caught) {
+    const exception = toError(caught)
     error.value = exception.message
   }
 }
 
-async function remove(item) {
+async function remove(item: AutomationSchedule) {
   if (!window.confirm(`确定删除定时任务“${item.name}”？历史发送记录会保留。`)) return
   try {
     await deleteAutomationSchedule(item.schedule_id)
     if (editingId.value === item.schedule_id) resetForm()
     message.value = '定时任务已删除'
     await loadAll()
-  } catch (exception) {
+  } catch (caught) {
+    const exception = toError(caught)
     error.value = exception.message
   }
 }
 
-async function retry(item) {
+async function retry(item: EmailDelivery) {
   try {
     await retryEmailDelivery(item.delivery_id)
     message.value = '邮件已重新加入发送队列'
     await loadAll()
-  } catch (exception) {
+  } catch (caught) {
+    const exception = toError(caught)
     error.value = exception.message
   }
 }
 
-function openDelivery(item) {
+function openDelivery(item: EmailDelivery) {
   if (resolutionDirty.value && !window.confirm('核对内容尚未保存，确定切换记录吗？')) return
   resolutionDirty.value = false
   selectedDelivery.value = item
@@ -271,13 +281,13 @@ async function deliveryResolved() {
   selectedDelivery.value = deliveries.value.find((item) => item.delivery_id === selectedDelivery.value?.delivery_id) || selectedDelivery.value
 }
 
-function scheduleText(item) {
-  if (item.frequency === 'weekly') return `每周${'一二三四五六日'[item.weekday - 1]} ${item.run_time}`
+function scheduleText(item: AutomationSchedule) {
+  if (item.frequency === 'weekly') return `每周${'一二三四五六日'[(item.weekday || 1) - 1]} ${item.run_time}`
   if (item.frequency === 'monthly') return `每月 ${item.month_day} 日 ${item.run_time}`
   return `每日 ${item.run_time}`
 }
 
-function formatDateTime(value) {
+function formatDateTime(value: unknown) {
   return formatChineseDateTime(value)
 }
 

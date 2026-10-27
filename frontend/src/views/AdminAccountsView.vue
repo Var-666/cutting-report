@@ -1,4 +1,7 @@
-<script setup>
+<script setup lang="ts">
+import type { HrPerson, User } from '../types/auth'
+
+import { toError } from '../utils/errors'
 import { computed, onMounted, reactive, ref } from 'vue'
 import {
   grantAdminAccess,
@@ -7,26 +10,26 @@ import {
   searchHrPeople,
 } from '../api/reports'
 import { session } from '../state/session'
-import { formatChineseDateTime } from '../utils/dateDisplay.js'
+import { formatChineseDateTime } from '../utils/dateDisplay.ts'
 import ManagementPageHero from '../components/ManagementPageHero.vue'
-import { useDialogFocus } from '../composables/useDialogFocus.js'
+import { useDialogFocus } from '../composables/useDialogFocus.ts'
 
-const admins = ref([])
-const results = ref([])
+const admins = ref<User[]>([])
+const results = ref<HrPerson[]>([])
 const keyword = ref('')
 const loading = ref(false)
 const searching = ref(false)
 const error = ref('')
 const notice = ref('')
-const dialog = reactive({ visible: false, action: 'grant', target: null, password: '', saving: false, error: '' })
-const dialogElement = ref(null)
+const dialog = reactive({ visible: false, action: 'grant', target: null as (User | HrPerson) | null, password: '', saving: false, error: '' })
+const dialogElement = ref<HTMLElement | null>(null)
 const dialogOpen = computed(() => dialog.visible)
 
 const adminExternalIds = computed(() => new Set(
   admins.value.filter((item) => item.external_id).map((item) => String(item.external_id)),
 ))
 
-function formatTime(value) {
+function formatTime(value: unknown) {
   return formatChineseDateTime(value, '—')
 }
 
@@ -36,7 +39,8 @@ async function loadAdmins() {
   try {
     const data = await listAdminAccounts()
     admins.value = data.items || []
-  } catch (exception) {
+  } catch (caught) {
+    const exception = toError(caught)
     error.value = exception.message
   } finally {
     loading.value = false
@@ -51,14 +55,15 @@ async function search() {
   try {
     const data = await searchHrPeople(keyword.value.trim())
     results.value = data.items || []
-  } catch (exception) {
+  } catch (caught) {
+    const exception = toError(caught)
     error.value = exception.message
   } finally {
     searching.value = false
   }
 }
 
-function openDialog(action, target) {
+function openDialog(action: string, target: User | HrPerson) {
   dialog.visible = true
   dialog.action = action
   dialog.target = target
@@ -76,21 +81,24 @@ function closeDialog() {
 useDialogFocus(dialogOpen, dialogElement, closeDialog)
 
 async function confirmPermissionChange() {
-  if (!dialog.password) return
+  if (!dialog.password || !dialog.target) return
   dialog.saving = true
   dialog.error = ''
   let succeeded = false
   try {
     if (dialog.action === 'grant') {
+      if (!dialog.target.external_id) return
       await grantAdminAccess(dialog.target.external_id, dialog.password)
       notice.value = `已授予 ${dialog.target.display_name} 管理员权限`
     } else {
+      if (!('user_id' in dialog.target)) return
       await revokeAdminAccess(dialog.target.user_id, dialog.password)
       notice.value = `已撤销 ${dialog.target.display_name} 的管理员权限`
     }
     await loadAdmins()
     succeeded = true
-  } catch (exception) {
+  } catch (caught) {
+    const exception = toError(caught)
     dialog.error = exception.message
   } finally {
     dialog.saving = false
@@ -172,7 +180,7 @@ onMounted(loadAdmins)
     <div v-if="dialog.visible" class="permission-dialog-backdrop" @click.self="closeDialog">
       <section ref="dialogElement" class="permission-dialog" role="dialog" aria-modal="true" aria-labelledby="permission-dialog-title" tabindex="-1">
         <header><div><small>SECURITY CHECK</small><h2 id="permission-dialog-title">{{ dialog.action === 'grant' ? '确认授予管理员权限' : '确认撤销管理员权限' }}</h2></div><button type="button" aria-label="关闭" :disabled="dialog.saving" @click="closeDialog">×</button></header>
-        <p>操作对象：<strong>{{ dialog.target?.display_name }}</strong>（{{ dialog.target?.company_no || dialog.target?.username }}）</p>
+        <p>操作对象：<strong>{{ dialog.target?.display_name }}</strong>（{{ dialog.target?.company_no || (dialog.target && 'username' in dialog.target ? dialog.target.username : undefined) }}）</p>
         <label><span>当前管理员密码</span><input v-model="dialog.password" name="current_admin_password" type="password" maxlength="128" autocomplete="current-password" required data-dialog-initial-focus @keyup.enter="confirmPermissionChange" /><small>用于确认是当前登录管理员本人操作，不会保存该密码。</small></label>
         <p v-if="dialog.error" class="dialog-error" role="alert">{{ dialog.error }}</p>
         <footer><button type="button" :disabled="dialog.saving" @click="closeDialog">取消</button><button class="primary" type="button" :disabled="dialog.saving || !dialog.password" @click="confirmPermissionChange">{{ dialog.saving ? '验证并提交中' : '验证密码并确认' }}</button></footer>

@@ -1,4 +1,12 @@
-<script setup>
+<script setup lang="ts">
+import type { ReportCreateRequest } from '../types/reports'
+
+import type { PropType } from 'vue'
+import type { ExportFormat } from '../types/api'
+import type { User } from '../types/auth'
+import type { ConfirmationAudit, TaskConfirmation, WorkshopResult, WorkshopTask } from '../types/reports'
+
+import { toError } from '../utils/errors'
 import { computed, nextTick, onActivated, onDeactivated, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
@@ -19,47 +27,47 @@ import ReportFeedback from '../components/ReportFeedback.vue'
 import ReportTrendPanel from '../components/ReportTrendPanel.vue'
 import StandardReportQuery from '../components/StandardReportQuery.vue'
 import WorkshopStructureCharts from '../components/WorkshopStructureCharts.vue'
-import { reportToday, taskProductionDate } from '../api/reportDates.js'
-import { formatChineseDate, formatChineseDateTime } from '../utils/dateDisplay.js'
-import { useDialogFocus } from '../composables/useDialogFocus.js'
-import { useDeviceSwitchQuery } from '../composables/useDeviceSwitchQuery.js'
-import { mergeOwnedQuery, queryChoice, queryDateRange, queryPositiveInteger, queryText, sameRouteQuery } from '../utils/reportRouteState.js'
+import { reportToday, taskProductionDate } from '../api/reportDates.ts'
+import { formatChineseDate, formatChineseDateTime } from '../utils/dateDisplay.ts'
+import { useDialogFocus } from '../composables/useDialogFocus.ts'
+import { useDeviceSwitchQuery } from '../composables/useDeviceSwitchQuery.ts'
+import { mergeOwnedQuery, queryChoice, queryDateRange, queryPositiveInteger, queryText, sameRouteQuery } from '../utils/reportRouteState.ts'
 
 const props = defineProps({
   exporting: Boolean,
-  user: { type: Object, required: true },
-  mode: { type: String, default: 'manager', validator: (value) => ['manager', 'worker'].includes(value) },
+  user: { type: Object as PropType<User>, required: true },
+  mode: { type: String, default: 'manager', validator: (value: unknown) => ['manager', 'worker'].includes(String(value)) },
 })
-const emit = defineEmits(['export'])
+const emit = defineEmits<{ export: [payload: ReportCreateRequest, format: ExportFormat] }>()
 const route = useRoute()
 const router = useRouter()
 const today = reportToday()
 const pageSize = 10
 const filters = reactive({ reportDate: today, startDate: today, endDate: today, projectName: '', confirmationStatus: 'all' })
 const appliedRouteState = reactive({ startDate: today, endDate: today, projectName: '', confirmationStatus: 'all', page: 1, defaultView: true })
-const result = ref({ report: null, items: [], total: 0, page: 1, page_size: pageSize, project_names: [], confirmed_count: 0, worker_summaries: [], duration_distribution: [], status_distribution: [], top_cut_length_tasks: [] })
+const result = ref<WorkshopResult>({ report: null, items: [], total: 0, page: 1, page_size: pageSize, project_names: [], confirmed_count: 0, worker_summaries: [], duration_distribution: [], status_distribution: [], top_cut_length_tasks: [] })
 const loading = ref(false)
 const error = ref('')
 const pageActive = ref(true)
 const defaultReportView = ref(true)
 const chartType = ref(props.mode === 'manager' ? queryChoice(route.query.chart, ['bar_line', 'bar', 'line', 'area'], 'bar_line') : 'bar_line')
-const selectedTasks = ref(new Map())
-const batchConfirmation = reactive({ visible: false, saving: false, error: '', tasks: [] })
-const batchDialogElement = ref(null)
+const selectedTasks = ref(new Map<string, WorkshopTask>())
+const batchConfirmation = reactive({ visible: false, saving: false, error: '', tasks: [] as WorkshopTask[] })
+const batchDialogElement = ref<HTMLElement | null>(null)
 const confirmationFeedback = reactive({ visible: false, type: 'pending', title: '', message: '' })
 const correction = reactive({
   visible: false,
-  row: null,
+  row: null as WorkshopTask | null,
   action: 'revoke',
   workerId: '',
   reason: '',
   saving: false,
   loading: false,
   error: '',
-  workers: [],
-  audits: [],
+  workers: [] as User[],
+  audits: [] as ConfirmationAudit[],
 })
-const correctionDialogElement = ref(null)
+const correctionDialogElement = ref<HTMLElement | null>(null)
 const batchDialogOpen = computed(() => batchConfirmation.visible)
 const correctionDialogOpen = computed(() => correction.visible)
 useDialogFocus(batchDialogOpen, batchDialogElement, closeBatchConfirmation)
@@ -135,9 +143,9 @@ const workshopMetricSeries = computed(() => {
     confirmationRate: rows.map((row) => row.confirmation_rate),
   }
 })
-let refreshTimer = null
-let feedbackTimer = null
-let requestController = null
+let refreshTimer: number | null = null
+let feedbackTimer: number | null = null
+let requestController: AbortController | null = null
 let requestSequence = 0
 let routeStateReady = false
 let restoringRouteState = false
@@ -216,21 +224,21 @@ watch(() => correction.action, () => {
   if (!isWorker.value && presetReasonValues.has(correction.reason)) correction.reason = ''
 })
 
-function display(value) { return value || '--' }
-function number(value) { return value == null ? '--' : new Intl.NumberFormat('zh-CN', { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(value) }
-function duration(value) {
+function display(value: string | null | undefined) { return value || '--' }
+function number(value: number | null | undefined) { return value == null ? '--' : new Intl.NumberFormat('zh-CN', { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(value) }
+function duration(value: unknown) {
   if (value == null) return '--'
   const seconds = Math.max(0, Math.round(Number(value)))
   return [Math.floor(seconds / 3600), Math.floor(seconds % 3600 / 60), seconds % 60].map((item) => String(item).padStart(2, '0')).join(':')
 }
-function time(value) { return formatChineseDateTime(value) }
-function rowDate(row) { return taskProductionDate(row, filters.reportDate) }
+function time(value: unknown) { return formatChineseDateTime(value) }
+function rowDate(row: WorkshopTask) { return taskProductionDate(row, filters.reportDate) }
 
 function clearSelectedTasks() {
   selectedTasks.value = new Map()
 }
 
-function setTaskSelected(row, selected) {
+function setTaskSelected(row: WorkshopTask, selected: boolean) {
   if (!isWorker.value || row.confirmed_by || batchConfirmation.saving) return
   const next = new Map(selectedTasks.value)
   if (selected) next.set(row.task_id, row)
@@ -238,7 +246,7 @@ function setTaskSelected(row, selected) {
   selectedTasks.value = next
 }
 
-function toggleVisibleTasks(selected) {
+function toggleVisibleTasks(selected: boolean) {
   const next = new Map(selectedTasks.value)
   for (const row of selectableTasks.value) {
     if (selected) next.set(row.task_id, row)
@@ -247,7 +255,7 @@ function toggleVisibleTasks(selected) {
   selectedTasks.value = next
 }
 
-function reconcileVisibleTaskSelection(items) {
+function reconcileVisibleTaskSelection(items: WorkshopTask[]) {
   if (!selectedTasks.value.size) return
   const next = new Map(selectedTasks.value)
   for (const row of items) {
@@ -266,7 +274,7 @@ function openBatchConfirmation(tasks = [...selectedTasks.value.values()]) {
   batchConfirmation.visible = true
 }
 
-function openSingleConfirmation(row) {
+function openSingleConfirmation(row: WorkshopTask) {
   if (row.confirmed_by) return
   selectedTasks.value = new Map([[row.task_id, row]])
   openBatchConfirmation([row])
@@ -278,7 +286,7 @@ function closeBatchConfirmation() {
   batchConfirmation.error = ''
 }
 
-function showConfirmationFeedback(type, title, message, timeout = 0) {
+function showConfirmationFeedback(type: string, title: string, message: string, timeout = 0) {
   if (feedbackTimer) window.clearTimeout(feedbackTimer)
   Object.assign(confirmationFeedback, { visible: true, type, title, message })
   if (timeout) {
@@ -295,7 +303,7 @@ function closeConfirmationFeedback() {
   confirmationFeedback.visible = false
 }
 
-function applyConfirmedTasks(confirmations = []) {
+function applyConfirmedTasks(confirmations: TaskConfirmation[] = []) {
   const confirmationByTaskId = new Map(
     confirmations.map((confirmation) => [String(confirmation.task_id), confirmation]),
   )
@@ -365,7 +373,8 @@ async function load(page = 1, { silent = false, ensureReport = true, force = fal
       reconcileVisibleTaskSelection(data.items || [])
       if (syncRoute) await syncRouteState()
     }
-  } catch (exception) {
+  } catch (caught) {
+    const exception = toError(caught)
     if (exception.name !== 'AbortError' && sequence === requestSequence && !silent) error.value = exception.message
   } finally {
     if (sequence === requestSequence) {
@@ -386,7 +395,7 @@ function applyTaskFilters() {
   load(1, { force: true, syncRoute: !isWorker.value })
 }
 
-function changePage(page) {
+function changePage(page: number) {
   load(page, { syncRoute: !isWorker.value })
 }
 
@@ -414,7 +423,8 @@ async function submitBatchConfirmation() {
     await load(result.value.page, { silent: true, ensureReport: false })
     // 即使后台刷新短暂返回旧快照，也不能让已确认任务重新显示待确认按钮。
     applyConfirmedTasks(confirmations)
-  } catch (exception) {
+  } catch (caught) {
+    const exception = toError(caught)
     error.value = exception.message
     batchConfirmation.error = exception.message
     showConfirmationFeedback('error', '确认失败', exception.message, 7000)
@@ -423,11 +433,11 @@ async function submitBatchConfirmation() {
   }
 }
 
-function isOwnConfirmation(row) {
+function isOwnConfirmation(row: WorkshopTask) {
   return isWorker.value && row.confirmed_by_id === props.user.user_id
 }
 
-async function openCorrection(row) {
+async function openCorrection(row: WorkshopTask) {
   if (!row.confirmed_by || (isWorker.value && !isOwnConfirmation(row))) return
   Object.assign(correction, {
     visible: true,
@@ -438,8 +448,8 @@ async function openCorrection(row) {
     saving: false,
     loading: !isWorker.value,
     error: '',
-    workers: [],
-    audits: [],
+    workers: [] as User[],
+    audits: [] as ConfirmationAudit[],
   })
   if (isWorker.value) return
   try {
@@ -449,7 +459,8 @@ async function openCorrection(row) {
     ])
     correction.workers = users.items || []
     correction.audits = auditResult.items || []
-  } catch (exception) {
+  } catch (caught) {
+    const exception = toError(caught)
     correction.error = exception.message
   } finally {
     correction.loading = false
@@ -462,7 +473,7 @@ function closeCorrection() {
   correction.row = null
 }
 
-function selectCorrectionReason(reason) {
+function selectCorrectionReason(reason: string) {
   correction.reason = reason
   correction.error = ''
 }
@@ -480,6 +491,7 @@ async function submitCorrection() {
   correction.saving = true
   correction.error = ''
   const row = correction.row
+  if (!row) return
   try {
     if (isWorker.value) {
       await revokeWorkshopTask(row.task_id, filters.reportDate, reason)
@@ -500,7 +512,8 @@ async function submitCorrection() {
     correction.visible = false
     correction.row = null
     await load(result.value.page, { silent: true, ensureReport: false })
-  } catch (exception) {
+  } catch (caught) {
+    const exception = toError(caught)
     correction.error = exception.message
     showConfirmationFeedback('error', '更正失败', exception.message, 7000)
   } finally {
@@ -508,7 +521,7 @@ async function submitCorrection() {
   }
 }
 
-function exportReport(format = 'html') {
+function exportReport(format: ExportFormat = 'html') {
   emit('export', {
     report_type: 'workshop',
     report_date: isWorker.value ? filters.reportDate : filters.startDate,
@@ -531,7 +544,7 @@ function requestedRouteState() {
   }
 }
 
-async function applyRequestedRouteState(state) {
+async function applyRequestedRouteState(state: ReturnType<typeof requestedRouteState>) {
   restoringRouteState = true
   chartType.value = state.chartType
   if (state.range) {
@@ -563,7 +576,8 @@ async function initializeReport({ restoreQuery = false } = {}) {
       filters.confirmationStatus = 'all'
     }
     defaultReportView.value = true
-  } catch (exception) {
+  } catch (caught) {
+    const exception = toError(caught)
     if (exception.name !== 'AbortError' && sequence === requestSequence) error.value = exception.message
   }
   if (!pageActive.value || signal.aborted || sequence !== requestSequence) return
@@ -792,12 +806,12 @@ watch(() => route.query, async () => {
     </template>
     <template #table>
       <table v-content-table="pageActive" class="workshop-table" :class="{ 'worker-workshop-table': isWorker }" :data-content-columns="isWorker ? 'center center left left left left right right right left center left' : 'center left left left left right right right left center left'">
-        <thead><tr><th v-if="isWorker" class="workshop-select-cell"><input type="checkbox" :checked="allVisibleTasksSelected" :indeterminate="someVisibleTasksSelected" :disabled="!selectableTasks.length || loading || batchConfirmation.saving" aria-label="全选当前页待确认任务" @change="toggleVisibleTasks($event.target.checked)" /></th><th>序号</th><th>工程号</th><th>船号</th><th>分段名</th><th>程序号</th><th>切割长度</th><th>坡口长度</th><th>切割时长</th><th>时间</th><th>确认状态</th><th>备注</th></tr></thead>
+        <thead><tr><th v-if="isWorker" class="workshop-select-cell"><input type="checkbox" :checked="allVisibleTasksSelected" :indeterminate="someVisibleTasksSelected" :disabled="!selectableTasks.length || loading || batchConfirmation.saving" aria-label="全选当前页待确认任务" @change="toggleVisibleTasks(($event.target as HTMLInputElement).checked)" /></th><th>序号</th><th>工程号</th><th>船号</th><th>分段名</th><th>程序号</th><th>切割长度</th><th>坡口长度</th><th>切割时长</th><th>时间</th><th>确认状态</th><th>备注</th></tr></thead>
         <tbody>
           <tr v-if="loading"><td :colspan="isWorker ? 12 : 11" class="table-empty">正在查询任务…</td></tr>
           <tr v-else-if="!result.items.length"><td :colspan="isWorker ? 12 : 11" class="table-empty">当前条件下暂无任务</td></tr>
           <tr v-for="(row, index) in result.items" v-else :key="row.task_id" :class="{ selected: isWorker && selectedTasks.has(row.task_id) }">
-            <td v-if="isWorker" class="workshop-select-cell"><input type="checkbox" :checked="selectedTasks.has(row.task_id)" :disabled="Boolean(row.confirmed_by) || loading || batchConfirmation.saving" :aria-label="`选择任务 ${display(row.program_no)}`" @change="setTaskSelected(row, $event.target.checked)" /></td>
+            <td v-if="isWorker" class="workshop-select-cell"><input type="checkbox" :checked="selectedTasks.has(row.task_id)" :disabled="Boolean(row.confirmed_by) || loading || batchConfirmation.saving" :aria-label="`选择任务 ${display(row.program_no)}`" @change="setTaskSelected(row, ($event.target as HTMLInputElement).checked)" /></td>
             <td>{{ (result.page - 1) * result.page_size + index + 1 }}</td><td>{{ display(row.project_code) }}</td><td>{{ display(row.ship_no) }}</td><td>{{ display(row.segment_name) }}</td><td class="program-cell" :title="display(row.program_no)">{{ display(row.program_no) }}</td><td>{{ number(row.cut_length) }}</td><td>{{ number(row.groove_length) }}</td><td class="duration-cell">{{ duration(row.work_time) }}</td><td class="time-cell">{{ time(row.production_time) }}</td>
             <td class="confirm-cell"><div v-if="row.confirmed_by" class="confirmation-person"><span class="confirmed-mark">✓ {{ row.confirmed_by }}<small>{{ time(row.confirmed_at) }}</small></span><button v-if="isOwnConfirmation(row)" type="button" class="correction-button" :disabled="correction.saving" @click="openCorrection(row)">撤销我的确认</button><button v-else-if="!isWorker" type="button" class="correction-button" :disabled="correction.saving" @click="openCorrection(row)">更正确认</button></div><button v-else-if="isWorker" type="button" :disabled="batchConfirmation.saving" @click="openSingleConfirmation(row)">确认是我完成</button><span v-else class="pending-confirmation">待确认</span></td>
             <td>{{ display(row.remark) }}</td>

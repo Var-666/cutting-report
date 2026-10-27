@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { setDeviceCatalog, resetDeviceContext } from '../src/api/deviceContext.js'
-import { downloadReportPdf, waitForReport } from '../src/api/reportExport.js'
+import { setDeviceCatalog, resetDeviceContext } from '../src/api/deviceContext.ts'
+import { downloadReportPdf, waitForReport } from '../src/api/reportExport.ts'
 
 test.beforeEach(() => setDeviceCatalog({ default_device_id: 'Cutter01', items: [{ id: 'Cutter01' }] }))
 test.afterEach(resetDeviceContext)

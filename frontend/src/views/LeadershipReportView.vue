@@ -1,4 +1,15 @@
-<script setup>
+<script setup lang="ts">
+import type { ReportCreateRequest } from '../types/reports'
+
+import type { LeadershipReport } from '../types/reports'
+import type { ExportFormat } from '../types/api'
+import type { BarSeriesOption, LineSeriesOption } from 'echarts'
+type TrendSeries = Omit<LineSeriesOption, 'type'> & Pick<BarSeriesOption, 'barMaxWidth'> & { type: 'bar' | 'line' }
+
+import type { EChartsType as ECharts } from 'echarts/core'
+import type { EChartsOption } from 'echarts'
+
+import { toError } from '../utils/errors'
 import { BarChart, LineChart } from 'echarts/charts'
 import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
 import { init, use } from 'echarts/core'
@@ -13,15 +24,15 @@ import ReportTrendPanel from '../components/ReportTrendPanel.vue'
 import StandardReportQuery from '../components/StandardReportQuery.vue'
 import AppIcon from '../components/AppIcon.vue'
 import heroImage from '../assets/home-laser-cutting.webp'
-import { recentTwelveMonthStart, reportToday } from '../api/reportDates.js'
-import { formatChineseDate, formatChineseMonth } from '../utils/dateDisplay.js'
-import { createReportChartGrid } from '../utils/reportChartTheme.js'
-import { useReportChartTheme } from '../composables/useReportChartTheme.js'
-import { useDeviceSwitchQuery } from '../composables/useDeviceSwitchQuery.js'
-import { mergeOwnedQuery, queryChoice, queryDateRange, sameRouteQuery } from '../utils/reportRouteState.js'
+import { recentTwelveMonthStart, reportToday } from '../api/reportDates.ts'
+import { formatChineseDate, formatChineseMonth } from '../utils/dateDisplay.ts'
+import { createReportChartGrid } from '../utils/reportChartTheme.ts'
+import { useReportChartTheme } from '../composables/useReportChartTheme.ts'
+import { useDeviceSwitchQuery } from '../composables/useDeviceSwitchQuery.ts'
+import { mergeOwnedQuery, queryChoice, queryDateRange, sameRouteQuery } from '../utils/reportRouteState.ts'
 
 defineProps({ exporting: Boolean })
-const emit = defineEmits(['export'])
+const emit = defineEmits<{ export: [payload: ReportCreateRequest, format: ExportFormat] }>()
 
 use([BarChart, LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
 
@@ -39,20 +50,20 @@ const monthlyPeriodStart = ref(recentTwelveMonthStart(today))
 const monthlyPeriodEnd = ref(today)
 const defaultMonthlyView = ref(true)
 const chartType = ref(queryChoice(route.query.chart, ['bar_line', 'bar', 'line', 'area'], 'bar_line'))
-const report = ref(null)
-const monthlyReport = ref(null)
+const report = ref<LeadershipReport | null>(null)
+const monthlyReport = ref<LeadershipReport | null>(null)
 const loading = ref(false)
 const monthlyLoading = ref(false)
 const refreshLoading = ref(false)
 const error = ref('')
-const dailyPanel = ref(null)
-const monthlyPanel = ref(null)
+const dailyPanel = ref<InstanceType<typeof ReportTrendPanel> | null>(null)
+const monthlyPanel = ref<InstanceType<typeof ReportTrendPanel> | null>(null)
 const pageActive = ref(true)
-let dailyChart = null
-let monthlyChart = null
-let refreshTimer = null
+let dailyChart: ECharts | null = null
+let monthlyChart: ECharts | null = null
+let refreshTimer: number | null = null
 let refreshPollCount = 0
-let requestController = null
+let requestController: AbortController | null = null
 let requestSequence = 0
 let resizeListening = false
 let routeStateReady = false
@@ -85,7 +96,7 @@ function beginRequest() {
   return { sequence: ++requestSequence, signal: requestController.signal }
 }
 
-function requestIsCurrent(sequence, signal) {
+function requestIsCurrent(sequence: number, signal: AbortSignal) {
   return pageActive.value && !signal.aborted && sequence === requestSequence
 }
 
@@ -125,12 +136,12 @@ const analysisReady = computed(() => Boolean(
   && !monthlyLoading.value
 ))
 
-function roundNumber(value, digits = 1) {
+function roundNumber(value: unknown, digits = 1) {
   const factor = 10 ** digits
   return Math.round((Number(value || 0) + Number.EPSILON) * factor) / factor
 }
 
-function formatLength(value) {
+function formatLength(value: unknown) {
   if (value === null || value === undefined || !Number.isFinite(Number(value))) return '--'
   return new Intl.NumberFormat('zh-CN', {
     minimumFractionDigits: 1,
@@ -138,7 +149,7 @@ function formatLength(value) {
   }).format(Number(value || 0))
 }
 
-function formatDuration(value) {
+function formatDuration(value: unknown) {
   if (value === null || value === undefined || !Number.isFinite(Number(value))) return '--'
   const totalSeconds = Math.max(0, Math.round(Number(value || 0)))
   const hours = Math.floor(totalSeconds / 3600)
@@ -147,7 +158,7 @@ function formatDuration(value) {
   return [hours, minutes, seconds].map((part) => String(part).padStart(2, '0')).join(':')
 }
 
-function changeRate(current, previous) {
+function changeRate(current: unknown, previous: unknown) {
   if (previous === null || previous === undefined) return null
   const currentValue = Number(current || 0)
   const previousValue = Number(previous || 0)
@@ -163,16 +174,16 @@ const metricChanges = computed(() => ({
   workTime: changeRate(total.value.work_time_seconds, comparisonTotal.value?.work_time_seconds),
 }))
 
-function changeText(change) {
+function changeText(change: ReturnType<typeof changeRate>) {
   return change ? `${change.value}%` : '暂无对比'
 }
 
-function comparisonLabel(change) {
+function comparisonLabel(change: ReturnType<typeof changeRate>) {
   if (!change) return '当前统计区间'
   return defaultMonthlyView.value ? '较上月' : '较对比区间'
 }
 
-function applyChartType(series) {
+function applyChartType(series: TrendSeries): TrendSeries {
   if (chartType.value === 'bar_line') return series
   const result = { ...series }
   delete result.areaStyle
@@ -209,7 +220,8 @@ async function loadReport(force = false, { syncRoute = true } = {}) {
     renderCharts({ monthly: false })
     scheduleRefreshPoll(true)
     if (syncRoute) await syncRouteState()
-  } catch (exception) {
+  } catch (caught) {
+    const exception = toError(caught)
     if (exception.name !== 'AbortError' && sequence === requestSequence) error.value = exception.message
   } finally {
     if (sequence === requestSequence) {
@@ -264,7 +276,8 @@ async function loadDefaultReport(force = false) {
     await nextTick()
     renderCharts()
     scheduleRefreshPoll(true)
-  } catch (exception) {
+  } catch (caught) {
+    const exception = toError(caught)
     if (exception.name !== 'AbortError' && sequence === requestSequence) error.value = exception.message
   } finally {
     if (sequence === requestSequence) {
@@ -311,7 +324,8 @@ function scheduleRefreshPoll(reset = false) {
       } else {
         refreshLoading.value = false
       }
-    } catch (exception) {
+    } catch (caught) {
+    const exception = toError(caught)
       refreshLoading.value = false
       if (exception.name !== 'AbortError' && sequence === requestSequence) error.value = exception.message
     } finally {
@@ -327,7 +341,7 @@ function renderCharts({ monthly = true } = {}) {
   if (dailyChartElement && report.value) {
     dailyChart ||= init(dailyChartElement, chartTheme.darkMode.value ? 'dark' : undefined)
     const records = [...dailyRecords.value].sort((left, right) => left.period_start.localeCompare(right.period_start))
-    dailyChart.setOption({
+    dailyChart.setOption<EChartsOption>({
       backgroundColor: 'transparent',
       tooltip: { trigger: 'axis', backgroundColor: chartTheme.vars.value.popoverColor, borderColor: chartTheme.vars.value.borderColor, textStyle: { color: chartTheme.vars.value.textColor1 } },
       legend: { data: ['切割长度', '坡口长度', '切割工时'] },
@@ -337,17 +351,17 @@ function renderCharts({ monthly = true } = {}) {
         { type: 'value', name: '长度（米）', splitLine: { lineStyle: { color: chartTheme.vars.value.dividerColor } } },
         { type: 'value', name: '工时（小时）', splitLine: { show: false } },
       ],
-      series: [
+      series: ([
         { name: '切割长度', type: 'bar', data: records.map((row) => roundNumber(row.cut_length_m)), tooltip: { valueFormatter: (value) => `${formatLength(value)} 米` }, itemStyle: { color: chartTheme.colors.value.primary } },
         { name: '坡口长度', type: 'bar', data: records.map((row) => roundNumber(row.groove_length_m)), tooltip: { valueFormatter: (value) => `${formatLength(value)} 米` }, itemStyle: { color: chartTheme.colors.value.secondary } },
         { name: '切割工时', type: 'line', yAxisIndex: 1, smooth: true, data: records.map((row) => roundNumber(Number(row.work_time_seconds) / 3600)), tooltip: { valueFormatter: (value) => `${formatLength(value)} 小时` }, itemStyle: { color: chartTheme.colors.value.accent } },
-      ].map(applyChartType),
+      ] satisfies TrendSeries[]).map(applyChartType),
     }, true)
   }
   if (monthly && monthlyChartElement && monthlyReport.value) {
     monthlyChart ||= init(monthlyChartElement, chartTheme.darkMode.value ? 'dark' : undefined)
     const records = [...monthlyRecords.value].sort((left, right) => left.period_start.localeCompare(right.period_start))
-    monthlyChart.setOption({
+    monthlyChart.setOption<EChartsOption>({
       backgroundColor: 'transparent',
       tooltip: { trigger: 'axis', backgroundColor: chartTheme.vars.value.popoverColor, borderColor: chartTheme.vars.value.borderColor, textStyle: { color: chartTheme.vars.value.textColor1 } },
       legend: { data: ['切割长度', '坡口长度', '完成任务'] },
@@ -357,11 +371,11 @@ function renderCharts({ monthly = true } = {}) {
         { type: 'value', name: '长度（米）', splitLine: { lineStyle: { color: chartTheme.vars.value.dividerColor } } },
         { type: 'value', name: '任务数', splitLine: { show: false } },
       ],
-      series: [
+      series: ([
         { name: '切割长度', type: 'bar', data: records.map((row) => roundNumber(row.cut_length_m)), tooltip: { valueFormatter: (value) => `${formatLength(value)} 米` }, itemStyle: { color: chartTheme.colors.value.primary } },
         { name: '坡口长度', type: 'bar', data: records.map((row) => roundNumber(row.groove_length_m)), tooltip: { valueFormatter: (value) => `${formatLength(value)} 米` }, itemStyle: { color: chartTheme.colors.value.secondary } },
         { name: '完成任务', type: 'line', yAxisIndex: 1, smooth: true, data: records.map((row) => row.task_count), itemStyle: { color: chartTheme.colors.value.accent } },
-      ].map(applyChartType),
+      ] satisfies TrendSeries[]).map(applyChartType),
     }, true)
   }
 }
@@ -407,7 +421,7 @@ function pausePage(dispose = false) {
   if (dispose) disposeCharts()
 }
 
-function exportReport(format = 'html') {
+function exportReport(format: ExportFormat = 'html') {
   emit('export', {
     report_type: 'leadership',
     report_date: appliedPeriodStart.value,
@@ -443,7 +457,8 @@ async function refreshRangeAnalysisReport() {
     await nextTick()
     renderCharts()
     scheduleRefreshPoll(true)
-  } catch (exception) {
+  } catch (caught) {
+    const exception = toError(caught)
     if (exception.name !== 'AbortError' && sequence === requestSequence) error.value = exception.message
   } finally {
     if (sequence === requestSequence) {

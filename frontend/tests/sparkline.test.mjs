@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { sparklineGeometry } from '../src/utils/sparkline.js'
+import { sparklineGeometry } from '../src/utils/sparkline.ts'
 
 test('sparkline geometry is derived from values and keeps the last point', () => {
   const result = sparklineGeometry([10, 15, 12, 20])

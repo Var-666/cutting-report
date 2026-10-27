@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 import { useReportExport } from '../composables/useReportExport'
 import ReportFeedback from '../components/ReportFeedback.vue'
 import LeadershipReportView from './LeadershipReportView.vue'

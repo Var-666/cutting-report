@@ -42,7 +42,7 @@ const icon = computed(() => {
 <template>
   <ButtonIcon
     :key="String(collapsed)"
-    :tooltip-content="$attrs['aria-label'] || (collapsed ? $t('icon.expand') : $t('icon.collapse'))"
+    :tooltip-content="($attrs['aria-label'] as string | undefined) || (collapsed ? $t('icon.expand') : $t('icon.collapse'))"
     tooltip-placement="bottom-start"
     :z-index="zIndex"
   >

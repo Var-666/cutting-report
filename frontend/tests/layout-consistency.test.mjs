@@ -1,3 +1,4 @@
+import { scriptFunction } from './typescript-helpers.mjs'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { readFileSync } from 'node:fs'
@@ -28,7 +29,7 @@ test('vertical-mix reserves both device columns on every page and uses a single 
   const isVerticalMix = computed(() => true)
   const inactive = computed(() => false)
   const code = transformSync(script, { loader: 'ts' }).code
-  const width = new Function('themeStore', 'appStore', 'isVerticalMix', 'isTopHybridSidebarFirst', 'isTopHybridHeaderFirst', 'isVerticalHybridHeaderFirst', `${code}\nreturn getSiderAndCollapsedWidth`)(themeStore, appStore, isVerticalMix, inactive, inactive, inactive)
+  const width = scriptFunction('themeStore', 'appStore', 'isVerticalMix', 'isTopHybridSidebarFirst', 'isTopHybridHeaderFirst', 'isVerticalHybridHeaderFirst', `${code}\nreturn getSiderAndCollapsedWidth`)(themeStore, appStore, isVerticalMix, inactive, inactive, inactive)
   assert.equal(width(false), 360)
   assert.equal(width(true), 228)
   appStore.mixSiderFixed = false
@@ -48,7 +49,7 @@ test('vertical-mix reserves both device columns on every page and uses a single 
   assert.match(menu.scriptSetup.content, /showDrawer = computed\(\(\) => drawerVisible.value \|\| appStore.mixSiderFixed\)/)
   assert.doesNotMatch(menu.scriptSetup.content, /if \(appStore.siderCollapse/)
   assert.match(menu.template.content, /:collapsed="appStore.siderCollapse"/)
-  assert.match(descriptor('menu-toggler', 'components/common').template.content, /:tooltip-content="\$attrs\['aria-label'\]/)
+  assert.match(descriptor('menu-toggler', 'components/common').template.content, /:tooltip-content="\(\$attrs\['aria-label'\]/)
   assert.match(layout.scriptSetup.content, /'vertical-mix': \{\s*showLogo: false,\s*showMenu: false,\s*showMenuToggler: true/)
   assert.match(descriptor('index', 'layouts/modules/global-menu').scriptSetup.content, /if \(appStore.isMobile\) return VerticalMenu/)
 })
@@ -143,7 +144,7 @@ test('alarm severity colors agree and dispatch project names can display in full
   }
   const select = descriptor('AppSelect', 'components')
   assert.match(select.template.content, /:consistent-menu-width="consistentMenuWidth" :menu-props="menuProps"/)
-  assert.match(select.scriptSetup.content, /consistentMenuWidth: \{ type: Boolean, default: true \}/)
+  assert.match(select.scriptSetup.content, /consistentMenuWidth: true/)
 })
 
 test('all report calendars use one shared below-field date picker', () => {
@@ -235,7 +236,7 @@ test('unavailable report data shares the loading spinner while preserving the re
 })
 
 test('report export feedback can retry the exact last request', () => {
-  const exportSource = readFileSync(new URL('../src/composables/useReportExport.js', import.meta.url), 'utf8')
+  const exportSource = readFileSync(new URL('../src/composables/useReportExport.ts', import.meta.url), 'utf8')
   assert.match(exportSource, /lastRequest = \{ payload, format \}/)
   assert.match(exportSource, /function retryExport\(\)[\s\S]*exportReport\(lastRequest\.payload, lastRequest\.format\)/)
 
@@ -278,7 +279,7 @@ test('report analysis uses server source versions and starts immediately', () =>
     assert.doesNotMatch(template, /context-version/)
   }
 
-  const api = readFileSync(new URL('../src/api/reports.js', import.meta.url), 'utf8')
+  const api = readFileSync(new URL('../src/api/reports.ts', import.meta.url), 'utf8')
   assert.match(api, /analyzeReport\(\{[^}]*dataVersion[^}]*\}/)
   assert.match(api, /data_version: dataVersion \|\| undefined/)
   assert.match(script, /props\.summaryPeriodStart[\s\S]*props\.summaryPeriodEnd[\s\S]*props\.summaryDataVersion/)
@@ -316,7 +317,7 @@ test('leadership dashboard uses verified comparison data and the home visual bas
   assert.match(template, /<AnalysisPanel/)
   assert.doesNotMatch(template, /leadership-analysis/)
   assert.match(script, /report\.value\?\.comparison_total/)
-  assert.match(script, /function changeRate\(current, previous\)/)
+  assert.match(script, /function changeRate\(current: unknown, previous: unknown\)/)
   assert.match(script, /defaultMonthlyView\.value \? '较上月' : '较对比区间'/)
   assert.match(styles, /--leadership-hero-image/)
   assert.match(styles, /grid-template-columns:repeat\(4,minmax\(0,1fr\)\)/)
@@ -711,7 +712,7 @@ test('report automation exposes secure live runtime configuration', () => {
   const automation = descriptor('AutomationView')
   const template = automation.template.content
   const script = automation.scriptSetup.content
-  const api = readFileSync(new URL('../src/api/reports.js', import.meta.url), 'utf8')
+  const api = readFileSync(new URL('../src/api/reports.ts', import.meta.url), 'utf8')
 
   assert.match(template, /运行与邮件参数/)
   assert.match(template, /即时生效/)
@@ -722,7 +723,7 @@ test('report automation exposes secure live runtime configuration', () => {
   assert.match(script, /configurationMessage\.value = result\.message[\s\S]*?await loadAll\(\)/)
   assert.match(script, /Promise\.all\(\[loadConfiguration\(\), loadAll\(\)\]\)/)
   assert.match(api, /export function getAutomationConfiguration\(\)/)
-  assert.match(api, /export function saveAutomationConfiguration\(payload\)/)
+  assert.match(api, /export function saveAutomationConfiguration\(payload: AutomationConfiguration\)/)
 })
 
 test('leadership report keeps refresh automatic and exposes only the normal query action', () => {
@@ -812,7 +813,7 @@ test('workshop confirmations support own revocation and audited admin correction
   assert.match(template, /更正原因/)
   assert.match(script, /const correctionReasonPresets =/)
   assert.match(script, /workerRevoke:[\s\S]*adminRevoke:[\s\S]*adminReassign:/)
-  assert.match(script, /function selectCorrectionReason\(reason\)/)
+  assert.match(script, /function selectCorrectionReason\(reason: string\)/)
   assert.match(template, /aria-label="常用更正原因"/)
   assert.match(template, /v-for="reason in visibleCorrectionReasonPresets"/)
   assert.match(template, /选择常用原因，或直接填写其他原因/)
@@ -859,7 +860,7 @@ test('all standard report analyses follow the selected report range', () => {
   const workshop = descriptor('WorkshopView')
   const equipment = descriptor('EnergyPeriodReportView')
   const analysis = descriptor('AnalysisPanel', 'components')
-  const api = readFileSync(new URL('../src/api/reports.js', import.meta.url), 'utf8')
+  const api = readFileSync(new URL('../src/api/reports.ts', import.meta.url), 'utf8')
 
   assert.match(leadership.template.content, /<AnalysisPanel[\s\S]*report-type="leadership"/)
   assert.match(leadership.template.content, /:period-start="defaultMonthlyView \? '' : appliedPeriodStart"/)
@@ -895,7 +896,7 @@ test('leadership and equipment second tables default to the recent twelve months
 
   assert.match(leadership.scriptSetup.content, /getLeadershipReport\(today\.slice\(0, 7\), \{ force, signal \}\)/)
   assert.match(leadership.scriptSetup.content, /monthlyPeriodStart = ref\(recentTwelveMonthStart\(today\)\)/)
-  assert.match(leadership.scriptSetup.content, /const monthlyReport = ref\(null\)/)
+  assert.match(leadership.scriptSetup.content, /const monthlyReport = ref<(?:LeadershipReport|EnergyPeriodReport) \| null>\(null\)/)
   assert.match(leadership.scriptSetup.content, /monthlyRecords = computed\(\(\) => monthlyReport\.value\?\.monthly_records/)
   assert.doesNotMatch(leadershipRange, /monthlyReport\.value|monthlyPeriodStart\.value|monthlyPeriodEnd\.value/)
   assert.match(leadershipRange, /renderCharts\(\{ monthly: false \}\)/)
@@ -904,7 +905,7 @@ test('leadership and equipment second tables default to the recent twelve months
   assert.match(leadership.scriptSetup.content, /summary_period_start: monthlyPeriodStart\.value/)
   assert.match(leadership.scriptSetup.content, /summary_period_end: monthlyPeriodEnd\.value/)
   assert.match(equipment.scriptSetup.content, /getEnergyMonthlyRange\(recentStart, selectedDate/)
-  assert.match(equipment.scriptSetup.content, /const monthlyReport = ref\(null\)/)
+  assert.match(equipment.scriptSetup.content, /const monthlyReport = ref<(?:LeadershipReport|EnergyPeriodReport) \| null>\(null\)/)
   assert.match(equipment.scriptSetup.content, /summaryRows = computed\(\(\) => sortReportPeriods\(monthlyReport\.value\?\.rows/)
   assert.match(equipmentRange, /beginRequest\(\{ preserveSummary: true \}\)/)
   assert.doesNotMatch(equipmentRange, /monthlyReport\.value|summaryPeriodStart\.value|summaryPeriodEnd\.value/)
@@ -922,8 +923,8 @@ test('leadership and equipment second tables default to the recent twelve months
 test('switching cached workshop and equipment reports does not force another query', () => {
   const workshop = descriptor('WorkshopView')
   const equipment = descriptor('EnergyPeriodReportView')
-  const preload = readFileSync(new URL('../src/state/reportPreload.js', import.meta.url), 'utf8')
-  const api = readFileSync(new URL('../src/api/reports.js', import.meta.url), 'utf8')
+  const preload = readFileSync(new URL('../src/state/reportPreload.ts', import.meta.url), 'utf8')
+  const api = readFileSync(new URL('../src/api/reports.ts', import.meta.url), 'utf8')
 
   assert.match(workshop.scriptSetup.content, /force = false/)
   assert.match(workshop.scriptSetup.content, /if \(!pageActive\.value \|\| !isWorker\.value \|\| refreshTimer\) return/)
@@ -1006,16 +1007,16 @@ test('long-lived page polling is serialized and cancelled when the page leaves',
   const alarm = descriptor('AlarmCenterView').scriptSetup.content
   const workshop = descriptor('WorkshopView').scriptSetup.content
   const reportCenter = descriptor('ReportCenterView').scriptSetup.content
-  const api = readFileSync(new URL('../src/api/reports.js', import.meta.url), 'utf8')
+  const api = readFileSync(new URL('../src/api/reports.ts', import.meta.url), 'utf8')
 
   assert.doesNotMatch(alarm, /setInterval\(loadData/)
   assert.match(alarm, /if \(!pageActive \|\| requestController\) return/)
   assert.match(alarm, /requestController\?\.abort\(\)/)
   assert.match(alarm, /await loadData\(\)[\s\S]*scheduleRefresh\(\)/)
-  assert.match(api, /getAlarmStatus\(\{ signal \} = \{\}\)/)
-  assert.match(api, /listAlarmIncidentPage\([\s\S]*\{ signal \} = \{\}\)/)
-  assert.match(api, /listAlarmReports\([\s\S]*\{ signal \} = \{\}\)/)
-  assert.match(api, /listAlarmReportPage\([\s\S]*\{ signal \} = \{\}\)/)
+  assert.match(api, /getAlarmStatus\(\{ signal \}: ReadOptions = \{\}\)/)
+  assert.match(api, /listAlarmIncidentPage\([\s\S]*\{ signal \}: ReadOptions = \{\}\)/)
+  assert.match(api, /listAlarmReports\([\s\S]*\{ signal \}: ReadOptions = \{\}\)/)
+  assert.match(api, /listAlarmReportPage\([\s\S]*\{ signal \}: ReadOptions = \{\}\)/)
 
   assert.doesNotMatch(workshop, /setInterval\(/)
   assert.match(workshop, /refreshTimer = window\.setTimeout\(async \(\) =>/)
@@ -1097,7 +1098,7 @@ test('report loading, empty and error overlays share the same inset as report co
   }
   const props = reactive({ error: '', hasData: false, loading: true, empty: false, loadingTitle: '加载', loadingMessage: '读取中', errorTitle: '失败', emptyTitle: '空数据', retryLabel: '重试' })
   const code = panel.scriptSetup.content.slice(panel.scriptSetup.content.indexOf('const state = computed'), panel.scriptSetup.content.indexOf('defineExpose'))
-  const current = new Function('computed', 'props', `${code}; return state`)(computed, props)
+  const current = scriptFunction('computed', 'props', `${code}; return state`)(computed, props)
   assert.equal(current.value.type, 'loading')
   props.loading = false
   props.empty = true

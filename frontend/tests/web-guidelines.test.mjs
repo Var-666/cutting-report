@@ -40,7 +40,7 @@ test('modal workflows trap focus and data grids label editable controls', () => 
   const accounts = source('views/AdminAccountsView.vue')
   const dispatch = source('views/CuttingDispatchView.vue')
   const workshop = source('views/WorkshopView.vue')
-  const dialogFocus = source('composables/useDialogFocus.js')
+  const dialogFocus = source('composables/useDialogFocus.ts')
   assert.match(dialogFocus, /event\.key === 'Escape'/)
   assert.match(dialogFocus, /event\.key !== 'Tab'/)
   for (const view of [accounts, dispatch, workshop]) assert.match(view, /useDialogFocus\(/)

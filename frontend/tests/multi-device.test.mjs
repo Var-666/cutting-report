@@ -1,12 +1,13 @@
+import { scriptFunction } from './typescript-helpers.mjs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { ref } from 'vue'
-import { getDeviceId, deviceUrl, selectDevice, setDeviceCatalog, resetDeviceContext, registerDeviceSwitchQuery, deviceSwitchQuery } from '../src/api/deviceContext.js'
-import { createReportCache, reportCache } from '../src/api/reportCache.js'
-import { listWorkshopTasks, createReport, getDeviceCatalog } from '../src/api/reports.js'
-import { changeDevice, deviceSelection, loadDevices } from '../src/state/devices.js'
-import { formatDeviceDisplay } from '../src/utils/deviceDisplay.js'
+import { getDeviceId, deviceUrl, selectDevice, setDeviceCatalog, resetDeviceContext, registerDeviceSwitchQuery, deviceSwitchQuery } from '../src/api/deviceContext.ts'
+import { createReportCache, reportCache } from '../src/api/reportCache.ts'
+import { listWorkshopTasks, createReport, getDeviceCatalog } from '../src/api/reports.ts'
+import { changeDevice, deviceSelection, loadDevices } from '../src/state/devices.ts'
+import { formatDeviceDisplay } from '../src/utils/deviceDisplay.ts'
 
 const catalog = { default_device_id: 'Cutter01', items: [
   { id: 'Cutter01', machine_no: 'Cutter01', name: '20KW切割机' },
@@ -35,11 +36,11 @@ function mockSessionStorage(t, initial = {}) {
 
 test('refresh restores the chosen equipment before the first report request', async (t) => {
   const storage = mockSessionStorage(t)
-  const before = await import('../src/api/deviceContext.js?before-refresh')
+  const before = await import('../src/api/deviceContext.ts?before-refresh')
   before.setDeviceCatalog(catalog)
   before.selectDevice('Cutter02')
   assert.equal(storage.getItem('cutting-report.device-id'), 'Cutter02')
-  const refreshed = await import('../src/api/deviceContext.js?after-refresh')
+  const refreshed = await import('../src/api/deviceContext.ts?after-refresh')
   assert.equal(refreshed.getDeviceId(), 'Cutter02')
   assert.match(refreshed.deviceUrl('/api/v1/workshop/latest-date'), /device_id=Cutter02/)
   refreshed.setDeviceCatalog(catalog)
@@ -48,7 +49,7 @@ test('refresh restores the chosen equipment before the first report request', as
 
 test('a removed saved device falls back to the catalog default and session reset forgets it', async (t) => {
   const storage = mockSessionStorage(t, { 'cutting-report.device-id': 'RemovedDevice' })
-  const context = await import('../src/api/deviceContext.js?removed-device')
+  const context = await import('../src/api/deviceContext.ts?removed-device')
   context.setDeviceCatalog(catalog)
   assert.equal(context.getDeviceId(), 'Cutter01')
   assert.equal(storage.getItem('cutting-report.device-id'), 'Cutter01')
@@ -61,7 +62,7 @@ test('a removed saved device falls back to the catalog default and session reset
 test('blocked browser storage does not prevent loading and switching equipment', async (t) => {
   const storage = mockSessionStorage(t)
   for (const method of ['getItem', 'setItem', 'removeItem']) storage[method] = () => { throw new Error('storage blocked') }
-  const context = await import('../src/api/deviceContext.js?blocked-storage')
+  const context = await import('../src/api/deviceContext.ts?blocked-storage')
   assert.equal(context.getDeviceId(), '')
   context.setDeviceCatalog(catalog)
   context.selectDevice('Cutter02')
@@ -84,7 +85,7 @@ test('device context rejects unknown equipment and preserves existing report fil
 
 test('a fresh session follows the catalog default instead of assuming Cutter01', async (t) => {
   mockSessionStorage(t)
-  const context = await import('../src/api/deviceContext.js?catalog-default')
+  const context = await import('../src/api/deviceContext.ts?catalog-default')
   context.setDeviceCatalog({ ...catalog, default_device_id: 'Cutter02' })
   assert.equal(context.getDeviceId(), 'Cutter02')
   context.selectDevice('Cutter01')
@@ -187,11 +188,11 @@ test('shells use the selected device to discard cached views, while keeping rout
   assert.match(source('components/DeviceSwitcher.vue'), /max-width:600px/)
   assert.match(source('components/DeviceSwitcher.vue'), /role="alert"/)
   assert.match(source('components/DeviceSwitcher.vue'), /正在读取设备/)
-  assert.doesNotMatch(source('state/devices.js'), /router\.(push|replace)/)
+  assert.doesNotMatch(source('state/devices.ts'), /router\.(push|replace)/)
 })
 
 test('both device selectors preserve displayed filters before switching and reject overlapping switches', async () => {
-  const script = source('composables/useDeviceSelection.js').replace(/^import .*$/gm, '').replace('export function', 'function')
+  const script = source('composables/useDeviceSelection.ts').replace(/^import .*$/gm, '').replace('export function', 'function')
   const selection = { id: 'Cutter01' }
   const changes = []
   let completeNavigation
@@ -202,7 +203,7 @@ test('both device selectors preserve displayed filters before switching and reje
     if (failNavigation) return Promise.reject(new Error('navigation failed'))
     return new Promise(resolve => { completeNavigation = resolve })
   } }
-  const api = new Function('ref', 'onMounted', 'useRoute', 'useRouter', 'deviceSwitchQuery', 'changeDevice', 'deviceSelection', 'loadDevices', `${script}\nreturn useDeviceSelection()`)(ref, () => {}, () => route, () => router, () => ({ start_date: '2026-10-12' }), id => { selection.id = id }, selection, () => {})
+  const api = scriptFunction('ref', 'onMounted', 'useRoute', 'useRouter', 'deviceSwitchQuery', 'changeDevice', 'deviceSelection', 'loadDevices', `${script}\nreturn useDeviceSelection()`)(ref, () => {}, () => route, () => router, () => ({ start_date: '2026-10-12' }), id => { selection.id = id }, selection, () => {})
   await api.switchDevice('Cutter01')
   assert.equal(changes.length, 0)
   const pending = api.switchDevice('Cutter02')

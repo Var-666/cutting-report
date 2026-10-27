@@ -1,14 +1,19 @@
-<script setup>
+<script setup lang="ts">
+import type { AnalysisRequest, AnalysisResult } from '../types/reports'
+import type { PropType } from 'vue'
+
+import { toError } from '../utils/errors'
+
 import { computed, onActivated, onBeforeUnmount, onDeactivated, ref, watch } from 'vue'
 import { analyzeReport, getAnalysisVersion, getLatestAnalysis } from '../api/reports'
-import { createActivationTimer } from '../utils/activationTimer.js'
-import { compactAnalysisFactLabel, compactAnalysisFactValue } from '../utils/analysisFactDisplay.js'
-import { formatDeviceDisplay } from '../utils/deviceDisplay.js'
+import { createActivationTimer } from '../utils/activationTimer.ts'
+import { compactAnalysisFactLabel, compactAnalysisFactValue } from '../utils/analysisFactDisplay.ts'
+import { formatDeviceDisplay } from '../utils/deviceDisplay.ts'
 import AppIcon from './AppIcon.vue'
-import { getDeviceId, subscribeDevices } from '../api/deviceContext.js'
+import { getDeviceId, subscribeDevices } from '../api/deviceContext.ts'
 
 const props = defineProps({
-  reportType: { type: String, required: true },
+  reportType: { type: String as PropType<AnalysisRequest['reportType']>, required: true },
   reportDate: { type: String, default: '' },
   periodStart: { type: String, default: '' },
   periodEnd: { type: String, default: '' },
@@ -19,11 +24,11 @@ const props = defineProps({
   summaryDataVersion: { type: String, default: '' },
   versionCheckEnabled: { type: Boolean, default: false },
 })
-const emit = defineEmits(['refresh-report'])
+const emit = defineEmits<{ 'refresh-report': [] }>()
 const SOURCE_CHECK_INTERVAL_MS = 300_000
 const RESULT_CHECK_INTERVAL_MS = 10_000
 
-const analysis = ref(null)
+const analysis = ref<AnalysisResult | null>(null)
 const loading = ref(false)
 const readingLatest = ref(false)
 const error = ref('')
@@ -33,17 +38,17 @@ let displayedRequestKey = ''
 let displayedScope = ''
 const deviceId = ref(getDeviceId())
 const unsubscribeDevice = subscribeDevices(() => { deviceId.value = getDeviceId() })
-let requestController = null
-let sourceCheckController = null
-let sourceCheckTimer = null
-let resultCheckTimer = null
+let requestController: AbortController | null = null
+let sourceCheckController: AbortController | null = null
+let sourceCheckTimer: number | null = null
+let resultCheckTimer: number | null = null
 let refreshRequestedKey = ''
 const activationTimer = createActivationTimer({
   setTimer: (callback, delay) => window.setTimeout(callback, delay),
   clearTimer: (timer) => window.clearTimeout(timer),
 })
 
-function formatAnalysisText(value) {
+function formatAnalysisText(value: unknown) {
   return formatDeviceDisplay(value).replace(/-?\d[\d,]*\.\d{2,}/g, (raw) => {
     const numeric = Number(raw.replaceAll(',', ''))
     if (!Number.isFinite(numeric)) return raw
@@ -55,18 +60,18 @@ function formatAnalysisText(value) {
   })
 }
 
-function plainAnalysisText(value) {
+function plainAnalysisText(value: unknown) {
   return formatAnalysisText(value).replace(/\[(F\d{3})\]/g, '').replace(/\s+/g, ' ').trim()
 }
 
-function sectionLead(value, fallback = '数据分析结论') {
+function sectionLead(value: unknown, fallback = '数据分析结论') {
   const text = plainAnalysisText(value)
   if (!text) return fallback
   const sentence = text.split(/[。；;！!？?]/)[0].trim()
   return sentence
 }
 
-function sectionBody(value) {
+function sectionBody(value: unknown) {
   const text = plainAnalysisText(value)
   const firstBreak = text.search(/[。；;！!？?]/)
   if (firstBreak < 0 || firstBreak >= text.length - 1) return ''
@@ -102,7 +107,7 @@ function clearScheduledAnalysis() {
   activationTimer.cancel()
 }
 
-function requestReportRefresh(targetKey) {
+function requestReportRefresh(targetKey: string) {
   if (targetKey !== requestKey() || refreshRequestedKey === targetKey) return
   refreshRequestedKey = targetKey
   error.value = '报表数据已更新，正在同步后重新分析…'
@@ -131,7 +136,8 @@ async function revalidateSource() {
     if (!controller.signal.aborted && targetKey === requestKey()
         && refreshed?.data_version
         && refreshed.data_version !== analysisDataVersion.value) requestReportRefresh(targetKey)
-  } catch (exception) {
+  } catch (caught) {
+    const exception = toError(caught)
     if (!controller.signal.aborted) console.warn('智能分析版本检查失败', exception)
   } finally {
     if (sourceCheckController === controller) sourceCheckController = null
@@ -171,7 +177,8 @@ async function loadAnalysis(force = false, targetKey = requestKey()) {
       displayedRequestKey = targetKey
       displayedScope = queryScope()
     }
-  } catch (exception) {
+  } catch (caught) {
+    const exception = toError(caught)
     if (exception.name !== 'AbortError' && sequence === requestSequence) {
       if (exception.status === 409) requestReportRefresh(targetKey)
       else error.value = exception.message
@@ -341,7 +348,7 @@ onBeforeUnmount(() => { pauseAnalysis(); unsubscribeDevice() })
           { key: 'features', title: '变化情况', icon: 'trend' },
           { key: 'alerts', title: '需要关注', icon: 'alert' },
           { key: 'suggestions', title: '建议怎么做', icon: 'lightbulb' },
-        ]" :key="section.key">
+        ] as const" :key="section.key">
           <header><h3><AppIcon :name="section.icon" size="20" tone="current" />{{ section.title }}</h3></header>
           <div class="analysis-card-copy">
             <h4>{{ sectionLead(analysis[section.key], section.title) }}</h4>

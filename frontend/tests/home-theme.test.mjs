@@ -1,18 +1,19 @@
+import { scriptFunction } from './typescript-helpers.mjs'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import * as Vue from 'vue'
 import { renderToString } from '@vue/server-renderer'
-import { NConfigProvider, darkTheme, useThemeVars } from 'naive-ui'
+import { NAlert, NConfigProvider, darkTheme, useThemeVars } from 'naive-ui'
 import { createPinia, setActivePinia } from 'pinia'
 import { createGenerator } from 'unocss'
 import { loadConfigFromFile } from 'vite'
 import { fileURLToPath } from 'node:url'
 import { parse } from '@vue/compiler-sfc'
-import { sparklineGeometry } from '../src/utils/sparkline.js'
+import { sparklineGeometry } from '../src/utils/sparkline.ts'
 
 const read = (path) => readFileSync(new URL(`../src/${path}`, import.meta.url), 'utf8')
-const { config: unoConfig } = await loadConfigFromFile({ command: 'build', mode: 'test' }, fileURLToPath(new URL('../uno.config.js', import.meta.url)))
+const { config: unoConfig } = await loadConfigFromFile({ command: 'build', mode: 'test' }, fileURLToPath(new URL('../uno.config.ts', import.meta.url)))
 const flush = async () => { await Promise.resolve(); await Vue.nextTick(); await Promise.resolve(); await Vue.nextTick() }
 
 test('Uno semantic cards include shadow initialization, RGB opacity and shared spacing', async () => {
@@ -48,7 +49,7 @@ function mountHome(overrides = {}) {
   }
   const source = parse(read('views/AdminHomeView.vue')).descriptor.scriptSetup.content.replace(/^import .*$/gm, '')
   const entries = Object.entries(bindings).filter(([key]) => /^[\w$]+$/.test(key))
-  const setup = new Function(...entries.map(([key]) => key), `${source}\nreturn { overviewLoading, historyLoading, energyLoading, alarmLoading, overview, total, error, recentReports, loadDashboard, workHours, workUnit, trendElement, statusElement, metricSeries, comparisonStatus, taskComparison, lengthComparison, timeComparison, insightTrend }`)
+  const setup = scriptFunction(...entries.map(([key]) => key), `${source}\nreturn { overviewLoading, historyLoading, energyLoading, alarmLoading, overview, total, error, recentReports, loadDashboard, workHours, workUnit, trendElement, statusElement, metricSeries, comparisonStatus, taskComparison, lengthComparison, timeComparison, insightTrend }`)
   const renderer = Vue.createRenderer({
     createComment: () => ({}), createText: () => ({}), createElement: () => ({}), insert() {}, remove() {}, setText() {}, setElementText() {}, parentNode: () => null, nextSibling: () => null, patchProp() {},
   })
@@ -111,7 +112,7 @@ test('home failure and empty data preserve successful independent modules and fi
 test('home KPI keeps precision and separators with reduced motion, and missing values stay unknown', () => {
   const props = Vue.reactive({ value: 9714.2, precision: 1 })
   const source = parse(read('components/HomeKpiCard.vue')).descriptor.scriptSetup.content.replace(/^import .*$/gm, '')
-  const setup = new Function('computed', 'defineProps', 'useAppStore', `${source}\nreturn { numericValue, formattedValue }`)
+  const setup = scriptFunction('computed', 'defineProps', 'useAppStore', `${source}\nreturn { numericValue, formattedValue }`)
   const state = setup(Vue.computed, () => props, () => ({ reducedMotion: true }))
   assert.equal(state.formattedValue.value, '9,714.2')
   props.value = 0
@@ -179,4 +180,12 @@ test('cards and the welcome banner have distinct light surfaces with dark theme 
   assert.match(dark, /--container-bg-color/)
   assert.match(dark, /--layout-bg-color/)
   assert.doesNotMatch(dark, /#[a-f0-9]+/i)
+})
+
+// The old action slot is ignored by NAlert; its removal must preserve rendered UI.
+test('removing the unsupported alert action slot preserves the home error output', async () => {
+  const render = slots => renderToString(Vue.createSSRApp({ render: () => Vue.h(NAlert, { title: '部分概览数据读取失败', type: 'error', role: 'alert' }, slots) }))
+  const before = await render({ default: () => '读取失败', action: () => Vue.h('button', '重试') })
+  const after = await render({ default: () => '读取失败' })
+  assert.equal(after, before)
 })

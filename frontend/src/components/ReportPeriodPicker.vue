@@ -1,6 +1,6 @@
-<script setup>
+<script setup lang="ts">
 import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, useId, watch } from 'vue'
-import { createActivationBinding } from '../utils/activationTimer.js'
+import { createActivationBinding } from '../utils/activationTimer.ts'
 import AppIcon from './AppIcon.vue'
 
 const props = defineProps({
@@ -10,16 +10,11 @@ const props = defineProps({
   disabled: Boolean,
   maxDays: { type: Number, default: 366 },
 })
-const emit = defineEmits([
-  'update:startDate',
-  'update:endDate',
-  'apply',
-  'validation-error',
-])
+const emit = defineEmits<{ 'update:startDate': [date: string]; 'update:endDate': [date: string]; apply: [period: { startDate: string; endDate: string; preset: string }]; 'validation-error': [message: string] }>()
 
-const root = ref(null)
-const trigger = ref(null)
-const panel = ref(null)
+const root = ref<HTMLElement | null>(null)
+const trigger = ref<HTMLElement | null>(null)
+const panel = ref<HTMLElement | null>(null)
 const open = ref(false)
 const panelStyle = ref({})
 const draftStart = ref(props.startDate)
@@ -29,31 +24,31 @@ const panelId = useId()
 const labelId = useId()
 const valueId = useId()
 
-function parseDate(value) {
+function parseDate(value: string) {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value || '')
   if (!match) return null
   const result = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])))
   return Number.isNaN(result.getTime()) ? null : result
 }
 
-function formatDate(value) {
+function formatDate(value: Date) {
   const year = value.getUTCFullYear()
   const month = String(value.getUTCMonth() + 1).padStart(2, '0')
   const day = String(value.getUTCDate()).padStart(2, '0')
   return `${year}-${month}-${day}`
 }
 
-function addDays(value, days) {
+function addDays(value: Date, days: number) {
   const result = new Date(value)
   result.setUTCDate(result.getUTCDate() + days)
   return result
 }
 
-function monthStart(value) {
+function monthStart(value: Date) {
   return new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), 1))
 }
 
-function quarterStart(value) {
+function quarterStart(value: Date) {
   return new Date(Date.UTC(
     value.getUTCFullYear(),
     Math.floor(value.getUTCMonth() / 3) * 3,
@@ -62,7 +57,7 @@ function quarterStart(value) {
 }
 
 const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })
-const anchor = computed(() => parseDate(props.anchorDate || props.endDate || today) || parseDate(today))
+const anchor = computed(() => parseDate(props.anchorDate || props.endDate || today) || parseDate(today)!)
 const presets = computed(() => {
   const end = anchor.value
   const currentMonthStart = monthStart(end)
@@ -94,7 +89,7 @@ const presets = computed(() => {
   }))
 })
 
-function matchingPreset(start, end) {
+function matchingPreset(start: string, end: string) {
   return presets.value.find((item) => item.start === start && item.end === end) || null
 }
 
@@ -148,7 +143,7 @@ function closePanel({ focus = false } = {}) {
   if (focus) nextTick(() => trigger.value?.focus())
 }
 
-function selectPreset(item) {
+function selectPreset(item: { start: string; end: string }) {
   draftStart.value = item.start
   draftEnd.value = item.end
   validationError.value = ''
@@ -159,7 +154,7 @@ function validate() {
   const end = parseDate(draftEnd.value)
   if (!start || !end) return '请选择完整的开始和结束日期'
   if (end < start) return '结束日期不能早于开始日期'
-  const inclusiveDays = Math.round((end - start) / 86400000) + 1
+  const inclusiveDays = Math.round((end.getTime() - start.getTime()) / 86400000) + 1
   if (inclusiveDays > props.maxDays) return `查询区间最长为 ${props.maxDays} 天`
   return ''
 }
@@ -181,16 +176,17 @@ function applyPeriod() {
   closePanel({ focus: true })
 }
 
-function handleDocumentPointer(event) {
+function handleDocumentPointer(event: PointerEvent) {
+  const target = event.target as HTMLElement
   if (
-    root.value?.contains(event.target)
-    || panel.value?.contains(event.target)
-    || event.target.closest?.('.app-date-picker__panel')
+    root.value?.contains(target)
+    || panel.value?.contains(target)
+    || target.closest?.('.app-date-picker__panel')
   ) return
   closePanel()
 }
 
-function handleKeydown(event) {
+function handleKeydown(event: KeyboardEvent) {
   if (event.key === 'Escape') closePanel({ focus: true })
 }
 

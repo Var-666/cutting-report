@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, useAttrs } from 'vue';
-import { icons } from '@/vendor/soybean-admin/icons.js';
+import { icons } from '@/vendor/soybean-admin/icons.ts';
 import { Icon } from '@iconify/vue/offline';
 
 defineOptions({ name: 'SvgIcon', inheritAttrs: false });

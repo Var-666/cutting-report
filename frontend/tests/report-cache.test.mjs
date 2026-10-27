@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createReportCache } from '../src/api/reportCache.js'
-import { recentTwelveMonthStart, reportToday } from '../src/api/reportDates.js'
-import { createActivationBinding, createActivationTimer } from '../src/utils/activationTimer.js'
+import { createReportCache } from '../src/api/reportCache.ts'
+import { recentTwelveMonthStart, reportToday } from '../src/api/reportDates.ts'
+import { createActivationBinding, createActivationTimer } from '../src/utils/activationTimer.ts'
 
 function deferred() {
   let resolve

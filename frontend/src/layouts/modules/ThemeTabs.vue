@@ -1,20 +1,20 @@
-<script setup>
+<script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { PageTab } from '../../vendor/soybean-admin/materials'
 import { useThemeStore } from '../../store/modules/theme'
 import { localStg } from '../../utils/storage'
 import AppIcon from '../../components/AppIcon.vue'
-import { getTabIdByRoute } from '../../utils/themeTabs.js'
-import { deviceSelection } from '../../state/devices.js'
+import { getTabIdByRoute } from '../../utils/themeTabs.ts'
+import { deviceSelection } from '../../state/devices.ts'
 
 const theme = useThemeStore()
 const route = useRoute()
 const router = useRouter()
-const root = ref(null)
+const root = ref<HTMLElement | null>(null)
 const cached = localStg.get('tabs')
-const paths = ref(theme.tab.cache && Array.isArray(cached) ? cached.filter(path => typeof path === 'string' && path.startsWith('/admin/')) : [])
-const idByPath = path => getTabIdByRoute(router.resolve(path))
+const paths = ref<string[]>(theme.tab.cache && Array.isArray(cached) ? cached.filter(path => typeof path === 'string' && path.startsWith('/admin/')) : [])
+const idByPath = (path: string) => getTabIdByRoute(router.resolve(path))
 const activeId = computed(() => getTabIdByRoute(route))
 const homePath = computed(() => deviceSelection.id === 'welding' ? '/admin/welding/home' : '/admin/home')
 const tabs = computed(() => [...new Map([...new Set([homePath.value, ...paths.value])].flatMap(path => {
@@ -34,20 +34,20 @@ watch([paths, () => theme.tab.cache], () => {
   if (theme.tab.cache) localStg.set('tabs', paths.value)
   else localStg.remove('tabs')
 }, { deep: true, immediate: true })
-function close(id) {
+function close(id: string) {
   if (id === homePath.value) return
   const index = tabs.value.findIndex(tab => tab.id === id)
   const fallback = tabs.value[index - 1]?.path || homePath.value
   paths.value = paths.value.filter(item => idByPath(item) !== id)
   if (activeId.value === id) router.push(fallback)
 }
-function middleClick(event, id) {
+function middleClick(event: MouseEvent, id: string) {
   if (event.button !== 1 || !theme.tab.closeTabByMiddleClick) return
   event.preventDefault()
   close(id)
 }
-function scrollTabs(event) {
-  const element = event.currentTarget
+function scrollTabs(event: WheelEvent) {
+  const element = event.currentTarget as HTMLElement
   const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY
   const previous = element.scrollLeft
   element.scrollLeft += delta
@@ -58,7 +58,7 @@ function scrollTabs(event) {
   <DarkModeContainer class="h-full min-w-0 flex-y-center px-16px shadow-tab">
     <div ref="root" class="theme-tabs h-full min-w-0 flex flex-1 overflow-x-auto" :class="theme.tab.mode === 'button' ? 'items-center gap-12px' : 'items-end'" role="tablist" aria-label="已打开页面" @wheel="scrollTabs">
       <PageTab v-for="tab in tabs" :key="tab.id" class="flex-shrink-0" :mode="theme.tab.mode" :dark-mode="theme.darkMode" :active="tab.id === activeId" :active-color="theme.themeColor" :closable="tab.id !== homePath" :data-active="tab.id === activeId" role="tab" :aria-selected="tab.id === activeId" tabindex="0" @click="router.push(tab.path)" @keydown.enter="router.push(tab.path)" @keydown.delete="close(tab.id)" @mousedown="middleClick($event, tab.id)" @close="close(tab.id)">
-        <template #prefix><AppIcon :name="tab.icon" :size="16" tone="current" /></template>
+        <template #prefix><AppIcon :name="tab.icon || ''" :size="16" tone="current" /></template>
         <span class="max-w-240px ellipsis-text">{{ tab.label }}</span>
       </PageTab>
     </div>

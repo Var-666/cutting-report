@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { createRequestCancellation } from '../src/api/requestCancellation.js'
+import { createRequestCancellation } from '../src/api/requestCancellation.ts'
 
 test('abort notifies the backend once using the same request id', async () => {
   const calls = []

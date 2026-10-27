@@ -1,11 +1,11 @@
-<script setup>
+<script setup lang="ts">
 import { RouterView, useRouter } from 'vue-router'
 import { NButton } from 'naive-ui'
 import SoybeanAdminLayout from '../vendor/soybean-admin/index.vue'
 import projectLogo from '../assets/project-logo.png'
 import DeviceSwitcher from '../components/DeviceSwitcher.vue'
-import { useAppStore } from '../state/app.js'
-import { deviceSelection } from '../state/devices.js'
+import { useAppStore } from '../state/app.ts'
+import { deviceSelection } from '../state/devices.ts'
 import { endSession, session } from '../state/session'
 
 const app = useAppStore()

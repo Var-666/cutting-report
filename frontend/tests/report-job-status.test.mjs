@@ -6,5 +6,5 @@ const source = readFileSync(new URL('../src/components/ReportJobStatus.vue', imp
 
 test('report job status gives unavailable AI output a user-facing label', () => {
   assert.match(source, /unavailable: '暂不可用'/)
-  assert.match(source, /aiStatusText\[job\.ai_status\]/)
+  assert.match(source, /aiStatusText\[job\.ai_status \|\| ''\]/)
 })

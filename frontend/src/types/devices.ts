@@ -1,0 +1,29 @@
+export interface CuttingDevice {
+  id: string;
+  name: string;
+  machine_no: string;
+  production_line_id: string;
+  energy_connected: boolean;
+  alarm_start_at: string;
+  type?: 'cutting';
+  type_name?: string;
+  capabilities?: ('reports' | 'alarms' | 'dispatch' | 'settings')[];
+  enabled?: never;
+}
+export interface WeldingLine {
+  id: 'welding';
+  name: string;
+  type: 'welding';
+  type_name: string;
+  enabled: boolean;
+  capabilities: ('reports' | 'analysis' | 'settings')[];
+  machine_no?: never;
+  production_line_id?: never;
+  energy_connected?: never;
+  alarm_start_at?: never;
+}
+export type ProductionLine = CuttingDevice | WeldingLine;
+export interface DeviceCatalog {
+  default_device_id: string;
+  items: ProductionLine[];
+}

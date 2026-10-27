@@ -1,13 +1,14 @@
-<script setup>
+<script setup lang="ts">
+import type { PropType } from 'vue'
 import { computed } from 'vue'
 import { NBadge, NNumberAnimation, NSkeleton, NStatistic, NTag, NText } from 'naive-ui'
 import MetricSparkline from './MetricSparkline.vue'
-import { useAppStore } from '../state/app.js'
+import { useAppStore } from '../state/app.ts'
 
 const props = defineProps({
   title: { type: String, required: true },
   color: { type: String, default: 'rgb(var(--primary-color))' },
-  value: { type: [String, Number], default: null },
+  value: { type: [String, Number] as PropType<string | number | null>, default: null },
   precision: { type: Number, default: 0 },
   unit: { type: String, default: '' },
   status: { type: String, default: '' },
@@ -26,7 +27,7 @@ const formattedValue = computed(() => numericValue.value === null ? props.value 
       <div class="flex-y-center gap-8px"><NBadge dot :color="color" :processing="!loading && numericValue !== null && !app.reducedMotion" aria-hidden="true" /><NText depth="3" class="text-12px">{{ title }}</NText></div>
       <NTag v-if="!loading && status" size="small" :bordered="false" :type="direction === 'up' ? 'success' : direction === 'down' ? 'error' : 'default'" :aria-label="status">{{ status.replace(' 较上月', '') }}</NTag>
     </div>
-    <NStatistic tabular-nums :value="loading || (numericValue !== null && !app.reducedMotion) ? undefined : formattedValue" :theme-overrides="{ valueFontSize: '30px', valueFontWeight: 600 }">
+    <NStatistic tabular-nums :value="loading || (numericValue !== null && !app.reducedMotion) ? undefined : formattedValue" :theme-overrides="{ valueFontSize: '30px', valueFontWeight: '600' }">
       <NSkeleton v-if="loading" height="36px" width="60%" aria-label="正在获取生产数据" role="status" />
       <NNumberAnimation v-else-if="numericValue !== null && !app.reducedMotion" :from="0" :to="numericValue" :precision="precision" show-separator />
       <template #suffix><NText v-if="unit && !loading" depth="3" class="text-12px">{{ unit }}</NText></template>
