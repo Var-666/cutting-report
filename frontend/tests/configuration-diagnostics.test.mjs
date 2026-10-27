@@ -29,7 +29,7 @@ const flush = async () => { await Promise.resolve(); await Vue.nextTick() }
 test('diagnostics is an admin settings child and uses the shared read-only API', () => {
   const router = read('../src/router/index.ts')
   assert.match(router, /path: '\/admin'[\s\S]*meta: \{ role: 'admin' \}[\s\S]*path: 'settings'[\s\S]*path: 'configuration-diagnostics'[\s\S]*ConfigurationDiagnosticsView/)
-  assert.match(read('../src/api/reports.ts'), /getConfigurationDiagnostics[\s\S]*request<ConfigurationDiagnostics>\('\/api\/v1\/configuration\/diagnostics', \{ signal \}\)/)
+  assert.match(read('../src/api/configuration.ts'), /getConfigurationDiagnostics[\s\S]*request<ConfigurationDiagnostics>\('\/api\/v1\/configuration\/diagnostics', \{ signal \}\)/)
   assert.doesNotMatch(script, /fetch\(|method:|saveConfiguration|\.snapshot\(/)
 })
 

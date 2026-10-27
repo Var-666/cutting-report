@@ -5,7 +5,7 @@ import type { PropType } from 'vue'
 import { toError } from '../utils/errors'
 
 import { computed, onActivated, onBeforeUnmount, onDeactivated, ref, watch } from 'vue'
-import { analyzeReport, getAnalysisVersion, getLatestAnalysis } from '../api/reports'
+import { analyzeReport, getAnalysisVersion, getLatestAnalysis } from '../api/cutting.ts'
 import { createActivationTimer } from '../utils/activationTimer.ts'
 import { compactAnalysisFactLabel, compactAnalysisFactValue } from '../utils/analysisFactDisplay.ts'
 import { formatDeviceDisplay } from '../utils/deviceDisplay.ts'

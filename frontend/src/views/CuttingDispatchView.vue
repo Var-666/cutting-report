@@ -14,17 +14,7 @@ import { parseCuttingInstructionFilename } from '../utils/cuttingInstructionName
 import { matchesDispatchParameters } from '../utils/cuttingDispatchBatch.ts'
 import { formatChineseDateTime } from '../utils/dateDisplay.ts'
 import { useDialogFocus } from '../composables/useDialogFocus.ts'
-import {
-  createCuttingDispatchBatch,
-  executeCuttingDispatch,
-  getCuttingDispatch,
-  getCuttingStatus,
-  listCuttingDispatches,
-  listCuttingMachines,
-  listCuttingProjects,
-  listCuttingCatalogs,
-  listCuttingFiles,
-} from '../api/reports'
+import { createCuttingDispatchBatch, executeCuttingDispatch, getCuttingDispatch, getCuttingStatus, listCuttingDispatches, listCuttingMachines, listCuttingProjects, listCuttingCatalogs, listCuttingFiles } from '../api/dispatch.ts'
 
 const pageActive = ref(true)
 const route = useRoute()

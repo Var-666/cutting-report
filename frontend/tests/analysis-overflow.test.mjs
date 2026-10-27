@@ -36,7 +36,7 @@ test('model-only analysis hides reference codes but keeps evidence available', (
 })
 
 test('analysis checks for newer report data and asks the current report to sync automatically', () => {
-  const api = readFileSync(new URL('../src/api/reports.ts', import.meta.url), 'utf8')
+  const api = ['client', 'cutting'].map(name => readFileSync(new URL(`../src/api/${name}.ts`, import.meta.url), 'utf8')).join('\n')
   assert.match(api, /error\.status = response\.status/)
   assert.match(api, /export function getAnalysisVersion[\s\S]*\/api\/v1\/analysis\/version/)
   assert.match(source, /SOURCE_CHECK_INTERVAL_MS = 300_000/)

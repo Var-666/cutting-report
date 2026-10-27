@@ -1,6 +1,6 @@
 import type { ReadOptions } from '../types/api'
 import { deviceUrl } from './deviceContext.ts'
-import { createReport, getReportStatus } from './reports.ts'
+import { createReport, getReportStatus } from './cutting.ts'
 
 export async function downloadReportPdf(reportId: string, { signal }: ReadOptions = {}) {
   const response = await fetch(deviceUrl(`/api/v1/reports/${encodeURIComponent(reportId)}/download?format=pdf`), {

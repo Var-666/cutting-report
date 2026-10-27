@@ -7,7 +7,7 @@ import { createPinia, setActivePinia, defineStore } from 'pinia'
 import { parse } from '@vue/compiler-sfc'
 import { cuttingRoutes } from '../src/router/cuttingRoutes.ts'
 import { weldingRoutes } from '../src/router/weldingRoutes.ts'
-import { selectedLineType } from '../src/utils/productionLines.ts'
+import { lineHome, selectedLineType } from '../src/utils/productionLines.ts'
 import { adminMenus } from '../src/router/menus.ts'
 import { selectOptions } from '../src/utils/selectOptions.ts'
 import { useAppStore } from '../src/state/app.ts'
@@ -95,7 +95,7 @@ test('native PageTab adapter honors cached paths, middle-click setting and activ
   const destinations = []
   const router = { push: path => destinations.push(path), resolve: path => ({ path: path.split('?')[0], query: Object.fromEntries(new URLSearchParams(path.split('?')[1] || '')), matched: path === '/admin/not-a-route' ? [] : [{ meta: { role: 'admin' }, ...(['/admin/settings', '/admin/settings/report-design'].includes(path) ? { redirect: '/admin/settings' } : {}) }], meta: { title: path, icon: 'home' } }) }
   const localStg = { get: key => stored.get(key), set: (key, value) => stored.set(key, [...value]), remove: key => stored.delete(key) }
-  const api = scriptFunction('computed', 'nextTick', 'ref', 'watch', 'useRoute', 'useRouter', 'useThemeStore', 'localStg', 'getTabIdByRoute', 'deviceSelection', `${source}\nreturn { tabs, close, middleClick, scrollTabs }`)(computed, nextTick, ref, watch, () => route, () => router, () => theme, localStg, getTabIdByRoute, { id: 'Cutter01' })
+  const api = scriptFunction('computed', 'nextTick', 'ref', 'watch', 'useRoute', 'useRouter', 'useThemeStore', 'localStg', 'getTabIdByRoute', 'deviceSelection', 'lineHome', 'selectedLineType', `${source}\nreturn { tabs, close, middleClick, scrollTabs }`)(computed, nextTick, ref, watch, () => route, () => router, () => theme, localStg, getTabIdByRoute, { id: 'Cutter01', items: [] }, lineHome, selectedLineType)
   await nextTick()
   assert.deepEqual(api.tabs.value.map(tab => tab.path), ['/admin/home', '/admin/settings/database', '/admin/reports/leadership'])
   route.fullPath = '/admin/reports/leadership?start_date=2026-10-01'

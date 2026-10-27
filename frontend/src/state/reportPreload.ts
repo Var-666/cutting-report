@@ -1,10 +1,7 @@
 import type { User } from '../types/auth'
 import { reactive } from 'vue'
-import {
-  getEnergyDay, getEnergyMonthlyRange, getLeadershipReport,
-  getLatestWorkshopProductionDate, getTaskEnergyDay,
-  listReports, listWorkshopRangeTasks, listWorkshopTasks,
-} from '../api/reports.ts'
+import { getEnergyDay, getEnergyMonthlyRange, getTaskEnergyDay } from '../api/energy.ts'
+import { getLeadershipReport, getLatestWorkshopProductionDate, listReports, listWorkshopRangeTasks, listWorkshopTasks } from '../api/cutting.ts'
 import { reportCache } from '../api/reportCache.ts'
 import { recentTwelveMonthStart, reportToday } from '../api/reportDates.ts'
 

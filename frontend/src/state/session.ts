@@ -1,8 +1,10 @@
+import { selectedLineType } from '../utils/productionLines.ts'
 import type { User } from '../types/auth'
 import type { SystemHealth } from '../types/system'
 import { resetDeviceContext } from '../api/deviceContext.ts'
 import { reactive } from 'vue'
-import { getAuthStatus, getSystemHealth, logoutAccount } from '../api/reports.ts'
+import { getAuthStatus, logoutAccount } from '../api/auth.ts'
+import { getSystemHealth } from '../api/system.ts'
 import { startReportPreload, stopReportPreload } from './reportPreload.ts'
 import { deviceSelection, loadDevices } from './devices.ts'
 
@@ -22,7 +24,7 @@ function preloadDeviceReports(user: User | null, generation: number) {
   if (!user) { stopReportPreload(); return }
   // Validate the remembered device before any production report warmup starts.
   loadDevices({ includeLines: user.role === 'admin' }).then(() => {
-    if (generation === sessionGeneration && deviceSelection.ready && deviceSelection.id !== 'welding') startReportPreload(user)
+    if (generation === sessionGeneration && deviceSelection.ready && selectedLineType(deviceSelection.items, deviceSelection.id) === 'cutting') startReportPreload(user)
   })
 }
 

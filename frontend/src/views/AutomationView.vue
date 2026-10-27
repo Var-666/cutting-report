@@ -3,17 +3,7 @@ import type { AutomationSchedule, AutomationStatus, EmailDelivery } from '../typ
 
 import { toError } from '../utils/errors'
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
-import {
-  deleteAutomationSchedule,
-  getAutomationConfiguration,
-  getAutomationStatus,
-  listAutomationSchedules,
-  listEmailDeliveries,
-  retryEmailDelivery,
-  runAutomationSchedule,
-  saveAutomationConfiguration,
-  saveAutomationSchedule,
-} from '../api/reports'
+import { deleteAutomationSchedule, getAutomationConfiguration, getAutomationStatus, listAutomationSchedules, listEmailDeliveries, retryEmailDelivery, runAutomationSchedule, saveAutomationConfiguration, saveAutomationSchedule } from '../api/automation.ts'
 import { deviceSelection } from '../state/devices.ts'
 import { formatDeviceDisplay } from '../utils/deviceDisplay.ts'
 import { formatChineseDate, formatChineseDateTime } from '../utils/dateDisplay.ts'

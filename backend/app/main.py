@@ -9,7 +9,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
+from app.services.frontend_static import FrontendAssets
+from app.services.production_lines import supports_path
 
 from app.api.configuration import router as configuration_router
 from app.api.database import router as database_router
@@ -95,11 +96,9 @@ if settings.cors_origins:
 
 @app.middleware("http")
 async def request_id_middleware(request: Request, call_next):
-    if request.headers.get('X-Production-Line') == 'welding' and any(
-        request.url.path == f'/api/v1/{module}' or request.url.path.startswith(f'/api/v1/{module}/')
-        for module in ('cutting', 'downloads', 'alarms', 'automation', 'workshop', 'leadership-report',
-                       'equipment-report', 'energy-report', 'analysis', 'reports', 'options', 'projects', 'ships', 'conditions', 'designer')
-    ):
+    # A client scope can restrict capabilities, but never grants access or replaces role checks.
+    line_id = request.headers.get('X-Production-Line')
+    if line_id and not supports_path(line_id, request.url.path):
         return JSONResponse(status_code=403, content={'success': False, 'error': {'code': 'LINE_CAPABILITY_DENIED', 'message': '当前产线不支持此功能'}})
     supplied_request_id = request.headers.get("X-Request-ID", "")
     request_id = (
@@ -200,7 +199,7 @@ async def health(request: Request) -> dict:
 
 assets_dir = settings.frontend_dist_dir / "assets"
 if assets_dir.is_dir():
-    app.mount("/assets", StaticFiles(directory=assets_dir), name="frontend-assets")
+    app.mount("/assets", FrontendAssets(directory=assets_dir), name="frontend-assets")
 
 
 @app.get("/favicon.svg", include_in_schema=False)
@@ -215,7 +214,7 @@ def frontend_favicon():
 def frontend_index():
     index_path = settings.frontend_dist_dir / "index.html"
     if index_path.is_file():
-        return FileResponse(index_path)
+        return FileResponse(index_path, headers={'Cache-Control': 'no-cache'})
     return HTMLResponse(
         """
         <!doctype html><html lang="zh-CN"><meta charset="utf-8">
@@ -235,5 +234,5 @@ def frontend_spa(frontend_path: str):
         raise HTTPException(status_code=404, detail="Not Found")
     index_path = settings.frontend_dist_dir / "index.html"
     if index_path.is_file():
-        return FileResponse(index_path)
+        return FileResponse(index_path, headers={'Cache-Control': 'no-cache'})
     raise HTTPException(status_code=404, detail="Vue 前端尚未构建")

@@ -2,6 +2,7 @@ import { scriptFunction } from './typescript-helpers.mjs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { lineHome, selectedLineType } from '../src/utils/productionLines.ts'
 import { ref } from 'vue'
 import { getDeviceId, deviceUrl, selectDevice, setDeviceCatalog, resetDeviceContext, registerDeviceSwitchQuery, deviceSwitchQuery } from '../src/api/deviceContext.ts'
 import { createReportCache, reportCache } from '../src/api/reportCache.ts'
@@ -193,7 +194,7 @@ test('shells use the selected device to discard cached views, while keeping rout
 
 test('both device selectors preserve displayed filters before switching and reject overlapping switches', async () => {
   const script = source('composables/useDeviceSelection.ts').replace(/^import .*$/gm, '').replace('export function', 'function')
-  const selection = { id: 'Cutter01' }
+  const selection = { id: 'Cutter01', items: catalog.items }
   const changes = []
   let completeNavigation
   let failNavigation = false
@@ -203,7 +204,7 @@ test('both device selectors preserve displayed filters before switching and reje
     if (failNavigation) return Promise.reject(new Error('navigation failed'))
     return new Promise(resolve => { completeNavigation = resolve })
   } }
-  const api = scriptFunction('ref', 'onMounted', 'useRoute', 'useRouter', 'deviceSwitchQuery', 'changeDevice', 'deviceSelection', 'loadDevices', `${script}\nreturn useDeviceSelection()`)(ref, () => {}, () => route, () => router, () => ({ start_date: '2026-10-12' }), id => { selection.id = id }, selection, () => {})
+  const api = scriptFunction('ref', 'onMounted', 'useRoute', 'useRouter', 'deviceSwitchQuery', 'changeDevice', 'deviceSelection', 'loadDevices', 'lineHome', 'selectedLineType', `${script}\nreturn useDeviceSelection()`)(ref, () => {}, () => route, () => router, () => ({ start_date: '2026-10-12' }), id => { selection.id = id }, selection, () => {}, lineHome, selectedLineType)
   await api.switchDevice('Cutter01')
   assert.equal(changes.length, 0)
   const pending = api.switchDevice('Cutter02')

@@ -3,12 +3,7 @@ import type { HrPerson, User } from '../types/auth'
 
 import { toError } from '../utils/errors'
 import { computed, onMounted, reactive, ref } from 'vue'
-import {
-  grantAdminAccess,
-  listAdminAccounts,
-  revokeAdminAccess,
-  searchHrPeople,
-} from '../api/reports'
+import { grantAdminAccess, listAdminAccounts, revokeAdminAccess, searchHrPeople } from '../api/auth.ts'
 import { session } from '../state/session'
 import { formatChineseDateTime } from '../utils/dateDisplay.ts'
 import ManagementPageHero from '../components/ManagementPageHero.vue'

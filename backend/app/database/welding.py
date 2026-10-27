@@ -261,7 +261,8 @@ class WeldingRepository:
         rows = session.fetch(f'SELECT {JOB_FIELDS} FROM weld_info_table j WHERE {where} ORDER BY {column} {direction}, id {direction} LIMIT %s OFFSET %s', (*values, size, offset), limit=size)
         return rows, total
 
-    def parts(self, session: WeldingSession, query: WeldingQuery, *, limit: int | None = None) -> tuple[list[dict], int]:
+    @staticmethod
+    def part_conditions(query: WeldingQuery) -> tuple[str, tuple]:
         # State on this page belongs to the part, not to the job that establishes involvement.
         job_query = query.model_copy(update={'state': None})
         where, values = job_conditions(job_query)
@@ -272,7 +273,12 @@ class WeldingRepository:
             if value is not None and value != '':
                 conditions += f' AND p.{name} = %s'
                 values += (value,)
-        total = session.fetch(f'SELECT COUNT(*) AS total FROM weld_part_info_table p WHERE {conditions}', values, limit=1)[0]['total']
+        return conditions, values
+
+    def parts(self, session: WeldingSession, query: WeldingQuery, *, limit: int | None = None, total: int | None = None) -> tuple[list[dict], int]:
+        conditions, values = self.part_conditions(query)
+        if total is None:
+            total = session.fetch(f'SELECT COUNT(*) AS total FROM weld_part_info_table p WHERE {conditions}', values, limit=1)[0]['total']
         if limit is not None and total >= limit:
             return [], total
         size = limit if limit is not None else query.page_size

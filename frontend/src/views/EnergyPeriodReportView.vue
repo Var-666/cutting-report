@@ -14,13 +14,8 @@ import { init, use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import {
-  getEnergyDay,
-  getEnergyMonthlyRange,
-  getEnergyRange,
-  getLatestWorkshopProductionDate,
-  getTaskEnergyDay,
-} from '../api/reports'
+import { getEnergyDay, getEnergyMonthlyRange, getEnergyRange, getTaskEnergyDay } from '../api/energy.ts'
+import { getLatestWorkshopProductionDate } from '../api/cutting.ts'
 import { recentTwelveMonthStart, reportToday, taskProductionDate } from '../api/reportDates.ts'
 import AnalysisPanel from '../components/AnalysisPanel.vue'
 import AppIcon from '../components/AppIcon.vue'

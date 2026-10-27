@@ -5,7 +5,7 @@ import type { EmailDelivery, EmailResolution, RecipientOutcome } from '../types/
 import { toError } from '../utils/errors'
 
 import { computed, onActivated, onDeactivated, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { listEmailDeliveryResolutions, resolveEmailDelivery } from '../api/reports'
+import { listEmailDeliveryResolutions, resolveEmailDelivery } from '../api/automation.ts'
 import { formatChineseDateTime } from '../utils/dateDisplay.ts'
 
 const props = defineProps({ delivery: { type: Object as PropType<EmailDelivery>, required: true } })

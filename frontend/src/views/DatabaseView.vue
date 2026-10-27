@@ -2,15 +2,9 @@
 import type { ConnectionTestResult, DatabaseConfiguration, DatabaseSource, DatabaseStatus, SaveResult, SqlConnection, WeldingConnection } from '../types/configuration'
 
 import { toError } from '../utils/errors'
+import { selectedLineType } from '../utils/productionLines.ts'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import {
-  getDatabaseConfiguration,
-  getDatabaseStatus,
-  saveDatabaseConfiguration,
-  testDatabaseConnection,
-  testWeldingConnection,
-  saveWeldingConfiguration,
-} from '../api/reports'
+import { getDatabaseConfiguration, getDatabaseStatus, saveDatabaseConfiguration, testDatabaseConnection, testWeldingConnection, saveWeldingConfiguration } from '../api/configuration.ts'
 import { deviceSelection, loadDevices } from '../state/devices.ts'
 import { formatTableDateValue } from '../utils/dateDisplay.ts'
 import ManagementPageHero from '../components/ManagementPageHero.vue'
@@ -26,7 +20,7 @@ const configurationResult = ref<SaveResult | null>(null)
 const testing = ref(false)
 const testResult = ref<ConnectionTestResult | null>(null)
 const testError = ref('')
-const weldingScope = computed(() => deviceSelection.id === 'welding')
+const weldingScope = computed(() => selectedLineType(deviceSelection.items, deviceSelection.id) === 'welding')
 const testSource = ref('sqlserver')
 const testIsWelding = computed(() => weldingScope.value || testSource.value === 'welding')
 const dataSources = computed(() => (status.value?.data_sources || []).filter(source => !weldingScope.value || source.source === 'welding'))

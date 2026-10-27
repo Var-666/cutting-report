@@ -4,7 +4,7 @@ import type { User } from '../types/auth'
 import { toError } from '../utils/errors'
 import { nextTick, reactive, ref } from 'vue'
 import { NButton, NInput } from 'naive-ui'
-import { bootstrapAccount, loginAccount } from '../api/reports'
+import { bootstrapAccount, loginAccount } from '../api/auth.ts'
 import loginIllustration from '../assets/login-illustration.png'
 import projectLogo from '../assets/project-logo.png'
 

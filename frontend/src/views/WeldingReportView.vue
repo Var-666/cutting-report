@@ -3,6 +3,7 @@ import type { DataRow } from '../types/api'
 import type { PropType } from 'vue'
 import type { WeldingAnalysis, WeldingPart, WeldingQuery, WeldingFilterDraft, WeldingReport, WeldingReportKind, WeldingJobRow, WeldingPartRow, WeldingMetrics } from '../types/welding'
 import { toError } from '../utils/errors'
+import { selectedLineType } from '../utils/productionLines.ts'
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { NCard, NModal } from 'naive-ui'
@@ -42,7 +43,8 @@ const detailJob = ref<WeldingJobRow | null>(null)
 const detailLoading = ref(false)
 const detailError = ref('')
 const seamPage = ref(1)
-const sourceEnabled = computed(() => deviceSelection.items?.find(item => item.id === 'welding')?.enabled !== false)
+const lineName = computed(() => deviceSelection.items.find(item => item.id === deviceSelection.id)?.name || '焊接生产线')
+const sourceEnabled = computed(() => deviceSelection.items?.find(item => item.id === deviceSelection.id)?.enabled !== false)
 let controller: AbortController | undefined, detailController: AbortController | undefined, exportController: AbortController | undefined, analysisController: AbortController | undefined
 let generation = 0
 let detailGeneration = 0
@@ -79,7 +81,7 @@ async function load(values: WeldingQuery) {
   }
   try {
     const value = await getWeldingReport(props.kind, values, controller.signal)
-    if (run !== generation || deviceSelection.id !== 'welding') return
+    if (run !== generation || selectedLineType(deviceSelection.items, deviceSelection.id) !== 'welding') return
     report.value = value
     activeQuery.value = value.query
   } catch (caught) {
@@ -169,14 +171,14 @@ function cancel() {
   for (const request of [controller, detailController, exportController, analysisController]) request?.abort()
 }
 watch(detailOpen, open => { if (!open) { detailController?.abort(); detailGeneration += 1 } })
-watch(() => deviceSelection.id, id => { if (id !== 'welding') { cancel(); report.value = null; detailOpen.value = false } })
+watch(() => deviceSelection.id, id => { if (selectedLineType(deviceSelection.items, id) !== 'welding') { cancel(); report.value = null; detailOpen.value = false } })
 watch(() => [props.kind, sourceEnabled.value], submit, { immediate: true })
 onBeforeUnmount(cancel)
 </script>
 
 <template>
   <div class="welding-page">
-    <header class="welding-heading"><div><h1>{{ title }}</h1><p>小组立焊接线 · {{ kind === 'dashboard' ? '今日指标与最近7天动态' : '按作业结束时间统计，北京时间' }}</p></div><ReportExportMenu :formats="['csv', 'html', 'pdf']" :disabled="!report || loading" :loading="exporting" @select="exportReport" /></header>
+    <header class="welding-heading"><div><h1>{{ title }}</h1><p>{{ lineName }} · {{ kind === 'dashboard' ? '今日指标与最近7天动态' : '按作业结束时间统计，北京时间' }}</p></div><ReportExportMenu :formats="['csv', 'html', 'pdf']" :disabled="!report || loading" :loading="exporting" @select="exportReport" /></header>
     <section v-if="sourceEnabled" class="panel welding-filter-panel">
       <form class="welding-filters" @submit.prevent="submit">
         <template v-if="kind !== 'dashboard'"><label><span>开始日期</span><AppDatePicker v-model="draft.start" required /></label><label><span>结束日期</span><AppDatePicker v-model="draft.end" :min="draft.start" required /></label></template>

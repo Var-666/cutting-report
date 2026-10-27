@@ -1,3 +1,4 @@
+import { lineHome, selectedLineType } from '../utils/productionLines.ts'
 import { createRouter, createWebHistory } from 'vue-router'
 import { loadSession, roleHome, session } from '../state/session'
 import { installSessionExpiryRedirect } from '../state/sessionExpiry.ts'
@@ -156,12 +157,11 @@ router.beforeEach(async (to) => {
   }
   if (requiredRole === 'admin') {
     await loadDevices({ includeLines: true })
-    const weldingPage = to.matched.some(record => record.meta.line === 'welding')
-    if (weldingPage) {
-      if (!deviceSelection.items.some(item => item.id === 'welding')) return '/admin/home'
-      if (deviceSelection.id !== 'welding') changeDevice('welding')
-    } else if (deviceSelection.id === 'welding' && to.matched.some(record => record.meta.line === 'cutting')) {
-      return '/admin/welding/home'
+    const type = to.matched.find(record => record.meta.line)?.meta.line
+    if (type && type !== selectedLineType(deviceSelection.items, deviceSelection.id)) {
+      const line = deviceSelection.items.find(item => (item.type || 'cutting') === type)
+      if (!line) return lineHome(deviceSelection.items, deviceSelection.id)
+      changeDevice(line.id)
     }
   }
   return true

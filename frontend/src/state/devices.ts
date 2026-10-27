@@ -1,5 +1,5 @@
 import { reactive } from 'vue'
-import { getDeviceCatalog, getProductionLines } from '../api/reports.ts'
+import { getDeviceCatalog, getProductionLines } from '../api/devices.ts'
 import { getDeviceId, getDevices, selectDevice, setDeviceCatalog, subscribeDevices } from '../api/deviceContext.ts'
 import { stopReportPreload } from './reportPreload.ts'
 

@@ -5,7 +5,7 @@ import type { ConfigurationDiagnostics, DiagnosticStatus } from '../types/config
 import { toError } from '../utils/errors'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { NAlert, NButton, NCard, NInput, NTag } from 'naive-ui'
-import { getConfigurationDiagnostics } from '../api/reports.ts'
+import { getConfigurationDiagnostics } from '../api/configuration.ts'
 import AppSelect from '../components/AppSelect.vue'
 import ManagementPageHero from '../components/ManagementPageHero.vue'
 

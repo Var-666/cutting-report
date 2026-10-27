@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { computed, h, reactive, ref } from 'vue'
 import { parse, compileScript, compileTemplate } from '@vue/compiler-sfc'
-import { productionGroups, selectedLineType } from '../src/utils/productionLines.ts'
+import { lineHome, productionGroups, selectedLineType } from '../src/utils/productionLines.ts'
 import { adminMenus } from '../src/router/menus.ts'
 import { analyzeWelding, downloadWelding, getWeldingPart, getWeldingReport, weldingQuery } from '../src/api/welding.ts'
 import { weldingColumns, weldingDisplay, weldingKpis, weldingTitles } from '../src/utils/weldingReport.ts'
@@ -23,11 +23,11 @@ test('device types contain independent welding lines without adding a third navi
 
 test('cross-line switching enters the correct home and restores selection if navigation is cancelled', async () => {
   const script = source('composables/useDeviceSelection.ts').replace(/^import .*$/gm, '').replace('export function', 'function')
-  const selection = { id: 'Cutter01' }
+  const selection = { id: 'Cutter01', items: [{ id: 'Cutter01' }, { id: 'Cutter02' }, { id: 'welding', type: 'welding' }, { id: 'other-welding', type: 'welding' }] }
   const destinations = []
   let cancel = false
   const router = { replace: async to => { destinations.push(to); return cancel ? { type: 4 } : undefined } }
-  const bindings = { ref, onMounted() {}, useRoute: () => ({ name: 'admin-home', query: {} }), useRouter: () => router,
+  const bindings = { lineHome, selectedLineType, ref, onMounted() {}, useRoute: () => ({ name: 'admin-home', query: {} }), useRouter: () => router,
     deviceSwitchQuery: () => null, changeDevice: id => { selection.id = id }, deviceSelection: selection, loadDevices() {} }
   const app = scriptFunction(...Object.keys(bindings), `${script}; return useDeviceSelection();`)(...Object.values(bindings))
   await app.switchDevice('welding')
@@ -36,8 +36,14 @@ test('cross-line switching enters the correct home and restores selection if nav
   await app.switchDevice('Cutter02')
   assert.equal(selection.id, 'Cutter02')
   assert.equal(destinations.at(-1), '/admin/home')
-  cancel = true
+  await app.switchDevice('other-welding')
+  assert.equal(selection.id, 'other-welding')
+  assert.equal(destinations.at(-1), '/admin/welding/home')
   await app.switchDevice('welding')
+  assert.equal(selection.id, 'welding')
+  await app.switchDevice('Cutter02')
+  cancel = true
+  await app.switchDevice('other-welding')
   assert.equal(selection.id, 'Cutter02')
   assert.equal(app.switching.value, false)
 })
@@ -79,10 +85,10 @@ function view(readReport, options = {}) {
   const script = parse(source('views/WeldingReportView.vue')).descriptor.scriptSetup.content.replace(/^import .*$/gm, '')
   const cleanup = []
   const bindings = {
-    computed, reactive, ref, watch: (source, callback, config) => { if (options.watchers) { options.watchers.push({ source, callback }); if (config?.immediate) callback(source()) } }, onBeforeUnmount: fn => cleanup.push(fn),
+    selectedLineType, computed, reactive, ref, watch: (source, callback, config) => { if (options.watchers) { options.watchers.push({ source, callback }); if (config?.immediate) callback(source()) } }, onBeforeUnmount: fn => cleanup.push(fn),
     defineProps: () => ({ kind: 'jobs' }), useRoute: () => options.route || ({ query: {} }), useRouter: () => options.router || ({ push() {} }), queryDateRange,
     reportToday: () => '2026-10-26', getWeldingReport: readReport,
-    deviceSelection: { id: 'welding', items: [{ id: 'welding', enabled: options.enabled ?? true }] }, weldingTitles, weldingKpis, weldingColumns, weldingDisplay, weldingQuery,
+    deviceSelection: { id: 'welding', items: [{ id: 'welding', type: 'welding', enabled: options.enabled ?? true }] }, weldingTitles, weldingKpis, weldingColumns, weldingDisplay, weldingQuery,
   }
   return { ...scriptFunction(...Object.keys(bindings), `${script}; return { read, submit, changePage, changePageSize, report, loading, error, activeQuery, draft, detailJob, goToPart, actionError };`)(...Object.values(bindings)), cleanup }
 }
@@ -317,4 +323,35 @@ test('unsubmitted filters and pagination cannot send a request without a valid p
   app.submit()
   assert.equal(calls, 1)
   assert.equal(app.actionError.value, '')
+})
+
+test('router resolves registered line types without requiring a fixed welding ID', async () => {
+  const sourceCode = source('router/index.ts')
+  const guard = sourceCode.slice(sourceCode.indexOf('router.beforeEach('), sourceCode.indexOf('\nrouter.afterEach('))
+  const selection = { id: 'Cutter01', items: [{ id: 'Cutter01', type: 'cutting' }, { id: 'weld-2', type: 'welding' }] }
+  let beforeEach
+  const bindings = { router: { beforeEach: fn => { beforeEach = fn } }, loadSession: async () => {},
+    session: { user: { role: 'admin' } }, roleHome: () => '/worker/tasks', loadDevices: async () => {},
+    deviceSelection: selection, changeDevice: id => { selection.id = id }, selectedLineType, lineHome }
+  scriptFunction(...Object.keys(bindings), guard)(...Object.values(bindings))
+  const route = line => ({ meta: {}, matched: [{ meta: { role: 'admin' } }, { meta: { line } }] })
+  assert.equal(await beforeEach(route('welding')), true)
+  assert.equal(selection.id, 'weld-2')
+  assert.equal(await beforeEach(route('welding')), true)
+  assert.equal(selection.id, 'weld-2')
+  assert.equal(await beforeEach(route('coating')), '/admin/welding/home')
+  assert.equal(selection.id, 'weld-2')
+  assert.equal(await beforeEach(route('cutting')), true)
+  assert.equal(selection.id, 'Cutter01')
+  bindings.session.user.role = 'worker'
+  assert.equal(await beforeEach(route('welding')), '/worker/tasks')
+  assert.equal(selection.id, 'Cutter01')
+})
+
+test('new line types keep registered labels and destinations', () => {
+  const items = [{ id: 'paint-1', type: 'coating', type_name: '涂装', name: '涂装一线', home_path: '/admin/coating/home' }]
+  assert.equal(productionGroups(items)[0].name, '涂装')
+  assert.equal(selectedLineType(items, 'paint-1'), 'coating')
+  assert.equal(lineHome(items, 'paint-1'), '/admin/coating/home')
+  assert.equal(productionGroups([{ ...items[0], type_name: '' }])[0].name, 'coating')
 })

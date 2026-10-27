@@ -3,7 +3,7 @@ import type { AlarmIncident, AlarmIncidentSummary, AlarmReport, AlarmStatus } fr
 
 import { toError } from '../utils/errors'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { getAlarmStatus, listAlarmIncidentPage, listAlarmReportPage, listAlarmReports } from '../api/reports'
+import { getAlarmStatus, listAlarmIncidentPage, listAlarmReportPage, listAlarmReports } from '../api/alarms.ts'
 import heroImage from '../assets/home-laser-cutting.webp'
 import AppIcon from '../components/AppIcon.vue'
 import { alarmConfidencePercent, latestModelAlarmReport } from '../utils/alarmAnalysis.ts'

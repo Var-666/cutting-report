@@ -9,17 +9,8 @@ import type { ConfirmationAudit, TaskConfirmation, WorkshopResult, WorkshopTask 
 import { toError } from '../utils/errors'
 import { computed, nextTick, onActivated, onDeactivated, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import {
-  confirmWorkshopTasks,
-  correctWorkshopTask,
-  generateWorkshopDailyReport,
-  getLatestWorkshopProductionDate,
-  listUserAccounts,
-  listWorkshopConfirmationAudits,
-  listWorkshopRangeTasks,
-  listWorkshopTasks,
-  revokeWorkshopTask,
-} from '../api/reports'
+import { confirmWorkshopTasks, correctWorkshopTask, generateWorkshopDailyReport, getLatestWorkshopProductionDate, listWorkshopConfirmationAudits, listWorkshopRangeTasks, listWorkshopTasks, revokeWorkshopTask } from '../api/cutting.ts'
+import { listUserAccounts } from '../api/auth.ts'
 import AnalysisPanel from '../components/AnalysisPanel.vue'
 import AppIcon from '../components/AppIcon.vue'
 import MetricSparkline from '../components/MetricSparkline.vue'

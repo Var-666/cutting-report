@@ -1,3 +1,4 @@
+import { lineHome, selectedLineType } from '../utils/productionLines.ts'
 import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { deviceSwitchQuery } from '../api/deviceContext.ts'
@@ -12,10 +13,10 @@ export function useDeviceSelection() {
     switching.value = true
     try {
       const previous = deviceSelection.id
-      if ((id === 'welding') !== (previous === 'welding')) {
+      if (selectedLineType(deviceSelection.items, id) !== selectedLineType(deviceSelection.items, previous)) {
         changeDevice(id)
         try {
-          const failure = await router.replace(id === 'welding' ? '/admin/welding/home' : '/admin/home')
+          const failure = await router.replace(lineHome(deviceSelection.items, id))
           if (failure) changeDevice(previous)
         }
         catch (error) { changeDevice(previous); throw error }

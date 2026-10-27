@@ -8,10 +8,10 @@ export interface CuttingDevice {
   type?: 'cutting';
   type_name?: string;
   capabilities?: ('reports' | 'alarms' | 'dispatch' | 'settings')[];
-  enabled?: never;
+  enabled?: boolean;
 }
 export interface WeldingLine {
-  id: 'welding';
+  id: string;
   name: string;
   type: 'welding';
   type_name: string;
@@ -22,7 +22,19 @@ export interface WeldingLine {
   energy_connected?: never;
   alarm_start_at?: never;
 }
-export type ProductionLine = CuttingDevice | WeldingLine;
+export interface ProductionLine {
+  id: string;
+  name: string;
+  type?: string;
+  type_name?: string;
+  enabled?: boolean;
+  capabilities?: string[];
+  home_path?: string;
+  machine_no?: string;
+  production_line_id?: string;
+  energy_connected?: boolean;
+  alarm_start_at?: string;
+}
 export interface DeviceCatalog {
   default_device_id: string;
   items: ProductionLine[];

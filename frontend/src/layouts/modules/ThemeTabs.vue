@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { lineHome, selectedLineType } from '../../utils/productionLines.ts'
 import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { PageTab } from '../../vendor/soybean-admin/materials'
@@ -16,10 +17,10 @@ const cached = localStg.get('tabs')
 const paths = ref<string[]>(theme.tab.cache && Array.isArray(cached) ? cached.filter(path => typeof path === 'string' && path.startsWith('/admin/')) : [])
 const idByPath = (path: string) => getTabIdByRoute(router.resolve(path))
 const activeId = computed(() => getTabIdByRoute(route))
-const homePath = computed(() => deviceSelection.id === 'welding' ? '/admin/welding/home' : '/admin/home')
+const homePath = computed(() => lineHome(deviceSelection.items, deviceSelection.id))
 const tabs = computed(() => [...new Map([...new Set([homePath.value, ...paths.value])].flatMap(path => {
   const resolved = router.resolve(path)
-  if (resolved.matched.some(record => record.meta.line && record.meta.line !== (deviceSelection.id === 'welding' ? 'welding' : 'cutting'))) return []
+  if (resolved.matched.some(record => record.meta.line && record.meta.line !== selectedLineType(deviceSelection.items, deviceSelection.id))) return []
     return resolved.matched.some(record => record.meta.role === 'admin') && !resolved.matched.some(record => record.redirect) && resolved.meta.title
     ? [[idByPath(path), { id: idByPath(path), path, label: resolved.meta.title, icon: resolved.meta.icon }]] : []
 })).values()])

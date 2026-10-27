@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from app.api.auth import require_admin
 from app.api.runtime import runtime_state
+from app.services.production_lines import SERVICE_LINES
 from app.api.workloads import RequestWorkload, analysis_requests, pdf_requests
 from app.config import settings
 from app.models.domain import to_primitive
@@ -28,9 +29,13 @@ welding_requests = RequestWorkload(max(1, min(4, settings.weld_db_pool_size)), '
 
 
 def service(request: Request):
-    instance = getattr(runtime_state(request), 'welding', None)
+    selected = request.headers.get('X-Production-Line')
+    line = next((item for item in SERVICE_LINES if item['type'] == 'welding' and (not selected or item['id'] == selected)), None)
+    if line is None:
+        raise HTTPException(status_code=422, detail='焊接产线上下文无效')
+    instance = getattr(runtime_state(request), line['service_key'], None)
     if instance is None or not instance.settings.weld_enabled:
-        raise HTTPException(status_code=503, detail='小组立焊接线尚未启用')
+        raise HTTPException(status_code=503, detail=f'{line["name"]}尚未启用')
     return instance
 
 

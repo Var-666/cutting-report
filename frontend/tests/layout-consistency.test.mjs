@@ -279,7 +279,7 @@ test('report analysis uses server source versions and starts immediately', () =>
     assert.doesNotMatch(template, /context-version/)
   }
 
-  const api = readFileSync(new URL('../src/api/reports.ts', import.meta.url), 'utf8')
+  const api = readFileSync(new URL('../src/api/cutting.ts', import.meta.url), 'utf8')
   assert.match(api, /analyzeReport\(\{[^}]*dataVersion[^}]*\}/)
   assert.match(api, /data_version: dataVersion \|\| undefined/)
   assert.match(script, /props\.summaryPeriodStart[\s\S]*props\.summaryPeriodEnd[\s\S]*props\.summaryDataVersion/)
@@ -712,7 +712,7 @@ test('report automation exposes secure live runtime configuration', () => {
   const automation = descriptor('AutomationView')
   const template = automation.template.content
   const script = automation.scriptSetup.content
-  const api = readFileSync(new URL('../src/api/reports.ts', import.meta.url), 'utf8')
+  const api = readFileSync(new URL('../src/api/automation.ts', import.meta.url), 'utf8')
 
   assert.match(template, /运行与邮件参数/)
   assert.match(template, /即时生效/)
@@ -860,7 +860,7 @@ test('all standard report analyses follow the selected report range', () => {
   const workshop = descriptor('WorkshopView')
   const equipment = descriptor('EnergyPeriodReportView')
   const analysis = descriptor('AnalysisPanel', 'components')
-  const api = readFileSync(new URL('../src/api/reports.ts', import.meta.url), 'utf8')
+  const api = readFileSync(new URL('../src/api/cutting.ts', import.meta.url), 'utf8')
 
   assert.match(leadership.template.content, /<AnalysisPanel[\s\S]*report-type="leadership"/)
   assert.match(leadership.template.content, /:period-start="defaultMonthlyView \? '' : appliedPeriodStart"/)
@@ -924,7 +924,7 @@ test('switching cached workshop and equipment reports does not force another que
   const workshop = descriptor('WorkshopView')
   const equipment = descriptor('EnergyPeriodReportView')
   const preload = readFileSync(new URL('../src/state/reportPreload.ts', import.meta.url), 'utf8')
-  const api = readFileSync(new URL('../src/api/reports.ts', import.meta.url), 'utf8')
+  const api = readFileSync(new URL('../src/api/cutting.ts', import.meta.url), 'utf8')
 
   assert.match(workshop.scriptSetup.content, /force = false/)
   assert.match(workshop.scriptSetup.content, /if \(!pageActive\.value \|\| !isWorker\.value \|\| refreshTimer\) return/)
@@ -1007,7 +1007,7 @@ test('long-lived page polling is serialized and cancelled when the page leaves',
   const alarm = descriptor('AlarmCenterView').scriptSetup.content
   const workshop = descriptor('WorkshopView').scriptSetup.content
   const reportCenter = descriptor('ReportCenterView').scriptSetup.content
-  const api = readFileSync(new URL('../src/api/reports.ts', import.meta.url), 'utf8')
+  const api = readFileSync(new URL('../src/api/alarms.ts', import.meta.url), 'utf8')
 
   assert.doesNotMatch(alarm, /setInterval\(loadData/)
   assert.match(alarm, /if \(!pageActive \|\| requestController\) return/)

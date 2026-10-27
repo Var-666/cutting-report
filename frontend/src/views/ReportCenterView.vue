@@ -8,14 +8,8 @@ import ReportForm from '../components/ReportForm.vue'
 import ReportJobStatus from '../components/ReportJobStatus.vue'
 import ReportTable from '../components/ReportTable.vue'
 import ManagementPageHero from '../components/ManagementPageHero.vue'
-import {
-  createReport,
-  getReportStatus,
-  listProjects,
-  listPublishedDefinitions,
-  listReports,
-  listShips,
-} from '../api/reports'
+import { createReport, getReportStatus, listProjects, listReports, listShips } from '../api/cutting.ts'
+import { listPublishedDefinitions } from '../api/designer.ts'
 import { mergeOwnedQuery, queryChoice, queryPositiveInteger, sameRouteQuery } from '../utils/reportRouteState.ts'
 
 defineProps({

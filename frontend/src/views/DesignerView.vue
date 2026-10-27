@@ -3,13 +3,7 @@ import type { ColumnDefinition, DesignerDefinition, DesignerResource, DesignerRe
 import { toError } from '../utils/errors'
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import {
-  deleteDesignerResource,
-  listDesignerResources,
-  previewDesignerQuery,
-  saveDesignerResource,
-  validateDesignerSql,
-} from '../api/reports'
+import { deleteDesignerResource, listDesignerResources, previewDesignerQuery, saveDesignerResource, validateDesignerSql } from '../api/designer.ts'
 import { formatChineseDate, formatChineseDateTime, formatTableDateValue } from '../utils/dateDisplay.ts'
 import ManagementPageHero from '../components/ManagementPageHero.vue'
 import { useUnsavedChanges } from '../composables/useUnsavedChanges.ts'
