@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import ts from 'typescript'
 import { parse } from '@vue/compiler-sfc'
+import { scriptFunction } from './typescript-helpers.mjs'
 import { toError } from '../src/utils/errors.ts'
 
 const sourceRoot = new URL('../src/', import.meta.url)
@@ -49,4 +50,9 @@ test('production builds require type checking and the frontend suite before bund
   const steps = scripts.build.split(' && ')
   assert.deepEqual(steps.slice(0, 2), ['npm run typecheck', 'npm test'])
   assert.ok(steps.indexOf('vite build') > 1)
+})
+
+test('script fixtures ignore non-identifier module exports without shifting bindings', () => {
+  const run = scriptFunction('first', 'module.exports', 'last', 'return [first, last]')
+  assert.deepEqual(run(1, {}, 3), [1, 3])
 })

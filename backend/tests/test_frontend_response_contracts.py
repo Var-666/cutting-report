@@ -158,6 +158,7 @@ def test_welding_report_response_contract(client, kind, path, empty):
     client.app.state.welding = WeldingService(client.app.state.settings, WeldingSource(empty))
     report = data(client.get(f'/api/v1/welding/{path}?start=2026-10-01&end=2026-10-01'))
     assert report['report_type'] == kind
+    assert report['query']['start'] == report['query']['end'] == '2026-10-01'
     assert report['query']['sort_by'] in ('time', 'length', 'id')
     assert type(report['total']) is int
     assert isinstance(report['items'], list)
@@ -210,3 +211,9 @@ def test_welding_part_response_contract(client):
     assert seam['theoretical_length_m'] is None
     assert seam['working_hours'] is None
     assert isinstance(seam['quality_reasons'], list)
+
+
+@pytest.mark.parametrize('path', ['statistics/daily', 'equipment/summary', 'jobs', 'parts', 'dashboard'])
+@pytest.mark.parametrize('dates', ['start=2026-10-01', 'end=2026-10-01', ''])
+def test_welding_report_requires_both_dates(client, path, dates):
+    assert client.get(f'/api/v1/welding/{path}?{dates}').status_code == 422

@@ -28,10 +28,11 @@ const resolution: DeliveryResolutionRequest = { message_id: 'mail-id', evidence_
 resolution.outcomes.push({ recipient: 'worker@example.com', outcome: 'unknown' })
 void [role, invalidRole, invalidWelding, deviceLabel, report, invalidReport, history, resolution]
 
-import type { WeldingDailyRow, WeldingEquipmentRow, WeldingJobRow, WeldingPartRow, WeldingPart, WeldingQuery, WeldingReport } from '../../src/types/welding'
-import { getWeldingReport } from '../../src/api/welding'
+import type { WeldingDailyRow, WeldingEquipmentRow, WeldingJobRow, WeldingPartRow, WeldingPart, WeldingQuery, WeldingFilterDraft, WeldingReport } from '../../src/types/welding'
+import { analyzeWelding, getWeldingReport } from '../../src/api/welding'
 
-const weldingSort: WeldingQuery = { sort_by: 'length' }
+const period = { start: '2026-10-01', end: '2026-10-02' }
+const weldingSort: WeldingQuery = { ...period, sort_by: 'length' }
 // @ts-expect-error Sort keys must match the backend whitelist.
 weldingSort.sort_by = 'serial_number'
 function weldingRows(daily: WeldingDailyRow, equipment: WeldingEquipmentRow, job: WeldingJobRow, part: WeldingPartRow, detail: WeldingPart) {
@@ -62,10 +63,21 @@ function weldingReport(report: WeldingReport) {
   }
 }
 async function weldingApi() {
-  const daily: WeldingReport<'daily'> = await getWeldingReport('daily', {})
-  const dashboard: WeldingReport<'jobs'> = await getWeldingReport('dashboard', {})
+  const daily: WeldingReport<'daily'> = await getWeldingReport('daily', period)
+  const dashboard: WeldingReport<'jobs'> = await getWeldingReport('dashboard', period)
   // @ts-expect-error Endpoint-specific return types cannot be interchanged.
-  const jobs: WeldingReport<'jobs'> = await getWeldingReport('equipment', {})
+  const jobs: WeldingReport<'jobs'> = await getWeldingReport('equipment', period)
+  // @ts-expect-error Requests cannot omit both dates.
+  getWeldingReport('daily', {})
+  // @ts-expect-error The end date is required.
+  getWeldingReport('jobs', { start: period.start })
+  // @ts-expect-error The start date is required.
+  getWeldingReport('equipment', { end: period.end })
+  const draft: WeldingFilterDraft = {}
+  // @ts-expect-error An unsubmitted draft is not a complete API query.
+  getWeldingReport('parts', draft)
+  // @ts-expect-error Analysis must also include both dates.
+  analyzeWelding('jobs', {}, 'version')
   return [daily, dashboard, jobs]
 }
 void [weldingRows, weldingReport, weldingSort, weldingApi]

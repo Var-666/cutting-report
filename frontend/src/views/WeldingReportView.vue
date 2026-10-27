@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { DataRow } from '../types/api'
 import type { PropType } from 'vue'
-import type { WeldingAnalysis, WeldingPart, WeldingQuery, WeldingReport, WeldingReportKind, WeldingJobRow, WeldingPartRow, WeldingMetrics } from '../types/welding'
+import type { WeldingAnalysis, WeldingPart, WeldingQuery, WeldingFilterDraft, WeldingReport, WeldingReportKind, WeldingJobRow, WeldingPartRow, WeldingMetrics } from '../types/welding'
 import { toError } from '../utils/errors'
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -26,7 +26,7 @@ const router = useRouter()
 const today = reportToday()
 const weekStart = new Date(Date.parse(`${today}T00:00:00Z`) - 6 * 86400000).toISOString().slice(0, 10)
 const initialRange = props.kind === 'dashboard' ? null : queryDateRange(route.query)
-const draft = reactive({ start: initialRange?.start || (props.kind === 'dashboard' ? weekStart : today), end: initialRange?.end || today, device_no: '', robot_no: '', weld_type: '', state: '', serial_number: typeof route.query.serial_number === 'string' ? route.query.serial_number : '', project_no: '', section_no: '', part_no: '', anomalies_only: false, sort_by: 'time' as NonNullable<WeldingQuery['sort_by']>, descending: true })
+const draft = reactive({ start: initialRange?.start || (props.kind === 'dashboard' ? weekStart : today), end: initialRange?.end || today, device_no: '', robot_no: '', weld_type: '', state: '', serial_number: typeof route.query.serial_number === 'string' ? route.query.serial_number : '', project_no: '', section_no: '', part_no: '', anomalies_only: false, sort_by: 'time' as NonNullable<WeldingQuery['sort_by']>, descending: true } satisfies WeldingFilterDraft)
 const report = ref<WeldingReport | null>(null)
 const activeQuery = ref<WeldingQuery | null>(null)
 const loading = ref(false)
@@ -89,9 +89,14 @@ async function load(values: WeldingQuery) {
     if (run === generation) loading.value = false
   }
 }
-function submit() { read({ ...draft, page: 1, page_size: activeQuery.value?.page_size || 20 }) }
-function changePage(page: number) { read({ ...activeQuery.value, page }) }
-function changePageSize(page_size: number) { read({ ...activeQuery.value, page: 1, page_size }) }
+function submit() {
+  const range = queryDateRange({ start: draft.start, end: draft.end })
+  if (!range) { actionError.value = '请选择有效日期区间，最长366天'; return }
+  actionError.value = ''
+  read({ ...draft, ...range, page: 1, page_size: activeQuery.value?.page_size || 20 })
+}
+function changePage(page: number) { if (!activeQuery.value) return; read({ ...activeQuery.value, page }) }
+function changePageSize(page_size: number) { if (!activeQuery.value) return; read({ ...activeQuery.value, page: 1, page_size }) }
 function goToPart() {
   if (!detailJob.value || !activeQuery.value) return
   router.push({ name: 'welding-parts', query: { serial_number: detailJob.value.serial_number || undefined, start: activeQuery.value.start, end: activeQuery.value.end } })

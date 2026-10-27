@@ -3,8 +3,8 @@ import type { AnalysisResult } from './reports'
 export type WeldingReportType = 'daily' | 'parts' | 'jobs' | 'equipment'
 export type WeldingReportKind = 'dashboard' | WeldingReportType
 export interface WeldingQuery {
-  start?: string
-  end?: string
+  start: string
+  end: string
   device_no?: string | number | null
   robot_no?: string | number | null
   weld_type?: string | number | null
@@ -20,6 +20,9 @@ export interface WeldingQuery {
   page?: number
   page_size?: number
 }
+// Draft filters may be incomplete; API requests require both dates.
+export type WeldingFilterDraft = Partial<WeldingQuery>
+
 export interface WeldingMetrics {
   source_rows: number
   job_count: number

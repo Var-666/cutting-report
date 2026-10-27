@@ -57,7 +57,7 @@ npm run dev
 
 ## 构建与部署
 
-生产式本地运行先在 `frontend/` 执行 `npm run build`，再启动一个 Web 和一个 Worker；Web 去掉 `--reload`。前端构建依次强制执行 `npm run typecheck`、`npm test`，通过后才同步 ECharts 资源并打包；任一步失败都会停止构建。日常修改只运行受影响的定向测试，正式构建执行这一次完整前端验证。正式环境将两个进程注册为独立服务。
+生产式本地运行先在 `frontend/` 执行 `npm run build`，再启动一个 Web 和一个 Worker；Web 去掉 `--reload`。前端构建依次强制执行 `npm run typecheck`、`npm test`，通过后才同步 ECharts 资源并打包；任一步失败都会停止构建。日常修改只运行受影响的定向测试，正式构建执行这一次完整前端验证。正式环境将两个进程注册为独立服务。GitHub Actions 在 push 和 pull request 时，使用 Node.js 22、`npm ci` 和同一 `npm run build` 命令自动验证前端。
 
 - [Docker 部署与更新](README-DOCKER.md)
 - [麒麟原生部署](docs/deployment/KYLIN原生部署说明.md)
@@ -66,7 +66,7 @@ npm run dev
 
 升级已有系统前按对应文档备份并核对迁移条件，保留原配置与数据卷。
 
-核心 API 响应契约测试：`./.venv/bin/python -m pytest backend/tests/test_frontend_response_contracts.py`，检查切割报表、焊接各类报表/详情及认证响应的关键字段；使用隔离数据，不连接生产库。
+核心 API 响应契约测试：`./.venv/bin/python -m pytest backend/tests/test_frontend_response_contracts.py`，检查切割报表、焊接各类报表/详情及认证响应的关键字段；使用隔离数据，不连接生产库。这些测试覆盖关键字段，并非完整的响应 Schema 校验；接口变更时应同步维护前端类型与相关断言。焊接 API 查询要求 `start/end` 同时存在，页面草稿独立使用 `WeldingFilterDraft`，提交时复用日期区间校验。
 
 ## 文档
 
