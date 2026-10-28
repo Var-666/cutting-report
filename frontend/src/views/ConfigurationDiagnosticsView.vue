@@ -7,6 +7,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { NAlert, NButton, NCard, NInput, NTag } from 'naive-ui'
 import { getConfigurationDiagnostics } from '../api/configuration.ts'
 import AppSelect from '../components/AppSelect.vue'
+import AppReportTable from '../components/AppReportTable.vue'
 import ManagementPageHero from '../components/ManagementPageHero.vue'
 
 const report = ref<ConfigurationDiagnostics | null>(null)
@@ -23,7 +24,6 @@ const rows = computed(() => (report.value?.items || []).filter(item =>
   && (!category.value || item.category === category.value)
   && item.key.toLowerCase().includes(search.value.trim().toLowerCase()),
 ))
-const totalPages = computed(() => Math.max(1, Math.ceil(rows.value.length / pageSize.value)))
 const visibleRows = computed(() => rows.value.slice((page.value - 1) * pageSize.value, page.value * pageSize.value))
 watch([category, search, pageSize, report], () => { page.value = 1 })
 let controller: AbortController | undefined
@@ -54,6 +54,13 @@ async function load() {
 
 onMounted(load)
 onBeforeUnmount(() => { sequence++; controller?.abort() })
+const diagnosticsTableColumns = [
+  { key: 'c0', title: '配置项', width: 260, align: 'left', fixed: 'left', ellipsis: false },
+  { key: 'c1', title: 'Web 当前生效值 / 来源', minWidth: 320, align: 'left', ellipsis: false },
+  { key: 'c2', title: 'Worker 当前生效值 / 来源', minWidth: 320, align: 'left', ellipsis: false },
+  { key: 'c3', title: '已保存目标 / 来源', minWidth: 280, align: 'left', ellipsis: false },
+  { key: 'c4', title: '生效状态及规则', minWidth: 340, align: 'left', ellipsis: false },
+] as const
 </script>
 
 <template>
@@ -75,18 +82,14 @@ onBeforeUnmount(() => { sequence++; controller?.abort() })
           <label><span>配置项名称</span><NInput v-model:value="search" placeholder="搜索配置项名称" :input-props="{ 'aria-label': '配置项名称' }" clearable /></label>
           <NButton :loading="loading" :disabled="loading" @click="load">刷新快照</NButton>
         </div>
-        <div class="history-wrap diagnostics-table"><table v-content-table class="history-table" data-content-columns="left left left left left"><caption class="sr-only">Web、Worker 配置来源和生效状态</caption><thead><tr><th>配置项</th><th>Web 当前生效值 / 来源</th><th>Worker 当前生效值 / 来源</th><th>已保存目标 / 来源</th><th>生效状态及规则</th></tr></thead><tbody>
-          <tr v-for="row in visibleRows" :key="row.key">
-            <td><div class="diagnostic-cell"><strong :title="row.key">{{ row.key }}</strong><small :title="row.category">{{ row.category }}</small></div></td>
-            <td v-for="role in (['web', 'worker'] as const)" :key="role"><div class="diagnostic-cell"><NTag size="small" :type="tones[row.processes[role].status]">{{ statuses[row.processes[role].status] }}</NTag><span class="diagnostic-value" :title="display(row.processes[role].value)">{{ display(row.processes[role].value) }}</span><small class="diagnostic-source" :title="row.processes[role].source">来源：{{ row.processes[role].source }}</small></div></td>
-            <td><div class="diagnostic-cell"><span class="diagnostic-value" :title="display(row.saved_value)">{{ display(row.saved_value) }}</span><small class="diagnostic-source" :title="row.saved_source">来源：{{ row.saved_source }}</small></div></td>
-            <td><div class="diagnostic-cell"><NTag size="small" :type="tones[row.status]">{{ statuses[row.status] }}</NTag><small v-if="row.process_mismatch">Web / Worker 配置版本不一致</small><small v-if="!row.valid">目标配置无效，请核对对应配置项及文件</small><small :title="row.rule">{{ row.rule }}</small></div></td>
-          </tr>
-          <tr v-if="!rows.length"><td colspan="5" class="diagnostics-empty" role="status">{{ category || search ? '没有符合条件的异常配置项。' : '暂无异常配置项。' }}</td></tr>
-        </tbody></table></div>
-        <div class="history-pagination app-pagination" aria-label="异常配置项分页">
-          <label class="history-page-size"><span>每页</span><AppSelect v-model="pageSize" aria-label="配置诊断每页条数" :disabled="loading"><option :value="10">10 条</option><option :value="20">20 条</option><option :value="50">50 条</option></AppSelect></label>
-          <div class="history-page-buttons app-pagination__actions"><button type="button" :disabled="loading || page <= 1" @click="page--">上一页</button><span class="app-pagination__summary">第 {{ page }} / {{ totalPages }} 页，共 {{ rows.length }} 条</span><button type="button" :disabled="loading || page >= totalPages" @click="page++">下一页</button></div>
+        <div class="diagnostics-table">
+          <AppReportTable :columns="diagnosticsTableColumns" :items="visibleRows" :row-key="row => row.key" :total="rows.length" :page="page" :page-size="pageSize" :page-sizes="[10, 20, 50]" :loading="loading" aria-label="Web、Worker 配置来源和生效状态及异常配置项分页" @page="page = $event" @page-size="pageSize = $event">
+            <template #c0="{ row }"><div class="diagnostic-cell"><strong :title="row.key">{{ row.key }}</strong><small :title="row.category">{{ row.category }}</small></div></template>
+            <template v-for="(role, index) in (['web', 'worker'] as const)" :key="role" #[`c${index+1}`]="{ row }"><div class="diagnostic-cell"><NTag size="small" :type="tones[row.processes[role].status]">{{ statuses[row.processes[role].status] }}</NTag><span class="diagnostic-value" :title="display(row.processes[role].value)">{{ display(row.processes[role].value) }}</span><small class="diagnostic-source" :title="row.processes[role].source">来源：{{ row.processes[role].source }}</small></div></template>
+            <template #c3="{ row }"><div class="diagnostic-cell"><span class="diagnostic-value" :title="display(row.saved_value)">{{ display(row.saved_value) }}</span><small class="diagnostic-source" :title="row.saved_source">来源：{{ row.saved_source }}</small></div></template>
+            <template #c4="{ row }"><div class="diagnostic-cell"><NTag size="small" :type="tones[row.status]">{{ statuses[row.status] }}</NTag><small v-if="row.process_mismatch">Web / Worker 配置版本不一致</small><small v-if="!row.valid">目标配置无效，请核对对应配置项及文件</small><small :title="row.rule">{{ row.rule }}</small></div></template>
+            <template #empty><span role="status">{{ category || search ? '没有符合条件的异常配置项。' : '暂无异常配置项。' }}</span></template>
+          </AppReportTable>
         </div>
       </NCard>
     </template>
@@ -95,8 +98,7 @@ onBeforeUnmount(() => { sequence++; controller?.abort() })
 </template>
 
 <style scoped>
-.configuration-diagnostics-page{display:grid;gap:16px;min-width:0}.diagnostics-filters{display:grid;grid-template-columns:1fr 2fr auto;gap:12px;align-items:end;margin-bottom:16px}.diagnostics-filters label{min-width:0}.diagnostics-filters label>span{display:block;margin-bottom:6px;color:var(--text-color-3);font-size:13px}.processes{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.processes p{overflow-wrap:anywhere;color:var(--text-color-3);font-size:12px}.diagnostics-table{overflow:auto}.diagnostic-cell{max-width:100%;gap:12px;min-width:0}.diagnostic-cell>strong,.diagnostic-cell>small{min-width:0;overflow:hidden;text-overflow:ellipsis}.diagnostic-cell>small{color:var(--text-color-3);font-size:var(--font-auxiliary)}.diagnostic-source{border-left:1px solid var(--theme-border-color);padding-left:10px}.diagnostic-value{flex:0 0 auto;max-width:120px;overflow:hidden;text-overflow:ellipsis}.diagnostic-cell :deep(.n-tag){flex-shrink:0}.diagnostics-empty{padding:24px!important}
-@layer legacy{.configuration-diagnostics-page .diagnostics-table table.content-table :is(th,td,strong,small){text-align:left!important}.configuration-diagnostics-page .diagnostics-table table.content-table .diagnostics-empty{text-align:center!important}.configuration-diagnostics-page .diagnostic-cell>small{margin-left:0!important}}
+.configuration-diagnostics-page{display:grid;gap:16px;min-width:0}.diagnostics-filters{display:grid;grid-template-columns:1fr 2fr auto;gap:12px;align-items:end;margin-bottom:16px}.diagnostics-filters label{min-width:0}.diagnostics-filters label>span{display:block;margin-bottom:6px;color:var(--text-color-3);font-size:13px}.processes{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.processes p{overflow-wrap:anywhere;color:var(--text-color-3);font-size:12px}.diagnostics-table{min-width:0}.diagnostic-cell{display:flex;align-items:center;white-space:nowrap;max-width:100%;gap:12px;min-width:0}.diagnostic-cell>strong,.diagnostic-cell>small{white-space:nowrap;min-width:0;overflow:hidden;text-overflow:ellipsis}.diagnostic-cell>small{color:var(--text-color-3);font-size:var(--font-auxiliary)}.diagnostic-source{border-left:1px solid var(--theme-border-color);padding-left:10px}.diagnostic-value{flex:0 1 auto;min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis}.diagnostic-cell :deep(.n-tag){flex-shrink:0}
 @media(max-width:900px){.diagnostics-filters{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:560px){.diagnostics-filters,.processes{grid-template-columns:1fr}}
 </style>

@@ -138,8 +138,7 @@ function getSiderAndCollapsedWidth(isCollapsed: boolean) {
       :header-height="appStore.isMobile ? Math.max(104, themeStore.header.height) : themeStore.header.height"
       :tab-visible="themeStore.tab.visible" :tab-height="themeStore.tab.height"
       :sider-visible="siderVisible" :sider-width="siderWidth" :sider-collapsed-width="siderCollapsedWidth"
-      :footer-visible="themeStore.footer.visible" :footer-height="themeStore.footer.height"
-      :fixed-footer="themeStore.footer.fixed" :right-footer="themeStore.footer.right" content-class="min-w-0">
+      :footer-visible="false" content-class="min-w-0">
       <template #header>
         <div class="soybean-header">
           <GlobalLogo v-if="headerProps.showLogo && !appStore.isMobile" :show-title="false" />
@@ -169,7 +168,6 @@ function getSiderAndCollapsedWidth(isCollapsed: boolean) {
       </div>
       <GlobalMenu />
       <ThemeDrawer />
-      <template #footer><DarkModeContainer class="h-full flex-center text-12px">切割生产智能产报</DarkModeContainer></template>
     </SoybeanAdminLayout>
     <NWatermark v-if="themeStore.watermark.visible" :content="themeStore.watermarkContent" cross fullscreen :font-size="16" :line-height="16" :width="384" :height="384" :x-offset="12" :y-offset="60" :rotate="-15" />
   </div>

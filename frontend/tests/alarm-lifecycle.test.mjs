@@ -1,4 +1,6 @@
 import { scriptFunction } from './typescript-helpers.mjs'
+import { setup as setupCssr } from '@css-render/vue3-ssr'
+import { SharedDataTable } from './data-table-helpers.mjs'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
@@ -33,7 +35,9 @@ test('alarm page uses the device alias in every displayed section while preservi
   const render = scriptFunction('Vue', compile(parse(source).descriptor.template.content, { prefixIdentifiers: true }).code)(Vue)
   const app = Vue.createSSRApp({ setup: () => setup(...Object.values(bindings)), render })
   app.component('AppIcon', bindings.AppIcon)
+  app.component('AppReportTable', SharedDataTable)
   app.directive('content-table', {})
+  setupCssr(app)
   const html = await renderToString(app)
   const text = html.replace(/<[^>]*>/g, '')
   assert.doesNotMatch(text, /Cutter01/, 'monitor, table, report names and model evidence must all use the same readable name')
@@ -62,9 +66,11 @@ test('incident report status is independent of alarm resolution and the recent r
   const render = scriptFunction('Vue', compile(parse(source).descriptor.template.content, { prefixIdentifiers: true }).code)(Vue)
   const app = Vue.createSSRApp({ setup: () => setup(...Object.values(bindings)), render })
   app.component('AppIcon', bindings.AppIcon)
+  app.component('AppReportTable', SharedDataTable)
   app.directive('content-table', {})
+  setupCssr(app)
   const html = await renderToString(app)
-  const rows = [...html.matchAll(/<tr>([\s\S]*?)<\/tr>/g)].map((match) => match[1]).filter((row) => row.includes('<td'))
+  const rows = [...html.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/g)].map((match) => match[1]).filter((row) => row.includes('<td'))
   assert.equal(rows.length, cases.length)
   for (const [index, item] of cases.entries()) {
     assert.match(rows[index], new RegExp(item.label))

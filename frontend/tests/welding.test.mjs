@@ -1,3 +1,6 @@
+import { setup as setupCssr } from '@css-render/vue3-ssr'
+import { renderToString } from '@vue/server-renderer'
+import { SharedDataTable, createSharedDataTable } from './data-table-helpers.mjs'
 import { scriptFunction } from './typescript-helpers.mjs'
 import test, { afterEach } from 'node:test'
 import assert from 'node:assert/strict'
@@ -9,7 +12,7 @@ import { parse, compileScript, compileTemplate } from '@vue/compiler-sfc'
 import { lineHome, productionGroups, selectedLineType } from '../src/utils/productionLines.ts'
 import { adminMenus } from '../src/router/menus.ts'
 import { analyzeWelding, downloadWelding, getWeldingPart, getWeldingReport, weldingQuery } from '../src/api/welding.ts'
-import { weldingColumns, weldingDisplay, weldingKpis, weldingTitles } from '../src/utils/weldingReport.ts'
+import { weldingColumns, weldingColumnLayout, weldingDisplay, weldingKpis, weldingTitles } from '../src/utils/weldingReport.ts'
 import { weldingRoutes } from '../src/router/weldingRoutes.ts'
 import { reportCache } from '../src/api/reportCache.ts'
 import { queryDateRange, sameRouteQuery } from '../src/utils/reportRouteState.ts'
@@ -74,7 +77,7 @@ test('business menus isolate cutting capabilities and flatten the welding layout
 test('query parameters retain zero device, robot and process codes; unknown is not zero', () => {
   assert.deepEqual(weldingQuery({ device_no: 0, robot_no: 0, weld_type: 0, state: '', project_no: null, anomalies_only: false }), { device_no: 0, robot_no: 0, weld_type: 0, anomalies_only: false })
   assert.equal(weldingDisplay(null, 'completed_part_count'), '待核实')
-  assert.equal(weldingDisplay(0, 'weld_length_m'), '0')
+  assert.equal(weldingDisplay(0, 'weld_length_m'), '0.000')
   assert.equal(weldingDisplay(null, 'weld_length_m'), '未记录')
   const cards = weldingKpis('daily', { summary: { weld_length_m: 0, involved_part_count: 0 }, meta: { pending_metrics: { completed_part_count: 'pending' } } })
   assert.equal(cards[0].value, 0)
@@ -93,7 +96,7 @@ function view(readReport, options = {}) {
     selectedLineType, computed, reactive, ref, watch: (source, callback, config) => { if (options.watchers) { options.watchers.push({ source, callback }); if (config?.immediate) callback(source()) } }, onBeforeUnmount: fn => cleanup.push(fn),
     defineProps: () => ({ kind: options.kind || 'jobs' }), useRoute: () => options.route || ({ query: {} }), useRouter: () => options.router || ({ push() {}, replace() {} }), queryDateRange, sameRouteQuery, parseWeldingRouteQuery, weldingRouteQuery,
     reportToday: () => '2026-10-26', getWeldingReport: readReport,
-    deviceSelection: { id: 'welding', items: [{ id: 'welding', type: 'welding', enabled: options.enabled ?? true }] }, weldingTitles, weldingKpis, weldingColumns, weldingDisplay, weldingQuery,
+    deviceSelection: { id: 'welding', items: [{ id: 'welding', type: 'welding', enabled: options.enabled ?? true }] }, weldingTitles, weldingKpis, weldingColumns, weldingColumnLayout, weldingDisplay, weldingQuery,
   }
   return { ...scriptFunction(...Object.keys(bindings), `${script}; return { read, submit, changePage, changePageSize, report, loading, error, activeQuery, draft, detailJob, goToPart, actionError };`)(...Object.values(bindings)), cleanup }
 }
@@ -283,7 +286,7 @@ async function mountWelding(t, kind = 'jobs', query = {}) {
   const bindings = {
     ...Vue, useRoute, useRouter, defineProps: () => ({ get kind() { return router.currentRoute.value.meta.kind } }),
     selectedLineType, deviceSelection: selection, queryDateRange, sameRouteQuery, parseWeldingRouteQuery, weldingRouteQuery,
-    reportToday: () => '2026-10-26', weldingTitles, weldingKpis, weldingColumns, weldingDisplay, weldingQuery,
+    reportToday: () => '2026-10-26', weldingTitles, weldingKpis, weldingColumns, weldingColumnLayout, weldingDisplay, weldingQuery,
     getWeldingReport: (kind, values, signal) => {
       // Match the backend's parts query normalization instead of echoing conflicting state fields.
       const normalized = kind === 'parts' ? { ...values, state: null, part_state: values.part_state !== '' && values.part_state != null ? values.part_state : values.state === '' ? null : values.state } : { ...values }
@@ -639,7 +642,7 @@ test('a disabled welding line remains navigable without querying an unconfigured
 })
 
 test('welding templates compile with loading, error, pending, detail and responsive states', () => {
-  for (const path of ['views/WeldingReportView.vue', 'components/WeldingCharts.vue', 'components/WeldingTable.vue', 'components/DeviceSwitcher.vue', 'views/DatabaseView.vue', 'layouts/modules/ThemeTabs.vue', 'layouts/AdminLayout.vue', 'layouts/modules/global-menu/modules/vertical-mix-menu.vue']) {
+  for (const path of ['views/WeldingReportView.vue', 'components/WeldingCharts.vue', 'components/AppReportTable.vue', 'components/WeldingTable.vue', 'components/DeviceSwitcher.vue', 'views/DatabaseView.vue', 'layouts/modules/ThemeTabs.vue', 'layouts/AdminLayout.vue', 'layouts/modules/global-menu/modules/vertical-mix-menu.vue']) {
     const { descriptor, errors } = parse(source(path))
     assert.deepEqual(errors, [])
     assert.doesNotThrow(() => compileScript(descriptor, { id: path }), path)
@@ -653,6 +656,7 @@ test('welding templates compile with loading, error, pending, detail and respons
   assert.match(page, /data_version/)
   assert.match(page, /ReportPanelState v-else-if="loading" type="loading"/)
   assert.match(source('views/DatabaseView.vue'), /weld_password[\s\S]*type="password"/)
+  assert.match(parse(source('components/AppReportTable.vue')).descriptor.styles[0].content, /input\[type="checkbox"\]\)\{width:16px;height:16px;min-width:16px;min-height:16px;padding:0;/)
 })
 
 test('identical in-flight filters reuse the query and a later explicit refresh still runs', async () => {
@@ -702,10 +706,16 @@ test('welding table keys and detail events respect aggregate, job, part and seam
     ['seams', { id: 3, robot_no: null }, 3],
   ]) {
     const events = []
-    const bindings = { computed, h, NButton: 'button', weldingColumns, weldingDisplay,
-      defineProps: () => ({ kind }), defineEmits: () => (...args) => events.push(args) }
+    const bindings = { ...Vue, onMounted() {}, onUpdated() {}, onBeforeUnmount() {}, onActivated() {}, onDeactivated() {}, computed, h, NButton: 'button', weldingColumns, weldingColumnLayout, weldingDisplay,
+      defineSlots: () => ({}), defineProps: () => ({ kind }), defineEmits: () => (...args) => events.push(args) }
     const table = scriptFunction(...Object.keys(bindings), `${script}; return { columns, rowKey };`)(...Object.values(bindings))
     assert.equal(table.rowKey(row), key)
+    for (const column of table.columns.value) {
+      assert.equal(column.titleAlign, column.align || 'left')
+      if (/length|hours|count|output|speed|duration|seconds|consumption|rate/.test(column.key)) assert.equal(column.align, 'right')
+      if (['state_label', 'weld_type_label', 'actions'].includes(column.key)) assert.equal(column.align, 'center')
+      if (['robot_no', 'welding_seam_no', 'serial_number', 'id'].includes(column.key)) assert.equal(column.align, 'left')
+    }
     const action = table.columns.value.find(column => column.key === 'actions')
     if (kind === 'jobs' || kind === 'parts') {
       action.render(row).props.onClick()
@@ -798,4 +808,115 @@ test('explicit refresh requests fresh statistics while initial reads and paginat
   assert.match(source('views/WeldingReportView.vue'), /统计已过期/)
   assert.match(source('views/WeldingReportView.vue'), /后台刷新排队中/)
   assert.match(source('views/WeldingReportView.vue'), /刷新失败，保留上次统计/)
+})
+
+
+test('shared cutting table renders escaped cells, header controls, summary and empty state', async () => {
+  const props = { columns: [{ key: 'c0', title: '任务', width: 160, align: 'left' }, { key: 'c1', title: '长度', width: 120, align: 'right' }],
+    items: [{ id: 'task-1', program: '<script>bad</script>', length: 12 }], rowKey: row => row.id, paginate: false, summary: true }
+  const slots = { 'header-c0': () => h('input', { type: 'checkbox', 'aria-label': '选择当前页' }),
+    c0: ({ row }) => row.program, c1: ({ row }) => String(row.length),
+    'summary-c0': () => '汇总', 'summary-c1': () => '12', empty: () => '当前无任务' }
+  const render = async items => {
+    const app = Vue.createSSRApp({ render: () => h(SharedDataTable, { ...props, items }, slots) })
+    setupCssr(app)
+    return renderToString(app)
+  }
+  const html = await render(props.items)
+  assert.match(html, /n-data-table/)
+  assert.equal((html.match(/<th\b[^>]*text-align:\s*left/g) || []).length, 1)
+  assert.equal((html.match(/<th\b[^>]*text-align:\s*right/g) || []).length, 1)
+  assert.match(html, /n-data-table-td--right-align/)
+  assert.match(parse(source('components/AppReportTable.vue')).descriptor.styles[0].content, /\.app-report-table\{width:100%;min-width:0\}/)
+  assert.match(html, /aria-label="选择当前页"/)
+  assert.match(html, /&lt;script&gt;bad&lt;\/script&gt;/)
+  assert.match(html, /汇总/)
+  assert.doesNotMatch(html, /<script>bad/)
+  assert.match(await render([]), /当前无任务/)
+})
+
+test('shared pagination forwards page and size changes once and respects loading', async () => {
+  const Pagination = Vue.defineComponent({
+    props: ['page', 'pageSize', 'itemCount', 'disabled', 'showSizePicker'], emits: ['update:page', 'update:page-size'],
+    setup(props, { emit }) {
+      if (!props.disabled) { emit('update:page', props.page + 1); if (props.showSizePicker) emit('update:page-size', 50) }
+      return () => null
+    },
+  })
+  const Table = createSharedDataTable({ NPagination: Pagination })
+  for (const loading of [false, true]) {
+    const events = []
+    const app = Vue.createSSRApp({ render: () => h(Table, { columns: [{ key: 'c0', title: '任务', width: 160 }],
+      items: [], rowKey: row => row.id, total: 100, page: 2, pageSize: 20, loading,
+      onPage: value => events.push(['page', value]), 'onPage-size': value => events.push(['size', value]) }) })
+    setupCssr(app)
+    await renderToString(app)
+    assert.deepEqual(events, loading ? [] : [['page', 3], ['size', 50]])
+  }
+})
+
+test('welding measurements keep fixed decimals while counts and identifiers retain their meaning', () => {
+  for (const key of ['weld_length_m', 'working_hours', 'weld_speed', 'arc_rate', 'duration_seconds', 'wire_consumption']) {
+    assert.equal(weldingDisplay(12.5, key), '12.500')
+    assert.equal(weldingDisplay(0, key), '0.000')
+  }
+  assert.equal(weldingDisplay(1240, 'job_count'), '1,240')
+  assert.equal(weldingDisplay(1240, 'robot_no'), '1240')
+  assert.equal(weldingDisplay('0012', 'welding_seam_no'), '0012')
+  assert.equal(weldingDisplay(null, 'arc_rate'), '待核实')
+  const styles = parse(source('components/AppReportTable.vue')).descriptor.styles[0].content
+  assert.match(styles, /n-data-table-td\)\{[^}]*font-variant-numeric:tabular-nums;[^}]*vertical-align:middle/)
+})
+
+
+
+
+test('shared report table preserves declared Naive widths across short, long and empty page data', async () => {
+  const snapshots = []
+  const DataTable = Vue.defineComponent({ props: ['columns', 'data', 'scrollX', 'tableLayout', 'rowKey'],
+    setup(props) { snapshots.push({ columns: props.columns, scrollX: props.scrollX, layout: props.tableLayout }); return () => null } })
+  const Table = createSharedDataTable({ NDataTable: DataTable })
+  const columns = [
+    { key: 'c0', title: '姓名', width: 96, align: 'left' },
+    { key: 'c1', title: '文件名', minWidth: 220, align: 'left' },
+    { key: 'c2', title: '状态', width: 104, align: 'center' },
+  ]
+  for (const items of [[], [{ id: 1, name: '张三', file: 'a.nc' }], [{ id: 2, name: '姓名'.repeat(100), file: 'file'.repeat(100) }]]) {
+    const app = Vue.createSSRApp({ render: () => h(Table, { columns, items, rowKey: row => row.id, paginate: false }) })
+    await renderToString(app)
+  }
+  for (const snapshot of snapshots) {
+    assert.equal(snapshot.layout, 'fixed')
+    assert.equal(snapshot.scrollX, 420)
+    assert.deepEqual(snapshot.columns.map(column => [column.width, column.minWidth]), [[96, undefined], [undefined, 220], [104, undefined]])
+    assert.ok(snapshot.columns.every(column => column.titleAlign === column.align && column.ellipsis.tooltip))
+  }
+  assert.equal(snapshots.length, 3)
+  assert.doesNotMatch(source('components/AppReportTable.vue'), /ResizeObserver|getComputedStyle|measureText|querySelector|onUpdated|tableColumnWeight|weldingColumns/)
+})
+
+test('welding adapter has explicit layouts for every field and only delegates presentation to AppReportTable', () => {
+  for (const [kind, fields] of Object.entries(weldingColumns)) {
+    for (const [key] of fields) {
+      const layout = weldingColumnLayout[key]
+      assert.ok(layout, `${kind}.${key}`)
+      assert.ok(Number(layout.width ?? layout.minWidth) > 0, `${kind}.${key} must have a valid native width`)
+    }
+  }
+  assert.equal(weldingColumnLayout.quality_reasons.width, 200)
+  assert.equal(weldingColumnLayout.project_name.minWidth, 180)
+  assert.match(source('components/WeldingTable.vue'), /<AppReportTable/)
+  assert.doesNotMatch(source('components/WeldingTable.vue'), /ResizeObserver|measureText|NDataTable|NPagination/)
+})
+
+test('workshop columns keep short names and program codes bounded and reserve confirmation controls explicitly', () => {
+  const script = parse(source('views/WorkshopView.vue')).descriptor.scriptSetup.content
+  const result = Vue.ref({ items: [{ program_no: 'OP-027', confirmed_by: null }] })
+  const table = scriptFunction('computed', 'isWorker', 'result', `${script.slice(script.indexOf('const taskTableColumns ='), script.indexOf('</script>'))}; return { taskTableColumns, workerTableColumns }`)(computed, { value: false }, result)
+  assert.equal(table.taskTableColumns.value.find(column => column.key === 'c5').width, 160)
+  assert.equal(table.workerTableColumns.find(column => column.key === 'c2').width, 96)
+  assert.equal(table.taskTableColumns.value.find(column => column.key === 'c10').width, 116)
+  result.value.items = [{ program_no: 'long'.repeat(100), confirmed_by: '张三' }]
+  assert.equal(table.taskTableColumns.value.find(column => column.key === 'c5').width, 160)
+  assert.equal(table.taskTableColumns.value.find(column => column.key === 'c10').width, 240)
 })

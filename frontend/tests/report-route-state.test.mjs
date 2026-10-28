@@ -113,6 +113,7 @@ async function mountReport(t, kind, { query = {}, refreshing = false, syncing = 
   }
   const bindings = {
     ...Vue, useRoute, useRouter, defineProps: () => ({}), defineEmits: () => () => {},
+    ResizeObserver: class { observe() {} disconnect() {} },
     use() {}, BarChart: {}, LineChart: {}, GridComponent: {}, LegendComponent: {}, TooltipComponent: {}, CanvasRenderer: {},
     useDeviceSwitchQuery() {}, useReportChartTheme: () => ({ darkMode: Vue.ref(false), vars: Vue.ref({}), colors: Vue.ref({}) }),
     getLeadershipReport: (_month, options) => read('monthly', '2026-10-01', '2026-10-27', options),

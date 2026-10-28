@@ -9,6 +9,7 @@ import { formatDeviceDisplay } from '../utils/deviceDisplay.ts'
 import { formatChineseDate, formatChineseDateTime } from '../utils/dateDisplay.ts'
 import ManagementPageHero from '../components/ManagementPageHero.vue'
 import AppIcon from '../components/AppIcon.vue'
+import AppReportTable from '../components/AppReportTable.vue'
 import EmailDeliveryResolution from '../components/EmailDeliveryResolution.vue'
 import { useUnsavedChanges } from '../composables/useUnsavedChanges.ts'
 
@@ -329,6 +330,26 @@ onBeforeUnmount(() => {
   deliverySequence += 1
   deliveryController?.abort()
 })
+const scheduleTableColumns = [
+  { key: 'c0', title: '状态', width: 88, align: 'center' },
+  { key: 'c1', title: '任务', minWidth: 280, align: 'left' },
+  { key: 'c2', title: '报表', width: 112, align: 'left' },
+  { key: 'c3', title: '计划', width: 160, align: 'left' },
+  { key: 'c4', title: '下次执行', width: 184, align: 'left' },
+  { key: 'c5', title: '收件人', width: 96, align: 'right' },
+  { key: 'c6', title: '发送 / 失败', width: 120, align: 'right' },
+  { key: 'c7', title: '操作', width: 248, align: 'center', fixed: 'right', ellipsis: false },
+] as const
+const deliveryTableColumns = [
+  { key: 'c0', title: '创建时间', width: 184, align: 'left' },
+  { key: 'c1', title: '任务', minWidth: 240, align: 'left' },
+  { key: 'c2', title: '报表日期', width: 152, align: 'left' },
+  { key: 'c3', title: '收件人', minWidth: 260, align: 'left' },
+  { key: 'c4', title: '状态', width: 112, align: 'center' },
+  { key: 'c5', title: '尝试', width: 96, align: 'right' },
+  { key: 'c6', title: '结果', minWidth: 240, align: 'left' },
+  { key: 'c7', title: '操作', width: 208, align: 'center', fixed: 'right', ellipsis: false },
+] as const
 </script>
 
 <template>
@@ -453,16 +474,18 @@ onBeforeUnmount(() => {
       <div class="panel-title"><div><span><AppIcon name="tasks" tone="muted" :size="17" /></span><h2 id="automation-schedules-title">定时任务</h2></div><p>{{ status ? `${schedules.length} 个计划` : loading ? '正在读取' : '暂不可用' }}<span class="table-scroll-hint">左右滑动查看完整表格</span></p></div>
       <div v-if="loading && !schedules.length" class="empty" role="status">正在读取定时任务…</div>
       <div v-else-if="!status && error" class="configuration-load-error" role="alert"><span>定时任务暂时无法读取。</span><button type="button" @click="loadAll">重新读取</button></div>
-      <div v-else-if="!schedules.length" class="empty">尚未创建定时任务，可在上方设置并创建。</div>
-      <div v-else class="automation-table-wrap" tabindex="0" role="region" aria-label="定时任务列表，可滚动查看">
-        <table v-content-table data-content-columns="center left left left left right right actions"><thead><tr><th>状态</th><th>任务</th><th>报表</th><th>计划</th><th>下次执行</th><th>收件人</th><th>发送 / 失败</th><th>操作</th></tr></thead>
-          <tbody><tr v-for="item in schedules" :key="item.schedule_id">
-            <td><span class="schedule-status" :class="{ enabled: item.enabled }"><i></i>{{ item.enabled ? '启用' : '停用' }}</span></td>
-            <td class="task-cell"><strong>{{ item.name }}</strong><small>{{ formatDeviceDisplay(item.device_id) }}</small><small>{{ scheduleLabels[item.last_status] || item.last_status || '尚未执行' }}</small></td>
-            <td>{{ reportLabels[item.report_type] }}</td><td>{{ scheduleText(item) }}</td><td>{{ formatDateTime(item.next_run_at) }}</td>
-            <td :title="item.recipients.join(', ')">{{ item.recipients.length }} 人</td><td>{{ item.sent_count || 0 }} / {{ item.failed_count || 0 }}</td>
-            <td><div class="row-actions"><button type="button" @click="runNow(item)">立即执行</button><button type="button" @click="editSchedule(item)">编辑</button><button type="button" class="danger" @click="remove(item)">删除</button></div></td>
-          </tr></tbody></table>
+      <div v-else class="automation-table-wrap">
+        <AppReportTable :columns="scheduleTableColumns" :items="schedules" :row-key="item => item.schedule_id" :paginate="false" :max-height="340" :loading="loading" aria-label="定时任务列表">
+          <template #c0="{ row: item }"><span class="schedule-status" :class="{ enabled: item.enabled }"><i></i>{{ item.enabled ? '启用' : '停用' }}</span></template>
+          <template #c1="{ row: item }"><div class="task-cell"><strong>{{ item.name }}</strong><small>{{ formatDeviceDisplay(item.device_id) }}</small><small>{{ scheduleLabels[item.last_status] || item.last_status || '尚未执行' }}</small></div></template>
+          <template #c2="{ row: item }">{{ reportLabels[item.report_type] }}</template>
+          <template #c3="{ row: item }">{{ scheduleText(item) }}</template>
+          <template #c4="{ row: item }">{{ formatDateTime(item.next_run_at) }}</template>
+          <template #c5="{ row: item }"><span :title="item.recipients.join(', ')">{{ item.recipients.length }} 人</span></template>
+          <template #c6="{ row: item }">{{ item.sent_count || 0 }} / {{ item.failed_count || 0 }}</template>
+          <template #c7="{ row: item }"><div class="row-actions"><button type="button" @click="runNow(item)">立即执行</button><button type="button" @click="editSchedule(item)">编辑</button><button type="button" class="danger" @click="remove(item)">删除</button></div></template>
+          <template #empty>尚未创建定时任务，可在上方设置并创建。</template>
+        </AppReportTable>
       </div>
     </section>
 
@@ -470,21 +493,19 @@ onBeforeUnmount(() => {
       <div class="panel-title"><div><span><AppIcon name="send" tone="muted" :size="17" /></span><h2 id="automation-deliveries-title">邮件发送记录</h2></div><p>失败可重发，未知结果先核对<span class="table-scroll-hint">左右滑动查看完整表格</span></p></div>
       <div v-if="deliveryLoading && !deliveries.length" class="empty" role="status">正在读取邮件发送记录…</div>
       <div v-else-if="error && !deliveries.length" class="configuration-load-error" role="alert"><span>邮件发送记录暂时无法读取。</span><button type="button" @click="loadAll">重新读取</button></div>
-      <div v-else-if="!deliveries.length" class="empty">尚无邮件发送记录，任务执行后会显示在这里。</div>
-      <div v-else class="automation-table-wrap delivery-table-wrap" tabindex="0" role="region" aria-label="邮件发送记录，可滚动查看">
-        <table v-content-table data-content-columns="left left left left center right left actions"><thead><tr><th>创建时间</th><th>任务</th><th>报表日期</th><th>收件人</th><th>状态</th><th>尝试</th><th>结果</th><th>操作</th></tr></thead>
-          <tbody><tr v-for="item in deliveries" :key="item.delivery_id">
-            <td>{{ formatDateTime(item.created_at) }}</td>
-            <td class="task-cell"><strong>{{ item.schedule_name }}</strong><small :title="item.subject">{{ item.subject }}</small></td>
-            <td>{{ formatChineseDate(item.report_date) }}</td>
-            <td class="recipient-cell">{{ item.recipients.join(', ') }}<small v-for="(result, address) in item.recipient_results" :key="address" :title="`${address}：${result.status}`">{{ address }}：{{ result.status === 'accepted' ? '服务器已接受' : result.status === 'unknown' ? '结果待核对' : result.status === 'not_accepted' ? '服务器未接收（人工核对）' : '服务器拒收' }}{{ result.code ? `（${result.code}）` : '' }}</small></td>
-            <td><span class="delivery-status" :class="item.status">{{ deliveryLabels[item.status] || item.status }}</span></td>
-            <td>{{ item.attempt_count }} / {{ item.max_attempts }}</td>
-            <td class="error-cell" :title="item.last_error || ''"><span>{{ item.sent_at ? formatDateTime(item.sent_at) : item.last_error || '—' }}</span></td>
-            <td><div class="delivery-actions"><button v-if="item.status === 'failed'" type="button" @click="retry(item)">重新发送</button><button type="button" @click="openDelivery(item)">{{ item.status === 'unknown' ? '核对结果' : '核对记录' }}</button></div><small v-if="item.status === 'unknown'" :title="item.message_id">{{ item.message_id || '无历史 Message-ID' }}</small></td>
-          </tr></tbody></table>
+      <div v-else class="automation-table-wrap delivery-table-wrap">
+        <AppReportTable :columns="deliveryTableColumns" :items="deliveries" :row-key="item => item.delivery_id" :paginate="!!status" :total="deliveryTotal" :page="deliveryPage" :page-size="20" :page-sizes="[]" :max-height="440" :loading="deliveryLoading" aria-label="邮件发送记录" @page="changeDeliveryPage">
+          <template #c0="{ row: item }">{{ formatDateTime(item.created_at) }}</template>
+          <template #c1="{ row: item }"><div class="task-cell"><strong>{{ item.schedule_name }}</strong><small :title="item.subject">{{ item.subject }}</small></div></template>
+          <template #c2="{ row: item }">{{ formatChineseDate(item.report_date) }}</template>
+          <template #c3="{ row: item }"><div class="recipient-cell"><span>{{ item.recipients.join(', ') }}</span><small v-for="(result, address) in item.recipient_results" :key="address" :title="`${address}：${result.status}`">{{ address }}：{{ result.status === 'accepted' ? '服务器已接受' : result.status === 'unknown' ? '结果待核对' : result.status === 'not_accepted' ? '服务器未接收（人工核对）' : '服务器拒收' }}{{ result.code ? `（${result.code}）` : '' }}</small></div></template>
+          <template #c4="{ row: item }"><span class="delivery-status" :class="item.status">{{ deliveryLabels[item.status] || item.status }}</span></template>
+          <template #c5="{ row: item }">{{ item.attempt_count }} / {{ item.max_attempts }}</template>
+          <template #c6="{ row: item }"><span class="error-cell" :title="item.last_error || ''">{{ item.sent_at ? formatDateTime(item.sent_at) : item.last_error || '—' }}</span></template>
+          <template #c7="{ row: item }"><div class="delivery-actions"><button v-if="item.status === 'failed'" type="button" @click="retry(item)">重新发送</button><button type="button" @click="openDelivery(item)">{{ item.status === 'unknown' ? '核对结果' : '核对记录' }}</button><small v-if="item.status === 'unknown'" :title="item.message_id">{{ item.message_id || '无历史 Message-ID' }}</small></div></template>
+          <template #empty>尚无邮件发送记录，任务执行后会显示在这里。</template>
+        </AppReportTable>
       </div>
-      <div v-if="status" class="automation-pagination app-pagination"><div class="app-pagination__actions"><button type="button" :disabled="deliveryLoading || deliveryPage <= 1" @click="changeDeliveryPage(deliveryPage - 1)">上一页</button><span class="app-pagination__summary">第 {{ deliveryPage }} / {{ pageCount }} 页，共 {{ deliveryTotal }} 条</span><button type="button" :disabled="deliveryLoading || deliveryPage >= pageCount" @click="changeDeliveryPage(deliveryPage + 1)">下一页</button></div></div>
     </section>
     <EmailDeliveryResolution v-if="selectedDelivery" :key="selectedDelivery.delivery_id" :delivery="selectedDelivery" @dirty="resolutionDirty = $event" @resolved="deliveryResolved" @close="selectedDelivery = null; resolutionDirty = false" />
   </div>
@@ -550,22 +571,17 @@ onBeforeUnmount(() => {
 .configuration-load-error { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin: 18px; padding: 12px; border: 1px solid rgb(var(--error-color)); border-radius: 7px; color: rgb(var(--error-color)); background: rgb(var(--error-color) / .1); font-size: 12px; }
 .configuration-load-error button { min-height: 32px; padding: 0 10px; }
 .automation-page .empty { padding: 30px 18px; color: var(--muted); font-size: 12px; line-height: 1.6; text-align: center; }
-.automation-table-wrap { max-height: 340px; overflow: auto; scrollbar-gutter: stable; }
-.delivery-table-wrap { max-height: 440px; }
-.automation-table-wrap:focus-visible { outline: 2px solid rgb(var(--primary-color) / .3); outline-offset: -2px; }
-.automation-table-wrap table { width: 100%; border-collapse: collapse; }
-.automation-page .automation-table-wrap th { position: sticky; z-index: 1; top: 0; font-size: var(--font-auxiliary) !important; }
-.automation-table-wrap td strong, .automation-table-wrap td small { display: block; }
-.automation-table-wrap td small { margin-top: 4px; color: var(--muted); font-size: var(--font-auxiliary); }
-.automation-page .automation-table-wrap td.task-cell, .automation-page .automation-table-wrap td.recipient-cell, .automation-page .automation-table-wrap td.error-cell { text-align: left !important; }
-.automation-page .automation-table-wrap td.task-cell strong, .automation-page .automation-table-wrap td.task-cell small, .automation-page .automation-table-wrap td.recipient-cell small { text-align: left !important; }
-.automation-page .automation-table-wrap td.error-cell { white-space: nowrap !important; }
-.error-cell > span { display: block; color: var(--muted); line-height: 1.6; overflow-wrap: anywhere; }
+.automation-table-wrap { min-width: 0; padding: 0 16px; }
+.task-cell, .recipient-cell { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.task-cell > *, .recipient-cell > *, .delivery-actions > small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-cell small, .recipient-cell small, .delivery-actions small { color: var(--muted); font-size: var(--font-auxiliary); }
+.error-cell { color: var(--muted); white-space: nowrap; }
 .schedule-status { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 5px; color: var(--muted); background: rgb(var(--primary-color) / .1); }
 .schedule-status i { width: 6px; height: 6px; border-radius: 50%; background: var(--theme-hover-color); }
 .schedule-status.enabled { color: var(--text-color-1); background: rgb(var(--success-color) / .1); }
 .schedule-status.enabled i { background: rgb(var(--success-color)); }
-.row-actions, .delivery-actions { display: flex; justify-content: center; gap: 6px; }
+.row-actions, .delivery-actions { display: flex; align-items: center; justify-content: center; gap: 6px; }
+.delivery-actions button { flex-shrink: 0; }
 .row-actions button, .delivery-actions button { min-height: 30px; padding: 0 9px; font-size: var(--font-auxiliary); white-space: nowrap; }
 .row-actions .danger { color: rgb(var(--error-color)); border-color: rgb(var(--error-color)); background: rgb(var(--error-color) / .1); }
 .delivery-status { display: inline-block; padding: 4px 8px; border-radius: 5px; color: var(--muted); background: rgb(var(--info-color) / .1); }
@@ -573,8 +589,6 @@ onBeforeUnmount(() => {
 .delivery-status.failed { color: rgb(var(--error-color)); background: rgb(var(--error-color) / .1); }
 .delivery-status.retry_wait, .delivery-status.unknown { color: var(--text-color-1); background: rgb(var(--warning-color) / .1); }
 .delivery-status.sending { color: rgb(var(--info-color)); background: rgb(var(--info-color) / .1); }
-.automation-pagination { display: flex; align-items: center; justify-content: flex-end; padding: 12px 16px; border-top: 1px solid var(--theme-border-color); color: var(--muted); font-size: var(--font-auxiliary); }
-.automation-pagination button { min-height: 32px; padding: 0 10px; }
 @media (max-width: 1100px) {
   .automation-workspace { grid-template-columns: 1fr; }
   .configuration-grid { grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); gap: 18px; }

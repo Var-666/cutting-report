@@ -1,11 +1,14 @@
 <script setup lang="ts">
+import type { DataTableBaseColumn } from 'naive-ui'
+import type { DataRow } from '../types/api'
 import type { ColumnDefinition, DesignerDefinition, DesignerResource, DesignerResources, QueryPreview, QueryTask, ReportTemplate, SqlValidation } from '../types/designer'
 import { toError } from '../utils/errors'
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, toDisplayString, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { deleteDesignerResource, listDesignerResources, previewDesignerQuery, saveDesignerResource, validateDesignerSql } from '../api/designer.ts'
 import { formatChineseDate, formatChineseDateTime, formatTableDateValue } from '../utils/dateDisplay.ts'
 import ManagementPageHero from '../components/ManagementPageHero.vue'
+import AppReportTable from '../components/AppReportTable.vue'
 import { useUnsavedChanges } from '../composables/useUnsavedChanges.ts'
 
 const emit = defineEmits<{ 'definitions-change': [] }>()
@@ -239,6 +242,16 @@ async function previewQuery() {
 }
 
 onMounted(loadResources)
+const previewTableColumns = computed<DataTableBaseColumn<DataRow>[]>(() => (queryPreview.value?.columns || []).map((column, index) => ({
+  key: `c${index}`,
+  title: column.label,
+  ...(['number', 'duration'].includes(column.type)
+    ? { width: 128, align: 'right' as const }
+    : column.type === 'date' || column.type === 'datetime'
+      ? { width: column.type === 'date' ? 152 : 184, align: 'left' as const }
+      : { minWidth: 160, align: 'left' as const }),
+  render: row => toDisplayString(formatPreviewValue(row[column.field], column)),
+})))
 </script>
 
 <template>
@@ -298,7 +311,9 @@ onMounted(loadResources)
           <button class="primary" type="button" :disabled="saving || queryDraft.is_builtin" @click="saveResource('query-tasks', queryDraft, 'query_task_id')">保存任务</button>
           <button class="danger-button" type="button" :disabled="queryDraft.is_builtin" @click="removeResource('query-tasks', queryDraft, 'query_task_id')">删除</button>
         </div>
-        <div v-if="queryPreview" class="designer-preview-table"><div>预览返回 {{ queryPreview.returned }} 行 · {{ queryPreview.mode }}</div><div class="history-wrap"><table v-content-table :data-content-columns="queryPreview.columns.map(column => ['number', 'duration'].includes(column.type) ? 'right' : 'left').join(' ')"><thead><tr><th v-for="column in queryPreview.columns" :key="column.field">{{ column.label }}</th></tr></thead><tbody><tr v-for="(row, index) in queryPreview.items" :key="index"><td v-for="column in queryPreview.columns" :key="column.field">{{ formatPreviewValue(row[column.field], column) }}</td></tr></tbody></table></div></div>
+        <div v-if="queryPreview" class="designer-preview-table"><div>预览返回 {{ queryPreview.returned }} 行 · {{ queryPreview.mode }}</div><div class="history-wrap">
+          <AppReportTable :columns="previewTableColumns" :items="queryPreview.items" :row-key="row => queryPreview?.items.indexOf(row) ?? -1" :paginate="false" aria-label="查询数据预览" />
+        </div></div>
       </div>
     </div>
 

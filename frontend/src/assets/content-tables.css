@@ -1,5 +1,5 @@
 /* Word-style AutoFit: every column keeps its intrinsic content width, then
-   receives an equal share of the remaining window width. */
+   lets flexible text columns absorb the remaining window width. */
 table.content-table {
   width:100% !important;
   max-width:none !important;
@@ -15,7 +15,8 @@ table.content-table td {
   height:47px !important;
   min-width:0 !important;
   max-width:none !important;
-  padding:8px 12px !important;
+  padding-block:8px !important;
+  padding-inline:calc(12px + var(--content-extra-pad, 0px)) !important;
   border-bottom:1px solid var(--theme-border-color) !important;
   text-align:left !important;
   vertical-align:middle !important;

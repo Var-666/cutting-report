@@ -35,7 +35,7 @@ test('administrator management follows the shared settings UI baseline', () => {
   assert.match(template, /title="管理员管理"/)
   assert.match(template, /status-label="HR 身份认证"/)
   assert.match(template, /status-note="系统仅保存管理员权限映射"/)
-  assert.match(template, /class="history-table account-table"/)
+  assert.match(template, /<AppReportTable :columns="adminTableColumns"[\s\S]*:row-key="admin => admin.user_id"/)
   assert.doesNotMatch(styles, /linear-gradient\(120deg,#083e61,#0d7391\)/)
   assert.doesNotMatch(styles, /\.panel-title\s*\{/)
 })

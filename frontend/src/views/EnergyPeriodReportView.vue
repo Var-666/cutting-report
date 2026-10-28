@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import AppReportTable from '../components/AppReportTable.vue'
 import type { ReportCreateRequest } from '../types/reports'
 
 import type { EnergyChannel, EnergyPeriodReport, TaskEnergyReport } from '../types/energy'
@@ -71,6 +72,7 @@ let refreshRequestSequence = 0
 let summaryRefreshTimer: number | null = null
 let summaryRefreshCount = 0
 let resizeListening = false
+let chartResizeObserver: ResizeObserver | undefined
 let routeStateReady = false
 
 const routeQueryKeys = ['start', 'end', 'chart']
@@ -426,12 +428,19 @@ function startResizeListening() {
   if (resizeListening) return
   resizeListening = true
   window.addEventListener('resize', resizeCharts)
+  chartResizeObserver = new ResizeObserver(resizeCharts)
+  for (const panel of [taskPanel, periodPanel]) {
+    const element = panel.value?.getChartElement()
+    if (element) chartResizeObserver.observe(element)
+  }
 }
 
 function stopResizeListening() {
   if (!resizeListening) return
   resizeListening = false
   window.removeEventListener('resize', resizeCharts)
+  chartResizeObserver?.disconnect()
+  chartResizeObserver = undefined
 }
 
 function pause(dispose = false) {
@@ -559,9 +568,10 @@ onMounted(async () => {
 })
 onActivated(async () => {
   pageActive.value = true
+  await nextTick()
+  if (!pageActive.value) return
   startResizeListening()
   if (routeStateReady && await restoreRouteState()) return
-  await nextTick()
   if ((!taskDay.value || !monthlyReport.value) && !loading.value) await initializeReport()
   else if (!taskChart || (monthlyReport.value && !periodChart)) renderCharts()
   resizeCharts()
@@ -578,6 +588,26 @@ watch(() => route.query, async (query, previous) => {
     await restoreRouteState({ preserveDraft: query.start === previous.start && query.end === previous.end })
   }
 }, { deep: true })
+
+const taskTableColumns = [
+  { key: 'c0', title: "序号", width: 56, align: 'center', fixed: 'left' },
+  { key: 'c1', title: "工程号", width: 76, align: 'left' },
+  { key: 'c2', title: "船号", width: 68, align: 'left' },
+  { key: 'c3', title: "分段名", width: 76, align: 'left' },
+  { key: 'c4', title: "任务开始", width: 184, align: 'left' },
+  { key: 'c5', title: "切割时长", width: 96, align: 'center' },
+  { key: 'c6', title: "电耗", width: 80, align: 'right' },
+  { key: 'c7', title: "气耗", width: 80, align: 'right' }
+] as const
+
+const summaryTableColumns = [
+  { key: 'c0', title: "序号", width: 56, align: 'center', fixed: 'left' },
+  { key: 'c1', title: '', width: 112, align: 'left' },
+  { key: 'c2', title: "任务数", width: 84, align: 'right' },
+  { key: 'c3', title: "切割时长", width: 112, align: 'center' },
+  { key: 'c4', title: "电耗", width: 104, align: 'right' },
+  { key: 'c5', title: "气耗", width: 104, align: 'right' }
+] as const
 </script>
 
 <template>
@@ -641,6 +671,7 @@ watch(() => route.query, async (query, previous) => {
     </section>
 
     <ReportTrendPanel
+      :height="245"
       ref="taskPanel"
       number="01"
       title="区间任务能耗明细"
@@ -655,15 +686,30 @@ watch(() => route.query, async (query, previous) => {
       @retry="retryReport"
     >
     <template #table>
-        <table v-content-table="pageActive" class="energy-period-table energy-task-table summary-table" aria-label="任务能耗明细表" data-content-columns="center left left left left right right right">
-          <thead><tr><th scope="col">序号</th><th scope="col">工程号</th><th scope="col">船号</th><th scope="col">分段名</th><th scope="col">任务开始</th><th scope="col">切割时长</th><th scope="col">电耗</th><th scope="col">气耗</th></tr></thead>
-          <tbody><tr v-for="(row, index) in taskRows" :key="row.task_id"><th scope="row">{{ index + 1 }}</th><td>{{ row.project_code || '--' }}</td><td>{{ row.ship_no || '--' }}</td><td>{{ row.segment_name || '--' }}</td><td>{{ formatChineseDateTime(row.production_time) }}</td><td>{{ duration(row.work_time) }}</td><td>{{ format(row.electricity_consumption) }}</td><td>{{ format(row.gas_consumption) }}</td></tr><tr v-if="!taskRows.length"><td colspan="8" class="energy-empty">{{ loading ? '正在查询…' : '所选区间暂无任务' }}</td></tr></tbody>
-          <tfoot><tr><th aria-hidden="true"></th><th scope="row">汇总</th><th>{{ equipmentScopeLabel }}</th><th>{{ summary.task_count || 0 }} 项</th><th>--</th><th>{{ duration(summary.total_work_time) }}</th><th>{{ format(summary.total_electricity_consumption) }}</th><th>{{ format(summary.total_gas_consumption) }}</th></tr></tfoot>
-        </table>
+        <AppReportTable flex-height :columns="taskTableColumns" :items="taskRows" :row-key="row => row.task_id" :paginate="false" aria-label="任务能耗明细表" summary>
+        <template #c0="{ row, index: rowIndex }">{{ rowIndex + 1 }}</template>
+        <template #c1="{ row }">{{ row.project_code || '--' }}</template>
+        <template #c2="{ row }">{{ row.ship_no || '--' }}</template>
+        <template #c3="{ row }">{{ row.segment_name || '--' }}</template>
+        <template #c4="{ row }">{{ formatChineseDateTime(row.production_time) }}</template>
+        <template #c5="{ row }">{{ duration(row.work_time) }}</template>
+        <template #c6="{ row }">{{ format(row.electricity_consumption) }}</template>
+        <template #c7="{ row }">{{ format(row.gas_consumption) }}</template>
+        <template #summary-c0>汇总</template>
+        <template #summary-c1></template>
+        <template #summary-c2></template>
+        <template #summary-c3></template>
+        <template #summary-c4>--</template>
+        <template #summary-c5>{{ duration(summary.total_work_time) }}</template>
+        <template #summary-c6>{{ format(summary.total_electricity_consumption) }}</template>
+        <template #summary-c7>{{ format(summary.total_gas_consumption) }}</template>
+        <template #empty>{{ loading ? '正在查询…' : '所选区间暂无任务' }}</template>
+      </AppReportTable>
     </template>
     </ReportTrendPanel>
 
     <ReportTrendPanel
+      :height="245"
       ref="periodPanel"
       number="02"
       :title="summaryTitle"
@@ -677,7 +723,22 @@ watch(() => route.query, async (query, previous) => {
       empty-message="当前月份范围没有可展示的能耗汇总。"
       @retry="initializeReport"
     >
-    <template #table><table v-content-table="pageActive" class="leadership-table energy-month-table summary-table" :aria-label="summaryTableLabel" data-content-columns="center left right right right right"><thead><tr><th scope="col">序号</th><th scope="col">{{ summaryDateHeading }}</th><th scope="col">任务数</th><th scope="col">切割时长</th><th scope="col">电耗</th><th scope="col">气耗</th></tr></thead><tbody><tr v-for="(row, index) in summaryRows" :key="row.report_date"><th scope="row">{{ index + 1 }}</th><td>{{ summaryPeriod(row.report_date) }}</td><td>{{ row.task_count }}</td><td>{{ duration(row.work_time_seconds) }}</td><td>{{ valueText(row.electricity) }}</td><td>{{ valueText(row.gas) }}</td></tr><tr v-if="!summaryRows.length"><td colspan="6" class="energy-empty">{{ summaryLoading ? '正在查询…' : summaryEmptyText }}</td></tr></tbody><tfoot><tr><th aria-hidden="true"></th><th scope="row">汇总</th><th>{{ month?.total_task_count || 0 }}</th><th>{{ duration(month?.total_work_time_seconds) }}</th><th>{{ valueText(month?.summary?.electricity) }}</th><th>{{ valueText(month?.summary?.gas) }}</th></tr></tfoot></table></template>
+    <template #table><AppReportTable flex-height :columns="summaryTableColumns" :items="summaryRows" :row-key="row => row.report_date" :paginate="false" :aria-label="summaryTableLabel" summary>
+        <template #header-c1>{{ summaryDateHeading }}</template>
+        <template #c0="{ row, index: rowIndex }">{{ rowIndex + 1 }}</template>
+        <template #c1="{ row }">{{ summaryPeriod(row.report_date) }}</template>
+        <template #c2="{ row }">{{ row.task_count }}</template>
+        <template #c3="{ row }">{{ duration(row.work_time_seconds) }}</template>
+        <template #c4="{ row }">{{ valueText(row.electricity) }}</template>
+        <template #c5="{ row }">{{ valueText(row.gas) }}</template>
+        <template #summary-c0>汇总</template>
+        <template #summary-c1></template>
+        <template #summary-c2>{{ month?.total_task_count || 0 }}</template>
+        <template #summary-c3>{{ duration(month?.total_work_time_seconds) }}</template>
+        <template #summary-c4>{{ valueText(month?.summary?.electricity) }}</template>
+        <template #summary-c5>{{ valueText(month?.summary?.gas) }}</template>
+      <template #empty>{{ summaryLoading ? '正在查询…' : summaryEmptyText }}</template>
+      </AppReportTable></template>
     </ReportTrendPanel>
 
     <AnalysisPanel
@@ -700,15 +761,15 @@ watch(() => route.query, async (query, previous) => {
 .device-report-shell>.page-hero{position:relative;min-height:174px;display:flex;align-items:center;overflow:hidden;padding:25px 30px;border:1px solid var(--theme-border-color);border-radius:14px;background:linear-gradient(90deg,rgb(var(--container-bg-color) / 0.99) 0%,rgb(var(--container-bg-color) / 0.92) 39%,rgb(var(--container-bg-color) / 0.08) 69%),url('../assets/home-laser-cutting.webp') center 51%/cover no-repeat;box-shadow:var(--theme-shadow);animation:surface-in .46s cubic-bezier(.2,.75,.25,1) both}.device-report-shell>.page-hero::after{content:"";position:absolute;inset:0;pointer-events:none;background:transparent}.device-hero__copy{position:relative;z-index:1;max-width:540px}.device-breadcrumb{display:block;margin-bottom:7px;color:rgb(var(--info-color));font-size:var(--font-auxiliary)}.device-title-row{display:flex;align-items:flex-end;gap:14px}.device-title-row h2{margin:0;color:var(--text-color-1);font-size:var(--font-page-title);line-height:1.08;letter-spacing:1px}.device-title-row>span{padding-bottom:5px;color:rgb(var(--info-color));font-size:var(--font-auxiliary);font-weight:700;letter-spacing:3px}.device-query-shell{margin:10px 0;border:1px solid var(--theme-border-color)}.device-query-shell .report-query{width:100%;grid-template-columns:minmax(320px,1fr) minmax(180px,.55fr) 128px 128px;padding:0;border:0;background:transparent;box-shadow:none}.device-query-shell :deep(.report-period-picker){grid-column:auto}.device-query-shell :deep(.report-period-picker__trigger),.device-query-shell :deep(.app-select__trigger),.device-query-shell .report-query>button{height:38px;min-height:38px;border-radius:6px;font-size:var(--font-auxiliary)}.device-query-shell .report-query>button.primary{display:flex;align-items:center;justify-content:center;gap:6px;border-color:var(--theme-border-color);background:rgb(var(--info-color));box-shadow:var(--theme-shadow)}
 .energy-config-note{display:grid;gap:6px;padding:12px 16px;margin-bottom:10px;border:1px solid var(--theme-border-color);border-radius:9px;background:rgb(var(--warning-color) / .1);color:rgb(var(--warning-color));font-size:var(--font-auxiliary)}.device-kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:16px;margin:16px 0}.device-kpi{--kpi-color:rgb(var(--info-color));--kpi-soft:rgb(var(--info-color) / .1);position:relative;min-width:0;min-height:108px;padding:12px;border:1px solid var(--theme-border-color);border-top:2px solid var(--kpi-color);border-radius:10px;background:rgb(var(--container-bg-color));box-shadow:var(--theme-shadow);transition:transform .18s ease,box-shadow .18s ease;animation:surface-in .42s cubic-bezier(.2,.75,.25,1) both;display:grid;grid-template-columns:35px minmax(0,1fr);align-items:center;gap:8px 12px}.device-kpi:hover{transform:translateY(-2px);box-shadow:var(--theme-shadow)}.device-kpi:nth-child(2){animation-delay:.04s}.device-kpi:nth-child(3){animation-delay:.08s}.device-kpi:nth-child(4){animation-delay:.12s}.device-kpi:nth-child(5){animation-delay:.16s}.device-kpi.kpi-red{--kpi-color:var(--text-color-3);--kpi-soft:rgb(var(--info-color) / .1)}.device-kpi.kpi-teal{--kpi-color:rgb(var(--info-color));--kpi-soft:rgb(var(--info-color) / .1)}.device-kpi.kpi-violet{--kpi-color:rgb(var(--primary-color));--kpi-soft:rgb(var(--primary-color) / .1)}.device-kpi.kpi-cyan{--kpi-color:rgb(var(--info-color));--kpi-soft:rgb(var(--info-color) / .1)}.device-kpi__icon{position:relative;z-index:1;width:35px;height:35px;display:grid;place-items:center;flex:0 0 auto;color:var(--kpi-color);border-radius:50%;background:var(--kpi-soft);transition:transform .2s ease}.device-kpi:hover .device-kpi__icon{transform:scale(1.08) rotate(-3deg)}.device-kpi>div{display:contents}.device-kpi>div>span{display:block;color:var(--text-color-1);font-size:var(--font-auxiliary);font-weight:700;white-space:normal;overflow-wrap:anywhere;grid-column:2}.device-kpi p{margin:0;color:var(--text-color-1);font-size:var(--font-auxiliary);grid-column:1/-1;min-width:0;overflow-wrap:anywhere}.device-kpi p strong{font-size:21px}.device-kpi p.device-duration strong{font-size:17px}.device-kpi p small{margin-left:2px;color:var(--muted);font-size:var(--font-auxiliary)}.device-kpi em{display:block;color:var(--muted);font-style:normal;font-size:var(--font-auxiliary);grid-column:1/-1;min-width:0;white-space:normal;overflow-wrap:anywhere;line-height:1.6}.device-sparkline{width:58px;height:25px;opacity:.72;grid-column:1/-1;justify-self:end}.global-error{margin:10px 0 0;border-radius:9px}
 .energy-period-table { width:100%; border-collapse:collapse; font-size:12px; }
-.energy-period-table th,.energy-period-table td { height:47px; padding:10px; border-bottom:1px solid var(--theme-border-color); text-align:center; white-space:nowrap; }
+.energy-period-table th,.energy-period-table td { height:47px; padding-block:10px; border-bottom:1px solid var(--theme-border-color); text-align:center; white-space:nowrap; }
 .energy-task-table th:nth-child(2),.energy-task-table td:nth-child(2),.energy-task-table th:nth-child(3),.energy-task-table td:nth-child(3),.energy-task-table th:nth-child(4),.energy-task-table td:nth-child(4) { text-align:left; }
 .energy-period-table thead th { position:sticky; top:0; z-index:2; color:var(--report-table-head-ink); background:var(--report-table-head-bg); }
 .energy-period-table tfoot th { position:sticky; bottom:0; background:rgb(var(--info-color) / .1); color:var(--navy); }
 .energy-task-table tfoot th:nth-child(2),.energy-task-table tfoot th:nth-child(3),.energy-task-table tfoot th:nth-child(4) { text-align:left; }
 .energy-empty { height:120px; color:var(--text-color-3); }
-:deep(.report-trend-panel){margin-bottom:24px;border:1px solid var(--theme-border-color);border-radius:var(--report-panel-radius);box-shadow:var(--theme-shadow)}:deep(.report-trend-panel__heading){min-height:47px;padding:0 16px;border-bottom:1px solid var(--theme-border-color);background:rgb(var(--container-bg-color))}:deep(.report-trend-panel__heading>div){gap:8px}:deep(.report-trend-panel__heading>div>span){width:28px;height:24px;display:grid;place-items:center;padding:0;color:rgb(var(--info-color));border:0;border-radius:7px;background:rgb(var(--info-color) / .1);font-size:var(--font-auxiliary);font-weight:700}:deep(.report-trend-panel__heading h2){color:var(--text-color-1);font-size:14px}:deep(.report-trend-panel__heading small){color:var(--muted);font-size:var(--font-auxiliary);font-weight:400}:deep(.report-trend-panel__heading p){color:var(--muted);font-size:var(--font-auxiliary)}:deep(.report-trend-panel__content){grid-template-columns:minmax(330px,.9fr) minmax(0,1.25fr);gap:16px}:deep(.report-trend-panel__chart),:deep(.report-trend-panel__table){height:245px;overflow:hidden;border-color:var(--theme-border-color);border-radius:6px}:deep(table.content-table th),:deep(table.content-table td){height:35px!important;padding:6px 8px!important;font-size:var(--font-auxiliary)!important}:deep(table.content-table thead th){letter-spacing:.15px!important}:deep(table.content-table tfoot th){color:var(--text-color-1)!important;border-top:1px solid var(--theme-border-color)!important;background:rgb(var(--info-color) / .1)!important}
+:deep(.report-trend-panel){margin-bottom:24px;border:1px solid var(--theme-border-color);border-radius:var(--report-panel-radius);box-shadow:var(--theme-shadow)}:deep(.report-trend-panel__heading){min-height:47px;padding:0 16px;border-bottom:1px solid var(--theme-border-color);background:rgb(var(--container-bg-color))}:deep(.report-trend-panel__heading>div){gap:8px}:deep(.report-trend-panel__heading>div>span){width:28px;height:24px;display:grid;place-items:center;padding:0;color:rgb(var(--info-color));border:0;border-radius:7px;background:rgb(var(--info-color) / .1);font-size:var(--font-auxiliary);font-weight:700}:deep(.report-trend-panel__heading h2){color:var(--text-color-1);font-size:14px}:deep(.report-trend-panel__heading small){color:var(--muted);font-size:var(--font-auxiliary);font-weight:400}:deep(.report-trend-panel__heading p){color:var(--muted);font-size:var(--font-auxiliary)}:deep(.report-trend-panel__content){gap:16px}:deep(.report-trend-panel__chart),:deep(.report-trend-panel__table){height:var(--report-trend-height);overflow:hidden;border-color:var(--theme-border-color);border-radius:6px}:deep(table.content-table th),:deep(table.content-table td){height:35px!important;padding-block:6px!important;font-size:var(--font-auxiliary)!important}:deep(table.content-table thead th){letter-spacing:.15px!important}:deep(table.content-table tfoot th){color:var(--text-color-1)!important;border-top:1px solid var(--theme-border-color)!important;background:rgb(var(--info-color) / .1)!important}
 @media(max-width:1120px){.device-kpis{grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:16px 0}.device-kpi:last-child{grid-column:1/-1}}
-@media(max-width:900px){.device-query-shell .report-query{grid-template-columns:repeat(2,minmax(180px,1fr))}.device-query-shell :deep(.report-period-picker){grid-column:1/-1}:deep(.report-trend-panel__content){grid-template-columns:1fr;gap:16px}:deep(.report-trend-panel__chart),:deep(.report-trend-panel__table){height:270px;border-radius:6px}}
+@media(max-width:900px){.device-query-shell .report-query{grid-template-columns:repeat(2,minmax(180px,1fr))}.device-query-shell :deep(.report-period-picker){grid-column:1/-1}:deep(.report-trend-panel__content){grid-template-columns:1fr;gap:16px}:deep(.report-trend-panel){--report-trend-height:270px!important}:deep(.report-trend-panel__chart),:deep(.report-trend-panel__table){height:var(--report-trend-height);border-radius:6px}}
 @media(max-width:560px){.device-report-shell>.page-hero{min-height:0;padding:22px 18px;background:linear-gradient(90deg,rgb(var(--container-bg-color) / 0.97),rgb(var(--container-bg-color) / 0.89)),url('../assets/home-laser-cutting.webp') center/cover}.device-title-row{display:block}.device-title-row h2{font-size:var(--font-page-title-mobile)}.device-title-row>span{display:block;padding:6px 0 0}.device-query-shell .report-query,.device-kpis{grid-template-columns:1fr}.device-query-shell :deep(.report-period-picker),.device-kpi:last-child{grid-column:auto}}
 @media(prefers-reduced-motion:reduce){.device-report-shell>.page-hero,.device-kpi{animation:none}.device-kpi{transition:none;display:grid;grid-template-columns:35px minmax(0,1fr);align-items:center;gap:8px 12px;padding:12px}}
 
@@ -726,7 +787,8 @@ watch(() => route.query, async (query, previous) => {
 :deep(table.content-table tbody th),
 :deep(table.content-table tfoot th) { font-size:var(--font-auxiliary)!important; }
 :deep(.report-trend-panel__table) {
-  overflow:auto!important;
-  scrollbar-gutter:stable;
+  height:var(--report-trend-height)!important;
+  overflow:hidden!important;
+  scrollbar-gutter:auto;
 }
 </style>

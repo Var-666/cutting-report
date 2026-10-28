@@ -7,6 +7,7 @@ import { grantAdminAccess, listAdminAccounts, revokeAdminAccess, searchHrPeople 
 import { session } from '../state/session'
 import { formatChineseDateTime } from '../utils/dateDisplay.ts'
 import ManagementPageHero from '../components/ManagementPageHero.vue'
+import AppReportTable from '../components/AppReportTable.vue'
 import { useDialogFocus } from '../composables/useDialogFocus.ts'
 
 const admins = ref<User[]>([])
@@ -102,6 +103,14 @@ async function confirmPermissionChange() {
 }
 
 onMounted(loadAdmins)
+
+const adminTableColumns = [
+  { key: 'c0', title: '姓名', width: 96, align: 'left', fixed: 'left' },
+  { key: 'c1', title: '公司工号', width: 128, align: 'left' },
+  { key: 'c2', title: '身份来源', width: 136, align: 'center' },
+  { key: 'c3', title: '授权信息', minWidth: 280, align: 'left' },
+  { key: 'c4', title: '操作', width: 112, align: 'center', fixed: 'right', ellipsis: false },
+] as const
 </script>
 
 <template>
@@ -126,15 +135,12 @@ onMounted(loadAdmins)
         <button type="button" :disabled="loading" @click="loadAdmins">{{ loading ? '刷新中' : '刷新' }}</button>
       </div>
       <div class="history-wrap account-table-wrap">
-        <table v-content-table class="history-table account-table" data-content-columns="left left left left actions">
-          <thead><tr><th>姓名</th><th>公司工号</th><th>身份来源</th><th>授权信息</th><th>操作</th></tr></thead>
-          <tbody>
-            <tr v-for="admin in admins" :key="admin.user_id">
-              <td><strong>{{ admin.display_name }}</strong></td>
-              <td>{{ admin.company_no || admin.username }}</td>
-              <td><span class="source-badge" :class="admin.auth_source">{{ admin.auth_source === 'hr_database' ? 'HR 数据库' : '本地应急账号' }}</span></td>
-              <td>{{ admin.permission_changed_by ? `${admin.permission_changed_by} · ${formatTime(admin.permission_changed_at)}` : formatTime(admin.created_at) }}</td>
-              <td>
+        <AppReportTable :columns="adminTableColumns" :items="admins" :row-key="admin => admin.user_id" :paginate="false" :loading="loading" aria-label="现有管理员">
+          <template #c0="{ row: admin }"><strong>{{ admin.display_name }}</strong></template>
+          <template #c1="{ row: admin }">{{ admin.company_no || admin.username }}</template>
+          <template #c2="{ row: admin }"><span class="source-badge" :class="admin.auth_source">{{ admin.auth_source === 'hr_database' ? 'HR 数据库' : '本地应急账号' }}</span></template>
+          <template #c3="{ row: admin }">{{ admin.permission_changed_by ? `${admin.permission_changed_by} · ${formatTime(admin.permission_changed_at)}` : formatTime(admin.created_at) }}</template>
+          <template #c4="{ row: admin }">
                 <button
                   v-if="admin.auth_source === 'hr_database'"
                   type="button"
@@ -144,11 +150,9 @@ onMounted(loadAdmins)
                   @click="openDialog('revoke', admin)"
                 >撤销权限</button>
                 <span v-else class="protected-text">受保护</span>
-              </td>
-            </tr>
-            <tr v-if="!loading && !admins.length"><td colspan="5" class="empty-cell">暂无管理员</td></tr>
-          </tbody>
-        </table>
+          </template>
+          <template #empty><span role="status">{{ loading ? '正在读取管理员…' : '暂无管理员' }}</span></template>
+        </AppReportTable>
       </div>
     </section>
 
@@ -185,6 +189,6 @@ onMounted(loadAdmins)
 </template>
 
 <style scoped>
-.admin-security-badge{min-width:220px}.account-notice,.account-error{margin:0 0 18px;padding:12px 16px;border-left:4px solid rgb(var(--error-color));background:rgb(var(--success-color) / .1);color:rgb(var(--error-color));font-size:12px}.account-error{border-color:rgb(var(--error-color));background:rgb(var(--error-color) / .1);color:rgb(var(--error-color))}.account-panel{padding:0;overflow:hidden}.account-table{min-width:820px}.account-table th,.account-table td{vertical-align:middle}.source-badge{display:inline-flex;padding:4px 8px;border-radius:999px;background:rgb(var(--info-color) / .1);color:rgb(var(--info-color));font-size:var(--font-auxiliary);font-weight:700}.source-badge.local{background:var(--theme-hover-color);color:var(--text-color-2)}.danger-link{min-height:30px;padding:0 8px;color:rgb(var(--error-color));border:0;background:transparent}.protected-text{color:var(--muted);font-size:var(--font-auxiliary)}.empty-cell{text-align:center!important;color:var(--muted);padding:30px!important}.hr-search{display:grid;grid-template-columns:minmax(220px,480px) max-content;align-items:end;gap:12px;padding:24px 26px}.hr-search label,.permission-dialog label{display:grid;gap:7px}.hr-search label span,.permission-dialog label span{font-size:var(--font-auxiliary);font-weight:700;color:var(--text-color-2)}.search-results{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;padding:0 26px 24px}.search-results article{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 16px;border:1px solid var(--line);background:rgb(var(--container-bg-color))}.search-results article div{display:grid;grid-template-columns:auto auto;gap:3px 10px}.search-results article strong{font-size:14px}.search-results article span{color:var(--blue);font-size:12px}.search-results article small{grid-column:1/-1;color:var(--muted)}.search-results article button{flex:0 0 auto}.search-hint{margin:0;padding:0 26px 24px;color:var(--muted);font-size:12px}.permission-dialog-backdrop{position:fixed;z-index:100;inset:0;display:grid;place-items:center;padding:20px;background:rgb(var(--inverted-bg-color) / .6)}.permission-dialog{width:min(480px,100%);padding:24px;border:1px solid var(--line);background:rgb(var(--container-bg-color));box-shadow:var(--theme-popover-shadow)}.permission-dialog header{display:flex;align-items:flex-start;justify-content:space-between}.permission-dialog header small{color:var(--cyan);font-size:var(--font-auxiliary);font-weight:800;letter-spacing:1.6px}.permission-dialog h2{margin:5px 0 0;font-size:20px}.permission-dialog header button{min-width:32px;min-height:32px;padding:0;border:0;font-size:24px}.permission-dialog>p{margin:22px 0 16px;color:var(--muted);font-size:13px}.permission-dialog label small{color:var(--muted);line-height:1.6}.dialog-error{margin:12px 0 0!important;padding:10px;background:rgb(var(--error-color) / .1);color:rgb(var(--error-color))!important}.permission-dialog footer{display:flex;justify-content:flex-end;gap:10px;margin-top:22px}
+.admin-security-badge{min-width:220px}.account-notice,.account-error{margin:0 0 18px;padding:12px 16px;border-left:4px solid rgb(var(--error-color));background:rgb(var(--success-color) / .1);color:rgb(var(--error-color));font-size:12px}.account-error{border-color:rgb(var(--error-color));background:rgb(var(--error-color) / .1);color:rgb(var(--error-color))}.account-panel{padding:0;overflow:hidden}.source-badge{display:inline-flex;padding:4px 8px;border-radius:999px;background:rgb(var(--info-color) / .1);color:rgb(var(--info-color));font-size:var(--font-auxiliary);font-weight:700}.source-badge.local{background:var(--theme-hover-color);color:var(--text-color-2)}.danger-link{min-height:30px;padding:0 8px;color:rgb(var(--error-color));border:0;background:transparent}.protected-text{color:var(--muted);font-size:var(--font-auxiliary)}.hr-search{display:grid;grid-template-columns:minmax(220px,480px) max-content;align-items:end;gap:12px;padding:24px 26px}.hr-search label,.permission-dialog label{display:grid;gap:7px}.hr-search label span,.permission-dialog label span{font-size:var(--font-auxiliary);font-weight:700;color:var(--text-color-2)}.search-results{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;padding:0 26px 24px}.search-results article{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 16px;border:1px solid var(--line);background:rgb(var(--container-bg-color))}.search-results article div{display:grid;grid-template-columns:auto auto;gap:3px 10px}.search-results article strong{font-size:14px}.search-results article span{color:var(--blue);font-size:12px}.search-results article small{grid-column:1/-1;color:var(--muted)}.search-results article button{flex:0 0 auto}.search-hint{margin:0;padding:0 26px 24px;color:var(--muted);font-size:12px}.permission-dialog-backdrop{position:fixed;z-index:100;inset:0;display:grid;place-items:center;padding:20px;background:rgb(var(--inverted-bg-color) / .6)}.permission-dialog{width:min(480px,100%);padding:24px;border:1px solid var(--line);background:rgb(var(--container-bg-color));box-shadow:var(--theme-popover-shadow)}.permission-dialog header{display:flex;align-items:flex-start;justify-content:space-between}.permission-dialog header small{color:var(--cyan);font-size:var(--font-auxiliary);font-weight:800;letter-spacing:1.6px}.permission-dialog h2{margin:5px 0 0;font-size:20px}.permission-dialog header button{min-width:32px;min-height:32px;padding:0;border:0;font-size:24px}.permission-dialog>p{margin:22px 0 16px;color:var(--muted);font-size:13px}.permission-dialog label small{color:var(--muted);line-height:1.6}.dialog-error{margin:12px 0 0!important;padding:10px;background:rgb(var(--error-color) / .1);color:rgb(var(--error-color))!important}.permission-dialog footer{display:flex;justify-content:flex-end;gap:10px;margin-top:22px}
 @media(max-width:760px){.search-results{grid-template-columns:1fr}.hr-search{grid-template-columns:1fr}.admin-security-badge{min-width:0}}
 </style>

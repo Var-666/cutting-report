@@ -72,7 +72,7 @@ defineExpose({ getChartElement: () => chartElement.value })
 .report-trend-panel__heading small { color:var(--muted); font-size:12px; }
 .report-trend-panel__activity{display:flex;align-items:center;gap:7px;color:rgb(var(--info-color))!important;font-weight:700}.report-trend-panel__activity .spinner{width:13px;height:13px}
 .report-trend-panel__body{display:grid;min-height:var(--report-trend-height)}
-.report-trend-panel__content { grid-area:1/1; display:grid; grid-template-columns:minmax(330px,.9fr) minmax(0,1.25fr); gap:16px; align-items:stretch; padding:var(--report-panel-padding); }
+.report-trend-panel__content { grid-area:1/1; display:grid; grid-template-columns:minmax(0,2fr) minmax(0,3fr); gap:16px; align-items:stretch; padding:var(--report-panel-padding); }
 .report-trend-panel__content.is-obscured{visibility:hidden;pointer-events:none}
 .report-trend-panel__state{grid-area:1/1;z-index:2;margin:var(--report-panel-padding);border:1px solid var(--theme-border-color);border-radius:8px}
 .report-trend-panel__content--table-only { grid-template-columns:minmax(0,1fr); }

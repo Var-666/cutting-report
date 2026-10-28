@@ -4,7 +4,6 @@ import App from './App.vue'
 import router from './router'
 import 'virtual:uno.css'
 import './assets/application.css'
-import { contentTable } from './directives/contentTable.ts'
 import AppSelect from './components/AppSelect.vue'
 import AppDatePicker from './components/AppDatePicker.vue'
 import { resetSetupStore } from './store/plugins/index.ts'
@@ -20,6 +19,5 @@ app
   .use(pinia)
   .component('AppSelect', AppSelect)
   .component('AppDatePicker', AppDatePicker)
-  .directive('content-table', contentTable)
   .use(router)
   .mount('#app')

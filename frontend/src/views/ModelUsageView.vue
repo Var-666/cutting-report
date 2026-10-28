@@ -16,6 +16,7 @@ import { formatChineseDate, formatChineseMonth } from '../utils/dateDisplay.ts'
 import { useReportChartTheme } from '../composables/useReportChartTheme.ts'
 import AppDatePicker from '../components/AppDatePicker.vue'
 import AppSelect from '../components/AppSelect.vue'
+import AppReportTable from '../components/AppReportTable.vue'
 import ManagementPageHero from '../components/ManagementPageHero.vue'
 
 use([BarChart, LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
@@ -145,6 +146,24 @@ onBeforeUnmount(() => {
   controller?.abort()
   disposeChart()
 })
+const periodTableColumns = [
+  { key: 'c0', title: '统计周期', width: 152, align: 'left', fixed: 'left' },
+  { key: 'c1', title: '请求次数', width: 104, align: 'right' },
+  { key: 'c2', title: '输入 token', width: 128, align: 'right' },
+  { key: 'c3', title: '输出 token', width: 128, align: 'right' },
+  { key: 'c4', title: '总 token', width: 128, align: 'right' },
+  { key: 'c5', title: '用量已返回 / 请求', width: 176, align: 'right' },
+  { key: 'c6', title: '请求失败', width: 104, align: 'right' },
+] as const
+const breakdownTableColumns = [
+  { key: 'c0', title: '业务场景', width: 120, align: 'left', fixed: 'left' },
+  { key: 'c1', title: '模型', minWidth: 200, align: 'left' },
+  { key: 'c2', title: '请求次数', width: 104, align: 'right' },
+  { key: 'c3', title: '输入 token', width: 128, align: 'right' },
+  { key: 'c4', title: '输出 token', width: 128, align: 'right' },
+  { key: 'c5', title: '总 token', width: 128, align: 'right' },
+  { key: 'c6', title: '未返回总用量', width: 128, align: 'right' },
+] as const
 </script>
 
 <template>
@@ -179,13 +198,32 @@ onBeforeUnmount(() => {
         <div v-show="series.length" ref="chartElement" class="usage-chart" role="img" aria-label="总 token、输入 token 和输出 token 趋势，完整数值见下方周期汇总表"></div>
         <p v-if="!series.length" class="usage-empty" role="status">当前区间暂无用量记录。</p>
         <div v-if="series.length" class="history-wrap usage-periods">
-          <table v-content-table class="history-table" data-content-columns="left right right right right right right"><caption class="sr-only">每日或每月 token 汇总</caption><thead><tr><th>统计周期</th><th>请求次数</th><th>输入 token</th><th>输出 token</th><th>总 token</th><th>用量已返回 / 请求</th><th>请求失败</th></tr></thead><tbody><tr v-for="row in periods" :key="row.period"><td>{{ report.granularity === 'day' ? formatChineseDate(row.period) : formatChineseMonth(row.period) }}</td><td>{{ number(row.call_count) }}</td><td>{{ number(row.input_tokens) }}</td><td>{{ number(row.output_tokens) }}</td><td><strong>{{ number(row.total_tokens) }}</strong></td><td>{{ number(row.metered_count) }} / {{ number(row.call_count) }}</td><td>{{ number(row.failed_count) }}</td></tr></tbody></table>
+          <AppReportTable :columns="periodTableColumns" :items="periods" :row-key="row => row.period" :paginate="false" :max-height="330" :loading="loading" aria-label="每日或每月 token 汇总">
+            <template #c0="{ row }">{{ report.granularity === 'day' ? formatChineseDate(row.period) : formatChineseMonth(row.period) }}</template>
+            <template #c1="{ row }">{{ number(row.call_count) }}</template>
+            <template #c2="{ row }">{{ number(row.input_tokens) }}</template>
+            <template #c3="{ row }">{{ number(row.output_tokens) }}</template>
+            <template #c4="{ row }"><strong>{{ number(row.total_tokens) }}</strong></template>
+            <template #c5="{ row }">{{ number(row.metered_count) }} / {{ number(row.call_count) }}</template>
+            <template #c6="{ row }">{{ number(row.failed_count) }}</template>
+          </AppReportTable>
         </div>
       </NCard>
 
       <NCard :bordered="false" aria-label="业务场景与模型消耗">
         <header class="usage-panel-title"><div><h2>场景与模型分布</h2></div><p>按当前查询区间统计</p></header>
-        <div class="history-wrap"><table v-content-table class="history-table" data-content-columns="left left right right right right right"><thead><tr><th>业务场景</th><th>模型</th><th>请求次数</th><th>输入 token</th><th>输出 token</th><th>总 token</th><th>未返回总用量</th></tr></thead><tbody><tr v-for="row in report.breakdown" :key="`${row.scene}:${row.model}`"><td>{{ sceneName(row.scene) }}</td><td :title="row.model">{{ row.model || '未记录' }}</td><td>{{ number(row.call_count) }}</td><td>{{ number(row.input_tokens) }}</td><td>{{ number(row.output_tokens) }}</td><td><strong>{{ number(row.total_tokens) }}</strong></td><td>{{ number(row.call_count - row.metered_count) }}</td></tr><tr v-if="!report.breakdown.length"><td colspan="7" class="usage-empty">暂无场景用量</td></tr></tbody></table></div>
+        <div class="history-wrap">
+          <AppReportTable :columns="breakdownTableColumns" :items="report.breakdown" :row-key="row => JSON.stringify([row.scene, row.model])" :paginate="false" :loading="loading" aria-label="业务场景与模型用量明细">
+            <template #c0="{ row }">{{ sceneName(row.scene) }}</template>
+            <template #c1="{ row }">{{ row.model || '未记录' }}</template>
+            <template #c2="{ row }">{{ number(row.call_count) }}</template>
+            <template #c3="{ row }">{{ number(row.input_tokens) }}</template>
+            <template #c4="{ row }">{{ number(row.output_tokens) }}</template>
+            <template #c5="{ row }"><strong>{{ number(row.total_tokens) }}</strong></template>
+            <template #c6="{ row }">{{ number(row.call_count - row.metered_count) }}</template>
+            <template #empty>暂无场景用量</template>
+          </AppReportTable>
+        </div>
       </NCard>
 
     </template>
@@ -193,7 +231,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.model-usage-page{display:grid;gap:16px;min-width:0}.usage-filters{display:grid;grid-template-columns:repeat(3,minmax(0,1fr)) auto;align-items:end;gap:16px}.usage-filters label{display:block;min-width:0}.usage-filters label>span{display:block;margin-bottom:6px;color:var(--text-color-3);font-size:13px}.usage-presets{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:16px;font-size:12px;color:var(--text-color-3)}.usage-presets small{margin-left:auto;font-size:var(--font-auxiliary)}.usage-range{display:flex;align-items:center;flex-wrap:wrap;gap:8px 20px;font-size:13px}.usage-range span,.usage-kpis small{color:var(--text-color-3);font-size:12px;line-height:1.7}.usage-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}.usage-kpis>.n-card{min-width:0}.usage-kpis small{display:block;margin-top:8px}.usage-kpis :deep(.n-statistic-value){overflow-wrap:anywhere;font-variant-numeric:tabular-nums}.usage-message{margin:0}.usage-message .n-button{margin-left:12px}.usage-tabs{display:flex;gap:6px}.usage-tabs .active{color:rgb(var(--primary-color))}.usage-chart{height:280px;margin-top:12px}.usage-periods{max-height:330px;overflow:auto}.usage-periods th{position:sticky;top:0;z-index:1}.usage-empty{padding:20px!important;text-align:center;color:var(--text-color-3)}.usage-panel-title{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}.usage-panel-title h2{margin:0;font-size:16px;font-weight:600}
+.model-usage-page{display:grid;gap:16px;min-width:0}.usage-filters{display:grid;grid-template-columns:repeat(3,minmax(0,1fr)) auto;align-items:end;gap:16px}.usage-filters label{display:block;min-width:0}.usage-filters label>span{display:block;margin-bottom:6px;color:var(--text-color-3);font-size:13px}.usage-presets{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:16px;font-size:12px;color:var(--text-color-3)}.usage-presets small{margin-left:auto;font-size:var(--font-auxiliary)}.usage-range{display:flex;align-items:center;flex-wrap:wrap;gap:8px 20px;font-size:13px}.usage-range span,.usage-kpis small{color:var(--text-color-3);font-size:12px;line-height:1.7}.usage-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}.usage-kpis>.n-card{min-width:0}.usage-kpis small{display:block;margin-top:8px}.usage-kpis :deep(.n-statistic-value){overflow-wrap:anywhere;font-variant-numeric:tabular-nums}.usage-message{margin:0}.usage-message .n-button{margin-left:12px}.usage-tabs{display:flex;gap:6px}.usage-tabs .active{color:rgb(var(--primary-color))}.usage-chart{height:280px;margin-top:12px}.usage-empty{padding:20px!important;text-align:center;color:var(--text-color-3)}.usage-panel-title{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}.usage-panel-title h2{margin:0;font-size:16px;font-weight:600}
 @media(max-width:1100px){.usage-kpis,.usage-filters{grid-template-columns:repeat(2,minmax(0,1fr))}.usage-presets small{width:100%;margin-left:0}}
 @media(max-width:560px){.usage-filters{grid-template-columns:1fr}.usage-kpis{gap:12px}.usage-chart{height:240px}.usage-range{align-items:flex-start;flex-direction:column}.usage-kpis :deep(.n-card__content){padding:12px}.usage-kpis :deep(.n-statistic-value__content){font-size:22px}}
 </style>

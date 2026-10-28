@@ -1,13 +1,35 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { readFileSync, readdirSync } from 'node:fs'
-import { contentFit, contentTable, contentWidthUnits, distributeColumnWidths } from '../src/directives/contentTable.ts'
+import { contentFit, contentTable, contentWidthUnits, distributeColumnWidths, tableColumnWeight } from '../src/directives/contentTable.ts'
+
+test('report, welding, dispatch and settings columns share compact and flexible width rules', () => {
+  for (const label of ['序号', '工程号', '船号', '分段名', '任务数', '长度(m)', '切割时长', '累计作业用时(h)', '源表速度(mm/min)', '参与工件数', '操作', '焊接类型', '状态', '版本', '魔盒UUID', '工件流水号', '机器人', '输入 token', '日期', '月份', '年月', '统计周期', '报告周期', '任务开始', '生成时间', '下次执行', '设备']) {
+    assert.equal(tableColumnWeight(label), 0, label)
+  }
+  for (const label of ['程序号', '项目名称', '报告名称', '文件名', '工人姓名', '配置项', '模型']) {
+    assert.equal(tableColumnWeight(label), 1, label)
+  }
+  for (const label of ['备注', '可能原因', '失败原因', '数据核查提示', '结果', '路径']) assert.equal(tableColumnWeight(label), 3, label)
+  assert.equal(tableColumnWeight('收件人', 'right'), 0, 'recipient counts remain numeric')
+  assert.equal(tableColumnWeight('操作', 'actions'), 0)
+  assert.equal(tableColumnWeight(''), 0)
+  assert.equal(contentWidthUnits('程序号', ['OP-027']), 10)
+  assert.equal(contentWidthUnits('程序号', ['OP']), 10, 'the header itself still reserves its measured width')
+  assert.ok(contentWidthUnits('程序号', ['LONG-PROGRAM-CODE-12345']) > 10)
+  assert.equal(tableColumnWeight('程序号', 'left', ['OP-027', 'OP-025']), 0)
+  assert.equal(tableColumnWeight('程序号', 'left', []), 0)
+  assert.equal(tableColumnWeight('程序号', 'left', ['LONG-PROGRAM-CODE-12345']), 1)
+  assert.equal(tableColumnWeight('文件名', 'left', ['a.nc']), 0)
+  assert.equal(tableColumnWeight('文件名', 'left', ['section-a-long-file.nc']), 1)
+})
 
 test('short numbers, empty fields and timestamps shrink to their content, not fixed proportions', () => {
   assert.equal(contentFit('序号', ['1', '100']), 'compact')
   assert.equal(contentFit('工程号', ['--', '—']), 'compact')
   assert.equal(contentFit('电耗 kWh', ['31.166', '--']), 'compact')
   assert.equal(contentFit('任务开始', ['2026-09-03 12:45:28']), 'compact')
+  for (const label of ['月份', '年月', '统计周期']) assert.equal(contentFit(label, ['2026年10月至2026年12月']), 'compact')
   assert.equal(contentFit('人', ['张三2026-09-03 12:45']), 'compact')
   assert.equal(contentFit('程序号', ['A_10.0023.slp-PK-406PS23']), 'text')
   assert.equal(contentFit('错误', ['错误原因比较长时应该允许换行而不是裁剪掉']), 'text')
@@ -53,10 +75,10 @@ test('intrinsic widths use every heading and keep program columns naturally wide
   assert.ok(units[programIndex] > units[columns.findIndex(([label]) => label === '切割长度')])
 })
 
-test('tables preserve intrinsic widths and share remaining window width equally', () => {
-  const headers = [{ textContent: '日期', dataset: {} }, { textContent: '切割时长', dataset: {} }, { textContent: '电耗 kWh', dataset: {} }]
+test('native tables preserve numeric widths and allocate remaining space to text columns', () => {
+  const headers = [{ textContent: '名称', dataset: {} }, { textContent: '切割时长', dataset: {} }, { textContent: '电耗 kWh', dataset: {} }]
   const rowCells = [
-    { textContent: '2026-09-01', colSpan: 1, dataset: {} },
+    { textContent: '生产任务名称', colSpan: 1, dataset: {} },
     { textContent: '00:00:00', colSpan: 1, dataset: {} },
     { textContent: '--', colSpan: 1, dataset: {} },
   ]
@@ -90,10 +112,50 @@ test('tables preserve intrinsic widths and share remaining window width equally'
   assert.ok(Math.abs(widths.reduce((sum, width) => sum + width, 0) - 900) < 0.02)
   assert.ok(widths[0] > widths[2])
 
-  const units = [contentWidthUnits('日期', ['2026-09-01']), contentWidthUnits('切割时长', ['00:00:00']), contentWidthUnits('电耗 kWh', ['--'])]
-  const tracks = distributeColumnWidths(units, 900)
+  const units = [contentWidthUnits('名称', ['生产任务名称']), contentWidthUnits('切割时长', ['00:00:00']), contentWidthUnits('电耗 kWh', ['--'])]
+  const tracks = distributeColumnWidths(units, 900, [1, 0, 0])
   const additions = tracks.widths.map((width, index) => width - tracks.intrinsicWidths[index])
-  assert.ok(additions.every((addition) => Math.abs(addition - additions[0]) < 0.001))
+  assert.ok(additions[0] > 0)
+  assert.deepEqual(additions.slice(1), [0, 0])
+  assert.equal(widths[1], tracks.intrinsicWidths[1])
+  assert.equal(widths[2], tracks.intrinsicWidths[2])
+  const weighted = distributeColumnWidths([10, 10, 10], 900, [0, 1, 3])
+  assert.equal(weighted.widths[0], weighted.intrinsicWidths[0])
+  assert.equal(weighted.widths[2] - weighted.intrinsicWidths[2], 3 * (weighted.widths[1] - weighted.intrinsicWidths[1]))
+  const overflow = distributeColumnWidths([100, 100], 900, [0, 1])
+  assert.deepEqual(overflow.widths, overflow.intrinsicWidths)
+})
+
+test('symmetric track padding follows allocated width on headers, data and totals and clears stale padding', () => {
+  const cell = textContent => ({ textContent, colSpan: 1, dataset: {},
+    style: { values: { '--content-extra-pad': '999px' }, setProperty(name, value) { this.values[name] = value } } })
+  const headers = ['名称', '说明', '数量', '状态', '操作', '别名'].map(cell)
+  const cells = ['甲', '说明文本', '0', '完成', '编辑', '--'].map(cell)
+  const totals = ['汇总', '--', '100', '--', '--', '—'].map(cell)
+  const empty = cell('暂无数据'); empty.colSpan = headers.length
+  const table = { dataset: { contentColumns: 'left left right center actions left' },
+    classList: { add() {} }, parentElement: { clientWidth: 1200 },
+    tHead: { rows: [{ cells: headers }] }, tBodies: [{ rows: [{ cells }, { cells: [empty] }] }], tFoot: { rows: [{ cells: totals }] } }
+  const padding = row => row.map(item => item.style.values['--content-extra-pad'])
+
+  contentTable.mounted(table)
+  for (const row of [headers, cells, totals]) assert.deepEqual(padding(row), ['66px', '215px', '0px', '0px', '0px', '0px'])
+  assert.deepEqual(headers.map(item => item.dataset.contentAlign), ['left', 'left', 'right', 'center', 'center', 'left'])
+  assert.equal(empty.style.values['--content-extra-pad'], '999px', 'merged empty rows must not be treated as a column')
+
+  cells[5].textContent = '0'
+  contentTable.updated(table)
+  assert.equal(padding(headers)[5], '66px', 'zero is valid data, not a missing-value placeholder')
+  assert.equal(padding(cells)[5], '66px')
+  assert.equal(padding(totals)[5], '66px')
+
+  table.parentElement.clientWidth = 600
+  contentTable.updated(table)
+  for (const row of [headers, cells, totals]) assert.deepEqual(padding(row), ['6px', '35px', '0px', '0px', '0px', '6px'])
+
+  for (const item of [...cells, ...totals]) item.textContent = '--'
+  contentTable.updated(table)
+  for (const row of [headers, cells, totals]) assert.deepEqual(padding(row), headers.map(() => '0px'))
 })
 
 test('cached tables disconnect and restore exactly one ResizeObserver', () => {
@@ -133,24 +195,36 @@ test('cached tables disconnect and restore exactly one ResizeObserver', () => {
   }
 })
 
-test('every Vue page table opts into shared content sizing', () => {
+test('every Vue page table uses the shared Naive component without the legacy directive', () => {
   let count = 0
   for (const folder of ['views', 'components']) {
     const dir = new URL(`../src/${folder}/`, import.meta.url)
     for (const name of readdirSync(dir).filter((name) => name.endsWith('.vue'))) {
       const source = readFileSync(new URL(name, dir), 'utf8')
-      for (const [tag] of source.matchAll(/<table\b[^>]*>/g)) {
-        assert.match(tag, /v-content-table/, name)
-        count++
-      }
+      assert.doesNotMatch(source, /<table\b|v-content-table/, name)
+      count += (source.match(/<AppReportTable\b/g) || []).length
     }
   }
-  assert.ok(count >= 14)
+  assert.ok(count >= 20)
+  assert.doesNotMatch(readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8'), /contentTable|content-table/)
+  assert.match(readFileSync(new URL('../src/components/AppReportTable.vue', import.meta.url), 'utf8'), /<NDataTable/)
   const css = readFileSync(new URL('../src/assets/content-tables.css', import.meta.url), 'utf8')
   assert.match(css, /table\.content-table\s*\{[\s\S]*--content-table-min-width[\s\S]*table-layout:fixed !important/)
   assert.match(css, /table\.content-table th,\s*table\.content-table td\s*\{[^}]*text-align:left !important/)
   assert.match(css, /white-space:nowrap !important/)
+  assert.match(css, /padding-block:8px !important/)
+  assert.match(css, /padding-inline:calc\(12px \+ var\(--content-extra-pad, 0px\)\) !important/)
   assert.doesNotMatch(css, /resize:/)
+})
+
+test('report and management table padding does not override the shared inline track padding', () => {
+  for (const name of ['EnergyPeriodReportView', 'WorkshopView']) {
+    const source = readFileSync(new URL(`../src/views/${name}.vue`, import.meta.url), 'utf8')
+    assert.doesNotMatch(source, /padding:\s*6px\s+8px\b/)
+    assert.match(source, /padding-block:6px/)
+  }
+  const styles = readFileSync(new URL('../src/assets/style.css', import.meta.url), 'utf8')
+  assert.match(styles, /\.management-page \.designer-preview-table th\{padding-block:10px!important;/)
 })
 
 test('header and summary cells paint a solid theme surface below their tint while rows scroll underneath', () => {
@@ -169,7 +243,7 @@ test('table details and action groups stay on the same line', () => {
   assert.match(css, /:is\(\.push-batch-file > span,\.error-cell > span\)\s*\{[^}]*display:inline-block !important;[^}]*white-space:nowrap !important;/)
   assert.match(css, /td :is\(button,a\) \{ white-space:nowrap !important;/)
   const automation = readFileSync(new URL('../src/views/AutomationView.vue', import.meta.url), 'utf8')
-  assert.match(automation, /td\.error-cell \{ white-space: nowrap !important; \}/)
+  assert.match(automation, /\.error-cell \{[^}]*white-space: nowrap;/)
 })
 
 test('explicit field alignment reaches headings, placeholders and totals with safe hover text', () => {

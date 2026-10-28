@@ -186,7 +186,7 @@ test('dispatch history pages through all records in ten-row pages independently 
   assert.deepEqual(calls, [{ page: 1, size: 10 }, { page: 2, size: 10 }, { page: 3, size: 10 }, { page: 3, size: 10 }])
   assert.equal(history.historyPageCount.value, 3)
   const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
-  assert.match(view, /aria-label="派发记录分页"[\s\S]*?>上一页<\/button>[\s\S]*?historyPageCount[\s\S]*?>下一页<\/button>/)
+  assert.match(view, /:items="histories"[^>]*:total="historyTotal"[^>]*:page="historyPage"[^>]*:page-size="historyPageSize"[^>]*@page="changeHistoryPage"/)
 })
 
 test('a failed history page keeps the displayed rows and page number instead of showing a false empty state', async () => {
@@ -323,7 +323,7 @@ test('machine selectors show Chinese names and IPs while dispatch still uses the
   assert.equal((view.match(/:value="machine.machine_ip"/g) || []).length, 2)
   assert.equal((view.match(/\{\{ machineName\(machine.machine_ip\) \}\}/g) || []).length, 2)
   assert.match(view, /machine_ip: dispatchForm.machineIp/)
-  assert.match(view, /<td>\{\{ machineName\(item.machine_ip\) \}\}<\/td>/)
+  assert.match(view, /#c2="[^"]*">\{\{ machineName\(item.machine_ip\) \}\}<\/template>/)
   assert.equal((view.match(/\{\{ machineName\(machine.machine_ip\) \}\} · \{\{ machine.machine_ip \}\}（/g) || []).length, 2)
   assert.doesNotMatch(view, /目标机床 IP|<th>机床IP<\/th>/)
 })
@@ -352,7 +352,7 @@ test('file dispatch page uses the recursive PDM directory tree without condition
   assert.doesNotMatch(view, /<option value="" disabled>\{\{ projectLoading/)
   assert.match(view, /\.project-search \.project-selector \{ height:36px;[^}]*font-size:12px;/)
   assert.match(view, /:render-label="option => \(option as \{ displayLabel: string \}\).displayLabel"/)
-  assert.match(view, /文件名<\/th><th>命名检查<\/th><th>中间产品<\/th><th>文件格式<\/th><th>版本<\/th><th>操作人<\/th><th>操作人工号<\/th><th>操作时间<\/th><th>派发状态<\/th><th class="file-download-cell">操作/)
+  assert.match(view, /title: "文件名"[\s\S]*title: "命名检查"[\s\S]*title: "中间产品"[\s\S]*title: "文件格式"[\s\S]*title: "版本"[\s\S]*title: "操作人"[\s\S]*title: "操作人工号"[\s\S]*title: "操作时间"[\s\S]*title: "派发状态"[\s\S]*title: "操作"/)
   assert.doesNotMatch(view, /<th>切割状态<\/th>/)
   assert.match(view, /fileExtension\(row\)/)
   assert.doesNotMatch(view, /ConditionBuilder|SortBuilder|searchCuttingFiles|组合条件查询/)
@@ -410,12 +410,12 @@ test('project-shaped catalog root is hidden to avoid showing the project twice',
 
 test('file dispatch status is displayed after operation time with the history badge and empty state', () => {
   const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
-  assert.match(view, /<th>操作时间<\/th><th>派发状态<\/th><th class="file-download-cell">操作/)
+  assert.match(view, /title: "操作时间"[\s\S]*title: "派发状态"[\s\S]*title: "操作"/)
   assert.match(view, /class="dispatch-status" :class="row.dispatch_status.status"/)
   assert.match(view, /row.dispatch_status.status_label/)
   assert.match(view, /row.dispatch_status.stage_label/)
   assert.match(view, /v-else class="dispatch-project-name">暂无记录/)
-  assert.match(view, /colspan="11" class="dispatch-empty-row"/)
+  assert.match(view, /#empty>[\s\S]*当前目录没有匹配的文件/)
   assert.match(view, /Promise.allSettled\(\[loadHistory\(\), refreshVisibleFileStatuses\(\)\]\)/)
 })
 
@@ -682,9 +682,9 @@ test('PDM file table supports up to one hundred selections and direct batch disp
   assert.match(view, /:aria-label="`选择文件 \$\{row\.document_no\}`"/)
   assert.match(view, /设置参数并派发/)
   assert.match(view, /@click="openSinglePush\(row\)"/)
-  assert.match(view, /colspan="11"/)
+  assert.match(view, /:columns="fileTableColumns"/)
   assert.doesNotMatch(view, /downloadCuttingFile|保存到系统|listCuttingDownloads/)
-  assert.match(view, /class="dispatch-table source-file-table"/)
+  assert.match(view, /<AppReportTable :columns="fileTableColumns"/)
 })
 
 test('mobile file selection keeps batch actions reachable at the bottom of the viewport', () => {
@@ -919,7 +919,7 @@ test('dispatch segments are recognized or required before a nonstandard file can
   assert.equal(batchItemError(manual), '')
   manual.segmentName = '806\nC'
   assert.match(batchItemError(manual), /控制字符/)
-  assert.match(view, /<th>分段名<\/th>/)
+  assert.match(view, /title: "分段名"/)
   assert.match(view, /v-else v-model.trim="item.segmentName"/)
 })
 

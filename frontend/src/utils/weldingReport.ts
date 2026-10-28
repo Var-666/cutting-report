@@ -1,4 +1,5 @@
-import type { WeldingReport, WeldingReportKind } from '../types/welding'
+import type { DataTableBaseColumn } from 'naive-ui'
+import type { WeldingReport, WeldingReportKind, WeldingRow } from '../types/welding'
 export const weldingTitles = { dashboard: '生产首页', daily: '生产统计报表', parts: '工件生产报表', jobs: '焊接作业报表', equipment: '设备效能报表' }
 const common = [['device_no', '设备'], ['robot_no', '机器人']]
 const metrics = [['involved_part_count', '参与工件数'], ['job_count', '作业次数'], ['flat_length_m', '平焊长度(m)'], ['vertical_length_m', '立焊长度(m)'], ['wrap_length_m', '包角类型长度(m)'], ['unknown_length_m', '未知工艺长度(m)'], ['weld_length_m', '总长度(m)'], ['working_hours', '累计作业用时(h)'], ['output_per_hour', '单位作业用时产出(m/h)']]
@@ -10,10 +11,48 @@ export const weldingColumns: Record<string, string[][]> = {
   seams: [['id', '焊缝ID'], ['riser_no', '立板'], ['welding_seam_no', '焊缝序号'], ...common, ['theoretical_length_m', '理论长度(m)'], ['actual_length_m', '实际长度(m)'], ['working_hours', '焊缝用时(h)'], ['start_time', '开始时间'], ['end_time', '结束时间'], ['state_label', '状态'], ['quality_reasons', '数据核查提示']],
 }
 
+export const weldingColumnLayout: Record<string, Pick<DataTableBaseColumn<WeldingRow>, 'width' | 'minWidth' | 'align'>> = {
+  production_date: { width: 152, align: 'left' },
+  device_no: { width: 96, align: 'left' },
+  robot_no: { width: 88, align: 'left' },
+  involved_part_count: { width: 112, align: 'right' },
+  job_count: { width: 100, align: 'right' },
+  flat_length_m: { width: 120, align: 'right' },
+  vertical_length_m: { width: 120, align: 'right' },
+  wrap_length_m: { width: 144, align: 'right' },
+  unknown_length_m: { width: 144, align: 'right' },
+  weld_length_m: { width: 120, align: 'right' },
+  working_hours: { width: 152, align: 'right' },
+  output_per_hour: { width: 184, align: 'right' },
+  completed_part_count: { width: 168, align: 'right' },
+  arc_rate: { width: 152, align: 'right' },
+  id: { width: 88, align: 'left' },
+  end_time: { width: 184, align: 'left' },
+  serial_number: { width: 200, align: 'left' },
+  riser_no: { width: 88, align: 'left' },
+  welding_seam_no: { width: 104, align: 'left' },
+  weld_type_label: { width: 104, align: 'center' },
+  weld_speed: { width: 168, align: 'right' },
+  state_label: { width: 112, align: 'center' },
+  quality_reasons: { width: 200, align: 'left' },
+  project_no: { width: 120, align: 'left' },
+  project_name: { minWidth: 180, align: 'left' },
+  section_no: { width: 100, align: 'left' },
+  part_no: { width: 152, align: 'left' },
+  theoretical_length_m: { width: 152, align: 'right' },
+  actual_length_m: { width: 152, align: 'right' },
+  weld_rate: { width: 168, align: 'right' },
+  start_time: { width: 184, align: 'left' },
+}
+
 export function weldingDisplay(value: unknown, key = '') {
   if (value === null || value === undefined || value === '') return ['completed_part_count', 'arc_rate'].includes(key) ? '待核实' : '未记录'
   if (Array.isArray(value)) return value.join('；') || '—'
-  if (typeof value === 'number') return value.toLocaleString('zh-CN', { maximumFractionDigits: /length|hours|output|rate/.test(key) ? 3 : 0 })
+  if (typeof value === 'number') {
+    if (!/length|hours|count|output|speed|duration|seconds|consumption|rate/.test(key)) return String(value)
+    const digits = /count/.test(key) ? 0 : 3
+    return value.toLocaleString('zh-CN', { minimumFractionDigits: digits, maximumFractionDigits: digits })
+  }
   return String(value)
 }
 

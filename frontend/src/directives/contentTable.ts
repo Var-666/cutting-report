@@ -1,7 +1,16 @@
 import type { ObjectDirective } from 'vue'
-// Derive an intrinsic width for every column, then add an equal share of the
-// remaining container width to every track. A real table plus a generated
-// colgroup keeps headers, body cells and summary rows on exactly the same grid.
+// Text columns absorb spare space; fully compact tables share it to keep the table full-width.
+export function tableColumnWeight(title: string, align = 'left', values?: readonly string[]) {
+  const label = title.replace(/\s+/g, '')
+  if (!label || align === 'right' || align === 'center' || align === 'actions') return 0
+  if (/备注|描述|说明|原因|提示|结果|路径/.test(label)) return 3
+  if (/时间|日期|月份|年月|周期|下次执行|任务开始|任务结束/.test(label)) return 0
+  if (/程序号|文件名/.test(label)) return values === undefined || values.some(value => [...value.trim()].length > 8) ? 1 : 0
+  if (/^(序号|选择|人|设备|操作|详情)$|工程号|船号|分段|编号|工号|流水号|标识|ID|UUID|机器人|立板|焊缝序号|状态|级别|类型|检查|格式|版本|材质|长度|时长|工时|用时|耗|速度|率|数量|任务数|工件数|次数|产出|大小|token|尝试|发送|失败/i.test(label)) return 0
+  return 1
+}
+
+
 const MIN_TABLE_WIDTH = 560
 const PIXELS_PER_UNIT = 7.8
 const tableObservers = new WeakMap<HTMLTableElement, ResizeObserver>()
@@ -10,7 +19,7 @@ export function contentFit(label: string, values: string[]) {
   const heading = label.replace(/\s+/g, '')
   const populated = values.map((value) => value.trim()).filter((value) => value && !/^[-—–]+$/.test(value))
   if (/^(序号|选择|人|待确认|操作|任务数|数量|大小|尝试)$/.test(heading)) return 'compact'
-  if (/时间|日期|时长|下次执行|任务开始|任务结束/.test(heading)) return 'compact'
+  if (/时间|日期|月份|年月|周期|时长|下次执行|任务开始|任务结束/.test(heading)) return 'compact'
   if (!populated.length) return 'compact'
   if (populated.every((value) => /^[+-]?[\d,]+(?:\.\d+)?(?:%|\s*(?:KB|MB|GB|B|kWh|Nm³))?$/.test(value))) return 'compact'
   if (populated.every((value) => [...value].length <= 8)) return 'compact'
@@ -31,7 +40,8 @@ export function contentWidthUnits(label: string, values: string[], fit = content
   const heading = label.replace(/\s+/g, '')
   const longest = Math.max(visualUnits(heading), ...values.map(visualUnits))
   if (/^(序号|选择)$/.test(heading)) return 6
-  if (/文件名|程序号/.test(heading)) return clamp(longest + 4, 18, 42)
+  if (/程序号/.test(heading)) return clamp(longest + 4, 8, 42)
+  if (/文件名/.test(heading)) return clamp(longest + 4, 18, 42)
   if (/时间|日期|下次执行|任务开始|任务结束/.test(heading)) return clamp(longest + 4, 16, 30)
   if (/时长/.test(heading)) return clamp(longest + 4, 10, 16)
   if (/备注|错误|原因|结果|路径|收件人/.test(heading)) return clamp(longest + 4, 12, 42)
@@ -40,13 +50,14 @@ export function contentWidthUnits(label: string, values: string[], fit = content
   return clamp(longest + 4, 8, 22)
 }
 
-export function distributeColumnWidths(units: number[], availableWidth = 0) {
+export function distributeColumnWidths(units: number[], availableWidth = 0, weights = units.map(() => 0)) {
   if (!units.length) return { intrinsicWidths: [], widths: [], tableWidth: 0 }
   const intrinsicWidths = units.map((unit) => Math.ceil(unit * PIXELS_PER_UNIT))
   const intrinsicTotal = intrinsicWidths.reduce((sum, width) => sum + width, 0)
   const tableWidth = Math.max(MIN_TABLE_WIDTH, Math.floor(availableWidth || 0), intrinsicTotal)
-  const sharedRemainder = Math.max(0, tableWidth - intrinsicTotal) / units.length
-  const widths = intrinsicWidths.map((width) => width + sharedRemainder)
+  const remaining = Math.max(0, tableWidth - intrinsicTotal)
+  const totalWeight = weights.reduce((sum, weight) => sum + weight, 0)
+  const widths = intrinsicWidths.map((width, index) => width + (totalWeight ? remaining * weights[index] / totalWeight : remaining / units.length))
   return { intrinsicWidths, widths, tableWidth }
 }
 
@@ -77,8 +88,20 @@ function applyColumnTracks(table: HTMLTableElement, headers: HTMLTableCellElemen
     return Math.max(contentUnits, ...actionWidths.map((width) => width / PIXELS_PER_UNIT))
   })
   const availableWidth = table.parentElement?.clientWidth || table.clientWidth || 0
-  const tracks = distributeColumnWidths(units, availableWidth)
+  const weights = headers.map((header, index) => tableColumnWeight(header.textContent || '', header.dataset.contentAlign, rows.map(row => row.cells[index].textContent || '')))
+  const tracks = distributeColumnWidths(units, availableWidth, weights)
   table.style?.setProperty('--content-table-min-width', `${tracks.tableWidth}px`)
+  headers.forEach((header, index) => {
+    const cells = rows.map(row => row.cells[index])
+    const hasData = cells.some(cell => {
+      const text = (cell.textContent || '').trim()
+      return text && !/^[-—–]+$/.test(text)
+    })
+    const extraPad = hasData && header.dataset.contentAction !== 'true' && header.dataset.contentAlign !== 'center'
+      ? Math.max(0, Math.floor((tracks.widths[index] - tracks.intrinsicWidths[index] - 16) / 2))
+      : 0
+    for (const cell of [header, ...cells]) cell.style?.setProperty('--content-extra-pad', `${extraPad}px`)
+  })
   if (!table.ownerDocument) return
 
   let colgroup = Array.from(table.children || []).find((child) => child.tagName === 'COLGROUP') as HTMLTableColElement | undefined

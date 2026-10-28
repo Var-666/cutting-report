@@ -54,9 +54,19 @@ test('worker task table exposes multi-select and reviews tasks before confirmati
   assert.match(template, /aria-label="全选当前页待确认任务"/)
   assert.match(template, /确认选中任务/)
   assert.match(template, /确认以下任务由我完成/)
-  assert.match(template, /v-for="\(row, index\) in batchConfirmation\.tasks"/)
-  assert.match(template, /工程\/船号[\s\S]*分段名[\s\S]*程序号[\s\S]*生产时间/)
+  assert.match(template, /:items="batchConfirmation\.tasks"/)
+  assert.match(script, /工程\/船号[\s\S]*分段名[\s\S]*程序号[\s\S]*生产时间/)
   assert.match(template, /@click="openSingleConfirmation\(row\)"/)
+  assert.match(template, /:disabled="loading \|\| correction.saving"/)
+  assert.match(template, /:disabled="loading \|\| batchConfirmation.saving"/)
+  assert.doesNotMatch(script, /title: [\"']备注[\"']/)
+  assert.doesNotMatch(template, /row\.remark/ )
+  assert.match(script, /key: 'c8', title: "切割时长", width: 104, align: 'center'/)
+  assert.match(template, /<AppReportTable :columns="taskTableColumns"/)
+  const shared = parse(readFileSync(new URL('../src/components/AppReportTable.vue', import.meta.url), 'utf8')).descriptor
+  const styles = shared.styles.map(style => style.content).join('\n')
+  assert.match(styles, /n-data-table-td\)\{[^}]*padding:6px 14px;/)
+  assert.match(styles, /border-right-color:color-mix\(in srgb, var\(--n-merged-border-color\) 35%, transparent\)/)
 })
 
 test('workshop keeps confirmation corrections while the source correction entry is removed', () => {

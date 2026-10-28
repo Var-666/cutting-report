@@ -1,7 +1,8 @@
 <script setup lang="ts">
+import AppReportTable from '../components/AppReportTable.vue'
 import type { ReportCreateRequest } from '../types/reports'
 
-import type { LeadershipReport } from '../types/reports'
+import type { LeadershipPeriodRecord, LeadershipReport } from '../types/reports'
 import type { ExportFormat } from '../types/api'
 import type { BarSeriesOption, LineSeriesOption } from 'echarts'
 type TrendSeries = Omit<LineSeriesOption, 'type'> & Pick<BarSeriesOption, 'barMaxWidth'> & { type: 'bar' | 'line' }
@@ -66,6 +67,7 @@ let refreshPollCount = 0
 let requestController: AbortController | null = null
 let requestSequence = 0
 let resizeListening = false
+let chartResizeObserver: ResizeObserver | undefined
 let routeStateReady = false
 
 const routeQueryKeys = ['start', 'end', 'chart']
@@ -117,6 +119,17 @@ function requestIsCurrent(sequence: number, signal: AbortSignal) {
 }
 
 const dailyRecords = computed(() => report.value?.daily_records || [])
+const dailyChartRecords = computed<LeadershipPeriodRecord[]>(() => {
+  if (!report.value) return []
+  const byDate = new Map(dailyRecords.value.map(row => [row.period_start, row]))
+  const rows: LeadershipPeriodRecord[] = []
+  const end = Date.parse(`${appliedPeriodEnd.value}T00:00:00Z`)
+  for (let day = Date.parse(`${appliedPeriodStart.value}T00:00:00Z`); day <= end; day += 86_400_000) {
+    const date = new Date(day).toISOString().slice(0, 10)
+    rows.push(byDate.get(date) || { period_start: date, task_count: 0, cut_length_m: 0, groove_length_m: 0, work_time_seconds: 0 })
+  }
+  return rows
+})
 const metricSeries = computed(() => {
   const rows = [...dailyRecords.value].sort((left, right) => left.period_start.localeCompare(right.period_start))
   return {
@@ -370,7 +383,7 @@ function renderCharts({ monthly = true } = {}) {
   const monthlyChartElement = monthlyPanel.value?.getChartElement()
   if (dailyChartElement && report.value) {
     dailyChart ||= init(dailyChartElement, chartTheme.darkMode.value ? 'dark' : undefined)
-    const records = [...dailyRecords.value].sort((left, right) => left.period_start.localeCompare(right.period_start))
+    const records = dailyChartRecords.value
     dailyChart.setOption<EChartsOption>({
       backgroundColor: 'transparent',
       tooltip: { trigger: 'axis', backgroundColor: chartTheme.vars.value.popoverColor, borderColor: chartTheme.vars.value.borderColor, textStyle: { color: chartTheme.vars.value.textColor1 } },
@@ -428,12 +441,19 @@ function startResizeListening() {
   if (resizeListening) return
   resizeListening = true
   window.addEventListener('resize', resizeCharts)
+  chartResizeObserver = new ResizeObserver(resizeCharts)
+  for (const panel of [dailyPanel, monthlyPanel]) {
+    const element = panel.value?.getChartElement()
+    if (element) chartResizeObserver.observe(element)
+  }
 }
 
 function stopResizeListening() {
   if (!resizeListening) return
   resizeListening = false
   window.removeEventListener('resize', resizeCharts)
+  chartResizeObserver?.disconnect()
+  chartResizeObserver = undefined
 }
 
 function pausePage(dispose = false) {
@@ -509,9 +529,10 @@ onMounted(async () => {
 })
 onActivated(async () => {
   pageActive.value = true
+  await nextTick()
+  if (!pageActive.value) return
   startResizeListening()
   if (routeStateReady && await restoreRouteState()) return
-  await nextTick()
   if (!report.value && !loading.value) await loadDefaultReport()
   else if (!dailyChart || (monthlyReport.value && !monthlyChart)) renderCharts()
   resizeCharts()
@@ -529,6 +550,24 @@ watch(() => route.query, async (query, previous) => {
     if (!await restoreRouteState({ preserveDraft })) scheduleRefreshPoll()
   }
 }, { deep: true })
+
+const dailyTableColumns = [
+  { key: 'c0', title: "序号", width: 56, align: 'center', fixed: 'left' },
+  { key: 'c1', title: "日期", width: 152, align: 'left' },
+  { key: 'c2', title: "任务数", width: 84, align: 'right' },
+  { key: 'c3', title: "切割长度", width: 104, align: 'right' },
+  { key: 'c4', title: "坡口长度", width: 104, align: 'right' },
+  { key: 'c5', title: "切割时长", width: 104, align: 'center' },
+] as const
+
+const monthlyTableColumns = [
+  { key: 'c0', title: "序号", width: 56, align: 'center', fixed: 'left' },
+  { key: 'c1', title: "月份", width: 112, align: 'left' },
+  { key: 'c2', title: "任务数", width: 84, align: 'right' },
+  { key: 'c3', title: "切割长度", width: 104, align: 'right' },
+  { key: 'c4', title: "坡口长度", width: 104, align: 'right' },
+  { key: 'c5', title: "切割时长", width: 104, align: 'center' },
+] as const
 </script>
 
 <template>
@@ -583,41 +622,41 @@ watch(() => route.query, async (query, previous) => {
 
   <ReportTrendPanel ref="dailyPanel" number="01" title="区间每日明细与趋势" subtitle="查看所选时间段内每日任务与加工指标变化" chart-label="区间每日趋势图" :height="245" :loading="loading || (refreshLoading && !snapshot.data_as_of)" :has-data="dailyRecords.length > 0" :empty="Boolean(report) && !dailyRecords.length" :error="!report ? error : ''" loading-title="正在读取区间生产数据" loading-message="正在汇总任务、切割长度、坡口长度和切割时长。" empty-title="所选区间暂无已完成任务" empty-message="请调整日期范围，或等待生产数据完成后重新查询。" @retry="retryReport">
     <template #table>
-        <table v-content-table="pageActive" class="leadership-table summary-table" data-content-columns="center left right right right right left">
-        <thead><tr><th>序号</th><th>日期</th><th>任务数</th><th>切割长度</th><th>坡口长度</th><th>切割时长</th><th>备注</th></tr></thead>
-        <tbody>
-          <tr v-for="(row, index) in dailyRecords" :key="row.period_start">
-            <td>{{ index + 1 }}</td><td>{{ formatChineseDate(row.period_start) }}</td><td>{{ row.task_count }}</td>
-            <td>{{ formatLength(row.cut_length_m) }}</td><td>{{ formatLength(row.groove_length_m) }}</td>
-            <td class="duration-cell">{{ formatDuration(row.work_time_seconds) }}</td><td>{{ row.remark || '--' }}</td>
-          </tr>
-          <tr v-if="refreshLoading && !snapshot.data_as_of"><td colspan="7" class="table-empty">首次快照正在后台生成</td></tr>
-          <tr v-else-if="!loading && !dailyRecords.length"><td colspan="7" class="table-empty">所选区间暂无已完成任务</td></tr>
-        </tbody>
-        <tfoot>
-          <tr><th aria-hidden="true"></th><th>汇总</th><th>{{ total.task_count }}</th><th>{{ formatLength(total.cut_length_m) }}</th><th>{{ formatLength(total.groove_length_m) }}</th><th class="duration-cell">{{ formatDuration(total.work_time_seconds) }}</th><th>--</th></tr>
-        </tfoot>
-        </table>
+        <AppReportTable flex-height :columns="dailyTableColumns" :items="dailyRecords" :row-key="row => row.period_start" :paginate="false" summary>
+        <template #c0="{ row, index: rowIndex }">{{ rowIndex + 1 }}</template>
+        <template #c1="{ row }">{{ formatChineseDate(row.period_start) }}</template>
+        <template #c2="{ row }">{{ row.task_count }}</template>
+        <template #c3="{ row }">{{ formatLength(row.cut_length_m) }}</template>
+        <template #c4="{ row }">{{ formatLength(row.groove_length_m) }}</template>
+        <template #c5="{ row }"><div class="duration-cell">{{ formatDuration(row.work_time_seconds) }}</div></template>
+        <template #summary-c0>汇总</template>
+        <template #summary-c1></template>
+        <template #summary-c2>{{ total.task_count }}</template>
+        <template #summary-c3>{{ formatLength(total.cut_length_m) }}</template>
+        <template #summary-c4>{{ formatLength(total.groove_length_m) }}</template>
+        <template #summary-c5>{{ formatDuration(total.work_time_seconds) }}</template>
+        <template #empty>所选区间暂无已完成任务</template>
+      </AppReportTable>
     </template>
   </ReportTrendPanel>
 
   <ReportTrendPanel ref="monthlyPanel" number="02" :title="monthlyTitle" subtitle="查看近12个月各项数据的对比趋势" :note="`${monthlyPeriodStart} 至 ${monthlyPeriodEnd}`" chart-label="近12个月月度趋势图" :height="245" :loading="monthlyLoading" :has-data="monthlyRecords.length > 0" :empty="Boolean(monthlyReport) && !monthlyRecords.length" :error="!monthlyReport ? error : ''" loading-title="正在读取近12个月趋势" loading-message="月度汇总独立加载，不影响当前区间明细。" empty-title="近12个月暂无已完成任务" empty-message="当前统计范围内还没有可汇总的生产任务。" @retry="loadDefaultReport">
     <template #table>
-        <table v-content-table="pageActive" class="leadership-table summary-table" data-content-columns="center left right right right right left">
-        <thead><tr><th>序号</th><th>月份</th><th>任务数</th><th>切割长度</th><th>坡口长度</th><th>切割时长</th><th>备注</th></tr></thead>
-        <tbody>
-          <tr v-for="(row, index) in monthlyRecords" :key="row.period_start">
-            <td>{{ index + 1 }}</td><td>{{ formatChineseMonth(row.period_start) }}</td><td>{{ row.task_count }}</td>
-            <td>{{ formatLength(row.cut_length_m) }}</td><td>{{ formatLength(row.groove_length_m) }}</td>
-            <td class="duration-cell">{{ formatDuration(row.work_time_seconds) }}</td><td>{{ row.remark || '--' }}</td>
-          </tr>
-          <tr v-if="monthlyLoading"><td colspan="7" class="table-empty">近12个月趋势正在加载</td></tr>
-          <tr v-else-if="!monthlyRecords.length"><td colspan="7" class="table-empty">近12个月暂无已完成任务</td></tr>
-        </tbody>
-        <tfoot>
-          <tr><th aria-hidden="true"></th><th>汇总</th><th>{{ monthlyTotal.task_count }}</th><th>{{ formatLength(monthlyTotal.cut_length_m) }}</th><th>{{ formatLength(monthlyTotal.groove_length_m) }}</th><th class="duration-cell">{{ formatDuration(monthlyTotal.work_time_seconds) }}</th><th>--</th></tr>
-        </tfoot>
-        </table>
+        <AppReportTable flex-height :columns="monthlyTableColumns" :items="monthlyRecords" :row-key="row => row.period_start" :paginate="false" summary>
+        <template #c0="{ row, index: rowIndex }">{{ rowIndex + 1 }}</template>
+        <template #c1="{ row }">{{ formatChineseMonth(row.period_start) }}</template>
+        <template #c2="{ row }">{{ row.task_count }}</template>
+        <template #c3="{ row }">{{ formatLength(row.cut_length_m) }}</template>
+        <template #c4="{ row }">{{ formatLength(row.groove_length_m) }}</template>
+        <template #c5="{ row }"><div class="duration-cell">{{ formatDuration(row.work_time_seconds) }}</div></template>
+        <template #summary-c0>汇总</template>
+        <template #summary-c1></template>
+        <template #summary-c2>{{ monthlyTotal.task_count }}</template>
+        <template #summary-c3>{{ formatLength(monthlyTotal.cut_length_m) }}</template>
+        <template #summary-c4>{{ formatLength(monthlyTotal.groove_length_m) }}</template>
+        <template #summary-c5>{{ formatDuration(monthlyTotal.work_time_seconds) }}</template>
+        <template #empty>近12个月暂无已完成任务</template>
+      </AppReportTable>
     </template>
   </ReportTrendPanel>
 
@@ -654,7 +693,7 @@ watch(() => route.query, async (query, previous) => {
 .report-trend-panel { margin-bottom:24px; }
 :deep(.report-trend-panel) { border-radius:var(--report-panel-radius); margin-bottom:24px; }
 :deep(.report-trend-panel__heading) { min-height:47px; padding:0 16px; }
-:deep(.report-trend-panel__content) { grid-template-columns:minmax(330px,.9fr) minmax(0,1.25fr); gap:16px; }
+:deep(.report-trend-panel__content) { gap:16px; }
 :deep(table.content-table thead th) {
   color:var(--report-table-head-ink)!important;
   background:var(--report-table-head-bg)!important;
@@ -664,8 +703,9 @@ watch(() => route.query, async (query, previous) => {
 :deep(table.content-table tbody th),
 :deep(table.content-table tfoot th) { font-size:var(--font-auxiliary)!important; }
 :deep(.report-trend-panel__table) {
-  overflow:auto!important;
-  scrollbar-gutter:stable;
+  height:var(--report-trend-height)!important;
+  overflow:hidden!important;
+  scrollbar-gutter:auto;
 }
 @media(max-width:720px) {
   :deep(.report-trend-panel__content) { grid-template-columns:1fr; gap:16px; }

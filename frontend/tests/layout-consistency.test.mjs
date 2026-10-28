@@ -71,6 +71,12 @@ test('report form and history pagination retain horizontal text and consistent c
   assert.match(styles, /\.n-base-selection\)[^}]*\.n-input\)[^}]*--n-height:40px!important/)
   const shared = readFileSync(new URL('../src/assets/style.css', import.meta.url), 'utf8')
   assert.match(shared, /\.history-page-size \{[^}]*flex-shrink:0[^}]*white-space:nowrap/)
+  const history = descriptor('ReportTable', 'components')
+  assert.match(history.template.content, /<AppReportTable[\s\S]*:loading="loading"/)
+  assert.match(history.template.content, /loading \? '正在加载…' : '暂无历史报告'/)
+  assert.match(history.styles[0].content, /\.history-wrap \{[^}]*padding:16px;/)
+  assert.match(history.styles[0].content, /\.history-empty \{ color:var\(--text-color-3\);/)
+  assert.match(history.styles[0].content, /\.actions-cell \{[^}]*justify-content:center;[^}]*gap:12px;/)
 })
 
 test('first page cards clear the header without doubling their own top spacing', () => {
@@ -545,25 +551,30 @@ test('device report is one page with task details and a default monthly summary'
   assert.match(energy.template.content, /<h2>设备报表<\/h2>/)
   assert.match(energy.template.content, /:max-days="31"/)
   assert.match(energy.template.content, /任务能耗明细/)
-  assert.match(energy.template.content, /<tfoot>[\s\S]*<th scope="row">汇总<\/th>/)
+  assert.match(energy.template.content, /#summary-c0>汇总<\/template>/)
+  const taskSummary = energy.template.content.slice(energy.template.content.indexOf('#summary-c0'), energy.template.content.indexOf('#empty'))
+  assert.match(taskSummary, /#summary-c2><\/template>/)
+  assert.match(taskSummary, /#summary-c3><\/template>/)
+  assert.doesNotMatch(taskSummary, /equipmentScopeLabel|summary\.task_count/)
   assert.match(energy.scriptSetup.content, /近12个月月度能耗汇总/)
   assert.match(energy.template.content, /aria-label="任务能耗明细表"/)
   assert.match(energy.template.content, /:aria-label="summaryTableLabel"/)
-  assert.match(energy.template.content, /class="leadership-table energy-month-table summary-table"/)
-  assert.match(energy.template.content, /<thead><tr><th scope="col">序号<\/th><th scope="col">\{\{ summaryDateHeading \}\}<\/th><th scope="col">任务数<\/th><th scope="col">切割时长<\/th><th scope="col">电耗/)
+  assert.match(energy.template.content, /<AppReportTable flex-height :columns="summaryTableColumns"/)
+  assert.match(energy.template.content, /#header-c1>\{\{ summaryDateHeading \}\}/)
+  assert.match(energy.scriptSetup.content, /const summaryTableColumns[\s\S]*任务数[\s\S]*切割时长[\s\S]*电耗/)
   assert.match(energy.scriptSetup.content, /const taskChartRows = computed\(\(\) => taskRows\.value[\s\S]*\.slice\(0, 50\)[\s\S]*\.sort\(\(left, right\) => String\(left\.production_time \|\| ''\)\.localeCompare\(String\(right\.production_time \|\| ''\)\)\)\)/)
   assert.match(energy.scriptSetup.content, /const labels = taskChartRows\.value\.map/)
   assert.match(energy.scriptSetup.content, /getEnergyMonthlyRange\(recentStart, selectedDate/)
   assert.match(energy.template.content, /month\?\.total_task_count/)
   assert.doesNotMatch(energy.template.content, /电耗覆盖|气耗覆盖|保存状态/)
-  assert.match(energy.template.content, /colspan="6" class="energy-empty"/)
+  assert.match(energy.template.content, /#empty>\{\{ summaryLoading/)
   assert.doesNotMatch(energy.template.content, /任务结束/)
   assert.doesNotMatch(energy.template.content, /数据状态/)
-  assert.match(energy.template.content, /colspan="8" class="energy-empty"/)
+  assert.match(energy.template.content, /#empty>\{\{ loading/)
   assert.doesNotMatch(energy.template.content, /scope="row" colspan="5"/)
-  assert.match(energy.template.content, /<tfoot><tr><th aria-hidden="true"><\/th><th scope="row">汇总<\/th>/)
+  assert.equal((energy.template.content.match(/#summary-c0>汇总/g) || []).length, 2)
   assert.doesNotMatch(energy.template.content, /当日任务汇总|当月汇总/)
-  assert.equal((energy.template.content.match(/summary-table/g) || []).length, 2)
+  assert.equal((energy.template.content.match(/<AppReportTable flex-height/g) || []).length, 2)
   assert.doesNotMatch(energy.template.content, /<colgroup>/)
   assert.match(energy.scriptSetup.content, /import AnalysisPanel from '\.\.\/components\/AnalysisPanel\.vue'/)
   assert.match(energy.template.content, /<AnalysisPanel[\s\S]*report-type="equipment"/)
@@ -577,32 +588,21 @@ test('device report is one page with task details and a default monthly summary'
   assert.doesNotMatch(energyStyles, /\.energy-period-query\s*\{[^}]*display:/)
 })
 
-test('report tables with sticky summaries use content-weighted window columns', () => {
-  const leadership = descriptor('LeadershipReportView')
-  const energy = descriptor('EnergyPeriodReportView')
-  const trendPanel = descriptor('ReportTrendPanel', 'components')
-  const contentCss = readFileSync(new URL('../src/assets/content-tables.css', import.meta.url), 'utf8')
-  const trendStyles = trendPanel.styles.map((style) => style.content).join('\n')
-
-  assert.equal((leadership.template.content.match(/leadership-table summary-table/g) || []).length, 2)
-  assert.doesNotMatch(leadership.template.content, /<colgroup>/)
-  assert.equal((energy.template.content.match(/summary-table/g) || []).length, 2)
-  assert.doesNotMatch(energy.template.content, /<colgroup>/)
-  assert.match(contentCss, /table-layout:fixed !important/)
-  assert.match(trendStyles, /scrollbar-gutter:stable/)
-  assert.match(trendStyles, /report-trend-panel__content--fit-table \.report-trend-panel__table \{[^}]*overflow-y:visible;[^}]*scrollbar-gutter:auto;/)
+test('cutting report tables use the shared Naive table with fixed-height bodies and summaries', () => {
+  const table = descriptor('AppReportTable', 'components')
   for (const name of ['LeadershipReportView', 'EnergyPeriodReportView']) {
-    const viewStyles = descriptor(name).styles.map((style) => style.content).join('\n')
-    assert.match(viewStyles, /\.report-trend-panel__table\)\s*\{[^}]*overflow:auto!important;[^}]*scrollbar-gutter:stable;/, `${name} trend tables must remain scrollable`)
+    const view = descriptor(name)
+    assert.equal((view.template.content.match(/<AppReportTable flex-height/g) || []).length, 2)
+    assert.equal((view.template.content.match(/#summary-c0>汇总/g) || []).length, 2)
+    assert.equal((view.template.content.match(/#summary-c1><\/template>/g) || []).length, 2)
+    assert.doesNotMatch(view.scriptSetup.content, /title: [\"']备注[\"']/)
+    assert.doesNotMatch(view.template.content, /row\.remark/)
+    assert.doesNotMatch(view.template.content, /<table|<colgroup>/)
+    assert.match(view.styles.map(style => style.content).join('\n'), /height:var\(--report-trend-height\)!important;\s*overflow:hidden!important;\s*scrollbar-gutter:auto;/)
   }
-  const workshopStyles = descriptor('WorkshopView').styles.map((style) => style.content).join('\n')
-  assert.doesNotMatch(workshopStyles, /\.report-trend-panel__table\)\s*\{[^}]*overflow:auto!important;/)
-  assert.match(contentCss, /height:47px !important/)
-  assert.match(contentCss, /font-size:var\(--content-table-font-size,13px\) !important/)
-  assert.match(contentCss, /thead th \{[\s\S]*font-size:var\(--content-table-header-font-size,12px\) !important/)
-  assert.match(contentCss, /background:linear-gradient\(var\(--report-table-head-bg\),var\(--report-table-head-bg\)\),rgb\(var\(--container-bg-color\)\) !important/)
-  assert.match(contentCss, /table\.content-table th,\s*table\.content-table td\s*\{[^}]*text-align:left !important/)
-  assert.match(contentCss, /white-space:nowrap !important/)
+  assert.match(table.template.content, /<NDataTable[\s\S]*:summary="summary \? createSummary : undefined"/)
+  assert.match(table.template.content, /:flex-height="flexHeight"/)
+  assert.match(table.styles[0].content, /n-data-table-td--summary\)\{position:sticky;bottom:0;/)
 })
 
 test('device report reuses the leadership report UI baseline', () => {
@@ -619,7 +619,9 @@ test('device report reuses the leadership report UI baseline', () => {
   assert.match(energy.template.content, /<StandardReportQuery/)
   assert.equal((leadership.template.content.match(/<ReportTrendPanel/g) || []).length, 2)
   assert.equal((energy.template.content.match(/<ReportTrendPanel/g) || []).length, 2)
-  assert.doesNotMatch(energy.template.content, /:height=/)
+  assert.equal((energy.template.content.match(/:height="245"/g) || []).length, 2)
+  assert.match(energyStyles, /report-trend-panel__chart\),:deep\(\.report-trend-panel__table\)\{height:var\(--report-trend-height\)/)
+  assert.match(energyStyles, /--report-trend-height:270px!important/)
   assert.equal((energy.template.content.match(/chart-label=/g) || []).length, 2)
   assert.match(trendPanel.template.content, /class="panel report-trend-panel"/)
   assert.match(trendPanel.template.content, /class="panel-title report-trend-panel__heading"/)
@@ -629,7 +631,7 @@ test('device report reuses the leadership report UI baseline', () => {
   assert.match(trendPanel.template.content, /v-if="showChart"/)
   assert.match(trendPanel.template.content, /report-trend-panel__content--table-only/)
   assert.match(trendPanel.scriptSetup.content, /defineExpose\(\{ getChartElement:/)
-  assert.match(trendStyles, /\.report-trend-panel__content\s*\{[^}]*grid-template-columns:minmax\(330px,\.9fr\) minmax\(0,1\.25fr\)/)
+  assert.match(trendStyles, /\.report-trend-panel__content\s*\{[^}]*grid-template-columns:minmax\(0,2fr\) minmax\(0,3fr\)/)
   assert.match(trendStyles, /\.report-trend-panel__content--table-only\s*\{[^}]*grid-template-columns:minmax\(0,1fr\)/)
   assert.match(trendStyles, /height:var\(--report-trend-height\)/)
   assert.match(energyStyles, /\.energy-period-table thead th\s*\{[^}]*background:var\(--report-table-head-bg\);/)
@@ -743,7 +745,7 @@ test('alarm center uses source timestamps and presents the latest evidenced mode
   assert.match(template, /class="leadership-kpis alarm-kpis"/)
   assert.equal((template.match(/class="panel alarm-list"/g) || []).length, 2)
   assert.match(template, /class="alarm-refresh-button"/)
-  assert.match(template, /<th>告警时间<\/th><th>发现时间<\/th>/)
+  assert.match(script, /title: "告警时间"[\s\S]*title: "发现时间"/)
   assert.match(template, /formatShortDateTime\(item\.first_start_time\)/)
   assert.match(template, /同步游标[\s\S]*ALARM_INFO_ID/)
   assert.doesNotMatch(template, /已同步记录/)
@@ -761,13 +763,13 @@ test('alarm center uses source timestamps and presents the latest evidenced mode
   assert.match(template, /模型结论仅用于辅助排查/)
   assert.doesNotMatch(script, /insightSummary|insightCause/)
   assert.doesNotMatch(template, /检查电源及急停回路|检查气压与冷却系统/)
-  assert.match(template, /class="alarm-pagination app-pagination"/)
-  assert.match(template, /第 \{\{ incidentPage \}\} \/ \{\{ incidentPageCount \}\} 页，共 \{\{ incidentSummary\.total \}\} 条/)
+  assert.match(template, /:items="filteredIncidents"[^>]*@page="changeIncidentPage"/)
+  assert.match(template, /:total="incidentSummary.total"[^>]*:page="incidentPage"/)
   assert.match(script, /const reportPageSize = 10/)
   assert.match(script, /listAlarmReportPage\(\{ page: reportPage\.value, pageSize: reportPageSize \}/)
-  assert.match(template, /v-for="item in reportItems"/)
-  assert.match(template, /aria-label="实体告警报告分页"/)
-  assert.match(template, /第 \{\{ reportPage \}\} \/ \{\{ reportPageCount \}\} 页，共 \{\{ reportSummary\.total \}\} 份/)
+  assert.match(template, /:items="reportItems"/)
+  assert.match(template, /@page="changeReportPage"/)
+  assert.match(template, /:total="reportSummary.total"[^>]*:page="reportPage"/)
   assert.equal((template.match(/class="alarm-empty-state"/g) || []).length, 4)
   assert.match(template, /当前设备暂无告警记录/)
   assert.match(template, /当前没有状态异常的告警/)
@@ -946,33 +948,74 @@ test('workshop pagination does not invalidate an unchanged analysis context', ()
   assert.ok(readyExpression)
   assert.match(readyExpression[1], /!loading\.value/)
   assert.match(analysis, /if \(!props\.reportDate \|\| queryScope\(\) !== displayedScope\) \{[\s\S]*analysis\.value = null/)
-  assert.match(template, /@click="changePage\(result\.page - 1\)">上一页/)
-  assert.match(template, /@click="changePage\(result\.page \+ 1\)">下一页/)
+  assert.match(template, /:page="result.page"[^>]*:page-size="result.page_size"/)
+  assert.match(template, /@page="changePage"/)
 })
 
-test('all visible pagination controls share one production-console format', () => {
-  const sources = [
-    descriptor('ReportTable', 'components').template.content,
-    descriptor('WorkshopView').template.content,
-    descriptor('AlarmCenterView').template.content,
-    descriptor('AutomationView').template.content,
-    descriptor('CuttingDispatchView').template.content,
-    descriptor('ConfigurationDiagnosticsView').template.content,
-  ]
-  const styles = readFileSync(new URL('../src/assets/style.css', import.meta.url), 'utf8')
-
-  for (const source of sources) {
-    assert.match(source, /class="[^"]*app-pagination[^"]*"/)
-    assert.match(source, /class="[^"]*app-pagination__summary[^"]*"/)
-    assert.match(source, /class="[^"]*app-pagination__actions[^"]*"/)
-    assert.match(source, /class="[^"]*app-pagination__actions[^"]*"[\s\S]*?>上一页<\/button>[\s\S]*?class="app-pagination__summary"[\s\S]*?>下一页<\/button>/)
+test('cutting list pagination is rendered once by the shared Naive component', () => {
+  for (const name of ['WorkshopView', 'AlarmCenterView', 'CuttingDispatchView']) {
+    const template = descriptor(name).template.content
+    assert.match(template, /<AppReportTable/)
+    assert.match(template, /:page-size=/)
+    assert.match(template, /@page=/)
+    assert.doesNotMatch(template, />上一页<|>下一页</)
   }
+  const report = descriptor('ReportTable', 'components').template.content
+  assert.match(report, /@page="emit\('page-change', \$event\)"/)
+  assert.match(report, /@page-size="emit\('page-size-change', \$event\)"/)
+  const shared = descriptor('AppReportTable', 'components').template.content
+  assert.equal((shared.match(/<NPagination/g) || []).length, 1)
+  assert.match(shared, /:item-count="total"/)
+  assert.match(shared, /:disabled="loading"/)
+})
 
-  assert.doesNotMatch(descriptor('ReportTable', 'components').scriptSetup.content, /visiblePages|rangeStart|rangeEnd/)
-  assert.match(styles, /\.app-pagination \{[^}]*min-height:48px!important/)
-  assert.match(styles, /\.app-pagination__actions button,[^}]*min-height:32px!important/)
-  assert.match(styles, /\.app-pagination__actions button:disabled,[^}]*opacity:1!important/)
-  assert.match(styles, /@media\(max-width:560px\)\{\.app-pagination\{[^}]*flex-wrap:wrap!important/)
+test('report charts resize with their containers and disconnect observers while inactive', async () => {
+  for (const name of ['LeadershipReportView', 'EnergyPeriodReportView']) {
+    const source = descriptor(name).scriptSetup.content
+    const code = source.slice(source.indexOf('function resizeCharts()'), source.indexOf('function pause'))
+    const observed = [], observers = [], calls = []
+    const chart = { resize: () => calls.push('resize') }
+    const panel = { value: { getChartElement: () => ({}) } }
+    const pageActive = { value: true }
+    class ResizeObserver {
+      constructor(callback) { this.callback = callback; observers.push(this) }
+      observe(element) { observed.push(element) }
+      disconnect() { this.disconnected = true }
+    }
+    const bindings = { ResizeObserver, pageActive, dailyPanel: panel, monthlyPanel: panel, taskPanel: panel, periodPanel: panel,
+      dailyChart: chart, monthlyChart: chart, taskChart: chart, periodChart: chart,
+      window: { addEventListener() {}, removeEventListener() {} } }
+    const state = scriptFunction(...Object.keys(bindings), `let resizeListening = false; let chartResizeObserver; ${code}; return { startResizeListening, stopResizeListening }`)(...Object.values(bindings))
+    state.startResizeListening()
+    state.startResizeListening()
+    assert.equal(observers.length, 1)
+    assert.equal(observed.length, 2)
+    observers[0].callback()
+    assert.equal(calls.length, 2)
+    pageActive.value = false
+    observers[0].callback()
+    assert.equal(calls.length, 2)
+    state.stopResizeListening()
+    assert.equal(observers[0].disconnected, true)
+    state.startResizeListening()
+    assert.equal(observers.length, 2)
+    state.stopResizeListening()
+
+    panel.value = null
+    const before = observed.length
+    let activate
+    const activation = source.slice(source.indexOf('onActivated(async () => {'), source.indexOf('onDeactivated('))
+    const activationBindings = { ...bindings,
+      onActivated: callback => { activate = callback },
+      nextTick: async () => { panel.value = { getChartElement: () => ({}) } },
+      routeStateReady: false, restoreRouteState: async () => false,
+      report: { value: {} }, taskDay: { value: {} }, monthlyReport: { value: {} }, loading: { value: false },
+      scheduleRefreshPoll() {}, scheduleSummaryRefresh() {}, renderCharts() {} }
+    const active = scriptFunction(...Object.keys(activationBindings), `let resizeListening = false; let chartResizeObserver; ${code}; ${activation}; return { stopResizeListening }`)(...Object.values(activationBindings))
+    await activate()
+    assert.equal(observed.length, before + 2, 'activation must observe the chart elements after Vue restores their refs')
+    active.stopResizeListening()
+  }
 })
 
 test('cached report resources pause on deactivation and cache is bounded', () => {
@@ -986,7 +1029,7 @@ test('cached report resources pause on deactivation and cache is bounded', () =>
   assert.match(layout.template.content, /<KeepAlive :max="3">/)
   for (const view of [leadership, workshop, equipment]) {
     assert.match(view.scriptSetup.content, /onDeactivated\(/)
-    assert.match(view.template.content, /v-content-table="pageActive"/)
+    assert.match(view.template.content, /<AppReportTable/)
   }
   assert.match(leadership.scriptSetup.content, /disposeCharts\(\)/)
   assert.match(equipment.scriptSetup.content, /disposeCharts\(\)/)
@@ -1043,7 +1086,7 @@ test('scrollable report tables do not add duplicate previous and next pagination
   const script = energy.scriptSetup.content
   const template = energy.template.content
 
-  assert.match(template, /v-for="\(row, index\) in taskRows"/)
+  assert.match(template, /:items="taskRows"/)
   assert.doesNotMatch(template, /#footer|上一页|下一页/)
   assert.doesNotMatch(script, /visibleTaskRows|totalPages|pageSize/)
 })

@@ -338,3 +338,56 @@ for (const [reportType, period] of [['leadership', 'current_month'], ['leadershi
     } finally { scope.stop() }
   })
 }
+
+test('all seven migrated settings tables render their fields and controls through Naive UI', async () => {
+  const [{ compile, parse: parseTemplate }, { renderToString }, { setup: setupCssr }, { SharedDataTable }, dateDisplay] = await Promise.all([
+    import('@vue/compiler-dom'), import('@vue/server-renderer'), import('@css-render/vue3-ssr'), import('./data-table-helpers.mjs'), import('../src/utils/dateDisplay.ts'),
+  ])
+  const { NTag } = await import('naive-ui')
+  const cases = [
+    ['AdminAccountsView', 'adminTableColumns', { admins: [
+      { user_id: 'self', display_name: '本人', company_no: '001', auth_source: 'hr_database' },
+      { user_id: 'other', display_name: '同事', company_no: '002', auth_source: 'hr_database' },
+      { user_id: 'local', display_name: '应急管理员', username: 'admin', auth_source: 'local' },
+    ], session: { user: { user_id: 'self' } }, formatTime: () => '2026年10月28日', openDialog() {} }, ['本人', '同事', '应急管理员', 'HR 数据库', '本地应急账号', '受保护']],
+    ['ConfigurationDiagnosticsView', 'diagnosticsTableColumns', { visibleRows: [{ key: 'TEST_HOST', category: '数据库', saved_value: false, saved_source: 'settings.env', status: 'error', rule: '需要重启', valid: false, process_mismatch: true, processes: { web: { status: 'error', value: 'web-host', source: 'Web快照' }, worker: { status: 'pending', value: 'worker-host', source: 'Worker快照' } } }], rows: Array(21), page: 2, pageSize: 10, category: '', search: '', display: value => String(value), tones: { error: 'error', pending: 'warning' }, statuses: { error: '配置异常', pending: '待重启' } }, ['TEST_HOST', 'web-host', 'worker-host', 'Web快照', 'Worker快照', 'settings.env', '需要重启', '配置版本不一致']],
+    ['ModelUsageView', 'periodTableColumns', { periods: [{ period: '2026-10-28', call_count: 1240, input_tokens: null, output_tokens: 0, total_tokens: 0, metered_count: 1200, failed_count: 40 }], report: { granularity: 'day' }, number: value => value == null ? '—' : value.toLocaleString('zh-CN') }, ['2026年10月28日', '1,240', '1,200', '—', '40']],
+    ['ModelUsageView', 'breakdownTableColumns', { report: { breakdown: [{ scene: 'workshop', model: '<script>unsafe</script>', call_count: 10, input_tokens: 0, output_tokens: null, total_tokens: 0, metered_count: 8 }] }, sceneName: () => '车间报表', number: value => value == null ? '—' : String(value) }, ['车间报表', '&lt;script&gt;unsafe&lt;/script&gt;', '—']],
+    ['AutomationView', 'scheduleTableColumns', { schedules: [{ schedule_id: 'schedule', enabled: true, name: '每日车间', device_id: 'Cutter01', report_type: 'workshop', recipients: ['one@example.com'], sent_count: 12, failed_count: 1 }], reportLabels: { workshop: '车间报表' }, scheduleLabels: {}, formatDeviceDisplay: () => '20KW切割机', scheduleText: () => '每天18:00', formatDateTime: () => '2026年10月28日 18:00:00', runNow() {}, editSchedule() {}, remove() {} }, ['每日车间', '20KW切割机', '每天18:00', '立即执行', '编辑', '删除']],
+    ['AutomationView', 'deliveryTableColumns', { deliveries: [
+      { delivery_id: 'failed', schedule_name: '邮件失败', recipients: ['one@example.com'], recipient_results: {}, status: 'failed', attempt_count: 1, max_attempts: 3, last_error: '连接失败' },
+      { delivery_id: 'unknown', schedule_name: '邮件待核对', recipients: ['two@example.com'], recipient_results: { 'two@example.com': { status: 'unknown' } }, status: 'unknown', message_id: '<mail-id>' },
+    ], status: {}, deliveryTotal: 41, deliveryPage: 2, deliveryLoading: false, deliveryLabels: { failed: '发送失败', unknown: '结果待核对' }, formatDateTime: () => '2026年10月28日 18:00:00', retry() {}, openDelivery() {}, changeDeliveryPage() {} }, ['one@example.com', 'two@example.com', '连接失败', '重新发送', '核对记录', '核对结果', '结果待核对', '&lt;mail-id&gt;']],
+    ['DesignerView', 'previewTableColumns', { queryPreview: Vue.ref({ columns: [{ field: 'name', label: '名称', type: 'text' }, { field: 'date', label: '日期', type: 'date' }, { field: 'time', label: '时间', type: 'datetime' }, { field: 'value', label: '数值', type: 'number' }, { field: 'duration', label: '时长', type: 'duration' }], items: [{ name: '<b>工件</b>', date: '2026-10-28', time: '2026-10-28T08:00:00', value: 0, duration: 12.5 }] }) }, ['&lt;b&gt;工件&lt;/b&gt;', '2026年10月28日', '08:00:00', '12.5']],
+  ]
+  for (const [viewName, columnName, state, expected] of cases) {
+    const view = descriptor(viewName)
+    const script = view.scriptSetup.content
+    const bindings = { ...Vue, ...dateDisplay, ...state, loading: false }
+    if (viewName === 'DesignerView') {
+      bindings.formatPreviewValue = scriptFunction(...Object.keys(bindings), `${script.slice(script.indexOf('function formatPreviewValue'), script.indexOf('function blankQuery'))}; return formatPreviewValue`)(...Object.values(bindings))
+    }
+    const columns = scriptFunction(...Object.keys(bindings), `${script.slice(script.indexOf(`const ${columnName} =`))}; return ${columnName}`)(...Object.values(bindings))
+    const nodes = []
+    function collect(node) { if (node.tag === 'AppReportTable') nodes.push(node); for (const child of node.children || []) collect(child) }
+    collect(parseTemplate(view.template.content))
+    const table = nodes.find(node => node.loc.source.includes(`:columns="${columnName}"`))
+    assert.ok(table, `${viewName} table ${columnName} is mounted`)
+    const render = scriptFunction('Vue', compile(table.loc.source, { prefixIdentifiers: true, expressionPlugins: ['typescript'] }).code)(Vue)
+    const app = Vue.createSSRApp({ setup: () => ({ ...bindings, [columnName]: columns }), render })
+    app.component('AppReportTable', SharedDataTable)
+    app.component('NTag', NTag)
+    setupCssr(app)
+    const html = await renderToString(app)
+    assert.match(html, /n-data-table/)
+    for (const value of expected) assert.ok(html.includes(value), `${viewName} shows ${value}`)
+    if (viewName === 'AdminAccountsView') assert.match(html, /disabled title="不能撤销当前登录账号自己的权限"/)
+    if (columnName === 'diagnosticsTableColumns' || columnName === 'deliveryTableColumns') {
+      assert.match(html, /class="n-pagination(?:\s|")/)
+      assert.match(html, /第 3 页/)
+    } else assert.doesNotMatch(html, /class="n-pagination(?:\s|")/)
+    if (columnName === 'breakdownTableColumns') assert.doesNotMatch(html, /<script>unsafe/)
+    const height = { periodTableColumns: 330, scheduleTableColumns: 340, deliveryTableColumns: 440 }[columnName]
+    if (height) assert.ok(html.includes(`max-height:${height}px`), 'scroll height is handled by NDataTable')
+  }
+})

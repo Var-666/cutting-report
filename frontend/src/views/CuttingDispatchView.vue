@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import AppReportTable from '../components/AppReportTable.vue'
 import type { ReadOptions } from '../types/api'
 import type { CuttingCatalog, CuttingDispatch, CuttingFile, CuttingMachine, CuttingProject, CuttingStatus, DispatchCreationResult } from '../types/cutting'
 interface PushBatchItem { referenceKey: string; documentId: string; versionId: string | null; filePath: string; filename: string; version: string; parsed: ReturnType<typeof parseCuttingInstructionFilename>; segmentName: string; material: string; thickness: number | string; quantity: number; status: 'pending' | 'pushing' | 'sent' | 'duplicate' | 'failed'; error: string; dispatchId: string; retryable: boolean; statusChecked: boolean }
@@ -961,6 +962,41 @@ onActivated(async () => {
 })
 onDeactivated(pausePage)
 onBeforeUnmount(pausePage)
+
+const fileTableColumns = [
+  { key: 'c0', title: '', width: 48, align: 'center', fixed: 'left', ellipsis: false },
+  { key: 'c1', title: "文件名", minWidth: 220, align: 'left' },
+  { key: 'c2', title: "命名检查", width: 104, align: 'center' },
+  { key: 'c3', title: "中间产品", width: 112, align: 'left' },
+  { key: 'c4', title: "文件格式", width: 80, align: 'left' },
+  { key: 'c5', title: "版本", width: 72, align: 'left' },
+  { key: 'c6', title: "操作人", width: 96, align: 'left' },
+  { key: 'c7', title: "操作人工号", width: 112, align: 'left' },
+  { key: 'c8', title: "操作时间", width: 184, align: 'left' },
+  { key: 'c9', title: "派发状态", width: 112, align: 'center' },
+  { key: 'c10', title: "操作", width: 148, align: 'center', fixed: 'right', ellipsis: false }
+] as const
+
+const historyTableColumns = [
+  { key: 'c0', title: "任务标识", width: 180, align: 'left', fixed: 'left' },
+  { key: 'c1', title: "文件名", minWidth: 220, align: 'left' },
+  { key: 'c2', title: "目标机床", width: 144, align: 'left' },
+  { key: 'c3', title: "阶段 / 状态", width: 160, align: 'center' },
+  { key: 'c4', title: "魔盒UUID", width: 240, align: 'left' },
+  { key: 'c5', title: "失败原因", width: 240, align: 'left' },
+  { key: 'c6', title: "创建时间", width: 184, align: 'left' },
+  { key: 'c7', title: "操作", width: 144, align: 'center', fixed: 'right', ellipsis: false }
+] as const
+
+const batchTableColumns = [
+  { key: 'c0', title: "文件 / 识别结果", minWidth: 220, align: 'left', fixed: 'left' },
+  { key: 'c1', title: "分段名", width: 140, align: 'left', ellipsis: false },
+  { key: 'c2', title: "材质", width: 120, align: 'left', ellipsis: false },
+  { key: 'c3', title: "板厚（mm）", width: 104, align: 'right', ellipsis: false },
+  { key: 'c4', title: "数量", width: 88, align: 'right', ellipsis: false },
+  { key: 'c5', title: "状态", width: 200, align: 'center' },
+  { key: 'c6', title: "操作", width: 260, align: 'center', fixed: 'right', ellipsis: false }
+] as const
 </script>
 
 <template>
@@ -1040,29 +1076,22 @@ onBeforeUnmount(pausePage)
       </div>
       <div class="dispatch-table-wrap" :aria-busy="loading">
         <div v-if="loading" class="dispatch-loading" role="status">{{ selectingAll ? '正在选择所有分页的文件…' : `正在加载第 ${requestedPage} 页…` }}</div>
-        <table v-content-table="pageActive" class="dispatch-table source-file-table" aria-label="文件查询结果" data-content-columns="center left center left left left left left left center actions">
-          <thead>
-            <tr><th class="download-check-cell"><input type="checkbox" :checked="allCatalogFilesSelected" :indeterminate="someCatalogFilesSelected" :disabled="!total || !systemStatus?.can_push || loading || pushBatch.saving" aria-label="全选当前目录所有分页的可派发文件" @change="toggleCatalogFiles($event)" /></th><th>文件名</th><th>命名检查</th><th>中间产品</th><th>文件格式</th><th>版本</th><th>操作人</th><th>操作人工号</th><th>操作时间</th><th>派发状态</th><th class="file-download-cell">操作</th></tr>
-          </thead>
-          <tbody>
-            <tr v-for="row in rows" :key="fileKey(row)" :class="{ selected: selectedFiles.has(fileKey(row)) }">
-              <td class="download-check-cell"><input type="checkbox" :checked="selectedFiles.has(fileKey(row))" :disabled="loading || pushBatch.saving || !row.path_available || !systemStatus?.can_push" :aria-label="`选择文件 ${row.document_no}`" @change="setFileSelected(row, $event)" /></td>
-              <td class="file-name-cell"><strong>{{ row.document_no }}</strong></td>
-              <td><span class="filename-standard" :class="{ warning: !parseCuttingInstructionFilename(row.document_no) }">{{ parseCuttingInstructionFilename(row.document_no) ? '标准名' : '非标准名' }}</span></td>
-              <td>{{ row.pbs_info || '--' }}</td>
-              <td class="file-extension">{{ fileExtension(row) }}</td>
-              <td>{{ row.version || row.physical_version_code?.trim() || row.physical_version_no || '--' }}</td>
-              <td>{{ row.operator || row.physical_file_operator || '--' }}</td>
-              <td>{{ row.operator_job_no || row.physical_file_operator_job_no || '--' }}</td>
-              <td>{{ formatTime(row.operate_time || row.physical_file_date) }}</td>
-              <td><template v-if="row.dispatch_status"><span class="dispatch-status" :class="row.dispatch_status.status">{{ row.dispatch_status.status_label }}</span><small class="dispatch-project-name">{{ row.dispatch_status.stage_label }}</small></template><span v-else class="dispatch-project-name">暂无记录</span></td>
-              <td class="file-download-cell"><button type="button" :disabled="loading || pushBatch.saving || !row.path_available || !systemStatus?.can_push" :aria-label="`派发 ${row.document_no}`" @click="openSinglePush(row)">设置并派发</button><small v-if="!row.path_available">{{ row.path_error || '路径不可用' }}</small></td>
-            </tr>
-            <tr v-if="!loading && rows.length === 0"><td colspan="11" class="dispatch-empty-row">{{ selectedCatalog ? appliedFileKeyword ? '当前目录没有匹配的文件' : '当前目录没有文件' : '请从左侧选择一个目录' }}</td></tr>
-          </tbody>
-        </table>
+        <AppReportTable :columns="fileTableColumns" :items="rows" :total="total" :page="page" :page-size="pageSize" :page-sizes="[]" @page="changePage" :row-key="row => fileKey(row)" aria-label="文件查询结果" :row-class-name="row => (selectedFiles.has(fileKey(row))) ? 'selected' : ''" :loading="loading">
+        <template #header-c0><input type="checkbox" :checked="allCatalogFilesSelected" :indeterminate="someCatalogFilesSelected" :disabled="!total || !systemStatus?.can_push || loading || pushBatch.saving" aria-label="全选当前目录所有分页的可派发文件" @change="toggleCatalogFiles($event)" /></template>
+        <template #c0="{ row }"><div class="download-check-cell"><input type="checkbox" :checked="selectedFiles.has(fileKey(row))" :disabled="loading || pushBatch.saving || !row.path_available || !systemStatus?.can_push" :aria-label="`选择文件 ${row.document_no}`" @change="setFileSelected(row, $event)" /></div></template>
+        <template #c1="{ row }"><div class="file-name-cell"><strong>{{ row.document_no }}</strong></div></template>
+        <template #c2="{ row }"><span class="filename-standard" :class="{ warning: !parseCuttingInstructionFilename(row.document_no) }">{{ parseCuttingInstructionFilename(row.document_no) ? '标准名' : '非标准名' }}</span></template>
+        <template #c3="{ row }">{{ row.pbs_info || '--' }}</template>
+        <template #c4="{ row }"><div class="file-extension">{{ fileExtension(row) }}</div></template>
+        <template #c5="{ row }">{{ row.version || row.physical_version_code?.trim() || row.physical_version_no || '--' }}</template>
+        <template #c6="{ row }">{{ row.operator || row.physical_file_operator || '--' }}</template>
+        <template #c7="{ row }">{{ row.operator_job_no || row.physical_file_operator_job_no || '--' }}</template>
+        <template #c8="{ row }">{{ formatTime(row.operate_time || row.physical_file_date) }}</template>
+        <template #c9="{ row }"><template v-if="row.dispatch_status"><span class="dispatch-status" :class="row.dispatch_status.status">{{ row.dispatch_status.status_label }}</span><small class="dispatch-project-name">{{ row.dispatch_status.stage_label }}</small></template><span v-else class="dispatch-project-name">暂无记录</span></template>
+        <template #c10="{ row }"><div class="file-download-cell"><button type="button" :disabled="loading || pushBatch.saving || !row.path_available || !systemStatus?.can_push" :aria-label="`派发 ${row.document_no}`" @click="openSinglePush(row)">设置并派发</button><small v-if="!row.path_available">{{ row.path_error || '路径不可用' }}</small></div></template>
+      <template #empty>{{ selectedCatalog ? appliedFileKeyword ? '当前目录没有匹配的文件' : '当前目录没有文件' : '请从左侧选择一个目录' }}</template>
+      </AppReportTable>
       </div>
-      <div class="dispatch-pagination app-pagination"><div class="app-pagination__actions"><button type="button" :disabled="page <= 1 || loading" @click="changePage(page - 1)">上一页</button><span class="app-pagination__summary">第 {{ page }} / {{ totalPages }} 页，共 {{ total }} 条</span><button type="button" :disabled="page >= totalPages || loading" @click="changePage(page + 1)">下一页</button></div></div>
       <p v-if="systemStatus && !systemStatus.can_push" class="dispatch-download-hint">当前文件来源或魔盒服务不可用，暂不可派发。</p>
     </section>
 
@@ -1094,15 +1123,18 @@ onBeforeUnmount(pausePage)
     <div class="panel-title"><div><span class="dispatch-section-icon green"><AppIcon name="check" size="17" /></span><small>04</small><h2>派发记录</h2></div></div>
     <div v-if="historyError" class="global-error" role="alert"><span>派发记录读取失败：{{ historyError }}</span><button type="button" :disabled="historyLoading" @click="loadHistory()">重试</button></div>
     <div v-if="historyLoading && !histories.length" class="dispatch-empty-history" role="status"><span class="spinner dark" aria-hidden="true"></span><strong>正在读取派发记录</strong></div>
-    <div v-else-if="histories.length" class="dispatch-table-wrap"><table v-content-table="pageActive" class="dispatch-table history-table" data-content-columns="left left left center left left left actions"><thead><tr><th>任务标识</th><th>文件名</th><th>目标机床</th><th>阶段 / 状态</th><th>魔盒UUID</th><th>失败原因</th><th>创建时间</th><th>操作</th></tr></thead><tbody><tr v-for="item in histories" :key="item.dispatch_id"><td><code>{{ item.task_identifier || item.dispatch_id }}</code></td><td>{{ item.document_no }}<small class="dispatch-project-name">数量 {{ item.quantity }}</small></td><td>{{ machineName(item.machine_ip) }}</td><td><span class="dispatch-status" :class="item.status">{{ item.status_label }}</span><small class="dispatch-project-name">{{ item.stage_label }}</small></td><td><code>{{ item.remote_task_id || '--' }}</code></td><td class="history-error">{{ item.last_error || '--' }}</td><td>{{ formatTime(item.created_at) }}</td><td><div class="history-actions"><button v-if="item.can_execute" type="button" :disabled="!!operatingId || historyLoading" @click="executeSaved(item)">{{ item.remote_task_id ? '重试指派' : '执行推送' }}</button><span v-if="!item.can_execute">--</span></div></td></tr></tbody></table></div>
+    <div v-else-if="histories.length" class="dispatch-table-wrap"><AppReportTable :columns="historyTableColumns" :items="histories" :total="historyTotal" :page="historyPage" :page-size="historyPageSize" :page-sizes="[]" @page="changeHistoryPage" :row-key="item => item.dispatch_id" :loading="historyLoading || !!operatingId || pushBatch.saving">
+        <template #c0="{ row: item }"><code>{{ item.task_identifier || item.dispatch_id }}</code></template>
+        <template #c1="{ row: item }">{{ item.document_no }}<small class="dispatch-project-name">数量 {{ item.quantity }}</small></template>
+        <template #c2="{ row: item }">{{ machineName(item.machine_ip) }}</template>
+        <template #c3="{ row: item }"><span class="dispatch-status" :class="item.status">{{ item.status_label }}</span><small class="dispatch-project-name">{{ item.stage_label }}</small></template>
+        <template #c4="{ row: item }"><code>{{ item.remote_task_id || '--' }}</code></template>
+        <template #c5="{ row: item }"><div class="history-error">{{ item.last_error || '--' }}</div></template>
+        <template #c6="{ row: item }">{{ formatTime(item.created_at) }}</template>
+        <template #c7="{ row: item }"><div class="history-actions"><button v-if="item.can_execute" type="button" :disabled="!!operatingId || historyLoading" @click="executeSaved(item)">{{ item.remote_task_id ? '重试指派' : '执行推送' }}</button><span v-if="!item.can_execute">--</span></div></template>
+      </AppReportTable></div>
     <div v-else-if="!historyError" class="dispatch-empty-history"><i><AppIcon name="send" size="20" /></i><strong>暂无派发记录</strong></div>
-    <div v-if="historyTotal > 0" class="dispatch-pagination app-pagination" aria-label="派发记录分页">
-      <div class="app-pagination__actions">
-        <button type="button" :disabled="historyPage <= 1 || historyLoading || !!operatingId || pushBatch.saving" @click="changeHistoryPage(historyPage - 1)">上一页</button>
-        <span class="app-pagination__summary">第 {{ historyPage }} / {{ historyPageCount }} 页，共 {{ historyTotal }} 条</span>
-        <button type="button" :disabled="historyPage >= historyPageCount || historyLoading || !!operatingId || pushBatch.saving" @click="changeHistoryPage(historyPage + 1)">下一页</button>
-      </div>
-    </div>
+
   </section>
 
   <div v-if="selectedFileCount && !pushBatch.visible" class="mobile-selection-bar-spacer" aria-hidden="true"></div>
@@ -1131,20 +1163,15 @@ onBeforeUnmount(pausePage)
           <div v-if="pushBatch.saving" class="push-batch-progress" role="status"><div><strong>{{ pushBatch.currentFilename }}</strong><span>{{ pushBatch.completed }} / {{ pushBatch.total }}</span></div><progress :value="pushBatch.completed" :max="pushBatch.total"></progress><small>正在按顺序处理，请不要关闭页面。</small></div>
 
           <div class="push-batch-table-wrap">
-            <table v-content-table="pageActive" class="push-batch-table" data-content-columns="left left left right right center actions">
-              <thead><tr><th>文件 / 识别结果</th><th>分段名</th><th>材质</th><th>板厚（mm）</th><th>数量</th><th>状态</th><th>操作</th></tr></thead>
-              <tbody>
-                <tr v-for="item in pushBatch.items" :key="item.referenceKey" :class="{ invalid: !pushBatch.resultsReady && (batchItemError(item) || !item.parsed || hasNameMismatch(item)) }">
-                  <td class="push-batch-file"><strong>{{ item.filename }}</strong><small>版本 {{ item.version }}</small><span v-if="item.parsed" class="recognized">已识别：{{ item.parsed.material }} · {{ item.parsed.thickness.toFixed(1) }} mm</span><span v-else class="manual">非标准名，请手工填写参数</span><span v-if="hasNameMismatch(item)" class="manual">加工参数与标准名不一致，请人工复核</span></td>
-                  <td><span v-if="item.parsed">{{ item.segmentName }}</span><input v-else v-model.trim="item.segmentName" :name="`segment_${item.referenceKey}`" :aria-label="`${item.filename} 分段名`" autocomplete="off" :disabled="pushBatch.saving || pushBatch.resultsReady" maxlength="80" placeholder="例如：806C" @input="invalidateBatchConfirmation(item)" /></td>
-                  <td><input v-model.trim="item.material" :name="`material_${item.referenceKey}`" :aria-label="`${item.filename} 材质`" autocomplete="off" :disabled="pushBatch.saving || pushBatch.resultsReady" maxlength="80" placeholder="例如：A0、B0、SS" @input="invalidateBatchConfirmation(item)" /></td>
-                  <td><input v-model="item.thickness" :name="`thickness_${item.referenceKey}`" :aria-label="`${item.filename} 板厚`" autocomplete="off" :disabled="pushBatch.saving || pushBatch.resultsReady" type="number" inputmode="decimal" min="0.01" max="1000" step="0.01" placeholder="例如：12.0…" @input="invalidateBatchConfirmation(item)" /></td>
-                  <td><input v-model="item.quantity" :name="`quantity_${item.referenceKey}`" :aria-label="`${item.filename} 数量`" autocomplete="off" :disabled="pushBatch.saving || pushBatch.resultsReady" type="number" inputmode="numeric" min="1" max="10000" step="1" @input="invalidateBatchConfirmation(item)" /></td>
-                  <td class="push-batch-result"><span :class="item.status">{{ batchStatusLabel(item) }}</span><small v-if="item.dispatchId" :title="item.dispatchId">任务 {{ item.dispatchId }}</small><small v-if="item.error" :title="item.error">{{ item.error }}</small></td>
-                  <td class="push-batch-actions"><template v-if="pushBatch.resultsReady"><button v-if="item.status === 'failed' && isStaleFileError(item)" type="button" :disabled="pushBatch.saving" @click="refreshBatchCatalog">刷新清单重选</button><button v-else-if="item.status === 'failed' && (!item.dispatchId || item.retryable)" type="button" :disabled="pushBatch.saving" @click="retryBatchItem(item)">{{ item.dispatchId ? '重试当前任务' : '重试创建并派发' }}</button><button v-if="item.status === 'duplicate' && item.dispatchId && (!item.statusChecked || item.retryable)" type="button" :disabled="pushBatch.saving" @click="retryBatchItem(item)">核对并继续已有任务</button><button v-if="item.dispatchId && (item.status === 'failed' || item.status === 'duplicate')" type="button" :disabled="pushBatch.saving" @click="checkBatchItem(item)">核对状态</button><span v-if="item.status === 'sent'">已完成</span></template><button v-else class="push-batch-remove" type="button" :disabled="pushBatch.saving" @click="removePushBatchItem(item)">移除</button></td>
-                </tr>
-              </tbody>
-            </table>
+            <AppReportTable class="push-batch-table" :columns="batchTableColumns" :items="pushBatch.items" :row-key="item => item.referenceKey" :paginate="false" :row-class-name="item => (!pushBatch.resultsReady && (batchItemError(item) || !item.parsed || hasNameMismatch(item))) ? 'invalid' : ''" :loading="pushBatch.saving">
+        <template #c0="{ row: item }"><div class="push-batch-file"><strong>{{ item.filename }}</strong><small>版本 {{ item.version }}</small><span v-if="item.parsed" class="recognized">已识别：{{ item.parsed.material }} · {{ item.parsed.thickness.toFixed(1) }} mm</span><span v-else class="manual">非标准名，请手工填写参数</span><span v-if="hasNameMismatch(item)" class="manual">加工参数与标准名不一致，请人工复核</span></div></template>
+        <template #c1="{ row: item }"><span v-if="item.parsed">{{ item.segmentName }}</span><input v-else v-model.trim="item.segmentName" :name="`segment_${item.referenceKey}`" :aria-label="`${item.filename} 分段名`" autocomplete="off" :disabled="pushBatch.saving || pushBatch.resultsReady" maxlength="80" placeholder="例如：806C" @input="invalidateBatchConfirmation(item)" /></template>
+        <template #c2="{ row: item }"><input v-model.trim="item.material" :name="`material_${item.referenceKey}`" :aria-label="`${item.filename} 材质`" autocomplete="off" :disabled="pushBatch.saving || pushBatch.resultsReady" maxlength="80" placeholder="例如：A0、B0、SS" @input="invalidateBatchConfirmation(item)" /></template>
+        <template #c3="{ row: item }"><input v-model="item.thickness" :name="`thickness_${item.referenceKey}`" :aria-label="`${item.filename} 板厚`" autocomplete="off" :disabled="pushBatch.saving || pushBatch.resultsReady" type="number" inputmode="decimal" min="0.01" max="1000" step="0.01" placeholder="例如：12.0…" @input="invalidateBatchConfirmation(item)" /></template>
+        <template #c4="{ row: item }"><input v-model="item.quantity" :name="`quantity_${item.referenceKey}`" :aria-label="`${item.filename} 数量`" autocomplete="off" :disabled="pushBatch.saving || pushBatch.resultsReady" type="number" inputmode="numeric" min="1" max="10000" step="1" @input="invalidateBatchConfirmation(item)" /></template>
+        <template #c5="{ row: item }"><div class="push-batch-result"><span :class="item.status">{{ batchStatusLabel(item) }}</span><small v-if="item.dispatchId" :title="item.dispatchId">任务 {{ item.dispatchId }}</small><small v-if="item.error" :title="item.error">{{ item.error }}</small></div></template>
+        <template #c6="{ row: item }"><div class="push-batch-actions"><template v-if="pushBatch.resultsReady"><button v-if="item.status === 'failed' && isStaleFileError(item)" type="button" :disabled="pushBatch.saving" @click="refreshBatchCatalog">刷新清单重选</button><button v-else-if="item.status === 'failed' && (!item.dispatchId || item.retryable)" type="button" :disabled="pushBatch.saving" @click="retryBatchItem(item)">{{ item.dispatchId ? '重试当前任务' : '重试创建并派发' }}</button><button v-if="item.status === 'duplicate' && item.dispatchId && (!item.statusChecked || item.retryable)" type="button" :disabled="pushBatch.saving" @click="retryBatchItem(item)">核对并继续已有任务</button><button v-if="item.dispatchId && (item.status === 'failed' || item.status === 'duplicate')" type="button" :disabled="pushBatch.saving" @click="checkBatchItem(item)">核对状态</button><span v-if="item.status === 'sent'">已完成</span></template><button v-else class="push-batch-remove" type="button" :disabled="pushBatch.saving" @click="removePushBatchItem(item)">移除</button></div></template>
+      </AppReportTable>
           </div>
           <div v-if="!pushBatch.resultsReady" class="push-batch-safety">
             <p>标准指令名已自动识别分段并填充材质和板厚，请在提交前逐项核对。非标准名不会猜测参数，必须手工补全。</p>
@@ -1273,7 +1300,7 @@ onBeforeUnmount(pausePage)
 .history-table { min-width:1180px; }
 .history-table code { color:var(--blue); font-size:var(--font-auxiliary); }
 .history-error { max-width:220px; color:rgb(var(--error-color)); overflow-wrap:anywhere; }
-.history-actions { display:flex; align-items:center; gap:6px; }
+.history-actions { display:flex; align-items:center; justify-content:center; gap:6px; }
 .history-actions button { min-height:30px; padding:0 9px; color:var(--blue); border:1px solid var(--theme-border-color); background:rgb(var(--container-bg-color)); white-space:nowrap; font-size:var(--font-auxiliary); }
 .push-batch-backdrop { position:fixed; z-index:1000; inset:0; display:grid; place-items:center; padding:24px; background:rgb(var(--inverted-bg-color) / .6); }
 .push-batch-dialog { width:min(1180px,100%); max-height:calc(100vh - 48px); display:flex; flex-direction:column; overflow:hidden; color:var(--text-color-1); background:rgb(var(--container-bg-color)); }
@@ -1311,7 +1338,7 @@ onBeforeUnmount(pausePage)
 .push-batch-file span { margin-top:5px; font-size:var(--font-auxiliary); }
 .push-batch-file .recognized { color:rgb(var(--info-color)); }
 .push-batch-file .manual { color:rgb(var(--warning-color)); }
-.push-batch-result { width:170px; }
+.push-batch-result { width:170px; margin-inline:auto; }
 .push-batch-result > span { display:inline-flex; padding:4px 7px; color:rgb(var(--warning-color)); border-radius:999px; background:rgb(var(--warning-color) / .1); white-space:nowrap; }
 .push-batch-result > span.sent,.push-batch-result > span.saved { color:var(--text-color-1); background:rgb(var(--success-color) / .1); }
 .push-batch-result > span.failed { color:rgb(var(--error-color)); background:rgb(var(--error-color) / .1); }
@@ -1319,7 +1346,7 @@ onBeforeUnmount(pausePage)
 .push-batch-result > span.duplicate { color:rgb(var(--warning-color)); background:rgb(var(--warning-color) / .1); }
 .push-batch-result small { display:block; max-width:220px; margin-top:5px; color:var(--text-color-2); overflow-wrap:anywhere; }
 .push-batch-remove { min-height:30px; padding:0 8px; color:var(--text-color-2); border:1px solid var(--theme-border-color); background:rgb(var(--container-bg-color)); }
-.push-batch-actions { min-width:140px; }
+.push-batch-actions { min-width:140px; display:flex; align-items:center; justify-content:center; gap:6px; }
 .push-batch-actions button { display:block; min-height:30px; margin:3px 0; padding:0 8px; color:var(--blue); border:1px solid var(--theme-border-color); border-radius:7px; background:rgb(var(--container-bg-color)); }
 .push-batch-actions button:disabled { opacity:.55; cursor:not-allowed; }
 .push-batch-actions span { color:var(--text-color-1); font-size:var(--font-auxiliary); }
@@ -1428,7 +1455,7 @@ onBeforeUnmount(pausePage)
 .source-file-table thead .file-download-cell { background:var(--theme-table-header-color); }
 .dispatch-table tbody tr:hover { background:rgb(var(--layout-bg-color)); }
 .dispatch-table tbody tr.selected { background:rgb(var(--layout-bg-color)); box-shadow:inset 3px 0 rgb(var(--info-color)); }
-.file-download-cell { width:100px; }
+.file-download-cell { width:100px; margin-inline:auto; }
 .file-download-cell button { min-height:29px; padding:4px 8px; border-color:var(--theme-border-color); border-radius:6px; background:rgb(var(--info-color) / .1); font-size:var(--font-auxiliary); }
 .filename-standard { color:rgb(var(--success-color)); background:rgb(var(--success-color) / .1); }
 .filename-standard.warning { color:rgb(var(--warning-color)); background:rgb(var(--warning-color) / .1); }

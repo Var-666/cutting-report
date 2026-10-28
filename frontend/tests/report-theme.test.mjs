@@ -64,14 +64,14 @@ test('other business pages and shared states use theme colors, preserving only t
   assert.match(read('assets/style.css'), /\.template-preview-page \{ --muted:#[a-f0-9]+; --ink:#[a-f0-9]+/)
 })
 
-function mountCharts(name) {
+function mountCharts(name, rows) {
   const theme = Vue.reactive({ darkMode: false })
   const vars = Vue.ref({ primaryColor: 'primary', successColor: 'success', warningColor: 'warning', infoColor: 'info', textColor1: 'text', textColor3: 'muted', borderColor: 'border', dividerColor: 'divider', popoverColor: 'popover', cardColor: 'container' })
   const charts = []
   let calls = 0
   const makeChart = (dom, scheme) => { const chart = { scheme, dom, disposed: false, options: [], getDom() { return dom }, setOption(option) { this.options.push(option) }, resize() {}, dispose() { this.disposed = true } }; charts.push(chart); return chart }
   const daily = { period_start: '2026-10-23', task_count: 4, cut_length_m: 12, work_time_seconds: 3600 }
-  const report = { snapshot: { data_as_of: '2026-10-23T12:00:00', refreshing: false }, daily_records: [daily], monthly_records: [daily], current_month_total: { task_count: 4 }, rows: [], records: [] }
+  const report = { snapshot: { data_as_of: '2026-10-23T12:00:00', refreshing: false }, daily_records: rows || [daily], monthly_records: rows || [daily], current_month_total: { task_count: 4 }, rows: [], records: [] }
   const query = async () => { calls++; return report }
   const route = Vue.reactive({ name: name.startsWith('Leadership') ? 'leadership-report' : 'equipment-report', query: {} })
   const oldWindow = globalThis.window
@@ -93,7 +93,7 @@ function mountCharts(name) {
   const script = parse(read(`${folder}/${name}.vue`)).descriptor.scriptSetup.content.replace(/^import[\s\S]*?from ['"][^'"]+['"];?\s*$/gm, '')
   const names = name === 'LeadershipReportView' ? 'dailyPanel, monthlyPanel' : name === 'EnergyPeriodReportView' ? 'taskPanel, periodPanel' : 'durationElement, topElement'
   const entries = Object.entries(bindings).filter(([key]) => /^[\w$]+$/.test(key))
-  const setup = scriptFunction(...entries.map(([key]) => key), `${script}\nreturn { ${names}, pageActive, renderCharts }`)
+  const setup = scriptFunction(...entries.map(([key]) => key), `${script}\nreturn { ${names}, pageActive, renderCharts ${name === 'LeadershipReportView' ? ', chartType, dailyChartRecords, appliedPeriodStart, appliedPeriodEnd, report' : ''} }`)
   let state
   const renderer = Vue.createRenderer({ createComment: () => ({}), createText: () => ({}), createElement: () => ({}), insert() {}, remove() {}, setText() {}, setElementText() {}, parentNode: () => null, nextSibling: () => null, patchProp() {} })
   const app = renderer.createApp({ setup() { state = setup(...entries.map(([, value]) => value)); return () => null } })
@@ -132,5 +132,72 @@ for (const name of ['LeadershipReportView', 'EnergyPeriodReportView', 'WorkshopS
     page.state.pageActive.value = true
     page.state.renderCharts()
     assert.ok(page.charts.slice(-2).every(chart => chart.scheme === undefined))
+  } finally { page.close() }
+})
+
+
+test('leadership charts retain the original daily and monthly metrics and unit axes', async () => {
+  const rows = [
+    { period_start: '2026-10-23', task_count: 4, cut_length_m: 12.4, groove_length_m: 0, work_time_seconds: 3600 },
+    { period_start: '2026-10-22', task_count: 8, cut_length_m: 42.5, groove_length_m: 2.6, work_time_seconds: 7200 },
+  ]
+  const original = structuredClone(rows)
+  const page = mountCharts('LeadershipReportView', rows)
+  try {
+    await page.attach()
+    page.state.appliedPeriodStart.value = '2026-10-22'
+    page.state.appliedPeriodEnd.value = '2026-10-23'
+    page.state.renderCharts()
+    for (const mode of ['bar_line', 'bar', 'line', 'area']) {
+      page.state.chartType.value = mode
+      await flush()
+      const [daily, monthly] = page.charts.slice(-2).map(chart => chart.options.at(-1))
+      assert.deepEqual(daily.legend.data, ['切割长度', '坡口长度', '切割工时'])
+      assert.deepEqual(monthly.legend.data, ['切割长度', '坡口长度', '完成任务'])
+      assert.deepEqual(daily.series.map(series => series.data), [[42.5, 12.4], [2.6, 0], [2, 1]])
+      assert.deepEqual(monthly.series.map(series => series.data), [[42.5, 12.4], [2.6, 0], [8, 4]])
+      assert.deepEqual(daily.yAxis.map(axis => axis.name), ['长度（米）', '工时（小时）'])
+      assert.deepEqual(monthly.yAxis.map(axis => axis.name), ['长度（米）', '任务数'])
+      for (const option of [daily, monthly]) {
+        assert.deepEqual(option.grid, createReportChartGrid())
+        assert.deepEqual(option.series.map(series => series.yAxisIndex || 0), [0, 0, 1])
+        if (mode !== 'bar_line') assert.ok(option.series.every(series => series.type === (mode === 'bar' ? 'bar' : 'line')))
+      }
+    }
+    assert.deepEqual(rows, original, 'plot sorting must not reorder the table data')
+  } finally { page.close() }
+})
+
+
+test('leadership daily chart includes every calendar day and zero-task days while date labels stay automatic', async () => {
+  const rows = [
+    { period_start: '2026-10-01', task_count: 3, cut_length_m: 30, groove_length_m: 0, work_time_seconds: 3600 },
+    { period_start: '2026-10-03', task_count: 4, cut_length_m: 40, groove_length_m: 2, work_time_seconds: 7200 },
+  ]
+  const page = mountCharts('LeadershipReportView', rows)
+  try {
+    await page.attach()
+    page.state.appliedPeriodStart.value = '2026-10-01'
+    page.state.appliedPeriodEnd.value = '2026-10-28'
+    page.state.renderCharts()
+    const daily = page.charts[0].options.at(-1)
+    assert.equal(daily.xAxis.data.length, 28)
+    assert.deepEqual(daily.xAxis.data.slice(0, 4), ['10-01', '10-02', '10-03', '10-04'])
+    assert.equal(daily.xAxis.data.at(-1), '10-28')
+    assert.deepEqual(daily.series[0].data.slice(0, 4), [30, 0, 40, 0])
+    assert.deepEqual(daily.series[2].data.slice(0, 4), [1, 0, 2, 0])
+    assert.deepEqual(daily.xAxis.axisLabel, { hideOverlap: true })
+    assert.deepEqual(page.state.report.value.daily_records, rows, 'calendar padding must not alter the source or table records')
+    page.state.appliedPeriodStart.value = '2024-02-28'
+    page.state.appliedPeriodEnd.value = '2024-03-01'
+    assert.deepEqual(page.state.dailyChartRecords.value.map(row => row.period_start), ['2024-02-28', '2024-02-29', '2024-03-01'])
+    page.state.appliedPeriodStart.value = '2025-12-31'
+    page.state.appliedPeriodEnd.value = '2026-02-01'
+    page.state.renderCharts()
+    const longRange = page.charts[0].options.at(-1)
+    assert.equal(longRange.xAxis.data.length, 33)
+    assert.equal(longRange.series[0].data.length, 33)
+    page.state.report.value = null
+    assert.deepEqual(page.state.dailyChartRecords.value, [])
   } finally { page.close() }
 })
