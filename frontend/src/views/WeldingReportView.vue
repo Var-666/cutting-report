@@ -51,6 +51,8 @@ let appliedLine = ''
 let generation = 0
 let detailGeneration = 0
 let pendingRead: { key: string; promise: Promise<void> } | null | undefined
+let refreshTimer: ReturnType<typeof setTimeout> | undefined
+let refreshPollCount = 0
 const reportKind = computed(() => props.kind === 'dashboard' ? 'jobs' : props.kind)
 const cards = computed(() => weldingKpis(props.kind, report.value))
 const title = computed(() => weldingTitles[props.kind])
@@ -70,17 +72,19 @@ function read(values: WeldingQuery, force = false, syncRoute = true) {
   promise.finally(() => { if (pendingRead?.promise === promise) pendingRead = null })
   return promise
 }
-async function load(values: WeldingQuery, force: boolean, syncRoute: boolean) {
+async function load(values: WeldingQuery, force: boolean, syncRoute: boolean, background = false) {
   if (disposed) return
   const kind = props.kind
   const line = deviceSelection.id
+  clearTimeout(refreshTimer)
+  if (!background) refreshPollCount = 0
   controller?.abort()
-  analysisController?.abort()
+  if (!background) analysisController?.abort()
   const run = ++generation
   controller = new AbortController()
-  loading.value = true
+  loading.value = !background
   error.value = ''
-  analysis.value = null
+  if (!background) analysis.value = null
   if (!sourceEnabled.value) {
     report.value = null
     activeQuery.value = null
@@ -90,14 +94,19 @@ async function load(values: WeldingQuery, force: boolean, syncRoute: boolean) {
   try {
     const value = await getWeldingReport(props.kind, values, controller.signal, force)
     if (disposed || run !== generation || line !== deviceSelection.id || kind !== props.kind || selectedLineType(deviceSelection.items, deviceSelection.id) !== 'welding') return
+    if (background && value.data_version !== report.value?.data_version) { analysisController?.abort(); analysis.value = null }
     report.value = value
     activeQuery.value = value.query
     appliedKind = kind
     appliedLine = line
     const query = weldingRouteQuery(route.query, parseWeldingRouteQuery(weldingRouteQuery({}, value.query), kind, today))
-    if (!sameRouteQuery(query, route.query)) {
+    if (!background && !sameRouteQuery(query, route.query)) {
       if (syncRoute) await router.push({ query })
       else await router.replace({ query })
+    }
+    if (run === generation && value.meta?.report_data?.refreshing && refreshPollCount < 75) {
+      refreshPollCount += 1
+      refreshTimer = setTimeout(() => { if (!disposed && run === generation) void load(values, false, false, true) }, 5000)
     }
   } catch (caught) {
     const exception = toError(caught)
@@ -181,6 +190,7 @@ async function runAnalysis() {
   finally { analyzing.value = false }
 }
 function cancel() {
+  clearTimeout(refreshTimer)
   generation += 1
   detailGeneration += 1
   for (const request of [controller, detailController, exportController, analysisController]) request?.abort()
@@ -242,15 +252,15 @@ onBeforeUnmount(() => { disposed = true; cancel() })
     </section>
     <ReportFeedback v-if="!sourceEnabled" title="焊接数据库尚未启用" message="请先保存数据库连接参数并启用小组立焊接线。" action-label="配置数据库" @action="router.push('/admin/settings/database')" />
     <ReportFeedback v-else-if="error" type="error" title="焊接数据读取失败" :message="`${error}${report ? '；当前保留上次成功查询结果。' : ''}`" action-label="重试" @action="submit(true)" />
-    <ReportPanelState v-else-if="loading" type="loading" title="正在读取焊接数据" message="正在查询，繁忙时由服务器短暂排队。" />
+    <ReportPanelState v-else-if="loading" type="loading" title="正在读取焊接数据" message="首次统计可能需要较长时间，准备完成后会自动显示，请勿重复刷新。" />
     <ReportFeedback v-if="actionError" type="error" title="操作未完成" :message="actionError" dismissible @dismiss="actionError = ''" />
     <ReportFeedback v-if="actionNotice" title="操作完成" :message="actionNotice" dismissible @dismiss="actionNotice = ''" />
-    <div v-if="sourceEnabled" class="welding-kpis"><NCard v-for="card in cards" :key="card.key" :bordered="false"><HomeKpiCard :title="card.title" :value="card.value" :unit="card.unit" :precision="card.unit === 'm' || card.unit === 'h' || card.unit === 'm/h' ? 2 : 0" :loading="loading" :status="card.pending ? '口径待核实' : ''" :series="report?.daily?.map(row => row[card.key as keyof WeldingMetrics] ?? 0) || []" /></NCard></div>
+    <div v-if="sourceEnabled" class="welding-kpis"><NCard v-for="card in cards" :key="card.key" :bordered="false"><HomeKpiCard :title="card.title" :value="card.value" :unit="card.unit" :precision="card.unit === 'm' || card.unit === 'h' || card.unit === 'm/h' ? 2 : 0" :loading="loading && !report" :status="card.pending ? '口径待核实' : ''" :series="report?.daily?.map(row => row[card.key as keyof WeldingMetrics] ?? 0) || []" /></NCard></div>
     <template v-if="report && activeQuery">
       <div class="welding-freshness"><strong>源库最新更新时间</strong><span>{{ sourceUpdated }}</span><span>本次计算：{{ report.meta.calculated_at }}</span><template v-if="report.meta.report_data"><span>统计来源：{{ { snapshot: '持久化快照', cache: '内存缓存', database: '源库查询' }[report.meta.report_data.source] }}</span><span>统计截止：{{ report.meta.report_data.data_as_of }}</span><strong v-if="report.meta.report_data.stale">统计已过期</strong><span v-if="report.meta.report_data.refreshing">后台刷新排队中</span><span v-if="report.meta.report_data.refresh_failed">刷新失败，保留上次统计</span></template></div>
       <ReportFeedback v-if="!report.summary.job_count" title="当前区间暂无可归属的作业记录" message="可调整日期或设备后重新查询；无效时间候选记录见数据核查说明。" />
       <WeldingCharts v-else :kind="kind" :report="report" />
-      <section class="panel welding-detail-table"><header><h2>{{ kind === 'dashboard' ? '最近7天最新焊接动态' : title }}</h2><span>当前查询：{{ activeQuery.start }} 至 {{ activeQuery.end }}；服务器分页</span></header><WeldingTable :paginate="kind !== 'dashboard'" :kind="reportKind" :items="report.items" :total="report.total" :page="activeQuery.page" :page-size="kind === 'dashboard' ? 10 : activeQuery.page_size" :loading="loading" @page="changePage" @page-size="changePageSize" @detail="openDetail" @copy="copy" /></section>
+      <section class="panel welding-detail-table"><header><h2>{{ kind === 'dashboard' ? '最近7天最新焊接动态' : title }}</h2><span>当前查询：{{ activeQuery.start }} 至 {{ activeQuery.end }}；{{ kind === 'dashboard' ? '随首页快照更新，最多10条' : '服务器分页，明细与统计随快照更新' }}</span></header><WeldingTable :paginate="kind !== 'dashboard'" :kind="reportKind" :items="report.items" :total="report.total" :page="activeQuery.page" :page-size="kind === 'dashboard' ? 10 : activeQuery.page_size" :loading="loading && !report" @page="changePage" @page-size="changePageSize" @detail="openDetail" @copy="copy" /></section>
       <section v-if="kind === 'jobs' && report.speed_distribution?.length" class="panel welding-quality"><h2>源表速度分布（mm/min）</h2><dl><template v-for="band in report.speed_distribution" :key="band.speed_band"><dt>{{ band.speed_band }}</dt><dd>{{ band.job_count }} 次</dd></template></dl><p>只统计可归属生产日的作业；不将字段均值作为整线速度。</p></section>
       <section class="panel welding-quality"><h2>统计口径与数据核查</h2><p v-for="notice in report.meta.notices" :key="notice">{{ notice }}</p><dl><template v-for="(label, key) in qualityLabels" :key="key"><dt>{{ label }}</dt><dd>{{ report.meta.quality[key] }}</dd></template><dt>未关联工件的有效流水号</dt><dd>{{ report.meta.unlinked_part_count }}</dd></dl><p v-if="report.projects_truncated">项目图展示工件数最多的前100个项目，可按项目筛选查看。</p></section>
       <section class="panel welding-analysis"><header><h2>AI 生产分析</h2><button type="button" :disabled="analyzing || loading || !report.summary.job_count" @click="runAnalysis">{{ analyzing ? '分析中…' : '生成当前区间分析' }}</button></header><p>基于已核验的汇总分析产出趋势、工艺结构和数据缺口。模型不可用时仍可查询和导出报表。</p><div v-if="analysis" class="welding-analysis-grid"><article v-for="[key, label] in analysisSections" :key="key"><h3>{{ label }}</h3><p>{{ analysis[key] }}</p></article></div></section>

@@ -8,7 +8,7 @@ from dataclasses import replace
 from copy import deepcopy
 from collections import OrderedDict
 from threading import Lock
-from time import monotonic
+from time import monotonic, time
 from datetime import datetime, timedelta
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
@@ -116,11 +116,11 @@ class WeldingService:
             while len(self._analyses) > 16:
                 self._analyses.popitem(last=False)
 
-    def report(self, kind: ReportType, query: WeldingQuery, *, export_limit: int | None = None, dashboard: bool = False, force: bool = False) -> dict:
+    def report(self, kind: ReportType, query: WeldingQuery, *, export_limit: int | None = None, dashboard: bool = False, force: bool = False, live: bool = False) -> dict:
         repo = self.repository
         if kind == 'parts':
             query = query.model_copy(update={'part_state': query.part_state if query.part_state is not None else query.state, 'state': None})
-        statistics = self.fetch_summary(kind, query, force=force) if self.snapshot_service and export_limit is None else None
+        statistics = self.fetch_summary(kind, query, force=force) if self.snapshot_service and export_limit is None and not live else None
         today_summary = None
         if statistics is not None and dashboard:
             today = datetime.now(ZoneInfo(self.settings.weld_db_timezone)).date()
@@ -140,7 +140,7 @@ class WeldingService:
                 info = repo.source_info(session)
                 filters = query.model_dump(mode='json', exclude={'page', 'page_size', 'sort_by', 'descending'})
                 key = json.dumps({'filters': filters, 'source': to_primitive(info)}, sort_keys=True)
-                use_cache = not force and export_limit is None and any(value is not None for value in info['updated_at'].values())
+                use_cache = not force and not live and export_limit is None and any(value is not None for value in info['updated_at'].values())
                 common = self._cached_statistics(('common', key), lambda: self._common_statistics(session, query), use_cache=use_cache)
                 projects, speeds, totals = self._cached_statistics((kind, key), lambda: self._report_statistics(session, kind, query), use_cache=use_cache)
             summary, daily, equipment, devices, association = common
@@ -206,8 +206,12 @@ class WeldingService:
         return query.model_dump(exclude=excluded) == WeldingQuery(start=query.start, end=query.end).model_dump(exclude=excluded)
 
     def _snapshot_key(self, query: WeldingQuery, report_type: str = 'statistics') -> ReportKey:
-        filters = query.model_dump(mode='json', exclude={'start', 'end', 'page', 'page_size', 'sort_by', 'descending'})
-        return ReportKey(self.settings.device_id, 'statistics' if self.snapshot_eligible(query) else report_type, query.start.isoformat(), query.end.isoformat(), filters, self.source_identity())
+        if report_type == 'dashboard':
+            query = query.model_copy(update={'page': 1, 'page_size': 10, 'sort_by': 'time', 'descending': True})
+        page = report_type == 'dashboard' or report_type.startswith('page:')
+        excluded = {'start', 'end'} if page else {'start', 'end', 'page', 'page_size', 'sort_by', 'descending'}
+        filters = query.model_dump(mode='json', exclude=excluded)
+        return ReportKey(self.settings.device_id, 'statistics' if not page and self.snapshot_eligible(query) else report_type, query.start.isoformat(), query.end.isoformat(), filters, self.source_identity())
 
     def _snapshot_ttl(self, query: WeldingQuery) -> int:
         if not self.snapshot_eligible(query):
@@ -224,32 +228,45 @@ class WeldingService:
         return to_primitive({'common': common, 'info': info, 'reports': reports})
 
     def fetch_summary(self, report_type: str, query, *, force: bool = False, requested_at: float | None = None) -> ReportData:
-        if report_type not in (*self.report_types, 'statistics'):
+        page_kind = report_type.removeprefix('page:') if report_type.startswith('page:') else None
+        if report_type not in (*self.report_types, 'statistics') and page_kind not in ('daily', 'jobs', 'parts', 'equipment'):
             raise ValueError('焊接报表类型不支持')
         if not isinstance(query, WeldingQuery):
             query = WeldingQuery.model_validate(query)
+        if report_type == 'dashboard':
+            query = query.model_copy(update={'page': 1, 'page_size': 10, 'sort_by': 'time', 'descending': True})
         if self.snapshot_service is None:
             raise ValueError('当前查询不支持统计快照')
-        return self.snapshot_service.read(self._snapshot_key(query, report_type), lambda: self._load_statistics_snapshot(query, report_type),
-                                          ttl=self._snapshot_ttl(query), force=force, requested_at=requested_at, background=requested_at is not None)
+        if report_type == 'dashboard':
+            load = lambda: self.report('jobs', query, dashboard=True, live=True)
+        elif page_kind:
+            load = lambda: self.report(page_kind, query, live=True)
+        else:
+            load = lambda: self._load_statistics_snapshot(query, report_type)
+        return self.snapshot_service.read(self._snapshot_key(query, report_type), load,
+                                          ttl=self._snapshot_ttl(query), force=force, requested_at=requested_at,
+                                          background=requested_at is not None, background_only=report_type == 'dashboard' or page_kind is not None)
 
     def fetch_detail(self, report_type: str, query) -> dict:
         if report_type not in self.report_types:
             raise ValueError('焊接报表类型不支持')
         if not isinstance(query, WeldingQuery):
             query = WeldingQuery.model_validate(query)
-        return self.dashboard(query) if report_type == 'dashboard' else self.report(report_type, query)
+        return self.dashboard(query) if report_type == 'dashboard' else self.page(report_type, query)
 
     def refresh_summary(self, report_type: str, query: dict, *, requested_at: float | None = None) -> None:
+        if (report_type == 'dashboard' or report_type.startswith('page:')) and requested_at is None:
+            requested_at = time()
         self.fetch_summary(report_type, query, force=True, requested_at=requested_at)
 
     def refresh_plan(self) -> list[tuple[dict, int]]:
         if not self.settings.weld_enabled or self.snapshot_service is None:
             return []
         today = datetime.now(ZoneInfo(self.settings.weld_db_timezone)).date()
-        periods = {(today, today), (today - timedelta(days=6), today), (today.replace(day=1), today)}
-        return [(self.snapshot_service.task_payload(self._snapshot_key(WeldingQuery(start=start, end=end))),
-                 max(30, self.settings.report_background_refresh_seconds)) for start, end in sorted(periods)]
+        homepage = WeldingQuery(start=today - timedelta(days=6), end=today, page_size=10)
+        queries = [(homepage, 'dashboard')] + [(WeldingQuery(start=today, end=today), f'page:{kind}') for kind in ('daily', 'jobs', 'parts', 'equipment')]
+        return [(self.snapshot_service.task_payload(self._snapshot_key(query, kind)),
+                 max(30, self.settings.report_background_refresh_seconds)) for query, kind in queries]
 
     def _cached_statistics(self, key: tuple[str, str], load: Callable[[], Any], *, use_cache: bool = True) -> Any:
         if not use_cache:
@@ -292,12 +309,20 @@ class WeldingService:
         where, values = job_conditions(query)
         projects = []
         if kind == 'parts':
-            projects = session.fetch(f'SELECT p.project_no, MIN(p.project_name) AS project_name, COUNT(*) AS part_count, SUM(CASE WHEN p.reality_lenght >= 0 THEN p.reality_lenght ELSE 0 END) / 1000 AS cumulative_actual_length_m FROM weld_part_info_table p WHERE (SELECT COUNT(*) FROM weld_part_info_table owner WHERE owner.serial_number = p.serial_number) = 1 AND EXISTS (SELECT 1 FROM weld_info_table j WHERE {where} AND {valid_time("j.end_time")} AND j.serial_number = p.serial_number AND {valid_serial("p.serial_number")}) GROUP BY p.project_no ORDER BY part_count DESC, p.project_no LIMIT 101', values, limit=101)
+            # Group ownership once; repeated jobs must not multiply part counts or cumulative lengths.
+            owners = '(SELECT serial_number, COUNT(*) AS owner_count FROM weld_part_info_table GROUP BY serial_number) owners'
+            projects = session.fetch(
+                f'SELECT p.project_no, MIN(p.project_name) AS project_name, COUNT(*) AS part_count, '
+                f'SUM(CASE WHEN p.reality_lenght >= 0 THEN p.reality_lenght ELSE 0 END) / 1000 AS cumulative_actual_length_m '
+                f'FROM (SELECT DISTINCT j.serial_number FROM weld_info_table j WHERE {where} AND {valid_time("j.end_time")}) involved '
+                f'JOIN {owners} ON owners.serial_number = involved.serial_number AND owners.owner_count = 1 '
+                f'JOIN weld_part_info_table p ON p.serial_number = owners.serial_number '
+                f'WHERE {valid_serial("p.serial_number")} GROUP BY p.project_no ORDER BY part_count DESC, p.project_no LIMIT 101', values, limit=101)
         speeds = session.fetch(f"SELECT CASE WHEN j.weld_speed IS NULL OR j.weld_speed <= 0 THEN '未记录或无效' WHEN j.weld_speed < 300 THEN '<300' WHEN j.weld_speed < 600 THEN '300–599' ELSE '≥600' END AS speed_band, COUNT(*) AS job_count FROM weld_info_table j WHERE {where} AND {valid_time('j.end_time')} GROUP BY speed_band ORDER BY speed_band", values, limit=5) if kind == 'jobs' else []
         totals = {}
         if kind == 'parts':
             part_conditions, part_values = repo.part_conditions(query)
-            totals = session.fetch(f'SELECT COUNT(*) AS part_row_count, COALESCE(SUM(CASE WHEN p.reality_lenght >= 0 THEN p.reality_lenght ELSE 0 END), 0) / 1000 AS part_actual_length_m, COALESCE(SUM((SELECT COUNT(*) FROM weld_part_info_table owner WHERE owner.serial_number = p.serial_number) > 1), 0) AS ambiguous_part_rows, COALESCE(SUM(CASE WHEN p.used_time < 0 OR p.weld_used_time < 0 OR p.weld_used_time > p.used_time OR p.weld_rate < 0 OR p.weld_rate > 1 OR p.arc_rate < 0 OR p.arc_rate > 1 THEN 1 ELSE 0 END), 0) AS invalid_part_rows FROM weld_part_info_table p WHERE {part_conditions}', part_values, limit=1)[0]
+            totals = session.fetch(f'SELECT COUNT(*) AS part_row_count, COALESCE(SUM(CASE WHEN p.reality_lenght >= 0 THEN p.reality_lenght ELSE 0 END), 0) / 1000 AS part_actual_length_m, COALESCE(SUM(owners.owner_count > 1), 0) AS ambiguous_part_rows, COALESCE(SUM(CASE WHEN p.used_time < 0 OR p.weld_used_time < 0 OR p.weld_used_time > p.used_time OR p.weld_rate < 0 OR p.weld_rate > 1 OR p.arc_rate < 0 OR p.arc_rate > 1 THEN 1 ELSE 0 END), 0) AS invalid_part_rows FROM weld_part_info_table p JOIN {owners} ON owners.serial_number = p.serial_number WHERE {part_conditions}', part_values, limit=1)[0]
             if totals['ambiguous_part_rows']:
                 totals['part_actual_length_m'] = None
         return projects, speeds, totals
@@ -313,7 +338,22 @@ class WeldingService:
         return hashlib.sha256(json.dumps(relevant, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
     def dashboard(self, query: WeldingQuery, *, force: bool = False) -> dict:
-        return self.report('jobs', query.model_copy(update={'page': 1, 'page_size': 10}), dashboard=True, force=force)
+        query = query.model_copy(update={'page': 1, 'page_size': 10, 'sort_by': 'time', 'descending': True})
+        if self.snapshot_service is None:
+            return self.report('jobs', query, dashboard=True, force=force)
+        return self.page('dashboard', query, force=force)
+
+    def page(self, kind: str, query: WeldingQuery, *, force: bool = False) -> dict:
+        if kind not in self.report_types:
+            raise ValueError('焊接报表类型不支持')
+        if kind == 'parts':
+            query = query.model_copy(update={'part_state': query.part_state if query.part_state is not None else query.state, 'state': None})
+        if self.snapshot_service is None:
+            return self.dashboard(query, force=force) if kind == 'dashboard' else self.report(kind, query, force=force)
+        data = self.fetch_summary('dashboard' if kind == 'dashboard' else f'page:{kind}', query, force=force)
+        payload = data.payload
+        payload['meta']['report_data'] = {**data.meta, 'data_version': payload['data_version'], 'details_source': data.meta['source']}
+        return payload
 
     def part(self, part_id: int, page: int = 1, page_size: int = 20) -> dict | None:
         repo = self.repository

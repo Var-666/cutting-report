@@ -1,13 +1,21 @@
 import type { User } from '../types/auth'
+import type { WeldingReportKind } from '../types/welding'
 import { reactive } from 'vue'
 import { getEnergyDay, getEnergyMonthlyRange, getTaskEnergyDay } from '../api/energy.ts'
 import { getLeadershipReport, getLatestWorkshopProductionDate, listReports, listWorkshopRangeTasks, listWorkshopTasks } from '../api/cutting.ts'
 import { reportCache } from '../api/reportCache.ts'
 import { recentTwelveMonthStart, reportToday } from '../api/reportDates.ts'
+import { getWeldingReport } from '../api/welding.ts'
+import { getDeviceId, getDevices } from '../api/deviceContext.ts'
+import { selectedLineType } from '../utils/productionLines.ts'
+import { parseWeldingRouteQuery } from '../utils/weldingRouteState.ts'
 
 export const reportPreload = reactive({ identity: '', items: [] as { key: string; label: string; status: string }[] })
 let generation = 0
 let completion: Promise<PromiseSettledResult<void>[]> | null = null
+const weldingPages: Record<string, WeldingReportKind> = { '/admin/home': 'dashboard', '/admin/welding/home': 'dashboard',
+  '/admin/welding/reports/daily': 'daily', '/admin/welding/reports/jobs': 'jobs',
+  '/admin/welding/reports/parts': 'parts', '/admin/welding/reports/equipment': 'equipment' }
 
 export function stopReportPreload() {
   generation += 1
@@ -34,15 +42,20 @@ export function startReportPreload(
   const today = reportToday()
   const month = today.slice(0, 7)
   const active = () => run === generation
-  const jobs: { key: string; label: string; load: () => Promise<unknown> }[] = [{ key: 'workshop', label: '车间报表', load: async () => {
+  const lineType = selectedLineType(getDevices(), getDeviceId())
+  const weldingKind = weldingPages[pathname]
+  const weldingFilters = Object.fromEntries(new URLSearchParams(globalThis.location?.search || ''))
+  const jobs: { key: string; label: string; load: () => Promise<unknown> }[] = lineType === 'welding'
+    ? weldingKind ? [{ key: 'welding', label: '焊接报表', load: () => getWeldingReport(weldingKind, parseWeldingRouteQuery(weldingFilters, weldingKind, today)) }] : []
+    : lineType === 'cutting' ? [{ key: 'workshop', label: '车间报表', load: async () => {
     const latest = await getLatestWorkshopProductionDate(today)
     if (!active()) return
     const reportDate = latest.report_date || today
     return user.role === 'worker'
       ? listWorkshopTasks({ reportDate, sortMode: 'worker' }, { warmup: true })
       : listWorkshopRangeTasks({ startDate: reportDate, endDate: reportDate })
-  } }]
-  if (user.role === 'admin') {
+  } }] : []
+  if (user.role === 'admin' && lineType === 'cutting') {
     jobs.unshift({ key: 'leadership', label: '领导报表', load: () => getLeadershipReport(month) })
     jobs.push({ key: 'equipment', label: '设备报表', load: async () => {
       const latest = await getLatestWorkshopProductionDate(today)
@@ -53,7 +66,9 @@ export function startReportPreload(
     } })
     jobs.push({ key: 'history', label: '生成与历史', load: () => listReports({ page: 1, pageSize: 10 }) })
   }
-  const routeKeys = user.role === 'worker'
+  const routeKeys = lineType === 'welding'
+    ? new Set(user.role === 'admin' ? ['welding'] : [])
+    : user.role === 'worker'
     ? new Set(['workshop'])
     : pathname === '/admin/home'
       ? new Set(['leadership', 'history'])

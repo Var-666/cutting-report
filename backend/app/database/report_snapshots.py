@@ -1,4 +1,4 @@
-"""Bounded application-owned statistics snapshots; never stores source detail tables."""
+"""Bounded application-owned statistics and paginated report snapshots."""
 from __future__ import annotations
 
 from dataclasses import dataclass

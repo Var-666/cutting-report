@@ -9,6 +9,8 @@ import * as api from '../src/api/reports.ts'
 import { session, loadSession, completeAuthentication, endSession } from '../src/state/session.ts'
 import { resetDeviceContext, setDeviceCatalog, selectDevice, getDeviceId } from '../src/api/deviceContext.ts'
 import { deviceSelection } from '../src/state/devices.ts'
+import { getWeldingReport } from '../src/api/welding.ts'
+import { parseWeldingRouteQuery } from '../src/utils/weldingRouteState.ts'
 
 const originalFetch = globalThis.fetch
 const admin = { user_id: 'admin-1', role: 'admin' }
@@ -30,6 +32,33 @@ function mockApi(override = () => undefined) {
   return calls
 }
 afterEach(() => { stopReportPreload(); resetDeviceContext(); globalThis.fetch = originalFetch })
+
+test('restored welding sessions preload only their homepage and share the page read', async () => {
+  let complete
+  const calls = mockApi(url => {
+    if (url === '/api/v1/production-lines') return response({ default_device_id: 'welding', items: [{ id: 'welding', type: 'welding' }] })
+    if (url.includes('/welding/dashboard?')) return new Promise(resolve => { complete = resolve })
+  })
+  await loadSession({ force: true })
+  await new Promise(resolve => setImmediate(resolve))
+  const page = getWeldingReport('dashboard', parseWeldingRouteQuery({}, 'dashboard', today))
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(calls.filter(call => call.url.includes('/welding/dashboard?')).length, 1)
+  assert.ok(calls.every(call => !/leadership-report|energy-report|\/reports\?/.test(call.url)))
+  complete(response({ data_version: 'welding-home' }))
+  assert.equal((await page).data_version, 'welding-home')
+  await startReportPreload(admin)
+  assert.deepEqual(reportPreload.items, [{ key: 'welding', label: '焊接报表', status: 'ready' }])
+})
+
+for (const kind of ['daily', 'jobs', 'parts', 'equipment']) test(`welding ${kind} deep links preload only their own report`, async () => {
+  const calls = mockApi()
+  setDeviceCatalog({ default_device_id: 'welding', items: [{ id: 'welding', type: 'welding' }] })
+  await startReportPreload(admin, { pathname: `/admin/welding/reports/${kind}` })
+  assert.equal(calls.length, 1)
+  const path = kind === 'daily' ? 'statistics/daily' : kind === 'equipment' ? 'equipment/summary' : kind
+  assert.ok(calls[0].url.startsWith(`/api/v1/welding/${path}?`))
+})
 
 test('worker load syncs a nonempty snapshot while background polling remains read-only', async () => {
   const source = readFileSync(new URL('../src/views/WorkshopView.vue', import.meta.url), 'utf8')

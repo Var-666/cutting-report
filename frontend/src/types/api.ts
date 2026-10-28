@@ -31,6 +31,7 @@ export interface Items<T> {
   items: T[];
 }
 export interface ApiError extends Error {
+  code?: string;
   status?: number;
   retryAfterMs?: number;
 }

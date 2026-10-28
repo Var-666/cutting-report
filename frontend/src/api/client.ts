@@ -39,6 +39,8 @@ export async function request<T = unknown>(url: string, options: RequestOptions 
       const message = payload?.error?.message || payload?.detail || '请求失败，请稍后重试'
       const error: ApiError = new Error(message)
       error.status = response.status
+      const code = response.headers?.get?.('X-Welding-Error')
+      if (code) error.code = code
       const retryAfter = Number(response.headers?.get?.('Retry-After'))
       if (Number.isFinite(retryAfter) && retryAfter > 0) error.retryAfterMs = retryAfter * 1000
       throw error

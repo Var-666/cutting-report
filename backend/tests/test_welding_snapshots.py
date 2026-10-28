@@ -17,6 +17,7 @@ from app.services.application_runtime import build_runtime
 from app.services.database_runtime import database_context
 from app.services.production_reports import report_provider
 from app.services.welding_service import WeldingService
+from app.services.report_snapshots import SnapshotRefreshBusy, SnapshotRefreshRejected
 from app.worker import WorkerProcess
 from test_welding_statistics_cache import Repository
 
@@ -182,18 +183,173 @@ def test_stale_aggregate_survives_outage_and_failed_worker_refresh(configured):
         service.report('jobs', query())
 
 
-def test_precomputed_dashboard_queries_only_current_detail(configured):
-    _, _, _, source, service = configured
-    for payload, _ in service.refresh_plan():
-        service.refresh_summary(payload['report_type'], payload['query'])
+def test_precomputed_dashboard_opens_no_mysql_and_does_not_compute_part_statistics(configured, monkeypatch):
+    cfg, snapshots, queue, source, service = configured
+    report_statistics = service._report_statistics
+    def statistics(session, kind, selected):
+        assert kind == 'jobs', 'homepage must not wait for part statistics'
+        return report_statistics(session, kind, selected)
+    monkeypatch.setattr(service, '_report_statistics', statistics)
+    payload, _ = service.refresh_plan()[0]
+    assert payload['report_type'] == 'dashboard'
+    service.refresh_summary(payload['report_type'], payload['query'])
     before = source.calls.copy()
     today = datetime.now(ZoneInfo(service.settings.weld_db_timezone)).date()
     result = service.dashboard(WeldingQuery(start=today-timedelta(days=6), end=today))
-    assert source.calls['summary'] == before['summary']
-    assert source.calls['source'] == before['source']
-    assert source.calls['jobs'] == before['jobs'] + 1
+    assert source.calls == before
     assert result['today']['job_count'] == 3
-    assert result['meta']['report_data']['today_data_as_of']
+    assert result['query']['page_size'] == 10
+    assert result['meta']['report_data']['details_source'] == 'snapshot'
+    source.down = True
+    restarted = WeldingService(cfg, source, snapshots=snapshots, coordination=queue)
+    assert restarted.dashboard(WeldingQuery.model_validate(payload['query']))['items'] == result['items']
+    assert source.calls == before
+
+
+def test_cold_dashboard_only_enqueues_one_background_refresh(configured):
+    _, _, queue, source, service = configured
+    for _ in range(2):
+        with pytest.raises(SnapshotRefreshBusy, match='后台准备'):
+            service.dashboard(query())
+    assert not source.calls
+    with queue.connect() as connection:
+        tasks = connection.execute('SELECT * FROM background_tasks').fetchall()
+    assert len(tasks) == 1
+    assert 'dashboard' in tasks[0]['payload']
+
+
+def test_dashboard_keeps_latest_ten_jobs_when_the_source_contains_more_than_ten(configured):
+    _, _, _, source, service = configured
+    source.count = 100
+    queries = []
+    original = source.fetch
+    def fetch(sql, values=(), **kwargs):
+        if sql.startswith(f'SELECT {JOB_FIELDS}'):
+            queries.append((sql, values))
+            assert values[-2:] == (10, 0)
+            return [{'id': index, 'serial_number': 'part'} for index in range(100, 90, -1)]
+        return original(sql, values, **kwargs)
+    source.fetch = fetch
+    source.jobs = lambda session, selected, **kwargs: WeldingRepository.jobs(source, session, selected, **kwargs)
+    service.refresh_summary('dashboard', query().model_dump(mode='json'))
+    report = service.dashboard(query())
+    assert len(queries) == 1
+    assert report['total'] == 100 and len(report['items']) == 10
+    assert report['items'][0]['id'] == 100 and report['items'][-1]['id'] == 91
+
+
+def test_dashboard_keeps_expired_snapshot_and_manual_refresh_is_background_only(configured):
+    _, snapshots, queue, source, service = configured
+    service.refresh_summary('dashboard', query().model_dump(mode='json'))
+    first = service.dashboard(query())
+    before = source.calls.copy()
+    # Even an explicit refresh returns the existing complete page immediately.
+    result = service.dashboard(query(), force=True)
+    assert source.calls == before
+    assert result['data_version'] == first['data_version']
+    assert result['meta']['report_data']['refreshing']
+    owner = queue.acquire('worker', ttl=30)
+    task = queue.claim_task(owner, analysis=False)
+    source.count = 9
+    service.refresh_summary('dashboard', task['payload']['query'], requested_at=task['created_at'])
+    queue.finish_task(task, owner)
+    fresh = service.dashboard(query())
+    assert fresh['summary']['job_count'] == fresh['today']['job_count'] == 9
+    assert fresh['data_version'] != first['data_version']
+    assert not fresh['meta']['report_data']['refreshing']
+    old = expire(service, snapshots, query(), 'dashboard')
+    snapshots.save(replace(old, expires_at=datetime.now(timezone.utc) - timedelta(days=2)))
+    service.snapshot_service.revision.publish()
+    before = source.calls.copy()
+    source.down = True
+    stale = service.dashboard(query())
+    assert source.calls == before
+    assert stale['data_version'] == fresh['data_version']
+    assert stale['meta']['report_data']['stale'] and stale['meta']['report_data']['refreshing']
+    with pytest.raises(WeldingUnavailable):
+        service.refresh_summary('dashboard', query().model_dump(mode='json'))
+    assert service.dashboard(query())['data_version'] == fresh['data_version']
+
+
+@pytest.mark.parametrize('selected', [date(2026, 10, 28), date(2026, 11, 1)])
+def test_refresh_plan_warms_each_default_page_with_homepage_first(configured, monkeypatch, selected):
+    _, _, _, _, service = configured
+    class Clock:
+        @staticmethod
+        def now(zone):
+            return datetime(selected.year, selected.month, selected.day, tzinfo=zone)
+    monkeypatch.setattr('app.services.welding_service.datetime', Clock)
+    periods = [(payload['query']['start'], payload['query']['end']) for payload, _ in service.refresh_plan()]
+    assert periods == [((selected - timedelta(days=6)).isoformat(), selected.isoformat()), *[(selected.isoformat(), selected.isoformat())] * 4]
+    assert [payload['report_type'] for payload, _ in service.refresh_plan()] == ['dashboard', 'page:daily', 'page:jobs', 'page:parts', 'page:equipment']
+
+
+@pytest.mark.parametrize('kind', ['daily', 'jobs', 'parts', 'equipment'])
+def test_every_page_reads_one_coherent_snapshot_and_refreshes_only_its_own_statistics(configured, monkeypatch, kind):
+    cfg, snapshots, queue, source, service = configured
+    selected = query(page=2, page_size=1, device_no=0, state=0 if kind in ('jobs', 'parts') else None)
+    original = service._report_statistics
+    computed = []
+    def statistics(session, current_kind, current_query):
+        computed.append(current_kind)
+        return original(session, current_kind, current_query)
+    monkeypatch.setattr(service, '_report_statistics', statistics)
+    with pytest.raises(SnapshotRefreshBusy):
+        service.page(kind, selected)
+    assert not source.calls
+    owner = queue.acquire('worker', ttl=30)
+    task = queue.claim_task(owner, analysis=False)
+    service.refresh_summary(task['payload']['report_type'], task['payload']['query'], requested_at=task['created_at'])
+    queue.finish_task(task, owner)
+    first = service.page(kind, selected)
+    assert computed == [kind]
+    assert source.calls['sessions'] == 1, 'statistics, total and rows must share one source transaction'
+    assert first['query']['page'] == 2 and first['query']['device_no'] == 0
+    if kind == 'parts':
+        assert first['query']['state'] is None and first['query']['part_state'] == 0
+    if kind in ('jobs', 'parts'):
+        assert first['items'][0]['id'] == 2 and first['total'] == 3
+    before = source.calls.copy()
+    source.count = 9
+    source.down = True
+    restarted = WeldingService(cfg, source, snapshots=snapshots, coordination=queue)
+    cached = restarted.page(kind, selected, force=True)
+    assert source.calls == before
+    assert cached['data_version'] == first['data_version']
+    assert cached['total'] == first['total'] and cached['items'] == first['items']
+    assert cached['meta']['report_data']['refreshing']
+    assert cached['meta']['report_data']['details_source'] in ('snapshot', 'cache')
+    task = queue.claim_task(owner, analysis=False)
+    with pytest.raises(WeldingUnavailable):
+        restarted.refresh_summary(task['payload']['report_type'], task['payload']['query'], requested_at=task['created_at'])
+    assert snapshots.get(restarted._snapshot_key(WeldingQuery.model_validate(task['payload']['query']), f'page:{kind}'))
+
+
+def test_page_keys_isolate_pagination_sort_filters_and_changed_source(configured):
+    cfg, snapshots, queue, source, service = configured
+    service.refresh_summary('page:jobs', query(page_size=1).model_dump(mode='json'))
+    before = source.calls.copy()
+    for changes in ({'page': 2}, {'page_size': 20}, {'sort_by': 'length'}, {'descending': False}, {'device_no': 0}):
+        with pytest.raises(SnapshotRefreshBusy):
+            service.page('jobs', query(**({'page_size': 1} | changes)))
+    changed = WeldingService(replace(cfg, weld_db_host='new-source'), source, snapshots=snapshots, coordination=queue)
+    with pytest.raises(SnapshotRefreshBusy):
+        changed.page('jobs', query(page_size=1))
+    assert source.calls == before
+
+
+def test_page_queue_rejection_is_distinct_from_preparation_and_retains_available_data(configured, monkeypatch):
+    _, _, queue, source, service = configured
+    monkeypatch.setattr(queue, 'request_snapshot_refresh', lambda *args, **kwargs: False)
+    with pytest.raises(SnapshotRefreshRejected, match='队列已满'):
+        service.page('jobs', query())
+    assert not source.calls
+    service.refresh_summary('page:jobs', query().model_dump(mode='json'))
+    before = source.calls.copy()
+    report = service.page('jobs', query(), force=True)
+    assert source.calls == before
+    assert report['meta']['report_data']['refresh_failed']
+    assert not report['meta']['report_data']['refreshing']
 
 
 def test_exports_bypass_snapshots_and_do_not_replace_current_page_version(configured):
@@ -228,7 +384,7 @@ def test_worker_uses_registry_dedup_capacity_and_current_database_context(config
             with execution_scope(cfg.metadata_db_path, 'worker', owner):
                 process._handle(task)
                 queue.finish_task(task, owner)
-        assert current.welding.repository.calls['summary'] == len(tasks)
+        assert current.welding.repository.calls['summary'] == len(tasks) + 1, 'homepage also computes today within its own source transaction'
         assert report_provider(current, 'Cutter01').source_identity()
         # An old task is harmless after hot configuration replaces the service.
         old = tasks[0]

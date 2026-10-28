@@ -11,7 +11,7 @@ from pydantic import ValidationError
 from app.api.auth import require_admin
 from app.api.runtime import runtime_state
 from app.services.production_lines import SERVICE_LINES, resolve_line_service
-from app.services.report_snapshots import SnapshotRefreshBusy
+from app.services.report_snapshots import SnapshotRefreshBusy, SnapshotRefreshRejected
 from app.api.workloads import RequestWorkload, analysis_requests, pdf_requests
 from app.config import settings
 from app.models.domain import to_primitive
@@ -45,7 +45,9 @@ def source_errors():
     try:
         yield
     except SnapshotRefreshBusy as exc:
-        raise HTTPException(status_code=503, detail=str(exc), headers={'Retry-After': '1'}) from None
+        raise HTTPException(status_code=503, detail=str(exc), headers={'Retry-After': '1', 'X-Welding-Error': 'snapshot_refresh_busy'}) from None
+    except SnapshotRefreshRejected as exc:
+        raise HTTPException(status_code=503, detail=str(exc), headers={'X-Welding-Error': 'snapshot_queue_full'}) from None
     except WeldingUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc), headers={'X-Welding-Error': exc.category}) from None
     except ValueError as exc:
@@ -92,28 +94,28 @@ def dashboard(request: Request):
 def daily(request: Request):
     query = parse_query(request)
     with source_errors():
-        return response(request, service(request).report('daily', query, **({'force': True} if request.query_params.get('refresh') == 'true' else {})))
+        return response(request, service(request).page('daily', query, **({'force': True} if request.query_params.get('refresh') == 'true' else {})))
 
 
 @welding_requests.route(router.get('/parts'))
 def parts(request: Request):
     query = parse_query(request)
     with source_errors():
-        return response(request, service(request).report('parts', query, **({'force': True} if request.query_params.get('refresh') == 'true' else {})))
+        return response(request, service(request).page('parts', query, **({'force': True} if request.query_params.get('refresh') == 'true' else {})))
 
 
 @welding_requests.route(router.get('/jobs'))
 def jobs(request: Request):
     query = parse_query(request)
     with source_errors():
-        return response(request, service(request).report('jobs', query, **({'force': True} if request.query_params.get('refresh') == 'true' else {})))
+        return response(request, service(request).page('jobs', query, **({'force': True} if request.query_params.get('refresh') == 'true' else {})))
 
 
 @welding_requests.route(router.get('/equipment/summary'))
 def equipment(request: Request):
     query = parse_query(request)
     with source_errors():
-        return response(request, service(request).report('equipment', query, **({'force': True} if request.query_params.get('refresh') == 'true' else {})))
+        return response(request, service(request).page('equipment', query, **({'force': True} if request.query_params.get('refresh') == 'true' else {})))
 
 
 @welding_requests.route(router.get('/parts/{part_id}'))
@@ -164,7 +166,7 @@ async def export(request: Request, report_type: Literal['daily', 'parts', 'jobs'
 async def analysis(request: Request, payload: WeldingAnalysisRequest):
     instance = service(request)
     with source_errors():
-        report = await welding_requests.run_sync(instance.report, payload.report_type, payload.query, _request=request)
+        report = await welding_requests.run_sync(instance.page, payload.report_type, payload.query, _request=request)
     return response(request, await analysis_requests.run_sync(_analyze, instance, report, payload))
 
 

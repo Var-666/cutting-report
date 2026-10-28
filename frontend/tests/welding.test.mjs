@@ -1,5 +1,5 @@
 import { scriptFunction } from './typescript-helpers.mjs'
-import test from 'node:test'
+import test, { afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { computed, h, reactive, ref } from 'vue'
@@ -11,10 +11,12 @@ import { adminMenus } from '../src/router/menus.ts'
 import { analyzeWelding, downloadWelding, getWeldingPart, getWeldingReport, weldingQuery } from '../src/api/welding.ts'
 import { weldingColumns, weldingDisplay, weldingKpis, weldingTitles } from '../src/utils/weldingReport.ts'
 import { weldingRoutes } from '../src/router/weldingRoutes.ts'
+import { reportCache } from '../src/api/reportCache.ts'
 import { queryDateRange, sameRouteQuery } from '../src/utils/reportRouteState.ts'
 import { parseWeldingRouteQuery, weldingRouteQuery } from '../src/utils/weldingRouteState.ts'
 
 const source = path => readFileSync(new URL(`../src/${path}`, import.meta.url), 'utf8')
+afterEach(() => reportCache.clear())
 
 test('device types contain independent welding lines without adding a third navigation level', () => {
   const items = [{ id: 'Cutter01', name: '20KW' }, { id: 'Cutter02', name: '30KW' }, { id: 'welding', type: 'welding', name: '小组立焊接线' }, { id: 'other-welding', type: 'welding', name: '另一焊接线' }]
@@ -89,7 +91,7 @@ function view(readReport, options = {}) {
   const cleanup = []
   const bindings = {
     selectedLineType, computed, reactive, ref, watch: (source, callback, config) => { if (options.watchers) { options.watchers.push({ source, callback }); if (config?.immediate) callback(source()) } }, onBeforeUnmount: fn => cleanup.push(fn),
-    defineProps: () => ({ kind: 'jobs' }), useRoute: () => options.route || ({ query: {} }), useRouter: () => options.router || ({ push() {}, replace() {} }), queryDateRange, sameRouteQuery, parseWeldingRouteQuery, weldingRouteQuery,
+    defineProps: () => ({ kind: options.kind || 'jobs' }), useRoute: () => options.route || ({ query: {} }), useRouter: () => options.router || ({ push() {}, replace() {} }), queryDateRange, sameRouteQuery, parseWeldingRouteQuery, weldingRouteQuery,
     reportToday: () => '2026-10-26', getWeldingReport: readReport,
     deviceSelection: { id: 'welding', items: [{ id: 'welding', type: 'welding', enabled: options.enabled ?? true }] }, weldingTitles, weldingKpis, weldingColumns, weldingDisplay, weldingQuery,
   }
@@ -99,6 +101,146 @@ function view(readReport, options = {}) {
 const period = { start: '2026-10-26', end: '2026-10-26' }
 const busyResponse = (retryAfter = '1') => Response.json({ detail: '焊接数据查询请求繁忙，请稍后重试。' }, { status: 503, headers: { 'Retry-After': retryAfter } })
 const settle = () => new Promise(resolve => setImmediate(resolve))
+
+function snapshotWaitTimers(t) {
+  const timers = new Map()
+  let clock = 0, sequence = 0
+  t.mock.method(Date, 'now', () => clock)
+  t.mock.method(globalThis, 'setTimeout', (callback, delay) => { timers.set(++sequence, { callback, delay }); return sequence })
+  t.mock.method(globalThis, 'clearTimeout', id => timers.delete(id))
+  return { timers, advance(milliseconds) { clock += milliseconds }, fire() { const [id, timer] = timers.entries().next().value; timers.delete(id); clock += timer.delay; timer.callback() } }
+}
+const preparingResponse = () => Response.json({ detail: '统计正在生成，请稍后重试' }, { status: 503, headers: { 'Retry-After': '1', 'X-Welding-Error': 'snapshot_refresh_busy' } })
+
+for (const kind of ['dashboard', 'daily', 'parts', 'jobs', 'equipment']) test(`${kind} keeps its snapshot visible and replaces it when background refresh finishes without applying draft edits`, async t => {
+  const clock = snapshotWaitTimers(t)
+  const calls = []
+  let complete
+  const app = view((kind, values, signal, force) => {
+    calls.push({ kind, values, signal, force })
+    return calls.length === 1
+      ? Promise.resolve({ query: values, data_version: 'previous', meta: { report_data: { refreshing: true } } })
+      : new Promise(resolve => { complete = resolve })
+  }, { kind })
+  t.after(() => app.cleanup.forEach(cleanup => cleanup()))
+  await app.read({ ...period, device_no: 0 })
+  assert.equal(app.loading.value, false)
+  assert.equal(app.report.value.data_version, 'previous')
+  assert.equal(clock.timers.size, 1)
+  app.draft.device_no = 7
+  clock.fire(); await settle()
+  assert.equal(app.loading.value, false)
+  assert.equal(app.report.value.data_version, 'previous')
+  assert.equal(calls[1].values.device_no, 0)
+  assert.equal(calls[1].force, false)
+  complete({ query: calls[1].values, data_version: 'latest', meta: { report_data: { refreshing: false } } })
+  await settle()
+  assert.equal(app.report.value.data_version, 'latest')
+  assert.equal(app.draft.device_no, 7)
+  assert.equal(clock.timers.size, 0)
+})
+
+test('a new homepage filter or unmount cancels background checks and ignores late results', async t => {
+  const clock = snapshotWaitTimers(t)
+  const calls = []
+  const app = view((kind, values, signal) => new Promise(resolve => calls.push({ values, signal, resolve })), { kind: 'dashboard' })
+  const first = app.read({ ...period, device_no: 0 })
+  calls[0].resolve({ query: calls[0].values, data_version: 'old', meta: { report_data: { refreshing: true } } })
+  await first
+  clock.fire(); await settle()
+  const selected = app.read({ ...period, device_no: 1 })
+  assert.equal(calls[1].signal.aborted, true)
+  calls[2].resolve({ query: calls[2].values, data_version: 'selected', meta: { report_data: { refreshing: true } } })
+  await selected
+  calls[1].resolve({ query: calls[1].values, data_version: 'late' }); await settle()
+  assert.equal(app.report.value.data_version, 'selected')
+  assert.equal(clock.timers.size, 1)
+  app.cleanup.forEach(cleanup => cleanup())
+  assert.equal(clock.timers.size, 0)
+})
+
+test('background snapshot checks stop at the same bounded count as cutting reports', async t => {
+  const clock = snapshotWaitTimers(t)
+  let calls = 0
+  const app = view(async (kind, values) => {
+    calls += 1
+    return { query: values, data_version: 'previous', meta: { report_data: { refreshing: true } } }
+  })
+  t.after(() => app.cleanup.forEach(cleanup => cleanup()))
+  await app.read(period)
+  for (let index = 0; index < 75; index += 1) { clock.fire(); await settle() }
+  assert.equal(calls, 76)
+  assert.equal(clock.timers.size, 0)
+  assert.equal(app.loading.value, false)
+  assert.equal(app.report.value.data_version, 'previous')
+})
+
+test('snapshot preparation keeps the page loading and reads the completed snapshot without forcing another refresh', async t => {
+  const clock = snapshotWaitTimers(t)
+  const calls = []
+  t.mock.method(globalThis, 'fetch', async url => {
+    calls.push(new URL(url, 'http://test'))
+    return calls.length === 1 ? preparingResponse() : Response.json({ success: true, data: { query: period, data_version: 'prepared' } })
+  })
+  const app = view(getWeldingReport)
+  const pending = app.read(period, true)
+  await settle()
+  assert.equal(app.loading.value, true)
+  assert.equal(app.error.value, '')
+  assert.equal(clock.timers.size, 1)
+  assert.equal(calls[0].searchParams.get('refresh'), 'true')
+  clock.fire(); await pending
+  assert.equal(calls.length, 2)
+  assert.equal(calls[1].searchParams.has('refresh'), false)
+  assert.equal(app.report.value.data_version, 'prepared')
+  assert.equal(app.loading.value, false)
+  assert.equal(app.error.value, '')
+})
+
+test('snapshot preparation stops at its bounded deadline instead of retrying forever', async t => {
+  const clock = snapshotWaitTimers(t)
+  const fetchMock = t.mock.method(globalThis, 'fetch', async () => preparingResponse())
+  const result = getWeldingReport('dashboard', period).then(() => null, error => error)
+  await settle()
+  clock.advance(180000)
+  clock.fire()
+  const error = await result
+  assert.equal(error.code, 'snapshot_refresh_busy')
+  assert.equal(error.status, 503)
+  assert.equal(fetchMock.mock.callCount(), 1)
+  assert.equal(clock.timers.size, 0)
+})
+
+test('leaving the page cancels a snapshot wait and clears its timer', async t => {
+  const { timers } = snapshotWaitTimers(t)
+  const fetchMock = t.mock.method(globalThis, 'fetch', async () => preparingResponse())
+  const app = view(getWeldingReport)
+  const pending = app.read(period)
+  await settle()
+  assert.equal(timers.size, 1)
+  app.cleanup.forEach(cleanup => cleanup())
+  await pending
+  assert.equal(timers.size, 0)
+  assert.equal(fetchMock.mock.callCount(), 1)
+  assert.equal(app.error.value, '')
+})
+
+test('a new filter cancels the previous snapshot wait and cannot receive its result', async t => {
+  const { timers } = snapshotWaitTimers(t)
+  let calls = 0
+  t.mock.method(globalThis, 'fetch', async url => {
+    calls++
+    return new URL(url, 'http://test').searchParams.get('device_no') === '0' ? preparingResponse() : Response.json({ success: true, data: { query: { ...period, device_no: 1 }, data_version: 'new-filter' } })
+  })
+  const app = view(getWeldingReport)
+  const old = app.read({ ...period, device_no: 0 })
+  await settle()
+  await app.read({ ...period, device_no: 1 }); await old
+  assert.equal(timers.size, 0)
+  assert.equal(calls, 2)
+  assert.equal(app.activeQuery.value.device_no, 1)
+  assert.equal(app.report.value.data_version, 'new-filter')
+})
 
 test('welding route parsing validates all boundaries, preserves numeric zero and drops incompatible filters', () => {
   const all = { start: '2026-09-01', end: '2026-09-02', device_no: '0', robot_no: '0', weld_type: '0', state: '0', part_state: '0', serial_number: 'S', project_no: 'P', section_no: 'SEC', part_no: 'PART', anomalies_only: 'true', sort_by: 'length', descending: 'false', page: '3', page_size: '50', unrelated: 'keep' }
@@ -415,6 +557,7 @@ test('queue overflow is shown once and retains the last successful report', asyn
 test('source, authentication and network failures remain visible without replay', async t => {
   const responses = [
     () => Response.json({ detail: '数据源超时' }, { status: 503 }),
+    () => Response.json({ detail: '后台刷新队列已满' }, { status: 503, headers: { 'X-Welding-Error': 'snapshot_queue_full' } }),
     () => Response.json({ detail: '权限不足' }, { status: 403, headers: { 'Retry-After': '1' } }),
     () => busyResponse('invalid'),
     () => busyResponse('0'),
@@ -627,6 +770,7 @@ test('new line types keep registered labels and destinations', () => {
 })
 
 test('explicit refresh requests fresh statistics while initial reads and pagination reuse snapshots', async t => {
+  const clock = snapshotWaitTimers(t)
   const urls = []
   t.mock.method(globalThis, 'fetch', async url => { urls.push(new URL(url, 'http://test')); return Response.json({ success: true, data: {} }) })
   await getWeldingReport('daily', period)
@@ -637,6 +781,7 @@ test('explicit refresh requests fresh statistics while initial reads and paginat
   const calls = []
   const meta = { source: 'snapshot', stale: true, refreshing: true, data_as_of: '2026-10-26T08:00:00Z' }
   const app = view(async (kind, values, signal, force) => { calls.push(force); return { query: values, data_version: 'same', meta: { report_data: meta } } })
+  t.after(() => app.cleanup.forEach(cleanup => cleanup()))
   await app.read(period)
   assert.equal(calls[0], false)
   assert.equal(app.report.value.meta.report_data.stale, true)
@@ -647,7 +792,8 @@ test('explicit refresh requests fresh statistics while initial reads and paginat
   await settle()
   assert.equal(calls[2], false)
   assert.equal(app.report.value.meta.report_data.data_as_of, meta.data_as_of)
-  assert.equal(calls.length, 3, 'freshness metadata must not create another refresh loop')
+  assert.equal(calls.length, 3, 'only one background check should be scheduled after each read')
+  assert.equal(clock.timers.size, 1)
   assert.match(source('views/WeldingReportView.vue'), /统计截止/)
   assert.match(source('views/WeldingReportView.vue'), /统计已过期/)
   assert.match(source('views/WeldingReportView.vue'), /后台刷新排队中/)

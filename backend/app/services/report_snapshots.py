@@ -20,6 +20,10 @@ class SnapshotRefreshBusy(RuntimeError):
     pass
 
 
+class SnapshotRefreshRejected(RuntimeError):
+    pass
+
+
 @dataclass
 class ReportData:
     payload: object
@@ -64,13 +68,22 @@ class ReportSnapshotService:
         })
 
     def read(self, key: ReportKey, load: Callable[[], dict], *, ttl: int, force: bool = False,
-             requested_at: float | None = None, background: bool = False) -> ReportData:
+             requested_at: float | None = None, background: bool = False, background_only: bool = False) -> ReportData:
         requested_at = time() if requested_at is None else requested_at
         record, source = self._get(key)
         now = datetime.now(timezone.utc)
         payload = self.task_payload(key)
         refreshing = bool(self.coordination and self.coordination.snapshot_refresh_active(key.line_id, payload))
-        if record and record.expires_at > now and (not force or background):
+        if background_only and not background and self.coordination:
+            if force or record is None or record.expires_at <= now:
+                self.coordination.request_snapshot_refresh(key.line_id, payload)
+                refreshing = self.coordination.snapshot_refresh_active(key.line_id, payload)
+            if record:
+                return self._result(record, source, refreshing=refreshing, error=(force or record.expires_at <= now) and not refreshing)
+            if not refreshing:
+                raise SnapshotRefreshRejected('后台刷新队列已满，请稍后重试')
+            raise SnapshotRefreshBusy('报表数据正在后台准备，完成后自动显示')
+        if record and record.expires_at > now and (not force or background and (not background_only or record.refreshed_at.timestamp() >= requested_at)):
             return self._result(record, source, refreshing=refreshing)
         # Stale statistics are read-only; detail queries and all writes keep their own live validation.
         fallback = record if record and now - record.expires_at <= timedelta(seconds=max(1, self.settings.leadership_report_history_cache_seconds)) else None
@@ -93,7 +106,7 @@ class ReportSnapshotService:
             # Re-read after the OS lock: Web and Worker share the same singleflight.
             latest = self.repository.get(key)
             now = datetime.now(timezone.utc)
-            if latest and latest.expires_at > now and (not force or background or latest.refreshed_at.timestamp() >= requested_at):
+            if latest and latest.expires_at > now and (not force or background and not background_only or latest.refreshed_at.timestamp() >= requested_at):
                 return self._result(latest, 'snapshot')
             data_as_of = now
             try:

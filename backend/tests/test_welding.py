@@ -311,7 +311,7 @@ def test_worker_cannot_read_welding_or_line_catalog(api):
 
 def test_ai_input_version_and_unavailable_model(api):
     instance = api.app.state.welding
-    instance.report = lambda *args, **kwargs: {'data_version': 'b' * 64}
+    instance.page = lambda *args, **kwargs: {'data_version': 'b' * 64}
     body = {'query': query().model_dump(mode='json'), 'data_version': 'a' * 64}
     assert api.post('/api/v1/welding/analysis', json=body).status_code == 409
     body['data_version'] = 'b' * 64
@@ -508,10 +508,32 @@ def test_report_passes_the_same_snapshot_count_to_paginated_jobs():
 def test_http_source_error_keeps_safe_category_without_retry_header(api):
     def failed(*args, **kwargs):
         raise WeldingUnavailable('焊接SQL执行失败', category='sql_error')
-    api.app.state.welding.report = failed
+    api.app.state.welding.page = failed
     result = api.get('/api/v1/welding/jobs?start=2026-10-01&end=2026-10-02')
     assert result.status_code == 503
     assert result.headers['X-Welding-Error'] == 'sql_error'
+    assert 'Retry-After' not in result.headers
+
+
+def test_snapshot_preparation_has_a_distinct_reason_from_queue_or_database_failures(api):
+    from app.services.report_snapshots import SnapshotRefreshBusy
+    def preparing(*args, **kwargs):
+        raise SnapshotRefreshBusy('统计正在生成，请稍后重试')
+    api.app.state.welding.page = preparing
+    result = api.get('/api/v1/welding/jobs?start=2026-10-01&end=2026-10-02')
+    assert result.status_code == 503
+    assert result.headers['X-Welding-Error'] == 'snapshot_refresh_busy'
+    assert result.headers['Retry-After'] == '1'
+
+
+def test_snapshot_queue_rejection_is_not_reported_as_preparation(api):
+    from app.services.report_snapshots import SnapshotRefreshRejected
+    def rejected(*args, **kwargs):
+        raise SnapshotRefreshRejected('后台刷新队列已满')
+    api.app.state.welding.page = rejected
+    result = api.get('/api/v1/welding/jobs?start=2026-10-01&end=2026-10-02')
+    assert result.status_code == 503
+    assert result.headers['X-Welding-Error'] == 'snapshot_queue_full'
     assert 'Retry-After' not in result.headers
 
 
@@ -610,7 +632,7 @@ def test_four_http_queries_execute_and_fifth_waits_for_a_slot(api, monkeypatch):
         finally:
             with lock:
                 counts['running'] -= 1
-    api.app.state.welding.report = report
+    api.app.state.welding.page = report
     async def exercise():
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=api.app), base_url='http://test') as client:
             tasks = [asyncio.create_task(client.get('/api/v1/welding/jobs?start=2026-10-01&end=2026-10-02')) for _ in range(5)]
@@ -639,7 +661,7 @@ def test_http_csv_and_html_export_preserve_data_without_pdf(api, format, media):
 
 def test_refresh_control_is_validated_and_excluded_from_business_filters(api):
     calls = []
-    api.app.state.welding.report = lambda kind, selected, **kwargs: calls.append((selected, kwargs)) or {'items': []}
+    api.app.state.welding.page = lambda kind, selected, **kwargs: calls.append((selected, kwargs)) or {'items': []}
     url = '/api/v1/welding/jobs?start=2026-10-01&end=2026-10-02'
     assert api.get(url + '&refresh=true').status_code == 200
     assert calls[-1][1] == {'force': True}
