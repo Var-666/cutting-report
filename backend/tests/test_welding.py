@@ -495,6 +495,8 @@ def test_report_passes_the_same_snapshot_count_to_paginated_jobs():
             return []
         def equipment(self, *args):
             return []
+        def statistics(self, session, selected):
+            return self.summary(session, selected), [], [], [], {'unlinked': 0, 'ambiguous': 0}
         def source_info(self, *args):
             return {'devices': [], 'updated_at': {}}
         def jobs(self, session, selected, *, limit, total):

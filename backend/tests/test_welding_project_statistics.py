@@ -32,12 +32,13 @@ def project_statistics(tmp_path):
         CREATE TABLE weld_part_info_table (
             id INT, serial_number TEXT COLLATE NOCASE, project_no TEXT, project_name TEXT,
             section_no TEXT, part_no TEXT, state INT, reality_lenght REAL,
-            used_time REAL, weld_used_time REAL, weld_rate REAL, arc_rate REAL);
+            used_time REAL, weld_used_time REAL, weld_rate REAL, arc_rate REAL,
+            device_no INT, theory_lenght REAL, start_time TEXT, end_time TEXT, update_date TEXT);
     ''')
     parts = [('A', 'P1', 2000, 0), ('B', 'P1', 3000, 3), ('C', 'P2', 4000, 0),
              ('D', 'P2', 1000, 0), ('D', 'P3', 2000, 3), ('unknown', 'P1', 100000, 0),
              ('E', 'P4', 10000, 0), ('F', 'P5', 5000, 0), ('G', 'P6', -1000, 0)]
-    connection.executemany('INSERT INTO weld_part_info_table VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+    connection.executemany('INSERT INTO weld_part_info_table (id, serial_number, project_no, project_name, section_no, part_no, state, reality_lenght, used_time, weld_used_time, weld_rate, arc_rate) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
         [(index, serial, project, project, 'section', f'part-{index}', state, length,
           -1 if serial == 'G' else 10, 5, .5, .5) for index, (serial, project, length, state) in enumerate(parts, 1)])
     jobs = [('A', 0, '2026-10-28 10:00:00'), ('A', 0, '2026-10-28 11:00:00'),
@@ -51,7 +52,7 @@ def project_statistics(tmp_path):
         def fetch(self, sql, values=(), **kwargs):
             self.queries.append(sql)
             # SQLite needs quoted LEFT and positional placeholders; all joins/predicates are unchanged.
-            sql = sql.replace('LEFT(', '"LEFT"(').replace('%s', '?')
+            sql = sql.replace('LEFT(', '"LEFT"(').replace('%s', '?').replace('LIMIT 18446744073709551615', 'LIMIT -1')
             return [dict(row) for row in connection.execute(sql, values).fetchall()]
     session = Session()
     service = WeldingService(Settings(project_root=tmp_path), WeldingRepository(None))
@@ -75,6 +76,6 @@ def test_project_statistics_preserve_unique_ownership_filters_and_units(project_
     assert [(row['project_no'], row['part_count'], row['cumulative_actual_length_m']) for row in projects] == expected_projects
     assert totals == {'part_row_count': count, 'ambiguous_part_rows': ambiguous, 'part_actual_length_m': length, 'invalid_part_rows': invalid}
     assert speeds == []
-    assert len(session.queries) == 2
+    assert len(session.queries) == 1
     assert all('FROM weld_part_info_table owner WHERE' not in sql for sql in session.queries)
-    assert 'SELECT DISTINCT j.serial_number' in session.queries[0]
+    assert 'FROM weld_info_table part_job' in session.queries[0]

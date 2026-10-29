@@ -199,37 +199,46 @@ def job_conditions(query: WeldingQuery, alias: str = 'j') -> tuple[str, tuple]:
 
 
 def job_source(query: WeldingQuery) -> tuple[str, tuple]:
-    where, values = job_conditions(query)
+    sql, values = job_rows(query)
+    return f'({sql}) j', values
+
+
+def job_rows(query: WeldingQuery, alias: str = 'j') -> tuple[str, tuple]:
+    where, values = job_conditions(query, alias)
     # LIMIT prevents derived-table merging so validation runs once per source row.
-    return (f'(SELECT serial_number, device_no, robot_no, end_time, weld_type, weld_lenght, used_time, '
-            f'{valid_time("j.end_time")} AS valid_end_time, {valid_serial("j.serial_number")} AS valid_serial_number '
-            f'FROM weld_info_table j WHERE {where} LIMIT 18446744073709551615) j', values)
+    return (f'SELECT serial_number, device_no, robot_no, end_time, weld_type, weld_lenght, used_time, '
+            f'{valid_time(f"{alias}.end_time")} AS valid_end_time, {valid_serial(f"{alias}.serial_number")} AS valid_serial_number '
+            f'FROM weld_info_table {alias} WHERE {where} LIMIT 18446744073709551615', values)
 
 
-def job_aggregate(alias: str = 'j') -> str:
+def job_aggregates(alias: str = 'j') -> dict[str, str]:
     time = f'{alias}.valid_end_time'
     length = f'({time} AND {alias}.weld_lenght > 0)'
     duration = f'({time} AND {alias}.used_time > 0)'
     paired = f'({length} AND {alias}.used_time > 0)'
     serial = f'{alias}.valid_serial_number'
-    columns = [
-        f'COUNT(*) AS source_rows', f'COALESCE(SUM({time}), 0) AS job_count',
-        f'COUNT(DISTINCT CASE WHEN {time} AND {serial} THEN {alias}.serial_number END) AS involved_part_count',
-        f'COALESCE(SUM(CASE WHEN {length} THEN {alias}.weld_lenght ELSE 0 END), 0) / 1000 AS weld_length_m',
-        f'COALESCE(SUM(CASE WHEN {duration} THEN {alias}.used_time ELSE 0 END), 0) / 3600 AS working_hours',
-        f'SUM(CASE WHEN {paired} THEN {alias}.weld_lenght ELSE 0 END) / 1000 / NULLIF(SUM(CASE WHEN {paired} THEN {alias}.used_time ELSE 0 END) / 3600, 0) AS output_per_hour',
-        f'COUNT(DISTINCT CASE WHEN {time} THEN {alias}.device_no END) AS device_count',
-        f'COUNT(DISTINCT CASE WHEN {time} THEN {alias}.device_no END, CASE WHEN {time} THEN {alias}.robot_no END) AS robot_station_count',
-        f'COALESCE(SUM(NOT COALESCE({time}, 0)), 0) AS invalid_time_rows',
-        f'COALESCE(SUM(NOT COALESCE({serial}, 0)), 0) AS invalid_serial_rows',
-        f'COALESCE(SUM({alias}.weld_lenght IS NULL OR {alias}.weld_lenght <= 0), 0) AS invalid_length_rows',
-        f'COALESCE(SUM({alias}.used_time IS NULL OR {alias}.used_time <= 0), 0) AS invalid_duration_rows',
-        f'COUNT(*) AS unverified_state_rows',
-    ]
+    columns = {
+        'source_rows': 'COUNT(*)', 'job_count': f'COALESCE(SUM({time}), 0)',
+        'involved_part_count': f'COUNT(DISTINCT CASE WHEN {time} AND {serial} THEN {alias}.serial_number END)',
+        'weld_length_m': f'COALESCE(SUM(CASE WHEN {length} THEN {alias}.weld_lenght ELSE 0 END), 0) / 1000',
+        'working_hours': f'COALESCE(SUM(CASE WHEN {duration} THEN {alias}.used_time ELSE 0 END), 0) / 3600',
+        'output_per_hour': f'SUM(CASE WHEN {paired} THEN {alias}.weld_lenght ELSE 0 END) / 1000 / NULLIF(SUM(CASE WHEN {paired} THEN {alias}.used_time ELSE 0 END) / 3600, 0)',
+        'device_count': f'COUNT(DISTINCT CASE WHEN {time} THEN {alias}.device_no END)',
+        'robot_station_count': f'COUNT(DISTINCT CASE WHEN {time} THEN {alias}.device_no END, CASE WHEN {time} THEN {alias}.robot_no END)',
+        'invalid_time_rows': f'COALESCE(SUM(NOT COALESCE({time}, 0)), 0)',
+        'invalid_serial_rows': f'COALESCE(SUM(NOT COALESCE({serial}, 0)), 0)',
+        'invalid_length_rows': f'COALESCE(SUM({alias}.weld_lenght IS NULL OR {alias}.weld_lenght <= 0), 0)',
+        'invalid_duration_rows': f'COALESCE(SUM({alias}.used_time IS NULL OR {alias}.used_time <= 0), 0)',
+        'unverified_state_rows': 'COUNT(*)',
+    }
     for code, name in ((0, 'flat_wrap_length_m'), (1, 'flat_length_m'), (2, 'vertical_wrap_length_m'), (3, 'vertical_length_m')):
-        columns.append(f'COALESCE(SUM(CASE WHEN {length} AND {alias}.weld_type = {code} THEN {alias}.weld_lenght ELSE 0 END), 0) / 1000 AS {name}')
-    columns.append(f'COALESCE(SUM(CASE WHEN {length} AND ({alias}.weld_type IS NULL OR {alias}.weld_type NOT IN (0,1,2,3)) THEN {alias}.weld_lenght ELSE 0 END), 0) / 1000 AS unknown_length_m')
-    return ', '.join(columns)
+        columns[name] = f'COALESCE(SUM(CASE WHEN {length} AND {alias}.weld_type = {code} THEN {alias}.weld_lenght ELSE 0 END), 0) / 1000'
+    columns['unknown_length_m'] = f'COALESCE(SUM(CASE WHEN {length} AND ({alias}.weld_type IS NULL OR {alias}.weld_type NOT IN (0,1,2,3)) THEN {alias}.weld_lenght ELSE 0 END), 0) / 1000'
+    return columns
+
+
+def job_aggregate(alias: str = 'j') -> str:
+    return ', '.join(f'{expression} AS {name}' for name, expression in job_aggregates(alias).items())
 
 
 class WeldingRepository:
@@ -248,6 +257,44 @@ class WeldingRepository:
         source, values = job_source(query)
         return session.fetch(f'SELECT j.device_no, j.robot_no, {job_aggregate()} FROM {source} GROUP BY j.device_no, j.robot_no ORDER BY j.device_no, j.robot_no LIMIT 10001', values, limit=10001)
 
+    def statistics(self, session: WeldingSession, query: WeldingQuery) -> tuple[dict, list[dict], list[dict], list[dict], dict]:
+        source, values = job_rows(query, 'source_job')
+        aggregates = job_aggregate()
+        empty_metrics = ', '.join(f'NULL AS {name}' for name in job_aggregates())
+        # A materialized CTE is shared by all five branches; the source interval is scanned once.
+        sql = f'''WITH scoped_jobs AS ({source}),
+            involved AS (SELECT DISTINCT serial_number FROM scoped_jobs WHERE valid_end_time AND valid_serial_number),
+            owners AS (SELECT p.serial_number, COUNT(*) AS owner_count FROM weld_part_info_table p
+                JOIN involved i ON i.serial_number = p.serial_number GROUP BY p.serial_number)
+            SELECT 'summary' AS bucket, NULL AS production_date, NULL AS device_no, NULL AS robot_no,
+                {aggregates}, NULL AS unlinked, NULL AS ambiguous FROM scoped_jobs j
+            UNION ALL
+            SELECT 'daily', LEFT(j.end_time, 10), NULL, NULL, {aggregates}, NULL, NULL
+                FROM scoped_jobs j WHERE j.valid_end_time GROUP BY LEFT(j.end_time, 10)
+            UNION ALL
+            (SELECT 'equipment', NULL, j.device_no, j.robot_no, {aggregates}, NULL, NULL
+                FROM scoped_jobs j GROUP BY j.device_no, j.robot_no ORDER BY j.device_no, j.robot_no LIMIT 10001)
+            UNION ALL
+            (SELECT 'devices', NULL, j.device_no, NULL, {aggregates}, NULL, NULL
+                FROM scoped_jobs j GROUP BY j.device_no ORDER BY j.device_no LIMIT 1001)
+            UNION ALL
+            SELECT 'association', NULL, NULL, NULL, {empty_metrics},
+                COUNT(CASE WHEN o.owner_count IS NULL THEN 1 END), COUNT(CASE WHEN o.owner_count > 1 THEN 1 END)
+                FROM involved i LEFT JOIN owners o ON o.serial_number = i.serial_number'''
+        groups = {'summary': [], 'daily': [], 'equipment': [], 'devices': [], 'association': []}
+        dimensions = {'summary': (), 'daily': ('production_date',), 'equipment': ('device_no', 'robot_no'), 'devices': ('device_no',)}
+        for row in session.fetch(sql, values, limit=11371):
+            bucket = row.pop('bucket')
+            if bucket == 'association':
+                groups[bucket].append({key: row[key] for key in ('unlinked', 'ambiguous')})
+            else:
+                groups[bucket].append({key: value for key, value in row.items()
+                                      if key in dimensions[bucket] or key not in ('production_date', 'device_no', 'robot_no', 'unlinked', 'ambiguous')})
+        groups['daily'].sort(key=lambda row: row['production_date'])
+        for bucket, keys in (('equipment', ('device_no', 'robot_no')), ('devices', ('device_no',))):
+            groups[bucket].sort(key=lambda row: tuple((row[key] is not None, row[key] or 0) for key in keys))
+        return groups['summary'][0], groups['daily'], groups['equipment'], groups['devices'], groups['association'][0]
+
     def jobs(self, session: WeldingSession, query: WeldingQuery, *, limit: int | None = None, total: int | None = None) -> tuple[list[dict], int]:
         where, values = job_conditions(query)
         if total is None:
@@ -262,30 +309,80 @@ class WeldingRepository:
         return rows, total
 
     @staticmethod
-    def part_conditions(query: WeldingQuery) -> tuple[str, tuple]:
-        # State on this page belongs to the part, not to the job that establishes involvement.
-        job_query = query.model_copy(update={'state': None})
-        where, values = job_conditions(job_query)
-        related = f'p.serial_number = j.serial_number AND {valid_serial("p.serial_number")}'
-        conditions = f'EXISTS (SELECT 1 FROM weld_info_table j WHERE {where} AND {related})'
+    def part_filters(query: WeldingQuery) -> tuple[str, tuple]:
+        clauses, values = [], []
         for name in ('project_no', 'section_no', 'part_no', 'state'):
             value = query.part_state if name == 'state' else getattr(query, name)
             if value is not None and value != '':
-                conditions += f' AND p.{name} = %s'
-                values += (value,)
+                clauses.append(f'p.{name} = %s')
+                values.append(value)
+        return ' AND '.join(clauses), tuple(values)
+
+    @staticmethod
+    def part_conditions(query: WeldingQuery) -> tuple[str, tuple]:
+        # State on this page belongs to the part, not to the job that establishes involvement.
+        where, values = job_conditions(query.model_copy(update={'state': None}))
+        related = f'p.serial_number = j.serial_number AND {valid_serial("p.serial_number")}'
+        conditions = f'EXISTS (SELECT 1 FROM weld_info_table j WHERE {where} AND {related})'
+        own, own_values = WeldingRepository.part_filters(query)
+        if own:
+            conditions += f' AND {own}'
+            values += own_values
         return conditions, values
 
+    @staticmethod
+    def part_scope(query: WeldingQuery) -> tuple[str, tuple]:
+        where, values = job_conditions(query.model_copy(update={'state': None}), 'part_job')
+        fields = ', '.join(f'source_part.{field}' for field in PART_FIELDS.split(', '))
+        # Keep every owner of an involved serial until after ownership is counted.
+        return (f'''WITH involved AS (
+            SELECT part_job.serial_number, MAX({valid_time('part_job.end_time')}) AS has_valid_job
+            FROM weld_info_table part_job WHERE {where} GROUP BY part_job.serial_number),
+            scoped_parts AS (SELECT {fields}, i.has_valid_job FROM weld_part_info_table source_part
+                JOIN involved i ON i.serial_number = source_part.serial_number
+                WHERE {valid_serial('source_part.serial_number')} LIMIT 18446744073709551615)''', values)
+
+    def part_statistics(self, session: WeldingSession, query: WeldingQuery) -> tuple[list[dict], dict]:
+        scope, values = self.part_scope(query)
+        own, own_values = self.part_filters(query)
+        sql = f'''{scope}, owners AS (SELECT serial_number, COUNT(*) AS owner_count FROM scoped_parts GROUP BY serial_number)
+            SELECT 'totals' AS bucket, NULL AS project_no, NULL AS project_name, NULL AS part_count, NULL AS cumulative_actual_length_m,
+                COUNT(*) AS part_row_count,
+                COALESCE(SUM(CASE WHEN p.reality_lenght >= 0 THEN p.reality_lenght ELSE 0 END), 0) / 1000 AS part_actual_length_m,
+                COALESCE(SUM(o.owner_count > 1), 0) AS ambiguous_part_rows,
+                COALESCE(SUM(CASE WHEN p.used_time < 0 OR p.weld_used_time < 0 OR p.weld_used_time > p.used_time
+                    OR p.weld_rate < 0 OR p.weld_rate > 1 OR p.arc_rate < 0 OR p.arc_rate > 1 THEN 1 ELSE 0 END), 0) AS invalid_part_rows
+                FROM scoped_parts p JOIN owners o ON o.serial_number = p.serial_number WHERE {own or '1=1'}
+            UNION ALL
+            SELECT * FROM (SELECT 'project' AS bucket, p.project_no, MIN(p.project_name) AS project_name, COUNT(*) AS part_count,
+                SUM(CASE WHEN p.reality_lenght >= 0 THEN p.reality_lenght ELSE 0 END) / 1000 AS cumulative_actual_length_m,
+                NULL AS part_row_count, NULL AS part_actual_length_m, NULL AS ambiguous_part_rows, NULL AS invalid_part_rows
+                FROM scoped_parts p JOIN owners o ON o.serial_number = p.serial_number
+                WHERE p.has_valid_job AND o.owner_count = 1
+                GROUP BY p.project_no ORDER BY part_count DESC, p.project_no LIMIT 101) projects
+            ORDER BY bucket DESC, part_count DESC, project_no'''
+        rows = session.fetch(sql, (*values, *own_values), limit=102)
+        total_row = next(row for row in rows if row['bucket'] == 'totals')
+        totals = {key: total_row[key] for key in ('part_row_count', 'part_actual_length_m', 'ambiguous_part_rows', 'invalid_part_rows')}
+        if totals['ambiguous_part_rows']:
+            totals['part_actual_length_m'] = None
+        projects = [{key: row[key] for key in ('project_no', 'project_name', 'part_count', 'cumulative_actual_length_m')}
+                    for row in rows if row['bucket'] == 'project']
+        return projects, totals
+
     def parts(self, session: WeldingSession, query: WeldingQuery, *, limit: int | None = None, total: int | None = None) -> tuple[list[dict], int]:
-        conditions, values = self.part_conditions(query)
+        scope, values = self.part_scope(query)
+        own, own_values = self.part_filters(query)
+        values += own_values
         if total is None:
-            total = session.fetch(f'SELECT COUNT(*) AS total FROM weld_part_info_table p WHERE {conditions}', values, limit=1)[0]['total']
+            total = session.fetch(f'{scope}\nSELECT COUNT(*) AS total FROM scoped_parts p WHERE {own or "1=1"}', values, limit=1)[0]['total']
         if limit is not None and total >= limit:
             return [], total
         size = limit if limit is not None else query.page_size
         offset = 0 if limit is not None else (query.page - 1) * size
         column = {'time': 'end_time', 'length': 'reality_lenght', 'id': 'id'}[query.sort_by]
         direction = 'DESC' if query.descending else 'ASC'
-        rows = session.fetch(f'SELECT {PART_FIELDS} FROM weld_part_info_table p WHERE {conditions} ORDER BY {column} {direction}, id {direction} LIMIT %s OFFSET %s', (*values, size, offset), limit=size)
+        rows = session.fetch(f'{scope}\nSELECT {PART_FIELDS} FROM scoped_parts p WHERE {own or "1=1"} ORDER BY {column} {direction}, id {direction} LIMIT %s OFFSET %s', (*values, size, offset), limit=size)
         return rows, total
 
     def part(self, session: WeldingSession, part_id: int) -> dict | None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
 from contextlib import nullcontext
 from dataclasses import replace
@@ -17,9 +18,12 @@ from app.config import Settings
 from app.services.production_lines import SERVICE_LINES
 from app.database.report_snapshots import ReportKey, fingerprint
 from app.services.report_snapshots import ReportData, ReportSnapshotService
-from app.database.welding import WeldingRepository, WeldingSession, WeldingUnavailable, job_aggregate, job_conditions, job_source, valid_serial, valid_time
+from app.database.welding import WeldingRepository, WeldingSession, WeldingUnavailable, job_conditions, valid_serial, valid_time
 from app.models.domain import to_primitive
 from app.models.welding import ReportType, WeldingQuery, WELD_TYPES
+
+
+logger = logging.getLogger(__name__)
 
 
 PENDING_METRICS = {
@@ -137,7 +141,12 @@ class WeldingService:
                 info = statistics.payload['info']
                 projects, speeds, totals = statistics.payload['reports'][kind]
             else:
-                info = repo.source_info(session)
+                if live:
+                    info = self._cached_statistics(('source-info', self.source_identity()),
+                        lambda: {**repo.source_info(session), 'sampled_at': datetime.now(ZoneInfo(self.settings.weld_db_timezone)).isoformat()},
+                        ttl=max(30, self.settings.report_background_refresh_seconds))
+                else:
+                    info = repo.source_info(session)
                 filters = query.model_dump(mode='json', exclude={'page', 'page_size', 'sort_by', 'descending'})
                 key = json.dumps({'filters': filters, 'source': to_primitive(info)}, sort_keys=True)
                 use_cache = not force and not live and export_limit is None and any(value is not None for value in info['updated_at'].values())
@@ -179,6 +188,9 @@ class WeldingService:
             meta['quality']['invalid_part_rows'] = summary['invalid_part_rows']
             meta['notices'].append(f'当前涉及工件中有{summary["invalid_part_rows"]}条比率或耗时关系异常候选；原始明细保留，不据此判定质量。')
         meta['notices'].append('项目图仅包含流水号归属唯一且有有效区间作业的工件；歧义关联不自动合并。')
+        if info.get('sampled_at'):
+            meta['source_info_as_of'] = info['sampled_at']
+            meta['notices'].append('源表最新更新时间和设备目录按后台刷新间隔采样；业务统计仍按本次源事务计算。')
         if association['ambiguous']:
             meta['notices'].append(f'当前有{association["ambiguous"]}个参与流水号存在多条工件归属，相关累计指标及下钻需核实。')
         payload = to_primitive({'report_type': kind, 'query': query.model_dump(mode='json'), 'summary': summary,
@@ -255,6 +267,10 @@ class WeldingService:
         return self.dashboard(query) if report_type == 'dashboard' else self.page(report_type, query)
 
     def refresh_summary(self, report_type: str, query: dict, *, requested_at: float | None = None) -> None:
+        # Upgrade queues can still contain aggregate packs that no page reads anymore.
+        if requested_at is not None and report_type in ('statistics', 'daily', 'jobs', 'parts', 'equipment'):
+            logger.info('skipping superseded welding statistics refresh: report_type=%s', report_type)
+            return
         if (report_type == 'dashboard' or report_type.startswith('page:')) and requested_at is None:
             requested_at = time()
         self.fetch_summary(report_type, query, force=True, requested_at=requested_at)
@@ -268,13 +284,13 @@ class WeldingService:
         return [(self.snapshot_service.task_payload(self._snapshot_key(query, kind)),
                  max(30, self.settings.report_background_refresh_seconds)) for query, kind in queries]
 
-    def _cached_statistics(self, key: tuple[str, str], load: Callable[[], Any], *, use_cache: bool = True) -> Any:
+    def _cached_statistics(self, key: tuple[str, str], load: Callable[[], Any], *, use_cache: bool = True, ttl: float = 30) -> Any:
         if not use_cache:
             return load()
         # shortcut: source MAX(update_date) is a watermark, not CDC; expire after 30s until a reliable source revision exists.
         with self._statistics_lock:
             cached = self._statistics.get(key)
-            if cached and monotonic() - cached[0] < 30:
+            if cached and monotonic() - cached[0] < ttl:
                 self._statistics.move_to_end(key)
                 return deepcopy(cached[1])
         value = load()
@@ -286,46 +302,22 @@ class WeldingService:
         return value
 
     def _common_statistics(self, session: WeldingSession, query: WeldingQuery) -> tuple[dict, list[dict], list[dict], list[dict], dict]:
-        repo = self.repository
-        summary = summary_values(repo.summary(session, query))
-        daily = [summary_values(row) for row in repo.daily(session, query)]
-        equipment = [summary_values(row) for row in repo.equipment(session, query)]
+        summary, daily, equipment, devices, association = self.repository.statistics(session, query)
         if len(equipment) > 10000:
             raise ValueError('设备机器人工位组合超过上限，请缩小筛选范围')
-        where, values = job_conditions(query)
-        source, source_values = job_source(query)
-        devices = session.fetch(f'SELECT j.device_no, {job_aggregate()} FROM {source} GROUP BY j.device_no ORDER BY j.device_no LIMIT 1001', source_values, limit=1001)
-        association = session.fetch(
-            f'SELECT COUNT(CASE WHEN p.owners IS NULL THEN 1 END) AS unlinked, '
-            f'COUNT(CASE WHEN p.owners > 1 THEN 1 END) AS ambiguous '
-            f'FROM (SELECT DISTINCT j.serial_number FROM weld_info_table j WHERE {where} '
-            f'AND {valid_serial("j.serial_number")} AND {valid_time("j.end_time")}) involved '
-            f'LEFT JOIN (SELECT serial_number, COUNT(*) AS owners FROM weld_part_info_table '
-            f'GROUP BY serial_number) p ON p.serial_number = involved.serial_number', values, limit=1)[0]
-        return summary, daily, equipment, devices, association
+        if len(devices) > 1000:
+            raise WeldingUnavailable('源库设备目录超过支持范围，请联系管理员核查')
+        return summary_values(summary), [summary_values(row) for row in daily], [summary_values(row) for row in equipment], devices, association
 
     def _report_statistics(self, session: WeldingSession, kind: ReportType, query: WeldingQuery) -> tuple[list[dict], list[dict], dict]:
         repo = self.repository
         where, values = job_conditions(query)
         projects = []
         if kind == 'parts':
-            # Group ownership once; repeated jobs must not multiply part counts or cumulative lengths.
-            owners = '(SELECT serial_number, COUNT(*) AS owner_count FROM weld_part_info_table GROUP BY serial_number) owners'
-            projects = session.fetch(
-                f'SELECT p.project_no, MIN(p.project_name) AS project_name, COUNT(*) AS part_count, '
-                f'SUM(CASE WHEN p.reality_lenght >= 0 THEN p.reality_lenght ELSE 0 END) / 1000 AS cumulative_actual_length_m '
-                f'FROM (SELECT DISTINCT j.serial_number FROM weld_info_table j WHERE {where} AND {valid_time("j.end_time")}) involved '
-                f'JOIN {owners} ON owners.serial_number = involved.serial_number AND owners.owner_count = 1 '
-                f'JOIN weld_part_info_table p ON p.serial_number = owners.serial_number '
-                f'WHERE {valid_serial("p.serial_number")} GROUP BY p.project_no ORDER BY part_count DESC, p.project_no LIMIT 101', values, limit=101)
+            projects, totals = repo.part_statistics(session, query)
+            return projects, [], totals
         speeds = session.fetch(f"SELECT CASE WHEN j.weld_speed IS NULL OR j.weld_speed <= 0 THEN '未记录或无效' WHEN j.weld_speed < 300 THEN '<300' WHEN j.weld_speed < 600 THEN '300–599' ELSE '≥600' END AS speed_band, COUNT(*) AS job_count FROM weld_info_table j WHERE {where} AND {valid_time('j.end_time')} GROUP BY speed_band ORDER BY speed_band", values, limit=5) if kind == 'jobs' else []
-        totals = {}
-        if kind == 'parts':
-            part_conditions, part_values = repo.part_conditions(query)
-            totals = session.fetch(f'SELECT COUNT(*) AS part_row_count, COALESCE(SUM(CASE WHEN p.reality_lenght >= 0 THEN p.reality_lenght ELSE 0 END), 0) / 1000 AS part_actual_length_m, COALESCE(SUM(owners.owner_count > 1), 0) AS ambiguous_part_rows, COALESCE(SUM(CASE WHEN p.used_time < 0 OR p.weld_used_time < 0 OR p.weld_used_time > p.used_time OR p.weld_rate < 0 OR p.weld_rate > 1 OR p.arc_rate < 0 OR p.arc_rate > 1 THEN 1 ELSE 0 END), 0) AS invalid_part_rows FROM weld_part_info_table p JOIN {owners} ON owners.serial_number = p.serial_number WHERE {part_conditions}', part_values, limit=1)[0]
-            if totals['ambiguous_part_rows']:
-                totals['part_actual_length_m'] = None
-        return projects, speeds, totals
+        return projects, speeds, {}
 
     @staticmethod
     def version(payload: dict) -> str:

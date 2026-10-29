@@ -55,9 +55,9 @@ def test_paging_uses_one_live_count_with_identical_predicates_and_keeps_cached_s
     original_fetch = source.fetch
     def fetch(sql, values=(), **kwargs):
         sql_calls.append((sql, values))
-        if sql.startswith('SELECT COUNT(*) AS total FROM '):
+        if sql.startswith('SELECT COUNT(*) AS total FROM ') or '\nSELECT COUNT(*) AS total FROM ' in sql:
             return [{'total': source.count}]
-        if sql.startswith(f'SELECT {JOB_FIELDS}') or sql.startswith(f'SELECT {PART_FIELDS}'):
+        if sql.startswith(f'SELECT {JOB_FIELDS}') or f'\nSELECT {PART_FIELDS} FROM ' in sql:
             return [{'id': values[-1] + 1, 'serial_number': 'part'}]
         return original_fetch(sql, values, **kwargs)
     source.fetch = fetch
@@ -76,8 +76,12 @@ def test_paging_uses_one_live_count_with_identical_predicates_and_keeps_cached_s
     assert len(sql_calls) == 2
     count_sql, count_values = sql_calls[0]
     rows_sql, row_values = sql_calls[1]
-    assert count_sql.startswith('SELECT COUNT(*) AS total')
-    assert count_sql.split(' WHERE ', 1)[1] == rows_sql.split(' WHERE ', 1)[1].rsplit(' ORDER BY ', 1)[0]
+    if kind == 'jobs':
+        assert count_sql.startswith('SELECT COUNT(*) AS total')
+        assert count_sql.split(' WHERE ', 1)[1] == rows_sql.split(' WHERE ', 1)[1].rsplit(' ORDER BY ', 1)[0]
+    else:
+        assert count_sql.split('\nSELECT', 1)[0] == rows_sql.split('\nSELECT', 1)[0]
+        assert count_sql.rsplit(' WHERE ', 1)[1] == rows_sql.rsplit(' WHERE ', 1)[1].rsplit(' ORDER BY ', 1)[0]
     assert row_values[:-2] == count_values
     assert row_values[-2:] == (1, 1)
     assert ('j.state = %s' if kind == 'jobs' else 'p.state = %s') in rows_sql
@@ -176,7 +180,7 @@ def test_stale_aggregate_survives_outage_and_failed_worker_refresh(configured):
     forced = service.report('daily', query(), force=True)
     assert forced['meta']['report_data']['refresh_failed']
     with pytest.raises(WeldingUnavailable):
-        service.refresh_summary('statistics', query().model_dump(mode='json'), requested_at=old.refreshed_at.timestamp() + 1)
+        service.fetch_summary('statistics', query(), force=True, requested_at=old.refreshed_at.timestamp() + 1)
     assert snapshots.get(service._snapshot_key(query())).data_version == old.data_version
     # Never disguise a failed live detail query as a successful empty table.
     with pytest.raises(WeldingUnavailable):
@@ -352,6 +356,30 @@ def test_page_queue_rejection_is_distinct_from_preparation_and_retains_available
     assert not report['meta']['report_data']['refreshing']
 
 
+def test_page_refreshes_share_sampled_source_info_without_reusing_old_business_statistics(configured, monkeypatch):
+    cfg, _, _, source, service = configured
+    clock = [0]
+    monkeypatch.setattr('app.services.welding_service.monotonic', lambda: clock[0])
+    service.refresh_summary('page:daily', query().model_dump(mode='json'))
+    first = service.page('daily', query())
+    source.count = 9
+    source.revision = '2026-10-28 10:00:00'
+    service.refresh_summary('page:jobs', query().model_dump(mode='json'))
+    second = service.page('jobs', query())
+    assert source.calls['source'] == 1, 'global watermarks and catalog are shared across page refreshes'
+    assert second['summary']['job_count'] == 9 and first['summary']['job_count'] == 3
+    assert second['meta']['source_info_as_of'] == first['meta']['source_info_as_of']
+    assert second['meta']['data_updated_at']['jobs'] != source.revision
+    clock[0] = max(30, cfg.report_background_refresh_seconds)
+    service.refresh_summary('page:equipment', query().model_dump(mode='json'))
+    third = service.page('equipment', query())
+    assert source.calls['source'] == 2
+    assert third['meta']['data_updated_at']['jobs'] == source.revision
+    # Export remains a new source read and never consumes sampled page metadata.
+    service.report('daily', query(), export_limit=100)
+    assert source.calls['source'] == 3
+
+
 def test_exports_bypass_snapshots_and_do_not_replace_current_page_version(configured):
     _, _, _, source, service = configured
     first = service.report('jobs', query())
@@ -430,7 +458,7 @@ def test_existing_configuration_controls_current_history_and_filtered_freshness(
         assert changed.source_identity() != service.source_identity()
 
 
-def test_periodic_worker_reuses_fresh_web_statistics_but_manual_refresh_recomputes(configured):
+def test_obsolete_worker_statistics_do_not_recompute_but_direct_manual_refresh_still_does(configured):
     _, snapshots, _, source, service = configured
     from time import time
     service.report('daily', query())
@@ -439,6 +467,57 @@ def test_periodic_worker_reuses_fresh_web_statistics_but_manual_refresh_recomput
     assert source.calls['summary'] == 1
     expire(service, snapshots, query())
     service.refresh_summary('statistics', query().model_dump(mode='json'), requested_at=time())
-    assert source.calls['summary'] == 2
+    assert source.calls['summary'] == 1
     service.report('daily', query(), force=True)
-    assert source.calls['summary'] == 3
+    assert source.calls['summary'] == 2
+
+
+@pytest.mark.parametrize('kind', ['statistics', 'daily', 'jobs', 'parts', 'equipment'])
+def test_legacy_refresh_tasks_are_skipped_before_opening_mysql(configured, kind, caplog):
+    from time import time
+    _, snapshots, _, source, service = configured
+    source.down = True
+    with caplog.at_level('INFO', logger='app.services.welding_service'):
+        service.refresh_summary(kind, query().model_dump(mode='json'), requested_at=time())
+    assert not source.calls
+    assert snapshots.get(service._snapshot_key(query(), kind)) is None
+    assert f'skipping superseded welding statistics refresh: report_type={kind}' in caplog.text
+
+
+def test_upgrade_drains_old_aggregate_tasks_before_building_the_new_homepage(configured, caplog):
+    cfg, _, _, _, _ = configured
+    runtime = build_runtime(cfg, role='worker')
+    current = database_context(runtime)
+    source = Source()
+    current.welding.repository = source
+    service = current.welding
+    queue = runtime.coordination
+    for start in (date(2026, 10, 1), date(2026, 10, 22), date(2026, 10, 28)):
+        selected = WeldingQuery(start=start, end=date(2026, 10, 28))
+        queue.request_snapshot_refresh('welding', service.snapshot_service.task_payload(service._snapshot_key(selected)))
+    process = WorkerProcess(cfg, runtime)
+    process.owner = queue.acquire('worker', ttl=30)
+    try:
+        process._schedule()
+        with caplog.at_level('INFO'), process.scope():
+            for _ in range(3):
+                task = queue.claim_task(process.owner, analysis=False)
+                assert task['payload']['report_type'] == 'statistics'
+                process._execute(task)
+                process._flush_completions()
+                assert not source.calls, 'old month/week/today packs must not delay page snapshots with source queries'
+            task = queue.claim_task(process.owner, analysis=False)
+            assert task['payload']['report_type'] == 'dashboard'
+            process._execute(task)
+            process._flush_completions()
+        assert source.calls['sessions'] == 1 and source.calls['summary'] == 2
+        report = service.dashboard(WeldingQuery.model_validate(task['payload']['query']))
+        assert report['today']['job_count'] == 3
+        assert report['meta']['report_data']['source'] == 'snapshot'
+        with queue.connect() as connection:
+            completed = connection.execute("SELECT COUNT(*) FROM background_tasks WHERE kind='report_snapshot_refresh' AND status='completed'").fetchone()[0]
+        assert completed == 4
+        assert 'report_type=dashboard outcome=completed elapsed_ms=' in caplog.text
+        assert caplog.text.count('skipping superseded welding statistics refresh') == 3
+    finally:
+        process.stop()

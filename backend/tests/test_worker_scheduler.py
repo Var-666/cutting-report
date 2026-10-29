@@ -77,6 +77,25 @@ def test_task_failure_retries_after_backoff_and_stale_owner_cannot_finish(tmp_pa
     assert repository.task_counts() == {"completed": 1}
 
 
+@pytest.mark.parametrize('payload', [{}, {'report_type': 'dashboard', 'query': None}])
+def test_malformed_snapshot_task_is_recorded_as_failed_without_breaking_completion(tmp_path, payload, caplog):
+    process = WorkerProcess(configuration(tmp_path))
+    queue = process.repository
+    process.owner = queue.acquire('worker', ttl=30)
+    queue.enqueue('report_snapshot_refresh', 'welding', payload)
+    try:
+        task = queue.claim_task(process.owner, analysis=False)
+        with caplog.at_level('INFO'), process.scope():
+            process._execute(task)
+            process._flush_completions()
+        assert queue.task_counts() == {'deferred': 1}
+        assert 'outcome=failed elapsed_ms=' in caplog.text
+        with queue.connect() as connection:
+            assert connection.execute('SELECT last_error FROM background_tasks').fetchone()[0]
+    finally:
+        process.stop()
+
+
 def test_process_migration_backs_up_and_preserves_legacy_business_rows(tmp_path):
     configured = configuration(tmp_path)
     legacy = build_runtime(configured, role="worker")

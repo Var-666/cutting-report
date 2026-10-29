@@ -135,6 +135,13 @@ class WeldingSource(WeldingRepository):
     def equipment(self, *_):
         return [] if self.empty else [{'device_no': 0, 'robot_no': None, **self.metrics}]
 
+    def statistics(self, session, query):
+        devices = [] if self.empty else [{'device_no': 0, **self.metrics}]
+        return self.summary(session, query), self.daily(session, query), self.equipment(session, query), devices, {'unlinked': 0, 'ambiguous': 0}
+
+    def part_statistics(self, session, query):
+        return [], {'part_row_count': 0 if self.empty else 1, 'part_actual_length_m': None, 'ambiguous_part_rows': 0, 'invalid_part_rows': 0}
+
     def source_info(self, *_):
         return {'devices': [0], 'updated_at': {'weld_info_table': None}}
 

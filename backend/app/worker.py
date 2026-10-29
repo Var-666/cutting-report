@@ -154,7 +154,15 @@ class WorkerProcess:
     @background_llm_work()
     def _execute(self, task: dict) -> None:
         error = None
+        started = monotonic()
+        snapshot = task['kind'] == 'report_snapshot_refresh'
+        report_type = None
         try:
+            if snapshot:
+                report_type = task['payload'].get('report_type')
+                logger.info('report snapshot refresh started: task=%s device=%s report_type=%s start=%s end=%s',
+                            task['task_id'], task['device_id'], report_type,
+                            task['payload'].get('query', {}).get('start'), task['payload'].get('query', {}).get('end'))
             if task["kind"].startswith("analysis_"):
                 priority = Event()
                 priority.set()
@@ -166,6 +174,10 @@ class WorkerProcess:
             error = type(exc).__name__
             logger.exception("background task failed: task=%s kind=%s device=%s", task["task_id"], task["kind"], task["device_id"])
         finally:
+            if snapshot:
+                logger.info('report snapshot refresh finished: task=%s device=%s report_type=%s outcome=%s elapsed_ms=%s',
+                            task['task_id'], task['device_id'], report_type,
+                            'failed' if error else 'completed', round((monotonic() - started) * 1000))
             with self._lock:
                 self._completed.append((task, error))
 

@@ -32,6 +32,7 @@ FILES = (
     "docs/deployment/WEB_WORKER进程隔离升级说明.md",
     "docs/deployment/配置参考.md", "docs/project/功能与接口参考.md",
     "docs/project/multi-device-isolation.md",
+    "docs/project/multi-line-report-data.md",
     "docs/project/welding-integration.md",
     "docs/project/changelog.md",
     "scripts/README.md", "scripts/check_energy.py",

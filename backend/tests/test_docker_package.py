@@ -92,6 +92,7 @@ def test_source_package_keeps_soybean_build_configuration_and_license(tmp_path):
     assert payload["licenses/pinia/LICENSE"] == b"pinia license"
     assert payload['scripts/check_welding.py'] == b'fixture'
     assert payload['docs/project/welding-integration.md'] == b'fixture'
+    assert payload['docs/project/multi-line-report-data.md'] == b'fixture'
     assert payload['backend/app/api/welding.py'] == b'fixture'
     for name in ("docs/deployment/配置参考.md", "docs/project/功能与接口参考.md", "docs/project/changelog.md"):
         assert payload[name] == b"fixture"

@@ -103,6 +103,7 @@ export type WeldingRow = WeldingRows[WeldingReportType] | WeldingSeamRow
 export interface WeldingMeta {
   report_data?: ReportDataMeta
   calculated_at: string
+  source_info_as_of?: string
   data_updated_at: Record<string, string | null>
   devices: number[]
   pending_metrics: Record<string, string>

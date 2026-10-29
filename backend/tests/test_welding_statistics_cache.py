@@ -49,6 +49,12 @@ class Repository(WeldingRepository):
         self.calls['equipment'] += 1
         return []
 
+    def statistics(self, session, query):
+        return self.summary(session, query), self.daily(session, query), self.equipment(session, query), [], {'unlinked': 0, 'ambiguous': 0}
+
+    def part_statistics(self, session, query):
+        return [], {'part_row_count': 3, 'ambiguous_part_rows': 0, 'invalid_part_rows': 0, 'part_actual_length_m': 2}
+
     def jobs(self, session, query, *, limit, total):
         self.calls['jobs'] += 1
         assert total == 3
@@ -141,7 +147,7 @@ def test_parts_reuse_cached_count_with_the_same_bound_predicate():
     class Session:
         def fetch(self, sql, values, **kwargs):
             calls.append((sql, values))
-            return [{'total': 3}] if sql.startswith('SELECT COUNT(*)') else [{'id': 2}]
+            return [{'total': 3}] if '\nSELECT COUNT(*)' in sql else [{'id': 2}]
     repo = WeldingRepository(None)
     selected = query(page=2, page_size=1, part_state=0, project_no='project')
     assert repo.parts(Session(), selected, total=3) == ([{'id': 2}], 3)
