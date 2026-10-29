@@ -8,7 +8,8 @@ import { changeDevice, deviceSelection, loadDevices } from '../state/devices.ts'
 
 const router = createRouter({
   history: createWebHistory(),
-  scrollBehavior: () => {
+  scrollBehavior: (to, from) => {
+    if (to.path === from.path) return false
     document.querySelector('.soybean-layout main')?.scrollTo({ top: 0 })
     return { top: 0 }
   },

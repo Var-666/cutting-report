@@ -286,11 +286,11 @@ onBeforeUnmount(() => {
     />
   </section>
 
-  <div v-if="error" class="global-error" role="alert"><strong>操作未完成</strong><span>{{ error }}，请检查报表条件后重试。</span><button type="button" @click="error = ''">关闭</button></div>
+  <div v-if="error" class="global-error" role="alert"><strong>操作未完成</strong><span>{{ error }}，请检查报表条件后重试。</span><NButton attr-type="button" @click="error = ''">关闭</NButton></div>
   <ReportJobStatus :job="currentJob" />
 
   <section class="panel history-panel">
-    <div class="panel-title"><div><span>02</span><h2>最近生成报告</h2></div><button class="text-button" :disabled="loadingHistory" @click="loadHistory(historyPage, true)">刷新列表</button></div>
+    <div class="panel-title"><div><span>02</span><h2>最近生成报告</h2></div><NButton class="text-button" :disabled="loadingHistory" @click="loadHistory(historyPage, true)">刷新列表</NButton></div>
     <ReportTable
       :items="history"
       :loading="loadingHistory"

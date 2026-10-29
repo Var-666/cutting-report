@@ -180,37 +180,37 @@ onMounted(() => Promise.all([loadStatus(), loadConfiguration()]))
       <div class="configuration-switches">
         <template v-if="!weldingScope">
         <label><span>生产数据模式</span><AppSelect v-model="databaseConfiguration.data_source_mode" name="data_source_mode" @change="hasUnsavedChanges = true"><option value="demo">演示数据</option><option value="sqlserver">SQL Server</option></AppSelect></label>
-        <label class="check-label"><input v-model="databaseConfiguration.worker_database_auth_enabled" name="worker_database_auth_enabled" type="checkbox" /><span>启用工人 HR 库登录</span></label>
-        <label class="check-label"><input v-model="databaseConfiguration.file_database_enabled" name="file_database_enabled" type="checkbox" /><span>启用切割文件库</span></label>
+        <NCheckbox v-model:checked="databaseConfiguration.worker_database_auth_enabled" name="worker_database_auth_enabled" @update:checked="hasUnsavedChanges = true" class="check-label"><span>启用工人 HR 库登录</span></NCheckbox>
+        <NCheckbox v-model:checked="databaseConfiguration.file_database_enabled" name="file_database_enabled" @update:checked="hasUnsavedChanges = true" class="check-label"><span>启用切割文件库</span></NCheckbox>
         </template>
-        <label v-if="databaseConfiguration.welding" class="check-label"><input v-model="databaseConfiguration.welding.enabled" type="checkbox" name="weld_enabled" /><span>启用焊接产线</span></label>
+        <NCheckbox v-model:checked="databaseConfiguration.welding.enabled" name="weld_enabled" @update:checked="hasUnsavedChanges = true" v-if="databaseConfiguration.welding" class="check-label"><span>启用焊接产线</span></NCheckbox>
       </div>
       <div class="saved-source-grid" :class="{ 'saved-source-grid--welding': weldingScope }">
         <template v-if="!weldingScope">
         <fieldset v-for="source in configurationSources" :key="source.key">
           <legend><strong>{{ source.label }}</strong><small>{{ source.description }}</small></legend>
-          <label><span>服务器地址</span><input v-model.trim="databaseConfiguration[source.key].host" :name="`${source.key}_host`" autocomplete="off" spellcheck="false" placeholder="例如：10.0.0.20…" /></label>
-          <label><span>端口</span><input v-model.number="databaseConfiguration[source.key].port" :name="`${source.key}_port`" type="number" inputmode="numeric" autocomplete="off" min="1" max="65535" /></label>
-          <label><span>数据库名称</span><input v-model.trim="databaseConfiguration[source.key].database" :name="`${source.key}_database`" autocomplete="off" spellcheck="false" /></label>
-          <label><span>只读账号</span><input v-model.trim="databaseConfiguration[source.key].username" :name="`${source.key}_username`" autocomplete="off" spellcheck="false" /></label>
-          <label><span>密码</span><input v-model="databaseConfiguration[source.key].password" :name="`${source.key}_password`" type="password" autocomplete="new-password" :placeholder="databaseConfiguration[source.key].password_configured ? '已配置，留空则保留原密码…' : '请输入只读密码…'" /></label>
-          <label><span>ODBC 驱动</span><input v-model.trim="databaseConfiguration[source.key].driver" :name="`${source.key}_driver`" autocomplete="off" spellcheck="false" /></label>
-          <div class="saved-connection-options"><label class="check-label"><input v-model="databaseConfiguration[source.key].encrypt" :name="`${source.key}_encrypt`" type="checkbox" /><span>加密连接</span></label><label class="check-label"><input v-model="databaseConfiguration[source.key].trust_server_certificate" :name="`${source.key}_trust_certificate`" type="checkbox" /><span>信任服务器证书</span></label></div>
+          <label><span>服务器地址</span><NInput v-model:value.trim="databaseConfiguration[source.key].host" :name="`${source.key}_host`" autocomplete="off" spellcheck="false" placeholder="例如：10.0.0.20…" :input-props="{ 'name': `${source.key}_host`, 'autocomplete': 'off', 'spellcheck': false }" /></label>
+          <label><span>端口</span><NInputNumber v-model:value="databaseConfiguration[source.key].port" :name="`${source.key}_port`" inputmode="numeric" autocomplete="off" :min="1" :max="65535" :input-props="{ 'name': `${source.key}_port`, 'inputmode': 'numeric', 'autocomplete': 'off' }" @update:value="hasUnsavedChanges = true" :precision="0" /></label>
+          <label><span>数据库名称</span><NInput v-model:value.trim="databaseConfiguration[source.key].database" :name="`${source.key}_database`" autocomplete="off" spellcheck="false" :input-props="{ 'name': `${source.key}_database`, 'autocomplete': 'off', 'spellcheck': false }" /></label>
+          <label><span>只读账号</span><NInput v-model:value.trim="databaseConfiguration[source.key].username" :name="`${source.key}_username`" autocomplete="off" spellcheck="false" :input-props="{ 'name': `${source.key}_username`, 'autocomplete': 'off', 'spellcheck': false }" /></label>
+          <label><span>密码</span><NInput v-model:value="databaseConfiguration[source.key].password" :name="`${source.key}_password`" type="password" show-password-on="click" autocomplete="new-password" :placeholder="databaseConfiguration[source.key].password_configured ? '已配置，留空则保留原密码…' : '请输入只读密码…'" :input-props="{ 'name': `${source.key}_password`, 'autocomplete': 'new-password' }" /></label>
+          <label><span>ODBC 驱动</span><NInput v-model:value.trim="databaseConfiguration[source.key].driver" :name="`${source.key}_driver`" autocomplete="off" spellcheck="false" :input-props="{ 'name': `${source.key}_driver`, 'autocomplete': 'off', 'spellcheck': false }" /></label>
+          <div class="saved-connection-options"><NCheckbox v-model:checked="databaseConfiguration[source.key].encrypt" :name="`${source.key}_encrypt`" @update:checked="hasUnsavedChanges = true" class="check-label"><span>加密连接</span></NCheckbox><NCheckbox v-model:checked="databaseConfiguration[source.key].trust_server_certificate" :name="`${source.key}_trust_certificate`" @update:checked="hasUnsavedChanges = true" class="check-label"><span>信任服务器证书</span></NCheckbox></div>
         </fieldset>
         </template>
       <fieldset v-if="databaseConfiguration.welding" class="welding-connection">
         <legend><strong>小组立焊接线 · MySQL</strong><small>焊接生产数据 · 独立只读连接</small></legend>
-          <label><span>服务器地址</span><input v-model.trim="databaseConfiguration.welding.host" name="weld_host" autocomplete="off" :required="databaseConfiguration.welding.enabled" placeholder="请输入地址，例如 10.147.1.21" /></label>
-          <label><span>实际端口</span><input v-model.number="databaseConfiguration.welding.port" name="weld_port" type="number" min="1" max="65535" /></label>
-          <label><span>数据库</span><input v-model.trim="databaseConfiguration.welding.database" name="weld_database" :required="databaseConfiguration.welding.enabled" autocomplete="off" /></label>
-          <label><span>只读账号</span><input v-model.trim="databaseConfiguration.welding.username" name="weld_username" :required="databaseConfiguration.welding.enabled" autocomplete="off" /></label>
-          <label><span>密码</span><input v-model="databaseConfiguration.welding.password" name="weld_password" type="password" :required="databaseConfiguration.welding.enabled && !databaseConfiguration.welding.password_configured" autocomplete="new-password" :placeholder="databaseConfiguration.welding.password_configured ? '已配置，留空保留原密码' : '请输入只读密码'" /></label>
-          <label><span>生产时区</span><input v-model.trim="databaseConfiguration.welding.timezone" name="weld_timezone" autocomplete="off" /></label>
+          <label><span>服务器地址</span><NInput v-model:value.trim="databaseConfiguration.welding.host" name="weld_host" autocomplete="off" :required="databaseConfiguration.welding.enabled" placeholder="请输入地址，例如 10.147.1.21" :input-props="{ 'name': 'weld_host', 'autocomplete': 'off', 'required': databaseConfiguration.welding.enabled }" /></label>
+          <label><span>实际端口</span><NInputNumber v-model:value="databaseConfiguration.welding.port" name="weld_port" :min="1" :max="65535" :input-props="{ 'name': 'weld_port' }" @update:value="hasUnsavedChanges = true" :precision="0" /></label>
+          <label><span>数据库</span><NInput v-model:value.trim="databaseConfiguration.welding.database" name="weld_database" :required="databaseConfiguration.welding.enabled" autocomplete="off" :input-props="{ 'name': 'weld_database', 'required': databaseConfiguration.welding.enabled, 'autocomplete': 'off' }" /></label>
+          <label><span>只读账号</span><NInput v-model:value.trim="databaseConfiguration.welding.username" name="weld_username" :required="databaseConfiguration.welding.enabled" autocomplete="off" :input-props="{ 'name': 'weld_username', 'required': databaseConfiguration.welding.enabled, 'autocomplete': 'off' }" /></label>
+          <label><span>密码</span><NInput v-model:value="databaseConfiguration.welding.password" name="weld_password" type="password" show-password-on="click" :required="databaseConfiguration.welding.enabled && !databaseConfiguration.welding.password_configured" autocomplete="new-password" :placeholder="databaseConfiguration.welding.password_configured ? '已配置，留空保留原密码' : '请输入只读密码'" :input-props="{ 'name': 'weld_password', 'required': databaseConfiguration.welding.enabled && !databaseConfiguration.welding.password_configured, 'autocomplete': 'new-password' }" /></label>
+          <label><span>生产时区</span><NInput v-model:value.trim="databaseConfiguration.welding.timezone" name="weld_timezone" autocomplete="off" :input-props="{ 'name': 'weld_timezone', 'autocomplete': 'off' }" /></label>
       </fieldset>
       </div>
       <div class="configuration-actions">
         <span>连接测试不会保存参数；启用焊接产线后请点击“保存数据库配置”。</span>
-        <button class="primary" type="submit" :disabled="configurationSaving">{{ configurationSaving ? '正在保存' : '保存数据库配置' }}</button>
+        <NButton class="primary" attr-type="submit" :disabled="configurationSaving" type="primary" :loading="configurationSaving">{{ configurationSaving ? '正在保存' : '保存数据库配置' }}</NButton>
       </div>
     </form>
     <div v-if="configurationResult" class="inline-result success" role="status" aria-live="polite"><strong>配置已写入</strong><span>{{ configurationResult.message }}</span></div>
@@ -259,20 +259,20 @@ onMounted(() => Promise.all([loadStatus(), loadConfiguration()]))
     <div class="panel-title"><div><span>03</span><h2>连接测试</h2></div><p>凭据仅用于本次测试，不会保存</p></div>
     <div v-if="!weldingScope" class="connection-test-source"><label><span>数据库类型</span><AppSelect v-model="testSource" :disabled="testing" name="test_source"><option value="sqlserver">SQL Server</option><option value="welding">小组立焊接线 · MySQL</option></AppSelect></label></div>
     <form class="connection-form" @submit.prevent="runConnectionTest">
-      <label><span>服务器地址</span><input v-model="activeTestConnection.host" name="test_host" required placeholder="例如：192.168.1.20…" autocomplete="off" spellcheck="false" /></label>
-      <label><span>端口</span><input v-model.number="activeTestConnection.port" name="test_port" type="number" inputmode="numeric" autocomplete="off" min="1" max="65535" required /></label>
-      <label><span>数据库名称</span><input v-model="activeTestConnection.database" name="test_database" required autocomplete="off" spellcheck="false" /></label>
-      <label><span>只读账号</span><input v-model="activeTestConnection.username" name="test_username" required autocomplete="username" spellcheck="false" /></label>
-      <label><span>密码</span><input v-model="activeTestConnection.password" name="test_password" type="password" :required="!testIsWelding || !databaseConfiguration?.welding?.password_configured" :placeholder="testIsWelding && databaseConfiguration?.welding?.password_configured ? '已配置，留空使用原密码' : ''" autocomplete="current-password" /></label>
-      <label v-if="testIsWelding" class="driver-field"><span>生产时区</span><input v-model.trim="weldingConnection.timezone" name="test_timezone" required autocomplete="off" spellcheck="false" /></label>
-      <label v-else class="driver-field"><span>ODBC 驱动</span><input v-model="connection.driver" name="test_driver" required autocomplete="off" spellcheck="false" /></label>
+      <label><span>服务器地址</span><NInput v-model:value="activeTestConnection.host" name="test_host" required placeholder="例如：192.168.1.20…" autocomplete="off" spellcheck="false" :input-props="{ 'name': 'test_host', 'required': true, 'autocomplete': 'off', 'spellcheck': false }" /></label>
+      <label><span>端口</span><NInputNumber v-model:value="activeTestConnection.port" name="test_port" inputmode="numeric" autocomplete="off" :min="1" :max="65535" required :input-props="{ 'name': 'test_port', 'inputmode': 'numeric', 'autocomplete': 'off', 'required': true }" :precision="0" /></label>
+      <label><span>数据库名称</span><NInput v-model:value="activeTestConnection.database" name="test_database" required autocomplete="off" spellcheck="false" :input-props="{ 'name': 'test_database', 'required': true, 'autocomplete': 'off', 'spellcheck': false }" /></label>
+      <label><span>只读账号</span><NInput v-model:value="activeTestConnection.username" name="test_username" required autocomplete="username" spellcheck="false" :input-props="{ 'name': 'test_username', 'required': true, 'autocomplete': 'username', 'spellcheck': false }" /></label>
+      <label><span>密码</span><NInput v-model:value="activeTestConnection.password" name="test_password" type="password" show-password-on="click" :required="!testIsWelding || !databaseConfiguration?.welding?.password_configured" :placeholder="testIsWelding && databaseConfiguration?.welding?.password_configured ? '已配置，留空使用原密码' : ''" autocomplete="current-password" :input-props="{ 'name': 'test_password', 'required': !testIsWelding || !databaseConfiguration?.welding?.password_configured, 'autocomplete': 'current-password' }" /></label>
+      <label v-if="testIsWelding" class="driver-field"><span>生产时区</span><NInput v-model:value.trim="weldingConnection.timezone" name="test_timezone" required autocomplete="off" spellcheck="false" :input-props="{ 'name': 'test_timezone', 'required': true, 'autocomplete': 'off', 'spellcheck': false }" /></label>
+      <label v-else class="driver-field"><span>ODBC 驱动</span><NInput v-model:value="connection.driver" name="test_driver" required autocomplete="off" spellcheck="false" :input-props="{ 'name': 'test_driver', 'required': true, 'autocomplete': 'off', 'spellcheck': false }" /></label>
       <div v-if="!testIsWelding" class="connection-options">
-        <label class="check-label"><input v-model="connection.encrypt" name="test_encrypt" type="checkbox" /><span>加密连接</span></label>
-        <label class="check-label"><input v-model="connection.trust_server_certificate" name="test_trust_certificate" type="checkbox" /><span>信任服务器证书</span></label>
+        <NCheckbox v-model:checked="connection.encrypt" name="test_encrypt"  class="check-label"><span>加密连接</span></NCheckbox>
+        <NCheckbox v-model:checked="connection.trust_server_certificate" name="test_trust_certificate"  class="check-label"><span>信任服务器证书</span></NCheckbox>
       </div>
-      <button class="primary test-button" type="submit" :disabled="testing">
-        <span v-if="testing" class="spinner"></span>{{ testing ? '正在测试' : '测试连接' }}
-      </button>
+      <NButton class="primary test-button" attr-type="submit" :disabled="testing" type="primary" :loading="testing">
+        {{ testing ? '正在测试' : '测试连接' }}
+      </NButton>
     </form>
     <div v-if="testResult" class="inline-result success" role="status" aria-live="polite"><strong>连接成功</strong><span>{{ testResult.database }} · {{ formatCell(testResult.elapsed_ms) }} ms · 凭据未保存</span></div>
     <p v-if="testResult?.message" class="connection-test-note">{{ testResult.message }}</p>

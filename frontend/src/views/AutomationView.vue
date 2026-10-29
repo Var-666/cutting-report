@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { NTag, NTimePicker } from 'naive-ui'
+import { useConfirm } from '../composables/useConfirm.ts'
+
 import type { AutomationSchedule, AutomationStatus, EmailDelivery } from '../types/automation'
 
 import { toError } from '../utils/errors'
@@ -13,6 +16,7 @@ import AppReportTable from '../components/AppReportTable.vue'
 import EmailDeliveryResolution from '../components/EmailDeliveryResolution.vue'
 import { useUnsavedChanges } from '../composables/useUnsavedChanges.ts'
 
+const confirm = useConfirm()
 const status = ref<AutomationStatus | null>(null)
 const schedules = ref<AutomationSchedule[]>([])
 const deliveries = ref<EmailDelivery[]>([])
@@ -278,7 +282,7 @@ async function runNow(item: AutomationSchedule) {
 }
 
 async function remove(item: AutomationSchedule) {
-  if (!window.confirm(`确定删除定时任务“${item.name}”？历史发送记录会保留。`)) return
+  if (!await confirm(`确定删除定时任务“${item.name}”？历史发送记录会保留。`)) return
   try {
     await deleteAutomationSchedule(item.schedule_id)
     if (editingId.value === item.schedule_id) resetForm()
@@ -301,8 +305,8 @@ async function retry(item: EmailDelivery) {
   }
 }
 
-function openDelivery(item: EmailDelivery) {
-  if (resolutionDirty.value && !window.confirm('核对内容尚未保存，确定切换记录吗？')) return
+async function openDelivery(item: EmailDelivery) {
+  if (resolutionDirty.value && !await confirm('核对内容尚未保存，确定切换记录吗？')) return
   resolutionDirty.value = false
   selectedDelivery.value = item
 }
@@ -384,7 +388,7 @@ const deliveryTableColumns = [
         <div v-if="configurationLoading" class="empty" role="status">正在读取自动化配置…</div>
         <div v-else-if="!configurationLoaded" class="configuration-load-error" role="alert">
           <span>{{ configurationError || '自动化配置读取失败' }}</span>
-          <button type="button" @click="loadConfiguration">重新读取</button>
+          <NButton attr-type="button" @click="loadConfiguration">重新读取</NButton>
         </div>
         <form v-else class="configuration-form" @submit.prevent="submitConfiguration" @input.capture="hasUnsavedChanges = true" @change.capture="hasUnsavedChanges = true">
           <div class="configuration-notice">
@@ -395,35 +399,29 @@ const deliveryTableColumns = [
           <div class="configuration-grid">
             <fieldset class="configuration-card">
               <legend>任务引擎</legend>
-              <label class="setting-switch">
-                <span><strong>启用报表自动化</strong><small>关闭后保留计划，暂停自动执行</small></span>
-                <input v-model="configuration.automation_enabled" name="automation_enabled" type="checkbox">
-              </label>
+              <NCheckbox v-model:checked="configuration.automation_enabled" name="automation_enabled" @update:checked="hasUnsavedChanges = true"  class="setting-switch"><span><strong>启用报表自动化</strong><small>关闭后保留计划，暂停自动执行</small></span></NCheckbox>
               <div class="setting-fields two-columns">
-                <label><span>计划扫描间隔（秒）</span><input v-model.number="configuration.automation_scan_seconds" name="automation_scan_seconds" type="number" inputmode="numeric" autocomplete="off" min="1" max="3600" step="1" required><small>建议 15 秒，范围 1–3600 秒</small></label>
-                <label><span>重试基准间隔（秒）</span><input v-model.number="configuration.email_retry_base_seconds" name="email_retry_base_seconds" type="number" inputmode="numeric" autocomplete="off" min="1" max="86400" step="1" required><small>后续重试间隔逐次延长</small></label>
+                <label><span>计划扫描间隔（秒）</span><NInputNumber v-model:value="configuration.automation_scan_seconds" name="automation_scan_seconds" inputmode="numeric" autocomplete="off" :min="1" :max="3600" :step="1" required @update:value="hasUnsavedChanges = true" :input-props="{ 'name': 'automation_scan_seconds', 'inputmode': 'numeric', 'autocomplete': 'off', 'required': true }" :precision="0" /><small>建议 15 秒，范围 1–3600 秒</small></label>
+                <label><span>重试基准间隔（秒）</span><NInputNumber v-model:value="configuration.email_retry_base_seconds" name="email_retry_base_seconds" inputmode="numeric" autocomplete="off" :min="1" :max="86400" :step="1" required @update:value="hasUnsavedChanges = true" :input-props="{ 'name': 'email_retry_base_seconds', 'inputmode': 'numeric', 'autocomplete': 'off', 'required': true }" :precision="0" /><small>后续重试间隔逐次延长</small></label>
               </div>
             </fieldset>
 
             <fieldset class="configuration-card smtp-configuration-card">
               <legend>SMTP 邮件服务</legend>
-              <label class="setting-switch">
-                <span><strong>启用 SMTP 发送</strong><small>关闭时仍可编辑并保存参数</small></span>
-                <input v-model="configuration.smtp_enabled" name="smtp_enabled" type="checkbox">
-              </label>
+              <NCheckbox v-model:checked="configuration.smtp_enabled" name="smtp_enabled" @update:checked="hasUnsavedChanges = true"  class="setting-switch"><span><strong>启用 SMTP 发送</strong><small>关闭时仍可编辑并保存参数</small></span></NCheckbox>
               <div class="setting-fields smtp-fields">
-                <label class="span-two"><span>SMTP 服务器</span><input v-model.trim="configuration.smtp_host" name="smtp_host" autocomplete="off" spellcheck="false" :required="configuration.smtp_enabled" maxlength="255" placeholder="例如：mail.example.com" aria-describedby="smtp-host-hint"><small id="smtp-host-hint">填写服务器域名或 IP，不填 https:// 或网页路径。</small></label>
-                <label><span>端口</span><input v-model.number="configuration.smtp_port" name="smtp_port" type="number" inputmode="numeric" autocomplete="off" min="1" max="65535" required></label>
-                <label><span>超时（秒）</span><input v-model.number="configuration.smtp_timeout_seconds" name="smtp_timeout_seconds" type="number" inputmode="numeric" autocomplete="off" min="1" max="300" step="1" required></label>
-                <label><span>登录账号</span><input v-model.trim="configuration.smtp_username" name="smtp_username" maxlength="255" autocomplete="username" spellcheck="false" placeholder="填写邮箱账号，免认证时可留空"></label>
-                <label><span>登录密码</span><input v-model="configuration.smtp_password" name="smtp_password" type="password" maxlength="256" autocomplete="new-password" :placeholder="configuration.smtp_password_configured ? '已配置，留空保留原密码' : '邮箱密码或客户端专用密码'"></label>
-                <label><span>发件人邮箱</span><input v-model.trim="configuration.smtp_from_email" name="smtp_from_email" type="email" inputmode="email" spellcheck="false" autocomplete="off" :required="configuration.smtp_enabled" maxlength="320" placeholder="例如：reports@example.com"></label>
-                <label><span>发件人名称</span><input v-model.trim="configuration.smtp_from_name" name="smtp_from_name" autocomplete="off" maxlength="100" placeholder="例如：切割生产智能产报系统"></label>
+                <label class="span-two"><span>SMTP 服务器</span><NInput v-model:value.trim="configuration.smtp_host" name="smtp_host" autocomplete="off" spellcheck="false" :required="configuration.smtp_enabled" :maxlength="255" placeholder="例如：mail.example.com" aria-describedby="smtp-host-hint" :input-props="{ 'name': 'smtp_host', 'autocomplete': 'off', 'spellcheck': false, 'required': configuration.smtp_enabled, 'aria-describedby': 'smtp-host-hint' }" /><small id="smtp-host-hint">填写服务器域名或 IP，不填 https:// 或网页路径。</small></label>
+                <label><span>端口</span><NInputNumber v-model:value="configuration.smtp_port" name="smtp_port" inputmode="numeric" autocomplete="off" :min="1" :max="65535" required @update:value="hasUnsavedChanges = true" :input-props="{ 'name': 'smtp_port', 'inputmode': 'numeric', 'autocomplete': 'off', 'required': true }" :precision="0" /></label>
+                <label><span>超时（秒）</span><NInputNumber v-model:value="configuration.smtp_timeout_seconds" name="smtp_timeout_seconds" inputmode="numeric" autocomplete="off" :min="1" :max="300" :step="1" required @update:value="hasUnsavedChanges = true" :input-props="{ 'name': 'smtp_timeout_seconds', 'inputmode': 'numeric', 'autocomplete': 'off', 'required': true }" :precision="0" /></label>
+                <label><span>登录账号</span><NInput v-model:value.trim="configuration.smtp_username" name="smtp_username" :maxlength="255" autocomplete="username" spellcheck="false" placeholder="填写邮箱账号，免认证时可留空" :input-props="{ 'name': 'smtp_username', 'autocomplete': 'username', 'spellcheck': false }" /></label>
+                <label><span>登录密码</span><NInput v-model:value="configuration.smtp_password" name="smtp_password" type="password" show-password-on="click" :maxlength="256" autocomplete="new-password" :placeholder="configuration.smtp_password_configured ? '已配置，留空保留原密码' : '邮箱密码或客户端专用密码'" :input-props="{ 'name': 'smtp_password', 'autocomplete': 'new-password' }" /></label>
+                <label><span>发件人邮箱</span><NInput v-model:value.trim="configuration.smtp_from_email" name="smtp_from_email" inputmode="email" spellcheck="false" autocomplete="off" :required="configuration.smtp_enabled" :maxlength="320" placeholder="例如：reports@example.com" :input-props="{ 'name': 'smtp_from_email', type: 'email', 'inputmode': 'email', 'spellcheck': false, 'autocomplete': 'off', 'required': configuration.smtp_enabled }" /></label>
+                <label><span>发件人名称</span><NInput v-model:value.trim="configuration.smtp_from_name" name="smtp_from_name" autocomplete="off" :maxlength="100" placeholder="例如：切割生产智能产报系统" :input-props="{ 'name': 'smtp_from_name', 'autocomplete': 'off' }" /></label>
               </div>
               <div class="security-options">
                 <span>连接安全</span>
-                <label><input v-model="configuration.smtp_use_tls" name="smtp_use_tls" type="checkbox" @change="selectTls">STARTTLS</label>
-                <label><input v-model="configuration.smtp_use_ssl" name="smtp_use_ssl" type="checkbox" @change="selectSsl">SSL/TLS</label>
+                <NCheckbox v-model:checked="configuration.smtp_use_tls" name="smtp_use_tls" @update:checked="selectTls(); hasUnsavedChanges = true" >STARTTLS</NCheckbox>
+                <NCheckbox v-model:checked="configuration.smtp_use_ssl" name="smtp_use_ssl" @update:checked="selectSsl(); hasUnsavedChanges = true" >SSL/TLS</NCheckbox>
                 <small>按邮箱管理员提供的方式选择；两项互斥，也可都不选。</small>
               </div>
             </fieldset>
@@ -433,7 +431,7 @@ const deliveryTableColumns = [
           <div v-if="configurationError" class="configuration-feedback error" role="alert">{{ configurationError }}，请检查参数后重试。</div>
           <div class="configuration-actions">
             <span>密码不回显，留空保留已保存的密码。</span>
-            <button type="submit" class="primary" :disabled="configurationSaving">{{ configurationSaving ? '保存中…' : '保存自动化参数' }}</button>
+            <NButton attr-type="submit" class="primary" :disabled="configurationSaving" type="primary" :loading="configurationSaving">{{ configurationSaving ? '保存中…' : '保存自动化参数' }}</NButton>
           </div>
         </form>
       </section>
@@ -445,26 +443,26 @@ const deliveryTableColumns = [
         </div>
         <form class="automation-form" @submit.prevent="submit" @input.capture="hasUnsavedChanges = true" @change.capture="hasUnsavedChanges = true">
           <div class="automation-fields">
-            <label class="wide"><span>任务名称</span><input v-model.trim="form.name" name="schedule_name" autocomplete="off" required maxlength="80"></label>
+            <label class="wide"><span>任务名称</span><NInput v-model:value.trim="form.name" name="schedule_name" autocomplete="off" required :maxlength="80" :input-props="{ 'name': 'schedule_name', 'autocomplete': 'off', 'required': true }" /></label>
             <label><span>设备</span><AppSelect v-model="form.device_id" name="schedule_device" required @change="hasUnsavedChanges = true"><option v-for="item in deviceSelection.items.filter(item => !item.type || item.type === 'cutting')" :key="item.id" :value="item.id">{{ item.name }}</option></AppSelect><small>计划固定使用此设备。</small></label>
             <label><span>报表类型</span><AppSelect v-model="form.report_type" name="report_type" @change="changeReportType"><option v-for="(label,key) in reportLabels" :key="key" :value="key">{{ label }}</option></AppSelect></label>
             <label><span>报表期间</span><AppSelect v-model="form.report_period" name="report_period" @change="hasUnsavedChanges = true"><template v-if="form.report_type === 'leadership'"><option value="previous_month">上月</option><option value="current_month">本月</option></template><template v-else><option value="previous_day">前一日</option><option value="current_day">当日</option></template></AppSelect></label>
             <label><span>执行频率</span><AppSelect v-model="form.frequency" name="frequency" @change="hasUnsavedChanges = true"><option value="daily">每日</option><option value="weekly">每周</option><option value="monthly">每月</option></AppSelect></label>
-            <label><span>执行时间</span><input v-model="form.run_time" name="run_time" type="time" autocomplete="off" required></label>
+            <label><span>执行时间</span><NTimePicker v-model:formatted-value="form.run_time" name="run_time" autocomplete="off" required @update:formatted-value="hasUnsavedChanges = true" format="HH:mm" value-format="HH:mm" :clearable="false" input-readonly /></label>
             <label v-if="form.frequency === 'weekly'" class="wide"><span>星期</span><AppSelect v-model.number="form.weekday" name="weekday" @change="hasUnsavedChanges = true"><option v-for="(day,index) in ['一','二','三','四','五','六','日']" :key="day" :value="index + 1">星期{{ day }}</option></AppSelect></label>
-            <label v-if="form.frequency === 'monthly'" class="wide"><span>每月执行日</span><input v-model.number="form.month_day" name="month_day" type="number" inputmode="numeric" autocomplete="off" min="1" max="28"></label>
+            <label v-if="form.frequency === 'monthly'" class="wide"><span>每月执行日</span><NInputNumber v-model:value="form.month_day" name="month_day" inputmode="numeric" autocomplete="off" :min="1" :max="28" @update:value="hasUnsavedChanges = true" :input-props="{ 'name': 'month_day', 'inputmode': 'numeric', 'autocomplete': 'off' }" :precision="0" /></label>
             <label><span>图表类型</span><AppSelect v-model="form.chart_type" name="chart_type" @change="hasUnsavedChanges = true"><option value="bar_line">柱线组合</option><option value="bar">柱状图</option><option value="line">折线图</option><option value="area">面积图</option></AppSelect></label>
-            <label><span>最大尝试次数</span><input v-model.number="form.max_attempts" name="max_attempts" type="number" inputmode="numeric" autocomplete="off" min="1" max="10"></label>
-            <label class="wide"><span>收件人</span><textarea v-model="form.recipients_text" name="recipients" inputmode="email" autocomplete="off" spellcheck="false" rows="3" required placeholder="例如：manager@example.com"></textarea><small>每行一个邮箱，或用逗号分隔。</small></label>
-            <label class="wide"><span>邮件主题</span><input v-model.trim="form.subject_template" name="subject_template" autocomplete="off" required><small>可用：{report_name}、{report_type}、{report_date}</small></label>
+            <label><span>最大尝试次数</span><NInputNumber v-model:value="form.max_attempts" name="max_attempts" inputmode="numeric" autocomplete="off" :min="1" :max="10" @update:value="hasUnsavedChanges = true" :input-props="{ 'name': 'max_attempts', 'inputmode': 'numeric', 'autocomplete': 'off' }" :precision="0" /></label>
+            <label class="wide"><span>收件人</span><NInput v-model:value="form.recipients_text" name="recipients" inputmode="email" autocomplete="off" spellcheck="false" required placeholder="例如：manager@example.com" type="textarea" show-count :autosize="{ minRows: 3, maxRows: 8 }" :input-props="{ 'name': 'recipients', 'inputmode': 'email', 'autocomplete': 'off', 'spellcheck': false, 'required': true }" /><small>每行一个邮箱，或用逗号分隔。</small></label>
+            <label class="wide"><span>邮件主题</span><NInput v-model:value.trim="form.subject_template" name="subject_template" autocomplete="off" required :input-props="{ 'name': 'subject_template', 'autocomplete': 'off', 'required': true }" /><small>可用：{report_name}、{report_type}、{report_date}</small></label>
             <div class="automation-switches wide">
-              <label><input v-model="form.attach_report" name="attach_report" type="checkbox">附加 HTML 报表</label>
-              <label><input v-model="form.enabled" name="schedule_enabled" type="checkbox">启用定时任务</label>
+              <NCheckbox v-model:checked="form.attach_report" name="attach_report" @update:checked="hasUnsavedChanges = true" >附加 HTML 报表</NCheckbox>
+              <NCheckbox v-model:checked="form.enabled" name="schedule_enabled" @update:checked="hasUnsavedChanges = true" >启用定时任务</NCheckbox>
             </div>
           </div>
           <div class="automation-actions wide">
             <span>邮件失败独立重试，不重复生成报表。</span>
-            <div><button v-if="editingId" type="button" class="secondary" @click="resetForm">取消编辑</button><button type="submit" class="primary" :disabled="saving">{{ saving ? '保存中…' : editingId ? '保存修改' : '创建任务' }}</button></div>
+            <div><NButton v-if="editingId" attr-type="button" class="secondary" @click="resetForm">取消编辑</NButton><NButton attr-type="submit" class="primary" :disabled="saving" type="primary" :loading="saving">{{ saving ? '保存中…' : editingId ? '保存修改' : '创建任务' }}</NButton></div>
           </div>
         </form>
       </section>
@@ -473,17 +471,17 @@ const deliveryTableColumns = [
     <section class="panel automation-list" aria-labelledby="automation-schedules-title">
       <div class="panel-title"><div><span><AppIcon name="tasks" tone="muted" :size="17" /></span><h2 id="automation-schedules-title">定时任务</h2></div><p>{{ status ? `${schedules.length} 个计划` : loading ? '正在读取' : '暂不可用' }}<span class="table-scroll-hint">左右滑动查看完整表格</span></p></div>
       <div v-if="loading && !schedules.length" class="empty" role="status">正在读取定时任务…</div>
-      <div v-else-if="!status && error" class="configuration-load-error" role="alert"><span>定时任务暂时无法读取。</span><button type="button" @click="loadAll">重新读取</button></div>
+      <div v-else-if="!status && error" class="configuration-load-error" role="alert"><span>定时任务暂时无法读取。</span><NButton attr-type="button" @click="loadAll">重新读取</NButton></div>
       <div v-else class="automation-table-wrap">
         <AppReportTable :columns="scheduleTableColumns" :items="schedules" :row-key="item => item.schedule_id" :paginate="false" :max-height="340" :loading="loading" aria-label="定时任务列表">
-          <template #c0="{ row: item }"><span class="schedule-status" :class="{ enabled: item.enabled }"><i></i>{{ item.enabled ? '启用' : '停用' }}</span></template>
+          <template #c0="{ row: item }"><NTag class="schedule-status" :class="{ enabled: item.enabled }" size="small" :type="item.enabled ? 'success' : 'default'">{{ item.enabled ? '启用' : '停用' }}</NTag></template>
           <template #c1="{ row: item }"><div class="task-cell"><strong>{{ item.name }}</strong><small>{{ formatDeviceDisplay(item.device_id) }}</small><small>{{ scheduleLabels[item.last_status] || item.last_status || '尚未执行' }}</small></div></template>
           <template #c2="{ row: item }">{{ reportLabels[item.report_type] }}</template>
           <template #c3="{ row: item }">{{ scheduleText(item) }}</template>
           <template #c4="{ row: item }">{{ formatDateTime(item.next_run_at) }}</template>
           <template #c5="{ row: item }"><span :title="item.recipients.join(', ')">{{ item.recipients.length }} 人</span></template>
           <template #c6="{ row: item }">{{ item.sent_count || 0 }} / {{ item.failed_count || 0 }}</template>
-          <template #c7="{ row: item }"><div class="row-actions"><button type="button" @click="runNow(item)">立即执行</button><button type="button" @click="editSchedule(item)">编辑</button><button type="button" class="danger" @click="remove(item)">删除</button></div></template>
+          <template #c7="{ row: item }"><div class="row-actions"><NButton attr-type="button" @click="runNow(item)">立即执行</NButton><NButton attr-type="button" @click="editSchedule(item)">编辑</NButton><NButton attr-type="button" class="danger" @click="remove(item)">删除</NButton></div></template>
           <template #empty>尚未创建定时任务，可在上方设置并创建。</template>
         </AppReportTable>
       </div>
@@ -492,17 +490,17 @@ const deliveryTableColumns = [
     <section class="panel automation-list" aria-labelledby="automation-deliveries-title">
       <div class="panel-title"><div><span><AppIcon name="send" tone="muted" :size="17" /></span><h2 id="automation-deliveries-title">邮件发送记录</h2></div><p>失败可重发，未知结果先核对<span class="table-scroll-hint">左右滑动查看完整表格</span></p></div>
       <div v-if="deliveryLoading && !deliveries.length" class="empty" role="status">正在读取邮件发送记录…</div>
-      <div v-else-if="error && !deliveries.length" class="configuration-load-error" role="alert"><span>邮件发送记录暂时无法读取。</span><button type="button" @click="loadAll">重新读取</button></div>
+      <div v-else-if="error && !deliveries.length" class="configuration-load-error" role="alert"><span>邮件发送记录暂时无法读取。</span><NButton attr-type="button" @click="loadAll">重新读取</NButton></div>
       <div v-else class="automation-table-wrap delivery-table-wrap">
         <AppReportTable :columns="deliveryTableColumns" :items="deliveries" :row-key="item => item.delivery_id" :paginate="!!status" :total="deliveryTotal" :page="deliveryPage" :page-size="20" :page-sizes="[]" :max-height="440" :loading="deliveryLoading" aria-label="邮件发送记录" @page="changeDeliveryPage">
           <template #c0="{ row: item }">{{ formatDateTime(item.created_at) }}</template>
           <template #c1="{ row: item }"><div class="task-cell"><strong>{{ item.schedule_name }}</strong><small :title="item.subject">{{ item.subject }}</small></div></template>
           <template #c2="{ row: item }">{{ formatChineseDate(item.report_date) }}</template>
           <template #c3="{ row: item }"><div class="recipient-cell"><span>{{ item.recipients.join(', ') }}</span><small v-for="(result, address) in item.recipient_results" :key="address" :title="`${address}：${result.status}`">{{ address }}：{{ result.status === 'accepted' ? '服务器已接受' : result.status === 'unknown' ? '结果待核对' : result.status === 'not_accepted' ? '服务器未接收（人工核对）' : '服务器拒收' }}{{ result.code ? `（${result.code}）` : '' }}</small></div></template>
-          <template #c4="{ row: item }"><span class="delivery-status" :class="item.status">{{ deliveryLabels[item.status] || item.status }}</span></template>
+          <template #c4="{ row: item }"><NTag class="delivery-status" :class="item.status" size="small" :type="item.status === 'sent' ? 'success' : item.status === 'failed' ? 'error' : item.status === 'unknown' ? 'warning' : 'info'">{{ deliveryLabels[item.status] || item.status }}</NTag></template>
           <template #c5="{ row: item }">{{ item.attempt_count }} / {{ item.max_attempts }}</template>
           <template #c6="{ row: item }"><span class="error-cell" :title="item.last_error || ''">{{ item.sent_at ? formatDateTime(item.sent_at) : item.last_error || '—' }}</span></template>
-          <template #c7="{ row: item }"><div class="delivery-actions"><button v-if="item.status === 'failed'" type="button" @click="retry(item)">重新发送</button><button type="button" @click="openDelivery(item)">{{ item.status === 'unknown' ? '核对结果' : '核对记录' }}</button><small v-if="item.status === 'unknown'" :title="item.message_id">{{ item.message_id || '无历史 Message-ID' }}</small></div></template>
+          <template #c7="{ row: item }"><div class="delivery-actions"><NButton v-if="item.status === 'failed'" attr-type="button" @click="retry(item)">重新发送</NButton><NButton attr-type="button" @click="openDelivery(item)">{{ item.status === 'unknown' ? '核对结果' : '核对记录' }}</NButton><small v-if="item.status === 'unknown'" :title="item.message_id">{{ item.message_id || '无历史 Message-ID' }}</small></div></template>
           <template #empty>尚无邮件发送记录，任务执行后会显示在这里。</template>
         </AppReportTable>
       </div>
@@ -576,19 +574,13 @@ const deliveryTableColumns = [
 .task-cell > *, .recipient-cell > *, .delivery-actions > small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .task-cell small, .recipient-cell small, .delivery-actions small { color: var(--muted); font-size: var(--font-auxiliary); }
 .error-cell { color: var(--muted); white-space: nowrap; }
-.schedule-status { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 5px; color: var(--muted); background: rgb(var(--primary-color) / .1); }
-.schedule-status i { width: 6px; height: 6px; border-radius: 50%; background: var(--theme-hover-color); }
-.schedule-status.enabled { color: var(--text-color-1); background: rgb(var(--success-color) / .1); }
-.schedule-status.enabled i { background: rgb(var(--success-color)); }
+.schedule-status { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; }
+.schedule-status i { width: 6px; height: 6px; }
 .row-actions, .delivery-actions { display: flex; align-items: center; justify-content: center; gap: 6px; }
 .delivery-actions button { flex-shrink: 0; }
-.row-actions button, .delivery-actions button { min-height: 30px; padding: 0 9px; font-size: var(--font-auxiliary); white-space: nowrap; }
+.row-actions button, .delivery-actions button { min-height: 30px; padding: 0 9px; white-space: nowrap; }
 .row-actions .danger { color: rgb(var(--error-color)); border-color: rgb(var(--error-color)); background: rgb(var(--error-color) / .1); }
-.delivery-status { display: inline-block; padding: 4px 8px; border-radius: 5px; color: var(--muted); background: rgb(var(--info-color) / .1); }
-.delivery-status.sent { color: var(--text-color-1); background: rgb(var(--success-color) / .1); }
-.delivery-status.failed { color: rgb(var(--error-color)); background: rgb(var(--error-color) / .1); }
-.delivery-status.retry_wait, .delivery-status.unknown { color: var(--text-color-1); background: rgb(var(--warning-color) / .1); }
-.delivery-status.sending { color: rgb(var(--info-color)); background: rgb(var(--info-color) / .1); }
+.delivery-status { display: inline-block; padding: 4px 8px; }
 @media (max-width: 1100px) {
   .automation-workspace { grid-template-columns: 1fr; }
   .configuration-grid { grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); gap: 18px; }

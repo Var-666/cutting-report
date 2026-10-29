@@ -85,7 +85,7 @@ watch(
               @update:value="switchDevice"
             />
             <span v-if="deviceSelection.loading" class="device-rail-state" role="status">加载中…</span>
-            <div v-else-if="deviceSelection.error" class="device-rail-state" role="alert" :title="deviceSelection.error">加载失败<button type="button" @click="loadDevices()">重试</button></div>
+            <div v-else-if="deviceSelection.error" class="device-rail-state" role="alert" :title="deviceSelection.error">加载失败<NButton attr-type="button" @click="loadDevices()">重试</NButton></div>
             <span v-else-if="deviceSelection.ready && !deviceSelection.items.length" class="device-rail-state" role="status">暂无设备</span>
           </nav>
         </SimpleScrollbar>

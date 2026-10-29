@@ -1,11 +1,11 @@
 import { readFileSync } from 'node:fs'
 import * as Vue from 'vue'
-import { NDataTable, NPagination } from 'naive-ui'
+import { NButton, NDataTable, NPagination } from 'naive-ui'
 import { parse, compileScript } from '@vue/compiler-sfc'
 import { scriptFunction } from './typescript-helpers.mjs'
 
 const descriptor = parse(readFileSync(new URL('../src/components/AppReportTable.vue', import.meta.url), 'utf8')).descriptor
-const bindings = { NDataTable, NPagination }
+const bindings = { NButton, NDataTable, NPagination }
 const script = compileScript(descriptor, { id: 'shared-table-test', inlineTemplate: true }).content
   .replace(/import\s*\{([^}]+)\}\s*from\s*['"]vue['"]/g, (_, names) => {
     for (const name of names.split(',')) {

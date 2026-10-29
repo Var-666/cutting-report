@@ -8,7 +8,6 @@ import { session } from '../state/session'
 import { formatChineseDateTime } from '../utils/dateDisplay.ts'
 import ManagementPageHero from '../components/ManagementPageHero.vue'
 import AppReportTable from '../components/AppReportTable.vue'
-import { useDialogFocus } from '../composables/useDialogFocus.ts'
 
 const admins = ref<User[]>([])
 const results = ref<HrPerson[]>([])
@@ -18,7 +17,6 @@ const searching = ref(false)
 const error = ref('')
 const notice = ref('')
 const dialog = reactive({ visible: false, action: 'grant', target: null as (User | HrPerson) | null, password: '', saving: false, error: '' })
-const dialogElement = ref<HTMLElement | null>(null)
 const dialogOpen = computed(() => dialog.visible)
 
 const adminExternalIds = computed(() => new Set(
@@ -74,7 +72,6 @@ function closeDialog() {
   dialog.password = ''
 }
 
-useDialogFocus(dialogOpen, dialogElement, closeDialog)
 
 async function confirmPermissionChange() {
   if (!dialog.password || !dialog.target) return
@@ -132,7 +129,7 @@ const adminTableColumns = [
     <section class="panel account-panel">
       <div class="panel-title">
         <div><span>01</span><h2>现有管理员</h2></div>
-        <button type="button" :disabled="loading" @click="loadAdmins">{{ loading ? '刷新中' : '刷新' }}</button>
+        <NButton attr-type="button" :disabled="loading" @click="loadAdmins" :loading="loading">{{ loading ? '刷新中' : '刷新' }}</NButton>
       </div>
       <div class="history-wrap account-table-wrap">
         <AppReportTable :columns="adminTableColumns" :items="admins" :row-key="admin => admin.user_id" :paginate="false" :loading="loading" aria-label="现有管理员">
@@ -141,14 +138,14 @@ const adminTableColumns = [
           <template #c2="{ row: admin }"><span class="source-badge" :class="admin.auth_source">{{ admin.auth_source === 'hr_database' ? 'HR 数据库' : '本地应急账号' }}</span></template>
           <template #c3="{ row: admin }">{{ admin.permission_changed_by ? `${admin.permission_changed_by} · ${formatTime(admin.permission_changed_at)}` : formatTime(admin.created_at) }}</template>
           <template #c4="{ row: admin }">
-                <button
+                <NButton
                   v-if="admin.auth_source === 'hr_database'"
-                  type="button"
+                  attr-type="button"
                   class="danger-link"
                   :disabled="admin.user_id === session.user?.user_id"
                   :title="admin.user_id === session.user?.user_id ? '不能撤销当前登录账号自己的权限' : ''"
                   @click="openDialog('revoke', admin)"
-                >撤销权限</button>
+                 type="error" quaternary>撤销权限</NButton>
                 <span v-else class="protected-text">受保护</span>
           </template>
           <template #empty><span role="status">{{ loading ? '正在读取管理员…' : '暂无管理员' }}</span></template>
@@ -159,36 +156,36 @@ const adminTableColumns = [
     <section class="panel account-panel">
       <div class="panel-title"><div><span>02</span><h2>从 HR 人员库添加</h2></div><p>按姓名或公司工号搜索</p></div>
       <form class="hr-search" @submit.prevent="search">
-        <label><span>HR 人员</span><input v-model.trim="keyword" name="hr_keyword" maxlength="64" autocomplete="off" spellcheck="false" placeholder="例如：张三或 10086…" required /></label>
-        <button class="primary" type="submit" :disabled="searching">{{ searching ? '搜索中' : '搜索' }}</button>
+        <label><span>HR 人员</span><NInput clearable v-model:value.trim="keyword" name="hr_keyword" :maxlength="64" autocomplete="off" spellcheck="false" placeholder="例如：张三或 10086…" required :input-props="{ 'name': 'hr_keyword', 'autocomplete': 'off', 'spellcheck': false, 'required': true }" /></label>
+        <NButton class="primary" attr-type="submit" :disabled="searching" type="primary" :loading="searching">{{ searching ? '搜索中' : '搜索' }}</NButton>
       </form>
       <div v-if="results.length" class="search-results">
         <article v-for="person in results" :key="person.external_id">
           <div><strong>{{ person.display_name }}</strong><span>{{ person.company_no }}</span><small>{{ person.group_no || '未设置集团工号' }}</small></div>
-          <button
-            type="button"
+          <NButton
+            attr-type="button"
             :disabled="adminExternalIds.has(String(person.external_id))"
             @click="openDialog('grant', person)"
-          >{{ adminExternalIds.has(String(person.external_id)) ? '已是管理员' : '授予管理员权限' }}</button>
+          >{{ adminExternalIds.has(String(person.external_id)) ? '已是管理员' : '授予管理员权限' }}</NButton>
         </article>
       </div>
       <p v-else-if="!searching && keyword" class="search-hint">没有搜索结果时，请检查姓名或公司工号后重新搜索。</p>
       <p v-else class="search-hint">被授权人员无需设置新密码，仍使用 HR 数据库中的原密码登录。</p>
     </section>
 
-    <div v-if="dialog.visible" class="permission-dialog-backdrop" @click.self="closeDialog">
-      <section ref="dialogElement" class="permission-dialog" role="dialog" aria-modal="true" aria-labelledby="permission-dialog-title" tabindex="-1">
-        <header><div><small>SECURITY CHECK</small><h2 id="permission-dialog-title">{{ dialog.action === 'grant' ? '确认授予管理员权限' : '确认撤销管理员权限' }}</h2></div><button type="button" aria-label="关闭" :disabled="dialog.saving" @click="closeDialog">×</button></header>
+    <NModal :show="dialogOpen" :mask-closable="!dialog.saving" :close-on-esc="!dialog.saving" @update:show="visible => { if (!visible) closeDialog() }">
+      <div class="permission-dialog" role="dialog" aria-modal="true" aria-labelledby="permission-dialog-title" tabindex="-1">
+        <header><div><small>SECURITY CHECK</small><h2 id="permission-dialog-title">{{ dialog.action === 'grant' ? '确认授予管理员权限' : '确认撤销管理员权限' }}</h2></div><NButton attr-type="button" aria-label="关闭" :disabled="dialog.saving" @click="closeDialog" :loading="dialog.saving">×</NButton></header>
         <p>操作对象：<strong>{{ dialog.target?.display_name }}</strong>（{{ dialog.target?.company_no || (dialog.target && 'username' in dialog.target ? dialog.target.username : undefined) }}）</p>
-        <label><span>当前管理员密码</span><input v-model="dialog.password" name="current_admin_password" type="password" maxlength="128" autocomplete="current-password" required data-dialog-initial-focus @keyup.enter="confirmPermissionChange" /><small>用于确认是当前登录管理员本人操作，不会保存该密码。</small></label>
+        <label><span>当前管理员密码</span><NInput v-model:value="dialog.password" name="current_admin_password" type="password" show-password-on="click" :maxlength="128" autocomplete="current-password" required data-dialog-initial-focus @keyup.enter="confirmPermissionChange" :input-props="{ 'name': 'current_admin_password', 'autocomplete': 'current-password', 'required': true }" /><small>用于确认是当前登录管理员本人操作，不会保存该密码。</small></label>
         <p v-if="dialog.error" class="dialog-error" role="alert">{{ dialog.error }}</p>
-        <footer><button type="button" :disabled="dialog.saving" @click="closeDialog">取消</button><button class="primary" type="button" :disabled="dialog.saving || !dialog.password" @click="confirmPermissionChange">{{ dialog.saving ? '验证并提交中' : '验证密码并确认' }}</button></footer>
-      </section>
-    </div>
+        <footer><NButton attr-type="button" :disabled="dialog.saving" @click="closeDialog" :loading="dialog.saving">取消</NButton><NButton class="primary" attr-type="button" :disabled="dialog.saving || !dialog.password" @click="confirmPermissionChange" type="primary">{{ dialog.saving ? '验证并提交中' : '验证密码并确认' }}</NButton></footer>
+      </div>
+    </NModal>
   </div>
 </template>
 
 <style scoped>
-.admin-security-badge{min-width:220px}.account-notice,.account-error{margin:0 0 18px;padding:12px 16px;border-left:4px solid rgb(var(--error-color));background:rgb(var(--success-color) / .1);color:rgb(var(--error-color));font-size:12px}.account-error{border-color:rgb(var(--error-color));background:rgb(var(--error-color) / .1);color:rgb(var(--error-color))}.account-panel{padding:0;overflow:hidden}.source-badge{display:inline-flex;padding:4px 8px;border-radius:999px;background:rgb(var(--info-color) / .1);color:rgb(var(--info-color));font-size:var(--font-auxiliary);font-weight:700}.source-badge.local{background:var(--theme-hover-color);color:var(--text-color-2)}.danger-link{min-height:30px;padding:0 8px;color:rgb(var(--error-color));border:0;background:transparent}.protected-text{color:var(--muted);font-size:var(--font-auxiliary)}.hr-search{display:grid;grid-template-columns:minmax(220px,480px) max-content;align-items:end;gap:12px;padding:24px 26px}.hr-search label,.permission-dialog label{display:grid;gap:7px}.hr-search label span,.permission-dialog label span{font-size:var(--font-auxiliary);font-weight:700;color:var(--text-color-2)}.search-results{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;padding:0 26px 24px}.search-results article{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 16px;border:1px solid var(--line);background:rgb(var(--container-bg-color))}.search-results article div{display:grid;grid-template-columns:auto auto;gap:3px 10px}.search-results article strong{font-size:14px}.search-results article span{color:var(--blue);font-size:12px}.search-results article small{grid-column:1/-1;color:var(--muted)}.search-results article button{flex:0 0 auto}.search-hint{margin:0;padding:0 26px 24px;color:var(--muted);font-size:12px}.permission-dialog-backdrop{position:fixed;z-index:100;inset:0;display:grid;place-items:center;padding:20px;background:rgb(var(--inverted-bg-color) / .6)}.permission-dialog{width:min(480px,100%);padding:24px;border:1px solid var(--line);background:rgb(var(--container-bg-color));box-shadow:var(--theme-popover-shadow)}.permission-dialog header{display:flex;align-items:flex-start;justify-content:space-between}.permission-dialog header small{color:var(--cyan);font-size:var(--font-auxiliary);font-weight:800;letter-spacing:1.6px}.permission-dialog h2{margin:5px 0 0;font-size:20px}.permission-dialog header button{min-width:32px;min-height:32px;padding:0;border:0;font-size:24px}.permission-dialog>p{margin:22px 0 16px;color:var(--muted);font-size:13px}.permission-dialog label small{color:var(--muted);line-height:1.6}.dialog-error{margin:12px 0 0!important;padding:10px;background:rgb(var(--error-color) / .1);color:rgb(var(--error-color))!important}.permission-dialog footer{display:flex;justify-content:flex-end;gap:10px;margin-top:22px}
+.admin-security-badge{min-width:220px}.account-notice,.account-error{margin:0 0 18px;padding:12px 16px;border-left:4px solid rgb(var(--error-color));background:rgb(var(--success-color) / .1);color:rgb(var(--error-color));font-size:12px}.account-error{border-color:rgb(var(--error-color));background:rgb(var(--error-color) / .1);color:rgb(var(--error-color))}.account-panel{padding:0;overflow:hidden}.source-badge{display:inline-flex;padding:4px 8px;border-radius:999px;background:rgb(var(--info-color) / .1);color:rgb(var(--info-color));font-size:var(--font-auxiliary);font-weight:700}.source-badge.local{background:var(--theme-hover-color);color:var(--text-color-2)}.danger-link{min-height:30px;padding:0 8px}.protected-text{color:var(--muted);font-size:var(--font-auxiliary)}.hr-search{display:grid;grid-template-columns:minmax(220px,480px) max-content;align-items:end;gap:12px;padding:24px 26px}.hr-search label,.permission-dialog label{display:grid;gap:7px}.hr-search label span,.permission-dialog label span{font-size:var(--font-auxiliary);font-weight:700;color:var(--text-color-2)}.search-results{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;padding:0 26px 24px}.search-results article{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 16px;border:1px solid var(--line);background:rgb(var(--container-bg-color))}.search-results article div{display:grid;grid-template-columns:auto auto;gap:3px 10px}.search-results article strong{font-size:14px}.search-results article span{color:var(--blue);font-size:12px}.search-results article small{grid-column:1/-1;color:var(--muted)}.search-results article button{flex:0 0 auto}.search-hint{margin:0;padding:0 26px 24px;color:var(--muted);font-size:12px}.permission-dialog-backdrop{position:fixed;z-index:100;inset:0;display:grid;place-items:center;padding:20px;background:rgb(var(--inverted-bg-color) / .6)}.permission-dialog{width:min(480px,100%);padding:24px;border:1px solid var(--line);background:rgb(var(--container-bg-color));box-shadow:var(--theme-popover-shadow)}.permission-dialog header{display:flex;align-items:flex-start;justify-content:space-between}.permission-dialog header small{color:var(--cyan);font-size:var(--font-auxiliary);font-weight:800;letter-spacing:1.6px}.permission-dialog h2{margin:5px 0 0;font-size:20px}.permission-dialog header button{min-width:32px;min-height:32px;padding:0}.permission-dialog>p{margin:22px 0 16px;color:var(--muted);font-size:13px}.permission-dialog label small{color:var(--muted);line-height:1.6}.dialog-error{margin:12px 0 0!important;padding:10px;background:rgb(var(--error-color) / .1);color:rgb(var(--error-color))!important}.permission-dialog footer{display:flex;justify-content:flex-end;gap:10px;margin-top:22px}
 @media(max-width:760px){.search-results{grid-template-columns:1fr}.hr-search{grid-template-columns:1fr}.admin-security-badge{min-width:0}}
 </style>

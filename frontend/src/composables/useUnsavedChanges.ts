@@ -1,8 +1,10 @@
 import type { Ref } from 'vue'
 import { onBeforeUnmount, onMounted } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
+import { useConfirm } from './useConfirm.ts'
 
 export function useUnsavedChanges(dirty: Readonly<Ref<boolean>>, message = '当前页面有未保存的修改，确定离开吗？') {
+  const confirm = useConfirm()
   function beforeUnload(event: BeforeUnloadEvent) {
     if (!dirty.value) return
     event.preventDefault()
@@ -14,6 +16,6 @@ export function useUnsavedChanges(dirty: Readonly<Ref<boolean>>, message = '当�
 
   onBeforeRouteLeave((to, from) => {
     if (to.path === from.path || !dirty.value) return true
-    return window.confirm(message)
+    return confirm(message)
   })
 }

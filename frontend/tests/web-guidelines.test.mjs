@@ -43,7 +43,11 @@ test('modal workflows trap focus and data grids label editable controls', () => 
   const dialogFocus = source('composables/useDialogFocus.ts')
   assert.match(dialogFocus, /event\.key === 'Escape'/)
   assert.match(dialogFocus, /event\.key !== 'Tab'/)
-  for (const view of [accounts, dispatch, workshop]) assert.match(view, /useDialogFocus\(/)
+  for (const view of [accounts, dispatch, workshop]) {
+    assert.match(view, /<NModal :show=/)
+    assert.match(view, /:close-on-esc="!\w+\.saving"/)
+    assert.doesNotMatch(view, /useDialogFocus\(/)
+  }
   assert.match(dispatch, /:aria-label="`\$\{item\.filename\} 材质`"/)
   assert.match(dispatch, /:aria-label="`\$\{item\.filename\} 板厚`"/)
   assert.match(workshop, /class="confirmation-dialog-error" role="alert"/)

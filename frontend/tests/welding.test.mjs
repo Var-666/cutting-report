@@ -656,7 +656,7 @@ test('welding templates compile with loading, error, pending, detail and respons
   assert.match(page, /data_version/)
   assert.match(page, /ReportPanelState v-else-if="loading" type="loading"/)
   assert.match(source('views/DatabaseView.vue'), /weld_password[\s\S]*type="password"/)
-  assert.match(parse(source('components/AppReportTable.vue')).descriptor.styles[0].content, /input\[type="checkbox"\]\)\{width:16px;height:16px;min-width:16px;min-height:16px;padding:0;/)
+  assert.match(page, /<NCheckbox v-model:checked="draft.descending"/)
 })
 
 test('identical in-flight filters reuse the query and a later explicit refresh still runs', async () => {

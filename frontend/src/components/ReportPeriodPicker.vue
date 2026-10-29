@@ -2,6 +2,7 @@
 import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, useId, watch } from 'vue'
 import { createActivationBinding } from '../utils/activationTimer.ts'
 import AppIcon from './AppIcon.vue'
+import { NPopover, NButton } from 'naive-ui'
 
 const props = defineProps({
   startDate: { type: String, required: true },
@@ -12,11 +13,8 @@ const props = defineProps({
 })
 const emit = defineEmits<{ 'update:startDate': [date: string]; 'update:endDate': [date: string]; apply: [period: { startDate: string; endDate: string; preset: string }]; 'validation-error': [message: string] }>()
 
-const root = ref<HTMLElement | null>(null)
-const trigger = ref<HTMLElement | null>(null)
-const panel = ref<HTMLElement | null>(null)
+const trigger = ref<InstanceType<typeof NButton> | null>(null)
 const open = ref(false)
-const panelStyle = ref({})
 const draftStart = ref(props.startDate)
 const draftEnd = ref(props.endDate)
 const validationError = ref('')
@@ -103,44 +101,19 @@ const buttonLabel = computed(() => {
   return `${prefix} · ${period}`
 })
 
-function positionPanel() {
-  if (!open.value || !trigger.value || !panel.value) return
-  const rect = trigger.value.getBoundingClientRect()
-  const viewportPadding = 10
-  const gutter = 7
-  const width = Math.min(470, window.innerWidth - viewportPadding * 2)
-  const left = Math.min(
-    Math.max(viewportPadding, rect.right - width),
-    window.innerWidth - width - viewportPadding,
-  )
-  const availableBelow = window.innerHeight - rect.bottom - viewportPadding - gutter
-  const availableAbove = rect.top - viewportPadding - gutter
-  const placeAbove = availableBelow < 330 && availableAbove > availableBelow
-  const maxHeight = Math.max(230, placeAbove ? availableAbove : availableBelow)
-  panelStyle.value = {
-    left: `${Math.round(left)}px`,
-    top: placeAbove ? 'auto' : `${Math.round(rect.bottom + gutter)}px`,
-    bottom: placeAbove ? `${Math.round(window.innerHeight - rect.top + gutter)}px` : 'auto',
-    width: `${Math.round(width)}px`,
-    maxHeight: `${Math.floor(maxHeight)}px`,
-  }
-}
-
-async function showPanel() {
+function showPanel() {
   if (props.disabled) return
   draftStart.value = props.startDate
   draftEnd.value = props.endDate
   validationError.value = ''
   open.value = true
-  await nextTick()
-  positionPanel()
 }
 
 function closePanel({ focus = false } = {}) {
   if (!open.value) return
   open.value = false
   validationError.value = ''
-  if (focus) nextTick(() => trigger.value?.focus())
+  if (focus) nextTick(() => trigger.value?.$el.focus())
 }
 
 function selectPreset(item: { start: string; end: string }) {
@@ -176,22 +149,14 @@ function applyPeriod() {
   closePanel({ focus: true })
 }
 
-function handleDocumentPointer(event: PointerEvent) {
-  const target = event.target as HTMLElement
-  if (
-    root.value?.contains(target)
-    || panel.value?.contains(target)
-    || target.closest?.('.app-date-picker__panel')
-  ) return
+function handleClickoutside(event: MouseEvent) {
+  // DatePicker panels are teleported outside this popover.
+  if ((event.target as HTMLElement).closest('.n-date-panel')) return
   closePanel()
 }
 
 function handleKeydown(event: KeyboardEvent) {
   if (event.key === 'Escape') closePanel({ focus: true })
-}
-
-function handleViewportChange() {
-  if (open.value) positionPanel()
 }
 
 watch(() => props.disabled, (disabled) => {
@@ -200,16 +165,10 @@ watch(() => props.disabled, (disabled) => {
 
 const listenerBinding = createActivationBinding(
   () => {
-    document.addEventListener('pointerdown', handleDocumentPointer)
     document.addEventListener('keydown', handleKeydown)
-    window.addEventListener('resize', handleViewportChange)
-    window.addEventListener('scroll', handleViewportChange, true)
   },
   () => {
-    document.removeEventListener('pointerdown', handleDocumentPointer)
     document.removeEventListener('keydown', handleKeydown)
-    window.removeEventListener('resize', handleViewportChange)
-    window.removeEventListener('scroll', handleViewportChange, true)
   },
 )
 
@@ -225,11 +184,13 @@ onBeforeUnmount(pause)
 </script>
 
 <template>
-  <div ref="root" class="report-period-picker" :class="{ 'is-open': open }">
+  <div class="report-period-picker" :class="{ 'is-open': open }">
     <span :id="labelId" class="report-period-picker__label"><AppIcon name="calendar" size="13" tone="current" />统计区间</span>
-    <button
+    <NPopover :show="open" trigger="manual" placement="bottom-end" :show-arrow="false" :on-clickoutside="handleClickoutside" :style="{ width: 'min(470px, calc(100vw - 20px))', padding: 0, maxHeight: 'calc(100vh - 20px)', overflow: 'auto' }">
+    <template #trigger>
+    <NButton
       ref="trigger"
-      type="button"
+      attr-type="button"
       class="report-period-picker__trigger"
       :disabled="disabled"
       aria-haspopup="dialog"
@@ -239,32 +200,28 @@ onBeforeUnmount(pause)
       @click="open ? closePanel() : showPanel()"
     >
       <span :id="valueId" class="report-period-picker__value">{{ buttonLabel }}</span><i aria-hidden="true"></i>
-    </button>
-
-    <Teleport to="body">
+    </NButton>
+    </template>
       <section
-        v-if="open"
         :id="panelId"
-        ref="panel"
         class="report-period-picker__panel"
-        :style="panelStyle"
         role="dialog"
         aria-modal="false"
         aria-label="选择报表统计区间"
       >
         <header>
           <div><small>REPORT PERIOD</small><strong>选择统计区间</strong></div>
-          <button type="button" aria-label="关闭区间选择" @click="closePanel({ focus: true })">×</button>
+          <NButton attr-type="button" aria-label="关闭区间选择" @click="closePanel({ focus: true })">×</NButton>
         </header>
 
         <div class="report-period-picker__presets" aria-label="快捷区间">
-          <button
+          <NButton
             v-for="item in presets"
             :key="item.id"
-            type="button"
-            :class="{ selected: draftPreset?.id === item.id }"
+            attr-type="button"
+            :class="{ selected: draftPreset?.id === item.id }" :type="draftPreset?.id === item.id ? 'primary' : 'default'"
             @click="selectPreset(item)"
-          >{{ item.label }}</button>
+          >{{ item.label }}</NButton>
         </div>
 
         <div class="report-period-picker__dates">
@@ -275,33 +232,27 @@ onBeforeUnmount(pause)
         <p v-else class="report-period-picker__hint">包含开始日和结束日，最长 {{ maxDays }} 天。</p>
 
         <footer>
-          <button type="button" @click="closePanel({ focus: true })">取消</button>
-          <button type="button" class="primary" @click="applyPeriod">应用</button>
+          <NButton attr-type="button" @click="closePanel({ focus: true })">取消</NButton>
+          <NButton attr-type="button" class="primary" @click="applyPeriod" type="primary">应用</NButton>
         </footer>
       </section>
-    </Teleport>
+    </NPopover>
   </div>
 </template>
 
 <style scoped>
 .report-period-picker { position:relative; min-width:0; width:100%; grid-column:span 2; }
 .report-period-picker__label { display:flex; align-items:center; gap:5px; margin-bottom:6px; color:var(--text-color-3); font-size:var(--font-auxiliary); font-weight:700; letter-spacing:.12px; }
-.report-period-picker__trigger { display:flex; align-items:center; justify-content:space-between; gap:12px; width:100%; height:40px; min-height:40px; padding:0 12px; color:var(--ink); border:1px solid var(--theme-border-color); border-radius:8px; background:rgb(var(--container-bg-color)); box-shadow:var(--theme-shadow); text-align:left; transition:border-color .16s ease,box-shadow .16s ease,background .16s ease; }
-.report-period-picker__trigger:hover:not(:disabled) { border-color:var(--theme-border-color); background:rgb(var(--container-bg-color)); }
+.report-period-picker__trigger { width:100%; height:40px; min-width:0; }
+.report-period-picker__trigger :deep(.n-button__content) { min-width:0; width:100%; justify-content:space-between; }
 .report-period-picker__value { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.report-period-picker__trigger i { width:8px; height:8px; flex:0 0 8px; border-right:2px solid var(--theme-border-color); border-bottom:2px solid var(--theme-border-color); transform:rotate(45deg) translateY(-2px); transition:transform .16s ease; }
-.report-period-picker.is-open .report-period-picker__trigger { border-color:var(--blue); box-shadow:var(--theme-shadow); }
-.report-period-picker.is-open .report-period-picker__trigger i { transform:rotate(225deg) translate(-2px,-1px); }
-.report-period-picker__panel { position:fixed; z-index:1850; overflow:auto; padding:0; border:1px solid var(--theme-border-color); border-radius:6px; background:rgb(var(--container-bg-color)); box-shadow:var(--theme-shadow); overscroll-behavior:contain; }
+.report-period-picker__panel { min-width:0; }
 .report-period-picker__panel > header { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:15px 17px; border-bottom:1px solid var(--theme-border-color); }
 .report-period-picker__panel > header div { display:grid; gap:2px; }
 .report-period-picker__panel > header small { color:rgb(var(--info-color)); font-size:var(--font-auxiliary); font-weight:800; letter-spacing:.11em; }
 .report-period-picker__panel > header strong { color:var(--navy); font-size:16px; }
-.report-period-picker__panel > header button { min-width:34px; min-height:34px; padding:0; color:var(--text-color-3); border:0; background:transparent; font-size:24px; }
+.report-period-picker__panel > header button { min-width:34px; min-height:34px; padding:0; }
 .report-period-picker__presets { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:7px; padding:15px 17px 8px; }
-.report-period-picker__presets button { min-width:0; min-height:37px; padding:6px 8px; color:rgb(var(--info-color)); border:1px solid var(--theme-border-color); border-radius:4px; background:rgb(var(--container-bg-color)); font-size:12px; }
-.report-period-picker__presets button:hover { color:var(--blue); border-color:var(--theme-border-color); background:rgb(var(--info-color) / .1); }
-.report-period-picker__presets button.selected { color:var(--theme-on-primary-color); border-color:var(--blue); background:var(--blue); font-weight:700; }
 .report-period-picker__dates { display:grid; grid-template-columns:1fr 1fr; gap:11px; padding:10px 17px 8px; }
 .report-period-picker__dates label { min-width:0; }
 .report-period-picker__dates label > span { display:block; margin-bottom:6px; color:var(--text-color-3); font-size:var(--font-auxiliary); font-weight:700; }
@@ -312,7 +263,6 @@ onBeforeUnmount(pause)
 .report-period-picker__panel > footer button { min-width:82px; min-height:38px; }
 @media (max-width:560px) {
   .report-period-picker { grid-column:auto; }
-  .report-period-picker__panel { inset:auto 10px 10px!important; width:auto!important; max-height:calc(100vh - 20px)!important; border-radius:9px; }
   .report-period-picker__presets { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .report-period-picker__dates { grid-template-columns:1fr; }
 }

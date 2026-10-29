@@ -11,7 +11,7 @@ function mount({ resolve = async () => ({}), list = async () => ({ items: [] }),
   let state
   const events = []
   const bindings = {
-    ...Vue,
+    ...Vue, useConfirm: () => async () => false,
     defineProps: () => ({ delivery: { delivery_id: 'd1', status: 'unknown', message_id: '<stable@host>',
       recipients: ['a@example.com', 'b@example.com'], recipient_results: {}, ...delivery } }),
     defineEmits: () => (...args) => events.push(args),

@@ -121,11 +121,10 @@ function reset() {
       </AppSelect>
     </label>
     <div class="form-actions">
-      <button class="primary" type="submit" :disabled="loading || (isMonthly ? !form.report_month : !form.report_date)">
-        <span v-if="loading" class="spinner"></span>
+      <NButton class="primary" attr-type="submit" :disabled="loading || (isMonthly ? !form.report_month : !form.report_date)" type="primary" :loading="loading">
         {{ loading ? '生成中' : '生成报告' }}
-      </button>
-      <button type="button" :disabled="loading" @click="reset">重置</button>
+      </NButton>
+      <NButton attr-type="button" :disabled="loading" @click="reset" :loading="loading">重置</NButton>
     </div>
   </form>
 </template>

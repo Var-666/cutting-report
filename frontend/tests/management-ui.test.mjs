@@ -17,7 +17,7 @@ async function mountAutomation(t) {
   let held = false
   const result = (page, total = 60) => ({ items: total ? [{ delivery_id: `page-${page}` }] : [], total, page, page_size: 20 })
   const bindings = {
-    ...Vue, useUnsavedChanges() {}, deviceSelection: Vue.reactive({ id: 'Cutter02', items: [{ id: 'Cutter02' }] }),
+    ...Vue, useConfirm: () => async () => true, useUnsavedChanges() {}, deviceSelection: Vue.reactive({ id: 'Cutter02', items: [{ id: 'Cutter02' }] }),
     getAutomationConfiguration: async () => ({}),
     getAutomationStatus: async () => { calls.status++; return { revision: calls.status } },
     listAutomationSchedules: async () => { calls.schedules++; return { items: [{ schedule_id: 'saved' }] } },
@@ -203,7 +203,7 @@ test('database save reloads active settings and status without a restart prompt'
     driver: 'ODBC Driver 18 for SQL Server', encrypt: true, trust_server_certificate: false }
   const current = { data_source_mode: 'sqlserver', worker_database_auth_enabled: true, file_database_enabled: true,
     production: { ...connection }, worker: { ...connection }, file: { ...connection } }
-  const bindings = { computed, reactive, ref, watch() {}, onMounted() {}, useUnsavedChanges() {}, formatTableDateValue: String,
+  const bindings = { computed, reactive, ref, watch() {}, onMounted() {}, useConfirm: () => async () => true, useUnsavedChanges() {}, formatTableDateValue: String,
     deviceSelection: { id: 'Cutter01' }, loadDevices: async () => { calls.push('catalog') },
     getDatabaseStatus: async () => { calls.push('status'); return { mode: 'sqlserver', driver: connection.driver } },
     getDatabaseConfiguration: async () => { calls.push('configuration'); return structuredClone(current) },
@@ -257,7 +257,7 @@ test('shared connection test selects SQL Server or MySQL without saving either d
   const view = descriptor('DatabaseView')
   const calls = []
   const selection = reactive({ id: 'Cutter01', items: [{ id: 'Cutter01', type: 'cutting' }, { id: 'welding', type: 'welding' }] })
-  const bindings = { computed, reactive, ref, watch() {}, onMounted() {}, useUnsavedChanges() {}, formatTableDateValue: String,
+  const bindings = { computed, reactive, ref, watch() {}, onMounted() {}, useConfirm: () => async () => true, useUnsavedChanges() {}, formatTableDateValue: String,
     deviceSelection: selection, selectedLineType,
     testDatabaseConnection: async body => { calls.push(['sqlserver', body]); return { database: body.database, elapsed_ms: 1 } },
     testWeldingConnection: async body => { calls.push(['welding', body]); return { connected: true, elapsed_ms: 2 } },
@@ -288,7 +288,7 @@ test('shared connection test selects SQL Server or MySQL without saving either d
   assert.equal(calls[2][0], 'welding')
   const testSection = view.template.content.slice(view.template.content.indexOf('class="panel db-panel"'))
   assert.match(testSection, /name="test_source"[\s\S]*value="sqlserver"[\s\S]*value="welding"/)
-  assert.match(testSection, /v-model="activeTestConnection.host"/)
+  assert.match(testSection, /v-model:value="activeTestConnection.host"/)
   assert.match(testSection, /v-if="testIsWelding"[\s\S]*name="test_timezone"/)
 })
 
@@ -299,7 +299,7 @@ for (const [reportType, period] of [['leadership', 'current_month'], ['leadershi
     const scope = Vue.effectScope()
     const script = descriptor('AutomationView').scriptSetup.content.replace(/^import .*$/gm, '')
     const bindings = {
-      ...Vue, onMounted() {}, onBeforeUnmount() {}, useUnsavedChanges() {}, deviceSelection: Vue.reactive({ id: 'Cutter02' }),
+      ...Vue, onMounted() {}, onBeforeUnmount() {}, useConfirm: () => async () => true, useUnsavedChanges() {}, deviceSelection: Vue.reactive({ id: 'Cutter02' }),
       saveAutomationSchedule: async (body, id) => saved.push({ body, id }),
       getAutomationStatus: async () => ({}), listAutomationSchedules: async () => ({ items: [] }),
       listEmailDeliveries: async () => ({ items: [], total: 0, page: 1, page_size: 20 }),
@@ -343,7 +343,7 @@ test('all seven migrated settings tables render their fields and controls throug
   const [{ compile, parse: parseTemplate }, { renderToString }, { setup: setupCssr }, { SharedDataTable }, dateDisplay] = await Promise.all([
     import('@vue/compiler-dom'), import('@vue/server-renderer'), import('@css-render/vue3-ssr'), import('./data-table-helpers.mjs'), import('../src/utils/dateDisplay.ts'),
   ])
-  const { NTag } = await import('naive-ui')
+  const { NTag, NButton } = await import('naive-ui')
   const cases = [
     ['AdminAccountsView', 'adminTableColumns', { admins: [
       { user_id: 'self', display_name: '本人', company_no: '001', auth_source: 'hr_database' },
@@ -377,6 +377,7 @@ test('all seven migrated settings tables render their fields and controls throug
     const app = Vue.createSSRApp({ setup: () => ({ ...bindings, [columnName]: columns }), render })
     app.component('AppReportTable', SharedDataTable)
     app.component('NTag', NTag)
+    app.component('NButton', NButton)
     setupCssr(app)
     const html = await renderToString(app)
     assert.match(html, /n-data-table/)

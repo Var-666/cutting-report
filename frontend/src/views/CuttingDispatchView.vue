@@ -7,16 +7,17 @@ interface PushBatchItem { referenceKey: string; documentId: string; versionId: s
 import { toError } from '../utils/errors'
 import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { NAutoComplete } from 'naive-ui'
+import { NAutoComplete, NProgress, NTag } from 'naive-ui'
 import CatalogTreeNode from '../components/CatalogTreeNode.vue'
 import AppIcon from '../components/AppIcon.vue'
 import heroImage from '../assets/home-laser-cutting.webp'
 import { parseCuttingInstructionFilename } from '../utils/cuttingInstructionName.ts'
 import { matchesDispatchParameters } from '../utils/cuttingDispatchBatch.ts'
 import { formatChineseDateTime } from '../utils/dateDisplay.ts'
-import { useDialogFocus } from '../composables/useDialogFocus.ts'
+import { useConfirm } from '../composables/useConfirm.ts'
 import { createCuttingDispatchBatch, executeCuttingDispatch, getCuttingDispatch, getCuttingStatus, listCuttingDispatches, listCuttingMachines, listCuttingProjects, listCuttingCatalogs, listCuttingFiles } from '../api/dispatch.ts'
 
+const confirm = useConfirm()
 const pageActive = ref(true)
 const route = useRoute()
 const router = useRouter()
@@ -69,13 +70,14 @@ const pushBatch = reactive({
   nonStandardConfirmed: false,
   overrideConfirmed: false,
 })
-const pushBatchDialog = ref<HTMLElement | null>(null)
 const pushBatchOpen = computed(() => pushBatch.visible)
 const selectedFiles = ref(new Map<string, CuttingFile>())
 const catalogSelectionRows = ref<CuttingFile[] | null>(null)
 const selectingAll = ref(false)
 const loading = ref(false)
 const operatingId = ref('')
+const retryDispatch = ref<CuttingDispatch | null>(null)
+const retrySegment = ref('')
 const notice = ref('')
 const noticeType = ref('info')
 const page = ref(1)
@@ -190,18 +192,14 @@ function rememberSelectedProject(projectId: string) {
   router.replace({ query })
 }
 
-function setFileSelected(file: CuttingFile, event: Event) {
-  const input = event.target as HTMLInputElement
-  const selected = input.checked
+function setFileSelected(file: CuttingFile, selected: boolean) {
   const next = new Map(selectedFiles.value)
   const key = fileKey(file)
   if (selected && !next.has(key) && next.size >= 100) {
-    input.checked = false
     showNotice('已达 100 项上限，请先取消部分文件后再选择。', 'error')
     return
   }
   if (selected && !next.has(key) && alreadySelectedDocument(next, file)) {
-    input.checked = false
     showNotice('同一 PDM 文件只能选择一个版本，请先取消已选版本。', 'error')
     return
   }
@@ -210,9 +208,7 @@ function setFileSelected(file: CuttingFile, event: Event) {
   selectedFiles.value = next
 }
 
-async function toggleCatalogFiles(event: Event) {
-  const input = event.target as HTMLInputElement
-  const selected = input.checked
+async function toggleCatalogFiles(selected: boolean) {
   if (loading.value || pushBatch.saving || !systemStatus.value?.can_push || !selectedProject.value || !selectedCatalog.value) return
   const sequence = ++querySequence
   const signal = beginDirectoryRequest()
@@ -265,9 +261,6 @@ async function toggleCatalogFiles(event: Event) {
     if (sequence === querySequence) {
       loading.value = false
       selectingAll.value = false
-      // Restore native checkbox state even when the computed value did not change.
-      input.checked = allCatalogFilesSelected.value
-      input.indeterminate = someCatalogFilesSelected.value
     }
   }
 }
@@ -403,7 +396,6 @@ function closePushBatch() {
   pushBatch.visible = false
 }
 
-useDialogFocus(pushBatchOpen, pushBatchDialog, closePushBatch)
 
 function removePushBatchItem(item: PushBatchItem) {
   if (pushBatch.saving || pushBatch.resultsReady) return
@@ -834,12 +826,15 @@ async function refreshBatchCatalog() {
   await loadFiles(1)
 }
 
-async function executeSaved(item: CuttingDispatch) {
+async function executeSaved(item: CuttingDispatch, segmentName?: string) {
   if (operatingId.value) return
-  if (!window.confirm(`确认执行任务 ${item.dispatch_id}？\n文件：${item.document_no}\n机床：${machineName(item.machine_ip)}`)) return
-  const segmentName = !item.remote_task_id && !parseCuttingInstructionFilename(item.document_no)
-    ? window.prompt('非标准文件名，请填写分段名（例如：806C）：') : undefined
-  if (segmentName === null) return
+  if (!item.remote_task_id && !parseCuttingInstructionFilename(item.document_no) && segmentName === undefined) {
+    retryDispatch.value = item
+    retrySegment.value = ''
+    return
+  }
+  if (!await confirm(`确认执行任务 ${item.dispatch_id}？\n文件：${item.document_no}\n机床：${machineName(item.machine_ip)}`)) return
+  retryDispatch.value = null
   operatingId.value = item.dispatch_id
   try {
     const completed = await executeCuttingDispatch(item.dispatch_id, segmentName)
@@ -930,6 +925,7 @@ async function initializePage({ refreshProjects = true } = {}) {
 function pausePage() {
   if (!pageActive.value) return
   pageActive.value = false
+  retryDispatch.value = null
   lifecycleSequence += 1
   querySequence += 1
   lifecycleController?.abort()
@@ -1020,11 +1016,11 @@ const batchTableColumns = [
 
   <div v-if="statusError" class="dispatch-notice error" role="alert">
     <span>{{ statusError }}</span>
-    <button type="button" :disabled="statusLoading" @click="loadRuntimeStatus({ force: true })">重新检查</button>
+    <NButton attr-type="button" :disabled="statusLoading" @click="loadRuntimeStatus({ force: true })">重新检查</NButton>
   </div>
   <div v-if="notice" class="dispatch-notice" :class="{ error: noticeType === 'error' }" role="status">
     <span>{{ notice }}</span>
-    <button type="button" @click="notice = ''">关闭</button>
+    <NButton attr-type="button" @click="notice = ''">关闭</NButton>
   </div>
 
   <div class="dispatch-workspace download-workspace">
@@ -1068,17 +1064,17 @@ const batchTableColumns = [
       <div class="selected-directory"><span>当前位置</span><strong>{{ selectedPath }}</strong></div>
       <form class="file-name-search" @submit.prevent="applyFileSearch">
         <label for="file-keyword">当前目录内查找文件</label>
-        <div><input id="file-keyword" v-model.trim="fileKeyword" name="file_keyword" autocomplete="off" :disabled="!selectedCatalog" placeholder="输入文件名或中间产品…" /><button type="submit" :disabled="!selectedCatalog || loading">{{ loading ? '查询中…' : '查询' }}</button></div>
+        <div><NInput id="file-keyword" v-model:value.trim="fileKeyword" name="file_keyword" autocomplete="off" :disabled="!selectedCatalog" placeholder="输入文件名或中间产品…" :input-props="{ 'id': 'file-keyword', 'name': 'file_keyword', 'autocomplete': 'off' }" /><NButton attr-type="submit" :disabled="!selectedCatalog || loading">{{ loading ? '查询中…' : '查询' }}</NButton></div>
       </form>
       <div class="download-batch-toolbar" aria-live="polite">
         <span>已选择 <strong>{{ selectedFileCount }}</strong> / 100 项<small>全选包含所有分页</small></span>
-        <div><button type="button" :disabled="!selectedFileCount || pushBatch.saving" @click="clearSelectedFiles">清空选择</button><button class="primary" type="button" :disabled="!selectedFileCount || loading || pushBatch.saving || !systemStatus?.can_push" @click="openPushBatch">设置参数并派发</button></div>
+        <div><NButton attr-type="button" :disabled="!selectedFileCount || pushBatch.saving" @click="clearSelectedFiles">清空选择</NButton><NButton class="primary" attr-type="button" :disabled="!selectedFileCount || loading || pushBatch.saving || !systemStatus?.can_push" @click="openPushBatch" type="primary">设置参数并派发</NButton></div>
       </div>
       <div class="dispatch-table-wrap" :aria-busy="loading">
         <div v-if="loading" class="dispatch-loading" role="status">{{ selectingAll ? '正在选择所有分页的文件…' : `正在加载第 ${requestedPage} 页…` }}</div>
-        <AppReportTable :columns="fileTableColumns" :items="rows" :total="total" :page="page" :page-size="pageSize" :page-sizes="[]" @page="changePage" :row-key="row => fileKey(row)" aria-label="文件查询结果" :row-class-name="row => (selectedFiles.has(fileKey(row))) ? 'selected' : ''" :loading="loading">
-        <template #header-c0><input type="checkbox" :checked="allCatalogFilesSelected" :indeterminate="someCatalogFilesSelected" :disabled="!total || !systemStatus?.can_push || loading || pushBatch.saving" aria-label="全选当前目录所有分页的可派发文件" @change="toggleCatalogFiles($event)" /></template>
-        <template #c0="{ row }"><div class="download-check-cell"><input type="checkbox" :checked="selectedFiles.has(fileKey(row))" :disabled="loading || pushBatch.saving || !row.path_available || !systemStatus?.can_push" :aria-label="`选择文件 ${row.document_no}`" @change="setFileSelected(row, $event)" /></div></template>
+        <AppReportTable flex-height :columns="fileTableColumns" :items="rows" :total="total" :page="page" :page-size="pageSize" :page-sizes="[]" @page="changePage" :row-key="row => fileKey(row)" aria-label="文件查询结果" :row-class-name="row => (selectedFiles.has(fileKey(row))) ? 'selected' : ''" :loading="loading">
+        <template #header-c0><NCheckbox :checked="allCatalogFilesSelected" :indeterminate="someCatalogFilesSelected" :disabled="!total || !systemStatus?.can_push || loading || pushBatch.saving" aria-label="全选当前目录所有分页的可派发文件" @update:checked="toggleCatalogFiles($event)" /></template>
+        <template #c0="{ row }"><div class="download-check-cell"><NCheckbox :checked="selectedFiles.has(fileKey(row))" :disabled="loading || pushBatch.saving || !row.path_available || !systemStatus?.can_push" :aria-label="`选择文件 ${row.document_no}`" @update:checked="setFileSelected(row, $event)" /></div></template>
         <template #c1="{ row }"><div class="file-name-cell"><strong>{{ row.document_no }}</strong></div></template>
         <template #c2="{ row }"><span class="filename-standard" :class="{ warning: !parseCuttingInstructionFilename(row.document_no) }">{{ parseCuttingInstructionFilename(row.document_no) ? '标准名' : '非标准名' }}</span></template>
         <template #c3="{ row }">{{ row.pbs_info || '--' }}</template>
@@ -1087,8 +1083,8 @@ const batchTableColumns = [
         <template #c6="{ row }">{{ row.operator || row.physical_file_operator || '--' }}</template>
         <template #c7="{ row }">{{ row.operator_job_no || row.physical_file_operator_job_no || '--' }}</template>
         <template #c8="{ row }">{{ formatTime(row.operate_time || row.physical_file_date) }}</template>
-        <template #c9="{ row }"><template v-if="row.dispatch_status"><span class="dispatch-status" :class="row.dispatch_status.status">{{ row.dispatch_status.status_label }}</span><small class="dispatch-project-name">{{ row.dispatch_status.stage_label }}</small></template><span v-else class="dispatch-project-name">暂无记录</span></template>
-        <template #c10="{ row }"><div class="file-download-cell"><button type="button" :disabled="loading || pushBatch.saving || !row.path_available || !systemStatus?.can_push" :aria-label="`派发 ${row.document_no}`" @click="openSinglePush(row)">设置并派发</button><small v-if="!row.path_available">{{ row.path_error || '路径不可用' }}</small></div></template>
+        <template #c9="{ row }"><template v-if="row.dispatch_status"><NTag class="dispatch-status" :class="row.dispatch_status.status" size="small" :type="row.dispatch_status.status === 'failed' ? 'error' : 'info'">{{ row.dispatch_status.status_label }}</NTag><small class="dispatch-project-name">{{ row.dispatch_status.stage_label }}</small></template><span v-else class="dispatch-project-name">暂无记录</span></template>
+        <template #c10="{ row }"><div class="file-download-cell"><NButton attr-type="button" :disabled="loading || pushBatch.saving || !row.path_available || !systemStatus?.can_push" :aria-label="`派发 ${row.document_no}`" @click="openSinglePush(row)">设置并派发</NButton><small v-if="!row.path_available">{{ row.path_error || '路径不可用' }}</small></div></template>
       <template #empty>{{ selectedCatalog ? appliedFileKeyword ? '当前目录没有匹配的文件' : '当前目录没有文件' : '请从左侧选择一个目录' }}</template>
       </AppReportTable>
       </div>
@@ -1105,7 +1101,7 @@ const batchTableColumns = [
         <div class="confirm-file-list" :class="{ empty: !selectedFileCount }">
           <template v-if="selectedFileCount">
             <span v-for="file in selectedFileItems.slice(0, 5)" :key="fileKey(file)" :title="file.document_no || file.physical_file_name || undefined">{{ file.document_no || file.physical_file_name }}</span>
-            <button v-if="selectedFileCount > 5" type="button" @click="openPushBatch">其余 {{ selectedFileCount - 5 }} 项 · 展开全部</button>
+            <NButton v-if="selectedFileCount > 5" attr-type="button" @click="openPushBatch">其余 {{ selectedFileCount - 5 }} 项 · 展开全部</NButton>
           </template>
           <template v-else><AppIcon name="file" size="23" /><span>请从目录文件中选择待派发文件</span></template>
         </div>
@@ -1114,24 +1110,24 @@ const batchTableColumns = [
           <AppSelect id="dispatch-machine" v-model="dispatchForm.machineIp" :disabled="!machines.length || pushBatch.saving"><option value="" disabled>请选择目标机床</option><option v-for="machine in machines" :key="machine.machine_ip" :value="machine.machine_ip">{{ machineName(machine.machine_ip) }} · {{ machine.machine_ip }}（{{ machine.online ? '在线' : '待确认' }}）</option></AppSelect>
           <small><i :class="{ ready: selectedMachine?.online }"></i>{{ selectedMachine ? `${machineName(selectedMachine.machine_ip)} · ${selectedMachine.online ? '机床在线' : '未从列表确认在线'}` : systemStatus?.file_source?.label || '请选择接收文件的机床' }}</small>
         </div>
-        <button class="confirm-dispatch-button" type="button" :disabled="!selectedFileCount || loading || pushBatch.saving || !systemStatus?.can_push || !dispatchForm.machineIp" @click="openPushBatch"><AppIcon name="send" size="18" tone="light" />设置参数并派发</button>
+        <NButton class="confirm-dispatch-button" attr-type="button" :disabled="!selectedFileCount || loading || pushBatch.saving || !systemStatus?.can_push || !dispatchForm.machineIp" @click="openPushBatch"><AppIcon name="send" size="18" tone="light" />设置参数并派发</NButton>
       </div>
     </aside>
   </div>
 
   <section class="panel dispatch-history-panel" :aria-busy="historyLoading">
     <div class="panel-title"><div><span class="dispatch-section-icon green"><AppIcon name="check" size="17" /></span><small>04</small><h2>派发记录</h2></div></div>
-    <div v-if="historyError" class="global-error" role="alert"><span>派发记录读取失败：{{ historyError }}</span><button type="button" :disabled="historyLoading" @click="loadHistory()">重试</button></div>
+    <div v-if="historyError" class="global-error" role="alert"><span>派发记录读取失败：{{ historyError }}</span><NButton attr-type="button" :disabled="historyLoading" @click="loadHistory()">重试</NButton></div>
     <div v-if="historyLoading && !histories.length" class="dispatch-empty-history" role="status"><span class="spinner dark" aria-hidden="true"></span><strong>正在读取派发记录</strong></div>
     <div v-else-if="histories.length" class="dispatch-table-wrap"><AppReportTable :columns="historyTableColumns" :items="histories" :total="historyTotal" :page="historyPage" :page-size="historyPageSize" :page-sizes="[]" @page="changeHistoryPage" :row-key="item => item.dispatch_id" :loading="historyLoading || !!operatingId || pushBatch.saving">
         <template #c0="{ row: item }"><code>{{ item.task_identifier || item.dispatch_id }}</code></template>
         <template #c1="{ row: item }">{{ item.document_no }}<small class="dispatch-project-name">数量 {{ item.quantity }}</small></template>
         <template #c2="{ row: item }">{{ machineName(item.machine_ip) }}</template>
-        <template #c3="{ row: item }"><span class="dispatch-status" :class="item.status">{{ item.status_label }}</span><small class="dispatch-project-name">{{ item.stage_label }}</small></template>
+        <template #c3="{ row: item }"><NTag class="dispatch-status" :class="item.status" size="small" :type="item.status === 'failed' ? 'error' : 'info'">{{ item.status_label }}</NTag><small class="dispatch-project-name">{{ item.stage_label }}</small></template>
         <template #c4="{ row: item }"><code>{{ item.remote_task_id || '--' }}</code></template>
         <template #c5="{ row: item }"><div class="history-error">{{ item.last_error || '--' }}</div></template>
         <template #c6="{ row: item }">{{ formatTime(item.created_at) }}</template>
-        <template #c7="{ row: item }"><div class="history-actions"><button v-if="item.can_execute" type="button" :disabled="!!operatingId || historyLoading" @click="executeSaved(item)">{{ item.remote_task_id ? '重试指派' : '执行推送' }}</button><span v-if="!item.can_execute">--</span></div></template>
+        <template #c7="{ row: item }"><div class="history-actions"><NButton v-if="item.can_execute" attr-type="button" :disabled="!!operatingId || historyLoading" @click="executeSaved(item)">{{ item.remote_task_id ? '重试指派' : '执行推送' }}</NButton><span v-if="!item.can_execute">--</span></div></template>
       </AppReportTable></div>
     <div v-else-if="!historyError" class="dispatch-empty-history"><i><AppIcon name="send" size="20" /></i><strong>暂无派发记录</strong></div>
 
@@ -1140,56 +1136,64 @@ const batchTableColumns = [
   <div v-if="selectedFileCount && !pushBatch.visible" class="mobile-selection-bar-spacer" aria-hidden="true"></div>
   <aside v-if="selectedFileCount && !pushBatch.visible" class="mobile-selection-bar" aria-label="已选文件操作">
     <span><small>已选</small><strong>{{ selectedFileCount }}</strong><small>/ 100 项</small></span>
-    <button type="button" :disabled="pushBatch.saving" @click="clearSelectedFiles">清空</button>
-    <button class="primary" type="button" :disabled="loading || pushBatch.saving || !systemStatus?.can_push" @click="openPushBatch"><AppIcon name="send" size="16" tone="light" />设置参数并派发</button>
+    <NButton attr-type="button" :disabled="pushBatch.saving" @click="clearSelectedFiles">清空</NButton>
+    <NButton class="primary" attr-type="button" :disabled="loading || pushBatch.saving || !systemStatus?.can_push" @click="openPushBatch" type="primary"><AppIcon name="send" size="16" tone="light" />设置参数并派发</NButton>
   </aside>
 
-  <Teleport to="body">
-    <div v-if="pushBatch.visible" class="push-batch-backdrop" role="presentation" @click.self="closePushBatch">
-      <section ref="pushBatchDialog" class="push-batch-dialog" role="dialog" aria-modal="true" aria-labelledby="push-batch-title" tabindex="-1">
+    <NModal :show="!!retryDispatch" @update:show="visible => { if (!visible) retryDispatch = null }">
+      <div class="retry-dispatch-dialog panel" role="dialog" aria-modal="true" aria-labelledby="retry-dispatch-title"><form @submit.prevent="retryDispatch && executeSaved(retryDispatch, retrySegment.trim())">
+        <h2 id="retry-dispatch-title">补充分段名</h2>
+        <p>{{ retryDispatch?.document_no }} 为非标准文件名，请填写分段名后核对执行。</p>
+        <label><span>分段名</span><NInput v-model:value.trim="retrySegment" :maxlength="80" :input-props="{ name: 'retry_segment', required: true }" placeholder="例如：806C" /></label>
+        <footer><NButton @click="retryDispatch = null">取消</NButton><NButton type="primary" attr-type="submit" :disabled="!retrySegment.trim()">核对并继续</NButton></footer>
+      </form></div>
+    </NModal>
+    <NModal :show="pushBatchOpen" :mask-closable="!pushBatch.saving" :close-on-esc="!pushBatch.saving" @update:show="visible => { if (!visible) closePushBatch() }">
+      <div class="push-batch-dialog" role="dialog" aria-modal="true" aria-labelledby="push-batch-title" tabindex="-1">
         <header class="push-batch-header">
           <div><span>FILE DISPATCH</span><h2 id="push-batch-title">{{ pushBatch.items.length === 1 ? '文件派发确认' : '批量派发确认' }}</h2></div>
-          <button type="button" :disabled="pushBatch.saving" aria-label="关闭批量推送窗口" @click="closePushBatch">×</button>
+          <NButton attr-type="button" :disabled="pushBatch.saving" aria-label="关闭批量推送窗口" @click="closePushBatch">×</NButton>
         </header>
 
         <div class="push-batch-content">
           <div class="push-batch-common">
             <label><span>目标机床</span><AppSelect v-model="dispatchForm.machineIp" :disabled="pushBatch.saving || pushBatch.resultsReady"><option value="" disabled>请选择目标机床</option><option v-for="machine in machines" :key="machine.machine_ip" :value="machine.machine_ip">{{ machineName(machine.machine_ip) }} · {{ machine.machine_ip }}（{{ machine.online ? '在线' : '未从列表确认在线' }}）</option></AppSelect></label>
-            <label><span>统一加工数量</span><div><input v-model="bulkQuantity" name="bulk_quantity" type="number" min="1" max="10000" step="1" autocomplete="off" :disabled="pushBatch.saving || pushBatch.resultsReady" /><button type="button" :disabled="pushBatch.saving || pushBatch.resultsReady" @click="applyBulkQuantity">应用到全部</button></div></label>
+            <label><span>统一加工数量</span><div><NInputNumber v-model:value="bulkQuantity" name="bulk_quantity" :min="1" :max="10000" :step="1" autocomplete="off" :disabled="pushBatch.saving || pushBatch.resultsReady" :input-props="{ 'name': 'bulk_quantity', 'autocomplete': 'off' }" :precision="0" /><NButton attr-type="button" :disabled="pushBatch.saving || pushBatch.resultsReady" @click="applyBulkQuantity">应用到全部</NButton></div></label>
             <div class="push-batch-summary"><strong>{{ pushBatch.items.length }}</strong><span>个文件</span><small v-if="!pushBatch.resultsReady">{{ invalidBatchCount ? `${invalidBatchCount} 项待补参数` : nonStandardBatchCount || overrideBatchCount ? `${nonStandardBatchCount} 项非标准名、${overrideBatchCount} 项参数不符待确认` : '全部为标准名' }}</small><small v-else>已推送 {{ batchStatusCounts.sent }} · 失败 {{ batchStatusCounts.failed }} · 重复 {{ batchStatusCounts.duplicate }}</small></div>
           </div>
 
           <div v-if="pushBatch.error" class="push-batch-error" role="alert">{{ pushBatch.error }}</div>
-          <div v-if="pushBatch.saving" class="push-batch-progress" role="status"><div><strong>{{ pushBatch.currentFilename }}</strong><span>{{ pushBatch.completed }} / {{ pushBatch.total }}</span></div><progress :value="pushBatch.completed" :max="pushBatch.total"></progress><small>正在按顺序处理，请不要关闭页面。</small></div>
+          <div v-if="pushBatch.saving" class="push-batch-progress" role="status"><div><strong>{{ pushBatch.currentFilename }}</strong><span>{{ pushBatch.completed }} / {{ pushBatch.total }}</span></div><NProgress type="line" :percentage="pushBatch.total ? Math.round(pushBatch.completed / pushBatch.total * 100) : 0" :show-indicator="false" /><small>正在按顺序处理，请不要关闭页面。</small></div>
 
           <div class="push-batch-table-wrap">
             <AppReportTable class="push-batch-table" :columns="batchTableColumns" :items="pushBatch.items" :row-key="item => item.referenceKey" :paginate="false" :row-class-name="item => (!pushBatch.resultsReady && (batchItemError(item) || !item.parsed || hasNameMismatch(item))) ? 'invalid' : ''" :loading="pushBatch.saving">
         <template #c0="{ row: item }"><div class="push-batch-file"><strong>{{ item.filename }}</strong><small>版本 {{ item.version }}</small><span v-if="item.parsed" class="recognized">已识别：{{ item.parsed.material }} · {{ item.parsed.thickness.toFixed(1) }} mm</span><span v-else class="manual">非标准名，请手工填写参数</span><span v-if="hasNameMismatch(item)" class="manual">加工参数与标准名不一致，请人工复核</span></div></template>
-        <template #c1="{ row: item }"><span v-if="item.parsed">{{ item.segmentName }}</span><input v-else v-model.trim="item.segmentName" :name="`segment_${item.referenceKey}`" :aria-label="`${item.filename} 分段名`" autocomplete="off" :disabled="pushBatch.saving || pushBatch.resultsReady" maxlength="80" placeholder="例如：806C" @input="invalidateBatchConfirmation(item)" /></template>
-        <template #c2="{ row: item }"><input v-model.trim="item.material" :name="`material_${item.referenceKey}`" :aria-label="`${item.filename} 材质`" autocomplete="off" :disabled="pushBatch.saving || pushBatch.resultsReady" maxlength="80" placeholder="例如：A0、B0、SS" @input="invalidateBatchConfirmation(item)" /></template>
-        <template #c3="{ row: item }"><input v-model="item.thickness" :name="`thickness_${item.referenceKey}`" :aria-label="`${item.filename} 板厚`" autocomplete="off" :disabled="pushBatch.saving || pushBatch.resultsReady" type="number" inputmode="decimal" min="0.01" max="1000" step="0.01" placeholder="例如：12.0…" @input="invalidateBatchConfirmation(item)" /></template>
-        <template #c4="{ row: item }"><input v-model="item.quantity" :name="`quantity_${item.referenceKey}`" :aria-label="`${item.filename} 数量`" autocomplete="off" :disabled="pushBatch.saving || pushBatch.resultsReady" type="number" inputmode="numeric" min="1" max="10000" step="1" @input="invalidateBatchConfirmation(item)" /></template>
+        <template #c1="{ row: item }"><span v-if="item.parsed">{{ item.segmentName }}</span><NInput v-else v-model:value.trim="item.segmentName" :name="`segment_${item.referenceKey}`" :aria-label="`${item.filename} 分段名`" autocomplete="off" :disabled="pushBatch.saving || pushBatch.resultsReady" :maxlength="80" placeholder="例如：806C" @update:value="invalidateBatchConfirmation(item)" :input-props="{ 'name': `segment_${item.referenceKey}`, 'aria-label': `${item.filename} 分段名`, 'autocomplete': 'off' }" /></template>
+        <template #c2="{ row: item }"><NInput v-model:value.trim="item.material" :name="`material_${item.referenceKey}`" :aria-label="`${item.filename} 材质`" autocomplete="off" :disabled="pushBatch.saving || pushBatch.resultsReady" :maxlength="80" placeholder="例如：A0、B0、SS" @update:value="invalidateBatchConfirmation(item)" :input-props="{ 'name': `material_${item.referenceKey}`, 'aria-label': `${item.filename} 材质`, 'autocomplete': 'off' }" /></template>
+        <template #c3="{ row: item }"><NInputNumber :value="item.thickness === '' ? null : Number(item.thickness)" @update:value="item.thickness = $event ?? ''; invalidateBatchConfirmation(item)" :name="`thickness_${item.referenceKey}`" :aria-label="`${item.filename} 板厚`" autocomplete="off" :disabled="pushBatch.saving || pushBatch.resultsReady" inputmode="decimal" :min="0.01" :max="1000" :step="0.01" placeholder="例如：12.0…" :input-props="{ 'name': `thickness_${item.referenceKey}`, 'aria-label': `${item.filename} 板厚`, 'autocomplete': 'off', 'inputmode': 'decimal' }" /></template>
+        <template #c4="{ row: item }"><NInputNumber v-model:value="item.quantity" :name="`quantity_${item.referenceKey}`" :aria-label="`${item.filename} 数量`" autocomplete="off" :disabled="pushBatch.saving || pushBatch.resultsReady" inputmode="numeric" :min="1" :max="10000" :step="1" @update:value="invalidateBatchConfirmation(item)" :input-props="{ 'name': `quantity_${item.referenceKey}`, 'aria-label': `${item.filename} 数量`, 'autocomplete': 'off', 'inputmode': 'numeric' }" :precision="0" /></template>
         <template #c5="{ row: item }"><div class="push-batch-result"><span :class="item.status">{{ batchStatusLabel(item) }}</span><small v-if="item.dispatchId" :title="item.dispatchId">任务 {{ item.dispatchId }}</small><small v-if="item.error" :title="item.error">{{ item.error }}</small></div></template>
-        <template #c6="{ row: item }"><div class="push-batch-actions"><template v-if="pushBatch.resultsReady"><button v-if="item.status === 'failed' && isStaleFileError(item)" type="button" :disabled="pushBatch.saving" @click="refreshBatchCatalog">刷新清单重选</button><button v-else-if="item.status === 'failed' && (!item.dispatchId || item.retryable)" type="button" :disabled="pushBatch.saving" @click="retryBatchItem(item)">{{ item.dispatchId ? '重试当前任务' : '重试创建并派发' }}</button><button v-if="item.status === 'duplicate' && item.dispatchId && (!item.statusChecked || item.retryable)" type="button" :disabled="pushBatch.saving" @click="retryBatchItem(item)">核对并继续已有任务</button><button v-if="item.dispatchId && (item.status === 'failed' || item.status === 'duplicate')" type="button" :disabled="pushBatch.saving" @click="checkBatchItem(item)">核对状态</button><span v-if="item.status === 'sent'">已完成</span></template><button v-else class="push-batch-remove" type="button" :disabled="pushBatch.saving" @click="removePushBatchItem(item)">移除</button></div></template>
+        <template #c6="{ row: item }"><div class="push-batch-actions"><template v-if="pushBatch.resultsReady"><NButton v-if="item.status === 'failed' && isStaleFileError(item)" attr-type="button" :disabled="pushBatch.saving" @click="refreshBatchCatalog">刷新清单重选</NButton><NButton v-else-if="item.status === 'failed' && (!item.dispatchId || item.retryable)" attr-type="button" :disabled="pushBatch.saving" @click="retryBatchItem(item)">{{ item.dispatchId ? '重试当前任务' : '重试创建并派发' }}</NButton><NButton v-if="item.status === 'duplicate' && item.dispatchId && (!item.statusChecked || item.retryable)" attr-type="button" :disabled="pushBatch.saving" @click="retryBatchItem(item)">核对并继续已有任务</NButton><NButton v-if="item.dispatchId && (item.status === 'failed' || item.status === 'duplicate')" attr-type="button" :disabled="pushBatch.saving" @click="checkBatchItem(item)">核对状态</NButton><span v-if="item.status === 'sent'">已完成</span></template><NButton v-else class="push-batch-remove" attr-type="button" :disabled="pushBatch.saving" @click="removePushBatchItem(item)">移除</NButton></div></template>
       </AppReportTable>
           </div>
           <div v-if="!pushBatch.resultsReady" class="push-batch-safety">
             <p>标准指令名已自动识别分段并填充材质和板厚，请在提交前逐项核对。非标准名不会猜测参数，必须手工补全。</p>
-            <label v-if="nonStandardBatchCount"><input v-model="pushBatch.nonStandardConfirmed" name="non_standard_confirmed" type="checkbox" :disabled="pushBatch.saving" />我已人工核对 {{ nonStandardBatchCount }} 个非标准文件名及其分段、材质、板厚和数量</label>
-            <label v-if="overrideBatchCount"><input v-model="pushBatch.overrideConfirmed" name="standard_override_confirmed" type="checkbox" :disabled="pushBatch.saving" />我已人工核对 {{ overrideBatchCount }} 个与标准名不一致的材质或板厚</label>
+            <NCheckbox v-model:checked="pushBatch.nonStandardConfirmed" name="non_standard_confirmed" :disabled="pushBatch.saving"  v-if="nonStandardBatchCount">我已人工核对 {{ nonStandardBatchCount }} 个非标准文件名及其分段、材质、板厚和数量</NCheckbox>
+            <NCheckbox v-model:checked="pushBatch.overrideConfirmed" name="standard_override_confirmed" :disabled="pushBatch.saving"  v-if="overrideBatchCount">我已人工核对 {{ overrideBatchCount }} 个与标准名不一致的材质或板厚</NCheckbox>
           </div>
         </div>
 
         <footer class="push-batch-footer">
-          <template v-if="pushBatch.resultsReady"><span>可重试安全失败项；上传结果待核对的任务须先检查魔盒，系统不会自动重复上传。</span><button class="primary" type="button" :disabled="pushBatch.saving" @click="closePushBatch">完成</button></template>
-          <template v-else><div><button type="button" :disabled="pushBatch.saving" @click="closePushBatch">取消</button><button class="primary" type="button" :disabled="pushBatch.saving || invalidBatchCount > 0 || !dispatchForm.machineIp || !systemStatus?.can_push || (nonStandardBatchCount > 0 && !pushBatch.nonStandardConfirmed) || (overrideBatchCount > 0 && !pushBatch.overrideConfirmed)" @click="submitPushBatch">{{ pushBatch.saving ? '顺序派发中…' : pushBatch.items.length === 1 ? '确认派发' : '确认并顺序派发' }}</button></div></template>
+          <template v-if="pushBatch.resultsReady"><span>可重试安全失败项；上传结果待核对的任务须先检查魔盒，系统不会自动重复上传。</span><NButton class="primary" attr-type="button" :disabled="pushBatch.saving" @click="closePushBatch" type="primary">完成</NButton></template>
+          <template v-else><div><NButton attr-type="button" :disabled="pushBatch.saving" @click="closePushBatch">取消</NButton><NButton class="primary" attr-type="button" :disabled="pushBatch.saving || invalidBatchCount > 0 || !dispatchForm.machineIp || !systemStatus?.can_push || (nonStandardBatchCount > 0 && !pushBatch.nonStandardConfirmed) || (overrideBatchCount > 0 && !pushBatch.overrideConfirmed)" @click="submitPushBatch" type="primary">{{ pushBatch.saving ? '顺序派发中…' : pushBatch.items.length === 1 ? '确认派发' : '确认并顺序派发' }}</NButton></div></template>
         </footer>
-      </section>
-    </div>
-  </Teleport>
+      </div>
+    </NModal>
 </template>
 
 <style scoped>
+.retry-dispatch-dialog{width:min(480px,calc(100vw - 32px));padding:24px}.retry-dispatch-dialog footer{display:flex;justify-content:flex-end;gap:10px;margin-top:20px}
+
 .dispatch-project-name { display:block; color:var(--muted); font-size:var(--font-auxiliary); max-width:140px; overflow-wrap:anywhere; margin-top:5px; }
 .dispatch-stage-badge { min-width:310px; display:flex; flex-direction:column; padding:17px 20px; border:1px solid var(--theme-border-color); border-right:4px solid var(--theme-border-color); background:rgb(var(--warning-color) / .1); box-shadow:var(--theme-shadow); }
 .dispatch-stage-badge span { color:rgb(var(--warning-color)); font-size:var(--font-auxiliary); font-weight:700; letter-spacing:2px; }
@@ -1205,12 +1209,12 @@ const batchTableColumns = [
 .dispatch-flow .active i { color:var(--theme-on-primary-color); }
 .dispatch-notice { display:flex; align-items:center; gap:12px; margin-bottom:22px; padding:13px 16px; color:var(--text-color-1); background:rgb(var(--info-color) / .1); font-size:12px; }
 .dispatch-notice.error { color:rgb(var(--error-color)); background:rgb(var(--error-color) / .1); }
-.dispatch-notice button { min-height:30px; margin-left:auto; padding:0 8px; color:var(--blue); border:0; background:transparent; }
+.dispatch-notice button { min-height:30px; margin-left:auto; padding:0 8px; }
 .dispatch-workspace { display:grid; grid-template-columns:minmax(0,1.8fr) minmax(300px,.72fr); gap:24px; align-items:start; margin:24px 0 0; }
 .dispatch-workspace.push-workspace { grid-template-columns:1fr; align-items:stretch; }
 .dispatch-files-panel { min-width:0; }
 .download-workspace .dispatch-files-panel { display:flex; min-height:600px; flex-direction:column; }
-.download-workspace .dispatch-table-wrap { flex:1 1 auto; }
+.download-workspace .dispatch-table-wrap { display:flex; flex:1 1 auto; min-height:260px; }
 .directory-panel { min-width:0; }
 .project-search,.file-name-search { padding:15px 18px; border-bottom:1px solid var(--theme-border-color); }
 .project-search label,.file-name-search label { display:block; margin-bottom:6px; color:var(--text-color-2); font-size:var(--font-auxiliary); font-weight:700; }
@@ -1220,9 +1224,8 @@ const batchTableColumns = [
 .project-search .project-selector { height:36px; font-size:12px; }
 .project-search :deep(.n-input) { height:36px; font-size:12px; }
 :global(.dispatch-project-menu .n-base-select-option__content) { min-width:0; white-space:normal!important; overflow-wrap:anywhere; }
-.project-search button,.file-name-search button { min-width:58px; padding:0 11px; border:1px solid var(--theme-border-color); }
-.project-search button { min-height:36px; height:36px; font-size:var(--font-auxiliary); }
-.project-search button:disabled,.file-name-search button:disabled { opacity:.55; }
+.project-search button,.file-name-search button { min-width:58px; padding:0 11px; }
+.project-search button { min-height:36px; height:36px; }
 .directory-scroll { padding:10px 9px 15px; }
 .project-tree,.project-catalogs { margin:0; padding:0; list-style:none; }
 .project-catalogs { margin-left:18px; border-left:1px solid var(--theme-border-color); }
@@ -1246,13 +1249,12 @@ const batchTableColumns = [
 .download-batch-toolbar > span small { font-size:inherit; }
 .download-batch-toolbar > span { color:var(--muted); font-size:var(--font-auxiliary); }
 .download-batch-toolbar > span strong { margin:0 3px; color:var(--blue); font-size:15px; font-variant-numeric:tabular-nums; }
-.download-batch-toolbar > span small { margin-left:10px; color:rgb(var(--warning-color)); }
+.download-batch-toolbar > span small { margin-left:10px; color:rgb(var(--warning-color)); font-size:inherit; }
 .download-batch-toolbar > div { display:flex; gap:7px; }
-.download-batch-toolbar button { padding:0 12px; color:var(--blue); border:1px solid var(--theme-border-color); background:rgb(var(--container-bg-color)); white-space:nowrap; }
-.download-batch-toolbar button.primary { color:var(--theme-on-primary-color); }
-.download-batch-toolbar button:disabled { opacity:.55; cursor:not-allowed; }
+.download-batch-toolbar button { padding:0 12px; white-space:nowrap; }
+.download-batch-toolbar button:disabled { cursor:not-allowed; }
 .dispatch-table-wrap { overflow-x:auto; position:relative; min-height:75px; }
-.dispatch-loading { position:absolute; z-index:2; inset:0; display:flex; align-items:flex-start; justify-content:center; padding-top:48px; background:rgb(var(--info-color) / .1); color:var(--blue); font-size:12px; }.file-download-cell button { border:1px solid var(--theme-border-color); color:var(--blue); white-space:nowrap; cursor:pointer; }.file-download-cell button:disabled { opacity:.55; cursor:not-allowed; }.file-download-cell small { display:block; margin-top:4px; color:var(--muted); font-size:var(--font-auxiliary); }
+.dispatch-loading { position:absolute; z-index:2; inset:0; display:flex; align-items:flex-start; justify-content:center; padding-top:48px; background:rgb(var(--info-color) / .1); color:var(--blue); font-size:12px; }.file-download-cell button { white-space:nowrap; cursor:pointer; }.file-download-cell button:disabled { cursor:not-allowed; }.file-download-cell small { display:block; margin-top:4px; color:var(--muted); font-size:var(--font-auxiliary); }
 .source-file-table .file-download-cell { position:sticky; z-index:1; right:0; background:rgb(var(--container-bg-color)); box-shadow:var(--theme-shadow); }
 .source-file-table thead .file-download-cell { z-index:2; }
 .source-file-table tbody tr:hover .file-download-cell { background:rgb(var(--layout-bg-color)); }
@@ -1277,7 +1279,7 @@ const batchTableColumns = [
 .push-file-filter label > span { display:block; margin-bottom:6px; color:var(--text-color-2); font-size:var(--font-auxiliary); font-weight:700; }
 .push-file-filter input,.push-file-filter .app-select { width:100%; min-width:0; }
 .push-filter-actions { display:flex; justify-content:flex-end; gap:7px; }
-.push-filter-actions button { min-height:38px; padding:0 13px; color:var(--blue); border:1px solid var(--theme-border-color); background:rgb(var(--container-bg-color)); }
+.push-filter-actions button { min-height:38px; padding:0 13px; }
 .push-filter-actions .primary { color:var(--theme-on-primary-color); border-color:var(--blue); background:var(--blue); }
 .push-file-table tbody tr { cursor:pointer; }
 .push-check-cell { width:48px; text-align:center!important; }
@@ -1287,12 +1289,11 @@ const batchTableColumns = [
 .push-file-origin strong { color:var(--navy); font-size:var(--font-auxiliary); }
 .push-file-origin small { max-width:230px; margin-top:4px; color:var(--muted); font-size:var(--font-auxiliary); }
 .push-file-picker .dispatch-table-wrap { min-height:210px; flex:1 1 auto; }
-.dispatch-status { display:inline-flex; padding:4px 8px; color:rgb(var(--warning-color)); border-radius:999px; background:rgb(var(--warning-color) / .1); white-space:nowrap; font-size:var(--font-auxiliary); }
-.dispatch-status.failed { color:rgb(var(--error-color)); background:rgb(var(--error-color) / .1); }
+.dispatch-status { display:inline-flex; padding:4px 8px; white-space:nowrap; }
 .dispatch-empty-row { padding:32px!important; color:var(--muted); text-align:center!important; }
 .dispatch-pagination { display:flex; align-items:center; justify-content:flex-end; gap:12px; color:var(--muted); font-size:var(--font-auxiliary); }
-.dispatch-pagination button { min-height:30px; padding:0 12px; color:var(--blue); border:1px solid var(--theme-border-color); background:rgb(var(--container-bg-color)); }
-.dispatch-pagination button:disabled { color:var(--theme-text-disabled); background:var(--theme-hover-color); cursor:not-allowed; }
+.dispatch-pagination button { min-height:30px; padding:0 12px; }
+.dispatch-pagination button:disabled { cursor:not-allowed; }
 .dispatch-empty-history { min-height:160px; display:flex; align-items:center; justify-content:center; flex-direction:column; padding:30px; color:var(--muted); text-align:center; }
 .dispatch-empty-history i { width:38px; height:38px; display:grid; place-items:center; margin-bottom:10px; border-radius:50%; font-style:normal; font-size:18px; }
 .dispatch-empty-history strong { color:var(--text-color-2); font-size:13px; }
@@ -1301,20 +1302,20 @@ const batchTableColumns = [
 .history-table code { color:var(--blue); font-size:var(--font-auxiliary); }
 .history-error { max-width:220px; color:rgb(var(--error-color)); overflow-wrap:anywhere; }
 .history-actions { display:flex; align-items:center; justify-content:center; gap:6px; }
-.history-actions button { min-height:30px; padding:0 9px; color:var(--blue); border:1px solid var(--theme-border-color); background:rgb(var(--container-bg-color)); white-space:nowrap; font-size:var(--font-auxiliary); }
+.history-actions button { min-height:30px; padding:0 9px; white-space:nowrap; }
 .push-batch-backdrop { position:fixed; z-index:1000; inset:0; display:grid; place-items:center; padding:24px; background:rgb(var(--inverted-bg-color) / .6); }
 .push-batch-dialog { width:min(1180px,100%); max-height:calc(100vh - 48px); display:flex; flex-direction:column; overflow:hidden; color:var(--text-color-1); background:rgb(var(--container-bg-color)); }
 .push-batch-header { display:flex; align-items:flex-start; justify-content:space-between; gap:24px; padding:20px 24px; }
 .push-batch-header span { color:rgb(var(--info-color)); font-size:var(--font-auxiliary); font-weight:700; letter-spacing:2px; }
 .push-batch-header h2 { margin:3px 0 4px; font-size:20px; }
 .push-batch-header p { margin:0; color:var(--text-color-3); font-size:var(--font-auxiliary); }
-.push-batch-header button { width:34px; min-height:34px; flex:0 0 34px; padding:0; color:var(--text-color-1); border:1px solid var(--theme-border-color); background:transparent; font-size:23px; line-height:1; }
+.push-batch-header button { width:34px; min-height:34px; flex:0 0 34px; padding:0; line-height:1; }
 .push-batch-content { min-height:0; overflow:auto; padding:20px 24px; }
 .push-batch-common { display:grid; grid-template-columns:minmax(280px,1.2fr) minmax(230px,.8fr) minmax(170px,.55fr); align-items:end; gap:16px; margin-bottom:18px; padding:16px; }
 .push-batch-common label > span { display:block; margin-bottom:7px; color:var(--text-color-2); font-size:var(--font-auxiliary); font-weight:700; }
 .push-batch-common label > div { display:flex; gap:7px; }
 .push-batch-common input,.push-batch-common .app-select { width:100%; min-width:0; }
-.push-batch-common button { flex:0 0 auto; min-height:38px; padding:0 11px; color:var(--blue); border:1px solid var(--theme-border-color); background:rgb(var(--container-bg-color)); }
+.push-batch-common button { flex:0 0 auto; min-height:38px; padding:0 11px; }
 .push-batch-summary { min-height:61px; display:flex; align-items:baseline; align-content:center; flex-wrap:wrap; gap:4px; padding:10px 13px; border-left:3px solid var(--cyan); background:rgb(var(--info-color) / .1); }
 .push-batch-summary strong { color:var(--blue); font-size:22px; }
 .push-batch-summary span { font-size:var(--font-auxiliary); }
@@ -1347,8 +1348,8 @@ const batchTableColumns = [
 .push-batch-result small { display:block; max-width:220px; margin-top:5px; color:var(--text-color-2); overflow-wrap:anywhere; }
 .push-batch-remove { min-height:30px; padding:0 8px; color:var(--text-color-2); border:1px solid var(--theme-border-color); background:rgb(var(--container-bg-color)); }
 .push-batch-actions { min-width:140px; display:flex; align-items:center; justify-content:center; gap:6px; }
-.push-batch-actions button { display:block; min-height:30px; margin:3px 0; padding:0 8px; color:var(--blue); border:1px solid var(--theme-border-color); border-radius:7px; background:rgb(var(--container-bg-color)); }
-.push-batch-actions button:disabled { opacity:.55; cursor:not-allowed; }
+.push-batch-actions button { display:block; min-height:30px; margin:3px 0; padding:0 8px; }
+.push-batch-actions button:disabled { cursor:not-allowed; }
 .push-batch-actions span { color:var(--text-color-1); font-size:var(--font-auxiliary); }
 .push-batch-safety { margin:14px 0 0; color:rgb(var(--success-color)); font-size:var(--font-auxiliary); line-height:1.7; }
 .push-batch-safety p { margin:0; }
@@ -1358,9 +1359,8 @@ const batchTableColumns = [
 .push-batch-footer { display:flex; align-items:center; justify-content:space-between; gap:20px; padding:15px 24px; border-top:1px solid var(--theme-border-color); background:rgb(var(--info-color) / .1); }
 .push-batch-footer > span { color:var(--text-color-3); font-size:var(--font-auxiliary); line-height:1.5; }
 .push-batch-footer > div { display:flex; flex:0 0 auto; gap:8px; margin-left:auto; }
-.push-batch-footer button { min-height:38px; padding:0 16px; color:var(--blue); border:1px solid var(--theme-border-color); background:rgb(var(--container-bg-color)); white-space:nowrap; }
-.push-batch-footer button.primary { color:var(--theme-on-primary-color); }
-.push-batch-footer button:disabled,.push-batch-common button:disabled { opacity:.55; cursor:not-allowed; }
+.push-batch-footer button { min-height:38px; padding:0 16px; white-space:nowrap; }
+.push-batch-footer button:disabled,.push-batch-common button:disabled { cursor:not-allowed; }
 @media (max-width:1000px) {
   .dispatch-hero { align-items:flex-start; flex-direction:column; justify-content:center; padding:28px 0; }
   .dispatch-stage-badge { width:100%; min-width:0; }
@@ -1430,7 +1430,6 @@ const batchTableColumns = [
 .dispatch-section-icon.green { color:rgb(var(--success-color))!important; background:rgb(var(--success-color) / .1)!important; }
 .project-search,.file-name-search { border-bottom-color:var(--theme-border-color); background:rgb(var(--container-bg-color)); }
 .project-search { padding:16px; gap:8px; }
-.project-search button,.file-name-search button { border-color:var(--theme-border-color); border-radius:7px; color:rgb(var(--info-color)); background:rgb(var(--info-color) / .1); }
 .directory-panel { position:relative; display:grid; grid-template-columns:minmax(0,1fr); grid-template-rows:auto auto minmax(0,1fr); min-height:0; }
 .directory-panel .panel-title>div,.directory-panel .project-search { min-width:0; }
 .directory-scroll { grid-area:3 / 1 / 4 / -1; position:absolute; inset:0; min-height:0; max-height:none; overflow:auto; overscroll-behavior:contain; scrollbar-gutter:stable; }
@@ -1446,8 +1445,7 @@ const batchTableColumns = [
 .file-name-search>div { width:min(355px,100%); }
 .file-name-search input { height:34px; border-color:var(--theme-border-color); border-radius:7px; }
 .download-batch-toolbar { min-height:44px; padding:12px 16px; border-bottom-color:var(--theme-border-color); background:rgb(var(--container-bg-color)); gap:8px; }
-.download-batch-toolbar button { min-height:31px; border-color:var(--theme-border-color); border-radius:7px; }
-.download-batch-toolbar button.primary { border-color:var(--theme-border-color); background:rgb(var(--primary-color)); box-shadow:var(--theme-shadow); }
+.download-batch-toolbar button { min-height:31px; }
 .mobile-selection-bar,.mobile-selection-bar-spacer { display:none; }
 .source-file-table { min-width:820px; }
 .dispatch-table th,.dispatch-table td { height:39px; padding:7px 9px; border-bottom-color:var(--theme-border-color); }
@@ -1456,11 +1454,10 @@ const batchTableColumns = [
 .dispatch-table tbody tr:hover { background:rgb(var(--layout-bg-color)); }
 .dispatch-table tbody tr.selected { background:rgb(var(--layout-bg-color)); box-shadow:inset 3px 0 rgb(var(--info-color)); }
 .file-download-cell { width:100px; margin-inline:auto; }
-.file-download-cell button { min-height:29px; padding:4px 8px; border-color:var(--theme-border-color); border-radius:6px; background:rgb(var(--info-color) / .1); font-size:var(--font-auxiliary); }
+.file-download-cell button { min-height:29px; padding:4px 8px; }
 .filename-standard { color:rgb(var(--success-color)); background:rgb(var(--success-color) / .1); }
 .filename-standard.warning { color:rgb(var(--warning-color)); background:rgb(var(--warning-color) / .1); }
 .dispatch-pagination { padding:9px 13px 0; }
-.dispatch-pagination button { border-radius:6px; }
 .dispatch-download-hint { margin:11px 14px 13px; font-size:var(--font-auxiliary); line-height:1.55; }
 .dispatch-confirm-panel { min-width:0; grid-column:1/-1; align-self:start; }
 .dispatch-confirm-content { display:grid; grid-template-columns:140px minmax(240px,1fr) minmax(230px,.8fr) 210px; align-items:center; gap:16px; height:auto; padding:16px; box-sizing:border-box; }
@@ -1470,7 +1467,7 @@ const batchTableColumns = [
 .confirm-total strong { margin-right:3px; color:var(--text-color-1); font-size:25px; font-variant-numeric:tabular-nums; }
 .confirm-file-list { grid-column:2; grid-row:1/3; min-height:86px; display:flex; flex-direction:column; gap:7px; padding:10px 12px; border:1px solid var(--theme-border-color); border-radius:7px; background:rgb(var(--container-bg-color)); }
 .confirm-file-list>span { overflow:hidden; color:var(--text-color-2); text-overflow:ellipsis; white-space:nowrap; font-size:var(--font-auxiliary); }
-.confirm-file-list>button { align-self:flex-end; min-height:22px; margin-top:auto; padding:0; color:rgb(var(--info-color)); border:0; background:transparent; font-size:var(--font-auxiliary); }
+.confirm-file-list>button { align-self:flex-end; min-height:22px; margin-top:auto; padding:0; }
 .confirm-file-list.empty { align-items:center; justify-content:center; gap:8px; color:var(--text-color-3); text-align:center; }
 .confirm-file-list.empty>span { color:var(--text-color-3); white-space:normal; line-height:1.5; }
 .confirm-machine { grid-column:3; grid-row:1/3; margin:0; padding:0; border:0; }
@@ -1478,23 +1475,18 @@ const batchTableColumns = [
 .confirm-machine .app-select { width:100%; }
 .confirm-machine small { display:flex; align-items:flex-start; gap:6px; margin-top:8px; color:var(--text-color-3); font-size:var(--font-auxiliary); line-height:1.45; }
 .confirm-machine small i { margin-top:3px; }
-.confirm-dispatch-button { min-height:40px; display:flex; align-items:center; justify-content:center; grid-column:4; grid-row:1/3; gap:7px; margin:0; padding:0 12px; color:var(--theme-on-primary-color); border:0; border-radius:7px; background:rgb(var(--primary-color)); box-shadow:var(--theme-shadow); font-size:var(--font-auxiliary); font-weight:700; }
-.confirm-dispatch-button:hover:not(:disabled) { transform:translateY(-1px); box-shadow:var(--theme-shadow); }
-.confirm-dispatch-button:disabled { opacity:.48; cursor:not-allowed; box-shadow:none; }
+.confirm-dispatch-button { min-height:40px; display:flex; align-items:center; justify-content:center; grid-column:4; grid-row:1/3; gap:7px; margin:0; padding:0 12px; }
+.confirm-dispatch-button:hover:not(:disabled) { transform:translateY(-1px); }
+.confirm-dispatch-button:disabled { cursor:not-allowed; }
 .dispatch-history-panel { --content-table-font-size:13px; --content-table-header-font-size:12px; margin-top:24px; }
 .history-table th { color:var(--theme-on-primary-color); background:var(--theme-table-header-color); }
-.history-table :is(code,.dispatch-status,.history-actions button) { font-size:inherit; }
 .history-table .dispatch-project-name { font-size:12px; }
-.dispatch-status.sent { color:rgb(var(--success-color)); background:rgb(var(--success-color) / .1); }
-.history-actions button { border-radius:6px; }
 .dispatch-empty-history i { color:rgb(var(--info-color)); border:0; background:rgb(var(--info-color) / .1); }
 .push-batch-backdrop { backdrop-filter:blur(5px); }
 .push-batch-dialog { border:1px solid var(--theme-border-color); border-radius:14px; box-shadow:var(--theme-popover-shadow); }
 .push-batch-header { color:var(--text-color-1); background:var(--theme-table-header-color); }
-.push-batch-header button,.push-batch-common button,.push-batch-remove,.push-batch-footer button { border-radius:7px; }
 .push-batch-summary,.push-batch-error,.push-batch-progress { border-radius:7px; }
 .push-batch-table-wrap { border-radius:8px; }
-.push-batch-footer button.primary { border-color:var(--theme-border-color); background:rgb(var(--primary-color)); }
 
 @media (max-width:1120px) {
   .dispatch-confirm-content { grid-template-columns:120px minmax(220px,1fr) minmax(210px,.8fr) 190px; }
@@ -1530,12 +1522,12 @@ const batchTableColumns = [
   .mobile-selection-bar>span { min-width:54px; display:flex; align-items:baseline; gap:3px; color:var(--text-color-3); white-space:nowrap; }
   .mobile-selection-bar>span strong { color:rgb(var(--info-color)); font-size:20px; font-variant-numeric:tabular-nums; }
   .mobile-selection-bar>span small { font-size:var(--font-auxiliary); }
-  .mobile-selection-bar button { min-height:44px; padding:0 12px; color:rgb(var(--info-color)); border:1px solid var(--theme-border-color); border-radius:7px; background:rgb(var(--info-color) / .1); white-space:nowrap; font-size:var(--font-auxiliary); font-weight:700; }
-  .mobile-selection-bar button.primary { min-width:0; display:flex; align-items:center; justify-content:center; gap:6px; color:var(--theme-on-primary-color); border-color:var(--theme-border-color); background:rgb(var(--primary-color)); box-shadow:var(--theme-shadow); }
-  .mobile-selection-bar button:disabled { opacity:.5; cursor:not-allowed; box-shadow:none; }
+  .mobile-selection-bar button { min-height:44px; padding:0 12px; white-space:nowrap; }
+  .mobile-selection-bar button.primary { min-width:0; display:flex; align-items:center; justify-content:center; gap:6px; }
+  .mobile-selection-bar button:disabled { cursor:not-allowed; }
 }
 @media (prefers-reduced-motion:reduce) {
   .dispatch-hero,.dispatch-workspace>.panel,.dispatch-history-panel { animation:none; }
-  .confirm-dispatch-button { transition:none; }
 }
+.history-table :is(code,.dispatch-status,.history-actions button) { font-size:inherit; }
 </style>

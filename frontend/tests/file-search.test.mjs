@@ -31,7 +31,7 @@ function dispatchLifecycle({ status, projects, listMachines, catalogs } = {}) {
   let mounted, activated, timerId = 0
   const context = vm.createContext({
     ref, reactive, computed, AbortController,
-    useRoute: () => ({ query: {} }), useRouter: () => ({ replace() {} }), useDialogFocus() {},
+    useRoute: () => ({ query: {} }), useRouter: () => ({ replace() {} }), useConfirm: () => async () => true,
     onMounted: fn => { mounted = fn }, onActivated: fn => { activated = fn }, onDeactivated() {}, onBeforeUnmount() {},
     getCuttingStatus: (_scope, options) => { calls.status.push(options); return status(options, calls.status.length) },
     listCuttingProjects: (...args) => { calls.projects += 1; return projects ? projects(...args) : Promise.resolve({ items: [{ project_id: 'P1', project_name: 'P1' }] }) },
@@ -491,20 +491,20 @@ function fileSelection(files = [], { total = files.length, listFiles } = {}) {
 }
 
 const selectableFile = (id, documentNo = 'S806C080A001.gen') => ({ document_id: String(id), version_id: 'v1', normalized_path: `files/${id}.gen`, document_no: documentNo, path_available: true })
-const checkboxEvent = checked => ({ target: { checked, indeterminate: false } })
+const checkboxEvent = checked => checked
 
 test('select-all includes nonstandard names and skips unavailable paths; clearing affects the loaded directory scope', async () => {
   const files = [selectableFile(1), selectableFile(2, 'custom-cutting.gen'), { ...selectableFile(3), path_available: false }]
   const selection = fileSelection(files)
   const otherPage = selectableFile(4)
   selection.selectedFiles.value.set(selection.fileKey(otherPage), otherPage)
-  const event = checkboxEvent(true)
+  let event = checkboxEvent(true)
   await selection.toggleCatalogFiles(event)
   assert.equal(selection.selectedFiles.value.size, 3)
   assert.equal(selection.selectedFiles.value.has(selection.fileKey(files[1])), true)
-  assert.equal(event.target.checked, true)
-  assert.equal(event.target.indeterminate, false)
-  event.target.checked = false
+  assert.equal(selection.allCatalogFilesSelected.value, true)
+  assert.equal(selection.someCatalogFilesSelected.value, false)
+  event = false
   await selection.toggleCatalogFiles(event)
   assert.equal(selection.selectedFiles.value.size, 1)
   assert.equal(selection.selectedFiles.value.has(selection.fileKey(otherPage)), true)
@@ -514,44 +514,44 @@ test('a full selection on another page cannot leave a false checked header or ro
   const selection = fileSelection([selectableFile(101, 'custom-cutting.gen')])
   for (let i = 1; i <= 100; i += 1) selection.setFileSelected(selectableFile(i), checkboxEvent(true))
   assert.deepEqual(selection.notices, [], 'selecting exactly 100 files must not show a limit warning')
-  const header = checkboxEvent(true)
+  let header = checkboxEvent(true)
   await selection.toggleCatalogFiles(header)
-  assert.equal(header.target.checked, false)
-  assert.equal(header.target.indeterminate, true)
+  assert.equal(selection.allCatalogFilesSelected.value, false)
+  assert.equal(selection.someCatalogFilesSelected.value, true)
   const row = checkboxEvent(true)
   selection.setFileSelected(selection.rows.value[0], row)
-  assert.equal(row.target.checked, false)
+  assert.equal(selection.selectedFiles.value.has(selection.fileKey(selection.rows.value[0])), false)
   assert.equal(selection.selectedFiles.value.size, 100)
   assert.match(selection.notices.at(-1), /已达 100 项上限/)
 })
 
 test('select-all accepts exactly 100 files quietly and warns only for an extra file', async () => {
   const selection = fileSelection(Array.from({ length: 100 }, (_, i) => selectableFile(i)))
-  const header = checkboxEvent(true)
+  let header = checkboxEvent(true)
   await selection.toggleCatalogFiles(header)
   assert.equal(selection.selectedFiles.value.size, 100)
-  assert.equal(header.target.checked, true)
+  assert.equal(selection.allCatalogFilesSelected.value, true)
   assert.deepEqual(selection.notices, [])
   const extra = checkboxEvent(true)
   selection.setFileSelected(selectableFile(101), extra)
   assert.equal(selection.selectedFiles.value.size, 100)
-  assert.equal(extra.target.checked, false)
+  assert.equal(selection.selectedFiles.value.has(selection.fileKey(selectableFile(101))), false)
   assert.match(selection.notices.at(-1), /已达 100 项上限/)
 })
 
 test('select-all shows partial state when only remaining capacity fits and preserves off-page selections', async () => {
   const selection = fileSelection([selectableFile(101), selectableFile(102, 'custom-cutting.gen'), selectableFile(103)])
   for (let i = 1; i <= 98; i += 1) selection.setFileSelected(selectableFile(i), checkboxEvent(true))
-  const header = checkboxEvent(true)
+  let header = checkboxEvent(true)
   await selection.toggleCatalogFiles(header)
   assert.equal(selection.selectedFiles.value.size, 100)
-  assert.equal(header.target.checked, false)
-  assert.equal(header.target.indeterminate, true)
-  header.target.checked = false
+  assert.equal(selection.allCatalogFilesSelected.value, false)
+  assert.equal(selection.someCatalogFilesSelected.value, true)
+  header = false
   await selection.toggleCatalogFiles(header)
   assert.equal(selection.selectedFiles.value.size, 98)
-  assert.equal(header.target.checked, false)
-  assert.equal(header.target.indeterminate, true)
+  assert.equal(selection.allCatalogFilesSelected.value, false)
+  assert.equal(selection.someCatalogFilesSelected.value, true)
 })
 
 test('duplicate versions cannot leave false checkbox state or replace a previously selected version', async () => {
@@ -559,12 +559,12 @@ test('duplicate versions cannot leave false checkbox state or replace a previous
   const changedVersion = { ...original, version_id: 'v2', normalized_path: 'files/1-v2.gen' }
   const selection = fileSelection([changedVersion])
   selection.setFileSelected(original, checkboxEvent(true))
-  const header = checkboxEvent(true)
+  let header = checkboxEvent(true)
   await selection.toggleCatalogFiles(header)
-  assert.equal(header.target.checked, false)
+  assert.equal(selection.allCatalogFilesSelected.value, false)
   const row = checkboxEvent(true)
   selection.setFileSelected(changedVersion, row)
-  assert.equal(row.target.checked, false)
+  assert.equal(selection.selectedFiles.value.has(selection.fileKey(selection.rows.value[0])), false)
   assert.equal(selection.selectedFiles.value.size, 1)
   assert.equal(selection.selectedFiles.value.has(selection.fileKey(original)), true)
   assert.match(selection.notices.at(-1), /只能选择一个版本/)
@@ -578,10 +578,10 @@ test('directory select-all loads every page with the applied filter and stays se
     return { items: files, total: 42 }
   } })
   selection.appliedFileKeyword.value = '307C'
-  const header = checkboxEvent(true)
+  let header = checkboxEvent(true)
   await selection.toggleCatalogFiles(header)
   assert.equal(selection.selectedFiles.value.size, 42)
-  assert.equal(header.target.checked, true)
+  assert.equal(selection.allCatalogFilesSelected.value, true)
   assert.deepEqual(calls, [{ projectId: 'P1', catalogId: 'C1', keyword: '307C', page: 1, pageSize: 100 }])
   selection.rows.value = files.slice(0, 20)
   assert.equal(selection.allCatalogFilesSelected.value, true)
@@ -604,14 +604,14 @@ test('directory select-all fetches beyond 100 rows, skips unavailable paths and 
     pages.push(page)
     return { items: files.slice((page - 1) * pageSize, page * pageSize), total: files.length }
   } })
-  const header = checkboxEvent(true)
+  let header = checkboxEvent(true)
   await selection.toggleCatalogFiles(header)
   assert.deepEqual(pages, [1, 2])
   assert.equal(selection.selectedFiles.value.size, 100)
   assert.equal(selection.selectedFiles.value.has(selection.fileKey(files[1])), false)
   assert.equal(selection.selectedFiles.value.has(selection.fileKey(files[2])), false)
-  assert.equal(header.target.checked, false)
-  assert.equal(header.target.indeterminate, true)
+  assert.equal(selection.allCatalogFilesSelected.value, false)
+  assert.equal(selection.someCatalogFilesSelected.value, true)
   assert.match(selection.notices.at(-1), /另有 2 项/)
 })
 
@@ -622,14 +622,14 @@ test('failed directory select-all preserves previous selections without committi
     return { items: files.slice(0, 100), total: files.length }
   } })
   selection.setFileSelected(files[0], checkboxEvent(true))
-  const header = checkboxEvent(true)
+  let header = checkboxEvent(true)
   const pending = selection.toggleCatalogFiles(header)
   assert.equal(selection.loading.value, true)
   await pending
   assert.equal(selection.loading.value, false)
   assert.equal(selection.selectedFiles.value.size, 1)
-  assert.equal(header.target.checked, false)
-  assert.equal(header.target.indeterminate, true)
+  assert.equal(selection.allCatalogFilesSelected.value, false)
+  assert.equal(selection.someCatalogFilesSelected.value, true)
   assert.match(selection.notices.at(-1), /全选失败.*网络中断/)
 })
 
@@ -653,10 +653,10 @@ test('clearing or switching directory during select-all discards late results an
 
 test('empty and unavailable-only pages do not falsely indicate full directory selection', async () => {
   const empty = fileSelection([])
-  const header = checkboxEvent(true)
+  let header = checkboxEvent(true)
   await empty.toggleCatalogFiles(header)
-  assert.equal(header.target.checked, false)
-  assert.equal(header.target.indeterminate, false)
+  assert.equal(empty.allCatalogFilesSelected.value, false)
+  assert.equal(empty.someCatalogFilesSelected.value, false)
   const available = selectableFile(21)
   const selection = fileSelection([{ ...selectableFile(1), path_available: false }], {
     total: 21, listFiles: async () => ({ items: [available], total: 1 }),
@@ -676,8 +676,8 @@ test('PDM file table supports up to one hundred selections and direct batch disp
   assert.match(view, /function toggleCatalogFiles/)
   assert.match(view, /next\.size >= 100/)
   assert.match(view, /aria-label="全选当前目录所有分页的可派发文件"/)
-  assert.match(view, /@change="toggleCatalogFiles\(\$event\)"/)
-  assert.match(view, /@change="setFileSelected\(row, \$event\)"/)
+  assert.match(view, /@update:checked="toggleCatalogFiles\(\$event\)"/)
+  assert.match(view, /@update:checked="setFileSelected\(row, \$event\)"/)
   assert.doesNotMatch(view, /selectedFileCount >= 100" role="status"/)
   assert.match(view, /:aria-label="`选择文件 \$\{row\.document_no\}`"/)
   assert.match(view, /设置参数并派发/)
@@ -839,7 +839,7 @@ test('batch confirmation checks standard-name overrides and blocks duplicate ver
   assert.match(view, /hasNameMismatch\(item\)/)
   assert.match(view, /name_check_confirmed:/)
   assert.match(view, /standard_override_confirmed/)
-  assert.match(view, /@input="invalidateBatchConfirmation\(item\)"/)
+  assert.match(view, /@update:value="invalidateBatchConfirmation\(item\)"/)
   assert.match(view, /pushBatch\.nonStandardConfirmed = false/)
   assert.match(view, /pushBatch\.overrideConfirmed = false/)
   assert.match(view, /overrideBatchCount > 0 && !pushBatch\.overrideConfirmed/)
@@ -920,7 +920,7 @@ test('dispatch segments are recognized or required before a nonstandard file can
   manual.segmentName = '806\nC'
   assert.match(batchItemError(manual), /控制字符/)
   assert.match(view, /title: "分段名"/)
-  assert.match(view, /v-else v-model.trim="item.segmentName"/)
+  assert.match(view, /v-else v-model:value.trim="item.segmentName"/)
 })
 
 test('execute API sends the manual segment without changing the file reference', async () => {
@@ -933,19 +933,25 @@ test('execute API sends the manual segment without changing the file reference',
   assert.deepEqual(calls, [{ url: '/api/v1/cutting/dispatches/task%2F1/execute', body: JSON.stringify({ segment_name: '806C' }) }])
 })
 
-test('history retries collect a segment for nonstandard files and cancellation never executes', async () => {
+test('history retries require a segment for nonstandard files and cancellation never executes', async () => {
   const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
   const source = view.slice(view.indexOf('async function executeSaved('), view.indexOf('function formatTime('))
-  const calls = []
-  let answer = '806C'
-  const window = { confirm: () => true, prompt: () => answer }
+  const calls = [], retryDispatch = ref(null), retrySegment = ref('')
   const operatingId = ref('')
-  const executeSaved = scriptFunction('window', 'operatingId', 'machineName', 'parseCuttingInstructionFilename', 'executeCuttingDispatch', 'showNotice', 'loadHistory', 'refreshVisibleFileStatuses', `${source}\nreturn executeSaved`)(window, operatingId, String, parseCuttingInstructionFilename, async (...args) => { calls.push(args); return { remote_task_id: 'remote' } }, () => {}, async () => {}, async () => {})
-  await executeSaved({ dispatch_id: 'old-manual', document_no: 'custom.gen', machine_ip: '10.1.1.2' })
+  let accepted = true
+  const executeSaved = scriptFunction('confirm', 'retryDispatch', 'retrySegment', 'operatingId', 'machineName', 'parseCuttingInstructionFilename', 'executeCuttingDispatch', 'showNotice', 'loadHistory', 'refreshVisibleFileStatuses', `${source}\nreturn executeSaved`)(async () => accepted, retryDispatch, retrySegment, operatingId, String, parseCuttingInstructionFilename, async (...args) => { calls.push(args); return { remote_task_id: 'remote' } }, () => {}, async () => {}, async () => {})
+  const manual = { dispatch_id: 'old-manual', document_no: 'custom.gen', machine_ip: '10.1.1.2' }
+  await executeSaved(manual)
+  assert.equal(calls.length, 0)
+  assert.deepEqual(retryDispatch.value, manual)
+  await executeSaved(manual, '806C')
   assert.deepEqual(calls, [['old-manual', '806C']])
-  answer = null
-  await executeSaved({ dispatch_id: 'cancelled', document_no: 'custom.gen', machine_ip: '10.1.1.2' })
+  assert.equal(retryDispatch.value, null)
+  accepted = false
+  await executeSaved(manual, '806C')
   assert.equal(calls.length, 1)
-  await executeSaved({ dispatch_id: 'uploaded', document_no: 'custom.gen', remote_task_id: 'remote', machine_ip: '10.1.1.2' })
+  accepted = true
+  await executeSaved({ ...manual, dispatch_id: 'uploaded', remote_task_id: 'remote' })
   assert.deepEqual(calls[1], ['uploaded', undefined])
+  assert.doesNotMatch(view, /window\.(?:confirm|prompt)\(/)
 })

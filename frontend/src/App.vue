@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { RouterView } from 'vue-router'
-import { NConfigProvider, NMessageProvider, darkTheme, zhCN, dateZhCN, enUS, dateEnUS, useMessage, useThemeVars } from 'naive-ui'
+import { NConfigProvider, NDialogProvider, NMessageProvider, darkTheme, zhCN, dateZhCN, enUS, dateEnUS, useMessage, useThemeVars } from 'naive-ui'
 import { computed, defineComponent, nextTick, onBeforeUnmount, watch, watchEffect } from 'vue'
 import { loadSession, session } from './state/session'
 import { useAppStore } from './state/app.ts'
@@ -45,12 +45,12 @@ onBeforeUnmount(() => mobileQuery.removeEventListener('change', updateViewport))
 
 <template>
   <NConfigProvider :locale="locale === 'en-US' ? enUS : zhCN" :date-locale="locale === 'en-US' ? dateEnUS : dateZhCN" :theme="theme.darkMode ? darkTheme : null" :theme-overrides="theme.naiveTheme">
-    <NMessageProvider><ThemeFeedback />
+    <NDialogProvider><NMessageProvider><ThemeFeedback />
     <div v-if="!session.ready" class="auth-loading" role="status" aria-live="polite">正在检查登录状态…</div>
     <div v-else-if="session.error && !session.user" class="auth-loading auth-failed" role="alert">
-      <strong>系统初始化失败</strong><span>{{ session.error }}</span><button type="button" @click="loadSession({ force: true })">重新连接</button>
+      <strong>系统初始化失败</strong><span>{{ session.error }}</span><NButton attr-type="button" @click="loadSession({ force: true })">重新连接</NButton>
     </div>
     <RouterView v-else />
-    </NMessageProvider>
+    </NMessageProvider></NDialogProvider>
   </NConfigProvider>
 </template>

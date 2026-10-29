@@ -129,11 +129,8 @@ test('all application dropdowns use the shared below-field menu', () => {
 
 test('alarm severity colors agree and dispatch project names can display in full', () => {
   const alarm = descriptor('AlarmCenterView').styles[0].content
-  for (const [severity, color] of [['critical', 'error'], ['high', 'warning'], ['warning', 'info']]) {
-    assert.ok(alarm.includes(`.severity-badge.${severity}{color:rgb(var(--${color}-color));`))
-    assert.ok(alarm.includes(`.severity-badge.${severity}>span{background:rgb(var(--${color}-color))}`))
-  }
-  assert.match(alarm, /\.severity-badge>span\{[^}]*color:var\(--theme-on-primary-color\)/)
+  const template = descriptor('AlarmCenterView').template.content
+  assert.match(template, /<NTag class="severity-badge"[^>]*item.severity === 'critical' \? 'error' : item.severity === 'high' \? 'warning' : 'info'/)
   const dispatch = descriptor('CuttingDispatchView')
   assert.match(dispatch.template.content, /<NAutoComplete[^\n]*class="project-selector"[^\n]*maxWidth: 'calc\(100vw - 24px\)'/)
   assert.match(dispatch.styles[0].content, /:global\(\.dispatch-project-menu \.n-base-select-option__content\) \{ min-width:0; white-space:normal!important; overflow-wrap:anywhere;/)
@@ -183,13 +180,13 @@ test('three standard reports reuse the quick period popover', () => {
   assert.match(query.scriptSetup.content, /import ReportPeriodPicker from/)
   assert.match(query.template.content, /<ReportPeriodPicker/)
   const period = descriptor('ReportPeriodPicker', 'components')
-  assert.match(period.template.content, /<Teleport to="body">/)
+  assert.match(period.template.content, /<NPopover :show="open"/)
   assert.match(period.scriptSetup.content, /单日/)
   assert.match(period.scriptSetup.content, /最近 7 天/)
   assert.match(period.scriptSetup.content, /跨月·近 30 天/)
   assert.match(period.scriptSetup.content, /本季度/)
   assert.match(period.scriptSetup.content, /上季度/)
-  assert.match(period.template.content, /@click="applyPeriod">应用/)
+  assert.match(period.template.content, /@click="applyPeriod"[^>]*>应用/)
   assert.match(period.scriptSetup.content, /inclusiveDays > props\.maxDays/)
 })
 
@@ -229,10 +226,10 @@ test('standard reports expose consistent state recovery and truthful initial met
   assert.match(views[2].scriptSetup.content, /if \(value === null \|\| value === undefined \|\| !Number\.isFinite\(Number\(value\)\)\) return '--'/)
 })
 
-test('unavailable report data shares the loading spinner while preserving the reason and retry action', () => {
+test('unavailable report data uses an alert while preserving the reason and retry action', () => {
   const panel = descriptor('ReportTrendPanel', 'components')
   const state = descriptor('ReportPanelState', 'components')
-  assert.match(state.template.content, /v-if="type === 'loading' \|\| type === 'error'" class="spinner dark"/)
+  assert.match(state.template.content, /<NAlert v-if="type === 'error'" type="error"/)
   assert.doesNotMatch(state.styles[0].content, /report-panel-state--error/)
   assert.match(panel.scriptSetup.content, /errorTitle: \{ type: String, default: '等待报表数据' \}/)
   assert.match(panel.scriptSetup.content, /type: 'error', title: props.errorTitle, message: props.error, actionLabel: props.retryLabel/)

@@ -28,7 +28,7 @@ function setupControl(name, props, attrs = {}, slots = {}) {
   return { state, emitted, deactivate: () => deactivate() }
 }
 
-test('sidebar exposes admin routes, excludes redirects and resets the new content scroller', () => {
+test('sidebar exposes admin routes, excludes redirects and preserves scroll for query changes', () => {
   const source = readFileSync(new URL('../src/router/index.ts', import.meta.url), 'utf8')
   const expression = source.slice(source.indexOf('const router = createRouter('), source.indexOf('\nrouter.beforeEach'))
   const scrolls = []
@@ -50,8 +50,20 @@ test('sidebar exposes admin routes, excludes redirects and resets the new conten
   assert.doesNotMatch(source, /SettingsHomeView/)
   assert.ok(menus.at(-1).children.every((item) => item.key !== 'settings'))
   assert.deepEqual(menus.filter((menu) => menu.children).map((menu) => menu.key), ['/admin/reports', '/admin/settings'])
-  assert.deepEqual(router.scrollBehavior(), { top: 0 })
-  assert.deepEqual(scrolls, [{ top: 0 }])
+  const paginatedPaths = [
+    '/admin/reports/workshop', '/admin/reports/center', '/worker/tasks',
+    '/admin/alarms', '/admin/cutting-dispatch', '/admin/settings/automation', '/admin/settings/configuration-diagnostics',
+    ...['daily', 'parts', 'jobs', 'equipment'].map(kind => `/admin/welding/reports/${kind}`),
+  ]
+  for (const path of paginatedPaths) {
+    for (const [fromQuery, toQuery] of [[{}, { page: '2' }], [{ page: '2' }, {}], [{ page: '2' }, { confirmation: 'confirmed' }]]) {
+      assert.equal(router.scrollBehavior({ path, query: toQuery }, { path, query: fromQuery }), false)
+    }
+  }
+  assert.deepEqual(scrolls, [], 'query changes must preserve the content scroller')
+  assert.deepEqual(router.scrollBehavior({ path: '/admin/reports/workshop' }, { path: '/admin/home' }), { top: 0 })
+  assert.deepEqual(router.scrollBehavior({ path: '/worker/tasks' }, { path: '/' }), { top: 0 })
+  assert.deepEqual(scrolls, [{ top: 0 }, { top: 0 }])
 })
 
 test('official menu adapter keeps settings as a group with child icons and actual route hierarchy', () => {

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { NAlert, NCollapse, NCollapseItem } from 'naive-ui'
 import type { AnalysisRequest, AnalysisResult } from '../types/reports'
 import type { PropType } from 'vue'
 
@@ -308,17 +309,17 @@ onBeforeUnmount(() => { pauseAnalysis(); unsubscribeDevice() })
         <span v-if="analysis" class="analysis-mode model">
           AI 分析<small v-if="analysis.cached">已缓存</small>
         </span>
-        <button type="button" class="analysis-reload" :disabled="loading || !ready" @click="reloadAnalysis">
+        <NButton attr-type="button" class="analysis-reload" :disabled="loading || !ready" @click="reloadAnalysis" :loading="loading">
           <AppIcon v-if="!loading" name="activity" :size="14" tone="current" />
-          <span v-if="loading" class="spinner dark"></span>{{ loading ? (readingLatest ? '读取中' : '分析中') : '重新分析' }}
-        </button>
+          {{ loading ? (readingLatest ? '读取中' : '分析中') : '重新分析' }}
+        </NButton>
       </div>
     </div>
 
     <div v-if="loading && !analysis" class="analysis-state">{{ readingLatest ? '正在读取最近一次已完成的分析…' : '正在整理报表指标并生成分析…' }}</div>
-    <div v-else-if="error" class="analysis-error">
-      <span>{{ error }}</span><button type="button" @click="retryAnalysis">重试</button>
-    </div>
+    <NAlert v-else-if="error" type="error" class="analysis-error" role="alert">
+      <span>{{ error }}</span><NButton attr-type="button" @click="retryAnalysis">重试</NButton>
+    </NAlert>
     <template v-if="analysis">
       <section class="analysis-conclusion" aria-labelledby="analysis-conclusion-title">
         <span class="analysis-conclusion__icon"><AppIcon name="sparkles" :size="31" tone="current" /></span>
@@ -356,8 +357,7 @@ onBeforeUnmount(() => { pauseAnalysis(); unsubscribeDevice() })
           </div>
         </article>
       </div>
-      <details v-if="analysis.facts?.length" class="analysis-evidence">
-        <summary><AppIcon name="database" :size="17" tone="current" />查看模型输入数据（{{ analysis.facts.length }} 项）</summary>
+      <NCollapse v-if="analysis.facts?.length" class="analysis-evidence"><NCollapseItem name="evidence"><template #header><AppIcon name="database" :size="17" tone="current" />查看模型输入数据（{{ analysis.facts.length }} 项）</template>
         <div class="evidence-list">
           <article v-for="fact in analysis.facts" :key="`evidence-${fact.id}`">
             <strong>{{ fact.id }} · {{ fact.label }}</strong>
@@ -365,7 +365,7 @@ onBeforeUnmount(() => { pauseAnalysis(); unsubscribeDevice() })
             <small>来源：{{ fact.source || '当前报表数据' }}</small>
           </article>
         </div>
-      </details>
+      </NCollapseItem></NCollapse>
       <p class="analysis-time">生成时间：{{ analysis.generated_at || '--' }}</p>
     </template>
     <div v-else-if="!loading && !error" class="analysis-state">{{ versionCheckEnabled && ready ? '后台尚无已完成的分析，生成后将自动显示。' : '报表数据加载后将自动生成分析。' }}</div>
@@ -377,9 +377,9 @@ onBeforeUnmount(() => { pauseAnalysis(); unsubscribeDevice() })
 .analysis-panel-head{min-height:66px;display:flex;align-items:center;justify-content:space-between;gap:24px;padding:16px!important;border-bottom:1px solid var(--theme-border-color);background:var(--panel-heading-bg)!important}
 .analysis-panel-title{display:flex;align-items:center;gap:12px}.analysis-panel-icon{width:38px!important;height:38px!important;display:grid;place-items:center;flex:0 0 auto;color:var(--analysis-indigo);border-radius:50%;background:rgb(var(--primary-color) / .1)}
 .analysis-panel-head h2{margin:2px 0 0!important;color:var(--text-color-1)!important;font-size:14px!important}.analysis-kicker{color:rgb(var(--info-color));font-size:var(--font-auxiliary)!important;font-weight:800;letter-spacing:.12em}
-.analysis-actions{display:flex;align-items:center;gap:8px;flex-shrink:0}.analysis-actions button,.analysis-error button{min-height:34px!important;padding:0 12px!important;border-radius:7px;font-size:var(--font-auxiliary)!important}
+.analysis-actions{display:flex;align-items:center;gap:8px;flex-shrink:0}.analysis-actions button,.analysis-error button{min-height:34px!important;padding:0 12px!important}
 .analysis-mode{display:inline-flex;align-items:center;gap:8px;padding:7px 11px;color:rgb(var(--info-color));border:1px solid var(--theme-border-color);border-radius:999px;background:rgb(var(--info-color) / .1);font-weight:700;white-space:nowrap}.analysis-mode.model{color:rgb(var(--success-color));border-color:var(--theme-border-color);background:rgb(var(--success-color) / .1)}.analysis-mode small{padding-left:8px;border-left:1px solid currentColor;font-size:var(--font-auxiliary);opacity:.72}
-.analysis-reload{display:inline-flex;align-items:center;justify-content:center;gap:7px;color:rgb(var(--info-color));border-color:var(--theme-border-color);background:rgb(var(--info-color) / .1)}.analysis-reload:hover:not(:disabled){color:var(--theme-on-primary-color);border-color:var(--theme-border-color);background:rgb(var(--info-color))}
+.analysis-reload{display:inline-flex;align-items:center;justify-content:center;gap:7px}
 .analysis-state{padding:40px 24px;color:var(--muted);text-align:center;background:rgb(var(--container-bg-color))}.analysis-error{display:flex;align-items:center;justify-content:center;gap:16px;margin:24px;padding:16px;color:rgb(var(--error-color));background:rgb(var(--error-color) / .1)}
 .analysis-conclusion{display:grid;grid-template-columns:58px minmax(0,1fr) minmax(250px,.42fr);align-items:center;gap:16px;margin:16px;padding:16px;border:1px solid var(--theme-border-color);border-radius:10px;background:rgb(var(--container-bg-color));box-shadow:var(--theme-shadow)}
 .analysis-conclusion__icon{width:50px;height:50px;display:grid;place-items:center;border-radius:50%;background:rgb(var(--primary-color));box-shadow:var(--theme-shadow)}.analysis-conclusion__copy{min-width:0}.analysis-conclusion__copy>span{color:rgb(var(--primary-color));font-size:var(--font-auxiliary);font-weight:700}.analysis-conclusion__copy>span small{margin-left:8px;padding:4px 8px;color:var(--analysis-blue);border-radius:999px;background:rgb(var(--info-color) / .1);font-size:var(--font-auxiliary)}.analysis-conclusion h3{margin:4px 0 4px;color:var(--analysis-navy);font-size:14px;line-height:1.6}.analysis-conclusion p{margin:0;color:var(--muted);font-size:var(--font-auxiliary);line-height:1.6}.analysis-conclusion blockquote{margin:0;padding:4px 0 4px 20px;color:var(--muted);border-left:1px solid var(--theme-border-color);font-size:var(--font-auxiliary);line-height:1.6}

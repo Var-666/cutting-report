@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { NTag } from 'naive-ui'
 import AppReportTable from './AppReportTable.vue'
 import type { PropType } from 'vue'
 import type { ReportJob } from '../types/reports'
@@ -65,7 +66,7 @@ const reportTableColumns = [
         <template #c2="{ row: item }">{{ display(item.project_code) }}</template>
         <template #c3="{ row: item }">{{ display(item.ship_no) }}</template>
         <template #c4="{ row: item }">{{ item.task_count ?? '--' }}</template>
-        <template #c5="{ row: item }"><span class="mini-status" :data-status="item.status">{{ statusText[item.status] || item.status }}</span></template>
+        <template #c5="{ row: item }"><NTag class="mini-status" :data-status="item.status" size="small" :type="item.status === 'completed' ? 'success' : item.status === 'failed' ? 'error' : 'info'">{{ statusText[item.status] || item.status }}</NTag></template>
         <template #c6="{ row: item }">{{ formatChineseDateTime(item.generated_at || item.created_at) }}</template>
         <template #c7="{ row: item }"><div class="actions-cell"><a v-if="item.view_url" :href="item.view_url" target="_blank" rel="noopener">打开</a>
             <a v-if="item.download_url" :href="item.download_url">下载 HTML</a>
