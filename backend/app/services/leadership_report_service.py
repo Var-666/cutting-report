@@ -46,7 +46,7 @@ def _previous_month(month_start: date, months: int) -> date:
 
 
 class LeadershipReportService:
-    SNAPSHOT_VERSION = 2
+    SNAPSHOT_VERSION = 3
 
     def __init__(
         self,

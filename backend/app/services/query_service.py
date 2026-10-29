@@ -340,7 +340,7 @@ class QueryService:
             """
             WITH source AS (
                 SELECT
-                    NULLIF(LTRIM(RTRIM([PROJECT_NAME])), '') AS project_code,
+                    COALESCE(NULLIF(LTRIM(RTRIM([PROJECT_NAME])), ''), NULLIF(LTRIM(RTRIM([PROJECT_CODE])), '')) AS project_code,
                     COALESCE(
                         TRY_CONVERT(date, NULLIF(LTRIM(RTRIM([OP_DATE])), ''), 23),
                         CONVERT(date, [START_TIME])
@@ -367,7 +367,7 @@ class QueryService:
             """
             WITH source AS (
                 SELECT
-                    NULLIF(LTRIM(RTRIM([PROJECT_NAME])), '') AS project_name,
+                    COALESCE(NULLIF(LTRIM(RTRIM([PROJECT_NAME])), ''), NULLIF(LTRIM(RTRIM([PROJECT_CODE])), '')) AS project_name,
                     COALESCE(
                         TRY_CONVERT(date, NULLIF(LTRIM(RTRIM([OP_DATE])), ''), 23),
                         CONVERT(date, [START_TIME])

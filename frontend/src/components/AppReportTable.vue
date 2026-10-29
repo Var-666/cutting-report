@@ -17,7 +17,7 @@ const props = defineProps({
   rowClassName: { type: Function as PropType<(row: T, index: number) => string> },
   summary: Boolean,
   flexHeight: Boolean,
-  maxHeight: { type: Number, default: 540 },
+  maxHeight: { type: Number as PropType<number | null>, default: 540 },
   pageSizes: { type: Array as PropType<number[]>, default: () => [20, 50, 100] },
 })
 const emit = defineEmits<{ page: [page: number]; 'page-size': [size: number] }>()
@@ -41,7 +41,7 @@ const createSummary: DataTableCreateSummary<T> = () => [Object.fromEntries(colum
 </script>
 <template>
   <div role="group" class="app-report-table" :class="{ 'app-report-table--flex': flexHeight }">
-    <NDataTable table-layout="fixed" remote size="small" :columns="columns" :data="items" :row-key="rowKey" :row-class-name="rowClassName" :summary="summary ? createSummary : undefined" :loading="loading" :scroll-x="tableWidth" :max-height="flexHeight ? undefined : maxHeight" :flex-height="flexHeight" :single-line="false" :pagination="false"><template #empty><slot name="empty">暂无数据</slot></template></NDataTable>
+    <NDataTable table-layout="fixed" remote size="small" :columns="columns" :data="items" :row-key="rowKey" :row-class-name="rowClassName" :summary="summary ? createSummary : undefined" :loading="loading" :scroll-x="tableWidth" :max-height="flexHeight ? undefined : maxHeight ?? undefined" :flex-height="flexHeight" :single-line="false" :pagination="false"><template #empty><slot name="empty">暂无数据</slot></template></NDataTable>
     <div v-if="paginate" class="app-report-pagination"><span>共 {{ total }} 条</span><NPagination :page="page" :page-size="pageSize" :item-count="total" :page-slot="5" :page-sizes="pageSizes" :show-size-picker="pageSizes.length > 0" :disabled="loading" @update:page="emit('page', $event)" @update:page-size="emit('page-size', $event)">
       <template #prev><NButton class="pagination-control" text attr-type="button" aria-label="上一页" :disabled="loading || page <= 1">‹</NButton></template>
       <template #next><NButton class="pagination-control" text attr-type="button" aria-label="下一页" :disabled="loading || page >= Math.max(1, Math.ceil(total / pageSize))">›</NButton></template>

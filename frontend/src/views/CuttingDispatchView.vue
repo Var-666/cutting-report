@@ -103,6 +103,7 @@ const projects = computed(() => {
 const catalogTree = ref<CuttingCatalog[]>([])
 const fileKeyword = ref('')
 const appliedFileKeyword = ref('')
+const fileError = ref('')
 const selectedProject = ref<CuttingProject | null>(null)
 const selectedCatalog = ref<CuttingCatalog | null>(null)
 const projectExpanded = ref(false)
@@ -487,6 +488,7 @@ async function loadProjects() {
     ) || null
     selectedProject.value = null
     selectedCatalog.value = null
+    fileError.value = ''
     projectExpanded.value = false
     catalogTree.value = []
     expandedCatalogIds.value = new Set()
@@ -521,6 +523,7 @@ async function selectProject(project: CuttingProject) {
   selectedProject.value = project
   projectExpanded.value = true
   selectedCatalog.value = null
+  fileError.value = ''
   catalogTree.value = []
   expandedCatalogIds.value = new Set()
   rows.value = []
@@ -559,6 +562,9 @@ function toggleProject(project: CuttingProject) {
 
 async function selectCatalog(node: CuttingCatalog) {
   selectedCatalog.value = node
+  rows.value = []
+  total.value = 0
+  page.value = 1
   if (node.children?.length && !expandedCatalogIds.value.has(String(node.catalog_id))) expandCatalog(node)
   fileKeyword.value = ''
   appliedFileKeyword.value = ''
@@ -568,17 +574,17 @@ async function selectCatalog(node: CuttingCatalog) {
 
 async function applyFileSearch() {
   if (fileKeyword.value.trim() !== appliedFileKeyword.value) clearSelectedFiles()
-  await loadFiles(1)
+  await loadFiles(1, fileKeyword.value.trim())
 }
 
-async function loadFiles(targetPage = 1) {
+async function loadFiles(targetPage = 1, keyword = appliedFileKeyword.value) {
   selectingAll.value = false
   if (!selectedProject.value || !selectedCatalog.value) return
   const sequence = ++querySequence
   const signal = beginDirectoryRequest()
   loading.value = true
   requestedPage.value = targetPage
-  const keyword = fileKeyword.value.trim()
+  fileError.value = ''
   try {
     const data = await listCuttingFiles({
       projectId: selectedProject.value.project_id,
@@ -595,7 +601,7 @@ async function loadFiles(targetPage = 1) {
     notice.value = ''
   } catch (caught) {
     const error = toError(caught)
-    if (error.name !== 'AbortError' && sequence === querySequence) showNotice(error.message, 'error')
+    if (error.name !== 'AbortError' && sequence === querySequence) fileError.value = error.message
   } finally {
     if (sequence === querySequence) loading.value = false
   }
@@ -974,14 +980,17 @@ const fileTableColumns = [
 ] as const
 
 const historyTableColumns = [
-  { key: 'c0', title: "任务标识", width: 180, align: 'left', fixed: 'left' },
-  { key: 'c1', title: "文件名", minWidth: 220, align: 'left' },
-  { key: 'c2', title: "目标机床", width: 144, align: 'left' },
-  { key: 'c3', title: "阶段 / 状态", width: 160, align: 'center' },
-  { key: 'c4', title: "魔盒UUID", width: 240, align: 'left' },
-  { key: 'c5', title: "失败原因", width: 240, align: 'left' },
-  { key: 'c6', title: "创建时间", width: 184, align: 'left' },
-  { key: 'c7', title: "操作", width: 144, align: 'center', fixed: 'right', ellipsis: false }
+  { key: 'c0', title: "船号", width: 140, align: 'left', fixed: 'left' },
+  { key: 'c1', title: "分段号", width: 104, align: 'left' },
+  { key: 'c2', title: "文件名", minWidth: 220, align: 'left' },
+  { key: 'c3', title: "数量", width: 80, align: 'right' },
+  { key: 'c4', title: "目标机床", width: 144, align: 'left' },
+  { key: 'c5', title: "状态", width: 112, align: 'center' },
+  { key: 'c6', title: "阶段", width: 144, align: 'left' },
+  { key: 'c7', title: "任务标识", width: 200, align: 'left' },
+  { key: 'c8', title: "魔盒UUID", width: 260, align: 'left' },
+  { key: 'c9', title: "失败原因", width: 240, align: 'left' },
+  { key: 'c10', title: "创建时间", width: 184, align: 'left' }
 ] as const
 
 const batchTableColumns = [
@@ -1066,14 +1075,15 @@ const batchTableColumns = [
         <label for="file-keyword">当前目录内查找文件</label>
         <div><NInput id="file-keyword" v-model:value.trim="fileKeyword" name="file_keyword" autocomplete="off" :disabled="!selectedCatalog" placeholder="输入文件名或中间产品…" :input-props="{ 'id': 'file-keyword', 'name': 'file_keyword', 'autocomplete': 'off' }" /><NButton attr-type="submit" :disabled="!selectedCatalog || loading">{{ loading ? '查询中…' : '查询' }}</NButton></div>
       </form>
+      <div v-if="fileError" class="dispatch-notice error" role="alert"><span>文件读取失败：{{ fileError }}{{ rows.length ? '；当前仍显示上次查询结果。' : '' }}</span><NButton :disabled="loading" @click="applyFileSearch">重试</NButton></div>
       <div class="download-batch-toolbar" aria-live="polite">
         <span>已选择 <strong>{{ selectedFileCount }}</strong> / 100 项<small>全选包含所有分页</small></span>
         <div><NButton attr-type="button" :disabled="!selectedFileCount || pushBatch.saving" @click="clearSelectedFiles">清空选择</NButton><NButton class="primary" attr-type="button" :disabled="!selectedFileCount || loading || pushBatch.saving || !systemStatus?.can_push" @click="openPushBatch" type="primary">设置参数并派发</NButton></div>
       </div>
       <div class="dispatch-table-wrap" :aria-busy="loading">
         <div v-if="loading" class="dispatch-loading" role="status">{{ selectingAll ? '正在选择所有分页的文件…' : `正在加载第 ${requestedPage} 页…` }}</div>
-        <AppReportTable flex-height :columns="fileTableColumns" :items="rows" :total="total" :page="page" :page-size="pageSize" :page-sizes="[]" @page="changePage" :row-key="row => fileKey(row)" aria-label="文件查询结果" :row-class-name="row => (selectedFiles.has(fileKey(row))) ? 'selected' : ''" :loading="loading">
-        <template #header-c0><NCheckbox :checked="allCatalogFilesSelected" :indeterminate="someCatalogFilesSelected" :disabled="!total || !systemStatus?.can_push || loading || pushBatch.saving" aria-label="全选当前目录所有分页的可派发文件" @update:checked="toggleCatalogFiles($event)" /></template>
+        <AppReportTable :flex-height="rows.length === 0" :max-height="null" :columns="fileTableColumns" :items="rows" :total="total" :page="page" :page-size="pageSize" :page-sizes="[]" @page="changePage" :row-key="row => fileKey(row)" aria-label="文件查询结果" :row-class-name="row => (selectedFiles.has(fileKey(row))) ? 'selected' : ''" :loading="loading">
+        <template #header-c0><div class="download-check-cell"><NCheckbox :checked="allCatalogFilesSelected" :indeterminate="someCatalogFilesSelected" :disabled="!total || !systemStatus?.can_push || loading || pushBatch.saving" aria-label="全选当前目录所有分页的可派发文件" @update:checked="toggleCatalogFiles($event)" /></div></template>
         <template #c0="{ row }"><div class="download-check-cell"><NCheckbox :checked="selectedFiles.has(fileKey(row))" :disabled="loading || pushBatch.saving || !row.path_available || !systemStatus?.can_push" :aria-label="`选择文件 ${row.document_no}`" @update:checked="setFileSelected(row, $event)" /></div></template>
         <template #c1="{ row }"><div class="file-name-cell"><strong>{{ row.document_no }}</strong></div></template>
         <template #c2="{ row }"><span class="filename-standard" :class="{ warning: !parseCuttingInstructionFilename(row.document_no) }">{{ parseCuttingInstructionFilename(row.document_no) ? '标准名' : '非标准名' }}</span></template>
@@ -1085,7 +1095,7 @@ const batchTableColumns = [
         <template #c8="{ row }">{{ formatTime(row.operate_time || row.physical_file_date) }}</template>
         <template #c9="{ row }"><template v-if="row.dispatch_status"><NTag class="dispatch-status" :class="row.dispatch_status.status" size="small" :type="row.dispatch_status.status === 'failed' ? 'error' : 'info'">{{ row.dispatch_status.status_label }}</NTag><small class="dispatch-project-name">{{ row.dispatch_status.stage_label }}</small></template><span v-else class="dispatch-project-name">暂无记录</span></template>
         <template #c10="{ row }"><div class="file-download-cell"><NButton attr-type="button" :disabled="loading || pushBatch.saving || !row.path_available || !systemStatus?.can_push" :aria-label="`派发 ${row.document_no}`" @click="openSinglePush(row)">设置并派发</NButton><small v-if="!row.path_available">{{ row.path_error || '路径不可用' }}</small></div></template>
-      <template #empty>{{ selectedCatalog ? appliedFileKeyword ? '当前目录没有匹配的文件' : '当前目录没有文件' : '请从左侧选择一个目录' }}</template>
+      <template #empty>{{ fileError ? '文件读取失败，请重试' : selectedCatalog ? appliedFileKeyword ? '当前目录没有匹配的文件' : '当前目录没有文件' : '请从左侧选择一个目录' }}</template>
       </AppReportTable>
       </div>
       <p v-if="systemStatus && !systemStatus.can_push" class="dispatch-download-hint">当前文件来源或魔盒服务不可用，暂不可派发。</p>
@@ -1120,14 +1130,17 @@ const batchTableColumns = [
     <div v-if="historyError" class="global-error" role="alert"><span>派发记录读取失败：{{ historyError }}</span><NButton attr-type="button" :disabled="historyLoading" @click="loadHistory()">重试</NButton></div>
     <div v-if="historyLoading && !histories.length" class="dispatch-empty-history" role="status"><span class="spinner dark" aria-hidden="true"></span><strong>正在读取派发记录</strong></div>
     <div v-else-if="histories.length" class="dispatch-table-wrap"><AppReportTable :columns="historyTableColumns" :items="histories" :total="historyTotal" :page="historyPage" :page-size="historyPageSize" :page-sizes="[]" @page="changeHistoryPage" :row-key="item => item.dispatch_id" :loading="historyLoading || !!operatingId || pushBatch.saving">
-        <template #c0="{ row: item }"><code>{{ item.task_identifier || item.dispatch_id }}</code></template>
-        <template #c1="{ row: item }">{{ item.document_no }}<small class="dispatch-project-name">数量 {{ item.quantity }}</small></template>
-        <template #c2="{ row: item }">{{ machineName(item.machine_ip) }}</template>
-        <template #c3="{ row: item }"><NTag class="dispatch-status" :class="item.status" size="small" :type="item.status === 'failed' ? 'error' : 'info'">{{ item.status_label }}</NTag><small class="dispatch-project-name">{{ item.stage_label }}</small></template>
-        <template #c4="{ row: item }"><code>{{ item.remote_task_id || '--' }}</code></template>
-        <template #c5="{ row: item }"><div class="history-error">{{ item.last_error || '--' }}</div></template>
-        <template #c6="{ row: item }">{{ formatTime(item.created_at) }}</template>
-        <template #c7="{ row: item }"><div class="history-actions"><NButton v-if="item.can_execute" attr-type="button" :disabled="!!operatingId || historyLoading" @click="executeSaved(item)">{{ item.remote_task_id ? '重试指派' : '执行推送' }}</NButton><span v-if="!item.can_execute">--</span></div></template>
+        <template #c0="{ row: item }">{{ item.ship_no || projectOptions.find(project => project.project_id === item.project_id)?.ship_no || '--' }}</template>
+        <template #c1="{ row: item }">{{ item.segment_name || parseCuttingInstructionFilename(item.document_no)?.intermediateProduct || '--' }}</template>
+        <template #c2="{ row: item }">{{ item.document_no }}</template>
+        <template #c3="{ row: item }">{{ item.quantity }}</template>
+        <template #c4="{ row: item }">{{ machineName(item.machine_ip) }}</template>
+        <template #c5="{ row: item }"><NTag class="dispatch-status" :class="item.status" size="small" :type="item.status === 'failed' ? 'error' : 'info'">{{ item.status_label }}</NTag></template>
+        <template #c6="{ row: item }">{{ item.stage_label }}</template>
+        <template #c7="{ row: item }"><code>{{ item.task_identifier || item.dispatch_id }}</code></template>
+        <template #c8="{ row: item }"><code>{{ item.remote_task_id || '--' }}</code></template>
+        <template #c9="{ row: item }"><span class="history-error">{{ item.last_error || '--' }}</span></template>
+        <template #c10="{ row: item }">{{ formatTime(item.created_at) }}</template>
       </AppReportTable></div>
     <div v-else-if="!historyError" class="dispatch-empty-history"><i><AppIcon name="send" size="20" /></i><strong>暂无派发记录</strong></div>
 
@@ -1254,6 +1267,7 @@ const batchTableColumns = [
 .download-batch-toolbar button { padding:0 12px; white-space:nowrap; }
 .download-batch-toolbar button:disabled { cursor:not-allowed; }
 .dispatch-table-wrap { overflow-x:auto; position:relative; min-height:75px; }
+.dispatch-history-panel > .dispatch-table-wrap { min-width:0; padding:16px; }
 .dispatch-loading { position:absolute; z-index:2; inset:0; display:flex; align-items:flex-start; justify-content:center; padding-top:48px; background:rgb(var(--info-color) / .1); color:var(--blue); font-size:12px; }.file-download-cell button { white-space:nowrap; cursor:pointer; }.file-download-cell button:disabled { cursor:not-allowed; }.file-download-cell small { display:block; margin-top:4px; color:var(--muted); font-size:var(--font-auxiliary); }
 .source-file-table .file-download-cell { position:sticky; z-index:1; right:0; background:rgb(var(--container-bg-color)); box-shadow:var(--theme-shadow); }
 .source-file-table thead .file-download-cell { z-index:2; }
@@ -1265,7 +1279,7 @@ const batchTableColumns = [
 .dispatch-table th { color:var(--theme-on-primary-color); background:var(--theme-table-header-color); font-size:var(--font-auxiliary); letter-spacing:.4px; }
 .dispatch-table tbody tr { cursor:default; }
 .dispatch-table input[type='checkbox'] { width:15px; height:15px; }
-.download-check-cell { width:44px; text-align:center!important; }
+.download-check-cell { width:100%; display:flex; align-items:center; justify-content:center; }
 .download-check-cell input { display:block; margin:auto; accent-color:var(--blue); cursor:pointer; }
 .download-check-cell input:disabled { cursor:not-allowed; }
 .check-column { width:42px; text-align:center!important; }
@@ -1530,4 +1544,7 @@ const batchTableColumns = [
   .dispatch-hero,.dispatch-workspace>.panel,.dispatch-history-panel { animation:none; }
 }
 .history-table :is(code,.dispatch-status,.history-actions button) { font-size:inherit; }
+@media (max-width:560px) {
+  .dispatch-history-panel > .dispatch-table-wrap { padding:12px; }
+}
 </style>

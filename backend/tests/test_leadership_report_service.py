@@ -44,6 +44,23 @@ def test_demo_report_has_daily_total_and_twelve_months(tmp_path) -> None:
     assert result.snapshot.source == "demo"
 
 
+def test_project_mapping_upgrade_rebuilds_snapshots_with_the_old_mapping(tmp_path, monkeypatch):
+    settings = Settings(project_root=tmp_path, demo_mode=False, data_source_mode="sqlserver")
+    snapshots = LeadershipSnapshotRepository(SQLiteDatabase(settings.metadata_db_path))
+    snapshots.initialize()
+    legacy = LeadershipReportService(settings, snapshots)
+    legacy.SNAPSHOT_VERSION = 2
+    monkeypatch.setattr(legacy.client, "fetch_result_sets", lambda *_: [[], []])
+    month = date(2026, 10, 1)
+    legacy.refresh(month, bootstrap=True)
+    assert not legacy.needs_bootstrap(month)
+    current = LeadershipReportService(settings, snapshots)
+    assert current.needs_bootstrap(month)
+    monkeypatch.setattr(current.client, "fetch_result_sets", lambda *_: [[], []])
+    current.refresh(month, bootstrap=True)
+    assert not current.needs_bootstrap(month)
+
+
 def test_sqlserver_rows_are_normalized_without_portion_deduplication(
     tmp_path, monkeypatch
 ) -> None:

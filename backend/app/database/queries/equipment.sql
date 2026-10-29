@@ -1,11 +1,12 @@
 /*
   设备生产数据。能耗由能管服务按 MACHINE_NO 和实际 START_TIME/END_TIME 补充。
-  工程号和船号均按 PROJECT_NAME 原样映射。
+  工程号和船号使用同一编号：PROJECT_NAME 非空时优先，否则读取 PROJECT_CODE。
   参数顺序：设备编号、开始时间、结束时间、工程/船号、工程/船号、工程/船号、工程/船号。
 */
 WITH task_source AS (
     SELECT
         t.*,
+        COALESCE(NULLIF(LTRIM(RTRIM(t.[PROJECT_NAME])), ''), NULLIF(LTRIM(RTRIM(t.[PROJECT_CODE])), '')) AS project_number,
         COALESCE(
             TRY_CONVERT(date, NULLIF(LTRIM(RTRIM(t.[OP_DATE])), ''), 23),
             CONVERT(date, t.[START_TIME])
@@ -19,8 +20,8 @@ SELECT
     CONVERT(varchar(64), source.[TASK_ID]) AS task_id,
     source.production_date AS production_date,
     NULLIF(LTRIM(RTRIM(source.[MACHINE_NO])), '') AS equipment_id,
-    NULLIF(LTRIM(RTRIM(source.[PROJECT_NAME])), '') AS project_code,
-    NULLIF(LTRIM(RTRIM(source.[PROJECT_NAME])), '') AS ship_no,
+    source.project_number AS project_code,
+    source.project_number AS ship_no,
     NULLIF(LTRIM(RTRIM(source.[SEGMENT_NAME])), '') AS segment_name,
     CONVERT(decimal(18, 3), COALESCE(source.[OP_LENGTH_CUT], 0)) / 1000.0 AS cut_length,
     CONVERT(decimal(18, 3), COALESCE(source.[WORK_TIME], 0)) AS work_time,
@@ -33,6 +34,6 @@ SELECT
 FROM task_source AS source
 WHERE source.production_date >= CONVERT(date, ?)
   AND source.production_date < CONVERT(date, ?)
-  AND (? IS NULL OR source.[PROJECT_NAME] = ?)
-  AND (? IS NULL OR source.[PROJECT_NAME] = ?)
+  AND (? IS NULL OR source.project_number = ?)
+  AND (? IS NULL OR source.project_number = ?)
 ORDER BY source.[MACHINE_NO], source.[START_TIME], source.[TASK_ID];

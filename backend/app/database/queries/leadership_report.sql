@@ -11,7 +11,7 @@ DECLARE @range_end date = CAST(? AS date);
 
 SELECT
     calculated.production_date,
-    COALESCE(NULLIF(LTRIM(RTRIM(t.[PROJECT_NAME])), ''), N'未标注工程') AS project_name,
+    COALESCE(NULLIF(LTRIM(RTRIM(t.[PROJECT_NAME])), ''), NULLIF(LTRIM(RTRIM(t.[PROJECT_CODE])), ''), N'未标注工程') AS project_name,
     CONVERT(decimal(38, 3), COALESCE(t.[OP_LENGTH_CUT], 0)) AS cut_length_mm,
     CONVERT(decimal(38, 3), COALESCE(t.[OP_LENGTH_GROOVE], 0)) AS groove_length_mm,
     CONVERT(decimal(38, 0), COALESCE(t.[WORK_TIME], 0)) AS work_time_seconds,

@@ -61,6 +61,9 @@ export interface CuttingStatus {
 }
 export interface CuttingDispatch {
   dispatch_id: string;
+  project_id?: string;
+  ship_no?: string | null;
+  segment_name?: string | null;
   document_id: string;
   document_no: string;
   version_id: string | null;

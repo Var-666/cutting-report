@@ -11,6 +11,22 @@ function descriptor(name, folder = 'views') {
   return parse(source).descriptor
 }
 
+test('file selection centers header and row checkboxes while history and alarm tables share panel insets', () => {
+  const dispatch = descriptor('CuttingDispatchView')
+  const dispatchStyles = dispatch.styles.map(style => style.content).join('\n')
+  assert.equal((dispatch.template.content.match(/class="download-check-cell"/g) || []).length, 2)
+  assert.match(dispatch.template.content, /#header-c0><div class="download-check-cell"><NCheckbox/)
+  assert.match(dispatchStyles, /\.download-check-cell \{ width:100%; display:flex; align-items:center; justify-content:center;/)
+  assert.match(dispatchStyles, /\.dispatch-history-panel > \.dispatch-table-wrap \{ min-width:0; padding:16px;/)
+  assert.match(dispatchStyles, /@media \(max-width:560px\) \{\s*\.dispatch-history-panel > \.dispatch-table-wrap \{ padding:12px;/)
+  const alarm = descriptor('AlarmCenterView')
+  const alarmStyles = alarm.styles.map(style => style.content).join('\n')
+  assert.match(alarm.template.content, /class="alarm-table-wrap"/)
+  assert.match(alarm.template.content, /class="alarm-table-wrap report-table-wrap"/)
+  assert.match(alarmStyles, /\.alarm-table-wrap\{min-width:0;padding:16px;overflow-x:auto\}/)
+  assert.match(alarmStyles, /@media \(max-width:560px\)\{\.alarm-table-wrap\{padding:12px\}\}/)
+})
+
 test('admin pages use the pinned Soybean layout and responsive content shell', () => {
   const layout = descriptor('AdminLayout', 'layouts')
   const styles = readFileSync(new URL('../src/assets/soybean.css', import.meta.url), 'utf8')
@@ -763,11 +779,13 @@ test('alarm center uses source timestamps and presents the latest evidenced mode
   assert.match(template, /:items="filteredIncidents"[^>]*@page="changeIncidentPage"/)
   assert.match(template, /:total="incidentSummary.total"[^>]*:page="incidentPage"/)
   assert.match(script, /const reportPageSize = 10/)
-  assert.match(script, /listAlarmReportPage\(\{ page: reportPage\.value, pageSize: reportPageSize \}/)
+  assert.match(script, /listAlarmReportPage\(\{ page: targetReportPage, pageSize: reportPageSize \}/)
   assert.match(template, /:items="reportItems"/)
   assert.match(template, /@page="changeReportPage"/)
   assert.match(template, /:total="reportSummary.total"[^>]*:page="reportPage"/)
-  assert.equal((template.match(/class="alarm-empty-state"/g) || []).length, 4)
+  assert.equal((template.match(/class="alarm-empty-state"/g) || []).length, 6)
+  assert.match(template, /告警事件读取失败[\s\S]*当前告警状态未知/)
+  assert.match(template, /告警报告读取失败/)
   assert.match(template, /当前设备暂无告警记录/)
   assert.match(template, /当前没有状态异常的告警/)
   assert.match(styles, /\.alarm-page>\.panel\{margin-bottom:0\}/)

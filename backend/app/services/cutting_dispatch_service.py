@@ -318,6 +318,8 @@ class CuttingDispatchService:
             {
                 **file_item,
                 "project_name": project.get("project_name") if project else None,
+                "ship_no": str(raw_file.get("ship_no") or "").strip() or None,
+                "segment_name": standard_instruction_segment(file_item["document_no"]),
                 "relative_path": file_item["normalized_path"],
                 "machine_ip": machine_ip,
                 "material": material,
@@ -415,6 +417,7 @@ class CuttingDispatchService:
         remote_id = bool(item.get("remote_task_id"))
         return {
             **item,
+            "segment_name": item.get("segment_name") or standard_instruction_segment(item["document_no"]),
             "status_label": STATUS_LABELS.get(item["status"], item["status"]),
             "stage_label": STAGE_LABELS.get(stage, stage),
             "can_execute": item["status"] in {"ready", "downloaded", "download_failed"}
@@ -541,6 +544,7 @@ class CuttingDispatchService:
                 dispatch_id, expected={item["status"]},
                 expected_stage=item.get("stage"), expected_attempt_count=item["attempt_count"],
                 status="pushing", stage="uploading",
+                ship_no=ship_no, segment_name=segment_name,
                 increment_attempt=item["attempt_count"] == initial_attempt_count,
                 claim_exclusive=True, now=self._now(),
             )

@@ -937,12 +937,24 @@ class WorkshopRepository(SQLiteRepository):
                 existing_ids = set(existing_rows)
                 unique_records: list[WorkshopRecord] = []
                 mismatched_task_ids: list[str] = []
+                project_backfills: list[tuple[str, str]] = []
                 for record in records:
                     task_id = str(record.task_id)
                     expected = _snapshot_values(record, report_date)
                     if task_id in existing_rows:
-                        if not _snapshot_values_equal(existing_rows[task_id], expected):
-                            mismatched_task_ids.append(task_id)
+                        existing = existing_rows[task_id]
+                        if not _snapshot_values_equal(existing, expected):
+                            # Only repair a missing identifier; task data and confirmations stay intact.
+                            if (
+                                not (existing.get("project_name") or "").strip()
+                                and expected["project_name"]
+                                and _snapshot_values_equal(existing, {
+                                    field: value for field, value in expected.items() if field != "project_name"
+                                })
+                            ):
+                                project_backfills.append((expected["project_name"], existing["report_item_id"]))
+                            else:
+                                mismatched_task_ids.append(task_id)
                         continue
                     unique_records.append(record)
                 if mismatched_task_ids:
@@ -950,6 +962,11 @@ class WorkshopRepository(SQLiteRepository):
                     suffix = "等" if len(mismatched_task_ids) > 10 else ""
                     raise DailyReportRecordMismatchError(
                         f"日报任务与生产源数据不一致：{shown}{suffix}；请检查数据源或采集配置"
+                    )
+                if project_backfills:
+                    connection.executemany(
+                        "UPDATE workshop_report_items SET project_name = ? WHERE report_item_id = ?",
+                        project_backfills,
                     )
                 if unique_records:
                     ordinal = int(connection.execute(

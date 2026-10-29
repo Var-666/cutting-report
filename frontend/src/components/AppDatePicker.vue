@@ -16,6 +16,7 @@ const props = defineProps({
   id: { type: String, default: undefined },
   min: { type: String, default: '' },
   max: { type: String, default: '' },
+  to: { type: String, default: undefined },
 })
 const emit = defineEmits<{ 'update:modelValue': [value: string]; change: [event: ChangeEvent] }>()
 const control = ref<DatePickerInst | null>(null)
@@ -48,7 +49,7 @@ onDeactivated(() => { open.value = false })
 
 <template>
   <div class="app-date-picker" :class="[$attrs.class, { 'is-invalid': invalid }]" :style="$attrs.style">
-    <NDatePicker :id="id" ref="control" v-model:show="open" :type="mode" :formatted-value="modelValue || null" :value-format="valueFormat" :format="mode === 'month' ? 'yyyy年MM月' : 'yyyy年MM月dd日'" :disabled="disabled" :status="invalid ? 'error' : undefined" :is-date-disabled="isOutsideBounds" :input-readonly="true" :clearable="!required" :aria-label="($attrs['aria-label'] as string | undefined) || (mode === 'month' ? '选择月份' : '选择日期')" @update:formatted-value="commit" />
+    <NDatePicker :id="id" ref="control" v-model:show="open" :to="to" :type="mode" :formatted-value="modelValue || null" :value-format="valueFormat" :format="mode === 'month' ? 'yyyy年MM月' : 'yyyy年MM月dd日'" :disabled="disabled" :status="invalid ? 'error' : undefined" :is-date-disabled="isOutsideBounds" :input-readonly="true" :clearable="!required" :aria-label="($attrs['aria-label'] as string | undefined) || (mode === 'month' ? '选择月份' : '选择日期')" @update:formatted-value="commit" />
     <input class="app-control-native" :type="mode" :name="$attrs.name as string | undefined" :value="modelValue" :required="required" :disabled="disabled" :min="min" :max="max" tabindex="-1" aria-hidden="true" @invalid.prevent="handleInvalid" />
   </div>
 </template>

@@ -78,16 +78,122 @@ test('migrated controls compile and retain native buttons only in the original d
 })
 
 
-test('reviewed controls keep filters stationary, the original tree and a full-height file list', () => {
+test('reviewed controls keep filters stationary, the original tree and twenty-row file pages without internal vertical scrolling', () => {
   const source = name => readFileSync(new URL(`../src/${name}.vue`, import.meta.url), 'utf8')
   const alarm = parse(source('views/AlarmCenterView')).descriptor
   const styles = alarm.styles.map(style => style.content).join('\n')
   assert.match(styles, /\.alarm-tabs\{[^}]*height:auto;overflow:visible/)
   assert.doesNotMatch(styles, /\.alarm-tabs\{[^}]*overflow(?:-[xy])?:(?:auto|scroll)/)
   const dispatch = parse(source('views/CuttingDispatchView')).descriptor
-  assert.match(dispatch.template.content, /<AppReportTable flex-height :columns="fileTableColumns"/)
+  assert.match(dispatch.template.content, /<AppReportTable :flex-height="rows.length === 0" :max-height="null" :columns="fileTableColumns"/)
+  assert.match(dispatch.scriptSetup.content, /const pageSize = 20/)
   assert.match(dispatch.styles[0].content, /\.download-workspace \.dispatch-table-wrap \{ display:flex; flex:1 1 auto; min-height:260px;/)
   const tree = parse(source('components/CatalogTreeNode')).descriptor
   assert.match(tree.template.content, /class="catalog-folder" aria-hidden="true"/)
   assert.match(tree.template.content, /<CatalogTreeNode[\s\S]*@select="emit\('select', \$event\)"[\s\S]*@toggle="emit\('toggle', \$event\)"/)
+})
+
+test('shared report table removes the height cap only when requested and keeps empty flex layouts', async () => {
+  const states = []
+  const items = Array.from({ length: 20 }, (_, index) => ({ id: index + 1 }))
+  const Table = Vue.defineComponent({ props: ['data', 'maxHeight', 'flexHeight'],
+    setup(props) { states.push({ rows: props.data.length, maxHeight: props.maxHeight, flexHeight: props.flexHeight }); return () => null },
+  })
+  const props = { columns: [{ key: 'id', title: '文件', width: 160 }], items, rowKey: row => row.id, paginate: false }
+  for (const overrides of [{}, { maxHeight: null }, { maxHeight: 330 }, { items: [], maxHeight: null, flexHeight: true }]) {
+    await render('AppReportTable', { ...props, ...overrides }, { NDataTable: Table })
+  }
+  assert.deepEqual(states, [
+    { rows: 20, maxHeight: 540, flexHeight: false },
+    { rows: 20, maxHeight: undefined, flexHeight: false },
+    { rows: 20, maxHeight: 330, flexHeight: false },
+    { rows: 0, maxHeight: undefined, flexHeight: true },
+  ])
+})
+
+test('period calendar clicks keep both draft dates open until Apply or an outside click', () => {
+  const source = readFileSync(new URL('../src/components/ReportPeriodPicker.vue', import.meta.url), 'utf8')
+  const script = parse(source).descriptor.scriptSetup.content.replace(/^import .*$/gm, '')
+  const events = []
+  const bindings = {
+    ...Vue, defineProps: () => ({ startDate: '2026-10-29', endDate: '2026-10-29', anchorDate: '2026-10-29', maxDays: 366 }),
+    defineEmits: () => (...event) => events.push(event), useId: () => 'period-test',
+    createActivationBinding: () => ({ activate() {}, deactivate() {} }),
+    onMounted() {}, onActivated() {}, onDeactivated() {}, onBeforeUnmount() {},
+  }
+  const api = scriptFunction(...Object.keys(bindings), `${script}\nreturn { open, draftStart, draftEnd, showPanel, handleClickoutside, applyPeriod }`)(...Object.values(bindings))
+  const calendarClick = { target: { closest: selector => selector === '.n-date-panel' ? {} : null } }
+  api.showPanel()
+  api.draftStart.value = '2026-10-28'
+  api.handleClickoutside(calendarClick)
+  assert.equal(api.open.value, true)
+  api.draftEnd.value = '2026-10-28'
+  api.handleClickoutside(calendarClick)
+  assert.equal(api.open.value, true)
+  assert.deepEqual(events, [], 'choosing dates must not apply or discard the draft')
+  api.applyPeriod()
+  assert.equal(api.open.value, false)
+  assert.deepEqual(events.find(([event]) => event === 'apply'), ['apply', { startDate: '2026-10-28', endDate: '2026-10-28', preset: 'custom' }])
+  api.showPanel()
+  api.draftStart.value = '2026-10-30'
+  api.draftEnd.value = '2026-10-28'
+  api.applyPeriod()
+  assert.equal(api.open.value, true)
+  assert.equal(events.filter(([event]) => event === 'apply').length, 1, 'an invalid range must not query')
+  api.handleClickoutside({ target: { closest: () => null } })
+  assert.equal(api.open.value, false)
+})
+
+test('period calendars escape the scrollable popover while other date pickers retain their default container', async () => {
+  const targets = []
+  const DatePicker = component('AppDatePicker', {
+    NDatePicker: Vue.defineComponent({ props: ['to'], setup(props) { targets.push(props.to); return () => null } }),
+  })
+  const Period = component('ReportPeriodPicker', {
+    AppDatePicker: DatePicker,
+    AppIcon: () => null,
+    createActivationBinding: () => ({ activate() {}, deactivate() {} }),
+    NPopover: Vue.defineComponent({ setup(_, { slots }) { return () => slots.default?.() } }),
+  })
+  const app = Vue.createSSRApp({ render: () => Vue.h(Vue.Fragment, [
+    Vue.h(Period, { startDate: '2026-10-29', endDate: '2026-10-29' }), Vue.h(DatePicker),
+  ]) })
+  app.component('AppDatePicker', DatePicker)
+  setupCssr(app)
+  await renderToString(app)
+  assert.deepEqual(targets, ['body', 'body', undefined])
+})
+
+test('applying a report period submits once after date watchers settle and cancel does not query', async () => {
+  for (const apply of [true, false]) {
+    const dates = Vue.reactive({ start: '2026-10-29', end: '2026-10-29' })
+    const submissions = []
+    let filter = 'previous-project'
+    const stop = Vue.watch(() => [dates.start, dates.end], () => { filter = '' })
+    const Query = component('StandardReportQuery', {
+      AppIcon: () => null, ReportExportMenu: () => null,
+      ReportPeriodPicker: Vue.defineComponent({
+        emits: ['update:startDate', 'update:endDate', 'apply'],
+        setup(_, { emit }) {
+          if (apply) {
+            emit('update:startDate', '2026-10-27')
+            emit('update:endDate', '2026-10-28')
+            emit('apply', { startDate: '2026-10-27', endDate: '2026-10-28', preset: 'custom' })
+          }
+          return () => null
+        },
+      }),
+    })
+    const app = Vue.createSSRApp({ render: () => Vue.h(Query, {
+      startDate: dates.start, endDate: dates.end, chartType: 'bar_line',
+      'onUpdate:startDate': date => { dates.start = date }, 'onUpdate:endDate': date => { dates.end = date },
+      onSubmit: () => submissions.push({ ...dates, filter }),
+    }) })
+    app.component('AppSelect', () => null)
+    setupCssr(app)
+    await renderToString(app)
+    await Vue.nextTick()
+    stop()
+    assert.deepEqual(submissions, apply ? [{ start: '2026-10-27', end: '2026-10-28', filter: '' }] : [])
+  }
 })

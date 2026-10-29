@@ -100,6 +100,40 @@ def test_snapshot_source_identity_must_match(tmp_path):
     assert repository.get_daily_report(report_date='2026-09-30')['item_count'] == 1
 
 
+def test_snapshot_backfills_only_missing_project_number_and_preserves_confirmation(tmp_path):
+    repository = setup(tmp_path)
+    arguments = dict(report_date='2026-09-30', source_mode='sqlserver',
+                     user={'user_id': repository.test_admin_id, 'display_name': '管理员'}, now='2026-10-01T01:00:00')
+    report = repository.create_daily_report(**arguments, records=[record('A', project=None)])
+    repository.confirm_tasks(task_ids=['A'], report_id=report['report_id'],
+                             user={'user_id': repository.test_worker_id, 'display_name': '工人', 'role': 'worker'},
+                             now='2026-10-01T02:00:00')
+    before_confirmation = repository.get_confirmations(['A'], report_id=report['report_id'])
+    before_audits = repository.list_confirmation_audits(task_id='A')
+    _, before = repository.get_daily_report_records('2026-09-30')
+    updated = repository.populate_empty_daily_report(**arguments, records=[record('A', project='CMYZ0170')])
+    _, after = repository.get_daily_report_records('2026-09-30')
+    assert updated['report_id'] == report['report_id']
+    assert updated['confirmed_count'] == 1
+    assert (after[0].project_code, after[0].ship_no) == ('CMYZ0170', 'CMYZ0170')
+    assert after[0].snapshot_revision == before[0].snapshot_revision
+    assert repository.get_confirmations(['A'], report_id=report['report_id']) == before_confirmation
+    assert repository.list_confirmation_audits(task_id='A') == before_audits
+
+
+@pytest.mark.parametrize('changed', ['work_time', 'existing_project'])
+def test_snapshot_project_backfill_is_atomic_and_cannot_hide_other_source_changes(tmp_path, changed):
+    repository = setup(tmp_path)
+    arguments = dict(report_date='2026-09-30', source_mode='sqlserver',
+                     user={'user_id': repository.test_admin_id, 'display_name': '管理员'}, now='2026-10-01T01:00:00')
+    repository.create_daily_report(**arguments, records=[record('A', project=None), record('B', project='P')])
+    conflicting = record('B', work=90) if changed == 'work_time' else record('B', project='OTHER')
+    with pytest.raises(DailyReportRecordMismatchError):
+        repository.populate_empty_daily_report(**arguments, records=[record('A', project='CMYZ0170'), conflicting])
+    _, after = repository.get_daily_report_records('2026-09-30')
+    assert [(row.project_code, row.work_time) for row in after] == [(None, Decimal('60')), ('P', Decimal('60'))]
+
+
 def test_empty_snapshot_can_be_populated_and_then_incrementally_synced(tmp_path):
     repository = setup(tmp_path)
     report = repository.create_daily_report(report_date='2026-09-30', source_mode='sqlserver', records=[],

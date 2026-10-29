@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from app.services.frontend_static import FrontendAssets
 
 
-def test_index_and_nested_routes_revalidate_without_caching_api_errors(tmp_path, monkeypatch):
+def test_index_and_nested_routes_are_not_stored_without_caching_api_errors(tmp_path, monkeypatch):
     from app import main
     dist = tmp_path / 'frontend/dist'
     dist.mkdir(parents=True)
@@ -16,7 +16,7 @@ def test_index_and_nested_routes_revalidate_without_caching_api_errors(tmp_path,
     for path in ('/', '/admin/home', '/admin/welding/reports/jobs'):
         response = client.get(path)
         assert response.status_code == 200
-        assert response.headers['cache-control'] == 'no-cache'
+        assert response.headers['cache-control'] == 'no-store'
     response = client.get('/api/v1/not-a-real-route')
     assert response.status_code == 404
     assert 'cache-control' not in response.headers

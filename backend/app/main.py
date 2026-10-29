@@ -214,7 +214,7 @@ def frontend_favicon():
 def frontend_index():
     index_path = settings.frontend_dist_dir / "index.html"
     if index_path.is_file():
-        return FileResponse(index_path, headers={'Cache-Control': 'no-cache'})
+        return FileResponse(index_path, headers={'Cache-Control': 'no-store'})
     return HTMLResponse(
         """
         <!doctype html><html lang="zh-CN"><meta charset="utf-8">
@@ -234,5 +234,5 @@ def frontend_spa(frontend_path: str):
         raise HTTPException(status_code=404, detail="Not Found")
     index_path = settings.frontend_dist_dir / "index.html"
     if index_path.is_file():
-        return FileResponse(index_path, headers={'Cache-Control': 'no-cache'})
+        return FileResponse(index_path, headers={'Cache-Control': 'no-store'})
     raise HTTPException(status_code=404, detail="Vue 前端尚未构建")

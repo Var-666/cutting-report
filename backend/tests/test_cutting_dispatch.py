@@ -67,6 +67,39 @@ def _service(tmp_path: Path, file_source=None):
     )
 
 
+def test_dispatch_history_saves_ship_and_segment_without_reading_pdm_when_listing(tmp_path):
+    service, repository, admin = _service(tmp_path)
+    source = service.pdm.files[0]
+    source['document_no'] = 'S802C120A001.gen'
+    draft = service.create_dispatch(document_id=source['document_id'], machine_ip='10.1.133.197',
+                                    material='A0', thickness=12, quantity=3, user=admin)
+    assert (draft['ship_no'], draft['segment_name']) == ('CMYZ0177', '802C')
+    service.pdm.get_file = lambda *_: (_ for _ in ()).throw(AssertionError('history must stay local'))
+    service.pdm.projects[0]['ship_no'] = 'CHANGED'
+    item = service.list_dispatches(page=1, page_size=10)['items'][0]
+    assert item['dispatch_id'] == draft['dispatch_id']
+    assert (item['ship_no'], item['segment_name'], item['quantity']) == ('CMYZ0177', '802C', 3)
+
+
+def test_dispatch_history_adds_nullable_ship_and_segment_to_legacy_records(tmp_path):
+    service, repository, admin = _service(tmp_path)
+    source = service.pdm.files[0]
+    source['document_no'] = 'S802C120A001.gen'
+    draft = service.create_dispatch(document_id=source['document_id'], machine_ip='10.1.133.197',
+                                    material='A0', thickness=12, quantity=1, user=admin)
+    with repository.connect() as connection:
+        connection.execute('ALTER TABLE cutting_dispatches DROP COLUMN ship_no')
+        connection.execute('ALTER TABLE cutting_dispatches DROP COLUMN segment_name')
+    repository.initialize()
+    repository.initialize()
+    saved = repository.get(draft['dispatch_id'])
+    assert saved['ship_no'] is None and saved['segment_name'] is None
+    assert saved['task_identifier'] == draft['task_identifier']
+    history = service.list_dispatches(page=1, page_size=10)['items'][0]
+    assert history['ship_no'] is None
+    assert history['segment_name'] == '802C'
+
+
 @pytest.mark.parametrize(
     "unsafe_path",
     [
@@ -514,6 +547,11 @@ def test_real_push_combines_ship_segment_and_uploaded_filename_in_task_name(tmp_
 
     assert sent["status"] == "sent"
     assert sent["remote_task_id"] == "magic-uuid-1"
+    assert (sent["ship_no"], sent["segment_name"]) == ("CMYZ0177", "806C")
+    restarted = DispatchRepository(dispatches.database)
+    restarted.initialize()
+    saved = restarted.get(draft["dispatch_id"])
+    assert (saved["ship_no"], saved["segment_name"]) == ("CMYZ0177", "806C")
     assert client.uploads[0]["task_name"] == f"CMYZ0177_806C_{client.uploads[0]['file_path'].name}"
     assert client.uploads[0]["task_name"].endswith(".GEN")
     assert client.assignments == [{
@@ -1312,6 +1350,8 @@ def test_nonstandard_task_requires_manual_segment_before_downloading_or_uploadin
     assert service.downloads.repository.list(page=1, page_size=10)[1] == 0
     service.execute_dispatch(draft["dispatch_id"], user=admin, segment_name=" 806C ")
     assert client.uploads[0]["task_name"] == "CMYZ0177_806C_custom.GEN"
+    saved = service.get_dispatch(draft["dispatch_id"])
+    assert (saved["ship_no"], saved["segment_name"]) == ("CMYZ0177", "806C")
 
 
 def test_missing_ship_number_stops_upload_instead_of_guessing_from_project_name(tmp_path):

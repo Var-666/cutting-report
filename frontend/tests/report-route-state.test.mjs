@@ -78,7 +78,7 @@ test('standard reports distinguish edited dates from the last successfully appli
   assert.match(query.scriptSetup.content, /dateDirty: Boolean/)
   assert.match(query.template.content, /v-if="dateDirty && !loading"/)
   assert.match(query.template.content, /role="status"/)
-  assert.match(query.template.content, /条件已修改，尚未更新报表/)
+  assert.match(query.template.content, /所选区间尚未加载成功，可重新查询/)
   assert.match(leadership, /periodStart\.value !== appliedPeriodStart\.value \|\| periodEnd\.value !== appliedPeriodEnd\.value/)
   assert.match(equipment, /periodStart\.value !== appliedPeriodStart\.value \|\| periodEnd\.value !== appliedPeriodEnd\.value/)
   assert.match(workshop, /filters\.startDate !== appliedRouteState\.startDate \|\| filters\.endDate !== appliedRouteState\.endDate/)

@@ -155,14 +155,21 @@ function historyPagination() {
   return { ...bindings, ...functions }
 }
 
-test('dispatch history removes the ineffective cancel action while keeping safe execution retries', () => {
+test('dispatch history omits the action column and keeps each field in its own single-line column', () => {
   const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
   const history = view.slice(view.indexOf('<section class="panel dispatch-history-panel"'), view.indexOf('<div v-if="selectedFileCount && !pushBatch.visible" class="mobile-selection-bar-spacer"'))
 
   assert.doesNotMatch(view, /取消指派|cancelSaved|cancelCuttingDispatch|can_cancel/)
-  assert.match(history, /v-if="item.can_execute"[^>]*@click="executeSaved\(item\)"/)
-  assert.match(history, /item.remote_task_id \? '重试指派' : '执行推送'/)
-  assert.match(history, /<span v-if="!item.can_execute">--<\/span>/)
+  const columns = view.slice(view.indexOf('const historyTableColumns ='), view.indexOf('const batchTableColumns ='))
+  assert.deepEqual([...columns.matchAll(/title: "([^"]+)"/g)].map(match => match[1]),
+    ['船号', '分段号', '文件名', '数量', '目标机床', '状态', '阶段', '任务标识', '魔盒UUID', '失败原因', '创建时间'])
+  const table = history.slice(history.indexOf('<AppReportTable'), history.indexOf('</AppReportTable>'))
+  assert.doesNotMatch(table, /executeSaved|history-actions|<small|<br\b/)
+  for (let index = 0; index < 11; index++) assert.match(history, new RegExp(`#c${index}="`))
+  assert.match(history, /item\.ship_no \|\| projectOptions\.find/)
+  assert.match(history, /item\.segment_name \|\| parseCuttingInstructionFilename\(item\.document_no\)\?\.intermediateProduct/)
+  assert.match(history, /#c3="\{ row: item \}">\{\{ item.quantity \}\}/)
+  assert.match(history, /#c6="\{ row: item \}">\{\{ item.stage_label \}\}/)
 })
 
 test('dispatch history pages through all records in ten-row pages independently of file selection', async () => {
@@ -323,7 +330,7 @@ test('machine selectors show Chinese names and IPs while dispatch still uses the
   assert.equal((view.match(/:value="machine.machine_ip"/g) || []).length, 2)
   assert.equal((view.match(/\{\{ machineName\(machine.machine_ip\) \}\}/g) || []).length, 2)
   assert.match(view, /machine_ip: dispatchForm.machineIp/)
-  assert.match(view, /#c2="[^"]*">\{\{ machineName\(item.machine_ip\) \}\}<\/template>/)
+  assert.match(view, /#c4="[^"]*">\{\{ machineName\(item.machine_ip\) \}\}<\/template>/)
   assert.equal((view.match(/\{\{ machineName\(machine.machine_ip\) \}\} · \{\{ machine.machine_ip \}\}（/g) || []).length, 2)
   assert.doesNotMatch(view, /目标机床 IP|<th>机床IP<\/th>/)
 })

@@ -105,6 +105,8 @@ class DispatchRepository(SQLiteRepository):
                 ).fetchall()
             }
             migrations = {
+                "ship_no": "ALTER TABLE cutting_dispatches ADD COLUMN ship_no TEXT",
+                "segment_name": "ALTER TABLE cutting_dispatches ADD COLUMN segment_name TEXT",
                 "task_identifier": "ALTER TABLE cutting_dispatches ADD COLUMN task_identifier TEXT",
                 "download_id": "ALTER TABLE cutting_dispatches ADD COLUMN download_id TEXT",
                 "file_size": "ALTER TABLE cutting_dispatches ADD COLUMN file_size INTEGER",
@@ -232,8 +234,9 @@ class DispatchRepository(SQLiteRepository):
                 relative_path, machine_ip, material, thickness, quantity,
                 status, source_mode, is_simulation, created_by_id,
                 created_by_name, created_at, updated_at, task_identifier,
-                stage, attempt_count, download_id, file_size, file_sha256
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                stage, attempt_count, download_id, file_size, file_sha256,
+                ship_no, segment_name
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 dispatch_id,
@@ -263,6 +266,8 @@ class DispatchRepository(SQLiteRepository):
                 data.get("download_id"),
                 data.get("file_size"),
                 data.get("file_sha256"),
+                data.get("ship_no"),
+                data.get("segment_name"),
             ),
         )
         DispatchRepository._sync_file_summaries(connection, dispatch_id)
@@ -368,6 +373,8 @@ class DispatchRepository(SQLiteRepository):
         download_id: str | None = None,
         file_size: int | None = None,
         file_sha256: str | None = None,
+        ship_no: str | None = None,
+        segment_name: str | None = None,
         increment_attempt: bool = False,
         expected_stage: str | None = None,
         expected_attempt_count: int | None = None,
@@ -401,6 +408,8 @@ class DispatchRepository(SQLiteRepository):
                     download_id = COALESCE(?, download_id),
                     file_size = COALESCE(?, file_size),
                     file_sha256 = COALESCE(?, file_sha256),
+                    ship_no = COALESCE(?, ship_no),
+                    segment_name = COALESCE(?, segment_name),
                     attempt_count = attempt_count + ?,
                     attempted_at = CASE WHEN ? = 1 THEN ? ELSE attempted_at END,
                     downloaded_at = COALESCE(?, downloaded_at),
@@ -418,6 +427,8 @@ class DispatchRepository(SQLiteRepository):
                     download_id,
                     file_size,
                     file_sha256,
+                    ship_no,
+                    segment_name,
                     int(increment_attempt),
                     int(increment_attempt),
                     now,

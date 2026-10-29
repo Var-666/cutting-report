@@ -3,7 +3,7 @@ import type { ExportFormat } from '../types/api'
 
 import type { PropType } from 'vue'
 
-import { computed } from 'vue'
+import { computed, nextTick } from 'vue'
 import { NButton } from 'naive-ui'
 import AppIcon from './AppIcon.vue'
 import ReportExportMenu from './ReportExportMenu.vue'
@@ -46,6 +46,11 @@ const chartTypeModel = computed({
   get: () => props.chartType,
   set: (value) => emit('update:chartType', value),
 })
+
+async function applyPeriod() {
+  await nextTick()
+  emit('submit')
+}
 </script>
 
 <template>
@@ -58,9 +63,10 @@ const chartTypeModel = computed({
           :anchor-date="anchorDate"
           :max-days="maxDays"
           :disabled="loading"
+          @apply="applyPeriod"
           @validation-error="emit('validation-error', $event)"
         />
-        <p v-if="dateDirty && !loading" class="standard-report-query__pending" role="status" aria-live="polite">条件已修改，尚未更新报表</p>
+        <p v-if="dateDirty && !loading" class="standard-report-query__pending" role="status" aria-live="polite">所选区间尚未加载成功，可重新查询</p>
       </div>
       <label class="standard-report-query__chart">
         <span><AppIcon name="chart" size="13" tone="current" />图表类型</span>

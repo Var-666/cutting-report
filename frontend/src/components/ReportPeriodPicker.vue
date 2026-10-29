@@ -225,8 +225,8 @@ onBeforeUnmount(pause)
         </div>
 
         <div class="report-period-picker__dates">
-          <label><span>开始日期</span><AppDatePicker v-model="draftStart" required /></label>
-          <label><span>结束日期</span><AppDatePicker v-model="draftEnd" required /></label>
+          <label><span>开始日期</span><AppDatePicker v-model="draftStart" to="body" required /></label>
+          <label><span>结束日期</span><AppDatePicker v-model="draftEnd" to="body" required /></label>
         </div>
         <p v-if="validationError" class="report-period-picker__error" role="alert">{{ validationError }}</p>
         <p v-else class="report-period-picker__hint">包含开始日和结束日，最长 {{ maxDays }} 天。</p>
