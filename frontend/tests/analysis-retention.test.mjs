@@ -11,7 +11,10 @@ test('analysis omits the previous-result notice and retains loading and error fe
   const template = source.match(/<template>([\s\S]*?)<\/template>/)[1]
   assert.doesNotMatch(template, /上次分析时间|此结果基于上次数据|后台新结果完成后自动更新|等待更新/)
   assert.match(template, /v-if="loading && !analysis" class="analysis-state"/)
-  assert.match(template, /v-else-if="error" class="analysis-error"/)
+  const errorAlert = template.match(/<NAlert\b[^>]*v-else-if="error"[^>]*>/)?.[0] || ''
+  assert.match(errorAlert, /class="analysis-error"/)
+  assert.match(errorAlert, /type="error"/)
+  assert.match(errorAlert, /role="alert"/)
   assert.match(template, /<template v-if="analysis">/)
 })
 

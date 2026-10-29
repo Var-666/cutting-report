@@ -684,7 +684,7 @@ test('PDM file table supports up to one hundred selections and direct batch disp
   assert.match(view, /@click="openSinglePush\(row\)"/)
   assert.match(view, /:columns="fileTableColumns"/)
   assert.doesNotMatch(view, /downloadCuttingFile|保存到系统|listCuttingDownloads/)
-  assert.match(view, /<AppReportTable :columns="fileTableColumns"/)
+  assert.match(view, /<AppReportTable\b[^>]*:columns="fileTableColumns"/)
 })
 
 test('mobile file selection keeps batch actions reachable at the bottom of the viewport', () => {
