@@ -9,7 +9,10 @@ from app.database.definitions import DefinitionRepository
 from app.database.dispatch import DispatchRepository
 from app.database.metadata import MetadataRepository
 from app.database.sqlite import SQLiteDatabase
-from app.database.workshop import WorkshopRepository
+from app.database.workshop_reports import WorkshopReportRepository
+from app.database.confirmations import ConfirmationRepository
+from app.database.users import UserRepository
+from app.database.sessions import SessionRepository
 
 
 class UnitOfWork:
@@ -28,7 +31,10 @@ class UnitOfWork:
         self._context = None
         self.connection: sqlite3.Connection | None = None
         self.metadata: MetadataRepository
-        self.workshop: WorkshopRepository
+        self.workshop: WorkshopReportRepository
+        self.confirmations: ConfirmationRepository
+        self.users: UserRepository
+        self.sessions: SessionRepository
         self.automation: AutomationRepository
         self.definitions: DefinitionRepository
         self.dispatches: DispatchRepository
@@ -40,9 +46,14 @@ class UnitOfWork:
         self.metadata = MetadataRepository(
             self.database, connection=self.connection, device_id=self.device_id
         )
-        self.workshop = WorkshopRepository(
+        self.workshop = WorkshopReportRepository(
             self.database, connection=self.connection, scope_machine_no=self.scope_machine_no
         )
+        self.confirmations = ConfirmationRepository(
+            self.database, connection=self.connection, scope_machine_no=self.scope_machine_no
+        )
+        self.users = UserRepository(self.database, connection=self.connection)
+        self.sessions = SessionRepository(self.database, connection=self.connection)
         self.automation = AutomationRepository(
             self.database, connection=self.connection
         )

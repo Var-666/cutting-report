@@ -1,3 +1,4 @@
+import type { DispatchBatchCreateRequest, BatchCreationResult, DispatchExecuteRequest } from './generated/types.gen'
 import type { CuttingCatalog, CuttingDispatch, CuttingFile, CuttingMachine, CuttingProject, CuttingStatus, DispatchBatchItem, DispatchCreationResult } from '../types/cutting'
 import type { Items, Page, ReadOptions } from '../types/api'
 import { reportCache } from './reportCache.ts'
@@ -50,8 +51,8 @@ export function listCuttingFiles({ projectId, catalogId = '', status = 'all', ke
   )
 }
 
-export function createCuttingDispatchBatch(payload: { machine_ip: string; items: DispatchBatchItem[] }) {
-  return request<Items<DispatchCreationResult>>('/api/v1/cutting/dispatches/batch', {
+export function createCuttingDispatchBatch(payload: DispatchBatchCreateRequest) {
+  return request<BatchCreationResult>('/api/v1/cutting/dispatches/batch', {
     method: 'POST',
     body: JSON.stringify(payload),
   }).finally(() => reportCache.invalidate('cutting:files:'))
@@ -73,6 +74,6 @@ export function listCuttingMachines({ signal }: ReadOptions = {}) {
 export function executeCuttingDispatch(dispatchId: string, segmentName?: string) {
   return request<CuttingDispatch>(`/api/v1/cutting/dispatches/${encodeURIComponent(dispatchId)}/execute`, {
     method: 'POST',
-    ...(segmentName ? { body: JSON.stringify({ segment_name: segmentName }) } : {}),
+    ...(segmentName ? { body: JSON.stringify({ segment_name: segmentName } satisfies DispatchExecuteRequest) } : {}),
   }).finally(() => reportCache.invalidate('cutting:files:'))
 }

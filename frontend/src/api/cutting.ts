@@ -1,3 +1,4 @@
+import type { ConfirmTaskRequest, ConfirmTasksRequest, RevokeTaskRequest, CorrectTaskRequest, ConfirmationBatch, WorkshopReportInfo, LatestProductionDate } from './generated/types.gen'
 import type { ConfirmationAudit, TaskConfirmation, AnalysisRequest, AnalysisResult, LeadershipReport, ReportCreateRequest, ReportJob, WorkshopQuery, WorkshopRangeQuery, WorkshopResult } from '../types/reports'
 import type { Items, Page, ReadOptions } from '../types/api'
 import { reportCache } from './reportCache.ts'
@@ -38,36 +39,36 @@ export function listWorkshopRangeTasks({ startDate, endDate, projectName = '', c
 }
 
 export function generateWorkshopDailyReport(reportDate: string, { signal }: ReadOptions = {}) {
-  return request('/api/v1/workshop/reports', {
+  return request<WorkshopReportInfo>('/api/v1/workshop/reports', {
     method: 'POST',
-    body: JSON.stringify({ report_date: reportDate }),
+    body: JSON.stringify({ report_date: reportDate } satisfies ConfirmTaskRequest),
     signal,
   }).then((data) => { invalidateWorkshopReports(); return data })
 }
 
 export function getLatestWorkshopProductionDate(onOrBefore: string, { force = false, signal }: ReadOptions = {}) {
   const query = new URLSearchParams({ on_or_before: onOrBefore })
-  return reportCache.read(`workshop:latest:${query}`, (signal) => request<{ report_date: string | null }>(`/api/v1/workshop/latest-date?${query}`, { signal }), { ttl: REPORT_VIEW_CACHE_TTL, force, signal })
+  return reportCache.read(`workshop:latest:${query}`, (signal) => request<LatestProductionDate>(`/api/v1/workshop/latest-date?${query}`, { signal }), { ttl: REPORT_VIEW_CACHE_TTL, force, signal })
 }
 
 export function confirmWorkshopTasks(taskIds: string[], reportDate: string, snapshotRevisions: Record<string, number>) {
-  return request<Items<TaskConfirmation>>('/api/v1/workshop/tasks/confirm', {
+  return request<ConfirmationBatch>('/api/v1/workshop/tasks/confirm', {
     method: 'POST',
-    body: JSON.stringify({ report_date: reportDate, task_ids: taskIds, snapshot_revisions: snapshotRevisions }),
+    body: JSON.stringify({ report_date: reportDate, task_ids: taskIds, snapshot_revisions: snapshotRevisions } satisfies ConfirmTasksRequest),
   }).then((data) => { invalidateWorkshopReports(); return data })
 }
 
 export function revokeWorkshopTask(taskId: string, reportDate: string, reason: string) {
   return request(`/api/v1/workshop/tasks/${encodeURIComponent(taskId)}/revoke`, {
     method: 'POST',
-    body: JSON.stringify({ report_date: reportDate, reason }),
+    body: JSON.stringify({ report_date: reportDate, reason } satisfies RevokeTaskRequest),
   }).then((data) => { invalidateWorkshopReports(); return data })
 }
 
-export function correctWorkshopTask(taskId: string, { reportDate, action, workerId = null, reason }: { reportDate: string; action: string; workerId?: string | null; reason: string }) {
+export function correctWorkshopTask(taskId: string, { reportDate, action, workerId = null, reason }: { reportDate: string; action: CorrectTaskRequest['action']; workerId?: string | null; reason: string }) {
   return request(`/api/v1/workshop/tasks/${encodeURIComponent(taskId)}/correct`, {
     method: 'POST',
-    body: JSON.stringify({ report_date: reportDate, action, worker_id: workerId, reason }),
+    body: JSON.stringify({ report_date: reportDate, action, worker_id: workerId, reason } satisfies CorrectTaskRequest),
   }).then((data) => { invalidateWorkshopReports(); return data })
 }
 

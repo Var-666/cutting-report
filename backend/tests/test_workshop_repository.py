@@ -287,7 +287,7 @@ def test_account_session_and_single_worker_confirmation(tmp_path: Path) -> None:
 
 
 def test_external_worker_is_upserted_without_storing_hr_password(tmp_path: Path) -> None:
-    repository = WorkshopRepository(tmp_path / "metadata.db")
+    repository = WorkshopRepository(tmp_path / "metadata.db", scope_machine_no="Cutter01")
     repository.initialize()
     now = "2026-08-24T09:00:00+08:00"
 

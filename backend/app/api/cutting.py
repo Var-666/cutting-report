@@ -17,7 +17,11 @@ from app.services.cutting_dispatch_service import (
     DuplicateDispatchError,
 )
 from app.services.magic_box_service import MagicBoxError
-
+from app.models.contracts import ApiEnvelope
+from app.models.cutting_contracts import (
+    Items, Page, CuttingStatus, CuttingProject, CatalogResult, CuttingFile,
+    MachineResult, CuttingDispatch, BatchCreationResult,
+)
 
 router = APIRouter(
     prefix="/api/v1/cutting",
@@ -139,7 +143,7 @@ class DispatchBatchCreateRequest(BaseModel):
         return values
 
 
-@router.get("/status")
+@router.get("/status", response_model=ApiEnvelope[CuttingStatus], response_model_exclude_unset=True)
 def cutting_status(
     request: Request,
     scope: str = Query(default="push", pattern=r"^(download|push)$"),
@@ -150,7 +154,7 @@ def cutting_status(
     )
 
 
-@router.get("/machines")
+@router.get("/machines", response_model=ApiEnvelope[MachineResult], response_model_exclude_unset=True)
 def list_machines(request: Request) -> dict:
     try:
         data = runtime_state(request).cutting_dispatch.list_machines()
@@ -159,7 +163,7 @@ def list_machines(request: Request) -> dict:
     return _envelope(request, data)
 
 
-@router.get("/projects")
+@router.get("/projects", response_model=ApiEnvelope[Items[CuttingProject]], response_model_exclude_unset=True)
 def list_projects(
     request: Request,
     keyword: str = Query(default="", max_length=128),
@@ -169,7 +173,7 @@ def list_projects(
     return _envelope(request, {"items": items})
 
 
-@router.get("/catalogs")
+@router.get("/catalogs", response_model=ApiEnvelope[CatalogResult], response_model_exclude_unset=True)
 def list_catalogs(
     request: Request,
     project_id: str = Query(min_length=1, max_length=128),
@@ -178,7 +182,7 @@ def list_catalogs(
     return _envelope(request, data)
 
 
-@router.get("/files")
+@router.get("/files", response_model=ApiEnvelope[Page[CuttingFile]], response_model_exclude_unset=True)
 def list_files(
     request: Request,
     project_id: str = Query(min_length=1, max_length=128),
@@ -199,7 +203,7 @@ def list_files(
     return _envelope(request, data)
 
 
-@router.post("/dispatches", status_code=201)
+@router.post("/dispatches", status_code=201, response_model=ApiEnvelope[CuttingDispatch], response_model_exclude_unset=True)
 def create_dispatch(
     payload: DispatchCreateRequest,
     request: Request,
@@ -218,7 +222,7 @@ def create_dispatch(
     return _envelope(request, item)
 
 
-@router.post("/dispatches/batch", status_code=201)
+@router.post("/dispatches/batch", status_code=201, response_model=ApiEnvelope[BatchCreationResult], response_model_exclude_unset=True)
 def create_dispatch_batch(
     payload: DispatchBatchCreateRequest,
     request: Request,
@@ -232,7 +236,7 @@ def create_dispatch_batch(
     return _envelope(request, data)
 
 
-@router.post("/files/search")
+@router.post("/files/search", response_model=ApiEnvelope[Page[CuttingFile]], response_model_exclude_unset=True)
 def search_files(payload: ConditionSearch, request: Request):
     try:
         data = runtime_state(request).cutting_dispatch.search_files(payload.filters, page=payload.page, page_size=payload.page_size, sort=payload.sort)
@@ -241,7 +245,7 @@ def search_files(payload: ConditionSearch, request: Request):
     return _envelope(request, data)
 
 
-@router.get("/dispatches")
+@router.get("/dispatches", response_model=ApiEnvelope[Page[CuttingDispatch]], response_model_exclude_unset=True)
 def list_dispatches(
     request: Request,
     page: int = Query(default=1, ge=1),
@@ -255,7 +259,7 @@ def list_dispatches(
     )
 
 
-@router.get("/dispatches/{dispatch_id}")
+@router.get("/dispatches/{dispatch_id}", response_model=ApiEnvelope[CuttingDispatch], response_model_exclude_unset=True)
 def get_dispatch(dispatch_id: str, request: Request) -> dict:
     try:
         item = runtime_state(request).cutting_dispatch.get_dispatch(dispatch_id)
@@ -264,7 +268,7 @@ def get_dispatch(dispatch_id: str, request: Request) -> dict:
     return _envelope(request, item)
 
 
-@router.post("/dispatches/{dispatch_id}/execute")
+@router.post("/dispatches/{dispatch_id}/execute", response_model=ApiEnvelope[CuttingDispatch], response_model_exclude_unset=True)
 def execute_dispatch(
     dispatch_id: str,
     request: Request,
@@ -286,7 +290,7 @@ def execute_dispatch(
     return _envelope(request, item)
 
 
-@router.post("/dispatches/{dispatch_id}/cancel")
+@router.post("/dispatches/{dispatch_id}/cancel", response_model=ApiEnvelope[CuttingDispatch], response_model_exclude_unset=True)
 def cancel_dispatch(dispatch_id: str, request: Request) -> dict:
     try:
         item = runtime_state(request).cutting_dispatch.cancel_dispatch(dispatch_id)

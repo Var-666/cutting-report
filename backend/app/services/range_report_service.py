@@ -8,7 +8,7 @@ from typing import Iterable
 from zoneinfo import ZoneInfo
 
 from app.config import Settings
-from app.database.workshop import WorkshopRepository
+from app.database.workshop_reports import WorkshopReportRepository
 from app.models.domain import (
     EquipmentRecord,
     production_day,
@@ -97,7 +97,7 @@ class RangeReportService:
         self,
         settings: Settings,
         query_service: QueryService,
-        workshop: WorkshopRepository,
+        workshop: WorkshopReportRepository,
         energy_period_service,
     ) -> None:
         self.settings = settings

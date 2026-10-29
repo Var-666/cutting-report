@@ -104,12 +104,23 @@ def _set_session_cookie(response: Response, token: str) -> None:
     )
 
 
+def _users(request: Request):
+    state = request.app.state
+    # Existing embedded apps expose only the historical workshop facade.
+    return state.users if hasattr(state, 'users') else state.workshop
+
+
+def _sessions(request: Request):
+    state = request.app.state
+    return state.sessions if hasattr(state, 'sessions') else state.workshop
+
+
 async def optional_user(
     request: Request,
     session_token: str | None = Cookie(default=None, alias=SESSION_COOKIE),
 ) -> dict | None:
     user = await run_in_threadpool(
-        request.app.state.workshop.user_for_session,
+        _sessions(request).user_for_session,
         session_token, now=_now().isoformat(timespec="seconds"),
     )
     if user is not None and user.get("auth_source") == "hr_database":
@@ -125,7 +136,7 @@ async def optional_user(
         except WorkerAuthenticationUnavailableError as exc:
             raise HTTPException(status_code=503, detail="HR人员数据库暂时不可用，请稍后重试") from exc
         if not available:
-            await run_in_threadpool(request.app.state.workshop.revoke_user_sessions, user["user_id"])
+            await run_in_threadpool(_sessions(request).revoke_user_sessions, user["user_id"])
             user = None
     if user is not None and not sql_request_cancellations.set_owner(
         current_request_id.get(), cancellation_owner(user.get("user_id"), session_token),
@@ -179,7 +190,7 @@ def _verify_current_admin_password(
             raise HTTPException(status_code=401, detail="当前管理员密码错误")
         return
 
-    if not request.app.state.workshop.verify_local_user_password(
+    if not _users(request).verify_local_user_password(
         admin["user_id"], plaintext
     ):
         raise HTTPException(status_code=401, detail="当前管理员密码错误")
@@ -190,7 +201,7 @@ def auth_status(request: Request, user: dict | None = Depends(optional_user)) ->
     return _envelope(
         request,
         {
-            "setup_required": request.app.state.workshop.admin_count() == 0,
+            "setup_required": _users(request).admin_count() == 0,
             "worker_database_auth_enabled": getattr(runtime_state(request), "settings", settings).worker_database_auth_enabled,
             "authenticated": user is not None,
             "user": user,
@@ -202,7 +213,7 @@ def auth_status(request: Request, user: dict | None = Depends(optional_user)) ->
 def bootstrap(payload: BootstrapRequest, request: Request, response: Response) -> dict:
     now = _now()
     try:
-        user = request.app.state.workshop.bootstrap_admin(
+        user = _users(request).bootstrap_admin(
             username=payload.username,
             display_name=payload.display_name,
             password=payload.password,
@@ -210,7 +221,7 @@ def bootstrap(payload: BootstrapRequest, request: Request, response: Response) -
         )
     except (AuthenticationError, ValueError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    token, expires_at = request.app.state.workshop.create_session(
+    token, expires_at = _sessions(request).create_session(
         user["user_id"], now=now, hours=settings.auth_session_hours
     )
     _set_session_cookie(response, token)
@@ -221,7 +232,7 @@ def bootstrap(payload: BootstrapRequest, request: Request, response: Response) -
 def login(payload: LoginRequest, request: Request, response: Response) -> dict:
     user = None
     try:
-        local_user = request.app.state.workshop.authenticate(
+        local_user = _users(request).authenticate(
             payload.username, payload.password
         )
         if not getattr(runtime_state(request), "settings", settings).worker_database_auth_enabled or local_user["role"] == "admin":
@@ -238,7 +249,7 @@ def login(payload: LoginRequest, request: Request, response: Response) -> dict:
             raise HTTPException(status_code=401, detail="账号或密码错误") from exc
         except WorkerAuthenticationUnavailableError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
-        user = request.app.state.workshop.upsert_external_worker(
+        user = _users(request).upsert_external_worker(
             **identity,
             now=_now().isoformat(timespec="seconds"),
         )
@@ -247,7 +258,7 @@ def login(payload: LoginRequest, request: Request, response: Response) -> dict:
         raise HTTPException(status_code=401, detail="账号或密码错误")
 
     now = _now()
-    token, expires_at = request.app.state.workshop.create_session(
+    token, expires_at = _sessions(request).create_session(
         user["user_id"], now=now, hours=settings.auth_session_hours
     )
     _set_session_cookie(response, token)
@@ -271,11 +282,11 @@ def worker_login(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     now = _now()
-    user = request.app.state.workshop.upsert_external_worker(
+    user = _users(request).upsert_external_worker(
         **identity,
         now=now.isoformat(timespec="seconds"),
     )
-    token, expires_at = request.app.state.workshop.create_session(
+    token, expires_at = _sessions(request).create_session(
         user["user_id"], now=now, hours=settings.auth_session_hours
     )
     _set_session_cookie(response, token)
@@ -288,7 +299,7 @@ def logout(
     response: Response,
     session_token: str | None = Cookie(default=None, alias=SESSION_COOKIE),
 ) -> dict:
-    request.app.state.workshop.delete_session(session_token)
+    _sessions(request).delete_session(session_token)
     response.delete_cookie(SESSION_COOKIE, path="/")
     return _envelope(request, {"logged_out": True})
 
@@ -297,7 +308,7 @@ def logout(
 def list_users(
     request: Request, _: dict = Depends(require_admin)
 ) -> dict:
-    return _envelope(request, {"items": request.app.state.workshop.list_users()})
+    return _envelope(request, {"items": _users(request).list_users()})
 
 
 @authentication_requests.route(router.post("/users", status_code=201))
@@ -309,7 +320,7 @@ def create_user(
     if getattr(runtime_state(request), "settings", settings).worker_database_auth_enabled:
         raise HTTPException(status_code=409, detail="账号与管理员权限由HR数据库统一管理")
     try:
-        user = request.app.state.workshop.create_user(
+        user = _users(request).create_user(
             username=payload.username,
             display_name=payload.display_name,
             password=payload.password,
@@ -336,7 +347,7 @@ def search_hr_directory(
 
 @router.get("/admins")
 def list_admins(request: Request, _: dict = Depends(require_admin)) -> dict:
-    return _envelope(request, {"items": request.app.state.workshop.list_admins()})
+    return _envelope(request, {"items": _users(request).list_admins()})
 
 
 @authentication_requests.route(router.post("/admins", status_code=201))
@@ -353,7 +364,7 @@ def grant_admin(
     if identity is None:
         raise HTTPException(status_code=404, detail="HR人员不存在或账号不可用")
     try:
-        user = request.app.state.workshop.grant_external_admin(
+        user = _users(request).grant_external_admin(
             identity=identity,
             operator=admin,
             now=_now().isoformat(timespec="seconds"),
@@ -372,7 +383,7 @@ def revoke_admin(
 ) -> dict:
     _verify_current_admin_password(request, admin, payload.current_password)
     try:
-        user = request.app.state.workshop.revoke_external_admin(
+        user = _users(request).revoke_external_admin(
             user_id,
             operator=admin,
             now=_now().isoformat(timespec="seconds"),

@@ -4,12 +4,36 @@ from pathlib import Path
 import zipfile
 
 import pytest
+import yaml
 
 
 ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location("build_docker_package", ROOT / "scripts/build_docker_package.py")
 packager = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(packager)
+
+
+def test_frontend_delivery_uses_the_pinned_pnpm_and_one_frozen_lockfile():
+    manager = json.loads((ROOT / 'frontend/package.json').read_text())['packageManager']
+    assert manager.startswith('pnpm@')
+    assert f'npm install --global {manager}' in (ROOT / 'Dockerfile').read_text()
+    for name in ('Dockerfile', '.github/workflows/frontend.yml', '.github/workflows/api-contracts.yml'):
+        source = (ROOT / name).read_text()
+        assert 'pnpm install --frozen-lockfile' in source, name
+        assert 'frontend/pnpm-lock.yaml' in source, name
+        assert 'npm ci' not in source and 'frontend/package-lock.json' not in source, name
+        if name.endswith('.yml'):
+            workflow = yaml.safe_load(source)
+            for job in workflow['jobs'].values():
+                steps = job['steps']
+                pnpm_step = next(i for i, step in enumerate(steps) if step.get('uses', '').startswith('pnpm/action-setup@'))
+                node_step = next(i for i, step in enumerate(steps) if step.get('uses', '').startswith('actions/setup-node@'))
+                assert pnpm_step < node_step
+                assert steps[pnpm_step]['with']['package_json_file'] == 'frontend/package.json'
+                assert steps[node_step]['with']['cache'] == 'pnpm'
+    assert {'frontend/pnpm-lock.yaml', 'frontend/pnpm-workspace.yaml'} <= set(packager.FILES)
+    assert 'frontend/package-lock.json' not in packager.FILES
+    assert not (ROOT / 'frontend/package-lock.json').exists()
 
 
 @pytest.mark.parametrize("name", [
@@ -53,7 +77,7 @@ def test_source_package_keeps_soybean_build_configuration_and_license(tmp_path):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("fixture")
     for name in ("vue", "vue-router", "echarts", "zrender", "tslib", "naive-ui", "pinia"):
-        path = tmp_path / "frontend/node_modules" / name / "LICENSE"
+        path = tmp_path / "frontend/dist/licenses" / name / "LICENSE"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(f"{name} license")
 

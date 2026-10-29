@@ -39,22 +39,8 @@ class RetentionRepository(SQLiteRepository):
         super().__init__(database, connection=connection)
 
     def initialize(self) -> None:
-        self.database.initialize()
-        with self.connect() as connection:
-            connection.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS retention_file_deletions (
-                    relative_path TEXT PRIMARY KEY,
-                    category TEXT NOT NULL,
-                    queued_at TEXT NOT NULL,
-                    attempt_count INTEGER NOT NULL DEFAULT 0,
-                    last_error TEXT,
-                    updated_at TEXT NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS idx_retention_file_deletions_queued
-                    ON retention_file_deletions(queued_at, relative_path);
-                """
-            )
+        from app.database.migrations import apply_migrations
+        apply_migrations(self.database, names=("013_retention",))
 
     @staticmethod
     def _placeholders(values: list[str]) -> str:

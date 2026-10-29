@@ -48,7 +48,7 @@ test('caught errors retain cancellation and server retry metadata', () => {
 test('production builds require type checking and the frontend suite before bundling', () => {
   const { scripts } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
   const steps = scripts.build.split(' && ')
-  assert.deepEqual(steps.slice(0, 2), ['npm run typecheck', 'npm test'])
+  assert.deepEqual(steps.slice(0, 2), ['pnpm run typecheck', 'pnpm test'])
   assert.ok(steps.indexOf('vite build') > 1)
 })
 

@@ -301,7 +301,7 @@ def test_device_api_validates_selection_and_scopes_history_and_exports(database,
         assert client.get(f'/api/v1/reports?device_id={device_id}').json()['data']['total'] == 1
         job = {**app.state.devices[device_id].metadata.get_job(report_id), 'status': 'completed'}
         serialized = reports_api._serialize_job(job)
-        alarm_url = alarms_api._device_url(SimpleNamespace(app=app, query_params={'device_id': device_id}), '/api/v1/alarms/reports/a1/view')
+        alarm_url = alarms_api._device_url(SimpleNamespace(app=app, query_params={'device_id': device_id}, state=SimpleNamespace()), '/api/v1/alarms/reports/a1/view')
         for url in (serialized['view_url'], serialized['download_url'], alarm_url):
             resolved_device = parse_qs(urlsplit(url).query)['device_id'][0]
             assert resolved_device == device_id, 'report links must resolve to their owner under either default'

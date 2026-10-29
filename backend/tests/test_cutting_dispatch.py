@@ -90,6 +90,7 @@ def test_dispatch_history_adds_nullable_ship_and_segment_to_legacy_records(tmp_p
     with repository.connect() as connection:
         connection.execute('ALTER TABLE cutting_dispatches DROP COLUMN ship_no')
         connection.execute('ALTER TABLE cutting_dispatches DROP COLUMN segment_name')
+        connection.execute("DELETE FROM schema_migrations WHERE name='010_dispatch'")
     repository.initialize()
     repository.initialize()
     saved = repository.get(draft['dispatch_id'])
@@ -237,6 +238,7 @@ def test_dispatch_summary_backfills_existing_history_and_survives_restart(tmp_pa
     key = (source["document_id"], source["version_id"])
     with dispatches.connect() as connection:
         connection.execute("DROP TABLE cutting_file_dispatch_status")
+        connection.execute("DELETE FROM schema_migrations WHERE name='010_dispatch'")
     dispatches.initialize()
     summary = dispatches.latest_for_files([key])[key]
     assert summary["dispatch_id"] == sent["dispatch_id"]

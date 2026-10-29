@@ -3,11 +3,14 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "packageManager": "pnpm@10.34.9",
   "scripts": {
     "dev": "vite",
+    "api:generate": "node scripts/generate-api.mjs",
+    "api:check": "node scripts/generate-api.mjs --check",
     "test": "node --import tsx --test tests/naive-controls.test.mjs tests/configuration-diagnostics.test.mjs tests/cutting-routes.test.mjs tests/layout-consistency.test.mjs tests/report-cache.test.mjs tests/report-preload.test.mjs tests/request-cancellation.test.mjs tests/session-expiry.test.mjs tests/email-resolution.test.mjs tests/file-search.test.mjs tests/content-table.test.mjs tests/date-display.test.mjs tests/production-date.test.mjs tests/alarm-analysis.test.mjs tests/alarm-lifecycle.test.mjs tests/ux-query-state.test.mjs tests/report-export.test.mjs tests/report-route-state.test.mjs tests/admin-access.test.mjs tests/workshop-batch-confirmation.test.mjs tests/sparkline.test.mjs tests/analysis-overflow.test.mjs tests/management-ui.test.mjs tests/model-usage.test.mjs tests/report-job-status.test.mjs tests/web-guidelines.test.mjs tests/multi-device.test.mjs tests/analysis-retention.test.mjs tests/soybean-migration.test.mjs tests/home-theme.test.mjs tests/theme-store.test.mjs tests/report-theme.test.mjs tests/welding.test.mjs tests/welding-charts.test.mjs tests/typescript-migration.test.mjs",
     "sync:echarts": "node scripts/sync-echarts.mjs",
-    "build": "npm run typecheck && npm test && npm run sync:echarts && vite build && node scripts/copy-notices.mjs",
+    "build": "pnpm run typecheck && pnpm test && pnpm run sync:echarts && vite build && node scripts/copy-notices.mjs",
     "preview": "vite preview",
     "typecheck": "vue-tsc --noEmit && tsc --noEmit -p tsconfig.node.json"
   },
@@ -32,8 +35,17 @@
     "vue-router": "^4.6.3"
   },
   "devDependencies": {
+    "@css-render/vue3-ssr": "0.15.14",
+    "@hey-api/openapi-ts": "0.99.0",
     "@types/node": "^20.19.43",
+    "@unocss/core": "66.6.0",
+    "@unocss/preset-mini": "66.6.0",
     "@vitejs/plugin-vue": "^5.2.1",
+    "@vue/compiler-dom": "3.5.41",
+    "@vue/compiler-sfc": "3.5.41",
+    "@vue/server-renderer": "3.5.41",
+    "esbuild": "0.21.5",
+    "postcss": "8.5.26",
     "tsx": "^4.23.15",
     "typescript": "5.9.3",
     "unocss": "66.6.0",
@@ -41,6 +53,6 @@
     "vue-tsc": "^3.1.1"
   },
   "engines": {
-    "node": ">=20.19.0"
+    "node": ">=22.18.0"
   }
 }

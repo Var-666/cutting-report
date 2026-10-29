@@ -37,7 +37,7 @@ const today = reportToday()
 const pageSize = 10
 const filters = reactive({ reportDate: today, startDate: today, endDate: today, projectName: '', confirmationStatus: 'all' })
 const appliedRouteState = reactive({ startDate: today, endDate: today, projectName: '', confirmationStatus: 'all', page: 1, defaultView: true })
-const result = ref<WorkshopResult>({ report: null, items: [], total: 0, page: 1, page_size: pageSize, project_names: [], confirmed_count: 0, worker_summaries: [], duration_distribution: [], status_distribution: [], top_cut_length_tasks: [] })
+const result = ref<WorkshopResult>({ analysis_source_version: '', report: null, items: [], total: 0, page: 1, page_size: pageSize, project_names: [], confirmed_count: 0, worker_summaries: [], duration_distribution: [], status_distribution: [], top_cut_length_tasks: [] })
 const loading = ref(false)
 const error = ref('')
 const pageActive = ref(true)
@@ -49,7 +49,7 @@ const confirmationFeedback = reactive({ visible: false, type: 'pending', title: 
 const correction = reactive({
   visible: false,
   row: null as WorkshopTask | null,
-  action: 'revoke',
+  action: 'revoke' as 'revoke' | 'reassign',
   workerId: '',
   reason: '',
   saving: false,
@@ -200,7 +200,7 @@ watch(() => [filters.reportDate, filters.startDate, filters.endDate], () => {
   filters.confirmationStatus = 'all'
   clearSelectedTasks()
   batchConfirmation.visible = false
-  result.value = { report: null, items: [], total: 0, page: 1, page_size: pageSize, project_names: [], confirmed_count: 0, worker_summaries: [], duration_distribution: [], status_distribution: [], top_cut_length_tasks: [] }
+  result.value = { analysis_source_version: '', report: null, items: [], total: 0, page: 1, page_size: pageSize, project_names: [], confirmed_count: 0, worker_summaries: [], duration_distribution: [], status_distribution: [], top_cut_length_tasks: [] }
 })
 watch(() => [filters.projectName, filters.confirmationStatus], () => {
   if (restoringRouteState) return

@@ -69,29 +69,8 @@ class LeadershipSnapshotRepository(SQLiteRepository):
         super().__init__(database)
 
     def initialize(self) -> None:
-        self.database.initialize()
-        with self.connect() as connection:
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS leadership_month_snapshots (
-                    report_month TEXT PRIMARY KEY,
-                    daily_json TEXT NOT NULL,
-                    project_json TEXT NOT NULL,
-                    total_json TEXT NOT NULL,
-                    data_as_of TEXT NOT NULL,
-                    refreshed_at TEXT NOT NULL,
-                    expires_at TEXT NOT NULL,
-                    query_duration_ms INTEGER NOT NULL DEFAULT 0,
-                    source_fingerprint TEXT NOT NULL,
-                    snapshot_version INTEGER NOT NULL DEFAULT 1
-                )
-                """
-            )
-
-        rebuild_table(self.database, 'leadership_month_snapshots', lambda sql: sql.replace(
-            'report_month TEXT PRIMARY KEY', 'report_month TEXT NOT NULL').replace(
-            'snapshot_version INTEGER NOT NULL DEFAULT 1',
-            'snapshot_version INTEGER NOT NULL DEFAULT 1, PRIMARY KEY(report_month, source_fingerprint)') if 'report_month TEXT PRIMARY KEY' in sql else sql)
+        from app.database.migrations import apply_migrations
+        apply_migrations(self.database, names=("005_leadership_snapshots",))
 
     def get(
         self,

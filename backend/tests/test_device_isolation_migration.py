@@ -46,14 +46,14 @@ def test_migration_preserves_records_cursor_lease_and_is_idempotent(legacy):
         schema = connection.execute("SELECT sql FROM sqlite_master WHERE name='workshop_confirmations'").fetchone()[0]
         assert "DEFAULT 'Cutter01'" not in schema
     assert workshop.get_daily_report(DAY)['confirmed_count'] == 1
-    copies = list((db.path.parent / 'backups').glob('*.db'))
+    copies = list((db.path.parent / 'backups').glob('*-before-device-isolation-*.db'))
     assert len(copies) == 1
     with sqlite3.connect(copies[0]) as backup:
         assert backup.execute("SELECT last_alarm_id,lease_owner FROM alarm_sync_state WHERE source_name='production'").fetchone() == (123, 'owner')
     snapshot = dump(db)
     migrate_device_isolation(db, DEVICE_CATALOG)
     assert dump(db) == snapshot
-    assert list((db.path.parent / 'backups').glob('*.db')) == copies
+    assert list((db.path.parent / 'backups').glob('*-before-device-isolation-*.db')) == copies
     other = WorkshopRepository(db, scope_machine_no='Cutter02')
     report = other.create_daily_report(report_date=DAY, source_mode='sqlserver', records=[workshop_record('same')], user=admin, now=STAMP)
     other.confirm_task(task_id='same', user=admin, report_id=report['report_id'], now=STAMP)
@@ -78,7 +78,7 @@ def test_migration_failure_rolls_back_every_change_and_keeps_backup(legacy, faul
     with pytest.raises(ValueError, match='已回滚'):
         migrate_device_isolation(db, DEVICE_CATALOG)
     assert dump(db) == before
-    assert len(list((db.path.parent / 'backups').glob('*.db'))) == 1
+    assert len(list((db.path.parent / 'backups').glob('*-before-device-isolation-*.db'))) == 1
 
 
 def test_single_device_schema_adds_device_ids_without_changing_history(tmp_path):

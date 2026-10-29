@@ -10,6 +10,10 @@ from fastapi.responses import FileResponse
 from app.api.devices import device_state, device_settings
 from app.api.auth import require_admin
 from app.config import settings
+from app.models.contracts import ApiEnvelope
+from app.models.alarm_contracts import (
+    AlarmStatus, AlarmIncident, AlarmIncidentPage, AlarmReport, AlarmReportPage,
+)
 
 
 router = APIRouter(
@@ -28,7 +32,7 @@ def _device_url(request: Request, url: str) -> str:
     return url + '?' + urlencode({'device_id': device_id})
 
 
-@router.get("/status")
+@router.get("/status", response_model=ApiEnvelope[AlarmStatus], response_model_exclude_unset=True)
 def alarm_status(request: Request) -> dict:
     repository = device_state(request).alarm_repository
     return {
@@ -51,7 +55,7 @@ def alarm_status(request: Request) -> dict:
     }
 
 
-@router.get("/incidents")
+@router.get("/incidents", response_model=ApiEnvelope[list[AlarmIncident]], response_model_exclude_unset=True)
 def list_alarm_incidents(
     request: Request,
     status: Literal["open", "closed"] | None = None,
@@ -68,7 +72,7 @@ def list_alarm_incidents(
     }
 
 
-@router.get("/incidents/page")
+@router.get("/incidents/page", response_model=ApiEnvelope[AlarmIncidentPage], response_model_exclude_unset=True)
 def page_alarm_incidents(
     request: Request,
     status: Literal["open", "closed"] | None = None,
@@ -97,7 +101,7 @@ def page_alarm_incidents(
     }
 
 
-@router.get("/reports")
+@router.get("/reports", response_model=ApiEnvelope[list[AlarmReport]], response_model_exclude_unset=True)
 def list_alarm_reports(
     request: Request, limit: int = Query(50, ge=1, le=200)
 ) -> dict:
@@ -115,7 +119,7 @@ def list_alarm_reports(
     }
 
 
-@router.get("/reports/page")
+@router.get("/reports/page", response_model=ApiEnvelope[AlarmReportPage], response_model_exclude_unset=True)
 def page_alarm_reports(
     request: Request,
     page: int = Query(1, ge=1),

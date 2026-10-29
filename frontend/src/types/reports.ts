@@ -1,3 +1,5 @@
+export type { WorkshopTask, WorkshopReportInfo, WorkshopResult, DistributionItem, TopCutTask, TaskConfirmation, ConfirmationAudit, WorkerSummary } from '../api/generated/types.gen'
+import type { WorkshopResult } from '../api/generated/types.gen'
 import type { Page } from './api';
 export type ReportType = 'leadership' | 'workshop' | 'equipment' | 'custom';
 export type ReportStatus = 'pending' | 'querying' | 'calculating' | 'analyzing' | 'rendering' | 'completed' | 'failed';
@@ -104,54 +106,6 @@ export interface LeadershipReport {
   analysis_source_version?: string;
   analysis_summary_source_version?: string;
 }
-export interface WorkshopTask {
-  task_id: string;
-  project_code: string | null;
-  ship_no: string | null;
-  segment_name: string | null;
-  program_no: string | null;
-  cut_length: number | null;
-  groove_length: number | null;
-  work_time: number | null;
-  remark?: string | null;
-  production_time?: string | null;
-  production_date?: string | null;
-  snapshot_revision: number;
-  confirmed_by_id?: string | null;
-  confirmed_by?: string | null;
-  confirmed_by_company_no?: string | null;
-  confirmed_at?: string | null;
-}
-export interface WorkshopReportInfo {
-  report_date?: string;
-  period_start?: string;
-  period_end?: string;
-  item_count: number;
-  confirmed_count: number;
-  analysis_source_version?: string;
-  data_as_of?: string;
-  snapshot_revision?: number;
-  generated_by_name?: string;
-  generated_at?: string;
-}
-export interface WorkshopResult extends Page<WorkshopTask> {
-  analysis_source_version?: string;
-  report: WorkshopReportInfo | null;
-  project_names: string[];
-  confirmed_count: number;
-  worker_summaries: WorkerSummary[];
-  duration_distribution: DistributionItem[];
-  status_distribution: DistributionItem[];
-  top_cut_length_tasks: TopCutTask[];
-  trend?: {
-    report_date: string;
-    task_count: number;
-    pending_count: number;
-    confirmed_count: number;
-    project_count: number;
-    confirmation_rate: number;
-  }[];
-}
 export interface WorkshopQuery {
   reportDate: string;
   projectName?: string;
@@ -168,43 +122,4 @@ export interface ReportDefinition {
   definition_id: string;
   name: string;
   period_type: string;
-}
-export interface DistributionItem {
-  key: string;
-  label: string;
-  count: number;
-}
-export interface TopCutTask {
-  task_id: string;
-  program_no: string | null;
-  cut_length_m: number | null;
-}
-export interface TaskConfirmation {
-  task_id: string;
-  worker_id: string;
-  worker_name: string;
-  worker_company_no: string | null;
-  confirmed_at: string;
-}
-export interface ConfirmationAudit {
-  audit_id: string;
-  action: string;
-  actor_name: string;
-  reason: string;
-  created_at: string;
-  previous_worker_name?: string | null;
-  new_worker_name?: string | null;
-  action_label: string;
-  operated_by_name: string;
-  operated_at: string;
-}
-export interface WorkerSummary {
-  worker_id: string;
-  company_no: string | null;
-  worker_name: string;
-  confirmed_task_count: number;
-  total_cut_length: number;
-  total_work_time_seconds: number;
-  last_confirmed_at: string | null;
-  work_time_share: number;
 }

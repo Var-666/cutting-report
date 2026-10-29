@@ -15,6 +15,8 @@ from app.database.downloads import DownloadRepository
 from app.database.pdm import MockPdmRepository, SqlServerPdmRepository
 from app.database.retention import RetentionRepository
 from app.database.workshop import WorkshopRepository
+from app.database.users import UserRepository
+from app.database.sessions import SessionRepository
 from app.database.sqlite import SQLiteDatabase
 from app.services.retention_service import RetentionService
 from app.services.worker_auth_service import WorkerAuthService
@@ -50,7 +52,8 @@ def _build_runtime(settings: Settings, *, role: str) -> SimpleNamespace:
     database = SQLiteDatabase(settings.metadata_db_path)
     backup_before_process_upgrade(database)
     migrate_device_isolation(database, DEVICE_CATALOG)
-    database.initialize()
+    from app.database.migrations import apply_migrations
+    apply_migrations(database)
     coordination = CoordinationRepository(database)
     coordination.initialize()
     state.coordination = coordination
@@ -89,7 +92,9 @@ def _build_runtime(settings: Settings, *, role: str) -> SimpleNamespace:
     automation_service.device_services = devices
     state.metadata = metadata
     state.sqlite_database = database
-    state.workshop = workshop  # Authentication and users are shared across devices.
+    state.workshop = workshop  # Compatibility for existing embedded application callers.
+    state.users = UserRepository(database)
+    state.sessions = SessionRepository(database)
     state.definitions = definitions
     state.automation = automation
     state.automation_runtime = automation_runtime

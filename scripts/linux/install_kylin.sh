@@ -29,10 +29,14 @@ if [[ ! -x "${VENV_DIR}/bin/python" ]]; then
   "${PYTHON_BIN}" -m venv "${VENV_DIR}"
 fi
 
+"${VENV_DIR}/bin/python" - <<'PYTHON'
+import sys
+if sys.version_info[:2] not in {(3, 11), (3, 12)}:
+    raise SystemExit("[ERROR] 现有 .venv 需要 Python 3.11 或 3.12；请先保留旧环境并重建，不会自动覆盖。")
+PYTHON
+
 echo "安装应用依赖……"
-"${VENV_DIR}/bin/python" -m pip install --upgrade pip
-"${VENV_DIR}/bin/python" -m pip install \
-  -r backend/requirements.txt \
+"${VENV_DIR}/bin/python" -m pip install --require-hashes --no-deps --only-binary=:all: \
   -r backend/requirements-sqlserver.txt
 
 echo "安装 PDF 导出所需的 Chromium……"

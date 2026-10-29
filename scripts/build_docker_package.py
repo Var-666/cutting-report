@@ -21,8 +21,10 @@ DEPLOYMENT_ENV_FILE = ".env.deploy"
 FILES = (
     "Dockerfile", "compose.yaml", "compose.offline.yaml", ".dockerignore", ".env.example", "README.md",
     "README-DOCKER.md", "backend/requirements.txt",
-    "backend/requirements-sqlserver.txt", "backend/pyproject.toml",
-    "frontend/package.json", "frontend/package-lock.json", "frontend/index.html",
+    "backend/requirements-sqlserver.txt", "backend/requirements-dev.txt",
+    "backend/pyproject.toml", "backend/uv.lock", "backend/.python-version",
+    "scripts/lock_python_dependencies.py",
+    "frontend/package.json", "frontend/pnpm-lock.yaml", "frontend/pnpm-workspace.yaml", "frontend/index.html",
     "frontend/vite.config.ts", "frontend/uno.config.ts",
     "frontend/tsconfig.json", "frontend/tsconfig.node.json",
     "docs/deployment/KYLIN原生部署说明.md",
@@ -35,7 +37,7 @@ FILES = (
     "scripts/README.md", "scripts/check_energy.py",
     "scripts/check_welding.py",
     "scripts/build_docker_package.py", "scripts/prepare_alarm_monitor.py",
-    "scripts/linux/install_kylin.sh",
+    "scripts/linux/install_kylin.sh", "scripts/linux/docker_entrypoint.sh",
     "scripts/linux/start_kylin.sh", "scripts/linux/start_offline_docker.sh",
 )
 TREES = (
@@ -85,7 +87,7 @@ def collect_files(root: Path) -> dict[str, bytes]:
             raise ValueError(f"Missing required build/feature file: {name}")
     # Retain notices for the browser runtime libraries already included in the build.
     for package in ("vue", "vue-router", "echarts", "zrender", "tslib", "naive-ui", "pinia"):
-        package_root = root / "frontend" / "node_modules" / package
+        package_root = root / "frontend" / "dist" / "licenses" / package
         notices = [path for path in package_root.glob("*")
                    if path.is_file() and path.name.upper().startswith(("LICENSE", "COPYING", "NOTICE"))]
         if not notices:
@@ -155,10 +157,10 @@ def build_package(root: Path, name: str) -> Path:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--name", required=True)
-    parser.add_argument("--skip-frontend-build", action="store_true", help="Only when npm run build has just succeeded")
+    parser.add_argument("--skip-frontend-build", action="store_true", help="Only when pnpm run build has just succeeded")
     args = parser.parse_args()
     if not args.skip_frontend_build:
-        subprocess.run(["npm", "run", "build"], cwd=ROOT / "frontend", check=True)
+        subprocess.run(["pnpm", "run", "build"], cwd=ROOT / "frontend", check=True)
     result = build_package(ROOT, args.name)
     print(f"Created: {result}")
     print(f"Deployment .env included: {'yes' if (ROOT / DEPLOYMENT_ENV_FILE).is_file() else 'no'}")

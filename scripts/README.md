@@ -8,7 +8,7 @@ Linux/Docker 部署见 [Docker 说明](../README-DOCKER.md)，麒麟原生部署
 python3 scripts/build_docker_package.py --name cutting-report-linux-docker-YYYYMMDD
 ```
 
-脚本先构建前端，再按清单收录当前工作区文件，生成含 SHA-256 清单的 ZIP；不生成离线镜像，也不包含运行数据库和日志。
+先在 frontend/ 执行 `pnpm install --frozen-lockfile`。脚本使用项目固定的 pnpm 构建前端，再按清单收录当前工作区文件，生成含 SHA-256 清单的 ZIP；不生成离线镜像，也不包含运行数据库和日志。
 
 根目录存在 `.env.deploy` 时会以 `.env` 名称写入部署包。该文件不提交 Git；含部署配置的 ZIP 可能包含密码和密钥，需按敏感文件保管。已有部署包不覆盖。
 

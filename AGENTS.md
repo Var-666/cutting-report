@@ -43,7 +43,7 @@
 - 保留现有风格：Python 使用类型标注和 Pydantic 边界校验；Vue 使用 Composition API；JavaScript 不强制分号。
 - 公共 API、数据结构、认证、统计口径或背景工作机制改动前，先用 `rg` 检查调用方和对应测试。
 - 后端验证：`./.venv/bin/python -m pytest backend/tests`。
-- 前端验证：在 `frontend/` 执行 `npm test` 和 `npm run build`。
+- 前端验证：在 `frontend/` 执行 `pnpm test` 和 `pnpm run build`。
 - 功能修改应补充相同层级的回归测试；涉及 UI 时同时检查窄屏和空数据/加载/失败状态。
 
 ## 不应随意修改

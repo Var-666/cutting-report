@@ -10,7 +10,7 @@ import pytest
 
 from app.api import auth, workloads
 from app.config import settings
-from app.database import workshop
+from app.database import users as workshop
 from app.database.workshop import WorkshopRepository
 from app.main import app
 from app.services.worker_auth_service import WorkerAuthService

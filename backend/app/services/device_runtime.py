@@ -9,7 +9,8 @@ from app.database.metadata import MetadataRepository
 from app.database.definitions import DefinitionRepository
 from app.database.leadership_snapshots import LeadershipSnapshotRepository
 from app.database.sqlite import SQLiteDatabase
-from app.database.workshop import WorkshopRepository
+from app.database.workshop_reports import WorkshopReportRepository
+from app.database.confirmations import ConfirmationRepository
 from app.services.alarm_analysis_service import AlarmAnalysisService
 from app.services.alarm_monitor_service import AlarmMonitorService
 from app.services.alarm_report_service import AlarmReportService
@@ -32,7 +33,7 @@ from app.workers.leadership_refresh_worker import LeadershipRefreshWorker
 class DeviceRuntime:
     settings: Settings
     metadata: MetadataRepository
-    workshop: WorkshopRepository
+    workshop: WorkshopReportRepository
     pipeline: ReportPipeline
     leadership_report_service: LeadershipReportService
     report_analysis_service: ReportAnalysisService
@@ -43,6 +44,10 @@ class DeviceRuntime:
     alarm_monitor_service: AlarmMonitorService
     alarm_worker: AlarmWorker
     report_provider: CuttingReportProvider | None = None
+
+    @property
+    def confirmations(self) -> ConfirmationRepository:
+        return ConfirmationRepository(self.workshop.database, scope_machine_no=self.settings.report_machine_no)
 
     @property
     def query_service(self) -> QueryService:
@@ -72,7 +77,7 @@ def build_device_runtime(
     *, task_queue=None,
 ) -> DeviceRuntime:
     metadata = MetadataRepository(database, device_id=settings.device_id)
-    workshop = WorkshopRepository(database, scope_machine_no=settings.report_machine_no)
+    workshop = WorkshopReportRepository(database, scope_machine_no=settings.report_machine_no)
     pipeline = ReportPipeline(settings, metadata, definitions)
     leadership = LeadershipReportService(settings, snapshots)
     analysis = pipeline.analysis_service

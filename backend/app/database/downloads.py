@@ -8,23 +8,9 @@ from app.services.condition_service import compile_conditions, fields_for, prepa
 
 
 class DownloadRepository(SQLiteRepository):
-    def initialize(self):
-        self.database.initialize()
-        with self.connect() as connection:
-            connection.executescript("""
-                CREATE TABLE IF NOT EXISTS cutting_downloads (
-                    download_id TEXT PRIMARY KEY,
-                    document_id TEXT NOT NULL,
-                    status TEXT NOT NULL CHECK(status IN ('downloading', 'downloaded', 'failed')),
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    payload TEXT NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS idx_cutting_downloads_created
-                    ON cutting_downloads(created_at DESC, download_id DESC);
-                CREATE INDEX IF NOT EXISTS idx_cutting_downloads_retention
-                    ON cutting_downloads(status, updated_at, download_id);
-            """)
+    def initialize(self) -> None:
+        from app.database.migrations import apply_migrations
+        apply_migrations(self.database, names=("009_downloads",))
 
     def save(self, item):
         with self.connect() as connection:
