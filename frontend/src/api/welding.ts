@@ -40,7 +40,7 @@ async function readWeldingReport<K extends WeldingReportKind>(kind: K, values: W
   }
 }
 export function getWeldingPart(id: number, page: number, signal?: AbortSignal) {
-  return request<WeldingPart>(`/api/v1/welding/parts/${encodeURIComponent(id)}?page=${page}&page_size=20`, { signal })
+  return request<WeldingPart>(`/api/v1/welding/parts/${encodeURIComponent(id)}?page=${page}&page_size=10`, { signal })
 }
 export function analyzeWelding(reportType: Exclude<WeldingReportKind, 'dashboard'>, query: WeldingQuery, version: string, signal?: AbortSignal) {
   return request<WeldingAnalysis>('/api/v1/welding/analysis', { method: 'POST', body: JSON.stringify({ report_type: reportType, query: weldingQuery(query), data_version: version }), signal })

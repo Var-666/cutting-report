@@ -6,7 +6,7 @@
 
 ## 技术栈
 
-- 前端：Vue 3、Vue Router、Vite、ECharts。
+- 前端：Vue 3、Vue Router、Vite、Soybean Admin、Naive UI、UnoCSS、ECharts。
 - 后端：Python、FastAPI、Pydantic、Uvicorn、Jinja2。
 - 数据：SQL Server 作为生产数据源，SQLite 保存系统元数据、快照和操作记录。
 - 报表：单文件 HTML、ECharts、Playwright/Chromium PDF 转换，可选 OpenAI-Compatible LLM 分析。
@@ -43,8 +43,18 @@
 - 保留现有风格：Python 使用类型标注和 Pydantic 边界校验；Vue 使用 Composition API；JavaScript 不强制分号。
 - 公共 API、数据结构、认证、统计口径或背景工作机制改动前，先用 `rg` 检查调用方和对应测试。
 - 后端验证：`./.venv/bin/python -m pytest backend/tests`。
-- 前端验证：在 `frontend/` 执行 `pnpm test` 和 `pnpm run build`。
+- 前端验证：在 `frontend/` 执行 `pnpm run typecheck` 和受影响的局部测试；`pnpm test` / `pnpm run build` 用于发布、CI 或明确需要的全量验证。
 - 功能修改应补充相同层级的回归测试；涉及 UI 时同时检查窄屏和空数据/加载/失败状态。
+
+## 前端设计开发规范
+
+- 沿用 Soybean Admin + Naive UI + UnoCSS；新增或修改页面前，先检查 `frontend/src/theme/`、`assets/style.css`、`uno.config.ts` 和已有公共组件，不另建独立设计系统。
+- 颜色、背景、文字、边框和阴影使用语义化主题变量；Naive UI 变量由 `theme/reportVariables.ts` 桥接，避免重复硬编码主题色，并检查亮色、暗色及主题色切换。
+- 优先使用现有字号变量及 4/8/12/16/24px 间距：辅助文字和控件 12px、正文 13px、区块标题 16px；首页指标保留 30px 变体。报表筛选控件默认 40px 高，控件圆角跟随 Naive 主题，卡片 8px、报表面板 10px；图表尺寸、紧凑表格和特殊业务布局允许明确的局部例外。
+- 表格、筛选栏、指标卡和图表面板优先复用 `AppReportTable`、`StandardReportQuery`、`ReportPeriodPicker`、`HomeKpiCard`、`ReportTrendPanel`，先完善现有组件，避免重复实现。
+- 页面专属样式放在对应组件的 scoped 样式中；全局 CSS 只维护主题别名、基础规则和跨页面公共规范，不持续追加业务选择器。
+- 优先通过组件 props、`theme-overrides` 和局部 CSS 变量调整 Naive 控件；不随意添加 `!important`，确需覆盖库内联变量或已有兼容规则时说明原因并限定范围。
+- 切割线、焊接线沿用统一视觉语言，保留业务布局差异；设计整理不顺带改动查询、分页、导出、权限或统计口径，按受影响组件检查实际显示并执行必要的局部验证。
 
 ## 不应随意修改
 

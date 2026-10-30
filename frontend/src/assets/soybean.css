@@ -9,7 +9,7 @@ html, body { color:rgb(var(--base-text-color)); background:rgb(var(--layout-bg-c
 .soybean-menu-toggle { flex:0 0 auto; }
 .soybean-logout { height:36px; min-height:36px; padding:0 12px; border-radius:8px; font-weight:500; }
 .soybean-breadcrumb { min-width:0; flex:1; overflow:hidden; white-space:nowrap; }
-.soybean-header-actions { display:flex; flex-shrink:0; align-items:center; gap:16px; margin-left:auto; min-width:0; }
+.soybean-header-actions { display:flex; flex-shrink:0; align-items:center; gap:var(--space-2); margin-left:auto; min-width:0; }
 .soybean-account { display:flex; align-items:center; gap:6px; max-width:150px; font-size:13px; color:var(--text-color-3); }
 .soybean-account > span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .soybean-sider { background:rgb(var(--container-bg-color)); box-shadow:var(--sider-box-shadow); }
@@ -30,7 +30,7 @@ html, body { color:rgb(var(--base-text-color)); background:rgb(var(--layout-bg-c
 @media (max-width:767px) {
   .soybean-header { display:grid; grid-template-columns:auto minmax(0,1fr); gap:0 12px; padding:8px 12px; }
   .soybean-breadcrumb { overflow:hidden; white-space:nowrap; }
-  .soybean-header-actions { grid-column:1/-1; width:100%; justify-content:flex-end; gap:12px; }
+  .soybean-header-actions { grid-column:1/-1; width:100%; justify-content:flex-end; }
   .soybean-header-actions .device-switcher { margin-right:auto; }
   .soybean-header .soybean-account { max-width:110px; }
   .soybean-page, .worker-shell .worker-main { padding:12px; }
@@ -45,14 +45,12 @@ html, body { color:rgb(var(--base-text-color)); background:rgb(var(--layout-bg-c
 
 .n-button { min-height:0; }
 
-.soybean-header-actions { gap:8px; }
 .soybean-header > .soybean-brand { height:100%; padding:0; }
 
-.card-wrapper { border:1px solid #e2e8f0; }
-.dark .card-wrapper { border-color:var(--theme-border-color); }
+.card-wrapper { border:1px solid var(--theme-border-color); }
 .home-welcome.card-wrapper {
-  background:radial-gradient(ellipse at left bottom, rgb(var(--primary-color) / .055), transparent 55%), linear-gradient(105deg, #eef2ff 0%, #f8fafc 55%, #fff 100%);
-  border-color:#e0e7ff;
+  background:radial-gradient(ellipse at left bottom, rgb(var(--primary-color) / .055), transparent 55%), linear-gradient(105deg, color-mix(in srgb, rgb(var(--primary-color)) 11%, rgb(var(--container-bg-color))) 0%, color-mix(in srgb, rgb(var(--layout-bg-color)) 50%, rgb(var(--container-bg-color))) 55%, rgb(var(--container-bg-color)) 100%);
+  border-color:rgb(var(--primary-color) / .2);
 }
 .dark .home-welcome.card-wrapper {
   background:radial-gradient(ellipse at left bottom, rgb(var(--primary-color) / .12), transparent 55%), linear-gradient(105deg, rgb(var(--container-bg-color)) 0%, rgb(var(--layout-bg-color)) 55%, rgb(var(--container-bg-color)) 100%);

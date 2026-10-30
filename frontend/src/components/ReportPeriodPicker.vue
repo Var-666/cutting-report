@@ -242,22 +242,22 @@ onBeforeUnmount(pause)
 
 <style scoped>
 .report-period-picker { position:relative; min-width:0; width:100%; grid-column:span 2; }
-.report-period-picker__label { display:flex; align-items:center; gap:5px; margin-bottom:6px; color:var(--text-color-3); font-size:var(--font-auxiliary); font-weight:700; letter-spacing:.12px; }
-.report-period-picker__trigger { width:100%; height:40px; min-width:0; }
+.report-period-picker__label { display:flex; align-items:center; gap:5px; margin-bottom:6px; color:var(--text-color-2); font-size:var(--font-auxiliary); font-weight:700; letter-spacing:.12px; }
+.report-period-picker__trigger { width:100%; height:var(--control-height); min-width:0; }
 .report-period-picker__trigger :deep(.n-button__content) { min-width:0; width:100%; justify-content:space-between; }
 .report-period-picker__value { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .report-period-picker__panel { min-width:0; }
-.report-period-picker__panel > header { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:15px 17px; border-bottom:1px solid var(--theme-border-color); }
+.report-period-picker__panel > header { display:flex; align-items:center; justify-content:space-between; gap:var(--space-4); padding:15px 17px; border-bottom:1px solid var(--theme-border-color); }
 .report-period-picker__panel > header div { display:grid; gap:2px; }
 .report-period-picker__panel > header small { color:rgb(var(--info-color)); font-size:var(--font-auxiliary); font-weight:800; letter-spacing:.11em; }
-.report-period-picker__panel > header strong { color:var(--navy); font-size:16px; }
+.report-period-picker__panel > header strong { color:var(--navy); font-size:var(--font-section-title); }
 .report-period-picker__panel > header button { min-width:34px; min-height:34px; padding:0; }
 .report-period-picker__presets { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:7px; padding:15px 17px 8px; }
 .report-period-picker__dates { display:grid; grid-template-columns:1fr 1fr; gap:11px; padding:10px 17px 8px; }
 .report-period-picker__dates label { min-width:0; }
-.report-period-picker__dates label > span { display:block; margin-bottom:6px; color:var(--text-color-3); font-size:var(--font-auxiliary); font-weight:700; }
+.report-period-picker__dates label > span { display:block; margin-bottom:6px; color:var(--text-color-2); font-size:var(--font-auxiliary); font-weight:700; }
 .report-period-picker__hint,.report-period-picker__error { min-height:20px; margin:3px 17px 8px; font-size:var(--font-auxiliary); line-height:1.55; }
-.report-period-picker__hint { color:var(--text-color-3); }
+.report-period-picker__hint { color:var(--text-color-2); }
 .report-period-picker__error { color:rgb(var(--error-color)); }
 .report-period-picker__panel > footer { display:flex; justify-content:flex-end; gap:9px; padding:12px 17px 15px; border-top:1px solid var(--theme-border-color); }
 .report-period-picker__panel > footer button { min-width:82px; min-height:38px; }

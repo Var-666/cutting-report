@@ -7,7 +7,7 @@ export const weldingRoutes: RouteRecordRaw = {
   meta: { line: 'welding' },
   children: [
     { path: '', redirect: '/admin/welding/home' },
-    { path: 'home', name: 'welding-home', component: view, props: { kind: 'dashboard' }, meta: { title: '生产首页', icon: 'home' } },
+    { path: 'home', name: 'welding-home', component: () => import('../views/WeldingHomeView.vue'), meta: { title: '生产首页', icon: 'home' } },
     { path: 'reports', meta: { title: '生产报表', icon: 'report' }, children: [
       { path: 'daily', name: 'welding-daily', component: view, props: { kind: 'daily' }, meta: { title: '生产统计报表', icon: 'chart' } },
       { path: 'parts', name: 'welding-parts', component: view, props: { kind: 'parts' }, meta: { title: '工件生产报表', icon: 'factory' } },

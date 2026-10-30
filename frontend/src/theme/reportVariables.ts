@@ -6,6 +6,7 @@ export function reportThemeVariables(theme: NonNullable<GlobalTheme['common']>) 
     '--text-color-2': theme.textColor2,
     '--text-color-3': theme.textColor3,
     '--theme-border-color': theme.borderColor,
+    '--theme-border-radius': theme.borderRadius,
     '--theme-divider-color': theme.dividerColor,
     '--theme-hover-color': theme.hoverColor,
     '--theme-input-color': theme.inputColor,

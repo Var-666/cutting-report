@@ -63,3 +63,18 @@ test('global interaction styles preserve visible focus and touch behavior', () =
   assert.match(css, /env\(safe-area-inset-top\)/)
   assert.match(period, /:aria-labelledby="`\$\{labelId\} \$\{valueId\}`"/)
 })
+
+
+test('welding home offers equivalent chart tables and mobile welding tables release both fixed sides', () => {
+  const home = source('views/WeldingHomeView.vue')
+  for (const title of ['查看生产趋势数据', '查看工艺结构数据', '查看设备产出数据']) assert.ok(home.includes(`<summary>${title}</summary>`))
+  assert.match(home, /v-for="row in daily"[\s\S]*weldingDisplay\(row.weld_length_m, 'weld_length_m'\)[\s\S]*weldingDisplay\(row.job_count, 'job_count'\)/)
+  assert.match(home, /v-for="row in processes"[\s\S]*weldingDisplay\(row.length, 'weld_length_m'\)/)
+  assert.match(home, /v-for="row in devices"[\s\S]*weldingDisplay\(row.weld_length_m, 'weld_length_m'\)/)
+  assert.equal((home.match(/<caption>/g) || []).length, 3)
+  assert.equal((home.match(/scope="row"/g) || []).length, 3)
+  const table = source('components/AppReportTable.vue')
+  assert.match(table, /@media\(max-width:600px\)[\s\S]*welding-table-wrap :deep\(\.n-data-table-td--fixed-left\)[^{]*\{position:static!important\}/)
+  assert.doesNotMatch(table, /not\(\.welding-table-wrap\)/)
+  assert.match(source('components/HomeKpiCard.vue'), /formattedValue} \$\{unit}/)
+})

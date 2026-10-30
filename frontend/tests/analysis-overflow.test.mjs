@@ -5,7 +5,8 @@ import test from 'node:test'
 import { compactAnalysisFactLabel, compactAnalysisFactValue } from '../src/utils/analysisFactDisplay.ts'
 import { formatDeviceDisplay } from '../src/utils/deviceDisplay.ts'
 
-const source = readFileSync(new URL('../src/components/AnalysisPanel.vue', import.meta.url), 'utf8')
+const controllerSource = readFileSync(new URL('../src/components/AnalysisPanel.vue', import.meta.url), 'utf8')
+const source = readFileSync(new URL('../src/components/ReportAnalysis.vue', import.meta.url), 'utf8')
 
 test('report model text uses the same device alias without changing numeric formatting or evidence', () => {
   const formatter = source.slice(source.indexOf('function formatAnalysisText('), source.indexOf('function plainAnalysisText('))
@@ -16,9 +17,20 @@ test('report model text uses the same device alias without changing numeric form
 
 test('analysis text is visible by default without a collapsed-card action', () => {
   assert.doesNotMatch(source, /class="analysis-expand"|isLongSection\(|isSectionExpanded\(/)
-  assert.match(source, /\.analysis-grid h4,\.analysis-grid p\{display:block;overflow:visible;-webkit-line-clamp:unset;overflow-wrap:anywhere\}/)
-  assert.match(source, /\.analysis-facts span:not\(\.analysis-fact-icon\),\.analysis-facts strong\{overflow:visible;text-overflow:clip;white-space:normal;overflow-wrap:anywhere\}/)
-  assert.match(source, /\.analysis-facts article\{overflow:visible\}/)
+  for (const selector of ['.analysis-grid h4', '.analysis-grid p']) {
+    const rule = source.slice(source.indexOf(`${selector}{`)).split('}')[0]
+    assert.match(rule, /display:block/)
+    assert.match(rule, /overflow:visible/)
+    assert.match(rule, /overflow-wrap:anywhere/)
+  }
+  assert.doesNotMatch(source, /-webkit-line-clamp:2|analysis-expand|is-expanded/)
+  for (const selector of ['.analysis-facts span:not(.analysis-fact-icon)', '.analysis-facts strong']) {
+    const rule = source.slice(source.indexOf(`${selector}{`)).split('}')[0]
+    assert.match(rule, /overflow:visible/)
+    assert.match(rule, /white-space:normal/)
+    assert.match(rule, /overflow-wrap:anywhere/)
+  }
+  assert.match(source, /\.analysis-facts article\{[^}]*overflow:visible/)
 })
 
 test('single-sentence analysis is not repeated as both heading and body', () => {
@@ -39,18 +51,18 @@ test('analysis checks for newer report data and asks the current report to sync 
   const api = ['client', 'cutting'].map(name => readFileSync(new URL(`../src/api/${name}.ts`, import.meta.url), 'utf8')).join('\n')
   assert.match(api, /error\.status = response\.status/)
   assert.match(api, /export function getAnalysisVersion[\s\S]*\/api\/v1\/analysis\/version/)
-  assert.match(source, /SOURCE_CHECK_INTERVAL_MS = 300_000/)
-  assert.match(source, /async function revalidateSource\(\)/)
-  const revalidateSource = source.match(/async function revalidateSource\(\)[\s\S]*?\n}\n\nasync function loadAnalysis/)[0]
+  assert.match(controllerSource, /SOURCE_CHECK_INTERVAL_MS = 300_000/)
+  assert.match(controllerSource, /async function revalidateSource\(\)/)
+  const revalidateSource = controllerSource.match(/async function revalidateSource\(\)[\s\S]*?\n}\n\nasync function loadAnalysis/)[0]
   assert.match(revalidateSource, /getAnalysisVersion\(/)
   assert.doesNotMatch(revalidateSource, /analyzeReport\(/)
   assert.match(revalidateSource, /!props\.versionCheckEnabled/)
   assert.match(revalidateSource, /refreshed\?\.data_version[\s\S]*refreshed\.data_version !== analysisDataVersion\.value/)
-  assert.match(source, /exception\.status === 409\) requestReportRefresh\(targetKey\)/)
-  assert.match(source, /emit\('refresh-report'\)/)
-  assert.match(source, /sourceCheckController\?\.abort\(\)/)
-  assert.match(source, /window\.clearInterval\(sourceCheckTimer\)/)
-  assert.match(source, /if \(!analysis\.value\) \{[\s\S]*refreshRequestedKey = ''[\s\S]*requestReportRefresh\(targetKey\)/)
+  assert.match(controllerSource, /exception\.status === 409\) requestReportRefresh\(targetKey\)/)
+  assert.match(controllerSource, /emit\('refresh-report'\)/)
+  assert.match(controllerSource, /sourceCheckController\?\.abort\(\)/)
+  assert.match(controllerSource, /window\.clearInterval\(sourceCheckTimer\)/)
+  assert.match(controllerSource, /if \(!analysis\.value\) \{[\s\S]*refreshRequestedKey = ''[\s\S]*requestReportRefresh\(targetKey\)/)
   for (const name of ['LeadershipReportView', 'EnergyPeriodReportView', 'WorkshopView']) {
     const view = readFileSync(new URL(`../src/views/${name}.vue`, import.meta.url), 'utf8')
     assert.match(view, /@refresh-report="refreshAnalysisReport"/)

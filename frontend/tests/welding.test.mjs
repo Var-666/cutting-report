@@ -12,7 +12,7 @@ import { parse, compileScript, compileTemplate } from '@vue/compiler-sfc'
 import { lineHome, productionGroups, selectedLineType } from '../src/utils/productionLines.ts'
 import { adminMenus } from '../src/router/menus.ts'
 import { analyzeWelding, downloadWelding, getWeldingPart, getWeldingReport, weldingQuery } from '../src/api/welding.ts'
-import { weldingColumns, weldingColumnLayout, weldingDisplay, weldingKpis, weldingTitles } from '../src/utils/weldingReport.ts'
+import { weldingColumns, weldingVisibleColumns, weldingColumnLayout, weldingDisplay, weldingKpis, weldingTitles } from '../src/utils/weldingReport.ts'
 import { weldingRoutes } from '../src/router/weldingRoutes.ts'
 import { reportCache } from '../src/api/reportCache.ts'
 import { queryDateRange, sameRouteQuery } from '../src/utils/reportRouteState.ts'
@@ -71,7 +71,7 @@ test('business menus isolate cutting capabilities and flatten the welding layout
   assert.deepEqual(legacyAnalysis.redirect({ query: { start: '2026-09-01', end: '2026-09-02' } }), {
     path: '/admin/welding/reports/daily', query: { start: '2026-09-01', end: '2026-09-02' },
   })
-  assert.match(source('views/WeldingReportView.vue'), /class="panel welding-analysis"[\s\S]*生成当前区间分析/)
+  assert.match(source('views/WeldingReportView.vue'), /<ReportAnalysis[\s\S]*生成当前区间分析[\s\S]*@reload="runAnalysis"/)
 })
 
 test('query parameters retain zero device, robot and process codes; unknown is not zero', () => {
@@ -80,8 +80,13 @@ test('query parameters retain zero device, robot and process codes; unknown is n
   assert.equal(weldingDisplay(0, 'weld_length_m'), '0.000')
   assert.equal(weldingDisplay(null, 'weld_length_m'), '未记录')
   const cards = weldingKpis('daily', { summary: { weld_length_m: 0, involved_part_count: 0 }, meta: { pending_metrics: { completed_part_count: 'pending' } } })
-  assert.equal(cards[0].value, 0)
-  assert.equal(cards[2].value, '待核实')
+  assert.equal(cards[1].value, 0)
+  assert.equal(cards[2].value, 0)
+  assert.equal(cards[3].value, null)
+  const parts = weldingKpis('parts', { summary: { part_row_count: 0, part_actual_length_m: null }, meta: { ambiguous_part_count: 2, pending_metrics: { part_actual_length_m: '歧义关联' } } })
+  assert.equal(parts[1].value, 0)
+  assert.equal(parts[2].value, '待核实')
+  assert.equal(parts[3].value, 2)
 })
 
 test('a successful JSON response cannot be downloaded as a PDF', async t => {
@@ -267,7 +272,7 @@ test('welding route parsing validates all boundaries, preserves numeric zero and
     assert.equal(parsed.robot_no, '')
   }
   const invalid = parseWeldingRouteQuery({ start: '2025-01-01', end: '2026-10-26', serial_number: '\u0000bad', page: '100001', page_size: '101', state: 'no', sort_by: 'bad', anomalies_only: '1', descending: '0' }, 'jobs', '2026-10-26')
-  assert.deepEqual([invalid.start, invalid.end, invalid.page, invalid.page_size, invalid.state, invalid.serial_number, invalid.sort_by, invalid.anomalies_only, invalid.descending], ['2026-10-26', '2026-10-26', 1, 20, '', '', 'time', false, true])
+  assert.deepEqual([invalid.start, invalid.end, invalid.page, invalid.page_size, invalid.state, invalid.serial_number, invalid.sort_by, invalid.anomalies_only, invalid.descending], ['2026-10-26', '2026-10-26', 1, 10, '', '', 'time', false, true])
   const query = weldingRouteQuery(all, jobs)
   assert.equal(query.unrelated, 'keep')
   assert.equal(query.device_no, '0')
@@ -430,7 +435,7 @@ test('welding queries: successful submit, sorting and pagination sync URL while 
   assert.equal(calls[3].query.page, 1)
   assert.equal(calls[3].query.serial_number, 'S')
   calls[3].resolve(); await resized; await flushWelding()
-  assert.equal(router.currentRoute.value.query.page_size, '50')
+  assert.equal(router.currentRoute.value.query.page_size, '10')
   assert.equal(state.draft.serial_number, 'unsaved')
   const failed = state.changePage(2)
   calls[4].reject(new Error('query failed')); await failed
@@ -642,7 +647,7 @@ test('a disabled welding line remains navigable without querying an unconfigured
 })
 
 test('welding templates compile with loading, error, pending, detail and responsive states', () => {
-  for (const path of ['views/WeldingReportView.vue', 'components/WeldingCharts.vue', 'components/AppReportTable.vue', 'components/WeldingTable.vue', 'components/DeviceSwitcher.vue', 'views/DatabaseView.vue', 'layouts/modules/ThemeTabs.vue', 'layouts/AdminLayout.vue', 'layouts/modules/global-menu/modules/vertical-mix-menu.vue']) {
+  for (const path of ['views/WeldingHomeView.vue', 'views/WeldingReportView.vue', 'components/WeldingChart.vue', 'components/WeldingKpiCards.vue', 'components/WeldingRecord.vue', 'components/WeldingCharts.vue', 'components/ReportAnalysis.vue', 'components/AppReportTable.vue', 'components/WeldingTable.vue', 'components/DeviceSwitcher.vue', 'views/DatabaseView.vue', 'layouts/modules/ThemeTabs.vue', 'layouts/AdminLayout.vue', 'layouts/modules/global-menu/modules/vertical-mix-menu.vue']) {
     const { descriptor, errors } = parse(source(path))
     assert.deepEqual(errors, [])
     assert.doesNotThrow(() => compileScript(descriptor, { id: path }), path)
@@ -706,7 +711,7 @@ test('welding table keys and detail events respect aggregate, job, part and seam
     ['seams', { id: 3, robot_no: null }, 3],
   ]) {
     const events = []
-    const bindings = { ...Vue, onMounted() {}, onUpdated() {}, onBeforeUnmount() {}, onActivated() {}, onDeactivated() {}, computed, h, NButton: 'button', weldingColumns, weldingColumnLayout, weldingDisplay,
+    const bindings = { ...Vue, onMounted() {}, onUpdated() {}, onBeforeUnmount() {}, onActivated() {}, onDeactivated() {}, computed, h, NButton: 'button', weldingColumns, weldingVisibleColumns, weldingColumnLayout, weldingDisplay,
       defineSlots: () => ({}), defineProps: () => ({ kind }), defineEmits: () => (...args) => events.push(args) }
     const table = scriptFunction(...Object.keys(bindings), `${script}; return { columns, rowKey };`)(...Object.values(bindings))
     assert.equal(table.rowKey(row), key)
@@ -919,4 +924,59 @@ test('workshop columns keep short names and program codes bounded and reserve co
   result.value.items = [{ program_no: 'long'.repeat(100), confirmed_by: '张三' }]
   assert.equal(table.taskTableColumns.value.find(column => column.key === 'c5').width, 160)
   assert.equal(table.taskTableColumns.value.find(column => column.key === 'c10').width, 240)
+})
+
+test('independent welding home waits for its catalog, keeps successful data on failure and ignores late disabled-source results', async () => {
+  const selection = reactive({ id: 'welding', items: [] })
+  const calls = [], cleanup = [], scope = Vue.effectScope()
+  const bindings = { ...Vue, deviceSelection: selection, selectedLineType, parseWeldingRouteQuery,
+    useRoute: () => ({ query: {} }), useRouter: () => ({ push() {} }), reportToday: () => '2026-10-26',
+    useReportChartTheme: () => ({ colors: ref({}), vars: ref({}) }), onBeforeUnmount: fn => cleanup.push(fn),
+    getWeldingReport: (kind, query, signal) => new Promise((resolve, reject) => calls.push({ kind, query, signal, resolve, reject })),
+  }
+  const script = parse(source('views/WeldingHomeView.vue')).descriptor.scriptSetup.content.replace(/^import .*$/gm, '')
+  const setup = scriptFunction(...Object.keys(bindings), `${script}; return { load, report, error };`)
+  const home = scope.run(() => setup(...Object.values(bindings)))
+  assert.equal(calls.length, 0)
+  selection.items = [{ id: 'welding', type: 'welding', enabled: true }]
+  await Vue.nextTick()
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].kind, 'dashboard')
+  assert.equal(calls[0].query.start, '2026-10-20')
+  assert.equal(calls[0].query.page_size, 10)
+  calls[0].resolve({ today: { job_count: 0 }, meta: {} })
+  await settle()
+  const failed = home.load(true)
+  calls[1].reject(new Error('source unavailable'))
+  await failed
+  assert.equal(home.report.value.today.job_count, 0)
+  assert.equal(home.error.value, 'source unavailable')
+  const late = home.load(true)
+  selection.items[0].enabled = false
+  await Vue.nextTick()
+  assert.equal(calls[2].signal.aborted, true)
+  calls[2].resolve({ today: { job_count: 999 }, meta: {} })
+  await late
+  assert.equal(home.report.value, null)
+  cleanup.forEach(fn => fn()); scope.stop()
+})
+
+
+test('welding paginated details use ten rows without an internal height limit or a query-only button palette', async t => {
+  for (const kind of ['daily', 'parts', 'jobs', 'equipment']) {
+    for (const size of [undefined, '20', '50', 'bad']) {
+      assert.equal(parseWeldingRouteQuery({ page_size: size }, kind, '2026-10-30').page_size, 10)
+    }
+  }
+  const table = source('components/WeldingTable.vue')
+  assert.match(table, /:page-sizes="\[\]"/)
+  assert.match(table, /:max-height="paginate \? null : undefined"/)
+  const styles = parse(source('views/WeldingReportView.vue')).descriptor.styles[0].content
+  assert.doesNotMatch(styles, /--n-color(?:-hover|-focus|-pressed)?:/)
+  assert.match(styles, /\.welding-filters>\.welding-query-submit\{padding:0 16px;gap:0;justify-content:center;/)
+  const fetchMock = t.mock.method(globalThis, 'fetch', async () => Response.json({ part: { id: 2 }, items: [], total: 0 }))
+  await getWeldingPart(2, 3)
+  const url = new URL(fetchMock.mock.calls[0].arguments[0], 'http://localhost')
+  assert.equal(url.searchParams.get('page'), '3')
+  assert.equal(url.searchParams.get('page_size'), '10')
 })

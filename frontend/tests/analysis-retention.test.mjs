@@ -8,7 +8,8 @@ import { createActivationTimer } from '../src/utils/activationTimer.ts'
 const source = readFileSync(new URL('../src/components/AnalysisPanel.vue', import.meta.url), 'utf8')
 
 test('analysis omits the previous-result notice and retains loading and error feedback', () => {
-  const template = source.match(/<template>([\s\S]*?)<\/template>/)[1]
+  const presentation = readFileSync(new URL('../src/components/ReportAnalysis.vue', import.meta.url), 'utf8')
+  const template = presentation.match(/<template>([\s\S]*?)<\/template>/)[1]
   assert.doesNotMatch(template, /上次分析时间|此结果基于上次数据|后台新结果完成后自动更新|等待更新/)
   assert.match(template, /v-if="loading && !analysis" class="analysis-state"/)
   const errorAlert = template.match(/<NAlert\b[^>]*v-else-if="error"[^>]*>/)?.[0] || ''

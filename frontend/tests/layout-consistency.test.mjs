@@ -75,8 +75,8 @@ test('dispatch history uses readable body text and inherits it for identifiers, 
   const shared = readFileSync(new URL('../src/assets/content-tables.css', import.meta.url), 'utf8')
   assert.match(dispatch, /\.dispatch-history-panel \{ --content-table-font-size:13px; --content-table-header-font-size:12px;/)
   assert.match(dispatch, /\.history-table :is\(code,\.dispatch-status,\.history-actions button\) \{ font-size:inherit;/)
-  assert.match(shared, /font-size:var\(--content-table-font-size,13px\) !important/)
-  assert.match(shared, /font-size:var\(--content-table-header-font-size,12px\) !important/)
+  assert.match(shared, /font-size:var\(--content-table-font-size,var\(--font-body\)\) !important/)
+  assert.match(shared, /font-size:var\(--content-table-header-font-size,var\(--font-table-head\)\) !important/)
 })
 
 test('report form and history pagination retain horizontal text and consistent control heights', () => {
@@ -162,7 +162,7 @@ test('alarm severity colors agree and dispatch project names can display in full
     assert.match(rule[1], /background:#f7c85b;/)
   }
   const select = descriptor('AppSelect', 'components')
-  assert.match(select.template.content, /:consistent-menu-width="consistentMenuWidth" :menu-props="menuProps"/)
+  assert.match(select.template.content, /:consistent-menu-width="consistentMenuWidth" :menu-props="\{ \.\.\.menuProps, id: menuId, role: 'listbox' \}"/)
   assert.match(select.scriptSetup.content, /consistentMenuWidth: true/)
 })
 
@@ -283,7 +283,8 @@ test('report analysis uses server source versions and starts immediately', () =>
   assert.match(script, /analyzeReport\([\s\S]*\}, \{ signal \}\)/)
   assert.match(script, /dataVersion: analysisDataVersion\.value \|\| undefined/)
   assert.doesNotMatch(script, /报表数据分析|guardrail_fallback|simulated_fallback|降级/)
-  assert.match(analysis.template.content, /class="analysis-mode model"[\s\S]*AI 分析/)
+  assert.match(analysis.template.content, /<ReportAnalysis[^>]*:analysis="analysis"/)
+  assert.match(descriptor('ReportAnalysis', 'components').template.content, /class="analysis-mode model"[\s\S]*AI 分析/)
   assert.match(script, /const targetKey = requestKey\(\)[\s\S]*if \(!props\.ready \|\| !props\.reportDate\)/)
   assert.match(script, /if \(!props\.reportDate \|\| queryScope\(\) !== displayedScope\) \{[\s\S]*analysis\.value = null/)
 
@@ -310,7 +311,7 @@ test('report values use one decimal place throughout the UI', () => {
   const energy = descriptor('EnergyPeriodReportView').scriptSetup.content
   const home = descriptor('AdminHomeView').scriptSetup.content
   const database = descriptor('DatabaseView').scriptSetup.content
-  const analysis = descriptor('AnalysisPanel', 'components').scriptSetup.content
+  const analysis = descriptor('ReportAnalysis', 'components').scriptSetup.content
 
   assert.match(leadership, /digits = 1/)
   assert.match(leadership, /minimumFractionDigits: 1/)
@@ -540,13 +541,13 @@ test('primary application pages share one readable typography scale', () => {
   const tables = readFileSync(new URL('../src/assets/content-tables.css', import.meta.url), 'utf8')
 
   assert.match(styles, /--font-page-title:\s*28px;/)
-  assert.match(styles, /--font-page-description:\s*12px;/)
+  assert.match(styles, /--font-page-description:\s*var\(--font-auxiliary\);/)
   assert.match(styles, /--font-section-title:\s*16px;/)
   assert.match(styles, /--font-kpi-value:\s*24px;/)
-  assert.match(styles, /--font-table-head:\s*12px;/)
+  assert.match(styles, /--font-table-head:\s*var\(--font-auxiliary\);/)
   assert.match(styles, /--font-auxiliary:\s*12px;/)
-  assert.match(tables, /font-size:var\(--content-table-font-size,13px\) !important;/)
-  assert.match(tables, /font-size:var\(--content-table-header-font-size,12px\) !important;/)
+  assert.match(tables, /font-size:var\(--content-table-font-size,var\(--font-body\)\) !important;/)
+  assert.match(tables, /font-size:var\(--content-table-header-font-size,var\(--font-table-head\)\) !important;/)
   assert.doesNotMatch(styles, /font-family:\s*Georgia/)
   assert.match(styles, /font-family: "Microsoft YaHei", "PingFang SC", Inter, Arial, sans-serif;/)
 })
@@ -711,15 +712,15 @@ test('equivalent page headers and report query bars share one layout system', ()
   assert.match(standardQuery.template.content, /class="standard-report-query"/)
   assert.match(standardQuery.template.content, /name="search"/)
   assert.match(standardQueryStyles, /\.standard-report-query\s*\{[^}]*grid-template-areas:"period chart query export";/)
-  assert.match(standardQueryStyles, /\.standard-report-query :deep\(\.report-period-picker\)\s*\{[^}]*grid-template-rows:16px 40px;/)
-  assert.match(standardQueryStyles, /\.standard-report-query :deep\(\.report-period-picker__trigger\),[\s\S]*?height:40px!important;[^}]*min-height:40px!important;/)
-  assert.match(standardQueryStyles, /\.standard-report-query__submit\s*\{[^}]*margin-top:24px;/)
-  assert.match(standardQueryStyles, /\.standard-report-query__export\s*\{[^}]*margin-top:24px;/)
+  assert.match(standardQueryStyles, /\.standard-report-query :deep\(\.report-period-picker\)\s*\{[^}]*grid-template-rows:var\(--space-4\) var\(--control-height\);/)
+  assert.match(standardQueryStyles, /\.standard-report-query :deep\(\.report-period-picker__trigger\),[\s\S]*?height:var\(--control-height\)!important;[^}]*min-height:var\(--control-height\)!important;/)
+  assert.match(standardQueryStyles, /\.standard-report-query__submit\s*\{[^}]*margin-top:var\(--space-6\);/)
+  assert.match(standardQueryStyles, /\.standard-report-query__export\s*\{[^}]*margin-top:var\(--space-6\);/)
   assert.match(css, /@media \(max-width: 900px\)[\s\S]*\.report-query\s*\{[^}]*grid-template-columns:repeat\(2,minmax\(180px,1fr\)\) 140px 136px 136px;/)
   assert.doesNotMatch(css, /\.workshop-query\s*\{[^}]*display:/)
   assert.doesNotMatch(css, /\.equipment-query\s+\.app-date-picker/)
   assert.doesNotMatch(energy.styles.map((style) => style.content).join('\n'), /\.equipment-hero|\.energy-period-query/)
-  assert.match(standardQueryStyles, /:deep\(\.n-base-selection\)\s*\{[^}]*--n-height:40px!important;/)
+  assert.match(standardQueryStyles, /:deep\(\.n-base-selection\)\s*\{[^}]*--n-height:var\(--control-height\)!important;/)
   assert.doesNotMatch(standardQueryStyles, /app-select__trigger/)
 })
 
@@ -841,7 +842,7 @@ test('workshop confirmations support own revocation and audited admin correction
 })
 
 test('intelligent analysis omits the analysis boundary section', () => {
-  const analysis = descriptor('AnalysisPanel', 'components')
+  const analysis = descriptor('ReportAnalysis', 'components')
   assert.doesNotMatch(analysis.template.content, /分析边界|analysis\.limitations|analysis-limit/)
 })
 
@@ -852,7 +853,7 @@ test('all standard reports share the leadership analysis structure and compact c
     assert.doesNotMatch(template, /(?:leadership|workshop|device)-analysis/)
   }
 
-  const analysis = descriptor('AnalysisPanel', 'components')
+  const analysis = descriptor('ReportAnalysis', 'components')
   const template = analysis.template.content
   const styles = analysis.styles.map((style) => style.content).join('\n')
   assert.match(template, /class="analysis-conclusion"/)
@@ -1143,11 +1144,11 @@ test('report loading, empty and error overlays share the same inset as report co
   const panel = descriptor('ReportTrendPanel', 'components')
   const state = descriptor('ReportPanelState', 'components')
   const css = panel.styles[0].content
-  assert.match(css, /\.report-trend-panel \{ --report-panel-padding:16px;/)
+  assert.match(css, /\.report-trend-panel \{ --report-panel-padding:var\(--space-4\);/)
   assert.match(css, /\.report-trend-panel__body\{display:grid;min-height:var\(--report-trend-height\)/)
   assert.match(css, /\.report-trend-panel__content \{[^}]*grid-area:1\/1;[^}]*padding:var\(--report-panel-padding\);/)
   assert.match(css, /\.report-trend-panel__state\{grid-area:1\/1;[^}]*margin:var\(--report-panel-padding\);/)
-  assert.match(css, /@media \(max-width:560px\)[^\n]*--report-panel-padding:12px/)
+  assert.match(css, /@media \(max-width:560px\)[^\n]*--report-panel-padding:var\(--space-3\)/)
   assert.doesNotMatch(state.styles[0].content, /\.report-panel-state\{[^}]*min-height:/)
   assert.match(state.styles[0].content, /overflow-wrap:anywhere/)
   for (const name of ['LeadershipReportView', 'EnergyPeriodReportView', 'WorkshopView']) {

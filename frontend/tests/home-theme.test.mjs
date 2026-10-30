@@ -18,11 +18,14 @@ const flush = async () => { await Promise.resolve(); await Vue.nextTick(); await
 
 test('Uno semantic cards include shadow initialization, RGB opacity and shared spacing', async () => {
   const uno = await createGenerator(unoConfig)
-  const { css } = await uno.generate('card-wrapper bg-layout bg-container bg-primary/10 gap-16px transition-all-300')
+  const { css } = await uno.generate('card-wrapper bg-layout bg-container bg-primary/10 gap-panel gap-field p-panel text-auxiliary transition-all-300')
   assert.ok(css.includes('--un-shadow-inset:'))
   assert.ok(css.includes('--un-ring-shadow:'))
   for (const token of ['--layout-bg-color', '--container-bg-color', '--primary-color']) assert.ok(css.includes(`var(${token})`))
-  assert.match(css, /gap:16px/)
+  assert.match(css, /gap:var\(--space-4\)/)
+  assert.match(css, /padding:var\(--space-4\)/)
+  assert.match(css, /font-size:var\(--font-auxiliary\)/)
+  assert.match(css, /border-radius:var\(--card-radius\)/)
   assert.match(css, /cubic-bezier/)
 })
 
@@ -172,10 +175,9 @@ test('cards and the welcome banner have distinct light surfaces with dark theme 
   const css = read('assets/soybean.css')
   const template = parse(read('views/AdminHomeView.vue')).descriptor.template.content
   assert.match(template, /class="card-wrapper bg-container home-welcome"/)
-  assert.match(css, /\.card-wrapper \{ border:1px solid #e2e8f0;/)
-  assert.match(css, /\.dark \.card-wrapper \{ border-color:var\(--theme-border-color\)/)
-  assert.match(css, /linear-gradient\(105deg, #eef2ff 0%, #f8fafc 55%, #fff 100%\)/)
-  assert.match(css, /\.home-welcome\.card-wrapper \{[^}]*border-color:#e0e7ff;/s)
+  assert.match(css, /\.card-wrapper \{ border:1px solid var\(--theme-border-color\);/)
+  assert.match(css, /linear-gradient\(105deg, color-mix\(in srgb, rgb\(var\(--primary-color\)\) 11%, rgb\(var\(--container-bg-color\)\)\)/)
+  assert.match(css, /\.home-welcome\.card-wrapper \{[^}]*border-color:rgb\(var\(--primary-color\) \/ \.2\);/s)
   const dark = css.match(/\.dark \.home-welcome\.card-wrapper \{([^}]+)\}/)[1]
   assert.match(dark, /--container-bg-color/)
   assert.match(dark, /--layout-bg-color/)

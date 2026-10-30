@@ -25,7 +25,7 @@ export function parseWeldingRouteQuery(query: LocationQuery, kind: WeldingReport
     serial_number: '', project_no: '', section_no: '', part_no: '', anomalies_only: false,
     sort_by: queryChoice(query.sort_by, ['time', 'length', 'id'] as const, 'time'),
     descending: scalar(query.descending) !== 'false',
-    page: integer(query.page, 1, 100000) || 1, page_size: integer(query.page_size, 1, 100) || 20,
+    page: integer(query.page, 1, 100000) || 1, page_size: 10,
   }
   if (kind === 'jobs' || kind === 'equipment') {
     result.robot_no = integer(query.robot_no, 0)

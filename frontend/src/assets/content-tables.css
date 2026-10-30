@@ -20,13 +20,13 @@ table.content-table td {
   border-bottom:1px solid var(--theme-border-color) !important;
   text-align:left !important;
   vertical-align:middle !important;
-  font-size:var(--content-table-font-size,13px) !important;
+  font-size:var(--content-table-font-size,var(--font-body)) !important;
   white-space:nowrap !important;
 }
 table.content-table thead th {
   color:var(--report-table-head-ink) !important;
   background:linear-gradient(var(--report-table-head-bg),var(--report-table-head-bg)),rgb(var(--container-bg-color)) !important;
-  font-size:var(--content-table-header-font-size,12px) !important;
+  font-size:var(--content-table-header-font-size,var(--font-table-head)) !important;
   font-weight:600 !important;
   letter-spacing:.4px !important;
   vertical-align:middle !important;

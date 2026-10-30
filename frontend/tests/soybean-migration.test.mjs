@@ -19,11 +19,11 @@ function setupControl(name, props, attrs = {}, slots = {}) {
   const source = readFileSync(new URL(`../src/components/${name}.vue`, import.meta.url), 'utf8')
   const script = parse(source).descriptor.scriptSetup.content.replace(/^import .*$/gm, '')
   const bindings = {
-    computed, ref, watch, selectOptions, defineOptions: () => {}, defineProps: () => { if ('value' in attrs) props.value = attrs.value; return props },
+    computed, ref, watch, nextTick, useId: () => 'test', selectOptions, defineOptions: () => {}, defineProps: () => { if ('value' in attrs) props.value = attrs.value; return props },
     defineEmits: () => (...event) => emitted.push(event), useAttrs: () => attrs, useSlots: () => slots,
     onDeactivated: (callback) => { deactivate = callback },
   }
-  const api = name === 'AppSelect' ? 'options, selectedValue, choose' : 'isOutsideBounds, commit'
+  const api = name === 'AppSelect' ? 'options, selectedValue, choose, syncAccessibility, optionProps, menuId' : 'isOutsideBounds, commit'
   const state = scriptFunction(...Object.keys(bindings), `${script}\nreturn { open, control, invalid, handleInvalid, ${api} }`)(...Object.values(bindings))
   return { state, emitted, deactivate: () => deactivate() }
 }
@@ -158,7 +158,7 @@ test('select option slots retain fragments, groups, disabled options and origina
 
 test('select retains v-model, value-only actions and the existing change event contract', () => {
   const select = parse(readFileSync(new URL('../src/components/AppSelect.vue', import.meta.url), 'utf8')).descriptor
-  assert.match(select.template.content, /<div class="app-select"[^>]*@click\.prevent>/, 'wrapping labels must not focus the hidden native select and close the menu')
+  assert.match(select.template.content, /<div class="app-select"[^>]*@click\.prevent(?:\s|>)/, 'wrapping labels must not focus the hidden native select and close the menu')
   assert.match(select.scriptSetup.content, /filterable\?: boolean/)
   assert.match(select.template.content, /:filterable="filterable"/)
   assert.match(select.template.content, /:placeholder="\$attrs.placeholder as string \| undefined"/)
@@ -213,3 +213,38 @@ for (const name of ['AppSelect', 'AppDatePicker']) {
     assert.equal(state.open.value, false)
   })
 }
+
+
+test('select exposes its name, state, listbox and active option on the actual focus target', () => {
+  const props = reactive({ modelValue: 2 })
+  const attrs = {}
+  const { state } = setupControl('AppSelect', props, attrs, { default: () => [h('option', { value: 1 }, '设备一'), h('option', { value: 2 }, '设备二')] })
+  const attributes = new Map()
+  const target = { setAttribute: (key, value) => attributes.set(key, value), removeAttribute: key => attributes.delete(key) }
+  const caption = { id: '' }
+  const el = { querySelector: () => target, querySelectorAll: () => [], closest: () => ({ querySelector: () => caption }), ownerDocument: { getElementById: () => ({ querySelector: () => ({ id: `${state.menuId}-option-0` }) }) } }
+  state.syncAccessibility(el)
+  assert.equal(attributes.get('role'), 'combobox')
+  assert.equal(attributes.get('aria-labelledby'), caption.id)
+  assert.equal(attributes.get('aria-expanded'), 'false')
+  assert.equal(attributes.has('aria-activedescendant'), false)
+  assert.equal(attributes.get('tabindex'), '0')
+  state.open.value = true
+  attrs['aria-label'] = '导出报表'
+  state.syncAccessibility(el)
+  assert.equal(attributes.get('aria-label'), '导出报表')
+  assert.equal(attributes.has('aria-labelledby'), false)
+  assert.equal(attributes.get('aria-controls'), state.menuId)
+  assert.equal(attributes.get('aria-activedescendant'), `${state.menuId}-option-0`)
+  assert.equal(state.optionProps({ value: 1 }).role, 'option')
+  assert.equal(state.optionProps({ value: 1 })['aria-selected'], true)
+  assert.equal(state.optionProps({ value: 0, disabled: true })['aria-disabled'], true)
+  props.disabled = true
+  props.filterable = true
+  state.invalid.value = true
+  state.syncAccessibility(el)
+  assert.equal(attributes.get('tabindex'), '-1')
+  assert.equal(attributes.get('aria-disabled'), 'true')
+  assert.equal(attributes.get('aria-invalid'), 'true')
+  assert.equal(attributes.get('aria-autocomplete'), 'list')
+})

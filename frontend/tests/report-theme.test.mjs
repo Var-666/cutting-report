@@ -27,6 +27,7 @@ test('report CSS aliases use actual Naive light/dark surfaces, text, borders and
     assert.equal(aliases['--text-color-1'], vars.textColor1)
     assert.equal(aliases['--theme-table-header-color'], vars.tableHeaderColor)
     assert.equal(aliases['--theme-on-primary-color'], vars.baseColor)
+    assert.equal(aliases['--theme-border-radius'], vars.borderRadius)
     assert.ok(Object.values(aliases).every(value => typeof value === 'string' && value.length))
     modes.push(aliases)
   }
@@ -36,7 +37,7 @@ test('report CSS aliases use actual Naive light/dark surfaces, text, borders and
 })
 
 test('standard report surfaces, controls and feedback contain no fixed light colors', () => {
-  for (const path of ['views/LeadershipReportView.vue','views/WorkshopView.vue','views/EnergyPeriodReportView.vue','components/AnalysisPanel.vue','components/ReportTrendPanel.vue','components/ReportPanelState.vue','components/ReportFeedback.vue','components/ReportPeriodPicker.vue','components/WorkshopStructureCharts.vue','components/StandardReportQuery.vue','components/ReportExportMenu.vue']) {
+  for (const path of ['views/LeadershipReportView.vue','views/WorkshopView.vue','views/EnergyPeriodReportView.vue','components/AnalysisPanel.vue','components/ReportAnalysis.vue','components/ReportTrendPanel.vue','components/ReportPanelState.vue','components/ReportFeedback.vue','components/ReportPeriodPicker.vue','components/WorkshopStructureCharts.vue','components/StandardReportQuery.vue','components/ReportExportMenu.vue']) {
     const styles = parse(read(path)).descriptor.styles.map(style => style.content).join('\n')
     assert.doesNotMatch(styles, /#[a-f0-9]{3,8}\b|rgba?\(\s*\d/i, path)
   }

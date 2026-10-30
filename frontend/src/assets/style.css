@@ -11,8 +11,17 @@
   --line: var(--theme-border-color);
   --paper: rgb(var(--container-bg-color));
   --panel-heading-bg: var(--theme-table-header-color);
-  --control-height: 43px;
-  --control-radius: 7px;
+  /* Shared dimensions; page-specific geometry stays in its component. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --control-height: 40px;
+  --control-radius: var(--theme-border-radius, 6px);
+  --card-radius: 8px;
+  --table-row-height: 44px;
+  --table-cell-padding: 6px 14px;
   --page-hero-height: 175px;
   --page-hero-gap: 32px;
   --report-query-width: 884px;
@@ -21,13 +30,14 @@
   --report-panel-radius: 10px;
   --font-page-title: 28px;
   --font-page-title-mobile: 22px;
-  --font-page-description: 12px;
+  --font-page-description: var(--font-auxiliary);
   --font-section-title: 16px;
-  --font-kpi-label: 12px;
+  --font-kpi-label: var(--font-auxiliary);
   --font-kpi-value: 24px;
+  --font-home-kpi-value: 30px;
   --font-body: 13px;
-  --font-table-head: 12px;
-  --font-control: 12px;
+  --font-table-head: var(--font-auxiliary);
+  --font-control: var(--font-auxiliary);
   --font-auxiliary: 12px;
 }
 

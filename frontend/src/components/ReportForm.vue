@@ -134,5 +134,5 @@ function reset() {
 .report-form > label { min-width:0; }
 .report-form .form-actions { grid-column:auto; }
 .form-actions button { height:40px; min-height:40px; flex-shrink:0; white-space:nowrap; }
-.report-form :deep(.n-base-selection), .report-form :deep(.n-input) { --n-height:40px!important; }
+.report-form :deep(.n-base-selection), .report-form :deep(.n-input) { --n-height:var(--control-height)!important; }
 </style>
