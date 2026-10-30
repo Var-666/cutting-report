@@ -1,23 +1,15 @@
 <script setup lang="ts">
+import { useLeadershipReportQuery } from '../composables/useLeadershipReportQuery'
+import { useLeadershipReportData } from '../composables/useLeadershipReportData'
+import { useLeadershipReportCharts } from '../composables/useLeadershipReportCharts'
 import AppReportTable from '../components/AppReportTable.vue'
 import type { ReportCreateRequest } from '../types/reports'
 
-import type { LeadershipPeriodRecord, LeadershipReport } from '../types/reports'
 import type { ExportFormat } from '../types/api'
-import type { BarSeriesOption, LineSeriesOption } from 'echarts'
-type TrendSeries = Omit<LineSeriesOption, 'type'> & Pick<BarSeriesOption, 'barMaxWidth'> & { type: 'bar' | 'line' }
 
-import type { EChartsType as ECharts } from 'echarts/core'
-import type { EChartsOption } from 'echarts'
 
-import { toError } from '../utils/errors'
-import { BarChart, LineChart } from 'echarts/charts'
-import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
-import { init, use } from 'echarts/core'
-import { CanvasRenderer } from 'echarts/renderers'
 import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { getLeadershipRange, getLeadershipReport } from '../api/cutting.ts'
 import AnalysisPanel from '../components/AnalysisPanel.vue'
 import MetricSparkline from '../components/MetricSparkline.vue'
 import ReportFeedback from '../components/ReportFeedback.vue'
@@ -25,135 +17,35 @@ import ReportTrendPanel from '../components/ReportTrendPanel.vue'
 import StandardReportQuery from '../components/StandardReportQuery.vue'
 import AppIcon from '../components/AppIcon.vue'
 import heroImage from '../assets/home-laser-cutting.webp'
-import { recentTwelveMonthStart, reportToday } from '../api/reportDates.ts'
+import { reportToday } from '../api/reportDates.ts'
 import { formatChineseDate, formatChineseMonth } from '../utils/dateDisplay.ts'
-import { createReportChartGrid } from '../utils/reportChartTheme.ts'
-import { useReportChartTheme } from '../composables/useReportChartTheme.ts'
 import { useDeviceSwitchQuery } from '../composables/useDeviceSwitchQuery.ts'
-import { mergeOwnedQuery, queryChoice, queryDateRange, sameRouteQuery } from '../utils/reportRouteState.ts'
+import { queryDateRange } from '../utils/reportRouteState.ts'
 
 defineProps({ exporting: Boolean })
 const emit = defineEmits<{ export: [payload: ReportCreateRequest, format: ExportFormat] }>()
-
-use([BarChart, LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
-
-const chartTheme = useReportChartTheme(() => { disposeCharts(); renderCharts() })
 const route = useRoute()
 const router = useRouter()
 const today = reportToday()
-const defaultPeriodStart = `${today.slice(0, 7)}-01`
 const routeRange = queryDateRange(route.query)
-const periodStart = ref(routeRange?.start || defaultPeriodStart)
-const periodEnd = ref(routeRange?.end || today)
-const appliedPeriodStart = ref(periodStart.value)
-const appliedPeriodEnd = ref(periodEnd.value)
-const monthlyPeriodStart = ref(recentTwelveMonthStart(today))
-const monthlyPeriodEnd = ref(today)
-const defaultMonthlyView = ref(true)
-const chartType = ref(queryChoice(route.query.chart, ['bar_line', 'bar', 'line', 'area'], 'bar_line'))
-const report = ref<LeadershipReport | null>(null)
-const monthlyReport = ref<LeadershipReport | null>(null)
-const loading = ref(false)
-const monthlyLoading = ref(false)
-const refreshLoading = ref(false)
-const error = ref('')
-const dailyPanel = ref<InstanceType<typeof ReportTrendPanel> | null>(null)
-const monthlyPanel = ref<InstanceType<typeof ReportTrendPanel> | null>(null)
 const pageActive = ref(true)
-let dailyChart: ECharts | null = null
-let monthlyChart: ECharts | null = null
-let refreshTimer: number | null = null
-let refreshPollCount = 0
-let requestController: AbortController | null = null
-let requestSequence = 0
-let resizeListening = false
-let chartResizeObserver: ResizeObserver | undefined
 let routeStateReady = false
 
-const routeQueryKeys = ['start', 'end', 'chart']
-const dateQueryDirty = computed(() => (
-  periodStart.value !== appliedPeriodStart.value || periodEnd.value !== appliedPeriodEnd.value
-))
-
-function routeStateQuery() {
-  return mergeOwnedQuery(route.query, routeQueryKeys, {
-    start: defaultMonthlyView.value ? '' : appliedPeriodStart.value,
-    end: defaultMonthlyView.value ? '' : appliedPeriodEnd.value,
-    chart: chartType.value === 'bar_line' ? '' : chartType.value,
-  })
-}
+const {
+  periodStart, periodEnd, appliedPeriodStart, appliedPeriodEnd, monthlyPeriodStart,
+  monthlyPeriodEnd, defaultMonthlyView, chartType, report, monthlyReport,
+  loading, monthlyLoading, refreshLoading, error, dateQueryDirty,
+  routeStateQuery, cancelReportRequest, changeChartType, snapshot, loadReport,
+  restoreRouteState, loadDefaultReport, scheduleRefreshPoll, retryReport, refreshAnalysisReport,
+} = useLeadershipReportQuery({ route, router, today, routeRange, pageActive, renderCharts: options => renderCharts(options) })
+const {
+  dailyRecords, dailyChartRecords, metricSeries, monthlyRecords, total,
+  monthlyTotal, roundNumber, formatLength, formatDuration,
+  metricChanges, changeText, comparisonLabel,
+} = useLeadershipReportData({ report, monthlyReport, appliedPeriodStart, appliedPeriodEnd, defaultMonthlyView })
+const { dailyPanel, monthlyPanel, renderCharts, resizeCharts, disposeCharts, startResizeListening, stopResizeListening, chartsMissing } = useLeadershipReportCharts({ report, monthlyReport, dailyChartRecords, monthlyRecords, chartType, pageActive, roundNumber, formatLength })
 
 useDeviceSwitchQuery('leadership-report', routeStateQuery)
-
-async function syncRouteState() {
-  const query = routeStateQuery()
-  if (sameRouteQuery(query, route.query)) return
-  await router.push({ query })
-}
-
-function cancelReportRequest() {
-  stopRefreshPoll()
-  requestSequence += 1
-  requestController?.abort()
-  requestController = null
-  loading.value = false
-  monthlyLoading.value = false
-  refreshLoading.value = false
-}
-
-async function changeChartType(value: string) {
-  chartType.value = value
-  const query = mergeOwnedQuery(route.query, ['chart'], { chart: value === 'bar_line' ? '' : value })
-  if (loading.value) Object.assign(query, { start: periodStart.value, end: periodEnd.value })
-  if (pageActive.value && !sameRouteQuery(query, route.query)) await router.push({ query })
-}
-
-function beginRequest() {
-  cancelReportRequest()
-  requestController = new AbortController()
-  return { sequence: requestSequence, signal: requestController.signal }
-}
-
-function requestIsCurrent(sequence: number, signal: AbortSignal) {
-  return pageActive.value && !signal.aborted && sequence === requestSequence
-}
-
-const dailyRecords = computed(() => report.value?.daily_records || [])
-const dailyChartRecords = computed<LeadershipPeriodRecord[]>(() => {
-  if (!report.value) return []
-  const byDate = new Map(dailyRecords.value.map(row => [row.period_start, row]))
-  const rows: LeadershipPeriodRecord[] = []
-  const end = Date.parse(`${appliedPeriodEnd.value}T00:00:00Z`)
-  for (let day = Date.parse(`${appliedPeriodStart.value}T00:00:00Z`); day <= end; day += 86_400_000) {
-    const date = new Date(day).toISOString().slice(0, 10)
-    rows.push(byDate.get(date) || { period_start: date, task_count: 0, cut_length_m: 0, groove_length_m: 0, work_time_seconds: 0 })
-  }
-  return rows
-})
-const metricSeries = computed(() => {
-  const rows = [...dailyRecords.value].sort((left, right) => left.period_start.localeCompare(right.period_start))
-  return {
-    taskCount: rows.map((row) => row.task_count),
-    cutLength: rows.map((row) => row.cut_length_m),
-    grooveLength: rows.map((row) => row.groove_length_m),
-    workTime: rows.map((row) => row.work_time_seconds),
-  }
-})
-const monthlyRecords = computed(() => monthlyReport.value?.monthly_records || [])
-const total = computed(() => report.value?.current_month_total || {
-  task_count: null,
-  cut_length_m: null,
-  groove_length_m: null,
-  work_time_seconds: null,
-})
-const monthlyTotal = computed(() => monthlyReport.value?.twelve_month_total || {
-  task_count: null,
-  cut_length_m: null,
-  groove_length_m: null,
-  work_time_seconds: null,
-})
-const snapshot = computed(() => report.value?.snapshot || {})
-const comparisonTotal = computed(() => report.value?.comparison_total || null)
 const monthlyTitle = '近12个月按月对比与趋势'
 const analysisReady = computed(() => Boolean(
   pageActive.value
@@ -164,297 +56,6 @@ const analysisReady = computed(() => Boolean(
   && !loading.value
   && !monthlyLoading.value
 ))
-
-function roundNumber(value: unknown, digits = 1) {
-  const factor = 10 ** digits
-  return Math.round((Number(value || 0) + Number.EPSILON) * factor) / factor
-}
-
-function formatLength(value: unknown) {
-  if (value === null || value === undefined || !Number.isFinite(Number(value))) return '--'
-  return new Intl.NumberFormat('zh-CN', {
-    minimumFractionDigits: 1,
-    maximumFractionDigits: 1,
-  }).format(Number(value || 0))
-}
-
-function formatDuration(value: unknown) {
-  if (value === null || value === undefined || !Number.isFinite(Number(value))) return '--'
-  const totalSeconds = Math.max(0, Math.round(Number(value || 0)))
-  const hours = Math.floor(totalSeconds / 3600)
-  const minutes = Math.floor((totalSeconds % 3600) / 60)
-  const seconds = totalSeconds % 60
-  return [hours, minutes, seconds].map((part) => String(part).padStart(2, '0')).join(':')
-}
-
-function changeRate(current: unknown, previous: unknown) {
-  if (previous === null || previous === undefined) return null
-  const currentValue = Number(current || 0)
-  const previousValue = Number(previous || 0)
-  if (!previousValue) return currentValue ? { value: 100, direction: 'up' } : { value: 0, direction: 'flat' }
-  const rate = Math.round(((currentValue - previousValue) / Math.abs(previousValue)) * 100)
-  return { value: Math.abs(rate), direction: rate > 0 ? 'up' : rate < 0 ? 'down' : 'flat' }
-}
-
-const metricChanges = computed(() => ({
-  taskCount: changeRate(total.value.task_count, comparisonTotal.value?.task_count),
-  cutLength: changeRate(total.value.cut_length_m, comparisonTotal.value?.cut_length_m),
-  grooveLength: changeRate(total.value.groove_length_m, comparisonTotal.value?.groove_length_m),
-  workTime: changeRate(total.value.work_time_seconds, comparisonTotal.value?.work_time_seconds),
-}))
-
-function changeText(change: ReturnType<typeof changeRate>) {
-  return change ? `${change.value}%` : '暂无对比'
-}
-
-function comparisonLabel(change: ReturnType<typeof changeRate>) {
-  if (!change) return '当前统计区间'
-  return defaultMonthlyView.value ? '较上月' : '较对比区间'
-}
-
-function applyChartType(series: TrendSeries): TrendSeries {
-  if (chartType.value === 'bar_line') return series
-  const result = { ...series }
-  delete result.areaStyle
-  if (chartType.value === 'bar') {
-    result.type = 'bar'
-    delete result.smooth
-  } else {
-    result.type = 'line'
-    result.smooth = true
-    if (chartType.value === 'area') result.areaStyle = { opacity: 0.16 }
-  }
-  return result
-}
-
-async function loadReport(force = false, { syncRoute = true } = {}) {
-  if (!periodStart.value || !periodEnd.value) return
-  if (periodEnd.value < periodStart.value) {
-    error.value = '结束日期不能早于开始日期'
-    return
-  }
-  const { sequence, signal } = beginRequest()
-  loading.value = true
-  error.value = ''
-  const requestedStart = periodStart.value
-  const requestedEnd = periodEnd.value
-  try {
-    const result = await getLeadershipRange(requestedStart, requestedEnd, { force, signal })
-    if (!requestIsCurrent(sequence, signal)) return
-    report.value = result
-    appliedPeriodStart.value = requestedStart
-    appliedPeriodEnd.value = requestedEnd
-    defaultMonthlyView.value = false
-    await nextTick()
-    if (!requestIsCurrent(sequence, signal)) return
-    renderCharts({ monthly: false })
-    scheduleRefreshPoll(true)
-    if (syncRoute) await syncRouteState()
-  } catch (caught) {
-    const exception = toError(caught)
-    if (exception.name !== 'AbortError' && sequence === requestSequence) error.value = exception.message
-  } finally {
-    if (sequence === requestSequence) {
-      loading.value = false
-      requestController = null
-    }
-  }
-}
-
-async function restoreRouteState({ preserveDraft = false } = {}) {
-  if (route.name !== 'leadership-report') return false
-  cancelReportRequest()
-  const range = queryDateRange(route.query)
-  const nextChartType = queryChoice(route.query.chart, ['bar_line', 'bar', 'line', 'area'], 'bar_line')
-  chartType.value = nextChartType
-
-  if (range) {
-    const needsLoad = !report.value || defaultMonthlyView.value || appliedPeriodStart.value !== range.start || appliedPeriodEnd.value !== range.end
-    if (!preserveDraft || needsLoad) {
-      periodStart.value = range.start
-      periodEnd.value = range.end
-    }
-    if (needsLoad) {
-      await loadReport(false, { syncRoute: false })
-      return true
-    }
-    return false
-  }
-
-  if (!preserveDraft || !report.value || !defaultMonthlyView.value) {
-    periodStart.value = defaultPeriodStart
-    periodEnd.value = today
-  }
-  if (!report.value || !defaultMonthlyView.value) {
-    await loadDefaultReport()
-    return true
-  }
-  return false
-}
-
-async function loadDefaultReport(force = false) {
-  const { sequence, signal } = beginRequest()
-  loading.value = true
-  monthlyLoading.value = true
-  error.value = ''
-  try {
-    const result = await getLeadershipReport(today.slice(0, 7), { force, signal })
-    if (!requestIsCurrent(sequence, signal)) return
-    report.value = result
-    monthlyReport.value = result
-    appliedPeriodStart.value = `${today.slice(0, 7)}-01`
-    appliedPeriodEnd.value = today
-    monthlyPeriodStart.value = recentTwelveMonthStart(today)
-    monthlyPeriodEnd.value = today
-    defaultMonthlyView.value = true
-    await nextTick()
-    if (!requestIsCurrent(sequence, signal)) return
-    renderCharts()
-    scheduleRefreshPoll(true)
-  } catch (caught) {
-    const exception = toError(caught)
-    if (exception.name !== 'AbortError' && sequence === requestSequence) error.value = exception.message
-  } finally {
-    if (sequence === requestSequence) {
-      loading.value = false
-      monthlyLoading.value = false
-      requestController = null
-    }
-  }
-}
-
-function stopRefreshPoll() {
-  if (refreshTimer) window.clearTimeout(refreshTimer)
-  refreshTimer = null
-}
-
-function scheduleRefreshPoll(reset = false) {
-  stopRefreshPoll()
-  if (reset) refreshPollCount = 0
-  if (!pageActive.value || !snapshot.value.refreshing) {
-    refreshLoading.value = false
-    return
-  }
-  refreshLoading.value = true
-  const sequence = requestSequence
-  const requestedStart = appliedPeriodStart.value
-  const requestedEnd = appliedPeriodEnd.value
-  const requestedRange = `${requestedStart}:${requestedEnd}`
-  const requestedDefaultView = defaultMonthlyView.value
-  refreshTimer = window.setTimeout(async () => {
-    if (!pageActive.value || sequence !== requestSequence || loading.value || monthlyLoading.value || requestedRange !== `${appliedPeriodStart.value}:${appliedPeriodEnd.value}` || requestedDefaultView !== defaultMonthlyView.value) {
-      return
-    }
-    refreshTimer = null
-    const controller = new AbortController()
-    requestController = controller
-    const signal = controller.signal
-    try {
-      const result = requestedDefaultView
-        ? await getLeadershipReport(requestedStart.slice(0, 7), { force: true, signal })
-        : await getLeadershipRange(requestedStart, requestedEnd, { force: true, signal })
-      if (!requestIsCurrent(sequence, signal)) return
-      report.value = result
-      if (requestedDefaultView) monthlyReport.value = result
-      await nextTick()
-      if (!requestIsCurrent(sequence, signal)) return
-      renderCharts({ monthly: requestedDefaultView })
-      refreshPollCount += 1
-      if (snapshot.value.refreshing && refreshPollCount < 75) {
-        scheduleRefreshPoll()
-      } else {
-        refreshLoading.value = false
-      }
-    } catch (caught) {
-    const exception = toError(caught)
-      if (sequence === requestSequence) {
-        refreshLoading.value = false
-        if (exception.name !== 'AbortError') error.value = exception.message
-      }
-    } finally {
-      if (requestController === controller) requestController = null
-    }
-  }, 2000)
-}
-
-function renderCharts({ monthly = true } = {}) {
-  if (!pageActive.value) return
-  const dailyChartElement = dailyPanel.value?.getChartElement()
-  const monthlyChartElement = monthlyPanel.value?.getChartElement()
-  if (dailyChartElement && report.value) {
-    dailyChart ||= init(dailyChartElement, chartTheme.darkMode.value ? 'dark' : undefined)
-    const records = dailyChartRecords.value
-    dailyChart.setOption<EChartsOption>({
-      backgroundColor: 'transparent',
-      tooltip: { trigger: 'axis', backgroundColor: chartTheme.vars.value.popoverColor, borderColor: chartTheme.vars.value.borderColor, textStyle: { color: chartTheme.vars.value.textColor1 } },
-      legend: { data: ['切割长度', '坡口长度', '切割工时'] },
-      grid: createReportChartGrid(),
-      xAxis: { type: 'category', data: records.map((row) => row.period_start.slice(5)), axisLabel: { hideOverlap: true } },
-      yAxis: [
-        { type: 'value', name: '长度（米）', splitLine: { lineStyle: { color: chartTheme.vars.value.dividerColor } } },
-        { type: 'value', name: '工时（小时）', splitLine: { show: false } },
-      ],
-      series: ([
-        { name: '切割长度', type: 'bar', data: records.map((row) => roundNumber(row.cut_length_m)), tooltip: { valueFormatter: (value) => `${formatLength(value)} 米` }, itemStyle: { color: chartTheme.colors.value.primary } },
-        { name: '坡口长度', type: 'bar', data: records.map((row) => roundNumber(row.groove_length_m)), tooltip: { valueFormatter: (value) => `${formatLength(value)} 米` }, itemStyle: { color: chartTheme.colors.value.secondary } },
-        { name: '切割工时', type: 'line', yAxisIndex: 1, smooth: true, data: records.map((row) => roundNumber(Number(row.work_time_seconds) / 3600)), tooltip: { valueFormatter: (value) => `${formatLength(value)} 小时` }, itemStyle: { color: chartTheme.colors.value.accent } },
-      ] satisfies TrendSeries[]).map(applyChartType),
-    }, true)
-  }
-  if (monthly && monthlyChartElement && monthlyReport.value) {
-    monthlyChart ||= init(monthlyChartElement, chartTheme.darkMode.value ? 'dark' : undefined)
-    const records = [...monthlyRecords.value].sort((left, right) => left.period_start.localeCompare(right.period_start))
-    monthlyChart.setOption<EChartsOption>({
-      backgroundColor: 'transparent',
-      tooltip: { trigger: 'axis', backgroundColor: chartTheme.vars.value.popoverColor, borderColor: chartTheme.vars.value.borderColor, textStyle: { color: chartTheme.vars.value.textColor1 } },
-      legend: { data: ['切割长度', '坡口长度', '完成任务'] },
-      grid: createReportChartGrid(),
-      xAxis: { type: 'category', data: records.map((row) => row.period_start.slice(0, 7)), axisLabel: { hideOverlap: true } },
-      yAxis: [
-        { type: 'value', name: '长度（米）', splitLine: { lineStyle: { color: chartTheme.vars.value.dividerColor } } },
-        { type: 'value', name: '任务数', splitLine: { show: false } },
-      ],
-      series: ([
-        { name: '切割长度', type: 'bar', data: records.map((row) => roundNumber(row.cut_length_m)), tooltip: { valueFormatter: (value) => `${formatLength(value)} 米` }, itemStyle: { color: chartTheme.colors.value.primary } },
-        { name: '坡口长度', type: 'bar', data: records.map((row) => roundNumber(row.groove_length_m)), tooltip: { valueFormatter: (value) => `${formatLength(value)} 米` }, itemStyle: { color: chartTheme.colors.value.secondary } },
-        { name: '完成任务', type: 'line', yAxisIndex: 1, smooth: true, data: records.map((row) => row.task_count), itemStyle: { color: chartTheme.colors.value.accent } },
-      ] satisfies TrendSeries[]).map(applyChartType),
-    }, true)
-  }
-}
-
-function resizeCharts() {
-  if (pageActive.value) {
-    dailyChart?.resize()
-    monthlyChart?.resize()
-  }
-}
-
-function disposeCharts() {
-  dailyChart?.dispose()
-  monthlyChart?.dispose()
-  dailyChart = null
-  monthlyChart = null
-}
-
-function startResizeListening() {
-  if (resizeListening) return
-  resizeListening = true
-  window.addEventListener('resize', resizeCharts)
-  chartResizeObserver = new ResizeObserver(resizeCharts)
-  for (const panel of [dailyPanel, monthlyPanel]) {
-    const element = panel.value?.getChartElement()
-    if (element) chartResizeObserver.observe(element)
-  }
-}
-
-function stopResizeListening() {
-  if (!resizeListening) return
-  resizeListening = false
-  window.removeEventListener('resize', resizeCharts)
-  chartResizeObserver?.disconnect()
-  chartResizeObserver = undefined
-}
 
 function pausePage(dispose = false) {
   if (pageActive.value) {
@@ -481,44 +82,6 @@ function exportReport(format: ExportFormat = 'html') {
   }, format)
 }
 
-function retryReport() {
-  return report.value ? loadReport(false) : loadDefaultReport()
-}
-
-async function refreshRangeAnalysisReport() {
-  const { sequence, signal } = beginRequest()
-  loading.value = true
-  monthlyLoading.value = true
-  error.value = ''
-  try {
-    const [refreshedReport, refreshedSummary] = await Promise.all([
-      getLeadershipRange(appliedPeriodStart.value, appliedPeriodEnd.value, { force: true, signal }),
-      getLeadershipReport(monthlyPeriodEnd.value.slice(0, 7), { force: true, signal }),
-    ])
-    if (!requestIsCurrent(sequence, signal)) return
-    report.value = refreshedReport
-    monthlyReport.value = refreshedSummary
-    await nextTick()
-    if (!requestIsCurrent(sequence, signal)) return
-    renderCharts()
-    scheduleRefreshPoll(true)
-  } catch (caught) {
-    const exception = toError(caught)
-    if (exception.name !== 'AbortError' && sequence === requestSequence) error.value = exception.message
-  } finally {
-    if (sequence === requestSequence) {
-      loading.value = false
-      monthlyLoading.value = false
-      requestController = null
-    }
-  }
-}
-
-function refreshAnalysisReport() {
-  if (!pageActive.value || loading.value) return
-  return defaultMonthlyView.value ? loadDefaultReport(true) : refreshRangeAnalysisReport()
-}
-
 onMounted(async () => {
   const initialQuery = route.query
   await loadDefaultReport()
@@ -534,7 +97,7 @@ onActivated(async () => {
   startResizeListening()
   if (routeStateReady && await restoreRouteState()) return
   if (!report.value && !loading.value) await loadDefaultReport()
-  else if (!dailyChart || (monthlyReport.value && !monthlyChart)) renderCharts()
+  else if (chartsMissing()) renderCharts()
   resizeCharts()
   scheduleRefreshPoll(true)
 })

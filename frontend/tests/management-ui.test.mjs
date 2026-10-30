@@ -372,11 +372,13 @@ test('all seven migrated settings tables render their fields and controls throug
   for (const [viewName, columnName, state, expected] of cases) {
     const view = viewName === 'AutomationView'
       ? descriptor(`automation/${columnName === 'scheduleTableColumns' ? 'AutomationScheduleTable' : 'AutomationDeliveryTable'}`, 'components')
+      : viewName === 'DesignerView' ? descriptor('designer/DesignerQueryPreview', 'components')
       : descriptor(viewName)
     const script = view.scriptSetup.content
     const bindings = { ...Vue, ...dateDisplay, ...state, loading: false, paginate: true }
     if (viewName === 'DesignerView') {
-      bindings.formatPreviewValue = scriptFunction(...Object.keys(bindings), `${script.slice(script.indexOf('function formatPreviewValue'), script.indexOf('function blankQuery'))}; return formatPreviewValue`)(...Object.values(bindings))
+      bindings.props = { queryPreview: state.queryPreview.value }
+      bindings.formatPreviewValue = scriptFunction(...Object.keys(bindings), `${script.slice(script.indexOf('function formatPreviewValue'), script.indexOf('const previewTableColumns'))}; return formatPreviewValue`)(...Object.values(bindings))
     }
     const columns = scriptFunction(...Object.keys(bindings), `${script.slice(script.indexOf(`const ${columnName} =`))}; return ${columnName}`)(...Object.values(bindings))
     const nodes = []
@@ -448,4 +450,66 @@ test('automation configuration keeps TLS modes exclusive and preserves empty-pas
   assert.equal(saved[1].smtp_password, 'new-test-password')
   assert.equal(state.configuration.smtp_password, '')
   assert.equal(refreshed, 2)
+})
+
+function designerPage(t, overrides = {}) {
+  const events = [], apiCalls = [], scope = Vue.effectScope()
+  const previousWindow = globalThis.window
+  let guard
+  globalThis.window = { confirm: () => false }
+  t.after(() => { scope.stop(); globalThis.window = previousWindow })
+  const bindings = {
+    ...Vue, onMounted() {}, defineEmits: () => (...args) => events.push(args),
+    useRoute: () => ({ query: {} }), useRouter: () => ({ replace() {} }),
+    useUnsavedChanges: value => { guard = value },
+    listDesignerResources: async () => ({ items: [] }),
+    saveDesignerResource: async (kind, draft, id, token) => { apiCalls.push({ kind, draft, id, token }); return { ...draft, version: 2 } },
+    validateDesignerSql: async () => ({ formatted_sql: 'SELECT 1 AS value', tables: ['task'] }),
+    previewDesignerQuery: async (id, query, token) => { apiCalls.push({ id, query, token }); return { columns: [], items: [], returned: 0, mode: 'demo' } },
+    ...overrides,
+  }
+  const querySource = readFileSync(new URL('../src/composables/useDesignerQueryPreview.ts', import.meta.url), 'utf8').replace(/^import .*$/gm, '').replace('export function', 'function')
+  bindings.useDesignerQueryPreview = scriptFunction(...Object.keys(bindings), `${querySource}; return useDesignerQueryPreview`)(...Object.values(bindings))
+  const source = descriptor('DesignerView').scriptSetup.content.replace(/^import .*$/gm, '')
+  const state = scope.run(() => scriptFunction(...Object.keys(bindings), `${source}; return { hasUnsavedChanges, adminToken, queryDraft, templateDraft, definitionDraft, queryValidation, queryPreview, loadResources, chooseQuery, saveResource, validateQuery, previewQuery, error }`)(...Object.values(bindings)))
+  return { ...state, events, apiCalls, get guard() { return guard } }
+}
+
+test('designer keeps one page-owned dirty guard across editor drafts and resets it after saving a definition', async t => {
+  const page = designerPage(t)
+  await page.loadResources()
+  assert.equal(page.guard, page.hasUnsavedChanges)
+  assert.equal(page.hasUnsavedChanges.value, false)
+  page.queryDraft.value.columns[0].label = '修改字段'
+  await Vue.nextTick()
+  assert.equal(page.hasUnsavedChanges.value, true)
+  const selected = page.queryDraft.value
+  page.chooseQuery({ ...selected, query_task_id: 'other' })
+  assert.equal(page.queryDraft.value, selected, 'cancelled replacement retains the reviewed draft')
+  page.templateDraft.value.config.layout = 'chart_first'
+  page.definitionDraft.value.name = '报表甲'
+  await Vue.nextTick()
+  assert.equal(page.hasUnsavedChanges.value, true)
+  await page.saveResource('definitions', page.definitionDraft.value, 'definition_id')
+  assert.equal(page.hasUnsavedChanges.value, false)
+  assert.deepEqual(page.events, [['definitions-change']])
+  assert.equal(page.definitionDraft.value.name, '报表甲')
+})
+
+test('designer SQL validation and preview use the current draft, token and unchanged preview parameters', async t => {
+  const page = designerPage(t)
+  await page.loadResources()
+  await page.previewQuery()
+  assert.match(page.error.value, /请先保存/)
+  assert.equal(page.apiCalls.length, 0)
+  page.queryDraft.value.query_task_id = 'query-1'
+  page.adminToken.value = 'test-admin-token'
+  await page.validateQuery()
+  assert.equal(page.queryDraft.value.sql_text, 'SELECT 1 AS value')
+  await page.previewQuery()
+  assert.equal(page.apiCalls[0].id, 'query-1')
+  assert.equal(page.apiCalls[0].token, 'test-admin-token')
+  assert.equal(page.apiCalls[0].query.max_rows, 10)
+  assert.deepEqual(page.apiCalls[0].query.parameters, {})
+  assert.equal(page.queryPreview.value.returned, 0)
 })

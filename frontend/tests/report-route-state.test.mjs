@@ -1,3 +1,4 @@
+import { reportModuleBindings } from './report-module-helpers.mjs'
 import * as Vue from 'vue'
 import { createRouter, createMemoryHistory, RouterView, useRoute, useRouter } from 'vue-router'
 import { scriptFunction } from './typescript-helpers.mjs'
@@ -13,6 +14,8 @@ import {
   queryPositiveInteger,
   sameRouteQuery,
 } from '../src/utils/reportRouteState.ts'
+
+const leadershipQuerySource = readFileSync(new URL('../src/composables/useLeadershipReportQuery.ts', import.meta.url), 'utf8')
 
 function viewSource(name) {
   const source = readFileSync(new URL(`../src/views/${name}`, import.meta.url), 'utf8')
@@ -53,7 +56,7 @@ test('report views restore only applied state and keep worker task routing uncha
   const workshop = viewSource('WorkshopView.vue')
   const center = viewSource('ReportCenterView.vue')
 
-  assert.match(leadership, /if \(syncRoute\) await syncRouteState\(\)/)
+  assert.match(leadershipQuerySource, /if \(syncRoute\) await syncRouteState\(\)/)
   assert.match(leadership, /watch\(\(\) => route\.query/)
   assert.match(equipment, /queryDateRange\(route\.query, \{ maxDays: 31 \}\)/)
   assert.match(equipment, /if \(syncRoute\) await syncRouteState\(\)/)
@@ -79,7 +82,7 @@ test('standard reports distinguish edited dates from the last successfully appli
   assert.match(query.template.content, /v-if="dateDirty && !loading"/)
   assert.match(query.template.content, /role="status"/)
   assert.match(query.template.content, /所选区间尚未加载成功，可重新查询/)
-  assert.match(leadership, /periodStart\.value !== appliedPeriodStart\.value \|\| periodEnd\.value !== appliedPeriodEnd\.value/)
+  assert.match(leadershipQuerySource, /periodStart\.value !== appliedPeriodStart\.value \|\| periodEnd\.value !== appliedPeriodEnd\.value/)
   assert.match(equipment, /periodStart\.value !== appliedPeriodStart\.value \|\| periodEnd\.value !== appliedPeriodEnd\.value/)
   assert.match(workshop, /filters\.startDate !== appliedRouteState\.startDate \|\| filters\.endDate !== appliedRouteState\.endDate/)
   for (const name of ['LeadershipReportView.vue', 'EnergyPeriodReportView.vue', 'WorkshopView.vue']) {
@@ -99,6 +102,7 @@ function reportResult(start = '2026-10-01', end = '2026-10-27', id = 'initial', 
 async function mountReport(t, kind, { query = {}, refreshing = false, syncing = false } = {}) {
   const name = kind === 'leadership' ? 'leadership-report' : 'equipment-report'
   const pending = []
+  const exports = []
   const timers = new Map()
   const held = { range: false, monthly: false, summary: false }
   const chartUpdates = []
@@ -112,7 +116,7 @@ async function mountReport(t, kind, { query = {}, refreshing = false, syncing = 
     return new Promise((resolve, reject) => pending.push({ type, start, end, signal: options.signal, resolve: data => resolve(type === 'range' && kind === 'equipment' ? { task_report: data } : data), reject }))
   }
   const bindings = {
-    ...Vue, useRoute, useRouter, defineProps: () => ({}), defineEmits: () => () => {},
+    ...Vue, useRoute, useRouter, defineProps: () => ({}), defineEmits: () => (...args) => exports.push(args),
     ResizeObserver: class { observe() {} disconnect() {} },
     use() {}, BarChart: {}, LineChart: {}, GridComponent: {}, LegendComponent: {}, TooltipComponent: {}, CanvasRenderer: {},
     useDeviceSwitchQuery() {}, useReportChartTheme: () => ({ darkMode: Vue.ref(false), vars: Vue.ref({}), colors: Vue.ref({}) }),
@@ -128,10 +132,11 @@ async function mountReport(t, kind, { query = {}, refreshing = false, syncing = 
     sortReportPeriods: rows => rows, taskProductionDate: () => '2026-10-27', deviceSelection: { id: 'Cutter01' },
     mergeOwnedQuery, queryChoice, queryDateRange, sameRouteQuery,
   }
+  Object.assign(bindings, reportModuleBindings(bindings))
   const source = viewSource(kind === 'leadership' ? 'LeadershipReportView.vue' : 'EnergyPeriodReportView.vue').replace(/^import .*$/gm, '')
   const data = kind === 'leadership' ? 'report' : 'taskDay'
   const load = kind === 'leadership' ? 'loadReport' : 'loadRange'
-  const setup = scriptFunction(...Object.keys(bindings), `${source}\nreturn { data: ${data}, load: ${load}, periodStart, periodEnd, appliedPeriodStart, appliedPeriodEnd, chartType, changeChartType, loading, error, pageActive, dateQueryDirty${kind === 'leadership' ? ', refreshLoading, monthlyLoading, retryReport' : ', monthlyReport, summaryPeriodStart, summaryPeriodEnd, loadDefaultRanges, periodPanel, getSummaryCount: () => summaryRefreshCount, setSummaryCount: value => { summaryRefreshCount = value }'} }`)
+  const setup = scriptFunction(...Object.keys(bindings), `${source}\nreturn { data: ${data}, load: ${load}, periodStart, periodEnd, appliedPeriodStart, appliedPeriodEnd, chartType, changeChartType, loading, error, pageActive, dateQueryDirty, exportReport${kind === 'leadership' ? ', refreshLoading, monthlyLoading, retryReport, monthlyPeriodStart, monthlyPeriodEnd' : ', monthlyReport, summaryPeriodStart, summaryPeriodEnd, loadDefaultRanges, periodPanel, getSummaryCount: () => summaryRefreshCount, setSummaryCount: value => { summaryRefreshCount = value }'} }`)
   const page = { setup() { mounts++; state = setup(...Object.values(bindings)); return () => Vue.h('div') } }
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/report', name, component: page }, { path: '/other', component: { render: () => Vue.h('div') } }] })
   await router.push({ name, query })
@@ -143,7 +148,7 @@ async function mountReport(t, kind, { query = {}, refreshing = false, syncing = 
   const unmount = () => { if (mounted) { app.unmount(); mounted = false } }
   t.after(() => { unmount(); if (previousWindow === undefined) delete globalThis.window; else globalThis.window = previousWindow })
   await flushReport()
-  return { state, router, pending, held, timers, chartUpdates, unmount, mounts: () => mounts, fire() { const [id, callback] = timers.entries().next().value; timers.delete(id); return callback() } }
+  return { state, router, pending, held, timers, chartUpdates, exports, unmount, mounts: () => mounts, fire() { const [id, callback] = timers.entries().next().value; timers.delete(id); return callback() } }
 }
 
 test('equipment summary: KeepAlive resumes one missing-data poll and completion updates the chart', async t => {
@@ -386,4 +391,20 @@ test('leadership: unmount aborts the active poll and rejects its late result', a
   assert.notEqual(page.state.data.value.id, 'after-unmount')
   assert.equal(page.state.loading.value, false)
   assert.equal(page.state.refreshLoading.value, false)
+})
+
+test('leadership export retains the applied range, monthly summary and chosen chart despite edited draft dates', async t => {
+  const page = await mountReport(t, 'leadership', { query: rangeA })
+  const { state } = page
+  state.periodStart.value = '2026-09-15'
+  state.periodEnd.value = '2026-09-16'
+  await state.changeChartType('area')
+  await flushReport()
+  state.exportReport('pdf')
+  assert.deepEqual(page.exports.at(-1), ['export', {
+    report_type: 'leadership', report_date: rangeA.start, period_start: rangeA.start, period_end: rangeA.end,
+    project_code: null, ship_no: null,
+    parameters: { chart_type: 'area', summary_period_start: '2025-11-01', summary_period_end: '2026-10-27' },
+  }, 'pdf'])
+  assert.equal(state.dateQueryDirty.value, true)
 })

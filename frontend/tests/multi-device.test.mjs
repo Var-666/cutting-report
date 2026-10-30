@@ -229,7 +229,7 @@ test('scheduled reports store a fixed device and disconnected energy is explicit
   assert.match(source('composables/useAutomationSchedules.ts'), /device_id: form.device_id/)
   assert.match(source('composables/useAutomationSchedules.ts'), /device_id: item.device_id/)
   assert.match(automation, /计划固定使用此设备/)
-  const energy = source('views/EnergyPeriodReportView.vue')
+  const energy = source('composables/useEnergyReportData.ts')
   assert.match(energy, /energy_connected !== false/)
   assert.match(energy, /return '暂未接入'/)
   assert.doesNotMatch(energy, /equipment_scope\?\.join\(' \/ '\) \|\| 'Cutter01'/)

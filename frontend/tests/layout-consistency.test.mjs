@@ -11,6 +11,13 @@ function descriptor(name, folder = 'views') {
   return parse(source).descriptor
 }
 
+const energyDataScript = readFileSync(new URL('../src/composables/useEnergyReportData.ts', import.meta.url), 'utf8')
+const energyChartsScript = readFileSync(new URL('../src/composables/useEnergyReportCharts.ts', import.meta.url), 'utf8')
+
+const leadershipQueryScript = readFileSync(new URL('../src/composables/useLeadershipReportQuery.ts', import.meta.url), 'utf8')
+const leadershipDataScript = readFileSync(new URL('../src/composables/useLeadershipReportData.ts', import.meta.url), 'utf8')
+const leadershipChartsScript = readFileSync(new URL('../src/composables/useLeadershipReportCharts.ts', import.meta.url), 'utf8')
+
 test('file selection centers header and row checkboxes while history and alarm tables share panel insets', () => {
   const dispatch = descriptor('CuttingDispatchView')
   const dispatchStyles = dispatch.styles.map(style => style.content).join('\n')
@@ -307,9 +314,9 @@ test('report analysis uses server source versions and starts immediately', () =>
 })
 
 test('report values use one decimal place throughout the UI', () => {
-  const leadership = descriptor('LeadershipReportView').scriptSetup.content
+  const leadership = leadershipDataScript
   const workshop = descriptor('WorkshopView').scriptSetup.content
-  const energy = descriptor('EnergyPeriodReportView').scriptSetup.content
+  const energy = energyDataScript
   const home = descriptor('AdminHomeView').scriptSetup.content
   const database = descriptor('DatabaseView').scriptSetup.content
   const analysis = descriptor('ReportAnalysis', 'components').scriptSetup.content
@@ -337,9 +344,9 @@ test('leadership dashboard uses verified comparison data and the home visual bas
   assert.equal((template.match(/class="leadership-kpi /g) || []).length, 4)
   assert.match(template, /<AnalysisPanel/)
   assert.doesNotMatch(template, /leadership-analysis/)
-  assert.match(script, /report\.value\?\.comparison_total/)
-  assert.match(script, /function changeRate\(current: unknown, previous: unknown\)/)
-  assert.match(script, /defaultMonthlyView\.value \? '较上月' : '较对比区间'/)
+  assert.match(leadershipDataScript, /report\.value\?\.comparison_total/)
+  assert.match(leadershipDataScript, /function changeRate\(current: unknown, previous: unknown\)/)
+  assert.match(leadershipDataScript, /defaultMonthlyView\.value \? '较上月' : '较对比区间'/)
   assert.match(styles, /--leadership-hero-image/)
   assert.match(styles, /grid-template-columns:repeat\(4,minmax\(0,1fr\)\)/)
 })
@@ -357,7 +364,7 @@ test('equipment dashboard uses verified energy metrics and responsive home visua
   assert.match(template, /<AppIcon name="activity"/)
   assert.match(template, /<AppIcon name="tasks"/)
   assert.match(template, /<AppIcon name="clock"/)
-  assert.match(script, /const energyCoverage = computed/)
+  assert.match(energyDataScript, /const energyCoverage = computed/)
   assert.doesNotMatch(template, /设备利用率/)
   assert.match(styles, /grid-template-columns:repeat\(5,minmax\(0,1fr\)\)/)
   assert.match(styles, /@media\(max-width:560px\)[\s\S]*\.device-query-shell \.report-query,\.device-kpis\{grid-template-columns:1fr/)
@@ -577,8 +584,8 @@ test('device report is one page with task details and a default monthly summary'
   assert.match(energy.template.content, /<AppReportTable flex-height :columns="summaryTableColumns"/)
   assert.match(energy.template.content, /#header-c1>\{\{ summaryDateHeading \}\}/)
   assert.match(energy.scriptSetup.content, /const summaryTableColumns[\s\S]*任务数[\s\S]*切割时长[\s\S]*电耗/)
-  assert.match(energy.scriptSetup.content, /const taskChartRows = computed\(\(\) => taskRows\.value[\s\S]*\.slice\(0, 50\)[\s\S]*\.sort\(\(left, right\) => String\(left\.production_time \|\| ''\)\.localeCompare\(String\(right\.production_time \|\| ''\)\)\)\)/)
-  assert.match(energy.scriptSetup.content, /const labels = taskChartRows\.value\.map/)
+  assert.match(energyDataScript, /const taskChartRows = computed\(\(\) => taskRows\.value[\s\S]*\.slice\(0, 50\)[\s\S]*\.sort\(\(left, right\) => String\(left\.production_time \|\| ''\)\.localeCompare\(String\(right\.production_time \|\| ''\)\)\)\)/)
+  assert.match(energyChartsScript, /const labels = taskChartRows\.value\.map/)
   assert.match(energy.scriptSetup.content, /getEnergyMonthlyRange\(recentStart, selectedDate/)
   assert.match(energy.template.content, /month\?\.total_task_count/)
   assert.doesNotMatch(energy.template.content, /电耗覆盖|气耗覆盖|保存状态/)
@@ -596,8 +603,8 @@ test('device report is one page with task details and a default monthly summary'
   assert.match(energy.template.content, /:ready="analysisReady"/)
   assert.equal((energy.template.content.match(/<ReportTrendPanel/g) || []).length, 2)
   assert.equal((energy.template.content.match(/chart-label=/g) || []).length, 2)
-  assert.match(energy.scriptSetup.content, /function renderCharts\(/)
-  assert.match(energy.scriptSetup.content, /taskPanel\.value\?\.getChartElement\(\)/)
+  assert.match(energyChartsScript, /function renderCharts\(/)
+  assert.match(energyChartsScript, /taskPanel\.value\?\.getChartElement\(\)/)
   const energyStyles = energy.styles.map((style) => style.content).join('\n')
   assert.doesNotMatch(energyStyles, /\.energy-period-query\s*\{[^}]*grid-template-columns:/)
   assert.doesNotMatch(energyStyles, /\.energy-period-query\s*\{[^}]*display:/)
@@ -624,7 +631,7 @@ test('device report reuses the leadership report UI baseline', () => {
   const leadership = descriptor('LeadershipReportView')
   const energy = descriptor('EnergyPeriodReportView')
   const trendPanel = descriptor('ReportTrendPanel', 'components')
-  const energyScript = energy.scriptSetup.content
+  const energyScript = energyChartsScript
   const energyStyles = energy.styles.map((style) => style.content).join('\n')
   const trendStyles = trendPanel.styles.map((style) => style.content).join('\n')
 
@@ -659,8 +666,8 @@ test('device report reuses the leadership report UI baseline', () => {
   assert.match(energyScript, /chartTheme\.colors\.value\.primary/)
   assert.match(energyScript, /chartTheme\.colors\.value\.secondary/)
   assert.match(energyScript, /chartTheme\.colors\.value\.accent/)
-  assert.match(leadership.scriptSetup.content, /createReportChartGrid/)
-  assert.match(leadership.scriptSetup.content, /grid: createReportChartGrid\(\)/)
+  assert.match(leadershipChartsScript, /createReportChartGrid/)
+  assert.match(leadershipChartsScript, /grid: createReportChartGrid\(\)/)
   assert.match(energyScript, /function renderCharts\(/)
   assert.match(energyStyles, /@media\(max-width:560px\)[\s\S]*\.device-query-shell \.report-query,\.device-kpis\{grid-template-columns:1fr/)
 })
@@ -911,13 +918,13 @@ test('all standard report analyses follow the selected report range', () => {
 test('leadership and equipment second tables default to the recent twelve months', () => {
   const leadership = descriptor('LeadershipReportView')
   const equipment = descriptor('EnergyPeriodReportView')
-  const leadershipRange = leadership.scriptSetup.content.match(/async function loadReport[\s\S]*?\n}\n\nasync function loadDefaultReport/)?.[0] || ''
+  const leadershipRange = leadershipQueryScript.slice(leadershipQueryScript.indexOf('async function loadReport'), leadershipQueryScript.indexOf('async function restoreRouteState'))
   const equipmentRange = equipment.scriptSetup.content.match(/async function loadRange[\s\S]*?\n}\n\nfunction stopSummaryRefresh/)?.[0] || ''
 
-  assert.match(leadership.scriptSetup.content, /getLeadershipReport\(today\.slice\(0, 7\), \{ force, signal \}\)/)
-  assert.match(leadership.scriptSetup.content, /monthlyPeriodStart = ref\(recentTwelveMonthStart\(today\)\)/)
-  assert.match(leadership.scriptSetup.content, /const monthlyReport = ref<(?:LeadershipReport|EnergyPeriodReport) \| null>\(null\)/)
-  assert.match(leadership.scriptSetup.content, /monthlyRecords = computed\(\(\) => monthlyReport\.value\?\.monthly_records/)
+  assert.match(leadershipQueryScript, /getLeadershipReport\(today\.slice\(0, 7\), \{ force, signal \}\)/)
+  assert.match(leadershipQueryScript, /monthlyPeriodStart = ref\(recentTwelveMonthStart\(today\)\)/)
+  assert.match(leadershipQueryScript, /const monthlyReport = ref<(?:LeadershipReport|EnergyPeriodReport) \| null>\(null\)/)
+  assert.match(leadershipDataScript, /monthlyRecords = computed\(\(\) => monthlyReport\.value\?\.monthly_records/)
   assert.doesNotMatch(leadershipRange, /monthlyReport\.value|monthlyPeriodStart\.value|monthlyPeriodEnd\.value/)
   assert.match(leadershipRange, /renderCharts\(\{ monthly: false \}\)/)
   assert.match(leadership.template.content, /:title="monthlyTitle"/)
@@ -926,13 +933,13 @@ test('leadership and equipment second tables default to the recent twelve months
   assert.match(leadership.scriptSetup.content, /summary_period_end: monthlyPeriodEnd\.value/)
   assert.match(equipment.scriptSetup.content, /getEnergyMonthlyRange\(recentStart, selectedDate/)
   assert.match(equipment.scriptSetup.content, /const monthlyReport = ref<(?:LeadershipReport|EnergyPeriodReport) \| null>\(null\)/)
-  assert.match(equipment.scriptSetup.content, /summaryRows = computed\(\(\) => sortReportPeriods\(monthlyReport\.value\?\.rows/)
+  assert.match(energyDataScript, /summaryRows = computed\(\(\) => sortReportPeriods\(monthlyReport\.value\?\.rows/)
   assert.match(equipmentRange, /beginRequest\(\{ preserveSummary: true \}\)/)
   assert.doesNotMatch(equipmentRange, /monthlyReport\.value|summaryPeriodStart\.value|summaryPeriodEnd\.value/)
   assert.match(equipmentRange, /renderCharts\(\{ summary: false \}\)/)
   assert.match(equipment.template.content, /:title="summaryTitle"/)
   assert.match(equipment.template.content, /:subtitle="summarySubtitle"/)
-  assert.match(equipment.scriptSetup.content, /后台补齐 \$\{missing\} 天能耗中/)
+  assert.match(energyDataScript, /后台补齐 \$\{missing\} 天能耗中/)
   assert.match(equipment.scriptSetup.content, /scheduleSummaryRefresh\(summaryResult\)/)
   assert.match(equipment.scriptSetup.content, /}, 1000\)/)
   assert.match(equipment.scriptSetup.content, /summaryRefreshCount >= 600/)
@@ -990,7 +997,8 @@ test('cutting list pagination is rendered once by the shared Naive component', (
 test('report charts resize with their containers and disconnect observers while inactive', async () => {
   for (const name of ['LeadershipReportView', 'EnergyPeriodReportView']) {
     const source = descriptor(name).scriptSetup.content
-    const code = source.slice(source.indexOf('function resizeCharts()'), source.indexOf('function pause'))
+    const chartSource = name === 'EnergyPeriodReportView' ? energyChartsScript : leadershipChartsScript
+    const code = chartSource.slice(chartSource.indexOf('function resizeCharts()'), chartSource.indexOf('function chartsMissing()'))
     const observed = [], observers = [], calls = []
     const chart = { resize: () => calls.push('resize') }
     const panel = { value: { getChartElement: () => ({}) } }
@@ -1028,7 +1036,7 @@ test('report charts resize with their containers and disconnect observers while 
       nextTick: async () => { panel.value = { getChartElement: () => ({}) } },
       routeStateReady: false, restoreRouteState: async () => false,
       report: { value: {} }, taskDay: { value: {} }, monthlyReport: { value: {} }, loading: { value: false },
-      scheduleRefreshPoll() {}, scheduleSummaryRefresh() {}, renderCharts() {} }
+      scheduleRefreshPoll() {}, scheduleSummaryRefresh() {}, renderCharts() {}, chartsMissing: () => false }
     const active = scriptFunction(...Object.keys(activationBindings), `let resizeListening = false; let chartResizeObserver; ${code}; ${activation}; return { stopResizeListening }`)(...Object.values(activationBindings))
     await activate()
     assert.equal(observed.length, before + 2, 'activation must observe the chart elements after Vue restores their refs')
@@ -1053,8 +1061,8 @@ test('cached report resources pause on deactivation and cache is bounded', () =>
   assert.match(equipment.scriptSetup.content, /disposeCharts\(\)/)
   assert.match(leadership.scriptSetup.content, /onBeforeUnmount\(\(\) => pausePage\(true\)\)/)
   assert.match(equipment.scriptSetup.content, /onBeforeUnmount\(\(\) => pause\(true\)\)/)
-  assert.match(leadership.scriptSetup.content, /dailyChart \|\|= init\(dailyChartElement, chartTheme\.darkMode\.value \? 'dark' : undefined\)/)
-  assert.match(equipment.scriptSetup.content, /taskChart \|\|= init\(taskChartElement, chartTheme\.darkMode\.value \? 'dark' : undefined\)/)
+  assert.match(leadershipChartsScript, /dailyChart \|\|= init\(dailyChartElement, chartTheme\.darkMode\.value \? 'dark' : undefined\)/)
+  assert.match(energyChartsScript, /taskChart \|\|= init\(taskChartElement, chartTheme\.darkMode\.value \? 'dark' : undefined\)/)
   assert.doesNotMatch(leadership.scriptSetup.content, /onDeactivated\([\s\S]{0,120}disposeCharts/)
   assert.doesNotMatch(equipment.scriptSetup.content, /onDeactivated\([\s\S]{0,120}disposeCharts/)
   for (const control of controls) {

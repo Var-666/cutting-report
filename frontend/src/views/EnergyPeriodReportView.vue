@@ -1,42 +1,30 @@
 <script setup lang="ts">
+import { useEnergyReportData } from '../composables/useEnergyReportData'
+import { useEnergyReportCharts } from '../composables/useEnergyReportCharts'
 import AppReportTable from '../components/AppReportTable.vue'
 import type { ReportCreateRequest } from '../types/reports'
 
-import type { EnergyChannel, EnergyPeriodReport, TaskEnergyReport } from '../types/energy'
+import type { EnergyPeriodReport, TaskEnergyReport } from '../types/energy'
 import type { ExportFormat } from '../types/api'
 
-import type { EChartsType as ECharts } from 'echarts/core'
-import type { EChartsOption } from 'echarts'
 
 import { toError } from '../utils/errors'
-import { BarChart, LineChart } from 'echarts/charts'
-import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
-import { init, use } from 'echarts/core'
-import { CanvasRenderer } from 'echarts/renderers'
 import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getEnergyDay, getEnergyMonthlyRange, getEnergyRange, getTaskEnergyDay } from '../api/energy.ts'
 import { getLatestWorkshopProductionDate } from '../api/cutting.ts'
-import { recentTwelveMonthStart, reportToday, taskProductionDate } from '../api/reportDates.ts'
+import { recentTwelveMonthStart, reportToday } from '../api/reportDates.ts'
 import AnalysisPanel from '../components/AnalysisPanel.vue'
 import AppIcon from '../components/AppIcon.vue'
 import MetricSparkline from '../components/MetricSparkline.vue'
 import ReportFeedback from '../components/ReportFeedback.vue'
 import ReportTrendPanel from '../components/ReportTrendPanel.vue'
 import StandardReportQuery from '../components/StandardReportQuery.vue'
-import { formatChineseDateTime, formatChineseMonth, sortReportPeriods } from '../utils/dateDisplay.ts'
-import { deviceSelection } from '../state/devices.ts'
-import { formatDeviceDisplay } from '../utils/deviceDisplay.ts'
-import { createReportChartGrid } from '../utils/reportChartTheme.ts'
-import { useReportChartTheme } from '../composables/useReportChartTheme.ts'
+import { formatChineseDateTime } from '../utils/dateDisplay.ts'
 import { useDeviceSwitchQuery } from '../composables/useDeviceSwitchQuery.ts'
 import { mergeOwnedQuery, queryChoice, queryDateRange, sameRouteQuery } from '../utils/reportRouteState.ts'
-
-use([BarChart, LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
 defineProps({ exporting: Boolean })
 const emit = defineEmits<{ export: [payload: ReportCreateRequest, format: ExportFormat] }>()
-
-const chartTheme = useReportChartTheme(() => { disposeCharts(); renderCharts() })
 const route = useRoute()
 const router = useRouter()
 const today = reportToday()
@@ -59,11 +47,7 @@ const energyChartOptions = [
 const loading = ref(false)
 const summaryLoading = ref(false)
 const error = ref('')
-const taskPanel = ref<InstanceType<typeof ReportTrendPanel> | null>(null)
-const periodPanel = ref<InstanceType<typeof ReportTrendPanel> | null>(null)
 const pageActive = ref(true)
-let taskChart: ECharts | null = null
-let periodChart: ECharts | null = null
 let controller: AbortController | null = null
 let backgroundController: AbortController | null = null
 let refreshController: AbortController | null = null
@@ -71,9 +55,15 @@ let requestSequence = 0
 let refreshRequestSequence = 0
 let summaryRefreshTimer: number | null = null
 let summaryRefreshCount = 0
-let resizeListening = false
-let chartResizeObserver: ResizeObserver | undefined
 let routeStateReady = false
+
+const {
+  taskRows, taskChartRows, summaryRows, summaryChartRows, month,
+  units, summary, equipmentScopeLabel, energyConnected, configurationError,
+  energyCoverage, deviceMetricSeries, summaryCountLabel, summarySubtitle, format,
+  duration, valueText, summaryPeriod,
+} = useEnergyReportData({ taskDay, monthlyReport, summaryPeriodStart, summaryPeriodEnd })
+const { taskPanel, periodPanel, renderCharts, resizeCharts, disposeCharts, startResizeListening, stopResizeListening, chartsMissing } = useEnergyReportCharts({ taskDay, monthlyReport, taskChartRows, summaryChartRows, units, format, chartType, pageActive })
 
 const routeQueryKeys = ['start', 'end', 'chart']
 const dateQueryDirty = computed(() => (
@@ -127,66 +117,11 @@ function beginRequest({ preserveSummary = false } = {}) {
 function requestIsCurrent(sequence: number, signal: AbortSignal) {
   return pageActive.value && !signal.aborted && sequence === requestSequence
 }
-
-const taskRows = computed(() => taskDay.value?.records || [])
-const taskChartRows = computed(() => taskRows.value
-  .slice(0, 50)
-  .sort((left, right) => String(left.production_time || '').localeCompare(String(right.production_time || ''))))
-const summaryRows = computed(() => sortReportPeriods(monthlyReport.value?.rows || [], 'desc'))
-const summaryChartRows = computed(() => sortReportPeriods(monthlyReport.value?.rows || []))
-const month = computed(() => monthlyReport.value)
-const units = computed(() => taskDay.value?.units || { electricity: 'kWh', gas: 'Nm³' })
-const summary = computed(() => taskDay.value?.summary || {
-  task_count: null,
-  total_work_time: null,
-  total_gas_consumption: null,
-  total_electricity_consumption: null,
-  gas_record_count: 0,
-  electricity_record_count: 0,
-})
-const equipmentScopeLabel = computed(() => formatDeviceDisplay(taskDay.value?.equipment_scope?.join(' / ') || deviceSelection.id))
-const energyConnected = computed(() => taskDay.value?.energy_connected !== false)
-const configurationError = computed(() => taskDay.value?.configuration_error || '')
-const energyCoverage = computed(() => {
-  const taskCount = Number(summary.value.task_count || 0)
-  if (!taskCount) return 0
-  const matchedRecords = Number(summary.value.electricity_record_count || 0)
-    + Number(summary.value.gas_record_count || 0)
-  return Math.max(0, Math.min(100, Math.round((matchedRecords / (taskCount * 2)) * 100)))
-})
-const deviceMetricSeries = computed(() => {
-  const rows = [...taskRows.value].sort((left, right) => String(left.production_time || '').localeCompare(String(right.production_time || '')))
-  const countsByDay = new Map<string, number>()
-  for (const row of rows) {
-    const stamp = taskProductionDate(row)
-    if (stamp) countsByDay.set(stamp, (countsByDay.get(stamp) || 0) + 1)
-  }
-  return {
-    electricity: rows.map((row) => row.electricity_consumption),
-    gas: rows.map((row) => row.gas_consumption),
-    coverage: rows.map((row) => (
-      (row.electricity_consumption == null ? 0 : 50)
-      + (row.gas_consumption == null ? 0 : 50)
-    )),
-    tasks: [...countsByDay.values()],
-    workTime: rows.map((row) => row.work_time),
-  }
-})
 const summaryTitle = '近12个月月度能耗汇总'
-const summaryCountLabel = computed(() => `${summaryRows.value.length} 个月`)
 const summaryDateHeading = '月份'
 const summaryChartLabel = '月度能耗图'
 const summaryTableLabel = '近12个月月度能耗汇总表'
 const summaryEmptyText = '近12个月暂无月度汇总'
-const summarySubtitle = computed(() => {
-  const base = `${summaryPeriodStart.value} 至 ${summaryPeriodEnd.value} · ${summaryCountLabel.value}`
-  if (!energyConnected.value) return `${base} · 能耗暂未接入`
-  const missing = Number(monthlyReport.value?.missing_day_count || 0)
-  if (!missing) return base
-  return monthlyReport.value?.syncing
-    ? `${base} · 后台补齐 ${missing} 天能耗中`
-    : `${base} · ${missing} 天暂无能耗数据`
-})
 const analysisReady = computed(() => Boolean(
   pageActive.value
   && taskDay.value
@@ -196,63 +131,6 @@ const analysisReady = computed(() => Boolean(
   && !loading.value
   && !summaryLoading.value
 ))
-
-function format(value: unknown, digits = 1) {
-  if (!energyConnected.value && value == null) return '暂未接入'
-  if (value === null || value === undefined || !Number.isFinite(Number(value))) return '--'
-  return new Intl.NumberFormat('zh-CN', { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(Number(value))
-}
-
-function duration(value: unknown) {
-  if (value === null || value === undefined || !Number.isFinite(Number(value))) return '--'
-  const seconds = Math.max(0, Math.round(Number(value)))
-  return [Math.floor(seconds / 3600), Math.floor(seconds % 3600 / 60), seconds % 60]
-    .map((item) => String(item).padStart(2, '0')).join(':')
-}
-
-function valueText(item: EnergyChannel | null | undefined) { return format(item?.value) }
-function summaryPeriod(value: unknown) { return formatChineseMonth(value) }
-function chartValue(value: unknown) {
-  if (value === null || value === undefined || !Number.isFinite(Number(value))) return null
-  return Number(Number(value).toFixed(1))
-}
-
-function chartOption(rows: { electricity: number | null; gas: number | null }[], labels: string[]): EChartsOption {
-  const line = chartType.value === 'line'
-  return {
-    backgroundColor: 'transparent',
-      tooltip: { trigger: 'axis', backgroundColor: chartTheme.vars.value.popoverColor, borderColor: chartTheme.vars.value.borderColor, textStyle: { color: chartTheme.vars.value.textColor1 } },
-    legend: { data: ['电耗', '气耗'] },
-    grid: createReportChartGrid(),
-    xAxis: { type: 'category', data: labels, axisLabel: { hideOverlap: true } },
-    yAxis: [
-      { type: 'value', name: `电耗\n${units.value.electricity}`, splitLine: { lineStyle: { color: chartTheme.vars.value.dividerColor } } },
-      { type: 'value', name: `气耗\n${units.value.gas}`, splitLine: { show: false } },
-    ],
-    series: [
-      { name: '电耗', type: line ? 'line' : 'bar', smooth: line, yAxisIndex: 0, data: rows.map((row) => chartValue(row.electricity)), tooltip: { valueFormatter: (value) => format(value) }, itemStyle: { color: chartTheme.colors.value.primary } },
-      { name: '气耗', type: chartType.value === 'bar' ? 'bar' : 'line', smooth: chartType.value !== 'bar', yAxisIndex: 1, data: rows.map((row) => chartValue(row.gas)), tooltip: { valueFormatter: (value) => format(value) }, itemStyle: { color: chartType.value === 'bar_line' ? chartTheme.colors.value.accent : chartTheme.colors.value.secondary } },
-    ],
-  }
-}
-
-function renderCharts({ summary: renderSummary = true } = {}) {
-  if (!pageActive.value) return
-  const taskChartElement = taskPanel.value?.getChartElement()
-  const periodChartElement = periodPanel.value?.getChartElement()
-  if (taskChartElement && taskDay.value) {
-    taskChart ||= init(taskChartElement, chartTheme.darkMode.value ? 'dark' : undefined)
-    const rows = taskChartRows.value.map((row) => ({ electricity: row.electricity_consumption, gas: row.gas_consumption }))
-    const labels = taskChartRows.value.map((row) => `${String(row.production_time || '').slice(5, 16).replace('T', ' ')} ${row.segment_name || ''}`)
-    taskChart.setOption(chartOption(rows, labels), true)
-  }
-  if (renderSummary && periodChartElement && monthlyReport.value) {
-    periodChart ||= init(periodChartElement, chartTheme.darkMode.value ? 'dark' : undefined)
-    const rows = summaryChartRows.value.map((row) => ({ electricity: row.electricity?.value, gas: row.gas?.value }))
-    const labels = summaryChartRows.value.map((row) => row.report_date)
-    periodChart.setOption(chartOption(rows, labels), true)
-  }
-}
 
 async function loadRange(force = false, { syncRoute = true } = {}) {
   if (!periodStart.value || !periodEnd.value) return
@@ -415,34 +293,6 @@ function exportReport(format: ExportFormat = 'html') {
   }, format)
 }
 
-function resizeCharts() { if (pageActive.value) { taskChart?.resize(); periodChart?.resize() } }
-
-function disposeCharts() {
-  taskChart?.dispose()
-  periodChart?.dispose()
-  taskChart = null
-  periodChart = null
-}
-
-function startResizeListening() {
-  if (resizeListening) return
-  resizeListening = true
-  window.addEventListener('resize', resizeCharts)
-  chartResizeObserver = new ResizeObserver(resizeCharts)
-  for (const panel of [taskPanel, periodPanel]) {
-    const element = panel.value?.getChartElement()
-    if (element) chartResizeObserver.observe(element)
-  }
-}
-
-function stopResizeListening() {
-  if (!resizeListening) return
-  resizeListening = false
-  window.removeEventListener('resize', resizeCharts)
-  chartResizeObserver?.disconnect()
-  chartResizeObserver = undefined
-}
-
 function pause(dispose = false) {
   if (pageActive.value) {
     pageActive.value = false
@@ -573,7 +423,7 @@ onActivated(async () => {
   startResizeListening()
   if (routeStateReady && await restoreRouteState()) return
   if ((!taskDay.value || !monthlyReport.value) && !loading.value) await initializeReport()
-  else if (!taskChart || (monthlyReport.value && !periodChart)) renderCharts()
+  else if (chartsMissing()) renderCharts()
   resizeCharts()
   if (monthlyReport.value) scheduleSummaryRefresh(monthlyReport.value)
 })

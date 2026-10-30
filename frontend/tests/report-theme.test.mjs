@@ -1,3 +1,4 @@
+import { reportModuleBindings } from './report-module-helpers.mjs'
 import { scriptFunction } from './typescript-helpers.mjs'
 import assert from 'node:assert/strict'
 import test from 'node:test'
@@ -90,6 +91,7 @@ function mountCharts(name, rows) {
     formatChineseDate: String, formatChineseMonth: String, formatChineseDateTime: String, formatDeviceDisplay: String, deviceSelection: { id: 'Cutter01' }, sortReportPeriods: rows => rows,
     mergeOwnedQuery, queryChoice, queryDateRange, sameRouteQuery,
   }
+  Object.assign(bindings, reportModuleBindings(bindings))
   const folder = name === 'WorkshopStructureCharts' ? 'components' : 'views'
   const script = parse(read(`${folder}/${name}.vue`)).descriptor.scriptSetup.content.replace(/^import[\s\S]*?from ['"][^'"]+['"];?\s*$/gm, '')
   const names = name === 'LeadershipReportView' ? 'dailyPanel, monthlyPanel' : name === 'EnergyPeriodReportView' ? 'taskPanel, periodPanel' : 'durationElement, topElement'
@@ -201,4 +203,24 @@ test('leadership daily chart includes every calendar day and zero-task days whil
     page.state.report.value = null
     assert.deepEqual(page.state.dailyChartRecords.value, [])
   } finally { page.close() }
+})
+
+test('energy data module preserves missing-meter values, production-day counts and independent table/chart sorting', async () => {
+  const { useEnergyReportData } = await import('../src/composables/useEnergyReportData.ts')
+  const records = Array.from({ length: 52 }, (_, index) => ({ task_id: String(index), production_date: index % 2 ? '2026-10-02' : '2026-10-01', production_time: `2026-10-02T${String(23 - index % 24).padStart(2, '0')}:00:00`, electricity_consumption: index % 2 ? null : 0, gas_consumption: 1, work_time: 60 }))
+  const taskDay = Vue.ref({ records, energy_connected: false, summary: { task_count: 4, electricity_record_count: 2, gas_record_count: 4 } })
+  const monthlyReport = Vue.ref({ rows: [{ report_date: '2026-09' }, { report_date: '2026-10' }], syncing: true, missing_day_count: 2 })
+  const data = useEnergyReportData({ taskDay, monthlyReport, summaryPeriodStart: Vue.ref('2025-11-01'), summaryPeriodEnd: Vue.ref('2026-10-30') })
+  assert.equal(data.format(null), '暂未接入')
+  assert.equal(data.format(0), '0.0')
+  assert.equal(data.energyCoverage.value, 75)
+  assert.deepEqual(data.deviceMetricSeries.value.tasks, [26, 26])
+  assert.equal(data.taskChartRows.value.length, 50)
+  assert.equal(data.taskRows.value.length, 52)
+  assert.equal(data.taskRows.value[0].task_id, '0', 'chart sorting must not reorder table/source records')
+  assert.equal(data.summaryRows.value[0].report_date, '2026-10')
+  assert.equal(data.summaryChartRows.value[0].report_date, '2026-09')
+  taskDay.value.energy_connected = true
+  assert.equal(data.format(null), '--')
+  assert.match(data.summarySubtitle.value, /后台补齐 2 天能耗中/)
 })
