@@ -58,8 +58,8 @@ test('Naive confirmation resolves accept/cancel and cancels pending work when it
 })
 
 
-test('migrated controls compile and retain native buttons only in the original directory tree', () => {
-  const files = ['views/DatabaseView', 'views/AdminAccountsView', 'views/AutomationView', 'views/WeldingReportView', 'views/WorkshopView', 'views/AlarmCenterView', 'views/CuttingDispatchView', 'views/ReportCenterView', 'components/ReportFeedback', 'components/ReportPanelState', 'components/ReportJobStatus', 'components/DownloadPdfButton', 'components/EmailDeliveryResolution', 'components/ReportPeriodPicker', 'components/CatalogTreeNode', 'components/AnalysisPanel', 'components/AppReportTable', 'components/ReportForm']
+test('migrated controls compile with native directory buttons and semantic welding disclosures', () => {
+  const files = ['views/DatabaseView', 'views/AdminAccountsView', 'views/AutomationView', 'views/WeldingReportView', 'views/WeldingHomeView', 'views/WorkshopView', 'views/AlarmCenterView', 'views/CuttingDispatchView', 'views/ReportCenterView', 'components/ReportFeedback', 'components/ReportPanelState', 'components/ReportJobStatus', 'components/DownloadPdfButton', 'components/EmailDeliveryResolution', 'components/ReportPeriodPicker', 'components/CatalogTreeNode', 'components/AnalysisPanel', 'components/AppReportTable', 'components/ReportForm', 'components/dispatch/DispatchHistoryTable', 'components/automation/AutomationScheduleTable', 'components/automation/AutomationDeliveryTable', 'components/workshop/WorkshopBatchConfirmationDialog', 'components/workshop/WorkshopCorrectionDialog']
   for (const name of files) {
     const source = readFileSync(new URL(`../src/${name}.vue`, import.meta.url), 'utf8')
     const { descriptor, errors } = parse(source)
@@ -71,6 +71,17 @@ test('migrated controls compile and retain native buttons only in the original d
     if (['views/CuttingDispatchView', 'components/CatalogTreeNode'].includes(name)) {
       for (const [tag] of widgetTemplate.matchAll(/<button\b[^>]*>/g)) assert.match(tag, /class="(?:project|catalog)-(?:toggle|label)"/)
       widgetTemplate = widgetTemplate.replace(/<button\b[^>]*>/g, '')
+    }
+    if (['views/WeldingReportView', 'views/WeldingHomeView'].includes(name)) {
+      const disclosures = [...widgetTemplate.matchAll(/<details\b[\s\S]*?<\/details>/g)]
+      const home = name === 'views/WeldingHomeView'
+      assert.equal(disclosures.length, home ? 3 : 2)
+      for (const [disclosure] of disclosures) {
+        const opening = disclosure.slice(0, disclosure.indexOf('<summary>'))
+        assert.match(opening, home ? /class="welding-chart-data"/ : /class="panel welding-quality"/)
+        assert.match(disclosure, /^<details\b[\s\S]*?><summary>[^<]+<\/summary>/)
+        widgetTemplate = widgetTemplate.replace(opening, '')
+      }
     }
     assert.doesNotMatch(widgetTemplate, /<(?:button|input|textarea|select|details|progress)\b/, name)
     assert.doesNotMatch(descriptor.scriptSetup.content, /window\.(?:confirm|prompt)\(/, name)

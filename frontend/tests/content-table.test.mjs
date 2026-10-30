@@ -195,12 +195,26 @@ test('cached tables disconnect and restore exactly one ResizeObserver', () => {
   }
 })
 
-test('every Vue page table uses the shared Naive component without the legacy directive', () => {
+test('business tables use shared Naive controls while chart data retains accessible semantic tables', () => {
   let count = 0
   for (const folder of ['views', 'components']) {
     const dir = new URL(`../src/${folder}/`, import.meta.url)
-    for (const name of readdirSync(dir).filter((name) => name.endsWith('.vue'))) {
-      const source = readFileSync(new URL(name, dir), 'utf8')
+    for (const name of readdirSync(dir, { recursive: true }).filter((name) => name.endsWith('.vue'))) {
+      let source = readFileSync(new URL(name, dir), 'utf8')
+      if (folder === 'views' && name === 'WeldingHomeView.vue') {
+        const disclosures = [...source.matchAll(/<details\b[\s\S]*?<\/details>/g)]
+        assert.equal(disclosures.length, 3)
+        for (const [disclosure] of disclosures) {
+          assert.match(disclosure.slice(0, disclosure.indexOf('<summary>')), /class="welding-chart-data"/)
+          assert.match(disclosure, /^<details\b[\s\S]*?><summary>[^<]+<\/summary>/)
+          assert.match(disclosure, /role="region" aria-label="[^"]+" tabindex="0"/)
+          assert.match(disclosure, /<table><caption>[^<]+<\/caption>/)
+          assert.match(disclosure, /<th scope="col">/)
+          assert.match(disclosure, /<th scope="row">/)
+          for (const [heading] of disclosure.matchAll(/<th\b[^>]*>/g)) assert.match(heading, /scope="(?:col|row)"/)
+          source = source.replace(disclosure, '')
+        }
+      }
       assert.doesNotMatch(source, /<table\b|v-content-table/, name)
       count += (source.match(/<AppReportTable\b/g) || []).length
     }

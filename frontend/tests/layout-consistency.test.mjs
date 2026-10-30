@@ -84,8 +84,9 @@ test('report form and history pagination retain horizontal text and consistent c
   const styles = form.styles[0].content
   assert.match(styles, /repeat\(auto-fit, minmax\(min\(100%, 150px\), 1fr\)\)/)
   assert.match(styles, /\.form-actions button[^}]*height:40px[^}]*white-space:nowrap/)
-  assert.match(styles, /\.n-base-selection\)[^}]*\.n-input\)[^}]*--n-height:40px!important/)
+  assert.match(styles, /\.n-base-selection\)[^}]*\.n-input\)[^}]*--n-height:var\(--control-height\)!important/)
   const shared = readFileSync(new URL('../src/assets/style.css', import.meta.url), 'utf8')
+  assert.match(shared, /--control-height:\s*40px;/)
   assert.match(shared, /\.history-page-size \{[^}]*flex-shrink:0[^}]*white-space:nowrap/)
   const history = descriptor('ReportTable', 'components')
   assert.match(history.template.content, /<AppReportTable[\s\S]*:loading="loading"/)
