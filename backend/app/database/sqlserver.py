@@ -64,7 +64,7 @@ class SqlServerClient:
             import pyodbc
         except ImportError as exc:
             raise SqlServerConfigurationError(
-                "未安装 pyodbc，请安装 backend/requirements-sqlserver.txt"
+                "未安装 pyodbc，请用 uv 为应用环境同步 sqlserver 可选依赖"
             ) from exc
         connection = pyodbc.connect(self._connection_string())
         try:

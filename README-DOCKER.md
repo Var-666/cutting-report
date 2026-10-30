@@ -49,7 +49,7 @@ docker buildx build --platform linux/amd64 -t cutting-report:local --load .
 docker save -o cutting-report-image-amd64.tar cutting-report:local
 ```
 
-将镜像与程序包带入内网。导入镜像后，按 [麒麟离线 Docker 部署](docs/deployment/OFFLINE_DOCKER部署说明.md) 使用 `compose.offline.yaml` 和 Linux 启动脚本；该方式挂载当前程序文件，普通功能更新不必重新导入运行环境镜像。运行镜像必须包含与源码包相同的 Python 依赖清单指纹；启动脚本会预检，镜像入口也会检查。依赖清单变化或旧镜像没有指纹时，必须重建并重新导入配套镜像；不会静默复用旧依赖。
+将镜像与程序包带入内网。导入镜像后，按 [麒麟离线 Docker 部署](docs/deployment/OFFLINE_DOCKER部署说明.md) 使用 `compose.offline.yaml` 和 Linux 启动脚本；该方式挂载当前程序文件，普通功能更新不必重新导入运行环境镜像。Python 依赖统一在构建阶段通过固定版本 uv 执行 `uv sync --locked --no-dev --extra sqlserver --no-build` 安装。运行镜像必须包含与源码包相同的 `pyproject.toml`、`uv.lock`、`.python-version` 指纹；启动脚本会预检，镜像入口也会检查。上述文件变化或旧镜像没有新格式指纹时，必须重建并重新导入配套镜像；不会静默复用旧依赖。
 
 ## 健康检查与运行依赖
 

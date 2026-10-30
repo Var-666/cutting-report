@@ -20,10 +20,8 @@ ROOT = Path(__file__).resolve().parents[1]
 DEPLOYMENT_ENV_FILE = ".env.deploy"
 FILES = (
     "Dockerfile", "compose.yaml", "compose.offline.yaml", ".dockerignore", ".env.example", "README.md",
-    "README-DOCKER.md", "backend/requirements.txt",
-    "backend/requirements-sqlserver.txt", "backend/requirements-dev.txt",
+    "README-DOCKER.md",
     "backend/pyproject.toml", "backend/uv.lock", "backend/.python-version",
-    "scripts/lock_python_dependencies.py",
     "frontend/package.json", "frontend/pnpm-lock.yaml", "frontend/pnpm-workspace.yaml", "frontend/index.html",
     "frontend/vite.config.ts", "frontend/uno.config.ts",
     "frontend/tsconfig.json", "frontend/tsconfig.node.json",

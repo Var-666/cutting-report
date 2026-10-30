@@ -22,12 +22,19 @@ docker compose logs -f app worker
 
 ## 本地开发
 
-默认使用 Python 3.12.14、Node.js >=22.18、pnpm 10.34.9；原生麒麟支持 Python 3.11/3.12，同一解释器/平台由统一锁文件确定依赖。以下为 macOS/Linux 命令；麒麟安装步骤见下方部署文档。
+默认使用 Python 3.12.14、uv 0.13.6、Node.js >=22.18、pnpm 10.34.9；原生麒麟支持 Python 3.11/3.12，同一解释器/平台由统一锁文件确定依赖。以下为 macOS/Linux 命令；麒麟安装步骤见下方部署文档。先按 [uv 安装说明](https://docs.astral.sh/uv/getting-started/installation/) 安装固定版本 0.13.6。已有 `.venv` 时先确认其归属和 Python 版本；uv 会同步移除额外依赖，不要指向共享环境，旧环境需保留时先另存再安装。
+
+首次安装 uv（已安装 0.13.6 时跳过）：
+
+```bash
+curl -LsSf https://astral.sh/uv/0.13.6/install.sh -o /tmp/cutting-uv-install.sh
+sh /tmp/cutting-uv-install.sh
+export PATH="$HOME/.local/bin:$PATH"
+```
 
 ```bash
 cp .env.example .env
-python3.12 -m venv .venv
-./.venv/bin/python -m pip install --require-hashes --no-deps --only-binary=:all: -r backend/requirements-dev.txt
+UV_PROJECT_ENVIRONMENT="$PWD/.venv" uv sync --project backend --locked --no-build
 npm install --global pnpm@10.34.9
 cd frontend
 pnpm install --frozen-lockfile
@@ -54,7 +61,7 @@ pnpm run dev
 
 打开 [http://127.0.0.1:5173](http://127.0.0.1:5173)，Vite 代理 API 和报告请求。SQL Server 驱动、可选模型、能管、文件服务及 PDF 浏览器依赖见 [配置参考](docs/deployment/配置参考.md)。
 
-本机连接真实 SQL Server 时，另执行 `./.venv/bin/python -m pip install --require-hashes --no-deps --only-binary=:all: -r backend/requirements-sqlserver.txt`，并安装操作系统对应的 Microsoft ODBC Driver 18；macOS 按[微软官方步骤](https://learn.microsoft.com/en-us/sql/connect/odbc/linux-mac/install-microsoft-odbc-driver-sql-server-macos)安装，Homebrew 会带入 unixODBC。可用 `./.venv/bin/python -c "import pyodbc; print(pyodbc.drivers())"` 检查驱动能否实际加载。Docker 镜像已安装上述两层依赖。未提供连接参数时需在网页数据库配置中保存真实连接，不能将空报表当作连接成功。
+本机连接真实 SQL Server 时，另执行 `UV_PROJECT_ENVIRONMENT="$PWD/.venv" uv sync --project backend --locked --extra sqlserver --no-build`，后续同步也需保留 `--extra sqlserver`，并安装操作系统对应的 Microsoft ODBC Driver 18；macOS 按[微软官方步骤](https://learn.microsoft.com/en-us/sql/connect/odbc/linux-mac/install-microsoft-odbc-driver-sql-server-macos)安装，Homebrew 会带入 unixODBC。可用 `./.venv/bin/python -c "import pyodbc; print(pyodbc.drivers())"` 检查驱动能否实际加载。Docker 镜像已安装上述两层依赖。未提供连接参数时需在网页数据库配置中保存真实连接，不能将空报表当作连接成功。
 
 ## 前端依赖管理
 
@@ -64,21 +71,23 @@ CI 和 Docker 均使用相同 pnpm 版本及冻结锁文件安装。`frontend/pn
 
 ## Python 依赖锁定
 
-`backend/pyproject.toml` 声明直接依赖、开发依赖与 SQL Server 可选依赖，`backend/uv.lock` 固定完整依赖树和包哈希。三份 `requirements*.txt` 均由锁文件生成，不手改；Docker、原生安装和 CI 使用带哈希的清单，不在部署时重新解析版本，也不自动升级 pip。生产清单不包含 pytest。
+`backend/pyproject.toml` 声明直接依赖、开发依赖与 SQL Server 可选依赖，`backend/uv.lock` 固定完整依赖树和包哈希。开发、Docker、麒麟原生安装和 CI 统一使用 uv 0.13.6 的 `uv sync --locked`，不再生成或维护 requirements 导出文件。清单与锁不一致会报错，不会在部署时重写锁文件或升级版本。
 
-维护依赖时使用固定工具 `uv==0.13.6`，例如在专用工具环境安装后执行：
+项目根目录的 `.venv` 是开发环境，需显式设置 `UV_PROJECT_ENVIRONMENT="$PWD/.venv"`，避免 uv 默认的 backend/.venv 与现有启动脚本不一致。开发和 CI 包含 dev 依赖组；生产使用 `--no-dev --extra sqlserver`。安装统一加 `--no-build`，只接受锁定的二进制包；缺少当前平台的 wheel 时明确失败。
+
+维护依赖时更新并提交清单与锁文件：
 
 ```sh
 uv lock --project backend
-python scripts/lock_python_dependencies.py
-python scripts/lock_python_dependencies.py --check
+uv lock --project backend --check
+UV_PROJECT_ENVIRONMENT="$PWD/.venv" uv sync --project backend --locked --no-build
 ```
 
-普通安装只消费已提交的清单，无需在服务器安装 uv。可选的 uv 开发安装为 `UV_PROJECT_ENVIRONMENT="$PWD/.venv" uv sync --project backend --locked`，会同步/清理该环境，请先停止使用旧环境并保留必要资料；不要指向共享虚拟环境。默认 Python 版本在 `backend/.python-version`。主动升级单个依赖使用 `uv lock --project backend --upgrade-package 包名`，重新导出、验证后连同锁文件提交。CI 会拒绝清单与锁文件不一致的变更。
+主动升级单个依赖使用 `uv lock --project backend --upgrade-package 包名`，验证后连同清单提交。默认 Python 版本在 `backend/.python-version`。麒麟安装脚本要求预先安装 uv 0.13.6（可通过 `UV_BIN` 指定离线二进制），使用现场 Python 3.11/3.12 或已有兼容 `.venv`，禁止自动下载 Python。Docker 仅在构建阶段使用固定摘要的 uv 镜像，运行容器和 Docker 宿主机不需要安装 uv。
 
 Docker 的 Python/Node 基础镜像使用摘要固定，Debian 系统包使用日期快照，ODBC 固定版本，Chromium 随已锁定的 Playwright 版本安装。锁定不等于永不更新：安全更新必须主动刷新依赖/镜像/系统快照并重新构建验证。
 
-离线源码挂载会校验镜像中的依赖指纹；清单变化或旧镜像没有指纹时，需要重新构建、导入配套镜像，不能仅替换源码。无依赖变动的业务更新仍可复用配套镜像。原生主机的 ODBC、字体和操作系统由现场维护；锁文件保证 Python 包版本，不承诺不同 OS/架构生成逐字节相同的镜像。
+离线源码挂载会校验 `pyproject.toml`、`uv.lock`、`.python-version` 三份文件与镜像中的指纹。任一文件变化或旧镜像没有新指纹时，需要重新构建、导入配套镜像，不能仅替换源码；升级预检会在替换 Web/Worker 前拒绝旧镜像。无依赖变动的业务更新仍可复用配套镜像。原生主机的 ODBC、字体和操作系统由现场维护；锁文件保证 Python 包版本，不承诺不同 OS/架构生成逐字节相同的镜像。
 
 ## 构建与部署
 

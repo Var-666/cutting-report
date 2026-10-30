@@ -1,5 +1,7 @@
 # syntax=docker/dockerfile:1
 
+FROM ghcr.io/astral-sh/uv:0.13.6@sha256:af22a52f5eafef3d78e551599d405c02df61919d18028f0cea8eda93bc9986d0 AS uv
+
 FROM node:22-bookworm-slim@sha256:4b150b48b4116e2a22f2c39cc27025fbf4f153e2078fd3b14d159fdb5c7279da AS frontend-builder
 
 WORKDIR /build
@@ -13,17 +15,18 @@ RUN cd frontend && pnpm run build
 
 FROM python:3.12.14-slim-bookworm@sha256:392307d22300de8b5986851a12d9176dfc0fc073e65bf6523ebd7dcbeb23564e AS python-builder
 
-ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PIP_NO_CACHE_DIR=1 \
+ENV UV_PROJECT_ENVIRONMENT=/opt/venv \
+    UV_PYTHON_DOWNLOADS=never \
+    UV_LINK_MODE=copy \
     PATH=/opt/venv/bin:$PATH
 
-RUN python -m venv /opt/venv
+COPY --from=uv /uv /usr/local/bin/uv
+WORKDIR /build
 
-COPY backend/requirements-sqlserver.txt /tmp/requirements/requirements-sqlserver.txt
-RUN pip install --require-hashes --no-deps --only-binary=:all: \
-        -r /tmp/requirements/requirements-sqlserver.txt \
-    && sha256sum /tmp/requirements/requirements-sqlserver.txt \
-        | sed 's|/tmp/requirements/|/app/backend/|' > /opt/python-dependencies.sha256
+COPY backend/pyproject.toml backend/uv.lock backend/.python-version ./backend/
+RUN uv sync --project backend --locked --no-dev --extra sqlserver --no-build --python /usr/local/bin/python \
+    && sha256sum backend/pyproject.toml backend/uv.lock backend/.python-version \
+        | sed 's|  backend/|  /app/backend/|' > /opt/python-project.sha256
 
 
 
@@ -66,7 +69,7 @@ RUN groupadd --gid "${APP_GID}" app \
 WORKDIR /app
 
 COPY --from=python-builder /opt/venv /opt/venv
-COPY --from=python-builder /opt/python-dependencies.sha256 /opt/python-dependencies.sha256
+COPY --from=python-builder /opt/python-project.sha256 /opt/python-project.sha256
 COPY --chmod=755 scripts/linux/docker_entrypoint.sh /usr/local/bin/cutting-entrypoint
 RUN playwright install --with-deps chromium \
     && apt-get install -y --no-install-recommends fonts-noto-cjk \

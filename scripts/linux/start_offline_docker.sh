@@ -11,15 +11,20 @@ if [[ ! -f .env ]]; then
   exit 1
 fi
 
-# Check only the public dependency manifest; never mount data or credentials here.
+# Check only public lock inputs; never mount data or credentials here.
 image="$(docker compose -f compose.yaml -f compose.offline.yaml config --images | sort -u)"
 if [[ -z "${image}" || "${image}" == *$'\n'* ]]; then
   echo '[ERROR] Web 和 Worker 必须使用同一运行镜像。' >&2
   exit 1
 fi
-docker run --rm --network none \
-  --mount "type=bind,src=${PROJECT_ROOT}/backend/requirements-sqlserver.txt,dst=/app/backend/requirements-sqlserver.txt,readonly" \
-  --entrypoint /usr/local/bin/cutting-entrypoint "${image}" true
+if ! docker run --rm --network none \
+  --mount "type=bind,src=${PROJECT_ROOT}/backend/pyproject.toml,dst=/app/backend/pyproject.toml,readonly" \
+  --mount "type=bind,src=${PROJECT_ROOT}/backend/uv.lock,dst=/app/backend/uv.lock,readonly" \
+  --mount "type=bind,src=${PROJECT_ROOT}/backend/.python-version,dst=/app/backend/.python-version,readonly" \
+  --entrypoint /usr/local/bin/cutting-entrypoint "${image}" test -r /opt/python-project.sha256; then
+  echo '[ERROR] 请导入使用当前 uv.lock 构建的配套镜像，不能复用旧版依赖镜像。' >&2
+  exit 1
+fi
 
 docker compose \
   -f compose.yaml \
