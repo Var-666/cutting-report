@@ -247,7 +247,8 @@ test('standard reports expose consistent state recovery and truthful initial met
   assert.match(views[0].template.content, /total\.task_count \?\? '--'/)
   assert.match(views[1].template.content, /result\.report \? workshopMetrics\.taskCount : '--'/)
   assert.match(views[2].template.content, /taskDay \? \(summary\.task_count \?\? '--'\) : '--'/)
-  assert.match(views[2].scriptSetup.content, /if \(value === null \|\| value === undefined \|\| !Number\.isFinite\(Number\(value\)\)\) return '--'/)
+  assert.match(views[2].scriptSetup.content, /summarySubtitle, format,[\s\S]*} = useEnergyReportData\(/)
+  assert.match(energyDataScript, /if \(value === null \|\| value === undefined \|\| !Number\.isFinite\(Number\(value\)\)\) return '--'/)
 })
 
 test('unavailable report data uses an alert while preserving the reason and retry action', () => {
