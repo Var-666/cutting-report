@@ -242,7 +242,7 @@ test('table details and action groups stay on the same line', () => {
   assert.match(css, /td > :is\(div,p,span\)\s*\{[^}]*display:inline-flex !important;[^}]*flex-flow:row nowrap !important;/)
   assert.match(css, /:is\(\.push-batch-file > span,\.error-cell > span\)\s*\{[^}]*display:inline-block !important;[^}]*white-space:nowrap !important;/)
   assert.match(css, /td :is\(button,a\) \{ white-space:nowrap !important;/)
-  const automation = readFileSync(new URL('../src/views/AutomationView.vue', import.meta.url), 'utf8')
+  const automation = readFileSync(new URL('../src/components/automation/tableCells.css', import.meta.url), 'utf8')
   assert.match(automation, /\.error-cell \{[^}]*white-space: nowrap;/)
 })
 

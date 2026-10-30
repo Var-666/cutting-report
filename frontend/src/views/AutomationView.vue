@@ -1,232 +1,55 @@
 <script setup lang="ts">
-import { NTag, NTimePicker } from 'naive-ui'
+import { NTimePicker } from 'naive-ui'
 import { useConfirm } from '../composables/useConfirm.ts'
+import { useAutomationConfiguration } from '../composables/useAutomationConfiguration'
+import { useAutomationSchedules } from '../composables/useAutomationSchedules'
+import { useAutomationDeliveries } from '../composables/useAutomationDeliveries'
 
-import type { AutomationSchedule, AutomationStatus, EmailDelivery } from '../types/automation'
+import type { AutomationSchedule, AutomationStatus } from '../types/automation'
 
 import { toError } from '../utils/errors'
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { deleteAutomationSchedule, getAutomationConfiguration, getAutomationStatus, listAutomationSchedules, listEmailDeliveries, retryEmailDelivery, runAutomationSchedule, saveAutomationConfiguration, saveAutomationSchedule } from '../api/automation.ts'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { getAutomationStatus, listAutomationSchedules } from '../api/automation.ts'
 import { deviceSelection } from '../state/devices.ts'
-import { formatDeviceDisplay } from '../utils/deviceDisplay.ts'
-import { formatChineseDate, formatChineseDateTime } from '../utils/dateDisplay.ts'
 import ManagementPageHero from '../components/ManagementPageHero.vue'
 import AppIcon from '../components/AppIcon.vue'
-import AppReportTable from '../components/AppReportTable.vue'
+import AutomationScheduleTable from '../components/automation/AutomationScheduleTable.vue'
+import AutomationDeliveryTable from '../components/automation/AutomationDeliveryTable.vue'
 import EmailDeliveryResolution from '../components/EmailDeliveryResolution.vue'
 import { useUnsavedChanges } from '../composables/useUnsavedChanges.ts'
 
 const confirm = useConfirm()
 const status = ref<AutomationStatus | null>(null)
 const schedules = ref<AutomationSchedule[]>([])
-const deliveries = ref<EmailDelivery[]>([])
-const deliveryPage = ref(1)
-const deliveryTotal = ref(0)
-const deliveryLoading = ref(false)
-let deliveryController: AbortController | null = null
-let deliverySequence = 0
 let loadSequence = 0
 let disposed = false
 const loading = ref(false)
-const saving = ref(false)
 const message = ref('')
 const error = ref('')
-const editingId = ref('')
-const configurationLoading = ref(false)
-const configurationLoaded = ref(false)
-const configurationSaving = ref(false)
-const configurationMessage = ref('')
-const configurationError = ref('')
 const editorSection = ref<HTMLElement | null>(null)
 const hasUnsavedChanges = ref(false)
-const selectedDelivery = ref<EmailDelivery | null>(null)
-const resolutionDirty = ref(false)
+const {
+  configurationLoading, configurationLoaded, configurationSaving, configurationMessage, configurationError,
+  configuration, selectTls, selectSsl, loadConfiguration, submitConfiguration,
+} = useAutomationConfiguration({ hasUnsavedChanges, refresh: loadAll })
+const {
+  saving, editingId, form, changeReportType, resetForm,
+  editSchedule, submit, runNow, remove,
+} = useAutomationSchedules({
+  hasUnsavedChanges, message, error, refresh: loadAll, confirm,
+  scrollToEditor: () => nextTick(() => editorSection.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })),
+})
+const {
+  deliveries, deliveryPage, deliveryTotal, deliveryLoading, selectedDelivery,
+  resolutionDirty, pageCount, loadDeliveries, changeDeliveryPage, retry,
+  openDelivery, deliveryResolved, pauseDeliveries,
+} = useAutomationDeliveries({ message, error, refresh: loadAll, isDisposed: () => disposed, confirm })
 useUnsavedChanges(computed(() => hasUnsavedChanges.value || resolutionDirty.value), '自动化配置还有未保存的修改，确定离开吗？')
-
-const configuration = reactive({
-  automation_enabled: true,
-  automation_scan_seconds: 15,
-  email_retry_base_seconds: 60,
-  smtp_enabled: false,
-  smtp_host: '',
-  smtp_port: 587,
-  smtp_username: '',
-  smtp_password: '',
-  smtp_password_configured: false,
-  smtp_from_email: '',
-  smtp_from_name: '切割生产智能产报系统',
-  smtp_use_tls: true,
-  smtp_use_ssl: false,
-  smtp_timeout_seconds: 20,
-})
-
-const emptyForm = () => ({
-  device_id: deviceSelection.id,
-  name: '每日车间报表',
-  report_type: 'workshop',
-  frequency: 'daily',
-  run_time: '18:00',
-  weekday: 1,
-  month_day: 1,
-  report_period: 'previous_day',
-  recipients_text: '',
-  subject_template: '{report_name} - {report_date}',
-  chart_type: 'bar_line',
-  attach_report: true,
-  max_attempts: 3,
-  enabled: true,
-})
-const form = reactive(emptyForm())
-watch(() => deviceSelection.id, (id) => { if (!form.device_id) form.device_id = id })
-
-const pageCount = computed(() => Math.max(1, Math.ceil(deliveryTotal.value / 20)))
 const reportLabels: Record<string, string> = { leadership: '领导报表', workshop: '车间报表', equipment: '设备报表' }
 const deliveryLabels: Record<string, string> = {
   pending: '等待发送', sending: '发送中', retry_wait: '等待重试', sent: '已发送', failed: '发送失败', unknown: '结果待核对',
 }
 const scheduleLabels: Record<string, string> = { ...deliveryLabels, queued: '等待生成报表' }
-
-function changeReportType() {
-  const periods = form.report_type === 'leadership' ? ['previous_month', 'current_month'] : ['previous_day', 'current_day']
-  if (!periods.includes(form.report_period)) form.report_period = periods[0]
-  hasUnsavedChanges.value = true
-}
-
-function selectTls() {
-  if (configuration.smtp_use_tls) configuration.smtp_use_ssl = false
-}
-
-function selectSsl() {
-  if (configuration.smtp_use_ssl) configuration.smtp_use_tls = false
-}
-
-async function loadConfiguration() {
-  configurationLoading.value = true
-  configurationError.value = ''
-  try {
-    const data = await getAutomationConfiguration()
-    Object.assign(configuration, data, { smtp_password: '' })
-    configurationLoaded.value = true
-    hasUnsavedChanges.value = false
-  } catch (caught) {
-    const exception = toError(caught)
-    configurationError.value = exception.message
-  } finally {
-    configurationLoading.value = false
-  }
-}
-
-async function submitConfiguration() {
-  configurationSaving.value = true
-  configurationMessage.value = ''
-  configurationError.value = ''
-  try {
-    const result = await saveAutomationConfiguration({
-      automation_enabled: configuration.automation_enabled,
-      automation_scan_seconds: Number(configuration.automation_scan_seconds),
-      email_retry_base_seconds: Number(configuration.email_retry_base_seconds),
-      smtp_enabled: configuration.smtp_enabled,
-      smtp_host: configuration.smtp_host,
-      smtp_port: Number(configuration.smtp_port),
-      smtp_username: configuration.smtp_username,
-      smtp_password: configuration.smtp_password || null,
-      smtp_from_email: configuration.smtp_from_email,
-      smtp_from_name: configuration.smtp_from_name,
-      smtp_use_tls: configuration.smtp_use_tls,
-      smtp_use_ssl: configuration.smtp_use_ssl,
-      smtp_timeout_seconds: Number(configuration.smtp_timeout_seconds),
-    })
-    if (configuration.smtp_password) configuration.smtp_password_configured = true
-    configuration.smtp_password = ''
-    configurationMessage.value = result.message
-    hasUnsavedChanges.value = false
-    await loadAll()
-  } catch (caught) {
-    const exception = toError(caught)
-    configurationError.value = exception.message
-  } finally {
-    configurationSaving.value = false
-  }
-}
-
-function resetForm() {
-  editingId.value = ''
-  Object.assign(form, emptyForm())
-  hasUnsavedChanges.value = false
-}
-
-function editSchedule(item: AutomationSchedule) {
-  editingId.value = item.schedule_id
-  Object.assign(form, {
-    device_id: item.device_id,
-    name: item.name,
-    report_type: item.report_type,
-    frequency: item.frequency,
-    run_time: item.run_time,
-    weekday: item.weekday || 1,
-    month_day: item.month_day || 1,
-    report_period: item.report_period,
-    recipients_text: item.recipients.join('\n'),
-    subject_template: item.subject_template,
-    chart_type: item.chart_type,
-    attach_report: item.attach_report,
-    max_attempts: item.max_attempts,
-    enabled: item.enabled,
-  })
-  nextTick(() => editorSection.value?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
-}
-
-function payload() {
-  return {
-    device_id: form.device_id,
-    name: form.name,
-    report_type: form.report_type,
-    frequency: form.frequency,
-    run_time: form.run_time,
-    weekday: form.frequency === 'weekly' ? Number(form.weekday) : null,
-    month_day: form.frequency === 'monthly' ? Number(form.month_day) : null,
-    report_period: form.report_period,
-    recipients: form.recipients_text.split(/[\n,;]+/).map((item) => item.trim()).filter(Boolean),
-    subject_template: form.subject_template,
-    chart_type: form.chart_type,
-    attach_report: form.attach_report,
-    max_attempts: Number(form.max_attempts),
-    enabled: form.enabled,
-  }
-}
-
-async function loadDeliveries(page = deliveryPage.value) {
-  if (disposed || !Number.isSafeInteger(page)) return
-  let target = Math.min(Math.max(page, 1), pageCount.value)
-  deliveryController?.abort()
-  const controller = new AbortController()
-  const sequence = ++deliverySequence
-  deliveryController = controller
-  deliveryLoading.value = true
-  error.value = ''
-  const current = () => !disposed && !controller.signal.aborted && sequence === deliverySequence
-  try {
-    let data = await listEmailDeliveries({ page: target, pageSize: 20 }, { signal: controller.signal })
-    while (current() && target > Math.max(1, Math.ceil(data.total / 20))) {
-      target = Math.max(1, Math.ceil(data.total / 20))
-      data = await listEmailDeliveries({ page: target, pageSize: 20 }, { signal: controller.signal })
-    }
-    if (!current()) return
-    deliveries.value = data.items
-    deliveryTotal.value = data.total
-    deliveryPage.value = data.page
-  } catch (caught) {
-    const exception = toError(caught)
-    if (current() && exception.name !== 'AbortError') error.value = exception.message
-  } finally {
-    if (sequence === deliverySequence) { deliveryLoading.value = false; deliveryController = null }
-  }
-}
-
-function changeDeliveryPage(page: number) {
-  if (deliveryLoading.value || page < 1 || page > pageCount.value || page === deliveryPage.value) return
-  return loadDeliveries(page)
-}
 
 async function loadAll() {
   if (disposed) return
@@ -250,110 +73,12 @@ async function loadAll() {
   }
 }
 
-async function submit() {
-  saving.value = true
-  error.value = ''
-  message.value = ''
-  try {
-    await saveAutomationSchedule(payload(), editingId.value)
-    message.value = editingId.value ? '定时任务已更新' : '定时任务已创建'
-    resetForm()
-    await loadAll()
-  } catch (caught) {
-    const exception = toError(caught)
-    error.value = exception.message
-  } finally {
-    saving.value = false
-  }
-}
-
-async function runNow(item: AutomationSchedule) {
-  error.value = ''
-  message.value = ''
-  try {
-    const run = await runAutomationSchedule(item.schedule_id)
-    if (run.status === 'failed') throw new Error(run.last_error || '报表任务创建失败')
-    message.value = `已提交“${item.name}”，报表生成后将自动发送。`
-    await loadAll()
-  } catch (caught) {
-    const exception = toError(caught)
-    error.value = exception.message
-  }
-}
-
-async function remove(item: AutomationSchedule) {
-  if (!await confirm(`确定删除定时任务“${item.name}”？历史发送记录会保留。`)) return
-  try {
-    await deleteAutomationSchedule(item.schedule_id)
-    if (editingId.value === item.schedule_id) resetForm()
-    message.value = '定时任务已删除'
-    await loadAll()
-  } catch (caught) {
-    const exception = toError(caught)
-    error.value = exception.message
-  }
-}
-
-async function retry(item: EmailDelivery) {
-  try {
-    await retryEmailDelivery(item.delivery_id)
-    message.value = '邮件已重新加入发送队列'
-    await loadAll()
-  } catch (caught) {
-    const exception = toError(caught)
-    error.value = exception.message
-  }
-}
-
-async function openDelivery(item: EmailDelivery) {
-  if (resolutionDirty.value && !await confirm('核对内容尚未保存，确定切换记录吗？')) return
-  resolutionDirty.value = false
-  selectedDelivery.value = item
-}
-async function deliveryResolved() {
-  resolutionDirty.value = false
-  message.value = '核对结果已保存；未接收的邮件仍需单独手动重试。'
-  await loadAll()
-  selectedDelivery.value = deliveries.value.find((item) => item.delivery_id === selectedDelivery.value?.delivery_id) || selectedDelivery.value
-}
-
-function scheduleText(item: AutomationSchedule) {
-  if (item.frequency === 'weekly') return `每周${'一二三四五六日'[(item.weekday || 1) - 1]} ${item.run_time}`
-  if (item.frequency === 'monthly') return `每月 ${item.month_day} 日 ${item.run_time}`
-  return `每日 ${item.run_time}`
-}
-
-function formatDateTime(value: unknown) {
-  return formatChineseDateTime(value)
-}
-
 onMounted(() => Promise.all([loadConfiguration(), loadAll()]))
 onBeforeUnmount(() => {
   disposed = true
   loadSequence += 1
-  deliverySequence += 1
-  deliveryController?.abort()
+  pauseDeliveries()
 })
-const scheduleTableColumns = [
-  { key: 'c0', title: '状态', width: 88, align: 'center' },
-  { key: 'c1', title: '任务', minWidth: 280, align: 'left' },
-  { key: 'c2', title: '报表', width: 112, align: 'left' },
-  { key: 'c3', title: '计划', width: 160, align: 'left' },
-  { key: 'c4', title: '下次执行', width: 184, align: 'left' },
-  { key: 'c5', title: '收件人', width: 96, align: 'right' },
-  { key: 'c6', title: '发送 / 失败', width: 120, align: 'right' },
-  { key: 'c7', title: '操作', width: 248, align: 'center', fixed: 'right', ellipsis: false },
-] as const
-const deliveryTableColumns = [
-  { key: 'c0', title: '创建时间', width: 184, align: 'left' },
-  { key: 'c1', title: '任务', minWidth: 240, align: 'left' },
-  { key: 'c2', title: '报表日期', width: 152, align: 'left' },
-  { key: 'c3', title: '收件人', minWidth: 260, align: 'left' },
-  { key: 'c4', title: '状态', width: 112, align: 'center' },
-  { key: 'c5', title: '尝试', width: 96, align: 'right' },
-  { key: 'c6', title: '结果', minWidth: 240, align: 'left' },
-  { key: 'c7', title: '操作', width: 208, align: 'center', fixed: 'right', ellipsis: false },
-] as const
 </script>
 
 <template>
@@ -473,17 +198,7 @@ const deliveryTableColumns = [
       <div v-if="loading && !schedules.length" class="empty" role="status">正在读取定时任务…</div>
       <div v-else-if="!status && error" class="configuration-load-error" role="alert"><span>定时任务暂时无法读取。</span><NButton attr-type="button" @click="loadAll">重新读取</NButton></div>
       <div v-else class="automation-table-wrap">
-        <AppReportTable :columns="scheduleTableColumns" :items="schedules" :row-key="item => item.schedule_id" :paginate="false" :max-height="340" :loading="loading" aria-label="定时任务列表">
-          <template #c0="{ row: item }"><NTag class="schedule-status" :class="{ enabled: item.enabled }" size="small" :type="item.enabled ? 'success' : 'default'">{{ item.enabled ? '启用' : '停用' }}</NTag></template>
-          <template #c1="{ row: item }"><div class="task-cell"><strong>{{ item.name }}</strong><small>{{ formatDeviceDisplay(item.device_id) }}</small><small>{{ scheduleLabels[item.last_status] || item.last_status || '尚未执行' }}</small></div></template>
-          <template #c2="{ row: item }">{{ reportLabels[item.report_type] }}</template>
-          <template #c3="{ row: item }">{{ scheduleText(item) }}</template>
-          <template #c4="{ row: item }">{{ formatDateTime(item.next_run_at) }}</template>
-          <template #c5="{ row: item }"><span :title="item.recipients.join(', ')">{{ item.recipients.length }} 人</span></template>
-          <template #c6="{ row: item }">{{ item.sent_count || 0 }} / {{ item.failed_count || 0 }}</template>
-          <template #c7="{ row: item }"><div class="row-actions"><NButton attr-type="button" @click="runNow(item)">立即执行</NButton><NButton attr-type="button" @click="editSchedule(item)">编辑</NButton><NButton attr-type="button" class="danger" @click="remove(item)">删除</NButton></div></template>
-          <template #empty>尚未创建定时任务，可在上方设置并创建。</template>
-        </AppReportTable>
+        <AutomationScheduleTable :schedules="schedules" :loading="loading" :report-labels="reportLabels" :schedule-labels="scheduleLabels" @run="runNow" @edit="editSchedule" @remove="remove" />
       </div>
     </section>
 
@@ -492,17 +207,7 @@ const deliveryTableColumns = [
       <div v-if="deliveryLoading && !deliveries.length" class="empty" role="status">正在读取邮件发送记录…</div>
       <div v-else-if="error && !deliveries.length" class="configuration-load-error" role="alert"><span>邮件发送记录暂时无法读取。</span><NButton attr-type="button" @click="loadAll">重新读取</NButton></div>
       <div v-else class="automation-table-wrap delivery-table-wrap">
-        <AppReportTable :columns="deliveryTableColumns" :items="deliveries" :row-key="item => item.delivery_id" :paginate="!!status" :total="deliveryTotal" :page="deliveryPage" :page-size="20" :page-sizes="[]" :max-height="440" :loading="deliveryLoading" aria-label="邮件发送记录" @page="changeDeliveryPage">
-          <template #c0="{ row: item }">{{ formatDateTime(item.created_at) }}</template>
-          <template #c1="{ row: item }"><div class="task-cell"><strong>{{ item.schedule_name }}</strong><small :title="item.subject">{{ item.subject }}</small></div></template>
-          <template #c2="{ row: item }">{{ formatChineseDate(item.report_date) }}</template>
-          <template #c3="{ row: item }"><div class="recipient-cell"><span>{{ item.recipients.join(', ') }}</span><small v-for="(result, address) in item.recipient_results" :key="address" :title="`${address}：${result.status}`">{{ address }}：{{ result.status === 'accepted' ? '服务器已接受' : result.status === 'unknown' ? '结果待核对' : result.status === 'not_accepted' ? '服务器未接收（人工核对）' : '服务器拒收' }}{{ result.code ? `（${result.code}）` : '' }}</small></div></template>
-          <template #c4="{ row: item }"><NTag class="delivery-status" :class="item.status" size="small" :type="item.status === 'sent' ? 'success' : item.status === 'failed' ? 'error' : item.status === 'unknown' ? 'warning' : 'info'">{{ deliveryLabels[item.status] || item.status }}</NTag></template>
-          <template #c5="{ row: item }">{{ item.attempt_count }} / {{ item.max_attempts }}</template>
-          <template #c6="{ row: item }"><span class="error-cell" :title="item.last_error || ''">{{ item.sent_at ? formatDateTime(item.sent_at) : item.last_error || '—' }}</span></template>
-          <template #c7="{ row: item }"><div class="delivery-actions"><NButton v-if="item.status === 'failed'" attr-type="button" @click="retry(item)">重新发送</NButton><NButton attr-type="button" @click="openDelivery(item)">{{ item.status === 'unknown' ? '核对结果' : '核对记录' }}</NButton><small v-if="item.status === 'unknown'" :title="item.message_id">{{ item.message_id || '无历史 Message-ID' }}</small></div></template>
-          <template #empty>尚无邮件发送记录，任务执行后会显示在这里。</template>
-        </AppReportTable>
+        <AutomationDeliveryTable :deliveries="deliveries" :delivery-total="deliveryTotal" :delivery-page="deliveryPage" :delivery-loading="deliveryLoading" :paginate="!!status" :delivery-labels="deliveryLabels" @page="changeDeliveryPage" @retry="retry" @open="openDelivery" />
       </div>
     </section>
     <EmailDeliveryResolution v-if="selectedDelivery" :key="selectedDelivery.delivery_id" :delivery="selectedDelivery" @dirty="resolutionDirty = $event" @resolved="deliveryResolved" @close="selectedDelivery = null; resolutionDirty = false" />
@@ -570,17 +275,6 @@ const deliveryTableColumns = [
 .configuration-load-error button { min-height: 32px; padding: 0 10px; }
 .automation-page .empty { padding: 30px 18px; color: var(--muted); font-size: 12px; line-height: 1.6; text-align: center; }
 .automation-table-wrap { min-width: 0; padding: 0 16px; }
-.task-cell, .recipient-cell { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
-.task-cell > *, .recipient-cell > *, .delivery-actions > small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.task-cell small, .recipient-cell small, .delivery-actions small { color: var(--muted); font-size: var(--font-auxiliary); }
-.error-cell { color: var(--muted); white-space: nowrap; }
-.schedule-status { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; }
-.schedule-status i { width: 6px; height: 6px; }
-.row-actions, .delivery-actions { display: flex; align-items: center; justify-content: center; gap: 6px; }
-.delivery-actions button { flex-shrink: 0; }
-.row-actions button, .delivery-actions button { min-height: 30px; padding: 0 9px; white-space: nowrap; }
-.row-actions .danger { color: rgb(var(--error-color)); border-color: rgb(var(--error-color)); background: rgb(var(--error-color) / .1); }
-.delivery-status { display: inline-block; padding: 4px 8px; }
 @media (max-width: 1100px) {
   .automation-workspace { grid-template-columns: 1fr; }
   .configuration-grid { grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); gap: 18px; }

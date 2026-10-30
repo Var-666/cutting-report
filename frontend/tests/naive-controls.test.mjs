@@ -86,7 +86,7 @@ test('reviewed controls keep filters stationary, the original tree and twenty-ro
   assert.doesNotMatch(styles, /\.alarm-tabs\{[^}]*overflow(?:-[xy])?:(?:auto|scroll)/)
   const dispatch = parse(source('views/CuttingDispatchView')).descriptor
   assert.match(dispatch.template.content, /<AppReportTable :flex-height="rows.length === 0" :max-height="null" :columns="fileTableColumns"/)
-  assert.match(dispatch.scriptSetup.content, /const pageSize = 20/)
+  assert.match(readFileSync(new URL('../src/composables/useCuttingFileBrowser.ts', import.meta.url), 'utf8'), /const pageSize = 20/)
   assert.match(dispatch.styles[0].content, /\.download-workspace \.dispatch-table-wrap \{ display:flex; flex:1 1 auto; min-height:260px;/)
   const tree = parse(source('components/CatalogTreeNode')).descriptor
   assert.match(tree.template.content, /class="catalog-folder" aria-hidden="true"/)

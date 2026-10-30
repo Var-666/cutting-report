@@ -226,8 +226,8 @@ test('both device selectors preserve displayed filters before switching and reje
 
 test('scheduled reports store a fixed device and disconnected energy is explicitly labelled', () => {
   const automation = source('views/AutomationView.vue')
-  assert.match(automation, /device_id: form.device_id/)
-  assert.match(automation, /device_id: item.device_id/)
+  assert.match(source('composables/useAutomationSchedules.ts'), /device_id: form.device_id/)
+  assert.match(source('composables/useAutomationSchedules.ts'), /device_id: item.device_id/)
   assert.match(automation, /计划固定使用此设备/)
   const energy = source('views/EnergyPeriodReportView.vue')
   assert.match(energy, /energy_connected !== false/)

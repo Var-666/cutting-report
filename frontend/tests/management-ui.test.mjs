@@ -11,13 +11,20 @@ function descriptor(name, folder = 'views') {
   return parse(source).descriptor
 }
 
+function automationHooks(bindings) {
+  return Object.fromEntries(['useAutomationConfiguration', 'useAutomationSchedules', 'useAutomationDeliveries'].map(name => {
+    const source = readFileSync(new URL(`../src/composables/${name}.ts`, import.meta.url), 'utf8').replace(/^import .*$/gm, '').replace('export function', 'function')
+    return [name, scriptFunction(...Object.keys(bindings), `${source}; return ${name}`)(...Object.values(bindings))]
+  }))
+}
+
 const flushAutomation = async () => { await new Promise(resolve => setImmediate(resolve)); await Vue.nextTick() }
-async function mountAutomation(t) {
+async function mountAutomation(t, { confirm = async () => true } = {}) {
   const calls = { status: 0, schedules: 0, emails: [], actions: [] }
   let held = false
   const result = (page, total = 60) => ({ items: total ? [{ delivery_id: `page-${page}` }] : [], total, page, page_size: 20 })
   const bindings = {
-    ...Vue, useConfirm: () => async () => true, useUnsavedChanges() {}, deviceSelection: Vue.reactive({ id: 'Cutter02', items: [{ id: 'Cutter02' }] }),
+    ...Vue, useConfirm: () => confirm, useUnsavedChanges() {}, deviceSelection: Vue.reactive({ id: 'Cutter02', items: [{ id: 'Cutter02' }] }),
     getAutomationConfiguration: async () => ({}),
     getAutomationStatus: async () => { calls.status++; return { revision: calls.status } },
     listAutomationSchedules: async () => { calls.schedules++; return { items: [{ schedule_id: 'saved' }] } },
@@ -29,8 +36,9 @@ async function mountAutomation(t) {
     deleteAutomationSchedule: async () => calls.actions.push('delete'), runAutomationSchedule: async () => { calls.actions.push('run'); return { status: 'queued' } },
     saveAutomationConfiguration: async () => { calls.actions.push('config'); return { message: 'saved' } },
   }
+  Object.assign(bindings, automationHooks(bindings))
   const code = descriptor('AutomationView').scriptSetup.content.replace(/^import .*$/gm, '')
-  const setup = scriptFunction(...Object.keys(bindings), `${code}; return { loadDeliveries, changeDeliveryPage, deliveryPage, deliveries, deliveryTotal, deliveryLoading, pageCount, error, loadAll, retry, submit, submitConfiguration, remove, runNow, deliveryResolved, form }`)
+  const setup = scriptFunction(...Object.keys(bindings), `${code}; return { loadDeliveries, changeDeliveryPage, deliveryPage, deliveries, deliveryTotal, deliveryLoading, pageCount, error, loadAll, retry, submit, submitConfiguration, remove, runNow, deliveryResolved, openDelivery, selectedDelivery, resolutionDirty, form }`)
   let state
   const renderer = Vue.createRenderer({ createComment: () => ({}), createText: () => ({}), createElement: () => ({}), insert() {}, remove() {}, setText() {}, setElementText() {}, parentNode: () => null, nextSibling: () => null, patchProp() {} })
   const app = renderer.createApp({ setup() { state = setup(...Object.values(bindings)); return () => null } })
@@ -304,6 +312,7 @@ for (const [reportType, period] of [['leadership', 'current_month'], ['leadershi
       getAutomationStatus: async () => ({}), listAutomationSchedules: async () => ({ items: [] }),
       listEmailDeliveries: async () => ({ items: [], total: 0, page: 1, page_size: 20 }),
     }
+    Object.assign(bindings, automationHooks(bindings))
     const page = scope.run(() => scriptFunction(...Object.keys(bindings), `${script}\nreturn { form, editSchedule, changeReportType, submit, hasUnsavedChanges }`)(...Object.values(bindings)))
     try {
       const item = { schedule_id: 'schedule-1', device_id: 'Cutter02', name: 'Saved plan', report_type: reportType, report_period: period, frequency: 'weekly', run_time: '16:30', weekday: 2, month_day: null, recipients: ['worker@example.com'], subject_template: '{report_name}', chart_type: 'line', attach_report: true, max_attempts: 3, enabled: true }
@@ -361,9 +370,11 @@ test('all seven migrated settings tables render their fields and controls throug
     ['DesignerView', 'previewTableColumns', { queryPreview: Vue.ref({ columns: [{ field: 'name', label: '名称', type: 'text' }, { field: 'date', label: '日期', type: 'date' }, { field: 'time', label: '时间', type: 'datetime' }, { field: 'value', label: '数值', type: 'number' }, { field: 'duration', label: '时长', type: 'duration' }], items: [{ name: '<b>工件</b>', date: '2026-10-28', time: '2026-10-28T08:00:00', value: 0, duration: 12.5 }] }) }, ['&lt;b&gt;工件&lt;/b&gt;', '2026年10月28日', '08:00:00', '12.5']],
   ]
   for (const [viewName, columnName, state, expected] of cases) {
-    const view = descriptor(viewName)
+    const view = viewName === 'AutomationView'
+      ? descriptor(`automation/${columnName === 'scheduleTableColumns' ? 'AutomationScheduleTable' : 'AutomationDeliveryTable'}`, 'components')
+      : descriptor(viewName)
     const script = view.scriptSetup.content
-    const bindings = { ...Vue, ...dateDisplay, ...state, loading: false }
+    const bindings = { ...Vue, ...dateDisplay, ...state, loading: false, paginate: true }
     if (viewName === 'DesignerView') {
       bindings.formatPreviewValue = scriptFunction(...Object.keys(bindings), `${script.slice(script.indexOf('function formatPreviewValue'), script.indexOf('function blankQuery'))}; return formatPreviewValue`)(...Object.values(bindings))
     }
@@ -391,4 +402,50 @@ test('all seven migrated settings tables render their fields and controls throug
     const height = { periodTableColumns: 330, scheduleTableColumns: 340, deliveryTableColumns: 440 }[columnName]
     if (height) assert.ok(html.includes(`max-height:${height}px`), 'scroll height is handled by NDataTable')
   }
+})
+
+test('automation delivery review preserves a dirty draft when switching is cancelled and rebinds refreshed records', async t => {
+  let accepted = false
+  const { state } = await mountAutomation(t, { confirm: async () => accepted })
+  const original = { delivery_id: 'page-1', subject: '待核对记录' }
+  await state.openDelivery(original)
+  state.resolutionDirty.value = true
+  await state.openDelivery({ delivery_id: 'other' })
+  assert.equal(state.selectedDelivery.value.delivery_id, 'page-1')
+  assert.equal(state.resolutionDirty.value, true)
+  accepted = true
+  await state.openDelivery({ delivery_id: 'other' })
+  assert.equal(state.selectedDelivery.value.delivery_id, 'other')
+  assert.equal(state.resolutionDirty.value, false)
+  await state.openDelivery(original)
+  await state.deliveryResolved()
+  assert.equal(state.selectedDelivery.value, state.deliveries.value[0])
+})
+
+test('automation configuration keeps TLS modes exclusive and preserves empty-password save semantics', async () => {
+  const saved = [], hasUnsavedChanges = Vue.ref(true)
+  let refreshed = 0
+  const { useAutomationConfiguration } = automationHooks({
+    ...Vue,
+    getAutomationConfiguration: async () => ({ smtp_password_configured: true, smtp_password: 'ignored-test-placeholder' }),
+    saveAutomationConfiguration: async body => { saved.push(body); return { message: '已保存' } },
+  })
+  const state = useAutomationConfiguration({ hasUnsavedChanges, refresh: async () => { refreshed++ } })
+  await state.loadConfiguration()
+  assert.equal(state.configuration.smtp_password, '')
+  assert.equal(state.configuration.smtp_password_configured, true)
+  assert.equal(hasUnsavedChanges.value, false)
+  state.configuration.smtp_use_ssl = true
+  state.selectSsl()
+  assert.equal(state.configuration.smtp_use_tls, false)
+  state.configuration.smtp_use_tls = true
+  state.selectTls()
+  assert.equal(state.configuration.smtp_use_ssl, false)
+  await state.submitConfiguration()
+  assert.equal(saved[0].smtp_password, null)
+  state.configuration.smtp_password = 'new-test-password'
+  await state.submitConfiguration()
+  assert.equal(saved[1].smtp_password, 'new-test-password')
+  assert.equal(state.configuration.smtp_password, '')
+  assert.equal(refreshed, 2)
 })

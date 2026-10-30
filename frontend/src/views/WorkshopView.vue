@@ -1,18 +1,21 @@
 <script setup lang="ts">
 import { NTag } from 'naive-ui'
 import AppReportTable from '../components/AppReportTable.vue'
+import WorkshopCorrectionDialog from '../components/workshop/WorkshopCorrectionDialog.vue'
+import WorkshopBatchConfirmationDialog from '../components/workshop/WorkshopBatchConfirmationDialog.vue'
+import { useWorkshopConfirmation } from '../composables/useWorkshopConfirmation'
+import { useWorkshopCorrection } from '../composables/useWorkshopCorrection'
 import type { ReportCreateRequest } from '../types/reports'
 
 import type { PropType } from 'vue'
 import type { ExportFormat } from '../types/api'
 import type { User } from '../types/auth'
-import type { ConfirmationAudit, TaskConfirmation, WorkshopResult, WorkshopTask } from '../types/reports'
+import type { WorkshopResult, WorkshopTask } from '../types/reports'
 
 import { toError } from '../utils/errors'
 import { computed, nextTick, onActivated, onDeactivated, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { confirmWorkshopTasks, correctWorkshopTask, generateWorkshopDailyReport, getLatestWorkshopProductionDate, listWorkshopConfirmationAudits, listWorkshopRangeTasks, listWorkshopTasks, revokeWorkshopTask } from '../api/cutting.ts'
-import { listUserAccounts } from '../api/auth.ts'
+import { generateWorkshopDailyReport, getLatestWorkshopProductionDate, listWorkshopRangeTasks, listWorkshopTasks } from '../api/cutting.ts'
 import AnalysisPanel from '../components/AnalysisPanel.vue'
 import AppIcon from '../components/AppIcon.vue'
 import MetricSparkline from '../components/MetricSparkline.vue'
@@ -43,51 +46,24 @@ const error = ref('')
 const pageActive = ref(true)
 const defaultReportView = ref(true)
 const chartType = ref(props.mode === 'manager' ? queryChoice(route.query.chart, ['bar_line', 'bar', 'line', 'area'], 'bar_line') : 'bar_line')
-const selectedTasks = ref(new Map<string, WorkshopTask>())
-const batchConfirmation = reactive({ visible: false, saving: false, error: '', tasks: [] as WorkshopTask[] })
-const confirmationFeedback = reactive({ visible: false, type: 'pending', title: '', message: '' })
-const correction = reactive({
-  visible: false,
-  row: null as WorkshopTask | null,
-  action: 'revoke' as 'revoke' | 'reassign',
-  workerId: '',
-  reason: '',
-  saving: false,
-  loading: false,
-  error: '',
-  workers: [] as User[],
-  audits: [] as ConfirmationAudit[],
-})
-const batchDialogOpen = computed(() => batchConfirmation.visible)
-const correctionDialogOpen = computed(() => correction.visible)
-const correctionReasonPresets = {
-  workerRevoke: [
-    '误选了其他工人的任务',
-    '任务并非本人完成',
-    '任务信息有误，需重新核对',
-  ],
-  adminRevoke: [
-    '原确认人选择错误',
-    '暂时无法确认实际完成人',
-    '任务记录异常，待现场核查',
-  ],
-  adminReassign: [
-    '根据现场记录更正实际完成人',
-    '班组核对后调整任务归属',
-    '原确认人误选，改派给正确人员',
-  ],
-}
-const presetReasonValues = new Set(Object.values(correctionReasonPresets).flat())
 const isWorker = computed(() => props.mode === 'worker')
 const dateQueryDirty = computed(() => !isWorker.value && (
   filters.startDate !== appliedRouteState.startDate || filters.endDate !== appliedRouteState.endDate
 ))
-const visibleCorrectionReasonPresets = computed(() => {
-  if (isWorker.value) return correctionReasonPresets.workerRevoke
-  return correction.action === 'reassign'
-    ? correctionReasonPresets.adminReassign
-    : correctionReasonPresets.adminRevoke
+const {
+  selectableTasks, selectedTasks, batchConfirmation, confirmationFeedback, batchDialogOpen, selectedTaskCount,
+  allVisibleTasksSelected, someVisibleTasksSelected, clearSelectedTasks, setTaskSelected, toggleVisibleTasks,
+  reconcileVisibleTaskSelection, openBatchConfirmation, openSingleConfirmation, closeBatchConfirmation, showConfirmationFeedback,
+  closeConfirmationFeedback, submitBatchConfirmation, pauseFeedback,
+} = useWorkshopConfirmation({ isWorker, user: () => props.user, result, filters, error, load })
+const {
+  correction, correctionDialogOpen, visibleCorrectionReasonPresets, availableWorkers, isOwnConfirmation,
+  openCorrection, closeCorrection, selectCorrectionReason, submitCorrection,
+} = useWorkshopCorrection({
+  isWorker, user: () => props.user, filters, rowDate, showConfirmationFeedback,
+  refresh: () => load(result.value.page, { silent: true, ensureReport: false }),
 })
+
 const analysisReady = computed(() => Boolean(
   pageActive.value
   && !isWorker.value
@@ -96,19 +72,6 @@ const analysisReady = computed(() => Boolean(
   && result.value.report.period_end === filters.endDate
   && !loading.value
 ))
-const selectableTasks = computed(() => isWorker.value ? result.value.items.filter((row) => !row.confirmed_by) : [])
-const selectedTaskCount = computed(() => selectedTasks.value.size)
-const allVisibleTasksSelected = computed(() => (
-  selectableTasks.value.length > 0
-  && selectableTasks.value.every((row) => selectedTasks.value.has(row.task_id))
-))
-const someVisibleTasksSelected = computed(() => (
-  !allVisibleTasksSelected.value
-  && selectableTasks.value.some((row) => selectedTasks.value.has(row.task_id))
-))
-const availableWorkers = computed(() => correction.workers.filter((worker) => (
-  worker.role === 'worker' && worker.active && worker.user_id !== correction.row?.confirmed_by_id
-)))
 const workshopMetrics = computed(() => {
   const taskCount = Math.max(0, Number(result.value.report?.item_count || 0))
   const confirmedCount = Math.max(0, Number(result.value.report?.confirmed_count || 0))
@@ -131,7 +94,6 @@ const workshopMetricSeries = computed(() => {
   }
 })
 let refreshTimer: number | null = null
-let feedbackTimer: number | null = null
 let requestController: AbortController | null = null
 let requestSequence = 0
 let routeStateReady = false
@@ -207,9 +169,6 @@ watch(() => [filters.projectName, filters.confirmationStatus], () => {
   clearSelectedTasks()
   batchConfirmation.visible = false
 })
-watch(() => correction.action, () => {
-  if (!isWorker.value && presetReasonValues.has(correction.reason)) correction.reason = ''
-})
 
 function display(value: string | null | undefined) { return value || '--' }
 function number(value: number | null | undefined) { return value == null ? '--' : new Intl.NumberFormat('zh-CN', { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(value) }
@@ -220,102 +179,6 @@ function duration(value: unknown) {
 }
 function time(value: unknown) { return formatChineseDateTime(value) }
 function rowDate(row: WorkshopTask) { return taskProductionDate(row, filters.reportDate) }
-
-function clearSelectedTasks() {
-  selectedTasks.value = new Map()
-}
-
-function setTaskSelected(row: WorkshopTask, selected: boolean) {
-  if (!isWorker.value || row.confirmed_by || batchConfirmation.saving) return
-  const next = new Map(selectedTasks.value)
-  if (selected) next.set(row.task_id, row)
-  else next.delete(row.task_id)
-  selectedTasks.value = next
-}
-
-function toggleVisibleTasks(selected: boolean) {
-  const next = new Map(selectedTasks.value)
-  for (const row of selectableTasks.value) {
-    if (selected) next.set(row.task_id, row)
-    else next.delete(row.task_id)
-  }
-  selectedTasks.value = next
-}
-
-function reconcileVisibleTaskSelection(items: WorkshopTask[]) {
-  if (!selectedTasks.value.size) return
-  const next = new Map(selectedTasks.value)
-  for (const row of items) {
-    if (!next.has(row.task_id)) continue
-    if (row.confirmed_by) next.delete(row.task_id)
-    else next.set(row.task_id, row)
-  }
-  selectedTasks.value = next
-}
-
-function openBatchConfirmation(tasks = [...selectedTasks.value.values()]) {
-  const pendingTasks = tasks.filter((row) => !row.confirmed_by)
-  if (!isWorker.value || !pendingTasks.length || batchConfirmation.saving) return
-  batchConfirmation.tasks = pendingTasks
-  batchConfirmation.error = ''
-  batchConfirmation.visible = true
-}
-
-function openSingleConfirmation(row: WorkshopTask) {
-  if (row.confirmed_by) return
-  selectedTasks.value = new Map([[row.task_id, row]])
-  openBatchConfirmation([row])
-}
-
-function closeBatchConfirmation() {
-  if (batchConfirmation.saving) return
-  batchConfirmation.visible = false
-  batchConfirmation.error = ''
-}
-
-function showConfirmationFeedback(type: string, title: string, message: string, timeout = 0) {
-  if (feedbackTimer) window.clearTimeout(feedbackTimer)
-  Object.assign(confirmationFeedback, { visible: true, type, title, message })
-  if (timeout) {
-    feedbackTimer = window.setTimeout(() => {
-      confirmationFeedback.visible = false
-      feedbackTimer = null
-    }, timeout)
-  }
-}
-
-function closeConfirmationFeedback() {
-  if (feedbackTimer) window.clearTimeout(feedbackTimer)
-  feedbackTimer = null
-  confirmationFeedback.visible = false
-}
-
-function applyConfirmedTasks(confirmations: TaskConfirmation[] = []) {
-  const confirmationByTaskId = new Map(
-    confirmations.map((confirmation) => [String(confirmation.task_id), confirmation]),
-  )
-  if (!confirmationByTaskId.size) return
-
-  let newlyConfirmed = 0
-  const items = result.value.items.map((row) => {
-    const confirmation = confirmationByTaskId.get(String(row.task_id))
-    if (!confirmation) return row
-    if (!row.confirmed_by) newlyConfirmed += 1
-    return {
-      ...row,
-      confirmed_by_id: confirmation.worker_id,
-      confirmed_by: confirmation.worker_name,
-      confirmed_by_company_no: confirmation.worker_company_no ?? row.confirmed_by_company_no ?? null,
-      confirmed_at: confirmation.confirmed_at,
-    }
-  })
-  result.value = {
-    ...result.value,
-    items,
-    confirmed_count: Number(result.value.confirmed_count || 0) + newlyConfirmed,
-  }
-  reconcileVisibleTaskSelection(items)
-}
 
 async function load(page = 1, { silent = false, ensureReport = true, force = false, syncRoute = false } = {}) {
   if (!isWorker.value && filters.endDate < filters.startDate) {
@@ -384,128 +247,6 @@ function applyTaskFilters() {
 
 function changePage(page: number) {
   load(page, { syncRoute: !isWorker.value })
-}
-
-async function submitBatchConfirmation() {
-  if (!isWorker.value || batchConfirmation.saving || !batchConfirmation.tasks.length) return
-  const tasks = [...batchConfirmation.tasks]
-  batchConfirmation.saving = true
-  batchConfirmation.error = ''
-  error.value = ''
-  showConfirmationFeedback('pending', '正在确认任务', `共 ${tasks.length} 项 · 请稍候`)
-  try {
-    const confirmationResult = await confirmWorkshopTasks(tasks.map((row) => row.task_id), filters.reportDate,
-      Object.fromEntries(tasks.map((row) => [row.task_id, row.snapshot_revision || 1])))
-    const confirmations = confirmationResult.items || []
-    applyConfirmedTasks(confirmations)
-    batchConfirmation.visible = false
-    batchConfirmation.tasks = []
-    clearSelectedTasks()
-    showConfirmationFeedback(
-      'success',
-      '确认成功',
-      `${tasks.length} 项任务已登记为由 ${props.user.display_name} 完成`,
-      5000,
-    )
-    await load(result.value.page, { silent: true, ensureReport: false })
-    // 即使后台刷新短暂返回旧快照，也不能让已确认任务重新显示待确认按钮。
-    applyConfirmedTasks(confirmations)
-  } catch (caught) {
-    const exception = toError(caught)
-    error.value = exception.message
-    batchConfirmation.error = exception.message
-    showConfirmationFeedback('error', '确认失败', exception.message, 7000)
-  } finally {
-    batchConfirmation.saving = false
-  }
-}
-
-function isOwnConfirmation(row: WorkshopTask) {
-  return isWorker.value && row.confirmed_by_id === props.user.user_id
-}
-
-async function openCorrection(row: WorkshopTask) {
-  if (!row.confirmed_by || (isWorker.value && !isOwnConfirmation(row))) return
-  Object.assign(correction, {
-    visible: true,
-    row,
-    action: 'revoke',
-    workerId: '',
-    reason: '',
-    saving: false,
-    loading: !isWorker.value,
-    error: '',
-    workers: [] as User[],
-    audits: [] as ConfirmationAudit[],
-  })
-  if (isWorker.value) return
-  try {
-    const [users, auditResult] = await Promise.all([
-      listUserAccounts(),
-      listWorkshopConfirmationAudits({ reportDate: rowDate(row), taskId: row.task_id }),
-    ])
-    correction.workers = users.items || []
-    correction.audits = auditResult.items || []
-  } catch (caught) {
-    const exception = toError(caught)
-    correction.error = exception.message
-  } finally {
-    correction.loading = false
-  }
-}
-
-function closeCorrection() {
-  if (correction.saving) return
-  correction.visible = false
-  correction.row = null
-}
-
-function selectCorrectionReason(reason: string) {
-  correction.reason = reason
-  correction.error = ''
-}
-
-async function submitCorrection() {
-  const reason = correction.reason.trim()
-  if (reason.length < 2) {
-    correction.error = '请填写至少 2 个字的原因'
-    return
-  }
-  if (!isWorker.value && correction.action === 'reassign' && !correction.workerId) {
-    correction.error = '请选择改派后的工人'
-    return
-  }
-  correction.saving = true
-  correction.error = ''
-  const row = correction.row
-  if (!row) return
-  try {
-    if (isWorker.value) {
-      await revokeWorkshopTask(row.task_id, filters.reportDate, reason)
-      showConfirmationFeedback('success', '已撤销确认', `${display(row.program_no)} 已恢复为待确认`, 5000)
-    } else {
-      await correctWorkshopTask(row.task_id, {
-        reportDate: rowDate(row),
-        action: correction.action,
-        workerId: correction.action === 'reassign' ? correction.workerId : null,
-        reason,
-      })
-      const target = correction.workers.find((worker) => worker.user_id === correction.workerId)
-      const message = correction.action === 'reassign'
-        ? `${display(row.program_no)} 已改派给 ${target?.display_name || '所选工人'}`
-        : `${display(row.program_no)} 已恢复为待确认`
-      showConfirmationFeedback('success', '更正已保存', message, 5000)
-    }
-    correction.visible = false
-    correction.row = null
-    await load(result.value.page, { silent: true, ensureReport: false })
-  } catch (caught) {
-    const exception = toError(caught)
-    correction.error = exception.message
-    showConfirmationFeedback('error', '更正失败', exception.message, 7000)
-  } finally {
-    correction.saving = false
-  }
 }
 
 function exportReport(format: ExportFormat = 'html') {
@@ -611,8 +352,7 @@ function pausePage() {
   requestController = null
   loading.value = false
   stopRefreshTimer()
-  if (feedbackTimer) window.clearTimeout(feedbackTimer)
-  feedbackTimer = null
+  pauseFeedback()
 }
 
 onMounted(async () => {
@@ -642,14 +382,6 @@ watch(chartType, async () => {
 watch(() => route.query, async () => {
   if (routeStateReady && pageActive.value && !isWorker.value && route.name === 'workshop-report') await restoreRouteState()
 }, { deep: true })
-
-const batchTableColumns = [
-  { key: 'c0', title: "序号", width: 56, align: 'center', fixed: 'left' },
-  { key: 'c1', title: "工程/船号", width: 112, align: 'left' },
-  { key: 'c2', title: "分段名", width: 80, align: 'left' },
-  { key: 'c3', title: "程序号", width: 160, align: 'left' },
-  { key: 'c4', title: "生产时间", width: 184, align: 'left' }
-] as const
 
 const taskTableColumns = computed(() => [
   ...(isWorker.value ? [{ key: 'c0', title: '', width: 48, align: 'center' as const, fixed: 'left' as const, ellipsis: false }] : []),
@@ -687,43 +419,9 @@ const workerTableColumns = [
     </aside>
   </Transition>
 
-    <NModal :show="batchDialogOpen" :mask-closable="!batchConfirmation.saving" :close-on-esc="!batchConfirmation.saving" @update:show="visible => { if (!visible) closeBatchConfirmation() }">
-      <div class="confirmation-dialog batch-confirmation-dialog" role="dialog" aria-modal="true" aria-labelledby="batch-confirmation-dialog-title" tabindex="-1">
-        <header><div><small>任务确认</small><h2 id="batch-confirmation-dialog-title">确认以下任务由我完成</h2></div><NButton attr-type="button" aria-label="关闭" :disabled="batchConfirmation.saving" @click="closeBatchConfirmation">×</NButton></header>
-        <p class="batch-confirmation-intro">请核对以下 {{ batchConfirmation.tasks.length }} 项任务。确认后，任务将登记到当前工人“{{ user.display_name }}”名下。</p>
-        <div class="batch-confirmation-list">
-          <AppReportTable :columns="batchTableColumns" :items="batchConfirmation.tasks" :row-key="row => row.task_id" :paginate="false">
-        <template #c0="{ row, index: rowIndex }">{{ rowIndex + 1 }}</template>
-        <template #c1="{ row }">{{ display(row.project_code || row.ship_no) }}</template>
-        <template #c2="{ row }">{{ display(row.segment_name) }}</template>
-        <template #c3="{ row }"><div :title="display(row.program_no)">{{ display(row.program_no) }}</div></template>
-        <template #c4="{ row }">{{ time(row.production_time) }}</template>
-      </AppReportTable>
-        </div>
-        <p v-if="batchConfirmation.error" class="confirmation-dialog-error" role="alert">{{ batchConfirmation.error }}</p>
-        <footer><NButton attr-type="button" :disabled="batchConfirmation.saving" @click="closeBatchConfirmation">返回检查</NButton><NButton class="primary" attr-type="button" :disabled="batchConfirmation.saving" @click="submitBatchConfirmation" type="primary" :loading="batchConfirmation.saving">{{ batchConfirmation.saving ? '确认中…' : `确认这 ${batchConfirmation.tasks.length} 项任务` }}</NButton></footer>
-      </div>
-    </NModal>
+    <WorkshopBatchConfirmationDialog :batch-confirmation="batchConfirmation" :user="user" @close="closeBatchConfirmation" @submit="submitBatchConfirmation" />
 
-    <NModal :show="correctionDialogOpen" :mask-closable="!correction.saving" :close-on-esc="!correction.saving" @update:show="visible => { if (!visible) closeCorrection() }">
-      <div class="confirmation-dialog" role="dialog" aria-modal="true" aria-labelledby="confirmation-dialog-title" tabindex="-1">
-        <header><div><small>{{ isWorker ? '本人撤销' : '管理员更正' }}</small><h2 id="confirmation-dialog-title">{{ isWorker ? '撤销任务确认' : '更正确认人' }}</h2></div><NButton attr-type="button" aria-label="关闭" :disabled="correction.saving" @click="closeCorrection">×</NButton></header>
-        <div class="confirmation-dialog-task"><strong>{{ display(correction.row?.program_no) }}</strong><span>当前确认人：{{ correction.row?.confirmed_by }} · {{ time(correction.row?.confirmed_at) }}</span></div>
-        <div v-if="correction.loading" class="confirmation-dialog-loading"><span class="spinner dark"></span>正在读取工人和审计记录…</div>
-        <template v-else>
-          <label v-if="!isWorker" class="confirmation-dialog-field"><span>更正方式</span><AppSelect v-model="correction.action"><option value="revoke">撤销为待确认</option><option value="reassign">直接改派给其他工人</option></AppSelect></label>
-          <label v-if="!isWorker && correction.action === 'reassign'" class="confirmation-dialog-field"><span>目标工人</span><AppSelect v-model="correction.workerId" required><option value="" disabled>请选择工人</option><option v-for="worker in availableWorkers" :key="worker.user_id" :value="worker.user_id">{{ worker.display_name }}{{ worker.company_no || worker.username ? ` · ${worker.company_no || worker.username}` : '' }}</option></AppSelect><small v-if="!availableWorkers.length">只显示已登录过系统的可用工人账号。</small></label>
-          <div class="confirmation-reason-presets" role="group" aria-label="常用更正原因">
-            <span>常用原因</span>
-            <div><NButton v-for="reason in visibleCorrectionReasonPresets" :key="reason" attr-type="button" :class="{ active: correction.reason === reason }" :type="correction.reason === reason ? 'primary' : 'default'" round size="small" :disabled="correction.saving" @click="selectCorrectionReason(reason)">{{ reason }}</NButton></div>
-          </div>
-          <label class="confirmation-dialog-field"><span>更正原因</span><NInput v-model:value="correction.reason" name="correction_reason" autocomplete="off" :maxlength="200" placeholder="选择常用原因，或直接填写其他原因…" required type="textarea" show-count :autosize="{ minRows: 3, maxRows: 8 }" :input-props="{ 'name': 'correction_reason', 'autocomplete': 'off', 'required': true }" /></label>
-          <p v-if="correction.error" class="confirmation-dialog-error" role="alert">{{ correction.error }}</p>
-          <section v-if="!isWorker" class="confirmation-audit-list"><h3>该任务的确认记录</h3><p v-if="!correction.audits.length">暂无历史更正记录</p><article v-for="audit in correction.audits" :key="audit.audit_id"><strong>{{ audit.action_label }}</strong><span>{{ audit.previous_worker_name || '待确认' }} → {{ audit.new_worker_name || '待确认' }}</span><small>{{ audit.operated_by_name }} · {{ time(audit.operated_at) }} · {{ audit.reason }}</small></article></section>
-        </template>
-        <footer><NButton attr-type="button" :disabled="correction.saving" @click="closeCorrection">取消</NButton><NButton class="primary" attr-type="button" :disabled="correction.loading || correction.saving || (!isWorker && correction.action === 'reassign' && !correction.workerId)" @click="submitCorrection" type="primary" :loading="correction.saving">{{ correction.saving ? '保存中…' : isWorker ? '确认撤销' : '保存更正' }}</NButton></footer>
-      </div>
-    </NModal>
+    <WorkshopCorrectionDialog :correction="correction" v-model:action="correction.action" v-model:worker-id="correction.workerId" v-model:reason="correction.reason" :is-worker="isWorker" :available-workers="availableWorkers" :visible-correction-reason-presets="visibleCorrectionReasonPresets" @close="closeCorrection" @submit="submitCorrection" @reason="selectCorrectionReason" />
 
   <div class="workshop-dashboard" :class="isWorker ? 'workshop-dashboard--worker' : 'workshop-dashboard--manager'">
     <section class="page-hero report-hero workshop-hero" :class="{ 'report-hero--query': !isWorker }">

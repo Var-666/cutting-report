@@ -11,19 +11,16 @@ import { formatChineseDateTime } from '../src/utils/dateDisplay.ts'
 import { formatDeviceDisplay } from '../src/utils/deviceDisplay.ts'
 
 function directoryQuery(listFiles) {
-  const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
-  const bindings = {
-    selectedProject: Vue.ref({ project_id: 'P1' }), selectedCatalog: Vue.ref({ catalog_id: 'old' }),
-    rows: Vue.ref([{ document_no: 'old.gen' }]), total: Vue.ref(40), page: Vue.ref(1), pageSize: 20,
-    fileKeyword: Vue.ref(''), appliedFileKeyword: Vue.ref(''), fileError: Vue.ref(''), loading: Vue.ref(false),
-    selectingAll: Vue.ref(false), requestedPage: Vue.ref(1), pageActive: Vue.ref(true), notice: Vue.ref(''),
-    expandedCatalogIds: Vue.ref(new Set()), expandCatalog() {}, clearSelectedFiles() {},
-    beginDirectoryRequest: () => new AbortController().signal,
-    listCuttingFiles: listFiles, toError: value => value,
-  }
-  bindings.totalPages = Vue.computed(() => Math.max(1, Math.ceil(bindings.total.value / 20)))
-  const code = view.slice(view.indexOf('async function selectCatalog('), view.indexOf('function applyCreationResult('))
-  return { ...bindings, ...scriptFunction(...Object.keys(bindings), `let querySequence = 0; ${code}; return { selectCatalog, applyFileSearch, changePage };`)(...Object.values(bindings)) }
+  const source = readFileSync(new URL('../src/composables/useCuttingFileBrowser.ts', import.meta.url), 'utf8')
+  const code = source.replace(/^import .*$/gm, '').replace('export function', 'function')
+  const bindings = { ...Vue, listCuttingFiles: listFiles, fileKey: row => String(row.document_id) }
+  const useBrowser = scriptFunction(...Object.keys(bindings), `${code}; return useCuttingFileBrowser`)(...Object.values(bindings))
+  const state = useBrowser({ pageActive: Vue.ref(true), systemStatus: Vue.ref(null), isDispatching: () => false, initialProjectId: '', rememberSelectedProject() {}, notice: Vue.ref(''), showNotice() {} })
+  state.selectedProject.value = { project_id: 'P1' }
+  state.selectedCatalog.value = { catalog_id: 'old' }
+  state.rows.value = [{ document_no: 'old.gen' }]
+  state.total.value = 40
+  return state
 }
 
 test('switching directories clears old files immediately and failure cannot restore them', async () => {

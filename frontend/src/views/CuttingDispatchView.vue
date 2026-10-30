@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import AppReportTable from '../components/AppReportTable.vue'
+import DispatchHistoryTable from '../components/dispatch/DispatchHistoryTable.vue'
+import { useCuttingFileBrowser } from '../composables/useCuttingFileBrowser'
+import { useCuttingDispatchHistory } from '../composables/useCuttingDispatchHistory'
+import { useCuttingDispatchBatch } from '../composables/useCuttingDispatchBatch'
 import type { ReadOptions } from '../types/api'
-import type { CuttingCatalog, CuttingDispatch, CuttingFile, CuttingMachine, CuttingProject, CuttingStatus, DispatchCreationResult } from '../types/cutting'
-interface PushBatchItem { referenceKey: string; documentId: string; versionId: string | null; filePath: string; filename: string; version: string; parsed: ReturnType<typeof parseCuttingInstructionFilename>; segmentName: string; material: string; thickness: number | string; quantity: number; status: 'pending' | 'pushing' | 'sent' | 'duplicate' | 'failed'; error: string; dispatchId: string; retryable: boolean; statusChecked: boolean }
+import type { CuttingDispatch, CuttingFile, CuttingMachine, CuttingStatus } from '../types/cutting'
 
 import { toError } from '../utils/errors'
 import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, reactive, ref } from 'vue'
@@ -12,23 +15,19 @@ import CatalogTreeNode from '../components/CatalogTreeNode.vue'
 import AppIcon from '../components/AppIcon.vue'
 import heroImage from '../assets/home-laser-cutting.webp'
 import { parseCuttingInstructionFilename } from '../utils/cuttingInstructionName.ts'
-import { matchesDispatchParameters } from '../utils/cuttingDispatchBatch.ts'
+import { cuttingFileKey as fileKey } from '../utils/cuttingDispatchBatch.ts'
 import { formatChineseDateTime } from '../utils/dateDisplay.ts'
 import { useConfirm } from '../composables/useConfirm.ts'
-import { createCuttingDispatchBatch, executeCuttingDispatch, getCuttingDispatch, getCuttingStatus, listCuttingDispatches, listCuttingMachines, listCuttingProjects, listCuttingCatalogs, listCuttingFiles } from '../api/dispatch.ts'
+import { executeCuttingDispatch, getCuttingStatus, listCuttingMachines } from '../api/dispatch.ts'
 
 const confirm = useConfirm()
 const pageActive = ref(true)
 const route = useRoute()
 const router = useRouter()
-let querySequence = 0
 let lifecycleSequence = 0
 let lifecycleController: AbortController | null = null
-let directoryController: AbortController | null = null
-let historyController: AbortController | null = null
 let statusController: AbortController | null = null
 let firstActivation = true
-let projectsLoaded = false
 const STATUS_CHECK_TIMEOUT_MS = 30_000
 
 function beginLifecycleRequest() {
@@ -36,93 +35,62 @@ function beginLifecycleRequest() {
   lifecycleController = new AbortController()
   return { sequence: ++lifecycleSequence, signal: lifecycleController.signal }
 }
-
-function beginDirectoryRequest() {
-  selectingAll.value = false
-  loading.value = false
-  directoryController?.abort()
-  directoryController = new AbortController()
-  return directoryController.signal
-}
 const dispatchForm = reactive({ machineIp: '' })
 const systemStatus = ref<CuttingStatus | null>(null)
 const statusLoading = ref(false)
 const statusError = ref('')
-const rows = ref<CuttingFile[]>([])
-const histories = ref<CuttingDispatch[]>([])
-const historyPage = ref(1)
-const historyPageSize = 10
-const historyTotal = ref(0)
-const historyLoading = ref(false)
-const historyError = ref('')
-const historyPageCount = computed(() => Math.max(1, Math.ceil(historyTotal.value / historyPageSize)))
 const machines = ref<CuttingMachine[]>([])
-const bulkQuantity = ref(1)
-const pushBatch = reactive({
-  visible: false,
-  saving: false,
-  resultsReady: false,
-  items: [] as PushBatchItem[],
-  completed: 0,
-  total: 0,
-  currentFilename: '',
-  error: '',
-  nonStandardConfirmed: false,
-  overrideConfirmed: false,
-})
-const pushBatchOpen = computed(() => pushBatch.visible)
-const selectedFiles = ref(new Map<string, CuttingFile>())
-const catalogSelectionRows = ref<CuttingFile[] | null>(null)
-const selectingAll = ref(false)
-const loading = ref(false)
 const operatingId = ref('')
 const retryDispatch = ref<CuttingDispatch | null>(null)
 const retrySegment = ref('')
 const notice = ref('')
 const noticeType = ref('info')
-const page = ref(1)
-const requestedPage = ref(1)
-const pageSize = 20
-const total = ref(0)
-const projectOptions = ref<CuttingProject[]>([])
-const projectSearch = ref('')
-const projectSuggestions = computed(() => {
-  const keyword = (projectSearch.value || '').trim().toLocaleLowerCase()
-  return projectOptions.value
-    .map((project) => ({ value: String(project.project_id), displayLabel: `${project.project_name}${project.ship_no ? ` · ${project.ship_no}` : ''}` }))
-    .filter((option) => option.displayLabel.toLocaleLowerCase().includes(keyword))
-})
 const initialProjectId = Array.isArray(route.query.project_id)
   ? route.query.project_id[0] || ''
   : String(route.query.project_id || '')
-const selectedProjectId = ref(initialProjectId)
-const projects = computed(() => {
-  const selected = projectOptions.value.find((project) => String(project.project_id) === selectedProjectId.value)
-  return selected ? [selected] : []
+const {
+  rows, selectedFiles, selectingAll, loading, page,
+  requestedPage, pageSize, total, projectOptions, projectSearch,
+  projectSuggestions, selectedProjectId, projects, catalogTree, fileKeyword,
+  appliedFileKeyword, fileError, selectedProject, selectedCatalog, projectExpanded,
+  expandedCatalogIds, projectLoading, catalogLoading, totalPages, allCatalogFilesSelected,
+  someCatalogFilesSelected, selectedPath, clearSelectedFiles, setFileSelected, toggleCatalogFiles,
+  expandCatalog, loadProjects, openSelectedProject, selectProject, toggleProject,
+  selectCatalog, applyFileSearch, loadFiles, changePage, refreshVisibleFileStatuses,
+  projectsLoaded, pauseDirectory,
+} = useCuttingFileBrowser({
+  pageActive,
+  systemStatus,
+  isDispatching: () => pushBatch.saving,
+  initialProjectId,
+  rememberSelectedProject,
+  notice,
+  showNotice,
 })
-const catalogTree = ref<CuttingCatalog[]>([])
-const fileKeyword = ref('')
-const appliedFileKeyword = ref('')
-const fileError = ref('')
-const selectedProject = ref<CuttingProject | null>(null)
-const selectedCatalog = ref<CuttingCatalog | null>(null)
-const projectExpanded = ref(false)
-const expandedCatalogIds = ref(new Set<string>())
-const projectLoading = ref(false)
-const catalogLoading = ref(false)
+const {
+  histories, historyPage, historyPageSize, historyTotal, historyLoading,
+  historyError, loadHistory, changeHistoryPage, pauseHistory,
+} = useCuttingDispatchHistory({
+  pageActive,
+  isBusy: () => Boolean(operatingId.value || pushBatch.saving),
+})
+const {
+  bulkQuantity, pushBatch, pushBatchOpen, invalidBatchCount, nonStandardBatchCount,
+  overrideBatchCount, batchStatusCounts, batchItemError, hasNameMismatch, openPushBatch,
+  closePushBatch, removePushBatchItem, applyBulkQuantity, invalidateBatchConfirmation, batchStatusLabel,
+  isStaleFileError, submitPushBatch, retryBatchItem, checkBatchItem, refreshBatchCatalog,
+} = useCuttingDispatchBatch({
+  selectedFiles,
+  clearSelectedFiles,
+  dispatchForm,
+  systemStatus,
+  operatingId,
+  loadHistory,
+  refreshVisibleFileStatuses,
+  loadFiles,
+  showNotice,
+})
 
-const invalidBatchCount = computed(() => pushBatch.items.filter((item) => batchItemError(item)).length)
-const nonStandardBatchCount = computed(() => pushBatch.items.filter((item) => !item.parsed).length)
-const overrideBatchCount = computed(() => pushBatch.items.filter((item) => hasNameMismatch(item)).length)
-const batchStatusCounts = computed(() => {
-  const counts: Record<string, number> = { sent: 0, duplicate: 0, failed: 0, pending: 0 }
-  pushBatch.items.forEach((item) => {
-    const key = Object.hasOwn(counts, item.status) ? item.status : 'pending'
-    counts[key] += 1
-  })
-  return counts
-})
-const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize)))
 const selectedFileCount = computed(() => selectedFiles.value.size)
 const selectedFileItems = computed(() => [...selectedFiles.value.values()])
 const selectedMachine = computed(() => machines.value.find((machine) => machine.machine_ip === dispatchForm.machineIp))
@@ -141,44 +109,10 @@ const activeDispatchStep = computed(() => {
   if (selectedFileCount.value) return 2
   return 1
 })
-const selectableRows = computed(() => (catalogSelectionRows.value ?? rows.value).filter((row) => row.path_available && systemStatus.value?.can_push))
-const allCatalogFilesSelected = computed(() => (
-  (catalogSelectionRows.value !== null || total.value <= rows.value.length)
-  && selectableRows.value.length > 0
-  && selectableRows.value.every((row) => selectedFiles.value.has(fileKey(row)))
-))
-const someCatalogFilesSelected = computed(() => (
-  !allCatalogFilesSelected.value
-  && selectedFiles.value.size > 0
-))
-const selectedPath = computed(() => {
-  if (!selectedProject.value) return '请选择项目和目录'
-  const catalog = selectedCatalog.value
-  return catalog ? `${selectedProject.value.project_name} / ${catalogPath(catalog)}` : selectedProject.value.project_name
-})
 
 function showNotice(message: string, type = 'info') {
   notice.value = message
   noticeType.value = type
-}
-
-function fileKey(file: CuttingFile) {
-  return JSON.stringify([file.document_id, file.version_id, file.normalized_path])
-}
-
-function alreadySelectedDocument(files: Map<string, CuttingFile>, file: CuttingFile) {
-  return [...files.values()].some((selected) => String(selected.document_id) === String(file.document_id))
-}
-
-function clearSelectedFiles() {
-  if (selectingAll.value) {
-    querySequence += 1
-    directoryController?.abort()
-    selectingAll.value = false
-    loading.value = false
-  }
-  catalogSelectionRows.value = null
-  selectedFiles.value = new Map()
 }
 
 function rememberSelectedProject(projectId: string) {
@@ -193,123 +127,10 @@ function rememberSelectedProject(projectId: string) {
   router.replace({ query })
 }
 
-function setFileSelected(file: CuttingFile, selected: boolean) {
-  const next = new Map(selectedFiles.value)
-  const key = fileKey(file)
-  if (selected && !next.has(key) && next.size >= 100) {
-    showNotice('已达 100 项上限，请先取消部分文件后再选择。', 'error')
-    return
-  }
-  if (selected && !next.has(key) && alreadySelectedDocument(next, file)) {
-    showNotice('同一 PDM 文件只能选择一个版本，请先取消已选版本。', 'error')
-    return
-  }
-  if (selected) next.set(key, file)
-  else next.delete(key)
-  selectedFiles.value = next
-}
-
-async function toggleCatalogFiles(selected: boolean) {
-  if (loading.value || pushBatch.saving || !systemStatus.value?.can_push || !selectedProject.value || !selectedCatalog.value) return
-  const sequence = ++querySequence
-  const signal = beginDirectoryRequest()
-  loading.value = true
-  selectingAll.value = true
-  try {
-    if (catalogSelectionRows.value === null) {
-      let files = rows.value
-      if (total.value > rows.value.length) {
-        files = []
-        let filePage = 1
-        let fileTotal = total.value
-        do {
-          const data = await listCuttingFiles({
-            projectId: selectedProject.value.project_id,
-            catalogId: selectedCatalog.value.catalog_id,
-            keyword: appliedFileKeyword.value,
-            page: filePage,
-            pageSize: 100,
-          }, { signal })
-          if (signal.aborted || !pageActive.value || sequence !== querySequence) return
-          if (!data.items.length && files.length < data.total) throw new Error('文件列表发生变化，请重新查询后全选。')
-          files.push(...data.items)
-          fileTotal = data.total
-          filePage += 1
-        } while ((filePage - 1) * 100 < fileTotal)
-      }
-      catalogSelectionRows.value = files
-    }
-    if (!systemStatus.value?.can_push) return
-    const next = new Map(selectedFiles.value)
-    let skipped = 0
-    for (const file of selectableRows.value) {
-      const key = fileKey(file)
-      if (!selected) {
-        next.delete(key)
-      } else if (!next.has(key) && next.size < 100) {
-        if (alreadySelectedDocument(next, file)) skipped += 1
-        else next.set(key, file)
-      } else if (!next.has(key)) {
-        skipped += 1
-      }
-    }
-    selectedFiles.value = next
-    if (skipped) showNotice(`另有 ${skipped} 项因已达 100 项上限或文件版本重复而未选中，请取消部分文件或已选版本后再选择。`, 'error')
-  } catch (caught) {
-    const error = toError(caught)
-    if (error.name !== 'AbortError' && sequence === querySequence) showNotice(`全选失败：${error.message}`, 'error')
-  } finally {
-    if (sequence === querySequence) {
-      loading.value = false
-      selectingAll.value = false
-    }
-  }
-}
-
 function openSinglePush(file: CuttingFile) {
   if (pushBatch.saving) return
   selectedFiles.value = new Map([[fileKey(file), file]])
   openPushBatch()
-}
-
-async function loadHistory({ signal, page: targetPage = historyPage.value }: { signal?: AbortSignal; page?: number } = {}) {
-  if (!pageActive.value || signal?.aborted) return
-  historyController?.abort()
-  const controller = new AbortController()
-  historyController = controller
-  const abort = () => controller.abort()
-  signal?.addEventListener('abort', abort, { once: true })
-  historyLoading.value = true
-  historyError.value = ''
-  try {
-    let data = await listCuttingDispatches({ page: targetPage, pageSize: historyPageSize }, { signal: controller.signal })
-    if (controller.signal.aborted || !pageActive.value || historyController !== controller) return
-    const lastPage = Math.max(1, Math.ceil(data.total / historyPageSize))
-    if (targetPage > lastPage) {
-      targetPage = lastPage
-      data = await listCuttingDispatches({ page: targetPage, pageSize: historyPageSize }, { signal: controller.signal })
-    }
-    if (controller.signal.aborted || !pageActive.value || historyController !== controller) return
-    histories.value = data.items
-    historyTotal.value = data.total
-    historyPage.value = data.page
-  } catch (caught) {
-    const error = toError(caught)
-    if (error.name !== 'AbortError' && !controller.signal.aborted && pageActive.value && historyController === controller) {
-      historyError.value = error.message
-    }
-  } finally {
-    signal?.removeEventListener('abort', abort)
-    if (historyController === controller) {
-      historyLoading.value = false
-      historyController = null
-    }
-  }
-}
-
-async function changeHistoryPage(value: number) {
-  if (historyLoading.value || operatingId.value || pushBatch.saving || value < 1 || value > historyPageCount.value) return
-  await loadHistory({ page: value })
 }
 
 async function loadMachines({ signal }: ReadOptions = {}) {
@@ -332,504 +153,6 @@ async function loadMachines({ signal }: ReadOptions = {}) {
     if (!dispatchForm.machineIp && machines.value.length) dispatchForm.machineIp = machines.value[0].machine_ip
     showNotice(`机床在线状态读取失败：${error.message}。仍可选择 SYS_CONFIG 中配置的机床。`, 'error')
   }
-}
-
-function createPushBatchItem(file: CuttingFile): PushBatchItem {
-  const filename = file.document_no || file.physical_file_name || ''
-  const parsed = parseCuttingInstructionFilename(filename)
-  return {
-    referenceKey: fileKey(file),
-    documentId: String(file.document_id),
-    versionId: file.version_id || null,
-    filePath: file.normalized_path || '',
-    filename,
-    version: String(file.version || file.physical_version_code?.trim() || file.physical_version_no || '--'),
-    parsed,
-    segmentName: parsed?.intermediateProduct || '',
-    material: parsed?.material || '',
-    thickness: parsed?.thickness ?? '',
-    quantity: 1,
-    status: 'pending',
-    error: '',
-    dispatchId: '',
-    retryable: false,
-    statusChecked: false,
-  }
-}
-
-function batchItemError(item: PushBatchItem) {
-  const segment = String(item.segmentName || '').trim()
-  if (!segment) return '请填写分段名'
-  if (segment.length > 80 || /[\u0000-\u001f\u007f]/.test(segment)) return '分段名不能超过80字或包含控制字符'
-  if (!String(item.material || '').trim()) return '请填写材质'
-  const thickness = Number(item.thickness)
-  if (!Number.isFinite(thickness) || thickness <= 0 || thickness > 1000) return '板厚必须大于 0 且不超过 1000 mm'
-  const quantity = Number(item.quantity)
-  if (!Number.isInteger(quantity) || quantity < 1 || quantity > 10000) return '加工数量必须是 1–10000 的整数'
-  return ''
-}
-
-function hasNameMismatch(item: PushBatchItem) {
-  if (!item.parsed) return false
-  return String(item.material || '').trim().toLowerCase() !== item.parsed.material.toLowerCase()
-    || Number(item.thickness) !== item.parsed.thickness
-}
-
-function openPushBatch() {
-  if (!selectedFileCount.value) {
-    showNotice('请先选择要推送的文件。', 'error')
-    return
-  }
-  pushBatch.items = [...selectedFiles.value.values()].map(createPushBatchItem)
-  pushBatch.completed = 0
-  pushBatch.total = pushBatch.items.length
-  pushBatch.currentFilename = ''
-  pushBatch.error = ''
-  pushBatch.nonStandardConfirmed = false
-  pushBatch.overrideConfirmed = false
-  pushBatch.resultsReady = false
-  bulkQuantity.value = 1
-  pushBatch.visible = true
-}
-
-function closePushBatch() {
-  if (pushBatch.saving) return
-  pushBatch.visible = false
-}
-
-
-function removePushBatchItem(item: PushBatchItem) {
-  if (pushBatch.saving || pushBatch.resultsReady) return
-  pushBatch.items = pushBatch.items.filter((candidate) => candidate.referenceKey !== item.referenceKey)
-  const next = new Map(selectedFiles.value)
-  next.delete(item.referenceKey)
-  selectedFiles.value = next
-  pushBatch.total = pushBatch.items.length
-  if (!pushBatch.items.length) closePushBatch()
-}
-
-function applyBulkQuantity() {
-  const quantity = Number(bulkQuantity.value)
-  if (!Number.isInteger(quantity) || quantity < 1 || quantity > 10000) {
-    pushBatch.error = '统一数量必须是 1–10000 的整数。'
-    return
-  }
-  pushBatch.items.forEach((item) => { item.quantity = quantity })
-  if (nonStandardBatchCount.value) pushBatch.nonStandardConfirmed = false
-  pushBatch.error = ''
-}
-
-function invalidateBatchConfirmation(item: PushBatchItem) {
-  if (item.parsed) pushBatch.overrideConfirmed = false
-  else pushBatch.nonStandardConfirmed = false
-}
-
-function batchRequestItem(item: PushBatchItem) {
-  return {
-    document_id: item.documentId,
-    version_id: item.versionId,
-    file_path: item.filePath,
-    material: String(item.material).trim(),
-    thickness: Number(item.thickness),
-    quantity: Number(item.quantity),
-    name_check_confirmed: item.parsed ? hasNameMismatch(item) && pushBatch.overrideConfirmed : pushBatch.nonStandardConfirmed,
-  }
-}
-
-function batchStatusLabel(item: PushBatchItem) {
-  return {
-    pending: '待创建',
-    pushing: '下载并推送中',
-    sent: '已推送',
-    duplicate: '已有未完成任务',
-    failed: '失败',
-  }[item.status] || '待创建'
-}
-
-function catalogPath(node: CuttingCatalog) {
-  const names = [node.title]
-  const byId = new Map<string, CuttingCatalog>()
-  const visit = (items: CuttingCatalog[]): void => items.forEach((item) => { byId.set(String(item.catalog_id), item); visit(item.children || []) })
-  visit(catalogTree.value)
-  let parent = byId.get(String(node.parent_id))
-  const seen = new Set([String(node.catalog_id)])
-  while (parent && !seen.has(String(parent.catalog_id))) {
-    names.unshift(parent.title)
-    seen.add(String(parent.catalog_id))
-    parent = byId.get(String(parent.parent_id))
-  }
-  return names.join(' / ')
-}
-
-function expandCatalog(node: CuttingCatalog) {
-  const next = new Set(expandedCatalogIds.value)
-  const key = String(node.catalog_id)
-  if (next.has(key)) next.delete(key)
-  else next.add(key)
-  expandedCatalogIds.value = next
-}
-
-async function loadProjects() {
-  const sequence = ++querySequence
-  const signal = beginDirectoryRequest()
-  projectLoading.value = true
-  let projectToOpen = null
-  try {
-    const data = await listCuttingProjects('', 1000, { signal })
-    if (signal.aborted || !pageActive.value || sequence !== querySequence) return
-    projectOptions.value = data.items || []
-    projectsLoaded = true
-    if (!projectOptions.value.some((project) => String(project.project_id) === selectedProjectId.value)) {
-      selectedProjectId.value = projectOptions.value[0] ? String(projectOptions.value[0].project_id) : ''
-    }
-    rememberSelectedProject(selectedProjectId.value)
-    projectToOpen = projectOptions.value.find(
-      (project) => String(project.project_id) === selectedProjectId.value,
-    ) || null
-    selectedProject.value = null
-    selectedCatalog.value = null
-    fileError.value = ''
-    projectExpanded.value = false
-    catalogTree.value = []
-    expandedCatalogIds.value = new Set()
-    rows.value = []
-    clearSelectedFiles()
-    total.value = 0
-    page.value = 1
-    notice.value = ''
-  } catch (caught) {
-    const error = toError(caught)
-    if (error.name !== 'AbortError' && sequence === querySequence) showNotice(error.message, 'error')
-  } finally {
-    if (sequence === querySequence) projectLoading.value = false
-  }
-  if (projectToOpen && pageActive.value && !signal.aborted && sequence === querySequence) await selectProject(projectToOpen)
-}
-
-async function openSelectedProject(projectId = selectedProjectId.value) {
-  const project = projectOptions.value.find((item) => String(item.project_id) === projectId)
-  if (project) await selectProject(project)
-}
-
-async function selectProject(project: CuttingProject) {
-  if (selectedProject.value?.project_id === project.project_id && catalogTree.value.length) {
-    projectExpanded.value = true
-    return
-  }
-  const sequence = ++querySequence
-  const signal = beginDirectoryRequest()
-  selectedProjectId.value = String(project.project_id)
-  rememberSelectedProject(selectedProjectId.value)
-  selectedProject.value = project
-  projectExpanded.value = true
-  selectedCatalog.value = null
-  fileError.value = ''
-  catalogTree.value = []
-  expandedCatalogIds.value = new Set()
-  rows.value = []
-  clearSelectedFiles()
-  total.value = 0
-  page.value = 1
-  catalogLoading.value = true
-  try {
-    const data = await listCuttingCatalogs(project.project_id, { signal })
-    if (signal.aborted || !pageActive.value || sequence !== querySequence) return
-    let roots = data.tree || []
-    // PDM may repeat the project itself as a catalog root. The project is
-    // already the first visible node, so begin with its real child folders.
-    if (roots.length === 1 && roots[0].children?.length
-        && String(roots[0].title || '').trim() === String(project.project_name || '').trim()) {
-      roots = roots[0].children
-    }
-    catalogTree.value = roots
-    expandedCatalogIds.value = new Set(roots.map((item) => String(item.catalog_id)))
-    notice.value = ''
-  } catch (caught) {
-    const error = toError(caught)
-    if (error.name !== 'AbortError' && sequence === querySequence) showNotice(error.message, 'error')
-  } finally {
-    if (sequence === querySequence) catalogLoading.value = false
-  }
-}
-
-function toggleProject(project: CuttingProject) {
-  if (selectedProject.value?.project_id !== project.project_id || !catalogTree.value.length) {
-    selectProject(project)
-    return
-  }
-  projectExpanded.value = !projectExpanded.value
-}
-
-async function selectCatalog(node: CuttingCatalog) {
-  selectedCatalog.value = node
-  rows.value = []
-  total.value = 0
-  page.value = 1
-  if (node.children?.length && !expandedCatalogIds.value.has(String(node.catalog_id))) expandCatalog(node)
-  fileKeyword.value = ''
-  appliedFileKeyword.value = ''
-  clearSelectedFiles()
-  await loadFiles(1)
-}
-
-async function applyFileSearch() {
-  if (fileKeyword.value.trim() !== appliedFileKeyword.value) clearSelectedFiles()
-  await loadFiles(1, fileKeyword.value.trim())
-}
-
-async function loadFiles(targetPage = 1, keyword = appliedFileKeyword.value) {
-  selectingAll.value = false
-  if (!selectedProject.value || !selectedCatalog.value) return
-  const sequence = ++querySequence
-  const signal = beginDirectoryRequest()
-  loading.value = true
-  requestedPage.value = targetPage
-  fileError.value = ''
-  try {
-    const data = await listCuttingFiles({
-      projectId: selectedProject.value.project_id,
-      catalogId: selectedCatalog.value.catalog_id,
-      keyword,
-      page: targetPage,
-      pageSize,
-    }, { signal })
-    if (signal.aborted || !pageActive.value || sequence !== querySequence) return
-    rows.value = data.items
-    total.value = data.total
-    page.value = targetPage
-    appliedFileKeyword.value = keyword
-    notice.value = ''
-  } catch (caught) {
-    const error = toError(caught)
-    if (error.name !== 'AbortError' && sequence === querySequence) fileError.value = error.message
-  } finally {
-    if (sequence === querySequence) loading.value = false
-  }
-}
-
-async function changePage(nextPage: number) {
-  if (loading.value || nextPage < 1 || nextPage > totalPages.value || nextPage === page.value) return
-  await loadFiles(nextPage)
-}
-
-function applyCreationResult(item: PushBatchItem, result: DispatchCreationResult | undefined) {
-  item.dispatchId = result?.dispatch?.dispatch_id || ''
-  item.retryable = false
-  item.statusChecked = false
-  if (result?.status === 'created' && item.dispatchId) {
-    item.status = 'pending'
-    item.error = ''
-    return true
-  }
-  item.status = result?.status === 'duplicate' ? 'duplicate' : 'failed'
-  item.error = result?.error || '任务创建结果不完整，请核对派发记录后重试'
-  return false
-}
-
-function isStaleFileError(item: PushBatchItem) {
-  return /版本已变化|路径已变化|PDM中未找到/.test(item.error)
-}
-
-async function syncBatchItem(item: PushBatchItem) {
-  const current = await getCuttingDispatch(item.dispatchId)
-  const matching = matchesDispatchParameters(current, item, dispatchForm.machineIp)
-  item.statusChecked = true
-  item.retryable = Boolean(current.can_execute) && matching
-  if (!matching) {
-    item.error = '已有任务的文件版本、机床或加工参数不一致，请在派发记录中核对，不要直接继续'
-  } else if (current.status === 'sent') {
-    item.status = 'sent'
-    item.error = ''
-  } else if (!current.can_execute) {
-    item.error = `${current.last_error || current.status_label}；${current.stage_label}，请核对派发记录和魔盒状态`
-  } else if (item.status === 'duplicate') {
-    item.error = '已有同参数任务，可以核对后继续执行'
-  } else {
-    item.status = 'failed'
-    item.error = current.last_error || '当前任务可安全重试'
-  }
-  return current
-}
-
-async function executeBatchItem(item: PushBatchItem) {
-  item.status = 'pushing'
-  item.retryable = false
-  item.error = ''
-  pushBatch.currentFilename = item.filename
-  operatingId.value = item.dispatchId
-  try {
-    const completed = await executeCuttingDispatch(item.dispatchId, item.segmentName)
-    item.status = 'sent'
-    if (completed.local_file_cleanup?.error) item.error = completed.local_file_cleanup.error
-  } catch (caught) {
-    const error = toError(caught)
-    item.status = 'failed'
-    item.error = error.message
-    try {
-      await syncBatchItem(item)
-    } catch {
-      item.error = `${error.message}；任务状态未知，请先核对状态，不要重复上传`
-    }
-  } finally {
-    operatingId.value = ''
-  }
-}
-
-async function refreshVisibleFileStatuses() {
-  if (!selectedProject.value || !selectedCatalog.value || !pageActive.value) return
-  const sequence = querySequence
-  const data = await listCuttingFiles({
-    projectId: selectedProject.value.project_id,
-    catalogId: selectedCatalog.value.catalog_id,
-    keyword: appliedFileKeyword.value,
-    page: page.value,
-    pageSize,
-  }, { force: true })
-  if (!pageActive.value || sequence !== querySequence) return
-  const statuses = new Map(data.items.map((row) => [fileKey(row), row.dispatch_status]))
-  rows.value = rows.value.map((row) => statuses.has(fileKey(row))
-    ? { ...row, dispatch_status: statuses.get(fileKey(row)) }
-    : row)
-}
-
-async function refreshBatchHistory() {
-  await Promise.allSettled([loadHistory(), refreshVisibleFileStatuses()])
-  const counts = batchStatusCounts.value
-  const cleanupWarnings = pushBatch.items.filter((item) => item.status === 'sent' && item.error).length
-  showNotice(
-    `文件派发结果：成功 ${counts.sent} 项，失败 ${counts.failed} 项，重复 ${counts.duplicate} 项${cleanupWarnings ? `，本地文件清理警告 ${cleanupWarnings} 项` : ''}。`,
-    counts.failed || counts.duplicate || cleanupWarnings ? 'error' : 'info',
-  )
-}
-
-async function submitPushBatch() {
-  if (pushBatch.saving) return
-  pushBatch.error = ''
-  if (!dispatchForm.machineIp) {
-    pushBatch.error = '请选择目标机床。'
-    return
-  }
-  if (!pushBatch.items.length) {
-    pushBatch.error = '请至少保留一个文件。'
-    return
-  }
-  if (invalidBatchCount.value) {
-    pushBatch.error = `还有 ${invalidBatchCount.value} 个文件的加工参数不完整，请先补充。`
-    return
-  }
-  if (nonStandardBatchCount.value && !pushBatch.nonStandardConfirmed) {
-    pushBatch.error = `请先确认已人工核对 ${nonStandardBatchCount.value} 个非标准文件名及其加工参数。`
-    return
-  }
-  if (overrideBatchCount.value && !pushBatch.overrideConfirmed) {
-    pushBatch.error = `有 ${overrideBatchCount.value} 个文件的参数与标准文件名不一致，请先人工核对并确认。`
-    return
-  }
-  if (!systemStatus.value?.can_push) {
-    pushBatch.error = '当前文件来源或推送服务不可用。'
-    return
-  }
-
-  pushBatch.saving = true
-  pushBatch.resultsReady = false
-  pushBatch.completed = 0
-  pushBatch.total = pushBatch.items.length
-  pushBatch.currentFilename = '正在创建独立派发任务'
-  pushBatch.items.forEach((item) => {
-    item.status = 'pending'
-    item.error = ''
-    item.dispatchId = ''
-    item.retryable = false
-    item.statusChecked = false
-  })
-
-  try {
-    const created = await createCuttingDispatchBatch({
-      machine_ip: dispatchForm.machineIp,
-      items: pushBatch.items.map(batchRequestItem),
-    })
-    const createdItems = []
-    for (const [index, item] of pushBatch.items.entries()) {
-      const result = created.items?.[index]
-      if (result && String(result.document_id) !== item.documentId) {
-        item.status = 'failed'
-        item.error = '任务创建结果与所选文件不一致，请核对派发记录'
-        continue
-      }
-      if (applyCreationResult(item, result)) createdItems.push(item)
-    }
-
-    pushBatch.completed = pushBatch.items.length - createdItems.length
-    for (const item of createdItems) {
-      await executeBatchItem(item)
-      pushBatch.completed += 1
-    }
-
-    pushBatch.resultsReady = true
-    pushBatch.currentFilename = ''
-    clearSelectedFiles()
-    await refreshBatchHistory()
-  } catch (caught) {
-    const error = toError(caught)
-    pushBatch.error = `任务创建结果未确认：${error.message}。重新提交时已创建的活动任务会显示为重复，请先核对其状态。`
-  } finally {
-    pushBatch.saving = false
-    operatingId.value = ''
-  }
-}
-
-async function retryBatchItem(item: PushBatchItem) {
-  if (pushBatch.saving || !['failed', 'duplicate'].includes(item.status) || isStaleFileError(item)) return
-  pushBatch.saving = true
-  pushBatch.error = ''
-  pushBatch.completed = 0
-  pushBatch.total = 1
-  pushBatch.currentFilename = item.filename
-  try {
-    if (item.dispatchId) {
-      const current = await syncBatchItem(item)
-      if (current.status === 'sent' || !item.retryable) return
-    } else {
-      const created = await createCuttingDispatchBatch({
-        machine_ip: dispatchForm.machineIp,
-        items: [batchRequestItem(item)],
-      })
-      if (!applyCreationResult(item, created.items?.[0])) return
-    }
-    await executeBatchItem(item)
-  } catch (caught) {
-    const error = toError(caught)
-    item.status = 'failed'
-    item.retryable = false
-    item.error = `${error.message}；请核对任务状态后再重试`
-  } finally {
-    pushBatch.completed = 1
-    pushBatch.currentFilename = ''
-    pushBatch.saving = false
-    await refreshBatchHistory()
-  }
-}
-
-async function checkBatchItem(item: PushBatchItem) {
-  if (pushBatch.saving || !item.dispatchId) return
-  pushBatch.saving = true
-  try {
-    await syncBatchItem(item)
-  } catch (caught) {
-    const error = toError(caught)
-    item.retryable = false
-    item.error = `任务状态核对失败：${error.message}`
-  } finally {
-    pushBatch.saving = false
-    await Promise.allSettled([loadHistory(), refreshVisibleFileStatuses()])
-  }
-}
-
-async function refreshBatchCatalog() {
-  if (pushBatch.saving) return
-  closePushBatch()
-  clearSelectedFiles()
-  await loadFiles(1)
 }
 
 async function executeSaved(item: CuttingDispatch, segmentName?: string) {
@@ -933,21 +256,13 @@ function pausePage() {
   pageActive.value = false
   retryDispatch.value = null
   lifecycleSequence += 1
-  querySequence += 1
   lifecycleController?.abort()
   lifecycleController = null
   statusController?.abort()
   statusController = null
   statusLoading.value = false
-  selectingAll.value = false
-  directoryController?.abort()
-  directoryController = null
-  historyController?.abort()
-  historyController = null
-  historyLoading.value = false
-  loading.value = false
-  projectLoading.value = false
-  catalogLoading.value = false
+  pauseDirectory()
+  pauseHistory()
 }
 
 onMounted(() => {
@@ -960,7 +275,7 @@ onActivated(async () => {
     firstActivation = false
     return
   }
-  await initializePage({ refreshProjects: !projectsLoaded })
+  await initializePage({ refreshProjects: !projectsLoaded.value })
 })
 onDeactivated(pausePage)
 onBeforeUnmount(pausePage)
@@ -977,20 +292,6 @@ const fileTableColumns = [
   { key: 'c8', title: "操作时间", width: 184, align: 'left' },
   { key: 'c9', title: "派发状态", width: 112, align: 'center' },
   { key: 'c10', title: "操作", width: 148, align: 'center', fixed: 'right', ellipsis: false }
-] as const
-
-const historyTableColumns = [
-  { key: 'c0', title: "船号", width: 140, align: 'left', fixed: 'left' },
-  { key: 'c1', title: "分段号", width: 104, align: 'left' },
-  { key: 'c2', title: "文件名", minWidth: 220, align: 'left' },
-  { key: 'c3', title: "数量", width: 80, align: 'right' },
-  { key: 'c4', title: "目标机床", width: 144, align: 'left' },
-  { key: 'c5', title: "状态", width: 112, align: 'center' },
-  { key: 'c6', title: "阶段", width: 144, align: 'left' },
-  { key: 'c7', title: "任务标识", width: 200, align: 'left' },
-  { key: 'c8', title: "魔盒UUID", width: 260, align: 'left' },
-  { key: 'c9', title: "失败原因", width: 240, align: 'left' },
-  { key: 'c10', title: "创建时间", width: 184, align: 'left' }
 ] as const
 
 const batchTableColumns = [
@@ -1129,19 +430,7 @@ const batchTableColumns = [
     <div class="panel-title"><div><span class="dispatch-section-icon green"><AppIcon name="check" size="17" /></span><small>04</small><h2>派发记录</h2></div></div>
     <div v-if="historyError" class="global-error" role="alert"><span>派发记录读取失败：{{ historyError }}</span><NButton attr-type="button" :disabled="historyLoading" @click="loadHistory()">重试</NButton></div>
     <div v-if="historyLoading && !histories.length" class="dispatch-empty-history" role="status"><span class="spinner dark" aria-hidden="true"></span><strong>正在读取派发记录</strong></div>
-    <div v-else-if="histories.length" class="dispatch-table-wrap"><AppReportTable :columns="historyTableColumns" :items="histories" :total="historyTotal" :page="historyPage" :page-size="historyPageSize" :page-sizes="[]" @page="changeHistoryPage" :row-key="item => item.dispatch_id" :loading="historyLoading || !!operatingId || pushBatch.saving">
-        <template #c0="{ row: item }">{{ item.ship_no || projectOptions.find(project => project.project_id === item.project_id)?.ship_no || '--' }}</template>
-        <template #c1="{ row: item }">{{ item.segment_name || parseCuttingInstructionFilename(item.document_no)?.intermediateProduct || '--' }}</template>
-        <template #c2="{ row: item }">{{ item.document_no }}</template>
-        <template #c3="{ row: item }">{{ item.quantity }}</template>
-        <template #c4="{ row: item }">{{ machineName(item.machine_ip) }}</template>
-        <template #c5="{ row: item }"><NTag class="dispatch-status" :class="item.status" size="small" :type="item.status === 'failed' ? 'error' : 'info'">{{ item.status_label }}</NTag></template>
-        <template #c6="{ row: item }">{{ item.stage_label }}</template>
-        <template #c7="{ row: item }"><code>{{ item.task_identifier || item.dispatch_id }}</code></template>
-        <template #c8="{ row: item }"><code>{{ item.remote_task_id || '--' }}</code></template>
-        <template #c9="{ row: item }"><span class="history-error">{{ item.last_error || '--' }}</span></template>
-        <template #c10="{ row: item }">{{ formatTime(item.created_at) }}</template>
-      </AppReportTable></div>
+    <div v-else-if="histories.length" class="dispatch-table-wrap"><DispatchHistoryTable :histories="histories" :history-total="historyTotal" :history-page="historyPage" :history-page-size="historyPageSize" :project-options="projectOptions" :machine-name="machineName" :loading="historyLoading || !!operatingId || pushBatch.saving" @page="changeHistoryPage" /></div>
     <div v-else-if="!historyError" class="dispatch-empty-history"><i><AppIcon name="send" size="20" /></i><strong>暂无派发记录</strong></div>
 
   </section>
@@ -1303,7 +592,7 @@ const batchTableColumns = [
 .push-file-origin strong { color:var(--navy); font-size:var(--font-auxiliary); }
 .push-file-origin small { max-width:230px; margin-top:4px; color:var(--muted); font-size:var(--font-auxiliary); }
 .push-file-picker .dispatch-table-wrap { min-height:210px; flex:1 1 auto; }
-.dispatch-status { display:inline-flex; padding:4px 8px; white-space:nowrap; }
+:deep(.dispatch-status) { display:inline-flex; padding:4px 8px; white-space:nowrap; }
 .dispatch-empty-row { padding:32px!important; color:var(--muted); text-align:center!important; }
 .dispatch-pagination { display:flex; align-items:center; justify-content:flex-end; gap:12px; color:var(--muted); font-size:var(--font-auxiliary); }
 .dispatch-pagination button { min-height:30px; padding:0 12px; }
@@ -1314,7 +603,6 @@ const batchTableColumns = [
 .dispatch-empty-history span { margin-top:5px; font-size:var(--font-auxiliary); }
 .history-table { min-width:1180px; }
 .history-table code { color:var(--blue); font-size:var(--font-auxiliary); }
-.history-error { max-width:220px; color:rgb(var(--error-color)); overflow-wrap:anywhere; }
 .history-actions { display:flex; align-items:center; justify-content:center; gap:6px; }
 .history-actions button { min-height:30px; padding:0 9px; white-space:nowrap; }
 .push-batch-backdrop { position:fixed; z-index:1000; inset:0; display:grid; place-items:center; padding:24px; background:rgb(var(--inverted-bg-color) / .6); }

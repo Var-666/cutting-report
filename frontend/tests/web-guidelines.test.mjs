@@ -39,7 +39,7 @@ test('critical forms have names, inline alerts, and unsaved-change protection', 
 test('modal workflows trap focus and data grids label editable controls', () => {
   const accounts = source('views/AdminAccountsView.vue')
   const dispatch = source('views/CuttingDispatchView.vue')
-  const workshop = source('views/WorkshopView.vue')
+  const workshop = source('components/workshop/WorkshopBatchConfirmationDialog.vue')
   const dialogFocus = source('composables/useDialogFocus.ts')
   assert.match(dialogFocus, /event\.key === 'Escape'/)
   assert.match(dialogFocus, /event\.key !== 'Tab'/)

@@ -16,7 +16,14 @@ import {
 } from '../src/api/reports.ts'
 import { reportCache } from '../src/api/reportCache.ts'
 import { parseCuttingInstructionFilename } from '../src/utils/cuttingInstructionName.ts'
-import { matchesDispatchParameters } from '../src/utils/cuttingDispatchBatch.ts'
+import { cuttingFileKey as fileKey, matchesDispatchParameters } from '../src/utils/cuttingDispatchBatch.ts'
+
+const readSource = path => readFileSync(new URL(`../src/${path}`, import.meta.url), 'utf8')
+const browserSource = readSource('composables/useCuttingFileBrowser.ts')
+const batchSource = readSource('composables/useCuttingDispatchBatch.ts')
+const historySource = readSource('composables/useCuttingDispatchHistory.ts')
+const historyTableSource = readSource('components/dispatch/DispatchHistoryTable.vue')
+const hookScript = source => source.replace(/^import .*$/gm, '').replace('export function', 'function')
 
 const originalFetch = globalThis.fetch
 afterEach(() => {
@@ -30,7 +37,7 @@ function dispatchLifecycle({ status, projects, listMachines, catalogs } = {}) {
   const timers = new Map()
   let mounted, activated, timerId = 0
   const context = vm.createContext({
-    ref, reactive, computed, AbortController,
+    ref, reactive, computed, AbortController, fileKey,
     useRoute: () => ({ query: {} }), useRouter: () => ({ replace() {} }), useConfirm: () => async () => true,
     onMounted: fn => { mounted = fn }, onActivated: fn => { activated = fn }, onDeactivated() {}, onBeforeUnmount() {},
     getCuttingStatus: (_scope, options) => { calls.status.push(options); return status(options, calls.status.length) },
@@ -43,6 +50,7 @@ function dispatchLifecycle({ status, projects, listMachines, catalogs } = {}) {
       clearTimeout: id => timers.delete(id),
     },
   })
+  for (const module of [browserSource, historySource, batchSource]) runTypeScript(hookScript(module), context)
   const script = source.match(/<script setup(?: lang="ts")?>([\s\S]*?)<\/script>/)[1].replace(/^import[\s\S]*?from ['"][^'"]+['"]\n/gm, '')
   runTypeScript(script + '\nthis.page = { initializePage, loadRuntimeStatus, loadMachines, pausePage, systemStatus, statusError, statusLoading, projectOptions, notice, machines };', context)
   return { ...context.page, calls, timers, context, mounted: () => mounted(), activated: () => activated() }
@@ -143,24 +151,18 @@ test('cancelling machine status cannot write a stale fallback or error notice af
 })
 
 function historyPagination() {
-  const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
-  const source = view.slice(view.indexOf('async function loadHistory('), view.indexOf('async function loadMachines('))
-  const bindings = {
-    pageActive: ref(true), histories: ref([]), historyPage: ref(1), historyPageSize: 10,
-    historyTotal: ref(0), historyLoading: ref(false), historyError: ref(''),
-    operatingId: ref(''), pushBatch: { saving: false }, listCuttingDispatches,
-  }
-  bindings.historyPageCount = computed(() => Math.max(1, Math.ceil(bindings.historyTotal.value / 10)))
-  const functions = scriptFunction(...Object.keys(bindings), `let historyController = null; ${source}; return { loadHistory, changeHistoryPage }`)(...Object.values(bindings))
-  return { ...bindings, ...functions }
+  const inputs = { pageActive: ref(true), operatingId: ref(''), pushBatch: { saving: false } }
+  const useHistory = scriptFunction('ref', 'computed', 'listCuttingDispatches', `${hookScript(historySource)}; return useCuttingDispatchHistory`)(ref, computed, listCuttingDispatches)
+  const state = useHistory({ pageActive: inputs.pageActive, isBusy: () => Boolean(inputs.operatingId.value || inputs.pushBatch.saving) })
+  return { ...inputs, ...state, historyPageCount: computed(() => Math.max(1, Math.ceil(state.historyTotal.value / 10))) }
 }
 
 test('dispatch history omits the action column and keeps each field in its own single-line column', () => {
   const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
-  const history = view.slice(view.indexOf('<section class="panel dispatch-history-panel"'), view.indexOf('<div v-if="selectedFileCount && !pushBatch.visible" class="mobile-selection-bar-spacer"'))
+  const history = historyTableSource
 
   assert.doesNotMatch(view, /取消指派|cancelSaved|cancelCuttingDispatch|can_cancel/)
-  const columns = view.slice(view.indexOf('const historyTableColumns ='), view.indexOf('const batchTableColumns ='))
+  const columns = historyTableSource.split('</script>')[0]
   assert.deepEqual([...columns.matchAll(/title: "([^"]+)"/g)].map(match => match[1]),
     ['船号', '分段号', '文件名', '数量', '目标机床', '状态', '阶段', '任务标识', '魔盒UUID', '失败原因', '创建时间'])
   const table = history.slice(history.indexOf('<AppReportTable'), history.indexOf('</AppReportTable>'))
@@ -193,7 +195,9 @@ test('dispatch history pages through all records in ten-row pages independently 
   assert.deepEqual(calls, [{ page: 1, size: 10 }, { page: 2, size: 10 }, { page: 3, size: 10 }, { page: 3, size: 10 }])
   assert.equal(history.historyPageCount.value, 3)
   const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
-  assert.match(view, /:items="histories"[^>]*:total="historyTotal"[^>]*:page="historyPage"[^>]*:page-size="historyPageSize"[^>]*@page="changeHistoryPage"/)
+  assert.match(historyTableSource, /:items="histories"[^>]*:total="historyTotal"[^>]*:page="historyPage"[^>]*:page-size="historyPageSize"/)
+  assert.match(historyTableSource, /@page="emit\('page', \$event\)"/)
+  assert.match(view, /<DispatchHistoryTable[^>]*@page="changeHistoryPage"/)
 })
 
 test('a failed history page keeps the displayed rows and page number instead of showing a false empty state', async () => {
@@ -329,8 +333,8 @@ test('machine selectors show Chinese names and IPs while dispatch still uses the
   assert.equal(machineName('10.147.1.42'), '未命名机床')
   assert.equal((view.match(/:value="machine.machine_ip"/g) || []).length, 2)
   assert.equal((view.match(/\{\{ machineName\(machine.machine_ip\) \}\}/g) || []).length, 2)
-  assert.match(view, /machine_ip: dispatchForm.machineIp/)
-  assert.match(view, /#c4="[^"]*">\{\{ machineName\(item.machine_ip\) \}\}<\/template>/)
+  assert.match(batchSource, /machine_ip: dispatchForm.machineIp/)
+  assert.match(historyTableSource, /#c4="[^"]*">\{\{ machineName\(item.machine_ip\) \}\}<\/template>/)
   assert.equal((view.match(/\{\{ machineName\(machine.machine_ip\) \}\} · \{\{ machine.machine_ip \}\}（/g) || []).length, 2)
   assert.doesNotMatch(view, /目标机床 IP|<th>机床IP<\/th>/)
 })
@@ -340,16 +344,16 @@ test('file dispatch page uses the recursive PDM directory tree without condition
   const node = readFileSync(new URL('../src/components/CatalogTreeNode.vue', import.meta.url), 'utf8')
 
   assert.match(view, /<CatalogTreeNode/)
-  assert.match(view, /listCuttingProjects/)
-  assert.match(view, /listCuttingCatalogs/)
-  assert.match(view, /listCuttingFiles/)
+  assert.match(browserSource, /listCuttingProjects/)
+  assert.match(browserSource, /listCuttingCatalogs/)
+  assert.match(browserSource, /listCuttingFiles/)
   assert.match(view, /getCuttingStatus\('push', \{ signal: controller\.signal, force \}\)/)
   assert.doesNotMatch(view, /defineProps|isDownload/)
   assert.match(view, /项目目录/)
   assert.match(view, /当前位置/)
-  assert.match(view, /const pageSize = 20/)
-  assert.match(view, /const projectOptions = ref<CuttingProject\[\]>\(\[\]\)/)
-  assert.match(view, /const selectedProjectId = ref\(initialProjectId\)/)
+  assert.match(browserSource, /const pageSize = 20/)
+  assert.match(browserSource, /const projectOptions = ref<CuttingProject\[\]>\(\[\]\)/)
+  assert.match(browserSource, /const selectedProjectId = ref\(initialProjectId\)/)
   assert.match(view, /<NAutoComplete[^\n]*v-model:value="projectSearch"[^\n]*@select="openSelectedProject"/)
   assert.match(view, /:options="projectSuggestions"/)
   assert.match(view, /:get-show="\(\) => true"/)
@@ -404,15 +408,15 @@ test('selected dispatch project survives refresh without a saved-file browser', 
   assert.match(view, /useRoute, useRouter/)
   assert.match(view, /route\.query\.project_id/)
   assert.match(view, /router\.replace\(\{ query \}\)/)
-  assert.match(view, /if \(projectToOpen && pageActive\.value && !signal\.aborted && sequence === querySequence\) await selectProject\(projectToOpen\)/)
+  assert.match(browserSource, /if \(projectToOpen && pageActive\.value && !signal\.aborted && sequence === querySequence\) await selectProject\(projectToOpen\)/)
   assert.doesNotMatch(view, /CuttingDownloadsPanel|downloadsPanel|selectProjectById/)
 })
 
 test('project-shaped catalog root is hidden to avoid showing the project twice', () => {
   const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
-  assert.match(view, /roots\.length === 1/)
+  assert.match(browserSource, /roots\.length === 1/)
   assert.match(view, /project\.project_name/)
-  assert.match(view, /roots = roots\[0\]\.children/)
+  assert.match(browserSource, /roots = roots\[0\]\.children/)
 })
 
 test('file dispatch status is displayed after operation time with the history badge and empty state', () => {
@@ -428,7 +432,7 @@ test('file dispatch status is displayed after operation time with the history ba
 
 test('file status refresh preserves selections and ignores responses after a directory switch', async () => {
   const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
-  const source = view.slice(view.indexOf('async function refreshVisibleFileStatuses('), view.indexOf('async function refreshBatchHistory('))
+  const source = browserSource.slice(browserSource.indexOf('async function refreshVisibleFileStatuses('), browserSource.indexOf('function pauseDirectory('))
   let complete
   const calls = []
   const file = { document_id: 'doc', version_id: 'v1', normalized_path: 'file.gen' }
@@ -477,24 +481,15 @@ test('dispatch mutations invalidate cached file status even when execution fails
 })
 
 function fileSelection(files = [], { total = files.length, listFiles } = {}) {
-  const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
-  const states = view.slice(view.indexOf('const selectableRows ='), view.indexOf('const selectedPath ='))
-  const handlers = view.slice(view.indexOf('function fileKey('), view.indexOf('function openSinglePush('))
   const notices = []
-  const bindings = {
-    computed, rows: ref(files), total: ref(total), selectedFiles: ref(new Map()),
-    catalogSelectionRows: ref(null), selectingAll: ref(false), loading: ref(false),
-    pushBatch: { saving: false }, pageActive: ref(true),
-    selectedProject: ref({ project_id: 'P1' }), selectedCatalog: ref({ catalog_id: 'C1' }),
-    appliedFileKeyword: ref(''), listCuttingFiles: listFiles,
-    systemStatus: ref({ can_push: true }), showNotice: text => notices.push(text),
-  }
-  const selection = scriptFunction(...Object.keys(bindings), `let querySequence = 0, directoryController;
-    function beginDirectoryRequest() {
-      directoryController?.abort(); directoryController = new AbortController(); return directoryController.signal
-    }
-    ${states}\n${handlers}\nreturn { fileKey, setFileSelected, clearSelectedFiles, toggleCatalogFiles, allCatalogFilesSelected, someCatalogFilesSelected }`)(...Object.values(bindings))
-  return { ...bindings, ...selection, notices }
+  const inputs = { pageActive: ref(true), systemStatus: ref({ can_push: true }), pushBatch: { saving: false } }
+  const useBrowser = scriptFunction('ref', 'computed', 'listCuttingFiles', 'fileKey', `${hookScript(browserSource)}; return useCuttingFileBrowser`)(ref, computed, listFiles, fileKey)
+  const state = useBrowser({ ...inputs, isDispatching: () => inputs.pushBatch.saving, initialProjectId: '', rememberSelectedProject() {}, notice: ref(''), showNotice: text => notices.push(text) })
+  state.rows.value = files
+  state.total.value = total
+  state.selectedProject.value = { project_id: 'P1' }
+  state.selectedCatalog.value = { catalog_id: 'C1' }
+  return { ...inputs, ...state, fileKey, notices }
 }
 
 const selectableFile = (id, documentNo = 'S806C080A001.gen') => ({ document_id: String(id), version_id: 'v1', normalized_path: `files/${id}.gen`, document_no: documentNo, path_available: true })
@@ -654,7 +649,7 @@ test('clearing or switching directory during select-all discards late results an
   await pending
   assert.equal(signal.aborted, true)
   assert.equal(selection.selectedFiles.value.size, 0)
-  assert.equal(selection.catalogSelectionRows.value, null)
+  assert.equal(selection.allCatalogFilesSelected.value, false)
   assert.equal(selection.loading.value, false)
 })
 
@@ -679,9 +674,9 @@ test('empty and unavailable-only pages do not falsely indicate full directory se
 test('PDM file table supports up to one hundred selections and direct batch dispatch', () => {
   const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
 
-  assert.match(view, /const selectedFiles = ref\(new Map<string, CuttingFile>\(\)\)/)
-  assert.match(view, /function toggleCatalogFiles/)
-  assert.match(view, /next\.size >= 100/)
+  assert.match(browserSource, /const selectedFiles = ref\(new Map<string, CuttingFile>\(\)\)/)
+  assert.match(browserSource, /function toggleCatalogFiles/)
+  assert.match(browserSource, /next\.size >= 100/)
   assert.match(view, /aria-label="全选当前目录所有分页的可派发文件"/)
   assert.match(view, /@update:checked="toggleCatalogFiles\(\$event\)"/)
   assert.match(view, /@update:checked="setFileSelected\(row, \$event\)"/)
@@ -791,8 +786,8 @@ test('dispatch parameters depend on material and thickness, not the product code
 
 test('any two-character material code is filled verbatim without a grade mapping or manual override', () => {
   const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
-  const createSource = view.slice(view.indexOf('function createPushBatchItem('), view.indexOf('function batchItemError('))
-  const mismatchSource = view.slice(view.indexOf('function hasNameMismatch('), view.indexOf('function openPushBatch('))
+  const createSource = batchSource.slice(batchSource.indexOf('function createPushBatchItem('), batchSource.indexOf('function batchItemError('))
+  const mismatchSource = batchSource.slice(batchSource.indexOf('function hasNameMismatch('), batchSource.indexOf('function openPushBatch('))
   const { createPushBatchItem, hasNameMismatch } = scriptFunction('parseCuttingInstructionFilename', 'fileKey',
     `${createSource}\n${mismatchSource}\nreturn {createPushBatchItem, hasNameMismatch}`)(parseCuttingInstructionFilename, file => file.document_id)
   for (const code of ['A0', 'A2', 'A6', 'SS', 'B0', 'A7', 'X9', '7X', '00', 'q7', '@0', '中钢', '🧪0']) {
@@ -812,25 +807,25 @@ test('any two-character material code is filled verbatim without a grade mapping
 test('direct dispatch builds independent PDM references and executes tasks sequentially', () => {
   const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
 
-  assert.match(view, /next\.size >= 100/)
-  assert.match(view, /function createPushBatchItem\(file: CuttingFile\)/)
-  assert.match(view, /const parsed = parseCuttingInstructionFilename\(filename\)/)
-  assert.match(view, /material: parsed\?\.material \|\| ''/)
-  assert.match(view, /thickness: parsed\?\.thickness \?\? ''/)
-  assert.match(view, /quantity: 1/)
-  assert.match(view, /createCuttingDispatchBatch/)
-  assert.match(view, /document_id: item\.documentId/)
-  assert.match(view, /version_id: item\.versionId/)
-  assert.match(view, /file_path: item\.filePath/)
-  assert.match(view, /for \(const item of createdItems\)/)
-  assert.match(view, /await executeCuttingDispatch\(item\.dispatchId, item\.segmentName\)/)
+  assert.match(browserSource, /next\.size >= 100/)
+  assert.match(batchSource, /function createPushBatchItem\(file: CuttingFile\)/)
+  assert.match(batchSource, /const parsed = parseCuttingInstructionFilename\(filename\)/)
+  assert.match(batchSource, /material: parsed\?\.material \|\| ''/)
+  assert.match(batchSource, /thickness: parsed\?\.thickness \?\? ''/)
+  assert.match(batchSource, /quantity: 1/)
+  assert.match(batchSource, /createCuttingDispatchBatch/)
+  assert.match(batchSource, /document_id: item\.documentId/)
+  assert.match(batchSource, /version_id: item\.versionId/)
+  assert.match(batchSource, /file_path: item\.filePath/)
+  assert.match(batchSource, /for \(const item of createdItems\)/)
+  assert.match(batchSource, /await executeCuttingDispatch\(item\.dispatchId, item\.segmentName\)/)
   assert.match(view, /非标准名，请手工填写参数/)
 })
 
 test('non-standard names require explicit manual confirmation before dispatch', () => {
   const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
 
-  assert.match(view, /const nonStandardBatchCount = computed/)
+  assert.match(batchSource, /const nonStandardBatchCount = computed/)
   assert.match(view, /pushBatch\.nonStandardConfirmed/)
   assert.match(view, /我已人工核对 \{\{ nonStandardBatchCount \}\} 个非标准文件名/)
   assert.match(view, /nonStandardBatchCount > 0 && !pushBatch\.nonStandardConfirmed/)
@@ -841,16 +836,16 @@ test('non-standard names require explicit manual confirmation before dispatch', 
 test('batch confirmation checks standard-name overrides and blocks duplicate versions', () => {
   const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
 
-  assert.match(view, /alreadySelectedDocument\(next, file\)/)
-  assert.match(view, /同一 PDM 文件只能选择一个版本/)
+  assert.match(browserSource, /alreadySelectedDocument\(next, file\)/)
+  assert.match(browserSource, /同一 PDM 文件只能选择一个版本/)
   assert.match(view, /hasNameMismatch\(item\)/)
-  assert.match(view, /name_check_confirmed:/)
+  assert.match(batchSource, /name_check_confirmed:/)
   assert.match(view, /standard_override_confirmed/)
   assert.match(view, /@update:value="invalidateBatchConfirmation\(item\)"/)
-  assert.match(view, /pushBatch\.nonStandardConfirmed = false/)
-  assert.match(view, /pushBatch\.overrideConfirmed = false/)
+  assert.match(batchSource, /pushBatch\.nonStandardConfirmed = false/)
+  assert.match(batchSource, /pushBatch\.overrideConfirmed = false/)
   assert.match(view, /overrideBatchCount > 0 && !pushBatch\.overrideConfirmed/)
-  assert.match(view, /for \(const \[index, item\] of pushBatch\.items\.entries\(\)\)/)
+  assert.match(batchSource, /for \(const \[index, item\] of pushBatch\.items\.entries\(\)\)/)
 })
 
 test('retry only continues a matching dispatch after reading its current status', async () => {
@@ -881,8 +876,8 @@ test('retry only continues a matching dispatch after reading its current status'
   assert.deepEqual(calls, ['/api/v1/cutting/dispatches/task%2F1'])
 
   const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
-  assert.match(view, /const current = await getCuttingDispatch\(item\.dispatchId\)/)
-  assert.match(view, /if \(current\.status === 'sent' \|\| !item\.retryable\) return/)
+  assert.match(batchSource, /const current = await getCuttingDispatch\(item\.dispatchId\)/)
+  assert.match(batchSource, /if \(current\.status === 'sent' \|\| !item\.retryable\) return/)
   assert.match(view, /上传结果待核对的任务须先检查魔盒/)
   assert.match(view, /核对并继续已有任务/)
   assert.match(view, /刷新清单重选/)
@@ -915,7 +910,7 @@ test('project suggestions preserve the typed search while selecting and switchin
 
 test('dispatch segments are recognized or required before a nonstandard file can be pushed', () => {
   const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
-  const source = view.slice(view.indexOf('function createPushBatchItem('), view.indexOf('function hasNameMismatch('))
+  const source = batchSource.slice(batchSource.indexOf('function createPushBatchItem('), batchSource.indexOf('function hasNameMismatch('))
   const { createPushBatchItem, batchItemError } = scriptFunction('parseCuttingInstructionFilename', 'fileKey', `${source}\nreturn { createPushBatchItem, batchItemError }`)(parseCuttingInstructionFilename, file => file.document_id)
   const standard = createPushBatchItem({ document_id: 'standard', document_no: 'Z806C080A001.gen' })
   assert.equal(standard.segmentName, '806C')
@@ -961,4 +956,67 @@ test('history retries require a segment for nonstandard files and cancellation n
   await executeSaved({ ...manual, dispatch_id: 'uploaded', remote_task_id: 'remote' })
   assert.deepEqual(calls[1], ['uploaded', undefined])
   assert.doesNotMatch(view, /window\.(?:confirm|prompt)\(/)
+})
+
+function batchWorkflow(api = {}) {
+  const calls = { create: [], execute: [], refresh: 0 }
+  const inputs = {
+    selectedFiles: ref(new Map([['one', selectableFile('one')], ['two', selectableFile('two')]])),
+    dispatchForm: { machineIp: '10.147.1.40' }, systemStatus: ref({ can_push: true }), operatingId: ref(''),
+    loadHistory: async () => { calls.refresh++ }, refreshVisibleFileStatuses: async () => { calls.refresh++ },
+    loadFiles: async () => {}, showNotice() {},
+  }
+  inputs.clearSelectedFiles = () => { inputs.selectedFiles.value = new Map() }
+  const bindings = {
+    ref, computed, reactive, fileKey, parseCuttingInstructionFilename, matchesDispatchParameters,
+    createCuttingDispatchBatch: async payload => {
+      calls.create.push(payload)
+      return { items: payload.items.map((item, index) => ({ ...item, status: 'created', dispatch: { dispatch_id: `d${index + 1}` } })) }
+    },
+    executeCuttingDispatch: async id => { calls.execute.push(id); return {} },
+    getCuttingDispatch: async () => { throw new Error('状态不可用') },
+    ...api,
+  }
+  const useBatch = scriptFunction(...Object.keys(bindings), `${hookScript(batchSource)}; return useCuttingDispatchBatch`)(...Object.values(bindings))
+  const state = useBatch(inputs)
+  state.openPushBatch()
+  return { ...state, inputs, calls }
+}
+
+test('batch composable preserves sequential execution, blocks concurrent submit and refreshes both result consumers', async () => {
+  const pending = []
+  const batch = batchWorkflow({ executeCuttingDispatch: id => new Promise(resolve => pending.push({ id, resolve })) })
+  const run = batch.submitPushBatch()
+  await flushDispatch()
+  assert.equal(batch.pushBatch.saving, true)
+  assert.deepEqual(pending.map(item => item.id), ['d1'])
+  await batch.submitPushBatch()
+  assert.equal(batch.calls.create.length, 1)
+  assert.deepEqual(batch.calls.create[0].items.map(item => item.document_id), ['one', 'two'])
+  pending[0].resolve({})
+  await flushDispatch()
+  assert.deepEqual(pending.map(item => item.id), ['d1', 'd2'])
+  pending[1].resolve({})
+  await run
+  assert.equal(batch.pushBatch.saving, false)
+  assert.equal(batch.pushBatch.resultsReady, true)
+  assert.equal(batch.pushBatch.completed, 2)
+  assert.equal(batch.inputs.selectedFiles.value.size, 0)
+  assert.equal(batch.calls.refresh, 2)
+  assert.deepEqual(batch.pushBatch.items.map(item => item.status), ['sent', 'sent'])
+})
+
+test('batch composable validates before creating tasks and preserves an uncertain execution for explicit status checking', async () => {
+  const batch = batchWorkflow({ executeCuttingDispatch: async () => { throw new Error('连接中断') } })
+  batch.pushBatch.items[0].segmentName = ''
+  await batch.submitPushBatch()
+  assert.equal(batch.calls.create.length, 0)
+  assert.match(batch.pushBatch.error, /参数不完整/)
+  batch.pushBatch.items[0].segmentName = '806C'
+  await batch.submitPushBatch()
+  assert.equal(batch.calls.create.length, 1)
+  assert.equal(batch.pushBatch.saving, false)
+  assert.equal(batch.inputs.operatingId.value, '')
+  assert.equal(batch.pushBatch.resultsReady, true)
+  assert.ok(batch.pushBatch.items.every(item => item.status === 'failed' && !item.retryable && /不要重复上传/.test(item.error)))
 })

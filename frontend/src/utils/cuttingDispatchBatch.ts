@@ -1,3 +1,9 @@
+import type { CuttingFile } from '../types/cutting'
+
+export function cuttingFileKey(file: CuttingFile) {
+  return JSON.stringify([file.document_id, file.version_id, file.normalized_path])
+}
+
 export function matchesDispatchParameters(current: { document_id?: string; version_id?: string | null; relative_path?: string; machine_ip?: string; material?: string | null; thickness?: number | string | null; quantity?: number | string } | null | undefined, item: { documentId: string; versionId?: string | null; filePath?: string; material?: string; thickness?: number | string; quantity?: number | string } | null | undefined, machineIp: string) {
   if (!current || !item) return false
   const normalizePath = (value: unknown) => String(value || '').replaceAll('\\', '/')
