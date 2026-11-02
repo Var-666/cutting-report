@@ -48,11 +48,13 @@
 | `database/` | 数据库客户端、参数化 SQL、Repository、连接、事务和迁移 | 依赖模型、配置及基础机制；不调用业务 Service、HTTP 路由或后台调度。确认归属、唯一性、并发冲突等必须原子判断的约束留在仓储事务内 |
 | `workers/`、`worker.py` | 调度、任务领取、租约、退避、容量、停止及业务执行入口 | 调用 Service；队列状态可直接使用协调仓储，不复制报表统计和业务流程，不依赖 HTTP 层 |
 | `models/` | 已有领域数据、请求/响应契约和共享值类型 | 不依赖 API、Service、Worker 或 Repository；不为分层强行复制同一数据结构 |
-| `core/`（当前未建立） | 确有多个模块使用、无业务语义的基础机制 | 仅在实际改动需要时考虑提取取消、期限或进程锁等机制；先复用现有模块，不预建目录，不放业务字段注册、统计口径或通用 Service 基类 |
+| `core/` | 已复用的取消注册表、执行期限和进程锁 | 实现统一位于 `request_cancellation.py`、`report_deadline.py`、`process_lock.py`；不依赖 API、Service 或数据库，不放业务字段注册、统计口径或通用 Service 基类 |
 
 - 默认业务调用方向为 `api/workers → services → database`，模型和配置供各层使用。`main.py`、`worker.py`、`services/application_runtime.py`、`services/device_runtime.py` 是入口/装配边界，允许同时依赖 Service、Repository 和 Worker；不能因这类导入机械判定为反向依赖。
 - 现有 `services/frontend_static.py` 是供 Web 入口使用的 HTTP 静态资源适配，不属于业务 Service；保留位置，不向其中增加业务流程，也不由业务 Service 引用它。
-- `database/` 现有对 `services/condition_service.py`、取消/期限/锁机制的导入按实际职责记录为存量边界问题；暂时复用，禁止复制实现或继续往基础机制中加入业务依赖。小型响应封装不必为消除重复而建立公共框架。
+- 数据库层直接使用 `core/` 的取消、期限和锁机制；旧 `services/` 同名入口仅导出同一实现，不能复制注册表、ContextVar 或重入状态。SQLite 执行租约和提交围栏继续留在 `database/sqlite.py`。
+- 条件查询契约、字段描述和通用值校验在 `models/conditions.py`；数据集字段/排序列映射在 `database/condition_fields.py`，SQL 编译和 Mock 求值在 `database/condition_query.py`。`services/condition_service.py` 提供公开 schema 和旧调用入口，Repository 不反向引用该 Service。小型响应封装不必为消除重复而建立公共框架。
+- 告警事件归并、发送认领、状态转换、唯一性和租约判断必须在原事务内完成；扫描窗口、调度日期、模型/文件生成、SMTP 和重试策略由现有 Service 编排。不能为缩短 Repository 把原子校验移出事务。
 
 ### Runtime、配置与事务
 

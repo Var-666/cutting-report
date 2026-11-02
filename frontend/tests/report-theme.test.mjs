@@ -48,6 +48,17 @@ test('standard report surfaces, controls and feedback contain no fixed light col
   assert.match(read('App.vue'), /reportThemeVariables\(vars.value\)/)
 })
 
+test('highlighted report rows composite over the table surface so fixed cells stay opaque', () => {
+  const styles = parse(read('components/AppReportTable.vue')).descriptor.styles[0].content
+  const backgrounds = new Map()
+  postcss.parse(styles).walkRules(rule => {
+    if (!/\.n-data-table-tr\.(selected|invalid)\b/.test(rule.selector)) return
+    rule.walkDecls('background', declaration => backgrounds.set(rule.selector, declaration.value))
+  })
+  assert.equal(backgrounds.size, 2)
+  for (const value of backgrounds.values()) assert.match(value, /var\(--n-td-color\)/)
+})
+
 test('other business pages and shared states use theme colors, preserving only the export preview palette', () => {
   for (const path of ['views/AlarmCenterView.vue','views/CuttingDispatchView.vue','views/DatabaseView.vue','views/AutomationView.vue','views/AdminAccountsView.vue','views/ModelUsageView.vue','components/ManagementPageHero.vue','components/CatalogTreeNode.vue','components/EmailDeliveryResolution.vue','components/DownloadPdfButton.vue','components/AppIcon.vue','assets/style.css']) {
     const source = read(path)

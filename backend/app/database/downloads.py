@@ -4,7 +4,8 @@ import json
 
 from app.database.sqlite import SQLiteRepository
 from app.models.conditions import ConditionGroup
-from app.services.condition_service import compile_conditions, fields_for, prepare_sort, sort_expression
+from app.database.condition_fields import fields_for, sort_expression
+from app.database.condition_query import compile_conditions, prepare_sort
 
 
 class DownloadRepository(SQLiteRepository):

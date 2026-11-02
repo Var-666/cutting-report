@@ -6,7 +6,7 @@ from pathlib import Path
 import sqlite3
 
 from app.database.sqlite import SQLiteDatabase
-from app.services.process_lock import FileLock
+from app.core.process_lock import FileLock
 
 
 def execute_script(connection: sqlite3.Connection, script: str) -> None:

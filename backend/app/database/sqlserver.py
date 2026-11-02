@@ -5,8 +5,8 @@ from math import ceil
 from typing import Any, Iterator
 
 from app.config import Settings
-from app.services.request_cancellation import cancellable_cursor
-from app.services.report_deadline import ensure_time_remaining, remaining_seconds
+from app.core.request_cancellation import cancellable_cursor
+from app.core.report_deadline import ensure_time_remaining, remaining_seconds
 
 
 class SqlServerConfigurationError(RuntimeError):

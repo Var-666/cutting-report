@@ -13,8 +13,8 @@ from zoneinfo import ZoneInfo
 
 from app.config import Settings
 from app.models.welding import WeldingQuery
-from app.services.report_deadline import remaining_seconds
-from app.services.request_cancellation import SqlRequestCancelled, current_request_id, sql_request_cancellations
+from app.core.report_deadline import remaining_seconds
+from app.core.request_cancellation import SqlRequestCancelled, current_request_id, sql_request_cancellations
 
 
 logger = logging.getLogger(__name__)

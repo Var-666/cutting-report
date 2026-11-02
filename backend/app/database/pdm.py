@@ -6,8 +6,9 @@ from time import monotonic
 
 from app.config import Settings
 from app.database.sqlserver import SqlServerClient
-from app.models.conditions import ConditionGroup
-from app.services.condition_service import ConditionError, compile_conditions, fields_for, matches_conditions, prepare, prepare_sort, sort_expression, sort_mock_rows
+from app.models.conditions import ConditionError, ConditionGroup, prepare
+from app.database.condition_fields import fields_for, sort_expression
+from app.database.condition_query import compile_conditions, matches_conditions, prepare_sort, sort_mock_rows
 
 
 class PdmRepository(Protocol):

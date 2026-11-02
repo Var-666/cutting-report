@@ -295,13 +295,19 @@ const fileTableColumns = [
 ] as const
 
 const batchTableColumns = [
-  { key: 'c0', title: "文件 / 识别结果", minWidth: 220, align: 'left', fixed: 'left' },
+  { key: 'c0', title: "文件名", minWidth: 220, align: 'left', fixed: 'left' },
+  { key: 'c8', title: "命名检查", width: 104, align: 'center' },
+  { key: 'c9', title: "识别材质", width: 96, align: 'left' },
+  { key: 'c10', title: "识别板厚（mm）", width: 128, align: 'right' },
   { key: 'c1', title: "分段名", width: 140, align: 'left', ellipsis: false },
   { key: 'c2', title: "材质", width: 120, align: 'left', ellipsis: false },
-  { key: 'c3', title: "板厚（mm）", width: 104, align: 'right', ellipsis: false },
-  { key: 'c4', title: "数量", width: 88, align: 'right', ellipsis: false },
-  { key: 'c5', title: "状态", width: 200, align: 'center' },
-  { key: 'c6', title: "操作", width: 260, align: 'center', fixed: 'right', ellipsis: false }
+  { key: 'c3', title: "板厚（mm）", width: 128, align: 'right', ellipsis: false },
+  { key: 'c4', title: "数量", width: 112, align: 'right', ellipsis: false },
+  { key: 'c11', title: "参数核对", minWidth: 260, align: 'left' },
+  { key: 'c5', title: "派发状态", width: 160, align: 'center' },
+  { key: 'c12', title: "任务编号", width: 240, align: 'left' },
+  { key: 'c13', title: "处理说明", minWidth: 260, align: 'left' },
+  { key: 'c6', title: "操作", width: 300, align: 'center', fixed: 'right', ellipsis: false }
 ] as const
 </script>
 
@@ -469,12 +475,18 @@ const batchTableColumns = [
 
           <div class="push-batch-table-wrap">
             <AppReportTable class="push-batch-table" :columns="batchTableColumns" :items="pushBatch.items" :row-key="item => item.referenceKey" :paginate="false" :row-class-name="item => (!pushBatch.resultsReady && (batchItemError(item) || !item.parsed || hasNameMismatch(item))) ? 'invalid' : ''" :loading="pushBatch.saving">
-        <template #c0="{ row: item }"><div class="push-batch-file"><strong>{{ item.filename }}</strong><small>版本 {{ item.version }}</small><span v-if="item.parsed" class="recognized">已识别：{{ item.parsed.material }} · {{ item.parsed.thickness.toFixed(1) }} mm</span><span v-else class="manual">非标准名，请手工填写参数</span><span v-if="hasNameMismatch(item)" class="manual">加工参数与标准名不一致，请人工复核</span></div></template>
+        <template #c0="{ row: item }"><strong class="push-batch-file">{{ item.filename }}</strong></template>
+        <template #c8="{ row: item }"><span class="filename-standard" :class="{ warning: !item.parsed }">{{ item.parsed ? '标准名' : '非标准名' }}</span></template>
+        <template #c9="{ row: item }">{{ item.parsed?.material || '--' }}</template>
+        <template #c10="{ row: item }">{{ item.parsed ? item.parsed.thickness.toFixed(1) : '--' }}</template>
+        <template #c11="{ row: item }"><span class="push-batch-review" :class="{ manual: batchItemError(item) || !item.parsed || hasNameMismatch(item) }">{{ batchItemError(item) || (hasNameMismatch(item) ? '加工参数与标准名不一致，请人工复核' : item.parsed ? '与标准名一致' : '非标准名，请人工核对参数') }}</span></template>
+        <template #c12="{ row: item }">{{ item.dispatchId || '--' }}</template>
+        <template #c13="{ row: item }">{{ item.error || '--' }}</template>
         <template #c1="{ row: item }"><span v-if="item.parsed">{{ item.segmentName }}</span><NInput v-else v-model:value.trim="item.segmentName" :name="`segment_${item.referenceKey}`" :aria-label="`${item.filename} 分段名`" autocomplete="off" :disabled="pushBatch.saving || pushBatch.resultsReady" :maxlength="80" placeholder="例如：806C" @update:value="invalidateBatchConfirmation(item)" :input-props="{ 'name': `segment_${item.referenceKey}`, 'aria-label': `${item.filename} 分段名`, 'autocomplete': 'off' }" /></template>
         <template #c2="{ row: item }"><NInput v-model:value.trim="item.material" :name="`material_${item.referenceKey}`" :aria-label="`${item.filename} 材质`" autocomplete="off" :disabled="pushBatch.saving || pushBatch.resultsReady" :maxlength="80" placeholder="例如：A0、B0、SS" @update:value="invalidateBatchConfirmation(item)" :input-props="{ 'name': `material_${item.referenceKey}`, 'aria-label': `${item.filename} 材质`, 'autocomplete': 'off' }" /></template>
         <template #c3="{ row: item }"><NInputNumber :value="item.thickness === '' ? null : Number(item.thickness)" @update:value="item.thickness = $event ?? ''; invalidateBatchConfirmation(item)" :name="`thickness_${item.referenceKey}`" :aria-label="`${item.filename} 板厚`" autocomplete="off" :disabled="pushBatch.saving || pushBatch.resultsReady" inputmode="decimal" :min="0.01" :max="1000" :step="0.01" placeholder="例如：12.0…" :input-props="{ 'name': `thickness_${item.referenceKey}`, 'aria-label': `${item.filename} 板厚`, 'autocomplete': 'off', 'inputmode': 'decimal' }" /></template>
         <template #c4="{ row: item }"><NInputNumber v-model:value="item.quantity" :name="`quantity_${item.referenceKey}`" :aria-label="`${item.filename} 数量`" autocomplete="off" :disabled="pushBatch.saving || pushBatch.resultsReady" inputmode="numeric" :min="1" :max="10000" :step="1" @update:value="invalidateBatchConfirmation(item)" :input-props="{ 'name': `quantity_${item.referenceKey}`, 'aria-label': `${item.filename} 数量`, 'autocomplete': 'off', 'inputmode': 'numeric' }" :precision="0" /></template>
-        <template #c5="{ row: item }"><div class="push-batch-result"><span :class="item.status">{{ batchStatusLabel(item) }}</span><small v-if="item.dispatchId" :title="item.dispatchId">任务 {{ item.dispatchId }}</small><small v-if="item.error" :title="item.error">{{ item.error }}</small></div></template>
+        <template #c5="{ row: item }"><div class="push-batch-result"><span :class="item.status">{{ batchStatusLabel(item) }}</span></div></template>
         <template #c6="{ row: item }"><div class="push-batch-actions"><template v-if="pushBatch.resultsReady"><NButton v-if="item.status === 'failed' && isStaleFileError(item)" attr-type="button" :disabled="pushBatch.saving" @click="refreshBatchCatalog">刷新清单重选</NButton><NButton v-else-if="item.status === 'failed' && (!item.dispatchId || item.retryable)" attr-type="button" :disabled="pushBatch.saving" @click="retryBatchItem(item)">{{ item.dispatchId ? '重试当前任务' : '重试创建并派发' }}</NButton><NButton v-if="item.status === 'duplicate' && item.dispatchId && (!item.statusChecked || item.retryable)" attr-type="button" :disabled="pushBatch.saving" @click="retryBatchItem(item)">核对并继续已有任务</NButton><NButton v-if="item.dispatchId && (item.status === 'failed' || item.status === 'duplicate')" attr-type="button" :disabled="pushBatch.saving" @click="checkBatchItem(item)">核对状态</NButton><span v-if="item.status === 'sent'">已完成</span></template><NButton v-else class="push-batch-remove" attr-type="button" :disabled="pushBatch.saving" @click="removePushBatchItem(item)">移除</NButton></div></template>
       </AppReportTable>
           </div>
@@ -629,27 +641,23 @@ const batchTableColumns = [
 .push-batch-progress span,.push-batch-progress small { color:var(--text-color-3); font-size:var(--font-auxiliary); }
 .push-batch-progress progress { width:100%; height:7px; margin:8px 0 4px; accent-color:var(--cyan); }
 .push-batch-table-wrap { overflow:auto; max-height:410px; border:1px solid var(--theme-border-color); }
-.push-batch-table { width:100%; min-width:920px; border-collapse:collapse; }
+.push-batch-table { width:100%; min-width:0; }
+.push-batch-table :deep(.n-data-table-td) { white-space:nowrap; }
 .push-batch-table th,.push-batch-table td { padding:10px; border-bottom:1px solid var(--theme-border-color); text-align:left; font-size:var(--font-auxiliary); vertical-align:middle; }
 .push-batch-table th { position:sticky; z-index:1; top:0; color:var(--theme-on-primary-color); background:var(--theme-table-header-color); font-size:var(--font-auxiliary); }
 .push-batch-table tr.invalid { background:rgb(var(--warning-color) / .1); }
 .push-batch-table input { width:100%; min-width:82px; height:34px; padding:0 9px; }
-.push-batch-file { width:290px; }
-.push-batch-file strong,.push-batch-file small,.push-batch-file span { display:block; }
-.push-batch-file strong { max-width:280px; overflow:hidden; color:var(--navy); text-overflow:ellipsis; white-space:nowrap; font-size:var(--font-auxiliary); }
-.push-batch-file small { margin-top:3px; color:var(--muted); }
-.push-batch-file span { margin-top:5px; font-size:var(--font-auxiliary); }
-.push-batch-file .recognized { color:rgb(var(--info-color)); }
-.push-batch-file .manual { color:rgb(var(--warning-color)); }
-.push-batch-result { width:170px; margin-inline:auto; }
+.push-batch-file { display:block; overflow:hidden; color:var(--navy); text-overflow:ellipsis; white-space:nowrap; font-size:var(--font-auxiliary); }
+.push-batch-review { color:var(--text-color-2); }
+.push-batch-review.manual { color:rgb(var(--warning-color)); }
+.push-batch-result { white-space:nowrap; }
 .push-batch-result > span { display:inline-flex; padding:4px 7px; color:rgb(var(--warning-color)); border-radius:999px; background:rgb(var(--warning-color) / .1); white-space:nowrap; }
 .push-batch-result > span.sent,.push-batch-result > span.saved { color:var(--text-color-1); background:rgb(var(--success-color) / .1); }
 .push-batch-result > span.failed { color:rgb(var(--error-color)); background:rgb(var(--error-color) / .1); }
 .push-batch-result > span.pushing { color:var(--text-color-1); background:rgb(var(--info-color) / .1); }
 .push-batch-result > span.duplicate { color:rgb(var(--warning-color)); background:rgb(var(--warning-color) / .1); }
-.push-batch-result small { display:block; max-width:220px; margin-top:5px; color:var(--text-color-2); overflow-wrap:anywhere; }
 .push-batch-remove { min-height:30px; padding:0 8px; color:var(--text-color-2); border:1px solid var(--theme-border-color); background:rgb(var(--container-bg-color)); }
-.push-batch-actions { min-width:140px; display:flex; align-items:center; justify-content:center; gap:6px; }
+.push-batch-actions { display:flex; align-items:center; justify-content:center; gap:6px; flex-wrap:nowrap; white-space:nowrap; }
 .push-batch-actions button { display:block; min-height:30px; margin:3px 0; padding:0 8px; }
 .push-batch-actions button:disabled { cursor:not-allowed; }
 .push-batch-actions span { color:var(--text-color-1); font-size:var(--font-auxiliary); }

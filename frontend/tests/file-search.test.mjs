@@ -819,7 +819,22 @@ test('direct dispatch builds independent PDM references and executes tasks seque
   assert.match(batchSource, /file_path: item\.filePath/)
   assert.match(batchSource, /for \(const item of createdItems\)/)
   assert.match(batchSource, /await executeCuttingDispatch\(item\.dispatchId, item\.segmentName\)/)
-  assert.match(view, /非标准名，请手工填写参数/)
+  assert.match(view, /非标准名，请人工核对参数/)
+})
+
+test('batch dispatch uses separate single-line columns for recognition and results', () => {
+  const view = readSource('views/CuttingDispatchView.vue')
+  const columns = view.slice(view.indexOf('const batchTableColumns = ['), view.indexOf('</script>'))
+  for (const title of ['文件名', '命名检查', '识别材质', '识别板厚（mm）', '参数核对', '派发状态', '任务编号', '处理说明']) {
+    assert.ok(columns.includes(`title: "${title}"`), title)
+  }
+  assert.ok(!columns.includes('title: "版本"'))
+  const table = view.slice(view.indexOf('<AppReportTable class="push-batch-table"'), view.indexOf('<div v-if="!pushBatch.resultsReady" class="push-batch-safety">'))
+  assert.doesNotMatch(table, /<small|<br\b/)
+  for (const value of ['item.dispatchId', 'item.error', 'batchItemError(item)', 'item.parsed.thickness.toFixed(1)']) assert.ok(table.includes(value), value)
+  assert.ok(!table.includes('item.version'))
+  assert.match(view, /\.push-batch-table :deep\(\.n-data-table-td\) \{ white-space:nowrap;/)
+  assert.match(view, /\.push-batch-actions \{[^}]*flex-wrap:nowrap; white-space:nowrap;/)
 })
 
 test('non-standard names require explicit manual confirmation before dispatch', () => {

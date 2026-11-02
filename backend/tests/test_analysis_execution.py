@@ -6,7 +6,8 @@ from fastapi import HTTPException
 
 from app.api import analysis as analysis_api
 from app.config import Settings
-from app.services import analysis_execution, llm_service, report_deadline
+from app.services import analysis_execution, llm_service
+from app.core import report_deadline
 from app.services.analysis_execution import (
     analysis_observation, analysis_operation, analysis_prepared, analysis_queue_remaining, analysis_stage,
 )
