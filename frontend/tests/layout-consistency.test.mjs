@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs'
 import { parse } from '@vue/compiler-sfc'
 import { computed, reactive } from 'vue'
 import { transformSync } from 'esbuild'
+import { getAutomationConfiguration, saveAutomationConfiguration } from '../src/api/automation.ts'
 
 function descriptor(name, folder = 'views') {
   const source = readFileSync(new URL(`../src/${folder}/${name}.vue`, import.meta.url), 'utf8')
@@ -733,11 +734,10 @@ test('equivalent page headers and report query bars share one layout system', ()
   assert.doesNotMatch(standardQueryStyles, /app-select__trigger/)
 })
 
-test('report automation exposes secure live runtime configuration', () => {
+test('report automation exposes secure live runtime configuration', async t => {
   const automation = descriptor('AutomationView')
   const template = automation.template.content
   const script = automation.scriptSetup.content
-  const api = readFileSync(new URL('../src/api/automation.ts', import.meta.url), 'utf8')
 
   assert.match(template, /运行与邮件参数/)
   assert.match(template, /即时生效/)
@@ -747,8 +747,19 @@ test('report automation exposes secure live runtime configuration', () => {
   assert.match(readFileSync(new URL('../src/composables/useAutomationConfiguration.ts', import.meta.url), 'utf8'), /smtp_password: configuration\.smtp_password \|\| null/)
   assert.match(readFileSync(new URL('../src/composables/useAutomationConfiguration.ts', import.meta.url), 'utf8'), /configurationMessage\.value = result\.message[\s\S]*?await refresh\(\)/)
   assert.match(script, /Promise\.all\(\[loadConfiguration\(\), loadAll\(\)\]\)/)
-  assert.match(api, /export function getAutomationConfiguration\(\)/)
-  assert.match(api, /export function saveAutomationConfiguration\(payload: AutomationConfiguration\)/)
+  const calls = []
+  const result = { saved: true, restart_required: false, message: '已生效' }
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    calls.push({ url, options })
+    return new Response(JSON.stringify({ success: true, data: result }), { headers: { 'Content-Type': 'application/json' } })
+  })
+  assert.deepEqual(await getAutomationConfiguration(), result)
+  const payload = { automation_enabled: true, smtp_host: 'smtp.example.com', smtp_password: null }
+  assert.deepEqual(await saveAutomationConfiguration(payload), result)
+  assert.deepEqual(calls.map(call => new URL(call.url, 'http://test').pathname), Array(2).fill('/api/v1/automation/configuration'))
+  assert.equal(calls[1].options.method, 'PUT')
+  assert.deepEqual(JSON.parse(calls[1].options.body), payload)
+  assert.ok(calls.every(call => call.options.credentials === 'same-origin'))
 })
 
 test('leadership report keeps refresh automatic and exposes only the normal query action', () => {

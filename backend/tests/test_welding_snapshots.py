@@ -284,8 +284,8 @@ def test_refresh_plan_warms_each_default_page_with_homepage_first(configured, mo
             return datetime(selected.year, selected.month, selected.day, tzinfo=zone)
     monkeypatch.setattr('app.services.welding_service.datetime', Clock)
     periods = [(payload['query']['start'], payload['query']['end']) for payload, _ in service.refresh_plan()]
-    assert periods == [((selected - timedelta(days=6)).isoformat(), selected.isoformat()), *[(selected.isoformat(), selected.isoformat())] * 4]
-    assert [payload['report_type'] for payload, _ in service.refresh_plan()] == ['dashboard', 'page:daily', 'page:jobs', 'page:parts', 'page:equipment']
+    assert periods == [((selected - timedelta(days=6)).isoformat(), selected.isoformat()), *[(selected.isoformat(), selected.isoformat())] * 3]
+    assert [payload['report_type'] for payload, _ in service.refresh_plan()] == ['dashboard', 'page:daily', 'page:jobs', 'page:parts']
 
 
 @pytest.mark.parametrize('kind', ['daily', 'jobs', 'parts', 'equipment'])
@@ -306,7 +306,7 @@ def test_every_page_reads_one_coherent_snapshot_and_refreshes_only_its_own_stati
     service.refresh_summary(task['payload']['report_type'], task['payload']['query'], requested_at=task['created_at'])
     queue.finish_task(task, owner)
     first = service.page(kind, selected)
-    assert computed == [kind]
+    assert computed == ['daily' if kind == 'equipment' else kind]
     assert source.calls['sessions'] == 1, 'statistics, total and rows must share one source transaction'
     assert first['query']['page'] == 2 and first['query']['device_no'] == 0
     if kind == 'parts':
@@ -327,6 +327,46 @@ def test_every_page_reads_one_coherent_snapshot_and_refreshes_only_its_own_stati
     with pytest.raises(WeldingUnavailable):
         restarted.refresh_summary(task['payload']['report_type'], task['payload']['query'], requested_at=task['created_at'])
     assert snapshots.get(restarted._snapshot_key(WeldingQuery.model_validate(task['payload']['query']), f'page:{kind}'))
+
+
+def test_daily_equipment_paging_and_sort_share_one_coherent_snapshot(configured, monkeypatch, caplog):
+    cfg, snapshots, queue, source, service = configured
+    caplog.set_level('INFO')
+    monkeypatch.setattr(source, 'daily', lambda *_: [
+        {'production_date': f'2026-10-0{i}', 'weld_length_m': length} for i, length in [(1, 4), (2, 2), (3, 6)]])
+    monkeypatch.setattr(source, 'equipment', lambda *_: [
+        {'device_no': i, 'robot_no': 0, 'weld_length_m': length} for i, length in [(0, 4), (1, 2), (2, 6)]])
+    selected = WeldingQuery(start=date(2026, 10, 1), end=date(2026, 10, 3), serial_number='PRIVATE-SERIAL')
+    service.refresh_summary('page:daily', selected.model_dump(mode='json'))
+    key = service._snapshot_key(selected, 'page:daily')
+    stored = snapshots.get(key)
+    before = source.calls.copy()
+    source.down = True
+    pages = [('daily', selected.model_copy(update={'page': 2, 'page_size': 1, 'sort_by': 'length'})),
+             ('equipment', selected.model_copy(update={'page': 2, 'page_size': 2, 'sort_by': 'length', 'descending': False}))]
+    results = [service.page(kind, selection) for kind, selection in pages]
+    assert results[0]['items'][0]['production_date'] == '2026-10-01'
+    assert results[1]['items'] == [results[1]['equipment'][2]]
+    for (kind, selection), result in zip(pages, results):
+        assert service._snapshot_key(selection, f'page:{kind}') == key
+        assert result['report_type'] == kind and result['query'] == selection.model_dump(mode='json')
+        assert result['total'] == 3
+        assert result['data_version'] == stored.payload['data_version'] == service.version(result)
+        assert result['meta']['report_data']['data_as_of'] == stored.data_as_of.isoformat()
+        assert result['meta']['report_data']['refreshed_at'] == stored.refreshed_at.isoformat()
+    results[0]['summary']['job_count'] = -1
+    assert service.page('daily', selected)['summary']['job_count'] == 3
+    assert source.calls == before and source.calls['summary'] == 1
+    service.page('equipment', selected, force=True)
+    service.page('daily', selected, force=True)
+    with queue.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM background_tasks WHERE kind='report_snapshot_refresh' AND status='pending'").fetchone()[0] == 1
+    assert source.calls == before
+    with pytest.raises(SnapshotRefreshBusy):
+        service.page('equipment', selected.model_copy(update={'device_no': 0}))
+    assert 'report snapshot lookup' in caplog.text and 'hit=True' in caplog.text
+    assert 'welding common statistics line=welding' in caplog.text and 'elapsed_ms=' in caplog.text
+    assert 'PRIVATE-SERIAL' not in caplog.text
 
 
 def test_page_keys_isolate_pagination_sort_filters_and_changed_source(configured):

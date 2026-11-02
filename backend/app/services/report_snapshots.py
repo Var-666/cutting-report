@@ -5,6 +5,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
+import logging
 from time import monotonic, sleep, time
 from typing import Callable
 
@@ -14,6 +15,9 @@ from app.services.process_lock import FileLock
 from app.services.query_cache import QueryCache
 from app.services.report_deadline import ensure_time_remaining
 from app.services.request_cancellation import SqlRequestCancelled, current_request_id, sql_request_cancellations
+
+
+logger = logging.getLogger(__name__)
 
 
 class SnapshotRefreshBusy(RuntimeError):
@@ -49,6 +53,7 @@ class ReportSnapshotService:
                 'source_fingerprint': key.source_fingerprint}
 
     def _get(self, key: ReportKey) -> tuple[ReportSnapshot | None, str]:
+        started = monotonic()
         source = 'cache'
         def read():
             nonlocal source
@@ -56,7 +61,11 @@ class ReportSnapshotService:
             return self.repository.get(key)
         record = self._cache.read((*key.values, self.revision.version()), read,
                                   ttl=max(0, min(30, self.settings.report_data_cache_seconds)))
-        return deepcopy(record), source
+        logger.info('report snapshot lookup line=%s report_type=%s start=%s end=%s source=%s hit=%s elapsed_ms=%d',
+                    key.line_id, key.report_type, key.period_start, key.period_end, source,
+                    record is not None, round((monotonic() - started) * 1000))
+        # The record stays read-only; _result copies the payload once at the return boundary.
+        return record, source
 
     def _result(self, snapshot: ReportSnapshot, source: str, *, refreshing: bool = False, error: bool = False) -> ReportData:
         # Storage checksum; providers retain their own public report/AI version.

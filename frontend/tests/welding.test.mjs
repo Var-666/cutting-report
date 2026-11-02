@@ -89,6 +89,27 @@ test('query parameters retain zero device, robot and process codes; unknown is n
   assert.equal(parts[3].value, 2)
 })
 
+test('equivalent query defaults and field order share one HTTP request while filters stay isolated', async t => {
+  let finish
+  const gate = new Promise(resolve => { finish = resolve })
+  const calls = []
+  t.mock.method(globalThis, 'fetch', async url => {
+    calls.push(url)
+    await gate
+    return new Response(JSON.stringify({ success: true, data: { data_version: 'shared' } }), { headers: { 'Content-Type': 'application/json' } })
+  })
+  const first = getWeldingReport('daily', { start: '2026-10-01', end: '2026-10-02' })
+  const second = getWeldingReport('daily', { page_size: 20, page: 1, end: '2026-10-02', start: '2026-10-01', descending: true, sort_by: 'time', anomalies_only: false })
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(calls.length, 1)
+  finish()
+  assert.equal(await first, await second)
+  await getWeldingReport('daily', { start: '2026-10-01', end: '2026-10-02', device_no: 0 })
+  assert.equal(calls.length, 2)
+  await getWeldingReport('daily', { device_no: '0', end: '2026-10-02', start: '2026-10-01' })
+  assert.equal(calls.length, 2)
+})
+
 test('a successful JSON response cannot be downloaded as a PDF', async t => {
   t.mock.method(globalThis, 'fetch', async () => new Response('{}', { headers: { 'Content-Type': 'application/json' } }))
   await assert.rejects(downloadWelding('/api/v1/welding/export', 'test.pdf'), /文件格式不正确/)
@@ -928,9 +949,10 @@ test('workshop columns keep short names and program codes bounded and reserve co
 
 test('independent welding home waits for its catalog, keeps successful data on failure and ignores late disabled-source results', async () => {
   const selection = reactive({ id: 'welding', items: [] })
+  const route = reactive({ query: {} })
   const calls = [], cleanup = [], scope = Vue.effectScope()
   const bindings = { ...Vue, deviceSelection: selection, selectedLineType, parseWeldingRouteQuery,
-    useRoute: () => ({ query: {} }), useRouter: () => ({ push() {} }), reportToday: () => '2026-10-26',
+    useRoute: () => route, useRouter: () => ({ push() {} }), reportToday: () => '2026-10-26',
     useReportChartTheme: () => ({ colors: ref({}), vars: ref({}) }), onBeforeUnmount: fn => cleanup.push(fn),
     getWeldingReport: (kind, query, signal) => new Promise((resolve, reject) => calls.push({ kind, query, signal, resolve, reject })),
   }
@@ -946,6 +968,10 @@ test('independent welding home waits for its catalog, keeps successful data on f
   assert.equal(calls[0].query.page_size, 10)
   calls[0].resolve({ today: { job_count: 0 }, meta: {} })
   await settle()
+  route.query = { unrelated: 'navigation-state' }
+  await Vue.nextTick()
+  assert.equal(calls.length, 1, 'unrelated URL changes must not reset a successful homepage or restart polling')
+  assert.equal(home.report.value.today.job_count, 0)
   const failed = home.load(true)
   calls[1].reject(new Error('source unavailable'))
   await failed

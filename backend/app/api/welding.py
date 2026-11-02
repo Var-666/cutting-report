@@ -4,6 +4,8 @@ from contextlib import contextmanager
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from typing import Literal
+from time import monotonic
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import ValidationError
@@ -28,9 +30,14 @@ from app.services.welding_export import WeldingExport, csv_bytes, COLUMNS
 from app.services.welding_service import WeldingService
 
 
+logger = logging.getLogger(__name__)
+
+
 router = APIRouter(prefix='/api/v1/welding', tags=['welding'], dependencies=[Depends(require_admin)])
 # Explicit smaller connection pools also lower execution capacity after restart.
 welding_requests = RequestWorkload(max(1, min(4, settings.weld_db_pool_size)), '焊接数据查询', max_waiters=12, queue_timeout_seconds=5)
+# SQLite-only reads must not queue behind source exports/drilldowns. Source fallbacks retain the MySQL limit.
+snapshot_requests = RequestWorkload(4, '焊接快照读取', max_waiters=12, queue_timeout_seconds=5)
 
 # Keep parse_query's duplicate/unknown-key checks; describe its existing model without a second parser.
 _query_schema = WeldingQuery.model_json_schema()
@@ -96,39 +103,54 @@ def health(request: Request):
         return response(request, service(request).health())
 
 
-@welding_requests.route(router.get('/dashboard', response_model=None, responses={200: {'model': ApiEnvelope[WeldingJobsReport]}}, openapi_extra=WELD_REPORT_QUERY))
-def dashboard(request: Request):
-    query = parse_query(request)
-    with source_errors():
-        return response(request, service(request).dashboard(query, **({'force': True} if request.query_params.get('refresh') == 'true' else {})))
+async def _read_page(instance: WeldingService, kind: str, query: WeldingQuery, request: Request, *, force: bool = False):
+    snapshots = instance.snapshot_service
+    pool = snapshot_requests if snapshots is not None and snapshots.coordination is not None else welding_requests
+    if kind == 'dashboard':
+        return await pool.run_sync(instance.dashboard, query, **({'force': True} if force else {}), _request=request)
+    return await pool.run_sync(instance.page, kind, query, **({'force': True} if force else {}), _request=request)
 
 
-@welding_requests.route(router.get('/statistics/daily', response_model=None, responses={200: {'model': ApiEnvelope[WeldingDailyReport]}}, openapi_extra=WELD_REPORT_QUERY))
-def daily(request: Request):
-    query = parse_query(request)
-    with source_errors():
-        return response(request, service(request).page('daily', query, **({'force': True} if request.query_params.get('refresh') == 'true' else {})))
+async def _page_response(request: Request, kind: str):
+    started = monotonic()
+    query = None
+    instance = None
+    try:
+        query = parse_query(request)
+        instance = service(request)
+        with source_errors():
+            data = await _read_page(instance, kind, query, request, force=request.query_params.get('refresh') == 'true')
+        return response(request, data)
+    finally:
+        logger.info('welding page request line=%s report_type=%s start=%s end=%s request_id=%s elapsed_ms=%d',
+                    instance.settings.device_id if instance else None, kind,
+                    query.start if query else None, query.end if query else None,
+                    getattr(request.state, 'request_id', None), round((monotonic() - started) * 1000))
 
 
-@welding_requests.route(router.get('/parts', response_model=None, responses={200: {'model': ApiEnvelope[WeldingPartsReport]}}, openapi_extra=WELD_REPORT_QUERY))
-def parts(request: Request):
-    query = parse_query(request)
-    with source_errors():
-        return response(request, service(request).page('parts', query, **({'force': True} if request.query_params.get('refresh') == 'true' else {})))
+@router.get('/dashboard', response_model=None, responses={200: {'model': ApiEnvelope[WeldingJobsReport]}}, openapi_extra=WELD_REPORT_QUERY)
+async def dashboard(request: Request):
+    return await _page_response(request, 'dashboard')
 
 
-@welding_requests.route(router.get('/jobs', response_model=None, responses={200: {'model': ApiEnvelope[WeldingJobsReport]}}, openapi_extra=WELD_REPORT_QUERY))
-def jobs(request: Request):
-    query = parse_query(request)
-    with source_errors():
-        return response(request, service(request).page('jobs', query, **({'force': True} if request.query_params.get('refresh') == 'true' else {})))
+@router.get('/statistics/daily', response_model=None, responses={200: {'model': ApiEnvelope[WeldingDailyReport]}}, openapi_extra=WELD_REPORT_QUERY)
+async def daily(request: Request):
+    return await _page_response(request, 'daily')
 
 
-@welding_requests.route(router.get('/equipment/summary', response_model=None, responses={200: {'model': ApiEnvelope[WeldingEquipmentReport]}}, openapi_extra=WELD_REPORT_QUERY))
-def equipment(request: Request):
-    query = parse_query(request)
-    with source_errors():
-        return response(request, service(request).page('equipment', query, **({'force': True} if request.query_params.get('refresh') == 'true' else {})))
+@router.get('/parts', response_model=None, responses={200: {'model': ApiEnvelope[WeldingPartsReport]}}, openapi_extra=WELD_REPORT_QUERY)
+async def parts(request: Request):
+    return await _page_response(request, 'parts')
+
+
+@router.get('/jobs', response_model=None, responses={200: {'model': ApiEnvelope[WeldingJobsReport]}}, openapi_extra=WELD_REPORT_QUERY)
+async def jobs(request: Request):
+    return await _page_response(request, 'jobs')
+
+
+@router.get('/equipment/summary', response_model=None, responses={200: {'model': ApiEnvelope[WeldingEquipmentReport]}}, openapi_extra=WELD_REPORT_QUERY)
+async def equipment(request: Request):
+    return await _page_response(request, 'equipment')
 
 
 @welding_requests.route(router.get('/parts/{part_id}', response_model=None, responses={200: {'model': ApiEnvelope[WeldingPart]}}))
@@ -179,7 +201,7 @@ async def export(request: Request, report_type: Literal['daily', 'parts', 'jobs'
 async def analysis(request: Request, payload: WeldingAnalysisRequest):
     instance = service(request)
     with source_errors():
-        report = await welding_requests.run_sync(instance.page, payload.report_type, payload.query, _request=request)
+        report = await _read_page(instance, payload.report_type, payload.query, request)
     return response(request, await analysis_requests.run_sync(_analyze, instance, report, payload))
 
 

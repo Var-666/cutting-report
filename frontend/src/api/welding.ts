@@ -11,7 +11,11 @@ export function weldingQuery<T extends object>(values: T): Partial<T> {
 }
 
 export function getWeldingReport<K extends WeldingReportKind>(kind: K, values: WeldingQuery, signal?: AbortSignal, force = false) {
-  return reportCache.read(`welding:${kind}:${JSON.stringify(weldingQuery(values))}`, sharedSignal => readWeldingReport(kind, values, sharedSignal, force), { signal, force, ttl: 3000 })
+  const filters = { anomalies_only: false, page: 1, page_size: 20, sort_by: 'time', descending: true, ...weldingQuery(values) }
+  if (kind === 'dashboard') Object.assign(filters, { page: 1, page_size: 10, sort_by: 'time', descending: true })
+  const key = new URLSearchParams(Object.entries(filters).map(([name, value]) => [name, String(value)]))
+  key.sort()
+  return reportCache.read(`welding:${kind}:${key}`, sharedSignal => readWeldingReport(kind, values, sharedSignal, force), { signal, force, ttl: 3000 })
 }
 
 async function readWeldingReport<K extends WeldingReportKind>(kind: K, values: WeldingQuery, signal?: AbortSignal, force = false) {

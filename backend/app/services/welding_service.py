@@ -121,6 +121,7 @@ class WeldingService:
                 self._analyses.popitem(last=False)
 
     def report(self, kind: ReportType, query: WeldingQuery, *, export_limit: int | None = None, dashboard: bool = False, force: bool = False, live: bool = False) -> dict:
+        started = monotonic()
         repo = self.repository
         if kind == 'parts':
             query = query.model_copy(update={'part_state': query.part_state if query.part_state is not None else query.state, 'state': None})
@@ -162,12 +163,7 @@ class WeldingService:
             elif kind == 'parts':
                 raw, total = repo.parts(session, query, limit=export_limit, total=None if statistics is not None else summary['part_row_count'])
             else:
-                raw = daily if kind == 'daily' else equipment
-                column = {'time': 'production_date' if kind == 'daily' else 'device_no',
-                          'length': 'weld_length_m', 'id': 'production_date' if kind == 'daily' else 'device_no'}[query.sort_by]
-                raw = sorted(raw, key=lambda row: (row.get(column) is not None, row.get(column) or 0, row.get('robot_no') or 0), reverse=query.descending)
-                total = len(raw)
-                raw = raw[:export_limit] if export_limit is not None else raw[(query.page - 1) * query.page_size:query.page * query.page_size]
+                raw, total = self._aggregate_rows(kind, query, daily, equipment, export_limit)
             rows = [mapped_row(row, kind) for row in raw] if kind in ('parts', 'jobs') else raw
         meta = {
             'line_key': self.settings.device_id, 'timezone': self.settings.weld_db_timezone,
@@ -203,6 +199,9 @@ class WeldingService:
             payload['meta']['calculated_at'] = statistics.meta['refreshed_at']
             payload['meta']['report_data'] = {**statistics.meta, 'report_type': kind, 'data_version': payload['data_version'],
                 'details_source': 'database' if kind in ('jobs', 'parts') else statistics.meta['source']}
+        logger.info('welding report built line=%s report_type=%s start=%s end=%s live=%s export=%s elapsed_ms=%d',
+                    self.settings.device_id, 'dashboard' if dashboard else kind, query.start, query.end,
+                    live, export_limit is not None, round((monotonic() - started) * 1000))
         return payload
 
     report_types = ('daily', 'jobs', 'parts', 'equipment', 'dashboard')
@@ -218,6 +217,10 @@ class WeldingService:
         return query.model_dump(exclude=excluded) == WeldingQuery(start=query.start, end=query.end).model_dump(exclude=excluded)
 
     def _snapshot_key(self, query: WeldingQuery, report_type: str = 'statistics') -> ReportKey:
+        if report_type in ('page:daily', 'page:equipment'):
+            # Both views already contain every daily/equipment group, not raw job/part details.
+            query = self._aggregate_query(query)
+            report_type = 'page:daily'
         if report_type == 'dashboard':
             query = query.model_copy(update={'page': 1, 'page_size': 10, 'sort_by': 'time', 'descending': True})
         page = report_type == 'dashboard' or report_type.startswith('page:')
@@ -251,13 +254,36 @@ class WeldingService:
             raise ValueError('当前查询不支持统计快照')
         if report_type == 'dashboard':
             load = lambda: self.report('jobs', query, dashboard=True, live=True)
+        elif page_kind in ('daily', 'equipment'):
+            load = lambda: self.report('daily', self._aggregate_query(query), live=True)
         elif page_kind:
             load = lambda: self.report(page_kind, query, live=True)
         else:
             load = lambda: self._load_statistics_snapshot(query, report_type)
-        return self.snapshot_service.read(self._snapshot_key(query, report_type), load,
+        data = self.snapshot_service.read(self._snapshot_key(query, report_type), load,
                                           ttl=self._snapshot_ttl(query), force=force, requested_at=requested_at,
                                           background=requested_at is not None, background_only=report_type == 'dashboard' or page_kind is not None)
+        if page_kind in ('daily', 'equipment'):
+            payload = data.payload
+            payload['report_type'] = page_kind
+            payload['query'] = query.model_dump(mode='json')
+            payload['items'], payload['total'] = self._aggregate_rows(page_kind, query, payload['daily'], payload['equipment'])
+            data.meta['report_type'] = report_type
+        return data
+
+    @staticmethod
+    def _aggregate_query(query: WeldingQuery) -> WeldingQuery:
+        defaults = WeldingQuery(start=query.start, end=query.end)
+        return query.model_copy(update=defaults.model_dump(include={'page', 'page_size', 'sort_by', 'descending'}))
+
+    @staticmethod
+    def _aggregate_rows(kind: str, query: WeldingQuery, daily: list[dict], equipment: list[dict], limit: int | None = None) -> tuple[list[dict], int]:
+        rows = daily if kind == 'daily' else equipment
+        column = {'time': 'production_date' if kind == 'daily' else 'device_no',
+                  'length': 'weld_length_m', 'id': 'production_date' if kind == 'daily' else 'device_no'}[query.sort_by]
+        rows = sorted(rows, key=lambda row: (row.get(column) is not None, row.get(column) or 0, row.get('robot_no') or 0), reverse=query.descending)
+        total = len(rows)
+        return (rows[:limit] if limit is not None else rows[(query.page - 1) * query.page_size:query.page * query.page_size]), total
 
     def fetch_detail(self, report_type: str, query) -> dict:
         if report_type not in self.report_types:
@@ -280,7 +306,8 @@ class WeldingService:
             return []
         today = datetime.now(ZoneInfo(self.settings.weld_db_timezone)).date()
         homepage = WeldingQuery(start=today - timedelta(days=6), end=today, page_size=10)
-        queries = [(homepage, 'dashboard')] + [(WeldingQuery(start=today, end=today), f'page:{kind}') for kind in ('daily', 'jobs', 'parts', 'equipment')]
+        # The daily snapshot also serves equipment; keep the homepage ahead of heavier part work.
+        queries = [(homepage, 'dashboard')] + [(WeldingQuery(start=today, end=today), f'page:{kind}') for kind in ('daily', 'jobs', 'parts')]
         return [(self.snapshot_service.task_payload(self._snapshot_key(query, kind)),
                  max(30, self.settings.report_background_refresh_seconds)) for query, kind in queries]
 
@@ -292,12 +319,16 @@ class WeldingService:
         return deepcopy(self._statistics.read(scoped_key, load, ttl=ttl))
 
     def _common_statistics(self, session: WeldingSession, query: WeldingQuery) -> tuple[dict, list[dict], list[dict], list[dict], dict]:
+        started = monotonic()
         summary, daily, equipment, devices, association = self.repository.statistics(session, query)
         if len(equipment) > 10000:
             raise ValueError('设备机器人工位组合超过上限，请缩小筛选范围')
         if len(devices) > 1000:
             raise WeldingUnavailable('源库设备目录超过支持范围，请联系管理员核查')
-        return summary_values(summary), [summary_values(row) for row in daily], [summary_values(row) for row in equipment], devices, association
+        result = summary_values(summary), [summary_values(row) for row in daily], [summary_values(row) for row in equipment], devices, association
+        logger.info('welding common statistics line=%s start=%s end=%s elapsed_ms=%d',
+                    self.settings.device_id, query.start, query.end, round((monotonic() - started) * 1000))
+        return result
 
     def _report_statistics(self, session: WeldingSession, kind: ReportType, query: WeldingQuery) -> tuple[list[dict], list[dict], dict]:
         repo = self.repository

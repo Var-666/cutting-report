@@ -282,7 +282,7 @@ def api():
     app.include_router(router)
     app.include_router(lines_router)
     app.dependency_overrides[require_admin] = lambda: {'role': 'admin'}
-    app.state.welding = SimpleNamespace(settings=Settings(weld_enabled=True, llm_enabled=False))
+    app.state.welding = SimpleNamespace(settings=Settings(weld_enabled=True, llm_enabled=False), snapshot_service=None)
     return TestClient(app)
 
 
@@ -612,7 +612,8 @@ def test_pdf_and_ai_release_welding_capacity_before_slow_processing(api, monkeyp
     anyio.run(exercise)
 
 
-def test_four_http_queries_execute_and_fifth_waits_for_a_slot(api, monkeypatch):
+@pytest.mark.parametrize('has_snapshot_storage', [False, True])
+def test_four_http_queries_execute_and_fifth_waits_for_a_slot(api, monkeypatch, has_snapshot_storage):
     import asyncio
     import anyio
     import httpx
@@ -625,6 +626,8 @@ def test_four_http_queries_execute_and_fifth_waits_for_a_slot(api, monkeypatch):
     monkeypatch.setattr(pool, 'queue_timeout_seconds', 5)
     release, lock = Event(), Lock()
     counts = {'running': 0, 'peak': 0}
+    if has_snapshot_storage:
+        api.app.state.welding.snapshot_service = SimpleNamespace(coordination=None)
     def report(*args):
         with lock:
             counts['running'] += 1
@@ -649,6 +652,45 @@ def test_four_http_queries_execute_and_fifth_waits_for_a_slot(api, monkeypatch):
                 responses = await asyncio.gather(*tasks)
             assert all(response.status_code == 200 for response in responses)
             assert counts['peak'] == 4 and not pool._queue
+    anyio.run(exercise)
+
+
+def test_ready_snapshots_do_not_wait_for_busy_source_connections(api, monkeypatch):
+    import asyncio
+    import anyio
+    import httpx
+    from threading import Event, Lock
+    release, lock = Event(), Lock()
+    counts = {'running': 0}
+
+    def part(*args):
+        with lock:
+            counts['running'] += 1
+        try:
+            assert release.wait(5)
+            return {'part': {'id': 1}, 'items': []}
+        finally:
+            with lock:
+                counts['running'] -= 1
+
+    api.app.state.welding.snapshot_service = SimpleNamespace(coordination=object())
+    api.app.state.welding.part = part
+    api.app.state.welding.page = lambda *_: {'data_version': 'ready', 'meta': {'report_data': {'source': 'snapshot'}}}
+
+    async def exercise():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=api.app), base_url='http://test') as client:
+            tasks = [asyncio.create_task(client.get('/api/v1/welding/parts/1')) for _ in range(4)]
+            try:
+                with anyio.fail_after(2):
+                    while counts['running'] != 4:
+                        await anyio.sleep(0.001)
+                with anyio.fail_after(1):
+                    response = await client.get('/api/v1/welding/jobs?start=2026-10-01&end=2026-10-02')
+                assert response.status_code == 200 and response.json()['data']['data_version'] == 'ready'
+                assert not any(task.done() for task in tasks)
+            finally:
+                release.set()
+                await asyncio.gather(*tasks)
     anyio.run(exercise)
 
 

@@ -89,7 +89,8 @@ async function copy(value: string) {
 function goToPart() {
   if (detailJob.value?.serial_number) router.push({ name: 'welding-parts', query: { serial_number: detailJob.value.serial_number, start: query.value.start, end: query.value.end } })
 }
-watch(() => [deviceSelection.id, sourceEnabled.value, selectedLineType(deviceSelection.items, deviceSelection.id), route.query], () => {
+watch([() => deviceSelection.id, () => sourceEnabled.value,
+  () => selectedLineType(deviceSelection.items, deviceSelection.id), () => JSON.stringify(query.value)], () => {
   report.value = null
   detailOpen.value = false
   void load()
