@@ -102,7 +102,7 @@ class LatestProductionDate(BaseModel):
 
 class TaskConfirmation(BaseModel):
     task_id: str
-    report_id: str
+    report_id: str | None
     worker_id: str
     worker_name: str
     worker_company_no: str | None = None

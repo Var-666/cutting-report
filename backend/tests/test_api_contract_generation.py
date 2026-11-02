@@ -51,6 +51,40 @@ def test_required_dispatch_fields_cannot_silently_disappear():
         CuttingDispatch.model_validate({'dispatch_id': 'missing-required-fields'})
 
 
+@pytest.mark.parametrize('file_type', [0, 1, '0', 'GEN', None])
+def test_file_list_and_search_preserve_pdm_file_type(tmp_path, file_type):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from app.api import cutting
+    from app.api.auth import require_user
+
+    service, _, admin = _service(tmp_path)
+    raw = service.pdm.files[0]
+    raw['physical_file_type'] = file_type
+    app = FastAPI()
+    app.include_router(cutting.router)
+    app.state.cutting_dispatch = service
+    app.dependency_overrides[require_user] = lambda: admin
+
+    @app.middleware('http')
+    async def context(request, call_next):
+        request.state.request_id = 'pdm-file-type-contract'
+        return await call_next(request)
+
+    with TestClient(app) as client:
+        responses = [
+            client.get('/api/v1/cutting/files', params={'project_id': raw['project_id']}),
+            client.post('/api/v1/cutting/files/search', json={
+                'filters': {'rules': [{'field': 'document_id', 'operator': 'eq', 'value': raw['document_id']}]},
+            }),
+        ]
+        for response in responses:
+            assert response.status_code == 200, response.text
+            item = next(item for item in response.json()['data']['items'] if item['document_id'] == raw['document_id'])
+            assert item['physical_file_type'] == file_type
+            assert type(item['physical_file_type']) is type(file_type)
+
+
 def test_http_response_validation_matches_workshop_and_dispatch_records(tmp_path):
     from datetime import datetime
     from decimal import Decimal
@@ -96,7 +130,8 @@ def test_http_response_validation_matches_workshop_and_dispatch_records(tmp_path
         assert response.json()['data']['ship_no'] == 'CMYZ0177'
 
 
-def test_alarm_http_contracts_cover_empty_and_populated_reports(tmp_path):
+@pytest.mark.parametrize('priority', [1, 'high', 'medium', 'low'])
+def test_alarm_http_contracts_cover_empty_and_populated_reports(tmp_path, priority):
     from datetime import datetime
     from types import SimpleNamespace
     from zoneinfo import ZoneInfo
@@ -106,6 +141,7 @@ def test_alarm_http_contracts_cover_empty_and_populated_reports(tmp_path):
     from app.api.auth import require_admin
     from app.config import Settings
     from app.database.alarms import AlarmRepository
+    from app.services.alarm_analysis_service import AlarmAnalysisService
     from tests.test_alarm_monitor import alarm
 
     repository = AlarmRepository(tmp_path / 'alarms.db', source_name='production')
@@ -128,8 +164,21 @@ def test_alarm_http_contracts_cover_empty_and_populated_reports(tmp_path):
             assert response.status_code == 200, response.text
         repository.ingest([alarm(1, start_time='2026-10-28 08:00:00')], now=datetime(2026, 10, 28, 9, tzinfo=ZoneInfo('Asia/Shanghai')), cursor=1, debounce_minutes=10)
         incident = repository.list_incidents(None)[0]
+        facts = AlarmAnalysisService._facts([incident])
+        analysis = {
+            'summary': 'model [E001]',
+            'facts': facts,
+            'findings': [{
+                'title': '设备告警', 'analysis': '需要现场核查 [E001]',
+                'possible_causes': ['可能存在设备异常'], 'confidence': 0.6,
+                'evidence_ids': ['E001'],
+            }],
+            'actions': [{'priority': priority, 'action': '按规程核查 [E001]', 'evidence_ids': ['E001']}],
+            'limitations': ['仅依据告警记录'],
+        }
+        AlarmAnalysisService._validate(analysis, facts)
         repository.reserve_report(proposed_report_id='report', emission_key='report', machine_no='Cutter01', incident_ids=[incident['incident_id']], now='2026-10-28T09:00:00+08:00')
-        repository.complete_report('report', analysis={'summary': 'model', 'overall_risk': 'warning', 'facts': [], 'findings': [], 'actions': [], 'limitations': []}, html_relative_path='alarms/a.html', pdf_relative_path='alarms/a.pdf', pdf_filename='a.pdf', file_size=10, sha256='sha', model_status='model', completed_at='2026-10-28T09:01:00+08:00')
+        repository.complete_report('report', analysis=analysis, html_relative_path='alarms/a.html', pdf_relative_path='alarms/a.pdf', pdf_filename='a.pdf', file_size=10, sha256='sha', model_status='model', completed_at='2026-10-28T09:01:00+08:00')
         response = client.get('/api/v1/alarms/incidents/page?device_id=Cutter01')
         assert response.status_code == 200, response.text
         assert response.json()['data']['total'] == 1
@@ -141,4 +190,5 @@ def test_alarm_http_contracts_cover_empty_and_populated_reports(tmp_path):
             item = data[0] if isinstance(data, list) else data['items'][0]
             original = repository.get_report('report')
             assert original.keys() <= item.keys()
-            assert item['analysis']['summary'] == 'model'
+            assert item['analysis'] == analysis
+            assert type(item['analysis']['actions'][0]['priority']) is type(priority)

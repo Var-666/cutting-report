@@ -5,8 +5,10 @@ import re
 from typing import Any
 
 import httpx
+from pydantic import ValidationError
 
 from app.config import Settings
+from app.models.alarm_contracts import AlarmAnalysis
 from app.services.llm_service import AnalysisInputTooLarge, AnalysisOutputValidationError, request_llm_json
 
 
@@ -188,3 +190,7 @@ class AlarmAnalysisService:
             raise ValueError("告警分析缺少证据引用")
         if not references.issubset(valid_ids):
             raise ValueError("告警分析引用了不存在的证据")
+        try:
+            AlarmAnalysis.model_validate({**result, "facts": facts})
+        except ValidationError as exc:
+            raise AnalysisOutputValidationError("告警分析字段格式错误") from exc

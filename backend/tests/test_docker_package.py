@@ -91,6 +91,8 @@ def test_source_package_keeps_soybean_build_configuration_and_license(tmp_path):
     assert payload["licenses/naive-ui/LICENSE"] == b"naive-ui license"
     assert payload["licenses/pinia/LICENSE"] == b"pinia license"
     assert payload['scripts/check_welding.py'] == b'fixture'
+    assert payload['scripts/export_api_contracts.py'] == b'fixture'
+    assert payload['scripts/migrate_database.py'] == b'fixture'
     assert payload['docs/project/welding-integration.md'] == b'fixture'
     assert payload['docs/project/multi-line-report-data.md'] == b'fixture'
     assert payload['backend/app/api/welding.py'] == b'fixture'

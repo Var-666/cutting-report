@@ -1,7 +1,7 @@
 """Alarm HTTP contracts; generated frontend types must come from these models."""
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 class AlarmStatus(BaseModel):
     source_name: str
@@ -57,14 +57,14 @@ class AlarmFact(BaseModel):
 class AlarmFinding(BaseModel):
     title: str
     severity: str
-    confidence: float
+    confidence: float = Field(ge=0, le=1)
     analysis: str
     possible_causes: list[str]
     evidence_ids: list[str]
 
 
 class AlarmAction(BaseModel):
-    priority: int
+    priority: int | str
     action: str
     evidence_ids: list[str]
 

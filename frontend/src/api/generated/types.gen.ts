@@ -11,7 +11,7 @@ export type AlarmAction = {
     /**
      * Priority
      */
-    priority: number;
+    priority: number | string;
     /**
      * Action
      */
@@ -1062,7 +1062,7 @@ export type CuttingDispatch = {
     /**
      * Is Simulation
      */
-    is_simulation: number;
+    is_simulation: boolean;
     /**
      * Remote Task Id
      */
@@ -1269,7 +1269,7 @@ export type CuttingFile = {
     /**
      * Physical File Type
      */
-    physical_file_type?: string | null;
+    physical_file_type?: string | number | null;
     /**
      * Physical File Name
      */
@@ -1836,7 +1836,7 @@ export type TaskConfirmation = {
     /**
      * Report Id
      */
-    report_id: string;
+    report_id: string | null;
     /**
      * Worker Id
      */

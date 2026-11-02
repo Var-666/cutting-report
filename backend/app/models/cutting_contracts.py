@@ -61,7 +61,7 @@ class CuttingFile(BaseModel):
     physical_file_id: str | None = None
     physical_version_id: str | None = None
     physical_version_no: str | int | None
-    physical_file_type: str | None = None
+    physical_file_type: str | int | None = None
     physical_file_name: str | None
     physical_file_date: str | None
     physical_file_operator: str | None
@@ -162,7 +162,7 @@ class CuttingDispatch(BaseModel):
     quantity: int
     status: str
     source_mode: str
-    is_simulation: int
+    is_simulation: bool
     remote_task_id: str | None
     last_error: str | None
     created_by_id: str
