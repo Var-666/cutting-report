@@ -5,9 +5,10 @@ import { toError } from '../utils/errors'
 import { selectedLineType } from '../utils/productionLines.ts'
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { NModal } from 'naive-ui'
+import { NModal, NTag } from 'naive-ui'
 import ReportPeriodPicker from '../components/ReportPeriodPicker.vue'
 import AppIcon from '../components/AppIcon.vue'
+import HomeSectionHeader from '../components/HomeSectionHeader.vue'
 import WeldingKpiCards from '../components/WeldingKpiCards.vue'
 import ReportAnalysis from '../components/ReportAnalysis.vue'
 import AppSelect from '../components/AppSelect.vue'
@@ -242,11 +243,12 @@ onBeforeUnmount(() => { disposed = true; cancel() })
 
 <template>
   <div class="welding-page">
-    <section class="page-hero report-hero welding-hero">
-      <div class="report-hero-copy"><span class="report-hero-eyebrow">WELDING PRODUCTION</span><h1>{{ title }}</h1><p>{{ description }}</p></div>
-      <div class="welding-hero-mark" aria-hidden="true"><AppIcon :name="kind === 'parts' ? 'grid' : kind === 'equipment' ? 'factory' : 'activity'" :size="64" tone="current" /></div>
-    </section>
-    <section v-if="sourceEnabled" class="panel welding-filter-panel" aria-label="焊接报表查询条件">
+    <section class="panel welding-report-header">
+      <div class="page-hero report-hero welding-hero">
+        <div class="report-hero-copy"><span class="report-hero-eyebrow">WELDING PRODUCTION</span><h1>{{ title }}</h1><p>{{ description }}</p></div>
+        <div class="welding-hero-mark" aria-hidden="true"><AppIcon :name="kind === 'parts' ? 'grid' : kind === 'equipment' ? 'factory' : 'activity'" :size="40" tone="current" /></div>
+      </div>
+      <section v-if="sourceEnabled" class="welding-filter-panel" aria-label="焊接报表查询条件">
       <form @submit.prevent="submit(true)">
         <div class="welding-filters">
           <ReportPeriodPicker v-model:start-date="draft.start" v-model:end-date="draft.end" :anchor-date="today" :disabled="loading" @apply="submit(true)" @validation-error="actionError = $event" />
@@ -257,28 +259,39 @@ onBeforeUnmount(() => { disposed = true; cancel() })
           <NButton attr-type="button" :disabled="loading" @click="resetFilters">重置</NButton>
         </div>
         <div v-show="showAdvanced" id="welding-advanced" class="welding-advanced">
-          <label v-if="['jobs', 'equipment'].includes(kind)"><span>机器人编号</span><NInputNumber :value="draft.robot_no === '' ? null : Number(draft.robot_no)" @update:value="draft.robot_no = $event ?? ''" :min="0" :step="1" placeholder="全部" :precision="0" /></label>
+          <label v-if="['jobs', 'equipment'].includes(kind)"><span>机器人编号</span><NInputNumber size="large" :value="draft.robot_no === '' ? null : Number(draft.robot_no)" @update:value="draft.robot_no = $event ?? ''" :min="0" :step="1" placeholder="全部" :precision="0" /></label>
           <label v-if="['jobs', 'equipment'].includes(kind)"><span>焊接类型</span><AppSelect v-model="draft.weld_type" aria-label="焊接类型"><option value="">全部工艺</option><option :value="0">平焊包角</option><option :value="1">平焊</option><option :value="2">立焊包角</option><option :value="3">立焊</option></AppSelect></label>
-          <template v-if="kind === 'parts'"><label><span>项目编号</span><NInput v-model:value.trim="draft.project_no" :maxlength="255" placeholder="精确匹配" /></label><label><span>分段号</span><NInput v-model:value.trim="draft.section_no" :maxlength="255" /></label><label><span>工件编号</span><NInput v-model:value.trim="draft.part_no" :maxlength="255" /></label></template>
-          <template v-if="['parts', 'jobs'].includes(kind)"><label><span>工件流水号</span><NInput v-model:value.trim="draft.serial_number" :maxlength="255" placeholder="完整流水号精确匹配" /></label><label><span>{{ kind === 'parts' ? '工件' : '作业' }}状态代码（待确认）</span><NInputNumber :value="draft[kind === 'parts' ? 'part_state' : 'state'] === '' ? null : Number(draft[kind === 'parts' ? 'part_state' : 'state'])" @update:value="draft[kind === 'parts' ? 'part_state' : 'state'] = $event ?? ''" :step="1" placeholder="全部" :precision="0" /></label></template>
+          <template v-if="kind === 'parts'"><label><span>项目编号</span><NInput size="large" v-model:value.trim="draft.project_no" :maxlength="255" placeholder="精确匹配" /></label><label><span>分段号</span><NInput size="large" v-model:value.trim="draft.section_no" :maxlength="255" /></label><label><span>工件编号</span><NInput size="large" v-model:value.trim="draft.part_no" :maxlength="255" /></label></template>
+          <template v-if="['parts', 'jobs'].includes(kind)"><label><span>工件流水号</span><NInput size="large" v-model:value.trim="draft.serial_number" :maxlength="255" placeholder="完整流水号精确匹配" /></label><label><span>{{ kind === 'parts' ? '工件' : '作业' }}状态代码（待确认）</span><NInputNumber size="large" :value="draft[kind === 'parts' ? 'part_state' : 'state'] === '' ? null : Number(draft[kind === 'parts' ? 'part_state' : 'state'])" @update:value="draft[kind === 'parts' ? 'part_state' : 'state'] = $event ?? ''" :step="1" placeholder="全部" :precision="0" /></label></template>
           <label><span>排序方式</span><AppSelect v-model="draft.sort_by" aria-label="排序方式"><option value="time">时间／设备</option><option value="length">长度</option><option value="id">主键／设备</option></AppSelect></label>
           <NCheckbox v-model:checked="draft.descending" class="welding-check">降序</NCheckbox>
           <NCheckbox v-if="kind === 'jobs'" v-model:checked="draft.anomalies_only" class="welding-check">仅异常候选</NCheckbox>
         </div>
       </form>
       <p class="welding-query-note">{{ activeQuery ? `当前结果：${activeQuery.start} 至 ${activeQuery.end}` : '按作业结束时间统计，北京时间' }} · 筛选修改后点击查询，导出与 AI 使用已查询条件。</p>
+      </section>
     </section>
     <ReportFeedback v-if="!sourceEnabled" title="焊接数据库尚未启用" message="请先保存数据库连接参数并启用小组立焊接线。" action-label="配置数据库" @action="router.push('/admin/settings/database')" />
     <ReportFeedback v-else-if="error" type="error" title="焊接数据读取失败" :message="`${error}${report ? '；当前保留上次成功查询结果。' : ''}`" action-label="重试" @action="submit(true)" />
-    <ReportPanelState v-else-if="loading" type="loading" title="正在读取焊接数据" message="首次统计可能需要较长时间，准备完成后会自动显示，请勿重复刷新。" />
+    <ReportPanelState v-else-if="loading" type="loading" class="card-wrapper" title="正在读取焊接数据" message="首次统计可能需要较长时间，准备完成后会自动显示，请勿重复刷新。" />
     <ReportFeedback v-if="actionError" type="error" title="操作未完成" :message="actionError" dismissible @dismiss="actionError = ''" />
     <ReportFeedback v-if="actionNotice" title="操作完成" :message="actionNotice" dismissible @dismiss="actionNotice = ''" />
+    <div v-if="report && activeQuery" class="welding-freshness" role="status">
+      <span class="welding-freshness-date"><AppIcon name="clock" :size="14" tone="current" />数据更新：{{ report.meta.report_data?.data_as_of || report.meta.calculated_at }}</span>
+      <NTag v-if="loading" size="small" type="info" :bordered="false">正在更新，当前展示上次结果</NTag>
+      <template v-if="report.meta.report_data">
+        <NTag v-if="report.meta.report_data.refreshing" size="small" type="info" :bordered="false">后台刷新排队中</NTag>
+        <NTag v-if="report.meta.report_data.refresh_failed" size="small" type="warning" :bordered="false">刷新失败，保留上次统计</NTag>
+        <NTag v-else-if="report.meta.report_data.stale" size="small" type="warning" :bordered="false">统计已过期，等待更新</NTag>
+      </template>
+      <span v-if="report.meta.ambiguous_part_count">工件关联待核实：{{ report.meta.ambiguous_part_count }} 个流水号</span>
+    </div>
     <WeldingKpiCards v-if="sourceEnabled" :kind="kind" :report="report" :loading="loading" />
     <template v-if="report && activeQuery">
-      <div class="welding-freshness" role="status"><span>数据更新：{{ report.meta.report_data?.data_as_of || report.meta.calculated_at }}</span><span v-if="loading">正在更新，当前展示上次结果</span><template v-if="report.meta.report_data"><span v-if="report.meta.report_data.refreshing">后台刷新排队中</span><span v-if="report.meta.report_data.refresh_failed">刷新失败，保留上次统计</span><span v-else-if="report.meta.report_data.stale">统计已过期，等待更新</span></template></div>
+
       <ReportFeedback v-if="!report.summary.job_count" title="当前区间暂无可归属的作业记录" message="可调整日期或设备后重新查询；无效时间候选记录见数据核查说明。" />
-      <WeldingCharts v-else :kind="kind" :report="report" />
-      <section class="panel welding-detail-table"><header><h2>{{ kind === 'parts' ? '工件生产明细' : kind === 'jobs' ? '焊接作业明细' : kind === 'equipment' ? '机器人工位明细' : '每日生产明细' }}</h2><span>{{ report.total }} 条记录 · 分页与排序使用已查询条件</span></header><WeldingTable :kind="reportKind" :items="report.items" :total="report.total" :page="activeQuery.page" :page-size="activeQuery.page_size" :loading="loading" @page="changePage" @page-size="changePageSize" @detail="openDetail" @copy="copy" /></section>
+      <WeldingCharts v-else :kind="kind" :report="report" :loading="loading" />
+      <section class="panel welding-detail-table"><div class="welding-detail-header"><HomeSectionHeader :title="kind === 'parts' ? '工件生产明细' : kind === 'jobs' ? '焊接作业明细' : kind === 'equipment' ? '机器人工位明细' : '每日生产明细'" icon="tasks" /><span>{{ report.total }} 条记录 · 分页与排序使用已查询条件</span></div><WeldingTable :kind="reportKind" :items="report.items" :total="report.total" :page="activeQuery.page" :page-size="activeQuery.page_size" :loading="loading" @page="changePage" @page-size="changePageSize" @detail="openDetail" @copy="copy" /></section>
       <details v-if="kind === 'jobs' && report.speed_distribution?.length" class="panel welding-quality"><summary>源表速度分布（mm/min）</summary><dl><template v-for="band in report.speed_distribution" :key="band.speed_band"><dt>{{ band.speed_band }}</dt><dd>{{ band.job_count }} 次</dd></template></dl><p>只统计可归属生产日的作业；不将字段均值作为整线速度。</p></details>
       <ReportAnalysis :analysis="analysis" :loading="analyzing" :error="analysisError" :ready="!loading && Boolean(report.summary.job_count)" :action-label="analysis ? '重新生成分析' : '生成当前区间分析'" empty-message="点击“生成当前区间分析”，查看产出趋势、工艺结构和数据核查建议。" @reload="runAnalysis" @retry="runAnalysis" />
       <details class="panel welding-quality"><summary>统计口径与数据核查</summary><p v-for="notice in report.meta.notices" :key="notice">{{ notice }}</p><dl><template v-for="(label, key) in qualityLabels" :key="key"><dt>{{ label }}</dt><dd>{{ report.meta.quality[key] ?? '未提供' }}</dd></template><dt>未关联工件的有效流水号</dt><dd>{{ report.meta.unlinked_part_count ?? '未提供' }}</dd><dt>待核查关联流水号</dt><dd>{{ report.meta.ambiguous_part_count ?? '未提供' }}</dd></dl><p v-if="report.projects_truncated">项目图展示工件数最多的前100个项目，可按项目筛选查看。</p><p>源库最新更新时间：{{ sourceUpdated }}</p><p v-if="report.meta.source_info_as_of">源信息采样：{{ report.meta.source_info_as_of }}</p><p>本次计算：{{ report.meta.calculated_at }}<template v-if="report.meta.report_data">；统计截止：{{ report.meta.report_data.data_as_of }}</template></p></details>
@@ -293,5 +306,49 @@ onBeforeUnmount(() => { disposed = true; cancel() })
 </template>
 
 <style scoped>
-.welding-page{display:flex;flex-direction:column;gap:16px;min-width:0}.welding-page>.panel{margin-bottom:0}.welding-hero{padding:22px 24px;min-height:140px;border-radius:11px;background:rgb(var(--container-bg-color));border:1px solid var(--theme-border-color)}.welding-hero h1{font-size:24px;margin:8px 0}.welding-hero p{font-size:13px}.welding-hero-mark{color:rgb(var(--primary-color));padding:12px 24px;background:rgb(var(--primary-color) / .06);border-radius:16px}.welding-filter-panel{padding:16px}.welding-filters{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end}.welding-filters>.report-period-picker{flex:1 1 250px}.welding-filters>label{flex:0 1 160px;min-width:140px}.welding-filters>.report-export-menu{width:138px}.welding-filters>.n-button{height:40px}.welding-filters>.welding-query-submit{padding:0 16px;gap:0;justify-content:center;flex:0 0 112px;width:112px;min-width:112px;height:40px;min-height:40px;max-height:40px}.welding-filters :deep(.report-period-picker__trigger){height:40px;min-height:40px}.welding-filters :deep(.n-base-selection){--n-height:40px!important}.welding-filters label,.welding-advanced label{display:flex;flex-direction:column;gap:8px}.welding-filters label>span,.welding-advanced label>span{font-size:12px;color:var(--text-color-2)}.welding-advanced{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;align-items:end;margin-top:16px;padding-top:16px;border-top:1px solid var(--theme-border-color)}.welding-check{min-height:36px}.welding-query-note{margin:12px 0 0;color:var(--text-color-2);font-size:12px}.welding-freshness{display:flex;gap:8px 16px;flex-wrap:wrap;font-size:12px;color:var(--text-color-2)}.welding-detail-table,.welding-quality{padding:16px;min-width:0}.welding-detail-table header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.welding-page h2{display:flex;align-items:center;gap:8px;font-size:16px;margin:0;color:var(--text-color-1)}.welding-detail-table header{margin-bottom:16px}.welding-detail-table header span,.welding-quality p{font-size:12px;color:var(--text-color-2);line-height:1.8}.welding-quality summary{font-weight:600;cursor:pointer}.welding-quality dl{display:grid;grid-template-columns:minmax(170px,1fr) 80px;gap:8px;font-size:12px;max-width:600px}.welding-quality dd{margin:0;text-align:right;font-variant-numeric:tabular-nums}@media(max-width:600px){.welding-hero{padding:18px 16px}.welding-hero-mark{display:none}.welding-filters>label,.welding-filters>.report-period-picker{flex-basis:100%;flex-grow:1}.welding-filters>.n-button,.welding-filters>.report-export-menu{flex:1 1 calc(50% - 12px);width:auto}}
+.welding-page { display:flex; flex-direction:column; gap:var(--space-4); min-width:0; }
+.welding-page>.panel { margin-bottom:0; }
+.welding-page>.report-feedback { margin:0; }
+.welding-report-header { border-radius:var(--report-panel-radius); container:welding-report / inline-size; }
+.welding-hero { min-height:136px; padding:var(--space-6); background:linear-gradient(110deg,rgb(var(--primary-color) / .06),transparent 65%); }
+.welding-hero p { margin:var(--space-1) 0 0; color:var(--text-color-3); font-size:var(--font-page-description); line-height:1.6; }
+.welding-hero-mark { width:72px; height:72px; display:grid; place-items:center; flex-shrink:0; color:rgb(var(--primary-color)); border-radius:var(--card-radius); background:rgb(var(--primary-color) / .08); }
+.welding-filter-panel { padding:var(--space-4) var(--space-6); border-top:1px solid var(--theme-divider-color); container:welding-query / inline-size; }
+.welding-filters { display:grid; grid-template-columns:minmax(240px,1fr) minmax(140px,180px) 112px 132px 104px 72px; gap:var(--space-3); align-items:end; }
+.welding-filters>* { min-width:0; }
+.welding-filters>.report-period-picker { grid-column:auto; }
+.welding-filters>.n-button { height:var(--control-height); }
+.welding-filters>.welding-query-submit { padding:0 16px; gap:0; justify-content:center; width:100%; min-height:var(--control-height); }
+.welding-filters :deep(.report-period-picker__trigger) { height:var(--control-height); min-height:var(--control-height); }
+/* AppSelect sets its Naive height inline; keep this override within the query controls. */
+.welding-filter-panel :deep(.n-base-selection) { --n-height:var(--control-height)!important; }
+.welding-filters label,.welding-advanced label { display:flex; flex-direction:column; gap:var(--space-2); min-width:0; }
+.welding-filters label>span,.welding-advanced label>span { font-size:var(--font-control); color:var(--text-color-2); }
+.welding-advanced { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:var(--space-3); align-items:end; margin-top:var(--space-4); padding-top:var(--space-4); border-top:1px solid var(--theme-divider-color); }
+.welding-check { min-height:var(--control-height); display:flex; align-items:center; }
+.welding-query-note { margin:var(--space-3) 0 0; color:var(--text-color-3); font-size:var(--font-auxiliary); line-height:1.6; }
+.welding-freshness { display:flex; align-items:center; gap:var(--space-2) var(--space-4); flex-wrap:wrap; font-size:var(--font-auxiliary); color:var(--text-color-3); }
+.welding-freshness-date { display:inline-flex; align-items:center; gap:var(--space-2); }
+.welding-detail-table { min-width:0; border-radius:var(--report-panel-radius); }
+.welding-detail-header { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); flex-wrap:wrap; padding:var(--space-4); background:var(--panel-heading-bg); border-bottom:1px solid var(--theme-divider-color); }
+.welding-detail-header>span,.welding-quality p { font-size:var(--font-auxiliary); color:var(--text-color-3); line-height:1.8; }
+.welding-quality { padding:var(--space-4); border-radius:var(--report-panel-radius); }
+.welding-quality summary { font-size:var(--font-body); font-weight:600; cursor:pointer; }
+.welding-quality dl { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:var(--space-2) var(--space-4); font-size:var(--font-auxiliary); max-width:600px; }
+.welding-quality dt { color:var(--text-color-2); }
+.welding-quality dd { margin:0; text-align:right; font-variant-numeric:tabular-nums; }
+@container welding-query (max-width:1040px) {
+  .welding-filters { grid-template-columns:repeat(4,minmax(0,1fr)); }
+  .welding-filters>.report-period-picker { grid-column:span 3; }
+}
+@container welding-query (max-width:600px) {
+  .welding-filters { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .welding-filters>.report-period-picker,.welding-filters>label { grid-column:span 2; }
+}
+@container welding-report (max-width:600px) {
+  .welding-hero { min-height:0; padding:var(--space-4); }
+  .welding-hero-mark { display:none; }
+  .welding-filter-panel { padding:var(--space-4); }
+  .welding-advanced { grid-template-columns:minmax(0,1fr); }
+}
 </style>

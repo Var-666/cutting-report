@@ -999,7 +999,6 @@ test('welding paginated details use ten rows without an internal height limit or
   assert.match(table, /:max-height="paginate \? null : undefined"/)
   const styles = parse(source('views/WeldingReportView.vue')).descriptor.styles[0].content
   assert.doesNotMatch(styles, /--n-color(?:-hover|-focus|-pressed)?:/)
-  assert.match(styles, /\.welding-filters>\.welding-query-submit\{padding:0 16px;gap:0;justify-content:center;/)
   const fetchMock = t.mock.method(globalThis, 'fetch', async () => Response.json({ part: { id: 2 }, items: [], total: 0 }))
   await getWeldingPart(2, 3)
   const url = new URL(fetchMock.mock.calls[0].arguments[0], 'http://localhost')

@@ -2,7 +2,7 @@
 import type { WeldingReport, WeldingJobRow } from '../types/welding'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import { NButton, NCard, NEmpty, NModal } from 'naive-ui'
+import { NButton, NCard, NEmpty, NModal, NTag } from 'naive-ui'
 import AppIcon from '../components/AppIcon.vue'
 import HomeSectionHeader from '../components/HomeSectionHeader.vue'
 import WeldingKpiCards from '../components/WeldingKpiCards.vue'
@@ -49,8 +49,8 @@ const quality = computed(() => [
   { label: '存在多条工件归属的流水号', value: report.value?.meta.ambiguous_part_count },
 ])
 const links = [
-  { kind: 'daily', icon: 'chart' }, { kind: 'parts', icon: 'grid' },
-  { kind: 'jobs', icon: 'activity' }, { kind: 'equipment', icon: 'factory' },
+  { kind: 'daily', icon: 'chart' }, { kind: 'jobs', icon: 'activity' },
+  { kind: 'parts', icon: 'grid' }, { kind: 'equipment', icon: 'factory' },
 ] as const
 let controller: AbortController | undefined
 let timer: ReturnType<typeof setTimeout> | undefined
@@ -102,17 +102,24 @@ onBeforeUnmount(() => { disposed = true; generation += 1; clearTimeout(timer); c
   <div class="welding-home">
     <NCard :bordered="false" size="small" class="card-wrapper home-welcome">
       <div class="welding-welcome">
-        <div><h1>小组立焊接生产指挥中心</h1><p>今日生产概览</p><div class="welding-date"><AppIcon name="calendar" :size="16" tone="current" /><span>{{ displayDate }}</span><NButton size="small" :disabled="loading || !sourceEnabled" :loading="loading" @click="load(true)">刷新概览</NButton></div></div>
-        <div class="welding-welcome-art" aria-hidden="true"><AppIcon name="factory" :size="92" tone="current" /><AppIcon name="sparkles" :size="34" tone="current" /></div>
+        <div class="welding-welcome-copy">
+          <h1>小组立焊接生产指挥中心</h1>
+          <p>今日生产概览与近七天生产动态</p>
+          <div class="welding-date"><AppIcon name="calendar" :size="16" tone="current" /><span>{{ displayDate }}</span></div>
+        </div>
+        <div class="welding-welcome-actions">
+          <div class="welding-welcome-art" aria-hidden="true"><AppIcon name="factory" :size="72" tone="current" /><AppIcon name="sparkles" :size="24" tone="current" /></div>
+          <NButton :disabled="loading || !sourceEnabled" :loading="loading" @click="load(true)"><template #icon><AppIcon name="activity" :size="16" tone="current" /></template>刷新概览</NButton>
+        </div>
       </div>
     </NCard>
     <ReportFeedback v-if="!sourceEnabled" title="焊接数据库尚未启用" message="保存连接并启用小组立焊接线后，即可查看生产概览。" action-label="配置数据库" @action="router.push('/admin/settings/database')" />
     <ReportFeedback v-else-if="error" type="error" title="生产概览读取失败" :message="`${error}${report ? '；当前保留上次成功结果。' : ''}`" action-label="重试" @action="load(true)" />
-    <ReportPanelState v-else-if="loading && !report" type="loading" title="正在读取焊接生产概览" message="正在准备今日指标与近七天生产数据，完成后将自动显示。" />
+    <ReportPanelState v-else-if="loading && !report" type="loading" class="card-wrapper" title="正在读取焊接生产概览" message="正在准备今日指标与近七天生产数据，完成后将自动显示。" />
     <ReportFeedback v-if="notice" title="操作提示" :message="notice" dismissible @dismiss="notice = ''" />
     <WeldingKpiCards v-if="sourceEnabled" kind="dashboard" :report="report" :loading="loading" />
     <template v-if="report">
-      <div class="welding-home-meta" role="status"><span>数据更新：{{ report.meta.report_data?.data_as_of || report.meta.calculated_at }}</span><span v-if="report.meta.report_data?.refresh_failed">刷新失败，保留上次结果</span><span v-else-if="report.meta.report_data?.refreshing">后台更新中</span><span v-else-if="report.meta.report_data?.stale">数据待更新</span><span>趋势与结构：{{ query.start }} 至 {{ query.end }}{{ query.device_no !== '' ? ` · 设备 ${query.device_no}` : '' }}</span></div>
+      <div class="welding-home-meta" role="status"><AppIcon name="clock" :size="14" tone="current" /><span>数据更新：{{ report.meta.report_data?.data_as_of || report.meta.calculated_at }}</span><NTag v-if="report.meta.report_data?.refresh_failed" size="small" type="warning" :bordered="false">刷新失败，保留上次结果</NTag><NTag v-else-if="report.meta.report_data?.refreshing" size="small" type="info" :bordered="false">后台更新中</NTag><NTag v-if="report.meta.report_data?.stale" size="small" type="warning" :bordered="false">数据待更新</NTag><span>趋势与结构：{{ query.start }} 至 {{ query.end }}{{ query.device_no !== '' ? ` · 设备 ${query.device_no}` : '' }}</span></div>
       <section class="welding-home-grid" aria-label="生产趋势与工艺结构">
         <NCard :bordered="false" size="small" class="card-wrapper">
           <template #header><HomeSectionHeader title="近七天生产趋势" icon="trend" to="/admin/welding/reports/daily" action="生产统计" /></template>
@@ -138,16 +145,24 @@ onBeforeUnmount(() => { disposed = true; generation += 1; clearTimeout(timer); c
           <p class="welding-home-note">各项候选可重叠，数量不可相加；数据核查不代表设备故障。</p>
         </NCard>
       </section>
-      <NCard :bordered="false" size="small" class="card-wrapper">
+    </template>
+    <div class="welding-home-bottom" :class="{ 'welding-home-bottom--single': !report }">
+      <NCard v-if="report" :bordered="false" size="small" class="card-wrapper welding-recent">
         <template #header><HomeSectionHeader title="最近焊接作业" icon="tasks" to="/admin/welding/reports/jobs" action="查看全部作业" /></template>
         <WeldingTable kind="jobs" :items="report.items.slice(0, 10)" :paginate="false" @detail="openJob" @copy="copy" />
         <p class="welding-home-note">当前范围内最新 10 条真实记录，原始状态含义待确认。</p>
       </NCard>
-    </template>
-    <section aria-label="焊接报表快捷入口">
-      <HomeSectionHeader title="生产报表" icon="report" />
-      <div class="welding-home-links"><RouterLink v-for="link in links" :key="link.kind" :to="{ name: `welding-${link.kind}` }" class="panel"><AppIcon :name="link.icon" :size="22" tone="current" /><div><h3>{{ weldingTitles[link.kind] }}</h3><p>{{ weldingDescriptions[link.kind] }}</p></div><AppIcon name="chevron-right" :size="18" tone="current" /></RouterLink></div>
-    </section>
+      <NCard :bordered="false" size="small" class="card-wrapper welding-shortcuts">
+        <template #header><HomeSectionHeader title="生产报表" icon="report" /></template>
+        <nav class="welding-home-links" aria-label="焊接报表快捷入口">
+          <RouterLink v-for="link in links" :key="link.kind" :to="{ name: `welding-${link.kind}` }">
+            <span class="welding-link-icon"><AppIcon :name="link.icon" :size="20" tone="current" /></span>
+            <div><h3>{{ weldingTitles[link.kind] }}</h3><p>{{ weldingDescriptions[link.kind] }}</p></div>
+            <AppIcon name="chevron-right" :size="16" tone="current" />
+          </RouterLink>
+        </nav>
+      </NCard>
+    </div>
     <NModal v-model:show="detailOpen" preset="card" title="焊接作业详情" :style="{ width: 'min(760px, 94vw)' }">
       <template v-if="detailJob"><WeldingRecord kind="jobs" :row="detailJob" /><NButton :disabled="!detailJob.serial_number" @click="goToPart">查询该流水号的工件</NButton></template>
     </NModal>
@@ -155,6 +170,45 @@ onBeforeUnmount(() => { disposed = true; generation += 1; clearTimeout(timer); c
 </template>
 
 <style scoped>
-.welding-home{display:flex;flex-direction:column;gap:16px;min-width:0}.welding-welcome{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:8px 12px}.welding-welcome h1{font-size:22px;font-weight:600;margin:0 0 10px}.welding-welcome p{margin:0 0 12px;color:var(--text-color-2)}.welding-date{display:flex;align-items:center;flex-wrap:wrap;gap:8px;color:var(--text-color-2);font-size:12px}.welding-welcome-art{display:flex;align-items:center;justify-content:center;gap:8px;width:200px;min-height:118px;flex-shrink:0;color:rgb(var(--primary-color));border-radius:18px;background:rgb(var(--primary-color) / .06)}.welding-home-grid{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(0,1fr);gap:16px}.welding-home-grid>*{min-width:0}.welding-home-chart{height:260px;display:flex;align-items:center;justify-content:center;min-width:0}.welding-home-note{font-size:12px;line-height:1.7;color:var(--text-color-2);margin:10px 0 0}.welding-home-meta{display:flex;flex-wrap:wrap;gap:8px 16px;font-size:12px;color:var(--text-color-2)}.welding-home-quality{margin:0}.welding-home-quality>div{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:38px;border-bottom:1px solid var(--theme-border-color)}.welding-home-quality dt{font-size:12px;color:var(--text-color-2)}.welding-home-quality dd{margin:0;font-size:18px;font-weight:600;font-variant-numeric:tabular-nums}.has-candidates{color:rgb(var(--warning-color))}.welding-home-links{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;margin-top:12px}.welding-home-links>a{display:flex;align-items:center;gap:12px;margin:0;padding:18px 16px;text-decoration:none;color:var(--text-color-1)}.welding-home-links>a>div{flex:1;min-width:0}.welding-home-links>a>.app-icon:first-child{color:rgb(var(--primary-color))}.welding-home-links h3{font-size:14px;margin:0 0 6px}.welding-home-links p{font-size:12px;line-height:1.6;margin:0;color:var(--text-color-2)}@media(max-width:1100px){.welding-home-links{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:900px){.welding-home-grid{grid-template-columns:1fr}}@media(max-width:600px){.welding-welcome{padding:4px}.welding-welcome h1{font-size:20px}.welding-welcome-art{display:none}.welding-home-links{grid-template-columns:1fr}}
+.welding-home { display:flex; flex-direction:column; gap:var(--space-4); min-width:0; container:welding-home / inline-size; }
+.welding-home>.report-feedback { margin:0; }
+.welding-welcome { min-height:128px; display:flex; align-items:center; justify-content:space-between; gap:var(--space-4); }
+.welding-welcome-copy { display:flex; flex-direction:column; gap:var(--space-3); min-width:0; }
+.welding-welcome h1 { font-size:22px; font-weight:600; line-height:1.4; margin:0; }
+.welding-welcome p { margin:0; color:var(--text-color-3); font-size:var(--font-body); }
+.welding-date { display:flex; align-items:center; gap:var(--space-2); color:var(--text-color-3); font-size:var(--font-auxiliary); }
+.welding-welcome-actions { display:flex; align-items:center; gap:var(--space-6); }
+.welding-welcome-art { display:flex; align-items:center; gap:var(--space-2); padding:0 var(--space-6); color:rgb(var(--primary-color)); }
+.welding-home-grid { display:grid; grid-template-columns:minmax(0,2fr) minmax(0,1fr); gap:var(--space-4); }
+.welding-home-grid>* { min-width:0; }
+.welding-home-chart { height:240px; display:flex; align-items:center; justify-content:center; min-width:0; }
+.welding-home-note { font-size:var(--font-auxiliary); line-height:1.7; color:var(--text-color-3); margin:var(--space-3) 0 0; }
+.welding-home-meta { display:flex; align-items:center; flex-wrap:wrap; gap:var(--space-2) var(--space-4); color:var(--text-color-3); font-size:var(--font-auxiliary); }
+.welding-home-quality { margin:0; }
+.welding-home-quality>div { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); min-height:36px; border-bottom:1px solid var(--theme-divider-color); }
+.welding-home-quality>div:last-child { border-bottom:0; }
+.welding-home-quality dt { font-size:var(--font-auxiliary); color:var(--text-color-2); }
+.welding-home-quality dd { margin:0; font-size:18px; font-weight:600; font-variant-numeric:tabular-nums; }
+.has-candidates { color:rgb(var(--warning-color)); }
+.welding-home-bottom { display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:var(--space-4); align-items:start; }
+.welding-home-bottom>* { min-width:0; }
+.welding-home-bottom--single { grid-template-columns:minmax(0,1fr); }
+.welding-home-links { display:grid; gap:var(--space-2); }
+.welding-home-links>a { display:flex; align-items:center; gap:var(--space-3); min-width:0; padding:var(--space-3); border-radius:var(--card-radius); text-decoration:none; color:var(--text-color-1); transition:background .18s ease; }
+.welding-home-links>a:hover { background:rgb(var(--primary-color) / .08); }
+.welding-home-links>a:focus-visible { outline:2px solid rgb(var(--primary-color)); outline-offset:2px; }
+.welding-home-links>a>div { flex:1; min-width:0; }
+.welding-link-icon { width:36px; height:36px; flex-shrink:0; display:grid; place-items:center; border-radius:var(--card-radius); color:rgb(var(--primary-color)); background:rgb(var(--primary-color) / .1); }
+.welding-home-links h3 { font-size:var(--font-body); font-weight:500; margin:0 0 var(--space-1); }
+.welding-home-links p { font-size:var(--font-auxiliary); line-height:1.6; margin:0; color:var(--text-color-3); }
+@container welding-home (max-width:1200px) { .welding-home-bottom { grid-template-columns:minmax(0,1fr); } .welding-home-links { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@container welding-home (max-width:760px) { .welding-home-grid { grid-template-columns:minmax(0,1fr); } .welding-welcome-art { display:none; } }
+@container welding-home (max-width:560px) {
+  .welding-welcome { align-items:flex-start; flex-direction:column; min-height:0; gap:var(--space-4); }
+  .welding-welcome h1 { font-size:22px; }
+  .welding-welcome-art { display:none; }
+  .welding-home-links { grid-template-columns:minmax(0,1fr); }
+  .welding-home-meta { align-items:flex-start; }
+}
 .welding-chart-data{margin-top:12px;color:var(--text-color-2);font-size:12px}.welding-chart-data summary{cursor:pointer;min-height:28px;display:list-item;line-height:28px}.welding-chart-data-scroll{max-height:280px;overflow:auto;margin-top:8px}.welding-chart-data table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}.welding-chart-data caption{text-align:left;padding:8px 0}.welding-chart-data th,.welding-chart-data td{padding:8px;border-bottom:1px solid var(--theme-border-color);text-align:right;white-space:nowrap}.welding-chart-data th:first-child{text-align:left}.welding-chart-data-scroll:focus-visible{outline:2px solid rgb(var(--primary-color));outline-offset:2px}
 </style>

@@ -11,7 +11,7 @@ import { useReportChartTheme } from '../composables/useReportChartTheme'
 import { weldingDisplay, weldingProcessRows } from '../utils/weldingReport'
 import { weldingTrendOption, weldingLengthOption, weldingProcessOption } from '../utils/weldingChartOptions'
 
-const props = defineProps<{ report: WeldingReport; kind: string }>()
+const props = defineProps<{ report: WeldingReport; kind: string; loading?: boolean }>()
 const { colors, vars } = useReportChartTheme(() => {})
 const daily = computed(() => [...props.report.daily].sort((a, b) => a.production_date.localeCompare(b.production_date)))
 const devices = computed(() => [...props.report.device_distribution].sort((a, b) => b.weld_length_m - a.weld_length_m))
@@ -53,9 +53,9 @@ function rowKey(row: object) {
 
 <template>
   <div class="welding-statistics">
-    <ReportTrendPanel v-for="(panel, index) in panels" :key="`${kind}-${index}`" :number="String(index + 1).padStart(2, '0')" :title="panel.title" :subtitle="panel.subtitle" :chart-label="panel.title" :height="280" :empty="!panel.rows.length" :has-data="panel.rows.length > 0">
+    <ReportTrendPanel v-for="(panel, index) in panels" :key="`${kind}-${index}`" :number="String(index + 1).padStart(2, '0')" :title="panel.title" :subtitle="panel.subtitle" :chart-label="panel.title" :height="245" :loading="loading" :empty="!panel.rows.length" :has-data="panel.rows.length > 0">
       <template #chart><div v-if="kind === 'jobs' && index === 1 && !processes.some(row => row.length !== null && row.length > 0)" class="welding-chart-empty"><NEmpty description="暂无有效工艺长度数据" /></div><WeldingChart v-else :option="panel.option" :label="panel.title" /></template>
-      <template #table><AppReportTable :columns="columns(panel.fields)" :items="panel.rows" :row-key="rowKey" :paginate="false" :max-height="280" /></template>
+      <template #table><AppReportTable :columns="columns(panel.fields)" :items="panel.rows" :row-key="rowKey" :paginate="false" :max-height="245" /></template>
     </ReportTrendPanel>
   </div>
 </template>
