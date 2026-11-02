@@ -44,6 +44,10 @@ def test_partial_resolution_requires_manual_retry_and_excludes_accepted_recipien
     assert repository.delivery_state(delivery["delivery_id"]) == "failed"
     assert repository.claim_delivery(STAMP) is None
     audit = repository.delivery_resolutions(delivery["delivery_id"])
+    from app.models.automation_contracts import EmailDelivery, EmailResolution
+    saved_delivery = repository.list_deliveries(page=1, page_size=20)[0][0]
+    for raw, model in [(saved_delivery, EmailDelivery), (audit[0], EmailResolution)]:
+        assert model.model_validate(raw).model_dump(mode='json', exclude_unset=True) == raw
     assert audit[0]["actor_id"] == ACTOR["user_id"]
     assert audit[0]["before_results"]["a@example.com"]["status"] == "unknown"
     assert audit[0]["after_results"]["a@example.com"]["status"] == "accepted"

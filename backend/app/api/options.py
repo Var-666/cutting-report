@@ -8,6 +8,7 @@ from app.api.workloads import query_requests
 from app.api.devices import device_state
 from app.api.auth import require_admin
 from app.models.domain import ReportFilter
+from app.models.contracts import ApiEnvelope, Items
 
 
 router = APIRouter(
@@ -20,7 +21,7 @@ router = APIRouter(
 router.dependencies.append(Depends(device_state))
 
 
-@query_requests.route(router.get("/projects"))
+@query_requests.route(router.get("/projects", response_model=None, responses={200: {"model": ApiEnvelope[Items[str]]}}))
 def list_projects(report_date: date, request: Request) -> dict:
     filters = ReportFilter(report_date=report_date)
     return {
@@ -30,7 +31,7 @@ def list_projects(report_date: date, request: Request) -> dict:
     }
 
 
-@query_requests.route(router.get("/ships"))
+@query_requests.route(router.get("/ships", response_model=None, responses={200: {"model": ApiEnvelope[Items[str]]}}))
 def list_ships(
     report_date: date,
     request: Request,

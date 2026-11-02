@@ -89,7 +89,7 @@ const conclusionText = computed(() => plainAnalysisText(props.analysis?.overview
 
       <div class="analysis-section-heading"><div><AppIcon name="chart" :size="19" tone="current" /><h3>核心指标</h3></div><span>当前分析周期</span></div>
       <div v-if="analysis.facts?.length" class="analysis-facts">
-        <article v-for="(fact, index) in analysis.facts" :key="fact.id">
+        <article v-for="(fact, index) in analysis.facts" :key="fact.id ?? undefined">
           <span class="analysis-fact-icon"><AppIcon :name="['tasks','ruler','clock','chart','trend','database'][index % 6]" :size="19" tone="current" /></span>
           <div>
             <span :title="fact.label">{{ compactAnalysisFactLabel(fact.label, fact.value) }}</span>

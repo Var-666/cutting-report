@@ -30,7 +30,7 @@ const deliveryTableColumns = [
           <template #c4="{ row: item }"><NTag class="delivery-status" :class="item.status" size="small" :type="item.status === 'sent' ? 'success' : item.status === 'failed' ? 'error' : item.status === 'unknown' ? 'warning' : 'info'">{{ deliveryLabels[item.status] || item.status }}</NTag></template>
           <template #c5="{ row: item }">{{ item.attempt_count }} / {{ item.max_attempts }}</template>
           <template #c6="{ row: item }"><span class="error-cell" :title="item.last_error || ''">{{ item.sent_at ? formatDateTime(item.sent_at) : item.last_error || '—' }}</span></template>
-          <template #c7="{ row: item }"><div class="delivery-actions"><NButton v-if="item.status === 'failed'" attr-type="button" @click="emit('retry', item)">重新发送</NButton><NButton attr-type="button" @click="emit('open', item)">{{ item.status === 'unknown' ? '核对结果' : '核对记录' }}</NButton><small v-if="item.status === 'unknown'" :title="item.message_id">{{ item.message_id || '无历史 Message-ID' }}</small></div></template>
+          <template #c7="{ row: item }"><div class="delivery-actions"><NButton v-if="item.status === 'failed'" attr-type="button" @click="emit('retry', item)">重新发送</NButton><NButton attr-type="button" @click="emit('open', item)">{{ item.status === 'unknown' ? '核对结果' : '核对记录' }}</NButton><small v-if="item.status === 'unknown'" :title="item.message_id || undefined">{{ item.message_id || '无历史 Message-ID' }}</small></div></template>
           <template #empty>尚无邮件发送记录，任务执行后会显示在这里。</template>
         </AppReportTable>
 </template>

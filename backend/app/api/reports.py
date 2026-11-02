@@ -18,6 +18,8 @@ from app.api.devices import device_state, device_settings
 from app.api.auth import require_admin
 from app.config import settings
 from app.models.api import ReportCreateRequest
+from app.models.contracts import ApiEnvelope, Page
+from app.models.report_contracts import ReportAccepted, ReportJob
 from app.services.pdf_service import PdfRenderError
 from app.services.custom_report_service import PARAMETER_PATTERN
 
@@ -91,7 +93,7 @@ router.dependencies.append(Depends(device_state))
 view_router.dependencies.append(Depends(device_state))
 
 
-@router.post("", status_code=202)
+@router.post("", status_code=202, response_model=None, responses={202: {"model": ApiEnvelope[ReportAccepted]}})
 def create_report(payload: ReportCreateRequest, request: Request) -> dict:
     now = datetime.now(ZoneInfo(settings.timezone))
     report_id = f"rpt_{now:%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:6]}"
@@ -131,7 +133,7 @@ def create_report(payload: ReportCreateRequest, request: Request) -> dict:
     }
 
 
-@router.get("/{report_id}/status")
+@router.get("/{report_id}/status", response_model=None, responses={200: {"model": ApiEnvelope[ReportJob]}})
 def get_report_status(report_id: str, request: Request) -> dict:
     job = device_state(request).metadata.get_job(report_id)
     if job is None:
@@ -143,7 +145,7 @@ def get_report_status(report_id: str, request: Request) -> dict:
     }
 
 
-@router.get("")
+@router.get("", response_model=None, responses={200: {"model": ApiEnvelope[Page[ReportJob]]}})
 def list_reports(
     request: Request,
     page: int = Query(1, ge=1),
@@ -187,7 +189,7 @@ def _resolve_report_file(request: Request, report_id: str) -> tuple[dict, Path]:
     return job, path
 
 
-@router.get("/{report_id}/download")
+@router.get("/{report_id}/download", response_class=FileResponse, responses={200: {"content": {media: {"schema": {"type": "string", "format": "binary"}} for media in ("text/html", "application/pdf")}}})
 async def download_report(
     report_id: str,
     request: Request,

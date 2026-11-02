@@ -415,6 +415,93 @@ export type AlarmStatus = {
 };
 
 /**
+ * AnalysisFact
+ */
+export type AnalysisFact = {
+    /**
+     * Label
+     */
+    label: string;
+    /**
+     * Value
+     */
+    value: string | number | null;
+    /**
+     * Id
+     */
+    id?: string | null;
+    /**
+     * Fact Id
+     */
+    fact_id?: string | null;
+    /**
+     * Source
+     */
+    source?: string | null;
+    /**
+     * Description
+     */
+    description?: string | null;
+    /**
+     * Unit
+     */
+    unit?: string | null;
+    [key: string]: JsonValue | string | string | number | null | string | null | string | null | string | null | string | null | string | null | undefined;
+};
+
+/**
+ * AnalysisRequest
+ */
+export type AnalysisRequest = {
+    /**
+     * Report Type
+     */
+    report_type: 'leadership' | 'workshop' | 'equipment';
+    /**
+     * Report Date
+     */
+    report_date: string;
+    /**
+     * Period Start
+     */
+    period_start?: string | null;
+    /**
+     * Period End
+     */
+    period_end?: string | null;
+    /**
+     * Summary Period Start
+     */
+    summary_period_start?: string | null;
+    /**
+     * Summary Period End
+     */
+    summary_period_end?: string | null;
+    /**
+     * Data Version
+     */
+    data_version?: string | null;
+    /**
+     * Force
+     */
+    force?: boolean;
+};
+
+/**
+ * AnalysisVersion
+ */
+export type AnalysisVersion = {
+    /**
+     * Data Version
+     */
+    data_version: string;
+    /**
+     * Updated At
+     */
+    updated_at: string;
+};
+
+/**
  * ApiEnvelope[AlarmIncidentPage]
  */
 export type ApiEnvelopeAlarmIncidentPage = {
@@ -460,6 +547,51 @@ export type ApiEnvelopeAlarmStatus = {
 };
 
 /**
+ * ApiEnvelope[AutomationConfiguration]
+ */
+export type ApiEnvelopeAutomationConfiguration = {
+    /**
+     * Success
+     */
+    success: true;
+    data: AutomationConfiguration;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
+ * ApiEnvelope[AutomationSchedule]
+ */
+export type ApiEnvelopeAutomationSchedule = {
+    /**
+     * Success
+     */
+    success: true;
+    data: AutomationSchedule;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
+ * ApiEnvelope[AutomationStatus]
+ */
+export type ApiEnvelopeAutomationStatus = {
+    /**
+     * Success
+     */
+    success: true;
+    data: AutomationStatus;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
  * ApiEnvelope[BatchCreationResult]
  */
 export type ApiEnvelopeBatchCreationResult = {
@@ -483,6 +615,36 @@ export type ApiEnvelopeCatalogResult = {
      */
     success: true;
     data: CatalogResult;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
+ * ApiEnvelope[ConfigurationDiagnostics]
+ */
+export type ApiEnvelopeConfigurationDiagnostics = {
+    /**
+     * Success
+     */
+    success: true;
+    data: ConfigurationDiagnostics;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
+ * ApiEnvelope[ConfigurationSaved]
+ */
+export type ApiEnvelopeConfigurationSaved = {
+    /**
+     * Success
+     */
+    success: true;
+    data: ConfigurationSaved;
     /**
      * Request Id
      */
@@ -520,6 +682,21 @@ export type ApiEnvelopeConfirmationBatch = {
 };
 
 /**
+ * ApiEnvelope[ConnectionTestResult]
+ */
+export type ApiEnvelopeConnectionTestResult = {
+    /**
+     * Success
+     */
+    success: true;
+    data: ConnectionTestResult;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
  * ApiEnvelope[CuttingDispatch]
  */
 export type ApiEnvelopeCuttingDispatch = {
@@ -543,6 +720,156 @@ export type ApiEnvelopeCuttingStatus = {
      */
     success: true;
     data: CuttingStatus;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
+ * ApiEnvelope[DatabaseConfiguration]
+ */
+export type ApiEnvelopeDatabaseConfiguration = {
+    /**
+     * Success
+     */
+    success: true;
+    data: DatabaseConfiguration;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
+ * ApiEnvelope[DatabasePreview]
+ */
+export type ApiEnvelopeDatabasePreview = {
+    /**
+     * Success
+     */
+    success: true;
+    data: DatabasePreview;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
+ * ApiEnvelope[DatabaseStatus]
+ */
+export type ApiEnvelopeDatabaseStatus = {
+    /**
+     * Success
+     */
+    success: true;
+    data: DatabaseStatus;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
+ * ApiEnvelope[Deleted]
+ */
+export type ApiEnvelopeDeleted = {
+    /**
+     * Success
+     */
+    success: true;
+    data: Deleted;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
+ * ApiEnvelope[EnergyDayReport]
+ */
+export type ApiEnvelopeEnergyDayReport = {
+    /**
+     * Success
+     */
+    success: true;
+    data: EnergyDayReport;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
+ * ApiEnvelope[EnergyMonthReport]
+ */
+export type ApiEnvelopeEnergyMonthReport = {
+    /**
+     * Success
+     */
+    success: true;
+    data: EnergyMonthReport;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
+ * ApiEnvelope[EnergyPeriodReport]
+ */
+export type ApiEnvelopeEnergyPeriodReport = {
+    /**
+     * Success
+     */
+    success: true;
+    data: EnergyPeriodReport;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
+ * ApiEnvelope[EnergyRangeReport]
+ */
+export type ApiEnvelopeEnergyRangeReport = {
+    /**
+     * Success
+     */
+    success: true;
+    data: EnergyRangeReport;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
+ * ApiEnvelope[EquipmentReport]
+ */
+export type ApiEnvelopeEquipmentReport = {
+    /**
+     * Success
+     */
+    success: true;
+    data: EquipmentReport;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
+ * ApiEnvelope[Items[AutomationSchedule]]
+ */
+export type ApiEnvelopeItemsAutomationSchedule = {
+    /**
+     * Success
+     */
+    success: true;
+    data: ItemsAutomationSchedule;
     /**
      * Request Id
      */
@@ -580,6 +907,36 @@ export type ApiEnvelopeItemsCuttingProject = {
 };
 
 /**
+ * ApiEnvelope[Items[EmailResolution]]
+ */
+export type ApiEnvelopeItemsEmailResolution = {
+    /**
+     * Success
+     */
+    success: true;
+    data: ItemsEmailResolution;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
+ * ApiEnvelope[Items[str]]
+ */
+export type ApiEnvelopeItemsStr = {
+    /**
+     * Success
+     */
+    success: true;
+    data: ItemsStr;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
  * ApiEnvelope[LatestProductionDate]
  */
 export type ApiEnvelopeLatestProductionDate = {
@@ -588,6 +945,21 @@ export type ApiEnvelopeLatestProductionDate = {
      */
     success: true;
     data: LatestProductionDate;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
+ * ApiEnvelope[LeadershipReport]
+ */
+export type ApiEnvelopeLeadershipReport = {
+    /**
+     * Success
+     */
+    success: true;
+    data: LeadershipReport;
     /**
      * Request Id
      */
@@ -640,6 +1012,126 @@ export type ApiEnvelopePageCuttingFile = {
 };
 
 /**
+ * ApiEnvelope[Page[EmailDelivery]]
+ */
+export type ApiEnvelopePageEmailDelivery = {
+    /**
+     * Success
+     */
+    success: true;
+    data: PageEmailDelivery;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
+ * ApiEnvelope[Page[ReportJob]]
+ */
+export type ApiEnvelopePageReportJob = {
+    /**
+     * Success
+     */
+    success: true;
+    data: PageReportJob;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
+ * ApiEnvelope[Queued]
+ */
+export type ApiEnvelopeQueued = {
+    /**
+     * Success
+     */
+    success: true;
+    data: Queued;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
+ * ApiEnvelope[ReportAccepted]
+ */
+export type ApiEnvelopeReportAccepted = {
+    /**
+     * Success
+     */
+    success: true;
+    data: ReportAccepted;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
+ * ApiEnvelope[ReportAnalysis]
+ */
+export type ApiEnvelopeReportAnalysis = {
+    /**
+     * Success
+     */
+    success: true;
+    data: ReportAnalysis;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
+ * ApiEnvelope[ReportJob]
+ */
+export type ApiEnvelopeReportJob = {
+    /**
+     * Success
+     */
+    success: true;
+    data: ReportJob;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
+ * ApiEnvelope[Resolved]
+ */
+export type ApiEnvelopeResolved = {
+    /**
+     * Success
+     */
+    success: true;
+    data: Resolved;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
+ * ApiEnvelope[ScheduledRun]
+ */
+export type ApiEnvelopeScheduledRun = {
+    /**
+     * Success
+     */
+    success: true;
+    data: ScheduledRun;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
  * ApiEnvelope[TaskConfirmation]
  */
 export type ApiEnvelopeTaskConfirmation = {
@@ -648,6 +1140,171 @@ export type ApiEnvelopeTaskConfirmation = {
      */
     success: true;
     data: TaskConfirmation;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
+ * ApiEnvelope[TaskEnergyReport]
+ */
+export type ApiEnvelopeTaskEnergyReport = {
+    /**
+     * Success
+     */
+    success: true;
+    data: TaskEnergyReport;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
+ * ApiEnvelope[Union[AnalysisVersion, NoneType]]
+ */
+export type ApiEnvelopeUnionAnalysisVersionNoneType = {
+    /**
+     * Success
+     */
+    success: true;
+    data: AnalysisVersion | null;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
+ * ApiEnvelope[Union[ReportAnalysis, NoneType]]
+ */
+export type ApiEnvelopeUnionReportAnalysisNoneType = {
+    /**
+     * Success
+     */
+    success: true;
+    data: ReportAnalysis | null;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
+ * ApiEnvelope[ValidatedWorkbenchSql]
+ */
+export type ApiEnvelopeValidatedWorkbenchSql = {
+    /**
+     * Success
+     */
+    success: true;
+    data: ValidatedWorkbenchSql;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
+ * ApiEnvelope[WeldingDailyReport]
+ */
+export type ApiEnvelopeWeldingDailyReport = {
+    /**
+     * Success
+     */
+    success: true;
+    data: WeldingDailyReport;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
+ * ApiEnvelope[WeldingEquipmentReport]
+ */
+export type ApiEnvelopeWeldingEquipmentReport = {
+    /**
+     * Success
+     */
+    success: true;
+    data: WeldingEquipmentReport;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
+ * ApiEnvelope[WeldingHealth]
+ */
+export type ApiEnvelopeWeldingHealth = {
+    /**
+     * Success
+     */
+    success: true;
+    data: WeldingHealth;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
+ * ApiEnvelope[WeldingJobsReport]
+ */
+export type ApiEnvelopeWeldingJobsReport = {
+    /**
+     * Success
+     */
+    success: true;
+    data: WeldingJobsReport;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
+ * ApiEnvelope[WeldingPart]
+ */
+export type ApiEnvelopeWeldingPart = {
+    /**
+     * Success
+     */
+    success: true;
+    data: WeldingPart;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
+ * ApiEnvelope[WeldingPartsReport]
+ */
+export type ApiEnvelopeWeldingPartsReport = {
+    /**
+     * Success
+     */
+    success: true;
+    data: WeldingPartsReport;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
+ * ApiEnvelope[WorkbenchQueryResult]
+ */
+export type ApiEnvelopeWorkbenchQueryResult = {
+    /**
+     * Success
+     */
+    success: true;
+    data: WorkbenchQueryResult;
     /**
      * Request Id
      */
@@ -718,6 +1375,274 @@ export type ApiEnvelopeListAlarmReport = {
      * Request Id
      */
     request_id: string;
+};
+
+/**
+ * AutomationConfiguration
+ */
+export type AutomationConfiguration = {
+    /**
+     * Automation Enabled
+     */
+    automation_enabled: boolean;
+    /**
+     * Automation Scan Seconds
+     */
+    automation_scan_seconds: number;
+    /**
+     * Email Retry Base Seconds
+     */
+    email_retry_base_seconds: number;
+    /**
+     * Smtp Enabled
+     */
+    smtp_enabled: boolean;
+    /**
+     * Smtp Host
+     */
+    smtp_host: string;
+    /**
+     * Smtp Port
+     */
+    smtp_port: number;
+    /**
+     * Smtp Username
+     */
+    smtp_username: string;
+    /**
+     * Smtp Password Configured
+     */
+    smtp_password_configured: boolean;
+    /**
+     * Smtp From Email
+     */
+    smtp_from_email: string;
+    /**
+     * Smtp From Name
+     */
+    smtp_from_name: string;
+    /**
+     * Smtp Use Tls
+     */
+    smtp_use_tls: boolean;
+    /**
+     * Smtp Use Ssl
+     */
+    smtp_use_ssl: boolean;
+    /**
+     * Smtp Timeout Seconds
+     */
+    smtp_timeout_seconds: number;
+};
+
+/**
+ * AutomationConfigurationRequest
+ */
+export type AutomationConfigurationRequest = {
+    /**
+     * Automation Enabled
+     */
+    automation_enabled?: boolean;
+    /**
+     * Automation Scan Seconds
+     */
+    automation_scan_seconds?: number;
+    /**
+     * Email Retry Base Seconds
+     */
+    email_retry_base_seconds?: number;
+    /**
+     * Smtp Enabled
+     */
+    smtp_enabled?: boolean;
+    /**
+     * Smtp Host
+     */
+    smtp_host?: string;
+    /**
+     * Smtp Port
+     */
+    smtp_port?: number;
+    /**
+     * Smtp Username
+     */
+    smtp_username?: string;
+    /**
+     * Smtp Password
+     */
+    smtp_password?: null;
+    /**
+     * Smtp From Email
+     */
+    smtp_from_email?: string;
+    /**
+     * Smtp From Name
+     */
+    smtp_from_name?: string;
+    /**
+     * Smtp Use Tls
+     */
+    smtp_use_tls?: boolean;
+    /**
+     * Smtp Use Ssl
+     */
+    smtp_use_ssl?: boolean;
+    /**
+     * Smtp Timeout Seconds
+     */
+    smtp_timeout_seconds?: number;
+};
+
+/**
+ * AutomationSchedule
+ */
+export type AutomationSchedule = {
+    /**
+     * Schedule Id
+     */
+    schedule_id: string;
+    /**
+     * Device Id
+     */
+    device_id: string;
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Report Type
+     */
+    report_type: 'leadership' | 'workshop' | 'equipment';
+    /**
+     * Frequency
+     */
+    frequency: 'daily' | 'weekly' | 'monthly';
+    /**
+     * Run Time
+     */
+    run_time: string;
+    /**
+     * Weekday
+     */
+    weekday: number | null;
+    /**
+     * Month Day
+     */
+    month_day: number | null;
+    /**
+     * Report Period
+     */
+    report_period: 'current_day' | 'previous_day' | 'current_month' | 'previous_month';
+    /**
+     * Recipients
+     */
+    recipients: Array<string>;
+    /**
+     * Subject Template
+     */
+    subject_template: string;
+    /**
+     * Chart Type
+     */
+    chart_type: 'bar_line' | 'bar' | 'line' | 'area';
+    /**
+     * Attach Report
+     */
+    attach_report: boolean;
+    /**
+     * Max Attempts
+     */
+    max_attempts: number;
+    /**
+     * Enabled
+     */
+    enabled: boolean;
+    /**
+     * Next Run At
+     */
+    next_run_at: string;
+    /**
+     * Last Run At
+     */
+    last_run_at: string | null;
+    /**
+     * Last Status
+     */
+    last_status: string | null;
+    /**
+     * Created By Id
+     */
+    created_by_id: string;
+    /**
+     * Created By Name
+     */
+    created_by_name: string;
+    /**
+     * Created At
+     */
+    created_at: string;
+    /**
+     * Updated At
+     */
+    updated_at: string;
+    /**
+     * Run Count
+     */
+    run_count?: number | null;
+    /**
+     * Sent Count
+     */
+    sent_count?: number | null;
+    /**
+     * Failed Count
+     */
+    failed_count?: number | null;
+};
+
+/**
+ * AutomationStatus
+ */
+export type AutomationStatus = {
+    /**
+     * Automation Enabled
+     */
+    automation_enabled: boolean;
+    smtp: SmtpStatus;
+    summary: AutomationSummary;
+};
+
+/**
+ * AutomationSummary
+ */
+export type AutomationSummary = {
+    /**
+     * Schedule Total
+     */
+    schedule_total: number;
+    /**
+     * Schedule Enabled
+     */
+    schedule_enabled: number;
+    /**
+     * Delivery Total
+     */
+    delivery_total: number;
+    /**
+     * Delivery Sent
+     */
+    delivery_sent: number;
+    /**
+     * Delivery Pending
+     */
+    delivery_pending: number;
+    /**
+     * Delivery Failed
+     */
+    delivery_failed: number;
+    /**
+     * Delivery Unknown
+     */
+    delivery_unknown: number;
 };
 
 /**
@@ -805,6 +1730,89 @@ export type ConditionSearch = {
      * Sort
      */
     sort?: Array<SortRule>;
+};
+
+/**
+ * ConfigurationDiagnostics
+ */
+export type ConfigurationDiagnostics = {
+    /**
+     * Categories
+     */
+    categories: Array<string>;
+    /**
+     * Items
+     */
+    items: Array<DiagnosticItem>;
+    /**
+     * Errors
+     */
+    errors: Array<string>;
+    /**
+     * Precedence
+     */
+    precedence: string;
+    processes: ConfigurationProcesses;
+    /**
+     * Consistent
+     */
+    consistent: boolean;
+    /**
+     * Notes
+     */
+    notes: Array<string>;
+};
+
+/**
+ * ConfigurationProcessVersion
+ */
+export type ConfigurationProcessVersion = {
+    /**
+     * Loaded At
+     */
+    loaded_at: string;
+    /**
+     * Hot Loaded At
+     */
+    hot_loaded_at: string;
+    /**
+     * Hot Revision
+     */
+    hot_revision: number;
+    /**
+     * Version
+     */
+    version: string;
+};
+
+/**
+ * ConfigurationProcesses
+ */
+export type ConfigurationProcesses = {
+    web: ConfigurationProcessVersion;
+    worker: WorkerConfigurationVersion;
+};
+
+/**
+ * ConfigurationSaved
+ */
+export type ConfigurationSaved = {
+    /**
+     * Saved
+     */
+    saved: boolean;
+    /**
+     * Restart Required
+     */
+    restart_required: boolean;
+    /**
+     * Path
+     */
+    path: string;
+    /**
+     * Message
+     */
+    message: string;
 };
 
 /**
@@ -929,6 +1937,66 @@ export type ConfirmationBatch = {
      * Confirmed Count
      */
     confirmed_count: number;
+};
+
+/**
+ * ConnectionTestRequest
+ */
+export type ConnectionTestRequest = {
+    /**
+     * Host
+     */
+    host: string;
+    /**
+     * Port
+     */
+    port?: number;
+    /**
+     * Database
+     */
+    database: string;
+    /**
+     * Username
+     */
+    username: string;
+    /**
+     * Driver
+     */
+    driver?: string;
+    /**
+     * Encrypt
+     */
+    encrypt?: boolean;
+    /**
+     * Trust Server Certificate
+     */
+    trust_server_certificate?: boolean;
+};
+
+/**
+ * ConnectionTestResult
+ */
+export type ConnectionTestResult = {
+    /**
+     * Connected
+     */
+    connected: boolean;
+    /**
+     * Elapsed Ms
+     */
+    elapsed_ms: number;
+    /**
+     * Message
+     */
+    message: string;
+    /**
+     * Database
+     */
+    database?: string | null;
+    /**
+     * Saved
+     */
+    saved?: boolean | null;
 };
 
 /**
@@ -1408,6 +2476,311 @@ export type CuttingStatus = {
 };
 
 /**
+ * DatabaseConfiguration
+ */
+export type DatabaseConfiguration = {
+    /**
+     * Data Source Mode
+     */
+    data_source_mode: 'demo' | 'sqlserver';
+    /**
+     * Worker Database Auth Enabled
+     */
+    worker_database_auth_enabled: boolean;
+    /**
+     * File Database Enabled
+     */
+    file_database_enabled: boolean;
+    production: SavedConnection;
+    worker: SavedConnection;
+    file: SavedConnection;
+    welding: WeldingConnection;
+};
+
+/**
+ * DatabaseConfigurationRequest
+ */
+export type DatabaseConfigurationRequest = {
+    /**
+     * Data Source Mode
+     */
+    data_source_mode?: 'demo' | 'sqlserver';
+    /**
+     * Worker Database Auth Enabled
+     */
+    worker_database_auth_enabled?: boolean;
+    /**
+     * File Database Enabled
+     */
+    file_database_enabled?: boolean;
+    production: SavedConnectionRequest;
+    worker: SavedConnectionRequest;
+    file: SavedConnectionRequest;
+    welding?: WeldingConnectionRequest | null;
+};
+
+/**
+ * DatabasePreview
+ */
+export type DatabasePreview = {
+    /**
+     * Dataset
+     */
+    dataset: 'summary' | 'workshop' | 'equipment';
+    /**
+     * Mode
+     */
+    mode: string;
+    /**
+     * Items
+     */
+    items: Array<{
+        [key: string]: JsonValue;
+    }>;
+    /**
+     * Returned
+     */
+    returned: number;
+    /**
+     * Total
+     */
+    total: number;
+    /**
+     * Truncated
+     */
+    truncated: boolean;
+};
+
+/**
+ * DatabasePreviewRequest
+ */
+export type DatabasePreviewRequest = {
+    /**
+     * Dataset
+     */
+    dataset: 'summary' | 'workshop' | 'equipment';
+    /**
+     * Report Date
+     */
+    report_date: string;
+    /**
+     * Project Code
+     */
+    project_code?: string | null;
+    /**
+     * Ship No
+     */
+    ship_no?: string | null;
+    /**
+     * Limit
+     */
+    limit?: number;
+};
+
+/**
+ * DatabaseSourceStatus
+ */
+export type DatabaseSourceStatus = {
+    /**
+     * Source
+     */
+    source: string;
+    /**
+     * Label
+     */
+    label: string;
+    /**
+     * Enabled
+     */
+    enabled: boolean;
+    /**
+     * Configured
+     */
+    configured: boolean;
+    /**
+     * Host
+     */
+    host: string | null;
+    /**
+     * Port
+     */
+    port: number;
+    /**
+     * Database
+     */
+    database: string | null;
+    /**
+     * Driver
+     */
+    driver: string;
+    /**
+     * Uses Primary Fallback
+     */
+    uses_primary_fallback: boolean;
+};
+
+/**
+ * DatabaseStatus
+ */
+export type DatabaseStatus = {
+    /**
+     * Mode
+     */
+    mode: 'demo' | 'sqlserver';
+    /**
+     * Demo Mode
+     */
+    demo_mode: boolean;
+    /**
+     * Pyodbc Installed
+     */
+    pyodbc_installed: boolean;
+    /**
+     * Connection Configured
+     */
+    connection_configured: boolean;
+    /**
+     * Configured Host
+     */
+    configured_host: string | null;
+    /**
+     * Configured Database
+     */
+    configured_database: string | null;
+    /**
+     * Driver
+     */
+    driver: string;
+    /**
+     * Data Sources
+     */
+    data_sources: Array<DatabaseSourceStatus>;
+    /**
+     * Query Mappings
+     */
+    query_mappings: Array<QueryMapping>;
+    /**
+     * All Queries Ready
+     */
+    all_queries_ready: boolean;
+    /**
+     * Arbitrary Sql Enabled
+     */
+    arbitrary_sql_enabled: boolean;
+    /**
+     * Sql Workbench Enabled
+     */
+    sql_workbench_enabled: boolean;
+    /**
+     * Sql Workbench Requires Token
+     */
+    sql_workbench_requires_token: boolean;
+    /**
+     * Sql Workbench Token Configured
+     */
+    sql_workbench_token_configured: boolean;
+    /**
+     * Sql Workbench Max Rows
+     */
+    sql_workbench_max_rows: number;
+};
+
+/**
+ * Deleted
+ */
+export type Deleted = {
+    /**
+     * Deleted
+     */
+    deleted: boolean;
+};
+
+/**
+ * DeliveryResolutionRequest
+ */
+export type DeliveryResolutionRequest = {
+    /**
+     * Message Id
+     */
+    message_id: string;
+    /**
+     * Outcomes
+     */
+    outcomes: Array<RecipientResolution>;
+    /**
+     * Evidence Note
+     */
+    evidence_note: string;
+};
+
+/**
+ * DiagnosticItem
+ */
+export type DiagnosticItem = {
+    /**
+     * Key
+     */
+    key: string;
+    /**
+     * Category
+     */
+    category: string;
+    processes: DiagnosticProcesses;
+    saved_value: JsonValue;
+    /**
+     * Saved Source
+     */
+    saved_source: string;
+    /**
+     * Status
+     */
+    status: 'effective' | 'pending' | 'error' | 'unconfigured';
+    /**
+     * Valid
+     */
+    valid: boolean;
+    /**
+     * Process Mismatch
+     */
+    process_mismatch: boolean;
+    /**
+     * Restart Required
+     */
+    restart_required: boolean;
+    /**
+     * Rule
+     */
+    rule: string;
+};
+
+/**
+ * DiagnosticProcess
+ */
+export type DiagnosticProcess = {
+    value: JsonValue;
+    /**
+     * Source
+     */
+    source: string;
+    /**
+     * Matches Saved
+     */
+    matches_saved: boolean;
+    /**
+     * Status
+     */
+    status: 'effective' | 'pending' | 'error' | 'unconfigured';
+};
+
+/**
+ * DiagnosticProcesses
+ */
+export type DiagnosticProcesses = {
+    web: DiagnosticProcess;
+    worker: DiagnosticProcess;
+};
+
+/**
  * DispatchBatchCreateRequest
  */
 export type DispatchBatchCreateRequest = {
@@ -1577,6 +2950,697 @@ export type DominantAlarm = {
 };
 
 /**
+ * EmailDelivery
+ */
+export type EmailDelivery = {
+    /**
+     * Delivery Id
+     */
+    delivery_id: string;
+    /**
+     * Run Id
+     */
+    run_id: string;
+    /**
+     * Report Id
+     */
+    report_id: string;
+    /**
+     * Recipients
+     */
+    recipients: Array<string>;
+    /**
+     * Recipient Results
+     */
+    recipient_results: {
+        [key: string]: RecipientResult;
+    };
+    /**
+     * Subject
+     */
+    subject: string;
+    /**
+     * Status
+     */
+    status: string;
+    /**
+     * Attempt Count
+     */
+    attempt_count: number;
+    /**
+     * Max Attempts
+     */
+    max_attempts: number;
+    /**
+     * Next Attempt At
+     */
+    next_attempt_at: string;
+    /**
+     * Last Error
+     */
+    last_error: string | null;
+    /**
+     * Message Id
+     */
+    message_id: string | null;
+    /**
+     * Created At
+     */
+    created_at: string;
+    /**
+     * Updated At
+     */
+    updated_at: string;
+    /**
+     * Sent At
+     */
+    sent_at: string | null;
+    /**
+     * Schedule Name
+     */
+    schedule_name: string;
+    /**
+     * Report Type
+     */
+    report_type: string;
+    /**
+     * Report Date
+     */
+    report_date: string;
+    /**
+     * Trigger Type
+     */
+    trigger_type: string;
+    /**
+     * Filename
+     */
+    filename: string;
+    /**
+     * Relative Path
+     */
+    relative_path: string;
+    /**
+     * Generated At
+     */
+    generated_at: string;
+};
+
+/**
+ * EmailResolution
+ */
+export type EmailResolution = {
+    /**
+     * Resolution Id
+     */
+    resolution_id: string;
+    /**
+     * Delivery Id
+     */
+    delivery_id: string;
+    /**
+     * Run Id
+     */
+    run_id: string;
+    /**
+     * Message Id
+     */
+    message_id: string;
+    /**
+     * Actor Id
+     */
+    actor_id: string;
+    /**
+     * Actor Name
+     */
+    actor_name: string;
+    /**
+     * Evidence Note
+     */
+    evidence_note: string;
+    /**
+     * Before Results
+     */
+    before_results: {
+        [key: string]: RecipientResult;
+    };
+    /**
+     * After Results
+     */
+    after_results: {
+        [key: string]: RecipientResult;
+    };
+    /**
+     * Resolved Status
+     */
+    resolved_status: string;
+    /**
+     * Created At
+     */
+    created_at: string;
+};
+
+/**
+ * EnergyCalendarDay
+ */
+export type EnergyCalendarDay = {
+    electricity: EnergyChannel;
+    gas: EnergyChannel;
+    /**
+     * Report Date
+     */
+    report_date: string;
+    /**
+     * Saved
+     */
+    saved: boolean;
+    /**
+     * Updated At
+     */
+    updated_at: string | null;
+    /**
+     * Is Future
+     */
+    is_future: boolean;
+    /**
+     * Is Today
+     */
+    is_today: boolean;
+    /**
+     * Needs Resync
+     */
+    needs_resync: boolean;
+    /**
+     * Task Count
+     */
+    task_count: number | null;
+    /**
+     * Work Time Seconds
+     */
+    work_time_seconds: number | null;
+};
+
+/**
+ * EnergyChannel
+ */
+export type EnergyChannel = {
+    /**
+     * Value
+     */
+    value: number | null;
+    /**
+     * Status
+     */
+    status: string;
+    /**
+     * Label
+     */
+    label: string;
+    /**
+     * Valid Count
+     */
+    valid_count?: number | null;
+    /**
+     * Expected Count
+     */
+    expected_count?: number | null;
+    /**
+     * Complete Count
+     */
+    complete_count?: number | null;
+    /**
+     * Estimated Count
+     */
+    estimated_count?: number | null;
+    [key: string]: JsonValue | number | null | string | number | null | number | null | number | null | number | null | undefined;
+};
+
+/**
+ * EnergyDayReport
+ */
+export type EnergyDayReport = {
+    units: EnergyUnits;
+    /**
+     * Notice
+     */
+    notice: string;
+    /**
+     * Source Name
+     */
+    source_name: string;
+    /**
+     * Timezone
+     */
+    timezone: string;
+    /**
+     * Configuration Error
+     */
+    configuration_error: string | null;
+    /**
+     * Energy Connected
+     */
+    energy_connected: boolean;
+    /**
+     * Equipment Scope
+     */
+    equipment_scope: Array<string>;
+    /**
+     * Parameters
+     */
+    parameters: {
+        [key: string]: string | Array<string>;
+    };
+    /**
+     * Report Date
+     */
+    report_date: string;
+    /**
+     * Rows
+     */
+    rows: Array<EnergyHour>;
+    summary: EnergySummary;
+    /**
+     * Updated At
+     */
+    updated_at: string | null;
+    /**
+     * Saved
+     */
+    saved: boolean;
+    /**
+     * Sync Ok
+     */
+    sync_ok: boolean;
+    /**
+     * Is Today
+     */
+    is_today: boolean;
+    /**
+     * Warning
+     */
+    warning: string;
+    /**
+     * From Cache
+     */
+    from_cache?: boolean | null;
+};
+
+/**
+ * EnergyHour
+ */
+export type EnergyHour = {
+    electricity: EnergyChannel;
+    gas: EnergyChannel;
+    /**
+     * Hour
+     */
+    hour: number;
+    /**
+     * Label
+     */
+    label: string;
+    /**
+     * Start
+     */
+    start: string;
+    /**
+     * End
+     */
+    end: string;
+};
+
+/**
+ * EnergyMonthReport
+ */
+export type EnergyMonthReport = {
+    units: EnergyUnits;
+    /**
+     * Notice
+     */
+    notice: string;
+    /**
+     * Source Name
+     */
+    source_name: string;
+    /**
+     * Timezone
+     */
+    timezone: string;
+    /**
+     * Configuration Error
+     */
+    configuration_error: string | null;
+    /**
+     * Energy Connected
+     */
+    energy_connected: boolean;
+    /**
+     * Equipment Scope
+     */
+    equipment_scope: Array<string>;
+    /**
+     * Parameters
+     */
+    parameters: {
+        [key: string]: string | Array<string>;
+    };
+    /**
+     * Report Month
+     */
+    report_month: string;
+    /**
+     * Rows
+     */
+    rows: Array<EnergyCalendarDay>;
+    summary: EnergySummary;
+    /**
+     * Total Task Count
+     */
+    total_task_count: number;
+    /**
+     * Total Work Time Seconds
+     */
+    total_work_time_seconds: number;
+    /**
+     * Saved Day Count
+     */
+    saved_day_count: number;
+    /**
+     * Elapsed Day Count
+     */
+    elapsed_day_count: number;
+    /**
+     * Calendar Day Count
+     */
+    calendar_day_count: number;
+    /**
+     * Resync Dates
+     */
+    resync_dates: Array<string>;
+    /**
+     * Storage Notice
+     */
+    storage_notice: string;
+};
+
+/**
+ * EnergyPeriodReport
+ */
+export type EnergyPeriodReport = {
+    units: EnergyUnits;
+    /**
+     * Notice
+     */
+    notice: string;
+    /**
+     * Source Name
+     */
+    source_name: string;
+    /**
+     * Timezone
+     */
+    timezone: string;
+    /**
+     * Configuration Error
+     */
+    configuration_error: string | null;
+    /**
+     * Energy Connected
+     */
+    energy_connected: boolean;
+    /**
+     * Equipment Scope
+     */
+    equipment_scope: Array<string>;
+    /**
+     * Parameters
+     */
+    parameters: {
+        [key: string]: string | Array<string>;
+    };
+    /**
+     * Period Start
+     */
+    period_start: string;
+    /**
+     * Period End
+     */
+    period_end: string;
+    /**
+     * Rows
+     */
+    rows: Array<EnergyPeriodRow>;
+    summary: EnergySummary;
+    /**
+     * Total Task Count
+     */
+    total_task_count: number;
+    /**
+     * Total Work Time Seconds
+     */
+    total_work_time_seconds: number;
+    /**
+     * Saved Day Count
+     */
+    saved_day_count: number;
+    /**
+     * Elapsed Day Count
+     */
+    elapsed_day_count: number;
+    /**
+     * Calendar Day Count
+     */
+    calendar_day_count: number;
+    /**
+     * Missing Day Count
+     */
+    missing_day_count: number;
+    /**
+     * Syncing
+     */
+    syncing: boolean;
+    /**
+     * Analysis Source Version
+     */
+    analysis_source_version: string;
+};
+
+/**
+ * EnergyPeriodRow
+ */
+export type EnergyPeriodRow = {
+    electricity: EnergyChannel;
+    gas: EnergyChannel;
+    /**
+     * Report Date
+     */
+    report_date: string;
+    /**
+     * Task Count
+     */
+    task_count: number;
+    /**
+     * Work Time Seconds
+     */
+    work_time_seconds: number;
+    /**
+     * Is Future
+     */
+    is_future?: boolean | null;
+    /**
+     * Is Today
+     */
+    is_today?: boolean | null;
+    /**
+     * Saved
+     */
+    saved?: boolean | null;
+};
+
+/**
+ * EnergyRangeReport
+ */
+export type EnergyRangeReport = {
+    task_report: TaskEnergyReport;
+    period_report: TaskEnergyPeriodReport;
+};
+
+/**
+ * EnergySummary
+ */
+export type EnergySummary = {
+    electricity: EnergyChannel;
+    gas: EnergyChannel;
+};
+
+/**
+ * EnergyUnits
+ */
+export type EnergyUnits = {
+    /**
+     * Electricity
+     */
+    electricity: string;
+    /**
+     * Gas
+     */
+    gas: string;
+};
+
+/**
+ * EquipmentRecord
+ */
+export type EquipmentRecord = {
+    /**
+     * Task Id
+     */
+    task_id: string;
+    /**
+     * Equipment Id
+     */
+    equipment_id: string | null;
+    /**
+     * Project Code
+     */
+    project_code: string | null;
+    /**
+     * Ship No
+     */
+    ship_no: string | null;
+    /**
+     * Segment Name
+     */
+    segment_name: string | null;
+    /**
+     * Cut Length
+     */
+    cut_length: number | null;
+    /**
+     * Work Time
+     */
+    work_time: number | null;
+    /**
+     * Gas Consumption
+     */
+    gas_consumption: number | null;
+    /**
+     * Electricity Consumption
+     */
+    electricity_consumption: number | null;
+    /**
+     * Production Time
+     */
+    production_time: string | null;
+    /**
+     * Remark
+     */
+    remark: string | null;
+    /**
+     * Production End Time
+     */
+    production_end_time: string | null;
+    /**
+     * Gas Data Status
+     */
+    gas_data_status: string;
+    /**
+     * Electricity Data Status
+     */
+    electricity_data_status: string;
+    /**
+     * Energy Note
+     */
+    energy_note: string | null;
+    /**
+     * Energy Details
+     */
+    energy_details: {
+        [key: string]: JsonValue;
+    };
+    /**
+     * Production Date
+     */
+    production_date: string | null;
+};
+
+/**
+ * EquipmentReport
+ */
+export type EquipmentReport = {
+    /**
+     * Report Date
+     */
+    report_date: string | null;
+    /**
+     * Records
+     */
+    records: Array<EquipmentRecord>;
+    summary: EquipmentSummary;
+    /**
+     * Data Updated At
+     */
+    data_updated_at: string | null;
+    /**
+     * Energy Notice
+     */
+    energy_notice: string;
+    units: EnergyUnits;
+    /**
+     * Truncated
+     */
+    truncated?: boolean | null;
+};
+
+/**
+ * EquipmentSummary
+ */
+export type EquipmentSummary = {
+    /**
+     * Task Count
+     */
+    task_count: number;
+    /**
+     * Total Work Time
+     */
+    total_work_time: number;
+    /**
+     * Total Gas Consumption
+     */
+    total_gas_consumption: number | null;
+    /**
+     * Total Electricity Consumption
+     */
+    total_electricity_consumption: number | null;
+    /**
+     * Gas Record Count
+     */
+    gas_record_count: number;
+    /**
+     * Electricity Record Count
+     */
+    electricity_record_count: number;
+    /**
+     * Gas Missing Count
+     */
+    gas_missing_count: number;
+    /**
+     * Electricity Missing Count
+     */
+    electricity_missing_count: number;
+    /**
+     * Estimated Record Count
+     */
+    estimated_record_count: number;
+    /**
+     * Has Energy Data
+     */
+    has_energy_data: boolean;
+    /**
+     * Energy Data Mode
+     */
+    energy_data_mode: string;
+};
+
+/**
  * FileCleanup
  */
 export type FileCleanup = {
@@ -1641,6 +3705,16 @@ export type HttpValidationError = {
 };
 
 /**
+ * Items[AutomationSchedule]
+ */
+export type ItemsAutomationSchedule = {
+    /**
+     * Items
+     */
+    items: Array<AutomationSchedule>;
+};
+
+/**
  * Items[ConfirmationAudit]
  */
 export type ItemsConfirmationAudit = {
@@ -1661,6 +3735,28 @@ export type ItemsCuttingProject = {
 };
 
 /**
+ * Items[EmailResolution]
+ */
+export type ItemsEmailResolution = {
+    /**
+     * Items
+     */
+    items: Array<EmailResolution>;
+};
+
+/**
+ * Items[str]
+ */
+export type ItemsStr = {
+    /**
+     * Items
+     */
+    items: Array<string>;
+};
+
+export type JsonValue = unknown;
+
+/**
  * LatestProductionDate
  */
 export type LatestProductionDate = {
@@ -1668,6 +3764,135 @@ export type LatestProductionDate = {
      * Report Date
      */
     report_date: string | null;
+};
+
+/**
+ * LeadershipPeriodRecord
+ */
+export type LeadershipPeriodRecord = {
+    /**
+     * Period Start
+     */
+    period_start: string;
+    /**
+     * Task Count
+     */
+    task_count: number;
+    /**
+     * Cut Length M
+     */
+    cut_length_m: number;
+    /**
+     * Groove Length M
+     */
+    groove_length_m: number;
+    /**
+     * Work Time Seconds
+     */
+    work_time_seconds: number;
+    /**
+     * Remark
+     */
+    remark: string | null;
+};
+
+/**
+ * LeadershipRefreshRequest
+ */
+export type LeadershipRefreshRequest = {
+    /**
+     * Report Month
+     */
+    report_month: string;
+};
+
+/**
+ * LeadershipReport
+ */
+export type LeadershipReport = {
+    /**
+     * Report Month
+     */
+    report_month: string;
+    /**
+     * Source Mode
+     */
+    source_mode: string;
+    /**
+     * Daily Records
+     */
+    daily_records: Array<LeadershipPeriodRecord>;
+    /**
+     * Monthly Records
+     */
+    monthly_records: Array<LeadershipPeriodRecord>;
+    current_month_total: LeadershipPeriodRecord;
+    twelve_month_total: LeadershipPeriodRecord;
+    year_ago_total: LeadershipPeriodRecord | null;
+    /**
+     * Project Distribution
+     */
+    project_distribution: Array<ProjectDistribution>;
+    snapshot: LeadershipSnapshotState;
+    /**
+     * Period Start
+     */
+    period_start: string | null;
+    /**
+     * Period End
+     */
+    period_end: string | null;
+    comparison_total: LeadershipPeriodRecord | null;
+    /**
+     * Comparison Start
+     */
+    comparison_start: string | null;
+    /**
+     * Comparison End
+     */
+    comparison_end: string | null;
+    /**
+     * Analysis Source Version
+     */
+    analysis_source_version: string;
+    /**
+     * Analysis Summary Source Version
+     */
+    analysis_summary_source_version: string;
+    /**
+     * Aggregation
+     */
+    aggregation?: 'day' | 'month' | null;
+};
+
+/**
+ * LeadershipSnapshotState
+ */
+export type LeadershipSnapshotState = {
+    /**
+     * Data As Of
+     */
+    data_as_of?: string | null;
+    /**
+     * Stale
+     */
+    stale?: boolean;
+    /**
+     * Refreshing
+     */
+    refreshing?: boolean;
+    /**
+     * Cached
+     */
+    cached?: boolean;
+    /**
+     * Source
+     */
+    source?: string;
+    /**
+     * Query Duration Ms
+     */
+    query_duration_ms?: number | null;
 };
 
 /**
@@ -1780,6 +4005,50 @@ export type PageCuttingFile = {
 };
 
 /**
+ * Page[EmailDelivery]
+ */
+export type PageEmailDelivery = {
+    /**
+     * Items
+     */
+    items: Array<EmailDelivery>;
+    /**
+     * Total
+     */
+    total: number;
+    /**
+     * Page
+     */
+    page: number;
+    /**
+     * Page Size
+     */
+    page_size: number;
+};
+
+/**
+ * Page[ReportJob]
+ */
+export type PageReportJob = {
+    /**
+     * Items
+     */
+    items: Array<ReportJob>;
+    /**
+     * Total
+     */
+    total: number;
+    /**
+     * Page
+     */
+    page: number;
+    /**
+     * Page Size
+     */
+    page_size: number;
+};
+
+/**
  * PdmStatus
  */
 export type PdmStatus = {
@@ -1798,6 +4067,374 @@ export type PdmStatus = {
 };
 
 /**
+ * ProjectDistribution
+ */
+export type ProjectDistribution = {
+    /**
+     * Project Name
+     */
+    project_name: string;
+    /**
+     * Task Count
+     */
+    task_count: number;
+    /**
+     * Cut Length M
+     */
+    cut_length_m: number;
+    /**
+     * Work Time Seconds
+     */
+    work_time_seconds: number;
+};
+
+/**
+ * QueryMapping
+ */
+export type QueryMapping = {
+    /**
+     * Dataset
+     */
+    dataset: string;
+    /**
+     * Label
+     */
+    label: string;
+    /**
+     * Filename
+     */
+    filename: string;
+    /**
+     * Ready
+     */
+    ready: boolean;
+};
+
+/**
+ * Queued
+ */
+export type Queued = {
+    /**
+     * Queued
+     */
+    queued: boolean;
+};
+
+/**
+ * RecipientResolution
+ */
+export type RecipientResolution = {
+    /**
+     * Recipient
+     */
+    recipient: string;
+    /**
+     * Outcome
+     */
+    outcome: 'accepted' | 'not_accepted';
+};
+
+/**
+ * RecipientResult
+ */
+export type RecipientResult = {
+    /**
+     * Status
+     */
+    status: string;
+    /**
+     * Message
+     */
+    message?: string | null;
+    /**
+     * Code
+     */
+    code?: number | null;
+    [key: string]: JsonValue | string | string | null | number | null | undefined;
+};
+
+/**
+ * ReportAccepted
+ */
+export type ReportAccepted = {
+    /**
+     * Report Id
+     */
+    report_id: string;
+    /**
+     * Status
+     */
+    status: 'pending';
+    /**
+     * Status Url
+     */
+    status_url: string;
+};
+
+/**
+ * ReportAnalysis
+ */
+export type ReportAnalysis = {
+    /**
+     * Status
+     */
+    status: string;
+    /**
+     * Overview
+     */
+    overview: string;
+    /**
+     * Features
+     */
+    features: string;
+    /**
+     * Alerts
+     */
+    alerts: string;
+    /**
+     * Suggestions
+     */
+    suggestions: string;
+    /**
+     * Mode
+     */
+    mode: string;
+    /**
+     * Facts
+     */
+    facts: Array<AnalysisFact>;
+    /**
+     * Data Version
+     */
+    data_version: string | null;
+    /**
+     * Generated At
+     */
+    generated_at: string | null;
+    /**
+     * Cached
+     */
+    cached: boolean;
+    /**
+     * Error
+     */
+    error?: string | null;
+};
+
+/**
+ * ReportCreateRequest
+ */
+export type ReportCreateRequest = {
+    /**
+     * Report Type
+     */
+    report_type?: 'leadership' | 'workshop' | 'equipment' | 'custom';
+    /**
+     * Report Date
+     */
+    report_date?: string | null;
+    /**
+     * Period Start
+     */
+    period_start?: string | null;
+    /**
+     * Period End
+     */
+    period_end?: string | null;
+    /**
+     * Project Code
+     */
+    project_code?: string | null;
+    /**
+     * Ship No
+     */
+    ship_no?: string | null;
+    /**
+     * Definition Id
+     */
+    definition_id?: string | null;
+    /**
+     * Parameters
+     */
+    parameters?: {
+        [key: string]: string | number | number | boolean | null;
+    };
+};
+
+/**
+ * ReportDataMeta
+ */
+export type ReportDataMeta = {
+    /**
+     * Line Id
+     */
+    line_id: string;
+    /**
+     * Report Type
+     */
+    report_type: string;
+    /**
+     * Data Version
+     */
+    data_version: string;
+    /**
+     * Data As Of
+     */
+    data_as_of: string;
+    /**
+     * Refreshed At
+     */
+    refreshed_at: string;
+    /**
+     * Expires At
+     */
+    expires_at: string;
+    /**
+     * Source
+     */
+    source: 'snapshot' | 'cache' | 'database';
+    /**
+     * Stale
+     */
+    stale: boolean;
+    /**
+     * Refreshing
+     */
+    refreshing: boolean;
+    /**
+     * Refresh Failed
+     */
+    refresh_failed: boolean;
+    /**
+     * Details Source
+     */
+    details_source?: 'snapshot' | 'cache' | 'database' | null;
+    /**
+     * Today Data As Of
+     */
+    today_data_as_of?: string | null;
+};
+
+/**
+ * ReportError
+ */
+export type ReportError = {
+    /**
+     * Code
+     */
+    code: string;
+    /**
+     * Message
+     */
+    message: string;
+};
+
+/**
+ * ReportJob
+ */
+export type ReportJob = {
+    /**
+     * Report Id
+     */
+    report_id: string;
+    /**
+     * Device Id
+     */
+    device_id: string;
+    /**
+     * Status
+     */
+    status: 'pending' | 'querying' | 'calculating' | 'analyzing' | 'rendering' | 'completed' | 'failed';
+    /**
+     * Report Type
+     */
+    report_type: 'leadership' | 'workshop' | 'equipment' | 'custom';
+    /**
+     * Definition Id
+     */
+    definition_id: string | null;
+    /**
+     * Report Title
+     */
+    report_title: string | null;
+    /**
+     * Stage Message
+     */
+    stage_message: string;
+    /**
+     * Report Date
+     */
+    report_date: string;
+    /**
+     * Period Start
+     */
+    period_start: string;
+    /**
+     * Period End
+     */
+    period_end: string;
+    /**
+     * Project Code
+     */
+    project_code: string | null;
+    /**
+     * Ship No
+     */
+    ship_no: string | null;
+    /**
+     * Created At
+     */
+    created_at: string;
+    /**
+     * Started At
+     */
+    started_at: string | null;
+    /**
+     * Finished At
+     */
+    finished_at: string | null;
+    /**
+     * Ai Status
+     */
+    ai_status: string | null;
+    error: ReportError | null;
+    /**
+     * Filename
+     */
+    filename?: string | null;
+    /**
+     * Task Count
+     */
+    task_count?: number | null;
+    /**
+     * File Size
+     */
+    file_size?: number | null;
+    /**
+     * View Url
+     */
+    view_url?: string | null;
+    /**
+     * Download Url
+     */
+    download_url?: string | null;
+    /**
+     * Generated At
+     */
+    generated_at?: string | null;
+};
+
+/**
+ * Resolved
+ */
+export type Resolved = {
+    /**
+     * Resolved
+     */
+    resolved: boolean;
+};
+
+/**
  * RevokeTaskRequest
  */
 export type RevokeTaskRequest = {
@@ -1812,6 +4449,264 @@ export type RevokeTaskRequest = {
 };
 
 /**
+ * SavedConnection
+ */
+export type SavedConnection = {
+    /**
+     * Host
+     */
+    host: string;
+    /**
+     * Port
+     */
+    port: number;
+    /**
+     * Database
+     */
+    database: string;
+    /**
+     * Username
+     */
+    username: string;
+    /**
+     * Password Configured
+     */
+    password_configured: boolean;
+    /**
+     * Driver
+     */
+    driver: string;
+    /**
+     * Encrypt
+     */
+    encrypt: boolean;
+    /**
+     * Trust Server Certificate
+     */
+    trust_server_certificate: boolean;
+};
+
+/**
+ * SavedConnectionRequest
+ */
+export type SavedConnectionRequest = {
+    /**
+     * Host
+     */
+    host?: string;
+    /**
+     * Port
+     */
+    port?: number;
+    /**
+     * Database
+     */
+    database?: string;
+    /**
+     * Username
+     */
+    username?: string;
+    /**
+     * Password
+     */
+    password?: null;
+    /**
+     * Driver
+     */
+    driver?: string;
+    /**
+     * Encrypt
+     */
+    encrypt?: boolean;
+    /**
+     * Trust Server Certificate
+     */
+    trust_server_certificate?: boolean;
+};
+
+/**
+ * SchedulePayload
+ */
+export type SchedulePayload = {
+    /**
+     * Device Id
+     */
+    device_id: string;
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Report Type
+     */
+    report_type: 'leadership' | 'workshop' | 'equipment';
+    /**
+     * Frequency
+     */
+    frequency?: 'daily' | 'weekly' | 'monthly';
+    /**
+     * Run Time
+     */
+    run_time?: string;
+    /**
+     * Weekday
+     */
+    weekday?: number | null;
+    /**
+     * Month Day
+     */
+    month_day?: number | null;
+    /**
+     * Report Period
+     */
+    report_period?: 'current_day' | 'previous_day' | 'current_month' | 'previous_month';
+    /**
+     * Recipients
+     */
+    recipients: Array<string>;
+    /**
+     * Subject Template
+     */
+    subject_template?: string;
+    /**
+     * Chart Type
+     */
+    chart_type?: 'bar_line' | 'bar' | 'line' | 'area';
+    /**
+     * Attach Report
+     */
+    attach_report?: boolean;
+    /**
+     * Max Attempts
+     */
+    max_attempts?: number;
+    /**
+     * Enabled
+     */
+    enabled?: boolean;
+};
+
+/**
+ * ScheduledRun
+ */
+export type ScheduledRun = {
+    /**
+     * Run Id
+     */
+    run_id: string;
+    /**
+     * Device Id
+     */
+    device_id: string;
+    /**
+     * Schedule Id
+     */
+    schedule_id: string | null;
+    /**
+     * Schedule Name
+     */
+    schedule_name: string;
+    /**
+     * Report Type
+     */
+    report_type: string;
+    /**
+     * Report Date
+     */
+    report_date: string;
+    /**
+     * Scheduled For
+     */
+    scheduled_for: string;
+    /**
+     * Trigger Type
+     */
+    trigger_type: string;
+    /**
+     * Report Id
+     */
+    report_id: string | null;
+    /**
+     * Status
+     */
+    status: string;
+    /**
+     * Recipients
+     */
+    recipients: Array<string>;
+    /**
+     * Subject Template
+     */
+    subject_template: string;
+    /**
+     * Chart Type
+     */
+    chart_type: string;
+    /**
+     * Attach Report
+     */
+    attach_report: boolean;
+    /**
+     * Max Attempts
+     */
+    max_attempts: number;
+    /**
+     * Created By Id
+     */
+    created_by_id: string;
+    /**
+     * Created By Name
+     */
+    created_by_name: string;
+    /**
+     * Last Error
+     */
+    last_error: string | null;
+    /**
+     * Created At
+     */
+    created_at: string;
+    /**
+     * Updated At
+     */
+    updated_at: string;
+};
+
+/**
+ * SmtpStatus
+ */
+export type SmtpStatus = {
+    /**
+     * Enabled
+     */
+    enabled: boolean;
+    /**
+     * Configured
+     */
+    configured: boolean;
+    /**
+     * Host
+     */
+    host: string | null;
+    /**
+     * Port
+     */
+    port: number;
+    /**
+     * From Email
+     */
+    from_email: string | null;
+    /**
+     * Use Tls
+     */
+    use_tls: boolean;
+    /**
+     * Use Ssl
+     */
+    use_ssl: boolean;
+};
+
+/**
  * SortRule
  */
 export type SortRule = {
@@ -1823,6 +4718,30 @@ export type SortRule = {
      * Direction
      */
     direction?: 'asc' | 'desc';
+};
+
+/**
+ * SqlExecuteRequest
+ */
+export type SqlExecuteRequest = {
+    /**
+     * Sql
+     */
+    sql: string;
+    /**
+     * Max Rows
+     */
+    max_rows?: number;
+};
+
+/**
+ * SqlValidateRequest
+ */
+export type SqlValidateRequest = {
+    /**
+     * Sql
+     */
+    sql: string;
 };
 
 /**
@@ -1868,6 +4787,110 @@ export type TaskConfirmation = {
 };
 
 /**
+ * TaskEnergyPeriodReport
+ */
+export type TaskEnergyPeriodReport = {
+    /**
+     * Period Start
+     */
+    period_start: string;
+    /**
+     * Period End
+     */
+    period_end: string;
+    /**
+     * Rows
+     */
+    rows: Array<EnergyPeriodRow>;
+    summary: EnergySummary;
+    /**
+     * Total Task Count
+     */
+    total_task_count: number;
+    /**
+     * Total Work Time Seconds
+     */
+    total_work_time_seconds: number;
+    /**
+     * Saved Day Count
+     */
+    saved_day_count: number;
+    /**
+     * Elapsed Day Count
+     */
+    elapsed_day_count: number;
+    /**
+     * Calendar Day Count
+     */
+    calendar_day_count: number;
+    units: EnergyUnits;
+    /**
+     * Equipment Scope
+     */
+    equipment_scope: Array<string>;
+};
+
+/**
+ * TaskEnergyReport
+ */
+export type TaskEnergyReport = {
+    /**
+     * Report Date
+     */
+    report_date: string;
+    /**
+     * Records
+     */
+    records: Array<EquipmentRecord>;
+    summary: EquipmentSummary;
+    units: EnergyUnits;
+    /**
+     * Equipment Scope
+     */
+    equipment_scope: Array<string>;
+    /**
+     * Source Task Count
+     */
+    source_task_count: number;
+    /**
+     * Excluded Task Count
+     */
+    excluded_task_count: number;
+    /**
+     * Energy Notice
+     */
+    energy_notice: string;
+    /**
+     * Warning
+     */
+    warning: string;
+    /**
+     * Configuration Error
+     */
+    configuration_error: string | null;
+    /**
+     * Energy Connected
+     */
+    energy_connected: boolean;
+    /**
+     * Period Start
+     */
+    period_start?: string | null;
+    /**
+     * Period End
+     */
+    period_end?: string | null;
+    /**
+     * Data Updated At
+     */
+    data_updated_at?: string | null;
+    /**
+     * Analysis Source Version
+     */
+    analysis_source_version?: string | null;
+};
+
+/**
  * TopCutTask
  */
 export type TopCutTask = {
@@ -1887,6 +4910,32 @@ export type TopCutTask = {
      * Cut Length M
      */
     cut_length_m: number | null;
+};
+
+/**
+ * ValidatedWorkbenchSql
+ */
+export type ValidatedWorkbenchSql = {
+    /**
+     * Valid
+     */
+    valid: boolean;
+    /**
+     * Formatted Sql
+     */
+    formatted_sql: string;
+    /**
+     * Tables
+     */
+    tables: Array<string>;
+    /**
+     * Columns
+     */
+    columns: Array<string>;
+    /**
+     * Read Only
+     */
+    read_only: boolean;
 };
 
 /**
@@ -1915,6 +4964,1327 @@ export type ValidationError = {
     ctx?: {
         [key: string]: unknown;
     };
+};
+
+/**
+ * WeldingAnalysisRequest
+ */
+export type WeldingAnalysisRequest = {
+    /**
+     * Report Type
+     */
+    report_type?: 'daily' | 'parts' | 'jobs' | 'equipment';
+    query: WeldingQuery;
+    /**
+     * Data Version
+     */
+    data_version: string;
+};
+
+/**
+ * WeldingConnection
+ */
+export type WeldingConnection = {
+    /**
+     * Enabled
+     */
+    enabled: boolean;
+    /**
+     * Host
+     */
+    host: string;
+    /**
+     * Port
+     */
+    port: number;
+    /**
+     * Database
+     */
+    database: string;
+    /**
+     * Username
+     */
+    username: string;
+    /**
+     * Password Configured
+     */
+    password_configured: boolean;
+    /**
+     * Timezone
+     */
+    timezone: string;
+};
+
+/**
+ * WeldingConnectionRequest
+ */
+export type WeldingConnectionRequest = {
+    /**
+     * Enabled
+     */
+    enabled?: boolean;
+    /**
+     * Host
+     */
+    host?: string;
+    /**
+     * Port
+     */
+    port?: number;
+    /**
+     * Database
+     */
+    database?: string;
+    /**
+     * Username
+     */
+    username?: string;
+    /**
+     * Password
+     */
+    password?: null;
+    /**
+     * Timezone
+     */
+    timezone?: string;
+};
+
+/**
+ * WeldingDailyReport
+ */
+export type WeldingDailyReport = {
+    query: WeldingQuery;
+    summary: WeldingSummary;
+    today: WeldingDisplayMetrics | null;
+    /**
+     * Daily
+     */
+    daily: Array<WeldingDailyRow>;
+    /**
+     * Equipment
+     */
+    equipment: Array<WeldingEquipmentRow>;
+    /**
+     * Device Distribution
+     */
+    device_distribution: Array<WeldingDeviceRow>;
+    /**
+     * Projects
+     */
+    projects: Array<WeldingProject>;
+    /**
+     * Projects Truncated
+     */
+    projects_truncated: boolean;
+    /**
+     * Speed Distribution
+     */
+    speed_distribution: Array<WeldingSpeedBucket>;
+    /**
+     * Items
+     */
+    items: Array<WeldingDailyRow>;
+    /**
+     * Total
+     */
+    total: number;
+    meta: WeldingMeta;
+    /**
+     * Data Version
+     */
+    data_version: string;
+    /**
+     * Report Type
+     */
+    report_type: 'daily';
+};
+
+/**
+ * WeldingDailyRow
+ */
+export type WeldingDailyRow = {
+    /**
+     * Source Rows
+     */
+    source_rows: number;
+    /**
+     * Job Count
+     */
+    job_count: number;
+    /**
+     * Involved Part Count
+     */
+    involved_part_count: number;
+    /**
+     * Weld Length M
+     */
+    weld_length_m: number;
+    /**
+     * Working Hours
+     */
+    working_hours: number;
+    /**
+     * Output Per Hour
+     */
+    output_per_hour: number | null;
+    /**
+     * Device Count
+     */
+    device_count: number;
+    /**
+     * Robot Station Count
+     */
+    robot_station_count: number;
+    /**
+     * Invalid Time Rows
+     */
+    invalid_time_rows: number;
+    /**
+     * Invalid Serial Rows
+     */
+    invalid_serial_rows: number;
+    /**
+     * Invalid Length Rows
+     */
+    invalid_length_rows: number;
+    /**
+     * Invalid Duration Rows
+     */
+    invalid_duration_rows: number;
+    /**
+     * Unverified State Rows
+     */
+    unverified_state_rows: number;
+    /**
+     * Flat Wrap Length M
+     */
+    flat_wrap_length_m: number;
+    /**
+     * Flat Length M
+     */
+    flat_length_m: number;
+    /**
+     * Vertical Wrap Length M
+     */
+    vertical_wrap_length_m: number;
+    /**
+     * Vertical Length M
+     */
+    vertical_length_m: number;
+    /**
+     * Unknown Length M
+     */
+    unknown_length_m: number;
+    /**
+     * Wrap Length M
+     */
+    wrap_length_m: number;
+    /**
+     * Completed Part Count
+     */
+    completed_part_count: null;
+    /**
+     * Arc Rate
+     */
+    arc_rate: null;
+    /**
+     * Weld Rate
+     */
+    weld_rate: null;
+    /**
+     * Additional Wrap Length M
+     */
+    additional_wrap_length_m: null;
+    /**
+     * Production Date
+     */
+    production_date: string;
+};
+
+/**
+ * WeldingDeviceRow
+ */
+export type WeldingDeviceRow = {
+    /**
+     * Source Rows
+     */
+    source_rows: number;
+    /**
+     * Job Count
+     */
+    job_count: number;
+    /**
+     * Involved Part Count
+     */
+    involved_part_count: number;
+    /**
+     * Weld Length M
+     */
+    weld_length_m: number;
+    /**
+     * Working Hours
+     */
+    working_hours: number;
+    /**
+     * Output Per Hour
+     */
+    output_per_hour: number | null;
+    /**
+     * Device Count
+     */
+    device_count: number;
+    /**
+     * Robot Station Count
+     */
+    robot_station_count: number;
+    /**
+     * Invalid Time Rows
+     */
+    invalid_time_rows: number;
+    /**
+     * Invalid Serial Rows
+     */
+    invalid_serial_rows: number;
+    /**
+     * Invalid Length Rows
+     */
+    invalid_length_rows: number;
+    /**
+     * Invalid Duration Rows
+     */
+    invalid_duration_rows: number;
+    /**
+     * Unverified State Rows
+     */
+    unverified_state_rows: number;
+    /**
+     * Flat Wrap Length M
+     */
+    flat_wrap_length_m: number;
+    /**
+     * Flat Length M
+     */
+    flat_length_m: number;
+    /**
+     * Vertical Wrap Length M
+     */
+    vertical_wrap_length_m: number;
+    /**
+     * Vertical Length M
+     */
+    vertical_length_m: number;
+    /**
+     * Unknown Length M
+     */
+    unknown_length_m: number;
+    /**
+     * Device No
+     */
+    device_no: number | null;
+};
+
+/**
+ * WeldingDisplayMetrics
+ */
+export type WeldingDisplayMetrics = {
+    /**
+     * Source Rows
+     */
+    source_rows: number;
+    /**
+     * Job Count
+     */
+    job_count: number;
+    /**
+     * Involved Part Count
+     */
+    involved_part_count: number;
+    /**
+     * Weld Length M
+     */
+    weld_length_m: number;
+    /**
+     * Working Hours
+     */
+    working_hours: number;
+    /**
+     * Output Per Hour
+     */
+    output_per_hour: number | null;
+    /**
+     * Device Count
+     */
+    device_count: number;
+    /**
+     * Robot Station Count
+     */
+    robot_station_count: number;
+    /**
+     * Invalid Time Rows
+     */
+    invalid_time_rows: number;
+    /**
+     * Invalid Serial Rows
+     */
+    invalid_serial_rows: number;
+    /**
+     * Invalid Length Rows
+     */
+    invalid_length_rows: number;
+    /**
+     * Invalid Duration Rows
+     */
+    invalid_duration_rows: number;
+    /**
+     * Unverified State Rows
+     */
+    unverified_state_rows: number;
+    /**
+     * Flat Wrap Length M
+     */
+    flat_wrap_length_m: number;
+    /**
+     * Flat Length M
+     */
+    flat_length_m: number;
+    /**
+     * Vertical Wrap Length M
+     */
+    vertical_wrap_length_m: number;
+    /**
+     * Vertical Length M
+     */
+    vertical_length_m: number;
+    /**
+     * Unknown Length M
+     */
+    unknown_length_m: number;
+    /**
+     * Wrap Length M
+     */
+    wrap_length_m: number;
+    /**
+     * Completed Part Count
+     */
+    completed_part_count: null;
+    /**
+     * Arc Rate
+     */
+    arc_rate: null;
+    /**
+     * Weld Rate
+     */
+    weld_rate: null;
+    /**
+     * Additional Wrap Length M
+     */
+    additional_wrap_length_m: null;
+};
+
+/**
+ * WeldingEquipmentReport
+ */
+export type WeldingEquipmentReport = {
+    query: WeldingQuery;
+    summary: WeldingSummary;
+    today: WeldingDisplayMetrics | null;
+    /**
+     * Daily
+     */
+    daily: Array<WeldingDailyRow>;
+    /**
+     * Equipment
+     */
+    equipment: Array<WeldingEquipmentRow>;
+    /**
+     * Device Distribution
+     */
+    device_distribution: Array<WeldingDeviceRow>;
+    /**
+     * Projects
+     */
+    projects: Array<WeldingProject>;
+    /**
+     * Projects Truncated
+     */
+    projects_truncated: boolean;
+    /**
+     * Speed Distribution
+     */
+    speed_distribution: Array<WeldingSpeedBucket>;
+    /**
+     * Items
+     */
+    items: Array<WeldingEquipmentRow>;
+    /**
+     * Total
+     */
+    total: number;
+    meta: WeldingMeta;
+    /**
+     * Data Version
+     */
+    data_version: string;
+    /**
+     * Report Type
+     */
+    report_type: 'equipment';
+};
+
+/**
+ * WeldingEquipmentRow
+ */
+export type WeldingEquipmentRow = {
+    /**
+     * Source Rows
+     */
+    source_rows: number;
+    /**
+     * Job Count
+     */
+    job_count: number;
+    /**
+     * Involved Part Count
+     */
+    involved_part_count: number;
+    /**
+     * Weld Length M
+     */
+    weld_length_m: number;
+    /**
+     * Working Hours
+     */
+    working_hours: number;
+    /**
+     * Output Per Hour
+     */
+    output_per_hour: number | null;
+    /**
+     * Device Count
+     */
+    device_count: number;
+    /**
+     * Robot Station Count
+     */
+    robot_station_count: number;
+    /**
+     * Invalid Time Rows
+     */
+    invalid_time_rows: number;
+    /**
+     * Invalid Serial Rows
+     */
+    invalid_serial_rows: number;
+    /**
+     * Invalid Length Rows
+     */
+    invalid_length_rows: number;
+    /**
+     * Invalid Duration Rows
+     */
+    invalid_duration_rows: number;
+    /**
+     * Unverified State Rows
+     */
+    unverified_state_rows: number;
+    /**
+     * Flat Wrap Length M
+     */
+    flat_wrap_length_m: number;
+    /**
+     * Flat Length M
+     */
+    flat_length_m: number;
+    /**
+     * Vertical Wrap Length M
+     */
+    vertical_wrap_length_m: number;
+    /**
+     * Vertical Length M
+     */
+    vertical_length_m: number;
+    /**
+     * Unknown Length M
+     */
+    unknown_length_m: number;
+    /**
+     * Wrap Length M
+     */
+    wrap_length_m: number;
+    /**
+     * Completed Part Count
+     */
+    completed_part_count: null;
+    /**
+     * Arc Rate
+     */
+    arc_rate: null;
+    /**
+     * Weld Rate
+     */
+    weld_rate: null;
+    /**
+     * Additional Wrap Length M
+     */
+    additional_wrap_length_m: null;
+    /**
+     * Device No
+     */
+    device_no: number | null;
+    /**
+     * Robot No
+     */
+    robot_no: number | null;
+};
+
+/**
+ * WeldingHealth
+ */
+export type WeldingHealth = {
+    /**
+     * Connected
+     */
+    connected: boolean;
+    /**
+     * Devices
+     */
+    devices: Array<number>;
+    /**
+     * Updated At
+     */
+    updated_at: {
+        [key: string]: string | null;
+    };
+};
+
+/**
+ * WeldingJobRow
+ */
+export type WeldingJobRow = {
+    /**
+     * Id
+     */
+    id: number;
+    /**
+     * Serial Number
+     */
+    serial_number: string | null;
+    /**
+     * Device No
+     */
+    device_no: number | null;
+    /**
+     * Start Time
+     */
+    start_time: string | null;
+    /**
+     * End Time
+     */
+    end_time: string | null;
+    /**
+     * State
+     */
+    state: number | null;
+    /**
+     * Update Date
+     */
+    update_date: string | null;
+    /**
+     * Used Time
+     */
+    used_time: number | null;
+    /**
+     * Working Hours
+     */
+    working_hours: number | null;
+    /**
+     * State Label
+     */
+    state_label: string;
+    /**
+     * Quality Reasons
+     */
+    quality_reasons: Array<string>;
+    /**
+     * Robot No
+     */
+    robot_no: number | null;
+    /**
+     * Riser No
+     */
+    riser_no: number | null;
+    /**
+     * Welding Seam No
+     */
+    welding_seam_no: number | null;
+    /**
+     * Weld Task Serial Number
+     */
+    weld_task_serial_number: number | null;
+    /**
+     * Weld Type
+     */
+    weld_type: number | null;
+    /**
+     * Weld Speed
+     */
+    weld_speed: number | null;
+    /**
+     * Weld Lenght
+     */
+    weld_lenght: number | null;
+    /**
+     * Wrap Angle Lenght
+     */
+    wrap_angle_lenght: number | null;
+    /**
+     * Weld Type Label
+     */
+    weld_type_label: string;
+    /**
+     * Weld Length M
+     */
+    weld_length_m: number | null;
+    /**
+     * Additional Wrap Length M
+     */
+    additional_wrap_length_m: number | null;
+};
+
+/**
+ * WeldingJobsReport
+ */
+export type WeldingJobsReport = {
+    query: WeldingQuery;
+    summary: WeldingSummary;
+    today: WeldingDisplayMetrics | null;
+    /**
+     * Daily
+     */
+    daily: Array<WeldingDailyRow>;
+    /**
+     * Equipment
+     */
+    equipment: Array<WeldingEquipmentRow>;
+    /**
+     * Device Distribution
+     */
+    device_distribution: Array<WeldingDeviceRow>;
+    /**
+     * Projects
+     */
+    projects: Array<WeldingProject>;
+    /**
+     * Projects Truncated
+     */
+    projects_truncated: boolean;
+    /**
+     * Speed Distribution
+     */
+    speed_distribution: Array<WeldingSpeedBucket>;
+    /**
+     * Items
+     */
+    items: Array<WeldingJobRow>;
+    /**
+     * Total
+     */
+    total: number;
+    meta: WeldingMeta;
+    /**
+     * Data Version
+     */
+    data_version: string;
+    /**
+     * Report Type
+     */
+    report_type: 'jobs';
+};
+
+/**
+ * WeldingMeta
+ */
+export type WeldingMeta = {
+    /**
+     * Line Key
+     */
+    line_key: string;
+    /**
+     * Timezone
+     */
+    timezone: string;
+    /**
+     * Calculated At
+     */
+    calculated_at: string;
+    /**
+     * Data Updated At
+     */
+    data_updated_at: {
+        [key: string]: string | null;
+    };
+    /**
+     * Devices
+     */
+    devices: Array<number>;
+    /**
+     * Units
+     */
+    units: {
+        [key: string]: string;
+    };
+    /**
+     * Pending Metrics
+     */
+    pending_metrics: {
+        [key: string]: string;
+    };
+    /**
+     * Quality
+     */
+    quality: {
+        [key: string]: number;
+    };
+    /**
+     * Unlinked Part Count
+     */
+    unlinked_part_count: number;
+    /**
+     * Ambiguous Part Count
+     */
+    ambiguous_part_count: number;
+    /**
+     * Notices
+     */
+    notices: Array<string>;
+    report_data?: ReportDataMeta | null;
+    /**
+     * Source Info As Of
+     */
+    source_info_as_of?: string | null;
+};
+
+/**
+ * WeldingPart
+ */
+export type WeldingPart = {
+    part: WeldingPartRow;
+    /**
+     * Items
+     */
+    items: Array<WeldingSeamRow>;
+    /**
+     * Total
+     */
+    total: number;
+    /**
+     * Association Status
+     */
+    association_status: string;
+    /**
+     * Notice
+     */
+    notice: string;
+};
+
+/**
+ * WeldingPartRow
+ */
+export type WeldingPartRow = {
+    /**
+     * Id
+     */
+    id: number;
+    /**
+     * Serial Number
+     */
+    serial_number: string | null;
+    /**
+     * Device No
+     */
+    device_no: number | null;
+    /**
+     * Start Time
+     */
+    start_time: string | null;
+    /**
+     * End Time
+     */
+    end_time: string | null;
+    /**
+     * State
+     */
+    state: number | null;
+    /**
+     * Update Date
+     */
+    update_date: string | null;
+    /**
+     * Used Time
+     */
+    used_time: number | null;
+    /**
+     * Working Hours
+     */
+    working_hours: number | null;
+    /**
+     * State Label
+     */
+    state_label: string;
+    /**
+     * Quality Reasons
+     */
+    quality_reasons: Array<string>;
+    /**
+     * Project No
+     */
+    project_no: string | null;
+    /**
+     * Project Name
+     */
+    project_name: string | null;
+    /**
+     * Section No
+     */
+    section_no: string | null;
+    /**
+     * Part No
+     */
+    part_no: string | null;
+    /**
+     * Theory Lenght
+     */
+    theory_lenght: number | null;
+    /**
+     * Reality Lenght
+     */
+    reality_lenght: number | null;
+    /**
+     * Weld Rate
+     */
+    weld_rate: number | null;
+    /**
+     * Arc Rate
+     */
+    arc_rate: number | null;
+    /**
+     * Weld Used Time
+     */
+    weld_used_time: number | null;
+    /**
+     * Theoretical Length M
+     */
+    theoretical_length_m: number | null;
+    /**
+     * Actual Length M
+     */
+    actual_length_m: number | null;
+};
+
+/**
+ * WeldingPartsReport
+ */
+export type WeldingPartsReport = {
+    query: WeldingQuery;
+    summary: WeldingSummary;
+    today: WeldingDisplayMetrics | null;
+    /**
+     * Daily
+     */
+    daily: Array<WeldingDailyRow>;
+    /**
+     * Equipment
+     */
+    equipment: Array<WeldingEquipmentRow>;
+    /**
+     * Device Distribution
+     */
+    device_distribution: Array<WeldingDeviceRow>;
+    /**
+     * Projects
+     */
+    projects: Array<WeldingProject>;
+    /**
+     * Projects Truncated
+     */
+    projects_truncated: boolean;
+    /**
+     * Speed Distribution
+     */
+    speed_distribution: Array<WeldingSpeedBucket>;
+    /**
+     * Items
+     */
+    items: Array<WeldingPartRow>;
+    /**
+     * Total
+     */
+    total: number;
+    meta: WeldingMeta;
+    /**
+     * Data Version
+     */
+    data_version: string;
+    /**
+     * Report Type
+     */
+    report_type: 'parts';
+};
+
+/**
+ * WeldingProject
+ */
+export type WeldingProject = {
+    /**
+     * Project Name
+     */
+    project_name: string | null;
+    /**
+     * Project No
+     */
+    project_no: string | null;
+    /**
+     * Cumulative Actual Length M
+     */
+    cumulative_actual_length_m: number | null;
+    /**
+     * Part Count
+     */
+    part_count: number;
+};
+
+/**
+ * WeldingQuery
+ */
+export type WeldingQuery = {
+    /**
+     * Start
+     */
+    start: string;
+    /**
+     * End
+     */
+    end: string;
+    /**
+     * Device No
+     */
+    device_no?: number | null;
+    /**
+     * Robot No
+     */
+    robot_no?: number | null;
+    /**
+     * Weld Type
+     */
+    weld_type?: number | null;
+    /**
+     * State
+     */
+    state?: number | null;
+    /**
+     * Part State
+     */
+    part_state?: number | null;
+    /**
+     * Serial Number
+     */
+    serial_number?: string;
+    /**
+     * Project No
+     */
+    project_no?: string;
+    /**
+     * Section No
+     */
+    section_no?: string;
+    /**
+     * Part No
+     */
+    part_no?: string;
+    /**
+     * Anomalies Only
+     */
+    anomalies_only?: boolean;
+    /**
+     * Page
+     */
+    page?: number;
+    /**
+     * Page Size
+     */
+    page_size?: number;
+    /**
+     * Sort By
+     */
+    sort_by?: 'time' | 'length' | 'id';
+    /**
+     * Descending
+     */
+    descending?: boolean;
+};
+
+/**
+ * WeldingSeamRow
+ */
+export type WeldingSeamRow = {
+    /**
+     * Id
+     */
+    id: number;
+    /**
+     * Serial Number
+     */
+    serial_number: string | null;
+    /**
+     * Device No
+     */
+    device_no: number | null;
+    /**
+     * Start Time
+     */
+    start_time: string | null;
+    /**
+     * End Time
+     */
+    end_time: string | null;
+    /**
+     * State
+     */
+    state: number | null;
+    /**
+     * Update Date
+     */
+    update_date: string | null;
+    /**
+     * Used Time
+     */
+    used_time: number | null;
+    /**
+     * Working Hours
+     */
+    working_hours: number | null;
+    /**
+     * State Label
+     */
+    state_label: string;
+    /**
+     * Quality Reasons
+     */
+    quality_reasons: Array<string>;
+    /**
+     * Robot No
+     */
+    robot_no: number | null;
+    /**
+     * Riser No
+     */
+    riser_no: number | null;
+    /**
+     * Welding Seam No
+     */
+    welding_seam_no: number | null;
+    /**
+     * Theory Lenght
+     */
+    theory_lenght: number | null;
+    /**
+     * Reality Lenght
+     */
+    reality_lenght: number | null;
+    /**
+     * Theoretical Length M
+     */
+    theoretical_length_m: number | null;
+    /**
+     * Actual Length M
+     */
+    actual_length_m: number | null;
+};
+
+/**
+ * WeldingSpeedBucket
+ */
+export type WeldingSpeedBucket = {
+    /**
+     * Speed Band
+     */
+    speed_band: string;
+    /**
+     * Job Count
+     */
+    job_count: number;
+};
+
+/**
+ * WeldingSummary
+ */
+export type WeldingSummary = {
+    /**
+     * Source Rows
+     */
+    source_rows: number;
+    /**
+     * Job Count
+     */
+    job_count: number;
+    /**
+     * Involved Part Count
+     */
+    involved_part_count: number;
+    /**
+     * Weld Length M
+     */
+    weld_length_m: number;
+    /**
+     * Working Hours
+     */
+    working_hours: number;
+    /**
+     * Output Per Hour
+     */
+    output_per_hour: number | null;
+    /**
+     * Device Count
+     */
+    device_count: number;
+    /**
+     * Robot Station Count
+     */
+    robot_station_count: number;
+    /**
+     * Invalid Time Rows
+     */
+    invalid_time_rows: number;
+    /**
+     * Invalid Serial Rows
+     */
+    invalid_serial_rows: number;
+    /**
+     * Invalid Length Rows
+     */
+    invalid_length_rows: number;
+    /**
+     * Invalid Duration Rows
+     */
+    invalid_duration_rows: number;
+    /**
+     * Unverified State Rows
+     */
+    unverified_state_rows: number;
+    /**
+     * Flat Wrap Length M
+     */
+    flat_wrap_length_m: number;
+    /**
+     * Flat Length M
+     */
+    flat_length_m: number;
+    /**
+     * Vertical Wrap Length M
+     */
+    vertical_wrap_length_m: number;
+    /**
+     * Vertical Length M
+     */
+    vertical_length_m: number;
+    /**
+     * Unknown Length M
+     */
+    unknown_length_m: number;
+    /**
+     * Wrap Length M
+     */
+    wrap_length_m: number;
+    /**
+     * Completed Part Count
+     */
+    completed_part_count: null;
+    /**
+     * Arc Rate
+     */
+    arc_rate: null;
+    /**
+     * Weld Rate
+     */
+    weld_rate: null;
+    /**
+     * Additional Wrap Length M
+     */
+    additional_wrap_length_m: null;
+    /**
+     * Part Row Count
+     */
+    part_row_count?: number | null;
+    /**
+     * Part Actual Length M
+     */
+    part_actual_length_m?: number | null;
+    /**
+     * Ambiguous Part Rows
+     */
+    ambiguous_part_rows?: number | null;
+    /**
+     * Invalid Part Rows
+     */
+    invalid_part_rows?: number | null;
+};
+
+/**
+ * WorkbenchQueryResult
+ */
+export type WorkbenchQueryResult = {
+    /**
+     * Columns
+     */
+    columns: Array<string>;
+    /**
+     * Items
+     */
+    items: Array<{
+        [key: string]: JsonValue;
+    }>;
+    /**
+     * Returned
+     */
+    returned: number;
+    /**
+     * Truncated
+     */
+    truncated: boolean;
+    /**
+     * Elapsed Ms
+     */
+    elapsed_ms: number;
+};
+
+/**
+ * WorkerConfigurationVersion
+ */
+export type WorkerConfigurationVersion = {
+    /**
+     * State
+     */
+    state: string;
+    /**
+     * Available
+     */
+    available: boolean;
+    /**
+     * Loaded At
+     */
+    loaded_at?: string | null;
+    /**
+     * Hot Loaded At
+     */
+    hot_loaded_at?: string | null;
+    /**
+     * Hot Revision
+     */
+    hot_revision?: number | null;
+    /**
+     * Version
+     */
+    version?: string | null;
 };
 
 /**
@@ -2205,6 +6575,196 @@ export type WorkshopUser = {
      * Created At
      */
     created_at?: string | null;
+};
+
+/**
+ * AutomationConfigurationRequest
+ */
+export type AutomationConfigurationRequestWritable = {
+    /**
+     * Automation Enabled
+     */
+    automation_enabled?: boolean;
+    /**
+     * Automation Scan Seconds
+     */
+    automation_scan_seconds?: number;
+    /**
+     * Email Retry Base Seconds
+     */
+    email_retry_base_seconds?: number;
+    /**
+     * Smtp Enabled
+     */
+    smtp_enabled?: boolean;
+    /**
+     * Smtp Host
+     */
+    smtp_host?: string;
+    /**
+     * Smtp Port
+     */
+    smtp_port?: number;
+    /**
+     * Smtp Username
+     */
+    smtp_username?: string;
+    /**
+     * Smtp Password
+     */
+    smtp_password?: string | null;
+    /**
+     * Smtp From Email
+     */
+    smtp_from_email?: string;
+    /**
+     * Smtp From Name
+     */
+    smtp_from_name?: string;
+    /**
+     * Smtp Use Tls
+     */
+    smtp_use_tls?: boolean;
+    /**
+     * Smtp Use Ssl
+     */
+    smtp_use_ssl?: boolean;
+    /**
+     * Smtp Timeout Seconds
+     */
+    smtp_timeout_seconds?: number;
+};
+
+/**
+ * ConnectionTestRequest
+ */
+export type ConnectionTestRequestWritable = {
+    /**
+     * Host
+     */
+    host: string;
+    /**
+     * Port
+     */
+    port?: number;
+    /**
+     * Database
+     */
+    database: string;
+    /**
+     * Username
+     */
+    username: string;
+    /**
+     * Password
+     */
+    password: string;
+    /**
+     * Driver
+     */
+    driver?: string;
+    /**
+     * Encrypt
+     */
+    encrypt?: boolean;
+    /**
+     * Trust Server Certificate
+     */
+    trust_server_certificate?: boolean;
+};
+
+/**
+ * DatabaseConfigurationRequest
+ */
+export type DatabaseConfigurationRequestWritable = {
+    /**
+     * Data Source Mode
+     */
+    data_source_mode?: 'demo' | 'sqlserver';
+    /**
+     * Worker Database Auth Enabled
+     */
+    worker_database_auth_enabled?: boolean;
+    /**
+     * File Database Enabled
+     */
+    file_database_enabled?: boolean;
+    production: SavedConnectionRequestWritable;
+    worker: SavedConnectionRequestWritable;
+    file: SavedConnectionRequestWritable;
+    welding?: WeldingConnectionRequestWritable | null;
+};
+
+/**
+ * SavedConnectionRequest
+ */
+export type SavedConnectionRequestWritable = {
+    /**
+     * Host
+     */
+    host?: string;
+    /**
+     * Port
+     */
+    port?: number;
+    /**
+     * Database
+     */
+    database?: string;
+    /**
+     * Username
+     */
+    username?: string;
+    /**
+     * Password
+     */
+    password?: string | null;
+    /**
+     * Driver
+     */
+    driver?: string;
+    /**
+     * Encrypt
+     */
+    encrypt?: boolean;
+    /**
+     * Trust Server Certificate
+     */
+    trust_server_certificate?: boolean;
+};
+
+/**
+ * WeldingConnectionRequest
+ */
+export type WeldingConnectionRequestWritable = {
+    /**
+     * Enabled
+     */
+    enabled?: boolean;
+    /**
+     * Host
+     */
+    host?: string;
+    /**
+     * Port
+     */
+    port?: number;
+    /**
+     * Database
+     */
+    database?: string;
+    /**
+     * Username
+     */
+    username?: string;
+    /**
+     * Password
+     */
+    password?: string | null;
+    /**
+     * Timezone
+     */
+    timezone?: string;
 };
 
 export type LatestProductionDateApiV1WorkshopLatestDateGetData = {
@@ -3110,3 +7670,1883 @@ export type ViewAlarmReportApiV1AlarmsReportsReportIdViewGetResponses = {
      */
     200: unknown;
 };
+
+export type GetDatabaseConfigurationApiV1DatabaseConfigurationGetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/database/configuration';
+};
+
+export type GetDatabaseConfigurationApiV1DatabaseConfigurationGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type GetDatabaseConfigurationApiV1DatabaseConfigurationGetError = GetDatabaseConfigurationApiV1DatabaseConfigurationGetErrors[keyof GetDatabaseConfigurationApiV1DatabaseConfigurationGetErrors];
+
+export type GetDatabaseConfigurationApiV1DatabaseConfigurationGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeDatabaseConfiguration;
+};
+
+export type GetDatabaseConfigurationApiV1DatabaseConfigurationGetResponse = GetDatabaseConfigurationApiV1DatabaseConfigurationGetResponses[keyof GetDatabaseConfigurationApiV1DatabaseConfigurationGetResponses];
+
+export type SaveDatabaseConfigurationApiV1DatabaseConfigurationPutData = {
+    body: DatabaseConfigurationRequestWritable;
+    path?: never;
+    query?: never;
+    url: '/api/v1/database/configuration';
+};
+
+export type SaveDatabaseConfigurationApiV1DatabaseConfigurationPutErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type SaveDatabaseConfigurationApiV1DatabaseConfigurationPutError = SaveDatabaseConfigurationApiV1DatabaseConfigurationPutErrors[keyof SaveDatabaseConfigurationApiV1DatabaseConfigurationPutErrors];
+
+export type SaveDatabaseConfigurationApiV1DatabaseConfigurationPutResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeConfigurationSaved;
+};
+
+export type SaveDatabaseConfigurationApiV1DatabaseConfigurationPutResponse = SaveDatabaseConfigurationApiV1DatabaseConfigurationPutResponses[keyof SaveDatabaseConfigurationApiV1DatabaseConfigurationPutResponses];
+
+export type SaveWeldingConfigurationApiV1DatabaseWeldingConfigurationPutData = {
+    body: WeldingConnectionRequestWritable;
+    path?: never;
+    query?: never;
+    url: '/api/v1/database/welding/configuration';
+};
+
+export type SaveWeldingConfigurationApiV1DatabaseWeldingConfigurationPutErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type SaveWeldingConfigurationApiV1DatabaseWeldingConfigurationPutError = SaveWeldingConfigurationApiV1DatabaseWeldingConfigurationPutErrors[keyof SaveWeldingConfigurationApiV1DatabaseWeldingConfigurationPutErrors];
+
+export type SaveWeldingConfigurationApiV1DatabaseWeldingConfigurationPutResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeConfigurationSaved;
+};
+
+export type SaveWeldingConfigurationApiV1DatabaseWeldingConfigurationPutResponse = SaveWeldingConfigurationApiV1DatabaseWeldingConfigurationPutResponses[keyof SaveWeldingConfigurationApiV1DatabaseWeldingConfigurationPutResponses];
+
+export type TestWeldingConnectionApiV1DatabaseWeldingTestConnectionPostData = {
+    body: WeldingConnectionRequestWritable;
+    path?: never;
+    query?: never;
+    url: '/api/v1/database/welding/test-connection';
+};
+
+export type TestWeldingConnectionApiV1DatabaseWeldingTestConnectionPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type TestWeldingConnectionApiV1DatabaseWeldingTestConnectionPostError = TestWeldingConnectionApiV1DatabaseWeldingTestConnectionPostErrors[keyof TestWeldingConnectionApiV1DatabaseWeldingTestConnectionPostErrors];
+
+export type TestWeldingConnectionApiV1DatabaseWeldingTestConnectionPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeConnectionTestResult;
+};
+
+export type TestWeldingConnectionApiV1DatabaseWeldingTestConnectionPostResponse = TestWeldingConnectionApiV1DatabaseWeldingTestConnectionPostResponses[keyof TestWeldingConnectionApiV1DatabaseWeldingTestConnectionPostResponses];
+
+export type DatabaseStatusApiV1DatabaseStatusGetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/database/status';
+};
+
+export type DatabaseStatusApiV1DatabaseStatusGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type DatabaseStatusApiV1DatabaseStatusGetError = DatabaseStatusApiV1DatabaseStatusGetErrors[keyof DatabaseStatusApiV1DatabaseStatusGetErrors];
+
+export type DatabaseStatusApiV1DatabaseStatusGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeDatabaseStatus;
+};
+
+export type DatabaseStatusApiV1DatabaseStatusGetResponse = DatabaseStatusApiV1DatabaseStatusGetResponses[keyof DatabaseStatusApiV1DatabaseStatusGetResponses];
+
+export type ValidateSqlApiV1DatabaseSqlValidatePostData = {
+    body: SqlValidateRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/database/sql/validate';
+};
+
+export type ValidateSqlApiV1DatabaseSqlValidatePostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ValidateSqlApiV1DatabaseSqlValidatePostError = ValidateSqlApiV1DatabaseSqlValidatePostErrors[keyof ValidateSqlApiV1DatabaseSqlValidatePostErrors];
+
+export type ValidateSqlApiV1DatabaseSqlValidatePostResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeValidatedWorkbenchSql;
+};
+
+export type ValidateSqlApiV1DatabaseSqlValidatePostResponse = ValidateSqlApiV1DatabaseSqlValidatePostResponses[keyof ValidateSqlApiV1DatabaseSqlValidatePostResponses];
+
+export type ExecuteSqlApiV1DatabaseSqlExecutePostData = {
+    body: SqlExecuteRequest;
+    headers?: {
+        /**
+         * X-Sql-Workbench-Token
+         */
+        'X-SQL-Workbench-Token'?: string | null;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/database/sql/execute';
+};
+
+export type ExecuteSqlApiV1DatabaseSqlExecutePostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ExecuteSqlApiV1DatabaseSqlExecutePostError = ExecuteSqlApiV1DatabaseSqlExecutePostErrors[keyof ExecuteSqlApiV1DatabaseSqlExecutePostErrors];
+
+export type ExecuteSqlApiV1DatabaseSqlExecutePostResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeWorkbenchQueryResult;
+};
+
+export type ExecuteSqlApiV1DatabaseSqlExecutePostResponse = ExecuteSqlApiV1DatabaseSqlExecutePostResponses[keyof ExecuteSqlApiV1DatabaseSqlExecutePostResponses];
+
+export type TestConnectionApiV1DatabaseTestConnectionPostData = {
+    body: ConnectionTestRequestWritable;
+    path?: never;
+    query?: never;
+    url: '/api/v1/database/test-connection';
+};
+
+export type TestConnectionApiV1DatabaseTestConnectionPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type TestConnectionApiV1DatabaseTestConnectionPostError = TestConnectionApiV1DatabaseTestConnectionPostErrors[keyof TestConnectionApiV1DatabaseTestConnectionPostErrors];
+
+export type TestConnectionApiV1DatabaseTestConnectionPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeConnectionTestResult;
+};
+
+export type TestConnectionApiV1DatabaseTestConnectionPostResponse = TestConnectionApiV1DatabaseTestConnectionPostResponses[keyof TestConnectionApiV1DatabaseTestConnectionPostResponses];
+
+export type PreviewDatasetApiV1DatabasePreviewPostData = {
+    body: DatabasePreviewRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/database/preview';
+};
+
+export type PreviewDatasetApiV1DatabasePreviewPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type PreviewDatasetApiV1DatabasePreviewPostError = PreviewDatasetApiV1DatabasePreviewPostErrors[keyof PreviewDatasetApiV1DatabasePreviewPostErrors];
+
+export type PreviewDatasetApiV1DatabasePreviewPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeDatabasePreview;
+};
+
+export type PreviewDatasetApiV1DatabasePreviewPostResponse = PreviewDatasetApiV1DatabasePreviewPostResponses[keyof PreviewDatasetApiV1DatabasePreviewPostResponses];
+
+export type GetAutomationConfigurationApiV1AutomationConfigurationGetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/automation/configuration';
+};
+
+export type GetAutomationConfigurationApiV1AutomationConfigurationGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type GetAutomationConfigurationApiV1AutomationConfigurationGetError = GetAutomationConfigurationApiV1AutomationConfigurationGetErrors[keyof GetAutomationConfigurationApiV1AutomationConfigurationGetErrors];
+
+export type GetAutomationConfigurationApiV1AutomationConfigurationGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeAutomationConfiguration;
+};
+
+export type GetAutomationConfigurationApiV1AutomationConfigurationGetResponse = GetAutomationConfigurationApiV1AutomationConfigurationGetResponses[keyof GetAutomationConfigurationApiV1AutomationConfigurationGetResponses];
+
+export type SaveAutomationConfigurationApiV1AutomationConfigurationPutData = {
+    body: AutomationConfigurationRequestWritable;
+    path?: never;
+    query?: never;
+    url: '/api/v1/automation/configuration';
+};
+
+export type SaveAutomationConfigurationApiV1AutomationConfigurationPutErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type SaveAutomationConfigurationApiV1AutomationConfigurationPutError = SaveAutomationConfigurationApiV1AutomationConfigurationPutErrors[keyof SaveAutomationConfigurationApiV1AutomationConfigurationPutErrors];
+
+export type SaveAutomationConfigurationApiV1AutomationConfigurationPutResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeConfigurationSaved;
+};
+
+export type SaveAutomationConfigurationApiV1AutomationConfigurationPutResponse = SaveAutomationConfigurationApiV1AutomationConfigurationPutResponses[keyof SaveAutomationConfigurationApiV1AutomationConfigurationPutResponses];
+
+export type StatusApiV1AutomationStatusGetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/automation/status';
+};
+
+export type StatusApiV1AutomationStatusGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type StatusApiV1AutomationStatusGetError = StatusApiV1AutomationStatusGetErrors[keyof StatusApiV1AutomationStatusGetErrors];
+
+export type StatusApiV1AutomationStatusGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeAutomationStatus;
+};
+
+export type StatusApiV1AutomationStatusGetResponse = StatusApiV1AutomationStatusGetResponses[keyof StatusApiV1AutomationStatusGetResponses];
+
+export type ListSchedulesApiV1AutomationSchedulesGetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/automation/schedules';
+};
+
+export type ListSchedulesApiV1AutomationSchedulesGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ListSchedulesApiV1AutomationSchedulesGetError = ListSchedulesApiV1AutomationSchedulesGetErrors[keyof ListSchedulesApiV1AutomationSchedulesGetErrors];
+
+export type ListSchedulesApiV1AutomationSchedulesGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeItemsAutomationSchedule;
+};
+
+export type ListSchedulesApiV1AutomationSchedulesGetResponse = ListSchedulesApiV1AutomationSchedulesGetResponses[keyof ListSchedulesApiV1AutomationSchedulesGetResponses];
+
+export type CreateScheduleApiV1AutomationSchedulesPostData = {
+    body: SchedulePayload;
+    path?: never;
+    query?: never;
+    url: '/api/v1/automation/schedules';
+};
+
+export type CreateScheduleApiV1AutomationSchedulesPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type CreateScheduleApiV1AutomationSchedulesPostError = CreateScheduleApiV1AutomationSchedulesPostErrors[keyof CreateScheduleApiV1AutomationSchedulesPostErrors];
+
+export type CreateScheduleApiV1AutomationSchedulesPostResponses = {
+    /**
+     * Successful Response
+     */
+    201: ApiEnvelopeAutomationSchedule;
+};
+
+export type CreateScheduleApiV1AutomationSchedulesPostResponse = CreateScheduleApiV1AutomationSchedulesPostResponses[keyof CreateScheduleApiV1AutomationSchedulesPostResponses];
+
+export type DeleteScheduleApiV1AutomationSchedulesScheduleIdDeleteData = {
+    body?: never;
+    path: {
+        /**
+         * Schedule Id
+         */
+        schedule_id: string;
+    };
+    query?: never;
+    url: '/api/v1/automation/schedules/{schedule_id}';
+};
+
+export type DeleteScheduleApiV1AutomationSchedulesScheduleIdDeleteErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type DeleteScheduleApiV1AutomationSchedulesScheduleIdDeleteError = DeleteScheduleApiV1AutomationSchedulesScheduleIdDeleteErrors[keyof DeleteScheduleApiV1AutomationSchedulesScheduleIdDeleteErrors];
+
+export type DeleteScheduleApiV1AutomationSchedulesScheduleIdDeleteResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeDeleted;
+};
+
+export type DeleteScheduleApiV1AutomationSchedulesScheduleIdDeleteResponse = DeleteScheduleApiV1AutomationSchedulesScheduleIdDeleteResponses[keyof DeleteScheduleApiV1AutomationSchedulesScheduleIdDeleteResponses];
+
+export type UpdateScheduleApiV1AutomationSchedulesScheduleIdPutData = {
+    body: SchedulePayload;
+    path: {
+        /**
+         * Schedule Id
+         */
+        schedule_id: string;
+    };
+    query?: never;
+    url: '/api/v1/automation/schedules/{schedule_id}';
+};
+
+export type UpdateScheduleApiV1AutomationSchedulesScheduleIdPutErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type UpdateScheduleApiV1AutomationSchedulesScheduleIdPutError = UpdateScheduleApiV1AutomationSchedulesScheduleIdPutErrors[keyof UpdateScheduleApiV1AutomationSchedulesScheduleIdPutErrors];
+
+export type UpdateScheduleApiV1AutomationSchedulesScheduleIdPutResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeAutomationSchedule;
+};
+
+export type UpdateScheduleApiV1AutomationSchedulesScheduleIdPutResponse = UpdateScheduleApiV1AutomationSchedulesScheduleIdPutResponses[keyof UpdateScheduleApiV1AutomationSchedulesScheduleIdPutResponses];
+
+export type RunScheduleApiV1AutomationSchedulesScheduleIdRunPostData = {
+    body?: never;
+    path: {
+        /**
+         * Schedule Id
+         */
+        schedule_id: string;
+    };
+    query?: never;
+    url: '/api/v1/automation/schedules/{schedule_id}/run';
+};
+
+export type RunScheduleApiV1AutomationSchedulesScheduleIdRunPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type RunScheduleApiV1AutomationSchedulesScheduleIdRunPostError = RunScheduleApiV1AutomationSchedulesScheduleIdRunPostErrors[keyof RunScheduleApiV1AutomationSchedulesScheduleIdRunPostErrors];
+
+export type RunScheduleApiV1AutomationSchedulesScheduleIdRunPostResponses = {
+    /**
+     * Successful Response
+     */
+    202: ApiEnvelopeScheduledRun;
+};
+
+export type RunScheduleApiV1AutomationSchedulesScheduleIdRunPostResponse = RunScheduleApiV1AutomationSchedulesScheduleIdRunPostResponses[keyof RunScheduleApiV1AutomationSchedulesScheduleIdRunPostResponses];
+
+export type ListDeliveriesApiV1AutomationDeliveriesGetData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Page
+         */
+        page?: number;
+        /**
+         * Page Size
+         */
+        page_size?: number;
+    };
+    url: '/api/v1/automation/deliveries';
+};
+
+export type ListDeliveriesApiV1AutomationDeliveriesGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ListDeliveriesApiV1AutomationDeliveriesGetError = ListDeliveriesApiV1AutomationDeliveriesGetErrors[keyof ListDeliveriesApiV1AutomationDeliveriesGetErrors];
+
+export type ListDeliveriesApiV1AutomationDeliveriesGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopePageEmailDelivery;
+};
+
+export type ListDeliveriesApiV1AutomationDeliveriesGetResponse = ListDeliveriesApiV1AutomationDeliveriesGetResponses[keyof ListDeliveriesApiV1AutomationDeliveriesGetResponses];
+
+export type RetryDeliveryApiV1AutomationDeliveriesDeliveryIdRetryPostData = {
+    body?: never;
+    path: {
+        /**
+         * Delivery Id
+         */
+        delivery_id: string;
+    };
+    query?: never;
+    url: '/api/v1/automation/deliveries/{delivery_id}/retry';
+};
+
+export type RetryDeliveryApiV1AutomationDeliveriesDeliveryIdRetryPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type RetryDeliveryApiV1AutomationDeliveriesDeliveryIdRetryPostError = RetryDeliveryApiV1AutomationDeliveriesDeliveryIdRetryPostErrors[keyof RetryDeliveryApiV1AutomationDeliveriesDeliveryIdRetryPostErrors];
+
+export type RetryDeliveryApiV1AutomationDeliveriesDeliveryIdRetryPostResponses = {
+    /**
+     * Successful Response
+     */
+    202: ApiEnvelopeQueued;
+};
+
+export type RetryDeliveryApiV1AutomationDeliveriesDeliveryIdRetryPostResponse = RetryDeliveryApiV1AutomationDeliveriesDeliveryIdRetryPostResponses[keyof RetryDeliveryApiV1AutomationDeliveriesDeliveryIdRetryPostResponses];
+
+export type ResolveDeliveryApiV1AutomationDeliveriesDeliveryIdResolvePostData = {
+    body: DeliveryResolutionRequest;
+    path: {
+        /**
+         * Delivery Id
+         */
+        delivery_id: string;
+    };
+    query?: never;
+    url: '/api/v1/automation/deliveries/{delivery_id}/resolve';
+};
+
+export type ResolveDeliveryApiV1AutomationDeliveriesDeliveryIdResolvePostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ResolveDeliveryApiV1AutomationDeliveriesDeliveryIdResolvePostError = ResolveDeliveryApiV1AutomationDeliveriesDeliveryIdResolvePostErrors[keyof ResolveDeliveryApiV1AutomationDeliveriesDeliveryIdResolvePostErrors];
+
+export type ResolveDeliveryApiV1AutomationDeliveriesDeliveryIdResolvePostResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeResolved;
+};
+
+export type ResolveDeliveryApiV1AutomationDeliveriesDeliveryIdResolvePostResponse = ResolveDeliveryApiV1AutomationDeliveriesDeliveryIdResolvePostResponses[keyof ResolveDeliveryApiV1AutomationDeliveriesDeliveryIdResolvePostResponses];
+
+export type DeliveryResolutionsApiV1AutomationDeliveriesDeliveryIdResolutionsGetData = {
+    body?: never;
+    path: {
+        /**
+         * Delivery Id
+         */
+        delivery_id: string;
+    };
+    query?: never;
+    url: '/api/v1/automation/deliveries/{delivery_id}/resolutions';
+};
+
+export type DeliveryResolutionsApiV1AutomationDeliveriesDeliveryIdResolutionsGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type DeliveryResolutionsApiV1AutomationDeliveriesDeliveryIdResolutionsGetError = DeliveryResolutionsApiV1AutomationDeliveriesDeliveryIdResolutionsGetErrors[keyof DeliveryResolutionsApiV1AutomationDeliveriesDeliveryIdResolutionsGetErrors];
+
+export type DeliveryResolutionsApiV1AutomationDeliveriesDeliveryIdResolutionsGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeItemsEmailResolution;
+};
+
+export type DeliveryResolutionsApiV1AutomationDeliveriesDeliveryIdResolutionsGetResponse = DeliveryResolutionsApiV1AutomationDeliveriesDeliveryIdResolutionsGetResponses[keyof DeliveryResolutionsApiV1AutomationDeliveriesDeliveryIdResolutionsGetResponses];
+
+export type ConfigurationDiagnosticsApiV1ConfigurationDiagnosticsGetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/configuration/diagnostics';
+};
+
+export type ConfigurationDiagnosticsApiV1ConfigurationDiagnosticsGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ConfigurationDiagnosticsApiV1ConfigurationDiagnosticsGetError = ConfigurationDiagnosticsApiV1ConfigurationDiagnosticsGetErrors[keyof ConfigurationDiagnosticsApiV1ConfigurationDiagnosticsGetErrors];
+
+export type ConfigurationDiagnosticsApiV1ConfigurationDiagnosticsGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeConfigurationDiagnostics;
+};
+
+export type ConfigurationDiagnosticsApiV1ConfigurationDiagnosticsGetResponse = ConfigurationDiagnosticsApiV1ConfigurationDiagnosticsGetResponses[keyof ConfigurationDiagnosticsApiV1ConfigurationDiagnosticsGetResponses];
+
+export type HealthApiV1WeldingHealthGetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/welding/health';
+};
+
+export type HealthApiV1WeldingHealthGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type HealthApiV1WeldingHealthGetError = HealthApiV1WeldingHealthGetErrors[keyof HealthApiV1WeldingHealthGetErrors];
+
+export type HealthApiV1WeldingHealthGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeWeldingHealth;
+};
+
+export type HealthApiV1WeldingHealthGetResponse = HealthApiV1WeldingHealthGetResponses[keyof HealthApiV1WeldingHealthGetResponses];
+
+export type DashboardApiV1WeldingDashboardGetData = {
+    body?: never;
+    path?: never;
+    query: {
+        /**
+         * Start
+         */
+        start: string;
+        /**
+         * End
+         */
+        end: string;
+        /**
+         * Device No
+         */
+        device_no?: number | null;
+        /**
+         * Robot No
+         */
+        robot_no?: number | null;
+        /**
+         * Weld Type
+         */
+        weld_type?: number | null;
+        /**
+         * State
+         */
+        state?: number | null;
+        /**
+         * Part State
+         */
+        part_state?: number | null;
+        /**
+         * Serial Number
+         */
+        serial_number?: string;
+        /**
+         * Project No
+         */
+        project_no?: string;
+        /**
+         * Section No
+         */
+        section_no?: string;
+        /**
+         * Part No
+         */
+        part_no?: string;
+        /**
+         * Anomalies Only
+         */
+        anomalies_only?: boolean;
+        /**
+         * Page
+         */
+        page?: number;
+        /**
+         * Page Size
+         */
+        page_size?: number;
+        /**
+         * Sort By
+         */
+        sort_by?: 'time' | 'length' | 'id';
+        /**
+         * Descending
+         */
+        descending?: boolean;
+        refresh?: boolean;
+    };
+    url: '/api/v1/welding/dashboard';
+};
+
+export type DashboardApiV1WeldingDashboardGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type DashboardApiV1WeldingDashboardGetError = DashboardApiV1WeldingDashboardGetErrors[keyof DashboardApiV1WeldingDashboardGetErrors];
+
+export type DashboardApiV1WeldingDashboardGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeWeldingJobsReport;
+};
+
+export type DashboardApiV1WeldingDashboardGetResponse = DashboardApiV1WeldingDashboardGetResponses[keyof DashboardApiV1WeldingDashboardGetResponses];
+
+export type DailyApiV1WeldingStatisticsDailyGetData = {
+    body?: never;
+    path?: never;
+    query: {
+        /**
+         * Start
+         */
+        start: string;
+        /**
+         * End
+         */
+        end: string;
+        /**
+         * Device No
+         */
+        device_no?: number | null;
+        /**
+         * Robot No
+         */
+        robot_no?: number | null;
+        /**
+         * Weld Type
+         */
+        weld_type?: number | null;
+        /**
+         * State
+         */
+        state?: number | null;
+        /**
+         * Part State
+         */
+        part_state?: number | null;
+        /**
+         * Serial Number
+         */
+        serial_number?: string;
+        /**
+         * Project No
+         */
+        project_no?: string;
+        /**
+         * Section No
+         */
+        section_no?: string;
+        /**
+         * Part No
+         */
+        part_no?: string;
+        /**
+         * Anomalies Only
+         */
+        anomalies_only?: boolean;
+        /**
+         * Page
+         */
+        page?: number;
+        /**
+         * Page Size
+         */
+        page_size?: number;
+        /**
+         * Sort By
+         */
+        sort_by?: 'time' | 'length' | 'id';
+        /**
+         * Descending
+         */
+        descending?: boolean;
+        refresh?: boolean;
+    };
+    url: '/api/v1/welding/statistics/daily';
+};
+
+export type DailyApiV1WeldingStatisticsDailyGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type DailyApiV1WeldingStatisticsDailyGetError = DailyApiV1WeldingStatisticsDailyGetErrors[keyof DailyApiV1WeldingStatisticsDailyGetErrors];
+
+export type DailyApiV1WeldingStatisticsDailyGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeWeldingDailyReport;
+};
+
+export type DailyApiV1WeldingStatisticsDailyGetResponse = DailyApiV1WeldingStatisticsDailyGetResponses[keyof DailyApiV1WeldingStatisticsDailyGetResponses];
+
+export type PartsApiV1WeldingPartsGetData = {
+    body?: never;
+    path?: never;
+    query: {
+        /**
+         * Start
+         */
+        start: string;
+        /**
+         * End
+         */
+        end: string;
+        /**
+         * Device No
+         */
+        device_no?: number | null;
+        /**
+         * Robot No
+         */
+        robot_no?: number | null;
+        /**
+         * Weld Type
+         */
+        weld_type?: number | null;
+        /**
+         * State
+         */
+        state?: number | null;
+        /**
+         * Part State
+         */
+        part_state?: number | null;
+        /**
+         * Serial Number
+         */
+        serial_number?: string;
+        /**
+         * Project No
+         */
+        project_no?: string;
+        /**
+         * Section No
+         */
+        section_no?: string;
+        /**
+         * Part No
+         */
+        part_no?: string;
+        /**
+         * Anomalies Only
+         */
+        anomalies_only?: boolean;
+        /**
+         * Page
+         */
+        page?: number;
+        /**
+         * Page Size
+         */
+        page_size?: number;
+        /**
+         * Sort By
+         */
+        sort_by?: 'time' | 'length' | 'id';
+        /**
+         * Descending
+         */
+        descending?: boolean;
+        refresh?: boolean;
+    };
+    url: '/api/v1/welding/parts';
+};
+
+export type PartsApiV1WeldingPartsGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type PartsApiV1WeldingPartsGetError = PartsApiV1WeldingPartsGetErrors[keyof PartsApiV1WeldingPartsGetErrors];
+
+export type PartsApiV1WeldingPartsGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeWeldingPartsReport;
+};
+
+export type PartsApiV1WeldingPartsGetResponse = PartsApiV1WeldingPartsGetResponses[keyof PartsApiV1WeldingPartsGetResponses];
+
+export type JobsApiV1WeldingJobsGetData = {
+    body?: never;
+    path?: never;
+    query: {
+        /**
+         * Start
+         */
+        start: string;
+        /**
+         * End
+         */
+        end: string;
+        /**
+         * Device No
+         */
+        device_no?: number | null;
+        /**
+         * Robot No
+         */
+        robot_no?: number | null;
+        /**
+         * Weld Type
+         */
+        weld_type?: number | null;
+        /**
+         * State
+         */
+        state?: number | null;
+        /**
+         * Part State
+         */
+        part_state?: number | null;
+        /**
+         * Serial Number
+         */
+        serial_number?: string;
+        /**
+         * Project No
+         */
+        project_no?: string;
+        /**
+         * Section No
+         */
+        section_no?: string;
+        /**
+         * Part No
+         */
+        part_no?: string;
+        /**
+         * Anomalies Only
+         */
+        anomalies_only?: boolean;
+        /**
+         * Page
+         */
+        page?: number;
+        /**
+         * Page Size
+         */
+        page_size?: number;
+        /**
+         * Sort By
+         */
+        sort_by?: 'time' | 'length' | 'id';
+        /**
+         * Descending
+         */
+        descending?: boolean;
+        refresh?: boolean;
+    };
+    url: '/api/v1/welding/jobs';
+};
+
+export type JobsApiV1WeldingJobsGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type JobsApiV1WeldingJobsGetError = JobsApiV1WeldingJobsGetErrors[keyof JobsApiV1WeldingJobsGetErrors];
+
+export type JobsApiV1WeldingJobsGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeWeldingJobsReport;
+};
+
+export type JobsApiV1WeldingJobsGetResponse = JobsApiV1WeldingJobsGetResponses[keyof JobsApiV1WeldingJobsGetResponses];
+
+export type EquipmentApiV1WeldingEquipmentSummaryGetData = {
+    body?: never;
+    path?: never;
+    query: {
+        /**
+         * Start
+         */
+        start: string;
+        /**
+         * End
+         */
+        end: string;
+        /**
+         * Device No
+         */
+        device_no?: number | null;
+        /**
+         * Robot No
+         */
+        robot_no?: number | null;
+        /**
+         * Weld Type
+         */
+        weld_type?: number | null;
+        /**
+         * State
+         */
+        state?: number | null;
+        /**
+         * Part State
+         */
+        part_state?: number | null;
+        /**
+         * Serial Number
+         */
+        serial_number?: string;
+        /**
+         * Project No
+         */
+        project_no?: string;
+        /**
+         * Section No
+         */
+        section_no?: string;
+        /**
+         * Part No
+         */
+        part_no?: string;
+        /**
+         * Anomalies Only
+         */
+        anomalies_only?: boolean;
+        /**
+         * Page
+         */
+        page?: number;
+        /**
+         * Page Size
+         */
+        page_size?: number;
+        /**
+         * Sort By
+         */
+        sort_by?: 'time' | 'length' | 'id';
+        /**
+         * Descending
+         */
+        descending?: boolean;
+        refresh?: boolean;
+    };
+    url: '/api/v1/welding/equipment/summary';
+};
+
+export type EquipmentApiV1WeldingEquipmentSummaryGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type EquipmentApiV1WeldingEquipmentSummaryGetError = EquipmentApiV1WeldingEquipmentSummaryGetErrors[keyof EquipmentApiV1WeldingEquipmentSummaryGetErrors];
+
+export type EquipmentApiV1WeldingEquipmentSummaryGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeWeldingEquipmentReport;
+};
+
+export type EquipmentApiV1WeldingEquipmentSummaryGetResponse = EquipmentApiV1WeldingEquipmentSummaryGetResponses[keyof EquipmentApiV1WeldingEquipmentSummaryGetResponses];
+
+export type PartApiV1WeldingPartsPartIdSeamsGetData = {
+    body?: never;
+    path: {
+        /**
+         * Part Id
+         */
+        part_id: number;
+    };
+    query?: {
+        /**
+         * Page
+         */
+        page?: number;
+        /**
+         * Page Size
+         */
+        page_size?: number;
+    };
+    url: '/api/v1/welding/parts/{part_id}/seams';
+};
+
+export type PartApiV1WeldingPartsPartIdSeamsGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type PartApiV1WeldingPartsPartIdSeamsGetError = PartApiV1WeldingPartsPartIdSeamsGetErrors[keyof PartApiV1WeldingPartsPartIdSeamsGetErrors];
+
+export type PartApiV1WeldingPartsPartIdSeamsGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeWeldingPart;
+};
+
+export type PartApiV1WeldingPartsPartIdSeamsGetResponse = PartApiV1WeldingPartsPartIdSeamsGetResponses[keyof PartApiV1WeldingPartsPartIdSeamsGetResponses];
+
+export type PartApiV1WeldingPartsPartIdGetData = {
+    body?: never;
+    path: {
+        /**
+         * Part Id
+         */
+        part_id: number;
+    };
+    query?: {
+        /**
+         * Page
+         */
+        page?: number;
+        /**
+         * Page Size
+         */
+        page_size?: number;
+    };
+    url: '/api/v1/welding/parts/{part_id}';
+};
+
+export type PartApiV1WeldingPartsPartIdGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type PartApiV1WeldingPartsPartIdGetError = PartApiV1WeldingPartsPartIdGetErrors[keyof PartApiV1WeldingPartsPartIdGetErrors];
+
+export type PartApiV1WeldingPartsPartIdGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeWeldingPart;
+};
+
+export type PartApiV1WeldingPartsPartIdGetResponse = PartApiV1WeldingPartsPartIdGetResponses[keyof PartApiV1WeldingPartsPartIdGetResponses];
+
+export type SeamExportApiV1WeldingPartsPartIdSeamsExportGetData = {
+    body?: never;
+    path: {
+        /**
+         * Part Id
+         */
+        part_id: number;
+    };
+    query?: never;
+    url: '/api/v1/welding/parts/{part_id}/seams/export';
+};
+
+export type SeamExportApiV1WeldingPartsPartIdSeamsExportGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type SeamExportApiV1WeldingPartsPartIdSeamsExportGetError = SeamExportApiV1WeldingPartsPartIdSeamsExportGetErrors[keyof SeamExportApiV1WeldingPartsPartIdSeamsExportGetErrors];
+
+export type SeamExportApiV1WeldingPartsPartIdSeamsExportGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: Blob | File;
+};
+
+export type SeamExportApiV1WeldingPartsPartIdSeamsExportGetResponse = SeamExportApiV1WeldingPartsPartIdSeamsExportGetResponses[keyof SeamExportApiV1WeldingPartsPartIdSeamsExportGetResponses];
+
+export type ExportApiV1WeldingExportGetData = {
+    body?: never;
+    path?: never;
+    query: {
+        /**
+         * Report Type
+         */
+        report_type: 'daily' | 'parts' | 'jobs' | 'equipment';
+        /**
+         * Format
+         */
+        format?: 'csv' | 'html' | 'pdf';
+        /**
+         * Start
+         */
+        start: string;
+        /**
+         * End
+         */
+        end: string;
+        /**
+         * Device No
+         */
+        device_no?: number | null;
+        /**
+         * Robot No
+         */
+        robot_no?: number | null;
+        /**
+         * Weld Type
+         */
+        weld_type?: number | null;
+        /**
+         * State
+         */
+        state?: number | null;
+        /**
+         * Part State
+         */
+        part_state?: number | null;
+        /**
+         * Serial Number
+         */
+        serial_number?: string;
+        /**
+         * Project No
+         */
+        project_no?: string;
+        /**
+         * Section No
+         */
+        section_no?: string;
+        /**
+         * Part No
+         */
+        part_no?: string;
+        /**
+         * Anomalies Only
+         */
+        anomalies_only?: boolean;
+        /**
+         * Page
+         */
+        page?: number;
+        /**
+         * Page Size
+         */
+        page_size?: number;
+        /**
+         * Sort By
+         */
+        sort_by?: 'time' | 'length' | 'id';
+        /**
+         * Descending
+         */
+        descending?: boolean;
+    };
+    url: '/api/v1/welding/export';
+};
+
+export type ExportApiV1WeldingExportGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ExportApiV1WeldingExportGetError = ExportApiV1WeldingExportGetErrors[keyof ExportApiV1WeldingExportGetErrors];
+
+export type ExportApiV1WeldingExportGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: Blob | File;
+};
+
+export type ExportApiV1WeldingExportGetResponse = ExportApiV1WeldingExportGetResponses[keyof ExportApiV1WeldingExportGetResponses];
+
+export type AnalysisApiV1WeldingAnalysisPostData = {
+    body: WeldingAnalysisRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/welding/analysis';
+};
+
+export type AnalysisApiV1WeldingAnalysisPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type AnalysisApiV1WeldingAnalysisPostError = AnalysisApiV1WeldingAnalysisPostErrors[keyof AnalysisApiV1WeldingAnalysisPostErrors];
+
+export type AnalysisApiV1WeldingAnalysisPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeReportAnalysis;
+};
+
+export type AnalysisApiV1WeldingAnalysisPostResponse = AnalysisApiV1WeldingAnalysisPostResponses[keyof AnalysisApiV1WeldingAnalysisPostResponses];
+
+export type GetLeadershipReportApiV1LeadershipReportGetData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Report Month
+         *
+         * 报表月份，格式 YYYY-MM
+         */
+        report_month?: string | null;
+        /**
+         * Start Date
+         */
+        start_date?: string | null;
+        /**
+         * End Date
+         */
+        end_date?: string | null;
+        /**
+         * Refresh
+         *
+         * 提交后台刷新并返回现有快照
+         */
+        refresh?: boolean;
+    };
+    url: '/api/v1/leadership-report';
+};
+
+export type GetLeadershipReportApiV1LeadershipReportGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type GetLeadershipReportApiV1LeadershipReportGetError = GetLeadershipReportApiV1LeadershipReportGetErrors[keyof GetLeadershipReportApiV1LeadershipReportGetErrors];
+
+export type GetLeadershipReportApiV1LeadershipReportGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeLeadershipReport;
+};
+
+export type GetLeadershipReportApiV1LeadershipReportGetResponse = GetLeadershipReportApiV1LeadershipReportGetResponses[keyof GetLeadershipReportApiV1LeadershipReportGetResponses];
+
+export type RefreshLeadershipReportApiV1LeadershipReportRefreshPostData = {
+    body: LeadershipRefreshRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/leadership-report/refresh';
+};
+
+export type RefreshLeadershipReportApiV1LeadershipReportRefreshPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type RefreshLeadershipReportApiV1LeadershipReportRefreshPostError = RefreshLeadershipReportApiV1LeadershipReportRefreshPostErrors[keyof RefreshLeadershipReportApiV1LeadershipReportRefreshPostErrors];
+
+export type RefreshLeadershipReportApiV1LeadershipReportRefreshPostResponses = {
+    /**
+     * Successful Response
+     */
+    202: ApiEnvelopeLeadershipReport;
+};
+
+export type RefreshLeadershipReportApiV1LeadershipReportRefreshPostResponse = RefreshLeadershipReportApiV1LeadershipReportRefreshPostResponses[keyof RefreshLeadershipReportApiV1LeadershipReportRefreshPostResponses];
+
+export type GetEquipmentReportApiV1EquipmentReportGetData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Report Date
+         */
+        report_date?: string | null;
+        /**
+         * Refresh
+         *
+         * 忽略缓存并重新查询
+         */
+        refresh?: boolean;
+    };
+    url: '/api/v1/equipment-report';
+};
+
+export type GetEquipmentReportApiV1EquipmentReportGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type GetEquipmentReportApiV1EquipmentReportGetError = GetEquipmentReportApiV1EquipmentReportGetErrors[keyof GetEquipmentReportApiV1EquipmentReportGetErrors];
+
+export type GetEquipmentReportApiV1EquipmentReportGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeEquipmentReport;
+};
+
+export type GetEquipmentReportApiV1EquipmentReportGetResponse = GetEquipmentReportApiV1EquipmentReportGetResponses[keyof GetEquipmentReportApiV1EquipmentReportGetResponses];
+
+export type GetLatestAnalysisApiV1AnalysisLatestGetData = {
+    body?: never;
+    path?: never;
+    query: {
+        /**
+         * Report Type
+         */
+        report_type: 'leadership' | 'workshop' | 'equipment';
+        /**
+         * Report Date
+         */
+        report_date: string;
+    };
+    url: '/api/v1/analysis/latest';
+};
+
+export type GetLatestAnalysisApiV1AnalysisLatestGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type GetLatestAnalysisApiV1AnalysisLatestGetError = GetLatestAnalysisApiV1AnalysisLatestGetErrors[keyof GetLatestAnalysisApiV1AnalysisLatestGetErrors];
+
+export type GetLatestAnalysisApiV1AnalysisLatestGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeUnionReportAnalysisNoneType;
+};
+
+export type GetLatestAnalysisApiV1AnalysisLatestGetResponse = GetLatestAnalysisApiV1AnalysisLatestGetResponses[keyof GetLatestAnalysisApiV1AnalysisLatestGetResponses];
+
+export type GetAnalysisVersionApiV1AnalysisVersionGetData = {
+    body?: never;
+    path?: never;
+    query: {
+        /**
+         * Report Type
+         */
+        report_type: 'leadership' | 'workshop' | 'equipment';
+        /**
+         * Report Date
+         */
+        report_date: string;
+    };
+    url: '/api/v1/analysis/version';
+};
+
+export type GetAnalysisVersionApiV1AnalysisVersionGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type GetAnalysisVersionApiV1AnalysisVersionGetError = GetAnalysisVersionApiV1AnalysisVersionGetErrors[keyof GetAnalysisVersionApiV1AnalysisVersionGetErrors];
+
+export type GetAnalysisVersionApiV1AnalysisVersionGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeUnionAnalysisVersionNoneType;
+};
+
+export type GetAnalysisVersionApiV1AnalysisVersionGetResponse = GetAnalysisVersionApiV1AnalysisVersionGetResponses[keyof GetAnalysisVersionApiV1AnalysisVersionGetResponses];
+
+export type AnalyzeReportApiV1AnalysisPostData = {
+    body: AnalysisRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/analysis';
+};
+
+export type AnalyzeReportApiV1AnalysisPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type AnalyzeReportApiV1AnalysisPostError = AnalyzeReportApiV1AnalysisPostErrors[keyof AnalyzeReportApiV1AnalysisPostErrors];
+
+export type AnalyzeReportApiV1AnalysisPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeReportAnalysis;
+};
+
+export type AnalyzeReportApiV1AnalysisPostResponse = AnalyzeReportApiV1AnalysisPostResponses[keyof AnalyzeReportApiV1AnalysisPostResponses];
+
+export type GetEnergyDayApiV1EnergyReportDayGetData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Report Date
+         */
+        report_date?: string | null;
+        /**
+         * Refresh
+         */
+        refresh?: boolean;
+    };
+    url: '/api/v1/energy-report/day';
+};
+
+export type GetEnergyDayApiV1EnergyReportDayGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type GetEnergyDayApiV1EnergyReportDayGetError = GetEnergyDayApiV1EnergyReportDayGetErrors[keyof GetEnergyDayApiV1EnergyReportDayGetErrors];
+
+export type GetEnergyDayApiV1EnergyReportDayGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeEnergyDayReport;
+};
+
+export type GetEnergyDayApiV1EnergyReportDayGetResponse = GetEnergyDayApiV1EnergyReportDayGetResponses[keyof GetEnergyDayApiV1EnergyReportDayGetResponses];
+
+export type GetTaskEnergyDayApiV1EnergyReportTasksGetData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Report Date
+         */
+        report_date?: string | null;
+        /**
+         * Refresh
+         */
+        refresh?: boolean;
+    };
+    url: '/api/v1/energy-report/tasks';
+};
+
+export type GetTaskEnergyDayApiV1EnergyReportTasksGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type GetTaskEnergyDayApiV1EnergyReportTasksGetError = GetTaskEnergyDayApiV1EnergyReportTasksGetErrors[keyof GetTaskEnergyDayApiV1EnergyReportTasksGetErrors];
+
+export type GetTaskEnergyDayApiV1EnergyReportTasksGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeTaskEnergyReport;
+};
+
+export type GetTaskEnergyDayApiV1EnergyReportTasksGetResponse = GetTaskEnergyDayApiV1EnergyReportTasksGetResponses[keyof GetTaskEnergyDayApiV1EnergyReportTasksGetResponses];
+
+export type GetEnergyMonthApiV1EnergyReportMonthGetData = {
+    body?: never;
+    path?: never;
+    query: {
+        /**
+         * Report Month
+         */
+        report_month: string;
+    };
+    url: '/api/v1/energy-report/month';
+};
+
+export type GetEnergyMonthApiV1EnergyReportMonthGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type GetEnergyMonthApiV1EnergyReportMonthGetError = GetEnergyMonthApiV1EnergyReportMonthGetErrors[keyof GetEnergyMonthApiV1EnergyReportMonthGetErrors];
+
+export type GetEnergyMonthApiV1EnergyReportMonthGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeEnergyMonthReport;
+};
+
+export type GetEnergyMonthApiV1EnergyReportMonthGetResponse = GetEnergyMonthApiV1EnergyReportMonthGetResponses[keyof GetEnergyMonthApiV1EnergyReportMonthGetResponses];
+
+export type GetEnergyMonthlyRangeApiV1EnergyReportMonthlyRangeGetData = {
+    body?: never;
+    path?: never;
+    query: {
+        /**
+         * Start Date
+         */
+        start_date: string;
+        /**
+         * End Date
+         */
+        end_date: string;
+    };
+    url: '/api/v1/energy-report/monthly-range';
+};
+
+export type GetEnergyMonthlyRangeApiV1EnergyReportMonthlyRangeGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type GetEnergyMonthlyRangeApiV1EnergyReportMonthlyRangeGetError = GetEnergyMonthlyRangeApiV1EnergyReportMonthlyRangeGetErrors[keyof GetEnergyMonthlyRangeApiV1EnergyReportMonthlyRangeGetErrors];
+
+export type GetEnergyMonthlyRangeApiV1EnergyReportMonthlyRangeGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeEnergyPeriodReport;
+};
+
+export type GetEnergyMonthlyRangeApiV1EnergyReportMonthlyRangeGetResponse = GetEnergyMonthlyRangeApiV1EnergyReportMonthlyRangeGetResponses[keyof GetEnergyMonthlyRangeApiV1EnergyReportMonthlyRangeGetResponses];
+
+export type GetEnergyRangeApiV1EnergyReportRangeGetData = {
+    body?: never;
+    path?: never;
+    query: {
+        /**
+         * Start Date
+         */
+        start_date: string;
+        /**
+         * End Date
+         */
+        end_date: string;
+        /**
+         * Refresh
+         */
+        refresh?: boolean;
+    };
+    url: '/api/v1/energy-report/range';
+};
+
+export type GetEnergyRangeApiV1EnergyReportRangeGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type GetEnergyRangeApiV1EnergyReportRangeGetError = GetEnergyRangeApiV1EnergyReportRangeGetErrors[keyof GetEnergyRangeApiV1EnergyReportRangeGetErrors];
+
+export type GetEnergyRangeApiV1EnergyReportRangeGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeEnergyRangeReport;
+};
+
+export type GetEnergyRangeApiV1EnergyReportRangeGetResponse = GetEnergyRangeApiV1EnergyReportRangeGetResponses[keyof GetEnergyRangeApiV1EnergyReportRangeGetResponses];
+
+export type ListReportsApiV1ReportsGetData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Page
+         */
+        page?: number;
+        /**
+         * Page Size
+         */
+        page_size?: number;
+        /**
+         * Report Date
+         */
+        report_date?: string | null;
+        /**
+         * Project Code
+         */
+        project_code?: string | null;
+        /**
+         * Ship No
+         */
+        ship_no?: string | null;
+        /**
+         * Report Type
+         */
+        report_type?: 'leadership' | 'workshop' | 'equipment' | 'custom' | null;
+    };
+    url: '/api/v1/reports';
+};
+
+export type ListReportsApiV1ReportsGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ListReportsApiV1ReportsGetError = ListReportsApiV1ReportsGetErrors[keyof ListReportsApiV1ReportsGetErrors];
+
+export type ListReportsApiV1ReportsGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopePageReportJob;
+};
+
+export type ListReportsApiV1ReportsGetResponse = ListReportsApiV1ReportsGetResponses[keyof ListReportsApiV1ReportsGetResponses];
+
+export type CreateReportApiV1ReportsPostData = {
+    body: ReportCreateRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/reports';
+};
+
+export type CreateReportApiV1ReportsPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type CreateReportApiV1ReportsPostError = CreateReportApiV1ReportsPostErrors[keyof CreateReportApiV1ReportsPostErrors];
+
+export type CreateReportApiV1ReportsPostResponses = {
+    /**
+     * Successful Response
+     */
+    202: ApiEnvelopeReportAccepted;
+};
+
+export type CreateReportApiV1ReportsPostResponse = CreateReportApiV1ReportsPostResponses[keyof CreateReportApiV1ReportsPostResponses];
+
+export type GetReportStatusApiV1ReportsReportIdStatusGetData = {
+    body?: never;
+    path: {
+        /**
+         * Report Id
+         */
+        report_id: string;
+    };
+    query?: never;
+    url: '/api/v1/reports/{report_id}/status';
+};
+
+export type GetReportStatusApiV1ReportsReportIdStatusGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type GetReportStatusApiV1ReportsReportIdStatusGetError = GetReportStatusApiV1ReportsReportIdStatusGetErrors[keyof GetReportStatusApiV1ReportsReportIdStatusGetErrors];
+
+export type GetReportStatusApiV1ReportsReportIdStatusGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeReportJob;
+};
+
+export type GetReportStatusApiV1ReportsReportIdStatusGetResponse = GetReportStatusApiV1ReportsReportIdStatusGetResponses[keyof GetReportStatusApiV1ReportsReportIdStatusGetResponses];
+
+export type DownloadReportApiV1ReportsReportIdDownloadGetData = {
+    body?: never;
+    path: {
+        /**
+         * Report Id
+         */
+        report_id: string;
+    };
+    query?: {
+        /**
+         * Format
+         */
+        format?: 'html' | 'pdf';
+    };
+    url: '/api/v1/reports/{report_id}/download';
+};
+
+export type DownloadReportApiV1ReportsReportIdDownloadGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type DownloadReportApiV1ReportsReportIdDownloadGetError = DownloadReportApiV1ReportsReportIdDownloadGetErrors[keyof DownloadReportApiV1ReportsReportIdDownloadGetErrors];
+
+export type DownloadReportApiV1ReportsReportIdDownloadGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: Blob | File;
+};
+
+export type DownloadReportApiV1ReportsReportIdDownloadGetResponse = DownloadReportApiV1ReportsReportIdDownloadGetResponses[keyof DownloadReportApiV1ReportsReportIdDownloadGetResponses];
+
+export type ListProjectsApiV1OptionsProjectsGetData = {
+    body?: never;
+    path?: never;
+    query: {
+        /**
+         * Report Date
+         */
+        report_date: string;
+    };
+    url: '/api/v1/options/projects';
+};
+
+export type ListProjectsApiV1OptionsProjectsGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ListProjectsApiV1OptionsProjectsGetError = ListProjectsApiV1OptionsProjectsGetErrors[keyof ListProjectsApiV1OptionsProjectsGetErrors];
+
+export type ListProjectsApiV1OptionsProjectsGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeItemsStr;
+};
+
+export type ListProjectsApiV1OptionsProjectsGetResponse = ListProjectsApiV1OptionsProjectsGetResponses[keyof ListProjectsApiV1OptionsProjectsGetResponses];
+
+export type ListShipsApiV1OptionsShipsGetData = {
+    body?: never;
+    path?: never;
+    query: {
+        /**
+         * Report Date
+         */
+        report_date: string;
+        /**
+         * Project Code
+         */
+        project_code?: string | null;
+    };
+    url: '/api/v1/options/ships';
+};
+
+export type ListShipsApiV1OptionsShipsGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ListShipsApiV1OptionsShipsGetError = ListShipsApiV1OptionsShipsGetErrors[keyof ListShipsApiV1OptionsShipsGetErrors];
+
+export type ListShipsApiV1OptionsShipsGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeItemsStr;
+};
+
+export type ListShipsApiV1OptionsShipsGetResponse = ListShipsApiV1OptionsShipsGetResponses[keyof ListShipsApiV1OptionsShipsGetResponses];

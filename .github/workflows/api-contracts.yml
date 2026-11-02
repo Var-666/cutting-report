@@ -23,6 +23,11 @@ jobs:
           enable-cache: true
           cache-dependency-glob: backend/uv.lock
       - run: uv sync --project backend --locked --no-build --python python
+      - name: Check documented JSON contracts against local responses
+        run: >-
+          .venv/bin/python -m pytest -q
+          backend/tests/test_api_contract_generation.py
+          backend/tests/test_frontend_response_contracts.py
       - uses: pnpm/action-setup@v4
         with:
           package_json_file: frontend/package.json

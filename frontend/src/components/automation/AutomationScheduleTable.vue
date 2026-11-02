@@ -28,7 +28,7 @@ const scheduleTableColumns = [
 <template>
   <AppReportTable :columns="scheduleTableColumns" :items="schedules" :row-key="item => item.schedule_id" :paginate="false" :max-height="340" :loading="loading" aria-label="定时任务列表">
           <template #c0="{ row: item }"><NTag class="schedule-status" :class="{ enabled: item.enabled }" size="small" :type="item.enabled ? 'success' : 'default'">{{ item.enabled ? '启用' : '停用' }}</NTag></template>
-          <template #c1="{ row: item }"><div class="task-cell"><strong>{{ item.name }}</strong><small>{{ formatDeviceDisplay(item.device_id) }}</small><small>{{ scheduleLabels[item.last_status] || item.last_status || '尚未执行' }}</small></div></template>
+          <template #c1="{ row: item }"><div class="task-cell"><strong>{{ item.name }}</strong><small>{{ formatDeviceDisplay(item.device_id) }}</small><small>{{ scheduleLabels[item.last_status || ''] || item.last_status || '尚未执行' }}</small></div></template>
           <template #c2="{ row: item }">{{ reportLabels[item.report_type] }}</template>
           <template #c3="{ row: item }">{{ scheduleText(item) }}</template>
           <template #c4="{ row: item }">{{ formatDateTime(item.next_run_at) }}</template>

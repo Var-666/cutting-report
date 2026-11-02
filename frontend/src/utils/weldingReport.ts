@@ -33,7 +33,7 @@ export const weldingProcesses = [
   ['vertical_length_m', '立焊'], ['vertical_wrap_length_m', '立焊包角'], ['unknown_length_m', '未知工艺'],
 ] as const
 
-export function weldingProcessRows(summary: WeldingReport['summary']) {
+export function weldingProcessRows(summary: Partial<WeldingReport['summary']>) {
   return weldingProcesses.map(([key, name]) => ({ key, name, length: summary[key] ?? null }))
 }
 
@@ -88,14 +88,14 @@ export function weldingDisplay(value: unknown, key = '') {
 }
 
 export function weldingKpis(kind: WeldingReportKind, report: WeldingReport | null) {
-  const data = kind === 'dashboard' ? report?.today : report?.summary
+  const data: Partial<WeldingReport['summary']> | null | undefined = kind === 'dashboard' ? report?.today : report?.summary
   const definitions = {
     dashboard: [['weld_length_m', '今日焊接长度', 'm'], ['job_count', '今日焊接作业次数', '次'], ['involved_part_count', '今日参与工件数', '件'], ['working_hours', '今日累计作业用时', 'h']],
     daily: [['job_count', '焊接作业次数', '次'], ['weld_length_m', '焊接总长度', 'm'], ['involved_part_count', '参与焊接工件数', '件'], ['working_hours', '累计作业用时', 'h']],
     parts: [['involved_part_count', '涉及工件数', '件'], ['part_row_count', '工件记录数', '条'], ['part_actual_length_m', '累计实际焊接长度', 'm'], ['ambiguous_part_count', '待核查关联数', '个']],
     jobs: [['job_count', '作业次数', '次'], ['weld_length_m', '焊接总长度', 'm'], ['working_hours', '累计作业用时', 'h'], ['output_per_hour', '单位用时产出', 'm/h']],
     equipment: [['device_count', '参与作业设备数', '台'], ['robot_station_count', '活跃设备机器人工位数', '组'], ['weld_length_m', '累计焊接长度', 'm'], ['output_per_hour', '单位作业用时产出', 'm/h']],
-  }
+  } satisfies Record<WeldingReportKind, [keyof WeldingReport['summary'] | 'ambiguous_part_count', string, string][]>
   return definitions[kind].map(([key, title, unit]) => {
     const pending = Boolean(report?.meta?.pending_metrics?.[key])
     const value = key === 'ambiguous_part_count' ? report?.meta?.ambiguous_part_count : data?.[key]

@@ -1,4 +1,4 @@
-import type { ConfirmTaskRequest, ConfirmTasksRequest, RevokeTaskRequest, CorrectTaskRequest, ConfirmationBatch, WorkshopReportInfo, LatestProductionDate } from './generated/types.gen'
+import type { ConfirmTaskRequest, ConfirmTasksRequest, RevokeTaskRequest, CorrectTaskRequest, ConfirmationBatch, WorkshopReportInfo, LatestProductionDate, ReportAccepted, AnalysisRequest as ApiAnalysisRequest, AnalysisVersion } from './generated/types.gen'
 import type { ConfirmationAudit, TaskConfirmation, AnalysisRequest, AnalysisResult, LeadershipReport, ReportCreateRequest, ReportJob, WorkshopQuery, WorkshopRangeQuery, WorkshopResult } from '../types/reports'
 import type { Items, Page, ReadOptions } from '../types/api'
 import { reportCache } from './reportCache.ts'
@@ -78,7 +78,7 @@ export function listWorkshopConfirmationAudits({ reportDate, taskId, limit = 30 
 }
 
 export function createReport(form: ReportCreateRequest) {
-  return request<ReportJob>('/api/v1/reports', {
+  return request<ReportAccepted>('/api/v1/reports', {
     method: 'POST',
     body: JSON.stringify(form),
   }).then((data) => { reportCache.invalidate('history:'); return data })
@@ -127,7 +127,7 @@ export function analyzeReport({ reportType, reportDate, periodStart, periodEnd, 
       summary_period_end: summaryPeriodEnd,
       data_version: dataVersion || undefined,
       force,
-    }),
+    } satisfies ApiAnalysisRequest),
   })
 }
 
@@ -141,5 +141,5 @@ export function getAnalysisVersion({ reportType, reportDate }: Pick<AnalysisRequ
     report_type: reportType,
     report_date: reportDate,
   })
-  return request<{ data_version: string } | null>(`/api/v1/analysis/version?${query}`, { signal })
+  return request<AnalysisVersion | null>(`/api/v1/analysis/version?${query}`, { signal })
 }

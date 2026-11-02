@@ -1,4 +1,5 @@
-import type { ConfigurationDiagnostics, ConnectionTestResult, DatabasePreviewRequest, DatabaseConfiguration, DatabaseStatus, SaveResult, SqlConnection, WeldingConnection } from '../types/configuration'
+import type { DatabaseConfigurationRequestWritable as DatabaseConfigurationRequest, DatabaseConfiguration as DatabaseConfigurationData, DatabasePreview, ValidatedWorkbenchSql, WorkbenchQueryResult, ConnectionTestRequestWritable as ConnectionTestRequest, WeldingConnectionRequestWritable as WeldingConnectionRequest } from './generated/types.gen'
+import type { ConfigurationDiagnostics, ConnectionTestResult, DatabasePreviewRequest, DatabaseStatus, SaveResult } from '../types/configuration'
 import type { ReadOptions } from '../types/api'
 import { reportCache } from './reportCache.ts'
 import { request } from './client.ts'
@@ -8,10 +9,10 @@ export function getDatabaseStatus() {
 }
 
 export function getDatabaseConfiguration() {
-  return request<DatabaseConfiguration>('/api/v1/database/configuration')
+  return request<DatabaseConfigurationData>('/api/v1/database/configuration')
 }
 
-export function saveDatabaseConfiguration(payload: DatabaseConfiguration) {
+export function saveDatabaseConfiguration(payload: DatabaseConfigurationRequest) {
   return request<SaveResult>('/api/v1/database/configuration', {
     method: 'PUT',
     body: JSON.stringify(payload),
@@ -21,7 +22,7 @@ export function saveDatabaseConfiguration(payload: DatabaseConfiguration) {
   })
 }
 
-export function testDatabaseConnection(connection: SqlConnection) {
+export function testDatabaseConnection(connection: ConnectionTestRequest) {
   return request<ConnectionTestResult>('/api/v1/database/test-connection', {
     method: 'POST',
     body: JSON.stringify(connection),
@@ -29,29 +30,29 @@ export function testDatabaseConnection(connection: SqlConnection) {
 }
 
 export function previewDatabaseDataset(filters: DatabasePreviewRequest) {
-  return request('/api/v1/database/preview', {
+  return request<DatabasePreview>('/api/v1/database/preview', {
     method: 'POST',
     body: JSON.stringify(filters),
   })
 }
 
 export function validateWorkbenchSql(sql: string) {
-  return request('/api/v1/database/sql/validate', {
+  return request<ValidatedWorkbenchSql>('/api/v1/database/sql/validate', {
     method: 'POST',
     body: JSON.stringify({ sql }),
   })
 }
 
 export function executeWorkbenchSql({ sql, maxRows, token }: { sql: string; maxRows: number; token: string }) {
-  return request('/api/v1/database/sql/execute', {
+  return request<WorkbenchQueryResult>('/api/v1/database/sql/execute', {
     method: 'POST',
     headers: token ? { 'X-SQL-Workbench-Token': token } : {},
     body: JSON.stringify({ sql, max_rows: maxRows }),
   })
 }
 
-export function testWeldingConnection(payload: WeldingConnection) { return request<ConnectionTestResult>('/api/v1/database/welding/test-connection', { method: 'POST', body: JSON.stringify(payload) }) }
-export function saveWeldingConfiguration(payload: WeldingConnection) { return request<SaveResult>('/api/v1/database/welding/configuration', { method: 'PUT', body: JSON.stringify(payload) }) }
+export function testWeldingConnection(payload: WeldingConnectionRequest) { return request<ConnectionTestResult>('/api/v1/database/welding/test-connection', { method: 'POST', body: JSON.stringify(payload) }) }
+export function saveWeldingConfiguration(payload: WeldingConnectionRequest) { return request<SaveResult>('/api/v1/database/welding/configuration', { method: 'PUT', body: JSON.stringify(payload) }) }
 
 export function getConfigurationDiagnostics({ signal }: ReadOptions = {}) {
   return request<ConfigurationDiagnostics>('/api/v1/configuration/diagnostics', { signal })

@@ -13,6 +13,8 @@ from app.api.devices import device_state
 from app.api.auth import require_admin
 from app.database.sqlserver import SqlServerConfigurationError
 from app.models.domain import ReportFilter, to_primitive
+from app.models.contracts import ApiEnvelope
+from app.models.report_contracts import ReportAnalysis, AnalysisVersion
 from app.services.energy_period_service import restore_task_energy_records
 from app.services.range_report_service import previous_equal_range, validate_report_range
 from app.services.report_analysis_service import (
@@ -81,7 +83,7 @@ def _is_default_view(payload: AnalysisRequest) -> bool:
     return summary_end == payload.report_date
 
 
-@router.get("/latest")
+@router.get("/latest", response_model=None, responses={200: {"model": ApiEnvelope[ReportAnalysis | None]}})
 def get_latest_analysis(
     report_type: Literal["leadership", "workshop", "equipment"],
     report_date: date,
@@ -95,7 +97,7 @@ def get_latest_analysis(
     }
 
 
-@router.get("/version")
+@router.get("/version", response_model=None, responses={200: {"model": ApiEnvelope[AnalysisVersion | None]}})
 def get_analysis_version(
     report_type: Literal["leadership", "workshop", "equipment"],
     report_date: date,
@@ -121,7 +123,7 @@ def get_analysis_version(
     }
 
 
-@analysis_requests.route(router.post(""))
+@analysis_requests.route(router.post("", response_model=None, responses={200: {"model": ApiEnvelope[ReportAnalysis]}}))
 def analyze_report(payload: AnalysisRequest, request: Request) -> dict:
     settings = device_state(request).report_analysis_service.settings
     try:

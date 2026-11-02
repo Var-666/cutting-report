@@ -140,14 +140,15 @@ async function saveConfiguration(weldingOnly = false) {
 
 async function runConnectionTest() {
   const welding = testIsWelding.value
-  const profile = { ...activeTestConnection.value }
+  const weldingProfile = { ...weldingConnection }
+  const sqlProfile = { ...connection }
   testing.value = true
   testResult.value = null
   testError.value = ''
   try {
     const result = welding
-      ? { ...await testWeldingConnection({ ...profile as WeldingConnection, password: profile.password || null }), database: profile.database }
-      : await testDatabaseConnection(profile as SqlConnection)
+      ? { ...await testWeldingConnection({ ...weldingProfile, password: weldingProfile.password || null }), database: weldingProfile.database }
+      : await testDatabaseConnection(sqlProfile)
     if (welding === testIsWelding.value) testResult.value = result
   } catch (caught) {
     const exception = toError(caught)

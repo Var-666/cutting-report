@@ -39,6 +39,7 @@ function weldingRows(daily: WeldingDailyRow, equipment: WeldingEquipmentRow, job
   const date: string = daily.production_date
   const robot: number | null = equipment.robot_no
   const id: number = job.id
+  const taskSerial: number | null = job.weld_task_serial_number
   const serial: string | null = part.serial_number
   // @ts-expect-error Daily aggregates have no detail ID.
   daily.id
@@ -48,9 +49,11 @@ function weldingRows(daily: WeldingDailyRow, equipment: WeldingEquipmentRow, job
   part.robot_no
   // @ts-expect-error Seams are not job rows.
   const seamJob: WeldingJobRow = detail.items[0]
-  return [date, robot, id, serial, seamJob]
+  return [date, robot, id, serial, taskSerial, seamJob]
 }
 function weldingReport(report: WeldingReport) {
+  // @ts-expect-error Summary metric names also come from the backend contract.
+  report.summary.weld_lenght
   if (report.report_type === 'daily') {
     const daily: WeldingDailyRow[] = report.items
     // @ts-expect-error Daily reports cannot be treated as job details.
@@ -81,3 +84,32 @@ async function weldingApi() {
   return [daily, dashboard, jobs]
 }
 void [weldingRows, weldingReport, weldingSort, weldingApi]
+
+import { getDatabaseConfiguration, saveDatabaseConfiguration, getConfigurationDiagnostics } from '../../src/api/configuration'
+import { getAutomationConfiguration, saveAutomationSchedule } from '../../src/api/automation'
+import { createReport } from '../../src/api/cutting'
+
+async function generatedApiContracts() {
+  const database = await getDatabaseConfiguration()
+  const mode: 'demo' | 'sqlserver' = database.data_source_mode
+  // @ts-expect-error request<T>() unwraps data; callers must not read a second envelope.
+  database.data.production
+  // @ts-expect-error Response credentials are presence flags, never returned passwords.
+  database.production.password
+  await saveDatabaseConfiguration({ production: { password: 'write-only' }, worker: {}, file: {} })
+  // @ts-expect-error Database mode is defined by the backend request model.
+  await saveDatabaseConfiguration({ data_source_mode: 'excel', production: {}, worker: {}, file: {} })
+  const automation = await getAutomationConfiguration()
+  const interval: number = automation.automation_scan_seconds
+  // @ts-expect-error Schedule report types cannot introduce a welding schedule.
+  await saveAutomationSchedule({ device_id: 'Cutter01', name: 'test', report_type: 'welding', recipients: ['test@example.com'] })
+  const diagnostics = await getConfigurationDiagnostics()
+  const revision: number = diagnostics.processes.web.hot_revision
+  // @ts-expect-error Runtime revisions are integers, not display strings.
+  const textRevision: string = diagnostics.processes.web.hot_revision
+  const accepted = await createReport(report)
+  // @ts-expect-error Creation returns an acknowledgement, not a polled job detail.
+  accepted.stage_message
+  return [mode, interval, revision, textRevision]
+}
+void generatedApiContracts

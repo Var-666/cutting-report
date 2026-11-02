@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { ReportCreateRequest, ReportDefinition, ReportJob } from '../types/reports'
+import type { ReportCreateRequest, ReportDefinition, ReportJob, ReportJobState } from '../types/reports'
 
 import { toError } from '../utils/errors'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
@@ -20,7 +20,7 @@ defineProps({
 
 const route = useRoute()
 const router = useRouter()
-const currentJob = ref<ReportJob | null>(null)
+const currentJob = ref<ReportJobState | null>(null)
 const history = ref<ReportJob[]>([])
 const projects = ref<string[]>([])
 const ships = ref<string[]>([])

@@ -1,5 +1,5 @@
 import type { Ref } from 'vue'
-import type { AutomationSchedule } from '../types/automation'
+import type { AutomationSchedule, SchedulePayload } from '../types/automation'
 import { reactive, ref, watch } from 'vue'
 import { deleteAutomationSchedule, runAutomationSchedule, saveAutomationSchedule } from '../api/automation'
 import { deviceSelection } from '../state/devices'
@@ -15,7 +15,7 @@ export function useAutomationSchedules({ hasUnsavedChanges, message, error, refr
 }) {
   const saving = ref(false)
   const editingId = ref('')
-  const emptyForm = () => ({
+  const emptyForm = (): Omit<Required<SchedulePayload>, 'recipients' | 'weekday'> & { recipients_text: string; weekday: number } => ({
     device_id: deviceSelection.id,
     name: '每日车间报表',
     report_type: 'workshop',
@@ -34,7 +34,7 @@ export function useAutomationSchedules({ hasUnsavedChanges, message, error, refr
   const form = reactive(emptyForm())
 
   function changeReportType() {
-    const periods = form.report_type === 'leadership' ? ['previous_month', 'current_month'] : ['previous_day', 'current_day']
+    const periods: NonNullable<SchedulePayload['report_period']>[] = form.report_type === 'leadership' ? ['previous_month', 'current_month'] : ['previous_day', 'current_day']
     if (!periods.includes(form.report_period)) form.report_period = periods[0]
     hasUnsavedChanges.value = true
   }

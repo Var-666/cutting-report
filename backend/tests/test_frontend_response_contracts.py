@@ -107,7 +107,7 @@ class WeldingSource(WeldingRepository):
         self.metrics.update(weld_length_m=Decimal('2.5'), working_hours=Decimal('1'), output_per_hour=None)
         self.raw = dict(id=1, serial_number=None, device_no=0, robot_no=None, project_no=None,
                         project_name=None, section_no=None, part_no=None, riser_no=None, welding_seam_no=None,
-                        weld_type=1, weld_speed=None, weld_lenght=None, theory_lenght=None,
+                        weld_task_serial_number=9001, weld_type=1, weld_speed=None, weld_lenght=None, theory_lenght=None,
                         reality_lenght=2500, used_time=None, weld_rate=None, arc_rate=None,
                         start_time=None, end_time=None)
 
@@ -164,6 +164,10 @@ class WeldingSource(WeldingRepository):
 def test_welding_report_response_contract(client, kind, path, empty):
     client.app.state.welding = WeldingService(client.app.state.settings, WeldingSource(empty))
     report = data(client.get(f'/api/v1/welding/{path}?start=2026-10-01&end=2026-10-01'))
+    from app.models.welding_contracts import WeldingDailyReport, WeldingJobsReport, WeldingPartsReport, WeldingEquipmentReport
+    model = {'daily': WeldingDailyReport, 'jobs': WeldingJobsReport,
+             'parts': WeldingPartsReport, 'equipment': WeldingEquipmentReport}[kind]
+    assert model.model_validate(report).model_dump(mode='json', exclude_unset=True) == report
     assert report['report_type'] == kind
     assert report['query']['start'] == report['query']['end'] == '2026-10-01'
     assert report['query']['sort_by'] in ('time', 'length', 'id')
@@ -205,6 +209,8 @@ def test_welding_report_response_contract(client, kind, path, empty):
 def test_welding_part_response_contract(client):
     client.app.state.welding = WeldingService(client.app.state.settings, WeldingSource())
     result = data(client.get('/api/v1/welding/parts/1'))
+    from app.models.welding_contracts import WeldingPart
+    assert WeldingPart.model_validate(result).model_dump(mode='json', exclude_unset=True) == result
     assert type(result['part']['id']) is int
     assert result['part']['serial_number'] is None
     assert result['part']['theoretical_length_m'] is None

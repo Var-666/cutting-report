@@ -94,6 +94,15 @@
 - 前端验证：在 `frontend/` 执行 `pnpm run typecheck` 和受影响的局部测试；`pnpm test` / `pnpm run build` 用于发布、CI 或明确需要的全量验证。
 - 功能修改应补充相同层级的回归测试；涉及 UI 时同时检查窄屏和空数据/加载/失败状态。
 
+## API 类型契约（P07）
+
+- FastAPI/Pydantic 是 HTTP 数据契约的来源。新增 JSON 接口优先使用明确的请求模型及 `ApiEnvelope[T]` 响应模型；复用 `models/contracts.py` 的 `Items/Page` 和已有领域/业务契约。分页只描述实际返回的字段：焊接分页位于 `query` 中，不能凭空在外层补 `page/page_size`。动态 SQL 列、能耗诊断细节等保留 JSON 动态字段，不用 `dict/any` 代替整个稳定响应。
+- 旧接口补类型必须保持原返回值，尤其是数字/Decimal、日期、空值、缺失字段、附加字段和状态分支。当前配置、自动化、焊接、领导/设备/能耗、报表任务和 AI 接口用 `responses={状态码: {'model': ApiEnvelope[T]}}` 配合 `response_model=None` 描述契约，保留既有序列化，不增加响应过滤或查询。修改这些契约时用实际 HTTP/Service 载荷做定向兼容验证；新接口使用运行时响应校验前同样核对序列化。下载继续返回原文件响应，按实际 MIME 描述，不包 JSON。
+- `scripts/export_api_contracts.py` 挂载契约范围内的 Router，不启动 Runtime、不连接数据源。前端只通过 `pnpm run api:generate` 调用现有 `@hey-api/openapi-ts` TypeScript 插件更新 `src/api/generated/`，不手改生成文件、不生成第二套 HTTP SDK。新增纳入类型复用的 Router 时同步补入导出范围。
+- 前端业务 API 优先引用生成的请求与响应数据类型，已有共享名称可用类型别名兼容；密码等只写请求字段使用生成器的 `*Writable` 类型。`request<T>()` 已解包 `data`，`T` 应是业务数据，不能再次使用完整 envelope，也不能为生成器修改 Cookie、设备/产线、取消、重试、缓存和下载机制。
+- 页面草稿、URL 字符串筛选、驼峰参数适配、图表补零和任务接受到轮询详情之间的展示状态由前端维护，优先从生成类型派生。API 字段/类型不一致应修正契约或调用方，不用 `any`、无依据的断言或类型抑制掩盖；报表创建的最小接受响应不能当作完整任务详情。
+- 契约修改后执行 `pnpm run api:generate`、`pnpm run api:check`、`pnpm run typecheck` 及受影响的定向测试。现有 API contracts CI 检查本地响应契约和生成漂移，Frontend CI 检查 TypeScript；保持精简，不因此运行全量后端回归。认证、设计器和系统诊断等未迁移模块按后续实际修改逐步覆盖，不为全覆盖重写历史业务。
+
 ## 前端设计开发规范
 
 - 沿用 Soybean Admin + Naive UI + UnoCSS；新增或修改页面前，先检查 `frontend/src/theme/`、`assets/style.css`、`uno.config.ts` 和已有公共组件，不另建独立设计系统。

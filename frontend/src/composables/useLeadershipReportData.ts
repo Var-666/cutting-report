@@ -17,7 +17,7 @@ export function useLeadershipReportData({ report, monthlyReport, appliedPeriodSt
     const end = Date.parse(`${appliedPeriodEnd.value}T00:00:00Z`)
     for (let day = Date.parse(`${appliedPeriodStart.value}T00:00:00Z`); day <= end; day += 86_400_000) {
       const date = new Date(day).toISOString().slice(0, 10)
-      rows.push(byDate.get(date) || { period_start: date, task_count: 0, cut_length_m: 0, groove_length_m: 0, work_time_seconds: 0 })
+      rows.push(byDate.get(date) || { period_start: date, task_count: 0, cut_length_m: 0, groove_length_m: 0, work_time_seconds: 0, remark: null })
     }
     return rows
   })

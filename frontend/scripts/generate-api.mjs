@@ -1,4 +1,4 @@
-// Regenerate the three migrated API modules without running Web/Worker or accessing databases.
+// Regenerate selected API contracts without running Web/Worker or accessing databases.
 import { spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -20,8 +20,9 @@ try {
   await createClient({ input: schema, output, plugins: ['@hey-api/typescript'] })
   if (check) {
     const tracked = join(root, 'frontend/src/api/generated')
-    for (const name of readdirSync(output)) {
-      if (!existsSync(join(tracked, name)) || readFileSync(join(tracked, name), 'utf8') !== readFileSync(join(output, name), 'utf8')) {
+    const names = new Set([...readdirSync(output), ...readdirSync(tracked)])
+    for (const name of names) {
+      if (!existsSync(join(output, name)) || !existsSync(join(tracked, name)) || readFileSync(join(tracked, name), 'utf8') !== readFileSync(join(output, name), 'utf8')) {
         throw new Error(`API types are stale: ${name}. Run pnpm run api:generate.`)
       }
     }

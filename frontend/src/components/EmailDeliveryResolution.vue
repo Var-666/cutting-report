@@ -52,12 +52,13 @@ async function loadAudit() {
 }
 
 async function submit() {
-  if (saving.value || resolved.value || !canSubmit.value) return
+  const messageId = props.delivery.message_id
+  if (saving.value || resolved.value || !canSubmit.value || !messageId) return
   saving.value = true
   error.value = ''
   try {
     await resolveEmailDelivery(props.delivery.delivery_id, {
-      message_id: props.delivery.message_id,
+      message_id: messageId,
       evidence_note: evidence.value.trim(),
       outcomes: pendingRecipients.value.map((recipient) => ({ recipient, outcome: outcomes[recipient] })),
     })

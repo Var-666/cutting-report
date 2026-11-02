@@ -1,3 +1,4 @@
+import type { AutomationConfigurationRequestWritable as AutomationConfigurationRequest, ScheduledRun, Deleted, Queued, Resolved } from './generated/types.gen'
 import type { SaveResult } from '../types/configuration'
 import type { AutomationConfiguration, AutomationSchedule, DeliveryResolutionRequest, AutomationStatus, EmailDelivery, SchedulePayload, EmailResolution } from '../types/automation'
 import type { Items, Page, ReadOptions } from '../types/api'
@@ -11,7 +12,7 @@ export function getAutomationConfiguration() {
   return request<AutomationConfiguration>('/api/v1/automation/configuration')
 }
 
-export function saveAutomationConfiguration(payload: AutomationConfiguration) {
+export function saveAutomationConfiguration(payload: AutomationConfigurationRequest) {
   return request<SaveResult>('/api/v1/automation/configuration', {
     method: 'PUT',
     body: JSON.stringify(payload),
@@ -33,13 +34,13 @@ export function saveAutomationSchedule(payload: SchedulePayload, scheduleId = ''
 }
 
 export function deleteAutomationSchedule(scheduleId: string) {
-  return request(`/api/v1/automation/schedules/${encodeURIComponent(scheduleId)}`, {
+  return request<Deleted>(`/api/v1/automation/schedules/${encodeURIComponent(scheduleId)}`, {
     method: 'DELETE',
   })
 }
 
 export function runAutomationSchedule(scheduleId: string) {
-  return request<{ report_id: string; status: string; last_error?: string }>(`/api/v1/automation/schedules/${encodeURIComponent(scheduleId)}/run`, {
+  return request<ScheduledRun>(`/api/v1/automation/schedules/${encodeURIComponent(scheduleId)}/run`, {
     method: 'POST',
   })
 }
@@ -50,13 +51,13 @@ export function listEmailDeliveries({ page = 1, pageSize = 20 } = {}, { signal }
 }
 
 export function retryEmailDelivery(deliveryId: string) {
-  return request(`/api/v1/automation/deliveries/${encodeURIComponent(deliveryId)}/retry`, {
+  return request<Queued>(`/api/v1/automation/deliveries/${encodeURIComponent(deliveryId)}/retry`, {
     method: 'POST',
   })
 }
 
 export function resolveEmailDelivery(deliveryId: string, payload: DeliveryResolutionRequest) {
-  return request(`/api/v1/automation/deliveries/${encodeURIComponent(deliveryId)}/resolve`, {
+  return request<Resolved>(`/api/v1/automation/deliveries/${encodeURIComponent(deliveryId)}/resolve`, {
     method: 'POST', body: JSON.stringify(payload),
   })
 }

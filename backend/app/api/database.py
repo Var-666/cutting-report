@@ -27,6 +27,8 @@ from app.services.database_runtime import welding_connection_settings
 from app.config import Settings, settings
 from app.database.sqlserver import SqlServerClient, SqlServerConfigurationError
 from app.models.domain import ReportFilter, to_primitive
+from app.models.contracts import ApiEnvelope
+from app.models.configuration_contracts import DatabaseConfiguration, ConfigurationSaved, DatabaseStatus, ConnectionTestResult, DatabasePreview, ValidatedWorkbenchSql, WorkbenchQueryResult
 from app.services.request_cancellation import SqlRequestCancelled, cancellable_cursor
 from app.services.sql_workbench_service import (
     SqlWorkbenchService,
@@ -151,7 +153,7 @@ def _active_settings(request: Request) -> Settings:
     return getattr(runtime_state(request), "settings", settings) if hasattr(request, 'app') else settings
 
 
-@router.get("/configuration")
+@router.get("/configuration", response_model=None, responses={200: {"model": ApiEnvelope[DatabaseConfiguration]}})
 def get_database_configuration(request: Request) -> dict:
     return {
         "success": True,
@@ -160,14 +162,14 @@ def get_database_configuration(request: Request) -> dict:
     }
 
 
-@router.put("/configuration")
+@router.put("/configuration", response_model=None, responses={200: {"model": ApiEnvelope[ConfigurationSaved]}})
 def save_database_configuration(
     payload: DatabaseConfigurationRequest, request: Request
 ) -> dict:
     return _save_configuration(payload, request)
 
 
-@router.put('/welding/configuration')
+@router.put('/welding/configuration', response_model=None, responses={200: {'model': ApiEnvelope[ConfigurationSaved]}})
 def save_welding_configuration(payload: WeldingConnectionRequest, request: Request) -> dict:
     return _save_configuration(payload, request)
 
@@ -194,7 +196,7 @@ def _save_configuration(payload, request: Request) -> dict:
     }
 
 
-@query_requests.route(router.post('/welding/test-connection'))
+@query_requests.route(router.post('/welding/test-connection', response_model=None, responses={200: {'model': ApiEnvelope[ConnectionTestResult]}}))
 def test_welding_connection(payload: WeldingConnectionRequest, request: Request) -> dict:
     from app.database.welding import WeldingClient, WeldingUnavailable
     try:
@@ -212,7 +214,7 @@ def test_welding_connection(payload: WeldingConnectionRequest, request: Request)
         raise HTTPException(status_code=503, detail=str(exc)) from None
 
 
-@router.get("/status")
+@router.get("/status", response_model=None, responses={200: {"model": ApiEnvelope[DatabaseStatus]}})
 def database_status(request: Request) -> dict:
     settings = _active_settings(request)
     mappings = _query_mapping_status()
@@ -248,7 +250,7 @@ def database_status(request: Request) -> dict:
     }
 
 
-@router.post("/sql/validate")
+@router.post("/sql/validate", response_model=None, responses={200: {"model": ApiEnvelope[ValidatedWorkbenchSql]}})
 def validate_sql(payload: SqlValidateRequest, request: Request) -> dict:
     try:
         validated = SqlWorkbenchService(_active_settings(request)).validate(payload.sql)
@@ -267,7 +269,7 @@ def validate_sql(payload: SqlValidateRequest, request: Request) -> dict:
     }
 
 
-@query_requests.route(router.post("/sql/execute"))
+@query_requests.route(router.post("/sql/execute", response_model=None, responses={200: {"model": ApiEnvelope[WorkbenchQueryResult]}}))
 def execute_sql(
     payload: SqlExecuteRequest,
     request: Request,
@@ -320,7 +322,7 @@ def execute_sql(
     }
 
 
-@query_requests.route(router.post("/test-connection"))
+@query_requests.route(router.post("/test-connection", response_model=None, responses={200: {"model": ApiEnvelope[ConnectionTestResult]}}))
 def test_connection(payload: ConnectionTestRequest, request: Request) -> dict:
     temporary_settings = replace(
         _active_settings(request),
@@ -367,7 +369,7 @@ def test_connection(payload: ConnectionTestRequest, request: Request) -> dict:
     }
 
 
-@query_requests.route(router.post("/preview", dependencies=[Depends(device_state)]))
+@query_requests.route(router.post("/preview", dependencies=[Depends(device_state)], response_model=None, responses={200: {"model": ApiEnvelope[DatabasePreview]}}))
 def preview_dataset(payload: DatabasePreviewRequest, request: Request) -> dict:
     filters = ReportFilter(
         report_date=payload.report_date,

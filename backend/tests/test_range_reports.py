@@ -311,6 +311,8 @@ def test_page_analysis_uses_the_selected_range(
     )
 
     facts = {fact["id"]: fact for fact in response["data"]["facts"]}
+    from app.models.report_contracts import ReportAnalysis
+    assert ReportAnalysis.model_validate(response['data']).model_dump(mode='json', exclude_unset=True) == response['data']
     assert facts["F001"]["label"] == expected_fact_label
     assert "2026-08-18 至 2026-08-20" in response["data"]["overview"]
 

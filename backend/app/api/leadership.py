@@ -14,6 +14,8 @@ from app.api.auth import require_admin
 from app.config import settings
 from app.database.sqlserver import SqlServerConfigurationError
 from app.models.domain import to_primitive
+from app.models.contracts import ApiEnvelope
+from app.models.report_contracts import LeadershipReport
 from app.services.report_analysis_service import (
     analysis_table_source_version,
     leadership_analysis_source_version,
@@ -64,7 +66,7 @@ def _with_analysis_source_version(data: dict) -> dict:
 router.dependencies.append(Depends(device_state))
 
 
-@query_requests.route(router.get(""))
+@query_requests.route(router.get("", response_model=None, responses={200: {"model": ApiEnvelope[LeadershipReport]}}))
 def get_leadership_report(
     request: Request,
     report_month: str | None = Query(
@@ -128,7 +130,7 @@ def get_leadership_report(
     }
 
 
-@query_requests.route(router.post("/refresh", status_code=status.HTTP_202_ACCEPTED))
+@query_requests.route(router.post("/refresh", status_code=status.HTTP_202_ACCEPTED, response_model=None, responses={202: {"model": ApiEnvelope[LeadershipReport]}}))
 def refresh_leadership_report(
     payload: LeadershipRefreshRequest,
     request: Request,

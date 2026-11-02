@@ -13,6 +13,9 @@ from app.api.auth import require_admin
 from app.services.automation_configuration import AutomationConfigurationRequest, automation_configuration_data
 from app.services.runtime_settings_store import RuntimeSettingsSaveError
 from app.config import DEVICE_CATALOG, settings
+from app.models.contracts import ApiEnvelope, Items, Page
+from app.models.automation_contracts import (AutomationConfiguration, AutomationStatus, AutomationSchedule, ScheduledRun, EmailDelivery, EmailResolution, Deleted, Queued, Resolved)
+from app.models.configuration_contracts import ConfigurationSaved
 
 
 logger = logging.getLogger(__name__)
@@ -119,13 +122,13 @@ def _envelope(request: Request, data: object) -> dict:
     return {"success": True, "data": data, "request_id": request.state.request_id}
 
 
-@router.get("/configuration")
+@router.get("/configuration", response_model=None, responses={200: {"model": ApiEnvelope[AutomationConfiguration]}})
 def get_automation_configuration(request: Request) -> dict:
     current_settings, _ = application_state(request).automation_runtime.snapshot()
     return _envelope(request, automation_configuration_data(current_settings))
 
 
-@router.put("/configuration")
+@router.put("/configuration", response_model=None, responses={200: {"model": ApiEnvelope[ConfigurationSaved]}})
 def save_automation_configuration(
     payload: AutomationConfigurationRequest, request: Request
 ) -> dict:
@@ -145,7 +148,7 @@ def save_automation_configuration(
     )
 
 
-@router.get("/status")
+@router.get("/status", response_model=None, responses={200: {"model": ApiEnvelope[AutomationStatus]}})
 def status(request: Request) -> dict:
     current_settings, _ = application_state(request).automation_runtime.snapshot()
     return _envelope(
@@ -160,12 +163,12 @@ def status(request: Request) -> dict:
     )
 
 
-@router.get("/schedules")
+@router.get("/schedules", response_model=None, responses={200: {"model": ApiEnvelope[Items[AutomationSchedule]]}})
 def list_schedules(request: Request) -> dict:
     return _envelope(request, {"items": application_state(request).automation.list_schedules()})
 
 
-@router.post("/schedules", status_code=201)
+@router.post("/schedules", status_code=201, response_model=None, responses={201: {"model": ApiEnvelope[AutomationSchedule]}})
 def create_schedule(
     payload: SchedulePayload,
     request: Request,
@@ -181,7 +184,7 @@ def create_schedule(
     return _envelope(request, item)
 
 
-@router.put("/schedules/{schedule_id}")
+@router.put("/schedules/{schedule_id}", response_model=None, responses={200: {"model": ApiEnvelope[AutomationSchedule]}})
 def update_schedule(
     schedule_id: str,
     payload: SchedulePayload,
@@ -199,14 +202,14 @@ def update_schedule(
     return _envelope(request, item)
 
 
-@router.delete("/schedules/{schedule_id}")
+@router.delete("/schedules/{schedule_id}", response_model=None, responses={200: {"model": ApiEnvelope[Deleted]}})
 def delete_schedule(schedule_id: str, request: Request) -> dict:
     if not application_state(request).automation.delete_schedule(schedule_id):
         raise HTTPException(status_code=404, detail="定时任务不存在")
     return _envelope(request, {"deleted": True})
 
 
-@router.post("/schedules/{schedule_id}/run", status_code=202)
+@router.post("/schedules/{schedule_id}/run", status_code=202, response_model=None, responses={202: {"model": ApiEnvelope[ScheduledRun]}})
 def run_schedule(schedule_id: str, request: Request) -> dict:
     run = application_state(request).automation_service.run_now(schedule_id, _now())
     if run is None:
@@ -214,7 +217,7 @@ def run_schedule(schedule_id: str, request: Request) -> dict:
     return _envelope(request, run)
 
 
-@router.get("/deliveries")
+@router.get("/deliveries", response_model=None, responses={200: {"model": ApiEnvelope[Page[EmailDelivery]]}})
 def list_deliveries(
     request: Request,
     page: int = Query(default=1, ge=1),
@@ -229,7 +232,7 @@ def list_deliveries(
     )
 
 
-@router.post("/deliveries/{delivery_id}/retry", status_code=202)
+@router.post("/deliveries/{delivery_id}/retry", status_code=202, response_model=None, responses={202: {"model": ApiEnvelope[Queued]}})
 def retry_delivery(delivery_id: str, request: Request) -> dict:
     now = _now().isoformat(timespec="seconds")
     if application_state(request).automation.delivery_state(delivery_id) is None:
@@ -239,7 +242,7 @@ def retry_delivery(delivery_id: str, request: Request) -> dict:
     return _envelope(request, {"queued": True})
 
 
-@router.post("/deliveries/{delivery_id}/resolve")
+@router.post("/deliveries/{delivery_id}/resolve", response_model=None, responses={200: {"model": ApiEnvelope[Resolved]}})
 def resolve_delivery(delivery_id: str, payload: DeliveryResolutionRequest, request: Request,
                      user: dict = Depends(require_admin)) -> dict:
     try:
@@ -258,6 +261,6 @@ def resolve_delivery(delivery_id: str, payload: DeliveryResolutionRequest, reque
     return _envelope(request, {"resolved": True})
 
 
-@router.get("/deliveries/{delivery_id}/resolutions")
+@router.get("/deliveries/{delivery_id}/resolutions", response_model=None, responses={200: {"model": ApiEnvelope[Items[EmailResolution]]}})
 def delivery_resolutions(delivery_id: str, request: Request) -> dict:
     return _envelope(request, {"items": application_state(request).automation.delivery_resolutions(delivery_id)})

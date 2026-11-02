@@ -12,6 +12,8 @@ from app.api.auth import require_admin
 from app.config import settings
 from app.database.sqlserver import SqlServerConfigurationError
 from app.models.domain import ReportFilter, to_primitive
+from app.models.contracts import ApiEnvelope
+from app.models.energy_contracts import EquipmentReport
 from app.services.equipment_service import (
     summarize_equipment,
 )
@@ -29,7 +31,7 @@ router = APIRouter(
 router.dependencies.append(Depends(device_state))
 
 
-@query_requests.route(router.get(""))
+@query_requests.route(router.get("", response_model=None, responses={200: {"model": ApiEnvelope[EquipmentReport]}}))
 def get_equipment_report(
     request: Request,
     report_date: date | None = Query(default=None),

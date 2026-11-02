@@ -16,6 +16,9 @@ from app.api.workloads import RequestWorkload, analysis_requests, pdf_requests
 from app.config import settings
 from app.models.domain import to_primitive
 from app.models.welding import WeldingAnalysisRequest, WeldingQuery
+from app.models.contracts import ApiEnvelope
+from app.models.report_contracts import ReportAnalysis
+from app.models.welding_contracts import WeldingDailyReport, WeldingJobsReport, WeldingPartsReport, WeldingEquipmentReport, WeldingPart, WeldingHealth
 from app.database.welding import WeldingUnavailable
 from app.services.analysis_execution import analysis_operation
 from app.services.llm_service import LlmService
@@ -28,6 +31,15 @@ from app.services.welding_service import WeldingService
 router = APIRouter(prefix='/api/v1/welding', tags=['welding'], dependencies=[Depends(require_admin)])
 # Explicit smaller connection pools also lower execution capacity after restart.
 welding_requests = RequestWorkload(max(1, min(4, settings.weld_db_pool_size)), '焊接数据查询', max_waiters=12, queue_timeout_seconds=5)
+
+# Keep parse_query's duplicate/unknown-key checks; describe its existing model without a second parser.
+_query_schema = WeldingQuery.model_json_schema()
+WELD_QUERY_PARAMETERS = [
+    {'name': name, 'in': 'query', 'required': name in _query_schema.get('required', []), 'schema': schema}
+    for name, schema in _query_schema['properties'].items()
+]
+WELD_REPORT_QUERY = {'parameters': [*WELD_QUERY_PARAMETERS,
+    {'name': 'refresh', 'in': 'query', 'required': False, 'schema': {'type': 'boolean', 'default': False}}]}
 
 
 def service(request: Request) -> WeldingService:
@@ -78,49 +90,49 @@ def response(request: Request, data) -> dict:
     return {'success': True, 'data': to_primitive(data), 'request_id': getattr(request.state, 'request_id', '')}
 
 
-@welding_requests.route(router.get('/health'))
+@welding_requests.route(router.get('/health', response_model=None, responses={200: {'model': ApiEnvelope[WeldingHealth]}}))
 def health(request: Request):
     with source_errors():
         return response(request, service(request).health())
 
 
-@welding_requests.route(router.get('/dashboard'))
+@welding_requests.route(router.get('/dashboard', response_model=None, responses={200: {'model': ApiEnvelope[WeldingJobsReport]}}, openapi_extra=WELD_REPORT_QUERY))
 def dashboard(request: Request):
     query = parse_query(request)
     with source_errors():
         return response(request, service(request).dashboard(query, **({'force': True} if request.query_params.get('refresh') == 'true' else {})))
 
 
-@welding_requests.route(router.get('/statistics/daily'))
+@welding_requests.route(router.get('/statistics/daily', response_model=None, responses={200: {'model': ApiEnvelope[WeldingDailyReport]}}, openapi_extra=WELD_REPORT_QUERY))
 def daily(request: Request):
     query = parse_query(request)
     with source_errors():
         return response(request, service(request).page('daily', query, **({'force': True} if request.query_params.get('refresh') == 'true' else {})))
 
 
-@welding_requests.route(router.get('/parts'))
+@welding_requests.route(router.get('/parts', response_model=None, responses={200: {'model': ApiEnvelope[WeldingPartsReport]}}, openapi_extra=WELD_REPORT_QUERY))
 def parts(request: Request):
     query = parse_query(request)
     with source_errors():
         return response(request, service(request).page('parts', query, **({'force': True} if request.query_params.get('refresh') == 'true' else {})))
 
 
-@welding_requests.route(router.get('/jobs'))
+@welding_requests.route(router.get('/jobs', response_model=None, responses={200: {'model': ApiEnvelope[WeldingJobsReport]}}, openapi_extra=WELD_REPORT_QUERY))
 def jobs(request: Request):
     query = parse_query(request)
     with source_errors():
         return response(request, service(request).page('jobs', query, **({'force': True} if request.query_params.get('refresh') == 'true' else {})))
 
 
-@welding_requests.route(router.get('/equipment/summary'))
+@welding_requests.route(router.get('/equipment/summary', response_model=None, responses={200: {'model': ApiEnvelope[WeldingEquipmentReport]}}, openapi_extra=WELD_REPORT_QUERY))
 def equipment(request: Request):
     query = parse_query(request)
     with source_errors():
         return response(request, service(request).page('equipment', query, **({'force': True} if request.query_params.get('refresh') == 'true' else {})))
 
 
-@welding_requests.route(router.get('/parts/{part_id}'))
-@welding_requests.route(router.get('/parts/{part_id}/seams'))
+@welding_requests.route(router.get('/parts/{part_id}', response_model=None, responses={200: {'model': ApiEnvelope[WeldingPart]}}))
+@welding_requests.route(router.get('/parts/{part_id}/seams', response_model=None, responses={200: {'model': ApiEnvelope[WeldingPart]}}))
 def part(request: Request, part_id: int, page: int = Query(1, ge=1, le=100000), page_size: int = Query(20, ge=1, le=100)):
     with source_errors():
         data = service(request).part(part_id, page, page_size)
@@ -129,7 +141,7 @@ def part(request: Request, part_id: int, page: int = Query(1, ge=1, le=100000), 
     return response(request, data)
 
 
-@welding_requests.route(router.get('/parts/{part_id}/seams/export'))
+@welding_requests.route(router.get('/parts/{part_id}/seams/export', response_class=Response, responses={200: {'content': {'text/csv': {'schema': {'type': 'string', 'format': 'binary'}}}}}))
 def seam_export(request: Request, part_id: int):
     instance = service(request)
     with source_errors():
@@ -151,7 +163,7 @@ def seam_export(request: Request, part_id: int):
     return Response(content, media_type='text/csv; charset=utf-8', headers={'Content-Disposition': f'attachment; filename="welding-seams-{part_id}.csv"'})
 
 
-@router.get('/export')
+@router.get('/export', response_class=Response, responses={200: {'content': {media: {'schema': {'type': 'string', 'format': 'binary'}} for media in ('text/csv', 'text/html', 'application/pdf')}}}, openapi_extra={'parameters': WELD_QUERY_PARAMETERS})
 async def export(request: Request, report_type: Literal['daily', 'parts', 'jobs', 'equipment'], format: Literal['csv', 'html', 'pdf'] = 'csv'):
     query = parse_query(request)
     instance = service(request)
@@ -163,7 +175,7 @@ async def export(request: Request, report_type: Literal['daily', 'parts', 'jobs'
     return Response(content, media_type=media, headers={'Content-Disposition': f'attachment; filename="welding-{report_type}-{query.start}-{query.end}.{format}"'})
 
 
-@router.post('/analysis')
+@router.post('/analysis', response_model=None, responses={200: {'model': ApiEnvelope[ReportAnalysis]}})
 async def analysis(request: Request, payload: WeldingAnalysisRequest):
     instance = service(request)
     with source_errors():

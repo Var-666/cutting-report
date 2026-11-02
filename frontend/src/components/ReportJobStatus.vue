@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import type { PropType } from 'vue'
-import type { ReportJob } from '../types/reports'
+import type { ReportJobState } from '../types/reports'
 
 import DownloadPdfButton from './DownloadPdfButton.vue'
 import { NSteps, NStep, NTag } from 'naive-ui'
-defineProps({ job: { type: Object as PropType<ReportJob | null>, default: null } })
+defineProps({ job: { type: Object as PropType<ReportJobState | null>, default: null } })
 
 const steps = [
   ['querying', '查询数据'],
@@ -22,7 +22,7 @@ const aiStatusText: Record<string, string> = { success: '已生成', unavailable
   <section v-if="job" class="job-card" :class="{ failed: job.status === 'failed' }">
     <div class="job-heading">
       <div>
-        <span class="eyebrow">当前生成任务 · {{ reportTypeText[job.report_type] || '报表' }}</span>
+        <span class="eyebrow">当前生成任务 · {{ (job.report_type && reportTypeText[job.report_type]) || '报表' }}</span>
         <h2>{{ job.stage_message }}</h2>
       </div>
       <NTag class="status-pill" :data-status="job.status" :type="job.status === 'failed' ? 'error' : job.status === 'completed' ? 'success' : 'info'" size="small">{{ job.status }}</NTag>

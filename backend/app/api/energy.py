@@ -8,6 +8,8 @@ from app.api.devices import device_state
 from app.api.auth import require_admin
 from app.database.sqlserver import SqlServerConfigurationError
 from app.models.domain import ReportFilter, to_primitive
+from app.models.contracts import ApiEnvelope
+from app.models.energy_contracts import EnergyDayReport, TaskEnergyReport, EnergyMonthReport, EnergyPeriodReport, EnergyRangeReport
 from app.services.report_analysis_service import (
     analysis_table_source_version,
     equipment_analysis_source_version,
@@ -29,7 +31,7 @@ def _add_analysis_source_version(task_report: dict) -> dict:
 router.dependencies.append(Depends(device_state))
 
 
-@query_requests.route(router.get("/day"))
+@query_requests.route(router.get("/day", response_model=None, responses={200: {"model": ApiEnvelope[EnergyDayReport]}}))
 def get_energy_day(request: Request, report_date: date | None = None, refresh: bool = False):
     service = device_state(request).energy_period_service
     selected = report_date or service.now().date()
@@ -39,7 +41,7 @@ def get_energy_day(request: Request, report_date: date | None = None, refresh: b
     return {"success": True, "data": data, "request_id": request.state.request_id}
 
 
-@query_requests.route(router.get("/tasks"))
+@query_requests.route(router.get("/tasks", response_model=None, responses={200: {"model": ApiEnvelope[TaskEnergyReport]}}))
 def get_task_energy_day(request: Request, report_date: date | None = None, refresh: bool = False):
     service = device_state(request).energy_period_service
     selected = report_date or service.now().date()
@@ -62,7 +64,7 @@ def get_task_energy_day(request: Request, report_date: date | None = None, refre
     return {"success": True, "data": data, "request_id": request.state.request_id}
 
 
-@query_requests.route(router.get("/month"))
+@query_requests.route(router.get("/month", response_model=None, responses={200: {"model": ApiEnvelope[EnergyMonthReport]}}))
 def get_energy_month(request: Request, report_month: str = Query(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")):
     try:
         selected = date.fromisoformat(report_month + "-01")
@@ -74,7 +76,7 @@ def get_energy_month(request: Request, report_month: str = Query(pattern=r"^\d{4
     return {"success": True, "data": data, "request_id": request.state.request_id}
 
 
-@query_requests.route(router.get("/monthly-range"))
+@query_requests.route(router.get("/monthly-range", response_model=None, responses={200: {"model": ApiEnvelope[EnergyPeriodReport]}}))
 def get_energy_monthly_range(request: Request, start_date: date, end_date: date):
     try:
         data = device_state(request).energy_period_service.get_monthly_range(
@@ -101,7 +103,7 @@ def get_energy_monthly_range(request: Request, start_date: date, end_date: date)
     return {"success": True, "data": data, "request_id": request.state.request_id}
 
 
-@query_requests.route(router.get("/range"))
+@query_requests.route(router.get("/range", response_model=None, responses={200: {"model": ApiEnvelope[EnergyRangeReport]}}))
 def get_energy_range(
     request: Request,
     start_date: date,

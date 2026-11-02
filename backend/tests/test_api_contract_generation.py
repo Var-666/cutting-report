@@ -37,13 +37,116 @@ def test_alarm_contract_export_has_typed_json_responses_and_no_database_side_eff
     schema = module.api_schema()
     for url, methods in schema['paths'].items():
         for method, operation in methods.items():
-            if not method in {'get', 'post'} or '/pdf' in url or url.endswith('/view'):
+            if method not in {'get', 'post', 'put', 'delete'} or '/pdf' in url or url.endswith('/view'):
                 continue
             success = next(value for code, value in operation['responses'].items() if code.startswith('2'))
+            if 'application/json' not in success.get('content', {}):
+                continue
             assert '$ref' in success['content']['application/json']['schema'], url
     assert 'AlarmIncidentPage' in schema['components']['schemas']
     assert 'WorkshopResult' in schema['components']['schemas']
     assert 'CuttingDispatch' in schema['components']['schemas']
+    query = schema['paths']['/api/v1/welding/jobs']['get']['parameters']
+    assert {item['name'] for item in query if item.get('required')} == {'start', 'end'}
+    assert not schema['components']['schemas']['ConfigurationDiagnostics']['properties']['items'] == {}
+    assert schema['components']['schemas']['LeadershipPeriodRecord']['properties']['cut_length_m']['type'] == 'number'
+    download = schema['paths']['/api/v1/welding/export']['get']['responses']['200']['content']
+    assert set(download) == {'text/csv', 'text/html', 'application/pdf'}
+
+
+@pytest.fixture
+def contract_http(tmp_path):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from app.api import automation, configuration, database, leadership, equipment, energy, reports, analysis
+    from app.api.auth import require_admin
+    from app.config import DEVICE_CATALOG, Settings
+    from app.services.application_runtime import build_runtime
+
+    catalog = tmp_path / 'backend/app/configuration/devices.json'
+    catalog.parent.mkdir(parents=True)
+    catalog.write_text(DEVICE_CATALOG.model_dump_json())
+    runtime = build_runtime(Settings(project_root=tmp_path, data_source_mode='demo', weld_enabled=False,
+        worker_database_auth_enabled=False, file_database_enabled=False, energy_api_enabled=False, llm_enabled=False), role='web')
+    admin = runtime.users.bootstrap_admin(username='contract-admin', display_name='管理员',
+        password='test-password', now='2026-11-02T10:00:00+08:00')
+    app = FastAPI()
+    app.state.runtime = runtime
+    app.dependency_overrides[require_admin] = lambda: admin
+    for router in (database.router, automation.router, configuration.router, leadership.router, equipment.router, energy.router, reports.router, analysis.router):
+        app.include_router(router)
+
+    @app.middleware('http')
+    async def context(request, call_next):
+        request.state.request_id = 'configuration-contract'
+        return await call_next(request)
+
+    with TestClient(app) as client:
+        yield client
+
+
+def check_contract(response, model):
+    from app.models.contracts import ApiEnvelope
+    assert response.status_code in (200, 201, 202), response.text
+    raw = response.json()
+    contract = ApiEnvelope[model].model_validate(raw)
+    assert contract.model_dump(mode='json', exclude_unset=True) == raw
+    return raw['data']
+
+
+def test_configuration_and_automation_documented_responses_match_http_payloads(contract_http):
+    from app.models.contracts import Items, Page
+    from app.models.configuration_contracts import DatabaseConfiguration, DatabaseStatus, ConfigurationSaved, ConfigurationDiagnostics
+    from app.models.automation_contracts import AutomationConfiguration, AutomationStatus, AutomationSchedule, EmailDelivery, ScheduledRun
+    client = contract_http
+    check_contract(client.get('/api/v1/database/status'), DatabaseStatus)
+    check_contract(client.get('/api/v1/database/configuration'), DatabaseConfiguration)
+    check_contract(client.put('/api/v1/database/configuration', json={
+        'data_source_mode': 'demo', 'production': {}, 'worker': {}, 'file': {},
+    }), ConfigurationSaved)
+    check_contract(client.get('/api/v1/automation/configuration'), AutomationConfiguration)
+    check_contract(client.put('/api/v1/automation/configuration', json={'smtp_enabled': False}), ConfigurationSaved)
+    check_contract(client.get('/api/v1/automation/status'), AutomationStatus)
+    schedule = check_contract(client.post('/api/v1/automation/schedules', json={
+        'device_id': 'Cutter01', 'name': '契约测试', 'report_type': 'workshop',
+        'recipients': ['contract@example.com'],
+    }), AutomationSchedule)
+    check_contract(client.get('/api/v1/automation/schedules'), Items[AutomationSchedule])
+    check_contract(client.post(f"/api/v1/automation/schedules/{schedule['schedule_id']}/run"), ScheduledRun)
+    check_contract(client.get('/api/v1/automation/deliveries?page=1&page_size=5'), Page[EmailDelivery])
+    check_contract(client.get('/api/v1/configuration/diagnostics'), ConfigurationDiagnostics)
+
+
+
+def test_cutting_reports_and_state_dependent_job_responses_match_contracts(contract_http):
+    from app.models.contracts import Page
+    from app.models.report_contracts import LeadershipReport, ReportAccepted, ReportJob
+    from app.models.energy_contracts import EquipmentReport, TaskEnergyReport, EnergyRangeReport, EnergyPeriodReport, EnergyDayReport, EnergyMonthReport
+    client = contract_http
+    params = {'device_id': 'Cutter01'}
+    for path, query, model in [
+        ('leadership-report', {'report_month': '2026-08'}, LeadershipReport),
+        ('leadership-report', {'start_date': '2026-08-18', 'end_date': '2026-08-20'}, LeadershipReport),
+        ('equipment-report', {'report_date': '2026-08-18'}, EquipmentReport),
+        ('energy-report/tasks', {'report_date': '2026-08-18'}, TaskEnergyReport),
+        ('energy-report/range', {'start_date': '2026-08-18', 'end_date': '2026-08-20'}, EnergyRangeReport),
+        ('energy-report/day', {'report_date': '2026-08-18'}, EnergyDayReport),
+        ('energy-report/month', {'report_month': '2026-08'}, EnergyMonthReport),
+        ('energy-report/monthly-range', {'start_date': '2026-08-01', 'end_date': '2026-08-20'}, EnergyPeriodReport),
+    ]:
+        check_contract(client.get(f'/api/v1/{path}', params={**params, **query}), model)
+    accepted = check_contract(client.post('/api/v1/reports', params=params, json={
+        'report_type': 'workshop', 'report_date': '2026-08-18',
+    }), ReportAccepted)
+    assert set(accepted) == {'report_id', 'status', 'status_url'}
+    url = f"/api/v1/reports/{accepted['report_id']}/status"
+    pending = check_contract(client.get(url, params=params), ReportJob)
+    assert 'download_url' not in pending and pending['error'] is None
+    metadata = client.app.state.runtime.devices['Cutter01'].metadata
+    metadata.update_status(accepted['report_id'], status='failed', stage_message='契约测试失败状态')
+    failed = check_contract(client.get(url, params=params), ReportJob)
+    assert failed['error']['message'] == '契约测试失败状态'
+    check_contract(client.get('/api/v1/reports', params=params), Page[ReportJob])
 
 
 def test_required_dispatch_fields_cannot_silently_disappear():
