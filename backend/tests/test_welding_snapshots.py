@@ -419,7 +419,7 @@ def test_worker_uses_registry_dedup_capacity_and_current_database_context(config
         import json
         task = {**dict(old), 'payload': json.loads(old['payload'])}
         updated = WeldingService(replace(cfg, weld_db_host='new-source'), Source(), snapshots=runtime.report_snapshots, coordination=queue)
-        current.welding = updated
+        runtime.database_runtime.publish(replace(current, settings=updated.settings, welding=updated), {})
         process._handle(task)
         assert updated.repository.calls == Counter()
         with pytest.raises(ValueError, match='未登记'):

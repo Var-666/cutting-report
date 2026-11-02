@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field, SecretStr, field_validator
 from starlette.concurrency import run_in_threadpool
 
 from app.api.workloads import authentication_requests
-from app.api.runtime import runtime_state
+from app.api.runtime import application_state, runtime_state
 from app.config import settings
 from app.services.request_cancellation import (
     cancellation_owner, current_request_id, sql_request_cancellations,
@@ -105,13 +105,13 @@ def _set_session_cookie(response: Response, token: str) -> None:
 
 
 def _users(request: Request):
-    state = request.app.state
+    state = application_state(request)
     # Existing embedded apps expose only the historical workshop facade.
     return state.users if hasattr(state, 'users') else state.workshop
 
 
 def _sessions(request: Request):
-    state = request.app.state
+    state = application_state(request)
     return state.sessions if hasattr(state, 'sessions') else state.workshop
 
 

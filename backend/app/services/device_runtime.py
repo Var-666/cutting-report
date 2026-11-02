@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from app.config import Settings
 from app.database.alarms import AlarmRepository
@@ -28,12 +29,16 @@ from app.workers.current_report_refresh_worker import CurrentReportRefreshWorker
 from app.workers.energy_history_worker import EnergyHistoryWorker
 from app.workers.leadership_refresh_worker import LeadershipRefreshWorker
 
+if TYPE_CHECKING:
+    from app.database.coordination import CoordinationRepository
+
 
 @dataclass
 class DeviceRuntime:
     settings: Settings
     metadata: MetadataRepository
     workshop: WorkshopReportRepository
+    confirmations: ConfirmationRepository
     pipeline: ReportPipeline
     leadership_report_service: LeadershipReportService
     report_analysis_service: ReportAnalysisService
@@ -44,10 +49,6 @@ class DeviceRuntime:
     alarm_monitor_service: AlarmMonitorService
     alarm_worker: AlarmWorker
     report_provider: CuttingReportProvider | None = None
-
-    @property
-    def confirmations(self) -> ConfirmationRepository:
-        return ConfirmationRepository(self.workshop.database, scope_machine_no=self.settings.report_machine_no)
 
     @property
     def query_service(self) -> QueryService:
@@ -74,11 +75,11 @@ class DeviceRuntime:
 def build_device_runtime(
     settings: Settings, database: SQLiteDatabase, definitions: DefinitionRepository,
     snapshots: LeadershipSnapshotRepository, pdf_service: PdfService,
-    *, task_queue=None,
+    *, task_queue: CoordinationRepository | None = None,
 ) -> DeviceRuntime:
     metadata = MetadataRepository(database, device_id=settings.device_id)
     workshop = WorkshopReportRepository(database, scope_machine_no=settings.report_machine_no)
-    pipeline = ReportPipeline(settings, metadata, definitions)
+    pipeline = ReportPipeline(settings, metadata, definitions, workshop_repository=workshop)
     leadership = LeadershipReportService(settings, snapshots)
     analysis = pipeline.analysis_service
     source_name = f'{settings.production_data_source}:{settings.device_id}'
@@ -87,11 +88,14 @@ def build_device_runtime(
     monitor = AlarmMonitorService(settings, alarms, SqlServerAlarmSource(settings),
                                   AlarmAnalysisService(settings), AlarmReportService(settings, pdf_service))
     return DeviceRuntime(
-        settings, metadata, workshop, pipeline, leadership, analysis,
-        LeadershipRefreshWorker(settings, leadership, analysis, task_queue=task_queue),
-        CurrentReportRefreshWorker(settings, pipeline.query_service, pipeline.range_service,
+        settings=settings, metadata=metadata, workshop=workshop,
+        confirmations=ConfirmationRepository(database, scope_machine_no=settings.report_machine_no),
+        pipeline=pipeline, leadership_report_service=leadership, report_analysis_service=analysis,
+        leadership_refresh_worker=LeadershipRefreshWorker(settings, leadership, analysis, task_queue=task_queue),
+        current_report_refresh_worker=CurrentReportRefreshWorker(settings, pipeline.query_service, pipeline.range_service,
                                    pipeline.energy_period_service, analysis, task_queue=task_queue),
-        EnergyHistoryWorker(settings, pipeline.energy_period_service, managed=task_queue is not None),
-        alarms, monitor, AlarmWorker(settings, monitor, managed=task_queue is not None),
-        CuttingReportProvider(leadership),
+        energy_history_worker=EnergyHistoryWorker(settings, pipeline.energy_period_service, managed=task_queue is not None),
+        alarm_repository=alarms, alarm_monitor_service=monitor,
+        alarm_worker=AlarmWorker(settings, monitor, managed=task_queue is not None),
+        report_provider=CuttingReportProvider(leadership),
     )

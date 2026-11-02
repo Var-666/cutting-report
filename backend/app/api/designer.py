@@ -11,7 +11,7 @@ from app.api.workloads import query_requests
 from app.api.auth import require_admin
 from app.api.devices import device_state, device_settings
 from app.config import settings
-from app.api.runtime import runtime_state
+from app.api.runtime import application_state, runtime_state
 from app.models.designer import (
     DefinitionUpsert,
     QueryPreviewRequest,
@@ -63,7 +63,7 @@ def _translate_write_error(exc: Exception) -> None:
 
 @router.get("/published-definitions")
 def published_definitions(request: Request):
-    items = request.app.state.definitions.list_definitions(
+    items = application_state(request).definitions.list_definitions(
         enabled_only=True, include_builtin=False
     )
     return _envelope(request, {"items": items})
@@ -72,7 +72,7 @@ def published_definitions(request: Request):
 @router.get("/query-tasks")
 def list_query_tasks(request: Request, token: AdminToken = None):
     _require_admin_token(token, request)
-    return _envelope(request, {"items": request.app.state.definitions.list_query_tasks()})
+    return _envelope(request, {"items": application_state(request).definitions.list_query_tasks()})
 
 
 @router.post("/query-tasks/validate")
@@ -90,7 +90,7 @@ def create_query_task(payload: QueryTaskUpsert, request: Request, token: AdminTo
     _require_admin_token(token, request)
     try:
         CustomReportService(settings).validate(payload.sql_text)
-        item = request.app.state.definitions.save_query_task(payload.model_dump())
+        item = application_state(request).definitions.save_query_task(payload.model_dump())
     except SqlWorkbenchValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
@@ -103,7 +103,7 @@ def update_query_task(query_task_id: str, payload: QueryTaskUpsert, request: Req
     _require_admin_token(token, request)
     try:
         CustomReportService(settings).validate(payload.sql_text)
-        item = request.app.state.definitions.save_query_task(payload.model_dump(), query_task_id)
+        item = application_state(request).definitions.save_query_task(payload.model_dump(), query_task_id)
     except SqlWorkbenchValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
@@ -115,7 +115,7 @@ def update_query_task(query_task_id: str, payload: QueryTaskUpsert, request: Req
 def delete_query_task(query_task_id: str, request: Request, token: AdminToken = None):
     _require_admin_token(token, request)
     try:
-        request.app.state.definitions.delete_query_task(query_task_id)
+        application_state(request).definitions.delete_query_task(query_task_id)
     except Exception as exc:
         _translate_write_error(exc)
     return _envelope(request, {"deleted": True})
@@ -124,7 +124,7 @@ def delete_query_task(query_task_id: str, request: Request, token: AdminToken = 
 @query_requests.route(router.post("/query-tasks/{query_task_id}/preview", dependencies=[Depends(device_state)]))
 def preview_query_task(query_task_id: str, payload: QueryPreviewRequest, request: Request, token: AdminToken = None):
     _require_admin_token(token, request)
-    task = request.app.state.definitions.get_query_task(query_task_id)
+    task = application_state(request).definitions.get_query_task(query_task_id)
     if not task:
         raise HTTPException(status_code=404, detail="查询任务不存在")
     try:
@@ -148,14 +148,14 @@ def preview_query_task(query_task_id: str, payload: QueryPreviewRequest, request
 @router.get("/templates")
 def list_templates(request: Request, token: AdminToken = None):
     _require_admin_token(token, request)
-    return _envelope(request, {"items": request.app.state.definitions.list_templates()})
+    return _envelope(request, {"items": application_state(request).definitions.list_templates()})
 
 
 @router.post("/templates", status_code=201)
 def create_template(payload: TemplateUpsert, request: Request, token: AdminToken = None):
     _require_admin_token(token, request)
     try:
-        item = request.app.state.definitions.save_template(payload.model_dump())
+        item = application_state(request).definitions.save_template(payload.model_dump())
     except Exception as exc:
         _translate_write_error(exc)
     return _envelope(request, item)
@@ -165,7 +165,7 @@ def create_template(payload: TemplateUpsert, request: Request, token: AdminToken
 def update_template(template_id: str, payload: TemplateUpsert, request: Request, token: AdminToken = None):
     _require_admin_token(token, request)
     try:
-        item = request.app.state.definitions.save_template(payload.model_dump(), template_id)
+        item = application_state(request).definitions.save_template(payload.model_dump(), template_id)
     except Exception as exc:
         _translate_write_error(exc)
     return _envelope(request, item)
@@ -175,7 +175,7 @@ def update_template(template_id: str, payload: TemplateUpsert, request: Request,
 def delete_template(template_id: str, request: Request, token: AdminToken = None):
     _require_admin_token(token, request)
     try:
-        request.app.state.definitions.delete_template(template_id)
+        application_state(request).definitions.delete_template(template_id)
     except Exception as exc:
         _translate_write_error(exc)
     return _envelope(request, {"deleted": True})
@@ -184,14 +184,14 @@ def delete_template(template_id: str, request: Request, token: AdminToken = None
 @router.get("/definitions")
 def list_definitions(request: Request, token: AdminToken = None):
     _require_admin_token(token, request)
-    return _envelope(request, {"items": request.app.state.definitions.list_definitions()})
+    return _envelope(request, {"items": application_state(request).definitions.list_definitions()})
 
 
 @router.post("/definitions", status_code=201)
 def create_definition(payload: DefinitionUpsert, request: Request, token: AdminToken = None):
     _require_admin_token(token, request)
     try:
-        item = request.app.state.definitions.save_definition(payload.model_dump())
+        item = application_state(request).definitions.save_definition(payload.model_dump())
     except Exception as exc:
         _translate_write_error(exc)
     return _envelope(request, item)
@@ -201,7 +201,7 @@ def create_definition(payload: DefinitionUpsert, request: Request, token: AdminT
 def update_definition(definition_id: str, payload: DefinitionUpsert, request: Request, token: AdminToken = None):
     _require_admin_token(token, request)
     try:
-        item = request.app.state.definitions.save_definition(payload.model_dump(), definition_id)
+        item = application_state(request).definitions.save_definition(payload.model_dump(), definition_id)
     except Exception as exc:
         _translate_write_error(exc)
     return _envelope(request, item)
@@ -211,7 +211,7 @@ def update_definition(definition_id: str, payload: DefinitionUpsert, request: Re
 def delete_definition(definition_id: str, request: Request, token: AdminToken = None):
     _require_admin_token(token, request)
     try:
-        request.app.state.definitions.delete_definition(definition_id)
+        application_state(request).definitions.delete_definition(definition_id)
     except Exception as exc:
         _translate_write_error(exc)
     return _envelope(request, {"deleted": True})

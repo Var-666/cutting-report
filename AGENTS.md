@@ -8,7 +8,7 @@
 
 - 前端：Vue 3、Vue Router、Vite、Soybean Admin、Naive UI、UnoCSS、ECharts。
 - 后端：Python、FastAPI、Pydantic、Uvicorn、Jinja2。
-- 数据：SQL Server 作为生产数据源，SQLite 保存系统元数据、快照和操作记录。
+- 数据：SQL Server（切割/HR/PDM）、MySQL（焊接）作为外部数据源，SQLite 保存系统元数据、快照和操作记录。
 - 报表：单文件 HTML、ECharts、Playwright/Chromium PDF 转换，可选 OpenAI-Compatible LLM 分析。
 - 测试：Pytest 和 Node.js 内置测试运行器。
 
@@ -16,7 +16,7 @@
 
 - `backend/app/api/`：HTTP 路由、请求校验和权限边界。
 - `backend/app/services/`：业务流程、统计、外部集成和报表生成。
-- `backend/app/database/`：SQL Server 和 SQLite 仓储。
+- `backend/app/database/`：SQL Server、MySQL 和 SQLite 客户端、仓储与事务管理。
 - `backend/app/workers/`：报表、告警、缓存刷新和清理后台任务。
 - `backend/tests/`：后端回归测试。
 - `frontend/src/views/`：页面；`components/` 为可复用组件；`layouts/` 为角色/功能布局。
@@ -30,10 +30,47 @@
 - API 层保持精简；业务规则放在 service，持久化放在 repository/database 层。
 - 生产 SQL Server、HR 库、PDM 库和能管平台均按外部系统处理。除非需求和设计明确授权，不对其执行写入。
 - SQLite 是应用自有状态库；多仓储原子操作应遵循 `docs/design/SQLite仓储与事务设计.md`。
-- 生产式部署由 FastAPI 同源提供构建后的前端和 API。后台工作线程依赖单个 Uvicorn 进程，不得随意改为多 worker。
+- 生产式部署保留一个 Web（`app.main:app`）与一个独立 Worker（`python -m app.worker`）。Web 同源提供前端和 API，不启动后台消费者；不得用多个 Uvicorn workers 替代独立 Worker。
 - 管理员与工人路由、菜单和后端 API 权限必须一致；不能仅依赖前端隐藏实现授权。
 - 页面查询、HTML/PDF 导出和智能分析应共用同一统计口径、时区和区间定义。
 - 管理页保存的运行参数写入 `data/settings.env`，密码不回显；数据库页全部配置及自动化/SMTP 参数按新操作热加载，其余启动参数修改后重启生效。
+
+## 后端模块边界（P01）
+
+新功能先用 `rg` 查找同类入口、Service、Repository 和测试，优先扩展已有业务模块。当前结构和待处理问题见 [后端架构说明](docs/project/architecture.md#p01-后端边界与后续治理2026-11-02)；以下约束适用于新增和修改代码，不要求顺带搬迁历史实现。
+
+### 职责与依赖
+
+| 位置 | 放什么 | 依赖与限制 |
+| --- | --- | --- |
+| `api/` | HTTP 参数/Pydantic 校验、身份与角色权限、请求容量、响应及异常状态映射 | 调用 Service；不新增业务 SQL、统计计算、跨仓储流程或配置发布流程。现有简单仓储调用可保留，复用仓储异常作 HTTP 映射不算越层业务实现 |
+| `services/` | 业务规则、统计、报表流程、外部 HTTP/文件/SMTP/LLM 协调 | 依赖 `database/`、`models/` 和显式传入的配置/协作服务；业务 Service 不依赖 FastAPI、`api/` 或入口模块，不接收 `Request`/`app.state` 作为业务上下文 |
+| `database/` | 数据库客户端、参数化 SQL、Repository、连接、事务和迁移 | 依赖模型、配置及基础机制；不调用业务 Service、HTTP 路由或后台调度。确认归属、唯一性、并发冲突等必须原子判断的约束留在仓储事务内 |
+| `workers/`、`worker.py` | 调度、任务领取、租约、退避、容量、停止及业务执行入口 | 调用 Service；队列状态可直接使用协调仓储，不复制报表统计和业务流程，不依赖 HTTP 层 |
+| `models/` | 已有领域数据、请求/响应契约和共享值类型 | 不依赖 API、Service、Worker 或 Repository；不为分层强行复制同一数据结构 |
+| `core/`（当前未建立） | 确有多个模块使用、无业务语义的基础机制 | 仅在实际改动需要时考虑提取取消、期限或进程锁等机制；先复用现有模块，不预建目录，不放业务字段注册、统计口径或通用 Service 基类 |
+
+- 默认业务调用方向为 `api/workers → services → database`，模型和配置供各层使用。`main.py`、`worker.py`、`services/application_runtime.py`、`services/device_runtime.py` 是入口/装配边界，允许同时依赖 Service、Repository 和 Worker；不能因这类导入机械判定为反向依赖。
+- 现有 `services/frontend_static.py` 是供 Web 入口使用的 HTTP 静态资源适配，不属于业务 Service；保留位置，不向其中增加业务流程，也不由业务 Service 引用它。
+- `database/` 现有对 `services/condition_service.py`、取消/期限/锁机制的导入按实际职责记录为存量边界问题；暂时复用，禁止复制实现或继续往基础机制中加入业务依赖。小型响应封装不必为消除重复而建立公共框架。
+
+### Runtime、配置与事务
+
+- `application_runtime.build_runtime(settings, role=...)` 统一装配进程共享资源，`build_device_runtime` 装配设备专属服务。Runtime 负责对象连接与生命周期，不承载新增业务规则；业务方法接收所需服务/仓储，不自行查全局 Runtime 或重新构建它。
+- Web 只在 `app.state.runtime` 挂载类型化 `ApplicationRuntime`；API 通过 `application_state(request)` 获取进程共享资源，通过 `runtime_state(request)`/`Depends(runtime_state)` 获取 `DatabaseServices` 请求快照。旧式平铺 state 仅在公共入口兼容，不在新路由继续散落属性探测。Runtime 上保留的初始数据库服务引用供旧调用方使用，不能代替热加载快照。
+- Web 通过 `api/runtime.runtime_state` 固定单请求数据库服务快照，通过 `device_state` 选择切割设备；Worker 通过 `database_context` 在新操作边界选择快照。在途操作保持原引用，不混用新旧服务或直接改写已发布对象。
+- `config.py` 保留不可变 `Settings`、字段元数据、校验、连接配置及设备配置派生；环境解析复用 `configuration_sources`。业务代码使用传入的 Settings，不能另读环境或另写默认值。启动全局 `settings` 不代表当前热加载状态。
+- 热加载复用 `DatabaseRuntime`、`AutomationRuntime`；保存复用 `runtime_settings_store` 和进程锁，保持“锁内读改写/保留空密码 → 校验并准备候选 → 原子写文件 → 发布快照”。读取或构建失败保留旧快照，诊断用 `inspect()`，不因读取诊断触发热加载。不自行扩大热加载字段范围。
+- SQLite 业务连接统一经 `SQLiteDatabase`/`SQLiteRepository`；跨仓储原子写入使用 `UnitOfWork` 绑定同一连接并由外层提交。Service 不持有原始连接、不自行提交；单仓储原子校验/写入由仓储完成。编号迁移复用 `database/migrations/`，不在路由或后台任务临时建表。
+- SQL/LLM/SMTP/文件等耗时外部操作不得放进 SQLite 写事务；保留现有任务状态、幂等、未知结果保护和失败补偿。不要用事务回滚假定外部副作用已撤销，详见 [SQLite 事务设计](docs/design/SQLite仓储与事务设计.md)。
+- 两进程通过同机本地 SQLite WAL 和共享文件卷协作；保留 Web OS 锁、Worker 租约/提交围栏、持久化队列及现有共享容量，不依赖跨进程内存对象或为每台设备新增常驻线程。不扩展为多主机或网络共享卷部署。
+
+### 多产线与复用
+
+- 切割设备映射以 `configuration/devices.json` 和 `device_config.py` 为准，由 `settings_for_device` 派生配置；类型/独立产线登记复用 `production_lines.py`。新增实例必须同时落实配置、服务装配、目录和测试，不能只增加名称；业务 SQL 仍放对应 `database/queries/` 或仓储。
+- 复用现有 `ProductionReportProvider`、`QueryCache`、`CacheRevision` 和报表快照能力；Provider 只统一访问/刷新契约，不强行统一切割与焊接的指标、日期、单位和持久化结构。焊接保持独立只读 MySQL 仓储及服务，不塞入切割 `DeviceRuntime`。
+- 设备相关请求、任务、缓存与持久化操作显式保留设备/产线及来源身份，切割请求使用唯一有效的 `device_id`，不回退默认设备。`X-Production-Line` 仅限制能力范围，不能代替角色权限或授予产线权限。
+- `WorkshopRepository` 是兼容门面；新代码使用用户、会话、日报、确认专属仓储。现有线程模式、旧调用签名和配置兼容分支先查实际调用方及测试，后续专项处理，不在新功能中扩散或顺手删除。
 
 ## 编码和验证规范
 

@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from starlette.concurrency import run_in_threadpool
 
+from app.api.runtime import application_state
 from app.api.workloads import pdf_requests
 from app.api.devices import device_state, device_settings
 from app.api.auth import require_admin
@@ -96,10 +97,10 @@ def create_report(payload: ReportCreateRequest, request: Request) -> dict:
     report_id = f"rpt_{now:%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:6]}"
     definition = None
     if payload.report_type == "custom":
-        definition = request.app.state.definitions.get_definition(payload.definition_id)
+        definition = application_state(request).definitions.get_definition(payload.definition_id)
         if not definition or definition["is_builtin"] or not definition["enabled"]:
             raise HTTPException(status_code=400, detail="报表定义不存在或尚未启用")
-        query = request.app.state.definitions.get_query_task(definition['query_task_id'])
+        query = application_state(request).definitions.get_query_task(definition['query_task_id'])
         if query is None or 'machine_no' not in PARAMETER_PATTERN.findall(query['sql_text']):
             raise HTTPException(status_code=400, detail='该自定义报表尚未声明设备参数，请更新 SQL 定义')
     explicit_period = bool(
@@ -195,7 +196,7 @@ async def download_report(
     job, path = await run_in_threadpool(_resolve_report_file, request, report_id)
     if format == "pdf":
         try:
-            path = await pdf_requests.run_sync(request.app.state.pdf_service.render, path)
+            path = await pdf_requests.run_sync(application_state(request).pdf_service.render, path)
         except PdfRenderError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         filename = Path(job["filename"]).with_suffix(".pdf").name

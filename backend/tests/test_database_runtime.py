@@ -1,4 +1,5 @@
-from dataclasses import replace
+from dataclasses import FrozenInstanceError, replace
+from datetime import date
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
@@ -6,10 +7,10 @@ import pytest
 from fastapi import HTTPException
 
 from app.api import auth, database
-from app.api.runtime import runtime_state
+from app.api.runtime import application_state, runtime_state
 from app.config import DEVICE_CATALOG, settings
-from app.services.application_runtime import build_runtime
-from app.services.database_runtime import database_context
+from app.services.application_runtime import ApplicationRuntime, build_runtime
+from app.services.database_runtime import DatabaseServices, database_context
 from app.services.runtime_settings_store import read_runtime_env, write_runtime_env
 from app.workers.report_worker import ReportWorker
 
@@ -39,6 +40,98 @@ def payload(**changes):
                           'password': f'{source}-private', 'encrypt': True, 'trust_server_certificate': False}
     values.update(changes)
     return database.DatabaseConfigurationRequest.model_validate(values)
+
+
+def test_runtime_graph_reuses_injected_repositories_and_has_an_immutable_service_snapshot(environment):
+    _, state = environment
+    context = state.database_runtime.current_context
+    assert isinstance(state, ApplicationRuntime)
+    assert isinstance(context, DatabaseServices)
+    with pytest.raises(FrozenInstanceError):
+        context.settings = replace(context.settings, app_version='changed')
+    assert state.automation_service.database_runtime is state.database_runtime
+    assert state.configuration_diagnostics.database_runtime is state.database_runtime
+    for device in context.devices.values():
+        assert device.pipeline.workshop_repository is device.workshop
+        assert device.pipeline.range_service.workshop is device.workshop
+        assert device.confirmations is device.confirmations
+        assert device.confirmations.database is state.sqlite_database
+        assert device.confirmations.scope_machine_no == device.settings.report_machine_no
+        assert device.workers == ()
+
+
+def test_depends_and_direct_access_share_one_canonical_request_snapshot(environment, monkeypatch):
+    from fastapi import Depends, FastAPI, Request
+    from fastapi.testclient import TestClient
+    cfg, state = environment
+    app = FastAPI()
+    app.state.runtime = state
+    original = state.database_runtime.snapshot
+    reads = []
+
+    def snapshot():
+        reads.append(True)
+        return original()
+
+    monkeypatch.setattr(state.database_runtime, 'snapshot', snapshot)
+
+    @app.get('/probe')
+    def probe(request: Request, context: DatabaseServices = Depends(runtime_state),
+              runtime: ApplicationRuntime = Depends(application_state)):
+        assert runtime is state
+        runtime.database_runtime.publish(replace(context, settings=replace(context.settings, app_version='next')), {})
+        assert runtime_state(request) is context
+        return {'version': context.settings.app_version}
+
+    with TestClient(app) as client:
+        assert client.get('/probe').json() == {'version': cfg.app_version}
+        assert client.get('/probe').json() == {'version': 'next'}
+    assert len(reads) == 2
+
+
+def test_device_pipeline_uses_the_injected_daily_report_repository_to_publish_a_report(environment, monkeypatch):
+    from app.models.domain import ReportFilter
+    from tests.analysis_fakes import model_analysis
+    cfg, state = environment
+    cfg.echarts_vendor_path.parent.mkdir(parents=True)
+    cfg.echarts_vendor_path.write_text('window.echarts={};')
+    device = database_context(state).devices['Cutter01']
+    stamp = '2026-08-18T10:00:00+08:00'
+    user = state.users.bootstrap_admin(username='pipeline-admin', display_name='管理员', password='test-password', now=stamp)
+    bundle = device.query_service.fetch_workshop_data(ReportFilter(report_date=date(2026, 8, 18)))
+    device.workshop.sync_daily_report(report_date='2026-08-18', source_mode='demo',
+        records=bundle.workshop_records, user=user, now=stamp, scope_machine_no=device.settings.report_machine_no)
+    monkeypatch.setattr(device.report_analysis_service.llm, 'analyze_context', model_analysis)
+    device.metadata.create_job(report_id='injected-pipeline', report_type='workshop', report_date='2026-08-18',
+        project_code=None, ship_no=None, request_id='test-runtime-pipeline', created_at=stamp)
+    device.pipeline.run(device.metadata.claim_next_job(stamp))
+    job = device.metadata.get_job('injected-pipeline')
+    assert job['status'] == 'completed'
+    assert '切割生产车间日报' in (cfg.reports_dir / job['relative_path']).read_text()
+    assert device.workshop.get_daily_report_records('2026-08-18')[1]
+
+
+def test_directory_routes_use_the_overridden_snapshot_dependency(environment):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from app.api import devices, production_lines
+    _, state = environment
+    app = FastAPI()
+    app.include_router(devices.router)
+    app.include_router(production_lines.router)
+    app.dependency_overrides[auth.require_user] = lambda: {'role': 'admin'}
+    app.dependency_overrides[runtime_state] = lambda: state.database_runtime.current_context
+
+    @app.middleware('http')
+    async def request_id(request, call_next):
+        request.state.request_id = 'injected-directory'
+        return await call_next(request)
+
+    with TestClient(app) as client:
+        for path in ('/api/v1/devices', '/api/v1/production-lines'):
+            response = client.get(path)
+            assert response.status_code == 200, response.text
+            assert {item['id'] for item in response.json()['data']['items']} >= set(state.devices)
 
 
 def test_welding_settings_publish_without_rebuilding_cutting_or_echoing_password(environment):
@@ -284,8 +377,7 @@ def test_http_save_stays_admin_only_and_never_echoes_credentials(environment):
     from fastapi.testclient import TestClient
     cfg, state = environment
     app = FastAPI()
-    for name, value in vars(state).items():
-        setattr(app.state, name, value)
+    app.state.runtime = state
     app.include_router(database.router)
     app.include_router(auth.router)
 

@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import ValidationError
 
 from app.api.auth import require_admin
-from app.api.runtime import runtime_state
+from app.api.runtime import application_state, runtime_state
 from app.services.production_lines import SERVICE_LINES, resolve_line_service
 from app.services.report_snapshots import SnapshotRefreshBusy, SnapshotRefreshRejected
 from app.api.workloads import RequestWorkload, analysis_requests, pdf_requests
@@ -22,6 +22,7 @@ from app.services.llm_service import LlmService
 from app.services.pdf_service import PdfRenderError
 from app.services.request_cancellation import SqlRequestCancelled
 from app.services.welding_export import WeldingExport, csv_bytes, COLUMNS
+from app.services.welding_service import WeldingService
 
 
 router = APIRouter(prefix='/api/v1/welding', tags=['welding'], dependencies=[Depends(require_admin)])
@@ -29,7 +30,7 @@ router = APIRouter(prefix='/api/v1/welding', tags=['welding'], dependencies=[Dep
 welding_requests = RequestWorkload(max(1, min(4, settings.weld_db_pool_size)), '焊接数据查询', max_waiters=12, queue_timeout_seconds=5)
 
 
-def service(request: Request):
+def service(request: Request) -> WeldingService:
     selected = request.headers.get('X-Production-Line')
     line = next((item for item in SERVICE_LINES if item['type'] == 'welding' and (not selected or item['id'] == selected)), None)
     if line is None:
@@ -154,7 +155,7 @@ def seam_export(request: Request, part_id: int):
 async def export(request: Request, report_type: Literal['daily', 'parts', 'jobs', 'equipment'], format: Literal['csv', 'html', 'pdf'] = 'csv'):
     query = parse_query(request)
     instance = service(request)
-    exporter = WeldingExport(instance.settings, instance, request.app.state.pdf_service)
+    exporter = WeldingExport(instance.settings, instance, application_state(request).pdf_service)
     with source_errors():
         content, media = await welding_requests.run_sync(exporter.prepare, report_type, query, format, _request=request)
         if format == 'pdf':

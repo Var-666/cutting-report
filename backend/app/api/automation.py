@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from app.api.runtime import application_state
 from app.api.auth import require_admin
 from app.services.automation_configuration import AutomationConfigurationRequest
 from app.services.process_lock import settings_file_lock
@@ -143,7 +144,7 @@ def _write_automation_runtime_env(values: dict[str, object]) -> None:
 
 @router.get("/configuration")
 def get_automation_configuration(request: Request) -> dict:
-    current_settings, _ = request.app.state.automation_runtime.snapshot()
+    current_settings, _ = application_state(request).automation_runtime.snapshot()
     return _envelope(request, _automation_configuration_data(current_settings))
 
 
@@ -151,7 +152,7 @@ def get_automation_configuration(request: Request) -> dict:
 def save_automation_configuration(
     payload: AutomationConfigurationRequest, request: Request
 ) -> dict:
-    runtime = request.app.state.automation_runtime
+    runtime = application_state(request).automation_runtime
     with runtime.update_lock, settings_file_lock(settings.runtime_settings_env_path):
         current_settings, _ = runtime.snapshot()
         submitted_password = (
@@ -219,22 +220,22 @@ def save_automation_configuration(
 
 @router.get("/status")
 def status(request: Request) -> dict:
-    current_settings, _ = request.app.state.automation_runtime.snapshot()
+    current_settings, _ = application_state(request).automation_runtime.snapshot()
     return _envelope(
         request,
         {
             "automation_enabled": current_settings.automation_enabled,
-            "smtp": request.app.state.email_service.status(
+            "smtp": application_state(request).email_service.status(
                 settings_snapshot=current_settings
             ),
-            "summary": request.app.state.automation.summary(),
+            "summary": application_state(request).automation.summary(),
         },
     )
 
 
 @router.get("/schedules")
 def list_schedules(request: Request) -> dict:
-    return _envelope(request, {"items": request.app.state.automation.list_schedules()})
+    return _envelope(request, {"items": application_state(request).automation.list_schedules()})
 
 
 @router.post("/schedules", status_code=201)
@@ -244,10 +245,10 @@ def create_schedule(
     user: dict = Depends(require_admin),
 ) -> dict:
     now = _now()
-    data = request.app.state.automation_service.enrich_schedule(
+    data = application_state(request).automation_service.enrich_schedule(
         payload.model_dump(), now
     )
-    item = request.app.state.automation.create_schedule(
+    item = application_state(request).automation.create_schedule(
         data, user=user, now=now.isoformat(timespec="seconds")
     )
     return _envelope(request, item)
@@ -260,10 +261,10 @@ def update_schedule(
     request: Request,
 ) -> dict:
     now = _now()
-    data = request.app.state.automation_service.enrich_schedule(
+    data = application_state(request).automation_service.enrich_schedule(
         payload.model_dump(), now
     )
-    item = request.app.state.automation.update_schedule(
+    item = application_state(request).automation.update_schedule(
         schedule_id, data, now=now.isoformat(timespec="seconds")
     )
     if item is None:
@@ -273,14 +274,14 @@ def update_schedule(
 
 @router.delete("/schedules/{schedule_id}")
 def delete_schedule(schedule_id: str, request: Request) -> dict:
-    if not request.app.state.automation.delete_schedule(schedule_id):
+    if not application_state(request).automation.delete_schedule(schedule_id):
         raise HTTPException(status_code=404, detail="定时任务不存在")
     return _envelope(request, {"deleted": True})
 
 
 @router.post("/schedules/{schedule_id}/run", status_code=202)
 def run_schedule(schedule_id: str, request: Request) -> dict:
-    run = request.app.state.automation_service.run_now(schedule_id, _now())
+    run = application_state(request).automation_service.run_now(schedule_id, _now())
     if run is None:
         raise HTTPException(status_code=404, detail="定时任务不存在或无法执行")
     return _envelope(request, run)
@@ -292,7 +293,7 @@ def list_deliveries(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
 ) -> dict:
-    items, total = request.app.state.automation.list_deliveries(
+    items, total = application_state(request).automation.list_deliveries(
         page=page, page_size=page_size
     )
     return _envelope(
@@ -304,9 +305,9 @@ def list_deliveries(
 @router.post("/deliveries/{delivery_id}/retry", status_code=202)
 def retry_delivery(delivery_id: str, request: Request) -> dict:
     now = _now().isoformat(timespec="seconds")
-    if request.app.state.automation.delivery_state(delivery_id) is None:
+    if application_state(request).automation.delivery_state(delivery_id) is None:
         raise HTTPException(status_code=404, detail="邮件发送记录不存在")
-    if not request.app.state.automation.retry_delivery(delivery_id, now=now):
+    if not application_state(request).automation.retry_delivery(delivery_id, now=now):
         raise HTTPException(status_code=409, detail="仅明确失败的邮件可重试；发送中、已发送或结果待核对的邮件不可重发")
     return _envelope(request, {"queued": True})
 
@@ -315,7 +316,7 @@ def retry_delivery(delivery_id: str, request: Request) -> dict:
 def resolve_delivery(delivery_id: str, payload: DeliveryResolutionRequest, request: Request,
                      user: dict = Depends(require_admin)) -> dict:
     try:
-        changed = request.app.state.automation.resolve_unknown_delivery(
+        changed = application_state(request).automation.resolve_unknown_delivery(
             delivery_id, message_id=payload.message_id,
             outcomes=[item.model_dump() for item in payload.outcomes],
             evidence_note=payload.evidence_note, user=user,
@@ -332,4 +333,4 @@ def resolve_delivery(delivery_id: str, payload: DeliveryResolutionRequest, reque
 
 @router.get("/deliveries/{delivery_id}/resolutions")
 def delivery_resolutions(delivery_id: str, request: Request) -> dict:
-    return _envelope(request, {"items": request.app.state.automation.delivery_resolutions(delivery_id)})
+    return _envelope(request, {"items": application_state(request).automation.delivery_resolutions(delivery_id)})

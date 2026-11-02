@@ -7,6 +7,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 
+from app.api.runtime import application_state
 from app.api.devices import device_state, device_settings
 from app.api.auth import require_admin
 from app.config import settings
@@ -46,7 +47,7 @@ def alarm_status(request: Request) -> dict:
             "reopen_debounce_minutes": device_settings(request).alarm_reopen_debounce_minutes,
             "worker_running": (
                 device_state(request).alarm_worker.enabled
-                and request.app.state.worker_status_reader.status().get("state") in {"running", "stalled"}
+                and application_state(request).worker_status_reader.status().get("state") in {"running", "stalled"}
                 if device_state(request).alarm_worker.thread is None
                 else device_state(request).alarm_worker.thread.is_alive()
             ),

@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field, SecretStr, field_validator
 from app.api.workloads import query_requests
 from app.services.process_lock import settings_file_lock
 from app.api.devices import device_state
-from app.api.runtime import runtime_state
+from app.api.runtime import application_state, runtime_state
 from app.api.auth import require_admin
 from app.services.runtime_settings_store import read_runtime_env, write_runtime_env, runtime_settings_lock
 from app.config import Settings, settings
@@ -326,7 +326,7 @@ def save_welding_configuration(payload: WeldingConnectionRequest, request: Reque
 
 def _publish_database_configuration(request: Request, values: dict[str, object]) -> dict:
     # Both callers hold the settings and file locks through prepare, save and publication.
-    runtime = request.app.state.database_runtime
+    runtime = application_state(request).database_runtime
     try:
         merged = {**read_runtime_env(settings.runtime_settings_env_path), **values}
         prepared = runtime.prepare(merged)

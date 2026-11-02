@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import date, datetime, time, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from app.config import DEVICE_CATALOG, Settings, settings_for_device
@@ -17,6 +17,10 @@ from app.services.email_service import (
 )
 from app.services.automation_runtime import AutomationRuntime
 from app.services.query_service import QueryService
+
+if TYPE_CHECKING:
+    from app.services.database_runtime import DatabaseRuntime
+    from app.services.device_runtime import DeviceRuntime
 
 
 logger = logging.getLogger(__name__)
@@ -74,6 +78,9 @@ class AutomationService:
         metadata: MetadataRepository,
         email_service: EmailService,
         runtime: AutomationRuntime | None = None,
+        *,
+        device_services: dict[str, DeviceRuntime] | None = None,
+        database_runtime: DatabaseRuntime | None = None,
     ) -> None:
         if repository.database_path != metadata.database_path:
             raise ValueError("自动化仓储与元数据仓储必须使用同一个 SQLite 数据库")
@@ -83,8 +90,8 @@ class AutomationService:
         self.email_service = email_service
         self.runtime = runtime or AutomationRuntime(settings)
         self.database = metadata.database
-        self.device_services = {}
-        self.database_runtime = None
+        self.device_services = device_services if device_services is not None else {}
+        self.database_runtime = database_runtime
 
     def enrich_schedule(self, data: dict[str, Any], now: datetime) -> dict[str, Any]:
         value = dict(data)

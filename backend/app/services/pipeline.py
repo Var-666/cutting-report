@@ -14,6 +14,7 @@ from app.database.energy import EnergyReportRepository
 from app.database.metadata import MetadataRepository
 from app.database.definitions import DefinitionRepository
 from app.database.workshop import WorkshopRepository
+from app.database.workshop_reports import WorkshopReportRepository
 from app.database.unit_of_work import UnitOfWork
 from app.models.domain import (
     QueryBundle,
@@ -126,6 +127,8 @@ class ReportPipeline:
         settings: Settings,
         metadata: MetadataRepository,
         definitions: DefinitionRepository | None = None,
+        *,
+        workshop_repository: WorkshopReportRepository | None = None,
     ) -> None:
         self.settings = settings
         self.metadata = metadata
@@ -150,8 +153,10 @@ class ReportPipeline:
         self.analysis_service = ReportAnalysisService(settings, metadata)
         self.report_service = ReportService(settings)
         self.custom_report_service = CustomReportService(settings)
-        self.workshop_repository = WorkshopRepository(self.database, scope_machine_no=settings.report_machine_no)
-        self.workshop_repository.initialize()
+        if workshop_repository is None:
+            workshop_repository = WorkshopRepository(self.database, scope_machine_no=settings.report_machine_no)
+            workshop_repository.initialize()
+        self.workshop_repository = workshop_repository
         self.range_service = RangeReportService(
             settings,
             self.query_service,

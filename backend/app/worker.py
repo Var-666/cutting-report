@@ -11,11 +11,11 @@ from threading import Event, Lock
 from time import monotonic, time
 from zoneinfo import ZoneInfo
 
-from app.config import settings
+from app.config import Settings, settings
 from app.database.coordination import CoordinationRepository
 from app.database.sqlite import SQLiteDatabase, ExecutionLeaseLost, execution_scope
 from app.models.domain import ReportFilter
-from app.services.application_runtime import build_runtime
+from app.services.application_runtime import ApplicationRuntime, build_runtime
 from app.services.database_runtime import database_context
 from app.services.llm_service import background_llm_work, generation_priority
 from app.services.leadership_report_service import _previous_month
@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 class WorkerProcess:
     LEASE_SECONDS = 30
 
-    def __init__(self, configuration, runtime=None) -> None:
+    def __init__(self, configuration: Settings, runtime: ApplicationRuntime | None = None) -> None:
         self.settings = configuration
         self.runtime = runtime or build_runtime(configuration, role="worker")
         self.repository = self.runtime.coordination

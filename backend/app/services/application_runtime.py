@@ -1,8 +1,11 @@
-from types import SimpleNamespace
+from __future__ import annotations
+
 from copy import copy
+from dataclasses import dataclass, replace
+from typing import Literal
 
 from app.config import DEVICE_CATALOG, Settings, settings_for_device
-from app.services.device_runtime import build_device_runtime
+from app.services.device_runtime import DeviceRuntime, build_device_runtime
 from app.database.device_migrations import migrate_device_isolation
 from app.database.metadata import MetadataRepository
 from app.database.llm_usage import LlmUsageRepository
@@ -35,20 +38,53 @@ from app.workers.download_cleanup_worker import DownloadCleanupWorker
 from app.database.coordination import CoordinationRepository, backup_before_process_upgrade
 from app.services.process_lock import FileLock
 from app.services.worker_status import WorkerStatusReader
-from app.services.database_runtime import DatabaseRuntime, DATABASE_FIELDS, WELD_FIELDS
+from app.services.database_runtime import DatabaseRuntime, DatabaseServices, DATABASE_FIELDS, WELD_FIELDS
 from app.database.welding import WeldingClient, WeldingRepository
 from app.services.welding_service import WeldingService
 
 
-def build_runtime(settings: Settings, *, role: str) -> SimpleNamespace:
+@dataclass
+class ApplicationRuntime:
+    """Process resources; database_runtime owns the active database service graph.
+
+    The initial service references remain available to embedded callers. New
+    operations select database_runtime.snapshot() rather than these references.
+    """
+    coordination: CoordinationRepository
+    worker_status_reader: WorkerStatusReader
+    sqlite_database: SQLiteDatabase
+    metadata: MetadataRepository
+    llm_usage: LlmUsageRepository
+    report_snapshots: ReportSnapshotRepository
+    workshop: WorkshopRepository
+    users: UserRepository
+    sessions: SessionRepository
+    definitions: DefinitionRepository
+    automation: AutomationRepository
+    automation_runtime: AutomationRuntime
+    database_runtime: DatabaseRuntime
+    configuration_diagnostics: ConfigurationDiagnostics
+    automation_service: AutomationService
+    email_service: EmailService
+    dispatches: DispatchRepository
+    pdf_service: PdfService
+    retention_service: RetentionService
+    retention_worker: RetentionWorker
+    download_cleanup_worker: DownloadCleanupWorker
+    devices: dict[str, DeviceRuntime]
+    welding: WeldingService
+    worker_auth: WorkerAuthService
+    file_downloads: FileDownloadService
+    cutting_dispatch: CuttingDispatchService
+
+
+def build_runtime(settings: Settings, *, role: Literal["web", "worker"]) -> ApplicationRuntime:
     settings.ensure_runtime_dirs()
     with FileLock(settings.metadata_db_path.with_suffix(".initialize.lock")):
         return _build_runtime(settings, role=role)
 
 
-def _build_runtime(settings: Settings, *, role: str) -> SimpleNamespace:
-    state = SimpleNamespace()
-    settings.ensure_runtime_dirs()
+def _build_runtime(settings: Settings, *, role: Literal["web", "worker"]) -> ApplicationRuntime:
     database = SQLiteDatabase(settings.metadata_db_path)
     backup_before_process_upgrade(database)
     migrate_device_isolation(database, DEVICE_CATALOG)
@@ -56,18 +92,14 @@ def _build_runtime(settings: Settings, *, role: str) -> SimpleNamespace:
     apply_migrations(database)
     coordination = CoordinationRepository(database)
     coordination.initialize()
-    state.coordination = coordination
-    state.worker_status_reader = WorkerStatusReader(database.path)
     metadata = MetadataRepository(database)
     metadata.initialize()
     llm_usage = LlmUsageRepository(database)
     llm_usage.initialize()
-    state.llm_usage = llm_usage
     leadership_snapshots = LeadershipSnapshotRepository(database)
     leadership_snapshots.initialize()
     report_snapshots = ReportSnapshotRepository(database)
     report_snapshots.initialize()
-    state.report_snapshots = report_snapshots
     workshop = WorkshopRepository(database)
     workshop.initialize()
     automation = AutomationRepository(database)
@@ -83,48 +115,27 @@ def _build_runtime(settings: Settings, *, role: str) -> SimpleNamespace:
                                         definitions, leadership_snapshots, pdf_service, task_queue=coordination)
         for device in DEVICE_CATALOG.devices
     }
-    state.devices = devices
     automation_runtime = AutomationRuntime(settings)
     email_service = EmailService(settings, runtime=automation_runtime)
-    automation_service = AutomationService(
-        settings, automation, metadata, email_service, runtime=automation_runtime,
-    )
-    automation_service.device_services = devices
-    state.metadata = metadata
-    state.sqlite_database = database
-    state.workshop = workshop  # Compatibility for existing embedded application callers.
-    state.users = UserRepository(database)
-    state.sessions = SessionRepository(database)
-    state.definitions = definitions
-    state.automation = automation
-    state.automation_runtime = automation_runtime
-    state.configuration_diagnostics = ConfigurationDiagnostics(settings, automation_runtime)
-    state.automation_service = automation_service
-    state.email_service = email_service
-    state.worker_auth = WorkerAuthService(settings)
+    worker_auth = WorkerAuthService(settings)
     pdm = (
         SqlServerPdmRepository(settings)
         if settings.file_database_enabled
         else MockPdmRepository()
     )
-    state.dispatches = dispatches
     file_source = build_file_source(settings)
     downloads = DownloadRepository(database)
     downloads.initialize()
     file_downloads = FileDownloadService(settings, downloads, pdm, file_source)
-    state.file_downloads = file_downloads
     if role == "web":
         downloads.recover_interrupted(file_downloads.now())
     download_cleanup_worker = DownloadCleanupWorker(settings, file_downloads, managed=True)
-    state.download_cleanup_worker = download_cleanup_worker
     retention_repository = RetentionRepository(database)
     retention_repository.initialize()
     retention_service = RetentionService(settings, retention_repository)
     retention_worker = RetentionWorker(settings, retention_service, managed=True)
-    state.retention_service = retention_service
-    state.retention_worker = retention_worker
     magic_config = MagicBoxConfigProvider(settings)
-    state.cutting_dispatch = CuttingDispatchService(
+    cutting_dispatch = CuttingDispatchService(
         settings,
         pdm,
         dispatches,
@@ -133,17 +144,14 @@ def _build_runtime(settings: Settings, *, role: str) -> SimpleNamespace:
         magic_config,
     )
     if role == "web":
-        dispatches.recover_interrupted(state.cutting_dispatch._now())
-    state.pdf_service = pdf_service
-    state.welding = WeldingService(settings, WeldingRepository(WeldingClient(settings)), snapshots=report_snapshots, coordination=coordination)
+        dispatches.recover_interrupted(cutting_dispatch._now())
+    welding = WeldingService(settings, WeldingRepository(WeldingClient(settings)), snapshots=report_snapshots, coordination=coordination)
 
-    def rebuild_database_services(configuration: Settings) -> SimpleNamespace:
-        previous = state.database_runtime.current_context
+    def rebuild_database_services(configuration: Settings) -> DatabaseServices:
+        previous = database_runtime.current_context
         welding = previous.welding if all(getattr(previous.settings, name) == getattr(configuration, name) for name in WELD_FIELDS) else WeldingService(configuration, WeldingRepository(WeldingClient(configuration)), snapshots=report_snapshots, coordination=coordination)
         if all(getattr(previous.settings, name) == getattr(configuration, name) for name in DATABASE_FIELDS - WELD_FIELDS):
-            updated = copy(previous)
-            updated.settings, updated.welding = configuration, welding
-            return updated
+            return replace(previous, settings=configuration, welding=welding)
         updated_devices = {
             device.id: build_device_runtime(settings_for_device(configuration, device.id), database,
                                             definitions, leadership_snapshots, pdf_service, task_queue=coordination)
@@ -156,16 +164,33 @@ def _build_runtime(settings: Settings, *, role: str) -> SimpleNamespace:
         updated_downloads = copy(file_downloads)
         updated_downloads.settings = configuration
         updated_downloads.pdm = updated_pdm
-        return SimpleNamespace(settings=configuration, devices=updated_devices,
+        return DatabaseServices(settings=configuration, devices=updated_devices,
             welding=welding,
             worker_auth=WorkerAuthService(configuration), file_downloads=updated_downloads,
             cutting_dispatch=CuttingDispatchService(configuration, updated_pdm, dispatches,
                                                    file_source, updated_downloads, magic_config))
 
-    state.database_runtime = DatabaseRuntime(settings, SimpleNamespace(
-        settings=settings, devices=devices, welding=state.welding, worker_auth=state.worker_auth,
-        file_downloads=file_downloads, cutting_dispatch=state.cutting_dispatch,
-    ), rebuild_database_services, automation_runtime)
-    state.configuration_diagnostics.database_runtime = state.database_runtime
-    automation_service.database_runtime = state.database_runtime
-    return state
+    context = DatabaseServices(
+        settings=settings, devices=devices, welding=welding, worker_auth=worker_auth,
+        file_downloads=file_downloads, cutting_dispatch=cutting_dispatch,
+    )
+    database_runtime = DatabaseRuntime(settings, context, rebuild_database_services, automation_runtime)
+    automation_service = AutomationService(
+        settings, automation, metadata, email_service, runtime=automation_runtime,
+        device_services=devices, database_runtime=database_runtime,
+    )
+    return ApplicationRuntime(
+        coordination=coordination, worker_status_reader=WorkerStatusReader(database.path),
+        sqlite_database=database, metadata=metadata, llm_usage=llm_usage,
+        report_snapshots=report_snapshots, workshop=workshop,
+        users=UserRepository(database), sessions=SessionRepository(database),
+        definitions=definitions, automation=automation, automation_runtime=automation_runtime,
+        database_runtime=database_runtime,
+        configuration_diagnostics=ConfigurationDiagnostics(settings, automation_runtime, database_runtime=database_runtime),
+        automation_service=automation_service, email_service=email_service,
+        dispatches=dispatches, pdf_service=pdf_service,
+        retention_service=retention_service, retention_worker=retention_worker,
+        download_cleanup_worker=download_cleanup_worker,
+        devices=devices, welding=welding, worker_auth=worker_auth,
+        file_downloads=file_downloads, cutting_dispatch=cutting_dispatch,
+    )

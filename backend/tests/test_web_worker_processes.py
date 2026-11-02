@@ -38,8 +38,8 @@ def _web_probe(root, output):
             threading.Thread.__init__ = original
             assert constructed == []
             extra = [thread.name for thread in threading.enumerate() if thread.ident not in before]
-            assert all(device.workers == () for device in main.app.state.devices.values())
-            job = main.app.state.metadata.get_job("restart-test")
+            assert all(device.workers == () for device in main.app.state.runtime.devices.values())
+            job = main.app.state.runtime.metadata.get_job("restart-test")
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url="http://test") as client:
                 with anyio.fail_after(3):
                     assert (await client.get("/api/v1/health")).status_code == 200

@@ -1,12 +1,33 @@
 """Publish database service snapshots without changing operations already in flight."""
-from dataclasses import fields, replace
+from __future__ import annotations
+
+from dataclasses import dataclass, fields, replace
 from datetime import datetime, timezone
-from types import SimpleNamespace
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Callable, cast
 
 from app.config import LOADED_SOURCES, Settings
 from app.services.runtime_settings_store import read_runtime_env, runtime_settings_lock
 from app.services.process_lock import settings_file_lock
+from app.services.automation_runtime import AutomationRuntime
+
+if TYPE_CHECKING:
+    from app.services.application_runtime import ApplicationRuntime
+    from app.services.cutting_dispatch_service import CuttingDispatchService
+    from app.services.device_runtime import DeviceRuntime
+    from app.services.file_download_service import FileDownloadService
+    from app.services.welding_service import WeldingService
+    from app.services.worker_auth_service import WorkerAuthService
+
+
+@dataclass(frozen=True)
+class DatabaseServices:
+    """One published service graph, retained by operations already in flight."""
+    settings: Settings
+    devices: dict[str, DeviceRuntime]
+    welding: WeldingService
+    worker_auth: WorkerAuthService
+    file_downloads: FileDownloadService
+    cutting_dispatch: CuttingDispatchService
 
 
 CONNECTION_FIELDS = ('host', 'port', 'database', 'username', 'password', 'driver',
@@ -65,8 +86,8 @@ def parse_database_settings(base: Settings, values: dict[str, object]) -> Settin
 
 
 class DatabaseRuntime:
-    def __init__(self, settings: Settings, context: SimpleNamespace,
-                 build: Callable[[Settings], SimpleNamespace], automation_runtime) -> None:
+    def __init__(self, settings: Settings, context: DatabaseServices,
+                 build: Callable[[Settings], DatabaseServices], automation_runtime: AutomationRuntime) -> None:
         self._base = settings
         self._context = context
         self._build = build
@@ -79,7 +100,7 @@ class DatabaseRuntime:
         self._error = None
 
     @property
-    def current_context(self) -> SimpleNamespace:
+    def current_context(self) -> DatabaseServices:
         """Read the published services without triggering a nested configuration reload."""
         with runtime_settings_lock:
             return self._context
@@ -91,11 +112,11 @@ class DatabaseRuntime:
         except FileNotFoundError:
             return None
 
-    def prepare(self, values: dict[str, object]) -> SimpleNamespace:
+    def prepare(self, values: dict[str, object]) -> DatabaseServices:
         updated = parse_database_settings(self._base, values)
         return self._context if updated == self._context.settings else self._build(updated)
 
-    def publish(self, context: SimpleNamespace, values: dict[str, object]) -> None:
+    def publish(self, context: DatabaseServices, values: dict[str, object]) -> None:
         with runtime_settings_lock:
             if context is not self._context:
                 self._automation_runtime.apply(source='data/settings.env', **{
@@ -109,7 +130,7 @@ class DatabaseRuntime:
             self._file_version = self._version()
             self._error = None
 
-    def snapshot(self) -> SimpleNamespace:
+    def snapshot(self) -> DatabaseServices:
         with runtime_settings_lock:
             try:
                 with settings_file_lock(self._base.runtime_settings_env_path):
@@ -132,6 +153,7 @@ class DatabaseRuntime:
                     'sources': dict(self._sources), 'loaded_at': self._loaded_at, 'error': self._error}
 
 
-def database_context(state: Any) -> Any:
+def database_context(state: ApplicationRuntime) -> DatabaseServices:
     runtime = getattr(state, 'database_runtime', None)
-    return runtime.snapshot() if runtime is not None else state
+    # Embedded apps can still supply their service graph without a hot runtime.
+    return runtime.snapshot() if runtime is not None else cast(DatabaseServices, state)

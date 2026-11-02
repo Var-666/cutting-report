@@ -33,7 +33,7 @@ from app.api.requests import REQUEST_ID_PATTERN, router as requests_router
 from app.api.workshop import router as workshop_router
 from app.config import settings
 from app.api.devices import router as devices_router
-from app.api.runtime import runtime_state
+from app.api.runtime import application_state, runtime_state
 from app.api.welding import router as welding_router
 from app.api.production_lines import router as production_lines_router
 from app.services.application_runtime import build_runtime
@@ -62,8 +62,7 @@ async def lifespan(app: FastAPI):
         raise RuntimeError("已有 Web 进程运行；请保持一个 Web 和一个独立 Worker")
     try:
         runtime = build_runtime(settings, role="web")
-        for name, value in vars(runtime).items():
-            setattr(app.state, name, value)
+        app.state.runtime = runtime
         yield
     finally:
         lock.release()
@@ -174,7 +173,7 @@ app.include_router(view_router)
 async def health(request: Request) -> dict:
     configuration = await to_thread.run_sync(runtime_state, request, limiter=_health_threads)
     mode = getattr(configuration, "settings", settings).effective_data_source_mode
-    reader = getattr(request.app.state, "worker_status_reader", None)
+    reader = getattr(application_state(request), "worker_status_reader", None)
     worker_status = await to_thread.run_sync(reader.status, limiter=_health_threads) if reader else {"state": "missing", "report_alive": False}
     ready = background_ready(worker_status)
     web_ready = worker_status.get("database_available") is not False

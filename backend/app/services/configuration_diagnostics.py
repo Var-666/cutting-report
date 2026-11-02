@@ -18,9 +18,9 @@ from app.config import (
 )
 from app.configuration_sources import load_environment
 from app.device_config import load_device_catalog
-from app.services.automation_runtime import HOT_SETTINGS
+from app.services.automation_runtime import AutomationRuntime, HOT_SETTINGS
 from app.services.automation_configuration import AutomationConfigurationRequest
-from app.services.database_runtime import DATABASE_FIELDS, DATABASE_DIAGNOSTIC_KEYS
+from app.services.database_runtime import DatabaseRuntime, DATABASE_FIELDS, DATABASE_DIAGNOSTIC_KEYS
 from pydantic import ValidationError
 
 
@@ -171,9 +171,10 @@ def validate_values(settings: Settings, values: dict) -> set[str]:
 
 
 class ConfigurationDiagnostics:
-    def __init__(self, settings: Settings, runtime, *, process=None, sources=None, catalog=DEVICE_CATALOG):
+    def __init__(self, settings: Settings, runtime: AutomationRuntime, *, process=None, sources=None,
+                 catalog=DEVICE_CATALOG, database_runtime: DatabaseRuntime | None = None):
         self.settings = settings
-        self.database_runtime = None
+        self.database_runtime = database_runtime
         self.runtime = runtime
         self.process = dict(PROCESS_ENVIRONMENT if process is None else process)
         self.sources = dict(LOADED_SOURCES if sources is None else sources)

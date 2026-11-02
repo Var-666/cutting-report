@@ -5,11 +5,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from app.api.auth import require_user
 from app.config import DEVICE_CATALOG, Settings
 from app.api.runtime import runtime_state
+from app.services.database_runtime import DatabaseServices
+from app.services.device_runtime import DeviceRuntime
 
 router = APIRouter(prefix='/api/v1/devices', tags=['devices'], dependencies=[Depends(require_user)])
 
 
-def device_state(request: Request) -> Any:
+def device_state(request: Request) -> DeviceRuntime:
     runtimes = getattr(runtime_state(request), 'devices', None)
     values = request.query_params.getlist('device_id') if hasattr(request.query_params, 'getlist') else [request.query_params.get('device_id')]
     if len(values) != 1 or not values[0]:
@@ -28,8 +30,8 @@ def device_settings(request: Request) -> Settings:
 
 
 @router.get('')
-def list_devices(request: Request) -> dict[str, Any]:
-    runtimes = getattr(runtime_state(request), 'devices', {})
+def list_devices(request: Request, context: DatabaseServices = Depends(runtime_state)) -> dict[str, Any]:
+    runtimes = context.devices
     items = []
     for item in DEVICE_CATALOG.devices:
         cfg = runtimes[item.id].settings if item.id in runtimes else None
