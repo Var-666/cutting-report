@@ -440,6 +440,7 @@ def api(tmp_path):
     app.include_router(conditions_router)
     app.include_router(cutting_router)
     app.include_router(downloads_router)
+    app.state.devices = {cfg.device_id: SimpleNamespace(settings=cfg)}
     app.state.cutting_dispatch = CuttingDispatchService(cfg, pdm, SimpleNamespace(), DisabledFileSource())
     app.state.file_downloads = FileDownloadService(cfg, repo, pdm, DisabledFileSource())
     app.dependency_overrides[optional_user] = lambda: {"role": "admin", "user_id": "tests"}
@@ -454,8 +455,11 @@ def api(tmp_path):
 
 def test_api_search_and_schema_are_readonly_and_paged(api):
     app, client, repo = api
-    response = client.get("/api/v1/conditions/cutting_files/schema")
+    params = {"device_id": next(iter(app.state.devices))}
+    response = client.get("/api/v1/conditions/cutting_files/schema", params=params)
     assert response.status_code == 200 and response.json()["data"]["requires_filter"]
+    assert client.get("/api/v1/conditions/cutting_files/schema").status_code == 422
+    assert client.get("/api/v1/conditions/cutting_files/schema", params={"device_id": "missing"}).status_code == 422
     payload = {"filters": group(rule("project_id", "eq", app.state.cutting_dispatch.pdm.projects[0]["project_id"])).model_dump(), "page_size": 1}
     response = client.post("/api/v1/cutting/files/search", json=payload)
     assert response.status_code == 200
@@ -463,7 +467,7 @@ def test_api_search_and_schema_are_readonly_and_paged(api):
     assert data["total"] == 2 and len(data["items"]) == 1 and data["items"][0]["path_available"]
     assert repo.list(1, 10)[1] == 0
     assert client.post("/api/v1/cutting/files/search", json={}).status_code == 422
-    assert client.get("/api/v1/conditions/private/schema").status_code == 404
+    assert client.get("/api/v1/conditions/private/schema", params=params).status_code == 404
     response = client.post("/api/v1/cutting/downloads/search", json={})
     assert response.status_code == 200 and response.json()["data"]["total"] == 0
     assert response.headers["cache-control"] == "no-store"
@@ -492,6 +496,7 @@ def test_api_passes_sort_to_repository_before_paging(api):
 def test_condition_endpoints_require_admin(api, user, expected):
     app, client, _ = api
     app.dependency_overrides[optional_user] = lambda: user
-    assert client.get("/api/v1/conditions/cutting_files/schema").status_code == expected
+    assert client.get("/api/v1/conditions/cutting_files/schema",
+                      params={"device_id": next(iter(app.state.devices))}).status_code == expected
     for path in ["/api/v1/cutting/files/search", "/api/v1/cutting/downloads/search"]:
         assert client.post(path, json={}).status_code == expected

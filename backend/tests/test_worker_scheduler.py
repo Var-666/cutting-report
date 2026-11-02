@@ -109,6 +109,8 @@ def test_process_migration_backs_up_and_preserves_legacy_business_rows(tmp_path)
             connection.execute(f"ALTER TABLE {table} DROP COLUMN execution_owner")
         for table in ("process_leases", "background_tasks", "background_schedules", "llm_waiters", "analysis_generations"):
             connection.execute(f"DROP TABLE {table}")
+        # A pre-process database cannot retain markers claiming the removed schema is already installed.
+        connection.execute("DROP TABLE schema_migrations")
         tables = [row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")]
         columns = {table: [row[1] for row in connection.execute(f'PRAGMA table_info("{table}")')] for table in tables}
         before = {table: [tuple(row) for row in connection.execute(f'SELECT * FROM "{table}"')] for table in tables}
@@ -122,7 +124,10 @@ def test_process_migration_backs_up_and_preserves_legacy_business_rows(tmp_path)
             assert [tuple(row) for row in connection.execute(f'SELECT {selection} FROM "{table}"')] == before[table], table
             assert [tuple(row) for row in backup.execute(f'SELECT * FROM "{table}"')] == before[table], table
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+        migrations = [tuple(row) for row in connection.execute("SELECT * FROM schema_migrations ORDER BY name")]
     build_runtime(configured, role="worker")
+    with upgraded.sqlite_database.connect() as connection:
+        assert [tuple(row) for row in connection.execute("SELECT * FROM schema_migrations ORDER BY name")] == migrations
     assert len(list((configured.data_dir / "backups").glob("metadata-before-processes-*.db"))) == 1
     assert upgraded.metadata.get_job("legacy")["status"] == "analyzing"
 

@@ -10,8 +10,9 @@ import httpx
 import pytest
 
 from app.config import Settings
+from app.core import report_deadline
 from app.database.llm_usage import LlmUsageRepository
-from app.services import analysis_execution, llm_service, report_deadline
+from app.services import analysis_execution, llm_service
 from app.services.alarm_analysis_service import AlarmAnalysisService
 from app.services.analysis_execution import analysis_operation
 from app.services.llm_service import AnalysisOutputValidationError, LlmService, _LlmCapacity

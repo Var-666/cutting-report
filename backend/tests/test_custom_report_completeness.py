@@ -9,7 +9,7 @@ from app.services.custom_report_service import CustomReportService
 from app.services.report_deadline import report_deadline
 
 
-QUERY = {"sql_text": "SELECT TASK_ID AS amount FROM dbo.task", "columns": [
+QUERY = {"sql_text": "SELECT TASK_ID AS amount FROM dbo.task WHERE MACHINE_NO = :machine_no", "columns": [
     {"field": "amount", "label": "数量", "type": "number"},
 ]}
 DEFINITION = {"visual_config": {
@@ -63,6 +63,7 @@ def test_preview_closes_source_at_display_limit(tmp_path, monkeypatch):
     closed = []
 
     def source(sql, values):
+        assert "MACHINE_NO = ?" in sql and values == (service.settings.report_machine_no,)
         try:
             for value in range(1000):
                 consumed.append(value)
@@ -121,6 +122,7 @@ def test_sqlserver_report_aggregates_full_stream_beyond_display_limit(tmp_path, 
 
     def source(sql, values):
         assert "dbo.task" in sql
+        assert "MACHINE_NO = ?" in sql and values == (service.settings.report_machine_no,)
         try:
             yield from ({"amount": i} for i in range(1100))
         finally:
