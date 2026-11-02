@@ -7,7 +7,7 @@ from pathlib import Path
 
 from app.configuration_sources import load_environment
 
-from app.device_config import load_device_catalog
+from app.device_config import device_catalog_path, load_device_catalog
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -25,9 +25,7 @@ def configuration_field(key, factory, *, hidden=False):
 
 
 # Device business settings come only from the catalog; credentials stay in env.
-DEVICE_CONFIG_PATH = Path(os.getenv("DEVICE_CONFIG_PATH", "backend/app/configuration/devices.json")).expanduser()
-if not DEVICE_CONFIG_PATH.is_absolute():
-    DEVICE_CONFIG_PATH = PROJECT_ROOT / DEVICE_CONFIG_PATH
+DEVICE_CONFIG_PATH = device_catalog_path(PROJECT_ROOT, LOADED_ENVIRONMENT)
 DEVICE_CATALOG = load_device_catalog(DEVICE_CONFIG_PATH)
 DEFAULT_DEVICE = DEVICE_CATALOG.default_device
 

@@ -7,7 +7,6 @@ import hashlib
 import hmac
 import json
 import math
-from pathlib import Path
 import re
 from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -17,9 +16,8 @@ from app.config import (
     PROCESS_ENVIRONMENT, Settings, _environment,
 )
 from app.configuration_sources import load_environment
-from app.device_config import load_device_catalog
-from app.services.automation_runtime import AutomationRuntime, HOT_SETTINGS
-from app.services.automation_configuration import AutomationConfigurationRequest
+from app.device_config import device_catalog_path, load_device_catalog
+from app.services.automation_runtime import AutomationRuntime, HOT_SETTINGS, validate_automation_settings
 from app.services.database_runtime import DatabaseRuntime, DATABASE_FIELDS, DATABASE_DIAGNOSTIC_KEYS
 from pydantic import ValidationError
 
@@ -63,7 +61,7 @@ def safe_value(value, key=""):
     if isinstance(value, (bool, int)) or isinstance(value, float) and math.isfinite(value):
         return value
     visible = {
-        "APP_ENV", "APP_TIMEZONE", "APP_DATA_SOURCE_MODE", "APP_EFFECTIVE_DATA_SOURCE_MODE",
+        "APP_ENV", "APP_TIMEZONE", "APP_DATA_SOURCE_MODE", "APP_EFFECTIVE_DATA_SOURCE_MODE", "WELD_DB_TIMEZONE",
         "ENERGY_GAS_UNIT", "ENERGY_ELECTRICITY_UNIT", "ENERGY_GAS_FACTOR", "ENERGY_ELECTRICITY_FACTOR",
         "ENERGY_SAMPLING_CHANGE_AT", "FILE_SOURCE_MODE",
     }
@@ -125,10 +123,7 @@ def validate_values(settings: Settings, values: dict) -> set[str]:
             if not math.isfinite(value) or value < 0 or (key.endswith("_PORT") and not 1 <= value <= 65535):
                 invalid.add(key)
     try:
-        AutomationConfigurationRequest.model_validate({
-            ("smtp_timeout_seconds" if name == "smtp_timeout" else name): getattr(settings, name)
-            for name, _ in HOT_SETTINGS.values()
-        })
+        validate_automation_settings(settings)
     except ValidationError as exc:
         for error in exc.errors(include_input=False, include_url=False):
             name = error["loc"][0] if error["loc"] else None
@@ -248,9 +243,7 @@ class ConfigurationDiagnostics:
             targets[key] = (value, source)
             if dependency in invalid:
                 invalid.add(key)
-        catalog_path = Path(values.get("DEVICE_CONFIG_PATH", "backend/app/configuration/devices.json")).expanduser()
-        if not catalog_path.is_absolute():
-            catalog_path = self.settings.project_root / catalog_path
+        catalog_path = device_catalog_path(self.settings.project_root, values)
         targets["DEVICE_CONFIG_PATH"] = (str(catalog_path), sources.get("DEVICE_CONFIG_PATH", "default"))
         try:
             catalog = load_device_catalog(catalog_path)

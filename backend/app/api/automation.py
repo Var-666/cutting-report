@@ -10,10 +10,9 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.api.runtime import application_state
 from app.api.auth import require_admin
-from app.services.automation_configuration import AutomationConfigurationRequest
-from app.services.process_lock import settings_file_lock
-from app.services.runtime_settings_store import read_runtime_env, write_runtime_env
-from app.config import DEVICE_CATALOG, Settings, settings
+from app.services.automation_configuration import AutomationConfigurationRequest, automation_configuration_data
+from app.services.runtime_settings_store import RuntimeSettingsSaveError
+from app.config import DEVICE_CATALOG, settings
 
 
 logger = logging.getLogger(__name__)
@@ -120,93 +119,21 @@ def _envelope(request: Request, data: object) -> dict:
     return {"success": True, "data": data, "request_id": request.state.request_id}
 
 
-def _automation_configuration_data(current_settings: Settings | None = None) -> dict:
-    current_settings = current_settings or settings
-    return {
-        "automation_enabled": current_settings.automation_enabled,
-        "automation_scan_seconds": current_settings.automation_scan_seconds,
-        "email_retry_base_seconds": current_settings.email_retry_base_seconds,
-        "smtp_enabled": current_settings.smtp_enabled,
-        "smtp_host": current_settings.smtp_host,
-        "smtp_port": current_settings.smtp_port,
-        "smtp_username": current_settings.smtp_username,
-        "smtp_password_configured": bool(current_settings.smtp_password),
-        "smtp_from_email": current_settings.smtp_from_email,
-        "smtp_from_name": current_settings.smtp_from_name,
-        "smtp_use_tls": current_settings.smtp_use_tls,
-        "smtp_use_ssl": current_settings.smtp_use_ssl,
-        "smtp_timeout_seconds": current_settings.smtp_timeout,
-    }
-
-
-def _write_automation_runtime_env(values: dict[str, object]) -> None:
-    write_runtime_env(settings.runtime_settings_env_path, values)
-
 @router.get("/configuration")
 def get_automation_configuration(request: Request) -> dict:
     current_settings, _ = application_state(request).automation_runtime.snapshot()
-    return _envelope(request, _automation_configuration_data(current_settings))
+    return _envelope(request, automation_configuration_data(current_settings))
 
 
 @router.put("/configuration")
 def save_automation_configuration(
     payload: AutomationConfigurationRequest, request: Request
 ) -> dict:
-    runtime = application_state(request).automation_runtime
-    with runtime.update_lock, settings_file_lock(settings.runtime_settings_env_path):
-        current_settings, _ = runtime.snapshot()
-        submitted_password = (
-            payload.smtp_password.get_secret_value()
-            if payload.smtp_password is not None
-            else None
-        )
-        saved_password = None
-        if settings.runtime_settings_env_path.is_file():
-            saved_password = read_runtime_env(settings.runtime_settings_env_path).get("SMTP_PASSWORD")
-        password = submitted_password
-        if submitted_password in {None, ""}:
-            password = (
-                saved_password if saved_password is not None else current_settings.smtp_password
-            )
-        values: dict[str, object] = {
-            "AUTOMATION_ENABLED": str(payload.automation_enabled).lower(),
-            "AUTOMATION_SCAN_SECONDS": payload.automation_scan_seconds,
-            "EMAIL_RETRY_BASE_SECONDS": payload.email_retry_base_seconds,
-            "SMTP_ENABLED": str(payload.smtp_enabled).lower(),
-            "SMTP_HOST": payload.smtp_host,
-            "SMTP_PORT": payload.smtp_port,
-            "SMTP_USERNAME": payload.smtp_username,
-            "SMTP_PASSWORD": password,
-            "SMTP_FROM_EMAIL": payload.smtp_from_email,
-            "SMTP_FROM_NAME": payload.smtp_from_name,
-            "SMTP_USE_TLS": str(payload.smtp_use_tls).lower(),
-            "SMTP_USE_SSL": str(payload.smtp_use_ssl).lower(),
-            "SMTP_TIMEOUT_SECONDS": payload.smtp_timeout_seconds,
-        }
-        try:
-            _write_automation_runtime_env(values)
-        except (OSError, ValueError) as exc:
-            logger.exception("failed to save report automation configuration")
-            raise HTTPException(
-                status_code=500,
-                detail="配置保存失败，请检查 data 目录的写入权限。",
-            ) from exc
-        runtime.apply(
-            source="data/settings.env",
-            automation_enabled=payload.automation_enabled,
-            automation_scan_seconds=payload.automation_scan_seconds,
-            email_retry_base_seconds=payload.email_retry_base_seconds,
-            smtp_enabled=payload.smtp_enabled,
-            smtp_host=payload.smtp_host,
-            smtp_port=payload.smtp_port,
-            smtp_username=payload.smtp_username,
-            smtp_password=password,
-            smtp_from_email=payload.smtp_from_email,
-            smtp_from_name=payload.smtp_from_name,
-            smtp_use_tls=payload.smtp_use_tls,
-            smtp_use_ssl=payload.smtp_use_ssl,
-            smtp_timeout=payload.smtp_timeout_seconds,
-        )
+    try:
+        application_state(request).automation_runtime.save_configuration(payload)
+    except (RuntimeSettingsSaveError, ValueError, OSError):
+        logger.error("failed to save report automation configuration")
+        raise HTTPException(status_code=500, detail="配置保存失败，请检查 data 目录的写入权限。") from None
     return _envelope(
         request,
         {

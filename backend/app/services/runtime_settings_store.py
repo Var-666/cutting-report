@@ -14,6 +14,10 @@ from app.services.process_lock import settings_file_lock
 runtime_settings_lock = RLock()
 
 
+class RuntimeSettingsSaveError(RuntimeError):
+    """A candidate was not saved; the caller must not publish it."""
+
+
 def read_runtime_env(path: Path) -> dict:
     with runtime_settings_lock, settings_file_lock(path):
         values, errors = read_env_file(path, environment={}, interpolate=False)
@@ -48,7 +52,7 @@ def write_runtime_env(path: Path, values: dict[str, object]) -> None:
             output.append("")
         if not original:
             output.extend([
-                "# 系统管理的运行配置：自动化/SMTP 热生效，数据库参数重启生效。",
+                "# 系统管理的运行配置：数据库及自动化/SMTP 参数按新操作热加载，其余参数重启生效。",
                 "# 包含密码，不要提交到代码库或对外发送。", "",
             ])
         for key, value in values.items():

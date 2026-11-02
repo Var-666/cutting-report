@@ -6,7 +6,13 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Callable, cast
 
 from app.config import LOADED_SOURCES, Settings
-from app.services.runtime_settings_store import read_runtime_env, runtime_settings_lock
+from app.services.runtime_settings_store import (
+    RuntimeSettingsSaveError, read_runtime_env, write_runtime_env, runtime_settings_lock,
+)
+from app.services.database_configuration import (
+    DatabaseConfigurationRequest, WeldingConnectionRequest, database_configuration_data,
+    connection_env_values, welding_env_values,
+)
 from app.services.process_lock import settings_file_lock
 from app.services.automation_runtime import AutomationRuntime
 
@@ -85,6 +91,14 @@ def parse_database_settings(base: Settings, values: dict[str, object]) -> Settin
     return updated
 
 
+def welding_connection_settings(payload: WeldingConnectionRequest, base: Settings) -> Settings:
+    path = base.runtime_settings_env_path
+    with runtime_settings_lock, settings_file_lock(path):
+        values = welding_env_values(payload, base, read_runtime_env(path))
+    changes = {DATABASE_SETTINGS[key]: value for key, value in values.items()}
+    return replace(base, **{**changes, 'weld_enabled': True})
+
+
 class DatabaseRuntime:
     def __init__(self, settings: Settings, context: DatabaseServices,
                  build: Callable[[Settings], DatabaseServices], automation_runtime: AutomationRuntime) -> None:
@@ -115,6 +129,35 @@ class DatabaseRuntime:
     def prepare(self, values: dict[str, object]) -> DatabaseServices:
         updated = parse_database_settings(self._base, values)
         return self._context if updated == self._context.settings else self._build(updated)
+
+    def save_configuration(self, payload: DatabaseConfigurationRequest | WeldingConnectionRequest) -> None:
+        path = self._base.runtime_settings_env_path
+        with runtime_settings_lock, settings_file_lock(path):
+            current = self.snapshot().settings
+            saved = read_runtime_env(path)
+            welding = payload if isinstance(payload, WeldingConnectionRequest) else payload.welding
+            welding_only = isinstance(payload, WeldingConnectionRequest)
+            if not welding_only and welding is not None:
+                unchanged = DatabaseConfigurationRequest.model_validate({**database_configuration_data(current), 'welding': None})
+                welding_only = payload.model_copy(update={'welding': None}) == unchanged
+            values = {}
+            if not welding_only:
+                values = {
+                    'APP_DATA_SOURCE_MODE': payload.data_source_mode,
+                    'WORKER_DATABASE_AUTH_ENABLED': str(payload.worker_database_auth_enabled).lower(),
+                    'FILE_DATABASE_ENABLED': str(payload.file_database_enabled).lower(),
+                }
+                for source in ('production', 'worker', 'file'):
+                    values.update(connection_env_values(source, getattr(payload, source), current, saved))
+            if welding is not None:
+                values.update(welding_env_values(welding, current, saved))
+            merged = {**saved, **values}
+            prepared = self.prepare(merged)
+            try:
+                write_runtime_env(path, values)
+            except (OSError, ValueError):
+                raise RuntimeSettingsSaveError('运行配置保存失败') from None
+            self.publish(prepared, merged)
 
     def publish(self, context: DatabaseServices, values: dict[str, object]) -> None:
         with runtime_settings_lock:

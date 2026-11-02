@@ -190,7 +190,7 @@ def test_unified_save_accepts_only_welding_changes_without_saving_incomplete_cut
     cfg = replace(cfg, data_source_mode='sqlserver')
     monkeypatch.setattr(database, 'settings', cfg)
     state = build_runtime(cfg, role='web')
-    body = database.DatabaseConfigurationRequest.model_validate(database._database_configuration_data(cfg))
+    body = database.DatabaseConfigurationRequest.model_validate(database.database_configuration_data(cfg))
     body.welding = database.WeldingConnectionRequest(enabled=True, host='weld.test', database='weld',
         username='readonly', password='weld-private')
     database.save_database_configuration(body, request(state))
@@ -308,12 +308,88 @@ def test_failed_save_or_incomplete_enabled_profile_cannot_publish_or_destroy_sav
     assert not cfg.runtime_settings_env_path.exists()
     write_runtime_env(cfg.runtime_settings_env_path, {'CUSTOM_VALUE': 'keep'})
     before = cfg.runtime_settings_env_path.read_bytes()
-    monkeypatch.setattr(database, '_write_runtime_env', lambda _: (_ for _ in ()).throw(OSError('disk unavailable')))
+    monkeypatch.setattr('app.services.database_runtime.write_runtime_env', lambda *_: (_ for _ in ()).throw(OSError('disk unavailable')))
     with pytest.raises(HTTPException) as error:
         database.save_database_configuration(payload(), request(state))
     assert error.value.status_code == 500
     assert cfg.runtime_settings_env_path.read_bytes() == before
     assert database_context(state) is original
+
+
+def test_save_uses_runtime_path_and_password_instead_of_global_startup_settings(environment, tmp_path, monkeypatch):
+    cfg, _ = environment
+    cfg = replace(cfg, sqlserver_password='runtime-password')
+    state = build_runtime(cfg, role='web')
+    unrelated = replace(cfg, project_root=tmp_path / 'other-app', sqlserver_password='wrong-global-password')
+    monkeypatch.setattr(database, 'settings', unrelated)
+    body = payload()
+    body.production.password = None
+    database.save_database_configuration(body, request(state))
+    assert read_runtime_env(cfg.runtime_settings_env_path)['SQLSERVER_PASSWORD'] == 'runtime-password'
+    assert database_context(state).settings.sqlserver_password == 'runtime-password'
+    assert not unrelated.runtime_settings_env_path.exists()
+
+
+def test_failed_candidate_build_preserves_file_and_published_services(environment, monkeypatch):
+    cfg, state = environment
+    write_runtime_env(cfg.runtime_settings_env_path, {'CUSTOM_VALUE': 'keep'})
+    original = database_context(state)
+    before = cfg.runtime_settings_env_path.read_bytes()
+    monkeypatch.setattr(state.database_runtime, '_build', lambda _: (_ for _ in ()).throw(RuntimeError('private-source-details')))
+    with pytest.raises(HTTPException) as error:
+        database.save_database_configuration(payload(), request(state))
+    assert error.value.status_code == 503
+    assert 'private-source-details' not in error.value.detail
+    assert cfg.runtime_settings_env_path.read_bytes() == before
+    assert state.database_runtime.current_context is original
+
+
+def test_welding_connection_test_keeps_embedded_context_and_does_not_save(environment, monkeypatch):
+    from contextlib import contextmanager
+    from app.database.welding import WeldingClient
+    cfg, _ = environment
+    cfg = replace(cfg, weld_db_password='embedded-password')
+    embedded = SimpleNamespace(settings=cfg)
+    seen = []
+
+    @contextmanager
+    def connect(client):
+        seen.append(client.settings)
+        yield SimpleNamespace(fetch=lambda *_, **__: [{'connected': 1}])
+
+    with monkeypatch.context() as patch:
+        patch.setattr(WeldingClient, 'snapshot', connect)
+        body = database.WeldingConnectionRequest(host='test-weld', username='reader')
+        result = database.test_welding_connection(body, request(embedded))
+        assert result['data']['connected']
+    assert seen[0].weld_enabled and seen[0].weld_db_pool_size == 1
+    assert seen[0].weld_db_password == 'embedded-password'
+    assert not cfg.runtime_settings_env_path.exists()
+    with pytest.raises(HTTPException) as error:
+        database.test_welding_connection(database.WeldingConnectionRequest(), request(embedded))
+    assert error.value.status_code == 503, 'an incomplete connection retains the existing unavailable response'
+
+
+def test_diagnostics_distinguishes_hot_welding_timezone_from_startup_timeouts(environment):
+    cfg, web = environment
+    body = database.WeldingConnectionRequest(enabled=True, host='weld.test', database='weld',
+        username='readonly', password='private-weld-password', timezone='UTC')
+    database.save_welding_configuration(body, request(web))
+    background = build_runtime(cfg, role='worker')
+    database_context(background)
+    timeout = 121 if cfg.weld_db_query_timeout != 121 else 122
+    write_runtime_env(cfg.runtime_settings_env_path, {'WELD_DB_QUERY_TIMEOUT_SECONDS': timeout})
+    worker = {'state': 'running', 'owner': 'diagnostic-worker',
+              'configuration': background.configuration_diagnostics.observed('diagnostic-worker')}
+    report = web.configuration_diagnostics.report(worker)
+    rows = {row['key']: row for row in report['items']}
+    hot = rows['WELD_DB_TIMEZONE']
+    assert hot['status'] == 'effective' and not hot['restart_required']
+    assert hot['processes']['web']['value'] == hot['saved_value'] == 'UTC'
+    assert hot['processes']['web']['source'].startswith('data/settings.env')
+    startup = rows['WELD_DB_QUERY_TIMEOUT_SECONDS']
+    assert startup['status'] == 'pending' and startup['restart_required']
+    assert 'private-weld-password' not in str(report)
 
 
 def test_report_worker_resolves_current_pipeline_for_each_job(environment, monkeypatch):

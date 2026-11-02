@@ -358,11 +358,12 @@ def test_http_context_blocks_cutting_operations_and_validation_never_echoes_pass
             app.dependency_overrides[require_admin] = previous
 
 
-def test_welding_hot_configuration_validation_and_password_retention():
-    from app.api.database import WeldingConnectionRequest, _welding_env_values
+@pytest.mark.parametrize('saved', [{}, {'WELD_DB_PASSWORD': None}])
+def test_welding_hot_configuration_validation_and_password_retention(saved):
+    from app.services.database_configuration import WeldingConnectionRequest, welding_env_values
     initial = Settings(weld_db_password='saved-secret', data_source_mode='demo', worker_database_auth_enabled=False, file_database_enabled=False)
     payload = WeldingConnectionRequest(enabled=True, host='db.test', username='readonly')
-    values = _welding_env_values(payload, initial)
+    values = welding_env_values(payload, initial, saved)
     updated = parse_database_settings(initial, values)
     assert updated.weld_enabled and updated.weld_db_password == 'saved-secret'
     assert initial.weld_enabled is False

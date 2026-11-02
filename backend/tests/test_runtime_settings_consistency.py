@@ -11,7 +11,8 @@ from pydantic import ValidationError
 from app.api import automation, database
 from app.config import settings
 from app.services.automation_runtime import AutomationRuntime
-from app.services.runtime_settings_store import read_runtime_env, runtime_settings_lock
+from app.services.runtime_settings_store import read_runtime_env, write_runtime_env, runtime_settings_lock
+from app.services.database_configuration import connection_env_values
 from app.database.sqlserver import SqlServerConfigurationError
 from app.models.domain import ReportFilter
 from app.services.query_service import QueryService
@@ -41,7 +42,7 @@ def test_database_and_automation_save_share_read_modify_publish_lock(tmp_path, m
     monkeypatch.setattr(store.os, "replace", slow_replace)
 
     def save_database():
-        database._write_runtime_env({"SQLSERVER_HOST": "production-db"})
+        write_runtime_env(configured.runtime_settings_env_path, {"SQLSERVER_HOST": "production-db"})
         database_done.set()
 
     with ThreadPoolExecutor(max_workers=2) as pool:
@@ -64,9 +65,9 @@ def test_database_and_automation_save_share_read_modify_publish_lock(tmp_path, m
 def test_blank_database_password_preserves_latest_saved_value_before_restart(tmp_path, monkeypatch):
     configured = replace(settings, project_root=tmp_path, sqlserver_password="old-startup-password")
     monkeypatch.setattr(database, "settings", configured)
-    database._write_runtime_env({"SQLSERVER_PASSWORD": "new-saved-password"})
+    write_runtime_env(configured.runtime_settings_env_path, {"SQLSERVER_PASSWORD": "new-saved-password"})
     payload = database.SavedConnectionRequest(host="db", database="production", username="reader")
-    values = database._connection_env_values("production", payload)
+    values = connection_env_values("production", payload, configured, read_runtime_env(configured.runtime_settings_env_path))
     assert values["SQLSERVER_PASSWORD"] == "new-saved-password"
 
 

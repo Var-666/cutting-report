@@ -63,6 +63,10 @@
 - Web 通过 `api/runtime.runtime_state` 固定单请求数据库服务快照，通过 `device_state` 选择切割设备；Worker 通过 `database_context` 在新操作边界选择快照。在途操作保持原引用，不混用新旧服务或直接改写已发布对象。
 - `config.py` 保留不可变 `Settings`、字段元数据、校验、连接配置及设备配置派生；环境解析复用 `configuration_sources`。业务代码使用传入的 Settings，不能另读环境或另写默认值。启动全局 `settings` 不代表当前热加载状态。
 - 热加载复用 `DatabaseRuntime`、`AutomationRuntime`；保存复用 `runtime_settings_store` 和进程锁，保持“锁内读改写/保留空密码 → 校验并准备候选 → 原子写文件 → 发布快照”。读取或构建失败保留旧快照，诊断用 `inspect()`，不因读取诊断触发热加载。不自行扩大热加载字段范围。
+- 配置来源由 `configuration_sources.load_environment` 统一解析：`data/settings.env > 进程环境变量 > .env > Settings 默认值`；`.env` 保留已有变量插值与 `PYTHON_DOTENV_DISABLED` 兼容，管理页文件按字面值读取，不展开密码中的 `${...}`。设备目录路径由 `device_config.device_catalog_path` 解析，设备业务映射只取启动加载的 `devices.json`；旧设备环境字段仅校验兼容，不能覆盖目录。
+- 数据库配置请求/字段转换及脱敏响应在 `services/database_configuration.py`，自动化配置契约及脱敏响应在 `automation_configuration.py`；保存分别调用 `DatabaseRuntime.save_configuration`、`AutomationRuntime.save_configuration`。Runtime 持有保存路径和当前配置，API 不再读取启动全局 Settings 保留密码，也不自行加锁、合并或发布。空密码优先保留锁内读取的最新文件值，文件未提供有效值时保留当前快照；不回显密码。
+- 热加载白名单以 `database_runtime.DATABASE_SETTINGS` 和 `automation_runtime.HOT_SETTINGS` 为准：数据库页已有连接/启用字段（含焊接时区）及自动化/SMTP 字段可热加载；连接超时、焊接连接池、`devices.json`、AI、报表 TTL 等其余参数仍需重启。新字段先在 `Settings` 登记环境键和默认值，只有明确授权热加载才补入白名单及相应管理契约，不能因字段以数据库前缀开头就自动热加载。
+- 诊断继续通过 `ConfigurationDiagnostics` 对比各进程 `inspect()` 已发布值与文件目标，展示实际来源和重启要求；不能调用 `snapshot()` 使诊断变成配置发布。Worker 按独立心跳报告其快照，未加载/不可用不能标为已生效；敏感值及内部比较指纹不出现在诊断 API 中。
 - SQLite 业务连接统一经 `SQLiteDatabase`/`SQLiteRepository`；跨仓储原子写入使用 `UnitOfWork` 绑定同一连接并由外层提交。Service 不持有原始连接、不自行提交；单仓储原子校验/写入由仓储完成。编号迁移复用 `database/migrations/`，不在路由或后台任务临时建表。
 - SQL/LLM/SMTP/文件等耗时外部操作不得放进 SQLite 写事务；保留现有任务状态、幂等、未知结果保护和失败补偿。不要用事务回滚假定外部副作用已撤销，详见 [SQLite 事务设计](docs/design/SQLite仓储与事务设计.md)。
 - 两进程通过同机本地 SQLite WAL 和共享文件卷协作；保留 Web OS 锁、Worker 租约/提交围栏、持久化队列及现有共享容量，不依赖跨进程内存对象或为每台设备新增常驻线程。不扩展为多主机或网络共享卷部署。

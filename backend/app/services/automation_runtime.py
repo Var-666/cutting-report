@@ -6,7 +6,8 @@ from datetime import datetime, timezone
 from app.config import LOADED_ENVIRONMENT, LOADED_SOURCES, Settings
 from app.services.automation_configuration import AutomationConfigurationRequest
 from app.services.runtime_settings_store import runtime_settings_lock
-from app.services.runtime_settings_store import read_runtime_env
+from app.services.runtime_settings_store import read_runtime_env, write_runtime_env, RuntimeSettingsSaveError
+from app.services.process_lock import settings_file_lock
 
 
 HOT_SETTINGS = {
@@ -19,6 +20,13 @@ HOT_SETTINGS = {
     "SMTP_FROM_NAME": ("smtp_from_name", str), "SMTP_USE_TLS": ("smtp_use_tls", bool),
     "SMTP_USE_SSL": ("smtp_use_ssl", bool), "SMTP_TIMEOUT_SECONDS": ("smtp_timeout", float),
 }
+
+
+def validate_automation_settings(settings: Settings) -> None:
+    AutomationConfigurationRequest.model_validate({
+        ('smtp_timeout_seconds' if name == 'smtp_timeout' else name): getattr(settings, name)
+        for name, _ in HOT_SETTINGS.values()
+    })
 
 
 class AutomationRuntime:
@@ -58,10 +66,7 @@ class AutomationRuntime:
                                 raise ValueError("布尔配置值无效")
                             changes[field] = value.strip().lower() in {"1", "true", "yes", "on"} if convert is bool else convert(value)
                     updated = replace(self._settings, **changes)
-                    AutomationConfigurationRequest.model_validate({
-                        ("smtp_timeout_seconds" if name == "smtp_timeout" else name): getattr(updated, name)
-                        for name, _ in HOT_SETTINGS.values()
-                    })
+                    validate_automation_settings(updated)
                     if updated != self._settings:
                         self._settings = updated
                         self._revision += 1
@@ -76,11 +81,39 @@ class AutomationRuntime:
 
     def apply(self, *, source: str = "runtime", **changes: object) -> None:
         with self.update_lock:
-            self._settings = replace(self._settings, **changes)
-            self._revision += 1
-            self._sources.update(dict.fromkeys(changes, source))
-            self._loaded_at = datetime.now(timezone.utc).isoformat()
-            self._error = None
+            self._publish(replace(self._settings, **changes), changes, source)
+
+    def _publish(self, settings: Settings, changes: dict, source: str) -> None:
+        self._settings = settings
+        self._revision += 1
+        self._sources.update(dict.fromkeys(changes, source))
+        self._loaded_at = datetime.now(timezone.utc).isoformat()
+        self._error = None
+
+    def save_configuration(self, payload: AutomationConfigurationRequest) -> None:
+        path = self._settings.runtime_settings_env_path
+        with self.update_lock, settings_file_lock(path):
+            current = self._settings
+            saved = read_runtime_env(path)
+            submitted = payload.smtp_password.get_secret_value() if payload.smtp_password is not None else None
+            saved_password = saved.get('SMTP_PASSWORD')
+            password = submitted
+            if submitted in {None, ''}:
+                password = saved_password if saved_password is not None else current.smtp_password
+            submitted_fields = payload.model_dump(exclude={'smtp_password'})
+            changes = {
+                name: submitted_fields['smtp_timeout_seconds' if name == 'smtp_timeout' else name]
+                for name, _ in HOT_SETTINGS.values() if name != 'smtp_password'
+            }
+            changes['smtp_password'] = password
+            prepared = replace(current, **changes)
+            values = {key: str(changes[name]).lower() if convert is bool else changes[name]
+                      for key, (name, convert) in HOT_SETTINGS.items()}
+            try:
+                write_runtime_env(path, values)
+            except (OSError, ValueError):
+                raise RuntimeSettingsSaveError('运行配置保存失败') from None
+            self._publish(prepared, changes, 'data/settings.env')
 
     def inspect(self) -> dict:
         """Read the published snapshot without loading files or applying changes."""

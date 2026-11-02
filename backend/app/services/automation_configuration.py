@@ -1,5 +1,7 @@
 from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 
+from app.config import Settings
+
 
 class AutomationConfigurationRequest(BaseModel):
     automation_enabled: bool = True
@@ -41,3 +43,21 @@ class AutomationConfigurationRequest(BaseModel):
             ):
                 raise ValueError("启用 SMTP 后必须填写有效的发件人邮箱")
         return self
+
+
+def automation_configuration_data(current_settings: Settings) -> dict:
+    return {
+        "automation_enabled": current_settings.automation_enabled,
+        "automation_scan_seconds": current_settings.automation_scan_seconds,
+        "email_retry_base_seconds": current_settings.email_retry_base_seconds,
+        "smtp_enabled": current_settings.smtp_enabled,
+        "smtp_host": current_settings.smtp_host,
+        "smtp_port": current_settings.smtp_port,
+        "smtp_username": current_settings.smtp_username,
+        "smtp_password_configured": bool(current_settings.smtp_password),
+        "smtp_from_email": current_settings.smtp_from_email,
+        "smtp_from_name": current_settings.smtp_from_name,
+        "smtp_use_tls": current_settings.smtp_use_tls,
+        "smtp_use_ssl": current_settings.smtp_use_ssl,
+        "smtp_timeout_seconds": current_settings.smtp_timeout,
+    }

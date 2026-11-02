@@ -11,6 +11,11 @@ from pydantic import (
 )
 
 
+def device_catalog_path(root: Path, environment: dict[str, str]) -> Path:
+    path = Path(environment.get('DEVICE_CONFIG_PATH', 'backend/app/configuration/devices.json')).expanduser()
+    return path if path.is_absolute() else root / path
+
+
 ConfigText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=128)]
 
 

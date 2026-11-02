@@ -90,8 +90,9 @@ def test_runtime_env_write_is_atomic_preserves_unknown_keys_and_quotes_secrets(
     path.write_text("CUSTOM_SETTING='keep-me'\nSQLSERVER_HOST='old'\n", encoding="utf-8")
     monkeypatch.setattr(database, "settings", runtime_settings)
 
-    database._write_runtime_env(
-        {
+    from app.services.runtime_settings_store import write_runtime_env
+    write_runtime_env(
+        path, {
             "SQLSERVER_HOST": "new-db",
             "SQLSERVER_PASSWORD": "pa'ss\\word${UNCHANGED}",
         }
@@ -111,7 +112,7 @@ def test_database_configuration_response_never_contains_passwords(monkeypatch) -
     )
     monkeypatch.setattr(database, "settings", configured)
 
-    payload = database._database_configuration_data()
+    payload = database.database_configuration_data(configured)
 
     assert payload["production"]["password_configured"] is True
     assert payload["worker"]["password_configured"] is True

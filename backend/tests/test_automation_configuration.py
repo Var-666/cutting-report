@@ -10,6 +10,7 @@ from app.api import automation
 from app.config import settings
 from app.services.automation_runtime import AutomationRuntime
 from app.services.email_service import EmailService
+from app.services.runtime_settings_store import write_runtime_env
 
 
 def _runtime_settings(tmp_path, **changes):
@@ -52,7 +53,7 @@ def test_configuration_response_never_contains_smtp_password(
 ) -> None:
     monkeypatch.setattr(automation, "settings", _runtime_settings(tmp_path))
 
-    payload = automation._automation_configuration_data()
+    payload = automation.automation_configuration_data(automation.settings)
 
     assert payload["smtp_password_configured"] is True
     assert "smtp_password" not in payload
@@ -147,10 +148,10 @@ def test_failed_save_keeps_active_configuration(tmp_path, monkeypatch) -> None:
     runtime = AutomationRuntime(runtime_settings)
     request = _request(runtime)
 
-    def fail_write(_values):
+    def fail_write(_path, _values):
         raise OSError("disk unavailable")
 
-    monkeypatch.setattr(automation, "_write_automation_runtime_env", fail_write)
+    monkeypatch.setattr("app.services.automation_runtime.write_runtime_env", fail_write)
     with pytest.raises(HTTPException, match="配置保存失败"):
         automation.save_automation_configuration(
             automation.AutomationConfigurationRequest(
@@ -180,6 +181,35 @@ def test_configuration_rejects_conflicting_or_incomplete_smtp_settings() -> None
             smtp_use_tls=True,
             smtp_use_ssl=False,
         )
+
+
+def test_save_uses_runtime_root_and_keeps_existing_operation_snapshot(tmp_path, monkeypatch):
+    initial = _runtime_settings(tmp_path, smtp_password='runtime-secret')
+    runtime = AutomationRuntime(initial)
+    request = _request(runtime)
+    unrelated = _runtime_settings(tmp_path / 'other-app', smtp_password='wrong-global-secret')
+    monkeypatch.setattr(automation, 'settings', unrelated)
+    payload = automation.AutomationConfigurationRequest(smtp_enabled=True, smtp_host='new-smtp',
+        smtp_from_email='new@example.com', smtp_password='')
+    automation.save_automation_configuration(payload, request)
+    current, _ = runtime.snapshot()
+    assert current.smtp_host == 'new-smtp' and current.smtp_password == 'runtime-secret'
+    assert initial.smtp_host == 'smtp.old.example' and initial.smtp_password == 'runtime-secret'
+    assert not unrelated.runtime_settings_env_path.exists()
+
+
+def test_failed_candidate_preparation_does_not_write_or_publish(tmp_path, monkeypatch):
+    initial = _runtime_settings(tmp_path)
+    path = initial.runtime_settings_env_path
+    write_runtime_env(path, {'CUSTOM_VALUE': 'keep'})
+    runtime = AutomationRuntime(initial)
+    before = path.read_bytes()
+    monkeypatch.setattr('app.services.automation_runtime.replace', lambda *_, **__: (_ for _ in ()).throw(ValueError('private-details')))
+    with pytest.raises(HTTPException) as error:
+        automation.save_automation_configuration(automation.AutomationConfigurationRequest(), _request(runtime))
+    assert error.value.status_code == 500 and 'private-details' not in error.value.detail
+    assert path.read_bytes() == before
+    assert runtime.inspect()['settings'] is initial and runtime.inspect()['revision'] == 0
 
 
 def test_blank_password_keeps_the_latest_value_saved_before_restart(
