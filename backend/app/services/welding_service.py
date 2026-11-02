@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 
 from app.config import Settings
 from app.services.production_lines import SERVICE_LINES
+from app.services.query_cache import QueryCache
 from app.database.report_snapshots import ReportKey, fingerprint
 from app.services.report_snapshots import ReportData, ReportSnapshotService
 from app.database.welding import WeldingRepository, WeldingSession, WeldingUnavailable, job_conditions, valid_serial, valid_time
@@ -103,8 +104,7 @@ class WeldingService:
         self.repository = repository
         self._analyses = OrderedDict()
         self._analysis_lock = Lock()
-        self._statistics = OrderedDict()
-        self._statistics_lock = Lock()
+        self._statistics = QueryCache[Any](limit=32)
         self.snapshot_service = ReportSnapshotService(self.settings, snapshots, coordination, unavailable_errors=(WeldingUnavailable,)) if snapshots else None
         self.report_provider = self
 
@@ -288,18 +288,8 @@ class WeldingService:
         if not use_cache:
             return load()
         # shortcut: source MAX(update_date) is a watermark, not CDC; expire after 30s until a reliable source revision exists.
-        with self._statistics_lock:
-            cached = self._statistics.get(key)
-            if cached and monotonic() - cached[0] < ttl:
-                self._statistics.move_to_end(key)
-                return deepcopy(cached[1])
-        value = load()
-        with self._statistics_lock:
-            self._statistics[key] = (monotonic(), deepcopy(value))
-            self._statistics.move_to_end(key)
-            while len(self._statistics) > 32:
-                self._statistics.popitem(last=False)
-        return value
+        scoped_key = (self.settings.device_id, self.source_identity(), *key)
+        return deepcopy(self._statistics.read(scoped_key, load, ttl=ttl))
 
     def _common_statistics(self, session: WeldingSession, query: WeldingQuery) -> tuple[dict, list[dict], list[dict], list[dict], dict]:
         summary, daily, equipment, devices, association = self.repository.statistics(session, query)
@@ -321,6 +311,7 @@ class WeldingService:
 
     @staticmethod
     def version(payload: dict) -> str:
+        """Business/AI version shared by page and live export, not the snapshot checksum."""
         # Table pagination and generation time must not change the analysis source version.
         relevant = {key: payload[key] for key in ('summary', 'daily', 'equipment')}
         relevant['quality'] = payload['meta']['quality']

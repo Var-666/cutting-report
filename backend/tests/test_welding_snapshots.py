@@ -359,7 +359,7 @@ def test_page_queue_rejection_is_distinct_from_preparation_and_retains_available
 def test_page_refreshes_share_sampled_source_info_without_reusing_old_business_statistics(configured, monkeypatch):
     cfg, _, _, source, service = configured
     clock = [0]
-    monkeypatch.setattr('app.services.welding_service.monotonic', lambda: clock[0])
+    monkeypatch.setattr('app.services.query_cache.monotonic', lambda: clock[0])
     service.refresh_summary('page:daily', query().model_dump(mode='json'))
     first = service.page('daily', query())
     source.count = 9
@@ -381,14 +381,25 @@ def test_page_refreshes_share_sampled_source_info_without_reusing_old_business_s
 
 
 def test_exports_bypass_snapshots_and_do_not_replace_current_page_version(configured):
-    _, _, _, source, service = configured
-    first = service.report('jobs', query())
+    _, snapshots, _, source, service = configured
+    service.refresh_summary('page:jobs', query().model_dump(mode='json'))
+    first = service.page('jobs', query())
+    stored = snapshots.get(service._snapshot_key(query(), 'page:jobs'))
+    internal = service.fetch_summary('page:jobs', query())
+    assert internal.meta['data_version'] == stored.data_version
+    assert stored.data_version != first['data_version'], 'storage checksum is not the public business/AI version'
+    assert first['meta']['report_data']['data_version'] == first['data_version']
     before = source.calls['summary']
     for kind in ('jobs', 'parts', 'daily', 'equipment'):
         report = service.report(kind, query(), export_limit=100)
         assert 'report_data' not in report['meta']
+        if kind == 'jobs':
+            assert report['data_version'] == first['data_version']
     assert source.calls['summary'] == before + 4
-    assert service.report('jobs', query())['data_version'] == first['data_version']
+    source.count = 9
+    assert service.report('jobs', query(), export_limit=100)['data_version'] != first['data_version']
+    assert service.page('jobs', query())['data_version'] == first['data_version']
+    assert snapshots.get(service._snapshot_key(query(), 'page:jobs')).data_version == stored.data_version
 
 
 def test_worker_uses_registry_dedup_capacity_and_current_database_context(configured):

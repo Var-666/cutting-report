@@ -18,7 +18,7 @@ class QueryCache(Generic[_CachedResult]):
         self._query_locks = [Lock() for _ in range(32)]
 
     def read(
-        self, key: tuple, loader: Callable[[], _CachedResult], *, ttl: int, force: bool = False
+        self, key: tuple, loader: Callable[[], _CachedResult], *, ttl: float, force: bool = False
     ) -> _CachedResult:
         if ttl <= 0:
             return loader()
@@ -47,3 +47,7 @@ class QueryCache(Generic[_CachedResult]):
                 while len(self._entries) > self._limit:
                     self._entries.pop(next(iter(self._entries)))
             return result
+
+    def clear(self) -> None:
+        with self._lock:
+            self._entries.clear()

@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 
 from app.config import Settings
 from app.services.cache_revision import CacheRevision
+from app.services.query_cache import QueryCache
 from app.database.leadership_snapshots import (
     LeadershipMonthSnapshot,
     LeadershipSnapshotRepository,
@@ -64,10 +65,8 @@ class LeadershipReportService:
             / "leadership_report.sql"
         )
         self._cache_lock = Lock()
-        self._month_locks: dict[date, Lock] = {}
-        self._cache: dict[
-            date | tuple, tuple[float, float, LeadershipReportResult]
-        ] = {}
+        self._query_cache = QueryCache[LeadershipReportResult]()
+        self._cache: dict[tuple, tuple[float, float, LeadershipReportResult]] = {}
 
     def fetch(
         self, report_month: date, *, force: bool = False
@@ -84,37 +83,13 @@ class LeadershipReportService:
                 )
             return self._fetch_snapshot_report(month_start)
 
-        cache_seconds = self.settings.leadership_report_cache_seconds
-        if cache_seconds <= 0:
-            return self._fetch_uncached(month_start)
-
-        requested_at = monotonic()
-        with self._cache_lock:
-            cached = self._cache.get(month_start)
-            if not force and cached and cached[0] > requested_at:
-                return cached[2]
-            month_lock = self._month_locks.setdefault(month_start, Lock())
-
-        # 同一月份只允许一个线程查询。等待中的普通请求，以及在同一次
-        # 强制刷新期间到达的刷新请求，直接复用先完成的结果。
-        with month_lock:
-            now = monotonic()
-            with self._cache_lock:
-                cached = self._cache.get(month_start)
-                cache_is_fresh = cached and cached[0] > now
-                refreshed_after_request = cached and cached[1] >= requested_at
-                if (not force and cache_is_fresh) or refreshed_after_request:
-                    return cached[2]
-
-            result = self._fetch_uncached(month_start)
-            created_at = monotonic()
-            with self._cache_lock:
-                self._cache[month_start] = (
-                    created_at + cache_seconds,
-                    created_at,
-                    result,
-                )
-            return result
+        return self._query_cache.read(
+            (self.settings.device_id, self.source_identity(), month_start,
+             self.cache_revision.version()),
+            lambda: self._fetch_uncached(month_start),
+            ttl=self.settings.leadership_report_cache_seconds,
+            force=force,
+        )
 
     def _fetch_uncached(self, month_start: date) -> LeadershipReportResult:
         if self.settings.effective_data_source_mode == "demo":
@@ -143,6 +118,7 @@ class LeadershipReportService:
             self.cache_revision.publish()
         with self._cache_lock:
             self._cache.clear()
+        self._query_cache.clear()
         return len(snapshots)
 
     def _fetch_snapshot_report(self, month_start: date) -> LeadershipReportResult:
@@ -177,7 +153,7 @@ class LeadershipReportService:
         created_at = monotonic()
         with self._cache_lock:
             self._cache = {key: value for key, value in self._cache.items()
-                           if not isinstance(key, tuple) or key[0] != month_start}
+                           if key[0] != month_start}
             self._cache[cache_key] = (created_at + ttl, created_at, result)
         return result
 
@@ -188,7 +164,7 @@ class LeadershipReportService:
             return {}
         return self.snapshots.get_many(
             months,
-            source_fingerprint=self._source_fingerprint(),
+            source_fingerprint=self.source_identity(),
             snapshot_version=self.SNAPSHOT_VERSION,
         )
 
@@ -266,7 +242,7 @@ class LeadershipReportService:
                 refreshed_at=now,
                 expires_at=now + timedelta(seconds=ttl_seconds),
                 query_duration_ms=query_duration_ms,
-                source_fingerprint=self._source_fingerprint(),
+                source_fingerprint=self.source_identity(),
                 snapshot_version=self.SNAPSHOT_VERSION,
             )
         return snapshots
@@ -306,7 +282,7 @@ class LeadershipReportService:
             ),
         )
 
-    def _source_fingerprint(self) -> str:
+    def source_identity(self) -> str:
         connection = self.settings.sqlserver_connection("production")
         identity = "|".join(
             (

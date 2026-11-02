@@ -59,6 +59,7 @@ class ReportSnapshotService:
         return deepcopy(record), source
 
     def _result(self, snapshot: ReportSnapshot, source: str, *, refreshing: bool = False, error: bool = False) -> ReportData:
+        # Storage checksum; providers retain their own public report/AI version.
         return ReportData(deepcopy(snapshot.payload), {
             'line_id': snapshot.key.line_id, 'report_type': snapshot.key.report_type,
             'data_version': snapshot.data_version, 'data_as_of': snapshot.data_as_of.isoformat(),

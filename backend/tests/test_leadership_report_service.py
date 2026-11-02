@@ -157,6 +157,10 @@ def test_sqlserver_report_is_cached_by_month_and_can_be_refreshed(
     assert refreshed is not first
     assert call_count == 2
 
+    service.refresh(date(2026, 8, 1))
+    assert service.fetch(date(2026, 8, 1)) is not refreshed
+    assert call_count == 4, 'explicit refresh must also invalidate the direct-query cache'
+
 
 def test_sqlserver_snapshots_survive_service_restart_and_fill_history(
     tmp_path, monkeypatch

@@ -100,7 +100,7 @@ def test_common_statistics_are_shared_across_report_types_without_part_fields_le
 
 def test_filters_source_changes_expiry_exports_and_service_replacement_recompute(monkeypatch):
     clock = [0]
-    monkeypatch.setattr('app.services.welding_service.monotonic', lambda: clock[0])
+    monkeypatch.setattr('app.services.query_cache.monotonic', lambda: clock[0])
     repo = Repository()
     service = WeldingService(Settings(), repo)
     service.report('jobs', query())
@@ -125,21 +125,21 @@ def test_missing_watermark_and_failures_are_not_cached():
     repo.fail = True
     with pytest.raises(ValueError, match='source failed'):
         service.report('jobs', query())
-    assert not service._statistics
+    assert not service._statistics._entries
     repo.fail = False
     repo.revision = None
     service.report('jobs', query())
     service.report('jobs', query(page=2))
     assert repo.calls['summary'] == 3
-    assert not service._statistics
+    assert not service._statistics._entries
 
 
 def test_statistics_cache_is_bounded():
     service = WeldingService(Settings(), Repository())
     for i in range(33):
         service._cached_statistics(('common', str(i)), lambda: {})
-    assert len(service._statistics) == 32
-    assert ('common', '0') not in service._statistics
+    assert len(service._statistics._entries) == 32
+    assert all(key[-2:] != ('common', '0') for key in service._statistics._entries)
 
 
 def test_parts_reuse_cached_count_with_the_same_bound_predicate():

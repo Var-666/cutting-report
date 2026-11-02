@@ -71,6 +71,11 @@
 
 - 切割设备映射以 `configuration/devices.json` 和 `device_config.py` 为准，由 `settings_for_device` 派生配置；类型/独立产线登记复用 `production_lines.py`。新增实例必须同时落实配置、服务装配、目录和测试，不能只增加名称；业务 SQL 仍放对应 `database/queries/` 或仓储。
 - 复用现有 `ProductionReportProvider`、`QueryCache`、`CacheRevision` 和报表快照能力；Provider 只统一访问/刷新契约，不强行统一切割与焊接的指标、日期、单位和持久化结构。焊接保持独立只读 MySQL 仓储及服务，不塞入切割 `DeviceRuntime`。
+- Provider 提供 `report_types/source_identity/fetch_summary/fetch_detail/refresh_summary/refresh_plan`；查询类型和明细结果由产线保留，后台查询参数须能 JSON 序列化。跨服务调用公开方法，不能访问其他 Service 的私有方法。`requested_at` 是 Worker 任务提交时间，沿用现有刷新合并语义。
+- 新独立产线在 `production_lines.py` 登记 `service_key`、启用配置和能力，实现专属 Repository、Service/Provider，并在类型化 `DatabaseServices/ApplicationRuntime` 及数据库装配/热加载中接入；按需增加 API/页面和隔离测试。已有 Worker 按注册表消费 `refresh_plan` 和 `report_snapshot_refresh`，不要为每种产线增加调度分支或缓存框架。切割实例仍使用设备目录，切割月报保留原 bootstrap/AI 调度。
+- 普通查询缓存用有界 `QueryCache`，缓存键或服务实例必须隔离产线/设备、来源、规范化条件及必要版本；可变返回值由调用方复制。领导月报直查和焊接短期统计复用该缓存；领导月快照的新鲜度缓存仍保留专属规则，焊接 AI 结果缓存仍按业务版本独立保存。
+- 通用持久化快照复用 `ReportSnapshotService/ReportKey`、`CacheRevision` 和原 SQLite 队列，键包含产线、类型、日期、实际筛选/分页/排序、来源、schema 及权限范围。保留焊接页面快照优先、冷页异步准备、过期标识、失败保留与源信息采样；导出/下钻保持现场查询，不用旧快照绕过实时校验，不强制各业务使用相同 TTL。
+- 区分来源、失效修订、存储校验和与业务版本：`source_identity` 标识来源隔离；`CacheRevision` 仅失效进程缓存；快照存储的 `data_version` 校验完整载荷。公开页面/AI 业务版本继续由现有算法生成：焊接页面及导出共用 `WeldingService.version`，切割沿用现有分析版本；不能用存储校验和替换。焊接 API 的 `meta.report_data.data_version` 与公开业务版本一致；AI 校验页面版本，现场导出随源数据变化可产生新版本，不能覆盖页面快照。
 - 设备相关请求、任务、缓存与持久化操作显式保留设备/产线及来源身份，切割请求使用唯一有效的 `device_id`，不回退默认设备。`X-Production-Line` 仅限制能力范围，不能代替角色权限或授予产线权限。
 - `WorkshopRepository` 是兼容门面；新代码使用用户、会话、日报、确认专属仓储。现有线程模式、旧调用签名和配置兼容分支先查实际调用方及测试，后续专项处理，不在新功能中扩散或顺手删除。
 
