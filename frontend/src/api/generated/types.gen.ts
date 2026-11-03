@@ -2679,6 +2679,10 @@ export type DatabaseSourceRequest = {
      */
     trust_server_certificate?: boolean;
     /**
+     * Legacy Tls
+     */
+    legacy_tls?: boolean;
+    /**
      * Pool Size
      */
     pool_size?: number;
@@ -2798,6 +2802,10 @@ export type DatabaseSourceView = {
      * Trust Server Certificate
      */
     trust_server_certificate?: boolean;
+    /**
+     * Legacy Tls
+     */
+    legacy_tls?: boolean;
     /**
      * Pool Size
      */
@@ -6990,6 +6998,10 @@ export type DatabaseSourceRequestWritable = {
      * Trust Server Certificate
      */
     trust_server_certificate?: boolean;
+    /**
+     * Legacy Tls
+     */
+    legacy_tls?: boolean;
     /**
      * Pool Size
      */

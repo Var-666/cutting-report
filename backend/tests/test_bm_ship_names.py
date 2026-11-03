@@ -154,6 +154,45 @@ def test_historical_snapshot_page_enriches_but_confirm_does_not_query_bm(worksho
     service.confirm_task('1',ConfirmSnapshotTaskRequest(report_date=date(2026,11,1),snapshot_revision=1),admin)
 
 
+def test_runtime_range_report_keeps_tasks_and_device_confirmations_when_bm_is_down(tmp_path, monkeypatch):
+    catalog = tmp_path / 'backend/app/configuration/devices.json'
+    catalog.parent.mkdir(parents=True)
+    catalog.write_text(DEVICE_CATALOG.model_dump_json())
+    from app.database.source_registry import source_configs_json
+    from app.models.database_sources import DatabaseSourceConfig
+    bm = DatabaseSourceConfig(id='bm', name='船名库', engine='sqlserver', host='offline', port=1433,
+                              database='bm', username='reader', password='private')
+    cfg = Settings(project_root=tmp_path, data_source_mode='sqlserver', llm_enabled=False,
+                   energy_api_enabled=False, database_sources_json=source_configs_json([bm]))
+    def fetch(client, sql, parameters):
+        if client.source == 'bm':
+            raise RuntimeError('BM unavailable')
+        return [dict(task_id='1', project_code='CMYZ0170', ship_no='CMYZ0170', segment_name='S1',
+                     program_no='N1', cut_length=1.2, groove_length=0.1, work_time=60,
+                     production_time=datetime(2026, 11, 1, 8))]
+    monkeypatch.setattr(SqlServerClient, 'fetch_all', fetch)
+    runtime = build_runtime(cfg, role='web')
+    try:
+        now = '2026-11-01T08:00:00+08:00'
+        admin = runtime.users.bootstrap_admin(username='admin', display_name='管理员', password='test-password', now=now)
+        first = runtime.devices['Cutter01']
+        report = first.workshop.create_daily_report(report_date='2026-11-01', source_mode='sqlserver',
+                                                    records=[record()], user=admin, now=now)
+        first.confirmations.confirm_task(task_id='1', report_id=report['report_id'], user=admin, now=now)
+        for device_id, confirmed in [('Cutter01', True), ('Cutter02', False)]:
+            device = runtime.devices[device_id]
+            service = WorkshopService(device.workshop, device.confirmations, device.settings,
+                                      query_service=device.query_service, range_report_service=device.range_report_service)
+            result = service.list_range_tasks(date(2026, 11, 1), date(2026, 11, 1), None, 'all', 1, 20)
+            assert result['total'] == 1
+            row = result['items'][0]
+            assert row['project_code'] == 'CMYZ0170' and row['ship_no'] is None
+            assert bool(row['confirmed_by']) is confirmed
+            assert row['cut_length'] == 1.2 and row['work_time'] == 60
+    finally:
+        runtime.database_runtime.close()
+
+
 def test_migration_preserves_legacy_project_confirmations_and_revision(workshop):
     from app.database.migrations.v014_workshop_ship_names import upgrade
     repo, admin, now = workshop

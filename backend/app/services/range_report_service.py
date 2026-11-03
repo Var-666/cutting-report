@@ -8,7 +8,7 @@ from typing import Iterable
 from zoneinfo import ZoneInfo
 
 from app.config import Settings
-from app.database.workshop_reports import WorkshopReportRepository
+from app.database.confirmations import ConfirmationRepository
 from app.models.domain import (
     EquipmentRecord,
     production_day,
@@ -97,12 +97,12 @@ class RangeReportService:
         self,
         settings: Settings,
         query_service: QueryService,
-        workshop: WorkshopReportRepository,
+        confirmations: ConfirmationRepository,
         energy_period_service,
     ) -> None:
         self.settings = settings
         self.query_service = query_service
-        self.workshop = workshop
+        self.confirmations = confirmations
         self.energy_period_service = energy_period_service
 
     def bundle(
@@ -225,7 +225,7 @@ class RangeReportService:
             project_code=project_code,
             ship_no=ship_no,
         )
-        confirmations = self.workshop.get_confirmations(
+        confirmations = self.confirmations.get_confirmations(
             [str(row.task_id) for row in bundle.workshop_records]
         )
         rows = []

@@ -1,5 +1,10 @@
 # 当前系统架构
 
+## BM 旧 TLS 与区间报表确认读取（2026-11-03）
+
+- 通用 SQL Server 数据源的 `legacy_tls` 默认关闭，仅显式开启的数据源批量只读查询进入一次性子进程。专用 OpenSSL 配置允许旧 TLS/签名算法，不修改宿主机或 Web/Worker 进程环境，不影响其他数据源、HTTP 或 SMTP 的 TLS 策略。凭据通过私有管道传递；取消注册表负责终止在途子进程，查询预算及操作期限继续生效，结束后回收资源。直接连接、流式及多结果集接口不在此兼容模式范围内。
+- `RangeReportService` 显式接收设备范围的 `ConfirmationRepository`，流水线装配时提供专属确认仓储；不能从只负责日报的 `WorkshopReportRepository` 调用确认查询。回归覆盖真实 Runtime 的两台设备，验证 BM 故障时任务、指标及设备隔离的确认状态仍可用。
+
 ## P14 维护边界（2026-11-03）
 
 - 保留 ApplicationRuntime、DeviceRuntime、DatabaseRuntime、数据源 Registry、QueryCache、CacheRevision、Provider 与报表快照的独立职责。

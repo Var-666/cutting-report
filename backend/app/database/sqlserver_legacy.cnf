@@ -1,0 +1,9 @@
+# Loaded only by an explicitly opted-in SQL Server query child process.
+openssl_conf = legacy_init
+[legacy_init]
+ssl_conf = legacy_ssl
+[legacy_ssl]
+system_default = legacy_policy
+[legacy_policy]
+MinProtocol = TLSv1
+CipherString = DEFAULT:@SECLEVEL=0

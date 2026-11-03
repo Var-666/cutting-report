@@ -86,6 +86,22 @@ test('pending save blocks duplicate actions; failed save preserves the entire dr
     assert.equal(failed.state.editorError.value, '保存失败')
   } finally { failed.app.unmount() }
 })
+test('legacy TLS is opt-in, included in test/save, and cleared for MySQL', async () => {
+  const { app, state, calls } = mount()
+  try {
+    await flush(); state.open(row)
+    assert.equal(state.draft.value.legacy_tls, false)
+    state.draft.value.legacy_tls = true
+    await state.testConnection()
+    assert.equal(calls.test[0].legacy_tls, true)
+    await state.save()
+    assert.equal(calls.save[0][0].legacy_tls, true)
+    state.open({ ...row, legacy_tls: true })
+    assert.equal(state.draft.value.legacy_tls, true)
+    state.changeEngine('mysql')
+    assert.equal(state.draft.value.legacy_tls, false)
+  } finally { app.unmount() }
+})
 test('load failure and unsaved close are explicit; engine changes invalidate test results', async () => {
   const { app, state } = mount({ listDatabaseSources: async () => { throw Error('读取失败') }, useConfirm: () => async () => false })
   try {

@@ -77,6 +77,8 @@ class SqlServerClient:
 
     @contextmanager
     def connect(self) -> Iterator[Any]:
+        if isinstance(self.settings, DatabaseSourceConfig) and self.settings.legacy_tls:
+            raise SqlServerConfigurationError('旧版 TLS 兼容仅支持隔离进程中的批量只读查询')
         try:
             import pyodbc
         except ImportError as exc:
@@ -96,6 +98,10 @@ class SqlServerClient:
             connection.close()
 
     def fetch_all(self, sql: str, parameters: tuple[Any, ...]) -> list[dict[str, Any]]:
+        if isinstance(self.settings, DatabaseSourceConfig) and self.settings.legacy_tls:
+            from app.database.sqlserver_legacy import fetch_all
+            self.connection_config()  # Reject disabled sources before starting a child.
+            return fetch_all(self.settings, sql, parameters)
         with self.connect() as connection:
             with cancellable_cursor(connection) as cursor:
                 cursor.execute(sql, parameters)

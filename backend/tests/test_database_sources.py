@@ -95,6 +95,20 @@ def test_save_restart_hot_reload_and_old_request_config(runtime):
     assert manager._base.runtime_settings_env_path.stat().st_mode & 0o777 == 0o600
 
 
+def test_legacy_tls_is_opt_in_hot_loaded_and_preserves_existing_client_and_password(runtime):
+    manager = runtime.database_runtime
+    manager.save_source(source(), create=True)
+    first = manager.snapshot().database_sources
+    old = first.client('quality')
+    manager.save_source(update(source(), password='', legacy_tls=True))
+    latest = manager.snapshot().database_sources
+    assert not old.settings.legacy_tls and first.get('quality').legacy_tls is False
+    assert latest.client('quality') is not old and latest.get('quality').legacy_tls is True
+    assert latest.get('quality').password.get_secret_value() == 'private-password'
+    assert latest.view('quality').legacy_tls is True
+    assert 'password' not in latest.view('quality').model_dump()
+
+
 def test_atomic_save_failure_bad_file_and_diagnostics_keep_published_snapshot(runtime, monkeypatch):
     manager = runtime.database_runtime
     manager.save_source(source(), create=True)

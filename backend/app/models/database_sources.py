@@ -1,7 +1,7 @@
 """Connection contracts for additional external sources; no business SQL lives here."""
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 
 class DatabaseSourceFields(BaseModel):
@@ -20,6 +20,7 @@ class DatabaseSourceFields(BaseModel):
     driver: str = Field(default='ODBC Driver 18 for SQL Server', min_length=1, max_length=128)
     encrypt: bool = True
     trust_server_certificate: bool = True
+    legacy_tls: bool = False
     pool_size: int = Field(default=4, ge=1, le=4)
     charset: str = Field(default='utf8mb4', pattern=r'^[a-zA-Z0-9_]{1,32}$')
     readonly: Literal[True] = True
@@ -32,6 +33,12 @@ class DatabaseSourceFields(BaseModel):
         if not value or any(ord(char) < 32 for char in value):
             raise ValueError('连接字段不能为空或包含控制字符')
         return value
+
+    @model_validator(mode='after')
+    def validate_legacy_tls(self) -> 'DatabaseSourceFields':
+        if self.legacy_tls and self.engine != 'sqlserver':
+            raise ValueError('旧版 TLS 兼容仅适用于 SQL Server')
+        return self
 
 
 class DatabaseSourceRequest(DatabaseSourceFields):

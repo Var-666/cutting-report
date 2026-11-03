@@ -31,7 +31,7 @@ const columns = [
 function defaults(engine: Draft['engine'] = 'sqlserver'): Draft {
   return { id: '', name: '', engine, enabled: true, host: '', port: engine === 'mysql' ? 3306 : 1433,
     database: '', username: '', password: '', connect_timeout: 5, query_timeout: 120,
-    driver: 'ODBC Driver 18 for SQL Server', encrypt: true, trust_server_certificate: true,
+    driver: 'ODBC Driver 18 for SQL Server', encrypt: true, trust_server_certificate: true, legacy_tls: false,
     pool_size: 4, charset: 'utf8mb4', readonly: true, isolation_level: 'REPEATABLE READ' }
 }
 const draft = ref<Draft>(defaults())
@@ -60,6 +60,7 @@ function open(source?: DatabaseSourceView) {
 }
 function changeEngine(engine: Draft['engine']) {
   draft.value.engine = engine
+  if (engine !== 'sqlserver') draft.value.legacy_tls = false
   draft.value.port = engine === 'mysql' ? 3306 : 1433
   result.value = null
   dirty.value = true
@@ -158,6 +159,8 @@ onMounted(load)
             <label class="source-full"><span>ODBC 驱动</span><NInput :disabled="busy" v-model:value="draft.driver" :input-props="{ 'aria-label': 'ODBC 驱动', required: true }" /></label>
             <label class="source-checkbox"><NCheckbox :disabled="busy" v-model:checked="draft.encrypt" @update:checked="dirty = true" >加密连接</NCheckbox></label>
             <label class="source-checkbox"><NCheckbox :disabled="busy" v-model:checked="draft.trust_server_certificate" @update:checked="dirty = true" >信任服务器证书</NCheckbox></label>
+            <label class="source-full source-checkbox"><NCheckbox :disabled="busy" v-model:checked="draft.legacy_tls" @update:checked="dirty = true">兼容旧版 SQL Server TLS</NCheckbox></label>
+            <p v-if="draft.legacy_tls" class="source-full source-note">仅此数据源的批量只读查询允许旧 TLS 和弱签名算法，在隔离进程中执行；不改变其他连接。仅在无法更新旧服务器时启用。</p>
           </template>
           <template v-else>
             <label><span>连接池大小</span><NInputNumber :disabled="busy" v-model:value="draft.pool_size" :input-props="{ 'aria-label': '连接池大小' }" :min="1" :max="4" :precision="0" @update:value="dirty = true" /></label>

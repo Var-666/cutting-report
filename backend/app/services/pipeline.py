@@ -12,6 +12,7 @@ from app.database.metadata import MetadataRepository
 from app.database.definitions import DefinitionRepository
 from app.database.workshop import WorkshopRepository
 from app.database.workshop_reports import WorkshopReportRepository
+from app.database.confirmations import ConfirmationRepository
 from app.database.unit_of_work import UnitOfWork
 from app.models.domain import AnalysisResult
 from app.services.chart_service import ChartService
@@ -92,7 +93,7 @@ class ReportPipeline:
         self.range_service = RangeReportService(
             settings,
             self.query_service,
-            self.workshop_repository,
+            ConfirmationRepository(self.database, scope_machine_no=settings.report_machine_no),
             self.energy_period_service,
         )
         self._cancellation_check: Callable[[], bool] | None = None
