@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
+from app.core.report_deadline import ReportOperationTimeout
 from app.core.sql_capacity import SqlCapacityError
 from app.api.workloads import query_requests
 from app.api.devices import device_state, device_settings
@@ -116,7 +117,7 @@ def get_leadership_report(
                 bootstrap=service.needs_bootstrap(month_start),
             )
         result = _result_with_refresh_state(request, month_start, result)
-    except (SqlRequestCancelled, SqlCapacityError):
+    except (SqlRequestCancelled, SqlCapacityError, ReportOperationTimeout):
         raise
     except (SqlServerConfigurationError, ValueError) as exc:
         if isinstance(exc, ValueError):
@@ -150,7 +151,7 @@ def refresh_leadership_report(
             )
             result = service.fetch(month_start)
         result = _result_with_refresh_state(request, month_start, result)
-    except (SqlRequestCancelled, SqlCapacityError):
+    except (SqlRequestCancelled, SqlCapacityError, ReportOperationTimeout):
         raise
     except SqlServerConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc

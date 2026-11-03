@@ -40,6 +40,7 @@ from app.api.welding import router as welding_router
 from app.api.production_lines import router as production_lines_router
 from app.services.application_runtime import build_runtime
 from app.core.sql_capacity import SqlCapacityError, sql_identity
+from app.core.report_deadline import ReportOperationTimeout
 from app.core.process_lock import FileLock
 from app.services.worker_status import background_ready
 from app.core.request_cancellation import (
@@ -160,6 +161,13 @@ async def sql_request_cancelled_handler(request: Request, exc: SqlRequestCancell
             "request_id": getattr(request.state, "request_id", "unknown"),
         },
     )
+
+
+@app.exception_handler(ReportOperationTimeout)
+async def operation_timeout_handler(request: Request, exc: ReportOperationTimeout):
+    return JSONResponse(status_code=504,
+        content={'success': False, 'error': {'code': 'OPERATION_TIMEOUT', 'message': str(exc)},
+                 'request_id': getattr(request.state, 'request_id', 'unknown')})
 
 
 @app.exception_handler(Exception)

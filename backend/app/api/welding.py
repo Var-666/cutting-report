@@ -191,7 +191,7 @@ async def export(request: Request, report_type: Literal['daily', 'parts', 'jobs'
     with source_errors():
         content, media = await query_requests.run_sync(exporter.prepare, report_type, query, format, _request=request)
         if format == 'pdf':
-            content, media = await pdf_requests.run_sync(exporter.render_pdf, content)
+            content, media = await pdf_requests.run_sync(exporter.render_pdf, content, _request=request)
     return Response(content, media_type=media, headers={'Content-Disposition': f'attachment; filename="welding-{report_type}-{query.start}-{query.end}.{format}"'})
 
 

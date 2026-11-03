@@ -14,6 +14,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field, SecretStr, field_validator
 
+from app.core.report_deadline import ReportOperationTimeout
 from app.core.sql_capacity import SqlCapacityError
 from app.api.workloads import query_requests
 from app.api.devices import device_state
@@ -282,7 +283,7 @@ def execute_sql(
         result = service.execute(payload.sql, payload.max_rows)
     except SqlWorkbenchValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except (SqlRequestCancelled, SqlCapacityError):
+    except (SqlRequestCancelled, SqlCapacityError, ReportOperationTimeout):
         raise
     except SqlServerConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -322,7 +323,7 @@ def test_connection(payload: ConnectionTestRequest, request: Request) -> dict:
                 row = cursor.fetchone()
         if row is None or int(row[0]) != 1:
             raise RuntimeError("数据库未返回预期结果")
-    except (SqlRequestCancelled, SqlCapacityError):
+    except (SqlRequestCancelled, SqlCapacityError, ReportOperationTimeout):
         raise
     except SqlServerConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -360,7 +361,7 @@ def preview_dataset(payload: DatabasePreviewRequest, request: Request) -> dict:
             records = query_service.fetch_workshop_data(filters).workshop_records
         else:
             records = query_service.fetch_equipment_data(filters).records
-    except (SqlRequestCancelled, SqlCapacityError):
+    except (SqlRequestCancelled, SqlCapacityError, ReportOperationTimeout):
         raise
     except SqlServerConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -393,7 +394,7 @@ def _source_result(request: Request, action) -> dict:
         raise HTTPException(status_code=500, detail='数据源保存失败，请检查 data 目录写入权限') from None
     except SourceConnectionError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from None
-    except (SqlRequestCancelled, SqlCapacityError):
+    except (SqlRequestCancelled, SqlCapacityError, ReportOperationTimeout):
         raise
     except ValueError:
         raise HTTPException(status_code=422, detail='数据源配置无效，请核对 ID、连接参数及密码') from None

@@ -529,7 +529,7 @@ def test_snapshot_queue_rejection_is_not_reported_as_preparation(api):
 
 
 @pytest.mark.parametrize('stage', ['pdf', 'analysis'])
-def test_pdf_and_ai_release_welding_capacity_before_slow_processing(api, monkeypatch, stage):
+def test_pdf_and_ai_release_welding_capacity_before_slow_processing(api, monkeypatch, tmp_path, stage):
     import asyncio
     import anyio
     import httpx
@@ -537,6 +537,7 @@ def test_pdf_and_ai_release_welding_capacity_before_slow_processing(api, monkeyp
     from app.api import welding
     from app.api.workloads import RequestWorkload
     from app.models.domain import AnalysisResult
+    from app.core.sql_capacity import SqlCapacity
     entered, release = Event(), Event()
     # Registered synchronous routes retain the original workload object.
     pool = welding.query_requests
@@ -547,18 +548,30 @@ def test_pdf_and_ai_release_welding_capacity_before_slow_processing(api, monkeyp
     monkeypatch.setattr(welding, 'pdf_requests', RequestWorkload(1, 'PDF'))
     monkeypatch.setattr(welding, 'analysis_requests', RequestWorkload(1, '分析'))
     data = {**report_data(), 'equipment': [], 'data_version': 'a' * 64}
+    instance = WeldingService(welding_settings(weld_enabled=True, llm_enabled=True), None)
+    resource = SqlCapacity(replace(instance.settings, project_root=tmp_path))
+    client = mysql_client(instance.settings)
+    client.capacity = resource
+    class Connection:
+        def start_transaction(self, **options):
+            assert options['readonly'] and options['isolation_level'] == 'REPEATABLE READ'
+        def rollback(self): pass
+        def close(self): pass
+    monkeypatch.setattr(client, '_get_pool', lambda: SimpleNamespace(get_connection=Connection))
     source = {'open': False}
     def report(*args, **kwargs):
         source['open'] = True
         try:
-            return data
+            with client.snapshot():
+                assert resource.status()['items'][0]['executing'] == 1
+                return data
         finally:
             source['open'] = False
-    instance = WeldingService(welding_settings(weld_enabled=True, llm_enabled=True), None)
     instance.report = report
     api.app.state.lines['welding'] = runtime_line(instance, 'welding')
     def slow():
         assert not source['open']
+        assert all(row['executing'] == row['waiting'] == 0 for row in resource.status()['items'])
         entered.set()
         assert release.wait(5)
     class Pdf:

@@ -131,7 +131,7 @@ async def optional_user(
             available = service.cached_session_identity_available(external_id, force=force)
             if available is None:
                 available = await authentication_requests.run_sync(
-                    service.session_identity_available, external_id, force=force,
+                    service.session_identity_available, external_id, force=force, _request=request,
                 )
         except WorkerAuthenticationUnavailableError as exc:
             raise HTTPException(status_code=503, detail="HR人员数据库暂时不可用，请稍后重试") from exc

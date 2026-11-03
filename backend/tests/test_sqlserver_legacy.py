@@ -2,6 +2,7 @@
 from datetime import datetime
 from decimal import Decimal
 import os
+import multiprocessing as mp
 from pathlib import Path
 from threading import Event, Thread
 from time import monotonic
@@ -17,6 +18,17 @@ from app.database import sqlserver_legacy
 from app.database.source_registry import DatabaseSourceRegistry, source_configs_json
 from app.database.sqlserver import SqlServerClient, SqlServerConfigurationError
 from app.models.database_sources import DatabaseSourceConfig
+from app.core.sql_capacity import SqlCapacity, SqlCapacityError
+from tests.line_fixtures import configuration
+
+
+def legacy_capacity(path):
+    return SqlCapacity(configuration(Path(path), sql_global_max_concurrent=1,
+        sqlserver_default_max_concurrent=1, sql_line_max_concurrent=1, sql_queue_timeout_seconds=.1))
+
+
+def _legacy_parent_query(path, config):
+    SqlServerClient(config, capacity=legacy_capacity(path)).fetch_all('slow', ())
 
 
 @pytest.fixture
@@ -34,7 +46,7 @@ class Cursor:
         if sql == 'fail':
             raise RuntimeError('private-password; UID=reader')
         if sql == 'slow':
-            Path(os.environ['QUERY_STARTED']).touch()
+            Path(os.environ['QUERY_STARTED']).write_text(str(os.getpid()))
             sleep(30)
     def fetchall(self):
         return [(Decimal('1.2500'), datetime(2026, 11, 3, 8), b'bytes',
@@ -56,15 +68,20 @@ def connect(connection_string, **options):
     processes = []
     popen = sqlserver_legacy.subprocess.Popen
     def start(*args, **kwargs):
+        assert all(item['executing'] == 1 for item in resource.status()['items'])
+        if os.name == 'posix':
+            assert len(kwargs['pass_fds']) == 2
         process = popen(*args, **kwargs)
         processes.append(process)
         return process
     monkeypatch.setattr(sqlserver_legacy.subprocess, 'Popen', start)
     config = DatabaseSourceConfig(id='bm', name='BM', engine='sqlserver', host='offline', port=1433,
         database='bm', username='reader', password='private-password', legacy_tls=True)
-    yield SqlServerClient(config), processes, tmp_path
+    resource = legacy_capacity(tmp_path)
+    yield SqlServerClient(config, capacity=resource), processes, tmp_path
     assert all(process.poll() is not None for process in processes)
     assert all(process.stdin.closed and process.stdout.closed for process in processes)
+    assert all(item['executing'] == item['waiting'] == 0 for item in resource.status()['items'])
 
 
 def test_isolated_query_preserves_values_credentials_and_parent_tls(legacy):
@@ -105,7 +122,7 @@ def test_deadline_kills_child_and_preserves_timeout_contract(legacy):
 
 def test_connection_and_query_timeout_bounds_child_without_a_report_deadline(legacy):
     client, processes, _ = legacy
-    client = SqlServerClient(client.settings.model_copy(update={'connect_timeout': 1, 'query_timeout': 1}))
+    client = SqlServerClient(client.settings.model_copy(update={'connect_timeout': 1, 'query_timeout': 1}), capacity=client.capacity)
     started = monotonic()
     with pytest.raises(TimeoutError, match='连接或查询超时'):
         client.fetch_all('slow', ())
@@ -147,3 +164,31 @@ def test_source_compatibility_defaults_to_off_roundtrips_and_rejects_mysql():
     assert 'password' not in registry.view('bm').model_dump()
     with pytest.raises(ValidationError, match='仅适用于 SQL Server'):
         DatabaseSourceConfig(**{**values, 'engine': 'mysql'}, legacy_tls=True)
+
+
+@pytest.mark.skipif(os.name != 'posix', reason='Current Linux/macOS deployment inherits POSIX lock descriptors')
+def test_parent_crash_does_not_release_permit_while_legacy_query_child_is_alive(legacy):
+    import signal
+    client, _, path = legacy
+    parent = mp.get_context('spawn').Process(target=_legacy_parent_query, args=(str(path), client.settings))
+    child_pid = None
+    try:
+        parent.start()
+        deadline = monotonic() + 5
+        while not (path / 'started').exists():
+            assert monotonic() < deadline and parent.is_alive()
+            Event().wait(.01)
+        child_pid = int((path / 'started').read_text())
+        parent.kill()
+        parent.join(5)
+        assert not parent.is_alive()
+        with pytest.raises(SqlCapacityError):
+            with client.capacity.slot(client.settings): pass
+        os.kill(child_pid, signal.SIGKILL)
+        child_pid = None
+        client.capacity.timeout = 2
+        with client.capacity.slot(client.settings): pass
+    finally:
+        if child_pid is not None:
+            os.kill(child_pid, signal.SIGKILL)
+        if parent.is_alive(): parent.kill(); parent.join(5)

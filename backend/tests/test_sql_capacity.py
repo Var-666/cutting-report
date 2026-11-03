@@ -114,6 +114,7 @@ def test_waiting_timeout_cancellation_and_total_deadline_release_tickets(tmp_pat
         with pytest.raises(SqlRequestCancelled if action == 'cancel' else ReportOperationTimeout if action == 'deadline' else SqlCapacityError):
             job.result(timeout=2)
         assert usage(resource)['waiting'] == 0
+        assert usage(resource)['timeouts'] == (0 if action == 'cancel' else 1)
     sql_request_cancellations.finish(request)
     with resource.slot(config): pass
     assert usage(resource)['executing'] == 0
@@ -202,6 +203,33 @@ def test_mysql_admits_before_pool_checkout_and_returns_each_independent_transact
     assert len(transactions) == 20
     assert all(options == dict(isolation_level='REPEATABLE READ', consistent_snapshot=True, readonly=True) for _, options in transactions)
     assert usage(resource)['executing'] == usage(resource)['waiting'] == 0
+
+
+@pytest.mark.parametrize('failure', ['checkout', 'begin', 'query', 'cancel'])
+def test_mysql_failure_and_cancellation_restore_shared_and_local_pool_slots(tmp_path, monkeypatch, failure):
+    resource = capacity(tmp_path)
+    client = MySqlClient(source('mysql', 'mysql', pool_size=1, sql_max_concurrent=1), capacity=resource)
+    failing = [True]
+    cleanup = []
+    class Connection:
+        def start_transaction(self, **options):
+            if failing[0] and failure == 'begin': raise TimeoutError('transaction timeout')
+        def rollback(self): cleanup.append('rollback')
+        def close(self): cleanup.append('close')
+    def checkout():
+        if failing[0] and failure == 'checkout': raise TimeoutError('connection timeout')
+        return Connection()
+    monkeypatch.setattr(client, '_get_pool', lambda: SimpleNamespace(get_connection=checkout))
+    with pytest.raises(SqlRequestCancelled if failure == 'cancel' else MySqlUnavailable):
+        with client.snapshot():
+            if failure == 'cancel': raise SqlRequestCancelled('cancelled')
+            raise TimeoutError('query timeout')
+    assert usage(resource)['executing'] == usage(resource)['waiting'] == 0
+    assert cleanup == ([] if failure == 'checkout' else ['rollback', 'close'])
+    failing[0] = False
+    with client.snapshot():
+        assert usage(resource)['executing'] == 1
+    assert usage(resource)['executing'] == 0
 
 
 def _process_slot(root, channel):
@@ -371,7 +399,8 @@ def test_source_quota_save_is_cold_and_preserves_clients_and_existing_data_ident
     assert fresh.database_sources.capacity.source_limit('not-published') == 6
 
 
-def test_http_reports_busy_sql_with_instance_identity_and_exposes_only_process_statistics(tmp_path, monkeypatch):
+@pytest.mark.parametrize('failure', ['queue_timeout', 'operation_timeout'])
+def test_http_reports_busy_sql_with_instance_identity_and_exposes_only_process_statistics(tmp_path, monkeypatch, failure):
     from fastapi.testclient import TestClient
     from app.main import app
     from app.api.auth import require_admin
@@ -383,6 +412,9 @@ def test_http_reports_busy_sql_with_instance_identity_and_exposes_only_process_s
     configs[0] = configs[0].model_copy(update={'sql_max_concurrent': 1})
     runtime = build_runtime(replace(cfg, database_sources_json=source_configs_json(configs)), role='web')
     context = database_context(runtime)
+    if failure == 'operation_timeout':
+        from app.api import workloads
+        monkeypatch.setattr(workloads, 'settings', SimpleNamespace(report_operation_timeout_seconds=.02))
     resource = context.database_sources.capacity
     config = context.database_sources.get('cutting-production')
     monkeypatch.setattr(app.state, 'runtime', runtime, raising=False)
@@ -402,7 +434,10 @@ def test_http_reports_busy_sql_with_instance_identity_and_exposes_only_process_s
     body = {'dataset': 'equipment', 'report_date': '2026-11-03', 'limit': 10}
     with resource.slot(config):
         blocked = client.post('/api/v1/database/preview?device_id=Cutter01', json=body)
-    assert blocked.status_code == 503 and blocked.headers['X-SQL-Resource-Error'] == 'queue_timeout'
+    if failure == 'operation_timeout':
+        assert blocked.status_code == 504 and blocked.json()['error']['code'] == 'OPERATION_TIMEOUT'
+    else:
+        assert blocked.status_code == 503 and blocked.headers['X-SQL-Resource-Error'] == 'queue_timeout'
     assert client.post('/api/v1/database/preview?device_id=Cutter01', json=body).status_code == 200
     status = client.get('/api/v1/database/resources')
     assert status.status_code == 200
@@ -424,3 +459,104 @@ def test_shared_hr_pdm_and_dispatch_queries_never_borrow_a_selected_line_identit
         for service in (WorkerAuthService(cfg, client=client), SqlServerPdmRepository(cfg, client=client), MagicBoxConfigProvider(cfg, client=client)):
             service._fetch_all('SELECT 1', ())
     assert seen == [None, None, None]
+
+
+def test_worker_and_automation_share_web_quota_and_retry_without_losing_task(tmp_path, monkeypatch):
+    from datetime import datetime
+    from app.database.source_registry import DatabaseSourceRegistry, source_configs_json
+    from app.services.application_runtime import build_runtime
+    from app.services.database_runtime import database_context
+    from app.models.domain import QueryBundle
+    from app.worker import WorkerProcess
+    cfg = configuration(tmp_path, real=True, sql_queue_timeout_seconds=.05)
+    configs = DatabaseSourceRegistry.from_json(cfg.database_sources_json).configs()
+    configs[0] = configs[0].model_copy(update={'sql_max_concurrent': 1})
+    cfg = replace(cfg, database_sources_json=source_configs_json(configs))
+    web = build_runtime(cfg, role='web')
+    worker = WorkerProcess(cfg)
+    worker.owner = worker.repository.acquire('worker', ttl=30)
+    context = database_context(worker.runtime)
+    resource = context.database_sources.capacity
+    line = context.lines['Cutter01']
+    client = context.database_sources.client('cutting-production')
+    connections = []
+    def connect(*args, **kwargs):
+        assert usage(resource, 'line')['resource'] == 'Cutter01'
+        connection = OdbcConnection(resource)
+        connections.append(connection)
+        return connection
+    monkeypatch.setitem(sys.modules, 'pyodbc', SimpleNamespace(connect=connect))
+    monkeypatch.setattr(line.background, 'handle_background', lambda *a: client.fetch_all('SELECT 1', ()))
+    def prepare(*args):
+        client.fetch_all('SELECT 1', ())
+        return QueryBundle(summary_records=[], workshop_records=[], equipment_records=[])
+    saved = []
+    device = SimpleNamespace(settings=line.settings, query_service=SimpleNamespace(fetch_workshop_data=prepare),
+        workshop=SimpleNamespace(sync_daily_report=lambda **kw: saved.append(kw)))
+    run = dict(report_date='2026-11-03', created_by_id=1, created_by_name='test')
+    now = datetime.fromisoformat('2026-11-03T10:00:00+08:00')
+    worker.repository.enqueue('current_refresh', 'Cutter01', {})
+    task = worker.repository.claim_task(worker.owner, analysis=False)
+    try:
+        web_context = database_context(web)
+        with web_context.database_sources.capacity.slot(web_context.database_sources.get('cutting-production')):
+            with worker.scope():
+                worker._execute(task)
+                worker._flush_completions()
+            with pytest.raises(SqlCapacityError):
+                worker.runtime.automation_service._ensure_workshop_report(run, now, device)
+        assert not connections and not saved
+        assert worker.repository.task_counts() == {'deferred': 1}
+        with worker.repository.connect() as connection:
+            row = connection.execute('SELECT last_error,next_attempt,updated_at FROM background_tasks').fetchone()
+            assert row['last_error'] == 'SqlCapacityError' and row['next_attempt'] > row['updated_at']
+            connection.execute('UPDATE background_tasks SET next_attempt=0')
+        worker.repository.admit_deferred()
+        retry = worker.repository.claim_task(worker.owner, analysis=False)
+        assert retry['task_id'] == task['task_id'] and retry['attempts'] == 2
+        with worker.scope():
+            worker._execute(retry)
+            worker._flush_completions()
+        worker.runtime.automation_service._ensure_workshop_report(run, now, device)
+        assert worker.repository.task_counts() == {'completed': 1}
+        assert len(connections) == 2 and all(connection.closed for connection in connections)
+        assert len(saved) == 1 and usage(resource)['executing'] == usage(resource)['waiting'] == 0
+    finally:
+        worker.stop()
+        web.database_runtime.close()
+
+
+def test_unsaved_probe_ids_share_fixed_slots_without_polluting_source_registration(tmp_path):
+    resource = capacity(tmp_path)
+    for index in range(20):
+        config = source(f'unsaved-{index}')
+        with resource.slot(config, probe=True): pass
+        assert not resource.knows_source(config.id)
+    assert {row['resource'] for row in resource.status()['items']} == {'sql', 'probe:sqlserver'}
+    assert len(list(resource.directory.glob('*.lock'))) == 2
+    for key in ('one', 'two'):
+        with resource.slot(source(key)): pass
+    assert resource.knows_source('one') and resource.knows_source('two')
+
+
+@pytest.mark.parametrize('boundary', ['equipment', 'leadership', 'energy_tasks', 'energy_range', 'energy_monthly_range'])
+@pytest.mark.parametrize('error', [SqlRequestCancelled('cancelled'), SqlCapacityError('queue_full'), ReportOperationTimeout('deadline')])
+def test_report_boundaries_preserve_cancellation_capacity_and_total_timeout(monkeypatch, boundary, error):
+    from datetime import date
+    from app.api import energy, equipment, leadership
+    def fail(*args, **kwargs): raise error
+    device = SimpleNamespace(query_service=SimpleNamespace(fetch_equipment_data=fail),
+        energy_period_service=SimpleNamespace(get_monthly_range=fail),
+        range_report_service=SimpleNamespace(leadership=fail, equipment=fail))
+    day = date(2026, 11, 3)
+    module, handler, args = {
+        'equipment': (equipment, equipment.get_equipment_report, dict(report_date=day, refresh=False)),
+        'leadership': (leadership, leadership.get_leadership_report, dict(report_month=None, start_date=day, end_date=day, refresh=False)),
+        'energy_tasks': (energy, energy.get_task_energy_day, dict(report_date=day, refresh=False)),
+        'energy_range': (energy, energy.get_energy_range, dict(start_date=day, end_date=day, refresh=False)),
+        'energy_monthly_range': (energy, energy.get_energy_monthly_range, dict(start_date=day, end_date=day)),
+    }[boundary]
+    monkeypatch.setattr(module, 'device_state', lambda request: device)
+    with pytest.raises(type(error)) as caught:
+        handler(SimpleNamespace(), **args)
+    assert caught.value is error

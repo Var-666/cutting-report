@@ -15,6 +15,8 @@ from app.services.report_analysis_service import (
     equipment_analysis_source_version,
 )
 from app.core.request_cancellation import SqlRequestCancelled
+from app.core.sql_capacity import SqlCapacityError
+from app.core.report_deadline import ReportOperationTimeout
 
 
 router = APIRouter(prefix="/api/v1/energy-report", tags=["energy-report"], dependencies=[Depends(require_admin)])
@@ -54,7 +56,7 @@ def get_task_energy_day(request: Request, report_date: date | None = None, refre
         data = service.get_task_day(selected, equipment.records, force=refresh)
         data["data_updated_at"] = to_primitive(equipment.data_updated_at)
         _add_analysis_source_version(data)
-    except SqlRequestCancelled:
+    except (SqlRequestCancelled, SqlCapacityError, ReportOperationTimeout):
         raise
     except SqlServerConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -91,7 +93,7 @@ def get_energy_monthly_range(request: Request, start_date: date, end_date: date)
         data["analysis_source_version"] = analysis_table_source_version(
             data.get("rows") or []
         )
-    except SqlRequestCancelled:
+    except (SqlRequestCancelled, SqlCapacityError, ReportOperationTimeout):
         raise
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -115,7 +117,7 @@ def get_energy_range(
             start_date, end_date, force=refresh
         )
         _add_analysis_source_version(data["task_report"])
-    except SqlRequestCancelled:
+    except (SqlRequestCancelled, SqlCapacityError, ReportOperationTimeout):
         raise
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

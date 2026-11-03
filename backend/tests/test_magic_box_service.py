@@ -13,6 +13,9 @@ from app.services.magic_box_service import (
     MagicBoxError,
 )
 from app.core.report_deadline import operation_deadline
+from app.core.report_deadline import ReportOperationTimeout
+from app.core.request_cancellation import SqlRequestCancelled
+from app.core.sql_capacity import SqlCapacityError
 
 
 class ConfigRows:
@@ -42,6 +45,16 @@ def test_config_provider_reads_whitelist_and_hides_secrets():
     assert public["configured"] is True
     assert "token-value" not in repr(public)
     assert "secret-value" not in repr(public)
+
+
+@pytest.mark.parametrize('error', [SqlRequestCancelled('cancelled'), SqlCapacityError('queue_full'), ReportOperationTimeout('deadline')])
+def test_config_read_preserves_cancellation_and_resource_errors(error):
+    class Unavailable:
+        def fetch_all(self, *args): raise error
+    provider = MagicBoxConfigProvider(replace(settings, magic_box_enabled=True), client=Unavailable())
+    with pytest.raises(type(error)) as caught:
+        provider.get()
+    assert caught.value is error
 
 
 def test_upload_keeps_composite_task_name_separate_from_filename_and_signed_headers(tmp_path: Path):

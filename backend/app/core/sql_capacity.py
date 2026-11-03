@@ -12,7 +12,7 @@ from time import monotonic
 from typing import TYPE_CHECKING
 
 from app.core.process_lock import FileLock
-from app.core.report_deadline import ensure_time_remaining, remaining_seconds
+from app.core.report_deadline import ReportOperationTimeout, ensure_time_remaining, remaining_seconds
 from app.core.request_cancellation import SqlRequestCancelled, current_request_id, sql_request_cancellations
 
 if TYPE_CHECKING:
@@ -227,6 +227,13 @@ class SqlCapacity:
                 logger.info('sql finished source=%s line=%s execution_ms=%d', source, identity.line_id or '-', round((monotonic()-entered)*1000))
                 with self._lock:
                     for stat in stats: stat['executing'] -= 1
+        except ReportOperationTimeout:
+            if waiting:
+                with self._lock:
+                    for stat in stats: stat['timeouts'] += 1
+                logger.warning('sql rejected source=%s line=%s reason=operation_timeout wait_ms=%d', source,
+                               identity.line_id or '-', round((monotonic()-started)*1000))
+            raise
         except SqlCapacityError as exc:
             logger.warning('sql rejected source=%s line=%s reason=%s wait_ms=%d', source,
                            identity.line_id or '-', exc.reason, round((monotonic()-started)*1000))

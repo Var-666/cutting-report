@@ -20,6 +20,7 @@ from app.database.alarm_source import SqlServerAlarmSource
 from app.database.alarms import AlarmRepository
 from app.database.device_migrations import migrate_device_isolation
 from app.core.process_lock import FileLock
+from app.core.sql_capacity import sql_identity
 
 
 def main() -> int:
@@ -41,7 +42,8 @@ def main() -> int:
         if settings.metadata_db_path.exists()
         else {"last_alarm_id": 0, "last_success_at": None}
     )
-    latest = source.latest_id()
+    with sql_identity(line.id):
+        latest = source.latest_id()
     print(
         f"设备 {cfg.device_id}；统计起点 {cfg.alarm_monitor_start_at}；"
         f"当前游标 {current['last_alarm_id']}；数据库最新编号 {latest}"

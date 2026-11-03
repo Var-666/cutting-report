@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.core.sql_capacity import sql_identity, SqlCapacityError
+from app.core.request_cancellation import SqlRequestCancelled
 
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -150,7 +151,7 @@ class MagicBoxConfigProvider:
                 )
             except SqlServerConfigurationError as exc:
                 raise MagicBoxConfigurationError(str(exc)) from None
-            except SqlCapacityError:
+            except (SqlCapacityError, SqlRequestCancelled, ReportOperationTimeout):
                 raise
             except Exception:
                 raise MagicBoxConfigurationError(

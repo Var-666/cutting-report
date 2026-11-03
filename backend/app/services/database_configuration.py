@@ -5,6 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, SecretStr, field_validator
 
+from app.core.report_deadline import ReportOperationTimeout
 from app.core.sql_capacity import SqlCapacity, SqlCapacityError
 from app.config import Settings
 from app.models.database_sources import DatabaseSourceConfig
@@ -117,7 +118,7 @@ def test_source_connection(config: DatabaseSourceConfig, *, capacity: SqlCapacit
                 rows = session.fetch('SELECT 1 AS connected', limit=1)
         if not rows or rows[0].get('connected') != 1:
             raise SourceConnectionError('数据库未返回预期结果')
-    except (SqlRequestCancelled, SqlCapacityError):
+    except (SqlRequestCancelled, SqlCapacityError, ReportOperationTimeout):
         raise
     except MySqlUnavailable as exc:
         raise SourceConnectionError(str(exc)) from None

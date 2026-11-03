@@ -5,6 +5,7 @@ from collections import OrderedDict
 from time import monotonic
 import threading
 
+from app.core.report_deadline import ReportOperationTimeout
 from app.core.sql_capacity import sql_identity, SqlCapacityError
 from app.config import Settings
 from app.database.sqlserver import SqlServerClient
@@ -110,7 +111,7 @@ class WorkerAuthService:
                 self.SQL,
                 (password, normalized_company_no),
             )
-        except (SqlRequestCancelled, SqlCapacityError):
+        except (SqlRequestCancelled, SqlCapacityError, ReportOperationTimeout):
             raise
         except Exception as exc:
             raise WorkerAuthenticationUnavailableError(
@@ -182,7 +183,7 @@ class WorkerAuthService:
                 self.DIRECTORY_SEARCH_SQL,
                 (self.settings.worker_database_available_value, pattern, pattern),
             )
-        except (SqlRequestCancelled, SqlCapacityError):
+        except (SqlRequestCancelled, SqlCapacityError, ReportOperationTimeout):
             raise
         except Exception as exc:
             raise WorkerAuthenticationUnavailableError(
@@ -194,7 +195,7 @@ class WorkerAuthService:
         self._ensure_enabled()
         try:
             rows = self._fetch_all(self.PERSON_SQL, (external_id.strip(),))
-        except (SqlRequestCancelled, SqlCapacityError):
+        except (SqlRequestCancelled, SqlCapacityError, ReportOperationTimeout):
             raise
         except Exception as exc:
             raise WorkerAuthenticationUnavailableError(

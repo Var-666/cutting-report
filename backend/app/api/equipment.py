@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from app.core.report_deadline import ReportOperationTimeout
 from app.core.sql_capacity import SqlCapacityError
 from app.api.workloads import query_requests
 from app.api.devices import device_state, device_settings
@@ -65,7 +66,7 @@ def get_equipment_report(
         )
         energy = device_state(request).energy_service.enrich(equipment_data.records, force=refresh)
         records = energy.records
-    except (SqlRequestCancelled, SqlCapacityError):
+    except (SqlRequestCancelled, SqlCapacityError, ReportOperationTimeout):
         raise
     except SqlServerConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc

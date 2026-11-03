@@ -198,7 +198,7 @@ async def download_report(
     job, path = await run_in_threadpool(_resolve_report_file, request, report_id)
     if format == "pdf":
         try:
-            path = await pdf_requests.run_sync(application_state(request).pdf_service.render, path)
+            path = await pdf_requests.run_sync(application_state(request).pdf_service.render, path, _request=request)
         except PdfRenderError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         filename = Path(job["filename"]).with_suffix(".pdf").name
