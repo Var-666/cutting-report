@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.api.workloads import query_requests
 from app.api.runtime import runtime_state
 from app.api.auth import require_admin
 from app.services.file_download_service import DownloadError
@@ -29,7 +30,7 @@ def _call(operation):
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from None
 
 
-@router.post("", status_code=201)
+@query_requests.route(router.post("", status_code=201))
 def download_file(payload: DownloadRequest, request: Request, response: Response, user: dict = Depends(require_admin)):
     response.headers["Cache-Control"] = "no-store"
     item = _call(lambda: runtime_state(request).file_downloads.download(**payload.model_dump(), user=user))

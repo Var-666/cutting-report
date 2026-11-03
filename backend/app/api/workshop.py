@@ -65,7 +65,7 @@ def latest_production_date(request: Request, on_or_before: date, user: dict=Depe
     return _envelope(request, _invoke(_service(request).latest_production_date, on_or_before=on_or_before, user=user))
 
 
-@query_requests.route(router.get('/my-confirmed-tasks', response_model=ApiEnvelope[MyConfirmedTasks]))
+@query_requests.route(router.get('/my-confirmed-tasks', response_model=ApiEnvelope[MyConfirmedTasks]), local_when=lambda request: True)
 def my_confirmed_tasks(request: Request, start_date: date, end_date: date,
                        page: int=Query(default=1, ge=1), page_size: int=Query(default=10, ge=1, le=50),
                        user: dict=Depends(require_worker)) -> dict:
@@ -76,7 +76,8 @@ def my_confirmed_tasks(request: Request, start_date: date, end_date: date,
 def generate_daily_report(payload: ConfirmTaskRequest, request: Request, user: dict=Depends(require_user)) -> dict:
     return _envelope(request, _invoke(_service(request).generate_daily_report, payload=payload, user=user))
 
-@query_requests.route(router.get('/tasks', response_model=ApiEnvelope[WorkshopResult], response_model_exclude_unset=True))
+@query_requests.route(router.get('/tasks', response_model=ApiEnvelope[WorkshopResult], response_model_exclude_unset=True),
+    local_when=lambda request: request.query_params.get('warmup') != 'true')
 def list_tasks(request: Request, report_date: date, project_name: str | None=Query(default=None, max_length=128), confirmation_status: Literal['all', 'confirmed', 'unconfirmed']='all', sort_mode: Literal['manager', 'worker']='manager', page: int=Query(default=1, ge=1), page_size: int=Query(default=10, ge=10, le=100), warmup: bool=False, user: dict=Depends(require_user)) -> dict:
     return _envelope(request, _invoke(_service(request).list_tasks, report_date=report_date, project_name=project_name, confirmation_status=confirmation_status, sort_mode=sort_mode, page=page, page_size=page_size, warmup=warmup, user=user))
 

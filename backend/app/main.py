@@ -39,6 +39,7 @@ from app.api.runtime import application_state, runtime_state
 from app.api.welding import router as welding_router
 from app.api.production_lines import router as production_lines_router
 from app.services.application_runtime import build_runtime
+from app.core.sql_capacity import SqlCapacityError, sql_identity
 from app.core.process_lock import FileLock
 from app.services.worker_status import background_ready
 from app.core.request_cancellation import (
@@ -102,7 +103,6 @@ async def request_id_middleware(request: Request, call_next):
     # A client scope can restrict capabilities, but never grants access or replaces role checks.
     line_id = request.headers.get('X-Production-Line')
     if line_id:
-        from app.api.runtime import runtime_state
         context = await run_in_threadpool(runtime_state, request)
     if line_id and not supports_path(context, line_id, request.url.path, request.method):
         return JSONResponse(status_code=403, content={'success': False, 'error': {'code': 'LINE_CAPABILITY_DENIED', 'message': '当前产线不支持此功能'}})
@@ -119,12 +119,35 @@ async def request_id_middleware(request: Request, call_next):
     request.state.execution_id = execution_id
     token = bind_request_id(execution_id)
     try:
-        response = await call_next(request)
+        selected = line_id or request.query_params.get('device_id')
+        sql_line = None
+        source_key = None
+        if selected and request.url.path.startswith(('/api/v1/workshop', '/api/v1/leadership-report',
+                '/api/v1/equipment-report', '/api/v1/energy-report', '/api/v1/analysis', '/api/v1/welding',
+                '/api/v1/options', '/api/v1/projects', '/api/v1/ships', '/api/v1/reports', '/api/v1/designer',
+                '/api/v1/database/preview', '/api/v1/database/sql/execute')):
+            context = await run_in_threadpool(runtime_state, request)
+            line = context.lines.get(selected)
+            if line is not None:
+                sql_line, source_key = line.config.id, line.config.source_key
+        elif request.url.path.startswith('/api/v1/cutting'):
+            context = await run_in_threadpool(runtime_state, request)
+            source_key = (context.settings.dispatch_source_key if request.url.path.endswith(('/machines', '/status'))
+                          else context.settings.file_source_key)
+        with sql_identity(sql_line, source_key):
+            response = await call_next(request)
         response.headers["X-Request-ID"] = request_id
         return response
     finally:
         reset_request_id(token)
         sql_request_cancellations.finish(execution_id)
+
+
+@app.exception_handler(SqlCapacityError)
+async def sql_capacity_error_handler(request: Request, exc: SqlCapacityError):
+    return JSONResponse(status_code=503, headers={'Retry-After': '1', 'X-SQL-Resource-Error': exc.reason},
+        content={'success': False, 'error': {'code': 'SQL_' + exc.reason.upper(), 'message': str(exc)},
+                 'request_id': getattr(request.state, 'request_id', 'unknown')})
 
 
 @app.exception_handler(SqlRequestCancelled)

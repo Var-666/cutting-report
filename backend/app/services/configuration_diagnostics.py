@@ -164,6 +164,9 @@ class ConfigurationDiagnostics:
         return {"items": items, "loaded_at": self.loaded_at, "hot_loaded_at": max(hot["loaded_at"], database['loaded_at']) if database else hot["loaded_at"],
                 "hot_revision": hot["revision"], "error": hot["error"],
                 "database_error": database['error'] if database else None,
+                "sql_capacity_pending": bool(self.database_runtime and any(item.get('restart_required')
+                    for item in self.database_runtime.current_context.database_sources.capacity.status(
+                        self.database_runtime.current_context.database_sources.configs())['items'])),
                 "version": f"{self.version}:{hot['revision']}:{database['revision'] if database else 0}"}
 
     def target(self) -> tuple[dict, set[str], list[str]]:
@@ -220,8 +223,11 @@ class ConfigurationDiagnostics:
             for role, snapshot in [("web", web), ("worker", other if worker_available else None)]:
                 item = snapshot.get("items", {}).get(key) if snapshot else None
                 matches = item is not None and key in targets and item["digest"] == desired
+                capacity_pending = bool(key == 'DATABASE_SOURCES_JSON' and snapshot and snapshot.get('sql_capacity_pending'))
                 abnormal = key in invalid or bool(errors) or not item or bool(snapshot.get("database_error" if database_hot else "error") and hot)
                 status = "error" if abnormal else "unconfigured" if matches and item["value"] == "未配置" else "effective" if matches else "pending" if not hot else "error"
+                if capacity_pending and not abnormal:
+                    status = 'pending'
                 processes[role] = {"value": item["value"] if item else "未知", "source": source_label(item["source"]) if item else "未知",
                                    "matches_saved": matches, "status": status}
             left = web["items"].get(key)
@@ -233,8 +239,9 @@ class ConfigurationDiagnostics:
                          "processes": processes, "saved_value": safe_value(target_value, key),
                          "saved_source": source_label(target_source), "status": state,
                          "valid": key not in invalid and not errors, "process_mismatch": mismatch,
-                         "restart_required": not hot and any(item["status"] == "pending" for item in processes.values()),
-                         "rule": "保存后新请求和后台操作自动加载；在途操作保留旧配置，无需重启容器" if database_hot else
+                         "restart_required": (not hot or key == 'DATABASE_SOURCES_JSON') and any(item["status"] == "pending" for item in processes.values()),
+                         "rule": "连接参数按新操作热加载；sql_max_concurrent 重启 Web/Worker 生效，实际容量见数据库资源诊断" if key == 'DATABASE_SOURCES_JSON' else
+                         "保存后新请求和后台操作自动加载；在途操作保留旧配置，无需重启容器" if database_hot else
                          "保存后由各进程下一轮自动化/邮件操作加载；在途操作保留旧快照" if hot else
                          ("数据库声明参数，实际连接及继承来源见 connections.*；" if "SQLSERVER_" in key else "")
                          + "重启 Web 和 Worker；Docker 环境变量变更需重新创建两个容器"})

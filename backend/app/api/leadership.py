@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
+from app.core.sql_capacity import SqlCapacityError
 from app.api.workloads import query_requests
 from app.api.devices import device_state, device_settings
 from app.api.auth import require_admin
@@ -66,7 +67,8 @@ def _with_analysis_source_version(data: dict) -> dict:
 router.dependencies.append(Depends(device_state))
 
 
-@query_requests.route(router.get("", response_model=None, responses={200: {"model": ApiEnvelope[LeadershipReport]}}))
+@query_requests.route(router.get("", response_model=None, responses={200: {"model": ApiEnvelope[LeadershipReport]}}),
+    local_when=lambda request: not any(key in request.query_params for key in ('start_date', 'end_date')))
 def get_leadership_report(
     request: Request,
     report_month: str | None = Query(
@@ -114,7 +116,7 @@ def get_leadership_report(
                 bootstrap=service.needs_bootstrap(month_start),
             )
         result = _result_with_refresh_state(request, month_start, result)
-    except SqlRequestCancelled:
+    except (SqlRequestCancelled, SqlCapacityError):
         raise
     except (SqlServerConfigurationError, ValueError) as exc:
         if isinstance(exc, ValueError):
@@ -148,7 +150,7 @@ def refresh_leadership_report(
             )
             result = service.fetch(month_start)
         result = _result_with_refresh_state(request, month_start, result)
-    except SqlRequestCancelled:
+    except (SqlRequestCancelled, SqlCapacityError):
         raise
     except SqlServerConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc

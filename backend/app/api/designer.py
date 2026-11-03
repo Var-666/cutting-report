@@ -128,7 +128,7 @@ def preview_query_task(query_task_id: str, payload: QueryPreviewRequest, request
     if not task:
         raise HTTPException(status_code=404, detail="查询任务不存在")
     try:
-        rows = CustomReportService(device_settings(request)).execute(
+        rows = CustomReportService(device_settings(request), client=device_state(request).query_service.client).execute(
             task,
             report_date=payload.report_date,
             period_type="day",

@@ -133,7 +133,8 @@ class DatabaseRuntime:
 
     def _saved_sources(self, saved: dict) -> DatabaseSourceRegistry:
         cfg = parse_database_settings(self._base, saved)
-        return DatabaseSourceRegistry.from_json(cfg.database_sources_json, bindings=source_bindings(cfg, load_line_catalog(cfg.production_lines_json)))
+        return DatabaseSourceRegistry.from_json(cfg.database_sources_json, bindings=source_bindings(cfg, load_line_catalog(cfg.production_lines_json)),
+                                               capacity=self._context.database_sources.capacity)
 
     def _source_config(self, payload: DatabaseSourceRequest, registry: DatabaseSourceRegistry) -> DatabaseSourceConfig:
         password = payload.password.get_secret_value() if payload.password else ''
@@ -193,7 +194,7 @@ class DatabaseRuntime:
             config = self._source_config(payload, self._saved_sources(read_runtime_env(path)))
         # A disabled source can be tested without enabling or saving it.
         config = config.model_copy(update={'enabled': True})
-        DatabaseSourceRegistry([config])
+        DatabaseSourceRegistry([config], register=False)
         return config
 
     def close(self) -> None:
@@ -277,6 +278,7 @@ class DatabaseRuntime:
 
     def publish(self, context: DatabaseServices, values: dict[str, object]) -> None:
         with runtime_settings_lock:
+            context.database_sources.capacity.register_sources(context.database_sources.configs())
             if context is not self._context:
                 self._automation_runtime.apply(source='data/settings.env', **{
                     name: getattr(context.settings, name) for name in DATABASE_FIELDS

@@ -5,6 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, SecretStr, field_validator
 
+from app.core.sql_capacity import SqlCapacity, SqlCapacityError
 from app.config import Settings
 from app.models.database_sources import DatabaseSourceConfig
 
@@ -97,7 +98,7 @@ class SourceConnectionError(RuntimeError):
     pass
 
 
-def test_source_connection(config: DatabaseSourceConfig) -> dict:
+def test_source_connection(config: DatabaseSourceConfig, *, capacity: SqlCapacity | None = None) -> dict:
     """Probe only SELECT 1; connection success says nothing about business schemas."""
     from time import perf_counter
     from app.database.sqlserver import SqlServerClient
@@ -106,16 +107,17 @@ def test_source_connection(config: DatabaseSourceConfig) -> dict:
 
     started = perf_counter()
     client = None
+    probe = capacity is None or not capacity.knows_source(config.id)
     try:
         if config.engine == 'sqlserver':
-            rows = SqlServerClient(config).fetch_all('SELECT 1 AS connected', ())
+            rows = SqlServerClient(config, capacity=capacity, probe=probe).fetch_all('SELECT 1 AS connected', ())
         else:
-            client = MySqlClient(config.model_copy(update={'pool_size': 1}))
+            client = MySqlClient(config.model_copy(update={'pool_size': 1}), capacity=capacity, probe=probe)
             with client.snapshot() as session:
                 rows = session.fetch('SELECT 1 AS connected', limit=1)
         if not rows or rows[0].get('connected') != 1:
             raise SourceConnectionError('数据库未返回预期结果')
-    except SqlRequestCancelled:
+    except (SqlRequestCancelled, SqlCapacityError):
         raise
     except MySqlUnavailable as exc:
         raise SourceConnectionError(str(exc)) from None

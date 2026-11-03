@@ -32,7 +32,7 @@ function defaults(engine: Draft['engine'] = 'sqlserver'): Draft {
   return { id: '', name: '', engine, enabled: true, host: '', port: engine === 'mysql' ? 3306 : 1433,
     database: '', username: '', password: '', connect_timeout: 5, query_timeout: 120,
     driver: 'ODBC Driver 18 for SQL Server', encrypt: true, trust_server_certificate: true, legacy_tls: false,
-    pool_size: 4, charset: 'utf8mb4', readonly: true, isolation_level: 'REPEATABLE READ' }
+    pool_size: 4, sql_max_concurrent: null, charset: 'utf8mb4', readonly: true, isolation_level: 'REPEATABLE READ' }
 }
 const draft = ref<Draft>(defaults())
 watch(draft, () => { result.value = null }, { deep: true })

@@ -14,7 +14,7 @@ from app.api.auth import require_admin
 from app.api.runtime import application_state, runtime_state
 from app.services.production_lines import resolve_line_service
 from app.services.report_snapshots import SnapshotRefreshBusy, SnapshotRefreshRejected
-from app.api.workloads import RequestWorkload, analysis_requests, pdf_requests
+from app.api.workloads import query_requests, snapshot_requests, analysis_requests, pdf_requests
 from app.config import settings
 from app.models.domain import to_primitive
 from app.models.welding import WeldingAnalysisRequest, WeldingQuery
@@ -34,10 +34,6 @@ logger = logging.getLogger(__name__)
 
 
 router = APIRouter(prefix='/api/v1/welding', tags=['welding'], dependencies=[Depends(require_admin)])
-# Global execution capacity is unchanged; each bound source enforces its own pool limit.
-welding_requests = RequestWorkload(4, '焊接数据查询', max_waiters=12, queue_timeout_seconds=5)
-# SQLite-only reads must not queue behind source exports/drilldowns. Source fallbacks retain the MySQL limit.
-snapshot_requests = RequestWorkload(4, '焊接快照读取', max_waiters=12, queue_timeout_seconds=5)
 
 # Keep parse_query's duplicate/unknown-key checks; describe its existing model without a second parser.
 _query_schema = WeldingQuery.model_json_schema()
@@ -99,7 +95,7 @@ def response(request: Request, data) -> dict:
     return {'success': True, 'data': to_primitive(data), 'request_id': getattr(request.state, 'request_id', '')}
 
 
-@welding_requests.route(router.get('/health', response_model=None, responses={200: {'model': ApiEnvelope[WeldingHealth]}}))
+@query_requests.route(router.get('/health', response_model=None, responses={200: {'model': ApiEnvelope[WeldingHealth]}}))
 def health(request: Request):
     with source_errors():
         return response(request, service(request).health())
@@ -107,7 +103,7 @@ def health(request: Request):
 
 async def _read_page(instance: WeldingService, kind: str, query: WeldingQuery, request: Request, *, force: bool = False):
     snapshots = instance.snapshot_service
-    pool = snapshot_requests if snapshots is not None and snapshots.coordination is not None else welding_requests
+    pool = snapshot_requests if snapshots is not None and snapshots.coordination is not None else query_requests
     if kind == 'dashboard':
         return await pool.run_sync(instance.dashboard, query, **({'force': True} if force else {}), _request=request)
     return await pool.run_sync(instance.page, kind, query, **({'force': True} if force else {}), _request=request)
@@ -155,8 +151,8 @@ async def equipment(request: Request):
     return await _page_response(request, 'equipment')
 
 
-@welding_requests.route(router.get('/parts/{part_id}', response_model=None, responses={200: {'model': ApiEnvelope[WeldingPart]}}))
-@welding_requests.route(router.get('/parts/{part_id}/seams', response_model=None, responses={200: {'model': ApiEnvelope[WeldingPart]}}))
+@query_requests.route(router.get('/parts/{part_id}', response_model=None, responses={200: {'model': ApiEnvelope[WeldingPart]}}))
+@query_requests.route(router.get('/parts/{part_id}/seams', response_model=None, responses={200: {'model': ApiEnvelope[WeldingPart]}}))
 def part(request: Request, part_id: int, page: int = Query(1, ge=1, le=100000), page_size: int = Query(20, ge=1, le=100)):
     with source_errors():
         data = service(request).part(part_id, page, page_size)
@@ -165,7 +161,7 @@ def part(request: Request, part_id: int, page: int = Query(1, ge=1, le=100000), 
     return response(request, data)
 
 
-@welding_requests.route(router.get('/parts/{part_id}/seams/export', response_class=Response, responses={200: {'content': {'text/csv': {'schema': {'type': 'string', 'format': 'binary'}}}}}))
+@query_requests.route(router.get('/parts/{part_id}/seams/export', response_class=Response, responses={200: {'content': {'text/csv': {'schema': {'type': 'string', 'format': 'binary'}}}}}))
 def seam_export(request: Request, part_id: int):
     instance = service(request)
     with source_errors():
@@ -193,7 +189,7 @@ async def export(request: Request, report_type: Literal['daily', 'parts', 'jobs'
     instance = service(request)
     exporter = WeldingExport(instance.settings, instance, application_state(request).pdf_service)
     with source_errors():
-        content, media = await welding_requests.run_sync(exporter.prepare, report_type, query, format, _request=request)
+        content, media = await query_requests.run_sync(exporter.prepare, report_type, query, format, _request=request)
         if format == 'pdf':
             content, media = await pdf_requests.run_sync(exporter.render_pdf, content)
     return Response(content, media_type=media, headers={'Content-Disposition': f'attachment; filename="welding-{report_type}-{query.start}-{query.end}.{format}"'})
@@ -204,7 +200,7 @@ async def analysis(request: Request, payload: WeldingAnalysisRequest):
     instance = service(request)
     with source_errors():
         report = await _read_page(instance, payload.report_type, payload.query, request)
-    return response(request, await analysis_requests.run_sync(_analyze, instance, report, payload))
+    return response(request, await analysis_requests.run_sync(_analyze, instance, report, payload, _request=request))
 
 
 def _analyze(instance, report: dict, payload: WeldingAnalysisRequest):

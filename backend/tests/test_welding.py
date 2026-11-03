@@ -402,7 +402,7 @@ def test_connection_pool_default_matches_execution_capacity_and_remains_readonly
     import mysql.connector.pooling
     from contextvars import ContextVar
     from app import config
-    from app.api.welding import welding_requests
+    from app.api.welding import query_requests
     monkeypatch.setattr(config, '_environment', ContextVar('test-welding-config', default={}))
     captured = {}
     class Connection:
@@ -417,8 +417,8 @@ def test_connection_pool_default_matches_execution_capacity_and_remains_readonly
         return SimpleNamespace(get_connection=Connection)
     monkeypatch.setattr(mysql.connector.pooling, 'MySQLConnectionPool', pool)
     cfg = welding_settings()
-    assert welding_requests._threads.total_tokens == 4
-    assert welding_requests.max_waiters == 12 and welding_requests.queue_timeout_seconds == 5
+    assert query_requests._threads.total_tokens == config.settings.http_query_max_concurrent
+    assert query_requests.max_waiters == config.settings.http_max_waiters and query_requests.queue_timeout_seconds == config.settings.sql_queue_timeout_seconds
     with mysql_client(cfg).snapshot() as session:
         assert session.timeout == 120
     assert captured['pool_size'] == 4 and captured['use_pure']
@@ -539,7 +539,7 @@ def test_pdf_and_ai_release_welding_capacity_before_slow_processing(api, monkeyp
     from app.models.domain import AnalysisResult
     entered, release = Event(), Event()
     # Registered synchronous routes retain the original workload object.
-    pool = welding.welding_requests
+    pool = welding.query_requests
     monkeypatch.setattr(pool, '_slots', BoundedSemaphore(1))
     monkeypatch.setattr(pool, '_threads', anyio.CapacityLimiter(1))
     monkeypatch.setattr(pool, 'max_waiters', 2)
@@ -607,7 +607,7 @@ def test_four_http_queries_execute_and_fifth_waits_for_a_slot(api, monkeypatch, 
     import httpx
     from threading import BoundedSemaphore, Event, Lock
     from app.api import welding
-    pool = welding.welding_requests
+    pool = welding.query_requests
     monkeypatch.setattr(pool, '_slots', BoundedSemaphore(4))
     monkeypatch.setattr(pool, '_threads', anyio.CapacityLimiter(4))
     monkeypatch.setattr(pool, 'max_waiters', 12)

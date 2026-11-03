@@ -14,6 +14,7 @@ from time import monotonic, time
 from zoneinfo import ZoneInfo
 
 from app.config import Settings, settings
+from app.core.sql_capacity import sql_identity
 from app.database.coordination import CoordinationRepository
 from app.database.sqlite import SQLiteDatabase, ExecutionLeaseLost, execution_scope
 from app.services.application_runtime import ApplicationRuntime, build_runtime
@@ -94,7 +95,9 @@ class WorkerProcess:
         status["stalled_workers"] = [*status.get("stalled_workers", []), *stalled]
         status["background_queue"] = self.repository.task_counts()
         status["active_tasks"] = len(running)
-        status["device_ids"] = list(database_context(self.runtime).lines)
+        context = database_context(self.runtime)
+        status["device_ids"] = list(context.lines)
+        status["sql_resources"] = context.database_sources.capacity.status(context.database_sources.configs())
         diagnostics = getattr(self.runtime, "configuration_diagnostics", None)
         if diagnostics is not None:
             try:
@@ -239,32 +242,33 @@ class WorkerProcess:
             completed += 1
 
     def _handle(self, task: dict) -> None:
-        kind, payload = task["kind"], task["payload"]
-        if kind == "retention":
-            if self.runtime.retention_worker.enabled:
-                self.runtime.retention_service.cleanup_expired()
-            self.repository.cleanup_completed()
-            return
-        if kind == "download_cleanup":
-            database_context(self.runtime).file_downloads.cleanup_expired()
-            return
-        if kind == 'report_snapshot_refresh':
-            context = database_context(self.runtime)
-            if task['device_id'] not in context.lines or not context.lines[task['device_id']].config.enabled:
+        with sql_identity(task["device_id"] or None):
+            kind, payload = task["kind"], task["payload"]
+            if kind == "retention":
+                if self.runtime.retention_worker.enabled:
+                    self.runtime.retention_service.cleanup_expired()
+                self.repository.cleanup_completed()
                 return
-            provider = report_provider(context, task['device_id'])
-            # Queued work from an old connection must not populate the new source's snapshots.
-            if payload['source_fingerprint'] == provider.source_identity():
-                provider.refresh_summary(payload['report_type'], payload['query'], requested_at=task['created_at'])
-            return
-        line = database_context(self.runtime).lines.get(task["device_id"])
-        if line is None or not line.config.enabled:
-            return  # Retired instance: keep historical work, never redirect it to another line.
-        if line.background is None:
-            raise ValueError("产线不支持此后台任务")
-        fingerprint = payload.get("source_fingerprint")
-        if fingerprint is None or fingerprint == line.settings.source_fingerprint:
-            line.background.handle_background(kind, payload)
+            if kind == "download_cleanup":
+                database_context(self.runtime).file_downloads.cleanup_expired()
+                return
+            if kind == 'report_snapshot_refresh':
+                context = database_context(self.runtime)
+                if task['device_id'] not in context.lines or not context.lines[task['device_id']].config.enabled:
+                    return
+                provider = report_provider(context, task['device_id'])
+                # Queued work from an old connection must not populate the new source's snapshots.
+                if payload['source_fingerprint'] == provider.source_identity():
+                    provider.refresh_summary(payload['report_type'], payload['query'], requested_at=task['created_at'])
+                return
+            line = database_context(self.runtime).lines.get(task["device_id"])
+            if line is None or not line.config.enabled:
+                return  # Retired instance: keep historical work, never redirect it to another line.
+            if line.background is None:
+                raise ValueError("产线不支持此后台任务")
+            fingerprint = payload.get("source_fingerprint")
+            if fingerprint is None or fingerprint == line.settings.source_fingerprint:
+                line.background.handle_background(kind, payload)
 
     def run(self) -> None:
         self.start()

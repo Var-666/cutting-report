@@ -70,6 +70,7 @@
 - SQLite 业务连接统一经 `SQLiteDatabase`/`SQLiteRepository`；跨仓储原子写入使用 `UnitOfWork` 绑定同一连接并由外层提交。Service 不持有原始连接、不自行提交；单仓储原子校验/写入由仓储完成。编号迁移复用 `database/migrations/`，不在路由或后台任务临时建表。
 - SQL/LLM/SMTP/文件等耗时外部操作不得放进 SQLite 写事务；保留现有任务状态、幂等、未知结果保护和失败补偿。不要用事务回滚假定外部副作用已撤销，详见 [SQLite 事务设计](docs/design/SQLite仓储与事务设计.md)。
 - 两进程通过同机本地 SQLite WAL 和共享文件卷协作；保留 Web OS 锁、Worker 租约/提交围栏、持久化队列及现有共享容量，不依赖跨进程内存对象或为每台设备新增常驻线程。不扩展为多主机或网络共享卷部署。
+- SQL 资源统一通过 `core/sql_capacity.py` 在 SQL Server/MySQL 驱动入口获取全局、数据源、产线配额；同机 Web/Worker 共用固定文件锁槽。等待不得持有部分执行配额，不向 SQLite 写配额状态。容量及单源 `sql_max_concurrent` 为冷配置，连接参数仍按新操作热加载；资源计数为各进程本地观测，不能声称实时全局统计。HTTP 执行池与 SQL、LLM、Chromium 容量分别管理。
 - Worker 调度沿用 `WorkerProcess` 的有界 monotonic 提示状态；SQLite `background_schedules/background_tasks` 仍决定真实到期、去重和重试。产线通过 `BackgroundSchedule` 提交周期/每日计划，耗时准备只在到期时执行；失败或未确认持久化不得推进内存进度。新增/停用/来源/间隔/计划变化随原快照处理，移除失效状态；队列保持每秒领取、5秒心跳，延迟接纳常规5秒及容量释放时检查，保留 `next_attempt` 与原容量。
 
 ### 多产线与复用

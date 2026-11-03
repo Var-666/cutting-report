@@ -11,6 +11,7 @@ from time import perf_counter
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'backend'))
 
+from app.core.sql_capacity import sql_identity
 from app.config import Settings
 from app.device_config import load_line_catalog
 from app.database.mysql import MySqlClient
@@ -63,32 +64,33 @@ def main() -> int:
     cfg = settings_for_line(cfg, line, sources.fingerprint(line.source_key))
     client = sources.client(line.source_key)
     service = WeldingService(cfg, WeldingRepository(client, device_nos=line.device_nos))
-    try:
-        report = inspect_source(client)
-        report['verified_rules'] = {'length_input': 'mm', 'length_output': 'm', 'timezone': cfg.weld_db_timezone,
-                                    'production_date': 'end_time', 'duration': 'used_time', 'completed_state': 'pending'}
-        report['timing'] = []
-        for label, start in [('day', args.end), ('week', args.end - timedelta(days=6)), ('month', args.end.replace(day=1))]:
-            query = WeldingQuery(start=start, end=args.end)
-            for kind in ('daily', 'jobs', 'parts', 'equipment'):
-                durations = []
-                sample = None
-                for _ in range(args.runs):
-                    started = perf_counter()
-                    sample = service.report(kind, query)
-                    durations.append((perf_counter() - started) * 1000)
-                report['timing'].append({'range': label, 'report': kind, 'sample_count': len(durations),
-                    'first_ms': round(durations[0]), 'p50_service_ms': round(statistics.median(durations)),
-                    'p95_service_ms': round(sorted(durations)[max(0, int(len(durations) * .95 + .999) - 1)]),
-                    'total': sample['total'], 'quality': sample['meta']['quality']})
-        report['limitations'] = ['服务调用耗时不是HTTP端到端延迟；低样本P95仅用于初查。',
-                                 '索引只检查不修改；状态、机器人映射、包角关系需业务确认。',
-                                 '不输出账号、授权原文、密码或连接地址；不写源库。']
-        print(json.dumps(report, ensure_ascii=False, indent=2))
-        return 0
-    except WeldingUnavailable as exc:
-        print(str(exc), file=sys.stderr)
-        return 2
+    with sql_identity(line.id, line.source_key):
+        try:
+            report = inspect_source(client)
+            report['verified_rules'] = {'length_input': 'mm', 'length_output': 'm', 'timezone': cfg.weld_db_timezone,
+                                        'production_date': 'end_time', 'duration': 'used_time', 'completed_state': 'pending'}
+            report['timing'] = []
+            for label, start in [('day', args.end), ('week', args.end - timedelta(days=6)), ('month', args.end.replace(day=1))]:
+                query = WeldingQuery(start=start, end=args.end)
+                for kind in ('daily', 'jobs', 'parts', 'equipment'):
+                    durations = []
+                    sample = None
+                    for _ in range(args.runs):
+                        started = perf_counter()
+                        sample = service.report(kind, query)
+                        durations.append((perf_counter() - started) * 1000)
+                    report['timing'].append({'range': label, 'report': kind, 'sample_count': len(durations),
+                        'first_ms': round(durations[0]), 'p50_service_ms': round(statistics.median(durations)),
+                        'p95_service_ms': round(sorted(durations)[max(0, int(len(durations) * .95 + .999) - 1)]),
+                        'total': sample['total'], 'quality': sample['meta']['quality']})
+            report['limitations'] = ['服务调用耗时不是HTTP端到端延迟；低样本P95仅用于初查。',
+                                     '索引只检查不修改；状态、机器人映射、包角关系需业务确认。',
+                                     '不输出账号、授权原文、密码或连接地址；不写源库。']
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+            return 0
+        except WeldingUnavailable as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
 
 
 if __name__ == '__main__':

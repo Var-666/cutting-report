@@ -15,7 +15,9 @@ _deadline: ContextVar[float | None] = ContextVar("report_operation_deadline", de
 
 @contextmanager
 def operation_deadline(timeout_seconds: float) -> Iterator[None]:
-    token = _deadline.set(monotonic() + timeout_seconds)
+    deadline = monotonic() + timeout_seconds
+    previous = _deadline.get()
+    token = _deadline.set(min(previous, deadline) if previous is not None else deadline)
     try:
         yield
     finally:

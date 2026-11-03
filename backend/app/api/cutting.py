@@ -6,6 +6,7 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from app.api.workloads import query_requests
 from app.api.runtime import runtime_state
 from app.api.auth import require_admin
 from app.models.conditions import ConditionSearch
@@ -144,7 +145,7 @@ class DispatchBatchCreateRequest(BaseModel):
         return values
 
 
-@router.get("/status", response_model=ApiEnvelope[CuttingStatus], response_model_exclude_unset=True)
+@query_requests.route(router.get("/status", response_model=ApiEnvelope[CuttingStatus], response_model_exclude_unset=True))
 def cutting_status(
     request: Request,
     scope: str = Query(default="push", pattern=r"^(download|push)$"),
@@ -155,7 +156,7 @@ def cutting_status(
     )
 
 
-@router.get("/machines", response_model=ApiEnvelope[MachineResult], response_model_exclude_unset=True)
+@query_requests.route(router.get("/machines", response_model=ApiEnvelope[MachineResult], response_model_exclude_unset=True))
 def list_machines(request: Request) -> dict:
     try:
         data = runtime_state(request).cutting_dispatch.list_machines()
@@ -164,7 +165,7 @@ def list_machines(request: Request) -> dict:
     return _envelope(request, data)
 
 
-@router.get("/projects", response_model=ApiEnvelope[Items[CuttingProject]], response_model_exclude_unset=True)
+@query_requests.route(router.get("/projects", response_model=ApiEnvelope[Items[CuttingProject]], response_model_exclude_unset=True))
 def list_projects(
     request: Request,
     keyword: str = Query(default="", max_length=128),
@@ -174,7 +175,7 @@ def list_projects(
     return _envelope(request, {"items": items})
 
 
-@router.get("/catalogs", response_model=ApiEnvelope[CatalogResult], response_model_exclude_unset=True)
+@query_requests.route(router.get("/catalogs", response_model=ApiEnvelope[CatalogResult], response_model_exclude_unset=True))
 def list_catalogs(
     request: Request,
     project_id: str = Query(min_length=1, max_length=128),
@@ -183,7 +184,7 @@ def list_catalogs(
     return _envelope(request, data)
 
 
-@router.get("/files", response_model=ApiEnvelope[Page[CuttingFile]], response_model_exclude_unset=True)
+@query_requests.route(router.get("/files", response_model=ApiEnvelope[Page[CuttingFile]], response_model_exclude_unset=True))
 def list_files(
     request: Request,
     project_id: str = Query(min_length=1, max_length=128),
@@ -204,7 +205,7 @@ def list_files(
     return _envelope(request, data)
 
 
-@router.post("/dispatches", status_code=201, response_model=ApiEnvelope[CuttingDispatch], response_model_exclude_unset=True)
+@query_requests.route(router.post("/dispatches", status_code=201, response_model=ApiEnvelope[CuttingDispatch], response_model_exclude_unset=True))
 def create_dispatch(
     payload: DispatchCreateRequest,
     request: Request,
@@ -223,7 +224,7 @@ def create_dispatch(
     return _envelope(request, item)
 
 
-@router.post("/dispatches/batch", status_code=201, response_model=ApiEnvelope[BatchCreationResult], response_model_exclude_unset=True)
+@query_requests.route(router.post("/dispatches/batch", status_code=201, response_model=ApiEnvelope[BatchCreationResult], response_model_exclude_unset=True))
 def create_dispatch_batch(
     payload: DispatchBatchCreateRequest,
     request: Request,
@@ -237,7 +238,7 @@ def create_dispatch_batch(
     return _envelope(request, data)
 
 
-@router.post("/files/search", response_model=ApiEnvelope[Page[CuttingFile]], response_model_exclude_unset=True)
+@query_requests.route(router.post("/files/search", response_model=ApiEnvelope[Page[CuttingFile]], response_model_exclude_unset=True))
 def search_files(payload: ConditionSearch, request: Request):
     try:
         data = runtime_state(request).cutting_dispatch.search_files(payload.filters, page=payload.page, page_size=payload.page_size, sort=payload.sort)
@@ -283,7 +284,7 @@ def get_dispatch(dispatch_id: str, request: Request) -> dict:
     return _envelope(request, item)
 
 
-@router.post("/dispatches/{dispatch_id}/execute", response_model=ApiEnvelope[CuttingDispatch], response_model_exclude_unset=True)
+@query_requests.route(router.post("/dispatches/{dispatch_id}/execute", response_model=ApiEnvelope[CuttingDispatch], response_model_exclude_unset=True))
 def execute_dispatch(
     dispatch_id: str,
     request: Request,

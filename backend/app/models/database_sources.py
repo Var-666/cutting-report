@@ -22,6 +22,7 @@ class DatabaseSourceFields(BaseModel):
     trust_server_certificate: bool = True
     legacy_tls: bool = False
     pool_size: int = Field(default=4, ge=1, le=4)
+    sql_max_concurrent: int | None = Field(default=None, ge=1, le=64)
     charset: str = Field(default='utf8mb4', pattern=r'^[a-zA-Z0-9_]{1,32}$')
     readonly: Literal[True] = True
     isolation_level: Literal['REPEATABLE READ'] = 'REPEATABLE READ'

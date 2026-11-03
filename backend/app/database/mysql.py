@@ -5,7 +5,7 @@ import logging
 import hashlib
 from math import ceil
 from contextlib import contextmanager
-from threading import RLock
+from threading import RLock, BoundedSemaphore
 from time import monotonic
 from typing import Any, Iterator
 from uuid import uuid4
@@ -13,6 +13,7 @@ from uuid import uuid4
 from app.models.database_sources import DatabaseSourceConfig
 from app.core.report_deadline import remaining_seconds
 from app.core.request_cancellation import SqlRequestCancelled, current_request_id, sql_request_cancellations
+from app.core.sql_capacity import SqlCapacity, default_sql_capacity
 
 logger = logging.getLogger(__name__)
 
@@ -63,12 +64,15 @@ class MySqlSession:
 class MySqlClient:
     session_type = MySqlSession
 
-    def __init__(self, config: DatabaseSourceConfig | None, *, label: str = 'MySQL') -> None:
+    def __init__(self, config: DatabaseSourceConfig | None, *, label: str = 'MySQL', capacity: SqlCapacity | None = None, probe: bool = False) -> None:
         if config is not None and config.engine != 'mysql':
             raise ValueError('数据源不是 MySQL')
         self.config = config
         self.query_timeout = config.query_timeout if config else 120
         self.label = label
+        self.capacity = capacity or default_sql_capacity()
+        self._probe = probe
+        self._pool_slots = BoundedSemaphore(config.pool_size if config else 1)
         self._pool = None
         self._lock = RLock()
         self._active: dict[int, int] = {}
@@ -134,6 +138,16 @@ class MySqlClient:
 
     @contextmanager
     def snapshot(self) -> Iterator[MySqlSession]:
+        if self.config is None:
+            raise MySqlUnavailable(f'{self.label}连接配置无效，请检查后端配置')
+        if not self.config.enabled:
+            raise MySqlUnavailable(f'{self.label}数据源尚未启用')
+        with self.capacity.slot(self.config, pool=self._pool_slots, probe=self._probe):
+            with self._snapshot() as session:
+                yield session
+
+    @contextmanager
+    def _snapshot(self) -> Iterator[MySqlSession]:
         connection = None
         pool = None
         discard_pool = False

@@ -39,6 +39,7 @@ from app.workers.download_cleanup_worker import DownloadCleanupWorker
 
 from app.database.coordination import CoordinationRepository, backup_before_process_upgrade
 from app.core.process_lock import FileLock
+from app.core.sql_capacity import SqlCapacity
 from app.services.worker_status import WorkerStatusReader
 from app.services.database_runtime import DatabaseRuntime, DatabaseServices, source_bindings, validate_sources
 from app.database.welding import WeldingRepository
@@ -97,7 +98,7 @@ def build_runtime(settings: Settings, *, role: Literal["web", "worker"]) -> Appl
 
 def _build_runtime(settings: Settings, *, role: Literal["web", "worker"]) -> ApplicationRuntime:
     catalog = load_line_catalog(settings.production_lines_json)
-    database_sources = DatabaseSourceRegistry.from_json(settings.database_sources_json, bindings=source_bindings(settings, catalog))
+    database_sources = DatabaseSourceRegistry.from_json(settings.database_sources_json, bindings=source_bindings(settings, catalog), capacity=SqlCapacity(settings))
     validate_sources(settings, catalog, database_sources)
     database = SQLiteDatabase(settings.metadata_db_path)
     backup_before_process_upgrade(database)
@@ -155,7 +156,7 @@ def _build_runtime(settings: Settings, *, role: Literal["web", "worker"]) -> App
         ship_names = build_ship_names(configuration, sources)
         for line in catalog.lines:
             old = previous.lines.get(line.id) if previous else None
-            unchanged = old and old.config == line and sources.get(line.source_key) == previous.database_sources.get(line.source_key)
+            unchanged = old and old.config == line and sources.fingerprint(line.source_key) == previous.database_sources.fingerprint(line.source_key)
             builder, global_fields, dependencies = builders[line.type]
             unchanged = unchanged and all(getattr(previous.settings, key) == getattr(configuration, key) for key in global_fields)
             unchanged = unchanged and ([x for x in sources.configs() if x.id in dependencies] == [x for x in previous.database_sources.configs() if x.id in dependencies])

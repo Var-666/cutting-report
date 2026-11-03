@@ -5,6 +5,7 @@ from datetime import date, datetime, time, timedelta
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
+from app.core.sql_capacity import sql_identity
 from app.config import Settings
 from app.database.automation import AutomationRepository
 from app.database.metadata import MetadataRepository
@@ -201,9 +202,10 @@ class AutomationService:
         cfg = device.settings
         query = device.query_service
         workshop = device.workshop
-        bundle = query.fetch_workshop_data(
-            ReportFilter(report_date=date.fromisoformat(report_date))
-        )
+        with sql_identity(device.settings.device_id):
+            bundle = query.fetch_workshop_data(
+                ReportFilter(report_date=date.fromisoformat(report_date))
+            )
         user = {
             "user_id": run["created_by_id"],
             "display_name": run["created_by_name"],

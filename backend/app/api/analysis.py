@@ -8,6 +8,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from app.core.sql_capacity import SqlCapacityError
 from app.api.workloads import analysis_requests
 from app.api.devices import device_state
 from app.api.auth import require_admin
@@ -343,7 +344,7 @@ def _analyze_report(payload: AnalysisRequest, request: Request) -> dict:
                 force=payload.force,
                 publish_latest=_is_default_view(payload),
             )
-    except (HTTPException, SqlRequestCancelled, ReportOperationTimeout):
+    except (HTTPException, SqlRequestCancelled, SqlCapacityError, ReportOperationTimeout):
         raise
     except AnalysisDataVersionMismatch as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

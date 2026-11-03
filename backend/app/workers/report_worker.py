@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 from contextlib import nullcontext
 from collections.abc import Callable
 
+from app.core.sql_capacity import sql_identity
 from app.config import Settings
 from app.database.metadata import MetadataRepository
 from app.services.pipeline import ReportPipeline, ReportPipelineCancelled
@@ -161,12 +162,13 @@ class ReportWorker:
             pipeline = self.pipeline if pipelines is None else pipelines[job["device_id"]]
             run = pipeline.run
             parameters = inspect.signature(run).parameters
-            if "cancellation_check" in parameters:
-                run(job, cancellation_check=self.stop_event.is_set)
-            else:
-                # Keep small test doubles and older integrations compatible while
-                # the concrete pipeline receives cooperative shutdown checkpoints.
-                run(job)
+            with sql_identity(job["device_id"]):
+                if "cancellation_check" in parameters:
+                    run(job, cancellation_check=self.stop_event.is_set)
+                else:
+                    # Keep small test doubles and older integrations compatible while
+                    # the concrete pipeline receives cooperative shutdown checkpoints.
+                    run(job)
         except ReportPipelineCancelled:
             if self.stop_event.is_set():
                 logger.info("report generation cancelled during worker shutdown", extra={"report_id": report_id})

@@ -1192,6 +1192,21 @@ export type ApiEnvelopeResolved = {
 };
 
 /**
+ * ApiEnvelope[ResourceReport]
+ */
+export type ApiEnvelopeResourceReport = {
+    /**
+     * Success
+     */
+    success: true;
+    data: ResourceReport;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
  * ApiEnvelope[ScheduledRun]
  */
 export type ApiEnvelopeScheduledRun = {
@@ -2732,6 +2747,10 @@ export type DatabaseSourceRequest = {
      */
     pool_size?: number;
     /**
+     * Sql Max Concurrent
+     */
+    sql_max_concurrent?: number | null;
+    /**
      * Charset
      */
     charset?: string;
@@ -2855,6 +2874,10 @@ export type DatabaseSourceView = {
      * Pool Size
      */
     pool_size?: number;
+    /**
+     * Sql Max Concurrent
+     */
+    sql_max_concurrent?: number | null;
     /**
      * Charset
      */
@@ -4977,6 +5000,68 @@ export type Resolved = {
 };
 
 /**
+ * ResourceReport
+ */
+export type ResourceReport = {
+    web: SqlResourceUsage;
+    /**
+     * Http
+     */
+    http: Array<ResourceUsage>;
+    worker: SqlResourceUsage | null;
+    /**
+     * Worker State
+     */
+    worker_state: string;
+};
+
+/**
+ * ResourceUsage
+ */
+export type ResourceUsage = {
+    /**
+     * Resource Type
+     */
+    resource_type: 'global' | 'source' | 'line' | 'http';
+    /**
+     * Resource
+     */
+    resource: string;
+    /**
+     * Executing
+     */
+    executing: number;
+    /**
+     * Execution Capacity
+     */
+    execution_capacity: number;
+    /**
+     * Waiting
+     */
+    waiting: number;
+    /**
+     * Waiting Capacity
+     */
+    waiting_capacity: number;
+    /**
+     * Timeouts
+     */
+    timeouts: number;
+    /**
+     * Rejected
+     */
+    rejected: number;
+    /**
+     * Configured Capacity
+     */
+    configured_capacity?: number | null;
+    /**
+     * Restart Required
+     */
+    restart_required?: boolean;
+};
+
+/**
  * RevokeTaskRequest
  */
 export type RevokeTaskRequest = {
@@ -5294,6 +5379,24 @@ export type SqlExecuteRequest = {
      * Max Rows
      */
     max_rows?: number;
+};
+
+/**
+ * SqlResourceUsage
+ */
+export type SqlResourceUsage = {
+    /**
+     * Scope
+     */
+    scope: 'process';
+    /**
+     * Coordination
+     */
+    coordination: 'shared_local_directory';
+    /**
+     * Items
+     */
+    items: Array<ResourceUsage>;
 };
 
 /**
@@ -7322,6 +7425,10 @@ export type DatabaseSourceRequestWritable = {
      */
     pool_size?: number;
     /**
+     * Sql Max Concurrent
+     */
+    sql_max_concurrent?: number | null;
+    /**
      * Charset
      */
     charset?: string;
@@ -8481,6 +8588,31 @@ export type ViewAlarmReportApiV1AlarmsReportsReportIdViewGetResponses = {
      */
     200: unknown;
 };
+
+export type ResourceStatusApiV1DatabaseResourcesGetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/database/resources';
+};
+
+export type ResourceStatusApiV1DatabaseResourcesGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ResourceStatusApiV1DatabaseResourcesGetError = ResourceStatusApiV1DatabaseResourcesGetErrors[keyof ResourceStatusApiV1DatabaseResourcesGetErrors];
+
+export type ResourceStatusApiV1DatabaseResourcesGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeResourceReport;
+};
+
+export type ResourceStatusApiV1DatabaseResourcesGetResponse = ResourceStatusApiV1DatabaseResourcesGetResponses[keyof ResourceStatusApiV1DatabaseResourcesGetResponses];
 
 export type GetDatabaseConfigurationApiV1DatabaseConfigurationGetData = {
     body?: never;

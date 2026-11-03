@@ -14,6 +14,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field, SecretStr, field_validator
 
+from app.core.sql_capacity import SqlCapacityError
 from app.api.workloads import query_requests
 from app.api.devices import device_state
 from app.api.runtime import application_state, runtime_state
@@ -31,6 +32,7 @@ from app.models.database_sources import DatabaseSourceConfig, DatabaseSourceRequ
 from app.database.source_registry import SourceNotFound, SourceConflict
 from app.services.database_configuration import test_source_connection, SourceConnectionError
 from app.models.configuration_contracts import DatabaseConfiguration, ConfigurationSaved, DatabaseStatus, ConnectionTestResult, DatabasePreview, ValidatedWorkbenchSql, WorkbenchQueryResult
+from app.models.resource_contracts import ResourceReport
 from app.core.request_cancellation import SqlRequestCancelled, cancellable_cursor
 from app.services.sql_workbench_service import (
     SqlWorkbenchService,
@@ -44,6 +46,18 @@ router = APIRouter(
     tags=["database"],
     dependencies=[Depends(require_admin)],
 )
+
+
+@router.get('/resources', response_model=ApiEnvelope[ResourceReport])
+def resource_status(request: Request) -> dict:
+    from app.api.workloads import analysis_requests, authentication_requests, pdf_requests, snapshot_requests
+    context = runtime_state(request)
+    worker = application_state(request).worker_status_reader.status()
+    return {'success': True, 'data': {
+        'web': context.database_sources.capacity.status(context.database_sources.configs()),
+        'http': [pool.status() for pool in (query_requests, snapshot_requests, analysis_requests, pdf_requests, authentication_requests)],
+        'worker': worker.get('sql_resources'), 'worker_state': worker.get('state', 'unknown')},
+        'request_id': request.state.request_id}
 
 
 class ConnectionTestRequest(BaseModel):
@@ -186,7 +200,7 @@ def test_welding_connection(payload: WeldingConnectionRequest, request: Request)
         candidate = DatabaseSourceRequest.model_validate({**old.model_dump(exclude={"password"}),
             **payload.model_dump(exclude={"enabled", "timezone"}), "enabled": True})
         config = application_state(request).database_runtime.source_for_test(candidate)
-        result = test_source_connection(config)
+        result = test_source_connection(config, capacity=context.database_sources.capacity)
     except ValueError:
         raise HTTPException(status_code=422, detail="焊接连接参数或产线上下文无效") from None
     except SourceConnectionError as exc:
@@ -268,7 +282,7 @@ def execute_sql(
         result = service.execute(payload.sql, payload.max_rows)
     except SqlWorkbenchValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except SqlRequestCancelled:
+    except (SqlRequestCancelled, SqlCapacityError):
         raise
     except SqlServerConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -301,14 +315,14 @@ def test_connection(payload: ConnectionTestRequest, request: Request) -> dict:
         **payload.model_dump())
     started = perf_counter()
     try:
-        client = SqlServerClient(temporary_config)
+        client = SqlServerClient(temporary_config, capacity=runtime_state(request).database_sources.capacity, probe=True)
         with client.connect() as connection:
             with cancellable_cursor(connection) as cursor:
                 cursor.execute("SELECT 1 AS connection_ok")
                 row = cursor.fetchone()
         if row is None or int(row[0]) != 1:
             raise RuntimeError("数据库未返回预期结果")
-    except SqlRequestCancelled:
+    except (SqlRequestCancelled, SqlCapacityError):
         raise
     except SqlServerConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -346,7 +360,7 @@ def preview_dataset(payload: DatabasePreviewRequest, request: Request) -> dict:
             records = query_service.fetch_workshop_data(filters).workshop_records
         else:
             records = query_service.fetch_equipment_data(filters).records
-    except SqlRequestCancelled:
+    except (SqlRequestCancelled, SqlCapacityError):
         raise
     except SqlServerConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -379,7 +393,7 @@ def _source_result(request: Request, action) -> dict:
         raise HTTPException(status_code=500, detail='数据源保存失败，请检查 data 目录写入权限') from None
     except SourceConnectionError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from None
-    except SqlRequestCancelled:
+    except (SqlRequestCancelled, SqlCapacityError):
         raise
     except ValueError:
         raise HTTPException(status_code=422, detail='数据源配置无效，请核对 ID、连接参数及密码') from None
@@ -438,4 +452,5 @@ def delete_database_source(source_id: str, request: Request):
 @query_requests.route(router.post('/sources/test-connection', response_model=ApiEnvelope[ConnectionTestResult]))
 def test_database_source(payload: DatabaseSourceRequest, request: Request):
     return _source_result(request, lambda: test_source_connection(
-        application_state(request).database_runtime.source_for_test(payload)))
+        application_state(request).database_runtime.source_for_test(payload),
+        capacity=runtime_state(request).database_sources.capacity))

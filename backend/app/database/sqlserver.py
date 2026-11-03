@@ -7,6 +7,7 @@ from typing import Any, Iterator
 from app.models.database_sources import DatabaseSourceConfig
 from app.core.request_cancellation import cancellable_cursor
 from app.core.report_deadline import ensure_time_remaining, remaining_seconds
+from app.core.sql_capacity import SqlCapacity, default_sql_capacity
 
 
 class SqlServerConfigurationError(RuntimeError):
@@ -14,11 +15,13 @@ class SqlServerConfigurationError(RuntimeError):
 
 
 class SqlServerClient:
-    def __init__(self, config: DatabaseSourceConfig) -> None:
+    def __init__(self, config: DatabaseSourceConfig, *, capacity: SqlCapacity | None = None, probe: bool = False) -> None:
         if config.engine != 'sqlserver':
             raise ValueError('数据源不是 SQL Server')
         self.settings = config
         self.source = config.id
+        self.capacity = capacity or default_sql_capacity()
+        self._probe = probe
 
     def connection_config(self) -> dict:
         if not self.settings.enabled:
@@ -73,22 +76,25 @@ class SqlServerClient:
                 "未安装 pyodbc，请用 uv 为应用环境同步 sqlserver 可选依赖"
             ) from exc
         options = {'readonly': True}
-        connection = pyodbc.connect(self._connection_string(), **options)
-        try:
-            query_timeout = self.connection_config()["query_timeout"]
-            remaining = remaining_seconds()
-            if remaining is not None:
-                query_timeout = max(1, min(query_timeout, ceil(remaining)))
-            connection.timeout = int(query_timeout)
-            yield connection
-        finally:
-            connection.close()
+        self.connection_config()
+        with self.capacity.slot(self.settings, probe=self._probe):
+            connection = pyodbc.connect(self._connection_string(), **options)
+            try:
+                query_timeout = self.connection_config()["query_timeout"]
+                remaining = remaining_seconds()
+                if remaining is not None:
+                    query_timeout = max(1, min(query_timeout, ceil(remaining)))
+                connection.timeout = int(query_timeout)
+                yield connection
+            finally:
+                connection.close()
 
     def fetch_all(self, sql: str, parameters: tuple[Any, ...]) -> list[dict[str, Any]]:
         if self.settings.legacy_tls:
             from app.database.sqlserver_legacy import fetch_all
             self.connection_config()  # Reject disabled sources before starting a child.
-            return fetch_all(self.settings, sql, parameters)
+            with self.capacity.slot(self.settings, probe=self._probe):
+                return fetch_all(self.settings, sql, parameters)
         with self.connect() as connection:
             with cancellable_cursor(connection) as cursor:
                 cursor.execute(sql, parameters)

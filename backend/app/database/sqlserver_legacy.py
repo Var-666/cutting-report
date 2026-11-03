@@ -14,6 +14,7 @@ from app.core.request_cancellation import (
     SqlRequestCancelled, current_request_id, sql_request_cancellations,
 )
 from app.models.database_sources import DatabaseSourceConfig
+from app.core.sql_capacity import inherited_sql_permit, sql_permit_fds
 
 
 def fetch_all(config: DatabaseSourceConfig, sql: str, parameters: tuple[Any, ...]) -> list[dict[str, Any]]:
@@ -27,7 +28,8 @@ def fetch_all(config: DatabaseSourceConfig, sql: str, parameters: tuple[Any, ...
     timeout = config.connect_timeout + config.query_timeout + 1
     started = monotonic()
     process = subprocess.Popen([sys.executable, '-m', 'app.database.sqlserver_legacy'],
-        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env)
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env,
+        **({'pass_fds': sql_permit_fds()} if os.name == 'posix' else {}))
     # Popen.kill also implements the cancellation registry's cursor.cancel contract.
     class PendingQuery:
         def cancel(self) -> None:
@@ -76,7 +78,7 @@ def main() -> None:
     from app.database.sqlserver import SqlServerClient
     try:
         config, sql, parameters = pickle.load(sys.stdin.buffer)
-        with operation_deadline(config.connect_timeout + config.query_timeout):
+        with inherited_sql_permit(), operation_deadline(config.connect_timeout + config.query_timeout):
             result = SqlServerClient(config).fetch_all(sql, parameters)
         response = (True, result)
     except Exception as exc:

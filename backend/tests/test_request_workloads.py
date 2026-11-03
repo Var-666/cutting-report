@@ -21,6 +21,7 @@ def test_busy_analysis_pdf_and_queries_leave_default_threads_and_fast_routes_fre
     entered = {name: Event() for name in ("analysis", "pdf", "query")}
     for pool in (workloads.analysis_requests, workloads.pdf_requests, workloads.query_requests):
         monkeypatch.setattr(pool, "_slots", BoundedSemaphore(1))
+        monkeypatch.setattr(pool, 'max_waiters', 0)
 
     def block(name, result):
         entered[name].set()
@@ -118,6 +119,7 @@ def test_isolation_preserves_context_and_exceptions_and_releases_slots(error, ma
 def test_slow_hr_dependency_does_not_borrow_default_thread_tokens(monkeypatch):
     entered, release = Event(), Event()
     monkeypatch.setattr(workloads.authentication_requests, "_slots", BoundedSemaphore(1))
+    monkeypatch.setattr(workloads.authentication_requests, 'max_waiters', 0)
     user = {"user_id": "hr-user", "role": "admin", "auth_source": "hr_database", "external_id": "123"}
 
     def revalidate(*_, **__):

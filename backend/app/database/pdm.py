@@ -4,6 +4,7 @@ from typing import Any, Callable, Protocol
 from threading import Lock
 from time import monotonic
 
+from app.core.sql_capacity import sql_identity
 from app.config import Settings
 from app.database.sqlserver import SqlServerClient
 from app.models.conditions import ConditionError, ConditionGroup, prepare
@@ -111,6 +112,10 @@ class SqlServerPdmRepository:
     """
     FILE_FROM = DOCUMENT_FROM + PROJECT_JOIN + VERSION_JOIN + PHYSICAL_APPLY
 
+    def _fetch_all(self, sql, parameters):
+        with sql_identity(None):
+            return self.client.fetch_all(sql, parameters)
+
     def __init__(self, settings: Settings, *, client: SqlServerClient) -> None:
         self.settings = settings
         self.client = client
@@ -170,7 +175,7 @@ class SqlServerPdmRepository:
                 cached = self._count_cache.get(key)
                 if not refresh and cached and cached[0] > now:
                     return cached[1]
-            row = self.client.fetch_all(
+            row = self._fetch_all(
                 f"SELECT COUNT(*) AS total {source} WHERE {where_sql}", parameters
             )[0]
             total = int(row["total"] or 0)
@@ -190,7 +195,7 @@ class SqlServerPdmRepository:
         parameters = (pattern, pattern, limit) if cleaned else (limit,)
         return self._cached_directory_rows(
             ("projects", cleaned, limit),
-            lambda: self.client.fetch_all(
+            lambda: self._fetch_all(
                 f"""
                 SELECT ID AS project_id,
                        ShipNo AS ship_no,
@@ -209,7 +214,7 @@ class SqlServerPdmRepository:
     def list_catalogs(self, project_id: str) -> list[dict[str, Any]]:
         return self._cached_directory_rows(
             ("catalogs", str(project_id)),
-            lambda: self.client.fetch_all(
+            lambda: self._fetch_all(
                 """
                 SELECT ID AS catalog_id,
                        ProjectInfoID AS project_id,
@@ -279,7 +284,7 @@ class SqlServerPdmRepository:
             keyword=keyword,
         )
         offset = (page - 1) * page_size
-        rows = self.client.fetch_all(
+        rows = self._fetch_all(
             f"""
             WITH page_documents AS (
                 SELECT
@@ -309,7 +314,7 @@ class SqlServerPdmRepository:
 
     def get_file(self, document_id: str) -> dict[str, Any] | None:
         where_sql, parameters = self._filters(document_id=document_id)
-        rows = self.client.fetch_all(
+        rows = self._fetch_all(
             f"""
             SELECT {self.FILE_COLUMNS}
             {self.FILE_FROM}
@@ -337,7 +342,7 @@ class SqlServerPdmRepository:
         # First select only this page's document IDs, then hydrate its display
         # columns and physical files. Physical-field filters retain the same
         # TOP (1), version matching and AND/OR semantics as get_file().
-        rows = self.client.fetch_all(
+        rows = self._fetch_all(
             f"""WITH page_documents AS (
                     SELECT a.ID AS document_id, {sort_columns}
                     {page_source} WHERE {where_sql}

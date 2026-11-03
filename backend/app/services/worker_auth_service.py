@@ -5,6 +5,7 @@ from collections import OrderedDict
 from time import monotonic
 import threading
 
+from app.core.sql_capacity import sql_identity, SqlCapacityError
 from app.config import Settings
 from app.database.sqlserver import SqlServerClient
 from app.database.workshop import AuthenticationError
@@ -69,6 +70,10 @@ class WorkerAuthService:
         WHERE [_Identify] = ?
     """
 
+    def _fetch_all(self, sql, parameters):
+        with sql_identity(None):
+            return self.client.fetch_all(sql, parameters)
+
     def __init__(self, settings: Settings, client: SqlServerClient | None = None) -> None:
         self.settings = settings
         self.client = client
@@ -101,11 +106,11 @@ class WorkerAuthService:
 
         normalized_company_no = company_no.strip()
         try:
-            rows = self.client.fetch_all(
+            rows = self._fetch_all(
                 self.SQL,
                 (password, normalized_company_no),
             )
-        except SqlRequestCancelled:
+        except (SqlRequestCancelled, SqlCapacityError):
             raise
         except Exception as exc:
             raise WorkerAuthenticationUnavailableError(
@@ -173,11 +178,11 @@ class WorkerAuthService:
         escaped = normalized.replace("[", "[[]").replace("%", "[%]").replace("_", "[_]")
         pattern = f"%{escaped}%"
         try:
-            rows = self.client.fetch_all(
+            rows = self._fetch_all(
                 self.DIRECTORY_SEARCH_SQL,
                 (self.settings.worker_database_available_value, pattern, pattern),
             )
-        except SqlRequestCancelled:
+        except (SqlRequestCancelled, SqlCapacityError):
             raise
         except Exception as exc:
             raise WorkerAuthenticationUnavailableError(
@@ -188,8 +193,8 @@ class WorkerAuthService:
     def find_person(self, external_id: str) -> dict[str, str] | None:
         self._ensure_enabled()
         try:
-            rows = self.client.fetch_all(self.PERSON_SQL, (external_id.strip(),))
-        except SqlRequestCancelled:
+            rows = self._fetch_all(self.PERSON_SQL, (external_id.strip(),))
+        except (SqlRequestCancelled, SqlCapacityError):
             raise
         except Exception as exc:
             raise WorkerAuthenticationUnavailableError(

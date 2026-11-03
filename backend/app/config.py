@@ -71,6 +71,19 @@ class Settings:
 
     database_sources_json: str = configuration_field("DATABASE_SOURCES_JSON", lambda: _environment.get().get("DATABASE_SOURCES_JSON", "[]"), hidden=True)
 
+    sql_global_max_concurrent: int = configuration_field('SQL_GLOBAL_MAX_CONCURRENT', lambda: _as_int('SQL_GLOBAL_MAX_CONCURRENT', 12))
+    sql_global_max_waiters: int = configuration_field('SQL_GLOBAL_MAX_WAITERS', lambda: _as_int('SQL_GLOBAL_MAX_WAITERS', 32))
+    sql_queue_timeout_seconds: float = configuration_field('SQL_QUEUE_TIMEOUT_SECONDS', lambda: _as_float('SQL_QUEUE_TIMEOUT_SECONDS', 5))
+    sqlserver_default_max_concurrent: int = configuration_field('SQLSERVER_DEFAULT_MAX_CONCURRENT', lambda: _as_int('SQLSERVER_DEFAULT_MAX_CONCURRENT', 6))
+    mysql_default_max_concurrent: int = configuration_field('MYSQL_DEFAULT_MAX_CONCURRENT', lambda: _as_int('MYSQL_DEFAULT_MAX_CONCURRENT', 4))
+    sql_line_max_concurrent: int = configuration_field('SQL_LINE_MAX_CONCURRENT', lambda: _as_int('SQL_LINE_MAX_CONCURRENT', 2))
+    http_query_max_concurrent: int = configuration_field('HTTP_QUERY_MAX_CONCURRENT', lambda: _as_int('HTTP_QUERY_MAX_CONCURRENT', 12))
+    http_snapshot_max_concurrent: int = configuration_field('HTTP_SNAPSHOT_MAX_CONCURRENT', lambda: _as_int('HTTP_SNAPSHOT_MAX_CONCURRENT', 4))
+    http_analysis_max_concurrent: int = configuration_field('HTTP_ANALYSIS_MAX_CONCURRENT', lambda: _as_int('HTTP_ANALYSIS_MAX_CONCURRENT', 10))
+    http_pdf_max_concurrent: int = configuration_field('HTTP_PDF_MAX_CONCURRENT', lambda: _as_int('HTTP_PDF_MAX_CONCURRENT', 2))
+    http_auth_max_concurrent: int = configuration_field('HTTP_AUTH_MAX_CONCURRENT', lambda: _as_int('HTTP_AUTH_MAX_CONCURRENT', 8))
+    http_max_waiters: int = configuration_field('HTTP_MAX_WAITERS', lambda: _as_int('HTTP_MAX_WAITERS', 32))
+
     leadership_report_cache_seconds: int = configuration_field("LEADERSHIP_REPORT_CACHE_SECONDS", lambda: _as_int(
         "LEADERSHIP_REPORT_CACHE_SECONDS", 600
     ))
@@ -215,6 +228,15 @@ class Settings:
     auth_cookie_secure: bool = configuration_field("AUTH_COOKIE_SECURE", lambda: _as_bool("AUTH_COOKIE_SECURE", False))
 
     def __post_init__(self) -> None:
+        for name in ('sql_global_max_concurrent', 'sqlserver_default_max_concurrent', 'mysql_default_max_concurrent',
+                     'sql_line_max_concurrent', 'http_query_max_concurrent', 'http_snapshot_max_concurrent',
+                     'http_analysis_max_concurrent', 'http_pdf_max_concurrent', 'http_auth_max_concurrent'):
+            if not 1 <= getattr(self, name) <= 64:
+                raise ValueError(f'{name.upper()} 必须在 1 到 64 之间')
+        if not 0 <= self.sql_global_max_waiters <= 256 or not 0 <= self.http_max_waiters <= 256:
+            raise ValueError('SQL_GLOBAL_MAX_WAITERS / HTTP_MAX_WAITERS 必须在 0 到 256 之间')
+        if not 0 < self.sql_queue_timeout_seconds <= 60:
+            raise ValueError('SQL_QUEUE_TIMEOUT_SECONDS 必须在 0 到 60 秒之间')
         if not 1000 <= self.llm_max_input_chars <= 10_000_000:
             raise ValueError("LLM_MAX_INPUT_CHARS 必须在 1000 到 10000000 之间")
         if not 1000 <= self.llm_max_output_chars <= 2_000_000:

@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from app.api.auth import require_user
 from app.api.configuration import router
 from app.config import Settings, _environment
+from app.database.source_registry import DatabaseSourceRegistry
 from tests.line_fixtures import configuration
 from app.configuration_sources import load_environment
 from app.services.automation_runtime import AutomationRuntime
@@ -201,7 +202,8 @@ def test_worker_heartbeat_uses_its_own_snapshot_and_diagnostic_failure_is_isolat
     saved = []
     runtime = SimpleNamespace(coordination=SimpleNamespace(
         task_counts=lambda: {}, renew=lambda *args, **kwargs: saved.append(kwargs['status']) or True),
-        lines={}, configuration_diagnostics=background)
+        lines={}, database_sources=DatabaseSourceRegistry(),
+        configuration_diagnostics=background)
     process = WorkerProcess(background.settings, runtime=runtime)
     process.owner = 'test-worker'
     process._heartbeat()

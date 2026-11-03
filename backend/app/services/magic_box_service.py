@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.core.sql_capacity import sql_identity, SqlCapacityError
+
 from dataclasses import dataclass, field
 from datetime import datetime
 import hashlib
@@ -60,6 +62,10 @@ class MagicBoxConfig:
 
 class MagicBoxConfigProvider:
     """Read only the explicit magic-box keys from production SYS_CONFIG."""
+
+    def _fetch_all(self, sql, parameters):
+        with sql_identity(None):
+            return self.client.fetch_all(sql, parameters)
 
     def __init__(self, settings, *, client=None, clock=None) -> None:
         self.settings = settings
@@ -134,7 +140,7 @@ class MagicBoxConfigProvider:
             if not force and self._cached and now - self._cached_at < ttl:
                 return self._cached
             try:
-                rows = self.client.fetch_all(
+                rows = self._fetch_all(
                     """
                     SELECT CONFIG_NAME, CONFIG_VALUE
                     FROM dbo.SYS_CONFIG
@@ -144,6 +150,8 @@ class MagicBoxConfigProvider:
                 )
             except SqlServerConfigurationError as exc:
                 raise MagicBoxConfigurationError(str(exc)) from None
+            except SqlCapacityError:
+                raise
             except Exception:
                 raise MagicBoxConfigurationError(
                     "读取SYS_CONFIG失败，请检查生产数据库连接和只读权限"

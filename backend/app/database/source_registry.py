@@ -12,6 +12,7 @@ from pydantic import TypeAdapter
 from app.models.database_sources import DatabaseSourceConfig, DatabaseSourceView
 from app.database.sqlserver import SqlServerClient
 from app.database.mysql import MySqlClient
+from app.core.sql_capacity import SqlCapacity, default_sql_capacity
 
 SOURCE_CONFIGS = TypeAdapter(list[DatabaseSourceConfig])
 RESERVED_SOURCES = {'production', 'worker', 'file', 'welding', 'sqlite'}
@@ -27,13 +28,16 @@ class SourceConflict(ValueError):
 
 class DatabaseSourceRegistry:
     def __init__(self, configs: Sequence[DatabaseSourceConfig] = (), *,
-                 bindings: Mapping[str, tuple[str, ...]] | None = None) -> None:
+                 bindings: Mapping[str, tuple[str, ...]] | None = None, capacity: SqlCapacity | None = None, register: bool = True) -> None:
         sources = {config.id: config for config in configs}
         if len(sources) != len(configs) or sources.keys() & RESERVED_SOURCES:
             raise ValueError('数据源 ID 重复或使用了系统保留名称')
         if any(config.enabled and not config.password.get_secret_value() for config in configs):
             raise ValueError('启用的数据源必须配置密码')
         self._sources = MappingProxyType(sources)
+        self.capacity = capacity or default_sql_capacity()
+        if register:
+            self.capacity.register_sources(configs)
         # Declared consumers can be deployed before their optional source is registered.
         self._bindings = MappingProxyType({key: refs for key, refs in (bindings or {}).items() if key in sources})
         self._clients: dict[str, SqlServerClient | MySqlClient] = {}
@@ -41,12 +45,13 @@ class DatabaseSourceRegistry:
 
     @classmethod
     def from_json(cls, value: str, *, previous: DatabaseSourceRegistry | None = None,
-                  bindings: Mapping[str, tuple[str, ...]] | None = None) -> DatabaseSourceRegistry:
-        registry = cls(SOURCE_CONFIGS.validate_json(value), bindings=bindings)
+                  bindings: Mapping[str, tuple[str, ...]] | None = None, capacity: SqlCapacity | None = None) -> DatabaseSourceRegistry:
+        registry = cls(SOURCE_CONFIGS.validate_json(value), bindings=bindings, capacity=previous.capacity if previous else capacity,
+                       register=previous is None)
         if previous is not None:
             with previous._lock:
                 registry._clients = {key: client for key, client in previous._clients.items()
-                    if registry._sources.get(key) == previous._sources.get(key)}
+                    if key in registry._sources and registry.fingerprint(key) == previous.fingerprint(key)}
         return registry
 
     def get(self, source_id: str) -> DatabaseSourceConfig:
@@ -59,11 +64,15 @@ class DatabaseSourceRegistry:
         config = self.get(source_id)
         with self._lock:
             if source_id not in self._clients:
-                self._clients[source_id] = SqlServerClient(config) if config.engine == 'sqlserver' else MySqlClient(config)
+                self._clients[source_id] = SqlServerClient(config, capacity=self.capacity) if config.engine == 'sqlserver' else MySqlClient(config, capacity=self.capacity)
             return self._clients[source_id]
 
     def fingerprint(self, source_id: str) -> str:
-        return hashlib.sha256(source_configs_json([self.get(source_id)]).encode()).hexdigest()
+        config = self.get(source_id)
+        # Quotas do not change data identity or invalidate P1 snapshots/analysis history.
+        value = [{**config.model_dump(mode='json', exclude={'password', 'sql_max_concurrent'}),
+                  'password': config.password.get_secret_value()}]
+        return hashlib.sha256(json.dumps(value, ensure_ascii=False).encode()).hexdigest()
 
     def connection_identity(self, source_id: str) -> str:
         config = self.get(source_id)
