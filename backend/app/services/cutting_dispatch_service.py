@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 import re
 from typing import Any, Callable
@@ -426,9 +426,34 @@ class CuttingDispatchService:
             and stage not in {"cancel_unknown", "cancel_interrupted"},
         }
 
-    def list_dispatches(self, *, page: int, page_size: int) -> dict[str, Any]:
-        items, total = self.dispatches.list(page=page, page_size=page_size)
+    def _sent_period(self, start_date: date | None, end_date: date | None) -> tuple[str | None, str | None]:
+        if start_date is None and end_date is None:
+            return None, None
+        if start_date is None or end_date is None:
+            raise ValueError('请同时填写开始和结束日期')
+        if end_date < start_date or (end_date - start_date).days >= 366:
+            raise ValueError('结束日期不能早于开始日期，查询区间最长为 366 天')
+        if not 1900 <= start_date.year <= end_date.year <= 2100:
+            raise ValueError('日期需在 1900—2100 年之间')
+        zone = ZoneInfo(self.settings.timezone)
+        return (datetime.combine(start_date, time.min, zone).isoformat(),
+                datetime.combine(end_date + timedelta(days=1), time.min, zone).isoformat())
+
+    def list_dispatches(self, *, page: int, page_size: int, start_date: date | None = None,
+                        end_date: date | None = None, machine_ip: str | None = None) -> dict[str, Any]:
+        sent_start, sent_end = self._sent_period(start_date, end_date)
+        items, total = self.dispatches.list(page=page, page_size=page_size,
+            sent_start=sent_start, sent_end=sent_end, machine_ip=machine_ip)
         return {"items": [self._decorate_dispatch(item) for item in items], "total": total, "page": page, "page_size": page_size}
+
+    def dispatch_trend(self, *, start_date: date, end_date: date, machine_ip: str | None = None) -> dict[str, Any]:
+        sent_start, sent_end = self._sent_period(start_date, end_date)
+        counts, machines = self.dispatches.daily_sent_counts(sent_start=sent_start, sent_end=sent_end,
+            timezone=self.settings.timezone, machine_ip=machine_ip)
+        days = [start_date + timedelta(days=index) for index in range((end_date - start_date).days + 1)]
+        return {'start_date': start_date.isoformat(), 'end_date': end_date.isoformat(),
+                'timezone': self.settings.timezone, 'machine_ips': machines,
+                'items': [{'date': day.isoformat(), 'sent_count': counts.get(day.isoformat(), 0)} for day in days]}
 
     def get_dispatch(self, dispatch_id: str) -> dict[str, Any]:
         item = self.dispatches.get(dispatch_id)

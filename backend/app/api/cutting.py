@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ipaddress
+from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -20,7 +21,7 @@ from app.services.magic_box_service import MagicBoxError
 from app.models.contracts import ApiEnvelope
 from app.models.cutting_contracts import (
     Items, Page, CuttingStatus, CuttingProject, CatalogResult, CuttingFile,
-    MachineResult, CuttingDispatch, BatchCreationResult,
+    MachineResult, CuttingDispatch, BatchCreationResult, DispatchTrend,
 )
 
 router = APIRouter(
@@ -250,13 +251,27 @@ def list_dispatches(
     request: Request,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=10, ge=1, le=100),
+    start_date: date | None = None,
+    end_date: date | None = None,
+    machine_ip: str | None = Query(default=None, min_length=3, max_length=64),
 ) -> dict:
-    return _envelope(
-        request,
-        runtime_state(request).cutting_dispatch.list_dispatches(
-            page=page, page_size=page_size
-        ),
-    )
+    try:
+        data = runtime_state(request).cutting_dispatch.list_dispatches(page=page, page_size=page_size,
+            start_date=start_date, end_date=end_date, machine_ip=machine_ip)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    return _envelope(request, data)
+
+
+@router.get('/dispatches/trend', response_model=ApiEnvelope[DispatchTrend])
+def dispatch_trend(request: Request, start_date: date, end_date: date,
+                   machine_ip: str | None = Query(default=None, min_length=3, max_length=64)) -> dict:
+    try:
+        data = runtime_state(request).cutting_dispatch.dispatch_trend(
+            start_date=start_date, end_date=end_date, machine_ip=machine_ip)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    return _envelope(request, data)
 
 
 @router.get("/dispatches/{dispatch_id}", response_model=ApiEnvelope[CuttingDispatch], response_model_exclude_unset=True)

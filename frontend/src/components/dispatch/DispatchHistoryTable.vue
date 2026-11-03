@@ -5,7 +5,7 @@ import AppReportTable from '../AppReportTable.vue'
 import { parseCuttingInstructionFilename } from '../../utils/cuttingInstructionName'
 import { formatChineseDateTime as formatTime } from '../../utils/dateDisplay'
 
-defineProps<{
+const props = withDefaults(defineProps<{
   histories: CuttingDispatch[]
   historyTotal: number
   historyPage: number
@@ -13,8 +13,20 @@ defineProps<{
   loading: boolean
   projectOptions: CuttingProject[]
   machineName: (ip: string) => string
-}>()
+  timezone?: string
+}>(), { timezone: 'Asia/Shanghai' })
 const emit = defineEmits<{ page: [page: number] }>()
+
+function formatSentTime(value: string | null) {
+  if (!value) return '--'
+  const timestamp = new Date(/(?:Z|[+-]\d{2}:\d{2})$/i.test(value) ? value : `${value}Z`)
+  if (Number.isNaN(timestamp.getTime())) return '--'
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-GB', {
+    timeZone: props.timezone, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+  }).formatToParts(timestamp).map(part => [part.type, part.value]))
+  return formatTime(`${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}`)
+}
 
 const historyTableColumns = [
   { key: 'c0', title: "船号", width: 140, align: 'left', fixed: 'left' },
@@ -27,7 +39,8 @@ const historyTableColumns = [
   { key: 'c7', title: "任务标识", width: 200, align: 'left' },
   { key: 'c8', title: "魔盒UUID", width: 260, align: 'left' },
   { key: 'c9', title: "失败原因", width: 240, align: 'left' },
-  { key: 'c10', title: "创建时间", width: 184, align: 'left' }
+  { key: 'c10', title: "创建时间", width: 184, align: 'left' },
+  { key: 'c11', title: "成功派发时间", width: 184, align: 'left' }
 ] as const
 </script>
 
@@ -44,6 +57,7 @@ const historyTableColumns = [
         <template #c8="{ row: item }"><code>{{ item.remote_task_id || '--' }}</code></template>
         <template #c9="{ row: item }"><span class="history-error">{{ item.last_error || '--' }}</span></template>
         <template #c10="{ row: item }">{{ formatTime(item.created_at) }}</template>
+        <template #c11="{ row: item }">{{ formatSentTime(item.sent_at) }}</template>
       </AppReportTable>
 </template>
 

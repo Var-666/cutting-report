@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from app.database.sqlite import SQLiteDatabase, SQLiteRepository
 
@@ -233,23 +235,62 @@ class DispatchRepository(SQLiteRepository):
             ).fetchone()
         return self._decode(row) if row else None
 
-    def list(self, *, page: int, page_size: int) -> tuple[list[dict[str, Any]], int]:
+    @staticmethod
+    def _history_filter(*, sent_start: str | None, sent_end: str | None,
+                        machine_ip: str | None) -> tuple[str, list[str]]:
+        clauses, parameters = [], []
+        if sent_start is not None and sent_end is not None:
+            clauses.extend(['sent_at IS NOT NULL', 'is_simulation = 0',
+                            'julianday(sent_at) >= julianday(?)', 'julianday(sent_at) < julianday(?)'])
+            parameters.extend([sent_start, sent_end])
+        if machine_ip:
+            clauses.append('machine_ip = ?')
+            parameters.append(machine_ip)
+        return (' WHERE ' + ' AND '.join(clauses) if clauses else ''), parameters
+
+    def list(self, *, page: int, page_size: int, sent_start: str | None = None,
+             sent_end: str | None = None, machine_ip: str | None = None) -> tuple[list[dict[str, Any]], int]:
         offset = (page - 1) * page_size
+        where, parameters = self._history_filter(sent_start=sent_start, sent_end=sent_end, machine_ip=machine_ip)
+        order = 'julianday(sent_at)' if sent_start is not None else 'created_at'
         with self.connect() as connection:
+            if not connection.in_transaction:
+                connection.execute('BEGIN')
             total = int(
                 connection.execute(
-                    "SELECT COUNT(*) FROM cutting_dispatches"
+                    'SELECT COUNT(*) FROM cutting_dispatches' + where, parameters
                 ).fetchone()[0]
             )
             rows = connection.execute(
-                """
+                f"""
                 SELECT * FROM cutting_dispatches
-                ORDER BY created_at DESC, dispatch_id DESC
+                {where}
+                ORDER BY {order} DESC, dispatch_id DESC
                 LIMIT ? OFFSET ?
                 """,
-                (page_size, offset),
+                (*parameters, page_size, offset),
             ).fetchall()
         return [self._decode(row) for row in rows], total
+
+    def daily_sent_counts(self, *, sent_start: str, sent_end: str, timezone: str,
+                          machine_ip: str | None) -> tuple[dict[str, int], list[str]]:
+        where, parameters = self._history_filter(sent_start=sent_start, sent_end=sent_end, machine_ip=machine_ip)
+        zone = ZoneInfo(timezone)
+        def local_day(value: str) -> str:
+            stamp = datetime.fromisoformat(value)
+            # SQLite also interprets offsetless legacy timestamps as UTC.
+            if stamp.tzinfo is None:
+                stamp = stamp.replace(tzinfo=ZoneInfo('UTC'))
+            return stamp.astimezone(zone).date().isoformat()
+        with self.connect() as connection:
+            if not connection.in_transaction:
+                connection.execute('BEGIN')
+            connection.create_function('dispatch_day', 1, local_day, deterministic=True)
+            rows = connection.execute(
+                'SELECT dispatch_day(sent_at) AS day, COUNT(*) AS sent_count FROM cutting_dispatches' + where +
+                ' GROUP BY dispatch_day(sent_at)', parameters).fetchall()
+            machines = connection.execute('SELECT DISTINCT machine_ip FROM cutting_dispatches ORDER BY machine_ip').fetchall()
+        return {row['day']: int(row['sent_count']) for row in rows}, [row['machine_ip'] for row in machines]
 
     def latest_for_files(self, files: Iterable[tuple[str, str]]) -> dict[tuple[str, str], dict[str, Any]]:
         keys = list(dict.fromkeys(files))
@@ -322,7 +363,7 @@ class DispatchRepository(SQLiteRepository):
                     attempt_count = attempt_count + ?,
                     attempted_at = CASE WHEN ? = 1 THEN ? ELSE attempted_at END,
                     downloaded_at = COALESCE(?, downloaded_at),
-                    sent_at = COALESCE(?, sent_at)
+                    sent_at = COALESCE(sent_at, ?)
                 WHERE dispatch_id = ? AND status IN ({placeholders})
                   AND (? IS NULL OR stage = ?)
                   AND (? IS NULL OR attempt_count = ?)

@@ -33,7 +33,7 @@ const props = defineProps({
   user: { type: Object as PropType<User>, required: true },
   mode: { type: String, default: 'manager', validator: (value: unknown) => ['manager', 'worker'].includes(String(value)) },
 })
-const emit = defineEmits<{ export: [payload: ReportCreateRequest, format: ExportFormat] }>()
+const emit = defineEmits<{ export: [payload: ReportCreateRequest, format: ExportFormat]; refreshed: [] }>()
 const route = useRoute()
 const router = useRouter()
 const today = reportToday()
@@ -230,6 +230,7 @@ async function load(page = 1, { silent = false, ensureReport = true, force = fal
     if (sequence === requestSequence) {
       if (!silent) loading.value = false
       requestController = null
+      if (isWorker.value && pageActive.value && !signal.aborted) emit('refreshed')
     }
   }
 }

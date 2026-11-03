@@ -10,6 +10,37 @@ from app.database.users import UserRepository
 from app.database.workshop_errors import ConfirmationConflictError, ConfirmationNotFoundError, ConfirmationPermissionError
 
 class ConfirmationRepository(WorkshopScopeRepository):
+    def list_worker_tasks(self, *, worker_id: str, start_date: str, end_date: str,
+                          page: int, page_size: int) -> tuple[list[dict[str, Any]], int]:
+        scope = self.require_scope()
+        # Legacy confirmations without report_id use one latest snapshot, never duplicate a task.
+        query = '''
+            WITH snapshots AS (
+                SELECT c.task_id, i.project_name AS project_code, i.ship_no, i.segment_name,
+                       i.program_no, COALESCE(i.production_date, r.report_date) AS production_date,
+                       c.confirmed_at,
+                       ROW_NUMBER() OVER (PARTITION BY c.task_id ORDER BY
+                           r.generated_at DESC, r.report_date DESC, r.report_id DESC) AS snapshot_rank
+                FROM workshop_confirmations c
+                JOIN workshop_reports r ON r.scope_machine_no = c.scope_machine_no COLLATE NOCASE
+                    AND (c.report_id = r.report_id OR c.report_id IS NULL)
+                JOIN workshop_report_items i ON i.report_id = r.report_id AND i.task_id = c.task_id
+                WHERE c.worker_id = ? AND c.scope_machine_no = ? COLLATE NOCASE
+            ), selected AS (
+                SELECT task_id, project_code, ship_no, segment_name, program_no, production_date, confirmed_at
+                FROM snapshots WHERE snapshot_rank = 1 AND production_date >= ? AND production_date <= ?
+            )
+        '''
+        parameters = (worker_id, scope, start_date, end_date)
+        with self.connect() as connection:
+            if not connection.in_transaction:
+                connection.execute('BEGIN')
+            total = int(connection.execute(query + 'SELECT COUNT(*) FROM selected', parameters).fetchone()[0])
+            rows = connection.execute(query + '''SELECT * FROM selected
+                ORDER BY production_date DESC, confirmed_at DESC, task_id DESC LIMIT ? OFFSET ?''',
+                (*parameters, page_size, (page - 1) * page_size)).fetchall()
+        return [dict(row) for row in rows], total
+
     def get_confirmations(
         self, task_ids: list[str], *, report_id: str | None = None
     ) -> dict[str, dict[str, Any]]:

@@ -65,6 +65,7 @@ test('worker load syncs a nonempty snapshot while background polling remains rea
   const loadSource = source.slice(source.indexOf('async function load('), source.indexOf('\nfunction refreshAnalysisReport('))
   const signal = new AbortController().signal
   const calls = []
+  const emitted = []
   const rows = (count) => ({ report: { item_count: count }, items: [], page: 1, page_size: 10 })
   const bindings = {
     isWorker: ref(true), filters: { reportDate: today }, props: { mode: 'worker' },
@@ -73,6 +74,7 @@ test('worker load syncs a nonempty snapshot while background polling remains rea
     listWorkshopTasks: async (_query, options) => { calls.push(['read', options]); return rows(calls.length > 1 ? 2 : 1) },
     generateWorkshopDailyReport: async (_date, options) => { calls.push(['sync', options]); return rows(2) },
     reconcileVisibleTaskSelection: () => {},
+    emit: event => emitted.push(event),
   }
   const load = scriptFunction(...Object.keys(bindings), `${loadSource}; return load`)(...Object.values(bindings))
   await load()
@@ -82,6 +84,7 @@ test('worker load syncs a nonempty snapshot while background polling remains rea
   calls.length = 0
   await load(1, { silent: true, ensureReport: false, force: true })
   assert.deepEqual(calls.map(([kind]) => kind), ['read'])
+  assert.deepEqual(emitted, ['refreshed', 'refreshed'])
 })
 
 test('snapshot synchronization forwards cancellation and invalidates the task cache', async () => {

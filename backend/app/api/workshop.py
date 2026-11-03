@@ -14,7 +14,7 @@ from app.database.workshop_errors import (
 from app.models.contracts import ApiEnvelope, Items
 from app.models.workshop_contracts import (
     WorkshopResult, WorkshopReportInfo, LatestProductionDate, TaskConfirmation,
-    ConfirmationBatch, ConfirmationAudit,
+    ConfirmationBatch, ConfirmationAudit, MyConfirmedTasks,
 )
 from app.models.workshop_requests import (
     ConfirmTaskRequest, ConfirmSnapshotTaskRequest, ConfirmTasksRequest,
@@ -63,6 +63,14 @@ def sort_workshop_records(records: list, sort_mode: Literal['manager', 'worker']
 @query_requests.route(router.get('/latest-date', response_model=ApiEnvelope[LatestProductionDate], response_model_exclude_unset=True))
 def latest_production_date(request: Request, on_or_before: date, user: dict=Depends(require_user)) -> dict:
     return _envelope(request, _invoke(_service(request).latest_production_date, on_or_before=on_or_before, user=user))
+
+
+@query_requests.route(router.get('/my-confirmed-tasks', response_model=ApiEnvelope[MyConfirmedTasks]))
+def my_confirmed_tasks(request: Request, start_date: date, end_date: date,
+                       page: int=Query(default=1, ge=1), page_size: int=Query(default=10, ge=1, le=50),
+                       user: dict=Depends(require_worker)) -> dict:
+    return _envelope(request, _invoke(_service(request).my_confirmed_tasks, value_error_status=422,
+        start_date=start_date, end_date=end_date, page=page, page_size=page_size, user=user))
 
 @query_requests.route(router.post('/reports', response_model=ApiEnvelope[WorkshopReportInfo], response_model_exclude_unset=True))
 def generate_daily_report(payload: ConfirmTaskRequest, request: Request, user: dict=Depends(require_user)) -> dict:

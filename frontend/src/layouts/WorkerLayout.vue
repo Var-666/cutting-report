@@ -35,3 +35,7 @@ async function logout() {
     </SoybeanAdminLayout>
   </div>
 </template>
+
+<style scoped>
+.worker-shell .worker-main { max-width:none; }
+</style>

@@ -100,6 +100,21 @@ class LatestProductionDate(BaseModel):
     report_date: str | None
 
 
+class MyConfirmedTask(BaseModel):
+    task_id: str
+    project_code: str | None
+    ship_no: str | None
+    segment_name: str | None
+    program_no: str | None
+    production_date: date
+    confirmed_at: str
+
+
+class MyConfirmedTasks(Page[MyConfirmedTask]):
+    start_date: date
+    end_date: date
+
+
 class TaskConfirmation(BaseModel):
     task_id: str
     report_id: str | None

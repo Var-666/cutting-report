@@ -1,10 +1,17 @@
-import type { ConfirmTaskRequest, ConfirmTasksRequest, RevokeTaskRequest, CorrectTaskRequest, ConfirmationBatch, WorkshopReportInfo, LatestProductionDate, ReportAccepted, AnalysisRequest as ApiAnalysisRequest, AnalysisVersion } from './generated/types.gen'
+import type { ConfirmTaskRequest, ConfirmTasksRequest, RevokeTaskRequest, CorrectTaskRequest, ConfirmationBatch, WorkshopReportInfo, LatestProductionDate, ReportAccepted, AnalysisRequest as ApiAnalysisRequest, AnalysisVersion, MyConfirmedTasks, MyConfirmedTasksApiV1WorkshopMyConfirmedTasksGetData } from './generated/types.gen'
 import type { ConfirmationAudit, TaskConfirmation, AnalysisRequest, AnalysisResult, LeadershipReport, ReportCreateRequest, ReportJob, WorkshopQuery, WorkshopRangeQuery, WorkshopResult } from '../types/reports'
 import type { Items, Page, ReadOptions } from '../types/api'
 import { reportCache } from './reportCache.ts'
 import { request } from './client.ts'
 
 const REPORT_VIEW_CACHE_TTL = 5 * 60 * 1000
+
+export type MyConfirmedTasksQuery = NonNullable<MyConfirmedTasksApiV1WorkshopMyConfirmedTasksGetData['query']>
+export function listMyConfirmedTasks(query: MyConfirmedTasksQuery, { signal }: ReadOptions = {}) {
+  const parameters = new URLSearchParams()
+  for (const [key, value] of Object.entries(query)) if (value != null) parameters.set(key, String(value))
+  return request<MyConfirmedTasks>(`/api/v1/workshop/my-confirmed-tasks?${parameters}`, { signal })
+}
 
 function invalidateWorkshopReports() {
   reportCache.invalidate('workshop:tasks:')

@@ -11,6 +11,7 @@ from app.models.workshop_requests import (
 from app.services.statistics_service import build_top_cut_length_tasks, build_worker_work_summaries, build_workshop_task_distributions
 from app.services.report_analysis_service import analysis_period_label, workshop_analysis_source_version
 from app.services.workshop_sorting import sort_workshop_by_recency
+from app.services.range_report_service import validate_report_range
 
 
 class WorkshopTaskNotFoundError(ValueError):
@@ -61,6 +62,13 @@ class WorkshopService:
         self.settings = settings
         self.query_service = query_service
         self.range_report_service = range_report_service
+
+    def my_confirmed_tasks(self, start_date: date, end_date: date, page: int, page_size: int, user: dict):
+        validate_report_range(start_date, end_date)
+        items, total = self.confirmations.list_worker_tasks(worker_id=user['user_id'],
+            start_date=start_date.isoformat(), end_date=end_date.isoformat(), page=page, page_size=page_size)
+        return {'items': items, 'total': total, 'page': page, 'page_size': page_size,
+                'start_date': start_date.isoformat(), 'end_date': end_date.isoformat()}
 
     def _records_for_date(self, report_date: date):
         report, records = self.reports.get_daily_report_records(report_date.isoformat())

@@ -1,4 +1,5 @@
 """Typed contracts for PDM browsing and cutting dispatch."""
+from datetime import date as Date
 from pydantic import BaseModel
 
 from app.models.contracts import Items, Page
@@ -185,6 +186,19 @@ class CuttingDispatch(BaseModel):
     can_execute: bool
     can_cancel: bool
     local_file_cleanup: FileCleanup | None = None
+
+
+class DispatchDailyCount(BaseModel):
+    date: Date
+    sent_count: int
+
+
+class DispatchTrend(BaseModel):
+    start_date: Date
+    end_date: Date
+    timezone: str
+    machine_ips: list[str]
+    items: list[DispatchDailyCount]
 
 
 class DispatchCreationResult(BaseModel):

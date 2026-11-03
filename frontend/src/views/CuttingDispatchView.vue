@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import AppReportTable from '../components/AppReportTable.vue'
 import DispatchHistoryTable from '../components/dispatch/DispatchHistoryTable.vue'
+import DispatchHistoryTrend from '../components/dispatch/DispatchHistoryTrend.vue'
 import { useCuttingFileBrowser } from '../composables/useCuttingFileBrowser'
 import { useCuttingDispatchHistory } from '../composables/useCuttingDispatchHistory'
 import { useCuttingDispatchBatch } from '../composables/useCuttingDispatchBatch'
@@ -70,6 +71,8 @@ const {
 const {
   histories, historyPage, historyPageSize, historyTotal, historyLoading,
   historyError, loadHistory, changeHistoryPage, pauseHistory,
+  trend, trendLoading, trendError, trendFilters, selectedHistoryDay, historySelectionLabel,
+  loadTrend, refreshHistory, applyHistoryFilters, selectHistoryDay, clearHistoryFilters,
 } = useCuttingDispatchHistory({
   pageActive,
   isBusy: () => Boolean(operatingId.value || pushBatch.saving),
@@ -85,7 +88,7 @@ const {
   dispatchForm,
   systemStatus,
   operatingId,
-  loadHistory,
+  loadHistory: refreshHistory,
   refreshVisibleFileStatuses,
   loadFiles,
   showNotice,
@@ -94,6 +97,11 @@ const {
 const selectedFileCount = computed(() => selectedFiles.value.size)
 const selectedFileItems = computed(() => [...selectedFiles.value.values()])
 const selectedMachine = computed(() => machines.value.find((machine) => machine.machine_ip === dispatchForm.machineIp))
+const historyMachineIps = computed(() => [...new Set([
+  ...(trend.value?.machine_ips || []), ...machines.value.map(machine => machine.machine_ip),
+  ...(systemStatus.value?.magic_box?.machine_ips || []),
+  ...(trendFilters.value.machine_ip ? [trendFilters.value.machine_ip] : []),
+])].sort())
 
 function machineName(machineIp: string) {
   const names: Record<string, string> = {
@@ -177,7 +185,7 @@ async function executeSaved(item: CuttingDispatch, segmentName?: string) {
     showNotice(error.message, 'error')
   } finally {
     operatingId.value = ''
-    await Promise.allSettled([loadHistory(), refreshVisibleFileStatuses()])
+    await Promise.allSettled([refreshHistory(), refreshVisibleFileStatuses()])
   }
 }
 
@@ -239,7 +247,7 @@ async function initializePage({ refreshProjects = true } = {}) {
     await Promise.allSettled([
       loadRuntimeStatus({ signal }),
       ...(refreshProjects ? [loadProjects()] : []),
-      loadHistory({ signal }),
+      refreshHistory({ signal }),
     ])
   } catch (caught) {
     const error = toError(caught)
@@ -434,9 +442,11 @@ const batchTableColumns = [
 
   <section class="panel dispatch-history-panel" :aria-busy="historyLoading">
     <div class="panel-title"><div><span class="dispatch-section-icon green"><AppIcon name="check" size="17" /></span><small>04</small><h2>派发记录</h2></div></div>
+    <DispatchHistoryTrend :trend="trend" :filters="trendFilters" :loading="trendLoading" :error="trendError" :selected-day="selectedHistoryDay" :machine-ips="historyMachineIps" :machine-name="machineName" :disabled="!!operatingId || pushBatch.saving" @apply="applyHistoryFilters" @select-day="selectHistoryDay" @clear="clearHistoryFilters" @retry="loadTrend()" />
+    <p class="dispatch-history-scope">当前明细：{{ historySelectionLabel }}<template v-if="trendFilters.machine_ip"> · {{ machineName(trendFilters.machine_ip) }}（{{ trendFilters.machine_ip }}）</template></p>
     <div v-if="historyError" class="global-error" role="alert"><span>派发记录读取失败：{{ historyError }}</span><NButton attr-type="button" :disabled="historyLoading" @click="loadHistory()">重试</NButton></div>
     <div v-if="historyLoading && !histories.length" class="dispatch-empty-history" role="status"><span class="spinner dark" aria-hidden="true"></span><strong>正在读取派发记录</strong></div>
-    <div v-else-if="histories.length" class="dispatch-table-wrap"><DispatchHistoryTable :histories="histories" :history-total="historyTotal" :history-page="historyPage" :history-page-size="historyPageSize" :project-options="projectOptions" :machine-name="machineName" :loading="historyLoading || !!operatingId || pushBatch.saving" @page="changeHistoryPage" /></div>
+    <div v-else-if="histories.length" class="dispatch-table-wrap"><DispatchHistoryTable :histories="histories" :history-total="historyTotal" :history-page="historyPage" :history-page-size="historyPageSize" :project-options="projectOptions" :machine-name="machineName" :timezone="trend?.timezone" :loading="historyLoading || !!operatingId || pushBatch.saving" @page="changeHistoryPage" /></div>
     <div v-else-if="!historyError" class="dispatch-empty-history"><i><AppIcon name="send" size="20" /></i><strong>暂无派发记录</strong></div>
 
   </section>
@@ -839,6 +849,7 @@ const batchTableColumns = [
 @media (prefers-reduced-motion:reduce) {
   .dispatch-hero,.dispatch-workspace>.panel,.dispatch-history-panel { animation:none; }
 }
+.dispatch-history-scope { margin:0; padding:12px 16px; border-bottom:1px solid var(--theme-border-color); color:var(--text-color-2); font-size:var(--font-auxiliary); }
 .history-table :is(code,.dispatch-status,.history-actions button) { font-size:inherit; }
 @media (max-width:560px) {
   .dispatch-history-panel > .dispatch-table-wrap { padding:12px; }

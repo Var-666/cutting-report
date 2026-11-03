@@ -1,4 +1,4 @@
-import type { DispatchBatchCreateRequest, BatchCreationResult, DispatchExecuteRequest } from './generated/types.gen'
+import type { DispatchBatchCreateRequest, BatchCreationResult, DispatchExecuteRequest, DispatchTrend, ListDispatchesApiV1CuttingDispatchesGetData, DispatchTrendApiV1CuttingDispatchesTrendGetData } from './generated/types.gen'
 import type { CuttingCatalog, CuttingDispatch, CuttingFile, CuttingMachine, CuttingProject, CuttingStatus, DispatchBatchItem, DispatchCreationResult } from '../types/cutting'
 import type { Items, Page, ReadOptions } from '../types/api'
 import { reportCache } from './reportCache.ts'
@@ -58,9 +58,19 @@ export function createCuttingDispatchBatch(payload: DispatchBatchCreateRequest) 
   }).finally(() => reportCache.invalidate('cutting:files:'))
 }
 
-export function listCuttingDispatches({ page = 1, pageSize = 10 } = {}, { signal }: ReadOptions = {}) {
+export type DispatchHistoryFilters = Pick<NonNullable<ListDispatchesApiV1CuttingDispatchesGetData['query']>, 'start_date' | 'end_date' | 'machine_ip'>
+export type DispatchTrendFilters = NonNullable<DispatchTrendApiV1CuttingDispatchesTrendGetData['query']>
+
+export function listCuttingDispatches({ page = 1, pageSize = 10, ...filters }: DispatchHistoryFilters & { page?: number; pageSize?: number } = {}, { signal }: ReadOptions = {}) {
   const query = new URLSearchParams({ page: String(page), page_size: String(pageSize) })
+  for (const [key, value] of Object.entries(filters)) if (value) query.set(key, value)
   return request<Page<CuttingDispatch>>(`/api/v1/cutting/dispatches?${query}`, { signal })
+}
+
+export function getCuttingDispatchTrend(filters: DispatchTrendFilters, { signal }: ReadOptions = {}) {
+  const query = new URLSearchParams()
+  for (const [key, value] of Object.entries(filters)) if (value) query.set(key, value)
+  return request<DispatchTrend>(`/api/v1/cutting/dispatches/trend?${query}`, { signal })
 }
 
 export function getCuttingDispatch(dispatchId: string, { signal }: ReadOptions = {}) {

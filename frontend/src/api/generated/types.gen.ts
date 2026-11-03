@@ -802,6 +802,21 @@ export type ApiEnvelopeDeleted = {
 };
 
 /**
+ * ApiEnvelope[DispatchTrend]
+ */
+export type ApiEnvelopeDispatchTrend = {
+    /**
+     * Success
+     */
+    success: true;
+    data: DispatchTrend;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
  * ApiEnvelope[EnergyDayReport]
  */
 export type ApiEnvelopeEnergyDayReport = {
@@ -1005,6 +1020,21 @@ export type ApiEnvelopeMachineResult = {
      */
     success: true;
     data: MachineResult;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
+ * ApiEnvelope[MyConfirmedTasks]
+ */
+export type ApiEnvelopeMyConfirmedTasks = {
+    /**
+     * Success
+     */
+    success: true;
+    data: MyConfirmedTasks;
     /**
      * Request Id
      */
@@ -3107,6 +3137,20 @@ export type DispatchCreationResult = {
 };
 
 /**
+ * DispatchDailyCount
+ */
+export type DispatchDailyCount = {
+    /**
+     * Date
+     */
+    date: string;
+    /**
+     * Sent Count
+     */
+    sent_count: number;
+};
+
+/**
  * DispatchExecuteRequest
  */
 export type DispatchExecuteRequest = {
@@ -3132,6 +3176,32 @@ export type DispatchStatus = {
      * Stage Label
      */
     stage_label: string;
+};
+
+/**
+ * DispatchTrend
+ */
+export type DispatchTrend = {
+    /**
+     * Start Date
+     */
+    start_date: string;
+    /**
+     * End Date
+     */
+    end_date: string;
+    /**
+     * Timezone
+     */
+    timezone: string;
+    /**
+     * Machine Ips
+     */
+    machine_ips: Array<string>;
+    /**
+     * Items
+     */
+    items: Array<DispatchDailyCount>;
 };
 
 /**
@@ -4185,6 +4255,70 @@ export type MagicBoxStatus = {
      * Message
      */
     message?: string | null;
+};
+
+/**
+ * MyConfirmedTask
+ */
+export type MyConfirmedTask = {
+    /**
+     * Task Id
+     */
+    task_id: string;
+    /**
+     * Project Code
+     */
+    project_code: string | null;
+    /**
+     * Ship No
+     */
+    ship_no: string | null;
+    /**
+     * Segment Name
+     */
+    segment_name: string | null;
+    /**
+     * Program No
+     */
+    program_no: string | null;
+    /**
+     * Production Date
+     */
+    production_date: string;
+    /**
+     * Confirmed At
+     */
+    confirmed_at: string;
+};
+
+/**
+ * MyConfirmedTasks
+ */
+export type MyConfirmedTasks = {
+    /**
+     * Items
+     */
+    items: Array<MyConfirmedTask>;
+    /**
+     * Total
+     */
+    total: number;
+    /**
+     * Page
+     */
+    page: number;
+    /**
+     * Page Size
+     */
+    page_size: number;
+    /**
+     * Start Date
+     */
+    start_date: string;
+    /**
+     * End Date
+     */
+    end_date: string;
 };
 
 /**
@@ -7126,6 +7260,48 @@ export type LatestProductionDateApiV1WorkshopLatestDateGetResponses = {
 
 export type LatestProductionDateApiV1WorkshopLatestDateGetResponse = LatestProductionDateApiV1WorkshopLatestDateGetResponses[keyof LatestProductionDateApiV1WorkshopLatestDateGetResponses];
 
+export type MyConfirmedTasksApiV1WorkshopMyConfirmedTasksGetData = {
+    body?: never;
+    path?: never;
+    query: {
+        /**
+         * Start Date
+         */
+        start_date: string;
+        /**
+         * End Date
+         */
+        end_date: string;
+        /**
+         * Page
+         */
+        page?: number;
+        /**
+         * Page Size
+         */
+        page_size?: number;
+    };
+    url: '/api/v1/workshop/my-confirmed-tasks';
+};
+
+export type MyConfirmedTasksApiV1WorkshopMyConfirmedTasksGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type MyConfirmedTasksApiV1WorkshopMyConfirmedTasksGetError = MyConfirmedTasksApiV1WorkshopMyConfirmedTasksGetErrors[keyof MyConfirmedTasksApiV1WorkshopMyConfirmedTasksGetErrors];
+
+export type MyConfirmedTasksApiV1WorkshopMyConfirmedTasksGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeMyConfirmedTasks;
+};
+
+export type MyConfirmedTasksApiV1WorkshopMyConfirmedTasksGetResponse = MyConfirmedTasksApiV1WorkshopMyConfirmedTasksGetResponses[keyof MyConfirmedTasksApiV1WorkshopMyConfirmedTasksGetResponses];
+
 export type GenerateDailyReportApiV1WorkshopReportsPostData = {
     body: ConfirmTaskRequest;
     path?: never;
@@ -7589,6 +7765,18 @@ export type ListDispatchesApiV1CuttingDispatchesGetData = {
          * Page Size
          */
         page_size?: number;
+        /**
+         * Start Date
+         */
+        start_date?: string | null;
+        /**
+         * End Date
+         */
+        end_date?: string | null;
+        /**
+         * Machine Ip
+         */
+        machine_ip?: string | null;
     };
     url: '/api/v1/cutting/dispatches';
 };
@@ -7685,6 +7873,44 @@ export type SearchFilesApiV1CuttingFilesSearchPostResponses = {
 };
 
 export type SearchFilesApiV1CuttingFilesSearchPostResponse = SearchFilesApiV1CuttingFilesSearchPostResponses[keyof SearchFilesApiV1CuttingFilesSearchPostResponses];
+
+export type DispatchTrendApiV1CuttingDispatchesTrendGetData = {
+    body?: never;
+    path?: never;
+    query: {
+        /**
+         * Start Date
+         */
+        start_date: string;
+        /**
+         * End Date
+         */
+        end_date: string;
+        /**
+         * Machine Ip
+         */
+        machine_ip?: string | null;
+    };
+    url: '/api/v1/cutting/dispatches/trend';
+};
+
+export type DispatchTrendApiV1CuttingDispatchesTrendGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type DispatchTrendApiV1CuttingDispatchesTrendGetError = DispatchTrendApiV1CuttingDispatchesTrendGetErrors[keyof DispatchTrendApiV1CuttingDispatchesTrendGetErrors];
+
+export type DispatchTrendApiV1CuttingDispatchesTrendGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeDispatchTrend;
+};
+
+export type DispatchTrendApiV1CuttingDispatchesTrendGetResponse = DispatchTrendApiV1CuttingDispatchesTrendGetResponses[keyof DispatchTrendApiV1CuttingDispatchesTrendGetResponses];
 
 export type GetDispatchApiV1CuttingDispatchesDispatchIdGetData = {
     body?: never;

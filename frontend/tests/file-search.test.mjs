@@ -46,6 +46,7 @@ function dispatchLifecycle({ status, projects, listMachines, catalogs } = {}) {
     listCuttingCatalogs: catalogs || (async () => ({ tree: [] })),
     listCuttingMachines: listMachines || (async () => ({ items: [] })),
     listCuttingDispatches: async () => { calls.history += 1; return { items: [], total: 0 } },
+    getCuttingDispatchTrend: async filters => ({ ...filters, items: [], machine_ips: [], timezone: 'Asia/Shanghai' }),
     window: {
       setTimeout: (callback, delay) => { const id = ++timerId; timers.set(id, { callback, delay }); return id },
       clearTimeout: id => timers.delete(id),
@@ -393,7 +394,6 @@ test('file dispatch status is displayed after operation time with the history ba
   assert.match(view, /row.dispatch_status.stage_label/)
   assert.match(view, /v-else class="dispatch-project-name">暂无记录/)
   assert.match(view, /#empty>[\s\S]*当前目录没有匹配的文件/)
-  assert.match(view, /Promise.allSettled\(\[loadHistory\(\), refreshVisibleFileStatuses\(\)\]\)/)
 })
 
 test('file status refresh preserves selections and ignores responses after a directory switch', async () => {
@@ -855,7 +855,8 @@ test('history retries require a segment for nonstandard files and cancellation n
   const calls = [], retryDispatch = ref(null), retrySegment = ref('')
   const operatingId = ref('')
   let accepted = true
-  const executeSaved = scriptFunction('confirm', 'retryDispatch', 'retrySegment', 'operatingId', 'machineName', 'parseCuttingInstructionFilename', 'executeCuttingDispatch', 'showNotice', 'loadHistory', 'refreshVisibleFileStatuses', `${source}\nreturn executeSaved`)(async () => accepted, retryDispatch, retrySegment, operatingId, String, parseCuttingInstructionFilename, async (...args) => { calls.push(args); return { remote_task_id: 'remote' } }, () => {}, async () => {}, async () => {})
+  let historyRefreshes = 0, fileRefreshes = 0
+  const executeSaved = scriptFunction('confirm', 'retryDispatch', 'retrySegment', 'operatingId', 'machineName', 'parseCuttingInstructionFilename', 'executeCuttingDispatch', 'showNotice', 'refreshHistory', 'refreshVisibleFileStatuses', `${source}\nreturn executeSaved`)(async () => accepted, retryDispatch, retrySegment, operatingId, String, parseCuttingInstructionFilename, async (...args) => { calls.push(args); return { remote_task_id: 'remote' } }, () => {}, async () => { historyRefreshes++ }, async () => { fileRefreshes++ })
   const manual = { dispatch_id: 'old-manual', document_no: 'custom.gen', machine_ip: '10.1.1.2' }
   await executeSaved(manual)
   assert.equal(calls.length, 0)
@@ -866,9 +867,13 @@ test('history retries require a segment for nonstandard files and cancellation n
   accepted = false
   await executeSaved(manual, '806C')
   assert.equal(calls.length, 1)
+  assert.equal(historyRefreshes, 1)
+  assert.equal(fileRefreshes, 1)
   accepted = true
   await executeSaved({ ...manual, dispatch_id: 'uploaded', remote_task_id: 'remote' })
   assert.deepEqual(calls[1], ['uploaded', undefined])
+  assert.equal(historyRefreshes, 2)
+  assert.equal(fileRefreshes, 2)
   assert.doesNotMatch(view, /window\.(?:confirm|prompt)\(/)
 })
 
