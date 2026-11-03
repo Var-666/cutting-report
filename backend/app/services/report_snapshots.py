@@ -11,10 +11,10 @@ from typing import Callable
 
 from app.database.report_snapshots import ReportKey, ReportSnapshot, ReportSnapshotRepository, fingerprint
 from app.services.cache_revision import CacheRevision
-from app.services.process_lock import FileLock
+from app.core.process_lock import FileLock
 from app.services.query_cache import QueryCache
-from app.services.report_deadline import ensure_time_remaining
-from app.services.request_cancellation import SqlRequestCancelled, current_request_id, sql_request_cancellations
+from app.core.report_deadline import ensure_time_remaining
+from app.core.request_cancellation import SqlRequestCancelled, current_request_id, sql_request_cancellations
 
 
 logger = logging.getLogger(__name__)

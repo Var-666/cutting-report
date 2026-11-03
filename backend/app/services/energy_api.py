@@ -18,7 +18,7 @@ from urllib.parse import urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 from app.config import Settings
-from app.services.report_deadline import ensure_time_remaining, remaining_seconds
+from app.core.report_deadline import ensure_time_remaining, remaining_seconds
 
 
 class EnergyApiError(RuntimeError):

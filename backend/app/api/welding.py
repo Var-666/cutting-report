@@ -25,7 +25,7 @@ from app.database.welding import WeldingUnavailable
 from app.services.analysis_execution import analysis_operation
 from app.services.llm_service import LlmService
 from app.services.pdf_service import PdfRenderError
-from app.services.request_cancellation import SqlRequestCancelled
+from app.core.request_cancellation import SqlRequestCancelled
 from app.services.welding_export import WeldingExport, csv_bytes, COLUMNS
 from app.services.welding_service import WeldingService
 

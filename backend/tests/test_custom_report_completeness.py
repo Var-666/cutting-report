@@ -6,7 +6,7 @@ import pytest
 from app.config import Settings
 from app.database.sqlserver import SqlServerClient
 from app.services.custom_report_service import CustomReportService
-from app.services.report_deadline import report_deadline
+from app.core.report_deadline import report_deadline
 
 
 QUERY = {"sql_text": "SELECT TASK_ID AS amount FROM dbo.task WHERE MACHINE_NO = :machine_no", "columns": [

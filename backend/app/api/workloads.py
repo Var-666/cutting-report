@@ -10,7 +10,7 @@ from typing import Any, Callable
 from anyio import CapacityLimiter, fail_after, sleep, to_thread
 from fastapi import HTTPException, Request
 
-from app.services.request_cancellation import SqlRequestCancelled, current_request_id, sql_request_cancellations
+from app.core.request_cancellation import SqlRequestCancelled, current_request_id, sql_request_cancellations
 
 
 logger = logging.getLogger(__name__)

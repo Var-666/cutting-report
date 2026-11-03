@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from app.api.auth import require_admin, require_user
 from app.config import Settings
 from app.main import app
-from app.services.request_cancellation import (
+from app.core.request_cancellation import (
     SqlRequestCancellationRegistry,
     SqlRequestCancelled,
     bind_request_id,

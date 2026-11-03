@@ -16,7 +16,7 @@ from app.config import DEVICE_CATALOG, settings, settings_for_device
 from app.database.alarm_source import SqlServerAlarmSource
 from app.database.alarms import AlarmRepository
 from app.database.device_migrations import migrate_device_isolation
-from app.services.process_lock import FileLock
+from app.core.process_lock import FileLock
 
 
 def main() -> int:

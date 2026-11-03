@@ -19,7 +19,7 @@ from app.services.production_reports import report_provider
 from app.services.welding_service import WeldingService
 from app.services.report_snapshots import SnapshotRefreshBusy, SnapshotRefreshRejected
 from app.worker import WorkerProcess
-from test_welding_statistics_cache import Repository
+from test_welding_statistics_cache import Repository, aggregate_groups
 
 
 class Source(Repository):
@@ -99,6 +99,34 @@ def test_parts_state_response_keeps_legacy_compatibility_and_canonical_precedenc
 
 def query(**changes):
     return WeldingQuery(start=date(2026, 10, 1), end=date(2026, 10, 27), **changes)
+
+
+@pytest.mark.parametrize('kind, sort_by', [('equipment', 'time'), ('equipment', 'length'), ('daily', 'length')])
+@pytest.mark.parametrize('descending', [False, True])
+def test_snapshot_sort_and_paging_match_live_aggregates(configured, aggregate_groups, monkeypatch, kind, sort_by, descending):
+    cfg, snapshots, _, source, service = configured
+    daily, equipment = aggregate_groups
+    monkeypatch.setattr(source, 'daily', lambda *args: [dict(row) for row in reversed(daily)])
+    monkeypatch.setattr(source, 'equipment', lambda *args: [dict(row) for row in reversed(equipment)])
+    selected = query(sort_by=sort_by, descending=descending, page_size=2)
+    service.refresh_summary('page:daily', selected.model_dump(mode='json'))
+    stored = snapshots.get(service._snapshot_key(selected, 'page:daily'))
+    live = WeldingService(cfg, source)
+    count = len(equipment if kind == 'equipment' else daily)
+    expected = [live.report(kind, selected.model_copy(update={'page': page}), live=True)
+                for page in range(1, count // 2 + 1)]
+    before = source.calls.copy()
+    source.down = True
+    for page, report in enumerate(expected, 1):
+        current = selected.model_copy(update={'page': page})
+        actual = service.page(kind, current)
+        for field in ('items', 'total', 'summary', 'daily', 'equipment', 'data_version'):
+            assert actual[field] == report[field], field
+        assert service._snapshot_key(current, f'page:{kind}') == stored.key
+        assert actual['data_version'] == stored.payload['data_version'] == service.version(actual)
+        assert actual['meta']['report_data']['data_as_of'] == stored.data_as_of.isoformat()
+        assert actual['meta']['report_data']['refreshed_at'] == stored.refreshed_at.isoformat()
+    assert source.calls == before
 
 
 @pytest.fixture

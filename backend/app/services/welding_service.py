@@ -19,7 +19,7 @@ from app.services.production_lines import SERVICE_LINES
 from app.services.query_cache import QueryCache
 from app.database.report_snapshots import ReportKey, fingerprint
 from app.services.report_snapshots import ReportData, ReportSnapshotService
-from app.database.welding import WeldingRepository, WeldingSession, WeldingUnavailable, job_conditions, valid_serial, valid_time
+from app.database.welding import WeldingRepository, WeldingSession, WeldingUnavailable, aggregate_sort_key, job_conditions, valid_serial, valid_time
 from app.models.domain import to_primitive
 from app.models.welding import ReportType, WeldingQuery, WELD_TYPES
 
@@ -281,7 +281,8 @@ class WeldingService:
         rows = daily if kind == 'daily' else equipment
         column = {'time': 'production_date' if kind == 'daily' else 'device_no',
                   'length': 'weld_length_m', 'id': 'production_date' if kind == 'daily' else 'device_no'}[query.sort_by]
-        rows = sorted(rows, key=lambda row: (row.get(column) is not None, row.get(column) or 0, row.get('robot_no') or 0), reverse=query.descending)
+        keys = (column, 'production_date') if kind == 'daily' else (column, 'device_no', 'robot_no')
+        rows = sorted(rows, key=lambda row: aggregate_sort_key(row, keys), reverse=query.descending)
         total = len(rows)
         return (rows[:limit] if limit is not None else rows[(query.page - 1) * query.page_size:query.page * query.page_size]), total
 

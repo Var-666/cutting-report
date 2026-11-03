@@ -32,7 +32,7 @@ from app.models.database_sources import DatabaseSourceRequest, DatabaseSourceVie
 from app.database.source_registry import SourceNotFound, SourceConflict
 from app.services.database_configuration import test_source_connection, SourceConnectionError
 from app.models.configuration_contracts import DatabaseConfiguration, ConfigurationSaved, DatabaseStatus, ConnectionTestResult, DatabasePreview, ValidatedWorkbenchSql, WorkbenchQueryResult
-from app.services.request_cancellation import SqlRequestCancelled, cancellable_cursor
+from app.core.request_cancellation import SqlRequestCancelled, cancellable_cursor
 from app.services.sql_workbench_service import (
     SqlWorkbenchService,
     SqlWorkbenchValidationError,

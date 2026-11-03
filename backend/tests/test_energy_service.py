@@ -13,7 +13,7 @@ from app.models.domain import EquipmentRecord
 from app.services.energy_api import EnergyApiClient, EnergyApiError, EnergyAuthenticationError
 from app.services.energy_service import EquipmentEnergyService, interval_consumption, make_series
 from app.services.equipment_service import summarize_equipment
-from app.services.report_deadline import report_deadline
+from app.core.report_deadline import report_deadline
 from tests.analysis_fakes import model_analysis
 
 

@@ -9,11 +9,11 @@ import threading
 from contextlib import contextmanager
 from time import monotonic
 
-from app.services.request_cancellation import (
+from app.core.request_cancellation import (
     SqlRequestCancelled, current_request_id, sql_request_cancellations,
 )
 from pathlib import Path
-from app.services.process_lock import FileLock
+from app.core.process_lock import FileLock
 
 
 class PdfRenderError(RuntimeError):

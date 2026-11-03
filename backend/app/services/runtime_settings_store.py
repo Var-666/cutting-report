@@ -7,7 +7,7 @@ from pathlib import Path
 from threading import RLock
 
 from app.configuration_sources import read_env_file
-from app.services.process_lock import settings_file_lock
+from app.core.process_lock import settings_file_lock
 
 
 # Keep thread reentrancy as well as the per-file interprocess lock.

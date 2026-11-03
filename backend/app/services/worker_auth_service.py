@@ -8,7 +8,7 @@ import threading
 from app.config import Settings
 from app.database.sqlserver import SqlServerClient
 from app.database.workshop import AuthenticationError
-from app.services.request_cancellation import SqlRequestCancelled
+from app.core.request_cancellation import SqlRequestCancelled
 
 
 class WorkerAuthenticationUnavailableError(RuntimeError):

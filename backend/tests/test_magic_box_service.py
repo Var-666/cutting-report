@@ -12,7 +12,7 @@ from app.services.magic_box_service import (
     MagicBoxConfigProvider,
     MagicBoxError,
 )
-from app.services.report_deadline import operation_deadline
+from app.core.report_deadline import operation_deadline
 
 
 class ConfigRows:

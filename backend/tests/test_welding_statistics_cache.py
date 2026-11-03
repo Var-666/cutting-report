@@ -1,6 +1,7 @@
 from collections import Counter
 from contextlib import contextmanager
 from datetime import date
+from types import SimpleNamespace
 
 import pytest
 
@@ -68,6 +69,52 @@ class Repository(WeldingRepository):
 
 def query(**kwargs):
     return WeldingQuery(start=date(2026, 10, 1), end=date(2026, 10, 2), **kwargs)
+
+
+@pytest.fixture
+def aggregate_groups():
+    daily = [{'production_date': f'2026-10-0{day}', 'weld_length_m': length}
+             for day, length in ((1, 4), (2, None), (3, 0), (4, 4))]
+    equipment = [{'device_no': device, 'robot_no': robot, 'weld_length_m': length}
+                 for device, robot, length in ((None, None, 4), (None, 0, 4), (0, None, 4), (0, 0, 4),
+                                               (0, 2, None), (2, None, 0), (2, 0, 4), (2, 3, 4))]
+    return daily, equipment
+
+
+@pytest.mark.parametrize('kind, sort_by', [('equipment', 'time'), ('equipment', 'id'), ('equipment', 'length'),
+                                         ('daily', 'time'), ('daily', 'length')])
+@pytest.mark.parametrize('descending', [False, True])
+def test_aggregate_sorting_keeps_null_zero_identity_and_page_order(aggregate_groups, kind, sort_by, descending):
+    daily, equipment = aggregate_groups
+    expected = equipment if kind == 'equipment' else daily
+    if sort_by == 'length':
+        indices = (4, 5, 0, 1, 2, 3, 6, 7) if kind == 'equipment' else (1, 2, 0, 3)
+        expected = [expected[index] for index in indices]
+    if descending:
+        expected = list(reversed(expected))
+    selected = query(sort_by=sort_by, descending=descending, page=2, page_size=2)
+    # Equal lengths still use the group identity, independent of source row order.
+    for days, stations in ((daily, equipment), (list(reversed(daily)), list(reversed(equipment)))):
+        original = (list(days), list(stations))
+        rows, total = WeldingService._aggregate_rows(kind, selected, days, stations)
+        assert rows == expected[2:4] and total == len(expected)
+        rows, _ = WeldingService._aggregate_rows(kind, selected, days, stations, limit=100)
+        assert rows == expected
+        assert (days, stations) == original
+
+
+def test_repository_statistics_and_page_sort_use_the_same_null_group_order(aggregate_groups):
+    daily, equipment = aggregate_groups
+    def fetch(sql, values, **kwargs):
+        return [{'bucket': 'summary'}, {'bucket': 'association', 'unlinked': 0, 'ambiguous': 0},
+                *[{'bucket': 'daily', **row} for row in reversed(daily)],
+                *[{'bucket': 'equipment', **row} for row in reversed(equipment)],
+                *[{'bucket': 'devices', 'device_no': device} for device in (2, 0, None)]]
+    _, days, stations, devices, _ = WeldingRepository(None).statistics(SimpleNamespace(fetch=fetch), query())
+    assert days == daily and stations == equipment
+    assert [row['device_no'] for row in devices] == [None, 0, 2]
+    rows, total = WeldingService._aggregate_rows('equipment', query(descending=False, page_size=100), days, stations)
+    assert rows == equipment and total == len(equipment)
 
 
 @pytest.mark.parametrize('kind', ['jobs', 'parts'])

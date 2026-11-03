@@ -20,7 +20,7 @@ from app.services.report_analysis_service import (
     analysis_table_source_version,
     leadership_analysis_source_version,
 )
-from app.services.request_cancellation import SqlRequestCancelled
+from app.core.request_cancellation import SqlRequestCancelled
 from app.services.production_reports import CuttingReportProvider
 
 

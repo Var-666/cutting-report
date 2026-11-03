@@ -89,7 +89,7 @@ def test_manual_upgrade_refuses_active_processes(tmp_path, owner):
     import subprocess
     import sys
     from time import time
-    from app.services.process_lock import FileLock
+    from app.core.process_lock import FileLock
     path = tmp_path / 'metadata.db'
     database = SQLiteDatabase(path)
     apply_migrations(database)

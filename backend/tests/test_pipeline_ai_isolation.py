@@ -8,8 +8,8 @@ from app.database.metadata import MetadataRepository
 from app.models.domain import ReportFilter
 from app.services.llm_service import AnalysisOutputValidationError, LlmRequestTimeout
 from app.services.pipeline import ReportPipeline, ReportPipelineCancelled
-from app.services.report_deadline import ReportOperationTimeout
-from app.services.request_cancellation import SqlRequestCancelled
+from app.core.report_deadline import ReportOperationTimeout
+from app.core.request_cancellation import SqlRequestCancelled
 from tests.analysis_fakes import model_analysis
 
 

@@ -1,47 +1,60 @@
+import ast
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from app.core import process_lock, report_deadline, request_cancellation
-from app.services import process_lock as legacy_lock
-from app.services import report_deadline as legacy_deadline
-from app.services import request_cancellation as legacy_cancellation
 
 
-def test_legacy_and_core_cancellation_share_registry_context_and_exception():
-    assert legacy_cancellation.sql_request_cancellations is request_cancellation.sql_request_cancellations
-    assert legacy_cancellation.current_request_id is request_cancellation.current_request_id
-    assert legacy_cancellation.SqlRequestCancelled is request_cancellation.SqlRequestCancelled
+def test_infrastructure_has_only_core_entry_points():
+    root = Path(__file__).resolve().parents[2]
+    modules = ('request_cancellation', 'report_deadline', 'process_lock')
+    retired = tuple(f'app.services.{name}' for name in modules)
+    for name in modules:
+        assert not (root / 'backend/app/services' / f'{name}.py').exists()
+    paths = [path for folder in ('backend/app', 'backend/tests', 'scripts')
+             for path in (root / folder).rglob('*.py')]
+    paths.extend(root.glob('*.py'))
+    for path in paths:
+        for node in ast.walk(ast.parse(path.read_text(), filename=str(path))):
+            references = []
+            if isinstance(node, ast.Import):
+                references = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                references = [f'{node.module}.{alias.name}' for alias in node.names]
+            elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+                references = [node.value]
+            assert not any(ref == old or ref.startswith(old + '.') for ref in references for old in retired), path
+
+
+def test_cancellation_context_and_cursor_share_the_registered_execution():
     registry = request_cancellation.sql_request_cancellations
-    execution = registry.activate('core-compatibility')
-    token = legacy_cancellation.bind_request_id(execution)
+    execution = registry.activate('core-execution')
+    token = request_cancellation.bind_request_id(execution)
     events = []
     cursor = SimpleNamespace(cancel=lambda: events.append('cancel'), close=lambda: events.append('close'))
     try:
-        with pytest.raises(legacy_cancellation.SqlRequestCancelled):
+        with pytest.raises(request_cancellation.SqlRequestCancelled):
             with request_cancellation.cancellable_cursor(SimpleNamespace(cursor=lambda: cursor)):
-                assert legacy_cancellation.sql_request_cancellations.cancel(execution)
+                assert registry.cancel(execution)
         assert events == ['cancel', 'close']
     finally:
         request_cancellation.reset_request_id(token)
         registry.finish(execution)
-    assert legacy_cancellation.current_request_id.get() is None
+    assert request_cancellation.current_request_id.get() is None
 
 
-def test_legacy_deadline_is_enforced_in_core_and_restores_context():
-    assert legacy_deadline.ReportOperationTimeout is report_deadline.ReportOperationTimeout
-    with legacy_deadline.report_deadline(0):
-        with pytest.raises(legacy_deadline.ReportOperationTimeout):
+def test_deadline_is_enforced_and_restores_context():
+    with report_deadline.report_deadline(0):
+        with pytest.raises(report_deadline.ReportOperationTimeout):
             report_deadline.ensure_time_remaining()
     assert report_deadline.remaining_seconds() is None
-    assert legacy_deadline.operation_deadline is report_deadline.operation_deadline
 
 
-def test_legacy_and_core_file_locks_share_reentrant_state(tmp_path):
-    assert legacy_lock.FileLock is process_lock.FileLock
-    assert legacy_lock.settings_file_lock is process_lock.settings_file_lock
+def test_file_locks_share_reentrant_state(tmp_path):
     path = tmp_path / 'settings.env'
-    with process_lock.settings_file_lock(path), legacy_lock.settings_file_lock(path):
+    with process_lock.settings_file_lock(path), process_lock.settings_file_lock(path):
         contender = process_lock.FileLock(path.with_name(path.name + '.lock'))
         assert not contender.acquire(blocking=False)
     assert contender.acquire(blocking=False)

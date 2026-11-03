@@ -11,7 +11,7 @@ from starlette.concurrency import run_in_threadpool
 from app.api.workloads import authentication_requests
 from app.api.runtime import application_state, runtime_state
 from app.config import settings
-from app.services.request_cancellation import (
+from app.core.request_cancellation import (
     cancellation_owner, current_request_id, sql_request_cancellations,
 )
 from app.database.workshop import AuthenticationError

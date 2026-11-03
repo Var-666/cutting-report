@@ -2,7 +2,7 @@ import pytest
 
 from app.config import Settings
 from app.database.sqlserver import SqlServerClient
-from app.services.report_deadline import (
+from app.core.report_deadline import (
     ReportOperationTimeout,
     ensure_time_remaining,
     report_deadline,

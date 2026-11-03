@@ -5,7 +5,7 @@ import re
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.api.auth import SESSION_COOKIE, require_user
-from app.services.request_cancellation import (
+from app.core.request_cancellation import (
     cancellation_owner, cancellation_session_scope, sql_request_cancellations,
 )
 

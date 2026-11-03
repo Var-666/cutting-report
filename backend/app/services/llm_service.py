@@ -19,8 +19,8 @@ import httpx
 from app.config import Settings
 from app.models.domain import AnalysisResult
 from app.services.llm_usage_service import record_llm_call
-from app.services.request_cancellation import SqlRequestCancelled, current_request_id, sql_request_cancellations
-from app.services.report_deadline import ensure_time_remaining, operation_deadline, remaining_seconds
+from app.core.request_cancellation import SqlRequestCancelled, current_request_id, sql_request_cancellations
+from app.core.report_deadline import ensure_time_remaining, operation_deadline, remaining_seconds
 from app.services.analysis_execution import analysis_observation, analysis_queue_remaining, analysis_stage, current_analysis_id
 from app.services.model_coordination import model_slot
 

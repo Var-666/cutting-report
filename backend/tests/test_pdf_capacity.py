@@ -6,7 +6,7 @@ import pytest
 
 from app.config import Settings
 from app.services.pdf_service import PdfService, PdfRenderError
-from app.services.request_cancellation import (
+from app.core.request_cancellation import (
     SqlRequestCancelled, bind_request_id, reset_request_id, sql_request_cancellations,
 )
 

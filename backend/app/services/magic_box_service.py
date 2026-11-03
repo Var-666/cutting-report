@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from app.database.sqlserver import SqlServerClient, SqlServerConfigurationError
-from app.services.report_deadline import (
+from app.core.report_deadline import (
     ReportOperationTimeout,
     ensure_time_remaining,
     remaining_seconds,

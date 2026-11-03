@@ -9,8 +9,8 @@ from time import monotonic
 from uuid import uuid4
 
 from app.config import Settings
-from app.services.report_deadline import ensure_time_remaining, operation_deadline, remaining_seconds
-from app.services.request_cancellation import current_request_id
+from app.core.report_deadline import ensure_time_remaining, operation_deadline, remaining_seconds
+from app.core.request_cancellation import current_request_id
 
 
 logger = logging.getLogger(__name__)

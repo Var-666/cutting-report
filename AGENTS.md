@@ -52,7 +52,7 @@
 
 - 默认业务调用方向为 `api/workers → services → database`，模型和配置供各层使用。`main.py`、`worker.py`、`services/application_runtime.py`、`services/device_runtime.py` 是入口/装配边界，允许同时依赖 Service、Repository 和 Worker；不能因这类导入机械判定为反向依赖。
 - 现有 `services/frontend_static.py` 是供 Web 入口使用的 HTTP 静态资源适配，不属于业务 Service；保留位置，不向其中增加业务流程，也不由业务 Service 引用它。
-- 数据库层直接使用 `core/` 的取消、期限和锁机制；旧 `services/` 同名入口仅导出同一实现，不能复制注册表、ContextVar 或重入状态。SQLite 执行租约和提交围栏继续留在 `database/sqlite.py`。
+- 请求取消、执行期限和进程锁以 `app.core.request_cancellation`、`app.core.report_deadline`、`app.core.process_lock` 为唯一正式入口；API、Service、Repository、Worker 及脚本均直接导入，新模块同样遵守。不在 `services/` 创建同名转发模块，不复制已有注册表、ContextVar、文件锁或执行期限实现。SQLite 执行租约和提交围栏继续留在 `database/sqlite.py`。
 - 条件查询契约、字段描述和通用值校验在 `models/conditions.py`；数据集字段/排序列映射在 `database/condition_fields.py`，SQL 编译和 Mock 求值在 `database/condition_query.py`。`services/condition_service.py` 提供公开 schema 和旧调用入口，Repository 不反向引用该 Service。小型响应封装不必为消除重复而建立公共框架。
 - 告警事件归并、发送认领、状态转换、唯一性和租约判断必须在原事务内完成；扫描窗口、调度日期、模型/文件生成、SMTP 和重试策略由现有 Service 编排。不能为缩短 Repository 把原子校验移出事务。
 

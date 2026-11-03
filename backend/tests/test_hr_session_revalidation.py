@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from app.api.auth import require_user
 from app.api.workloads import authentication_requests
 from app.database.workshop import WorkshopRepository
-from app.services.request_cancellation import SqlRequestCancelled
+from app.core.request_cancellation import SqlRequestCancelled
 from app.services.worker_auth_service import WorkerAuthService
 from test_worker_auth_service import FakeSqlServerClient, _enabled_settings, _valid_row
 

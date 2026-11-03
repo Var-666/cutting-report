@@ -17,7 +17,7 @@ from app.models.energy_contracts import EquipmentReport
 from app.services.equipment_service import (
     summarize_equipment,
 )
-from app.services.request_cancellation import SqlRequestCancelled
+from app.core.request_cancellation import SqlRequestCancelled
 
 
 logger = logging.getLogger(__name__)

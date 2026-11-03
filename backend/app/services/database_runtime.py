@@ -13,7 +13,7 @@ from app.services.database_configuration import (
     DatabaseConfigurationRequest, WeldingConnectionRequest, database_configuration_data,
     connection_env_values, welding_env_values,
 )
-from app.services.process_lock import settings_file_lock
+from app.core.process_lock import settings_file_lock
 from app.services.automation_runtime import AutomationRuntime
 from app.models.database_sources import DatabaseSourceConfig, DatabaseSourceRequest
 from app.database.source_registry import (

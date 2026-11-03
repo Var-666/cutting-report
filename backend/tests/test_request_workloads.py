@@ -12,7 +12,7 @@ from app.api import analysis, reports, workloads
 from app.api.auth import require_admin, require_user
 from app.config import Settings
 from app.main import app
-from app.services.request_cancellation import SqlRequestCancelled
+from app.core.request_cancellation import SqlRequestCancelled
 
 
 def test_busy_analysis_pdf_and_queries_leave_default_threads_and_fast_routes_free(tmp_path, monkeypatch):
@@ -288,7 +288,7 @@ def test_bounded_queue_is_fifo_without_threads_and_rejects_only_overflow():
 @pytest.mark.parametrize('cancellation', ['timeout', 'native', 'registry', 'disconnect'])
 def test_waiting_requests_cancel_or_timeout_without_late_execution(cancellation):
     from fastapi import Request
-    from app.services.request_cancellation import bind_request_id, reset_request_id, sql_request_cancellations
+    from app.core.request_cancellation import bind_request_id, reset_request_id, sql_request_cancellations
     workload = workloads.RequestWorkload(1, '焊接', max_waiters=1, queue_timeout_seconds=0.075)
     entered, release, executed = Event(), Event(), Event()
 

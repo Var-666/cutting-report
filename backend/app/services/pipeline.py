@@ -22,8 +22,8 @@ from app.services.leadership_report_service import LeadershipReportService
 from app.services.query_service import QueryService
 from app.services.range_report_service import RangeReportService
 from app.services.report_analysis_service import AnalysisUnavailableError, ReportAnalysisService
-from app.services.report_deadline import ReportOperationTimeout, ensure_time_remaining, report_deadline
-from app.services.request_cancellation import SqlRequestCancelled
+from app.core.report_deadline import ReportOperationTimeout, ensure_time_remaining, report_deadline
+from app.core.request_cancellation import SqlRequestCancelled
 from app.services.report_service import ReportService
 from app.services.statistics_service import StatisticsService
 from app.services.report_generation.leadership import prepare_report as prepare_leadership_report

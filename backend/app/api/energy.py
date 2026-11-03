@@ -14,7 +14,7 @@ from app.services.report_analysis_service import (
     analysis_table_source_version,
     equipment_analysis_source_version,
 )
-from app.services.request_cancellation import SqlRequestCancelled
+from app.core.request_cancellation import SqlRequestCancelled
 
 
 router = APIRouter(prefix="/api/v1/energy-report", tags=["energy-report"], dependencies=[Depends(require_admin)])

@@ -35,8 +35,8 @@ from app.services.report_analysis_service import (
     workshop_analysis_source_version,
 )
 from tests.analysis_fakes import model_analysis
-from app.services.report_deadline import ReportOperationTimeout, report_deadline
-from app.services.request_cancellation import (
+from app.core.report_deadline import ReportOperationTimeout, report_deadline
+from app.core.request_cancellation import (
     SqlRequestCancelled, bind_request_id, reset_request_id, sql_request_cancellations,
 )
 

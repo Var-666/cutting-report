@@ -102,7 +102,7 @@ def _configuration_observer(root, output, changed):
 
 def _config_increment(path, start):
     from app.services.runtime_settings_store import read_runtime_env, write_runtime_env, runtime_settings_lock
-    from app.services.process_lock import settings_file_lock
+    from app.core.process_lock import settings_file_lock
     assert start.wait(10)
     with runtime_settings_lock, settings_file_lock(Path(path)):
         current = read_runtime_env(Path(path))

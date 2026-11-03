@@ -15,7 +15,7 @@ from app.database.device_migrations import migrate_device_isolation
 from app.database.migrations import apply_migrations
 from app.database.migrations.registry import MIGRATIONS
 from app.database.sqlite import SQLiteDatabase
-from app.services.process_lock import FileLock
+from app.core.process_lock import FileLock
 
 
 def main() -> None:

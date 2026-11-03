@@ -12,7 +12,7 @@ from sqlglot.errors import ParseError
 
 from app.config import Settings
 from app.database.sqlserver import SqlServerClient
-from app.services.request_cancellation import cancellable_cursor
+from app.core.request_cancellation import cancellable_cursor
 
 
 PROHIBITED_NODE_KEYS = {

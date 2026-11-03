@@ -23,9 +23,9 @@ from app.services.report_analysis_service import (
     analysis_period_label as _period_label,
     equipment_analysis_source_version,
 )
-from app.services.request_cancellation import SqlRequestCancelled
+from app.core.request_cancellation import SqlRequestCancelled
 from app.services.analysis_execution import analysis_operation
-from app.services.report_deadline import ReportOperationTimeout
+from app.core.report_deadline import ReportOperationTimeout
 
 
 logger = logging.getLogger(__name__)

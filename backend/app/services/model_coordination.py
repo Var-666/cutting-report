@@ -5,9 +5,9 @@ from uuid import uuid4
 
 from app.database.coordination import CoordinationRepository
 from app.database.sqlite import SQLiteDatabase
-from app.services.process_lock import FileLock
-from app.services.report_deadline import ensure_time_remaining
-from app.services.request_cancellation import SqlRequestCancelled, current_request_id, sql_request_cancellations
+from app.core.process_lock import FileLock
+from app.core.report_deadline import ensure_time_remaining
+from app.core.request_cancellation import SqlRequestCancelled, current_request_id, sql_request_cancellations
 
 
 @lru_cache(maxsize=16)

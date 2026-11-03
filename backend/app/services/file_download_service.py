@@ -12,7 +12,7 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from app.services.file_source import FileSourceError, normalize_relative_path
-from app.services.process_lock import FileLock
+from app.core.process_lock import FileLock
 
 
 logger = logging.getLogger(__name__)

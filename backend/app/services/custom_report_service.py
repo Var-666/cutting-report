@@ -12,7 +12,7 @@ from typing import Any, Iterable, Iterator
 from app.config import Settings
 from app.database.sqlserver import SqlServerClient
 from app.services.sql_workbench_service import SqlWorkbenchService
-from app.services.report_deadline import ensure_time_remaining
+from app.core.report_deadline import ensure_time_remaining
 
 
 PARAMETER_PATTERN = re.compile(r":([A-Za-z_][A-Za-z0-9_]*)")

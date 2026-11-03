@@ -70,7 +70,7 @@ def test_connection_is_lazy_and_disabled_does_not_import_or_connect():
 
 def test_outer_query_budget_exhaustion_does_not_start_another_sql():
     from app.database.welding import WeldingSession
-    from app.services.report_deadline import operation_deadline
+    from app.core.report_deadline import operation_deadline
     session = WeldingSession(SimpleNamespace())
     with operation_deadline(-1):
         with pytest.raises(WeldingUnavailable, match='超时'):
@@ -116,7 +116,7 @@ def test_each_welding_query_gets_full_timeout_unless_outer_budget_is_shorter(mon
 
 def test_cursor_cleanup_does_not_mask_cancelled_query(monkeypatch, caplog):
     from app.database.welding import WeldingSession
-    from app.services.request_cancellation import SqlRequestCancelled, sql_request_cancellations
+    from app.core.request_cancellation import SqlRequestCancelled, sql_request_cancellations
     class Cursor:
         def execute(self, *args):
             pass
@@ -133,7 +133,7 @@ def test_cursor_cleanup_does_not_mask_cancelled_query(monkeypatch, caplog):
 
 
 def test_failed_rollback_still_closes_and_discards_pool():
-    from app.services.request_cancellation import SqlRequestCancelled
+    from app.core.request_cancellation import SqlRequestCancelled
     calls = []
     class Connection:
         def start_transaction(self, **kwargs):

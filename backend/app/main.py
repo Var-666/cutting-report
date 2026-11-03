@@ -37,9 +37,9 @@ from app.api.runtime import application_state, runtime_state
 from app.api.welding import router as welding_router
 from app.api.production_lines import router as production_lines_router
 from app.services.application_runtime import build_runtime
-from app.services.process_lock import FileLock
+from app.core.process_lock import FileLock
 from app.services.worker_status import background_ready
-from app.services.request_cancellation import (
+from app.core.request_cancellation import (
     SqlRequestCancelled, bind_request_id, cancellation_session_scope,
     reset_request_id, sql_request_cancellations,
 )

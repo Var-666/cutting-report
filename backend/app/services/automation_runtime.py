@@ -7,7 +7,7 @@ from app.config import LOADED_ENVIRONMENT, LOADED_SOURCES, Settings
 from app.services.automation_configuration import AutomationConfigurationRequest
 from app.services.runtime_settings_store import runtime_settings_lock
 from app.services.runtime_settings_store import read_runtime_env, write_runtime_env, RuntimeSettingsSaveError
-from app.services.process_lock import settings_file_lock
+from app.core.process_lock import settings_file_lock
 
 
 HOT_SETTINGS = {

@@ -36,7 +36,7 @@ from app.workers.retention_worker import RetentionWorker
 from app.workers.download_cleanup_worker import DownloadCleanupWorker
 
 from app.database.coordination import CoordinationRepository, backup_before_process_upgrade
-from app.services.process_lock import FileLock
+from app.core.process_lock import FileLock
 from app.services.worker_status import WorkerStatusReader
 from app.services.database_runtime import DatabaseRuntime, DatabaseServices, DATABASE_FIELDS, WELD_FIELDS
 from app.database.welding import WeldingClient, WeldingRepository

@@ -29,8 +29,8 @@ from app.services.llm_service import (
 from app.services.analysis_execution import (
     analysis_observation, analysis_operation, analysis_prepared, analysis_queue_remaining, analysis_stage,
 )
-from app.services.report_deadline import ReportOperationTimeout, ensure_time_remaining, remaining_seconds
-from app.services.request_cancellation import SqlRequestCancelled, current_request_id, sql_request_cancellations
+from app.core.report_deadline import ReportOperationTimeout, ensure_time_remaining, remaining_seconds
+from app.core.request_cancellation import SqlRequestCancelled, current_request_id, sql_request_cancellations
 
 from app.services.report_analysis.common import (
     _plain_language, generate_data_version, normalize_analysis_context,
@@ -166,7 +166,7 @@ class ReportAnalysisService:
 
     @contextmanager
     def _process_generation(self, cache_key: str, priority):
-        from app.services.process_lock import FileLock
+        from app.core.process_lock import FileLock
         lock = FileLock(self.settings.metadata_db_path.parent / ".coordination" / f"analysis-{cache_key}.lock")
         priority_path = lock.path.with_suffix(".foreground.lock")
         foreground_lock = FileLock(priority_path) if not is_background_llm_work() else None

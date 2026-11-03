@@ -12,6 +12,11 @@ from app.database.mysql import MySqlClient, MySqlSession, MySqlUnavailable as We
 TABLES = ('weld_info_table', 'weld_part_info_table', 'welding_seam_info_table')
 
 
+def aggregate_sort_key(row: dict, keys: tuple[str, ...]) -> tuple:
+    # MySQL ASC puts NULL before values, including the valid identifier 0.
+    return tuple((row.get(key) is not None, row.get(key) or 0) for key in keys)
+
+
 class WeldingSession(MySqlSession):
     def __init__(self, connection, timeout: int = 120, label: str = '焊接') -> None:
         super().__init__(connection, timeout, label)
@@ -179,7 +184,7 @@ class WeldingRepository:
                                       if key in dimensions[bucket] or key not in ('production_date', 'device_no', 'robot_no', 'unlinked', 'ambiguous')})
         groups['daily'].sort(key=lambda row: row['production_date'])
         for bucket, keys in (('equipment', ('device_no', 'robot_no')), ('devices', ('device_no',))):
-            groups[bucket].sort(key=lambda row: tuple((row[key] is not None, row[key] or 0) for key in keys))
+            groups[bucket].sort(key=lambda row: aggregate_sort_key(row, keys))
         return groups['summary'][0], groups['daily'], groups['equipment'], groups['devices'], groups['association'][0]
 
     def jobs(self, session: WeldingSession, query: WeldingQuery, *, limit: int | None = None, total: int | None = None) -> tuple[list[dict], int]:
