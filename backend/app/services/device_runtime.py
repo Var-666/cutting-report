@@ -37,6 +37,7 @@ from app.workers.leadership_refresh_worker import LeadershipRefreshWorker
 
 if TYPE_CHECKING:
     from app.database.coordination import CoordinationRepository
+    from app.services.production_lines import BackgroundSchedule
 
 
 @dataclass
@@ -89,21 +90,23 @@ class DeviceRuntime:
             from app.workers.energy_history_worker import _shift_month
             history.schedule_range(_shift_month(today.replace(day=1), -11), today)
 
-    def schedule_background(self, repository: CoordinationRepository, now: datetime) -> None:
+    def schedule_background(self, scheduler: BackgroundSchedule, now: datetime) -> None:
+        repository = scheduler.repository
         if self.current_report_refresh_worker.enabled:
             interval = max(30, self.settings.report_background_refresh_seconds)
-            repository.schedule("current_refresh", self.settings.device_id, {"date": now.date().isoformat(), "source_fingerprint": self.settings.source_fingerprint}, interval)
+            scheduler.schedule("current_refresh", self.settings.device_id, {"date": now.date().isoformat(), "source_fingerprint": self.settings.source_fingerprint}, interval,
+                               source=self.settings.source_fingerprint)
         leadership = self.leadership_refresh_worker
         if leadership.enabled:
             month = now.date().replace(day=1)
-            repository.schedule("leadership_refresh", self.settings.device_id,
-                {"date": month.isoformat(), "bootstrap": leadership.service.needs_bootstrap(month), "source_fingerprint": self.settings.source_fingerprint},
-                max(30, self.settings.report_background_refresh_seconds))
+            scheduler.schedule("leadership_refresh", self.settings.device_id,
+                lambda: {"date": month.isoformat(), "bootstrap": leadership.service.needs_bootstrap(month), "source_fingerprint": self.settings.source_fingerprint},
+                max(30, self.settings.report_background_refresh_seconds), source=self.settings.source_fingerprint)
             if now.hour >= self.settings.leadership_report_reconcile_hour:
                 # The current month is already scheduled by the periodic refresh.
                 for offset in range(1, 3):
                     selected = _previous_month(month, offset)
-                    repository.enqueue("leadership_refresh", self.settings.device_id, {"date": selected.isoformat(), "bootstrap": False, "source_fingerprint": self.settings.source_fingerprint},
+                    scheduler.enqueue_once("leadership_refresh", self.settings.device_id, {"date": selected.isoformat(), "bootstrap": False, "source_fingerprint": self.settings.source_fingerprint},
                         key=f"reconcile:{self.settings.device_id}:{now.date()}:{selected}")
         history = self.energy_history_worker
         if history._pending_finish is not None:
@@ -112,7 +115,8 @@ class DeviceRuntime:
                 and not repository.active("energy_sync", self.settings.device_id, {})):
             repository.enqueue("energy_sync", self.settings.device_id, {})
         if self.alarm_worker.enabled:
-            repository.schedule("alarm", self.settings.device_id, {}, max(30, self.settings.alarm_monitor_interval_seconds))
+            scheduler.schedule("alarm", self.settings.device_id, {}, max(30, self.settings.alarm_monitor_interval_seconds),
+                               source=self.settings.source_fingerprint)
 
     def handle_background(self, kind: str, payload: dict) -> None:
         current = self.current_report_refresh_worker

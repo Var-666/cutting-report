@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import argparse
 from collections import deque
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
 import json
 import logging
@@ -26,8 +28,16 @@ from app.workers.report_worker import ReportWorker
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class _Schedule:
+    interval: float
+    source: str
+    deadline: float
+
+
 class WorkerProcess:
     LEASE_SECONDS = 30
+    DEFERRED_SCAN_SECONDS = 5
 
     def __init__(self, configuration: Settings, runtime: ApplicationRuntime | None = None) -> None:
         self.settings = configuration
@@ -42,6 +52,12 @@ class WorkerProcess:
         self._completed = deque()
         self.report_worker = None
         self._next_heartbeat = 0.0
+        self._next_admission = 0.0
+        self._next_due: dict[str, _Schedule] = {}
+        self._reconciled: dict[str, str] = {}
+        self._seen_schedules: set[str] = set()
+        self._seen_reconciliations: set[str] = set()
+        self._clock_offset: float | None = None
 
     def scope(self):
         return execution_scope(self.settings.metadata_db_path, "worker", self.owner)
@@ -93,14 +109,17 @@ class WorkerProcess:
         if monotonic() >= self._next_heartbeat:
             self._heartbeat()
         with self.scope():
-            self._flush_completions()
+            completed = self._flush_completions()
             self._schedule()
-            self.repository.admit_deferred()
+            if completed or monotonic() >= self._next_admission:
+                self.repository.admit_deferred()
+                self._next_admission = monotonic() + self.DEFERRED_SCAN_SECONDS
             for is_analysis, executor in ((False, self.operations), (True, self.analysis)):
                 while executor.available() and not self.stop_event.is_set():
                     task = self.repository.claim_task(self.owner, analysis=is_analysis)
                     if task is None:
                         break
+                    self._next_admission = 0.0  # Claiming releases pending-queue capacity.
                     with self._lock:
                         self._running[task["task_id"]] = (task, time())
                     try:
@@ -114,15 +133,61 @@ class WorkerProcess:
     def _schedule(self) -> None:
         now = datetime.now(ZoneInfo(self.settings.timezone))
         context = database_context(self.runtime)
-        for line_id, line in context.lines.items():
-            if line.config.enabled and line.background is not None:
-                line.background.schedule_background(self.repository, now)
-        for line_id, provider in report_providers(context):
-            for payload, interval in provider.refresh_plan():
-                self.repository.request_snapshot_refresh(line_id, payload, interval=interval)
-        self.repository.schedule("retention", "", {}, max(1, self.settings.retention_cleanup_interval_hours) * 3600)
-        if self.runtime.download_cleanup_worker.enabled:
-            self.repository.schedule("download_cleanup", "", {}, 86400)
+        offset = time() - monotonic()
+        if self._clock_offset is not None and abs(offset - self._clock_offset) > 1:
+            self._next_due.clear()  # Rebase wall-clock persistence after a system clock step.
+        self._clock_offset = offset
+        self._seen_schedules.clear()
+        self._seen_reconciliations.clear()
+        try:
+            for line in context.lines.values():
+                if line.config.enabled and line.background is not None:
+                    line.background.schedule_background(self, now)
+            for line_id, provider in report_providers(context):
+                for payload, interval in provider.refresh_plan():
+                    self._schedule_snapshot(line_id, payload, interval)
+            self.schedule("retention", "", {}, max(1, self.settings.retention_cleanup_interval_hours) * 3600)
+            if self.runtime.download_cleanup_worker.enabled:
+                self.schedule("download_cleanup", "", {}, 86400)
+        finally:
+            self._next_due = {key: value for key, value in self._next_due.items() if key in self._seen_schedules}
+            self._reconciled = {key: value for key, value in self._reconciled.items() if key in self._seen_reconciliations}
+
+    def _waiting(self, key: str, interval: float, source: str) -> bool:
+        self._seen_schedules.add(key)
+        state = self._next_due.get(key)
+        return bool(state and state.interval == interval and state.source == source and monotonic() < state.deadline)
+
+    def _remember_due(self, key: str, interval: float, source: str, due: float) -> None:
+        self._next_due[key] = _Schedule(interval, source, monotonic() + max(0, due - time()))
+
+    def schedule(self, kind: str, line_id: str, payload: dict | Callable[[], dict], interval: float, *, source: str = "") -> None:
+        key = f"{kind}:{line_id}"
+        if self._waiting(key, interval, source):
+            return
+        due = self.repository.next_due(key, interval)
+        if due <= time():
+            due = self.repository.schedule(kind, line_id, payload() if callable(payload) else payload, interval)
+        self._remember_due(key, interval, source, due)
+
+    def enqueue_once(self, kind: str, line_id: str, payload: dict, *, key: str) -> None:
+        self._seen_reconciliations.add(key)
+        source = payload.get('source_fingerprint', '')
+        if self._reconciled.get(key) == source:
+            return
+        if self.repository.enqueue(kind, line_id, payload, key=key) or self.repository.task_exists(key):
+            self._reconciled[key] = source
+
+    def _schedule_snapshot(self, line_id: str, payload: dict, interval: float) -> None:
+        key = self.repository.snapshot_task_key(line_id, payload)
+        source = payload['source_fingerprint']
+        if self._waiting(key, interval, source):
+            return
+        due = self.repository.snapshot_refresh_due(line_id, payload, interval)
+        if due <= time():
+            self.repository.request_snapshot_refresh(line_id, payload, interval=interval)
+            due = self.repository.snapshot_refresh_due(line_id, payload, interval)
+        self._remember_due(key, interval, source, due)
 
     @background_llm_work()
     def _execute(self, task: dict) -> None:
@@ -154,17 +219,24 @@ class WorkerProcess:
             with self._lock:
                 self._completed.append((task, error))
 
-    def _flush_completions(self) -> None:
+    def _flush_completions(self) -> int:
+        completed = 0
         while True:
             with self._lock:
                 item = self._completed[0] if self._completed else None
             if item is None:
-                return
+                return completed
             task, error = item
-            self.repository.finish_task(task, self.owner, error)
+            finished_at = self.repository.finish_task(task, self.owner, error)
+            if task['kind'] == 'report_snapshot_refresh' and not error and finished_at is not None:
+                key = task['dedup_key']
+                state = self._next_due.get(key)
+                if state:
+                    self._remember_due(key, state.interval, state.source, finished_at + state.interval)
             with self._lock:
                 self._completed.popleft()
                 self._running.pop(task["task_id"], None)
+            completed += 1
 
     def _handle(self, task: dict) -> None:
         kind, payload = task["kind"], task["payload"]

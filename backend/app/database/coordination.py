@@ -41,7 +41,7 @@ class CoordinationRepository(SQLiteRepository):
 
     def initialize(self) -> None:
         from app.database.migrations import apply_migrations
-        apply_migrations(self.database, names=("001_coordination",))
+        apply_migrations(self.database, names=("001_coordination", "016_schedule_intervals"))
 
     def acquire(self, name: str, *, ttl: float) -> str | None:
         owner = uuid4().hex
@@ -107,6 +107,11 @@ class CoordinationRepository(SQLiteRepository):
 
     def admit_deferred(self, *, capacity: int = 256) -> None:
         with self.connect() as connection:
+            if connection.execute("SELECT 1 FROM background_tasks WHERE status='deferred' AND next_attempt<=? LIMIT 1",
+                                  (time(),)).fetchone() is None:
+                return
+            if connection.execute("SELECT COUNT(*) FROM background_tasks WHERE status='pending'").fetchone()[0] >= capacity:
+                return
             self.begin_immediate(connection)
             count = connection.execute("SELECT COUNT(*) FROM background_tasks WHERE status='pending'").fetchone()[0]
             connection.execute("""UPDATE background_tasks SET status='pending', updated_at=?
@@ -114,29 +119,35 @@ class CoordinationRepository(SQLiteRepository):
                     AND next_attempt<=? ORDER BY created_at LIMIT ?)""", (time(), time(), max(0, capacity - count)))
 
     def claim_task(self, owner: str, *, analysis: bool) -> dict | None:
+        query = """SELECT * FROM background_tasks WHERE status='pending' AND next_attempt<=?
+            AND (kind LIKE 'analysis_%')=?
+            AND NOT EXISTS (SELECT 1 FROM background_tasks active
+                WHERE active.device_id=background_tasks.device_id AND active.kind=background_tasks.kind
+                    AND active.status='running' AND background_tasks.kind NOT LIKE 'analysis_%')
+            ORDER BY created_at, task_id LIMIT 1"""
         with self.connect() as connection:
+            self._require_owner(connection, owner)
+            if connection.execute(query, (time(), int(analysis))).fetchone() is None:
+                return None
             self.begin_immediate(connection)
             self._require_owner(connection, owner)
-            row = connection.execute("""SELECT * FROM background_tasks WHERE status='pending' AND next_attempt<=?
-                AND (kind LIKE 'analysis_%')=?
-                AND NOT EXISTS (SELECT 1 FROM background_tasks active
-                    WHERE active.device_id=background_tasks.device_id AND active.kind=background_tasks.kind
-                        AND active.status='running' AND background_tasks.kind NOT LIKE 'analysis_%')
-                ORDER BY created_at, task_id LIMIT 1""", (time(), int(analysis))).fetchone()
+            row = connection.execute(query, (time(), int(analysis))).fetchone()
             if row is None:
                 return None
             connection.execute("""UPDATE background_tasks SET status='running', owner=?, updated_at=?, attempts=attempts+1
                 WHERE task_id=? AND status='pending'""", (owner, time(), row["task_id"]))
             return {**dict(row), "owner": owner, "payload": json.loads(row["payload"]), "attempts": row["attempts"] + 1}
 
-    def finish_task(self, task: dict, owner: str, error: str | None = None) -> None:
+    def finish_task(self, task: dict, owner: str, error: str | None = None) -> float | None:
         delay = min(30 * 2 ** min(task["attempts"] - 1, 7), 3600) if error else 0
         with self.connect() as connection:
             self.begin_immediate(connection)
             self._require_owner(connection, owner)
-            connection.execute("""UPDATE background_tasks SET status=?, owner=NULL, updated_at=?, next_attempt=?, last_error=?
+            now = time()
+            updated = connection.execute("""UPDATE background_tasks SET status=?, owner=NULL, updated_at=?, next_attempt=?, last_error=?
                 WHERE task_id=? AND owner=? AND status='running'""",
-                ("deferred" if error else "completed", time(), time() + delay, error, task["task_id"], owner))
+                ("deferred" if error else "completed", now, now + delay, error, task["task_id"], owner))
+        return now if updated.rowcount else None
 
     def recover_tasks(self, owner: str) -> None:
         with self.connect() as connection:
@@ -161,26 +172,50 @@ class CoordinationRepository(SQLiteRepository):
             return connection.execute("""SELECT 1 FROM background_tasks WHERE kind=? AND device_id=? AND payload=?
                 AND status IN ('pending','running','deferred') LIMIT 1""", (kind, device_id, json.dumps(payload))).fetchone() is not None
 
+    def task_exists(self, key: str) -> bool:
+        with self.connect() as connection:
+            return connection.execute("SELECT 1 FROM background_tasks WHERE dedup_key=?", (key,)).fetchone() is not None
+
+    @staticmethod
+    def _schedule_due(row: sqlite3.Row, interval: float) -> float:
+        if row['interval'] is None or row['interval'] == interval:
+            return row['next_due']
+        return row['next_due'] - row['interval'] + interval
+
+    def next_due(self, key: str, interval: float) -> float:
+        with self.connect() as connection:
+            row = connection.execute("SELECT next_due, interval FROM background_schedules WHERE schedule_key=?", (key,)).fetchone()
+            if row and row['interval'] is None:
+                # Adopt pre-P2 cadence once while preserving the persisted deadline.
+                self.begin_immediate(connection)
+                connection.execute("UPDATE background_schedules SET interval=? WHERE schedule_key=? AND interval IS NULL", (interval, key))
+                row = connection.execute("SELECT next_due, interval FROM background_schedules WHERE schedule_key=?", (key,)).fetchone()
+            return self._schedule_due(row, interval) if row else time()
+
     def due(self, key: str, interval: float) -> float | None:
         now = time()
         with self.connect() as connection:
             self.begin_immediate(connection)
-            connection.execute("INSERT OR IGNORE INTO background_schedules VALUES (?, ?)", (key, now))
-            stamp = connection.execute("SELECT next_due FROM background_schedules WHERE schedule_key=?", (key,)).fetchone()[0]
+            connection.execute("INSERT OR IGNORE INTO background_schedules(schedule_key, next_due, interval) VALUES (?, ?, ?)", (key, now, interval))
+            row = connection.execute("SELECT next_due, interval FROM background_schedules WHERE schedule_key=?", (key,)).fetchone()
+            stamp = self._schedule_due(row, interval)
             if stamp > now:
+                if row['interval'] != interval:
+                    connection.execute("UPDATE background_schedules SET next_due=?, interval=? WHERE schedule_key=?", (stamp, interval, key))
                 return None
-            connection.execute("UPDATE background_schedules SET next_due=? WHERE schedule_key=?", (now + interval, key))
+            connection.execute("UPDATE background_schedules SET next_due=?, interval=? WHERE schedule_key=?", (now + interval, interval, key))
             return stamp
 
-    def schedule(self, kind: str, device_id: str, payload: dict, interval: float) -> bool:
+    def schedule(self, kind: str, device_id: str, payload: dict, interval: float) -> float:
         with self.connect() as connection:
             self.begin_immediate(connection)
             bound = CoordinationRepository(self.database, connection=connection)
             stamp = bound.due(f"{kind}:{device_id}", interval)
-            if stamp is None:
-                return False
-            bound.enqueue(kind, device_id, payload, key=f"{kind}:{device_id}:{stamp}")
-            return True
+            if stamp is not None:
+                key = f"{kind}:{device_id}:{stamp}"
+                if not bound.enqueue(kind, device_id, payload, key=key) and not bound.task_exists(key):
+                    raise RuntimeError("周期任务未持久化，拒绝推进调度进度")
+            return bound.next_due(f"{kind}:{device_id}", interval)
 
     def refresh_active(self, device_id: str, month: str, *, source_fingerprint: str | None = None) -> bool:
         with self.connect() as connection:
@@ -205,7 +240,7 @@ class CoordinationRepository(SQLiteRepository):
             return bound.enqueue("leadership_refresh", device_id, {"date": month, "bootstrap": bootstrap, "source_fingerprint": source_fingerprint})
 
     @staticmethod
-    def _snapshot_task_key(line_id: str, payload: dict) -> str:
+    def snapshot_task_key(line_id: str, payload: dict) -> str:
         from app.database.report_snapshots import fingerprint
         identity = {key: payload[key] for key in ('report_type', 'query', 'source_fingerprint')}
         return f'report_snapshot:{line_id}:{fingerprint(identity)}'
@@ -214,10 +249,19 @@ class CoordinationRepository(SQLiteRepository):
         with self.connect() as connection:
             return connection.execute('''SELECT 1 FROM background_tasks WHERE dedup_key=?
                 AND status IN ('pending', 'running', 'deferred')''',
-                (self._snapshot_task_key(line_id, payload),)).fetchone() is not None
+                (self.snapshot_task_key(line_id, payload),)).fetchone() is not None
+
+    def snapshot_refresh_due(self, line_id: str, payload: dict, interval: float) -> float:
+        with self.connect() as connection:
+            row = connection.execute('SELECT status, updated_at FROM background_tasks WHERE dedup_key=?',
+                                     (self.snapshot_task_key(line_id, payload),)).fetchone()
+            if row is None:
+                return time()
+            # An active task cannot be refreshed until it completes, then waits its full interval.
+            return row['updated_at'] + interval if row['status'] == 'completed' else time() + interval
 
     def request_snapshot_refresh(self, line_id: str, payload: dict, *, interval: float | None = None) -> bool:
-        key = self._snapshot_task_key(line_id, payload)
+        key = self.snapshot_task_key(line_id, payload)
         now = time()
         with self.connect() as connection:
             self.begin_immediate(connection)

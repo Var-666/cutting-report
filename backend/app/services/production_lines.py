@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Protocol, cast
 from datetime import datetime
 from app.config import Settings
@@ -35,8 +36,15 @@ class ProductionLineService(Protocol):
 
 class LineBackgroundTasks(Protocol):
     def start_background(self) -> None: ...
-    def schedule_background(self, repository: CoordinationRepository, now: datetime) -> None: ...
+    def schedule_background(self, scheduler: BackgroundSchedule, now: datetime) -> None: ...
     def handle_background(self, kind: str, payload: dict) -> None: ...
+
+
+class BackgroundSchedule(Protocol):
+    repository: CoordinationRepository
+
+    def schedule(self, kind: str, line_id: str, payload: dict | Callable[[], dict], interval: float, *, source: str = "") -> None: ...
+    def enqueue_once(self, kind: str, line_id: str, payload: dict, *, key: str) -> None: ...
 
 
 @dataclass(frozen=True)

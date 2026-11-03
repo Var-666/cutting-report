@@ -15,6 +15,7 @@ from .v013_retention import upgrade as v013_retention
 from .v014_workshop_ship_names import upgrade as v014_workshop_ship_names
 
 from .v015_alarm_sources import upgrade as v015_alarm_sources
+from .v016_schedule_intervals import upgrade as v016_schedule_intervals
 
 MIGRATIONS = (
     ("001_coordination", v001_coordination),
@@ -32,4 +33,5 @@ MIGRATIONS = (
     ("013_retention", v013_retention),
     ("014_workshop_ship_names", v014_workshop_ship_names),
     ("015_alarm_sources", v015_alarm_sources),
+    ("016_schedule_intervals", v016_schedule_intervals),
 )

@@ -146,7 +146,8 @@ def _build_runtime(settings: Settings, *, role: Literal["web", "worker"]) -> App
                               snapshots=report_snapshots, coordination=coordination)
         return ProductionLineRuntime(line, service)
 
-    builders = {"cutting": (cutting, ("data_source_mode",), ("bm",)), "welding": (welding, (), ())}
+    builders = {"cutting": (cutting, ("data_source_mode", "report_background_refresh_seconds"), ("bm",)),
+                "welding": (welding, ("report_background_refresh_seconds",), ())}
 
     def build_lines(configuration: Settings, catalog: ProductionLineCatalog, sources: DatabaseSourceRegistry,
                     previous: DatabaseServices | None = None) -> dict[str, ProductionLineRuntime]:

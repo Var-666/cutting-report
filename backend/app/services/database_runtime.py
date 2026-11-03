@@ -41,7 +41,8 @@ class DatabaseServices:
 
 
 DATABASE_FIELDS = {'data_source_mode', 'worker_database_auth_enabled', 'file_database_enabled',
-                   'database_sources_json', 'production_lines_json', 'worker_source_key', 'file_source_key', 'dispatch_source_key'}
+                   'database_sources_json', 'production_lines_json', 'worker_source_key', 'file_source_key', 'dispatch_source_key',
+                   'report_background_refresh_seconds'}
 DATABASE_SETTINGS = {item.metadata['env']: item.name for item in fields(Settings) if item.name in DATABASE_FIELDS}
 DATABASE_DIAGNOSTIC_KEYS = set(DATABASE_SETTINGS) | {'APP_EFFECTIVE_DATA_SOURCE_MODE'}
 
@@ -56,6 +57,10 @@ def parse_database_settings(base: Settings, values: dict[str, object]) -> Settin
             if value.lower() not in {'1', 'true', 'yes', 'on', '0', 'false', 'no', 'off'}:
                 raise ValueError('数据库启用状态无效')
             value = value.lower() in {'1', 'true', 'yes', 'on'}
+        elif name == 'report_background_refresh_seconds':
+            value = int(value)
+            if value < 0:
+                raise ValueError('后台刷新间隔不能为负数')
         if isinstance(value, str) and any(char in value for char in ('\r', '\n', '\x00')):
             raise ValueError('数据库配置不能包含控制字符')
         changes[name] = value
