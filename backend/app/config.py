@@ -99,6 +99,8 @@ class Settings:
         if item.strip()
     ))
 
+    database_sources_json: str = configuration_field("DATABASE_SOURCES_JSON", lambda: _environment.get().get("DATABASE_SOURCES_JSON", "[]"), hidden=True)
+
     sqlserver_host: str = configuration_field("SQLSERVER_HOST", lambda: _environment.get().get("SQLSERVER_HOST", ""))
     sqlserver_port: int = configuration_field("SQLSERVER_PORT", lambda: _as_int("SQLSERVER_PORT", 1433))
     sqlserver_database: str = configuration_field("SQLSERVER_DATABASE", lambda: _environment.get().get("SQLSERVER_DATABASE", ""))

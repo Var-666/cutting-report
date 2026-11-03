@@ -27,7 +27,10 @@ from app.services.database_runtime import welding_connection_settings
 from app.config import Settings, settings
 from app.database.sqlserver import SqlServerClient, SqlServerConfigurationError
 from app.models.domain import ReportFilter, to_primitive
-from app.models.contracts import ApiEnvelope
+from app.models.contracts import ApiEnvelope, Items
+from app.models.database_sources import DatabaseSourceRequest, DatabaseSourceView, SourceEnabledRequest, SourceDeleted
+from app.database.source_registry import SourceNotFound, SourceConflict
+from app.services.database_configuration import test_source_connection, SourceConnectionError
 from app.models.configuration_contracts import DatabaseConfiguration, ConfigurationSaved, DatabaseStatus, ConnectionTestResult, DatabasePreview, ValidatedWorkbenchSql, WorkbenchQueryResult
 from app.services.request_cancellation import SqlRequestCancelled, cancellable_cursor
 from app.services.sql_workbench_service import (
@@ -404,3 +407,76 @@ def preview_dataset(payload: DatabasePreviewRequest, request: Request) -> dict:
         },
         "request_id": request.state.request_id,
     }
+
+
+def _source_result(request: Request, action) -> dict:
+    try:
+        data = action()
+    except SourceNotFound:
+        raise HTTPException(status_code=404, detail='数据源不存在') from None
+    except SourceConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    except RuntimeSettingsSaveError:
+        raise HTTPException(status_code=500, detail='数据源保存失败，请检查 data 目录写入权限') from None
+    except SourceConnectionError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from None
+    except SqlRequestCancelled:
+        raise
+    except ValueError:
+        raise HTTPException(status_code=422, detail='数据源配置无效，请核对 ID、连接参数及密码') from None
+    except Exception:
+        raise HTTPException(status_code=503, detail='数据源配置暂不可用，已保留原运行配置') from None
+    return {'success': True, 'data': data, 'request_id': request.state.request_id}
+
+
+@router.get('/sources', response_model=ApiEnvelope[Items[DatabaseSourceView]])
+def list_database_sources(request: Request):
+    return _source_result(request, lambda: {'items': runtime_state(request).database_sources.list()})
+
+
+@router.get('/sources/{source_id}', response_model=ApiEnvelope[DatabaseSourceView])
+def get_database_source(source_id: str, request: Request):
+    return _source_result(request, lambda: runtime_state(request).database_sources.view(source_id))
+
+
+@router.post('/sources', response_model=ApiEnvelope[DatabaseSourceView], status_code=201)
+def create_database_source(payload: DatabaseSourceRequest, request: Request):
+    def save():
+        runtime = application_state(request).database_runtime
+        runtime.save_source(payload, create=True)
+        return runtime.current_context.database_sources.view(payload.id)
+    return _source_result(request, save)
+
+
+@router.put('/sources/{source_id}', response_model=ApiEnvelope[DatabaseSourceView])
+def update_database_source(source_id: str, payload: DatabaseSourceRequest, request: Request):
+    def save():
+        if source_id != payload.id:
+            raise ValueError('数据源 ID 不允许修改')
+        runtime = application_state(request).database_runtime
+        runtime.save_source(payload)
+        return runtime.current_context.database_sources.view(source_id)
+    return _source_result(request, save)
+
+
+@router.patch('/sources/{source_id}/enabled', response_model=ApiEnvelope[DatabaseSourceView])
+def enable_database_source(source_id: str, payload: SourceEnabledRequest, request: Request):
+    def save():
+        runtime = application_state(request).database_runtime
+        runtime.set_source_enabled(source_id, payload.enabled)
+        return runtime.current_context.database_sources.view(source_id)
+    return _source_result(request, save)
+
+
+@router.delete('/sources/{source_id}', response_model=ApiEnvelope[SourceDeleted])
+def delete_database_source(source_id: str, request: Request):
+    def remove():
+        application_state(request).database_runtime.delete_source(source_id)
+        return {'deleted': True}
+    return _source_result(request, remove)
+
+
+@query_requests.route(router.post('/sources/test-connection', response_model=ApiEnvelope[ConnectionTestResult]))
+def test_database_source(payload: DatabaseSourceRequest, request: Request):
+    return _source_result(request, lambda: test_source_connection(
+        application_state(request).database_runtime.source_for_test(payload)))

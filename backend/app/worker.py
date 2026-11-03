@@ -258,6 +258,7 @@ class WorkerProcess:
             self.report_worker.stop()
         operations_stopped = self.operations.stop(max(0, deadline - monotonic()))
         analysis_stopped = self.analysis.stop(max(0, deadline - monotonic()))
+        self.runtime.database_runtime.close()
         report_stopped = not self.report_worker or not any(thread.is_alive() for thread in self.report_worker._threads())
         if self.owner and operations_stopped and analysis_stopped and report_stopped:
             try:

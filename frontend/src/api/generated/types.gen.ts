@@ -757,6 +757,21 @@ export type ApiEnvelopeDatabasePreview = {
 };
 
 /**
+ * ApiEnvelope[DatabaseSourceView]
+ */
+export type ApiEnvelopeDatabaseSourceView = {
+    /**
+     * Success
+     */
+    success: true;
+    data: DatabaseSourceView;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
  * ApiEnvelope[DatabaseStatus]
  */
 export type ApiEnvelopeDatabaseStatus = {
@@ -900,6 +915,21 @@ export type ApiEnvelopeItemsCuttingProject = {
      */
     success: true;
     data: ItemsCuttingProject;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
+ * ApiEnvelope[Items[DatabaseSourceView]]
+ */
+export type ApiEnvelopeItemsDatabaseSourceView = {
+    /**
+     * Success
+     */
+    success: true;
+    data: ItemsDatabaseSourceView;
     /**
      * Request Id
      */
@@ -1125,6 +1155,21 @@ export type ApiEnvelopeScheduledRun = {
      */
     success: true;
     data: ScheduledRun;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
+ * ApiEnvelope[SourceDeleted]
+ */
+export type ApiEnvelopeSourceDeleted = {
+    /**
+     * Success
+     */
+    success: true;
+    data: SourceDeleted;
     /**
      * Request Id
      */
@@ -2578,6 +2623,84 @@ export type DatabasePreviewRequest = {
 };
 
 /**
+ * DatabaseSourceRequest
+ */
+export type DatabaseSourceRequest = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Engine
+     */
+    engine: 'sqlserver' | 'mysql';
+    /**
+     * Enabled
+     */
+    enabled?: boolean;
+    /**
+     * Host
+     */
+    host: string;
+    /**
+     * Port
+     */
+    port: number;
+    /**
+     * Database
+     */
+    database: string;
+    /**
+     * Username
+     */
+    username: string;
+    /**
+     * Connect Timeout
+     */
+    connect_timeout?: number;
+    /**
+     * Query Timeout
+     */
+    query_timeout?: number;
+    /**
+     * Driver
+     */
+    driver?: string;
+    /**
+     * Encrypt
+     */
+    encrypt?: boolean;
+    /**
+     * Trust Server Certificate
+     */
+    trust_server_certificate?: boolean;
+    /**
+     * Pool Size
+     */
+    pool_size?: number;
+    /**
+     * Charset
+     */
+    charset?: string;
+    /**
+     * Readonly
+     */
+    readonly?: true;
+    /**
+     * Isolation Level
+     */
+    isolation_level?: 'REPEATABLE READ';
+    /**
+     * Password
+     */
+    password?: null;
+};
+
+/**
  * DatabaseSourceStatus
  */
 export type DatabaseSourceStatus = {
@@ -2617,6 +2740,92 @@ export type DatabaseSourceStatus = {
      * Uses Primary Fallback
      */
     uses_primary_fallback: boolean;
+};
+
+/**
+ * DatabaseSourceView
+ */
+export type DatabaseSourceView = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Engine
+     */
+    engine: 'sqlserver' | 'mysql';
+    /**
+     * Enabled
+     */
+    enabled?: boolean;
+    /**
+     * Host
+     */
+    host: string;
+    /**
+     * Port
+     */
+    port: number;
+    /**
+     * Database
+     */
+    database: string;
+    /**
+     * Username
+     */
+    username: string;
+    /**
+     * Connect Timeout
+     */
+    connect_timeout?: number;
+    /**
+     * Query Timeout
+     */
+    query_timeout?: number;
+    /**
+     * Driver
+     */
+    driver?: string;
+    /**
+     * Encrypt
+     */
+    encrypt?: boolean;
+    /**
+     * Trust Server Certificate
+     */
+    trust_server_certificate?: boolean;
+    /**
+     * Pool Size
+     */
+    pool_size?: number;
+    /**
+     * Charset
+     */
+    charset?: string;
+    /**
+     * Readonly
+     */
+    readonly?: true;
+    /**
+     * Isolation Level
+     */
+    isolation_level?: 'REPEATABLE READ';
+    /**
+     * Password Configured
+     */
+    password_configured: boolean;
+    /**
+     * Configured
+     */
+    configured: boolean;
+    /**
+     * References
+     */
+    references: Array<string>;
 };
 
 /**
@@ -3735,6 +3944,16 @@ export type ItemsCuttingProject = {
 };
 
 /**
+ * Items[DatabaseSourceView]
+ */
+export type ItemsDatabaseSourceView = {
+    /**
+     * Items
+     */
+    items: Array<DatabaseSourceView>;
+};
+
+/**
  * Items[EmailResolution]
  */
 export type ItemsEmailResolution = {
@@ -4718,6 +4937,26 @@ export type SortRule = {
      * Direction
      */
     direction?: 'asc' | 'desc';
+};
+
+/**
+ * SourceDeleted
+ */
+export type SourceDeleted = {
+    /**
+     * Deleted
+     */
+    deleted: boolean;
+};
+
+/**
+ * SourceEnabledRequest
+ */
+export type SourceEnabledRequest = {
+    /**
+     * Enabled
+     */
+    enabled: boolean;
 };
 
 /**
@@ -6696,6 +6935,84 @@ export type DatabaseConfigurationRequestWritable = {
 };
 
 /**
+ * DatabaseSourceRequest
+ */
+export type DatabaseSourceRequestWritable = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Engine
+     */
+    engine: 'sqlserver' | 'mysql';
+    /**
+     * Enabled
+     */
+    enabled?: boolean;
+    /**
+     * Host
+     */
+    host: string;
+    /**
+     * Port
+     */
+    port: number;
+    /**
+     * Database
+     */
+    database: string;
+    /**
+     * Username
+     */
+    username: string;
+    /**
+     * Connect Timeout
+     */
+    connect_timeout?: number;
+    /**
+     * Query Timeout
+     */
+    query_timeout?: number;
+    /**
+     * Driver
+     */
+    driver?: string;
+    /**
+     * Encrypt
+     */
+    encrypt?: boolean;
+    /**
+     * Trust Server Certificate
+     */
+    trust_server_certificate?: boolean;
+    /**
+     * Pool Size
+     */
+    pool_size?: number;
+    /**
+     * Charset
+     */
+    charset?: string;
+    /**
+     * Readonly
+     */
+    readonly?: true;
+    /**
+     * Isolation Level
+     */
+    isolation_level?: 'REPEATABLE READ';
+    /**
+     * Password
+     */
+    password?: string | null;
+};
+
+/**
  * SavedConnectionRequest
  */
 export type SavedConnectionRequestWritable = {
@@ -7901,6 +8218,201 @@ export type PreviewDatasetApiV1DatabasePreviewPostResponses = {
 };
 
 export type PreviewDatasetApiV1DatabasePreviewPostResponse = PreviewDatasetApiV1DatabasePreviewPostResponses[keyof PreviewDatasetApiV1DatabasePreviewPostResponses];
+
+export type ListDatabaseSourcesApiV1DatabaseSourcesGetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/database/sources';
+};
+
+export type ListDatabaseSourcesApiV1DatabaseSourcesGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ListDatabaseSourcesApiV1DatabaseSourcesGetError = ListDatabaseSourcesApiV1DatabaseSourcesGetErrors[keyof ListDatabaseSourcesApiV1DatabaseSourcesGetErrors];
+
+export type ListDatabaseSourcesApiV1DatabaseSourcesGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeItemsDatabaseSourceView;
+};
+
+export type ListDatabaseSourcesApiV1DatabaseSourcesGetResponse = ListDatabaseSourcesApiV1DatabaseSourcesGetResponses[keyof ListDatabaseSourcesApiV1DatabaseSourcesGetResponses];
+
+export type CreateDatabaseSourceApiV1DatabaseSourcesPostData = {
+    body: DatabaseSourceRequestWritable;
+    path?: never;
+    query?: never;
+    url: '/api/v1/database/sources';
+};
+
+export type CreateDatabaseSourceApiV1DatabaseSourcesPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type CreateDatabaseSourceApiV1DatabaseSourcesPostError = CreateDatabaseSourceApiV1DatabaseSourcesPostErrors[keyof CreateDatabaseSourceApiV1DatabaseSourcesPostErrors];
+
+export type CreateDatabaseSourceApiV1DatabaseSourcesPostResponses = {
+    /**
+     * Successful Response
+     */
+    201: ApiEnvelopeDatabaseSourceView;
+};
+
+export type CreateDatabaseSourceApiV1DatabaseSourcesPostResponse = CreateDatabaseSourceApiV1DatabaseSourcesPostResponses[keyof CreateDatabaseSourceApiV1DatabaseSourcesPostResponses];
+
+export type DeleteDatabaseSourceApiV1DatabaseSourcesSourceIdDeleteData = {
+    body?: never;
+    path: {
+        /**
+         * Source Id
+         */
+        source_id: string;
+    };
+    query?: never;
+    url: '/api/v1/database/sources/{source_id}';
+};
+
+export type DeleteDatabaseSourceApiV1DatabaseSourcesSourceIdDeleteErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type DeleteDatabaseSourceApiV1DatabaseSourcesSourceIdDeleteError = DeleteDatabaseSourceApiV1DatabaseSourcesSourceIdDeleteErrors[keyof DeleteDatabaseSourceApiV1DatabaseSourcesSourceIdDeleteErrors];
+
+export type DeleteDatabaseSourceApiV1DatabaseSourcesSourceIdDeleteResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeSourceDeleted;
+};
+
+export type DeleteDatabaseSourceApiV1DatabaseSourcesSourceIdDeleteResponse = DeleteDatabaseSourceApiV1DatabaseSourcesSourceIdDeleteResponses[keyof DeleteDatabaseSourceApiV1DatabaseSourcesSourceIdDeleteResponses];
+
+export type GetDatabaseSourceApiV1DatabaseSourcesSourceIdGetData = {
+    body?: never;
+    path: {
+        /**
+         * Source Id
+         */
+        source_id: string;
+    };
+    query?: never;
+    url: '/api/v1/database/sources/{source_id}';
+};
+
+export type GetDatabaseSourceApiV1DatabaseSourcesSourceIdGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type GetDatabaseSourceApiV1DatabaseSourcesSourceIdGetError = GetDatabaseSourceApiV1DatabaseSourcesSourceIdGetErrors[keyof GetDatabaseSourceApiV1DatabaseSourcesSourceIdGetErrors];
+
+export type GetDatabaseSourceApiV1DatabaseSourcesSourceIdGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeDatabaseSourceView;
+};
+
+export type GetDatabaseSourceApiV1DatabaseSourcesSourceIdGetResponse = GetDatabaseSourceApiV1DatabaseSourcesSourceIdGetResponses[keyof GetDatabaseSourceApiV1DatabaseSourcesSourceIdGetResponses];
+
+export type UpdateDatabaseSourceApiV1DatabaseSourcesSourceIdPutData = {
+    body: DatabaseSourceRequestWritable;
+    path: {
+        /**
+         * Source Id
+         */
+        source_id: string;
+    };
+    query?: never;
+    url: '/api/v1/database/sources/{source_id}';
+};
+
+export type UpdateDatabaseSourceApiV1DatabaseSourcesSourceIdPutErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type UpdateDatabaseSourceApiV1DatabaseSourcesSourceIdPutError = UpdateDatabaseSourceApiV1DatabaseSourcesSourceIdPutErrors[keyof UpdateDatabaseSourceApiV1DatabaseSourcesSourceIdPutErrors];
+
+export type UpdateDatabaseSourceApiV1DatabaseSourcesSourceIdPutResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeDatabaseSourceView;
+};
+
+export type UpdateDatabaseSourceApiV1DatabaseSourcesSourceIdPutResponse = UpdateDatabaseSourceApiV1DatabaseSourcesSourceIdPutResponses[keyof UpdateDatabaseSourceApiV1DatabaseSourcesSourceIdPutResponses];
+
+export type EnableDatabaseSourceApiV1DatabaseSourcesSourceIdEnabledPatchData = {
+    body: SourceEnabledRequest;
+    path: {
+        /**
+         * Source Id
+         */
+        source_id: string;
+    };
+    query?: never;
+    url: '/api/v1/database/sources/{source_id}/enabled';
+};
+
+export type EnableDatabaseSourceApiV1DatabaseSourcesSourceIdEnabledPatchErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type EnableDatabaseSourceApiV1DatabaseSourcesSourceIdEnabledPatchError = EnableDatabaseSourceApiV1DatabaseSourcesSourceIdEnabledPatchErrors[keyof EnableDatabaseSourceApiV1DatabaseSourcesSourceIdEnabledPatchErrors];
+
+export type EnableDatabaseSourceApiV1DatabaseSourcesSourceIdEnabledPatchResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeDatabaseSourceView;
+};
+
+export type EnableDatabaseSourceApiV1DatabaseSourcesSourceIdEnabledPatchResponse = EnableDatabaseSourceApiV1DatabaseSourcesSourceIdEnabledPatchResponses[keyof EnableDatabaseSourceApiV1DatabaseSourcesSourceIdEnabledPatchResponses];
+
+export type TestDatabaseSourceApiV1DatabaseSourcesTestConnectionPostData = {
+    body: DatabaseSourceRequestWritable;
+    path?: never;
+    query?: never;
+    url: '/api/v1/database/sources/test-connection';
+};
+
+export type TestDatabaseSourceApiV1DatabaseSourcesTestConnectionPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type TestDatabaseSourceApiV1DatabaseSourcesTestConnectionPostError = TestDatabaseSourceApiV1DatabaseSourcesTestConnectionPostErrors[keyof TestDatabaseSourceApiV1DatabaseSourcesTestConnectionPostErrors];
+
+export type TestDatabaseSourceApiV1DatabaseSourcesTestConnectionPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeConnectionTestResult;
+};
+
+export type TestDatabaseSourceApiV1DatabaseSourcesTestConnectionPostResponse = TestDatabaseSourceApiV1DatabaseSourcesTestConnectionPostResponses[keyof TestDatabaseSourceApiV1DatabaseSourcesTestConnectionPostResponses];
 
 export type GetAutomationConfigurationApiV1AutomationConfigurationGetData = {
     body?: never;

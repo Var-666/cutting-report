@@ -8,6 +8,7 @@ import { getDatabaseConfiguration, getDatabaseStatus, saveDatabaseConfiguration,
 import { deviceSelection, loadDevices } from '../state/devices.ts'
 import { formatTableDateValue } from '../utils/dateDisplay.ts'
 import ManagementPageHero from '../components/ManagementPageHero.vue'
+import DatabaseSourcesPanel from '../components/DatabaseSourcesPanel.vue'
 import { useUnsavedChanges } from '../composables/useUnsavedChanges.ts'
 
 const status = ref<DatabaseStatus | null>(null)
@@ -255,6 +256,8 @@ onMounted(() => Promise.all([loadStatus(), loadConfiguration()]))
       <small>车间 / 汇总 / 设备</small>
     </article>
   </section>
+
+  <DatabaseSourcesPanel />
 
   <section class="panel db-panel">
     <div class="panel-title"><div><span>03</span><h2>连接测试</h2></div><p>凭据仅用于本次测试，不会保存</p></div>

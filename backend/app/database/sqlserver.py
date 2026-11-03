@@ -5,6 +5,7 @@ from math import ceil
 from typing import Any, Iterator
 
 from app.config import Settings
+from app.models.database_sources import DatabaseSourceConfig
 from app.core.request_cancellation import cancellable_cursor
 from app.core.report_deadline import ensure_time_remaining, remaining_seconds
 
@@ -20,20 +21,31 @@ class SqlServerClient:
         "file": ("FILE_SQLSERVER", "文件数据库"),
     }
 
-    def __init__(self, settings: Settings, *, source: str = "production") -> None:
-        if source not in self.SOURCE_LABELS:
+    def __init__(self, settings: Settings | DatabaseSourceConfig, *, source: str = "production") -> None:
+        if isinstance(settings, DatabaseSourceConfig):
+            if settings.engine != 'sqlserver':
+                raise ValueError('数据源不是 SQL Server')
+            source = settings.id
+        elif source not in self.SOURCE_LABELS:
             raise ValueError(f"不支持的数据源：{source}")
         self.settings = settings
         self.source = source
 
+    def connection_config(self) -> dict:
+        if isinstance(self.settings, DatabaseSourceConfig):
+            if not self.settings.enabled:
+                raise SqlServerConfigurationError('数据源尚未启用')
+            return self.settings.sqlserver_connection()
+        return self.settings.sqlserver_connection(self.source)
+
     def _connection_string(self) -> str:
-        config = self.settings.sqlserver_connection(self.source)
+        config = self.connection_config()
         ensure_time_remaining()
         remaining = remaining_seconds()
         connect_timeout = config["connect_timeout"]
         if remaining is not None:
             connect_timeout = max(1, min(connect_timeout, ceil(remaining)))
-        env_prefix, source_label = self.SOURCE_LABELS[self.source]
+        env_prefix, source_label = self.SOURCE_LABELS.get(self.source, ('SOURCE', '数据库'))
         required = {
             f"{env_prefix}_HOST": config["host"],
             f"{env_prefix}_DATABASE": config["database"],
@@ -47,16 +59,21 @@ class SqlServerClient:
             )
         return ";".join(
             [
-                f"DRIVER={{{config['driver']}}}",
-                f"SERVER={config['host']},{config['port']}",
-                f"DATABASE={config['database']}",
-                f"UID={config['username']}",
-                f"PWD={config['password']}",
+                "DRIVER={" + str(config['driver']).replace('}', '}}') + "}",
+                f"SERVER={self._odbc_value(str(config['host']) + ',' + str(config['port']))}",
+                f"DATABASE={self._odbc_value(config['database'])}",
+                f"UID={self._odbc_value(config['username'])}",
+                f"PWD={self._odbc_value(config['password'])}",
                 f"Encrypt={config['encrypt']}",
                 f"TrustServerCertificate={config['trust_server_certificate']}",
                 f"Connection Timeout={connect_timeout}",
             ]
         )
+
+    @staticmethod
+    def _odbc_value(value: str) -> str:
+        # Preserve ordinary legacy strings and escape delimiters in credentials.
+        return '{' + value.replace('}', '}}') + '}' if any(char in value for char in ';{}') else value
 
     @contextmanager
     def connect(self) -> Iterator[Any]:
@@ -66,9 +83,10 @@ class SqlServerClient:
             raise SqlServerConfigurationError(
                 "未安装 pyodbc，请用 uv 为应用环境同步 sqlserver 可选依赖"
             ) from exc
-        connection = pyodbc.connect(self._connection_string())
+        options = {'readonly': True} if isinstance(self.settings, DatabaseSourceConfig) else {}
+        connection = pyodbc.connect(self._connection_string(), **options)
         try:
-            query_timeout = self.settings.sqlserver_connection(self.source)["query_timeout"]
+            query_timeout = self.connection_config()["query_timeout"]
             remaining = remaining_seconds()
             if remaining is not None:
                 query_timeout = max(1, min(query_timeout, ceil(remaining)))

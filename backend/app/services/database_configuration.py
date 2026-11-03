@@ -6,6 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, SecretStr, field_validator
 
 from app.config import Settings
+from app.models.database_sources import DatabaseSourceConfig
 
 
 class SavedConnectionRequest(BaseModel):
@@ -140,3 +141,39 @@ def welding_env_values(payload: WeldingConnectionRequest, configuration: Setting
             'WELD_DB_PORT': payload.port, 'WELD_DB_NAME': payload.database,
             'WELD_DB_USER': payload.username, 'WELD_DB_PASSWORD': password or saved_password,
             'WELD_DB_TIMEZONE': payload.timezone}
+
+
+class SourceConnectionError(RuntimeError):
+    pass
+
+
+def test_source_connection(config: DatabaseSourceConfig) -> dict:
+    """Probe only SELECT 1; connection success says nothing about business schemas."""
+    from time import perf_counter
+    from app.database.sqlserver import SqlServerClient
+    from app.database.mysql import MySqlClient, MySqlUnavailable
+    from app.core.request_cancellation import SqlRequestCancelled
+
+    started = perf_counter()
+    client = None
+    try:
+        if config.engine == 'sqlserver':
+            rows = SqlServerClient(config).fetch_all('SELECT 1 AS connected', ())
+        else:
+            client = MySqlClient(config.model_copy(update={'pool_size': 1}))
+            with client.snapshot() as session:
+                rows = session.fetch('SELECT 1 AS connected', limit=1)
+        if not rows or rows[0].get('connected') != 1:
+            raise SourceConnectionError('数据库未返回预期结果')
+    except SqlRequestCancelled:
+        raise
+    except MySqlUnavailable as exc:
+        raise SourceConnectionError(str(exc)) from None
+    except Exception:
+        raise SourceConnectionError('连接失败，请核对驱动、地址、端口、账号、证书及网络配置') from None
+    finally:
+        if client is not None:
+            client.close()
+    return {'connected': True, 'saved': False, 'database': config.database,
+        'elapsed_ms': round((perf_counter() - started) * 1000, 2),
+        'message': '只读连接测试成功，参数未保存；业务表、字段及统计口径尚未验证。'}

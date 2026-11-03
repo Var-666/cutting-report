@@ -135,3 +135,12 @@
 - 开始任务时只读取 `docs/` 中与任务直接相关的文档。
 - 只记录对后续开发有用的结果：架构、UI 约定、性能优化、技术决策和当前进度分别写入 `docs/project/` 中的对应文档。
 - `docs/project/progress.md` 保持简洁，只保留“当前状态、最近完成、当前问题、下一步”；不记录聊天过程。
+
+## 通用外部数据源（P13）
+
+- 新增 SQL Server/MySQL 数据库优先通过 `DatabaseSourceRegistry` 注册；管理页“其他数据源”仅登记连接，不自动创建产线、菜单、报表或授予业务权限。新产线仍沿用现有多产线注册与 Provider 机制。
+- 新增连接统一使用 `models/database_sources.py` 的配置模型，SQL Server 使用 `SqlServerClient(config)`，MySQL 使用 `MySqlClient(config)`；不在业务 Service 中散落连接字段，不为每个新库复制连接池。专属 SQL、参数及字段映射归业务 Repository，不统一 SQL 方言。
+- Registry 从 `DatabaseServices.database_sources` 请求/操作快照获取；Repository 固定本次操作的客户端，Service 通过装配显式接收 Repository。需要保护删除的业务引用在 `application_runtime.DATABASE_SOURCE_BINDINGS` 显式登记，不扫描源码推断引用。
+- 动态连接仅保存于 `data/settings.env` 的 `DATABASE_SOURCES_JSON`，复用原保存锁、0600 原子写入、空密码保留和失败保留旧快照；新数据源的全部连接选项随快照热加载。旧连接超时/池大小等参数的重启规则保持不变，旧 SQL Server/焊接配置继续兼容。
+- 新操作使用最新 Registry，旧操作和旧 Repository 保留原配置/客户端。不能在配置发布时关闭仍被引用的旧池；MySQL 客户端最后释放或进程退出时关闭资源，在途会话返回后才清理池。
+- 连接测试仅执行固定只读 `SELECT 1`；新增数据源不自动获得任意 SQL 查询能力，现有 Workbench 的生产库范围、管理员鉴权及令牌要求保持不变。响应/日志/诊断禁止回显密码或完整 `DATABASE_SOURCES_JSON`，前端类型从 OpenAPI 生成。

@@ -119,3 +119,48 @@ SQLite 结构升级统一登记在 `backend/app/database/migrations/registry.py`
 - [开发约定与架构](docs/project/README.md) · [完整文档目录](docs/README.md)
 
 开发时遵循 [AGENTS.md](AGENTS.md)，按实际影响范围执行定向测试；不默认运行全量套件。环境配置、凭据及运行数据不得提交 Git。
+
+## 通用外部数据源（P13）
+
+管理员在“系统设置 → 数据库配置 → 其他数据源”登记 SQL Server 或 MySQL。新增和编辑共用表单，支持连接测试、启停和删除。旧生产/HR/PDM/焊接配置继续保留，SQLite 不纳入此管理区域。
+
+例如登记下一个 SQL Server 数据库：
+
+1. 点击“新增数据源”，ID 填 `quality`，名称填“质量检测数据库”，选择 SQL Server，填写地址、端口、数据库及只读账号密码。
+2. 点击“测试连接”：只执行 `SELECT 1`，不保存参数，也不验证业务表和统计口径。确认后点击“保存”。编辑时密码留空保留最新已保存密码。
+3. 新业务在 Repository 中取得该数据源的客户端，使用参数化 SQL；Service 显式接收 Repository。以下仅为接入示例，本次不创建质量检测业务：
+
+   ```python
+   from app.database.source_registry import DatabaseSourceRegistry
+   from app.database.sqlserver import SqlServerClient
+
+   class QualityRepository:
+       def __init__(self, sources: DatabaseSourceRegistry):
+           client = sources.client('quality')
+           if not isinstance(client, SqlServerClient):
+               raise ValueError('quality 必须是 SQL Server 数据源')
+           self.client = client
+
+       # 在此实现业务 SQL；SQL Server 参数使用 ?，MySQL 会话参数使用 %s。
+   ```
+
+4. 在业务操作的装配入口，把当前快照的 Registry 传给 Repository，再把 Repository 传给业务 Service；Web 从 `runtime_state(request).database_sources`、Worker 从 `database_context(runtime).database_sources` 选取。固定本次操作的客户端，不跨操作长期保留启动时的 Repository。此方式无需修改公共 Runtime 或连接层；专属业务的长期服务装配仍遵循现有类型化 Runtime 约定。
+5. 在 `application_runtime.DATABASE_SOURCE_BINDINGS` 登记 `{'quality': ('quality-reports',)}` 等明确引用。部署消费者前先登记对应数据源；存在引用时禁止删除或更换数据库类型。移除业务引用后才能删除。
+
+以后新增连接无需重复开发配置表单、密码保存、连接测试、连接池或公共客户端。新业务仍需编写自己的 Repository、Service 和必要的 API；新增连接不会自动获得 Workbench 权限，也不会新增生产线或空白报表。
+
+新增源配置以 JSON 存在 `data/settings.env` 的 `DATABASE_SOURCES_JSON` 一项，只有这一份持久化来源；沿用文件锁、0600 权限和原子替换。Web 保存后立即发布，Worker 下一操作读取同一文件；配置无效或读取失败保留旧快照。诊断页对这项配置只展示状态和进程一致性，不显示 JSON/密码。旧环境变量及其热加载/重启边界保持兼容。
+
+未变化的客户端在快照之间复用。旧请求/Repository 保留旧配置，最后一个引用释放后 MySQL 客户端清理旧池；主动关闭时等待在途会话返回后清理。连接池清理封装使用当前 Connector/Python 的 `_remove_connections`，升级驱动时需执行池生命周期定向测试。MySQL 保持最多 4 个连接、只读事务和 REPEATABLE READ；不同源各自拥有连接资源。
+
+P13 的隔离验证命令：
+
+```bash
+./.venv/bin/python -m pytest backend/tests/test_database_sources.py -q
+cd frontend
+node --import tsx --test tests/database-sources.test.mjs
+pnpm run api:check
+pnpm run typecheck
+```
+
+现场网络、业务表权限和查询性能仍需在内网部署后另行验证，勿将连接测试成功当作业务验收。

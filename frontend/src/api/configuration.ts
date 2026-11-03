@@ -57,3 +57,27 @@ export function saveWeldingConfiguration(payload: WeldingConnectionRequest) { re
 export function getConfigurationDiagnostics({ signal }: ReadOptions = {}) {
   return request<ConfigurationDiagnostics>('/api/v1/configuration/diagnostics', { signal })
 }
+
+// Additional sources share generated contracts; no arbitrary query API is exposed.
+export function listDatabaseSources() {
+  return request<import('./generated/types.gen').ItemsDatabaseSourceView>('/api/v1/database/sources')
+}
+export function getDatabaseSource(id: string) {
+  return request<import('./generated/types.gen').DatabaseSourceView>(`/api/v1/database/sources/${encodeURIComponent(id)}`)
+}
+export function saveDatabaseSource(payload: import('./generated/types.gen').DatabaseSourceRequestWritable, create: boolean) {
+  return request<import('./generated/types.gen').DatabaseSourceView>(create ? '/api/v1/database/sources' : `/api/v1/database/sources/${encodeURIComponent(payload.id)}`, {
+    method: create ? 'POST' : 'PUT', body: JSON.stringify(payload),
+  })
+}
+export function setDatabaseSourceEnabled(id: string, enabled: boolean) {
+  return request<import('./generated/types.gen').DatabaseSourceView>(`/api/v1/database/sources/${encodeURIComponent(id)}/enabled`, {
+    method: 'PATCH', body: JSON.stringify({ enabled }),
+  })
+}
+export function deleteDatabaseSource(id: string) {
+  return request<import('./generated/types.gen').SourceDeleted>(`/api/v1/database/sources/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+export function testDatabaseSource(payload: import('./generated/types.gen').DatabaseSourceRequestWritable) {
+  return request<ConnectionTestResult>('/api/v1/database/sources/test-connection', { method: 'POST', body: JSON.stringify(payload) })
+}

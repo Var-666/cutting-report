@@ -65,6 +65,8 @@ async def lifespan(app: FastAPI):
         app.state.runtime = runtime
         yield
     finally:
+        if hasattr(app.state, "runtime"):
+            app.state.runtime.database_runtime.close()
         lock.release()
 
 
@@ -79,7 +81,7 @@ app = FastAPI(
 
 @app.exception_handler(RequestValidationError)
 async def safe_connection_validation(request: Request, exc: RequestValidationError):
-    if request.url.path.startswith(('/api/v1/welding', '/api/v1/database/welding/')) or request.url.path == '/api/v1/database/configuration':
+    if request.url.path.startswith(('/api/v1/welding', '/api/v1/database/welding/', '/api/v1/database/sources')) or request.url.path == '/api/v1/database/configuration':
         return JSONResponse(status_code=422, content={'success': False, 'error': {'code': 'VALIDATION_ERROR', 'message': '请求参数无效，请检查日期、筛选或连接配置'}})
     return await request_validation_exception_handler(request, exc)
 

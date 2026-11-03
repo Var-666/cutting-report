@@ -1,156 +1,43 @@
-"""Read-only welding queries; each report uses one repeatable-read snapshot."""
+"""Read-only welding queries; business SQL stays separate from MySQL connections."""
 from __future__ import annotations
 
-import logging
-import hashlib
-from math import ceil
-from contextlib import contextmanager
-from threading import Lock
-from time import monotonic
-from typing import Any, Iterator
-from uuid import uuid4
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from app.config import Settings
 from app.models.welding import WeldingQuery
-from app.core.report_deadline import remaining_seconds
-from app.core.request_cancellation import SqlRequestCancelled, current_request_id, sql_request_cancellations
+from app.models.database_sources import DatabaseSourceConfig
+from app.database.mysql import MySqlClient, MySqlSession, MySqlUnavailable as WeldingUnavailable
 
-
-logger = logging.getLogger(__name__)
 TABLES = ('weld_info_table', 'weld_part_info_table', 'welding_seam_info_table')
 
 
-class WeldingUnavailable(RuntimeError):
-    def __init__(self, message: str, *, category: str = 'source_unavailable') -> None:
-        super().__init__(message)
-        self.category = category
+class WeldingSession(MySqlSession):
+    def __init__(self, connection, timeout: int = 120, label: str = '焊接') -> None:
+        super().__init__(connection, timeout, label)
 
 
-class WeldingSession:
-    def __init__(self, connection, timeout: int = 120) -> None:
-        self.connection = connection
-        self.timeout = timeout
+class WeldingClient(MySqlClient):
+    session_type = WeldingSession
 
-    def fetch(self, sql: str, values: tuple = (), *, limit: int = 100001) -> list[dict[str, Any]]:
-        if sql_request_cancellations.is_cancelled(current_request_id.get()):
-            raise SqlRequestCancelled('焊接查询已取消')
-        started = monotonic()
-        remaining = remaining_seconds()
-        if remaining is not None and remaining <= 0:
-            raise WeldingUnavailable('焊接查询超时，请缩小日期或筛选范围后重试', category='query_timeout')
-        timeout = self.timeout if remaining is None else max(1, min(self.timeout, ceil(remaining)))
-        query_id = hashlib.sha256(sql.encode()).hexdigest()[:12]
-        cursor = self.connection.cursor(dictionary=True, read_timeout=timeout, write_timeout=timeout)
-        failed = False
-        try:
-            cursor.execute(sql, values)
-            rows = cursor.fetchmany(limit)
-            if sql_request_cancellations.is_cancelled(current_request_id.get()):
-                raise SqlRequestCancelled('焊接查询已取消')
-            logger.info('welding query request_id=%s id=%s elapsed_ms=%d rows=%d', current_request_id.get(), query_id, round((monotonic() - started) * 1000), len(rows))
-            return rows
-        except Exception as exc:
-            failed = True
-            logger.warning('welding query failed request_id=%s id=%s type=%s errno=%s elapsed_ms=%d', current_request_id.get(), query_id, type(exc).__name__, getattr(exc, 'errno', None), round((monotonic() - started) * 1000))
-            raise
-        finally:
-            try:
-                cursor.close()
-            except Exception as exc:
-                if not failed:
-                    raise
-                logger.warning('welding cursor cleanup failure type=%s errno=%s', type(exc).__name__, getattr(exc, 'errno', None))
-
-
-class WeldingClient:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
-        self._pool = None
-        self._lock = Lock()
+        # Keep lazy validation: disabled or incomplete legacy settings need not connect.
+        super().__init__(None, label='焊接')
+        self.query_timeout = settings.weld_db_query_timeout
 
-    def _get_pool(self):
+    def connection_config(self) -> DatabaseSourceConfig:
         cfg = self.settings
         if not cfg.weld_enabled:
             raise WeldingUnavailable('小组立焊接线尚未启用')
         if not all((cfg.weld_db_host, cfg.weld_db_name, cfg.weld_db_user, cfg.weld_db_password)):
             raise WeldingUnavailable('焊接数据库配置不完整，请联系管理员')
-        if not (1 <= cfg.weld_db_port <= 65535 and 1 <= cfg.weld_db_pool_size <= 4
-                and 1 <= cfg.weld_db_connect_timeout <= 60 and 1 <= cfg.weld_db_query_timeout <= 300):
-            raise WeldingUnavailable('焊接数据库端口、连接容量或超时配置无效')
         ZoneInfo(cfg.weld_db_timezone)
-        with self._lock:
-            if self._pool is None:
-                from mysql.connector.pooling import MySQLConnectionPool
-                self._pool = MySQLConnectionPool(
-                    pool_name=f'weld_{uuid4().hex[:16]}', pool_size=cfg.weld_db_pool_size,
-                    host=cfg.weld_db_host, port=cfg.weld_db_port, database=cfg.weld_db_name,
-                    user=cfg.weld_db_user, password=cfg.weld_db_password, charset='utf8mb4',
-                    connection_timeout=cfg.weld_db_connect_timeout,
-                    read_timeout=cfg.weld_db_query_timeout, write_timeout=cfg.weld_db_query_timeout,
-                    use_pure=True, autocommit=False,
-                )
-            return self._pool
-
-    @contextmanager
-    def snapshot(self) -> Iterator[WeldingSession]:
-        connection = None
-        pool = None
-        discard_pool = False
-        ready = False
-        try:
-            pool = self._get_pool()
-            connection = pool.get_connection()
-            connection.start_transaction(isolation_level='REPEATABLE READ', consistent_snapshot=True, readonly=True)
-            ready = True
-            yield WeldingSession(connection, self.settings.weld_db_query_timeout)
-        except (WeldingUnavailable, SqlRequestCancelled):
-            raise
-        except ValueError:
-            if ready:
-                raise
-            raise WeldingUnavailable('焊接连接配置无效，请检查后端配置') from None
-        except Exception as exc:
-            # Driver messages can contain credentials, SQL values and host addresses.
-            discard_pool = True
-            logger.warning('welding source failure request_id=%s type=%s errno=%s', current_request_id.get(), type(exc).__name__, getattr(exc, 'errno', None))
-            code = getattr(exc, 'errno', None)
-            if type(exc).__name__ == 'PoolError':
-                discard_pool = False
-                raise WeldingUnavailable('焊接数据库连接池已耗尽，请稍后重试', category='connection_pool_exhausted') from None
-            if isinstance(exc, TimeoutError) or type(exc).__name__ in ('ReadTimeoutError', 'WriteTimeoutError') or code in (1205, 1317, 3024):
-                raise WeldingUnavailable('焊接数据库查询超时，请缩小筛选范围或联系管理员核查SQL耗时', category='query_timeout') from None
-            if code == 1045:
-                raise WeldingUnavailable('焊接数据库认证失败，请检查账号和密码', category='authentication_failed') from None
-            if code in (1142, 1143, 1227):
-                raise WeldingUnavailable('焊接数据库只读查询权限不足，请联系管理员核对授权', category='permission_denied') from None
-            if code in (1049, 1054, 1146):
-                raise WeldingUnavailable('焊接数据库或表结构与预期不符，请核对数据库和字段映射', category='schema_mismatch') from None
-            if code in (1064, 1149):
-                raise WeldingUnavailable('焊接SQL执行失败，请联系管理员核查查询语句', category='sql_error') from None
-            if code in (2002, 2003, 2005, 2006, 2013, 2055):
-                raise WeldingUnavailable('焊接数据库连接失败或连接中断，请核查网络及数据库服务', category='connection_failed') from None
-            if isinstance(exc, ImportError):
-                raise WeldingUnavailable('服务器尚未安装焊接MySQL驱动，请更新部署依赖') from None
-            raise WeldingUnavailable('焊接数据源暂不可用或查询超时，请稍后重试') from None
-        finally:
-            if connection is not None:
-                try:
-                    connection.rollback()
-                except Exception as exc:
-                    discard_pool = True
-                    logger.warning('welding rollback failure type=%s errno=%s', type(exc).__name__, getattr(exc, 'errno', None))
-                finally:
-                    try:
-                        connection.close()
-                    except Exception as exc:
-                        discard_pool = True
-                        logger.warning('welding connection cleanup failure type=%s errno=%s', type(exc).__name__, getattr(exc, 'errno', None))
-            if discard_pool and pool is not None:
-                # A timed-out connector can retain unread protocol data even after reconnect.
-                with self._lock:
-                    if self._pool is pool:
-                        self._pool = None
+        return DatabaseSourceConfig(id='welding', name='小组立焊接线', engine='mysql',
+            host=cfg.weld_db_host, port=cfg.weld_db_port, database=cfg.weld_db_name,
+            username=cfg.weld_db_user, password=cfg.weld_db_password,
+            pool_size=cfg.weld_db_pool_size, connect_timeout=cfg.weld_db_connect_timeout,
+            query_timeout=cfg.weld_db_query_timeout)
 
 
 def valid_serial(column: str) -> str:

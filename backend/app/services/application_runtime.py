@@ -43,6 +43,10 @@ from app.database.welding import WeldingClient, WeldingRepository
 from app.services.welding_service import WeldingService
 
 
+# Explicit Repository bindings; register a source before deploying its business consumer.
+DATABASE_SOURCE_BINDINGS: dict[str, tuple[str, ...]] = {}
+
+
 @dataclass
 class ApplicationRuntime:
     """Process resources; database_runtime owns the active database service graph.
@@ -150,7 +154,7 @@ def _build_runtime(settings: Settings, *, role: Literal["web", "worker"]) -> App
     def rebuild_database_services(configuration: Settings) -> DatabaseServices:
         previous = database_runtime.current_context
         welding = previous.welding if all(getattr(previous.settings, name) == getattr(configuration, name) for name in WELD_FIELDS) else WeldingService(configuration, WeldingRepository(WeldingClient(configuration)), snapshots=report_snapshots, coordination=coordination)
-        if all(getattr(previous.settings, name) == getattr(configuration, name) for name in DATABASE_FIELDS - WELD_FIELDS):
+        if all(getattr(previous.settings, name) == getattr(configuration, name) for name in DATABASE_FIELDS - WELD_FIELDS - {'database_sources_json'}):
             return replace(previous, settings=configuration, welding=welding)
         updated_devices = {
             device.id: build_device_runtime(settings_for_device(configuration, device.id), database,
@@ -174,7 +178,8 @@ def _build_runtime(settings: Settings, *, role: Literal["web", "worker"]) -> App
         settings=settings, devices=devices, welding=welding, worker_auth=worker_auth,
         file_downloads=file_downloads, cutting_dispatch=cutting_dispatch,
     )
-    database_runtime = DatabaseRuntime(settings, context, rebuild_database_services, automation_runtime)
+    database_runtime = DatabaseRuntime(settings, context, rebuild_database_services, automation_runtime,
+                                       source_bindings=DATABASE_SOURCE_BINDINGS)
     automation_service = AutomationService(
         settings, automation, metadata, email_service, runtime=automation_runtime,
         device_services=devices, database_runtime=database_runtime,

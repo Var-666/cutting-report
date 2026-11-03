@@ -1,7 +1,7 @@
 """Publish database service snapshots without changing operations already in flight."""
 from __future__ import annotations
 
-from dataclasses import dataclass, fields, replace
+from dataclasses import dataclass, field, fields, replace
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Callable, cast
 
@@ -15,6 +15,10 @@ from app.services.database_configuration import (
 )
 from app.services.process_lock import settings_file_lock
 from app.services.automation_runtime import AutomationRuntime
+from app.models.database_sources import DatabaseSourceConfig, DatabaseSourceRequest
+from app.database.source_registry import (
+    DatabaseSourceRegistry, SourceConflict, SourceNotFound, source_configs_json,
+)
 
 if TYPE_CHECKING:
     from app.services.application_runtime import ApplicationRuntime
@@ -34,13 +38,14 @@ class DatabaseServices:
     worker_auth: WorkerAuthService
     file_downloads: FileDownloadService
     cutting_dispatch: CuttingDispatchService
+    database_sources: DatabaseSourceRegistry = field(default_factory=DatabaseSourceRegistry)
 
 
 CONNECTION_FIELDS = ('host', 'port', 'database', 'username', 'password', 'driver',
                      'encrypt', 'trust_server_certificate')
 WELD_FIELDS = {'weld_enabled', 'weld_db_host', 'weld_db_port', 'weld_db_name', 'weld_db_user',
                'weld_db_password', 'weld_db_timezone'}
-DATABASE_FIELDS = {'data_source_mode', 'worker_database_auth_enabled', 'file_database_enabled'} | {
+DATABASE_FIELDS = {'data_source_mode', 'worker_database_auth_enabled', 'file_database_enabled', 'database_sources_json'} | {
     f'{prefix}_{field}' for prefix in ('sqlserver', 'worker_sqlserver', 'file_sqlserver')
     for field in CONNECTION_FIELDS
 } | WELD_FIELDS
@@ -81,7 +86,7 @@ def parse_database_settings(base: Settings, values: dict[str, object]) -> Settin
         except (ValueError, ZoneInfoNotFoundError):
             raise ValueError('生产时区无效') from None
     # A welding-only save preserves SQL Server profiles, including an unconfigured local preview.
-    if changes and changes.keys() <= WELD_FIELDS:
+    if changes and changes.keys() <= WELD_FIELDS | {'database_sources_json'}:
         return updated
     for source, enabled in [('production', updated.effective_data_source_mode == 'sqlserver'),
                             ('worker', updated.worker_database_auth_enabled), ('file', updated.file_database_enabled)]:
@@ -101,9 +106,12 @@ def welding_connection_settings(payload: WeldingConnectionRequest, base: Setting
 
 class DatabaseRuntime:
     def __init__(self, settings: Settings, context: DatabaseServices,
-                 build: Callable[[Settings], DatabaseServices], automation_runtime: AutomationRuntime) -> None:
+                 build: Callable[[Settings], DatabaseServices], automation_runtime: AutomationRuntime,
+                 *, source_bindings: dict[str, tuple[str, ...]] | None = None) -> None:
         self._base = settings
-        self._context = context
+        self._source_bindings = dict(source_bindings or {})
+        self._context = replace(context, database_sources=DatabaseSourceRegistry.from_json(
+            settings.database_sources_json, bindings=self._source_bindings))
         self._build = build
         self._automation_runtime = automation_runtime
         self._file_version = None
@@ -128,7 +136,86 @@ class DatabaseRuntime:
 
     def prepare(self, values: dict[str, object]) -> DatabaseServices:
         updated = parse_database_settings(self._base, values)
-        return self._context if updated == self._context.settings else self._build(updated)
+        if updated == self._context.settings:
+            return self._context
+        previous = self._context
+        registry = previous.database_sources
+        if updated.database_sources_json != previous.settings.database_sources_json:
+            registry = DatabaseSourceRegistry.from_json(updated.database_sources_json,
+                previous=registry, bindings=self._source_bindings)
+        legacy_changed = any(getattr(updated, name) != getattr(previous.settings, name)
+            for name in DATABASE_FIELDS - {'database_sources_json'})
+        context = self._build(updated) if legacy_changed else replace(previous, settings=updated)
+        return replace(context, database_sources=registry)
+
+    def _saved_sources(self, saved: dict) -> DatabaseSourceRegistry:
+        return DatabaseSourceRegistry.from_json(saved.get('DATABASE_SOURCES_JSON', self._base.database_sources_json),
+            bindings=self._source_bindings)
+
+    def _source_config(self, payload: DatabaseSourceRequest, registry: DatabaseSourceRegistry) -> DatabaseSourceConfig:
+        password = payload.password.get_secret_value() if payload.password else ''
+        if not password:
+            try:
+                password = registry.get(payload.id).password.get_secret_value()
+                if not password:
+                    password = self._context.database_sources.get(payload.id).password.get_secret_value()
+            except SourceNotFound:
+                pass
+        return DatabaseSourceConfig(**payload.model_dump(exclude={'password'}), password=password)
+
+    def save_source(self, payload: DatabaseSourceRequest, *, create: bool = False) -> None:
+        path = self._base.runtime_settings_env_path
+        with runtime_settings_lock, settings_file_lock(path):
+            saved = read_runtime_env(path)
+            registry = self._saved_sources(saved)
+            exists = any(config.id == payload.id for config in registry.configs())
+            if create and exists:
+                raise SourceConflict('数据源 ID 已存在')
+            if not create:
+                old = registry.get(payload.id)
+                if old.engine != payload.engine:
+                    registry.require_unbound(payload.id)
+            config = self._source_config(payload, registry)
+            configs = [item for item in registry.configs() if item.id != config.id] + [config]
+            self._save_sources(configs, saved)
+
+    def set_source_enabled(self, source_id: str, enabled: bool) -> None:
+        path = self._base.runtime_settings_env_path
+        with runtime_settings_lock, settings_file_lock(path):
+            saved = read_runtime_env(path)
+            registry = self._saved_sources(saved)
+            config = registry.get(source_id).model_copy(update={'enabled': enabled})
+            self._save_sources([item for item in registry.configs() if item.id != source_id] + [config], saved)
+
+    def delete_source(self, source_id: str) -> None:
+        path = self._base.runtime_settings_env_path
+        with runtime_settings_lock, settings_file_lock(path):
+            saved = read_runtime_env(path)
+            registry = self._saved_sources(saved)
+            registry.require_unbound(source_id)
+            self._save_sources([item for item in registry.configs() if item.id != source_id], saved)
+
+    def _save_sources(self, configs: list[DatabaseSourceConfig], saved: dict) -> None:
+        value = source_configs_json(configs)
+        prepared = self.prepare({**saved, 'DATABASE_SOURCES_JSON': value})
+        try:
+            write_runtime_env(self._base.runtime_settings_env_path, {'DATABASE_SOURCES_JSON': value})
+        except (OSError, ValueError):
+            raise RuntimeSettingsSaveError('数据源配置保存失败') from None
+        self.publish(prepared, {**saved, 'DATABASE_SOURCES_JSON': value})
+
+    def source_for_test(self, payload: DatabaseSourceRequest) -> DatabaseSourceConfig:
+        path = self._base.runtime_settings_env_path
+        with runtime_settings_lock, settings_file_lock(path):
+            config = self._source_config(payload, self._saved_sources(read_runtime_env(path)))
+        # A disabled source can be tested without enabling or saving it.
+        config = config.model_copy(update={'enabled': True})
+        DatabaseSourceRegistry([config])
+        return config
+
+    def close(self) -> None:
+        self._context.database_sources.close()
+        self._context.welding.repository.client.close()
 
     def save_configuration(self, payload: DatabaseConfigurationRequest | WeldingConnectionRequest) -> None:
         path = self._base.runtime_settings_env_path

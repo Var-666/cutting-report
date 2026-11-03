@@ -104,12 +104,12 @@ def test_each_welding_query_gets_full_timeout_unless_outer_budget_is_shorter(mon
     def cursor(**kwargs):
         timeouts.append((kwargs['read_timeout'], kwargs['write_timeout']))
         return Cursor()
-    monkeypatch.setattr(welding, 'monotonic', lambda: clock[0])
+    monkeypatch.setattr('app.database.mysql.monotonic', lambda: clock[0])
     session = welding.WeldingSession(SimpleNamespace(cursor=cursor))
     assert session.fetch('SELECT 1') == [{'healthy': 1}]
     assert session.fetch('SELECT 1') == [{'healthy': 1}]
     assert timeouts == [(120, 120), (120, 120)]
-    monkeypatch.setattr(welding, 'remaining_seconds', lambda: 9.2)
+    monkeypatch.setattr('app.database.mysql.remaining_seconds', lambda: 9.2)
     session.fetch('SELECT 1')
     assert timeouts[-1] == (10, 10)
 

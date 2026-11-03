@@ -40,7 +40,7 @@ def source_label(source: str) -> str:
 def category(key: str) -> str:
     if key in HOT_SETTINGS:
         return CATEGORIES[5]
-    if key.startswith(("connections.", "WELD_", "SQLSERVER_", "WORKER_SQLSERVER_", "WORKER_DATABASE_", "FILE_SQLSERVER_", "FILE_DATABASE_", "SQL_WORKBENCH_")):
+    if key.startswith(("DATABASE_SOURCES_", "connections.", "WELD_", "SQLSERVER_", "WORKER_SQLSERVER_", "WORKER_DATABASE_", "FILE_SQLSERVER_", "FILE_DATABASE_", "SQL_WORKBENCH_")):
         return CATEGORIES[1]
     if key.startswith("LLM_"):
         return CATEGORIES[3]
@@ -113,6 +113,11 @@ def catalog_values(catalog, energy_enabled: bool) -> dict:
 
 def validate_values(settings: Settings, values: dict) -> set[str]:
     invalid = set()
+    try:
+        from app.database.source_registry import DatabaseSourceRegistry
+        DatabaseSourceRegistry.from_json(settings.database_sources_json)
+    except ValueError:
+        invalid.add('DATABASE_SOURCES_JSON')
     for name, item in ENV_FIELDS.items():
         key = item.metadata["env"]
         value = getattr(settings, name)
