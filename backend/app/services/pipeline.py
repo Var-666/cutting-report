@@ -60,6 +60,7 @@ class ReportPipeline:
         definitions: DefinitionRepository | None = None,
         *,
         workshop_repository: WorkshopReportRepository | None = None,
+        query_service: QueryService | None = None,
     ) -> None:
         self.settings = settings
         self.metadata = metadata
@@ -68,7 +69,7 @@ class ReportPipeline:
             self.database, settings.timezone
         )
         self.definitions.initialize()
-        self.query_service = QueryService(settings)
+        self.query_service = query_service or QueryService(settings)
         self.energy_service = EquipmentEnergyService(settings)
         energy_reports = EnergyReportRepository(self.database)
         energy_reports.initialize()

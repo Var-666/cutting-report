@@ -33,9 +33,8 @@ class DatabaseSourceRegistry:
         if any(config.enabled and not config.password.get_secret_value() for config in configs):
             raise ValueError('启用的数据源必须配置密码')
         self._sources = MappingProxyType(sources)
-        self._bindings = MappingProxyType(dict(bindings or {}))
-        if self._bindings.keys() - sources.keys():
-            raise ValueError('业务绑定的数据源不存在')
+        # Declared consumers can be deployed before their optional source is registered.
+        self._bindings = MappingProxyType({key: refs for key, refs in (bindings or {}).items() if key in sources})
         self._clients: dict[str, SqlServerClient | MySqlClient] = {}
         self._lock = RLock()
 

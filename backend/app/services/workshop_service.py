@@ -98,6 +98,7 @@ class WorkshopService:
                 'analysis_source_version': workshop_analysis_source_version(report_date.isoformat(), []),
                 'current_user': user,
             }
+        records = self.query_service.enrich_ship_names(records) if self.query_service else records
         analysis_source_version = _workshop_analysis_source_version(report_date.isoformat(), records)
         project_names = sorted({row.project_code for row in records if row.project_code})
         if project_name:

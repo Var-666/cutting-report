@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -9,6 +10,7 @@ from time import monotonic
 from zoneinfo import ZoneInfo
 
 from app.config import Settings
+from app.services.ship_name_service import ShipNameService
 from app.services.cache_revision import CacheRevision
 from app.services.query_cache import QueryCache as _QueryCache
 from app.database.sqlserver import SqlServerClient, SqlServerConfigurationError
@@ -45,8 +47,9 @@ def _decimal(value: object) -> Decimal | None:
 
 
 class QueryService:
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, *, ship_names: ShipNameService | None = None) -> None:
         self.settings = settings
+        self.ship_names = ship_names
         self.cache_revision = CacheRevision(settings, "production")
         self.client = SqlServerClient(settings)
         self.query_dir = Path(__file__).resolve().parents[1] / "database" / "queries"
@@ -62,6 +65,15 @@ class QueryService:
         self._workshop_cache_lock = Lock()
         self._workshop_prepare_locks = [Lock() for _ in range(16)]
         self._workshop_cache: dict[tuple, tuple[float, QueryBundle]] = {}
+
+    def enrich_ship_names(self, records: list, *, force: bool = False) -> list:
+        return self.ship_names.enrich(records, force=force) if self.ship_names else records
+
+    def _ship_records(self, records: list, filters: ReportFilter, *, force: bool = False) -> list:
+        records = self.enrich_ship_names(records, force=force)
+        if self.ship_names and filters.ship_no:
+            records = [row for row in records if row.ship_no == filters.ship_no]
+        return records
 
     def prepare_workshop_data(self, report_date: date) -> QueryBundle:
         """Read-only, short-lived warmup; does not create reports or confirmations."""
@@ -135,9 +147,10 @@ class QueryService:
         self, filters: ReportFilter, *, force: bool = False
     ) -> QueryBundle:
         if self.settings.effective_data_source_mode == "sqlserver":
-            return self._fetch_cached_bundle(
+            bundle = self._fetch_cached_bundle(
                 "summary", filters, self._sqlserver_summary_data, force=force
             )
+            return replace(bundle, summary_records=self._ship_records(bundle.summary_records, filters, force=force))
         bundle = self.fetch_report_data(filters)
         return QueryBundle(bundle.summary_records, [], [], bundle.data_updated_at)
 
@@ -145,9 +158,10 @@ class QueryService:
         self, filters: ReportFilter, *, force: bool = False
     ) -> QueryBundle:
         if self.settings.effective_data_source_mode == "sqlserver":
-            return self._fetch_cached_bundle(
+            bundle = self._fetch_cached_bundle(
                 "workshop", filters, self._sqlserver_workshop_data, force=force
             )
+            return replace(bundle, workshop_records=self._ship_records(bundle.workshop_records, filters, force=force))
         bundle = self.fetch_report_data(filters)
         return QueryBundle([], bundle.workshop_records, [], bundle.data_updated_at)
 
@@ -155,10 +169,11 @@ class QueryService:
         self, filters: ReportFilter, *, force: bool = False
     ) -> EquipmentQueryResult:
         """Fetch only equipment rows and coalesce repeated per-day requests."""
-        return self._equipment_cache.read(
+        result = self._equipment_cache.read(
             self._cache_key("equipment", filters), lambda: self._fetch_equipment_uncached(filters),
             ttl=self.settings.report_data_cache_seconds, force=force,
         )
+        return replace(result, records=self._ship_records(result.records, filters, force=force))
 
     def fetch_equipment_month_work_times(
         self, report_month: date
@@ -301,8 +316,8 @@ class QueryService:
             end,
             filters.project_code,
             filters.project_code,
-            filters.ship_no,
-            filters.ship_no,
+            None if self.ship_names else filters.ship_no,
+            None if self.ship_names else filters.ship_no,
         )
         rows = self.client.fetch_all(
             self._read_query("equipment.sql"), parameters
@@ -391,6 +406,9 @@ class QueryService:
                 filters.project_code,
             ),
         )
+        if self.ship_names:
+            names = self.ship_names.names_for([str(row['project_name']) for row in rows]) or {}
+            return sorted({name for name in names.values() if name})
         return [str(row["project_name"]) for row in rows]
 
     def latest_production_date(
@@ -470,8 +488,8 @@ class QueryService:
             end,
             filters.project_code,
             filters.project_code,
-            filters.ship_no,
-            filters.ship_no,
+            None if self.ship_names else filters.ship_no,
+            None if self.ship_names else filters.ship_no,
         )
         rows = self.client.fetch_all(self._read_query("summary_base.sql"), parameters)
         records = [
@@ -510,8 +528,8 @@ class QueryService:
             end,
             filters.project_code,
             filters.project_code,
-            filters.ship_no,
-            filters.ship_no,
+            None if self.ship_names else filters.ship_no,
+            None if self.ship_names else filters.ship_no,
         )
         rows = self.client.fetch_all(self._read_query("workshop.sql"), parameters)
         records = [

@@ -21,6 +21,7 @@ from app.services.pipeline import ReportPipeline
 from app.services.report_analysis_service import ReportAnalysisService
 from app.services.pdf_service import PdfService
 from app.services.query_service import QueryService
+from app.services.ship_name_service import ShipNameService
 from app.services.energy_service import EquipmentEnergyService
 from app.services.energy_period_service import EnergyPeriodService
 from app.services.range_report_service import RangeReportService
@@ -75,11 +76,12 @@ class DeviceRuntime:
 def build_device_runtime(
     settings: Settings, database: SQLiteDatabase, definitions: DefinitionRepository,
     snapshots: LeadershipSnapshotRepository, pdf_service: PdfService,
-    *, task_queue: CoordinationRepository | None = None,
+    *, task_queue: CoordinationRepository | None = None, ship_names: ShipNameService | None = None,
 ) -> DeviceRuntime:
     metadata = MetadataRepository(database, device_id=settings.device_id)
     workshop = WorkshopReportRepository(database, scope_machine_no=settings.report_machine_no)
-    pipeline = ReportPipeline(settings, metadata, definitions, workshop_repository=workshop)
+    pipeline = ReportPipeline(settings, metadata, definitions, workshop_repository=workshop,
+                              query_service=QueryService(settings, ship_names=ship_names))
     leadership = LeadershipReportService(settings, snapshots)
     analysis = pipeline.analysis_service
     source_name = f'{settings.production_data_source}:{settings.device_id}'

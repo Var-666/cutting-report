@@ -114,9 +114,9 @@ function reset() {
       </AppSelect>
     </label>
     <label v-if="!isLeadership">
-      <span>船号</span>
+      <span>船名</span>
       <AppSelect v-model="form.ship_no" :disabled="loading || shipsLoading">
-        <option value="">全部船号</option>
+        <option value="">全部船名</option>
         <option v-for="item in ships" :key="item" :value="item">{{ item }}</option>
       </AppSelect>
     </label>

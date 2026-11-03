@@ -12,6 +12,7 @@ from .v010_dispatch import upgrade as v010_dispatch
 from .v011_energy import upgrade as v011_energy
 from .v012_alarms import upgrade as v012_alarms
 from .v013_retention import upgrade as v013_retention
+from .v014_workshop_ship_names import upgrade as v014_workshop_ship_names
 
 MIGRATIONS = (
     ("001_coordination", v001_coordination),
@@ -27,4 +28,5 @@ MIGRATIONS = (
     ("011_energy", v011_energy),
     ("012_alarms", v012_alarms),
     ("013_retention", v013_retention),
+    ("014_workshop_ship_names", v014_workshop_ship_names),
 )

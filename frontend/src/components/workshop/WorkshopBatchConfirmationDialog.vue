@@ -13,7 +13,7 @@ const emit = defineEmits<{ close: []; submit: [] }>()
 function display(value: string | null | undefined) { return value || '--' }
 const batchTableColumns = [
   { key: 'c0', title: "序号", width: 56, align: 'center', fixed: 'left' },
-  { key: 'c1', title: "工程/船号", width: 112, align: 'left' },
+  { key: 'c1', title: "工程号", width: 112, align: 'left' },
   { key: 'c2', title: "分段名", width: 80, align: 'left' },
   { key: 'c3', title: "程序号", width: 160, align: 'left' },
   { key: 'c4', title: "生产时间", width: 184, align: 'left' }
@@ -28,8 +28,8 @@ const batchTableColumns = [
         <div class="batch-confirmation-list">
           <AppReportTable :columns="batchTableColumns" :items="batchConfirmation.tasks" :row-key="row => row.task_id" :paginate="false">
         <template #c0="{ row, index: rowIndex }">{{ rowIndex + 1 }}</template>
-        <template #c1="{ row }">{{ display(row.project_code || row.ship_no) }}</template>
-        <template #c2="{ row }">{{ display(row.segment_name) }}</template>
+        <template #c1="{ row }">{{ row.project_code?.trim() || '非船' }}</template>
+        <template #c2="{ row }">{{ row.segment_name?.trim() || '非船' }}</template>
         <template #c3="{ row }"><div :title="display(row.program_no)">{{ display(row.program_no) }}</div></template>
         <template #c4="{ row }">{{ time(row.production_time) }}</template>
       </AppReportTable>

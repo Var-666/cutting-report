@@ -50,7 +50,7 @@ const reportTableColumns = [
   { key: 'c0', title: "报告类型", width: 104, align: 'left', fixed: 'left' },
   { key: 'c1', title: "报告周期", width: 220, align: 'left' },
   { key: 'c2', title: "工程号", width: 88, align: 'left' },
-  { key: 'c3', title: "船号", width: 88, align: 'left' },
+  { key: 'c3', title: "船名", width: 160, align: 'left' },
   { key: 'c4', title: "任务数", width: 84, align: 'right' },
   { key: 'c5', title: "生成状态", width: 104, align: 'center' },
   { key: 'c6', title: "生成时间", width: 184, align: 'left' },

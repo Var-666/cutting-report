@@ -387,7 +387,7 @@ const taskTableColumns = computed(() => [
   ...(isWorker.value ? [{ key: 'c0', title: '', width: 48, align: 'center' as const, fixed: 'left' as const, ellipsis: false }] : []),
   { key: 'c1', title: "序号", width: 56, align: 'center' },
   { key: 'c2', title: "工程号", width: 76, align: 'left' },
-  { key: 'c3', title: "船号", width: 68, align: 'left' },
+  { key: 'c3', title: "船名", width: 160, align: 'left' },
   { key: 'c4', title: "分段名", width: 76, align: 'left' },
   { key: 'c5', title: "程序号", width: 160, align: 'left' },
   { key: 'c6', title: "切割长度", width: 104, align: 'right' },
@@ -515,12 +515,12 @@ const workerTableColumns = [
     <template #summary>
       <form class="workshop-filters" :class="{ manager: !isWorker }" @submit.prevent="applyTaskFilters">
         <label v-if="isWorker"><span>生产日期</span><AppDatePicker v-model="filters.reportDate" required /></label>
-        <label><span>工程/船号</span><AppSelect v-model="filters.projectName" :disabled="!result.report"><option value="">全部</option><option v-for="name in result.project_names" :key="name" :value="name">{{ name }}</option></AppSelect></label>
+        <label><span>工程号</span><AppSelect v-model="filters.projectName" :disabled="!result.report"><option value="">全部</option><option v-for="name in result.project_names" :key="name" :value="name">{{ name }}</option></AppSelect></label>
         <label><span>确认状态</span><AppSelect v-model="filters.confirmationStatus" :disabled="!result.report"><option value="all">全部</option><option value="unconfirmed">未确认</option><option value="confirmed">已确认</option></AppSelect></label>
         <NButton attr-type="submit" :disabled="loading || !result.report"><AppIcon name="sparkles" size="14" tone="current" />{{ loading ? '筛选中' : '筛选明细' }}</NButton>
       </form>
       <div v-if="result.report" class="workshop-report-state"><strong>{{ isWorker ? formatChineseDate(result.report.report_date) : `${formatChineseDate(result.report.period_start)} 至 ${formatChineseDate(result.report.period_end)}` }} 车间报表</strong><span>{{ isWorker ? `生成人：${result.report.generated_by_name || '--'} · 生成时间：${time(result.report.generated_at)} · ` : '' }}总任务 {{ result.report.item_count }} 项 · 已确认 {{ result.report.confirmed_count }} 项</span></div>
-      <div v-if="result.report" class="workshop-summary">当前筛选返回 {{ result.total }} 项任务，所选工程/船号已确认 {{ result.confirmed_count }} 项</div>
+      <div v-if="result.report" class="workshop-summary">当前筛选返回 {{ result.total }} 项任务，所选工程号已确认 {{ result.confirmed_count }} 项</div>
       <div v-if="isWorker && result.report" class="workshop-batch-actions"><span>已选择 <strong>{{ selectedTaskCount }}</strong> 项待确认任务</span><div><NButton attr-type="button" :disabled="!selectedTaskCount || batchConfirmation.saving" @click="clearSelectedTasks">清空选择</NButton><NButton class="primary" attr-type="button" :disabled="!selectedTaskCount || loading || batchConfirmation.saving" @click="openBatchConfirmation()" type="primary">确认选中任务</NButton></div></div>
     </template>
     <template #table>
@@ -528,9 +528,9 @@ const workerTableColumns = [
         <template #header-c0><NCheckbox :checked="allVisibleTasksSelected" :indeterminate="someVisibleTasksSelected" :disabled="!selectableTasks.length || loading || batchConfirmation.saving" aria-label="全选当前页待确认任务" @update:checked="toggleVisibleTasks($event)" /></template>
         <template #c0="{ row }"><div class="workshop-select-cell"><NCheckbox :checked="selectedTasks.has(row.task_id)" :disabled="Boolean(row.confirmed_by) || loading || batchConfirmation.saving" :aria-label="`选择任务 ${display(row.program_no)}`" @update:checked="setTaskSelected(row, $event)" /></div></template>
         <template #c1="{ row, index: rowIndex }">{{ (result.page - 1) * result.page_size + rowIndex + 1 }}</template>
-        <template #c2="{ row }">{{ display(row.project_code) }}</template>
-        <template #c3="{ row }">{{ display(row.ship_no) }}</template>
-        <template #c4="{ row }">{{ display(row.segment_name) }}</template>
+        <template #c2="{ row }">{{ row.project_code?.trim() || '非船' }}</template>
+        <template #c3="{ row }">{{ row.ship_no?.trim() || '非船' }}</template>
+        <template #c4="{ row }">{{ row.segment_name?.trim() || '非船' }}</template>
         <template #c5="{ row }"><div class="program-cell" :title="display(row.program_no)">{{ display(row.program_no) }}</div></template>
         <template #c6="{ row }">{{ number(row.cut_length) }}</template>
         <template #c7="{ row }">{{ number(row.groove_length) }}</template>

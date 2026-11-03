@@ -121,7 +121,7 @@ def test_demo_pipeline_generates_offline_report(
         assert 'class="print-table-chunk"' in html
     if report_type == "workshop":
         assert "工程号" in html
-        assert "船号" in html
+        assert "船名" in html
         assert "✓ 测试工人" in html
         assert "时间" in html
         assert "待确认" in html

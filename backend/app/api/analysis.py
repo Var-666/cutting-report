@@ -234,6 +234,10 @@ def _analyze_report(payload: AnalysisRequest, request: Request) -> dict:
                         year_ago_day.isoformat()
                     )
                 )
+                query = device_state(request).query_service
+                records = query.enrich_ship_names(records)
+                previous_records = query.enrich_ship_names(previous_records)
+                year_ago_records = query.enrich_ship_names(year_ago_records)
                 analysis = service.analyze_workshop(
                     report_date,
                     records,

@@ -100,6 +100,10 @@ def prepare_report(
                 != settings.report_machine_no
             ):
                 raise ValueError("请先生成当日车间报表，再进行导出")
+            workshop_records = query_service.enrich_ship_names(workshop_records)
+            workshop_records = [row for row in workshop_records
+                if (not filters.project_code or row.project_code == filters.project_code)
+                and (not filters.ship_no or row.ship_no == filters.ship_no)]
             bundle = _workshop_bundle(workshop_records, datetime.fromisoformat(workshop_report['generated_at']))
     else:
         bundle = query_service.fetch_report_data(filters)
@@ -164,6 +168,8 @@ def prepare_report(
                         year_ago_date.isoformat()
                     )
                 )
+                previous_records = query_service.enrich_ship_names(previous_records)
+                year_ago_records = query_service.enrich_ship_names(year_ago_records)
                 return analysis_service.analyze_workshop(
                     filters.report_date.isoformat(),
                     bundle.workshop_records,

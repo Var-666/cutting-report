@@ -66,7 +66,7 @@ test('worker task table exposes multi-select and reviews tasks before confirmati
   assert.match(template, /确认选中任务/)
   assert.match(batchDialogSource, /确认以下任务由我完成/)
   assert.match(batchDialogSource, /:items="batchConfirmation\.tasks"/)
-  assert.match(batchDialogSource, /工程\/船号[\s\S]*分段名[\s\S]*程序号[\s\S]*生产时间/)
+  assert.match(batchDialogSource, /工程号[\s\S]*分段名[\s\S]*程序号[\s\S]*生产时间/)
   assert.match(template, /@click="openSingleConfirmation\(row\)"/)
   assert.match(template, /:disabled="loading \|\| correction.saving"/)
   assert.match(template, /:disabled="loading \|\| batchConfirmation.saving"/)

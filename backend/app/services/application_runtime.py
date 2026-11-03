@@ -41,10 +41,26 @@ from app.services.worker_status import WorkerStatusReader
 from app.services.database_runtime import DatabaseRuntime, DatabaseServices, DATABASE_FIELDS, WELD_FIELDS
 from app.database.welding import WeldingClient, WeldingRepository
 from app.services.welding_service import WeldingService
+from app.database.source_registry import DatabaseSourceRegistry, SourceNotFound
+from app.database.bm_projects import BmProjectRepository
+from app.services.ship_name_service import ShipNameService
 
 
-# Explicit Repository bindings; register a source before deploying its business consumer.
-DATABASE_SOURCE_BINDINGS: dict[str, tuple[str, ...]] = {}
+# BM is optional until registered; an installed source is protected from accidental deletion.
+DATABASE_SOURCE_BINDINGS: dict[str, tuple[str, ...]] = {'bm': ('切割报表船名关联',)}
+
+
+def build_ship_names(settings: Settings, sources: DatabaseSourceRegistry) -> ShipNameService | None:
+    try:
+        config = sources.get('bm')
+    except SourceNotFound:
+        return None
+    if config.engine != 'sqlserver':
+        raise ValueError('bm 船名数据库必须使用 SQL Server')
+    if not config.enabled or settings.effective_data_source_mode != 'sqlserver':
+        return None
+    client = sources.client('bm')
+    return ShipNameService(BmProjectRepository(client), cache_seconds=settings.report_data_cache_seconds)
 
 
 @dataclass
@@ -114,9 +130,11 @@ def _build_runtime(settings: Settings, *, role: Literal["web", "worker"]) -> App
     dispatches.initialize()
     pdf_service = PdfService(operation_timeout_seconds=settings.pdf_render_timeout_seconds,
                              coordination_path=settings.metadata_db_path.parent / ".coordination" / "pdf-render.lock")
+    database_sources = DatabaseSourceRegistry.from_json(settings.database_sources_json, bindings=DATABASE_SOURCE_BINDINGS)
+    ship_names = build_ship_names(settings, database_sources)
     devices = {
         device.id: build_device_runtime(settings_for_device(settings, device.id), database,
-                                        definitions, leadership_snapshots, pdf_service, task_queue=coordination)
+                                        definitions, leadership_snapshots, pdf_service, task_queue=coordination, ship_names=ship_names)
         for device in DEVICE_CATALOG.devices
     }
     automation_runtime = AutomationRuntime(settings)
@@ -151,18 +169,21 @@ def _build_runtime(settings: Settings, *, role: Literal["web", "worker"]) -> App
         dispatches.recover_interrupted(cutting_dispatch._now())
     welding = WeldingService(settings, WeldingRepository(WeldingClient(settings)), snapshots=report_snapshots, coordination=coordination)
 
-    def rebuild_database_services(configuration: Settings) -> DatabaseServices:
+    def rebuild_database_services(configuration: Settings, sources: DatabaseSourceRegistry) -> DatabaseServices:
         previous = database_runtime.current_context
         welding = previous.welding if all(getattr(previous.settings, name) == getattr(configuration, name) for name in WELD_FIELDS) else WeldingService(configuration, WeldingRepository(WeldingClient(configuration)), snapshots=report_snapshots, coordination=coordination)
-        if all(getattr(previous.settings, name) == getattr(configuration, name) for name in DATABASE_FIELDS - WELD_FIELDS - {'database_sources_json'}):
+        bm_changed = ([item for item in previous.database_sources.configs() if item.id == 'bm']
+                      != [item for item in sources.configs() if item.id == 'bm'])
+        if not bm_changed and all(getattr(previous.settings, name) == getattr(configuration, name) for name in DATABASE_FIELDS - WELD_FIELDS - {'database_sources_json'}):
             return replace(previous, settings=configuration, welding=welding)
+        updated_ship_names = build_ship_names(configuration, sources)
         updated_devices = {
             device.id: build_device_runtime(settings_for_device(configuration, device.id), database,
-                                            definitions, leadership_snapshots, pdf_service, task_queue=coordination)
+                                            definitions, leadership_snapshots, pdf_service, task_queue=coordination, ship_names=updated_ship_names)
             for device in DEVICE_CATALOG.devices
         }
         for device_id, device in updated_devices.items():
-            device.energy_history_worker._completion = devices[device_id].energy_history_worker._completion
+            device.energy_history_worker._completion = previous.devices[device_id].energy_history_worker._completion
         updated_pdm = SqlServerPdmRepository(configuration) if configuration.file_database_enabled else MockPdmRepository()
         # Keep the existing download concurrency and cleanup locks across snapshots.
         updated_downloads = copy(file_downloads)
@@ -176,7 +197,7 @@ def _build_runtime(settings: Settings, *, role: Literal["web", "worker"]) -> App
 
     context = DatabaseServices(
         settings=settings, devices=devices, welding=welding, worker_auth=worker_auth,
-        file_downloads=file_downloads, cutting_dispatch=cutting_dispatch,
+        file_downloads=file_downloads, cutting_dispatch=cutting_dispatch, database_sources=database_sources,
     )
     database_runtime = DatabaseRuntime(settings, context, rebuild_database_services, automation_runtime,
                                        source_bindings=DATABASE_SOURCE_BINDINGS)

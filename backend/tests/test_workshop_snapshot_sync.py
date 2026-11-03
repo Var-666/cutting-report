@@ -115,7 +115,8 @@ def test_snapshot_backfills_only_missing_project_number_and_preserves_confirmati
     _, after = repository.get_daily_report_records('2026-09-30')
     assert updated['report_id'] == report['report_id']
     assert updated['confirmed_count'] == 1
-    assert (after[0].project_code, after[0].ship_no) == ('CMYZ0170', 'CMYZ0170')
+    # A repaired project identifier must not invent a ship name absent from the source.
+    assert (after[0].project_code, after[0].ship_no) == ('CMYZ0170', None)
     assert after[0].snapshot_revision == before[0].snapshot_revision
     assert repository.get_confirmations(['A'], report_id=report['report_id']) == before_confirmation
     assert repository.list_confirmation_audits(task_id='A') == before_audits

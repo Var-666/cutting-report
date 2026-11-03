@@ -106,12 +106,12 @@ def welding_connection_settings(payload: WeldingConnectionRequest, base: Setting
 
 class DatabaseRuntime:
     def __init__(self, settings: Settings, context: DatabaseServices,
-                 build: Callable[[Settings], DatabaseServices], automation_runtime: AutomationRuntime,
+                 build: Callable[[Settings, DatabaseSourceRegistry], DatabaseServices], automation_runtime: AutomationRuntime,
                  *, source_bindings: dict[str, tuple[str, ...]] | None = None) -> None:
         self._base = settings
         self._source_bindings = dict(source_bindings or {})
         self._context = replace(context, database_sources=DatabaseSourceRegistry.from_json(
-            settings.database_sources_json, bindings=self._source_bindings))
+            settings.database_sources_json, previous=context.database_sources, bindings=self._source_bindings))
         self._build = build
         self._automation_runtime = automation_runtime
         self._file_version = None
@@ -143,9 +143,7 @@ class DatabaseRuntime:
         if updated.database_sources_json != previous.settings.database_sources_json:
             registry = DatabaseSourceRegistry.from_json(updated.database_sources_json,
                 previous=registry, bindings=self._source_bindings)
-        legacy_changed = any(getattr(updated, name) != getattr(previous.settings, name)
-            for name in DATABASE_FIELDS - {'database_sources_json'})
-        context = self._build(updated) if legacy_changed else replace(previous, settings=updated)
+        context = self._build(updated, registry)
         return replace(context, database_sources=registry)
 
     def _saved_sources(self, saved: dict) -> DatabaseSourceRegistry:

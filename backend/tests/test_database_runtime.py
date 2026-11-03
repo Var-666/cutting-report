@@ -335,7 +335,7 @@ def test_failed_candidate_build_preserves_file_and_published_services(environmen
     write_runtime_env(cfg.runtime_settings_env_path, {'CUSTOM_VALUE': 'keep'})
     original = database_context(state)
     before = cfg.runtime_settings_env_path.read_bytes()
-    monkeypatch.setattr(state.database_runtime, '_build', lambda _: (_ for _ in ()).throw(RuntimeError('private-source-details')))
+    monkeypatch.setattr(state.database_runtime, '_build', lambda *_: (_ for _ in ()).throw(RuntimeError('private-source-details')))
     with pytest.raises(HTTPException) as error:
         database.save_database_configuration(payload(), request(state))
     assert error.value.status_code == 503

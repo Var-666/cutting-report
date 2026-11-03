@@ -442,7 +442,7 @@ watch(() => route.query, async (query, previous) => {
 const taskTableColumns = [
   { key: 'c0', title: "序号", width: 56, align: 'center', fixed: 'left' },
   { key: 'c1', title: "工程号", width: 76, align: 'left' },
-  { key: 'c2', title: "船号", width: 68, align: 'left' },
+  { key: 'c2', title: "船名", width: 160, align: 'left' },
   { key: 'c3', title: "分段名", width: 76, align: 'left' },
   { key: 'c4', title: "任务开始", width: 184, align: 'left' },
   { key: 'c5', title: "切割时长", width: 96, align: 'center' },
@@ -538,9 +538,9 @@ const summaryTableColumns = [
     <template #table>
         <AppReportTable flex-height :columns="taskTableColumns" :items="taskRows" :row-key="row => row.task_id" :paginate="false" aria-label="任务能耗明细表" summary>
         <template #c0="{ row, index: rowIndex }">{{ rowIndex + 1 }}</template>
-        <template #c1="{ row }">{{ row.project_code || '--' }}</template>
-        <template #c2="{ row }">{{ row.ship_no || '--' }}</template>
-        <template #c3="{ row }">{{ row.segment_name || '--' }}</template>
+        <template #c1="{ row }">{{ row.project_code?.trim() || '非船' }}</template>
+        <template #c2="{ row }">{{ row.ship_no?.trim() || '非船' }}</template>
+        <template #c3="{ row }">{{ row.segment_name?.trim() || '非船' }}</template>
         <template #c4="{ row }">{{ formatChineseDateTime(row.production_time) }}</template>
         <template #c5="{ row }">{{ duration(row.work_time) }}</template>
         <template #c6="{ row }">{{ format(row.electricity_consumption) }}</template>

@@ -140,3 +140,40 @@ test('report option APIs retain device parameters and forward optional cancellat
   assert.ok(calls.every(call => call.url.searchParams.get('device_id') === 'Cutter02' && call.options.signal === controller.signal))
   assert.equal(calls[1].url.searchParams.get('project_code'), 'B')
 })
+
+test('BM ship names: report form submits name separately from the unchanged project number', async t => {
+  const events = []
+  const props = Vue.reactive({ initialReportType: 'workshop', projects: ['CMYZ0170'], ships: ['18600DWT-02'], customDefinitions: [], loading: false })
+  const { state } = mountSource(t, 'components/ReportForm', { defineProps: () => props, defineEmits: () => (name, value) => events.push([name, value]) }, 'form, submit')
+  state.form.project_code = 'CMYZ0170'
+  state.form.ship_no = '18600DWT-02'
+  state.submit()
+  assert.equal(events.at(-1)[1].project_code, 'CMYZ0170')
+  assert.equal(events.at(-1)[1].ship_no, '18600DWT-02')
+  const form = readFileSync(new URL('../src/components/ReportForm.vue', import.meta.url), 'utf8')
+  assert.match(form, /<span>船名<\/span>/)
+  assert.match(form, /全部船名/)
+})
+
+test('non-ship task display is consistent without changing missing task fields', () => {
+  const slots = [
+    ['views/WorkshopView', { project_code: 'c2', ship_no: 'c3', segment_name: 'c4' }],
+    ['views/EnergyPeriodReportView', { project_code: 'c1', ship_no: 'c2', segment_name: 'c3' }],
+    ['components/workshop/WorkshopBatchConfirmationDialog', { project_code: 'c1', segment_name: 'c2' }],
+  ]
+  for (const [file, fields] of slots) {
+    const template = parse(readFileSync(new URL(`../src/${file}.vue`, import.meta.url), 'utf8')).descriptor.template.content
+    for (const [field, slot] of Object.entries(fields)) {
+      const expression = template.match(new RegExp(`<template #${slot}="[^"]*">\\{\\{ (.*?) \\}\\}`))
+      assert.ok(expression, `${file} ${slot}`)
+      const render = new Function('row', `return (${expression[1]})`)
+      for (const value of [null, '', '   ']) {
+        const row = { project_code: 'CMYZ0170', ship_no: '18600DWT-02', segment_name: '804C', [field]: value }
+        assert.equal(render(row), '非船')
+        assert.equal(row[field], value)
+      }
+      const row = { project_code: 'CMYZ0170', ship_no: '18600DWT-02', segment_name: '804C' }
+      assert.equal(render(row), row[field])
+    }
+  }
+})

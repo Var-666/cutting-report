@@ -183,8 +183,8 @@ class WorkshopReportRepository(WorkshopScopeRepository):
                 INSERT INTO workshop_report_items (
                     report_item_id, report_id, task_id, ordinal, project_name,
                     segment_name, program_no, cut_length, groove_length,
-                    work_time, production_time, remark, production_date
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    work_time, production_time, remark, production_date, ship_no
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     (
@@ -201,6 +201,7 @@ class WorkshopReportRepository(WorkshopScopeRepository):
                         record.production_time.isoformat() if record.production_time else None,
                         record.remark,
                         record.production_date.isoformat() if record.production_date else report_date,
+                        record.ship_no,
                     )
                     for ordinal, record in enumerate(unique_records, start=1)
                 ],
@@ -248,11 +249,14 @@ class WorkshopReportRepository(WorkshopScopeRepository):
                 unique_records: list[WorkshopRecord] = []
                 mismatched_task_ids: list[str] = []
                 project_backfills: list[tuple[str, str]] = []
+                ship_backfills: list[tuple[str, str]] = []
                 for record in records:
                     task_id = str(record.task_id)
                     expected = _snapshot_values(record, report_date)
                     if task_id in existing_rows:
                         existing = existing_rows[task_id]
+                        if record.ship_no and existing.get('ship_no') in (None, existing.get('project_name')):
+                            ship_backfills.append((record.ship_no, existing['report_item_id']))
                         if not _snapshot_values_equal(existing, expected):
                             # Only repair a missing identifier; task data and confirmations stay intact.
                             if (
@@ -278,6 +282,8 @@ class WorkshopReportRepository(WorkshopScopeRepository):
                         "UPDATE workshop_report_items SET project_name = ? WHERE report_item_id = ?",
                         project_backfills,
                     )
+                if ship_backfills:
+                    connection.executemany('UPDATE workshop_report_items SET ship_no = ? WHERE report_item_id = ?', ship_backfills)
                 if unique_records:
                     ordinal = int(connection.execute(
                         "SELECT COALESCE(MAX(ordinal), 0) FROM workshop_report_items WHERE report_id = ?",
@@ -288,8 +294,8 @@ class WorkshopReportRepository(WorkshopScopeRepository):
                         INSERT INTO workshop_report_items (
                             report_item_id, report_id, task_id, ordinal, project_name,
                             segment_name, program_no, cut_length, groove_length,
-                            work_time, production_time, remark, production_date, snapshot_revision
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            work_time, production_time, remark, production_date, snapshot_revision, ship_no
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         [
                             (
@@ -304,6 +310,7 @@ class WorkshopReportRepository(WorkshopScopeRepository):
                                 record.remark,
                                 record.production_date.isoformat() if record.production_date else report_date,
                                 snapshot_revision,
+                                record.ship_no,
                             )
                             for index, record in enumerate(unique_records, start=1)
                         ],
@@ -332,8 +339,8 @@ class WorkshopReportRepository(WorkshopScopeRepository):
                 INSERT INTO workshop_report_items (
                     report_item_id, report_id, task_id, ordinal, project_name,
                     segment_name, program_no, cut_length, groove_length,
-                    work_time, production_time, remark, production_date, snapshot_revision
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    work_time, production_time, remark, production_date, snapshot_revision, ship_no
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     (
@@ -351,6 +358,7 @@ class WorkshopReportRepository(WorkshopScopeRepository):
                         record.remark,
                         record.production_date.isoformat() if record.production_date else report_date,
                         snapshot_revision,
+                        record.ship_no,
                     )
                     for ordinal, record in enumerate(unique_records, start=1)
                 ],
@@ -404,7 +412,7 @@ class WorkshopReportRepository(WorkshopScopeRepository):
                 WorkshopRecord(
                     task_id=str(row["task_id"]),
                     project_code=row["project_name"],
-                    ship_no=row["project_name"],
+                    ship_no=row["ship_no"],
                     segment_name=row["segment_name"],
                     program_no=row["program_no"],
                     cut_length=self._optional_decimal(row["cut_length"]),
