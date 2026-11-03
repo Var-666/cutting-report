@@ -3,7 +3,6 @@ from __future__ import annotations
 import sqlite3
 from types import TracebackType
 
-from app.config import DEVICE_CATALOG
 from app.database.automation import AutomationRepository
 from app.database.definitions import DefinitionRepository
 from app.database.dispatch import DispatchRepository
@@ -18,16 +17,13 @@ from app.database.sessions import SessionRepository
 class UnitOfWork:
     """Share one SQLite transaction across repository boundaries."""
 
-    def __init__(self, database: SQLiteDatabase, timezone: str = "Asia/Shanghai", *, device_id: str | None = None) -> None:
+    def __init__(self, database: SQLiteDatabase, timezone: str = "Asia/Shanghai", *, device_id: str | None = None, scope_machine_no: str | None = None) -> None:
         self.database = database
         self.timezone = timezone
         self.device_id = device_id
-        self.scope_machine_no = None
-        if device_id is not None:
-            device = next((item for item in DEVICE_CATALOG.devices if item.id == device_id), None)
-            if device is None:
-                raise ValueError("设备不存在")
-            self.scope_machine_no = device.machine_no
+        self.scope_machine_no = scope_machine_no
+        if device_id is not None and not scope_machine_no:
+            raise ValueError("必须显式指定产线的机床范围")
         self._context = None
         self.connection: sqlite3.Connection | None = None
         self.metadata: MetadataRepository

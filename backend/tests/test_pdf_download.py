@@ -1,3 +1,4 @@
+from tests.line_fixtures import as_line_services, runtime_line
 from dataclasses import replace
 import inspect
 from types import SimpleNamespace
@@ -29,7 +30,7 @@ def report_client(tmp_path, monkeypatch):
     app.include_router(reports.router)
     app.dependency_overrides[require_admin] = lambda: {"role": "admin"}
     app.state.metadata = SimpleNamespace(get_job=lambda report_id: job if report_id == "saved" else None)
-    app.state.devices = {'Cutter01': SimpleNamespace(metadata=app.state.metadata)}
+    app.state.lines = as_line_services({'Cutter01': SimpleNamespace(metadata=app.state.metadata)})
     app.state.pdf_service = SimpleNamespace(render=render)
     monkeypatch.setattr(reports, "settings", replace(reports.settings, project_root=tmp_path))
     # Settings resolves report files under project_root/reports.

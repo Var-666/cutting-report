@@ -175,7 +175,7 @@ test('welding connection uses the same source card grid and full-width field lay
   assert.match(database.template.content, /class="configuration-switches"[\s\S]*name="weld_enabled"/)
   assert.match(welding, /name="weld_host"[^>]*:required="databaseConfiguration.welding.enabled"[^>]*placeholder="请输入地址，例如 10.147.1.21"/)
   assert.match(welding, /name="weld_password"[^>]*:required="databaseConfiguration.welding.enabled && !databaseConfiguration.welding.password_configured"/)
-  assert.match(database.template.content, /v-else-if="source.configured">已使用独立连接配置/)
+  assert.match(database.template.content, /v-if="source.configured">已登记数据源连接/)
   assert.match(database.template.content, /连接参数尚未保存完整/)
   assert.match(database.styles[0].content, /\.saved-source-grid fieldset \{ min-width:0; display:grid; grid-template-columns:minmax\(0,1fr\) 92px;/)
   assert.match(database.styles[0].content, /\.saved-source-grid--welding \{ grid-template-columns:1fr;/)
@@ -191,7 +191,7 @@ test('database save reloads active settings and status without a restart prompt'
     driver: 'ODBC Driver 18 for SQL Server', encrypt: true, trust_server_certificate: false }
   const current = { data_source_mode: 'sqlserver', worker_database_auth_enabled: true, file_database_enabled: true,
     production: { ...connection }, worker: { ...connection }, file: { ...connection } }
-  const bindings = { computed, reactive, ref, watch() {}, onMounted() {}, useConfirm: () => async () => true, useUnsavedChanges() {}, formatTableDateValue: String,
+  const bindings = { computed, reactive, ref, watch() {}, onMounted() {}, onBeforeUnmount() {}, registerDeviceSwitchGuard: () => () => {}, useConfirm: () => async () => true, useUnsavedChanges() {}, formatTableDateValue: String,
     deviceSelection: { id: 'Cutter01' }, loadDevices: async () => { calls.push('catalog') },
     getDatabaseStatus: async () => { calls.push('status'); return { mode: 'sqlserver', driver: connection.driver } },
     getDatabaseConfiguration: async () => { calls.push('configuration'); return structuredClone(current) },
@@ -214,20 +214,46 @@ test('database save reloads active settings and status without a restart prompt'
   assert.doesNotMatch(view.template.content, /重启服务后生效/)
 })
 
-test('successful database saves clear old report reads and failed saves preserve them', async () => {
-  const { reportCache } = await import('../src/api/reportCache.ts')
-  const { saveDatabaseConfiguration } = await import('../src/api/reports.ts')
-  const originalFetch = globalThis.fetch
-  try {
-    await reportCache.read('database-runtime-test', () => 'old')
-    globalThis.fetch = async () => ({ ok: false, json: async () => ({ detail: '保存失败' }) })
-    await assert.rejects(saveDatabaseConfiguration({}), /保存失败/)
-    assert.equal(await reportCache.read('database-runtime-test', () => 'unexpected'), 'old')
-    globalThis.fetch = async () => ({ ok: true, json: async () => ({ success: true, data: { restart_required: false } }) })
-    await saveDatabaseConfiguration({})
-    assert.equal(await reportCache.read('database-runtime-test', () => 'new'), 'new')
-  } finally { globalThis.fetch = originalFetch; reportCache.clear() }
-})
+for (const method of ['saveDatabaseConfiguration', 'saveWeldingConfiguration', 'saveDatabaseSource', 'setDatabaseSourceEnabled', 'deleteDatabaseSource']) {
+  test(`successful ${method} clears report reads and a failed save preserves them`, async () => {
+    const { reportCache } = await import('../src/api/reportCache.ts')
+    const configuration = await import('../src/api/configuration.ts')
+    const mutate = () => method === 'saveDatabaseSource' ? configuration[method]({ id: 'cutting-production' }, false)
+      : method === 'setDatabaseSourceEnabled' ? configuration[method]('cutting-production', true)
+      : method === 'deleteDatabaseSource' ? configuration[method]('quality') : configuration[method]({})
+    const originalFetch = globalThis.fetch
+    try {
+      await reportCache.read('database-runtime-test', () => 'old')
+      globalThis.fetch = async () => ({ ok: false, json: async () => ({ detail: '保存失败' }) })
+      await assert.rejects(mutate(), /保存失败/)
+      assert.equal(await reportCache.read('database-runtime-test', () => 'unexpected'), 'old')
+      globalThis.fetch = async () => ({ ok: true, json: async () => ({ success: true, data: { restart_required: false } }) })
+      await mutate()
+      assert.equal(await reportCache.read('database-runtime-test', () => 'new'), 'new')
+    } finally { globalThis.fetch = originalFetch; reportCache.clear() }
+  })
+}
+
+for (const fail of [false, true]) {
+  test(`late database configuration ${fail ? 'failure' : 'response'} cannot overwrite another line`, async () => {
+    const { computed, reactive, ref } = await import('vue')
+    let settle
+    const selection = { id: 'Cutter01' }
+    const bindings = { computed, reactive, ref, watch() {}, onMounted() {}, onBeforeUnmount() {}, registerDeviceSwitchGuard: () => () => {}, useConfirm: () => async () => true, useUnsavedChanges() {}, formatTableDateValue: String,
+      deviceSelection: selection, getDatabaseConfiguration: () => new Promise((resolve, reject) => { settle = fail ? reject : resolve }) }
+    const script = descriptor('DatabaseView').scriptSetup.content.replace(/^import[\s\S]*?from ['"][^'"]+['"]\s*$/gm, '')
+    const page = scriptFunction(...Object.keys(bindings), `${script}\nreturn { databaseConfiguration, configurationError, configurationLoading, loadConfiguration }`)(...Object.values(bindings))
+    const reading = page.loadConfiguration()
+    selection.id = 'Cutter02'
+    page.databaseConfiguration.value = { selected: 'Cutter02' }
+    page.configurationError.value = 'current-error'
+    settle(fail ? Error('old-error') : { production: {}, worker: {}, file: {} })
+    await reading
+    assert.deepEqual(page.databaseConfiguration.value, { selected: 'Cutter02' })
+    assert.equal(page.configurationError.value, 'current-error')
+    assert.equal(page.configurationLoading.value, true)
+  })
+}
 
 test('database configuration retains sections 01–03 and omits mapping, preview and SQL workbench', () => {
   const database = descriptor('DatabaseView')
@@ -244,8 +270,8 @@ test('shared connection test selects SQL Server or MySQL without saving either d
   const { computed, reactive, ref } = await import('vue')
   const view = descriptor('DatabaseView')
   const calls = []
-  const selection = reactive({ id: 'Cutter01', items: [{ id: 'Cutter01', type: 'cutting' }, { id: 'welding', type: 'welding' }] })
-  const bindings = { computed, reactive, ref, watch() {}, onMounted() {}, useConfirm: () => async () => true, useUnsavedChanges() {}, formatTableDateValue: String,
+  const selection = reactive({ id: 'Cutter01', items: [{ id: 'Cutter01', type: 'cutting' }, { id: 'welding', type: 'welding', source_key: 'welding' }] })
+  const bindings = { computed, reactive, ref, watch() {}, onMounted() {}, onBeforeUnmount() {}, registerDeviceSwitchGuard: () => () => {}, useConfirm: () => async () => true, useUnsavedChanges() {}, formatTableDateValue: String,
     deviceSelection: selection, selectedLineType,
     testDatabaseConnection: async body => { calls.push(['sqlserver', body]); return { database: body.database, elapsed_ms: 1 } },
     testWeldingConnection: async body => { calls.push(['welding', body]); return { connected: true, elapsed_ms: 2 } },

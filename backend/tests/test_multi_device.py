@@ -1,3 +1,7 @@
+from app.services.query_service import QueryService
+from tests.line_fixtures import source_client
+from tests.line_fixtures import source_client
+from tests.line_fixtures import as_line_services, runtime_line
 from dataclasses import replace
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -14,7 +18,8 @@ from app.api.auth import require_admin, require_user
 from app.api.devices import router as devices_router
 from app.api.options import router as options_router
 from app.api.reports import router as reports_router
-from app.config import DEVICE_CATALOG, Settings, settings_for_device
+from tests.line_fixtures import CUTTING_SCOPES, cutting_settings, line_settings, configuration
+from app.device_config import load_line_catalog
 from app.database.alarms import AlarmRepository
 from app.database.alarm_source import SqlServerAlarmSource
 from app.database.automation import AutomationRepository
@@ -55,9 +60,9 @@ def database(tmp_path):
 
 
 def test_cutter02_uses_shared_connection_but_cannot_inherit_any_cutter01_meter(tmp_path):
-    base = Settings(project_root=tmp_path, data_source_mode='sqlserver', demo_mode=False, energy_api_enabled=True)
-    cfg = settings_for_device(base, 'Cutter02')
-    assert cfg.sqlserver_connection('production') == base.sqlserver_connection('production')
+    base = cutting_settings(project_root=tmp_path, data_source_mode='sqlserver', demo_mode=False, energy_api_enabled=True)
+    cfg = line_settings(base, 'Cutter02')
+    assert cfg.production_data_source == base.production_data_source
     assert (cfg.device_id, cfg.device_name, cfg.report_machine_no) == ('Cutter02', '30KW切割机', 'Cutter02')
     assert cfg.alarm_monitor_start_at == '2026-10-12 00:00:00'
     assert cfg.alarm_monitor_machine_nos == ('Cutter02',)
@@ -66,8 +71,8 @@ def test_cutter02_uses_shared_connection_but_cannot_inherit_any_cutter01_meter(t
     assert cfg.energy_report_electricity_parameter_ids == cfg.energy_equipment_ids == cfg.energy_electricity_parameter_ids == ()
     assert cfg.energy_report_equipment_ids == ('Cutter02',)
     assert base.energy_report_equipment_ids == ('Cutter01',)
-    with pytest.raises(ValueError, match='设备不存在'):
-        settings_for_device(base, 'missing')
+    with pytest.raises(ValueError, match='产线未登记'):
+        line_settings(base, 'missing')
 
 
 def test_two_devices_can_keep_same_day_snapshots_confirmations_and_corrections_separate(database):
@@ -105,7 +110,7 @@ def test_upgrade_preserves_legacy_snapshot_children_and_confirmations(database):
     with db.connect() as connection:
         connection.execute('DROP INDEX idx_workshop_reports_device_date')
     rebuild_table(db, 'workshop_reports', lambda sql: sql.replace('report_date TEXT NOT NULL', 'report_date TEXT NOT NULL UNIQUE'))
-    migrate_device_isolation(db, DEVICE_CATALOG)
+    migrate_device_isolation(db, CUTTING_SCOPES)
     legacy.initialize()
     one = WorkshopRepository(db, scope_machine_no='Cutter01')
     two = WorkshopRepository(db, scope_machine_no='Cutter02')
@@ -154,8 +159,8 @@ def alarm_event(key, machine):
 
 def test_alarm_cursors_leases_recovery_and_page_totals_are_device_scoped(database):
     db, _ = database
-    one = AlarmRepository(db, machine_no='Cutter01', source_name='production:Cutter01')
-    two = AlarmRepository(db, machine_no='Cutter02', source_name='production:Cutter02')
+    one = AlarmRepository(db, machine_no='Cutter01', source_name='cutting-production:Cutter01')
+    two = AlarmRepository(db, machine_no='Cutter02', source_name='cutting-production:Cutter02')
     for repo, key, owner in [(one, 100, 'owner-1'), (two, 200, 'owner-2')]:
         repo.initialize()
         assert repo.try_acquire_lease(owner, NOW)
@@ -183,7 +188,7 @@ def test_alarm_cursors_leases_recovery_and_page_totals_are_device_scoped(databas
 def test_alarm_source_always_filters_cutter02_and_its_confirmed_start_time():
     calls = []
     client = SimpleNamespace(fetch_all=lambda sql, params: calls.append((sql, params)) or [])
-    source = SqlServerAlarmSource(settings_for_device(Settings(), 'Cutter02'), client)
+    source = SqlServerAlarmSource(line_settings(cutting_settings(), 'Cutter02'), client)
     source.fetch_new(0, 1000, 500)
     sql, params = calls[0]
     assert 'START_TIME' in sql and 'MACHINE_NO' in sql
@@ -191,7 +196,7 @@ def test_alarm_source_always_filters_cutter02_and_its_confirmed_start_time():
 
 
 def test_disconnected_energy_retains_cutter02_tasks_and_never_calls_meters(tmp_path):
-    cfg = settings_for_device(Settings(project_root=tmp_path, energy_api_enabled=True), 'Cutter02')
+    cfg = line_settings(cutting_settings(project_root=tmp_path, energy_api_enabled=True), 'Cutter02')
     repo = EnergyReportRepository(SQLiteDatabase(tmp_path / 'energy.db'))
     repo.initialize()
     client = MeterStub()
@@ -210,7 +215,7 @@ def test_disconnected_energy_retains_cutter02_tasks_and_never_calls_meters(tmp_p
 
 
 def test_custom_sql_cannot_silently_use_cutter01_scope_or_override_device_parameter():
-    service = CustomReportService(settings_for_device(Settings(), 'Cutter02'))
+    service = CustomReportService(line_settings(cutting_settings(), 'Cutter02'), client=source_client(line_settings(cutting_settings(), 'Cutter02')))
     arguments = dict(report_date=NOW.date(), period_type='day', project_code=None,
                      ship_no=None, parameters={'machine_no': 'Cutter01'})
     with pytest.raises(ValueError, match=':machine_no'):
@@ -220,14 +225,14 @@ def test_custom_sql_cannot_silently_use_cutter01_scope_or_override_device_parame
 
 
 def test_cutter02_export_explains_disconnected_energy_even_without_tasks(tmp_path):
-    cfg = settings_for_device(Settings(project_root=tmp_path, data_source_mode='demo',
+    cfg = line_settings(cutting_settings(project_root=tmp_path, data_source_mode='demo',
                                        demo_mode=True, llm_enabled=False), 'Cutter02')
     cfg.ensure_runtime_dirs()
     cfg.echarts_vendor_path.parent.mkdir(exist_ok=True)
     cfg.echarts_vendor_path.write_text('window.echarts = {};')
     metadata = MetadataRepository(cfg.metadata_db_path, device_id='Cutter02')
     metadata.initialize()
-    pipeline = ReportPipeline(cfg, metadata)
+    pipeline = ReportPipeline(cfg, metadata, query_service=QueryService(cfg, client=source_client(cfg)))
     metadata.create_job(report_id='cutter02-export', report_date=DAY, project_code=None, ship_no=None,
                         request_id='export', created_at=STAMP, report_type='equipment')
     pipeline.run(metadata.claim_next_job(STAMP))
@@ -250,13 +255,13 @@ def test_schedule_run_and_queue_keep_fixed_device_even_after_schedule_edit(datab
     run = automation.reserve_run(schedule, scheduled_for=STAMP, report_date=DAY, trigger_type='manual', now=STAMP)
     automation.update_schedule(schedule['schedule_id'], {**data, 'device_id': 'Cutter01'}, now=STAMP)
     metadata = MetadataRepository(db)
-    service = AutomationService(Settings(), automation, metadata, SimpleNamespace())
+    service = AutomationService(cutting_settings(), automation, metadata, SimpleNamespace(), line_services={key: runtime_line(SimpleNamespace(settings=line_settings(cutting_settings(), key), pipeline=object()), key) for key in ('Cutter01', 'Cutter02')})
     assert service._create_report_job(run, NOW)
     job = metadata.get_job(automation.get_run(run['run_id'])['report_id'])
     assert job['device_id'] == 'Cutter02'
     executed = []
     pipelines = {key: SimpleNamespace(run=lambda job, key=key: executed.append(key)) for key in ('Cutter01', 'Cutter02')}
-    worker = ReportWorker(Settings(), metadata, pipelines['Cutter01'], pipelines=pipelines)
+    worker = ReportWorker(cutting_settings(), metadata, pipelines['Cutter01'], pipelines=pipelines)
     worker._process_report(job, ZoneInfo('Asia/Shanghai'))
     assert executed == ['Cutter02']
 
@@ -265,20 +270,19 @@ def test_schedule_run_and_queue_keep_fixed_device_even_after_schedule_edit(datab
 @pytest.mark.parametrize('device_id', ['Cutter01', 'Cutter02'])
 def test_device_api_validates_selection_and_scopes_history_and_exports(database, monkeypatch, default_device_id, device_id):
     from app.api import devices as devices_api, reports as reports_api, alarms as alarms_api
-    configured_catalog = devices_api.DEVICE_CATALOG.model_copy(update={'default_device_id': default_device_id})
-    for module in (devices_api,):
-        monkeypatch.setattr(module, 'DEVICE_CATALOG', configured_catalog)
     db, admin = database
     app = FastAPI()
+    app.state.catalog = load_line_catalog(cutting_settings().production_lines_json)
+    app.state.catalog = load_line_catalog(configuration(db.path.parent).production_lines_json).model_copy(update={"default_line_id": default_device_id})
     for router in (devices_router, options_router, reports_router):
         app.include_router(router)
     app.dependency_overrides[require_user] = lambda: admin
     app.dependency_overrides[require_admin] = lambda: admin
-    app.state.devices = {
-        key: SimpleNamespace(settings=settings_for_device(Settings(), key), metadata=MetadataRepository(db, device_id=key),
+    app.state.lines = as_line_services({
+        key: SimpleNamespace(settings=line_settings(cutting_settings(), key), metadata=MetadataRepository(db, device_id=key),
                              query_service=SimpleNamespace(list_projects=lambda filters, key=key: [key]))
         for key in ('Cutter01', 'Cutter02')
-    }
+    })
     @app.middleware('http')
     async def request_id(request, call_next):
         request.state.request_id = 'multi-device'
@@ -299,9 +303,9 @@ def test_device_api_validates_selection_and_scopes_history_and_exports(database,
         assert client.get(f'/api/v1/reports/{report_id}/status?device_id={other}').status_code == 404
         assert client.get(f'/api/v1/reports?device_id={other}').json()['data']['total'] == 0
         assert client.get(f'/api/v1/reports?device_id={device_id}').json()['data']['total'] == 1
-        job = {**app.state.devices[device_id].metadata.get_job(report_id), 'status': 'completed'}
+        job = {**app.state.lines[device_id].service.metadata.get_job(report_id), 'status': 'completed'}
         serialized = reports_api._serialize_job(job)
-        alarm_url = alarms_api._device_url(SimpleNamespace(app=app, query_params={'device_id': device_id}, state=SimpleNamespace()), '/api/v1/alarms/reports/a1/view')
+        alarm_url = alarms_api._device_url(SimpleNamespace(app=app, query_params={'device_id': device_id}, state=SimpleNamespace(), headers={}), '/api/v1/alarms/reports/a1/view')
         for url in (serialized['view_url'], serialized['download_url'], alarm_url):
             resolved_device = parse_qs(urlsplit(url).query)['device_id'][0]
             assert resolved_device == device_id, 'report links must resolve to their owner under either default'
@@ -313,12 +317,12 @@ def test_device_runtime_has_independent_caches_and_disables_only_cutter02_energy
     definitions.initialize()
     snapshots = LeadershipSnapshotRepository(db)
     snapshots.initialize()
-    base = Settings(project_root=tmp_path, data_source_mode='sqlserver', demo_mode=False,
+    base = cutting_settings(project_root=tmp_path, data_source_mode='sqlserver', demo_mode=False,
                     energy_api_enabled=True, alarm_monitor_enabled=True)
-    one, two = [build_device_runtime(settings_for_device(base, key), db, definitions, snapshots, SimpleNamespace())
+    one, two = [build_device_runtime(line_settings(base, key), db, definitions, snapshots, SimpleNamespace(), client=source_client(base))
                 for key in ('Cutter01', 'Cutter02')]
-    assert one.alarm_repository.source_name == 'production:Cutter01'
-    assert two.alarm_repository.source_name == 'production:Cutter02'
+    assert one.alarm_repository.source_name == 'cutting-production:Cutter01'
+    assert two.alarm_repository.source_name == 'cutting-production:Cutter02'
     assert one.query_service is not two.query_service
     assert one.report_analysis_service is not two.report_analysis_service
     for runtime in (one, two):
@@ -370,12 +374,13 @@ def test_all_device_api_boundaries_reject_missing_unknown_and_duplicate_context(
     from app.api import alarms, analysis, conditions, database as database_api, designer, energy, equipment, leadership, workshop
     db, admin = database
     app = FastAPI()
+    app.state.catalog = load_line_catalog(cutting_settings().production_lines_json)
     for router in (devices_router, options_router, reports_router, alarms.router, analysis.router, conditions.router,
                    database_api.router, designer.router, energy.router, equipment.router, leadership.router, workshop.router):
         app.include_router(router)
     app.dependency_overrides[require_user] = lambda: admin
     app.dependency_overrides[require_admin] = lambda: admin
-    app.state.devices = {key: SimpleNamespace(settings=settings_for_device(Settings(), key)) for key in ('Cutter01','Cutter02')}
+    app.state.lines = as_line_services({key: SimpleNamespace(settings=line_settings(cutting_settings(), key)) for key in ('Cutter01','Cutter02')})
     @app.middleware('http')
     async def request_id(request, call_next):
         request.state.request_id = 'boundary'
@@ -398,14 +403,15 @@ def test_database_preview_and_pdf_download_use_only_the_requested_runtime(databa
     from app.api import database as database_api, reports
     db, admin = database
     app = FastAPI()
+    app.state.catalog = load_line_catalog(cutting_settings().production_lines_json)
     app.include_router(database_api.router)
     app.include_router(reports_router)
     app.include_router(reports.view_router)
     app.dependency_overrides[require_admin] = lambda: admin
-    base = Settings(project_root=tmp_path)
+    base = cutting_settings(project_root=tmp_path)
     base.ensure_runtime_dirs()
     monkeypatch.setattr(reports,'settings',base)
-    app.state.devices = {}
+    app.state.lines = as_line_services({})
     render_calls = []
     def render(path):
         render_calls.append(path)
@@ -419,8 +425,8 @@ def test_database_preview_and_pdf_download_use_only_the_requested_runtime(databa
         path = base.reports_dir / f'{key}.html'
         path.write_text(key)
         metadata.save_report(report_id=key,filename=path.name,relative_path=path.name,file_size=len(key),sha256='0'*64,task_count=1,generated_at=STAMP,system_version='test')
-        app.state.devices[key] = SimpleNamespace(settings=settings_for_device(base,key),metadata=metadata,
-            query_service=SimpleNamespace(fetch_summary_data=lambda _,key=key: SimpleNamespace(summary_records=[{'device':key}])))
+        app.state.lines[key] = runtime_line(SimpleNamespace(settings=line_settings(base,key),metadata=metadata,
+            query_service=SimpleNamespace(fetch_summary_data=lambda _,key=key: SimpleNamespace(summary_records=[{'device':key}]))), key)
     @app.middleware('http')
     async def request_id(request,call_next):
         request.state.request_id='preview'
@@ -445,7 +451,7 @@ def test_analysis_cache_and_source_versions_are_distinct_for_identical_input(dat
     calls=[]
     services=[]
     for key in ('Cutter01','Cutter02'):
-        cfg=settings_for_device(Settings(project_root=tmp_path,llm_enabled=True),key)
+        cfg=line_settings(cutting_settings(project_root=tmp_path,llm_enabled=True),key)
         service=ReportAnalysisService(cfg,MetadataRepository(db,device_id=key))
         def analyze(kind,context,**kwargs):
             calls.append(kind)
@@ -463,7 +469,7 @@ def test_analysis_cache_and_source_versions_are_distinct_for_identical_input(dat
 
 def test_pipeline_rejects_a_job_owned_by_another_device_before_query(database, tmp_path):
     db, _ = database
-    cfg = settings_for_device(Settings(project_root=tmp_path), 'Cutter01')
-    pipeline = ReportPipeline(cfg, MetadataRepository(db, device_id='Cutter01'))
+    cfg = line_settings(cutting_settings(project_root=tmp_path), 'Cutter01')
+    pipeline = ReportPipeline(cfg, MetadataRepository(db, device_id='Cutter01'), query_service=QueryService(cfg, client=source_client(cfg)))
     with pytest.raises(ValueError, match='执行设备不一致'):
         pipeline.run({'device_id': 'Cutter02', 'report_id': 'wrong-device'})

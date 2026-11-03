@@ -1,3 +1,4 @@
+from tests.line_fixtures import as_line_services, runtime_line
 from types import SimpleNamespace
 
 from app.database import condition_fields, condition_query
@@ -16,7 +17,7 @@ def test_condition_sql_uses_server_fields_and_bound_values():
 
 def test_public_schema_and_mock_search_keep_their_http_contract_with_device_context(api):
     app, client, downloads = api
-    app.state.devices = {'Cutter01': SimpleNamespace(settings=app.state.cutting_dispatch.settings)}
+    app.state.lines = as_line_services({'Cutter01': SimpleNamespace(settings=app.state.cutting_dispatch.settings)})
     response = client.get('/api/v1/conditions/cutting_files/schema?device_id=Cutter01')
     assert response.status_code == 200
     schema = response.json()['data']

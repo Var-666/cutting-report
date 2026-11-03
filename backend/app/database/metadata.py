@@ -5,7 +5,6 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from app.config import DEVICE_CATALOG
 from app.database.sqlite import SQLiteDatabase, SQLiteRepository, execution_owner, require_worker_recovery
 
 
@@ -16,15 +15,21 @@ class MetadataRepository(SQLiteRepository):
         *,
         connection: sqlite3.Connection | None = None,
         device_id: str | None = None,
+        analysis_scope: str | None = None,
     ) -> None:
         super().__init__(database, connection=connection)
         self.device_id = device_id
+        self._analysis_scope = analysis_scope
 
     def require_device_id(self, device_id: str | None = None) -> str:
         selected = device_id if device_id is not None else self.device_id
-        if selected not in {item.id for item in DEVICE_CATALOG.devices} or (self.device_id is not None and selected != self.device_id):
+        if not selected or (self.device_id is not None and selected != self.device_id):
             raise ValueError("必须指定一致的设备上下文")
         return selected
+
+    @property
+    def analysis_scope(self) -> str:
+        return self._analysis_scope or self.require_device_id()
 
     def initialize(self) -> None:
         from app.database.migrations import apply_migrations
@@ -257,7 +262,7 @@ class MetadataRepository(SQLiteRepository):
                   AND model_name = ? AND prompt_version = ? AND mode = 'model'
                 ORDER BY generated_at DESC, rowid DESC LIMIT 1
                 """,
-                (self.require_device_id(), report_type, report_date, model_name, prompt_version),
+                (self.analysis_scope, report_type, report_date, model_name, prompt_version),
             ).fetchone()
             value = json.loads(row["result_json"]) if row else None
             return value if isinstance(value, dict) else None
@@ -275,7 +280,7 @@ class MetadataRepository(SQLiteRepository):
                 FROM analysis_source_versions
                 WHERE report_type = ? AND report_date = ? AND device_id = ?
                 """,
-                (report_type, report_date, self.require_device_id()),
+                (report_type, report_date, self.analysis_scope),
             ).fetchone()
             if row is None:
                 return None
@@ -302,7 +307,7 @@ class MetadataRepository(SQLiteRepository):
                     data_version = excluded.data_version,
                     updated_at = excluded.updated_at
                 """,
-                (report_type, report_date, data_version, updated_at, self.require_device_id()),
+                (report_type, report_date, data_version, updated_at, self.analysis_scope),
             )
 
     def save_analysis(
@@ -352,7 +357,7 @@ class MetadataRepository(SQLiteRepository):
                     prompt_version,
                     json.dumps(result, ensure_ascii=False),
                     generated_at,
-                    self.require_device_id() if publish_latest else None,
+                    self.analysis_scope if publish_latest else None,
                 ),
             )
 

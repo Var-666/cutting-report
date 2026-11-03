@@ -12,7 +12,8 @@ from app.api import automation, database
 from app.config import settings
 from app.services.automation_runtime import AutomationRuntime
 from app.services.runtime_settings_store import read_runtime_env, write_runtime_env, runtime_settings_lock
-from app.services.database_configuration import connection_env_values
+from app.database.source_registry import DatabaseSourceRegistry, source_configs_json
+from tests.line_fixtures import configuration, line_settings
 from app.database.sqlserver import SqlServerConfigurationError
 from app.models.domain import ReportFilter
 from app.services.query_service import QueryService
@@ -63,12 +64,16 @@ def test_database_and_automation_save_share_read_modify_publish_lock(tmp_path, m
 
 
 def test_blank_database_password_preserves_latest_saved_value_before_restart(tmp_path, monkeypatch):
-    configured = replace(settings, project_root=tmp_path, sqlserver_password="old-startup-password")
-    monkeypatch.setattr(database, "settings", configured)
-    write_runtime_env(configured.runtime_settings_env_path, {"SQLSERVER_PASSWORD": "new-saved-password"})
-    payload = database.SavedConnectionRequest(host="db", database="production", username="reader")
-    values = connection_env_values("production", payload, configured, read_runtime_env(configured.runtime_settings_env_path))
-    assert values["SQLSERVER_PASSWORD"] == "new-saved-password"
+    from app.services.application_runtime import build_runtime
+    from app.models.database_sources import DatabaseSourceRequest
+    configured = configuration(tmp_path)
+    state = build_runtime(configured, role='web')
+    current = state.database_runtime.snapshot().database_sources
+    latest = current.get('cutting-production').model_copy(update={'password': __import__('pydantic').SecretStr('new-saved-password')})
+    write_runtime_env(configured.runtime_settings_env_path, {'DATABASE_SOURCES_JSON': source_configs_json([latest, current.get('welding-production')])})
+    payload = DatabaseSourceRequest.model_validate({**latest.model_dump(exclude={'password'}), 'password': ''})
+    state.database_runtime.save_source(payload)
+    assert state.database_runtime.snapshot().database_sources.get('cutting-production').password.get_secret_value() == 'new-saved-password'
 
 
 def test_failed_atomic_write_preserves_file_and_removes_temporary_secret(tmp_path, monkeypatch):
@@ -106,7 +111,8 @@ def test_database_configuration_cannot_save_removed_excel_mode():
 
 
 def test_sqlserver_query_failure_does_not_fall_back_to_local_or_demo_data(monkeypatch):
-    service = QueryService(replace(settings, data_source_mode="sqlserver"))
+    cfg = configuration(__import__('pathlib').Path('/tmp/source-test'), real=True)
+    service = QueryService(line_settings(cfg), client=DatabaseSourceRegistry.from_json(cfg.database_sources_json).client('cutting-production'))
 
     def unavailable(*args):
         raise SqlServerConfigurationError("生产数据库未配置")
@@ -131,7 +137,7 @@ def test_removing_local_workbench_keeps_production_execution_guards(monkeypatch,
 
 
 def test_demo_status_does_not_advertise_sql_execution_even_when_flag_is_set(monkeypatch):
-    monkeypatch.setattr(database, "settings", replace(settings, data_source_mode="demo", sql_workbench_enabled=True))
+    monkeypatch.setattr(database, "settings", configuration(__import__('pathlib').Path('/tmp/status-test'), sql_workbench_enabled=True))
     request = SimpleNamespace(state=SimpleNamespace(request_id="test"))
     status = database.database_status(request)["data"]
     assert status["sql_workbench_enabled"] is False

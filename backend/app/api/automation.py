@@ -12,7 +12,8 @@ from app.api.runtime import application_state
 from app.api.auth import require_admin
 from app.services.automation_configuration import AutomationConfigurationRequest, automation_configuration_data
 from app.services.runtime_settings_store import RuntimeSettingsSaveError
-from app.config import DEVICE_CATALOG, settings
+from app.config import settings
+from app.api.runtime import runtime_state
 from app.models.contracts import ApiEnvelope, Items, Page
 from app.models.automation_contracts import (AutomationConfiguration, AutomationStatus, AutomationSchedule, ScheduledRun, EmailDelivery, EmailResolution, Deleted, Queued, Resolved)
 from app.models.configuration_contracts import ConfigurationSaved
@@ -46,13 +47,6 @@ class DeliveryResolutionRequest(BaseModel):
 
 class SchedulePayload(BaseModel):
     device_id: str
-
-    @field_validator("device_id")
-    @classmethod
-    def validate_device(cls, value: str) -> str:
-        if value not in {item.id for item in DEVICE_CATALOG.devices}:
-            raise ValueError("设备不存在")
-        return value
 
     name: str = Field(min_length=2, max_length=80)
     report_type: Literal["leadership", "workshop", "equipment"]
@@ -174,6 +168,10 @@ def create_schedule(
     request: Request,
     user: dict = Depends(require_admin),
 ) -> dict:
+    line = runtime_state(request).lines.get(payload.device_id)
+    if line is None or not line.config.enabled or line.pipeline is None:
+        raise HTTPException(status_code=422, detail="产线未启用或不支持自动化报表")
+
     now = _now()
     data = application_state(request).automation_service.enrich_schedule(
         payload.model_dump(), now
@@ -190,6 +188,10 @@ def update_schedule(
     payload: SchedulePayload,
     request: Request,
 ) -> dict:
+    line = runtime_state(request).lines.get(payload.device_id)
+    if line is None or not line.config.enabled or line.pipeline is None:
+        raise HTTPException(status_code=422, detail="产线未启用或不支持自动化报表")
+
     now = _now()
     data = application_state(request).automation_service.enrich_schedule(
         payload.model_dump(), now

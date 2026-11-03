@@ -15,11 +15,13 @@ import { adminMenus } from '../src/router/menus.ts'
 import { analyzeWelding, downloadWelding, getWeldingPart, getWeldingReport, weldingQuery } from '../src/api/welding.ts'
 import { weldingColumns, weldingVisibleColumns, weldingColumnLayout, weldingDisplay, weldingKpis, weldingTitles } from '../src/utils/weldingReport.ts'
 import { weldingRoutes } from '../src/router/weldingRoutes.ts'
+import { setDeviceCatalog, selectDevice } from '../src/api/deviceContext.ts'
 import { reportCache } from '../src/api/reportCache.ts'
 import { queryDateRange, sameRouteQuery } from '../src/utils/reportRouteState.ts'
 import { parseWeldingRouteQuery, weldingRouteQuery } from '../src/utils/weldingRouteState.ts'
 
 const source = path => readFileSync(new URL(`../src/${path}`, import.meta.url), 'utf8')
+test.beforeEach(() => setDeviceCatalog({ default_device_id: 'welding', items: [{ id: 'welding', name: '焊接', type: 'welding' }] }))
 afterEach(() => reportCache.clear())
 
 test('device types contain independent welding lines without adding a third navigation level', () => {
@@ -37,7 +39,7 @@ test('cross-line switching enters the correct home and restores selection if nav
   let cancel = false
   const router = { replace: async to => { destinations.push(to); return cancel ? { type: 4 } : undefined } }
   const bindings = { lineHome, selectedLineType, ref, onMounted() {}, useRoute: () => ({ name: 'admin-home', query: {} }), useRouter: () => router,
-    deviceSwitchQuery: () => null, changeDevice: id => { selection.id = id }, deviceSelection: selection, loadDevices() {} }
+    allowDeviceSwitch: async () => true, deviceSwitchQuery: () => null, changeDevice: id => { selection.id = id }, deviceSelection: selection, loadDevices() {} }
   const app = scriptFunction(...Object.keys(bindings), `${script}; return useDeviceSelection();`)(...Object.values(bindings))
   await app.switchDevice('welding')
   assert.equal(selection.id, 'welding')
@@ -778,17 +780,18 @@ test('router resolves registered line types without requiring a fixed welding ID
     deviceSelection: selection, changeDevice: id => { selection.id = id }, selectedLineType, lineHome }
   scriptFunction(...Object.keys(bindings), guard)(...Object.values(bindings))
   const route = line => ({ meta: {}, matched: [{ meta: { role: 'admin' } }, { meta: { line } }] })
-  assert.equal(await beforeEach(route('welding')), true)
-  assert.equal(selection.id, 'weld-2')
+  assert.equal(await beforeEach(route('welding')), '/admin/home')
+  assert.equal(selection.id, 'Cutter01')
+  selection.id = 'weld-2'
   assert.equal(await beforeEach(route('welding')), true)
   assert.equal(selection.id, 'weld-2')
   assert.equal(await beforeEach(route('coating')), '/admin/welding/home')
   assert.equal(selection.id, 'weld-2')
-  assert.equal(await beforeEach(route('cutting')), true)
-  assert.equal(selection.id, 'Cutter01')
+  assert.equal(await beforeEach(route('cutting')), '/admin/welding/home')
+  assert.equal(selection.id, 'weld-2')
   bindings.session.user.role = 'worker'
   assert.equal(await beforeEach(route('welding')), '/worker/tasks')
-  assert.equal(selection.id, 'Cutter01')
+  assert.equal(selection.id, 'weld-2')
 })
 
 test('new line types keep registered labels and destinations', () => {
@@ -1008,4 +1011,25 @@ test('welding details render zero identifiers, missing measurements and escaped 
   assert.ok(html.includes('未记录'))
   const empty = await renderComponent('components/WeldingTable', { kind: 'jobs', items: [], total: 0 })
   assert.ok(empty.includes('暂无数据'))
+})
+
+test('two welding instances use distinct cache entries and explicit request scopes', async (t) => {
+  setDeviceCatalog({ default_device_id: 'welding', items: [
+    { id: 'welding', name: '一号焊接', type: 'welding' },
+    { id: 'weld-2', name: '二号焊接', type: 'welding' },
+  ] })
+  const scopes = []
+  const original = globalThis.fetch
+  globalThis.fetch = async (_url, options) => {
+    scopes.push(options.headers['X-Production-Line'])
+    return new Response(JSON.stringify({ success: true, data: { line: scopes.at(-1) } }), { headers: { 'Content-Type': 'application/json' } })
+  }
+  t.after(() => { globalThis.fetch = original })
+  const query = { start: '2026-10-01', end: '2026-10-02' }
+  assert.equal((await getWeldingReport('daily', query)).line, 'welding')
+  selectDevice('weld-2')
+  assert.equal((await getWeldingReport('daily', query)).line, 'weld-2')
+  selectDevice('welding')
+  assert.equal((await getWeldingReport('daily', query)).line, 'welding')
+  assert.deepEqual(scopes, ['welding', 'weld-2'])
 })

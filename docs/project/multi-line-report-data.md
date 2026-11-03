@@ -13,7 +13,7 @@
 | CacheRevision 以同机共享卷文件原子换代 | 直接复用；统计写入成功才发布版本，Web 按新版本换 L1 键 |
 | SQLite持久化后台队列、去重、租约和4个操作消费者 | 增加 report_snapshot_refresh 类型，不增加线程框架、进程或源库连接池 |
 | Web/Worker按 settings.env 文件版本加载不可变数据库上下文 | 每次请求/任务解析当前上下文；源身份含连接、账号、凭据、启用状态及生产时区，旧请求只写旧源键 |
-| 原 Worker 默认从 runtime.devices 分发 | 新统计任务在访问 devices 之前通过注册表解析 Provider，支持独立 runtime.welding |
+| Worker 统一按 lines[line_id] 分发 | 切割和焊接都是实例，按 Provider 与可选后台能力调度，无全局 welding 字段 |
 
 ## 访问协议和数据流
 
@@ -57,7 +57,7 @@ MySQL不可用时，所有已存在的页面快照仍可读取，包含当时真
 
 SQLiteDatabase继续管理WAL、提交回滚和执行租约。外部查询不占SQLite长事务；完整包和有界淘汰在一个短事务提交，旧执行者失去Worker租约后不能提交。启动的现有初始化文件锁保证增量建表幂等。升级前按现有运维流程做SQLite备份，无生产MySQL/SQL Server表结构变更。
 
-回滚应用前先停止Web/Worker，备份SQLite，将新类型的未完成任务置为completed并保留回滚原因，再启动旧版，避免旧Worker误把welding交给devices。仅针对自有队列执行：
+回滚应用前先停止Web/Worker，备份SQLite，将新类型的未完成任务置为completed并保留回滚原因，再启动旧版，避免旧版本 Worker 误解释统一实例任务。P1 的015告警事件结构也不兼容旧写入，回退须恢复同批次停机备份。仅针对自有队列执行：
 
 ```sql
 UPDATE background_tasks SET status='completed', owner=NULL,

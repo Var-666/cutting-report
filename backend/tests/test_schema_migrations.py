@@ -74,13 +74,16 @@ def test_migration_cli_status_does_not_create_database_and_upgrade_is_repeatable
     import sys
     script = Path(__file__).resolve().parents[2] / 'scripts/migrate_database.py'
     path = tmp_path / 'metadata.db'
+    from tests.line_fixtures import configuration
+    import os
+    env = {**os.environ, 'PRODUCTION_LINES_JSON': configuration(tmp_path).production_lines_json}
     command = [sys.executable, str(script)]
-    status = subprocess.run([*command, 'status', '--database', str(path)], capture_output=True, text=True, check=True)
+    status = subprocess.run([*command, 'status', '--database', str(path)], capture_output=True, text=True, check=True, env=env)
     assert status.stdout.count('pending ') == len(MIGRATIONS)
     assert not path.exists()
-    upgraded = subprocess.run([*command, 'upgrade', '--database', str(path)], capture_output=True, text=True, check=True)
+    upgraded = subprocess.run([*command, 'upgrade', '--database', str(path)], capture_output=True, text=True, check=True, env=env)
     assert upgraded.stdout.count('applied ') == len(MIGRATIONS)
-    repeated = subprocess.run([*command, 'upgrade', '--database', str(path)], capture_output=True, text=True, check=True)
+    repeated = subprocess.run([*command, 'upgrade', '--database', str(path)], capture_output=True, text=True, check=True, env=env)
     assert repeated.stdout == upgraded.stdout
 
 

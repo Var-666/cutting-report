@@ -83,7 +83,7 @@ def test_cross_repository_unit_of_work_rolls_back_all_changes(tmp_path: Path) ->
     assert run is not None
 
     with pytest.raises(RuntimeError, match="simulate failure"):
-        with UnitOfWork(database, device_id="Cutter01") as unit:
+        with UnitOfWork(database, device_id="Cutter01", scope_machine_no="Cutter01") as unit:
             unit.metadata.create_job(
                 report_id="rpt_atomic",
                 report_date="2026-08-25",
@@ -109,7 +109,7 @@ def test_failed_cross_repository_link_does_not_leave_orphan_job(
     database, metadata, _workshop, _automation, _definitions, _dispatches = _repositories(tmp_path)
 
     with pytest.raises(LookupError):
-        with UnitOfWork(database, device_id="Cutter01") as unit:
+        with UnitOfWork(database, device_id="Cutter01", scope_machine_no="Cutter01") as unit:
             unit.metadata.create_job(
                 report_id="rpt_orphan",
                 report_date="2026-08-25",

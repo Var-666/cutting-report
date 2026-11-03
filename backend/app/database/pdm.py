@@ -111,9 +111,9 @@ class SqlServerPdmRepository:
     """
     FILE_FROM = DOCUMENT_FROM + PROJECT_JOIN + VERSION_JOIN + PHYSICAL_APPLY
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, *, client: SqlServerClient) -> None:
         self.settings = settings
-        self.client = SqlServerClient(settings, source="file")
+        self.client = client
         self._count_cache: dict[tuple, tuple[float, int]] = {}
         self._count_cache_lock = Lock()
         self._count_query_locks = [Lock() for _ in range(16)]

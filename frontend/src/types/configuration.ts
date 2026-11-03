@@ -5,5 +5,5 @@ export type DatabaseSource = 'production' | 'worker' | 'file'
 // Editable drafts combine the response with a write-only password and optional presence flag.
 export type SqlConnection = Omit<SavedConnection, 'password_configured'> & Pick<SavedConnectionRequest, 'password'> & Partial<Pick<SavedConnection, 'password_configured'>>
 export type WeldingConnection = Omit<WeldingData, 'password_configured' | 'enabled'> & Pick<WeldingConnectionRequest, 'password' | 'enabled'> & Partial<Pick<WeldingData, 'password_configured'>>
-export type DatabaseConfiguration = Omit<DatabaseData, DatabaseSource | 'welding'> & Record<DatabaseSource, SqlConnection> & { welding: WeldingConnection }
+export type DatabaseConfiguration = Omit<DatabaseData, DatabaseSource | 'welding'> & Record<DatabaseSource, SqlConnection> & { welding: WeldingConnection | null }
 export type DiagnosticStatus = import('../api/generated/types.gen').DiagnosticProcess['status']

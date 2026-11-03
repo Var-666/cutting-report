@@ -1,3 +1,4 @@
+from tests.line_fixtures import as_line_services, runtime_line
 """Contracts must cover actual service output, not just a second handwritten TS model."""
 from pathlib import Path
 import importlib.util
@@ -60,14 +61,10 @@ def contract_http(tmp_path):
     from fastapi.testclient import TestClient
     from app.api import automation, configuration, database, leadership, equipment, energy, reports, analysis
     from app.api.auth import require_admin
-    from app.config import DEVICE_CATALOG, Settings
+    from tests.line_fixtures import configuration as line_configuration
     from app.services.application_runtime import build_runtime
 
-    catalog = tmp_path / 'backend/app/configuration/devices.json'
-    catalog.parent.mkdir(parents=True)
-    catalog.write_text(DEVICE_CATALOG.model_dump_json())
-    runtime = build_runtime(Settings(project_root=tmp_path, data_source_mode='demo', weld_enabled=False,
-        worker_database_auth_enabled=False, file_database_enabled=False, energy_api_enabled=False, llm_enabled=False), role='web')
+    runtime = build_runtime(line_configuration(tmp_path), role='web')
     admin = runtime.users.bootstrap_admin(username='contract-admin', display_name='管理员',
         password='test-password', now='2026-11-02T10:00:00+08:00')
     app = FastAPI()
@@ -142,7 +139,7 @@ def test_cutting_reports_and_state_dependent_job_responses_match_contracts(contr
     url = f"/api/v1/reports/{accepted['report_id']}/status"
     pending = check_contract(client.get(url, params=params), ReportJob)
     assert 'download_url' not in pending and pending['error'] is None
-    metadata = client.app.state.runtime.devices['Cutter01'].metadata
+    metadata = client.app.state.runtime.database_runtime.snapshot().lines['Cutter01'].service.metadata
     metadata.update_status(accepted['report_id'], status='failed', stage_message='契约测试失败状态')
     failed = check_contract(client.get(url, params=params), ReportJob)
     assert failed['error']['message'] == '契约测试失败状态'
@@ -207,7 +204,7 @@ def test_http_response_validation_matches_workshop_and_dispatch_records(tmp_path
     app = FastAPI()
     app.include_router(workshop.router)
     app.include_router(cutting.router)
-    app.state.devices = {'Cutter01': SimpleNamespace(settings=service.settings, workshop=repository, query_service=None)}
+    app.state.lines = as_line_services({'Cutter01': SimpleNamespace(settings=service.settings, workshop=repository, query_service=None)})
     app.dependency_overrides[require_user] = lambda: admin
     app.dependency_overrides[require_admin] = lambda: admin
     app.dependency_overrides[require_worker] = lambda: worker
@@ -215,7 +212,7 @@ def test_http_response_validation_matches_workshop_and_dispatch_records(tmp_path
     @app.middleware('http')
     async def attach_context(request, call_next):
         request.state.request_id = 'contract-test'
-        request.state.database_context = SimpleNamespace(cutting_dispatch=service, devices=app.state.devices)
+        request.state.database_context = SimpleNamespace(cutting_dispatch=service, lines=app.state.lines)
         return await call_next(request)
 
     with TestClient(app) as client:
@@ -253,7 +250,7 @@ def test_alarm_http_contracts_cover_empty_and_populated_reports(tmp_path, priori
     runtime = SimpleNamespace(settings=cfg, alarm_repository=repository, alarm_worker=SimpleNamespace(enabled=False, thread=None))
     app = FastAPI()
     app.include_router(alarms.router)
-    app.state.devices = {'Cutter01': runtime}
+    app.state.lines = as_line_services({'Cutter01': runtime})
     app.dependency_overrides[require_admin] = lambda: {'role': 'admin'}
 
     @app.middleware('http')

@@ -16,7 +16,9 @@ import sys
 PROJECT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT / "backend"))
 
-from app.config import DEVICE_CATALOG, settings, settings_for_device
+from app.config import settings, settings_for_line
+from app.device_config import load_line_catalog
+from app.database.source_registry import DatabaseSourceRegistry
 from app.models.domain import to_primitive
 from app.services.energy_api import EnergyApiClient, EnergyApiError
 from app.services.energy_service import make_series
@@ -24,11 +26,11 @@ from app.services.energy_service import make_series
 
 def main():
     parser = argparse.ArgumentParser(description="只读核对能管四个累计量参数，结果不代表全天用量。")
-    parser.add_argument("--device-id", required=True, choices=[item.id for item in DEVICE_CATALOG.devices])
+    parser.add_argument("--device-id", required=True, choices=[item.id for item in load_line_catalog(settings.production_lines_json).lines if item.type == "cutting"])
     parser.add_argument("--date", type=date.fromisoformat, required=True, help="YYYY-MM-DD")
     parser.add_argument("--output", type=Path, help="可选：导出原始采集 JSON（不含授权信息），供内网联调核对")
     args = parser.parse_args()
-    device_settings = settings_for_device(settings, args.device_id)
+    device_settings = settings_for_line(settings, load_line_catalog(settings.production_lines_json).get(args.device_id))
     if not device_settings.energy_connected:
         parser.error("所选设备能耗暂未接入")
     parameters = {"累计流量": device_settings.energy_gas_parameter_id,

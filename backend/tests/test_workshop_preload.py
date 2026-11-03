@@ -1,3 +1,5 @@
+from tests.line_fixtures import source_client
+from tests.line_fixtures import as_line_services, runtime_line
 from datetime import date
 from types import SimpleNamespace
 
@@ -7,7 +9,7 @@ import pytest
 
 from app.api.auth import require_user
 from app.api.workshop import router
-from app.config import Settings
+from tests.line_fixtures import cutting_settings
 from app.database.workshop import WorkshopRepository
 from app.models.domain import QueryBundle
 from app.services.query_service import QueryService
@@ -15,7 +17,7 @@ from app.services.query_service import QueryService
 
 @pytest.fixture
 def service(tmp_path):
-    return QueryService(Settings(project_root=tmp_path, data_source_mode="demo", demo_mode=True))
+    return QueryService(cutting_settings(project_root=tmp_path, data_source_mode="demo", demo_mode=True), client=source_client(cutting_settings(project_root=tmp_path, data_source_mode="demo", demo_mode=True)))
 
 
 def test_workshop_warmup_and_report_generation_share_query_without_confirming(service, tmp_path, monkeypatch):
@@ -27,9 +29,9 @@ def test_workshop_warmup_and_report_generation_share_query_without_confirming(se
     app.include_router(router)
     app.state.workshop = repo
     app.state.query_service = service
-    app.state.devices = {'Cutter01': SimpleNamespace(
+    app.state.lines = as_line_services({'Cutter01': SimpleNamespace(
         settings=service.settings, workshop=app.state.workshop,
-        query_service=getattr(app.state, 'query_service', None))}
+        query_service=getattr(app.state, 'query_service', None))})
     app.dependency_overrides[require_user] = lambda: admin
 
     @app.middleware("http")

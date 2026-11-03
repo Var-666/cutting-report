@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
+from app.models.domain import ReportFilter
+from app.services.leadership_report_service import _previous_month
 from typing import TYPE_CHECKING
 
 from app.config import Settings
+from app.database.sqlserver import SqlServerClient
 from app.database.alarms import AlarmRepository
 from app.database.alarm_source import SqlServerAlarmSource
 from app.database.metadata import MetadataRepository
@@ -49,7 +54,7 @@ class DeviceRuntime:
     alarm_repository: AlarmRepository
     alarm_monitor_service: AlarmMonitorService
     alarm_worker: AlarmWorker
-    report_provider: CuttingReportProvider | None = None
+    report_provider: CuttingReportProvider
 
     @property
     def query_service(self) -> QueryService:
@@ -73,21 +78,85 @@ class DeviceRuntime:
                 self.energy_history_worker, self.alarm_worker) if worker.thread is not None)
 
 
+    def reuse_pending(self, previous: DeviceRuntime) -> None:
+        self.energy_history_worker._completion = previous.energy_history_worker._completion
+
+    def start_background(self) -> None:
+        history = self.energy_history_worker
+        if history.enabled:
+            history.repository.recover_history_queue(history.source_key, history._now())
+            today = history.service.now().date()
+            from app.workers.energy_history_worker import _shift_month
+            history.schedule_range(_shift_month(today.replace(day=1), -11), today)
+
+    def schedule_background(self, repository: CoordinationRepository, now: datetime) -> None:
+        if self.current_report_refresh_worker.enabled:
+            interval = max(30, self.settings.report_background_refresh_seconds)
+            repository.schedule("current_refresh", self.settings.device_id, {"date": now.date().isoformat(), "source_fingerprint": self.settings.source_fingerprint}, interval)
+        leadership = self.leadership_refresh_worker
+        if leadership.enabled:
+            month = now.date().replace(day=1)
+            repository.schedule("leadership_refresh", self.settings.device_id,
+                {"date": month.isoformat(), "bootstrap": leadership.service.needs_bootstrap(month), "source_fingerprint": self.settings.source_fingerprint},
+                max(30, self.settings.report_background_refresh_seconds))
+            if now.hour >= self.settings.leadership_report_reconcile_hour:
+                # The current month is already scheduled by the periodic refresh.
+                for offset in range(1, 3):
+                    selected = _previous_month(month, offset)
+                    repository.enqueue("leadership_refresh", self.settings.device_id, {"date": selected.isoformat(), "bootstrap": False, "source_fingerprint": self.settings.source_fingerprint},
+                        key=f"reconcile:{self.settings.device_id}:{now.date()}:{selected}")
+        history = self.energy_history_worker
+        if history._pending_finish is not None:
+            history._flush_pending_finish()
+        if (history.enabled and (history._pending_finish is not None or history.repository.history_ready(history.source_key, history._now()))
+                and not repository.active("energy_sync", self.settings.device_id, {})):
+            repository.enqueue("energy_sync", self.settings.device_id, {})
+        if self.alarm_worker.enabled:
+            repository.schedule("alarm", self.settings.device_id, {}, max(30, self.settings.alarm_monitor_interval_seconds))
+
+    def handle_background(self, kind: str, payload: dict) -> None:
+        current = self.current_report_refresh_worker
+        if kind == "current_refresh":
+            current.run_once(date.fromisoformat(payload["date"]))
+            self.query_service.cache_revision.publish()
+        elif kind == "leadership_refresh":
+            self.leadership_refresh_worker._refresh(date.fromisoformat(payload["date"]), payload["bootstrap"])
+        elif kind == "analysis_leadership":
+            self.leadership_refresh_worker._analyze(date.fromisoformat(payload["date"]))
+        elif kind == "analysis_workshop":
+            current._analyze_workshop(date.fromisoformat(payload["date"]))
+        elif kind == "analysis_equipment":
+            selected = date.fromisoformat(payload["date"])
+            equipment = self.query_service.fetch_equipment_data(ReportFilter(report_date=selected))
+            task_report = self.energy_period_service.get_task_day(selected, equipment.records)
+            current._analyze_equipment(selected, equipment.records, task_report)
+        elif kind == "alarm":
+            self.alarm_monitor_service.run_once(datetime.now(ZoneInfo(self.settings.timezone)))
+        elif kind == "energy_sync":
+            history = self.energy_history_worker
+            history._flush_pending_finish()
+            claim = history._claim()
+            if claim:
+                history._process(claim)
+        else:
+            raise ValueError(f"未知后台任务类型: {kind}")
+
+
 def build_device_runtime(
     settings: Settings, database: SQLiteDatabase, definitions: DefinitionRepository,
     snapshots: LeadershipSnapshotRepository, pdf_service: PdfService,
-    *, task_queue: CoordinationRepository | None = None, ship_names: ShipNameService | None = None,
+    *, client: SqlServerClient | None = None, task_queue: CoordinationRepository | None = None, ship_names: ShipNameService | None = None,
 ) -> DeviceRuntime:
-    metadata = MetadataRepository(database, device_id=settings.device_id)
+    metadata = MetadataRepository(database, device_id=settings.device_id, analysis_scope=f"{settings.device_id}:{settings.source_fingerprint}")
     workshop = WorkshopReportRepository(database, scope_machine_no=settings.report_machine_no)
     pipeline = ReportPipeline(settings, metadata, definitions, workshop_repository=workshop,
-                              query_service=QueryService(settings, ship_names=ship_names))
-    leadership = LeadershipReportService(settings, snapshots)
+                              query_service=QueryService(settings, client=client, ship_names=ship_names))
+    leadership = LeadershipReportService(settings, snapshots, client=client)
     analysis = pipeline.analysis_service
-    source_name = f'{settings.production_data_source}:{settings.device_id}'
+    source_name = settings.alarm_source_name or f'{settings.production_data_source}:{settings.device_id}'
     alarms = AlarmRepository(database, machine_no=settings.report_machine_no, source_name=source_name)
     alarms.initialize()
-    monitor = AlarmMonitorService(settings, alarms, SqlServerAlarmSource(settings),
+    monitor = AlarmMonitorService(settings, alarms, SqlServerAlarmSource(settings, client=client),
                                   AlarmAnalysisService(settings), AlarmReportService(settings, pdf_service))
     return DeviceRuntime(
         settings=settings, metadata=metadata, workshop=workshop,

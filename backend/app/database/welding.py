@@ -2,11 +2,8 @@
 from __future__ import annotations
 
 from typing import Any
-from zoneinfo import ZoneInfo
 
-from app.config import Settings
 from app.models.welding import WeldingQuery
-from app.models.database_sources import DatabaseSourceConfig
 from app.database.mysql import MySqlClient, MySqlSession, MySqlUnavailable as WeldingUnavailable
 
 TABLES = ('weld_info_table', 'weld_part_info_table', 'welding_seam_info_table')
@@ -15,34 +12,6 @@ TABLES = ('weld_info_table', 'weld_part_info_table', 'welding_seam_info_table')
 def aggregate_sort_key(row: dict, keys: tuple[str, ...]) -> tuple:
     # MySQL ASC puts NULL before values, including the valid identifier 0.
     return tuple((row.get(key) is not None, row.get(key) or 0) for key in keys)
-
-
-class WeldingSession(MySqlSession):
-    def __init__(self, connection, timeout: int = 120, label: str = '焊接') -> None:
-        super().__init__(connection, timeout, label)
-
-
-class WeldingClient(MySqlClient):
-    session_type = WeldingSession
-
-    def __init__(self, settings: Settings) -> None:
-        self.settings = settings
-        # Keep lazy validation: disabled or incomplete legacy settings need not connect.
-        super().__init__(None, label='焊接')
-        self.query_timeout = settings.weld_db_query_timeout
-
-    def connection_config(self) -> DatabaseSourceConfig:
-        cfg = self.settings
-        if not cfg.weld_enabled:
-            raise WeldingUnavailable('小组立焊接线尚未启用')
-        if not all((cfg.weld_db_host, cfg.weld_db_name, cfg.weld_db_user, cfg.weld_db_password)):
-            raise WeldingUnavailable('焊接数据库配置不完整，请联系管理员')
-        ZoneInfo(cfg.weld_db_timezone)
-        return DatabaseSourceConfig(id='welding', name='小组立焊接线', engine='mysql',
-            host=cfg.weld_db_host, port=cfg.weld_db_port, database=cfg.weld_db_name,
-            username=cfg.weld_db_user, password=cfg.weld_db_password,
-            pool_size=cfg.weld_db_pool_size, connect_timeout=cfg.weld_db_connect_timeout,
-            query_timeout=cfg.weld_db_query_timeout)
 
 
 def valid_serial(column: str) -> str:
@@ -62,10 +31,17 @@ PART_FIELDS = 'id, serial_number, project_no, project_name, section_no, part_no,
 SEAM_FIELDS = 'id, serial_number, device_no, robot_no, riser_no, welding_seam_no, theory_lenght, reality_lenght, used_time, start_time, end_time, state, update_date'
 
 
-def job_conditions(query: WeldingQuery, alias: str = 'j') -> tuple[str, tuple]:
+def device_scope(column: str, device_nos: tuple[int, ...]) -> str:
+    return f" AND {column} IN ({','.join('%s' for _ in device_nos)})" if device_nos else ""
+
+
+def job_conditions(query: WeldingQuery, alias: str = 'j', device_nos: tuple[int, ...] = ()) -> tuple[str, tuple]:
     start, end = query.bounds
     clauses = [f'{alias}.end_time >= %s', f'{alias}.end_time < %s']
     values: list[Any] = [start, end]
+    if device_nos:
+        clauses.append(f"{alias}.device_no IN ({','.join('%s' for _ in device_nos)})")
+        values.extend(device_nos)
     for name in ('device_no', 'robot_no', 'weld_type', 'serial_number'):
         value = getattr(query, name)
         if value is not None and value != '':
@@ -75,7 +51,8 @@ def job_conditions(query: WeldingQuery, alias: str = 'j') -> tuple[str, tuple]:
         clauses.append(f'{alias}.state = %s')
         values.append(query.state)
     if any((query.project_no, query.section_no, query.part_no)) or query.part_state is not None:
-        linked = [f'p.serial_number = {alias}.serial_number', valid_serial('p.serial_number')]
+        linked = [f'p.serial_number = {alias}.serial_number', valid_serial('p.serial_number') + device_scope('p.device_no', device_nos)]
+        values.extend(device_nos)
         for name in ('project_no', 'section_no', 'part_no'):
             value = getattr(query, name)
             if value:
@@ -90,13 +67,13 @@ def job_conditions(query: WeldingQuery, alias: str = 'j') -> tuple[str, tuple]:
     return ' AND '.join(clauses), tuple(values)
 
 
-def job_source(query: WeldingQuery) -> tuple[str, tuple]:
-    sql, values = job_rows(query)
+def job_source(query: WeldingQuery, device_nos: tuple[int, ...] = ()) -> tuple[str, tuple]:
+    sql, values = job_rows(query, device_nos=device_nos)
     return f'({sql}) j', values
 
 
-def job_rows(query: WeldingQuery, alias: str = 'j') -> tuple[str, tuple]:
-    where, values = job_conditions(query, alias)
+def job_rows(query: WeldingQuery, alias: str = 'j', device_nos: tuple[int, ...] = ()) -> tuple[str, tuple]:
+    where, values = job_conditions(query, alias, device_nos)
     # LIMIT prevents derived-table merging so validation runs once per source row.
     return (f'SELECT serial_number, device_no, robot_no, end_time, weld_type, weld_lenght, used_time, '
             f'{valid_time(f"{alias}.end_time")} AS valid_end_time, {valid_serial(f"{alias}.serial_number")} AS valid_serial_number '
@@ -134,30 +111,34 @@ def job_aggregate(alias: str = 'j') -> str:
 
 
 class WeldingRepository:
-    def __init__(self, client: WeldingClient) -> None:
+    def __init__(self, client: MySqlClient, *, device_nos: tuple[int, ...] = ()) -> None:
         self.client = client
+        self.device_nos = device_nos
 
-    def summary(self, session: WeldingSession, query: WeldingQuery) -> dict:
-        source, values = job_source(query)
+    def conditions(self, query: WeldingQuery, alias: str = "j") -> tuple[str, tuple]:
+        return job_conditions(query, alias, self.device_nos)
+
+    def summary(self, session: MySqlSession, query: WeldingQuery) -> dict:
+        source, values = job_source(query, self.device_nos)
         return session.fetch(f'SELECT {job_aggregate()} FROM {source}', values, limit=1)[0]
 
-    def daily(self, session: WeldingSession, query: WeldingQuery) -> list[dict]:
-        source, values = job_source(query)
+    def daily(self, session: MySqlSession, query: WeldingQuery) -> list[dict]:
+        source, values = job_source(query, self.device_nos)
         return session.fetch(f'SELECT LEFT(j.end_time, 10) AS production_date, {job_aggregate()} FROM {source} WHERE j.valid_end_time GROUP BY LEFT(j.end_time, 10) ORDER BY production_date', values, limit=367)
 
-    def equipment(self, session: WeldingSession, query: WeldingQuery) -> list[dict]:
-        source, values = job_source(query)
+    def equipment(self, session: MySqlSession, query: WeldingQuery) -> list[dict]:
+        source, values = job_source(query, self.device_nos)
         return session.fetch(f'SELECT j.device_no, j.robot_no, {job_aggregate()} FROM {source} GROUP BY j.device_no, j.robot_no ORDER BY j.device_no, j.robot_no LIMIT 10001', values, limit=10001)
 
-    def statistics(self, session: WeldingSession, query: WeldingQuery) -> tuple[dict, list[dict], list[dict], list[dict], dict]:
-        source, values = job_rows(query, 'source_job')
+    def statistics(self, session: MySqlSession, query: WeldingQuery) -> tuple[dict, list[dict], list[dict], list[dict], dict]:
+        source, values = job_rows(query, 'source_job', self.device_nos)
         aggregates = job_aggregate()
         empty_metrics = ', '.join(f'NULL AS {name}' for name in job_aggregates())
         # A materialized CTE is shared by all five branches; the source interval is scanned once.
         sql = f'''WITH scoped_jobs AS ({source}),
             involved AS (SELECT DISTINCT serial_number FROM scoped_jobs WHERE valid_end_time AND valid_serial_number),
             owners AS (SELECT p.serial_number, COUNT(*) AS owner_count FROM weld_part_info_table p
-                JOIN involved i ON i.serial_number = p.serial_number GROUP BY p.serial_number)
+                JOIN involved i ON i.serial_number = p.serial_number WHERE 1=1{device_scope('p.device_no', self.device_nos)} GROUP BY p.serial_number)
             SELECT 'summary' AS bucket, NULL AS production_date, NULL AS device_no, NULL AS robot_no,
                 {aggregates}, NULL AS unlinked, NULL AS ambiguous FROM scoped_jobs j
             UNION ALL
@@ -175,7 +156,7 @@ class WeldingRepository:
                 FROM involved i LEFT JOIN owners o ON o.serial_number = i.serial_number'''
         groups = {'summary': [], 'daily': [], 'equipment': [], 'devices': [], 'association': []}
         dimensions = {'summary': (), 'daily': ('production_date',), 'equipment': ('device_no', 'robot_no'), 'devices': ('device_no',)}
-        for row in session.fetch(sql, values, limit=11371):
+        for row in session.fetch(sql, (*values, *self.device_nos), limit=11371):
             bucket = row.pop('bucket')
             if bucket == 'association':
                 groups[bucket].append({key: row[key] for key in ('unlinked', 'ambiguous')})
@@ -187,8 +168,8 @@ class WeldingRepository:
             groups[bucket].sort(key=lambda row: aggregate_sort_key(row, keys))
         return groups['summary'][0], groups['daily'], groups['equipment'], groups['devices'], groups['association'][0]
 
-    def jobs(self, session: WeldingSession, query: WeldingQuery, *, limit: int | None = None, total: int | None = None) -> tuple[list[dict], int]:
-        where, values = job_conditions(query)
+    def jobs(self, session: MySqlSession, query: WeldingQuery, *, limit: int | None = None, total: int | None = None) -> tuple[list[dict], int]:
+        where, values = self.conditions(query)
         if total is None:
             total = session.fetch(f'SELECT COUNT(*) AS total FROM weld_info_table j WHERE {where}', values, limit=1)[0]['total']
         if limit is not None and total >= limit:
@@ -210,21 +191,20 @@ class WeldingRepository:
                 values.append(value)
         return ' AND '.join(clauses), tuple(values)
 
-    @staticmethod
-    def part_conditions(query: WeldingQuery) -> tuple[str, tuple]:
+    def part_conditions(self, query: WeldingQuery) -> tuple[str, tuple]:
         # State on this page belongs to the part, not to the job that establishes involvement.
-        where, values = job_conditions(query.model_copy(update={'state': None}))
+        where, values = self.conditions(query.model_copy(update={'state': None}))
         related = f'p.serial_number = j.serial_number AND {valid_serial("p.serial_number")}'
-        conditions = f'EXISTS (SELECT 1 FROM weld_info_table j WHERE {where} AND {related})'
+        conditions = f"EXISTS (SELECT 1 FROM weld_info_table j WHERE {where} AND {related}){device_scope('p.device_no', self.device_nos)}"
+        values += self.device_nos
         own, own_values = WeldingRepository.part_filters(query)
         if own:
             conditions += f' AND {own}'
             values += own_values
         return conditions, values
 
-    @staticmethod
-    def part_scope(query: WeldingQuery) -> tuple[str, tuple]:
-        where, values = job_conditions(query.model_copy(update={'state': None}), 'part_job')
+    def part_scope(self, query: WeldingQuery) -> tuple[str, tuple]:
+        where, values = self.conditions(query.model_copy(update={'state': None}), 'part_job')
         fields = ', '.join(f'source_part.{field}' for field in PART_FIELDS.split(', '))
         # Keep every owner of an involved serial until after ownership is counted.
         return (f'''WITH involved AS (
@@ -232,9 +212,9 @@ class WeldingRepository:
             FROM weld_info_table part_job WHERE {where} GROUP BY part_job.serial_number),
             scoped_parts AS (SELECT {fields}, i.has_valid_job FROM weld_part_info_table source_part
                 JOIN involved i ON i.serial_number = source_part.serial_number
-                WHERE {valid_serial('source_part.serial_number')} LIMIT 18446744073709551615)''', values)
+                WHERE {valid_serial('source_part.serial_number')}{device_scope('source_part.device_no', self.device_nos)} LIMIT 18446744073709551615)''', (*values, *self.device_nos))
 
-    def part_statistics(self, session: WeldingSession, query: WeldingQuery) -> tuple[list[dict], dict]:
+    def part_statistics(self, session: MySqlSession, query: WeldingQuery) -> tuple[list[dict], dict]:
         scope, values = self.part_scope(query)
         own, own_values = self.part_filters(query)
         sql = f'''{scope}, owners AS (SELECT serial_number, COUNT(*) AS owner_count FROM scoped_parts GROUP BY serial_number)
@@ -262,7 +242,7 @@ class WeldingRepository:
                     for row in rows if row['bucket'] == 'project']
         return projects, totals
 
-    def parts(self, session: WeldingSession, query: WeldingQuery, *, limit: int | None = None, total: int | None = None) -> tuple[list[dict], int]:
+    def parts(self, session: MySqlSession, query: WeldingQuery, *, limit: int | None = None, total: int | None = None) -> tuple[list[dict], int]:
         scope, values = self.part_scope(query)
         own, own_values = self.part_filters(query)
         values += own_values
@@ -277,26 +257,34 @@ class WeldingRepository:
         rows = session.fetch(f'{scope}\nSELECT {PART_FIELDS} FROM scoped_parts p WHERE {own or "1=1"} ORDER BY {column} {direction}, id {direction} LIMIT %s OFFSET %s', (*values, size, offset), limit=size)
         return rows, total
 
-    def part(self, session: WeldingSession, part_id: int) -> dict | None:
-        rows = session.fetch(f'SELECT {PART_FIELDS} FROM weld_part_info_table WHERE id = %s', (part_id,), limit=1)
+    def part(self, session: MySqlSession, part_id: int) -> dict | None:
+        scope = device_scope("p.device_no", self.device_nos)
+        values = (part_id, *self.device_nos)
+        if self.device_nos:
+            scope += f" AND EXISTS (SELECT 1 FROM weld_info_table j WHERE j.serial_number = p.serial_number AND j.device_no IN ({','.join('%s' for _ in self.device_nos)}))"
+            values += self.device_nos
+        rows = session.fetch(f'SELECT {PART_FIELDS} FROM weld_part_info_table p WHERE id = %s{scope}', values, limit=1)
         return rows[0] if rows else None
 
-    def seams(self, session: WeldingSession, part: dict, page: int, page_size: int) -> tuple[list[dict], int, bool]:
+    def seams(self, session: MySqlSession, part: dict, page: int, page_size: int) -> tuple[list[dict], int, bool]:
         serial = part['serial_number']
         if not serial or str(serial).strip().lower() in ('unknown', 'null'):
             return [], 0, True
-        owners = session.fetch('SELECT COUNT(*) AS total FROM weld_part_info_table WHERE serial_number = %s', (serial,), limit=1)[0]['total']
+        scope = device_scope('device_no', self.device_nos)
+        values = (serial, *self.device_nos)
+        owners = session.fetch(f'SELECT COUNT(*) AS total FROM weld_part_info_table WHERE serial_number = %s{scope}', values, limit=1)[0]['total']
         if owners != 1:
             return [], 0, True
-        total = session.fetch('SELECT COUNT(*) AS total FROM welding_seam_info_table WHERE serial_number = %s', (serial,), limit=1)[0]['total']
+        total = session.fetch(f'SELECT COUNT(*) AS total FROM welding_seam_info_table WHERE serial_number = %s{scope}', values, limit=1)[0]['total']
         if page_size > 100 and total >= page_size:
             return [], total, False
-        rows = session.fetch(f'SELECT {SEAM_FIELDS} FROM welding_seam_info_table WHERE serial_number = %s ORDER BY riser_no, welding_seam_no, id LIMIT %s OFFSET %s', (serial, page_size, (page - 1) * page_size), limit=page_size)
+        rows = session.fetch(f'SELECT {SEAM_FIELDS} FROM welding_seam_info_table WHERE serial_number = %s{scope} ORDER BY riser_no, welding_seam_no, id LIMIT %s OFFSET %s', (*values, page_size, (page - 1) * page_size), limit=page_size)
         return rows, total, False
 
-    def source_info(self, session: WeldingSession) -> dict:
-        rows = session.fetch('SELECT device_no FROM weld_info_table WHERE device_no >= 0 GROUP BY device_no ORDER BY device_no LIMIT 1001', limit=1001)
+    def source_info(self, session: MySqlSession) -> dict:
+        scope = device_scope("device_no", self.device_nos)
+        rows = session.fetch(f'SELECT device_no FROM weld_info_table WHERE device_no >= 0{scope} GROUP BY device_no ORDER BY device_no LIMIT 1001', self.device_nos, limit=1001)
         if len(rows) > 1000:
             raise WeldingUnavailable('源库设备目录超过支持范围，请联系管理员核查')
-        updated = {table: session.fetch(f'SELECT MAX(update_date) AS updated_at FROM {table}', limit=1)[0]['updated_at'] for table in TABLES}
+        updated = {table: session.fetch(f'SELECT MAX(update_date) AS updated_at FROM {table} WHERE 1=1{scope}', self.device_nos, limit=1)[0]['updated_at'] for table in TABLES}
         return {'devices': [row['device_no'] for row in rows], 'updated_at': updated}

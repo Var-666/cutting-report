@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-from pathlib import Path
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -11,21 +10,11 @@ from pydantic import (
 )
 
 
-def device_catalog_path(root: Path, environment: dict[str, str]) -> Path:
-    path = Path(environment.get('DEVICE_CONFIG_PATH', 'backend/app/configuration/devices.json')).expanduser()
-    return path if path.is_absolute() else root / path
-
-
 ConfigText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=128)]
 
 
 class ConfigModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
-
-
-class ProductionLineConfig(ConfigModel):
-    id: ConfigText
-    name: ConfigText
 
 
 class DeviceEnergyConfig(ConfigModel):
@@ -53,63 +42,121 @@ class DeviceAlarmConfig(ConfigModel):
         return parsed.strftime("%Y-%m-%d %H:%M:%S")
 
 
-class DeviceConfig(ConfigModel):
+class ProductionLineInstance(ConfigModel):
     id: ConfigText
     name: ConfigText
-    production_line_id: ConfigText
-    data_source: Literal["production"]
-    machine_no: ConfigText
+    type: Literal["cutting", "welding"]
+    source_key: Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_-]{0,63}$")]
+    enabled: bool = True
+    # Physical identity is separate from the stable line key used by historical device_id columns.
+    device_id: ConfigText | None = None
+    production_line_id: ConfigText | None = None
+    machine_no: ConfigText | None = None
     energy: DeviceEnergyConfig | None = None
-    alarm: DeviceAlarmConfig
+    alarm: DeviceAlarmConfig | None = None
+    timezone: ConfigText = "Asia/Shanghai"
+    device_nos: tuple[int, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_business_scope(self):
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+        try:
+            ZoneInfo(self.timezone)
+        except (ValueError, ZoneInfoNotFoundError):
+            raise ValueError("生产时区无效") from None
+        if self.type == "cutting":
+            if not all((self.device_id, self.production_line_id, self.machine_no, self.alarm)):
+                raise ValueError("切割线必须指定设备、生产线、机床和告警起点")
+            if self.device_nos:
+                raise ValueError("切割线不使用焊接设备范围")
+            if self.energy and self.machine_no.casefold() not in {x.casefold() for x in self.energy.equipment_ids}:
+                raise ValueError("能耗设备范围必须包含生产设备编号")
+        elif any((self.device_id, self.machine_no, self.energy, self.alarm)):
+            raise ValueError("焊接线不使用切割设备配置")
+        if len(set(self.device_nos)) != len(self.device_nos) or any(x < 0 for x in self.device_nos):
+            raise ValueError("焊接设备范围必须唯一且非负")
+        return self
 
 
-class DeviceCatalog(ConfigModel):
-    schema_version: Literal[1]
-    default_device_id: ConfigText
-    production_lines: tuple[ProductionLineConfig, ...] = Field(min_length=1)
-    devices: tuple[DeviceConfig, ...] = Field(min_length=1)
+class ProductionLineCatalog(ConfigModel):
+    schema_version: Literal[2] = 2
+    lines: tuple[ProductionLineInstance, ...]
+    default_line_id: ConfigText | None = None
 
     @model_validator(mode="after")
     def validate_references(self):
-        line_ids = {line.id for line in self.production_lines}
-        device_ids = {device.id for device in self.devices}
-        if (len({key.casefold() for key in line_ids}) != len(self.production_lines)
-                or len({key.casefold() for key in device_ids}) != len(self.devices)):
-            raise ValueError("产线编号和设备编号分别必须唯一")
-        if self.default_device_id not in device_ids:
-            raise ValueError("默认设备不存在")
-        machine_owners: dict[str, str] = {}
-        meter_owners: dict[UUID, str] = {}
-        for device in self.devices:
-            for alias in (device.machine_no, *(device.energy.equipment_ids if device.energy else ())):
-                owner = machine_owners.setdefault(alias.casefold(), device.id)
-                if owner != device.id:
-                    raise ValueError("不同设备的生产数据范围不能重叠")
-            if device.energy:
-                for meter in (device.energy.gas_parameter_id, *device.energy.electricity_parameter_ids):
-                    if meter in meter_owners:
-                        raise ValueError("不同设备不能共用同一仪表")
-                    meter_owners[meter] = device.id
-        for device in self.devices:
-            if device.production_line_id not in line_ids:
-                raise ValueError("设备引用的产线不存在")
-            if device.energy is not None and device.machine_no.casefold() not in {alias.casefold() for alias in device.energy.equipment_ids}:
-                raise ValueError("能耗设备范围必须包含生产设备编号")
+        if len({line.id.casefold() for line in self.lines}) != len(self.lines):
+            raise ValueError("产线编号必须唯一")
+        if self.default_line_id and self.default_line_id not in {line.id for line in self.lines}:
+            raise ValueError("默认产线不存在")
+        physical = set()
+        machines = set()
+        meters = set()
+        scopes: dict[tuple[str, str], list[ProductionLineInstance]] = {}
+        for line in self.lines:
+            if line.type == "cutting":
+                if line.device_id.casefold() in physical:
+                    raise ValueError("物理设备不能重复登记")
+                physical.add(line.device_id.casefold())
+                aliases = {x.casefold() for x in (line.machine_no, *(line.energy.equipment_ids if line.energy else ()))}
+                if machines & aliases:
+                    raise ValueError("物理机床编号及历史别名不能在多条产线重复使用")
+                machines.update(aliases)
+                for meter in ((line.energy.gas_parameter_id, *line.energy.electricity_parameter_ids) if line.energy else ()):
+                    if meter in meters:
+                        raise ValueError("不同产线不能共用同一仪表")
+                    meters.add(meter)
+            siblings = scopes.setdefault((line.type, line.source_key), [])
+            for other in siblings:
+                if line.type == "cutting":
+                    own = {x.casefold() for x in (line.machine_no, *(line.energy.equipment_ids if line.energy else ()))}
+                    theirs = {x.casefold() for x in (other.machine_no, *(other.energy.equipment_ids if other.energy else ()))}
+                    overlap = bool(own & theirs)
+                else:
+                    overlap = not line.device_nos or not other.device_nos or bool(set(line.device_nos) & set(other.device_nos))
+                if overlap:
+                    raise ValueError("共用数据源的同类型产线必须指定互不重叠的设备范围")
+            siblings.append(line)
         return self
 
-    @property
-    def default_device(self) -> DeviceConfig:
-        return next(device for device in self.devices if device.id == self.default_device_id)
+    def get(self, line_id: str) -> ProductionLineInstance:
+        line = next((line for line in self.lines if line.id == line_id), None)
+        if line is None:
+            raise ValueError("产线未登记")
+        return line
+
+    def source_bindings(self) -> dict[str, tuple[str, ...]]:
+        result: dict[str, tuple[str, ...]] = {}
+        for line in self.lines:
+            result[line.source_key] = (*result.get(line.source_key, ()), f"产线:{line.id}")
+        return result
 
 
-def load_device_catalog(path: Path) -> DeviceCatalog:
+def load_line_catalog(value: str) -> ProductionLineCatalog:
+    if not value:
+        raise ValueError("缺少 PRODUCTION_LINES_JSON，请先运行 scripts/migrate_production_lines.py")
     try:
-        content = path.read_bytes()
-    except OSError as exc:
-        raise ValueError(f"无法读取设备配置文件：{path}") from exc
-    try:
-        return DeviceCatalog.model_validate_json(content)
-    except ValidationError as exc:
-        fields = ", ".join(".".join(map(str, error["loc"])) or "文件结构"
-                           for error in exc.errors(include_input=False, include_url=False))
-        raise ValueError(f"设备配置文件校验失败：{path}（{fields}）") from None
+        return ProductionLineCatalog.model_validate_json(value)
+    except ValidationError:
+        raise ValueError("产线配置无效，请核对唯一 ID、类型和设备范围") from None
+
+
+class PublicProductionLine(ConfigModel):
+    id: str
+    name: str
+    type: Literal["cutting", "welding"]
+    source_key: str
+    enabled: bool
+    type_name: str
+    capabilities: tuple[str, ...]
+    home_path: str
+    device_id: str | None = None
+    production_line_id: str | None = None
+    machine_no: str | None = None
+    energy_connected: bool = False
+    alarm_start_at: str | None = None
+
+
+class PublicLineCatalog(ConfigModel):
+    default_device_id: str
+    items: list[PublicProductionLine]

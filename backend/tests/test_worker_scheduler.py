@@ -1,3 +1,4 @@
+from tests.line_fixtures import as_line_services, runtime_line
 from collections import Counter
 from dataclasses import replace
 import sqlite3
@@ -14,17 +15,20 @@ def test_periodic_rounds_are_durable_device_scoped_and_do_not_duplicate_reconcil
     from app.database import coordination
     now = [coordination.time()]
     monkeypatch.setattr(coordination, "time", lambda: now[0])
-    configured = replace(configuration(tmp_path), data_source_mode="sqlserver", llm_enabled=True,
+    from tests.line_fixtures import configuration as line_configuration
+    configured = replace(line_configuration(tmp_path, real=True), llm_enabled=True,
                          leadership_report_reconcile_hour=0)
     process = WorkerProcess(configured)
     process._schedule()
     with process.repository.connect() as connection:
         rows = [dict(row) for row in connection.execute("SELECT kind,device_id,payload FROM background_tasks")]
-    for device_id in process.runtime.devices:
+    for device_id, line in process.runtime.database_runtime.snapshot().lines.items():
+        if not line.config.enabled or line.background is None:
+            continue
         assert Counter(row["kind"] for row in rows if row["device_id"] == device_id) == {
             "current_refresh": 1, "leadership_refresh": 3,
         }
-        current = process.runtime.devices[device_id].current_report_refresh_worker
+        current = process.runtime.database_runtime.snapshot().lines[device_id].service.current_report_refresh_worker
         from datetime import date
         current._schedule_analysis("workshop", (date(2026, 10, 24),))
         current._schedule_analysis("workshop", (date(2026, 10, 24),))
@@ -37,7 +41,7 @@ def test_periodic_rounds_are_durable_device_scoped_and_do_not_duplicate_reconcil
     replacement._schedule()
     with process.repository.connect() as connection:
         rounds = connection.execute("SELECT device_id, COUNT(*) FROM background_tasks WHERE kind='current_refresh' GROUP BY device_id").fetchall()
-    assert dict(rounds) == {device_id: 2 for device_id in process.runtime.devices}
+    assert dict(rounds) == {key: 2 for key, line in process.runtime.database_runtime.snapshot().lines.items() if line.config.enabled and line.background is not None}
     assert not process.operations.threads and not process.analysis.threads
 
 
@@ -79,7 +83,8 @@ def test_task_failure_retries_after_backoff_and_stale_owner_cannot_finish(tmp_pa
 
 @pytest.mark.parametrize('payload', [{}, {'report_type': 'dashboard', 'query': None}])
 def test_malformed_snapshot_task_is_recorded_as_failed_without_breaking_completion(tmp_path, payload, caplog):
-    process = WorkerProcess(configuration(tmp_path))
+    from tests.line_fixtures import configuration as line_configuration
+    process = WorkerProcess(line_configuration(tmp_path, welding=True))
     queue = process.repository
     process.owner = queue.acquire('worker', ttl=30)
     queue.enqueue('report_snapshot_refresh', 'welding', payload)

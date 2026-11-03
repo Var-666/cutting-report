@@ -1,6 +1,7 @@
 import pytest
 
-from app.config import settings
+from tests.line_fixtures import cutting_settings, source_client
+settings = cutting_settings()
 from app.services.sql_workbench_service import (
     SqlWorkbenchService,
     SqlWorkbenchValidationError,
@@ -9,7 +10,7 @@ from app.services.sql_workbench_service import (
 
 @pytest.fixture
 def workbench() -> SqlWorkbenchService:
-    return SqlWorkbenchService(settings)
+    return SqlWorkbenchService(settings, client=source_client(settings))
 
 
 def test_select_is_allowed_and_formatted(workbench: SqlWorkbenchService) -> None:

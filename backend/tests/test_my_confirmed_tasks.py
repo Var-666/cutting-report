@@ -1,3 +1,4 @@
+from tests.line_fixtures import as_line_services, runtime_line
 from dataclasses import replace
 from datetime import date, datetime
 from decimal import Decimal
@@ -9,7 +10,7 @@ from fastapi.testclient import TestClient
 
 from app.api.auth import require_user
 from app.api.workshop import router
-from app.config import Settings
+from tests.line_fixtures import cutting_settings
 from app.database.confirmations import ConfirmationRepository
 from app.database.workshop import WorkshopRepository
 from app.database.workshop_reports import WorkshopReportRepository
@@ -47,7 +48,7 @@ def personal(tmp_path):
     confirm('A', another_device, scope='Cutter02')
     confirmations = ConfirmationRepository(repository.database, scope_machine_no='Cutter01')
     service = WorkshopService(WorkshopReportRepository(repository.database, scope_machine_no='Cutter01'),
-                              confirmations, Settings())
+                              confirmations, cutting_settings())
     return SimpleNamespace(repository=repository, service=service, admin=admin, worker=worker, other=other,
                            confirm=confirm, reports=[first, second])
 
@@ -89,12 +90,12 @@ def test_personal_http_auth_device_scope_validation_and_no_external_dependency(p
     app = FastAPI()
     app.include_router(router)
     app.state.workshop = p.repository
-    app.state.devices = {}
+    app.state.lines = as_line_services({})
     for device_id in ('Cutter01', 'Cutter02'):
-        app.state.devices[device_id] = SimpleNamespace(settings=replace(Settings(), report_machine_no=device_id),
+        app.state.lines[device_id] = runtime_line(SimpleNamespace(settings=replace(cutting_settings(), report_machine_no=device_id),
             workshop=WorkshopReportRepository(p.repository.database, scope_machine_no=device_id),
             confirmations=ConfirmationRepository(p.repository.database, scope_machine_no=device_id),
-            query_service=SimpleNamespace(enrich_ship_names=lambda *_: pytest.fail('personal history must not query BM or production')))
+            query_service=SimpleNamespace(enrich_ship_names=lambda *_: pytest.fail('personal history must not query BM or production'))), device_id)
     @app.middleware('http')
     async def context(request, call_next):
         request.state.request_id = 'personal-tasks'

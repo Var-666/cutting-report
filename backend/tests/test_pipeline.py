@@ -1,3 +1,5 @@
+from app.services.query_service import QueryService
+from tests.line_fixtures import source_client
 from datetime import date, datetime
 from copy import deepcopy
 from decimal import Decimal
@@ -6,7 +8,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from app.config import Settings
+from tests.line_fixtures import cutting_settings, source_client
 from app.database.metadata import MetadataRepository
 from app.database.workshop import WorkshopRepository
 from app.models.domain import ReportFilter
@@ -34,7 +36,7 @@ def test_demo_pipeline_generates_offline_report(
         "window.echarts={init:function(){return {setOption:function(){},resize:function(){}}}};",
         encoding="utf-8",
     )
-    test_settings = Settings(
+    test_settings = cutting_settings(
         project_root=tmp_path,
         demo_mode=True,
         data_source_mode="demo",
@@ -44,7 +46,7 @@ def test_demo_pipeline_generates_offline_report(
     test_settings.ensure_runtime_dirs()
     metadata = MetadataRepository(test_settings.metadata_db_path, device_id='Cutter01')
     metadata.initialize()
-    pipeline = ReportPipeline(test_settings, metadata)
+    pipeline = ReportPipeline(test_settings, metadata, query_service=QueryService(test_settings, client=source_client(test_settings)))
     pipeline.analysis_service.llm.analyze_context = model_analysis
     now = datetime.now(ZoneInfo(test_settings.timezone)).isoformat(timespec="seconds")
     if report_type == "workshop":
@@ -152,7 +154,7 @@ def test_pipeline_completes_deterministic_report_when_ai_is_unavailable(tmp_path
         "window.echarts={init:function(){return {setOption:function(){},resize:function(){}}}};",
         encoding="utf-8",
     )
-    test_settings = Settings(
+    test_settings = cutting_settings(
         project_root=tmp_path,
         demo_mode=True,
         data_source_mode="demo",
@@ -162,7 +164,7 @@ def test_pipeline_completes_deterministic_report_when_ai_is_unavailable(tmp_path
     test_settings.ensure_runtime_dirs()
     metadata = MetadataRepository(test_settings.metadata_db_path, device_id='Cutter01')
     metadata.initialize()
-    pipeline = ReportPipeline(test_settings, metadata)
+    pipeline = ReportPipeline(test_settings, metadata, query_service=QueryService(test_settings, client=source_client(test_settings)))
     now = datetime.now(ZoneInfo(test_settings.timezone)).isoformat(timespec="seconds")
     metadata.create_job(
         report_id="rpt_ai_unavailable",
@@ -200,7 +202,7 @@ def test_range_export_keeps_the_recent_twelve_month_summary(
         "window.echarts={init:function(){return {setOption:function(){},resize:function(){}}}};",
         encoding="utf-8",
     )
-    test_settings = Settings(
+    test_settings = cutting_settings(
         project_root=tmp_path,
         demo_mode=True,
         data_source_mode="demo",
@@ -210,7 +212,7 @@ def test_range_export_keeps_the_recent_twelve_month_summary(
     test_settings.ensure_runtime_dirs()
     metadata = MetadataRepository(test_settings.metadata_db_path, device_id='Cutter01')
     metadata.initialize()
-    pipeline = ReportPipeline(test_settings, metadata)
+    pipeline = ReportPipeline(test_settings, metadata, query_service=QueryService(test_settings, client=source_client(test_settings)))
     pipeline.analysis_service.llm.analyze_context = model_analysis
     now = datetime.now(ZoneInfo(test_settings.timezone)).isoformat(timespec="seconds")
     metadata.create_job(
@@ -275,14 +277,14 @@ def report_flow(tmp_path, monkeypatch):
     vendor_dir = tmp_path / "vendor"
     vendor_dir.mkdir()
     (vendor_dir / "echarts.min.js").write_text("window.echarts={};")
-    settings = Settings(project_root=tmp_path, data_source_mode="sqlserver", demo_mode=False,
+    settings = cutting_settings(project_root=tmp_path, data_source_mode="sqlserver", demo_mode=False,
                         report_machine_no="Cutter01",
                         energy_report_equipment_ids=("Cutter01",), energy_api_enabled=False,
                         llm_enabled=True, app_version="test")
     settings.ensure_runtime_dirs()
     metadata = MetadataRepository(settings.metadata_db_path, device_id='Cutter01')
     metadata.initialize()
-    pipeline = ReportPipeline(settings, metadata)
+    pipeline = ReportPipeline(settings, metadata, query_service=QueryService(settings, client=source_client(settings)))
 
     def selected_rows(parameters):
         machine, start, end = parameters[:3]

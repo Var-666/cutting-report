@@ -17,6 +17,7 @@ from app.api.cutting import (
     get_dispatch as get_dispatch_api,
 )
 from app.config import settings
+from tests.line_fixtures import cutting_settings
 from app.database.dispatch import DispatchRepository
 from app.database.downloads import DownloadRepository
 from app.database.pdm import MockPdmRepository
@@ -42,7 +43,7 @@ from app.services.magic_box_service import MagicBoxConfig, MagicBoxError
 
 
 def _service(tmp_path: Path, file_source=None):
-    configured = replace(settings, project_root=tmp_path)
+    configured = cutting_settings(project_root=tmp_path)
     database = SQLiteDatabase(tmp_path / "metadata.db")
     workshop = WorkshopRepository(database)
     workshop.initialize()
@@ -506,7 +507,7 @@ class TestHttpFileSource(MockFileSource):
 
 
 def _push_service(tmp_path: Path, client: RecordingMagicClient):
-    cfg = replace(settings, project_root=tmp_path, magic_box_enabled=True)
+    cfg = cutting_settings(project_root=tmp_path, magic_box_enabled=True)
     database = SQLiteDatabase(tmp_path / "metadata.db")
     workshop = WorkshopRepository(database)
     workshop.initialize()

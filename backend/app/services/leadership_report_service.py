@@ -53,10 +53,11 @@ class LeadershipReportService:
         self,
         settings: Settings,
         snapshots: LeadershipSnapshotRepository | None = None,
+        *, client: SqlServerClient | None = None,
     ) -> None:
         self.settings = settings
         self.cache_revision = CacheRevision(settings, "leadership")
-        self.client = SqlServerClient(settings)
+        self.client = client
         self.snapshots = snapshots
         self.query_path = (
             Path(__file__).resolve().parents[1]
@@ -283,19 +284,9 @@ class LeadershipReportService:
         )
 
     def source_identity(self) -> str:
-        connection = self.settings.sqlserver_connection("production")
-        identity = "|".join(
-            (
-                self.settings.effective_data_source_mode,
-                str(connection["host"]),
-                str(connection["port"]),
-                str(connection["database"]),
-                str(connection["username"]),
-                self.settings.report_machine_no.casefold(),
-                str(self.SNAPSHOT_VERSION),
-            )
-        )
-        return sha256(identity.encode("utf-8")).hexdigest()
+        from app.database.report_snapshots import fingerprint
+        return fingerprint((self.settings.device_id, self.settings.source_fingerprint,
+            self.settings.effective_data_source_mode, self.settings.report_machine_no.casefold(), self.SNAPSHOT_VERSION))
 
     @property
     def current_refresh_seconds(self) -> int:

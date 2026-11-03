@@ -3,7 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from typing import Literal
+from typing import Literal, cast
 from time import monotonic
 import logging
 
@@ -12,7 +12,7 @@ from pydantic import ValidationError
 
 from app.api.auth import require_admin
 from app.api.runtime import application_state, runtime_state
-from app.services.production_lines import SERVICE_LINES, resolve_line_service
+from app.services.production_lines import resolve_line_service
 from app.services.report_snapshots import SnapshotRefreshBusy, SnapshotRefreshRejected
 from app.api.workloads import RequestWorkload, analysis_requests, pdf_requests
 from app.config import settings
@@ -34,8 +34,8 @@ logger = logging.getLogger(__name__)
 
 
 router = APIRouter(prefix='/api/v1/welding', tags=['welding'], dependencies=[Depends(require_admin)])
-# Explicit smaller connection pools also lower execution capacity after restart.
-welding_requests = RequestWorkload(max(1, min(4, settings.weld_db_pool_size)), '焊接数据查询', max_waiters=12, queue_timeout_seconds=5)
+# Global execution capacity is unchanged; each bound source enforces its own pool limit.
+welding_requests = RequestWorkload(4, '焊接数据查询', max_waiters=12, queue_timeout_seconds=5)
 # SQLite-only reads must not queue behind source exports/drilldowns. Source fallbacks retain the MySQL limit.
 snapshot_requests = RequestWorkload(4, '焊接快照读取', max_waiters=12, queue_timeout_seconds=5)
 
@@ -51,13 +51,15 @@ WELD_REPORT_QUERY = {'parameters': [*WELD_QUERY_PARAMETERS,
 
 def service(request: Request) -> WeldingService:
     selected = request.headers.get('X-Production-Line')
-    line = next((item for item in SERVICE_LINES if item['type'] == 'welding' and (not selected or item['id'] == selected)), None)
-    if line is None:
-        raise HTTPException(status_code=422, detail='焊接产线上下文无效')
-    instance = resolve_line_service(runtime_state(request), line['id'])
-    if instance is None or not instance.settings.weld_enabled:
-        raise HTTPException(status_code=503, detail=f'{line["name"]}尚未启用')
-    return instance
+    if not selected:
+        raise HTTPException(status_code=422, detail='必须明确指定焊接产线')
+    try:
+        instance = resolve_line_service(runtime_state(request), selected)
+    except ValueError:
+        raise HTTPException(status_code=503, detail='焊接产线未登记或已停用') from None
+    if runtime_state(request).catalog.get(selected).type != "welding":
+        raise HTTPException(status_code=403, detail='当前产线不支持焊接业务')
+    return cast(WeldingService, instance)
 
 
 @contextmanager

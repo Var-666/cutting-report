@@ -6,20 +6,14 @@ from threading import Event, Lock
 
 import pytest
 
-from app.config import Settings
+from tests.line_fixtures import cutting_settings, source_client
 from app.models.domain import EquipmentRecord, QueryBundle, ReportFilter
 from app.services.query_service import EquipmentQueryResult, QueryService
 
 
 def _service(tmp_path: Path) -> QueryService:
-    return QueryService(
-        Settings(
-            project_root=tmp_path,
-            demo_mode=False,
-            data_source_mode="sqlserver",
-            report_data_cache_seconds=300,
-        )
-    )
+    cfg = cutting_settings(project_root=tmp_path, data_source_mode="sqlserver", report_data_cache_seconds=300)
+    return QueryService(cfg, client=source_client(cfg))
 
 
 def _equipment_result(task_id: str) -> EquipmentQueryResult:
@@ -60,7 +54,7 @@ def test_equipment_query_reuses_same_date_and_force_refreshes(
     refreshed = service.fetch_equipment_data(filters, force=True)
 
     assert calls == 2
-    assert second is first
+    assert second == first
     assert refreshed.records[0].task_id == "task-2"
 
 
@@ -157,8 +151,8 @@ def test_summary_and_workshop_ranges_each_execute_one_cached_query(
 
     summary = service.fetch_summary_data(filters)
     workshop = service.fetch_workshop_data(filters)
-    assert service.fetch_summary_data(filters) is summary
-    assert service.fetch_workshop_data(filters) is workshop
+    assert service.fetch_summary_data(filters) == summary
+    assert service.fetch_workshop_data(filters) == workshop
 
     assert len(calls) == 2
     assert len(summary.summary_records) == 1
@@ -233,14 +227,14 @@ def test_query_cache_expiry_and_force_refresh_keep_the_latest_result(tmp_path, m
     filters = ReportFilter(report_date=date(2026, 8, 25))
     first = read(filters)
     clock[0] += 299
-    assert read(filters) is first
+    assert read(filters) == first
     clock[0] += 1
     expired = read(filters)
-    assert expired is not first
+    assert expired != first
     clock[0] += 1
     refreshed = read(filters, force=True)
-    assert refreshed is not expired
-    assert read(filters) is refreshed
+    assert refreshed != expired
+    assert read(filters) == refreshed
     assert len(calls) == 3
 
 
@@ -282,7 +276,7 @@ def test_cache_keys_isolate_date_ranges_projects_and_ships(tmp_path, monkeypatch
     results = [read(item) for item in filters]
     assert len({id(result) for result in results}) == len(filters)
     for item, result in zip(filters, results):
-        assert read(replace(item)) is result
+        assert read(replace(item)) == result
     assert len(calls) == len(filters)
 
 
@@ -333,9 +327,9 @@ def test_concurrent_reads_share_the_query_already_started(tmp_path, monkeypatch,
         finally:
             release.set()
         result = first.result(timeout=2)
-        assert second.result(timeout=2) is result
+        assert second.result(timeout=2) == result
     assert len(calls) == 1
-    assert read(filters, force=True) is not result  # a later explicit refresh still runs
+    assert read(filters, force=True) != result  # a later explicit refresh still runs
     assert len(calls) == 2
 
 
@@ -356,10 +350,10 @@ def test_failed_refresh_does_not_replace_good_data_and_can_retry(tmp_path, monke
     first = read(filters)
     with pytest.raises(OSError, match="temporary query failure"):
         read(filters, force=True)
-    assert read(filters) is first
+    assert read(filters) == first
     refreshed = read(filters, force=True)
-    assert refreshed is not first
-    assert read(filters) is refreshed
+    assert refreshed != first
+    assert read(filters) == refreshed
     assert len(calls) == 3
 
 
@@ -374,8 +368,8 @@ def test_equipment_and_bundle_caches_keep_independent_capacities(tmp_path, monke
         service.fetch_equipment_data(ReportFilter(report_date=date(2025, 1, 1) + timedelta(days=offset)))
     assert len(service._equipment_cache._entries) == 128
     assert len(service._equipment_cache._query_locks) == 32
-    assert service.fetch_summary_data(filters) is summary
-    assert service.fetch_workshop_data(filters) is workshop
+    assert service.fetch_summary_data(filters) == summary
+    assert service.fetch_workshop_data(filters) == workshop
     assert len(service._bundle_cache._entries) == 2
     for offset in range(140):
         service.fetch_summary_data(ReportFilter(report_date=date(2025, 1, 1) + timedelta(days=offset)))

@@ -10,7 +10,8 @@ from fastapi import HTTPException
 
 from app.api import analysis, reports, workloads
 from app.api.auth import require_admin, require_user
-from app.config import Settings
+from tests.line_fixtures import cutting_settings, as_line_services
+from app.device_config import load_line_catalog, ProductionLineCatalog
 from app.main import app
 from app.core.request_cancellation import SqlRequestCancelled
 
@@ -31,8 +32,8 @@ def test_busy_analysis_pdf_and_queries_leave_default_threads_and_fast_routes_fre
     monkeypatch.setattr(analysis, "_analyze_report", lambda *_: block("analysis", {"success": True}))
     monkeypatch.setattr(reports, "_resolve_report_file", lambda *_: ({"filename": "report.html"}, pdf))
     state = {
-        "settings": Settings(project_root=tmp_path),
-        "report_analysis_service": SimpleNamespace(settings=Settings(project_root=tmp_path)),
+        "settings": cutting_settings(project_root=tmp_path),
+        "report_analysis_service": SimpleNamespace(settings=cutting_settings(project_root=tmp_path)),
         "pdf_service": SimpleNamespace(render=lambda _: block("pdf", pdf)),
         "energy_period_service": SimpleNamespace(get_day=lambda *_, **__: block("query", {})),
         "worker": SimpleNamespace(status=lambda: {"report_alive": True}),
@@ -40,13 +41,14 @@ def test_busy_analysis_pdf_and_queries_leave_default_threads_and_fast_routes_fre
             authenticate=lambda *_: {"role": "admin", "user_id": "admin"},
             create_session=lambda *_, **__: ("session", "2026-10-24T23:00:00+08:00"),
         ),
-        "devices": {},
+        "lines": {},
+        "catalog": load_line_catalog(cutting_settings().production_lines_json),
     }
     for key, value in state.items():
         monkeypatch.setattr(app.state, key, value, raising=False)
     monkeypatch.setattr(analysis, "device_state", lambda _: app.state)
     # The real device dependency also runs before the isolated endpoint.
-    state["devices"]["Cutter01"] = app.state
+    state["lines"].update(as_line_services({"Cutter01": app.state}))
     monkeypatch.setitem(app.dependency_overrides, require_admin, lambda: {"role": "admin"})
     monkeypatch.setitem(app.dependency_overrides, require_user, lambda: {"role": "admin"})
 
@@ -129,7 +131,8 @@ def test_slow_hr_dependency_does_not_borrow_default_thread_tokens(monkeypatch):
         session_identity_available=revalidate,
     ), raising=False)
     monkeypatch.setattr(app.state, "worker", SimpleNamespace(status=lambda: {"report_alive": True}), raising=False)
-    monkeypatch.setattr(app.state, "devices", {}, raising=False)
+    monkeypatch.setattr(app.state, "lines", {}, raising=False)
+    monkeypatch.setattr(app.state, "catalog", ProductionLineCatalog(lines=()), raising=False)
 
     async def exercise():
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:

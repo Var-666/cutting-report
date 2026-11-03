@@ -336,7 +336,7 @@ class ReportAnalysisService:
         data_version = source_data_version or input_hash
         engine = f"model:{self.settings.llm_model}"
         cache_key = hashlib.sha256(
-            f"{self.settings.device_id}|{PROMPT_VERSION}|{report_type}|{report_date}|{engine}|{data_version}|{input_hash}".encode(
+            f"{self.settings.device_id}|{self.settings.source_fingerprint}|{PROMPT_VERSION}|{report_type}|{report_date}|{engine}|{data_version}|{input_hash}".encode(
                 "utf-8"
             )
         ).hexdigest()

@@ -1,0 +1,51 @@
+{
+  "schema_version": 2,
+  "lines": [
+    {
+      "id": "Cutter01",
+      "name": "20KW切割机",
+      "type": "cutting",
+      "source_key": "cutting-production",
+      "enabled": true,
+      "device_id": "Cutter01",
+      "production_line_id": "Cutter01",
+      "machine_no": "Cutter01",
+      "energy": {
+        "equipment_ids": [
+          "Cutter01"
+        ],
+        "gas_parameter_id": "bd3179be-c587-f011-a2e9-000c2974f33c",
+        "electricity_parameter_ids": [
+          "2b00e015-d987-f011-a2e9-000c2974f33c",
+          "98cbd135-d987-f011-a2e9-000c2974f33c",
+          "93fae152-d987-f011-a2e9-000c2974f33c"
+        ]
+      },
+      "alarm": {
+        "start_at": "2026-09-29 00:00:00"
+      }
+    },
+    {
+      "id": "Cutter02",
+      "name": "30KW切割机",
+      "type": "cutting",
+      "source_key": "cutting-production",
+      "enabled": true,
+      "device_id": "Cutter02",
+      "production_line_id": "Cutter02",
+      "machine_no": "Cutter02",
+      "energy": null,
+      "alarm": {
+        "start_at": "2026-10-12 00:00:00"
+      }
+    },
+    {
+      "id": "welding",
+      "name": "小组立焊接线",
+      "type": "welding",
+      "source_key": "welding-production",
+      "enabled": false
+    }
+  ],
+  "default_line_id": "Cutter01"
+}

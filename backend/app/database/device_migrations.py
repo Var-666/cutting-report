@@ -61,7 +61,7 @@ def rebuild_table(database: SQLiteDatabase, table: str, transform: Callable[[str
             raise ValueError('设备范围迁移外键检查失败，已回滚')
 
 
-def migrate_device_isolation(database: SQLiteDatabase, catalog) -> None:
+def migrate_device_isolation(database: SQLiteDatabase, devices: dict[str, str]) -> None:
     """Run under the startup initialize lock, before repositories or workers start.
 
     Back up the committed database first. All ownership validation, table rebuilds,
@@ -82,7 +82,6 @@ def migrate_device_isolation(database: SQLiteDatabase, catalog) -> None:
         with database.connect() as connection:
             connection.execute('PRAGMA foreign_keys=OFF')
             connection.execute('BEGIN IMMEDIATE')
-            devices = {device.id: device.machine_no for device in catalog.devices}
             machines = {machine.casefold(): machine for machine in devices.values()}
             legacy_machine = devices.get(LEGACY_DEVICE_ID)
             # Null scopes are only attributable from the old single-device schema

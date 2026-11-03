@@ -24,7 +24,7 @@ export const subscribeDevices = (listener: () => void) => { subscribers.add(list
 function notify() { for (const listener of subscribers) listener() }
 export function setDeviceCatalog(data: DeviceCatalog) {
   catalog = data.items
-  defaultDeviceId = data.default_device_id
+  defaultDeviceId = catalog.some(item => item.id === data.default_device_id) ? data.default_device_id : ''
   selectedId = catalog.some((item) => item.id === rememberedId) ? rememberedId : defaultDeviceId
   rememberedId = selectedId
   rememberDevice(selectedId)
@@ -37,9 +37,9 @@ export function selectDevice(id: string) {
   rememberDevice(id)
   notify()
 }
-export function resetDeviceContext() { rememberDevice(null); rememberedId = ''; defaultDeviceId = ''; selectedId = defaultDeviceId; catalog = []; switchQueries.clear(); notify() }
+export function resetDeviceContext() { rememberDevice(null); rememberedId = ''; defaultDeviceId = ''; selectedId = defaultDeviceId; catalog = []; switchQueries.clear(); switchGuards.clear(); notify() }
 export function deviceUrl(url: string, deviceId = selectedId) {
-  if (!/^\/api\/v1\/(workshop|leadership-report|equipment-report|energy-report|analysis|options|projects|ships|reports|conditions|alarms)(?:[/?]|$)|^\/api\/v1\/database\/preview(?:[?]|$)|^\/api\/v1\/designer\/query-tasks\/[^/?]+\/preview(?:[?]|$)/.test(url)) return url
+  if (!/^\/api\/v1\/(workshop|leadership-report|equipment-report|energy-report|analysis|options|projects|ships|reports|conditions|alarms)(?:[/?]|$)|^\/api\/v1\/database\/(?:preview|sql\/execute)(?:[?]|$)|^\/api\/v1\/designer\/query-tasks\/[^/?]+\/preview(?:[?]|$)/.test(url)) return url
   const [path, query = ''] = url.split('?')
   const values = new URLSearchParams(query)
   if (!values.has('device_id')) {
@@ -54,3 +54,10 @@ export function registerDeviceSwitchQuery(routeName: RouteRecordName | null | un
   return () => { if (switchQueries.get(routeName) === reader) switchQueries.delete(routeName) }
 }
 export function deviceSwitchQuery(routeName: RouteRecordName | null | undefined) { return switchQueries.get(routeName)?.() }
+
+const switchGuards = new Map<RouteRecordName | null | undefined, () => boolean | Promise<boolean>>()
+export function registerDeviceSwitchGuard(routeName: RouteRecordName | null | undefined, guard: () => boolean | Promise<boolean>) {
+  switchGuards.set(routeName, guard)
+  return () => { if (switchGuards.get(routeName) === guard) switchGuards.delete(routeName) }
+}
+export async function allowDeviceSwitch(routeName: RouteRecordName | null | undefined) { return await switchGuards.get(routeName)?.() ?? true }

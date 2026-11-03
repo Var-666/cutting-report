@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.config import Settings
+from tests.line_fixtures import welding_settings
 from app.database.welding import WeldingRepository
 from app.models.welding import WeldingQuery
 from app.services.welding_service import WeldingService
@@ -13,6 +13,7 @@ from app.services.welding_service import WeldingService
 
 class Repository(WeldingRepository):
     def __init__(self):
+        self.device_nos = ()
         self.client = self
         self.calls = Counter()
         self.revision = '2026-10-27 10:00:00'
@@ -120,7 +121,7 @@ def test_repository_statistics_and_page_sort_use_the_same_null_group_order(aggre
 @pytest.mark.parametrize('kind', ['jobs', 'parts'])
 def test_paging_and_sorting_only_read_source_revision_and_details(kind):
     repo = Repository()
-    service = WeldingService(Settings(), repo)
+    service = WeldingService(welding_settings(), repo)
     first = service.report(kind, query())
     sql = repo.calls['sql']
     first['summary']['job_count'] = -1
@@ -135,7 +136,7 @@ def test_paging_and_sorting_only_read_source_revision_and_details(kind):
 
 def test_common_statistics_are_shared_across_report_types_without_part_fields_leaking():
     repo = Repository()
-    service = WeldingService(Settings(), repo)
+    service = WeldingService(welding_settings(), repo)
     part = service.report('parts', query())
     daily = service.report('daily', query())
     service.report('jobs', query())
@@ -149,7 +150,7 @@ def test_filters_source_changes_expiry_exports_and_service_replacement_recompute
     clock = [0]
     monkeypatch.setattr('app.services.query_cache.monotonic', lambda: clock[0])
     repo = Repository()
-    service = WeldingService(Settings(), repo)
+    service = WeldingService(welding_settings(), repo)
     service.report('jobs', query())
     service.report('jobs', query(device_no=0))
     assert repo.calls['summary'] == 2
@@ -162,13 +163,13 @@ def test_filters_source_changes_expiry_exports_and_service_replacement_recompute
     service.report('jobs', query(), export_limit=100)
     service.report('jobs', query(), export_limit=100)
     assert repo.calls['summary'] == 6
-    WeldingService(Settings(), repo).report('jobs', query())
+    WeldingService(welding_settings(), repo).report('jobs', query())
     assert repo.calls['summary'] == 7
 
 
 def test_missing_watermark_and_failures_are_not_cached():
     repo = Repository()
-    service = WeldingService(Settings(), repo)
+    service = WeldingService(welding_settings(), repo)
     repo.fail = True
     with pytest.raises(ValueError, match='source failed'):
         service.report('jobs', query())
@@ -182,7 +183,7 @@ def test_missing_watermark_and_failures_are_not_cached():
 
 
 def test_statistics_cache_is_bounded():
-    service = WeldingService(Settings(), Repository())
+    service = WeldingService(welding_settings(), Repository())
     for i in range(33):
         service._cached_statistics(('common', str(i)), lambda: {})
     assert len(service._statistics._entries) == 32

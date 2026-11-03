@@ -88,7 +88,7 @@ class LeadershipRefreshWorker:
             return False
         month_start = report_month.replace(day=1)
         if self.task_queue is not None:
-            return self.task_queue.request_refresh(self.settings.device_id, month_start.isoformat(), bootstrap=bootstrap)
+            return self.task_queue.request_refresh(self.settings.device_id, month_start.isoformat(), bootstrap=bootstrap, source_fingerprint=self.settings.source_fingerprint)
         with self._lock:
             already_scheduled = month_start in self._requests or month_start in self._running
             if month_start in self._running:
@@ -102,7 +102,7 @@ class LeadershipRefreshWorker:
     def is_refreshing(self, report_month: date) -> bool:
         month_start = report_month.replace(day=1)
         if self.task_queue is not None:
-            return self.task_queue.refresh_active(self.settings.device_id, month_start.isoformat())
+            return self.task_queue.refresh_active(self.settings.device_id, month_start.isoformat(), source_fingerprint=self.settings.source_fingerprint)
         with self._lock:
             return month_start in self._requests or month_start in self._running
 
@@ -143,7 +143,7 @@ class LeadershipRefreshWorker:
             and report_month == self._now().date().replace(day=1)
         ):
             if self.task_queue is not None:
-                self.task_queue.enqueue("analysis_leadership", self.settings.device_id, {"date": report_month.isoformat()})
+                self.task_queue.enqueue("analysis_leadership", self.settings.device_id, {"date": report_month.isoformat(), "source_fingerprint": self.settings.source_fingerprint})
                 return
             with self._lock:
                 self._analysis_pending.append(report_month)

@@ -4,7 +4,6 @@ from contextlib import contextmanager
 from math import ceil
 from typing import Any, Iterator
 
-from app.config import Settings
 from app.models.database_sources import DatabaseSourceConfig
 from app.core.request_cancellation import cancellable_cursor
 from app.core.report_deadline import ensure_time_remaining, remaining_seconds
@@ -15,28 +14,16 @@ class SqlServerConfigurationError(RuntimeError):
 
 
 class SqlServerClient:
-    SOURCE_LABELS = {
-        "production": ("SQLSERVER", "生产数据库"),
-        "worker": ("WORKER_SQLSERVER", "工人数据库"),
-        "file": ("FILE_SQLSERVER", "文件数据库"),
-    }
-
-    def __init__(self, settings: Settings | DatabaseSourceConfig, *, source: str = "production") -> None:
-        if isinstance(settings, DatabaseSourceConfig):
-            if settings.engine != 'sqlserver':
-                raise ValueError('数据源不是 SQL Server')
-            source = settings.id
-        elif source not in self.SOURCE_LABELS:
-            raise ValueError(f"不支持的数据源：{source}")
-        self.settings = settings
-        self.source = source
+    def __init__(self, config: DatabaseSourceConfig) -> None:
+        if config.engine != 'sqlserver':
+            raise ValueError('数据源不是 SQL Server')
+        self.settings = config
+        self.source = config.id
 
     def connection_config(self) -> dict:
-        if isinstance(self.settings, DatabaseSourceConfig):
-            if not self.settings.enabled:
-                raise SqlServerConfigurationError('数据源尚未启用')
-            return self.settings.sqlserver_connection()
-        return self.settings.sqlserver_connection(self.source)
+        if not self.settings.enabled:
+            raise SqlServerConfigurationError('数据源尚未启用')
+        return self.settings.sqlserver_connection()
 
     def _connection_string(self) -> str:
         config = self.connection_config()
@@ -45,7 +32,7 @@ class SqlServerClient:
         connect_timeout = config["connect_timeout"]
         if remaining is not None:
             connect_timeout = max(1, min(connect_timeout, ceil(remaining)))
-        env_prefix, source_label = self.SOURCE_LABELS.get(self.source, ('SOURCE', '数据库'))
+        env_prefix, source_label = ('SOURCE', '数据库')
         required = {
             f"{env_prefix}_HOST": config["host"],
             f"{env_prefix}_DATABASE": config["database"],
@@ -77,7 +64,7 @@ class SqlServerClient:
 
     @contextmanager
     def connect(self) -> Iterator[Any]:
-        if isinstance(self.settings, DatabaseSourceConfig) and self.settings.legacy_tls:
+        if self.settings.legacy_tls:
             raise SqlServerConfigurationError('旧版 TLS 兼容仅支持隔离进程中的批量只读查询')
         try:
             import pyodbc
@@ -85,7 +72,7 @@ class SqlServerClient:
             raise SqlServerConfigurationError(
                 "未安装 pyodbc，请用 uv 为应用环境同步 sqlserver 可选依赖"
             ) from exc
-        options = {'readonly': True} if isinstance(self.settings, DatabaseSourceConfig) else {}
+        options = {'readonly': True}
         connection = pyodbc.connect(self._connection_string(), **options)
         try:
             query_timeout = self.connection_config()["query_timeout"]
@@ -98,7 +85,7 @@ class SqlServerClient:
             connection.close()
 
     def fetch_all(self, sql: str, parameters: tuple[Any, ...]) -> list[dict[str, Any]]:
-        if isinstance(self.settings, DatabaseSourceConfig) and self.settings.legacy_tls:
+        if self.settings.legacy_tls:
             from app.database.sqlserver_legacy import fetch_all
             self.connection_config()  # Reject disabled sources before starting a child.
             return fetch_all(self.settings, sql, parameters)

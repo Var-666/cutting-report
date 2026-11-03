@@ -23,7 +23,7 @@ class SqlServerAlarmSource:
 
     def __init__(self, settings: Settings, client: SqlServerClient | None = None) -> None:
         self.settings = settings
-        self.client = client or SqlServerClient(settings, source="production")
+        self.client = client
 
     @property
     def machine_nos(self) -> tuple[str, ...]:

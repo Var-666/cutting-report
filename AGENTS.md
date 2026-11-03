@@ -58,14 +58,14 @@
 
 ### Runtime、配置与事务
 
-- `application_runtime.build_runtime(settings, role=...)` 统一装配进程共享资源，`build_device_runtime` 装配设备专属服务。Runtime 负责对象连接与生命周期，不承载新增业务规则；业务方法接收所需服务/仓储，不自行查全局 Runtime 或重新构建它。
-- Web 只在 `app.state.runtime` 挂载类型化 `ApplicationRuntime`；API 通过 `application_state(request)` 获取进程共享资源，通过 `runtime_state(request)`/`Depends(runtime_state)` 获取 `DatabaseServices` 请求快照。旧式平铺 state 仅在公共入口兼容，不在新路由继续散落属性探测。Runtime 上保留的初始数据库服务引用供旧调用方使用，不能代替热加载快照。
+- `application_runtime.build_runtime(settings, role=...)` 统一装配进程共享资源，`build_device_runtime` 装配切割业务实现，所有实例统一登记在 `DatabaseServices.lines`。Runtime 负责对象连接与生命周期，不承载新增业务规则；业务方法接收所需服务/仓储，不自行查全局 Runtime 或重新构建它。
+- Web 只在 `app.state.runtime` 挂载类型化 `ApplicationRuntime`；API 通过 `application_state(request)` 获取进程共享资源，通过 `runtime_state(request)`/`Depends(runtime_state)` 获取 `DatabaseServices` 请求快照。旧式平铺 state 仅在公共入口兼容，不在新路由继续散落属性探测。ApplicationRuntime 不保留初始产线服务字段，业务一律从当前 DatabaseServices.lines 访问。
 - Web 通过 `api/runtime.runtime_state` 固定单请求数据库服务快照，通过 `device_state` 选择切割设备；Worker 通过 `database_context` 在新操作边界选择快照。在途操作保持原引用，不混用新旧服务或直接改写已发布对象。
 - `config.py` 保留不可变 `Settings`、字段元数据、校验、连接配置及设备配置派生；环境解析复用 `configuration_sources`。业务代码使用传入的 Settings，不能另读环境或另写默认值。启动全局 `settings` 不代表当前热加载状态。
 - 热加载复用 `DatabaseRuntime`、`AutomationRuntime`；保存复用 `runtime_settings_store` 和进程锁，保持“锁内读改写/保留空密码 → 校验并准备候选 → 原子写文件 → 发布快照”。读取或构建失败保留旧快照，诊断用 `inspect()`，不因读取诊断触发热加载。不自行扩大热加载字段范围。
-- 配置来源由 `configuration_sources.load_environment` 统一解析：`data/settings.env > 进程环境变量 > .env > Settings 默认值`；`.env` 保留已有变量插值与 `PYTHON_DOTENV_DISABLED` 兼容，管理页文件按字面值读取，不展开密码中的 `${...}`。设备目录路径由 `device_config.device_catalog_path` 解析，设备业务映射只取启动加载的 `devices.json`；旧设备环境字段仅校验兼容，不能覆盖目录。
+- 配置来源由 `configuration_sources.load_environment` 统一解析：`data/settings.env > 进程环境变量 > .env > Settings 默认值`；`.env` 保留已有变量插值与 `PYTHON_DOTENV_DISABLED` 兼容，管理页文件按字面值读取，不展开密码中的 `${...}`。产线只取 `PRODUCTION_LINES_JSON`，连接只取 `DATABASE_SOURCES_JSON`；旧设备目录及连接环境键仅由独立 `scripts/migrate_production_lines.py` 升级工具读取，正常运行不回退。
 - 数据库配置请求/字段转换及脱敏响应在 `services/database_configuration.py`，自动化配置契约及脱敏响应在 `automation_configuration.py`；保存分别调用 `DatabaseRuntime.save_configuration`、`AutomationRuntime.save_configuration`。Runtime 持有保存路径和当前配置，API 不再读取启动全局 Settings 保留密码，也不自行加锁、合并或发布。空密码优先保留锁内读取的最新文件值，文件未提供有效值时保留当前快照；不回显密码。
-- 热加载白名单以 `database_runtime.DATABASE_SETTINGS` 和 `automation_runtime.HOT_SETTINGS` 为准：数据库页已有连接/启用字段（含焊接时区）及自动化/SMTP 字段可热加载；连接超时、焊接连接池、`devices.json`、AI、报表 TTL 等其余参数仍需重启。新字段先在 `Settings` 登记环境键和默认值，只有明确授权热加载才补入白名单及相应管理契约，不能因字段以数据库前缀开头就自动热加载。
+- 热加载白名单以 `database_runtime.DATABASE_SETTINGS` 和 `automation_runtime.HOT_SETTINGS` 为准：数据库页已有连接/启用字段（含焊接时区）及自动化/SMTP 字段可热加载；产线目录和全部数据源选项（含单源超时/池大小）已获 P1 授权热加载；AI、报表 TTL 等其他启动参数仍需重启。新字段先在 `Settings` 登记环境键和默认值，只有明确授权热加载才补入白名单及相应管理契约，不能因字段以数据库前缀开头就自动热加载。
 - 诊断继续通过 `ConfigurationDiagnostics` 对比各进程 `inspect()` 已发布值与文件目标，展示实际来源和重启要求；不能调用 `snapshot()` 使诊断变成配置发布。Worker 按独立心跳报告其快照，未加载/不可用不能标为已生效；敏感值及内部比较指纹不出现在诊断 API 中。
 - SQLite 业务连接统一经 `SQLiteDatabase`/`SQLiteRepository`；跨仓储原子写入使用 `UnitOfWork` 绑定同一连接并由外层提交。Service 不持有原始连接、不自行提交；单仓储原子校验/写入由仓储完成。编号迁移复用 `database/migrations/`，不在路由或后台任务临时建表。
 - SQL/LLM/SMTP/文件等耗时外部操作不得放进 SQLite 写事务；保留现有任务状态、幂等、未知结果保护和失败补偿。不要用事务回滚假定外部副作用已撤销，详见 [SQLite 事务设计](docs/design/SQLite仓储与事务设计.md)。
@@ -73,10 +73,10 @@
 
 ### 多产线与复用
 
-- 切割设备映射以 `configuration/devices.json` 和 `device_config.py` 为准，由 `settings_for_device` 派生配置；类型/独立产线登记复用 `production_lines.py`。新增实例必须同时落实配置、服务装配、目录和测试，不能只增加名称；业务 SQL 仍放对应 `database/queries/` 或仓储。
-- 复用现有 `ProductionReportProvider`、`QueryCache`、`CacheRevision` 和报表快照能力；Provider 只统一访问/刷新契约，不强行统一切割与焊接的指标、日期、单位和持久化结构。焊接保持独立只读 MySQL 仓储及服务，不塞入切割 `DeviceRuntime`。
+- 唯一实例目录由 `device_config.ProductionLineCatalog` 从 `PRODUCTION_LINES_JSON` 校验，`settings_for_line` 派生业务配置，类型能力复用 `production_lines.py`。新增同类型实例只改配置并验证绑定与隔离，不改公共 Runtime/Worker/API；业务 SQL 仍放对应 `database/queries/` 或仓储。
+- 复用现有 `ProductionReportProvider`、`QueryCache`、`CacheRevision` 和报表快照能力；Provider 只统一访问/刷新契约，不强行统一切割与焊接的指标、日期、单位和持久化结构。焊接保留专属只读 MySQL 仓储及 Service；切割和焊接均由 `lines[line_id]` 管理，不新增全局单例字段。
 - Provider 提供 `report_types/source_identity/fetch_summary/fetch_detail/refresh_summary/refresh_plan`；查询类型和明细结果由产线保留，后台查询参数须能 JSON 序列化。跨服务调用公开方法，不能访问其他 Service 的私有方法。`requested_at` 是 Worker 任务提交时间，沿用现有刷新合并语义。
-- 新独立产线在 `production_lines.py` 登记 `service_key`、启用配置和能力，实现专属 Repository、Service/Provider，并在类型化 `DatabaseServices/ApplicationRuntime` 及数据库装配/热加载中接入；按需增加 API/页面和隔离测试。已有 Worker 按注册表消费 `refresh_plan` 和 `report_snapshot_refresh`，不要为每种产线增加调度分支或缓存框架。切割实例仍使用设备目录，切割月报保留原 bootstrap/AI 调度。
+- 新增产线类型登记构建函数和能力，业务实例只登记在统一目录，实现专属 Repository、Service/Provider，并在类型注册的构建函数与 `ProductionLineRuntime` 可选能力中接入；按需增加 API/页面和隔离测试。已有 Worker 按统一实例集合消费 `refresh_plan` 和 `report_snapshot_refresh`，不要为每种产线增加调度分支或缓存框架。切割实例仍使用统一目录内的物理映射，切割月报保留原 bootstrap/AI 调度。
 - 普通查询缓存用有界 `QueryCache`，缓存键或服务实例必须隔离产线/设备、来源、规范化条件及必要版本；可变返回值由调用方复制。领导月报直查和焊接短期统计复用该缓存；领导月快照的新鲜度缓存仍保留专属规则，焊接 AI 结果缓存仍按业务版本独立保存。
 - 通用持久化快照复用 `ReportSnapshotService/ReportKey`、`CacheRevision` 和原 SQLite 队列，键包含产线、类型、日期、参与快照计算的筛选及必要分页/排序、来源、schema 及权限范围；完整聚合视图的分页投影例外见 P09。保留焊接页面快照优先、冷页异步准备、过期标识、失败保留与源信息采样；导出/下钻保持现场查询，不用旧快照绕过实时校验，不强制各业务使用相同 TTL。
 - 区分来源、失效修订、存储校验和与业务版本：`source_identity` 标识来源隔离；`CacheRevision` 仅失效进程缓存；快照存储的 `data_version` 校验完整载荷。公开页面/AI 业务版本继续由现有算法生成：焊接页面及导出共用 `WeldingService.version`，切割沿用现有分析版本；不能用存储校验和替换。焊接 API 的 `meta.report_data.data_version` 与公开业务版本一致；AI 校验页面版本，现场导出随源数据变化可产生新版本，不能覆盖页面快照。
@@ -142,8 +142,8 @@
 
 - 新增 SQL Server/MySQL 数据库优先通过 `DatabaseSourceRegistry` 注册；管理页“其他数据源”仅登记连接，不自动创建产线、菜单、报表或授予业务权限。新产线仍沿用现有多产线注册与 Provider 机制。
 - 新增连接统一使用 `models/database_sources.py` 的配置模型，SQL Server 使用 `SqlServerClient(config)`，MySQL 使用 `MySqlClient(config)`；不在业务 Service 中散落连接字段，不为每个新库复制连接池。专属 SQL、参数及字段映射归业务 Repository，不统一 SQL 方言。
-- Registry 从 `DatabaseServices.database_sources` 请求/操作快照获取；Repository 固定本次操作的客户端，Service 通过装配显式接收 Repository。需要保护删除的业务引用在 `application_runtime.DATABASE_SOURCE_BINDINGS` 显式登记，不扫描源码推断引用。
-- 动态连接仅保存于 `data/settings.env` 的 `DATABASE_SOURCES_JSON`，复用原保存锁、0600 原子写入、空密码保留和失败保留旧快照；新数据源的全部连接选项随快照热加载。旧连接超时/池大小等参数的重启规则保持不变，旧 SQL Server/焊接配置继续兼容。
+- Registry 从 `DatabaseServices.database_sources` 请求/操作快照获取；Repository 固定本次操作的客户端，Service 通过装配显式接收 Repository。产线引用从统一目录合并；共享用途在 `database_runtime.source_bindings` 明确登记，不扫描源码推断引用。
+- 动态连接仅保存于 `data/settings.env` 的 `DATABASE_SOURCES_JSON`，复用原保存锁、0600 原子写入、空密码保留和失败保留旧快照；新数据源的全部连接选项随快照热加载。所有生产连接及其选项统一随 Registry 快照加载；旧 SQLSERVER/WELD 配置通过一次性工具迁移，不保留正式运行兼容路径。
 - 新操作使用最新 Registry，旧操作和旧 Repository 保留原配置/客户端。不能在配置发布时关闭仍被引用的旧池；MySQL 客户端最后释放或进程退出时关闭资源，在途会话返回后才清理池。
 - 连接测试仅执行固定只读 `SELECT 1`；新增数据源不自动获得任意 SQL 查询能力，现有 Workbench 的生产库范围、管理员鉴权及令牌要求保持不变。响应/日志/诊断禁止回显密码或完整 `DATABASE_SOURCES_JSON`，前端类型从 OpenAPI 生成。
 

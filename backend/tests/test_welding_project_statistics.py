@@ -6,7 +6,7 @@ from datetime import date
 
 import pytest
 
-from app.config import Settings
+from tests.line_fixtures import welding_settings
 from app.database.welding import WeldingRepository
 from app.models.welding import WeldingQuery
 from app.services.welding_service import WeldingService
@@ -55,7 +55,7 @@ def project_statistics(tmp_path):
             sql = sql.replace('LEFT(', '"LEFT"(').replace('%s', '?').replace('LIMIT 18446744073709551615', 'LIMIT -1')
             return [dict(row) for row in connection.execute(sql, values).fetchall()]
     session = Session()
-    service = WeldingService(Settings(project_root=tmp_path), WeldingRepository(None))
+    service = WeldingService(welding_settings(project_root=tmp_path), WeldingRepository(None))
     try:
         yield service, session
     finally:
@@ -79,3 +79,24 @@ def test_project_statistics_preserve_unique_ownership_filters_and_units(project_
     assert len(session.queries) == 1
     assert all('FROM weld_part_info_table owner WHERE' not in sql for sql in session.queries)
     assert 'FROM weld_info_table part_job' in session.queries[0]
+
+
+def test_shared_source_scope_applies_to_parts_seams_and_direct_drilldown(project_statistics):
+    from app.database.welding import SEAM_FIELDS
+    _, session = project_statistics
+    session.fetch("UPDATE weld_part_info_table SET device_no=CASE WHEN serial_number IN ('B','C') THEN 1 ELSE 0 END")
+    columns = ','.join(f'{name} ' + ('INTEGER' if name in ('id', 'device_no', 'robot_no') else 'TEXT') for name in SEAM_FIELDS.split(', '))
+    session.fetch(f'CREATE TABLE welding_seam_info_table ({columns})')
+    session.fetch("INSERT INTO welding_seam_info_table(id, serial_number, device_no, robot_no) VALUES (1,'A',0,2),(2,'A',1,3)")
+    repository = WeldingRepository(None, device_nos=(0,))
+    selected = WeldingQuery(start=date(2026, 10, 28), end=date(2026, 10, 28))
+    projects, totals = repository.part_statistics(session, selected)
+    p1 = next(row for row in projects if row['project_no'] == 'P1')
+    assert p1['part_count'] == 1 and p1['cumulative_actual_length_m'] == 2
+    part = repository.part(session, 1)
+    assert part['serial_number'] == 'A'
+    assert repository.part(session, 2) is None
+    rows, total, ambiguous = repository.seams(session, part, 1, 10)
+    assert not ambiguous and total == 1
+    assert [row['id'] for row in rows] == [1]
+    assert rows[0]['robot_no'] == 2, 'device scope must not impose an unverified robot mapping'

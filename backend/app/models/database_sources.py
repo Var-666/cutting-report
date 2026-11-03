@@ -11,10 +11,10 @@ class DatabaseSourceFields(BaseModel):
     name: str = Field(min_length=1, max_length=128)
     engine: Literal['sqlserver', 'mysql']
     enabled: bool = True
-    host: str = Field(min_length=1, max_length=255)
+    host: str = Field(min_length=0, max_length=255)
     port: int = Field(ge=1, le=65535)
-    database: str = Field(min_length=1, max_length=128)
-    username: str = Field(min_length=1, max_length=128)
+    database: str = Field(min_length=0, max_length=128)
+    username: str = Field(min_length=0, max_length=128)
     connect_timeout: int = Field(default=5, ge=1, le=60)
     query_timeout: int = Field(default=120, ge=1, le=300)
     driver: str = Field(default='ODBC Driver 18 for SQL Server', min_length=1, max_length=128)
@@ -30,12 +30,14 @@ class DatabaseSourceFields(BaseModel):
     @classmethod
     def clean_text(cls, value: str) -> str:
         value = value.strip()
-        if not value or any(ord(char) < 32 for char in value):
+        if any(ord(char) < 32 for char in value):
             raise ValueError('连接字段不能为空或包含控制字符')
         return value
 
     @model_validator(mode='after')
     def validate_legacy_tls(self) -> 'DatabaseSourceFields':
+        if self.enabled and not all((self.host, self.database, self.username)):
+            raise ValueError('启用的数据源必须填写完整连接参数')
         if self.legacy_tls and self.engine != 'sqlserver':
             raise ValueError('旧版 TLS 兼容仅适用于 SQL Server')
         return self

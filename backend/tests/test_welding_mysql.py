@@ -7,8 +7,15 @@ from datetime import date
 
 import pytest
 
+from dataclasses import replace
 from app.config import Settings
-from app.database.welding import WeldingClient, WeldingRepository, WeldingUnavailable, job_source, job_aggregate, job_conditions, valid_serial, valid_time
+from app.database.source_registry import DatabaseSourceRegistry, source_configs_json
+from tests.line_fixtures import line_settings
+from app.services.application_runtime import build_runtime
+from app.database.mysql import MySqlClient
+from app.models.database_sources import DatabaseSourceConfig
+from tests.line_fixtures import welding_settings
+from app.database.welding import WeldingRepository, WeldingUnavailable, job_source, job_aggregate, job_conditions, valid_serial, valid_time
 from app.models.welding import WeldingQuery
 from app.services.welding_service import WeldingService
 
@@ -62,9 +69,15 @@ def weld_mysql():
     cursor.executemany('INSERT INTO weld_part_info_table (id,serial_number,project_no,project_name,reality_lenght,state,update_date) VALUES (%s,%s,%s,%s,%s,%s,\'2026-10-02 01:00:00\')', [(1, 'p-A', 'P1', '项目1', 10000, 3), (2, 'p-B', 'P1', '项目1', 2000, 0), (3, 'p-dup', 'P2', '项目2', 1000, 0), (4, 'p-dup', 'P3', '项目3', 1000, 0)])
     cursor.executemany('INSERT INTO welding_seam_info_table (id,serial_number,robot_no,reality_lenght,update_date) VALUES (%s,%s,%s,%s,\'2026-10-02 01:00:00\')', [(1, 'p-A', 2, 2000), (2, 'p-A', 2, 4000), (3, 'p-dup', 2, 1000)])
     root.commit()
-    cfg = Settings(weld_enabled=True, weld_db_host='127.0.0.1', weld_db_port=int(port), weld_db_name='codex_welding_test', weld_db_user='codex_weld_reader', weld_db_password='weld-readonly-test-only', weld_db_pool_size=2)
-    service = WeldingService(cfg, WeldingRepository(WeldingClient(cfg)))
+    cfg = welding_settings()
+    source = DatabaseSourceConfig(id='mysql-test', name='测试库', engine='mysql', host='127.0.0.1', port=int(port),
+        database='codex_welding_test', username='codex_weld_reader', password='weld-readonly-test-only', pool_size=2)
+    configs = DatabaseSourceRegistry.from_json(cfg.database_sources_json).configs()
+    configs = [item if item.id != 'welding-production' else source.model_copy(update={'id': item.id}) for item in configs]
+    cfg = line_settings(replace(cfg, database_sources_json=source_configs_json(configs)), 'welding')
+    service = WeldingService(cfg, WeldingRepository(MySqlClient(source)))
     yield service
+    service.repository.client.close()
     cursor.execute('DROP DATABASE codex_welding_test')
     cursor.execute("DROP USER 'codex_weld_reader'@'%'")
     cursor.close()
@@ -227,7 +240,7 @@ def test_part_scope_matches_original_project_totals_and_page_queries(weld_mysql,
 
 def test_real_mysql_snapshot_is_repeatable_and_account_is_readonly(weld_mysql):
     import mysql.connector
-    writer = mysql.connector.connect(host='127.0.0.1', port=weld_mysql.settings.weld_db_port, user='root', password='weld-local-test-only', database='codex_welding_test')
+    writer = mysql.connector.connect(host='127.0.0.1', port=weld_mysql.repository.client.config.port, user='root', password='weld-local-test-only', database='codex_welding_test')
     cursor = writer.cursor()
     try:
         with weld_mysql.repository.client.snapshot() as session:
@@ -251,7 +264,7 @@ def test_real_mysql_snapshot_is_repeatable_and_account_is_readonly(weld_mysql):
 
 def test_real_mysql_timeout_recovers_for_next_request(weld_mysql, caplog):
     from dataclasses import replace
-    client = WeldingClient(replace(weld_mysql.settings, weld_db_query_timeout=1))
+    client = MySqlClient(weld_mysql.repository.client.config.model_copy(update={'query_timeout': 1}))
     previous_pool = client._get_pool()
     with pytest.raises(WeldingUnavailable):
         with client.snapshot() as session:
@@ -261,7 +274,7 @@ def test_real_mysql_timeout_recovers_for_next_request(weld_mysql, caplog):
     with client.snapshot() as session:
         assert session.fetch('SELECT 1 AS healthy', limit=1) == [{'healthy': 1}]
     assert client._pool is not previous_pool
-    service = WeldingService(client.settings, WeldingRepository(client))
+    service = WeldingService(weld_mysql.settings, WeldingRepository(client))
     assert service.report('daily', period())['summary']['weld_length_m'] == 10
 
 
@@ -276,15 +289,15 @@ def test_real_mysql_api_exports_and_pdf(weld_mysql):
     app.include_router(router)
     app.include_router(database_router)
     app.dependency_overrides[require_admin] = lambda: {'role': 'admin'}
-    app.state.welding = weld_mysql
-    app.state.settings = weld_mysql.settings
+    runtime = build_runtime(weld_mysql.settings, role="web")
+    app.state.runtime = runtime
     app.state.pdf_service = PdfService(operation_timeout_seconds=60)
     @app.middleware('http')
     async def request_id(request, call_next):
         request.state.request_id = 'welding-mysql-test'
         return await call_next(request)
-    client = TestClient(app)
-    tested = client.post('/api/v1/database/welding/test-connection', json={'host': '127.0.0.1', 'port': weld_mysql.settings.weld_db_port, 'database': 'codex_welding_test', 'username': 'codex_weld_reader'})
+    client = TestClient(app, headers={"X-Production-Line": "welding"})
+    tested = client.post('/api/v1/database/welding/test-connection', json={'host': '127.0.0.1', 'port': weld_mysql.repository.client.config.port, 'database': 'codex_welding_test', 'username': 'codex_weld_reader'})
     assert tested.status_code == 200, tested.text
     for path in ('statistics/daily', 'parts', 'jobs', 'equipment/summary'):
         response = client.get(f'/api/v1/welding/{path}?start=2026-10-01&end=2026-10-01')

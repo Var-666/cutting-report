@@ -1,4 +1,5 @@
-from app.config import Settings
+from tests.line_fixtures import as_line_services, runtime_line
+from tests.line_fixtures import cutting_settings
 from types import SimpleNamespace
 from datetime import datetime
 from decimal import Decimal
@@ -61,9 +62,9 @@ def test_legacy_snapshot_does_not_block_worker_revoke_or_admin_correction(
     app = FastAPI()
     app.include_router(router)
     app.state.workshop = repository
-    app.state.devices = {'Cutter01': SimpleNamespace(
-        settings=Settings(data_source_mode='sqlserver'), workshop=app.state.workshop,
-        query_service=getattr(app.state, 'query_service', None))}
+    app.state.lines = as_line_services({'Cutter01': SimpleNamespace(
+        settings=cutting_settings(data_source_mode='sqlserver'), workshop=app.state.workshop,
+        query_service=getattr(app.state, 'query_service', None))})
     app.dependency_overrides[require_user] = lambda: worker
     app.dependency_overrides[require_worker] = lambda: worker
     app.dependency_overrides[require_admin] = lambda: admin

@@ -1,6 +1,7 @@
 import type { WeldingAnalysis, WeldingPart, WeldingQuery, WeldingReport, WeldingReportKind } from '../types/welding'
 import type { ApiError } from '../types/api'
 import { request } from './client.ts'
+import { getDeviceId } from './deviceContext.ts'
 import { reportCache } from './reportCache.ts'
 import { throwIfAborted } from '../utils/abort.ts'
 
@@ -15,10 +16,12 @@ export function getWeldingReport<K extends WeldingReportKind>(kind: K, values: W
   if (kind === 'dashboard') Object.assign(filters, { page: 1, page_size: 10, sort_by: 'time', descending: true })
   const key = new URLSearchParams(Object.entries(filters).map(([name, value]) => [name, String(value)]))
   key.sort()
-  return reportCache.read(`welding:${kind}:${key}`, sharedSignal => readWeldingReport(kind, values, sharedSignal, force), { signal, force, ttl: 3000 })
+  return reportCache.read(`welding:${getDeviceId()}:${kind}:${key}`, sharedSignal => readWeldingReport(kind, values, sharedSignal, force), { signal, force, ttl: 3000 })
 }
 
 async function readWeldingReport<K extends WeldingReportKind>(kind: K, values: WeldingQuery, signal?: AbortSignal, force = false) {
+  const lineId = getDeviceId()
+  if (!lineId) throw new Error('请先选择焊接产线')
   const query = new URLSearchParams(Object.entries({ ...weldingQuery(values), ...(force ? { refresh: 'true' } : {}) }).map(([key, value]) => [key, String(value)]))
   const deadline = Date.now() + 180000
   let preparingError: ApiError | undefined
@@ -26,7 +29,7 @@ async function readWeldingReport<K extends WeldingReportKind>(kind: K, values: W
     throwIfAborted(signal)
     if (preparingError && Date.now() >= deadline) throw preparingError
     try {
-      return await request<WeldingReport<K extends 'dashboard' ? 'jobs' : K>>(`/api/v1/welding/${paths[kind]}?${query}`, { signal })
+      return await request<WeldingReport<K extends 'dashboard' ? 'jobs' : K>>(`/api/v1/welding/${paths[kind]}?${query}`, { signal, headers: { 'X-Production-Line': lineId } })
     } catch (caught) {
       throwIfAborted(signal)
       const error = caught as ApiError

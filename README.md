@@ -145,11 +145,11 @@ SQLite 结构升级统一登记在 `backend/app/database/migrations/registry.py`
    ```
 
 4. 在业务操作的装配入口，把当前快照的 Registry 传给 Repository，再把 Repository 传给业务 Service；Web 从 `runtime_state(request).database_sources`、Worker 从 `database_context(runtime).database_sources` 选取。固定本次操作的客户端，不跨操作长期保留启动时的 Repository。此方式无需修改公共 Runtime 或连接层；专属业务的长期服务装配仍遵循现有类型化 Runtime 约定。
-5. 在 `application_runtime.DATABASE_SOURCE_BINDINGS` 登记 `{'quality': ('quality-reports',)}` 等明确引用。部署消费者前先登记对应数据源；存在引用时禁止删除或更换数据库类型。移除业务引用后才能删除。
+5. 在统一产线目录的 source_key 或 `database_runtime.source_bindings` 登记 明确业务引用。部署消费者前先登记对应数据源；存在引用时禁止删除或更换数据库类型。移除业务引用后才能删除。
 
 以后新增连接无需重复开发配置表单、密码保存、连接测试、连接池或公共客户端。新业务仍需编写自己的 Repository、Service 和必要的 API；新增连接不会自动获得 Workbench 权限，也不会新增生产线或空白报表。
 
-新增源配置以 JSON 存在 `data/settings.env` 的 `DATABASE_SOURCES_JSON` 一项，只有这一份持久化来源；沿用文件锁、0600 权限和原子替换。Web 保存后立即发布，Worker 下一操作读取同一文件；配置无效或读取失败保留旧快照。诊断页对这项配置只展示状态和进程一致性，不显示 JSON/密码。旧环境变量及其热加载/重启边界保持兼容。
+新增源配置以 JSON 存在 `data/settings.env` 的 `DATABASE_SOURCES_JSON` 一项，只有这一份持久化来源；沿用文件锁、0600 权限和原子替换。Web 保存后立即发布，Worker 下一操作读取同一文件；配置无效或读取失败保留旧快照。诊断页对这项配置只展示状态和进程一致性，不显示 JSON/密码。旧生产连接和设备目录须先由 `scripts/migrate_production_lines.py` 迁移；正式运行只读取统一产线及来源配置。
 
 未变化的客户端在快照之间复用。旧请求/Repository 保留旧配置，最后一个引用释放后 MySQL 客户端清理旧池；主动关闭时等待在途会话返回后清理。连接池清理封装使用当前 Connector/Python 的 `_remove_connections`，升级驱动时需执行池生命周期定向测试。MySQL 保持最多 4 个连接、只读事务和 REPEATABLE READ；不同源各自拥有连接资源。
 
@@ -179,3 +179,6 @@ pnpm run typecheck
 SQLite 的 `014_workshop_ship_names` 迁移单独保存日报船名，升级前沿用现有自动备份机制。历史日报展示时也查询映射；正常同步时可补齐原空值或原工程编号占用的船名字段，不改生产任务、快照修订号或确认/审计记录。重新导出的报告使用当前映射，已生成的 HTML/PDF 文件保持原内容。
 
 两台切割设备共享有界船名缓存，使用现有报表缓存 TTL；强制查询会刷新船名。修改 `bm` 连接会重建受影响的切割服务，旧请求保留原引用；更改其他无关数据源不会重建切割服务。`bm` 已声明为切割报表引用，登记后可停用，但不能通过管理页删除或切换数据库类型。
+
+
+P1 升级须先停止 Web/Worker 并运行 `python scripts/migrate_production_lines.py`，再启动同版本两进程；首次启动应用 SQLite 执行015告警来源隔离。统一实例与来源配置、备份位置、新增切割/焊接线及回退边界见[配置参考](docs/deployment/配置参考.md#p1-升级与新增实例)。

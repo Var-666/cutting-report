@@ -47,11 +47,11 @@ def _decimal(value: object) -> Decimal | None:
 
 
 class QueryService:
-    def __init__(self, settings: Settings, *, ship_names: ShipNameService | None = None) -> None:
+    def __init__(self, settings: Settings, *, client: SqlServerClient | None = None, ship_names: ShipNameService | None = None) -> None:
         self.settings = settings
         self.ship_names = ship_names
         self.cache_revision = CacheRevision(settings, "production")
-        self.client = SqlServerClient(settings)
+        self.client = client
         self.query_dir = Path(__file__).resolve().parents[1] / "database" / "queries"
         self._equipment_cache = _QueryCache[EquipmentQueryResult]()
         self._bundle_cache = _QueryCache[QueryBundle]()

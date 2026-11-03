@@ -63,7 +63,7 @@ class MagicBoxConfigProvider:
 
     def __init__(self, settings, *, client=None, clock=None) -> None:
         self.settings = settings
-        self.client = client or SqlServerClient(settings, source="production")
+        self.client = client
         self.clock = clock or time.monotonic
         self._cached: MagicBoxConfig | None = None
         self._cached_at = 0.0

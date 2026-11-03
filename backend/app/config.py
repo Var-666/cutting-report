@@ -7,7 +7,7 @@ from pathlib import Path
 
 from app.configuration_sources import load_environment
 
-from app.device_config import device_catalog_path, load_device_catalog
+from app.device_config import ProductionLineInstance
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -22,43 +22,6 @@ _environment = ContextVar("configuration_environment", default=LOADED_ENVIRONMEN
 def configuration_field(key, factory, *, hidden=False):
     hidden = hidden or any(part in key for part in ("PASSWORD", "API_KEY", "TOKEN", "AUTHORIZATION", "COOKIE", "USERNAME"))
     return field(default_factory=factory, metadata={"env": key}, repr=not hidden)
-
-
-# Device business settings come only from the catalog; credentials stay in env.
-DEVICE_CONFIG_PATH = device_catalog_path(PROJECT_ROOT, LOADED_ENVIRONMENT)
-DEVICE_CATALOG = load_device_catalog(DEVICE_CONFIG_PATH)
-DEFAULT_DEVICE = DEVICE_CATALOG.default_device
-
-
-def legacy_device_environment_conflicts(catalog, environment) -> dict[str, str]:
-    """Legacy variables assert catalog compatibility; they never override devices."""
-    device = catalog.default_device
-    energy = device.energy
-    expected = {
-        "REPORT_MACHINE_NO": device.machine_no,
-        "ENERGY_EQUIPMENT_IDS": ",".join(energy.equipment_ids) if energy else "",
-        "ENERGY_REPORT_EQUIPMENT_IDS": ",".join(energy.equipment_ids) if energy else device.machine_no,
-        "ENERGY_GAS_PARAMETER_ID": str(energy.gas_parameter_id) if energy else "",
-        "ENERGY_ELECTRICITY_PARAMETER_IDS": ",".join(map(str, energy.electricity_parameter_ids)) if energy else "",
-        "ENERGY_REPORT_ELECTRICITY_PARAMETER_IDS": ",".join(map(str, energy.electricity_parameter_ids)) if energy else "",
-        "ALARM_MONITOR_MACHINE_NOS": device.machine_no,
-        "ALARM_MONITOR_START_AT": device.alarm.start_at,
-    }
-    conflicts = {}
-    for key, value in expected.items():
-        actual = environment.get(key, "").strip()
-        if actual and tuple(part.strip() for part in actual.split(",")) != tuple(value.split(",")):
-            conflicts[key] = f"{key}: 环境={actual!r}，目录={value!r}"
-    return conflicts
-
-
-def validate_legacy_device_environment() -> None:
-    conflicts = legacy_device_environment_conflicts(DEVICE_CATALOG, LOADED_ENVIRONMENT)
-    if conflicts:
-        raise ValueError("旧设备环境配置与设备目录冲突；请核对并迁入设备目录后移除旧变量：" + "; ".join(conflicts.values()))
-
-
-validate_legacy_device_environment()
 
 
 def _as_bool(name: str, default: bool) -> bool:
@@ -80,11 +43,11 @@ def _as_float(name: str, default: float) -> float:
 
 @dataclass(frozen=True, slots=True)
 class Settings:
-    device_id: str = DEFAULT_DEVICE.id
-    device_name: str = DEFAULT_DEVICE.name
-    production_line_id: str = DEFAULT_DEVICE.production_line_id
-    production_data_source: str = DEFAULT_DEVICE.data_source
-    energy_connected: bool = DEFAULT_DEVICE.energy is not None
+    device_id: str = ""
+    device_name: str = ""
+    production_line_id: str = ""
+    production_data_source: str = ""
+    energy_connected: bool = False
     project_root: Path = PROJECT_ROOT
     app_env: str = configuration_field("APP_ENV", lambda: _environment.get().get("APP_ENV", "development"))
     app_host: str = configuration_field("APP_HOST", lambda: _environment.get().get("APP_HOST", "127.0.0.1"))
@@ -99,20 +62,15 @@ class Settings:
         if item.strip()
     ))
 
+    production_lines_json: str = configuration_field("PRODUCTION_LINES_JSON", lambda: _environment.get().get("PRODUCTION_LINES_JSON", ""))
+    worker_source_key: str = configuration_field("WORKER_SOURCE_KEY", lambda: _environment.get().get("WORKER_SOURCE_KEY", ""))
+    file_source_key: str = configuration_field("FILE_SOURCE_KEY", lambda: _environment.get().get("FILE_SOURCE_KEY", ""))
+    dispatch_source_key: str = configuration_field("DISPATCH_SOURCE_KEY", lambda: _environment.get().get("DISPATCH_SOURCE_KEY", ""))
+    source_fingerprint: str = ""
+    alarm_source_name: str = ""
+
     database_sources_json: str = configuration_field("DATABASE_SOURCES_JSON", lambda: _environment.get().get("DATABASE_SOURCES_JSON", "[]"), hidden=True)
 
-    sqlserver_host: str = configuration_field("SQLSERVER_HOST", lambda: _environment.get().get("SQLSERVER_HOST", ""))
-    sqlserver_port: int = configuration_field("SQLSERVER_PORT", lambda: _as_int("SQLSERVER_PORT", 1433))
-    sqlserver_database: str = configuration_field("SQLSERVER_DATABASE", lambda: _environment.get().get("SQLSERVER_DATABASE", ""))
-    sqlserver_username: str = configuration_field("SQLSERVER_USERNAME", lambda: _environment.get().get("SQLSERVER_USERNAME", ""))
-    sqlserver_password: str = configuration_field("SQLSERVER_PASSWORD", lambda: _environment.get().get("SQLSERVER_PASSWORD", ""))
-    sqlserver_driver: str = configuration_field("SQLSERVER_DRIVER", lambda: _environment.get().get("SQLSERVER_DRIVER", "ODBC Driver 18 for SQL Server"))
-    sqlserver_encrypt: str = configuration_field("SQLSERVER_ENCRYPT", lambda: _environment.get().get("SQLSERVER_ENCRYPT", "yes"))
-    sqlserver_trust_server_certificate: str = configuration_field("SQLSERVER_TRUST_SERVER_CERTIFICATE", lambda: _environment.get().get(
-        "SQLSERVER_TRUST_SERVER_CERTIFICATE", "yes"
-    ))
-    sqlserver_connect_timeout: int = configuration_field("SQLSERVER_CONNECT_TIMEOUT_SECONDS", lambda: _as_int("SQLSERVER_CONNECT_TIMEOUT_SECONDS", 5))
-    sqlserver_query_timeout: int = configuration_field("SQLSERVER_QUERY_TIMEOUT_SECONDS", lambda: _as_int("SQLSERVER_QUERY_TIMEOUT_SECONDS", 120))
     leadership_report_cache_seconds: int = configuration_field("LEADERSHIP_REPORT_CACHE_SECONDS", lambda: _as_int(
         "LEADERSHIP_REPORT_CACHE_SECONDS", 600
     ))
@@ -124,18 +82,10 @@ class Settings:
     ))
     report_data_cache_seconds: int = configuration_field("REPORT_DATA_CACHE_SECONDS", lambda: _as_int("REPORT_DATA_CACHE_SECONDS", 600))
     report_background_refresh_seconds: int = configuration_field("REPORT_BACKGROUND_REFRESH_SECONDS", lambda: _as_int("REPORT_BACKGROUND_REFRESH_SECONDS", 300))
-    report_machine_no: str = DEFAULT_DEVICE.machine_no
+    report_machine_no: str = ""
 
-    weld_enabled: bool = configuration_field("WELD_ENABLED", lambda: _as_bool("WELD_ENABLED", False))
-    weld_db_host: str = configuration_field("WELD_DB_HOST", lambda: _environment.get().get("WELD_DB_HOST", ""))
-    weld_db_port: int = configuration_field("WELD_DB_PORT", lambda: _as_int("WELD_DB_PORT", 3306))
-    weld_db_name: str = configuration_field("WELD_DB_NAME", lambda: _environment.get().get("WELD_DB_NAME", "weld_production_data"))
-    weld_db_user: str = configuration_field("WELD_DB_USER", lambda: _environment.get().get("WELD_DB_USER", ""), hidden=True)
-    weld_db_password: str = configuration_field("WELD_DB_PASSWORD", lambda: _environment.get().get("WELD_DB_PASSWORD", ""))
-    weld_db_timezone: str = configuration_field("WELD_DB_TIMEZONE", lambda: _environment.get().get("WELD_DB_TIMEZONE", "Asia/Shanghai"))
-    weld_db_pool_size: int = configuration_field("WELD_DB_POOL_SIZE", lambda: _as_int("WELD_DB_POOL_SIZE", 4))
-    weld_db_connect_timeout: int = configuration_field("WELD_DB_CONNECT_TIMEOUT_SECONDS", lambda: _as_int("WELD_DB_CONNECT_TIMEOUT_SECONDS", 5))
-    weld_db_query_timeout: int = configuration_field("WELD_DB_QUERY_TIMEOUT_SECONDS", lambda: _as_int("WELD_DB_QUERY_TIMEOUT_SECONDS", 120))
+    weld_enabled: bool = False
+    weld_db_timezone: str = "Asia/Shanghai"
 
     # 能管平台只读接入。仪表绑定、计量边界和单位必须由现场确认。
     energy_api_enabled: bool = configuration_field("ENERGY_API_ENABLED", lambda: _as_bool("ENERGY_API_ENABLED", False))
@@ -145,7 +95,7 @@ class Settings:
     energy_api_timeout: float = configuration_field("ENERGY_API_TIMEOUT_SECONDS", lambda: _as_float("ENERGY_API_TIMEOUT_SECONDS", 10))
     energy_cache_seconds: int = configuration_field("ENERGY_CACHE_SECONDS", lambda: _as_int("ENERGY_CACHE_SECONDS", 60))
     energy_equipment_ids: tuple[str, ...] = ()
-    energy_gas_parameter_id: str = str(DEFAULT_DEVICE.energy.gas_parameter_id) if DEFAULT_DEVICE.energy else ""
+    energy_gas_parameter_id: str = ""
     energy_electricity_parameter_ids: tuple[str, ...] = ()
     energy_gas_unit: str = configuration_field("ENERGY_GAS_UNIT", lambda: _environment.get().get("ENERGY_GAS_UNIT", "Nm³").strip())
     energy_electricity_unit: str = configuration_field("ENERGY_ELECTRICITY_UNIT", lambda: _environment.get().get("ENERGY_ELECTRICITY_UNIT", "kWh").strip())
@@ -162,30 +112,10 @@ class Settings:
 
     # 统一设备能耗报表：当前仪表组只归属一台物理设备。多个值仅用于
     # 同一设备在 TASK.MACHINE_NO 中的历史别名，不能混入另一台设备。
-    energy_report_equipment_ids: tuple[str, ...] = DEFAULT_DEVICE.energy.equipment_ids if DEFAULT_DEVICE.energy else (DEFAULT_DEVICE.machine_no,)
-    energy_report_electricity_parameter_ids: tuple[str, ...] = tuple(map(str, DEFAULT_DEVICE.energy.electricity_parameter_ids)) if DEFAULT_DEVICE.energy else ()
+    energy_report_equipment_ids: tuple[str, ...] = ()
+    energy_report_electricity_parameter_ids: tuple[str, ...] = ()
     energy_report_max_gap_seconds: int = configuration_field("ENERGY_REPORT_MAX_GAP_SECONDS", lambda: _as_int("ENERGY_REPORT_MAX_GAP_SECONDS", 1800))
     energy_report_snapshot_ttl_seconds: int = configuration_field("ENERGY_REPORT_SNAPSHOT_TTL_SECONDS", lambda: _as_int("ENERGY_REPORT_SNAPSHOT_TTL_SECONDS", 3600))
-
-    # HR 工人库与生产任务库可以位于不同的 SQL Server 实例。
-    # 专用地址、库名、账号或密码任意一项被配置后，该数据源就不再
-    # 混用生产库的连接字段；旧部署在完全未配置时仍可显式回退。
-    worker_sqlserver_host: str = configuration_field("WORKER_SQLSERVER_HOST", lambda: _environment.get().get("WORKER_SQLSERVER_HOST", ""))
-    worker_sqlserver_port: int = configuration_field("WORKER_SQLSERVER_PORT", lambda: _as_int("WORKER_SQLSERVER_PORT", 1433))
-    worker_sqlserver_database: str = configuration_field("WORKER_SQLSERVER_DATABASE", lambda: _environment.get().get("WORKER_SQLSERVER_DATABASE", ""))
-    worker_sqlserver_username: str = configuration_field("WORKER_SQLSERVER_USERNAME", lambda: _environment.get().get("WORKER_SQLSERVER_USERNAME", ""))
-    worker_sqlserver_password: str = configuration_field("WORKER_SQLSERVER_PASSWORD", lambda: _environment.get().get("WORKER_SQLSERVER_PASSWORD", ""))
-    worker_sqlserver_driver: str = configuration_field("WORKER_SQLSERVER_DRIVER", lambda: _environment.get().get("WORKER_SQLSERVER_DRIVER", ""))
-    worker_sqlserver_encrypt: str = configuration_field("WORKER_SQLSERVER_ENCRYPT", lambda: _environment.get().get("WORKER_SQLSERVER_ENCRYPT", ""))
-    worker_sqlserver_trust_server_certificate: str = configuration_field("WORKER_SQLSERVER_TRUST_SERVER_CERTIFICATE", lambda: _environment.get().get(
-        "WORKER_SQLSERVER_TRUST_SERVER_CERTIFICATE", ""
-    ))
-    worker_sqlserver_connect_timeout: int = configuration_field("WORKER_SQLSERVER_CONNECT_TIMEOUT_SECONDS", lambda: _as_int(
-        "WORKER_SQLSERVER_CONNECT_TIMEOUT_SECONDS", 5
-    ))
-    worker_sqlserver_query_timeout: int = configuration_field("WORKER_SQLSERVER_QUERY_TIMEOUT_SECONDS", lambda: _as_int(
-        "WORKER_SQLSERVER_QUERY_TIMEOUT_SECONDS", 15
-    ))
 
     worker_database_auth_enabled: bool = configuration_field("WORKER_DATABASE_AUTH_ENABLED", lambda: _as_bool(
         "WORKER_DATABASE_AUTH_ENABLED", False
@@ -196,22 +126,6 @@ class Settings:
     ).strip())
     # 切割文件索引/内容库单独配置，不与生产报表或 HR 库共用账号。
     file_database_enabled: bool = configuration_field("FILE_DATABASE_ENABLED", lambda: _as_bool("FILE_DATABASE_ENABLED", False))
-    file_sqlserver_host: str = configuration_field("FILE_SQLSERVER_HOST", lambda: _environment.get().get("FILE_SQLSERVER_HOST", ""))
-    file_sqlserver_port: int = configuration_field("FILE_SQLSERVER_PORT", lambda: _as_int("FILE_SQLSERVER_PORT", 1433))
-    file_sqlserver_database: str = configuration_field("FILE_SQLSERVER_DATABASE", lambda: _environment.get().get("FILE_SQLSERVER_DATABASE", ""))
-    file_sqlserver_username: str = configuration_field("FILE_SQLSERVER_USERNAME", lambda: _environment.get().get("FILE_SQLSERVER_USERNAME", ""))
-    file_sqlserver_password: str = configuration_field("FILE_SQLSERVER_PASSWORD", lambda: _environment.get().get("FILE_SQLSERVER_PASSWORD", ""))
-    file_sqlserver_driver: str = configuration_field("FILE_SQLSERVER_DRIVER", lambda: _environment.get().get("FILE_SQLSERVER_DRIVER", ""))
-    file_sqlserver_encrypt: str = configuration_field("FILE_SQLSERVER_ENCRYPT", lambda: _environment.get().get("FILE_SQLSERVER_ENCRYPT", ""))
-    file_sqlserver_trust_server_certificate: str = configuration_field("FILE_SQLSERVER_TRUST_SERVER_CERTIFICATE", lambda: _environment.get().get(
-        "FILE_SQLSERVER_TRUST_SERVER_CERTIFICATE", ""
-    ))
-    file_sqlserver_connect_timeout: int = configuration_field("FILE_SQLSERVER_CONNECT_TIMEOUT_SECONDS", lambda: _as_int(
-        "FILE_SQLSERVER_CONNECT_TIMEOUT_SECONDS", 5
-    ))
-    file_sqlserver_query_timeout: int = configuration_field("FILE_SQLSERVER_QUERY_TIMEOUT_SECONDS", lambda: _as_int(
-        "FILE_SQLSERVER_QUERY_TIMEOUT_SECONDS", 15
-    ))
     file_status_sent_value: str = configuration_field("FILE_STATUS_SENT_VALUE", lambda: _environment.get().get(
         "FILE_STATUS_SENT_VALUE", "已派发"
     ).strip())
@@ -254,8 +168,8 @@ class Settings:
     alarm_monitor_interval_seconds: int = configuration_field("ALARM_MONITOR_INTERVAL_SECONDS", lambda: _as_int(
         "ALARM_MONITOR_INTERVAL_SECONDS", 300
     ))
-    alarm_monitor_machine_nos: tuple[str, ...] = (DEFAULT_DEVICE.machine_no,)
-    alarm_monitor_start_at: str = DEFAULT_DEVICE.alarm.start_at
+    alarm_monitor_machine_nos: tuple[str, ...] = ()
+    alarm_monitor_start_at: str = ""
     alarm_reopen_debounce_minutes: int = configuration_field("ALARM_REOPEN_DEBOUNCE_MINUTES", lambda: _as_int(
         "ALARM_REOPEN_DEBOUNCE_MINUTES", 10
     ))
@@ -366,73 +280,26 @@ class Settings:
         mode = self.data_source_mode or ("demo" if self.demo_mode else "sqlserver")
         return mode
 
-    def sqlserver_connection(self, source: str = "production") -> dict[str, object]:
-        """Return one complete connection profile without mixing database identities."""
-        if source not in {"production", "worker", "file"}:
-            raise ValueError(f"不支持的数据源：{source}")
-
-        primary = {
-            "host": self.sqlserver_host,
-            "port": self.sqlserver_port,
-            "database": self.sqlserver_database,
-            "username": self.sqlserver_username,
-            "password": self.sqlserver_password,
-            "driver": self.sqlserver_driver,
-            "encrypt": self.sqlserver_encrypt,
-            "trust_server_certificate": self.sqlserver_trust_server_certificate,
-            "connect_timeout": self.sqlserver_connect_timeout,
-            "query_timeout": self.sqlserver_query_timeout,
-            "uses_primary_fallback": False,
-        }
-        if source == "production":
-            return primary
-
-        dedicated_identity = {
-            "host": getattr(self, f"{source}_sqlserver_host"),
-            "database": getattr(self, f"{source}_sqlserver_database"),
-            "username": getattr(self, f"{source}_sqlserver_username"),
-            "password": getattr(self, f"{source}_sqlserver_password"),
-        }
-        if not any(dedicated_identity.values()):
-            return {**primary, "uses_primary_fallback": True}
-
-        return {
-            **dedicated_identity,
-            "port": getattr(self, f"{source}_sqlserver_port"),
-            "driver": getattr(self, f"{source}_sqlserver_driver") or self.sqlserver_driver,
-            "encrypt": getattr(self, f"{source}_sqlserver_encrypt") or self.sqlserver_encrypt,
-            "trust_server_certificate": (
-                getattr(self, f"{source}_sqlserver_trust_server_certificate")
-                or self.sqlserver_trust_server_certificate
-            ),
-            "connect_timeout": getattr(
-                self, f"{source}_sqlserver_connect_timeout"
-            ),
-            "query_timeout": getattr(self, f"{source}_sqlserver_query_timeout"),
-            "uses_primary_fallback": False,
-        }
-
     def ensure_runtime_dirs(self) -> None:
         for path in (self.data_dir, self.reports_dir, self.logs_dir):
             path.mkdir(parents=True, exist_ok=True)
 
 
-def settings_for_device(base: Settings, device_id: str) -> Settings:
-    device = next((item for item in DEVICE_CATALOG.devices if item.id == device_id), None)
-    if device is None:
-        raise ValueError("设备不存在")
-    energy = device.energy
+def settings_for_line(base: Settings, line: ProductionLineInstance, source_fingerprint: str = "") -> Settings:
+    energy = line.energy
     return replace(
-        base, device_id=device.id, device_name=device.name,
-        production_line_id=device.production_line_id, production_data_source=device.data_source,
-        report_machine_no=device.machine_no, energy_connected=energy is not None,
+        base, device_id=line.id, device_name=line.name,
+        production_line_id=line.production_line_id or line.id, production_data_source=line.source_key,
+        source_fingerprint=source_fingerprint,
+        report_machine_no=line.machine_no or "", energy_connected=energy is not None,
         energy_api_enabled=base.energy_api_enabled and energy is not None,
         energy_gas_parameter_id=str(energy.gas_parameter_id) if energy else "",
-        energy_report_equipment_ids=energy.equipment_ids if energy else (device.machine_no,),
+        energy_report_equipment_ids=energy.equipment_ids if energy else ((line.machine_no,) if line.machine_no else ()),
         energy_report_electricity_parameter_ids=tuple(map(str, energy.electricity_parameter_ids)) if energy else (),
         energy_equipment_ids=(), energy_electricity_parameter_ids=(),
-        alarm_monitor_machine_nos=(device.machine_no,),
-        alarm_monitor_start_at=device.alarm.start_at,
+        alarm_monitor_machine_nos=(line.machine_no,) if line.machine_no else (),
+        alarm_monitor_start_at=line.alarm.start_at if line.alarm else "",
+        weld_enabled=line.enabled, weld_db_timezone=line.timezone,
     )
 
 

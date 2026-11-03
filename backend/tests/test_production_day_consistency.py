@@ -6,7 +6,8 @@ from types import SimpleNamespace
 import pytest
 
 from app.api.workshop import _workshop_trend
-from app.config import settings
+from tests.line_fixtures import cutting_settings, source_client
+settings = cutting_settings()
 from app.database.workshop import WorkshopRepository
 from app.models.domain import QueryBundle, ReportFilter, SummaryBaseRecord, WorkshopRecord, to_primitive
 from app.services.query_service import QueryService
@@ -34,7 +35,7 @@ def workshop_record(**changes):
 
 @pytest.mark.parametrize("date_value", [DAY, DAY.isoformat(), datetime(2026, 9, 30)])
 def test_sqlserver_mapping_retains_business_day_for_all_report_paths(date_value):
-    service = QueryService(replace(settings, data_source_mode="sqlserver", report_data_cache_seconds=0))
+    service = QueryService(replace(settings, data_source_mode="sqlserver", report_data_cache_seconds=0), client=source_client(replace(settings, data_source_mode="sqlserver", report_data_cache_seconds=0)))
     row = {**source_row(), "production_date": date_value}
     queries = []
 
@@ -74,7 +75,7 @@ def test_leadership_daily_totals_and_workshop_trend_use_business_day_without_sta
 
 
 def test_equipment_daily_rows_keep_cross_day_task_in_selected_day():
-    query = QueryService(replace(settings, data_source_mode="sqlserver", report_data_cache_seconds=0))
+    query = QueryService(replace(settings, data_source_mode="sqlserver", report_data_cache_seconds=0), client=source_client(replace(settings, data_source_mode="sqlserver", report_data_cache_seconds=0)))
     query.client = SimpleNamespace(fetch_all=lambda *args: [source_row()])
     source = query.fetch_equipment_data(ReportFilter(report_date=DAY))
     energy = SimpleNamespace(get_task_range=lambda *args, **kwargs: {

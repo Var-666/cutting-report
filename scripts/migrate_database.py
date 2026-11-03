@@ -9,7 +9,8 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'backend'))
 
-from app.config import DEVICE_CATALOG
+from app.config import settings
+from app.device_config import load_line_catalog
 from app.database.coordination import backup_before_process_upgrade
 from app.database.device_migrations import migrate_device_isolation
 from app.database.migrations import apply_migrations
@@ -38,7 +39,7 @@ def main() -> None:
             stack.enter_context(FileLock(path.with_suffix('.initialize.lock')))
             database = SQLiteDatabase(path)
             backup_before_process_upgrade(database)
-            migrate_device_isolation(database, DEVICE_CATALOG)
+            migrate_device_isolation(database, {line.id: line.machine_no for line in load_line_catalog(settings.production_lines_json).lines if line.type == "cutting"})
             apply_migrations(database)
     applied = set()
     if path.exists():

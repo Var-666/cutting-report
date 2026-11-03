@@ -177,7 +177,7 @@ class CurrentReportRefreshWorker:
             return
         if self.task_queue is not None:
             self.task_queue.enqueue(f"analysis_{report_type}", self.settings.device_id,
-                                    {"date": args[0].isoformat()})
+                                    {"date": args[0].isoformat(), "source_fingerprint": self.settings.source_fingerprint})
             return
         with self._analysis_lock:
             if self.stop_event.is_set():

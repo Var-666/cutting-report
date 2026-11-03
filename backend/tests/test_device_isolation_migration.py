@@ -2,7 +2,7 @@ import sqlite3
 
 import pytest
 
-from app.config import DEVICE_CATALOG
+from tests.line_fixtures import CUTTING_SCOPES
 from app.database.alarms import AlarmRepository
 from app.database.device_migrations import migrate_device_isolation, rebuild_table
 from app.database.sqlite import SQLiteDatabase
@@ -37,7 +37,7 @@ def test_migration_preserves_records_cursor_lease_and_is_idempotent(legacy):
     with db.connect() as connection:
         before = dict(connection.execute("SELECT * FROM alarm_sync_state WHERE source_name='production'").fetchone())
         audits = [dict(row) for row in connection.execute('SELECT * FROM workshop_confirmation_audits')]
-    migrate_device_isolation(db, DEVICE_CATALOG)
+    migrate_device_isolation(db, CUTTING_SCOPES)
     with db.connect() as connection:
         after = dict(connection.execute("SELECT * FROM alarm_sync_state WHERE source_name='production:Cutter01'").fetchone())
         assert after == {**before, 'source_name': 'production:Cutter01'}
@@ -51,7 +51,7 @@ def test_migration_preserves_records_cursor_lease_and_is_idempotent(legacy):
     with sqlite3.connect(copies[0]) as backup:
         assert backup.execute("SELECT last_alarm_id,lease_owner FROM alarm_sync_state WHERE source_name='production'").fetchone() == (123, 'owner')
     snapshot = dump(db)
-    migrate_device_isolation(db, DEVICE_CATALOG)
+    migrate_device_isolation(db, CUTTING_SCOPES)
     assert dump(db) == snapshot
     assert list((db.path.parent / 'backups').glob('*-before-device-isolation-*.db')) == copies
     other = WorkshopRepository(db, scope_machine_no='Cutter02')
@@ -76,7 +76,7 @@ def test_migration_failure_rolls_back_every_change_and_keeps_backup(legacy, faul
             connection.execute("UPDATE workshop_confirmations SET worker_id='deleted-worker'")
     before = dump(db)
     with pytest.raises(ValueError, match='已回滚'):
-        migrate_device_isolation(db, DEVICE_CATALOG)
+        migrate_device_isolation(db, CUTTING_SCOPES)
     assert dump(db) == before
     assert len(list((db.path.parent / 'backups').glob('*-before-device-isolation-*.db'))) == 1
 
@@ -98,7 +98,7 @@ def test_single_device_schema_adds_device_ids_without_changing_history(tmp_path)
             CREATE TABLE workshop_confirmation_audits(audit_id TEXT PRIMARY KEY,task_id TEXT,report_id TEXT);
             INSERT INTO workshop_confirmation_audits VALUES ('a','task','r');
         ''')
-    migrate_device_isolation(db, DEVICE_CATALOG)
+    migrate_device_isolation(db, CUTTING_SCOPES)
     with db.connect() as connection:
         for table, column in [('report_jobs','device_id'), ('analysis_source_versions','device_id'), ('workshop_reports','scope_machine_no'), ('workshop_confirmations','scope_machine_no'), ('workshop_confirmation_audits','scope_machine_no')]:
             assert connection.execute(f'SELECT {column} FROM {table}').fetchone()[0] == 'Cutter01'
@@ -112,5 +112,5 @@ def test_unattributable_orphan_is_not_guessed_as_default(tmp_path):
         connection.execute("INSERT INTO workshop_confirmations VALUES ('orphan',NULL)")
     before = dump(db)
     with pytest.raises(ValueError, match='归属不明确'):
-        migrate_device_isolation(db, DEVICE_CATALOG)
+        migrate_device_isolation(db, CUTTING_SCOPES)
     assert dump(db) == before

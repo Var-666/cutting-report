@@ -71,7 +71,7 @@ class WorkerAuthService:
 
     def __init__(self, settings: Settings, client: SqlServerClient | None = None) -> None:
         self.settings = settings
-        self.client = client or SqlServerClient(settings, source="worker")
+        self.client = client
         self._session_checks: OrderedDict[str, tuple[float, bool | None]] = OrderedDict()
         self._session_cache_lock = threading.Lock()
         self._session_query_locks = [threading.Lock() for _ in range(16)]

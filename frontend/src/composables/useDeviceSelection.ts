@@ -1,7 +1,7 @@
 import { lineHome, selectedLineType } from '../utils/productionLines.ts'
 import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { deviceSwitchQuery } from '../api/deviceContext.ts'
+import { allowDeviceSwitch, deviceSwitchQuery } from '../api/deviceContext.ts'
 import { changeDevice, deviceSelection, loadDevices } from '../state/devices.ts'
 
 export function useDeviceSelection() {
@@ -12,6 +12,7 @@ export function useDeviceSelection() {
     if (switching.value || id === deviceSelection.id) return
     switching.value = true
     try {
+      if (!await allowDeviceSwitch(route.name)) return
       const previous = deviceSelection.id
       if (selectedLineType(deviceSelection.items, id) !== selectedLineType(deviceSelection.items, previous)) {
         changeDevice(id)

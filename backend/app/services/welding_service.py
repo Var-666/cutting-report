@@ -5,7 +5,6 @@ import json
 import logging
 import math
 from contextlib import nullcontext
-from dataclasses import replace
 from copy import deepcopy
 from collections import OrderedDict
 from threading import Lock
@@ -15,11 +14,11 @@ from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
 from app.config import Settings
-from app.services.production_lines import SERVICE_LINES
 from app.services.query_cache import QueryCache
 from app.database.report_snapshots import ReportKey, fingerprint
 from app.services.report_snapshots import ReportData, ReportSnapshotService
-from app.database.welding import WeldingRepository, WeldingSession, WeldingUnavailable, aggregate_sort_key, job_conditions, valid_serial, valid_time
+from app.database.mysql import MySqlSession
+from app.database.welding import WeldingRepository, WeldingUnavailable, aggregate_sort_key, job_conditions, valid_serial, valid_time
 from app.models.domain import to_primitive
 from app.models.welding import ReportType, WeldingQuery, WELD_TYPES
 
@@ -98,9 +97,8 @@ def summary_values(row: dict) -> dict:
 
 
 class WeldingService:
-    def __init__(self, settings: Settings, repository: WeldingRepository, *, line_id: str | None = None, snapshots=None, coordination=None) -> None:
-        line = next(item for item in SERVICE_LINES if item['type'] == 'welding' and (line_id is None or item['id'] == line_id))
-        self.settings = replace(settings, device_id=line['id'], device_name=line['name'], production_line_id=line['id'], production_data_source=line['type'])
+    def __init__(self, settings: Settings, repository: WeldingRepository, *, snapshots=None, coordination=None) -> None:
+        self.settings = settings
         self.repository = repository
         self._analyses = OrderedDict()
         self._analysis_lock = Lock()
@@ -207,9 +205,8 @@ class WeldingService:
     report_types = ('daily', 'jobs', 'parts', 'equipment', 'dashboard')
 
     def source_identity(self) -> str:
-        return fingerprint({name: getattr(self.settings, name) for name in
-            ('device_id', 'weld_enabled', 'weld_db_host', 'weld_db_port', 'weld_db_name',
-             'weld_db_user', 'weld_db_password', 'weld_db_timezone')})
+        return fingerprint((self.settings.device_id, self.settings.source_fingerprint,
+                            self.settings.weld_db_timezone, self.repository.device_nos))
 
     @staticmethod
     def snapshot_eligible(query: WeldingQuery) -> bool:
@@ -319,7 +316,7 @@ class WeldingService:
         scoped_key = (self.settings.device_id, self.source_identity(), *key)
         return deepcopy(self._statistics.read(scoped_key, load, ttl=ttl))
 
-    def _common_statistics(self, session: WeldingSession, query: WeldingQuery) -> tuple[dict, list[dict], list[dict], list[dict], dict]:
+    def _common_statistics(self, session: MySqlSession, query: WeldingQuery) -> tuple[dict, list[dict], list[dict], list[dict], dict]:
         started = monotonic()
         summary, daily, equipment, devices, association = self.repository.statistics(session, query)
         if len(equipment) > 10000:
@@ -331,9 +328,9 @@ class WeldingService:
                     self.settings.device_id, query.start, query.end, round((monotonic() - started) * 1000))
         return result
 
-    def _report_statistics(self, session: WeldingSession, kind: ReportType, query: WeldingQuery) -> tuple[list[dict], list[dict], dict]:
+    def _report_statistics(self, session: MySqlSession, kind: ReportType, query: WeldingQuery) -> tuple[list[dict], list[dict], dict]:
         repo = self.repository
-        where, values = job_conditions(query)
+        where, values = self.repository.conditions(query)
         projects = []
         if kind == 'parts':
             projects, totals = repo.part_statistics(session, query)

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from starlette.concurrency import run_in_threadpool
+
 import logging
 import uuid
 from contextlib import asynccontextmanager
@@ -91,7 +93,7 @@ if settings.cors_origins:
         allow_origins=list(settings.cors_origins),
         allow_credentials=False,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
-        allow_headers=["Content-Type", "X-Request-ID", "X-SQL-Workbench-Token"],
+        allow_headers=["Content-Type", "X-Request-ID", "X-SQL-Workbench-Token", "X-Production-Line"],
     )
 
 
@@ -99,7 +101,10 @@ if settings.cors_origins:
 async def request_id_middleware(request: Request, call_next):
     # A client scope can restrict capabilities, but never grants access or replaces role checks.
     line_id = request.headers.get('X-Production-Line')
-    if line_id and not supports_path(line_id, request.url.path):
+    if line_id:
+        from app.api.runtime import runtime_state
+        context = await run_in_threadpool(runtime_state, request)
+    if line_id and not supports_path(context, line_id, request.url.path, request.method):
         return JSONResponse(status_code=403, content={'success': False, 'error': {'code': 'LINE_CAPABILITY_DENIED', 'message': '当前产线不支持此功能'}})
     supplied_request_id = request.headers.get("X-Request-ID", "")
     request_id = (

@@ -1,3 +1,4 @@
+from tests.line_fixtures import as_line_services, runtime_line, source_client, cutting_settings
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -197,7 +198,7 @@ class SqlClient:
 def test_pdm_project_and_catalog_queries_are_cached(monkeypatch):
     now = [0]
     monkeypatch.setattr("app.database.pdm.monotonic", lambda: now[0])
-    pdm = SqlServerPdmRepository(settings)
+    pdm = SqlServerPdmRepository(settings, client=source_client(cutting_settings()))
 
     class DirectoryClient:
         def __init__(self):
@@ -230,7 +231,7 @@ def test_pdm_project_and_catalog_queries_are_cached(monkeypatch):
 
 
 def test_pdm_directory_page_uses_one_windowed_query():
-    pdm = SqlServerPdmRepository(settings)
+    pdm = SqlServerPdmRepository(settings, client=source_client(cutting_settings()))
 
     class PageClient:
         def __init__(self):
@@ -260,7 +261,7 @@ def test_pdm_directory_page_uses_one_windowed_query():
 
 
 def test_sqlserver_count_and_page_use_identical_safe_filter():
-    pdm = SqlServerPdmRepository(settings)
+    pdm = SqlServerPdmRepository(settings, client=source_client(cutting_settings()))
     pdm.client = SqlClient()
     project_id = "3E97B5EF-0E12-49E2-87E5-B9440C416022"
     criteria = group(rule("project_id", "eq", project_id), rule("operate_date", "between", ["2026-08-01", "2026-08-31"]), logic="or")
@@ -278,7 +279,7 @@ def test_sqlserver_count_and_page_use_identical_safe_filter():
 def test_pdm_pages_share_count_but_new_search_and_expiry_recount(monkeypatch):
     now = [0]
     monkeypatch.setattr("app.database.pdm.monotonic", lambda: now[0])
-    pdm = SqlServerPdmRepository(settings)
+    pdm = SqlServerPdmRepository(settings, client=source_client(cutting_settings()))
     pdm.client = SqlClient()
     criteria = group(rule("document_no", "contains", ".GEN"))
     pdm.search_files(criteria, page=1, page_size=10)
@@ -295,7 +296,7 @@ def test_pdm_pages_share_count_but_new_search_and_expiry_recount(monkeypatch):
 
 @pytest.mark.parametrize("logic", ["and", "or"])
 def test_physical_filters_keep_version_matched_top_file_semantics(logic):
-    pdm = SqlServerPdmRepository(settings)
+    pdm = SqlServerPdmRepository(settings, client=source_client(cutting_settings()))
     pdm.client = SqlClient()
     criteria = group(rule("document_no", "contains", ".GEN"), rule("physical_file_name", "eq", "abc.gen"), logic=logic)
     pdm.search_files(criteria, page=1, page_size=10)
@@ -310,7 +311,7 @@ def test_physical_filters_keep_version_matched_top_file_semantics(logic):
 
 
 def test_sqlserver_sort_is_multilevel_and_has_unique_tiebreaker():
-    pdm = SqlServerPdmRepository(settings)
+    pdm = SqlServerPdmRepository(settings, client=source_client(cutting_settings()))
     pdm.client = SqlClient()
     pdm.search_files(group(rule("project_id", "eq", "project")), page=2, page_size=10,
                      sort=[SortRule(field="operate_date", direction="desc"), SortRule(field="document_no")])
@@ -323,7 +324,7 @@ def test_sqlserver_sort_is_multilevel_and_has_unique_tiebreaker():
 
 @pytest.mark.parametrize("field,dependency", [("version", "JDDR_PDM_NCDocumentVersion_Data"), ("physical_version_no", "OUTER APPLY")])
 def test_sort_only_joins_are_not_added_to_count(field, dependency):
-    pdm = SqlServerPdmRepository(settings)
+    pdm = SqlServerPdmRepository(settings, client=source_client(cutting_settings()))
     pdm.client = SqlClient()
     pdm.search_files(group(rule("document_no", "contains", "GEN")), page=1, page_size=10, sort=[SortRule(field=field)])
     count, page = pdm.client.calls
@@ -337,7 +338,7 @@ def test_sort_only_joins_are_not_added_to_count(field, dependency):
     [{"field": "document_no", "direction": "asc"}] * 2,
 ])
 def test_invalid_sort_never_reaches_database(sort):
-    pdm = SqlServerPdmRepository(settings)
+    pdm = SqlServerPdmRepository(settings, client=source_client(cutting_settings()))
     pdm.client = SqlClient()
     with pytest.raises(ConditionError):
         pdm.search_files(group(rule("document_no", "contains", "GEN")), page=1, page_size=10,
@@ -369,7 +370,7 @@ def test_mock_sort_is_before_pagination_and_ties_are_deterministic():
 
 
 def test_empty_or_invalid_pdm_query_does_not_access_database():
-    for pdm in [MockPdmRepository(), SqlServerPdmRepository(settings)]:
+    for pdm in [MockPdmRepository(), SqlServerPdmRepository(settings, client=source_client(cutting_settings()))]:
         pdm.client = SqlClient()
         for criteria in [group(), group(rule("not_allowed", "eq", "x"))]:
             with pytest.raises(ConditionError):
@@ -435,7 +436,7 @@ def test_sqlite_literal_text_operators(downloads, operator, value, expected):
 
 @pytest.fixture
 def api(tmp_path):
-    cfg = replace(settings, project_root=tmp_path)
+    cfg = cutting_settings(project_root=tmp_path)
     pdm = MockPdmRepository()
     repo = DownloadRepository(tmp_path / "api.db")
     repo.initialize()
@@ -443,7 +444,7 @@ def api(tmp_path):
     app.include_router(conditions_router)
     app.include_router(cutting_router)
     app.include_router(downloads_router)
-    app.state.devices = {cfg.device_id: SimpleNamespace(settings=cfg)}
+    app.state.lines = as_line_services({cfg.device_id: SimpleNamespace(settings=cfg)})
     app.state.cutting_dispatch = CuttingDispatchService(cfg, pdm, SimpleNamespace(), DisabledFileSource())
     app.state.file_downloads = FileDownloadService(cfg, repo, pdm, DisabledFileSource())
     app.dependency_overrides[optional_user] = lambda: {"role": "admin", "user_id": "tests"}
@@ -458,7 +459,7 @@ def api(tmp_path):
 
 def test_api_search_and_schema_are_readonly_and_paged(api):
     app, client, repo = api
-    params = {"device_id": next(iter(app.state.devices))}
+    params = {"device_id": next(iter(app.state.lines))}
     response = client.get("/api/v1/conditions/cutting_files/schema", params=params)
     assert response.status_code == 200 and response.json()["data"]["requires_filter"]
     assert client.get("/api/v1/conditions/cutting_files/schema").status_code == 422
@@ -500,6 +501,6 @@ def test_condition_endpoints_require_admin(api, user, expected):
     app, client, _ = api
     app.dependency_overrides[optional_user] = lambda: user
     assert client.get("/api/v1/conditions/cutting_files/schema",
-                      params={"device_id": next(iter(app.state.devices))}).status_code == expected
+                      params={"device_id": next(iter(app.state.lines))}).status_code == expected
     for path in ["/api/v1/cutting/files/search", "/api/v1/cutting/downloads/search"]:
         assert client.post(path, json={}).status_code == expected

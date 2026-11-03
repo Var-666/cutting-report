@@ -1,3 +1,6 @@
+from tests.line_fixtures import source_client
+from app.database.source_registry import DatabaseSourceRegistry
+from tests.line_fixtures import as_line_services, runtime_line
 """BM enrichment is tested offline; production metrics and confirmations stay unchanged."""
 from dataclasses import replace
 from datetime import date, datetime
@@ -7,7 +10,8 @@ import logging
 
 import pytest
 
-from app.config import DEVICE_CATALOG, Settings
+from tests.line_fixtures import CUTTING_SCOPES, cutting_settings, configuration
+from app.device_config import load_line_catalog
 from app.core.request_cancellation import SqlRequestCancelled
 from app.core.report_deadline import ReportOperationTimeout
 from app.database.bm_projects import BmProjectRepository
@@ -74,8 +78,8 @@ def test_enrichment_caches_without_mutating_records_and_fails_without_losing_tas
 
 @pytest.mark.parametrize('kind', ['summary', 'workshop', 'equipment'])
 def test_all_report_queries_map_and_filter_names_before_statistics(kind):
-    service = QueryService(Settings(data_source_mode='sqlserver', report_data_cache_seconds=600), ship_names=ShipNameService(
-        SimpleNamespace(ship_names=lambda numbers: {'CMYZ0170': '18600DWT-02'}), cache_seconds=600))
+    service = QueryService(cutting_settings(data_source_mode='sqlserver', report_data_cache_seconds=600), ship_names=ShipNameService(
+        SimpleNamespace(ship_names=lambda numbers: {'CMYZ0170': '18600DWT-02'}), cache_seconds=600), client=source_client(cutting_settings(data_source_mode='sqlserver', report_data_cache_seconds=600)))
     calls = []
     def fetch(sql, values):
         calls.append(values)
@@ -99,8 +103,8 @@ def test_all_report_queries_map_and_filter_names_before_statistics(kind):
 
 
 def test_ship_options_follow_date_and_project_and_use_shared_mapping_cache():
-    service = QueryService(Settings(data_source_mode='sqlserver'), ship_names=ShipNameService(
-        SimpleNamespace(ship_names=lambda numbers: {'CMYZ0170': '18600DWT-02', 'P2': '18600DWT-02'}), cache_seconds=600))
+    service = QueryService(cutting_settings(data_source_mode='sqlserver'), ship_names=ShipNameService(
+        SimpleNamespace(ship_names=lambda numbers: {'CMYZ0170': '18600DWT-02', 'P2': '18600DWT-02'}), cache_seconds=600), client=source_client(cutting_settings(data_source_mode='sqlserver')))
     calls = []
     service.client = SimpleNamespace(fetch_all=lambda sql, values: calls.append(values) or [{'project_name':'CMYZ0170'},{'project_name':'P2'}])
     filters = ReportFilter(report_date=date(2026,11,1),project_code='CMYZ0170')
@@ -144,9 +148,9 @@ def test_snapshot_stores_separate_ship_name_and_backfills_without_revision_or_au
 def test_historical_snapshot_page_enriches_but_confirm_does_not_query_bm(workshop):
     repo, admin, now = workshop
     repo.sync_daily_report(report_date='2026-11-01',source_mode='sqlserver',records=[record()],user=admin,now=now)
-    query = QueryService(Settings(data_source_mode='sqlserver'),ship_names=ShipNameService(
-        SimpleNamespace(ship_names=lambda numbers:{'CMYZ0170':'18600DWT-02'}),cache_seconds=600))
-    service = WorkshopService(repo,repo,Settings(),query_service=query)
+    query = QueryService(cutting_settings(data_source_mode='sqlserver'),ship_names=ShipNameService(
+        SimpleNamespace(ship_names=lambda numbers:{'CMYZ0170':'18600DWT-02'}),cache_seconds=600), client=source_client(cutting_settings(data_source_mode='sqlserver')))
+    service = WorkshopService(repo,repo,cutting_settings(),query_service=query)
     payload = service.list_tasks(date(2026,11,1),None,'all','manager',1,20,False,admin)
     assert payload['items'][0]['ship_no'] == '18600DWT-02' and payload['total'] == 1
     from app.models.workshop_requests import ConfirmSnapshotTaskRequest
@@ -155,15 +159,12 @@ def test_historical_snapshot_page_enriches_but_confirm_does_not_query_bm(worksho
 
 
 def test_runtime_range_report_keeps_tasks_and_device_confirmations_when_bm_is_down(tmp_path, monkeypatch):
-    catalog = tmp_path / 'backend/app/configuration/devices.json'
-    catalog.parent.mkdir(parents=True)
-    catalog.write_text(DEVICE_CATALOG.model_dump_json())
     from app.database.source_registry import source_configs_json
     from app.models.database_sources import DatabaseSourceConfig
     bm = DatabaseSourceConfig(id='bm', name='船名库', engine='sqlserver', host='offline', port=1433,
                               database='bm', username='reader', password='private')
-    cfg = Settings(project_root=tmp_path, data_source_mode='sqlserver', llm_enabled=False,
-                   energy_api_enabled=False, database_sources_json=source_configs_json([bm]))
+    base = configuration(tmp_path, real=True)
+    cfg = replace(base, database_sources_json=source_configs_json(DatabaseSourceRegistry.from_json(base.database_sources_json).configs() + [bm]))
     def fetch(client, sql, parameters):
         if client.source == 'bm':
             raise RuntimeError('BM unavailable')
@@ -175,12 +176,12 @@ def test_runtime_range_report_keeps_tasks_and_device_confirmations_when_bm_is_do
     try:
         now = '2026-11-01T08:00:00+08:00'
         admin = runtime.users.bootstrap_admin(username='admin', display_name='管理员', password='test-password', now=now)
-        first = runtime.devices['Cutter01']
+        first = runtime.database_runtime.snapshot().lines['Cutter01'].service
         report = first.workshop.create_daily_report(report_date='2026-11-01', source_mode='sqlserver',
                                                     records=[record()], user=admin, now=now)
         first.confirmations.confirm_task(task_id='1', report_id=report['report_id'], user=admin, now=now)
         for device_id, confirmed in [('Cutter01', True), ('Cutter02', False)]:
-            device = runtime.devices[device_id]
+            device = runtime.database_runtime.snapshot().lines[device_id].service
             service = WorkshopService(device.workshop, device.confirmations, device.settings,
                                       query_service=device.query_service, range_report_service=device.range_report_service)
             result = service.list_range_tasks(date(2026, 11, 1), date(2026, 11, 1), None, 'all', 1, 20)
@@ -208,32 +209,27 @@ def test_migration_preserves_legacy_project_confirmations_and_revision(workshop)
 
 
 def test_bm_runtime_registration_hot_reload_protection_and_old_request(tmp_path,monkeypatch):
-    catalog = tmp_path/'backend/app/configuration/devices.json'
-    catalog.parent.mkdir(parents=True)
-    catalog.write_text(DEVICE_CATALOG.model_dump_json())
-    cfg=Settings(project_root=tmp_path,data_source_mode='sqlserver',sqlserver_host='test-prod',
-        sqlserver_database='prod',sqlserver_username='reader',sqlserver_password='private',
-        weld_enabled=False,worker_database_auth_enabled=False,file_database_enabled=False,database_sources_json='[]')
+    cfg=configuration(tmp_path, real=True)
     runtime=build_runtime(cfg,role='web')
     initial=runtime.database_runtime.snapshot()
-    assert initial.devices['Cutter01'].query_service.ship_names is None
+    assert initial.lines['Cutter01'].service.query_service.ship_names is None
     payload=DatabaseSourceRequest(id='bm',name='船名库',engine='sqlserver',host='test-bm',port=1433,
         database='bm',username='reader',password='private')
     runtime.database_runtime.save_source(payload,create=True)
     first=runtime.database_runtime.snapshot()
-    query=first.devices['Cutter01'].query_service
+    query=first.lines['Cutter01'].service.query_service
     mapper=query.ship_names
-    assert mapper is not None and first.devices is not initial.devices
-    assert mapper is first.devices['Cutter02'].query_service.ship_names
+    assert mapper is not None and first.lines['Cutter01'] is not initial.lines['Cutter01']
+    assert mapper is first.lines['Cutter02'].service.query_service.ship_names
     assert mapper.repository.client is first.database_sources.client('bm')
     assert first.database_sources.view('bm').references == ['切割报表船名关联']
     with pytest.raises(SourceConflict): runtime.database_runtime.delete_source('bm')
     runtime.database_runtime.save_source(payload.model_copy(update={'host':'other-bm'}))
     second=runtime.database_runtime.snapshot()
     assert mapper.repository.client.connection_config()['host']=='test-bm'
-    assert second.devices['Cutter01'].query_service.ship_names.repository.client.connection_config()['host']=='other-bm'
+    assert second.lines['Cutter01'].service.query_service.ship_names.repository.client.connection_config()['host']=='other-bm'
     runtime.database_runtime.set_source_enabled('bm',False)
-    assert runtime.database_runtime.snapshot().devices['Cutter01'].query_service.ship_names is None
+    assert runtime.database_runtime.snapshot().lines['Cutter01'].service.query_service.ship_names is None
     assert query.ship_names is mapper
     with pytest.raises(ValueError):
         runtime.database_runtime.save_source(payload.model_copy(update={'engine':'mysql'}))
@@ -251,11 +247,11 @@ def test_snapshot_page_and_html_export_share_bm_names_and_filtered_totals(tmp_pa
     vendor = tmp_path/'vendor'
     vendor.mkdir()
     (vendor/'echarts.min.js').write_text('window.echarts={init(){return {setOption(){},resize(){}}}}')
-    cfg = Settings(project_root=tmp_path,data_source_mode='sqlserver',llm_enabled=False)
+    cfg = cutting_settings(project_root=tmp_path,data_source_mode='sqlserver',llm_enabled=False)
     metadata = MetadataRepository(cfg.metadata_db_path,device_id=cfg.device_id)
     metadata.initialize()
     query = QueryService(cfg,ship_names=ShipNameService(
-        SimpleNamespace(ship_names=lambda numbers:{'CMYZ0170':'18600DWT-02'}),cache_seconds=600))
+        SimpleNamespace(ship_names=lambda numbers:{'CMYZ0170':'18600DWT-02'}),cache_seconds=600), client=source_client(cfg))
     rows = [dict(task_id='1',project_code='CMYZ0170',ship_no='CMYZ0170',segment_name='S1',program_no='N1',
                 cut_length=Decimal('1.2'),groove_length=Decimal('0.1'),work_time=Decimal('60'),production_time=datetime(2026,11,1,8)),
             dict(task_id='2',project_code='MISSING',ship_no='MISSING',segment_name='S2',program_no='N2',
@@ -299,7 +295,7 @@ def test_non_ship_labels_in_screen_and_print_tables_preserve_original_fields(pro
     row = replace(record(),project_code=project,ship_no=ship,segment_name=segment)
     values = {**to_primitive(row), 'gas_consumption': None, 'electricity_consumption': None}
     template = (Path(__file__).parents[1]/'app/templates/report.html.j2').read_text()
-    environment = ReportService(Settings()).environment
+    environment = ReportService(cutting_settings()).environment
     # Exercise actual workshop/equipment screen and print table bodies with the same raw row.
     bodies = re.findall(r'<tbody>(.*?)</tbody>',template,re.S)
     checked = 0

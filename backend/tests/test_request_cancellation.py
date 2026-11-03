@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.api.auth import require_admin, require_user
-from app.config import Settings
+from tests.line_fixtures import cutting_settings, source_client, as_line_services
 from app.main import app
 from app.core.request_cancellation import (
     SqlRequestCancellationRegistry,
@@ -121,9 +121,9 @@ def test_http_request_id_reaches_sync_query_thread(monkeypatch, tmp_path) -> Non
             return SimpleNamespace(records=[])
 
     query_service = _QueryService()
-    device = SimpleNamespace(settings=Settings(project_root=tmp_path, data_source_mode="demo"),
+    device = SimpleNamespace(settings=cutting_settings(project_root=tmp_path, data_source_mode="demo"),
                              query_service=query_service)
-    monkeypatch.setattr(app.state, "devices", {"Cutter01": device}, raising=False)
+    monkeypatch.setattr(app.state, "lines", as_line_services({"Cutter01": device}), raising=False)
     app.dependency_overrides[require_admin] = lambda: {"role": "admin"}
     try:
         response = TestClient(app).post(
@@ -225,9 +225,9 @@ def test_real_http_auth_binds_cancel_to_user_and_session(monkeypatch, tmp_path, 
                 return SimpleNamespace(records=[])
 
     monkeypatch.setattr(app.state, "workshop", Workshop(), raising=False)
-    device = SimpleNamespace(settings=Settings(project_root=tmp_path, data_source_mode="demo"),
+    device = SimpleNamespace(settings=cutting_settings(project_root=tmp_path, data_source_mode="demo"),
                              query_service=Query())
-    monkeypatch.setattr(app.state, "devices", {"Cutter01": device}, raising=False)
+    monkeypatch.setattr(app.state, "lines", as_line_services({"Cutter01": device}), raising=False)
     own = TestClient(app)
     own.cookies.set("cutting_session", "user1-session")
     foreign = TestClient(app)

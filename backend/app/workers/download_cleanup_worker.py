@@ -15,7 +15,7 @@ class DownloadCleanupWorker:
 
     INTERVAL_SECONDS = 24 * 60 * 60
 
-    def __init__(self, settings: Settings, service: FileDownloadService, *, managed: bool = False) -> None:
+    def __init__(self, settings: Settings, service: FileDownloadService | None, *, managed: bool = False) -> None:
         self.settings = settings
         self.service = service
         self.stop_event = threading.Event()
@@ -40,6 +40,7 @@ class DownloadCleanupWorker:
         self.thread.join(timeout=5)
 
     def _run_loop(self) -> None:
+        assert self.service is not None
         while not self.stop_event.is_set():
             try:
                 result = self.service.cleanup_expired()

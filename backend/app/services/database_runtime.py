@@ -6,12 +6,13 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Callable, cast
 
 from app.config import LOADED_SOURCES, Settings
+from app.device_config import ProductionLineCatalog, load_line_catalog
+from app.services.production_lines import ProductionLineRuntime
 from app.services.runtime_settings_store import (
     RuntimeSettingsSaveError, read_runtime_env, write_runtime_env, runtime_settings_lock,
 )
 from app.services.database_configuration import (
-    DatabaseConfigurationRequest, WeldingConnectionRequest, database_configuration_data,
-    connection_env_values, welding_env_values,
+    DatabaseConfigurationRequest, WeldingConnectionRequest,
 )
 from app.core.process_lock import settings_file_lock
 from app.services.automation_runtime import AutomationRuntime
@@ -23,9 +24,7 @@ from app.database.source_registry import (
 if TYPE_CHECKING:
     from app.services.application_runtime import ApplicationRuntime
     from app.services.cutting_dispatch_service import CuttingDispatchService
-    from app.services.device_runtime import DeviceRuntime
     from app.services.file_download_service import FileDownloadService
-    from app.services.welding_service import WeldingService
     from app.services.worker_auth_service import WorkerAuthService
 
 
@@ -33,27 +32,18 @@ if TYPE_CHECKING:
 class DatabaseServices:
     """One published service graph, retained by operations already in flight."""
     settings: Settings
-    devices: dict[str, DeviceRuntime]
-    welding: WeldingService
+    catalog: ProductionLineCatalog
+    lines: dict[str, ProductionLineRuntime]
     worker_auth: WorkerAuthService
     file_downloads: FileDownloadService
     cutting_dispatch: CuttingDispatchService
     database_sources: DatabaseSourceRegistry = field(default_factory=DatabaseSourceRegistry)
 
 
-CONNECTION_FIELDS = ('host', 'port', 'database', 'username', 'password', 'driver',
-                     'encrypt', 'trust_server_certificate')
-WELD_FIELDS = {'weld_enabled', 'weld_db_host', 'weld_db_port', 'weld_db_name', 'weld_db_user',
-               'weld_db_password', 'weld_db_timezone'}
-DATABASE_FIELDS = {'data_source_mode', 'worker_database_auth_enabled', 'file_database_enabled', 'database_sources_json'} | {
-    f'{prefix}_{field}' for prefix in ('sqlserver', 'worker_sqlserver', 'file_sqlserver')
-    for field in CONNECTION_FIELDS
-} | WELD_FIELDS
+DATABASE_FIELDS = {'data_source_mode', 'worker_database_auth_enabled', 'file_database_enabled',
+                   'database_sources_json', 'production_lines_json', 'worker_source_key', 'file_source_key', 'dispatch_source_key'}
 DATABASE_SETTINGS = {item.metadata['env']: item.name for item in fields(Settings) if item.name in DATABASE_FIELDS}
-DATABASE_DIAGNOSTIC_KEYS = set(DATABASE_SETTINGS) | {'APP_EFFECTIVE_DATA_SOURCE_MODE'} | {
-    f'connections.{source}.{name}' for source in ('production', 'worker', 'file')
-    for name in (*CONNECTION_FIELDS, 'uses_primary_fallback')
-}
+DATABASE_DIAGNOSTIC_KEYS = set(DATABASE_SETTINGS) | {'APP_EFFECTIVE_DATA_SOURCE_MODE'}
 
 
 def parse_database_settings(base: Settings, values: dict[str, object]) -> Settings:
@@ -62,56 +52,47 @@ def parse_database_settings(base: Settings, values: dict[str, object]) -> Settin
         if key not in values:
             continue
         value = str(values[key])
-        if name in {'worker_database_auth_enabled', 'file_database_enabled', 'weld_enabled'}:
+        if name in {'worker_database_auth_enabled', 'file_database_enabled'}:
             if value.lower() not in {'1', 'true', 'yes', 'on', '0', 'false', 'no', 'off'}:
                 raise ValueError('数据库启用状态无效')
             value = value.lower() in {'1', 'true', 'yes', 'on'}
-        elif name.endswith('_port'):
-            value = int(value)
-            if not 1 <= value <= 65535:
-                raise ValueError('数据库端口无效')
-        elif name.endswith(('_encrypt', '_trust_server_certificate')):
-            if value and value.lower() not in {'yes', 'no', 'true', 'false', '1', '0', 'on', 'off'}:
-                raise ValueError('数据库连接选项无效')
         if isinstance(value, str) and any(char in value for char in ('\r', '\n', '\x00')):
             raise ValueError('数据库配置不能包含控制字符')
         changes[name] = value
     updated = replace(base, **changes)
-    if updated.weld_enabled:
-        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-        if not all((updated.weld_db_host, updated.weld_db_name, updated.weld_db_user, updated.weld_db_password)):
-            raise ValueError('焊接连接配置不完整')
-        try:
-            ZoneInfo(updated.weld_db_timezone)
-        except (ValueError, ZoneInfoNotFoundError):
-            raise ValueError('生产时区无效') from None
-    # A welding-only save preserves SQL Server profiles, including an unconfigured local preview.
-    if changes and changes.keys() <= WELD_FIELDS | {'database_sources_json'}:
-        return updated
-    for source, enabled in [('production', updated.effective_data_source_mode == 'sqlserver'),
-                            ('worker', updated.worker_database_auth_enabled), ('file', updated.file_database_enabled)]:
-        profile = updated.sqlserver_connection(source)
-        if enabled and not all(profile[key] for key in ('host', 'database', 'username', 'password', 'driver')):
-            raise ValueError('启用的数据库连接参数不完整')
+    load_line_catalog(updated.production_lines_json)
     return updated
 
 
-def welding_connection_settings(payload: WeldingConnectionRequest, base: Settings) -> Settings:
-    path = base.runtime_settings_env_path
-    with runtime_settings_lock, settings_file_lock(path):
-        values = welding_env_values(payload, base, read_runtime_env(path))
-    changes = {DATABASE_SETTINGS[key]: value for key, value in values.items()}
-    return replace(base, **{**changes, 'weld_enabled': True})
+def source_bindings(settings: Settings, catalog: ProductionLineCatalog) -> dict[str, tuple[str, ...]]:
+    result = catalog.source_bindings()
+    for key, reference in ((settings.worker_source_key, "工人 HR"), (settings.file_source_key, "切割文件"),
+                           (settings.dispatch_source_key, "魔盒配置"), ("bm", "切割报表船名关联")):
+        if key:
+            result[key] = (*result.get(key, ()), reference)
+    return result
+
+
+def validate_sources(configuration: Settings, catalog: ProductionLineCatalog, sources: DatabaseSourceRegistry) -> None:
+    sources.validate_lines(catalog, demo=configuration.effective_data_source_mode == 'demo')
+    for key, enabled in ((configuration.worker_source_key, configuration.worker_database_auth_enabled),
+                         (configuration.file_source_key, configuration.file_database_enabled),
+                         (configuration.dispatch_source_key, configuration.magic_box_enabled)):
+        if not key:
+            if enabled:
+                raise ValueError('启用的共享业务必须指定数据源绑定')
+            continue
+        config = sources.get(key)
+        if config.engine != 'sqlserver' or enabled and not config.enabled:
+            raise SourceConflict('共享业务必须绑定兼容且已启用的 SQL Server 数据源')
 
 
 class DatabaseRuntime:
     def __init__(self, settings: Settings, context: DatabaseServices,
                  build: Callable[[Settings, DatabaseSourceRegistry], DatabaseServices], automation_runtime: AutomationRuntime,
-                 *, source_bindings: dict[str, tuple[str, ...]] | None = None) -> None:
+                 ) -> None:
         self._base = settings
-        self._source_bindings = dict(source_bindings or {})
-        self._context = replace(context, database_sources=DatabaseSourceRegistry.from_json(
-            settings.database_sources_json, previous=context.database_sources, bindings=self._source_bindings))
+        self._context = context
         self._build = build
         self._automation_runtime = automation_runtime
         self._file_version = None
@@ -139,16 +120,15 @@ class DatabaseRuntime:
         if updated == self._context.settings:
             return self._context
         previous = self._context
-        registry = previous.database_sources
-        if updated.database_sources_json != previous.settings.database_sources_json:
-            registry = DatabaseSourceRegistry.from_json(updated.database_sources_json,
-                previous=registry, bindings=self._source_bindings)
+        registry = DatabaseSourceRegistry.from_json(updated.database_sources_json,
+            previous=previous.database_sources, bindings=source_bindings(updated, load_line_catalog(updated.production_lines_json)))
+        validate_sources(updated, load_line_catalog(updated.production_lines_json), registry)
         context = self._build(updated, registry)
         return replace(context, database_sources=registry)
 
     def _saved_sources(self, saved: dict) -> DatabaseSourceRegistry:
-        return DatabaseSourceRegistry.from_json(saved.get('DATABASE_SOURCES_JSON', self._base.database_sources_json),
-            bindings=self._source_bindings)
+        cfg = parse_database_settings(self._base, saved)
+        return DatabaseSourceRegistry.from_json(cfg.database_sources_json, bindings=source_bindings(cfg, load_line_catalog(cfg.production_lines_json)))
 
     def _source_config(self, payload: DatabaseSourceRequest, registry: DatabaseSourceRegistry) -> DatabaseSourceConfig:
         password = payload.password.get_secret_value() if payload.password else ''
@@ -213,29 +193,58 @@ class DatabaseRuntime:
 
     def close(self) -> None:
         self._context.database_sources.close()
-        self._context.welding.repository.client.close()
 
-    def save_configuration(self, payload: DatabaseConfigurationRequest | WeldingConnectionRequest) -> None:
+    def save_configuration(self, payload: DatabaseConfigurationRequest | WeldingConnectionRequest, *, line_id: str | None = None) -> None:
         path = self._base.runtime_settings_env_path
         with runtime_settings_lock, settings_file_lock(path):
-            current = self.snapshot().settings
             saved = read_runtime_env(path)
-            welding = payload if isinstance(payload, WeldingConnectionRequest) else payload.welding
-            welding_only = isinstance(payload, WeldingConnectionRequest)
-            if not welding_only and welding is not None:
-                unchanged = DatabaseConfigurationRequest.model_validate({**database_configuration_data(current), 'welding': None})
-                welding_only = payload.model_copy(update={'welding': None}) == unchanged
-            values = {}
-            if not welding_only:
-                values = {
-                    'APP_DATA_SOURCE_MODE': payload.data_source_mode,
-                    'WORKER_DATABASE_AUTH_ENABLED': str(payload.worker_database_auth_enabled).lower(),
-                    'FILE_DATABASE_ENABLED': str(payload.file_database_enabled).lower(),
-                }
-                for source in ('production', 'worker', 'file'):
-                    values.update(connection_env_values(source, getattr(payload, source), current, saved))
+            cfg = parse_database_settings(self._base, saved)
+            registry = self._saved_sources(saved)
+            catalog = load_line_catalog(cfg.production_lines_json)
+            line = catalog.get(line_id) if line_id else None
+            values: dict[str, object] = {}
+            configs = {config.id: config for config in registry.configs()}
+
+            def update_source(key, connection, *, enabled=None):
+                if not key:
+                    if any((connection.host, connection.database, connection.username)):
+                        raise ValueError("请先配置数据源绑定")
+                    return
+                old = registry.get(key)
+                changes = connection.model_dump(exclude={"password", "enabled", "timezone"})
+                if enabled is not None:
+                    changes["enabled"] = enabled
+                request = DatabaseSourceRequest.model_validate({**old.model_dump(exclude={"password"}), **changes,
+                                                               "password": connection.password})
+                candidate = self._source_config(request, registry)
+                changes = {field: getattr(candidate, field) for field in type(candidate).model_fields
+                           if getattr(candidate, field) != getattr(old, field)}
+                for field, value in changes.items():
+                    if getattr(configs[key], field) not in (getattr(old, field), value):
+                        raise ValueError("同一数据源在多个配置区块存在冲突修改")
+                configs[key] = configs[key].model_copy(update=changes)
+
+            if isinstance(payload, DatabaseConfigurationRequest):
+                values.update({"APP_DATA_SOURCE_MODE": payload.data_source_mode,
+                               "WORKER_DATABASE_AUTH_ENABLED": str(payload.worker_database_auth_enabled).lower(),
+                               "FILE_DATABASE_ENABLED": str(payload.file_database_enabled).lower()})
+                if line and line.type == "cutting":
+                    update_source(line.source_key, payload.production, enabled=True if payload.data_source_mode == "sqlserver" else None)
+                elif any((payload.production.host, payload.production.database, payload.production.username)):
+                    raise ValueError("必须明确选择切割产线")
+                update_source(cfg.worker_source_key, payload.worker, enabled=True if payload.worker_database_auth_enabled else None)
+                update_source(cfg.file_source_key, payload.file, enabled=True if payload.file_database_enabled else None)
+                welding = payload.welding
+            else:
+                welding = payload
             if welding is not None:
-                values.update(welding_env_values(welding, current, saved))
+                if line is None or line.type != "welding":
+                    raise ValueError("必须明确选择焊接产线")
+                update_source(line.source_key, welding, enabled=True if welding.enabled else None)
+                updated = line.model_copy(update={"enabled": welding.enabled, "timezone": welding.timezone})
+                catalog = catalog.model_copy(update={"lines": tuple(updated if item.id == line.id else item for item in catalog.lines)})
+                values["PRODUCTION_LINES_JSON"] = catalog.model_dump_json()
+            values["DATABASE_SOURCES_JSON"] = source_configs_json(list(configs.values()))
             merged = {**saved, **values}
             prepared = self.prepare(merged)
             try:
@@ -243,6 +252,23 @@ class DatabaseRuntime:
             except (OSError, ValueError):
                 raise RuntimeSettingsSaveError('运行配置保存失败') from None
             self.publish(prepared, merged)
+
+    def save_lines(self, catalog: ProductionLineCatalog) -> None:
+        path = self._base.runtime_settings_env_path
+        with runtime_settings_lock, settings_file_lock(path):
+            saved = read_runtime_env(path)
+            previous = load_line_catalog(parse_database_settings(self._base, saved).production_lines_json)
+            values = {**saved, "PRODUCTION_LINES_JSON": catalog.model_dump_json()}
+            # Removing IDs makes persisted jobs unreachable; retire instances by disabling them.
+            if {line.id for line in previous.lines} - {line.id for line in catalog.lines}:
+                raise ValueError("已有产线只能停用，不能删除历史标识")
+            for line in catalog.lines:
+                old = next((item for item in previous.lines if item.id == line.id), None)
+                if old and (old.type, old.device_id, old.machine_no) != (line.type, line.device_id, line.machine_no):
+                    raise ValueError("已有产线类型与物理设备标识不能改变")
+            prepared = self.prepare(values)
+            write_runtime_env(path, {"PRODUCTION_LINES_JSON": catalog.model_dump_json()})
+            self.publish(prepared, values)
 
     def publish(self, context: DatabaseServices, values: dict[str, object]) -> None:
         with runtime_settings_lock:

@@ -3,12 +3,14 @@ import type { ConnectionTestResult, DatabaseConfiguration, DatabaseSource, Datab
 
 import { toError } from '../utils/errors'
 import { selectedLineType } from '../utils/productionLines.ts'
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { getDatabaseConfiguration, getDatabaseStatus, saveDatabaseConfiguration, testDatabaseConnection, testWeldingConnection, saveWeldingConfiguration } from '../api/configuration.ts'
 import { deviceSelection, loadDevices } from '../state/devices.ts'
 import { formatTableDateValue } from '../utils/dateDisplay.ts'
 import ManagementPageHero from '../components/ManagementPageHero.vue'
 import DatabaseSourcesPanel from '../components/DatabaseSourcesPanel.vue'
+import { registerDeviceSwitchGuard } from '../api/deviceContext.ts'
+import { useConfirm } from '../composables/useConfirm.ts'
 import { useUnsavedChanges } from '../composables/useUnsavedChanges.ts'
 
 const status = ref<DatabaseStatus | null>(null)
@@ -24,16 +26,18 @@ const testError = ref('')
 const weldingScope = computed(() => selectedLineType(deviceSelection.items, deviceSelection.id) === 'welding')
 const testSource = ref('sqlserver')
 const testIsWelding = computed(() => weldingScope.value || testSource.value === 'welding')
-const dataSources = computed(() => (status.value?.data_sources || []).filter(source => !weldingScope.value || source.source === 'welding'))
+const dataSources = computed(() => (status.value?.data_sources || []).filter(source => !weldingScope.value || source.source === deviceSelection.items.find(line => line.id === deviceSelection.id)?.source_key))
 const connectionStatus = computed(() => weldingScope.value
   ? databaseConfiguration.value?.welding?.password_configured ? '焊接参数已配置' : '等待配置'
   : status.value?.connection_configured ? '只读连接已配置' : '等待配置')
 const hasUnsavedChanges = ref(false)
 useUnsavedChanges(hasUnsavedChanges, '数据库连接参数还有未保存的修改，确定离开吗？')
+const confirm = useConfirm()
+onBeforeUnmount(registerDeviceSwitchGuard('database', () => !hasUnsavedChanges.value || confirm('数据库连接参数还有未保存的修改，确定切换产线吗？')))
 const configurationSources: { key: DatabaseSource; label: string; description: string }[] = [
-  { key: 'production', label: '生产报表库', description: 'SQLSERVER_* · dbo.task 等生产数据' },
-  { key: 'worker', label: '工人 HR 库', description: 'WORKER_SQLSERVER_* · dbo.HRbase_userInfo' },
-  { key: 'file', label: '切割文件库', description: 'FILE_SQLSERVER_* · PDM 文件索引/内容' },
+  { key: 'production', label: '生产报表库', description: '当前切割产线绑定的数据源 · dbo.task 等生产数据' },
+  { key: 'worker', label: '工人 HR 库', description: 'WORKER_SOURCE_KEY · dbo.HRbase_userInfo' },
+  { key: 'file', label: '切割文件库', description: 'FILE_SOURCE_KEY · PDM 文件索引/内容' },
 ]
 
 const connection = reactive({
@@ -48,6 +52,7 @@ const connection = reactive({
 })
 const weldingConnection = reactive({ host: '', port: 3306, database: 'weld_production_data', username: '', password: '', timezone: 'Asia/Shanghai' })
 const activeTestConnection = computed(() => testIsWelding.value ? weldingConnection : connection)
+watch(() => deviceSelection.id, () => { configurationResult.value = null; testResult.value = null; testError.value = ''; void loadConfiguration(); void loadStatus() })
 watch(testIsWelding, () => { testResult.value = null; testError.value = '' })
 
 const sourceLabels: Record<string, string> = { demo: '演示数据', sqlserver: 'SQL Server' }
@@ -63,23 +68,29 @@ function formatCell(value: unknown) {
 }
 
 async function loadStatus() {
+  const line = deviceSelection.id
   statusError.value = ''
   try {
-    status.value = await getDatabaseStatus()
+    const result = await getDatabaseStatus()
+    if (line !== deviceSelection.id) return
+    status.value = result
     connection.driver = status.value.driver
     connection.host = status.value.configured_host || ''
     connection.database = status.value.configured_database || ''
   } catch (caught) {
     const exception = toError(caught)
-    statusError.value = exception.message
+    if (line === deviceSelection.id) statusError.value = exception.message
   }
 }
 
 async function loadConfiguration() {
+  const line = deviceSelection.id
   configurationLoading.value = true
   configurationError.value = ''
   try {
-    databaseConfiguration.value = await getDatabaseConfiguration()
+    const result = await getDatabaseConfiguration()
+    if (line !== deviceSelection.id) return
+    databaseConfiguration.value = result
     for (const source of configurationSources) {
       databaseConfiguration.value[source.key].password = ''
     }
@@ -90,13 +101,14 @@ async function loadConfiguration() {
     hasUnsavedChanges.value = false
   } catch (caught) {
     const exception = toError(caught)
-    configurationError.value = exception.message
+    if (line === deviceSelection.id) configurationError.value = exception.message
   } finally {
-    configurationLoading.value = false
+    if (line === deviceSelection.id) configurationLoading.value = false
   }
 }
 
 async function saveConfiguration(weldingOnly = false) {
+  const line = deviceSelection.id
   configurationSaving.value = true
   configurationError.value = ''
   configurationResult.value = null
@@ -107,7 +119,7 @@ async function saveConfiguration(weldingOnly = false) {
       data_source_mode: databaseConfiguration.value.data_source_mode,
       worker_database_auth_enabled: databaseConfiguration.value.worker_database_auth_enabled,
       file_database_enabled: databaseConfiguration.value.file_database_enabled,
-      welding: { ...databaseConfiguration.value.welding, password: databaseConfiguration.value.welding?.password || null },
+      welding: databaseConfiguration.value.welding ? { ...databaseConfiguration.value.welding, password: databaseConfiguration.value.welding.password || null } : null,
     }
     for (const source of configurationSources) {
       const value = databaseConfiguration.value[source.key]
@@ -122,7 +134,9 @@ async function saveConfiguration(weldingOnly = false) {
         trust_server_certificate: value.trust_server_certificate,
       }
     }
-    configurationResult.value = weldingOnly ? await saveWeldingConfiguration(payload.welding) : await saveDatabaseConfiguration(payload)
+    const result = weldingOnly && payload.welding ? await saveWeldingConfiguration(payload.welding) : await saveDatabaseConfiguration(payload)
+    if (line !== deviceSelection.id) return
+    configurationResult.value = result
     for (const source of configurationSources) {
       const value = databaseConfiguration.value[source.key]
       if (value.password) value.password_configured = true
@@ -133,13 +147,14 @@ async function saveConfiguration(weldingOnly = false) {
     await loadDevices({ force: true })
   } catch (caught) {
     const exception = toError(caught)
-    configurationError.value = exception.message
+    if (line === deviceSelection.id) configurationError.value = exception.message
   } finally {
     configurationSaving.value = false
   }
 }
 
 async function runConnectionTest() {
+  const line = deviceSelection.id
   const welding = testIsWelding.value
   const weldingProfile = { ...weldingConnection }
   const sqlProfile = { ...connection }
@@ -150,10 +165,10 @@ async function runConnectionTest() {
     const result = welding
       ? { ...await testWeldingConnection({ ...weldingProfile, password: weldingProfile.password || null }), database: weldingProfile.database }
       : await testDatabaseConnection(sqlProfile)
-    if (welding === testIsWelding.value) testResult.value = result
+    if (line === deviceSelection.id && welding === testIsWelding.value) testResult.value = result
   } catch (caught) {
     const exception = toError(caught)
-    if (welding === testIsWelding.value) testError.value = exception.message
+    if (line === deviceSelection.id && welding === testIsWelding.value) testError.value = exception.message
   } finally {
     testing.value = false
   }
@@ -167,7 +182,7 @@ onMounted(() => Promise.all([loadStatus(), loadConfiguration()]))
   <ManagementPageHero
     eyebrow="DATABASE ADMINISTRATION"
     title="数据库配置"
-    :description="weldingScope ? '配置小组立焊接线 MySQL 只读连接；保存后新请求生效。' : '生产报表、工人身份和切割文件使用独立数据源，连接信息由服务器环境配置统一管理。'"
+    :description="weldingScope ? '配置当前焊接产线绑定的 MySQL 只读连接；保存后新请求生效。' : '生产报表、工人身份和切割文件使用独立数据源，连接信息由服务器环境配置统一管理。'"
     icon="database"
     status-label="数据访问"
     :status-value="connectionStatus"
@@ -225,8 +240,7 @@ onMounted(() => Promise.all([loadStatus(), loadConfiguration()]))
       <article v-for="source in dataSources" :key="source.source">
         <div><strong>{{ source.label }}</strong><span :class="source.enabled && source.configured ? 'ready' : 'muted'">{{ !source.enabled ? '未启用' : source.configured ? '已配置' : '配置不完整' }}</span></div>
         <dl><div><dt>服务器</dt><dd>{{ source.host ? `${source.host}:${source.port}` : '--' }}</dd></div><div><dt>数据库</dt><dd>{{ source.database || '--' }}</dd></div></dl>
-        <small v-if="source.uses_primary_fallback" class="source-warning">当前兼容回退到生产库；正式环境请配置专用连接。</small>
-        <small v-else-if="source.configured">已使用独立连接配置</small>
+        <small v-if="source.configured">已登记数据源连接</small>
         <small v-else>连接参数尚未保存完整</small>
       </article>
     </div>

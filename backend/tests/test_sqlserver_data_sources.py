@@ -5,80 +5,49 @@ from dotenv import dotenv_values
 
 from app.api import database
 from app.config import settings
+from app.database.source_registry import DatabaseSourceRegistry, source_configs_json
 from app.database.sqlserver import SqlServerClient, SqlServerConfigurationError
+from app.models.database_sources import DatabaseSourceConfig
 from app.services.worker_auth_service import WorkerAuthService
+from tests.line_fixtures import configuration
 
 
-def _production_settings(**changes):
-    values = {
-        "sqlserver_host": "prod-db",
-        "sqlserver_port": 1433,
-        "sqlserver_database": "production",
-        "sqlserver_username": "prod-reader",
-        "sqlserver_password": "prod-secret",
-        "worker_sqlserver_host": "",
-        "worker_sqlserver_database": "",
-        "worker_sqlserver_username": "",
-        "worker_sqlserver_password": "",
-        "file_sqlserver_host": "",
-        "file_sqlserver_database": "",
-        "file_sqlserver_username": "",
-        "file_sqlserver_password": "",
-    }
-    values.update(changes)
-    return replace(settings, **values)
+def test_worker_and_file_use_explicitly_bound_registry_clients(tmp_path):
+    from app.services.application_runtime import build_runtime
+    cfg = configuration(tmp_path)
+    sources = DatabaseSourceRegistry.from_json(cfg.database_sources_json).configs()
+    for key in ('hr', 'pdm'):
+        sources.append(DatabaseSourceConfig(id=key, name=key, engine='sqlserver', host=key + '.test', port=1433,
+            database=key, username='reader', password=key + '-private'))
+    cfg = replace(cfg, worker_database_auth_enabled=True, file_database_enabled=True, worker_source_key='hr',
+                  file_source_key='pdm', database_sources_json=source_configs_json(sources))
+    context = build_runtime(cfg, role='web').database_runtime.snapshot()
+    assert context.worker_auth.client is context.database_sources.client('hr')
+    assert context.file_downloads.pdm.client is context.database_sources.client('pdm')
+    assert context.worker_auth.client.connection_config()['database'] == 'hr'
+    assert context.file_downloads.pdm.client.connection_config()['database'] == 'pdm'
 
 
-def test_worker_and_file_clients_use_their_own_database_profiles() -> None:
-    configured = _production_settings(
-        worker_sqlserver_host="hr-db",
-        worker_sqlserver_port=1434,
-        worker_sqlserver_database="hr",
-        worker_sqlserver_username="hr-reader",
-        worker_sqlserver_password="hr-secret",
-        file_sqlserver_host="file-db",
-        file_sqlserver_port=1435,
-        file_sqlserver_database="pdm",
-        file_sqlserver_username="file-reader",
-        file_sqlserver_password="file-secret",
-    )
-
-    worker_connection = SqlServerClient(configured, source="worker")._connection_string()
-    file_connection = SqlServerClient(configured, source="file")._connection_string()
-
-    assert "SERVER=hr-db,1434" in worker_connection
-    assert "DATABASE=hr" in worker_connection
-    assert "UID=prod-reader" not in worker_connection
-    assert "SERVER=file-db,1435" in file_connection
-    assert "DATABASE=pdm" in file_connection
-    assert "UID=prod-reader" not in file_connection
+def test_disabled_or_incompatible_source_cannot_be_used():
+    cfg = DatabaseSourceConfig(id='production-test', name='测试', engine='sqlserver', host='', port=1433,
+                               database='', username='', enabled=False)
+    with pytest.raises(SqlServerConfigurationError, match='尚未启用'):
+        SqlServerClient(cfg).connection_config()
+    with pytest.raises(ValueError, match='不是 SQL Server'):
+        SqlServerClient(cfg.model_copy(update={'engine': 'mysql'}))
 
 
-def test_partial_dedicated_profile_never_mixes_primary_credentials() -> None:
-    configured = _production_settings(worker_sqlserver_host="hr-db")
-
-    with pytest.raises(SqlServerConfigurationError) as exc_info:
-        SqlServerClient(configured, source="worker")._connection_string()
-
-    message = str(exc_info.value)
-    assert "WORKER_SQLSERVER_DATABASE" in message
-    assert "WORKER_SQLSERVER_USERNAME" in message
-    assert "WORKER_SQLSERVER_PASSWORD" in message
-
-
-def test_unconfigured_legacy_profile_has_an_explicit_primary_fallback() -> None:
-    configured = _production_settings()
-
-    worker_profile = configured.sqlserver_connection("worker")
-
-    assert worker_profile["uses_primary_fallback"] is True
-    assert worker_profile["host"] == "prod-db"
-
-
-def test_worker_auth_constructs_a_worker_database_client() -> None:
-    service = WorkerAuthService(_production_settings())
-
-    assert service.client.source == "worker"
+def test_configuration_response_is_from_selected_source_and_never_echoes_credentials(tmp_path):
+    cfg = configuration(tmp_path, welding=True)
+    payload = database.database_configuration_data(cfg, 'Cutter01')
+    assert payload['production']['password_configured']
+    assert payload['welding'] is None
+    weld = database.database_configuration_data(cfg, 'welding')
+    assert weld['welding']['password_configured']
+    assert 'password' not in payload['production'] and 'private' not in str(payload) + str(weld)
+    status = database._database_source_status(cfg)
+    assert {item['source'] for item in status} == {'cutting-production', 'welding-production'}
+    assert all(not item['uses_primary_fallback'] for item in status)
 
 
 def test_runtime_env_write_is_atomic_preserves_unknown_keys_and_quotes_secrets(
@@ -103,36 +72,3 @@ def test_runtime_env_write_is_atomic_preserves_unknown_keys_and_quotes_secrets(
     assert saved["SQLSERVER_HOST"] == "new-db"
     assert saved["SQLSERVER_PASSWORD"] == "pa'ss\\word${UNCHANGED}"
     assert path.stat().st_mode & 0o777 == 0o600
-
-
-def test_database_configuration_response_never_contains_passwords(monkeypatch) -> None:
-    configured = _production_settings(
-        worker_sqlserver_password="worker-secret",
-        file_sqlserver_password="file-secret",
-    )
-    monkeypatch.setattr(database, "settings", configured)
-
-    payload = database.database_configuration_data(configured)
-
-    assert payload["production"]["password_configured"] is True
-    assert payload["worker"]["password_configured"] is True
-    assert "password" not in payload["production"]
-    assert "prod-secret" not in str(payload)
-    assert "worker-secret" not in str(payload)
-
-
-@pytest.mark.parametrize(('enabled', 'configured'), [(False, False), (True, False), (False, True), (True, True)])
-def test_welding_source_status_matches_connection_configuration_without_secrets(enabled, configured):
-    configuration = _production_settings(
-        weld_enabled=enabled, weld_db_host='weld-db', weld_db_port=3307,
-        weld_db_name='welding', weld_db_user='weld-reader',
-        weld_db_password='weld-private' if configured else '',
-    )
-    sources = database._database_source_status(configuration)
-    assert [source['source'] for source in sources] == ['production', 'worker', 'file', 'welding']
-    welding = sources[-1]
-    assert welding['enabled'] is enabled and welding['configured'] is configured
-    assert (welding['host'], welding['port'], welding['database']) == ('weld-db', 3307, 'welding')
-    assert welding['uses_primary_fallback'] is False
-    assert 'password' not in welding and 'username' not in welding
-    assert 'weld-private' not in str(sources) and 'weld-reader' not in str(sources)

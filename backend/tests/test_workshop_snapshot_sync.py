@@ -1,3 +1,4 @@
+from tests.line_fixtures import as_line_services, runtime_line
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from concurrent.futures import ThreadPoolExecutor
@@ -230,12 +231,12 @@ def test_unexpected_source_mismatch_is_reported_without_silent_overwrite(tmp_pat
 def test_http_generation_syncs_nonempty_snapshot_or_reports_source_conflict(tmp_path, monkeypatch, corrected):
     from app.api.auth import require_user
     from app.api.workshop import router
-    from app.config import Settings
+    from tests.line_fixtures import cutting_settings
     from app.models.domain import QueryBundle
 
     repository = setup(tmp_path)
     admin = {'user_id': repository.test_admin_id, 'display_name': '管理员', 'role': 'admin'}
-    cfg = Settings(project_root=tmp_path, data_source_mode='sqlserver', demo_mode=False)
+    cfg = cutting_settings(project_root=tmp_path, data_source_mode='sqlserver', demo_mode=False)
     monkeypatch.setattr('app.api.workshop.settings', cfg)
     repository.sync_daily_report(report_date='2026-09-30', source_mode='sqlserver',
                                  records=[record('A')], user=admin, now='2026-10-01T01:00:00')
@@ -247,9 +248,9 @@ def test_http_generation_syncs_nonempty_snapshot_or_reports_source_conflict(tmp_
     app.state.query_service = SimpleNamespace(prepare_workshop_data=lambda _: QueryBundle(
         [], [record('A', work=90 if corrected else 60), record('B')], [],
     ))
-    app.state.devices = {'Cutter01': SimpleNamespace(
-        settings=Settings(data_source_mode='sqlserver'), workshop=app.state.workshop,
-        query_service=getattr(app.state, 'query_service', None))}
+    app.state.lines = as_line_services({'Cutter01': SimpleNamespace(
+        settings=cutting_settings(data_source_mode='sqlserver'), workshop=app.state.workshop,
+        query_service=getattr(app.state, 'query_service', None))})
     app.dependency_overrides[require_user] = lambda: admin
 
     @app.middleware('http')
@@ -272,14 +273,14 @@ def test_http_generation_syncs_nonempty_snapshot_or_reports_source_conflict(tmp_
 
 
 def test_automation_preparation_syncs_existing_snapshot(tmp_path):
-    from app.config import Settings
+    from tests.line_fixtures import cutting_settings
     from app.database.automation import AutomationRepository
     from app.database.metadata import MetadataRepository
     from app.models.domain import QueryBundle
     from app.services.automation_service import AutomationService
 
     workshop = setup(tmp_path)
-    cfg = Settings(project_root=tmp_path, data_source_mode='sqlserver', demo_mode=False)
+    cfg = cutting_settings(project_root=tmp_path, data_source_mode='sqlserver', demo_mode=False)
     metadata = MetadataRepository(workshop.database, device_id='Cutter01')
     metadata.initialize()
     automation = AutomationRepository(workshop.database)
@@ -288,12 +289,12 @@ def test_automation_preparation_syncs_existing_snapshot(tmp_path):
     workshop.sync_daily_report(report_date='2026-09-30', source_mode='sqlserver',
                               records=[record('A')], user=user, now='2026-10-01T01:00:00')
     service = AutomationService(cfg, automation, metadata, object())
-    service.device_services = {'Cutter01': SimpleNamespace(settings=cfg, workshop=workshop, query_service=SimpleNamespace(fetch_workshop_data=lambda _: QueryBundle(
+    service.line_services = as_line_services({'Cutter01': SimpleNamespace(settings=cfg, workshop=workshop, query_service=SimpleNamespace(fetch_workshop_data=lambda _: QueryBundle(
         [], [record('A'), record('B')], [],
-    )))}
+    )))})
     run = {'device_id': 'Cutter01', 'report_date': '2026-09-30', 'created_by_id': user['user_id'], 'created_by_name': user['display_name']}
-    service._ensure_workshop_report(run, datetime(2026, 10, 1, 2))
-    service._ensure_workshop_report(run, datetime(2026, 10, 1, 3))
+    service._ensure_workshop_report(run, datetime(2026, 10, 1, 2), service.line_services["Cutter01"].cutting())
+    service._ensure_workshop_report(run, datetime(2026, 10, 1, 3), service.line_services["Cutter01"].cutting())
     assert [row.task_id for row in workshop.get_daily_report_records('2026-09-30')[1]] == ['A', 'B']
 
 

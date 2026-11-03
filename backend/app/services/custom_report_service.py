@@ -27,10 +27,10 @@ def _primitive(value: Any) -> Any:
 
 
 class CustomReportService:
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, *, client: SqlServerClient | None = None) -> None:
         self.settings = settings
-        self.client = SqlServerClient(settings)
-        self.validator = SqlWorkbenchService(settings)
+        self.client = client
+        self.validator = SqlWorkbenchService(settings, client=client)
 
     def validate(self, sql_text: str) -> dict[str, Any]:
         validated = self.validator.validate(sql_text)

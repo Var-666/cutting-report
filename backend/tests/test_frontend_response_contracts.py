@@ -1,3 +1,5 @@
+from tests.line_fixtures import source_client
+from tests.line_fixtures import as_line_services, runtime_line
 """Check serialized core responses against the fields consumed by the frontend.
 
 External production sources are replaced; routes, services and JSON conversion run.
@@ -11,7 +13,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api import auth, leadership, welding
-from app.config import Settings
+from tests.line_fixtures import cutting_settings, welding_settings
+from app.device_config import load_line_catalog
 from app.database.welding import JOB_FIELDS, PART_FIELDS, SEAM_FIELDS, WeldingRepository
 from app.database.workshop import WorkshopRepository
 from app.services.leadership_report_service import LeadershipReportService
@@ -20,7 +23,7 @@ from app.services.welding_service import WeldingService
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    cfg = Settings(project_root=tmp_path, data_source_mode='demo', demo_mode=True,
+    cfg = cutting_settings(project_root=tmp_path, data_source_mode='demo', demo_mode=True,
                    weld_enabled=True, worker_database_auth_enabled=False, auth_cookie_secure=False)
     cfg.ensure_runtime_dirs()
     users = WorkshopRepository(tmp_path / 'contracts.db')
@@ -30,7 +33,7 @@ def client(tmp_path, monkeypatch):
         app.include_router(router)
     app.state.settings = cfg
     app.state.workshop = users
-    app.state.devices = {'Cutter01': SimpleNamespace(settings=cfg, leadership_report_service=LeadershipReportService(cfg))}
+    app.state.lines = as_line_services({'Cutter01': SimpleNamespace(settings=cfg, leadership_report_service=LeadershipReportService(cfg, client=source_client(cfg)))})
     app.dependency_overrides[auth.require_admin] = lambda: {'role': 'admin'}
     monkeypatch.setattr(auth, 'settings', cfg)
 
@@ -96,6 +99,7 @@ def test_cutting_report_response_contract(client):
 
 
 class WeldingSource(WeldingRepository):
+    device_nos = ()
     """Repository-shaped source with nullable details and Decimal aggregates."""
     def __init__(self, empty=False):
         self.client = self
@@ -162,7 +166,10 @@ class WeldingSource(WeldingRepository):
 @pytest.mark.parametrize('kind,path', [('daily', 'statistics/daily'), ('equipment', 'equipment/summary'),
                                       ('jobs', 'jobs'), ('parts', 'parts'), ('jobs', 'dashboard')])
 def test_welding_report_response_contract(client, kind, path, empty):
-    client.app.state.welding = WeldingService(client.app.state.settings, WeldingSource(empty))
+    instance = WeldingService(welding_settings(), WeldingSource(empty))
+    client.app.state.lines['welding'] = runtime_line(instance, 'welding')
+    client.app.state.catalog = load_line_catalog(instance.settings.production_lines_json)
+    client.headers['X-Production-Line'] = 'welding'
     report = data(client.get(f'/api/v1/welding/{path}?start=2026-10-01&end=2026-10-01'))
     from app.models.welding_contracts import WeldingDailyReport, WeldingJobsReport, WeldingPartsReport, WeldingEquipmentReport
     model = {'daily': WeldingDailyReport, 'jobs': WeldingJobsReport,
@@ -207,7 +214,10 @@ def test_welding_report_response_contract(client, kind, path, empty):
 
 
 def test_welding_part_response_contract(client):
-    client.app.state.welding = WeldingService(client.app.state.settings, WeldingSource())
+    instance = WeldingService(welding_settings(), WeldingSource())
+    client.app.state.lines['welding'] = runtime_line(instance, 'welding')
+    client.app.state.catalog = load_line_catalog(instance.settings.production_lines_json)
+    client.headers['X-Production-Line'] = 'welding'
     result = data(client.get('/api/v1/welding/parts/1'))
     from app.models.welding_contracts import WeldingPart
     assert WeldingPart.model_validate(result).model_dump(mode='json', exclude_unset=True) == result

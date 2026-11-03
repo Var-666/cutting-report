@@ -12,13 +12,13 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.config import (
-    DEVICE_CATALOG, DEVICE_CONFIG_PATH, LOADED_ENVIRONMENT, LOADED_SOURCES,
+    LOADED_ENVIRONMENT, LOADED_SOURCES,
     PROCESS_ENVIRONMENT, Settings, _environment,
 )
 from app.configuration_sources import load_environment
-from app.device_config import device_catalog_path, load_device_catalog
+from app.device_config import load_line_catalog
 from app.services.automation_runtime import AutomationRuntime, HOT_SETTINGS, validate_automation_settings
-from app.services.database_runtime import DatabaseRuntime, DATABASE_FIELDS, DATABASE_DIAGNOSTIC_KEYS
+from app.services.database_runtime import DatabaseRuntime, DATABASE_FIELDS, DATABASE_DIAGNOSTIC_KEYS, validate_sources
 from pydantic import ValidationError
 
 
@@ -28,19 +28,17 @@ ENV_FIELDS = {item.name: item for item in fields(Settings) if "env" in item.meta
 HOT_FIELDS = {item[0] for item in HOT_SETTINGS.values()}
 SOURCE_LABELS = {"default": "程序默认值", "process": "进程环境变量", ".env": ".env",
                  "data/settings.env": "data/settings.env（管理页面保存）", "runtime": "运行时更新",
-                 "devices.json": "devices.json", "derived": "运行配置推导"}
+                 "derived": "运行配置推导"}
 
 
 def source_label(source: str) -> str:
-    if source.endswith("+devices.json"):
-        return SOURCE_LABELS.get(source.split("+")[0], "未知") + " + devices.json（未绑定仪表时禁用）"
     return SOURCE_LABELS.get(source, "未知")
 
 
 def category(key: str) -> str:
     if key in HOT_SETTINGS:
         return CATEGORIES[5]
-    if key.startswith(("DATABASE_SOURCES_", "connections.", "WELD_", "SQLSERVER_", "WORKER_SQLSERVER_", "WORKER_DATABASE_", "FILE_SQLSERVER_", "FILE_DATABASE_", "SQL_WORKBENCH_")):
+    if key.endswith("_SOURCE_KEY") or key.startswith(("DATABASE_SOURCES_", "connections.", "WELD_", "SQLSERVER_", "WORKER_SQLSERVER_", "WORKER_DATABASE_", "FILE_SQLSERVER_", "FILE_DATABASE_", "SQL_WORKBENCH_")):
         return CATEGORIES[1]
     if key.startswith("LLM_"):
         return CATEGORIES[3]
@@ -48,7 +46,7 @@ def category(key: str) -> str:
         return CATEGORIES[6]
     if key.startswith(("FILE_", "MAGIC_BOX_")):
         return CATEGORIES[7]
-    if key.startswith("ENERGY_") or key == "DEVICE_CONFIG_PATH":
+    if key.startswith("ENERGY_") or key == "PRODUCTION_LINES_JSON":
         return CATEGORIES[2]
     if key.startswith(("REPORT_", "LEADERSHIP_", "CHART_", "PDF_", "EMAIL_")):
         return CATEGORIES[4]
@@ -74,19 +72,6 @@ def safe_value(value, key=""):
 
 def connection_values(settings: Settings, sources: dict) -> dict:
     result = {}
-    for source in ("production", "worker", "file"):
-        connection = settings.sqlserver_connection(source)
-        primary = source == "production" or connection["uses_primary_fallback"]
-        prefix = "SQLSERVER" if primary else f"{source.upper()}_SQLSERVER"
-        for name, value in connection.items():
-            key = f"connections.{source}.{name}"
-            env = f"{prefix}_{name.upper()}" + ("_SECONDS" if name in {"connect_timeout", "query_timeout"} else "")
-            if name == "uses_primary_fallback":
-                result[key] = (value, "derived", None)
-                continue
-            if not primary and name in {"driver", "encrypt", "trust_server_certificate"} and not getattr(settings, f"{source}_sqlserver_{name}"):
-                env = f"SQLSERVER_{name.upper()}"
-            result[key] = (value, sources.get(env, "default"), env)
     mode_key = "APP_DATA_SOURCE_MODE" if settings.data_source_mode else "APP_DEMO_MODE"
     result["APP_EFFECTIVE_DATA_SOURCE_MODE"] = (settings.effective_data_source_mode, sources.get(mode_key, "default"), mode_key)
     return result
@@ -96,26 +81,18 @@ def fingerprint(value, key: str) -> str:
     return hmac.new(key.encode(), json.dumps(value, sort_keys=True, ensure_ascii=False, default=str).encode(), hashlib.sha256).hexdigest()
 
 
-def catalog_values(catalog, energy_enabled: bool) -> dict:
-    result = {"devices.default_device_id": catalog.default_device_id}
-    for line in catalog.production_lines:
-        result[f"lines.{line.id}.name"] = line.name
-    for device in catalog.devices:
-        result[f"devices.{device.id}.energy_api_enabled"] = energy_enabled and device.energy is not None
-        for name, value in device.model_dump(mode="json").items():
-            if isinstance(value, dict):
-                for child, content in value.items():
-                    result[f"devices.{device.id}.{name}.{child}"] = content
-            else:
-                result[f"devices.{device.id}.{name}"] = value
-    return result
-
-
 def validate_values(settings: Settings, values: dict) -> set[str]:
     invalid = set()
+    from app.database.source_registry import DatabaseSourceRegistry
     try:
-        from app.database.source_registry import DatabaseSourceRegistry
-        DatabaseSourceRegistry.from_json(settings.database_sources_json)
+        catalog = load_line_catalog(settings.production_lines_json)
+    except ValueError:
+        invalid.add('PRODUCTION_LINES_JSON')
+        catalog = None
+    try:
+        registry = DatabaseSourceRegistry.from_json(settings.database_sources_json)
+        if catalog is not None:
+            validate_sources(settings, catalog, registry)
     except ValueError:
         invalid.add('DATABASE_SOURCES_JSON')
     for name, item in ENV_FIELDS.items():
@@ -141,23 +118,6 @@ def validate_values(settings: Settings, values: dict) -> set[str]:
         required.extend([("SMTP_HOST", settings.smtp_host), ("SMTP_FROM_EMAIL", settings.smtp_from_email if "@" in settings.smtp_from_email else "")])
     if settings.llm_enabled:
         required.extend((key, getattr(settings, name)) for key, name in [("LLM_API_KEY", "llm_api_key"), ("LLM_BASE_URL", "llm_base_url"), ("LLM_MODEL", "llm_model")])
-    if settings.weld_enabled:
-        required.extend((key, getattr(settings, name)) for key, name in [('WELD_DB_HOST', 'weld_db_host'), ('WELD_DB_NAME', 'weld_db_name'), ('WELD_DB_USER', 'weld_db_user'), ('WELD_DB_PASSWORD', 'weld_db_password')])
-        try:
-            ZoneInfo(settings.weld_db_timezone)
-        except (ValueError, ZoneInfoNotFoundError):
-            invalid.add('WELD_DB_TIMEZONE')
-        for key, valid in [('WELD_DB_POOL_SIZE', 1 <= settings.weld_db_pool_size <= 4),
-                           ('WELD_DB_CONNECT_TIMEOUT_SECONDS', 1 <= settings.weld_db_connect_timeout <= 60),
-                           ('WELD_DB_QUERY_TIMEOUT_SECONDS', 1 <= settings.weld_db_query_timeout <= 300)]:
-            if not valid:
-                invalid.add(key)
-    for source, enabled in [("production", settings.effective_data_source_mode == "sqlserver"),
-                            ("worker", settings.worker_database_auth_enabled), ("file", settings.file_database_enabled)]:
-        if enabled:
-            connection = settings.sqlserver_connection(source)
-            prefix = "SQLSERVER" if source == "production" or connection["uses_primary_fallback"] else f"{source.upper()}_SQLSERVER"
-            required.extend((f"{prefix}_{name.upper()}", connection[name]) for name in ("host", "database", "username", "password"))
     invalid.update(key for key, value in required if not value)
     try:
         ZoneInfo(settings.timezone)
@@ -172,7 +132,7 @@ def validate_values(settings: Settings, values: dict) -> set[str]:
 
 class ConfigurationDiagnostics:
     def __init__(self, settings: Settings, runtime: AutomationRuntime, *, process=None, sources=None,
-                 catalog=DEVICE_CATALOG, database_runtime: DatabaseRuntime | None = None):
+                 database_runtime: DatabaseRuntime | None = None):
         self.settings = settings
         self.database_runtime = database_runtime
         self.runtime = runtime
@@ -184,7 +144,6 @@ class ConfigurationDiagnostics:
             key = item.metadata["env"]
             if isinstance(value, (int, float)) and not isinstance(value, bool) and self.startup_values.get(key) == "":
                 self.sources[key] = "default"
-        self.catalog = catalog
         self.loaded_at = datetime.now(timezone.utc).isoformat()
         self.version = uuid4().hex[:12]
 
@@ -202,11 +161,6 @@ class ConfigurationDiagnostics:
             items[key] = {"value": safe_value(value, key), "source": source, "digest": fingerprint(value, comparison_key)}
         for key, (value, source, _) in connection_values(database_settings, database_sources).items():
             items[key] = {"value": safe_value(value, key), "source": source, "digest": fingerprint(value, comparison_key)}
-        items["DEVICE_CONFIG_PATH"] = {"value": "已配置", "source": self.sources.get("DEVICE_CONFIG_PATH", "default"),
-                                       "digest": fingerprint(str(DEVICE_CONFIG_PATH), comparison_key)}
-        for key, value in catalog_values(self.catalog, self.settings.energy_api_enabled).items():
-            source = self.sources.get("ENERGY_API_ENABLED", "default") + "+devices.json" if key.endswith(".energy_api_enabled") else "devices.json"
-            items[key] = {"value": value, "source": source, "digest": fingerprint(value, comparison_key)}
         return {"items": items, "loaded_at": self.loaded_at, "hot_loaded_at": max(hot["loaded_at"], database['loaded_at']) if database else hot["loaded_at"],
                 "hot_revision": hot["revision"], "error": hot["error"],
                 "database_error": database['error'] if database else None,
@@ -248,21 +202,6 @@ class ConfigurationDiagnostics:
             targets[key] = (value, source)
             if dependency in invalid:
                 invalid.add(key)
-        catalog_path = device_catalog_path(self.settings.project_root, values)
-        targets["DEVICE_CONFIG_PATH"] = (str(catalog_path), sources.get("DEVICE_CONFIG_PATH", "default"))
-        try:
-            catalog = load_device_catalog(catalog_path)
-            targets.update({key: (value, sources.get("ENERGY_API_ENABLED", "default") + "+devices.json" if key.endswith(".energy_api_enabled") else "devices.json")
-                            for key, value in catalog_values(catalog, parsed["energy_api_enabled"]).items()})
-            # Legacy environment variables are assertions, never device overrides.
-            from app.config import legacy_device_environment_conflicts
-            conflicts = legacy_device_environment_conflicts(catalog, values)
-            invalid.update(conflicts)
-            if conflicts:
-                errors.append("旧设备环境参数与设备目录冲突，请核对并迁入设备目录")
-        except (ValueError, OSError):
-            invalid.add("DEVICE_CONFIG_PATH")
-            errors.append("设备目录无法读取或校验失败")
         return targets, invalid, errors
 
     def report(self, worker: dict) -> dict:
@@ -273,7 +212,7 @@ class ConfigurationDiagnostics:
         targets, invalid, errors = self.target()
         rows = []
         for key in sorted(set(web["items"]) | set(targets) | set(other.get("items", {}) if worker_available else {})):
-            target_value, target_source = targets.get(key, (None, "devices.json"))
+            target_value, target_source = targets.get(key, (None, "default"))
             desired = fingerprint(target_value, comparison_key)
             database_hot = self.database_runtime is not None and key in DATABASE_DIAGNOSTIC_KEYS
             hot = key in HOT_SETTINGS or database_hot
@@ -291,7 +230,7 @@ class ConfigurationDiagnostics:
             statuses = {item["status"] for item in processes.values()}
             state = "error" if mismatch or "error" in statuses else "pending" if "pending" in statuses else processes["web"]["status"]
             rows.append({"key": key, "category": CATEGORIES[2] if key.startswith(("devices.", "lines.")) else category(key),
-                         "processes": processes, "saved_value": safe_value(target_value, key) if target_source != "devices.json" else target_value,
+                         "processes": processes, "saved_value": safe_value(target_value, key),
                          "saved_source": source_label(target_source), "status": state,
                          "valid": key not in invalid and not errors, "process_mismatch": mismatch,
                          "restart_required": not hot and any(item["status"] == "pending" for item in processes.values()),
@@ -300,11 +239,11 @@ class ConfigurationDiagnostics:
                          ("数据库声明参数，实际连接及继承来源见 connections.*；" if "SQLSERVER_" in key else "")
                          + "重启 Web 和 Worker；Docker 环境变量变更需重新创建两个容器"})
         return {"categories": CATEGORIES, "items": rows, "errors": errors,
-                "precedence": "data/settings.env > 进程环境变量 > .env > 程序默认值；设备业务参数只取 devices.json",
+                "precedence": "data/settings.env > 进程环境变量 > .env > 程序默认值；产线与连接只取统一配置",
                 "processes": {"web": {key: web[key] for key in ("loaded_at", "hot_loaded_at", "hot_revision", "version")},
                               "worker": {"state": worker.get("state", "missing"), "available": worker_available,
                                          **({key: other.get(key) for key in ("loaded_at", "hot_loaded_at", "hot_revision", "version")} if worker_available else {})}},
                 "consistent": worker_available and not any(row["process_mismatch"] for row in rows),
                 "notes": ["版本号标识各进程加载批次；一致性按实际配置逐项比较，包含凭据变更，不以版本号或脱敏文本判定。","只读快照不触发热更新、数据库连接或后台任务。", "Worker 状态来自独立心跳，缺失或过期时显示异常，不能视为已生效。",
                           "已生效表示与该进程环境下的保存目标一致；宿主机 .env 尚未注入的新值需先重新创建容器。",
-                          "数据库专用身份完全留空时沿用生产连接；部分身份已配置时不混用生产身份。"]}
+                          "每条产线及共享业务通过显式 source_key 绑定数据源，不继承其他产线连接。"]}

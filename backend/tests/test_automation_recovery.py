@@ -5,7 +5,8 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from app.config import settings
+from tests.line_fixtures import cutting_settings, as_line_services
+from types import SimpleNamespace
 from app.database.automation import AutomationRepository
 from app.database.metadata import MetadataRepository
 from app.database.workshop import WorkshopRepository
@@ -38,7 +39,9 @@ def workflow(tmp_path):
     run = repository.reserve_run(schedule, scheduled_for=STAMP, report_date="2026-09-29",
                                  trigger_type="scheduled", now=STAMP,
                                  next_run_at="2026-10-01T09:00:00+08:00")
-    service = AutomationService(replace(settings, project_root=tmp_path), repository, metadata, object())
+    cfg = cutting_settings(project_root=tmp_path)
+    service = AutomationService(cfg, repository, metadata, object(),
+        line_services=as_line_services({"Cutter01": SimpleNamespace(settings=cfg, pipeline=object())}))
     return repository, metadata, service, run
 
 
@@ -104,3 +107,17 @@ def test_unknown_device_fails_reserved_run_without_creating_a_job(workflow):
     assert not service._create_report_job(run, NOW)
     assert repository.get_run(run['run_id'])['status'] == 'failed'
     assert metadata.list_reports(page=1, page_size=10)[1] == 0
+
+
+def test_report_preparation_uses_one_operation_snapshot(workflow, monkeypatch):
+    _, _, service, run = workflow
+    selected = service.line_services['Cutter01']
+    snapshots, prepared = [], []
+    def snapshot():
+        snapshots.append(True)
+        return SimpleNamespace(lines={'Cutter01': selected})
+    service.database_runtime = SimpleNamespace(snapshot=snapshot)
+    monkeypatch.setattr(service, '_ensure_workshop_report', lambda run, now, device: prepared.append(device))
+    assert service._create_report_job({**run, 'report_type': 'workshop'}, NOW)
+    assert snapshots == [True]
+    assert prepared == [selected.cutting()]

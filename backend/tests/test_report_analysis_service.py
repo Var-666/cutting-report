@@ -13,7 +13,7 @@ from threading import Event
 import pytest
 import httpx
 
-from app.config import Settings
+from tests.line_fixtures import cutting_settings, source_client
 from app.database.metadata import MetadataRepository
 from app.models.domain import AnalysisResult, ReportFilter
 from app.services.equipment_service import mock_energy, sort_equipment_records
@@ -71,7 +71,7 @@ def test_analysis_presents_internal_labels_in_plain_language() -> None:
 def test_missing_project_identifiers_are_described_plainly_in_report_analysis(tmp_path: Path) -> None:
     settings, service = _services(tmp_path)
     selected_date = date(2026, 8, 18)
-    bundle = QueryService(settings).fetch_report_data(ReportFilter(report_date=selected_date))
+    bundle = QueryService(settings, client=source_client(settings)).fetch_report_data(ReportFilter(report_date=selected_date))
     workshop_row = replace(bundle.workshop_records[0], project_code=None, ship_no=None)
     equipment_row = replace(bundle.equipment_records[0], project_code=None, ship_no=None)
 
@@ -87,7 +87,7 @@ def test_missing_project_identifiers_are_described_plainly_in_report_analysis(tm
 
 
 def _services(tmp_path: Path):
-    settings = Settings(
+    settings = cutting_settings(
         project_root=tmp_path,
         demo_mode=True,
         data_source_mode="demo",
@@ -102,7 +102,7 @@ def _services(tmp_path: Path):
 
 
 def test_disabled_model_does_not_generate_report_data_analysis(tmp_path: Path) -> None:
-    settings = Settings(
+    settings = cutting_settings(
         project_root=tmp_path,
         demo_mode=True,
         data_source_mode="demo",
@@ -112,7 +112,7 @@ def test_disabled_model_does_not_generate_report_data_analysis(tmp_path: Path) -
     metadata = MetadataRepository(settings.metadata_db_path, device_id='Cutter01')
     metadata.initialize()
     service = ReportAnalysisService(settings, metadata)
-    report = LeadershipReportService(settings).fetch(date(2026, 8, 1))
+    report = LeadershipReportService(settings, client=source_client(settings)).fetch(date(2026, 8, 1))
 
     with pytest.raises(AnalysisUnavailableError, match="未启用"):
         service.analyze_leadership(report)
@@ -124,8 +124,8 @@ def test_disabled_model_does_not_generate_report_data_analysis(tmp_path: Path) -
 def test_three_report_types_use_model_results_with_report_facts(tmp_path: Path) -> None:
     settings, service = _services(tmp_path)
     selected_date = date(2026, 8, 18)
-    leadership = LeadershipReportService(settings).fetch(selected_date)
-    bundle = QueryService(settings).fetch_report_data(
+    leadership = LeadershipReportService(settings, client=source_client(settings)).fetch(selected_date)
+    bundle = QueryService(settings, client=source_client(settings)).fetch_report_data(
         ReportFilter(report_date=selected_date)
     )
 
@@ -171,7 +171,7 @@ def test_three_report_types_use_model_results_with_report_facts(tmp_path: Path) 
 
 def test_same_analysis_input_uses_metadata_cache(tmp_path: Path) -> None:
     settings, service = _services(tmp_path)
-    report = LeadershipReportService(settings).fetch(date(2026, 8, 1))
+    report = LeadershipReportService(settings, client=source_client(settings)).fetch(date(2026, 8, 1))
 
     first = service.analyze_leadership(report)
     second = service.analyze_leadership(report)
@@ -186,7 +186,7 @@ def test_same_analysis_input_uses_metadata_cache(tmp_path: Path) -> None:
 
 def test_visible_report_version_must_match_analysis_source(tmp_path: Path) -> None:
     settings, service = _services(tmp_path)
-    report = LeadershipReportService(settings).fetch(date(2026, 8, 1))
+    report = LeadershipReportService(settings, client=source_client(settings)).fetch(date(2026, 8, 1))
     primary_version = leadership_analysis_source_version(report)
     summary_version = analysis_table_source_version(report.monthly_records)
     visible_version = combined_analysis_source_version(
@@ -208,7 +208,7 @@ def test_visible_report_version_must_match_analysis_source(tmp_path: Path) -> No
         )
 
     report_date = date(2026, 8, 18)
-    records = QueryService(settings).fetch_report_data(
+    records = QueryService(settings, client=source_client(settings)).fetch_report_data(
         ReportFilter(report_date=report_date)
     ).workshop_records
     workshop_version = combined_analysis_source_version(
@@ -312,7 +312,7 @@ def test_delayed_cache_write_cannot_replace_a_newer_completed_analysis(tmp_path,
 
 def test_force_refresh_replaces_same_version_cache(tmp_path: Path, monkeypatch) -> None:
     settings, service = _services(tmp_path)
-    report = LeadershipReportService(settings).fetch(date(2026, 8, 1))
+    report = LeadershipReportService(settings, client=source_client(settings)).fetch(date(2026, 8, 1))
     now = datetime(2026, 8, 1, 8, tzinfo=service.timezone)
 
     class Clock:
@@ -354,7 +354,7 @@ def test_force_refresh_replaces_same_version_cache(tmp_path: Path, monkeypatch) 
 def test_concurrent_same_version_requests_call_model_once(tmp_path: Path, monkeypatch) -> None:
     settings, service = _services(tmp_path)
     service.settings = replace(settings, llm_enabled=True)
-    report = LeadershipReportService(settings).fetch(date(2026, 8, 1))
+    report = LeadershipReportService(settings, client=source_client(settings)).fetch(date(2026, 8, 1))
     calls = 0
 
     def model(_report_type, context):
@@ -376,7 +376,7 @@ def test_page_promotes_queued_background_analysis_without_duplicate_model(tmp_pa
     settings, service = _services(tmp_path)
     settings = replace(settings, llm_max_concurrent=4, llm_queue_timeout_seconds=2)
     service.settings = settings
-    report = LeadershipReportService(settings).fetch(date(2026, 8, 1))
+    report = LeadershipReportService(settings, client=source_client(settings)).fetch(date(2026, 8, 1))
     capacity = _LlmCapacity()
     monkeypatch.setattr("app.services.llm_service._LLM_CAPACITY", capacity)
     started, admitted, finish = Event(), Event(), Event()
@@ -424,7 +424,7 @@ def test_page_promotes_queued_background_analysis_without_duplicate_model(tmp_pa
 ])
 def test_waiters_share_failed_attempt_but_later_retry_can_recover(tmp_path, monkeypatch, failure, expected, message):
     settings, service = _services(tmp_path)
-    report = LeadershipReportService(settings).fetch(date(2026, 8, 1))
+    report = LeadershipReportService(settings, client=source_client(settings)).fetch(date(2026, 8, 1))
     started, finish = Event(), Event()
     calls = 0
 
@@ -468,7 +468,7 @@ def test_cancelled_page_retracts_priority_without_cancelling_shared_background_w
     settings, service = _services(tmp_path)
     settings = replace(settings, llm_max_concurrent=4)
     service.settings = settings
-    report = LeadershipReportService(settings).fetch(date(2026, 8, 1))
+    report = LeadershipReportService(settings, client=source_client(settings)).fetch(date(2026, 8, 1))
     capacity = _LlmCapacity()
     monkeypatch.setattr("app.services.llm_service._LLM_CAPACITY", capacity)
     started, admitted = Event(), Event()
@@ -526,7 +526,7 @@ def test_cancelled_page_retracts_priority_without_cancelling_shared_background_w
 def test_same_version_wait_can_stop_without_releasing_active_generation(tmp_path, monkeypatch, stop):
     settings, service = _services(tmp_path)
     service.settings = replace(settings, llm_queue_timeout_seconds=1)
-    report = LeadershipReportService(settings).fetch(date(2026, 8, 1))
+    report = LeadershipReportService(settings, client=source_client(settings)).fetch(date(2026, 8, 1))
     entered, release = Event(), Event()
     calls = 0
 
@@ -591,7 +591,7 @@ def test_same_version_wait_can_stop_without_releasing_active_generation(tmp_path
 @pytest.mark.parametrize("error", [SqlRequestCancelled, ReportOperationTimeout])
 def test_model_cancellation_and_report_deadline_are_not_ai_unavailability(tmp_path, monkeypatch, error):
     settings, service = _services(tmp_path)
-    report = LeadershipReportService(settings).fetch(date(2026, 8, 1))
+    report = LeadershipReportService(settings, client=source_client(settings)).fetch(date(2026, 8, 1))
 
     def interrupted(*args):
         raise error("stopped")
@@ -607,8 +607,8 @@ def test_model_cancellation_and_report_deadline_are_not_ai_unavailability(tmp_pa
 def test_versions_change_when_previously_unwatched_report_values_change(tmp_path: Path) -> None:
     settings, service = _services(tmp_path)
     selected_date = date(2026, 8, 18)
-    report = LeadershipReportService(settings).fetch(selected_date)
-    bundle = QueryService(settings).fetch_report_data(
+    report = LeadershipReportService(settings, client=source_client(settings)).fetch(selected_date)
+    bundle = QueryService(settings, client=source_client(settings)).fetch_report_data(
         ReportFilter(report_date=selected_date)
     )
 
@@ -662,7 +662,7 @@ def test_versions_change_when_previously_unwatched_report_values_change(tmp_path
 
 def test_empty_reports_keep_six_facts_without_inventing_comparisons(tmp_path):
     settings, service = _services(tmp_path)
-    report = LeadershipReportService(settings).fetch(date(2026, 8, 1))
+    report = LeadershipReportService(settings, client=source_client(settings)).fetch(date(2026, 8, 1))
     empty_total = replace(report.current_month_total, task_count=0)
     report = replace(
         report,
@@ -694,7 +694,7 @@ def test_empty_reports_keep_six_facts_without_inventing_comparisons(tmp_path):
 
 def test_energy_quality_counts_a_task_once_even_with_multiple_issues(tmp_path):
     settings, service = _services(tmp_path)
-    bundle = QueryService(settings).fetch_report_data(ReportFilter(report_date=date(2026, 8, 18)))
+    bundle = QueryService(settings, client=source_client(settings)).fetch_report_data(ReportFilter(report_date=date(2026, 8, 18)))
     row = replace(bundle.equipment_records[0], gas_consumption=None, electricity_consumption=None, gas_data_status="overlap", electricity_data_status="gap")
     result = service.analyze_equipment("2026-08-18", [row])
     quality = result.facts[-1]
@@ -706,7 +706,7 @@ def test_energy_quality_counts_a_task_once_even_with_multiple_issues(tmp_path):
 
 def test_partial_task_energy_facts_keep_actual_meter_source(tmp_path):
     settings, service = _services(tmp_path)
-    bundle = QueryService(settings).fetch_report_data(ReportFilter(report_date=date(2026, 8, 18)))
+    bundle = QueryService(settings, client=source_client(settings)).fetch_report_data(ReportFilter(report_date=date(2026, 8, 18)))
     measured = replace(
         bundle.equipment_records[0],
         gas_consumption=Decimal("12.5"),
@@ -740,7 +740,7 @@ def test_partial_task_energy_facts_keep_actual_meter_source(tmp_path):
 
 def test_partial_energy_does_not_claim_a_missing_channel_has_meter_data(tmp_path):
     settings, service = _services(tmp_path)
-    bundle = QueryService(settings).fetch_report_data(ReportFilter(report_date=date(2026, 8, 18)))
+    bundle = QueryService(settings, client=source_client(settings)).fetch_report_data(ReportFilter(report_date=date(2026, 8, 18)))
     row = replace(
         bundle.equipment_records[0],
         gas_consumption=Decimal("12.5"),
@@ -763,8 +763,8 @@ def test_partial_energy_does_not_claim_a_missing_channel_has_meter_data(tmp_path
 
 def test_model_receives_six_facts_and_two_complete_report_tables(tmp_path, monkeypatch):
     settings, service = _services(tmp_path)
-    report = LeadershipReportService(settings).fetch(date(2026, 8, 1))
-    bundle = QueryService(settings).fetch_report_data(
+    report = LeadershipReportService(settings, client=source_client(settings)).fetch(date(2026, 8, 1))
+    bundle = QueryService(settings, client=source_client(settings)).fetch_report_data(
         ReportFilter(report_date=date(2026, 8, 18))
     )
     workshop_records = [
@@ -837,7 +837,7 @@ def test_model_receives_six_facts_and_two_complete_report_tables(tmp_path, monke
 
 def test_failed_model_call_is_not_cached_and_next_request_retries(tmp_path, monkeypatch):
     settings, service = _services(tmp_path)
-    report = LeadershipReportService(settings).fetch(date(2026, 8, 1))
+    report = LeadershipReportService(settings, client=source_client(settings)).fetch(date(2026, 8, 1))
     calls = 0
 
     def model(_report_type, context):
@@ -881,7 +881,7 @@ def test_failed_model_call_is_not_cached_and_next_request_retries(tmp_path, monk
 ])
 def test_model_failure_explains_recovery_action_and_does_not_poison_cache(tmp_path, monkeypatch, caplog, error, message):
     settings, service = _services(tmp_path)
-    report = LeadershipReportService(settings).fetch(date(2026, 8, 1))
+    report = LeadershipReportService(settings, client=source_client(settings)).fetch(date(2026, 8, 1))
 
     def fail(*args, **kwargs):
         raise error
@@ -898,7 +898,7 @@ def test_model_failure_explains_recovery_action_and_does_not_poison_cache(tmp_pa
 
 def test_oversized_report_explains_input_problem_instead_of_model_outage(tmp_path, monkeypatch):
     settings, service = _services(tmp_path)
-    report = LeadershipReportService(settings).fetch(date(2026, 8, 1))
+    report = LeadershipReportService(settings, client=source_client(settings)).fetch(date(2026, 8, 1))
 
     def fail(*args, **kwargs):
         raise AnalysisInputTooLarge('智能分析输入超过配置容量，请缩小报表范围后重试。')
@@ -978,7 +978,7 @@ def test_model_output_is_used_without_content_rejection(tmp_path, monkeypatch):
             return FakeResponse()
 
     monkeypatch.setattr("app.services.llm_service.httpx.Client", FakeClient)
-    report = LeadershipReportService(settings).fetch(date(2026, 8, 1))
+    report = LeadershipReportService(settings, client=source_client(settings)).fetch(date(2026, 8, 1))
 
     result = service.analyze_leadership(report)
     assert result.overview == "本期完成 999 项任务 [F001]。"

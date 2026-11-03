@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { lineHome, selectedLineType } from '../src/utils/productionLines.ts'
 import { ref } from 'vue'
-import { getDeviceId, deviceUrl, selectDevice, setDeviceCatalog, resetDeviceContext, registerDeviceSwitchQuery, deviceSwitchQuery } from '../src/api/deviceContext.ts'
+import { getDeviceId, deviceUrl, selectDevice, setDeviceCatalog, resetDeviceContext, registerDeviceSwitchQuery, deviceSwitchQuery, registerDeviceSwitchGuard, allowDeviceSwitch } from '../src/api/deviceContext.ts'
 import { createReportCache, reportCache } from '../src/api/reportCache.ts'
 import { listWorkshopTasks, createReport, getDeviceCatalog } from '../src/api/reports.ts'
 import { listWorkshopRangeTasks } from '../src/api/cutting.ts'
@@ -205,7 +205,7 @@ test('both device selectors preserve displayed filters before switching and reje
     if (failNavigation) return Promise.reject(new Error('navigation failed'))
     return new Promise(resolve => { completeNavigation = resolve })
   } }
-  const api = scriptFunction('ref', 'onMounted', 'useRoute', 'useRouter', 'deviceSwitchQuery', 'changeDevice', 'deviceSelection', 'loadDevices', 'lineHome', 'selectedLineType', `${script}\nreturn useDeviceSelection()`)(ref, () => {}, () => route, () => router, () => ({ start_date: '2026-10-12' }), id => { selection.id = id }, selection, () => {}, lineHome, selectedLineType)
+  const api = scriptFunction('allowDeviceSwitch', 'ref', 'onMounted', 'useRoute', 'useRouter', 'deviceSwitchQuery', 'changeDevice', 'deviceSelection', 'loadDevices', 'lineHome', 'selectedLineType', `${script}\nreturn useDeviceSelection()`)(async () => true, ref, () => {}, () => route, () => router, () => ({ start_date: '2026-10-12' }), id => { selection.id = id }, selection, () => {}, lineHome, selectedLineType)
   await api.switchDevice('Cutter01')
   assert.equal(changes.length, 0)
   const pending = api.switchDevice('Cutter02')
@@ -281,4 +281,20 @@ test('browsers without URLSearchParams.size retain device and report query param
   assert.equal(params.get('end_date'), '2026-10-27')
   assert.equal(params.get('project_name'), 'P1')
   assert.equal(params.get('page'), '2')
+})
+
+
+test('configuration scope guards prevent losing unsaved connection drafts and release on unmount', async () => {
+  const remove = registerDeviceSwitchGuard('database', async () => false)
+  assert.equal(await allowDeviceSwitch('database'), false)
+  assert.equal(await allowDeviceSwitch('workshop-report'), true)
+  remove()
+  assert.equal(await allowDeviceSwitch('database'), true)
+})
+
+
+test('SQL workbench execution keeps the explicit selected cutting line', () => {
+  setDeviceCatalog(catalog)
+  selectDevice('Cutter02')
+  assert.equal(new URL(deviceUrl('/api/v1/database/sql/execute'), 'http://test').searchParams.get('device_id'), 'Cutter02')
 })

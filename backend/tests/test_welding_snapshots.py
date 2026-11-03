@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from app.config import Settings
+from tests.line_fixtures import welding_settings
 from app.database.report_snapshots import ReportSnapshotRepository
 from app.database.sqlite import SQLiteDatabase, execution_scope
 from app.database.coordination import CoordinationRepository
@@ -131,8 +131,7 @@ def test_snapshot_sort_and_paging_match_live_aggregates(configured, aggregate_gr
 
 @pytest.fixture
 def configured(tmp_path):
-    cfg = Settings(project_root=tmp_path, data_source_mode='demo', weld_enabled=True,
-                   weld_db_host='weld.test', weld_db_user='reader', weld_db_password='test-only',
+    cfg = welding_settings(project_root=tmp_path, data_source_mode='demo', weld_enabled=True,
                    worker_database_auth_enabled=False, file_database_enabled=False, llm_enabled=False,
                    alarm_monitor_enabled=False, energy_api_enabled=False)
     database = SQLiteDatabase(cfg.metadata_db_path)
@@ -189,7 +188,7 @@ def test_zero_filters_report_types_and_source_changes_are_isolated(configured):
     assert source.calls['summary'] == 2
     service.report('jobs', query(device_no=1))
     assert source.calls['summary'] == 3
-    changed = WeldingService(replace(cfg, weld_db_host='another-source'), Source(), snapshots=snapshots, coordination=queue)
+    changed = WeldingService(replace(cfg, source_fingerprint='another-source'), Source(), snapshots=snapshots, coordination=queue)
     assert changed.source_identity() != service.source_identity()
     assert changed.report('daily', query())['meta']['report_data']['source'] == 'database'
     service.report('daily', query(), force=True)
@@ -404,7 +403,7 @@ def test_page_keys_isolate_pagination_sort_filters_and_changed_source(configured
     for changes in ({'page': 2}, {'page_size': 20}, {'sort_by': 'length'}, {'descending': False}, {'device_no': 0}):
         with pytest.raises(SnapshotRefreshBusy):
             service.page('jobs', query(**({'page_size': 1} | changes)))
-    changed = WeldingService(replace(cfg, weld_db_host='new-source'), source, snapshots=snapshots, coordination=queue)
+    changed = WeldingService(replace(cfg, source_fingerprint='new-source'), source, snapshots=snapshots, coordination=queue)
     with pytest.raises(SnapshotRefreshBusy):
         changed.page('jobs', query(page_size=1))
     assert source.calls == before
@@ -474,7 +473,7 @@ def test_worker_uses_registry_dedup_capacity_and_current_database_context(config
     cfg, _, _, _, _ = configured
     runtime = build_runtime(cfg, role='worker')
     current = database_context(runtime)
-    current.welding.repository = Source()
+    current.lines['welding'].service.repository = Source()
     process = WorkerProcess(cfg, runtime)
     try:
         process._schedule()
@@ -482,7 +481,7 @@ def test_worker_uses_registry_dedup_capacity_and_current_database_context(config
         queue = runtime.coordination
         with queue.connect() as connection:
             tasks = connection.execute("SELECT * FROM background_tasks WHERE kind='report_snapshot_refresh'").fetchall()
-        assert len(tasks) == len(current.welding.refresh_plan())
+        assert len(tasks) == len(current.lines['welding'].service.refresh_plan())
         assert {task['device_id'] for task in tasks} == {'welding'}
         owner = queue.acquire('worker', ttl=30)
         for _ in tasks:
@@ -491,14 +490,14 @@ def test_worker_uses_registry_dedup_capacity_and_current_database_context(config
             with execution_scope(cfg.metadata_db_path, 'worker', owner):
                 process._handle(task)
                 queue.finish_task(task, owner)
-        assert current.welding.repository.calls['summary'] == len(tasks) + 1, 'homepage also computes today within its own source transaction'
+        assert current.lines['welding'].service.repository.calls['summary'] == len(tasks) + 1, 'homepage also computes today within its own source transaction'
         assert report_provider(current, 'Cutter01').source_identity()
         # An old task is harmless after hot configuration replaces the service.
         old = tasks[0]
         import json
         task = {**dict(old), 'payload': json.loads(old['payload'])}
-        updated = WeldingService(replace(cfg, weld_db_host='new-source'), Source(), snapshots=runtime.report_snapshots, coordination=queue)
-        runtime.database_runtime.publish(replace(current, settings=updated.settings, welding=updated), {})
+        updated = WeldingService(replace(cfg, source_fingerprint='new-source'), Source(), snapshots=runtime.report_snapshots, coordination=queue)
+        runtime.database_runtime.publish(replace(current, lines={**current.lines, 'welding': replace(current.lines['welding'], service=updated)}), {})
         process._handle(task)
         assert updated.repository.calls == Counter()
         with pytest.raises(ValueError, match='未登记'):
@@ -513,12 +512,12 @@ def test_hot_configuration_never_reuses_previous_source_snapshots(configured, mo
     cfg, _, _, _, _ = configured
     monkeypatch.setattr(database, 'settings', cfg)
     runtime = build_runtime(cfg, role='web')
-    old = database_context(runtime).welding
+    old = database_context(runtime).lines['welding'].service
     old.repository = Source()
     expected = old.report('daily', query())
     body = database.WeldingConnectionRequest(enabled=True, host='new-source', database='new-db', username='reader', password='changed-test-only')
-    database.save_welding_configuration(body, request(runtime))
-    new = database_context(runtime).welding
+    database.save_welding_configuration(body, request(runtime, 'welding'))
+    new = database_context(runtime).lines['welding'].service
     assert old.source_identity() != new.source_identity()
     new.repository = Source()
     assert new.report('daily', query())['meta']['report_data']['source'] == 'database'
@@ -532,7 +531,7 @@ def test_existing_configuration_controls_current_history_and_filtered_freshness(
     previous = today.replace(day=1) - timedelta(days=1)
     assert service._snapshot_ttl(WeldingQuery(start=previous, end=previous)) == cfg.leadership_report_history_cache_seconds
     assert service._snapshot_ttl(WeldingQuery(start=today, end=today, device_no=0)) == 30
-    for field, value in [('weld_db_user', 'another-user'), ('weld_db_password', 'rotated-test-only'), ('weld_db_timezone', 'UTC')]:
+    for field, value in [('source_fingerprint', 'another-user'), ('source_fingerprint', 'rotated-test-only'), ('weld_db_timezone', 'UTC')]:
         changed = WeldingService(replace(cfg, **{field: value}), Source())
         assert changed.source_identity() != service.source_identity()
 
@@ -568,8 +567,8 @@ def test_upgrade_drains_old_aggregate_tasks_before_building_the_new_homepage(con
     runtime = build_runtime(cfg, role='worker')
     current = database_context(runtime)
     source = Source()
-    current.welding.repository = source
-    service = current.welding
+    current.lines['welding'].service.repository = source
+    service = current.lines['welding'].service
     queue = runtime.coordination
     for start in (date(2026, 10, 1), date(2026, 10, 22), date(2026, 10, 28)):
         selected = WeldingQuery(start=start, end=date(2026, 10, 28))

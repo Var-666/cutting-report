@@ -49,7 +49,7 @@ main.py（Web）                 worker.py（Worker）
   └──────────┬──────────────────┘
              services/application_runtime.build_runtime(role=...)
                ├─ 共享仓储、外部服务、配置 Runtime
-               └─ device_runtime.build_device_runtime（切割设备）
+               └─ 统一目录 → 类型构建函数 → lines[line_id]（切割/焊接实例）
 
 业务调用：api/ 或 workers/ → services/ → database/ → SQLite / 外部数据库
 外部 HTTP、文件、SMTP、LLM：由 services/ 中现有客户端与业务服务协调
@@ -60,9 +60,9 @@ models/、Settings：供各层使用；Runtime 装配是上述单向业务调用
 - `services/application_runtime.py` 装配自有 SQLite 仓储、共享服务与配置 Runtime；`device_runtime.py` 装配设备查询、统计、分析、流水线和后台控制对象。其对 `workers/` 的导入属于装配职责，不是业务 Service 反向调用调度层。
 - `services/frontend_static.py` 虽位于 services，实际是 FastAPI/Starlette 静态资源适配，只供 Web 入口使用；P01 保留位置，业务 Service 不依赖 HTTP 框架的约束不要求为它新增一层包装。
 - `api/runtime.py` 在 `request.state` 缓存一次 `database_context`；`api/devices.py` 验证唯一 `device_id` 并选设备。`DatabaseRuntime` 准备/发布服务快照，`AutomationRuntime` 管理自动化/SMTP 快照；业务操作保持已选引用。新功能沿用这些边界，不另建全局服务定位器。
-- `config.py` 的 `Settings` 为 frozen dataclass，但模块导入仍会读取环境/目录、校验旧设备变量并更新 `os.environ`。复用 `configuration_sources` 和字段元数据；默认优先级为 `settings.env > process > .env > defaults`（显式禁用 dotenv 时遵循现有分支）。新增业务代码不重读环境、不修改全局 Settings。
+- `config.py` 的 `Settings` 为 frozen dataclass，但模块导入读取统一环境来源并更新 `os.environ`。复用 `configuration_sources` 和字段元数据；默认优先级为 `settings.env > process > .env > defaults`（显式禁用 dotenv 时遵循现有分支）。新增业务代码不重读环境、不修改全局 Settings。
 - SQLite 的连接、租约检查和提交在 `database/sqlite.py`；多仓储原子用例复用 `unit_of_work.py`，例如自动化创建报表任务及流水线完成写入。事务内的确认归属/冲突检查属于数据完整性边界，不能为“瘦仓储”移到事务外。迁移统一走 `database/migrations/`。
-- 切割实例来自 `configuration/devices.json`，独立焊接服务来自 `production_lines.SERVICE_LINES` 与 Runtime 装配。`production_reports.py` 已有 Provider 契约，`report_snapshots.py` 已有快照访问机制；它们不要求统一各产线统计模型。焊接使用独立只读 MySQL，与切割 SQL Server 分开。
+- 全部产线实例来自 `PRODUCTION_LINES_JSON`，由 `device_config.ProductionLineCatalog` 校验；类型能力在 `production_lines.LINE_TYPES` 声明，Runtime 按类型构建 `lines[line_id]`。`production_reports.py` 已有 Provider 契约，`report_snapshots.py` 已有快照访问机制；它们不要求统一各产线统计模型。焊接使用独立只读 MySQL，与切割 SQL Server 分开。
 
 ### 主要问题（按后续变更影响排序）
 
@@ -94,7 +94,7 @@ P01 仅检查 Markdown 差异、引用路径和与上述代码/现有事务及�
 
 ## 产线注册与前端 API（2026-10-27）
 
-`services/production_lines.py` 集中登记产线类型、公开名称、能力、首页和业务 API 范围，切割实例仍来自 `DEVICE_CATALOG`；独立业务线登记运行时服务键和启用字段。产线目录返回统一描述，焊接 API 按登记的服务键选择请求快照，服务缓存按实例隔离。接入新类型时在登记模块及对应前端业务路由添加类型实现；新增同类型实例需提供其配置和运行时服务，再登记实例，不能仅登记名称就认为已连接数据库。不引入插件加载器或新的配置管理入口。
+`services/production_lines.py` 集中登记产线类型、能力、首页和业务 API 范围；所有实例统一从 `PRODUCTION_LINES_JSON` 加载，服务按稳定 line_id 从请求快照的 lines 集合选择。接入新类型时登记业务构建函数、类型能力及对应前端业务路由；同类型新实例只配置目录及 source_key，不修改公共运行时。不引入插件加载器或新的配置管理入口。
 
 前端公共选择、路由、标签页、预加载和配置页按产线类型处理，首页优先使用目录的 `home_path`；类型后备入口集中于 `utils/productionLines.ts`。业务 API 拆到 `api/auth.ts`、`devices.ts`、`cutting.ts`、`welding.ts`、`energy.ts`、`alarms.ts`、`dispatch.ts`、`automation.ts`、`configuration.ts`、`designer.ts` 和 `system.ts`，统一使用 `client.ts` 的同源请求、取消、错误和会话过期处理；`reports.ts` 仅保留兼容导出。
 
@@ -140,7 +140,7 @@ Repository / 外部系统客户端
 ## 主要模块关系
 
 - 生产报表源统一为 SQL Server，移除 Excel 读取、本地 SQL 兼容执行及文件挂载；显式 demo 模式继续用于隔离测试。旧 `APP_DATA_SOURCE_MODE=excel` 配置会明确拒绝启动，须迁移为 sqlserver；不自动回退或改写历史快照来源。
-- 产线与设备默认配置保存于 `backend/app/configuration/devices.json`，现登记 Cutter01（20KW切割机）和 Cutter02（30KW切割机），共用生产库连接，按设备创建不可变 `Settings` 与独立查询、分析及后台运行实例。所有设备请求必须显式指定有效且唯一的 `device_id`，设备目录只返回公开映射；旧设备环境变量与目录冲突时拒绝启动，连接和凭据仍由环境配置管理。
+- 全部产线通过 `PRODUCTION_LINES_JSON` 保存稳定 ID、物理设备范围和 `source_key`；连接只来自 `DATABASE_SOURCES_JSON`。`DatabaseServices.lines` 统一管理全部实例；历史 `device_id` 继续保存原产线键，HTTP 切割请求仍须明确指定唯一 `device_id`，焊接请求必须指定 `X-Production-Line`。
 - 车间日报按日期与设备唯一保存；报表任务、历史列表、确认审计和分析源版本按设备隔离，领导月快照按月份与来源指纹隔离。迁移前自动备份 SQLite；明确的单设备历史结构归属 Cutter01，歧义或冲突拒绝自动迁移。任务在唯一 production 来源内以 `(scope_machine_no, TASK_ID)` 为复合键，同号任务跨设备独立确认、统计及审计。
 - Cutter02 不绑定能耗仪表，任务正常统计，能耗保持空值并显示“暂未接入”；告警按 START_TIME 从 2026-10-12 00:00:00（Asia/Shanghai）监控。两台设备拥有独立告警游标与租约，后台运行仍受原全局开关控制。
 - 三类标准报表共用查询区间、中文日期显示、表格列宽规则和智能分析面板。页面、导出和分析必须保持同一数据口径。
@@ -176,10 +176,29 @@ Repository / 外部系统客户端
 
 `configuration_sources.load_environment` 统一解析启动和保存目标，保持 `settings.env > process > .env > defaults`。`Settings` 字段工厂及环境键元数据复用于目标解析，避免复制默认值/转换规则；启动同时捕获真实来源。设备目录保持单一业务来源，原环境断言不变。
 
-`ConfigurationDiagnostics` 从启动 Settings、设备目录和 `AutomationRuntime.inspect()` 读取实际快照；inspect 不调用会加载文件的 snapshot。自动化请求边界与热加载共用 `AutomationConfigurationRequest` 验证，异常热配置保留旧快照。数据库连接展示复用 `Settings.sqlserver_connection()`，包含专用库回退及驱动继承。
+`ConfigurationDiagnostics` 从启动 Settings、`DatabaseRuntime.inspect()` 和 `AutomationRuntime.inspect()` 读取实际快照；inspect 不调用会加载文件的 snapshot。自动化请求边界与热加载共用 `AutomationConfigurationRequest` 验证，异常热配置保留旧快照。数据库来源通过 Registry 校验；公开值脱敏，不再从旧连接字段推导回退关系。
 
 Worker 每5秒将自身安全快照和内部逐项 HMAC 比较值附在原租约心跳；Web 用该租约上下文生成自身比较值，包含凭据变化的差异也可识别。API/公开健康接口/健康命令不输出逐项指纹，页面版本为不含配置内容的加载批次号与热修订。失效或缺失 Worker 状态不能视为已生效；诊断采集失败不阻断 Worker 心跳。
 
 新增管理员只读 `GET /api/v1/configuration/diagnostics` 和系统设置子页，不增加一级菜单或编辑能力。状态包含已生效、待重启、异常、可选未配置；按分类/名称/状态筛选，分别显示运行值、目标值、来源和生效规则。仅核对配置结构和运行快照，不连接外部系统。密码、账号、密钥、认证头、Cookie、URL 等仅显示安全状态，异常不透传原始输入。
 
-部署仍为一个 Web 与一个 Worker，共享原数据卷；不增加配置中心或数据库表。冷配置及目录重启两个进程，宿主机 `.env` 更新重建 app/worker，管理保存的数据库页全部配置及自动化/SMTP 在下一轮操作热加载。诊断状态无法替代宿主机注入检查或外部连通性验收。现行保留默认值与 `.env.example` 一致：告警发生后30天且已解除，其他保留策略不变。
+部署仍为一个 Web 与一个 Worker，共享原数据卷；不增加配置中心或数据库表。冷配置重启两个进程，统一目录及数据源在新操作边界热加载；宿主机 `.env` 更新重建 app/worker，管理保存的数据库页全部配置及自动化/SMTP 在下一轮操作热加载。诊断状态无法替代宿主机注入检查或外部连通性验收。现行保留默认值与 `.env.example` 一致：告警发生后30天且已解除，其他保留策略不变。
+
+
+## P1：统一产线、绑定与生命周期（2026-11-03）
+
+唯一实例目录为 `Settings.production_lines_json → ProductionLineCatalog`，类型与能力声明在 `services/production_lines.py`；`configuration/production_lines.example.json` 仅为编辑示例。`devices.json` 仅由独立升级工具读取，正式运行不读取该旧目录，也没有 `DEVICE_CATALOG`、`SERVICE_LINES` 或 `runtime/context.devices/welding` 别名。
+
+每个实例拥有 `id/name/type/source_key/enabled`。切割实例另外明确 `device_id`（物理设备）、`machine_no`（源查询范围）、`production_line_id`（原业务分组）、能耗仪表与告警起点。既有 `Cutter01/Cutter02/welding` ID 不变，SQLite 的历史 `device_id` 列仍保存这些稳定产线键；日报/确认原机床范围不重命名。切割物理编号、机床及历史别名全局唯一，防止已有按机床保存的确认/告警历史归属重叠。焊接 `device_nos` 可限定实例范围；共用 MySQL 的同类型实例必须配置互不重叠的范围，独立库可留空表示整个库。
+
+`DatabaseSourceRegistry` 是全部 SQL Server/MySQL 客户端的入口。相同 source_key 复用客户端，变更配置只创建新客户端；生产 Service 不再从全局 SQLSERVER/WELD 参数建连接。HR、PDM 与魔盒分别由 `WORKER_SOURCE_KEY/FILE_SOURCE_KEY/DISPATCH_SOURCE_KEY` 显式绑定，BM 保留可选 `bm` 绑定。引用由目录和这些共享用途合并声明，阻止误删和引擎变更；启用实例/业务不可指向停用或不兼容的连接。
+
+`ApplicationRuntime` 只持有进程资源与 `DatabaseRuntime`。后者发布 `DatabaseServices(catalog, lines, database_sources, ...)`，每个 `ProductionLineRuntime` 具有实际共享的 settings/Provider 契约；后台任务与历史切割报表流水线是独立可选能力。类型构建函数由简单映射登记，同类型新增实例不改 Runtime、Worker 或 API。未改变绑定/配置及业务依赖的实例复用；请求保留旧服务引用，旧 MySQL 客户端在最后引用释放后关闭，已借出的连接归还后才清理池。
+
+Web 使用单请求快照，Worker 在每次调度、任务执行、报表领取、自动化操作选择快照。两个进程监测同一 settings.env 文件版本，无新增消费者或消息组件。公共 Worker 只分发实例的后台能力与 Provider，切割专属调度/执行留在 DeviceRuntime。任务仍使用既有持久化队列、租约、去重、取消与重试；新增来源标记防止旧队列任务写入新来源快照。快照以稳定产线 ID 与来源身份隔离；切割 AI 的缓存键、最新结果及源版本使用固定操作来源命名空间，旧在途分析不能覆盖新来源视图，公开业务版本算法保留。
+
+目录与数据源保存继续使用原进程锁、候选验证和 0600 原子替换，发布失败保留旧快照。管理员 `PUT /api/v1/production-lines` 可提交完整实例目录；不能删除历史 ID 或更换既有物理归属，停用实例会停止新业务查询与调度，但历史报表/告警报告仍可读取和下载。数据库页面的原连接表单只是选中 source_key 的编辑视图，不再写旧连接环境键；停用实例不会顺带停用其他实例共用的数据源。同一来源在多个连接区块出现时只合并实际改动字段，冲突修改拒绝发布。
+
+升级：先停止两个进程，执行 `python scripts/migrate_production_lines.py`。工具备份原 .env、settings.env、devices.json 及进程中的有效旧连接（备份目录0700、文件0600），保留既有数据源并转换旧生产/焊接/HR/PDM连接及实例。重复执行只验证统一配置，失败不写目标，不回退旧运行路径。首次新版本启动沿用编号迁移备份机制执行 `015_alarm_sources`：外部告警编号改为来源内唯一，按明确实例绑定迁移已有事件、归并指纹与游标，同时把原最新分析及版本绑定至升级来源，原 incident/report/analysis ID 不变；无法归属或游标冲突会拒绝启动。生产数据库不写入。
+
+新增切割线：先登记 SQL Server 数据源，再添加具有唯一 ID、物理编号、machine_no、生产分组及告警起点的 cutting 实例，能耗配置按实际仪表提供。新增焊接线：登记 MySQL 数据源，添加 welding 实例及生产时区，按需指定 device_nos。不同库设置不同 source_key；共用库设置相同 source_key 并提供互不重叠的设备范围。均通过配置生效，不复制服务或路由。具体升级命令和回退边界见[配置参考](../deployment/配置参考.md)。

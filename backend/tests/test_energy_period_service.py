@@ -1,3 +1,4 @@
+from tests.line_fixtures import as_line_services, runtime_line
 from dataclasses import replace
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -508,7 +509,7 @@ def test_day_month_routes_and_bad_month(tmp_path):
     energy, _ = service(tmp_path)
     app = FastAPI()
     app.state.energy_period_service = energy
-    app.state.devices = {"Cutter01": app.state}
+    app.state.lines = as_line_services({"Cutter01": app.state})
     start = START + timedelta(hours=8)
     app.state.query_service = SimpleNamespace(fetch_equipment_data=lambda *_args, **_kwargs: SimpleNamespace(
         records=[record(production_time=start, production_end_time=start + timedelta(minutes=30),

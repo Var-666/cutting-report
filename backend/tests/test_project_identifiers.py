@@ -7,7 +7,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.config import settings
+from tests.line_fixtures import cutting_settings, source_client
+settings = cutting_settings()
 from app.models.domain import ReportFilter
 from app.services.query_service import QueryService
 
@@ -23,7 +24,7 @@ def mapping_query(source):
     if not source.startswith("list_"):
         return (QUERY_DIR / f"{source}.sql").read_text(), "project_number" if source in SOURCES[:3] else "project_name"
     queries = []
-    service = QueryService(replace(settings, data_source_mode="sqlserver", demo_mode=False))
+    service = QueryService(replace(settings, data_source_mode="sqlserver", demo_mode=False), client=source_client(replace(settings, data_source_mode="sqlserver", demo_mode=False)))
     service.client = SimpleNamespace(fetch_all=lambda query, parameters: queries.append(query) or [])
     getattr(service, source)(ReportFilter(report_date=date(2026, 10, 29)))
     return queries[0], "project_code" if source == "list_projects" else "project_name"

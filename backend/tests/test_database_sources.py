@@ -11,7 +11,8 @@ from fastapi.testclient import TestClient
 
 from app.api import database
 from app.api.auth import require_admin
-from app.config import DEVICE_CATALOG, settings
+from app.config import settings
+from tests.line_fixtures import configuration
 from app.database.mysql import MySqlClient, MySqlUnavailable
 from app.database.sqlserver import SqlServerClient
 from app.database.source_registry import DatabaseSourceRegistry, SourceConflict, source_configs_json
@@ -33,12 +34,7 @@ def config(payload):
 
 @pytest.fixture
 def runtime(tmp_path):
-    catalog = tmp_path / 'backend/app/configuration/devices.json'
-    catalog.parent.mkdir(parents=True)
-    catalog.write_text(DEVICE_CATALOG.model_dump_json())
-    cfg = replace(settings, project_root=tmp_path, data_source_mode='demo', database_sources_json='[]',
-        weld_enabled=False, worker_database_auth_enabled=False, file_database_enabled=False,
-        energy_api_enabled=False, llm_enabled=False)
+    cfg = configuration(tmp_path)
     state = build_runtime(cfg, role='web')
     yield state
     state.database_runtime.close()
@@ -83,13 +79,14 @@ def test_save_restart_hot_reload_and_old_request_config(runtime):
     assert old.connection_config()['host'] == 'isolated-host'
     assert third.database_sources.client('quality').connection_config()['host'] == 'new-host'
     assert third.database_sources.get('quality').password.get_secret_value() == 'private-password'
-    assert third.devices is initial.devices and third.welding is initial.welding
+    assert all(third.lines[key] is line for key, line in initial.lines.items())
     worker = build_runtime(runtime.database_runtime.inspect()['settings'], role='worker')
     assert worker.database_runtime.snapshot().database_sources.get('quality').host == 'new-host'
     manager.set_source_enabled('inspection', False)
     assert not worker.database_runtime.snapshot().database_sources.get('inspection').enabled
-    with pytest.raises(SourceConflict):
-        manager.snapshot().database_sources.client('inspection')
+    with pytest.raises(MySqlUnavailable):
+        with manager.snapshot().database_sources.client('inspection').snapshot():
+            pass
     assert runtime.sqlite_database.path == worker.sqlite_database.path
     worker.database_runtime.close()
     assert manager._base.runtime_settings_env_path.stat().st_mode & 0o777 == 0o600
@@ -131,18 +128,16 @@ def test_atomic_save_failure_bad_file_and_diagnostics_keep_published_snapshot(ru
 
 
 def test_bindings_prevent_delete_and_engine_change(runtime):
-    from app.services.database_runtime import DatabaseRuntime
     manager = runtime.database_runtime
     manager.save_source(source(), create=True)
-    cfg = manager.snapshot().settings
-    bound = DatabaseRuntime(cfg, manager.snapshot(), manager._build, runtime.automation_runtime,
-        source_bindings={'quality': ('quality-reports',)})
-    assert bound.snapshot().database_sources.view('quality').references == ['quality-reports']
+    catalog = manager.snapshot().catalog
+    catalog = catalog.model_copy(update={"lines": tuple(line.model_copy(update={"source_key": "quality"}) if line.id == "Cutter02" else line for line in catalog.lines)})
+    manager.save_lines(catalog)
+    assert manager.snapshot().database_sources.view('quality').references == ['产线:Cutter02']
     with pytest.raises(SourceConflict):
-        bound.delete_source('quality')
+        manager.delete_source('quality')
     with pytest.raises(SourceConflict):
-        bound.save_source(update(source(), engine='mysql', port=3306))
-    assert bound.snapshot().database_sources.get('quality').engine == 'sqlserver'
+        manager.save_source(update(source(), engine='mysql', port=3306))
 
 
 # Separate processes exercise the actual settings_file_lock, not only its thread mutex.
@@ -177,7 +172,7 @@ def test_concurrent_process_saves_preserve_other_sources_passwords_and_env(runti
                 process.terminate()
                 process.join()
     registry = manager.snapshot().database_sources
-    assert {item.id for item in registry.configs()} == {'quality', 'source_0', 'source_1'}
+    assert {item.id for item in registry.configs()} >= {'quality', 'source_0', 'source_1'}
     assert registry.get('quality').password.get_secret_value() == 'private-password'
     assert read_runtime_env(manager._base.runtime_settings_env_path)['CUSTOM_KEY'] == 'preserved'
 
@@ -319,7 +314,7 @@ def test_admin_crud_contracts_secret_redaction_and_no_arbitrary_sql(http, monkey
     assert response.status_code == 201, response.text
     data = response.json()['data']
     assert 'password' not in data and data['password_configured']
-    assert client.get('/api/v1/database/sources').json()['data']['items'] == [data]
+    assert data in client.get('/api/v1/database/sources').json()['data']['items']
     assert client.get('/api/v1/database/sources/quality').json()['data'] == data
     assert client.post('/api/v1/database/sources', json=body).status_code == 409
     body['password'] = ''
@@ -331,7 +326,7 @@ def test_admin_crud_contracts_secret_redaction_and_no_arbitrary_sql(http, monkey
     assert client.post('/api/v1/database/sources/test-connection', json={**body, 'sql': 'DELETE FROM task'}).status_code == 422
     assert client.get('/api/v1/database/sources/missing').status_code == 404
     assert client.delete('/api/v1/database/sources/quality').json()['data']['deleted']
-    assert client.get('/api/v1/database/sources').json()['data']['items'] == []
+    assert not any(item['id'] == 'quality' for item in client.get('/api/v1/database/sources').json()['data']['items'])
     app.dependency_overrides.clear()
     for method, path, body in [('get', '/sources', None), ('get', '/sources/quality', None),
             ('post', '/sources', body), ('put', '/sources/quality', body),
@@ -388,11 +383,11 @@ def test_blank_password_preserves_latest_file_then_current_snapshot_and_literal_
     assert manager.snapshot().database_sources.get('quality').password.get_secret_value() == secret
     # Another completed save is authoritative even when this process has an older snapshot.
     latest = config(update(source(), password='latest-private'))
-    write_runtime_env(manager._base.runtime_settings_env_path, {'DATABASE_SOURCES_JSON': source_configs_json([latest])})
+    write_runtime_env(manager._base.runtime_settings_env_path, {'DATABASE_SOURCES_JSON': source_configs_json([x for x in manager.current_context.database_sources.configs() if x.id != 'quality'] + [latest])})
     manager.save_source(update(source(), password=''))
     assert manager.snapshot().database_sources.get('quality').password.get_secret_value() == 'latest-private'
     # An empty saved password on a disabled profile must not erase the published password.
     empty = config(update(source(), password='', enabled=False))
-    write_runtime_env(manager._base.runtime_settings_env_path, {'DATABASE_SOURCES_JSON': source_configs_json([empty])})
+    write_runtime_env(manager._base.runtime_settings_env_path, {'DATABASE_SOURCES_JSON': source_configs_json([x for x in manager.current_context.database_sources.configs() if x.id != 'quality'] + [empty])})
     manager.save_source(update(source(), password=''))
     assert manager.snapshot().database_sources.get('quality').password.get_secret_value() == 'latest-private'

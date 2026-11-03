@@ -1,7 +1,8 @@
+from tests.line_fixtures import source_client
 from datetime import date
 from decimal import Decimal
 
-from app.config import Settings
+from tests.line_fixtures import cutting_settings
 from app.database.leadership_snapshots import LeadershipSnapshotRepository
 from app.database.sqlite import SQLiteDatabase
 from app.services.leadership_report_service import LeadershipReportService
@@ -9,8 +10,8 @@ from app.services.leadership_report_service import LeadershipReportService
 
 def test_demo_report_has_daily_total_and_twelve_months(tmp_path) -> None:
     service = LeadershipReportService(
-        Settings(project_root=tmp_path, demo_mode=True, data_source_mode="demo")
-    )
+        cutting_settings(project_root=tmp_path, demo_mode=True, data_source_mode="demo")
+    , client=source_client(cutting_settings(project_root=tmp_path, demo_mode=True, data_source_mode="demo")))
 
     result = service.fetch(date(2025, 8, 18))
 
@@ -45,16 +46,16 @@ def test_demo_report_has_daily_total_and_twelve_months(tmp_path) -> None:
 
 
 def test_project_mapping_upgrade_rebuilds_snapshots_with_the_old_mapping(tmp_path, monkeypatch):
-    settings = Settings(project_root=tmp_path, demo_mode=False, data_source_mode="sqlserver")
+    settings = cutting_settings(project_root=tmp_path, demo_mode=False, data_source_mode="sqlserver")
     snapshots = LeadershipSnapshotRepository(SQLiteDatabase(settings.metadata_db_path))
     snapshots.initialize()
-    legacy = LeadershipReportService(settings, snapshots)
+    legacy = LeadershipReportService(settings, snapshots, client=source_client(settings))
     legacy.SNAPSHOT_VERSION = 2
     monkeypatch.setattr(legacy.client, "fetch_result_sets", lambda *_: [[], []])
     month = date(2026, 10, 1)
     legacy.refresh(month, bootstrap=True)
     assert not legacy.needs_bootstrap(month)
-    current = LeadershipReportService(settings, snapshots)
+    current = LeadershipReportService(settings, snapshots, client=source_client(settings))
     assert current.needs_bootstrap(month)
     monkeypatch.setattr(current.client, "fetch_result_sets", lambda *_: [[], []])
     current.refresh(month, bootstrap=True)
@@ -65,8 +66,8 @@ def test_sqlserver_rows_are_normalized_without_portion_deduplication(
     tmp_path, monkeypatch
 ) -> None:
     service = LeadershipReportService(
-        Settings(project_root=tmp_path, demo_mode=False, data_source_mode="sqlserver")
-    )
+        cutting_settings(project_root=tmp_path, demo_mode=False, data_source_mode="sqlserver")
+    , client=source_client(cutting_settings(project_root=tmp_path, demo_mode=False, data_source_mode="sqlserver")))
     captured = []
 
     def fake_fetch_result_sets(sql, parameters):
@@ -118,13 +119,18 @@ def test_sqlserver_report_is_cached_by_month_and_can_be_refreshed(
     tmp_path, monkeypatch
 ) -> None:
     service = LeadershipReportService(
-        Settings(
+        cutting_settings(
             project_root=tmp_path,
             demo_mode=False,
             data_source_mode="sqlserver",
             leadership_report_cache_seconds=300,
         )
-    )
+    , client=source_client(cutting_settings(
+            project_root=tmp_path,
+            demo_mode=False,
+            data_source_mode="sqlserver",
+            leadership_report_cache_seconds=300,
+        )))
     call_count = 0
 
     def fake_fetch_result_sets(sql, parameters):
@@ -165,18 +171,15 @@ def test_sqlserver_report_is_cached_by_month_and_can_be_refreshed(
 def test_sqlserver_snapshots_survive_service_restart_and_fill_history(
     tmp_path, monkeypatch
 ) -> None:
-    settings = Settings(
+    settings = cutting_settings(
         project_root=tmp_path,
         demo_mode=False,
         data_source_mode="sqlserver",
-        sqlserver_host="db.internal",
-        sqlserver_database="production",
-        sqlserver_username="reader",
     )
     database = SQLiteDatabase(settings.metadata_db_path)
     snapshots = LeadershipSnapshotRepository(database)
     snapshots.initialize()
-    service = LeadershipReportService(settings, snapshots)
+    service = LeadershipReportService(settings, snapshots, client=source_client(settings))
     calls = []
 
     def fake_fetch_result_sets(sql, parameters):
@@ -206,7 +209,7 @@ def test_sqlserver_snapshots_survive_service_restart_and_fill_history(
     monkeypatch.setattr(service.client, "fetch_result_sets", fake_fetch_result_sets)
     assert service.refresh(date(2026, 8, 1), bootstrap=True) == 13
 
-    restarted = LeadershipReportService(settings, snapshots)
+    restarted = LeadershipReportService(settings, snapshots, client=source_client(settings))
     monkeypatch.setattr(
         restarted.client,
         "fetch_result_sets",

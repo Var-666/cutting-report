@@ -1,3 +1,4 @@
+from tests.line_fixtures import as_line_services, runtime_line
 """Exercise the new response models through real services and SQLite repositories."""
 from datetime import date, datetime
 from decimal import Decimal
@@ -37,7 +38,7 @@ def api(tmp_path):
         cut_length=None, groove_length=None, work_time=None, production_date=date(2026, 10, 1),
     )]
     bundle = SimpleNamespace(workshop_records=records, data_updated_at=None)
-    query = SimpleNamespace(latest_production_date=lambda _: date(2026, 10, 1),
+    query = SimpleNamespace(enrich_ship_names=lambda records: records, latest_production_date=lambda _: date(2026, 10, 1),
                             prepare_workshop_data=lambda _: bundle)
     alarm_repository = AlarmRepository(dispatches.database, source_name='production')
     alarm_repository.initialize()
@@ -49,7 +50,7 @@ def api(tmp_path):
     app = FastAPI()
     for router in (cutting.router, workshop.router, alarms.router):
         app.include_router(router)
-    app.state.devices = {'Cutter01': runtime}
+    app.state.lines = as_line_services({'Cutter01': runtime})
     app.state.worker_status_reader = SimpleNamespace(status=lambda: {'state': 'running'})
     app.dependency_overrides[require_admin] = lambda: admin
     app.dependency_overrides[require_user] = lambda: admin
@@ -58,7 +59,7 @@ def api(tmp_path):
     @app.middleware('http')
     async def context(request, call_next):
         request.state.request_id = 'response-model-paths'
-        request.state.database_context = SimpleNamespace(cutting_dispatch=service, devices=app.state.devices)
+        request.state.database_context = SimpleNamespace(cutting_dispatch=service, lines=app.state.lines)
         return await call_next(request)
 
     with TestClient(app) as client:

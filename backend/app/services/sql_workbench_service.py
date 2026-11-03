@@ -89,9 +89,9 @@ def _unique_columns(description: Any) -> list[str]:
 
 
 class SqlWorkbenchService:
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, *, client: SqlServerClient | None = None) -> None:
         self.settings = settings
-        self.client = SqlServerClient(settings)
+        self.client = client
 
     def validate(self, sql: str) -> ValidatedSql:
         cleaned = sql.strip()

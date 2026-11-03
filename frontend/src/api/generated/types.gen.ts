@@ -1102,6 +1102,21 @@ export type ApiEnvelopePageReportJob = {
 };
 
 /**
+ * ApiEnvelope[PublicLineCatalog]
+ */
+export type ApiEnvelopePublicLineCatalog = {
+    /**
+     * Success
+     */
+    success: true;
+    data: PublicLineCatalog;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
  * ApiEnvelope[Queued]
  */
 export type ApiEnvelopeQueued = {
@@ -2569,7 +2584,7 @@ export type DatabaseConfiguration = {
     production: SavedConnection;
     worker: SavedConnection;
     file: SavedConnection;
-    welding: WeldingConnection;
+    welding: WeldingConnection | null;
 };
 
 /**
@@ -2958,6 +2973,34 @@ export type DeliveryResolutionRequest = {
      * Evidence Note
      */
     evidence_note: string;
+};
+
+/**
+ * DeviceAlarmConfig
+ */
+export type DeviceAlarmConfig = {
+    /**
+     * Start At
+     */
+    start_at: string;
+};
+
+/**
+ * DeviceEnergyConfig
+ */
+export type DeviceEnergyConfig = {
+    /**
+     * Equipment Ids
+     */
+    equipment_ids: Array<string>;
+    /**
+     * Gas Parameter Id
+     */
+    gas_parameter_id: string;
+    /**
+     * Electricity Parameter Ids
+     */
+    electricity_parameter_ids: Array<string>;
 };
 
 /**
@@ -4428,6 +4471,72 @@ export type PdmStatus = {
 };
 
 /**
+ * ProductionLineCatalog
+ */
+export type ProductionLineCatalog = {
+    /**
+     * Schema Version
+     */
+    schema_version?: 2;
+    /**
+     * Lines
+     */
+    lines: Array<ProductionLineInstance>;
+    /**
+     * Default Line Id
+     */
+    default_line_id?: string | null;
+};
+
+/**
+ * ProductionLineInstance
+ */
+export type ProductionLineInstance = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Type
+     */
+    type: 'cutting' | 'welding';
+    /**
+     * Source Key
+     */
+    source_key: string;
+    /**
+     * Enabled
+     */
+    enabled?: boolean;
+    /**
+     * Device Id
+     */
+    device_id?: string | null;
+    /**
+     * Production Line Id
+     */
+    production_line_id?: string | null;
+    /**
+     * Machine No
+     */
+    machine_no?: string | null;
+    energy?: DeviceEnergyConfig | null;
+    alarm?: DeviceAlarmConfig | null;
+    /**
+     * Timezone
+     */
+    timezone?: string;
+    /**
+     * Device Nos
+     */
+    device_nos?: Array<number>;
+};
+
+/**
  * ProjectDistribution
  */
 export type ProjectDistribution = {
@@ -4447,6 +4556,78 @@ export type ProjectDistribution = {
      * Work Time Seconds
      */
     work_time_seconds: number;
+};
+
+/**
+ * PublicLineCatalog
+ */
+export type PublicLineCatalog = {
+    /**
+     * Default Device Id
+     */
+    default_device_id: string;
+    /**
+     * Items
+     */
+    items: Array<PublicProductionLine>;
+};
+
+/**
+ * PublicProductionLine
+ */
+export type PublicProductionLine = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Type
+     */
+    type: 'cutting' | 'welding';
+    /**
+     * Source Key
+     */
+    source_key: string;
+    /**
+     * Enabled
+     */
+    enabled: boolean;
+    /**
+     * Type Name
+     */
+    type_name: string;
+    /**
+     * Capabilities
+     */
+    capabilities: Array<string>;
+    /**
+     * Home Path
+     */
+    home_path: string;
+    /**
+     * Device Id
+     */
+    device_id?: string | null;
+    /**
+     * Production Line Id
+     */
+    production_line_id?: string | null;
+    /**
+     * Machine No
+     */
+    machine_no?: string | null;
+    /**
+     * Energy Connected
+     */
+    energy_connected?: boolean;
+    /**
+     * Alarm Start At
+     */
+    alarm_start_at?: string | null;
 };
 
 /**
@@ -7229,6 +7410,81 @@ export type WeldingConnectionRequestWritable = {
      */
     timezone?: string;
 };
+
+export type ProductionLinesApiV1ProductionLinesGetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/production-lines';
+};
+
+export type ProductionLinesApiV1ProductionLinesGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ProductionLinesApiV1ProductionLinesGetError = ProductionLinesApiV1ProductionLinesGetErrors[keyof ProductionLinesApiV1ProductionLinesGetErrors];
+
+export type ProductionLinesApiV1ProductionLinesGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopePublicLineCatalog;
+};
+
+export type ProductionLinesApiV1ProductionLinesGetResponse = ProductionLinesApiV1ProductionLinesGetResponses[keyof ProductionLinesApiV1ProductionLinesGetResponses];
+
+export type SaveProductionLinesApiV1ProductionLinesPutData = {
+    body: ProductionLineCatalog;
+    path?: never;
+    query?: never;
+    url: '/api/v1/production-lines';
+};
+
+export type SaveProductionLinesApiV1ProductionLinesPutErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type SaveProductionLinesApiV1ProductionLinesPutError = SaveProductionLinesApiV1ProductionLinesPutErrors[keyof SaveProductionLinesApiV1ProductionLinesPutErrors];
+
+export type SaveProductionLinesApiV1ProductionLinesPutResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopePublicLineCatalog;
+};
+
+export type SaveProductionLinesApiV1ProductionLinesPutResponse = SaveProductionLinesApiV1ProductionLinesPutResponses[keyof SaveProductionLinesApiV1ProductionLinesPutResponses];
+
+export type ListDevicesApiV1DevicesGetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/devices';
+};
+
+export type ListDevicesApiV1DevicesGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ListDevicesApiV1DevicesGetError = ListDevicesApiV1DevicesGetErrors[keyof ListDevicesApiV1DevicesGetErrors];
+
+export type ListDevicesApiV1DevicesGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopePublicLineCatalog;
+};
+
+export type ListDevicesApiV1DevicesGetResponse = ListDevicesApiV1DevicesGetResponses[keyof ListDevicesApiV1DevicesGetResponses];
 
 export type LatestProductionDateApiV1WorkshopLatestDateGetData = {
     body?: never;

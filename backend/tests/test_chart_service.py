@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from app.config import Settings
+from tests.line_fixtures import cutting_settings, source_client
 from app.models.domain import EquipmentRecord
 from app.services.chart_service import ChartService
 from app.services.leadership_report_service import LeadershipReportService
@@ -30,8 +30,8 @@ def equipment(
 
 def test_leadership_charts_match_daily_and_monthly_periods(tmp_path) -> None:
     report = LeadershipReportService(
-        Settings(project_root=tmp_path, demo_mode=True, data_source_mode="demo")
-    ).fetch(date(2026, 8, 1))
+        cutting_settings(project_root=tmp_path, demo_mode=True, data_source_mode="demo")
+    , client=source_client(cutting_settings(project_root=tmp_path, demo_mode=True, data_source_mode="demo"))).fetch(date(2026, 8, 1))
 
     charts = ChartService().build_leadership(report)
 

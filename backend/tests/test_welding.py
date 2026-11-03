@@ -11,13 +11,22 @@ from pydantic import ValidationError
 from app.api.auth import require_admin
 from app.api.welding import router
 from app.api.production_lines import router as lines_router
-from app.config import Settings
-from app.database.welding import WeldingClient, WeldingRepository, WeldingUnavailable, job_conditions, job_aggregate
+from tests.line_fixtures import welding_settings, runtime_line
+from app.device_config import load_line_catalog
+from app.database.source_registry import DatabaseSourceRegistry
+from app.database.mysql import MySqlClient, MySqlSession
+from app.database.welding import WeldingRepository, WeldingUnavailable, job_conditions, job_aggregate
 from app.models.welding import WeldingQuery
 from app.services.database_runtime import parse_database_settings
 from app.services.llm_service import analysis_system_prompt
 from app.services.welding_export import WeldingExport, csv_bytes
 from app.services.welding_service import WeldingService, mapped_row, summary_values
+
+
+def mysql_client(cfg=None):
+    cfg = cfg or welding_settings()
+    source = DatabaseSourceRegistry.from_json(cfg.database_sources_json).get('welding-production')
+    return MySqlClient(source.model_copy(update={'enabled': cfg.weld_enabled}), label='焊接')
 
 
 def query(**kwargs):
@@ -61,7 +70,7 @@ def test_units_types_unknown_state_and_anomalies(code, label):
 
 
 def test_connection_is_lazy_and_disabled_does_not_import_or_connect():
-    client = WeldingClient(Settings(weld_enabled=False))
+    client = mysql_client(welding_settings(weld_enabled=False))
     assert client._pool is None
     with pytest.raises(WeldingUnavailable, match='尚未启用'):
         with client.snapshot():
@@ -69,25 +78,18 @@ def test_connection_is_lazy_and_disabled_does_not_import_or_connect():
 
 
 def test_outer_query_budget_exhaustion_does_not_start_another_sql():
-    from app.database.welding import WeldingSession
+    from app.database.mysql import MySqlSession
     from app.core.report_deadline import operation_deadline
-    session = WeldingSession(SimpleNamespace())
+    session = MySqlSession(SimpleNamespace())
     with operation_deadline(-1):
         with pytest.raises(WeldingUnavailable, match='超时'):
             session.fetch('SELECT 1')
 
 
-def test_welding_query_timeout_defaults_match_cutting_and_keep_explicit_override():
-    from app.config import _environment
-    token = _environment.set({})
-    try:
-        cfg = Settings()
-        assert cfg.weld_db_query_timeout == cfg.sqlserver_query_timeout == 120
-        assert cfg.weld_db_connect_timeout == cfg.sqlserver_connect_timeout == 5
-        _environment.set({'WELD_DB_QUERY_TIMEOUT_SECONDS': '30'})
-        assert Settings().weld_db_query_timeout == 30
-    finally:
-        _environment.reset(token)
+def test_mysql_query_timeout_defaults_and_explicit_source_override():
+    config = DatabaseSourceRegistry.from_json(welding_settings().database_sources_json).get('welding-production')
+    assert config.query_timeout == 120 and config.connect_timeout == 5
+    assert MySqlClient(config.model_copy(update={'query_timeout': 30})).query_timeout == 30
 
 
 def test_each_welding_query_gets_full_timeout_unless_outer_budget_is_shorter(monkeypatch):
@@ -105,7 +107,7 @@ def test_each_welding_query_gets_full_timeout_unless_outer_budget_is_shorter(mon
         timeouts.append((kwargs['read_timeout'], kwargs['write_timeout']))
         return Cursor()
     monkeypatch.setattr('app.database.mysql.monotonic', lambda: clock[0])
-    session = welding.WeldingSession(SimpleNamespace(cursor=cursor))
+    session = MySqlSession(SimpleNamespace(cursor=cursor))
     assert session.fetch('SELECT 1') == [{'healthy': 1}]
     assert session.fetch('SELECT 1') == [{'healthy': 1}]
     assert timeouts == [(120, 120), (120, 120)]
@@ -115,7 +117,7 @@ def test_each_welding_query_gets_full_timeout_unless_outer_budget_is_shorter(mon
 
 
 def test_cursor_cleanup_does_not_mask_cancelled_query(monkeypatch, caplog):
-    from app.database.welding import WeldingSession
+    from app.database.mysql import MySqlSession
     from app.core.request_cancellation import SqlRequestCancelled, sql_request_cancellations
     class Cursor:
         def execute(self, *args):
@@ -126,7 +128,7 @@ def test_cursor_cleanup_does_not_mask_cancelled_query(monkeypatch, caplog):
             raise RuntimeError('private-cleanup-secret')
     checks = iter([False, True])
     monkeypatch.setattr(sql_request_cancellations, 'is_cancelled', lambda _: next(checks))
-    session = WeldingSession(SimpleNamespace(cursor=lambda **kwargs: Cursor()))
+    session = MySqlSession(SimpleNamespace(cursor=lambda **kwargs: Cursor()))
     with pytest.raises(SqlRequestCancelled):
         session.fetch('SELECT 1')
     assert 'private-cleanup-secret' not in caplog.text
@@ -143,7 +145,7 @@ def test_failed_rollback_still_closes_and_discards_pool():
             raise RuntimeError('broken protocol')
         def close(self):
             calls.append('close')
-    client = WeldingClient(Settings())
+    client = mysql_client(welding_settings())
     client._pool = SimpleNamespace(get_connection=Connection)
     client._get_pool = lambda: client._pool
     with pytest.raises(SqlRequestCancelled):
@@ -156,7 +158,7 @@ def test_failed_rollback_still_closes_and_discards_pool():
 def test_failed_pool_checkout_does_not_poison_later_requests():
     def broken():
         raise RuntimeError('broken protocol')
-    client = WeldingClient(Settings())
+    client = mysql_client(welding_settings())
     client._pool = SimpleNamespace(get_connection=broken)
     client._get_pool = lambda: client._pool
     with pytest.raises(WeldingUnavailable):
@@ -183,7 +185,7 @@ def test_readonly_repeatable_snapshot_rollback_and_secret_redaction(caplog):
             calls.append('rollback')
         def close(self):
             calls.append('close')
-    client = WeldingClient(Settings())
+    client = mysql_client(welding_settings())
     client._get_pool = lambda: SimpleNamespace(get_connection=Connection)
     with pytest.raises(WeldingUnavailable):
         with client.snapshot():
@@ -198,7 +200,7 @@ def test_source_failures_explain_safe_error_category(code, message):
         errno = code
     def unavailable():
         raise DriverError('private-password@private-host')
-    client = WeldingClient(Settings())
+    client = mysql_client(welding_settings())
     client._get_pool = unavailable
     with pytest.raises(WeldingUnavailable, match=message) as error:
         with client.snapshot():
@@ -262,7 +264,7 @@ def test_exports_cover_all_filters_escape_text_and_enforce_limits(tmp_path):
             result = path.with_suffix('.pdf')
             result.write_bytes(b'%PDF-test')
             return result
-    export = WeldingExport(Settings(project_root=tmp_path), Service(), Pdf())
+    export = WeldingExport(welding_settings(project_root=tmp_path), Service(), Pdf())
     csv, _ = export.generate('jobs', query(), 'csv')
     assert csv.startswith(b'\xef\xbb\xbf') and '工件流水号' in csv.decode('utf-8-sig')
     html, _ = export.generate('jobs', query(), 'html')
@@ -282,8 +284,10 @@ def api():
     app.include_router(router)
     app.include_router(lines_router)
     app.dependency_overrides[require_admin] = lambda: {'role': 'admin'}
-    app.state.welding = SimpleNamespace(settings=Settings(weld_enabled=True, llm_enabled=False), snapshot_service=None)
-    return TestClient(app)
+    instance = SimpleNamespace(settings=welding_settings(llm_enabled=False), snapshot_service=None)
+    app.state.lines = {'welding': runtime_line(instance, 'welding')}
+    app.state.catalog = load_line_catalog(instance.settings.production_lines_json)
+    return TestClient(app, headers={'X-Production-Line': 'welding'})
 
 
 def test_api_validation_disabled_missing_and_capabilities(api):
@@ -294,7 +298,7 @@ def test_api_validation_disabled_missing_and_capabilities(api):
     weld = next(item for item in items if item['id'] == 'welding')
     assert weld['type'] == 'welding' and weld['enabled'] is True
     assert 'alarms' not in weld['capabilities'] and 'dispatch' not in weld['capabilities']
-    api.app.state.welding.settings = Settings(weld_enabled=False)
+    api.app.state.catalog = api.app.state.catalog.model_copy(update={'lines': tuple(line.model_copy(update={'enabled': False}) if line.id == 'welding' else line for line in api.app.state.catalog.lines)})
     assert api.get('/api/v1/welding/health').status_code == 503
     disabled = next(item for item in api.get('/api/v1/production-lines').json()['data']['items'] if item['id'] == 'welding')
     assert disabled['enabled'] is False
@@ -310,7 +314,7 @@ def test_worker_cannot_read_welding_or_line_catalog(api):
 
 
 def test_ai_input_version_and_unavailable_model(api):
-    instance = api.app.state.welding
+    instance = api.app.state.lines['welding'].service
     instance.page = lambda *args, **kwargs: {'data_version': 'b' * 64}
     body = {'query': query().model_dump(mode='json'), 'data_version': 'a' * 64}
     assert api.post('/api/v1/welding/analysis', json=body).status_code == 409
@@ -323,11 +327,11 @@ def test_ai_input_version_and_unavailable_model(api):
 
 def test_ai_uses_only_aggregate_context_and_reuses_verified_version(api, monkeypatch):
     from app.models.domain import AnalysisResult
-    instance = WeldingService(Settings(weld_enabled=True, llm_enabled=True), None)
+    instance = WeldingService(welding_settings(weld_enabled=True, llm_enabled=True), None)
     data = report_data()
     data.update(data_version='a' * 64, equipment=[])
     instance.report = lambda *args, **kwargs: data
-    api.app.state.welding = instance
+    api.app.state.lines['welding'] = runtime_line(instance, 'welding')
     calls = []
     def analyze(self, kind, context):
         calls.append(context)
@@ -340,8 +344,11 @@ def test_ai_uses_only_aggregate_context_and_reuses_verified_version(api, monkeyp
     assert len(calls) == 1
 
 
-def test_http_context_blocks_cutting_operations_and_validation_never_echoes_password():
+def test_http_context_blocks_cutting_operations_and_validation_never_echoes_password(tmp_path, monkeypatch):
     from app.main import app
+    from app.services.application_runtime import build_runtime
+    from tests.line_fixtures import configuration
+    monkeypatch.setattr(app.state, 'runtime', build_runtime(configuration(tmp_path, welding=True), role='web'), raising=False)
     previous = app.dependency_overrides.get(require_admin)
     app.dependency_overrides[require_admin] = lambda: {'role': 'admin'}
     try:
@@ -358,32 +365,12 @@ def test_http_context_blocks_cutting_operations_and_validation_never_echoes_pass
             app.dependency_overrides[require_admin] = previous
 
 
-@pytest.mark.parametrize('saved', [{}, {'WELD_DB_PASSWORD': None}])
-def test_welding_hot_configuration_validation_and_password_retention(saved):
-    from app.services.database_configuration import WeldingConnectionRequest, welding_env_values
-    initial = Settings(weld_db_password='saved-secret', data_source_mode='demo', worker_database_auth_enabled=False, file_database_enabled=False)
-    payload = WeldingConnectionRequest(enabled=True, host='db.test', username='readonly')
-    values = welding_env_values(payload, initial, saved)
-    updated = parse_database_settings(initial, values)
-    assert updated.weld_enabled and updated.weld_db_password == 'saved-secret'
-    assert initial.weld_enabled is False
-    with pytest.raises(ValueError):
-        parse_database_settings(initial, {**values, 'WELD_DB_PORT': 0})
-    with pytest.raises(ValueError):
-        parse_database_settings(initial, {**values, 'WELD_DB_TIMEZONE': 'invalid'})
-    with pytest.raises(ValueError):
-        parse_database_settings(initial, {**values, 'WELD_DB_PASSWORD': ''})
-
-
-def test_welding_diagnostics_report_missing_profile_without_returning_secrets():
-    from app.services.configuration_diagnostics import validate_values, safe_value
-    from app.api.database import WeldingConnectionRequest
-    cfg = Settings(weld_enabled=True, weld_db_host='', weld_db_user='', weld_db_password='', weld_db_pool_size=0, weld_db_timezone='bad')
-    invalid = validate_values(cfg, {})
-    assert {'WELD_DB_HOST', 'WELD_DB_USER', 'WELD_DB_PASSWORD', 'WELD_DB_POOL_SIZE', 'WELD_DB_TIMEZONE'} <= invalid
-    assert safe_value('private', 'WELD_DB_PASSWORD') == '已配置'
+def test_welding_connection_boundary_validates_timezone_without_echoing_secrets():
+    from app.services.database_configuration import WeldingConnectionRequest
     with pytest.raises(ValidationError):
-        WeldingConnectionRequest(timezone='bad')
+        WeldingConnectionRequest(timezone='invalid')
+    from app.services.configuration_diagnostics import safe_value
+    assert safe_value('private', 'DATABASE_SOURCES_JSON') == '已配置'
 
 
 def test_source_audit_keeps_core_results_when_optional_tables_are_not_authorized():
@@ -429,11 +416,10 @@ def test_connection_pool_default_matches_execution_capacity_and_remains_readonly
         captured.update(values)
         return SimpleNamespace(get_connection=Connection)
     monkeypatch.setattr(mysql.connector.pooling, 'MySQLConnectionPool', pool)
-    cfg = Settings(weld_enabled=True, weld_db_host='test', weld_db_user='reader', weld_db_password='private')
-    assert cfg.weld_db_pool_size == 4
-    assert welding_requests._threads.total_tokens == max(1, min(4, config.settings.weld_db_pool_size))
+    cfg = welding_settings()
+    assert welding_requests._threads.total_tokens == 4
     assert welding_requests.max_waiters == 12 and welding_requests.queue_timeout_seconds == 5
-    with WeldingClient(cfg).snapshot() as session:
+    with mysql_client(cfg).snapshot() as session:
         assert session.timeout == 120
     assert captured['pool_size'] == 4 and captured['use_pure']
     assert captured['transaction'] == {'isolation_level': 'REPEATABLE READ', 'consistent_snapshot': True, 'readonly': True}
@@ -452,7 +438,7 @@ def test_source_capacity_timeout_sql_and_connection_errors_remain_distinct(name,
     error = type(name, (RuntimeError,), {'errno': code})('private-credentials-and-SQL')
     def broken():
         raise error
-    client = WeldingClient(Settings())
+    client = mysql_client(welding_settings())
     pool = SimpleNamespace(get_connection=broken)
     client._pool = pool
     client._get_pool = lambda: pool
@@ -487,6 +473,8 @@ def test_report_passes_the_same_snapshot_count_to_paginated_jobs():
         def snapshot(self):
             yield Session()
     class Repository:
+        device_nos = ()
+        conditions = staticmethod(job_conditions)
         client = Client()
         def summary(self, session, selected):
             return {'source_rows': 3, 'job_count': 2, **dict.fromkeys([
@@ -503,7 +491,7 @@ def test_report_passes_the_same_snapshot_count_to_paginated_jobs():
         def jobs(self, session, selected, *, limit, total):
             assert total == 3 and selected.page == 2 and limit is None
             return [{'id': 2, 'serial_number': 'part'}], total
-    report = WeldingService(Settings(), Repository()).report('jobs', query(page=2, page_size=1))
+    report = WeldingService(welding_settings(), Repository()).report('jobs', query(page=2, page_size=1))
     assert report['total'] == 3 and report['summary']['job_count'] == 2
     assert report['items'][0]['id'] == 2 and report['data_version']
 
@@ -511,7 +499,7 @@ def test_report_passes_the_same_snapshot_count_to_paginated_jobs():
 def test_http_source_error_keeps_safe_category_without_retry_header(api):
     def failed(*args, **kwargs):
         raise WeldingUnavailable('焊接SQL执行失败', category='sql_error')
-    api.app.state.welding.page = failed
+    api.app.state.lines['welding'].service.page = failed
     result = api.get('/api/v1/welding/jobs?start=2026-10-01&end=2026-10-02')
     assert result.status_code == 503
     assert result.headers['X-Welding-Error'] == 'sql_error'
@@ -522,7 +510,7 @@ def test_snapshot_preparation_has_a_distinct_reason_from_queue_or_database_failu
     from app.services.report_snapshots import SnapshotRefreshBusy
     def preparing(*args, **kwargs):
         raise SnapshotRefreshBusy('统计正在生成，请稍后重试')
-    api.app.state.welding.page = preparing
+    api.app.state.lines['welding'].service.page = preparing
     result = api.get('/api/v1/welding/jobs?start=2026-10-01&end=2026-10-02')
     assert result.status_code == 503
     assert result.headers['X-Welding-Error'] == 'snapshot_refresh_busy'
@@ -533,7 +521,7 @@ def test_snapshot_queue_rejection_is_not_reported_as_preparation(api):
     from app.services.report_snapshots import SnapshotRefreshRejected
     def rejected(*args, **kwargs):
         raise SnapshotRefreshRejected('后台刷新队列已满')
-    api.app.state.welding.page = rejected
+    api.app.state.lines['welding'].service.page = rejected
     result = api.get('/api/v1/welding/jobs?start=2026-10-01&end=2026-10-02')
     assert result.status_code == 503
     assert result.headers['X-Welding-Error'] == 'snapshot_queue_full'
@@ -566,9 +554,9 @@ def test_pdf_and_ai_release_welding_capacity_before_slow_processing(api, monkeyp
             return data
         finally:
             source['open'] = False
-    instance = WeldingService(Settings(weld_enabled=True, llm_enabled=True), None)
+    instance = WeldingService(welding_settings(weld_enabled=True, llm_enabled=True), None)
     instance.report = report
-    api.app.state.welding = instance
+    api.app.state.lines['welding'] = runtime_line(instance, 'welding')
     def slow():
         assert not source['open']
         entered.set()
@@ -586,7 +574,7 @@ def test_pdf_and_ai_release_welding_capacity_before_slow_processing(api, monkeyp
     monkeypatch.setattr(welding.LlmService, 'analyze_context', model)
 
     async def exercise():
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=api.app), base_url='http://test') as client:
+        async with httpx.AsyncClient(headers={'X-Production-Line': 'welding'}, transport=httpx.ASGITransport(app=api.app), base_url='http://test') as client:
             if stage == 'pdf':
                 operation = client.get('/api/v1/welding/export?report_type=jobs&format=pdf&start=2026-10-01&end=2026-10-31')
             else:
@@ -627,7 +615,7 @@ def test_four_http_queries_execute_and_fifth_waits_for_a_slot(api, monkeypatch, 
     release, lock = Event(), Lock()
     counts = {'running': 0, 'peak': 0}
     if has_snapshot_storage:
-        api.app.state.welding.snapshot_service = SimpleNamespace(coordination=None)
+        api.app.state.lines['welding'].service.snapshot_service = SimpleNamespace(coordination=None)
     def report(*args):
         with lock:
             counts['running'] += 1
@@ -638,9 +626,9 @@ def test_four_http_queries_execute_and_fifth_waits_for_a_slot(api, monkeypatch, 
         finally:
             with lock:
                 counts['running'] -= 1
-    api.app.state.welding.page = report
+    api.app.state.lines['welding'].service.page = report
     async def exercise():
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=api.app), base_url='http://test') as client:
+        async with httpx.AsyncClient(headers={'X-Production-Line': 'welding'}, transport=httpx.ASGITransport(app=api.app), base_url='http://test') as client:
             tasks = [asyncio.create_task(client.get('/api/v1/welding/jobs?start=2026-10-01&end=2026-10-02')) for _ in range(5)]
             try:
                 with anyio.fail_after(2):
@@ -673,12 +661,12 @@ def test_ready_snapshots_do_not_wait_for_busy_source_connections(api, monkeypatc
             with lock:
                 counts['running'] -= 1
 
-    api.app.state.welding.snapshot_service = SimpleNamespace(coordination=object())
-    api.app.state.welding.part = part
-    api.app.state.welding.page = lambda *_: {'data_version': 'ready', 'meta': {'report_data': {'source': 'snapshot'}}}
+    api.app.state.lines['welding'].service.snapshot_service = SimpleNamespace(coordination=object())
+    api.app.state.lines['welding'].service.part = part
+    api.app.state.lines['welding'].service.page = lambda *_: {'data_version': 'ready', 'meta': {'report_data': {'source': 'snapshot'}}}
 
     async def exercise():
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=api.app), base_url='http://test') as client:
+        async with httpx.AsyncClient(headers={'X-Production-Line': 'welding'}, transport=httpx.ASGITransport(app=api.app), base_url='http://test') as client:
             tasks = [asyncio.create_task(client.get('/api/v1/welding/parts/1')) for _ in range(4)]
             try:
                 with anyio.fail_after(2):
@@ -696,7 +684,7 @@ def test_ready_snapshots_do_not_wait_for_busy_source_connections(api, monkeypatc
 
 @pytest.mark.parametrize('format,media', [('csv', 'text/csv'), ('html', 'text/html')])
 def test_http_csv_and_html_export_preserve_data_without_pdf(api, format, media):
-    api.app.state.welding.report = lambda *args, **kwargs: report_data()
+    api.app.state.lines['welding'].service.report = lambda *args, **kwargs: report_data()
     api.app.state.pdf_service = SimpleNamespace(render=lambda _: pytest.fail('CSV/HTML must not render PDF'))
     result = api.get(f'/api/v1/welding/export?report_type=jobs&format={format}&start=2026-10-01&end=2026-10-31')
     assert result.status_code == 200 and media in result.headers['content-type']
@@ -706,7 +694,7 @@ def test_http_csv_and_html_export_preserve_data_without_pdf(api, format, media):
 
 def test_refresh_control_is_validated_and_excluded_from_business_filters(api):
     calls = []
-    api.app.state.welding.page = lambda kind, selected, **kwargs: calls.append((selected, kwargs)) or {'items': []}
+    api.app.state.lines['welding'].service.page = lambda kind, selected, **kwargs: calls.append((selected, kwargs)) or {'items': []}
     url = '/api/v1/welding/jobs?start=2026-10-01&end=2026-10-02'
     assert api.get(url + '&refresh=true').status_code == 200
     assert calls[-1][1] == {'force': True}

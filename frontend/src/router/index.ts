@@ -160,9 +160,8 @@ router.beforeEach(async (to) => {
     await loadDevices({ includeLines: true })
     const type = to.matched.find(record => record.meta.line)?.meta.line
     if (type && type !== selectedLineType(deviceSelection.items, deviceSelection.id)) {
-      const line = deviceSelection.items.find(item => (item.type || 'cutting') === type)
-      if (!line) return lineHome(deviceSelection.items, deviceSelection.id)
-      changeDevice(line.id)
+      const line = deviceSelection.items.find(item => item.id === deviceSelection.id && item.type === type)
+      if (!line && deviceSelection.id) return lineHome(deviceSelection.items, deviceSelection.id)
     }
   }
   return true

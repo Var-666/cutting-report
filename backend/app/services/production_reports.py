@@ -5,7 +5,6 @@ from datetime import date
 from typing import TYPE_CHECKING, Any, Iterator, Protocol, TypeVar
 
 from app.services.report_snapshots import ReportData
-from app.services.production_lines import registered_lines, resolve_line_service
 
 if TYPE_CHECKING:
     from app.services.leadership_report_service import LeadershipReportService
@@ -66,7 +65,9 @@ class CuttingReportProvider:
 
 
 def report_provider(context, line_id: str) -> ProductionReportProvider[Any]:
-    service = resolve_line_service(context, line_id)
+    if not context.catalog.get(line_id).enabled:
+        raise ValueError("产线已停用")
+    service = context.lines.get(line_id)
     provider = getattr(service, 'report_provider', None)
     if provider is None:
         raise ValueError('产线没有登记报表服务')
@@ -74,9 +75,6 @@ def report_provider(context, line_id: str) -> ProductionReportProvider[Any]:
 
 
 def report_providers(context) -> Iterator[tuple[str, ProductionReportProvider[Any]]]:
-    for line in registered_lines(context):
-        if line['enabled']:
-            service = resolve_line_service(context, line['id'])
-            provider = getattr(service, 'report_provider', None)
-            if provider is not None:
-                yield line['id'], provider
+    for line_id, line in context.lines.items():
+        if line.config.enabled and line.report_provider is not None:
+            yield line_id, line.report_provider

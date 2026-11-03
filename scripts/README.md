@@ -24,3 +24,6 @@ scripts/
 ```
 
 Shell 脚本会从自身目录定位项目根目录，部署时保留相对目录结构。常规 Docker 构建直接在项目根目录执行 `docker compose up -d --build`。
+
+
+P1 旧部署先停 Web/Worker，运行 `python scripts/migrate_production_lines.py`，再启动新版本。该工具只读旧连接/设备配置，保护凭据并原子写入统一配置；重复执行只验证，不回退旧机制。新增同类型实例配置与015告警迁移边界见 [配置参考](../docs/deployment/配置参考.md#p1-升级与新增实例)。焊接核验脚本必须提供 `--line-id`；切割诊断的 `--device-id` 继续表示原稳定产线键。

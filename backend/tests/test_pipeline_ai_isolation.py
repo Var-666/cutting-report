@@ -1,9 +1,11 @@
+from app.services.query_service import QueryService
+from tests.line_fixtures import source_client
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 import pytest
 
-from app.config import Settings
+from tests.line_fixtures import cutting_settings, source_client
 from app.database.metadata import MetadataRepository
 from app.models.domain import ReportFilter
 from app.services.llm_service import AnalysisOutputValidationError, LlmRequestTimeout
@@ -19,7 +21,7 @@ REPORT_DATE = date(2026, 8, 18)
 
 
 def pipeline_job(tmp_path, report_type, interval, *, llm_enabled=True):
-    settings = Settings(project_root=tmp_path, data_source_mode="demo", demo_mode=True,
+    settings = cutting_settings(project_root=tmp_path, data_source_mode="demo", demo_mode=True,
                         llm_enabled=llm_enabled)
     settings.ensure_runtime_dirs()
     vendor_dir = tmp_path / "vendor"
@@ -27,7 +29,7 @@ def pipeline_job(tmp_path, report_type, interval, *, llm_enabled=True):
     (vendor_dir / "echarts.min.js").write_text("window.echarts={};")
     metadata = MetadataRepository(settings.metadata_db_path, device_id='Cutter01')
     metadata.initialize()
-    pipeline = ReportPipeline(settings, metadata)
+    pipeline = ReportPipeline(settings, metadata, query_service=QueryService(settings, client=source_client(settings)))
     now = datetime.now(ZoneInfo(settings.timezone)).isoformat(timespec="seconds")
     if report_type == "workshop" and not interval:
         user = pipeline.workshop_repository.bootstrap_admin(

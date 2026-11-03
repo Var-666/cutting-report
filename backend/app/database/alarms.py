@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Iterable
 from uuid import uuid4
 
+from app.database.migrations.v015_alarm_sources import scoped_fingerprint
 from app.database.sqlite import SQLiteDatabase, SQLiteRepository
 
 
@@ -68,7 +69,7 @@ class AlarmRepository(SQLiteRepository):
 
     def initialize(self) -> None:
         from app.database.migrations import apply_migrations
-        apply_migrations(self.database, names=("012_alarms",))
+        apply_migrations(self.database, names=("012_alarms", "015_alarm_sources"))
         with self.connect() as connection:
             connection.execute(
                 """
@@ -160,15 +161,15 @@ class AlarmRepository(SQLiteRepository):
         self, limit: int = 2000, *, monitor_start_at: str | None = None,
         after_id: int = 0,
     ) -> list[int]:
-        where = "WHERE is_open = 1 AND source_alarm_id > ?"
+        where = "WHERE is_open = 1 AND source_alarm_id > ? AND source_name = ?"
         if self.machine_no is not None:
             where += " AND incident_id IN (SELECT incident_id FROM alarm_incidents WHERE machine_no = ? COLLATE NOCASE)"
         parameters: tuple[Any, ...]
         if monitor_start_at:
             where += " AND start_time >= ?"
-            parameters = (after_id, *((self.machine_no,) if self.machine_no is not None else ()), monitor_start_at, limit)
+            parameters = (after_id, self.source_name, *((self.machine_no,) if self.machine_no is not None else ()), monitor_start_at, limit)
         else:
-            parameters = (after_id, *((self.machine_no,) if self.machine_no is not None else ()), limit)
+            parameters = (after_id, self.source_name, *((self.machine_no,) if self.machine_no is not None else ()), limit)
         with self.connect() as connection:
             rows = connection.execute(
                 f"""
@@ -304,9 +305,9 @@ class AlarmRepository(SQLiteRepository):
                     SELECT e.incident_id, e.source_hash, i.first_start_time
                     FROM alarm_source_events e
                     JOIN alarm_incidents i ON i.incident_id = e.incident_id
-                    WHERE e.source_alarm_id = ?
+                    WHERE e.source_alarm_id = ? AND e.source_name = ?
                     """,
-                    (source_alarm_id,),
+                    (source_alarm_id, source_name),
                 ).fetchone()
                 # History rechecks must not recreate expired, resolved events.
                 # Existing open events still need their removal update persisted.
@@ -331,8 +332,8 @@ class AlarmRepository(SQLiteRepository):
                 ):
                     affected_incidents.add(str(existing["incident_id"]))
                     connection.execute(
-                        "DELETE FROM alarm_source_events WHERE source_alarm_id = ?",
-                        (source_alarm_id,),
+                        "DELETE FROM alarm_source_events WHERE source_alarm_id = ? AND source_name = ?",
+                        (source_alarm_id, source_name),
                     )
                     existing = None
                 if existing:
@@ -344,7 +345,7 @@ class AlarmRepository(SQLiteRepository):
                             UPDATE alarm_source_events
                             SET source_hash = ?, start_time = ?, remove_time = ?,
                                 is_open = ?, last_seen_at = ?
-                            WHERE source_alarm_id = ?
+                            WHERE source_alarm_id = ? AND source_name = ?
                             """,
                             (
                                 source_hash,
@@ -353,14 +354,16 @@ class AlarmRepository(SQLiteRepository):
                                 is_open,
                                 now_text,
                                 source_alarm_id,
+                                source_name,
                             ),
                         )
                 else:
                     record_changed = True
-                    base_fingerprint = _fingerprint(record)
+                    base_fingerprint = scoped_fingerprint(source_name, _fingerprint(record))
                     fingerprint = _window_fingerprint(
-                        base_fingerprint, monitor_start_at
+                        _fingerprint(record), monitor_start_at
                     )
+                    fingerprint = scoped_fingerprint(source_name, fingerprint)
                     fingerprints = (
                         (base_fingerprint, fingerprint)
                         if fingerprint != base_fingerprint
@@ -448,11 +451,12 @@ class AlarmRepository(SQLiteRepository):
                     connection.execute(
                         """
                         INSERT INTO alarm_source_events (
-                            source_alarm_id, incident_id, source_hash, start_time,
+                            source_name, source_alarm_id, incident_id, source_hash, start_time,
                             remove_time, is_open, first_seen_at, last_seen_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
+                            source_name,
                             source_alarm_id,
                             incident_id,
                             source_hash,

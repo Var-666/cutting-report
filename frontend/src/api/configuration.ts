@@ -52,7 +52,10 @@ export function executeWorkbenchSql({ sql, maxRows, token }: { sql: string; maxR
 }
 
 export function testWeldingConnection(payload: WeldingConnectionRequest) { return request<ConnectionTestResult>('/api/v1/database/welding/test-connection', { method: 'POST', body: JSON.stringify(payload) }) }
-export function saveWeldingConfiguration(payload: WeldingConnectionRequest) { return request<SaveResult>('/api/v1/database/welding/configuration', { method: 'PUT', body: JSON.stringify(payload) }) }
+export function saveWeldingConfiguration(payload: WeldingConnectionRequest) {
+  return request<SaveResult>('/api/v1/database/welding/configuration', { method: 'PUT', body: JSON.stringify(payload) })
+    .then(result => { reportCache.clear(); return result })
+}
 
 export function getConfigurationDiagnostics({ signal }: ReadOptions = {}) {
   return request<ConfigurationDiagnostics>('/api/v1/configuration/diagnostics', { signal })
@@ -68,15 +71,15 @@ export function getDatabaseSource(id: string) {
 export function saveDatabaseSource(payload: import('./generated/types.gen').DatabaseSourceRequestWritable, create: boolean) {
   return request<import('./generated/types.gen').DatabaseSourceView>(create ? '/api/v1/database/sources' : `/api/v1/database/sources/${encodeURIComponent(payload.id)}`, {
     method: create ? 'POST' : 'PUT', body: JSON.stringify(payload),
-  })
+  }).then(result => { reportCache.clear(); return result })
 }
 export function setDatabaseSourceEnabled(id: string, enabled: boolean) {
   return request<import('./generated/types.gen').DatabaseSourceView>(`/api/v1/database/sources/${encodeURIComponent(id)}/enabled`, {
     method: 'PATCH', body: JSON.stringify({ enabled }),
-  })
+  }).then(result => { reportCache.clear(); return result })
 }
 export function deleteDatabaseSource(id: string) {
-  return request<import('./generated/types.gen').SourceDeleted>(`/api/v1/database/sources/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  return request<import('./generated/types.gen').SourceDeleted>(`/api/v1/database/sources/${encodeURIComponent(id)}`, { method: 'DELETE' }).then(result => { reportCache.clear(); return result })
 }
 export function testDatabaseSource(payload: import('./generated/types.gen').DatabaseSourceRequestWritable) {
   return request<ConnectionTestResult>('/api/v1/database/sources/test-connection', { method: 'POST', body: JSON.stringify(payload) })

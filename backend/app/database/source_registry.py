@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from threading import RLock
 from types import MappingProxyType
 from typing import Mapping, Sequence
@@ -56,18 +57,33 @@ class DatabaseSourceRegistry:
 
     def client(self, source_id: str) -> SqlServerClient | MySqlClient:
         config = self.get(source_id)
-        if not config.enabled:
-            raise SourceConflict('数据源尚未启用')
         with self._lock:
             if source_id not in self._clients:
                 self._clients[source_id] = SqlServerClient(config) if config.engine == 'sqlserver' else MySqlClient(config)
             return self._clients[source_id]
 
+    def fingerprint(self, source_id: str) -> str:
+        return hashlib.sha256(source_configs_json([self.get(source_id)]).encode()).hexdigest()
+
+    def connection_identity(self, source_id: str) -> str:
+        config = self.get(source_id)
+        value = config.model_dump(include={'id', 'engine', 'host', 'port', 'database', 'username'})
+        return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
+
+    def validate_lines(self, catalog, *, demo: bool = False) -> None:
+        for line in catalog.lines:
+            config = self.get(line.source_key)
+            engine = {"cutting": "sqlserver", "welding": "mysql"}[line.type]
+            if config.engine != engine:
+                raise SourceConflict("产线类型与数据源引擎不兼容")
+            if line.enabled and not config.enabled and not (demo and line.type == "cutting"):
+                raise SourceConflict("启用的产线不能绑定停用的数据源")
+
     def view(self, source_id: str) -> DatabaseSourceView:
         config = self.get(source_id)
         configured = bool(config.password.get_secret_value())
         return DatabaseSourceView(**config.model_dump(exclude={'password'}),
-            password_configured=configured, configured=configured,
+            password_configured=configured, configured=bool(config.host and config.database and config.username and configured),
             references=list(self._bindings.get(source_id, ())))
 
     def list(self) -> list[DatabaseSourceView]:

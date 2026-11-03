@@ -65,82 +65,32 @@ class DatabaseConfigurationRequest(BaseModel):
     welding: WeldingConnectionRequest | None = None
 
 
-def _saved_connection(source: str, configuration: Settings) -> dict:
-    prefix = "sqlserver" if source == "production" else f"{source}_sqlserver"
-    common = configuration.sqlserver_connection(source)
-    password = str(getattr(configuration, f"{prefix}_password"))
-    return {
-        "host": str(getattr(configuration, f"{prefix}_host")),
-        "port": int(getattr(configuration, f"{prefix}_port")),
-        "database": str(getattr(configuration, f"{prefix}_database")),
-        "username": str(getattr(configuration, f"{prefix}_username")),
-        "password_configured": bool(password),
-        "driver": str(getattr(configuration, f"{prefix}_driver") or common["driver"]),
-        "encrypt": str(
-            getattr(configuration, f"{prefix}_encrypt") or common["encrypt"]
-        ).strip().lower() in {"1", "true", "yes", "on"},
-        "trust_server_certificate": str(
-            getattr(configuration, f"{prefix}_trust_server_certificate")
-            or common["trust_server_certificate"]
-        ).strip().lower() in {"1", "true", "yes", "on"},
-    }
+def database_configuration_data(configuration: Settings, line_id: str | None = None) -> dict:
+    from app.database.source_registry import DatabaseSourceRegistry
+    from app.device_config import load_line_catalog
+    registry = DatabaseSourceRegistry.from_json(configuration.database_sources_json)
+    catalog = load_line_catalog(configuration.production_lines_json)
+    line = catalog.get(line_id) if line_id else None
 
+    def profile(key: str) -> dict:
+        if not key:
+            return {"host": "", "port": 1433, "database": "", "username": "", "password_configured": False,
+                    "driver": "ODBC Driver 18 for SQL Server", "encrypt": True, "trust_server_certificate": True}
+        config = registry.get(key)
+        return {**config.model_dump(include={"host", "port", "database", "username", "driver", "encrypt", "trust_server_certificate"}),
+                "password_configured": bool(config.password.get_secret_value())}
 
-def database_configuration_data(configuration: Settings) -> dict:
-    return {
-        "data_source_mode": configuration.effective_data_source_mode,
-        "worker_database_auth_enabled": configuration.worker_database_auth_enabled,
-        "file_database_enabled": configuration.file_database_enabled,
-        "production": _saved_connection("production", configuration),
-        "worker": _saved_connection("worker", configuration),
-        "file": _saved_connection("file", configuration),
-        "welding": {
-            'enabled': configuration.weld_enabled, 'host': configuration.weld_db_host,
-            'port': configuration.weld_db_port, 'database': configuration.weld_db_name,
-            'username': configuration.weld_db_user, 'password_configured': bool(configuration.weld_db_password),
-            'timezone': configuration.weld_db_timezone,
-        },
-    }
-
-
-def connection_env_values(
-    source: str, payload: SavedConnectionRequest, configuration: Settings, saved: dict
-) -> dict[str, object]:
-    env_prefix = "SQLSERVER" if source == "production" else f"{source.upper()}_SQLSERVER"
-    attribute_prefix = "sqlserver" if source == "production" else f"{source}_sqlserver"
-    submitted_password = (
-        payload.password.get_secret_value() if payload.password is not None else None
-    )
-    saved_password = saved.get(f"{env_prefix}_PASSWORD")
-    password = (
-        submitted_password
-        if submitted_password not in {None, ""}
-        else saved_password if saved_password is not None
-        else getattr(configuration, f"{attribute_prefix}_password")
-    )
-    return {
-        f"{env_prefix}_HOST": payload.host,
-        f"{env_prefix}_PORT": payload.port,
-        f"{env_prefix}_DATABASE": payload.database,
-        f"{env_prefix}_USERNAME": payload.username,
-        f"{env_prefix}_PASSWORD": password,
-        f"{env_prefix}_DRIVER": payload.driver,
-        f"{env_prefix}_ENCRYPT": "yes" if payload.encrypt else "no",
-        f"{env_prefix}_TRUST_SERVER_CERTIFICATE": (
-            "yes" if payload.trust_server_certificate else "no"
-        ),
-    }
-
-
-def welding_env_values(payload: WeldingConnectionRequest, configuration: Settings, saved: dict) -> dict[str, object]:
-    password = payload.password.get_secret_value() if payload.password else ''
-    saved_password = saved.get('WELD_DB_PASSWORD')
-    if saved_password is None:
-        saved_password = configuration.weld_db_password
-    return {'WELD_ENABLED': str(payload.enabled).lower(), 'WELD_DB_HOST': payload.host,
-            'WELD_DB_PORT': payload.port, 'WELD_DB_NAME': payload.database,
-            'WELD_DB_USER': payload.username, 'WELD_DB_PASSWORD': password or saved_password,
-            'WELD_DB_TIMEZONE': payload.timezone}
+    welding = None
+    if line and line.type == "welding":
+        welding = {**profile(line.source_key), "enabled": line.enabled, "timezone": line.timezone}
+        for key in ("driver", "encrypt", "trust_server_certificate"):
+            welding.pop(key)
+    return {"data_source_mode": configuration.effective_data_source_mode,
+            "worker_database_auth_enabled": configuration.worker_database_auth_enabled,
+            "file_database_enabled": configuration.file_database_enabled,
+            "production": profile(line.source_key if line and line.type == "cutting" else ""),
+            "worker": profile(configuration.worker_source_key), "file": profile(configuration.file_source_key),
+            "welding": welding}
 
 
 class SourceConnectionError(RuntimeError):

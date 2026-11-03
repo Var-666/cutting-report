@@ -1,10 +1,12 @@
+from app.services.query_service import QueryService
+from tests.line_fixtures import source_client
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
 
-from app.config import Settings
+from tests.line_fixtures import cutting_settings, source_client
 from app.database.definitions import DefinitionRepository
 from app.database.metadata import MetadataRepository
 from app.services.custom_report_service import CustomReportService
@@ -77,8 +79,8 @@ def test_definition_repository_seeds_builtins_and_versions_updates(tmp_path: Pat
 
 def test_custom_query_named_parameters_are_compiled_safely(tmp_path: Path) -> None:
     service = CustomReportService(
-        Settings(project_root=tmp_path, demo_mode=False, data_source_mode="sqlserver")
-    )
+        cutting_settings(project_root=tmp_path, demo_mode=False, data_source_mode="sqlserver")
+    , client=source_client(cutting_settings(project_root=tmp_path, demo_mode=False, data_source_mode="sqlserver")))
     sql, values = service._compile(
         QUERY_PAYLOAD["sql_text"],
         report_date=datetime(2026, 8, 18).date(),
@@ -102,7 +104,7 @@ def test_custom_demo_pipeline_generates_configured_report(tmp_path: Path, detail
         "window.echarts={init:function(){return {setOption:function(){},resize:function(){}}}};",
         encoding="utf-8",
     )
-    settings = Settings(
+    settings = cutting_settings(
         project_root=tmp_path,
         demo_mode=True,
         data_source_mode="demo",
@@ -130,7 +132,7 @@ def test_custom_demo_pipeline_generates_configured_report(tmp_path: Path, detail
     job = metadata.claim_next_job(now)
     assert job is not None
 
-    ReportPipeline(settings, metadata, definitions).run(job)
+    ReportPipeline(settings, metadata, definitions, query_service=QueryService(settings, client=source_client(settings))).run(job)
 
     completed = metadata.get_job("rpt_custom_test")
     assert completed["status"] == "completed"

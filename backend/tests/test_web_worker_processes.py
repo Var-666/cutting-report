@@ -1,3 +1,4 @@
+from tests.line_fixtures import as_line_services, runtime_line
 import multiprocessing as mp
 from pathlib import Path
 from queue import Empty
@@ -9,15 +10,15 @@ import httpx
 import pytest
 
 from app.config import Settings
+from tests.line_fixtures import configuration as line_configuration
 from app.database.coordination import CoordinationRepository
 from app.database.sqlite import SQLiteDatabase
 from app.services.application_runtime import build_runtime
 
 
 def configuration(root):
-    return Settings(project_root=Path(root), app_env="test", data_source_mode="demo",
-                    llm_enabled=False, energy_api_enabled=False, file_database_enabled=False,
-                    worker_database_auth_enabled=False, alarm_monitor_enabled=False, worker_poll_seconds=0.05)
+    from dataclasses import replace
+    return replace(line_configuration(Path(root)), app_env="test", alarm_monitor_enabled=False, worker_poll_seconds=0.05)
 
 
 def _web_probe(root, output):
@@ -38,7 +39,7 @@ def _web_probe(root, output):
             threading.Thread.__init__ = original
             assert constructed == []
             extra = [thread.name for thread in threading.enumerate() if thread.ident not in before]
-            assert all(device.workers == () for device in main.app.state.runtime.devices.values())
+            assert all(line.background.workers == () for line in main.app.state.runtime.database_runtime.snapshot().lines.values() if line.background is not None)
             job = main.app.state.runtime.metadata.get_job("restart-test")
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url="http://test") as client:
                 with anyio.fail_after(3):
@@ -56,7 +57,7 @@ def _worker(root, stop, entered=None, release=None):
     process = WorkerProcess(configuration(root))
     process.stop_event = stop
     if entered is not None:
-        for device in process.runtime.devices.values():
+        for device in (line.service for line in process.runtime.database_runtime.snapshot().lines.values() if line.pipeline is not None):
             original = device.pipeline.run
 
             def blocked(job, *, cancellation_check=None, pipeline_run=original, metadata=device.metadata):
@@ -97,7 +98,7 @@ def _configuration_observer(root, output, changed):
     assert changed.wait(10)
     current, new_revision = runtime.snapshot()
     output.put((current.smtp_host, current.automation_enabled, new_revision > revision,
-                current.sqlserver_host == old.sqlserver_host))
+                current.database_sources_json == old.database_sources_json))
 
 
 def _config_increment(path, start):
@@ -119,8 +120,10 @@ def _uncommitted(path, entered):
 
 def _publish_cache(root):
     from app.services.cache_revision import CacheRevision
-    CacheRevision(configuration(root), "production").publish()
-    CacheRevision(configuration(root), "leadership").publish()
+    from tests.line_fixtures import line_settings
+    CacheRevision(line_settings(configuration(root)), "production").publish()
+    from tests.line_fixtures import line_settings
+    CacheRevision(line_settings(configuration(root)), "leadership").publish()
 
 
 def _cleanup_after_push(root, download_id, entered, release, output):
@@ -171,7 +174,7 @@ def test_web_restarts_do_not_reset_worker_and_crashed_worker_report_recovers(tmp
     runtime = build_runtime(configuration(tmp_path), role="worker")
     runtime.workshop.bootstrap_admin(username="process-admin", display_name="进程测试", password="test-password",
                                     now="2026-10-24T10:00:00+08:00")
-    runtime.devices["Cutter01"].metadata.create_job(report_id="restart-test", report_type="equipment", report_date="2026-08-18",
+    runtime.database_runtime.snapshot().lines["Cutter01"].service.metadata.create_job(report_id="restart-test", report_type="equipment", report_date="2026-08-18",
         project_code=None, ship_no=None, request_id="test", created_at="2026-10-24T10:00:00+08:00")
     stop, entered, release = context.Event(), context.Event(), context.Event()
     worker = context.Process(target=_worker, args=(str(tmp_path), stop, entered, release))
@@ -340,15 +343,16 @@ def test_worker_refresh_invalidates_only_its_device_local_caches(tmp_path, monke
     from app.services.leadership_report_service import LeadershipReportService
     configured = configuration(tmp_path)
     runtime = build_runtime(configured, role="worker")
-    first, second = QueryService(configured), QueryService(replace(configured, device_id="Cutter02"))
+    from tests.line_fixtures import line_settings
+    first, second = QueryService(line_settings(configured)), QueryService(line_settings(configured, "Cutter02"))
     calls = []
     for label, service in (("one", first), ("two", second)):
         monkeypatch.setattr(service, "_fetch_equipment_uncached", lambda _, label=label: calls.append(label) or EquipmentQueryResult([]))
     filters = ReportFilter(report_date=date(2026, 10, 24))
     one, two = first.fetch_equipment_data(filters), second.fetch_equipment_data(filters)
-    assert first.fetch_equipment_data(filters) is one
-    leader = LeadershipReportService(configured, runtime.devices["Cutter01"].leadership_report_service.snapshots)
-    base = runtime.devices["Cutter01"].leadership_report_service.fetch(date(2026, 10, 1))
+    assert first.fetch_equipment_data(filters).records is one.records
+    leader = LeadershipReportService(line_settings(configured), runtime.database_runtime.snapshot().lines["Cutter01"].service.leadership_report_service.snapshots)
+    base = runtime.database_runtime.snapshot().lines["Cutter01"].service.leadership_report_service.fetch(date(2026, 10, 1))
     monkeypatch.setattr(leader, "_compose_snapshot_report", lambda *_, **__: replace(base))
     # The isolated demo result has a fresh snapshot, so the second call uses local cache.
     report = leader._fetch_snapshot_report(date(2026, 10, 1))
@@ -357,8 +361,8 @@ def test_worker_refresh_invalidates_only_its_device_local_caches(tmp_path, monke
     publisher = context.Process(target=_publish_cache, args=(str(tmp_path),))
     publisher.start()
     join(publisher)
-    assert first.fetch_equipment_data(filters) is not one
-    assert second.fetch_equipment_data(filters) is two
+    assert first.fetch_equipment_data(filters).records is not one.records
+    assert second.fetch_equipment_data(filters).records is two.records
     assert calls == ["one", "two", "one"]
     assert leader._fetch_snapshot_report(date(2026, 10, 1)) is not report
     assert len(leader._cache) == 1, "revision changes must not accumulate old local cache keys"

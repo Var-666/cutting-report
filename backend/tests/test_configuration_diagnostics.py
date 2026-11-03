@@ -10,7 +10,8 @@ from fastapi.testclient import TestClient
 
 from app.api.auth import require_user
 from app.api.configuration import router
-from app.config import DEVICE_CATALOG, Settings, _environment
+from app.config import Settings, _environment
+from tests.line_fixtures import configuration
 from app.configuration_sources import load_environment
 from app.services.automation_runtime import AutomationRuntime
 from app.services.configuration_diagnostics import ConfigurationDiagnostics
@@ -19,11 +20,10 @@ from app.services.runtime_settings_store import write_runtime_env
 
 @pytest.fixture
 def configured(tmp_path):
-    path = tmp_path / 'backend/app/configuration/devices.json'
-    path.parent.mkdir(parents=True)
-    path.write_text(DEVICE_CATALOG.model_dump_json(), encoding='utf-8')
-
+    defaults = configuration(tmp_path)
     def create(process=None):
+        process = {'PRODUCTION_LINES_JSON': defaults.production_lines_json, 'DATABASE_SOURCES_JSON': defaults.database_sources_json,
+                   'APP_DATA_SOURCE_MODE': 'demo', 'MAGIC_BOX_ENABLED': 'false', **(process or {})}
         values, sources, _ = load_environment(tmp_path, process or {})
         token = _environment.set(values)
         try:
@@ -60,21 +60,6 @@ def test_priority_interpolation_null_empty_and_no_environment_mutation(tmp_path,
     assert os.environ == before
 
 
-def test_database_pending_then_restart_and_sources_stay_actual(configured, tmp_path):
-    (tmp_path / '.env').write_text('SQLSERVER_HOST=base\nLLM_MAX_CONCURRENT=4\n')
-    process = {'SQLSERVER_HOST': 'process'}
-    web = configured(process)
-    write_runtime_env(web.settings.runtime_settings_env_path, {'SQLSERVER_HOST': 'saved'})
-    result = item(web.report(worker(web)), 'SQLSERVER_HOST')
-    assert result['status'] == 'pending' and result['restart_required']
-    assert result['processes']['web']['source'] == '进程环境变量'
-    assert result['saved_source'].startswith('data/settings.env')
-    restarted = configured(process)
-    result = item(restarted.report(worker(restarted)), 'SQLSERVER_HOST')
-    assert result['status'] == 'effective' and not result['restart_required']
-    assert result['processes']['web']['source'].startswith('data/settings.env')
-    assert item(web.report(worker(web)), 'LLM_MAX_CONCURRENT')['processes']['web']['source'] == '.env'
-    assert item(web.report(worker(web)), 'ALARM_RETENTION_DAYS')['processes']['web']['source'] == '程序默认值'
 
 
 def test_diagnostics_does_not_reload_hot_settings_or_write_files(configured, tmp_path, monkeypatch):
@@ -109,22 +94,6 @@ def test_worker_versions_are_independent_and_missing_stale_is_not_effective(conf
         assert item(report, 'LLM_MAX_CONCURRENT')['processes']['worker']['value'] == '未知'
 
 
-def test_all_devices_catalog_and_global_gating_share_same_rules(configured, tmp_path):
-    web = configured({'ENERGY_API_ENABLED': 'true'})
-    report = web.report(worker(web))
-    for device in DEVICE_CATALOG.devices:
-        assert item(report, f'devices.{device.id}.machine_no')['processes']['web']['value'] == device.machine_no
-        row = item(report, f'devices.{device.id}.energy_api_enabled')
-        assert row['processes']['web']['value'] == (device.energy is not None)
-        assert 'devices.json' in row['processes']['web']['source']
-    path = tmp_path / 'backend/app/configuration/devices.json'
-    payload = json.loads(path.read_text())
-    payload['devices'][1]['name'] = '测试名称'
-    path.write_text(json.dumps(payload))
-    assert item(web.report(worker(web)), 'devices.Cutter02.name')['status'] == 'pending'
-    path.write_text('{broken}')
-    report = web.report(worker(web))
-    assert report['errors'] and item(report, 'DEVICE_CONFIG_PATH')['status'] == 'error'
 
 
 @pytest.mark.parametrize(('key', 'value'), [('LLM_MAX_CONCURRENT', '11'), ('APP_PORT', 'bad-secret'),
@@ -141,8 +110,8 @@ def test_invalid_parameters_are_reported_without_raw_input(configured, key, valu
 
 def test_malformed_file_and_legacy_conflict_never_log_values(configured, caplog, tmp_path):
     web = configured()
-    write_runtime_env(web.settings.runtime_settings_env_path, {'REPORT_MACHINE_NO': 'secret-conflict'})
-    assert web.report(worker(web))['errors']
+    write_runtime_env(web.settings.runtime_settings_env_path, {'PRODUCTION_LINES_JSON': 'secret-conflict'})
+    assert not item(web.report(worker(web)), 'PRODUCTION_LINES_JSON')['valid']
     web.settings.runtime_settings_env_path.write_text('SMTP_PASSWORD="secret-unclosed\n')
     report = web.report(worker(web))
     web.runtime.snapshot()
@@ -163,7 +132,7 @@ def test_invalid_hot_configuration_keeps_last_usable_runtime(configured):
 
 
 def test_sensitive_values_urls_and_digests_never_leave_api(configured):
-    secrets = {'SQLSERVER_PASSWORD': 'secret-db', 'SQLSERVER_USERNAME': 'secret-user',
+    secrets = {'DATABASE_SOURCES_JSON': configuration(Path('/tmp/diagnostic-test')).database_sources_json,
                'LLM_API_KEY': 'secret-key', 'LLM_BASE_URL': 'https://secret-user:secret-pass@server/?token=secret-query',
                'FILE_HTTP_COOKIE': 'secret-cookie', 'FILE_HTTP_AUTHORIZATION': 'secret-auth',
                'SMTP_PASSWORD': 'secret-smtp', 'SQL_WORKBENCH_ADMIN_TOKEN': 'secret-token'}
@@ -205,21 +174,6 @@ def test_diagnostic_failure_is_sanitized(configured):
     assert error.value.status_code == 503 and 'secret' not in error.value.detail
 
 
-def test_secondary_connections_show_actual_fallback_values_and_sources(configured, tmp_path):
-    (tmp_path / '.env').write_text('SQLSERVER_PORT=1444\nSQLSERVER_DRIVER=Custom Driver\n')
-    web = configured()
-    report = web.report(worker(web))
-    row = item(report, 'connections.worker.port')
-    assert row['processes']['web']['value'] == 1444
-    assert row['processes']['web']['source'] == '.env'
-    assert item(report, 'connections.worker.uses_primary_fallback')['processes']['web']['value'] is True
-    assert item(report, 'APP_EFFECTIVE_DATA_SOURCE_MODE')['processes']['web']['value'] == 'demo'
-    write_runtime_env(web.settings.runtime_settings_env_path, {'WORKER_SQLSERVER_HOST': 'dedicated', 'WORKER_SQLSERVER_PORT': '1555'})
-    restarted = configured()
-    report = restarted.report(worker(restarted))
-    assert item(report, 'connections.worker.port')['processes']['web']['value'] == 1555
-    assert item(report, 'connections.worker.driver')['processes']['web']['source'] == '.env'
-    assert item(report, 'connections.worker.uses_primary_fallback')['processes']['web']['value'] is False
 
 
 def test_loader_preserves_dotenv_disable_switch(tmp_path):
@@ -247,7 +201,7 @@ def test_worker_heartbeat_uses_its_own_snapshot_and_diagnostic_failure_is_isolat
     saved = []
     runtime = SimpleNamespace(coordination=SimpleNamespace(
         task_counts=lambda: {}, renew=lambda *args, **kwargs: saved.append(kwargs['status']) or True),
-        devices={}, configuration_diagnostics=background)
+        lines={}, configuration_diagnostics=background)
     process = WorkerProcess(background.settings, runtime=runtime)
     process.owner = 'test-worker'
     process._heartbeat()
@@ -279,7 +233,8 @@ def test_example_defaults_only_choose_demo_mode_explicitly():
             _environment.reset(token)
         if default != configured:
             differences.add(field.metadata['env'])
-    assert differences == {'APP_DATA_SOURCE_MODE'}
+    assert differences == {'APP_DATA_SOURCE_MODE', 'PRODUCTION_LINES_JSON', 'DATABASE_SOURCES_JSON',
+                           'WORKER_SOURCE_KEY', 'FILE_SOURCE_KEY', 'DISPATCH_SOURCE_KEY'}
     assert values['ALARM_RETENTION_DAYS'] == '30'
 
 
@@ -299,7 +254,19 @@ def test_empty_numeric_values_use_default_source_including_inherited_connections
     monkeypatch.setattr(automation_runtime, 'LOADED_SOURCES', dict.fromkeys(process, 'process'))
     web.runtime = AutomationRuntime(web.settings)
     report = web.report(worker(web))
-    for key in ['SQLSERVER_PORT', 'SMTP_PORT', 'connections.worker.port']:
+    for key in ['SMTP_PORT']:
         row = item(report, key)
         assert row['processes']['web']['source'] == '程序默认值'
         assert row['saved_source'] == '程序默认值'
+
+
+def test_unified_catalog_and_sources_are_compared_without_returning_raw_configuration(configured):
+    web = configured()
+    row = item(web.report(worker(web)), 'PRODUCTION_LINES_JSON')
+    assert row['status'] == 'effective' and row['saved_value'] == '已配置'
+    value = json.loads(web.settings.production_lines_json)
+    value['lines'][1]['name'] = '改名产线'
+    write_runtime_env(web.settings.runtime_settings_env_path, {'PRODUCTION_LINES_JSON': json.dumps(value)})
+    row = item(web.report(worker(web)), 'PRODUCTION_LINES_JSON')
+    assert row['status'] == 'pending' and row['restart_required']
+    assert '改名产线' not in json.dumps(row)

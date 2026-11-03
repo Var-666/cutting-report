@@ -12,13 +12,17 @@ from time import perf_counter
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'backend'))
 
 from app.config import Settings
-from app.database.welding import WeldingClient, WeldingRepository, WeldingUnavailable, TABLES, valid_serial, valid_time
+from app.device_config import load_line_catalog
+from app.database.mysql import MySqlClient
+from app.database.source_registry import DatabaseSourceRegistry
+from app.config import settings_for_line
+from app.database.welding import WeldingRepository, WeldingUnavailable, TABLES, valid_serial, valid_time
 from app.models.domain import to_primitive
 from app.models.welding import WeldingQuery
 from app.services.welding_service import WeldingService
 
 
-def inspect_source(client: WeldingClient) -> dict:
+def inspect_source(client: MySqlClient) -> dict:
     from mysql.connector import Error
     result = {'source': '小组立焊接线', 'tables': {}}
     with client.snapshot() as session:
@@ -47,12 +51,18 @@ def inspect_source(client: WeldingClient) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--line-id', required=True)
     parser.add_argument('--end', type=date.fromisoformat, required=True, help='typical production date YYYY-MM-DD')
     parser.add_argument('--runs', type=int, choices=range(1, 11), default=3)
     args = parser.parse_args()
     cfg = Settings()
-    client = WeldingClient(cfg)
-    service = WeldingService(cfg, WeldingRepository(client))
+    line = load_line_catalog(cfg.production_lines_json).get(args.line_id)
+    if line.type != 'welding' or not line.enabled:
+        parser.error('请选择已启用的焊接产线')
+    sources = DatabaseSourceRegistry.from_json(cfg.database_sources_json)
+    cfg = settings_for_line(cfg, line, sources.fingerprint(line.source_key))
+    client = sources.client(line.source_key)
+    service = WeldingService(cfg, WeldingRepository(client, device_nos=line.device_nos))
     try:
         report = inspect_source(client)
         report['verified_rules'] = {'length_input': 'mm', 'length_output': 'm', 'timezone': cfg.weld_db_timezone,

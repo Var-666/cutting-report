@@ -1,4 +1,5 @@
 from __future__ import annotations
+from tests.line_fixtures import as_line_services, cutting_settings
 
 import json
 from dataclasses import replace
@@ -552,7 +553,7 @@ def test_sql_source_filters_the_actual_cutter_name() -> None:
             calls.append((sql, parameters))
             return []
 
-    configured = replace(settings, alarm_monitor_machine_nos=("Cutter01",))
+    configured = cutting_settings(alarm_monitor_machine_nos=("Cutter01",))
     SqlServerAlarmSource(configured, client=Client()).fetch_new(12, 1000, 500)
 
     sql, parameters = calls[0]
@@ -570,7 +571,7 @@ def test_sql_source_rechecks_the_bounded_recent_window() -> None:
             calls.append((sql, parameters))
             return []
 
-    configured = replace(settings, alarm_monitor_machine_nos=("Cutter01",))
+    configured = cutting_settings(alarm_monitor_machine_nos=("Cutter01",))
     SqlServerAlarmSource(configured, client=Client()).fetch_recent(
         20,
         1000,
@@ -852,7 +853,7 @@ def test_incident_page_exposes_report_state_without_a_recent_report_limit(tmp_pa
     assert "old-completed" not in {item["report_id"] for item in repository.list_reports(50)}
     monkeypatch.setattr(alarm_api, "settings", SimpleNamespace(alarm_monitor_start_at=cutoff))
     runtime = SimpleNamespace(alarm_repository=repository, settings=SimpleNamespace(device_id="Cutter01", alarm_monitor_start_at=cutoff))
-    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(devices={"Cutter01": runtime})), query_params={"device_id": "Cutter01"}, state=SimpleNamespace(request_id="test"))
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(lines=as_line_services({"Cutter01": runtime}))), query_params={"device_id": "Cutter01"}, state=SimpleNamespace(request_id="test"), headers={})
     result = alarm_api.page_alarm_incidents(request, page=1, page_size=15)["data"]
     by_code = {item["alarm_code"]: item for item in result["items"]}
     assert result["total"] == result["all_total"] == result["open_count"] == 6

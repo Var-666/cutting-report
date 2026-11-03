@@ -182,27 +182,27 @@ class CoordinationRepository(SQLiteRepository):
             bound.enqueue(kind, device_id, payload, key=f"{kind}:{device_id}:{stamp}")
             return True
 
-    def refresh_active(self, device_id: str, month: str) -> bool:
+    def refresh_active(self, device_id: str, month: str, *, source_fingerprint: str | None = None) -> bool:
         with self.connect() as connection:
             rows = connection.execute("""SELECT payload FROM background_tasks WHERE kind='leadership_refresh'
                 AND device_id=? AND status IN ('pending','running','deferred')""", (device_id,)).fetchall()
-            return any(json.loads(row[0])["date"] == month for row in rows)
+            return any(json.loads(row[0])["date"] == month and (source_fingerprint is None or json.loads(row[0]).get("source_fingerprint") == source_fingerprint) for row in rows)
 
-    def request_refresh(self, device_id: str, month: str, *, bootstrap: bool = False) -> bool:
+    def request_refresh(self, device_id: str, month: str, *, bootstrap: bool = False, source_fingerprint: str | None = None) -> bool:
         with self.connect() as connection:
             self.begin_immediate(connection)
             bound = CoordinationRepository(self.database, connection=connection)
-            if bound.refresh_active(device_id, month):
+            if bound.refresh_active(device_id, month, source_fingerprint=source_fingerprint):
                 if bootstrap:
                     rows = connection.execute("""SELECT task_id, payload FROM background_tasks WHERE kind='leadership_refresh'
                         AND device_id=? AND status IN ('pending','deferred')""", (device_id,)).fetchall()
                     for row in rows:
                         payload = json.loads(row["payload"])
-                        if payload["date"] == month:
+                        if payload["date"] == month and (source_fingerprint is None or payload.get("source_fingerprint") == source_fingerprint):
                             payload["bootstrap"] = True
                             connection.execute("UPDATE background_tasks SET payload=? WHERE task_id=?", (json.dumps(payload), row["task_id"]))
                 return False
-            return bound.enqueue("leadership_refresh", device_id, {"date": month, "bootstrap": bootstrap})
+            return bound.enqueue("leadership_refresh", device_id, {"date": month, "bootstrap": bootstrap, "source_fingerprint": source_fingerprint})
 
     @staticmethod
     def _snapshot_task_key(line_id: str, payload: dict) -> str:

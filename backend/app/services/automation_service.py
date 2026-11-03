@@ -5,22 +5,21 @@ from datetime import date, datetime, time, timedelta
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-from app.config import DEVICE_CATALOG, Settings, settings_for_device
+from app.config import Settings
 from app.database.automation import AutomationRepository
 from app.database.metadata import MetadataRepository
 from app.database.unit_of_work import UnitOfWork
-from app.database.workshop import WorkshopRepository
 from app.models.domain import ReportFilter
 from app.services.email_service import (
     EmailService, EmailConfigurationError, EmailDeliveryFailure,
     EmailRecipientsRefused,
 )
 from app.services.automation_runtime import AutomationRuntime
-from app.services.query_service import QueryService
 
 if TYPE_CHECKING:
     from app.services.database_runtime import DatabaseRuntime
     from app.services.device_runtime import DeviceRuntime
+    from app.services.production_lines import ProductionLineRuntime
 
 
 logger = logging.getLogger(__name__)
@@ -79,7 +78,7 @@ class AutomationService:
         email_service: EmailService,
         runtime: AutomationRuntime | None = None,
         *,
-        device_services: dict[str, DeviceRuntime] | None = None,
+        line_services: dict[str, ProductionLineRuntime] | None = None,
         database_runtime: DatabaseRuntime | None = None,
     ) -> None:
         if repository.database_path != metadata.database_path:
@@ -90,7 +89,7 @@ class AutomationService:
         self.email_service = email_service
         self.runtime = runtime or AutomationRuntime(settings)
         self.database = metadata.database
-        self.device_services = device_services if device_services is not None else {}
+        self.line_services = line_services if line_services is not None else {}
         self.database_runtime = database_runtime
 
     def enrich_schedule(self, data: dict[str, Any], now: datetime) -> dict[str, Any]:
@@ -140,12 +139,14 @@ class AutomationService:
 
     def _create_report_job(self, run: dict, now: datetime) -> bool:
         try:
-            if run["device_id"] not in {item.id for item in DEVICE_CATALOG.devices} or (self.device_services and run["device_id"] not in self.device_services):
-                raise ValueError("计划设备已移除，拒绝生成其他设备报表")
+            lines = self.database_runtime.snapshot().lines if self.database_runtime else self.line_services
+            line = lines.get(run["device_id"])
+            if line is None or not line.config.enabled or line.pipeline is None:
+                raise ValueError("计划产线未启用或不支持自动化报表")
             if run["report_type"] == "workshop":
-                self._ensure_workshop_report(run, now)
+                self._ensure_workshop_report(run, now, line.cutting())
             report_id = f"rpt_{now:%Y%m%d_%H%M%S}_{uuid4().hex[:6]}"
-            with UnitOfWork(self.database, self.settings.timezone, device_id=run["device_id"]) as unit:
+            with UnitOfWork(self.database, self.settings.timezone, device_id=run["device_id"], scope_machine_no=line.settings.report_machine_no) as unit:
                 current = unit.automation.get_run(run["run_id"])
                 if current is None or current["report_id"] or current["status"] != "queued":
                     return False
@@ -195,13 +196,11 @@ class AutomationService:
                 logger.exception("automation run recovery failed", extra={"run_id": item["run_id"]})
         return recovered
 
-    def _ensure_workshop_report(self, run: dict, now: datetime) -> None:
+    def _ensure_workshop_report(self, run: dict, now: datetime, device: DeviceRuntime) -> None:
         report_date = run["report_date"]
-        services = self.database_runtime.snapshot().devices if self.database_runtime else self.device_services
-        device = services.get(run["device_id"])
-        cfg = device.settings if device else settings_for_device(self.settings, run["device_id"])
-        query = device.query_service if device else QueryService(cfg)
-        workshop = device.workshop if device else WorkshopRepository(self.database, scope_machine_no=cfg.report_machine_no)
+        cfg = device.settings
+        query = device.query_service
+        workshop = device.workshop
         bundle = query.fetch_workshop_data(
             ReportFilter(report_date=date.fromisoformat(report_date))
         )

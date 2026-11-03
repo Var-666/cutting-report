@@ -32,7 +32,7 @@ class DatabaseConfiguration(BaseModel):
     production: SavedConnection
     worker: SavedConnection
     file: SavedConnection
-    welding: WeldingConnection
+    welding: WeldingConnection | None
 
 
 class ConfigurationSaved(BaseModel):

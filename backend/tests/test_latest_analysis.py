@@ -1,3 +1,5 @@
+from tests.line_fixtures import source_client
+from tests.line_fixtures import as_line_services, runtime_line
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import date, datetime, timedelta
@@ -67,7 +69,7 @@ def test_page_reads_previous_success_during_refresh_then_replaces_it_without_cal
     app.include_router(router)
     app.dependency_overrides[require_admin] = lambda: {'role': 'admin'}
     runtime = SimpleNamespace(report_analysis_service=service)
-    app.state.devices = {device_id: runtime}
+    app.state.lines = as_line_services({device_id: runtime})
 
     @app.middleware('http')
     async def request_id(request, call_next):
@@ -134,9 +136,9 @@ def test_report_services_publish_the_completed_default_result(tmp_path, report_t
     settings, service = _services(tmp_path)
     day = date(2026, 10, 21)
     if report_type == 'leadership':
-        result = service.analyze_leadership(LeadershipReportService(settings).fetch(day.replace(day=1)), publish_latest=True)
+        result = service.analyze_leadership(LeadershipReportService(settings, client=source_client(settings)).fetch(day.replace(day=1)), publish_latest=True)
     else:
-        bundle = QueryService(settings).fetch_report_data(ReportFilter(report_date=day))
+        bundle = QueryService(settings, client=source_client(settings)).fetch_report_data(ReportFilter(report_date=day))
         result = getattr(service, f'analyze_{report_type}')(
             day.isoformat(), getattr(bundle, f'{report_type}_records'), publish_latest=True,
         )

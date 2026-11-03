@@ -1,19 +1,20 @@
 """The reset command must preserve the configured Cutter01 monitoring window."""
 from dataclasses import replace
 
-from app.config import settings
+from tests.line_fixtures import configuration
+from app.database.source_registry import DatabaseSourceRegistry
 from app.database.alarms import AlarmRepository
 from scripts import prepare_alarm_monitor
 
 
 def test_monitoring_window_preview_and_apply_reset_cursor(monkeypatch, tmp_path) -> None:
-    configured = replace(settings, project_root=tmp_path, alarm_monitor_machine_nos=("Cutter01",))
-    repository = AlarmRepository(configured.metadata_db_path, machine_no="Cutter01", source_name="production:Cutter01")
+    configured = configuration(tmp_path, real=True)
+    repository = AlarmRepository(configured.metadata_db_path, machine_no="Cutter01", source_name="Cutter01:" + DatabaseSourceRegistry.from_json(configured.database_sources_json).connection_identity("cutting-production"))
     repository.initialize()
     monkeypatch.setattr(prepare_alarm_monitor, "settings", configured)
 
     class Source:
-        def __init__(self, _settings):
+        def __init__(self, _settings, *, client):
             pass
 
         def latest_id(self):
@@ -34,7 +35,7 @@ def test_monitoring_window_preview_and_apply_reset_cursor(monkeypatch, tmp_path)
 
 
 def test_monitoring_window_reset_requires_known_device(monkeypatch, tmp_path) -> None:
-    configured = replace(settings, project_root=tmp_path, alarm_monitor_machine_nos=("20kw切割机",))
+    configured = configuration(tmp_path, real=True)
     monkeypatch.setattr(prepare_alarm_monitor, "settings", configured)
     monkeypatch.setattr("sys.argv", ["prepare_alarm_monitor.py", "--device-id", "missing", "--apply"])
     try:

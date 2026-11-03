@@ -1,3 +1,6 @@
+from app.services.query_service import QueryService
+from tests.line_fixtures import source_client
+from tests.line_fixtures import as_line_services, runtime_line
 from dataclasses import replace
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -8,7 +11,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
-from app.config import Settings
+from tests.line_fixtures import cutting_settings
 from app.models.domain import EquipmentRecord
 from app.services.energy_api import EnergyApiClient, EnergyApiError, EnergyAuthenticationError
 from app.services.energy_service import EquipmentEnergyService, interval_consumption, make_series
@@ -28,7 +31,7 @@ END = START + timedelta(minutes=2)
 
 
 def configured(**changes):
-    cfg = Settings(data_source_mode="sqlserver", demo_mode=False,
+    cfg = cutting_settings(data_source_mode="sqlserver", demo_mode=False,
         energy_api_enabled=True, energy_api_base_url="http://energy.test:10091",
         energy_api_username="test@example.test", energy_api_password="test &+# password",
         energy_equipment_ids=("Cutter01",), energy_gas_parameter_id=GAS,
@@ -356,7 +359,7 @@ def test_unified_device_page_export_and_analysis_share_meter_values(tmp_path, mo
     (vendor / "echarts.min.js").write_text("window.echarts={};", encoding="utf-8")
     metadata = MetadataRepository(cfg.metadata_db_path, device_id='Cutter01')
     metadata.initialize()
-    pipeline = ReportPipeline(cfg, metadata)
+    pipeline = ReportPipeline(cfg, metadata, query_service=QueryService(cfg, client=source_client(cfg)))
     pipeline.analysis_service.llm.analyze_context = model_analysis
     pipeline.energy_period_service.client = MeterStub()
     rows = [record()]
@@ -381,13 +384,13 @@ def test_unified_device_page_export_and_analysis_share_meter_values(tmp_path, mo
             }
         },
     )
-    request = SimpleNamespace(state=SimpleNamespace(request_id="test"), app=SimpleNamespace(state=SimpleNamespace(
+    request = SimpleNamespace(headers={}, state=SimpleNamespace(request_id="test"), app=SimpleNamespace(state=SimpleNamespace(
         query_service=pipeline.query_service,
         energy_period_service=pipeline.energy_period_service,
         report_analysis_service=pipeline.analysis_service,
     )))
     request.query_params = {'device_id': 'Cutter01'}
-    request.app.state.devices = {'Cutter01': request.app.state}
+    request.app.state.lines = as_line_services({'Cutter01': request.app.state})
     page = get_task_energy_day(request=request, report_date=START.date(), refresh=True)["data"]
     assert page["summary"]["energy_data_mode"] == "metered"
     assert page["summary"]["total_gas_consumption"] == 2
@@ -470,7 +473,7 @@ def test_same_day_range_reuses_task_meter_scope_and_interpolation(tmp_path, monk
     cfg.ensure_runtime_dirs()
     metadata = MetadataRepository(cfg.metadata_db_path, device_id='Cutter01')
     metadata.initialize()
-    pipeline = ReportPipeline(cfg, metadata)
+    pipeline = ReportPipeline(cfg, metadata, query_service=QueryService(cfg, client=source_client(cfg)))
     meter = MeterStub()
     pipeline.energy_period_service.client = meter
     selected = record(

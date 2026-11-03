@@ -23,12 +23,11 @@ from app.services.database_configuration import (
     DatabaseConfigurationRequest, SavedConnectionRequest, WeldingConnectionRequest,
     database_configuration_data,
 )
-from app.services.database_runtime import welding_connection_settings
 from app.config import Settings, settings
 from app.database.sqlserver import SqlServerClient, SqlServerConfigurationError
 from app.models.domain import ReportFilter, to_primitive
 from app.models.contracts import ApiEnvelope, Items
-from app.models.database_sources import DatabaseSourceRequest, DatabaseSourceView, SourceEnabledRequest, SourceDeleted
+from app.models.database_sources import DatabaseSourceConfig, DatabaseSourceRequest, DatabaseSourceView, SourceEnabledRequest, SourceDeleted
 from app.database.source_registry import SourceNotFound, SourceConflict
 from app.services.database_configuration import test_source_connection, SourceConnectionError
 from app.models.configuration_contracts import DatabaseConfiguration, ConfigurationSaved, DatabaseStatus, ConnectionTestResult, DatabasePreview, ValidatedWorkbenchSql, WorkbenchQueryResult
@@ -116,40 +115,12 @@ def _query_mapping_status() -> list[dict]:
 
 def _database_source_status(configuration: Settings | None = None) -> list[dict]:
     configuration = configuration or settings
-    definitions = (
-        ("production", "生产报表库", configuration.effective_data_source_mode == "sqlserver"),
-        ("worker", "工人 HR 库", configuration.worker_database_auth_enabled),
-        ("file", "切割文件库", configuration.file_database_enabled),
-    )
-    sources = []
-    for source, label, enabled in definitions:
-        config = configuration.sqlserver_connection(source)
-        configured = all(
-            config[key] for key in ("host", "database", "username", "password")
-        )
-        sources.append(
-            {
-                "source": source,
-                "label": label,
-                "enabled": enabled,
-                "configured": configured,
-                "host": config["host"] or None,
-                "port": config["port"],
-                "database": config["database"] or None,
-                "driver": config["driver"],
-                "uses_primary_fallback": bool(config["uses_primary_fallback"]),
-            }
-        )
-    sources.append({
-        'source': 'welding', 'label': '小组立焊接线 · MySQL',
-        'enabled': configuration.weld_enabled,
-        'configured': all((configuration.weld_db_host, configuration.weld_db_name,
-                           configuration.weld_db_user, configuration.weld_db_password)),
-        'host': configuration.weld_db_host or None, 'port': configuration.weld_db_port,
-        'database': configuration.weld_db_name or None, 'driver': 'MySQL Connector/Python',
-        'uses_primary_fallback': False,
-    })
-    return sources
+    from app.database.source_registry import DatabaseSourceRegistry
+    registry = DatabaseSourceRegistry.from_json(configuration.database_sources_json)
+    return [{"source": view.id, "label": view.name, "enabled": view.enabled, "configured": view.configured,
+             "host": view.host or None, "port": view.port, "database": view.database or None,
+             "driver": view.driver if view.engine == "sqlserver" else "MySQL Connector/Python", "uses_primary_fallback": False}
+            for view in registry.list()]
 
 
 def _active_settings(request: Request) -> Settings:
@@ -158,9 +129,13 @@ def _active_settings(request: Request) -> Settings:
 
 @router.get("/configuration", response_model=None, responses={200: {"model": ApiEnvelope[DatabaseConfiguration]}})
 def get_database_configuration(request: Request) -> dict:
+    try:
+        data = database_configuration_data(_active_settings(request), request.headers.get("X-Production-Line"))
+    except ValueError:
+        raise HTTPException(status_code=422, detail="产线上下文或数据库配置无效") from None
     return {
         "success": True,
-        "data": database_configuration_data(_active_settings(request)),
+        "data": data,
         "request_id": request.state.request_id,
     }
 
@@ -179,7 +154,7 @@ def save_welding_configuration(payload: WeldingConnectionRequest, request: Reque
 
 def _save_configuration(payload, request: Request) -> dict:
     try:
-        application_state(request).database_runtime.save_configuration(payload)
+        application_state(request).database_runtime.save_configuration(payload, line_id=request.headers.get("X-Production-Line"))
     except RuntimeSettingsSaveError:
         logger.error("failed to save runtime database configuration")
         raise HTTPException(status_code=500, detail="配置保存失败，请检查 data 目录的写入权限。") from None
@@ -201,20 +176,22 @@ def _save_configuration(payload, request: Request) -> dict:
 
 @query_requests.route(router.post('/welding/test-connection', response_model=None, responses={200: {'model': ApiEnvelope[ConnectionTestResult]}}))
 def test_welding_connection(payload: WeldingConnectionRequest, request: Request) -> dict:
-    from app.database.welding import WeldingClient, WeldingUnavailable
+    context = runtime_state(request)
+    line_id = request.headers.get("X-Production-Line")
     try:
-        base = _active_settings(request)
-        candidate = welding_connection_settings(payload, base)
-        client = WeldingClient(replace(candidate, weld_db_pool_size=1))
-        started = perf_counter()
-        with client.snapshot() as session:
-            session.fetch('SELECT 1 AS connected', limit=1)
-        return {'success': True, 'data': {'connected': True, 'elapsed_ms': round((perf_counter() - started) * 1000),
-                'message': '只读事务连接测试成功；表结构、权限范围及指标仍需核验'}, 'request_id': request.state.request_id}
+        line = context.catalog.get(line_id)
+        if line.type != "welding":
+            raise ValueError("请选择焊接产线")
+        old = context.database_sources.get(line.source_key)
+        candidate = DatabaseSourceRequest.model_validate({**old.model_dump(exclude={"password"}),
+            **payload.model_dump(exclude={"enabled", "timezone"}), "enabled": True})
+        config = application_state(request).database_runtime.source_for_test(candidate)
+        result = test_source_connection(config)
     except ValueError:
-        raise HTTPException(status_code=422, detail='焊接连接参数不完整或无效，请核对账号、密码及时区') from None
-    except WeldingUnavailable as exc:
+        raise HTTPException(status_code=422, detail="焊接连接参数或产线上下文无效") from None
+    except SourceConnectionError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from None
+    return {"success": True, "data": result, "request_id": request.state.request_id}
 
 
 @router.get("/status", response_model=None, responses={200: {"model": ApiEnvelope[DatabaseStatus]}})
@@ -229,17 +206,10 @@ def database_status(request: Request) -> dict:
             "mode": mode,
             "demo_mode": mode == "demo",
             "pyodbc_installed": importlib.util.find_spec("pyodbc") is not None,
-            "connection_configured": all(
-                [
-                    settings.sqlserver_host,
-                    settings.sqlserver_database,
-                    settings.sqlserver_username,
-                    settings.sqlserver_password,
-                ]
-            ),
-            "configured_host": settings.sqlserver_host or None,
-            "configured_database": settings.sqlserver_database or None,
-            "driver": settings.sqlserver_driver,
+            "connection_configured": all(item["configured"] for item in _database_source_status(settings) if item["enabled"]),
+            "configured_host": None,
+            "configured_database": None,
+            "driver": "按数据源配置",
             "data_sources": _database_source_status(settings),
             "query_mappings": mappings,
             "all_queries_ready": all(item["ready"] for item in mappings),
@@ -294,7 +264,7 @@ def execute_sql(
 
     query_hash = hashlib.sha256(payload.sql.encode("utf-8")).hexdigest()[:16]
     try:
-        service = SqlWorkbenchService(settings)
+        service = SqlWorkbenchService(settings, client=device_state(request).query_service.client)
         result = service.execute(payload.sql, payload.max_rows)
     except SqlWorkbenchValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -327,22 +297,11 @@ def execute_sql(
 
 @query_requests.route(router.post("/test-connection", response_model=None, responses={200: {"model": ApiEnvelope[ConnectionTestResult]}}))
 def test_connection(payload: ConnectionTestRequest, request: Request) -> dict:
-    temporary_settings = replace(
-        _active_settings(request),
-        sqlserver_host=payload.host,
-        sqlserver_port=payload.port,
-        sqlserver_database=payload.database,
-        sqlserver_username=payload.username,
-        sqlserver_password=payload.password.get_secret_value(),
-        sqlserver_driver=payload.driver,
-        sqlserver_encrypt="yes" if payload.encrypt else "no",
-        sqlserver_trust_server_certificate=(
-            "yes" if payload.trust_server_certificate else "no"
-        ),
-    )
+    temporary_config = DatabaseSourceConfig(id="connection-test", name="连接测试", engine="sqlserver",
+        **payload.model_dump())
     started = perf_counter()
     try:
-        client = SqlServerClient(temporary_settings)
+        client = SqlServerClient(temporary_config)
         with client.connect() as connection:
             with cancellable_cursor(connection) as cursor:
                 cursor.execute("SELECT 1 AS connection_ok")

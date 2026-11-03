@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import argparse
 from collections import deque
-from datetime import date, datetime
+from datetime import datetime
 import json
 import logging
 import signal
@@ -14,11 +14,9 @@ from zoneinfo import ZoneInfo
 from app.config import Settings, settings
 from app.database.coordination import CoordinationRepository
 from app.database.sqlite import SQLiteDatabase, ExecutionLeaseLost, execution_scope
-from app.models.domain import ReportFilter
 from app.services.application_runtime import ApplicationRuntime, build_runtime
 from app.services.database_runtime import database_context
 from app.services.llm_service import background_llm_work, generation_priority
-from app.services.leadership_report_service import _previous_month
 from app.services.worker_status import background_ready
 from app.services.production_reports import report_provider, report_providers
 from app.workers.bounded_executor import BoundedExecutor
@@ -56,17 +54,13 @@ class WorkerProcess:
             with self.scope():
                 self.repository.recover_tasks(self.owner)
                 self.runtime.automation.recover_interrupted_deliveries()
-                for device in database_context(self.runtime).devices.values():
-                    history = device.energy_history_worker
-                    if history.enabled:
-                        history.repository.recover_history_queue(history.source_key, history._now())
-                        today = history.service.now().date()
-                        from app.workers.energy_history_worker import _shift_month
-                        history.schedule_range(_shift_month(today.replace(day=1), -11), today)
+                for line in database_context(self.runtime).lines.values():
+                    if line.config.enabled and line.background is not None:
+                        line.background.start_background()
                 self.report_worker = ReportWorker(
                     self.settings, self.runtime.metadata,
                     automation_service=self.runtime.automation_service, runtime=self.runtime.automation_runtime,
-                    pipelines=lambda: {key: value.pipeline for key, value in database_context(self.runtime).devices.items()},
+                    pipelines=lambda: {key: value.pipeline for key, value in database_context(self.runtime).lines.items() if value.config.enabled and value.pipeline is not None},
                     execution_context=self.scope,
                 )
                 self.report_worker.start()
@@ -84,7 +78,7 @@ class WorkerProcess:
         status["stalled_workers"] = [*status.get("stalled_workers", []), *stalled]
         status["background_queue"] = self.repository.task_counts()
         status["active_tasks"] = len(running)
-        status["device_ids"] = list(self.runtime.devices)
+        status["device_ids"] = list(database_context(self.runtime).lines)
         diagnostics = getattr(self.runtime, "configuration_diagnostics", None)
         if diagnostics is not None:
             try:
@@ -120,30 +114,9 @@ class WorkerProcess:
     def _schedule(self) -> None:
         now = datetime.now(ZoneInfo(self.settings.timezone))
         context = database_context(self.runtime)
-        for device_id, device in context.devices.items():
-            if device.current_report_refresh_worker.enabled:
-                interval = max(30, device.settings.report_background_refresh_seconds)
-                self.repository.schedule("current_refresh", device_id, {"date": now.date().isoformat()}, interval)
-            leadership = device.leadership_refresh_worker
-            if leadership.enabled:
-                month = now.date().replace(day=1)
-                self.repository.schedule("leadership_refresh", device_id,
-                    {"date": month.isoformat(), "bootstrap": leadership.service.needs_bootstrap(month)},
-                    max(30, device.settings.report_background_refresh_seconds))
-                if now.hour >= device.settings.leadership_report_reconcile_hour:
-                    # The current month is already scheduled by the periodic refresh.
-                    for offset in range(1, 3):
-                        selected = _previous_month(month, offset)
-                        self.repository.enqueue("leadership_refresh", device_id, {"date": selected.isoformat(), "bootstrap": False},
-                            key=f"reconcile:{device_id}:{now.date()}:{selected}")
-            history = device.energy_history_worker
-            if history._pending_finish is not None:
-                history._flush_pending_finish()
-            if (history.enabled and (history._pending_finish is not None or history.repository.history_ready(history.source_key, history._now()))
-                    and not self.repository.active("energy_sync", device_id, {})):
-                self.repository.enqueue("energy_sync", device_id, {})
-            if device.alarm_worker.enabled:
-                self.repository.schedule("alarm", device_id, {}, max(30, device.settings.alarm_monitor_interval_seconds))
+        for line_id, line in context.lines.items():
+            if line.config.enabled and line.background is not None:
+                line.background.schedule_background(self.repository, now)
         for line_id, provider in report_providers(context):
             for payload, interval in provider.refresh_plan():
                 self.repository.request_snapshot_refresh(line_id, payload, interval=interval)
@@ -204,37 +177,22 @@ class WorkerProcess:
             database_context(self.runtime).file_downloads.cleanup_expired()
             return
         if kind == 'report_snapshot_refresh':
-            provider = report_provider(database_context(self.runtime), task['device_id'])
+            context = database_context(self.runtime)
+            if task['device_id'] not in context.lines or not context.lines[task['device_id']].config.enabled:
+                return
+            provider = report_provider(context, task['device_id'])
             # Queued work from an old connection must not populate the new source's snapshots.
             if payload['source_fingerprint'] == provider.source_identity():
                 provider.refresh_summary(payload['report_type'], payload['query'], requested_at=task['created_at'])
             return
-        device = database_context(self.runtime).devices[task["device_id"]]
-        current = device.current_report_refresh_worker
-        if kind == "current_refresh":
-            current.run_once(date.fromisoformat(payload["date"]))
-            device.query_service.cache_revision.publish()
-        elif kind == "leadership_refresh":
-            device.leadership_refresh_worker._refresh(date.fromisoformat(payload["date"]), payload["bootstrap"])
-        elif kind == "analysis_leadership":
-            device.leadership_refresh_worker._analyze(date.fromisoformat(payload["date"]))
-        elif kind == "analysis_workshop":
-            current._analyze_workshop(date.fromisoformat(payload["date"]))
-        elif kind == "analysis_equipment":
-            selected = date.fromisoformat(payload["date"])
-            equipment = device.query_service.fetch_equipment_data(ReportFilter(report_date=selected))
-            task_report = device.energy_period_service.get_task_day(selected, equipment.records)
-            current._analyze_equipment(selected, equipment.records, task_report)
-        elif kind == "alarm":
-            device.alarm_monitor_service.run_once(datetime.now(ZoneInfo(self.settings.timezone)))
-        elif kind == "energy_sync":
-            history = device.energy_history_worker
-            history._flush_pending_finish()
-            claim = history._claim()
-            if claim:
-                history._process(claim)
-        else:
-            raise ValueError(f"未知后台任务类型: {kind}")
+        line = database_context(self.runtime).lines.get(task["device_id"])
+        if line is None or not line.config.enabled:
+            return  # Retired instance: keep historical work, never redirect it to another line.
+        if line.background is None:
+            raise ValueError("产线不支持此后台任务")
+        fingerprint = payload.get("source_fingerprint")
+        if fingerprint is None or fingerprint == line.settings.source_fingerprint:
+            line.background.handle_background(kind, payload)
 
     def run(self) -> None:
         self.start()
