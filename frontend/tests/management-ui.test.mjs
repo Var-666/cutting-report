@@ -1,3 +1,4 @@
+import { renderComponent } from './vue-component-helpers.mjs'
 import { scriptFunction } from './typescript-helpers.mjs'
 import assert from 'node:assert/strict'
 import test from 'node:test'
@@ -128,40 +129,19 @@ test('automation mutations still refresh status, schedules and current email pag
   assert.ok(calls.emails.slice(1).every(call => call.page === 2))
 })
 
-test('remaining management pages use one production hero and density system', () => {
-  for (const name of ['ReportCenterView', 'DatabaseView', 'DesignerView', 'AutomationView', 'AdminAccountsView']) {
-    const view = descriptor(name)
-    assert.match(view.scriptSetup.content, /import ManagementPageHero from/)
-    assert.match(view.template.content, /<ManagementPageHero/)
-    assert.match(view.template.content, /class="[^"]*management-page[^"]*"/)
-  }
-
-  const hero = descriptor('ManagementPageHero', 'components')
-  assert.match(hero.scriptSetup.content, /NCard, NTag/)
-  assert.match(hero.template.content, /<AppIcon/)
-  assert.match(hero.template.content, /<NCard/)
-  assert.match(hero.styles[0].content, /@media\(max-width:900px\)/)
-})
-
-test('management panels and tables share themed headers without zebra striping', () => {
-  const css = readFileSync(new URL('../src/assets/style.css', import.meta.url), 'utf8')
-  assert.match(css, /\.management-page \.panel-title/)
-  assert.match(css, /\.management-page \.history-table th[\s\S]*background:var\(--theme-table-header-color\)!important/)
-  assert.doesNotMatch(css, /\.management-page[^}]*tbody tr:nth-child/)
-
-})
-
 test('settings entry redirects to database and omits the repeated overview page', () => {
   const router = readFileSync(new URL('../src/router/index.ts', import.meta.url), 'utf8')
   assert.match(router, /path: '',\s*name: 'settings',\s*redirect: '\/admin\/settings\/database'/)
   assert.doesNotMatch(router, /SettingsHomeView/)
 })
 
-test('management hero status styles do not override Naive tag internals', () => {
-  const hero = descriptor('ManagementPageHero', 'components')
-  assert.match(hero.template.content, /<p v-if="description">/)
-  assert.match(hero.styles[0].content, /\.management-hero__status > div\{/)
-  assert.doesNotMatch(hero.styles[0].content, /\.management-hero__status div\{/)
+test('management hero renders its public status and optional description safely', async () => {
+  const props = { eyebrow: 'DATABASE', title: '数据库配置', statusValue: '运行中',
+    statusLabel: '数据库状态', statusNote: '<script>unsafe</script>' }
+  const html = await renderComponent('components/ManagementPageHero', props)
+  for (const value of ['数据库配置', '数据库状态', '运行中', '&lt;script&gt;unsafe&lt;/script&gt;']) assert.ok(html.includes(value))
+  assert.ok(!html.includes('<script>unsafe</script>'))
+  assert.ok((await renderComponent('components/ManagementPageHero', { ...props, description: '只读连接' })).includes('只读连接'))
 })
 
 test('login uses the supplied illustration without cropping and keeps the authentication form', () => {

@@ -252,7 +252,6 @@ onBeforeUnmount(() => {
 .setting-fields label > span, .automation-form label > span { display: block; margin-bottom: 6px; color: var(--text-color-2); font-size: var(--font-auxiliary); font-weight: 650; }
 .setting-fields input, .automation-form input { width: 100%; height: 36px; min-width: 0; padding: 0 10px; }
 .automation-form :deep(.app-select) { height: 36px; }
-.automation-form :deep(.app-select__trigger) { padding: 0 10px; }
 .setting-fields small, .automation-form small { display: block; margin-top: 5px; color: var(--muted); font-size: var(--font-auxiliary); line-height: 1.5; overflow-wrap: anywhere; }
 .security-options { display: flex; align-items: center; flex-wrap: wrap; gap: 9px 14px; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--theme-border-color); color: var(--text-color-2); font-size: var(--font-auxiliary); }
 .security-options > span { font-weight: 650; }

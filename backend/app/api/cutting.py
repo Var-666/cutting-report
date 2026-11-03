@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from app.api.runtime import runtime_state
 from app.api.auth import require_admin
 from app.models.conditions import ConditionSearch
-from app.services.condition_service import ConditionError
+from app.models.conditions import ConditionError
 from app.services.cutting_dispatch_service import (
     CuttingDispatchError,
     CuttingFileNotFoundError,

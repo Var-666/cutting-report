@@ -1,19 +1,8 @@
 from types import SimpleNamespace
 
 from app.database import condition_fields, condition_query
-from app.models.conditions import ConditionError, ConditionGroup, ConditionRule, FieldSpec, prepare
-from app.services import condition_service
+from app.models.conditions import ConditionGroup, ConditionRule
 from test_conditions import api
-
-
-def test_legacy_condition_entry_points_reuse_the_same_implementations():
-    assert condition_service.ConditionError is ConditionError
-    assert condition_service.FieldSpec is FieldSpec
-    assert condition_service.prepare is prepare
-    assert condition_service.fields_for is condition_fields.fields_for
-    assert condition_service.compile_conditions is condition_query.compile_conditions
-    assert condition_service.matches_conditions is condition_query.matches_conditions
-    assert condition_service.prepare_sort is condition_query.prepare_sort
 
 
 def test_condition_sql_uses_server_fields_and_bound_values():

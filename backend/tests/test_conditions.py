@@ -14,7 +14,10 @@ from app.config import settings
 from app.database.downloads import DownloadRepository
 from app.database.pdm import MockPdmRepository, SqlServerPdmRepository
 from app.models.conditions import ConditionGroup, ConditionSearch, SortRule
-from app.services.condition_service import ConditionError, compile_conditions, fields_for, matches_conditions, prepare, schema_for
+from app.models.conditions import ConditionError, prepare
+from app.database.condition_fields import fields_for
+from app.database.condition_query import compile_conditions, matches_conditions
+from app.services.condition_service import schema_for
 from app.services.cutting_dispatch_service import CuttingDispatchService
 from app.services.file_download_service import FileDownloadService
 from app.services.file_source import DisabledFileSource

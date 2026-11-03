@@ -1,12 +1,9 @@
-/* Word-style AutoFit: every column keeps its intrinsic content width, then
-   lets flexible text columns absorb the remaining window width. */
+/* Fixed field widths keep table geometry stable across pages. */
 table.content-table {
   width:100% !important;
   max-width:none !important;
   border-collapse:collapse !important;
   font-variant-numeric:tabular-nums;
-}
-table.content-table {
   min-width:max(100%,var(--content-table-min-width,640px)) !important;
   table-layout:fixed !important;
 }

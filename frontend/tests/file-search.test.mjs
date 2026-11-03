@@ -1,3 +1,4 @@
+import { renderComponent } from './vue-component-helpers.mjs'
 import { scriptFunction, runTypeScript } from './typescript-helpers.mjs'
 import assert from 'node:assert/strict'
 import { afterEach, test } from 'node:test'
@@ -157,21 +158,22 @@ function historyPagination() {
   return { ...inputs, ...state, historyPageCount: computed(() => Math.max(1, Math.ceil(state.historyTotal.value / 10))) }
 }
 
-test('dispatch history omits the action column and keeps each field in its own single-line column', () => {
-  const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
-  const history = historyTableSource
-
-  assert.doesNotMatch(view, /取消指派|cancelSaved|cancelCuttingDispatch|can_cancel/)
-  const columns = historyTableSource.split('</script>')[0]
-  assert.deepEqual([...columns.matchAll(/title: "([^"]+)"/g)].map(match => match[1]),
-    ['船号', '分段号', '文件名', '数量', '目标机床', '状态', '阶段', '任务标识', '魔盒UUID', '失败原因', '创建时间'])
-  const table = history.slice(history.indexOf('<AppReportTable'), history.indexOf('</AppReportTable>'))
-  assert.doesNotMatch(table, /executeSaved|history-actions|<small|<br\b/)
-  for (let index = 0; index < 11; index++) assert.match(history, new RegExp(`#c${index}="`))
-  assert.match(history, /item\.ship_no \|\| projectOptions\.find/)
-  assert.match(history, /item\.segment_name \|\| parseCuttingInstructionFilename\(item\.document_no\)\?\.intermediateProduct/)
-  assert.match(history, /#c3="\{ row: item \}">\{\{ item.quantity \}\}/)
-  assert.match(history, /#c6="\{ row: item \}">\{\{ item.stage_label \}\}/)
+test('dispatch history renders file references, machine names, status and safe fallback values', async () => {
+  const render = histories => renderComponent('components/dispatch/DispatchHistoryTable', {
+    histories, historyTotal: histories.length, historyPage: 1, historyPageSize: 10, loading: false,
+    projectOptions: [{ project_id: 'P1', ship_no: 'SHIP-FALLBACK' }], machineName: () => '测试机床',
+  })
+  const item = { dispatch_id: 'task-1', project_id: 'P1', document_no: 'Z806C080A001.gen',
+    quantity: 2, machine_ip: '192.0.2.1', status: 'failed', status_label: '派发失败',
+    stage_label: '上传文件', last_error: '<script>unsafe</script>', created_at: '2026-10-28T08:00:00' }
+  const html = await render([item])
+  for (const value of ['SHIP-FALLBACK', '806C', item.document_no, '测试机床', '派发失败', '上传文件', 'task-1', '2026年10月28日']) assert.ok(html.includes(value), value)
+  assert.ok(!html.includes('<script>unsafe</script>'))
+  assert.ok(html.includes('&lt;script&gt;unsafe&lt;/script&gt;'))
+  assert.ok(!html.includes('取消指派'))
+  const explicit = await render([{ ...item, ship_no: 'SHIP-EXPLICIT', segment_name: 'SEG-EXPLICIT', remote_task_id: 'remote-1', task_identifier: 'identifier-1' }])
+  for (const value of ['SHIP-EXPLICIT', 'SEG-EXPLICIT', 'remote-1', 'identifier-1']) assert.ok(explicit.includes(value), value)
+  assert.ok((await render([])).includes('暂无数据'))
 })
 
 test('dispatch history pages through all records in ten-row pages independently of file selection', async () => {
@@ -194,10 +196,6 @@ test('dispatch history pages through all records in ten-row pages independently 
   await history.loadHistory()
   assert.deepEqual(calls, [{ page: 1, size: 10 }, { page: 2, size: 10 }, { page: 3, size: 10 }, { page: 3, size: 10 }])
   assert.equal(history.historyPageCount.value, 3)
-  const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
-  assert.match(historyTableSource, /:items="histories"[^>]*:total="historyTotal"[^>]*:page="historyPage"[^>]*:page-size="historyPageSize"/)
-  assert.match(historyTableSource, /@page="emit\('page', \$event\)"/)
-  assert.match(view, /<DispatchHistoryTable[^>]*@page="changeHistoryPage"/)
 })
 
 test('a failed history page keeps the displayed rows and page number instead of showing a false empty state', async () => {
@@ -337,38 +335,6 @@ test('machine selectors show Chinese names and IPs while dispatch still uses the
   assert.match(historyTableSource, /#c4="[^"]*">\{\{ machineName\(item.machine_ip\) \}\}<\/template>/)
   assert.equal((view.match(/\{\{ machineName\(machine.machine_ip\) \}\} · \{\{ machine.machine_ip \}\}（/g) || []).length, 2)
   assert.doesNotMatch(view, /目标机床 IP|<th>机床IP<\/th>/)
-})
-
-test('file dispatch page uses the recursive PDM directory tree without condition builders', () => {
-  const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
-  const node = readFileSync(new URL('../src/components/CatalogTreeNode.vue', import.meta.url), 'utf8')
-
-  assert.match(view, /<CatalogTreeNode/)
-  assert.match(browserSource, /listCuttingProjects/)
-  assert.match(browserSource, /listCuttingCatalogs/)
-  assert.match(browserSource, /listCuttingFiles/)
-  assert.match(view, /getCuttingStatus\('push', \{ signal: controller\.signal, force \}\)/)
-  assert.doesNotMatch(view, /defineProps|isDownload/)
-  assert.match(view, /项目目录/)
-  assert.match(view, /当前位置/)
-  assert.match(browserSource, /const pageSize = 20/)
-  assert.match(browserSource, /const projectOptions = ref<CuttingProject\[\]>\(\[\]\)/)
-  assert.match(browserSource, /const selectedProjectId = ref\(initialProjectId\)/)
-  assert.match(view, /<NAutoComplete[^\n]*v-model:value="projectSearch"[^\n]*@select="openSelectedProject"/)
-  assert.match(view, /:options="projectSuggestions"/)
-  assert.match(view, /:get-show="\(\) => true"/)
-  assert.doesNotMatch(view, /project-keyword|projectKeyword|filteredProjectOptions|applyProjectKeyword|resetProjectSelection|project-select-row/)
-  assert.match(view, /支持项目/)
-  assert.match(view, /项目名称或船号/)
-  assert.doesNotMatch(view, /<option value="" disabled>\{\{ projectLoading/)
-  assert.match(view, /\.project-search \.project-selector \{ height:36px;[^}]*font-size:12px;/)
-  assert.match(view, /:render-label="option => \(option as \{ displayLabel: string \}\).displayLabel"/)
-  assert.match(view, /title: "文件名"[\s\S]*title: "命名检查"[\s\S]*title: "中间产品"[\s\S]*title: "文件格式"[\s\S]*title: "版本"[\s\S]*title: "操作人"[\s\S]*title: "操作人工号"[\s\S]*title: "操作时间"[\s\S]*title: "派发状态"[\s\S]*title: "操作"/)
-  assert.doesNotMatch(view, /<th>切割状态<\/th>/)
-  assert.match(view, /fileExtension\(row\)/)
-  assert.doesNotMatch(view, /ConditionBuilder|SortBuilder|searchCuttingFiles|组合条件查询/)
-  assert.match(node, /<CatalogTreeNode/)
-  assert.match(node, /node\.children/)
 })
 
 test('confirming a project opens it immediately, preserves same-project selection and ignores superseded catalogs', async () => {
@@ -671,62 +637,6 @@ test('empty and unavailable-only pages do not falsely indicate full directory se
   assert.match(view, /正在选择所有分页的文件/)
 })
 
-test('PDM file table supports up to one hundred selections and direct batch dispatch', () => {
-  const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
-
-  assert.match(browserSource, /const selectedFiles = ref\(new Map<string, CuttingFile>\(\)\)/)
-  assert.match(browserSource, /function toggleCatalogFiles/)
-  assert.match(browserSource, /next\.size >= 100/)
-  assert.match(view, /aria-label="全选当前目录所有分页的可派发文件"/)
-  assert.match(view, /@update:checked="toggleCatalogFiles\(\$event\)"/)
-  assert.match(view, /@update:checked="setFileSelected\(row, \$event\)"/)
-  assert.doesNotMatch(view, /selectedFileCount >= 100" role="status"/)
-  assert.match(view, /:aria-label="`选择文件 \$\{row\.document_no\}`"/)
-  assert.match(view, /设置参数并派发/)
-  assert.match(view, /@click="openSinglePush\(row\)"/)
-  assert.match(view, /:columns="fileTableColumns"/)
-  assert.doesNotMatch(view, /downloadCuttingFile|保存到系统|listCuttingDownloads/)
-  assert.match(view, /<AppReportTable\b[^>]*:columns="fileTableColumns"/)
-})
-
-test('mobile file selection keeps batch actions reachable at the bottom of the viewport', () => {
-  const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
-
-  assert.match(view, /v-if="selectedFileCount && !pushBatch\.visible" class="mobile-selection-bar"/)
-  assert.match(view, /class="mobile-selection-bar" aria-label="已选文件操作"/)
-  assert.match(view, /class="mobile-selection-bar"[\s\S]*@click="clearSelectedFiles"[\s\S]*@click="openPushBatch"/)
-  assert.match(view, /\.mobile-selection-bar,\.mobile-selection-bar-spacer \{ display:none; \}/)
-  assert.match(view, /@media \(max-width:680px\) \{[\s\S]*?\.mobile-selection-bar \{ position:fixed;[^}]*bottom:0;[^}]*display:grid;/)
-  assert.match(view, /\.mobile-selection-bar button \{ min-height:44px;/)
-  assert.match(view, /env\(safe-area-inset-bottom\)/)
-})
-
-test('file dispatch presents the four-step dashboard and persistent confirmation summary', () => {
-  const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
-
-  assert.match(view, /CUTTING FILE DISPATCH/)
-  assert.match(view, /选择项目目录/)
-  assert.match(view, /选择文件/)
-  assert.match(view, /确认派发/)
-  assert.match(view, /完成派发/)
-  assert.match(view, /class="panel dispatch-confirm-panel"/)
-  assert.match(view, /const selectedFileItems = computed/)
-  assert.match(view, /const activeDispatchStep = computed/)
-  assert.match(view, /v-for="file in selectedFileItems\.slice\(0, 5\)"/)
-  assert.match(view, /<AppIcon name="send"/)
-  assert.match(view, /\.dispatch-workspace\.download-workspace \{ grid-template-columns:280px minmax\(0,1fr\)/)
-  assert.match(view, /\.dispatch-confirm-panel \{[^}]*grid-column:1\/-1;[^}]*align-self:start;/)
-  assert.match(view, /\.directory-panel \{[^}]*display:grid;[^}]*grid-template-rows:auto auto minmax\(0,1fr\);/)
-  assert.match(view, /\.directory-panel \{[^}]*grid-template-columns:minmax\(0,1fr\);/)
-  assert.match(view, /\.project-search \.project-selector,\.file-name-search input \{ width:100%; min-width:0;/)
-  assert.match(view, /\.download-workspace \.dispatch-files-panel \{[^}]*min-height:600px;/)
-  assert.match(view, /\.directory-scroll \{[^}]*grid-area:3 \/ 1 \/ 4 \/ -1;[^}]*position:absolute;[^}]*overflow:auto;/)
-  assert.match(view, /@media \(max-width:1000px\) \{[\s\S]*?\.directory-panel \{ display:flex; flex-direction:column; \}/)
-  assert.match(view, /@media \(max-width:1000px\) \{[\s\S]*?\.download-workspace \.dispatch-files-panel \{ min-height:0; \}/)
-  assert.match(view, /\.directory-scroll \{ position:static; min-height:220px; max-height:410px; flex:0 1 auto; \}/)
-  assert.match(view, /\.source-file-table \{ min-width:820px; \}/)
-})
-
 test('standard cutting instruction names provide material and thickness for dispatch', () => {
   assert.deepEqual(parseCuttingInstructionFilename('P101C100A001.GEN'), {
     instructionType: 'P',
@@ -804,24 +714,6 @@ test('any two-character material code is filled verbatim without a grade mapping
   assert.equal(parseCuttingInstructionFilename('S306C095A602L.gen').material, 'A6')
 })
 
-test('direct dispatch builds independent PDM references and executes tasks sequentially', () => {
-  const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
-
-  assert.match(browserSource, /next\.size >= 100/)
-  assert.match(batchSource, /function createPushBatchItem\(file: CuttingFile\)/)
-  assert.match(batchSource, /const parsed = parseCuttingInstructionFilename\(filename\)/)
-  assert.match(batchSource, /material: parsed\?\.material \|\| ''/)
-  assert.match(batchSource, /thickness: parsed\?\.thickness \?\? ''/)
-  assert.match(batchSource, /quantity: 1/)
-  assert.match(batchSource, /createCuttingDispatchBatch/)
-  assert.match(batchSource, /document_id: item\.documentId/)
-  assert.match(batchSource, /version_id: item\.versionId/)
-  assert.match(batchSource, /file_path: item\.filePath/)
-  assert.match(batchSource, /for \(const item of createdItems\)/)
-  assert.match(batchSource, /await executeCuttingDispatch\(item\.dispatchId, item\.segmentName\)/)
-  assert.match(view, /非标准名，请人工核对参数/)
-})
-
 test('batch dispatch uses separate single-line columns for recognition and results', () => {
   const view = readSource('views/CuttingDispatchView.vue')
   const columns = view.slice(view.indexOf('const batchTableColumns = ['), view.indexOf('</script>'))
@@ -837,30 +729,37 @@ test('batch dispatch uses separate single-line columns for recognition and resul
   assert.match(view, /\.push-batch-actions \{[^}]*flex-wrap:nowrap; white-space:nowrap;/)
 })
 
-test('non-standard names require explicit manual confirmation before dispatch', () => {
-  const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
-
-  assert.match(batchSource, /const nonStandardBatchCount = computed/)
-  assert.match(view, /pushBatch\.nonStandardConfirmed/)
-  assert.match(view, /我已人工核对 \{\{ nonStandardBatchCount \}\} 个非标准文件名/)
-  assert.match(view, /nonStandardBatchCount > 0 && !pushBatch\.nonStandardConfirmed/)
-  assert.match(view, /completed\.local_file_cleanup\?\.error/)
-  assert.doesNotMatch(view, /仅保存任务|批量保存|再次保存/)
+test('non-standard names require manual confirmation and keep their independent dispatch reference', async () => {
+  const batch = batchWorkflow()
+  batch.inputs.selectedFiles.value = new Map([['manual', selectableFile('manual', 'custom.gen')]])
+  batch.openPushBatch()
+  Object.assign(batch.pushBatch.items[0], { segmentName: '806C', material: 'A0', thickness: 8 })
+  await batch.submitPushBatch()
+  assert.equal(batch.calls.create.length, 0)
+  assert.match(batch.pushBatch.error, /人工核对/)
+  batch.pushBatch.nonStandardConfirmed = true
+  await batch.submitPushBatch()
+  assert.deepEqual(batch.calls.create[0], { machine_ip: '10.147.1.40', items: [{
+    document_id: 'manual', version_id: 'v1', file_path: 'files/manual.gen',
+    material: 'A0', thickness: 8, quantity: 1, name_check_confirmed: true,
+  }] })
 })
 
-test('batch confirmation checks standard-name overrides and blocks duplicate versions', () => {
-  const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
-
-  assert.match(browserSource, /alreadySelectedDocument\(next, file\)/)
-  assert.match(browserSource, /同一 PDM 文件只能选择一个版本/)
-  assert.match(view, /hasNameMismatch\(item\)/)
-  assert.match(batchSource, /name_check_confirmed:/)
-  assert.match(view, /standard_override_confirmed/)
-  assert.match(view, /@update:value="invalidateBatchConfirmation\(item\)"/)
-  assert.match(batchSource, /pushBatch\.nonStandardConfirmed = false/)
-  assert.match(batchSource, /pushBatch\.overrideConfirmed = false/)
-  assert.match(view, /overrideBatchCount > 0 && !pushBatch\.overrideConfirmed/)
-  assert.match(batchSource, /for \(const \[index, item\] of pushBatch\.items\.entries\(\)\)/)
+test('changing standard-name parameters requires a fresh override confirmation before sending', async () => {
+  const batch = batchWorkflow()
+  const item = batch.pushBatch.items[0]
+  item.thickness = 9
+  await batch.submitPushBatch()
+  assert.equal(batch.calls.create.length, 0)
+  assert.match(batch.pushBatch.error, /参数与标准文件名不一致/)
+  batch.pushBatch.overrideConfirmed = true
+  batch.invalidateBatchConfirmation(item)
+  assert.equal(batch.pushBatch.overrideConfirmed, false)
+  batch.pushBatch.overrideConfirmed = true
+  await batch.submitPushBatch()
+  assert.equal(batch.calls.create[0].items[0].name_check_confirmed, true)
+  assert.equal(batch.calls.create[0].items[0].thickness, 9)
+  assert.equal(batch.calls.create[0].items[1].name_check_confirmed, false)
 })
 
 test('retry only continues a matching dispatch after reading its current status', async () => {

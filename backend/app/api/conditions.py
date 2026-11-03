@@ -3,7 +3,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from app.api.devices import device_state, device_settings
 from app.api.auth import require_admin
 from app.config import settings
-from app.services.condition_service import ConditionError, schema_for
+from app.models.conditions import ConditionError
+from app.services.condition_service import schema_for
 
 
 router = APIRouter(prefix="/api/v1/conditions", tags=["conditions"], dependencies=[Depends(require_admin)])

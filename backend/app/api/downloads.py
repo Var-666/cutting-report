@@ -5,7 +5,7 @@ from app.api.runtime import runtime_state
 from app.api.auth import require_admin
 from app.services.file_download_service import DownloadError
 from app.models.conditions import ConditionSearch
-from app.services.condition_service import ConditionError
+from app.models.conditions import ConditionError
 
 
 router = APIRouter(prefix="/api/v1/cutting/downloads", tags=["cutting-downloads"], dependencies=[Depends(require_admin)])

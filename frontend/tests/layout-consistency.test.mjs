@@ -1,3 +1,4 @@
+import { renderComponent } from './vue-component-helpers.mjs'
 import { scriptFunction } from './typescript-helpers.mjs'
 import assert from 'node:assert/strict'
 import test from 'node:test'
@@ -18,32 +19,6 @@ const energyChartsScript = readFileSync(new URL('../src/composables/useEnergyRep
 const leadershipQueryScript = readFileSync(new URL('../src/composables/useLeadershipReportQuery.ts', import.meta.url), 'utf8')
 const leadershipDataScript = readFileSync(new URL('../src/composables/useLeadershipReportData.ts', import.meta.url), 'utf8')
 const leadershipChartsScript = readFileSync(new URL('../src/composables/useLeadershipReportCharts.ts', import.meta.url), 'utf8')
-
-test('file selection centers header and row checkboxes while history and alarm tables share panel insets', () => {
-  const dispatch = descriptor('CuttingDispatchView')
-  const dispatchStyles = dispatch.styles.map(style => style.content).join('\n')
-  assert.equal((dispatch.template.content.match(/class="download-check-cell"/g) || []).length, 2)
-  assert.match(dispatch.template.content, /#header-c0><div class="download-check-cell"><NCheckbox/)
-  assert.match(dispatchStyles, /\.download-check-cell \{ width:100%; display:flex; align-items:center; justify-content:center;/)
-  assert.match(dispatchStyles, /\.dispatch-history-panel > \.dispatch-table-wrap \{ min-width:0; padding:16px;/)
-  assert.match(dispatchStyles, /@media \(max-width:560px\) \{\s*\.dispatch-history-panel > \.dispatch-table-wrap \{ padding:12px;/)
-  const alarm = descriptor('AlarmCenterView')
-  const alarmStyles = alarm.styles.map(style => style.content).join('\n')
-  assert.match(alarm.template.content, /class="alarm-table-wrap"/)
-  assert.match(alarm.template.content, /class="alarm-table-wrap report-table-wrap"/)
-  assert.match(alarmStyles, /\.alarm-table-wrap\{min-width:0;padding:16px;overflow-x:auto\}/)
-  assert.match(alarmStyles, /@media \(max-width:560px\)\{\.alarm-table-wrap\{padding:12px\}\}/)
-})
-
-test('admin pages use the pinned Soybean layout and responsive content shell', () => {
-  const layout = descriptor('AdminLayout', 'layouts')
-  const styles = readFileSync(new URL('../src/assets/soybean.css', import.meta.url), 'utf8')
-  assert.match(layout.scriptSetup.content, /import SoybeanAdminLayout from '..\/vendor\/soybean-admin\/index.vue'/)
-  assert.match(layout.template.content, /<SoybeanAdminLayout/)
-  assert.match(layout.template.content, /<GlobalMenu/)
-  assert.match(styles, /\.soybean-page \{[^}]*padding:16px/)
-  assert.match(styles, /@media \(max-width:767px\)/)
-})
 
 test('vertical-mix reserves both device columns on every page and uses a single mobile drawer', () => {
   const layout = descriptor('AdminLayout', 'layouts')
@@ -78,15 +53,6 @@ test('vertical-mix reserves both device columns on every page and uses a single 
   assert.match(descriptor('index', 'layouts/modules/global-menu').scriptSetup.content, /if \(appStore.isMobile\) return VerticalMenu/)
 })
 
-test('dispatch history uses readable body text and inherits it for identifiers, status and actions', () => {
-  const dispatch = descriptor('CuttingDispatchView').styles.map(style => style.content).join('\n')
-  const shared = readFileSync(new URL('../src/assets/content-tables.css', import.meta.url), 'utf8')
-  assert.match(dispatch, /\.dispatch-history-panel \{ --content-table-font-size:13px; --content-table-header-font-size:12px;/)
-  assert.match(dispatch, /\.history-table :is\(code,\.dispatch-status,\.history-actions button\) \{ font-size:inherit;/)
-  assert.match(shared, /font-size:var\(--content-table-font-size,var\(--font-body\)\) !important/)
-  assert.match(shared, /font-size:var\(--content-table-header-font-size,var\(--font-table-head\)\) !important/)
-})
-
 test('report form and history pagination retain horizontal text and consistent control heights', () => {
   const form = descriptor('ReportForm', 'components')
   const styles = form.styles[0].content
@@ -102,16 +68,6 @@ test('report form and history pagination retain horizontal text and consistent c
   assert.match(history.styles[0].content, /\.history-wrap \{[^}]*padding:16px;/)
   assert.match(history.styles[0].content, /\.history-empty \{ color:var\(--text-color-3\);/)
   assert.match(history.styles[0].content, /\.actions-cell \{[^}]*justify-content:center;[^}]*gap:12px;/)
-})
-
-test('first page cards clear the header without doubling their own top spacing', () => {
-  const styles = readFileSync(new URL('../src/assets/style.css', import.meta.url), 'utf8')
-  const home = descriptor('AdminHomeView').template.content
-  const dispatch = descriptor('CuttingDispatchView').styles.map((style) => style.content).join('\n')
-
-  assert.match(styles, /\.worker-main \{ padding:16px 0 24px; \}/)
-  assert.match(home, /min-h-500px flex-col-stretch gap-16px/)
-  assert.match(dispatch, /\.dispatch-flow \{[^}]*margin:16px 0 0;/)
 })
 
 test('the supplied project logo is reused across primary product entry points', () => {
@@ -215,23 +171,18 @@ test('three standard reports reuse the quick period popover', () => {
   assert.match(period.scriptSetup.content, /inclusiveDays > props\.maxDays/)
 })
 
-test('report panels share honest loading, empty and failed states without remounting charts', () => {
-  const panel = descriptor('ReportTrendPanel', 'components')
-  const panelState = descriptor('ReportPanelState', 'components')
-  const query = descriptor('StandardReportQuery', 'components')
-
-  assert.match(panel.scriptSetup.content, /import ReportPanelState from/)
-  assert.match(panel.scriptSetup.content, /if \(props\.error && !props\.hasData\)/)
-  assert.match(panel.scriptSetup.content, /if \(props\.loading && !props\.hasData\)/)
-  assert.match(panel.scriptSetup.content, /if \(props\.empty && !props\.hasData\)/)
-  assert.match(panel.template.content, /v-if="loading && hasData"[\s\S]*正在更新/)
-  assert.match(panel.template.content, /'is-obscured': state/)
-  assert.match(panel.template.content, /<ReportPanelState v-if="state"/)
-  assert.doesNotMatch(panel.template.content, /v-if="!state"[^>]*ref="chartElement"/)
-  assert.match(panelState.template.content, /type === 'error' \? 'alert' : 'status'/)
-  assert.match(panelState.template.content, /aria-live="polite"/)
-  assert.match(query.template.content, /:aria-busy="loading"/)
-  assert.match(query.template.content, /loading \? '查询中' : hasData \? '更新报表' : '查询报表'/)
+test('report panels render loading, empty and failure states with their reason and recovery action', async () => {
+  for (const [state, expected, role] of [
+    [{ loading: true }, '正在读取报表数据', 'status'],
+    [{ empty: true }, '当前条件下暂无数据', 'status'],
+    [{ error: '源数据库不可用' }, '源数据库不可用', 'alert'],
+  ]) {
+    const html = await renderComponent('components/ReportTrendPanel', { number: '01', title: '生产趋势', ...state })
+    assert.ok(html.includes('生产趋势'))
+    assert.ok(html.includes(expected))
+    assert.ok(html.includes(`role="${role}"`))
+    if (!state.loading) assert.ok(html.includes('重新查询'))
+  }
 })
 
 test('standard reports expose consistent state recovery and truthful initial metrics', () => {
@@ -252,16 +203,13 @@ test('standard reports expose consistent state recovery and truthful initial met
   assert.match(energyDataScript, /if \(value === null \|\| value === undefined \|\| !Number\.isFinite\(Number\(value\)\)\) return '--'/)
 })
 
-test('unavailable report data uses an alert while preserving the reason and retry action', () => {
-  const panel = descriptor('ReportTrendPanel', 'components')
-  const state = descriptor('ReportPanelState', 'components')
-  assert.match(state.template.content, /<NAlert v-if="type === 'error'" type="error"/)
-  assert.doesNotMatch(state.styles[0].content, /report-panel-state--error/)
-  assert.match(panel.scriptSetup.content, /errorTitle: \{ type: String, default: '等待报表数据' \}/)
-  assert.match(panel.scriptSetup.content, /type: 'error', title: props.errorTitle, message: props.error, actionLabel: props.retryLabel/)
-  assert.match(state.template.content, /v-if="actionLabel"[\s\S]*\$emit\('action'\)/)
-  assert.match(state.template.content, /type === 'error' \? 'alert' : 'status'/)
-  assert.match(state.template.content, /<p v-if="message">\{\{ message \}\}<\/p>/)
+test('refreshing a populated report retains its chart and rows instead of showing the initial loading state', async () => {
+  const html = await renderComponent('components/ReportTrendPanel', {
+    number: '01', title: '生产趋势', loading: true, hasData: true, chartLabel: '每日产量',
+  }, { chart: () => '现有图表', table: () => '现有明细' })
+  for (const text of ['正在更新', '现有图表', '现有明细', '每日产量']) assert.ok(html.includes(text))
+  assert.ok(!html.includes('正在读取报表数据'))
+  assert.ok(!html.includes('aria-hidden="true"'))
 })
 
 test('report export feedback can retry the exact last request', () => {
@@ -454,21 +402,6 @@ test('home KPI and production ring show verified data instead of decorative plac
   assert.match(template, /<NNumberAnimation[^>]*:to="activeDays"/)
 })
 
-test('home cards use native statistics, semantic colors and shared animation classes', () => {
-  for (const name of ['AdminHomeView', 'HomeKpiCard', 'HomeSectionHeader']) {
-    const view = descriptor(name, name === 'AdminHomeView' ? 'views' : 'components')
-    assert.equal(view.styles.length, 0)
-    assert.doesNotMatch(view.scriptSetup.content + view.template.content, /#[0-9a-f]{3,8}\b/i)
-  }
-  const kpi = descriptor('HomeKpiCard', 'components').template.content
-  assert.match(kpi, /<NStatistic tabular-nums/)
-  assert.match(kpi, /<NNumberAnimation[^>]*show-separator/)
-  assert.match(kpi, /#suffix><NText/)
-  const home = descriptor('AdminHomeView').template.content
-  assert.match(home, /<Transition name="fade-slide" mode="out-in">/)
-  assert.match(home, /card-wrapper bg-container/)
-})
-
 test('workshop report includes the confirmed-worker interval summary', () => {
   const workshop = descriptor('WorkshopView')
   const trendPanel = descriptor('ReportTrendPanel', 'components')
@@ -493,34 +426,6 @@ test('workshop report includes the confirmed-worker interval summary', () => {
   assert.match(trendStyles, /\.report-trend-panel__content--fit-table \.report-trend-panel__table\s*\{[^}]*height:auto;[^}]*max-height:none;/)
 })
 
-test('source files are dispatched directly without a manual save step', () => {
-  const dispatch = descriptor('CuttingDispatchView')
-  assert.match(dispatch.template.content, /@click="openSinglePush\(row\)"/)
-  assert.match(dispatch.template.content, /<strong>\{\{ row.document_no \}\}<\/strong>/)
-  assert.match(dispatch.template.content, /设置参数并派发/)
-  assert.match(dispatch.template.content, /标准名/)
-  assert.match(dispatch.template.content, /非标准名/)
-  assert.doesNotMatch(dispatch.template.content, /保存到系统|可推送文件列表/)
-  assert.doesNotMatch(dispatch.scriptSetup.content, /CuttingDownloadsPanel|downloadsPanel/)
-})
-
-test('dispatch page keeps one directory browser and omits the saved-file picker', () => {
-  const source = descriptor('CuttingDispatchView')
-  assert.match(source.template.content, /<CatalogTreeNode/)
-  assert.doesNotMatch(source.template.content, /<SortBuilder|<ConditionBuilder/)
-  assert.doesNotMatch(source.scriptSetup.content, /CuttingDownloadsPanel|downloadsPanel/)
-  assert.doesNotMatch(source.template.content, /<CuttingDownloadsPanel/)
-  assert.doesNotMatch(source.template.content, /<h2>系统已保存文件<\/h2>/)
-})
-
-test('dispatch page loads once initially and refreshes runtime status on later activations', () => {
-  const dispatch = descriptor('CuttingDispatchView')
-  assert.match(dispatch.scriptSetup.content, /onMounted\(\(\) => \{\s*initializePage\(\)/)
-  assert.match(dispatch.scriptSetup.content, /onActivated\(async \(\) =>/)
-  assert.match(dispatch.scriptSetup.content, /if \(firstActivation\) \{[\s\S]*?return[\s\S]*?initializePage\(\{ refreshProjects: !projectsLoaded\.value \}\)/)
-  assert.match(dispatch.scriptSetup.content, /onDeactivated\(pausePage\)/)
-})
-
 test('report and settings groups use sidebar navigation without duplicate page menus', () => {
   for (const name of ['ReportsLayout', 'SettingsLayout']) {
     const layout = descriptor(name, 'layouts')
@@ -531,35 +436,6 @@ test('report and settings groups use sidebar navigation without duplicate page m
   const reports = descriptor('ReportsLayout', 'layouts')
   assert.match(reports.template.content, /<KeepAlive :max="3">/)
   assert.match(reports.template.content, /route.meta.keepAlive/)
-})
-
-test('standard report pages share theme-aware table header and compact panel tokens', () => {
-  const styles = readFileSync(new URL('../src/assets/style.css', import.meta.url), 'utf8')
-  assert.match(styles, /--report-table-head-bg:\s*var\(--theme-table-header-color\);/)
-  assert.match(styles, /--report-table-head-ink:\s*var\(--text-color-1\);/)
-  assert.match(styles, /--report-panel-radius:\s*10px;/)
-
-  for (const name of ['LeadershipReportView', 'WorkshopView', 'EnergyPeriodReportView']) {
-    const viewStyles = descriptor(name).styles.map((style) => style.content).join('\n')
-    assert.match(viewStyles, /background:var\(--report-table-head-bg\)!important;/, `${name} does not use the shared themed table header`)
-    assert.match(viewStyles, /border-radius:var\(--report-panel-radius\)/, `${name} does not use the shared report panel radius`)
-  }
-})
-
-test('primary application pages share one readable typography scale', () => {
-  const styles = readFileSync(new URL('../src/assets/style.css', import.meta.url), 'utf8')
-  const tables = readFileSync(new URL('../src/assets/content-tables.css', import.meta.url), 'utf8')
-
-  assert.match(styles, /--font-page-title:\s*28px;/)
-  assert.match(styles, /--font-page-description:\s*var\(--font-auxiliary\);/)
-  assert.match(styles, /--font-section-title:\s*16px;/)
-  assert.match(styles, /--font-kpi-value:\s*24px;/)
-  assert.match(styles, /--font-table-head:\s*var\(--font-auxiliary\);/)
-  assert.match(styles, /--font-auxiliary:\s*12px;/)
-  assert.match(tables, /font-size:var\(--content-table-font-size,var\(--font-body\)\) !important;/)
-  assert.match(tables, /font-size:var\(--content-table-header-font-size,var\(--font-table-head\)\) !important;/)
-  assert.doesNotMatch(styles, /font-family:\s*Georgia/)
-  assert.match(styles, /font-family: "Microsoft YaHei", "PingFang SC", Inter, Arial, sans-serif;/)
 })
 
 test('device report is one page with task details and a default monthly summary', () => {
@@ -627,111 +503,6 @@ test('cutting report tables use the shared Naive table with fixed-height bodies 
   assert.match(table.template.content, /<NDataTable[\s\S]*:summary="summary \? createSummary : undefined"/)
   assert.match(table.template.content, /:flex-height="flexHeight"/)
   assert.match(table.styles[0].content, /n-data-table-td--summary\)\{position:sticky;bottom:0;/)
-})
-
-test('device report reuses the leadership report UI baseline', () => {
-  const leadership = descriptor('LeadershipReportView')
-  const energy = descriptor('EnergyPeriodReportView')
-  const trendPanel = descriptor('ReportTrendPanel', 'components')
-  const energyScript = energyChartsScript
-  const energyStyles = energy.styles.map((style) => style.content).join('\n')
-  const trendStyles = trendPanel.styles.map((style) => style.content).join('\n')
-
-  assert.match(leadership.template.content, /class="[^"]*page-hero[^"]*report-hero--query[^"]*leadership-hero[^"]*"/)
-  assert.match(leadership.template.content, /<StandardReportQuery/)
-  assert.match(energy.template.content, /class="[^"]*page-hero[^"]*report-hero--query[^"]*equipment-hero[^"]*"/)
-  assert.match(energy.template.content, /<StandardReportQuery/)
-  assert.equal((leadership.template.content.match(/<ReportTrendPanel/g) || []).length, 2)
-  assert.equal((energy.template.content.match(/<ReportTrendPanel/g) || []).length, 2)
-  assert.equal((energy.template.content.match(/:height="245"/g) || []).length, 2)
-  assert.match(energyStyles, /report-trend-panel__chart\),:deep\(\.report-trend-panel__table\)\{height:var\(--report-trend-height\)/)
-  assert.match(energyStyles, /--report-trend-height:270px!important/)
-  assert.equal((energy.template.content.match(/chart-label=/g) || []).length, 2)
-  assert.match(trendPanel.template.content, /class="panel report-trend-panel"/)
-  assert.match(trendPanel.template.content, /class="panel-title report-trend-panel__heading"/)
-  assert.match(trendPanel.template.content, /<slot name="summary"/)
-  assert.match(trendPanel.template.content, /<slot name="table"/)
-  assert.match(trendPanel.template.content, /<slot name="footer"/)
-  assert.match(trendPanel.template.content, /v-if="showChart"/)
-  assert.match(trendPanel.template.content, /report-trend-panel__content--table-only/)
-  assert.match(trendPanel.scriptSetup.content, /defineExpose\(\{ getChartElement:/)
-  assert.match(trendStyles, /\.report-trend-panel__content\s*\{[^}]*grid-template-columns:minmax\(0,2fr\) minmax\(0,3fr\)/)
-  assert.match(trendStyles, /\.report-trend-panel__content--table-only\s*\{[^}]*grid-template-columns:minmax\(0,1fr\)/)
-  assert.match(trendStyles, /height:var\(--report-trend-height\)/)
-  assert.match(energyStyles, /\.energy-period-table thead th\s*\{[^}]*background:var\(--report-table-head-bg\);/)
-  assert.match(energyStyles, /\.energy-period-table th,\.energy-period-table td\s*\{[^}]*height:47px;/)
-  assert.match(energyStyles, /\.energy-task-table th:nth-child\(2\),\.energy-task-table td:nth-child\(2\)/)
-  assert.match(energyStyles, /\.energy-task-table tfoot th:nth-child\(2\),\.energy-task-table tfoot th:nth-child\(3\),\.energy-task-table tfoot th:nth-child\(4\)\s*\{[^}]*text-align:left;/)
-  assert.doesNotMatch(energyStyles, /\.energy-period-table tfoot th:nth-child\(2\)/)
-  assert.match(energyScript, /createReportChartGrid/)
-  assert.match(energyScript, /grid: createReportChartGrid\(\)/)
-  assert.match(energyScript, /chartTheme\.colors\.value\.primary/)
-  assert.match(energyScript, /chartTheme\.colors\.value\.secondary/)
-  assert.match(energyScript, /chartTheme\.colors\.value\.accent/)
-  assert.match(leadershipChartsScript, /createReportChartGrid/)
-  assert.match(leadershipChartsScript, /grid: createReportChartGrid\(\)/)
-  assert.match(energyScript, /function renderCharts\(/)
-  assert.match(energyStyles, /@media\(max-width:560px\)[\s\S]*\.device-query-shell \.report-query,\.device-kpis\{grid-template-columns:1fr/)
-})
-
-test('equivalent page headers and report query bars share one layout system', () => {
-  const leadership = descriptor('LeadershipReportView')
-  const workshop = descriptor('WorkshopView')
-  const energy = descriptor('EnergyPeriodReportView')
-  const alarm = descriptor('AlarmCenterView')
-  const database = descriptor('DatabaseView')
-  const designer = descriptor('DesignerView')
-  const automation = descriptor('AutomationView')
-  const accounts = descriptor('AdminAccountsView')
-  const dispatch = descriptor('CuttingDispatchView')
-  const standardQuery = descriptor('StandardReportQuery', 'components')
-  const standardQueryStyles = standardQuery.styles.map((style) => style.content).join('\n')
-  const css = readFileSync(new URL('../src/assets/style.css', import.meta.url), 'utf8')
-
-  for (const view of [leadership, workshop, energy, alarm, dispatch]) {
-    assert.match(view.template.content, /class="[^"]*page-hero[^"]*"/)
-  }
-  for (const view of [database, designer, automation, accounts]) {
-    assert.match(view.scriptSetup.content, /import ManagementPageHero from/)
-    assert.match(view.template.content, /<ManagementPageHero/)
-  }
-  for (const view of [leadership, workshop, energy]) {
-    assert.match(view.scriptSetup.content, /import StandardReportQuery from/)
-    assert.match(view.template.content, /<StandardReportQuery/)
-    assert.doesNotMatch(view.scriptSetup.content, /import (?:ReportPeriodPicker|ReportExportMenu) from/)
-    assert.doesNotMatch(view.template.content, /<(?:ReportPeriodPicker|ReportExportMenu)/)
-    assert.match(view.template.content, /class="[^"]*report-hero-copy[^"]*"/)
-    assert.match(view.template.content, /class="[^"]*report-hero-eyebrow[^"]*"/)
-    assert.doesNotMatch(view.template.content, /class="report-hero-description"/)
-    assert.doesNotMatch(view.template.content, /class="[^"]*report-hero-meta[^"]*"/)
-  }
-  for (const view of [leadership, workshop, energy]) {
-    assert.match(view.template.content, /report-hero-query/)
-  }
-  assert.match(css, /\.report-hero\.report-hero--query\s*\{[^}]*grid-template-columns:minmax\(210px,\.55fr\) minmax\(0,1\.45fr\)!important;/)
-  assert.match(css, /\.report-hero--query > \.report-hero-query\s*\{[^}]*grid-column:2;[^}]*grid-row:1;/)
-  assert.match(css, /\.report-hero--query > \.report-hero-query\s*\{[^}]*border:1px solid var\(--theme-border-color\)!important;[^}]*background:rgb\(var\(--container-bg-color\)\)!important;[^}]*backdrop-filter:none;/)
-  assert.match(css, /\.report-hero-query > \.standard-report-query\s*\{[^}]*width:100%!important;/)
-  assert.match(css, /\.report-hero\.report-hero--query > \.report-hero-copy\s*\{[^}]*grid-template-rows:14px 48px;/)
-  assert.match(css, /\.report-hero-copy > h1,\.report-hero-copy > h2\s*\{[^}]*font-size:var\(--font-page-title\)!important;/)
-  assert.match(css, /--report-query-width:\s*884px;/)
-  assert.match(css, /html\s*\{[^}]*scrollbar-gutter:stable;/)
-  assert.match(css, /\.report-hero > div:first-child\s*\{[^}]*min-width:0;[^}]*flex:1 1 auto;/)
-  assert.match(css, /\.report-hero > \.report-query\s*\{[^}]*flex:0 0 auto;/)
-  assert.match(css, /\.report-query\s*\{[^}]*grid-template-columns:repeat\(2,190px\) 140px 136px 136px;/)
-  assert.match(standardQuery.template.content, /class="standard-report-query"/)
-  assert.match(standardQuery.template.content, /name="search"/)
-  assert.match(standardQueryStyles, /\.standard-report-query\s*\{[^}]*grid-template-areas:"period chart query export";/)
-  assert.match(standardQueryStyles, /\.standard-report-query :deep\(\.report-period-picker\)\s*\{[^}]*grid-template-rows:var\(--space-4\) var\(--control-height\);/)
-  assert.match(standardQueryStyles, /\.standard-report-query :deep\(\.report-period-picker__trigger\),[\s\S]*?height:var\(--control-height\)!important;[^}]*min-height:var\(--control-height\)!important;/)
-  assert.match(standardQueryStyles, /\.standard-report-query__submit\s*\{[^}]*margin-top:var\(--space-6\);/)
-  assert.match(standardQueryStyles, /\.standard-report-query__export\s*\{[^}]*margin-top:var\(--space-6\);/)
-  assert.match(css, /@media \(max-width: 900px\)[\s\S]*\.report-query\s*\{[^}]*grid-template-columns:repeat\(2,minmax\(180px,1fr\)\) 140px 136px 136px;/)
-  assert.doesNotMatch(css, /\.workshop-query\s*\{[^}]*display:/)
-  assert.doesNotMatch(css, /\.equipment-query\s+\.app-date-picker/)
-  assert.doesNotMatch(energy.styles.map((style) => style.content).join('\n'), /\.equipment-hero|\.energy-period-query/)
-  assert.match(standardQueryStyles, /:deep\(\.n-base-selection\)\s*\{[^}]*--n-height:var\(--control-height\)!important;/)
-  assert.doesNotMatch(standardQueryStyles, /app-select__trigger/)
 })
 
 test('report automation exposes secure live runtime configuration', async t => {
@@ -1160,50 +931,4 @@ test('home alarm and report previews share a bounded desktop height and insight 
   assert.match(insight, /header-style="padding-bottom: 0"/)
   assert.match(insight, /content-style="padding-top: var\(--n-padding-bottom\)"/)
   assert.match(insight, /content-class="flex flex-col justify-center"/)
-})
-
-test('report loading, empty and error overlays share the same inset as report content', () => {
-  const panel = descriptor('ReportTrendPanel', 'components')
-  const state = descriptor('ReportPanelState', 'components')
-  const css = panel.styles[0].content
-  assert.match(css, /\.report-trend-panel \{ --report-panel-padding:var\(--space-4\);/)
-  assert.match(css, /\.report-trend-panel__body\{display:grid;min-height:var\(--report-trend-height\)/)
-  assert.match(css, /\.report-trend-panel__content \{[^}]*grid-area:1\/1;[^}]*padding:var\(--report-panel-padding\);/)
-  assert.match(css, /\.report-trend-panel__state\{grid-area:1\/1;[^}]*margin:var\(--report-panel-padding\);/)
-  assert.match(css, /@media \(max-width:560px\)[^\n]*--report-panel-padding:var\(--space-3\)/)
-  assert.doesNotMatch(state.styles[0].content, /\.report-panel-state\{[^}]*min-height:/)
-  assert.match(state.styles[0].content, /overflow-wrap:anywhere/)
-  for (const name of ['LeadershipReportView', 'EnergyPeriodReportView', 'WorkshopView']) {
-    const styles = descriptor(name).styles.map(style => style.content).join('\n')
-    assert.doesNotMatch(styles, /report-trend-panel__content[^{}]*\)\s*\{[^}]*padding:/, name)
-  }
-  const props = reactive({ error: '', hasData: false, loading: true, empty: false, loadingTitle: '加载', loadingMessage: '读取中', errorTitle: '失败', emptyTitle: '空数据', retryLabel: '重试' })
-  const code = panel.scriptSetup.content.slice(panel.scriptSetup.content.indexOf('const state = computed'), panel.scriptSetup.content.indexOf('defineExpose'))
-  const current = scriptFunction('computed', 'props', `${code}; return state`)(computed, props)
-  assert.equal(current.value.type, 'loading')
-  props.loading = false
-  props.empty = true
-  assert.equal(current.value.type, 'empty')
-  props.error = '读取失败'
-  assert.equal(current.value.type, 'error')
-  props.hasData = true
-  assert.equal(current.value, null)
-})
-
-test('report and alarm KPI labels wrap while alarm cards fit the actual available width', () => {
-  for (const [name, prefix] of [['LeadershipReportView', 'leadership'], ['EnergyPeriodReportView', 'device'], ['WorkshopView', 'workshop'], ['AlarmCenterView', 'alarm']]) {
-    const styles = descriptor(name).styles.map(style => style.content).join('\n')
-    const label = styles.match(new RegExp(`\\.${prefix}-kpi>div>span\\{([^}]+)\\}`))[1]
-    assert.match(label, /white-space:normal;overflow-wrap:anywhere/)
-  }
-  const css = descriptor('AlarmCenterView').styles[0].content
-  assert.match(css, /\.alarm-hero\{[^}]*display:flex;flex-wrap:wrap;/)
-  assert.doesNotMatch(css, /\.alarm-hero\{[^}]*grid-template-columns:/)
-  assert.match(css, /\.alarm-hero__copy\{flex:1 1 320px;min-width:0/)
-  assert.match(css, /\.monitor-card\{flex:1 1 260px;min-width:0;max-width:320px/)
-  assert.match(css, /\.monitor-card dd\{[^}]*white-space:normal;overflow-wrap:anywhere/)
-  const grids = [...css.matchAll(/\.alarm-kpis\{([^}]+)\}/g)]
-  assert.equal(grids.length, 1)
-  assert.match(grids[0][1], /grid-template-columns:repeat\(auto-fit,minmax\(min\(100%,240px\),1fr\)\)/)
-  assert.doesNotMatch(css, /\.alarm-kpi--wide\{grid-column:span 2/)
 })

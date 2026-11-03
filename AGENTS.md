@@ -53,7 +53,7 @@
 - 默认业务调用方向为 `api/workers → services → database`，模型和配置供各层使用。`main.py`、`worker.py`、`services/application_runtime.py`、`services/device_runtime.py` 是入口/装配边界，允许同时依赖 Service、Repository 和 Worker；不能因这类导入机械判定为反向依赖。
 - 现有 `services/frontend_static.py` 是供 Web 入口使用的 HTTP 静态资源适配，不属于业务 Service；保留位置，不向其中增加业务流程，也不由业务 Service 引用它。
 - 请求取消、执行期限和进程锁以 `app.core.request_cancellation`、`app.core.report_deadline`、`app.core.process_lock` 为唯一正式入口；API、Service、Repository、Worker 及脚本均直接导入，新模块同样遵守。不在 `services/` 创建同名转发模块，不复制已有注册表、ContextVar、文件锁或执行期限实现。SQLite 执行租约和提交围栏继续留在 `database/sqlite.py`。
-- 条件查询契约、字段描述和通用值校验在 `models/conditions.py`；数据集字段/排序列映射在 `database/condition_fields.py`，SQL 编译和 Mock 求值在 `database/condition_query.py`。`services/condition_service.py` 提供公开 schema 和旧调用入口，Repository 不反向引用该 Service。小型响应封装不必为消除重复而建立公共框架。
+- 条件查询契约、字段描述和通用值校验在 `models/conditions.py`；数据集字段/排序列映射在 `database/condition_fields.py`，SQL 编译和 Mock 求值在 `database/condition_query.py`。`services/condition_service.py` 仅提供公开 schema，基础函数直接从所属模型/数据库模块导入，Repository 不反向引用该 Service。小型响应封装不必为消除重复而建立公共框架。
 - 告警事件归并、发送认领、状态转换、唯一性和租约判断必须在原事务内完成；扫描窗口、调度日期、模型/文件生成、SMTP 和重试策略由现有 Service 编排。不能为缩短 Repository 把原子校验移出事务。
 
 ### Runtime、配置与事务
@@ -93,6 +93,8 @@
 - 后端验证：`./.venv/bin/python -m pytest backend/tests`。
 - 前端验证：在 `frontend/` 执行 `pnpm run typecheck` 和受影响的局部测试；`pnpm test` / `pnpm run build` 用于发布、CI 或明确需要的全量验证。
 - 功能修改应补充相同层级的回归测试；涉及 UI 时同时检查窄屏和空数据/加载/失败状态。
+- 测试优先验证用户行为、渲染状态和公开契约，不用源码正则锁定内部函数名、变量名、组件布局或 CSS 写法。前端组件测试可复用 `tests/vue-component-helpers.mjs` 编译真实 SFC；已有有效的源码提取行为测试逐步迁移，稳定依赖/权限边界检查可保留。
+- 复用已有公共能力，不新增无明确职责的兼容转发模块；少量重复不必建立新抽象。删除兼容入口前检查源码、脚本、测试及嵌入式调用，不因层次多而合并 Runtime、缓存或快照机制。
 
 ## API 类型契约（P07）
 
@@ -132,7 +134,7 @@
 
 ## 文档维护
 
-- 开始任务时只读取 `docs/` 中与任务直接相关的文档。
+- 开始任务时只读取 `docs/` 中与任务直接相关的文档。新增共享文档确认未被 `.gitignore` 排除，链接目标应随源码可获取；内部原始资料继续保持忽略。
 - 只记录对后续开发有用的结果：架构、UI 约定、性能优化、技术决策和当前进度分别写入 `docs/project/` 中的对应文档。
 - `docs/project/progress.md` 保持简洁，只保留“当前状态、最近完成、当前问题、下一步”；不记录聊天过程。
 

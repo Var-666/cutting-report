@@ -1,3 +1,4 @@
+import { renderComponent } from './vue-component-helpers.mjs'
 import { setup as setupCssr } from '@css-render/vue3-ssr'
 import { renderToString } from '@vue/server-renderer'
 import { SharedDataTable, createSharedDataTable } from './data-table-helpers.mjs'
@@ -667,7 +668,7 @@ test('a disabled welding line remains navigable without querying an unconfigured
   assert.match(source('views/WeldingReportView.vue'), /焊接数据库尚未启用[\s\S]*action-label="配置数据库"/)
 })
 
-test('welding templates compile with loading, error, pending, detail and responsive states', () => {
+test('welding and navigation templates compile', () => {
   for (const path of ['views/WeldingHomeView.vue', 'views/WeldingReportView.vue', 'components/WeldingChart.vue', 'components/WeldingKpiCards.vue', 'components/WeldingRecord.vue', 'components/WeldingCharts.vue', 'components/ReportAnalysis.vue', 'components/AppReportTable.vue', 'components/WeldingTable.vue', 'components/DeviceSwitcher.vue', 'views/DatabaseView.vue', 'layouts/modules/ThemeTabs.vue', 'layouts/AdminLayout.vue', 'layouts/modules/global-menu/modules/vertical-mix-menu.vue']) {
     const { descriptor, errors } = parse(source(path))
     assert.deepEqual(errors, [])
@@ -675,14 +676,7 @@ test('welding templates compile with loading, error, pending, detail and respons
     const result = compileTemplate({ source: descriptor.template.content, filename: path, id: path, compilerOptions: { bindingMetadata: {} } })
     assert.deepEqual(result.errors, [], path)
   }
-  const page = source('views/WeldingReportView.vue')
-  assert.match(page, /上次成功查询结果/)
-  assert.match(page, /max-width:600px/)
-  assert.match(page, /NModal/)
-  assert.match(page, /data_version/)
-  assert.match(page, /ReportPanelState v-else-if="loading" type="loading"/)
-  assert.match(source('views/DatabaseView.vue'), /weld_password[\s\S]*type="password"/)
-  assert.match(page, /<NCheckbox v-model:checked="draft.descending"/)
+
 })
 
 test('identical in-flight filters reuse the query and a later explicit refresh still runs', async () => {
@@ -918,10 +912,9 @@ test('shared report table preserves declared Naive widths across short, long and
     assert.ok(snapshot.columns.every(column => column.titleAlign === column.align && column.ellipsis.tooltip))
   }
   assert.equal(snapshots.length, 3)
-  assert.doesNotMatch(source('components/AppReportTable.vue'), /ResizeObserver|getComputedStyle|measureText|querySelector|onUpdated|tableColumnWeight|weldingColumns/)
 })
 
-test('welding adapter has explicit layouts for every field and only delegates presentation to AppReportTable', () => {
+test('welding column definitions provide bounded widths for every field', () => {
   for (const [kind, fields] of Object.entries(weldingColumns)) {
     for (const [key] of fields) {
       const layout = weldingColumnLayout[key]
@@ -931,8 +924,6 @@ test('welding adapter has explicit layouts for every field and only delegates pr
   }
   assert.equal(weldingColumnLayout.quality_reasons.width, 200)
   assert.equal(weldingColumnLayout.project_name.minWidth, 180)
-  assert.match(source('components/WeldingTable.vue'), /<AppReportTable/)
-  assert.doesNotMatch(source('components/WeldingTable.vue'), /ResizeObserver|measureText|NDataTable|NPagination/)
 })
 
 test('workshop columns keep short names and program codes bounded and reserve confirmation controls explicitly', () => {
@@ -1004,4 +995,17 @@ test('welding paginated details use ten rows without an internal height limit or
   const url = new URL(fetchMock.mock.calls[0].arguments[0], 'http://localhost')
   assert.equal(url.searchParams.get('page'), '3')
   assert.equal(url.searchParams.get('page_size'), '10')
+})
+
+test('welding details render zero identifiers, missing measurements and escaped source values', async () => {
+  const html = await renderComponent('components/WeldingRecord', { kind: 'jobs', row: {
+    id: 7, device_no: 0, robot_no: 0, serial_number: '<script>source</script>',
+    weld_length_m: null, working_hours: 0, state_label: '完成', quality_reasons: [],
+  } })
+  for (const text of ['作业基础信息', '工艺与作业产出', '完成', '&lt;script&gt;source&lt;/script&gt;', '0.000']) assert.ok(html.includes(text), text)
+  assert.ok(!html.includes('<script>source</script>'))
+  assert.match(html, /<dd[^>]*>0<\/dd>/)
+  assert.ok(html.includes('未记录'))
+  const empty = await renderComponent('components/WeldingTable', { kind: 'jobs', items: [], total: 0 })
+  assert.ok(empty.includes('暂无数据'))
 })
