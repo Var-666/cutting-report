@@ -13,6 +13,8 @@ dependencies = [
     "sqlglot==30.13.0",
     "playwright>=1.55,<2",
     "mysql-connector-python>=9.2,<10",
+    "psycopg[binary]>=3.3,<4",
+    "psycopg-pool>=3.3,<4",
 ]
 
 [project.optional-dependencies]

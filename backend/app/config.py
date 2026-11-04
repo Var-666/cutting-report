@@ -71,6 +71,16 @@ class Settings:
 
     database_sources_json: str = configuration_field("DATABASE_SOURCES_JSON", lambda: _environment.get().get("DATABASE_SOURCES_JSON", "[]"), hidden=True)
 
+    # P4 offline tooling only; Web/Worker repositories continue to use SQLite.
+    postgres_host: str = configuration_field('POSTGRES_HOST', lambda: _environment.get().get('POSTGRES_HOST', 'postgres'))
+    postgres_port: int = configuration_field('POSTGRES_PORT', lambda: _as_int('POSTGRES_PORT', 5432))
+    postgres_database: str = configuration_field('POSTGRES_DATABASE', lambda: _environment.get().get('POSTGRES_DATABASE', 'cutting_report'))
+    postgres_user: str = configuration_field('POSTGRES_USER', lambda: _environment.get().get('POSTGRES_USER', 'cutting_migrator'))
+    postgres_password: str = configuration_field('POSTGRES_PASSWORD', lambda: _environment.get().get('POSTGRES_PASSWORD', ''), hidden=True)
+    postgres_pool_min_size: int = configuration_field('POSTGRES_POOL_MIN_SIZE', lambda: _as_int('POSTGRES_POOL_MIN_SIZE', 0))
+    postgres_pool_max_size: int = configuration_field('POSTGRES_POOL_MAX_SIZE', lambda: _as_int('POSTGRES_POOL_MAX_SIZE', 4))
+    postgres_connect_timeout_seconds: int = configuration_field('POSTGRES_CONNECT_TIMEOUT_SECONDS', lambda: _as_int('POSTGRES_CONNECT_TIMEOUT_SECONDS', 5))
+
     sql_global_max_concurrent: int = configuration_field('SQL_GLOBAL_MAX_CONCURRENT', lambda: _as_int('SQL_GLOBAL_MAX_CONCURRENT', 12))
     sql_global_max_waiters: int = configuration_field('SQL_GLOBAL_MAX_WAITERS', lambda: _as_int('SQL_GLOBAL_MAX_WAITERS', 32))
     sql_queue_timeout_seconds: float = configuration_field('SQL_QUEUE_TIMEOUT_SECONDS', lambda: _as_float('SQL_QUEUE_TIMEOUT_SECONDS', 5))
@@ -228,6 +238,12 @@ class Settings:
     auth_cookie_secure: bool = configuration_field("AUTH_COOKIE_SECURE", lambda: _as_bool("AUTH_COOKIE_SECURE", False))
 
     def __post_init__(self) -> None:
+        if not 1 <= self.postgres_port <= 65535:
+            raise ValueError('POSTGRES_PORT 必须在 1 到 65535 之间')
+        if not 0 <= self.postgres_pool_min_size <= self.postgres_pool_max_size <= 32 or self.postgres_pool_max_size < 1:
+            raise ValueError('POSTGRES_POOL_MIN_SIZE / POSTGRES_POOL_MAX_SIZE 必须满足 0 <= min <= max <= 32，max 至少为1')
+        if not 1 <= self.postgres_connect_timeout_seconds <= 60:
+            raise ValueError('POSTGRES_CONNECT_TIMEOUT_SECONDS 必须在 1 到 60 秒之间')
         for name in ('sql_global_max_concurrent', 'sqlserver_default_max_concurrent', 'mysql_default_max_concurrent',
                      'sql_line_max_concurrent', 'http_query_max_concurrent', 'http_snapshot_max_concurrent',
                      'http_analysis_max_concurrent', 'http_pdf_max_concurrent', 'http_auth_max_concurrent'):

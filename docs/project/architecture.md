@@ -238,3 +238,11 @@ Web 使用单请求快照，Worker 在每次调度、任务执行、报表领取
 容量是冷配置，统一重启 Web/Worker 生效；连接参数保留原热加载边界。单源容量不参与来源指纹，容量调整不失效 P1 的历史快照/分析或 P2 的任务来源键。具体默认值、覆盖和诊断见 [配置参考](../deployment/配置参考.md#sql-与-http-资源容量)。离线验证使用临时本地锁与驱动替身，覆盖20请求上限、来源/产线隔离、跨进程崩溃释放、排队取消及驱动生命周期；不据此推断生产吞吐或真实数据库承载能力。
 
 补充验收：真实 Worker 持久化队列在 Web 占满同源容量时进入原 deferred 退避，释放后同一任务重试完成；自动化数据准备遵守同一容量。焊接分析/PDF 接口在慢模型/渲染阶段的 SQL 执行与等待计数均为0，其他查询仍可进行。旧 TLS 在全局/来源均为1时正常查询，证明父子不重复准入；POSIX 父进程崩溃后，真实查询子进程继承的锁持续保护在途查询，子进程退出后恢复。SQL 排队耗尽总期限计入超时统计，由 HTTP 边界明确返回504，报表路由保留取消与资源繁忙异常。
+
+## P4：PostgreSQL 状态库准备（2026-11-04）
+
+`database/postgres.py` 使用锁定psycopg3和psycopg_pool，提供独立有界池及提交/回滚/健康检查；没有装配到当前SQLite Runtime。状态库POSTGRES_*与生产SQL Server/MySQL Registry分离，配置均冷生效。Compose postgres profile独立持久卷、不发布端口、不作为现有Web/Worker依赖；迁移与未来运行账号均非超级用户，运行角色只授予业务表DML。
+
+独立`postgres_migrations/001_initial.sql`依据实际SQLite001–016枚举建立38张业务表、3张迁移元数据表；PostgreSQL版本按真实DDL执行记载，源SQLite迁移历史单独归档。事务advisory锁串行安装，脚本校验和和结构指纹校验拒绝漂移。BIGINT/DOUBLE/TEXT保留历史ID、整数布尔和文本/浮点时间；ASCII NOCASE通过专用表达式唯一索引保留。
+
+`scripts/migrate_sqlite_to_postgres.py`提供schema/status/check/migrate/verify；复用现有文件锁、有效租约及SQLite写围栏，从官方一致性备份分批导入，逐表全字段规范化摘要、计数、约束、业务关联和必要实体文件核对。所有导入及成功记录同一PG事务，不覆盖未知目标，不双写、不自动切换。P4演练副本仅代表迁移时点。详细版本、完整表清单、真实PG验收及P5剩余仓储/事务/领取/切换工作见 [迁移说明](../deployment/PostgreSQL状态库迁移.md)。

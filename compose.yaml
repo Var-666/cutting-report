@@ -15,6 +15,9 @@ x-app-common: &app-common
     APP_PORT: 8000
     PYTHONPATH: /app/backend
     TZ: ${APP_TIMEZONE:-Asia/Shanghai}
+    # Bootstrap credentials are only consumed by the optional postgres service.
+    POSTGRES_BOOTSTRAP_PASSWORD: ""
+    POSTGRES_APP_PASSWORD: ""
   volumes:
     - cutting_data:/app/data
     - cutting_reports:/app/reports
@@ -34,6 +37,31 @@ x-app-common: &app-common
       max-file: "5"
 
 services:
+  postgres:
+    profiles: [postgres]
+    image: postgres:18.6-bookworm@sha256:5c4783a8cc3f0074912164f94dfa1be4e043438f0f707cf968d7af9a0d31a2c8
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DATABASE:-cutting_report}
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_BOOTSTRAP_PASSWORD:-}
+      POSTGRES_MIGRATOR_PASSWORD: ${POSTGRES_PASSWORD:-}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:-}
+    volumes:
+      - postgres_data:/var/lib/postgresql
+      - ./scripts/postgres/10-roles.sql:/docker-entrypoint-initdb.d/10-roles.sql:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          pg_isready -U postgres -d "$${POSTGRES_DB}" &&
+          psql -U postgres -d "$${POSTGRES_DB}" -Atqc
+          "SELECT COUNT(*)=2 AND NOT bool_or(rolsuper OR rolcreatedb OR rolcreaterole) FROM pg_roles WHERE rolname IN ('cutting_migrator','cutting_app')"
+          | grep -qx t
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   app:
     <<: *app-common
     container_name: cutting-report
@@ -68,3 +96,4 @@ volumes:
   cutting_data:
   cutting_reports:
   cutting_logs:
+  postgres_data:

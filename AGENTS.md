@@ -142,6 +142,8 @@
 
 ## 通用外部数据源（P13）
 
+- P4 PostgreSQL 仅用于离线状态库准备：连接在 `database/postgres.py`，独立迁移在 `postgres_migrations/`，迁移/校验工具为 `scripts/migrate_sqlite_to_postgres.py`。当前正式 Runtime、Repository、UnitOfWork 仍使用 SQLite；不把状态 PG 注册到生产数据源，不双写/自动回退，不在普通请求安装 PG Schema。PG 历史迁移只追加，SQLite 历史独立归档；P5 才统一接入仓储和运行数据库。
+
 - 新增 SQL Server/MySQL 数据库优先通过 `DatabaseSourceRegistry` 注册；管理页“其他数据源”仅登记连接，不自动创建产线、菜单、报表或授予业务权限。新产线仍沿用现有多产线注册与 Provider 机制。
 - 新增连接统一使用 `models/database_sources.py` 的配置模型，SQL Server 使用 `SqlServerClient(config)`，MySQL 使用 `MySqlClient(config)`；不在业务 Service 中散落连接字段，不为每个新库复制连接池。专属 SQL、参数及字段映射归业务 Repository，不统一 SQL 方言。
 - Registry 从 `DatabaseServices.database_sources` 请求/操作快照获取；Repository 固定本次操作的客户端，Service 通过装配显式接收 Repository。产线引用从统一目录合并；共享用途在 `database_runtime.source_bindings` 明确登记，不扫描源码推断引用。
