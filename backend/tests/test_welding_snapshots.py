@@ -30,6 +30,9 @@ class Source(Repository):
         self.down = False
         self.count = 3
 
+    def close(self):
+        self.closed = True
+
     @contextmanager
     def snapshot(self):
         self.calls['sessions'] += 1
