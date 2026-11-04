@@ -38,7 +38,7 @@ docker compose up -d --build app scheduler worker automation
 
 ## Compose与离线扩缩容
 
-.env中的CONSUMER_REPLICAS属于部署配置，默认1；不是每实例线程数。建议先验证1、2、3，更多副本依据CPU、内存、PG连接及外部系统容量决定，不能预设线性加速。
+.env中的CONSUMER_REPLICAS同时用于Compose部署数量和Web期望的最小健康Consumer数，默认1、至少1；不是每实例线程数。原生部署也使用同一参数声明期望容量。建议先验证1、2、3，更多副本依据CPU、内存、PG连接及外部系统容量决定，不能预设线性加速。
 
 ```bash
 # 明确启动单Consumer；三个后台只依赖PG健康，不依赖Web或彼此先启动
@@ -52,7 +52,7 @@ docker compose ps
 docker compose logs --tail 100 worker
 ```
 
-持久化副本数量可写CONSUMER_REPLICAS=2/3，再运行up；显式--scale覆盖该次部署值。宿主机.env冷配置变化须重建相应应用容器，资源容量修改须所有角色使用一致值；普通restart不更新环境。管理保存的产线、数据源及自动化/SMTP仍按各进程下一次操作热加载，不依赖共享Python内存。
+持久化副本数量可写CONSUMER_REPLICAS=2/3，再运行up；显式--scale仅覆盖该次实际副本数量，不改变Web加载的健康期望。若期望为3而只运行2个健康实例，后台状态为degraded；历史lost/stopped实例仍保留，但不扣减当前健康容量。永久调整期望时须重建Web及相应应用容器；默认期望1下临时扩缩容不需重启其他角色。宿主机.env冷配置变化须重建相应应用容器，资源容量修改须所有角色使用一致值；普通restart不更新环境。管理保存的产线、数据源及自动化/SMTP仍按各进程下一次操作热加载，不依赖共享Python内存。
 
 离线仍使用同一镜像和compose.yaml+compose.offline.yaml。start_offline_docker.sh先验证依赖镜像，再检查PG既有Schema，然后按CONSUMER_REPLICAS启动四类角色；不自动执行维护迁移。各副本均挂载当前backend/vendor和同机data/reports/logs，共享只读绑定使用SELinux z标签（[Docker官方语义](https://docs.docker.com/reference/compose-file/services/#volumes)），不使用会隔离副本访问的私有Z标签；P3锁目录必须是同一data/.coordination。本次没有生成新发布包或执行现场部署。
 

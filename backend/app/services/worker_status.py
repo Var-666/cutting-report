@@ -38,8 +38,9 @@ def role_health(settings, role):
 
 
 class WorkerStatusReader:
-    def __init__(self, database: PostgresDatabase) -> None:
+    def __init__(self, database: PostgresDatabase, *, expected_consumers: int = 1) -> None:
         self.repository = CoordinationRepository(database)
+        self.expected_consumers = expected_consumers
         self._lock = Lock()
         self._next_read = 0.0
         self._cached = {'state':'missing','report_alive':False}
@@ -50,15 +51,17 @@ class WorkerStatusReader:
                 try:
                     instances = self.repository.consumer_statuses()
                     healthy = [item for item in instances if role_ready('worker', item)]
-                    abnormal = [item for item in instances if item['state'] != 'stopped' and not role_ready('worker', item)]
+                    abnormal = [item for item in instances if item['state'] in ('running', 'stalled') and not role_ready('worker', item)]
                     sample = min(healthy or instances, key=lambda item: item['heartbeat_age_seconds'], default={})
-                    worker = {**sample, 'state': 'running' if healthy and not abnormal else 'degraded' if healthy else 'unavailable',
+                    worker = {**sample, 'state': 'running' if len(healthy) >= self.expected_consumers and not abnormal else 'degraded' if healthy else 'unavailable',
                               'report_alive':bool(healthy), 'active_tasks':sum(item.get('active_tasks',0) for item in instances if item['state'] in ('running','stalled')),
                               'stalled_workers':[f"{item['instance_id']}:{name}" for item in instances if item['state'] in ('running','stalled') for name in item.get('stalled_workers',[])]}
                     roles = {role:self.repository.worker_status(role) for role in ('scheduler','automation')}
                     roles['worker'] = worker
                     self._cached = {**worker, 'roles':roles, 'database_available':True,
                         'consumer_instances':instances, 'consumer_running_count':len(healthy),
+                        'consumer_expected_count':self.expected_consumers,
+                        'consumer_capacity_shortfall':max(0, self.expected_consumers-len(healthy)),
                         'consumer_lost_count':sum(item['state']=='lost' for item in instances),
                         'background_state':'running' if all(role_ready(role,roles[role]) for role in ROLES) else 'degraded',
                         'automation_alive':role_ready('automation',roles['automation']),

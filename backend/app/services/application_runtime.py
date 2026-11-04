@@ -228,7 +228,7 @@ def _build_runtime(settings: Settings, database: PostgresDatabase, *, role: Lite
         database_runtime=database_runtime,
     )
     return ApplicationRuntime(
-        coordination=coordination, worker_status_reader=WorkerStatusReader(database),
+        coordination=coordination, worker_status_reader=WorkerStatusReader(database, expected_consumers=settings.consumer_replicas),
         database=database, metadata=metadata, llm_usage=llm_usage,
         report_snapshots=report_snapshots, workshop=workshop,
         users=UserRepository(database), sessions=SessionRepository(database),

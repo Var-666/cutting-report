@@ -31,7 +31,7 @@ test('maintained source uses TypeScript with strict checking and no blanket supp
   assert.notEqual(config.compilerOptions.allowJs, true)
 })
 
-test('business contracts reject invalid roles, line capabilities, report types and email outcomes', () => {
+test('business contracts reject invalid roles, report types and email outcomes while matching the public line contract', () => {
   const fixture = fileURLToPath(new URL('./fixtures/type-contracts.ts', import.meta.url))
   const program = ts.createProgram([fixture], { strict: true, noEmit: true, skipLibCheck: true, allowImportingTsExtensions: true, target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler })
   const diagnostics = ts.getPreEmitDiagnostics(program)

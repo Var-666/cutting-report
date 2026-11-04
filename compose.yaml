@@ -15,6 +15,7 @@ x-app-common: &app-common
     APP_PORT: 8000
     PYTHONPATH: /app/backend
     TZ: ${APP_TIMEZONE:-Asia/Shanghai}
+    CONSUMER_REPLICAS: ${CONSUMER_REPLICAS:-1}
     POSTGRES_USER: cutting_app
     # Elevated credentials are consumed only by initialization/migration tools.
     POSTGRES_BOOTSTRAP_PASSWORD: ""

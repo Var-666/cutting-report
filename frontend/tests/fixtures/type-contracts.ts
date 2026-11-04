@@ -7,9 +7,7 @@ import type { DeliveryResolutionRequest } from '../../src/types/automation'
 const role: UserRole = 'worker'
 // @ts-expect-error Roles cannot introduce an administrator alias.
 const invalidRole: UserRole = 'superadmin'
-const welding: WeldingLine = { id: 'welding', type: 'welding', name: '小组立焊接线', type_name: '焊接', enabled: true, capabilities: ['reports', 'analysis', 'settings'] }
-// @ts-expect-error Welding lines do not have file dispatch capability.
-const invalidWelding: WeldingLine = { ...welding, capabilities: ['dispatch'] }
+const welding: WeldingLine = { id: 'welding', type: 'welding', name: '小组立焊接线', type_name: '焊接', enabled: true, source_key: 'mysql-1', home_path: '/admin/welding/home', capabilities: ['reports', 'analysis', 'settings'] }
 function deviceLabel(line: ProductionLine) {
   if (line.type === 'welding') return line.enabled ? line.name : '未启用'
   return line.machine_no
@@ -26,7 +24,7 @@ function history(page: Page<ReportJob>) {
 const resolution: DeliveryResolutionRequest = { message_id: 'mail-id', evidence_note: '已核对', outcomes: [{ recipient: 'worker@example.com', outcome: 'accepted' }] }
 // @ts-expect-error An uncertain result cannot be submitted as a manual resolution.
 resolution.outcomes.push({ recipient: 'worker@example.com', outcome: 'unknown' })
-void [role, invalidRole, invalidWelding, deviceLabel, report, invalidReport, history, resolution]
+void [role, invalidRole, welding, deviceLabel, report, invalidReport, history, resolution]
 
 import type { WeldingDailyRow, WeldingEquipmentRow, WeldingJobRow, WeldingPartRow, WeldingPart, WeldingQuery, WeldingFilterDraft, WeldingReport } from '../../src/types/welding'
 import { analyzeWelding, getWeldingReport } from '../../src/api/welding'

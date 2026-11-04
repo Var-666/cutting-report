@@ -214,7 +214,7 @@ def test_diagnostics_identify_each_consumer_and_do_not_treat_identity_as_shared_
             queue.renew(name, owner, ttl=60, status={'report_alive':True, 'scheduler_alive':True,
                 'automation_alive':True, 'email_alive':True, 'queue':{'available':True},
                 'configuration':diagnostics.observed(owner)})
-        status = WorkerStatusReader(database).status()
+        status = WorkerStatusReader(database, expected_consumers=2).status()
         assert background_ready(status)
         report = runtime.configuration_diagnostics.report(status)
         ConfigurationDiagnostics.model_validate(report)
@@ -224,7 +224,7 @@ def test_diagnostics_identify_each_consumer_and_do_not_treat_identity_as_shared_
         assert not any(item['key'] == 'CONSUMER_INSTANCE_ID' for item in report['items'])
         with database.connect() as connection:
             connection.execute("UPDATE process_leases SET expires_at=EXTRACT(EPOCH FROM clock_timestamp())-1 WHERE name='worker:second'")
-        lost = WorkerStatusReader(database).status()
+        lost = WorkerStatusReader(database, expected_consumers=2).status()
         assert lost['consumer_running_count'] == 1 and lost['consumer_lost_count'] == 1
         assert lost['roles']['worker']['state'] == 'degraded' and not background_ready(lost)
         assert not runtime.configuration_diagnostics.report(lost)['processes']['consumers']['second']['available']
@@ -570,3 +570,46 @@ def test_busy_scale_down_keeps_lease_until_expiry_and_fences_the_late_thread(pos
         if future is not None:
             future.result(timeout=3)
         worker.stop()
+
+
+def test_replaced_consumer_history_does_not_reduce_current_capacity(postgres_state):
+    database, _, _ = postgres_state
+    queue = CoordinationRepository(database)
+    for name in ('scheduler', 'automation', 'worker:old', 'worker:current-1', 'worker:current-2'):
+        owner = queue.acquire(name, ttl=60)
+        queue.renew(name, owner, ttl=60, status={'report_alive': True, 'scheduler_alive': True,
+            'automation_alive': True, 'email_alive': True, 'queue': {'available': True}})
+    with database.connect() as connection:
+        connection.execute("UPDATE process_leases SET expires_at=EXTRACT(EPOCH FROM clock_timestamp())-1 WHERE name='worker:old'")
+    status = WorkerStatusReader(database).status()
+    assert status['consumer_running_count'] == 2 and status['consumer_lost_count'] == 1
+    assert background_ready(status), 'a replaced historical instance must not keep healthy Consumers degraded'
+
+    assert status['consumer_expected_count'] == 1 and status['consumer_capacity_shortfall'] == 0
+    assert {item['instance_id']: item['state'] for item in status['consumer_instances']} == {
+        'old': 'lost', 'current-1': 'running', 'current-2': 'running',
+    }
+    from app.services.application_runtime import build_runtime
+    runtime = build_runtime(replace(postgres_state[1], consumer_replicas=3), role='web')
+    try:
+        limited = runtime.worker_status_reader.status()
+        assert not background_ready(limited) and limited['roles']['worker']['state'] == 'degraded'
+        assert limited['consumer_expected_count'] == 3 and limited['consumer_capacity_shortfall'] == 1
+        assert limited['scheduler_alive'] and limited['automation_alive'] and limited['email_alive']
+        owner = queue.acquire('worker:current-3', ttl=60)
+        queue.renew('worker:current-3', owner, ttl=60, status={'report_alive': True, 'queue': {'available': True}})
+        assert background_ready(WorkerStatusReader(database, expected_consumers=3).status())
+        with database.connect() as connection:
+            connection.execute("UPDATE process_leases SET expires_at=EXTRACT(EPOCH FROM clock_timestamp())-1 WHERE name LIKE 'worker:current-%'")
+        empty = WorkerStatusReader(database).status()
+        assert not background_ready(empty) and empty['roles']['worker']['state'] == 'unavailable'
+        assert empty['consumer_running_count'] == 0 and empty['consumer_lost_count'] == 4
+    finally:
+        runtime.database_runtime.close()
+        runtime.database.close()
+
+
+def test_consumer_expected_capacity_must_be_positive(tmp_path):
+    from tests.line_fixtures import configuration
+    with pytest.raises(ValueError, match='CONSUMER_REPLICAS'):
+        configuration(tmp_path, consumer_replicas=0)

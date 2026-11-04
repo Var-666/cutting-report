@@ -22,6 +22,9 @@ def test_scaled_offline_consumers_have_distinct_identity_and_shared_readonly_sou
     assert 'container_name' not in base
     assert base['environment']['CONSUMER_INSTANCE_ID'] == ''
     assert base['deploy']['replicas'] == '${CONSUMER_REPLICAS:-1}'
+    services = yaml.safe_load((ROOT / 'compose.yaml').read_text())['services']
+    for role in ('app', 'scheduler', 'worker', 'automation'):
+        assert services[role]['environment']['CONSUMER_REPLICAS'] == base['deploy']['replicas']
     offline = yaml.safe_load((ROOT / 'compose.offline.yaml').read_text())['services']
     for role in ('app', 'scheduler', 'worker', 'automation', 'migrate'):
         for mount in offline[role]['volumes']:

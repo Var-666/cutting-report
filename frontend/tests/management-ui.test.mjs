@@ -365,7 +365,23 @@ test('all seven migrated settings tables render their fields and controls throug
       { user_id: 'other', display_name: '同事', company_no: '002', auth_source: 'hr_database' },
       { user_id: 'local', display_name: '应急管理员', username: 'admin', auth_source: 'local' },
     ], session: { user: { user_id: 'self' } }, formatTime: () => '2026年10月28日', openDialog() {} }, ['本人', '同事', '应急管理员', 'HR 数据库', '本地应急账号', '受保护']],
-    ['ConfigurationDiagnosticsView', 'diagnosticsTableColumns', { visibleRows: [{ key: 'TEST_HOST', category: '数据库', saved_value: false, saved_source: 'settings.env', status: 'error', rule: '需要重启', valid: false, process_mismatch: true, processes: { web: { status: 'error', value: 'web-host', source: 'Web快照' }, worker: { status: 'pending', value: 'worker-host', source: 'Worker快照' } } }], rows: Array(21), page: 2, pageSize: 10, category: '', search: '', display: value => String(value), tones: { error: 'error', pending: 'warning' }, statuses: { error: '配置异常', pending: '待重启' } }, ['TEST_HOST', 'web-host', 'worker-host', 'Web快照', 'Worker快照', 'settings.env', '需要重启', '配置版本不一致']],
+    ...[1, 2].map(count => {
+      const consumers = Object.fromEntries(Array.from({ length: count }, (_, index) => [`consumer-${index + 1}`, {
+        status: 'pending', value: `consumer-${index + 1}-host<script>unsafe</script>`, source: `Consumer ${index + 1}快照`,
+      }]))
+      return ['ConfigurationDiagnosticsView', 'diagnosticsTableColumns', {
+        roles: ['web', 'worker', 'scheduler', 'automation'],
+        visibleRows: [{ key: 'TEST_HOST', category: '数据库', saved_value: false, saved_source: 'settings.env', status: 'error', rule: '需要重启', valid: false, process_mismatch: true, processes: {
+          web: { status: 'error', value: 'web-host', source: 'Web快照' },
+          worker: { status: 'pending', value: 'aggregate-host', source: '聚合快照' },
+          scheduler: { status: 'pending', value: 'scheduler-host', source: 'Scheduler快照' },
+          automation: { status: 'pending', value: 'automation-host', source: 'Automation快照' }, consumers,
+        } }], rows: Array(21), page: 2, pageSize: 10, category: '', search: '', display: value => String(value),
+        tones: { error: 'error', pending: 'warning' }, statuses: { error: '配置异常', pending: '待重启' },
+      }, ['TEST_HOST', 'web-host', 'Web快照', 'scheduler-host', 'Scheduler快照', 'automation-host', 'Automation快照',
+        ...Object.keys(consumers).flatMap((id, index) => [`${id}-host&lt;script&gt;unsafe&lt;/script&gt;`, `Consumer ${index + 1}快照`]),
+        'settings.env', '需要重启', '后台进程与 Web 配置不一致']]
+    }),
     ['ModelUsageView', 'periodTableColumns', { periods: [{ period: '2026-10-28', call_count: 1240, input_tokens: null, output_tokens: 0, total_tokens: 0, metered_count: 1200, failed_count: 40 }], report: { granularity: 'day' }, number: value => value == null ? '—' : value.toLocaleString('zh-CN') }, ['2026年10月28日', '1,240', '1,200', '—', '40']],
     ['ModelUsageView', 'breakdownTableColumns', { report: { breakdown: [{ scene: 'workshop', model: '<script>unsafe</script>', call_count: 10, input_tokens: 0, output_tokens: null, total_tokens: 0, metered_count: 8 }] }, sceneName: () => '车间报表', number: value => value == null ? '—' : String(value) }, ['车间报表', '&lt;script&gt;unsafe&lt;/script&gt;', '—']],
     ['AutomationView', 'scheduleTableColumns', { schedules: [{ schedule_id: 'schedule', enabled: true, name: '每日车间', device_id: 'Cutter01', report_type: 'workshop', recipients: ['one@example.com'], sent_count: 12, failed_count: 1 }], reportLabels: { workshop: '车间报表' }, scheduleLabels: {}, formatDeviceDisplay: () => '20KW切割机', scheduleText: () => '每天18:00', formatDateTime: () => '2026年10月28日 18:00:00', runNow() {}, editSchedule() {}, remove() {} }, ['每日车间', '20KW切割机', '每天18:00', '立即执行', '编辑', '删除']],
@@ -406,7 +422,8 @@ test('all seven migrated settings tables render their fields and controls throug
       assert.match(html, /class="n-pagination(?:\s|")/)
       assert.match(html, /第 3 页/)
     } else assert.doesNotMatch(html, /class="n-pagination(?:\s|")/)
-    if (columnName === 'breakdownTableColumns') assert.doesNotMatch(html, /<script>unsafe/)
+    if (['diagnosticsTableColumns', 'breakdownTableColumns'].includes(columnName)) assert.doesNotMatch(html, /<script>unsafe/)
+    if (columnName === 'diagnosticsTableColumns') assert.ok(!html.includes('aggregate-host'), 'render the actual Consumer instances')
     const height = { periodTableColumns: 330, scheduleTableColumns: 340, deliveryTableColumns: 440 }[columnName]
     if (height) assert.ok(html.includes(`max-height:${height}px`), 'scroll height is handled by NDataTable')
   }

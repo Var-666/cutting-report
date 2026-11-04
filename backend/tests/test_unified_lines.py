@@ -266,3 +266,16 @@ def test_upgrade_keeps_existing_latest_analysis_in_the_bound_source(state_databa
         assert selected.get_latest_analysis(**query)['overview'] == '保留已有分析'
         assert selected.get_analysis_source_version(report_type='workshop', report_date='2026-11-01')['data_version'] == 'old-version'
         runtime.database_runtime.close()
+
+
+
+def test_welding_capabilities_and_api_paths_keep_cutting_actions_unavailable(tmp_path):
+    from types import SimpleNamespace
+    cfg = configuration(tmp_path, welding=True)
+    context = SimpleNamespace(catalog=load_line_catalog(cfg.production_lines_json))
+    line = next(item for item in registered_lines(context) if item['type'] == 'welding')
+    assert line['capabilities'] == ['reports', 'analysis', 'settings']
+    assert supports_path(context, line['id'], '/api/v1/welding/dashboard')
+    assert supports_path(context, line['id'], '/api/v1/welding/analysis', 'POST')
+    assert not supports_path(context, line['id'], '/api/v1/alarms/status')
+    assert not supports_path(context, line['id'], '/api/v1/downloads', 'POST')

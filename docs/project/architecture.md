@@ -281,8 +281,12 @@ Web通过缓存2秒的持久心跳分别报告三个角色；任一异常使back
 
 003_consumer_scaling只追加owner索引、后台claim_token和维护门槛，不改变001/002或重建任务表。旧全局worker记录须在停机且全部租约失效后由cutting_migrator的prepare-consumers显式处理；SQLite全字段导入/verify先完成，随后恢复执行态和标识不可信来源。新Runtime不运行旧协议，不在启动时全局重置。
 
-Consumer实例各自心跳及本实例探针，WorkerStatusReader保留旧聚合字段并增加实例列表、正常/失联计数，区分running/degraded/unavailable；正常缩容stopped不拖累仍工作的实例。配置/资源诊断按实例展示，公开响应递归去除内部比较值。原retention清理超过30天且无运行任务引用的失效实例记录，同ID重启只更新同一租约。
+Consumer实例各自心跳及本实例探针，WorkerStatusReader保留旧聚合字段并增加实例列表、正常/失联计数，区分running/degraded/unavailable；历史lost/stopped保留在实例列表且不拖累健康替代实例；CONSUMER_REPLICAS明确Web最小健康期望（默认1、冷生效），健康数不足报告degraded，全部失效报告unavailable，有效停滞实例仍报告异常。--scale只变更实际副本数，不推断期望。配置/资源诊断按实例展示，公开响应递归去除内部比较值。原retention清理超过30天且无运行任务引用的失效实例记录，同ID重启只更新同一租约。
 
 本地容量默认4操作/10分析/1报表，每实例独立有界PG池默认0–4，应用连接预算4×(N+3)另加探针余量。所有进程继续共享P3的本机SQL/模型/PDF文件锁，慢外部工作不占PG事务；不支持跨主机。Compose去掉Worker固定名，CONSUMER_REPLICAS默认1；同一镜像及离线卷支持1→3→1，不重启其他角色。停止时先停领取，仅在执行线程全部停止及完成提交后释放租约，否则由TTL/围栏接管。
 
 验证包括真实PG所有权/恢复/事务、真实Consumer并发与强杀、完整设备报表崩溃后同ID新owner文件发布，以及Docker实际四角色探针与1→3→1。受控9任务的1/2/3进程实测及SQL/模型/PDF上限见[部署与验证说明](../deployment/WEB_WORKER进程隔离升级说明.md#验证与回退)。这不是生产性能或现场迁移验收；后续只进行授权的迁移、真实源/SMTP/模型/能管联调及必要修复。
+
+## P1～P7代码收尾边界（2026-11-04）
+
+P1～P7核心开发完成。本轮只修复CI测试装配、类型夹具及历史Consumer健康误判，保留统一产线、P2调度、P3配额、PG迁移/状态库和四角色职责与领取/恢复协议，不新增架构层。CI最终以修复提交关联的Frontend CI和API contracts全部通过为准，结果记录在[项目进度](progress.md)。生产PostgreSQL历史数据迁移尚未执行；SQL Server/MySQL、SMTP、LLM等现场联调、生产部署与实际负载验收均未完成，不能将代码验证视为生产上线。

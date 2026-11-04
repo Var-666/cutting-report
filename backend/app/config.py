@@ -217,6 +217,7 @@ class Settings:
     report_max_detail_rows: int = configuration_field("REPORT_MAX_DETAIL_ROWS", lambda: _as_int("REPORT_MAX_DETAIL_ROWS", 1000))
     chart_top_n: int = configuration_field("CHART_TOP_N", lambda: _as_int("CHART_TOP_N", 20))
     worker_poll_seconds: float = configuration_field("REPORT_WORKER_POLL_SECONDS", lambda: _as_float("REPORT_WORKER_POLL_SECONDS", 0.5))
+    consumer_replicas: int = configuration_field('CONSUMER_REPLICAS', lambda: _as_int('CONSUMER_REPLICAS', 1))
     consumer_instance_id: str = configuration_field('CONSUMER_INSTANCE_ID', lambda: _environment.get().get('CONSUMER_INSTANCE_ID', ''))
     consumer_operation_concurrency: int = configuration_field('CONSUMER_OPERATION_CONCURRENCY', lambda: _as_int('CONSUMER_OPERATION_CONCURRENCY', 4))
     consumer_analysis_concurrency: int = configuration_field('CONSUMER_ANALYSIS_CONCURRENCY', lambda: _as_int('CONSUMER_ANALYSIS_CONCURRENCY', 10))
@@ -243,6 +244,8 @@ class Settings:
     auth_cookie_secure: bool = configuration_field("AUTH_COOKIE_SECURE", lambda: _as_bool("AUTH_COOKIE_SECURE", False))
 
     def __post_init__(self) -> None:
+        if self.consumer_replicas < 1:
+            raise ValueError('CONSUMER_REPLICAS 必须至少为1')
         if self.consumer_instance_id and not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,63}', self.consumer_instance_id):
             raise ValueError('CONSUMER_INSTANCE_ID 必须是1–64位字母、数字、点、下划线或连字符')
         for name in ('consumer_operation_concurrency', 'consumer_analysis_concurrency'):

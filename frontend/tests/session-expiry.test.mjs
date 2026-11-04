@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict'
-import { afterEach, test } from 'node:test'
+import { afterEach, beforeEach, test } from 'node:test'
 
 import { getDatabaseStatus, executeWorkbenchSql } from '../src/api/reports.ts'
 import {
-  notifySessionExpired,
   setSessionExpiredHandler,
 } from '../src/api/sessionExpiry.ts'
+import { resetDeviceContext, setDeviceCatalog } from '../src/api/deviceContext.ts'
 import { reportCache } from '../src/api/reportCache.ts'
 import { session } from '../src/state/session.ts'
 import { installSessionExpiryRedirect } from '../src/state/sessionExpiry.ts'
@@ -26,7 +26,15 @@ function errorResponse(message, { sessionExpired = false } = {}) {
   }
 }
 
+beforeEach(() => {
+  setDeviceCatalog({ default_device_id: 'Cutter01', items: [{
+    id: 'Cutter01', type: 'cutting', name: '测试切割线', type_name: '切割', enabled: true,
+    source_key: 'test-source', home_path: '/admin/home', capabilities: ['reports', 'dispatch', 'alarms', 'settings'],
+  }] })
+})
+
 afterEach(() => {
+  resetDeviceContext()
   restoreHandler()
   restoreHandler = () => {}
   globalThis.fetch = originalFetch
@@ -59,13 +67,22 @@ test('concurrent expired-session responses trigger one global recovery', async (
 test('ordinary 401 errors do not discard the signed-in session', async () => {
   let handled = 0
   restoreHandler = setSessionExpiredHandler(() => { handled += 1 })
-  globalThis.fetch = async () => errorResponse('SQL 工作台管理员令牌无效')
+  session.user = { user_id: 'admin-1', role: 'admin' }
+  const signedIn = session.user
+  let calls = 0
+  globalThis.fetch = async url => {
+    calls++
+    assert.equal(new URL(url, 'http://localhost').searchParams.get('device_id'), 'Cutter01')
+    return errorResponse('SQL 工作台管理员令牌无效')
+  }
 
   await assert.rejects(
     executeWorkbenchSql({ sql: 'SELECT 1', maxRows: 1, token: 'wrong' }),
     /SQL 工作台管理员令牌无效/,
   )
+  assert.equal(calls, 1)
   assert.equal(handled, 0)
+  assert.equal(session.user, signedIn)
 })
 
 test('expired sessions clear account data and redirect back through login', async () => {
@@ -87,7 +104,8 @@ test('expired sessions clear account data and redirect back through login', asyn
   }
   restoreHandler = installSessionExpiryRedirect(router)
 
-  await notifySessionExpired()
+  globalThis.fetch = async () => errorResponse('请先登录', { sessionExpired: true })
+  await assert.rejects(executeWorkbenchSql({ sql: 'SELECT 1', maxRows: 1, token: 'test' }), /请先登录/)
 
   assert.equal(session.user, null)
   assert.equal(session.systemInfo, null)

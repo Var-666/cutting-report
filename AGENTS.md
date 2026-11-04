@@ -164,3 +164,5 @@
 - P7 Consumer原生实例必须显式配置CONSUMER_INSTANCE_ID，Docker使用各自容器身份；同ID互斥、不同ID并发，健康探针必须定位本实例。Scheduler/Automation仍各单实例；不恢复全局worker运行协议。
 - 状态Schema只追加003_consumer_scaling及指纹，不修改001/002。prepare-consumers由维护账号在所有Consumer停止且租约失效后显式执行；旧无指纹任务标blocked，不猜测数据源、不丢记录。告警/能耗等新增任务必须携带来源指纹。
 - Consumer本地执行容量与全局SQL/模型/PDF配额分开；所有实例共用本机锁目录，PG池预算按N+3个应用实例及探针计算，不支持跨主机。实例状态逐一报告并保留聚合字段；失联记录仅在无恢复引用且超过30天时由现有清理任务移除。
+
+- Consumer汇总健康按CONSUMER_REPLICAS的最小期望容量判断（默认1、冷生效），历史lost/stopped记录保留但不降低健康容量；有效实例的停滞仍报告异常。--scale只改实际数量，永久调整目标时同步修改共享配置并重建应用容器。
