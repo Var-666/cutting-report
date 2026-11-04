@@ -42,7 +42,7 @@ docker compose -f compose.yaml -f compose.offline.yaml run --rm --no-deps -T mig
 
 新空卷通过 `scripts/postgres/10-roles.sql` 创建两个非超级用户角色和 `app_state`。`schema` 使用 cutting_migrator 显式安装迁移，再执行 `grant_runtime.sql`。Web/Worker 只校验现成结构，不能使用管理员或迁移角色启动。
 
-已发布的 `001_initial` 保持不变。`002_runtime` 为分析/快照增加稳定插入序号，为同产线同类运行任务增加部分唯一索引，并提供兼容历史派发时间文本的解析函数。当前包括38张业务表、3张迁移元数据表、98个索引；迁移元数据对 app 只读，三个身份序列仅授予必要使用权限。运行账号无 Schema CREATE、SUPERUSER、CREATEDB、CREATEROLE 权限。
+已发布的 `001_initial` 保持不变。`002_runtime` 为分析/快照增加稳定插入序号，为同产线同类运行任务增加部分唯一索引，并提供兼容历史派发时间文本的解析函数。P7追加003_consumer_scaling的owner查询索引与后台claim_token列，001/002保持不变；应用启动不执行迁移。当前包括38张业务表、3张迁移元数据表、99个索引；迁移元数据对 app 只读，三个身份序列仅授予必要使用权限。运行账号无 Schema CREATE、SUPERUSER、CREATEDB、CREATEROLE 权限。
 
 ## 首次停机切换
 
@@ -148,3 +148,8 @@ P4_TEST_POSTGRES=1 P5_TEST_POSTGRES=1 P4_TEST_POSTGRES_PORT=55435 \
 ```
 
 未显式启用时上述PG测试跳过，不回退SQLite。实际本轮使用独立Python3.12测试环境执行，验收结果见 [架构记录](../project/architecture.md#p5postgresql-唯一状态库2026-11-04)。
+
+
+## P7 Consumer协议切换
+
+P7的003迁移拒绝任何仍持有效租约的旧/新Consumer。旧SQLite仍先完成本说明的最新数据导入与verify，再显式使用cutting_migrator运行 `python scripts/migrate_sqlite_to_postgres.py prepare-consumers`。P6 PostgreSQL现场同样先停所有Consumer、备份并确认退出，执行schema再执行prepare-consumers。准备步骤恢复执行态、保留业务ID/重试和完成记录，旧无来源任务标blocked，不猜测来源；移除旧全局worker租约后才允许启动新实例。该步骤会有意改变执行状态，应在逐表导入校验之后执行，不能由普通启动代办。完整单/多副本、连接预算及回退见[四角色与多Consumer部署](WEB_WORKER进程隔离升级说明.md)。不允许旧Worker与实例租约协议混跑；回退P6必须停止新实例并恢复匹配备份，不能只更换镜像或删除版本标记。

@@ -20,6 +20,7 @@ from app.services.production_reports import report_provider
 from app.services.welding_service import WeldingService
 from app.services.report_snapshots import SnapshotRefreshBusy, SnapshotRefreshRejected
 from app.worker import WorkerProcess
+from app.scheduler import SchedulerProcess
 from test_welding_statistics_cache import Repository, aggregate_groups
 
 
@@ -279,7 +280,7 @@ def test_dashboard_keeps_expired_snapshot_and_manual_refresh_is_background_only(
     assert source.calls == before
     assert result['data_version'] == first['data_version']
     assert result['meta']['report_data']['refreshing']
-    owner = queue.acquire('worker', ttl=30)
+    owner = queue.acquire('worker:test-consumer', ttl=30)
     task = queue.claim_task(owner, analysis=False)
     source.count = 9
     service.refresh_summary('dashboard', task['payload']['query'], requested_at=task['created_at'])
@@ -328,7 +329,7 @@ def test_every_page_reads_one_coherent_snapshot_and_refreshes_only_its_own_stati
     with pytest.raises(SnapshotRefreshBusy):
         service.page(kind, selected)
     assert not source.calls
-    owner = queue.acquire('worker', ttl=30)
+    owner = queue.acquire('worker:test-consumer', ttl=30)
     task = queue.claim_task(owner, analysis=False)
     service.refresh_summary(task['payload']['report_type'], task['payload']['query'], requested_at=task['created_at'])
     queue.finish_task(task, owner)
@@ -476,18 +477,18 @@ def test_worker_uses_registry_dedup_capacity_and_current_database_context(config
     current.lines['welding'].service.repository = Source()
     process = WorkerProcess(cfg, runtime)
     try:
-        process._schedule()
-        process._schedule()
+        SchedulerProcess(cfg, runtime)._schedule()
+        SchedulerProcess(cfg, runtime)._schedule()
         queue = runtime.coordination
         with queue.connect() as connection:
             tasks = connection.execute("SELECT * FROM background_tasks WHERE kind='report_snapshot_refresh'").fetchall()
         assert len(tasks) == len(current.lines['welding'].service.refresh_plan())
         assert {task['device_id'] for task in tasks} == {'welding'}
-        owner = queue.acquire('worker', ttl=30)
+        owner = queue.acquire('worker:test-consumer', ttl=30)
         for _ in tasks:
             task = queue.claim_task(owner, analysis=False)
             assert task['kind'] == 'report_snapshot_refresh'
-            with execution_scope(runtime.database, 'worker', owner):
+            with execution_scope(runtime.database, 'worker:test-consumer', owner):
                 process._handle(task)
                 queue.finish_task(task, owner)
         assert current.lines['welding'].service.repository.calls['summary'] == len(tasks) + 1, 'homepage also computes today within its own source transaction'
@@ -498,7 +499,8 @@ def test_worker_uses_registry_dedup_capacity_and_current_database_context(config
         task = {**dict(old), 'payload': json.loads(old['payload'])}
         updated = WeldingService(replace(cfg, source_fingerprint='new-source'), Source(), snapshots=runtime.report_snapshots, coordination=queue)
         runtime.database_runtime.publish(replace(current, lines={**current.lines, 'welding': replace(current.lines['welding'], service=updated)}), {})
-        process._handle(task)
+        with pytest.raises(RuntimeError, match='来源'):
+            process._handle(task)
         assert updated.repository.calls == Counter()
         with pytest.raises(ValueError, match='未登记'):
             report_provider(current, 'missing')
@@ -574,9 +576,9 @@ def test_upgrade_drains_old_aggregate_tasks_before_building_the_new_homepage(con
         selected = WeldingQuery(start=start, end=date(2026, 10, 28))
         queue.request_snapshot_refresh('welding', service.snapshot_service.task_payload(service._snapshot_key(selected)))
     process = WorkerProcess(cfg, runtime)
-    process.owner = queue.acquire('worker', ttl=30)
+    process.owner = queue.acquire('worker:test-consumer', ttl=30)
     try:
-        process._schedule()
+        SchedulerProcess(cfg, runtime)._schedule()
         with caplog.at_level('INFO'), process.scope():
             for _ in range(3):
                 task = queue.claim_task(process.owner, analysis=False)

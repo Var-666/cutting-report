@@ -204,7 +204,7 @@ def test_worker_heartbeat_uses_its_own_snapshot_and_diagnostic_failure_is_isolat
         task_counts=lambda: {}, renew=lambda *args, **kwargs: saved.append(kwargs['status']) or True),
         lines={}, database_sources=DatabaseSourceRegistry(),
         configuration_diagnostics=background)
-    process = WorkerProcess(background.settings, runtime=runtime)
+    process = WorkerProcess(replace(background.settings, consumer_instance_id='diagnostic-test'), runtime=runtime)
     process.owner = 'test-worker'
     process._heartbeat()
     assert saved[-1]['configuration']['version'] == background.observed(process.owner)['version']

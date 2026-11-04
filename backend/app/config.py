@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import re
+import socket
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -215,6 +217,9 @@ class Settings:
     report_max_detail_rows: int = configuration_field("REPORT_MAX_DETAIL_ROWS", lambda: _as_int("REPORT_MAX_DETAIL_ROWS", 1000))
     chart_top_n: int = configuration_field("CHART_TOP_N", lambda: _as_int("CHART_TOP_N", 20))
     worker_poll_seconds: float = configuration_field("REPORT_WORKER_POLL_SECONDS", lambda: _as_float("REPORT_WORKER_POLL_SECONDS", 0.5))
+    consumer_instance_id: str = configuration_field('CONSUMER_INSTANCE_ID', lambda: _environment.get().get('CONSUMER_INSTANCE_ID', ''))
+    consumer_operation_concurrency: int = configuration_field('CONSUMER_OPERATION_CONCURRENCY', lambda: _as_int('CONSUMER_OPERATION_CONCURRENCY', 4))
+    consumer_analysis_concurrency: int = configuration_field('CONSUMER_ANALYSIS_CONCURRENCY', lambda: _as_int('CONSUMER_ANALYSIS_CONCURRENCY', 10))
     worker_stall_timeout_seconds: float = configuration_field("REPORT_WORKER_STALL_TIMEOUT_SECONDS", lambda: _as_float("REPORT_WORKER_STALL_TIMEOUT_SECONDS", 900))
     report_operation_timeout_seconds: float = configuration_field("REPORT_OPERATION_TIMEOUT_SECONDS", lambda: _as_float("REPORT_OPERATION_TIMEOUT_SECONDS", 900))
     pdf_render_timeout_seconds: float = configuration_field("PDF_RENDER_TIMEOUT_SECONDS", lambda: _as_float("PDF_RENDER_TIMEOUT_SECONDS", 120))
@@ -238,6 +243,11 @@ class Settings:
     auth_cookie_secure: bool = configuration_field("AUTH_COOKIE_SECURE", lambda: _as_bool("AUTH_COOKIE_SECURE", False))
 
     def __post_init__(self) -> None:
+        if self.consumer_instance_id and not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,63}', self.consumer_instance_id):
+            raise ValueError('CONSUMER_INSTANCE_ID 必须是1–64位字母、数字、点、下划线或连字符')
+        for name in ('consumer_operation_concurrency', 'consumer_analysis_concurrency'):
+            if not 1 <= getattr(self, name) <= 32:
+                raise ValueError(f'{name.upper()} 必须在1到32之间')
         if not 1 <= self.postgres_port <= 65535:
             raise ValueError('POSTGRES_PORT 必须在 1 到 65535 之间')
         if not 0 <= self.postgres_pool_min_size <= self.postgres_pool_max_size <= 32 or self.postgres_pool_max_size < 1:
@@ -335,6 +345,14 @@ def settings_for_line(base: Settings, line: ProductionLineInstance, source_finge
         alarm_monitor_start_at=line.alarm.start_at if line.alarm else "",
         weld_enabled=line.enabled, weld_db_timezone=line.timezone,
     )
+
+
+def consumer_identity(configuration: Settings) -> str:
+    if configuration.consumer_instance_id:
+        return configuration.consumer_instance_id
+    if Path('/.dockerenv').is_file():
+        return socket.gethostname()
+    raise ValueError('原生 Consumer 必须显式设置 CONSUMER_INSTANCE_ID；同机各实例使用不同值')
 
 
 settings = Settings()

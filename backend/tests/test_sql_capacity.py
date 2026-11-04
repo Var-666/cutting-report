@@ -475,7 +475,7 @@ def test_worker_and_automation_share_web_quota_and_retry_without_losing_task(pos
     cfg = replace(cfg, database_sources_json=source_configs_json(configs))
     web = build_runtime(state_settings(cfg,postgres_state), role='web')
     worker = WorkerProcess(state_settings(cfg,postgres_state))
-    worker.owner = worker.repository.acquire('worker', ttl=30)
+    worker.owner = worker.repository.acquire('worker:test-consumer', ttl=30)
     context = database_context(worker.runtime)
     resource = context.database_sources.capacity
     line = context.lines['Cutter01']
@@ -496,7 +496,7 @@ def test_worker_and_automation_share_web_quota_and_retry_without_losing_task(pos
         workshop=SimpleNamespace(sync_daily_report=lambda **kw: saved.append(kw)))
     run = dict(report_date='2026-11-03', created_by_id=1, created_by_name='test')
     now = datetime.fromisoformat('2026-11-03T10:00:00+08:00')
-    worker.repository.enqueue('current_refresh', 'Cutter01', {})
+    worker.repository.enqueue('current_refresh', 'Cutter01', {'source_fingerprint': line.settings.source_fingerprint})
     task = worker.repository.claim_task(worker.owner, analysis=False)
     try:
         web_context = database_context(web)

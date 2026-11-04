@@ -145,7 +145,7 @@ def test_worker_lease_loss_cannot_publish_and_queue_has_retry_dedup_and_limits(t
     payload = ReportSnapshotService.task_payload(key())
     assert coordination.request_snapshot_refresh('welding', payload)
     assert not coordination.request_snapshot_refresh('welding', payload)
-    owner = coordination.acquire('worker', ttl=30)
+    owner = coordination.acquire('worker:test-consumer', ttl=30)
     task = coordination.claim_task(owner, analysis=False)
     assert task['device_id'] == 'welding' and task['kind'] == 'report_snapshot_refresh'
     coordination.finish_task(task, owner, 'ConnectionError')
@@ -157,8 +157,8 @@ def test_worker_lease_loss_cannot_publish_and_queue_has_retry_dedup_and_limits(t
         coordination.request_snapshot_refresh('welding', {**payload, 'query': {'start': str(i)}})
     with coordination.connect() as connection:
         assert connection.execute("SELECT COUNT(*) AS count FROM background_tasks WHERE kind='report_snapshot_refresh'").fetchone()['count'] == 64
-        connection.execute("UPDATE process_leases SET expires_at=0 WHERE name='worker'")
-    with pytest.raises(ExecutionLeaseLost), execution_scope(repo.database, 'worker', owner):
+        connection.execute("UPDATE process_leases SET expires_at=0 WHERE name='worker:test-consumer'")
+    with pytest.raises(ExecutionLeaseLost), execution_scope(repo.database, 'worker:test-consumer', owner):
         repo.save(record())
     assert repo.get(key()) is None
 
@@ -262,7 +262,7 @@ def test_snapshot_tasks_serialize_each_line_and_retries_reuse_the_same_queue_row
         assert coordination.request_snapshot_refresh('welding', payload)
         clock[0] += 1
     assert coordination.request_snapshot_refresh('Cutter02', payloads[0])
-    owner = coordination.acquire('worker', ttl=300)
+    owner = coordination.acquire('worker:test-consumer', ttl=300)
     first = coordination.claim_task(owner, analysis=False)
     assert first['device_id'] == 'welding'
     parallel = coordination.claim_task(owner, analysis=False)
@@ -301,11 +301,11 @@ def test_failed_worker_refresh_retains_snapshot_then_recovers_without_duplicate_
     service = ReportSnapshotService(settings, repository, coordination)
     payload = service.task_payload(key())
     coordination.request_snapshot_refresh('welding', payload)
-    owner = coordination.acquire('worker', ttl=300)
+    owner = coordination.acquire('worker:test-consumer', ttl=300)
     task = coordination.claim_task(owner, analysis=False)
     def unavailable():
         raise ConnectionError('isolated source unavailable')
-    with execution_scope(repository.database, 'worker', owner), pytest.raises(ConnectionError):
+    with execution_scope(repository.database, 'worker:test-consumer', owner), pytest.raises(ConnectionError):
         service.read(key(), unavailable, ttl=300, force=True, background=True)
     coordination.finish_task(task, owner, 'ConnectionError')
     fallback = service.read(key(), unavailable, ttl=300, force=True)
@@ -319,7 +319,7 @@ def test_failed_worker_refresh_retains_snapshot_then_recovers_without_duplicate_
     coordination.admit_deferred()
     retried = coordination.claim_task(owner, analysis=False)
     assert retried['task_id'] == task['task_id'] and retried['attempts'] == 2
-    with execution_scope(repository.database, 'worker', owner):
+    with execution_scope(repository.database, 'worker:test-consumer', owner):
         result = service.read(key(), lambda: {'count': 8}, ttl=300, force=True, background=True)
     coordination.finish_task(retried, owner)
     assert result.payload == {'count': 8} and not result.meta['stale']

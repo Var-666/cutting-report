@@ -85,10 +85,15 @@ class DeviceRuntime:
     def start_background(self) -> None:
         history = self.energy_history_worker
         if history.enabled:
-            history.repository.recover_history_queue(history.source_key, history._now())
+            self.recover_background()
             today = history.service.now().date()
             from app.workers.energy_history_worker import _shift_month
             history.schedule_range(_shift_month(today.replace(day=1), -11), today)
+
+    def recover_background(self) -> None:
+        history = self.energy_history_worker
+        if history.enabled:
+            history.repository.recover_history_queue(history.source_key, history._now())
 
     def schedule_background(self, scheduler: BackgroundSchedule, now: datetime) -> None:
         repository = scheduler.repository
@@ -109,11 +114,12 @@ class DeviceRuntime:
                     scheduler.enqueue_once("leadership_refresh", self.settings.device_id, {"date": selected.isoformat(), "bootstrap": False, "source_fingerprint": self.settings.source_fingerprint},
                         key=f"reconcile:{self.settings.device_id}:{now.date()}:{selected}")
         history = self.energy_history_worker
+        payload = {'source_fingerprint': self.settings.source_fingerprint}
         if (history.enabled and history.repository.history_ready(history.source_key, history._now())
-                and not repository.active("energy_sync", self.settings.device_id, {})):
-            repository.enqueue("energy_sync", self.settings.device_id, {})
+                and not repository.active("energy_sync", self.settings.device_id, payload)):
+            repository.enqueue("energy_sync", self.settings.device_id, payload)
         if self.alarm_worker.enabled:
-            scheduler.schedule("alarm", self.settings.device_id, {}, max(30, self.settings.alarm_monitor_interval_seconds),
+            scheduler.schedule("alarm", self.settings.device_id, payload, max(30, self.settings.alarm_monitor_interval_seconds),
                                source=self.settings.source_fingerprint)
 
     def flush_background_results(self) -> None:

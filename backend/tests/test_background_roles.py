@@ -78,14 +78,14 @@ def test_roles_start_independently_and_each_recovers_after_process_death(postgre
         owners={role:start(role) for role in order}
         wait_until(lambda:background_ready(WorkerStatusReader(database).status()))
         for role in order:
-            assert queue.acquire(role,ttl=30) is None
+            assert queue.acquire('worker:test-consumer' if role=='worker' else role,ttl=30) is None
         # Crash each role with the others still alive; takeover only after persisted expiry.
         for role in order:
             processes[role].kill();processes[role].join(5)
-            assert queue.acquire(role,ttl=30) is None
+            assert queue.acquire('worker:test-consumer' if role=='worker' else role,ttl=30) is None
             with database.connect() as connection:
-                connection.execute('UPDATE process_leases SET expires_at=0 WHERE name=%s',(role,))
-            assert queue.worker_status(role)['state']=='stopped'
+                connection.execute('UPDATE process_leases SET expires_at=0 WHERE name=%s',('worker:test-consumer' if role=='worker' else role,))
+            assert queue.worker_status('worker:test-consumer' if role=='worker' else role)['state']=='stopped'
             assert all(processes[other].is_alive() for other in order if other!=role)
             assert start(role)!=owners[role]
             wait_until(lambda:background_ready(WorkerStatusReader(database).status()))
@@ -104,18 +104,18 @@ def test_roles_start_independently_and_each_recovers_after_process_death(postgre
 def test_role_fencing_rolls_back_expired_commits_and_rejects_foreign_recovery(postgres_state,role):
     database,_,_=postgres_state
     queue=CoordinationRepository(database)
-    owner=queue.acquire(role,ttl=.1)
+    owner=queue.acquire('worker:test-consumer' if role=='worker' else role,ttl=.1)
     with pytest.raises(ExecutionLeaseLost):
-        with execution_scope(database,role,owner),database.connect() as connection:
-            connection.execute('INSERT INTO llm_waiters VALUES(%s,0)',(role,))
+        with execution_scope(database,'worker:test-consumer' if role=='worker' else role,owner),database.connect() as connection:
+            connection.execute('INSERT INTO llm_waiters VALUES(%s,0)',('worker:test-consumer' if role=='worker' else role,))
             sleep(.15)
     with database.connect() as connection:
-        assert connection.execute('SELECT 1 FROM llm_waiters WHERE waiter_id=%s',(role,)).fetchone() is None
-    new=queue.acquire(role,ttl=30)
+        assert connection.execute('SELECT 1 FROM llm_waiters WHERE waiter_id=%s',('worker:test-consumer' if role=='worker' else role,)).fetchone() is None
+    new=queue.acquire('worker:test-consumer' if role=='worker' else role,ttl=30)
     assert new and new!=owner
     runtime=build_runtime(postgres_state[1],role=role)
     try:
-        with execution_scope(database,role,new):
+        with execution_scope(database,'worker:test-consumer' if role=='worker' else role,new):
             if role=='automation':
                 runtime.automation.recover_interrupted_deliveries()
                 with pytest.raises(ExecutionLeaseLost):runtime.metadata.recover_interrupted_jobs()
@@ -136,7 +136,7 @@ def test_scheduler_only_enqueues_consumer_only_executes_and_old_source_never_ref
         with scheduler.scope():scheduler._schedule()
         assert scheduler.repository.task_counts()['pending']>0
         assert not hasattr(scheduler,'operations') and not hasattr(consumer,'_schedule')
-        consumer.owner=consumer.repository.acquire('worker',ttl=30)
+        consumer.owner=consumer.repository.acquire('worker:test-consumer',ttl=30)
         before=consumer.repository.task_counts()
         task=consumer.repository.claim_task(consumer.owner,analysis=False)
         line=consumer.runtime.database_runtime.snapshot().lines[task['device_id']]
@@ -148,7 +148,8 @@ def test_scheduler_only_enqueues_consumer_only_executes_and_old_source_never_ref
             assert connection.execute("SELECT count(*) FROM background_tasks").fetchone()['count']==sum(before.values())
         provider=consumer.runtime.database_runtime.snapshot().lines['welding'].report_provider
         monkeypatch.setattr(provider,'refresh_summary',lambda *a,**kw:pytest.fail('stale source refreshed'))
-        consumer._handle(dict(kind='report_snapshot_refresh',device_id='welding',payload={'source_fingerprint':'old-source'}))
+        with pytest.raises(RuntimeError, match='来源'):
+            consumer._handle(dict(kind='report_snapshot_refresh',device_id='welding',payload={'source_fingerprint':'old-source'}))
     finally:scheduler.stop();consumer.stop()
 
 
@@ -158,7 +159,7 @@ def test_consumer_callback_and_automation_reconciliation_share_one_outbox(postgr
     cfg=postgres_state[1]
     consumer=WorkerProcess(cfg);automation=AutomationProcess(cfg)
     try:
-        consumer.owner=consumer.repository.acquire('worker',ttl=30)
+        consumer.owner=consumer.repository.acquire('worker:test-consumer',ttl=30)
         automation.owner=automation.repository.acquire('automation',ttl=30)
         user=consumer.runtime.users.create_user(username='plan-admin',display_name='admin',password='test-password',role='admin',now=STAMP)
         auto=automation.runtime.automation
@@ -200,8 +201,8 @@ def test_role_diagnostics_include_all_snapshots_and_public_health_never_leaks_fi
     try:
         queue=CoordinationRepository(database)
         for role in CLASSES:
-            owner=queue.acquire(role,ttl=30)
-            queue.renew(role,owner,ttl=30,status={'report_alive':True,'scheduler_alive':True,'automation_alive':True,'email_alive':True,
+            owner=queue.acquire('worker:test-consumer' if role=='worker' else role,ttl=30)
+            queue.renew('worker:test-consumer' if role=='worker' else role,owner,ttl=30,status={'report_alive':True,'scheduler_alive':True,'automation_alive':True,'email_alive':True,
                 'configuration':runtime.configuration_diagnostics.observed(owner)})
         status=WorkerStatusReader(database).status()
         assert background_ready(status)
@@ -224,7 +225,7 @@ def test_consumer_owns_energy_recovery_and_hot_rebuild_keeps_inflight_claim(post
     from app.services.database_runtime import database_context
     cfg=state_settings(configuration(tmp_path,real=True,energy_api_enabled=True),postgres_state)
     consumer=WorkerProcess(cfg);scheduler=SchedulerProcess(cfg)
-    consumer.owner=consumer.repository.acquire('worker',ttl=30)
+    consumer.owner=consumer.repository.acquire('worker:test-consumer',ttl=30)
     try:
         with consumer.scope():consumer._initialize_lines()
         old=database_context(consumer.runtime).lines['Cutter01'].cutting().energy_history_worker

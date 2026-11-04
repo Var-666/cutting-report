@@ -19,6 +19,7 @@ def configuration(root: Path, *, real: bool = False, welding: bool = False, **ov
         DatabaseSourceConfig(id='welding-production', name='焊接', engine='mysql', enabled=welding,
         host='welding.test', port=3306, database='welding', username='reader', password='welding-private')]
     values = dict(project_root=root, production_lines_json=json.dumps(value), database_sources_json=source_configs_json(sources),
+                  consumer_instance_id='test-consumer',
                   data_source_mode='sqlserver' if real else 'demo', worker_database_auth_enabled=False,
                   file_database_enabled=False, magic_box_enabled=False, energy_api_enabled=False, llm_enabled=False,
                   alarm_monitor_enabled=False, smtp_enabled=False)

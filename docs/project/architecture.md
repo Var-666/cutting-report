@@ -44,7 +44,7 @@
 ### 当前依赖与组织
 
 ```text
-main.py（Web）  scheduler.py（调度）  worker.py（消费）  automation_worker.py（自动化/邮件）
+main.py（Web）  scheduler.py（调度）  worker.py（消费×N）  automation_worker.py（自动化/邮件）
   ├─ api/       └─ 周期入队          └─ workers/       └─ AutomationService
   └──────────┬─────────────────────────────────────────────────────────┘
              services/application_runtime.build_runtime(role=...)
@@ -127,7 +127,7 @@ Repository / 外部系统客户端
 
 生产式部署由独立 Web 同源提供前端静态资源和 API；Scheduler 生产周期任务，Consumer 消费后台任务与报表，Automation 扫描自动化计划、补偿并发送邮件。四者复用 `application_runtime.build_runtime` 与产线 Service，各自持有连接和资源，通过同一个 PostgreSQL 状态库及本机共享文件卷通信。Web 生命周期不启动任何后台线程，不恢复后台运行态。
 
-当前支持一个 Web、一个 Scheduler、一个 Consumer 与一个 Automation；Web 用 OS 锁阻止重复启动，保留进程内 HTTP 请求取消注册表。三个后台角色各用 PostgreSQL 30 秒独立租约和 5 秒心跳协调同角色唯一执行者，失效执行者的仓储读取与事务提交被拒绝。多个设备共用固定的 4 个后台操作消费者、10 个分析消费者，以及报表/自动化/邮件各一个消费者；设备控制对象只提交持久化请求，不创建独立线程。告警原有每次执行的续租线程仍保留，其数量受操作池上限约束。
+当前支持一个 Web、一个 Scheduler、1～N个同机 Consumer 与一个 Automation，默认单Consumer；Web 用 OS 锁阻止重复启动，保留进程内 HTTP 请求取消注册表。三个后台角色各用 PostgreSQL 30 秒独立租约和 5 秒心跳协调同角色唯一执行者，失效执行者的仓储读取与事务提交被拒绝。多个设备共用固定的 4 个后台操作消费者、10 个分析消费者，以及报表/自动化/邮件各一个消费者；设备控制对象只提交持久化请求，不创建独立线程。告警原有每次执行的续租线程仍保留，其数量受操作池上限约束。
 
 `background_tasks` 保留周期轮次和按需刷新请求。就绪等待队列最多 256 项，超额或失败任务显式转 deferred，记录原因并在容量释放或退避到期后重新准入，不丢弃周期分析轮次。已完成的辅助任务及分析执行记录保留 30 天；未完成任务保留。后台消费者不占 Web 的执行池。Web 继续使用 AI/PDF/SQL/鉴权独立限额 10/2/8/8。全局模型容量再以共享 OS 槽锁限制，两个进程和设备合计不超过同一个 LLM_MAX_CONCURRENT；前台等待优先、普通后台配额及周期分析使用完整空闲容量的策略保留，跨进程同版本等待也能提升生产者优先级。
 
@@ -271,3 +271,18 @@ Compose只读解析通过必需PG健康依赖、运行/迁移账号分离、卷�
 Web通过缓存2秒的持久心跳分别报告三个角色；任一异常使background_ready=false，PG不可用返回503。配置诊断分别比较四角色实际快照，公开健康递归去除内部配置指纹；诊断采集失败不阻断续约。四角色各复用独立有界PG池，默认总上限16，退出释放资源。Compose与离线流程共用一个应用镜像，仅依赖PG健康，共享本机data/reports/logs及容量锁，后台不开端口。
 
 真实隔离PG定向覆盖三种启动顺序、逐角色强杀接管、独立互斥/围栏、周期/消费分离、outbox并发补偿、能耗热重建、配置及脱敏；原P2调度、P3跨进程容量、自动化热加载与SMTP未知状态回归已通过。Docker隔离演示卷验证三个实际入口健康、Scheduler单独重启与PG暂停/恢复，未执行生产或外部SQL/模型/SMTP现场联调。旧SQLite现场先完成P5最新数据离线迁移/校验，禁止直接启动新后台或与旧混合Worker并跑。完整启动、探针、恢复及回退见 [四角色部署说明](../deployment/WEB_WORKER进程隔离升级说明.md)。
+
+
+## P7：同机多Consumer与实例级故障隔离（2026-11-04）
+
+现行Consumer协议以本节为准；P1–P6为各阶段记录。Consumer使用worker:实例ID租约，原生显式配置CONSUMER_INSTANCE_ID，Docker使用独立容器hostname；owner仍是每次获取生成的新随机令牌。Scheduler/Automation保持单实例。实例上下文传入原有线程池和ReportWorker，PG进入/提交围栏继续检查实际租约和数据库时钟。
+
+后台任务仍原子SKIP LOCKED领取，保留同产线同类普通任务部分唯一索引及分析分类；完成核对running、owner、claim_token和attempts。后台/报表/能耗恢复均只处理失效owner，锁候选后对owner租约取不等待共享锁，跳过未提交续约/接管，再用新语句快照复核，启动及每5秒精确恢复。报表状态/元数据校验execution_owner，文件按report_id+owner隔离；能耗保留claim_token和幂等初始化。新告警/能耗载荷带来源指纹，无指纹或错来源任务blocked，禁止使用新绑定猜测执行。
+
+003_consumer_scaling只追加owner索引、后台claim_token和维护门槛，不改变001/002或重建任务表。旧全局worker记录须在停机且全部租约失效后由cutting_migrator的prepare-consumers显式处理；SQLite全字段导入/verify先完成，随后恢复执行态和标识不可信来源。新Runtime不运行旧协议，不在启动时全局重置。
+
+Consumer实例各自心跳及本实例探针，WorkerStatusReader保留旧聚合字段并增加实例列表、正常/失联计数，区分running/degraded/unavailable；正常缩容stopped不拖累仍工作的实例。配置/资源诊断按实例展示，公开响应递归去除内部比较值。原retention清理超过30天且无运行任务引用的失效实例记录，同ID重启只更新同一租约。
+
+本地容量默认4操作/10分析/1报表，每实例独立有界PG池默认0–4，应用连接预算4×(N+3)另加探针余量。所有进程继续共享P3的本机SQL/模型/PDF文件锁，慢外部工作不占PG事务；不支持跨主机。Compose去掉Worker固定名，CONSUMER_REPLICAS默认1；同一镜像及离线卷支持1→3→1，不重启其他角色。停止时先停领取，仅在执行线程全部停止及完成提交后释放租约，否则由TTL/围栏接管。
+
+验证包括真实PG所有权/恢复/事务、真实Consumer并发与强杀、完整设备报表崩溃后同ID新owner文件发布，以及Docker实际四角色探针与1→3→1。受控9任务的1/2/3进程实测及SQL/模型/PDF上限见[部署与验证说明](../deployment/WEB_WORKER进程隔离升级说明.md#验证与回退)。这不是生产性能或现场迁移验收；后续只进行授权的迁移、真实源/SMTP/模型/能管联调及必要修复。

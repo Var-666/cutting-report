@@ -24,7 +24,7 @@ from pydantic import ValidationError
 
 CATEGORIES = ["基础运行配置", "数据库连接配置", "设备及产线配置", "AI 模型配置",
               "报表与后台任务配置", "自动化及 SMTP 配置", "告警与数据保留配置", "文件服务配置", "PostgreSQL 应用状态库"]
-ENV_FIELDS = {item.name: item for item in fields(Settings) if "env" in item.metadata}
+ENV_FIELDS = {item.name: item for item in fields(Settings) if "env" in item.metadata and item.name != 'consumer_instance_id'}
 HOT_FIELDS = {item[0] for item in HOT_SETTINGS.values()}
 SOURCE_LABELS = {"default": "程序默认值", "process": "进程环境变量", ".env": ".env",
                  "data/settings.env": "data/settings.env（管理页面保存）", "runtime": "运行时更新",
@@ -210,11 +210,22 @@ class ConfigurationDiagnostics:
         return targets, invalid, errors
 
     def report(self, worker: dict) -> dict:
+        instances = worker.get('consumer_instances', [])
+        if instances:
+            representative = next((item for item in instances if item.get('state') == 'running'), instances[0])
+            worker = {**worker, **representative}
         comparison_key = worker.get("owner", "web-local-comparison")
         web = self.observed(comparison_key)
         other = worker.get("configuration")
         worker_available = worker.get("state") in {"running", "stalled"} and isinstance(other, dict) and isinstance(other.get("items"), dict)
         additional = {}
+        for instance in instances:
+            if instance.get('state') == 'stopped':
+                continue
+            remote = instance.get('configuration')
+            available = instance.get('state') in {'running', 'stalled'} and isinstance(remote, dict) and isinstance(remote.get('items'), dict)
+            additional['consumer:' + instance['instance_id']] = (
+                instance, remote if available else None, self.observed(instance['owner']))
         for role in ('scheduler', 'automation'):
             status = worker.get('roles', {}).get(role)
             if status is not None:
@@ -253,11 +264,12 @@ class ConfigurationDiagnostics:
                 mismatch = mismatch or changed
             statuses = {item["status"] for item in processes.values()}
             state = "error" if mismatch or "error" in statuses else "pending" if "pending" in statuses else processes["web"]["status"]
+            processes['consumers'] = {role[9:]: processes.pop(role) for role in list(processes) if role.startswith('consumer:')}
             rows.append({"key": key, "category": CATEGORIES[2] if key.startswith(("devices.", "lines.")) else category(key),
                          "processes": processes, "saved_value": safe_value(target_value, key),
                          "saved_source": source_label(target_source), "status": state,
                          "valid": key not in invalid and not errors, "process_mismatch": mismatch,
-                         "restart_required": (not hot or key == 'DATABASE_SOURCES_JSON') and any(item["status"] == "pending" for item in processes.values()),
+                         "restart_required": (not hot or key == 'DATABASE_SOURCES_JSON') and 'pending' in statuses,
                          "rule": "连接参数按新操作热加载；sql_max_concurrent 重启 Web/Scheduler/Consumer/Automation 生效，实际容量见数据库资源诊断" if key == 'DATABASE_SOURCES_JSON' else
                          "保存后新请求和后台操作自动加载；在途操作保留旧配置，无需重启容器" if database_hot else
                          "保存后由各进程下一轮自动化/邮件操作加载；在途操作保留旧快照" if hot else
@@ -266,9 +278,12 @@ class ConfigurationDiagnostics:
         versions = {role:{'state':status.get('state','missing'),'available':remote is not None,
                          **({key:remote.get(key) for key in ('loaded_at','hot_loaded_at','hot_revision','version')} if remote else {})}
                     for role,(status,remote,local) in additional.items()}
+        consumer_versions = {role[9:]: versions.pop(role) for role in list(versions) if role.startswith('consumer:')}
+        consumer_versions.update({item['instance_id']: {'state':'stopped', 'available':False}
+                                  for item in instances if item.get('state') == 'stopped'})
         return {"categories": CATEGORIES, "items": rows, "errors": errors,
                 "precedence": "data/settings.env > 进程环境变量 > .env > 程序默认值；产线与连接只取统一配置",
-                "processes": {**versions, "web": {key: web[key] for key in ("loaded_at", "hot_loaded_at", "hot_revision", "version")},
+                "processes": {**versions, 'consumers': consumer_versions, "web": {key: web[key] for key in ("loaded_at", "hot_loaded_at", "hot_revision", "version")},
                               "worker": {"state": worker.get("state", "missing"), "available": worker_available,
                                          **({key: other.get(key) for key in ("loaded_at", "hot_loaded_at", "hot_revision", "version")} if worker_available else {})}},
                 "consistent": worker_available and all(remote is not None for _,remote,_ in additional.values()) and not any(row["process_mismatch"] for row in rows),

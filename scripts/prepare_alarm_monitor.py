@@ -20,6 +20,7 @@ from app.database.alarm_source import SqlServerAlarmSource
 from app.database.alarms import AlarmRepository
 from app.database.postgres import PostgresDatabase
 from app.database.coordination import CoordinationRepository
+from app.database.postgres_migrations import MIGRATION_LOCK
 from app.core.process_lock import FileLock
 from app.core.sql_capacity import sql_identity
 
@@ -51,9 +52,14 @@ def main() -> int:
         if not lock.acquire(blocking=False):
             raise RuntimeError('请先停止 Web，再重置告警统计起点')
         try:
-            if CoordinationRepository(database).worker_status()['state'] in ('running', 'stalled'):
-                raise RuntimeError('请先停止 Worker 并等待租约释放')
-            repository.configure_monitoring_window(cfg.alarm_monitor_start_at, force=True)
+            with database.connect() as connection:
+                connection.execute('SELECT pg_advisory_xact_lock(%s)', (MIGRATION_LOCK,))
+                coordination = CoordinationRepository(database, connection=connection)
+                statuses = [*coordination.consumer_statuses(), *(coordination.worker_status(role) for role in ('scheduler', 'automation'))]
+                if any(item['state'] in ('running', 'stalled') for item in statuses):
+                    raise RuntimeError('请先停止所有后台角色并等待租约释放')
+                bound = AlarmRepository(database, connection=connection, machine_no=cfg.report_machine_no, source_name=cfg.alarm_source_name)
+                bound.configure_monitoring_window(cfg.alarm_monitor_start_at, force=True)
         finally:
             lock.release()
         state = repository.get_sync_state()

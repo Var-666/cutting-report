@@ -5,7 +5,7 @@ from psycopg import Connection
 
 from typing import Any
 
-from app.database.postgres import PostgresDatabase, PostgresRepository, execution_owner, require_role_recovery
+from app.database.postgres import PostgresDatabase, PostgresRepository, execution_owner, require_role_recovery, ExecutionLeaseLost, recovery_owners
 
 
 class MetadataRepository(PostgresRepository):
@@ -65,12 +65,23 @@ class MetadataRepository(PostgresRepository):
     def recover_interrupted_jobs(self) -> int:
         with self.connect() as connection:
             require_role_recovery(connection, 'worker')
+            candidates = connection.execute("""SELECT report_id,execution_owner FROM report_jobs
+                WHERE status IN ('querying','calculating','analyzing','rendering') AND NOT EXISTS (
+                    SELECT 1 FROM process_leases lease WHERE lease.owner=report_jobs.execution_owner
+                    AND lease.expires_at>EXTRACT(EPOCH FROM clock_timestamp())) FOR UPDATE SKIP LOCKED""").fetchall()
+            if not candidates:
+                return 0
+            allowed = recovery_owners(connection, [row['execution_owner'] for row in candidates])
+            candidates = [row for row in candidates if row['execution_owner'] in allowed]
             cursor = connection.execute(
                 """
                 UPDATE report_jobs
                 SET status = 'pending', stage_message = '服务已恢复，等待重新生成', started_at = NULL, execution_owner = NULL
-                WHERE status IN ('querying', 'calculating', 'analyzing', 'rendering')
-                """
+                WHERE report_id=ANY(%s) AND status IN ('querying', 'calculating', 'analyzing', 'rendering')
+                  AND NOT EXISTS (SELECT 1 FROM process_leases lease
+                      WHERE lease.owner=report_jobs.execution_owner
+                      AND lease.expires_at>EXTRACT(EPOCH FROM clock_timestamp()))
+                """, ([r['report_id'] for r in candidates],)
             )
             return cursor.rowcount
 
@@ -153,7 +164,7 @@ class MetadataRepository(PostgresRepository):
         error_message: str | None = None,
     ) -> None:
         with self.connect() as connection:
-            connection.execute(
+            updated = connection.execute(
                 """
                 UPDATE report_jobs
                 SET status = %s, stage_message = %s,
@@ -161,6 +172,8 @@ class MetadataRepository(PostgresRepository):
                     finished_at = COALESCE(%s, finished_at),
                     error_code = %s, error_message = %s
                 WHERE report_id = %s AND (%s::text IS NULL OR device_id = %s)
+                  AND (%s::text IS NULL OR (execution_owner=%s
+                      AND status IN ('querying','calculating','analyzing','rendering')))
                 """,
                 (
                     status,
@@ -169,9 +182,11 @@ class MetadataRepository(PostgresRepository):
                     finished_at,
                     error_code,
                     error_message,
-                    report_id, self.device_id, self.device_id,
+                    report_id, self.device_id, self.device_id, execution_owner(), execution_owner(),
                 ),
             )
+            if execution_owner() is not None and updated.rowcount != 1:
+                raise ExecutionLeaseLost('报表任务已不属于当前 Consumer，拒绝更新状态')
 
     def save_report(
         self,
@@ -188,6 +203,12 @@ class MetadataRepository(PostgresRepository):
         if self.device_id is not None and self.get_job(report_id) is None:
             raise ValueError("报告不属于当前设备")
         with self.connect() as connection:
+            if execution_owner() is not None:
+                job = connection.execute("""SELECT report_id FROM report_jobs WHERE report_id=%s
+                    AND execution_owner=%s AND status='rendering' FOR UPDATE""",
+                    (report_id, execution_owner())).fetchone()
+                if job is None:
+                    raise ExecutionLeaseLost('报表领取代际已失效，拒绝发布文件')
             connection.execute(
                 """
                 INSERT INTO reports (

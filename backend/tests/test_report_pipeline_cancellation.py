@@ -35,7 +35,7 @@ def test_worker_shutdown_cancellation_does_not_mark_report_failed():
     worker.stop_event.set()
 
     worker._process_report(
-        {"report_id": "report-1"},
+        {"report_id": "report-1", "device_id": "Cutter01"},
         ZoneInfo("Asia/Shanghai"),
     )
 

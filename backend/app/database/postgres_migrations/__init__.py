@@ -6,13 +6,42 @@ from pathlib import Path
 from psycopg import Connection
 
 DIRECTORY = Path(__file__).parent
-VERSIONS = ('001_initial', '002_runtime')
+VERSIONS = ('001_initial', '002_runtime', '003_consumer_scaling')
 # Shared by schema installation and offline imports; released by transaction/OS exit.
 MIGRATION_LOCK = 740314001
 
 
 class MigrationError(RuntimeError):
     pass
+
+
+def prepare_consumers(database) -> dict:
+    """Offline P6/SQLite cutover after import verification; never part of startup."""
+    with database.connect() as connection:
+        if connection.execute('SELECT current_user AS name').fetchone()['name'] != 'cutting_migrator':
+            raise MigrationError('Consumer切换必须显式使用cutting_migrator')
+        connection.execute('SELECT pg_advisory_xact_lock(%s)', (MIGRATION_LOCK,))
+        validate_schema(connection)
+        leases = connection.execute("""SELECT name,expires_at,
+            EXTRACT(EPOCH FROM clock_timestamp())::double precision AS observed_at
+            FROM process_leases WHERE name='worker' OR name LIKE 'worker:%' FOR UPDATE""").fetchall()
+        if any(row['expires_at'] > row['observed_at'] for row in leases):
+            raise MigrationError('必须先停止所有旧/新Consumer并等待租约失效，禁止在线重置任务')
+        counts = {}
+        counts['background'] = connection.execute("""UPDATE background_tasks SET status='deferred',owner=NULL,claim_token=NULL,
+            last_error='INTERRUPTED',next_attempt=EXTRACT(EPOCH FROM clock_timestamp()),
+            updated_at=EXTRACT(EPOCH FROM clock_timestamp()) WHERE status='running'""").rowcount
+        counts['reports'] = connection.execute("""UPDATE report_jobs SET status='pending',execution_owner=NULL,
+            started_at=NULL,stage_message='升级维护完成，等待重新生成'
+            WHERE status IN ('querying','calculating','analyzing','rendering')""").rowcount
+        counts['energy'] = connection.execute("""UPDATE energy_history_queue SET status='pending',
+            claim_token=NULL,execution_owner=NULL,last_error_code='INTERRUPTED'
+            WHERE status='running'""").rowcount
+        counts['unverified_source'] = connection.execute("""UPDATE background_tasks SET status='blocked',
+            last_error='SOURCE_UNVERIFIED',owner=NULL WHERE device_id<>''
+            AND status IN ('pending','deferred') AND COALESCE(payload::jsonb->>'source_fingerprint','')=''""").rowcount
+        connection.execute("DELETE FROM process_leases WHERE name='worker'")
+        return counts
 
 
 def catalog(connection: Connection) -> dict:

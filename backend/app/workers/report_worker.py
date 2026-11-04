@@ -12,6 +12,7 @@ from collections.abc import Callable
 from app.core.sql_capacity import sql_identity
 from app.config import Settings
 from app.database.metadata import MetadataRepository
+from app.database.postgres import ExecutionLeaseLost
 from app.services.pipeline import ReportPipeline, ReportPipelineCancelled
 from app.services.automation_service import AutomationService
 from app.services.llm_service import background_llm_work
@@ -129,6 +130,10 @@ class ReportWorker:
                     self._checkpoint("report", "generating")
                     self._process_report(job, timezone)
                     continue
+            except ExecutionLeaseLost:
+                logger.warning('report Consumer lost its execution lease or task ownership')
+                self.stop_event.set()
+                break
             except Exception:
                 logger.exception("report queue processing failed")
             finally:
@@ -156,16 +161,25 @@ class ReportWorker:
                 logger.info("report generation cancelled during worker shutdown", extra={"report_id": report_id})
                 return
             raise
+        except ExecutionLeaseLost:
+            raise
         except Exception as exc:
             logger.exception("report generation failed", extra={"report_id": report_id})
-            try:
-                self.metadata.update_status(
-                    report_id, "failed", "报告生成失败，请联系管理员",
-                    finished_at=datetime.now(timezone).isoformat(timespec="seconds"),
-                    error_code="REPORT_GENERATION_FAILED", error_message=str(exc)[:500],
-                )
-            except Exception:
-                logger.exception("report failure status write failed", extra={"report_id": report_id})
+            while not self.stop_event.is_set():
+                try:
+                    self.metadata.update_status(
+                        report_id, "failed", "报告生成失败，请联系管理员",
+                        finished_at=datetime.now(timezone).isoformat(timespec="seconds"),
+                        error_code="REPORT_GENERATION_FAILED", error_message=str(exc)[:500],
+                    )
+                    break
+                except ExecutionLeaseLost:
+                    raise
+                except Exception:
+                    logger.exception("report failure status write failed", extra={"report_id": report_id})
+                    self.stop_event.wait(self.settings.worker_poll_seconds)
+            else:
+                return
             if self.automation_service is not None:
                 try:
                     self.automation_service.report_failed(

@@ -1,7 +1,7 @@
 """Configuration response schemas; secrets are represented only by presence flags."""
 from typing import Literal
 
-from pydantic import BaseModel, JsonValue
+from pydantic import BaseModel, JsonValue, Field
 
 
 class SavedConnection(BaseModel):
@@ -127,6 +127,7 @@ class DiagnosticProcesses(BaseModel):
     worker: DiagnosticProcess
     scheduler: DiagnosticProcess | None = None
     automation: DiagnosticProcess | None = None
+    consumers: dict[str, DiagnosticProcess] = Field(default_factory=dict)
 
 
 class DiagnosticItem(BaseModel):
@@ -163,6 +164,7 @@ class ConfigurationProcesses(BaseModel):
     worker: WorkerConfigurationVersion
     scheduler: WorkerConfigurationVersion | None = None
     automation: WorkerConfigurationVersion | None = None
+    consumers: dict[str, WorkerConfigurationVersion] = Field(default_factory=dict)
 
 
 class ConfigurationDiagnostics(BaseModel):

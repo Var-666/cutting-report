@@ -12,13 +12,13 @@ from app.database.postgres import PostgresDatabase, ExecutionLeaseLost, executio
 
 def _claim(cfg, output):
     with PostgresDatabase(cfg) as database:
-        output.put(CoordinationRepository(database).acquire("worker", ttl=10))
+        output.put(CoordinationRepository(database).acquire("worker:test-consumer", ttl=10))
 
 
 def _late_write(cfg, owner, entered, resume, output):
     with PostgresDatabase(cfg) as database:
         try:
-            with execution_scope(database, "worker", owner), database.connect() as connection:
+            with execution_scope(database, "worker:test-consumer", owner), database.connect() as connection:
                 entered.set()
                 assert resume.wait(10)
                 connection.execute("INSERT INTO llm_waiters VALUES ('stale', 0)")
@@ -28,7 +28,7 @@ def _late_write(cfg, owner, entered, resume, output):
 
 def _claim_report(cfg, owner, output):
     from app.database.metadata import MetadataRepository
-    with PostgresDatabase(cfg) as database, execution_scope(database, "worker", owner):
+    with PostgresDatabase(cfg) as database, execution_scope(database, "worker:test-consumer", owner):
         output.put(MetadataRepository(database).claim_next_job("2026-10-24T10:00:00+08:00") is not None)
 
 
@@ -50,16 +50,16 @@ def test_only_one_process_can_acquire_worker_lease(postgres_state):
 def test_expired_owner_cannot_commit_over_a_new_owner(postgres_state):
     database = postgres_state[0]
     repository = CoordinationRepository(database)
-    old = repository.acquire("worker", ttl=10)
+    old = repository.acquire("worker:test-consumer", ttl=10)
     with database.connect() as connection:
-        connection.execute("UPDATE process_leases SET expires_at=0 WHERE name='worker'")
-    new = repository.acquire("worker", ttl=10)
+        connection.execute("UPDATE process_leases SET expires_at=0 WHERE name='worker:test-consumer'")
+    new = repository.acquire("worker:test-consumer", ttl=10)
     assert new and new != old
-    assert not repository.renew("worker", old, ttl=10)
-    with pytest.raises(ExecutionLeaseLost), execution_scope(database, "worker", old):
+    assert not repository.renew("worker:test-consumer", old, ttl=10)
+    with pytest.raises(ExecutionLeaseLost), execution_scope(database, "worker:test-consumer", old):
         with database.connect() as connection:
             connection.execute("INSERT INTO llm_waiters VALUES ('stale',0)")
-    with execution_scope(database, "worker", new), database.connect() as connection:
+    with execution_scope(database, "worker:test-consumer", new), database.connect() as connection:
         connection.execute("INSERT INTO llm_waiters VALUES ('current',0)")
     with database.connect() as connection:
         assert [row["waiter_id"] for row in connection.execute("SELECT waiter_id FROM llm_waiters")] == ["current"]
@@ -68,14 +68,14 @@ def test_expired_owner_cannot_commit_over_a_new_owner(postgres_state):
 def test_lease_renewal_rechecks_database_time_after_waiting_for_row_lock(postgres_state):
     database = postgres_state[0]
     repository = CoordinationRepository(database)
-    owner = repository.acquire('worker', ttl=0.2)
+    owner = repository.acquire('worker:test-consumer', ttl=0.2)
     with ThreadPoolExecutor(1) as executor:
         with database.connect() as connection:
-            connection.execute("SELECT * FROM process_leases WHERE name='worker' FOR UPDATE")
+            connection.execute("SELECT * FROM process_leases WHERE name='worker:test-consumer' FOR UPDATE")
             renewed = executor.submit(repository.renew, 'worker', owner, ttl=10)
             sleep(0.3)
         assert renewed.result(timeout=3) is False
-    new = repository.acquire('worker', ttl=10)
+    new = repository.acquire('worker:test-consumer', ttl=10)
     assert new and new != owner
 
 
@@ -85,7 +85,7 @@ def test_queue_is_bounded_and_overflow_is_durable_and_recoverable(postgres_state
     for index in range(3):
         repository.enqueue("analysis_workshop", "Cutter01", {"round": index}, key=str(index), capacity=2)
     assert repository.task_counts() == {"pending": 2, "deferred": 1}
-    owner = repository.acquire("worker", ttl=10)
+    owner = repository.acquire("worker:test-consumer", ttl=10)
     first = repository.claim_task(owner, analysis=True)
     assert first
     repository.finish_task(first, owner)
@@ -97,7 +97,7 @@ def test_expiry_fences_a_transaction_opened_by_another_process_before_takeover(p
     context = mp.get_context('spawn')
     database, cfg, _ = postgres_state
     repository = CoordinationRepository(database)
-    owner = repository.acquire('worker', ttl=2)
+    owner = repository.acquire('worker:test-consumer', ttl=2)
     entered, resume, output = context.Event(), context.Event(), context.Queue()
     writer = context.Process(target=_late_write, args=(cfg, owner, entered, resume, output))
     writer.start()
@@ -108,10 +108,10 @@ def test_expiry_fences_a_transaction_opened_by_another_process_before_takeover(p
         # Takeover waits for the writer's shared row lock. Its final expiry
         # check must roll back before the replacement can acquire that row.
         sleep(2.05)
-        new = repository.acquire('worker', ttl=10)
+        new = repository.acquire('worker:test-consumer', ttl=10)
         assert new and new != owner
         assert output.get(timeout=5) == 'fenced'
-        with execution_scope(database,'worker',new), database.connect() as connection:
+        with execution_scope(database,'worker:test-consumer',new), database.connect() as connection:
             connection.execute("INSERT INTO llm_waiters VALUES ('current',0)")
         writer.join(5)
         assert writer.exitcode == 0
@@ -134,7 +134,7 @@ def test_report_claim_is_atomic_between_processes(postgres_state):
     metadata = MetadataRepository(database, device_id='Cutter01')
     metadata.create_job(report_id="one", report_date="2026-10-24", project_code=None, ship_no=None,
                         request_id="one", created_at="2026-10-24T10:00:00+08:00")
-    owner, output = repository.acquire("worker", ttl=10), context.Queue()
+    owner, output = repository.acquire("worker:test-consumer", ttl=10), context.Queue()
     claimers = [context.Process(target=_claim_report, args=(postgres_state[1], owner, output)) for _ in range(3)]
     for process in claimers:
         process.start()

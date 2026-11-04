@@ -10,7 +10,7 @@ from threading import Event, Lock
 from time import monotonic, time
 from zoneinfo import ZoneInfo
 
-from app.config import Settings, settings
+from app.config import Settings, settings, consumer_identity
 from app.core.sql_capacity import sql_identity
 from app.database.postgres import ExecutionLeaseLost, execution_scope
 from app.services.application_runtime import ApplicationRuntime, build_runtime
@@ -25,36 +25,42 @@ from app.workers.report_worker import ReportWorker
 logger = logging.getLogger(__name__)
 
 
+class TaskSourceUnavailable(RuntimeError):
+    pass
+
+
 class WorkerProcess:
     LEASE_SECONDS = 30
     DEFERRED_SCAN_SECONDS = 5
 
     def __init__(self, configuration: Settings, runtime: ApplicationRuntime | None = None) -> None:
         self.settings = configuration
+        self.instance_id = consumer_identity(configuration)
+        self.lease_name = f'worker:{self.instance_id}'
         self.runtime = runtime or build_runtime(configuration, role="worker")
         self.repository = self.runtime.coordination
         self.owner = None
         self._closed = False
         self.stop_event = Event()
-        self.analysis = BoundedExecutor(10, 0, "background-analysis")
-        self.operations = BoundedExecutor(4, 0, "background-operation")
+        self.analysis = BoundedExecutor(configuration.consumer_analysis_concurrency, 0, "background-analysis")
+        self.operations = BoundedExecutor(configuration.consumer_operation_concurrency, 0, "background-operation")
         self._lock = Lock()
         self._running = {}
         self._completed = deque()
         self.report_worker = None
         self._next_heartbeat = 0.0
         self._next_admission = 0.0
+        self._next_recovery = 0.0
         self._initialized_lines = {}
 
     def scope(self):
-        return execution_scope(self.runtime.database, "worker", self.owner)
+        return execution_scope(self.runtime.database, self.lease_name, self.owner)
 
     def start(self) -> None:
-        self.owner = self.repository.acquire("worker", ttl=self.LEASE_SECONDS)
-        if self.owner is None:
-            self.stop()
-            raise RuntimeError("已有有效 Worker 租约，拒绝启动重复消费者")
         try:
+            self.owner = self.repository.acquire(self.lease_name, ttl=self.LEASE_SECONDS)
+            if self.owner is None:
+                raise RuntimeError(f"已有有效 Consumer 实例租约：{self.instance_id}")
             with self.scope():
                 self.repository.recover_tasks(self.owner)
                 self._initialize_lines()
@@ -66,6 +72,7 @@ class WorkerProcess:
                 )
                 self.report_worker.start()
             self._heartbeat()
+            self._next_recovery = monotonic() + 5
         except BaseException:
             self.stop()
             raise
@@ -79,6 +86,10 @@ class WorkerProcess:
         status["stalled_workers"] = [*status.get("stalled_workers", []), *stalled]
         status["background_queue"] = self.repository.task_counts()
         status["active_tasks"] = len(running)
+        status['instance_id'] = self.instance_id
+        status['lease_name'] = self.lease_name
+        status['operation_capacity'] = self.settings.consumer_operation_concurrency
+        status['analysis_capacity'] = self.settings.consumer_analysis_concurrency
         context = database_context(self.runtime)
         status["device_ids"] = list(context.lines)
         status["sql_resources"] = context.database_sources.capacity.status(context.database_sources.configs())
@@ -88,7 +99,7 @@ class WorkerProcess:
                 status["configuration"] = diagnostics.observed(self.owner)
             except Exception:
                 status["configuration"] = {"error": "配置快照暂不可用"}
-        if not self.repository.renew("worker", self.owner, ttl=self.LEASE_SECONDS, status=status):
+        if not self.repository.renew(self.lease_name, self.owner, ttl=self.LEASE_SECONDS, status=status):
             raise ExecutionLeaseLost("Worker 租约失效，停止提交新任务")
         self._next_heartbeat = monotonic() + 5
 
@@ -98,6 +109,13 @@ class WorkerProcess:
         with self.scope():
             completed = self._flush_completions()
             self._initialize_lines()
+            if monotonic() >= self._next_recovery:
+                self.repository.recover_tasks(self.owner)
+                self.runtime.metadata.recover_interrupted_jobs()
+                for line in database_context(self.runtime).lines.values():
+                    if line.config.enabled and line.background is not None:
+                        line.background.recover_background()
+                self._next_recovery = monotonic() + 5
             if completed or monotonic() >= self._next_admission:
                 self.repository.admit_deferred()
                 self._next_admission = monotonic() + self.DEFERRED_SCAN_SECONDS
@@ -126,9 +144,10 @@ class WorkerProcess:
         try:
             if snapshot:
                 report_type = task['payload'].get('report_type')
+                query = task['payload'].get('query') or {}
                 logger.info('report snapshot refresh started: task=%s device=%s report_type=%s start=%s end=%s',
                             task['task_id'], task['device_id'], report_type,
-                            task['payload'].get('query', {}).get('start'), task['payload'].get('query', {}).get('end'))
+                            query.get('start'), query.get('end'))
             if task["kind"].startswith("analysis_"):
                 priority = Event()
                 priority.set()
@@ -137,7 +156,7 @@ class WorkerProcess:
             else:
                 self._handle(task)
         except Exception as exc:
-            error = type(exc).__name__
+            error = 'SOURCE_UNVERIFIED' if isinstance(exc, TaskSourceUnavailable) else type(exc).__name__
             logger.exception("background task failed: task=%s kind=%s device=%s", task["task_id"], task["kind"], task["device_id"])
         finally:
             if snapshot:
@@ -189,8 +208,9 @@ class WorkerProcess:
                     return
                 provider = report_provider(context, task['device_id'])
                 # Queued work from an old connection must not populate the new source's snapshots.
-                if payload['source_fingerprint'] == provider.source_identity():
-                    provider.refresh_summary(payload['report_type'], payload['query'], requested_at=task['created_at'])
+                if not payload.get('source_fingerprint') or payload['source_fingerprint'] != provider.source_identity():
+                    raise TaskSourceUnavailable('快照任务来源缺失或已变化，必须重新入队')
+                provider.refresh_summary(payload['report_type'], payload['query'], requested_at=task['created_at'])
                 return
             line = database_context(self.runtime).lines.get(task["device_id"])
             if line is None or not line.config.enabled:
@@ -198,8 +218,9 @@ class WorkerProcess:
             if line.background is None:
                 raise ValueError("产线不支持此后台任务")
             fingerprint = payload.get("source_fingerprint")
-            if fingerprint is None or fingerprint == line.settings.source_fingerprint:
-                line.background.handle_background(kind, payload)
+            if not fingerprint or fingerprint != line.settings.source_fingerprint:
+                raise TaskSourceUnavailable('任务来源缺失或已变化，必须核对后重新入队')
+            line.background.handle_background(kind, payload)
 
     def run(self) -> None:
         try:
@@ -233,7 +254,7 @@ class WorkerProcess:
                 try:
                     with self.scope():
                         self._flush_completions()
-                    self.repository.release("worker", self.owner)
+                    self.repository.release(self.lease_name, self.owner)
                 except ExecutionLeaseLost:
                     pass
         finally:
@@ -245,7 +266,7 @@ def main() -> int:
     parser.add_argument("--health", action="store_true")
     args = parser.parse_args()
     if args.health:
-        return role_health(settings, 'worker')
+        return role_health(settings, f'worker:{consumer_identity(settings)}')
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     worker = WorkerProcess(settings)
     for signum in (signal.SIGTERM, signal.SIGINT):

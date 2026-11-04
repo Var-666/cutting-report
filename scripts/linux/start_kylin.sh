@@ -19,7 +19,9 @@ fi
 
 case "${1:-web}" in
   scheduler) exec env PYTHONPATH="${PROJECT_ROOT}/backend" "${PYTHON_BIN}" -m app.scheduler ;;
-  worker) exec env PYTHONPATH="${PROJECT_ROOT}/backend" "${PYTHON_BIN}" -m app.worker ;;
+  worker)
+    # Native instances read distinct CONSUMER_INSTANCE_ID values through Settings.
+    exec env PYTHONPATH="${PROJECT_ROOT}/backend" "${PYTHON_BIN}" -m app.worker ;;
   automation) exec env PYTHONPATH="${PROJECT_ROOT}/backend" "${PYTHON_BIN}" -m app.automation_worker ;;
   web) ;;
   *) echo '角色必须为 web/scheduler/worker/automation' >&2; exit 1 ;;

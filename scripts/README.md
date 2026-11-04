@@ -27,3 +27,5 @@ Shell 脚本会从自身目录定位项目根目录，部署时保留相对目�
 
 
 P1 旧部署先停 Web/Worker，运行 `python scripts/migrate_production_lines.py`，再启动新版本。该工具只读旧连接/设备配置，保护凭据并原子写入统一配置；重复执行只验证，不回退旧机制。新增同类型实例配置与015告警迁移边界见 [配置参考](../docs/deployment/配置参考.md#p1-升级与新增实例)。焊接核验脚本必须提供 `--line-id`；切割诊断的 `--device-id` 继续表示原稳定产线键。
+
+P7 Consumer默认1个，同机扩缩容使用 `docker compose up -d --no-deps --scale worker=2 worker`（或3/1）；持久化数量设置CONSUMER_REPLICAS。原生每个服务显式设置不同CONSUMER_INSTANCE_ID。旧SQLite先完成P5最新迁移/verify；旧P6先停Consumer并追加003，再执行prepare-consumers，不能直接混跑两种租约协议。实例探针、容量预算和回退见[部署说明](../docs/deployment/WEB_WORKER进程隔离升级说明.md)。

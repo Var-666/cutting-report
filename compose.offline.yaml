@@ -2,29 +2,29 @@ services:
   app:
     pull_policy: never
     volumes:
-      - ./backend:/app/backend:ro,Z
-      - ./frontend/dist:/app/frontend/dist:ro,Z
-      - ./vendor:/app/vendor:ro,Z
+      - ./backend:/app/backend:ro,z
+      - ./frontend/dist:/app/frontend/dist:ro,z
+      - ./vendor:/app/vendor:ro,z
   scheduler:
     pull_policy: never
     volumes:
-      - ./backend:/app/backend:ro,Z
-      - ./vendor:/app/vendor:ro,Z
+      - ./backend:/app/backend:ro,z
+      - ./vendor:/app/vendor:ro,z
   worker:
     pull_policy: never
     volumes:
-      - ./backend:/app/backend:ro,Z
-      - ./vendor:/app/vendor:ro,Z
+      - ./backend:/app/backend:ro,z
+      - ./vendor:/app/vendor:ro,z
   automation:
     pull_policy: never
     volumes:
-      - ./backend:/app/backend:ro,Z
-      - ./vendor:/app/vendor:ro,Z
+      - ./backend:/app/backend:ro,z
+      - ./vendor:/app/vendor:ro,z
   migrate:
     pull_policy: never
     volumes:
-      - ./backend:/app/backend:ro,Z
-      - ./scripts/migrate_sqlite_to_postgres.py:/app/scripts/migrate_sqlite_to_postgres.py:ro,Z
-      - ./scripts/migrate_database.py:/app/scripts/migrate_database.py:ro,Z
-      - ./scripts/migrate_production_lines.py:/app/scripts/migrate_production_lines.py:ro,Z
-      - ./scripts/postgres:/app/scripts/postgres:ro,Z
+      - ./backend:/app/backend:ro,z
+      - ./scripts/migrate_sqlite_to_postgres.py:/app/scripts/migrate_sqlite_to_postgres.py:ro,z
+      - ./scripts/migrate_database.py:/app/scripts/migrate_database.py:ro,z
+      - ./scripts/migrate_production_lines.py:/app/scripts/migrate_production_lines.py:ro,z
+      - ./scripts/postgres:/app/scripts/postgres:ro,z

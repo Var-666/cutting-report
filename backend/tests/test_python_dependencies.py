@@ -17,6 +17,18 @@ ROOT = Path(__file__).resolve().parents[2]
 INPUTS = ('pyproject.toml', 'uv.lock', '.python-version')
 
 
+def test_scaled_offline_consumers_have_distinct_identity_and_shared_readonly_sources():
+    base = yaml.safe_load((ROOT / 'compose.yaml').read_text())['services']['worker']
+    assert 'container_name' not in base
+    assert base['environment']['CONSUMER_INSTANCE_ID'] == ''
+    assert base['deploy']['replicas'] == '${CONSUMER_REPLICAS:-1}'
+    offline = yaml.safe_load((ROOT / 'compose.offline.yaml').read_text())['services']
+    for role in ('app', 'scheduler', 'worker', 'automation', 'migrate'):
+        for mount in offline[role]['volumes']:
+            modes = set(mount.rsplit(':', 1)[1].split(','))
+            assert {'ro', 'z'} <= modes and 'Z' not in modes
+
+
 def test_all_installers_consume_the_same_uv_lock_and_ship_its_inputs():
     project = tomllib.loads((ROOT / 'backend/pyproject.toml').read_text())
     lock = tomllib.loads((ROOT / 'backend/uv.lock').read_text())

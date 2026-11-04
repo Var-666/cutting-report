@@ -71,7 +71,7 @@ def test_uow_commit_rollback_and_shared_pool(state):
 def _acquire_process(cfg, start, results):
     with PostgresDatabase(cfg) as database:
         start.wait(10)
-        results.put(CoordinationRepository(database).acquire('worker', ttl=10))
+        results.put(CoordinationRepository(database).acquire('worker:test-consumer', ttl=10))
 
 
 def test_lease_is_exclusive_between_processes(state):
@@ -97,7 +97,7 @@ def test_lease_is_exclusive_between_processes(state):
 def test_concurrent_claim_dedup_and_one_operation_per_line(state):
     database, _, _ = state
     queue = CoordinationRepository(database)
-    owner = queue.acquire('worker', ttl=10)
+    owner = queue.acquire('worker:test-consumer', ttl=10)
     assert queue.enqueue('refresh', 'Cutter01', {}, key='same')
     assert not queue.enqueue('refresh', 'Cutter01', {}, key='same')
     assert queue.enqueue('refresh', 'Cutter01', {'page': 2}, key='other')
@@ -117,16 +117,16 @@ def test_concurrent_claim_dedup_and_one_operation_per_line(state):
 def test_expired_owner_cannot_commit_finish_or_recover(state):
     database, _, _ = state
     queue = CoordinationRepository(database)
-    first = queue.acquire('worker', ttl=0.2)
+    first = queue.acquire('worker:test-consumer', ttl=0.2)
     queue.enqueue('refresh', 'Cutter01', {}, key='takeover')
     task = queue.claim_task(first, analysis=False)
     with pytest.raises(ExecutionLeaseLost):
-        with execution_scope(database, 'worker', first), database.connect() as connection:
+        with execution_scope(database, 'worker:test-consumer', first), database.connect() as connection:
             connection.execute("INSERT INTO llm_waiters VALUES ('must-roll-back', 1)")
             sleep(0.25)
-    second = queue.acquire('worker', ttl=10)
+    second = queue.acquire('worker:test-consumer', ttl=10)
     assert second and second != first
-    assert not queue.renew('worker', first, ttl=10)
+    assert not queue.renew('worker:test-consumer', first, ttl=10)
     with pytest.raises(ExecutionLeaseLost):
         queue.finish_task(task, first)
     with pytest.raises(ExecutionLeaseLost):
@@ -240,8 +240,8 @@ def test_automation_email_alarm_dispatch_and_retention(state):
     delivery = auto.enqueue_delivery('report-1',subject='日报',now=stamp)
     assert delivery
     queue = CoordinationRepository(database)
-    owner = queue.acquire('worker',ttl=10)
-    with execution_scope(database,'worker',owner):
+    owner = queue.acquire('worker:test-consumer',ttl=10)
+    with execution_scope(database,'worker:test-consumer',owner):
         claimed = auto.claim_delivery(stamp)
         assert claimed['delivery_id'] == delivery['delivery_id']
         assert auto.claim_delivery(stamp) is None
@@ -367,10 +367,11 @@ def test_web_and_worker_process_share_state_without_sqlite(state, monkeypatch):
                 assert connection.execute('SELECT relative_path FROM reports WHERE report_id=%s',(report_id,)).fetchone()
             for _ in range(80):
                 health = client.get('/api/v1/health')
-                if health.status_code == 200 and health.json()['data']['background_ready']:
+                if health.status_code == 200 and health.json()['data']['workers'].get('consumer_running_count') == 1:
                     break
                 sleep(0.1)
-            assert health.status_code == 200 and health.json()['data']['background_ready']
+            assert health.status_code == 200 and health.json()['data']['workers']['consumer_running_count'] == 1
+            assert not health.json()['data']['background_ready'], 'this fixture starts only the Consumer role'
             assert not list(cfg.data_dir.rglob('*.db')) and not list(cfg.data_dir.rglob('*.sqlite*'))
     finally:
         stop.set()
@@ -418,7 +419,7 @@ def test_database_unavailable_is_explicit_and_recovery_keeps_state(state, monkey
                     sleep(0.1)
             assert UserRepository(database).authenticate(user['username'],'p5-test-password')['user_id'] == user['user_id']
             worker._heartbeat()
-            assert CoordinationRepository(database).worker_status()['owner'] == worker.owner
+            assert CoordinationRepository(database).worker_status('worker:test-consumer')['owner'] == worker.owner
             with database.connect() as connection:
                 assert connection.execute('SELECT COUNT(*) AS n FROM users').fetchone()['n'] == 1
             web.app.state.runtime.worker_status_reader._next_read = 0
@@ -459,7 +460,7 @@ def test_alarm_renewal_thread_inherits_worker_execution_fence(state, monkeypatch
     database, _, _ = state
     alarms = AlarmRepository(database,machine_no='Cutter01',source_name='renewal-fence')
     alarms.initialize()
-    owner = CoordinationRepository(database).acquire('worker',ttl=0.3)
+    owner = CoordinationRepository(database).acquire('worker:test-consumer',ttl=0.3)
     service = AlarmMonitorService(SimpleNamespace(),alarms,object(),object(),object())
     monkeypatch.setattr(service,'LEASE_RENEW_SECONDS',0.02)
     observed = Event()
@@ -469,7 +470,7 @@ def test_alarm_renewal_thread_inherits_worker_execution_fence(state, monkeypatch
         return {}
     monkeypatch.setattr(service,'_run_owned',external_work)
     def run():
-        with execution_scope(database,'worker',owner):
+        with execution_scope(database,'worker:test-consumer',owner):
             service.run_once(datetime.now(timezone.utc))
     with ThreadPoolExecutor(1) as executor:
         result = executor.submit(run)

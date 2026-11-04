@@ -30,7 +30,7 @@
 - API 层保持精简；业务规则放在 service，持久化放在 repository/database 层。
 - 生产 SQL Server、HR 库、PDM 库和能管平台均按外部系统处理。除非需求和设计明确授权，不对其执行写入。
 - PostgreSQL 是唯一应用自有状态库；多仓储原子操作遵循 `docs/design/PostgreSQL仓储与事务设计.md`。
-- P6生产部署为一个Web（`app.main:app`）、一个Scheduler（`python -m app.scheduler`）、一个Consumer（`python -m app.worker`）及一个Automation（`python -m app.automation_worker`）。Web 同源提供前端和 API，不启动后台消费者；不得用多个 Uvicorn workers 替代独立 Worker。
+- P6生产部署为一个Web（`app.main:app`）、一个Scheduler（`python -m app.scheduler`）、1～N个同机Consumer（`python -m app.worker`，默认1个）及一个Automation（`python -m app.automation_worker`）。Web 同源提供前端和 API，不启动后台消费者；不得用多个 Uvicorn workers 替代独立 Worker。
 - 管理员与工人路由、菜单和后端 API 权限必须一致；不能仅依赖前端隐藏实现授权。
 - 页面查询、HTML/PDF 导出和智能分析应共用同一统计口径、时区和区间定义。
 - 管理页保存的运行参数写入 `data/settings.env`，密码不回显；数据库页连接配置及自动化/SMTP 参数按新操作热加载；SQL/HTTP 容量（含单源 sql_max_concurrent）及其余启动参数修改后重启生效。
@@ -69,9 +69,9 @@
 - 诊断继续通过 `ConfigurationDiagnostics` 对比各进程 `inspect()` 已发布值与文件目标，展示实际来源和重启要求；不能调用 `snapshot()` 使诊断变成配置发布。Worker 按独立心跳报告其快照，未加载/不可用不能标为已生效；敏感值及内部比较指纹不出现在诊断 API 中。
 - 状态业务连接统一经 `PostgresDatabase`/`PostgresRepository`；跨仓储原子写入使用 `UnitOfWork` 绑定同一连接并由外层提交。Service 不持有原始连接、不自行提交；单仓储原子校验/写入由仓储完成。PG编号迁移复用 `database/postgres_migrations/`；旧 `database/migrations/` 只供离线历史准备，不在路由或后台任务临时建表。
 - SQL/LLM/SMTP/文件等耗时外部操作不得放进状态库写事务；保留现有任务状态、幂等、未知结果保护和失败补偿。不要用事务回滚假定外部副作用已撤销，详见 [PostgreSQL 事务设计](docs/design/PostgreSQL仓储与事务设计.md)。
-- Web、Scheduler、Consumer、Automation 四进程通过同一 PostgreSQL 状态库与同机共享文件卷协作，各复用一个进程连接池；保留 Web OS 锁、Worker 租约/提交围栏、持久化队列及现有共享容量，不依赖跨进程内存对象或为每台设备新增常驻线程。不扩展为多主机或网络共享卷部署。
-- SQL 资源统一通过 `core/sql_capacity.py` 在 SQL Server/MySQL 驱动入口获取全局、数据源、产线配额；同机四个应用进程共用固定文件锁槽。等待不得持有部分执行配额，不向状态库写配额状态。容量及单源 `sql_max_concurrent` 为冷配置，连接参数仍按新操作热加载；资源计数为各进程本地观测，不能声称实时全局统计。HTTP 执行池与 SQL、LLM、Chromium 容量分别管理。
-- Worker 调度沿用 `WorkerProcess` 的有界 monotonic 提示状态；PostgreSQL `background_schedules/background_tasks` 仍决定真实到期、去重和重试。产线通过 `BackgroundSchedule` 提交周期/每日计划，耗时准备只在到期时执行；失败或未确认持久化不得推进内存进度。新增/停用/来源/间隔/计划变化随原快照处理，移除失效状态；队列保持每秒领取、5秒心跳，延迟接纳常规5秒及容量释放时检查，保留 `next_attempt` 与原容量。
+- Web、Scheduler、Automation及同机Consumer实例通过同一 PostgreSQL 状态库与同机共享文件卷协作，各复用一个进程连接池；保留 Web OS 锁、Worker 租约/提交围栏、持久化队列及现有共享容量，不依赖跨进程内存对象或为每台设备新增常驻线程。不扩展为多主机或网络共享卷部署。
+- SQL 资源统一通过 `core/sql_capacity.py` 在 SQL Server/MySQL 驱动入口获取全局、数据源、产线配额；所有同机应用实例共用固定文件锁槽。等待不得持有部分执行配额，不向状态库写配额状态。容量及单源 `sql_max_concurrent` 为冷配置，连接参数仍按新操作热加载；资源计数为各进程本地观测，不能声称实时全局统计。HTTP 执行池与 SQL、LLM、Chromium 容量分别管理。
+- 周期调度沿用 `SchedulerProcess` 的有界 monotonic 提示状态；PostgreSQL `background_schedules/background_tasks` 仍决定真实到期、去重和重试。产线通过 `BackgroundSchedule` 提交周期/每日计划，耗时准备只在到期时执行；失败或未确认持久化不得推进内存进度。新增/停用/来源/间隔/计划变化随原快照处理，移除失效状态；队列保持每秒领取、5秒心跳，延迟接纳常规5秒及容量释放时检查，保留 `next_attempt` 与原容量。
 
 ### 多产线与复用
 
@@ -154,9 +154,13 @@
 - BM 船名关联固定使用可选的 `bm` SQL Server 数据源；启用后由 `BmProjectRepository → ShipNameService → QueryService` 批量精确映射完整工程号，使用共享有界缓存。停用/未登记不影响启动和现有生产查询，启用时缺失或冲突映射保留任务、船名为空。禁止模糊匹配、截前缀、重复任务或以船名替换工程统计键。
 - 切割报表的 `ship_no` 保留接口字段名、显示 BM `ProjectName`；PDM/派发船号保持原语义。日报船名由编号迁移单独保存，补名称不得改变任务修订号与确认记录。页面、导出和分析共用映射，确认/撤销不依赖 BM 可用性；连接切换须同步重建受影响设备服务并保留在途引用。
 
-## P6 后台角色边界
+## P6/P7 后台角色边界
 
 - Scheduler只调度生产周期任务，保留P2内存到期提示和持久化去重；Consumer只领取后台/报表任务及恢复执行状态；Automation独占计划扫描、补偿和SMTP消费/恢复。ReportWorker不得启动自动化或邮件线程。
-- 复用PostgreSQL scheduler/worker/automation三种独立租约与execution_scope提交围栏，恢复检查实际角色，不伪装worker。快照期限以持久化完成时间为准，不跨进程依赖内存。能耗pending finish只由Consumer刷新，热重建不回收同owner在途claim。
-- 四角色使用相同配置/本地文件卷和各自有界PG池；保留P3 SQL/模型/PDF容量及邮件unknown保护。健康和配置诊断须分别报告三个角色，公开状态递归去除内部配置指纹。只支持单Consumer，P7才扩展多个消费者。
-- 旧SQLite部署先完成P5最新数据离线迁移/校验，再启动P6四个应用进程。禁止新旧混合Worker并跑；生产切换需单独授权。
+- 复用PostgreSQL scheduler/worker:实例ID/automation租约与execution_scope提交围栏，Consumer实例ID与每次获取的owner token分开，恢复检查实际角色，不伪装worker。快照期限以持久化完成时间为准，不跨进程依赖内存。能耗pending finish只由Consumer刷新，热重建不回收同owner在途claim。
+- 四角色使用相同配置/本地文件卷和各自有界PG池；保留P3 SQL/模型/PDF容量及邮件unknown保护。健康和配置诊断须分别报告三个角色，公开状态递归去除内部配置指纹。默认单Consumer，按需同机扩容；每个实例只恢复失效owner，不重置正常实例。报表写入校验owner，后台完成校验owner、claim_token及attempts，能耗保留claim_token。
+- 旧SQLite部署先完成P5最新数据离线迁移/校验，再运行P7停机prepare-consumers切换和启动各角色。禁止新旧混合Worker并跑；生产切换需单独授权。
+
+- P7 Consumer原生实例必须显式配置CONSUMER_INSTANCE_ID，Docker使用各自容器身份；同ID互斥、不同ID并发，健康探针必须定位本实例。Scheduler/Automation仍各单实例；不恢复全局worker运行协议。
+- 状态Schema只追加003_consumer_scaling及指纹，不修改001/002。prepare-consumers由维护账号在所有Consumer停止且租约失效后显式执行；旧无指纹任务标blocked，不猜测数据源、不丢记录。告警/能耗等新增任务必须携带来源指纹。
+- Consumer本地执行容量与全局SQL/模型/PDF配额分开；所有实例共用本机锁目录，PG池预算按N+3个应用实例及探针计算，不支持跨主机。实例状态逐一报告并保留聚合字段；失联记录仅在无恢复引用且超过30天时由现有清理任务移除。

@@ -1898,6 +1898,12 @@ export type ConfigurationProcesses = {
     worker: WorkerConfigurationVersion;
     scheduler?: WorkerConfigurationVersion | null;
     automation?: WorkerConfigurationVersion | null;
+    /**
+     * Consumers
+     */
+    consumers?: {
+        [key: string]: WorkerConfigurationVersion;
+    };
 };
 
 /**
@@ -3095,6 +3101,12 @@ export type DiagnosticProcesses = {
     worker: DiagnosticProcess;
     scheduler?: DiagnosticProcess | null;
     automation?: DiagnosticProcess | null;
+    /**
+     * Consumers
+     */
+    consumers?: {
+        [key: string]: DiagnosticProcess;
+    };
 };
 
 /**

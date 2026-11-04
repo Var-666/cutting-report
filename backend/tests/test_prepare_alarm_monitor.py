@@ -1,5 +1,6 @@
 """The reset command must preserve the configured Cutter01 monitoring window."""
 from dataclasses import replace
+import pytest
 
 from tests.line_fixtures import configuration
 from tests.postgres_fixtures import state_settings
@@ -27,6 +28,12 @@ def test_monitoring_window_preview_and_apply_reset_cursor(monkeypatch, tmp_path,
     assert repository.get_sync_state()["last_success_at"] is None
 
     monkeypatch.setattr("sys.argv", ["prepare_alarm_monitor.py", "--device-id", "Cutter01", "--apply"])
+    from app.database.coordination import CoordinationRepository
+    coordination = CoordinationRepository(postgres_state[0])
+    owner = coordination.acquire('worker:another-consumer', ttl=30)
+    with pytest.raises(RuntimeError, match='所有后台角色'):
+        prepare_alarm_monitor.main()
+    coordination.release('worker:another-consumer', owner)
     assert prepare_alarm_monitor.main() == 0
     state = repository.get_sync_state()
     assert state["last_alarm_id"] == 0

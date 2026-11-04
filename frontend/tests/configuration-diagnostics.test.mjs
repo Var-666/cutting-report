@@ -18,7 +18,7 @@ const data = { categories: ['数据库连接配置', 'AI 模型配置'], items: 
 function mount(fetcher) {
   let state
   const bindings = { computed: Vue.computed, onBeforeUnmount: Vue.onBeforeUnmount, onMounted: Vue.onMounted, ref: Vue.ref, watch: Vue.watch, getConfigurationDiagnostics: fetcher }
-  const setup = scriptFunction(...Object.keys(bindings), `${script}\nreturn { report, loading, error, category, search, rows, visibleRows, page, pageSize, load, display }`)
+  const setup = scriptFunction(...Object.keys(bindings), `${script}\nreturn { report, loading, error, category, search, rows, visibleRows, page, pageSize, load, display, consumerVersions, processRoles }`)
   const renderer = Vue.createRenderer({ createComment: () => ({}), createText: () => ({}), createElement: () => ({}), insert() {}, remove() {}, setText() {}, setElementText() {}, parentNode: () => null, nextSibling: () => null, patchProp() {} })
   const app = renderer.createApp({ setup() { state = setup(...Object.values(bindings)); return () => null } })
   app.mount({})
@@ -59,6 +59,20 @@ test('only abnormal configurations are shown and category and search filters nee
     assert.equal(calls, 1)
     assert.equal(page.state.display(false), '关闭')
     assert.equal(page.state.display(0), '0')
+  } finally { page.app.unmount() }
+})
+
+test('each Consumer keeps its own status and configuration version', async () => {
+  const page = mount(async () => ({ ...data, processes: { consumers: {
+    'consumer-1': { state: 'running', available: true, version: 'one' },
+    'consumer-2': { state: 'lost', available: false, version: 'two' },
+  } } }))
+  try {
+    await flush()
+    assert.deepEqual(page.state.consumerVersions.value.map(([id, value]) => [id, value.state, value.version]), [
+      ['consumer-1', 'running', 'one'], ['consumer-2', 'lost', 'two'],
+    ])
+    assert.deepEqual(page.state.processRoles.value, ['web', 'scheduler', 'automation'])
   } finally { page.app.unmount() }
 })
 

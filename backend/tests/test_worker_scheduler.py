@@ -58,7 +58,7 @@ def test_periodic_rounds_are_durable_device_scoped_and_do_not_duplicate_reconcil
 def test_task_failure_retries_after_backoff_and_stale_owner_cannot_finish(postgres_state, tmp_path, monkeypatch):
     process = WorkerProcess(state_settings(configuration(tmp_path),postgres_state))
     repository = process.repository
-    process.owner = repository.acquire("worker", ttl=30)
+    process.owner = repository.acquire("worker:test-consumer", ttl=30)
     repository.enqueue("analysis_workshop", "Cutter02", {"date": "2026-10-24"})
     task = repository.claim_task(process.owner, analysis=True)
     monkeypatch.setattr(process, "_handle", lambda _: (_ for _ in ()).throw(TimeoutError("model fixture")))
@@ -79,7 +79,7 @@ def test_task_failure_retries_after_backoff_and_stale_owner_cannot_finish(postgr
     old = process.owner
     with repository.connect() as connection:
         connection.execute("UPDATE process_leases SET expires_at=0")
-    process.owner = repository.acquire("worker", ttl=30)
+    process.owner = repository.acquire("worker:test-consumer", ttl=30)
     with process.scope():
         repository.recover_tasks(process.owner)
         repository.admit_deferred()
@@ -96,14 +96,14 @@ def test_malformed_snapshot_task_is_recorded_as_failed_without_breaking_completi
     from tests.line_fixtures import configuration as line_configuration
     process = WorkerProcess(state_settings(line_configuration(tmp_path, welding=True),postgres_state))
     queue = process.repository
-    process.owner = queue.acquire('worker', ttl=30)
+    process.owner = queue.acquire('worker:test-consumer', ttl=30)
     queue.enqueue('report_snapshot_refresh', 'welding', payload)
     try:
         task = queue.claim_task(process.owner, analysis=False)
         with caplog.at_level('INFO'), process.scope():
             process._execute(task)
             process._flush_completions()
-        assert queue.task_counts() == {'deferred': 1}
+        assert queue.task_counts() == {'blocked': 1}
         assert 'outcome=failed elapsed_ms=' in caplog.text
         with queue.connect() as connection:
             assert connection.execute('SELECT last_error FROM background_tasks').fetchone()['last_error']
@@ -348,7 +348,7 @@ def test_interval_hotload_recalculates_from_the_last_persisted_round_and_survive
 def test_empty_and_backing_off_queues_do_not_acquire_a_write_transaction(postgres_state, tmp_path, monkeypatch, clock):
     from app.database.coordination import CoordinationRepository
     repository = CoordinationRepository(postgres_state[0])
-    owner = repository.acquire('worker', ttl=300)
+    owner = repository.acquire('worker:test-consumer', ttl=300)
     statements = trace_sql(repository.database, monkeypatch)
     repository.admit_deferred()
     assert repository.claim_task(owner, analysis=False) is None
@@ -377,7 +377,7 @@ def test_web_submissions_are_polled_each_tick_and_capacity_release_admits_deferr
     from tests.line_fixtures import configuration
     from app.database.coordination import CoordinationRepository
     process = WorkerProcess(state_settings(configuration(tmp_path),postgres_state))
-    process.owner = process.repository.acquire('worker', ttl=30)
+    process.owner = process.repository.acquire('worker:test-consumer', ttl=30)
     received = []
     process.operations = process.analysis = SimpleNamespace(available=lambda: True, submit=lambda fn, task: received.append(task))
     admit = Mock(wraps=process.repository.admit_deferred)
@@ -529,7 +529,7 @@ def test_snapshot_completion_updates_the_deadline_without_shared_memory(postgres
     cfg=state_settings(configuration(tmp_path, welding=True),postgres_state)
     scheduler=SchedulerProcess(cfg)
     consumer=WorkerProcess(cfg)
-    consumer.owner=consumer.repository.acquire('worker',ttl=600)
+    consumer.owner=consumer.repository.acquire('worker:test-consumer',ttl=600)
     payload=database_context(scheduler.runtime).lines['welding'].report_provider.refresh_plan()[0][0]
     scheduler._schedule_snapshot('welding',payload,300)
     task=consumer.repository.claim_task(consumer.owner,analysis=False)
@@ -551,7 +551,7 @@ def test_snapshot_completion_updates_the_deadline_without_shared_memory(postgres
 def test_retired_snapshot_task_finishes_without_recreating_its_removed_plan(postgres_state, tmp_path):
     from tests.line_fixtures import configuration
     process = WorkerProcess(state_settings(configuration(tmp_path),postgres_state))
-    process.owner = process.repository.acquire('worker', ttl=30)
+    process.owner = process.repository.acquire('worker:test-consumer', ttl=30)
     process.repository.enqueue('report_snapshot_refresh', 'welding', {})
     task = process.repository.claim_task(process.owner, analysis=False)
     with process.scope():

@@ -20,6 +20,7 @@ from app.services.database_runtime import database_context
 from app.services.production_lines import supports_path, registered_lines
 from app.services.runtime_settings_store import RuntimeSettingsSaveError, read_runtime_env, write_runtime_env
 from app.worker import WorkerProcess
+from app.scheduler import SchedulerProcess
 from tests.line_fixtures import configuration
 
 
@@ -74,7 +75,8 @@ def test_source_change_rebuilds_only_bound_lines_and_worker_loads_it_at_new_oper
         process = WorkerProcess(cfg, web)
         called = []
         fresh.lines['Cutter01'].background.handle_background = lambda *args: called.append(args)
-        process._handle({'kind': 'current_refresh', 'device_id': 'Cutter01', 'payload': {'source_fingerprint': old.lines['Cutter01'].settings.source_fingerprint}})
+        with pytest.raises(RuntimeError, match='来源'):
+            process._handle({'kind': 'current_refresh', 'device_id': 'Cutter01', 'payload': {'source_fingerprint': old.lines['Cutter01'].settings.source_fingerprint}})
         assert not called
         process._handle({'kind': 'current_refresh', 'device_id': 'Cutter01', 'payload': {'source_fingerprint': fresh.lines['Cutter01'].settings.source_fingerprint}})
         assert len(called) == 1
@@ -169,7 +171,7 @@ def test_new_cutting_and_welding_instances_hotload_in_both_processes(postgres_st
         assert {'Cutter03', 'weld-2'} <= context.lines.keys()
         assert context.lines['Cutter03'].cutting().query_service.client.connection_config()['host'] == 'sql-3.test'
         assert context.lines['weld-2'].service.repository.client.config.host == 'mysql-2.test'
-        process = WorkerProcess(context.settings, runtime)
+        process = SchedulerProcess(context.settings, runtime)
         process._schedule()
         with runtime.coordination.connect() as connection:
             queued = {row['device_id'] for row in connection.execute('SELECT device_id FROM background_tasks')}

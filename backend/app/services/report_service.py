@@ -110,8 +110,11 @@ class ReportService:
         internal_filename = f"{report_id}_{owner}.html" if owner else f"{report_id}.html"
         final_path = folder / internal_filename
         temporary_path = folder / f".{internal_filename}.tmp"
-        temporary_path.write_text(html, encoding="utf-8")
-        os.replace(temporary_path, final_path)
+        try:
+            temporary_path.write_text(html, encoding="utf-8")
+            os.replace(temporary_path, final_path)
+        finally:
+            temporary_path.unlink(missing_ok=True)
 
         content = final_path.read_bytes()
         report_type = report["meta"]["report_type"]

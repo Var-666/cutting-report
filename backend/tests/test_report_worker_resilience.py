@@ -14,6 +14,7 @@ from app.workers.report_worker import ReportWorker
 def test_claim_and_failure_record_errors_do_not_kill_report_worker():
     finished = Event()
     calls = []
+    writes, generated = [], []
 
     class Metadata:
         def queue_observation(self):
@@ -31,10 +32,13 @@ def test_claim_and_failure_record_errors_do_not_kill_report_worker():
             return None
 
         def update_status(self, *args, **kwargs):
-            raise RuntimeError("failure status write unavailable")
+            writes.append(args)
+            if len(writes) == 1:
+                raise RuntimeError("temporary failure status write outage")
 
     class Pipeline:
         def run(self, job):
+            generated.append(job['report_id'])
             if job["report_id"] == "2":
                 raise RuntimeError("bad report")
             finished.set()
@@ -43,6 +47,8 @@ def test_claim_and_failure_record_errors_do_not_kill_report_worker():
     try:
         worker.start()
         assert finished.wait(2), "one broken report must not stop later reports"
+        assert [args[0] for args in writes] == ['2', '2']
+        assert generated.count('2') == 1, 'retry the status write, never repeat external report generation'
         assert worker.thread.is_alive()
     finally:
         worker.stop()

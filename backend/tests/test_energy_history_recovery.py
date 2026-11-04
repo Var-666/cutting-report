@@ -8,15 +8,15 @@ from app.workers.energy_history_worker import EnergyHistoryWorker
 from test_energy_period_service import NOW, service
 
 
-def worker_and_clock(tmp_path):
-    energy, _ = service(tmp_path)
+def worker_and_clock(tmp_path, state_database):
+    energy, _ = service(tmp_path, state_database)
     now = [NOW]
     energy.clock = lambda: now[0]
     return EnergyHistoryWorker(energy.settings, energy), now
 
 
-def test_failed_month_does_not_drop_other_months_and_backoff_survives_requests(tmp_path, monkeypatch):
-    worker, now = worker_and_clock(tmp_path)
+def test_failed_month_does_not_drop_other_months_and_backoff_survives_requests(tmp_path, state_database, monkeypatch):
+    worker, now = worker_and_clock(tmp_path, state_database)
     worker.schedule_range(date(2026, 7, 1), date(2026, 8, 1))
     calls = []
 
@@ -42,21 +42,25 @@ def test_failed_month_does_not_drop_other_months_and_backoff_survives_requests(t
     assert calls == [date(2026, 8, 1), date(2026, 7, 1)]
 
 
-def test_restart_recovers_running_claim_and_fences_late_completion(tmp_path):
-    worker, now = worker_and_clock(tmp_path)
+def test_restart_recovers_running_claim_and_fences_late_completion(tmp_path, state_database):
+    worker, now = worker_and_clock(tmp_path, state_database)
     worker.schedule_range(date(2026, 8, 1), date(2026, 8, 1))
     old = worker._claim()
     replacement = EnergyHistoryWorker(worker.settings, worker.service)
-    replacement.repository.recover_history_queue(replacement.source_key, replacement._now())
-    new = replacement._claim()
-    assert new["report_month"] == old["report_month"]
-    assert new["claim_token"] != old["claim_token"]
-    assert not worker.repository.reschedule_history_month(old, worker._now(), worker._now())
-    assert replacement.repository.reschedule_history_month(new, replacement._now(), replacement._now())
+    from app.database.coordination import CoordinationRepository
+    from app.database.postgres import execution_scope
+    owner = CoordinationRepository(state_database).acquire('worker:energy-restart', ttl=30)
+    with execution_scope(state_database, 'worker:energy-restart', owner):
+        replacement.repository.recover_history_queue(replacement.source_key, replacement._now())
+        new = replacement._claim()
+        assert new["report_month"] == old["report_month"]
+        assert new["claim_token"] != old["claim_token"]
+        assert not worker.repository.reschedule_history_month(old, worker._now(), worker._now())
+        assert replacement.repository.reschedule_history_month(new, replacement._now(), replacement._now())
 
 
-def test_month_requests_persist_and_atomic_claim_has_one_winner(tmp_path):
-    worker, now = worker_and_clock(tmp_path)
+def test_month_requests_persist_and_atomic_claim_has_one_winner(tmp_path, state_database):
+    worker, now = worker_and_clock(tmp_path, state_database)
     assert worker.schedule_range(date(2026, 8, 1), date(2026, 8, 1))
     second = EnergyHistoryWorker(worker.settings, worker.service)
     assert not second.schedule_range(date(2026, 8, 1), date(2026, 8, 1))
@@ -66,8 +70,8 @@ def test_month_requests_persist_and_atomic_claim_has_one_winner(tmp_path):
     assert second.is_syncing_range(date(2026, 8, 1), date(2026, 8, 31))
 
 
-def test_successful_partial_fetch_remains_scheduled_without_spinning(tmp_path, monkeypatch):
-    worker, now = worker_and_clock(tmp_path)
+def test_successful_partial_fetch_remains_scheduled_without_spinning(tmp_path, state_database, monkeypatch):
+    worker, now = worker_and_clock(tmp_path, state_database)
     worker.schedule_range(date(2026, 8, 1), date(2026, 8, 1))
     monkeypatch.setattr(worker.service, "sync_month", lambda month: 0)
     worker._process(worker._claim())
@@ -77,8 +81,8 @@ def test_successful_partial_fetch_remains_scheduled_without_spinning(tmp_path, m
     assert worker._claim()["report_month"] == "2026-08-01"
 
 
-def test_completion_write_retry_does_not_repeat_external_query(tmp_path, monkeypatch):
-    worker, now = worker_and_clock(tmp_path)
+def test_completion_write_retry_does_not_repeat_external_query(tmp_path, state_database, monkeypatch):
+    worker, now = worker_and_clock(tmp_path, state_database)
     worker.schedule_range(date(2026, 8, 1), date(2026, 8, 1))
     calls = []
     monkeypatch.setattr(worker.service, "sync_month", lambda month: calls.append(month) or 1)
@@ -98,9 +102,9 @@ def test_completion_write_retry_does_not_repeat_external_query(tmp_path, monkeyp
     assert worker._claim() is None
 
 
-def test_hot_snapshots_share_one_serialized_completion_retry(tmp_path, monkeypatch):
+def test_hot_snapshots_share_one_serialized_completion_retry(tmp_path, state_database, monkeypatch):
     from threading import Event
-    worker, _ = worker_and_clock(tmp_path)
+    worker, _ = worker_and_clock(tmp_path, state_database)
     replacement = EnergyHistoryWorker(worker.settings, worker.service)
     replacement._completion = worker._completion
     worker._pending_finish = ({'report_month': '2026-08-01'}, 'later', 'now', None)
@@ -125,11 +129,11 @@ def test_hot_snapshots_share_one_serialized_completion_retry(tmp_path, monkeypat
     assert worker._pending_finish is replacement._pending_finish is None
 
 
-def test_sampling_configuration_isolates_persisted_queue(tmp_path):
+def test_sampling_configuration_isolates_persisted_queue(tmp_path, state_database):
     from dataclasses import replace
     from app.services.energy_period_service import EnergyPeriodService
 
-    worker, _ = worker_and_clock(tmp_path)
+    worker, _ = worker_and_clock(tmp_path, state_database)
     worker.schedule_range(date(2026, 8, 1), date(2026, 8, 1))
     other_service = EnergyPeriodService(
         replace(worker.settings, energy_gas_factor="2"), worker.repository,
@@ -140,18 +144,18 @@ def test_sampling_configuration_isolates_persisted_queue(tmp_path):
     assert other._claim() is None
 
 
-def test_shutdown_before_start_is_safe_and_future_months_not_queued(tmp_path):
-    worker, _ = worker_and_clock(tmp_path)
+def test_shutdown_before_start_is_safe_and_future_months_not_queued(tmp_path, state_database):
+    worker, _ = worker_and_clock(tmp_path, state_database)
     assert not worker.schedule_range(date(2027, 1, 1), date(2027, 2, 1))
     assert worker._claim() is None
     worker.stop()
     assert worker.stop_event.is_set()
 
 
-def test_live_worker_survives_claim_failure_and_finishes_later_month(tmp_path, monkeypatch):
+def test_live_worker_survives_claim_failure_and_finishes_later_month(tmp_path, state_database, monkeypatch):
     from threading import Event
 
-    worker, _ = worker_and_clock(tmp_path)
+    worker, _ = worker_and_clock(tmp_path, state_database)
     worker.schedule_range(date(2026, 8, 1), date(2026, 8, 1))
     original_claim = worker._claim
     claims = []

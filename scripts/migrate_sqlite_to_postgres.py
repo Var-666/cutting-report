@@ -9,25 +9,28 @@ sys.path.insert(0, str(ROOT / 'backend'))
 
 from app.config import settings
 from app.database.postgres import PostgresDatabase
-from app.database.postgres_migrations import apply_migrations, MigrationError
+from app.database.postgres_migrations import apply_migrations, prepare_consumers, MigrationError
 from app.database.sqlite_to_postgres import offline_snapshot, transfer
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('schema', 'status', 'check', 'migrate', 'verify'))
+    parser.add_argument('action', choices=('schema', 'status', 'check', 'migrate', 'verify', 'prepare-consumers'))
     parser.add_argument('--sqlite', type=Path)
     parser.add_argument('--backup-dir', type=Path)
     parser.add_argument('--reports-root', type=Path, default=settings.reports_dir)
     parser.add_argument('--data-root', type=Path, default=settings.data_dir)
     parser.add_argument('--batch-size', type=int, default=1000)
     args = parser.parse_args(argv)
-    if args.action not in ('schema', 'status') and not args.sqlite:
+    if args.action not in ('schema', 'status', 'prepare-consumers') and not args.sqlite:
         parser.error('check/migrate/verify 必须指定 --sqlite；PostgreSQL 连接只取 POSTGRES_* 配置，不接收明文密码参数')
     try:
-        if args.action in ('schema', 'check', 'migrate', 'verify') and settings.postgres_user != 'cutting_migrator':
+        if args.action in ('schema', 'check', 'migrate', 'verify', 'prepare-consumers') and settings.postgres_user != 'cutting_migrator':
             raise MigrationError('升级/导入必须显式使用cutting_migrator，不能使用正式运行账号')
         with PostgresDatabase(settings) as database:
+            if args.action == 'prepare-consumers':
+                print(json.dumps({'consumer_cutover': prepare_consumers(database)}, ensure_ascii=False))
+                return 0
             if args.action in ('schema','status'):
                 if args.action=='schema':
                     result = apply_migrations(database)

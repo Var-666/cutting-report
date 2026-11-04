@@ -119,7 +119,7 @@ def test_schema_all_tables_constraints_indexes_and_repeated_install(postgres):
         tables={r['tablename'] for r in connection.execute("SELECT tablename FROM pg_tables WHERE schemaname='app_state'")}
         expected=set(json.loads((DIRECTORY/'sqlite_schema.json').read_text()))-{'schema_migrations'}
         assert tables==expected|{'_postgres_schema_migrations','_sqlite_imports','_sqlite_schema_versions'}
-        assert connection.execute("SELECT count(*) AS n FROM pg_indexes WHERE schemaname='app_state'").fetchone()['n']==98
+        assert connection.execute("SELECT count(*) AS n FROM pg_indexes WHERE schemaname='app_state'").fetchone()['n']==99
         connection.execute('DROP INDEX idx_background_tasks_ready')
     with pytest.raises(MigrationError,match='结构漂移'): apply_migrations(database)
 

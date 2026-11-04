@@ -19,6 +19,8 @@ const page = ref(1)
 const pageSize = ref(10)
 const roles = ['web', 'worker', 'scheduler', 'automation'] as const
 const labels = { web: 'Web', worker: 'Consumer', scheduler: 'Scheduler', automation: 'Automation' }
+const consumerVersions = computed(() => Object.entries(report.value?.processes.consumers || {}))
+const processRoles = computed(() => roles.filter(role => role !== 'worker' || !consumerVersions.value.length))
 const statuses = { effective: '已生效', pending: '待重启', error: '配置异常', unconfigured: '未配置' }
 const tones: Record<DiagnosticStatus, TagProps['type']> = { effective: 'success', pending: 'warning', error: 'error', unconfigured: 'default' }
 const rows = computed(() => (report.value?.items || []).filter(item =>
@@ -59,7 +61,7 @@ onBeforeUnmount(() => { sequence++; controller?.abort() })
 const diagnosticsTableColumns = [
   { key: 'c0', title: '配置项', width: 260, align: 'left', fixed: 'left', ellipsis: false },
   { key: 'c1', title: 'Web 当前生效值 / 来源', minWidth: 320, align: 'left', ellipsis: false },
-  { key: 'c2', title: 'Worker 当前生效值 / 来源', minWidth: 320, align: 'left', ellipsis: false },
+  { key: 'c2', title: '各 Consumer 当前生效值 / 来源', minWidth: 320, align: 'left', ellipsis: false },
   { key: 'c3', title: 'Scheduler 当前生效值 / 来源', minWidth: 320, align: 'left', ellipsis: false },
   { key: 'c4', title: 'Automation 当前生效值 / 来源', minWidth: 320, align: 'left', ellipsis: false },
   { key: 'c5', title: '已保存目标 / 来源', minWidth: 280, align: 'left', ellipsis: false },
@@ -77,7 +79,8 @@ const diagnosticsTableColumns = [
       <template v-for="role in roles.filter(item => item !== 'web')" :key="role"><NAlert v-if="!report.processes[role]?.available" type="warning" role="status">{{ labels[role] }} 快照不可用（{{ report.processes[role]?.state || 'missing' }}），请检查对应进程与心跳。</NAlert></template>
       <NCard :bordered="false" title="进程加载状态">
         <div class="processes">
-          <div v-for="role in roles" :key="role"><strong>{{ labels[role] }}</strong><p>配置版本：{{ report.processes[role]?.version || '未知' }}</p><p>启动加载：{{ report.processes[role]?.loaded_at || '未知' }}</p><p>热更新：{{ report.processes[role]?.hot_loaded_at || '未知' }} · 修订 {{ report.processes[role]?.hot_revision ?? '未知' }}</p></div>
+          <div v-for="role in processRoles" :key="role"><strong>{{ labels[role] }}</strong><p>配置版本：{{ report.processes[role]?.version || '未知' }}</p><p>启动加载：{{ report.processes[role]?.loaded_at || '未知' }}</p><p>热更新：{{ report.processes[role]?.hot_loaded_at || '未知' }} · 修订 {{ report.processes[role]?.hot_revision ?? '未知' }}</p></div>
+          <div v-for="[id, snapshot] in consumerVersions" :key="id"><strong>Consumer {{ id }} · {{ snapshot.state }}</strong><p>配置版本：{{ snapshot.version || '未知' }}</p><p>启动加载：{{ snapshot.loaded_at || '未知' }}</p><p>热更新：{{ snapshot.hot_loaded_at || '未知' }} · 修订 {{ snapshot.hot_revision ?? '未知' }}</p><p v-if="!snapshot.available && snapshot.state !== 'stopped'" role="status">此实例配置快照不可用，请检查心跳。</p></div>
         </div>
       </NCard>
       <NCard :bordered="false" title="异常配置项">
@@ -87,9 +90,14 @@ const diagnosticsTableColumns = [
           <NButton :loading="loading" :disabled="loading" @click="load">刷新快照</NButton>
         </div>
         <div class="diagnostics-table">
-          <AppReportTable :columns="diagnosticsTableColumns" :items="visibleRows" :row-key="row => row.key" :total="rows.length" :page="page" :page-size="pageSize" :page-sizes="[10, 20, 50]" :loading="loading" aria-label="四个应用进程配置来源和生效状态及异常配置项分页" @page="page = $event" @page-size="pageSize = $event">
+          <AppReportTable :columns="diagnosticsTableColumns" :items="visibleRows" :row-key="row => row.key" :total="rows.length" :page="page" :page-size="pageSize" :page-sizes="[10, 20, 50]" :loading="loading" aria-label="各应用实例配置来源和生效状态及异常配置项分页" @page="page = $event" @page-size="pageSize = $event">
             <template #c0="{ row }"><div class="diagnostic-cell"><strong :title="row.key">{{ row.key }}</strong><small :title="row.category">{{ row.category }}</small></div></template>
-            <template v-for="(role, index) in roles" :key="role" #[`c${index+1}`]="{ row }"><div class="diagnostic-cell"><NTag size="small" :type="tones[(row.processes[role]?.status || 'error')]">{{ statuses[(row.processes[role]?.status || 'error')] }}</NTag><span class="diagnostic-value" :title="display(row.processes[role]?.value)">{{ display(row.processes[role]?.value) }}</span><small class="diagnostic-source" :title="row.processes[role]?.source">来源：{{ row.processes[role]?.source }}</small></div></template>
+            <template v-for="(role, index) in roles" :key="role" #[`c${index+1}`]="{ row }">
+              <div v-if="role === 'worker' && Object.keys(row.processes.consumers || {}).length" class="grid gap-12px">
+                <div v-for="(snapshot, id) in row.processes.consumers" :key="id" class="diagnostic-cell"><strong>{{ id }}</strong><NTag size="small" :type="tones[snapshot.status]">{{ statuses[snapshot.status] }}</NTag><span class="diagnostic-value">{{ display(snapshot.value) }}</span><small class="diagnostic-source">来源：{{ snapshot.source }}</small></div>
+              </div>
+              <div v-else class="diagnostic-cell"><NTag size="small" :type="tones[(row.processes[role]?.status || 'error')]">{{ statuses[(row.processes[role]?.status || 'error')] }}</NTag><span class="diagnostic-value" :title="display(row.processes[role]?.value)">{{ display(row.processes[role]?.value) }}</span><small class="diagnostic-source" :title="row.processes[role]?.source">来源：{{ row.processes[role]?.source }}</small></div>
+            </template>
             <template #c5="{ row }"><div class="diagnostic-cell"><span class="diagnostic-value" :title="display(row.saved_value)">{{ display(row.saved_value) }}</span><small class="diagnostic-source" :title="row.saved_source">来源：{{ row.saved_source }}</small></div></template>
             <template #c6="{ row }"><div class="diagnostic-cell"><NTag size="small" :type="tones[row.status]">{{ statuses[row.status] }}</NTag><small v-if="row.process_mismatch">后台进程与 Web 配置不一致</small><small v-if="!row.valid">目标配置无效，请核对对应配置项及文件</small><small :title="row.rule">{{ row.rule }}</small></div></template>
             <template #empty><span role="status">{{ category || search ? '没有符合条件的异常配置项。' : '暂无异常配置项。' }}</span></template>
@@ -104,5 +112,6 @@ const diagnosticsTableColumns = [
 <style scoped>
 .configuration-diagnostics-page{display:grid;gap:16px;min-width:0}.diagnostics-filters{display:grid;grid-template-columns:1fr 2fr auto;gap:12px;align-items:end;margin-bottom:16px}.diagnostics-filters label{min-width:0}.diagnostics-filters label>span{display:block;margin-bottom:6px;color:var(--text-color-3);font-size:13px}.processes{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.processes p{overflow-wrap:anywhere;color:var(--text-color-3);font-size:12px}.diagnostics-table{min-width:0}.diagnostic-cell{display:flex;align-items:center;white-space:nowrap;max-width:100%;gap:12px;min-width:0}.diagnostic-cell>strong,.diagnostic-cell>small{white-space:nowrap;min-width:0;overflow:hidden;text-overflow:ellipsis}.diagnostic-cell>small{color:var(--text-color-3);font-size:var(--font-auxiliary)}.diagnostic-source{border-left:1px solid var(--theme-border-color);padding-left:10px}.diagnostic-value{flex:0 1 auto;min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis}.diagnostic-cell :deep(.n-tag){flex-shrink:0}
 @media(max-width:900px){.diagnostics-filters{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.processes strong{overflow-wrap:anywhere}
 @media(max-width:560px){.diagnostics-filters,.processes{grid-template-columns:1fr}}
 </style>

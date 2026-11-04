@@ -27,6 +27,7 @@ if ! docker run --rm --network none \
 fi
 
 # Schema installation/import is an explicit maintenance step, never automatic.
+# Compose reads CONSUMER_REPLICAS (default 1); never reset queues when scaling.
 docker compose -f compose.yaml -f compose.offline.yaml up -d --no-build --pull never postgres
 if ! docker compose -f compose.yaml -f compose.offline.yaml run --rm --no-deps -T app \
   python scripts/migrate_sqlite_to_postgres.py status; then

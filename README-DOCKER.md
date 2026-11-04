@@ -1,6 +1,6 @@
 # Docker 部署与更新
 
-使用项目根目录的 `compose.yaml`，同时运行一个 Web（`app`）、Scheduler（`scheduler`）、单Consumer（`worker`）和Automation（`automation`），共享原有 data/reports/logs 命名卷。需要 Docker Engine 与 Compose v2；首次源码构建需要联网；构建阶段自动安装项目固定的 pnpm，宿主机无需安装 Node.js/pnpm。
+使用项目根目录的 `compose.yaml`，同时运行一个 Web（`app`）、Scheduler（`scheduler`）、默认1个、可同机扩容的Consumer（`worker`）和Automation（`automation`），共享原有 data/reports/logs 命名卷。需要 Docker Engine 与 Compose v2；首次源码构建需要联网；构建阶段自动安装项目固定的 pnpm，宿主机无需安装 Node.js/pnpm。
 
 ## 首次部署
 
@@ -72,3 +72,5 @@ docker compose exec automation python -m app.automation_worker --health
 
 
 首次从 SQLite 升级不能直接启动上述全新安装命令：先按 [PostgreSQL 状态库切换](docs/deployment/PostgreSQL状态库迁移.md) 停机、备份、导入和校验。状态库现在是必需服务，保留 postgres_data 卷且不发布5432端口；运行账号为 cutting_app，独立 migrate 服务使用 cutting_migrator。不要执行 down -v 或把旧 P4 演练数据误当作最终数据。
+
+P7 Consumer默认1个，同机扩缩容使用 `docker compose up -d --no-deps --scale worker=2 worker`（或3/1）；持久化数量设置CONSUMER_REPLICAS。原生每个服务显式设置不同CONSUMER_INSTANCE_ID。旧SQLite先完成P5最新迁移/verify；旧P6先停Consumer并追加003，再执行prepare-consumers，不能直接混跑两种租约协议。实例探针、容量预算和回退见[部署说明](docs/deployment/WEB_WORKER进程隔离升级说明.md)。

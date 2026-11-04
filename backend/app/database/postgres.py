@@ -1,6 +1,7 @@
 """One process-owned PostgreSQL state pool and explicit repository transactions."""
 from contextlib import contextmanager
 from contextvars import ContextVar
+from collections.abc import Iterable
 from typing import Iterator
 
 from psycopg import Connection
@@ -31,6 +32,11 @@ def execution_owner() -> str | None:
     return current[2] if current else None
 
 
+def execution_lease_name() -> str | None:
+    current = _execution.get()
+    return current[1] if current else None
+
+
 def require_execution_lease(connection: Connection, database: 'PostgresDatabase') -> None:
     current = _execution.get()
     if current is None or current[0] != database.identity:
@@ -46,10 +52,20 @@ def require_execution_lease(connection: Connection, database: 'PostgresDatabase'
 
 def require_role_recovery(connection: Connection, role: str) -> None:
     current = _execution.get()
-    if current is None or current[1] != role or connection.execute('''
+    permitted = current is not None and (current[1].startswith('worker:') if role == 'worker' else current[1] == role)
+    if not permitted or connection.execute('''
         SELECT owner FROM process_leases WHERE name=%s AND owner=%s
-        AND expires_at>EXTRACT(EPOCH FROM clock_timestamp()) FOR SHARE''', (role, current[2])).fetchone() is None:
+        AND expires_at>EXTRACT(EPOCH FROM clock_timestamp()) FOR SHARE''', (current[1], current[2])).fetchone() is None:
         raise ExecutionLeaseLost(f'只有持有有效 {role} 租约的进程可以恢复所属运行态')
+
+
+def recovery_owners(connection: Connection, owners: Iterable[str | None]) -> set[str | None]:
+    """Do not recover across a renewal/takeover that has not committed yet."""
+    owners = set(owners)
+    locked = {row['owner'] for row in connection.execute("""SELECT owner FROM process_leases
+        WHERE owner=ANY(%s) ORDER BY name FOR SHARE SKIP LOCKED""", (list(owners),))}
+    present = {row['owner'] for row in connection.execute('SELECT owner FROM process_leases WHERE owner=ANY(%s)', (list(owners),))}
+    return owners - (present - locked)
 
 
 def lock_key(connection: Connection, key: str) -> None:

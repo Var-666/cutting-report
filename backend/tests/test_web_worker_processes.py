@@ -201,7 +201,7 @@ def test_web_restarts_do_not_reset_worker_and_crashed_worker_report_recovers(tmp
     assert runtime.metadata.get_job("restart-test")["status"] == "calculating"
     # Simulate the elapsed lease timeout without a 30-second test sleep.
     with runtime.database.connect() as connection:
-        connection.execute("UPDATE process_leases SET expires_at=0 WHERE name='worker'")
+        connection.execute("UPDATE process_leases SET expires_at=0 WHERE name='worker:test-consumer'")
     replacement_stop = context.Event()
     replacement = context.Process(target=_worker, args=(configuration(tmp_path, postgres_state), replacement_stop))
     replacement.start()
@@ -215,7 +215,7 @@ def test_web_restarts_do_not_reset_worker_and_crashed_worker_report_recovers(tmp
         assert job["status"] == "completed", job
         assert job["execution_owner"] != original_owner
         assert (tmp_path / "reports" / job["relative_path"]).is_file()
-        assert runtime.coordination.worker_status()["report_alive"]
+        assert runtime.coordination.worker_status('worker:test-consumer')["report_alive"]
     finally:
         replacement_stop.set()
         join(replacement)
