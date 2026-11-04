@@ -42,11 +42,10 @@ class Opener:
         return Response(self.content, self.headers, self.status)
 
 
-def make_service(tmp_path, source=None):
+def make_service(tmp_path, state_database, source=None):
     cfg = replace(settings, project_root=tmp_path, file_download_max_bytes=1024, file_http_authorization="", file_http_cookie="",
                   file_http_base_url="http://files.internal:8800")
-    repository = DownloadRepository(tmp_path / "metadata.db")
-    repository.initialize()
+    repository = DownloadRepository(state_database)
     pdm = MockPdmRepository()
     pdm.mode = "sqlserver"
     source = source or HttpFileSource(cfg, opener=Opener())
@@ -56,7 +55,7 @@ def make_service(tmp_path, source=None):
     return service, payload
 
 
-def test_http_query_encodes_path_and_has_separate_optional_auth(tmp_path):
+def test_http_query_encodes_path_and_has_separate_optional_auth(tmp_path, state_database):
     cfg = replace(settings, file_http_base_url="http://files.internal:8800", file_http_authorization="Bearer file-only", file_http_cookie="file-session=test")
     opener = Opener()
     HttpFileSource(cfg, opener=opener).download(r"Root\2026-08-25\中文 空格.gen", tmp_path / "download.part")
@@ -91,8 +90,8 @@ def test_http_configuration_rejects_unsafe_endpoint(base):
     (b'{"IsSuccess":false,"Message":"bad"}', {"Content-Type": "application/octet-stream"}, 200),
     (b"<html>login</html>", {"Content-Type": "application/octet-stream"}, 200),
 ])
-def test_failed_download_not_published_and_partial_is_cleaned(tmp_path, content, headers, status):
-    service, payload = make_service(tmp_path)
+def test_failed_download_not_published_and_partial_is_cleaned(tmp_path, state_database, content, headers, status):
+    service, payload = make_service(tmp_path, state_database)
     service.source.opener = Opener(content, headers, status)
     with pytest.raises(DownloadError):
         service.download(**payload, user=ADMIN)
@@ -104,8 +103,8 @@ def test_failed_download_not_published_and_partial_is_cleaned(tmp_path, content,
 
 
 @pytest.mark.parametrize("code", [301, 302, 401, 403, 404, 500])
-def test_http_errors_hide_credentials_and_remote_body(tmp_path, code):
-    service, payload = make_service(tmp_path)
+def test_http_errors_hide_credentials_and_remote_body(tmp_path, state_database, code):
+    service, payload = make_service(tmp_path, state_database)
     service.source.opener = Opener(error=HTTPError("http://files/?secret=do-not-log", code, "remote-secret", {}, BytesIO(b"private body")))
     with pytest.raises(DownloadError) as error:
         service.download(**payload, user=ADMIN)
@@ -113,16 +112,16 @@ def test_http_errors_hide_credentials_and_remote_body(tmp_path, code):
     assert "private" not in str(service.list())
 
 
-def test_connection_failure_safe_message(tmp_path):
-    service, payload = make_service(tmp_path)
+def test_connection_failure_safe_message(tmp_path, state_database):
+    service, payload = make_service(tmp_path, state_database)
     service.source.opener = Opener(error=URLError("secret in remote URL"))
     with pytest.raises(DownloadError) as error:
         service.download(**payload, user=ADMIN)
     assert "secret" not in str(error.value)
 
 
-def test_names_and_separate_downloads_persist_without_overwrite(tmp_path):
-    service, payload = make_service(tmp_path)
+def test_names_and_separate_downloads_persist_without_overwrite(tmp_path, state_database):
+    service, payload = make_service(tmp_path, state_database)
     first = service.download(**payload, user=ADMIN)
     second = service.download(**payload, user=ADMIN)
     assert first["filename"] == "f7e50f62-d508-430e-8309-8bf309568095.GEN"
@@ -143,8 +142,8 @@ def test_names_and_separate_downloads_persist_without_overwrite(tmp_path):
     assert service.local_file(first["download_id"])[1].exists()
 
 
-def test_pushed_copy_is_deleted_and_the_same_version_can_be_downloaded_again(tmp_path):
-    service, payload = make_service(tmp_path)
+def test_pushed_copy_is_deleted_and_the_same_version_can_be_downloaded_again(tmp_path, state_database):
+    service, payload = make_service(tmp_path, state_database)
     first = service.download(**payload, user=ADMIN)
     _record, first_path = service.local_file(first["download_id"])
 
@@ -178,8 +177,8 @@ def test_filename_sanitizes_windows_names_and_limits_utf8():
 
 
 @pytest.mark.parametrize("changed", ["version", "path"])
-def test_stale_selection_does_not_fetch(tmp_path, changed, monkeypatch):
-    service, payload = make_service(tmp_path)
+def test_stale_selection_does_not_fetch(tmp_path, state_database, changed, monkeypatch):
+    service, payload = make_service(tmp_path, state_database)
     raw = dict(service.pdm.get_file(payload["document_id"]))
     if changed == "version":
         raw["version_id"] = "new-version"
@@ -192,8 +191,8 @@ def test_stale_selection_does_not_fetch(tmp_path, changed, monkeypatch):
     assert not service.source.opener.requests
 
 
-def test_multiple_physical_history_rows_can_save_selected_current_path(tmp_path, monkeypatch):
-    service, payload = make_service(tmp_path)
+def test_multiple_physical_history_rows_can_save_selected_current_path(tmp_path, state_database, monkeypatch):
+    service, payload = make_service(tmp_path, state_database)
     raw = dict(service.pdm.get_file(payload["document_id"]))
     raw["physical_file_count"] = 3
     monkeypatch.setattr(service.pdm, "get_file", lambda _: raw)
@@ -204,8 +203,8 @@ def test_multiple_physical_history_rows_can_save_selected_current_path(tmp_path,
     assert len(service.source.opener.requests) == 1
 
 
-def test_real_service_cannot_download_mock_pdm_paths(tmp_path):
-    service, payload = make_service(tmp_path)
+def test_real_service_cannot_download_mock_pdm_paths(tmp_path, state_database):
+    service, payload = make_service(tmp_path, state_database)
     service.pdm.mode = "mock"
     with pytest.raises(DownloadError):
         service.download(**payload, user=ADMIN)
@@ -221,8 +220,8 @@ def test_strict_version_mapping_query():
     assert "c.ClassificationType AS classification_type" in SqlServerPdmRepository.FILE_COLUMNS
 
 
-def test_missing_or_modified_local_file_not_served(tmp_path):
-    service, payload = make_service(tmp_path)
+def test_missing_or_modified_local_file_not_served(tmp_path, state_database):
+    service, payload = make_service(tmp_path, state_database)
     result = service.download(**payload, user=ADMIN)
     _, path = service.local_file(result["download_id"])
     path.write_bytes(b"EVIL DATA")
@@ -232,8 +231,8 @@ def test_missing_or_modified_local_file_not_served(tmp_path):
     assert service.list()["items"][0]["available"] is False
 
 
-def test_expired_download_file_is_deleted_but_audit_record_is_retained(tmp_path):
-    service, payload = make_service(tmp_path)
+def test_expired_download_file_is_deleted_but_audit_record_is_retained(tmp_path, state_database):
+    service, payload = make_service(tmp_path, state_database)
     result = service.download(**payload, user=ADMIN)
     item, path = service.local_file(result["download_id"])
     completed_at = datetime.fromisoformat(item["downloaded_at"])
@@ -256,8 +255,8 @@ def test_expired_download_file_is_deleted_but_audit_record_is_retained(tmp_path)
     assert service.cleanup_expired(now=completed_at) == {"cleaned": 0, "missing": 0, "failed": 0}
 
 
-def test_recent_download_is_not_cleaned(tmp_path):
-    service, payload = make_service(tmp_path)
+def test_recent_download_is_not_cleaned(tmp_path, state_database):
+    service, payload = make_service(tmp_path, state_database)
     result = service.download(**payload, user=ADMIN)
     item, path = service.local_file(result["download_id"])
     completed_at = datetime.fromisoformat(item["downloaded_at"])
@@ -270,8 +269,8 @@ def test_recent_download_is_not_cleaned(tmp_path):
     assert path.is_file()
 
 
-def test_cleanup_never_follows_a_symlink_outside_download_root(tmp_path):
-    service, payload = make_service(tmp_path)
+def test_cleanup_never_follows_a_symlink_outside_download_root(tmp_path, state_database):
+    service, payload = make_service(tmp_path, state_database)
     result = service.download(**payload, user=ADMIN)
     item, path = service.local_file(result["download_id"])
     completed_at = datetime.fromisoformat(item["downloaded_at"])
@@ -315,8 +314,8 @@ def test_cleanup_worker_runs_immediately_and_stops_cleanly():
     assert not worker.thread.is_alive()
 
 
-def test_symlink_cannot_escape_download_root(tmp_path):
-    service, payload = make_service(tmp_path)
+def test_symlink_cannot_escape_download_root(tmp_path, state_database):
+    service, payload = make_service(tmp_path, state_database)
     result = service.download(**payload, user=ADMIN)
     _, path = service.local_file(result["download_id"])
     external = tmp_path / "external.gen"
@@ -327,8 +326,8 @@ def test_symlink_cannot_escape_download_root(tmp_path):
         service.local_file(result["download_id"])
 
 
-def test_restart_marks_only_incomplete_records_failed(tmp_path):
-    service, payload = make_service(tmp_path)
+def test_restart_marks_only_incomplete_records_failed(tmp_path, state_database):
+    service, payload = make_service(tmp_path, state_database)
     finished = service.download(**payload, user=ADMIN)
     pending = dict(finished, download_id="dl_" + "a" * 32, status="downloading")
     service.repository.save(pending)
@@ -338,8 +337,8 @@ def test_restart_marks_only_incomplete_records_failed(tmp_path):
 
 
 @pytest.mark.parametrize("user,expected", [(None, 401), ({"role": "worker"}, 403)])
-def test_download_routes_are_admin_only(tmp_path, user, expected):
-    service, payload = make_service(tmp_path)
+def test_download_routes_are_admin_only(tmp_path, state_database, user, expected):
+    service, payload = make_service(tmp_path, state_database)
     app = FastAPI()
     app.include_router(router)
     app.state.file_downloads = service
@@ -350,8 +349,8 @@ def test_download_routes_are_admin_only(tmp_path, user, expected):
     assert service.repository.list(1, 10)[1] == 0
 
 
-def test_api_download_saves_record_without_exposing_file_content(tmp_path):
-    service, payload = make_service(tmp_path)
+def test_api_download_saves_record_without_exposing_file_content(tmp_path, state_database):
+    service, payload = make_service(tmp_path, state_database)
     app = FastAPI()
     app.include_router(router)
     app.state.file_downloads = service
@@ -373,7 +372,7 @@ def test_api_download_saves_record_without_exposing_file_content(tmp_path):
     assert client.post("/api/v1/cutting/downloads", json={**payload, "url": "http://untrusted/"}).status_code == 422
 
 
-def test_real_http_transport_get_and_redirect_not_followed(tmp_path):
+def test_real_http_transport_get_and_redirect_not_followed(tmp_path, state_database):
     requests = []
 
     class Handler(BaseHTTPRequestHandler):
@@ -414,8 +413,8 @@ def test_real_http_transport_get_and_redirect_not_followed(tmp_path):
         thread.join(timeout=2)
 
 
-def test_concurrency_limit_does_not_create_or_fetch_file(tmp_path):
-    service, payload = make_service(tmp_path)
+def test_concurrency_limit_does_not_create_or_fetch_file(tmp_path, state_database):
+    service, payload = make_service(tmp_path, state_database)
     service._slots.acquire()
     service._slots.acquire()
     try:

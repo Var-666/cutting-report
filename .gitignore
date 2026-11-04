@@ -46,5 +46,6 @@ tmp/
 !/docs/deployment/WEB_WORKER进程隔离升级说明.md
 /docs/design/*
 !/docs/design/SQLite仓储与事务设计.md
+!/docs/design/PostgreSQL仓储与事务设计.md
 !/docs/design/API契约与迁移约定.md
 /packages/

@@ -1,3 +1,4 @@
+from tests.postgres_fixtures import state_settings
 """Opt-in integration against an isolated MySQL fixture; never a production host.
 
 Run with WELD_TEST_MYSQL_PORT=<local-test-port> pytest backend/tests/test_welding_mysql.py.
@@ -278,7 +279,7 @@ def test_real_mysql_timeout_recovers_for_next_request(weld_mysql, caplog):
     assert service.report('daily', period())['summary']['weld_length_m'] == 10
 
 
-def test_real_mysql_api_exports_and_pdf(weld_mysql):
+def test_real_mysql_api_exports_and_pdf(postgres_state, weld_mysql):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
     from app.api.auth import require_admin
@@ -289,7 +290,7 @@ def test_real_mysql_api_exports_and_pdf(weld_mysql):
     app.include_router(router)
     app.include_router(database_router)
     app.dependency_overrides[require_admin] = lambda: {'role': 'admin'}
-    runtime = build_runtime(weld_mysql.settings, role="web")
+    runtime = build_runtime(state_settings(weld_mysql.settings,postgres_state), role="web")
     app.state.runtime = runtime
     app.state.pdf_service = PdfService(operation_timeout_seconds=60)
     @app.middleware('http')

@@ -68,8 +68,8 @@ def test_analysis_presents_internal_labels_in_plain_language() -> None:
     assert "[F001][F002]" in presented.overview
 
 
-def test_missing_project_identifiers_are_described_plainly_in_report_analysis(tmp_path: Path) -> None:
-    settings, service = _services(tmp_path)
+def test_missing_project_identifiers_are_described_plainly_in_report_analysis(state_database, tmp_path: Path) -> None:
+    settings, service = _services(state_database, tmp_path)
     selected_date = date(2026, 8, 18)
     bundle = QueryService(settings, client=source_client(settings)).fetch_report_data(ReportFilter(report_date=selected_date))
     workshop_row = replace(bundle.workshop_records[0], project_code=None, ship_no=None)
@@ -86,7 +86,7 @@ def test_missing_project_identifiers_are_described_plainly_in_report_analysis(tm
     assert "工程号未填写" in workshop_result.facts[-1]["value"]
 
 
-def _services(tmp_path: Path):
+def _services(state_database, tmp_path: Path):
     settings = cutting_settings(
         project_root=tmp_path,
         demo_mode=True,
@@ -94,14 +94,13 @@ def _services(tmp_path: Path):
         llm_enabled=True,
     )
     settings.ensure_runtime_dirs()
-    metadata = MetadataRepository(settings.metadata_db_path, device_id='Cutter01')
-    metadata.initialize()
+    metadata = MetadataRepository(state_database, device_id='Cutter01')
     service = ReportAnalysisService(settings, metadata)
     service.llm.analyze_context = model_analysis
     return settings, service
 
 
-def test_disabled_model_does_not_generate_report_data_analysis(tmp_path: Path) -> None:
+def test_disabled_model_does_not_generate_report_data_analysis(state_database, tmp_path: Path) -> None:
     settings = cutting_settings(
         project_root=tmp_path,
         demo_mode=True,
@@ -109,20 +108,19 @@ def test_disabled_model_does_not_generate_report_data_analysis(tmp_path: Path) -
         llm_enabled=False,
     )
     settings.ensure_runtime_dirs()
-    metadata = MetadataRepository(settings.metadata_db_path, device_id='Cutter01')
-    metadata.initialize()
+    metadata = MetadataRepository(state_database, device_id='Cutter01')
     service = ReportAnalysisService(settings, metadata)
     report = LeadershipReportService(settings, client=source_client(settings)).fetch(date(2026, 8, 1))
 
     with pytest.raises(AnalysisUnavailableError, match="未启用"):
         service.analyze_leadership(report)
 
-    with sqlite3.connect(settings.metadata_db_path) as connection:
-        assert connection.execute("SELECT COUNT(*) FROM report_analyses").fetchone()[0] == 0
+    with state_database.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM report_analyses").fetchone()['count'] == 0
 
 
-def test_three_report_types_use_model_results_with_report_facts(tmp_path: Path) -> None:
-    settings, service = _services(tmp_path)
+def test_three_report_types_use_model_results_with_report_facts(state_database, tmp_path: Path) -> None:
+    settings, service = _services(state_database, tmp_path)
     selected_date = date(2026, 8, 18)
     leadership = LeadershipReportService(settings, client=source_client(settings)).fetch(selected_date)
     bundle = QueryService(settings, client=source_client(settings)).fetch_report_data(
@@ -169,8 +167,8 @@ def test_three_report_types_use_model_results_with_report_facts(tmp_path: Path) 
         assert result.mode == "model"
 
 
-def test_same_analysis_input_uses_metadata_cache(tmp_path: Path) -> None:
-    settings, service = _services(tmp_path)
+def test_same_analysis_input_uses_metadata_cache(state_database, tmp_path: Path) -> None:
+    settings, service = _services(state_database, tmp_path)
     report = LeadershipReportService(settings, client=source_client(settings)).fetch(date(2026, 8, 1))
 
     first = service.analyze_leadership(report)
@@ -184,8 +182,8 @@ def test_same_analysis_input_uses_metadata_cache(tmp_path: Path) -> None:
     assert re.fullmatch(r"[0-9a-f]{64}\.[0-9a-f]{64}", first.data_version or "")
 
 
-def test_visible_report_version_must_match_analysis_source(tmp_path: Path) -> None:
-    settings, service = _services(tmp_path)
+def test_visible_report_version_must_match_analysis_source(state_database, tmp_path: Path) -> None:
+    settings, service = _services(state_database, tmp_path)
     report = LeadershipReportService(settings, client=source_client(settings)).fetch(date(2026, 8, 1))
     primary_version = leadership_analysis_source_version(report)
     summary_version = analysis_table_source_version(report.monthly_records)
@@ -263,8 +261,8 @@ def test_data_version_is_stable_for_key_order_and_changes_with_business_data() -
     assert generate_data_version(first) != generate_data_version(changed)
 
 
-def test_delayed_cache_write_cannot_replace_a_newer_completed_analysis(tmp_path, monkeypatch):
-    _, service = _services(tmp_path)
+def test_delayed_cache_write_cannot_replace_a_newer_completed_analysis(state_database, tmp_path, monkeypatch):
+    _, service = _services(state_database, tmp_path)
     now = datetime(2026, 10, 19, 8, tzinfo=service.timezone)
     old_stamp = now.isoformat(timespec='seconds')
     waiting, release = Event(), Event()
@@ -310,8 +308,8 @@ def test_delayed_cache_write_cannot_replace_a_newer_completed_analysis(tmp_path,
     assert len(calls) == 2, 'both periodic calls must run while subsequent reads reuse the newest completed result'
 
 
-def test_force_refresh_replaces_same_version_cache(tmp_path: Path, monkeypatch) -> None:
-    settings, service = _services(tmp_path)
+def test_force_refresh_replaces_same_version_cache(state_database, tmp_path: Path, monkeypatch) -> None:
+    settings, service = _services(state_database, tmp_path)
     report = LeadershipReportService(settings, client=source_client(settings)).fetch(date(2026, 8, 1))
     now = datetime(2026, 8, 1, 8, tzinfo=service.timezone)
 
@@ -334,13 +332,13 @@ def test_force_refresh_replaces_same_version_cache(tmp_path: Path, monkeypatch) 
     assert cached.data_version == forced.data_version
     assert cached.generated_at == forced.generated_at
 
-    with sqlite3.connect(settings.metadata_db_path) as connection:
-        columns = {row[1] for row in connection.execute("PRAGMA table_info(report_analyses)")}
+    with state_database.connect() as connection:
+        columns = {row["column_name"] for row in connection.execute("SELECT column_name FROM information_schema.columns WHERE table_schema='app_state' AND table_name='report_analyses'")}
         rows = connection.execute(
             "SELECT data_version FROM report_analyses WHERE report_type = 'leadership'"
         ).fetchall()
     assert "data_version" in columns
-    assert rows == [(forced.data_version,)]
+    assert rows == [{"data_version":forced.data_version}]
     assert service.metadata.get_analysis_source_version(
         report_type="leadership",
         report_date="2026-08",
@@ -351,8 +349,8 @@ def test_force_refresh_replaces_same_version_cache(tmp_path: Path, monkeypatch) 
     }
 
 
-def test_concurrent_same_version_requests_call_model_once(tmp_path: Path, monkeypatch) -> None:
-    settings, service = _services(tmp_path)
+def test_concurrent_same_version_requests_call_model_once(state_database, tmp_path: Path, monkeypatch) -> None:
+    settings, service = _services(state_database, tmp_path)
     service.settings = replace(settings, llm_enabled=True)
     report = LeadershipReportService(settings, client=source_client(settings)).fetch(date(2026, 8, 1))
     calls = 0
@@ -372,8 +370,8 @@ def test_concurrent_same_version_requests_call_model_once(tmp_path: Path, monkey
     assert results[0].data_version == results[1].data_version
 
 
-def test_page_promotes_queued_background_analysis_without_duplicate_model(tmp_path, monkeypatch, caplog):
-    settings, service = _services(tmp_path)
+def test_page_promotes_queued_background_analysis_without_duplicate_model(state_database, tmp_path, monkeypatch, caplog):
+    settings, service = _services(state_database, tmp_path)
     settings = replace(settings, llm_max_concurrent=4, llm_queue_timeout_seconds=2)
     service.settings = settings
     report = LeadershipReportService(settings, client=source_client(settings)).fetch(date(2026, 8, 1))
@@ -387,7 +385,7 @@ def test_page_promotes_queued_background_analysis_without_duplicate_model(tmp_pa
         nonlocal calls
         calls += 1
         started.set()
-        with llm_capacity(settings):
+        with llm_capacity(settings, database=state_database):
             admitted.set()
             assert finish.wait(3)
             return model_analysis(report_type, context)
@@ -398,7 +396,7 @@ def test_page_promotes_queued_background_analysis_without_duplicate_model(tmp_pa
 
     monkeypatch.setattr(service.llm, "analyze_context", model)
     # Other automatic work fills the two background slots; two page slots remain.
-    with background_llm_work(), llm_capacity(settings), llm_capacity(settings):
+    with background_llm_work(), llm_capacity(settings, database=state_database), llm_capacity(settings, database=state_database):
         with ThreadPoolExecutor(max_workers=2) as executor:
             producer = executor.submit(background)
             try:
@@ -422,8 +420,8 @@ def test_page_promotes_queued_background_analysis_without_duplicate_model(tmp_pa
     (LlmRequestTimeout, AnalysisUnavailableError, "模型响应超时"),
     (ReportOperationTimeout, ReportOperationTimeout, "timeout"),
 ])
-def test_waiters_share_failed_attempt_but_later_retry_can_recover(tmp_path, monkeypatch, failure, expected, message):
-    settings, service = _services(tmp_path)
+def test_waiters_share_failed_attempt_but_later_retry_can_recover(state_database, tmp_path, monkeypatch, failure, expected, message):
+    settings, service = _services(state_database, tmp_path)
     report = LeadershipReportService(settings, client=source_client(settings)).fetch(date(2026, 8, 1))
     started, finish = Event(), Event()
     calls = 0
@@ -464,8 +462,8 @@ def test_waiters_share_failed_attempt_but_later_retry_can_recover(tmp_path, monk
     assert calls == 2
 
 
-def test_cancelled_page_retracts_priority_without_cancelling_shared_background_work(tmp_path, monkeypatch):
-    settings, service = _services(tmp_path)
+def test_cancelled_page_retracts_priority_without_cancelling_shared_background_work(state_database, tmp_path, monkeypatch):
+    settings, service = _services(state_database, tmp_path)
     settings = replace(settings, llm_max_concurrent=4)
     service.settings = settings
     report = LeadershipReportService(settings, client=source_client(settings)).fetch(date(2026, 8, 1))
@@ -475,7 +473,7 @@ def test_cancelled_page_retracts_priority_without_cancelling_shared_background_w
 
     def model(report_type, context):
         started.set()
-        with llm_capacity(settings):
+        with llm_capacity(settings, database=state_database):
             admitted.set()
             return model_analysis(report_type, context)
 
@@ -498,9 +496,9 @@ def test_cancelled_page_retracts_priority_without_cancelling_shared_background_w
             with ExitStack() as bg_slots, ExitStack() as fg_slots:
                 with background_llm_work():
                     for _ in range(2):
-                        bg_slots.enter_context(llm_capacity(settings))
+                        bg_slots.enter_context(llm_capacity(settings, database=state_database))
                 for _ in range(2):
-                    fg_slots.enter_context(llm_capacity(settings))
+                    fg_slots.enter_context(llm_capacity(settings, database=state_database))
                 producer = executor.submit(background)
                 assert started.wait(1)
                 page = executor.submit(page_request)
@@ -523,8 +521,8 @@ def test_cancelled_page_retracts_priority_without_cancelling_shared_background_w
 
 
 @pytest.mark.parametrize("stop", ["timeout", "cancel", "report_deadline"])
-def test_same_version_wait_can_stop_without_releasing_active_generation(tmp_path, monkeypatch, stop):
-    settings, service = _services(tmp_path)
+def test_same_version_wait_can_stop_without_releasing_active_generation(state_database, tmp_path, monkeypatch, stop):
+    settings, service = _services(state_database, tmp_path)
     service.settings = replace(settings, llm_queue_timeout_seconds=1)
     report = LeadershipReportService(settings, client=source_client(settings)).fetch(date(2026, 8, 1))
     entered, release = Event(), Event()
@@ -589,8 +587,8 @@ def test_same_version_wait_can_stop_without_releasing_active_generation(tmp_path
 
 
 @pytest.mark.parametrize("error", [SqlRequestCancelled, ReportOperationTimeout])
-def test_model_cancellation_and_report_deadline_are_not_ai_unavailability(tmp_path, monkeypatch, error):
-    settings, service = _services(tmp_path)
+def test_model_cancellation_and_report_deadline_are_not_ai_unavailability(state_database, tmp_path, monkeypatch, error):
+    settings, service = _services(state_database, tmp_path)
     report = LeadershipReportService(settings, client=source_client(settings)).fetch(date(2026, 8, 1))
 
     def interrupted(*args):
@@ -604,8 +602,8 @@ def test_model_cancellation_and_report_deadline_are_not_ai_unavailability(tmp_pa
     assert service.analyze_leadership(report).cached is False
 
 
-def test_versions_change_when_previously_unwatched_report_values_change(tmp_path: Path) -> None:
-    settings, service = _services(tmp_path)
+def test_versions_change_when_previously_unwatched_report_values_change(state_database, tmp_path: Path) -> None:
+    settings, service = _services(state_database, tmp_path)
     selected_date = date(2026, 8, 18)
     report = LeadershipReportService(settings, client=source_client(settings)).fetch(selected_date)
     bundle = QueryService(settings, client=source_client(settings)).fetch_report_data(
@@ -660,8 +658,8 @@ def test_versions_change_when_previously_unwatched_report_values_change(tmp_path
     assert equipment_before.data_version != equipment_after.data_version
 
 
-def test_empty_reports_keep_six_facts_without_inventing_comparisons(tmp_path):
-    settings, service = _services(tmp_path)
+def test_empty_reports_keep_six_facts_without_inventing_comparisons(state_database, tmp_path):
+    settings, service = _services(state_database, tmp_path)
     report = LeadershipReportService(settings, client=source_client(settings)).fetch(date(2026, 8, 1))
     empty_total = replace(report.current_month_total, task_count=0)
     report = replace(
@@ -692,8 +690,8 @@ def test_empty_reports_keep_six_facts_without_inventing_comparisons(tmp_path):
     assert results[2].facts[2]["value"].startswith("缺失")
 
 
-def test_energy_quality_counts_a_task_once_even_with_multiple_issues(tmp_path):
-    settings, service = _services(tmp_path)
+def test_energy_quality_counts_a_task_once_even_with_multiple_issues(state_database, tmp_path):
+    settings, service = _services(state_database, tmp_path)
     bundle = QueryService(settings, client=source_client(settings)).fetch_report_data(ReportFilter(report_date=date(2026, 8, 18)))
     row = replace(bundle.equipment_records[0], gas_consumption=None, electricity_consumption=None, gas_data_status="overlap", electricity_data_status="gap")
     result = service.analyze_equipment("2026-08-18", [row])
@@ -704,8 +702,8 @@ def test_energy_quality_counts_a_task_once_even_with_multiple_issues(tmp_path):
     assert "仪表记录不完整 1 项" in quality["source"]
 
 
-def test_partial_task_energy_facts_keep_actual_meter_source(tmp_path):
-    settings, service = _services(tmp_path)
+def test_partial_task_energy_facts_keep_actual_meter_source(state_database, tmp_path):
+    settings, service = _services(state_database, tmp_path)
     bundle = QueryService(settings, client=source_client(settings)).fetch_report_data(ReportFilter(report_date=date(2026, 8, 18)))
     measured = replace(
         bundle.equipment_records[0],
@@ -738,8 +736,8 @@ def test_partial_task_energy_facts_keep_actual_meter_source(tmp_path):
     assert "根据前后读数估算 1 项" in facts["F003"]["source"]
 
 
-def test_partial_energy_does_not_claim_a_missing_channel_has_meter_data(tmp_path):
-    settings, service = _services(tmp_path)
+def test_partial_energy_does_not_claim_a_missing_channel_has_meter_data(state_database, tmp_path):
+    settings, service = _services(state_database, tmp_path)
     bundle = QueryService(settings, client=source_client(settings)).fetch_report_data(ReportFilter(report_date=date(2026, 8, 18)))
     row = replace(
         bundle.equipment_records[0],
@@ -761,8 +759,8 @@ def test_partial_energy_does_not_claim_a_missing_channel_has_meter_data(tmp_path
     assert "数据来源 实际仪表数据" not in facts["F004"]["source"]
 
 
-def test_model_receives_six_facts_and_two_complete_report_tables(tmp_path, monkeypatch):
-    settings, service = _services(tmp_path)
+def test_model_receives_six_facts_and_two_complete_report_tables(state_database, tmp_path, monkeypatch):
+    settings, service = _services(state_database, tmp_path)
     report = LeadershipReportService(settings, client=source_client(settings)).fetch(date(2026, 8, 1))
     bundle = QueryService(settings, client=source_client(settings)).fetch_report_data(
         ReportFilter(report_date=date(2026, 8, 18))
@@ -835,8 +833,8 @@ def test_model_receives_six_facts_and_two_complete_report_tables(tmp_path, monke
         assert all(table["row_count"] == len(table["rows"]) for table in contexts[report_type]["tables"])
         assert result.mode == "model"
 
-def test_failed_model_call_is_not_cached_and_next_request_retries(tmp_path, monkeypatch):
-    settings, service = _services(tmp_path)
+def test_failed_model_call_is_not_cached_and_next_request_retries(state_database, tmp_path, monkeypatch):
+    settings, service = _services(state_database, tmp_path)
     report = LeadershipReportService(settings, client=source_client(settings)).fetch(date(2026, 8, 1))
     calls = 0
 
@@ -851,10 +849,10 @@ def test_failed_model_call_is_not_cached_and_next_request_retries(tmp_path, monk
     with pytest.raises(AnalysisUnavailableError, match="暂不可用"):
         service.analyze_leadership(report)
 
-    with sqlite3.connect(settings.metadata_db_path) as connection:
+    with state_database.connect() as connection:
         count = connection.execute(
             "SELECT COUNT(*) FROM report_analyses WHERE report_type = 'leadership'"
-        ).fetchone()[0]
+        ).fetchone()['count']
     assert count == 0
     assert service.metadata.get_analysis_source_version(
         report_type="leadership",
@@ -879,8 +877,8 @@ def test_failed_model_call_is_not_cached_and_next_request_retries(tmp_path, monk
                             response=httpx.Response(status)), message)
       for status, message in [(429, '限流'), (401, '认证失败'), (403, '认证失败'), (503, 'HTTP 503')]],
 ])
-def test_model_failure_explains_recovery_action_and_does_not_poison_cache(tmp_path, monkeypatch, caplog, error, message):
-    settings, service = _services(tmp_path)
+def test_model_failure_explains_recovery_action_and_does_not_poison_cache(state_database, tmp_path, monkeypatch, caplog, error, message):
+    settings, service = _services(state_database, tmp_path)
     report = LeadershipReportService(settings, client=source_client(settings)).fetch(date(2026, 8, 1))
 
     def fail(*args, **kwargs):
@@ -896,8 +894,8 @@ def test_model_failure_explains_recovery_action_and_does_not_poison_cache(tmp_pa
     assert service.analyze_leadership(report).cached is True
 
 
-def test_oversized_report_explains_input_problem_instead_of_model_outage(tmp_path, monkeypatch):
-    settings, service = _services(tmp_path)
+def test_oversized_report_explains_input_problem_instead_of_model_outage(state_database, tmp_path, monkeypatch):
+    settings, service = _services(state_database, tmp_path)
     report = LeadershipReportService(settings, client=source_client(settings)).fetch(date(2026, 8, 1))
 
     def fail(*args, **kwargs):
@@ -909,9 +907,9 @@ def test_oversized_report_explains_input_problem_instead_of_model_outage(tmp_pat
 
 
 @pytest.mark.parametrize('report_type', ['leadership', 'workshop', 'equipment'])
-def test_response_header_timeout_is_explained_and_all_report_types_can_recover(tmp_path, monkeypatch, report_type):
-    settings, service = _services(tmp_path)
-    service.llm = LlmService(replace(settings, llm_api_key='test-key', llm_base_url='http://llm.test', llm_timeout=90))
+def test_response_header_timeout_is_explained_and_all_report_types_can_recover(state_database, tmp_path, monkeypatch, report_type):
+    settings, service = _services(state_database, tmp_path)
+    service.llm = LlmService(replace(settings, llm_api_key='test-key', llm_base_url='http://llm.test', llm_timeout=90), database=state_database)
     original_client = httpx.Client
     attempts = []
 
@@ -936,8 +934,8 @@ def test_response_header_timeout_is_explained_and_all_report_types_can_recover(t
     assert len(attempts) == 2
 
 
-def test_model_output_is_used_without_content_rejection(tmp_path, monkeypatch):
-    settings, service = _services(tmp_path)
+def test_model_output_is_used_without_content_rejection(state_database, tmp_path, monkeypatch):
+    settings, service = _services(state_database, tmp_path)
     model_settings = replace(
         settings,
         llm_enabled=True,
@@ -945,7 +943,7 @@ def test_model_output_is_used_without_content_rejection(tmp_path, monkeypatch):
         llm_base_url="http://llm.test",
     )
     service.settings = model_settings
-    service.llm = LlmService(model_settings)
+    service.llm = LlmService(model_settings, database=state_database)
 
     class FakeResponse:
         def raise_for_status(self):
@@ -985,8 +983,8 @@ def test_model_output_is_used_without_content_rejection(tmp_path, monkeypatch):
     assert result.mode == "model"
     assert calls == 1
 
-    with sqlite3.connect(settings.metadata_db_path) as connection:
+    with state_database.connect() as connection:
         count = connection.execute(
             "SELECT COUNT(*) FROM report_analyses WHERE report_type = 'leadership'"
-        ).fetchone()[0]
+        ).fetchone()['count']
     assert count == 1

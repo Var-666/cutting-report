@@ -18,14 +18,11 @@ STAMP = NOW.isoformat(timespec="seconds")
 
 
 @pytest.fixture
-def workflow(tmp_path):
-    path = tmp_path / "metadata.db"
+def workflow(tmp_path, state_database):
+    path = state_database
     metadata = MetadataRepository(path, device_id='Cutter01')
-    metadata.initialize()
     workshop = WorkshopRepository(path, scope_machine_no='Cutter01')
-    workshop.initialize()
     repository = AutomationRepository(path)
-    repository.initialize()
     user = workshop.create_user(username="admin", display_name="管理员", password="test-password",
                                 role="admin", now=STAMP)
     schedule = repository.create_schedule({
@@ -79,7 +76,7 @@ def test_concurrent_recovery_and_manual_enqueue_create_only_one_job(workflow):
         results = list(pool.map(lambda _: service._create_report_job(run, NOW), range(2)))
     assert sorted(results) == [False, True]
     with metadata.connect() as connection:
-        assert connection.execute("SELECT COUNT(*) FROM report_jobs").fetchone()[0] == 1
+        assert connection.execute("SELECT COUNT(*) AS count FROM report_jobs").fetchone()['count'] == 1
     assert repository.get_run(run["run_id"])["status"] == "generating"
 
 
@@ -102,7 +99,7 @@ def test_recovery_isolates_callback_failure_and_repairs_failed_run(workflow, mon
 def test_unknown_device_fails_reserved_run_without_creating_a_job(workflow):
     repository, metadata, service, run = workflow
     with repository.connect() as connection:
-        connection.execute("UPDATE scheduled_report_runs SET device_id='missing' WHERE run_id=?", (run['run_id'],))
+        connection.execute("UPDATE scheduled_report_runs SET device_id='missing' WHERE run_id=%s", (run['run_id'],))
     run = repository.get_run(run['run_id'])
     assert not service._create_report_job(run, NOW)
     assert repository.get_run(run['run_id'])['status'] == 'failed'

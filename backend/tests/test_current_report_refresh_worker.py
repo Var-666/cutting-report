@@ -22,16 +22,16 @@ TODAY = date(2026, 9, 28)
 
 
 @pytest.mark.parametrize("limit", [4, 10])
-def test_periodic_analysis_can_use_shared_capacity_beyond_background_quota_and_releases_it(monkeypatch, limit):
+def test_periodic_analysis_can_use_shared_capacity_beyond_background_quota_and_releases_it(state_database, tmp_path, monkeypatch, limit):
     capacity = _LlmCapacity()
     monkeypatch.setattr("app.services.llm_service._LLM_CAPACITY", capacity)
-    settings = SimpleNamespace(llm_max_concurrent=limit, llm_queue_timeout_seconds=2)
+    settings = SimpleNamespace(data_dir=tmp_path, llm_max_concurrent=limit, llm_queue_timeout_seconds=2)
     entered, release = Event(), Event()
     lock = Lock()
     calls = []
     runner = ParallelAnalysisTasks()
     def analyze():
-        with llm_capacity(settings):
+        with llm_capacity(settings, database=state_database):
             with lock:
                 calls.append(1)
                 if len(calls) == limit:
@@ -52,11 +52,10 @@ def test_periodic_analysis_can_use_shared_capacity_beyond_background_quota_and_r
 
 @pytest.mark.parametrize("device_id", ["Cutter01", "Cutter02"])
 @pytest.mark.parametrize("report_type", ["leadership", "workshop", "equipment"])
-def test_unchanged_overlapping_periodic_rounds_each_send_http_and_record_usage(tmp_path, monkeypatch, device_id, report_type):
+def test_unchanged_overlapping_periodic_rounds_each_send_http_and_record_usage(state_database, tmp_path, monkeypatch, device_id, report_type):
     settings = Settings(project_root=tmp_path, device_id=device_id, llm_enabled=True,
                         llm_api_key="test", llm_base_url="http://llm.test", llm_max_concurrent=4)
-    metadata = MetadataRepository(settings.metadata_db_path, device_id=device_id)
-    metadata.initialize()
+    metadata = MetadataRepository(state_database, device_id=device_id)
     service = ReportAnalysisService(settings, metadata)
     entered, second_entered, release, completed = Event(), Event(), Event(), Event()
     lock = Lock()
@@ -118,7 +117,7 @@ def test_unchanged_overlapping_periodic_rounds_each_send_http_and_record_usage(t
     assert len(requests) == 2
     assert requests[0] == requests[1], "unchanged input must not suppress the next scheduled model call"
     assert all(not result.cached for result in results)
-    assert LlmUsageRepository(settings.metadata_db_path).summary() == {
+    assert LlmUsageRepository(state_database).summary() == {
         "call_count": 2, "metered_count": 2, "total_tokens": 18,
     }
     cached = service._analyze(report_type=report_type, report_date=analysis_date, context=context, force=False)
@@ -278,7 +277,7 @@ def test_daily_energy_snapshot_failure_does_not_skip_task_analysis() -> None:
     assert calls == [(TODAY.isoformat(), True)]
 
 
-def test_automatic_report_and_alarm_consumers_use_background_capacity_then_restore_foreground(monkeypatch):
+def test_automatic_report_and_alarm_consumers_use_background_capacity_then_restore_foreground(state_database, tmp_path, monkeypatch):
     class Capacity(_LlmCapacity):
         def acquire(self, settings, *, background):
             calls.append(background)
@@ -286,11 +285,11 @@ def test_automatic_report_and_alarm_consumers_use_background_capacity_then_resto
 
     calls = []
     monkeypatch.setattr('app.services.llm_service._LLM_CAPACITY', Capacity())
-    settings = SimpleNamespace(llm_enabled=True, llm_max_concurrent=4, llm_queue_timeout_seconds=1,
+    settings = SimpleNamespace(data_dir=tmp_path, llm_enabled=True, llm_max_concurrent=4, llm_queue_timeout_seconds=1,
                                timezone='Asia/Shanghai', alarm_monitor_interval_seconds=300)
 
     def analyze(*args, **kwargs):
-        with llm_capacity(settings):
+        with llm_capacity(settings, database=state_database):
             pass
 
     current = CurrentReportRefreshWorker(settings, SimpleNamespace(latest_production_date=lambda *a, **k: TODAY),
@@ -360,7 +359,7 @@ def test_slow_leadership_analysis_does_not_delay_or_merge_later_rounds():
 
 
 @pytest.mark.parametrize("blocked_type", ["workshop", "equipment"])
-def test_current_slow_analysis_preserves_every_round_and_its_equipment_inputs(monkeypatch, blocked_type):
+def test_current_slow_analysis_preserves_every_round_and_its_equipment_inputs(state_database, monkeypatch, blocked_type):
     from threading import Event
     entered, release, completed = Event(), Event(), Event()
     revisions = {"workshop": 0, "equipment": 0, "energy": 0}

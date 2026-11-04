@@ -24,7 +24,7 @@ from tests.analysis_fakes import model_analysis
         ("equipment", "切割生产设备报表", "equipment-detail-chart"),
     ],
 )
-def test_demo_pipeline_generates_offline_report(
+def test_demo_pipeline_generates_offline_report(state_database,
     tmp_path: Path,
     report_type: str,
     expected_title: str,
@@ -44,14 +44,12 @@ def test_demo_pipeline_generates_offline_report(
         app_version="test",
     )
     test_settings.ensure_runtime_dirs()
-    metadata = MetadataRepository(test_settings.metadata_db_path, device_id='Cutter01')
-    metadata.initialize()
+    metadata = MetadataRepository(state_database, device_id='Cutter01')
     pipeline = ReportPipeline(test_settings, metadata, query_service=QueryService(test_settings, client=source_client(test_settings)))
     pipeline.analysis_service.llm.analyze_context = model_analysis
     now = datetime.now(ZoneInfo(test_settings.timezone)).isoformat(timespec="seconds")
     if report_type == "workshop":
-        workshop = WorkshopRepository(test_settings.metadata_db_path, scope_machine_no='Cutter01')
-        workshop.initialize()
+        workshop = WorkshopRepository(state_database, scope_machine_no='Cutter01')
         user = workshop.bootstrap_admin(
             username="tester",
             display_name="测试工人",
@@ -147,7 +145,7 @@ def test_demo_pipeline_generates_offline_report(
     assert completed["task_count"] > 0
 
 
-def test_pipeline_completes_deterministic_report_when_ai_is_unavailable(tmp_path: Path) -> None:
+def test_pipeline_completes_deterministic_report_when_ai_is_unavailable(state_database, tmp_path: Path) -> None:
     vendor_dir = tmp_path / "vendor"
     vendor_dir.mkdir()
     (vendor_dir / "echarts.min.js").write_text(
@@ -162,8 +160,7 @@ def test_pipeline_completes_deterministic_report_when_ai_is_unavailable(tmp_path
         app_version="test",
     )
     test_settings.ensure_runtime_dirs()
-    metadata = MetadataRepository(test_settings.metadata_db_path, device_id='Cutter01')
-    metadata.initialize()
+    metadata = MetadataRepository(state_database, device_id='Cutter01')
     pipeline = ReportPipeline(test_settings, metadata, query_service=QueryService(test_settings, client=source_client(test_settings)))
     now = datetime.now(ZoneInfo(test_settings.timezone)).isoformat(timespec="seconds")
     metadata.create_job(
@@ -192,7 +189,7 @@ def test_pipeline_completes_deterministic_report_when_ai_is_unavailable(tmp_path
 
 
 @pytest.mark.parametrize("report_type", ["leadership", "equipment"])
-def test_range_export_keeps_the_recent_twelve_month_summary(
+def test_range_export_keeps_the_recent_twelve_month_summary(state_database,
     tmp_path: Path,
     report_type: str,
 ) -> None:
@@ -210,8 +207,7 @@ def test_range_export_keeps_the_recent_twelve_month_summary(
         app_version="test",
     )
     test_settings.ensure_runtime_dirs()
-    metadata = MetadataRepository(test_settings.metadata_db_path, device_id='Cutter01')
-    metadata.initialize()
+    metadata = MetadataRepository(state_database, device_id='Cutter01')
     pipeline = ReportPipeline(test_settings, metadata, query_service=QueryService(test_settings, client=source_client(test_settings)))
     pipeline.analysis_service.llm.analyze_context = model_analysis
     now = datetime.now(ZoneInfo(test_settings.timezone)).isoformat(timespec="seconds")
@@ -253,7 +249,7 @@ def test_range_export_keeps_the_recent_twelve_month_summary(
 
 
 @pytest.fixture
-def report_flow(tmp_path, monkeypatch):
+def report_flow(state_database, tmp_path, monkeypatch):
     """Use SQL Server result fixtures and real HTML to protect period/format semantics."""
     source_rows = []
     for task_id, stamp, machine, status in (
@@ -282,8 +278,7 @@ def report_flow(tmp_path, monkeypatch):
                         energy_report_equipment_ids=("Cutter01",), energy_api_enabled=False,
                         llm_enabled=True, app_version="test")
     settings.ensure_runtime_dirs()
-    metadata = MetadataRepository(settings.metadata_db_path, device_id='Cutter01')
-    metadata.initialize()
+    metadata = MetadataRepository(state_database, device_id='Cutter01')
     pipeline = ReportPipeline(settings, metadata, query_service=QueryService(settings, client=source_client(settings)))
 
     def selected_rows(parameters):

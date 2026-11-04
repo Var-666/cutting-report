@@ -49,14 +49,14 @@ def envelope(scenario='report'):
     return {'choices': [{'message': {'content': json.dumps(content)}}], 'usage': {'total_tokens': 9}}
 
 
-def analyze(settings, scenario='report'):
+def analyze(state_database, settings, scenario='report'):
     if scenario == 'report':
-        return LlmService(settings).analyze_context('workshop', {'facts': []})
-    return AlarmAnalysisService(settings).analyze([])
+        return LlmService(settings, database=state_database).analyze_context('workshop', {'facts': []})
+    return AlarmAnalysisService(settings, database=state_database).analyze([])
 
 
 @pytest.mark.parametrize('scenario', ['report', 'alarm'])
-def test_throttled_calls_recover_with_honest_usage_and_no_capacity_held_during_backoff(
+def test_throttled_calls_recover_with_honest_usage_and_no_capacity_held_during_backoff(state_database,
     settings, clock, monkeypatch, caplog, scenario,
 ):
     capacity = _LlmCapacity()
@@ -86,16 +86,16 @@ def test_throttled_calls_recover_with_honest_usage_and_no_capacity_held_during_b
         return response
 
     mock_http(monkeypatch, respond)
-    analyze(settings, scenario)
+    analyze(state_database, settings, scenario)
     assert sent_at == [1000, 1002, 1005], 'each retry must respect the provider wait'
     assert requests[0] == requests[1] == requests[2]
     assert all(response.is_closed for response in responses)
     assert sum(sleeps) == pytest.approx(5)
     assert capacity._active == capacity._background_active == capacity._foreground_waiting == 0
-    assert LlmUsageRepository(settings.metadata_db_path).summary() == {
+    assert LlmUsageRepository(state_database).summary() == {
         'call_count': 3, 'metered_count': 1, 'total_tokens': 9,
     }
-    with LlmUsageRepository(settings.metadata_db_path).connect() as connection:
+    with LlmUsageRepository(state_database).connect() as connection:
         rows = connection.execute('SELECT status, scene FROM llm_usage_calls ORDER BY id').fetchall()
     assert [row['status'] for row in rows] == ['failed', 'failed', 'responded']
     assert {row['scene'] for row in rows} == {'workshop' if scenario == 'report' else 'alarm'}
@@ -108,7 +108,7 @@ def test_throttled_calls_recover_with_honest_usage_and_no_capacity_held_during_b
 
 
 @pytest.mark.parametrize('scenario', ['report', 'alarm'])
-def test_persistent_throttling_stops_after_two_retries(settings, clock, monkeypatch, scenario):
+def test_persistent_throttling_stops_after_two_retries(state_database, settings, clock, monkeypatch, scenario):
     requests = []
 
     def respond(request):
@@ -117,15 +117,15 @@ def test_persistent_throttling_stops_after_two_retries(settings, clock, monkeypa
 
     mock_http(monkeypatch, respond)
     with pytest.raises(httpx.HTTPStatusError) as error:
-        analyze(settings, scenario)
+        analyze(state_database, settings, scenario)
     assert error.value.response.status_code == 429
     assert len(requests) == 3
     assert clock.now == 1015, 'fallback waits grow from five to ten seconds'
-    assert LlmUsageRepository(settings.metadata_db_path).summary()['call_count'] == 3
+    assert LlmUsageRepository(state_database).summary()['call_count'] == 3
 
 
 @pytest.mark.parametrize('failure', [401, 403, 500, 503, 'read_timeout', 'connect_error'])
-def test_only_explicit_throttling_is_retried(settings, clock, monkeypatch, failure):
+def test_only_explicit_throttling_is_retried(state_database, settings, clock, monkeypatch, failure):
     requests = []
 
     def respond(request):
@@ -138,14 +138,14 @@ def test_only_explicit_throttling_is_retried(settings, clock, monkeypatch, failu
 
     mock_http(monkeypatch, respond)
     with pytest.raises(httpx.HTTPError):
-        analyze(settings)
+        analyze(state_database, settings)
     assert len(requests) == 1, 'an ambiguous timeout must not duplicate upstream generation'
     assert clock.now == 1000
-    assert LlmUsageRepository(settings.metadata_db_path).summary()['call_count'] == 1
+    assert LlmUsageRepository(state_database).summary()['call_count'] == 1
 
 
 @pytest.mark.parametrize('malformed', ['envelope', 'analysis'])
-def test_invalid_model_output_does_not_trigger_more_generation(settings, clock, monkeypatch, malformed):
+def test_invalid_model_output_does_not_trigger_more_generation(state_database, settings, clock, monkeypatch, malformed):
     requests = []
 
     def respond(request):
@@ -156,7 +156,7 @@ def test_invalid_model_output_does_not_trigger_more_generation(settings, clock, 
 
     mock_http(monkeypatch, respond)
     with pytest.raises(AnalysisOutputValidationError):
-        analyze(settings)
+        analyze(state_database, settings)
     assert len(requests) == 1
 
 
@@ -172,7 +172,7 @@ def test_retry_after_http_date_is_respected(clock):
     assert llm_service._retry_delay(httpx.Response(429, headers={'Retry-After': past}), 1) == 0
 
 
-def test_retry_is_not_sent_early_when_retry_after_exceeds_remaining_budget(settings, clock, monkeypatch):
+def test_retry_is_not_sent_early_when_retry_after_exceeds_remaining_budget(state_database, settings, clock, monkeypatch):
     requests = []
 
     def respond(request):
@@ -182,12 +182,12 @@ def test_retry_is_not_sent_early_when_retry_after_exceeds_remaining_budget(setti
     mock_http(monkeypatch, respond)
     with report_deadline.report_deadline(3):
         with pytest.raises(httpx.HTTPStatusError):
-            analyze(settings)
+            analyze(state_database, settings)
     assert len(requests) == 1
     assert clock.now == 1000
 
 
-def test_retry_uses_remaining_round_budget_and_logs_final_analysis_result(settings, clock, monkeypatch, caplog):
+def test_retry_uses_remaining_round_budget_and_logs_final_analysis_result(state_database, settings, clock, monkeypatch, caplog):
     timeouts = []
     caplog.set_level(logging.INFO)
 
@@ -201,7 +201,7 @@ def test_retry_uses_remaining_round_budget_and_logs_final_analysis_result(settin
     mock_http(monkeypatch, respond)
     with report_deadline.report_deadline(8):
         with analysis_operation(settings, 'workshop', '2026-10-19'):
-            analyze(settings)
+            analyze(state_database, settings)
             assert report_deadline.remaining_seconds() == 1
     assert [item['read'] for item in timeouts] == [8, 4]
     message = next(record.getMessage() for record in caplog.records if 'report analysis timing:' in record.getMessage())
@@ -215,7 +215,7 @@ def test_retry_uses_remaining_round_budget_and_logs_final_analysis_result(settin
     assert len(ids) == 1, 'attempts and final analysis outcome must be traceable to the same round'
 
 
-def test_cancellation_during_backoff_prevents_another_paid_attempt(settings, clock, monkeypatch):
+def test_cancellation_during_backoff_prevents_another_paid_attempt(state_database, settings, clock, monkeypatch):
     execution = sql_request_cancellations.activate('retry')
     token = bind_request_id(execution)
     requests = []
@@ -232,15 +232,15 @@ def test_cancellation_during_backoff_prevents_another_paid_attempt(settings, clo
     monkeypatch.setattr(llm_service, 'sleep', sleep)
     try:
         with pytest.raises(SqlRequestCancelled):
-            analyze(settings)
+            analyze(state_database, settings)
     finally:
         reset_request_id(token)
         sql_request_cancellations.finish(execution)
     assert len(requests) == 1
-    assert LlmUsageRepository(settings.metadata_db_path).summary()['call_count'] == 1
+    assert LlmUsageRepository(state_database).summary()['call_count'] == 1
 
 
-def test_another_round_can_finish_while_previous_round_is_in_backoff(settings, clock, monkeypatch):
+def test_another_round_can_finish_while_previous_round_is_in_backoff(state_database, settings, clock, monkeypatch):
     waiting, release, second_done = Event(), Event(), Event()
     lock = Lock()
     requests = []
@@ -256,13 +256,13 @@ def test_another_round_can_finish_while_previous_round_is_in_backoff(settings, c
         assert release.wait(3)
 
     def second():
-        analyze(settings)
+        analyze(state_database, settings)
         second_done.set()
 
     mock_http(monkeypatch, respond)
     monkeypatch.setattr(llm_service, '_wait_for_retry', wait)
     with ThreadPoolExecutor(max_workers=2) as executor:
-        first = executor.submit(analyze, settings)
+        first = executor.submit(analyze, state_database, settings)
         try:
             assert waiting.wait(1)
             following = executor.submit(second)
@@ -272,4 +272,4 @@ def test_another_round_can_finish_while_previous_round_is_in_backoff(settings, c
         first.result(timeout=2)
         following.result(timeout=2)
     assert len(requests) == 3
-    assert LlmUsageRepository(settings.metadata_db_path).summary()['call_count'] == 3
+    assert LlmUsageRepository(state_database).summary()['call_count'] == 3

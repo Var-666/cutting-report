@@ -379,9 +379,8 @@ def test_empty_or_invalid_pdm_query_does_not_access_database():
 
 
 @pytest.fixture
-def downloads(tmp_path):
-    repo = DownloadRepository(tmp_path / "filters.db")
-    repo.initialize()
+def downloads(state_database, tmp_path):
+    repo = DownloadRepository(state_database)
     for index, (filename, status, day, size) in enumerate([
         ("甲板_%[!.gen", "downloaded", "2026-08-01", 0),
         ("加强筋.gen", "downloaded", "2026-08-31", 2048),
@@ -435,11 +434,10 @@ def test_sqlite_literal_text_operators(downloads, operator, value, expected):
 
 
 @pytest.fixture
-def api(tmp_path):
+def api(state_database, tmp_path):
     cfg = cutting_settings(project_root=tmp_path)
     pdm = MockPdmRepository()
-    repo = DownloadRepository(tmp_path / "api.db")
-    repo.initialize()
+    repo = DownloadRepository(state_database)
     app = FastAPI()
     app.include_router(conditions_router)
     app.include_router(cutting_router)

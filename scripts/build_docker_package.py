@@ -38,6 +38,7 @@ FILES = (
     "scripts/migrate_sqlite_to_postgres.py", "scripts/postgres/10-roles.sql",
     "scripts/postgres/grant_runtime.sql",
     "docs/deployment/PostgreSQL状态库迁移.md",
+    "docs/design/PostgreSQL仓储与事务设计.md",
     "scripts/build_docker_package.py", "scripts/prepare_alarm_monitor.py",
     "scripts/export_api_contracts.py", "scripts/migrate_database.py", "scripts/migrate_production_lines.py",
     "scripts/linux/install_kylin.sh", "scripts/linux/docker_entrypoint.sh",

@@ -1,3 +1,4 @@
+from tests.postgres_fixtures import state_settings
 from contextlib import contextmanager
 from dataclasses import replace
 from datetime import date
@@ -279,8 +280,9 @@ def test_exports_cover_all_filters_escape_text_and_enforce_limits(tmp_path):
 
 
 @pytest.fixture
-def api():
+def api(state_database):
     app = FastAPI()
+    app.state.database = state_database
     app.include_router(router)
     app.include_router(lines_router)
     app.dependency_overrides[require_admin] = lambda: {'role': 'admin'}
@@ -344,11 +346,11 @@ def test_ai_uses_only_aggregate_context_and_reuses_verified_version(api, monkeyp
     assert len(calls) == 1
 
 
-def test_http_context_blocks_cutting_operations_and_validation_never_echoes_password(tmp_path, monkeypatch):
+def test_http_context_blocks_cutting_operations_and_validation_never_echoes_password(postgres_state, tmp_path, monkeypatch):
     from app.main import app
     from app.services.application_runtime import build_runtime
     from tests.line_fixtures import configuration
-    monkeypatch.setattr(app.state, 'runtime', build_runtime(configuration(tmp_path, welding=True), role='web'), raising=False)
+    monkeypatch.setattr(app.state, 'runtime', build_runtime(state_settings(configuration(tmp_path, welding=True),postgres_state), role='web'), raising=False)
     previous = app.dependency_overrides.get(require_admin)
     app.dependency_overrides[require_admin] = lambda: {'role': 'admin'}
     try:

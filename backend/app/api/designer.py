@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hmac
-import sqlite3
+from psycopg import IntegrityError
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
@@ -54,7 +54,7 @@ def _translate_write_error(exc: Exception) -> None:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     if isinstance(exc, KeyError):
         raise HTTPException(status_code=404, detail="配置不存在") from exc
-    if isinstance(exc, sqlite3.IntegrityError):
+    if isinstance(exc, IntegrityError):
         raise HTTPException(status_code=409, detail="配置编码已存在，请更换编码") from exc
     if isinstance(exc, ValueError):
         raise HTTPException(status_code=409, detail=str(exc)) from exc

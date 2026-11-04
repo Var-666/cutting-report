@@ -3,14 +3,14 @@ import sqlite3
 
 import pytest
 
-from app.database.sqlite import SQLiteDatabase
+from app.database.sqlite_history import SQLiteHistory
 from app.database.migrations import apply_migrations
 from app.database.migrations.runner import run_migrations, execute_script
 from app.database.migrations.registry import MIGRATIONS
 
 
 def test_fresh_schema_and_repeat_startup_keep_one_ordered_version_per_upgrade(tmp_path):
-    database = SQLiteDatabase(tmp_path / 'metadata.db')
+    database = SQLiteHistory(tmp_path / 'metadata.db')
     apply_migrations(database)
     with database.connect() as connection:
         first = [tuple(row) for row in connection.execute('SELECT name, applied_at FROM schema_migrations ORDER BY name')]
@@ -24,7 +24,7 @@ def test_fresh_schema_and_repeat_startup_keep_one_ordered_version_per_upgrade(tm
 
 
 def test_existing_data_is_backed_up_and_schema_and_markers_roll_back_together(tmp_path):
-    database = SQLiteDatabase(tmp_path / 'metadata.db')
+    database = SQLiteHistory(tmp_path / 'metadata.db')
     with database.connect() as connection:
         connection.execute('CREATE TABLE records(value TEXT)')
         connection.execute("INSERT INTO records VALUES ('preserved')")
@@ -46,7 +46,7 @@ def test_existing_data_is_backed_up_and_schema_and_markers_roll_back_together(tm
 
 
 def test_legacy_database_adopts_baseline_without_losing_records(tmp_path):
-    database = SQLiteDatabase(tmp_path / 'metadata.db')
+    database = SQLiteHistory(tmp_path / 'metadata.db')
     with database.connect() as connection:
         connection.execute('CREATE TABLE custom_history(id TEXT PRIMARY KEY)')
         connection.execute("INSERT INTO custom_history VALUES ('kept')")
@@ -60,7 +60,7 @@ def test_legacy_database_adopts_baseline_without_losing_records(tmp_path):
 
 
 def test_bad_foreign_key_upgrade_rolls_back(tmp_path):
-    database = SQLiteDatabase(tmp_path / 'metadata.db')
+    database = SQLiteHistory(tmp_path / 'metadata.db')
     def invalid(connection):
         execute_script(connection, 'CREATE TABLE parent(id INTEGER PRIMARY KEY);\nCREATE TABLE child(parent_id INTEGER REFERENCES parent(id));\nINSERT INTO child VALUES (99);\n')
     with pytest.raises(ValueError, match='外键'):
@@ -76,7 +76,7 @@ def test_migration_cli_status_does_not_create_database_and_upgrade_is_repeatable
     path = tmp_path / 'metadata.db'
     from tests.line_fixtures import configuration
     import os
-    env = {**os.environ, 'PRODUCTION_LINES_JSON': configuration(tmp_path).production_lines_json}
+    env = {**os.environ, 'PRODUCTION_LINES_JSON': configuration(tmp_path).production_lines_json, 'DATABASE_SOURCES_JSON': configuration(tmp_path).database_sources_json}
     command = [sys.executable, str(script)]
     status = subprocess.run([*command, 'status', '--database', str(path)], capture_output=True, text=True, check=True, env=env)
     assert status.stdout.count('pending ') == len(MIGRATIONS)
@@ -94,7 +94,7 @@ def test_manual_upgrade_refuses_active_processes(tmp_path, owner):
     from time import time
     from app.core.process_lock import FileLock
     path = tmp_path / 'metadata.db'
-    database = SQLiteDatabase(path)
+    database = SQLiteHistory(path)
     apply_migrations(database)
     script = Path(__file__).resolve().parents[2] / 'scripts/migrate_database.py'
     lock = FileLock(tmp_path / '.web-process.lock')

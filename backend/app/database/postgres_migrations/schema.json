@@ -1,12 +1,12 @@
 {
-  "sha256": "05ecaebf4f629853185802198dfcd5841fd2e4956a9d230b76b223821f92a76e",
+  "sha256": "f8ca6a0bf7eaf00566ac68ef15f65bd8e96a87adc3032f0578ea37c37a7b456d",
   "tables": 41,
-  "indexes": 97,
+  "indexes": 98,
   "constraints": {
-    "n": 316,
-    "p": 41,
     "f": 14,
     "c": 14,
-    "u": 11
+    "u": 11,
+    "p": 41,
+    "n": 318
   }
 }

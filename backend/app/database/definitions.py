@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import json
-import sqlite3
+from psycopg import Connection
 import uuid
 from datetime import datetime
-from pathlib import Path
+
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from app.database.sqlite import SQLiteDatabase, SQLiteRepository
+from app.database.postgres import PostgresDatabase, PostgresRepository
 
 
 DEFAULT_TEMPLATE_CONFIG = {
@@ -30,13 +30,13 @@ DEFAULT_QUERY_COLUMNS = [
 ]
 
 
-class DefinitionRepository(SQLiteRepository):
+class DefinitionRepository(PostgresRepository):
     def __init__(
         self,
-        database: Path | SQLiteDatabase,
+        database: PostgresDatabase,
         timezone: str = "Asia/Shanghai",
         *,
-        connection: sqlite3.Connection | None = None,
+        connection: Connection | None = None,
     ) -> None:
         super().__init__(database, connection=connection)
         self.timezone = timezone
@@ -45,16 +45,14 @@ class DefinitionRepository(SQLiteRepository):
         return datetime.now(ZoneInfo(self.timezone)).isoformat(timespec="seconds")
 
     def initialize(self) -> None:
-        from app.database.migrations import apply_migrations
-        apply_migrations(self.database, names=("008_definitions",))
         with self.connect() as connection:
             now = self._now()
             connection.execute(
                 """
-                INSERT OR IGNORE INTO report_templates (
+                INSERT INTO report_templates (
                     template_id, code, name, description, config_json,
                     enabled, is_builtin, version, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, 1, 1, 1, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, 1, 1, 1, %s, %s) ON CONFLICT(template_id) DO NOTHING
                 """,
                 (
                     "tpl_classic_blue",
@@ -73,11 +71,11 @@ class DefinitionRepository(SQLiteRepository):
             ):
                 connection.execute(
                     """
-                    INSERT OR IGNORE INTO report_definitions (
+                    INSERT INTO report_definitions (
                         definition_id, code, name, description, query_task_id,
                         template_id, period_type, visual_config_json, enabled,
                         is_builtin, builtin_kind, version, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, NULL, 'tpl_classic_blue', ?, '{}', 1, 1, ?, 1, ?, ?)
+                    ) VALUES (%s, %s, %s, %s, NULL, 'tpl_classic_blue', %s, '{}', 1, 1, %s, 1, %s, %s) ON CONFLICT(definition_id) DO NOTHING
                     """,
                     (
                         definition_id,
@@ -92,7 +90,7 @@ class DefinitionRepository(SQLiteRepository):
                 )
 
     @staticmethod
-    def _decode(row: sqlite3.Row | None, json_fields: dict[str, str]) -> dict[str, Any] | None:
+    def _decode(row: dict[str, Any] | None, json_fields: dict[str, str]) -> dict[str, Any] | None:
         if row is None:
             return None
         item = dict(row)
@@ -112,7 +110,7 @@ class DefinitionRepository(SQLiteRepository):
     def get_query_task(self, query_task_id: str) -> dict[str, Any] | None:
         with self.connect() as connection:
             row = connection.execute(
-                "SELECT * FROM query_tasks WHERE query_task_id = ?", (query_task_id,)
+                "SELECT * FROM query_tasks WHERE query_task_id = %s", (query_task_id,)
             ).fetchone()
         return self._decode(row, {"columns_json": "columns"})
 
@@ -121,16 +119,16 @@ class DefinitionRepository(SQLiteRepository):
         query_task_id = query_task_id or f"qry_{uuid.uuid4().hex[:12]}"
         with self.connect() as connection:
             existing = connection.execute(
-                "SELECT is_builtin FROM query_tasks WHERE query_task_id = ?", (query_task_id,)
+                "SELECT is_builtin FROM query_tasks WHERE query_task_id = %s", (query_task_id,)
             ).fetchone()
             if existing and existing["is_builtin"]:
                 raise PermissionError("系统内置查询任务不能修改")
             if existing:
                 connection.execute(
                     """
-                    UPDATE query_tasks SET code=?, name=?, description=?, sql_text=?,
-                        columns_json=?, enabled=?, version=version+1, updated_at=?
-                    WHERE query_task_id=?
+                    UPDATE query_tasks SET code=%s, name=%s, description=%s, sql_text=%s,
+                        columns_json=%s, enabled=%s, version=version+1, updated_at=%s
+                    WHERE query_task_id=%s
                     """,
                     (
                         payload["code"], payload["name"], payload.get("description", ""),
@@ -144,7 +142,7 @@ class DefinitionRepository(SQLiteRepository):
                     INSERT INTO query_tasks (
                         query_task_id, code, name, description, sql_text, columns_json,
                         enabled, is_builtin, version, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?)
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, 0, 1, %s, %s)
                     """,
                     (
                         query_task_id, payload["code"], payload["name"], payload.get("description", ""),
@@ -157,18 +155,18 @@ class DefinitionRepository(SQLiteRepository):
     def delete_query_task(self, query_task_id: str) -> None:
         with self.connect() as connection:
             row = connection.execute(
-                "SELECT is_builtin FROM query_tasks WHERE query_task_id=?", (query_task_id,)
+                "SELECT is_builtin FROM query_tasks WHERE query_task_id=%s", (query_task_id,)
             ).fetchone()
             if not row:
                 raise KeyError(query_task_id)
             if row["is_builtin"]:
                 raise PermissionError("系统内置查询任务不能删除")
             used = connection.execute(
-                "SELECT COUNT(*) FROM report_definitions WHERE query_task_id=?", (query_task_id,)
-            ).fetchone()[0]
+                "SELECT COUNT(*) AS count FROM report_definitions WHERE query_task_id=%s", (query_task_id,)
+            ).fetchone()['count']
             if used:
                 raise ValueError("查询任务正在被报表定义使用")
-            connection.execute("DELETE FROM query_tasks WHERE query_task_id=?", (query_task_id,))
+            connection.execute("DELETE FROM query_tasks WHERE query_task_id=%s", (query_task_id,))
 
     def list_templates(self) -> list[dict[str, Any]]:
         with self.connect() as connection:
@@ -180,7 +178,7 @@ class DefinitionRepository(SQLiteRepository):
     def get_template(self, template_id: str) -> dict[str, Any] | None:
         with self.connect() as connection:
             row = connection.execute(
-                "SELECT * FROM report_templates WHERE template_id=?", (template_id,)
+                "SELECT * FROM report_templates WHERE template_id=%s", (template_id,)
             ).fetchone()
         return self._decode(row, {"config_json": "config"})
 
@@ -190,15 +188,15 @@ class DefinitionRepository(SQLiteRepository):
         config = {**DEFAULT_TEMPLATE_CONFIG, **(payload.get("config") or {})}
         with self.connect() as connection:
             existing = connection.execute(
-                "SELECT is_builtin FROM report_templates WHERE template_id=?", (template_id,)
+                "SELECT is_builtin FROM report_templates WHERE template_id=%s", (template_id,)
             ).fetchone()
             if existing and existing["is_builtin"]:
                 raise PermissionError("系统内置模板不能修改，请先复制")
             if existing:
                 connection.execute(
                     """
-                    UPDATE report_templates SET code=?, name=?, description=?, config_json=?,
-                        enabled=?, version=version+1, updated_at=? WHERE template_id=?
+                    UPDATE report_templates SET code=%s, name=%s, description=%s, config_json=%s,
+                        enabled=%s, version=version+1, updated_at=%s WHERE template_id=%s
                     """,
                     (
                         payload["code"], payload["name"], payload.get("description", ""),
@@ -211,7 +209,7 @@ class DefinitionRepository(SQLiteRepository):
                     INSERT INTO report_templates (
                         template_id, code, name, description, config_json, enabled,
                         is_builtin, version, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, 0, 1, ?, ?)
+                    ) VALUES (%s, %s, %s, %s, %s, %s, 0, 1, %s, %s)
                     """,
                     (
                         template_id, payload["code"], payload["name"], payload.get("description", ""),
@@ -223,18 +221,18 @@ class DefinitionRepository(SQLiteRepository):
     def delete_template(self, template_id: str) -> None:
         with self.connect() as connection:
             row = connection.execute(
-                "SELECT is_builtin FROM report_templates WHERE template_id=?", (template_id,)
+                "SELECT is_builtin FROM report_templates WHERE template_id=%s", (template_id,)
             ).fetchone()
             if not row:
                 raise KeyError(template_id)
             if row["is_builtin"]:
                 raise PermissionError("系统内置模板不能删除")
             used = connection.execute(
-                "SELECT COUNT(*) FROM report_definitions WHERE template_id=?", (template_id,)
-            ).fetchone()[0]
+                "SELECT COUNT(*) AS count FROM report_definitions WHERE template_id=%s", (template_id,)
+            ).fetchone()['count']
             if used:
                 raise ValueError("模板正在被报表定义使用")
-            connection.execute("DELETE FROM report_templates WHERE template_id=?", (template_id,))
+            connection.execute("DELETE FROM report_templates WHERE template_id=%s", (template_id,))
 
     def list_definitions(self, *, enabled_only: bool = False, include_builtin: bool = True) -> list[dict[str, Any]]:
         clauses = []
@@ -264,7 +262,7 @@ class DefinitionRepository(SQLiteRepository):
                 FROM report_definitions d
                 LEFT JOIN query_tasks q ON q.query_task_id=d.query_task_id
                 JOIN report_templates t ON t.template_id=d.template_id
-                WHERE d.definition_id=?
+                WHERE d.definition_id=%s
                 """,
                 (definition_id,),
             ).fetchone()
@@ -275,15 +273,15 @@ class DefinitionRepository(SQLiteRepository):
         definition_id = definition_id or f"def_{uuid.uuid4().hex[:12]}"
         with self.connect() as connection:
             existing = connection.execute(
-                "SELECT is_builtin FROM report_definitions WHERE definition_id=?", (definition_id,)
+                "SELECT is_builtin FROM report_definitions WHERE definition_id=%s", (definition_id,)
             ).fetchone()
             if existing and existing["is_builtin"]:
                 raise PermissionError("系统内置报表定义不能修改")
             query_exists = connection.execute(
-                "SELECT 1 FROM query_tasks WHERE query_task_id=? AND enabled=1", (payload["query_task_id"],)
+                "SELECT 1 FROM query_tasks WHERE query_task_id=%s AND enabled=1", (payload["query_task_id"],)
             ).fetchone()
             template_exists = connection.execute(
-                "SELECT 1 FROM report_templates WHERE template_id=? AND enabled=1", (payload["template_id"],)
+                "SELECT 1 FROM report_templates WHERE template_id=%s AND enabled=1", (payload["template_id"],)
             ).fetchone()
             if not query_exists or not template_exists:
                 raise ValueError("请选择已启用的查询任务和模板")
@@ -296,9 +294,9 @@ class DefinitionRepository(SQLiteRepository):
             if existing:
                 connection.execute(
                     """
-                    UPDATE report_definitions SET code=?, name=?, description=?, query_task_id=?,
-                        template_id=?, period_type=?, visual_config_json=?, enabled=?,
-                        version=version+1, updated_at=? WHERE definition_id=?
+                    UPDATE report_definitions SET code=%s, name=%s, description=%s, query_task_id=%s,
+                        template_id=%s, period_type=%s, visual_config_json=%s, enabled=%s,
+                        version=version+1, updated_at=%s WHERE definition_id=%s
                     """,
                     (*values, definition_id),
                 )
@@ -309,7 +307,7 @@ class DefinitionRepository(SQLiteRepository):
                         definition_id, code, name, description, query_task_id, template_id,
                         period_type, visual_config_json, enabled, is_builtin, builtin_kind,
                         version, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, 1, ?, ?)
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 0, NULL, 1, %s, %s)
                     """,
                     (definition_id, *values[:-1], now, now),
                 )
@@ -318,10 +316,10 @@ class DefinitionRepository(SQLiteRepository):
     def delete_definition(self, definition_id: str) -> None:
         with self.connect() as connection:
             row = connection.execute(
-                "SELECT is_builtin FROM report_definitions WHERE definition_id=?", (definition_id,)
+                "SELECT is_builtin FROM report_definitions WHERE definition_id=%s", (definition_id,)
             ).fetchone()
             if not row:
                 raise KeyError(definition_id)
             if row["is_builtin"]:
                 raise PermissionError("系统内置报表定义不能删除")
-            connection.execute("DELETE FROM report_definitions WHERE definition_id=?", (definition_id,))
+            connection.execute("DELETE FROM report_definitions WHERE definition_id=%s", (definition_id,))

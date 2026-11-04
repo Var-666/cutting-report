@@ -10,7 +10,8 @@
 - [离线 Docker 部署](deployment/OFFLINE_DOCKER部署说明.md)
 - [麒麟原生部署](deployment/KYLIN原生部署说明.md)
 - [Web/Worker 升级与回滚](deployment/WEB_WORKER进程隔离升级说明.md)
-- [SQLite 仓储与事务](design/SQLite仓储与事务设计.md)
+- [PostgreSQL 仓储与事务](design/PostgreSQL仓储与事务设计.md)
+- [SQLite 离线历史参考](design/SQLite仓储与事务设计.md)
 - [API 契约与迁移](design/API契约与迁移约定.md)
 
 新增共享文档时同步调整 `.gitignore` 白名单并检查链接和敏感信息，不提交原始连接凭据或生产数据。

@@ -200,10 +200,10 @@ async def analysis(request: Request, payload: WeldingAnalysisRequest):
     instance = service(request)
     with source_errors():
         report = await _read_page(instance, payload.report_type, payload.query, request)
-    return response(request, await analysis_requests.run_sync(_analyze, instance, report, payload, _request=request))
+    return response(request, await analysis_requests.run_sync(_analyze, instance, report, payload, application_state(request).database, _request=request))
 
 
-def _analyze(instance, report: dict, payload: WeldingAnalysisRequest):
+def _analyze(instance, report: dict, payload: WeldingAnalysisRequest, database):
     if report['data_version'] != payload.data_version:
         raise HTTPException(status_code=409, detail='报表数据已更新，请刷新后重新生成分析')
     if not instance.settings.llm_enabled:
@@ -217,7 +217,7 @@ def _analyze(instance, report: dict, payload: WeldingAnalysisRequest):
                           {'name': '统计口径和数据质量', 'rows': [report['meta']]}]}
     try:
         with analysis_operation(instance.settings, 'welding', context['report_date']):
-            result = LlmService(instance.settings).analyze_context('welding', context)
+            result = LlmService(instance.settings, database).analyze_context('welding', context)
     except SqlRequestCancelled:
         raise
     except Exception:

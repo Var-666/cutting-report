@@ -6,7 +6,7 @@ from pathlib import Path
 from psycopg import Connection
 
 DIRECTORY = Path(__file__).parent
-VERSIONS = ('001_initial',)
+VERSIONS = ('001_initial', '002_runtime')
 # Shared by schema installation and offline imports; released by transaction/OS exit.
 MIGRATION_LOCK = 740314001
 

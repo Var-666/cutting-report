@@ -8,7 +8,6 @@ from app.config import Settings, settings_for_line
 from app.device_config import ProductionLineCatalog, ProductionLineInstance, load_line_catalog
 from app.services.production_lines import ProductionLineRuntime
 from app.services.device_runtime import DeviceRuntime, build_device_runtime
-from app.database.device_migrations import migrate_device_isolation
 from app.database.metadata import MetadataRepository
 from app.database.llm_usage import LlmUsageRepository
 from app.database.leadership_snapshots import LeadershipSnapshotRepository
@@ -22,7 +21,7 @@ from app.database.retention import RetentionRepository
 from app.database.workshop import WorkshopRepository
 from app.database.users import UserRepository
 from app.database.sessions import SessionRepository
-from app.database.sqlite import SQLiteDatabase
+from app.database.postgres import PostgresDatabase
 from app.services.retention_service import RetentionService
 from app.services.worker_auth_service import WorkerAuthService
 from app.services.automation_service import AutomationService
@@ -37,8 +36,7 @@ from app.services.pdf_service import PdfService
 from app.workers.retention_worker import RetentionWorker
 from app.workers.download_cleanup_worker import DownloadCleanupWorker
 
-from app.database.coordination import CoordinationRepository, backup_before_process_upgrade
-from app.core.process_lock import FileLock
+from app.database.coordination import CoordinationRepository
 from app.core.sql_capacity import SqlCapacity
 from app.services.worker_status import WorkerStatusReader
 from app.services.database_runtime import DatabaseRuntime, DatabaseServices, source_bindings, validate_sources
@@ -69,7 +67,7 @@ class ApplicationRuntime:
     """Process resources; every operation selects database_runtime.snapshot()."""
     coordination: CoordinationRepository
     worker_status_reader: WorkerStatusReader
-    sqlite_database: SQLiteDatabase
+    database: PostgresDatabase
     metadata: MetadataRepository
     llm_usage: LlmUsageRepository
     report_snapshots: ReportSnapshotRepository
@@ -92,44 +90,34 @@ class ApplicationRuntime:
 
 def build_runtime(settings: Settings, *, role: Literal["web", "worker"]) -> ApplicationRuntime:
     settings.ensure_runtime_dirs()
-    with FileLock(settings.metadata_db_path.with_suffix(".initialize.lock")):
-        return _build_runtime(settings, role=role)
+    database = PostgresDatabase(settings)
+    try:
+        database.__enter__()
+        database.check_runtime()
+        return _build_runtime(settings, database, role=role)
+    except BaseException:
+        database.close()
+        raise
 
 
-def _build_runtime(settings: Settings, *, role: Literal["web", "worker"]) -> ApplicationRuntime:
+def _build_runtime(settings: Settings, database: PostgresDatabase, *, role: Literal["web", "worker"]) -> ApplicationRuntime:
     catalog = load_line_catalog(settings.production_lines_json)
     database_sources = DatabaseSourceRegistry.from_json(settings.database_sources_json, bindings=source_bindings(settings, catalog), capacity=SqlCapacity(settings))
     validate_sources(settings, catalog, database_sources)
-    database = SQLiteDatabase(settings.metadata_db_path)
-    backup_before_process_upgrade(database)
-    migrate_device_isolation(database, {line.id: line.machine_no for line in catalog.lines if line.type == "cutting"})
-    from app.database.migrations import apply_migrations
-    apply_migrations(database)
-    from app.database.migrations.v015_alarm_sources import bind_legacy_sources
-    bind_legacy_sources(database, {f'production:{line.id}': (line.machine_no, f'{line.id}:{database_sources.connection_identity(line.source_key)}')
-                                  for line in catalog.lines if line.type == 'cutting'},
-                        analysis_sources={line.id: f'{line.id}:{database_sources.fingerprint(line.source_key)}'
-                                          for line in catalog.lines if line.type == 'cutting'})
     coordination = CoordinationRepository(database)
-    coordination.initialize()
     metadata = MetadataRepository(database)
-    metadata.initialize()
     llm_usage = LlmUsageRepository(database)
     llm_usage.initialize()
     leadership_snapshots = LeadershipSnapshotRepository(database)
-    leadership_snapshots.initialize()
     report_snapshots = ReportSnapshotRepository(database)
-    report_snapshots.initialize()
     workshop = WorkshopRepository(database)
-    workshop.initialize()
     automation = AutomationRepository(database)
-    automation.initialize()
     definitions = DefinitionRepository(database, settings.timezone)
     definitions.initialize()
     dispatches = DispatchRepository(database)
     dispatches.initialize()
     pdf_service = PdfService(operation_timeout_seconds=settings.pdf_render_timeout_seconds,
-                             coordination_path=settings.metadata_db_path.parent / ".coordination" / "pdf-render.lock")
+                             coordination_path=settings.data_dir / ".coordination" / "pdf-render.lock")
 
     def cutting(configuration: Settings, line: ProductionLineInstance, sources: DatabaseSourceRegistry, ship_names: ShipNameService | None, previous: ProductionLineRuntime | None) -> ProductionLineRuntime:
         cfg = settings_for_line(configuration, line, sources.fingerprint(line.source_key))
@@ -183,13 +171,11 @@ def _build_runtime(settings: Settings, *, role: Literal["web", "worker"]) -> App
     )
     file_source = build_file_source(settings)
     downloads = DownloadRepository(database)
-    downloads.initialize()
     file_downloads = FileDownloadService(settings, downloads, pdm, file_source)
     if role == "web":
         downloads.recover_interrupted(file_downloads.now())
     download_cleanup_worker = DownloadCleanupWorker(settings, None, managed=True)
     retention_repository = RetentionRepository(database)
-    retention_repository.initialize()
     retention_service = RetentionService(settings, retention_repository)
     retention_worker = RetentionWorker(settings, retention_service, managed=True)
     magic_config = MagicBoxConfigProvider(settings, client=sql_client(database_sources, settings.dispatch_source_key, settings.magic_box_enabled))
@@ -242,8 +228,8 @@ def _build_runtime(settings: Settings, *, role: Literal["web", "worker"]) -> App
         database_runtime=database_runtime,
     )
     return ApplicationRuntime(
-        coordination=coordination, worker_status_reader=WorkerStatusReader(database.path),
-        sqlite_database=database, metadata=metadata, llm_usage=llm_usage,
+        coordination=coordination, worker_status_reader=WorkerStatusReader(database),
+        database=database, metadata=metadata, llm_usage=llm_usage,
         report_snapshots=report_snapshots, workshop=workshop,
         users=UserRepository(database), sessions=SessionRepository(database),
         definitions=definitions, automation=automation, automation_runtime=automation_runtime,

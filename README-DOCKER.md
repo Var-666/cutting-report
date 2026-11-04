@@ -13,7 +13,10 @@ cp .env.example .env
 已有 `.env` 时跳过复制，保留原配置。按 [配置参考](docs/deployment/配置参考.md) 填写生产数据源和只读连接；模板默认显式演示模式。
 
 ```bash
-docker compose up -d --build --wait --wait-timeout 180
+docker compose build app
+docker compose up -d postgres
+docker compose run --rm --no-deps migrate python scripts/migrate_sqlite_to_postgres.py schema
+docker compose up -d --wait --wait-timeout 180 app worker
 docker compose ps
 docker compose logs --tail 100 app worker
 ```
@@ -53,7 +56,7 @@ docker save -o cutting-report-image-amd64.tar cutting-report:local
 
 ## 健康检查与运行依赖
 
-`app` 的健康状态表示 Web 与应用 SQLite 可用；Worker 是否就绪另由 `background_ready` 表示。Worker 具备独立心跳与健康探针：
+`app` 的健康状态表示 Web 与 PostgreSQL 应用状态库可用；Worker 是否就绪另由 `background_ready` 表示。Worker 具备独立心跳与健康探针：
 
 ```bash
 docker compose ps
@@ -64,3 +67,6 @@ docker compose exec worker python -m app.worker --health
 容器 healthy 不代表生产 SQL、HR、PDM、能管、模型或 SMTP 已联调成功，需核对容器到内网服务的连通性。不要分享 `.env` 或 `docker compose config` 的完整输出。
 
 镜像已包含 ODBC Driver 18、Playwright Chromium 和中文字体，HTML/PDF 保存在 reports 卷；文件下载实体保存在 data 卷。凭据、设备仪表映射、采样规则和数据保留统一见 [配置参考](docs/deployment/配置参考.md)，页面操作与接口见 [功能与接口参考](docs/project/功能与接口参考.md)。
+
+
+首次从 SQLite 升级不能直接启动上述全新安装命令：先按 [PostgreSQL 状态库切换](docs/deployment/PostgreSQL状态库迁移.md) 停机、备份、导入和校验。状态库现在是必需服务，保留 postgres_data 卷且不发布5432端口；运行账号为 cutting_app，独立 migrate 服务使用 cutting_migrator。不要执行 down -v 或把旧 P4 演练数据误当作最终数据。

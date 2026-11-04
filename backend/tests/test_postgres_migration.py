@@ -15,7 +15,7 @@ import pytest
 
 from app.core.process_lock import FileLock
 from app.database.migrations import apply_migrations as sqlite_migrations
-from app.database.sqlite import SQLiteDatabase
+from app.database.sqlite_history import SQLiteHistory
 from app.database.postgres import PostgresDatabase
 from app.database.postgres_migrations import apply_migrations, validate_schema, MigrationError, DIRECTORY
 from app.database.sqlite_to_postgres import check_source, sqlite_schema, table_order, offline_snapshot, transfer
@@ -31,20 +31,20 @@ def postgres(tmp_path):
     name = 'cutting_p4_'+uuid4().hex
     options = dict(host='127.0.0.1',port=int(os.environ.get('P4_TEST_POSTGRES_PORT','55434')),
                    user='postgres',password=os.environ.get('P4_TEST_POSTGRES_PASSWORD','p4-isolated-test-only'))
-    with psycopg.connect(**options,dbname='p4_test',autocommit=True) as admin:
+    with psycopg.connect(**options,dbname=os.environ.get('P4_TEST_POSTGRES_DATABASE','p4_test'),autocommit=True) as admin:
         admin.execute(sql.SQL('CREATE DATABASE {}').format(sql.Identifier(name)))
     cfg = configuration(tmp_path,postgres_host=options['host'],postgres_port=options['port'],postgres_database=name,
         postgres_user=options['user'],postgres_password=options['password'],postgres_pool_max_size=1)
     with PostgresDatabase(cfg) as database:
         yield database, cfg, options
-    with psycopg.connect(**options,dbname='p4_test',autocommit=True) as admin:
+    with psycopg.connect(**options,dbname=os.environ.get('P4_TEST_POSTGRES_DATABASE','p4_test'),autocommit=True) as admin:
         admin.execute(sql.SQL('DROP DATABASE {} WITH (FORCE)').format(sql.Identifier(name)))
 
 
 @pytest.fixture
 def source(tmp_path):
     path = tmp_path/'source.db'
-    sqlite_migrations(SQLiteDatabase(path))
+    sqlite_migrations(SQLiteHistory(path))
     with sqlite3.connect(path) as connection:
         connection.row_factory = sqlite3.Row
         connection.execute('PRAGMA foreign_keys=ON')
@@ -119,7 +119,7 @@ def test_schema_all_tables_constraints_indexes_and_repeated_install(postgres):
         tables={r['tablename'] for r in connection.execute("SELECT tablename FROM pg_tables WHERE schemaname='app_state'")}
         expected=set(json.loads((DIRECTORY/'sqlite_schema.json').read_text()))-{'schema_migrations'}
         assert tables==expected|{'_postgres_schema_migrations','_sqlite_imports','_sqlite_schema_versions'}
-        assert connection.execute("SELECT count(*) AS n FROM pg_indexes WHERE schemaname='app_state'").fetchone()['n']==97
+        assert connection.execute("SELECT count(*) AS n FROM pg_indexes WHERE schemaname='app_state'").fetchone()['n']==98
         connection.execute('DROP INDEX idx_background_tasks_ready')
     with pytest.raises(MigrationError,match='结构漂移'): apply_migrations(database)
 
@@ -174,7 +174,7 @@ def test_all_state_migrates_in_batches_with_ids_values_relations_and_history(pos
     assert verified==result
     with database.connect() as connection:
         assert connection.execute('SELECT count(*) AS n FROM _sqlite_schema_versions').fetchone()['n']==16
-        assert connection.execute('SELECT count(*) AS n FROM _postgres_schema_migrations').fetchone()['n']==1
+        assert connection.execute('SELECT count(*) AS n FROM _postgres_schema_migrations').fetchone()['n']==2
         assert connection.execute('SELECT file_size,relative_path FROM reports').fetchone()=={'file_size':2**40,'relative_path':'fixture.html'}
         assert connection.execute("SELECT nextval('llm_usage_calls_id_seq') AS n").fetchone()['n']==2**40+1
         connection.execute("UPDATE users SET display_name='tampered'")
@@ -241,6 +241,17 @@ def test_preflight_refuses_writers_leases_schema_drift_and_missing_files(postgre
     with pytest.raises(MigrationError,match='Schema'): perform(source,database)
 
 
+def test_source_accepts_known_device_marker_but_refuses_unknown_history(source):
+    with sqlite3.connect(source) as connection:
+        connection.row_factory = sqlite3.Row
+        connection.execute("INSERT INTO schema_migrations VALUES ('device-isolation-v2','original-time')")
+        _, versions = check_source(connection)
+        assert versions[-1] == {'name':'device-isolation-v2','applied_at':'original-time'}
+        connection.execute("INSERT INTO schema_migrations VALUES ('unknown-migration','test-time')")
+        with pytest.raises(MigrationError, match='迁移历史'):
+            check_source(connection)
+
+
 def test_ascii_nocase_partial_uniqueness_and_cascade_are_preserved(postgres,source):
     import psycopg
     database,_,_=postgres
@@ -261,8 +272,8 @@ def test_ascii_nocase_partial_uniqueness_and_cascade_are_preserved(postgres,sour
             connection.execute("INSERT INTO users SELECT 'dupe', 'unique-name',display_name,password_hash,role,auth_source,external_id,group_no,company_no,active,created_at,updated_at FROM users WHERE external_id IS NOT NULL LIMIT 1")
 
 
-def test_cli_schema_check_migrate_verify_use_real_results_and_hide_credentials(postgres,source):
-    database,cfg,_=postgres
+def test_cli_schema_check_migrate_verify_use_real_results_and_hide_credentials(postgres_state,source):
+    database,_,cfg=postgres_state
     root=Path(__file__).resolve().parents[2]
     env={**os.environ, 'POSTGRES_HOST':cfg.postgres_host,'POSTGRES_PORT':str(cfg.postgres_port),
          'POSTGRES_DATABASE':cfg.postgres_database,'POSTGRES_USER':cfg.postgres_user,'POSTGRES_PASSWORD':cfg.postgres_password}

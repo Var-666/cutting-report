@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 
 from app.config import Settings
 from app.database.llm_usage import LlmUsageRepository
+from app.database.postgres import PostgresDatabase
 
 
 logger = logging.getLogger(__name__)
@@ -17,7 +18,7 @@ def _token_count(value: Any) -> int | None:
 
 
 def record_llm_call(
-    settings: Settings, response: Any | None, response_body: dict | None = None, *,
+    settings: Settings, database: PostgresDatabase, response: Any | None, response_body: dict | None = None, *,
     scene: str = "other", occurred_at: datetime | None = None, duration_ms: int = 0,
 ) -> None:
     """Count an HTTP attempt; use only token counts supplied by the provider."""
@@ -42,8 +43,7 @@ def record_llm_call(
         except (ValueError, AttributeError, TypeError):
             pass
     try:
-        repository = LlmUsageRepository(settings.metadata_db_path)
-        repository.initialize()
+        repository = LlmUsageRepository(database)
         repository.record_call(
             total, occurred_at=(occurred_at or datetime.now(ZoneInfo(settings.timezone))).astimezone(ZoneInfo(settings.timezone)),
             scene=scene if scene in {"leadership", "workshop", "equipment", "alarm", "custom", "welding"} else "other",

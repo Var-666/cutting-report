@@ -278,7 +278,7 @@ class LeadershipReportService:
                 data_as_of=selected.data_as_of if selected else None,
                 stale=stale,
                 cached=cached,
-                source="sqlite" if cached else "database",
+                source="postgres" if cached else "database",
                 query_duration_ms=(selected.query_duration_ms if selected else None),
             ),
         )

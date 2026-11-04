@@ -4,7 +4,6 @@ from decimal import Decimal
 
 from tests.line_fixtures import cutting_settings
 from app.database.leadership_snapshots import LeadershipSnapshotRepository
-from app.database.sqlite import SQLiteDatabase
 from app.services.leadership_report_service import LeadershipReportService
 
 
@@ -45,10 +44,9 @@ def test_demo_report_has_daily_total_and_twelve_months(tmp_path) -> None:
     assert result.snapshot.source == "demo"
 
 
-def test_project_mapping_upgrade_rebuilds_snapshots_with_the_old_mapping(tmp_path, monkeypatch):
+def test_project_mapping_upgrade_rebuilds_snapshots_with_the_old_mapping(tmp_path, monkeypatch, state_database):
     settings = cutting_settings(project_root=tmp_path, demo_mode=False, data_source_mode="sqlserver")
-    snapshots = LeadershipSnapshotRepository(SQLiteDatabase(settings.metadata_db_path))
-    snapshots.initialize()
+    snapshots = LeadershipSnapshotRepository(state_database)
     legacy = LeadershipReportService(settings, snapshots, client=source_client(settings))
     legacy.SNAPSHOT_VERSION = 2
     monkeypatch.setattr(legacy.client, "fetch_result_sets", lambda *_: [[], []])
@@ -169,16 +167,15 @@ def test_sqlserver_report_is_cached_by_month_and_can_be_refreshed(
 
 
 def test_sqlserver_snapshots_survive_service_restart_and_fill_history(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, state_database
 ) -> None:
     settings = cutting_settings(
         project_root=tmp_path,
         demo_mode=False,
         data_source_mode="sqlserver",
     )
-    database = SQLiteDatabase(settings.metadata_db_path)
+    database = state_database
     snapshots = LeadershipSnapshotRepository(database)
-    snapshots.initialize()
     service = LeadershipReportService(settings, snapshots, client=source_client(settings))
     calls = []
 

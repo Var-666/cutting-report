@@ -14,7 +14,7 @@ from app.database.alarm_source import SqlServerAlarmSource
 from app.database.metadata import MetadataRepository
 from app.database.definitions import DefinitionRepository
 from app.database.leadership_snapshots import LeadershipSnapshotRepository
-from app.database.sqlite import SQLiteDatabase
+from app.database.postgres import PostgresDatabase
 from app.database.workshop_reports import WorkshopReportRepository
 from app.database.confirmations import ConfirmationRepository
 from app.services.alarm_analysis_service import AlarmAnalysisService
@@ -147,7 +147,7 @@ class DeviceRuntime:
 
 
 def build_device_runtime(
-    settings: Settings, database: SQLiteDatabase, definitions: DefinitionRepository,
+    settings: Settings, database: PostgresDatabase, definitions: DefinitionRepository,
     snapshots: LeadershipSnapshotRepository, pdf_service: PdfService,
     *, client: SqlServerClient | None = None, task_queue: CoordinationRepository | None = None, ship_names: ShipNameService | None = None,
 ) -> DeviceRuntime:
@@ -161,7 +161,7 @@ def build_device_runtime(
     alarms = AlarmRepository(database, machine_no=settings.report_machine_no, source_name=source_name)
     alarms.initialize()
     monitor = AlarmMonitorService(settings, alarms, SqlServerAlarmSource(settings, client=client),
-                                  AlarmAnalysisService(settings), AlarmReportService(settings, pdf_service))
+                                  AlarmAnalysisService(settings, database), AlarmReportService(settings, pdf_service))
     return DeviceRuntime(
         settings=settings, metadata=metadata, workshop=workshop,
         confirmations=ConfirmationRepository(database, scope_machine_no=settings.report_machine_no),

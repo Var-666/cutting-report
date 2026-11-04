@@ -29,8 +29,8 @@ class Source:
 
 
 @pytest.fixture
-def repository(tmp_path):
-    repository = AlarmRepository(tmp_path / "metadata.db", source_name="production")
+def repository(state_database, tmp_path):
+    repository = AlarmRepository(state_database, source_name="production")
     repository.initialize()
     repository.configure_monitoring_window(START)
     repository.ingest([alarm(1)], now=NOW, cursor=1, debounce_minutes=10)
@@ -51,7 +51,7 @@ def test_restart_recovers_report_associations_and_completes_once(repository):
     assert repository.try_acquire_lease("dead-process", NOW, ttl_seconds=1)
     reserve(repository, "dead-process")
     assert repository.list_unreported_incidents() == []
-    restarted = AlarmRepository(repository.database_path, source_name="production")
+    restarted = AlarmRepository(repository.database, source_name="production")
     restarted.initialize()
     service = monitor(restarted, Source())
     result = service.run_once(NOW + timedelta(seconds=2))

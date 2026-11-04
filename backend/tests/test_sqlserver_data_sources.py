@@ -1,3 +1,4 @@
+from tests.postgres_fixtures import state_settings
 from dataclasses import replace
 
 import pytest
@@ -12,7 +13,7 @@ from app.services.worker_auth_service import WorkerAuthService
 from tests.line_fixtures import configuration
 
 
-def test_worker_and_file_use_explicitly_bound_registry_clients(tmp_path):
+def test_worker_and_file_use_explicitly_bound_registry_clients(postgres_state, tmp_path):
     from app.services.application_runtime import build_runtime
     cfg = configuration(tmp_path)
     sources = DatabaseSourceRegistry.from_json(cfg.database_sources_json).configs()
@@ -21,7 +22,7 @@ def test_worker_and_file_use_explicitly_bound_registry_clients(tmp_path):
             database=key, username='reader', password=key + '-private'))
     cfg = replace(cfg, worker_database_auth_enabled=True, file_database_enabled=True, worker_source_key='hr',
                   file_source_key='pdm', database_sources_json=source_configs_json(sources))
-    context = build_runtime(cfg, role='web').database_runtime.snapshot()
+    context = build_runtime(state_settings(cfg,postgres_state), role='web').database_runtime.snapshot()
     assert context.worker_auth.client is context.database_sources.client('hr')
     assert context.file_downloads.pdm.client is context.database_sources.client('pdm')
     assert context.worker_auth.client.connection_config()['database'] == 'hr'

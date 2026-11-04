@@ -1,3 +1,4 @@
+from tests.postgres_fixtures import state_settings
 """Offline SQL boundary/load checks: real lock files, blocking driver substitutes."""
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
@@ -365,14 +366,14 @@ def test_http_disconnect_and_cancel_scope_release_a_database_waiter(tmp_path, ca
     finally: sql_request_cancellations.finish(request_id)
 
 
-def test_source_quota_save_is_cold_and_preserves_clients_and_existing_data_identity(tmp_path, monkeypatch):
+def test_source_quota_save_is_cold_and_preserves_clients_and_existing_data_identity(postgres_state, tmp_path, monkeypatch):
     from hashlib import sha256
     import json
     from app.models.database_sources import DatabaseSourceRequest
     from app.services.application_runtime import build_runtime
     from app.services.database_runtime import database_context
     from app.services.runtime_settings_store import RuntimeSettingsSaveError
-    runtime = build_runtime(configuration(tmp_path, real=True), role='web')
+    runtime = build_runtime(state_settings(configuration(tmp_path, real=True),postgres_state), role='web')
     before = database_context(runtime)
     key = 'cutting-production'
     config = before.database_sources.get(key)
@@ -391,7 +392,7 @@ def test_source_quota_save_is_cold_and_preserves_clients_and_existing_data_ident
     report = runtime.configuration_diagnostics.report({'state': 'missing'})
     row = next(item for item in report['items'] if item['key'] == 'DATABASE_SOURCES_JSON')
     assert row['restart_required'] and row['processes']['web']['status'] == 'pending'
-    restarted = build_runtime(fresh.settings, role='web')
+    restarted = build_runtime(state_settings(fresh.settings,postgres_state), role='web')
     assert database_context(restarted).database_sources.capacity.source_limit(key) == 1
     monkeypatch.setattr('app.services.database_runtime.write_runtime_env', lambda *a, **kw: (_ for _ in ()).throw(OSError('test')))
     new = DatabaseSourceRequest.model_validate({**config.model_dump(), 'id': 'not-published', 'sql_max_concurrent': 1})
@@ -400,7 +401,7 @@ def test_source_quota_save_is_cold_and_preserves_clients_and_existing_data_ident
 
 
 @pytest.mark.parametrize('failure', ['queue_timeout', 'operation_timeout'])
-def test_http_reports_busy_sql_with_instance_identity_and_exposes_only_process_statistics(tmp_path, monkeypatch, failure):
+def test_http_reports_busy_sql_with_instance_identity_and_exposes_only_process_statistics(postgres_state, tmp_path, monkeypatch, failure):
     from fastapi.testclient import TestClient
     from app.main import app
     from app.api.auth import require_admin
@@ -410,7 +411,7 @@ def test_http_reports_busy_sql_with_instance_identity_and_exposes_only_process_s
     cfg = configuration(tmp_path, real=True, sql_queue_timeout_seconds=.05)
     configs = DatabaseSourceRegistry.from_json(cfg.database_sources_json).configs()
     configs[0] = configs[0].model_copy(update={'sql_max_concurrent': 1})
-    runtime = build_runtime(replace(cfg, database_sources_json=source_configs_json(configs)), role='web')
+    runtime = build_runtime(state_settings(replace(cfg, database_sources_json=source_configs_json(configs)),postgres_state), role='web')
     context = database_context(runtime)
     if failure == 'operation_timeout':
         from app.api import workloads
@@ -461,7 +462,7 @@ def test_shared_hr_pdm_and_dispatch_queries_never_borrow_a_selected_line_identit
     assert seen == [None, None, None]
 
 
-def test_worker_and_automation_share_web_quota_and_retry_without_losing_task(tmp_path, monkeypatch):
+def test_worker_and_automation_share_web_quota_and_retry_without_losing_task(postgres_state, tmp_path, monkeypatch):
     from datetime import datetime
     from app.database.source_registry import DatabaseSourceRegistry, source_configs_json
     from app.services.application_runtime import build_runtime
@@ -472,8 +473,8 @@ def test_worker_and_automation_share_web_quota_and_retry_without_losing_task(tmp
     configs = DatabaseSourceRegistry.from_json(cfg.database_sources_json).configs()
     configs[0] = configs[0].model_copy(update={'sql_max_concurrent': 1})
     cfg = replace(cfg, database_sources_json=source_configs_json(configs))
-    web = build_runtime(cfg, role='web')
-    worker = WorkerProcess(cfg)
+    web = build_runtime(state_settings(cfg,postgres_state), role='web')
+    worker = WorkerProcess(state_settings(cfg,postgres_state))
     worker.owner = worker.repository.acquire('worker', ttl=30)
     context = database_context(worker.runtime)
     resource = context.database_sources.capacity

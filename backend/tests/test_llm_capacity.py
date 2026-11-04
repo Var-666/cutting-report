@@ -24,8 +24,8 @@ def config(tmp_path, **changes):
                     llm_base_url='http://llm.local', **changes)
 
 
-def test_report_input_budget_rejects_before_network(tmp_path, monkeypatch):
-    service = LlmService(config(tmp_path, llm_max_input_chars=1000))
+def test_report_input_budget_rejects_before_network(state_database, tmp_path, monkeypatch):
+    service = LlmService(config(tmp_path, llm_max_input_chars=1000), database=state_database)
     def fail(*args, **kwargs):
         raise AssertionError('network must not be called for oversized input')
     monkeypatch.setattr('app.services.llm_service.httpx.Client', fail)
@@ -33,9 +33,9 @@ def test_report_input_budget_rejects_before_network(tmp_path, monkeypatch):
         service.analyze_context('leadership', {'tables': [{'x': 'x' * 2000}]})
 
 
-def test_alarm_input_budget_rejects_before_network(tmp_path, monkeypatch):
+def test_alarm_input_budget_rejects_before_network(state_database, tmp_path, monkeypatch):
     settings = config(tmp_path, llm_max_input_chars=1000)
-    service = AlarmAnalysisService(settings)
+    service = AlarmAnalysisService(settings, database=state_database)
     monkeypatch.setattr('app.services.alarm_analysis_service.httpx.Client',
                         lambda **kwargs: (_ for _ in ()).throw(AssertionError('network called')))
     incident = {'incident_id': 'i', 'machine_no': 'm', 'alarm_type': 't', 'alarm_code': 'c' * 2000,
@@ -46,12 +46,12 @@ def test_alarm_input_budget_rejects_before_network(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize('limit', [1, 10])
-def test_capacity_limits_concurrent_model_calls(tmp_path, limit):
+def test_capacity_limits_concurrent_model_calls(state_database, tmp_path, limit):
     settings = config(tmp_path, llm_max_concurrent=limit, llm_queue_timeout_seconds=1)
     entered = [Event() for _ in range(limit)]
     release = Event()
     def task(index):
-        with llm_capacity(settings):
+        with llm_capacity(settings, database=state_database):
             entered[index].set()
             assert release.wait(5)
     with ThreadPoolExecutor(max_workers=limit) as executor:
@@ -59,33 +59,33 @@ def test_capacity_limits_concurrent_model_calls(tmp_path, limit):
         try:
             assert all(event.wait(1) for event in entered), 'all configured slots must be usable'
             with pytest.raises(AnalysisCapacityError):
-                with llm_capacity(settings):
+                with llm_capacity(settings, database=state_database):
                     pytest.fail('an extra call must not exceed the shared model limit')
         finally:
             release.set()
         for future in futures:
             future.result(timeout=2)
-    with llm_capacity(settings):
+    with llm_capacity(settings, database=state_database):
         pass
 
 
-def test_capacity_cancellation_does_not_consume_slot(tmp_path):
+def test_capacity_cancellation_does_not_consume_slot(state_database, tmp_path):
     settings = config(tmp_path, llm_max_concurrent=1, llm_queue_timeout_seconds=2)
-    with llm_capacity(settings):
+    with llm_capacity(settings, database=state_database):
         execution = sql_request_cancellations.activate('llm')
         token = bind_request_id(execution)
         try:
             sql_request_cancellations.cancel(execution)
             with pytest.raises(SqlRequestCancelled):
-                with llm_capacity(settings):
+                with llm_capacity(settings, database=state_database):
                     pass
         finally:
             reset_request_id(token); sql_request_cancellations.finish(execution)
-    with llm_capacity(settings):
+    with llm_capacity(settings, database=state_database):
         pass
 
 
-def test_two_devices_background_calls_leave_two_slots_for_foreground(tmp_path, monkeypatch):
+def test_two_devices_background_calls_leave_two_slots_for_foreground(state_database, tmp_path, monkeypatch):
     capacity = _LlmCapacity()
     monkeypatch.setattr('app.services.llm_service._LLM_CAPACITY', capacity)
     settings = config(tmp_path, llm_max_concurrent=4, llm_queue_timeout_seconds=2)
@@ -95,12 +95,12 @@ def test_two_devices_background_calls_leave_two_slots_for_foreground(tmp_path, m
 
     def background(index):
         device = replace(settings, device_id=f'Cutter0{index + 1}')
-        with background_llm_work(), llm_capacity(device):
+        with background_llm_work(), llm_capacity(device, database=state_database):
             background_entered[index].set()
             assert release.wait(3)
 
     def foreground(index):
-        with llm_capacity(settings):
+        with llm_capacity(settings, database=state_database):
             foreground_entered[index].set()
             assert release.wait(3)
 
@@ -120,22 +120,22 @@ def test_two_devices_background_calls_leave_two_slots_for_foreground(tmp_path, m
     assert capacity._active == capacity._background_active == capacity._foreground_waiting == 0
 
 
-def test_foreground_waiter_precedes_background_even_with_one_configured_slot(tmp_path, monkeypatch):
+def test_foreground_waiter_precedes_background_even_with_one_configured_slot(state_database, tmp_path, monkeypatch):
     capacity = _LlmCapacity()
     monkeypatch.setattr('app.services.llm_service._LLM_CAPACITY', capacity)
     settings = config(tmp_path, llm_max_concurrent=1, llm_queue_timeout_seconds=2)
     order = []
 
     def background():
-        with background_llm_work(), llm_capacity(settings):
+        with background_llm_work(), llm_capacity(settings, database=state_database):
             order.append('background')
 
     def foreground():
-        with llm_capacity(settings):
+        with llm_capacity(settings, database=state_database):
             order.append('foreground')
 
     with ThreadPoolExecutor(max_workers=2) as executor:
-        with llm_capacity(settings):
+        with llm_capacity(settings, database=state_database):
             bg = executor.submit(background)
             fg = executor.submit(foreground)
             with capacity._condition:
@@ -145,24 +145,24 @@ def test_foreground_waiter_precedes_background_even_with_one_configured_slot(tmp
     assert order == ['foreground', 'background']
 
 
-def test_cancelled_foreground_does_not_leave_background_permanently_blocked(tmp_path, monkeypatch):
+def test_cancelled_foreground_does_not_leave_background_permanently_blocked(state_database, tmp_path, monkeypatch):
     capacity = _LlmCapacity()
     monkeypatch.setattr('app.services.llm_service._LLM_CAPACITY', capacity)
     settings = config(tmp_path, llm_max_concurrent=1, llm_queue_timeout_seconds=2)
-    with llm_capacity(settings):
+    with llm_capacity(settings, database=state_database):
         execution = sql_request_cancellations.activate('foreground')
         token = bind_request_id(execution)
         try:
             sql_request_cancellations.cancel(execution)
             with pytest.raises(SqlRequestCancelled):
-                with llm_capacity(settings):
+                with llm_capacity(settings, database=state_database):
                     pytest.fail('cancelled waiter must not acquire capacity')
         finally:
             reset_request_id(token)
             sql_request_cancellations.finish(execution)
-    with background_llm_work(), llm_capacity(settings):
+    with background_llm_work(), llm_capacity(settings, database=state_database):
         assert capacity._background_active == 1
-    with llm_capacity(settings):
+    with llm_capacity(settings, database=state_database):
         assert capacity._background_active == 0
 
 
@@ -177,7 +177,7 @@ def test_llm_limits_are_validated(tmp_path, kwargs):
         config(tmp_path, **kwargs)
 
 
-def test_model_output_budget_rejects_oversized_content(tmp_path, monkeypatch):
+def test_model_output_budget_rejects_oversized_content(state_database, tmp_path, monkeypatch):
     settings = config(tmp_path, llm_max_output_chars=1000)
     class Response:
         def raise_for_status(self): pass
@@ -190,7 +190,7 @@ def test_model_output_budget_rejects_oversized_content(tmp_path, monkeypatch):
         def post(self, *args, **kwargs): return Response()
     monkeypatch.setattr("app.services.llm_service.httpx.Client", Client)
     with pytest.raises(Exception, match="超过配置容量"):
-        LlmService(settings).analyze_context("leadership", {"facts": []})
+        LlmService(settings, database=state_database).analyze_context("leadership", {"facts": []})
 
 
 def test_streaming_model_response_has_one_total_deadline():
@@ -315,18 +315,18 @@ def test_model_call_uses_report_remaining_budget():
     assert all(0 < value <= 0.5 for value in timeouts[0].values())
 
 
-def test_capacity_wait_obeys_report_deadline(tmp_path):
+def test_capacity_wait_obeys_report_deadline(state_database, tmp_path):
     settings = config(tmp_path, llm_max_concurrent=1)
-    with llm_capacity(settings):
+    with llm_capacity(settings, database=state_database):
         with report_deadline(0.02):
             with pytest.raises(ReportOperationTimeout):
-                with llm_capacity(settings):
+                with llm_capacity(settings, database=state_database):
                     pytest.fail("occupied slot must not be acquired")
-    with llm_capacity(settings):
+    with llm_capacity(settings, database=state_database):
         pass
 
 
-def test_alarm_output_budget_is_checked_before_json_parsing(tmp_path, monkeypatch):
+def test_alarm_output_budget_is_checked_before_json_parsing(state_database, tmp_path, monkeypatch):
     settings = config(tmp_path, llm_max_output_chars=1000)
     original_client = httpx.Client
     transport = httpx.MockTransport(lambda request: httpx.Response(
@@ -335,4 +335,4 @@ def test_alarm_output_budget_is_checked_before_json_parsing(tmp_path, monkeypatc
     monkeypatch.setattr("app.services.alarm_analysis_service.httpx.Client",
                         lambda **kwargs: original_client(transport=transport, **kwargs))
     with pytest.raises(AnalysisOutputValidationError, match="超过配置容量"):
-        AlarmAnalysisService(settings).analyze([])
+        AlarmAnalysisService(settings, database=state_database).analyze([])

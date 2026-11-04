@@ -8,7 +8,6 @@ from app.database.automation import AutomationRepository
 from app.database.definitions import DefinitionRepository
 from app.database.dispatch import DispatchRepository
 from app.database.metadata import MetadataRepository
-from app.database.sqlite import SQLiteDatabase
 from app.database.unit_of_work import UnitOfWork
 from app.database.workshop import WorkshopRepository
 
@@ -16,34 +15,30 @@ from app.database.workshop import WorkshopRepository
 TZ = ZoneInfo("Asia/Shanghai")
 
 
-def _repositories(tmp_path: Path):
-    database = SQLiteDatabase(tmp_path / "metadata.db")
+def _repositories(database):
     metadata = MetadataRepository(database, device_id='Cutter01')
     workshop = WorkshopRepository(database, scope_machine_no='Cutter01')
     automation = AutomationRepository(database)
     definitions = DefinitionRepository(database)
     dispatches = DispatchRepository(database)
-    metadata.initialize()
-    workshop.initialize()
-    automation.initialize()
     definitions.initialize()
     dispatches.initialize()
     return database, metadata, workshop, automation, definitions, dispatches
 
 
-def test_every_repository_uses_the_same_connection_policy(tmp_path: Path) -> None:
-    database, metadata, workshop, automation, definitions, dispatches = _repositories(tmp_path)
+def test_every_repository_uses_the_same_connection_policy(state_database) -> None:
+    database, metadata, workshop, automation, definitions, dispatches = _repositories(state_database)
 
     for repository in (metadata, workshop, automation, definitions, dispatches):
         assert repository.database is database
         with repository.connect() as connection:
-            assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
-            assert connection.execute("PRAGMA busy_timeout").fetchone()[0] == 30_000
-            assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+            assert connection.execute('SELECT current_user AS name').fetchone()['name'] == 'cutting_app'
+            assert connection.info.dbname == database.identity[2]
 
 
-def test_cross_repository_unit_of_work_rolls_back_all_changes(tmp_path: Path) -> None:
-    database, metadata, workshop, automation, _definitions, _dispatches = _repositories(tmp_path)
+
+def test_cross_repository_unit_of_work_rolls_back_all_changes(state_database) -> None:
+    database, metadata, workshop, automation, _definitions, _dispatches = _repositories(state_database)
     now = datetime(2026, 8, 25, 10, 0, tzinfo=TZ).isoformat(timespec="seconds")
     admin = workshop.create_user(
         username="admin",
@@ -104,9 +99,9 @@ def test_cross_repository_unit_of_work_rolls_back_all_changes(tmp_path: Path) ->
 
 
 def test_failed_cross_repository_link_does_not_leave_orphan_job(
-    tmp_path: Path,
+    state_database,
 ) -> None:
-    database, metadata, _workshop, _automation, _definitions, _dispatches = _repositories(tmp_path)
+    database, metadata, _workshop, _automation, _definitions, _dispatches = _repositories(state_database)
 
     with pytest.raises(LookupError):
         with UnitOfWork(database, device_id="Cutter01", scope_machine_no="Cutter01") as unit:
@@ -124,3 +119,14 @@ def test_failed_cross_repository_link_does_not_leave_orphan_job(
             )
 
     assert metadata.get_job("rpt_orphan") is None
+
+
+def test_expected_constraint_failure_does_not_end_outer_transaction(state_database):
+    now = '2026-11-04T08:00:00+08:00'
+    with UnitOfWork(state_database) as unit:
+        unit.users.create_user(username='same', display_name='工人', password='test-password', role='worker', now=now)
+        with pytest.raises(ValueError, match='已存在'):
+            unit.users.create_user(username='same', display_name='重复', password='test-password', role='worker', now=now)
+        unit.users.create_user(username='kept', display_name='保留', password='test-password', role='worker', now=now)
+    with state_database.connect() as connection:
+        assert connection.execute('SELECT username FROM users ORDER BY username').fetchall() == [{'username':'kept'}, {'username':'same'}]

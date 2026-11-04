@@ -122,7 +122,7 @@ def ready(workflow, recipients=None):
     if recipients:
         import json
         with repository.connect() as connection:
-            connection.execute("UPDATE email_deliveries SET recipients_json = ? WHERE report_id = ?",
+            connection.execute("UPDATE email_deliveries SET recipients_json = %s WHERE report_id = %s",
                                (json.dumps(recipients), report_id))
     return repository, service, report_id
 
@@ -156,10 +156,13 @@ def test_success_then_database_failure_is_not_automatically_resent(workflow, mon
     with pytest.raises(RuntimeError, match="disk failure"):
         service.process_next_email(NOW)
     assert repository.delivery_for_report(report_id)["status"] == "sending"
-    restarted = AutomationRepository(repository.database_path)
-    restarted.initialize()
+    restarted = AutomationRepository(repository.database)
     assert restarted.delivery_for_report(report_id)["status"] == "sending", "Web schema initialization must not disturb live SMTP"
-    restarted.recover_interrupted_deliveries()
+    from app.database.coordination import CoordinationRepository
+    from app.database.postgres import execution_scope
+    owner = CoordinationRepository(repository.database).acquire('worker',ttl=30)
+    with execution_scope(repository.database,'worker',owner):
+        restarted.recover_interrupted_deliveries()
     record = restarted.delivery_for_report(report_id)
     assert record["status"] == "unknown"
     assert record["message_id"]
@@ -169,27 +172,25 @@ def test_success_then_database_failure_is_not_automatically_resent(workflow, mon
 
 def test_only_new_worker_can_recover_unknown_smtp_and_old_owner_cannot_mark_sent(workflow):
     from app.database.coordination import CoordinationRepository
-    from app.database.sqlite import ExecutionLeaseLost, execution_scope
+    from app.database.postgres import ExecutionLeaseLost, execution_scope
     repository, _, report_id = ready(workflow)
     coordination = CoordinationRepository(repository.database)
-    coordination.initialize()
     owner = coordination.acquire("worker", ttl=30)
-    with execution_scope(repository.database_path, "worker", owner):
+    with execution_scope(repository.database, "worker", owner):
         delivery = repository.claim_delivery(STAMP)
     # Web initialization neither resets sending nor allows recovery without a Worker lease.
-    repository.initialize()
     assert repository.delivery_for_report(report_id)["status"] == "sending"
     with pytest.raises(ExecutionLeaseLost):
         repository.recover_interrupted_deliveries()
     with repository.connect() as connection:
         connection.execute("UPDATE process_leases SET expires_at=0")
     replacement = coordination.acquire("worker", ttl=30)
-    with execution_scope(repository.database_path, "worker", replacement):
+    with execution_scope(repository.database, "worker", replacement):
         repository.recover_interrupted_deliveries()
     assert repository.delivery_for_report(report_id)["status"] == "unknown"
     assert repository.claim_delivery(STAMP) is None
     assert not repository.retry_delivery(delivery["delivery_id"], now=STAMP)
-    with execution_scope(repository.database_path, "worker", owner), pytest.raises(ExecutionLeaseLost):
+    with execution_scope(repository.database, "worker", owner), pytest.raises(ExecutionLeaseLost):
         repository.mark_delivery_sent(delivery, message_id=delivery["message_id"], now=STAMP)
     assert repository.delivery_for_report(report_id)["status"] == "unknown"
 
@@ -199,7 +200,7 @@ def test_manual_retry_cannot_reset_active_sent_or_unknown_delivery(workflow, sta
     repository, _, report_id = ready(workflow)
     record = repository.delivery_for_report(report_id)
     with repository.connect() as connection:
-        connection.execute("UPDATE email_deliveries SET status = ? WHERE report_id = ?", (status, report_id))
+        connection.execute("UPDATE email_deliveries SET status = %s WHERE report_id = %s", (status, report_id))
     assert not repository.retry_delivery(record["delivery_id"], now=STAMP)
     assert repository.delivery_for_report(report_id)["status"] == status
 

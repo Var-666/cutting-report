@@ -5,7 +5,7 @@ import sqlite3
 from collections.abc import Callable
 from datetime import datetime
 
-from app.database.sqlite import SQLiteDatabase
+from app.database.sqlite_history import SQLiteHistory
 
 
 # Only the historical single-device schema established this ownership.
@@ -22,7 +22,7 @@ SCOPED_TABLES = {
 }
 
 
-def _backup(database: SQLiteDatabase) -> None:
+def _backup(database: SQLiteHistory) -> None:
     folder = database.path.parent / 'backups'
     folder.mkdir(parents=True, exist_ok=True)
     target = folder / f'{database.path.stem}-before-device-isolation-{datetime.now():%Y%m%d-%H%M%S-%f}.db'
@@ -52,7 +52,7 @@ def _rebuild(connection: sqlite3.Connection, table: str, transform: Callable[[st
         connection.execute(statement)
 
 
-def rebuild_table(database: SQLiteDatabase, table: str, transform: Callable[[str], str]) -> None:
+def rebuild_table(database: SQLiteHistory, table: str, transform: Callable[[str], str]) -> None:
     with database.connect() as connection:
         connection.execute('PRAGMA foreign_keys=OFF')
         connection.execute('BEGIN IMMEDIATE')
@@ -61,7 +61,7 @@ def rebuild_table(database: SQLiteDatabase, table: str, transform: Callable[[str
             raise ValueError('设备范围迁移外键检查失败，已回滚')
 
 
-def migrate_device_isolation(database: SQLiteDatabase, devices: dict[str, str]) -> None:
+def migrate_device_isolation(database: SQLiteHistory, devices: dict[str, str]) -> None:
     """Run under the startup initialize lock, before repositories or workers start.
 
     Back up the committed database first. All ownership validation, table rebuilds,

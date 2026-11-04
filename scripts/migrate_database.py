@@ -11,11 +11,13 @@ sys.path.insert(0, str(ROOT / 'backend'))
 
 from app.config import settings
 from app.device_config import load_line_catalog
-from app.database.coordination import backup_before_process_upgrade
+from app.database.sqlite_history import backup_before_process_upgrade
 from app.database.device_migrations import migrate_device_isolation
+from app.database.source_registry import DatabaseSourceRegistry
+from app.database.migrations.v015_alarm_sources import bind_legacy_sources
 from app.database.migrations import apply_migrations
 from app.database.migrations.registry import MIGRATIONS
-from app.database.sqlite import SQLiteDatabase
+from app.database.sqlite_history import SQLiteHistory
 from app.core.process_lock import FileLock
 
 
@@ -37,10 +39,17 @@ def main() -> None:
                         if connection.execute("SELECT 1 FROM process_leases WHERE name='worker' AND expires_at>?", (time(),)).fetchone():
                             raise RuntimeError('请先停止 Worker 并等待有效租约释放，再执行升级')
             stack.enter_context(FileLock(path.with_suffix('.initialize.lock')))
-            database = SQLiteDatabase(path)
+            database = SQLiteHistory(path)
             backup_before_process_upgrade(database)
             migrate_device_isolation(database, {line.id: line.machine_no for line in load_line_catalog(settings.production_lines_json).lines if line.type == "cutting"})
             apply_migrations(database)
+            catalog = load_line_catalog(settings.production_lines_json)
+            sources = DatabaseSourceRegistry.from_json(settings.database_sources_json)
+            bind_legacy_sources(database,
+                {f'production:{line.id}': (line.machine_no, f'{line.id}:{sources.connection_identity(line.source_key)}')
+                 for line in catalog.lines if line.type == 'cutting'},
+                analysis_sources={line.id:f'{line.id}:{sources.fingerprint(line.source_key)}'
+                                  for line in catalog.lines if line.type == 'cutting'})
     applied = set()
     if path.exists():
         with sqlite3.connect(path.as_uri() + '?mode=ro', uri=True) as connection:

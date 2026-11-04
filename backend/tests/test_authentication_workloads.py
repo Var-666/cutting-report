@@ -17,10 +17,20 @@ from app.services.worker_auth_service import WorkerAuthService
 from test_worker_auth_service import FakeSqlServerClient, _enabled_settings, _valid_row
 
 
+@pytest.fixture(autouse=True)
+def isolated_app_state(monkeypatch):
+    # These admission tests exercise immediate rejection with no waiting queue.
+    monkeypatch.setattr(workloads.authentication_requests, "max_waiters", 0)
+    from tests.line_fixtures import cutting_settings
+    from app.device_config import load_line_catalog
+    monkeypatch.delattr(app.state,'runtime',raising=False)
+    monkeypatch.setattr(app.state,'catalog',load_line_catalog(cutting_settings().production_lines_json),raising=False)
+    monkeypatch.setattr(app.state,'lines',{},raising=False)
+
+
 @pytest.mark.parametrize('blocking_kind', ['password', 'hr'])
-def test_eight_expensive_authentications_leave_local_and_cached_hr_business_requests_free(tmp_path, monkeypatch, blocking_kind):
-    repository = WorkshopRepository(tmp_path / 'metadata.db')
-    repository.initialize()
+def test_eight_expensive_authentications_leave_local_and_cached_hr_business_requests_free(state_database, tmp_path, monkeypatch, blocking_kind):
+    repository = WorkshopRepository(state_database)
     now = datetime.now(ZoneInfo(settings.timezone))
     admin = repository.bootstrap_admin(username='local-admin', display_name='管理员', password='test-password', now=now.isoformat())
     local_token, _ = repository.create_session(admin['user_id'], now=now, hours=1)
@@ -56,7 +66,8 @@ def test_eight_expensive_authentications_leave_local_and_cached_hr_business_requ
     monkeypatch.setattr(app.state, 'worker_auth', service, raising=False)
     runtime = SimpleNamespace(settings=settings, metadata=SimpleNamespace(list_reports=lambda **_: ([], 0)),
                               energy_period_service=SimpleNamespace(get_day=lambda *_, **__: {}))
-    monkeypatch.setattr(app.state, 'devices', {'Cutter01': runtime}, raising=False)
+    from tests.line_fixtures import as_line_services
+    monkeypatch.setattr(app.state, 'lines', as_line_services({'Cutter01':runtime}), raising=False)
     local_headers = {'Cookie': f'cutting_session={local_token}'}
     hr_headers = {'Cookie': f'cutting_session={hr_token}'}
 
@@ -166,12 +177,11 @@ def test_more_than_eight_session_reads_run_in_threads_without_authentication_adm
     anyio.run(exercise)
 
 
-def test_bootstrap_and_local_account_hashing_use_authentication_capacity_and_keep_sessions(tmp_path, monkeypatch):
+def test_bootstrap_and_local_account_hashing_use_authentication_capacity_and_keep_sessions(state_database, tmp_path, monkeypatch):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    repository = WorkshopRepository(tmp_path / 'metadata.db')
-    repository.initialize()
+    repository = WorkshopRepository(state_database)
     isolated = FastAPI()
     isolated.include_router(auth.router)
     isolated.state.workshop = repository

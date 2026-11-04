@@ -5,8 +5,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
 
-from app.database.sqlite import SQLiteDatabase, SQLiteRepository
-from app.database.device_migrations import rebuild_table
+from app.database.postgres import PostgresDatabase, PostgresRepository
 from app.models.domain import LeadershipPeriodRecord, ProjectDistributionRecord
 
 
@@ -64,13 +63,10 @@ def _project_from_dict(value: dict) -> ProjectDistributionRecord:
     )
 
 
-class LeadershipSnapshotRepository(SQLiteRepository):
-    def __init__(self, database: SQLiteDatabase) -> None:
+class LeadershipSnapshotRepository(PostgresRepository):
+    def __init__(self, database: PostgresDatabase) -> None:
         super().__init__(database)
 
-    def initialize(self) -> None:
-        from app.database.migrations import apply_migrations
-        apply_migrations(self.database, names=("005_leadership_snapshots",))
 
     def get(
         self,
@@ -83,9 +79,9 @@ class LeadershipSnapshotRepository(SQLiteRepository):
             row = connection.execute(
                 """
                 SELECT * FROM leadership_month_snapshots
-                WHERE report_month = ?
-                  AND source_fingerprint = ?
-                  AND snapshot_version = ?
+                WHERE report_month = %s
+                  AND source_fingerprint = %s
+                  AND snapshot_version = %s
                 """,
                 (report_month.isoformat(), source_fingerprint, snapshot_version),
             ).fetchone()
@@ -100,7 +96,7 @@ class LeadershipSnapshotRepository(SQLiteRepository):
     ) -> dict[date, LeadershipMonthSnapshot]:
         if not report_months:
             return {}
-        placeholders = ",".join("?" for _ in report_months)
+        placeholders = ",".join("%s" for _ in report_months)
         parameters = [month.isoformat() for month in report_months]
         parameters.extend((source_fingerprint, snapshot_version))
         with self.connect() as connection:
@@ -108,8 +104,8 @@ class LeadershipSnapshotRepository(SQLiteRepository):
                 f"""
                 SELECT * FROM leadership_month_snapshots
                 WHERE report_month IN ({placeholders})
-                  AND source_fingerprint = ?
-                  AND snapshot_version = ?
+                  AND source_fingerprint = %s
+                  AND snapshot_version = %s
                 """,
                 tuple(parameters),
             ).fetchall()
@@ -147,26 +143,27 @@ class LeadershipSnapshotRepository(SQLiteRepository):
             for snapshot in snapshots
         ]
         with self.connect() as connection:
-            connection.executemany(
-                """
-                INSERT INTO leadership_month_snapshots (
-                    report_month, daily_json, project_json, total_json,
-                    data_as_of, refreshed_at, expires_at, query_duration_ms,
-                    source_fingerprint, snapshot_version
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(report_month, source_fingerprint) DO UPDATE SET
-                    daily_json = excluded.daily_json,
-                    project_json = excluded.project_json,
-                    total_json = excluded.total_json,
-                    data_as_of = excluded.data_as_of,
-                    refreshed_at = excluded.refreshed_at,
-                    expires_at = excluded.expires_at,
-                    query_duration_ms = excluded.query_duration_ms,
-                    source_fingerprint = excluded.source_fingerprint,
-                    snapshot_version = excluded.snapshot_version
-                """,
-                rows,
-            )
+            with connection.cursor() as cursor:
+                cursor.executemany(
+                    """
+                    INSERT INTO leadership_month_snapshots (
+                        report_month, daily_json, project_json, total_json,
+                        data_as_of, refreshed_at, expires_at, query_duration_ms,
+                        source_fingerprint, snapshot_version
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT(report_month, source_fingerprint) DO UPDATE SET
+                        daily_json = excluded.daily_json,
+                        project_json = excluded.project_json,
+                        total_json = excluded.total_json,
+                        data_as_of = excluded.data_as_of,
+                        refreshed_at = excluded.refreshed_at,
+                        expires_at = excluded.expires_at,
+                        query_duration_ms = excluded.query_duration_ms,
+                        source_fingerprint = excluded.source_fingerprint,
+                        snapshot_version = excluded.snapshot_version
+                    """,
+                    rows,
+                )
 
     @staticmethod
     def _from_row(row) -> LeadershipMonthSnapshot:

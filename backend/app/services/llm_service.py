@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from app.config import Settings
+from app.database.postgres import PostgresDatabase
 from app.models.domain import AnalysisResult
 from app.services.llm_usage_service import record_llm_call
 from app.core.request_cancellation import SqlRequestCancelled, current_request_id, sql_request_cancellations
@@ -142,16 +143,15 @@ _LLM_CAPACITY = _LlmCapacity()
 
 
 @contextmanager
-def llm_capacity(settings: Settings):
+def llm_capacity(settings: Settings, database: PostgresDatabase):
     background = _BACKGROUND_LLM.get()
     priority = _GENERATION_PRIORITY.get()
-    with model_slot(settings, background=background, promoted=lambda: bool(priority and priority.is_set()),
+    with model_slot(settings, database, background=background, promoted=lambda: bool(priority and priority.is_set()),
                     budget=analysis_queue_remaining(settings)) as slot:
         with analysis_stage("capacity_wait"):
             admitted_background = _LLM_CAPACITY.acquire(settings, background=background)
             try:
-                if slot:
-                    slot.acquire()
+                slot.acquire()
             except BaseException:
                 _LLM_CAPACITY.release(background=admitted_background)
                 raise
@@ -252,7 +252,7 @@ def _wait_for_retry(delay: float) -> None:
 
 def request_llm_json(
     settings: Settings, client: httpx.Client, url: str, *, headers: dict[str, str],
-    payload: dict[str, Any], scene: str,
+    payload: dict[str, Any], scene: str, database: PostgresDatabase,
 ) -> dict[str, Any]:
     """Retry only explicit throttling; share capacity, deadline and usage accounting."""
     analysis_id = current_analysis_id() or uuid4().hex
@@ -266,7 +266,7 @@ def request_llm_json(
         with operation_deadline(budget):
             for attempt in range(1, 4):
                 try:
-                    with llm_capacity(settings):
+                    with llm_capacity(settings, database):
                         ensure_time_remaining()
                         if sql_request_cancellations.is_cancelled(current_request_id.get()):
                             raise SqlRequestCancelled("智能分析请求已取消")
@@ -296,7 +296,7 @@ def request_llm_json(
                             raise
                         finally:
                             duration_ms = round((monotonic() - started) * 1000)
-                            record_llm_call(settings, response, response_body, scene=scene,
+                            record_llm_call(settings, database, response, response_body, scene=scene,
                                             occurred_at=occurred_at, duration_ms=duration_ms)
                             logger.info(
                                 "model HTTP attempt: analysis_id=%s request_id=%s device=%s scene=%s attempt=%d "
@@ -348,8 +348,9 @@ def _required_content(content: Any) -> bool:
 
 
 class LlmService:
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, database: PostgresDatabase) -> None:
         self.settings = settings
+        self.database = database
 
     def analyze_context(self, report_type: str, context: dict[str, Any]) -> AnalysisResult:
         if not self.settings.llm_enabled:
@@ -382,7 +383,7 @@ class LlmService:
         url = self.settings.llm_base_url.rstrip("/") + "/chat/completions"
         with httpx.Client(timeout=self.settings.llm_timeout) as client:
             response_body = request_llm_json(self.settings, client, url, headers=headers,
-                                            payload=payload, scene=report_type)
+                                            database=self.database, payload=payload, scene=report_type)
         raw_content = response_body["choices"][0]["message"]["content"]
         if not isinstance(raw_content, str) or len(raw_content) > self.settings.llm_max_output_chars:
             raise AnalysisOutputValidationError("大模型返回内容超过配置容量")

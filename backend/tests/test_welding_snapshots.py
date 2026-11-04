@@ -8,7 +8,8 @@ import pytest
 
 from tests.line_fixtures import welding_settings
 from app.database.report_snapshots import ReportSnapshotRepository
-from app.database.sqlite import SQLiteDatabase, execution_scope
+from app.database.postgres import execution_scope
+from tests.postgres_fixtures import state_settings
 from app.database.coordination import CoordinationRepository
 from app.database.welding import WeldingUnavailable
 from app.database.welding import JOB_FIELDS, PART_FIELDS, WeldingRepository
@@ -130,15 +131,14 @@ def test_snapshot_sort_and_paging_match_live_aggregates(configured, aggregate_gr
 
 
 @pytest.fixture
-def configured(tmp_path):
+def configured(tmp_path, postgres_state):
     cfg = welding_settings(project_root=tmp_path, data_source_mode='demo', weld_enabled=True,
                    worker_database_auth_enabled=False, file_database_enabled=False, llm_enabled=False,
                    alarm_monitor_enabled=False, energy_api_enabled=False)
-    database = SQLiteDatabase(cfg.metadata_db_path)
+    cfg = state_settings(cfg, postgres_state)
+    database = postgres_state[0]
     snapshots = ReportSnapshotRepository(database)
-    snapshots.initialize()
     queue = CoordinationRepository(database)
-    queue.initialize()
     source = Source()
     service = WeldingService(cfg, source, snapshots=snapshots, coordination=queue)
     return cfg, snapshots, queue, source, service
@@ -387,7 +387,7 @@ def test_daily_equipment_paging_and_sort_share_one_coherent_snapshot(configured,
     service.page('equipment', selected, force=True)
     service.page('daily', selected, force=True)
     with queue.connect() as connection:
-        assert connection.execute("SELECT COUNT(*) FROM background_tasks WHERE kind='report_snapshot_refresh' AND status='pending'").fetchone()[0] == 1
+        assert connection.execute("SELECT COUNT(*) AS count FROM background_tasks WHERE kind='report_snapshot_refresh' AND status='pending'").fetchone()['count'] == 1
     assert source.calls == before
     with pytest.raises(SnapshotRefreshBusy):
         service.page('equipment', selected.model_copy(update={'device_no': 0}))
@@ -487,7 +487,7 @@ def test_worker_uses_registry_dedup_capacity_and_current_database_context(config
         for _ in tasks:
             task = queue.claim_task(owner, analysis=False)
             assert task['kind'] == 'report_snapshot_refresh'
-            with execution_scope(cfg.metadata_db_path, 'worker', owner):
+            with execution_scope(runtime.database, 'worker', owner):
                 process._handle(task)
                 queue.finish_task(task, owner)
         assert current.lines['welding'].service.repository.calls['summary'] == len(tasks) + 1, 'homepage also computes today within its own source transaction'
@@ -593,7 +593,7 @@ def test_upgrade_drains_old_aggregate_tasks_before_building_the_new_homepage(con
         assert report['today']['job_count'] == 3
         assert report['meta']['report_data']['source'] == 'snapshot'
         with queue.connect() as connection:
-            completed = connection.execute("SELECT COUNT(*) FROM background_tasks WHERE kind='report_snapshot_refresh' AND status='completed'").fetchone()[0]
+            completed = connection.execute("SELECT COUNT(*) AS count FROM background_tasks WHERE kind='report_snapshot_refresh' AND status='completed'").fetchone()['count']
         assert completed == 4
         assert 'report_type=dashboard outcome=completed elapsed_ms=' in caplog.text
         assert caplog.text.count('skipping superseded welding statistics refresh') == 3

@@ -44,17 +44,17 @@ def fields_for(dataset, settings=None):
         )
     if dataset == "cutting_downloads":
         return (
-            FieldSpec("project_id", "项目ID", "text", "json_extract(payload, '$.project_id')"),
-            FieldSpec("catalog_id", "目录ID", "text", "json_extract(payload, '$.catalog_id')"),
-            FieldSpec("filename", "系统文件名", "text", "json_extract(payload, '$.filename')"),
-            FieldSpec("document_no", "文档名称", "text", "json_extract(payload, '$.document_no')"),
-            FieldSpec("version", "版本", "text", "json_extract(payload, '$.version')"),
-            FieldSpec("relative_path", "来源相对路径", "text", "json_extract(payload, '$.relative_path')"),
-            FieldSpec("created_by_name", "下载操作人", "text", "json_extract(payload, '$.created_by_name')"),
+            FieldSpec("project_id", "项目ID", "text", "(payload::json->>'project_id')"),
+            FieldSpec("catalog_id", "目录ID", "text", "(payload::json->>'catalog_id')"),
+            FieldSpec("filename", "系统文件名", "text", "(payload::json->>'filename')"),
+            FieldSpec("document_no", "文档名称", "text", "(payload::json->>'document_no')"),
+            FieldSpec("version", "版本", "text", "(payload::json->>'version')"),
+            FieldSpec("relative_path", "来源相对路径", "text", "(payload::json->>'relative_path')"),
+            FieldSpec("created_by_name", "下载操作人", "text", "(payload::json->>'created_by_name')"),
             FieldSpec("download_date", "下载日期", "date", "substr(created_at, 1, 10)", "created_at"),
-            FieldSpec("size", "文件大小（字节）", "number", "json_extract(payload, '$.size')"),
+            FieldSpec("size", "文件大小（字节）", "number", "(payload::json->>'size')::numeric"),
             FieldSpec("status", "下载记录状态", "enum", "status", options=(("downloading", "下载中"), ("downloaded", "已下载"), ("failed", "下载失败"))),
-            FieldSpec("source_mode", "文件来源", "enum", "json_extract(payload, '$.source_mode')", options=(("http", "FO HTTP 文件服务"), ("local", "本地目录"), ("mock", "模拟来源"))),
+            FieldSpec("source_mode", "文件来源", "enum", "(payload::json->>'source_mode')", options=(("http", "FO HTTP 文件服务"), ("local", "本地目录"), ("mock", "模拟来源"))),
         )
     raise ConditionError("不支持的查询对象")
 

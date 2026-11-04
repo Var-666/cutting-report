@@ -33,7 +33,7 @@ def test_live_but_blocked_consumer_degrades_health_and_recovers(monkeypatch, blo
         def claim_next_job(self, now):
             if blocked_worker == "report" and not self.claimed:
                 self.claimed = True
-                return {"report_id": "blocked"}
+                return {"report_id": "blocked", "device_id": "Cutter01"}
             return None
 
     class Pipeline:
@@ -85,9 +85,8 @@ def test_live_but_blocked_consumer_degrades_health_and_recovers(monkeypatch, blo
         worker.stop()
 
 
-def test_queue_observation_counts_only_nonterminal_jobs(tmp_path):
-    metadata = MetadataRepository(tmp_path / "metadata.db", device_id='Cutter01')
-    metadata.initialize()
+def test_queue_observation_counts_only_nonterminal_jobs(state_database, tmp_path):
+    metadata = MetadataRepository(state_database, device_id='Cutter01')
     for index in range(4):
         metadata.create_job(report_id=f"r{index}", report_date="2026-09-30",
                             project_code=None, ship_no=None, request_id=f"req{index}",

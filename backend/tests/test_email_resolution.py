@@ -19,7 +19,7 @@ def unknown_delivery(workflow):
     complete_report(metadata, report_id)
     service.report_completed(report_id, NOW)
     with repository.connect() as connection:
-        connection.execute("UPDATE email_deliveries SET recipients_json=? WHERE report_id=?",
+        connection.execute('UPDATE email_deliveries SET recipients_json=%s WHERE report_id=%s',
                            ('["a@example.com","b@example.com"]', report_id))
     delivery = repository.claim_delivery(STAMP)
     repository.mark_delivery_unknown(delivery, now=STAMP)
@@ -143,11 +143,7 @@ def test_prior_accepted_recipient_is_immutable_during_later_unknown_resolution(w
     repository, _, _, _ = workflow
     delivery = unknown_delivery(workflow)
     with repository.connect() as connection:
-        connection.execute("""
-            UPDATE email_deliveries SET recipients_json='["b@example.com"]',
-                recipient_results_json='{"a@example.com":{"status":"accepted"},"b@example.com":{"status":"unknown"}}'
-            WHERE delivery_id=?
-        """, (delivery["delivery_id"],))
+        connection.execute('\n            UPDATE email_deliveries SET recipients_json=\'["b@example.com"]\',\n                recipient_results_json=\'{"a@example.com":{"status":"accepted"},"b@example.com":{"status":"unknown"}}\'\n            WHERE delivery_id=%s\n        ', (delivery["delivery_id"],))
     with pytest.raises(ValueError):
         resolve(repository, delivery, [
             {"recipient": "a@example.com", "outcome": "not_accepted"},

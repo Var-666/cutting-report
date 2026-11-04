@@ -1,3 +1,4 @@
+from tests.postgres_fixtures import state_settings
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -25,9 +26,9 @@ def test_capability_scope_matches_registered_instance_and_whole_modules(tmp_path
     assert supports_path(context, line, path) is allowed
 
 
-def test_api_resolves_explicit_instances_and_public_metadata_has_no_credentials(tmp_path):
+def test_api_resolves_explicit_instances_and_public_metadata_has_no_credentials(postgres_state, tmp_path):
     cfg = configuration(tmp_path, welding=True)
-    runtime = build_runtime(cfg, role='web')
+    runtime = build_runtime(state_settings(cfg,postgres_state), role='web')
     context = database_context(runtime)
     app = FastAPI()
     app.state.runtime = runtime
@@ -43,9 +44,9 @@ def test_api_resolves_explicit_instances_and_public_metadata_has_no_credentials(
 
 
 @pytest.mark.parametrize('headers', [{}, {'X-Production-Line': 'welding'}, {'X-Production-Line': 'Cutter01'}])
-def test_client_scope_never_grants_authenticated_access(headers, tmp_path, monkeypatch):
+def test_client_scope_never_grants_authenticated_access(postgres_state, headers, tmp_path, monkeypatch):
     from app.main import app
-    runtime = build_runtime(configuration(tmp_path, welding=True), role='web')
+    runtime = build_runtime(state_settings(configuration(tmp_path, welding=True),postgres_state), role='web')
     monkeypatch.setattr(app.state, 'runtime', runtime, raising=False)
     path = '/api/v1/welding/health' if headers.get('X-Production-Line') != 'Cutter01' else '/api/v1/alarms/status?device_id=Cutter01'
     assert TestClient(app).get(path, headers=headers).status_code == 401

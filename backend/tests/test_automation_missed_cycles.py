@@ -13,14 +13,11 @@ def backlog_schedule(workflow, **changes):
     )
 
 
-def test_reservation_insert_failure_rolls_back_schedule_clock(workflow):
-    repository, _, _, _ = workflow
+def test_reservation_insert_failure_rolls_back_schedule_clock(workflow, monkeypatch):
+    from types import SimpleNamespace
+    repository, _, _, existing = workflow
     schedule = backlog_schedule(workflow)
-    with repository.connect() as connection:
-        connection.execute("""
-            CREATE TRIGGER fail_run BEFORE INSERT ON scheduled_report_runs
-            BEGIN SELECT RAISE(ABORT, 'test reservation insert failure'); END
-        """)
+    monkeypatch.setattr('app.database.automation.uuid4', lambda: SimpleNamespace(hex=existing['run_id'][4:]))
     assert repository.reserve_run(
         schedule, scheduled_for=schedule["next_run_at"], report_date="2026-09-26",
         trigger_type="scheduled", now=STAMP, next_run_at="2026-09-28T09:00:00+08:00",
@@ -38,7 +35,7 @@ def test_due_scan_does_not_let_old_backlog_occupy_every_slot(workflow):
     handled_ids = {schedule["schedule_id"] for schedule in first}
     with repository.connect() as connection:
         for schedule in first:
-            connection.execute("UPDATE report_schedules SET last_run_at=? WHERE schedule_id=?",
+            connection.execute('UPDATE report_schedules SET last_run_at=%s WHERE schedule_id=%s',
                                (STAMP, schedule["schedule_id"]))
     second = repository.due_schedules(STAMP)
     waiting_id = next(schedule["schedule_id"] for schedule in schedules
@@ -54,9 +51,9 @@ def test_one_corrupt_schedule_does_not_stop_other_due_schedules(workflow):
     assert repository.get_schedule(broken["schedule_id"])["next_run_at"] == broken["next_run_at"]
     with repository.connect() as connection:
         assert connection.execute(
-            "SELECT COUNT(*) FROM scheduled_report_runs WHERE schedule_id=?",
+            'SELECT COUNT(*) FROM scheduled_report_runs WHERE schedule_id=%s',
             (healthy["schedule_id"],),
-        ).fetchone()[0] == 1
+        ).fetchone()['count'] == 1
 
 
 @pytest.mark.parametrize("frequency,extra,first,second,expected_dates", [
@@ -79,7 +76,7 @@ def test_missed_cycles_are_caught_up_one_per_scan_with_original_report_dates(
     assert service.process_due_schedules(NOW) == 0
     with repository.connect() as connection:
         runs = connection.execute(
-            "SELECT * FROM scheduled_report_runs WHERE schedule_id=? ORDER BY scheduled_for",
+            'SELECT * FROM scheduled_report_runs WHERE schedule_id=%s ORDER BY scheduled_for',
             (schedule["schedule_id"],),
         ).fetchall()
     assert [run["report_date"] for run in runs] == expected_dates

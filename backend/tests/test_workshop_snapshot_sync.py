@@ -28,9 +28,8 @@ def record(task_id, *, project='P', work=60):
                           production_date=date(2026, 9, 30))
 
 
-def setup(tmp_path):
-    repository = WorkshopRepository(tmp_path / 'meta.db', scope_machine_no='Cutter01')
-    repository.initialize()
+def setup(state_database, tmp_path):
+    repository = WorkshopRepository(state_database, scope_machine_no='Cutter01')
     admin = repository.create_user(username='admin', display_name='管理员', password='password', role='admin', now='2026-10-01T00:00:00')
     worker = repository.create_user(username='w', display_name='工人', password='password', role='worker', now='2026-10-01T00:00:00')
     repository.test_admin_id, repository.test_worker_id = admin['user_id'], worker['user_id']
@@ -51,23 +50,20 @@ def test_source_correction_routes_are_removed_without_removing_confirmation_rout
             assert client.post(f'/api/v1/workshop{path}', json={}).status_code == 404
 
 
-def test_initialization_does_not_create_source_correction_records_or_delete_legacy_data(tmp_path):
-    repository = setup(tmp_path)
+def test_repositories_preserve_imported_confirmation_audits_without_creating_correction_tables(state_database, tmp_path):
+    repository = setup(state_database, tmp_path)
     with repository.connect() as connection:
-        assert connection.execute(
-            "SELECT name FROM sqlite_master WHERE name = 'workshop_source_correction_audits'"
-        ).fetchone() is None
-        connection.execute('CREATE TABLE workshop_source_correction_audits (audit_id TEXT PRIMARY KEY, payload TEXT)')
-        connection.execute("INSERT INTO workshop_source_correction_audits VALUES ('legacy', '历史操作记录')")
-    repository.initialize()
-    with repository.connect() as connection:
-        assert connection.execute(
-            "SELECT payload FROM workshop_source_correction_audits WHERE audit_id = 'legacy'"
-        ).fetchone()[0] == '历史操作记录'
+        assert connection.execute("SELECT tablename FROM pg_tables WHERE schemaname='app_state' AND tablename='workshop_source_correction_audits'").fetchone() is None
+        connection.execute("""INSERT INTO workshop_confirmation_audits
+            (audit_id,task_id,action,reason,operated_by_id,operated_by_name,operated_by_role,operated_at,scope_machine_no)
+            VALUES ('legacy','historical-task','confirm','历史操作记录',%s,'管理员','admin','2026-09-30','Cutter01')""",
+            (repository.test_admin_id,))
+    restarted = WorkshopRepository(state_database,scope_machine_no='Cutter01')
+    assert restarted.list_confirmation_audits()[0]['reason'] == '历史操作记录'
 
 
-def test_snapshot_sync_appends_new_task_ids_idempotently(tmp_path):
-    repository = setup(tmp_path)
+def test_snapshot_sync_appends_new_task_ids_idempotently(state_database, tmp_path):
+    repository = setup(state_database, tmp_path)
     initial = repository.create_daily_report(report_date='2026-09-30', source_mode='sqlserver',
                                              records=[record('A'), record('B')],
                                              user={'user_id': repository.test_admin_id, 'display_name': '管理员'}, now='2026-10-01T01:00:00')
@@ -89,8 +85,8 @@ def test_snapshot_sync_appends_new_task_ids_idempotently(tmp_path):
     assert repository.list_confirmation_audits(task_id='A')[0]['action'] == 'confirm'
 
 
-def test_snapshot_source_identity_must_match(tmp_path):
-    repository = setup(tmp_path)
+def test_snapshot_source_identity_must_match(state_database, tmp_path):
+    repository = setup(state_database, tmp_path)
     report = repository.create_daily_report(report_date='2026-09-30', source_mode='demo',
                                             records=[record('A')], user={'user_id': repository.test_admin_id, 'display_name': 'u'},
                                             now='2026-10-01T01:00:00')
@@ -101,8 +97,8 @@ def test_snapshot_source_identity_must_match(tmp_path):
     assert repository.get_daily_report(report_date='2026-09-30')['item_count'] == 1
 
 
-def test_snapshot_backfills_only_missing_project_number_and_preserves_confirmation(tmp_path):
-    repository = setup(tmp_path)
+def test_snapshot_backfills_only_missing_project_number_and_preserves_confirmation(state_database, tmp_path):
+    repository = setup(state_database, tmp_path)
     arguments = dict(report_date='2026-09-30', source_mode='sqlserver',
                      user={'user_id': repository.test_admin_id, 'display_name': '管理员'}, now='2026-10-01T01:00:00')
     report = repository.create_daily_report(**arguments, records=[record('A', project=None)])
@@ -124,8 +120,8 @@ def test_snapshot_backfills_only_missing_project_number_and_preserves_confirmati
 
 
 @pytest.mark.parametrize('changed', ['work_time', 'existing_project'])
-def test_snapshot_project_backfill_is_atomic_and_cannot_hide_other_source_changes(tmp_path, changed):
-    repository = setup(tmp_path)
+def test_snapshot_project_backfill_is_atomic_and_cannot_hide_other_source_changes(state_database, tmp_path, changed):
+    repository = setup(state_database, tmp_path)
     arguments = dict(report_date='2026-09-30', source_mode='sqlserver',
                      user={'user_id': repository.test_admin_id, 'display_name': '管理员'}, now='2026-10-01T01:00:00')
     repository.create_daily_report(**arguments, records=[record('A', project=None), record('B', project='P')])
@@ -136,8 +132,8 @@ def test_snapshot_project_backfill_is_atomic_and_cannot_hide_other_source_change
     assert [(row.project_code, row.work_time) for row in after] == [(None, Decimal('60')), ('P', Decimal('60'))]
 
 
-def test_empty_snapshot_can_be_populated_and_then_incrementally_synced(tmp_path):
-    repository = setup(tmp_path)
+def test_empty_snapshot_can_be_populated_and_then_incrementally_synced(state_database, tmp_path):
+    repository = setup(state_database, tmp_path)
     report = repository.create_daily_report(report_date='2026-09-30', source_mode='sqlserver', records=[],
                                             user={'user_id': repository.test_admin_id, 'display_name': 'u'}, now='2026-10-01T01:00:00')
     populated = repository.populate_empty_daily_report(report_date='2026-09-30', source_mode='sqlserver',
@@ -150,8 +146,8 @@ def test_empty_snapshot_can_be_populated_and_then_incrementally_synced(tmp_path)
     assert populated['item_count'] == 2
 
 
-def test_scope_change_does_not_overwrite_confirmed_snapshot(tmp_path):
-    repository = setup(tmp_path)
+def test_scope_change_does_not_overwrite_confirmed_snapshot(state_database, tmp_path):
+    repository = setup(state_database, tmp_path)
     report = repository.create_daily_report(
         report_date='2026-09-30', source_mode='sqlserver', records=[record('A')],
         user={'user_id': repository.test_admin_id, 'display_name': '管理员'}, now='2026-10-01T01:00:00',
@@ -172,8 +168,8 @@ def test_scope_change_does_not_overwrite_confirmed_snapshot(tmp_path):
     assert repository.list_confirmation_audits(task_id='A')[0]['action'] == 'confirm'
 
 
-def test_scope_change_rejects_orphaned_report_confirmation(tmp_path):
-    repository = setup(tmp_path)
+def test_scope_change_rejects_orphaned_report_confirmation(state_database, tmp_path):
+    repository = setup(state_database, tmp_path)
     report = repository.create_daily_report(
         report_date='2026-09-30', source_mode='sqlserver', records=[record('A')],
         user={'user_id': repository.test_admin_id, 'display_name': '管理员'}, now='2026-10-01T01:00:00',
@@ -187,7 +183,7 @@ def test_scope_change_rejects_orphaned_report_confirmation(tmp_path):
     # Simulate a legacy cleanup that removed the item but left its audit/confirmation.
     with repository.connect() as connection:
         connection.execute(
-            'DELETE FROM workshop_report_items WHERE report_id = ?',
+            'DELETE FROM workshop_report_items WHERE report_id = %s',
             (report['report_id'],),
         )
 
@@ -200,8 +196,8 @@ def test_scope_change_rejects_orphaned_report_confirmation(tmp_path):
     assert repository.get_confirmations(['A'], report_id=report['report_id'])['A']['report_id'] == report['report_id']
 
 
-def test_unexpected_source_mismatch_is_reported_without_silent_overwrite(tmp_path):
-    repository = setup(tmp_path)
+def test_unexpected_source_mismatch_is_reported_without_silent_overwrite(state_database, tmp_path):
+    repository = setup(state_database, tmp_path)
     repository.create_daily_report(
         report_date='2026-09-30', source_mode='sqlserver', records=[record('A')],
         user={'user_id': repository.test_admin_id, 'display_name': '管理员'}, now='2026-10-01T01:00:00',
@@ -228,13 +224,13 @@ def test_unexpected_source_mismatch_is_reported_without_silent_overwrite(tmp_pat
 
 
 @pytest.mark.parametrize('corrected', [False, True])
-def test_http_generation_syncs_nonempty_snapshot_or_reports_source_conflict(tmp_path, monkeypatch, corrected):
+def test_http_generation_syncs_nonempty_snapshot_or_reports_source_conflict(state_database, tmp_path, monkeypatch, corrected):
     from app.api.auth import require_user
     from app.api.workshop import router
     from tests.line_fixtures import cutting_settings
     from app.models.domain import QueryBundle
 
-    repository = setup(tmp_path)
+    repository = setup(state_database, tmp_path)
     admin = {'user_id': repository.test_admin_id, 'display_name': '管理员', 'role': 'admin'}
     cfg = cutting_settings(project_root=tmp_path, data_source_mode='sqlserver', demo_mode=False)
     monkeypatch.setattr('app.api.workshop.settings', cfg)
@@ -272,19 +268,17 @@ def test_http_generation_syncs_nonempty_snapshot_or_reports_source_conflict(tmp_
     assert len(repository.list_confirmation_audits(task_id='A')) == 1
 
 
-def test_automation_preparation_syncs_existing_snapshot(tmp_path):
+def test_automation_preparation_syncs_existing_snapshot(state_database, tmp_path):
     from tests.line_fixtures import cutting_settings
     from app.database.automation import AutomationRepository
     from app.database.metadata import MetadataRepository
     from app.models.domain import QueryBundle
     from app.services.automation_service import AutomationService
 
-    workshop = setup(tmp_path)
+    workshop = setup(state_database, tmp_path)
     cfg = cutting_settings(project_root=tmp_path, data_source_mode='sqlserver', demo_mode=False)
     metadata = MetadataRepository(workshop.database, device_id='Cutter01')
-    metadata.initialize()
     automation = AutomationRepository(workshop.database)
-    automation.initialize()
     user = {'user_id': workshop.test_admin_id, 'display_name': '管理员'}
     workshop.sync_daily_report(report_date='2026-09-30', source_mode='sqlserver',
                               records=[record('A')], user=user, now='2026-10-01T01:00:00')
@@ -298,8 +292,8 @@ def test_automation_preparation_syncs_existing_snapshot(tmp_path):
     assert [row.task_id for row in workshop.get_daily_report_records('2026-09-30')[1]] == ['A', 'B']
 
 
-def test_concurrent_first_sync_preserves_union_of_tasks(tmp_path):
-    repository = setup(tmp_path)
+def test_concurrent_first_sync_preserves_union_of_tasks(state_database, tmp_path):
+    repository = setup(state_database, tmp_path)
     barrier = Barrier(2)
 
     def sync(task_id):

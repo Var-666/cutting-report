@@ -69,11 +69,11 @@ class ReportPipeline:
         self.definitions = definitions or DefinitionRepository(
             self.database, settings.timezone
         )
-        self.definitions.initialize()
+        if definitions is None:
+            self.definitions.initialize()
         self.query_service = query_service or QueryService(settings)
         self.energy_service = EquipmentEnergyService(settings)
         energy_reports = EnergyReportRepository(self.database)
-        energy_reports.initialize()
         self.energy_period_service = EnergyPeriodService(
             settings,
             energy_reports,
@@ -88,7 +88,6 @@ class ReportPipeline:
         self.custom_report_service = CustomReportService(settings, client=self.query_service.client)
         if workshop_repository is None:
             workshop_repository = WorkshopRepository(self.database, scope_machine_no=settings.report_machine_no)
-            workshop_repository.initialize()
         self.workshop_repository = workshop_repository
         self.range_service = RangeReportService(
             settings,

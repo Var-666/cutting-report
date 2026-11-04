@@ -1,8 +1,8 @@
 from __future__ import annotations
-import sqlite3
-from pathlib import Path
+from psycopg import Connection
+
 from typing import Any
-from app.database.sqlite import SQLiteDatabase, SQLiteRepository
+
 
 from uuid import uuid4
 from app.database.workshop_scope import WorkshopScopeRepository
@@ -22,22 +22,20 @@ class ConfirmationRepository(WorkshopScopeRepository):
                        ROW_NUMBER() OVER (PARTITION BY c.task_id ORDER BY
                            r.generated_at DESC, r.report_date DESC, r.report_id DESC) AS snapshot_rank
                 FROM workshop_confirmations c
-                JOIN workshop_reports r ON r.scope_machine_no = c.scope_machine_no COLLATE NOCASE
+                JOIN workshop_reports r ON sqlite_nocase(r.scope_machine_no) = sqlite_nocase(c.scope_machine_no)
                     AND (c.report_id = r.report_id OR c.report_id IS NULL)
                 JOIN workshop_report_items i ON i.report_id = r.report_id AND i.task_id = c.task_id
-                WHERE c.worker_id = ? AND c.scope_machine_no = ? COLLATE NOCASE
+                WHERE c.worker_id = %s AND sqlite_nocase(c.scope_machine_no) = sqlite_nocase(%s)
             ), selected AS (
                 SELECT task_id, project_code, ship_no, segment_name, program_no, production_date, confirmed_at
-                FROM snapshots WHERE snapshot_rank = 1 AND production_date >= ? AND production_date <= ?
+                FROM snapshots WHERE snapshot_rank = 1 AND production_date >= %s AND production_date <= %s
             )
         '''
         parameters = (worker_id, scope, start_date, end_date)
-        with self.connect() as connection:
-            if not connection.in_transaction:
-                connection.execute('BEGIN')
-            total = int(connection.execute(query + 'SELECT COUNT(*) FROM selected', parameters).fetchone()[0])
+        with self.connect(repeatable_read=True) as connection:
+            total = int(connection.execute(query + 'SELECT COUNT(*) AS count FROM selected', parameters).fetchone()['count'])
             rows = connection.execute(query + '''SELECT * FROM selected
-                ORDER BY production_date DESC, confirmed_at DESC, task_id DESC LIMIT ? OFFSET ?''',
+                ORDER BY production_date DESC, confirmed_at DESC, task_id DESC LIMIT %s OFFSET %s''',
                 (*parameters, page_size, (page - 1) * page_size)).fetchall()
         return [dict(row) for row in rows], total
 
@@ -52,14 +50,14 @@ class ConfirmationRepository(WorkshopScopeRepository):
         with self.connect() as connection:
             for start in range(0, len(unique_ids), 500):
                 chunk = unique_ids[start : start + 500]
-                placeholders = ",".join("?" for _ in chunk)
+                placeholders = ",".join("%s" for _ in chunk)
                 report_clause = ""
                 parameters: list[Any] = list(chunk)
                 if report_id is not None:
-                    report_clause = " AND (c.report_id = ? OR c.report_id IS NULL)"
+                    report_clause = " AND (c.report_id = %s OR c.report_id IS NULL)"
                     parameters.append(report_id)
                 if self.scope_machine_no is not None:
-                    report_clause += " AND c.scope_machine_no = ? COLLATE NOCASE"
+                    report_clause += " AND sqlite_nocase(c.scope_machine_no) = sqlite_nocase(%s)"
                     parameters.append(self.scope_machine_no)
                 rows = connection.execute(
                     f"""
@@ -103,10 +101,10 @@ class ConfirmationRepository(WorkshopScopeRepository):
         unique_ids = list(dict.fromkeys(str(task_id) for task_id in task_ids))
         if not unique_ids:
             raise ValueError("至少选择一个待确认任务")
-        placeholders = ",".join("?" for _ in unique_ids)
+        placeholders = ",".join("%s" for _ in unique_ids)
 
         with self.connect() as connection:
-            self.begin_immediate(connection)
+            self.lock_scope(connection)
             self._check_report_scope(connection, report_id)
             if report_id:
                 report_revisions = {
@@ -114,7 +112,7 @@ class ConfirmationRepository(WorkshopScopeRepository):
                     for row in connection.execute(
                         f"""
                         SELECT task_id, snapshot_revision FROM workshop_report_items
-                        WHERE report_id = ? AND task_id IN ({placeholders})
+                        WHERE report_id = %s AND task_id IN ({placeholders})
                         """,
                         (report_id, *unique_ids),
                     ).fetchall()
@@ -125,7 +123,7 @@ class ConfirmationRepository(WorkshopScopeRepository):
                 report_revisions = {
                     str(row["task_id"]): int(row["snapshot_revision"])
                     for row in connection.execute(
-                        f"SELECT i.task_id, MAX(i.snapshot_revision) AS snapshot_revision FROM workshop_report_items i JOIN workshop_reports r ON r.report_id=i.report_id WHERE i.task_id IN ({placeholders}) AND r.scope_machine_no=? COLLATE NOCASE GROUP BY i.task_id",
+                        f"SELECT i.task_id, MAX(i.snapshot_revision) AS snapshot_revision FROM workshop_report_items i JOIN workshop_reports r ON r.report_id=i.report_id WHERE i.task_id IN ({placeholders}) AND sqlite_nocase(r.scope_machine_no) = sqlite_nocase(%s) GROUP BY i.task_id",
                         (*unique_ids, self.require_scope()),
                     ).fetchall()
                 }
@@ -137,7 +135,7 @@ class ConfirmationRepository(WorkshopScopeRepository):
             existing_rows = connection.execute(
                 f"""
                 SELECT * FROM workshop_confirmations
-                WHERE task_id IN ({placeholders}) AND scope_machine_no=? COLLATE NOCASE
+                WHERE task_id IN ({placeholders}) AND sqlite_nocase(scope_machine_no) = sqlite_nocase(%s)
                 """,
                 (*unique_ids, self.require_scope()),
             ).fetchall()
@@ -157,7 +155,7 @@ class ConfirmationRepository(WorkshopScopeRepository):
                     INSERT INTO workshop_confirmations (
                         task_id, report_id, worker_id, worker_name,
                         confirmed_at, created_at, updated_at, scope_machine_no
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         task_id,
@@ -185,7 +183,7 @@ class ConfirmationRepository(WorkshopScopeRepository):
             saved_rows = connection.execute(
                 f"""
                 SELECT * FROM workshop_confirmations
-                WHERE task_id IN ({placeholders}) AND scope_machine_no=? COLLATE NOCASE
+                WHERE task_id IN ({placeholders}) AND sqlite_nocase(scope_machine_no) = sqlite_nocase(%s)
                 """,
                 (*unique_ids, self.require_scope()),
             ).fetchall()
@@ -193,12 +191,12 @@ class ConfirmationRepository(WorkshopScopeRepository):
         return [saved_by_id[task_id] for task_id in unique_ids]
 
     def _insert_confirmation_audit(
-        self, connection: sqlite3.Connection,
+        self, connection: Connection,
         *,
         task_id: str,
         report_id: str | None,
         action: str,
-        previous: sqlite3.Row | dict[str, Any] | None,
+        previous: dict[str, Any] | None,
         new_worker: dict[str, Any] | None,
         reason: str,
         operator: dict[str, Any],
@@ -212,7 +210,7 @@ class ConfirmationRepository(WorkshopScopeRepository):
                 previous_worker_id, previous_worker_name,
                 new_worker_id, new_worker_name, reason,
                 operated_by_id, operated_by_name, operated_by_role, operated_at, scope_machine_no
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 audit_id,
@@ -234,7 +232,7 @@ class ConfirmationRepository(WorkshopScopeRepository):
         return audit_id
 
     @staticmethod
-    def _audit_dict(row: sqlite3.Row) -> dict[str, Any]:
+    def _audit_dict(row: dict[str, Any]) -> dict[str, Any]:
         labels = {
             "confirm": "确认任务",
             "worker_revoke": "工人撤销",
@@ -255,10 +253,10 @@ class ConfirmationRepository(WorkshopScopeRepository):
         now: str,
     ) -> dict[str, Any]:
         with self.connect() as connection:
-            self.begin_immediate(connection)
+            self.lock_scope(connection)
             self._check_report_scope(connection, report_id)
             existing = connection.execute(
-                "SELECT * FROM workshop_confirmations WHERE task_id = ? AND scope_machine_no = ? COLLATE NOCASE", (task_id, self.require_scope())
+                "SELECT * FROM workshop_confirmations WHERE task_id = %s AND sqlite_nocase(scope_machine_no) = sqlite_nocase(%s)", (task_id, self.require_scope())
             ).fetchone()
             if existing is None:
                 raise ConfirmationNotFoundError("该任务尚未确认或已被撤销")
@@ -276,10 +274,10 @@ class ConfirmationRepository(WorkshopScopeRepository):
                 now=now,
             )
             connection.execute(
-                "DELETE FROM workshop_confirmations WHERE task_id = ? AND scope_machine_no=? COLLATE NOCASE", (task_id, self.require_scope())
+                "DELETE FROM workshop_confirmations WHERE task_id = %s AND sqlite_nocase(scope_machine_no) = sqlite_nocase(%s)", (task_id, self.require_scope())
             )
             row = connection.execute(
-                "SELECT * FROM workshop_confirmation_audits WHERE audit_id = ?",
+                "SELECT * FROM workshop_confirmation_audits WHERE audit_id = %s",
                 (audit_id,),
             ).fetchone()
         return self._audit_dict(row)
@@ -295,10 +293,10 @@ class ConfirmationRepository(WorkshopScopeRepository):
         new_worker_id: str | None = None,
     ) -> dict[str, Any]:
         with self.connect() as connection:
-            self.begin_immediate(connection)
+            self.lock_scope(connection)
             self._check_report_scope(connection, report_id)
             existing = connection.execute(
-                "SELECT * FROM workshop_confirmations WHERE task_id = ? AND scope_machine_no = ? COLLATE NOCASE", (task_id, self.require_scope())
+                "SELECT * FROM workshop_confirmations WHERE task_id = %s AND sqlite_nocase(scope_machine_no) = sqlite_nocase(%s)", (task_id, self.require_scope())
             ).fetchone()
             if existing is None:
                 raise ConfirmationNotFoundError("该任务尚未确认或已被撤销")
@@ -307,7 +305,7 @@ class ConfirmationRepository(WorkshopScopeRepository):
             action = "admin_revoke"
             if new_worker_id:
                 target = connection.execute(
-                    "SELECT * FROM users WHERE user_id = ? AND role = 'worker' AND active = 1",
+                    "SELECT * FROM users WHERE user_id = %s AND role = 'worker' AND active = 1",
                     (new_worker_id,),
                 ).fetchone()
                 if target is None:
@@ -332,9 +330,9 @@ class ConfirmationRepository(WorkshopScopeRepository):
                 connection.execute(
                     """
                     UPDATE workshop_confirmations
-                    SET report_id = ?, worker_id = ?, worker_name = ?,
-                        confirmed_at = ?, updated_at = ?
-                    WHERE task_id = ? AND scope_machine_no=? COLLATE NOCASE
+                    SET report_id = %s, worker_id = %s, worker_name = %s,
+                        confirmed_at = %s, updated_at = %s
+                    WHERE task_id = %s AND sqlite_nocase(scope_machine_no) = sqlite_nocase(%s)
                     """,
                     (
                         existing["report_id"] or report_id,
@@ -347,10 +345,10 @@ class ConfirmationRepository(WorkshopScopeRepository):
                 )
             else:
                 connection.execute(
-                    "DELETE FROM workshop_confirmations WHERE task_id = ? AND scope_machine_no=? COLLATE NOCASE", (task_id, self.require_scope())
+                    "DELETE FROM workshop_confirmations WHERE task_id = %s AND sqlite_nocase(scope_machine_no) = sqlite_nocase(%s)", (task_id, self.require_scope())
                 )
             row = connection.execute(
-                "SELECT * FROM workshop_confirmation_audits WHERE audit_id = ?",
+                "SELECT * FROM workshop_confirmation_audits WHERE audit_id = %s",
                 (audit_id,),
             ).fetchone()
         return self._audit_dict(row)
@@ -366,23 +364,24 @@ class ConfirmationRepository(WorkshopScopeRepository):
         clauses: list[str] = []
         params: list[Any] = []
         if self.scope_machine_no is not None:
-            clauses.append("scope_machine_no = ? COLLATE NOCASE")
+            clauses.append("sqlite_nocase(scope_machine_no) = sqlite_nocase(%s)")
             params.append(self.scope_machine_no)
         if task_id:
-            clauses.append("task_id = ?")
+            clauses.append("task_id = %s")
             params.append(task_id)
         if report_id:
-            clauses.append("report_id = ?")
+            clauses.append("report_id = %s")
             params.append(report_id)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         params.append(limit)
         with self.connect() as connection:
+            self.lock_scope(connection)
             rows = connection.execute(
                 f"""
                 SELECT * FROM workshop_confirmation_audits
                 {where}
                 ORDER BY operated_at DESC, audit_id DESC
-                LIMIT ?
+                LIMIT %s
                 """,
                 params,
             ).fetchall()

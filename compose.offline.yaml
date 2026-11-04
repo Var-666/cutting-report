@@ -10,3 +10,11 @@ services:
     volumes:
       - ./backend:/app/backend:ro,Z
       - ./vendor:/app/vendor:ro,Z
+  migrate:
+    pull_policy: never
+    volumes:
+      - ./backend:/app/backend:ro,Z
+      - ./scripts/migrate_sqlite_to_postgres.py:/app/scripts/migrate_sqlite_to_postgres.py:ro,Z
+      - ./scripts/migrate_database.py:/app/scripts/migrate_database.py:ro,Z
+      - ./scripts/migrate_production_lines.py:/app/scripts/migrate_production_lines.py:ro,Z
+      - ./scripts/postgres:/app/scripts/postgres:ro,Z

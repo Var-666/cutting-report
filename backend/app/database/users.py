@@ -1,15 +1,15 @@
 from __future__ import annotations
-import sqlite3
-from pathlib import Path
+from psycopg import IntegrityError
+
 from typing import Any
-from app.database.sqlite import SQLiteDatabase, SQLiteRepository
+from app.database.postgres import PostgresRepository, lock_key
 
 from uuid import uuid4
 from app.database.identity_security import AuthenticationError, hash_password, verify_password
 
-class UserRepository(SQLiteRepository):
+class UserRepository(PostgresRepository):
     @staticmethod
-    def public_user(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
+    def public_user(row: dict[str, Any]) -> dict[str, Any]:
         keys = set(row.keys())
         auth_source = row["auth_source"] if "auth_source" in keys else "local"
         company_no = row["company_no"] if "company_no" in keys else None
@@ -30,8 +30,8 @@ class UserRepository(SQLiteRepository):
         with self.connect() as connection:
             return int(
                 connection.execute(
-                    "SELECT COUNT(*) FROM users WHERE role = 'admin'"
-                ).fetchone()[0]
+                    "SELECT COUNT(*) AS count FROM users WHERE role = 'admin'"
+                ).fetchone()['count']
             )
 
     def create_user(
@@ -45,13 +45,13 @@ class UserRepository(SQLiteRepository):
     ) -> dict[str, Any]:
         user_id = f"usr_{uuid4().hex[:16]}"
         try:
-            with self.connect() as connection:
+            with self.connect() as connection, connection.transaction():
                 connection.execute(
                     """
                     INSERT INTO users (
                         user_id, username, display_name, password_hash, role,
                         active, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+                    ) VALUES (%s, %s, %s, %s, %s, 1, %s, %s)
                     """,
                     (
                         user_id,
@@ -64,9 +64,9 @@ class UserRepository(SQLiteRepository):
                     ),
                 )
                 row = connection.execute(
-                    "SELECT * FROM users WHERE user_id = ?", (user_id,)
+                    "SELECT * FROM users WHERE user_id = %s", (user_id,)
                 ).fetchone()
-        except sqlite3.IntegrityError as exc:
+        except IntegrityError as exc:
             raise ValueError("登录账号已存在") from exc
         return self.public_user(row)
 
@@ -75,17 +75,17 @@ class UserRepository(SQLiteRepository):
     ) -> dict[str, Any]:
         user_id = f"usr_{uuid4().hex[:16]}"
         with self.connect() as connection:
-            self.begin_immediate(connection)
+            lock_key(connection, 'users:admin-membership')
             if connection.execute(
-                "SELECT COUNT(*) FROM users WHERE role = 'admin'"
-            ).fetchone()[0]:
+                "SELECT COUNT(*) AS count FROM users WHERE role = 'admin'"
+            ).fetchone()['count']:
                 raise AuthenticationError("系统已经完成账号初始化")
             connection.execute(
                 """
                 INSERT INTO users (
                     user_id, username, display_name, password_hash, role,
                     active, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, 'admin', 1, ?, ?)
+                ) VALUES (%s, %s, %s, %s, 'admin', 1, %s, %s)
                 """,
                 (
                     user_id,
@@ -97,7 +97,7 @@ class UserRepository(SQLiteRepository):
                 ),
             )
             row = connection.execute(
-                "SELECT * FROM users WHERE user_id = ?", (user_id,)
+                "SELECT * FROM users WHERE user_id = %s", (user_id,)
             ).fetchone()
         return self.public_user(row)
 
@@ -106,7 +106,7 @@ class UserRepository(SQLiteRepository):
             row = connection.execute(
                 """
                 SELECT * FROM users
-                WHERE username = ? COLLATE NOCASE
+                WHERE sqlite_nocase(username) = sqlite_nocase(%s)
                   AND active = 1
                   AND auth_source = 'local'
                 """,
@@ -131,11 +131,11 @@ class UserRepository(SQLiteRepository):
         identifier so a company-number change does not break history.
         """
         with self.connect() as connection:
-            self.begin_immediate(connection)
+            lock_key(connection, 'users:external:' + external_id)
             row = connection.execute(
                 """
                 SELECT * FROM users
-                WHERE auth_source = 'hr_database' AND external_id = ?
+                WHERE auth_source = 'hr_database' AND external_id = %s
                 """,
                 (external_id,),
             ).fetchone()
@@ -143,9 +143,9 @@ class UserRepository(SQLiteRepository):
                 connection.execute(
                     """
                     UPDATE users
-                    SET display_name = ?, group_no = ?, company_no = ?,
-                        active = 1, updated_at = ?
-                    WHERE user_id = ?
+                    SET display_name = %s, group_no = %s, company_no = %s,
+                        active = 1, updated_at = %s
+                    WHERE user_id = %s
                     """,
                     (display_name, group_no, company_no, now, row["user_id"]),
                 )
@@ -158,7 +158,7 @@ class UserRepository(SQLiteRepository):
                         user_id, username, display_name, password_hash, role,
                         auth_source, external_id, group_no, company_no,
                         active, created_at, updated_at
-                    ) VALUES (?, ?, ?, '', 'worker', 'hr_database', ?, ?, ?, 1, ?, ?)
+                    ) VALUES (%s, %s, %s, '', 'worker', 'hr_database', %s, %s, %s, 1, %s, %s)
                     """,
                     (
                         user_id,
@@ -172,7 +172,7 @@ class UserRepository(SQLiteRepository):
                     ),
                 )
             saved = connection.execute(
-                "SELECT * FROM users WHERE user_id = ?", (user_id,)
+                "SELECT * FROM users WHERE user_id = %s", (user_id,)
             ).fetchone()
         return self.public_user(saved)
 
@@ -188,7 +188,7 @@ class UserRepository(SQLiteRepository):
             row = connection.execute(
                 """
                 SELECT password_hash FROM users
-                WHERE user_id = ? AND auth_source = 'local' AND active = 1
+                WHERE user_id = %s AND auth_source = 'local' AND active = 1
                 """,
                 (user_id,),
             ).fetchone()
@@ -210,7 +210,7 @@ class UserRepository(SQLiteRepository):
                     """
                     SELECT operated_by_name, operated_at
                     FROM admin_role_audits
-                    WHERE subject_user_id = ?
+                    WHERE subject_user_id = %s
                     ORDER BY operated_at DESC
                     LIMIT 1
                     """,
@@ -237,11 +237,12 @@ class UserRepository(SQLiteRepository):
             raise ValueError("HR人员信息不完整")
 
         with self.connect() as connection:
-            self.begin_immediate(connection)
+            lock_key(connection, 'users:admin-membership')
+            lock_key(connection, 'users:external:' + external_id)
             existing = connection.execute(
                 """
                 SELECT * FROM users
-                WHERE auth_source = 'hr_database' AND external_id = ?
+                WHERE auth_source = 'hr_database' AND external_id = %s
                 """,
                 (external_id,),
             ).fetchone()
@@ -251,9 +252,9 @@ class UserRepository(SQLiteRepository):
                 connection.execute(
                     """
                     UPDATE users
-                    SET display_name = ?, group_no = ?, company_no = ?,
-                        role = 'admin', active = 1, updated_at = ?
-                    WHERE user_id = ?
+                    SET display_name = %s, group_no = %s, company_no = %s,
+                        role = 'admin', active = 1, updated_at = %s
+                    WHERE user_id = %s
                     """,
                     (
                         display_name,
@@ -271,7 +272,7 @@ class UserRepository(SQLiteRepository):
                         user_id, username, display_name, password_hash, role,
                         auth_source, external_id, group_no, company_no,
                         active, created_at, updated_at
-                    ) VALUES (?, ?, ?, '', 'admin', 'hr_database', ?, ?, ?, 1, ?, ?)
+                    ) VALUES (%s, %s, %s, '', 'admin', 'hr_database', %s, %s, %s, 1, %s, %s)
                     """,
                     (
                         user_id,
@@ -291,7 +292,7 @@ class UserRepository(SQLiteRepository):
                     INSERT INTO admin_role_audits (
                         audit_id, subject_user_id, subject_external_id, action,
                         operated_by_id, operated_by_name, operated_at
-                    ) VALUES (?, ?, ?, 'grant', ?, ?, ?)
+                    ) VALUES (%s, %s, %s, 'grant', %s, %s, %s)
                     """,
                     (
                         f"aar_{uuid4().hex[:16]}",
@@ -303,7 +304,7 @@ class UserRepository(SQLiteRepository):
                     ),
                 )
             saved = connection.execute(
-                "SELECT * FROM users WHERE user_id = ?", (user_id,)
+                "SELECT * FROM users WHERE user_id = %s", (user_id,)
             ).fetchone()
         return self.public_user(saved)
 
@@ -315,9 +316,9 @@ class UserRepository(SQLiteRepository):
         now: str,
     ) -> dict[str, Any]:
         with self.connect() as connection:
-            self.begin_immediate(connection)
+            lock_key(connection, 'users:admin-membership')
             target = connection.execute(
-                "SELECT * FROM users WHERE user_id = ? AND role = 'admin' AND active = 1",
+                "SELECT * FROM users WHERE user_id = %s AND role = 'admin' AND active = 1",
                 (user_id,),
             ).fetchone()
             if target is None:
@@ -327,12 +328,12 @@ class UserRepository(SQLiteRepository):
             if target["user_id"] == operator["user_id"]:
                 raise ValueError("不能撤销当前登录管理员自己的权限")
             if connection.execute(
-                "SELECT COUNT(*) FROM users WHERE role = 'admin' AND active = 1"
-            ).fetchone()[0] <= 1:
+                "SELECT COUNT(*) AS count FROM users WHERE role = 'admin' AND active = 1"
+            ).fetchone()['count'] <= 1:
                 raise ValueError("必须至少保留一个有效管理员")
 
             connection.execute(
-                "UPDATE users SET role = 'worker', updated_at = ? WHERE user_id = ?",
+                "UPDATE users SET role = 'worker', updated_at = %s WHERE user_id = %s",
                 (now, user_id),
             )
             connection.execute(
@@ -340,7 +341,7 @@ class UserRepository(SQLiteRepository):
                 INSERT INTO admin_role_audits (
                     audit_id, subject_user_id, subject_external_id, action,
                     operated_by_id, operated_by_name, operated_at
-                ) VALUES (?, ?, ?, 'revoke', ?, ?, ?)
+                ) VALUES (%s, %s, %s, 'revoke', %s, %s, %s)
                 """,
                 (
                     f"aar_{uuid4().hex[:16]}",
@@ -352,6 +353,6 @@ class UserRepository(SQLiteRepository):
                 ),
             )
             saved = connection.execute(
-                "SELECT * FROM users WHERE user_id = ?", (user_id,)
+                "SELECT * FROM users WHERE user_id = %s", (user_id,)
             ).fetchone()
         return self.public_user(saved)

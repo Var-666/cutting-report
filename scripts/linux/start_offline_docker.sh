@@ -12,7 +12,7 @@ if [[ ! -f .env ]]; then
 fi
 
 # Check only public lock inputs; never mount data or credentials here.
-image="$(docker compose -f compose.yaml -f compose.offline.yaml config --images | sort -u)"
+image="$(docker compose -f compose.yaml -f compose.offline.yaml config --images app worker | sed '/^postgres:/d' | sort -u)"
 if [[ -z "${image}" || "${image}" == *$'\n'* ]]; then
   echo '[ERROR] Web 和 Worker 必须使用同一运行镜像。' >&2
   exit 1
@@ -26,10 +26,18 @@ if ! docker run --rm --network none \
   exit 1
 fi
 
+# Schema installation/import is an explicit maintenance step, never automatic.
+docker compose -f compose.yaml -f compose.offline.yaml up -d --no-build --pull never postgres
+if ! docker compose -f compose.yaml -f compose.offline.yaml run --rm --no-deps -T app \
+  python scripts/migrate_sqlite_to_postgres.py status; then
+  echo '[ERROR] PostgreSQL 尚未准备完成。请先按 PostgreSQL状态库迁移.md 初始化、迁移并校验，禁止直接启动。' >&2
+  exit 1
+fi
+
 docker compose \
   -f compose.yaml \
   -f compose.offline.yaml \
-  up -d --no-build --pull never --force-recreate
+  up -d --no-build --pull never --force-recreate app worker
 
 docker compose \
   -f compose.yaml \

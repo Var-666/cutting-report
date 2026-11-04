@@ -19,9 +19,8 @@ from app.services.workshop_service import WorkshopService
 
 
 @pytest.fixture
-def personal(tmp_path):
-    repository = WorkshopRepository(tmp_path / 'personal.db', scope_machine_no='Cutter01')
-    repository.initialize()
+def personal(state_database, tmp_path):
+    repository = WorkshopRepository(state_database, scope_machine_no='Cutter01')
     now = '2026-11-03T12:00:00+08:00'
     def user(username, role='worker'):
         return repository.create_user(username=username, display_name='同名工人', password='offline-password', role=role, now=now)
@@ -42,7 +41,7 @@ def personal(tmp_path):
     confirm('legacy', None)
     duplicate = report('2026-10-31', ['legacy'])
     with repository.connect() as connection:
-        connection.execute("UPDATE workshop_reports SET generated_at='2026-10-31T08:00:00+08:00' WHERE report_id=?", (duplicate['report_id'],))
+        connection.execute("UPDATE workshop_reports SET generated_at='2026-10-31T08:00:00+08:00' WHERE report_id=%s", (duplicate['report_id'],))
         connection.execute("UPDATE workshop_report_items SET production_date=NULL WHERE task_id='B'")
     another_device = report('2026-11-01', ['A'], scope='Cutter02')
     confirm('A', another_device, scope='Cutter02')
@@ -82,7 +81,7 @@ def test_revoke_and_reassignment_remove_personal_tasks_without_changing_snapshot
     assert p.service.my_confirmed_tasks(*args, p.worker)['total'] == 2
     assert {row['task_id'] for row in p.service.my_confirmed_tasks(*args, p.other)['items']} == {'B', 'other'}
     with p.repository.connect() as connection:
-        assert connection.execute("SELECT COUNT(*) FROM workshop_report_items WHERE task_id='A'").fetchone()[0] == 2
+        assert connection.execute("SELECT COUNT(*) FROM workshop_report_items WHERE task_id='A'").fetchone()['count'] == 2
 
 
 def test_personal_http_auth_device_scope_validation_and_no_external_dependency(personal):

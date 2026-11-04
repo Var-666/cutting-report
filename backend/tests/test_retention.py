@@ -13,7 +13,6 @@ from app.database.dispatch import DispatchRepository
 from app.database.downloads import DownloadRepository
 from app.database.metadata import MetadataRepository
 from app.database.retention import RetentionRepository
-from app.database.sqlite import SQLiteDatabase
 from app.database.workshop import WorkshopRepository
 from app.services.retention_service import RetentionService
 from app.workers.retention_worker import RetentionWorker
@@ -25,8 +24,8 @@ RECENT = "2026-09-20T08:00:00+08:00"
 NOW = datetime(2026, 9, 21, 8, 0, tzinfo=TZ)
 
 
-def _repositories(tmp_path):
-    database = SQLiteDatabase(tmp_path / "data" / "metadata.db")
+def _repositories(state_database, tmp_path):
+    database = state_database
     workshop = WorkshopRepository(database, scope_machine_no='Cutter01')
     metadata = MetadataRepository(database, device_id='Cutter01')
     automation = AutomationRepository(database)
@@ -34,16 +33,8 @@ def _repositories(tmp_path):
     dispatches = DispatchRepository(database)
     downloads = DownloadRepository(database)
     retention = RetentionRepository(database)
-    for repository in (
-        workshop,
-        metadata,
-        automation,
-        alarms,
-        dispatches,
-        downloads,
-        retention,
-    ):
-        repository.initialize()
+    alarms.initialize()
+    dispatches.initialize()
     admin = workshop.create_user(
         username="retention-admin",
         display_name="保留策略管理员",
@@ -77,12 +68,12 @@ def _alarm(source_id: int, *, closed: bool) -> dict:
     }
 
 
-def test_dispatch_summary_survives_history_retention_and_still_appears_in_file_list(tmp_path):
+def test_dispatch_summary_survives_history_retention_and_still_appears_in_file_list(state_database, tmp_path):
     from app.database.pdm import MockPdmRepository
     from app.services.cutting_dispatch_service import CuttingDispatchService
     from app.services.file_source import DisabledFileSource
 
-    *_, dispatches, _downloads, retention, admin = _repositories(tmp_path)
+    *_, dispatches, _downloads, retention, admin = _repositories(state_database, tmp_path)
     pdm = MockPdmRepository()
     source = pdm.files[0]
     task = dispatches.create(dict(
@@ -106,8 +97,8 @@ def test_dispatch_summary_survives_history_retention_and_still_appears_in_file_l
     assert dispatches.latest_for_files([(source["document_id"], source["version_id"])])
 
 
-def test_retention_keeps_unresolved_remote_dispatches(tmp_path):
-    *_, dispatches, downloads, retention, admin = _repositories(tmp_path)
+def test_retention_keeps_unresolved_remote_dispatches(state_database, tmp_path):
+    *_, dispatches, downloads, retention, admin = _repositories(state_database, tmp_path)
     protected = []
     deletable = []
     for stage, remote_id in [("upload_unknown", None), ("assign_failed", "remote"),
@@ -129,8 +120,8 @@ def test_retention_keeps_unresolved_remote_dispatches(tmp_path):
     assert all(dispatches.get(identifier) is None for identifier in deletable)
 
 
-def test_alarm_retention_uses_occurrence_and_preserves_reports_with_unresolved_members(tmp_path):
-    database, _workshop, _metadata, _automation, alarms, *_rest, retention, _admin = _repositories(tmp_path)
+def test_alarm_retention_uses_occurrence_and_preserves_reports_with_unresolved_members(state_database, tmp_path):
+    database, _workshop, _metadata, _automation, alarms, *_rest, retention, _admin = _repositories(state_database, tmp_path)
     cutoff = NOW - timedelta(days=30)
     # Old alarms may only have been discovered or resolved today. Neither date
     # should extend the requested retention period measured from occurrence.
@@ -189,7 +180,7 @@ def test_alarm_retention_uses_occurrence_and_preserves_reports_with_unresolved_m
 
 
 @pytest.mark.parametrize("delivery_status", ["pending", "unknown"])
-def test_unified_retention_removes_only_expired_terminal_data(tmp_path, delivery_status) -> None:
+def test_unified_retention_removes_only_expired_terminal_data(state_database, tmp_path, delivery_status) -> None:
     (
         database,
         workshop,
@@ -200,7 +191,7 @@ def test_unified_retention_removes_only_expired_terminal_data(tmp_path, delivery
         downloads,
         retention,
         admin,
-    ) = _repositories(tmp_path)
+    ) = _repositories(state_database, tmp_path)
     cfg = replace(
         settings,
         project_root=tmp_path,
@@ -374,13 +365,7 @@ def test_unified_retention_removes_only_expired_terminal_data(tmp_path, delivery
             ("workshop-recent", "2026-09-20", "task-recent", RECENT),
         ):
             connection.execute(
-                """
-                INSERT INTO workshop_reports (
-                    report_id, report_date, source_mode, scope_machine_no,
-                    item_count, generated_by_id, generated_by_name,
-                    generated_at, created_at
-                ) VALUES (?, ?, 'database', 'Cutter01', 1, ?, ?, ?, ?)
-                """,
+                "\n                INSERT INTO workshop_reports (\n                    report_id, report_date, source_mode, scope_machine_no,\n                    item_count, generated_by_id, generated_by_name,\n                    generated_at, created_at\n                ) VALUES (%s, %s, 'database', 'Cutter01', 1, %s, %s, %s, %s)\n                ",
                 (
                     report_id,
                     report_date,
@@ -391,20 +376,11 @@ def test_unified_retention_removes_only_expired_terminal_data(tmp_path, delivery
                 ),
             )
             connection.execute(
-                """
-                INSERT INTO workshop_report_items (
-                    report_item_id, report_id, task_id, ordinal
-                ) VALUES (?, ?, ?, 1)
-                """,
+                '\n                INSERT INTO workshop_report_items (\n                    report_item_id, report_id, task_id, ordinal\n                ) VALUES (%s, %s, %s, 1)\n                ',
                 (f"item-{task_id}", report_id, task_id),
             )
             connection.execute(
-                """
-                INSERT INTO workshop_confirmations (
-                    task_id, report_id, worker_id, worker_name,
-                    confirmed_at, created_at, updated_at, scope_machine_no
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'Cutter01')
-                """,
+                "\n                INSERT INTO workshop_confirmations (\n                    task_id, report_id, worker_id, worker_name,\n                    confirmed_at, created_at, updated_at, scope_machine_no\n                ) VALUES (%s, %s, %s, %s, %s, %s, %s, 'Cutter01')\n                ",
                 (
                     task_id,
                     report_id,
@@ -430,12 +406,7 @@ def test_unified_retention_removes_only_expired_terminal_data(tmp_path, delivery
             """
         )
         connection.execute(
-            """
-            INSERT INTO workshop_confirmations (
-                task_id, report_id, worker_id, worker_name,
-                confirmed_at, created_at, updated_at, scope_machine_no
-            ) VALUES ('task-shared', 'workshop-old', ?, ?, ?, ?, ?, 'Cutter01')
-            """,
+            "\n            INSERT INTO workshop_confirmations (\n                task_id, report_id, worker_id, worker_name,\n                confirmed_at, created_at, updated_at, scope_machine_no\n            ) VALUES ('task-shared', 'workshop-old', %s, %s, %s, %s, %s, 'Cutter01')\n            ",
             (admin["user_id"], admin["display_name"], OLD, OLD, OLD),
         )
 
@@ -520,30 +491,15 @@ def test_unified_retention_removes_only_expired_terminal_data(tmp_path, delivery
 
     with database.connect() as connection:
         connection.execute(
-            """
-            INSERT INTO workshop_confirmation_audits (
-                audit_id, task_id, action, reason, operated_by_id,
-                operated_by_name, operated_by_role, operated_at, scope_machine_no
-            ) VALUES ('audit-old', 'task-old', 'admin_revoke', 'old', ?, ?, 'admin', ?, 'Cutter01')
-            """,
+            "\n            INSERT INTO workshop_confirmation_audits (\n                audit_id, task_id, action, reason, operated_by_id,\n                operated_by_name, operated_by_role, operated_at, scope_machine_no\n            ) VALUES ('audit-old', 'task-old', 'admin_revoke', 'old', %s, %s, 'admin', %s, 'Cutter01')\n            ",
             (admin["user_id"], admin["display_name"], OLD),
         )
         connection.execute(
-            """
-            INSERT INTO workshop_confirmation_audits (
-                audit_id, task_id, action, reason, operated_by_id,
-                operated_by_name, operated_by_role, operated_at, scope_machine_no
-            ) VALUES ('audit-recent', 'task-recent', 'admin_revoke', 'recent', ?, ?, 'admin', ?, 'Cutter01')
-            """,
+            "\n            INSERT INTO workshop_confirmation_audits (\n                audit_id, task_id, action, reason, operated_by_id,\n                operated_by_name, operated_by_role, operated_at, scope_machine_no\n            ) VALUES ('audit-recent', 'task-recent', 'admin_revoke', 'recent', %s, %s, 'admin', %s, 'Cutter01')\n            ",
             (admin["user_id"], admin["display_name"], RECENT),
         )
         connection.execute(
-            """
-            INSERT INTO admin_role_audits (
-                audit_id, subject_user_id, subject_external_id, action,
-                operated_by_id, operated_by_name, operated_at
-            ) VALUES ('admin-audit-old', ?, 'external-old', 'grant', ?, ?, ?)
-            """,
+            "\n            INSERT INTO admin_role_audits (\n                audit_id, subject_user_id, subject_external_id, action,\n                operated_by_id, operated_by_name, operated_at\n            ) VALUES ('admin-audit-old', %s, 'external-old', 'grant', %s, %s, %s)\n            ",
             (admin["user_id"], admin["user_id"], admin["display_name"], OLD),
         )
 
@@ -583,46 +539,42 @@ def test_unified_retention_removes_only_expired_terminal_data(tmp_path, delivery
     assert dispatches.get(active_dispatch["dispatch_id"]) is not None
     with database.connect() as connection:
         assert connection.execute(
-            "SELECT COUNT(*) FROM workshop_confirmation_audits WHERE audit_id='audit-recent'"
-        ).fetchone()[0] == 1
+            "SELECT COUNT(*) AS count FROM workshop_confirmation_audits WHERE audit_id='audit-recent'"
+        ).fetchone()['count'] == 1
         assert connection.execute(
-            "SELECT COUNT(*) FROM workshop_reports WHERE report_id='workshop-old'"
-        ).fetchone()[0] == 0
+            "SELECT COUNT(*) AS count FROM workshop_reports WHERE report_id='workshop-old'"
+        ).fetchone()['count'] == 0
         assert connection.execute(
-            "SELECT COUNT(*) FROM workshop_confirmations WHERE task_id='task-old'"
-        ).fetchone()[0] == 0
+            "SELECT COUNT(*) AS count FROM workshop_confirmations WHERE task_id='task-old'"
+        ).fetchone()['count'] == 0
         assert connection.execute(
-            "SELECT COUNT(*) FROM workshop_reports WHERE report_id='workshop-recent'"
-        ).fetchone()[0] == 1
+            "SELECT COUNT(*) AS count FROM workshop_reports WHERE report_id='workshop-recent'"
+        ).fetchone()['count'] == 1
         assert connection.execute(
-            "SELECT COUNT(*) FROM workshop_confirmations WHERE task_id='task-recent'"
-        ).fetchone()[0] == 1
+            "SELECT COUNT(*) AS count FROM workshop_confirmations WHERE task_id='task-recent'"
+        ).fetchone()['count'] == 1
         assert connection.execute(
-            "SELECT COUNT(*) FROM workshop_confirmations WHERE task_id='task-shared'"
-        ).fetchone()[0] == 1
+            "SELECT COUNT(*) AS count FROM workshop_confirmations WHERE task_id='task-shared'"
+        ).fetchone()['count'] == 1
         assert connection.execute(
-            "SELECT COUNT(*) FROM retention_file_deletions"
-        ).fetchone()[0] == 0
+            'SELECT COUNT(*) AS count FROM retention_file_deletions'
+        ).fetchone()['count'] == 0
 
     repeated = RetentionService(cfg, retention).cleanup_expired(now=NOW)
     assert not any(repeated["records"].values())
     assert repeated["files"] == {"deleted": 0, "missing": 0, "failed": 0}
 
 
-def test_retention_file_queue_retries_unsafe_paths_without_escaping(tmp_path) -> None:
-    database, *_items, retention, _admin = _repositories(tmp_path)
+def test_retention_file_queue_retries_unsafe_paths_without_escaping(state_database, tmp_path) -> None:
+    database, *_items, retention, _admin = _repositories(state_database, tmp_path)
     external = tmp_path / "outside.txt"
     external.write_text("keep", encoding="utf-8")
     report_link = tmp_path / "reports" / "outside-link.txt"
     report_link.parent.mkdir(parents=True)
     report_link.symlink_to(external)
     with database.connect() as connection:
-        connection.executemany(
-            """
-            INSERT INTO retention_file_deletions (
-                relative_path, category, queued_at, updated_at
-            ) VALUES (?, 'report', ?, ?)
-            """,
+        connection.cursor().executemany(
+            "\n            INSERT INTO retention_file_deletions (\n                relative_path, category, queued_at, updated_at\n            ) VALUES (%s, 'report', %s, %s)\n            ",
             (
                 ("../outside.txt", OLD, OLD),
                 ("outside-link.txt", OLD, OLD),
@@ -690,9 +642,9 @@ def test_retention_worker_runs_immediately_and_stops_cleanly() -> None:
     assert RetentionWorker(disabled.settings, service).enabled
 
 
-def test_retention_removes_only_expired_device_confirmation_when_task_numbers_match(tmp_path):
+def test_retention_removes_only_expired_device_confirmation_when_task_numbers_match(state_database, tmp_path):
     from test_workshop_snapshot_sync import record
-    database, one, metadata, automation, alarms, dispatches, downloads, retention, admin = _repositories(tmp_path)
+    database, one, metadata, automation, alarms, dispatches, downloads, retention, admin = _repositories(state_database, tmp_path)
     two = WorkshopRepository(database, scope_machine_no='Cutter02')
     for repo, generated in ((one, OLD), (two, RECENT)):
         report = repo.create_daily_report(report_date='2026-09-20', source_mode='sqlserver', records=[record('same')], user=admin, now=generated)

@@ -1,13 +1,15 @@
 from __future__ import annotations
 
-import sqlite3
+import json
+
+from psycopg import Connection
 from datetime import datetime
-from pathlib import Path
+
 from typing import Any, Iterable
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
-from app.database.sqlite import SQLiteDatabase, SQLiteRepository
+from app.database.postgres import PostgresDatabase, PostgresRepository, lock_key
 
 
 DISPATCH_STATUSES = {
@@ -47,24 +49,22 @@ def dispatch_retry_safe(item: dict[str, Any]) -> bool:
     )
 
 
-class DispatchRepository(SQLiteRepository):
+class DispatchRepository(PostgresRepository):
     def __init__(
         self,
-        database: Path | SQLiteDatabase,
+        database: PostgresDatabase,
         *,
-        connection: sqlite3.Connection | None = None,
+        connection: Connection | None = None,
     ) -> None:
         super().__init__(database, connection=connection)
 
     def initialize(self) -> None:
-        from app.database.migrations import apply_migrations
-        apply_migrations(self.database, names=("010_dispatch",))
         with self.connect() as connection:
             self._sync_file_summaries(connection)
 
     @staticmethod
-    def _sync_file_summaries(connection: sqlite3.Connection, dispatch_id: str | None = None) -> None:
-        where = "WHERE dispatch_id = ?" if dispatch_id is not None else ""
+    def _sync_file_summaries(connection: Connection, dispatch_id: str | None = None) -> None:
+        where = "WHERE dispatch_id = %s" if dispatch_id is not None else ""
         connection.execute(
             f"""
             INSERT INTO cutting_file_dispatch_status (
@@ -80,7 +80,7 @@ class DispatchRepository(SQLiteRepository):
                 ) AS file_rank
                 FROM cutting_dispatches
                 {where}
-            ) WHERE file_rank = 1
+            ) AS ranked WHERE file_rank = 1
             ON CONFLICT(document_id, version_id) DO UPDATE SET
                 dispatch_id = excluded.dispatch_id,
                 machine_ip = excluded.machine_ip,
@@ -98,28 +98,29 @@ class DispatchRepository(SQLiteRepository):
         )
 
     @staticmethod
-    def _decode(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
+    def _decode(row: dict[str, Any]) -> dict[str, Any]:
         item = dict(row)
         item["is_simulation"] = bool(item["is_simulation"])
         return item
 
     @staticmethod
     def _active_row(
-        connection: sqlite3.Connection,
+        connection: Connection,
         document_id: str,
         version_id: str | None,
         machine_ip: str,
         *,
         exclude_dispatch_id: str | None = None,
-    ) -> sqlite3.Row | None:
-        placeholders = ", ".join("?" for _ in ACTIVE_DISPATCH_STATUSES)
+    ) -> dict[str, Any] | None:
+        lock_key(connection, "dispatch-active:" + json.dumps([document_id, version_id or "", machine_ip]))
+        placeholders = ", ".join("%s" for _ in ACTIVE_DISPATCH_STATUSES)
         return connection.execute(
             f"""
             SELECT * FROM cutting_dispatches
-            WHERE document_id = ?
-              AND COALESCE(version_id, '') = COALESCE(?, '')
-              AND machine_ip = ?
-              AND (? IS NULL OR dispatch_id != ?)
+            WHERE document_id = %s
+              AND COALESCE(version_id, '') = COALESCE(%s, '')
+              AND machine_ip = %s
+              AND (%s::text IS NULL OR dispatch_id != %s)
               AND (status IN ({placeholders}) OR {UNRESOLVED_DISPATCH_SQL})
             ORDER BY created_at DESC, dispatch_id DESC
             LIMIT 1
@@ -130,7 +131,7 @@ class DispatchRepository(SQLiteRepository):
 
     @staticmethod
     def _insert(
-        connection: sqlite3.Connection,
+        connection: Connection,
         dispatch_id: str,
         data: dict[str, Any],
         *,
@@ -147,7 +148,7 @@ class DispatchRepository(SQLiteRepository):
                 created_by_name, created_at, updated_at, task_identifier,
                 stage, attempt_count, download_id, file_size, file_sha256,
                 ship_no, segment_name
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 dispatch_id,
@@ -207,7 +208,6 @@ class DispatchRepository(SQLiteRepository):
         with self.connect() as connection:
             # Serializing this short decision transaction closes the race between
             # checking for an active task and inserting its replacement.
-            self.begin_immediate(connection)
             existing = self._active_row(
                 connection,
                 data["document_id"],
@@ -220,7 +220,7 @@ class DispatchRepository(SQLiteRepository):
             dispatch_id = f"dsp_{uuid4().hex[:18]}"
             self._insert(connection, dispatch_id, data, user=user, now=now)
             created = connection.execute(
-                "SELECT * FROM cutting_dispatches WHERE dispatch_id = ?",
+                "SELECT * FROM cutting_dispatches WHERE dispatch_id = %s",
                 (dispatch_id,),
             ).fetchone()
             if created is None:
@@ -230,7 +230,7 @@ class DispatchRepository(SQLiteRepository):
     def get(self, dispatch_id: str) -> dict[str, Any] | None:
         with self.connect() as connection:
             row = connection.execute(
-                "SELECT * FROM cutting_dispatches WHERE dispatch_id = ?",
+                "SELECT * FROM cutting_dispatches WHERE dispatch_id = %s",
                 (dispatch_id,),
             ).fetchone()
         return self._decode(row) if row else None
@@ -241,10 +241,10 @@ class DispatchRepository(SQLiteRepository):
         clauses, parameters = [], []
         if sent_start is not None and sent_end is not None:
             clauses.extend(['sent_at IS NOT NULL', 'is_simulation = 0',
-                            'julianday(sent_at) >= julianday(?)', 'julianday(sent_at) < julianday(?)'])
+                            "state_timestamp(sent_at) >= %s::timestamp with time zone", "state_timestamp(sent_at) < %s::timestamp with time zone"])
             parameters.extend([sent_start, sent_end])
         if machine_ip:
-            clauses.append('machine_ip = ?')
+            clauses.append('machine_ip = %s')
             parameters.append(machine_ip)
         return (' WHERE ' + ' AND '.join(clauses) if clauses else ''), parameters
 
@@ -252,21 +252,19 @@ class DispatchRepository(SQLiteRepository):
              sent_end: str | None = None, machine_ip: str | None = None) -> tuple[list[dict[str, Any]], int]:
         offset = (page - 1) * page_size
         where, parameters = self._history_filter(sent_start=sent_start, sent_end=sent_end, machine_ip=machine_ip)
-        order = 'julianday(sent_at)' if sent_start is not None else 'created_at'
-        with self.connect() as connection:
-            if not connection.in_transaction:
-                connection.execute('BEGIN')
+        order = 'state_timestamp(sent_at)' if sent_start is not None else 'created_at'
+        with self.connect(repeatable_read=True) as connection:
             total = int(
                 connection.execute(
-                    'SELECT COUNT(*) FROM cutting_dispatches' + where, parameters
-                ).fetchone()[0]
+                    'SELECT COUNT(*) AS count FROM cutting_dispatches' + where, parameters
+                ).fetchone()['count']
             )
             rows = connection.execute(
                 f"""
                 SELECT * FROM cutting_dispatches
                 {where}
                 ORDER BY {order} DESC, dispatch_id DESC
-                LIMIT ? OFFSET ?
+                LIMIT %s OFFSET %s
                 """,
                 (*parameters, page_size, offset),
             ).fetchall()
@@ -275,20 +273,10 @@ class DispatchRepository(SQLiteRepository):
     def daily_sent_counts(self, *, sent_start: str, sent_end: str, timezone: str,
                           machine_ip: str | None) -> tuple[dict[str, int], list[str]]:
         where, parameters = self._history_filter(sent_start=sent_start, sent_end=sent_end, machine_ip=machine_ip)
-        zone = ZoneInfo(timezone)
-        def local_day(value: str) -> str:
-            stamp = datetime.fromisoformat(value)
-            # SQLite also interprets offsetless legacy timestamps as UTC.
-            if stamp.tzinfo is None:
-                stamp = stamp.replace(tzinfo=ZoneInfo('UTC'))
-            return stamp.astimezone(zone).date().isoformat()
-        with self.connect() as connection:
-            if not connection.in_transaction:
-                connection.execute('BEGIN')
-            connection.create_function('dispatch_day', 1, local_day, deterministic=True)
+        with self.connect(repeatable_read=True) as connection:
             rows = connection.execute(
-                'SELECT dispatch_day(sent_at) AS day, COUNT(*) AS sent_count FROM cutting_dispatches' + where +
-                ' GROUP BY dispatch_day(sent_at)', parameters).fetchall()
+                "SELECT to_char(state_timestamp(sent_at) AT TIME ZONE %s, 'YYYY-MM-DD') AS day, COUNT(*) AS sent_count "
+                'FROM cutting_dispatches' + where + ' GROUP BY day', (timezone, *parameters)).fetchall()
             machines = connection.execute('SELECT DISTINCT machine_ip FROM cutting_dispatches ORDER BY machine_ip').fetchall()
         return {row['day']: int(row['sent_count']) for row in rows}, [row['machine_ip'] for row in machines]
 
@@ -296,7 +284,7 @@ class DispatchRepository(SQLiteRepository):
         keys = list(dict.fromkeys(files))
         if not keys:
             return {}
-        placeholders = ", ".join("(?, ?)" for _ in keys)
+        placeholders = ", ".join("(%s, %s)" for _ in keys)
         with self.connect() as connection:
             rows = connection.execute(
                 f"""
@@ -335,14 +323,13 @@ class DispatchRepository(SQLiteRepository):
         expected_statuses = sorted(set(expected))
         if not expected_statuses:
             raise ValueError("必须指定允许迁移的原状态")
-        placeholders = ", ".join("?" for _ in expected_statuses)
+        placeholders = ", ".join("%s" for _ in expected_statuses)
         downloaded_at = now if status == "downloaded" else None
         sent_at = now if status == "sent" else None
         with self.connect() as connection:
-            self.begin_immediate(connection)
             if claim_exclusive:
                 item = connection.execute(
-                    "SELECT * FROM cutting_dispatches WHERE dispatch_id = ?", (dispatch_id,)
+                    "SELECT * FROM cutting_dispatches WHERE dispatch_id = %s", (dispatch_id,)
                 ).fetchone()
                 if item is None or self._active_row(
                     connection, item["document_id"], item["version_id"], item["machine_ip"],
@@ -352,21 +339,21 @@ class DispatchRepository(SQLiteRepository):
             cursor = connection.execute(
                 f"""
                 UPDATE cutting_dispatches
-                SET status = ?, updated_at = ?, last_error = ?,
-                    remote_task_id = COALESCE(?, remote_task_id),
-                    stage = COALESCE(?, stage),
-                    download_id = COALESCE(?, download_id),
-                    file_size = COALESCE(?, file_size),
-                    file_sha256 = COALESCE(?, file_sha256),
-                    ship_no = COALESCE(?, ship_no),
-                    segment_name = COALESCE(?, segment_name),
-                    attempt_count = attempt_count + ?,
-                    attempted_at = CASE WHEN ? = 1 THEN ? ELSE attempted_at END,
-                    downloaded_at = COALESCE(?, downloaded_at),
-                    sent_at = COALESCE(sent_at, ?)
-                WHERE dispatch_id = ? AND status IN ({placeholders})
-                  AND (? IS NULL OR stage = ?)
-                  AND (? IS NULL OR attempt_count = ?)
+                SET status = %s, updated_at = %s, last_error = %s,
+                    remote_task_id = COALESCE(%s, remote_task_id),
+                    stage = COALESCE(%s, stage),
+                    download_id = COALESCE(%s, download_id),
+                    file_size = COALESCE(%s, file_size),
+                    file_sha256 = COALESCE(%s, file_sha256),
+                    ship_no = COALESCE(%s, ship_no),
+                    segment_name = COALESCE(%s, segment_name),
+                    attempt_count = attempt_count + %s,
+                    attempted_at = CASE WHEN %s = 1 THEN %s ELSE attempted_at END,
+                    downloaded_at = COALESCE(%s, downloaded_at),
+                    sent_at = COALESCE(sent_at, %s)
+                WHERE dispatch_id = %s AND status IN ({placeholders})
+                  AND (%s::text IS NULL OR stage = %s)
+                  AND (%s::text IS NULL OR attempt_count = %s)
                 """,
                 (
                     status,
@@ -395,7 +382,7 @@ class DispatchRepository(SQLiteRepository):
             if cursor.rowcount != 1:
                 return None
             row = connection.execute(
-                "SELECT * FROM cutting_dispatches WHERE dispatch_id = ?", (dispatch_id,)
+                "SELECT * FROM cutting_dispatches WHERE dispatch_id = %s", (dispatch_id,)
             ).fetchone()
             self._sync_file_summaries(connection, dispatch_id)
             return self._decode(row)
@@ -428,7 +415,7 @@ class DispatchRepository(SQLiteRepository):
                             THEN '服务重启中断机床指派，远端结果未知，禁止盲目重复指派'
                         ELSE '服务重启发生在上传阶段，远端结果未知，禁止自动重复上传'
                     END,
-                    updated_at = ?
+                    updated_at = %s
                 WHERE status IN ('downloading', 'pushing')
                 """,
                 (now,),

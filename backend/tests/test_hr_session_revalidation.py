@@ -14,11 +14,10 @@ from test_worker_auth_service import FakeSqlServerClient, _enabled_settings, _va
 
 
 @pytest.fixture
-def hr_sessions(tmp_path, monkeypatch):
+def hr_sessions(state_database, tmp_path, monkeypatch):
     clock = [100.0]
     monkeypatch.setattr("app.services.worker_auth_service.monotonic", lambda: clock[0])
-    repository = WorkshopRepository(tmp_path / "metadata.db")
-    repository.initialize()
+    repository = WorkshopRepository(state_database)
     now = datetime.now(ZoneInfo("Asia/Shanghai"))
     user = repository.upsert_external_worker(external_id="9123", company_no="C0007",
                                              group_no="G0021", display_name="张三", now=now.isoformat())

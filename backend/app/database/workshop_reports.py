@@ -1,8 +1,8 @@
 from __future__ import annotations
-import sqlite3
-from pathlib import Path
+
+
 from typing import Any
-from app.database.sqlite import SQLiteDatabase, SQLiteRepository
+
 
 from datetime import date, datetime
 from decimal import Decimal
@@ -65,7 +65,7 @@ def _unique_snapshot_records(
 
 class WorkshopReportRepository(WorkshopScopeRepository):
     @staticmethod
-    def _report_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
+    def _report_dict(row: dict[str, Any] | None) -> dict[str, Any] | None:
         if row is None:
             return None
         return {
@@ -92,10 +92,10 @@ class WorkshopReportRepository(WorkshopScopeRepository):
                 LEFT JOIN workshop_report_items AS i ON i.report_id = r.report_id
                 LEFT JOIN workshop_confirmations AS c
                     ON c.task_id = i.task_id
-                    AND c.scope_machine_no = r.scope_machine_no COLLATE NOCASE
+                    AND sqlite_nocase(c.scope_machine_no) = sqlite_nocase(r.scope_machine_no)
                     AND (c.report_id = r.report_id OR c.report_id IS NULL)
-                WHERE r.report_date = ?
-                  AND r.scope_machine_no = ? COLLATE NOCASE
+                WHERE r.report_date = %s
+                  AND sqlite_nocase(r.scope_machine_no) = sqlite_nocase(%s)
                 GROUP BY r.report_id
                 """,
                 (report_date, self.require_scope()),
@@ -118,7 +118,7 @@ class WorkshopReportRepository(WorkshopScopeRepository):
             raise DailyReportScopeMismatchError("日报范围与设备上下文不一致")
         scope_machine_no = selected_scope
         with self.connect() as connection:
-            self.begin_immediate(connection)
+            self.lock_scope(connection)
             repository = WorkshopReportRepository(self.database, connection=connection, scope_machine_no=self.scope_machine_no)
             arguments = dict(
                 report_date=report_date,
@@ -149,9 +149,9 @@ class WorkshopReportRepository(WorkshopScopeRepository):
             raise DailyReportScopeMismatchError("日报范围与设备上下文不一致")
         scope_machine_no = selected_scope
         with self.connect() as connection:
-            self.begin_immediate(connection)
+            self.lock_scope(connection)
             existing = connection.execute(
-                "SELECT report_id FROM workshop_reports WHERE report_date = ? AND scope_machine_no = ? COLLATE NOCASE",
+                "SELECT report_id FROM workshop_reports WHERE report_date = %s AND sqlite_nocase(scope_machine_no) = sqlite_nocase(%s)",
                 (report_date, self.require_scope()),
             ).fetchone()
             if existing:
@@ -164,7 +164,7 @@ class WorkshopReportRepository(WorkshopScopeRepository):
                 INSERT INTO workshop_reports (
                     report_id, report_date, source_mode, scope_machine_no, item_count,
                     generated_by_id, generated_by_name, generated_at, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     report_id,
@@ -178,34 +178,35 @@ class WorkshopReportRepository(WorkshopScopeRepository):
                     now,
                 ),
             )
-            connection.executemany(
-                """
-                INSERT INTO workshop_report_items (
-                    report_item_id, report_id, task_id, ordinal, project_name,
-                    segment_name, program_no, cut_length, groove_length,
-                    work_time, production_time, remark, production_date, ship_no
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                [
-                    (
-                        f"wdi_{uuid4().hex[:20]}",
-                        report_id,
-                        str(record.task_id),
-                        ordinal,
-                        record.project_code or record.ship_no,
-                        record.segment_name,
-                        record.program_no,
-                        str(record.cut_length) if record.cut_length is not None else None,
-                        str(record.groove_length) if record.groove_length is not None else None,
-                        str(record.work_time) if record.work_time is not None else None,
-                        record.production_time.isoformat() if record.production_time else None,
-                        record.remark,
-                        record.production_date.isoformat() if record.production_date else report_date,
-                        record.ship_no,
-                    )
-                    for ordinal, record in enumerate(unique_records, start=1)
-                ],
-            )
+            with connection.cursor() as cursor:
+                cursor.executemany(
+                    """
+                    INSERT INTO workshop_report_items (
+                        report_item_id, report_id, task_id, ordinal, project_name,
+                        segment_name, program_no, cut_length, groove_length,
+                        work_time, production_time, remark, production_date, ship_no
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    [
+                        (
+                            f"wdi_{uuid4().hex[:20]}",
+                            report_id,
+                            str(record.task_id),
+                            ordinal,
+                            record.project_code or record.ship_no,
+                            record.segment_name,
+                            record.program_no,
+                            str(record.cut_length) if record.cut_length is not None else None,
+                            str(record.groove_length) if record.groove_length is not None else None,
+                            str(record.work_time) if record.work_time is not None else None,
+                            record.production_time.isoformat() if record.production_time else None,
+                            record.remark,
+                            record.production_date.isoformat() if record.production_date else report_date,
+                            record.ship_no,
+                        )
+                        for ordinal, record in enumerate(unique_records, start=1)
+                    ],
+                )
         report = self.get_daily_report(report_date)
         if report is None:
             raise RuntimeError("车间报表生成后未能读取")
@@ -226,9 +227,9 @@ class WorkshopReportRepository(WorkshopScopeRepository):
             raise DailyReportScopeMismatchError("日报范围与设备上下文不一致")
         scope_machine_no = selected_scope
         with self.connect() as connection:
-            self.begin_immediate(connection)
+            self.lock_scope(connection)
             report = connection.execute(
-                "SELECT * FROM workshop_reports WHERE report_date = ? AND scope_machine_no = ? COLLATE NOCASE",
+                "SELECT * FROM workshop_reports WHERE report_date = %s AND sqlite_nocase(scope_machine_no) = sqlite_nocase(%s)",
                 (report_date, self.require_scope()),
             ).fetchone()
             if report is None:
@@ -241,7 +242,7 @@ class WorkshopReportRepository(WorkshopScopeRepository):
                 existing_rows = {
                     str(row["task_id"]): dict(row)
                     for row in connection.execute(
-                        "SELECT * FROM workshop_report_items WHERE report_id = ?",
+                        "SELECT * FROM workshop_report_items WHERE report_id = %s",
                         (report["report_id"],),
                     ).fetchall()
                 }
@@ -278,45 +279,48 @@ class WorkshopReportRepository(WorkshopScopeRepository):
                         f"日报任务与生产源数据不一致：{shown}{suffix}；请检查数据源或采集配置"
                     )
                 if project_backfills:
-                    connection.executemany(
-                        "UPDATE workshop_report_items SET project_name = ? WHERE report_item_id = ?",
-                        project_backfills,
-                    )
+                    with connection.cursor() as cursor:
+                        cursor.executemany(
+                            "UPDATE workshop_report_items SET project_name = %s WHERE report_item_id = %s",
+                            project_backfills,
+                        )
                 if ship_backfills:
-                    connection.executemany('UPDATE workshop_report_items SET ship_no = ? WHERE report_item_id = ?', ship_backfills)
+                    with connection.cursor() as cursor:
+                        cursor.executemany('UPDATE workshop_report_items SET ship_no = %s WHERE report_item_id = %s', ship_backfills)
                 if unique_records:
                     ordinal = int(connection.execute(
-                        "SELECT COALESCE(MAX(ordinal), 0) FROM workshop_report_items WHERE report_id = ?",
+                        "SELECT COALESCE(MAX(ordinal), 0) AS count FROM workshop_report_items WHERE report_id = %s",
                         (report["report_id"],),
-                    ).fetchone()[0])
-                    connection.executemany(
-                        """
-                        INSERT INTO workshop_report_items (
-                            report_item_id, report_id, task_id, ordinal, project_name,
-                            segment_name, program_no, cut_length, groove_length,
-                            work_time, production_time, remark, production_date, snapshot_revision, ship_no
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        [
-                            (
-                                f"wdi_{uuid4().hex[:20]}", report["report_id"],
-                                str(record.task_id), ordinal + index,
-                                record.project_code or record.ship_no, record.segment_name,
-                                record.program_no,
-                                str(record.cut_length) if record.cut_length is not None else None,
-                                str(record.groove_length) if record.groove_length is not None else None,
-                                str(record.work_time) if record.work_time is not None else None,
-                                record.production_time.isoformat() if record.production_time else None,
-                                record.remark,
-                                record.production_date.isoformat() if record.production_date else report_date,
-                                snapshot_revision,
-                                record.ship_no,
-                            )
-                            for index, record in enumerate(unique_records, start=1)
-                        ],
-                    )
+                    ).fetchone()['count'])
+                    with connection.cursor() as cursor:
+                        cursor.executemany(
+                            """
+                            INSERT INTO workshop_report_items (
+                                report_item_id, report_id, task_id, ordinal, project_name,
+                                segment_name, program_no, cut_length, groove_length,
+                                work_time, production_time, remark, production_date, snapshot_revision, ship_no
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            """,
+                            [
+                                (
+                                    f"wdi_{uuid4().hex[:20]}", report["report_id"],
+                                    str(record.task_id), ordinal + index,
+                                    record.project_code or record.ship_no, record.segment_name,
+                                    record.program_no,
+                                    str(record.cut_length) if record.cut_length is not None else None,
+                                    str(record.groove_length) if record.groove_length is not None else None,
+                                    str(record.work_time) if record.work_time is not None else None,
+                                    record.production_time.isoformat() if record.production_time else None,
+                                    record.remark,
+                                    record.production_date.isoformat() if record.production_date else report_date,
+                                    snapshot_revision,
+                                    record.ship_no,
+                                )
+                                for index, record in enumerate(unique_records, start=1)
+                            ],
+                        )
                     connection.execute(
-                        "UPDATE workshop_reports SET item_count = ?, generated_by_id = ?, generated_by_name = ?, generated_at = ? WHERE report_id = ?",
+                        "UPDATE workshop_reports SET item_count = %s, generated_by_id = %s, generated_by_name = %s, generated_at = %s WHERE report_id = %s",
                         (len(existing_ids) + len(unique_records), user["user_id"], user["display_name"], now, report["report_id"]),
                     )
                 populated = connection.execute(
@@ -326,49 +330,50 @@ class WorkshopReportRepository(WorkshopScopeRepository):
                     LEFT JOIN workshop_report_items AS i ON i.report_id = r.report_id
                     LEFT JOIN workshop_confirmations AS c
                         ON c.task_id = i.task_id
-                        AND c.scope_machine_no = r.scope_machine_no COLLATE NOCASE
+                        AND sqlite_nocase(c.scope_machine_no) = sqlite_nocase(r.scope_machine_no)
                         AND (c.report_id = r.report_id OR c.report_id IS NULL)
-                    WHERE r.report_id = ? GROUP BY r.report_id
+                    WHERE r.report_id = %s GROUP BY r.report_id
                     """, (report["report_id"],),
                 ).fetchone()
                 return self._report_dict(populated)
 
             unique_records = records
-            connection.executemany(
-                """
-                INSERT INTO workshop_report_items (
-                    report_item_id, report_id, task_id, ordinal, project_name,
-                    segment_name, program_no, cut_length, groove_length,
-                    work_time, production_time, remark, production_date, snapshot_revision, ship_no
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                [
-                    (
-                        f"wdi_{uuid4().hex[:20]}",
-                        report["report_id"],
-                        str(record.task_id),
-                        ordinal,
-                        record.project_code or record.ship_no,
-                        record.segment_name,
-                        record.program_no,
-                        str(record.cut_length) if record.cut_length is not None else None,
-                        str(record.groove_length) if record.groove_length is not None else None,
-                        str(record.work_time) if record.work_time is not None else None,
-                        record.production_time.isoformat() if record.production_time else None,
-                        record.remark,
-                        record.production_date.isoformat() if record.production_date else report_date,
-                        snapshot_revision,
-                        record.ship_no,
-                    )
-                    for ordinal, record in enumerate(unique_records, start=1)
-                ],
-            )
+            with connection.cursor() as cursor:
+                cursor.executemany(
+                    """
+                    INSERT INTO workshop_report_items (
+                        report_item_id, report_id, task_id, ordinal, project_name,
+                        segment_name, program_no, cut_length, groove_length,
+                        work_time, production_time, remark, production_date, snapshot_revision, ship_no
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    [
+                        (
+                            f"wdi_{uuid4().hex[:20]}",
+                            report["report_id"],
+                            str(record.task_id),
+                            ordinal,
+                            record.project_code or record.ship_no,
+                            record.segment_name,
+                            record.program_no,
+                            str(record.cut_length) if record.cut_length is not None else None,
+                            str(record.groove_length) if record.groove_length is not None else None,
+                            str(record.work_time) if record.work_time is not None else None,
+                            record.production_time.isoformat() if record.production_time else None,
+                            record.remark,
+                            record.production_date.isoformat() if record.production_date else report_date,
+                            snapshot_revision,
+                            record.ship_no,
+                        )
+                        for ordinal, record in enumerate(unique_records, start=1)
+                    ],
+                )
             connection.execute(
                 """
                 UPDATE workshop_reports
-                SET source_mode = ?, scope_machine_no = ?, item_count = ?, generated_by_id = ?,
-                    generated_by_name = ?, generated_at = ?, snapshot_revision_floor = ?
-                WHERE report_id = ?
+                SET source_mode = %s, scope_machine_no = %s, item_count = %s, generated_by_id = %s,
+                    generated_by_name = %s, generated_at = %s, snapshot_revision_floor = %s
+                WHERE report_id = %s
                 """,
                 (
                     source_mode,
@@ -397,7 +402,7 @@ class WorkshopReportRepository(WorkshopScopeRepository):
             rows = connection.execute(
                 """
                 SELECT * FROM workshop_report_items
-                WHERE report_id = ?
+                WHERE report_id = %s
                 ORDER BY ordinal
                 """,
                 (report["report_id"],),

@@ -11,8 +11,8 @@ from tests.test_cutting_dispatch import _service
 
 
 @pytest.fixture
-def history(tmp_path):
-    service, repository, admin = _service(tmp_path)
+def history(state_database, tmp_path):
+    service, repository, admin = _service(state_database, tmp_path)
     service.pdm.get_file = lambda *_: pytest.fail('history must not query PDM')
     service.magic_client_factory = lambda *_: pytest.fail('history must not query the gateway')
     def add(*, sent_at=None, created_at='2026-11-01T08:00:00+08:00', machine='10.0.0.1',

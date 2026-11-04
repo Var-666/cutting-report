@@ -1,3 +1,4 @@
+from tests.postgres_fixtures import state_settings
 """P13 uses fake drivers and isolated files; never connect to a site database."""
 from dataclasses import replace
 import gc
@@ -33,9 +34,9 @@ def config(payload):
 
 
 @pytest.fixture
-def runtime(tmp_path):
+def runtime(postgres_state, tmp_path):
     cfg = configuration(tmp_path)
-    state = build_runtime(cfg, role='web')
+    state = build_runtime(state_settings(cfg,postgres_state), role='web')
     yield state
     state.database_runtime.close()
 
@@ -65,7 +66,7 @@ def test_registry_isolates_configs_dispatches_clients_and_is_lazy():
         DatabaseSourceRegistry.from_json('[{}]')
 
 
-def test_save_restart_hot_reload_and_old_request_config(runtime):
+def test_save_restart_hot_reload_and_old_request_config(postgres_state, runtime):
     manager = runtime.database_runtime
     initial = manager.snapshot()
     manager.save_source(source(), create=True)
@@ -80,14 +81,14 @@ def test_save_restart_hot_reload_and_old_request_config(runtime):
     assert third.database_sources.client('quality').connection_config()['host'] == 'new-host'
     assert third.database_sources.get('quality').password.get_secret_value() == 'private-password'
     assert all(third.lines[key] is line for key, line in initial.lines.items())
-    worker = build_runtime(runtime.database_runtime.inspect()['settings'], role='worker')
+    worker = build_runtime(state_settings(runtime.database_runtime.inspect()['settings'],postgres_state), role='worker')
     assert worker.database_runtime.snapshot().database_sources.get('quality').host == 'new-host'
     manager.set_source_enabled('inspection', False)
     assert not worker.database_runtime.snapshot().database_sources.get('inspection').enabled
     with pytest.raises(MySqlUnavailable):
         with manager.snapshot().database_sources.client('inspection').snapshot():
             pass
-    assert runtime.sqlite_database.path == worker.sqlite_database.path
+    assert runtime.database.identity == worker.database.identity
     worker.database_runtime.close()
     assert manager._base.runtime_settings_env_path.stat().st_mode & 0o777 == 0o600
 
@@ -147,6 +148,7 @@ def _save_process(cfg, payload, ready, go):
     go.wait(10)
     state.database_runtime.save_source(DatabaseSourceRequest.model_validate(payload), create=True)
     state.database_runtime.close()
+    state.database.close()
 
 
 def test_concurrent_process_saves_preserve_other_sources_passwords_and_env(runtime):

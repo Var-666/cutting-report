@@ -10,8 +10,8 @@ from app.models.cutting_contracts import CuttingFile, CuttingDispatch
 from tests.test_cutting_dispatch import _service
 
 
-def test_dispatch_contracts_match_service_and_preserve_all_returned_fields(tmp_path):
-    service, repository, admin = _service(tmp_path)
+def test_dispatch_contracts_match_service_and_preserve_all_returned_fields(state_database, tmp_path):
+    service, repository, admin = _service(state_database, tmp_path)
     # Use the fixture's real project identity instead of assuming a SQL Server key.
     project = service.list_projects('', 100)[0]
     files = service.list_files(project['project_id'], catalog_id=None, status='all', keyword='', page=1, page_size=20)
@@ -27,10 +27,10 @@ def test_dispatch_contracts_match_service_and_preserve_all_returned_fields(tmp_p
 
 
 def test_alarm_contract_export_has_typed_json_responses_and_no_database_side_effects(tmp_path, monkeypatch):
-    from app.database.sqlite import SQLiteDatabase
+    from app.database.postgres import PostgresDatabase
     def forbidden(*args, **kwargs):
         raise AssertionError("Schema export must not access databases")
-    monkeypatch.setattr(SQLiteDatabase, "connect", forbidden)
+    monkeypatch.setattr(PostgresDatabase, "connect", forbidden)
     path = Path(__file__).resolve().parents[2] / 'scripts/export_api_contracts.py'
     spec = importlib.util.spec_from_file_location('export_api_contracts', path)
     module = importlib.util.module_from_spec(spec)
@@ -56,7 +56,7 @@ def test_alarm_contract_export_has_typed_json_responses_and_no_database_side_eff
 
 
 @pytest.fixture
-def contract_http(tmp_path):
+def contract_http(tmp_path, postgres_state):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
     from app.api import automation, configuration, database, leadership, equipment, energy, reports, analysis
@@ -64,7 +64,8 @@ def contract_http(tmp_path):
     from tests.line_fixtures import configuration as line_configuration
     from app.services.application_runtime import build_runtime
 
-    runtime = build_runtime(line_configuration(tmp_path), role='web')
+    from tests.postgres_fixtures import state_settings
+    runtime = build_runtime(state_settings(line_configuration(tmp_path), postgres_state), role='web')
     admin = runtime.users.bootstrap_admin(username='contract-admin', display_name='管理员',
         password='test-password', now='2026-11-02T10:00:00+08:00')
     app = FastAPI()
@@ -152,13 +153,13 @@ def test_required_dispatch_fields_cannot_silently_disappear():
 
 
 @pytest.mark.parametrize('file_type', [0, 1, '0', 'GEN', None])
-def test_file_list_and_search_preserve_pdm_file_type(tmp_path, file_type):
+def test_file_list_and_search_preserve_pdm_file_type(state_database, tmp_path, file_type):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
     from app.api import cutting
     from app.api.auth import require_user
 
-    service, _, admin = _service(tmp_path)
+    service, _, admin = _service(state_database, tmp_path)
     raw = service.pdm.files[0]
     raw['physical_file_type'] = file_type
     app = FastAPI()
@@ -185,7 +186,7 @@ def test_file_list_and_search_preserve_pdm_file_type(tmp_path, file_type):
             assert type(item['physical_file_type']) is type(file_type)
 
 
-def test_http_response_validation_matches_workshop_and_dispatch_records(tmp_path):
+def test_http_response_validation_matches_workshop_and_dispatch_records(state_database, tmp_path):
     from datetime import datetime
     from decimal import Decimal
     from types import SimpleNamespace
@@ -195,7 +196,7 @@ def test_http_response_validation_matches_workshop_and_dispatch_records(tmp_path
     from app.api.auth import require_admin, require_user, require_worker
     from app.models.domain import WorkshopRecord
 
-    service, dispatches, admin = _service(tmp_path)
+    service, dispatches, admin = _service(state_database, tmp_path)
     from app.database.workshop import WorkshopRepository
     repository = WorkshopRepository(dispatches.database, scope_machine_no='Cutter01')
     worker = repository.create_user(username='worker', display_name='工人', password='worker-password', role='worker', now='2026-10-01T08:00:00')
@@ -231,7 +232,7 @@ def test_http_response_validation_matches_workshop_and_dispatch_records(tmp_path
 
 
 @pytest.mark.parametrize('priority', [1, 'high', 'medium', 'low'])
-def test_alarm_http_contracts_cover_empty_and_populated_reports(tmp_path, priority):
+def test_alarm_http_contracts_cover_empty_and_populated_reports(state_database, tmp_path, priority):
     from datetime import datetime
     from types import SimpleNamespace
     from zoneinfo import ZoneInfo
@@ -244,7 +245,7 @@ def test_alarm_http_contracts_cover_empty_and_populated_reports(tmp_path, priori
     from app.services.alarm_analysis_service import AlarmAnalysisService
     from tests.test_alarm_monitor import alarm
 
-    repository = AlarmRepository(tmp_path / 'alarms.db', source_name='production')
+    repository = AlarmRepository(state_database, source_name='production')
     repository.initialize()
     cfg = Settings(project_root=tmp_path, device_id='Cutter01')
     runtime = SimpleNamespace(settings=cfg, alarm_repository=repository, alarm_worker=SimpleNamespace(enabled=False, thread=None))

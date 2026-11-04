@@ -159,7 +159,7 @@ class ReportAnalysisService:
     def __init__(self, settings: Settings, metadata: MetadataRepository) -> None:
         self.settings = settings
         self.metadata = metadata
-        self.llm = LlmService(settings)
+        self.llm = LlmService(settings, metadata.database)
         self.timezone = ZoneInfo(settings.timezone)
         self._generation_guard = threading.Lock()
         self._generation_locks: dict[str, dict] = {}
@@ -167,7 +167,7 @@ class ReportAnalysisService:
     @contextmanager
     def _process_generation(self, cache_key: str, priority):
         from app.core.process_lock import FileLock
-        lock = FileLock(self.settings.metadata_db_path.parent / ".coordination" / f"analysis-{cache_key}.lock")
+        lock = FileLock(self.settings.data_dir / ".coordination" / f"analysis-{cache_key}.lock")
         priority_path = lock.path.with_suffix(".foreground.lock")
         foreground_lock = FileLock(priority_path) if not is_background_llm_work() else None
 

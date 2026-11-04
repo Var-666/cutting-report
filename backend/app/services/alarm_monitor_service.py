@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextvars import copy_context
+
 import hashlib
 import logging
 import threading
@@ -87,7 +89,7 @@ class AlarmMonitorService:
                         logger.exception("alarm lease renewal failed")
                         return
 
-            heartbeat = threading.Thread(target=renew, name="alarm-lease-renewal", daemon=True)
+            heartbeat = threading.Thread(target=copy_context().run, args=(renew,), name="alarm-lease-renewal", daemon=True)
             heartbeat.start()
             self.repository.recover_interrupted_reports(owner, lease_now())
             return self._run_owned(now, owner, lease_now, lost)

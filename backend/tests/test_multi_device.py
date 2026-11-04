@@ -1,3 +1,4 @@
+from pathlib import Path
 from app.services.query_service import QueryService
 from tests.line_fixtures import source_client
 from tests.line_fixtures import source_client
@@ -27,7 +28,6 @@ from app.database.definitions import DefinitionRepository
 from app.database.device_migrations import rebuild_table, migrate_device_isolation
 from app.database.leadership_snapshots import LeadershipMonthSnapshot, LeadershipSnapshotRepository
 from app.database.metadata import MetadataRepository
-from app.database.sqlite import SQLiteDatabase
 from app.database.workshop import ConfirmationConflictError, ConfirmationNotFoundError, WorkshopRepository
 from app.models.domain import LeadershipPeriodRecord, WorkshopRecord
 from app.services.automation_service import AutomationService
@@ -50,11 +50,9 @@ def workshop_record(task_id):
 
 
 @pytest.fixture
-def database(tmp_path):
-    db = SQLiteDatabase(tmp_path / 'metadata.db')
-    MetadataRepository(db).initialize()
+def database(state_database):
+    db = state_database
     users = WorkshopRepository(db)
-    users.initialize()
     admin = users.create_user(username='admin', display_name='管理员', password='admin-password', role='admin', now=STAMP)
     return db, admin
 
@@ -106,22 +104,14 @@ def test_upgrade_preserves_legacy_snapshot_children_and_confirmations(database):
     report = legacy.create_daily_report(report_date=DAY, source_mode='sqlserver', records=[workshop_record('old')],
                                         user=admin, now=STAMP, scope_machine_no=None)
     legacy.confirm_task(task_id='old', report_id=report['report_id'], user=admin, now=STAMP)
-    # Restore the previous release's date-only unique constraint, then upgrade it.
-    with db.connect() as connection:
-        connection.execute('DROP INDEX idx_workshop_reports_device_date')
-    rebuild_table(db, 'workshop_reports', lambda sql: sql.replace('report_date TEXT NOT NULL', 'report_date TEXT NOT NULL UNIQUE'))
-    migrate_device_isolation(db, CUTTING_SCOPES)
-    legacy.initialize()
     one = WorkshopRepository(db, scope_machine_no='Cutter01')
     two = WorkshopRepository(db, scope_machine_no='Cutter02')
     assert one.get_daily_report(DAY)['report_id'] == report['report_id']
     assert one.get_daily_report_records(DAY)[1][0].confirmed_by_id == admin['user_id']
     two.sync_daily_report(report_date=DAY, source_mode='sqlserver', records=[workshop_record('new')],
                           user=admin, now=STAMP, scope_machine_no='Cutter02')
-    legacy.initialize()  # Repeated startup must be safe and keep both reports.
     with db.connect() as connection:
-        assert connection.execute('SELECT COUNT(*) FROM workshop_report_items').fetchone()[0] == 2
-        assert connection.execute('PRAGMA foreign_key_check').fetchall() == []
+        assert connection.execute('SELECT COUNT(*) AS n FROM workshop_report_items').fetchone()['n'] == 2
 
 
 def test_analysis_versions_and_report_history_do_not_overwrite_other_device(database):
@@ -140,14 +130,12 @@ def test_analysis_versions_and_report_history_do_not_overwrite_other_device(data
 def test_month_snapshots_with_same_month_are_kept_for_both_devices(database):
     db, _ = database
     repo = LeadershipSnapshotRepository(db)
-    repo.initialize()
     month = date(2026, 10, 1)
     def snapshot(source, count):
         total = LeadershipPeriodRecord(period_start=month, task_count=count, cut_length_m=Decimal('1'),
                                        groove_length_m=Decimal('0'), work_time_seconds=60)
         return LeadershipMonthSnapshot(month, [total], [], total, NOW, NOW, NOW + timedelta(days=1), 0, source, 1)
     repo.upsert_many([snapshot('Cutter01-fingerprint', 1), snapshot('Cutter02-fingerprint', 2)])
-    repo.initialize()
     assert repo.get(month, source_fingerprint='Cutter01-fingerprint', snapshot_version=1).total.task_count == 1
     assert repo.get(month, source_fingerprint='Cutter02-fingerprint', snapshot_version=1).total.task_count == 2
 
@@ -195,10 +183,9 @@ def test_alarm_source_always_filters_cutter02_and_its_confirmed_start_time():
     assert params == (0, 1000, '2026-10-12 00:00:00', 'Cutter02')
 
 
-def test_disconnected_energy_retains_cutter02_tasks_and_never_calls_meters(tmp_path):
+def test_disconnected_energy_retains_cutter02_tasks_and_never_calls_meters(tmp_path, state_database):
     cfg = line_settings(cutting_settings(project_root=tmp_path, energy_api_enabled=True), 'Cutter02')
-    repo = EnergyReportRepository(SQLiteDatabase(tmp_path / 'energy.db'))
-    repo.initialize()
+    repo = EnergyReportRepository(state_database)
     client = MeterStub()
     service = EnergyPeriodService(cfg, repo, client=client, clock=lambda: NOW)
     task = record('cutter02-task', equipment_id='Cutter02')
@@ -224,14 +211,13 @@ def test_custom_sql_cannot_silently_use_cutter01_scope_or_override_device_parame
     assert 'MACHINE_NO = ?' in sql and values == ('Cutter02',)
 
 
-def test_cutter02_export_explains_disconnected_energy_even_without_tasks(tmp_path):
+def test_cutter02_export_explains_disconnected_energy_even_without_tasks(tmp_path, state_database):
     cfg = line_settings(cutting_settings(project_root=tmp_path, data_source_mode='demo',
                                        demo_mode=True, llm_enabled=False), 'Cutter02')
     cfg.ensure_runtime_dirs()
     cfg.echarts_vendor_path.parent.mkdir(exist_ok=True)
     cfg.echarts_vendor_path.write_text('window.echarts = {};')
-    metadata = MetadataRepository(cfg.metadata_db_path, device_id='Cutter02')
-    metadata.initialize()
+    metadata = MetadataRepository(state_database, device_id='Cutter02')
     pipeline = ReportPipeline(cfg, metadata, query_service=QueryService(cfg, client=source_client(cfg)))
     metadata.create_job(report_id='cutter02-export', report_date=DAY, project_code=None, ship_no=None,
                         request_id='export', created_at=STAMP, report_type='equipment')
@@ -246,7 +232,6 @@ def test_cutter02_export_explains_disconnected_energy_even_without_tasks(tmp_pat
 def test_schedule_run_and_queue_keep_fixed_device_even_after_schedule_edit(database):
     db, admin = database
     automation = AutomationRepository(db)
-    automation.initialize()
     data = {'name': 'Cutter02 日报', 'device_id': 'Cutter02', 'report_type': 'equipment', 'frequency': 'daily',
             'run_time': '18:00', 'report_period': 'previous_day', 'recipients': ['manager@example.test'],
             'subject_template': '{report_name}', 'chart_type': 'bar_line', 'attach_report': True,
@@ -273,7 +258,7 @@ def test_device_api_validates_selection_and_scopes_history_and_exports(database,
     db, admin = database
     app = FastAPI()
     app.state.catalog = load_line_catalog(cutting_settings().production_lines_json)
-    app.state.catalog = load_line_catalog(configuration(db.path.parent).production_lines_json).model_copy(update={"default_line_id": default_device_id})
+    app.state.catalog = load_line_catalog(configuration(Path("/tmp/isolated-state-fixture")).production_lines_json).model_copy(update={"default_line_id": default_device_id})
     for router in (devices_router, options_router, reports_router):
         app.include_router(router)
     app.dependency_overrides[require_user] = lambda: admin
@@ -316,7 +301,6 @@ def test_device_runtime_has_independent_caches_and_disables_only_cutter02_energy
     definitions = DefinitionRepository(db, 'Asia/Shanghai')
     definitions.initialize()
     snapshots = LeadershipSnapshotRepository(db)
-    snapshots.initialize()
     base = cutting_settings(project_root=tmp_path, data_source_mode='sqlserver', demo_mode=False,
                     energy_api_enabled=True, alarm_monitor_enabled=True)
     one, two = [build_device_runtime(line_settings(base, key), db, definitions, snapshots, SimpleNamespace(), client=source_client(base))
@@ -464,7 +448,7 @@ def test_analysis_cache_and_source_versions_are_distinct_for_identical_input(dat
         assert service._analyze(report_type='workshop',report_date=DAY,context={'facts':[]},force=False,publish_latest=True).cached
     assert len(calls)==2
     with db.connect() as connection:
-        assert {row[0] for row in connection.execute('SELECT display_scope FROM report_analyses')}=={'Cutter01','Cutter02'}
+        assert {row['display_scope'] for row in connection.execute('SELECT display_scope FROM report_analyses')}=={'Cutter01','Cutter02'}
 
 
 def test_pipeline_rejects_a_job_owned_by_another_device_before_query(database, tmp_path):

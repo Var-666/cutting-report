@@ -10,7 +10,7 @@ from typing import Any
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from app.config import Settings
-from app.database.sqlite import execution_owner
+from app.database.postgres import execution_owner
 
 
 class ReportRenderError(RuntimeError):

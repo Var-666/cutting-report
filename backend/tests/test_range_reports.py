@@ -25,7 +25,7 @@ from app.services.report_analysis_service import combined_analysis_source_versio
 from tests.analysis_fakes import model_analysis
 
 
-def _pipeline(tmp_path: Path) -> tuple[Settings, MetadataRepository, ReportPipeline]:
+def _pipeline(state_database, tmp_path: Path) -> tuple[Settings, MetadataRepository, ReportPipeline]:
     vendor_dir = tmp_path / "vendor"
     vendor_dir.mkdir()
     (vendor_dir / "echarts.min.js").write_text(
@@ -40,8 +40,7 @@ def _pipeline(tmp_path: Path) -> tuple[Settings, MetadataRepository, ReportPipel
         app_version="test",
     )
     settings.ensure_runtime_dirs()
-    metadata = MetadataRepository(settings.metadata_db_path, device_id='Cutter01')
-    metadata.initialize()
+    metadata = MetadataRepository(state_database, device_id='Cutter01')
     pipeline = ReportPipeline(settings, metadata, query_service=QueryService(settings, client=source_client(settings)))
     pipeline.analysis_service.llm.analyze_context = model_analysis
     return settings, metadata, pipeline
@@ -132,8 +131,8 @@ def test_workshop_top_lengths_use_filtered_rows_beyond_the_visible_page() -> Non
     assert data["top_cut_length_tasks"][0]["cut_length_m"] == 12.0
 
 
-def test_live_equipment_energy_range_is_bounded_to_31_days(tmp_path: Path) -> None:
-    _, _, pipeline = _pipeline(tmp_path)
+def test_live_equipment_energy_range_is_bounded_to_31_days(state_database, tmp_path: Path) -> None:
+    _, _, pipeline = _pipeline(state_database, tmp_path)
     with pytest.raises(ValueError, match="31 天"):
         pipeline.range_service.equipment(
             date(2026, 1, 1),
@@ -141,8 +140,8 @@ def test_live_equipment_energy_range_is_bounded_to_31_days(tmp_path: Path) -> No
         )
 
 
-def test_equipment_analysis_reports_long_range_as_validation_error(tmp_path: Path) -> None:
-    _, _, pipeline = _pipeline(tmp_path)
+def test_equipment_analysis_reports_long_range_as_validation_error(state_database, tmp_path: Path) -> None:
+    _, _, pipeline = _pipeline(state_database, tmp_path)
     request = SimpleNamespace(
         headers={},
         state=SimpleNamespace(request_id="analysis-range-limit"),
@@ -176,10 +175,10 @@ def test_equipment_analysis_reports_long_range_as_validation_error(tmp_path: Pat
     assert "31 天" in caught.value.detail
 
 
-def test_analysis_api_returns_503_without_a_model_result(
+def test_analysis_api_returns_503_without_a_model_result(state_database,
     tmp_path: Path, monkeypatch
 ) -> None:
-    _, _, pipeline = _pipeline(tmp_path)
+    _, _, pipeline = _pipeline(state_database, tmp_path)
 
     def fail(*_args):
         raise RuntimeError("model unavailable")
@@ -240,10 +239,10 @@ def test_analysis_version_check_reads_only_sqlite_metadata() -> None:
 
 
 @pytest.mark.parametrize("report_type", ["leadership", "workshop", "equipment"])
-def test_analysis_rejects_a_stale_visible_report_version(
+def test_analysis_rejects_a_stale_visible_report_version(state_database,
     tmp_path: Path, report_type: str
 ) -> None:
-    _, _, pipeline = _pipeline(tmp_path)
+    _, _, pipeline = _pipeline(state_database, tmp_path)
     request = SimpleNamespace(
         headers={},
         state=SimpleNamespace(request_id="analysis-stale-version"),
@@ -286,12 +285,12 @@ def test_analysis_rejects_a_stale_visible_report_version(
         ("equipment", "任务总数"),
     ],
 )
-def test_page_analysis_uses_the_selected_range(
+def test_page_analysis_uses_the_selected_range(state_database,
     tmp_path: Path,
     report_type: str,
     expected_fact_label: str,
 ) -> None:
-    _, _, pipeline = _pipeline(tmp_path)
+    _, _, pipeline = _pipeline(state_database, tmp_path)
     request = SimpleNamespace(
         headers={},
         state=SimpleNamespace(request_id="analysis-range"),
@@ -328,10 +327,10 @@ def test_page_analysis_uses_the_selected_range(
 
 
 @pytest.mark.parametrize("end_date", [date(2026, 8, 18), date(2026, 8, 20)])
-def test_workshop_page_version_matches_analysis_for_same_day_and_range(
+def test_workshop_page_version_matches_analysis_for_same_day_and_range(state_database,
     tmp_path: Path, end_date: date
 ) -> None:
-    _, _, pipeline = _pipeline(tmp_path)
+    _, _, pipeline = _pipeline(state_database, tmp_path)
     request = SimpleNamespace(
         headers={},
         state=SimpleNamespace(request_id="workshop-visible-version"),
@@ -375,8 +374,8 @@ def test_workshop_page_version_matches_analysis_for_same_day_and_range(
     )
 
 
-def test_leadership_page_versions_cover_both_analysis_tables(tmp_path: Path) -> None:
-    _, _, pipeline = _pipeline(tmp_path)
+def test_leadership_page_versions_cover_both_analysis_tables(state_database, tmp_path: Path) -> None:
+    _, _, pipeline = _pipeline(state_database, tmp_path)
     request = SimpleNamespace(
         headers={},
         state=SimpleNamespace(request_id="leadership-visible-version"),
@@ -425,14 +424,14 @@ def test_leadership_page_versions_cover_both_analysis_tables(tmp_path: Path) -> 
         ("equipment", "区间任务能耗明细", None, 42),
     ],
 )
-def test_pipeline_exports_the_selected_range(
+def test_pipeline_exports_the_selected_range(state_database,
     tmp_path: Path,
     report_type: str,
     expected_heading: str,
     project_code: str | None,
     expected_tasks: int,
 ) -> None:
-    settings, metadata, pipeline = _pipeline(tmp_path)
+    settings, metadata, pipeline = _pipeline(state_database, tmp_path)
     now = datetime.now(ZoneInfo(settings.timezone)).isoformat(timespec="seconds")
     metadata.create_job(
         report_id="rpt_range",

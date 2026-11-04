@@ -18,18 +18,18 @@ class Response:
         return {"usage": self.usage}
 
 
-def test_usage_counts_attempts_but_never_estimates_missing_tokens(tmp_path) -> None:
+def test_usage_counts_attempts_but_never_estimates_missing_tokens(state_database, tmp_path) -> None:
     settings = Settings(project_root=tmp_path)
-    record_llm_call(settings, Response({"total_tokens": 31}))
-    record_llm_call(settings, Response({"prompt_tokens": 10, "completion_tokens": 4}))
-    record_llm_call(settings, Response(None))
-    record_llm_call(settings, None)
+    record_llm_call(settings, state_database, Response({"total_tokens": 31}))
+    record_llm_call(settings, state_database, Response({"prompt_tokens": 10, "completion_tokens": 4}))
+    record_llm_call(settings, state_database, Response(None))
+    record_llm_call(settings, state_database, None)
 
-    summary = LlmUsageRepository(settings.metadata_db_path).summary()
+    summary = LlmUsageRepository(state_database).summary()
     assert summary == {"call_count": 4, "metered_count": 2, "total_tokens": 45}
 
 
-def test_report_model_request_is_counted_even_when_provider_omits_usage(tmp_path, monkeypatch) -> None:
+def test_report_model_request_is_counted_even_when_provider_omits_usage(state_database, tmp_path, monkeypatch) -> None:
     settings = Settings(
         project_root=tmp_path, llm_enabled=True,
         llm_api_key="test", llm_base_url="http://llm.test",
@@ -57,13 +57,13 @@ def test_report_model_request_is_counted_even_when_provider_omits_usage(tmp_path
             return ModelResponse()
 
     monkeypatch.setattr("app.services.llm_service.httpx.Client", Client)
-    LlmService(settings).analyze_context("leadership", {"facts": []})
-    assert LlmUsageRepository(settings.metadata_db_path).summary() == {
+    LlmService(settings, database=state_database).analyze_context("leadership", {"facts": []})
+    assert LlmUsageRepository(state_database).summary() == {
         "call_count": 1, "metered_count": 0, "total_tokens": 0,
     }
 
 
-def test_alarm_model_request_adds_provider_token_usage(tmp_path, monkeypatch) -> None:
+def test_alarm_model_request_adds_provider_token_usage(state_database, tmp_path, monkeypatch) -> None:
     settings = Settings(
         project_root=tmp_path, llm_enabled=True,
         llm_api_key="test", llm_base_url="http://llm.test",
@@ -97,13 +97,13 @@ def test_alarm_model_request_adds_provider_token_usage(tmp_path, monkeypatch) ->
             return ModelResponse()
 
     monkeypatch.setattr("app.services.alarm_analysis_service.httpx.Client", Client)
-    AlarmAnalysisService(settings).analyze([])
-    assert LlmUsageRepository(settings.metadata_db_path).summary() == {
+    AlarmAnalysisService(settings, database=state_database).analyze([])
+    assert LlmUsageRepository(state_database).summary() == {
         "call_count": 1, "metered_count": 1, "total_tokens": 9,
     }
 
 
-def test_failed_http_attempt_counts_without_inventing_tokens(tmp_path, monkeypatch) -> None:
+def test_failed_http_attempt_counts_without_inventing_tokens(state_database, tmp_path, monkeypatch) -> None:
     settings = Settings(
         project_root=tmp_path, llm_enabled=True,
         llm_api_key="test", llm_base_url="http://llm.test",
@@ -124,14 +124,14 @@ def test_failed_http_attempt_counts_without_inventing_tokens(tmp_path, monkeypat
 
     monkeypatch.setattr("app.services.llm_service.httpx.Client", Client)
     with pytest.raises(RuntimeError, match="connection failed"):
-        LlmService(settings).analyze_context("leadership", {"facts": []})
-    assert LlmUsageRepository(settings.metadata_db_path).summary() == {
+        LlmService(settings, database=state_database).analyze_context("leadership", {"facts": []})
+    assert LlmUsageRepository(state_database).summary() == {
         "call_count": 1, "metered_count": 0, "total_tokens": 0,
     }
 
 
 @pytest.mark.parametrize("scenario", ["report", "alarm"])
-def test_real_streamed_model_response_succeeds_and_records_usage(tmp_path, monkeypatch, scenario):
+def test_real_streamed_model_response_succeeds_and_records_usage(state_database, tmp_path, monkeypatch, scenario):
     settings = Settings(project_root=tmp_path, llm_enabled=True,
                         llm_api_key="test", llm_base_url="http://llm.test")
     if scenario == "report":
@@ -157,12 +157,12 @@ def test_real_streamed_model_response_succeeds_and_records_usage(tmp_path, monke
     monkeypatch.setattr("app.services.llm_service.httpx.Client",
                         lambda **kwargs: original_client(transport=transport, **kwargs))
     if scenario == "report":
-        assert LlmService(settings).analyze_context("leadership", {"facts": []}).status == "success"
+        assert LlmService(settings, database=state_database).analyze_context("leadership", {"facts": []}).status == "success"
     else:
-        assert AlarmAnalysisService(settings).analyze([])["summary"] == "无告警"
+        assert AlarmAnalysisService(settings, database=state_database).analyze([])["summary"] == "无告警"
     assert body.closed
     with pytest.raises(httpx.ResponseNotRead):
         response.json()
-    assert LlmUsageRepository(settings.metadata_db_path).summary() == {
+    assert LlmUsageRepository(state_database).summary() == {
         "call_count": 1, "metered_count": 1, "total_tokens": 9,
     }

@@ -1,3 +1,4 @@
+from tests.postgres_fixtures import state_settings
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import date
@@ -63,11 +64,11 @@ def test_database_and_automation_save_share_read_modify_publish_lock(tmp_path, m
     assert configured.runtime_settings_env_path.stat().st_mode & 0o777 == 0o600
 
 
-def test_blank_database_password_preserves_latest_saved_value_before_restart(tmp_path, monkeypatch):
+def test_blank_database_password_preserves_latest_saved_value_before_restart(postgres_state, tmp_path, monkeypatch):
     from app.services.application_runtime import build_runtime
     from app.models.database_sources import DatabaseSourceRequest
     configured = configuration(tmp_path)
-    state = build_runtime(configured, role='web')
+    state = build_runtime(state_settings(configured,postgres_state), role='web')
     current = state.database_runtime.snapshot().database_sources
     latest = current.get('cutting-production').model_copy(update={'password': __import__('pydantic').SecretStr('new-saved-password')})
     write_runtime_env(configured.runtime_settings_env_path, {'DATABASE_SOURCES_JSON': source_configs_json([latest, current.get('welding-production')])})

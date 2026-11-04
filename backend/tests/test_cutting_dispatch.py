@@ -21,7 +21,6 @@ from tests.line_fixtures import cutting_settings
 from app.database.dispatch import DispatchRepository
 from app.database.downloads import DownloadRepository
 from app.database.pdm import MockPdmRepository
-from app.database.sqlite import SQLiteDatabase
 from app.database.workshop import WorkshopRepository
 from app.services.cutting_dispatch_service import (
     CuttingDispatchService,
@@ -42,11 +41,10 @@ from app.services.file_source import (
 from app.services.magic_box_service import MagicBoxConfig, MagicBoxError
 
 
-def _service(tmp_path: Path, file_source=None):
+def _service(state_database, tmp_path: Path, file_source=None):
     configured = cutting_settings(project_root=tmp_path)
-    database = SQLiteDatabase(tmp_path / "metadata.db")
+    database = state_database
     workshop = WorkshopRepository(database)
-    workshop.initialize()
     dispatches = DispatchRepository(database)
     dispatches.initialize()
     admin = workshop.create_user(
@@ -68,8 +66,8 @@ def _service(tmp_path: Path, file_source=None):
     )
 
 
-def test_dispatch_history_saves_ship_and_segment_without_reading_pdm_when_listing(tmp_path):
-    service, repository, admin = _service(tmp_path)
+def test_dispatch_history_saves_ship_and_segment_without_reading_pdm_when_listing(state_database, tmp_path):
+    service, repository, admin = _service(state_database, tmp_path)
     source = service.pdm.files[0]
     source['document_no'] = 'S802C120A001.gen'
     draft = service.create_dispatch(document_id=source['document_id'], machine_ip='10.1.133.197',
@@ -82,16 +80,14 @@ def test_dispatch_history_saves_ship_and_segment_without_reading_pdm_when_listin
     assert (item['ship_no'], item['segment_name'], item['quantity']) == ('CMYZ0177', '802C', 3)
 
 
-def test_dispatch_history_adds_nullable_ship_and_segment_to_legacy_records(tmp_path):
-    service, repository, admin = _service(tmp_path)
+def test_dispatch_history_reads_nullable_ship_and_segment_from_imported_records(state_database, tmp_path):
+    service, repository, admin = _service(state_database, tmp_path)
     source = service.pdm.files[0]
     source['document_no'] = 'S802C120A001.gen'
     draft = service.create_dispatch(document_id=source['document_id'], machine_ip='10.1.133.197',
                                     material='A0', thickness=12, quantity=1, user=admin)
     with repository.connect() as connection:
-        connection.execute('ALTER TABLE cutting_dispatches DROP COLUMN ship_no')
-        connection.execute('ALTER TABLE cutting_dispatches DROP COLUMN segment_name')
-        connection.execute("DELETE FROM schema_migrations WHERE name='010_dispatch'")
+        connection.execute('UPDATE cutting_dispatches SET ship_no=NULL, segment_name=NULL')
     repository.initialize()
     repository.initialize()
     saved = repository.get(draft['dispatch_id'])
@@ -142,8 +138,8 @@ def test_local_file_source_stays_inside_read_only_root(tmp_path: Path) -> None:
         file_source.resolve("../outside.GEN")
 
 
-def test_mock_pdm_supports_project_catalog_file_and_status_queries(tmp_path: Path) -> None:
-    service, _dispatches, _admin = _service(tmp_path)
+def test_mock_pdm_supports_project_catalog_file_and_status_queries(state_database, tmp_path: Path) -> None:
+    service, _dispatches, _admin = _service(state_database, tmp_path)
     project = service.list_projects("0177", 10)[0]
     catalogs = service.list_catalogs(project["project_id"])
     files = service.list_files(
@@ -161,8 +157,8 @@ def test_mock_pdm_supports_project_catalog_file_and_status_queries(tmp_path: Pat
     assert files["items"][0]["status_label"] == "待派发"
 
 
-def test_file_list_keeps_selected_path_available_with_physical_history(tmp_path: Path) -> None:
-    service, _dispatches, _admin = _service(tmp_path)
+def test_file_list_keeps_selected_path_available_with_physical_history(state_database, tmp_path: Path) -> None:
+    service, _dispatches, _admin = _service(state_database, tmp_path)
     service.pdm.files[0]["physical_file_count"] = 3
 
     files = service.list_files(
@@ -183,8 +179,8 @@ def test_file_list_keeps_selected_path_available_with_physical_history(tmp_path:
     [("sent", "complete", "已派发"), ("push_failed", "assign_failed", "推送失败"),
      ("pushing", "assigning", "正在推送")],
 )
-def test_file_list_dispatch_status_matches_local_record(tmp_path: Path, status: str, stage: str, label: str) -> None:
-    service, dispatches, admin = _service(tmp_path)
+def test_file_list_dispatch_status_matches_local_record(state_database, tmp_path: Path, status: str, stage: str, label: str) -> None:
+    service, dispatches, admin = _service(state_database, tmp_path)
     source = service.pdm.files[0]
     task = service.create_dispatch(
         document_id=source["document_id"], machine_ip="10.1.133.196",
@@ -203,8 +199,8 @@ def test_file_list_dispatch_status_matches_local_record(tmp_path: Path, status: 
     assert item["status_label"] == "待派发", "keep the existing PDM status contract"
 
 
-def test_file_list_uses_latest_matching_version_outside_history_page(tmp_path: Path) -> None:
-    service, dispatches, admin = _service(tmp_path)
+def test_file_list_uses_latest_matching_version_outside_history_page(state_database, tmp_path: Path) -> None:
+    service, dispatches, admin = _service(state_database, tmp_path)
     source = service.pdm.files[0]
     task = service.create_dispatch(
         document_id=source["document_id"], machine_ip="10.1.133.196",
@@ -227,8 +223,8 @@ def test_file_list_uses_latest_matching_version_outside_history_page(tmp_path: P
     assert dispatches.latest_for_files([]) == {}
 
 
-def test_dispatch_summary_backfills_existing_history_and_survives_restart(tmp_path: Path) -> None:
-    service, dispatches, admin = _service(tmp_path)
+def test_dispatch_summary_backfills_existing_history_and_survives_restart(state_database, tmp_path: Path) -> None:
+    service, dispatches, admin = _service(state_database, tmp_path)
     source = service.pdm.files[0]
     task = service.create_dispatch(
         document_id=source["document_id"], machine_ip="10.1.133.196",
@@ -238,8 +234,7 @@ def test_dispatch_summary_backfills_existing_history_and_survives_restart(tmp_pa
                              user=admin, now="2090-01-01")
     key = (source["document_id"], source["version_id"])
     with dispatches.connect() as connection:
-        connection.execute("DROP TABLE cutting_file_dispatch_status")
-        connection.execute("DELETE FROM schema_migrations WHERE name='010_dispatch'")
+        connection.execute("DELETE FROM cutting_file_dispatch_status")
     dispatches.initialize()
     summary = dispatches.latest_for_files([key])[key]
     assert summary["dispatch_id"] == sent["dispatch_id"]
@@ -247,7 +242,7 @@ def test_dispatch_summary_backfills_existing_history_and_survives_restart(tmp_pa
     assert summary["machine_ip"] == sent["machine_ip"]
     assert summary["updated_at"] == sent["updated_at"]
     with dispatches.connect() as connection:
-        connection.execute("DELETE FROM cutting_dispatches WHERE dispatch_id = ?", (sent["dispatch_id"],))
+        connection.execute("DELETE FROM cutting_dispatches WHERE dispatch_id = %s", (sent["dispatch_id"],))
     dispatches.initialize()
     assert dispatches.latest_for_files([key])[key] == summary, "older surviving history must not replace the summary"
     with dispatches.connect() as connection:
@@ -259,8 +254,8 @@ def test_dispatch_summary_backfills_existing_history_and_survives_restart(tmp_pa
     assert restarted.list(page=1, page_size=10)[1] == 0
 
 
-def test_dispatch_summary_ignores_older_task_updates_and_keeps_versions_separate(tmp_path: Path) -> None:
-    service, dispatches, admin = _service(tmp_path)
+def test_dispatch_summary_ignores_older_task_updates_and_keeps_versions_separate(state_database, tmp_path: Path) -> None:
+    service, dispatches, admin = _service(state_database, tmp_path)
     source = service.pdm.files[0]
     older = service.create_dispatch(
         document_id=source["document_id"], machine_ip="10.1.133.196",
@@ -286,8 +281,8 @@ def test_dispatch_summary_ignores_older_task_updates_and_keeps_versions_separate
     assert summaries[(key[0], "")]["status"] == "sent"
 
 
-def test_dispatch_summary_rolls_back_with_history_changes(tmp_path: Path) -> None:
-    service, dispatches, admin = _service(tmp_path)
+def test_dispatch_summary_rolls_back_with_history_changes(state_database, tmp_path: Path) -> None:
+    service, dispatches, admin = _service(state_database, tmp_path)
     source = service.pdm.files[0]
     task = service.create_dispatch(
         document_id=source["document_id"], machine_ip="10.1.133.196",
@@ -307,8 +302,8 @@ def test_dispatch_summary_rolls_back_with_history_changes(tmp_path: Path) -> Non
     assert dispatches.get(task["dispatch_id"])["status"] == task["status"]
 
 
-def test_download_status_does_not_query_magic_box_configuration(tmp_path: Path) -> None:
-    service, _dispatches, _admin = _service(tmp_path)
+def test_download_status_does_not_query_magic_box_configuration(state_database, tmp_path: Path) -> None:
+    service, _dispatches, _admin = _service(state_database, tmp_path)
 
     class UnexpectedMagicConfig:
         def public_status(self):
@@ -322,8 +317,8 @@ def test_download_status_does_not_query_magic_box_configuration(tmp_path: Path) 
     assert result["can_query"] is True
 
 
-def test_saving_dispatch_is_persistent_but_does_not_download(tmp_path: Path) -> None:
-    service, dispatches, admin = _service(tmp_path)
+def test_saving_dispatch_is_persistent_but_does_not_download(state_database, tmp_path: Path) -> None:
+    service, dispatches, admin = _service(state_database, tmp_path)
 
     item = service.create_dispatch(
         document_id="F1A0796D-7118-4E37-8F69-B6D917BD6456",
@@ -350,11 +345,11 @@ def test_saving_dispatch_is_persistent_but_does_not_download(tmp_path: Path) -> 
         )
 
 
-def test_concurrent_duplicate_dispatch_creation_is_atomic(
+def test_concurrent_duplicate_dispatch_creation_is_atomic(state_database,
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    service, dispatches, admin = _service(tmp_path)
+    service, dispatches, admin = _service(state_database, tmp_path)
     original_create = dispatches.create_unless_active
     ready = Barrier(2)
 
@@ -392,8 +387,8 @@ def test_concurrent_duplicate_dispatch_creation_is_atomic(
 
 
 @pytest.mark.parametrize("suffix", [".GEN", ".gen", ".TXT", ".txt"])
-def test_dispatch_accepts_supported_file_types(tmp_path: Path, suffix: str) -> None:
-    service, _dispatches, admin = _service(tmp_path)
+def test_dispatch_accepts_supported_file_types(state_database, tmp_path: Path, suffix: str) -> None:
+    service, _dispatches, admin = _service(state_database, tmp_path)
     file = service.pdm.files[0]
     file["document_no"] = f"cutting-task{suffix}"
     file["file_path"] = f"CMYZ0177\\PK-707C1\\cutting-task{suffix}"
@@ -410,8 +405,8 @@ def test_dispatch_accepts_supported_file_types(tmp_path: Path, suffix: str) -> N
     assert item["document_no"] == f"cutting-task{suffix}"
 
 
-def test_dispatch_rejects_unsupported_file_type(tmp_path: Path) -> None:
-    service, _dispatches, admin = _service(tmp_path)
+def test_dispatch_rejects_unsupported_file_type(state_database, tmp_path: Path) -> None:
+    service, _dispatches, admin = _service(state_database, tmp_path)
     file = service.pdm.files[0]
     file["document_no"] = "drawing.PDF"
     file["file_path"] = "CMYZ0177\\PK-707C1\\drawing.PDF"
@@ -427,8 +422,8 @@ def test_dispatch_rejects_unsupported_file_type(tmp_path: Path) -> None:
         )
 
 
-def test_enabled_mock_source_creates_ready_task_and_state_transition(tmp_path: Path) -> None:
-    service, dispatches, admin = _service(tmp_path, MockFileSource())
+def test_enabled_mock_source_creates_ready_task_and_state_transition(state_database, tmp_path: Path) -> None:
+    service, dispatches, admin = _service(state_database, tmp_path, MockFileSource())
     item = service.create_dispatch(
         document_id="F1A0796D-7118-4E37-8F69-B6D917BD6456",
         machine_ip="10.1.133.197",
@@ -506,15 +501,13 @@ class TestHttpFileSource(MockFileSource):
     mode = "http"
 
 
-def _push_service(tmp_path: Path, client: RecordingMagicClient):
+def _push_service(state_database, tmp_path: Path, client: RecordingMagicClient):
     cfg = cutting_settings(project_root=tmp_path, magic_box_enabled=True)
-    database = SQLiteDatabase(tmp_path / "metadata.db")
+    database = state_database
     workshop = WorkshopRepository(database)
-    workshop.initialize()
     dispatches = DispatchRepository(database)
     dispatches.initialize()
     download_repository = DownloadRepository(database)
-    download_repository.initialize()
     pdm = MockPdmRepository()
     pdm.mode = "sqlserver"
     for index, file in enumerate(pdm.files):
@@ -534,9 +527,9 @@ def _push_service(tmp_path: Path, client: RecordingMagicClient):
     return service, dispatches, admin
 
 
-def test_real_push_combines_ship_segment_and_uploaded_filename_in_task_name(tmp_path: Path):
+def test_real_push_combines_ship_segment_and_uploaded_filename_in_task_name(state_database, tmp_path: Path):
     client = RecordingMagicClient()
-    service, dispatches, admin = _push_service(tmp_path, client)
+    service, dispatches, admin = _push_service(state_database, tmp_path, client)
     draft = service.create_dispatch(
         document_id="F1A0796D-7118-4E37-8F69-B6D917BD6456",
         machine_ip="10.1.133.197",
@@ -565,9 +558,9 @@ def test_real_push_combines_ship_segment_and_uploaded_filename_in_task_name(tmp_
     assert stored["stage"] == "complete" and stored["attempt_count"] == 1
 
 
-def test_push_can_start_from_selected_download_without_file_search(tmp_path: Path):
+def test_push_can_start_from_selected_download_without_file_search(state_database, tmp_path: Path):
     client = RecordingMagicClient()
-    service, _dispatches, admin = _push_service(tmp_path, client)
+    service, _dispatches, admin = _push_service(state_database, tmp_path, client)
     raw = service.pdm.get_file("F1A0796D-7118-4E37-8F69-B6D917BD6456")
     downloaded = service.downloads.download(
         document_id=raw["document_id"],
@@ -603,9 +596,9 @@ def test_push_can_start_from_selected_download_without_file_search(tmp_path: Pat
         service.downloads.local_file(downloaded["download_id"])
 
 
-def test_batch_creation_isolates_files_and_reports_duplicates(tmp_path: Path):
+def test_batch_creation_isolates_files_and_reports_duplicates(state_database, tmp_path: Path):
     client = RecordingMagicClient()
-    service, _dispatches, admin = _push_service(tmp_path, client)
+    service, _dispatches, admin = _push_service(state_database, tmp_path, client)
     downloaded = []
     for raw in service.pdm.files[:2]:
         downloaded.append(
@@ -646,9 +639,9 @@ def test_batch_creation_isolates_files_and_reports_duplicates(tmp_path: Path):
     assert all(item["dispatch"]["dispatch_id"] for item in repeated["items"])
 
 
-def test_batch_can_create_and_execute_directly_from_pdm_files(tmp_path: Path):
+def test_batch_can_create_and_execute_directly_from_pdm_files(state_database, tmp_path: Path):
     client = RecordingMagicClient()
-    service, _dispatches, admin = _push_service(tmp_path, client)
+    service, _dispatches, admin = _push_service(state_database, tmp_path, client)
     payload = [
         {
             "document_id": raw["document_id"],
@@ -679,9 +672,9 @@ def test_batch_can_create_and_execute_directly_from_pdm_files(tmp_path: Path):
     assert len(client.uploads) == len(client.assignments) == 2
 
 
-def test_direct_batch_rechecks_selected_pdm_version_and_path(tmp_path: Path):
+def test_direct_batch_rechecks_selected_pdm_version_and_path(state_database, tmp_path: Path):
     client = RecordingMagicClient()
-    service, _dispatches, admin = _push_service(tmp_path, client)
+    service, _dispatches, admin = _push_service(state_database, tmp_path, client)
     raw = service.pdm.files[0]
     common = {
         "document_id": raw["document_id"],
@@ -711,11 +704,11 @@ def test_standard_name_parser_matches_browser_rules() -> None:
 
 
 @pytest.mark.parametrize("sequence", range(1, 6))
-def test_z_prefix_is_standard_and_batch_accepts_matching_parameters_without_manual_confirmation(tmp_path: Path, sequence: int) -> None:
+def test_z_prefix_is_standard_and_batch_accepts_matching_parameters_without_manual_confirmation(state_database, tmp_path: Path, sequence: int) -> None:
     filename = f"Z806C080A0{sequence:02d}.gen"
     assert standard_instruction_parameters(filename) == ("A0", 8.0)
     assert standard_instruction_parameters(filename.lower()) == ("a0", 8.0)
-    service, dispatches, admin = _service(tmp_path)
+    service, dispatches, admin = _service(state_database, tmp_path)
     raw = service.pdm.files[0]
     raw["document_no"] = filename
     common = {"document_id": raw["document_id"], "version_id": raw["version_id"],
@@ -748,11 +741,11 @@ def test_unreadable_name_parameters_still_require_manual_input(filename: str) ->
 
 
 @pytest.mark.parametrize('code', ['A0', 'A2', 'A6', 'SS', 'B0', 'A7', 'X9', '7X', '00', 'q7', '@0', '中钢', '🧪0'])
-def test_material_code_is_stored_checked_and_uploaded_verbatim(tmp_path: Path, code: str) -> None:
+def test_material_code_is_stored_checked_and_uploaded_verbatim(state_database, tmp_path: Path, code: str) -> None:
     filename = f'S803C320{code}01L.gen'
     assert standard_instruction_parameters(filename) == (code, 32.0)
     client = RecordingMagicClient()
-    service, _dispatches, admin = _push_service(tmp_path, client)
+    service, _dispatches, admin = _push_service(state_database, tmp_path, client)
     raw = service.pdm.files[0]
     raw['document_no'] = filename
     item = {'document_id': raw['document_id'], 'version_id': raw['version_id'],
@@ -771,8 +764,8 @@ def test_material_code_is_stored_checked_and_uploaded_verbatim(tmp_path: Path, c
 
 
 @pytest.mark.parametrize("filename", ["P123C120A601.GEN", "P403P120A601.GEN", "P403P120A601B.GEN"])
-def test_batch_requires_manual_confirmation_for_nonstandard_and_overridden_names(tmp_path: Path, filename: str) -> None:
-    service, dispatches, admin = _service(tmp_path)
+def test_batch_requires_manual_confirmation_for_nonstandard_and_overridden_names(state_database, tmp_path: Path, filename: str) -> None:
+    service, dispatches, admin = _service(state_database, tmp_path)
     raw = service.pdm.files[0]
     common = {
         "document_id": raw["document_id"],
@@ -795,8 +788,8 @@ def test_batch_requires_manual_confirmation_for_nonstandard_and_overridden_names
         service.get_dispatch("missing-dispatch")
 
 
-def test_standard_name_parameter_mismatch_requires_explicit_confirmation(tmp_path: Path) -> None:
-    service, dispatches, admin = _service(tmp_path)
+def test_standard_name_parameter_mismatch_requires_explicit_confirmation(state_database, tmp_path: Path) -> None:
+    service, dispatches, admin = _service(state_database, tmp_path)
     raw = service.pdm.files[0]
     raw["document_no"] = "P123C120A601.GEN"
     common = {
@@ -821,8 +814,8 @@ def test_standard_name_parameter_mismatch_requires_explicit_confirmation(tmp_pat
     assert confirmed["items"][0]["dispatch"]["thickness"] == 10.0
 
 
-def test_single_dispatch_api_enforces_name_confirmation_and_exposes_current_status(tmp_path: Path) -> None:
-    service, _dispatches, admin = _service(tmp_path)
+def test_single_dispatch_api_enforces_name_confirmation_and_exposes_current_status(state_database, tmp_path: Path) -> None:
+    service, _dispatches, admin = _service(state_database, tmp_path)
     raw = service.pdm.files[0]
     request = SimpleNamespace(
         state=SimpleNamespace(request_id="dispatch-test"),
@@ -901,9 +894,9 @@ def test_batch_request_limits_files_and_validates_file_references():
             )
 
 
-def test_assign_retry_does_not_upload_file_twice(tmp_path: Path):
+def test_assign_retry_does_not_upload_file_twice(state_database, tmp_path: Path):
     client = RecordingMagicClient(fail_assign=True)
-    service, dispatches, admin = _push_service(tmp_path, client)
+    service, dispatches, admin = _push_service(state_database, tmp_path, client)
     draft = service.create_dispatch(
         document_id="F1A0796D-7118-4E37-8F69-B6D917BD6456",
         machine_ip="10.1.133.197",
@@ -925,14 +918,14 @@ def test_assign_retry_does_not_upload_file_twice(tmp_path: Path):
     assert len(client.assignments) == 2
 
 
-def test_unknown_upload_result_cannot_be_blindly_retried(tmp_path: Path) -> None:
+def test_unknown_upload_result_cannot_be_blindly_retried(state_database, tmp_path: Path) -> None:
     class UnknownUploadClient(RecordingMagicClient):
         def upload_task(self, **kwargs):
             self.uploads.append(kwargs)
             raise MagicBoxError("上传响应丢失", outcome_unknown=True)
 
     client = UnknownUploadClient()
-    service, _dispatches, admin = _push_service(tmp_path, client)
+    service, _dispatches, admin = _push_service(state_database, tmp_path, client)
     raw = service.pdm.files[0]
     created = service.create_dispatch_batch(
         machine_ip="10.1.133.197",
@@ -959,14 +952,14 @@ def test_unknown_upload_result_cannot_be_blindly_retried(tmp_path: Path) -> None
     assert len(client.uploads) == 1
 
 
-def test_unknown_upload_blocks_replacement_and_survives_restart(tmp_path: Path):
+def test_unknown_upload_blocks_replacement_and_survives_restart(state_database, tmp_path: Path):
     class UnknownClient(RecordingMagicClient):
         def upload_task(self, **kwargs):
             self.uploads.append(kwargs)
             raise MagicBoxError("上传响应丢失", outcome_unknown=True)
 
     client = UnknownClient()
-    service, dispatches, admin = _push_service(tmp_path, client)
+    service, dispatches, admin = _push_service(state_database, tmp_path, client)
     arguments = dict(document_id=service.pdm.files[0]["document_id"],
                      machine_ip="10.1.133.197", material=None, thickness=None,
                      quantity=1, user=admin)
@@ -998,9 +991,9 @@ def test_unknown_upload_blocks_replacement_and_survives_restart(tmp_path: Path):
     assert len(client.uploads) == 1
 
 
-def test_concurrent_assign_retries_have_one_remote_executor(tmp_path: Path):
+def test_concurrent_assign_retries_have_one_remote_executor(state_database, tmp_path: Path):
     client = RecordingMagicClient(fail_assign=True)
-    service, dispatches, admin = _push_service(tmp_path, client)
+    service, dispatches, admin = _push_service(state_database, tmp_path, client)
     draft = service.create_dispatch(document_id=service.pdm.files[0]["document_id"],
         machine_ip="10.1.133.197", material=None, thickness=None, quantity=1, user=admin)
     with pytest.raises(MagicBoxError):
@@ -1049,9 +1042,9 @@ def test_concurrent_assign_retries_have_one_remote_executor(tmp_path: Path):
     assert dispatches.get(draft["dispatch_id"])["status"] == "sent"
 
 
-def test_stale_upload_retry_cannot_cross_an_unknown_result(tmp_path: Path):
+def test_stale_upload_retry_cannot_cross_an_unknown_result(state_database, tmp_path: Path):
     client = RecordingMagicClient()
-    service, dispatches, admin = _push_service(tmp_path, client)
+    service, dispatches, admin = _push_service(state_database, tmp_path, client)
     raw = service.pdm.files[0]
     downloaded = service.downloads.download(document_id=raw["document_id"],
         version_id=raw["version_id"], file_path=raw["file_path"], user=admin)
@@ -1077,11 +1070,11 @@ def test_stale_upload_retry_cannot_cross_an_unknown_result(tmp_path: Path):
     ("assigning", "remote", "assign_unknown", False),
     ("cancelling", "remote", "cancel_unknown", False),
 ])
-def test_restart_preserves_uncertain_effects_and_only_retries_unstarted_assignment(
+def test_restart_preserves_uncertain_effects_and_only_retries_unstarted_assignment(state_database,
     tmp_path, stage, remote_id, recovered, retry_safe,
 ):
     client = RecordingMagicClient()
-    service, dispatches, admin = _push_service(tmp_path, client)
+    service, dispatches, admin = _push_service(state_database, tmp_path, client)
     arguments = dict(document_id=service.pdm.files[0]["document_id"],
         machine_ip="10.1.133.197", material=None, thickness=None, quantity=1, user=admin)
     draft = service.create_dispatch(**arguments)
@@ -1103,14 +1096,14 @@ def test_restart_preserves_uncertain_effects_and_only_retries_unstarted_assignme
     assert client.uploads == []
 
 
-def test_known_upload_rejection_retries_but_old_task_cannot_bypass_replacement(tmp_path):
+def test_known_upload_rejection_retries_but_old_task_cannot_bypass_replacement(state_database, tmp_path):
     class RejectedClient(RecordingMagicClient):
         def upload_task(self, **kwargs):
             self.uploads.append(kwargs)
             raise MagicBoxError("明确拒绝上传")
 
     client = RejectedClient()
-    service, dispatches, admin = _push_service(tmp_path, client)
+    service, dispatches, admin = _push_service(state_database, tmp_path, client)
     arguments = dict(document_id=service.pdm.files[0]["document_id"],
         machine_ip="10.1.133.197", material=None, thickness=None, quantity=1, user=admin)
     first = service.create_dispatch(**arguments)
@@ -1127,8 +1120,8 @@ def test_known_upload_rejection_retries_but_old_task_cannot_bypass_replacement(t
     assert dispatches.get(replacement["dispatch_id"])["status"] == "ready"
 
 
-def test_attempt_version_prevents_a_stale_retry_after_status_returns_to_same_value(tmp_path):
-    service, dispatches, admin = _push_service(tmp_path, RecordingMagicClient())
+def test_attempt_version_prevents_a_stale_retry_after_status_returns_to_same_value(state_database, tmp_path):
+    service, dispatches, admin = _push_service(state_database, tmp_path, RecordingMagicClient())
     draft = service.create_dispatch(document_id=service.pdm.files[0]["document_id"],
         machine_ip="10.1.133.197", material=None, thickness=None, quantity=1, user=admin)
     original = dispatches.transition(draft["dispatch_id"], expected={"ready"},
@@ -1143,9 +1136,9 @@ def test_attempt_version_prevents_a_stale_retry_after_status_returns_to_same_val
 
 
 @pytest.mark.parametrize("operation", ["upload", "assign", "cancel"])
-def test_unexpected_side_effect_failure_is_fail_closed(tmp_path, operation):
+def test_unexpected_side_effect_failure_is_fail_closed(state_database, tmp_path, operation):
     client = RecordingMagicClient()
-    service, dispatches, admin = _push_service(tmp_path, client)
+    service, dispatches, admin = _push_service(state_database, tmp_path, client)
     arguments = dict(document_id=service.pdm.files[0]["document_id"],
         machine_ip="10.1.133.197", material=None, thickness=None, quantity=1, user=admin)
     draft = service.create_dispatch(**arguments)
@@ -1172,9 +1165,9 @@ def test_unexpected_side_effect_failure_is_fail_closed(tmp_path, operation):
             service.cancel_dispatch(draft["dispatch_id"])
 
 
-def test_execution_and_cancellation_share_one_atomic_claim(tmp_path):
+def test_execution_and_cancellation_share_one_atomic_claim(state_database, tmp_path):
     client = RecordingMagicClient(fail_assign=True)
-    service, dispatches, admin = _push_service(tmp_path, client)
+    service, dispatches, admin = _push_service(state_database, tmp_path, client)
     draft = service.create_dispatch(document_id=service.pdm.files[0]["document_id"],
         machine_ip="10.1.133.197", material=None, thickness=None, quantity=1, user=admin)
     with pytest.raises(MagicBoxError):
@@ -1201,9 +1194,9 @@ def test_execution_and_cancellation_share_one_atomic_claim(tmp_path):
 
 
 @pytest.mark.parametrize("operation", ["assign", "cancel"])
-def test_lost_remote_response_disables_retry_and_replacement(tmp_path, operation):
+def test_lost_remote_response_disables_retry_and_replacement(state_database, tmp_path, operation):
     client = RecordingMagicClient()
-    service, dispatches, admin = _push_service(tmp_path, client)
+    service, dispatches, admin = _push_service(state_database, tmp_path, client)
     arguments = dict(document_id=service.pdm.files[0]["document_id"],
         machine_ip="10.1.133.197", material=None, thickness=None, quantity=1, user=admin)
     draft = service.create_dispatch(**arguments)
@@ -1226,9 +1219,9 @@ def test_lost_remote_response_disables_retry_and_replacement(tmp_path, operation
         service.create_dispatch(**arguments)
 
 
-def test_rejected_cancellation_preserves_original_state_and_can_retry(tmp_path):
+def test_rejected_cancellation_preserves_original_state_and_can_retry(state_database, tmp_path):
     client = RecordingMagicClient()
-    service, dispatches, admin = _push_service(tmp_path, client)
+    service, dispatches, admin = _push_service(state_database, tmp_path, client)
     draft = service.create_dispatch(document_id=service.pdm.files[0]["document_id"],
         machine_ip="10.1.133.197", material=None, thickness=None, quantity=1, user=admin)
     service.execute_dispatch(draft["dispatch_id"], user=admin)
@@ -1245,8 +1238,8 @@ def test_rejected_cancellation_preserves_original_state_and_can_retry(tmp_path):
     assert service.cancel_dispatch(draft["dispatch_id"])["status"] == "cancelled"
 
 
-def test_concurrent_file_preparation_failure_has_one_executor(tmp_path):
-    service, dispatches, admin = _push_service(tmp_path, RecordingMagicClient())
+def test_concurrent_file_preparation_failure_has_one_executor(state_database, tmp_path):
+    service, dispatches, admin = _push_service(state_database, tmp_path, RecordingMagicClient())
     draft = service.create_dispatch(document_id=service.pdm.files[0]["document_id"],
         machine_ip="10.1.133.197", material=None, thickness=None, quantity=1, user=admin)
     barrier = Barrier(2)
@@ -1285,11 +1278,11 @@ def test_concurrent_file_preparation_failure_has_one_executor(tmp_path):
 @pytest.mark.parametrize("failed_stage,recovered_stage", [
     ("uploaded", "upload_unknown"), ("complete", "assign_unknown"),
 ])
-def test_remote_success_with_local_commit_failure_cannot_be_repeated(
+def test_remote_success_with_local_commit_failure_cannot_be_repeated(state_database,
     tmp_path, failed_stage, recovered_stage,
 ):
     client = RecordingMagicClient()
-    service, dispatches, admin = _push_service(tmp_path, client)
+    service, dispatches, admin = _push_service(state_database, tmp_path, client)
     arguments = dict(document_id=service.pdm.files[0]["document_id"],
         machine_ip="10.1.133.197", material=None, thickness=None, quantity=1, user=admin)
     draft = service.create_dispatch(**arguments)
@@ -1328,9 +1321,9 @@ def test_task_segment_uses_the_existing_instruction_name_rules(filename, expecte
     assert standard_instruction_segment(filename) == expected
 
 
-def test_task_name_uses_ship_number_not_project_display_name(tmp_path):
+def test_task_name_uses_ship_number_not_project_display_name(state_database, tmp_path):
     client = RecordingMagicClient()
-    service, _, admin = _push_service(tmp_path, client)
+    service, _, admin = _push_service(state_database, tmp_path, client)
     service.pdm.projects[0]["ship_no"] = "CMIP-F262004"
     service.pdm.projects[0]["project_name"] = "3800m³LEG罐-1"
     draft = service.create_dispatch(document_id=service.pdm.files[0]["document_id"],
@@ -1340,9 +1333,9 @@ def test_task_name_uses_ship_number_not_project_display_name(tmp_path):
     assert client.uploads[0]["file_path"].name == "Z806C080A001.GEN"
 
 
-def test_nonstandard_task_requires_manual_segment_before_downloading_or_uploading(tmp_path):
+def test_nonstandard_task_requires_manual_segment_before_downloading_or_uploading(state_database, tmp_path):
     client = RecordingMagicClient()
-    service, _, admin = _push_service(tmp_path, client)
+    service, _, admin = _push_service(state_database, tmp_path, client)
     service.pdm.files[0]["document_no"] = "custom.GEN"
     draft = service.create_dispatch(document_id=service.pdm.files[0]["document_id"],
         machine_ip="10.1.133.197", material="A0", thickness=8, quantity=1, user=admin)
@@ -1357,9 +1350,9 @@ def test_nonstandard_task_requires_manual_segment_before_downloading_or_uploadin
     assert (saved["ship_no"], saved["segment_name"]) == ("CMYZ0177", "806C")
 
 
-def test_missing_ship_number_stops_upload_instead_of_guessing_from_project_name(tmp_path):
+def test_missing_ship_number_stops_upload_instead_of_guessing_from_project_name(state_database, tmp_path):
     client = RecordingMagicClient()
-    service, _, admin = _push_service(tmp_path, client)
+    service, _, admin = _push_service(state_database, tmp_path, client)
     service.pdm.projects[0]["ship_no"] = ""
     draft = service.create_dispatch(document_id=service.pdm.files[0]["document_id"],
         machine_ip="10.1.133.197", material="A0", thickness=8, quantity=1, user=admin)

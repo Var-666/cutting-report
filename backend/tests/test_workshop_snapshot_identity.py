@@ -1,4 +1,4 @@
-import sqlite3
+from psycopg.errors import ForeignKeyViolation
 
 import pytest
 
@@ -19,8 +19,8 @@ def prepare_phase(repository, arguments, phase):
 
 
 @pytest.mark.parametrize("phase", ["new", "empty", "existing"])
-def test_ambiguous_task_ids_reject_entire_sync_without_selecting_first_row(tmp_path, phase):
-    repository = setup(tmp_path)
+def test_ambiguous_task_ids_reject_entire_sync_without_selecting_first_row(tmp_path, state_database, phase):
+    repository = setup(state_database, tmp_path)
     arguments = prepare_phase(repository, sync_arguments(repository), phase)
     before_report, before_records = repository.get_daily_report_records(arguments["report_date"])
     with pytest.raises(DailyReportRecordMismatchError):
@@ -31,8 +31,8 @@ def test_ambiguous_task_ids_reject_entire_sync_without_selecting_first_row(tmp_p
 
 
 @pytest.mark.parametrize("phase", ["new", "empty", "existing"])
-def test_numerically_equivalent_duplicates_remain_idempotent(tmp_path, phase):
-    repository = setup(tmp_path)
+def test_numerically_equivalent_duplicates_remain_idempotent(tmp_path, state_database, phase):
+    repository = setup(state_database, tmp_path)
     arguments = prepare_phase(repository, sync_arguments(repository), phase)
     first = repository.sync_daily_report(**arguments, records=[record("A"), record("A", work="60.0")])
     repeated = repository.sync_daily_report(**arguments, records=[record("A", work="60.00")])
@@ -43,16 +43,16 @@ def test_numerically_equivalent_duplicates_remain_idempotent(tmp_path, phase):
 
 @pytest.mark.parametrize("empty_rebuild", [False, True])
 @pytest.mark.parametrize("legacy_parent", [False, True])
-def test_scope_change_is_rejected_without_touching_snapshot_revision(tmp_path, empty_rebuild, legacy_parent):
-    repository = setup(tmp_path)
+def test_scope_change_is_rejected_without_touching_snapshot_revision(tmp_path, state_database, empty_rebuild, legacy_parent):
+    repository = setup(state_database, tmp_path)
     arguments = sync_arguments(repository)
     report = repository.sync_daily_report(**arguments, records=[record("A")])
     with repository.connect() as connection:
         connection.execute("UPDATE workshop_report_items SET snapshot_revision = 2 WHERE task_id = 'A'")
     if legacy_parent:
         with repository.connect() as connection:
-            connection.execute("ALTER TABLE workshop_reports DROP COLUMN snapshot_revision_floor")
-        repository.initialize()
+            # The offline upgrade already materialized the legacy revision floor.
+            connection.execute("UPDATE workshop_reports SET snapshot_revision_floor=2")
     before = repository.get_daily_report_records(arguments["report_date"])
     with pytest.raises(DailyReportScopeMismatchError):
         repository.sync_daily_report(**{**arguments, "scope_machine_no": "Cutter02"},
@@ -67,16 +67,14 @@ def test_scope_change_is_rejected_without_touching_snapshot_revision(tmp_path, e
                             now=arguments["now"], snapshot_revision=2)
 
 
-def test_failed_append_restores_items_and_revision_barrier(tmp_path):
-    repository = setup(tmp_path)
+def test_failed_append_restores_items_and_revision_barrier(tmp_path, state_database):
+    repository = setup(state_database, tmp_path)
     arguments = sync_arguments(repository)
     repository.sync_daily_report(**arguments, records=[record("A")])
     before = repository.get_daily_report_records(arguments["report_date"])
-    with repository.connect() as connection:
-        connection.execute("""CREATE TRIGGER fail_append BEFORE INSERT ON workshop_report_items
-            WHEN NEW.task_id = 'B' BEGIN SELECT RAISE(ABORT, 'insert unavailable'); END""")
-    with pytest.raises(sqlite3.IntegrityError, match="insert unavailable"):
-        repository.sync_daily_report(**arguments, records=[record("A"), record("B")])
+    with pytest.raises(ForeignKeyViolation):
+        repository.sync_daily_report(**{**arguments, 'user':{'user_id':'missing-user','display_name':'失效账号'}},
+                                     records=[record("A"), record("B")])
     assert repository.get_daily_report_records(arguments["report_date"]) == before
     with repository.connect() as connection:
-        assert connection.execute("SELECT snapshot_revision_floor FROM workshop_reports").fetchone()[0] == 1
+        assert connection.execute("SELECT snapshot_revision_floor FROM workshop_reports").fetchone()['snapshot_revision_floor'] == 1

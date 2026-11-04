@@ -1,5 +1,5 @@
 from tests.line_fixtures import as_line_services, runtime_line
-"""Exercise the new response models through real services and SQLite repositories."""
+"""Exercise the new response models through real services and PostgreSQL repositories."""
 from datetime import date, datetime
 from decimal import Decimal
 from types import SimpleNamespace
@@ -21,9 +21,9 @@ from tests.test_cutting_dispatch import RecordingMagicClient, _push_service
 
 
 @pytest.fixture
-def api(tmp_path):
+def api(tmp_path, state_database):
     remote = RecordingMagicClient()
-    service, dispatches, admin = _push_service(tmp_path, remote)
+    service, dispatches, admin = _push_service(state_database, tmp_path, remote)
     repository = WorkshopRepository(dispatches.database, scope_machine_no='Cutter01')
     worker = repository.create_user(username='worker', display_name='工人', password='worker-password',
                                     role='worker', now='2026-10-01T08:00:00')

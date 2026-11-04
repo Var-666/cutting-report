@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 from collections import deque
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 import json
 import logging
@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo
 from app.config import Settings, settings
 from app.core.sql_capacity import sql_identity
 from app.database.coordination import CoordinationRepository
-from app.database.sqlite import SQLiteDatabase, ExecutionLeaseLost, execution_scope
+from app.database.postgres import PostgresDatabase, ExecutionLeaseLost, execution_scope
 from app.services.application_runtime import ApplicationRuntime, build_runtime
 from app.services.database_runtime import database_context
 from app.services.llm_service import background_llm_work, generation_priority
@@ -45,6 +45,7 @@ class WorkerProcess:
         self.runtime = runtime or build_runtime(configuration, role="worker")
         self.repository = self.runtime.coordination
         self.owner = None
+        self._closed = False
         self.stop_event = Event()
         self.analysis = BoundedExecutor(10, 0, "background-analysis")
         self.operations = BoundedExecutor(4, 0, "background-operation")
@@ -61,7 +62,7 @@ class WorkerProcess:
         self._clock_offset: float | None = None
 
     def scope(self):
-        return execution_scope(self.settings.metadata_db_path, "worker", self.owner)
+        return execution_scope(self.runtime.database, "worker", self.owner)
 
     def start(self) -> None:
         self.owner = self.repository.acquire("worker", ttl=self.LEASE_SECONDS)
@@ -271,8 +272,8 @@ class WorkerProcess:
                 line.background.handle_background(kind, payload)
 
     def run(self) -> None:
-        self.start()
         try:
+            self.start()
             while not self.stop_event.is_set():
                 try:
                     self.tick()
@@ -286,21 +287,27 @@ class WorkerProcess:
             self.stop()
 
     def stop(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
         self.stop_event.set()
         deadline = monotonic() + 5
         if self.report_worker:
             self.report_worker.stop()
         operations_stopped = self.operations.stop(max(0, deadline - monotonic()))
         analysis_stopped = self.analysis.stop(max(0, deadline - monotonic()))
-        self.runtime.database_runtime.close()
-        report_stopped = not self.report_worker or not any(thread.is_alive() for thread in self.report_worker._threads())
-        if self.owner and operations_stopped and analysis_stopped and report_stopped:
-            try:
-                with self.scope():
-                    self._flush_completions()
-                self.repository.release("worker", self.owner)
-            except ExecutionLeaseLost:
-                pass
+        try:
+            self.runtime.database_runtime.close()
+            report_stopped = not self.report_worker or not any(thread.is_alive() for thread in self.report_worker._threads())
+            if self.owner and operations_stopped and analysis_stopped and report_stopped:
+                try:
+                    with self.scope():
+                        self._flush_completions()
+                    self.repository.release("worker", self.owner)
+                except ExecutionLeaseLost:
+                    pass
+        finally:
+            self.runtime.database.close()
 
 
 def main() -> int:
@@ -309,7 +316,8 @@ def main() -> int:
     args = parser.parse_args()
     if args.health:
         try:
-            status = CoordinationRepository(SQLiteDatabase(settings.metadata_db_path, timeout_seconds=1)).worker_status()
+            with PostgresDatabase(replace(settings, postgres_pool_min_size=0, postgres_pool_max_size=1, postgres_connect_timeout_seconds=1)) as database:
+                status = CoordinationRepository(database).worker_status()
             print(json.dumps({key: value for key, value in status.items() if key != "configuration"}, ensure_ascii=False))
             return 0 if status.get("state") == "running" and background_ready(status) else 1
         except Exception:

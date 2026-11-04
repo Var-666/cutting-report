@@ -13,6 +13,3 @@ from app.database.confirmations import ConfirmationRepository
 
 class WorkshopRepository(WorkshopReportRepository, ConfirmationRepository, UserRepository, SessionRepository):
     """Preserve existing callers during the repository split; no business logic here."""
-    def initialize(self) -> None:
-        from app.database.migrations import apply_migrations
-        apply_migrations(self.database, names=("002_workshop", "014_workshop_ship_names"))

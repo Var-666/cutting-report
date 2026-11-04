@@ -1,25 +1,27 @@
 from __future__ import annotations
 
-import sqlite3
+from psycopg import Connection
 from datetime import date, datetime, timedelta, timezone
-from pathlib import Path
+
 from zoneinfo import ZoneInfo
 
-from app.database.sqlite import SQLiteDatabase, SQLiteRepository
+from app.database.postgres import PostgresDatabase, PostgresRepository
 
 
-class LlmUsageRepository(SQLiteRepository):
+class LlmUsageRepository(PostgresRepository):
     def __init__(
         self,
-        database: Path | SQLiteDatabase,
+        database: PostgresDatabase,
         *,
-        connection: sqlite3.Connection | None = None,
+        connection: Connection | None = None,
     ) -> None:
         super().__init__(database, connection=connection)
 
     def initialize(self) -> None:
-        from app.database.migrations import apply_migrations
-        apply_migrations(self.database, names=("004_llm_usage",))
+        with self.connect() as connection:
+            connection.execute('INSERT INTO llm_usage_totals(id) VALUES (1) ON CONFLICT(id) DO NOTHING')
+            connection.execute('INSERT INTO llm_usage_tracking VALUES (1, %s) ON CONFLICT(id) DO NOTHING',
+                               (datetime.now(timezone.utc).isoformat(),))
 
     def record_call(
         self, total_tokens: int | None, *, occurred_at: datetime | None = None,
@@ -34,7 +36,7 @@ class LlmUsageRepository(SQLiteRepository):
                 """INSERT INTO llm_usage_calls (
                     occurred_at, usage_date, scene, model, status, duration_ms,
                     input_tokens, output_tokens, total_tokens, cached_tokens, reasoning_tokens
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                 (occurred_at.isoformat(timespec="seconds"), occurred_at.date().isoformat(),
                  scene, model, status, duration_ms, input_tokens, output_tokens,
                  total_tokens, cached_tokens, reasoning_tokens),
@@ -43,8 +45,8 @@ class LlmUsageRepository(SQLiteRepository):
                 """
                 UPDATE llm_usage_totals
                 SET call_count = call_count + 1,
-                    metered_count = metered_count + ?,
-                    total_tokens = total_tokens + ?
+                    metered_count = metered_count + %s,
+                    total_tokens = total_tokens + %s
                 WHERE id = 1
                 """,
                 (int(total_tokens is not None), total_tokens or 0),
@@ -61,29 +63,28 @@ class LlmUsageRepository(SQLiteRepository):
     def _aggregate_columns() -> str:
         # SUM preserves unknown usage; an empty bucket alone has known zero usage.
         tokens = ", ".join(
-            f"CASE WHEN COUNT(*) = 0 THEN 0 ELSE SUM({name}) END AS {name}"
+            f"CASE WHEN COUNT(*) = 0 THEN 0 ELSE SUM({name})::bigint END AS {name}"
             for name in ("input_tokens", "output_tokens", "total_tokens", "cached_tokens", "reasoning_tokens")
         )
         return f"""COUNT(*) AS call_count, COUNT(total_tokens) AS metered_count,
             COUNT(input_tokens) AS input_metered_count,
             COUNT(output_tokens) AS output_metered_count,
-            COALESCE(SUM(status = 'failed'), 0) AS failed_count,
-            {tokens}, ROUND(AVG(duration_ms)) AS average_duration_ms"""
+            COUNT(*) FILTER (WHERE status = 'failed') AS failed_count,
+            {tokens}, ROUND(AVG(duration_ms))::double precision AS average_duration_ms"""
 
     def report(
         self, start_date: date, end_date: date, *, granularity: str = "day",
         scene: str = "", page: int = 1, page_size: int = 20,
         timezone_name: str = "Asia/Shanghai",
     ) -> dict:
-        where = "usage_date >= ? AND usage_date <= ?"
+        where = "usage_date >= %s AND usage_date <= %s"
         parameters: list = [start_date.isoformat(), end_date.isoformat()]
         if scene:
-            where += " AND scene = ?"
+            where += " AND scene = %s"
             parameters.append(scene)
         aggregate = self._aggregate_columns()
         bucket = "usage_date" if granularity == "day" else "substr(usage_date, 1, 7)"
-        with self.connect() as connection:
-            connection.execute("BEGIN")
+        with self.connect(repeatable_read=True) as connection:
             summary = dict(connection.execute(
                 f"SELECT {aggregate} FROM llm_usage_calls WHERE {where}", parameters,
             ).fetchone())
@@ -95,22 +96,22 @@ class LlmUsageRepository(SQLiteRepository):
             }
             breakdown = [dict(row) for row in connection.execute(
                 f"SELECT scene, model, {aggregate} FROM llm_usage_calls WHERE {where} "
-                "GROUP BY scene, model ORDER BY SUM(total_tokens) DESC, scene, model", parameters,
+                "GROUP BY scene, model ORDER BY SUM(total_tokens) DESC NULLS LAST, scene, model", parameters,
             ).fetchall()]
             total = summary["call_count"]
             page = min(page, max(1, (total + page_size - 1) // page_size))
             calls = [dict(row) for row in connection.execute(
                 f"SELECT * FROM llm_usage_calls WHERE {where} "
-                "ORDER BY occurred_at DESC, id DESC LIMIT ? OFFSET ?",
+                "ORDER BY occurred_at DESC, id DESC LIMIT %s OFFSET %s",
                 (*parameters, page_size, (page - 1) * page_size),
             ).fetchall()]
             lifetime = dict(connection.execute("SELECT call_count, metered_count, total_tokens FROM llm_usage_totals WHERE id = 1").fetchone())
             detailed = connection.execute(
-                "SELECT COUNT(*), COUNT(total_tokens), COALESCE(SUM(total_tokens), 0) FROM llm_usage_calls"
+                "SELECT COUNT(*) AS call_count, COUNT(total_tokens) AS metered_count, COALESCE(SUM(total_tokens), 0)::bigint AS total_tokens FROM llm_usage_calls"
             ).fetchone()
-            legacy = {name: lifetime[name] - detailed[index]
-                      for index, name in enumerate(("call_count", "metered_count", "total_tokens"))}
-            started_at = connection.execute("SELECT started_at FROM llm_usage_tracking WHERE id = 1").fetchone()[0]
+            legacy = {name: lifetime[name] - detailed[name]
+                      for name in ("call_count", "metered_count", "total_tokens")}
+            started_at = connection.execute("SELECT started_at FROM llm_usage_tracking WHERE id = 1").fetchone()['started_at']
         empty = dict.fromkeys(summary, 0)
         empty["average_duration_ms"] = None
         series = []

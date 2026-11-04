@@ -8,6 +8,7 @@ import httpx
 from pydantic import ValidationError
 
 from app.config import Settings
+from app.database.postgres import PostgresDatabase
 from app.models.alarm_contracts import AlarmAnalysis
 from app.services.llm_service import AnalysisInputTooLarge, AnalysisOutputValidationError, request_llm_json
 
@@ -28,8 +29,9 @@ def _evidence_ids(value: Any) -> set[str]:
 
 
 class AlarmAnalysisService:
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, database: PostgresDatabase) -> None:
         self.settings = settings
+        self.database = database
 
     def analyze(self, incidents: list[dict[str, Any]]) -> dict[str, Any]:
         facts = self._facts(incidents)
@@ -57,7 +59,7 @@ class AlarmAnalysisService:
         url = self.settings.llm_base_url.rstrip("/") + "/chat/completions"
         with httpx.Client(timeout=self.settings.llm_timeout) as client:
             response_body = request_llm_json(self.settings, client, url, headers=headers,
-                                            payload=payload, scene="alarm")
+                                            database=self.database, payload=payload, scene="alarm")
         raw_content = response_body["choices"][0]["message"]["content"]
         if not isinstance(raw_content, str) or len(raw_content) > self.settings.llm_max_output_chars:
             raise AnalysisOutputValidationError("大模型返回内容超过配置容量")

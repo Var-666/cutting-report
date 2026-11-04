@@ -2,7 +2,7 @@
 from hashlib import sha256
 import sqlite3
 
-from app.database.sqlite import SQLiteDatabase
+from app.database.sqlite_history import SQLiteHistory
 
 
 def scoped_fingerprint(source_name: str, value: str) -> str:
@@ -29,7 +29,7 @@ def upgrade(connection: sqlite3.Connection) -> None:
     connection.execute('CREATE INDEX idx_alarm_source_events_incident ON alarm_source_events(incident_id, is_open)')
 
 
-def bind_legacy_sources(database: SQLiteDatabase, bindings: dict[str, tuple[str, str]], *, analysis_sources: dict[str, str] | None = None) -> None:
+def bind_legacy_sources(database: SQLiteHistory, bindings: dict[str, tuple[str, str]], *, analysis_sources: dict[str, str] | None = None) -> None:
     """Finish v015's config-dependent backfill once, under the shared startup lock."""
     with database.connect() as connection:
         connection.execute('BEGIN IMMEDIATE')

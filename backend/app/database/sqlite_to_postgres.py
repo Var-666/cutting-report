@@ -14,9 +14,11 @@ from sqlglot import parse_one, exp
 
 from app.core.process_lock import FileLock
 from app.database.migrations.registry import MIGRATIONS
-from app.database.postgres_migrations import DIRECTORY, MIGRATION_LOCK, MigrationError, validate_schema
+from app.database.device_migrations import DEVICE_MIGRATION
+from app.database.postgres_migrations import DIRECTORY, MIGRATION_LOCK, MigrationError, validate_schema, VERSIONS
 
 SOURCE_SCHEMA = DIRECTORY / 'sqlite_schema.json'
+ORDERED_TABLES = {'report_analyses', 'report_snapshots'}
 
 
 def sqlite_schema(connection):
@@ -84,7 +86,7 @@ def check_source(source):
     if profile != json.loads(SOURCE_SCHEMA.read_text()):
         raise MigrationError('SQLite Schema 与当前 001–016 基线不匹配；先用原升级工具更新，禁止遗漏表')
     versions = [dict(r) for r in source.execute('SELECT name,applied_at FROM schema_migrations ORDER BY name')]
-    if [r['name'] for r in versions] != [n for n,_ in MIGRATIONS]:
+    if [r['name'] for r in versions if r['name'] != DEVICE_MIGRATION] != [n for n,_ in MIGRATIONS]:
         raise MigrationError('SQLite 迁移历史不完整或超出当前支持版本')
     return profile, versions
 
@@ -111,7 +113,9 @@ def normalize(value, kind, table, column):
 def batches(connection, table, columns, profile, batch_size, *, postgres=False):
     primary = sorted((v['pk'],k) for k,v in profile['columns'].items() if v['pk'])
     if not primary: raise MigrationError(f'{table}: 缺少稳定主键')
-    query = sql.SQL('SELECT {} FROM {} ORDER BY {}').format(sql.SQL(',').join(map(sql.Identifier, columns)),
+    selected = [sql.SQL('rowid AS insertion_order') if not postgres and column == 'insertion_order'
+                else sql.Identifier(column) for column in columns]
+    query = sql.SQL('SELECT {} FROM {} ORDER BY {}').format(sql.SQL(',').join(selected),
         sql.Identifier(table), sql.SQL(',').join(sql.Identifier(k) for _,k in primary))
     cursor = connection.cursor(name='p4_'+uuid4().hex) if postgres else connection.cursor()
     try:
@@ -133,6 +137,17 @@ def digest_table(connection, table, profile, batch_size, *, postgres=False):
             data = json.dumps(values,ensure_ascii=False,separators=(',',':')).encode()
             digest.update(len(data).to_bytes(8,'big')); digest.update(data); count += 1
     return {'rows':count,'sha256':digest.hexdigest()}
+
+
+def insertion_order_digest(connection, table, profile, batch_size, *, postgres=False):
+    columns = sorted(name for name, meta in profile['columns'].items() if meta['pk']) + ['insertion_order']
+    digest = sha256()
+    for rows in batches(connection, table, columns, profile, batch_size, postgres=postgres):
+        for row in rows:
+            data = json.dumps([row[column] for column in columns], ensure_ascii=False, separators=(',', ':')).encode()
+            digest.update(len(data).to_bytes(8, 'big'))
+            digest.update(data)
+    return digest.hexdigest()
 
 
 # Preserve soft historical links as well as actual foreign keys; never repair or drop orphans.
@@ -189,6 +204,8 @@ def transfer(source, database, *, action, batch_size=1000, reports_root, data_ro
     profile, versions = check_source(source)
     tables = table_order(profile)
     source_tables = {name:digest_table(source,name,profile[name],batch_size) for name in tables}
+    for name in ORDERED_TABLES:
+        source_tables[name]['insertion_order_sha256'] = insertion_order_digest(source, name, profile[name], batch_size)
     source_relations = relations(source)
     files = check_files(source,reports_root,data_root)
     identity = sha256(json.dumps([source_tables,versions],sort_keys=True,separators=(',',':')).encode()).hexdigest()
@@ -204,9 +221,9 @@ def transfer(source, database, *, action, batch_size=1000, reports_root, data_ro
             for table in tables+['_sqlite_schema_versions']:
                 if target.execute(sql.SQL('SELECT 1 FROM {} LIMIT 1').format(sql.Identifier(table))).fetchone():
                     raise MigrationError(f'{table}: 目标存在来源不明的数据，拒绝覆盖')
-            if action=='check': return dict(source_schema=versions[-1]['name'],postgres_schema='001_initial',tables=source_tables,relations=source_relations,files=files,result='ready')
+            if action=='check': return dict(source_schema=MIGRATIONS[-1][0],postgres_schema=VERSIONS[-1],tables=source_tables,relations=source_relations,files=files,result='ready')
             for table in tables:
-                columns = sorted(profile[table]['columns'])
+                columns = sorted(profile[table]['columns']) + (['insertion_order'] if table in ORDERED_TABLES else [])
                 statement = sql.SQL('INSERT INTO {} ({}) VALUES ({})').format(sql.Identifier(table),sql.SQL(',').join(map(sql.Identifier,columns)),sql.SQL(',').join(sql.Placeholder() for _ in columns))
                 try:
                     with target.cursor() as cursor:
@@ -215,21 +232,27 @@ def transfer(source, database, *, action, batch_size=1000, reports_root, data_ro
                 except Exception as exc:
                     raise MigrationError(f'{table}: 导入失败（{type(exc).__name__}），事务已回滚') from None
         for table in tables:
-            if digest_table(target,table,profile[table],batch_size,postgres=True) != source_tables[table]:
+            actual = digest_table(target,table,profile[table],batch_size,postgres=True)
+            if table in ORDERED_TABLES:
+                actual['insertion_order_sha256'] = insertion_order_digest(target, table, profile[table], batch_size, postgres=True)
+            if actual != source_tables[table]:
                 raise MigrationError(f'{table}: 行数、主键或字段摘要不一致')
         if relations(target) != source_relations: raise MigrationError('业务关联校验不一致')
-        summary = dict(source_schema=versions[-1]['name'],postgres_schema='001_initial',tables=source_tables,relations=source_relations,files=files,
+        summary = dict(source_schema=MIGRATIONS[-1][0],postgres_schema=VERSIONS[-1],tables=source_tables,relations=source_relations,files=files,
                        table_count=len(tables),total_rows=sum(t['rows'] for t in source_tables.values()),result='verified')
         if prior:
             if target.execute('SELECT name,applied_at FROM _sqlite_schema_versions ORDER BY name').fetchall() != versions:
                 raise MigrationError('源 SQLite 迁移历史记录不一致')
             recorded = target.execute('SELECT source_schema,summary_json FROM _sqlite_imports').fetchone()
-            if recorded['source_schema'] != versions[-1]['name'] or json.loads(recorded['summary_json']) != summary:
+            if recorded['source_schema'] != MIGRATIONS[-1][0] or json.loads(recorded['summary_json']) != summary:
                 raise MigrationError('已完成迁移的校验摘要被修改')
         else:
             next_id = target.execute('SELECT COALESCE(MAX(id),0)+1 AS value FROM llm_usage_calls').fetchone()['value']
             target.execute(sql.SQL('ALTER SEQUENCE llm_usage_calls_id_seq RESTART WITH {}').format(sql.Literal(next_id)))
-            target.execute('INSERT INTO _sqlite_imports VALUES (%s,%s,%s,%s)',(identity,versions[-1]['name'],datetime.now(timezone.utc).isoformat(),json.dumps(summary,ensure_ascii=False)))
+            for table in ORDERED_TABLES:
+                next_order = target.execute(sql.SQL('SELECT COALESCE(MAX(insertion_order),0)+1 AS value FROM {}').format(sql.Identifier(table))).fetchone()['value']
+                target.execute(sql.SQL('ALTER SEQUENCE {} RESTART WITH {}').format(sql.Identifier(table+'_insertion_order_seq'), sql.Literal(next_order)))
+            target.execute('INSERT INTO _sqlite_imports VALUES (%s,%s,%s,%s)',(identity,MIGRATIONS[-1][0],datetime.now(timezone.utc).isoformat(),json.dumps(summary,ensure_ascii=False)))
             with target.cursor() as cursor:
                 cursor.executemany('INSERT INTO _sqlite_schema_versions VALUES (%s,%s,%s)',[(identity,r['name'],r['applied_at']) for r in versions])
         return summary

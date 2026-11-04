@@ -71,11 +71,11 @@ class Settings:
 
     database_sources_json: str = configuration_field("DATABASE_SOURCES_JSON", lambda: _environment.get().get("DATABASE_SOURCES_JSON", "[]"), hidden=True)
 
-    # P4 offline tooling only; Web/Worker repositories continue to use SQLite.
+    # Authoritative application state, shared by Web and Worker through separate pools.
     postgres_host: str = configuration_field('POSTGRES_HOST', lambda: _environment.get().get('POSTGRES_HOST', 'postgres'))
     postgres_port: int = configuration_field('POSTGRES_PORT', lambda: _as_int('POSTGRES_PORT', 5432))
     postgres_database: str = configuration_field('POSTGRES_DATABASE', lambda: _environment.get().get('POSTGRES_DATABASE', 'cutting_report'))
-    postgres_user: str = configuration_field('POSTGRES_USER', lambda: _environment.get().get('POSTGRES_USER', 'cutting_migrator'))
+    postgres_user: str = configuration_field('POSTGRES_USER', lambda: _environment.get().get('POSTGRES_USER', 'cutting_app'))
     postgres_password: str = configuration_field('POSTGRES_PASSWORD', lambda: _environment.get().get('POSTGRES_PASSWORD', ''), hidden=True)
     postgres_pool_min_size: int = configuration_field('POSTGRES_POOL_MIN_SIZE', lambda: _as_int('POSTGRES_POOL_MIN_SIZE', 0))
     postgres_pool_max_size: int = configuration_field('POSTGRES_POOL_MAX_SIZE', lambda: _as_int('POSTGRES_POOL_MAX_SIZE', 4))
@@ -284,10 +284,6 @@ class Settings:
     @property
     def data_dir(self) -> Path:
         return self.project_root / "data"
-
-    @property
-    def metadata_db_path(self) -> Path:
-        return self.data_dir / "metadata.db"
 
     @property
     def cutting_downloads_dir(self) -> Path:

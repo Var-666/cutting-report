@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 import sqlite3
 
-from app.database.sqlite import SQLiteDatabase
+from app.database.sqlite_history import SQLiteHistory
 from app.core.process_lock import FileLock
 
 
@@ -21,7 +21,7 @@ def execute_script(connection: sqlite3.Connection, script: str) -> None:
         connection.execute(statement)
 
 
-def apply_migrations(database: SQLiteDatabase, *, names: Iterable[str] | None = None) -> None:
+def apply_migrations(database: SQLiteHistory, *, names: Iterable[str] | None = None) -> None:
     from .registry import MIGRATIONS
     selected = set(names) if names is not None else {name for name, _ in MIGRATIONS}
     unknown = selected - {name for name, _ in MIGRATIONS}
@@ -30,7 +30,7 @@ def apply_migrations(database: SQLiteDatabase, *, names: Iterable[str] | None = 
     run_migrations(database, [(name, upgrade) for name, upgrade in MIGRATIONS if name in selected])
 
 
-def run_migrations(database: SQLiteDatabase, migrations: list[tuple[str, Callable]]) -> None:
+def run_migrations(database: SQLiteHistory, migrations: list[tuple[str, Callable]]) -> None:
     identifiers = [name for name, _ in migrations]
     if identifiers != sorted(set(identifiers)):
         raise ValueError('数据库迁移编号必须唯一且按顺序排列')

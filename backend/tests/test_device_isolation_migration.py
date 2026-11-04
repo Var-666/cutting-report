@@ -3,28 +3,29 @@ import sqlite3
 import pytest
 
 from tests.line_fixtures import CUTTING_SCOPES
-from app.database.alarms import AlarmRepository
 from app.database.device_migrations import migrate_device_isolation, rebuild_table
-from app.database.sqlite import SQLiteDatabase
-from app.database.workshop import WorkshopRepository
-from test_multi_device import STAMP, DAY, workshop_record
+from app.database.sqlite_history import SQLiteHistory
+from app.database.migrations import apply_migrations
+STAMP='2026-10-12T12:00:00+08:00'
+DAY='2026-10-12'
 
 
 @pytest.fixture
 def legacy(tmp_path):
-    db = SQLiteDatabase(tmp_path / 'metadata.db')
-    workshop = WorkshopRepository(db, scope_machine_no='Cutter01')
-    workshop.initialize()
-    admin = workshop.create_user(username='admin', display_name='管理员', password='admin-password', role='admin', now=STAMP)
-    report = workshop.create_daily_report(report_date=DAY, source_mode='sqlserver', records=[workshop_record('same')], user=admin, now=STAMP)
-    workshop.confirm_task(task_id='same', user=admin, report_id=report['report_id'], now=STAMP)
+    db = SQLiteHistory(tmp_path / 'metadata.db')
+    apply_migrations(db)
+    with db.connect() as connection:
+        connection.execute("INSERT INTO users(user_id,username,display_name,password_hash,role,created_at,updated_at) VALUES('admin','admin','管理员','hash','admin',?,?)",(STAMP,STAMP))
+        connection.execute("INSERT INTO workshop_reports(report_id,report_date,source_mode,scope_machine_no,item_count,generated_by_id,generated_by_name,generated_at,created_at) VALUES('r',?,'sqlserver','Cutter01',1,'admin','管理员',?,?)",(DAY,STAMP,STAMP))
+        connection.execute("INSERT INTO workshop_report_items(report_item_id,report_id,task_id,ordinal,snapshot_revision) VALUES('i','r','same',1,1)")
+        connection.execute("INSERT INTO workshop_confirmations(task_id,worker_id,worker_name,report_id,created_at,confirmed_at,updated_at,scope_machine_no) VALUES('same','admin','管理员','r',?,?,?,'Cutter01')",(STAMP,STAMP,STAMP))
+        connection.execute("INSERT INTO workshop_confirmation_audits(audit_id,task_id,action,operated_by_id,operated_by_name,operated_by_role,operated_at,scope_machine_no,report_id,reason) VALUES('audit','same','confirm','admin','管理员','admin',?,'Cutter01','r','确认')",(STAMP,))
+        connection.execute("INSERT INTO alarm_sync_state(source_name) VALUES('production')")
     # Recreate the previous release's global task primary key and default.
     rebuild_table(db, 'workshop_confirmations', lambda sql: sql.replace('task_id TEXT NOT NULL', 'task_id TEXT PRIMARY KEY').replace('PRIMARY KEY(scope_machine_no, task_id),', '').replace('scope_machine_no TEXT NOT NULL', "scope_machine_no TEXT NOT NULL DEFAULT 'Cutter01'"))
-    alarms = AlarmRepository(db, machine_no='Cutter01', source_name='production')
-    alarms.initialize()
     with db.connect() as connection:
         connection.execute("UPDATE alarm_sync_state SET last_alarm_id=123, lease_owner='owner', lease_until='2099-01-01', open_recheck_after_id=9, history_recheck_after_id=8, monitor_start_at='2026-09-29 00:00:00', last_success_at=? WHERE source_name='production'", (STAMP,))
-    return db, workshop, admin
+    return db, {'user_id':'admin'}, {'report_id':'r'}
 
 
 def dump(db):
@@ -45,7 +46,8 @@ def test_migration_preserves_records_cursor_lease_and_is_idempotent(legacy):
         assert connection.execute('PRAGMA foreign_key_check').fetchall() == []
         schema = connection.execute("SELECT sql FROM sqlite_master WHERE name='workshop_confirmations'").fetchone()[0]
         assert "DEFAULT 'Cutter01'" not in schema
-    assert workshop.get_daily_report(DAY)['confirmed_count'] == 1
+    with db.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM workshop_confirmations WHERE scope_machine_no='Cutter01'").fetchone()[0] == 1
     copies = list((db.path.parent / 'backups').glob('*-before-device-isolation-*.db'))
     assert len(copies) == 1
     with sqlite3.connect(copies[0]) as backup:
@@ -54,11 +56,10 @@ def test_migration_preserves_records_cursor_lease_and_is_idempotent(legacy):
     migrate_device_isolation(db, CUTTING_SCOPES)
     assert dump(db) == snapshot
     assert list((db.path.parent / 'backups').glob('*-before-device-isolation-*.db')) == copies
-    other = WorkshopRepository(db, scope_machine_no='Cutter02')
-    report = other.create_daily_report(report_date=DAY, source_mode='sqlserver', records=[workshop_record('same')], user=admin, now=STAMP)
-    other.confirm_task(task_id='same', user=admin, report_id=report['report_id'], now=STAMP)
-    assert other.get_daily_report(DAY)['confirmed_count'] == 1
-    assert workshop.get_daily_report(DAY)['confirmed_count'] == 1
+    with db.connect() as connection:
+        connection.execute("INSERT INTO workshop_confirmations(task_id,worker_id,worker_name,created_at,confirmed_at,updated_at,scope_machine_no) VALUES('same','admin','管理员',?,?,?,'Cutter02')",(STAMP,STAMP,STAMP))
+        assert connection.execute('SELECT COUNT(*) FROM workshop_confirmations').fetchone()[0] == 2
+
 
 
 @pytest.mark.parametrize('fault', ['cursor_collision', 'owner_conflict', 'unknown_owner', 'foreign_key'])
@@ -82,7 +83,7 @@ def test_migration_failure_rolls_back_every_change_and_keeps_backup(legacy, faul
 
 
 def test_single_device_schema_adds_device_ids_without_changing_history(tmp_path):
-    db = SQLiteDatabase(tmp_path / 'metadata.db')
+    db = SQLiteHistory(tmp_path / 'metadata.db')
     with db.connect() as connection:
         connection.executescript('''
             CREATE TABLE report_jobs(report_id TEXT PRIMARY KEY);
@@ -106,7 +107,7 @@ def test_single_device_schema_adds_device_ids_without_changing_history(tmp_path)
 
 
 def test_unattributable_orphan_is_not_guessed_as_default(tmp_path):
-    db = SQLiteDatabase(tmp_path / 'metadata.db')
+    db = SQLiteHistory(tmp_path / 'metadata.db')
     with db.connect() as connection:
         connection.execute('CREATE TABLE workshop_confirmations(task_id TEXT PRIMARY KEY, report_id TEXT)')
         connection.execute("INSERT INTO workshop_confirmations VALUES ('orphan',NULL)")

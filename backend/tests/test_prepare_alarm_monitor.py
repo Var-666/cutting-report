@@ -2,14 +2,15 @@
 from dataclasses import replace
 
 from tests.line_fixtures import configuration
+from tests.postgres_fixtures import state_settings
 from app.database.source_registry import DatabaseSourceRegistry
 from app.database.alarms import AlarmRepository
 from scripts import prepare_alarm_monitor
 
 
-def test_monitoring_window_preview_and_apply_reset_cursor(monkeypatch, tmp_path) -> None:
-    configured = configuration(tmp_path, real=True)
-    repository = AlarmRepository(configured.metadata_db_path, machine_no="Cutter01", source_name="Cutter01:" + DatabaseSourceRegistry.from_json(configured.database_sources_json).connection_identity("cutting-production"))
+def test_monitoring_window_preview_and_apply_reset_cursor(monkeypatch, tmp_path, postgres_state) -> None:
+    configured = state_settings(configuration(tmp_path, real=True), postgres_state)
+    repository = AlarmRepository(postgres_state[0], machine_no="Cutter01", source_name="Cutter01:" + DatabaseSourceRegistry.from_json(configured.database_sources_json).connection_identity("cutting-production"))
     repository.initialize()
     monkeypatch.setattr(prepare_alarm_monitor, "settings", configured)
 
@@ -44,4 +45,4 @@ def test_monitoring_window_reset_requires_known_device(monkeypatch, tmp_path) ->
         assert exc.code == 2
     else:
         raise AssertionError("错误的设备配置不得推进告警游标")
-    assert not configured.metadata_db_path.exists()
+    assert not list(tmp_path.rglob("*.db"))

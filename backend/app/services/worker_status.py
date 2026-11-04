@@ -2,7 +2,7 @@ from threading import Lock
 from time import monotonic
 
 from app.database.coordination import CoordinationRepository
-from app.database.sqlite import SQLiteDatabase
+from app.database.postgres import PostgresDatabase
 
 
 def background_ready(status: dict) -> bool:
@@ -12,8 +12,8 @@ def background_ready(status: dict) -> bool:
 
 
 class WorkerStatusReader:
-    def __init__(self, path) -> None:
-        self.repository = CoordinationRepository(SQLiteDatabase(path, timeout_seconds=1))
+    def __init__(self, database: PostgresDatabase) -> None:
+        self.repository = CoordinationRepository(database)
         self._lock = Lock()
         self._next_read = 0.0
         self._cached = {"state": "missing", "report_alive": False}

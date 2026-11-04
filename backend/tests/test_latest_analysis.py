@@ -27,12 +27,12 @@ from tests.test_report_analysis_service import _services
 
 @pytest.mark.parametrize('report_type', ['leadership', 'workshop', 'equipment'])
 @pytest.mark.parametrize('device_id', ['Cutter01', 'Cutter02'])
-def test_page_reads_previous_success_during_refresh_then_replaces_it_without_calling_model(
+def test_page_reads_previous_success_during_refresh_then_replaces_it_without_calling_model(state_database,
     tmp_path, monkeypatch, report_type, device_id,
 ):
-    settings, _ = _services(tmp_path)
+    settings, _ = _services(state_database, tmp_path)
     settings = replace(settings, device_id=device_id)
-    metadata = MetadataRepository(settings.metadata_db_path, device_id=device_id)
+    metadata = MetadataRepository(state_database, device_id=device_id)
     service = ReportAnalysisService(settings, metadata)
     clock = [datetime(2026, 10, 21, 9, 55)]
 
@@ -111,7 +111,7 @@ def test_page_reads_previous_success_during_refresh_then_replaces_it_without_cal
     assert calls == ['09:55', '10:00', 'failed', 'custom summary']
 
     other = replace(settings, device_id='Cutter02' if device_id == 'Cutter01' else 'Cutter01')
-    other_service = ReportAnalysisService(other, MetadataRepository(settings.metadata_db_path, device_id=other.device_id))
+    other_service = ReportAnalysisService(other, MetadataRepository(state_database, device_id=other.device_id))
     assert other_service.latest_default_analysis(report_type, date(2026, 10, 21)) is None
     assert service.latest_default_analysis(report_type, date(2026, 11, 21)) is None
     runtime.report_analysis_service = ReportAnalysisService(replace(settings, llm_model='another-model'), metadata)
@@ -132,8 +132,8 @@ def test_only_default_report_scope_is_published_for_other_page_visits(payload, e
 
 
 @pytest.mark.parametrize('report_type', ['leadership', 'workshop', 'equipment'])
-def test_report_services_publish_the_completed_default_result(tmp_path, report_type):
-    settings, service = _services(tmp_path)
+def test_report_services_publish_the_completed_default_result(state_database, tmp_path, report_type):
+    settings, service = _services(state_database, tmp_path)
     day = date(2026, 10, 21)
     if report_type == 'leadership':
         result = service.analyze_leadership(LeadershipReportService(settings, client=source_client(settings)).fetch(day.replace(day=1)), publish_latest=True)
@@ -160,9 +160,10 @@ def test_existing_analysis_cache_upgrade_is_repeatable_and_keeps_historical_reco
         old = ('old-key', 'workshop', '2026-10-20', 'old-input', 'old-version', 'success',
                'model', 'old-model', 'old-prompt', json.dumps({'overview': 'historical'}), '2026-10-20T10:00:00')
         connection.execute('INSERT INTO report_analyses VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', old)
-    repository = MetadataRepository(path)
-    repository.initialize()
-    repository.initialize()
+    from app.database.sqlite_history import SQLiteHistory
+    from app.database.migrations import apply_migrations
+    apply_migrations(SQLiteHistory(path))
+    apply_migrations(SQLiteHistory(path))
     with sqlite3.connect(path) as connection:
         row = connection.execute('SELECT * FROM report_analyses').fetchone()
     assert row[:-1] == old

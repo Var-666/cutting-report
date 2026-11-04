@@ -1,3 +1,4 @@
+from tests.postgres_fixtures import state_settings
 from dataclasses import FrozenInstanceError, replace
 from datetime import date
 from types import SimpleNamespace
@@ -18,9 +19,9 @@ from tests.line_fixtures import configuration
 
 
 @pytest.fixture
-def environment(tmp_path):
+def environment(postgres_state, tmp_path):
     cfg = configuration(tmp_path)
-    return cfg, build_runtime(cfg, role='web')
+    return cfg, build_runtime(state_settings(cfg,postgres_state), role='web')
 
 
 def request(state, line_id='Cutter01'):
@@ -47,7 +48,7 @@ def test_runtime_graph_uses_fixed_repositories_and_immutable_snapshot(environmen
         device = line.cutting()
         assert device.pipeline.workshop_repository is device.workshop
         assert device.pipeline.range_service.confirmations.scope_machine_no == device.settings.report_machine_no
-        assert device.confirmations.database is runtime.sqlite_database
+        assert device.confirmations.database is runtime.database
         assert device.workers == ()
 
 
@@ -113,10 +114,10 @@ def test_cutting_save_rebuilds_bound_services_preserves_old_request_and_shared_c
     assert 'private' not in str(database.get_database_configuration(request(state)))
 
 
-def test_worker_sees_same_published_values_but_diagnostics_does_not_reload(environment, monkeypatch):
+def test_worker_sees_same_published_values_but_diagnostics_does_not_reload(postgres_state, environment, monkeypatch):
     cfg, web = environment
     write_runtime_env(cfg.runtime_settings_env_path, {'PRODUCTION_LINES_JSON': cfg.production_lines_json, 'DATABASE_SOURCES_JSON': cfg.database_sources_json})
-    worker = build_runtime(cfg, role='worker')
+    worker = build_runtime(state_settings(cfg,postgres_state), role='worker')
     old = database_context(worker)
     database.save_database_configuration(payload(cfg), request(web))
     assert worker.database_runtime.current_context is old
@@ -163,9 +164,9 @@ def test_failed_candidate_or_disk_write_keeps_published_graph_and_file(environme
     assert cfg.runtime_settings_env_path.read_bytes() == before
 
 
-def test_replaced_mysql_client_lives_until_last_operation_reference_is_released(tmp_path):
+def test_replaced_mysql_client_lives_until_last_operation_reference_is_released(postgres_state, tmp_path):
     cfg = configuration(tmp_path, welding=True)
-    runtime = build_runtime(cfg, role='web')
+    runtime = build_runtime(state_settings(cfg,postgres_state), role='web')
     old = database_context(runtime)
     client = old.lines['welding'].service.repository.client
     reference = weakref.ref(client)
@@ -177,9 +178,9 @@ def test_replaced_mysql_client_lives_until_last_operation_reference_is_released(
     assert reference() is None
 
 
-def test_shared_connection_edits_merge_once_and_conflicts_do_not_publish(tmp_path):
+def test_shared_connection_edits_merge_once_and_conflicts_do_not_publish(postgres_state, tmp_path):
     cfg = configuration(tmp_path, real=True, worker_source_key='cutting-production', file_source_key='cutting-production')
-    state = build_runtime(cfg, role='web')
+    state = build_runtime(state_settings(cfg,postgres_state), role='web')
     values = database.database_configuration_data(cfg, 'Cutter01')
     values['production']['host'] = 'new-shared.test'
     state.database_runtime.save_configuration(database.DatabaseConfigurationRequest.model_validate(values), line_id='Cutter01')

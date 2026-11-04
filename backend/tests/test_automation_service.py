@@ -33,14 +33,11 @@ def test_report_period_resolves_without_locale_assumptions() -> None:
     assert report_date_for({"report_period": "previous_month"}, scheduled_for) == date(2025, 12, 1)
 
 
-def test_schedule_and_email_retry_history_are_persisted(tmp_path) -> None:
+def test_schedule_and_email_retry_history_are_persisted(state_database, tmp_path) -> None:
     database_path = tmp_path / "metadata.db"
-    metadata = MetadataRepository(database_path, device_id='Cutter01')
-    metadata.initialize()
-    workshop = WorkshopRepository(database_path, scope_machine_no='Cutter01')
-    workshop.initialize()
-    repository = AutomationRepository(database_path)
-    repository.initialize()
+    metadata = MetadataRepository(state_database, device_id='Cutter01')
+    workshop = WorkshopRepository(state_database, scope_machine_no='Cutter01')
+    repository = AutomationRepository(state_database)
     now = "2026-08-24T18:00:00+08:00"
     admin = workshop.create_user(
         username="admin",

@@ -10,17 +10,14 @@ import pytest
 from app.config import Settings
 from app.database.coordination import CoordinationRepository
 from app.database.report_snapshots import ReportKey, ReportSnapshot, ReportSnapshotRepository, fingerprint
-from app.database.sqlite import SQLiteDatabase, ExecutionLeaseLost, execution_scope
+from app.database.postgres import PostgresDatabase, ExecutionLeaseLost, execution_scope
 from app.services.report_snapshots import ReportSnapshotService, SnapshotRefreshBusy
 
 
-def infrastructure(root):
-    settings = Settings(project_root=Path(root), device_id='welding')
-    database = SQLiteDatabase(settings.metadata_db_path)
+def infrastructure(settings, database):
+    settings = replace(settings, device_id='welding')
     coordination = CoordinationRepository(database)
-    coordination.initialize()
     repository = ReportSnapshotRepository(database)
-    repository.initialize()
     return settings, repository, coordination
 
 
@@ -34,11 +31,10 @@ def record(report_key=None, **changes):
     return replace(ReportSnapshot(report_key or key(), payload, fingerprint(payload), now, now, now + timedelta(seconds=300)), **changes)
 
 
-def test_snapshot_is_additive_atomic_versioned_and_bounded(tmp_path):
-    settings, repo, _ = infrastructure(tmp_path)
+def test_snapshot_is_additive_atomic_versioned_and_bounded(tmp_path, postgres_state):
+    settings, repo, _ = infrastructure(postgres_state[1], postgres_state[0])
     with repo.connect() as connection:
-        connection.execute('CREATE TABLE legacy_data (value TEXT)')
-        connection.execute("INSERT INTO legacy_data VALUES ('keep')")
+        connection.execute("INSERT INTO llm_waiters VALUES ('keep', 0)")
     first = record()
     repo.save(first)
     assert repo.get(key()).payload == {'count': 3}
@@ -52,22 +48,22 @@ def test_snapshot_is_additive_atomic_versioned_and_bounded(tmp_path):
     for i in range(130):
         repo.save(record(key(filters={'device_no': i})))
     with repo.connect() as connection:
-        assert connection.execute('SELECT COUNT(*) FROM report_snapshots').fetchone()[0] == 128
-        assert connection.execute('SELECT value FROM legacy_data').fetchone()[0] == 'keep'
+        assert connection.execute('SELECT COUNT(*) AS count FROM report_snapshots').fetchone()['count'] == 128
+        assert connection.execute('SELECT waiter_id FROM llm_waiters').fetchone()['waiter_id'] == 'keep'
 
 
 @pytest.mark.parametrize('changes', [
     {'line_id': 'Cutter01'}, {'report_type': 'parts'}, {'period_end': '2026-10-26'},
     {'filters': {'device_no': 1}}, {'source_fingerprint': 'other'}, {'schema_version': 2}, {'access_scope': 'worker:7'},
 ])
-def test_snapshot_key_isolates_every_data_boundary(tmp_path, changes):
-    _, repo, _ = infrastructure(tmp_path)
+def test_snapshot_key_isolates_every_data_boundary(tmp_path, postgres_state, changes):
+    _, repo, _ = infrastructure(postgres_state[1], postgres_state[0])
     repo.save(record())
     assert repo.get(key(**changes)) is None
 
 
-def test_l1_restart_revision_force_and_stale_policy(tmp_path):
-    settings, repo, coordination = infrastructure(tmp_path)
+def test_l1_restart_revision_force_and_stale_policy(tmp_path, postgres_state):
+    settings, repo, coordination = infrastructure(postgres_state[1], postgres_state[0])
     service = ReportSnapshotService(settings, repo, coordination)
     calls = []
     def load():
@@ -103,26 +99,27 @@ def test_l1_restart_revision_force_and_stale_policy(tmp_path):
 
 
 def _concurrent_read(root, start, entered, release, counter, output, force=False):
-    settings, repository, _ = infrastructure(root)
-    service = ReportSnapshotService(settings, repository)
-    def load():
-        with counter.get_lock():
-            counter.value += 1
-        entered.set()
-        assert release.wait(10)
-        return {'count': 7}
-    output.put('ready')
-    assert start.wait(10)
-    output.put(service.read(key(), load, ttl=300, force=force).payload)
+    with PostgresDatabase(root) as database:
+        settings, repository, _ = infrastructure(root, database)
+        service = ReportSnapshotService(settings, repository)
+        def load():
+            with counter.get_lock():
+                counter.value += 1
+            entered.set()
+            assert release.wait(10)
+            return {'count': 7}
+        output.put('ready')
+        assert start.wait(10)
+        output.put(service.read(key(), load, ttl=300, force=force).payload)
 
 
 @pytest.mark.parametrize('force', [False, True])
-def test_process_singleflight_shares_one_source_query(tmp_path, force):
-    infrastructure(tmp_path)
+def test_process_singleflight_shares_one_source_query(tmp_path, postgres_state, force):
+    infrastructure(postgres_state[1], postgres_state[0])
     context = mp.get_context('spawn')
     start, entered, release = context.Event(), context.Event(), context.Event()
     counter, output = context.Value('i', 0), context.Queue()
-    processes = [context.Process(target=_concurrent_read, args=(str(tmp_path), start, entered, release, counter, output, force)) for _ in range(2)]
+    processes = [context.Process(target=_concurrent_read, args=(postgres_state[1], start, entered, release, counter, output, force)) for _ in range(2)]
     try:
         for process in processes:
             process.start()
@@ -143,8 +140,8 @@ def test_process_singleflight_shares_one_source_query(tmp_path, force):
                 process.join(10)
 
 
-def test_worker_lease_loss_cannot_publish_and_queue_has_retry_dedup_and_limits(tmp_path):
-    _, repo, coordination = infrastructure(tmp_path)
+def test_worker_lease_loss_cannot_publish_and_queue_has_retry_dedup_and_limits(tmp_path, postgres_state):
+    _, repo, coordination = infrastructure(postgres_state[1], postgres_state[0])
     payload = ReportSnapshotService.task_payload(key())
     assert coordination.request_snapshot_refresh('welding', payload)
     assert not coordination.request_snapshot_refresh('welding', payload)
@@ -159,27 +156,28 @@ def test_worker_lease_loss_cannot_publish_and_queue_has_retry_dedup_and_limits(t
     for i in range(70):
         coordination.request_snapshot_refresh('welding', {**payload, 'query': {'start': str(i)}})
     with coordination.connect() as connection:
-        assert connection.execute("SELECT COUNT(*) FROM background_tasks WHERE kind='report_snapshot_refresh'").fetchone()[0] == 64
+        assert connection.execute("SELECT COUNT(*) AS count FROM background_tasks WHERE kind='report_snapshot_refresh'").fetchone()['count'] == 64
         connection.execute("UPDATE process_leases SET expires_at=0 WHERE name='worker'")
-    with pytest.raises(ExecutionLeaseLost), execution_scope(repo.database.path, 'worker', owner):
+    with pytest.raises(ExecutionLeaseLost), execution_scope(repo.database, 'worker', owner):
         repo.save(record())
     assert repo.get(key()) is None
 
 
 def _refresh_in_another_process(root):
-    settings, repository, _ = infrastructure(root)
-    service = ReportSnapshotService(settings, repository)
-    service.read(key(), lambda: {'count': 9}, ttl=300, force=True)
+    with PostgresDatabase(root) as database:
+        settings, repository, _ = infrastructure(root, database)
+        service = ReportSnapshotService(settings, repository)
+        service.read(key(), lambda: {'count': 9}, ttl=300, force=True)
 
 
-def test_worker_publication_invalidates_a_warm_web_l1_across_processes(tmp_path):
-    settings, repository, _ = infrastructure(tmp_path)
+def test_worker_publication_invalidates_a_warm_web_l1_across_processes(tmp_path, postgres_state):
+    settings, repository, _ = infrastructure(postgres_state[1], postgres_state[0])
     web = ReportSnapshotService(settings, repository)
     web.read(key(), lambda: {'count': 1}, ttl=300)
     web.read(key(), lambda: pytest.fail('source'), ttl=300)
     assert web.read(key(), lambda: pytest.fail('source'), ttl=300).meta['source'] == 'cache'
     context = mp.get_context('spawn')
-    worker = context.Process(target=_refresh_in_another_process, args=(str(tmp_path),))
+    worker = context.Process(target=_refresh_in_another_process, args=(postgres_state[1],))
     worker.start()
     worker.join(10)
     try:
@@ -192,8 +190,8 @@ def test_worker_publication_invalidates_a_warm_web_l1_across_processes(tmp_path)
             worker.join(10)
 
 
-def test_background_read_refreshes_expired_snapshot_without_queuing_itself(tmp_path):
-    settings, repository, coordination = infrastructure(tmp_path)
+def test_background_read_refreshes_expired_snapshot_without_queuing_itself(tmp_path, postgres_state):
+    settings, repository, coordination = infrastructure(postgres_state[1], postgres_state[0])
     repository.save(record(expires_at=datetime.now(timezone.utc) - timedelta(seconds=1)))
     service = ReportSnapshotService(settings, repository, coordination)
     result = service.read(key(), lambda: {'count': 8}, ttl=300, background=True)
@@ -202,23 +200,24 @@ def test_background_read_refreshes_expired_snapshot_without_queuing_itself(tmp_p
 
 
 def _hold_slow_refresh(root, entered, release, output):
-    settings, repository, _ = infrastructure(root)
-    service = ReportSnapshotService(settings, repository)
-    def load():
-        entered.set()
-        assert release.wait(20)
-        return {'count': 9}
-    output.put(service.read(key(), load, ttl=300, force=True).payload)
+    with PostgresDatabase(root) as database:
+        settings, repository, _ = infrastructure(root, database)
+        service = ReportSnapshotService(settings, repository)
+        def load():
+            entered.set()
+            assert release.wait(20)
+            return {'count': 9}
+        output.put(service.read(key(), load, ttl=300, force=True).payload)
 
 
-def test_slow_cross_process_refresh_bounds_waiters_and_serves_stale_without_extra_sql(tmp_path):
-    settings, repository, coordination = infrastructure(tmp_path)
+def test_slow_cross_process_refresh_bounds_waiters_and_serves_stale_without_extra_sql(tmp_path, postgres_state):
+    settings, repository, coordination = infrastructure(postgres_state[1], postgres_state[0])
     old = record(expires_at=datetime.now(timezone.utc) - timedelta(seconds=1))
     repository.save(old)
     web = ReportSnapshotService(settings, repository, coordination)
     context = mp.get_context('spawn')
     entered, release, output = context.Event(), context.Event(), context.Queue()
-    process = context.Process(target=_hold_slow_refresh, args=(str(tmp_path), entered, release, output))
+    process = context.Process(target=_hold_slow_refresh, args=(postgres_state[1], entered, release, output))
     process.start()
     try:
         assert entered.wait(10)
@@ -254,8 +253,8 @@ def test_slow_cross_process_refresh_bounds_waiters_and_serves_stale_without_extr
         process.join(10)
 
 
-def test_snapshot_tasks_serialize_each_line_and_retries_reuse_the_same_queue_row(tmp_path, monkeypatch):
-    _, _, coordination = infrastructure(tmp_path)
+def test_snapshot_tasks_serialize_each_line_and_retries_reuse_the_same_queue_row(tmp_path, postgres_state, monkeypatch):
+    _, _, coordination = infrastructure(postgres_state[1], postgres_state[0])
     clock = [1000.0]
     monkeypatch.setattr('app.database.coordination.time', lambda: clock[0])
     payloads = [ReportSnapshotService.task_payload(key(period_start=start)) for start in ('2026-10-27', '2026-10-21', '2026-10-01')]
@@ -295,8 +294,8 @@ def test_snapshot_tasks_serialize_each_line_and_retries_reuse_the_same_queue_row
     assert coordination.task_counts() == {'completed': 4}
 
 
-def test_failed_worker_refresh_retains_snapshot_then_recovers_without_duplicate_tasks(tmp_path):
-    settings, repository, coordination = infrastructure(tmp_path)
+def test_failed_worker_refresh_retains_snapshot_then_recovers_without_duplicate_tasks(tmp_path, postgres_state):
+    settings, repository, coordination = infrastructure(postgres_state[1], postgres_state[0])
     old = record(expires_at=datetime.now(timezone.utc) - timedelta(seconds=1))
     repository.save(old)
     service = ReportSnapshotService(settings, repository, coordination)
@@ -306,7 +305,7 @@ def test_failed_worker_refresh_retains_snapshot_then_recovers_without_duplicate_
     task = coordination.claim_task(owner, analysis=False)
     def unavailable():
         raise ConnectionError('isolated source unavailable')
-    with execution_scope(repository.database.path, 'worker', owner), pytest.raises(ConnectionError):
+    with execution_scope(repository.database, 'worker', owner), pytest.raises(ConnectionError):
         service.read(key(), unavailable, ttl=300, force=True, background=True)
     coordination.finish_task(task, owner, 'ConnectionError')
     fallback = service.read(key(), unavailable, ttl=300, force=True)
@@ -320,7 +319,7 @@ def test_failed_worker_refresh_retains_snapshot_then_recovers_without_duplicate_
     coordination.admit_deferred()
     retried = coordination.claim_task(owner, analysis=False)
     assert retried['task_id'] == task['task_id'] and retried['attempts'] == 2
-    with execution_scope(repository.database.path, 'worker', owner):
+    with execution_scope(repository.database, 'worker', owner):
         result = service.read(key(), lambda: {'count': 8}, ttl=300, force=True, background=True)
     coordination.finish_task(retried, owner)
     assert result.payload == {'count': 8} and not result.meta['stale']

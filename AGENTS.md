@@ -8,7 +8,7 @@
 
 - 前端：Vue 3、Vue Router、Vite、Soybean Admin、Naive UI、UnoCSS、ECharts。
 - 后端：Python、FastAPI、Pydantic、Uvicorn、Jinja2。
-- 数据：SQL Server（切割/HR/PDM）、MySQL（焊接）作为外部数据源，SQLite 保存系统元数据、快照和操作记录。
+- 数据：SQL Server（切割/HR/PDM）、MySQL（焊接）作为外部数据源，PostgreSQL 保存系统元数据、快照和操作记录；SQLite 仅用于离线历史准备/导入。
 - 报表：单文件 HTML、ECharts、Playwright/Chromium PDF 转换，可选 OpenAI-Compatible LLM 分析。
 - 测试：Pytest 和 Node.js 内置测试运行器。
 
@@ -16,7 +16,7 @@
 
 - `backend/app/api/`：HTTP 路由、请求校验和权限边界。
 - `backend/app/services/`：业务流程、统计、外部集成和报表生成。
-- `backend/app/database/`：SQL Server、MySQL 和 SQLite 客户端、仓储与事务管理。
+- `backend/app/database/`：SQL Server、MySQL 和 PostgreSQL 客户端、仓储与事务管理。
 - `backend/app/workers/`：报表、告警、缓存刷新和清理后台任务。
 - `backend/tests/`：后端回归测试。
 - `frontend/src/views/`：页面；`components/` 为可复用组件；`layouts/` 为角色/功能布局。
@@ -29,7 +29,7 @@
 
 - API 层保持精简；业务规则放在 service，持久化放在 repository/database 层。
 - 生产 SQL Server、HR 库、PDM 库和能管平台均按外部系统处理。除非需求和设计明确授权，不对其执行写入。
-- SQLite 是应用自有状态库；多仓储原子操作应遵循 `docs/design/SQLite仓储与事务设计.md`。
+- PostgreSQL 是唯一应用自有状态库；多仓储原子操作遵循 `docs/design/PostgreSQL仓储与事务设计.md`。
 - 生产式部署保留一个 Web（`app.main:app`）与一个独立 Worker（`python -m app.worker`）。Web 同源提供前端和 API，不启动后台消费者；不得用多个 Uvicorn workers 替代独立 Worker。
 - 管理员与工人路由、菜单和后端 API 权限必须一致；不能仅依赖前端隐藏实现授权。
 - 页面查询、HTML/PDF 导出和智能分析应共用同一统计口径、时区和区间定义。
@@ -52,7 +52,7 @@
 
 - 默认业务调用方向为 `api/workers → services → database`，模型和配置供各层使用。`main.py`、`worker.py`、`services/application_runtime.py`、`services/device_runtime.py` 是入口/装配边界，允许同时依赖 Service、Repository 和 Worker；不能因这类导入机械判定为反向依赖。
 - 现有 `services/frontend_static.py` 是供 Web 入口使用的 HTTP 静态资源适配，不属于业务 Service；保留位置，不向其中增加业务流程，也不由业务 Service 引用它。
-- 请求取消、执行期限和进程锁以 `app.core.request_cancellation`、`app.core.report_deadline`、`app.core.process_lock` 为唯一正式入口；API、Service、Repository、Worker 及脚本均直接导入，新模块同样遵守。不在 `services/` 创建同名转发模块，不复制已有注册表、ContextVar、文件锁或执行期限实现。SQLite 执行租约和提交围栏继续留在 `database/sqlite.py`。
+- 请求取消、执行期限和进程锁以 `app.core.request_cancellation`、`app.core.report_deadline`、`app.core.process_lock` 为唯一正式入口；API、Service、Repository、Worker 及脚本均直接导入，新模块同样遵守。不在 `services/` 创建同名转发模块，不复制已有注册表、ContextVar、文件锁或执行期限实现。PostgreSQL 执行租约和提交围栏统一位于 `database/postgres.py`。
 - 条件查询契约、字段描述和通用值校验在 `models/conditions.py`；数据集字段/排序列映射在 `database/condition_fields.py`，SQL 编译和 Mock 求值在 `database/condition_query.py`。`services/condition_service.py` 仅提供公开 schema，基础函数直接从所属模型/数据库模块导入，Repository 不反向引用该 Service。小型响应封装不必为消除重复而建立公共框架。
 - 告警事件归并、发送认领、状态转换、唯一性和租约判断必须在原事务内完成；扫描窗口、调度日期、模型/文件生成、SMTP 和重试策略由现有 Service 编排。不能为缩短 Repository 把原子校验移出事务。
 
@@ -67,11 +67,11 @@
 - 数据库配置请求/字段转换及脱敏响应在 `services/database_configuration.py`，自动化配置契约及脱敏响应在 `automation_configuration.py`；保存分别调用 `DatabaseRuntime.save_configuration`、`AutomationRuntime.save_configuration`。Runtime 持有保存路径和当前配置，API 不再读取启动全局 Settings 保留密码，也不自行加锁、合并或发布。空密码优先保留锁内读取的最新文件值，文件未提供有效值时保留当前快照；不回显密码。
 - 热加载白名单以 `database_runtime.DATABASE_SETTINGS` 和 `automation_runtime.HOT_SETTINGS` 为准：数据库页已有连接/启用字段（含焊接时区）及自动化/SMTP 字段可热加载；产线目录和数据源连接选项（含单源超时/池大小）已获 P1 授权热加载，P3 容量字段 sql_max_concurrent 除外；P2 将 `REPORT_BACKGROUND_REFRESH_SECONDS` 纳入同一快照，保持原最小30秒。AI、报表 TTL 等其他启动参数仍需重启。新字段先在 `Settings` 登记环境键和默认值，只有明确授权热加载才补入白名单及相应管理契约，不能因字段以数据库前缀开头就自动热加载。
 - 诊断继续通过 `ConfigurationDiagnostics` 对比各进程 `inspect()` 已发布值与文件目标，展示实际来源和重启要求；不能调用 `snapshot()` 使诊断变成配置发布。Worker 按独立心跳报告其快照，未加载/不可用不能标为已生效；敏感值及内部比较指纹不出现在诊断 API 中。
-- SQLite 业务连接统一经 `SQLiteDatabase`/`SQLiteRepository`；跨仓储原子写入使用 `UnitOfWork` 绑定同一连接并由外层提交。Service 不持有原始连接、不自行提交；单仓储原子校验/写入由仓储完成。编号迁移复用 `database/migrations/`，不在路由或后台任务临时建表。
-- SQL/LLM/SMTP/文件等耗时外部操作不得放进 SQLite 写事务；保留现有任务状态、幂等、未知结果保护和失败补偿。不要用事务回滚假定外部副作用已撤销，详见 [SQLite 事务设计](docs/design/SQLite仓储与事务设计.md)。
-- 两进程通过同机本地 SQLite WAL 和共享文件卷协作；保留 Web OS 锁、Worker 租约/提交围栏、持久化队列及现有共享容量，不依赖跨进程内存对象或为每台设备新增常驻线程。不扩展为多主机或网络共享卷部署。
-- SQL 资源统一通过 `core/sql_capacity.py` 在 SQL Server/MySQL 驱动入口获取全局、数据源、产线配额；同机 Web/Worker 共用固定文件锁槽。等待不得持有部分执行配额，不向 SQLite 写配额状态。容量及单源 `sql_max_concurrent` 为冷配置，连接参数仍按新操作热加载；资源计数为各进程本地观测，不能声称实时全局统计。HTTP 执行池与 SQL、LLM、Chromium 容量分别管理。
-- Worker 调度沿用 `WorkerProcess` 的有界 monotonic 提示状态；SQLite `background_schedules/background_tasks` 仍决定真实到期、去重和重试。产线通过 `BackgroundSchedule` 提交周期/每日计划，耗时准备只在到期时执行；失败或未确认持久化不得推进内存进度。新增/停用/来源/间隔/计划变化随原快照处理，移除失效状态；队列保持每秒领取、5秒心跳，延迟接纳常规5秒及容量释放时检查，保留 `next_attempt` 与原容量。
+- 状态业务连接统一经 `PostgresDatabase`/`PostgresRepository`；跨仓储原子写入使用 `UnitOfWork` 绑定同一连接并由外层提交。Service 不持有原始连接、不自行提交；单仓储原子校验/写入由仓储完成。PG编号迁移复用 `database/postgres_migrations/`；旧 `database/migrations/` 只供离线历史准备，不在路由或后台任务临时建表。
+- SQL/LLM/SMTP/文件等耗时外部操作不得放进状态库写事务；保留现有任务状态、幂等、未知结果保护和失败补偿。不要用事务回滚假定外部副作用已撤销，详见 [PostgreSQL 事务设计](docs/design/PostgreSQL仓储与事务设计.md)。
+- 两进程通过同一 PostgreSQL 状态库与同机共享文件卷协作，各复用一个进程连接池；保留 Web OS 锁、Worker 租约/提交围栏、持久化队列及现有共享容量，不依赖跨进程内存对象或为每台设备新增常驻线程。不扩展为多主机或网络共享卷部署。
+- SQL 资源统一通过 `core/sql_capacity.py` 在 SQL Server/MySQL 驱动入口获取全局、数据源、产线配额；同机 Web/Worker 共用固定文件锁槽。等待不得持有部分执行配额，不向状态库写配额状态。容量及单源 `sql_max_concurrent` 为冷配置，连接参数仍按新操作热加载；资源计数为各进程本地观测，不能声称实时全局统计。HTTP 执行池与 SQL、LLM、Chromium 容量分别管理。
+- Worker 调度沿用 `WorkerProcess` 的有界 monotonic 提示状态；PostgreSQL `background_schedules/background_tasks` 仍决定真实到期、去重和重试。产线通过 `BackgroundSchedule` 提交周期/每日计划，耗时准备只在到期时执行；失败或未确认持久化不得推进内存进度。新增/停用/来源/间隔/计划变化随原快照处理，移除失效状态；队列保持每秒领取、5秒心跳，延迟接纳常规5秒及容量释放时检查，保留 `next_attempt` 与原容量。
 
 ### 多产线与复用
 
@@ -80,7 +80,7 @@
 - Provider 提供 `report_types/source_identity/fetch_summary/fetch_detail/refresh_summary/refresh_plan`；查询类型和明细结果由产线保留，后台查询参数须能 JSON 序列化。跨服务调用公开方法，不能访问其他 Service 的私有方法。`requested_at` 是 Worker 任务提交时间，沿用现有刷新合并语义。
 - 新增产线类型登记构建函数和能力，业务实例只登记在统一目录，实现专属 Repository、Service/Provider，并在类型注册的构建函数与 `ProductionLineRuntime` 可选能力中接入；按需增加 API/页面和隔离测试。已有 Worker 按统一实例集合消费 `refresh_plan` 和 `report_snapshot_refresh`，不要为每种产线增加调度分支或缓存框架。切割实例仍使用统一目录内的物理映射，切割月报保留原 bootstrap/AI 调度。
 - 普通查询缓存用有界 `QueryCache`，缓存键或服务实例必须隔离产线/设备、来源、规范化条件及必要版本；可变返回值由调用方复制。领导月报直查和焊接短期统计复用该缓存；领导月快照的新鲜度缓存仍保留专属规则，焊接 AI 结果缓存仍按业务版本独立保存。
-- 通用持久化快照复用 `ReportSnapshotService/ReportKey`、`CacheRevision` 和原 SQLite 队列，键包含产线、类型、日期、参与快照计算的筛选及必要分页/排序、来源、schema 及权限范围；完整聚合视图的分页投影例外见 P09。保留焊接页面快照优先、冷页异步准备、过期标识、失败保留与源信息采样；导出/下钻保持现场查询，不用旧快照绕过实时校验，不强制各业务使用相同 TTL。
+- 通用持久化快照复用 `ReportSnapshotService/ReportKey`、`CacheRevision` 和原持久化队列，键包含产线、类型、日期、参与快照计算的筛选及必要分页/排序、来源、schema 及权限范围；完整聚合视图的分页投影例外见 P09。保留焊接页面快照优先、冷页异步准备、过期标识、失败保留与源信息采样；导出/下钻保持现场查询，不用旧快照绕过实时校验，不强制各业务使用相同 TTL。
 - 区分来源、失效修订、存储校验和与业务版本：`source_identity` 标识来源隔离；`CacheRevision` 仅失效进程缓存；快照存储的 `data_version` 校验完整载荷。公开页面/AI 业务版本继续由现有算法生成：焊接页面及导出共用 `WeldingService.version`，切割沿用现有分析版本；不能用存储校验和替换。焊接 API 的 `meta.report_data.data_version` 与公开业务版本一致；AI 校验页面版本，现场导出随源数据变化可产生新版本，不能覆盖页面快照。
 - 设备相关请求、任务、缓存与持久化操作显式保留设备/产线及来源身份，切割请求使用唯一有效的 `device_id`，不回退默认设备。`X-Production-Line` 仅限制能力范围，不能代替角色权限或授予产线权限。
 - `WorkshopRepository` 是兼容门面；新代码使用用户、会话、日报、确认专属仓储。现有线程模式、旧调用签名和配置兼容分支先查实际调用方及测试，后续专项处理，不在新功能中扩散或顺手删除。
@@ -142,7 +142,7 @@
 
 ## 通用外部数据源（P13）
 
-- P4 PostgreSQL 仅用于离线状态库准备：连接在 `database/postgres.py`，独立迁移在 `postgres_migrations/`，迁移/校验工具为 `scripts/migrate_sqlite_to_postgres.py`。当前正式 Runtime、Repository、UnitOfWork 仍使用 SQLite；不把状态 PG 注册到生产数据源，不双写/自动回退，不在普通请求安装 PG Schema。PG 历史迁移只追加，SQLite 历史独立归档；P5 才统一接入仓储和运行数据库。
+- P5 正式 Runtime、Repository、UnitOfWork、队列与租约统一使用 PostgreSQL；连接在 `database/postgres.py`，独立迁移在 `postgres_migrations/`，离线迁移/校验工具为 `scripts/migrate_sqlite_to_postgres.py`。Web/Worker 只用 cutting_app，维护工具显式用 cutting_migrator；不把状态 PG 注册到生产数据源，不双写/自动回退，不在普通启动/请求安装 Schema。PG历史迁移只追加，SQLite仅保留离线历史与一致性导入工具。
 
 - 新增 SQL Server/MySQL 数据库优先通过 `DatabaseSourceRegistry` 注册；管理页“其他数据源”仅登记连接，不自动创建产线、菜单、报表或授予业务权限。新产线仍沿用现有多产线注册与 Provider 机制。
 - 新增连接统一使用 `models/database_sources.py` 的配置模型，SQL Server 使用 `SqlServerClient(config)`，MySQL 使用 `MySqlClient(config)`；不在业务 Service 中散落连接字段，不为每个新库复制连接池。专属 SQL、参数及字段映射归业务 Repository，不统一 SQL 方言。

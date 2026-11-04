@@ -82,8 +82,8 @@ class AutomationService:
         line_services: dict[str, ProductionLineRuntime] | None = None,
         database_runtime: DatabaseRuntime | None = None,
     ) -> None:
-        if repository.database_path != metadata.database_path:
-            raise ValueError("自动化仓储与元数据仓储必须使用同一个 SQLite 数据库")
+        if repository.database is not metadata.database:
+            raise ValueError("自动化仓储与元数据仓储必须使用同一个 PostgreSQL 连接池")
         self.settings = settings
         self.repository = repository
         self.metadata = metadata
@@ -148,7 +148,7 @@ class AutomationService:
                 self._ensure_workshop_report(run, now, line.cutting())
             report_id = f"rpt_{now:%Y%m%d_%H%M%S}_{uuid4().hex[:6]}"
             with UnitOfWork(self.database, self.settings.timezone, device_id=run["device_id"], scope_machine_no=line.settings.report_machine_no) as unit:
-                current = unit.automation.get_run(run["run_id"])
+                current = unit.automation.get_run(run["run_id"], for_update=True)
                 if current is None or current["report_id"] or current["status"] != "queued":
                     return False
                 unit.metadata.create_job(
@@ -171,7 +171,7 @@ class AutomationService:
         except Exception as exc:
             logger.exception("scheduled report enqueue failed")
             with UnitOfWork(self.database, self.settings.timezone) as unit:
-                current = unit.automation.get_run(run["run_id"])
+                current = unit.automation.get_run(run["run_id"], for_update=True)
                 if current and not current["report_id"] and current["status"] == "queued":
                     unit.automation.mark_run(
                         run["run_id"], "failed", now=now.isoformat(timespec="seconds"), error=str(exc)

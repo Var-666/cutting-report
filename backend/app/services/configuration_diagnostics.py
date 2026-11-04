@@ -23,7 +23,7 @@ from pydantic import ValidationError
 
 
 CATEGORIES = ["基础运行配置", "数据库连接配置", "设备及产线配置", "AI 模型配置",
-              "报表与后台任务配置", "自动化及 SMTP 配置", "告警与数据保留配置", "文件服务配置"]
+              "报表与后台任务配置", "自动化及 SMTP 配置", "告警与数据保留配置", "文件服务配置", "PostgreSQL 应用状态库"]
 ENV_FIELDS = {item.name: item for item in fields(Settings) if "env" in item.metadata}
 HOT_FIELDS = {item[0] for item in HOT_SETTINGS.values()}
 SOURCE_LABELS = {"default": "程序默认值", "process": "进程环境变量", ".env": ".env",
@@ -36,6 +36,8 @@ def source_label(source: str) -> str:
 
 
 def category(key: str) -> str:
+    if key.startswith("POSTGRES_"):
+        return CATEGORIES[8]
     if key in HOT_SETTINGS:
         return CATEGORIES[5]
     if key.endswith("_SOURCE_KEY") or key.startswith(("DATABASE_SOURCES_", "connections.", "WELD_", "SQLSERVER_", "WORKER_SQLSERVER_", "WORKER_DATABASE_", "FILE_SQLSERVER_", "FILE_DATABASE_", "SQL_WORKBENCH_")):

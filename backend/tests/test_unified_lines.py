@@ -1,3 +1,4 @@
+from tests.postgres_fixtures import state_settings
 from dataclasses import replace
 from datetime import date
 import gc
@@ -22,7 +23,7 @@ from app.worker import WorkerProcess
 from tests.line_fixtures import configuration
 
 
-def test_new_instances_share_resources_without_sharing_scopes_or_snapshots(tmp_path):
+def test_new_instances_share_resources_without_sharing_scopes_or_snapshots(postgres_state, tmp_path):
     cfg = configuration(tmp_path, real=True, welding=True)
     catalog = load_line_catalog(cfg.production_lines_json)
     cutter = catalog.get('Cutter02').model_copy(update={'id': 'Cutter03', 'device_id': 'physical-3', 'machine_no': 'Cutter03'})
@@ -32,7 +33,7 @@ def test_new_instances_share_resources_without_sharing_scopes_or_snapshots(tmp_p
     from app.database.source_registry import source_configs_json
     catalog = catalog.model_copy(update={'lines': (*catalog.lines, cutter, weld)})
     cfg = replace(cfg, production_lines_json=catalog.model_dump_json(), database_sources_json=source_configs_json(configs))
-    runtime = build_runtime(cfg, role='web')
+    runtime = build_runtime(state_settings(cfg,postgres_state), role='web')
     context = database_context(runtime)
     try:
         assert set(context.lines) == {'Cutter01', 'Cutter02', 'Cutter03', 'welding', 'welding-2'}
@@ -53,9 +54,9 @@ def test_new_instances_share_resources_without_sharing_scopes_or_snapshots(tmp_p
         runtime.database_runtime.close()
 
 
-def test_source_change_rebuilds_only_bound_lines_and_worker_loads_it_at_new_operation(tmp_path):
+def test_source_change_rebuilds_only_bound_lines_and_worker_loads_it_at_new_operation(postgres_state, tmp_path):
     cfg = configuration(tmp_path, real=True, welding=True)
-    web, worker = (build_runtime(cfg, role=role) for role in ('web', 'worker'))
+    web, worker = (build_runtime(state_settings(cfg,postgres_state), role=role) for role in ('web', 'worker'))
     old = database_context(web)
     old_worker = database_context(worker)
     payload = DatabaseSourceRequest.model_validate({**old.database_sources.get('cutting-production').model_dump(), 'host': 'new.test'})
@@ -82,9 +83,9 @@ def test_source_change_rebuilds_only_bound_lines_and_worker_loads_it_at_new_oper
         worker.database_runtime.close()
 
 
-def test_invalid_bindings_and_failed_save_preserve_file_and_snapshot(tmp_path, monkeypatch):
+def test_invalid_bindings_and_failed_save_preserve_file_and_snapshot(postgres_state, tmp_path, monkeypatch):
     cfg = configuration(tmp_path, real=True)
-    runtime = build_runtime(cfg, role='web')
+    runtime = build_runtime(state_settings(cfg,postgres_state), role='web')
     current = database_context(runtime)
     write_runtime_env(cfg.runtime_settings_env_path, {'CUSTOM': 'keep'})
     before = cfg.runtime_settings_env_path.read_bytes()
@@ -102,7 +103,7 @@ def test_invalid_bindings_and_failed_save_preserve_file_and_snapshot(tmp_path, m
     assert cfg.runtime_settings_env_path.read_bytes() == before
 
 
-def test_shared_mysql_scope_is_required_and_bound_in_sql(tmp_path):
+def test_shared_mysql_scope_is_required_and_bound_in_sql(postgres_state, tmp_path):
     from app.database.welding import WeldingRepository
     cfg = configuration(tmp_path, welding=True)
     catalog = load_line_catalog(cfg.production_lines_json)
@@ -121,7 +122,7 @@ def test_shared_mysql_scope_is_required_and_bound_in_sql(tmp_path):
     assert 'j.device_no IN (%s)' in sql and 0 in values
     catalog = load_line_catalog(cfg.production_lines_json)
     catalog = catalog.model_copy(update={'lines': (*catalog.lines[:-1], first, second)})
-    runtime = build_runtime(replace(cfg, production_lines_json=catalog.model_dump_json()), role='web')
+    runtime = build_runtime(state_settings(replace(cfg, production_lines_json=catalog.model_dump_json()),postgres_state), role='web')
     context = database_context(runtime)
     a, b = (context.lines[key].service for key in ('welding', 'welding-2'))
     assert a.repository.client is b.repository.client
@@ -130,9 +131,9 @@ def test_shared_mysql_scope_is_required_and_bound_in_sql(tmp_path):
     assert a._snapshot_key(query, 'daily').values != b._snapshot_key(query, 'daily').values
 
 
-def test_catalog_reload_preserves_stable_ids_and_exposes_disabled_instance(tmp_path):
+def test_catalog_reload_preserves_stable_ids_and_exposes_disabled_instance(postgres_state, tmp_path):
     cfg = configuration(tmp_path, welding=True)
-    runtime = build_runtime(cfg, role='web')
+    runtime = build_runtime(state_settings(cfg,postgres_state), role='web')
     original = database_context(runtime)
     changed = original.catalog.model_copy(update={'lines': tuple(line.model_copy(update={'enabled': False}) if line.id == 'welding' else line for line in original.catalog.lines)})
     runtime.database_runtime.save_lines(changed)
@@ -144,15 +145,15 @@ def test_catalog_reload_preserves_stable_ids_and_exposes_disabled_instance(tmp_p
         runtime.database_runtime.save_lines(changed.model_copy(update={'lines': changed.lines[:-1]}))
 
 
-def test_missing_new_config_fails_instead_of_loading_legacy_directory(tmp_path):
+def test_missing_new_config_fails_instead_of_loading_legacy_directory(postgres_state, tmp_path):
     with pytest.raises(ValueError, match='migrate_production_lines'):
-        build_runtime(Settings(project_root=tmp_path, production_lines_json=''), role='web')
+        build_runtime(state_settings(Settings(project_root=tmp_path, production_lines_json=''),postgres_state), role='web')
 
 
-def test_new_cutting_and_welding_instances_hotload_in_both_processes(tmp_path):
+def test_new_cutting_and_welding_instances_hotload_in_both_processes(postgres_state, tmp_path):
     from app.database.source_registry import source_configs_json
     cfg = configuration(tmp_path, real=True, welding=True)
-    web, worker = (build_runtime(cfg, role=role) for role in ('web', 'worker'))
+    web, worker = (build_runtime(state_settings(cfg,postgres_state), role=role) for role in ('web', 'worker'))
     original = database_context(web)
     registry = original.database_sources
     for old_key, new_key in (('cutting-production', 'sql-3'), ('welding-production', 'mysql-2')):
@@ -171,18 +172,18 @@ def test_new_cutting_and_welding_instances_hotload_in_both_processes(tmp_path):
         process = WorkerProcess(context.settings, runtime)
         process._schedule()
         with runtime.coordination.connect() as connection:
-            queued = {row[0] for row in connection.execute('SELECT device_id FROM background_tasks')}
+            queued = {row['device_id'] for row in connection.execute('SELECT device_id FROM background_tasks')}
         assert {'Cutter03', 'weld-2'} <= queued
     assert database_context(web).lines['Cutter01'] is original.lines['Cutter01']
 
 
-def test_disabled_line_keeps_historical_report_access_and_rejects_new_work(tmp_path):
+def test_disabled_line_keeps_historical_report_access_and_rejects_new_work(postgres_state, tmp_path):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
     from app.api.auth import require_admin
     from app.api.reports import router
     cfg = configuration(tmp_path)
-    runtime = build_runtime(cfg, role='web')
+    runtime = build_runtime(state_settings(cfg,postgres_state), role='web')
     original = database_context(runtime)
     original.lines['Cutter01'].cutting().metadata.create_job(report_id='historical', report_type='equipment',
         report_date='2026-11-01', project_code=None, ship_no=None, request_id='old', created_at='2026-11-01T08:00:00+08:00')
@@ -204,8 +205,8 @@ def test_disabled_line_keeps_historical_report_access_and_rejects_new_work(tmp_p
         assert response.status_code == 503
 
 
-def test_analysis_latest_and_version_remain_bound_to_operation_source_after_switch(tmp_path):
-    runtime = build_runtime(configuration(tmp_path), role='web')
+def test_analysis_latest_and_version_remain_bound_to_operation_source_after_switch(postgres_state, tmp_path):
+    runtime = build_runtime(state_settings(configuration(tmp_path),postgres_state), role='web')
     before = database_context(runtime)
     old = before.lines['Cutter01'].cutting().metadata
     query = dict(report_type='workshop', report_date='2026-11-01', model_name='test-model', prompt_version='test-prompt')
@@ -228,7 +229,7 @@ def test_analysis_latest_and_version_remain_bound_to_operation_source_after_swit
     assert old.get_latest_analysis(**query)['overview'] == 'late-old-result'
 
 
-def test_fresh_example_bootstraps_explicit_demo_without_legacy_config(tmp_path):
+def test_fresh_example_bootstraps_explicit_demo_without_legacy_config(postgres_state, tmp_path):
     from app.config import _environment
     from app.configuration_sources import read_env_file
     example = Path(__file__).resolve().parents[2] / '.env.example'
@@ -239,7 +240,7 @@ def test_fresh_example_bootstraps_explicit_demo_without_legacy_config(tmp_path):
         cfg = Settings(project_root=tmp_path)
     finally:
         _environment.reset(token)
-    runtime = build_runtime(cfg, role='web')
+    runtime = build_runtime(state_settings(cfg,postgres_state), role='web')
     context = database_context(runtime)
     assert context.settings.effective_data_source_mode == 'demo'
     assert set(context.lines) == {'Cutter01', 'Cutter02', 'welding'}
@@ -247,17 +248,18 @@ def test_fresh_example_bootstraps_explicit_demo_without_legacy_config(tmp_path):
     assert not context.lines['welding'].config.enabled
 
 
-def test_upgrade_keeps_existing_latest_analysis_in_the_bound_source(tmp_path):
+def test_upgrade_keeps_existing_latest_analysis_in_the_bound_source(state_database, postgres_state, tmp_path):
     from app.database.metadata import MetadataRepository
     cfg = configuration(tmp_path)
-    legacy = MetadataRepository(cfg.metadata_db_path, device_id='Cutter01')
-    legacy.initialize()
+    from app.database.source_registry import DatabaseSourceRegistry
+    scope = 'Cutter01:' + DatabaseSourceRegistry.from_json(cfg.database_sources_json).fingerprint('cutting-production')
+    legacy = MetadataRepository(state_database, device_id='Cutter01', analysis_scope=scope)
     query = dict(report_type='workshop', report_date='2026-11-01', model_name='test', prompt_version='test')
     legacy.save_analysis(cache_key='legacy-analysis', **query, input_hash='input', data_version='old-version',
         status='success', mode='model', result={'overview': '保留已有分析'}, generated_at='2026-11-01T08:00:00+08:00', publish_latest=True)
     legacy.save_analysis_source_version(report_type='workshop', report_date='2026-11-01', data_version='old-version', updated_at='2026-11-01T08:00:00+08:00')
     for _ in range(2):
-        runtime = build_runtime(cfg, role='web')
+        runtime = build_runtime(state_settings(cfg,postgres_state), role='web')
         selected = database_context(runtime).lines['Cutter01'].cutting().metadata
         assert selected.get_latest_analysis(**query)['overview'] == '保留已有分析'
         assert selected.get_analysis_source_version(report_type='workshop', report_date='2026-11-01')['data_version'] == 'old-version'

@@ -1,3 +1,4 @@
+from tests.postgres_fixtures import state_settings
 from tests.line_fixtures import source_client
 from app.database.source_registry import DatabaseSourceRegistry
 from tests.line_fixtures import as_line_services, runtime_line
@@ -113,9 +114,8 @@ def test_ship_options_follow_date_and_project_and_use_shared_mapping_cache():
 
 
 @pytest.fixture
-def workshop(tmp_path):
-    repo = WorkshopRepository(tmp_path/'state.db',scope_machine_no='Cutter01')
-    repo.initialize()
+def workshop(state_database, tmp_path):
+    repo = WorkshopRepository(state_database,scope_machine_no='Cutter01')
     now = '2026-11-01T08:00:00+08:00'
     admin = repo.bootstrap_admin(username='admin', display_name='管理员',password='test-password',now=now)
     return repo, admin, now
@@ -158,7 +158,7 @@ def test_historical_snapshot_page_enriches_but_confirm_does_not_query_bm(worksho
     service.confirm_task('1',ConfirmSnapshotTaskRequest(report_date=date(2026,11,1),snapshot_revision=1),admin)
 
 
-def test_runtime_range_report_keeps_tasks_and_device_confirmations_when_bm_is_down(tmp_path, monkeypatch):
+def test_runtime_range_report_keeps_tasks_and_device_confirmations_when_bm_is_down(postgres_state, tmp_path, monkeypatch):
     from app.database.source_registry import source_configs_json
     from app.models.database_sources import DatabaseSourceConfig
     bm = DatabaseSourceConfig(id='bm', name='船名库', engine='sqlserver', host='offline', port=1433,
@@ -172,7 +172,7 @@ def test_runtime_range_report_keeps_tasks_and_device_confirmations_when_bm_is_do
                      program_no='N1', cut_length=1.2, groove_length=0.1, work_time=60,
                      production_time=datetime(2026, 11, 1, 8))]
     monkeypatch.setattr(SqlServerClient, 'fetch_all', fetch)
-    runtime = build_runtime(cfg, role='web')
+    runtime = build_runtime(state_settings(cfg,postgres_state), role='web')
     try:
         now = '2026-11-01T08:00:00+08:00'
         admin = runtime.users.bootstrap_admin(username='admin', display_name='管理员', password='test-password', now=now)
@@ -194,23 +194,23 @@ def test_runtime_range_report_keeps_tasks_and_device_confirmations_when_bm_is_do
         runtime.database_runtime.close()
 
 
-def test_migration_preserves_legacy_project_confirmations_and_revision(workshop):
+def test_migration_preserves_legacy_project_confirmations_and_revision(tmp_path):
     from app.database.migrations.v014_workshop_ship_names import upgrade
-    repo, admin, now = workshop
-    report = repo.create_daily_report(report_date='2026-11-01',source_mode='sqlserver',records=[record()],user=admin,now=now)
-    repo.confirm_task(task_id='1',report_id=report['report_id'],user=admin,now=now)
-    with repo.connect() as connection:
-        connection.execute('ALTER TABLE workshop_report_items DROP COLUMN ship_no')
+    from app.database.sqlite_history import SQLiteHistory
+    with SQLiteHistory(tmp_path/'legacy.db').connect() as connection:
+        connection.execute('''CREATE TABLE workshop_report_items(
+            project_name TEXT, confirmed_by TEXT, snapshot_revision INTEGER)''')
+        connection.execute("INSERT INTO workshop_report_items VALUES ('CMYZ0170','管理员',1)")
         upgrade(connection)
         upgrade(connection)
-    row = repo.get_daily_report_records('2026-11-01')[1][0]
-    assert row.project_code == row.ship_no == 'CMYZ0170'
-    assert row.confirmed_by == '管理员' and row.snapshot_revision == 1
+        row = connection.execute('SELECT * FROM workshop_report_items').fetchone()
+        assert row['project_name'] == row['ship_no'] == 'CMYZ0170'
+        assert row['confirmed_by'] == '管理员' and row['snapshot_revision'] == 1
 
 
-def test_bm_runtime_registration_hot_reload_protection_and_old_request(tmp_path,monkeypatch):
+def test_bm_runtime_registration_hot_reload_protection_and_old_request(postgres_state, tmp_path,monkeypatch):
     cfg=configuration(tmp_path, real=True)
-    runtime=build_runtime(cfg,role='web')
+    runtime=build_runtime(state_settings(cfg,postgres_state),role='web')
     initial=runtime.database_runtime.snapshot()
     assert initial.lines['Cutter01'].service.query_service.ship_names is None
     payload=DatabaseSourceRequest(id='bm',name='船名库',engine='sqlserver',host='test-bm',port=1433,
@@ -234,13 +234,13 @@ def test_bm_runtime_registration_hot_reload_protection_and_old_request(tmp_path,
     with pytest.raises(ValueError):
         runtime.database_runtime.save_source(payload.model_copy(update={'engine':'mysql'}))
     assert runtime.database_runtime.snapshot().database_sources.get('bm').engine == 'sqlserver'
-    worker = build_runtime(cfg, role='worker')
+    worker = build_runtime(state_settings(cfg,postgres_state), role='worker')
     assert not worker.database_runtime.snapshot().database_sources.get('bm').enabled
     worker.database_runtime.close()
     runtime.database_runtime.close()
 
 
-def test_snapshot_page_and_html_export_share_bm_names_and_filtered_totals(tmp_path):
+def test_snapshot_page_and_html_export_share_bm_names_and_filtered_totals(state_database, tmp_path):
     from app.database.metadata import MetadataRepository
     from app.models.workshop_requests import ConfirmTaskRequest
     from app.services.pipeline import ReportPipeline
@@ -248,8 +248,7 @@ def test_snapshot_page_and_html_export_share_bm_names_and_filtered_totals(tmp_pa
     vendor.mkdir()
     (vendor/'echarts.min.js').write_text('window.echarts={init(){return {setOption(){},resize(){}}}}')
     cfg = cutting_settings(project_root=tmp_path,data_source_mode='sqlserver',llm_enabled=False)
-    metadata = MetadataRepository(cfg.metadata_db_path,device_id=cfg.device_id)
-    metadata.initialize()
+    metadata = MetadataRepository(state_database,device_id=cfg.device_id)
     query = QueryService(cfg,ship_names=ShipNameService(
         SimpleNamespace(ship_names=lambda numbers:{'CMYZ0170':'18600DWT-02'}),cache_seconds=600), client=source_client(cfg))
     rows = [dict(task_id='1',project_code='CMYZ0170',ship_no='CMYZ0170',segment_name='S1',program_no='N1',

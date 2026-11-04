@@ -1,3 +1,4 @@
+from tests.postgres_fixtures import state_settings
 from datetime import date
 from types import SimpleNamespace
 from dataclasses import replace
@@ -22,9 +23,9 @@ def test_cutting_provider_preserves_month_summary_detail_and_business_refresh_co
     assert provider.refresh_plan() == []
 
 
-def test_worker_dispatches_instance_provider_without_a_global_welding_field(tmp_path):
+def test_worker_dispatches_instance_provider_without_a_global_welding_field(postgres_state, tmp_path):
     cfg = configuration(tmp_path, welding=True)
-    runtime = build_runtime(cfg, role='worker')
+    runtime = build_runtime(state_settings(cfg,postgres_state), role='worker')
     context = runtime.database_runtime.snapshot()
     key = ReportKey('welding', 'dashboard', '2026-10-01', '2026-10-02', {}, 'source-v1')
     payload = ReportSnapshotService.task_payload(key)

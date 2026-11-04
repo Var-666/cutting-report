@@ -1,4 +1,4 @@
-"""L1 -> SQLite -> provider, with cross-process singleflight and stale-while-refresh."""
+"""L1 -> PostgreSQL -> provider, with cross-process singleflight and stale-while-refresh."""
 from __future__ import annotations
 
 from copy import deepcopy

@@ -17,9 +17,8 @@ from app.database.workshop import (
 from app.models.domain import WorkshopRecord
 
 
-def test_hr_admin_permission_mapping_keeps_hr_password_external(tmp_path: Path) -> None:
-    repository = WorkshopRepository(tmp_path / "metadata.db")
-    repository.initialize()
+def test_hr_admin_permission_mapping_keeps_hr_password_external(tmp_path: Path, state_database) -> None:
+    repository = WorkshopRepository(state_database)
     now = "2026-09-09T10:30:00+08:00"
     operator = repository.bootstrap_admin(
         username="emergency-admin",
@@ -48,7 +47,7 @@ def test_hr_admin_permission_mapping_keeps_hr_password_external(tmp_path: Path) 
     assert not repository.verify_local_user_password(granted["user_id"], "anything")
     with repository.connect() as connection:
         row = connection.execute(
-            "SELECT password_hash FROM users WHERE user_id = ?", (granted["user_id"],)
+            "SELECT password_hash FROM users WHERE user_id = %s", (granted["user_id"],)
         ).fetchone()
     assert row["password_hash"] == ""
 
@@ -69,9 +68,8 @@ def test_hr_admin_permission_mapping_keeps_hr_password_external(tmp_path: Path) 
     assert revoked["role"] == "worker"
 
 
-def test_scoped_snapshot_keeps_existing_rows_when_new_tasks_arrive(tmp_path: Path) -> None:
-    repository = WorkshopRepository(tmp_path / "metadata.db", scope_machine_no='Cutter01')
-    repository.initialize()
+def test_scoped_snapshot_keeps_existing_rows_when_new_tasks_arrive(tmp_path: Path, state_database) -> None:
+    repository = WorkshopRepository(state_database, scope_machine_no='Cutter01')
     now = "2026-09-09T10:30:00+08:00"
     admin = repository.bootstrap_admin(
         username="admin",
@@ -131,9 +129,8 @@ def test_password_hash_is_salted_and_verifiable() -> None:
     assert not verify_password("wrong-password", first)
 
 
-def test_account_session_and_single_worker_confirmation(tmp_path: Path) -> None:
-    repository = WorkshopRepository(tmp_path / "metadata.db", scope_machine_no='Cutter01')
-    repository.initialize()
+def test_account_session_and_single_worker_confirmation(tmp_path: Path, state_database) -> None:
+    repository = WorkshopRepository(state_database, scope_machine_no='Cutter01')
     now = "2026-08-19T08:00:00+08:00"
     admin = repository.bootstrap_admin(
         username="admin",
@@ -286,9 +283,8 @@ def test_account_session_and_single_worker_confirmation(tmp_path: Path) -> None:
     assert audits[0]["reason"] == "等待现场重新确认"
 
 
-def test_external_worker_is_upserted_without_storing_hr_password(tmp_path: Path) -> None:
-    repository = WorkshopRepository(tmp_path / "metadata.db", scope_machine_no="Cutter01")
-    repository.initialize()
+def test_external_worker_is_upserted_without_storing_hr_password(tmp_path: Path, state_database) -> None:
+    repository = WorkshopRepository(state_database, scope_machine_no="Cutter01")
     now = "2026-08-24T09:00:00+08:00"
 
     worker = repository.upsert_external_worker(
@@ -305,7 +301,7 @@ def test_external_worker_is_upserted_without_storing_hr_password(tmp_path: Path)
     assert worker["role"] == "worker"
     with repository.connect() as connection:
         stored = connection.execute(
-            "SELECT username, password_hash FROM users WHERE user_id = ?",
+            "SELECT username, password_hash FROM users WHERE user_id = %s",
             (worker["user_id"],),
         ).fetchone()
     assert stored["username"] == "hr:9123"
@@ -327,9 +323,8 @@ def test_external_worker_is_upserted_without_storing_hr_password(tmp_path: Path)
     assert repository.get_confirmations(["hr-task"])["hr-task"]["worker_company_no"] == "C0008"
 
 
-def test_external_worker_does_not_prevent_admin_bootstrap(tmp_path: Path) -> None:
-    repository = WorkshopRepository(tmp_path / "metadata.db")
-    repository.initialize()
+def test_external_worker_does_not_prevent_admin_bootstrap(tmp_path: Path, state_database) -> None:
+    repository = WorkshopRepository(state_database)
     now = "2026-08-24T09:00:00+08:00"
     repository.upsert_external_worker(
         external_id="9123",
@@ -351,10 +346,9 @@ def test_external_worker_does_not_prevent_admin_bootstrap(tmp_path: Path) -> Non
 
 
 def test_empty_daily_report_can_be_populated_when_source_data_arrives(
-    tmp_path: Path,
+    tmp_path: Path, state_database,
 ) -> None:
-    repository = WorkshopRepository(tmp_path / "metadata.db", scope_machine_no='Cutter01')
-    repository.initialize()
+    repository = WorkshopRepository(state_database, scope_machine_no='Cutter01')
     now = "2026-08-19T08:00:00+08:00"
     admin = repository.bootstrap_admin(
         username="admin",
@@ -396,10 +390,9 @@ def test_empty_daily_report_can_be_populated_when_source_data_arrives(
 
 
 def test_batch_confirmation_is_atomic_when_one_task_has_another_worker(
-    tmp_path: Path,
+    tmp_path: Path, state_database,
 ) -> None:
-    repository = WorkshopRepository(tmp_path / "metadata.db", scope_machine_no='Cutter01')
-    repository.initialize()
+    repository = WorkshopRepository(state_database, scope_machine_no='Cutter01')
     now = "2026-09-11T09:00:00+08:00"
     admin = repository.bootstrap_admin(
         username="admin",

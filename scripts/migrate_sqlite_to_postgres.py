@@ -1,4 +1,4 @@
-"""P4 offline snapshot importer; never switches the Web/Worker runtime backend."""
+"""Offline state importer and explicit schema upgrade; never starts Web/Worker."""
 import argparse
 import json
 from pathlib import Path
@@ -25,9 +25,15 @@ def main(argv=None):
     if args.action not in ('schema', 'status') and not args.sqlite:
         parser.error('check/migrate/verify 必须指定 --sqlite；PostgreSQL 连接只取 POSTGRES_* 配置，不接收明文密码参数')
     try:
+        if args.action in ('schema', 'check', 'migrate', 'verify') and settings.postgres_user != 'cutting_migrator':
+            raise MigrationError('升级/导入必须显式使用cutting_migrator，不能使用正式运行账号')
         with PostgresDatabase(settings) as database:
             if args.action in ('schema','status'):
-                if args.action=='schema': result = apply_migrations(database)
+                if args.action=='schema':
+                    result = apply_migrations(database)
+                    with database.connect() as connection:
+                        grants = (ROOT / 'scripts/postgres/grant_runtime.sql').read_text()
+                        connection.execute(grants.replace('BEGIN;', '').replace('COMMIT;', ''), prepare=False)
                 else:
                     from app.database.postgres_migrations import validate_schema
                     with database.connect() as connection: result = validate_schema(connection)

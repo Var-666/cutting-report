@@ -340,7 +340,7 @@ def test_invalid_config_fails_closed(changes):
     assert not stub.calls
 
 
-def test_unified_device_page_export_and_analysis_share_meter_values(tmp_path, monkeypatch):
+def test_unified_device_page_export_and_analysis_share_meter_values(state_database, tmp_path, monkeypatch):
     from types import SimpleNamespace
     from app.api.analysis import AnalysisRequest, analyze_report
     from app.api.energy import get_task_energy_day
@@ -357,8 +357,7 @@ def test_unified_device_page_export_and_analysis_share_meter_values(tmp_path, mo
     vendor = tmp_path / "vendor"
     vendor.mkdir()
     (vendor / "echarts.min.js").write_text("window.echarts={};", encoding="utf-8")
-    metadata = MetadataRepository(cfg.metadata_db_path, device_id='Cutter01')
-    metadata.initialize()
+    metadata = MetadataRepository(state_database, device_id='Cutter01')
     pipeline = ReportPipeline(cfg, metadata, query_service=QueryService(cfg, client=source_client(cfg)))
     pipeline.analysis_service.llm.analyze_context = model_analysis
     pipeline.energy_period_service.client = MeterStub()
@@ -460,7 +459,7 @@ def test_unified_device_page_export_and_analysis_share_meter_values(tmp_path, mo
     assert analysis.mode == "model"
 
 
-def test_same_day_range_reuses_task_meter_scope_and_interpolation(tmp_path, monkeypatch):
+def test_same_day_range_reuses_task_meter_scope_and_interpolation(state_database, tmp_path, monkeypatch):
     from app.database.metadata import MetadataRepository
     from app.services.pipeline import ReportPipeline
     from app.services.query_service import EquipmentQueryResult
@@ -471,8 +470,7 @@ def test_same_day_range_reuses_task_meter_scope_and_interpolation(tmp_path, monk
         energy_report_equipment_ids=("Cutter01",),
     ), project_root=tmp_path)
     cfg.ensure_runtime_dirs()
-    metadata = MetadataRepository(cfg.metadata_db_path, device_id='Cutter01')
-    metadata.initialize()
+    metadata = MetadataRepository(state_database, device_id='Cutter01')
     pipeline = ReportPipeline(cfg, metadata, query_service=QueryService(cfg, client=source_client(cfg)))
     meter = MeterStub()
     pipeline.energy_period_service.client = meter
@@ -504,13 +502,12 @@ def test_same_day_range_reuses_task_meter_scope_and_interpolation(tmp_path, monk
     assert [call[0] for call in meter.calls] == [(GAS, *ELECTRIC)] * 2
 
 
-def test_analysis_does_not_report_missing_energy_as_zero(tmp_path):
+def test_analysis_does_not_report_missing_energy_as_zero(state_database, tmp_path):
     from app.database.metadata import MetadataRepository
     from app.services.report_analysis_service import ReportAnalysisService
     cfg = configured(project_root=tmp_path, llm_enabled=True)
     cfg.ensure_runtime_dirs()
-    metadata = MetadataRepository(cfg.metadata_db_path, device_id='Cutter01')
-    metadata.initialize()
+    metadata = MetadataRepository(state_database, device_id='Cutter01')
     service = ReportAnalysisService(cfg, metadata)
     service.llm.analyze_context = model_analysis
     analysis = service.analyze_equipment(START.date().isoformat(), [record()], energy_data_mode="unavailable")

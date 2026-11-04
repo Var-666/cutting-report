@@ -39,7 +39,8 @@ def _like(value):
     return value.replace("!", "!!").replace("%", "!%").replace("_", "!_").replace("[", "![")
 
 
-def compile_conditions(group: ConditionGroup, fields):
+def compile_conditions(group: ConditionGroup, fields, *, postgres: bool = False):
+    placeholder = "%s" if postgres else "?"
     clauses, parameters = [], []
     for field, operator, values in prepare(group, fields):
         column = field.expression
@@ -49,17 +50,19 @@ def compile_conditions(group: ConditionGroup, fields):
         elif operator in {"contains", "not_contains", "starts_with", "ends_with"}:
             literal = _like(values[0])
             pattern = ("" if operator == "starts_with" else "%") + literal + ("" if operator == "ends_with" else "%")
-            clauses.append(f"{column} {'NOT LIKE' if operator == 'not_contains' else 'LIKE'} ? ESCAPE '!'")
+            left = f"sqlite_nocase({column})" if postgres else column
+            right = f"sqlite_nocase({placeholder})" if postgres else placeholder
+            clauses.append(f"{left} {'NOT LIKE' if operator == 'not_contains' else 'LIKE'} {right} ESCAPE '!'")
             parameters.append(pattern)
         elif operator in {"in", "not_in"}:
-            clauses.append(f"{column} {'NOT IN' if operator == 'not_in' else 'IN'} ({', '.join('?' for _ in values)})")
+            clauses.append(f"{column} {'NOT IN' if operator == 'not_in' else 'IN'} ({', '.join(placeholder for _ in values)})")
             parameters.extend(values)
         elif operator == "between":
-            clauses.append(f"{column} BETWEEN ? AND ?")
+            clauses.append(f"{column} BETWEEN {placeholder} AND {placeholder}")
             parameters.extend(values)
         else:
             token = {"eq": "=", "ne": "<>", "gt": ">", "gte": ">=", "lt": "<", "lte": "<="}[operator]
-            clauses.append(f"{column} {token} ?")
+            clauses.append(f"{column} {token} {placeholder}")
             parameters.extend(values)
     return ("(" + (" AND " if group.logic == "and" else " OR ").join(clauses) + ")" if clauses else "1 = 1"), parameters
 

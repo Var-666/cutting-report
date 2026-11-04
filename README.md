@@ -1,6 +1,6 @@
 # 切割生产智能产报系统
 
-面向内网的生产报表系统，提供领导、车间、设备报表，工人任务确认、智能分析与告警、报表导出、邮件自动化和切割文件派发。前端使用 Vue 3，后端使用 FastAPI；生产数据来自 SQL Server，SQLite 保存应用状态。
+面向内网的生产报表系统，提供领导、车间、设备报表，工人任务确认、智能分析与告警、报表导出、邮件自动化和切割文件派发。前端使用 Vue 3，后端使用 FastAPI；生产数据来自 SQL Server/MySQL，PostgreSQL 保存应用状态。
 
 ## 快速启动（Docker）
 
@@ -8,7 +8,10 @@
 
 ```bash
 cp .env.example .env
-docker compose up -d --build
+docker compose build app
+docker compose up -d postgres
+docker compose run --rm --no-deps migrate python scripts/migrate_sqlite_to_postgres.py schema
+docker compose up -d app worker
 docker compose ps
 ```
 
@@ -102,9 +105,9 @@ Docker 的 Python/Node 基础镜像使用摘要固定，Debian 系统包使用�
 
 车间、文件派发和告警已采用 Pydantic/OpenAPI 生成前端类型，前端使用 Node.js >=22.18。在 `frontend/` 运行 `pnpm run api:generate` 更新 `src/api/generated/`，运行 `pnpm run api:check` 检查是否过期。生成脚本使用根目录 `.venv`，也可通过 `PYTHON` 指定已安装后端依赖的解释器；不启动 Web/Worker、不连接数据库。修改对应后端模型后重新生成，不手改生成文件；API contracts CI 会检查漂移。其他接口目前仍沿用既有类型维护方式。
 
-SQLite 结构升级统一登记在 `backend/app/database/migrations/registry.py`，001–013 接管既有结构；后续新增编号迁移，禁止继续把 ALTER TABLE 放入仓储初始化。已有库升级前自动通过 SQLite Backup API 写入 `data/backups/*-before-schema-*.db`，待执行批次及版本标记在同一事务提交，失败整体回滚。原设备归属迁移及其备份规则保留。
+应用状态结构由 `backend/app/database/postgres_migrations/` 的追加编号迁移管理。Web/Worker 使用 cutting_app 校验现成 Schema，只有独立维护命令使用 cutting_migrator 升级；正常启动不执行 DDL。
 
-手工检查：`./.venv/bin/python scripts/migrate_database.py status --database /absolute/path/data/metadata.db`；手工升级将 `status` 改为 `upgrade`，执行前停止 Web 和 Worker。命令拒绝活动 Web 锁和未释放的 Worker 租约。迁移失败后保留备份与错误、修复原因后重试；若升级后已接收业务，不直接覆盖旧备份，以免丢失新确认和审计。确需恢复时，停止全部进程、先保全当前库，再通过 SQLite Backup API 恢复备份，启动与该备份匹配的版本；不要在线仅覆盖 `.db` 而混用旧 WAL/SHM。
+从 SQLite 升级必须先停止 Web/Worker、保留一致性备份与实体文件，再使用 P4 离线工具完整导入/校验38张业务表。账号、具体命令及回退限制见 [PostgreSQL 状态库切换](docs/deployment/PostgreSQL状态库迁移.md)。旧 `scripts/migrate_database.py` 和 SQLite 历史 Schema 只用于导入前的离线准备。
 
 车间路由只负责 HTTP、角色依赖和错误映射，业务由 `WorkshopService` 组织。用户、会话、日报、确认分别使用 `UserRepository`、`SessionRepository`、`WorkshopReportRepository`、`ConfirmationRepository`；原 `WorkshopRepository` 保留为嵌入式调用的兼容门面，新实现使用独立仓储。确认冲突、修订号和设备范围仍在数据库事务内检查。
 
@@ -122,7 +125,7 @@ SQLite 结构升级统一登记在 `backend/app/database/migrations/registry.py`
 
 ## 通用外部数据源（P13）
 
-管理员在“系统设置 → 数据库配置 → 其他数据源”登记 SQL Server 或 MySQL。新增和编辑共用表单，支持连接测试、启停和删除。旧生产/HR/PDM/焊接配置继续保留，SQLite 不纳入此管理区域。
+管理员在“系统设置 → 数据库配置 → 其他数据源”登记 SQL Server 或 MySQL。新增和编辑共用表单，支持连接测试、启停和删除。旧生产/HR/PDM/焊接配置继续保留，PostgreSQL 状态库不纳入此管理区域。
 
 例如登记下一个 SQL Server 数据库：
 
@@ -181,4 +184,4 @@ SQLite 的 `014_workshop_ship_names` 迁移单独保存日报船名，升级前�
 两台切割设备共享有界船名缓存，使用现有报表缓存 TTL；强制查询会刷新船名。修改 `bm` 连接会重建受影响的切割服务，旧请求保留原引用；更改其他无关数据源不会重建切割服务。`bm` 已声明为切割报表引用，登记后可停用，但不能通过管理页删除或切换数据库类型。
 
 
-P1 升级须先停止 Web/Worker 并运行 `python scripts/migrate_production_lines.py`，再启动同版本两进程；首次启动应用 SQLite 执行015告警来源隔离。统一实例与来源配置、备份位置、新增切割/焊接线及回退边界见[配置参考](docs/deployment/配置参考.md#p1-升级与新增实例)。
+P1 升级须先停止 Web/Worker 并运行 `python scripts/migrate_production_lines.py`，再启动同版本两进程；旧 SQLite 的015告警来源隔离在离线准备阶段完成，正式启动不再读写 SQLite。统一实例与来源配置、备份位置、新增切割/焊接线及回退边界见[配置参考](docs/deployment/配置参考.md#p1-升级与新增实例)。

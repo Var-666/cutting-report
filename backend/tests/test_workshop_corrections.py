@@ -13,11 +13,10 @@ from app.database.workshop import WorkshopRepository
 from app.models.domain import WorkshopRecord
 
 
-def test_legacy_snapshot_does_not_block_worker_revoke_or_admin_correction(
+def test_legacy_snapshot_does_not_block_worker_revoke_or_admin_correction(state_database,
     tmp_path,
 ) -> None:
-    repository = WorkshopRepository(tmp_path / "metadata.db", scope_machine_no='Cutter01')
-    repository.initialize()
+    repository = WorkshopRepository(state_database, scope_machine_no='Cutter01')
     confirmed_at = "2026-09-09T16:15:00+08:00"
     admin = repository.bootstrap_admin(
         username="admin",

@@ -2,21 +2,18 @@ from __future__ import annotations
 
 import json
 
-from app.database.sqlite import SQLiteRepository
+from app.database.postgres import PostgresRepository
 from app.models.conditions import ConditionGroup
 from app.database.condition_fields import fields_for, sort_expression
 from app.database.condition_query import compile_conditions, prepare_sort
 
 
-class DownloadRepository(SQLiteRepository):
-    def initialize(self) -> None:
-        from app.database.migrations import apply_migrations
-        apply_migrations(self.database, names=("009_downloads",))
+class DownloadRepository(PostgresRepository):
 
     def save(self, item):
         with self.connect() as connection:
             connection.execute("""
-                INSERT INTO cutting_downloads VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO cutting_downloads VALUES (%s, %s, %s, %s, %s, %s)
                 ON CONFLICT(download_id) DO UPDATE SET
                     status=excluded.status, updated_at=excluded.updated_at, payload=excluded.payload
             """, (item["download_id"], item["document_id"], item["status"], item["created_at"],
@@ -24,8 +21,8 @@ class DownloadRepository(SQLiteRepository):
 
     def get(self, download_id):
         with self.connect() as connection:
-            row = connection.execute("SELECT payload FROM cutting_downloads WHERE download_id=?", (download_id,)).fetchone()
-        return json.loads(row[0]) if row else None
+            row = connection.execute("SELECT payload FROM cutting_downloads WHERE download_id=%s", (download_id,)).fetchone()
+        return json.loads(row['payload']) if row else None
 
     def find_latest(self, document_id, version_id, relative_path):
         """Return the newest exact downloaded version without requiring JSON1."""
@@ -33,13 +30,13 @@ class DownloadRepository(SQLiteRepository):
             rows = connection.execute(
                 """
                 SELECT payload FROM cutting_downloads
-                WHERE document_id=? AND status='downloaded'
+                WHERE document_id=%s AND status='downloaded'
                 ORDER BY created_at DESC, download_id DESC
                 """,
                 (document_id,),
             ).fetchall()
         for row in rows:
-            item = json.loads(row[0])
+            item = json.loads(row['payload'])
             if (
                 str(item.get("version_id") or "") == str(version_id or "")
                 and str(item.get("relative_path") or "") == str(relative_path or "")
@@ -50,15 +47,15 @@ class DownloadRepository(SQLiteRepository):
     def list_cleanup_candidates(self, cutoff):
         """Return completed files older than the retention cutoff.
 
-        Cleanup metadata stays inside payload so the existing SQLite schema and
+        Cleanup metadata stays inside payload so the existing state schema and
         its status constraint remain compatible with already deployed databases.
         """
         with self.connect() as connection:
             rows = connection.execute(
                 """
                 SELECT payload FROM cutting_downloads
-                WHERE status='downloaded' AND updated_at <= ?
-                  AND payload NOT LIKE '%"file_deleted_at"%'
+                WHERE status='downloaded' AND updated_at <= %s
+                  AND payload NOT LIKE '%%"file_deleted_at"%%'
                 ORDER BY updated_at, download_id
                 """,
                 (cutoff,),
@@ -66,27 +63,27 @@ class DownloadRepository(SQLiteRepository):
         return [
             item
             for row in rows
-            if not (item := json.loads(row[0])).get("file_deleted_at")
+            if not (item := json.loads(row['payload'])).get("file_deleted_at")
         ]
 
     def list(self, page, page_size, filters=None, sort=()):
-        where, parameters = compile_conditions(filters or ConditionGroup(), fields_for("cutting_downloads"))
+        where, parameters = compile_conditions(filters or ConditionGroup(), fields_for("cutting_downloads"), postgres=True)
         prepared = prepare_sort(sort, "cutting_downloads")
-        order = ", ".join(f"{sort_expression(field)} {direction}" for field, direction in prepared)
+        order = ", ".join(f"{sort_expression(field)} {direction} NULLS {'FIRST' if direction == 'ASC' else 'LAST'}" for field, direction in prepared)
         order = f"{order}, download_id DESC" if order else "created_at DESC, download_id DESC"
         with self.connect() as connection:
-            total = connection.execute(f"SELECT COUNT(*) FROM cutting_downloads WHERE {where}", parameters).fetchone()[0]
+            total = connection.execute(f"SELECT COUNT(*) AS count FROM cutting_downloads WHERE {where}", parameters).fetchone()['count']
             rows = connection.execute(f"""
-                SELECT payload FROM cutting_downloads WHERE {where} ORDER BY {order} LIMIT ? OFFSET ?
+                SELECT payload FROM cutting_downloads WHERE {where} ORDER BY {order} LIMIT %s OFFSET %s
             """, (*parameters, page_size, (page - 1) * page_size)).fetchall()
-        return [json.loads(row[0]) for row in rows], total
+        return [json.loads(row['payload']) for row in rows], total
 
     def recover_interrupted(self, now):
         # Called once at application startup (the deployment uses one worker).
         with self.connect() as connection:
             rows = connection.execute("SELECT payload FROM cutting_downloads WHERE status='downloading'").fetchall()
             for row in rows:
-                item = json.loads(row[0])
+                item = json.loads(row['payload'])
                 item.update(status="failed", updated_at=now, error="服务重启中断下载，请重新下载；此前完成文件不受影响")
-                connection.execute("UPDATE cutting_downloads SET status=?, updated_at=?, payload=? WHERE download_id=?",
+                connection.execute("UPDATE cutting_downloads SET status=%s, updated_at=%s, payload=%s WHERE download_id=%s",
                                    (item["status"], now, json.dumps(item, ensure_ascii=False), item["download_id"]))

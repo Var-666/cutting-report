@@ -22,12 +22,11 @@ from app.services.welding_service import WeldingService
 
 
 @pytest.fixture
-def client(tmp_path, monkeypatch):
+def client(state_database, tmp_path, monkeypatch):
     cfg = cutting_settings(project_root=tmp_path, data_source_mode='demo', demo_mode=True,
                    weld_enabled=True, worker_database_auth_enabled=False, auth_cookie_secure=False)
     cfg.ensure_runtime_dirs()
-    users = WorkshopRepository(tmp_path / 'contracts.db')
-    users.initialize()
+    users = WorkshopRepository(state_database)
     app = FastAPI()
     for router in (auth.router, leadership.router, welding.router):
         app.include_router(router)

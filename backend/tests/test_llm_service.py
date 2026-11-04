@@ -38,16 +38,16 @@ def _model_response(monkeypatch, raw_content):
     return requests
 
 
-def _service(tmp_path):
+def _service(state_database, tmp_path):
     return LlmService(Settings(
         project_root=tmp_path,
         llm_enabled=True,
         llm_api_key="test-key",
         llm_base_url="http://llm.test",
-    ))
+    ), database=state_database)
 
 
-def test_model_analysis_uses_first_result_without_content_guardrails_or_repair(tmp_path, monkeypatch):
+def test_model_analysis_uses_first_result_without_content_guardrails_or_repair(state_database, tmp_path, monkeypatch):
     content = {
         "overview": "完成 999 项任务，没有事实引用。" + "分析说明。" * 100,
         "features": "任务数显著增长，原因是订单增加。",
@@ -56,14 +56,14 @@ def test_model_analysis_uses_first_result_without_content_guardrails_or_repair(t
     }
     requests = _model_response(monkeypatch, json.dumps(content))
 
-    result = _service(tmp_path).analyze_context("leadership", {"facts": []})
+    result = _service(state_database, tmp_path).analyze_context("leadership", {"facts": []})
 
     assert result.mode == "model"
     assert {key: getattr(result, key) for key in content} == content
     assert len(requests) == 1
 
 
-def test_model_receives_facts_report_tables_and_scope(tmp_path, monkeypatch):
+def test_model_receives_facts_report_tables_and_scope(state_database, tmp_path, monkeypatch):
     content = {key: key for key in ("overview", "features", "alerts", "suggestions")}
     requests = _model_response(monkeypatch, json.dumps(content))
     context = {
@@ -79,7 +79,7 @@ def test_model_receives_facts_report_tables_and_scope(tmp_path, monkeypatch):
         "raw_records": [{"unvalidated_metric": 999}],
     }
 
-    _service(tmp_path).analyze_context("leadership", context)
+    _service(state_database, tmp_path).analyze_context("leadership", context)
 
     submitted = json.loads(requests[0]["messages"][1]["content"])
     assert set(submitted) == {
@@ -102,13 +102,13 @@ def test_model_receives_facts_report_tables_and_scope(tmp_path, monkeypatch):
         (json.dumps({"overview": "", "features": "a", "alerts": "b", "suggestions": "c"}), "四段内容"),
     ],
 )
-def test_only_unrenderable_model_results_are_rejected(
+def test_only_unrenderable_model_results_are_rejected(state_database,
     tmp_path, monkeypatch, raw_content, error_fragment
 ):
     requests = _model_response(monkeypatch, raw_content)
 
     with pytest.raises(AnalysisOutputValidationError, match=error_fragment):
-        _service(tmp_path).analyze_context("leadership", {"facts": []})
+        _service(state_database, tmp_path).analyze_context("leadership", {"facts": []})
 
     assert len(requests) == 1
 

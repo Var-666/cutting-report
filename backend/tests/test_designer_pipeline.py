@@ -59,8 +59,8 @@ def create_definition(repository: DefinitionRepository) -> dict:
     )
 
 
-def test_definition_repository_seeds_builtins_and_versions_updates(tmp_path: Path) -> None:
-    repository = DefinitionRepository(tmp_path / "metadata.db")
+def test_definition_repository_seeds_builtins_and_versions_updates(state_database, tmp_path: Path) -> None:
+    repository = DefinitionRepository(state_database)
     repository.initialize()
 
     assert [item["code"] for item in repository.list_definitions()] == [
@@ -97,7 +97,7 @@ def test_custom_query_named_parameters_are_compiled_safely(tmp_path: Path) -> No
 
 
 @pytest.mark.parametrize("detail_limit", [2, 1000])
-def test_custom_demo_pipeline_generates_configured_report(tmp_path: Path, detail_limit: int) -> None:
+def test_custom_demo_pipeline_generates_configured_report(state_database, tmp_path: Path, detail_limit: int) -> None:
     vendor_dir = tmp_path / "vendor"
     vendor_dir.mkdir()
     (vendor_dir / "echarts.min.js").write_text(
@@ -112,9 +112,8 @@ def test_custom_demo_pipeline_generates_configured_report(tmp_path: Path, detail
         report_max_detail_rows=detail_limit,
     )
     settings.ensure_runtime_dirs()
-    metadata = MetadataRepository(settings.metadata_db_path, device_id='Cutter01')
-    metadata.initialize()
-    definitions = DefinitionRepository(settings.metadata_db_path, settings.timezone)
+    metadata = MetadataRepository(state_database, device_id='Cutter01')
+    definitions = DefinitionRepository(state_database, settings.timezone)
     definitions.initialize()
     definition = create_definition(definitions)
     now = datetime.now(ZoneInfo(settings.timezone)).isoformat(timespec="seconds")

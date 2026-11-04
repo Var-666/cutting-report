@@ -1,31 +1,28 @@
 from __future__ import annotations
 
 import json
-import sqlite3
-from pathlib import Path
+from psycopg import Connection
+from psycopg.errors import UniqueViolation
+
 from typing import Any
 from uuid import uuid4
 
-from app.database.sqlite import SQLiteDatabase, SQLiteRepository, execution_owner, require_worker_recovery
+from app.database.postgres import PostgresDatabase, PostgresRepository, execution_owner, require_worker_recovery
 
 
-class AutomationRepository(SQLiteRepository):
+class AutomationRepository(PostgresRepository):
     def __init__(
         self,
-        database: Path | SQLiteDatabase,
+        database: PostgresDatabase,
         *,
-        connection: sqlite3.Connection | None = None,
+        connection: Connection | None = None,
     ) -> None:
         super().__init__(database, connection=connection)
 
-    def initialize(self) -> None:
-        from app.database.migrations import apply_migrations
-        apply_migrations(self.database, names=("007_automation",))
 
     def recover_interrupted_deliveries(self) -> None:
         """Only the newly elected Worker may classify abandoned SMTP attempts."""
         with self.connect() as connection:
-            self.begin_immediate(connection)
             require_worker_recovery(connection)
             interrupted = connection.execute(
                 "SELECT delivery_id, recipients_json, recipient_results_json FROM email_deliveries WHERE status = 'sending'"
@@ -35,7 +32,7 @@ class AutomationRepository(SQLiteRepository):
                 results.update({recipient: {"status": "unknown"}
                                 for recipient in json.loads(row["recipients_json"] or "[]")})
                 connection.execute(
-                    "UPDATE email_deliveries SET recipient_results_json = ? WHERE delivery_id = ?",
+                    "UPDATE email_deliveries SET recipient_results_json = %s WHERE delivery_id = %s",
                     (json.dumps(results), row["delivery_id"]),
                 )
             connection.execute(
@@ -52,7 +49,7 @@ class AutomationRepository(SQLiteRepository):
             )
 
     @staticmethod
-    def _decode_schedule(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
+    def _decode_schedule(row: dict[str, Any]) -> dict[str, Any]:
         item = dict(row)
         item["recipients"] = json.loads(item.pop("recipients_json") or "[]")
         item["enabled"] = bool(item["enabled"])
@@ -60,7 +57,7 @@ class AutomationRepository(SQLiteRepository):
         return item
 
     @staticmethod
-    def _decode_delivery(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
+    def _decode_delivery(row: dict[str, Any]) -> dict[str, Any]:
         item = dict(row)
         item.pop("execution_owner", None)
         item["recipients"] = json.loads(item.pop("recipients_json") or "[]")
@@ -77,7 +74,7 @@ class AutomationRepository(SQLiteRepository):
                     month_day, report_period, recipients_json, subject_template,
                     chart_type, attach_report, max_attempts, enabled, next_run_at,
                     created_by_id, created_by_name, created_at, updated_at, device_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     schedule_id,
@@ -97,11 +94,11 @@ class AutomationRepository(SQLiteRepository):
             cursor = connection.execute(
                 """
                 UPDATE report_schedules
-                SET name = ?, report_type = ?, frequency = ?, run_time = ?,
-                    weekday = ?, month_day = ?, report_period = ?, recipients_json = ?,
-                    subject_template = ?, chart_type = ?, attach_report = ?,
-                    max_attempts = ?, enabled = ?, next_run_at = ?, updated_at = ?, device_id = ?
-                WHERE schedule_id = ?
+                SET name = %s, report_type = %s, frequency = %s, run_time = %s,
+                    weekday = %s, month_day = %s, report_period = %s, recipients_json = %s,
+                    subject_template = %s, chart_type = %s, attach_report = %s,
+                    max_attempts = %s, enabled = %s, next_run_at = %s, updated_at = %s, device_id = %s
+                WHERE schedule_id = %s
                 """,
                 (
                     data["name"], data["report_type"], data["frequency"],
@@ -119,7 +116,7 @@ class AutomationRepository(SQLiteRepository):
     def get_schedule(self, schedule_id: str) -> dict | None:
         with self.connect() as connection:
             row = connection.execute(
-                "SELECT * FROM report_schedules WHERE schedule_id = ?", (schedule_id,)
+                "SELECT * FROM report_schedules WHERE schedule_id = %s", (schedule_id,)
             ).fetchone()
         return self._decode_schedule(row) if row else None
 
@@ -142,7 +139,7 @@ class AutomationRepository(SQLiteRepository):
     def delete_schedule(self, schedule_id: str) -> bool:
         with self.connect() as connection:
             cursor = connection.execute(
-                "DELETE FROM report_schedules WHERE schedule_id = ?", (schedule_id,)
+                "DELETE FROM report_schedules WHERE schedule_id = %s", (schedule_id,)
             )
             return cursor.rowcount == 1
 
@@ -151,9 +148,9 @@ class AutomationRepository(SQLiteRepository):
             rows = connection.execute(
                 """
                 SELECT * FROM report_schedules
-                WHERE enabled = 1 AND next_run_at <= ?
+                WHERE enabled = 1 AND next_run_at <= %s
                 ORDER BY COALESCE(last_run_at, ''), next_run_at, schedule_id
-                LIMIT ?
+                LIMIT %s
                 """,
                 (now, limit),
             ).fetchall()
@@ -171,10 +168,9 @@ class AutomationRepository(SQLiteRepository):
     ) -> dict | None:
         run_id = f"run_{uuid4().hex[:18]}"
         try:
-            with self.connect() as connection:
-                self.begin_immediate(connection)
+            with self.connect() as connection, connection.transaction():
                 current = connection.execute(
-                    "SELECT * FROM report_schedules WHERE schedule_id = ?",
+                    "SELECT * FROM report_schedules WHERE schedule_id = %s FOR UPDATE",
                     (schedule["schedule_id"],),
                 ).fetchone()
                 if current is None or (trigger_type == "scheduled" and not current["enabled"]):
@@ -183,8 +179,8 @@ class AutomationRepository(SQLiteRepository):
                     updated = connection.execute(
                         """
                         UPDATE report_schedules
-                        SET next_run_at = ?, last_run_at = ?, last_status = 'queued', updated_at = ?
-                        WHERE schedule_id = ? AND next_run_at = ? AND enabled = 1
+                        SET next_run_at = %s, last_run_at = %s, last_status = 'queued', updated_at = %s
+                        WHERE schedule_id = %s AND next_run_at = %s AND enabled = 1
                         """,
                         (next_run_at, now, now, schedule["schedule_id"], scheduled_for),
                     )
@@ -194,8 +190,8 @@ class AutomationRepository(SQLiteRepository):
                     connection.execute(
                         """
                         UPDATE report_schedules
-                        SET last_run_at = ?, last_status = 'queued', updated_at = ?
-                        WHERE schedule_id = ?
+                        SET last_run_at = %s, last_status = 'queued', updated_at = %s
+                        WHERE schedule_id = %s
                         """,
                         (now, now, schedule["schedule_id"]),
                     )
@@ -206,7 +202,7 @@ class AutomationRepository(SQLiteRepository):
                         scheduled_for, trigger_type, status, recipients_json,
                         subject_template, chart_type, attach_report, max_attempts, created_by_id,
                         created_by_name, created_at, updated_at, device_id
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, 'queued', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         run_id, schedule["schedule_id"], schedule["name"],
@@ -218,14 +214,14 @@ class AutomationRepository(SQLiteRepository):
                         schedule["created_by_name"], now, now, current["device_id"],
                     ),
                 )
-        except sqlite3.IntegrityError:
+        except UniqueViolation:
             return None
         return self.get_run(run_id)
 
-    def get_run(self, run_id: str) -> dict | None:
+    def get_run(self, run_id: str, *, for_update: bool = False) -> dict | None:
         with self.connect() as connection:
             row = connection.execute(
-                "SELECT * FROM scheduled_report_runs WHERE run_id = ?", (run_id,)
+                "SELECT * FROM scheduled_report_runs WHERE run_id = %s" + (" FOR UPDATE" if for_update else ""), (run_id,)
             ).fetchone()
         if row is None:
             return None
@@ -237,7 +233,7 @@ class AutomationRepository(SQLiteRepository):
     def get_run_for_report(self, report_id: str) -> dict | None:
         with self.connect() as connection:
             row = connection.execute(
-                "SELECT * FROM scheduled_report_runs WHERE report_id = ?",
+                "SELECT * FROM scheduled_report_runs WHERE report_id = %s",
                 (report_id,),
             ).fetchone()
         if row is None:
@@ -262,7 +258,7 @@ class AutomationRepository(SQLiteRepository):
                            SELECT 1 FROM email_deliveries d WHERE d.report_id = r.report_id
                        ))
                    OR (r.status = 'generating' AND j.status = 'failed')
-                ORDER BY r.created_at, r.run_id LIMIT ?
+                ORDER BY r.created_at, r.run_id LIMIT %s
                 """,
                 (limit,),
             ).fetchall()
@@ -273,8 +269,8 @@ class AutomationRepository(SQLiteRepository):
             updated = connection.execute(
                 """
                 UPDATE scheduled_report_runs
-                SET report_id = ?, status = 'generating', updated_at = ?
-                WHERE run_id = ? AND report_id IS NULL
+                SET report_id = %s, status = 'generating', updated_at = %s
+                WHERE run_id = %s AND report_id IS NULL
                 """,
                 (report_id, now, run_id),
             )
@@ -284,44 +280,43 @@ class AutomationRepository(SQLiteRepository):
     def mark_run(self, run_id: str, status: str, *, now: str, error: str | None = None) -> None:
         with self.connect() as connection:
             row = connection.execute(
-                "SELECT schedule_id FROM scheduled_report_runs WHERE run_id = ?", (run_id,)
+                "SELECT schedule_id FROM scheduled_report_runs WHERE run_id = %s", (run_id,)
             ).fetchone()
             connection.execute(
                 """
                 UPDATE scheduled_report_runs
-                SET status = ?, last_error = ?, updated_at = ? WHERE run_id = ?
+                SET status = %s, last_error = %s, updated_at = %s WHERE run_id = %s
                 """,
                 (status, error, now, run_id),
             )
             if row and row["schedule_id"]:
                 connection.execute(
                     """
-                    UPDATE report_schedules SET last_status = ?, updated_at = ?
-                    WHERE schedule_id = ?
+                    UPDATE report_schedules SET last_status = %s, updated_at = %s
+                    WHERE schedule_id = %s
                     """,
                     (status, now, row["schedule_id"]),
                 )
 
     def enqueue_delivery(self, report_id: str, *, subject: str, now: str) -> dict | None:
         with self.connect() as connection:
-            self.begin_immediate(connection)
             existing = connection.execute(
-                "SELECT delivery_id FROM email_deliveries WHERE report_id = ?", (report_id,)
+                "SELECT delivery_id FROM email_deliveries WHERE report_id = %s", (report_id,)
             ).fetchone()
             if existing is not None:
-                return self.delivery_for_report(report_id)
+                return AutomationRepository(self.database, connection=connection).delivery_for_report(report_id)
             run = connection.execute(
-                "SELECT * FROM scheduled_report_runs WHERE report_id = ?", (report_id,)
+                "SELECT * FROM scheduled_report_runs WHERE report_id = %s", (report_id,)
             ).fetchone()
             if run is None:
                 return None
             delivery_id = f"mail_{uuid4().hex[:18]}"
             connection.execute(
                 """
-                INSERT OR IGNORE INTO email_deliveries (
+                INSERT INTO email_deliveries (
                     delivery_id, run_id, report_id, recipients_json, subject,
                     status, max_attempts, next_attempt_at, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, 'pending', %s, %s, %s, %s) ON CONFLICT(report_id) DO NOTHING
                 """,
                 (
                     delivery_id, run["run_id"], report_id, run["recipients_json"],
@@ -330,8 +325,8 @@ class AutomationRepository(SQLiteRepository):
             )
             connection.execute(
                 """
-                UPDATE scheduled_report_runs SET status = 'email_pending', updated_at = ?
-                WHERE run_id = ?
+                UPDATE scheduled_report_runs SET status = 'email_pending', updated_at = %s
+                WHERE run_id = %s
                 """,
                 (now, run["run_id"]),
             )
@@ -346,7 +341,7 @@ class AutomationRepository(SQLiteRepository):
                 FROM email_deliveries AS d
                 JOIN scheduled_report_runs AS r ON r.run_id = d.run_id
                 JOIN reports AS p ON p.report_id = d.report_id
-                WHERE d.report_id = ?
+                WHERE d.report_id = %s
                 """,
                 (report_id,),
             ).fetchone()
@@ -354,7 +349,6 @@ class AutomationRepository(SQLiteRepository):
 
     def claim_delivery(self, now: str) -> dict | None:
         with self.connect() as connection:
-            self.begin_immediate(connection)
             row = connection.execute(
                 """
                 SELECT d.*, r.schedule_name, r.report_type, r.report_date, r.attach_report,
@@ -362,9 +356,9 @@ class AutomationRepository(SQLiteRepository):
                 FROM email_deliveries AS d
                 JOIN scheduled_report_runs AS r ON r.run_id = d.run_id
                 JOIN reports AS p ON p.report_id = d.report_id
-                WHERE d.status IN ('pending', 'retry_wait') AND d.next_attempt_at <= ?
+                WHERE d.status IN ('pending', 'retry_wait') AND d.next_attempt_at <= %s
                 ORDER BY d.next_attempt_at, d.created_at
-                LIMIT 1
+                LIMIT 1 FOR UPDATE OF d SKIP LOCKED
                 """,
                 (now,),
             ).fetchone()
@@ -373,9 +367,9 @@ class AutomationRepository(SQLiteRepository):
             updated = connection.execute(
                 """
                 UPDATE email_deliveries
-                SET status = 'sending', attempt_count = attempt_count + 1, updated_at = ?,
-                    message_id = COALESCE(message_id, ?), execution_owner = ?
-                WHERE delivery_id = ? AND status IN ('pending', 'retry_wait')
+                SET status = 'sending', attempt_count = attempt_count + 1, updated_at = %s,
+                    message_id = COALESCE(message_id, %s), execution_owner = %s
+                WHERE delivery_id = %s AND status IN ('pending', 'retry_wait')
                 """,
                 (now, f"<{row['delivery_id']}@cutting-report.local>", execution_owner(), row["delivery_id"]),
             )
@@ -388,15 +382,14 @@ class AutomationRepository(SQLiteRepository):
 
     def mark_delivery_sent(self, delivery: dict, *, message_id: str, now: str) -> None:
         with self.connect() as connection:
-            self.begin_immediate(connection)
             results = dict(delivery.get("recipient_results", {}))
             results.update({recipient: {"status": "accepted"} for recipient in delivery["recipients"]})
             updated = connection.execute(
                 """
                 UPDATE email_deliveries
-                SET status = 'sent', message_id = ?, last_error = NULL,
-                    sent_at = ?, updated_at = ?, recipient_results_json = ?
-                WHERE delivery_id = ? AND status = 'sending'
+                SET status = 'sent', message_id = %s, last_error = NULL,
+                    sent_at = %s, updated_at = %s, recipient_results_json = %s
+                WHERE delivery_id = %s AND status = 'sending'
                 """,
                 (message_id, now, now, json.dumps(results), delivery["delivery_id"]),
             )
@@ -410,12 +403,11 @@ class AutomationRepository(SQLiteRepository):
         exhausted = int(delivery["attempt_count"]) >= int(delivery["max_attempts"])
         status = "failed" if exhausted else "retry_wait"
         with self.connect() as connection:
-            self.begin_immediate(connection)
             updated = connection.execute(
                 """
                 UPDATE email_deliveries
-                SET status = ?, last_error = ?, next_attempt_at = ?, updated_at = ?
-                WHERE delivery_id = ? AND status = 'sending'
+                SET status = %s, last_error = %s, next_attempt_at = %s, updated_at = %s
+                WHERE delivery_id = %s AND status = 'sending'
                 """,
                 (status, error[:500], next_attempt_at, now, delivery["delivery_id"]),
             )
@@ -438,10 +430,9 @@ class AutomationRepository(SQLiteRepository):
         if not remaining:
             raise ValueError("SMTP 拒收结果没有匹配的收件人")
         with self.connect() as connection:
-            self.begin_immediate(connection)
             connection.execute(
-                """UPDATE email_deliveries SET recipients_json = ?, recipient_results_json = ?,
-                   message_id = ? WHERE delivery_id = ? AND status = 'sending'""",
+                """UPDATE email_deliveries SET recipients_json = %s, recipient_results_json = %s,
+                   message_id = %s WHERE delivery_id = %s AND status = 'sending'""",
                 (json.dumps(remaining), json.dumps(results), message_id, delivery["delivery_id"]),
             )
             AutomationRepository(self.database, connection=connection).mark_delivery_failed(
@@ -453,10 +444,9 @@ class AutomationRepository(SQLiteRepository):
         results = dict(delivery.get("recipient_results", {}))
         results.update({recipient: {"status": "unknown"} for recipient in delivery["recipients"]})
         with self.connect() as connection:
-            self.begin_immediate(connection)
             updated = connection.execute(
-                """UPDATE email_deliveries SET status = 'unknown', last_error = ?,
-                   updated_at = ?, recipient_results_json = ? WHERE delivery_id = ? AND status = 'sending'""",
+                """UPDATE email_deliveries SET status = 'unknown', last_error = %s,
+                   updated_at = %s, recipient_results_json = %s WHERE delivery_id = %s AND status = 'sending'""",
                 (error, now, json.dumps(results), delivery["delivery_id"]),
             )
             if updated.rowcount != 1:
@@ -467,8 +457,8 @@ class AutomationRepository(SQLiteRepository):
 
     def delivery_state(self, delivery_id: str) -> str | None:
         with self.connect() as connection:
-            row = connection.execute("SELECT status FROM email_deliveries WHERE delivery_id = ?", (delivery_id,)).fetchone()
-        return row[0] if row else None
+            row = connection.execute("SELECT status FROM email_deliveries WHERE delivery_id = %s", (delivery_id,)).fetchone()
+        return row['status'] if row else None
 
     def resolve_unknown_delivery(self, delivery_id: str, *, message_id: str,
                                  outcomes: list[dict], evidence_note: str,
@@ -480,8 +470,7 @@ class AutomationRepository(SQLiteRepository):
                                                 for value in decisions.values()):
             raise ValueError("收件人核对结果重复或无效")
         with self.connect() as connection:
-            self.begin_immediate(connection)
-            row = connection.execute("SELECT * FROM email_deliveries WHERE delivery_id=?",
+            row = connection.execute("SELECT * FROM email_deliveries WHERE delivery_id=%s",
                                      (delivery_id,)).fetchone()
             if row is None:
                 raise LookupError("邮件发送记录不存在")
@@ -502,13 +491,13 @@ class AutomationRepository(SQLiteRepository):
             status = "failed" if remaining else "sent"
             error = "人工核对服务器确认未接收，等待人工重试" if remaining else None
             connection.execute("""
-                INSERT INTO email_delivery_resolutions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO email_delivery_resolutions VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (uuid4().hex, delivery_id, delivery["run_id"], message_id,
                   user["user_id"], user["display_name"], evidence_note.strip(),
                   json.dumps(previous), json.dumps(results), status, now))
             connection.execute("""
-                UPDATE email_deliveries SET status=?, recipients_json=?, recipient_results_json=?,
-                    last_error=?, updated_at=? WHERE delivery_id=? AND status='unknown'
+                UPDATE email_deliveries SET status=%s, recipients_json=%s, recipient_results_json=%s,
+                    last_error=%s, updated_at=%s WHERE delivery_id=%s AND status='unknown'
             """, (status, json.dumps(remaining if remaining else delivery["recipients"]),
                   json.dumps(results), error, now, delivery_id))
             AutomationRepository(self.database, connection=connection).mark_run(
@@ -519,7 +508,7 @@ class AutomationRepository(SQLiteRepository):
     def delivery_resolutions(self, delivery_id: str) -> list[dict]:
         with self.connect() as connection:
             rows = connection.execute("""
-                SELECT * FROM email_delivery_resolutions WHERE delivery_id=?
+                SELECT * FROM email_delivery_resolutions WHERE delivery_id=%s
                 ORDER BY created_at, resolution_id
             """, (delivery_id,)).fetchall()
         results = []
@@ -532,24 +521,23 @@ class AutomationRepository(SQLiteRepository):
 
     def retry_delivery(self, delivery_id: str, *, now: str) -> bool:
         with self.connect() as connection:
-            self.begin_immediate(connection)
             row = connection.execute(
-                "SELECT run_id FROM email_deliveries WHERE delivery_id = ? AND status = 'failed'", (delivery_id,)
+                "SELECT run_id FROM email_deliveries WHERE delivery_id = %s AND status = 'failed'", (delivery_id,)
             ).fetchone()
             if row is None:
                 return False
             connection.execute(
                 """
                 UPDATE email_deliveries
-                SET status = 'pending', attempt_count = 0, next_attempt_at = ?,
-                    last_error = NULL, updated_at = ? WHERE delivery_id = ?
+                SET status = 'pending', attempt_count = 0, next_attempt_at = %s,
+                    last_error = NULL, updated_at = %s WHERE delivery_id = %s
                 """,
                 (now, now, delivery_id),
             )
             connection.execute(
                 """
                 UPDATE scheduled_report_runs SET status = 'email_pending',
-                    last_error = NULL, updated_at = ? WHERE run_id = ?
+                    last_error = NULL, updated_at = %s WHERE run_id = %s
                 """,
                 (now, row["run_id"]),
             )
@@ -557,7 +545,7 @@ class AutomationRepository(SQLiteRepository):
 
     def list_deliveries(self, *, page: int, page_size: int) -> tuple[list[dict], int]:
         with self.connect() as connection:
-            total = int(connection.execute("SELECT COUNT(*) FROM email_deliveries").fetchone()[0])
+            total = int(connection.execute("SELECT COUNT(*) AS count FROM email_deliveries").fetchone()['count'])
             rows = connection.execute(
                 """
                 SELECT d.*, r.schedule_name, r.report_type, r.report_date, r.trigger_type,
@@ -566,7 +554,7 @@ class AutomationRepository(SQLiteRepository):
                 JOIN scheduled_report_runs AS r ON r.run_id = d.run_id
                 JOIN reports AS p ON p.report_id = d.report_id
                 ORDER BY d.created_at DESC
-                LIMIT ? OFFSET ?
+                LIMIT %s OFFSET %s
                 """,
                 (page_size, (page - 1) * page_size),
             ).fetchall()

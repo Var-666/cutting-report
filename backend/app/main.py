@@ -61,7 +61,7 @@ logging.basicConfig(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Dispatch recovery is safe only after the previous Web process has exited.
-    lock = FileLock(settings.metadata_db_path.parent / ".web-process.lock")
+    lock = FileLock(settings.data_dir / ".web-process.lock")
     if not lock.acquire(blocking=False):
         raise RuntimeError("已有 Web 进程运行；请保持一个 Web 和一个独立 Worker")
     try:
@@ -70,7 +70,10 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         if hasattr(app.state, "runtime"):
-            app.state.runtime.database_runtime.close()
+            try:
+                app.state.runtime.database_runtime.close()
+            finally:
+                app.state.runtime.database.close()
         lock.release()
 
 

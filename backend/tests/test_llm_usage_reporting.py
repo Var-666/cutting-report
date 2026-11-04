@@ -14,8 +14,8 @@ from app.services.llm_usage_service import record_llm_call
 
 
 @pytest.fixture
-def repository(tmp_path):
-    repository = LlmUsageRepository(tmp_path / "usage.db")
+def repository(state_database, tmp_path):
+    repository = LlmUsageRepository(state_database)
     repository.initialize()
     with repository.connect() as connection:
         connection.execute("UPDATE llm_usage_tracking SET started_at = '2026-01-01T00:00:00+08:00'")
@@ -43,11 +43,10 @@ def test_daily_and_monthly_totals_include_failed_and_unmetered_calls_without_inv
     assert alarm["calls"]["total"] == 1
 
 
-def test_upgrade_preserves_legacy_totals_without_assigning_them_to_today(tmp_path):
-    repository = LlmUsageRepository(tmp_path / "old.db")
+def test_upgrade_preserves_legacy_totals_without_assigning_them_to_today(state_database, tmp_path):
+    repository = LlmUsageRepository(state_database)
     with repository.connect() as connection:
-        connection.execute("CREATE TABLE llm_usage_totals (id INTEGER PRIMARY KEY, call_count INTEGER, metered_count INTEGER, total_tokens INTEGER)")
-        connection.execute("INSERT INTO llm_usage_totals VALUES (1, 10, 8, 700)")
+        connection.execute("UPDATE llm_usage_totals SET call_count=10,metered_count=8,total_tokens=700 WHERE id=1")
     repository.initialize()
     repository.initialize()
     result = repository.report(date(2020, 1, 1), date(2020, 1, 2))
@@ -58,27 +57,29 @@ def test_upgrade_preserves_legacy_totals_without_assigning_them_to_today(tmp_pat
 
 
 def test_call_and_lifetime_are_atomic_and_concurrent_calls_are_not_lost(repository):
+    # Overflow the retained BIGINT total after inserting a detail row: both
+    # changes must roll back together without granting the app DDL privileges.
     with repository.connect() as connection:
-        connection.execute("CREATE TRIGGER fail_totals BEFORE UPDATE ON llm_usage_totals BEGIN SELECT RAISE(ABORT, 'write failed'); END")
-    with pytest.raises(Exception, match="write failed"):
+        connection.execute('UPDATE llm_usage_totals SET total_tokens=%s',(2**63-1,))
+    with pytest.raises(Exception, match='out of range'):
         repository.record_call(5)
     with repository.connect() as connection:
-        assert connection.execute("SELECT COUNT(*) FROM llm_usage_calls").fetchone()[0] == 0
-        connection.execute("DROP TRIGGER fail_totals")
+        assert connection.execute('SELECT COUNT(*) AS n FROM llm_usage_calls').fetchone()['n'] == 0
+        connection.execute('UPDATE llm_usage_totals SET total_tokens=0')
     with ThreadPoolExecutor(max_workers=8) as executor:
         list(executor.map(repository.record_call, [5] * 24))
     assert repository.summary() == {"call_count": 24, "metered_count": 24, "total_tokens": 120}
 
 
-def test_accounting_uses_business_timezone_and_does_not_double_count_token_subsets(tmp_path):
+def test_accounting_uses_business_timezone_and_does_not_double_count_token_subsets(state_database, tmp_path):
     settings = Settings(project_root=tmp_path, timezone="Asia/Shanghai", llm_model="model-a")
     stamp = datetime(2026, 2, 28, 16, 1, tzinfo=timezone.utc)
-    record_llm_call(settings, object(), {"usage": {
+    record_llm_call(settings, state_database, object(), {"usage": {
         "prompt_tokens": 20, "completion_tokens": 10,
         "prompt_tokens_details": {"cached_tokens": 12},
         "completion_tokens_details": {"reasoning_tokens": 3},
     }}, scene="alarm", occurred_at=stamp, duration_ms=250)
-    result = LlmUsageRepository(settings.metadata_db_path).report(date(2026, 3, 1), date(2026, 3, 1))
+    result = LlmUsageRepository(state_database).report(date(2026, 3, 1), date(2026, 3, 1))
     row = result["calls"]["items"][0]
     assert row["total_tokens"] == 30
     assert (row["input_tokens"], row["output_tokens"], row["cached_tokens"], row["reasoning_tokens"]) == (20, 10, 12, 3)
@@ -88,10 +89,10 @@ def test_accounting_uses_business_timezone_and_does_not_double_count_token_subse
 
 
 @pytest.mark.parametrize("usage", [None, {"total_tokens": True}, {"total_tokens": -1}, {"prompt_tokens": 3}, {"total_tokens": "20"}])
-def test_invalid_or_partial_token_counts_stay_unknown(tmp_path, usage):
+def test_invalid_or_partial_token_counts_stay_unknown(state_database, tmp_path, usage):
     settings = Settings(project_root=tmp_path)
-    record_llm_call(settings, object(), {"usage": usage})
-    repository = LlmUsageRepository(settings.metadata_db_path)
+    record_llm_call(settings, state_database, object(), {"usage": usage})
+    repository = LlmUsageRepository(state_database)
     with repository.connect() as connection:
         row = connection.execute("SELECT * FROM llm_usage_calls").fetchone()
         assert row["total_tokens"] is None

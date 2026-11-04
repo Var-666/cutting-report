@@ -20,9 +20,8 @@ def service(tmp_path):
     return QueryService(cutting_settings(project_root=tmp_path, data_source_mode="demo", demo_mode=True), client=source_client(cutting_settings(project_root=tmp_path, data_source_mode="demo", demo_mode=True)))
 
 
-def test_workshop_warmup_and_report_generation_share_query_without_confirming(service, tmp_path, monkeypatch):
-    repo = WorkshopRepository(tmp_path / "metadata.db", scope_machine_no='Cutter01')
-    repo.initialize()
+def test_workshop_warmup_and_report_generation_share_query_without_confirming(state_database, service, tmp_path, monkeypatch):
+    repo = WorkshopRepository(state_database, scope_machine_no='Cutter01')
     admin = repo.bootstrap_admin(username="testadmin", display_name="测试管理员",
                                  password="test-only-password", now="2026-09-03T08:00:00+08:00")
     app = FastAPI()

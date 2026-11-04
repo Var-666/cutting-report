@@ -1,19 +1,19 @@
 from __future__ import annotations
 
 import json
-import sqlite3
-from pathlib import Path
+from psycopg import Connection
+
 from typing import Any
 
-from app.database.sqlite import SQLiteDatabase, SQLiteRepository, execution_owner, require_worker_recovery
+from app.database.postgres import PostgresDatabase, PostgresRepository, execution_owner, require_worker_recovery
 
 
-class MetadataRepository(SQLiteRepository):
+class MetadataRepository(PostgresRepository):
     def __init__(
         self,
-        database: Path | SQLiteDatabase,
+        database: PostgresDatabase,
         *,
-        connection: sqlite3.Connection | None = None,
+        connection: Connection | None = None,
         device_id: str | None = None,
         analysis_scope: str | None = None,
     ) -> None:
@@ -31,18 +31,15 @@ class MetadataRepository(SQLiteRepository):
     def analysis_scope(self) -> str:
         return self._analysis_scope or self.require_device_id()
 
-    def initialize(self) -> None:
-        from app.database.migrations import apply_migrations
-        apply_migrations(self.database, names=("003_metadata",))
 
     def generation(self, cache_key: str) -> dict | None:
         with self.connect() as connection:
-            row = connection.execute("SELECT * FROM analysis_generations WHERE cache_key=?", (cache_key,)).fetchone()
+            row = connection.execute("SELECT * FROM analysis_generations WHERE cache_key=%s", (cache_key,)).fetchone()
             return dict(row) if row else None
 
     def start_generation(self, cache_key: str, attempt_id: str, now: float) -> None:
         with self.connect() as connection:
-            connection.execute("""INSERT INTO analysis_generations VALUES (?, ?, 'running', ?, NULL, NULL)
+            connection.execute("""INSERT INTO analysis_generations VALUES (%s, %s, 'running', %s, NULL, NULL)
                 ON CONFLICT(cache_key) DO UPDATE SET attempt_id=excluded.attempt_id,
                     status='running', updated_at=excluded.updated_at, error_type=NULL, error_message=NULL""",
                 (cache_key, attempt_id, now))
@@ -50,8 +47,8 @@ class MetadataRepository(SQLiteRepository):
     def finish_generation(self, cache_key: str, attempt_id: str, status: str, now: float,
                           error_type: str | None = None, error_message: str | None = None) -> None:
         with self.connect() as connection:
-            connection.execute("""UPDATE analysis_generations SET status=?, updated_at=?, error_type=?, error_message=?
-                WHERE cache_key=? AND attempt_id=?""", (status, now, error_type, error_message, cache_key, attempt_id))
+            connection.execute("""UPDATE analysis_generations SET status=%s, updated_at=%s, error_type=%s, error_message=%s
+                WHERE cache_key=%s AND attempt_id=%s""", (status, now, error_type, error_message, cache_key, attempt_id))
 
     def queue_observation(self) -> dict:
         with self.connect() as connection:
@@ -67,7 +64,6 @@ class MetadataRepository(SQLiteRepository):
 
     def recover_interrupted_jobs(self) -> int:
         with self.connect() as connection:
-            self.begin_immediate(connection)
             require_worker_recovery(connection)
             cursor = connection.execute(
                 """
@@ -102,7 +98,7 @@ class MetadataRepository(SQLiteRepository):
                     report_id, report_type, status, stage_message, report_date, project_code,
                     ship_no, created_at, request_id, definition_id, report_title, parameters_json,
                     period_start, period_end, device_id
-                ) VALUES (?, ?, 'pending', '等待生成', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, 'pending', '等待生成', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     report_id,
@@ -123,13 +119,12 @@ class MetadataRepository(SQLiteRepository):
 
     def claim_next_job(self, started_at: str) -> dict[str, Any] | None:
         with self.connect() as connection:
-            self.begin_immediate(connection)
             row = connection.execute(
                 """
                 SELECT * FROM report_jobs
-                WHERE status = 'pending' AND (? IS NULL OR device_id = ?)
+                WHERE status = 'pending' AND (%s::text IS NULL OR device_id = %s)
                 ORDER BY created_at ASC
-                LIMIT 1
+                LIMIT 1 FOR UPDATE SKIP LOCKED
                 """, (self.device_id, self.device_id),
             ).fetchone()
             if row is None:
@@ -137,8 +132,8 @@ class MetadataRepository(SQLiteRepository):
             updated = connection.execute(
                 """
                 UPDATE report_jobs
-                SET status = 'querying', stage_message = '正在查询生产数据', started_at = ?, execution_owner = ?
-                WHERE report_id = ? AND status = 'pending'
+                SET status = 'querying', stage_message = '正在查询生产数据', started_at = %s, execution_owner = %s
+                WHERE report_id = %s AND status = 'pending'
                 """,
                 (started_at, execution_owner(), row["report_id"]),
             )
@@ -161,11 +156,11 @@ class MetadataRepository(SQLiteRepository):
             connection.execute(
                 """
                 UPDATE report_jobs
-                SET status = ?, stage_message = ?,
-                    ai_status = COALESCE(?, ai_status),
-                    finished_at = COALESCE(?, finished_at),
-                    error_code = ?, error_message = ?
-                WHERE report_id = ? AND (? IS NULL OR device_id = ?)
+                SET status = %s, stage_message = %s,
+                    ai_status = COALESCE(%s, ai_status),
+                    finished_at = COALESCE(%s, finished_at),
+                    error_code = %s, error_message = %s
+                WHERE report_id = %s AND (%s::text IS NULL OR device_id = %s)
                 """,
                 (
                     status,
@@ -198,7 +193,7 @@ class MetadataRepository(SQLiteRepository):
                 INSERT INTO reports (
                     report_id, filename, relative_path, file_size, sha256,
                     task_count, generated_at, system_version
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     report_id,
@@ -220,7 +215,7 @@ class MetadataRepository(SQLiteRepository):
                        r.generated_at, r.sha256
                 FROM report_jobs j
                 LEFT JOIN reports r ON r.report_id = j.report_id
-                WHERE j.report_id = ? AND (? IS NULL OR j.device_id = ?)
+                WHERE j.report_id = %s AND (%s::text IS NULL OR j.device_id = %s)
                 """,
                 (report_id, self.device_id, self.device_id),
             ).fetchone()
@@ -239,10 +234,10 @@ class MetadataRepository(SQLiteRepository):
                 """
                 SELECT result_json
                 FROM report_analyses
-                WHERE cache_key = ?
-                  AND report_type = ?
-                  AND report_date = ?
-                  AND COALESCE(data_version, input_hash) = ?
+                WHERE cache_key = %s
+                  AND report_type = %s
+                  AND report_date = %s
+                  AND COALESCE(data_version, input_hash) = %s
                 """,
                 (cache_key, report_type, report_date, data_version),
             ).fetchone()
@@ -258,9 +253,9 @@ class MetadataRepository(SQLiteRepository):
             row = connection.execute(
                 """
                 SELECT result_json FROM report_analyses
-                WHERE display_scope = ? AND report_type = ? AND report_date = ?
-                  AND model_name = ? AND prompt_version = ? AND mode = 'model'
-                ORDER BY generated_at DESC, rowid DESC LIMIT 1
+                WHERE display_scope = %s AND report_type = %s AND report_date = %s
+                  AND model_name = %s AND prompt_version = %s AND mode = 'model'
+                ORDER BY generated_at DESC, insertion_order DESC LIMIT 1
                 """,
                 (self.analysis_scope, report_type, report_date, model_name, prompt_version),
             ).fetchone()
@@ -278,7 +273,7 @@ class MetadataRepository(SQLiteRepository):
                 """
                 SELECT data_version, updated_at
                 FROM analysis_source_versions
-                WHERE report_type = ? AND report_date = ? AND device_id = ?
+                WHERE report_type = %s AND report_date = %s AND device_id = %s
                 """,
                 (report_type, report_date, self.analysis_scope),
             ).fetchone()
@@ -302,7 +297,7 @@ class MetadataRepository(SQLiteRepository):
                 """
                 INSERT INTO analysis_source_versions (
                     report_type, report_date, data_version, updated_at, device_id
-                ) VALUES (?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s)
                 ON CONFLICT(report_type, report_date, device_id) DO UPDATE SET
                     data_version = excluded.data_version,
                     updated_at = excluded.updated_at
@@ -332,7 +327,7 @@ class MetadataRepository(SQLiteRepository):
                 INSERT INTO report_analyses (
                     cache_key, report_type, report_date, input_hash, data_version, status, mode,
                     model_name, prompt_version, result_json, generated_at, display_scope
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT(cache_key) DO UPDATE SET
                     input_hash = excluded.input_hash,
                     data_version = excluded.data_version,
@@ -374,7 +369,7 @@ class MetadataRepository(SQLiteRepository):
         filters: list[str] = []
         parameters: list[Any] = []
         if self.device_id is not None:
-            filters.append("j.device_id = ?")
+            filters.append("j.device_id = %s")
             parameters.append(self.device_id)
         for column, value in (
             ("j.report_date", report_date),
@@ -383,13 +378,13 @@ class MetadataRepository(SQLiteRepository):
             ("j.report_type", report_type),
         ):
             if value:
-                filters.append(f"{column} = ?")
+                filters.append(f"{column} = %s")
                 parameters.append(value)
         where = f"WHERE {' AND '.join(filters)}" if filters else ""
         with self.connect() as connection:
             total = connection.execute(
-                f"SELECT COUNT(*) FROM report_jobs j {where}", parameters
-            ).fetchone()[0]
+                f"SELECT COUNT(*) AS count FROM report_jobs j {where}", parameters
+            ).fetchone()['count']
             rows = connection.execute(
                 f"""
                 SELECT j.*, r.filename, r.file_size, r.task_count, r.generated_at
@@ -397,7 +392,7 @@ class MetadataRepository(SQLiteRepository):
                 LEFT JOIN reports r ON r.report_id = j.report_id
                 {where}
                 ORDER BY j.created_at DESC
-                LIMIT ? OFFSET ?
+                LIMIT %s OFFSET %s
                 """,
                 [*parameters, page_size, (page - 1) * page_size],
             ).fetchall()

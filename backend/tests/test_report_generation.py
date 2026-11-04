@@ -33,8 +33,8 @@ def business_payload(value):
     return value
 
 
-def generate_report_case(directory, report_type, interval):
-    pipeline, job = pipeline_job(directory, report_type, interval, llm_enabled=False)
+def generate_report_case(state_database, directory, report_type, interval):
+    pipeline, job = pipeline_job(state_database, directory, report_type, interval, llm_enabled=False)
     captured, transitions = [], []
     original_render, original_status = pipeline.report_service.render, pipeline.metadata.update_status
 
@@ -59,8 +59,8 @@ def generate_report_case(directory, report_type, interval):
 
 
 @pytest.mark.parametrize(('report_type', 'interval'), SCENARIOS)
-def test_report_payload_and_transitions_are_unchanged(tmp_path, report_type, interval):
-    assert generate_report_case(tmp_path, report_type, interval) == EXPECTED_REPORTS[(report_type, interval)]
+def test_report_payload_and_transitions_are_unchanged(state_database, tmp_path, report_type, interval):
+    assert generate_report_case(state_database, tmp_path, report_type, interval) == EXPECTED_REPORTS[(report_type, interval)]
 
 
 def test_legacy_daily_comparisons_reuse_raw_equipment_records_and_calendar_dates():

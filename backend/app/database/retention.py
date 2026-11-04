@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import sqlite3
-from pathlib import Path, PurePosixPath
+from psycopg import Connection
+from pathlib import PurePosixPath
 from typing import Any
 
-from app.database.sqlite import SQLiteDatabase, SQLiteRepository
+from app.database.postgres import PostgresDatabase, PostgresRepository
 from app.database.dispatch import UNRESOLVED_DISPATCH_SQL
 
 
@@ -23,32 +23,29 @@ ALARM_OCCURRED_AT_SQL = """replace(substr(COALESCE(
 ), 1, 19), 'T', ' ')"""
 ALARM_REPORT_LINK_SQL = """(
     incident.pdf_report_id = report.report_id
-    OR incident.incident_id IN (SELECT value FROM json_each(report.incident_ids_json))
+    OR incident.incident_id IN (SELECT value FROM json_array_elements_text(report.incident_ids_json::json) AS element(value))
 )"""
 
 
-class RetentionRepository(SQLiteRepository):
+class RetentionRepository(PostgresRepository):
     """Persistence boundary for bounded operational-history retention."""
 
     def __init__(
         self,
-        database: Path | SQLiteDatabase,
+        database: PostgresDatabase,
         *,
-        connection: sqlite3.Connection | None = None,
+        connection: Connection | None = None,
     ) -> None:
         super().__init__(database, connection=connection)
 
-    def initialize(self) -> None:
-        from app.database.migrations import apply_migrations
-        apply_migrations(self.database, names=("013_retention",))
 
     @staticmethod
     def _placeholders(values: list[str]) -> str:
-        return ", ".join("?" for _ in values)
+        return ", ".join("%s" for _ in values)
 
     @staticmethod
     def _queue_file(
-        connection: sqlite3.Connection,
+        connection: Connection,
         relative_path: str | None,
         *,
         category: str,
@@ -61,7 +58,7 @@ class RetentionRepository(SQLiteRepository):
             """
             INSERT INTO retention_file_deletions (
                 relative_path, category, queued_at, updated_at
-            ) VALUES (?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s)
             ON CONFLICT(relative_path) DO UPDATE SET
                 category = excluded.category,
                 updated_at = excluded.updated_at
@@ -96,7 +93,6 @@ class RetentionRepository(SQLiteRepository):
             "admin_audits": 0,
         }
         with self.connect() as connection:
-            self.begin_immediate(connection)
             if report_cutoff is not None:
                 report_rows = connection.execute(
                     f"""
@@ -104,7 +100,7 @@ class RetentionRepository(SQLiteRepository):
                     FROM report_jobs AS j
                     LEFT JOIN reports AS r ON r.report_id = j.report_id
                     WHERE j.status IN ({self._placeholders(list(REPORT_TERMINAL_STATUSES))})
-                      AND COALESCE(j.finished_at, j.created_at) <= ?
+                      AND COALESCE(j.finished_at, j.created_at) <= %s
                       AND NOT EXISTS (
                           SELECT 1 FROM scheduled_report_runs AS run
                           WHERE run.report_id = j.report_id
@@ -118,7 +114,7 @@ class RetentionRepository(SQLiteRepository):
                             AND delivery.status IN ('pending', 'sending', 'retry_wait', 'unknown')
                       )
                     ORDER BY COALESCE(j.finished_at, j.created_at), j.report_id
-                    LIMIT ?
+                    LIMIT %s
                     """,
                     (
                         *REPORT_TERMINAL_STATUSES,
@@ -172,9 +168,9 @@ class RetentionRepository(SQLiteRepository):
                         SELECT run_id FROM scheduled_report_runs
                         WHERE report_id IS NULL
                           AND status IN ({self._placeholders(list(AUTOMATION_TERMINAL_STATUSES))})
-                          AND updated_at <= ?
+                          AND updated_at <= %s
                         ORDER BY updated_at, run_id
-                        LIMIT ?
+                        LIMIT %s
                     )
                     """,
                     (*AUTOMATION_TERMINAL_STATUSES, report_cutoff, batch_size),
@@ -184,9 +180,9 @@ class RetentionRepository(SQLiteRepository):
                 workshop_report_rows = connection.execute(
                     """
                     SELECT report_id FROM workshop_reports
-                    WHERE generated_at <= ?
+                    WHERE generated_at <= %s
                     ORDER BY generated_at, report_id
-                    LIMIT ?
+                    LIMIT %s
                     """,
                     (report_cutoff, batch_size),
                 ).fetchall()
@@ -198,11 +194,11 @@ class RetentionRepository(SQLiteRepository):
                     counts["workshop_items"] = int(
                         connection.execute(
                             f"""
-                            SELECT COUNT(*) FROM workshop_report_items
+                            SELECT COUNT(*) AS count FROM workshop_report_items
                             WHERE report_id IN ({placeholders})
                             """,
                             workshop_report_ids,
-                        ).fetchone()[0]
+                        ).fetchone()['count']
                     )
                     counts["workshop_reports"] = connection.execute(
                         f"""
@@ -217,15 +213,15 @@ class RetentionRepository(SQLiteRepository):
                     WHERE (scope_machine_no, task_id) IN (
                         SELECT confirmation.scope_machine_no, confirmation.task_id
                         FROM workshop_confirmations AS confirmation
-                        WHERE confirmation.updated_at <= ?
+                        WHERE confirmation.updated_at <= %s
                           AND NOT EXISTS (
                               SELECT 1 FROM workshop_report_items AS item
                               JOIN workshop_reports AS report ON report.report_id=item.report_id
                               WHERE item.task_id = confirmation.task_id
-                                AND report.scope_machine_no=confirmation.scope_machine_no COLLATE NOCASE
+                                AND sqlite_nocase(report.scope_machine_no) = sqlite_nocase(confirmation.scope_machine_no)
                           )
                         ORDER BY confirmation.updated_at, confirmation.task_id
-                        LIMIT ?
+                        LIMIT %s
                     )
                     """,
                     (report_cutoff, batch_size),
@@ -237,9 +233,9 @@ class RetentionRepository(SQLiteRepository):
                     DELETE FROM report_analyses
                     WHERE cache_key IN (
                         SELECT cache_key FROM report_analyses
-                        WHERE generated_at <= ?
+                        WHERE generated_at <= %s
                         ORDER BY generated_at, cache_key
-                        LIMIT ?
+                        LIMIT %s
                     )
                     """,
                     (analysis_cutoff, batch_size),
@@ -253,7 +249,7 @@ class RetentionRepository(SQLiteRepository):
                     FROM alarm_reports AS report
                     WHERE report.status IN ('completed', 'failed')
                       AND (
-                          COALESCE(report.completed_at, report.created_at) < ?
+                          COALESCE(report.completed_at, report.created_at) < %s
                           OR EXISTS (
                               SELECT 1 FROM alarm_incidents AS incident
                               WHERE {ALARM_REPORT_LINK_SQL}
@@ -264,11 +260,11 @@ class RetentionRepository(SQLiteRepository):
                           WHERE {ALARM_REPORT_LINK_SQL}
                             AND (
                                 incident.status <> 'closed'
-                                OR {ALARM_OCCURRED_AT_SQL} >= ?
+                                OR {ALARM_OCCURRED_AT_SQL} >= %s
                             )
                       )
                     ORDER BY COALESCE(report.completed_at, report.created_at), report.report_id
-                    LIMIT ?
+                    LIMIT %s
                     """,
                     (alarm_cutoff, alarm_time_cutoff, batch_size),
                 ).fetchall()
@@ -290,9 +286,9 @@ class RetentionRepository(SQLiteRepository):
                     f"""
                     SELECT incident_id FROM alarm_incidents AS incident
                     WHERE status = 'closed'
-                      AND {ALARM_OCCURRED_AT_SQL} < ?
+                      AND {ALARM_OCCURRED_AT_SQL} < %s
                     ORDER BY {ALARM_OCCURRED_AT_SQL}, incident_id
-                    LIMIT ?
+                    LIMIT %s
                     """,
                     (alarm_time_cutoff, batch_size),
                 ).fetchall()
@@ -322,9 +318,9 @@ class RetentionRepository(SQLiteRepository):
                         SELECT dispatch_id FROM cutting_dispatches
                         WHERE status IN ({self._placeholders(list(DISPATCH_TERMINAL_STATUSES))})
                           AND NOT {UNRESOLVED_DISPATCH_SQL}
-                          AND updated_at <= ?
+                          AND updated_at <= %s
                         ORDER BY updated_at, dispatch_id
-                        LIMIT ?
+                        LIMIT %s
                     )
                     """,
                     (*DISPATCH_TERMINAL_STATUSES, dispatch_cutoff, batch_size),
@@ -334,13 +330,13 @@ class RetentionRepository(SQLiteRepository):
                     DELETE FROM cutting_downloads
                     WHERE download_id IN (
                         SELECT download_id FROM cutting_downloads
-                        WHERE updated_at <= ?
+                        WHERE updated_at <= %s
                           AND (
                               status = 'failed'
-                              OR payload LIKE '%"file_deleted_at"%'
+                              OR payload LIKE '%%"file_deleted_at"%%'
                           )
                         ORDER BY updated_at, download_id
-                        LIMIT ?
+                        LIMIT %s
                     )
                     """,
                     (dispatch_cutoff, batch_size),
@@ -352,9 +348,9 @@ class RetentionRepository(SQLiteRepository):
                     DELETE FROM workshop_confirmation_audits
                     WHERE audit_id IN (
                         SELECT audit_id FROM workshop_confirmation_audits
-                        WHERE operated_at <= ?
+                        WHERE operated_at <= %s
                         ORDER BY operated_at, audit_id
-                        LIMIT ?
+                        LIMIT %s
                     )
                     """,
                     (audit_cutoff, batch_size),
@@ -364,9 +360,9 @@ class RetentionRepository(SQLiteRepository):
                     DELETE FROM admin_role_audits
                     WHERE audit_id IN (
                         SELECT audit_id FROM admin_role_audits
-                        WHERE operated_at <= ?
+                        WHERE operated_at <= %s
                         ORDER BY operated_at, audit_id
-                        LIMIT ?
+                        LIMIT %s
                     )
                     """,
                     (audit_cutoff, batch_size),
@@ -379,7 +375,7 @@ class RetentionRepository(SQLiteRepository):
                 """
                 SELECT * FROM retention_file_deletions
                 ORDER BY attempt_count, queued_at, relative_path
-                LIMIT ?
+                LIMIT %s
                 """,
                 (limit,),
             ).fetchall()
@@ -394,7 +390,7 @@ class RetentionRepository(SQLiteRepository):
     def complete_file_deletion(self, relative_path: str) -> None:
         with self.connect() as connection:
             connection.execute(
-                "DELETE FROM retention_file_deletions WHERE relative_path = ?",
+                "DELETE FROM retention_file_deletions WHERE relative_path = %s",
                 (relative_path,),
             )
 
@@ -404,8 +400,8 @@ class RetentionRepository(SQLiteRepository):
                 """
                 UPDATE retention_file_deletions
                 SET attempt_count = attempt_count + 1,
-                    last_error = ?, updated_at = ?
-                WHERE relative_path = ?
+                    last_error = %s, updated_at = %s
+                WHERE relative_path = %s
                 """,
                 (error[:500], now, relative_path),
             )

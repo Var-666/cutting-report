@@ -15,9 +15,11 @@ x-app-common: &app-common
     APP_PORT: 8000
     PYTHONPATH: /app/backend
     TZ: ${APP_TIMEZONE:-Asia/Shanghai}
-    # Bootstrap credentials are only consumed by the optional postgres service.
+    POSTGRES_USER: cutting_app
+    # Elevated credentials are consumed only by initialization/migration tools.
     POSTGRES_BOOTSTRAP_PASSWORD: ""
     POSTGRES_APP_PASSWORD: ""
+    POSTGRES_MIGRATOR_PASSWORD: ""
   volumes:
     - cutting_data:/app/data
     - cutting_reports:/app/reports
@@ -38,15 +40,14 @@ x-app-common: &app-common
 
 services:
   postgres:
-    profiles: [postgres]
     image: postgres:18.6-bookworm@sha256:5c4783a8cc3f0074912164f94dfa1be4e043438f0f707cf968d7af9a0d31a2c8
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DATABASE:-cutting_report}
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_BOOTSTRAP_PASSWORD:-}
-      POSTGRES_MIGRATOR_PASSWORD: ${POSTGRES_PASSWORD:-}
-      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:-}
+      POSTGRES_MIGRATOR_PASSWORD: ${POSTGRES_MIGRATOR_PASSWORD:-}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_PASSWORD:-}
     volumes:
       - postgres_data:/var/lib/postgresql
       - ./scripts/postgres/10-roles.sql:/docker-entrypoint-initdb.d/10-roles.sql:ro
@@ -65,6 +66,9 @@ services:
   app:
     <<: *app-common
     container_name: cutting-report
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
       - "${DOCKER_BIND_ADDRESS:-127.0.0.1}:${DOCKER_PORT:-8088}:8000"
     healthcheck:
@@ -83,6 +87,8 @@ services:
     container_name: cutting-report-worker
     command: ["python", "-m", "app.worker"]
     depends_on:
+      postgres:
+        condition: service_healthy
       app:
         condition: service_healthy
     healthcheck:
@@ -91,6 +97,23 @@ services:
       timeout: 5s
       start_period: 20s
       retries: 3
+
+  migrate:
+    <<: *app-common
+    profiles: [tools]
+    restart: "no"
+    environment:
+      PYTHONPATH: /app/backend
+      POSTGRES_HOST: postgres
+      POSTGRES_USER: cutting_migrator
+      POSTGRES_PASSWORD: ${POSTGRES_MIGRATOR_PASSWORD:-}
+      POSTGRES_BOOTSTRAP_PASSWORD: ""
+      POSTGRES_APP_PASSWORD: ""
+      POSTGRES_MIGRATOR_PASSWORD: ""
+    command: ["python", "scripts/migrate_sqlite_to_postgres.py", "status"]
+    depends_on:
+      postgres:
+        condition: service_healthy
 
 volumes:
   cutting_data:

@@ -1,43 +1,43 @@
 import multiprocessing as mp
-from pathlib import Path
+from time import sleep
+from concurrent.futures import ThreadPoolExecutor
+from threading import Timer
 
 import pytest
 from threading import Event
 
 from app.database.coordination import CoordinationRepository
-from app.database.sqlite import SQLiteDatabase, ExecutionLeaseLost, execution_scope
+from app.database.postgres import PostgresDatabase, ExecutionLeaseLost, execution_scope
 
 
-def _claim(path, output):
-    repository = CoordinationRepository(SQLiteDatabase(Path(path)))
-    output.put(repository.acquire("worker", ttl=10))
+def _claim(cfg, output):
+    with PostgresDatabase(cfg) as database:
+        output.put(CoordinationRepository(database).acquire("worker", ttl=10))
 
 
-def _late_write(path, owner, entered, resume, output):
-    database = SQLiteDatabase(Path(path))
-    try:
-        with execution_scope(database.path, "worker", owner), database.connect() as connection:
-            entered.set()
-            assert resume.wait(10)
-            connection.execute("INSERT INTO example VALUES ('stale')")
-    except ExecutionLeaseLost:
-        output.put("fenced")
+def _late_write(cfg, owner, entered, resume, output):
+    with PostgresDatabase(cfg) as database:
+        try:
+            with execution_scope(database, "worker", owner), database.connect() as connection:
+                entered.set()
+                assert resume.wait(10)
+                connection.execute("INSERT INTO llm_waiters VALUES ('stale', 0)")
+        except ExecutionLeaseLost:
+            output.put("fenced")
 
 
-def _claim_report(path, owner, output):
+def _claim_report(cfg, owner, output):
     from app.database.metadata import MetadataRepository
-    database = SQLiteDatabase(Path(path))
-    with execution_scope(database.path, "worker", owner):
+    with PostgresDatabase(cfg) as database, execution_scope(database, "worker", owner):
         output.put(MetadataRepository(database).claim_next_job("2026-10-24T10:00:00+08:00") is not None)
 
 
-def test_only_one_process_can_acquire_worker_lease(tmp_path):
-    database = SQLiteDatabase(tmp_path / "metadata.db")
+def test_only_one_process_can_acquire_worker_lease(postgres_state):
+    database = postgres_state[0]
     repository = CoordinationRepository(database)
-    repository.initialize()
     context = mp.get_context("spawn")
     output = context.Queue()
-    processes = [context.Process(target=_claim, args=(str(database.path), output)) for _ in range(3)]
+    processes = [context.Process(target=_claim, args=(postgres_state[1], output)) for _ in range(3)]
     for process in processes:
         process.start()
     results = [output.get(timeout=10) for _ in processes]
@@ -47,52 +47,41 @@ def test_only_one_process_can_acquire_worker_lease(tmp_path):
     assert sum(owner is not None for owner in results) == 1
 
 
-def test_expired_owner_cannot_commit_over_a_new_owner(tmp_path):
-    database = SQLiteDatabase(tmp_path / "metadata.db")
+def test_expired_owner_cannot_commit_over_a_new_owner(postgres_state):
+    database = postgres_state[0]
     repository = CoordinationRepository(database)
-    repository.initialize()
     old = repository.acquire("worker", ttl=10)
     with database.connect() as connection:
-        connection.execute("CREATE TABLE example (value TEXT)")
         connection.execute("UPDATE process_leases SET expires_at=0 WHERE name='worker'")
     new = repository.acquire("worker", ttl=10)
     assert new and new != old
     assert not repository.renew("worker", old, ttl=10)
-    with pytest.raises(ExecutionLeaseLost), execution_scope(database.path, "worker", old):
+    with pytest.raises(ExecutionLeaseLost), execution_scope(database, "worker", old):
         with database.connect() as connection:
-            connection.execute("INSERT INTO example VALUES ('stale')")
-    with execution_scope(database.path, "worker", new), database.connect() as connection:
-        connection.execute("INSERT INTO example VALUES ('current')")
+            connection.execute("INSERT INTO llm_waiters VALUES ('stale',0)")
+    with execution_scope(database, "worker", new), database.connect() as connection:
+        connection.execute("INSERT INTO llm_waiters VALUES ('current',0)")
     with database.connect() as connection:
-        assert [row[0] for row in connection.execute("SELECT value FROM example")] == ["current"]
+        assert [row["waiter_id"] for row in connection.execute("SELECT waiter_id FROM llm_waiters")] == ["current"]
 
 
-def test_lease_renewal_rechecks_time_after_waiting_for_the_write_lock(tmp_path, monkeypatch):
-    from app.database import coordination
-    now = [100.0]
-    monkeypatch.setattr(coordination, "time", lambda: now[0])
-    repository = CoordinationRepository(SQLiteDatabase(tmp_path / "metadata.db"))
-    repository.initialize()
-    owner = repository.acquire("worker", ttl=10)
-    original = repository.begin_immediate
-
-    def wait_for_write_lock(connection):
-        original(connection)
-        now[0] += 20
-
-    monkeypatch.setattr(repository, "begin_immediate", wait_for_write_lock)
-    assert not repository.renew("worker", owner, ttl=10)
-    new = repository.acquire("worker", ttl=10)
+def test_lease_renewal_rechecks_database_time_after_waiting_for_row_lock(postgres_state):
+    database = postgres_state[0]
+    repository = CoordinationRepository(database)
+    owner = repository.acquire('worker', ttl=0.2)
+    with ThreadPoolExecutor(1) as executor:
+        with database.connect() as connection:
+            connection.execute("SELECT * FROM process_leases WHERE name='worker' FOR UPDATE")
+            renewed = executor.submit(repository.renew, 'worker', owner, ttl=10)
+            sleep(0.3)
+        assert renewed.result(timeout=3) is False
+    new = repository.acquire('worker', ttl=10)
     assert new and new != owner
-    with repository.connect() as connection:
-        row = connection.execute("SELECT heartbeat_at, expires_at FROM process_leases").fetchone()
-        assert row["heartbeat_at"] == 140
-        assert row["expires_at"] == 150
 
 
-def test_queue_is_bounded_and_overflow_is_durable_and_recoverable(tmp_path):
-    repository = CoordinationRepository(SQLiteDatabase(tmp_path / "metadata.db"))
-    repository.initialize()
+
+def test_queue_is_bounded_and_overflow_is_durable_and_recoverable(postgres_state):
+    repository = CoordinationRepository(postgres_state[0])
     for index in range(3):
         repository.enqueue("analysis_workshop", "Cutter01", {"round": index}, key=str(index), capacity=2)
     assert repository.task_counts() == {"pending": 2, "deferred": 1}
@@ -104,48 +93,49 @@ def test_queue_is_bounded_and_overflow_is_durable_and_recoverable(tmp_path):
     assert repository.task_counts() == {"completed": 1, "pending": 2}
 
 
-def test_expiry_fences_a_transaction_opened_by_another_process_before_takeover(tmp_path):
-    context = mp.get_context("spawn")
-    database = SQLiteDatabase(tmp_path / "metadata.db")
+def test_expiry_fences_a_transaction_opened_by_another_process_before_takeover(postgres_state):
+    context = mp.get_context('spawn')
+    database, cfg, _ = postgres_state
     repository = CoordinationRepository(database)
-    repository.initialize()
-    owner = repository.acquire("worker", ttl=10)
-    with database.connect() as connection:
-        connection.execute("CREATE TABLE example (value TEXT)")
+    owner = repository.acquire('worker', ttl=2)
     entered, resume, output = context.Event(), context.Event(), context.Queue()
-    writer = context.Process(target=_late_write, args=(str(database.path), owner, entered, resume, output))
+    writer = context.Process(target=_late_write, args=(cfg, owner, entered, resume, output))
     writer.start()
+    timer = Timer(2.2, resume.set)
     try:
-        assert entered.wait(10)
-        with database.connect() as connection:
-            connection.execute("UPDATE process_leases SET expires_at=0")
-        new = repository.acquire("worker", ttl=10)
-        with execution_scope(database.path, "worker", new), database.connect() as connection:
-            connection.execute("INSERT INTO example VALUES ('current')")
-        resume.set()
-        assert output.get(timeout=10) == "fenced"
-        writer.join(10)
+        assert entered.wait(5)
+        timer.start()
+        # Takeover waits for the writer's shared row lock. Its final expiry
+        # check must roll back before the replacement can acquire that row.
+        sleep(2.05)
+        new = repository.acquire('worker', ttl=10)
+        assert new and new != owner
+        assert output.get(timeout=5) == 'fenced'
+        with execution_scope(database,'worker',new), database.connect() as connection:
+            connection.execute("INSERT INTO llm_waiters VALUES ('current',0)")
+        writer.join(5)
         assert writer.exitcode == 0
         with database.connect() as connection:
-            assert [row[0] for row in connection.execute("SELECT value FROM example")] == ["current"]
+            assert connection.execute('SELECT waiter_id FROM llm_waiters').fetchall() == [{'waiter_id':'current'}]
     finally:
+        timer.cancel()
+        resume.set()
         if writer.is_alive():
             writer.kill()
-            writer.join(10)
+        writer.join(5)
 
 
-def test_report_claim_is_atomic_between_processes(tmp_path):
+
+def test_report_claim_is_atomic_between_processes(postgres_state):
     from app.database.metadata import MetadataRepository
     context = mp.get_context("spawn")
-    database = SQLiteDatabase(tmp_path / "metadata.db")
+    database = postgres_state[0]
     repository = CoordinationRepository(database)
-    repository.initialize()
     metadata = MetadataRepository(database, device_id='Cutter01')
-    metadata.initialize()
     metadata.create_job(report_id="one", report_date="2026-10-24", project_code=None, ship_no=None,
                         request_id="one", created_at="2026-10-24T10:00:00+08:00")
     owner, output = repository.acquire("worker", ttl=10), context.Queue()
-    claimers = [context.Process(target=_claim_report, args=(str(database.path), owner, output)) for _ in range(3)]
+    claimers = [context.Process(target=_claim_report, args=(postgres_state[1], owner, output)) for _ in range(3)]
     for process in claimers:
         process.start()
     assert sum(output.get(timeout=10) for _ in claimers) == 1
@@ -172,10 +162,9 @@ def test_executor_bounds_running_and_waiting_work():
         assert executor.stop()
 
 
-def test_energy_snapshot_compare_and_swap_keeps_concurrent_result(tmp_path):
+def test_energy_snapshot_compare_and_swap_keeps_concurrent_result(postgres_state):
     from app.database.energy import EnergyReportRepository
-    repository = EnergyReportRepository(SQLiteDatabase(tmp_path / "metadata.db"))
-    repository.initialize()
+    repository = EnergyReportRepository(postgres_state[0])
     original = {"report_date": "2026-10-24", "updated_at": "same-second", "rows": []}
     newer = {**original, "rows": [{"value": 1}]}
     assert repository.save_day("device-source", original, previous=None)

@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 import json
 
-from app.database.sqlite import SQLiteRepository
+from app.database.postgres import PostgresRepository, lock_key
 
 
 def fingerprint(value: object) -> str:
@@ -44,16 +44,13 @@ class ReportSnapshot:
     expires_at: datetime
 
 
-class ReportSnapshotRepository(SQLiteRepository):
-    def initialize(self) -> None:
-        from app.database.migrations import apply_migrations
-        apply_migrations(self.database, names=("006_report_snapshots",))
+class ReportSnapshotRepository(PostgresRepository):
 
     def get(self, key: ReportKey) -> ReportSnapshot | None:
         with self.connect() as connection:
             row = connection.execute('''SELECT * FROM report_snapshots WHERE
-                line_id=? AND report_type=? AND period_start=? AND period_end=? AND
-                query_fingerprint=? AND source_fingerprint=? AND snapshot_schema_version=?''', key.values).fetchone()
+                line_id=%s AND report_type=%s AND period_start=%s AND period_end=%s AND
+                query_fingerprint=%s AND source_fingerprint=%s AND snapshot_schema_version=%s''', key.values).fetchone()
         if row is None:
             return None
         try:
@@ -72,8 +69,8 @@ class ReportSnapshotRepository(SQLiteRepository):
         if fingerprint(snapshot.payload) != snapshot.data_version:
             raise ValueError('快照内容版本不一致')
         with self.connect() as connection:
-            self.begin_immediate(connection)
-            connection.execute('''INSERT INTO report_snapshots VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            lock_key(connection, "report-snapshots:" + snapshot.key.line_id)
+            connection.execute('''INSERT INTO report_snapshots (line_id, report_type, period_start, period_end, query_fingerprint, source_fingerprint, snapshot_schema_version, data_version, data_as_of, refreshed_at, expires_at, payload) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT(line_id, report_type, period_start, period_end, query_fingerprint,
                             source_fingerprint, snapshot_schema_version) DO UPDATE SET
                 data_version=excluded.data_version, data_as_of=excluded.data_as_of,
@@ -81,8 +78,10 @@ class ReportSnapshotRepository(SQLiteRepository):
                 (*snapshot.key.values, snapshot.data_version, snapshot.data_as_of.isoformat(),
                  snapshot.refreshed_at.isoformat(), snapshot.expires_at.isoformat(), payload))
             # Cache eviction never touches existing business snapshots or production records.
-            connection.execute('''DELETE FROM report_snapshots WHERE line_id=? AND rowid NOT IN
-                (SELECT rowid FROM report_snapshots WHERE line_id=? ORDER BY refreshed_at DESC, rowid DESC LIMIT 128)''',
+            connection.execute('''DELETE FROM report_snapshots WHERE line_id=%s AND insertion_order NOT IN
+                (SELECT insertion_order FROM report_snapshots WHERE line_id=%s ORDER BY refreshed_at DESC, insertion_order DESC LIMIT 128)''',
                 (snapshot.key.line_id, snapshot.key.line_id))
-            connection.execute('DELETE FROM report_snapshots WHERE expires_at<?',
+            # Other lines may be publishing concurrently; skip their locked rows.
+            connection.execute('''DELETE FROM report_snapshots WHERE insertion_order IN
+                (SELECT insertion_order FROM report_snapshots WHERE expires_at<%s FOR UPDATE SKIP LOCKED)''',
                                ((datetime.now(timezone.utc) - timedelta(days=30)).isoformat(),))

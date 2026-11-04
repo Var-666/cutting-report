@@ -20,15 +20,14 @@ SCENARIOS = [(kind, interval) for kind in ("leadership", "workshop", "equipment"
 REPORT_DATE = date(2026, 8, 18)
 
 
-def pipeline_job(tmp_path, report_type, interval, *, llm_enabled=True):
+def pipeline_job(state_database, tmp_path, report_type, interval, *, llm_enabled=True):
     settings = cutting_settings(project_root=tmp_path, data_source_mode="demo", demo_mode=True,
                         llm_enabled=llm_enabled)
     settings.ensure_runtime_dirs()
     vendor_dir = tmp_path / "vendor"
     vendor_dir.mkdir(exist_ok=True)
     (vendor_dir / "echarts.min.js").write_text("window.echarts={};")
-    metadata = MetadataRepository(settings.metadata_db_path, device_id='Cutter01')
-    metadata.initialize()
+    metadata = MetadataRepository(state_database, device_id='Cutter01')
     pipeline = ReportPipeline(settings, metadata, query_service=QueryService(settings, client=source_client(settings)))
     now = datetime.now(ZoneInfo(settings.timezone)).isoformat(timespec="seconds")
     if report_type == "workshop" and not interval:
@@ -106,13 +105,13 @@ def capture_facts(monkeypatch, pipeline):
 
 @pytest.mark.parametrize(("report_type", "interval"), SCENARIOS)
 @pytest.mark.parametrize("failure", ["disabled", "history", "model_timeout", "model_invalid"])
-def test_optional_ai_failure_does_not_discard_complete_factual_report(
+def test_optional_ai_failure_does_not_discard_complete_factual_report(state_database, baseline_state,
     tmp_path, monkeypatch, report_type, interval, failure,
 ):
-    pipeline, job = pipeline_job(tmp_path, report_type, interval, llm_enabled=failure != "disabled")
+    pipeline, job = pipeline_job(state_database, tmp_path, report_type, interval, llm_enabled=failure != "disabled")
     # Compare every published deterministic section with a successful AI run;
     # a nonzero task count alone would miss lost details or altered totals.
-    baseline, baseline_job = pipeline_job(tmp_path / "baseline", report_type, interval)
+    baseline, baseline_job = pipeline_job(baseline_state[0], tmp_path / "baseline", report_type, interval)
     baseline.analysis_service.llm.analyze_context = model_analysis
     expected_facts = capture_facts(monkeypatch, baseline)
     baseline.run(baseline_job)
@@ -154,8 +153,8 @@ def test_optional_ai_failure_does_not_discard_complete_factual_report(
 
 
 @pytest.mark.parametrize(("report_type", "interval"), SCENARIOS)
-def test_required_source_failure_still_prevents_report_publication(tmp_path, monkeypatch, report_type, interval):
-    pipeline, job = pipeline_job(tmp_path, report_type, interval)
+def test_required_source_failure_still_prevents_report_publication(state_database, tmp_path, monkeypatch, report_type, interval):
+    pipeline, job = pipeline_job(state_database, tmp_path, report_type, interval)
     if report_type == "leadership" and not interval:
         monkeypatch.setattr(pipeline.leadership_service, "fetch",
                             lambda *args: (_ for _ in ()).throw(OSError("source unavailable")))
@@ -168,8 +167,8 @@ def test_required_source_failure_still_prevents_report_publication(tmp_path, mon
 
 
 @pytest.mark.parametrize("error", [SqlRequestCancelled, ReportOperationTimeout, ReportPipelineCancelled])
-def test_control_signals_in_ai_preparation_are_not_degraded(tmp_path, monkeypatch, error):
-    pipeline, job = pipeline_job(tmp_path, "equipment", False)
+def test_control_signals_in_ai_preparation_are_not_degraded(state_database, tmp_path, monkeypatch, error):
+    pipeline, job = pipeline_job(state_database, tmp_path, "equipment", False)
     intercept_history(monkeypatch, pipeline, "equipment", False, error)
     with pytest.raises(error, match="source unavailable"):
         pipeline.run(job)
