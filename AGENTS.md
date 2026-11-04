@@ -106,6 +106,7 @@
 - 前端业务 API 优先引用生成的请求与响应数据类型，已有共享名称可用类型别名兼容；密码等只写请求字段使用生成器的 `*Writable` 类型。`request<T>()` 已解包 `data`，`T` 应是业务数据，不能再次使用完整 envelope，也不能为生成器修改 Cookie、设备/产线、取消、重试、缓存和下载机制。
 - 页面草稿、URL 字符串筛选、驼峰参数适配、图表补零和任务接受到轮询详情之间的展示状态由前端维护，优先从生成类型派生。API 字段/类型不一致应修正契约或调用方，不用 `any`、无依据的断言或类型抑制掩盖；报表创建的最小接受响应不能当作完整任务详情。
 - 契约修改后执行 `pnpm run api:generate`、`pnpm run api:check`、`pnpm run typecheck` 及受影响的定向测试。现有 API contracts CI 检查本地响应契约和生成漂移，Frontend CI 检查 TypeScript；保持精简，不因此运行全量后端回归。认证、设计器和系统诊断等未迁移模块按后续实际修改逐步覆盖，不为全覆盖重写历史业务。
+- API contracts CI 必须启动隔离 PG18、复用原测试角色/迁移夹具并设置 `P5_TEST_POSTGRES=1`；JUnit 检查两个契约模块均有收集且 skipped/failure/error 全为 0，不能以跳过 PostgreSQL 用例取得绿色结果。
 
 ## 焊接查询性能（P09）
 

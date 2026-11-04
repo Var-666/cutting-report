@@ -41,6 +41,7 @@ tmp/
 /docs/deployment/*
 !/docs/deployment/配置参考.md
 !/docs/deployment/PostgreSQL状态库迁移.md
+!/docs/deployment/PostgreSQL并发与队列容量验证.md
 !/docs/deployment/KYLIN原生部署说明.md
 !/docs/deployment/OFFLINE_DOCKER部署说明.md
 !/docs/deployment/WEB_WORKER进程隔离升级说明.md

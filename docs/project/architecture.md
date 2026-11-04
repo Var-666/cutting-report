@@ -289,4 +289,4 @@ Consumer实例各自心跳及本实例探针，WorkerStatusReader保留旧聚合
 
 ## P1～P7代码收尾边界（2026-11-04）
 
-P1～P7核心开发完成。本轮只修复CI测试装配、类型夹具及历史Consumer健康误判，保留统一产线、P2调度、P3配额、PG迁移/状态库和四角色职责与领取/恢复协议，不新增架构层。CI最终以修复提交关联的Frontend CI和API contracts全部通过为准，结果记录在[项目进度](progress.md)。生产PostgreSQL历史数据迁移尚未执行；SQL Server/MySQL、SMTP、LLM等现场联调、生产部署与实际负载验收均未完成，不能将代码验证视为生产上线。
+P1～P7核心开发完成。修复CI测试装配、类型夹具及历史Consumer健康误判后，进一步为API contracts提供隔离PG18、原角色初始化及JUnit零跳过门槛，两个契约文件本地43项全部执行通过。真实1/3 Consumer满执行槽、池上限4/8/12、行锁等待、池耗尽与自然TTL崩溃恢复已有定向观测；默认PG池4、5秒心跳/30秒租约、FOR SHARE提交围栏和64/256队列策略保持不变，细节与现场容量边界见[验证记录](../deployment/PostgreSQL并发与队列容量验证.md)。保留统一产线、P2调度、P3配额、PG迁移/状态库和四角色职责与领取/恢复协议，不新增架构层。CI最终以提交关联的Frontend CI和API contracts全部通过为准。生产PostgreSQL历史数据迁移、生产部署及实际外部系统负载验收尚未执行，不能将隔离验证视为生产上线。

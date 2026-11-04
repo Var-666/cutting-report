@@ -9,7 +9,24 @@ jobs:
   contracts:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:18.6-bookworm@sha256:5c4783a8cc3f0074912164f94dfa1be4e043438f0f707cf968d7af9a0d31a2c8
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: p5-isolated-test-only
+          POSTGRES_DB: p5_test
+        ports:
+          - 127.0.0.1:5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d p5_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
+      P5_TEST_POSTGRES: '1'
+      P5_TEST_POSTGRES_PORT: '5432'
+      P5_TEST_POSTGRES_PASSWORD: p5-isolated-test-only
       UV_PROJECT_ENVIRONMENT: ${{ github.workspace }}/.venv
       UV_PYTHON_DOWNLOADS: never
     steps:
@@ -23,11 +40,31 @@ jobs:
           enable-cache: true
           cache-dependency-glob: backend/uv.lock
       - run: uv sync --project backend --locked --no-build --python python
+      - name: Initialize isolated PostgreSQL test roles
+        run: >-
+          docker exec -i
+          -e POSTGRES_PASSWORD=p5-isolated-test-only
+          -e POSTGRES_MIGRATOR_PASSWORD=p5-migrator-test-only
+          -e POSTGRES_APP_PASSWORD=p5-app-test-only
+          ${{ job.services.postgres.id }}
+          psql -v ON_ERROR_STOP=1 -U postgres -d p5_test
+          < scripts/postgres/10-roles.sql
       - name: Check documented JSON contracts against local responses
         run: >-
-          .venv/bin/python -m pytest -q
+          .venv/bin/python -m pytest -q -ra --junitxml=api-contract-results.xml
           backend/tests/test_api_contract_generation.py
           backend/tests/test_frontend_response_contracts.py
+      - name: Require executed contracts without skips
+        run: |
+          .venv/bin/python - <<'PY'
+          import xml.etree.ElementTree as ET
+          cases = ET.parse('api-contract-results.xml').getroot().findall('.//testcase')
+          modules = {'test_api_contract_generation', 'test_frontend_response_contracts'}
+          assert cases and all(any(module in case.attrib['classname'] for case in cases) for module in modules), 'Contract tests were not collected'
+          counts = {tag: sum(case.find(tag) is not None for case in cases) for tag in ('skipped', 'failure', 'error')}
+          print(f'API contracts: collected={len(cases)}, passed={len(cases)-sum(counts.values())}, {counts}')
+          assert not any(counts.values()), 'Contracts must execute successfully with zero skips'
+          PY
       - uses: pnpm/action-setup@v4
         with:
           package_json_file: frontend/package.json
