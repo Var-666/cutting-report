@@ -1,6 +1,6 @@
 # 脚本目录
 
-Linux/Docker 部署见 [Docker 说明](../README-DOCKER.md)，麒麟原生部署见 [安装说明](../docs/deployment/KYLIN原生部署说明.md)。原生环境分别运行启动脚本及同一脚本的 `worker` 参数，将两个进程注册为独立服务；升级、健康和回滚见 [Web/Worker 说明](../docs/deployment/WEB_WORKER进程隔离升级说明.md)。
+Linux/Docker 部署见 [Docker 说明](../README-DOCKER.md)，麒麟原生部署见 [安装说明](../docs/deployment/KYLIN原生部署说明.md)。原生环境分别运行启动脚本及同一脚本的 `scheduler`、`worker`、`automation` 参数，将四个应用进程注册为独立服务；升级、健康和回滚见 [后台进程说明](../docs/deployment/WEB_WORKER进程隔离升级说明.md)。
 
 ## 生成源码部署包
 
@@ -19,7 +19,7 @@ scripts/
 ├── prepare_alarm_monitor.py      告警监控配置检查与维护
 └── linux/
     ├── install_kylin.sh          创建虚拟环境并安装依赖
-    ├── start_kylin.sh            启动 Web；worker 参数启动后台
+    ├── start_kylin.sh            启动 Web；scheduler/worker/automation 参数启动各后台角色
     └── start_offline_docker.sh   使用离线镜像和当前程序启动
 ```
 

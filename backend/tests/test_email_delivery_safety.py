@@ -160,8 +160,8 @@ def test_success_then_database_failure_is_not_automatically_resent(workflow, mon
     assert restarted.delivery_for_report(report_id)["status"] == "sending", "Web schema initialization must not disturb live SMTP"
     from app.database.coordination import CoordinationRepository
     from app.database.postgres import execution_scope
-    owner = CoordinationRepository(repository.database).acquire('worker',ttl=30)
-    with execution_scope(repository.database,'worker',owner):
+    owner = CoordinationRepository(repository.database).acquire('automation',ttl=30)
+    with execution_scope(repository.database,'automation',owner):
         restarted.recover_interrupted_deliveries()
     record = restarted.delivery_for_report(report_id)
     assert record["status"] == "unknown"
@@ -170,13 +170,13 @@ def test_success_then_database_failure_is_not_automatically_resent(workflow, mon
     assert not restarted.retry_delivery(record["delivery_id"], now=STAMP)
 
 
-def test_only_new_worker_can_recover_unknown_smtp_and_old_owner_cannot_mark_sent(workflow):
+def test_only_new_automation_can_recover_unknown_smtp_and_old_owner_cannot_mark_sent(workflow):
     from app.database.coordination import CoordinationRepository
     from app.database.postgres import ExecutionLeaseLost, execution_scope
     repository, _, report_id = ready(workflow)
     coordination = CoordinationRepository(repository.database)
-    owner = coordination.acquire("worker", ttl=30)
-    with execution_scope(repository.database, "worker", owner):
+    owner = coordination.acquire("automation", ttl=30)
+    with execution_scope(repository.database, "automation", owner):
         delivery = repository.claim_delivery(STAMP)
     # Web initialization neither resets sending nor allows recovery without a Worker lease.
     assert repository.delivery_for_report(report_id)["status"] == "sending"
@@ -184,13 +184,13 @@ def test_only_new_worker_can_recover_unknown_smtp_and_old_owner_cannot_mark_sent
         repository.recover_interrupted_deliveries()
     with repository.connect() as connection:
         connection.execute("UPDATE process_leases SET expires_at=0")
-    replacement = coordination.acquire("worker", ttl=30)
-    with execution_scope(repository.database, "worker", replacement):
+    replacement = coordination.acquire("automation", ttl=30)
+    with execution_scope(repository.database, "automation", replacement):
         repository.recover_interrupted_deliveries()
     assert repository.delivery_for_report(report_id)["status"] == "unknown"
     assert repository.claim_delivery(STAMP) is None
     assert not repository.retry_delivery(delivery["delivery_id"], now=STAMP)
-    with execution_scope(repository.database, "worker", owner), pytest.raises(ExecutionLeaseLost):
+    with execution_scope(repository.database, "automation", owner), pytest.raises(ExecutionLeaseLost):
         repository.mark_delivery_sent(delivery, message_id=delivery["message_id"], now=STAMP)
     assert repository.delivery_for_report(report_id)["status"] == "unknown"
 

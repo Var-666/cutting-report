@@ -57,7 +57,8 @@ def resource_status(request: Request) -> dict:
     return {'success': True, 'data': {
         'web': context.database_sources.capacity.status(context.database_sources.configs()),
         'http': [pool.status() for pool in (query_requests, snapshot_requests, analysis_requests, pdf_requests, authentication_requests)],
-        'worker': worker.get('sql_resources'), 'worker_state': worker.get('state', 'unknown')},
+        'worker': worker.get('sql_resources'), 'worker_state': worker.get('state', 'unknown'),
+        'roles': {role:status.get('sql_resources') for role,status in worker.get('roles',{}).items()}},
         'request_id': request.state.request_id}
 
 

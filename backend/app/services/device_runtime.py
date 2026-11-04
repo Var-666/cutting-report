@@ -109,14 +109,15 @@ class DeviceRuntime:
                     scheduler.enqueue_once("leadership_refresh", self.settings.device_id, {"date": selected.isoformat(), "bootstrap": False, "source_fingerprint": self.settings.source_fingerprint},
                         key=f"reconcile:{self.settings.device_id}:{now.date()}:{selected}")
         history = self.energy_history_worker
-        if history._pending_finish is not None:
-            history._flush_pending_finish()
-        if (history.enabled and (history._pending_finish is not None or history.repository.history_ready(history.source_key, history._now()))
+        if (history.enabled and history.repository.history_ready(history.source_key, history._now())
                 and not repository.active("energy_sync", self.settings.device_id, {})):
             repository.enqueue("energy_sync", self.settings.device_id, {})
         if self.alarm_worker.enabled:
             scheduler.schedule("alarm", self.settings.device_id, {}, max(30, self.settings.alarm_monitor_interval_seconds),
                                source=self.settings.source_fingerprint)
+
+    def flush_background_results(self) -> None:
+        self.energy_history_worker._flush_pending_finish()
 
     def handle_background(self, kind: str, payload: dict) -> None:
         current = self.current_report_refresh_worker

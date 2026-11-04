@@ -159,9 +159,8 @@ def test_report_worker_rescans_after_live_interval_change() -> None:
         def process_next_email(self, _now):
             return False
 
-    worker = ReportWorker(
-        initial, Metadata(), object(), automation_service=Automation(), runtime=runtime
-    )
+    from tests.automation_process_helpers import automation_process
+    worker = automation_process(initial, Automation(), runtime)
     try:
         worker.start()
         assert first_scan.wait(1)

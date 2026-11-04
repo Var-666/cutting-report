@@ -82,6 +82,20 @@ services:
       start_period: 20s
       retries: 3
 
+  scheduler:
+    <<: *app-common
+    container_name: cutting-report-scheduler
+    command: ["python", "-m", "app.scheduler"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.scheduler", "--health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
   worker:
     <<: *app-common
     container_name: cutting-report-worker
@@ -89,10 +103,22 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      app:
-        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-m", "app.worker", "--health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+  automation:
+    <<: *app-common
+    container_name: cutting-report-automation
+    command: ["python", "-m", "app.automation_worker"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.automation_worker", "--health"]
       interval: 30s
       timeout: 5s
       start_period: 20s

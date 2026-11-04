@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from uuid import uuid4
 
-from app.database.postgres import PostgresRepository, execution_owner, require_worker_recovery, lock_key
+from app.database.postgres import PostgresRepository, execution_owner, require_role_recovery, lock_key
 
 _UNCONDITIONAL = object()
 
@@ -27,12 +27,12 @@ class EnergyReportRepository(PostgresRepository):
     def recover_history_queue(self, source_key, now):
         # Production calls this only after acquiring the exclusive Worker lease.
         with self.connect() as connection:
-            require_worker_recovery(connection)
+            require_role_recovery(connection, 'worker')
             connection.execute("""
                 UPDATE energy_history_queue SET status='pending', claim_token=NULL,
                     next_attempt_at=%s, updated_at=%s, last_error_code='INTERRUPTED'
-                WHERE source_key=%s AND status='running'
-            """, (now, now, source_key))
+                WHERE source_key=%s AND status='running' AND execution_owner IS DISTINCT FROM %s
+            """, (now, now, source_key, execution_owner()))
 
     def claim_history_month(self, source_key, now):
         with self.connect() as connection:

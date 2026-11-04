@@ -14,6 +14,7 @@ from app.database.postgres import ExecutionLeaseLost
 from tests.postgres_fixtures import state_settings
 from app.services.application_runtime import build_runtime
 from app.worker import WorkerProcess
+from app.scheduler import SchedulerProcess
 from test_web_worker_processes import configuration
 
 
@@ -21,12 +22,12 @@ def test_periodic_rounds_are_durable_device_scoped_and_do_not_duplicate_reconcil
     from app.database import coordination
     now = [coordination.time()]
     monkeypatch.setattr(coordination, "time", lambda: now[0])
-    monkeypatch.setattr('app.worker.time', lambda: now[0])
-    monkeypatch.setattr('app.worker.monotonic', lambda: now[0])
+    monkeypatch.setattr('app.scheduler.time', lambda: now[0])
+    monkeypatch.setattr('app.scheduler.monotonic', lambda: now[0])
     from tests.line_fixtures import configuration as line_configuration
     configured = replace(state_settings(line_configuration(tmp_path, real=True),postgres_state), llm_enabled=True,
                          leadership_report_reconcile_hour=0)
-    process = WorkerProcess(configured)
+    process = SchedulerProcess(configured)
     process._schedule()
     with process.repository.connect() as connection:
         rows = [dict(row) for row in connection.execute("SELECT kind,device_id,payload FROM background_tasks")]
@@ -41,7 +42,7 @@ def test_periodic_rounds_are_durable_device_scoped_and_do_not_duplicate_reconcil
         current._schedule_analysis("workshop", (date(2026, 10, 24),))
         current._schedule_analysis("workshop", (date(2026, 10, 24),))
     assert process.repository.task_counts()["pending"] == len(rows) + 4
-    replacement = WorkerProcess(configured)
+    replacement = SchedulerProcess(configured)
     replacement._schedule()
     assert replacement.repository.task_counts() == process.repository.task_counts()
     assert replacement.repository.task_counts()["pending"] == len(rows) + 4
@@ -50,7 +51,8 @@ def test_periodic_rounds_are_durable_device_scoped_and_do_not_duplicate_reconcil
     with process.repository.connect() as connection:
         rounds = connection.execute("SELECT device_id, COUNT(*) AS count FROM background_tasks WHERE kind='current_refresh' GROUP BY device_id").fetchall()
     assert {row["device_id"]:row["count"] for row in rounds} == {key: 2 for key, line in process.runtime.database_runtime.snapshot().lines.items() if line.config.enabled and line.background is not None}
-    assert not process.operations.threads and not process.analysis.threads
+    assert not hasattr(process, "operations") and not hasattr(process, "analysis")
+
 
 
 def test_task_failure_retries_after_backoff_and_stale_owner_cannot_finish(postgres_state, tmp_path, monkeypatch):
@@ -153,10 +155,12 @@ def clock(monkeypatch):
         @classmethod
         def now(cls, tz=None):
             return datetime.fromtimestamp(value[0], tz)
-    monkeypatch.setattr('app.worker.datetime', ClockDateTime)
+    monkeypatch.setattr('app.scheduler.datetime', ClockDateTime)
     monkeypatch.setattr('app.services.welding_service.datetime', ClockDateTime)
-    monkeypatch.setattr('app.worker.time', lambda: value[0])
+    monkeypatch.setattr('app.scheduler.time', lambda: value[0])
+    monkeypatch.setattr('app.scheduler.monotonic', lambda: value[1])
     monkeypatch.setattr('app.worker.monotonic', lambda: value[1])
+    monkeypatch.setattr('app.worker.time', lambda: value[0])
     monkeypatch.setattr('app.database.coordination.time', lambda: value[0])
     return value
 
@@ -184,7 +188,7 @@ def trace_sql(database, monkeypatch):
 
 def test_idle_schedule_stays_in_memory_and_due_rounds_keep_the_same_cadence(postgres_state, tmp_path, monkeypatch, clock):
     from tests.line_fixtures import configuration
-    process = WorkerProcess(state_settings(configuration(tmp_path, real=True, welding=True, alarm_monitor_enabled=True,
+    process = SchedulerProcess(state_settings(configuration(tmp_path, real=True, welding=True, alarm_monitor_enabled=True,
                                           leadership_report_reconcile_hour=0),postgres_state))
     calls = {}
     for name in ('schedule', 'next_due', 'enqueue', 'request_snapshot_refresh', 'snapshot_refresh_due'):
@@ -218,15 +222,16 @@ def test_idle_schedule_stays_in_memory_and_due_rounds_keep_the_same_cadence(post
     assert all(probe.call_count == 2 for probe in bootstraps)
 
 
+
 @pytest.mark.parametrize('restart_after', [150, 301])
 def test_restart_recovers_persisted_deadline_and_pending_reconciliation(postgres_state, tmp_path, clock, restart_after):
     from tests.line_fixtures import configuration
     cfg = state_settings(configuration(tmp_path, real=True, leadership_report_reconcile_hour=0),postgres_state)
-    first = WorkerProcess(cfg)
+    first = SchedulerProcess(cfg)
     first._schedule()
     clock[0] += restart_after
     clock[1] += restart_after
-    replacement = WorkerProcess(cfg)
+    replacement = SchedulerProcess(cfg)
     replacement._schedule()
     with replacement.repository.connect() as connection:
         assert connection.execute("SELECT COUNT(*) FROM background_tasks WHERE kind='current_refresh'").fetchone()['count'] == (2 if restart_after < 300 else 4)
@@ -239,15 +244,16 @@ def test_restart_recovers_persisted_deadline_and_pending_reconciliation(postgres
         with replacement.repository.connect() as connection:
             assert connection.execute("SELECT COUNT(*) FROM background_tasks WHERE kind='current_refresh'").fetchone()['count'] == 4
     counts = replacement.repository.task_counts()
-    WorkerProcess(cfg)._schedule()
+    SchedulerProcess(cfg)._schedule()
     assert replacement.repository.task_counts() == counts
+
 
 
 @pytest.mark.parametrize('failure', ['exception', 'not-persisted'])
 def test_enqueue_failure_rolls_back_due_and_leaves_a_retry(postgres_state, tmp_path, monkeypatch, clock, failure):
     from tests.line_fixtures import configuration
     from app.database.coordination import CoordinationRepository
-    process = WorkerProcess(state_settings(configuration(tmp_path, real=True),postgres_state))
+    process = SchedulerProcess(state_settings(configuration(tmp_path, real=True),postgres_state))
     original = CoordinationRepository.enqueue
     def fail(*args, **kwargs):
         if failure == 'exception':
@@ -264,9 +270,10 @@ def test_enqueue_failure_rolls_back_due_and_leaves_a_retry(postgres_state, tmp_p
     assert process.repository.task_counts()['pending'] >= 4
 
 
+
 def test_daily_reconciliation_tracks_each_month_retries_and_resets_on_the_next_day(postgres_state, tmp_path, monkeypatch, clock):
     from tests.line_fixtures import configuration
-    process = WorkerProcess(state_settings(configuration(tmp_path, real=True, leadership_report_reconcile_hour=13),postgres_state))
+    process = SchedulerProcess(state_settings(configuration(tmp_path, real=True, leadership_report_reconcile_hour=13),postgres_state))
     original = process.repository.enqueue
     attempts = Counter()
     def enqueue(kind, line, payload, *, key):
@@ -295,12 +302,13 @@ def test_daily_reconciliation_tracks_each_month_retries_and_resets_on_the_next_d
     assert all('2026-11-04' in key for key in process._reconciled)
 
 
+
 def test_interval_hotload_recalculates_from_the_last_persisted_round_and_survives_restart(postgres_state, tmp_path, clock):
     from tests.line_fixtures import configuration
     from app.services.database_runtime import database_context
     from app.services.runtime_settings_store import write_runtime_env
     cfg = state_settings(configuration(tmp_path, real=True, welding=True),postgres_state)
-    process = WorkerProcess(cfg)
+    process = SchedulerProcess(cfg)
     process._schedule()
     with process.repository.connect() as connection:
         connection.execute("UPDATE background_tasks SET status='completed'")
@@ -320,7 +328,7 @@ def test_interval_hotload_recalculates_from_the_last_persisted_round_and_survive
         assert connection.execute("SELECT COUNT(*) FROM background_tasks WHERE kind='current_refresh'").fetchone()['count'] == 4
     write_runtime_env(cfg.runtime_settings_env_path, {'REPORT_BACKGROUND_REFRESH_SECONDS': 600})
     process._schedule()
-    replacement = WorkerProcess(cfg)
+    replacement = SchedulerProcess(cfg)
     replacement._schedule()
     assert replacement._next_due['current_refresh:Cutter01'].deadline == 660
     clock[0] += 600
@@ -334,6 +342,7 @@ def test_interval_hotload_recalculates_from_the_last_persisted_round_and_survive
         replacement._schedule()
         assert database_context(replacement.runtime) is before
         assert replacement.runtime.database_runtime.inspect()['error']
+
 
 
 def test_empty_and_backing_off_queues_do_not_acquire_a_write_transaction(postgres_state, tmp_path, monkeypatch, clock):
@@ -369,7 +378,6 @@ def test_web_submissions_are_polled_each_tick_and_capacity_release_admits_deferr
     from app.database.coordination import CoordinationRepository
     process = WorkerProcess(state_settings(configuration(tmp_path),postgres_state))
     process.owner = process.repository.acquire('worker', ttl=30)
-    monkeypatch.setattr(process, '_schedule', lambda: None)
     received = []
     process.operations = process.analysis = SimpleNamespace(available=lambda: True, submit=lambda fn, task: received.append(task))
     admit = Mock(wraps=process.repository.admit_deferred)
@@ -407,7 +415,7 @@ def test_hotadded_shared_source_lines_plan_changes_and_retirement_keep_state_bou
     from app.services.database_runtime import database_context
     from app.services.production_reports import report_providers
     from app.models.database_sources import DatabaseSourceRequest
-    process = WorkerProcess(state_settings(configuration(tmp_path, real=True, welding=True, leadership_report_reconcile_hour=0),postgres_state))
+    process = SchedulerProcess(state_settings(configuration(tmp_path, real=True, welding=True, leadership_report_reconcile_hour=0),postgres_state))
     process._schedule()
     untouched = process._next_due['current_refresh:Cutter01']
     context = database_context(process.runtime)
@@ -454,10 +462,11 @@ def test_hotadded_shared_source_lines_plan_changes_and_retirement_keep_state_bou
         assert {key for key in process._next_due if key.startswith('report_snapshot:')} == expected
 
 
+
 def test_snapshot_plan_parameters_and_intervals_remain_independent_and_capacity_rejection_retries(postgres_state, tmp_path, monkeypatch, clock):
     from tests.line_fixtures import configuration
     from app.services.database_runtime import database_context
-    process = WorkerProcess(state_settings(configuration(tmp_path, welding=True),postgres_state))
+    process = SchedulerProcess(state_settings(configuration(tmp_path, welding=True),postgres_state))
     provider = database_context(process.runtime).lines['welding'].report_provider
     payload = provider.refresh_plan()[0][0]
     other = {**payload, 'query': {**payload['query'], 'page': 2}}
@@ -485,10 +494,11 @@ def test_snapshot_plan_parameters_and_intervals_remain_independent_and_capacity_
     assert len(attempts) == 5 and attempts[-1] == other
 
 
+
 @pytest.mark.parametrize('jump', [-3600, 3600])
 def test_wall_clock_steps_rebase_cached_deadlines_on_persisted_progress(postgres_state, tmp_path, clock, jump):
     from tests.line_fixtures import configuration
-    process = WorkerProcess(state_settings(configuration(tmp_path, real=True),postgres_state))
+    process = SchedulerProcess(state_settings(configuration(tmp_path, real=True),postgres_state))
     process._schedule()
     clock[0] += jump
     clock[1] += 1
@@ -496,6 +506,7 @@ def test_wall_clock_steps_rebase_cached_deadlines_on_persisted_progress(postgres
     with process.repository.connect() as connection:
         assert connection.execute("SELECT COUNT(*) FROM background_tasks WHERE kind='current_refresh'").fetchone()['count'] == (2 if jump < 0 else 4)
     assert process._next_due['current_refresh:Cutter01'].deadline == (3901 if jump < 0 else 301)
+
 
 
 def test_imported_schedule_adopts_interval_without_changing_deadline(tmp_path, monkeypatch, clock, postgres_state):
@@ -512,34 +523,29 @@ def test_imported_schedule_adopts_interval_without_changing_deadline(tmp_path, m
     assert repository.next_due('current_refresh:Cutter01',60) == due - 240
 
 
-def test_snapshot_completion_updates_the_deadline_without_polling_before_its_interval(postgres_state, tmp_path, monkeypatch, clock):
+def test_snapshot_completion_updates_the_deadline_without_shared_memory(postgres_state, tmp_path, monkeypatch, clock):
     from tests.line_fixtures import configuration
     from app.services.database_runtime import database_context
-    process = WorkerProcess(state_settings(configuration(tmp_path, welding=True),postgres_state))
-    process.owner = process.repository.acquire('worker', ttl=600)
-    payload = database_context(process.runtime).lines['welding'].report_provider.refresh_plan()[0][0]
-    process._schedule_snapshot('welding', payload, 300)
-    task = process.repository.claim_task(process.owner, analysis=False)
-    clock[0] += 15
-    clock[1] += 15
-    process._completed.append((task, None))
-    with process.scope():
-        process._flush_completions()
-    clock[0] += 5
-    clock[1] += 5
-    process._completed.append((task, None))
-    with process.scope():
-        process._flush_completions()  # An already committed completion cannot postpone the next refresh.
-    statements = trace_sql(process.repository.database, monkeypatch)
-    clock[0] += 280
-    clock[1] += 280
-    process._schedule_snapshot('welding', payload, 300)
-    assert not statements
-    clock[0] += 15
-    clock[1] += 15
-    process._schedule_snapshot('welding', payload, 300)
-    assert any(statement.lstrip().startswith('UPDATE background_tasks') for statement in statements)
-    assert process.repository.task_counts() == {'pending': 1}
+    cfg=state_settings(configuration(tmp_path, welding=True),postgres_state)
+    scheduler=SchedulerProcess(cfg)
+    consumer=WorkerProcess(cfg)
+    consumer.owner=consumer.repository.acquire('worker',ttl=600)
+    payload=database_context(scheduler.runtime).lines['welding'].report_provider.refresh_plan()[0][0]
+    scheduler._schedule_snapshot('welding',payload,300)
+    task=consumer.repository.claim_task(consumer.owner,analysis=False)
+    clock[0]+=15;clock[1]+=15
+    consumer._completed.append((task,None))
+    with consumer.scope(): consumer._flush_completions()
+    calls=Mock(wraps=scheduler.repository.snapshot_refresh_due)
+    monkeypatch.setattr(scheduler.repository,'snapshot_refresh_due',calls)
+    clock[0]+=285;clock[1]+=285
+    scheduler._schedule_snapshot('welding',payload,300)
+    assert calls.call_count==1
+    assert scheduler.repository.task_counts()=={'completed':1}
+    clock[0]+=15;clock[1]+=15
+    scheduler._schedule_snapshot('welding',payload,300)
+    assert scheduler.repository.task_counts()=={'pending':1}
+    assert not hasattr(consumer,'_next_due')
 
 
 def test_retired_snapshot_task_finishes_without_recreating_its_removed_plan(postgres_state, tmp_path):
@@ -552,4 +558,4 @@ def test_retired_snapshot_task_finishes_without_recreating_its_removed_plan(post
         process._execute(task)
         assert process._flush_completions() == 1
     assert process.repository.task_counts() == {'completed': 1}
-    assert not process._next_due
+    assert not hasattr(process, "_next_due")

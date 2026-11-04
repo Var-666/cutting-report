@@ -125,6 +125,8 @@ class DiagnosticProcess(BaseModel):
 class DiagnosticProcesses(BaseModel):
     web: DiagnosticProcess
     worker: DiagnosticProcess
+    scheduler: DiagnosticProcess | None = None
+    automation: DiagnosticProcess | None = None
 
 
 class DiagnosticItem(BaseModel):
@@ -159,6 +161,8 @@ class WorkerConfigurationVersion(BaseModel):
 class ConfigurationProcesses(BaseModel):
     web: ConfigurationProcessVersion
     worker: WorkerConfigurationVersion
+    scheduler: WorkerConfigurationVersion | None = None
+    automation: WorkerConfigurationVersion | None = None
 
 
 class ConfigurationDiagnostics(BaseModel):

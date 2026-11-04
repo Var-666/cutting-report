@@ -50,9 +50,9 @@ class CoordinationRepository(PostgresRepository):
         with self.connect() as connection:
             connection.execute("UPDATE process_leases SET expires_at=0 WHERE name=%s AND owner=%s", (name, owner))
 
-    def worker_status(self) -> dict:
+    def worker_status(self, role: str = 'worker') -> dict:
         with self.connect() as connection:
-            row = connection.execute("SELECT *, EXTRACT(EPOCH FROM clock_timestamp())::double precision AS observed_at FROM process_leases WHERE name='worker'").fetchone()
+            row = connection.execute("SELECT *, EXTRACT(EPOCH FROM clock_timestamp())::double precision AS observed_at FROM process_leases WHERE name=%s", (role,)).fetchone()
         if row is None:
             return {"state": "missing", "report_alive": False, "stalled_workers": []}
         status = json.loads(row["status_json"])
@@ -61,7 +61,7 @@ class CoordinationRepository(PostgresRepository):
         if state == "running" and status.get("stalled_workers"):
             state = "stalled"
         if state in {"stopped", "lost"}:
-            for field in ("report_alive", "automation_alive", "email_alive"):
+            for field in ("report_alive", "scheduler_alive", "automation_alive", "email_alive"):
                 if field in status:
                     status[field] = False
         return {**status, "state": state, "owner": row["owner"], "heartbeat_age_seconds": round(age, 1),

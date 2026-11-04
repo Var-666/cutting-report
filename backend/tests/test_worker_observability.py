@@ -21,6 +21,7 @@ def health_request(worker):
 def test_live_but_blocked_consumer_degrades_health_and_recovers(monkeypatch, blocked_worker):
     stamp = [100.0]
     monkeypatch.setattr("app.workers.report_worker.monotonic", lambda: stamp[0])
+    monkeypatch.setattr("app.automation_worker.monotonic", lambda: stamp[0])
     entered, release, returned = Event(), Event(), Event()
 
     def block():
@@ -58,6 +59,9 @@ def test_live_but_blocked_consumer_degrades_health_and_recovers(monkeypatch, blo
 
     worker = ReportWorker(replace(settings, worker_poll_seconds=0.01,
                                   worker_stall_timeout_seconds=60), Metadata(), Pipeline(), Automation())
+    if blocked_worker != 'report':
+        from tests.automation_process_helpers import automation_process
+        worker = automation_process(replace(settings, worker_poll_seconds=0.01,worker_stall_timeout_seconds=60),Automation())
     original = worker._checkpoint
 
     def checkpoint(name, stage):

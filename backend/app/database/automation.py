@@ -7,7 +7,7 @@ from psycopg.errors import UniqueViolation
 from typing import Any
 from uuid import uuid4
 
-from app.database.postgres import PostgresDatabase, PostgresRepository, execution_owner, require_worker_recovery
+from app.database.postgres import PostgresDatabase, PostgresRepository, execution_owner, require_role_recovery
 
 
 class AutomationRepository(PostgresRepository):
@@ -21,9 +21,9 @@ class AutomationRepository(PostgresRepository):
 
 
     def recover_interrupted_deliveries(self) -> None:
-        """Only the newly elected Worker may classify abandoned SMTP attempts."""
+        """Only the newly elected Automation process may classify abandoned SMTP attempts."""
         with self.connect() as connection:
-            require_worker_recovery(connection)
+            require_role_recovery(connection, 'automation')
             interrupted = connection.execute(
                 "SELECT delivery_id, recipients_json, recipient_results_json FROM email_deliveries WHERE status = 'sending'"
             ).fetchall()

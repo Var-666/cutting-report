@@ -88,7 +88,7 @@ class ApplicationRuntime:
     download_cleanup_worker: DownloadCleanupWorker
 
 
-def build_runtime(settings: Settings, *, role: Literal["web", "worker"]) -> ApplicationRuntime:
+def build_runtime(settings: Settings, *, role: Literal["web", "scheduler", "worker", "automation"]) -> ApplicationRuntime:
     settings.ensure_runtime_dirs()
     database = PostgresDatabase(settings)
     try:
@@ -100,7 +100,7 @@ def build_runtime(settings: Settings, *, role: Literal["web", "worker"]) -> Appl
         raise
 
 
-def _build_runtime(settings: Settings, database: PostgresDatabase, *, role: Literal["web", "worker"]) -> ApplicationRuntime:
+def _build_runtime(settings: Settings, database: PostgresDatabase, *, role: Literal["web", "scheduler", "worker", "automation"]) -> ApplicationRuntime:
     catalog = load_line_catalog(settings.production_lines_json)
     database_sources = DatabaseSourceRegistry.from_json(settings.database_sources_json, bindings=source_bindings(settings, catalog), capacity=SqlCapacity(settings))
     validate_sources(settings, catalog, database_sources)

@@ -17,6 +17,8 @@ const category = ref('')
 const search = ref('')
 const page = ref(1)
 const pageSize = ref(10)
+const roles = ['web', 'worker', 'scheduler', 'automation'] as const
+const labels = { web: 'Web', worker: 'Consumer', scheduler: 'Scheduler', automation: 'Automation' }
 const statuses = { effective: '已生效', pending: '待重启', error: '配置异常', unconfigured: '未配置' }
 const tones: Record<DiagnosticStatus, TagProps['type']> = { effective: 'success', pending: 'warning', error: 'error', unconfigured: 'default' }
 const rows = computed(() => (report.value?.items || []).filter(item =>
@@ -58,8 +60,10 @@ const diagnosticsTableColumns = [
   { key: 'c0', title: '配置项', width: 260, align: 'left', fixed: 'left', ellipsis: false },
   { key: 'c1', title: 'Web 当前生效值 / 来源', minWidth: 320, align: 'left', ellipsis: false },
   { key: 'c2', title: 'Worker 当前生效值 / 来源', minWidth: 320, align: 'left', ellipsis: false },
-  { key: 'c3', title: '已保存目标 / 来源', minWidth: 280, align: 'left', ellipsis: false },
-  { key: 'c4', title: '生效状态及规则', minWidth: 340, align: 'left', ellipsis: false },
+  { key: 'c3', title: 'Scheduler 当前生效值 / 来源', minWidth: 320, align: 'left', ellipsis: false },
+  { key: 'c4', title: 'Automation 当前生效值 / 来源', minWidth: 320, align: 'left', ellipsis: false },
+  { key: 'c5', title: '已保存目标 / 来源', minWidth: 280, align: 'left', ellipsis: false },
+  { key: 'c6', title: '生效状态及规则', minWidth: 340, align: 'left', ellipsis: false },
 ] as const
 </script>
 
@@ -70,10 +74,10 @@ const diagnosticsTableColumns = [
     <p v-if="loading" role="status">正在读取配置快照…</p>
     <template v-if="report">
       <NAlert v-for="message in report.errors" :key="message" type="error" role="alert">{{ message }}</NAlert>
-      <NAlert v-if="!report.processes.worker.available" type="warning" role="status">Worker 快照不可用（{{ report.processes.worker.state }}），请检查独立 Worker 进程与心跳。</NAlert>
+      <template v-for="role in roles.filter(item => item !== 'web')" :key="role"><NAlert v-if="!report.processes[role]?.available" type="warning" role="status">{{ labels[role] }} 快照不可用（{{ report.processes[role]?.state || 'missing' }}），请检查对应进程与心跳。</NAlert></template>
       <NCard :bordered="false" title="进程加载状态">
         <div class="processes">
-          <div v-for="role in (['web', 'worker'] as const)" :key="role"><strong>{{ role === 'web' ? 'Web' : 'Worker' }}</strong><p>配置版本：{{ report.processes[role].version || '未知' }}</p><p>启动加载：{{ report.processes[role].loaded_at || '未知' }}</p><p>热更新：{{ report.processes[role].hot_loaded_at || '未知' }} · 修订 {{ report.processes[role].hot_revision ?? '未知' }}</p></div>
+          <div v-for="role in roles" :key="role"><strong>{{ labels[role] }}</strong><p>配置版本：{{ report.processes[role]?.version || '未知' }}</p><p>启动加载：{{ report.processes[role]?.loaded_at || '未知' }}</p><p>热更新：{{ report.processes[role]?.hot_loaded_at || '未知' }} · 修订 {{ report.processes[role]?.hot_revision ?? '未知' }}</p></div>
         </div>
       </NCard>
       <NCard :bordered="false" title="异常配置项">
@@ -83,11 +87,11 @@ const diagnosticsTableColumns = [
           <NButton :loading="loading" :disabled="loading" @click="load">刷新快照</NButton>
         </div>
         <div class="diagnostics-table">
-          <AppReportTable :columns="diagnosticsTableColumns" :items="visibleRows" :row-key="row => row.key" :total="rows.length" :page="page" :page-size="pageSize" :page-sizes="[10, 20, 50]" :loading="loading" aria-label="Web、Worker 配置来源和生效状态及异常配置项分页" @page="page = $event" @page-size="pageSize = $event">
+          <AppReportTable :columns="diagnosticsTableColumns" :items="visibleRows" :row-key="row => row.key" :total="rows.length" :page="page" :page-size="pageSize" :page-sizes="[10, 20, 50]" :loading="loading" aria-label="四个应用进程配置来源和生效状态及异常配置项分页" @page="page = $event" @page-size="pageSize = $event">
             <template #c0="{ row }"><div class="diagnostic-cell"><strong :title="row.key">{{ row.key }}</strong><small :title="row.category">{{ row.category }}</small></div></template>
-            <template v-for="(role, index) in (['web', 'worker'] as const)" :key="role" #[`c${index+1}`]="{ row }"><div class="diagnostic-cell"><NTag size="small" :type="tones[row.processes[role].status]">{{ statuses[row.processes[role].status] }}</NTag><span class="diagnostic-value" :title="display(row.processes[role].value)">{{ display(row.processes[role].value) }}</span><small class="diagnostic-source" :title="row.processes[role].source">来源：{{ row.processes[role].source }}</small></div></template>
-            <template #c3="{ row }"><div class="diagnostic-cell"><span class="diagnostic-value" :title="display(row.saved_value)">{{ display(row.saved_value) }}</span><small class="diagnostic-source" :title="row.saved_source">来源：{{ row.saved_source }}</small></div></template>
-            <template #c4="{ row }"><div class="diagnostic-cell"><NTag size="small" :type="tones[row.status]">{{ statuses[row.status] }}</NTag><small v-if="row.process_mismatch">Web / Worker 配置版本不一致</small><small v-if="!row.valid">目标配置无效，请核对对应配置项及文件</small><small :title="row.rule">{{ row.rule }}</small></div></template>
+            <template v-for="(role, index) in roles" :key="role" #[`c${index+1}`]="{ row }"><div class="diagnostic-cell"><NTag size="small" :type="tones[(row.processes[role]?.status || 'error')]">{{ statuses[(row.processes[role]?.status || 'error')] }}</NTag><span class="diagnostic-value" :title="display(row.processes[role]?.value)">{{ display(row.processes[role]?.value) }}</span><small class="diagnostic-source" :title="row.processes[role]?.source">来源：{{ row.processes[role]?.source }}</small></div></template>
+            <template #c5="{ row }"><div class="diagnostic-cell"><span class="diagnostic-value" :title="display(row.saved_value)">{{ display(row.saved_value) }}</span><small class="diagnostic-source" :title="row.saved_source">来源：{{ row.saved_source }}</small></div></template>
+            <template #c6="{ row }"><div class="diagnostic-cell"><NTag size="small" :type="tones[row.status]">{{ statuses[row.status] }}</NTag><small v-if="row.process_mismatch">后台进程与 Web 配置不一致</small><small v-if="!row.valid">目标配置无效，请核对对应配置项及文件</small><small :title="row.rule">{{ row.rule }}</small></div></template>
             <template #empty><span role="status">{{ category || search ? '没有符合条件的异常配置项。' : '暂无异常配置项。' }}</span></template>
           </AppReportTable>
         </div>

@@ -1896,6 +1896,8 @@ export type ConfigurationProcessVersion = {
 export type ConfigurationProcesses = {
     web: ConfigurationProcessVersion;
     worker: WorkerConfigurationVersion;
+    scheduler?: WorkerConfigurationVersion | null;
+    automation?: WorkerConfigurationVersion | null;
 };
 
 /**
@@ -3091,6 +3093,8 @@ export type DiagnosticProcess = {
 export type DiagnosticProcesses = {
     web: DiagnosticProcess;
     worker: DiagnosticProcess;
+    scheduler?: DiagnosticProcess | null;
+    automation?: DiagnosticProcess | null;
 };
 
 /**
@@ -5013,6 +5017,12 @@ export type ResourceReport = {
      * Worker State
      */
     worker_state: string;
+    /**
+     * Roles
+     */
+    roles?: {
+        [key: string]: SqlResourceUsage | null;
+    };
 };
 
 /**

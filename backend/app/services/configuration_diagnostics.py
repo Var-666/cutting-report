@@ -214,6 +214,13 @@ class ConfigurationDiagnostics:
         web = self.observed(comparison_key)
         other = worker.get("configuration")
         worker_available = worker.get("state") in {"running", "stalled"} and isinstance(other, dict) and isinstance(other.get("items"), dict)
+        additional = {}
+        for role in ('scheduler', 'automation'):
+            status = worker.get('roles', {}).get(role)
+            if status is not None:
+                remote = status.get('configuration')
+                available = status.get('state') in {'running','stalled'} and isinstance(remote,dict) and isinstance(remote.get('items'),dict)
+                additional[role] = (status, remote if available else None, self.observed(status.get('owner','unavailable')))
         targets, invalid, errors = self.target()
         rows = []
         for key in sorted(set(web["items"]) | set(targets) | set(other.get("items", {}) if worker_available else {})):
@@ -235,6 +242,15 @@ class ConfigurationDiagnostics:
             left = web["items"].get(key)
             right = other.get("items", {}).get(key) if worker_available else None
             mismatch = bool(worker_available and (not left or not right or left["digest"] != right["digest"]))
+            for role, (status, remote, local) in additional.items():
+                item = remote.get('items', {}).get(key) if remote else None
+                reference = local['items'].get(key)
+                matches = bool(item and key in targets and item['digest']==fingerprint(target_value,status.get('owner','unavailable')))
+                changed = bool(item and (not reference or item['digest'] != reference['digest']))
+                pending = bool(remote and key=='DATABASE_SOURCES_JSON' and remote.get('sql_capacity_pending'))
+                state = 'error' if key in invalid or errors or not item or remote.get('database_error' if database_hot else 'error') else 'pending' if pending or not matches and not hot else 'error' if not matches else 'unconfigured' if item['value']=='未配置' else 'effective'
+                processes[role] = {'value':item['value'] if item else '未知','source':source_label(item['source']) if item else '未知','matches_saved':matches,'status':state}
+                mismatch = mismatch or changed
             statuses = {item["status"] for item in processes.values()}
             state = "error" if mismatch or "error" in statuses else "pending" if "pending" in statuses else processes["web"]["status"]
             rows.append({"key": key, "category": CATEGORIES[2] if key.startswith(("devices.", "lines.")) else category(key),
@@ -242,17 +258,20 @@ class ConfigurationDiagnostics:
                          "saved_source": source_label(target_source), "status": state,
                          "valid": key not in invalid and not errors, "process_mismatch": mismatch,
                          "restart_required": (not hot or key == 'DATABASE_SOURCES_JSON') and any(item["status"] == "pending" for item in processes.values()),
-                         "rule": "连接参数按新操作热加载；sql_max_concurrent 重启 Web/Worker 生效，实际容量见数据库资源诊断" if key == 'DATABASE_SOURCES_JSON' else
+                         "rule": "连接参数按新操作热加载；sql_max_concurrent 重启 Web/Scheduler/Consumer/Automation 生效，实际容量见数据库资源诊断" if key == 'DATABASE_SOURCES_JSON' else
                          "保存后新请求和后台操作自动加载；在途操作保留旧配置，无需重启容器" if database_hot else
                          "保存后由各进程下一轮自动化/邮件操作加载；在途操作保留旧快照" if hot else
                          ("数据库声明参数，实际连接及继承来源见 connections.*；" if "SQLSERVER_" in key else "")
-                         + "重启 Web 和 Worker；Docker 环境变量变更需重新创建两个容器"})
+                         + "重启 Web、Scheduler、Consumer 和 Automation；Docker 环境变量变更需重新创建四个应用容器"})
+        versions = {role:{'state':status.get('state','missing'),'available':remote is not None,
+                         **({key:remote.get(key) for key in ('loaded_at','hot_loaded_at','hot_revision','version')} if remote else {})}
+                    for role,(status,remote,local) in additional.items()}
         return {"categories": CATEGORIES, "items": rows, "errors": errors,
                 "precedence": "data/settings.env > 进程环境变量 > .env > 程序默认值；产线与连接只取统一配置",
-                "processes": {"web": {key: web[key] for key in ("loaded_at", "hot_loaded_at", "hot_revision", "version")},
+                "processes": {**versions, "web": {key: web[key] for key in ("loaded_at", "hot_loaded_at", "hot_revision", "version")},
                               "worker": {"state": worker.get("state", "missing"), "available": worker_available,
                                          **({key: other.get(key) for key in ("loaded_at", "hot_loaded_at", "hot_revision", "version")} if worker_available else {})}},
-                "consistent": worker_available and not any(row["process_mismatch"] for row in rows),
+                "consistent": worker_available and all(remote is not None for _,remote,_ in additional.values()) and not any(row["process_mismatch"] for row in rows),
                 "notes": ["版本号标识各进程加载批次；一致性按实际配置逐项比较，包含凭据变更，不以版本号或脱敏文本判定。","只读快照不触发热更新、数据库连接或后台任务。", "Worker 状态来自独立心跳，缺失或过期时显示异常，不能视为已生效。",
                           "已生效表示与该进程环境下的保存目标一致；宿主机 .env 尚未注入的新值需先重新创建容器。",
                           "每条产线及共享业务通过显式 source_key 绑定数据源，不继承其他产线连接。"]}

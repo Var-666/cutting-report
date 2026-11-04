@@ -5,7 +5,7 @@ from psycopg import Connection
 
 from typing import Any
 
-from app.database.postgres import PostgresDatabase, PostgresRepository, execution_owner, require_worker_recovery
+from app.database.postgres import PostgresDatabase, PostgresRepository, execution_owner, require_role_recovery
 
 
 class MetadataRepository(PostgresRepository):
@@ -64,7 +64,7 @@ class MetadataRepository(PostgresRepository):
 
     def recover_interrupted_jobs(self) -> int:
         with self.connect() as connection:
-            require_worker_recovery(connection)
+            require_role_recovery(connection, 'worker')
             cursor = connection.execute(
                 """
                 UPDATE report_jobs

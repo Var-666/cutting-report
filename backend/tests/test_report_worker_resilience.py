@@ -1,3 +1,4 @@
+from tests.automation_process_helpers import automation_process
 from dataclasses import replace
 from threading import Event
 from types import SimpleNamespace
@@ -26,7 +27,7 @@ def test_claim_and_failure_record_errors_do_not_kill_report_worker():
             if len(calls) == 1:
                 raise RuntimeError("temporary database failure")
             if len(calls) <= 3:
-                return {"report_id": str(len(calls))}
+                return {"report_id": str(len(calls)), "device_id":"Cutter01"}
             return None
 
         def update_status(self, *args, **kwargs):
@@ -64,7 +65,7 @@ def test_slow_report_cannot_starve_email_and_callback_cannot_fail_completed_repo
             if self.claimed:
                 return None
             self.claimed = True
-            return {"report_id": "rpt_slow"}
+            return {"report_id": "rpt_slow", "device_id":"Cutter01"}
 
         def update_status(self, *args, **kwargs):
             failed.append(args)
@@ -94,8 +95,10 @@ def test_slow_report_cannot_starve_email_and_callback_cannot_fail_completed_repo
             failed.append(args)
 
     worker = ReportWorker(replace(settings, worker_poll_seconds=0.01), Metadata(), Pipeline(), Automation())
+    independent = automation_process(replace(settings, worker_poll_seconds=0.01),Automation())
     try:
         worker.start()
+        independent.start()
         assert generating.wait(1)
         assert emailed.wait(1), "email must proceed while report generation is blocked"
         release.set()
@@ -103,6 +106,7 @@ def test_slow_report_cannot_starve_email_and_callback_cannot_fail_completed_repo
     finally:
         release.set()
         worker.stop()
+        independent.stop()
     assert not failed, "a delivery callback failure must not corrupt a completed report"
 
 
@@ -158,8 +162,7 @@ def test_slow_scheduler_preparation_cannot_starve_email(phase):
                 emailed.set()
             return False
 
-    worker = ReportWorker(replace(settings, worker_poll_seconds=0.01), IdleMetadata(),
-                          SimpleNamespace(), Automation())
+    worker = automation_process(replace(settings, worker_poll_seconds=0.01), Automation())
     try:
         worker.start()
         assert blocked.wait(1)
@@ -168,7 +171,7 @@ def test_slow_scheduler_preparation_cannot_starve_email(phase):
     finally:
         release.set()
         worker.stop()
-    assert all(not thread.is_alive() for thread in worker._threads())
+    assert all(not thread.is_alive() for thread in worker.threads)
 
 
 def test_slow_smtp_cannot_starve_next_schedule_scan():
@@ -187,8 +190,7 @@ def test_slow_smtp_cannot_starve_next_schedule_scan():
             release.wait(3)
             return False
 
-    worker = ReportWorker(replace(settings, worker_poll_seconds=0.01, automation_scan_seconds=0.01),
-                          IdleMetadata(), SimpleNamespace(), Automation())
+    worker = automation_process(replace(settings, worker_poll_seconds=0.01, automation_scan_seconds=0.01), Automation())
     try:
         worker.start()
         assert sending.wait(1)
@@ -216,12 +218,11 @@ def test_email_consumer_recovers_after_one_claim_error():
             recovered.set()
             return False
 
-    worker = ReportWorker(replace(settings, worker_poll_seconds=0.01), IdleMetadata(),
-                          SimpleNamespace(), Automation())
+    worker = automation_process(replace(settings, worker_poll_seconds=0.01), Automation())
     try:
         worker.start()
         assert recovered.wait(1), "one outbox fault must not permanently stop delivery"
-        assert worker.email_thread.is_alive()
+        assert worker.threads[1].is_alive()
     finally:
         worker.stop()
 
@@ -229,15 +230,14 @@ def test_email_consumer_recovers_after_one_claim_error():
 def test_partial_thread_start_failure_stops_already_started_workers(monkeypatch):
     automation = SimpleNamespace(reconcile_runs=lambda now: None,
                                  process_due_schedules=lambda now: None)
-    worker = ReportWorker(replace(settings, worker_poll_seconds=0.01), IdleMetadata(),
-                          SimpleNamespace(), automation)
+    worker = automation_process(replace(settings, worker_poll_seconds=0.01), automation)
 
     def fail_start():
         raise RuntimeError("cannot start mail consumer")
 
-    monkeypatch.setattr(worker.email_thread, "start", fail_start)
+    monkeypatch.setattr(worker.threads[1], "start", fail_start)
     with pytest.raises(RuntimeError, match="cannot start mail consumer"):
         worker.start()
     assert worker.stop_event.is_set()
-    assert all(not thread.is_alive() for thread in worker._threads())
+    assert all(not thread.is_alive() for thread in worker.threads)
     worker.stop()  # An unstarted thread must not make cleanup raise.

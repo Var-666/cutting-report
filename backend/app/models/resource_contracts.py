@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ResourceUsage(BaseModel):
@@ -27,3 +27,4 @@ class ResourceReport(BaseModel):
     http: list[ResourceUsage]
     worker: SqlResourceUsage | None
     worker_state: str
+    roles: dict[str, SqlResourceUsage | None] = Field(default_factory=dict)

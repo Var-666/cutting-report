@@ -11,16 +11,16 @@ cp .env.example .env
 docker compose build app
 docker compose up -d postgres
 docker compose run --rm --no-deps migrate python scripts/migrate_sqlite_to_postgres.py schema
-docker compose up -d app worker
+docker compose up -d app scheduler worker automation
 docker compose ps
 ```
 
 示例配置使用演示数据；接入生产库前按 [配置参考](docs/deployment/配置参考.md) 设置数据源和只读连接。已有 `.env` 时保留原文件，不重新复制。构建需要联网，离线环境见 [离线 Docker 部署](docs/deployment/OFFLINE_DOCKER部署说明.md)。
 
-打开 [http://127.0.0.1:8088](http://127.0.0.1:8088)，首次登录创建本地管理员。Compose 同时启动 Web 与 Worker，后台报表和自动化依赖独立 Worker。
+打开 [http://127.0.0.1:8088](http://127.0.0.1:8088)，首次登录创建本地管理员。Compose 启动 Web、Scheduler、单Consumer和Automation，三个后台角色通过PostgreSQL独立协调。
 
 ```bash
-docker compose logs -f app worker
+docker compose logs -f app scheduler worker automation
 ```
 
 ## 本地开发
@@ -94,7 +94,7 @@ Docker 的 Python/Node 基础镜像使用摘要固定，Debian 系统包使用�
 
 ## 构建与部署
 
-生产式本地运行先在 `frontend/` 执行 `pnpm run build`，再启动一个 Web 和一个 Worker；Web 去掉 `--reload`。前端构建依次强制执行 `pnpm run typecheck`、`pnpm test`，通过后才同步 ECharts 资源并打包；任一步失败都会停止构建。日常修改只运行受影响的定向测试，正式构建执行这一次完整前端验证。正式环境将两个进程注册为独立服务。GitHub Actions 在 push 和 pull request 时，使用 Node.js 22、`pnpm install --frozen-lockfile` 和同一 `pnpm run build` 命令自动验证前端。
+生产式本地运行先在 `frontend/` 执行 `pnpm run build`，再启动一个 Web、一个Scheduler、一个Consumer和一个Automation；Web 去掉 `--reload`。前端构建依次强制执行 `pnpm run typecheck`、`pnpm test`，通过后才同步 ECharts 资源并打包；任一步失败都会停止构建。日常修改只运行受影响的定向测试，正式构建执行这一次完整前端验证。正式环境将四个应用进程注册为独立服务。GitHub Actions 在 push 和 pull request 时，使用 Node.js 22、`pnpm install --frozen-lockfile` 和同一 `pnpm run build` 命令自动验证前端。
 
 - [Docker 部署与更新](README-DOCKER.md)
 - [麒麟原生部署](docs/deployment/KYLIN原生部署说明.md)
@@ -184,4 +184,4 @@ SQLite 的 `014_workshop_ship_names` 迁移单独保存日报船名，升级前�
 两台切割设备共享有界船名缓存，使用现有报表缓存 TTL；强制查询会刷新船名。修改 `bm` 连接会重建受影响的切割服务，旧请求保留原引用；更改其他无关数据源不会重建切割服务。`bm` 已声明为切割报表引用，登记后可停用，但不能通过管理页删除或切换数据库类型。
 
 
-P1 升级须先停止 Web/Worker 并运行 `python scripts/migrate_production_lines.py`，再启动同版本两进程；旧 SQLite 的015告警来源隔离在离线准备阶段完成，正式启动不再读写 SQLite。统一实例与来源配置、备份位置、新增切割/焊接线及回退边界见[配置参考](docs/deployment/配置参考.md#p1-升级与新增实例)。
+P1 旧配置升级须先停止旧 Web/Worker 并运行 `python scripts/migrate_production_lines.py`；旧 SQLite 的015告警来源隔离及 P5 最新数据迁移在离线准备阶段完成后，才能启动 P6 四个应用角色，正式启动不再读写 SQLite。统一实例与来源配置、备份位置、新增切割/焊接线及回退边界见[配置参考](docs/deployment/配置参考.md#p1-升级与新增实例)。

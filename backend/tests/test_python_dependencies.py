@@ -108,6 +108,8 @@ esac
     assert 'test -r /opt/python-project.sha256' in called
     assert ('up -d' in called) != mismatch
     assert (result.returncode != 0) == mismatch
+    if not mismatch:
+        assert 'up -d --no-build --pull never --force-recreate app scheduler worker automation' in called
 
 
 @pytest.mark.parametrize('existing', ['new', 'valid', 'unsupported', 'shared', 'invalid-directory'])

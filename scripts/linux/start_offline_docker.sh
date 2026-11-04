@@ -12,9 +12,9 @@ if [[ ! -f .env ]]; then
 fi
 
 # Check only public lock inputs; never mount data or credentials here.
-image="$(docker compose -f compose.yaml -f compose.offline.yaml config --images app worker | sed '/^postgres:/d' | sort -u)"
+image="$(docker compose -f compose.yaml -f compose.offline.yaml config --images app scheduler worker automation | sed '/^postgres:/d' | sort -u)"
 if [[ -z "${image}" || "${image}" == *$'\n'* ]]; then
-  echo '[ERROR] Web 和 Worker 必须使用同一运行镜像。' >&2
+  echo '[ERROR] Web、Scheduler、Consumer 和 Automation 必须使用同一运行镜像。' >&2
   exit 1
 fi
 if ! docker run --rm --network none \
@@ -37,7 +37,7 @@ fi
 docker compose \
   -f compose.yaml \
   -f compose.offline.yaml \
-  up -d --no-build --pull never --force-recreate app worker
+  up -d --no-build --pull never --force-recreate app scheduler worker automation
 
 docker compose \
   -f compose.yaml \

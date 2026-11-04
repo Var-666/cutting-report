@@ -42,7 +42,7 @@ from app.services.application_runtime import build_runtime
 from app.core.sql_capacity import SqlCapacityError, sql_identity
 from app.core.report_deadline import ReportOperationTimeout
 from app.core.process_lock import FileLock
-from app.services.worker_status import background_ready
+from app.services.worker_status import background_ready, public_status
 from app.core.request_cancellation import (
     SqlRequestCancelled, bind_request_id, cancellation_session_scope,
     reset_request_id, sql_request_cancellations,
@@ -63,7 +63,7 @@ async def lifespan(app: FastAPI):
     # Dispatch recovery is safe only after the previous Web process has exited.
     lock = FileLock(settings.data_dir / ".web-process.lock")
     if not lock.acquire(blocking=False):
-        raise RuntimeError("已有 Web 进程运行；请保持一个 Web 和一个独立 Worker")
+        raise RuntimeError("已有 Web 进程运行；请保持单 Web，后台角色独立启动")
     try:
         runtime = build_runtime(settings, role="web")
         app.state.runtime = runtime
@@ -223,8 +223,8 @@ async def health(request: Request) -> dict:
         "data": {
             "status": "ok" if web_ready else "degraded",
             "background_ready": ready,
-            "background_status": worker_status.get("state", "running" if ready else "degraded"),
-            "workers": {key: value for key, value in worker_status.items() if key != "configuration"},
+            "background_status": worker_status.get("background_state", worker_status.get("state", "running" if ready else "degraded")),
+            "workers": public_status(worker_status),
             "version": settings.app_version,
             "demo_mode": mode == "demo",
             "data_source_mode": mode,

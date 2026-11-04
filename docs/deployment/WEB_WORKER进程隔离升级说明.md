@@ -1,89 +1,97 @@
-# Web / Worker 部署、升级与回滚
+# Web、Scheduler、Consumer、Automation 部署、升级与回滚
 
-更新日期：2026-10-24。适用于当前 Cutter01/Cutter02 多设备版本升级到进程隔离版本。
+更新：2026-11-04，P6。状态库为 P5 PostgreSQL；当前只有一个 Consumer，不支持多消费者或多主机部署。
 
-## 运行边界
+## 进程与职责
 
-- `app`：一个 Uvicorn Web 进程，负责页面、鉴权、生产只读查询、任务提交、状态和按需 AI/PDF。
-- `worker`：独立 Python 进程，负责报表、自动化、SMTP、告警、周期分析、能耗与清理。Web 重启不重置其任务。
-- 两者使用同一配置、设备目录和本机的 data/reports/logs 卷。SQLite 继续使用 WAL；生产 SQL Server 保持只读。不得把这些卷放在 NFS/SMB 或分布到不同主机。
-- 当前不支持多个 Web；HTTP 请求取消仍属于唯一 Web 进程，启动锁会拒绝第二个实例。Worker 采用持久化独占租约，第二个消费者不会接管有效租约。
-
-## 首次升级
-
-1. **先停止旧单进程容器或原生服务。不能让旧代码与新 Worker 混跑。** Compose 使用 `docker compose stop`，保留原项目名和卷，不加 `-v`。
-2. 备份 `.env`、data/settings.env、完整 data 卷和 reports 卷。确认 SMTP 的 sending/unknown、魔盒上传/指派/取消未知记录，未知结果不得为了升级而改成可重试。
-3. 更新源码构建部署使用 `docker compose up -d --build`。离线部署使用原 `compose.yaml` 加新版 `compose.offline.yaml`；两服务都挂载当前 backend/vendor，Compose 显式提供 PYTHONPATH，现有依赖镜像可以继续使用。
-4. 首次迁移会在 data/backups 写入 `metadata-before-processes-*.db`，使用 SQLite backup，权限 600。已有设备迁移备份逻辑仍保留。新增协调表、分析执行记录及 report_jobs/email_deliveries/energy_history_queue 的可空 execution_owner 字段，不改原字段含义或删除记录。
-5. `docker compose ps` 应看到 app 和 worker 各自 healthy。Worker 初次启动等待 Web healthy，仅用于启动排序；重启 Web 不会连带重启 Worker。
-6. 核对两台设备的历史报告、确认与审计，提交一份报告检查完成状态、HTML/PDF；核对告警和能耗游标。真实邮件/魔盒操作应按既有现场验收流程单独核对。
-
-常用命令：
-
-```bash
-docker compose logs --tail 100 app worker
-docker compose restart app
-docker compose restart worker
-docker compose exec worker python -m app.worker --health
-```
-
-Web 重启不会恢复或重排后台任务。Worker 非正常退出后，等待旧租约失效（通常最多 30 秒）再启动；不要手工清除有效租约来制造并发消费者。正常停止会在消费者结束后释放租约；在途操作未结束时留待租约到期和围栏处理。
-
-管理员可在“系统设置 → 配置诊断”查看两进程各自的实际来源、保存目标、加载时间与待重启/异常状态；诊断读取不触发配置更新。管理页保存到 data/settings.env 的数据库页全部配置及自动化/SMTP 参数通过文件版本传播，下一轮操作使用新快照，已开始的操作保留原快照。首次部署热加载代码仍需更新两个服务，之后修改数据库页配置无需重启容器。修改宿主机 .env、LLM 或设备配置，需要重建/重启**两个**服务，保持配置一致，例如 `docker compose up -d --force-recreate app worker`。
-
-## 原生部署
-
-分别注册两个独立系统服务，工作目录均为项目根目录。Web 保持 --workers 1；不要用增加 Web workers 代替后台进程。
-
-```bash
-./scripts/linux/start_kylin.sh
-./scripts/linux/start_kylin.sh worker
-```
-
-也可在项目根目录设置 `PYTHONPATH=backend` 后执行 `.venv/bin/python -m app.worker`。Docker/Linux 路径已作隔离回归。
-
-## 资源与恢复
-
-- Web 保留原 AI/PDF/SQL/鉴权独立限额 10/2/8/8。模型再使用跨进程共享槽位，总量受同一个 LLM_MAX_CONCURRENT 控制；不提高原上限。普通后台受半池配额限制，周期任务可利用全部空闲容量，真实前台等待优先。
-- 本地查询/领导快照缓存保留，Worker 刷新发布设备级版本标记以触发 Web 缓存换代；能耗快照通过旧值比较防止并发结果回退。下载保留清理和 Web 推送后删除共享 OS 锁，保留完整清理审计。
-- Worker 使用报表/自动化/邮件各一个消费者、4 个后台操作执行者、10 个分析执行者，不随设备数量增加执行线程。告警保留原租约续期线程，数量受操作池约束。
-- SQLite ready 队列最多 256 个 pending；超额保存为 deferred/QUEUE_CAPACITY，失败保存类型并按 30–3600 秒退避。执行池没有额外等待队列，任务只在有空位时认领。deferred 属于磁盘持久化积压，不占执行线程；持续过载时需监测 background_queue 和数据卷空间，不能将 256 误解为整个数据库只会保存 256 条任务。辅助任务完成记录、非活动分析尝试保留 30 天，未完成任务不清理。稳定 OS 锁文件不在线删除，避免锁文件换 inode 后出现两个持有者。
-- Worker 租约每 5 秒续 30 秒。后台仓储在进入及提交写事务时检查执行者，失效操作回滚；接管者恢复遗留报表、后台任务和能耗认领。报表使用不同执行者的内部路径，迟到文件不覆盖新文件，公开下载名称和链接协议保持。
-- 邮件 sending 恢复成 unknown，接受地址、Message-ID 和核对记录保留，不自动重发。魔盒仍由单 Web 的既有事务/CAS 状态机保护；Worker 不恢复或重试其上传、指派和取消。外部系统的最终结果仍可能需要人工核对，不能承诺外部副作用恰好一次。
-
-## 健康语义
-
-`GET /api/v1/health` 保留 success、data.status、workers 等主字段；HTTP 200 表示 Web/SQLite 可用，后台不可用通过 background_ready=false 和 background_status 表达。自有 SQLite 不可访问仍返回 503。后台状态为 missing/running/stalled/lost/stopped/unavailable，并提供心跳年龄、进展、队列计数。Web 的状态读取使用独立线程容量和 2 秒缓存。
-
-Worker 使用独立 `--health` 探针，检查有效心跳、消费者、队列观测和停滞状态。存活不代表有进展；超过 REPORT_WORKER_STALL_TIMEOUT_SECONDS 的任务会标记 stalled。进程挂起超过租约期限后为 lost，旧执行者不能续租复活。
-
-## 回滚
-
-本次迁移是增量迁移。回退到**本次改造前的当前多设备版本**时，先停止 app 和 worker，保存升级后的数据，再启动原单进程版本；旧代码可忽略本次新增表和可空字段，原报告路径保存在数据库内，已成功记录无需还原到旧备份。
-
-回滚前应排空新增后台队列；未排空的 pending/deferred 记录应保留，旧版本不会消费，恢复新版后才能继续。SMTP/魔盒未知结果继续保持未知，不因回滚改为 pending。更早的多设备迁移之前版本仍受原唯一约束兼容限制，不能据此直接回退。
-
-只有首次迁移失败、且确认升级后没有新增业务记录时，才考虑停止全部进程并恢复升级前数据库备份。已经接收业务后恢复旧备份会丢失新增确认、报表和审计，不能作为常规回滚方式。不得清空卷或在线删除协调锁来回滚。
-
-## 验证边界
-
-定向回归使用真实 spawn 子进程验证 Web 无后台线程、Worker 独立消费、Web 连续重启、Worker 强制退出恢复、任务原子认领、旧执行者写回围栏、全局模型容量与单飞优先级、配置传播和 SQLite 崩溃回滚。独立 Docker 项目使用新卷、演示数据、现有依赖镜像与只读源码挂载验证双服务、两设备 HTML、真实 Chromium PDF 和分别停止/重启。
-
-未调用真实生产写操作、真实 SMTP 投递或魔盒派发；生产 SQL/能管/LLM 的吞吐、驱动异常、部署资源仍须内网验收。未默认执行全量测试或重建前端/完整镜像。
-
-
-本次实际执行的定向验证（均通过；按改动分批执行，未重跑全量）：
-
-| 范围 | 测试文件或命令 | 已验证结果 |
+| Compose服务 | 入口 | 职责 / 租约 |
 | --- | --- | --- |
-| 多进程与调度 | `test_process_coordination.py`、`test_web_worker_processes.py`、`test_worker_scheduler.py` | spawn 进程、认领围栏、崩溃恢复、队列、迁移备份、独立重启、配置、模型/PDF 容量与清理审计 |
-| 缓存及生产查询 | `test_query_service_cache.py`、`test_workshop_preload.py`、`test_leadership_report_service.py` | 33 项通过；另以子进程发布设备级版本验证 Web 缓存换代和设备隔离 |
-| 配置与租约补充 | `test_automation_runtime.py`、`test_runtime_settings_consistency.py`及配置版本、协调和热传播用例 | 本轮组合 29 项通过 |
-| 受影响集成 | `test_request_workloads.py`、`test_unit_of_work.py`、`test_alarm_execution_recovery.py`、`test_multi_device.py`、`test_email_resolution.py`、`test_automation_missed_cycles.py`、`test_retention.py`及健康用例 | 本轮组合 61 项通过 |
-| 外部未知结果保护 | `test_cutting_dispatch.py -k 'unknown or interrupted or restart or duplicate or concurrent'`，SMTP 接管与旧 owner 写回用例 | 魔盒 14 项通过；SMTP 不重发与围栏通过，未真实投递 |
-| 下载文件清理 | `test_file_downloads.py -k 'cleanup or pushed or delete'`及双进程推送后删除/保留清理用例 | 4 项已有回归及真实子进程互斥回归通过 |
-| 保留的分析/报表链 | `test_report_analysis_service.py`、`test_llm_capacity.py`、`test_llm_retry.py`、`test_current_report_refresh_worker.py`、`test_pipeline.py`、PDF/能耗/邮件相关定向文件 | 分批回归通过，保留四段分析、缓存、周期强制调用、报表格式及异常恢复 |
-| 部署/包 | `test_docker_package.py`、`docker compose config --quiet`（常规及离线组合）、`bash -n`（两个 Linux 启动脚本） | 通过；离线包包含新入口和升级文档 |
-| 真实 Docker | 独立项目 `cutting-worker-isolation-test`，现有 amd64 依赖镜像加当前源码，只读挂载、新演示卷 | 两服务 healthy；两设备 HTML 与 354573 字节真实 Chromium PDF；Web/Worker 分别停止和重启，报告保留；Web 停止期间 Worker 完成队列任务 |
+| app | app.main:app，Uvicorn workers=1 | HTTP、鉴权、查询、持久化任务提交与状态；原Web启动的下载/派发恢复保留 |
+| scheduler | python -m app.scheduler | 生产周期刷新、告警、能耗、历史对账、清理计划入队；独占scheduler租约 |
+| worker | python -m app.worker | 唯一Consumer，领取后台任务与报表；独占worker租约 |
+| automation | python -m app.automation_worker | 自动化计划/补偿、报表任务准备关联、邮件发送；独占automation租约 |
+| postgres | PostgreSQL 18.6 | 统一业务状态、队列、完成时间、租约和心跳 |
 
-本机保留既有 Starlette TestClient/httpx 弃用警告。Docker 在 arm64 主机运行已有 amd64 镜像，已通过上述测试，但不据此宣称生产架构吞吐。测试容器和专用卷在验证后清理，未变更正式部署。
+Scheduler不调用业务执行、模型、PDF或SMTP；Consumer没有周期调度循环；ReportWorker只生成报表，保留完成/失败回调。Automation中的计划扫描和邮件发送使用两个原有职责线程，慢源准备和慢SMTP互不阻塞。Scheduler不扫描自动化计划。各角色通过PostgreSQL衔接，不共享Python内存，不保留切回混合Worker的开关。
+
+所有角色使用同一配置与同机data/reports/logs卷，继承P1统一产线与来源Registry、P3 SQL/LLM/PDF本地共享锁。后台进程不开HTTP端口；仍只允许单Web与单Consumer。配置文件及报表/附件继续在原卷，不迁到新目录。
+
+## 旧部署升级门槛
+
+**P5 PostgreSQL正式现场切换尚未执行。旧SQLite部署必须先完成P5停机、最新一致性备份、全部状态导入与校验，再部署P6。不能直接启动三个新后台容器处理尚未迁移的库。** 具体使用 [PostgreSQL状态库切换](PostgreSQL状态库迁移.md)，禁止用P4旧演练副本替代最新迁移数据。
+
+1. 停止旧Web、混合Worker及其系统服务/重启策略，保留Compose项目名和命名卷，不执行`down -v`。
+2. 保留同一时点PostgreSQL备份（SQLite旧部署还须原库一致性备份）、.env、data/settings.env、完整data/reports文件；核对SMTP sending/unknown和魔盒未知结果，不能改成自动重试。
+3. 用维护账号明确安装/检查已有`002_runtime` Schema，P6未新增表或修改历史迁移。正式角色只用无DDL权限cutting_app，不在启动时自动建表，不回退SQLite。
+4. 更新同一应用镜像和四个应用进程源码，按下方命令启动。三个后台只依赖健康PostgreSQL，不依赖Web或彼此先启动；顺序任意。有效的旧worker租约必须释放或自然到期。
+5. 分别检查三个后台探针、Web健康接口和配置诊断；核对已有历史报表、确认、告警/能耗队列与自动化运行。外部SQL/模型/SMTP/能管和生产副作用必须另行现场验收。
+
+## Docker与离线
+
+一个应用镜像供四个启动命令使用，PostgreSQL单独镜像。首次部署Schema和旧数据迁移完成后：
+
+```bash
+docker compose up -d --build app scheduler worker automation
+docker compose ps
+docker compose logs --tail 100 app scheduler worker automation
+```
+
+宿主机`.env`改变要重建四个应用容器：
+
+```bash
+docker compose up -d --force-recreate app scheduler worker automation
+```
+
+管理页产线/连接及自动化/SMTP仍在下一次操作热加载；冷配置和SQL容量须四个进程同时更新/重启。Scheduler加载新增/停用产线与来源变化；Consumer在新操作边界选快照，旧来源任务不写新快照；Automation加载同一文件及SMTP快照。不能假定一个进程改了内存其他进程就生效。
+
+离线仍使用 `compose.yaml + compose.offline.yaml` 和 `scripts/linux/start_offline_docker.sh`，统一预检四个角色使用相同依赖镜像，再检查PG现成Schema，最后启动四个应用容器。四角色均挂载当前backend/vendor；无需四个不同镜像。锁文件/依赖不匹配须重建导入镜像，普通源码变动可复用匹配依赖镜像。不要输出完整`docker compose config`或私有配置。
+
+```bash
+docker compose -f compose.yaml -f compose.offline.yaml up -d --no-build --pull never --force-recreate app scheduler worker automation
+# 任一角色可单独重启，不重置其他角色
+docker compose restart scheduler
+docker compose restart worker
+docker compose restart automation
+```
+
+## 原生服务与连接池
+
+分别注册四个系统服务，工作目录同为项目根目录：
+
+```bash
+./scripts/linux/start_kylin.sh web
+./scripts/linux/start_kylin.sh scheduler
+./scripts/linux/start_kylin.sh worker
+./scripts/linux/start_kylin.sh automation
+```
+
+亦可用`PYTHONPATH=backend .venv/bin/python -m app.scheduler|app.worker|app.automation_worker`。不要把这些命令串成一个系统服务或用多Uvicorn workers替代。
+
+每个进程独立复用PostgresDatabase池，默认每池0–4，总上限16；不按产线新建状态池。Scheduler主循环只使用短状态事务，Consumer仍是4操作线程、10分析线程和1报表线程，Automation为2业务线程及心跳；状态池不必等于执行线程数。生产SQL、LLM、PDF、SMTP在领取/状态提交事务外执行，不长期占PG连接或行锁。进程退出关闭本进程池及来源客户端。P3外部SQL全局12/单源/单产线限制及LLM前台优先、Chromium锁保持。
+
+## 租约、恢复及故障
+
+三个独立租约都为30秒、5秒续约，以PG数据库时钟判有效。同角色第二实例拒绝启动；角色之间不竞争同一租约。execution_scope按真实角色设置，事务进入与提交都核对并持有租约共享锁；旧owner不能提交。数据库短暂不可用不回退，未持久化工作不标成功；租约过期停止受保护工作，恢复由当前有效角色重新接管。租约无法撤销已发出的外部副作用。
+
+- Scheduler重启从持久化期限恢复P2内存提示，保留每日对账和队列去重；消费者可继续处理已入队任务。快照下次期限读取任务实际完成时间+间隔；Consumer不再修改Scheduler内存。未到期仍跳过数据库，不每秒全表扫描。
+- Consumer取得worker租约后恢复后台任务、报表、能耗队列；热重建不回收同owner在途能耗claim。待提交能耗结果只由Consumer刷新，Scheduler仅检查到期并入队。完成/失败继续原状态及退避；失效owner不得重复完成。
+- Automation取得automation租约后独占恢复SMTP sending为unknown，禁止自动重发。计划reserve/报表attach与邮件唯一性继续由原仓储事务保证；Consumer回调丢失时Automation从已持久化完成报表补偿，回调与扫描并发只生成一条outbox。SMTP成功但状态写失败保持sending，接管后unknown，需既有人工核对。
+- 下载、派发恢复仍由Web负责，没有移动到新后台角色。
+
+各角色崩溃不删除持久队列。角色被强杀后同角色须等租约失效再接管，不能直接篡改生产租约或重发unknown邮件。
+
+## 健康与配置诊断
+
+```bash
+docker compose exec scheduler python -m app.scheduler --health
+docker compose exec worker python -m app.worker --health
+docker compose exec automation python -m app.automation_worker --health
+```
+
+每个探针只核对本角色PG实际租约、心跳、循环/执行线程及停滞状态，不依赖另一个角色健康。Web `/api/v1/health`保留原字段，HTTP200表示Web/PG可用，后台任一角色异常时background_ready=false、background_status=degraded，`workers.roles.scheduler/worker/automation`给出各自状态。PG不可用返回503。状态读取缓存2秒，missing/lost/stopped/stalled/unavailable分开，公开响应递归移除内部配置指纹。管理员配置诊断增加Scheduler/Automation快照，按各自owner比较实际值，缺失/过期不算已生效；资源诊断分进程显示，不伪装全局计数。
+
+## 回退与验证边界
+
+P6回退P5前必须停止三个新后台角色，保存同批PG/配置/文件，再只启动一个旧混合Worker，不能新旧并跑。P6未改PG结构，保留现有任务/邮件未知状态；更早SQLite版本不能只换连接字符串回退。生产停机、状态迁移和正式切换需单独授权。
+
+本轮定向验证包括真实PG三角色互斥/围栏、三种启动顺序、逐角色强杀接管、P2到期缓存/热加载/快照期限、能耗在途claim保留、并发outbox补偿、邮件未知结果恢复及诊断脱敏。Docker使用现有amd64运行镜像加锁定依赖、当前源码只读挂载和独立演示卷，分别验证三个实际模块入口healthy、Scheduler单独停止/重启、PG短暂暂停后的拒绝与恢复；不是生产部署成功或吞吐压测。外部SQL/能管/模型/SMTP现场联调未执行。

@@ -3,10 +3,7 @@ from __future__ import annotations
 
 import argparse
 from collections import deque
-from collections.abc import Callable
-from dataclasses import dataclass, replace
 from datetime import datetime
-import json
 import logging
 import signal
 from threading import Event, Lock
@@ -15,25 +12,17 @@ from zoneinfo import ZoneInfo
 
 from app.config import Settings, settings
 from app.core.sql_capacity import sql_identity
-from app.database.coordination import CoordinationRepository
-from app.database.postgres import PostgresDatabase, ExecutionLeaseLost, execution_scope
+from app.database.postgres import ExecutionLeaseLost, execution_scope
 from app.services.application_runtime import ApplicationRuntime, build_runtime
 from app.services.database_runtime import database_context
 from app.services.llm_service import background_llm_work, generation_priority
-from app.services.worker_status import background_ready
-from app.services.production_reports import report_provider, report_providers
+from app.services.worker_status import role_health
+from app.services.production_reports import report_provider
 from app.workers.bounded_executor import BoundedExecutor
 from app.workers.report_worker import ReportWorker
 
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class _Schedule:
-    interval: float
-    source: str
-    deadline: float
 
 
 class WorkerProcess:
@@ -55,11 +44,7 @@ class WorkerProcess:
         self.report_worker = None
         self._next_heartbeat = 0.0
         self._next_admission = 0.0
-        self._next_due: dict[str, _Schedule] = {}
-        self._reconciled: dict[str, str] = {}
-        self._seen_schedules: set[str] = set()
-        self._seen_reconciliations: set[str] = set()
-        self._clock_offset: float | None = None
+        self._initialized_lines = {}
 
     def scope(self):
         return execution_scope(self.runtime.database, "worker", self.owner)
@@ -67,17 +52,15 @@ class WorkerProcess:
     def start(self) -> None:
         self.owner = self.repository.acquire("worker", ttl=self.LEASE_SECONDS)
         if self.owner is None:
+            self.stop()
             raise RuntimeError("已有有效 Worker 租约，拒绝启动重复消费者")
         try:
             with self.scope():
                 self.repository.recover_tasks(self.owner)
-                self.runtime.automation.recover_interrupted_deliveries()
-                for line in database_context(self.runtime).lines.values():
-                    if line.config.enabled and line.background is not None:
-                        line.background.start_background()
+                self._initialize_lines()
                 self.report_worker = ReportWorker(
                     self.settings, self.runtime.metadata,
-                    automation_service=self.runtime.automation_service, runtime=self.runtime.automation_runtime,
+                    automation_service=self.runtime.automation_service,
                     pipelines=lambda: {key: value.pipeline for key, value in database_context(self.runtime).lines.items() if value.config.enabled and value.pipeline is not None},
                     execution_context=self.scope,
                 )
@@ -114,7 +97,7 @@ class WorkerProcess:
             self._heartbeat()
         with self.scope():
             completed = self._flush_completions()
-            self._schedule()
+            self._initialize_lines()
             if completed or monotonic() >= self._next_admission:
                 self.repository.admit_deferred()
                 self._next_admission = monotonic() + self.DEFERRED_SCAN_SECONDS
@@ -133,65 +116,6 @@ class WorkerProcess:
                         with self._lock:
                             self._completed.append((task, "EXECUTOR_ADMISSION"))
                         break
-
-    def _schedule(self) -> None:
-        now = datetime.now(ZoneInfo(self.settings.timezone))
-        context = database_context(self.runtime)
-        offset = time() - monotonic()
-        if self._clock_offset is not None and abs(offset - self._clock_offset) > 1:
-            self._next_due.clear()  # Rebase wall-clock persistence after a system clock step.
-        self._clock_offset = offset
-        self._seen_schedules.clear()
-        self._seen_reconciliations.clear()
-        try:
-            for line in context.lines.values():
-                if line.config.enabled and line.background is not None:
-                    line.background.schedule_background(self, now)
-            for line_id, provider in report_providers(context):
-                for payload, interval in provider.refresh_plan():
-                    self._schedule_snapshot(line_id, payload, interval)
-            self.schedule("retention", "", {}, max(1, self.settings.retention_cleanup_interval_hours) * 3600)
-            if self.runtime.download_cleanup_worker.enabled:
-                self.schedule("download_cleanup", "", {}, 86400)
-        finally:
-            self._next_due = {key: value for key, value in self._next_due.items() if key in self._seen_schedules}
-            self._reconciled = {key: value for key, value in self._reconciled.items() if key in self._seen_reconciliations}
-
-    def _waiting(self, key: str, interval: float, source: str) -> bool:
-        self._seen_schedules.add(key)
-        state = self._next_due.get(key)
-        return bool(state and state.interval == interval and state.source == source and monotonic() < state.deadline)
-
-    def _remember_due(self, key: str, interval: float, source: str, due: float) -> None:
-        self._next_due[key] = _Schedule(interval, source, monotonic() + max(0, due - time()))
-
-    def schedule(self, kind: str, line_id: str, payload: dict | Callable[[], dict], interval: float, *, source: str = "") -> None:
-        key = f"{kind}:{line_id}"
-        if self._waiting(key, interval, source):
-            return
-        due = self.repository.next_due(key, interval)
-        if due <= time():
-            due = self.repository.schedule(kind, line_id, payload() if callable(payload) else payload, interval)
-        self._remember_due(key, interval, source, due)
-
-    def enqueue_once(self, kind: str, line_id: str, payload: dict, *, key: str) -> None:
-        self._seen_reconciliations.add(key)
-        source = payload.get('source_fingerprint', '')
-        if self._reconciled.get(key) == source:
-            return
-        if self.repository.enqueue(kind, line_id, payload, key=key) or self.repository.task_exists(key):
-            self._reconciled[key] = source
-
-    def _schedule_snapshot(self, line_id: str, payload: dict, interval: float) -> None:
-        key = self.repository.snapshot_task_key(line_id, payload)
-        source = payload['source_fingerprint']
-        if self._waiting(key, interval, source):
-            return
-        due = self.repository.snapshot_refresh_due(line_id, payload, interval)
-        if due <= time():
-            self.repository.request_snapshot_refresh(line_id, payload, interval=interval)
-            due = self.repository.snapshot_refresh_due(line_id, payload, interval)
-        self._remember_due(key, interval, source, due)
 
     @background_llm_work()
     def _execute(self, task: dict) -> None:
@@ -231,16 +155,22 @@ class WorkerProcess:
             if item is None:
                 return completed
             task, error = item
-            finished_at = self.repository.finish_task(task, self.owner, error)
-            if task['kind'] == 'report_snapshot_refresh' and not error and finished_at is not None:
-                key = task['dedup_key']
-                state = self._next_due.get(key)
-                if state:
-                    self._remember_due(key, state.interval, state.source, finished_at + state.interval)
+            self.repository.finish_task(task, self.owner, error)
             with self._lock:
                 self._completed.popleft()
                 self._running.pop(task["task_id"], None)
             completed += 1
+
+    def _initialize_lines(self):
+        context = database_context(self.runtime)
+        active = {}
+        for line_id, line in context.lines.items():
+            if line.config.enabled and line.background is not None:
+                if self._initialized_lines.get(line_id) is not line.background:
+                    line.background.start_background()
+                line.background.flush_background_results()
+                active[line_id] = line.background
+        self._initialized_lines = active
 
     def _handle(self, task: dict) -> None:
         with sql_identity(task["device_id"] or None):
@@ -281,7 +211,7 @@ class WorkerProcess:
                     logger.exception("Worker execution lease lost")
                     break
                 except Exception:
-                    logger.exception("Worker scheduler cycle failed")
+                    logger.exception("Worker consumer cycle failed")
                 self.stop_event.wait(1)
         finally:
             self.stop()
@@ -315,13 +245,7 @@ def main() -> int:
     parser.add_argument("--health", action="store_true")
     args = parser.parse_args()
     if args.health:
-        try:
-            with PostgresDatabase(replace(settings, postgres_pool_min_size=0, postgres_pool_max_size=1, postgres_connect_timeout_seconds=1)) as database:
-                status = CoordinationRepository(database).worker_status()
-            print(json.dumps({key: value for key, value in status.items() if key != "configuration"}, ensure_ascii=False))
-            return 0 if status.get("state") == "running" and background_ready(status) else 1
-        except Exception:
-            return 1
+        return role_health(settings, 'worker')
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     worker = WorkerProcess(settings)
     for signum in (signal.SIGTERM, signal.SIGINT):

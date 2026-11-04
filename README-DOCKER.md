@@ -1,6 +1,6 @@
 # Docker 部署与更新
 
-使用项目根目录的 `compose.yaml`，同时运行一个 Web（`app`）和一个独立后台进程（`worker`），共享原有 data/reports/logs 命名卷。需要 Docker Engine 与 Compose v2；首次源码构建需要联网；构建阶段自动安装项目固定的 pnpm，宿主机无需安装 Node.js/pnpm。
+使用项目根目录的 `compose.yaml`，同时运行一个 Web（`app`）、Scheduler（`scheduler`）、单Consumer（`worker`）和Automation（`automation`），共享原有 data/reports/logs 命名卷。需要 Docker Engine 与 Compose v2；首次源码构建需要联网；构建阶段自动安装项目固定的 pnpm，宿主机无需安装 Node.js/pnpm。
 
 ## 首次部署
 
@@ -16,9 +16,9 @@ cp .env.example .env
 docker compose build app
 docker compose up -d postgres
 docker compose run --rm --no-deps migrate python scripts/migrate_sqlite_to_postgres.py schema
-docker compose up -d --wait --wait-timeout 180 app worker
+docker compose up -d --wait --wait-timeout 180 app scheduler worker automation
 docker compose ps
-docker compose logs --tail 100 app worker
+docker compose logs --tail 100 app scheduler worker automation
 ```
 
 默认地址为 `http://127.0.0.1:8088`，首次打开创建本地管理员。如需内网访问，在 `.env` 设置 `DOCKER_BIND_ADDRESS=0.0.0.0`，由管理员限制防火墙来源；正式环境由反向代理提供 HTTPS。端口由 `DOCKER_PORT` 控制。
@@ -27,21 +27,21 @@ docker compose logs --tail 100 app worker
 
 首次从旧单进程或旧设备结构升级，先备份 `.env`、完整 data/reports 卷并停止旧服务，按 [Web/Worker 升级与回滚](docs/deployment/WEB_WORKER进程隔离升级说明.md) 和 [多设备迁移](docs/project/multi-device-isolation.md) 核对迁移条件。不能直接启动第二套实例或猜测历史数据归属。
 
-保留原 Compose 项目名及卷配置，更新程序后构建两个服务：
+保留原 Compose 项目名及卷配置，更新程序后构建四个应用服务：
 
 ```bash
-docker compose up -d --build app worker
+docker compose up -d --build app scheduler worker automation
 ```
 
-只修改宿主机 `.env` 时，重新创建两个容器以更新注入的环境变量：
+只修改宿主机 `.env` 时，重新创建四个应用容器以更新注入的环境变量：
 
 ```bash
-docker compose up -d --force-recreate app worker
+docker compose up -d --force-recreate app scheduler worker automation
 ```
 
-`docker compose restart` 不会重新注入环境变量。管理员保存的 `data/settings.env` 优先于进程环境和 `.env`；自动化/SMTP 通过下一轮操作热加载，数据库、模型、设备目录等需重启两个进程。在“系统设置 → 配置诊断”核对来源、保存目标与两个进程的实际状态。
+`docker compose restart` 不会重新注入环境变量。管理员保存的 `data/settings.env` 优先于进程环境和 `.env`；自动化/SMTP 通过下一轮操作热加载，数据库、模型、设备目录等需重启四个应用进程。在“系统设置 → 配置诊断”核对来源、保存目标与四个应用进程的实际状态。
 
-停止服务可使用 `docker compose down`，保留命名卷；不要使用 `down -v`，它会删除运行数据。回滚条件与操作见双进程升级文档。
+停止服务可使用 `docker compose down`，保留命名卷；不要使用 `down -v`，它会删除运行数据。回滚条件与操作见后台进程升级文档。
 
 ## 离线部署
 
@@ -60,8 +60,10 @@ docker save -o cutting-report-image-amd64.tar cutting-report:local
 
 ```bash
 docker compose ps
-docker compose logs --tail 100 app worker
+docker compose logs --tail 100 app scheduler worker automation
+docker compose exec scheduler python -m app.scheduler --health
 docker compose exec worker python -m app.worker --health
+docker compose exec automation python -m app.automation_worker --health
 ```
 
 容器 healthy 不代表生产 SQL、HR、PDM、能管、模型或 SMTP 已联调成功，需核对容器到内网服务的连通性。不要分享 `.env` 或 `docker compose config` 的完整输出。

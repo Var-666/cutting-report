@@ -44,9 +44,9 @@
 ### 当前依赖与组织
 
 ```text
-main.py（Web）                 worker.py（Worker）
-  ├─ api/                       ├─ workers/、协调仓储
-  └──────────┬──────────────────┘
+main.py（Web）  scheduler.py（调度）  worker.py（消费）  automation_worker.py（自动化/邮件）
+  ├─ api/       └─ 周期入队          └─ workers/       └─ AutomationService
+  └──────────┬─────────────────────────────────────────────────────────┘
              services/application_runtime.build_runtime(role=...)
                ├─ 共享仓储、外部服务、配置 Runtime
                └─ 统一目录 → 类型构建函数 → lines[line_id]（切割/焊接实例）
@@ -56,7 +56,7 @@ main.py（Web）                 worker.py（Worker）
 models/、Settings：供各层使用；Runtime 装配是上述单向业务调用的例外
 ```
 
-- `main.py` 获得 Web OS 锁后装配并挂载 `app.state`，不启动后台消费者；`worker.py` 获得 PostgreSQL 租约后恢复后台任务，使用共享有界执行池。Web 的派发/下载恢复仍归 Web，邮件/报表/能耗恢复归有效 Worker。两者只支持同机本地共享卷。
+- `main.py` 获得 Web OS 锁后装配并挂载 `app.state`，不启动后台消费者；`worker.py` 获得 PostgreSQL 租约后恢复后台任务，使用共享有界执行池。Web 的派发/下载恢复仍归 Web，报表/能耗恢复归有效 Consumer，邮件发送恢复归有效 Automation。四角色只支持同机本地共享卷。
 - `services/application_runtime.py` 装配自有 PostgreSQL 仓储、共享服务与配置 Runtime；`device_runtime.py` 装配设备查询、统计、分析、流水线和后台控制对象。其对 `workers/` 的导入属于装配职责，不是业务 Service 反向调用调度层。
 - `services/frontend_static.py` 虽位于 services，实际是 FastAPI/Starlette 静态资源适配，只供 Web 入口使用；P01 保留位置，业务 Service 不依赖 HTTP 框架的约束不要求为它新增一层包装。
 - `api/runtime.py` 在 `request.state` 缓存一次 `database_context`；`api/devices.py` 验证唯一 `device_id` 并选设备。`DatabaseRuntime` 准备/发布服务快照，`AutomationRuntime` 管理自动化/SMTP 快照；业务操作保持已选引用。新功能沿用这些边界，不另建全局服务定位器。
@@ -125,15 +125,15 @@ Repository / 外部系统客户端
   └─ 能管、激光魔盒、SMTP、LLM：外部服务
 ```
 
-生产式部署由独立 Web 进程同源提供前端静态资源和 API；独立 Worker 进程消费报表、周期分析、告警、能耗同步、邮件及清理任务。两者复用 `application_runtime.build_runtime` 与设备 Service，各自持有连接和资源，通过同一个 PostgreSQL 状态库及本机共享文件卷通信。Web 生命周期不启动任何后台线程，不恢复后台运行态。
+生产式部署由独立 Web 同源提供前端静态资源和 API；Scheduler 生产周期任务，Consumer 消费后台任务与报表，Automation 扫描自动化计划、补偿并发送邮件。四者复用 `application_runtime.build_runtime` 与产线 Service，各自持有连接和资源，通过同一个 PostgreSQL 状态库及本机共享文件卷通信。Web 生命周期不启动任何后台线程，不恢复后台运行态。
 
-当前支持一个 Web 与一个持有有效租约的 Worker；Web 用 OS 锁阻止重复启动，保留进程内 HTTP 请求取消注册表。Worker 用 PostgreSQL 30 秒租约和 5 秒心跳协调唯一执行者，失效执行者的仓储读取与事务提交被拒绝。多个设备共用固定的 4 个后台操作消费者、10 个分析消费者，以及报表/自动化/邮件各一个消费者；设备控制对象只提交持久化请求，不创建独立线程。告警原有每次执行的续租线程仍保留，其数量受操作池上限约束。
+当前支持一个 Web、一个 Scheduler、一个 Consumer 与一个 Automation；Web 用 OS 锁阻止重复启动，保留进程内 HTTP 请求取消注册表。三个后台角色各用 PostgreSQL 30 秒独立租约和 5 秒心跳协调同角色唯一执行者，失效执行者的仓储读取与事务提交被拒绝。多个设备共用固定的 4 个后台操作消费者、10 个分析消费者，以及报表/自动化/邮件各一个消费者；设备控制对象只提交持久化请求，不创建独立线程。告警原有每次执行的续租线程仍保留，其数量受操作池上限约束。
 
 `background_tasks` 保留周期轮次和按需刷新请求。就绪等待队列最多 256 项，超额或失败任务显式转 deferred，记录原因并在容量释放或退避到期后重新准入，不丢弃周期分析轮次。已完成的辅助任务及分析执行记录保留 30 天；未完成任务保留。后台消费者不占 Web 的执行池。Web 继续使用 AI/PDF/SQL/鉴权独立限额 10/2/8/8。全局模型容量再以共享 OS 槽锁限制，两个进程和设备合计不超过同一个 LLM_MAX_CONCURRENT；前台等待优先、普通后台配额及周期分析使用完整空闲容量的策略保留，跨进程同版本等待也能提升生产者优先级。
 
 生产查询与领导快照缓存仍留在各进程内。后台成功刷新后发布设备级文件版本，Web 的查询缓存键和领导快照缓存据此换代，避免拆分进程后继续读取旧本地缓存；普通请求只检查轻量文件版本，不逐次查询状态库。能耗日快照使用比较后写入，防止跨进程计算覆盖刚保存的结果。
 
-`/api/v1/health` 保留主要字段，HTTP 状态表示 Web 与 PostgreSQL 状态库的可用性；新增 background_ready/background_status 区分后台正常、停滞、失联和停止。后台状态来自持久化心跳并缓存 2 秒，Web 不依赖本地 Worker 对象。Worker 用独立 `python -m app.worker --health` 探针。
+`/api/v1/health` 保留主要字段，HTTP 状态表示 Web 与 PostgreSQL 状态库的可用性；新增 background_ready/background_status 区分后台正常、停滞、失联和停止。后台状态来自持久化心跳并缓存 2 秒，Web 不依赖本地 Worker 对象。三个后台分别用 `python -m app.scheduler --health`、`python -m app.worker --health`、`python -m app.automation_worker --health` 探针；汇总状态只有三个角色均正常时就绪。
 
 前端接入 Soybean Admin v2.3.0 的布局基础及完整官方主题 store/设置抽屉，使用 Naive UI、Pinia 与 UnoCSS；上游代码和许可在 `frontend/src/vendor/soybean-admin/`。保留既有 Vue Router 静态路由、同源 Cookie 认证、设备上下文和业务服务，不使用模板演示 API 或 Token 认证。主题由官方 theme store 注入完整 UnoCSS RGB 色阶，并驱动 NConfigProvider；外观、六种布局、标签栏、通用设置及四套预设全部接入，业务路由与会话使用适配层；首页 ECharts 监听主题重绘，切色不触发数据查询。既有 JavaScript 业务与上游 TypeScript 布局并存，仍以单一 pnpm 工程构建；构建和源码包携带第三方许可。
 
@@ -182,7 +182,7 @@ Worker 每5秒将自身安全快照和内部逐项 HMAC 比较值附在原租约
 
 新增管理员只读 `GET /api/v1/configuration/diagnostics` 和系统设置子页，不增加一级菜单或编辑能力。状态包含已生效、待重启、异常、可选未配置；按分类/名称/状态筛选，分别显示运行值、目标值、来源和生效规则。仅核对配置结构和运行快照，不连接外部系统。密码、账号、密钥、认证头、Cookie、URL 等仅显示安全状态，异常不透传原始输入。
 
-部署仍为一个 Web 与一个 Worker，共享原数据卷；不增加配置中心或数据库表。冷配置重启两个进程，统一目录及数据源在新操作边界热加载；宿主机 `.env` 更新重建 app/worker，管理保存的数据库连接配置及自动化/SMTP 在下一轮操作热加载，P3 容量字段须同时重启两个进程。诊断状态无法替代宿主机注入检查或外部连通性验收。现行保留默认值与 `.env.example` 一致：告警发生后30天且已解除，其他保留策略不变。
+P6 部署为 Web、Scheduler、Consumer、Automation 四角色，共享原数据卷；不增加配置中心或数据库表。冷配置重启四个进程，统一目录及数据源在新操作边界热加载；宿主机 `.env` 更新重建 app/scheduler/worker/automation，管理保存的数据库连接配置及自动化/SMTP 在下一轮操作热加载，P3 容量字段须同时重启四个进程。诊断状态无法替代宿主机注入检查或外部连通性验收。现行保留默认值与 `.env.example` 一致：告警发生后30天且已解除，其他保留策略不变。
 
 
 ## P1：统一产线、绑定与生命周期（2026-11-03）
@@ -258,3 +258,16 @@ Web/Worker 各复用一个进程池，所有状态仓储、UnitOfWork、租约�
 P5验收使用隔离的真实 PostgreSQL 18.6（本机55435、随机测试数据库），未连接生产状态库。`test_postgres_runtime.py` 的13项覆盖A–H：全部业务表历史导入与仓储读取、真实独立Worker与Web共享状态、跨仓储提交/回滚、并发领取和唯一性、跨进程租约竞争与提交围栏、辅助线程失效隔离、断库503与恢复、SQLite连接禁用。与登录容量4项合并执行17项通过；P4迁移既有12项及新增迁移标记拒绝1项通过。其他受影响的报表、确认、配置、快照、用量、调度、派发、自动化/邮件、告警和清理按调用范围分批验证，没有运行无关前端视觉测试或全量后端套件。
 
 Compose只读解析通过必需PG健康依赖、运行/迁移账号分离、卷身份和无PG公开端口检查，启动脚本通过bash语法检查。实际生产切换、SQL Server/MySQL/能管/魔盒/SMTP/LLM连接及生产负载未在本机验证；外部业务集成用例使用已有替身，不能据此宣称现场验收完成。
+
+
+## P6：Scheduler、Consumer、Automation 独立进程（2026-11-04）
+
+现行部署和恢复边界以本节为准；上文 P1–P5 保留各阶段改造记录。`scheduler.py` 迁入 P2 的全部周期调度方法及 monotonic 到期提示，不领取或执行业务；`worker.py` 只领取/执行/提交后台任务与报表，保留4操作、10分析执行池；`automation_worker.py` 独立运行原计划扫描/补偿与邮件两个线程。`ReportWorker` 只生成报表并保留完成/失败回调，不再启动自动化或邮件线程，无切回混合后台的分支。
+
+复用 PostgreSQL 的 `scheduler`、`worker`、`automation` 独立租约与真实角色 `execution_scope`，仍为30秒租约、5秒心跳和提交围栏。同角色互斥，不同角色可任意顺序启动。Consumer独占任务/报表/能耗恢复；Automation独占 sending→unknown 恢复，未知邮件不自动重发；Web原派发/下载恢复保持。能耗待提交结果移到Consumer，热重建不回收同owner的在途claim。快照期限从持久化完成时间加间隔计算，Consumer不修改Scheduler内存；P2未到期跳过、来源隔离与P3共享容量保持。
+
+自动化计划复用原Service和仓储创建并关联报表，Consumer完成回调与Automation补偿共用原outbox唯一约束。SMTP/外部SQL/模型/PDF在状态事务外执行；崩溃后依持久状态恢复，不假定外部副作用可回滚。未新增队列、状态表或资源框架，仍只有单Consumer，P7多消费者未实施。
+
+Web通过缓存2秒的持久心跳分别报告三个角色；任一异常使background_ready=false，PG不可用返回503。配置诊断分别比较四角色实际快照，公开健康递归去除内部配置指纹；诊断采集失败不阻断续约。四角色各复用独立有界PG池，默认总上限16，退出释放资源。Compose与离线流程共用一个应用镜像，仅依赖PG健康，共享本机data/reports/logs及容量锁，后台不开端口。
+
+真实隔离PG定向覆盖三种启动顺序、逐角色强杀接管、独立互斥/围栏、周期/消费分离、outbox并发补偿、能耗热重建、配置及脱敏；原P2调度、P3跨进程容量、自动化热加载与SMTP未知状态回归已通过。Docker隔离演示卷验证三个实际入口健康、Scheduler单独重启与PG暂停/恢复，未执行生产或外部SQL/模型/SMTP现场联调。旧SQLite现场先完成P5最新数据离线迁移/校验，禁止直接启动新后台或与旧混合Worker并跑。完整启动、探针、恢复及回退见 [四角色部署说明](../deployment/WEB_WORKER进程隔离升级说明.md)。

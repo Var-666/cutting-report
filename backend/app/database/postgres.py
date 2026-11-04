@@ -44,12 +44,12 @@ def require_execution_lease(connection: Connection, database: 'PostgresDatabase'
         raise ExecutionLeaseLost('后台执行租约已失效，拒绝旧执行者读取或提交')
 
 
-def require_worker_recovery(connection: Connection) -> None:
+def require_role_recovery(connection: Connection, role: str) -> None:
     current = _execution.get()
-    if current is None or current[1] != 'worker' or connection.execute('''
-        SELECT owner FROM process_leases WHERE name='worker' AND owner=%s
-        AND expires_at>EXTRACT(EPOCH FROM clock_timestamp()) FOR SHARE''', (current[2],)).fetchone() is None:
-        raise ExecutionLeaseLost('只有持有有效租约的 Worker 可以恢复后台运行态')
+    if current is None or current[1] != role or connection.execute('''
+        SELECT owner FROM process_leases WHERE name=%s AND owner=%s
+        AND expires_at>EXTRACT(EPOCH FROM clock_timestamp()) FOR SHARE''', (role, current[2])).fetchone() is None:
+        raise ExecutionLeaseLost(f'只有持有有效 {role} 租约的进程可以恢复所属运行态')
 
 
 def lock_key(connection: Connection, key: str) -> None:
