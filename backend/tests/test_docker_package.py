@@ -36,6 +36,13 @@ def test_frontend_delivery_uses_the_pinned_pnpm_and_one_frozen_lockfile():
     assert not (ROOT / 'frontend/package-lock.json').exists()
 
 
+def test_offline_postgres_uses_the_exported_version_tag_without_pulling():
+    base = yaml.safe_load((ROOT / 'compose.yaml').read_text())['services']['postgres']
+    offline = yaml.safe_load((ROOT / 'compose.offline.yaml').read_text())['services']['postgres']
+    assert base['image'].startswith(offline['image'] + '@sha256:')
+    assert offline['pull_policy'] == 'never'
+
+
 @pytest.mark.parametrize("name", [
     "backend/app/__pycache__/config.pyc", "frontend/src/.env", "frontend/src/.env.production",
     "frontend/public/TASK.xlsx", "frontend/dist/data.db", "frontend/dist/app.js.map",
@@ -86,6 +93,7 @@ def test_source_package_keeps_soybean_build_configuration_and_license(tmp_path):
     assert not set(removed).intersection(payload)
     assert payload["scripts/linux/start_kylin.sh"] == b"fixture"
     assert payload["scripts/linux/start_offline_docker.sh"] == b"fixture"
+    assert payload["scripts/linux/upgrade_offline_docker.sh"] == b"fixture"
     assert payload["frontend/uno.config.ts"] == b"fixture"
     assert payload["frontend/src/vendor/soybean-admin/LICENSE"] == b"fixture"
     assert payload["frontend/dist/licenses/soybean-admin/LICENSE"] == b"fixture"

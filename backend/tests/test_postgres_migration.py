@@ -118,8 +118,8 @@ def test_schema_all_tables_constraints_indexes_and_repeated_install(postgres):
         assert validate_schema(connection)==first
         tables={r['tablename'] for r in connection.execute("SELECT tablename FROM pg_tables WHERE schemaname='app_state'")}
         expected=set(json.loads((DIRECTORY/'sqlite_schema.json').read_text()))-{'schema_migrations'}
-        assert tables==expected|{'_postgres_schema_migrations','_sqlite_imports','_sqlite_schema_versions'}
-        assert connection.execute("SELECT count(*) AS n FROM pg_indexes WHERE schemaname='app_state'").fetchone()['n']==99
+        assert tables==expected|{'_postgres_schema_migrations','_sqlite_imports','_sqlite_schema_versions','workshop_source_correction_audits'}
+        assert connection.execute("SELECT count(*) AS n FROM pg_indexes WHERE schemaname='app_state'").fetchone()['n']==102
         connection.execute('DROP INDEX idx_background_tasks_ready')
     with pytest.raises(MigrationError,match='结构漂移'): apply_migrations(database)
 
@@ -174,7 +174,7 @@ def test_all_state_migrates_in_batches_with_ids_values_relations_and_history(pos
     assert verified==result
     with database.connect() as connection:
         assert connection.execute('SELECT count(*) AS n FROM _sqlite_schema_versions').fetchone()['n']==16
-        assert connection.execute('SELECT count(*) AS n FROM _postgres_schema_migrations').fetchone()['n']==2
+        assert connection.execute('SELECT count(*) AS n FROM _postgres_schema_migrations').fetchone()['n']==4
         assert connection.execute('SELECT file_size,relative_path FROM reports').fetchone()=={'file_size':2**40,'relative_path':'fixture.html'}
         assert connection.execute("SELECT nextval('llm_usage_calls_id_seq') AS n").fetchone()['n']==2**40+1
         connection.execute("UPDATE users SET display_name='tampered'")
@@ -250,6 +250,83 @@ def test_source_accepts_known_device_marker_but_refuses_unknown_history(source):
         connection.execute("INSERT INTO schema_migrations VALUES ('unknown-migration','test-time')")
         with pytest.raises(MigrationError, match='迁移历史'):
             check_source(connection)
+
+
+def historical_source(path, *, audits=True):
+    from app.database.device_migrations import rebuild_table
+    rebuild_table(SQLiteHistory(path), 'report_analyses',
+                  lambda ddl: ddl.replace('data_version TEXT NOT NULL','data_version TEXT'))
+    if audits:
+        with sqlite3.connect(path) as connection:
+            connection.executescript('''CREATE TABLE workshop_source_correction_audits (
+                audit_id TEXT PRIMARY KEY, report_id TEXT NOT NULL, task_id TEXT NOT NULL,
+                payload TEXT NOT NULL, reason TEXT NOT NULL, operated_by_id TEXT NOT NULL,
+                operated_by_name TEXT NOT NULL, operated_at TEXT NOT NULL);
+                CREATE INDEX idx_workshop_source_audits_report
+                  ON workshop_source_correction_audits(report_id,operated_at DESC);
+                CREATE INDEX idx_workshop_source_audits_retention
+                  ON workshop_source_correction_audits(operated_at,audit_id);''')
+            connection.execute('INSERT INTO workshop_source_correction_audits VALUES (?,?,?,?,?,?,?,?)',
+                               ('historical-audit','retired-report','42','{"old":"原值"}','历史更正','old-user','旧管理员','2026-09-30T12:00:00+08:00'))
+
+
+@pytest.mark.parametrize('audits',[False,True])
+def test_known_nullable_version_and_retired_audits_migrate_without_row_changes(postgres,source,audits):
+    database,_,_=postgres
+    historical_source(source,audits=audits)
+    apply_migrations(database)
+    result,_=perform(source,database)
+    assert result['result']=='verified' and result['table_count']==38+int(audits)
+    assert perform(source,database,action='verify')[0]==result
+    if audits:
+        with sqlite3.connect(source) as original, database.connect() as target:
+            original.row_factory=sqlite3.Row
+            assert target.execute('SELECT * FROM workshop_source_correction_audits').fetchall()==[
+                dict(row) for row in original.execute('SELECT * FROM workshop_source_correction_audits')]
+
+
+def test_nullable_declaration_does_not_allow_real_null_versions(postgres,source):
+    database,_,_=postgres
+    historical_source(source)
+    with sqlite3.connect(source) as connection:connection.execute('UPDATE report_analyses SET data_version=NULL')
+    apply_migrations(database)
+    with pytest.raises(MigrationError,match='真实空值'):perform(source,database)
+    with database.connect() as connection:
+        assert connection.execute('SELECT count(*) AS n FROM report_analyses').fetchone()['n']==0
+
+
+def test_known_audit_name_does_not_allow_unknown_columns(postgres,source):
+    database,_,_=postgres
+    historical_source(source)
+    with sqlite3.connect(source) as connection:connection.execute('ALTER TABLE workshop_source_correction_audits ADD COLUMN unexpected TEXT')
+    apply_migrations(database)
+    with pytest.raises(MigrationError,match='Schema'):perform(source,database)
+
+
+def test_absent_source_audits_cannot_hide_existing_target_history(postgres,source):
+    database,_,_=postgres
+    apply_migrations(database)
+    with database.connect() as connection:
+        connection.execute("INSERT INTO workshop_source_correction_audits VALUES ('unexpected','r','t','{}','retained','u','n','original-time')")
+    with pytest.raises(MigrationError,match='源库不存在的历史记录'):perform(source,database,action='check')
+
+
+def test_archive_migration_appends_to_existing_003_without_changing_state(postgres,monkeypatch):
+    import hashlib
+    import app.database.postgres_migrations as migrations
+    database,_,_=postgres
+    def original_schema(connection):
+        digest=hashlib.sha256(json.dumps(migrations.catalog(connection),sort_keys=True).encode()).hexdigest()
+        assert digest=='5188665e353111c6564ac52223e9efe6f9aca517d4c608ad5227d576f5171495'
+        return connection.execute('SELECT version,checksum FROM _postgres_schema_migrations ORDER BY version').fetchall()
+    with monkeypatch.context() as patch:
+        patch.setattr(migrations,'VERSIONS',migrations.VERSIONS[:3])
+        patch.setattr(migrations,'validate_schema',original_schema)
+        assert len(apply_migrations(database))==3
+    with database.connect() as connection:connection.execute('INSERT INTO llm_usage_totals(id) VALUES (1)')
+    assert len(apply_migrations(database))==4
+    with database.connect() as connection:
+        assert connection.execute('SELECT id FROM llm_usage_totals').fetchall()==[{'id':1}]
 
 
 def test_ascii_nocase_partial_uniqueness_and_cascade_are_preserved(postgres,source):

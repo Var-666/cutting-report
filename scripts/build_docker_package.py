@@ -38,11 +38,15 @@ FILES = (
     "scripts/migrate_sqlite_to_postgres.py", "scripts/postgres/10-roles.sql",
     "scripts/postgres/grant_runtime.sql",
     "docs/deployment/PostgreSQL状态库迁移.md",
+    "docs/deployment/服务器首次升级说明.md",
+    "docs/deployment/PostgreSQL并发与队列容量验证.md",
     "docs/design/PostgreSQL仓储与事务设计.md",
     "scripts/build_docker_package.py", "scripts/prepare_alarm_monitor.py",
     "scripts/export_api_contracts.py", "scripts/migrate_database.py", "scripts/migrate_production_lines.py",
     "scripts/linux/install_kylin.sh", "scripts/linux/docker_entrypoint.sh",
     "scripts/linux/start_kylin.sh", "scripts/linux/start_offline_docker.sh",
+    "scripts/linux/upgrade_offline_docker.sh",
+    "scripts/linux/resume_sqlite_upgrade.sh",
 )
 TREES = (
     "backend/app", "frontend/src", "frontend/public", "frontend/scripts",

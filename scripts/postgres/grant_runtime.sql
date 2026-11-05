@@ -41,7 +41,8 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
   app_state.workshop_reports
 TO cutting_app;
 GRANT SELECT ON app_state._postgres_schema_migrations,
-    app_state._sqlite_imports, app_state._sqlite_schema_versions TO cutting_app;
+    app_state._sqlite_imports, app_state._sqlite_schema_versions,
+    app_state.workshop_source_correction_audits TO cutting_app;
 GRANT USAGE, SELECT ON SEQUENCE app_state.llm_usage_calls_id_seq,
     app_state.report_analyses_insertion_order_seq,
     app_state.report_snapshots_insertion_order_seq TO cutting_app;

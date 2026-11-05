@@ -50,10 +50,13 @@ def test_source_correction_routes_are_removed_without_removing_confirmation_rout
             assert client.post(f'/api/v1/workshop{path}', json={}).status_code == 404
 
 
-def test_repositories_preserve_imported_confirmation_audits_without_creating_correction_tables(state_database, tmp_path):
+def test_repositories_preserve_confirmation_audits_without_reenabling_source_corrections(state_database, tmp_path):
     repository = setup(state_database, tmp_path)
     with repository.connect() as connection:
-        assert connection.execute("SELECT tablename FROM pg_tables WHERE schemaname='app_state' AND tablename='workshop_source_correction_audits'").fetchone() is None
+        permissions = connection.execute("""SELECT
+            has_table_privilege(current_user,'workshop_source_correction_audits','SELECT') AS readable,
+            has_table_privilege(current_user,'workshop_source_correction_audits','INSERT') AS writable""").fetchone()
+        assert permissions == {'readable':True,'writable':False}
         connection.execute("""INSERT INTO workshop_confirmation_audits
             (audit_id,task_id,action,reason,operated_by_id,operated_by_name,operated_by_role,operated_at,scope_machine_no)
             VALUES ('legacy','historical-task','confirm','历史操作记录',%s,'管理员','admin','2026-09-30','Cutter01')""",

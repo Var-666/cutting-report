@@ -42,7 +42,7 @@ docker compose -f compose.yaml -f compose.offline.yaml run --rm --no-deps -T mig
 
 新空卷通过 `scripts/postgres/10-roles.sql` 创建两个非超级用户角色和 `app_state`。`schema` 使用 cutting_migrator 显式安装迁移，再执行 `grant_runtime.sql`。Web/Worker 只校验现成结构，不能使用管理员或迁移角色启动。
 
-已发布的 `001_initial` 保持不变。`002_runtime` 为分析/快照增加稳定插入序号，为同产线同类运行任务增加部分唯一索引，并提供兼容历史派发时间文本的解析函数。P7追加003_consumer_scaling的owner查询索引与后台claim_token列，001/002保持不变；应用启动不执行迁移。当前包括38张业务表、3张迁移元数据表、99个索引；迁移元数据对 app 只读，三个身份序列仅授予必要使用权限。运行账号无 Schema CREATE、SUPERUSER、CREATEDB、CREATEROLE 权限。
+已发布的 `001_initial` 保持不变。`002_runtime` 为分析/快照增加稳定插入序号，为同产线同类运行任务增加部分唯一索引，并提供兼容历史派发时间文本的解析函数。P7追加003_consumer_scaling的owner查询索引与后台claim_token列，001/002保持不变；应用启动不执行迁移。004另保留1张退役审计表；当前包括38张正式业务表、1张历史归档表、3张迁移元数据表、102个索引；迁移元数据对 app 只读，三个身份序列仅授予必要使用权限。运行账号无 Schema CREATE、SUPERUSER、CREATEDB、CREATEROLE 权限。
 
 ## 首次停机切换
 
@@ -84,7 +84,7 @@ docker compose -f compose.yaml -f compose.offline.yaml run --rm --no-deps -T mig
 
 工具持有旧 Web/升级文件锁、检查有效 Worker 租约并排除 SQLite 写入者，使用官方 backup API 产生0600一致性备份；不会删除源数据。保留的离线升级入口为 `scripts/migrate_database.py`，用于尚未达到 SQLite 001–016 基线的旧库，必须在停止旧版进程后先运行。
 
-`check` 验证 Schema、字段类型、业务关联、文件引用和空目标；`migrate` 在一个 PG 事务内按依赖顺序分批导入38张业务表，保留16条编号迁移历史及已有的 device-isolation-v2 历史标记；`verify` 重新核对每张表的行数、全部字段摘要、关联、文件和插入顺序，不修补差异。同一快照可重复校验，不同来源或目标非空时拒绝覆盖。历史 ID、密码哈希、路径、设备/来源身份不改写。原有隐式 rowid 顺序显式导入两个 insertion_order 列，并重置三个身份序列。
+`check` 验证 Schema、字段类型、业务关联、文件引用和空目标；`migrate` 在一个 PG 事务内按依赖顺序分批导入38张业务表及存在时的退役审计表，保留16条编号迁移历史及已有的 device-isolation-v2 历史标记；`verify` 重新核对每张表的行数、全部字段摘要、关联、文件和插入顺序，不修补差异。同一快照可重复校验，不同来源或目标非空时拒绝覆盖。历史 ID、密码哈希、路径、设备/来源身份不改写。原有隐式 rowid 顺序显式导入两个 insertion_order 列，并重置三个身份序列。
 
 只有 `migrate` 和 `verify` 均显示 `result=verified` 才启动：
 
@@ -153,3 +153,11 @@ P4_TEST_POSTGRES=1 P5_TEST_POSTGRES=1 P4_TEST_POSTGRES_PORT=55435 \
 ## P7 Consumer协议切换
 
 P7的003迁移拒绝任何仍持有效租约的旧/新Consumer。旧SQLite仍先完成本说明的最新数据导入与verify，再显式使用cutting_migrator运行 `python scripts/migrate_sqlite_to_postgres.py prepare-consumers`。P6 PostgreSQL现场同样先停所有Consumer、备份并确认退出，执行schema再执行prepare-consumers。准备步骤恢复执行态、保留业务ID/重试和完成记录，旧无来源任务标blocked，不猜测来源；移除旧全局worker租约后才允许启动新实例。该步骤会有意改变执行状态，应在逐表导入校验之后执行，不能由普通启动代办。完整单/多副本、连接预算及回退见[四角色与多Consumer部署](WEB_WORKER进程隔离升级说明.md)。不允许旧Worker与实例租约协议混跑；回退P6必须停止新实例并恢复匹配备份，不能只更换镜像或删除版本标记。
+
+## 已确认的旧库结构兼容（2026-11-05）
+
+部分历史库通过ALTER新增report_analyses.data_version，声明为可空；只有这一声明差异且实际值均非NULL时，导入器接受原值。真实NULL仍拒绝，不猜填版本、不改写旧分析。旧版workshop_source_correction_audits在功能移除时保留，匹配原8列/主键及两索引定义时完整导入；未知字段、约束或其他多余表仍拒绝。
+
+追加004_legacy_workshop_audits，001–003不改写。PG增加历史表及两个索引，运行角色仅SELECT，不恢复源更正API/仓储写入；保留原始audit_id、report_id、task_id、payload、原因、操作人与时间，无新增外键猜测历史关联。PG共42表/102索引；源库仍为38张正式状态表，可额外包含这1张退役历史表。逐表计数/字段摘要及重复verify覆盖归档，不允许目标存在源库没有的审计记录。
+
+20261104-v1在check阶段因上述差异暂停的现场，保留已有完整备份及PG卷，补入配套源码和004迁移后使用scripts/linux/resume_sqlite_upgrade.sh，从schema/check/migrate/verify继续，不再重跑首次脚本。默认备份目录为现场已完成的/data/cutting-before-upgrade-SR9p3Ufy，也可用第一个参数显式指定。脚本拒绝活动应用，先单独备份当前PG再升级/导入，verify成功后才prepare-consumers并启动；不重建或清空卷。真实NULL/未知结构应继续停下核对，不能通过放宽校验掩盖。

@@ -18,6 +18,7 @@ from app.database.device_migrations import DEVICE_MIGRATION
 from app.database.postgres_migrations import DIRECTORY, MIGRATION_LOCK, MigrationError, validate_schema, VERSIONS
 
 SOURCE_SCHEMA = DIRECTORY / 'sqlite_schema.json'
+LEGACY_SCHEMA = DIRECTORY / 'sqlite_legacy_schema.json'
 ORDERED_TABLES = {'report_analyses', 'report_snapshots'}
 
 
@@ -83,7 +84,17 @@ def check_source(source):
     if source.execute('PRAGMA foreign_key_check').fetchone():
         raise MigrationError('SQLite 外键检查失败')
     profile = sqlite_schema(source)
-    if profile != json.loads(SOURCE_SCHEMA.read_text()):
+    expected = json.loads(SOURCE_SCHEMA.read_text())
+    for table, definition in json.loads(LEGACY_SCHEMA.read_text()).items():
+        if table in profile:
+            expected[table] = definition
+    version = profile.get('report_analyses', {}).get('columns', {}).get('data_version')
+    if version == {**expected['report_analyses']['columns']['data_version'], 'notnull': 0}:
+        # The old ALTER TABLE added a nullable column, but populated its values.
+        expected['report_analyses']['columns']['data_version']['notnull'] = 0
+        if source.execute('SELECT 1 FROM report_analyses WHERE data_version IS NULL LIMIT 1').fetchone():
+            raise MigrationError('report_analyses.data_version 存在真实空值，请先核对历史版本，禁止自动猜填')
+    if profile != expected:
         raise MigrationError('SQLite Schema 与当前 001–016 基线不匹配；先用原升级工具更新，禁止遗漏表')
     versions = [dict(r) for r in source.execute('SELECT name,applied_at FROM schema_migrations ORDER BY name')]
     if [r['name'] for r in versions if r['name'] != DEVICE_MIGRATION] != [n for n,_ in MIGRATIONS]:
@@ -213,7 +224,11 @@ def transfer(source, database, *, action, batch_size=1000, reports_root, data_ro
         target.execute('SELECT pg_advisory_xact_lock(%s)',(MIGRATION_LOCK,))
         validate_schema(target)
         # ACCESS EXCLUSIVE also excludes any future noncooperating P5 writer during verification.
-        target.execute(sql.SQL('LOCK TABLE {} IN ACCESS EXCLUSIVE MODE').format(sql.SQL(',').join(sql.Identifier(t) for t in tables+['_sqlite_imports','_sqlite_schema_versions'])))
+        absent_legacy = set(json.loads(LEGACY_SCHEMA.read_text())) - set(tables)
+        target.execute(sql.SQL('LOCK TABLE {} IN ACCESS EXCLUSIVE MODE').format(sql.SQL(',').join(sql.Identifier(t) for t in tables+sorted(absent_legacy)+['_sqlite_imports','_sqlite_schema_versions'])))
+        for table in absent_legacy:
+            if target.execute(sql.SQL('SELECT 1 FROM {} LIMIT 1').format(sql.Identifier(table))).fetchone():
+                raise MigrationError(f'{table}: 目标有源库不存在的历史记录，拒绝遗漏')
         prior = target.execute('SELECT source_digest FROM _sqlite_imports').fetchall()
         if prior and prior != [{'source_digest':identity}]: raise MigrationError('目标来自不同源快照，拒绝覆盖；请使用新的空目标库')
         if not prior:
