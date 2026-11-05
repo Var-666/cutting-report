@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, ref, watch } from 'vue'
-import { RouterView, useRoute, useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { NBreadcrumb, NBreadcrumbItem, NButton, NWatermark } from 'naive-ui'
 import SoybeanAdminLayout from '../vendor/soybean-admin/index.vue'
 import type { LayoutMode } from '../vendor/soybean-admin/types'
@@ -19,6 +19,7 @@ import GlobalLogo from './modules/global-logo/index.vue'
 import ThemeDrawer from './modules/theme-drawer/index.vue'
 import ThemeHeaderTools from './modules/ThemeHeaderTools.vue'
 import ThemeTabs from './modules/ThemeTabs.vue'
+import AdminPageView from './AdminPageView.vue'
 
 const appStore = useAppStore()
 const GlobalMenu = defineAsyncComponent(() => import('./modules/global-menu/index.vue'))
@@ -162,9 +163,7 @@ function getSiderAndCollapsedWidth(isCollapsed: boolean) {
       </template>
       <template #tab><ThemeTabs /></template>
       <div class="admin-main soybean-page">
-        <RouterView v-if="!devicePage || deviceSelection.ready" v-slot="{ Component }" :key="devicePage ? deviceSelection.id : undefined">
-          <Transition :name="transitionName" mode="out-in"><div :key="route.matched[1]?.path" class="min-w-0"><component :is="Component" /></div></Transition>
-        </RouterView>
+        <AdminPageView :ready="!devicePage || deviceSelection.ready" :device-id="deviceSelection.id" :device-page="devicePage" :transition-name="transitionName" />
       </div>
       <GlobalMenu />
       <ThemeDrawer />

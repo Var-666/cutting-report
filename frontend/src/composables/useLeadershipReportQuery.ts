@@ -3,7 +3,7 @@ import type { RouteLocationNormalizedLoaded, Router } from 'vue-router'
 import type { LeadershipReport } from '../types/reports'
 import { computed, nextTick, ref } from 'vue'
 import { getLeadershipRange, getLeadershipReport } from '../api/cutting'
-import { recentTwelveMonthStart } from '../api/reportDates'
+import { recentTwelveMonthStart, reportToday } from '../api/reportDates'
 import { mergeOwnedQuery, queryChoice, queryDateRange, sameRouteQuery } from '../utils/reportRouteState'
 import { toError } from '../utils/errors'
 
@@ -81,17 +81,17 @@ export function useLeadershipReportQuery({ route, router, today, routeRange, pag
   }
   const snapshot = computed(() => report.value?.snapshot || {})
 
-  async function loadReport(force = false, { syncRoute = true } = {}) {
-    if (!periodStart.value || !periodEnd.value) return
-    if (periodEnd.value < periodStart.value) {
+  async function loadReport(force = false, { syncRoute = true, useAppliedPeriod = false } = {}) {
+    const requestedStart = useAppliedPeriod ? appliedPeriodStart.value : periodStart.value
+    const requestedEnd = useAppliedPeriod ? appliedPeriodEnd.value : periodEnd.value
+    if (!requestedStart || !requestedEnd) return
+    if (requestedEnd < requestedStart) {
       error.value = '结束日期不能早于开始日期'
       return
     }
     const { sequence, signal } = beginRequest()
     loading.value = true
     error.value = ''
-    const requestedStart = periodStart.value
-    const requestedEnd = periodEnd.value
     try {
       const result = await getLeadershipRange(requestedStart, requestedEnd, { force, signal })
       if (!requestIsCurrent(sequence, signal)) return
@@ -147,19 +147,26 @@ export function useLeadershipReportQuery({ route, router, today, routeRange, pag
   }
 
   async function loadDefaultReport(force = false) {
+    const currentDay = reportToday()
     const { sequence, signal } = beginRequest()
     loading.value = true
     monthlyLoading.value = true
     error.value = ''
     try {
-      const result = await getLeadershipReport(today.slice(0, 7), { force, signal })
+      const result = await getLeadershipReport(currentDay.slice(0, 7), { force, signal })
       if (!requestIsCurrent(sequence, signal)) return
+      const updateDraft = !queryDateRange(route.query)
+        && periodStart.value === appliedPeriodStart.value && periodEnd.value === appliedPeriodEnd.value
       report.value = result
       monthlyReport.value = result
-      appliedPeriodStart.value = `${today.slice(0, 7)}-01`
-      appliedPeriodEnd.value = today
-      monthlyPeriodStart.value = recentTwelveMonthStart(today)
-      monthlyPeriodEnd.value = today
+      appliedPeriodStart.value = `${currentDay.slice(0, 7)}-01`
+      appliedPeriodEnd.value = currentDay
+      monthlyPeriodStart.value = recentTwelveMonthStart(currentDay)
+      monthlyPeriodEnd.value = currentDay
+      if (updateDraft) {
+        periodStart.value = appliedPeriodStart.value
+        periodEnd.value = appliedPeriodEnd.value
+      }
       defaultMonthlyView.value = true
       await nextTick()
       if (!requestIsCurrent(sequence, signal)) return
@@ -269,5 +276,10 @@ export function useLeadershipReportQuery({ route, router, today, routeRange, pag
     return defaultMonthlyView.value ? loadDefaultReport(true) : refreshRangeAnalysisReport()
   }
 
-  return { periodStart, periodEnd, appliedPeriodStart, appliedPeriodEnd, monthlyPeriodStart, monthlyPeriodEnd, defaultMonthlyView, chartType, report, monthlyReport, loading, monthlyLoading, refreshLoading, error, dateQueryDirty, routeStateQuery, cancelReportRequest, changeChartType, snapshot, loadReport, restoreRouteState, loadDefaultReport, scheduleRefreshPoll, retryReport, refreshAnalysisReport }
+  function refreshCachedReport() {
+    if (!pageActive.value || loading.value || !report.value || snapshot.value.refreshing) return
+    return defaultMonthlyView.value ? loadDefaultReport() : loadReport(false, { syncRoute: false, useAppliedPeriod: true })
+  }
+
+  return { periodStart, periodEnd, appliedPeriodStart, appliedPeriodEnd, monthlyPeriodStart, monthlyPeriodEnd, defaultMonthlyView, chartType, report, monthlyReport, loading, monthlyLoading, refreshLoading, error, dateQueryDirty, routeStateQuery, cancelReportRequest, changeChartType, snapshot, loadReport, restoreRouteState, loadDefaultReport, scheduleRefreshPoll, retryReport, refreshAnalysisReport, refreshCachedReport }
 }

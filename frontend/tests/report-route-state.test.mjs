@@ -1,11 +1,12 @@
 import { reportModuleBindings } from './report-module-helpers.mjs'
+import { renderComponent } from './vue-component-helpers.mjs'
 import * as Vue from 'vue'
 import { createRouter, createMemoryHistory, RouterView, useRoute, useRouter } from 'vue-router'
 import { scriptFunction } from './typescript-helpers.mjs'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
-import { parse } from '@vue/compiler-sfc'
+import { parse, compileScript } from '@vue/compiler-sfc'
 import {
   mergeOwnedQuery,
   queryChoice,
@@ -91,6 +92,17 @@ test('standard reports distinguish edited dates from the last successfully appli
   }
 })
 
+test('cached report query controls remain busy without showing a loading spinner', async () => {
+  const props = { startDate: '2026-11-05', endDate: '2026-11-05', chartType: 'bar_line', loading: true, hasData: true }
+  const warm = await renderComponent('components/StandardReportQuery', { ...props, showLoading: false })
+  assert.ok(warm.includes('更新报表'))
+  assert.ok(!warm.includes('查询中'))
+  assert.ok(!warm.includes('class="spinner"'))
+  assert.match(warm, /<button[^>]*disabled/)
+  const cold = await renderComponent('components/StandardReportQuery', props)
+  assert.ok(cold.includes('查询中') && cold.includes('class="spinner"'))
+})
+
 const flushReport = async () => { await new Promise(resolve => setImmediate(resolve)); await Vue.nextTick() }
 const rangeA = { start: '2026-09-01', end: '2026-09-02' }
 const rangeB = { start: '2026-09-03', end: '2026-09-04' }
@@ -104,7 +116,8 @@ async function mountReport(t, kind, { query = {}, refreshing = false, syncing = 
   const pending = []
   const exports = []
   const timers = new Map()
-  const held = { range: false, monthly: false, summary: false }
+  const held = { range: false, monthly: false, summary: false, tasks: false }
+  const clock = { today: '2026-10-27' }
   const chartUpdates = []
   let timerId = 0
   let state
@@ -120,14 +133,14 @@ async function mountReport(t, kind, { query = {}, refreshing = false, syncing = 
     ResizeObserver: class { observe() {} disconnect() {} },
     use() {}, BarChart: {}, LineChart: {}, GridComponent: {}, LegendComponent: {}, TooltipComponent: {}, CanvasRenderer: {},
     useDeviceSwitchQuery() {}, useReportChartTheme: () => ({ darkMode: Vue.ref(false), vars: Vue.ref({}), colors: Vue.ref({}) }),
-    getLeadershipReport: (_month, options) => read('monthly', '2026-10-01', '2026-10-27', options),
+    getLeadershipReport: (month, options) => read('monthly', `${month}-01`, clock.today, options),
     getLeadershipRange: (start, end, options) => read('range', start, end, options),
     getEnergyRange: async (start, end, options) => held.range ? read('range', start, end, options) : { task_report: reportResult(start, end) },
-    getLatestWorkshopProductionDate: async () => ({ report_date: '2026-10-27' }),
-    getEnergyDay: async () => ({}), getTaskEnergyDay: async () => reportResult('2026-10-27', '2026-10-27'),
+    getLatestWorkshopProductionDate: async () => ({ report_date: clock.today }),
+    getEnergyDay: async () => ({}), getTaskEnergyDay: (date, options) => read('tasks', date, date, options),
     getEnergyMonthlyRange: (start, end, options) => read('summary', start, end, options),
     init: () => ({ setOption: option => chartUpdates.push(option), dispose() {}, resize() {} }), createReportChartGrid: () => ({}),
-    reportToday: () => '2026-10-27', recentTwelveMonthStart: () => '2025-11-01',
+    reportToday: () => clock.today, recentTwelveMonthStart: () => '2025-11-01',
     formatChineseDate: String, formatChineseMonth: String, formatChineseDateTime: String, formatDeviceDisplay: String,
     sortReportPeriods: rows => rows, taskProductionDate: () => '2026-10-27', deviceSelection: { id: 'Cutter01' },
     mergeOwnedQuery, queryChoice, queryDateRange, sameRouteQuery,
@@ -148,8 +161,118 @@ async function mountReport(t, kind, { query = {}, refreshing = false, syncing = 
   const unmount = () => { if (mounted) { app.unmount(); mounted = false } }
   t.after(() => { unmount(); if (previousWindow === undefined) delete globalThis.window; else globalThis.window = previousWindow })
   await flushReport()
-  return { state, router, pending, held, timers, chartUpdates, exports, unmount, mounts: () => mounts, fire() { const [id, callback] = timers.entries().next().value; timers.delete(id); return callback() } }
+  return { state, router, pending, held, timers, chartUpdates, exports, clock, unmount, mounts: () => mounts, fire() { const [id, callback] = timers.entries().next().value; timers.delete(id); return callback() } }
 }
+
+for (const kind of ['leadership', 'equipment']) {
+  test(`${kind}: a retained default report follows the current day after month rollover`, async t => {
+    const page = await mountReport(t, kind)
+    await page.router.push('/other'); await flushReport()
+    page.clock.today = '2026-11-01'
+    await page.router.push('/report'); await flushReport(); await flushReport()
+    assert.equal(page.mounts(), 1)
+    assert.equal(page.state.appliedPeriodStart.value, '2026-11-01')
+    assert.equal(page.state.appliedPeriodEnd.value, '2026-11-01')
+    assert.equal(page.state.data.value.period_end, '2026-11-01')
+  })
+
+  test(`${kind}: returning immediately retains data while a delayed refresh runs and failure keeps that data`, async t => {
+    const page = await mountReport(t, kind)
+    const { state, router, held, pending } = page
+    held.monthly = held.summary = held.tasks = true
+    const previous = state.data.value
+    await router.push('/other'); await flushReport()
+    await router.push('/report'); await flushReport()
+    assert.equal(page.mounts(), 1)
+    assert.equal(state.data.value, previous, 'cached data remains available before the API returns')
+    assert.equal(state.loading.value, true, 'the update still protects export and analysis from stale inputs')
+    assert.ok(pending.length)
+    pending.forEach(item => item.reject(new Error('后台读取失败')))
+    await flushReport(); await flushReport()
+    assert.equal(state.data.value, previous)
+    assert.equal(state.loading.value, false)
+    assert.match(state.error.value, /后台读取失败/)
+  })
+}
+
+function compiledLayout(name) {
+  const descriptor = parse(readFileSync(new URL(`../src/layouts/${name}.vue`, import.meta.url), 'utf8')).descriptor
+  const bindings = { RouterView, useRoute, useRouter }
+  const script = compileScript(descriptor, { id: `cache-${name}`, inlineTemplate: true }).content
+    .replace(/import\s*\{([^}]+)\}\s*from\s*['"]vue['"]/g, (_, names) => {
+      for (const name of names.split(',')) {
+        const [original, alias = original] = name.trim().split(/\s+as\s+/)
+        bindings[alias] = original === 'Transition' ? { inheritAttrs: false, setup: (_props, { slots }) => () => Vue.h(Vue.Fragment, slots.default?.()) } : Vue[original]
+      }
+      return ''
+    }).replace(/^import .*$/gm, '').replace('export default', 'return')
+  return scriptFunction(...Object.keys(bindings), script)(...Object.values(bindings))
+}
+
+test('admin navigation retains the three report pages across other modules and discards them on device change', async t => {
+  const Outlet = compiledLayout('AdminPageView')
+  const Reports = compiledLayout('ReportsLayout')
+  const device = Vue.ref('Cutter01'), mounted = [], destroyed = [], active = new Set()
+  let settingsReads = 0
+  const report = kind => Vue.defineComponent({ setup() {
+    const identity = `${device.value}:${kind}`
+    mounted.push(identity)
+    Vue.onActivated(() => active.add(identity))
+    Vue.onDeactivated(() => active.delete(identity))
+    Vue.onBeforeUnmount(() => { destroyed.push(identity); active.delete(identity) })
+    return () => Vue.h('p', identity)
+  } })
+  const other = { render: () => Vue.h('p', '其他功能') }
+  const router = createRouter({ history: createMemoryHistory(), routes: [{
+    path: '/admin', component: { setup: () => {
+      const route = useRoute()
+      return () => Vue.h(Outlet, { ready: true, deviceId: device.value,
+        devicePage: route.path.startsWith('/admin/reports') || route.path === '/admin/home', transitionName: '' })
+    } }, children: [{ path: 'home', component: other }, { path: 'settings', component: RouterView,
+      children: [{ path: 'database', component: { setup() { settingsReads++; return () => Vue.h('p', '数据库设置') } } }],
+    }, {
+      path: 'reports', component: Reports, children: [...['leadership', 'workshop', 'equipment'].map(kind => ({
+        path: kind, name: kind, component: report(kind), meta: { keepAlive: true },
+      })), { path: 'center', name: 'center', component: report('center') }],
+    }],
+  }] })
+  const node = () => ({ children: [], parent: null })
+  const remove = child => {
+    if (child.parent) child.parent.children.splice(child.parent.children.indexOf(child), 1)
+    child.parent = null
+  }
+  const renderer = Vue.createRenderer({ createComment: node, createText: node, createElement: node,
+    insert(child, parent, anchor) {
+      remove(child)
+      const index = anchor ? parent.children.indexOf(anchor) : -1
+      parent.children.splice(index < 0 ? parent.children.length : index, 0, child)
+      child.parent = parent
+    }, remove, setText() {}, setElementText() {}, parentNode: child => child.parent,
+    nextSibling: child => child.parent?.children[child.parent.children.indexOf(child) + 1], patchProp() {} })
+  await router.push('/admin/reports/workshop')
+  const app = renderer.createApp({ render: () => Vue.h(RouterView) }); app.use(router); app.mount(node())
+  t.after(() => app.unmount())
+  for (const kind of ['workshop', 'equipment', 'leadership']) {
+    await router.push(`/admin/reports/${kind}`); await flushReport()
+    assert.deepEqual([...active], [`Cutter01:${kind}`])
+    await router.push('/admin/home'); await flushReport()
+    assert.equal(active.size, 0, 'cached report work is paused outside the report module')
+    assert.equal(destroyed.length, 0)
+    await router.push(`/admin/reports/${kind}`); await flushReport()
+    assert.equal(mounted.filter(item => item === `Cutter01:${kind}`).length, 1)
+  }
+  await router.push('/admin/reports/center'); await flushReport()
+  await router.push('/admin/home'); await flushReport()
+  assert.ok(destroyed.includes('Cutter01:center'), 'noncached report jobs leave the page and stop their own work')
+  await router.push('/admin/settings/database'); await flushReport()
+  assert.equal(settingsReads, 1, 'the inactive reports outlet must not mount a second settings page')
+  await router.push('/admin/reports/leadership'); await flushReport()
+  device.value = 'Cutter02'
+  await flushReport()
+  assert.deepEqual([...active], ['Cutter02:leadership'])
+  assert.equal(destroyed.filter(item => item.startsWith('Cutter01:') && item !== 'Cutter01:center').length, 3)
+  assert.equal(mounted.filter(item => item === 'Cutter02:leadership').length, 1)
+})
 
 test('equipment summary: KeepAlive resumes one missing-data poll and completion updates the chart', async t => {
   const page = await mountReport(t, 'equipment', { syncing: true })

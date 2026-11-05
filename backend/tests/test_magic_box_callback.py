@@ -13,6 +13,67 @@ from app.models.cutting_contracts import CuttingDispatch
 from tests.test_cutting_dispatch import _service
 
 
+@pytest.mark.parametrize(('body', 'content_type', 'field', 'error_type', 'input_type', 'invalid_value'), [
+    ({'FinishBy':'(10.1.133.197)', 'finishTime':'2026-11-05T16:20:30'}, 'application/json',
+     'finishTime', 'value_error', 'str', '2026-11-05T16:20:30'),
+    ({'FinishBy':'unknown', 'finishTime':'2026-11-05 16:20:30'}, 'application/json',
+     'FinishBy', 'value_error', 'str', 'unknown'),
+    ({'FinishBy':'(10.1.133.197)', 'finishTime':'2026-11-05 16:20:30', 'material':None}, 'application/json',
+     'material', 'string_type', 'NoneType', None),
+    ({'FinishBy':'(10.1.133.197)'}, 'application/json', 'finishTime', 'missing', 'dict', None),
+    ('FinishBy=unknown&finishTime=bad-time', 'application/x-www-form-urlencoded',
+     None, 'model_attributes_type', 'bytes', None),
+])
+def test_callback_validation_logs_field_errors_without_request_secrets(
+        body, content_type, field, error_type, input_type, invalid_value, caplog):
+    import json
+    from fastapi.exceptions import RequestValidationError
+    from app.main import safe_connection_validation
+    from app.api.cutting import require_callback_source
+
+    app = FastAPI()
+    app.add_exception_handler(RequestValidationError, safe_connection_validation)
+    app.dependency_overrides[require_callback_source] = lambda: None
+    app.include_router(callback_router)
+    if isinstance(body, dict):
+        body = {**body, 'password':'private-body-secret', 'taskName':'private-task-name'}
+        body = json.dumps(body)
+    with TestClient(app, client=('192.0.2.10', 50000)) as client:
+        response = client.post('/api/v1/magic-box/callbacks/task-finished', content=body,
+            headers={'Content-Type':content_type, 'Authorization':'private-header-secret'})
+    assert response.status_code == 422
+    detail = response.json()['detail'][0]
+    assert detail['loc'] == (['body', field] if field else ['body'])
+    assert detail['type'] == error_type
+    records = [record for record in caplog.records if '魔盒完成通知校验失败' in record.message]
+    assert len(records) == 1
+    message = records[0].message
+    assert '192.0.2.10' in message and content_type in message
+    assert error_type in message and input_type in message
+    if field:
+        assert field in message
+    if invalid_value:
+        assert invalid_value in message
+    for secret in ('private-body-secret', 'private-header-secret', 'private-task-name'):
+        assert secret not in message
+
+
+def test_other_validation_failures_keep_the_existing_response_and_do_not_log_callbacks(caplog):
+    from fastapi.exceptions import RequestValidationError
+    from app.main import safe_connection_validation
+
+    app = FastAPI()
+    app.add_exception_handler(RequestValidationError, safe_connection_validation)
+    @app.get('/api/v1/other')
+    def other(count: int):
+        return count
+    with TestClient(app) as client:
+        response = client.get('/api/v1/other', params={'count':'bad-number'})
+    assert response.status_code == 422
+    assert response.json()['detail'][0]['loc'] == ['query', 'count']
+    assert not any('魔盒完成通知校验失败' in record.message for record in caplog.records)
+
+
 @pytest.fixture
 def completion(state_database, tmp_path):
     service, repository, admin = _service(state_database, tmp_path)

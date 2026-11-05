@@ -905,7 +905,7 @@ test('shared report table preserves declared Naive widths across short, long and
     { key: 'c2', title: '状态', width: 104, align: 'center' },
   ]
   for (const items of [[], [{ id: 1, name: '张三', file: 'a.nc' }], [{ id: 2, name: '姓名'.repeat(100), file: 'file'.repeat(100) }]]) {
-    const app = Vue.createSSRApp({ render: () => h(Table, { columns, items, rowKey: row => row.id, paginate: false }) })
+    const app = Vue.createSSRApp({ render: () => h(Table, { columns, items, rowKey: row => row.id, paginate: false, autoFit: false }) })
     await renderToString(app)
   }
   for (const snapshot of snapshots) {
@@ -934,7 +934,7 @@ test('shared table exposes native resize and full-text tooltips while keeping ac
   }
   await renderToString(Vue.createSSRApp({ render: () => h(Table, { columns, items: [], rowKey: row => row.id, paginate: false }, slots) }))
   assert.equal(received[0].resizable, true)
-  assert.equal(received[0].ellipsis.tooltip, true)
+  assert.ok(received[0].ellipsis.tooltip)
   assert.equal(received[1].resizable, false)
   assert.equal(received[1].ellipsis, false)
   assert.equal(received[2].resizable, false)
@@ -944,6 +944,55 @@ test('shared table exposes native resize and full-text tooltips while keeping ac
   action.children[0].props.onClick()
   assert.equal(actions, 1)
   assert.equal(columns[0].resizable, undefined, 'caller definitions stay unchanged')
+})
+
+test('shared tables fit page content, cap text, include totals and preserve dragged widths', async () => {
+  let received, observer, disconnected = false
+  let measurements = [['c0', 900], ['c1', 320], ['c2', 520, true]]
+  const DataTable = Vue.defineComponent({
+    props: ['columns', 'data', 'scrollX', 'onUnstableColumnResize'],
+    setup(props) { received = props; return () => h('div', props.columns.map(column => String(column.width))) },
+  })
+  const Table = createSharedDataTable({ NDataTable: DataTable,
+    getComputedStyle: () => ({ paddingLeft: '14px', paddingRight: '14px' }),
+    ResizeObserver: class { constructor(callback) { observer = callback } observe() {} disconnect() { disconnected = true } },
+  })
+  const renderer = Vue.createRenderer({
+    createElement: () => ({ querySelectorAll: () => measurements.map(([key, width, controls]) => ({
+      dataset: { fitColumn: key }, classList: { contains: () => Boolean(controls) },
+      closest: () => ({}), getBoundingClientRect: () => ({ width }),
+    })) }),
+    createComment: () => ({}), createText: () => ({}), insert() {}, remove() {}, setText() {}, setElementText() {},
+    parentNode: () => null, nextSibling: () => null, patchProp() {},
+  })
+  const rows = ref([{ id: 1 }]), loading = ref(false)
+  const app = renderer.createApp({ render: () => h(Table, {
+    columns: [{ key: 'c0', title: '文件名', width: 1000 }, { key: 'c1', title: '汇总', width: 600 }, { key: 'c2', title: '操作', ellipsis: false }],
+    items: rows.value, rowKey: row => row.id, paginate: false, summary: true, loading: loading.value,
+  }, { c0: () => '完整文件名', c2: () => h('button', '操作'), 'summary-c1': () => '完整汇总内容' }) })
+  app.mount({})
+  try {
+    await Vue.nextTick()
+    assert.deepEqual(received.columns.map(column => column.width), [360, 350, 550])
+    assert.equal(received.scrollX, 1260)
+    assert.ok(received.columns[0].ellipsis.tooltip)
+    received.onUnstableColumnResize(630, 630, received.columns[0])
+    measurements = [['c0', 20], ['c1', 40], ['c2', 30, true]]
+    rows.value = [{ id: 2 }]
+    await Vue.nextTick(); await Vue.nextTick()
+    assert.deepEqual(received.columns.map(column => column.width), [630, 70, 60])
+    loading.value = true
+    await Vue.nextTick()
+    measurements = [['c0', 0], ['c1', 0], ['c2', 0, true]]
+    observer()
+    assert.equal(received.columns[1].width, 70, 'loading does not shrink the visible data')
+    loading.value = false
+    rows.value = []
+    measurements = [['c0', 32], ['c1', 24], ['c2', 24]]
+    await Vue.nextTick(); await Vue.nextTick()
+    assert.deepEqual(received.columns.map(column => column.width), [630, 54, 54])
+  } finally { app.unmount() }
+  assert.equal(disconnected, true)
 })
 
 test('welding column definitions provide bounded widths for every field', () => {

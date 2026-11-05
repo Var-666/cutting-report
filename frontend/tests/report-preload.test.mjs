@@ -99,6 +99,37 @@ test('snapshot synchronization forwards cancellation and invalidates the task ca
   assert.equal(calls.filter((call) => call.url.includes('/workshop/tasks?')).length, 2)
 })
 
+test('manager background refresh reads applied filters and retains visible data until success or failure', async () => {
+  const source = readFileSync(new URL('../src/views/WorkshopView.vue', import.meta.url), 'utf8')
+  const loadSource = source.slice(source.indexOf('async function load('), source.indexOf('\nfunction refreshAnalysisReport('))
+  const applied = { startDate: today, endDate: today, projectName: '已查询工程', confirmationStatus: 'all' }
+  const previous = { report: { item_count: 1 }, items: [{ task_id: 'cached' }], page: 2, page_size: 10 }
+  let resolve, reject, query
+  const bindings = {
+    isWorker: ref(false), filters: { ...applied, projectName: '尚未提交的草稿' }, appliedRouteState: { ...applied },
+    props: { mode: 'manager' }, beginRequest: () => ({ sequence: 1, signal: new AbortController().signal }),
+    requestSequence: 1, requestController: null, pageActive: ref(true), loading: ref(false), error: ref(''),
+    result: ref(previous), defaultReportView: ref(false), reconcileVisibleTaskSelection() {},
+    listWorkshopRangeTasks: value => { query = value; return new Promise((a, b) => { resolve = a; reject = b }) },
+  }
+  const load = scriptFunction(...Object.keys(bindings), `${loadSource}; return load`)(...Object.values(bindings))
+  const refresh = load(2, { ensureReport: false, useAppliedFilters: true })
+  assert.equal(query.projectName, applied.projectName)
+  assert.equal(query.page, 2)
+  assert.equal(bindings.result.value.items[0].task_id, 'cached')
+  assert.equal(bindings.loading.value, true)
+  resolve({ ...previous, items: [{ task_id: 'updated' }] })
+  await refresh
+  assert.equal(bindings.result.value.items[0].task_id, 'updated')
+  assert.equal(bindings.filters.projectName, '尚未提交的草稿')
+  const failed = load(2, { ensureReport: false, useAppliedFilters: true })
+  reject(new Error('后台更新失败'))
+  await failed
+  assert.equal(bindings.result.value.items[0].task_id, 'updated')
+  assert.equal(bindings.loading.value, false)
+  assert.equal(bindings.error.value, '后台更新失败')
+})
+
 test('admin home warms only its own overview and history', async () => {
   const calls = mockApi()
   const completion = startReportPreload(admin, { pathname: '/admin/home' })

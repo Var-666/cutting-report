@@ -185,7 +185,7 @@ test('catalog remains authenticated and new device names come from configuration
 })
 
 test('shells use the selected device to discard cached views, while keeping route queries', () => {
-  assert.match(source('layouts/AdminLayout.vue'), /devicePage \? deviceSelection.id : undefined/)
+  assert.match(source('layouts/AdminLayout.vue'), /:device-id="deviceSelection.id"/)
   assert.match(source('layouts/WorkerLayout.vue'), /:key="deviceSelection.id"/)
   assert.match(source('components/DeviceSwitcher.vue'), /max-width:600px/)
   assert.match(source('components/DeviceSwitcher.vue'), /role="alert"/)

@@ -62,5 +62,5 @@ const historyTableColumns = [
 </template>
 
 <style scoped>
-.history-error { max-width:220px; color:rgb(var(--error-color)); overflow-wrap:anywhere; }
+.history-error { color:rgb(var(--error-color)); }
 </style>

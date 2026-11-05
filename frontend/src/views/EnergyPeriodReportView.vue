@@ -132,17 +132,17 @@ const analysisReady = computed(() => Boolean(
   && !summaryLoading.value
 ))
 
-async function loadRange(force = false, { syncRoute = true } = {}) {
-  if (!periodStart.value || !periodEnd.value) return
-  if (periodEnd.value < periodStart.value) {
+async function loadRange(force = false, { syncRoute = true, useAppliedPeriod = false } = {}) {
+  const requestedStart = useAppliedPeriod ? appliedPeriodStart.value : periodStart.value
+  const requestedEnd = useAppliedPeriod ? appliedPeriodEnd.value : periodEnd.value
+  if (!requestedStart || !requestedEnd) return
+  if (requestedEnd < requestedStart) {
     error.value = '结束日期不能早于开始日期'
     return
   }
   const { sequence, signal } = beginRequest({ preserveSummary: true })
   loading.value = true
   error.value = ''
-  const requestedStart = periodStart.value
-  const requestedEnd = periodEnd.value
   try {
     const result = await getEnergyRange(requestedStart, requestedEnd, { force, signal })
     if (!requestIsCurrent(sequence, signal)) return
@@ -313,7 +313,7 @@ async function initializeReport({ restoreQuery = false } = {}) {
   const { sequence, signal } = beginRequest()
   loading.value = true
   try {
-    const latest = await getLatestWorkshopProductionDate(today, { signal })
+    const latest = await getLatestWorkshopProductionDate(reportToday(), { signal })
     if (!requestIsCurrent(sequence, signal)) return
     if (latest.report_date) {
       anchorDate.value = latest.report_date
@@ -425,7 +425,11 @@ onActivated(async () => {
   if ((!taskDay.value || !monthlyReport.value) && !loading.value) await initializeReport()
   else if (chartsMissing()) renderCharts()
   resizeCharts()
-  if (monthlyReport.value) scheduleSummaryRefresh(monthlyReport.value)
+  if (monthlyReport.value?.syncing) scheduleSummaryRefresh(monthlyReport.value)
+  else if (routeStateReady && taskDay.value && monthlyReport.value && !loading.value) {
+    if (rangeQueryApplied.value) loadRange(false, { syncRoute: false, useAppliedPeriod: true })
+    else initializeReport()
+  }
 })
 onDeactivated(pause)
 onBeforeUnmount(() => pause(true))
@@ -478,6 +482,7 @@ const summaryTableColumns = [
         :max-days="31"
         :chart-options="energyChartOptions"
         :loading="loading"
+        :show-loading="!taskDay"
         :has-data="Boolean(taskDay)"
         :date-dirty="dateQueryDirty"
         :export-disabled="loading || !taskDay"
@@ -488,6 +493,7 @@ const summaryTableColumns = [
       />
     </section>
 
+    <ReportFeedback v-if="loading && taskDay" type="info" title="设备报表正在后台更新" message="当前显示上次加载的数据，更新完成后自动替换。" />
     <ReportFeedback v-if="error && taskDay && monthlyReport" type="error" title="设备报表更新失败" :message="error" action-label="重新查询" dismissible @action="retryReport" @dismiss="error = ''" />
     <ReportFeedback v-if="!energyConnected" type="info" title="能耗暂未接入" message="当前设备暂未接入电表和气表，生产任务与工时正常统计。" />
     <ReportFeedback v-else-if="configurationError" type="warning" title="能管数据提示" :message="`${configurationError}。缺失值显示 --，不按零计算。`" />
@@ -527,7 +533,7 @@ const summaryTableColumns = [
       title="区间任务能耗明细"
       :subtitle="`${appliedPeriodStart} 至 ${appliedPeriodEnd}`"
       chart-label="任务能耗图"
-      :loading="loading"
+      :loading="loading && !taskDay"
       :has-data="taskRows.length > 0"
       :empty="Boolean(taskDay) && !taskRows.length"
       :error="!taskDay ? error : ''"
@@ -565,7 +571,7 @@ const summaryTableColumns = [
       :title="summaryTitle"
       :subtitle="summarySubtitle"
       :chart-label="summaryChartLabel"
-      :loading="summaryLoading"
+      :loading="summaryLoading && !monthlyReport"
       :has-data="summaryRows.length > 0"
       :empty="Boolean(monthlyReport) && !summaryRows.length"
       :error="!monthlyReport ? error : ''"

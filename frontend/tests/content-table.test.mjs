@@ -210,7 +210,7 @@ test('business tables use shared Naive controls while chart data retains accessi
           assert.match(disclosure, /role="region" aria-label="[^"]+" tabindex="0"/)
           assert.match(disclosure, /<table><caption>[^<]+<\/caption>/)
           assert.match(disclosure, /<th scope="col">/)
-          assert.match(disclosure, /<th scope="row">/)
+          assert.match(disclosure, /<th scope="row"[^>]*>/)
           for (const [heading] of disclosure.matchAll(/<th\b[^>]*>/g)) assert.match(heading, /scope="(?:col|row)"/)
           source = source.replace(disclosure, '')
         }

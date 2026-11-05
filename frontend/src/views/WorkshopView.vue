@@ -180,7 +180,7 @@ function duration(value: unknown) {
 function time(value: unknown) { return formatChineseDateTime(value) }
 function rowDate(row: WorkshopTask) { return taskProductionDate(row, filters.reportDate) }
 
-async function load(page = 1, { silent = false, ensureReport = true, force = false, syncRoute = false } = {}) {
+async function load(page = 1, { silent = false, ensureReport = true, force = false, syncRoute = false, useAppliedFilters = false } = {}) {
   if (!isWorker.value && filters.endDate < filters.startDate) {
     error.value = '结束日期不能早于开始日期'
     return
@@ -193,6 +193,10 @@ async function load(page = 1, { silent = false, ensureReport = true, force = fal
   try {
     const query = {
       ...filters,
+      ...(!isWorker.value && useAppliedFilters ? {
+        startDate: appliedRouteState.startDate, endDate: appliedRouteState.endDate,
+        projectName: appliedRouteState.projectName, confirmationStatus: appliedRouteState.confirmationStatus,
+      } : {}),
       sortMode: props.mode,
       page,
       pageSize: result.value.page_size,
@@ -293,7 +297,7 @@ async function initializeReport({ restoreQuery = false } = {}) {
   loading.value = true
   error.value = ''
   try {
-    const latest = await getLatestWorkshopProductionDate(today, { signal })
+    const latest = await getLatestWorkshopProductionDate(reportToday(), { signal })
     if (!pageActive.value || signal.aborted || sequence !== requestSequence) return
     if (latest.report_date) {
       filters.reportDate = latest.report_date
@@ -371,6 +375,11 @@ onActivated(async () => {
   }
   if (isWorker.value && result.value.report && !loading.value && !batchConfirmation.visible && !batchConfirmation.saving) {
     load(result.value.page, { silent: true, ensureReport: false, force: true })
+  } else if (!isWorker.value && routeStateReady && result.value.report && !loading.value) {
+    if (defaultReportView.value && !dateQueryDirty.value
+        && filters.projectName === appliedRouteState.projectName
+        && filters.confirmationStatus === appliedRouteState.confirmationStatus) initializeReport()
+    else load(result.value.page, { ensureReport: false, useAppliedFilters: true })
   }
 })
 onDeactivated(pausePage)
@@ -440,6 +449,7 @@ const workerTableColumns = [
         aria-label="车间报表查询条件"
         :anchor-date="filters.reportDate"
         :loading="loading"
+        :show-loading="!result.report"
         :has-data="Boolean(result.report)"
         :date-dirty="dateQueryDirty"
         :export-disabled="loading || !result.report"
@@ -450,6 +460,7 @@ const workerTableColumns = [
       />
     </section>
 
+    <ReportFeedback v-if="!isWorker && loading && result.report" type="info" title="车间报表正在后台更新" message="当前显示上次加载的数据，更新完成后自动替换。" />
     <ReportFeedback
       v-if="error && result.report"
       type="error"
@@ -494,7 +505,7 @@ const workerTableColumns = [
       :duration-distribution="result.duration_distribution || []"
       :status-distribution="result.status_distribution || []"
       :top-cut-length-tasks="result.top_cut_length_tasks || []"
-      :loading="loading"
+      :loading="loading && (isWorker || !result.report)"
     />
 
     <ReportTrendPanel
@@ -503,7 +514,7 @@ const workerTableColumns = [
     :title="isWorker ? '待确认任务表' : '区间车间报表'"
     :note="isWorker ? '只能确认尚未被其他工人确认的任务' : '已确认任务可撤销或改派'"
     :show-chart="false"
-    :loading="loading"
+    :loading="loading && (isWorker || !result.report)"
     :has-data="result.items.length > 0"
     :empty="Boolean(result.report) && !result.items.length"
     :error="!result.report ? error : ''"
@@ -516,8 +527,8 @@ const workerTableColumns = [
     <template #summary>
       <form class="workshop-filters" :class="{ manager: !isWorker }" @submit.prevent="applyTaskFilters">
         <label v-if="isWorker"><span>生产日期</span><AppDatePicker v-model="filters.reportDate" required /></label>
-        <label><span>工程号</span><AppSelect v-model="filters.projectName" :disabled="!result.report"><option value="">全部</option><option v-for="name in result.project_names" :key="name" :value="name">{{ name }}</option></AppSelect></label>
-        <label><span>确认状态</span><AppSelect v-model="filters.confirmationStatus" :disabled="!result.report"><option value="all">全部</option><option value="unconfirmed">未确认</option><option value="confirmed">已确认</option></AppSelect></label>
+        <label><span>工程号</span><AppSelect v-model="filters.projectName" :disabled="!result.report || (!isWorker && loading)"><option value="">全部</option><option v-for="name in result.project_names" :key="name" :value="name">{{ name }}</option></AppSelect></label>
+        <label><span>确认状态</span><AppSelect v-model="filters.confirmationStatus" :disabled="!result.report || (!isWorker && loading)"><option value="all">全部</option><option value="unconfirmed">未确认</option><option value="confirmed">已确认</option></AppSelect></label>
         <NButton attr-type="submit" :disabled="loading || !result.report"><AppIcon name="sparkles" size="14" tone="current" />{{ loading ? '筛选中' : '筛选明细' }}</NButton>
       </form>
       <div v-if="result.report" class="workshop-report-state"><strong>{{ isWorker ? formatChineseDate(result.report.report_date) : `${formatChineseDate(result.report.period_start)} 至 ${formatChineseDate(result.report.period_end)}` }} 车间报表</strong><span>{{ isWorker ? `生成人：${result.report.generated_by_name || '--'} · 生成时间：${time(result.report.generated_at)} · ` : '' }}总任务 {{ result.report.item_count }} 项 · 已确认 {{ result.report.confirmed_count }} 项</span></div>
@@ -525,7 +536,7 @@ const workerTableColumns = [
       <div v-if="isWorker && result.report" class="workshop-batch-actions"><span>已选择 <strong>{{ selectedTaskCount }}</strong> 项待确认任务</span><div><NButton attr-type="button" :disabled="!selectedTaskCount || batchConfirmation.saving" @click="clearSelectedTasks">清空选择</NButton><NButton class="primary" attr-type="button" :disabled="!selectedTaskCount || loading || batchConfirmation.saving" @click="openBatchConfirmation()" type="primary">确认选中任务</NButton></div></div>
     </template>
     <template #table>
-      <AppReportTable :columns="taskTableColumns" :items="result.items" :total="result.total" :page="result.page" :page-size="result.page_size" :page-sizes="[]" @page="changePage" :row-key="row => row.task_id" :row-class-name="row => (isWorker && selectedTasks.has(row.task_id)) ? 'selected' : ''" :loading="loading">
+      <AppReportTable :columns="taskTableColumns" :items="result.items" :total="result.total" :page="result.page" :page-size="result.page_size" :page-sizes="[]" @page="changePage" :row-key="row => row.task_id" :row-class-name="row => (isWorker && selectedTasks.has(row.task_id)) ? 'selected' : ''" :loading="loading && (isWorker || !result.report)">
         <template #header-c0><NCheckbox :checked="allVisibleTasksSelected" :indeterminate="someVisibleTasksSelected" :disabled="!selectableTasks.length || loading || batchConfirmation.saving" aria-label="全选当前页待确认任务" @update:checked="toggleVisibleTasks($event)" /></template>
         <template #c0="{ row }"><div class="workshop-select-cell"><NCheckbox :checked="selectedTasks.has(row.task_id)" :disabled="Boolean(row.confirmed_by) || loading || batchConfirmation.saving" :aria-label="`选择任务 ${display(row.program_no)}`" @update:checked="setTaskSelected(row, $event)" /></div></template>
         <template #c1="{ row, index: rowIndex }">{{ (result.page - 1) * result.page_size + rowIndex + 1 }}</template>

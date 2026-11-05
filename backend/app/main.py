@@ -88,6 +88,22 @@ app = FastAPI(
 
 @app.exception_handler(RequestValidationError)
 async def safe_connection_validation(request: Request, exc: RequestValidationError):
+    if request.url.path == '/api/v1/magic-box/callbacks/task-finished':
+        errors = exc.errors()
+        # Only inspect documented time/machine fields; never log the full body or headers.
+        invalid_fields = {error['loc'][1] for error in errors if len(error['loc']) > 1 and error['loc'][0] == 'body'}
+        values = {
+            key: repr(exc.body[key])[:256]
+            for key in ('FinishBy', 'finishTime')
+            if key in invalid_fields and isinstance(exc.body, dict) and key in exc.body
+        }
+        logging.getLogger(__name__).warning(
+            '魔盒完成通知校验失败 source_ip=%s content_type=%r body_type=%s errors=%r invalid_values=%r',
+            request.client.host if request.client else '', request.headers.get('content-type', '')[:120],
+            type(exc.body).__name__,
+            [{'loc': error['loc'], 'type': error['type'], 'input_type': type(error.get('input')).__name__}
+             for error in errors[:10]], values,
+        )
     if request.url.path.startswith(('/api/v1/welding', '/api/v1/database/welding/', '/api/v1/database/sources')) or request.url.path == '/api/v1/database/configuration':
         return JSONResponse(status_code=422, content={'success': False, 'error': {'code': 'VALIDATION_ERROR', 'message': '请求参数无效，请检查日期、筛选或连接配置'}})
     return await request_validation_exception_handler(request, exc)

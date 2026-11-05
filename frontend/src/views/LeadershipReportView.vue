@@ -36,7 +36,7 @@ const {
   monthlyPeriodEnd, defaultMonthlyView, chartType, report, monthlyReport,
   loading, monthlyLoading, refreshLoading, error, dateQueryDirty,
   routeStateQuery, cancelReportRequest, changeChartType, snapshot, loadReport,
-  restoreRouteState, loadDefaultReport, scheduleRefreshPoll, retryReport, refreshAnalysisReport,
+  restoreRouteState, loadDefaultReport, scheduleRefreshPoll, retryReport, refreshAnalysisReport, refreshCachedReport,
 } = useLeadershipReportQuery({ route, router, today, routeRange, pageActive, renderCharts: options => renderCharts(options) })
 const {
   dailyRecords, dailyChartRecords, metricSeries, monthlyRecords, total,
@@ -99,6 +99,7 @@ onActivated(async () => {
   if (!report.value && !loading.value) await loadDefaultReport()
   else if (chartsMissing()) renderCharts()
   resizeCharts()
+  if (routeStateReady) refreshCachedReport()
   scheduleRefreshPoll(true)
 })
 onDeactivated(pausePage)
@@ -148,6 +149,7 @@ const monthlyTableColumns = [
       aria-label="领导报表查询条件"
       :anchor-date="today"
       :loading="loading"
+      :show-loading="!report"
       :has-data="Boolean(report)"
       :date-dirty="dateQueryDirty"
       :export-disabled="loading || !report || !snapshot.data_as_of || snapshot.refreshing"
@@ -158,6 +160,7 @@ const monthlyTableColumns = [
     />
   </section>
 
+  <ReportFeedback v-if="loading && report" type="info" title="领导报表正在后台更新" message="当前显示上次加载的数据，更新完成后自动替换。" />
   <ReportFeedback v-if="error && report" type="error" title="报表更新失败" :message="error" action-label="重新查询" dismissible @action="retryReport" @dismiss="error = ''" />
 
   <section class="leadership-kpis" aria-label="区间汇总" :aria-busy="loading">
@@ -183,7 +186,7 @@ const monthlyTableColumns = [
     </article>
   </section>
 
-  <ReportTrendPanel ref="dailyPanel" number="01" title="区间每日明细与趋势" subtitle="查看所选时间段内每日任务与加工指标变化" chart-label="区间每日趋势图" :height="245" :loading="loading || (refreshLoading && !snapshot.data_as_of)" :has-data="dailyRecords.length > 0" :empty="Boolean(report) && !dailyRecords.length" :error="!report ? error : ''" loading-title="正在读取区间生产数据" loading-message="正在汇总任务、切割长度、坡口长度和切割时长。" empty-title="所选区间暂无已完成任务" empty-message="请调整日期范围，或等待生产数据完成后重新查询。" @retry="retryReport">
+  <ReportTrendPanel ref="dailyPanel" number="01" title="区间每日明细与趋势" subtitle="查看所选时间段内每日任务与加工指标变化" chart-label="区间每日趋势图" :height="245" :loading="!report && (loading || refreshLoading)" :has-data="dailyRecords.length > 0" :empty="Boolean(report) && !dailyRecords.length" :error="!report ? error : ''" loading-title="正在读取区间生产数据" loading-message="正在汇总任务、切割长度、坡口长度和切割时长。" empty-title="所选区间暂无已完成任务" empty-message="请调整日期范围，或等待生产数据完成后重新查询。" @retry="retryReport">
     <template #table>
         <AppReportTable flex-height :columns="dailyTableColumns" :items="dailyRecords" :row-key="row => row.period_start" :paginate="false" summary>
         <template #c0="{ row, index: rowIndex }">{{ rowIndex + 1 }}</template>
@@ -203,7 +206,7 @@ const monthlyTableColumns = [
     </template>
   </ReportTrendPanel>
 
-  <ReportTrendPanel ref="monthlyPanel" number="02" :title="monthlyTitle" subtitle="查看近12个月各项数据的对比趋势" :note="`${monthlyPeriodStart} 至 ${monthlyPeriodEnd}`" chart-label="近12个月月度趋势图" :height="245" :loading="monthlyLoading" :has-data="monthlyRecords.length > 0" :empty="Boolean(monthlyReport) && !monthlyRecords.length" :error="!monthlyReport ? error : ''" loading-title="正在读取近12个月趋势" loading-message="月度汇总独立加载，不影响当前区间明细。" empty-title="近12个月暂无已完成任务" empty-message="当前统计范围内还没有可汇总的生产任务。" @retry="loadDefaultReport">
+  <ReportTrendPanel ref="monthlyPanel" number="02" :title="monthlyTitle" subtitle="查看近12个月各项数据的对比趋势" :note="`${monthlyPeriodStart} 至 ${monthlyPeriodEnd}`" chart-label="近12个月月度趋势图" :height="245" :loading="monthlyLoading && !monthlyReport" :has-data="monthlyRecords.length > 0" :empty="Boolean(monthlyReport) && !monthlyRecords.length" :error="!monthlyReport ? error : ''" loading-title="正在读取近12个月趋势" loading-message="月度汇总独立加载，不影响当前区间明细。" empty-title="近12个月暂无已完成任务" empty-message="当前统计范围内还没有可汇总的生产任务。" @retry="loadDefaultReport">
     <template #table>
         <AppReportTable flex-height :columns="monthlyTableColumns" :items="monthlyRecords" :row-key="row => row.period_start" :paginate="false" summary>
         <template #c0="{ row, index: rowIndex }">{{ rowIndex + 1 }}</template>

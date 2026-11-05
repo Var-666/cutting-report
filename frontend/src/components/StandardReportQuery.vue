@@ -25,6 +25,7 @@ const props = defineProps({
     ],
   },
   loading: Boolean,
+  showLoading: { type: Boolean, default: true },
   hasData: Boolean,
   dateDirty: Boolean,
   exportDisabled: Boolean,
@@ -75,9 +76,9 @@ async function applyPeriod() {
         </AppSelect>
       </label>
       <NButton class="standard-report-query__submit" type="primary" attr-type="submit" :disabled="loading">
-        <span v-if="loading" class="spinner"></span>
+        <span v-if="loading && showLoading" class="spinner"></span>
         <AppIcon v-else name="search" size="15" tone="current" />
-        {{ loading ? '查询中' : hasData ? '更新报表' : '查询报表' }}
+        {{ loading && showLoading ? '查询中' : hasData ? '更新报表' : '查询报表' }}
       </NButton>
       <ReportExportMenu
         class="standard-report-query__export"

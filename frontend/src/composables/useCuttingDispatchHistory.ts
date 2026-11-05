@@ -22,7 +22,7 @@ export function useCuttingDispatchHistory({ pageActive, isBusy }: { pageActive: 
   const trendError = ref('')
   function defaultPeriod(): DispatchTrendFilters {
     const end = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })
-    const start = new Date(Date.parse(`${end}T00:00:00Z`) - 29 * 86400000).toISOString().slice(0, 10)
+    const start = new Date(Date.parse(`${end}T00:00:00Z`) - 6 * 86400000).toISOString().slice(0, 10)
     return { start_date: start, end_date: end }
   }
   const trendFilters = ref<DispatchTrendFilters>(defaultPeriod())

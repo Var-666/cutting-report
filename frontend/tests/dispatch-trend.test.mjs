@@ -20,6 +20,30 @@ function dataFor(url) {
   return { page: Number(query.get('page')), total: 12, items: [{ dispatch_id: query.get('start_date') || 'all' }] }
 }
 
+test('default trend requests seven inclusive Shanghai days and clearing restores that range', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-10-31T16:30:00Z') })
+  const calls = []
+  globalThis.fetch = async value => {
+    const url = new URL(value, 'http://localhost')
+    calls.push(url)
+    return response(dataFor(url))
+  }
+  const page = state()
+  const expected = { start_date: '2026-10-26', end_date: '2026-11-01' }
+  assert.deepEqual(page.trendFilters.value, expected)
+  await page.refreshHistory()
+  const query = calls.find(url => url.pathname.endsWith('/trend')).searchParams
+  assert.equal(query.get('start_date'), expected.start_date)
+  assert.equal(query.get('end_date'), expected.end_date)
+  await page.applyHistoryFilters(period)
+  assert.deepEqual(page.trendFilters.value, period)
+  await page.clearHistoryFilters()
+  assert.deepEqual(page.trendFilters.value, expected)
+  const reset = calls.findLast(url => url.pathname.endsWith('/trend')).searchParams
+  assert.equal(reset.get('start_date'), expected.start_date)
+  assert.equal(reset.get('end_date'), expected.end_date)
+})
+
 test('trend click and machine/date filters reuse history pagination, and clearing restores all records', async () => {
   const calls = []
   globalThis.fetch = async value => {
