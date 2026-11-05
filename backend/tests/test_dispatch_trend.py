@@ -46,9 +46,9 @@ def test_daily_counts_match_paginated_details_without_counting_retries_simulatio
     assert restored['sent_at'] == first['sent_at']
     filters = dict(start_date=date(2026, 11, 1), end_date=date(2026, 11, 3))
     trend = service.dispatch_trend(**filters)
-    assert trend['items'] == [{'date': '2026-11-01', 'sent_count': 0},
-                              {'date': '2026-11-02', 'sent_count': 4},
-                              {'date': '2026-11-03', 'sent_count': 0}]
+    assert trend['items'] == [{'date': '2026-11-01', 'sent_count': 0, 'completed_count': 0},
+                              {'date': '2026-11-02', 'sent_count': 4, 'completed_count': 0},
+                              {'date': '2026-11-03', 'sent_count': 0, 'completed_count': 0}]
     assert trend['machine_ips'] == ['10.0.0.1', '10.0.0.2']
     pages = [service.list_dispatches(page=page, page_size=2, **filters) for page in (1, 2)]
     assert all(page['total'] == 4 for page in pages)
@@ -68,7 +68,7 @@ def test_success_date_uses_configured_timezone_and_daylight_saving_boundaries(hi
     add(sent_at='2026-11-01T23:30:00-05:00')
     add(sent_at='2026-11-02T00:00:00-05:00')
     filters = dict(start_date=date(2026, 11, 1), end_date=date(2026, 11, 1))
-    assert service.dispatch_trend(**filters)['items'] == [{'date': '2026-11-01', 'sent_count': 2}]
+    assert service.dispatch_trend(**filters)['items'] == [{'date': '2026-11-01', 'sent_count': 2, 'completed_count': 0}]
     assert service.list_dispatches(page=1, page_size=20, **filters)['total'] == 2
 
 
@@ -87,7 +87,7 @@ def test_dispatch_trend_http_contract_filters_validation_and_admin_scope(history
         params = {'start_date': '2026-11-02', 'end_date': '2026-11-02', 'machine_ip': '10.0.0.1'}
         response = client.get('/api/v1/cutting/dispatches/trend', params=params)
         assert response.status_code == 200
-        assert response.json()['data']['items'] == [{'date': '2026-11-02', 'sent_count': 1}]
+        assert response.json()['data']['items'] == [{'date': '2026-11-02', 'sent_count': 1, 'completed_count': 0}]
         details = client.get('/api/v1/cutting/dispatches', params=params).json()['data']
         assert details['total'] == 1 and details['items'][0]['dispatch_id'] == item['dispatch_id']
         assert client.get('/api/v1/cutting/dispatches/' + item['dispatch_id']).status_code == 200

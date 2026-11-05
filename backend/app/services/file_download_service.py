@@ -49,6 +49,42 @@ def download_filename(document_no, version, relative_path):
     return f"{title}{extension}"
 
 
+def build_catalog_path(pdm, raw):
+    project_id = str(raw.get("project_id") or "")
+    catalog_id = str(raw.get("catalog_id") or "")
+    fallback = [{
+        "catalog_id": catalog_id,
+        "parent_id": str(raw.get("catalog_parent_id") or "") or None,
+        "title": str(raw.get("catalog_title") or "未分类"),
+        "catalog_type": raw.get("catalog_type"),
+    }] if catalog_id else []
+    if not project_id or not catalog_id:
+        return fallback
+    try:
+        catalogs = pdm.list_catalogs(project_id)
+    except Exception:
+        return fallback
+    by_id = {str(item.get("catalog_id") or ""): item for item in catalogs}
+    current = by_id.get(catalog_id)
+    if current is None:
+        return fallback
+    path = []
+    seen = set()
+    while current:
+        current_id = str(current.get("catalog_id") or "")
+        if not current_id or current_id in seen:
+            break
+        seen.add(current_id)
+        path.append({
+            "catalog_id": current_id,
+            "parent_id": str(current.get("parent_id") or "") or None,
+            "title": str(current.get("title") or "未分类"),
+            "catalog_type": current.get("catalog_type"),
+        })
+        current = by_id.get(str(current.get("parent_id") or ""))
+    return list(reversed(path)) or fallback
+
+
 class FileDownloadService:
     def __init__(self, settings, repository, pdm, source):
         self.settings, self.repository, self.pdm, self.source = settings, repository, pdm, source
@@ -58,41 +94,6 @@ class FileDownloadService:
 
     def now(self):
         return datetime.now(ZoneInfo(self.settings.timezone)).isoformat(timespec="seconds")
-
-    def _catalog_path(self, raw):
-        project_id = str(raw.get("project_id") or "")
-        catalog_id = str(raw.get("catalog_id") or "")
-        fallback = [{
-            "catalog_id": catalog_id,
-            "parent_id": str(raw.get("catalog_parent_id") or "") or None,
-            "title": str(raw.get("catalog_title") or "未分类"),
-            "catalog_type": raw.get("catalog_type"),
-        }] if catalog_id else []
-        if not project_id or not catalog_id:
-            return fallback
-        try:
-            catalogs = self.pdm.list_catalogs(project_id)
-        except Exception:
-            return fallback
-        by_id = {str(item.get("catalog_id") or ""): item for item in catalogs}
-        current = by_id.get(catalog_id)
-        if current is None:
-            return fallback
-        path = []
-        seen = set()
-        while current:
-            current_id = str(current.get("catalog_id") or "")
-            if not current_id or current_id in seen:
-                break
-            seen.add(current_id)
-            path.append({
-                "catalog_id": current_id,
-                "parent_id": str(current.get("parent_id") or "") or None,
-                "title": str(current.get("title") or "未分类"),
-                "catalog_type": current.get("catalog_type"),
-            })
-            current = by_id.get(str(current.get("parent_id") or ""))
-        return list(reversed(path)) or fallback
 
     def _path(self, item):
         root = self.settings.cutting_downloads_dir.resolve()
@@ -168,7 +169,7 @@ class FileDownloadService:
                 "ship_no": str(raw.get("ship_no") or ""),
                 "catalog_id": str(raw.get("catalog_id") or ""),
                 "catalog_title": str(raw.get("catalog_title") or ""),
-                "catalog_path": self._catalog_path(raw),
+                "catalog_path": build_catalog_path(self.pdm, raw),
                 "pbs_info": str(raw.get("pbs_info") or ""),
                 "filename": download_filename(raw.get("document_no"), version, actual),
                 "source_mode": self.source.mode, "is_simulation": self.pdm.mode == "mock" or self.source.mode == "mock",

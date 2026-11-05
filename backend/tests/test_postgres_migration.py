@@ -119,7 +119,7 @@ def test_schema_all_tables_constraints_indexes_and_repeated_install(postgres):
         tables={r['tablename'] for r in connection.execute("SELECT tablename FROM pg_tables WHERE schemaname='app_state'")}
         expected=set(json.loads((DIRECTORY/'sqlite_schema.json').read_text()))-{'schema_migrations'}
         assert tables==expected|{'_postgres_schema_migrations','_sqlite_imports','_sqlite_schema_versions','workshop_source_correction_audits'}
-        assert connection.execute("SELECT count(*) AS n FROM pg_indexes WHERE schemaname='app_state'").fetchone()['n']==102
+        assert connection.execute("SELECT count(*) AS n FROM pg_indexes WHERE schemaname='app_state'").fetchone()['n']==103
         connection.execute('DROP INDEX idx_background_tasks_ready')
     with pytest.raises(MigrationError,match='结构漂移'): apply_migrations(database)
 
@@ -174,7 +174,8 @@ def test_all_state_migrates_in_batches_with_ids_values_relations_and_history(pos
     assert verified==result
     with database.connect() as connection:
         assert connection.execute('SELECT count(*) AS n FROM _sqlite_schema_versions').fetchone()['n']==16
-        assert connection.execute('SELECT count(*) AS n FROM _postgres_schema_migrations').fetchone()['n']==4
+        assert connection.execute('SELECT count(*) AS n FROM _postgres_schema_migrations').fetchone()['n']==6
+        assert connection.execute('SELECT file_location FROM cutting_dispatches').fetchone()=={'file_location':None}
         assert connection.execute('SELECT file_size,relative_path FROM reports').fetchone()=={'file_size':2**40,'relative_path':'fixture.html'}
         assert connection.execute("SELECT nextval('llm_usage_calls_id_seq') AS n").fetchone()['n']==2**40+1
         connection.execute("UPDATE users SET display_name='tampered'")
@@ -324,9 +325,39 @@ def test_archive_migration_appends_to_existing_003_without_changing_state(postgr
         patch.setattr(migrations,'validate_schema',original_schema)
         assert len(apply_migrations(database))==3
     with database.connect() as connection:connection.execute('INSERT INTO llm_usage_totals(id) VALUES (1)')
-    assert len(apply_migrations(database))==4
+    assert len(apply_migrations(database))==6
     with database.connect() as connection:
         assert connection.execute('SELECT id FROM llm_usage_totals').fetchall()==[{'id':1}]
+
+
+@pytest.mark.parametrize(('baseline','fingerprint','location'),[
+    (4,'d8d2181d194738d72ceb9029b7ec31ada66cac21b9157a49687ad9439ba1e5f2',None),
+    (5,'10a49c5d5b0abba14d009aa7704f2dc6e59636396b1a74c29cc8f2978c107181','18600-2 / 船体 / Gen指令'),
+])
+def test_file_location_migration_preserves_existing_dispatches(postgres,source,monkeypatch,baseline,fingerprint,location):
+    import hashlib
+    import app.database.postgres_migrations as migrations
+    from psycopg import sql
+    database,_,_=postgres
+    def original_schema(connection):
+        digest=hashlib.sha256(json.dumps(migrations.catalog(connection),sort_keys=True).encode()).hexdigest()
+        assert digest==fingerprint
+        return connection.execute('SELECT version,checksum FROM _postgres_schema_migrations ORDER BY version').fetchall()
+    with monkeypatch.context() as patch:
+        patch.setattr(migrations,'VERSIONS',migrations.VERSIONS[:baseline])
+        patch.setattr(migrations,'validate_schema',original_schema)
+        assert len(apply_migrations(database))==baseline
+    with sqlite3.connect(source) as original, database.connect() as target:
+        original.row_factory=sqlite3.Row
+        for table in ('users','cutting_dispatches'):
+            row=dict(original.execute(f'SELECT * FROM {table} LIMIT 1').fetchone())
+            if table=='cutting_dispatches' and baseline==5:row['file_location']=location
+            target.execute(sql.SQL('INSERT INTO {} ({}) VALUES ({})').format(sql.Identifier(table),
+                sql.SQL(',').join(map(sql.Identifier,row)),sql.SQL(',').join(sql.Placeholder() for _ in row)),tuple(row.values()))
+        before=target.execute('SELECT * FROM cutting_dispatches').fetchone()
+    assert len(apply_migrations(database))==6
+    with database.connect() as connection:
+        assert connection.execute('SELECT * FROM cutting_dispatches').fetchone()=={**before,'file_location':location,'processing_finished_at':None,'processing_finish_by':None,'completion_received_at':None}
 
 
 def test_ascii_nocase_partial_uniqueness_and_cascade_are_preserved(postgres,source):

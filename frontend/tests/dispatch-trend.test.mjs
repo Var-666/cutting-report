@@ -7,7 +7,7 @@ import { renderComponent } from './vue-component-helpers.mjs'
 const originalFetch = globalThis.fetch
 afterEach(() => { globalThis.fetch = originalFetch })
 const period = { start_date: '2026-11-01', end_date: '2026-11-03', machine_ip: '10.0.0.2' }
-const days = [{ date: '2026-11-01', sent_count: 0 }, { date: '2026-11-02', sent_count: 12 }, { date: '2026-11-03', sent_count: 0 }]
+const days = [{ date: '2026-11-01', sent_count: 0, completed_count: 0 }, { date: '2026-11-02', sent_count: 12, completed_count: 0 }, { date: '2026-11-03', sent_count: 0, completed_count: 0 }]
 const response = data => ({ ok: true, json: async () => ({ success: true, data }) })
 function state() {
   const pageActive = ref(true)
@@ -94,7 +94,7 @@ test('late chart and detail responses cannot overwrite changed filters or a paus
   await page.applyHistoryFilters(period)
   assert.ok(pending.every(item => item.signal.aborted))
   pending.forEach(item => item.resolve(response(item.url.pathname.endsWith('/trend')
-    ? { ...dataFor(item.url), items: [{ date: '1999-01-01', sent_count: 99 }] }
+    ? { ...dataFor(item.url), items: [{ date: '1999-01-01', sent_count: 99, completed_count: 0 }] }
     : { page: 9, items: [{ dispatch_id: 'late' }], total: 99 })))
   await initial
   assert.equal(page.trend.value.items[0].date, '2026-11-01')
@@ -128,11 +128,11 @@ test('a failed filter request clears old rows so they cannot be mistaken for the
 })
 
 test('actual trend component renders selection, zero, loading and failure states', async () => {
-  const props = { trend: { ...period, items: days.map(item => ({ ...item, sent_count: 0 })), machine_ips: ['10.0.0.2'], timezone: 'Asia/Shanghai' },
+  const props = { trend: { ...period, items: days.map(item => ({ ...item, sent_count: 0, completed_count: 0 })), machine_ips: ['10.0.0.2'], timezone: 'Asia/Shanghai' },
     filters: period, loading: false, error: '', selectedDay: '2026-11-02', machineIps: ['10.0.0.2'], machineName: () => '测试机床', disabled: false }
   const render = overrides => renderComponent('components/dispatch/DispatchHistoryTrend', { ...props, ...overrides })
   const html = await render({})
-  for (const value of ['每日派发趋势', '全部机床', '测试机床', '2026-11-02', '所选区间暂无成功派发记录', '清除筛选 / 全部记录']) assert.ok(html.includes(value), value)
+  for (const value of ['每日派发与完成趋势', '全部机床', '测试机床', '2026-11-02', '所选区间暂无派发或完成记录', '清除筛选 / 全部记录']) assert.ok(html.includes(value), value)
   assert.ok((await render({ trend: null, loading: true })).includes('正在读取派发趋势'))
   const failed = await render({ trend: null, error: '离线测试错误' })
   assert.ok(failed.includes('趋势读取失败') && failed.includes('离线测试错误') && failed.includes('重试'))
@@ -146,4 +146,79 @@ test('history success time displays the same configured day as the trend and fil
   const html = await renderComponent('components/dispatch/DispatchHistoryTable', props)
   assert.ok(html.includes('成功派发时间'))
   assert.ok(html.includes('2026年11月2日 00:30:00'))
+})
+
+test('completed-day selection keeps its own date filter while the existing sent-day selection remains available', async () => {
+  const calls = []
+  globalThis.fetch = async value => {
+    const url = new URL(value, 'http://localhost'); calls.push(url)
+    return response(dataFor(url))
+  }
+  const page = state()
+  await page.applyHistoryFilters(period)
+  await page.selectHistoryDay('2026-11-02', 'completed')
+  assert.equal(calls.at(-1).searchParams.get('date_type'), 'completed')
+  assert.equal(page.historyDateType.value, 'completed')
+  assert.match(page.historySelectionLabel.value, /2026-11-02 加工完成记录/)
+  await page.changeHistoryPage(2)
+  assert.equal(calls.at(-1).searchParams.get('date_type'), 'completed')
+  await page.selectHistoryDay('2026-11-02')
+  assert.equal(calls.at(-1).searchParams.get('date_type'), 'sent')
+})
+
+test('visible history and trend refresh silently once per tick, preserving filters and stopping on pause', async t => {
+  const timers = new Map(); let nextId = 0
+  const oldWindow = globalThis.window, oldDocument = globalThis.document
+  globalThis.window = {
+    setTimeout(callback, delay) { assert.equal(delay,5000); timers.set(++nextId,callback); return nextId },
+    clearTimeout(id) { timers.delete(id) },
+  }
+  globalThis.document = { hidden:false }
+  t.after(() => {
+    if (oldWindow === undefined) delete globalThis.window; else globalThis.window = oldWindow
+    if (oldDocument === undefined) delete globalThis.document; else globalThis.document = oldDocument
+  })
+  const page = state(), calls = []
+  globalThis.fetch = async value => {
+    calls.push(new URL(value,'http://localhost'))
+    assert.equal(page.historyLoading.value,false)
+    assert.equal(page.trendLoading.value,false)
+    return response(dataFor(calls.at(-1)))
+  }
+  page.historyPage.value = 2
+  page.startHistoryPolling(); page.startHistoryPolling()
+  assert.equal(timers.size,1)
+  async function tick() {
+    const [id,callback] = timers.entries().next().value
+    timers.delete(id); await callback()
+  }
+  await tick()
+  assert.equal(calls.length,2)
+  assert.equal(calls.find(url=>!url.pathname.endsWith('/trend')).searchParams.get('page'),'2')
+  assert.equal(timers.size,1)
+  document.hidden=true; await tick(); assert.equal(calls.length,2)
+  document.hidden=false; page.busy.value=true; await tick(); assert.equal(calls.length,2)
+  page.busy.value=false
+  page.pauseHistory(); assert.equal(timers.size,0)
+})
+
+test('trend date selector exposes separate completed counts including days with only completions', async () => {
+  const html = await renderComponent('components/dispatch/DispatchHistoryTrend', {
+    trend:{...period,timezone:'Asia/Shanghai',machine_ips:[],items:[{date:'2026-11-02',sent_count:0,completed_count:3}]},
+    filters:period,loading:false,error:'',selectedDay:'2026-11-02',selectedDateType:'completed',machineIps:[],machineName:()=>'',disabled:false,
+  })
+  assert.ok(html.includes('完成 3 条'))
+  assert.ok(html.includes('2026-11-02|completed'))
+  assert.ok(!html.includes('所选区间暂无派发或完成记录'))
+})
+
+test('completed badge shows its finish time in the same configured timezone as the chart', async () => {
+  const html = await renderComponent('components/dispatch/DispatchHistoryTable', {
+    histories:[{dispatch_id:'finished',project_id:'P1',document_no:'A.gen',quantity:1,machine_ip:'10.0.0.1',
+      status:'sent',status_label:'已派发',stage_label:'推送完成',created_at:'2026-11-01T08:00:00+08:00',
+      processing_status:'completed',processing_finished_at:'2026-11-05T00:30:00+08:00',processing_finish_by:'切割机(10.0.0.1)'}],
+    historyTotal:1,historyPage:1,historyPageSize:10,projectOptions:[],machineName:()=> '切割机',loading:false,timezone:'America/Los_Angeles',
+  })
+  assert.ok(html.includes('已派发') && html.includes('已完成'))
+  assert.ok(html.includes('2026年11月4日 08:30:00'))
 })

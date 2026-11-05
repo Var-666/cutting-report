@@ -2177,6 +2177,30 @@ export type CuttingCatalog = {
  */
 export type CuttingDispatch = {
     /**
+     * File Location
+     */
+    file_location?: string | null;
+    /**
+     * Processing Finished At
+     */
+    processing_finished_at?: string | null;
+    /**
+     * Processing Finish By
+     */
+    processing_finish_by?: string | null;
+    /**
+     * Completion Received At
+     */
+    completion_received_at?: string | null;
+    /**
+     * Processing Status
+     */
+    processing_status: string;
+    /**
+     * Processing Status Label
+     */
+    processing_status_label: string;
+    /**
      * Dispatch Id
      */
     dispatch_id: string;
@@ -3230,6 +3254,10 @@ export type DispatchDailyCount = {
      * Sent Count
      */
     sent_count: number;
+    /**
+     * Completed Count
+     */
+    completed_count: number;
 };
 
 /**
@@ -4314,6 +4342,20 @@ export type MachineTime = {
 };
 
 /**
+ * MagicBoxCallbackResponse
+ */
+export type MagicBoxCallbackResponse = {
+    /**
+     * Status
+     */
+    status?: 0;
+    /**
+     * Msg
+     */
+    msg?: 'OK';
+};
+
+/**
  * MagicBoxStatus
  */
 export type MagicBoxStatus = {
@@ -4337,6 +4379,38 @@ export type MagicBoxStatus = {
      * Message
      */
     message?: string | null;
+};
+
+/**
+ * MagicBoxTaskFinishedRequest
+ */
+export type MagicBoxTaskFinishedRequest = {
+    /**
+     * Taskidentifier
+     */
+    taskIdentifier?: string;
+    /**
+     * Finishby
+     */
+    FinishBy: string;
+    /**
+     * Finishtime
+     *
+     * 完成时间，YYYY-MM-DD HH:mm:ss，GMT+8
+     */
+    finishTime: string;
+    /**
+     * Taskname
+     */
+    taskName?: string;
+    /**
+     * Material
+     */
+    material?: string;
+    /**
+     * Thickness
+     */
+    thickness?: number;
 };
 
 /**
@@ -8159,6 +8233,10 @@ export type ListDispatchesApiV1CuttingDispatchesGetData = {
          */
         end_date?: string | null;
         /**
+         * Date Type
+         */
+        date_type?: 'sent' | 'completed';
+        /**
          * Machine Ip
          */
         machine_ip?: string | null;
@@ -8389,6 +8467,31 @@ export type CancelDispatchApiV1CuttingDispatchesDispatchIdCancelPostResponses = 
 };
 
 export type CancelDispatchApiV1CuttingDispatchesDispatchIdCancelPostResponse = CancelDispatchApiV1CuttingDispatchesDispatchIdCancelPostResponses[keyof CancelDispatchApiV1CuttingDispatchesDispatchIdCancelPostResponses];
+
+export type TaskFinishedApiV1MagicBoxCallbacksTaskFinishedPostData = {
+    body: MagicBoxTaskFinishedRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/magic-box/callbacks/task-finished';
+};
+
+export type TaskFinishedApiV1MagicBoxCallbacksTaskFinishedPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type TaskFinishedApiV1MagicBoxCallbacksTaskFinishedPostError = TaskFinishedApiV1MagicBoxCallbacksTaskFinishedPostErrors[keyof TaskFinishedApiV1MagicBoxCallbacksTaskFinishedPostErrors];
+
+export type TaskFinishedApiV1MagicBoxCallbacksTaskFinishedPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: MagicBoxCallbackResponse;
+};
+
+export type TaskFinishedApiV1MagicBoxCallbacksTaskFinishedPostResponse = TaskFinishedApiV1MagicBoxCallbacksTaskFinishedPostResponses[keyof TaskFinishedApiV1MagicBoxCallbacksTaskFinishedPostResponses];
 
 export type AlarmStatusApiV1AlarmsStatusGetData = {
     body?: never;

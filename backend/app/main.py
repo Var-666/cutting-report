@@ -18,7 +18,7 @@ from app.api.configuration import router as configuration_router
 from app.api.database import router as database_router
 from app.api.analysis import router as analysis_router
 from app.api.automation import router as automation_router
-from app.api.cutting import router as cutting_router
+from app.api.cutting import router as cutting_router, callback_router as magic_box_callback_router
 from app.api.downloads import router as downloads_router
 from app.api.conditions import router as conditions_router
 from app.api.auth import SESSION_COOKIE, router as auth_router
@@ -204,6 +204,7 @@ app.include_router(workshop_router)
 app.include_router(analysis_router)
 app.include_router(automation_router)
 app.include_router(cutting_router)
+app.include_router(magic_box_callback_router)
 app.include_router(downloads_router)
 app.include_router(conditions_router)
 app.include_router(requests_router)

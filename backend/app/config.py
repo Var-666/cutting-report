@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import ipaddress
 import re
 import socket
 from contextvars import ContextVar
@@ -172,6 +173,10 @@ class Settings:
         "FILE_SERVER_PHYSICAL_ROOT", r"D:\File"
     ).strip())
     magic_box_enabled: bool = configuration_field("MAGIC_BOX_ENABLED", lambda: _as_bool("MAGIC_BOX_ENABLED", False))
+    magic_box_callback_enabled: bool = configuration_field("MAGIC_BOX_CALLBACK_ENABLED", lambda: _as_bool("MAGIC_BOX_CALLBACK_ENABLED", False))
+    magic_box_callback_allowed_ips: tuple[str, ...] = configuration_field("MAGIC_BOX_CALLBACK_ALLOWED_IPS", lambda: tuple(
+        value.strip() for value in _environment.get().get("MAGIC_BOX_CALLBACK_ALLOWED_IPS", "").split(",") if value.strip()
+    ))
     magic_box_timeout: float = configuration_field("MAGIC_BOX_TIMEOUT_SECONDS", lambda: _as_float("MAGIC_BOX_TIMEOUT_SECONDS", 60))
     magic_box_operation_timeout: float = configuration_field("MAGIC_BOX_OPERATION_TIMEOUT_SECONDS", lambda: _as_float("MAGIC_BOX_OPERATION_TIMEOUT_SECONDS", 180))
     magic_box_config_cache_seconds: int = configuration_field("MAGIC_BOX_CONFIG_CACHE_SECONDS", lambda: _as_int(
@@ -244,6 +249,13 @@ class Settings:
     auth_cookie_secure: bool = configuration_field("AUTH_COOKIE_SECURE", lambda: _as_bool("AUTH_COOKIE_SECURE", False))
 
     def __post_init__(self) -> None:
+        if self.magic_box_callback_enabled and not self.magic_box_callback_allowed_ips:
+            raise ValueError('启用魔盒回调必须配置 MAGIC_BOX_CALLBACK_ALLOWED_IPS')
+        for value in self.magic_box_callback_allowed_ips:
+            try:
+                ipaddress.ip_address(value)
+            except ValueError:
+                raise ValueError('MAGIC_BOX_CALLBACK_ALLOWED_IPS 必须为具体IP地址，多个地址以逗号分隔') from None
         if self.consumer_replicas < 1:
             raise ValueError('CONSUMER_REPLICAS 必须至少为1')
         if self.consumer_instance_id and not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,63}', self.consumer_instance_id):

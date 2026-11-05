@@ -12,7 +12,7 @@ from app.api import production_lines, devices, alarms, cutting, workshop, databa
 
 def api_schema() -> dict:
     app = FastAPI(title='Cutting report API contracts', version='1')
-    for router in (production_lines.router, devices.router, workshop.router, cutting.router, alarms.router, database.router, automation.router, configuration.router, welding.router, leadership.router, equipment.router, analysis.router, energy.router, reports.router, options.router):
+    for router in (production_lines.router, devices.router, workshop.router, cutting.router, cutting.callback_router, alarms.router, database.router, automation.router, configuration.router, welding.router, leadership.router, equipment.router, analysis.router, energy.router, reports.router, options.router):
         app.include_router(router)
     return app.openapi()
 

@@ -58,7 +58,7 @@ export function createCuttingDispatchBatch(payload: DispatchBatchCreateRequest) 
   }).finally(() => reportCache.invalidate('cutting:files:'))
 }
 
-export type DispatchHistoryFilters = Pick<NonNullable<ListDispatchesApiV1CuttingDispatchesGetData['query']>, 'start_date' | 'end_date' | 'machine_ip'>
+export type DispatchHistoryFilters = Pick<NonNullable<ListDispatchesApiV1CuttingDispatchesGetData['query']>, 'start_date' | 'end_date' | 'machine_ip' | 'date_type'>
 export type DispatchTrendFilters = NonNullable<DispatchTrendApiV1CuttingDispatchesTrendGetData['query']>
 
 export function listCuttingDispatches({ page = 1, pageSize = 10, ...filters }: DispatchHistoryFilters & { page?: number; pageSize?: number } = {}, { signal }: ReadOptions = {}) {

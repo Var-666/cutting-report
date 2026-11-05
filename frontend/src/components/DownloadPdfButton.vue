@@ -24,13 +24,15 @@ async function download() {
 </script>
 
 <template>
-  <span class="pdf-download">
+  <span class="pdf-download" :class="{ 'pdf-download--compact': compact }">
     <NButton attr-type="button" :class="{ compact }" :text="compact" :loading="loading" :disabled="loading" @click="download">{{ loading ? '生成 PDF…' : '下载 PDF' }}</NButton>
-    <span v-if="error" class="pdf-error" role="alert">{{ error }}</span>
+    <span v-if="error" class="pdf-error" role="alert" :title="error">{{ error }}</span>
   </span>
 </template>
 
 <style scoped>
 .pdf-download { display:inline-flex; flex-wrap:wrap; align-items:center; gap:6px; }
+.pdf-download--compact { flex-wrap:nowrap; }
+.pdf-download--compact .pdf-error { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .pdf-error { max-width:280px; color:rgb(var(--error-color)); font-size:12px; white-space:normal; }
 </style>

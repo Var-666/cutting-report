@@ -1,6 +1,10 @@
 """Typed contracts for PDM browsing and cutting dispatch."""
 from datetime import date as Date
-from pydantic import BaseModel
+from datetime import datetime
+import ipaddress
+from typing import Literal
+from zoneinfo import ZoneInfo
+from pydantic import BaseModel, Field, field_validator
 
 from app.models.contracts import Items, Page
 
@@ -147,6 +151,12 @@ class FileCleanup(BaseModel):
 
 
 class CuttingDispatch(BaseModel):
+    file_location: str | None = None
+    processing_finished_at: str | None = None
+    processing_finish_by: str | None = None
+    completion_received_at: str | None = None
+    processing_status: str
+    processing_status_label: str
     dispatch_id: str
     document_id: str
     project_id: str
@@ -191,6 +201,7 @@ class CuttingDispatch(BaseModel):
 class DispatchDailyCount(BaseModel):
     date: Date
     sent_count: int
+    completed_count: int
 
 
 class DispatchTrend(BaseModel):
@@ -213,3 +224,41 @@ class BatchCreationResult(Items[DispatchCreationResult]):
     created_count: int
     duplicate_count: int
     failed_count: int
+
+
+class MagicBoxTaskFinishedRequest(BaseModel):
+    task_identifier: str = Field(default="", alias="taskIdentifier", max_length=128, strict=True)
+    finish_by: str = Field(alias="FinishBy", min_length=1, max_length=256, strict=True)
+    finish_time: datetime = Field(alias="finishTime", description="完成时间，YYYY-MM-DD HH:mm:ss，GMT+8")
+    task_name: str = Field(default="", alias="taskName", max_length=512)
+    material: str = Field(default="", max_length=80)
+    thickness: float = Field(default=0, ge=0, le=1000, allow_inf_nan=False)
+
+    @field_validator("task_identifier")
+    @classmethod
+    def clean_identifier(cls, value: str) -> str:
+        if any(ord(char) < 32 or ord(char) == 127 for char in value):
+            raise ValueError("任务标识不能包含控制字符")
+        return value.strip()
+
+    @field_validator("finish_by")
+    @classmethod
+    def valid_machine(cls, value: str) -> str:
+        ipaddress.ip_address(value.rsplit("(", 1)[-1].removesuffix(")").strip())
+        return value
+
+    @field_validator("finish_time", mode="before")
+    @classmethod
+    def local_finish_time(cls, value: object) -> datetime:
+        if not isinstance(value, str):
+            raise ValueError("完成时间格式无效")
+        return datetime.strptime(value, "%Y-%m-%d %H:%M:%S").replace(tzinfo=ZoneInfo("Asia/Shanghai"))
+
+    @property
+    def machine_ip(self) -> str:
+        return str(ipaddress.ip_address(self.finish_by.rsplit("(", 1)[-1].removesuffix(")").strip()))
+
+
+class MagicBoxCallbackResponse(BaseModel):
+    status: Literal[0] = 0
+    msg: Literal["OK"] = "OK"

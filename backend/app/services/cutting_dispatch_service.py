@@ -3,13 +3,14 @@ from __future__ import annotations
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 import re
+import logging
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
 from app.config import Settings
 from app.database.dispatch import DispatchRepository, dispatch_retry_safe
 from app.database.pdm import PdmRepository
-from app.services.file_download_service import DownloadError, FileDownloadService
+from app.services.file_download_service import DownloadError, FileDownloadService, build_catalog_path
 from app.services.file_source import FileSource, normalize_relative_path
 from app.services.magic_box_service import (
     MagicBoxClient,
@@ -314,10 +315,16 @@ class CuttingDispatchService:
                 if not (material_matches and thickness_matches) and not name_check_confirmed:
                     raise CuttingDispatchError("加工参数与标准文件名不一致，必须人工核对后确认")
         project = next((item for item in self.pdm.list_projects("", 100) if str(item["project_id"]) == str(file_item["project_id"])), None)
+        project_name = raw_file.get("project_name") or (project.get("project_name") if project else None)
+        path_titles = [node["title"] for node in build_catalog_path(self.pdm, raw_file)]
+        project_title = project_name or raw_file.get("ship_no")
+        if project_title and (not path_titles or path_titles[0] != project_title):
+            path_titles.insert(0, project_title)
         dispatch, created = self.dispatches.create_unless_active(
             {
                 **file_item,
-                "project_name": project.get("project_name") if project else None,
+                "project_name": project_name,
+                "file_location": " / ".join(path_titles) or None,
                 "ship_no": str(raw_file.get("ship_no") or "").strip() or None,
                 "segment_name": standard_instruction_segment(file_item["document_no"]),
                 "relative_path": file_item["normalized_path"],
@@ -411,12 +418,34 @@ class CuttingDispatchService:
             "failed_count": counts["failed"],
         }
 
+    def receive_completion(self, *, task_identifier: str, machine_ip: str,
+                           finished_at: datetime, finish_by: str) -> bool:
+        matched = bool(task_identifier) and self.dispatches.record_completion(
+            task_identifier=task_identifier, machine_ip=machine_ip,
+            finished_at=finished_at.isoformat(timespec="seconds"), finish_by=finish_by,
+            received_at=self._now(),
+        )
+        if not matched:
+            logging.getLogger(__name__).warning("魔盒完成通知未匹配本系统真实派发记录，未更新任务 task_identifier=%s machine_ip=%s",
+                                              task_identifier or "[empty]", machine_ip)
+        return matched
+
     @staticmethod
     def _decorate_dispatch(item: dict[str, Any]) -> dict[str, Any]:
         stage = item.get("stage") or "created"
         remote_id = bool(item.get("remote_task_id"))
+        if item.get("processing_finished_at"):
+            processing = "completed"
+        elif item.get("is_simulation"):
+            processing = "simulation"
+        elif remote_id or item["status"] == "sent":
+            processing = "waiting"
+        else:
+            processing = "not_dispatched"
         return {
             **item,
+            "processing_status": processing,
+            "processing_status_label": {"completed": "已加工完成", "simulation": "模拟记录", "waiting": "未收到完成通知", "not_dispatched": "未派发"}[processing],
             "segment_name": item.get("segment_name") or standard_instruction_segment(item["document_no"]),
             "status_label": STATUS_LABELS.get(item["status"], item["status"]),
             "stage_label": STAGE_LABELS.get(stage, stage),
@@ -440,20 +469,21 @@ class CuttingDispatchService:
                 datetime.combine(end_date + timedelta(days=1), time.min, zone).isoformat())
 
     def list_dispatches(self, *, page: int, page_size: int, start_date: date | None = None,
-                        end_date: date | None = None, machine_ip: str | None = None) -> dict[str, Any]:
+                        end_date: date | None = None, machine_ip: str | None = None, date_type: str = "sent") -> dict[str, Any]:
         sent_start, sent_end = self._sent_period(start_date, end_date)
         items, total = self.dispatches.list(page=page, page_size=page_size,
-            sent_start=sent_start, sent_end=sent_end, machine_ip=machine_ip)
+            sent_start=sent_start, sent_end=sent_end, machine_ip=machine_ip, date_type=date_type)
         return {"items": [self._decorate_dispatch(item) for item in items], "total": total, "page": page, "page_size": page_size}
 
     def dispatch_trend(self, *, start_date: date, end_date: date, machine_ip: str | None = None) -> dict[str, Any]:
         sent_start, sent_end = self._sent_period(start_date, end_date)
-        counts, machines = self.dispatches.daily_sent_counts(sent_start=sent_start, sent_end=sent_end,
+        counts, completed, machines = self.dispatches.daily_dispatch_counts(sent_start=sent_start, sent_end=sent_end,
             timezone=self.settings.timezone, machine_ip=machine_ip)
         days = [start_date + timedelta(days=index) for index in range((end_date - start_date).days + 1)]
         return {'start_date': start_date.isoformat(), 'end_date': end_date.isoformat(),
                 'timezone': self.settings.timezone, 'machine_ips': machines,
-                'items': [{'date': day.isoformat(), 'sent_count': counts.get(day.isoformat(), 0)} for day in days]}
+                'items': [{'date': day.isoformat(), 'sent_count': counts.get(day.isoformat(), 0),
+                           'completed_count': completed.get(day.isoformat(), 0)} for day in days]}
 
     def get_dispatch(self, dispatch_id: str) -> dict[str, Any]:
         item = self.dispatches.get(dispatch_id)

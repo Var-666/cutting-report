@@ -73,11 +73,15 @@ def test_dispatch_history_saves_ship_and_segment_without_reading_pdm_when_listin
     draft = service.create_dispatch(document_id=source['document_id'], machine_ip='10.1.133.197',
                                     material='A0', thickness=12, quantity=3, user=admin)
     assert (draft['ship_no'], draft['segment_name']) == ('CMYZ0177', '802C')
+    expected_location = '扬州切割联调项目 / 船体专业 / PK-707C1 / GEN切割文件'
+    assert draft['file_location'] == expected_location
     service.pdm.get_file = lambda *_: (_ for _ in ()).throw(AssertionError('history must stay local'))
+    service.pdm.list_catalogs = lambda *_: (_ for _ in ()).throw(AssertionError('history must stay local'))
     service.pdm.projects[0]['ship_no'] = 'CHANGED'
     item = service.list_dispatches(page=1, page_size=10)['items'][0]
     assert item['dispatch_id'] == draft['dispatch_id']
     assert (item['ship_no'], item['segment_name'], item['quantity']) == ('CMYZ0177', '802C', 3)
+    assert item['file_location'] == expected_location
 
 
 def test_dispatch_history_reads_nullable_ship_and_segment_from_imported_records(state_database, tmp_path):
@@ -87,7 +91,7 @@ def test_dispatch_history_reads_nullable_ship_and_segment_from_imported_records(
     draft = service.create_dispatch(document_id=source['document_id'], machine_ip='10.1.133.197',
                                     material='A0', thickness=12, quantity=1, user=admin)
     with repository.connect() as connection:
-        connection.execute('UPDATE cutting_dispatches SET ship_no=NULL, segment_name=NULL')
+        connection.execute('UPDATE cutting_dispatches SET ship_no=NULL, segment_name=NULL, file_location=NULL')
     repository.initialize()
     repository.initialize()
     saved = repository.get(draft['dispatch_id'])
@@ -96,6 +100,24 @@ def test_dispatch_history_reads_nullable_ship_and_segment_from_imported_records(
     history = service.list_dispatches(page=1, page_size=10)['items'][0]
     assert history['ship_no'] is None
     assert history['segment_name'] == '802C'
+    assert history['file_location'] is None
+
+
+def test_dispatch_location_keeps_repeated_directory_titles_and_one_project_root(state_database, tmp_path):
+    service, repository, admin = _service(state_database, tmp_path)
+    source = service.pdm.files[0]
+    project_id = source['project_id']
+    service.pdm.projects[0]['project_name'] = '18600-2'
+    titles = ['18600-2', '船体', '船体', '410S', '板材', 'Gen指令']
+    service.pdm.catalogs = [dict(catalog_id=f'path-{index}', project_id=project_id,
+        parent_id=f'path-{index-1}' if index else None, title=title)
+        for index, title in enumerate(titles)]
+    source.update(catalog_id='path-5', catalog_title='Gen指令')
+    draft = service.create_dispatch(document_id=source['document_id'], machine_ip='10.1.133.197',
+                                    material='A0', thickness=12, quantity=1, user=admin)
+    expected = '18600-2 / 船体 / 船体 / 410S / 板材 / Gen指令'
+    assert draft['file_location'] == expected
+    assert repository.get(draft['dispatch_id'])['file_location'] == expected
 
 
 @pytest.mark.parametrize(

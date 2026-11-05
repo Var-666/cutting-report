@@ -168,12 +168,22 @@ test('dispatch history renders file references, machine names, status and safe f
     quantity: 2, machine_ip: '192.0.2.1', status: 'failed', status_label: '派发失败',
     stage_label: '上传文件', last_error: '<script>unsafe</script>', created_at: '2026-10-28T08:00:00' }
   const html = await render([item])
-  for (const value of ['SHIP-FALLBACK', '806C', item.document_no, '测试机床', '派发失败', '上传文件', 'task-1', '2026年10月28日']) assert.ok(html.includes(value), value)
+  for (const value of ['SHIP-FALLBACK', '806C', item.document_no, '测试机床', '派发失败', 'task-1', '2026年10月28日']) assert.ok(html.includes(value), value)
+  assert.ok(!html.includes('阶段'))
   assert.ok(!html.includes('<script>unsafe</script>'))
   assert.ok(html.includes('&lt;script&gt;unsafe&lt;/script&gt;'))
   assert.ok(!html.includes('取消指派'))
   const explicit = await render([{ ...item, ship_no: 'SHIP-EXPLICIT', segment_name: 'SEG-EXPLICIT', remote_task_id: 'remote-1', task_identifier: 'identifier-1' }])
   for (const value of ['SHIP-EXPLICIT', 'SEG-EXPLICIT', 'remote-1', 'identifier-1']) assert.ok(explicit.includes(value), value)
+  assert.ok(html.includes('文件位置'))
+  assert.ok(html.includes('未记录'))
+  const location = '18600-2 / 船体 / 船体 / 410S / 板材 / Gen指令'
+  const located = await render([{ ...item, file_location: location }])
+  assert.ok(located.includes(location))
+  assert.ok(located.includes(`title="${location}"`))
+  const completed = await render([{...item,status:'sent',status_label:'已派发',processing_status:'completed',processing_finished_at:'2026-11-05T16:20:30+08:00',processing_finish_by:'20kW切割机(10.1.133.197)'}])
+  assert.ok(completed.includes('已派发') && completed.includes('已完成'))
+  assert.ok(completed.includes('加工完成时间：') && completed.includes('20kW切割机'))
   assert.ok((await render([])).includes('暂无数据'))
 })
 

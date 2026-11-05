@@ -147,8 +147,8 @@ class DispatchRepository(PostgresRepository):
                 status, source_mode, is_simulation, created_by_id,
                 created_by_name, created_at, updated_at, task_identifier,
                 stage, attempt_count, download_id, file_size, file_sha256,
-                ship_no, segment_name
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ship_no, segment_name, file_location
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 dispatch_id,
@@ -180,6 +180,7 @@ class DispatchRepository(PostgresRepository):
                 data.get("file_sha256"),
                 data.get("ship_no"),
                 data.get("segment_name"),
+                data.get("file_location"),
             ),
         )
         DispatchRepository._sync_file_summaries(connection, dispatch_id)
@@ -237,11 +238,12 @@ class DispatchRepository(PostgresRepository):
 
     @staticmethod
     def _history_filter(*, sent_start: str | None, sent_end: str | None,
-                        machine_ip: str | None) -> tuple[str, list[str]]:
+                        machine_ip: str | None, date_type: str = "sent") -> tuple[str, list[str]]:
         clauses, parameters = [], []
         if sent_start is not None and sent_end is not None:
-            clauses.extend(['sent_at IS NOT NULL', 'is_simulation = 0',
-                            "state_timestamp(sent_at) >= %s::timestamp with time zone", "state_timestamp(sent_at) < %s::timestamp with time zone"])
+            column = 'processing_finished_at' if date_type == 'completed' else 'sent_at'
+            clauses.extend([f'{column} IS NOT NULL', 'is_simulation = 0',
+                            f"state_timestamp({column}) >= %s::timestamp with time zone", f"state_timestamp({column}) < %s::timestamp with time zone"])
             parameters.extend([sent_start, sent_end])
         if machine_ip:
             clauses.append('machine_ip = %s')
@@ -249,10 +251,11 @@ class DispatchRepository(PostgresRepository):
         return (' WHERE ' + ' AND '.join(clauses) if clauses else ''), parameters
 
     def list(self, *, page: int, page_size: int, sent_start: str | None = None,
-             sent_end: str | None = None, machine_ip: str | None = None) -> tuple[list[dict[str, Any]], int]:
+             sent_end: str | None = None, machine_ip: str | None = None, date_type: str = "sent") -> tuple[list[dict[str, Any]], int]:
         offset = (page - 1) * page_size
-        where, parameters = self._history_filter(sent_start=sent_start, sent_end=sent_end, machine_ip=machine_ip)
-        order = 'state_timestamp(sent_at)' if sent_start is not None else 'created_at'
+        where, parameters = self._history_filter(sent_start=sent_start, sent_end=sent_end, machine_ip=machine_ip, date_type=date_type)
+        column = 'processing_finished_at' if date_type == 'completed' else 'sent_at'
+        order = f'state_timestamp({column})' if sent_start is not None else 'created_at'
         with self.connect(repeatable_read=True) as connection:
             total = int(
                 connection.execute(
@@ -270,15 +273,40 @@ class DispatchRepository(PostgresRepository):
             ).fetchall()
         return [self._decode(row) for row in rows], total
 
-    def daily_sent_counts(self, *, sent_start: str, sent_end: str, timezone: str,
-                          machine_ip: str | None) -> tuple[dict[str, int], list[str]]:
+    def record_completion(self, *, task_identifier: str, machine_ip: str,
+                          finished_at: str, finish_by: str, received_at: str) -> bool:
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM cutting_dispatches WHERE task_identifier=%s LIMIT 2 FOR UPDATE",
+                (task_identifier,),
+            ).fetchall()
+            if len(rows) != 1:
+                return False
+            item = rows[0]
+            if item["machine_ip"] != machine_ip or item["is_simulation"] or not item["remote_task_id"]:
+                return False
+            if item["processing_finished_at"] is None:
+                connection.execute("""UPDATE cutting_dispatches
+                    SET processing_finished_at=%s, processing_finish_by=%s, completion_received_at=%s
+                    WHERE dispatch_id=%s""", (finished_at, finish_by, received_at, item["dispatch_id"]))
+            return True
+
+    def daily_dispatch_counts(self, *, sent_start: str, sent_end: str, timezone: str,
+                          machine_ip: str | None) -> tuple[dict[str, int], dict[str, int], list[str]]:
         where, parameters = self._history_filter(sent_start=sent_start, sent_end=sent_end, machine_ip=machine_ip)
+        completed_where, completed_parameters = self._history_filter(sent_start=sent_start, sent_end=sent_end,
+            machine_ip=machine_ip, date_type='completed')
         with self.connect(repeatable_read=True) as connection:
             rows = connection.execute(
                 "SELECT to_char(state_timestamp(sent_at) AT TIME ZONE %s, 'YYYY-MM-DD') AS day, COUNT(*) AS sent_count "
                 'FROM cutting_dispatches' + where + ' GROUP BY day', (timezone, *parameters)).fetchall()
+            completed = connection.execute(
+                "SELECT to_char(state_timestamp(processing_finished_at) AT TIME ZONE %s, 'YYYY-MM-DD') AS day, COUNT(*) AS completed_count "
+                'FROM cutting_dispatches' + completed_where + ' GROUP BY day', (timezone, *completed_parameters)).fetchall()
             machines = connection.execute('SELECT DISTINCT machine_ip FROM cutting_dispatches ORDER BY machine_ip').fetchall()
-        return {row['day']: int(row['sent_count']) for row in rows}, [row['machine_ip'] for row in machines]
+        return ({row['day']: int(row['sent_count']) for row in rows},
+                {row['day']: int(row['completed_count']) for row in completed},
+                [row['machine_ip'] for row in machines])
 
     def latest_for_files(self, files: Iterable[tuple[str, str]]) -> dict[tuple[str, str], dict[str, Any]]:
         keys = list(dict.fromkeys(files))

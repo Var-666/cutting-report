@@ -25,8 +25,9 @@ const columns = [
   { key: 'c1', title: '名称 / ID', width: 180, align: 'left' as const },
   { key: 'c2', title: '数据库类型', width: 120, align: 'left' as const },
   { key: 'c3', title: '服务器 / 数据库', width: 230, align: 'left' as const },
-  { key: 'c4', title: '状态', width: 140, align: 'left' as const },
-  { key: 'c5', title: '操作', width: 300, align: 'center' as const },
+  { key: 'c4', title: '状态', width: 200, align: 'left' as const },
+  { key: 'c6', title: '引用', minWidth: 220, align: 'left' as const },
+  { key: 'c5', title: '操作', width: 300, align: 'center' as const, ellipsis: false },
 ]
 function defaults(engine: Draft['engine'] = 'sqlserver'): Draft {
   return { id: '', name: '', engine, enabled: true, host: '', port: engine === 'mysql' ? 3306 : 1433,
@@ -138,7 +139,8 @@ onMounted(load)
         <NButton size="small" :disabled="busy" @click="open(row)">编辑</NButton>
         <NButton size="small" :disabled="busy" @click="toggle(row)">{{ row.enabled ? '停用' : '启用' }}</NButton>
         <NButton size="small" :disabled="busy || row.references.length > 0" @click="remove(row)">删除</NButton>
-      </div><small v-if="row.references.length" class="source-secondary">引用：{{ row.references.join('、') }}</small></template>
+      </div></template>
+      <template #c6="{ row }">{{ row.references.length ? row.references.join('、') : '—' }}</template>
       <template #empty>{{ loading ? '正在读取数据源…' : '暂无其他数据源，点击“新增数据源”登记连接。' }}</template>
     </AppReportTable>
     <NModal :show="showEditor" preset="card" :title="title" class="source-modal" :style="{ width: 'min(720px, calc(100vw - 32px))' }" :mask-closable="false" :close-on-esc="!busy" :closable="!busy" @update:show="value => { if (!value) close() }">
@@ -180,8 +182,10 @@ onMounted(load)
 .sources-heading { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:24px; }
 .sources-heading h2 { margin:0; color:var(--text-color-1); font-size:var(--font-section-title); }
 .sources-heading p,.source-note { margin:8px 0 0; color:var(--text-color-3); font-size:var(--font-auxiliary); }
-.source-secondary { display:block; margin-top:4px; color:var(--text-color-3); overflow-wrap:anywhere; }
-.source-actions,.source-footer { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+.source-secondary { color:var(--text-color-3); white-space:nowrap; }
+.source-actions,.source-footer { display:flex; align-items:center; gap:8px; }
+.source-actions { flex-wrap:nowrap; }
+.source-footer { flex-wrap:wrap; }
 .source-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; min-width:0; margin:0; padding:0; border:0; }
 .source-fields label { min-width:0; }
 .source-fields label > span { display:block; margin-bottom:8px; color:var(--text-color-2); font-size:var(--font-auxiliary); }

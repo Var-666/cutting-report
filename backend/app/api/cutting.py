@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ipaddress
 from datetime import date
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -23,6 +24,7 @@ from app.models.contracts import ApiEnvelope
 from app.models.cutting_contracts import (
     Items, Page, CuttingStatus, CuttingProject, CatalogResult, CuttingFile,
     MachineResult, CuttingDispatch, BatchCreationResult, DispatchTrend,
+    MagicBoxTaskFinishedRequest, MagicBoxCallbackResponse,
 )
 
 router = APIRouter(
@@ -30,6 +32,35 @@ router = APIRouter(
     tags=["cutting-dispatch"],
     dependencies=[Depends(require_admin)],
 )
+
+
+callback_router = APIRouter(prefix="/api/v1/magic-box/callbacks", tags=["magic-box-callback"])
+
+
+def require_callback_source(request: Request) -> None:
+    configuration = runtime_state(request).settings
+    if not configuration.magic_box_callback_enabled:
+        raise HTTPException(status_code=404, detail="魔盒回调未启用")
+    peer = request.client.host if request.client else ""
+    try:
+        allowed = ipaddress.ip_address(peer) in {
+            ipaddress.ip_address(value) for value in configuration.magic_box_callback_allowed_ips
+        }
+    except ValueError:
+        allowed = False
+    if not allowed:
+        raise HTTPException(status_code=403, detail="不允许的魔盒回调来源")
+
+
+@query_requests.route(callback_router.post("/task-finished", response_model=MagicBoxCallbackResponse,
+                                         dependencies=[Depends(require_callback_source)]))
+def task_finished(payload: MagicBoxTaskFinishedRequest, request: Request) -> MagicBoxCallbackResponse:
+    runtime_state(request).cutting_dispatch.receive_completion(
+        task_identifier=payload.task_identifier, machine_ip=payload.machine_ip,
+        finished_at=payload.finish_time, finish_by=payload.finish_by,
+    )
+    # The document requires an automatic acknowledgement; confirm this format onsite.
+    return MagicBoxCallbackResponse()
 
 
 def _envelope(request: Request, data: object) -> dict:
@@ -254,11 +285,12 @@ def list_dispatches(
     page_size: int = Query(default=10, ge=1, le=100),
     start_date: date | None = None,
     end_date: date | None = None,
+    date_type: Literal["sent", "completed"] = "sent",
     machine_ip: str | None = Query(default=None, min_length=3, max_length=64),
 ) -> dict:
     try:
         data = runtime_state(request).cutting_dispatch.list_dispatches(page=page, page_size=page_size,
-            start_date=start_date, end_date=end_date, machine_ip=machine_ip)
+            start_date=start_date, end_date=end_date, machine_ip=machine_ip, date_type=date_type)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
     return _envelope(request, data)

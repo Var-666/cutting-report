@@ -70,8 +70,8 @@ const {
 })
 const {
   histories, historyPage, historyPageSize, historyTotal, historyLoading,
-  historyError, loadHistory, changeHistoryPage, pauseHistory,
-  trend, trendLoading, trendError, trendFilters, selectedHistoryDay, historySelectionLabel,
+  historyError, loadHistory, changeHistoryPage, startHistoryPolling, pauseHistory,
+  trend, trendLoading, trendError, trendFilters, selectedHistoryDay, historyDateType, historySelectionLabel,
   loadTrend, refreshHistory, applyHistoryFilters, selectHistoryDay, clearHistoryFilters,
 } = useCuttingDispatchHistory({
   pageActive,
@@ -274,11 +274,13 @@ function pausePage() {
 }
 
 onMounted(() => {
+  startHistoryPolling()
   initializePage()
 })
 
 onActivated(async () => {
   pageActive.value = true
+  startHistoryPolling()
   if (firstActivation) {
     firstActivation = false
     return
@@ -298,7 +300,7 @@ const fileTableColumns = [
   { key: 'c6', title: "操作人", width: 96, align: 'left' },
   { key: 'c7', title: "操作人工号", width: 112, align: 'left' },
   { key: 'c8', title: "操作时间", width: 184, align: 'left' },
-  { key: 'c9', title: "派发状态", width: 112, align: 'center' },
+  { key: 'c9', title: "派发状态", width: 184, align: 'center' },
   { key: 'c10', title: "操作", width: 148, align: 'center', fixed: 'right', ellipsis: false }
 ] as const
 
@@ -409,7 +411,7 @@ const batchTableColumns = [
         <template #c7="{ row }">{{ row.operator_job_no || row.physical_file_operator_job_no || '--' }}</template>
         <template #c8="{ row }">{{ formatTime(row.operate_time || row.physical_file_date) }}</template>
         <template #c9="{ row }"><template v-if="row.dispatch_status"><NTag class="dispatch-status" :class="row.dispatch_status.status" size="small" :type="row.dispatch_status.status === 'failed' ? 'error' : 'info'">{{ row.dispatch_status.status_label }}</NTag><small class="dispatch-project-name">{{ row.dispatch_status.stage_label }}</small></template><span v-else class="dispatch-project-name">暂无记录</span></template>
-        <template #c10="{ row }"><div class="file-download-cell"><NButton attr-type="button" :disabled="loading || pushBatch.saving || !row.path_available || !systemStatus?.can_push" :aria-label="`派发 ${row.document_no}`" @click="openSinglePush(row)">设置并派发</NButton><small v-if="!row.path_available">{{ row.path_error || '路径不可用' }}</small></div></template>
+        <template #c10="{ row }"><div class="file-download-cell"><NButton attr-type="button" :disabled="loading || pushBatch.saving || !row.path_available || !systemStatus?.can_push" :aria-label="`派发 ${row.document_no}`" @click="openSinglePush(row)">设置并派发</NButton><small v-if="!row.path_available" :title="row.path_error || '路径不可用'">{{ row.path_error || '路径不可用' }}</small></div></template>
       <template #empty>{{ fileError ? '文件读取失败，请重试' : selectedCatalog ? appliedFileKeyword ? '当前目录没有匹配的文件' : '当前目录没有文件' : '请从左侧选择一个目录' }}</template>
       </AppReportTable>
       </div>
@@ -442,7 +444,7 @@ const batchTableColumns = [
 
   <section class="panel dispatch-history-panel" :aria-busy="historyLoading">
     <div class="panel-title"><div><span class="dispatch-section-icon green"><AppIcon name="check" size="17" /></span><small>04</small><h2>派发记录</h2></div></div>
-    <DispatchHistoryTrend :trend="trend" :filters="trendFilters" :loading="trendLoading" :error="trendError" :selected-day="selectedHistoryDay" :machine-ips="historyMachineIps" :machine-name="machineName" :disabled="!!operatingId || pushBatch.saving" @apply="applyHistoryFilters" @select-day="selectHistoryDay" @clear="clearHistoryFilters" @retry="loadTrend()" />
+    <DispatchHistoryTrend :trend="trend" :filters="trendFilters" :loading="trendLoading" :error="trendError" :selected-day="selectedHistoryDay" :selected-date-type="historyDateType" :machine-ips="historyMachineIps" :machine-name="machineName" :disabled="!!operatingId || pushBatch.saving" @apply="applyHistoryFilters" @select-day="selectHistoryDay" @clear="clearHistoryFilters" @retry="loadTrend()" />
     <p class="dispatch-history-scope">当前明细：{{ historySelectionLabel }}<template v-if="trendFilters.machine_ip"> · {{ machineName(trendFilters.machine_ip) }}（{{ trendFilters.machine_ip }}）</template></p>
     <div v-if="historyError" class="global-error" role="alert"><span>派发记录读取失败：{{ historyError }}</span><NButton attr-type="button" :disabled="historyLoading" @click="loadHistory()">重试</NButton></div>
     <div v-if="historyLoading && !histories.length" class="dispatch-empty-history" role="status"><span class="spinner dark" aria-hidden="true"></span><strong>正在读取派发记录</strong></div>
@@ -518,7 +520,7 @@ const batchTableColumns = [
 <style scoped>
 .retry-dispatch-dialog{width:min(480px,calc(100vw - 32px));padding:24px}.retry-dispatch-dialog footer{display:flex;justify-content:flex-end;gap:10px;margin-top:20px}
 
-.dispatch-project-name { display:block; color:var(--muted); font-size:var(--font-auxiliary); max-width:140px; overflow-wrap:anywhere; margin-top:5px; }
+.dispatch-project-name { color:var(--muted); font-size:var(--font-auxiliary); white-space:nowrap; }
 .dispatch-stage-badge { min-width:310px; display:flex; flex-direction:column; padding:17px 20px; border:1px solid var(--theme-border-color); border-right:4px solid var(--theme-border-color); background:rgb(var(--warning-color) / .1); box-shadow:var(--theme-shadow); }
 .dispatch-stage-badge span { color:rgb(var(--warning-color)); font-size:var(--font-auxiliary); font-weight:700; letter-spacing:2px; }
 .dispatch-stage-badge strong { margin:4px 0; color:var(--text-color-1); font-size:13px; }
@@ -579,7 +581,7 @@ const batchTableColumns = [
 .download-batch-toolbar button:disabled { cursor:not-allowed; }
 .dispatch-table-wrap { overflow-x:auto; position:relative; min-height:75px; }
 .dispatch-history-panel > .dispatch-table-wrap { min-width:0; padding:16px; }
-.dispatch-loading { position:absolute; z-index:2; inset:0; display:flex; align-items:flex-start; justify-content:center; padding-top:48px; background:rgb(var(--info-color) / .1); color:var(--blue); font-size:12px; }.file-download-cell button { white-space:nowrap; cursor:pointer; }.file-download-cell button:disabled { cursor:not-allowed; }.file-download-cell small { display:block; margin-top:4px; color:var(--muted); font-size:var(--font-auxiliary); }
+.dispatch-loading { position:absolute; z-index:2; inset:0; display:flex; align-items:flex-start; justify-content:center; padding-top:48px; background:rgb(var(--info-color) / .1); color:var(--blue); font-size:12px; }.file-download-cell button { white-space:nowrap; cursor:pointer; }.file-download-cell button:disabled { cursor:not-allowed; }.file-download-cell small { min-width:0; overflow:hidden; text-overflow:ellipsis; color:var(--muted); font-size:var(--font-auxiliary); }
 .source-file-table .file-download-cell { position:sticky; z-index:1; right:0; background:rgb(var(--container-bg-color)); box-shadow:var(--theme-shadow); }
 .source-file-table thead .file-download-cell { z-index:2; }
 .source-file-table tbody tr:hover .file-download-cell { background:rgb(var(--layout-bg-color)); }
@@ -594,7 +596,7 @@ const batchTableColumns = [
 .download-check-cell input { display:block; margin:auto; accent-color:var(--blue); cursor:pointer; }
 .download-check-cell input:disabled { cursor:not-allowed; }
 .check-column { width:42px; text-align:center!important; }
-.file-name-cell { max-width:230px; }
+.file-name-cell { white-space:nowrap; }
 .file-name-cell strong,.file-name-cell small { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .file-name-cell strong { color:var(--navy); font-size:var(--font-auxiliary); }
 .file-name-cell small { max-width:270px; margin-top:4px; color:var(--text-color-3); font:9px ui-monospace,SFMono-Regular,Menlo,monospace; }
@@ -773,7 +775,8 @@ const batchTableColumns = [
 .source-file-table thead .file-download-cell { background:var(--theme-table-header-color); }
 .dispatch-table tbody tr:hover { background:rgb(var(--layout-bg-color)); }
 .dispatch-table tbody tr.selected { background:rgb(var(--layout-bg-color)); box-shadow:inset 3px 0 rgb(var(--info-color)); }
-.file-download-cell { width:100px; margin-inline:auto; }
+.file-download-cell { display:inline-flex; align-items:center; gap:8px; max-width:100%; }
+.file-download-cell :deep(.n-button) { flex-shrink:0; }
 .file-download-cell button { min-height:29px; padding:4px 8px; }
 .filename-standard { color:rgb(var(--success-color)); background:rgb(var(--success-color) / .1); }
 .filename-standard.warning { color:rgb(var(--warning-color)); background:rgb(var(--warning-color) / .1); }

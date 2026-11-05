@@ -59,13 +59,13 @@ async function load() {
 onMounted(load)
 onBeforeUnmount(() => { sequence++; controller?.abort() })
 const diagnosticsTableColumns = [
-  { key: 'c0', title: '配置项', width: 260, align: 'left', fixed: 'left', ellipsis: false },
-  { key: 'c1', title: 'Web 当前生效值 / 来源', minWidth: 320, align: 'left', ellipsis: false },
-  { key: 'c2', title: '各 Consumer 当前生效值 / 来源', minWidth: 320, align: 'left', ellipsis: false },
-  { key: 'c3', title: 'Scheduler 当前生效值 / 来源', minWidth: 320, align: 'left', ellipsis: false },
-  { key: 'c4', title: 'Automation 当前生效值 / 来源', minWidth: 320, align: 'left', ellipsis: false },
-  { key: 'c5', title: '已保存目标 / 来源', minWidth: 280, align: 'left', ellipsis: false },
-  { key: 'c6', title: '生效状态及规则', minWidth: 340, align: 'left', ellipsis: false },
+  { key: 'c0', title: '配置项', width: 260, align: 'left', fixed: 'left' },
+  { key: 'c1', title: 'Web 当前生效值 / 来源', minWidth: 320, align: 'left' },
+  { key: 'c2', title: '各 Consumer 当前生效值 / 来源', minWidth: 320, align: 'left' },
+  { key: 'c3', title: 'Scheduler 当前生效值 / 来源', minWidth: 320, align: 'left' },
+  { key: 'c4', title: 'Automation 当前生效值 / 来源', minWidth: 320, align: 'left' },
+  { key: 'c5', title: '已保存目标 / 来源', minWidth: 280, align: 'left' },
+  { key: 'c6', title: '生效状态及规则', minWidth: 340, align: 'left' },
 ] as const
 </script>
 
@@ -93,7 +93,7 @@ const diagnosticsTableColumns = [
           <AppReportTable :columns="diagnosticsTableColumns" :items="visibleRows" :row-key="row => row.key" :total="rows.length" :page="page" :page-size="pageSize" :page-sizes="[10, 20, 50]" :loading="loading" aria-label="各应用实例配置来源和生效状态及异常配置项分页" @page="page = $event" @page-size="pageSize = $event">
             <template #c0="{ row }"><div class="diagnostic-cell"><strong :title="row.key">{{ row.key }}</strong><small :title="row.category">{{ row.category }}</small></div></template>
             <template v-for="(role, index) in roles" :key="role" #[`c${index+1}`]="{ row }">
-              <div v-if="role === 'worker' && Object.keys(row.processes.consumers || {}).length" class="grid gap-12px">
+              <div v-if="role === 'worker' && Object.keys(row.processes.consumers || {}).length" class="diagnostic-consumers">
                 <div v-for="(snapshot, id) in row.processes.consumers" :key="id" class="diagnostic-cell"><strong>{{ id }}</strong><NTag size="small" :type="tones[snapshot.status]">{{ statuses[snapshot.status] }}</NTag><span class="diagnostic-value">{{ display(snapshot.value) }}</span><small class="diagnostic-source">来源：{{ snapshot.source }}</small></div>
               </div>
               <div v-else class="diagnostic-cell"><NTag size="small" :type="tones[(row.processes[role]?.status || 'error')]">{{ statuses[(row.processes[role]?.status || 'error')] }}</NTag><span class="diagnostic-value" :title="display(row.processes[role]?.value)">{{ display(row.processes[role]?.value) }}</span><small class="diagnostic-source" :title="row.processes[role]?.source">来源：{{ row.processes[role]?.source }}</small></div>
@@ -110,7 +110,7 @@ const diagnosticsTableColumns = [
 </template>
 
 <style scoped>
-.configuration-diagnostics-page{display:grid;gap:16px;min-width:0}.diagnostics-filters{display:grid;grid-template-columns:1fr 2fr auto;gap:12px;align-items:end;margin-bottom:16px}.diagnostics-filters label{min-width:0}.diagnostics-filters label>span{display:block;margin-bottom:6px;color:var(--text-color-3);font-size:13px}.processes{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.processes p{overflow-wrap:anywhere;color:var(--text-color-3);font-size:12px}.diagnostics-table{min-width:0}.diagnostic-cell{display:flex;align-items:center;white-space:nowrap;max-width:100%;gap:12px;min-width:0}.diagnostic-cell>strong,.diagnostic-cell>small{white-space:nowrap;min-width:0;overflow:hidden;text-overflow:ellipsis}.diagnostic-cell>small{color:var(--text-color-3);font-size:var(--font-auxiliary)}.diagnostic-source{border-left:1px solid var(--theme-border-color);padding-left:10px}.diagnostic-value{flex:0 1 auto;min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis}.diagnostic-cell :deep(.n-tag){flex-shrink:0}
+.configuration-diagnostics-page{display:grid;gap:16px;min-width:0}.diagnostics-filters{display:grid;grid-template-columns:1fr 2fr auto;gap:12px;align-items:end;margin-bottom:16px}.diagnostics-filters label{min-width:0}.diagnostics-filters label>span{display:block;margin-bottom:6px;color:var(--text-color-3);font-size:13px}.processes{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.processes p{overflow-wrap:anywhere;color:var(--text-color-3);font-size:12px}.diagnostics-table{min-width:0}.diagnostic-consumers{display:inline-flex;align-items:center;gap:24px;white-space:nowrap}.diagnostic-cell{display:inline-flex;align-items:center;white-space:nowrap;gap:12px}.diagnostic-cell>strong,.diagnostic-cell>small{white-space:nowrap}.diagnostic-cell>small{color:var(--text-color-3);font-size:var(--font-auxiliary)}.diagnostic-source{border-left:1px solid var(--theme-border-color);padding-left:10px}.diagnostic-value{white-space:nowrap}.diagnostic-cell :deep(.n-tag){flex-shrink:0}
 @media(max-width:900px){.diagnostics-filters{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .processes strong{overflow-wrap:anywhere}
 @media(max-width:560px){.diagnostics-filters,.processes{grid-template-columns:1fr}}

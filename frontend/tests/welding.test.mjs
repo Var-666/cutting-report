@@ -917,6 +917,35 @@ test('shared report table preserves declared Naive widths across short, long and
   assert.equal(snapshots.length, 3)
 })
 
+test('shared table exposes native resize and full-text tooltips while keeping action columns intact', async () => {
+  let received
+  let actions = 0
+  const DataTable = Vue.defineComponent({ props: ['columns'], setup(props) { received = props.columns; return () => null } })
+  const Table = createSharedDataTable({ NDataTable: DataTable })
+  const filename = 'CMYZ0204-H804C-11 804C数控切割指令完整文件名.gen'
+  const columns = [
+    { key: 'c0', title: '文件名', width: 220 },
+    { key: 'c1', title: '操作', width: 148, ellipsis: false },
+    { key: 'c2', title: '固定说明', width: 160, resizable: false },
+  ]
+  const slots = {
+    c0: () => h('strong', filename),
+    c1: () => h('button', { onClick: () => actions++ }, '设置并派发'),
+  }
+  await renderToString(Vue.createSSRApp({ render: () => h(Table, { columns, items: [], rowKey: row => row.id, paginate: false }, slots) }))
+  assert.equal(received[0].resizable, true)
+  assert.equal(received[0].ellipsis.tooltip, true)
+  assert.equal(received[1].resizable, false)
+  assert.equal(received[1].ellipsis, false)
+  assert.equal(received[2].resizable, false)
+  const text = await renderToString(Vue.createSSRApp({ render: () => received[0].render({ id: 1 }, 0) }))
+  assert.ok(text.includes(filename), 'the complete filename must reach the native tooltip')
+  const action = received[1].render({ id: 1 }, 0)
+  action.children[0].props.onClick()
+  assert.equal(actions, 1)
+  assert.equal(columns[0].resizable, undefined, 'caller definitions stay unchanged')
+})
+
 test('welding column definitions provide bounded widths for every field', () => {
   for (const [kind, fields] of Object.entries(weldingColumns)) {
     for (const [key] of fields) {
@@ -938,7 +967,7 @@ test('workshop columns keep short names and program codes bounded and reserve co
   assert.equal(table.taskTableColumns.value.find(column => column.key === 'c10').width, 116)
   result.value.items = [{ program_no: 'long'.repeat(100), confirmed_by: '张三' }]
   assert.equal(table.taskTableColumns.value.find(column => column.key === 'c5').width, 160)
-  assert.equal(table.taskTableColumns.value.find(column => column.key === 'c10').width, 240)
+  assert.equal(table.taskTableColumns.value.find(column => column.key === 'c10').width, 400)
 })
 
 test('independent welding home waits for its catalog, keeps successful data on failure and ignores late disabled-source results', async () => {
