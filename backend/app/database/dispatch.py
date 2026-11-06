@@ -273,7 +273,7 @@ class DispatchRepository(PostgresRepository):
             ).fetchall()
         return [self._decode(row) for row in rows], total
 
-    def record_completion(self, *, task_identifier: str, machine_ip: str,
+    def record_completion(self, *, task_identifier: str,
                           finished_at: str, finish_by: str, received_at: str) -> bool:
         with self.connect() as connection:
             rows = connection.execute(
@@ -283,7 +283,7 @@ class DispatchRepository(PostgresRepository):
             if len(rows) != 1:
                 return False
             item = rows[0]
-            if item["machine_ip"] != machine_ip or item["is_simulation"] or not item["remote_task_id"]:
+            if item["is_simulation"] or not item["remote_task_id"]:
                 return False
             if item["processing_finished_at"] is None:
                 connection.execute("""UPDATE cutting_dispatches

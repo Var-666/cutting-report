@@ -158,6 +158,25 @@ test('worker preloads only workshop and uses worker sorting', async () => {
   assert.ok(calls.some((c) => c.url.includes('sort_mode=worker')))
 })
 
+for (const page of ['workshop', 'equipment']) test(`admin ${page} preload queries today without selecting an older production date`, async () => {
+  const calls = mockApi(url => {
+    if (url.includes('latest-date')) return response({ report_date: '2020-01-01' })
+  })
+  await startReportPreload(admin, { pathname: `/admin/reports/${page}` })
+  assert.ok(!calls.some(call => call.url.includes('latest-date')))
+  for (const call of calls) {
+    const url = new URL(call.url, 'http://localhost')
+    const date = url.searchParams.get('report_date') || url.searchParams.get('end_date')
+    assert.equal(date, today)
+  }
+  assert.ok(calls.length)
+  if (page === 'equipment') {
+    const monthly = calls.find(call => call.url.includes('/energy-report/monthly-range?'))
+    assert.ok(monthly)
+    assert.equal(new URL(monthly.url, 'http://localhost').searchParams.get('start_date'), recentTwelveMonthStart(today))
+  }
+})
+
 test('one unavailable report does not stop others; failed pages can retry', async () => {
   let fail = true
   mockApi((url) => {

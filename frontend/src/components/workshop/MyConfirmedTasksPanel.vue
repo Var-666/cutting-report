@@ -30,8 +30,8 @@ defineExpose({ refresh: () => load(undefined, { silent: true }) })
     <ul v-if="result?.items.length" class="my-confirmed-tasks__list">
       <li v-for="item in result.items" :key="item.task_id">
         <strong>{{ item.program_no || '--' }}</strong>
-        <span>{{ item.project_code?.trim() || '非船' }} · {{ item.segment_name?.trim() || '非船' }}</span>
-        <span>{{ item.ship_no?.trim() || '非船' }}</span>
+        <span>{{ item.project_code?.trim() || '--' }} · {{ item.segment_name?.trim() || '--' }}</span>
+        <span>{{ item.ship_no?.trim() || '--' }}</span>
         <dl><div><dt>生产日期</dt><dd>{{ formatChineseDate(item.production_date) }}</dd></div><div><dt>确认时间</dt><dd>{{ formatChineseDateTime(item.confirmed_at) }}</dd></div></dl>
       </li>
     </ul>

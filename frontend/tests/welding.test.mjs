@@ -13,7 +13,7 @@ import { parse, compileScript, compileTemplate } from '@vue/compiler-sfc'
 import { lineHome, productionGroups, selectedLineType } from '../src/utils/productionLines.ts'
 import { adminMenus } from '../src/router/menus.ts'
 import { analyzeWelding, downloadWelding, getWeldingPart, getWeldingReport, weldingQuery } from '../src/api/welding.ts'
-import { weldingColumns, weldingVisibleColumns, weldingColumnLayout, weldingDisplay, weldingKpis, weldingTitles } from '../src/utils/weldingReport.ts'
+import { weldingColumns, weldingVisibleColumns, weldingColumnLayout, weldingDisplay, weldingKpis, weldingTitles, weldingDescriptions } from '../src/utils/weldingReport.ts'
 import { weldingRoutes } from '../src/router/weldingRoutes.ts'
 import { setDeviceCatalog, selectDevice } from '../src/api/deviceContext.ts'
 import { reportCache } from '../src/api/reportCache.ts'
@@ -800,6 +800,96 @@ test('new line types keep registered labels and destinations', () => {
   assert.equal(selectedLineType(items, 'paint-1'), 'coating')
   assert.equal(lineHome(items, 'paint-1'), '/admin/coating/home')
   assert.equal(productionGroups([{ ...items[0], type_name: '' }])[0].name, 'coating')
+})
+
+function mountWeldingDisplay(t, readReport) {
+  const stub = { setup: (_props, { attrs, slots }) => () => h('div', [attrs.title, attrs.message, slots.default?.()]) }
+  const bindings = {
+    ...Vue, useRoute: () => ({ query: {} }), useRouter: () => ({ push() {}, replace() {} }),
+    reportToday: () => period.start, getWeldingReport: readReport, selectedLineType, queryDateRange, sameRouteQuery,
+    parseWeldingRouteQuery, weldingRouteQuery, weldingTitles, weldingDescriptions,
+    deviceSelection: reactive({ id: 'welding', items: [{ id: 'welding', type: 'welding', enabled: true }] }),
+    NModal: stub, NTag: stub, ReportPeriodPicker: stub, AppIcon: stub, HomeSectionHeader: stub,
+    ReportAnalysis: stub, AppSelect: stub, ReportFeedback: stub, ReportPanelState: stub, ReportExportMenu: stub,
+    WeldingCharts: stub, WeldingRecord: stub,
+    WeldingKpiCards: { props: ['report'], setup: props => () => h('div', `作业次数：${props.report?.summary.job_count ?? '--'}`) },
+    WeldingTable: { props: ['items'], setup: props => () => h('div', props.items.map(row => row.serial_number).join('、')) },
+  }
+  const descriptor = parse(source('views/WeldingReportView.vue')).descriptor
+  const code = compileScript(descriptor, { id: 'welding-cache-display', inlineTemplate: true }).content
+    .replace(/import\s*\{([^}]+)\}\s*from\s*['"]vue['"]/g, (_, names) => {
+      for (const name of names.split(',')) {
+        const [original, alias = original] = name.trim().split(/\s+as\s+/)
+        bindings[alias] = Vue[original]
+      }
+      return ''
+    }).replace(/^import .*$/gm, '').replace('export default', 'return')
+  const Page = scriptFunction(...Object.keys(bindings), code)(...Object.values(bindings))
+  const renderer = Vue.createRenderer({ createElement: () => ({ style: {} }), createComment: () => ({}), createText: () => ({}),
+    insert() {}, remove() {}, setText() {}, setElementText() {}, parentNode: () => null, nextSibling: () => null, patchProp() {} })
+  const app = renderer.createApp({ render: () => h(Page, { kind: 'jobs' }) })
+  for (const name of ['NButton', 'NInput', 'NInputNumber', 'NCheckbox']) app.component(name, stub)
+  app.mount({})
+  t.after(() => app.unmount())
+  function nodes(node = app._instance.subTree) {
+    return [node, ...(node.component?.subTree ? nodes(node.component.subTree) : []),
+      ...(Array.isArray(node.children) ? node.children.flatMap(child => typeof child === 'object' && child ? nodes(child) : []) : [])]
+  }
+  return {
+    text: () => nodes().filter(node => node.type === Vue.Text || typeof node.type === 'string').map(node => typeof node.children === 'string' ? node.children : '').join(' '),
+    submit: () => nodes().find(node => node.type === 'form').props.onSubmit({ preventDefault() {} }),
+  }
+}
+
+test('cached welding data stays visible through manual refresh, replacement and query failure', async t => {
+  const clock = snapshotWaitTimers(t)
+  const calls = []
+  const page = mountWeldingDisplay(t, (kind, values, signal, force) => new Promise((resolve, reject) => calls.push({ values, signal, force, resolve, reject })))
+  const result = (call, count, refreshing = false) => ({ query: call.values, data_version: String(count),
+    summary: { job_count: count }, items: count ? [{ id: 1, serial_number: `任务${count}` }] : [], total: count ? 1 : 0,
+    meta: { quality: {}, notices: [], devices: [], report_data: { data_as_of: '2026-10-26T08:00:00Z', refreshing } } })
+  assert.equal(calls[0].force, false)
+  assert.match(page.text(), /正在读取焊接数据/)
+  calls[0].resolve(result(calls[0], 3)); await flushWelding()
+  assert.match(page.text(), /作业次数：3/)
+  assert.match(page.text(), /任务3/)
+  assert.match(page.text(), /2026-10-26T08:00:00Z/)
+  assert.doesNotMatch(page.text(), /正在读取焊接数据/)
+
+  page.submit(); await flushWelding()
+  assert.equal(calls[1].force, true)
+  assert.match(page.text(), /作业次数：3/)
+  assert.match(page.text(), /任务3/)
+  assert.match(page.text(), /当前展示上次结果/)
+  assert.doesNotMatch(page.text(), /正在读取焊接数据/)
+  calls[1].resolve(result(calls[1], 3, true)); await flushWelding()
+  assert.match(page.text(), /后台刷新排队中/)
+  clock.fire(); await flushWelding()
+  assert.equal(calls[2].force, false)
+  assert.match(page.text(), /任务3/)
+  const failed = result(calls[2], 3, true)
+  failed.meta.report_data.refresh_failed = true
+  calls[2].resolve(failed); await flushWelding()
+  assert.match(page.text(), /刷新失败，保留上次统计/)
+  assert.match(page.text(), /任务3/)
+  clock.fire(); await flushWelding()
+  calls[3].resolve(result(calls[3], 9)); await flushWelding()
+  assert.match(page.text(), /作业次数：9/)
+  assert.match(page.text(), /任务9/)
+  assert.equal(clock.timers.size, 0)
+
+  page.submit(); await flushWelding()
+  calls[4].reject(new Error('源库暂不可用')); await flushWelding()
+  assert.match(page.text(), /源库暂不可用/)
+  assert.match(page.text(), /保留上次成功查询结果/)
+  assert.match(page.text(), /作业次数：9/)
+  assert.match(page.text(), /任务9/)
+
+  page.submit(); await flushWelding()
+  calls[5].resolve(result(calls[5], 0)); await flushWelding()
+  assert.match(page.text(), /作业次数：0/)
+  assert.match(page.text(), /当前区间暂无可归属的作业记录/)
+  assert.doesNotMatch(page.text(), /正在读取焊接数据|任务9|源库暂不可用/)
 })
 
 test('explicit refresh requests fresh statistics while initial reads and pagination reuse snapshots', async t => {

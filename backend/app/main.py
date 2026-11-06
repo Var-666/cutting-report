@@ -90,17 +90,17 @@ app = FastAPI(
 async def safe_connection_validation(request: Request, exc: RequestValidationError):
     if request.url.path == '/api/v1/magic-box/callbacks/task-finished':
         errors = exc.errors()
-        # Only inspect documented time/machine fields; never log the full body or headers.
-        invalid_fields = {error['loc'][1] for error in errors if len(error['loc']) > 1 and error['loc'][0] == 'body'}
+        # Retain task fields before discarding the failed request, without credentials or nested payloads.
         values = {
-            key: repr(exc.body[key])[:256]
-            for key in ('FinishBy', 'finishTime')
-            if key in invalid_fields and isinstance(exc.body, dict) and key in exc.body
+            key: value[:512] if isinstance(value, str) else value if isinstance(value, (int, float, bool, type(None))) else {'type': type(value).__name__}
+            for key, value in (exc.body.items() if isinstance(exc.body, dict) else [])
+            if key.replace('_', '').casefold() in {'finishby', 'finishtime', 'taskidentifier', 'taskname', 'material', 'thickness'}
         }
         logging.getLogger(__name__).warning(
-            '魔盒完成通知校验失败 source_ip=%s content_type=%r body_type=%s errors=%r invalid_values=%r',
+            '魔盒完成通知校验失败 source_ip=%s content_type=%r body_type=%s body_fields=%r errors=%r callback_body=%r',
             request.client.host if request.client else '', request.headers.get('content-type', '')[:120],
             type(exc.body).__name__,
+            [key[:80] for key in list(exc.body)[:20]] if isinstance(exc.body, dict) else [],
             [{'loc': error['loc'], 'type': error['type'], 'input_type': type(error.get('input')).__name__}
              for error in errors[:10]], values,
         )

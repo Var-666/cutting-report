@@ -227,7 +227,13 @@ def test_diagnostics_identify_each_consumer_and_do_not_treat_identity_as_shared_
         lost = WorkerStatusReader(database, expected_consumers=2).status()
         assert lost['consumer_running_count'] == 1 and lost['consumer_lost_count'] == 1
         assert lost['roles']['worker']['state'] == 'degraded' and not background_ready(lost)
-        assert not runtime.configuration_diagnostics.report(lost)['processes']['consumers']['second']['available']
+        diagnostics = runtime.configuration_diagnostics.report(lost)
+        assert set(diagnostics['processes']['consumers']) == {'first'}
+        assert diagnostics['processes']['worker']['state'] == 'degraded'
+        assert diagnostics['errors'] == ['Consumer运行数量不足：期望2个，当前正常1个，请检查进程与心跳。']
+        assert not diagnostics['consistent']
+        recovered = runtime.configuration_diagnostics.report(WorkerStatusReader(database, expected_consumers=1).status())
+        assert not recovered['errors'] and recovered['consistent']
     finally:
         for item in (runtime, other):
             item.database_runtime.close()

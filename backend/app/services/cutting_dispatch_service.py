@@ -421,7 +421,7 @@ class CuttingDispatchService:
     def receive_completion(self, *, task_identifier: str, machine_ip: str,
                            finished_at: datetime, finish_by: str) -> bool:
         matched = bool(task_identifier) and self.dispatches.record_completion(
-            task_identifier=task_identifier, machine_ip=machine_ip,
+            task_identifier=task_identifier,
             finished_at=finished_at.isoformat(timespec="seconds"), finish_by=finish_by,
             received_at=self._now(),
         )

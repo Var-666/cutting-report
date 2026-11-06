@@ -266,11 +266,12 @@ class CoordinationRepository(PostgresRepository):
         identity = {key: payload[key] for key in ('report_type', 'query', 'source_fingerprint')}
         return f'report_snapshot:{line_id}:{fingerprint(identity)}'
 
-    def snapshot_refresh_active(self, line_id: str, payload: dict) -> bool:
+    def snapshot_refresh_status(self, line_id: str, payload: dict) -> tuple[bool, bool]:
+        """Return (active, failed) without exposing internal error details."""
         with self.connect() as connection:
-            return connection.execute('''SELECT 1 FROM background_tasks WHERE dedup_key=%s
-                AND status IN ('pending', 'running', 'deferred')''',
-                (self.snapshot_task_key(line_id, payload),)).fetchone() is not None
+            row = connection.execute('''SELECT status, last_error FROM background_tasks WHERE dedup_key=%s''',
+                (self.snapshot_task_key(line_id, payload),)).fetchone()
+        return bool(row and row['status'] in ('pending', 'running', 'deferred')), bool(row and row['last_error'])
 
     def snapshot_refresh_due(self, line_id: str, payload: dict, interval: float) -> float:
         with self.connect() as connection:

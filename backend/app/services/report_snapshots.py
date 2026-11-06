@@ -83,24 +83,24 @@ class ReportSnapshotService:
         record, source = self._get(key)
         now = datetime.now(timezone.utc)
         payload = self.task_payload(key)
-        refreshing = bool(self.coordination and self.coordination.snapshot_refresh_active(key.line_id, payload))
+        refreshing, failed = self.coordination.snapshot_refresh_status(key.line_id, payload) if self.coordination else (False, False)
         if background_only and not background and self.coordination:
             if force or record is None or record.expires_at <= now:
                 self.coordination.request_snapshot_refresh(key.line_id, payload)
-                refreshing = self.coordination.snapshot_refresh_active(key.line_id, payload)
+                refreshing, failed = self.coordination.snapshot_refresh_status(key.line_id, payload)
             if record:
-                return self._result(record, source, refreshing=refreshing, error=(force or record.expires_at <= now) and not refreshing)
+                return self._result(record, source, refreshing=refreshing, error=failed or (force or record.expires_at <= now) and not refreshing)
             if not refreshing:
                 raise SnapshotRefreshRejected('后台刷新队列已满，请稍后重试')
             raise SnapshotRefreshBusy('报表数据正在后台准备，完成后自动显示')
         if record and record.expires_at > now and (not force or background and (not background_only or record.refreshed_at.timestamp() >= requested_at)):
-            return self._result(record, source, refreshing=refreshing)
+            return self._result(record, source, refreshing=refreshing, error=failed)
         # Stale statistics are read-only; detail queries and all writes keep their own live validation.
         fallback = record if record and now - record.expires_at <= timedelta(seconds=max(1, self.settings.leadership_report_history_cache_seconds)) else None
         if fallback and not force and not background and self.coordination:
             self.coordination.request_snapshot_refresh(key.line_id, payload)
-            refreshing = self.coordination.snapshot_refresh_active(key.line_id, payload)
-            return self._result(fallback, source, refreshing=refreshing)
+            refreshing, failed = self.coordination.snapshot_refresh_status(key.line_id, payload)
+            return self._result(fallback, source, refreshing=refreshing, error=failed)
         lock = FileLock(self.lock_path)
         started = monotonic()
         while not lock.acquire(blocking=False):

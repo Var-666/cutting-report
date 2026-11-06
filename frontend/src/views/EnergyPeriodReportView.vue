@@ -12,7 +12,6 @@ import { toError } from '../utils/errors'
 import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getEnergyDay, getEnergyMonthlyRange, getEnergyRange, getTaskEnergyDay } from '../api/energy.ts'
-import { getLatestWorkshopProductionDate } from '../api/cutting.ts'
 import { recentTwelveMonthStart, reportToday } from '../api/reportDates.ts'
 import AnalysisPanel from '../components/AnalysisPanel.vue'
 import AppIcon from '../components/AppIcon.vue'
@@ -221,6 +220,8 @@ async function loadDefaultRanges(force = false) {
   error.value = ''
   const selectedDate = periodStart.value
   const recentStart = recentTwelveMonthStart(selectedDate)
+  if (appliedPeriodStart.value !== selectedDate || appliedPeriodEnd.value !== selectedDate) taskDay.value = null
+  if (summaryPeriodStart.value !== recentStart || summaryPeriodEnd.value !== selectedDate) monthlyReport.value = null
   appliedPeriodStart.value = selectedDate
   appliedPeriodEnd.value = selectedDate
   summaryPeriodStart.value = recentStart
@@ -308,23 +309,13 @@ function pause(dispose = false) {
 }
 
 async function initializeReport({ restoreQuery = false } = {}) {
+  if (!pageActive.value) return
   const requestedQuery = route.query
   const requestedRange = restoreQuery ? queryDateRange(route.query, { maxDays: 31 }) : null
-  const { sequence, signal } = beginRequest()
-  loading.value = true
-  try {
-    const latest = await getLatestWorkshopProductionDate(reportToday(), { signal })
-    if (!requestIsCurrent(sequence, signal)) return
-    if (latest.report_date) {
-      anchorDate.value = latest.report_date
-      periodStart.value = latest.report_date
-      periodEnd.value = latest.report_date
-    }
-  } catch (caught) {
-    const exception = toError(caught)
-    if (exception.name !== 'AbortError' && sequence === requestSequence) error.value = exception.message
-  }
-  if (!requestIsCurrent(sequence, signal)) return
+  const selectedDate = reportToday()
+  anchorDate.value = selectedDate
+  periodStart.value = selectedDate
+  periodEnd.value = selectedDate
   await loadDefaultRanges()
   if (requestedRange && pageActive.value && route.query === requestedQuery) {
     periodStart.value = requestedRange.start
@@ -544,9 +535,9 @@ const summaryTableColumns = [
     <template #table>
         <AppReportTable flex-height :columns="taskTableColumns" :items="taskRows" :row-key="row => row.task_id" :paginate="false" aria-label="任务能耗明细表" summary>
         <template #c0="{ row, index: rowIndex }">{{ rowIndex + 1 }}</template>
-        <template #c1="{ row }">{{ row.project_code?.trim() || '非船' }}</template>
-        <template #c2="{ row }">{{ row.ship_no?.trim() || '非船' }}</template>
-        <template #c3="{ row }">{{ row.segment_name?.trim() || '非船' }}</template>
+        <template #c1="{ row }">{{ row.project_code?.trim() || '--' }}</template>
+        <template #c2="{ row }">{{ row.ship_no?.trim() || '--' }}</template>
+        <template #c3="{ row }">{{ row.segment_name?.trim() || '--' }}</template>
         <template #c4="{ row }">{{ formatChineseDateTime(row.production_time) }}</template>
         <template #c5="{ row }">{{ duration(row.work_time) }}</template>
         <template #c6="{ row }">{{ format(row.electricity_consumption) }}</template>

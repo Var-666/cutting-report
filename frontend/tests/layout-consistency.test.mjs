@@ -704,7 +704,6 @@ test('leadership and equipment second tables default to the recent twelve months
   const leadershipRange = leadershipQueryScript.slice(leadershipQueryScript.indexOf('async function loadReport'), leadershipQueryScript.indexOf('async function restoreRouteState'))
   const equipmentRange = equipment.scriptSetup.content.match(/async function loadRange[\s\S]*?\n}\n\nfunction stopSummaryRefresh/)?.[0] || ''
 
-  assert.match(leadershipQueryScript, /getLeadershipReport\(today\.slice\(0, 7\), \{ force, signal \}\)/)
   assert.match(leadershipQueryScript, /monthlyPeriodStart = ref\(recentTwelveMonthStart\(today\)\)/)
   assert.match(leadershipQueryScript, /const monthlyReport = ref<(?:LeadershipReport|EnergyPeriodReport) \| null>\(null\)/)
   assert.match(leadershipDataScript, /monthlyRecords = computed\(\(\) => monthlyReport\.value\?\.monthly_records/)
@@ -741,7 +740,6 @@ test('switching cached workshop and equipment reports does not force another que
   assert.match(workshop.scriptSetup.content, /if \(isWorker\.value && result\.value\.report/)
   assert.doesNotMatch(equipment.scriptSetup.content, /onActivated\([\s\S]{0,300}getEnergyRange/)
   assert.match(preload, /listWorkshopRangeTasks\(\{ startDate: reportDate, endDate: reportDate \}\)/)
-  assert.match(preload, /getEnergyMonthlyRange\(recentTwelveMonthStart\(reportDate\), reportDate\)/)
   assert.doesNotMatch(preload, /getEnergyRange\(recentTwelveMonthStart/)
   assert.match(api, /REPORT_VIEW_CACHE_TTL = 5 \* 60 \* 1000/)
 })

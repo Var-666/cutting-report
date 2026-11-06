@@ -4,7 +4,7 @@ from datetime import datetime
 import ipaddress
 from typing import Literal
 from zoneinfo import ZoneInfo
-from pydantic import BaseModel, Field, field_validator
+from pydantic import AliasChoices, BaseModel, Field, field_validator
 
 from app.models.contracts import Items, Page
 
@@ -228,7 +228,8 @@ class BatchCreationResult(Items[DispatchCreationResult]):
 
 class MagicBoxTaskFinishedRequest(BaseModel):
     task_identifier: str = Field(default="", alias="taskIdentifier", max_length=128, strict=True)
-    finish_by: str = Field(alias="FinishBy", min_length=1, max_length=256, strict=True)
+    finish_by: str = Field(alias="FinishBy", validation_alias=AliasChoices("FinishBy", "finishBy"),
+                           min_length=1, max_length=256, strict=True)
     finish_time: datetime = Field(alias="finishTime", description="完成时间，YYYY-MM-DD HH:mm:ss，GMT+8")
     task_name: str = Field(default="", alias="taskName", max_length=512)
     material: str = Field(default="", max_length=80)

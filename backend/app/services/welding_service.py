@@ -305,7 +305,7 @@ class WeldingService:
         today = datetime.now(ZoneInfo(self.settings.weld_db_timezone)).date()
         homepage = WeldingQuery(start=today - timedelta(days=6), end=today, page_size=10)
         # The daily snapshot also serves equipment; keep the homepage ahead of heavier part work.
-        queries = [(homepage, 'dashboard')] + [(WeldingQuery(start=today, end=today), f'page:{kind}') for kind in ('daily', 'jobs', 'parts')]
+        queries = [(homepage, 'dashboard')] + [(WeldingQuery(start=today, end=today, page_size=10), f'page:{kind}') for kind in ('daily', 'jobs', 'parts')]
         return [(self.snapshot_service.task_payload(self._snapshot_key(query, kind)),
                  max(30, self.settings.report_background_refresh_seconds)) for query, kind in queries]
 

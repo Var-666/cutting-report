@@ -48,9 +48,10 @@ export function startReportPreload(
   const jobs: { key: string; label: string; load: () => Promise<unknown> }[] = lineType === 'welding'
     ? weldingKind ? [{ key: 'welding', label: '焊接报表', load: () => getWeldingReport(weldingKind, parseWeldingRouteQuery(weldingFilters, weldingKind, today)) }] : []
     : lineType === 'cutting' ? [{ key: 'workshop', label: '车间报表', load: async () => {
-    const latest = await getLatestWorkshopProductionDate(today)
+    const reportDate = user.role === 'worker'
+      ? (await getLatestWorkshopProductionDate(today)).report_date || today
+      : today
     if (!active()) return
-    const reportDate = latest.report_date || today
     return user.role === 'worker'
       ? listWorkshopTasks({ reportDate, sortMode: 'worker' }, { warmup: true })
       : listWorkshopRangeTasks({ startDate: reportDate, endDate: reportDate })
@@ -58,11 +59,8 @@ export function startReportPreload(
   if (user.role === 'admin' && lineType === 'cutting') {
     jobs.unshift({ key: 'leadership', label: '领导报表', load: () => getLeadershipReport(month) })
     jobs.push({ key: 'equipment', label: '设备报表', load: async () => {
-      const latest = await getLatestWorkshopProductionDate(today)
-      if (!active()) return
-      const reportDate = latest.report_date || today
-      await Promise.all([getEnergyDay(reportDate), getTaskEnergyDay(reportDate)])
-      if (active()) return getEnergyMonthlyRange(recentTwelveMonthStart(reportDate), reportDate)
+      await Promise.all([getEnergyDay(today), getTaskEnergyDay(today)])
+      if (active()) return getEnergyMonthlyRange(recentTwelveMonthStart(today), today)
     } })
     jobs.push({ key: 'history', label: '生成与历史', load: () => listReports({ page: 1, pageSize: 10 }) })
   }

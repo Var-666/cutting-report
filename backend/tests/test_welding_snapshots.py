@@ -308,15 +308,37 @@ def test_dashboard_keeps_expired_snapshot_and_manual_refresh_is_background_only(
 
 @pytest.mark.parametrize('selected', [date(2026, 10, 28), date(2026, 11, 1)])
 def test_refresh_plan_warms_each_default_page_with_homepage_first(configured, monkeypatch, selected):
-    _, _, _, _, service = configured
-    class Clock:
+    cfg, snapshots, queue, source, service = configured
+    class Clock(datetime):
         @staticmethod
         def now(zone):
             return datetime(selected.year, selected.month, selected.day, tzinfo=zone)
     monkeypatch.setattr('app.services.welding_service.datetime', Clock)
-    periods = [(payload['query']['start'], payload['query']['end']) for payload, _ in service.refresh_plan()]
+    plan = service.refresh_plan()
+    periods = [(payload['query']['start'], payload['query']['end']) for payload, _ in plan]
     assert periods == [((selected - timedelta(days=6)).isoformat(), selected.isoformat()), *[(selected.isoformat(), selected.isoformat())] * 3]
-    assert [payload['report_type'] for payload, _ in service.refresh_plan()] == ['dashboard', 'page:daily', 'page:jobs', 'page:parts']
+    assert [payload['report_type'] for payload, _ in plan] == ['dashboard', 'page:daily', 'page:jobs', 'page:parts']
+    owner = queue.acquire('worker:test-consumer', ttl=30)
+    for payload, interval in plan:
+        assert queue.request_snapshot_refresh(cfg.device_id, payload, interval=interval)
+        task = queue.claim_task(owner, analysis=False)
+        service.refresh_summary(task['payload']['report_type'], task['payload']['query'], requested_at=task['created_at'])
+        queue.finish_task(task, owner)
+
+    before = source.calls.copy()
+    source.down = True
+    restarted = WeldingService(cfg, source, snapshots=snapshots, coordination=queue)
+    for kind in ('dashboard', 'daily', 'jobs', 'parts', 'equipment'):
+        current = WeldingQuery(start=selected - timedelta(days=6) if kind == 'dashboard' else selected,
+                               end=selected, page_size=10)
+        result = restarted.dashboard(current) if kind == 'dashboard' else restarted.page(kind, current)
+        assert result['query'] == current.model_dump(mode='json')
+        assert result['summary']['job_count'] == 3
+        assert result['meta']['report_data']['data_as_of']
+        assert result['meta']['report_data']['refreshed_at']
+        assert result['meta']['report_data']['source'] in ('snapshot', 'cache')
+        assert not result['meta']['report_data']['refreshing']
+    assert source.calls == before, 'default pages must reuse scheduled snapshots even after service restart'
 
 
 @pytest.mark.parametrize('kind', ['daily', 'jobs', 'parts', 'equipment'])
@@ -425,6 +447,46 @@ def test_page_queue_rejection_is_distinct_from_preparation_and_retains_available
     assert source.calls == before
     assert report['meta']['report_data']['refresh_failed']
     assert not report['meta']['report_data']['refreshing']
+
+
+@pytest.mark.parametrize('kind', ['dashboard', 'daily', 'jobs', 'parts', 'equipment'])
+def test_background_query_failure_is_visible_and_recovery_replaces_retained_snapshot(configured, kind):
+    cfg, snapshots, queue, source, service = configured
+    selected = query(page_size=10)
+    report_type = 'dashboard' if kind == 'dashboard' else f'page:{kind}'
+    service.refresh_summary(report_type, selected.model_dump(mode='json'))
+    first = service.fetch_detail(kind, selected)
+    payload = service.snapshot_service.task_payload(service._snapshot_key(selected, report_type))
+    before = source.calls.copy()
+    service.fetch_summary(report_type, selected, force=True)
+    assert source.calls == before
+    owner = queue.acquire('worker:test-consumer', ttl=30)
+    task = queue.claim_task(owner, analysis=False)
+    source.down = True
+    with pytest.raises(WeldingUnavailable):
+        service.refresh_summary(task['payload']['report_type'], task['payload']['query'], requested_at=task['created_at'])
+    assert queue.finish_task(task, owner, error='WeldingUnavailable')
+    assert queue.snapshot_refresh_status(cfg.device_id, payload) == (True, True)
+    restarted = WeldingService(cfg, source, snapshots=snapshots, coordination=queue)
+    retained = restarted.fetch_detail(kind, selected)
+    assert retained['items'] == first['items'] and retained['total'] == first['total']
+    assert retained['data_version'] == first['data_version']
+    assert retained['meta']['report_data']['data_as_of'] == first['meta']['report_data']['data_as_of']
+    assert retained['meta']['report_data']['refreshing'] and retained['meta']['report_data']['refresh_failed']
+
+    with queue.connect() as connection:
+        connection.execute('UPDATE background_tasks SET next_attempt=0 WHERE task_id=%s', (task['task_id'],))
+    queue.admit_deferred()
+    task = queue.claim_task(owner, analysis=False)
+    source.down = False
+    source.count = 9
+    restarted.refresh_summary(task['payload']['report_type'], task['payload']['query'], requested_at=task['created_at'])
+    assert queue.finish_task(task, owner)
+    updated = service.fetch_detail(kind, selected)
+    assert updated['summary']['job_count'] == 9
+    assert updated['data_version'] != first['data_version']
+    assert not updated['meta']['report_data']['refreshing']
+    assert not updated['meta']['report_data']['refresh_failed']
 
 
 def test_page_refreshes_share_sampled_source_info_without_reusing_old_business_statistics(configured, monkeypatch):

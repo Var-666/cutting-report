@@ -1,4 +1,6 @@
 import { reportModuleBindings } from './report-module-helpers.mjs'
+import { useWorkshopConfirmation } from '../src/composables/useWorkshopConfirmation.ts'
+import { useWorkshopCorrection } from '../src/composables/useWorkshopCorrection.ts'
 import { renderComponent } from './vue-component-helpers.mjs'
 import * as Vue from 'vue'
 import { createRouter, createMemoryHistory, RouterView, useRoute, useRouter } from 'vue-router'
@@ -13,6 +15,7 @@ import {
   queryDate,
   queryDateRange,
   queryPositiveInteger,
+  queryText,
   sameRouteQuery,
 } from '../src/utils/reportRouteState.ts'
 
@@ -111,13 +114,18 @@ function reportResult(start = '2026-10-01', end = '2026-10-27', id = 'initial', 
 }
 
 // Run the page's real setup/watch/lifecycle code with memory-history navigation.
-async function mountReport(t, kind, { query = {}, refreshing = false, syncing = false } = {}) {
-  const name = kind === 'leadership' ? 'leadership-report' : 'equipment-report'
+function emptyWorkshop(start, end) {
+  return { report: { period_start: start, period_end: end, item_count: 0 }, items: [], total: 0,
+    page: 1, page_size: 10, project_names: [], worker_summaries: [], duration_distribution: [], status_distribution: [], top_cut_length_tasks: [] }
+}
+async function mountReport(t, kind, { query = {}, refreshing = false, syncing = false, mode = 'manager' } = {}) {
+  const name = `${kind}-report`
   const pending = []
+  const requests = []
   const exports = []
   const timers = new Map()
-  const held = { range: false, monthly: false, summary: false, tasks: false }
-  const clock = { today: '2026-10-27' }
+  const held = { range: false, monthly: false, summary: false, tasks: false, workshop: false }
+  const clock = { today: '2026-10-27', latest: '2026-10-26' }
   const chartUpdates = []
   let timerId = 0
   let state
@@ -125,31 +133,39 @@ async function mountReport(t, kind, { query = {}, refreshing = false, syncing = 
   const previousWindow = globalThis.window
   globalThis.window = { setTimeout: callback => { timers.set(++timerId, callback); return timerId }, clearTimeout: id => timers.delete(id), addEventListener() {}, removeEventListener() {} }
   const read = (type, start, end, options = {}) => {
-    if (!held[type]) return Promise.resolve({ ...reportResult(start, end, 'initial', refreshing), ...(type === 'summary' ? { syncing, missing_day_count: syncing ? 2 : 0 } : {}) })
+    requests.push({ type, start, end, force: options.force })
+    if (!held[type]) return Promise.resolve(type === 'workshop' ? emptyWorkshop(start, end)
+      : { ...reportResult(start, end, 'initial', refreshing), ...(type === 'summary' ? { syncing, missing_day_count: syncing ? 2 : 0 } : {}) })
     return new Promise((resolve, reject) => pending.push({ type, start, end, signal: options.signal, resolve: data => resolve(type === 'range' && kind === 'equipment' ? { task_report: data } : data), reject }))
   }
   const bindings = {
-    ...Vue, useRoute, useRouter, defineProps: () => ({}), defineEmits: () => (...args) => exports.push(args),
+    ...Vue, useRoute, useRouter, defineProps: () => ({ mode, user: { user_id: 'admin-1', role: 'admin' } }), defineEmits: () => (...args) => exports.push(args),
+    useWorkshopConfirmation, useWorkshopCorrection,
+    listWorkshopRangeTasks: (query, options) => read('workshop', query.startDate, query.endDate, options),
+    listWorkshopTasks: (query, options) => read('workshop', query.reportDate, query.reportDate, options),
+    generateWorkshopDailyReport: async () => ({}),
     ResizeObserver: class { observe() {} disconnect() {} },
     use() {}, BarChart: {}, LineChart: {}, GridComponent: {}, LegendComponent: {}, TooltipComponent: {}, CanvasRenderer: {},
     useDeviceSwitchQuery() {}, useReportChartTheme: () => ({ darkMode: Vue.ref(false), vars: Vue.ref({}), colors: Vue.ref({}) }),
     getLeadershipReport: (month, options) => read('monthly', `${month}-01`, clock.today, options),
     getLeadershipRange: (start, end, options) => read('range', start, end, options),
     getEnergyRange: async (start, end, options) => held.range ? read('range', start, end, options) : { task_report: reportResult(start, end) },
-    getLatestWorkshopProductionDate: async () => ({ report_date: clock.today }),
+    getLatestWorkshopProductionDate: async () => { requests.push({ type: 'latest' }); return { report_date: clock.latest } },
     getEnergyDay: async () => ({}), getTaskEnergyDay: (date, options) => read('tasks', date, date, options),
     getEnergyMonthlyRange: (start, end, options) => read('summary', start, end, options),
     init: () => ({ setOption: option => chartUpdates.push(option), dispose() {}, resize() {} }), createReportChartGrid: () => ({}),
     reportToday: () => clock.today, recentTwelveMonthStart: () => '2025-11-01',
     formatChineseDate: String, formatChineseMonth: String, formatChineseDateTime: String, formatDeviceDisplay: String,
     sortReportPeriods: rows => rows, taskProductionDate: () => '2026-10-27', deviceSelection: { id: 'Cutter01' },
-    mergeOwnedQuery, queryChoice, queryDateRange, sameRouteQuery,
+    mergeOwnedQuery, queryChoice, queryDateRange, queryPositiveInteger, queryText, sameRouteQuery,
   }
   Object.assign(bindings, reportModuleBindings(bindings))
-  const source = viewSource(kind === 'leadership' ? 'LeadershipReportView.vue' : 'EnergyPeriodReportView.vue').replace(/^import .*$/gm, '')
+  const source = viewSource(kind === 'leadership' ? 'LeadershipReportView.vue' : kind === 'workshop' ? 'WorkshopView.vue' : 'EnergyPeriodReportView.vue').replace(/^import .*$/gm, '')
   const data = kind === 'leadership' ? 'report' : 'taskDay'
   const load = kind === 'leadership' ? 'loadReport' : 'loadRange'
-  const setup = scriptFunction(...Object.keys(bindings), `${source}\nreturn { data: ${data}, load: ${load}, periodStart, periodEnd, appliedPeriodStart, appliedPeriodEnd, chartType, changeChartType, loading, error, pageActive, dateQueryDirty, exportReport${kind === 'leadership' ? ', refreshLoading, monthlyLoading, retryReport, monthlyPeriodStart, monthlyPeriodEnd' : ', monthlyReport, summaryPeriodStart, summaryPeriodEnd, loadDefaultRanges, periodPanel, getSummaryCount: () => summaryRefreshCount, setSummaryCount: value => { summaryRefreshCount = value }'} }`)
+  const exposed = kind === 'workshop' ? 'data: result, filters, appliedRouteState, loading, error, initializeReport'
+    : `data: ${data}, load: ${load}, periodStart, periodEnd, appliedPeriodStart, appliedPeriodEnd, chartType, changeChartType, loading, error, pageActive, dateQueryDirty, exportReport${kind === 'leadership' ? ', refreshLoading, monthlyLoading, retryReport, monthlyPeriodStart, monthlyPeriodEnd, refreshAnalysisReport' : ', monthlyReport, summaryPeriodStart, summaryPeriodEnd, loadDefaultRanges, periodPanel, getSummaryCount: () => summaryRefreshCount, setSummaryCount: value => { summaryRefreshCount = value }'}`
+  const setup = scriptFunction(...Object.keys(bindings), `${source}\nreturn { ${exposed} }`)
   const page = { setup() { mounts++; state = setup(...Object.values(bindings)); return () => Vue.h('div') } }
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/report', name, component: page }, { path: '/other', component: { render: () => Vue.h('div') } }] })
   await router.push({ name, query })
@@ -161,8 +177,45 @@ async function mountReport(t, kind, { query = {}, refreshing = false, syncing = 
   const unmount = () => { if (mounted) { app.unmount(); mounted = false } }
   t.after(() => { unmount(); if (previousWindow === undefined) delete globalThis.window; else globalThis.window = previousWindow })
   await flushReport()
-  return { state, router, pending, held, timers, chartUpdates, exports, clock, unmount, mounts: () => mounts, fire() { const [id, callback] = timers.entries().next().value; timers.delete(id); return callback() } }
+  return { state, router, pending, requests, held, timers, chartUpdates, exports, clock, unmount, mounts: () => mounts, fire() { const [id, callback] = timers.entries().next().value; timers.delete(id); return callback() } }
 }
+
+for (const kind of ['workshop', 'equipment']) {
+  test(`${kind}: an empty current day never falls back to the latest historical production date`, async t => {
+    const page = await mountReport(t, kind)
+    assert.ok(!page.requests.some(request => request.type === 'latest'))
+    const read = page.requests.find(request => request.type === (kind === 'workshop' ? 'workshop' : 'tasks'))
+    assert.equal(read.start, page.clock.today)
+    assert.equal(read.end, page.clock.today)
+    const rows = kind === 'workshop' ? page.state.data.value.items : page.state.data.value.records
+    assert.deepEqual(rows, [])
+  })
+
+  test(`${kind}: changing the default day clears cached historical rows before loading the empty new day`, async t => {
+    const page = await mountReport(t, kind)
+    if (kind === 'workshop') page.state.data.value.items = [{ task_id: 'previous-day' }]
+    else page.state.data.value.records = [{ task_id: 'previous-day' }]
+    await page.router.push('/other'); await flushReport()
+    page.clock.today = '2026-11-01'
+    page.held.workshop = page.held.tasks = page.held.summary = true
+    await page.router.push('/report'); await flushReport()
+    assert.equal(page.state.loading.value, true)
+    if (kind === 'workshop') assert.deepEqual(page.state.data.value.items, [])
+    else assert.equal(page.state.data.value, null)
+    for (const call of page.pending) call.resolve(call.type === 'workshop'
+      ? emptyWorkshop(call.start, call.end) : reportResult(call.start, call.end))
+    await flushReport(); await flushReport()
+    assert.equal(kind === 'workshop' ? page.state.filters.startDate : page.state.appliedPeriodStart.value, page.clock.today)
+    assert.deepEqual(kind === 'workshop' ? page.state.data.value.items : page.state.data.value.records, [])
+    assert.ok(!page.requests.some(request => request.type === 'latest'))
+  })
+}
+
+test('worker task confirmation keeps its existing latest production day selection', async t => {
+  const page = await mountReport(t, 'workshop', { mode: 'worker' })
+  assert.equal(page.state.filters.reportDate, page.clock.latest)
+  assert.ok(page.requests.some(request => request.type === 'latest'))
+})
 
 for (const kind of ['leadership', 'equipment']) {
   test(`${kind}: a retained default report follows the current day after month rollover`, async t => {
@@ -174,6 +227,11 @@ for (const kind of ['leadership', 'equipment']) {
     assert.equal(page.state.appliedPeriodStart.value, '2026-11-01')
     assert.equal(page.state.appliedPeriodEnd.value, '2026-11-01')
     assert.equal(page.state.data.value.period_end, '2026-11-01')
+    if (kind === 'leadership') {
+      assert.equal(page.state.monthlyPeriodStart.value, '2025-11-01')
+      assert.equal(page.state.monthlyPeriodEnd.value, '2026-11-01')
+      assert.equal(page.requests.at(-1).start, '2026-11-01')
+    }
   })
 
   test(`${kind}: returning immediately retains data while a delayed refresh runs and failure keeps that data`, async t => {
@@ -194,6 +252,14 @@ for (const kind of ['leadership', 'equipment']) {
     assert.match(state.error.value, /后台读取失败/)
   })
 }
+
+test('leadership analysis refresh keeps the applied range and forces current data reads', async t => {
+  const page = await mountReport(t, 'leadership', { query: rangeA })
+  await page.state.refreshAnalysisReport()
+  const rangeRead = page.requests.findLast(request => request.type === 'range')
+  assert.deepEqual(rangeRead, { type: 'range', start: rangeA.start, end: rangeA.end, force: true })
+  assert.equal(page.requests.at(-1).force, true)
+})
 
 function compiledLayout(name) {
   const descriptor = parse(readFileSync(new URL(`../src/layouts/${name}.vue`, import.meta.url), 'utf8')).descriptor

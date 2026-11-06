@@ -16,7 +16,7 @@ def test_snapshot_limit_rejection_has_no_row_and_scheduler_retries_after_capacit
         scheduler.start()
         with scheduler.scope():
             scheduler._schedule_snapshot('welding',payload,30)
-        assert not queue.snapshot_refresh_active('welding',payload)
+        assert queue.snapshot_refresh_status('welding',payload) == (False, False)
         with database.connect() as conn:
             assert conn.execute('SELECT count(*) AS n FROM background_tasks').fetchone()['n']==64
         with execution_scope(database,'worker:capacity-test',owner):
@@ -24,7 +24,7 @@ def test_snapshot_limit_rejection_has_no_row_and_scheduler_retries_after_capacit
             assert queue.finish_task(task,owner)
         with scheduler.scope():
             scheduler._schedule_snapshot('welding',payload,30)
-        assert queue.snapshot_refresh_active('welding',payload)
+        assert queue.snapshot_refresh_status('welding',payload) == (True, False)
         with database.connect() as conn:
             assert conn.execute("SELECT count(*) AS n FROM background_tasks WHERE status IN ('pending','running','deferred')").fetchone()['n']==64
             assert conn.execute("SELECT count(*) AS n FROM background_tasks WHERE status='completed'").fetchone()['n']==1

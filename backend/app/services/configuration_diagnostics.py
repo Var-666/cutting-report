@@ -210,7 +210,13 @@ class ConfigurationDiagnostics:
         return targets, invalid, errors
 
     def report(self, worker: dict) -> dict:
-        instances = worker.get('consumer_instances', [])
+        instances = [item for item in worker.get('consumer_instances', []) if item.get('state') in {'running', 'stalled'}]
+        worker_state = worker.get('state', 'missing')
+        consumer_error = None
+        if worker.get('consumer_capacity_shortfall', 0):
+            consumer_error = f"Consumer运行数量不足：期望{worker['consumer_expected_count']}个，当前正常{worker['consumer_running_count']}个，请检查进程与心跳。"
+        elif worker_state == 'degraded':
+            consumer_error = 'Consumer运行异常，请检查当前实例与心跳。'
         if instances:
             representative = next((item for item in instances if item.get('state') == 'running'), instances[0])
             worker = {**worker, **representative}
@@ -220,8 +226,6 @@ class ConfigurationDiagnostics:
         worker_available = worker.get("state") in {"running", "stalled"} and isinstance(other, dict) and isinstance(other.get("items"), dict)
         additional = {}
         for instance in instances:
-            if instance.get('state') == 'stopped':
-                continue
             remote = instance.get('configuration')
             available = instance.get('state') in {'running', 'stalled'} and isinstance(remote, dict) and isinstance(remote.get('items'), dict)
             additional['consumer:' + instance['instance_id']] = (
@@ -279,14 +283,14 @@ class ConfigurationDiagnostics:
                          **({key:remote.get(key) for key in ('loaded_at','hot_loaded_at','hot_revision','version')} if remote else {})}
                     for role,(status,remote,local) in additional.items()}
         consumer_versions = {role[9:]: versions.pop(role) for role in list(versions) if role.startswith('consumer:')}
-        consumer_versions.update({item['instance_id']: {'state':'stopped', 'available':False}
-                                  for item in instances if item.get('state') == 'stopped'})
+        if consumer_error:
+            errors.append(consumer_error)
         return {"categories": CATEGORIES, "items": rows, "errors": errors,
                 "precedence": "data/settings.env > 进程环境变量 > .env > 程序默认值；产线与连接只取统一配置",
                 "processes": {**versions, 'consumers': consumer_versions, "web": {key: web[key] for key in ("loaded_at", "hot_loaded_at", "hot_revision", "version")},
-                              "worker": {"state": worker.get("state", "missing"), "available": worker_available,
+                              "worker": {"state": worker_state, "available": worker_available,
                                          **({key: other.get(key) for key in ("loaded_at", "hot_loaded_at", "hot_revision", "version")} if worker_available else {})}},
-                "consistent": worker_available and all(remote is not None for _,remote,_ in additional.values()) and not any(row["process_mismatch"] for row in rows),
+                "consistent": worker_available and not consumer_error and all(remote is not None for _,remote,_ in additional.values()) and not any(row["process_mismatch"] for row in rows),
                 "notes": ["版本号标识各进程加载批次；一致性按实际配置逐项比较，包含凭据变更，不以版本号或脱敏文本判定。","只读快照不触发热更新、数据库连接或后台任务。", "Worker 状态来自独立心跳，缺失或过期时显示异常，不能视为已生效。",
                           "已生效表示与该进程环境下的保存目标一致；宿主机 .env 尚未注入的新值需先重新创建容器。",
                           "每条产线及共享业务通过显式 source_key 绑定数据源，不继承其他产线连接。"]}

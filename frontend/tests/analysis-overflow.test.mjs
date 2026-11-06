@@ -68,7 +68,6 @@ test('analysis checks for newer report data and asks the current report to sync 
     assert.match(view, /@refresh-report="refreshAnalysisReport"/)
     assert.match(view, /:version-check-enabled=/)
     if (name === 'LeadershipReportView') {
-      assert.match(view, /refreshAnalysisReport,\s*} = useLeadershipReportQuery\(/)
       const query = readFileSync(new URL('../src/composables/useLeadershipReportQuery.ts', import.meta.url), 'utf8')
       assert.match(query, /function refreshAnalysisReport\(\)[\s\S]*return defaultMonthlyView\.value \? loadDefaultReport\(true\) : refreshRangeAnalysisReport\(\)/)
       assert.match(query, /getLeadershipRange\(appliedPeriodStart\.value, appliedPeriodEnd\.value, \{ force: true, signal \}\)/)

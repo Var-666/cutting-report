@@ -49,14 +49,25 @@ function selectDayOption(value: string) {
   const [day, dateType] = value.split('|')
   if (day && (dateType === 'sent' || dateType === 'completed')) emit('select-day', day, dateType)
 }
+function selectChartDay(day: string, dateType?: 'sent' | 'completed') {
+  if (props.disabled || props.loading) return
+  const item = props.trend?.items.find(item => item.date === day)
+  if (!item) return
+  emit('select-day', day, dateType || (item.sent_count === 0 && item.completed_count > 0 ? 'completed' : 'sent'))
+}
 function draw() {
   if (!active || !element.value || !props.trend) return
   if (!chart) {
     chart = init(element.value, undefined, { renderer: 'svg' })
     chart.on('click', params => {
-      if (props.disabled || props.loading) return
-      const day = params.componentType === 'xAxis' ? String(params.value) : params.name
-      if (props.trend?.items.some(item => item.date === day)) emit('select-day', day, params.seriesName === '加工完成' ? 'completed' : 'sent')
+      if (params.componentType === 'xAxis') selectChartDay(String(params.value))
+      else if (params.componentType === 'series') selectChartDay(params.name, params.seriesName === '加工完成' ? 'completed' : 'sent')
+    })
+    chart.getZr().on('click', event => {
+      if (event.target || !chart?.containPixel({ gridIndex: 0 }, [event.offsetX, event.offsetY])) return
+      const index = Number(chart.convertFromPixel({ xAxisIndex: 0 }, event.offsetX))
+      const item = props.trend?.items[index]
+      if (item) selectChartDay(item.date)
     })
   }
   const items = props.trend.items

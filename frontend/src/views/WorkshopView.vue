@@ -297,12 +297,15 @@ async function initializeReport({ restoreQuery = false } = {}) {
   loading.value = true
   error.value = ''
   try {
-    const latest = await getLatestWorkshopProductionDate(reportToday(), { signal })
+    const selectedDate = reportToday()
+    const reportDate = isWorker.value
+      ? (await getLatestWorkshopProductionDate(selectedDate, { signal })).report_date
+      : selectedDate
     if (!pageActive.value || signal.aborted || sequence !== requestSequence) return
-    if (latest.report_date) {
-      filters.reportDate = latest.report_date
-      filters.startDate = latest.report_date
-      filters.endDate = latest.report_date
+    if (reportDate) {
+      filters.reportDate = reportDate
+      filters.startDate = reportDate
+      filters.endDate = reportDate
     }
     if (!isWorker.value) {
       filters.projectName = ''
@@ -540,9 +543,9 @@ const workerTableColumns = [
         <template #header-c0><NCheckbox :checked="allVisibleTasksSelected" :indeterminate="someVisibleTasksSelected" :disabled="!selectableTasks.length || loading || batchConfirmation.saving" aria-label="全选当前页待确认任务" @update:checked="toggleVisibleTasks($event)" /></template>
         <template #c0="{ row }"><div class="workshop-select-cell"><NCheckbox :checked="selectedTasks.has(row.task_id)" :disabled="Boolean(row.confirmed_by) || loading || batchConfirmation.saving" :aria-label="`选择任务 ${display(row.program_no)}`" @update:checked="setTaskSelected(row, $event)" /></div></template>
         <template #c1="{ row, index: rowIndex }">{{ (result.page - 1) * result.page_size + rowIndex + 1 }}</template>
-        <template #c2="{ row }">{{ row.project_code?.trim() || '非船' }}</template>
-        <template #c3="{ row }">{{ row.ship_no?.trim() || '非船' }}</template>
-        <template #c4="{ row }">{{ row.segment_name?.trim() || '非船' }}</template>
+        <template #c2="{ row }">{{ row.project_code?.trim() || '--' }}</template>
+        <template #c3="{ row }">{{ row.ship_no?.trim() || '--' }}</template>
+        <template #c4="{ row }">{{ row.segment_name?.trim() || '--' }}</template>
         <template #c5="{ row }"><div class="program-cell" :title="display(row.program_no)">{{ display(row.program_no) }}</div></template>
         <template #c6="{ row }">{{ number(row.cut_length) }}</template>
         <template #c7="{ row }">{{ number(row.groove_length) }}</template>

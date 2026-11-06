@@ -28,8 +28,8 @@ const batchTableColumns = [
         <div class="batch-confirmation-list">
           <AppReportTable :columns="batchTableColumns" :items="batchConfirmation.tasks" :row-key="row => row.task_id" :paginate="false">
         <template #c0="{ row, index: rowIndex }">{{ rowIndex + 1 }}</template>
-        <template #c1="{ row }">{{ row.project_code?.trim() || '非船' }}</template>
-        <template #c2="{ row }">{{ row.segment_name?.trim() || '非船' }}</template>
+        <template #c1="{ row }">{{ row.project_code?.trim() || '--' }}</template>
+        <template #c2="{ row }">{{ row.segment_name?.trim() || '--' }}</template>
         <template #c3="{ row }"><div :title="display(row.program_no)">{{ display(row.program_no) }}</div></template>
         <template #c4="{ row }">{{ time(row.production_time) }}</template>
       </AppReportTable>

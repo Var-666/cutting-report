@@ -95,6 +95,44 @@ def test_worker_versions_are_independent_and_missing_stale_is_not_effective(conf
         assert item(report, 'LLM_MAX_CONCURRENT')['processes']['worker']['value'] == '未知'
 
 
+def test_recreated_consumer_history_does_not_add_cards_or_configuration_errors(configured):
+    web = configured()
+    current = {**worker(web), 'instance_id':'current'}
+    historical = [{**worker(web, state), 'state':state, 'instance_id':state} for state in ('lost', 'stopped')]
+    status = {**worker(web), 'consumer_instances':[*historical, current],
+              'consumer_expected_count':1, 'consumer_running_count':1, 'consumer_capacity_shortfall':0}
+    report = web.report(status)
+    assert set(report['processes']['consumers']) == {'current'}
+    assert report['processes']['consumers']['current']['available']
+    assert all(set(row['processes']['consumers']) == {'current'} for row in report['items'])
+    assert not report['errors'] and report['consistent']
+    assert not any(row['status'] == 'error' for row in report['items'])
+    assert len(status['consumer_instances']) == 3
+
+
+@pytest.mark.parametrize('state', ['lost', 'stopped'])
+def test_only_historical_consumers_still_report_missing_capacity(configured, state):
+    web = configured()
+    previous = {**worker(web), 'state':state, 'instance_id':'previous'}
+    report = web.report({**previous, 'state':'unavailable', 'consumer_instances':[previous],
+        'consumer_expected_count':1, 'consumer_running_count':0, 'consumer_capacity_shortfall':1})
+    assert report['processes']['consumers'] == {}
+    assert not report['processes']['worker']['available']
+    assert report['processes']['worker']['state'] == 'unavailable'
+    assert report['errors'] == ['Consumer运行数量不足：期望1个，当前正常0个，请检查进程与心跳。']
+    assert not report['consistent']
+
+
+def test_stalled_consumer_remains_visible_and_abnormal(configured):
+    web = configured()
+    stalled = {**worker(web), 'state':'stalled', 'instance_id':'stalled'}
+    report = web.report({**worker(web), 'state':'degraded', 'consumer_instances':[stalled]})
+    assert report['processes']['consumers']['stalled']['state'] == 'stalled'
+    assert report['processes']['worker']['state'] == 'degraded'
+    assert report['errors'] == ['Consumer运行异常，请检查当前实例与心跳。']
+    assert not report['consistent']
+
+
 
 
 @pytest.mark.parametrize(('key', 'value'), [('LLM_MAX_CONCURRENT', '11'), ('APP_PORT', 'bad-secret'),

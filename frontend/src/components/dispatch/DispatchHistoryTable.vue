@@ -40,7 +40,8 @@ const historyTableColumns = [
   { key: 'c8', title: "魔盒UUID", width: 260, align: 'left' },
   { key: 'c9', title: "失败原因", width: 240, align: 'left' },
   { key: 'c10', title: "创建时间", width: 184, align: 'left' },
-  { key: 'c11', title: "成功派发时间", width: 184, align: 'left' }
+  { key: 'c11', title: "成功派发时间", width: 184, align: 'left' },
+  { key: 'c13', title: "加工完成时间", width: 184, align: 'left' }
 ] as const
 </script>
 
@@ -53,11 +54,12 @@ const historyTableColumns = [
         <template #c3="{ row: item }">{{ item.quantity }}</template>
         <template #c4="{ row: item }">{{ machineName(item.machine_ip) }}</template>
         <template #c5="{ row: item }"><NTag class="dispatch-status" :class="item.status" size="small" :type="item.status === 'failed' ? 'error' : 'info'">{{ item.status_label }}</NTag><NTag v-if="item.processing_status === 'completed'" type="success" size="small" :title="`加工完成时间：${formatHistoryTime(item.processing_finished_at)}；完成机床：${item.processing_finish_by || '--'}`">已完成</NTag></template>
-        <template #c7="{ row: item }"><code>{{ item.task_identifier || item.dispatch_id }}</code></template>
-        <template #c8="{ row: item }"><code>{{ item.remote_task_id || '--' }}</code></template>
+        <template #c7="{ row: item }">{{ item.task_identifier || item.dispatch_id }}</template>
+        <template #c8="{ row: item }">{{ item.remote_task_id || '--' }}</template>
         <template #c9="{ row: item }"><span class="history-error">{{ item.last_error || '--' }}</span></template>
         <template #c10="{ row: item }">{{ formatTime(item.created_at) }}</template>
         <template #c11="{ row: item }">{{ formatHistoryTime(item.sent_at) }}</template>
+        <template #c13="{ row: item }">{{ formatHistoryTime(item.processing_finished_at) }}</template>
       </AppReportTable>
 </template>
 

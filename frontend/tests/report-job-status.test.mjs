@@ -155,7 +155,7 @@ test('BM ship names: report form submits name separately from the unchanged proj
   assert.match(form, /全部船名/)
 })
 
-test('non-ship task display is consistent without changing missing task fields', () => {
+test('missing task fields display dashes consistently without changing source values', () => {
   const slots = [
     ['views/WorkshopView', { project_code: 'c2', ship_no: 'c3', segment_name: 'c4' }],
     ['views/EnergyPeriodReportView', { project_code: 'c1', ship_no: 'c2', segment_name: 'c3' }],
@@ -167,13 +167,14 @@ test('non-ship task display is consistent without changing missing task fields',
       const expression = template.match(new RegExp(`<template #${slot}="[^"]*">\\{\\{ (.*?) \\}\\}`))
       assert.ok(expression, `${file} ${slot}`)
       const render = new Function('row', `return (${expression[1]})`)
-      for (const value of [null, '', '   ']) {
+      for (const value of [undefined, null, '', '   ']) {
         const row = { project_code: 'CMYZ0170', ship_no: '18600DWT-02', segment_name: '804C', [field]: value }
-        assert.equal(render(row), '非船')
+        assert.equal(render(row), '--')
         assert.equal(row[field], value)
       }
       const row = { project_code: 'CMYZ0170', ship_no: '18600DWT-02', segment_name: '804C' }
       assert.equal(render(row), row[field])
+      assert.equal(render({ [field]: '非船' }), '非船')
     }
   }
 })

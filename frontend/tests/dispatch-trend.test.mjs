@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
 import { afterEach, test } from 'node:test'
+import * as Vue from 'vue'
 import { ref } from 'vue'
+import { readFileSync } from 'node:fs'
+import { compileScript, parse } from '@vue/compiler-sfc'
+import { scriptFunction } from './typescript-helpers.mjs'
 import { useCuttingDispatchHistory } from '../src/composables/useCuttingDispatchHistory.ts'
 import { renderComponent } from './vue-component-helpers.mjs'
 
@@ -19,6 +23,75 @@ function dataFor(url) {
   if (url.pathname.endsWith('/trend')) return { ...period, timezone: 'Asia/Shanghai', machine_ips: ['10.0.0.2'], items: days }
   return { page: Number(query.get('page')), total: 12, items: [{ dispatch_id: query.get('start_date') || 'all' }] }
 }
+
+function mountTrend(t, trend, onSelect) {
+  const clicks = {}, canvasClicks = {}, selections = []
+  const props = Vue.reactive({ trend, filters: period, selectedDay: '', loading: false, error: '',
+    machineIps: [], machineName: () => '', disabled: false })
+  const chart = { on: (name, callback) => { clicks[name] = callback },
+    getZr: () => ({ on: (name, callback) => { canvasClicks[name] = callback } }),
+    setOption() {}, resize() {}, dispose() {}, containPixel: () => true, convertFromPixel: () => 0 }
+  const stub = { setup: (_props, { slots }) => () => Vue.h('div', slots.default?.()) }
+  const bindings = { init: () => chart, use() {}, BarChart: {}, GridComponent: {}, TooltipComponent: {},
+    LegendComponent: {}, SVGRenderer: {}, NButton: stub, AppSelect: stub, ReportPeriodPicker: stub, ReportPanelState: stub,
+    useThemeVars: () => Vue.ref({}), ResizeObserver: class { observe() {} disconnect() {} } }
+  const descriptor = parse(readFileSync(new URL('../src/components/dispatch/DispatchHistoryTrend.vue', import.meta.url), 'utf8')).descriptor
+  const code = compileScript(descriptor, { id: 'dispatch-trend-clicks', inlineTemplate: true }).content
+    .replace(/import\s*\{([^}]+)\}\s*from\s*['"]vue['"]/g, (_, names) => {
+      for (const name of names.split(',')) {
+        const [original, alias = original] = name.trim().split(/\s+as\s+/)
+        bindings[alias] = Vue[original]
+      }
+      return ''
+    }).replace(/^import .*$/gm, '').replace('export default', 'return')
+  const Component = scriptFunction(...Object.keys(bindings), code)(...Object.values(bindings))
+  const renderer = Vue.createRenderer({ createElement: () => ({ style: {} }), createComment: () => ({}), createText: () => ({}),
+    insert() {}, remove() {}, setText() {}, setElementText() {}, parentNode: () => null, nextSibling: () => null, patchProp() {} })
+  const app = renderer.createApp({ render: () => Vue.h(Component, { ...props,
+    onSelectDay: (...args) => { selections.push(args); onSelect?.(...args) } }) })
+  app.mount({})
+  t.after(() => app.unmount())
+  return { clicks, canvasClicks, chart, selections, props }
+}
+
+test('completion-only chart bars, dates and blank column areas open completed records', async t => {
+  const trend = { ...period, timezone: 'Asia/Shanghai', machine_ips: [],
+    items: [{ date: '2026-11-02', sent_count: 0, completed_count: 3 }] }
+  const page = state(), requests = []
+  page.trend.value = trend
+  globalThis.fetch = async value => {
+    const url = new URL(value, 'http://localhost'); requests.push(url)
+    return response({ page: 1, total: 1, items: [{ dispatch_id: 'previously-dispatched-task' }] })
+  }
+  const chart = mountTrend(t, trend, (...args) => page.selectHistoryDay(...args))
+  for (const click of [
+    () => chart.clicks.click({ componentType: 'series', seriesType: 'bar', seriesName: '加工完成', name: '2026-11-02' }),
+    () => chart.clicks.click({ componentType: 'xAxis', value: '2026-11-02' }),
+    () => chart.canvasClicks.click({ offsetX: 100, offsetY: 100 }),
+  ]) {
+    click()
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal(requests.at(-1).searchParams.get('date_type'), 'completed')
+    assert.equal(requests.at(-1).searchParams.get('start_date'), '2026-11-02')
+    assert.equal(page.histories.value[0].dispatch_id, 'previously-dispatched-task')
+  }
+  assert.deepEqual(chart.selections, Array(3).fill(['2026-11-02', 'completed']))
+})
+
+test('chart selection preserves sent bars and skips busy, out-of-grid and duplicate canvas clicks', async t => {
+  const chart = mountTrend(t, { ...period, timezone: 'Asia/Shanghai', machine_ips: [],
+    items: [{ date: '2026-11-02', sent_count: 5, completed_count: 3 }] })
+  chart.clicks.click({ componentType: 'series', seriesType: 'bar', seriesName: '成功派发', name: '2026-11-02' })
+  chart.clicks.click({ componentType: 'xAxis', value: '2026-11-02' })
+  assert.deepEqual(chart.selections, [['2026-11-02', 'sent'], ['2026-11-02', 'sent']])
+  chart.canvasClicks.click({ target: {}, offsetX: 100, offsetY: 100 })
+  chart.chart.containPixel = () => false
+  chart.canvasClicks.click({ offsetX: 100, offsetY: 100 })
+  chart.props.disabled = true
+  await Vue.nextTick()
+  chart.clicks.click({ componentType: 'xAxis', value: '2026-11-02' })
+  assert.equal(chart.selections.length, 2)
+})
 
 test('default trend requests seven inclusive Shanghai days and clearing restores that range', async t => {
   t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-10-31T16:30:00Z') })
@@ -170,6 +243,25 @@ test('history success time displays the same configured day as the trend and fil
   const html = await renderComponent('components/dispatch/DispatchHistoryTable', props)
   assert.ok(html.includes('成功派发时间'))
   assert.ok(html.includes('2026年11月2日 00:30:00'))
+})
+
+for (const [value, timezone, expected] of [
+  ['2026-11-06T00:47:03+08:00', 'Asia/Shanghai', '2026年11月6日 00:47:03'],
+  ['2026-11-05T16:30:00Z', 'Asia/Shanghai', '2026年11月6日 00:30:00'],
+  ['2026-11-06T00:47:03+08:00', 'America/Los_Angeles', '2026年11月5日 08:47:03'],
+  [null, 'Asia/Shanghai', '--'],
+  [undefined, 'Asia/Shanghai', '--'],
+  ['bad-time', 'Asia/Shanghai', '--'],
+]) test(`completion time column renders ${String(value)} in ${timezone}`, async () => {
+  const html = await renderComponent('components/dispatch/DispatchHistoryTable', {
+    histories: [{ dispatch_id: 'time-column', project_id: 'P1', document_no: 'S409P120A601.gen',
+      quantity: 1, machine_ip: '10.147.1.40', status: 'sent', status_label: '已派发',
+      created_at: '2026-11-05T08:00:00+08:00', processing_finished_at: value }],
+    historyTotal: 1, historyPage: 1, historyPageSize: 10, projectOptions: [], machineName: () => '切割机', loading: false, timezone,
+  })
+  assert.ok(html.includes('加工完成时间'))
+  const cells = [...html.matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/g)]
+  assert.ok(cells.at(-1)?.[1].includes(expected), 'the completion timestamp is visible in its own table cell')
 })
 
 test('completed-day selection keeps its own date filter while the existing sent-day selection remains available', async () => {
