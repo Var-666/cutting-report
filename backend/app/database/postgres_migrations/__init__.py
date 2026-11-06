@@ -1,4 +1,4 @@
-"""Explicit, transactional PostgreSQL migrations, separate from SQLite history."""
+"""Explicit, transactional PostgreSQL migrations, for the application state database."""
 from hashlib import sha256
 import json
 from pathlib import Path
@@ -7,7 +7,7 @@ from psycopg import Connection
 
 DIRECTORY = Path(__file__).parent
 VERSIONS = ('001_initial', '002_runtime', '003_consumer_scaling', '004_legacy_workshop_audits', '005_dispatch_file_location', '006_dispatch_completion')
-# Shared by schema installation and offline imports; released by transaction/OS exit.
+# Serializes schema installation and stopped-Consumer maintenance; released by transaction/OS exit.
 MIGRATION_LOCK = 740314001
 
 
@@ -16,7 +16,7 @@ class MigrationError(RuntimeError):
 
 
 def prepare_consumers(database) -> dict:
-    """Offline P6/SQLite cutover after import verification; never part of startup."""
+    """Stopped-Consumer protocol cutover; never part of startup."""
     with database.connect() as connection:
         if connection.execute('SELECT current_user AS name').fetchone()['name'] != 'cutting_migrator':
             raise MigrationError('Consumer切换必须显式使用cutting_migrator')

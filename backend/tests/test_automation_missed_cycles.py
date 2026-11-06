@@ -1,6 +1,6 @@
 import pytest
 
-from test_automation_recovery import workflow, NOW, STAMP
+from tests.automation_fixtures import NOW, STAMP
 
 
 def backlog_schedule(workflow, **changes):

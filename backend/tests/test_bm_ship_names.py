@@ -18,7 +18,7 @@ from app.core.report_deadline import ReportOperationTimeout
 from app.database.bm_projects import BmProjectRepository
 from app.database.source_registry import SourceConflict
 from app.database.sqlserver import SqlServerClient
-from app.database.workshop import WorkshopRepository, DailyReportRecordMismatchError
+from app.database.workshop import WorkshopRepository
 from app.models.database_sources import DatabaseSourceRequest
 from app.models.domain import ReportFilter, WorkshopRecord
 from app.services.application_runtime import build_runtime
@@ -133,10 +133,12 @@ def test_snapshot_stores_separate_ship_name_and_backfills_without_revision_or_au
     assert after.snapshot_revision == before.snapshot_revision
     assert after.confirmed_by == before.confirmed_by == '管理员'
     assert repo.get_confirmations(['1'])['1'] == before_confirmation
-    with pytest.raises(DailyReportRecordMismatchError):
-        repo.sync_daily_report(report_date='2026-11-01',source_mode='sqlserver',
-            records=[replace(record(),work_time=Decimal('99'),ship_no='wrong')],user=admin,now=now)
-    assert repo.get_daily_report_records('2026-11-01')[1][0].ship_no == '18600DWT-02'
+    repo.sync_daily_report(report_date='2026-11-01',source_mode='sqlserver',
+        records=[replace(record(),work_time=Decimal('99'))],user=admin,now=now)
+    changed = repo.get_daily_report_records('2026-11-01')[1][0]
+    assert changed.ship_no == '18600DWT-02' and changed.work_time == Decimal('99')
+    assert changed.snapshot_revision == after.snapshot_revision + 1
+    assert repo.get_confirmations(['1'])['1'] == before_confirmation
     # All snapshot insert paths: initial, append, and fill a previously empty report.
     repo.sync_daily_report(report_date='2026-11-01',source_mode='sqlserver',records=[record(),replace(record('2'),ship_no='Second ship')],user=admin,now=now)
     assert repo.get_daily_report_records('2026-11-01')[1][1].ship_no == 'Second ship'
@@ -192,20 +194,6 @@ def test_runtime_range_report_keeps_tasks_and_device_confirmations_when_bm_is_do
             assert row['cut_length'] == 1.2 and row['work_time'] == 60
     finally:
         runtime.database_runtime.close()
-
-
-def test_migration_preserves_legacy_project_confirmations_and_revision(tmp_path):
-    from app.database.migrations.v014_workshop_ship_names import upgrade
-    from app.database.sqlite_history import SQLiteHistory
-    with SQLiteHistory(tmp_path/'legacy.db').connect() as connection:
-        connection.execute('''CREATE TABLE workshop_report_items(
-            project_name TEXT, confirmed_by TEXT, snapshot_revision INTEGER)''')
-        connection.execute("INSERT INTO workshop_report_items VALUES ('CMYZ0170','管理员',1)")
-        upgrade(connection)
-        upgrade(connection)
-        row = connection.execute('SELECT * FROM workshop_report_items').fetchone()
-        assert row['project_name'] == row['ship_no'] == 'CMYZ0170'
-        assert row['confirmed_by'] == '管理员' and row['snapshot_revision'] == 1
 
 
 def test_bm_runtime_registration_hot_reload_protection_and_old_request(postgres_state, tmp_path,monkeypatch):

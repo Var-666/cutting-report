@@ -112,7 +112,7 @@ class WorkshopReportRepository(WorkshopScopeRepository):
         now: str,
         scope_machine_no: str | None = None,
     ) -> dict[str, Any]:
-        """Create or append a snapshot in one transaction, including first-create races."""
+        """Refresh task data and append new tasks atomically, preserving confirmations."""
         selected_scope = self.require_scope()
         if scope_machine_no is not None and scope_machine_no != selected_scope:
             raise DailyReportScopeMismatchError("日报范围与设备上下文不一致")
@@ -248,41 +248,36 @@ class WorkshopReportRepository(WorkshopScopeRepository):
                 }
                 existing_ids = set(existing_rows)
                 unique_records: list[WorkshopRecord] = []
-                mismatched_task_ids: list[str] = []
-                project_backfills: list[tuple[str, str]] = []
+                task_updates: list[tuple[Any, ...]] = []
                 ship_backfills: list[tuple[str, str]] = []
                 for record in records:
                     task_id = str(record.task_id)
                     expected = _snapshot_values(record, report_date)
                     if task_id in existing_rows:
                         existing = existing_rows[task_id]
-                        if record.ship_no and existing.get('ship_no') in (None, existing.get('project_name')):
+                        if record.ship_no and record.ship_no != existing.get('ship_no') and existing.get('ship_no') in (None, existing.get('project_name')):
                             ship_backfills.append((record.ship_no, existing['report_item_id']))
                         if not _snapshot_values_equal(existing, expected):
-                            # Only repair a missing identifier; task data and confirmations stay intact.
-                            if (
+                            project_backfill_only = (
                                 not (existing.get("project_name") or "").strip()
                                 and expected["project_name"]
                                 and _snapshot_values_equal(existing, {
                                     field: value for field, value in expected.items() if field != "project_name"
                                 })
-                            ):
-                                project_backfills.append((expected["project_name"], existing["report_item_id"]))
-                            else:
-                                mismatched_task_ids.append(task_id)
+                            )
+                            revision = int(existing['snapshot_revision']) + (0 if project_backfill_only else 1)
+                            task_updates.append((*expected.values(), revision, existing['report_item_id']))
                         continue
                     unique_records.append(record)
-                if mismatched_task_ids:
-                    shown = "、".join(mismatched_task_ids[:10])
-                    suffix = "等" if len(mismatched_task_ids) > 10 else ""
-                    raise DailyReportRecordMismatchError(
-                        f"日报任务与生产源数据不一致：{shown}{suffix}；请检查数据源或采集配置"
-                    )
-                if project_backfills:
+                if task_updates:
                     with connection.cursor() as cursor:
                         cursor.executemany(
-                            "UPDATE workshop_report_items SET project_name = %s WHERE report_item_id = %s",
-                            project_backfills,
+                            """UPDATE workshop_report_items
+                            SET project_name=%s, segment_name=%s, program_no=%s, cut_length=%s,
+                                groove_length=%s, work_time=%s, production_time=%s, remark=%s,
+                                production_date=%s, snapshot_revision=%s
+                            WHERE report_item_id=%s""",
+                            task_updates,
                         )
                 if ship_backfills:
                     with connection.cursor() as cursor:
@@ -319,6 +314,7 @@ class WorkshopReportRepository(WorkshopScopeRepository):
                                 for index, record in enumerate(unique_records, start=1)
                             ],
                         )
+                if unique_records or task_updates or ship_backfills:
                     connection.execute(
                         "UPDATE workshop_reports SET item_count = %s, generated_by_id = %s, generated_by_name = %s, generated_at = %s WHERE report_id = %s",
                         (len(existing_ids) + len(unique_records), user["user_id"], user["display_name"], now, report["report_id"]),

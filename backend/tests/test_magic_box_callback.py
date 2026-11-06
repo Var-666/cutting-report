@@ -10,7 +10,7 @@ import pytest
 
 from app.api.cutting import callback_router, router
 from app.models.cutting_contracts import CuttingDispatch
-from tests.test_cutting_dispatch import _service
+from tests.dispatch_fixtures import dispatch_service as _service
 
 
 @pytest.mark.parametrize(('body', 'content_type', 'field', 'error_type', 'input_type', 'invalid_value'), [

@@ -1,18 +1,14 @@
 <script setup lang="ts">
+import { useEnergyReportQuery } from '../composables/useEnergyReportQuery'
 import { useEnergyReportData } from '../composables/useEnergyReportData'
 import { useEnergyReportCharts } from '../composables/useEnergyReportCharts'
 import AppReportTable from '../components/AppReportTable.vue'
 import type { ReportCreateRequest } from '../types/reports'
 
-import type { EnergyPeriodReport, TaskEnergyReport } from '../types/energy'
 import type { ExportFormat } from '../types/api'
 
 
-import { toError } from '../utils/errors'
-import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
-import { getEnergyDay, getEnergyMonthlyRange, getEnergyRange, getTaskEnergyDay } from '../api/energy.ts'
-import { recentTwelveMonthStart, reportToday } from '../api/reportDates.ts'
+import { nextTick, onActivated, onBeforeUnmount, onDeactivated, watch } from 'vue'
 import AnalysisPanel from '../components/AnalysisPanel.vue'
 import AppIcon from '../components/AppIcon.vue'
 import MetricSparkline from '../components/MetricSparkline.vue'
@@ -20,41 +16,14 @@ import ReportFeedback from '../components/ReportFeedback.vue'
 import ReportTrendPanel from '../components/ReportTrendPanel.vue'
 import StandardReportQuery from '../components/StandardReportQuery.vue'
 import { formatChineseDateTime } from '../utils/dateDisplay.ts'
-import { useDeviceSwitchQuery } from '../composables/useDeviceSwitchQuery.ts'
-import { mergeOwnedQuery, queryChoice, queryDateRange, sameRouteQuery } from '../utils/reportRouteState.ts'
 defineProps({ exporting: Boolean })
 const emit = defineEmits<{ export: [payload: ReportCreateRequest, format: ExportFormat] }>()
-const route = useRoute()
-const router = useRouter()
-const today = reportToday()
-const anchorDate = ref(today)
-const periodStart = ref(today)
-const periodEnd = ref(today)
-const appliedPeriodStart = ref(today)
-const appliedPeriodEnd = ref(today)
-const summaryPeriodStart = ref(recentTwelveMonthStart(today))
-const summaryPeriodEnd = ref(today)
-const rangeQueryApplied = ref(false)
-const taskDay = ref<TaskEnergyReport | null>(null)
-const monthlyReport = ref<EnergyPeriodReport | null>(null)
-const chartType = ref(queryChoice(route.query.chart, ['bar_line', 'bar', 'line'], 'bar_line'))
-const energyChartOptions = [
-  { value: 'bar_line', label: '柱线组合' },
-  { value: 'bar', label: '双柱状图' },
-  { value: 'line', label: '双折线图' },
-]
-const loading = ref(false)
-const summaryLoading = ref(false)
-const error = ref('')
-const pageActive = ref(true)
-let controller: AbortController | null = null
-let backgroundController: AbortController | null = null
-let refreshController: AbortController | null = null
-let requestSequence = 0
-let refreshRequestSequence = 0
-let summaryRefreshTimer: number | null = null
-let summaryRefreshCount = 0
-let routeStateReady = false
+const {
+  anchorDate, periodStart, periodEnd, appliedPeriodStart, appliedPeriodEnd,
+  summaryPeriodStart, summaryPeriodEnd, taskDay, monthlyReport, chartType, loading, summaryLoading,
+  error, pageActive, rangeQueryApplied, dateQueryDirty, analysisReady,
+  loadRange, loadDefaultRanges, changeChartType, initializeReport, retryReport, refreshAnalysisReport,
+} = useEnergyReportQuery()
 
 const {
   taskRows, taskChartRows, summaryRows, summaryChartRows, month,
@@ -64,219 +33,16 @@ const {
 } = useEnergyReportData({ taskDay, monthlyReport, summaryPeriodStart, summaryPeriodEnd })
 const { taskPanel, periodPanel, renderCharts, resizeCharts, disposeCharts, startResizeListening, stopResizeListening, chartsMissing } = useEnergyReportCharts({ taskDay, monthlyReport, taskChartRows, summaryChartRows, units, format, chartType, pageActive })
 
-const routeQueryKeys = ['start', 'end', 'chart']
-const dateQueryDirty = computed(() => (
-  periodStart.value !== appliedPeriodStart.value || periodEnd.value !== appliedPeriodEnd.value
-))
-
-function routeStateQuery() {
-  return mergeOwnedQuery(route.query, routeQueryKeys, {
-    start: rangeQueryApplied.value ? appliedPeriodStart.value : '',
-    end: rangeQueryApplied.value ? appliedPeriodEnd.value : '',
-    chart: chartType.value === 'bar_line' ? '' : chartType.value,
-  })
-}
-
-useDeviceSwitchQuery('equipment-report', () => ({
-  ...routeStateQuery(), start: appliedPeriodStart.value, end: appliedPeriodEnd.value,
-}))
-
-async function syncRouteState() {
-  const query = routeStateQuery()
-  if (sameRouteQuery(query, route.query)) return
-  await router.push({ query })
-}
-
-function cancelReportRequest() {
-  requestSequence += 1
-  controller?.abort()
-  controller = null
-  loading.value = false
-  summaryLoading.value = false
-}
-
-async function changeChartType(value: string) {
-  chartType.value = value
-  const query = mergeOwnedQuery(route.query, ['chart'], { chart: value === 'bar_line' ? '' : value })
-  if (loading.value) Object.assign(query, { start: periodStart.value, end: periodEnd.value })
-  if (pageActive.value && !sameRouteQuery(query, route.query)) await router.push({ query })
-}
-
-function beginRequest({ preserveSummary = false } = {}) {
-  cancelReportRequest()
-  if (!preserveSummary) {
-    stopSummaryRefresh()
-    backgroundController?.abort()
-    backgroundController = null
-  }
-  controller = new AbortController()
-  return { sequence: requestSequence, signal: controller.signal }
-}
-
-function requestIsCurrent(sequence: number, signal: AbortSignal) {
-  return pageActive.value && !signal.aborted && sequence === requestSequence
-}
+const energyChartOptions = [
+  { value: 'bar_line', label: '柱线组合' },
+  { value: 'bar', label: '双柱状图' },
+  { value: 'line', label: '双折线图' },
+]
 const summaryTitle = '近12个月月度能耗汇总'
 const summaryDateHeading = '月份'
 const summaryChartLabel = '月度能耗图'
 const summaryTableLabel = '近12个月月度能耗汇总表'
 const summaryEmptyText = '近12个月暂无月度汇总'
-const analysisReady = computed(() => Boolean(
-  pageActive.value
-  && taskDay.value
-  && monthlyReport.value?.analysis_source_version
-  && taskDay.value.period_start === appliedPeriodStart.value
-  && taskDay.value.period_end === appliedPeriodEnd.value
-  && !loading.value
-  && !summaryLoading.value
-))
-
-async function loadRange(force = false, { syncRoute = true, useAppliedPeriod = false } = {}) {
-  const requestedStart = useAppliedPeriod ? appliedPeriodStart.value : periodStart.value
-  const requestedEnd = useAppliedPeriod ? appliedPeriodEnd.value : periodEnd.value
-  if (!requestedStart || !requestedEnd) return
-  if (requestedEnd < requestedStart) {
-    error.value = '结束日期不能早于开始日期'
-    return
-  }
-  const { sequence, signal } = beginRequest({ preserveSummary: true })
-  loading.value = true
-  error.value = ''
-  try {
-    const result = await getEnergyRange(requestedStart, requestedEnd, { force, signal })
-    if (!requestIsCurrent(sequence, signal)) return
-    taskDay.value = result.task_report
-    appliedPeriodStart.value = requestedStart
-    appliedPeriodEnd.value = requestedEnd
-    rangeQueryApplied.value = true
-    await nextTick()
-    if (!requestIsCurrent(sequence, signal)) return
-    renderCharts({ summary: false })
-    if (syncRoute) await syncRouteState()
-  } catch (caught) {
-    const exception = toError(caught)
-    if (exception.name !== 'AbortError' && sequence === requestSequence) error.value = exception.message
-  } finally {
-    if (sequence === requestSequence) {
-      loading.value = false
-      controller = null
-    }
-  }
-}
-
-function stopSummaryRefresh() {
-  if (summaryRefreshTimer) window.clearTimeout(summaryRefreshTimer)
-  summaryRefreshTimer = null
-  refreshRequestSequence += 1
-  refreshController?.abort()
-  refreshController = null
-}
-
-async function applyMonthlySummary(summaryResult: EnergyPeriodReport) {
-  if (!pageActive.value) return
-  monthlyReport.value = summaryResult
-  await nextTick()
-  renderCharts()
-  scheduleSummaryRefresh(summaryResult)
-}
-
-function scheduleSummaryRefresh(summaryResult: EnergyPeriodReport) {
-  if (summaryRefreshTimer || refreshController || !pageActive.value || !summaryResult?.syncing
-      || !summaryResult?.missing_day_count || summaryRefreshCount >= 600) return
-  const requestedStart = summaryPeriodStart.value
-  const requestedEnd = summaryPeriodEnd.value
-  const sequence = refreshRequestSequence
-  const current = () => pageActive.value && sequence === refreshRequestSequence
-    && requestedStart === summaryPeriodStart.value && requestedEnd === summaryPeriodEnd.value
-  summaryRefreshTimer = window.setTimeout(async () => {
-    if (!current()) return
-    summaryRefreshTimer = null
-    summaryRefreshCount += 1
-    const controller = new AbortController()
-    refreshController = controller
-    try {
-      const refreshed = await getEnergyMonthlyRange(requestedStart, requestedEnd, { force: true, signal: controller.signal })
-      if (!current() || controller.signal.aborted) return
-      await applyMonthlySummary(refreshed)
-    } catch (caught) {
-      const exception = toError(caught)
-      if (exception.name === 'AbortError') return
-      // Keep the last valid summary and retry within the existing attempt limit.
-    } finally {
-      if (refreshController === controller) {
-        refreshController = null
-        if (current() && !controller.signal.aborted) scheduleSummaryRefresh(monthlyReport.value || summaryResult)
-      }
-    }
-  }, 1000)
-}
-
-async function loadDefaultRanges(force = false) {
-  stopSummaryRefresh()
-  summaryRefreshCount = 0
-  const { sequence, signal } = beginRequest()
-  loading.value = true
-  summaryLoading.value = true
-  error.value = ''
-  const selectedDate = periodStart.value
-  const recentStart = recentTwelveMonthStart(selectedDate)
-  if (appliedPeriodStart.value !== selectedDate || appliedPeriodEnd.value !== selectedDate) taskDay.value = null
-  if (summaryPeriodStart.value !== recentStart || summaryPeriodEnd.value !== selectedDate) monthlyReport.value = null
-  appliedPeriodStart.value = selectedDate
-  appliedPeriodEnd.value = selectedDate
-  summaryPeriodStart.value = recentStart
-  summaryPeriodEnd.value = selectedDate
-  rangeQueryApplied.value = false
-
-  const showError = (exception: Error) => {
-    if (exception.name !== 'AbortError' && requestIsCurrent(sequence, signal)) error.value ||= exception.message
-  }
-  const taskRequest = getTaskEnergyDay(selectedDate, { force, signal })
-    .then(async (taskResult) => {
-      if (!requestIsCurrent(sequence, signal)) return
-      taskDay.value = {
-        ...taskResult,
-        period_start: selectedDate,
-        period_end: selectedDate,
-      }
-      await nextTick()
-      renderCharts()
-    })
-    .catch(showError)
-  const summaryRequest = getEnergyMonthlyRange(recentStart, selectedDate, { force, signal })
-    .then(async (summaryResult) => {
-      if (!requestIsCurrent(sequence, signal)) return
-      await applyMonthlySummary(summaryResult)
-    })
-    .catch(showError)
-    .finally(() => {
-      if (sequence === requestSequence) summaryLoading.value = false
-    })
-
-  // Daily meter synchronization is independent from first paint. Existing
-  // monthly snapshots render first; the current month refreshes silently once
-  // the live meter request finishes.
-  backgroundController = new AbortController()
-  const syncController = backgroundController
-  const syncSignal = syncController.signal
-  getEnergyDay(selectedDate, { signal: syncSignal })
-    .then(() => getEnergyMonthlyRange(recentStart, selectedDate, { signal: syncSignal }))
-    .then(async (summaryResult) => {
-      if (!pageActive.value || syncSignal.aborted) return
-      await applyMonthlySummary(summaryResult)
-    })
-    .catch(() => {})
-    .finally(() => {
-      if (backgroundController === syncController) backgroundController = null
-    })
-
-  await Promise.allSettled([taskRequest, summaryRequest])
-  if (requestIsCurrent(sequence, signal)) {
-    loading.value = false
-    controller = null
-  }
-}
-
 function exportReport(format: ExportFormat = 'html') {
   if (!taskDay.value || loading.value) return
   emit('export', {
@@ -294,145 +60,23 @@ function exportReport(format: ExportFormat = 'html') {
   }, format)
 }
 
-function pause(dispose = false) {
-  if (pageActive.value) {
-    pageActive.value = false
-    cancelReportRequest()
-    backgroundController?.abort()
-    backgroundController = null
-    loading.value = false
-    summaryLoading.value = false
-    stopSummaryRefresh()
-    stopResizeListening()
-  }
-  if (dispose) disposeCharts()
-}
-
-async function initializeReport({ restoreQuery = false } = {}) {
-  if (!pageActive.value) return
-  const requestedQuery = route.query
-  const requestedRange = restoreQuery ? queryDateRange(route.query, { maxDays: 31 }) : null
-  const selectedDate = reportToday()
-  anchorDate.value = selectedDate
-  periodStart.value = selectedDate
-  periodEnd.value = selectedDate
-  await loadDefaultRanges()
-  if (requestedRange && pageActive.value && route.query === requestedQuery) {
-    periodStart.value = requestedRange.start
-    periodEnd.value = requestedRange.end
-    await loadRange(false, { syncRoute: false })
-  }
-}
-
-async function restoreRouteState({ preserveDraft = false } = {}) {
-  if (route.name !== 'equipment-report') return false
-  cancelReportRequest()
-  const range = queryDateRange(route.query, { maxDays: 31 })
-  const nextChartType = queryChoice(route.query.chart, ['bar_line', 'bar', 'line'], 'bar_line')
-  chartType.value = nextChartType
-
-  if (range) {
-    const needsLoad = !taskDay.value || !monthlyReport.value || !rangeQueryApplied.value || appliedPeriodStart.value !== range.start || appliedPeriodEnd.value !== range.end
-    if (!preserveDraft || needsLoad) {
-      periodStart.value = range.start
-      periodEnd.value = range.end
-    }
-    if (!taskDay.value || !monthlyReport.value) {
-      await initializeReport({ restoreQuery: true })
-      return true
-    }
-    if (!rangeQueryApplied.value || appliedPeriodStart.value !== range.start || appliedPeriodEnd.value !== range.end) {
-      await loadRange(false, { syncRoute: false })
-      return true
-    }
-    return false
-  }
-
-  if (!taskDay.value || !monthlyReport.value || rangeQueryApplied.value) {
-    await initializeReport()
-    return true
-  }
-  if (!preserveDraft) {
-    periodStart.value = appliedPeriodStart.value
-    periodEnd.value = appliedPeriodEnd.value
-  }
-  return false
-}
-
-function retryReport() {
-  return rangeQueryApplied.value ? loadRange(false) : initializeReport()
-}
-
-async function refreshRangeAnalysisReport() {
-  const { sequence, signal } = beginRequest()
-  loading.value = true
-  summaryLoading.value = true
-  error.value = ''
-  try {
-    const [rangeResult, summaryResult] = await Promise.all([
-      getEnergyRange(appliedPeriodStart.value, appliedPeriodEnd.value, { force: true, signal }),
-      getEnergyMonthlyRange(
-        summaryPeriodStart.value,
-        summaryPeriodEnd.value,
-        { force: true, signal },
-      ),
-    ])
-    if (!requestIsCurrent(sequence, signal)) return
-    taskDay.value = rangeResult.task_report
-    await applyMonthlySummary(summaryResult)
-    await nextTick()
-    renderCharts()
-  } catch (caught) {
-    const exception = toError(caught)
-    if (exception.name !== 'AbortError' && sequence === requestSequence) error.value = exception.message
-  } finally {
-    if (sequence === requestSequence) {
-      loading.value = false
-      summaryLoading.value = false
-      controller = null
-    }
-  }
-}
-
-async function refreshAnalysisReport() {
-  if (!pageActive.value || loading.value) return
-  return rangeQueryApplied.value
-    ? refreshRangeAnalysisReport()
-    : loadDefaultRanges(true)
-}
-
-onMounted(async () => {
-  const initialQuery = route.query
-  await initializeReport({ restoreQuery: true })
-  routeStateReady = true
-  if (pageActive.value && route.query !== initialQuery) await restoreRouteState()
-})
-onActivated(async () => {
-  pageActive.value = true
+watch(taskDay, async () => {
   await nextTick()
-  if (!pageActive.value) return
-  startResizeListening()
-  if (routeStateReady && await restoreRouteState()) return
-  if ((!taskDay.value || !monthlyReport.value) && !loading.value) await initializeReport()
-  else if (chartsMissing()) renderCharts()
-  resizeCharts()
-  if (monthlyReport.value?.syncing) scheduleSummaryRefresh(monthlyReport.value)
-  else if (routeStateReady && taskDay.value && monthlyReport.value && !loading.value) {
-    if (rangeQueryApplied.value) loadRange(false, { syncRoute: false, useAppliedPeriod: true })
-    else initializeReport()
-  }
+  renderCharts({ summary: false })
 })
-onDeactivated(pause)
-onBeforeUnmount(() => pause(true))
-watch(chartType, async () => {
+watch([monthlyReport, chartType], async () => {
   await nextTick()
   renderCharts()
 })
-watch(() => route.query, async (query, previous) => {
-  if (routeStateReady && pageActive.value && route.name === 'equipment-report') {
-    await restoreRouteState({ preserveDraft: query.start === previous.start && query.end === previous.end })
-  }
-}, { deep: true })
+onActivated(async () => {
+  await nextTick()
+  if (!pageActive.value) return
+  startResizeListening()
+  if (chartsMissing()) renderCharts()
+  resizeCharts()
+})
+onDeactivated(stopResizeListening)
+onBeforeUnmount(() => { stopResizeListening(); disposeCharts() })
 
 const taskTableColumns = [
   { key: 'c0', title: "序号", width: 56, align: 'center', fixed: 'left' },

@@ -1,12 +1,12 @@
 from datetime import date, datetime, timedelta
 
-from test_energy_period_service import DAY, START, samples, service
+from tests.energy_period_fixtures import DAY, START, samples, service
 
 
-def test_saved_partial_day_is_completed_after_snapshot_ttl(tmp_path):
+def test_saved_partial_day_is_completed_after_snapshot_ttl(tmp_path, state_database):
     now = [datetime(2026, 8, 20, 12)]
     incomplete = [row for row in samples() if row["Mt"] < "2026-08-18T12:00:00"]
-    energy, client = service(tmp_path, rows=incomplete, now=now[0])
+    energy, client = service(tmp_path, state_database, rows=incomplete, now=now[0])
     energy.clock = lambda: now[0]
     partial = energy.get_day(DAY)
     assert partial["summary"]["gas"]["status"] == "partial"
@@ -18,8 +18,8 @@ def test_saved_partial_day_is_completed_after_snapshot_ttl(tmp_path):
     assert completed["summary"]["gas"]["complete_count"] == 24
 
 
-def test_month_resync_preserves_known_hours_when_platform_regresses(tmp_path):
-    energy, client = service(tmp_path, now=datetime(2026, 8, 20, 12))
+def test_month_resync_preserves_known_hours_when_platform_regresses(tmp_path, state_database):
+    energy, client = service(tmp_path, state_database, now=datetime(2026, 8, 20, 12))
     original = energy.get_day(DAY)
     client.rows = [row for row in samples() if row["Mt"] < "2026-08-18T12:00:00"]
     assert energy.sync_month(DAY, force=True) == 0
@@ -28,9 +28,9 @@ def test_month_resync_preserves_known_hours_when_platform_regresses(tmp_path):
     assert saved["summary"]["gas"]["value"] == 96
 
 
-def test_previous_today_snapshot_is_finalized_after_midnight_within_ttl(tmp_path):
+def test_previous_today_snapshot_is_finalized_after_midnight_within_ttl(tmp_path, state_database):
     now = [START + timedelta(hours=23, minutes=59, seconds=50)]
-    energy, client = service(tmp_path, now=now[0])
+    energy, client = service(tmp_path, state_database, now=now[0])
     energy.clock = lambda: now[0]
     provisional = energy.get_day(DAY)
     assert provisional["is_today"] is True
@@ -43,8 +43,8 @@ def test_previous_today_snapshot_is_finalized_after_midnight_within_ttl(tmp_path
     assert len(client.calls) == 2
 
 
-def test_historical_complete_snapshot_within_ttl_does_not_refetch(tmp_path):
-    energy, client = service(tmp_path, now=datetime(2026, 8, 20, 12))
+def test_historical_complete_snapshot_within_ttl_does_not_refetch(tmp_path, state_database):
+    energy, client = service(tmp_path, state_database, now=datetime(2026, 8, 20, 12))
     energy.get_day(DAY)
     energy.sync_month(date(2026, 8, 1))
     # The monthly request still checks missing dates, but never rewrites the fresh day.

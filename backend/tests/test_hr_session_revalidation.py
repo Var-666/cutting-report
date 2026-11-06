@@ -10,7 +10,7 @@ from app.api.workloads import authentication_requests
 from app.database.workshop import WorkshopRepository
 from app.core.request_cancellation import SqlRequestCancelled
 from app.services.worker_auth_service import WorkerAuthService
-from test_worker_auth_service import FakeSqlServerClient, _enabled_settings, _valid_row
+from tests.auth_fixtures import FakeSqlServerClient, enabled_settings as _enabled_settings, valid_row as _valid_row
 
 
 @pytest.fixture

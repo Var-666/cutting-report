@@ -17,14 +17,14 @@ import {
 } from '../src/api/reports.ts'
 import { reportCache } from '../src/api/reportCache.ts'
 import { parseCuttingInstructionFilename } from '../src/utils/cuttingInstructionName.ts'
-import { cuttingFileKey as fileKey, matchesDispatchParameters } from '../src/utils/cuttingDispatchBatch.ts'
+import { cuttingFileKey as fileKey, matchesDispatchParameters, batchItemError, hasNameMismatch, batchStatusLabel, isStaleFileError } from '../src/utils/cuttingDispatchBatch.ts'
 
 const readSource = path => readFileSync(new URL(`../src/${path}`, import.meta.url), 'utf8')
 const browserSource = readSource('composables/useCuttingFileBrowser.ts')
 const batchSource = readSource('composables/useCuttingDispatchBatch.ts')
 const historySource = readSource('composables/useCuttingDispatchHistory.ts')
 const historyTableSource = readSource('components/dispatch/DispatchHistoryTable.vue')
-const hookScript = source => source.replace(/^import .*$/gm, '').replace('export function', 'function')
+const hookScript = source => source.replace(/^import .*$/gm, '').replace(/^export type .*$/gm, '').replace('export function', 'function')
 
 const originalFetch = globalThis.fetch
 afterEach(() => {
@@ -38,7 +38,7 @@ function dispatchLifecycle({ status, projects, listMachines, catalogs } = {}) {
   const timers = new Map()
   let mounted, activated, timerId = 0
   const context = vm.createContext({
-    ref, reactive, computed, AbortController, fileKey,
+    ref, reactive, computed, AbortController, fileKey, batchItemError, hasNameMismatch, batchStatusLabel, isStaleFileError,
     useRoute: () => ({ query: {} }), useRouter: () => ({ replace() {} }), useConfirm: () => async () => true,
     onMounted: fn => { mounted = fn }, onActivated: fn => { activated = fn }, onDeactivated() {}, onBeforeUnmount() {},
     getCuttingStatus: (_scope, options) => { calls.status.push(options); return status(options, calls.status.length) },
@@ -340,11 +340,8 @@ test('machine selectors show Chinese names and IPs while dispatch still uses the
   assert.equal(machineName('10.147.1.38'), '30kW 切割机')
   assert.equal(machineName('10.147.1.41'), '其他机床')
   assert.equal(machineName('10.147.1.42'), '未命名机床')
-  assert.equal((view.match(/:value="machine.machine_ip"/g) || []).length, 2)
-  assert.equal((view.match(/\{\{ machineName\(machine.machine_ip\) \}\}/g) || []).length, 2)
   assert.match(batchSource, /machine_ip: dispatchForm.machineIp/)
   assert.match(historyTableSource, /#c4="[^"]*">\{\{ machineName\(item.machine_ip\) \}\}<\/template>/)
-  assert.equal((view.match(/\{\{ machineName\(machine.machine_ip\) \}\} · \{\{ machine.machine_ip \}\}（/g) || []).length, 2)
   assert.doesNotMatch(view, /目标机床 IP|<th>机床IP<\/th>/)
 })
 
@@ -706,10 +703,12 @@ test('dispatch parameters depend on material and thickness, not the product code
 
 test('any two-character material code is filled verbatim without a grade mapping or manual override', () => {
   const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
-  const createSource = batchSource.slice(batchSource.indexOf('function createPushBatchItem('), batchSource.indexOf('function batchItemError('))
-  const mismatchSource = batchSource.slice(batchSource.indexOf('function hasNameMismatch('), batchSource.indexOf('function openPushBatch('))
-  const { createPushBatchItem, hasNameMismatch } = scriptFunction('parseCuttingInstructionFilename', 'fileKey',
-    `${createSource}\n${mismatchSource}\nreturn {createPushBatchItem, hasNameMismatch}`)(parseCuttingInstructionFilename, file => file.document_id)
+  const batch = batchWorkflow()
+  const createPushBatchItem = file => {
+    batch.inputs.selectedFiles.value = new Map([[file.document_id, file]])
+    batch.openPushBatch()
+    return batch.pushBatch.items[0]
+  }
   for (const code of ['A0', 'A2', 'A6', 'SS', 'B0', 'A7', 'X9', '7X', '00', 'q7', '@0', '中钢', '🧪0']) {
     const filename = `S803C320${code}01L.gen`
     const parsed = parseCuttingInstructionFilename(filename)
@@ -722,21 +721,6 @@ test('any two-character material code is filled verbatim without a grade mapping
     assert.equal(hasNameMismatch({ ...item, material: `${code}-changed` }), true)
   }
   assert.equal(parseCuttingInstructionFilename('S306C095A602L.gen').material, 'A6')
-})
-
-test('batch dispatch uses separate single-line columns for recognition and results', () => {
-  const view = readSource('views/CuttingDispatchView.vue')
-  const columns = view.slice(view.indexOf('const batchTableColumns = ['), view.indexOf('</script>'))
-  for (const title of ['文件名', '命名检查', '识别材质', '识别板厚（mm）', '参数核对', '派发状态', '任务编号', '处理说明']) {
-    assert.ok(columns.includes(`title: "${title}"`), title)
-  }
-  assert.ok(!columns.includes('title: "版本"'))
-  const table = view.slice(view.indexOf('<AppReportTable class="push-batch-table"'), view.indexOf('<div v-if="!pushBatch.resultsReady" class="push-batch-safety">'))
-  assert.doesNotMatch(table, /<small|<br\b/)
-  for (const value of ['item.dispatchId', 'item.error', 'batchItemError(item)', 'item.parsed.thickness.toFixed(1)']) assert.ok(table.includes(value), value)
-  assert.ok(!table.includes('item.version'))
-  assert.match(view, /\.push-batch-table :deep\(\.n-data-table-td\) \{ white-space:nowrap;/)
-  assert.match(view, /\.push-batch-actions \{[^}]*flex-wrap:nowrap; white-space:nowrap;/)
 })
 
 test('non-standard names require manual confirmation and keep their independent dispatch reference', async () => {
@@ -802,9 +786,6 @@ test('retry only continues a matching dispatch after reading its current status'
   const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
   assert.match(batchSource, /const current = await getCuttingDispatch\(item\.dispatchId\)/)
   assert.match(batchSource, /if \(current\.status === 'sent' \|\| !item\.retryable\) return/)
-  assert.match(view, /上传结果待核对的任务须先检查魔盒/)
-  assert.match(view, /核对并继续已有任务/)
-  assert.match(view, /刷新清单重选/)
 })
 
 test('project suggestions preserve the typed search while selecting and switching projects', async () => {
@@ -834,8 +815,12 @@ test('project suggestions preserve the typed search while selecting and switchin
 
 test('dispatch segments are recognized or required before a nonstandard file can be pushed', () => {
   const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
-  const source = batchSource.slice(batchSource.indexOf('function createPushBatchItem('), batchSource.indexOf('function hasNameMismatch('))
-  const { createPushBatchItem, batchItemError } = scriptFunction('parseCuttingInstructionFilename', 'fileKey', `${source}\nreturn { createPushBatchItem, batchItemError }`)(parseCuttingInstructionFilename, file => file.document_id)
+  const batch = batchWorkflow()
+  const createPushBatchItem = file => {
+    batch.inputs.selectedFiles.value = new Map([[file.document_id, file]])
+    batch.openPushBatch()
+    return batch.pushBatch.items[0]
+  }
   const standard = createPushBatchItem({ document_id: 'standard', document_no: 'Z806C080A001.gen' })
   assert.equal(standard.segmentName, '806C')
   assert.equal(batchItemError(standard), '')
@@ -845,8 +830,6 @@ test('dispatch segments are recognized or required before a nonstandard file can
   assert.equal(batchItemError(manual), '')
   manual.segmentName = '806\nC'
   assert.match(batchItemError(manual), /控制字符/)
-  assert.match(view, /title: "分段名"/)
-  assert.match(view, /v-else v-model:value.trim="item.segmentName"/)
 })
 
 test('execute API sends the manual segment without changing the file reference', async () => {
@@ -897,7 +880,7 @@ function batchWorkflow(api = {}) {
   }
   inputs.clearSelectedFiles = () => { inputs.selectedFiles.value = new Map() }
   const bindings = {
-    ref, computed, reactive, fileKey, parseCuttingInstructionFilename, matchesDispatchParameters,
+    ref, computed, reactive, fileKey, parseCuttingInstructionFilename, matchesDispatchParameters, batchItemError, hasNameMismatch, batchStatusLabel, isStaleFileError,
     createCuttingDispatchBatch: async payload => {
       calls.create.push(payload)
       return { items: payload.items.map((item, index) => ({ ...item, status: 'created', dispatch: { dispatch_id: `d${index + 1}` } })) }

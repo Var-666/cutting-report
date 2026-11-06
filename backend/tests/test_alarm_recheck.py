@@ -130,20 +130,7 @@ def test_late_old_alarm_is_found_without_advancing_incremental_cursor(state_data
     assert restarted.get_sync_state()["history_recheck_after_id"] == 3
 
 
-def test_existing_sync_table_migrates_and_window_reset_resets_all_scan_positions(state_database, tmp_path):
-    from app.database.sqlite_history import SQLiteHistory
-    from app.database.migrations.v012_alarms import upgrade
-    path = tmp_path / "metadata.db"
-    with SQLiteHistory(path).connect() as connection:
-        connection.execute("""CREATE TABLE alarm_sync_state (
-            source_name TEXT PRIMARY KEY, last_alarm_id INTEGER NOT NULL DEFAULT 0,
-            last_success_at TEXT, lease_owner TEXT, lease_until TEXT)""")
-        connection.execute("INSERT INTO alarm_sync_state(source_name,last_alarm_id) VALUES ('production',42)")
-        upgrade(connection)
-        upgrade(connection)
-        legacy = connection.execute('SELECT * FROM alarm_sync_state').fetchone()
-        assert legacy['last_alarm_id'] == 42
-        assert legacy['open_recheck_after_id'] == legacy['history_recheck_after_id'] == 0
+def test_window_reset_resets_all_scan_positions(state_database):
     repository = AlarmRepository(state_database, source_name="production")
     with repository.connect() as connection:
         connection.execute("INSERT INTO alarm_sync_state(source_name,last_alarm_id) VALUES ('production',42)")

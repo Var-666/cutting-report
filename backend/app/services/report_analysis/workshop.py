@@ -21,6 +21,7 @@ from app.services.statistics_service import build_worker_work_summaries
 def _workshop_task_rows(records: list[WorkshopRecord]) -> list[dict]:
     return [
         {
+            "task_id": row.task_id,
             "project_code": row.project_code,
             "ship_no": row.ship_no,
             "segment_name": row.segment_name,

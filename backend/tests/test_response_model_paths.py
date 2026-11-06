@@ -17,7 +17,7 @@ from app.models.domain import WorkshopRecord
 from app.services.alarm_analysis_service import AlarmAnalysisService
 from app.services.llm_service import AnalysisOutputValidationError
 from tests.test_alarm_monitor import alarm, incident
-from tests.test_cutting_dispatch import RecordingMagicClient, _push_service
+from tests.dispatch_fixtures import RecordingMagicClient, push_service as _push_service
 
 
 @pytest.fixture

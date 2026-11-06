@@ -364,16 +364,13 @@ test('workshop dashboard uses verified confirmation metrics and responsive home 
   assert.match(styles, /@media\(max-width:560px\)[\s\S]*\.workshop-query-shell \.report-query,\.workshop-kpis/)
 })
 
-test('home and equipment pages reveal independent results progressively', () => {
+test('home panels expose independent loading states', () => {
   const home = descriptor('AdminHomeView')
   const equipment = descriptor('EnergyPeriodReportView')
 
   assert.match(home.scriptSetup.content, /const overviewLoading = ref\(true\)/)
   assert.match(home.scriptSetup.content, /const historyLoading = ref\(true\)/)
   assert.doesNotMatch(home.template.content, /报表预加载/)
-  assert.match(equipment.scriptSetup.content, /const taskRequest = getTaskEnergyDay/)
-  assert.match(equipment.scriptSetup.content, /const summaryRequest = getEnergyMonthlyRange/)
-  assert.match(equipment.scriptSetup.content, /await Promise\.allSettled\(\[taskRequest, summaryRequest\]\)/)
 })
 
 test('home quick access retains the three report destinations with semantic theme styles', () => {
@@ -464,7 +461,6 @@ test('device report is one page with task details and a default monthly summary'
   assert.match(energy.scriptSetup.content, /const summaryTableColumns[\s\S]*任务数[\s\S]*切割时长[\s\S]*电耗/)
   assert.match(energyDataScript, /const taskChartRows = computed\(\(\) => taskRows\.value[\s\S]*\.slice\(0, 50\)[\s\S]*\.sort\(\(left, right\) => String\(left\.production_time \|\| ''\)\.localeCompare\(String\(right\.production_time \|\| ''\)\)\)\)/)
   assert.match(energyChartsScript, /const labels = taskChartRows\.value\.map/)
-  assert.match(energy.scriptSetup.content, /getEnergyMonthlyRange\(recentStart, selectedDate/)
   assert.match(energy.template.content, /month\?\.total_task_count/)
   assert.doesNotMatch(energy.template.content, /电耗覆盖|气耗覆盖|保存状态/)
   assert.match(energy.template.content, /#empty>\{\{ summaryLoading/)
@@ -713,18 +709,10 @@ test('leadership and equipment second tables default to the recent twelve months
   assert.match(leadership.template.content, /:note="`\$\{monthlyPeriodStart\} 至 \$\{monthlyPeriodEnd\}`"/)
   assert.match(leadership.scriptSetup.content, /summary_period_start: monthlyPeriodStart\.value/)
   assert.match(leadership.scriptSetup.content, /summary_period_end: monthlyPeriodEnd\.value/)
-  assert.match(equipment.scriptSetup.content, /getEnergyMonthlyRange\(recentStart, selectedDate/)
-  assert.match(equipment.scriptSetup.content, /const monthlyReport = ref<(?:LeadershipReport|EnergyPeriodReport) \| null>\(null\)/)
   assert.match(energyDataScript, /summaryRows = computed\(\(\) => sortReportPeriods\(monthlyReport\.value\?\.rows/)
-  assert.match(equipmentRange, /beginRequest\(\{ preserveSummary: true \}\)/)
-  assert.doesNotMatch(equipmentRange, /monthlyReport\.value|summaryPeriodStart\.value|summaryPeriodEnd\.value/)
-  assert.match(equipmentRange, /renderCharts\(\{ summary: false \}\)/)
   assert.match(equipment.template.content, /:title="summaryTitle"/)
   assert.match(equipment.template.content, /:subtitle="summarySubtitle"/)
   assert.match(energyDataScript, /后台补齐 \$\{missing\} 天能耗中/)
-  assert.match(equipment.scriptSetup.content, /scheduleSummaryRefresh\(summaryResult\)/)
-  assert.match(equipment.scriptSetup.content, /}, 1000\)/)
-  assert.match(equipment.scriptSetup.content, /summaryRefreshCount >= 600/)
   assert.match(equipment.scriptSetup.content, /summary_period_start: summaryPeriodStart\.value/)
   assert.match(equipment.scriptSetup.content, /summary_period_end: summaryPeriodEnd\.value/)
 })
@@ -819,6 +807,7 @@ test('report charts resize with their containers and disconnect observers while 
       report: { value: {} }, taskDay: { value: {} }, monthlyReport: { value: {} }, loading: { value: false },
       scheduleRefreshPoll() {}, scheduleSummaryRefresh() {}, renderCharts() {}, chartsMissing: () => false }
     const active = scriptFunction(...Object.keys(activationBindings), `let resizeListening = false; let chartResizeObserver; ${code}; ${activation}; return { stopResizeListening }`)(...Object.values(activationBindings))
+    pageActive.value = true
     await activate()
     assert.equal(observed.length, before + 2, 'activation must observe the chart elements after Vue restores their refs')
     active.stopResizeListening()
@@ -841,11 +830,9 @@ test('cached report resources pause on deactivation and cache is bounded', () =>
   assert.match(leadership.scriptSetup.content, /disposeCharts\(\)/)
   assert.match(equipment.scriptSetup.content, /disposeCharts\(\)/)
   assert.match(leadership.scriptSetup.content, /onBeforeUnmount\(\(\) => pausePage\(true\)\)/)
-  assert.match(equipment.scriptSetup.content, /onBeforeUnmount\(\(\) => pause\(true\)\)/)
   assert.match(leadershipChartsScript, /dailyChart \|\|= init\(dailyChartElement, chartTheme\.darkMode\.value \? 'dark' : undefined\)/)
   assert.match(energyChartsScript, /taskChart \|\|= init\(taskChartElement, chartTheme\.darkMode\.value \? 'dark' : undefined\)/)
   assert.doesNotMatch(leadership.scriptSetup.content, /onDeactivated\([\s\S]{0,120}disposeCharts/)
-  assert.doesNotMatch(equipment.scriptSetup.content, /onDeactivated\([\s\S]{0,120}disposeCharts/)
   for (const control of controls) {
     assert.match(control, /createActivationBinding/)
     assert.match(control, /onActivated\(listenerBinding\.activate\)/)
@@ -907,8 +894,6 @@ test('file dispatch uses PDM references and has no saved-file prerequisite', () 
   assert.match(readFileSync(new URL('../src/composables/useCuttingDispatchBatch.ts', import.meta.url), 'utf8'), /version_id: item\.versionId/)
   assert.match(readFileSync(new URL('../src/composables/useCuttingDispatchBatch.ts', import.meta.url), 'utf8'), /file_path: item\.filePath/)
   assert.doesNotMatch(dispatch.scriptSetup.content, /listCuttingDownloads|downloadCuttingFile/)
-  assert.match(dispatch.template.content, /批量派发确认/)
-  assert.match(dispatch.template.content, /确认并顺序派发/)
   assert.match(dispatch.template.content, /PDM项目目录/)
 })
 

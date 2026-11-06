@@ -17,30 +17,11 @@ pnpm run api:check
 
 变更顺序：修改 Pydantic/路由 → 生成 → 修正调用方 → 执行对应检查。配置、自动化、焊接、领导/设备/能耗、报表任务及 AI 等接口也已接入生成范围；具体序列化兼容规则见 [AGENTS.md](../../AGENTS.md#api-类型契约p07)。
 
-## SQLite 版本迁移
+## 状态库与迁移
 
-`backend/app/database/migrations/registry.py` 按编号注册迁移。001–013 接管既有仓储的建表、补字段和历史补齐逻辑，保留表名与业务含义；后续结构变更新增编号文件，禁止继续在仓储 `initialize()` 中加入 ALTER TABLE，也不要修改已经发布的迁移。
+正式状态库是PostgreSQL，结构位于`backend/app/database/postgres_migrations/`；只能追加编号迁移，不改已发布脚本，不在仓储、请求或普通启动时临时建表。维护工具使用`cutting_migrator`显式执行`schema`，运行账号`cutting_app`无DDL权限。
 
-启动顺序：保留既有进程升级备份、设备归属迁移 → 执行待运行的编号迁移 → 初始化内置模板、设备同步游标等运行数据。历史 `device-isolation-v2` 标记继续保留，不根据当前默认设备猜测历史记录归属。
-
-统一 runner 使用文件锁串行执行，一批结构升级及迁移标记在同一事务提交。执行脚本不会调用会隐式提交的 `sqlite3.executescript`；失败整体回滚，并检查外键完整性。已执行的编号不重复运行。已有数据库执行待运行批次前，通过 SQLite Backup API 备份已提交数据（含 WAL）到 `data/backups/*-before-schema-*.db`，备份文件权限 600；备份失败即停止。
-
-手工查看与升级（路径必须明确指定）：
-
-```sh
-./.venv/bin/python scripts/migrate_database.py status --database /absolute/path/data/metadata.db
-./.venv/bin/python scripts/migrate_database.py upgrade --database /absolute/path/data/metadata.db
-```
-
-status 只读，不创建数据库。手工 upgrade 前停止 Web 和 Worker；命令拒绝活动 Web 进程锁或尚未释放的 Worker 租约。升级前保留原镜像、配置、完整 data 和 reports 卷。
-
-### 失败和恢复
-
-- 单批编号迁移失败：事务回滚；保留错误与备份，修复迁移原因后重试，不手动清除标记。
-- 旧版设备迁移有自己的事务与备份；多个历史阶段之间不承诺一个总事务，具体恢复沿用设备隔离文档。
-- 已升级并接收新业务：不要直接恢复旧备份，否则会丢失后续确认、派发和审计。先保全当前库，确定向前修复或增量恢复方案。
-- 确认没有新增业务、需要恢复时：停止全部进程，先另备份当前库；使用 SQLite Backup API 将备份恢复到目标库，再启动与备份结构匹配的旧版本。不要在线只覆盖主 `.db` 文件并保留旧 WAL/SHM。
-- 不在生产 SQL Server、PDM、HR 或焊接 MySQL 上执行这些迁移。
+当前维护入口为`scripts/manage_postgres.py schema|status|prepare-consumers`。旧SQLite升级/导入能力已退役，不恢复原迁移目录；尚未迁移的旧部署使用保留的历史版本工具。PG账号、备份、结构维护和恢复统一见[状态库说明](../deployment/PostgreSQL状态库迁移.md)，不对生产SQL Server/MySQL执行应用结构迁移，也不删除现场旧数据库文件。
 
 ## 车间模块边界
 
@@ -51,4 +32,4 @@ status 只读，不创建数据库。手工 upgrade 前停止 Web 和 Worker；�
 - `database/workshop_scope.py`：共享设备范围约束。
 - `database/workshop.py`：保留原公开导入的兼容门面，不再承载实现。新运行时和新业务使用独立仓储；既有嵌入式调用和旧测试可继续使用门面，后续迁移调用方后再删除。
 
-与并发有关的条件更新、修订号检查、设备范围和权限冲突仍在同一数据库事务内校验；不为了分层将它们拆成先检查后写入的两个事务。UnitOfWork 显式提供日报、确认、用户和会话仓储，绑定同一连接；外部 SQL Server、模型、SMTP、魔盒调用不放进 SQLite 长事务。
+与并发有关的条件更新、修订号检查、设备范围和权限冲突仍在同一数据库事务内校验；不为了分层将它们拆成先检查后写入的两个事务。UnitOfWork 显式提供日报、确认、用户和会话仓储，绑定同一连接；外部 SQL Server、模型、SMTP、魔盒调用不放进PostgreSQL状态写事务。

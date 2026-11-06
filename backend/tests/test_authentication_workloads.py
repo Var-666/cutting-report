@@ -14,7 +14,7 @@ from app.database import users as workshop
 from app.database.workshop import WorkshopRepository
 from app.main import app
 from app.services.worker_auth_service import WorkerAuthService
-from test_worker_auth_service import FakeSqlServerClient, _enabled_settings, _valid_row
+from tests.auth_fixtures import FakeSqlServerClient, enabled_settings as _enabled_settings, valid_row as _valid_row
 
 
 @pytest.fixture(autouse=True)

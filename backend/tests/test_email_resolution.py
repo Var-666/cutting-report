@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 
 from app.api.auth import require_admin
 from app.api.automation import router
-from test_automation_recovery import workflow, complete_report, NOW, STAMP
+from tests.automation_fixtures import complete_report, NOW, STAMP
 
 
 ACTOR = {"user_id": "admin-reviewer", "display_name": "管理员", "role": "admin"}

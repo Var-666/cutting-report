@@ -4,7 +4,6 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import date, datetime, timedelta
 import json
-import sqlite3
 from threading import Event
 from types import SimpleNamespace
 
@@ -146,25 +145,3 @@ def test_report_services_publish_the_completed_default_result(state_database, tm
     assert published.generated_at == result.generated_at
     assert published.overview == result.overview
     assert published.cached
-
-
-def test_existing_analysis_cache_upgrade_is_repeatable_and_keeps_historical_records(tmp_path):
-    path = tmp_path / 'metadata.db'
-    with sqlite3.connect(path) as connection:
-        connection.execute('''CREATE TABLE report_analyses (
-            cache_key TEXT PRIMARY KEY, report_type TEXT NOT NULL, report_date TEXT NOT NULL,
-            input_hash TEXT NOT NULL, data_version TEXT NOT NULL, status TEXT NOT NULL,
-            mode TEXT NOT NULL, model_name TEXT, prompt_version TEXT NOT NULL,
-            result_json TEXT NOT NULL, generated_at TEXT NOT NULL
-        )''')
-        old = ('old-key', 'workshop', '2026-10-20', 'old-input', 'old-version', 'success',
-               'model', 'old-model', 'old-prompt', json.dumps({'overview': 'historical'}), '2026-10-20T10:00:00')
-        connection.execute('INSERT INTO report_analyses VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', old)
-    from app.database.sqlite_history import SQLiteHistory
-    from app.database.migrations import apply_migrations
-    apply_migrations(SQLiteHistory(path))
-    apply_migrations(SQLiteHistory(path))
-    with sqlite3.connect(path) as connection:
-        row = connection.execute('SELECT * FROM report_analyses').fetchone()
-    assert row[:-1] == old
-    assert row[-1] is None, 'legacy custom and default results cannot be safely classified during migration'

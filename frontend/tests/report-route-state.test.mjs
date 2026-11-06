@@ -62,8 +62,6 @@ test('report views restore only applied state and keep worker task routing uncha
 
   assert.match(leadershipQuerySource, /if \(syncRoute\) await syncRouteState\(\)/)
   assert.match(leadership, /watch\(\(\) => route\.query/)
-  assert.match(equipment, /queryDateRange\(route\.query, \{ maxDays: 31 \}\)/)
-  assert.match(equipment, /if \(syncRoute\) await syncRouteState\(\)/)
 
   assert.match(workshop, /const appliedRouteState = reactive/)
   assert.match(workshop, /if \(isWorker\.value \|\| route\.name !== 'workshop-report'\) return/)
@@ -87,7 +85,6 @@ test('standard reports distinguish edited dates from the last successfully appli
   assert.match(query.template.content, /role="status"/)
   assert.match(query.template.content, /所选区间尚未加载成功，可重新查询/)
   assert.match(leadershipQuerySource, /periodStart\.value !== appliedPeriodStart\.value \|\| periodEnd\.value !== appliedPeriodEnd\.value/)
-  assert.match(equipment, /periodStart\.value !== appliedPeriodStart\.value \|\| periodEnd\.value !== appliedPeriodEnd\.value/)
   assert.match(workshop, /filters\.startDate !== appliedRouteState\.startDate \|\| filters\.endDate !== appliedRouteState\.endDate/)
   for (const name of ['LeadershipReportView.vue', 'EnergyPeriodReportView.vue', 'WorkshopView.vue']) {
     const source = readFileSync(new URL(`../src/views/${name}`, import.meta.url), 'utf8')
@@ -118,13 +115,13 @@ function emptyWorkshop(start, end) {
   return { report: { period_start: start, period_end: end, item_count: 0 }, items: [], total: 0,
     page: 1, page_size: 10, project_names: [], worker_summaries: [], duration_distribution: [], status_distribution: [], top_cut_length_tasks: [] }
 }
-async function mountReport(t, kind, { query = {}, refreshing = false, syncing = false, mode = 'manager' } = {}) {
+async function mountReport(t, kind, { query = {}, refreshing = false, syncing = false, mode = 'manager', hold = {} } = {}) {
   const name = `${kind}-report`
   const pending = []
   const requests = []
   const exports = []
   const timers = new Map()
-  const held = { range: false, monthly: false, summary: false, tasks: false, workshop: false }
+  const held = { range: false, monthly: false, summary: false, tasks: false, workshop: false, ...hold }
   const clock = { today: '2026-10-27', latest: '2026-10-26' }
   const chartUpdates = []
   let timerId = 0
@@ -149,7 +146,7 @@ async function mountReport(t, kind, { query = {}, refreshing = false, syncing = 
     useDeviceSwitchQuery() {}, useReportChartTheme: () => ({ darkMode: Vue.ref(false), vars: Vue.ref({}), colors: Vue.ref({}) }),
     getLeadershipReport: (month, options) => read('monthly', `${month}-01`, clock.today, options),
     getLeadershipRange: (start, end, options) => read('range', start, end, options),
-    getEnergyRange: async (start, end, options) => held.range ? read('range', start, end, options) : { task_report: reportResult(start, end) },
+    getEnergyRange: async (start, end, options) => held.range ? read('range', start, end, options) : (requests.push({ type: 'range', start, end, force: options?.force }), { task_report: reportResult(start, end) }),
     getLatestWorkshopProductionDate: async () => { requests.push({ type: 'latest' }); return { report_date: clock.latest } },
     getEnergyDay: async () => ({}), getTaskEnergyDay: (date, options) => read('tasks', date, date, options),
     getEnergyMonthlyRange: (start, end, options) => read('summary', start, end, options),
@@ -164,7 +161,7 @@ async function mountReport(t, kind, { query = {}, refreshing = false, syncing = 
   const data = kind === 'leadership' ? 'report' : 'taskDay'
   const load = kind === 'leadership' ? 'loadReport' : 'loadRange'
   const exposed = kind === 'workshop' ? 'data: result, filters, appliedRouteState, loading, error, initializeReport'
-    : `data: ${data}, load: ${load}, periodStart, periodEnd, appliedPeriodStart, appliedPeriodEnd, chartType, changeChartType, loading, error, pageActive, dateQueryDirty, exportReport${kind === 'leadership' ? ', refreshLoading, monthlyLoading, retryReport, monthlyPeriodStart, monthlyPeriodEnd, refreshAnalysisReport' : ', monthlyReport, summaryPeriodStart, summaryPeriodEnd, loadDefaultRanges, periodPanel, getSummaryCount: () => summaryRefreshCount, setSummaryCount: value => { summaryRefreshCount = value }'}`
+    : `data: ${data}, load: ${load}, periodStart, periodEnd, appliedPeriodStart, appliedPeriodEnd, chartType, changeChartType, loading, error, pageActive, dateQueryDirty, exportReport${kind === 'leadership' ? ', refreshLoading, monthlyLoading, retryReport, monthlyPeriodStart, monthlyPeriodEnd, refreshAnalysisReport' : ', monthlyReport, summaryPeriodStart, summaryPeriodEnd, loadDefaultRanges, periodPanel, refreshAnalysisReport'}`
   const setup = scriptFunction(...Object.keys(bindings), `${source}\nreturn { ${exposed} }`)
   const page = { setup() { mounts++; state = setup(...Object.values(bindings)); return () => Vue.h('div') } }
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/report', name, component: page }, { path: '/other', component: { render: () => Vue.h('div') } }] })
@@ -368,18 +365,24 @@ test('equipment summary: KeepAlive resumes one missing-data poll and completion 
 
 test('equipment summary: failures retain data and the attempt cap survives reactivation', async t => {
   const page = await mountReport(t, 'equipment', { syncing: true })
-  const { state, router, held, pending, timers } = page
+  const { state, router, held, pending, timers, requests } = page
   const previous = state.monthlyReport.value
-  state.setSummaryCount(599)
   held.summary = true
-  const poll = page.fire()
-  pending[0].reject(new Error('meter unavailable')); await poll
+  for (let attempt = 0; attempt < 600; attempt++) {
+    const poll = page.fire()
+    pending.at(-1).reject(new Error('meter unavailable'))
+    await poll
+  }
   assert.equal(state.monthlyReport.value, previous)
-  assert.equal(state.getSummaryCount(), 600)
+  assert.equal(requests.filter(call => call.type === 'summary' && call.force).length, 600)
   assert.equal(timers.size, 0)
   for (let index = 0; index < 2; index++) { await router.push('/other'); await router.push('/report'); await flushReport() }
-  assert.equal(state.getSummaryCount(), 600)
+  assert.equal(requests.filter(call => call.type === 'summary' && call.force).length, 600)
   assert.equal(timers.size, 0)
+  held.summary = false
+  state.periodStart.value = '2026-09-15'
+  await state.loadDefaultRanges(); await flushReport()
+  assert.equal(timers.size, 1, 'a new summary scope has its own replenishment budget')
 })
 
 test('equipment summary: a new summary interval and unmount invalidate old responses and timers', async t => {
@@ -391,7 +394,6 @@ test('equipment summary: a new summary interval and unmount invalidate old respo
   const load = state.loadDefaultRanges()
   await flushReport()
   assert.equal(pending[0].signal.aborted, true)
-  assert.equal(state.getSummaryCount(), 0)
   for (const call of pending.slice(1)) call.resolve({ ...reportResult(call.start, call.end, 'new-scope'), syncing: true, missing_day_count: 1 })
   await load; await flushReport()
   pending[0].resolve({ ...reportResult(), id: 'obsolete-scope', syncing: false })
@@ -596,4 +598,42 @@ test('leadership export retains the applied range, monthly summary and chosen ch
     parameters: { chart_type: 'area', summary_period_start: '2025-11-01', summary_period_end: '2026-10-27' },
   }, 'pdf'])
   assert.equal(state.dateQueryDirty.value, true)
+})
+
+
+test('equipment first paint accepts task and monthly results independently of a slow peer', async t => {
+  const page = await mountReport(t, 'equipment', { hold: { tasks: true } })
+  assert.equal(page.state.data.value, null)
+  assert.ok(page.state.monthlyReport.value)
+  assert.equal(page.state.loading.value, true)
+  page.pending[0].resolve(reportResult('2026-10-27', '2026-10-27', 'task-ready'))
+  await flushReport()
+  assert.equal(page.state.data.value.id, 'task-ready')
+  assert.equal(page.state.loading.value, false)
+})
+
+test('equipment range/export and analysis refresh retain the independent monthly scope and applied dates', async t => {
+  const page = await mountReport(t, 'equipment')
+  const { state, requests } = page
+  const summaryReads = requests.filter(call => call.type === 'summary').length
+  state.periodStart.value = '2026-10-01'; state.periodEnd.value = '2026-10-15'
+  await state.load(); await flushReport()
+  assert.equal(requests.filter(call => call.type === 'summary').length, summaryReads)
+  assert.equal(state.summaryPeriodStart.value, '2025-11-01')
+  assert.equal(state.summaryPeriodEnd.value, '2026-10-27')
+  await state.changeChartType('line'); await flushReport()
+  state.periodStart.value = '2026-10-20'
+  state.exportReport('pdf')
+  assert.deepEqual(page.exports.at(-1), ['export', {
+    report_type: 'equipment', report_date: '2026-10-01', period_start: '2026-10-01', period_end: '2026-10-15', project_code: null, ship_no: null,
+    parameters: { chart_type: 'line', summary_period_start: '2025-11-01', summary_period_end: '2026-10-27' },
+  }, 'pdf'])
+  assert.equal(state.dateQueryDirty.value, true)
+  requests.length = 0
+  await state.refreshAnalysisReport(); await flushReport()
+  assert.deepEqual(requests.map(call => [call.type, call.start, call.end, call.force]), [
+    ['range', '2026-10-01', '2026-10-15', true],
+    ['summary', '2025-11-01', '2026-10-27', true],
+  ])
+  assert.equal(state.appliedPeriodStart.value, '2026-10-01')
 })

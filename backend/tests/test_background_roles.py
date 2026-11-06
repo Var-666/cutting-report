@@ -154,7 +154,7 @@ def test_scheduler_only_enqueues_consumer_only_executes_and_old_source_never_ref
 
 
 def test_consumer_callback_and_automation_reconciliation_share_one_outbox(postgres_state,tmp_path,monkeypatch):
-    from test_automation_recovery import NOW,STAMP,complete_report
+    from tests.automation_fixtures import NOW, STAMP, complete_report
     from app.workers.report_worker import ReportWorker
     cfg=postgres_state[1]
     consumer=WorkerProcess(cfg);automation=AutomationProcess(cfg)

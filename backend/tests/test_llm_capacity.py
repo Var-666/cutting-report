@@ -15,7 +15,6 @@ from app.services.alarm_analysis_service import AlarmAnalysisService
 from app.core.request_cancellation import (
     SqlRequestCancelled, bind_request_id, reset_request_id, sql_request_cancellations,
 )
-from test_worker_auth_service import _enabled_settings
 from app.core.report_deadline import ReportOperationTimeout, report_deadline
 
 

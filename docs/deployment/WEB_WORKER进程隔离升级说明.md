@@ -18,23 +18,22 @@ Docker Consumer用自身容器hostname作为实例ID，Compose显式清空共享
 
 ## 升级门槛与顺序
 
-**P5尚未执行现场生产切换。旧SQLite现场必须先完成P5停机、最新一致性备份、全部历史导入与verify，再执行P7 Consumer切换准备。禁止用P4旧演练副本替代最新数据，禁止新Consumer连接SQLite或与旧全局worker协议混跑。**
+**以下仅用于旧PG全局Worker协议切换。已完成切换的PG现场走[普通更新](OFFLINE_DOCKER部署说明.md#已有postgresql更新)，不重复prepare-consumers。当前版本不支持SQLite升级/导入，禁止混跑两种租约协议。**
 
 1. 停止全部旧Consumer并禁用其自动重启；维护升级时同时停止其余应用角色，保留项目名、原卷和同一时点PG/配置/报表文件备份，不执行down -v。
 2. 等待旧租约释放或30秒到期，确认旧进程已停止执行。用cutting_migrator运行下面的schema命令，追加003_consumer_scaling，001_initial/002_runtime校验和保持不变。003发现有效的旧/新Consumer租约时拒绝升级。
-3. SQLite现场按[PostgreSQL迁移说明](PostgreSQL状态库迁移.md)完成最新数据导入与verify；核对sending/unknown及派发未知结果，不能改为自动重试。
-4. 显式运行prepare-consumers。该操作只允许cutting_migrator，拒绝任何有效Consumer租约，在事务内恢复中断后台/报表/能耗状态、保留业务ID和重试计数，并移除旧worker租约。旧无来源指纹的产线任务标为blocked/SOURCE_UNVERIFIED，不能猜测当前来源执行。此操作是停机维护，不由正常启动调用。
-5. 启动同版本Web/Scheduler/Automation和1个Consumer，验证历史记录、探针及配置，再扩至2/3个。新增实例启动只恢复失效owner，不重置其他正常实例。
+3. 显式运行prepare-consumers。该操作只允许cutting_migrator，拒绝任何有效Consumer租约，在事务内恢复中断后台/报表/能耗状态、保留业务ID和重试计数，并移除旧worker租约。旧无来源指纹的产线任务标为blocked/SOURCE_UNVERIFIED，不能猜测当前来源执行。此操作是停机维护，不由正常启动调用。
+4. 启动同版本Web/Scheduler/Automation和1个Consumer，验证历史记录、探针及配置，再扩至2/3个。新增实例启动只恢复失效owner，不重置其他正常实例。
 
 ```bash
 # Compose维护服务使用cutting_migrator；不把维护凭据注入正式角色
-docker compose run --rm migrate python scripts/migrate_sqlite_to_postgres.py schema
-# 旧SQLite导入与verify在此完成；两者之后才改变历史执行状态
-docker compose run --rm migrate python scripts/migrate_sqlite_to_postgres.py prepare-consumers
+docker compose run --rm migrate python scripts/manage_postgres.py schema
+# 仅旧PG全局Worker协议切换时执行，普通更新不重复准备
+docker compose run --rm migrate python scripts/manage_postgres.py prepare-consumers
 docker compose up -d --build app scheduler worker automation
 ```
 
-若存在旧worker租约记录，新Consumer拒绝启动并提示prepare-consumers。正常应用只用无DDL权限cutting_app，不自动迁移、不双写、不回退。SQLite全字段verify用于切换准备之前，准备步骤会有意调整执行态，不能把之后的状态与原导入摘要混为一谈。
+若存在旧worker租约记录，新Consumer拒绝启动并提示prepare-consumers。正常应用只用无DDL权限cutting_app，不自动迁移、不双写、不回退。准备步骤会有意调整执行态，操作前保留同批PG及文件备份。
 
 ## Compose与离线扩缩容
 
@@ -54,7 +53,7 @@ docker compose logs --tail 100 worker
 
 持久化副本数量可写CONSUMER_REPLICAS=2/3，再运行up；显式--scale仅覆盖该次实际副本数量，不改变Web加载的健康期望。若期望为3而只运行2个健康实例，后台状态为degraded；历史lost/stopped实例仍保留，但不扣减当前健康容量。永久调整期望时须重建Web及相应应用容器；默认期望1下临时扩缩容不需重启其他角色。宿主机.env冷配置变化须重建相应应用容器，资源容量修改须所有角色使用一致值；普通restart不更新环境。管理保存的产线、数据源及自动化/SMTP仍按各进程下一次操作热加载，不依赖共享Python内存。
 
-离线仍使用同一镜像和compose.yaml+compose.offline.yaml。start_offline_docker.sh先验证依赖镜像，再检查PG既有Schema，然后按CONSUMER_REPLICAS启动四类角色；不自动执行维护迁移。各副本均挂载当前backend/vendor和同机data/reports/logs，共享只读绑定使用SELinux z标签（[Docker官方语义](https://docs.docker.com/reference/compose-file/services/#volumes)），不使用会隔离副本访问的私有Z标签；P3锁目录必须是同一data/.coordination。本次没有生成新发布包或执行现场部署。
+离线仍使用同一镜像和compose.yaml+compose.offline.yaml。start_offline_docker.sh先验证依赖镜像，再检查PG既有Schema，然后按CONSUMER_REPLICAS启动四类角色；不自动执行维护迁移。各副本均挂载当前backend/vendor和同机data/reports/logs，共享只读绑定使用SELinux z标签（[Docker官方语义](https://docs.docker.com/reference/compose-file/services/#volumes)），不使用会隔离副本访问的私有Z标签；P3锁目录必须是同一data/.coordination。
 
 ```bash
 ./scripts/linux/start_offline_docker.sh
@@ -96,11 +95,11 @@ docker compose exec --index 2 worker python -m app.worker --health
 docker compose exec automation python -m app.automation_worker --health
 ```
 
-Consumer探针只验证当前容器/原生实例的租约、报表线程、队列观测和停滞状态。Web健康保留原字段，增加workers.consumer_instances、consumer_running_count、consumer_lost_count和roles.worker汇总；正常/退化/不可用可分别识别，2个正常加1个失联仍为degraded，不掩盖可用实例。正常缩容的stopped记录不拖累仍运行的消费者；没有正常实例为unavailable。PG故障返回503，不回退或把未持久化结果标成功。
+Consumer探针只验证当前容器/原生实例的租约、报表线程、队列观测和停滞状态。Web健康保留原字段，增加workers.consumer_instances、consumer_running_count、consumer_lost_count和roles.worker汇总；正常/退化/不可用按期望容量及当前有效实例判断：健康数不足或有效实例停滞为degraded，无正常实例为unavailable。历史lost/stopped记录不扣减健康容量。PG故障返回503，不回退或把未持久化结果标成功。
 
 公开健康递归移除配置比较指纹；配置诊断保留旧worker字段并按实例展示consumers快照、版本与差异，实例ID不是共享配置一致性项。资源API保留worker字段，在roles中增加worker:实例ID的本进程SQL观测，不能声称全局实时计数。
 
-同实例重启复用process_leases记录并更新owner；不同Docker重建身份留下的失联记录在管理状态中保留诊断。原retention任务删除心跳超过30天且无后台/报表/能耗运行任务引用的失效Consumer租约，不删除有效记录或还用于恢复的owner。历史lost记录在清理或同ID成功接管前继续提示degraded，不能凭新容器正常就抹去故障信息。
+同实例重启复用process_leases并更新owner；Docker重建留下的历史失联记录保留，但不累积配置诊断卡片或降低健康容量。配置诊断展示当前运行/停滞实例，容量不足及当前异常仍提示。原retention只清理超过30天且无后台/报表/能耗运行任务引用的失效Consumer租约，不删除有效或仍用于恢复的owner。
 
 ## 容量与连接预算
 
@@ -112,8 +111,6 @@ CONSUMER_OPERATION_CONCURRENCY默认4、CONSUMER_ANALYSIS_CONCURRENCY默认10，
 
 ## 验证与回退
 
-真实隔离PG验证实例互斥、原子领取、有效owner不恢复、未提交续约竞争、旧owner提交拒绝、报表/能耗精确恢复、失效记录保留及迁移门槛。实际Consumer进程验证单实例强杀后的接管，以及报告ID/文件归属保护；Scheduler/Automation生命周期和SMTP未知结果保留原回归。Docker使用已有amd64运行镜像、锁定依赖、当前源码及独立演示卷，验证真实四角色探针和Consumer 1→3→1，其他角色容器保持不变；不是生产切换。
-
-受控外部工作替身每组9任务，每实例普通/分析槽均设1、PG池上限4，按生产式1秒Consumer轮询；1/2/3实例耗时9.297/5.170/3.159秒，平均等待4.131/1.858/1.073秒，P95等待8.224/4.136/2.097秒，任务并行1/2/3，观测PG连接3/5/7（含测试观察连接）。测试SQL全局上限2、各源/产线1，实测SQL峰值1/2/2、源/产线均≤1，LLM后台及PDF峰值均1，重复领取0。该数据只证明隔离队列和配额行为，不是现场吞吐；真实SQL Server/MySQL、模型、SMTP、能管及Chromium实际渲染未在该负载对比中调用。
+隔离验证范围、连接与队列观测见[容量验证](PostgreSQL并发与队列容量验证.md)。测试证明领取、租约、恢复和配额边界，不承诺生产线性加速或现场迁移成功。
 
 回退必须先停止所有新Consumer及其余角色，确认退出并保留同批PG/配置/文件备份，处理未完成任务和未知副作用，再恢复匹配P6的PG备份及源码/镜像。003新增Schema版本使旧二进制拒绝启动；不能只换镜像或删除版本行来宣称已回退。需要保留升级后业务数据时须单独制定回迁流程，不擅自覆盖。更早SQLite版本也不能只换连接字符串恢复。

@@ -7,7 +7,7 @@ from pydantic import ValidationError
 import pytest
 
 from app.models.cutting_contracts import CuttingFile, CuttingDispatch
-from tests.test_cutting_dispatch import _service
+from tests.dispatch_fixtures import dispatch_service as _service
 
 
 def test_dispatch_contracts_match_service_and_preserve_all_returned_fields(state_database, tmp_path):
@@ -113,7 +113,6 @@ def test_configuration_and_automation_documented_responses_match_http_payloads(c
     check_contract(client.post(f"/api/v1/automation/schedules/{schedule['schedule_id']}/run"), ScheduledRun)
     check_contract(client.get('/api/v1/automation/deliveries?page=1&page_size=5'), Page[EmailDelivery])
     check_contract(client.get('/api/v1/configuration/diagnostics'), ConfigurationDiagnostics)
-
 
 
 def test_cutting_reports_and_state_dependent_job_responses_match_contracts(contract_http):

@@ -10,7 +10,7 @@
 cp .env.example .env
 docker compose build app
 docker compose up -d postgres
-docker compose run --rm --no-deps migrate python scripts/migrate_sqlite_to_postgres.py schema
+docker compose run --rm --no-deps migrate python scripts/manage_postgres.py schema
 docker compose up -d app scheduler worker automation
 docker compose ps
 ```
@@ -99,7 +99,6 @@ Docker 的 Python/Node 基础镜像使用摘要固定，Debian 系统包使用�
 - [Docker 部署与更新](README-DOCKER.md)
 - [麒麟原生部署](docs/deployment/KYLIN原生部署说明.md)
 - [Web/Worker 升级与回滚](docs/deployment/WEB_WORKER进程隔离升级说明.md)
-- [多设备数据迁移](docs/project/multi-device-isolation.md)
 
 升级已有系统前按对应文档备份并核对迁移条件，保留原配置与数据卷。
 
@@ -107,7 +106,7 @@ Docker 的 Python/Node 基础镜像使用摘要固定，Debian 系统包使用�
 
 应用状态结构由 `backend/app/database/postgres_migrations/` 的追加编号迁移管理。Web/Worker 使用 cutting_app 校验现成 Schema，只有独立维护命令使用 cutting_migrator 升级；正常启动不执行 DDL。
 
-从 SQLite 升级必须先停止 Web/Worker、保留一致性备份与实体文件，再使用 P4 离线工具完整导入/校验38张业务表。账号、具体命令及回退限制见 [PostgreSQL 状态库切换](docs/deployment/PostgreSQL状态库迁移.md)。旧 `scripts/migrate_database.py` 和 SQLite 历史 Schema 只用于导入前的离线准备。
+当前版本仅维护PostgreSQL，不包含旧SQLite升级或导入工具。结构维护、账号、备份及回退见[状态库维护](docs/deployment/PostgreSQL状态库迁移.md)。
 
 车间路由只负责 HTTP、角色依赖和错误映射，业务由 `WorkshopService` 组织。用户、会话、日报、确认分别使用 `UserRepository`、`SessionRepository`、`WorkshopReportRepository`、`ConfirmationRepository`；原 `WorkshopRepository` 保留为嵌入式调用的兼容门面，新实现使用独立仓储。确认冲突、修订号和设备范围仍在数据库事务内检查。
 
@@ -118,8 +117,7 @@ Docker 的 Python/Node 基础镜像使用摘要固定，Debian 系统包使用�
 - [配置参考](docs/deployment/配置参考.md)：来源优先级、参数、生效方式和诊断。
 - [功能与接口参考](docs/project/功能与接口参考.md)：报表口径、能耗、账号权限、文件派发及导出。
 - [当前进度](docs/project/progress.md)：当前状态、近期成果、问题和下一步。
-- [历史变更记录](docs/project/changelog.md)：已完成变更和当时验证结果。
-- [开发约定与架构](docs/project/README.md) · [完整文档目录](docs/README.md)
+- [开发规范](AGENTS.md) · [当前架构](docs/project/architecture.md) · [完整文档目录](docs/README.md)
 
 开发时遵循 [AGENTS.md](AGENTS.md)，按实际影响范围执行定向测试；不默认运行全量套件。环境配置、凭据及运行数据不得提交 Git。
 
@@ -179,11 +177,11 @@ pnpm run typecheck
 
 标准切割报表页面、船名选项/筛选、HTML/PDF 导出与 AI 明细使用同一船名服务。接口继续使用 `ship_no` 字段承载标准切割报表的船名，PDM 文件及派发中的真实船号不变。车间/设备任务明细及导出的工程号、船名、分段号（分段名）三项各自缺失时统一显示“非船”，确认列表也沿用此显示；有值的字段保留原值，原始空值及任务归类保留，便于后续补号。领导报表仍按原工程号统计。演示模式不查询 BM；未登记或停用 `bm` 时保留原兼容行为与已有快照数据。
 
-SQLite 的 `014_workshop_ship_names` 迁移单独保存日报船名，升级前沿用现有自动备份机制。历史日报展示时也查询映射；正常同步时可补齐原空值或原工程编号占用的船名字段，不改生产任务、快照修订号或确认/审计记录。重新导出的报告使用当前映射，已生成的 HTML/PDF 文件保持原内容。
+PostgreSQL日报单独保存船名字段，结构由已发布编号迁移维护。历史日报展示时也查询映射；正常同步时可补齐原空值或原工程编号占用的船名字段，不改生产任务、快照修订号或确认/审计记录。重新导出的报告使用当前映射，已生成的 HTML/PDF 文件保持原内容。
 
 两台切割设备共享有界船名缓存，使用现有报表缓存 TTL；强制查询会刷新船名。修改 `bm` 连接会重建受影响的切割服务，旧请求保留原引用；更改其他无关数据源不会重建切割服务。`bm` 已声明为切割报表引用，登记后可停用，但不能通过管理页删除或切换数据库类型。
 
 
-P1 旧配置升级须先停止旧 Web/Worker 并运行 `python scripts/migrate_production_lines.py`；旧 SQLite 的015告警来源隔离及 P5 最新数据迁移在离线准备阶段完成后，才能启动 P6 四个应用角色，正式启动不再读写 SQLite。统一实例与来源配置、备份位置、新增切割/焊接线及回退边界见[配置参考](docs/deployment/配置参考.md#p1-升级与新增实例)。
+P1 旧配置升级须先停止旧 Web/Worker 并运行 `python scripts/migrate_production_lines.py`；状态库使用PostgreSQL，旧SQLite部署需先使用历史版本完成迁移。统一实例与来源配置、备份位置、新增切割/焊接线及回退边界见[配置参考](docs/deployment/配置参考.md#p1-升级与新增实例)。
 
-P7 Consumer默认1个，同机扩缩容使用 `docker compose up -d --no-deps --scale worker=2 worker`（或3/1）；持久化数量设置CONSUMER_REPLICAS。原生每个服务显式设置不同CONSUMER_INSTANCE_ID。旧SQLite先完成P5最新迁移/verify；旧P6先停Consumer并追加003，再执行prepare-consumers，不能直接混跑两种租约协议。实例探针、容量预算和回退见[部署说明](docs/deployment/WEB_WORKER进程隔离升级说明.md)。
+P7 Consumer默认1个，同机扩缩容使用 `docker compose up -d --no-deps --scale worker=2 worker`（或3/1）；持久化数量设置CONSUMER_REPLICAS。原生每个服务显式设置不同CONSUMER_INSTANCE_ID。旧P6先停Consumer并追加003，再执行prepare-consumers，不能直接混跑两种租约协议。实例探针、容量预算和回退见[部署说明](docs/deployment/WEB_WORKER进程隔离升级说明.md)。

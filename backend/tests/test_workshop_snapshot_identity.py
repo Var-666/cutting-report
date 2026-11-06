@@ -74,7 +74,7 @@ def test_failed_append_restores_items_and_revision_barrier(tmp_path, state_datab
     before = repository.get_daily_report_records(arguments["report_date"])
     with pytest.raises(ForeignKeyViolation):
         repository.sync_daily_report(**{**arguments, 'user':{'user_id':'missing-user','display_name':'失效账号'}},
-                                     records=[record("A"), record("B")])
+                                     records=[record("A", work=120), record("B")])
     assert repository.get_daily_report_records(arguments["report_date"]) == before
     with repository.connect() as connection:
         assert connection.execute("SELECT snapshot_revision_floor FROM workshop_reports").fetchone()['snapshot_revision_floor'] == 1

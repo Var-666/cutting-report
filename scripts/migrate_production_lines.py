@@ -10,9 +10,7 @@ from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
-import sqlite3
 import sys
-from time import time
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'backend'))
@@ -109,12 +107,8 @@ def migrate(root: Path) -> bool:
         if not web.acquire(blocking=False):
             raise ValueError('请先停止 Web')
         stack.callback(web.release)
-        database = root / 'data' / 'metadata.db'
-        if database.exists():
-            with sqlite3.connect(database.as_uri() + '?mode=ro', uri=True) as connection:
-                if connection.execute("SELECT 1 FROM sqlite_master WHERE name='process_leases'").fetchone():
-                    if connection.execute("SELECT 1 FROM process_leases WHERE name='worker' AND expires_at>?", (time(),)).fetchone():
-                        raise ValueError('请先停止 Worker 并等待租约释放')
+        if (root / 'data' / 'metadata.db').exists():
+            raise ValueError('此版本不再支持SQLite部署；请使用保留的旧版本先完成状态库迁移')
         stack.enter_context(settings_file_lock(target))
         environment, _, errors = load_environment(root, dict(os.environ))
         if errors:

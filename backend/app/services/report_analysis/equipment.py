@@ -19,6 +19,8 @@ from app.services.report_analysis.common import (
 def _equipment_task_rows(records: list[EquipmentRecord]) -> list[dict]:
     return [
         {
+            "task_id": row.task_id,
+            "equipment_id": row.equipment_id,
             "project_code": row.project_code,
             "ship_no": row.ship_no,
             "segment_name": row.segment_name,
@@ -27,6 +29,8 @@ def _equipment_task_rows(records: list[EquipmentRecord]) -> list[dict]:
             "work_time": row.work_time,
             "electricity_consumption": row.electricity_consumption,
             "gas_consumption": row.gas_consumption,
+            "electricity_data_status": row.electricity_data_status,
+            "gas_data_status": row.gas_data_status,
         }
         for row in records
     ]

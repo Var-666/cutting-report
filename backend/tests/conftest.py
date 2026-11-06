@@ -1,1 +1,1 @@
-pytest_plugins = ["tests.postgres_fixtures"]
+pytest_plugins = ["tests.postgres_fixtures", "tests.automation_fixtures"]

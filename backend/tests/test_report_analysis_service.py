@@ -182,6 +182,29 @@ def test_same_analysis_input_uses_metadata_cache(state_database, tmp_path: Path)
     assert re.fullmatch(r"[0-9a-f]{64}\.[0-9a-f]{64}", first.data_version or "")
 
 
+def test_task_detail_input_version_excludes_previous_latest_and_cached_analysis(state_database, tmp_path, monkeypatch):
+    from app.services.llm_prompts import PROMPT_VERSION
+    settings, service = _services(state_database, tmp_path)
+    selected = date(2026, 8, 18)
+    records = QueryService(settings, client=source_client(settings)).fetch_workshop_data(
+        ReportFilter(report_date=selected)).workshop_records
+    calls = []
+    def model(kind, context):
+        calls.append(context)
+        return model_analysis(kind, context)
+    monkeypatch.setattr(service.llm, 'analyze_context', model)
+    with monkeypatch.context() as previous:
+        previous.setattr('app.services.report_analysis_service.PROMPT_VERSION', 'report-analysis-v22-full-report-tables')
+        service.analyze_workshop(selected.isoformat(), records, publish_latest=True)
+        assert service.latest_default_analysis('workshop', selected) is not None
+    assert PROMPT_VERSION != 'report-analysis-v22-full-report-tables'
+    assert service.latest_default_analysis('workshop', selected) is None
+    generated = service.analyze_workshop(selected.isoformat(), records, publish_latest=True)
+    cached = service.analyze_workshop(selected.isoformat(), records)
+    assert not generated.cached and cached.cached and len(calls) == 2
+    assert service.latest_default_analysis('workshop', selected).data_version == generated.data_version
+
+
 def test_visible_report_version_must_match_analysis_source(state_database, tmp_path: Path) -> None:
     settings, service = _services(state_database, tmp_path)
     report = LeadershipReportService(settings, client=source_client(settings)).fetch(date(2026, 8, 1))

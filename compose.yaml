@@ -141,7 +141,7 @@ services:
       POSTGRES_BOOTSTRAP_PASSWORD: ""
       POSTGRES_APP_PASSWORD: ""
       POSTGRES_MIGRATOR_PASSWORD: ""
-    command: ["python", "scripts/migrate_sqlite_to_postgres.py", "status"]
+    command: ["python", "scripts/manage_postgres.py", "status"]
     depends_on:
       postgres:
         condition: service_healthy

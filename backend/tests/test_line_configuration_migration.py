@@ -20,6 +20,20 @@ def legacy():
     return json.loads(LEGACY.read_text())
 
 
+def test_configuration_conversion_refuses_retired_sqlite_without_reading_it(tmp_path, monkeypatch):
+    import sqlite3
+
+    data = tmp_path / 'data'
+    data.mkdir()
+    database = data / 'metadata.db'
+    database.write_bytes(b'preserve historical database')
+    monkeypatch.setattr(sqlite3, 'connect', lambda *a, **kw: pytest.fail('must not open SQLite'))
+    with pytest.raises(ValueError, match='不再支持SQLite'):
+        migration.migrate(tmp_path)
+    assert database.read_bytes() == b'preserve historical database'
+    assert not (data / 'settings.env').exists()
+
+
 def test_migration_keeps_ids_business_bindings_credentials_and_existing_sources():
     extra = dict(id='quality', name='质量', engine='sqlserver', host='extra.test', port=1433,
                  database='extra', username='reader', password='existing-private')

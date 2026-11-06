@@ -11,7 +11,7 @@ from app.database.automation import AutomationRepository
 from app.services.email_service import (
     EmailService, EmailDeliveryFailure, EmailDeliveryUnknown, EmailRecipientsRefused,
 )
-from test_automation_recovery import workflow, complete_report, NOW, STAMP
+from tests.automation_fixtures import complete_report, NOW, STAMP
 
 
 def smtp_service(monkeypatch, responses, *, quit_error=False):

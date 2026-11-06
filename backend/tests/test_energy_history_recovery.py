@@ -5,7 +5,7 @@ import pytest
 
 from app.services.energy_api import EnergyApiError
 from app.workers.energy_history_worker import EnergyHistoryWorker
-from test_energy_period_service import NOW, service
+from tests.energy_period_fixtures import NOW, service
 
 
 def worker_and_clock(tmp_path, state_database):

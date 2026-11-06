@@ -88,7 +88,7 @@ docker run --rm --user 0:0 --network none \
 [[ -s "$backup_dir/app-files.tgz" ]] || fail '文件备份为空。'
 
 stage='追加数据库迁移'
-"${compose[@]}" run --rm --no-deps -T migrate python scripts/migrate_sqlite_to_postgres.py schema
+"${compose[@]}" run --rm --no-deps -T migrate python scripts/manage_postgres.py schema
 stage='启动及健康检查'
 started=true
 "$SCRIPT_DIR/start_offline_docker.sh"

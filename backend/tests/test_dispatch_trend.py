@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from app.api.auth import require_admin, require_user
 from app.api.cutting import router
-from tests.test_cutting_dispatch import _service
+from tests.dispatch_fixtures import dispatch_service as _service
 
 
 @pytest.fixture

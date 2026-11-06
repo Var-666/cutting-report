@@ -9,7 +9,6 @@ from decimal import Decimal
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 from urllib.parse import parse_qs, urlsplit
-import sqlite3
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -25,7 +24,6 @@ from app.database.alarms import AlarmRepository
 from app.database.alarm_source import SqlServerAlarmSource
 from app.database.automation import AutomationRepository
 from app.database.definitions import DefinitionRepository
-from app.database.device_migrations import rebuild_table, migrate_device_isolation
 from app.database.leadership_snapshots import LeadershipMonthSnapshot, LeadershipSnapshotRepository
 from app.database.metadata import MetadataRepository
 from app.database.workshop import ConfirmationConflictError, ConfirmationNotFoundError, WorkshopRepository
@@ -38,7 +36,7 @@ from app.services.energy_period_service import EnergyPeriodService
 from app.services.energy_service import EquipmentEnergyService
 from app.database.energy import EnergyReportRepository
 from app.workers.report_worker import ReportWorker
-from test_energy_service import MeterStub, record
+from tests.energy_fixtures import MeterStub, record
 
 NOW = datetime(2026, 10, 12, 12, tzinfo=ZoneInfo('Asia/Shanghai'))
 STAMP = NOW.isoformat()

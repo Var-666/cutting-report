@@ -8,7 +8,7 @@
 
 - 前端：Vue 3、Vue Router、Vite、Soybean Admin、Naive UI、UnoCSS、ECharts。
 - 后端：Python、FastAPI、Pydantic、Uvicorn、Jinja2。
-- 数据：SQL Server（切割/HR/PDM）、MySQL（焊接）作为外部数据源，PostgreSQL 保存系统元数据、快照和操作记录；SQLite 仅用于离线历史准备/导入。
+- 数据：SQL Server（切割/HR/PDM）、MySQL（焊接）作为外部数据源，PostgreSQL 保存系统元数据、快照和操作记录；旧SQLite迁移栈已退役。
 - 报表：单文件 HTML、ECharts、Playwright/Chromium PDF 转换，可选 OpenAI-Compatible LLM 分析。
 - 测试：Pytest 和 Node.js 内置测试运行器。
 
@@ -67,7 +67,7 @@
 - 数据库配置请求/字段转换及脱敏响应在 `services/database_configuration.py`，自动化配置契约及脱敏响应在 `automation_configuration.py`；保存分别调用 `DatabaseRuntime.save_configuration`、`AutomationRuntime.save_configuration`。Runtime 持有保存路径和当前配置，API 不再读取启动全局 Settings 保留密码，也不自行加锁、合并或发布。空密码优先保留锁内读取的最新文件值，文件未提供有效值时保留当前快照；不回显密码。
 - 热加载白名单以 `database_runtime.DATABASE_SETTINGS` 和 `automation_runtime.HOT_SETTINGS` 为准：数据库页已有连接/启用字段（含焊接时区）及自动化/SMTP 字段可热加载；产线目录和数据源连接选项（含单源超时/池大小）已获 P1 授权热加载，P3 容量字段 sql_max_concurrent 除外；P2 将 `REPORT_BACKGROUND_REFRESH_SECONDS` 纳入同一快照，保持原最小30秒。AI、报表 TTL 等其他启动参数仍需重启。新字段先在 `Settings` 登记环境键和默认值，只有明确授权热加载才补入白名单及相应管理契约，不能因字段以数据库前缀开头就自动热加载。
 - 诊断继续通过 `ConfigurationDiagnostics` 对比各进程 `inspect()` 已发布值与文件目标，展示实际来源和重启要求；不能调用 `snapshot()` 使诊断变成配置发布。Worker 按独立心跳报告其快照，未加载/不可用不能标为已生效；敏感值及内部比较指纹不出现在诊断 API 中。
-- 状态业务连接统一经 `PostgresDatabase`/`PostgresRepository`；跨仓储原子写入使用 `UnitOfWork` 绑定同一连接并由外层提交。Service 不持有原始连接、不自行提交；单仓储原子校验/写入由仓储完成。PG编号迁移复用 `database/postgres_migrations/`；旧 `database/migrations/` 只供离线历史准备，不在路由或后台任务临时建表。
+- 状态业务连接统一经 `PostgresDatabase`/`PostgresRepository`；跨仓储原子写入使用 `UnitOfWork` 绑定同一连接并由外层提交。Service 不持有原始连接、不自行提交；单仓储原子校验/写入由仓储完成。PG编号迁移复用 `database/postgres_migrations/`；旧SQLite迁移目录已移除，不在路由或后台任务临时建表。
 - SQL/LLM/SMTP/文件等耗时外部操作不得放进状态库写事务；保留现有任务状态、幂等、未知结果保护和失败补偿。不要用事务回滚假定外部副作用已撤销，详见 [PostgreSQL 事务设计](docs/design/PostgreSQL仓储与事务设计.md)。
 - Web、Scheduler、Automation及同机Consumer实例通过同一 PostgreSQL 状态库与同机共享文件卷协作，各复用一个进程连接池；保留 Web OS 锁、Worker 租约/提交围栏、持久化队列及现有共享容量，不依赖跨进程内存对象或为每台设备新增常驻线程。不扩展为多主机或网络共享卷部署。
 - SQL 资源统一通过 `core/sql_capacity.py` 在 SQL Server/MySQL 驱动入口获取全局、数据源、产线配额；所有同机应用实例共用固定文件锁槽。等待不得持有部分执行配额，不向状态库写配额状态。容量及单源 `sql_max_concurrent` 为冷配置，连接参数仍按新操作热加载；资源计数为各进程本地观测，不能声称实时全局统计。HTTP 执行池与 SQL、LLM、Chromium 容量分别管理。
@@ -95,6 +95,7 @@
 - 后端验证：`./.venv/bin/python -m pytest backend/tests`。
 - 前端验证：在 `frontend/` 执行 `pnpm run typecheck` 和受影响的局部测试；`pnpm test` / `pnpm run build` 用于发布、CI 或明确需要的全量验证。
 - 功能修改应补充相同层级的回归测试；涉及 UI 时同时检查窄屏和空数据/加载/失败状态。
+- 多个测试文件共用的构造函数、记录和桩放在对应业务的测试辅助模块，调用方直接引用辅助模块，不从其他 `test_*.py` 导入。pytest 公共夹具通过 `conftest.py` 注册；仅供单个用例或文件使用的桩就地保留，不为减少文件数合并不同职责的测试。
 - 测试优先验证用户行为、渲染状态和公开契约，不用源码正则锁定内部函数名、变量名、组件布局或 CSS 写法。前端组件测试可复用 `tests/vue-component-helpers.mjs` 编译真实 SFC；已有有效的源码提取行为测试逐步迁移，稳定依赖/权限边界检查可保留。
 - 复用已有公共能力，不新增无明确职责的兼容转发模块；少量重复不必建立新抽象。删除兼容入口前检查源码、脚本、测试及嵌入式调用，不因层次多而合并 Runtime、缓存或快照机制。
 
@@ -143,10 +144,11 @@
 - 开始任务时只读取 `docs/` 中与任务直接相关的文档。新增共享文档确认未被 `.gitignore` 排除，链接目标应随源码可获取；内部原始资料继续保持忽略。
 - 只记录对后续开发有用的结果：架构、UI 约定、性能优化、技术决策和当前进度分别写入 `docs/project/` 中的对应文档。
 - `docs/project/progress.md` 保持简洁，只保留“当前状态、最近完成、当前问题、下一步”；不记录聊天过程。
+- 文档统一从 `docs/README.md` 进入；同一规则只维护一处，其他文档引用。普通更新复用现行部署说明，不逐次新建日期更新文档；删除已被替代的流水账与无用历史，保留仍有效的迁移、备份、回退和业务约束，历史源码通过 Git 查阅。
 
 ## 通用外部数据源（P13）
 
-- P5 正式 Runtime、Repository、UnitOfWork、队列与租约统一使用 PostgreSQL；连接在 `database/postgres.py`，独立迁移在 `postgres_migrations/`，离线迁移/校验工具为 `scripts/migrate_sqlite_to_postgres.py`。四个应用角色只用 cutting_app，维护工具显式用 cutting_migrator；不把状态 PG 注册到生产数据源，不双写/自动回退，不在普通启动/请求安装 Schema。PG历史迁移只追加，SQLite仅保留离线历史与一致性导入工具。
+- P5 正式 Runtime、Repository、UnitOfWork、队列与租约统一使用 PostgreSQL；连接在 `database/postgres.py`，独立迁移在 `postgres_migrations/`，PG结构维护工具为 `scripts/manage_postgres.py`。四个应用角色只用 cutting_app，维护工具显式用 cutting_migrator；不把状态 PG 注册到生产数据源，不双写/自动回退，不在普通启动/请求安装 Schema。PG历史迁移只追加；旧SQLite升级/导入栈已移除，不恢复兼容入口，不删除现场历史数据库文件。
 
 - 新增 SQL Server/MySQL 数据库优先通过 `DatabaseSourceRegistry` 注册；管理页“其他数据源”仅登记连接，不自动创建产线、菜单、报表或授予业务权限。新产线仍沿用现有多产线注册与 Provider 机制。
 - 新增连接统一使用 `models/database_sources.py` 的配置模型，SQL Server 使用 `SqlServerClient(config)`，MySQL 使用 `MySqlClient(config)`；不在业务 Service 中散落连接字段，不为每个新库复制连接池。专属 SQL、参数及字段映射归业务 Repository，不统一 SQL 方言。
@@ -163,7 +165,7 @@
 - Scheduler只调度生产周期任务，保留P2内存到期提示和持久化去重；Consumer只领取后台/报表任务及恢复执行状态；Automation独占计划扫描、补偿和SMTP消费/恢复。ReportWorker不得启动自动化或邮件线程。
 - 复用PostgreSQL scheduler/worker:实例ID/automation租约与execution_scope提交围栏，Consumer实例ID与每次获取的owner token分开，恢复检查实际角色，不伪装worker。快照期限以持久化完成时间为准，不跨进程依赖内存。能耗pending finish只由Consumer刷新，热重建不回收同owner在途claim。
 - 四角色使用相同配置/本地文件卷和各自有界PG池；保留P3 SQL/模型/PDF容量及邮件unknown保护。健康和配置诊断须分别报告三个角色，公开状态递归去除内部配置指纹。默认单Consumer，按需同机扩容；每个实例只恢复失效owner，不重置正常实例。报表写入校验owner，后台完成校验owner、claim_token及attempts，能耗保留claim_token。
-- 旧SQLite部署先完成P5最新数据离线迁移/校验，再运行P7停机prepare-consumers切换和启动各角色。禁止新旧混合Worker并跑；生产切换需单独授权。
+- 旧PG全局Worker协议切换先停机备份，再运行prepare-consumers并启动各角色。尚未迁移的SQLite部署须使用保留的历史版本先完成迁移，当前版本不提供导入能力。禁止新旧混合Worker并跑；生产切换需单独授权。
 
 - P7 Consumer原生实例必须显式配置CONSUMER_INSTANCE_ID，Docker使用各自容器身份；同ID互斥、不同ID并发，健康探针必须定位本实例。Scheduler/Automation仍各单实例；不恢复全局worker运行协议。
 - 状态Schema只追加003_consumer_scaling及指纹，不修改001/002。prepare-consumers由维护账号在所有Consumer停止且租约失效后显式执行；旧无指纹任务标blocked，不猜测数据源、不丢记录。告警/能耗等新增任务必须携带来源指纹。

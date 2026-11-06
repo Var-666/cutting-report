@@ -1,3 +1,4 @@
+from tests.energy_period_fixtures import DAY, START, NOW, samples, service
 from tests.line_fixtures import as_line_services, runtime_line
 from dataclasses import replace
 from datetime import date, datetime, timedelta
@@ -11,35 +12,11 @@ import pytest
 
 from app.api.auth import require_admin
 from app.api.energy import router
-from app.database.energy import EnergyReportRepository
 from app.models.domain import to_primitive
 from app.services.energy_api import EnergyApiError
 from app.services.energy_period_service import EnergyPeriodService, restore_task_energy_records
 from app.workers.energy_history_worker import EnergyHistoryWorker
-from test_energy_service import configured, record, GAS, ELECTRIC, MeterStub
-
-
-DAY = date(2026, 8, 18)
-START = datetime(2026, 8, 18)
-NOW = datetime(2026, 9, 1, 12)
-
-
-def samples(start=START, *, minutes=15, offset=0, days=1):
-    result = []
-    # Stable increasing cumulative readings, with samples on both sides of midnight.
-    for index in range(-2, (days * 1440) // minutes + 3):
-        stamp = start + timedelta(minutes=index * minutes, seconds=offset)
-        for key, rate in zip((GAS, *ELECTRIC), (1, 2, 3, 4)):
-            result.append({"MfId": key, "Mt": stamp.isoformat(), "Mv": str(100000 + index * rate)})
-    return result
-
-
-def service(tmp_path, state_database, *, rows=None, now=NOW, **changes):
-    cfg = configured(energy_equipment_ids=(), energy_report_electricity_parameter_ids=ELECTRIC,
-                     energy_report_max_gap_seconds=1800, **changes)
-    repository = EnergyReportRepository(state_database)
-    client = MeterStub(samples() if rows is None else rows)
-    return EnergyPeriodService(cfg, repository, client=client, clock=lambda: now), client
+from tests.energy_fixtures import record, GAS, ELECTRIC, MeterStub
 
 
 def test_hourly_day_and_persisted_month_without_equipment_or_tasks(tmp_path, state_database):

@@ -273,37 +273,6 @@ def test_automation_email_alarm_dispatch_and_retention(state):
         dispatch_cutoff='2000-01-01',audit_cutoff='2000-01-01',queued_at=stamp,batch_size=100)['reports'] == 0
 
 
-def test_full_p4_history_import_preserves_every_table_and_order(state, tmp_path):
-    import sqlite3
-    from tests.test_postgres_migration import source as source_fixture
-    from app.database.sqlite_to_postgres import offline_snapshot, transfer
-    database, _, migrator = state
-    path = source_fixture.__wrapped__(tmp_path)
-    with sqlite3.connect(path) as connection:
-        connection.row_factory = sqlite3.Row
-        connection.execute("UPDATE report_analyses SET cache_key='z-original', display_scope='Cutter02', mode='model', report_type='workshop', report_date='2026-11-04', model_name='model', prompt_version='v1', result_json='{\"overview\":\"first\"}', generated_at='2026-11-04T00:00:00+00:00'")
-        analysis = dict(connection.execute('SELECT * FROM report_analyses').fetchone())
-        analysis.update(cache_key='a-last', result_json='{"overview":"last"}')
-        connection.execute('INSERT INTO report_analyses ('+','.join(analysis)+') VALUES ('+','.join('?' for _ in analysis)+')',tuple(analysis.values()))
-    with PostgresDatabase(migrator) as target:
-        with offline_snapshot(path,tmp_path/'backups') as (snapshot,_):
-            summary = transfer(snapshot,target,action='migrate',batch_size=2,reports_root=tmp_path/'reports',data_root=tmp_path/'data')
-            assert summary['result'] == 'verified' and summary['table_count'] == 38
-            assert transfer(snapshot,target,action='verify',batch_size=2,reports_root=tmp_path/'reports',data_root=tmp_path/'data') == summary
-    with database.connect() as connection, sqlite3.connect(path) as original:
-        assert connection.execute('SELECT user_id,password_hash FROM users ORDER BY user_id').fetchall() == [dict(zip(('user_id','password_hash'),row)) for row in original.execute('SELECT user_id,password_hash FROM users ORDER BY user_id')]
-        assert connection.execute('SELECT report_id,relative_path FROM reports').fetchone()['relative_path'] == 'fixture.html'
-        for table in ('report_analyses','report_snapshots'):
-            assert sorted(row['insertion_order'] for row in connection.execute(sql.SQL('SELECT insertion_order FROM {}').format(sql.Identifier(table)))) == sorted(row[0] for row in original.execute(f'SELECT rowid FROM {table}'))
-        assert connection.execute('SELECT last_value FROM llm_usage_calls_id_seq').fetchone()['last_value'] > 2**40
-    metadata = MetadataRepository(database,device_id='Cutter02')
-    latest = metadata.get_latest_analysis(report_type='workshop',report_date='2026-11-04',model_name='model',prompt_version='v1')
-    assert latest == {'overview':'last'}
-    with database.connect() as connection:
-        history_id = connection.execute('SELECT report_id FROM reports').fetchone()['report_id']
-    assert metadata.get_job(history_id)['relative_path'] == 'fixture.html'
-
-
 def _run_worker_process(cfg, ready, stop, results):
     import sqlite3
     import sys
@@ -477,38 +446,3 @@ def test_alarm_renewal_thread_inherits_worker_execution_fence(state, monkeypatch
         with pytest.raises(ExecutionLeaseLost):
             result.result(timeout=3)
     assert observed.is_set()
-
-
-def test_offline_upgrade_binds_legacy_analysis_before_final_import(state, tmp_path, monkeypatch):
-    from app.database.sqlite_history import SQLiteHistory
-    from app.database.migrations import apply_migrations as sqlite_migrations
-    from app.database.sqlite_to_postgres import offline_snapshot, transfer
-    from app.services.application_runtime import build_runtime
-    from app.services.database_runtime import database_context
-    from scripts import migrate_database
-    database, cfg, migrator = state
-    path = cfg.data_dir/'metadata.db'
-    history = SQLiteHistory(path)
-    sqlite_migrations(history)
-    with history.connect() as connection:
-        connection.execute('''INSERT INTO report_analyses
-            (cache_key,report_type,report_date,input_hash,data_version,status,mode,model_name,prompt_version,result_json,generated_at,display_scope)
-            VALUES ('legacy-analysis','workshop','2026-11-04','input','v-old','success','model','test','v1',
-                '{"overview":"迁移前的分析"}','2026-11-04T08:00:00+08:00','Cutter01')''')
-        connection.execute("INSERT INTO analysis_source_versions VALUES ('workshop','2026-11-04','v-old','original-time','Cutter01')")
-    monkeypatch.setattr(migrate_database,'settings',cfg)
-    monkeypatch.setattr('sys.argv',['migrate_database.py','upgrade','--database',str(path)])
-    migrate_database.main()
-    migrate_database.main()
-    with PostgresDatabase(migrator) as target, offline_snapshot(path,tmp_path/'backups') as (source,_):
-        assert transfer(source,target,action='migrate',reports_root=cfg.reports_dir,data_root=cfg.data_dir)['result'] == 'verified'
-    import sqlite3
-    monkeypatch.setattr(sqlite3,'connect',lambda *a,**kw:pytest.fail('Runtime must not use the retained SQLite file'))
-    runtime = build_runtime(cfg,role='web')
-    try:
-        metadata = database_context(runtime).lines['Cutter01'].cutting().metadata
-        assert metadata.get_latest_analysis(report_type='workshop',report_date='2026-11-04',model_name='test',prompt_version='v1') == {'overview':'迁移前的分析'}
-        assert metadata.get_analysis_source_version(report_type='workshop',report_date='2026-11-04') == {'data_version':'v-old','updated_at':'original-time'}
-    finally:
-        runtime.database_runtime.close()
-        runtime.database.close()

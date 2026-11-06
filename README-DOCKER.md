@@ -15,7 +15,7 @@ cp .env.example .env
 ```bash
 docker compose build app
 docker compose up -d postgres
-docker compose run --rm --no-deps migrate python scripts/migrate_sqlite_to_postgres.py schema
+docker compose run --rm --no-deps migrate python scripts/manage_postgres.py schema
 docker compose up -d --wait --wait-timeout 180 app scheduler worker automation
 docker compose ps
 docker compose logs --tail 100 app scheduler worker automation
@@ -25,7 +25,7 @@ docker compose logs --tail 100 app scheduler worker automation
 
 ## 更新已有部署
 
-首次从旧单进程或旧设备结构升级，先备份 `.env`、完整 data/reports 卷并停止旧服务，按 [Web/Worker 升级与回滚](docs/deployment/WEB_WORKER进程隔离升级说明.md) 和 [多设备迁移](docs/project/multi-device-isolation.md) 核对迁移条件。不能直接启动第二套实例或猜测历史数据归属。
+首次从旧单进程或旧设备结构升级，先备份 `.env`、完整 data/reports 卷并停止旧服务，按 [Web/Worker 升级与回滚](docs/deployment/WEB_WORKER进程隔离升级说明.md) 和 [PostgreSQL迁移](docs/deployment/PostgreSQL状态库迁移.md) 核对迁移条件。不能直接启动第二套实例或猜测历史数据归属。
 
 保留原 Compose 项目名及卷配置，更新程序后构建四个应用服务：
 
@@ -39,7 +39,7 @@ docker compose up -d --build app scheduler worker automation
 docker compose up -d --force-recreate app scheduler worker automation
 ```
 
-`docker compose restart` 不会重新注入环境变量。管理员保存的 `data/settings.env` 优先于进程环境和 `.env`；自动化/SMTP 通过下一轮操作热加载，数据库、模型、设备目录等需重启四个应用进程。在“系统设置 → 配置诊断”核对来源、保存目标与四个应用进程的实际状态。
+`docker compose restart` 不会重新注入环境变量。管理员保存的 `data/settings.env` 优先于进程环境和 `.env`；产线、数据库连接及自动化/SMTP按新操作热加载；SQL容量、PG连接、模型等冷配置需重启四个应用进程，具体范围以[配置参考](docs/deployment/配置参考.md)为准。在“系统设置 → 配置诊断”核对来源、保存目标与四个应用进程的实际状态。
 
 停止服务可使用 `docker compose down`，保留命名卷；不要使用 `down -v`，它会删除运行数据。回滚条件与操作见后台进程升级文档。
 
@@ -71,6 +71,6 @@ docker compose exec automation python -m app.automation_worker --health
 镜像已包含 ODBC Driver 18、Playwright Chromium 和中文字体，HTML/PDF 保存在 reports 卷；文件下载实体保存在 data 卷。凭据、设备仪表映射、采样规则和数据保留统一见 [配置参考](docs/deployment/配置参考.md)，页面操作与接口见 [功能与接口参考](docs/project/功能与接口参考.md)。
 
 
-首次从 SQLite 升级不能直接启动上述全新安装命令：先按 [PostgreSQL 状态库切换](docs/deployment/PostgreSQL状态库迁移.md) 停机、备份、导入和校验。状态库现在是必需服务，保留 postgres_data 卷且不发布5432端口；运行账号为 cutting_app，独立 migrate 服务使用 cutting_migrator。不要执行 down -v 或把旧 P4 演练数据误当作最终数据。
+当前版本不再支持SQLite升级/导入；旧部署须先用历史版本工具完成迁移，不能按全新安装覆盖原数据。状态库现在是必需服务，保留 postgres_data 卷且不发布5432端口；运行账号为 cutting_app，独立 migrate 服务使用 cutting_migrator。不要执行 down -v 或把旧 P4 演练数据误当作最终数据。
 
-P7 Consumer默认1个，同机扩缩容使用 `docker compose up -d --no-deps --scale worker=2 worker`（或3/1）；持久化数量设置CONSUMER_REPLICAS。原生每个服务显式设置不同CONSUMER_INSTANCE_ID。旧SQLite先完成P5最新迁移/verify；旧P6先停Consumer并追加003，再执行prepare-consumers，不能直接混跑两种租约协议。实例探针、容量预算和回退见[部署说明](docs/deployment/WEB_WORKER进程隔离升级说明.md)。
+P7 Consumer默认1个，同机扩缩容使用 `docker compose up -d --no-deps --scale worker=2 worker`（或3/1）；持久化数量设置CONSUMER_REPLICAS。原生每个服务显式设置不同CONSUMER_INSTANCE_ID。旧P6先停Consumer并追加003，再执行prepare-consumers，不能直接混跑两种租约协议。实例探针、容量预算和回退见[部署说明](docs/deployment/WEB_WORKER进程隔离升级说明.md)。

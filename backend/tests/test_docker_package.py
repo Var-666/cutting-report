@@ -74,8 +74,17 @@ def test_source_package_keeps_soybean_build_configuration_and_license(tmp_path):
         "frontend/src/vendor/soybean-admin/LICENSE",
     )
     removed = (
+        "scripts/migrate_database.py", "scripts/migrate_sqlite_to_postgres.py",
+        "scripts/linux/upgrade_offline_docker.sh", "scripts/linux/resume_sqlite_upgrade.sh",
         "START_DOCKER.bat", "scripts/windows/install_windows.bat", "scripts/windows/start_windows.bat",
         "docs/deployment/WINDOWS部署说明.md",
+        "docs/project/README.md",
+        "docs/project/changelog.md",
+        "docs/project/optimization.md",
+        "docs/project/multi-device-isolation.md",
+        "docs/design/SQLite仓储与事务设计.md",
+        "docs/deployment/20261105服务器更新说明.md",
+        "docs/deployment/20261106服务器更新说明.md",
     )
     assert not set(removed).intersection(packager.FILES)
     for name in packager.FILES:
@@ -93,7 +102,6 @@ def test_source_package_keeps_soybean_build_configuration_and_license(tmp_path):
     assert not set(removed).intersection(payload)
     assert payload["scripts/linux/start_kylin.sh"] == b"fixture"
     assert payload["scripts/linux/start_offline_docker.sh"] == b"fixture"
-    assert payload["scripts/linux/upgrade_offline_docker.sh"] == b"fixture"
     assert payload["frontend/uno.config.ts"] == b"fixture"
     assert payload["frontend/src/vendor/soybean-admin/LICENSE"] == b"fixture"
     assert payload["frontend/dist/licenses/soybean-admin/LICENSE"] == b"fixture"
@@ -101,11 +109,15 @@ def test_source_package_keeps_soybean_build_configuration_and_license(tmp_path):
     assert payload["licenses/pinia/LICENSE"] == b"pinia license"
     assert payload['scripts/check_welding.py'] == b'fixture'
     assert payload['scripts/export_api_contracts.py'] == b'fixture'
-    assert payload['scripts/migrate_database.py'] == b'fixture'
+    assert payload['scripts/manage_postgres.py'] == b'fixture'
     assert payload['docs/project/welding-integration.md'] == b'fixture'
     assert payload['docs/project/multi-line-report-data.md'] == b'fixture'
     assert payload['backend/app/api/welding.py'] == b'fixture'
-    for name in ("docs/deployment/配置参考.md", "docs/project/功能与接口参考.md", "docs/project/changelog.md"):
+    for name in (
+        "docs/deployment/配置参考.md", "docs/project/功能与接口参考.md", "docs/README.md",
+        "AGENTS.md", "docs/project/architecture.md", "docs/project/progress.md",
+        "docs/design/API契约与迁移约定.md",
+    ):
         assert payload[name] == b"fixture"
 
 

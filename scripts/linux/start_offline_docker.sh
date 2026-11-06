@@ -30,7 +30,7 @@ fi
 # Compose reads CONSUMER_REPLICAS (default 1); never reset queues when scaling.
 docker compose -f compose.yaml -f compose.offline.yaml up -d --no-build --pull never postgres
 if ! docker compose -f compose.yaml -f compose.offline.yaml run --rm --no-deps -T app \
-  python scripts/migrate_sqlite_to_postgres.py status; then
+  python scripts/manage_postgres.py status; then
   echo '[ERROR] PostgreSQL 尚未准备完成。请先按 PostgreSQL状态库迁移.md 初始化、迁移并校验，禁止直接启动。' >&2
   exit 1
 fi
