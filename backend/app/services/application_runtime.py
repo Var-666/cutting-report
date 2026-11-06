@@ -43,6 +43,8 @@ from app.services.database_runtime import DatabaseRuntime, DatabaseServices, sou
 from app.database.welding import WeldingRepository
 from app.database.mysql import MySqlClient
 from app.database.sqlserver import SqlServerClient
+from app.database.hr import HrRepository
+from app.database.magic_box import MagicBoxConfigRepository
 from app.services.welding_service import WeldingService
 from app.database.source_registry import DatabaseSourceRegistry, SourceNotFound
 from app.database.bm_projects import BmProjectRepository
@@ -163,7 +165,7 @@ def _build_runtime(settings: Settings, database: PostgresDatabase, *, role: Lite
 
     automation_runtime = AutomationRuntime(settings)
     email_service = EmailService(settings, runtime=automation_runtime)
-    worker_auth = WorkerAuthService(settings, client=sql_client(database_sources, settings.worker_source_key, settings.worker_database_auth_enabled))
+    worker_auth = WorkerAuthService(settings, repository=HrRepository(sql_client(database_sources, settings.worker_source_key, settings.worker_database_auth_enabled)))
     pdm = (
         SqlServerPdmRepository(settings, client=sql_client(database_sources, settings.file_source_key, True))
         if settings.file_database_enabled
@@ -178,7 +180,7 @@ def _build_runtime(settings: Settings, database: PostgresDatabase, *, role: Lite
     retention_repository = RetentionRepository(database)
     retention_service = RetentionService(settings, retention_repository)
     retention_worker = RetentionWorker(settings, retention_service, managed=True)
-    magic_config = MagicBoxConfigProvider(settings, client=sql_client(database_sources, settings.dispatch_source_key, settings.magic_box_enabled))
+    magic_config = MagicBoxConfigProvider(settings, repository=MagicBoxConfigRepository(sql_client(database_sources, settings.dispatch_source_key, settings.magic_box_enabled)))
     cutting_dispatch = CuttingDispatchService(
         settings,
         pdm,
@@ -212,10 +214,10 @@ def _build_runtime(settings: Settings, database: PostgresDatabase, *, role: Lite
             updated_downloads.pdm = updated_pdm
         updated_dispatch = previous.cutting_dispatch
         if not file_unchanged or not magic_unchanged:
-            updated_magic = MagicBoxConfigProvider(configuration, client=sql_client(sources, configuration.dispatch_source_key, configuration.magic_box_enabled))
+            updated_magic = MagicBoxConfigProvider(configuration, repository=MagicBoxConfigRepository(sql_client(sources, configuration.dispatch_source_key, configuration.magic_box_enabled)))
             updated_dispatch = CuttingDispatchService(configuration, updated_pdm, dispatches, file_source, updated_downloads, updated_magic)
         return DatabaseServices(settings=configuration, catalog=updated_catalog, lines=updated_lines,
-            worker_auth=previous.worker_auth if auth_unchanged else WorkerAuthService(configuration, client=sql_client(sources, configuration.worker_source_key, configuration.worker_database_auth_enabled)),
+            worker_auth=previous.worker_auth if auth_unchanged else WorkerAuthService(configuration, repository=HrRepository(sql_client(sources, configuration.worker_source_key, configuration.worker_database_auth_enabled))),
             file_downloads=updated_downloads, database_sources=sources, cutting_dispatch=updated_dispatch)
 
     context = DatabaseServices(

@@ -477,6 +477,7 @@ def test_report_passes_the_same_snapshot_count_to_paginated_jobs():
     class Repository:
         device_nos = ()
         conditions = staticmethod(job_conditions)
+        speed_distribution = WeldingRepository.speed_distribution
         client = Client()
         def summary(self, session, selected):
             return {'source_rows': 3, 'job_count': 2, **dict.fromkeys([

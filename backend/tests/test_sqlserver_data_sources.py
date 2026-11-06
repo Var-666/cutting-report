@@ -23,9 +23,9 @@ def test_worker_and_file_use_explicitly_bound_registry_clients(postgres_state, t
     cfg = replace(cfg, worker_database_auth_enabled=True, file_database_enabled=True, worker_source_key='hr',
                   file_source_key='pdm', database_sources_json=source_configs_json(sources))
     context = build_runtime(state_settings(cfg,postgres_state), role='web').database_runtime.snapshot()
-    assert context.worker_auth.client is context.database_sources.client('hr')
+    assert context.worker_auth.repository.client is context.database_sources.client('hr')
     assert context.file_downloads.pdm.client is context.database_sources.client('pdm')
-    assert context.worker_auth.client.connection_config()['database'] == 'hr'
+    assert context.worker_auth.repository.client.connection_config()['database'] == 'hr'
     assert context.file_downloads.pdm.client.connection_config()['database'] == 'pdm'
 
 

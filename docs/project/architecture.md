@@ -23,6 +23,7 @@
 
 - `services/report_analysis/leadership.py`、`workshop.py`、`equipment.py` 分别构建各自的事实、比较、异常及两张完整分析表；`common.py` 共享格式化、规范化与版本摘要算法。纯上下文构建不访问数据库或调用模型。
 - `ReportAnalysisService` 保留统一入口、来源版本校验、LLM 调用、缓存/单飞/跨进程协调、取消与期限、输出展示及持久化。原有公开版本函数及导入入口保持，不调整提示词版本。
+- 提示词集中在 `services/llm_prompts.py`：包含 `PROMPT_VERSION`、切割通用规则与领导/车间/设备场景、焊接及告警文案，以及报表提示词组合。`llm_service.py` 保留请求、限流、取消/期限、重试、用量和 JSON 校验；告警事实及证据校验仍由告警服务负责。2026-11-06仅搬迁定义，最终提示词与版本值逐项保持不变，沿用原缓存规则；焊接与告警保留独立单位和输出契约。
 - `services/report_generation/` 按领导、车间、设备、自定义报表组织内容准备；`common.py` 提供周期/元信息规则与 `PreparedReport` 返回类型。各类型显式接收现有 Service、Repository 和进度/分析/停止回调，不传入整个 Runtime 或重新创建协作对象。
 - `ReportPipeline.run()` 统一分派任务，保留设备校验、取消/超时、AI 失败降级及恢复执行上下文；内容准备返回后，统一渲染并在同一 UnitOfWork 中保存报告和完成状态。对象装配继续保持原有构造方式。
 - 删除 `run()` 无法到达的旧日报设备能耗分支；保留可到达的历史日报兜底及其设备比较行为。车间单日/区间共用日报统计输入转换，不合并各类报表的业务口径。
@@ -63,6 +64,12 @@ models/、Settings：供各层使用；Runtime 装配是上述单向业务调用
 - `config.py` 的 `Settings` 为 frozen dataclass，但模块导入读取统一环境来源并更新 `os.environ`。复用 `configuration_sources` 和字段元数据；默认优先级为 `settings.env > process > .env > defaults`（显式禁用 dotenv 时遵循现有分支）。新增业务代码不重读环境、不修改全局 Settings。
 - PostgreSQL 的连接、租约检查和提交在 `database/postgres.py`；多仓储原子用例复用 `unit_of_work.py`，例如自动化创建报表任务及流水线完成写入。事务内的确认归属/冲突检查属于数据完整性边界，不能为“瘦仓储”移到事务外。正式状态 Schema 迁移统一走 `database/postgres_migrations/`，`database/migrations/` 仅保留离线 SQLite 历史准备。
 - 全部产线实例来自 `PRODUCTION_LINES_JSON`，由 `device_config.ProductionLineCatalog` 校验；类型能力在 `production_lines.LINE_TYPES` 声明，Runtime 按类型构建 `lines[line_id]`。`production_reports.py` 已有 Provider 契约，`report_snapshots.py` 已有快照访问机制；它们不要求统一各产线统计模型。焊接使用独立只读 MySQL，与切割 SQL Server 分开。
+
+### 业务 SQL 归层（2026-11-06）
+
+- 切割工程/船名筛选和最近生产日查询由 `database/cutting_queries.py` 执行，对应 SQL 存入原 `database/queries/`；HR 人员查询与魔盒 SYS_CONFIG 查询分别由 `database/hr.py`、`magic_box.py` 执行。Service 保留认证、配置校验、缓存、船名映射与结果处理。
+- 焊接速度分布归 `WeldingRepository`，继续使用页面统计的同一 MySQL 只读事务、筛选与设备范围；模型等待者登记/检查/清理归 `CoordinationRepository`，过期清理与登记保持原事务，Service 保留优先级、配额文件锁、取消及期限。
+- Runtime 在启动和热重建时显式装配只读仓储，沿用 Registry 客户端快照；原 client 构造调用方式保持可用。业务 SQL 与参数语义保持一致，连接检查的固定 `SELECT 1` 保留在原适配入口，无新增依赖或 Schema 迁移。
 
 ### 主要问题（按后续变更影响排序）
 

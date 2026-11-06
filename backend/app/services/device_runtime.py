@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 from app.config import Settings
 from app.database.sqlserver import SqlServerClient
+from app.database.cutting_queries import CuttingQueryRepository
 from app.database.alarms import AlarmRepository
 from app.database.alarm_source import SqlServerAlarmSource
 from app.database.metadata import MetadataRepository
@@ -161,7 +162,8 @@ def build_device_runtime(
     metadata = MetadataRepository(database, device_id=settings.device_id, analysis_scope=f"{settings.device_id}:{settings.source_fingerprint}")
     workshop = WorkshopReportRepository(database, scope_machine_no=settings.report_machine_no)
     pipeline = ReportPipeline(settings, metadata, definitions, workshop_repository=workshop,
-                              query_service=QueryService(settings, client=client, ship_names=ship_names))
+                              query_service=QueryService(settings, client=client, ship_names=ship_names,
+                                  repository=CuttingQueryRepository(client, settings.report_machine_no)))
     leadership = LeadershipReportService(settings, snapshots, client=client)
     analysis = pipeline.analysis_service
     source_name = settings.alarm_source_name or f'{settings.production_data_source}:{settings.device_id}'

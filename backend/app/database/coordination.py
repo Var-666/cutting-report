@@ -16,6 +16,19 @@ logger = logging.getLogger(__name__)
 
 
 class CoordinationRepository(PostgresRepository):
+    def register_model_waiter(self, waiter_id: str, expires_at: float) -> None:
+        with self.connect() as connection:
+            connection.execute("DELETE FROM llm_waiters WHERE expires_at<=EXTRACT(EPOCH FROM clock_timestamp())")
+            connection.execute("INSERT INTO llm_waiters VALUES (%s, %s)", (waiter_id, expires_at))
+
+    def model_foreground_waiting(self) -> bool:
+        with self.connect() as connection:
+            return connection.execute("SELECT 1 FROM llm_waiters WHERE expires_at>EXTRACT(EPOCH FROM clock_timestamp()) LIMIT 1").fetchone() is not None
+
+    def unregister_model_waiter(self, waiter_id: str) -> None:
+        with self.connect() as connection:
+            connection.execute("DELETE FROM llm_waiters WHERE waiter_id=%s", (waiter_id,))
+
     def require_consumer_cutover(self) -> None:
         with self.connect() as connection:
             if connection.execute("SELECT 1 FROM process_leases WHERE name='worker'").fetchone():

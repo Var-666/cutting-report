@@ -107,7 +107,7 @@ def test_ship_options_follow_date_and_project_and_use_shared_mapping_cache():
     service = QueryService(cutting_settings(data_source_mode='sqlserver'), ship_names=ShipNameService(
         SimpleNamespace(ship_names=lambda numbers: {'CMYZ0170': '18600DWT-02', 'P2': '18600DWT-02'}), cache_seconds=600), client=source_client(cutting_settings(data_source_mode='sqlserver')))
     calls = []
-    service.client = SimpleNamespace(fetch_all=lambda sql, values: calls.append(values) or [{'project_name':'CMYZ0170'},{'project_name':'P2'}])
+    service.repository.client = SimpleNamespace(fetch_all=lambda sql, values: calls.append(values) or [{'project_name':'CMYZ0170'},{'project_name':'P2'}])
     filters = ReportFilter(report_date=date(2026,11,1),project_code='CMYZ0170')
     assert service.list_ships(filters) == ['18600DWT-02']
     assert calls[0][-2:] == ('CMYZ0170','CMYZ0170')

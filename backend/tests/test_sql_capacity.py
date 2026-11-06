@@ -449,16 +449,17 @@ def test_http_reports_busy_sql_with_instance_identity_and_exposes_only_process_s
 
 def test_shared_hr_pdm_and_dispatch_queries_never_borrow_a_selected_line_identity():
     from app.core.sql_capacity import current_sql_identity
-    from app.services.worker_auth_service import WorkerAuthService
+    from app.database.hr import HrRepository
     from app.database.pdm import SqlServerPdmRepository
-    from app.services.magic_box_service import MagicBoxConfigProvider
+    from app.database.magic_box import MagicBoxConfigRepository
     from tests.line_fixtures import cutting_settings
     seen = []
     client = SimpleNamespace(fetch_all=lambda *args: seen.append(current_sql_identity.get().line_id) or [])
     cfg = cutting_settings()
     with sql_identity('Cutter01', 'cutting-production'):
-        for service in (WorkerAuthService(cfg, client=client), SqlServerPdmRepository(cfg, client=client), MagicBoxConfigProvider(cfg, client=client)):
-            service._fetch_all('SELECT 1', ())
+        HrRepository(client).search_people('test', 1)
+        SqlServerPdmRepository(cfg, client=client)._fetch_all('SELECT 1', ())
+        MagicBoxConfigRepository(client).configuration_rows()
     assert seen == [None, None, None]
 
 

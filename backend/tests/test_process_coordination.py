@@ -10,6 +10,27 @@ from app.database.coordination import CoordinationRepository
 from app.database.postgres import PostgresDatabase, ExecutionLeaseLost, execution_scope
 
 
+def test_model_waiter_registration_is_atomic_and_removal_keeps_other_waiters(postgres_state):
+    from time import time
+    from psycopg.errors import UniqueViolation
+    repository = CoordinationRepository(postgres_state[0])
+    repository.register_model_waiter('foreground', time() + 300)
+    assert repository.model_foreground_waiting()
+    with repository.connect() as connection:
+        connection.execute("INSERT INTO llm_waiters VALUES ('expired', 0)")
+    with pytest.raises(UniqueViolation):
+        repository.register_model_waiter('foreground', time() + 300)
+    with repository.connect() as connection:
+        assert connection.execute("SELECT 1 FROM llm_waiters WHERE waiter_id='expired'").fetchone()
+    repository.register_model_waiter('another', time() + 300)
+    with repository.connect() as connection:
+        assert not connection.execute("SELECT 1 FROM llm_waiters WHERE waiter_id='expired'").fetchone()
+    repository.unregister_model_waiter('foreground')
+    assert repository.model_foreground_waiting()
+    repository.unregister_model_waiter('another')
+    assert not repository.model_foreground_waiting()
+
+
 def _claim(cfg, output):
     with PostgresDatabase(cfg) as database:
         output.put(CoordinationRepository(database).acquire("worker:test-consumer", ttl=10))

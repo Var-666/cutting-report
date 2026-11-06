@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from app.config import Settings
+from app.services.llm_prompts import PROMPT_VERSION
 from app.database.metadata import MetadataRepository
 from app.models.domain import (
     AnalysisResult,
@@ -41,7 +42,6 @@ from app.services.report_analysis.equipment import build_context as build_equipm
 
 
 logger = logging.getLogger(__name__)
-PROMPT_VERSION = "report-analysis-v22-full-report-tables"
 
 
 def _present_analysis(result: AnalysisResult) -> AnalysisResult:

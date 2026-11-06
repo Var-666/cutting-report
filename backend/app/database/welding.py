@@ -130,6 +130,10 @@ class WeldingRepository:
         source, values = job_source(query, self.device_nos)
         return session.fetch(f'SELECT j.device_no, j.robot_no, {job_aggregate()} FROM {source} GROUP BY j.device_no, j.robot_no ORDER BY j.device_no, j.robot_no LIMIT 10001', values, limit=10001)
 
+    def speed_distribution(self, session: MySqlSession, query: WeldingQuery) -> list[dict]:
+        where, values = self.conditions(query)
+        return session.fetch(f"SELECT CASE WHEN j.weld_speed IS NULL OR j.weld_speed <= 0 THEN '未记录或无效' WHEN j.weld_speed < 300 THEN '<300' WHEN j.weld_speed < 600 THEN '300–599' ELSE '≥600' END AS speed_band, COUNT(*) AS job_count FROM weld_info_table j WHERE {where} AND {valid_time('j.end_time')} GROUP BY speed_band ORDER BY speed_band", values, limit=5)
+
     def statistics(self, session: MySqlSession, query: WeldingQuery) -> tuple[dict, list[dict], list[dict], list[dict], dict]:
         source, values = job_rows(query, 'source_job', self.device_nos)
         aggregates = job_aggregate()

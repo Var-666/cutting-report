@@ -16,6 +16,39 @@ def _service(tmp_path: Path) -> QueryService:
     return QueryService(cfg, client=source_client(cfg))
 
 
+@pytest.mark.parametrize('kind', ['projects', 'ships'])
+def test_cutting_options_keep_source_scope_and_bound_filter_parameters(tmp_path, monkeypatch, kind):
+    service = _service(tmp_path)
+    calls = []
+    column = 'project_code' if kind == 'projects' else 'project_name'
+    def fetch(sql, parameters):
+        calls.append((sql, parameters))
+        return [{column: 'P001'}, {column: 'P002'}]
+    monkeypatch.setattr(service.client, 'fetch_all', fetch)
+    selected = ReportFilter(report_date=date(2026, 8, 1), period_start=date(2026, 8, 1),
+                            period_end=date(2026, 8, 3), project_code="P'001")
+    assert getattr(service, f'list_{kind}')(selected) == ['P001', 'P002']
+    sql, parameters = calls[0]
+    assert parameters[:3] == ('Cutter01', date(2026, 8, 1), date(2026, 8, 4))
+    assert parameters[3:] == (() if kind == 'projects' else ("P'001", "P'001"))
+    assert "P'001" not in sql
+
+
+@pytest.mark.parametrize('rows, expected', [
+    ([], None), ([{'latest_date': None}], None),
+    ([{'latest_date': date(2026, 8, 25)}], date(2026, 8, 25)),
+    ([{'latest_date': datetime(2026, 8, 25, 12)}], date(2026, 8, 25)),
+    ([{'latest_date': '2026-08-25 12:00:00'}], date(2026, 8, 25)),
+])
+def test_latest_production_date_query_preserves_empty_and_driver_date_values(tmp_path, monkeypatch, rows, expected):
+    service = _service(tmp_path)
+    calls = []
+    monkeypatch.setattr(service.client, 'fetch_all', lambda sql, parameters: calls.append(parameters) or rows)
+    assert service.latest_production_date(date(2026, 8, 26)) == expected
+    assert service.latest_production_date(date(2026, 8, 26)) == expected
+    assert calls == [('Cutter01', date(2026, 8, 26))]
+
+
 def _equipment_result(task_id: str) -> EquipmentQueryResult:
     return EquipmentQueryResult(
         records=[

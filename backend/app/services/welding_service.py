@@ -18,7 +18,7 @@ from app.services.query_cache import QueryCache
 from app.database.report_snapshots import ReportKey, fingerprint
 from app.services.report_snapshots import ReportData, ReportSnapshotService
 from app.database.mysql import MySqlSession
-from app.database.welding import WeldingRepository, WeldingUnavailable, aggregate_sort_key, job_conditions, valid_serial, valid_time
+from app.database.welding import WeldingRepository, WeldingUnavailable, aggregate_sort_key
 from app.models.domain import to_primitive
 from app.models.welding import ReportType, WeldingQuery, WELD_TYPES
 
@@ -330,12 +330,11 @@ class WeldingService:
 
     def _report_statistics(self, session: MySqlSession, kind: ReportType, query: WeldingQuery) -> tuple[list[dict], list[dict], dict]:
         repo = self.repository
-        where, values = self.repository.conditions(query)
         projects = []
         if kind == 'parts':
             projects, totals = repo.part_statistics(session, query)
             return projects, [], totals
-        speeds = session.fetch(f"SELECT CASE WHEN j.weld_speed IS NULL OR j.weld_speed <= 0 THEN '未记录或无效' WHEN j.weld_speed < 300 THEN '<300' WHEN j.weld_speed < 600 THEN '300–599' ELSE '≥600' END AS speed_band, COUNT(*) AS job_count FROM weld_info_table j WHERE {where} AND {valid_time('j.end_time')} GROUP BY speed_band ORDER BY speed_band", values, limit=5) if kind == 'jobs' else []
+        speeds = repo.speed_distribution(session, query) if kind == 'jobs' else []
         return projects, speeds, {}
 
     @staticmethod

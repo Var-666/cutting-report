@@ -25,7 +25,7 @@ def mapping_query(source):
         return (QUERY_DIR / f"{source}.sql").read_text(), "project_number" if source in SOURCES[:3] else "project_name"
     queries = []
     service = QueryService(replace(settings, data_source_mode="sqlserver", demo_mode=False), client=source_client(replace(settings, data_source_mode="sqlserver", demo_mode=False)))
-    service.client = SimpleNamespace(fetch_all=lambda query, parameters: queries.append(query) or [])
+    service.repository.client = SimpleNamespace(fetch_all=lambda query, parameters: queries.append(query) or [])
     getattr(service, source)(ReportFilter(report_date=date(2026, 10, 29)))
     return queries[0], "project_code" if source == "list_projects" else "project_name"
 

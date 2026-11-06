@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.core.sql_capacity import sql_identity, SqlCapacityError
+from app.core.sql_capacity import SqlCapacityError
 from app.core.request_cancellation import SqlRequestCancelled
 
 from dataclasses import dataclass, field
@@ -16,20 +16,12 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
-from app.database.sqlserver import SqlServerClient, SqlServerConfigurationError
+from app.database.magic_box import CONFIG_KEYS, MagicBoxConfigRepository
+from app.database.sqlserver import SqlServerConfigurationError
 from app.core.report_deadline import (
     ReportOperationTimeout,
     ensure_time_remaining,
     remaining_seconds,
-)
-
-
-CONFIG_KEYS = (
-    "CUTTER_GATEWAY",
-    "CUTTER_TOKEN",
-    "CUTTER_SECRET",
-    "CUTTER01_IP",
-    "CUTTER02_IP",
 )
 
 
@@ -64,13 +56,9 @@ class MagicBoxConfig:
 class MagicBoxConfigProvider:
     """Read only the explicit magic-box keys from production SYS_CONFIG."""
 
-    def _fetch_all(self, sql, parameters):
-        with sql_identity(None):
-            return self.client.fetch_all(sql, parameters)
-
-    def __init__(self, settings, *, client=None, clock=None) -> None:
+    def __init__(self, settings, *, client=None, clock=None, repository: MagicBoxConfigRepository | None = None) -> None:
         self.settings = settings
-        self.client = client
+        self.repository = repository or MagicBoxConfigRepository(client)
         self.clock = clock or time.monotonic
         self._cached: MagicBoxConfig | None = None
         self._cached_at = 0.0
@@ -141,14 +129,7 @@ class MagicBoxConfigProvider:
             if not force and self._cached and now - self._cached_at < ttl:
                 return self._cached
             try:
-                rows = self._fetch_all(
-                    """
-                    SELECT CONFIG_NAME, CONFIG_VALUE
-                    FROM dbo.SYS_CONFIG
-                    WHERE CONFIG_NAME IN (?, ?, ?, ?, ?)
-                    """,
-                    CONFIG_KEYS,
-                )
+                rows = self.repository.configuration_rows()
             except SqlServerConfigurationError as exc:
                 raise MagicBoxConfigurationError(str(exc)) from None
             except (SqlCapacityError, SqlRequestCancelled, ReportOperationTimeout):

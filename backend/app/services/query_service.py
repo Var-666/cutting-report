@@ -10,6 +10,7 @@ from time import monotonic
 from zoneinfo import ZoneInfo
 
 from app.config import Settings
+from app.database.cutting_queries import CuttingQueryRepository
 from app.services.ship_name_service import ShipNameService
 from app.services.cache_revision import CacheRevision
 from app.services.query_cache import QueryCache as _QueryCache
@@ -47,11 +48,12 @@ def _decimal(value: object) -> Decimal | None:
 
 
 class QueryService:
-    def __init__(self, settings: Settings, *, client: SqlServerClient | None = None, ship_names: ShipNameService | None = None) -> None:
+    def __init__(self, settings: Settings, *, client: SqlServerClient | None = None, ship_names: ShipNameService | None = None, repository: CuttingQueryRepository | None = None) -> None:
         self.settings = settings
         self.ship_names = ship_names
         self.cache_revision = CacheRevision(settings, "production")
         self.client = client
+        self.repository = repository or CuttingQueryRepository(client, settings.report_machine_no)
         self.query_dir = Path(__file__).resolve().parents[1] / "database" / "queries"
         self._equipment_cache = _QueryCache[EquipmentQueryResult]()
         self._bundle_cache = _QueryCache[QueryBundle]()
@@ -349,63 +351,14 @@ class QueryService:
     def list_projects(self, filters: ReportFilter) -> list[str]:
         if self.settings.effective_data_source_mode == "demo":
             return ["A001", "A002", "B101"]
-        start = filters.start_date
-        end = filters.end_exclusive
-        rows = self.client.fetch_all(
-            """
-            WITH source AS (
-                SELECT
-                    COALESCE(NULLIF(LTRIM(RTRIM([PROJECT_NAME])), ''), NULLIF(LTRIM(RTRIM([PROJECT_CODE])), '')) AS project_code,
-                    COALESCE(
-                        TRY_CONVERT(date, NULLIF(LTRIM(RTRIM([OP_DATE])), ''), 23),
-                        CONVERT(date, [START_TIME])
-                    ) AS production_date
-                FROM [dbo].[task]
-                WHERE [STATUS] = 2
-                  AND UPPER(LTRIM(RTRIM([MACHINE_NO]))) = UPPER(?)
-            )
-            SELECT DISTINCT project_code
-            FROM source
-            WHERE production_date >= ? AND production_date < ?
-              AND project_code IS NOT NULL
-            ORDER BY project_code
-            """,
-            (self.settings.report_machine_no, start, end),
-        )
+        rows = self.repository.list_projects(filters)
         return [str(row["project_code"]) for row in rows]
 
     def list_ships(self, filters: ReportFilter) -> list[str]:
         if self.settings.effective_data_source_mode == "demo":
             names = ["A001", "A002", "B101"]
             return [filters.project_code] if filters.project_code in names else names
-        rows = self.client.fetch_all(
-            """
-            WITH source AS (
-                SELECT
-                    COALESCE(NULLIF(LTRIM(RTRIM([PROJECT_NAME])), ''), NULLIF(LTRIM(RTRIM([PROJECT_CODE])), '')) AS project_name,
-                    COALESCE(
-                        TRY_CONVERT(date, NULLIF(LTRIM(RTRIM([OP_DATE])), ''), 23),
-                        CONVERT(date, [START_TIME])
-                    ) AS production_date
-                FROM [dbo].[task]
-                WHERE [STATUS] = 2
-                  AND UPPER(LTRIM(RTRIM([MACHINE_NO]))) = UPPER(?)
-            )
-            SELECT DISTINCT project_name
-            FROM source
-            WHERE production_date >= ? AND production_date < ?
-              AND project_name IS NOT NULL
-              AND (? IS NULL OR project_name = ?)
-            ORDER BY project_name
-            """,
-            (
-                self.settings.report_machine_no,
-                filters.start_date,
-                filters.end_exclusive,
-                filters.project_code,
-                filters.project_code,
-            ),
-        )
+        rows = self.repository.list_ships(filters)
         if self.ship_names:
             names = self.ship_names.names_for([str(row['project_name']) for row in rows]) or {}
             return sorted({name for name in names.values() if name})
@@ -438,33 +391,7 @@ class QueryService:
     def _latest_production_date_uncached(self, on_or_before: date) -> date | None:
         if self.settings.effective_data_source_mode == "demo":
             return on_or_before
-        rows = self.client.fetch_all(
-            """
-            WITH source AS (
-                SELECT
-                    COALESCE(
-                        TRY_CONVERT(date, NULLIF(LTRIM(RTRIM([OP_DATE])), ''), 23),
-                        CONVERT(date, [START_TIME])
-                    ) AS production_date
-                FROM [dbo].[task]
-                WHERE [STATUS] = 2
-                  AND COALESCE([WORK_TIME], 0) >= 0
-                  AND UPPER(LTRIM(RTRIM([MACHINE_NO]))) = UPPER(?)
-            )
-            SELECT MAX(production_date) AS latest_date
-            FROM source
-            WHERE production_date <= ?
-            """,
-            (self.settings.report_machine_no, on_or_before),
-        )
-        if not rows or rows[0]["latest_date"] is None:
-            return None
-        value = rows[0]["latest_date"]
-        if isinstance(value, datetime):
-            return value.date()
-        if isinstance(value, date):
-            return value
-        return date.fromisoformat(str(value)[:10])
+        return self.repository.latest_production_date(on_or_before)
 
     def _read_query(self, name: str) -> str:
         sql = (self.query_dir / name).read_text(encoding="utf-8")

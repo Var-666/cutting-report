@@ -24,9 +24,7 @@ class ModelSlot:
 
     def register(self):
         if not self.background:
-            with self.repository.connect() as connection:
-                connection.execute("DELETE FROM llm_waiters WHERE expires_at<=EXTRACT(EPOCH FROM clock_timestamp())")
-                connection.execute("INSERT INTO llm_waiters VALUES (%s, %s)", (self.waiter, self.expires))
+            self.repository.register_model_waiter(self.waiter, self.expires)
 
     def acquire(self):
         from app.services.llm_service import AnalysisCapacityError
@@ -37,8 +35,7 @@ class ModelSlot:
                 raise SqlRequestCancelled("智能分析请求已取消")
             if monotonic() >= self.deadline:
                 raise AnalysisCapacityError("智能分析排队超时，请稍后重试。")
-            with self.repository.connect() as connection:
-                foreground_waiting = connection.execute("SELECT 1 FROM llm_waiters WHERE expires_at>EXTRACT(EPOCH FROM clock_timestamp()) LIMIT 1").fetchone()
+            foreground_waiting = self.repository.model_foreground_waiting()
             if not self.background or not foreground_waiting:
                 background_lock = None
                 if self.background and not promoted:
@@ -62,8 +59,7 @@ class ModelSlot:
 
     def unregister(self):
         if not self.background:
-            with self.repository.connect() as connection:
-                connection.execute("DELETE FROM llm_waiters WHERE waiter_id=%s", (self.waiter,))
+            self.repository.unregister_model_waiter(self.waiter)
 
     def close(self):
         for lock in self.locks:

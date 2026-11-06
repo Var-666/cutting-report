@@ -6,8 +6,8 @@ from app.config import Settings
 from app.services.llm_service import (
     AnalysisOutputValidationError,
     LlmService,
-    analysis_system_prompt,
 )
+from app.services.llm_prompts import analysis_system_prompt
 
 
 def _model_response(monkeypatch, raw_content):
@@ -63,7 +63,8 @@ def test_model_analysis_uses_first_result_without_content_guardrails_or_repair(s
     assert len(requests) == 1
 
 
-def test_model_receives_facts_report_tables_and_scope(state_database, tmp_path, monkeypatch):
+@pytest.mark.parametrize('report_type', ['leadership', 'workshop', 'equipment', 'welding'])
+def test_model_receives_facts_report_tables_and_scope(state_database, tmp_path, monkeypatch, report_type):
     content = {key: key for key in ("overview", "features", "alerts", "suggestions")}
     requests = _model_response(monkeypatch, json.dumps(content))
     context = {
@@ -79,8 +80,9 @@ def test_model_receives_facts_report_tables_and_scope(state_database, tmp_path, 
         "raw_records": [{"unvalidated_metric": 999}],
     }
 
-    _service(state_database, tmp_path).analyze_context("leadership", context)
+    _service(state_database, tmp_path).analyze_context(report_type, context)
 
+    assert requests[0]['messages'][0] == {'role': 'system', 'content': analysis_system_prompt(report_type)}
     submitted = json.loads(requests[0]["messages"][1]["content"])
     assert set(submitted) == {
         "report_type",
@@ -90,6 +92,7 @@ def test_model_receives_facts_report_tables_and_scope(state_database, tmp_path, 
         "tables",
     }
     assert submitted["facts"] == context["facts"]
+    assert submitted['report_type'] == report_type
     assert submitted["tables"] == context["tables"]
     assert "raw_records" not in submitted
 

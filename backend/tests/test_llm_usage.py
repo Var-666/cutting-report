@@ -8,6 +8,7 @@ from app.database.llm_usage import LlmUsageRepository
 from app.services.alarm_analysis_service import AlarmAnalysisService
 from app.services.llm_usage_service import record_llm_call
 from app.services.llm_service import LlmService
+from app.services.llm_prompts import ALARM_SYSTEM_PROMPT
 
 
 class Response:
@@ -94,6 +95,7 @@ def test_alarm_model_request_adds_provider_token_usage(state_database, tmp_path,
             pass
 
         def post(self, *_args, **_kwargs):
+            assert _kwargs['json']['messages'][0] == {'role': 'system', 'content': ALARM_SYSTEM_PROMPT}
             return ModelResponse()
 
     monkeypatch.setattr("app.services.alarm_analysis_service.httpx.Client", Client)

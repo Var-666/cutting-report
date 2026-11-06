@@ -6,9 +6,10 @@ from time import monotonic
 import threading
 
 from app.core.report_deadline import ReportOperationTimeout
-from app.core.sql_capacity import sql_identity, SqlCapacityError
+from app.core.sql_capacity import SqlCapacityError
 from app.config import Settings
 from app.database.sqlserver import SqlServerClient
+from app.database.hr import HrRepository
 from app.database.workshop import AuthenticationError
 from app.core.request_cancellation import SqlRequestCancelled
 
@@ -32,52 +33,9 @@ class WorkerAuthService:
     never selected back into the application process.
     """
 
-    SQL = """
-        SELECT
-            [_Identify] AS external_id,
-            [姓名] AS display_name,
-            [集团工号] AS group_no,
-            [公司工号] AS company_no,
-            [可用] AS available_value,
-            CASE WHEN [密码] = ? THEN 1 ELSE 0 END AS password_matches
-        FROM [dbo].[HRbase_userInfo]
-        WHERE [公司工号] = ?
-    """
-
-    DIRECTORY_SEARCH_SQL = """
-        SELECT TOP 20
-            [_Identify] AS external_id,
-            [姓名] AS display_name,
-            [集团工号] AS group_no,
-            [公司工号] AS company_no,
-            [可用] AS available_value
-        FROM [dbo].[HRbase_userInfo]
-        WHERE [可用] = ?
-          AND (
-              CONVERT(nvarchar(128), [公司工号]) LIKE ?
-              OR [姓名] LIKE ?
-          )
-        ORDER BY [姓名], [公司工号]
-    """
-
-    PERSON_SQL = """
-        SELECT
-            [_Identify] AS external_id,
-            [姓名] AS display_name,
-            [集团工号] AS group_no,
-            [公司工号] AS company_no,
-            [可用] AS available_value
-        FROM [dbo].[HRbase_userInfo]
-        WHERE [_Identify] = ?
-    """
-
-    def _fetch_all(self, sql, parameters):
-        with sql_identity(None):
-            return self.client.fetch_all(sql, parameters)
-
-    def __init__(self, settings: Settings, client: SqlServerClient | None = None) -> None:
+    def __init__(self, settings: Settings, client: SqlServerClient | None = None, *, repository: HrRepository | None = None) -> None:
         self.settings = settings
-        self.client = client
+        self.repository = repository or HrRepository(client)
         self._session_checks: OrderedDict[str, tuple[float, bool | None]] = OrderedDict()
         self._session_cache_lock = threading.Lock()
         self._session_query_locks = [threading.Lock() for _ in range(16)]
@@ -107,10 +65,7 @@ class WorkerAuthService:
 
         normalized_company_no = company_no.strip()
         try:
-            rows = self._fetch_all(
-                self.SQL,
-                (password, normalized_company_no),
-            )
+            rows = self.repository.authentication_rows(normalized_company_no, password)
         except (SqlRequestCancelled, SqlCapacityError, ReportOperationTimeout):
             raise
         except Exception as exc:
@@ -176,13 +131,8 @@ class WorkerAuthService:
         normalized = query.strip()
         if len(normalized) < 1:
             return []
-        escaped = normalized.replace("[", "[[]").replace("%", "[%]").replace("_", "[_]")
-        pattern = f"%{escaped}%"
         try:
-            rows = self._fetch_all(
-                self.DIRECTORY_SEARCH_SQL,
-                (self.settings.worker_database_available_value, pattern, pattern),
-            )
+            rows = self.repository.search_people(normalized, self.settings.worker_database_available_value)
         except (SqlRequestCancelled, SqlCapacityError, ReportOperationTimeout):
             raise
         except Exception as exc:
@@ -194,7 +144,7 @@ class WorkerAuthService:
     def find_person(self, external_id: str) -> dict[str, str] | None:
         self._ensure_enabled()
         try:
-            rows = self._fetch_all(self.PERSON_SQL, (external_id.strip(),))
+            rows = self.repository.person_rows(external_id.strip())
         except (SqlRequestCancelled, SqlCapacityError, ReportOperationTimeout):
             raise
         except Exception as exc:
