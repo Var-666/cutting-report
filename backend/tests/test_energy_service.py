@@ -1,4 +1,4 @@
-from tests.energy_fixtures import GAS, ELECTRIC, START, END, configured, record, readings, MeterStub
+from tests.energy_fixtures import GAS, ELECTRIC, START, END, configured, record, readings, MeterStub, sparse_november_readings
 from app.services.query_service import QueryService
 from tests.line_fixtures import source_client
 from tests.line_fixtures import as_line_services, runtime_line
@@ -221,8 +221,84 @@ def test_legacy_tasks_use_new_policy_and_keep_subminute_interpolation():
     assert result.records[0].gas_data_status == "interpolated"
     sparse = [row for row in rows if row["Mt"] in {start, start + timedelta(minutes=4)}]
     result = EquipmentEnergyService(cfg, MeterStub(sparse)).enrich([task])
-    assert result.records[0].gas_consumption is None
-    assert result.records[0].gas_data_status == "gap"
+    assert result.records[0].gas_consumption == Decimal(1)
+    assert result.records[0].gas_data_status == "estimated"
+
+
+def test_sparse_task_readings_estimate_uncovered_ends_by_average_rate():
+    task = record(production_time=datetime(2026, 11, 7, 1, 14, 31),
+                  production_end_time=datetime(2026, 11, 7, 1, 41, 4))
+    result = EquipmentEnergyService(configured(energy_sampling_change_at="2026-09-04"),
+                                    MeterStub(sparse_november_readings())).enrich([task])
+    row = result.records[0]
+    assert row.gas_consumption == Decimal("7.975")
+    assert row.gas_data_status == "estimated"
+    assert row.electricity_consumption is None
+    gas = row.energy_details["gas"]
+    assert gas["estimation_method"] == "average_rate"
+    assert gas["observed_consumption"] == Decimal("7.81")
+    assert gas["covered_seconds"] == 1560
+    assert gas["task_seconds"] == 1593
+    assert gas["start_reading"] is None and gas["end_reading"] is None
+    assert summarize_equipment(result.records)["estimated_record_count"] == 1
+
+
+@pytest.mark.parametrize("start,end,amount,method", [
+    ("01:15:00", "01:41:00", "7.810", "cumulative_difference"),
+    ("01:14:00", "01:41:00", "8.110", "average_rate"),
+    ("01:15:00", "01:42:00", "8.110", "average_rate"),
+])
+def test_sparse_difference_and_each_missing_boundary(start, end, amount, method):
+    series = make_series(sparse_november_readings(), (GAS,), "Asia/Shanghai")[GAS]
+    result = interval_consumption(series, datetime.fromisoformat(f"2026-11-07T{start}"),
+        datetime.fromisoformat(f"2026-11-07T{end}"), max_gap_seconds=180, interpolate=True, estimate=True)
+    assert result["value"] == Decimal(amount)
+    assert result["status"] == "estimated"
+    assert result["estimation_method"] == method
+
+
+@pytest.mark.parametrize("values,status", [
+    ([], "missing"), ([100], "missing"), ([100, 99], "counter_reset"),
+    ([100, -1], "invalid_reading"), ([100, "NaN"], "invalid_reading"),
+    ([100, None], "invalid_reading"), ([100, 100], "estimated"),
+])
+def test_estimation_keeps_invalid_and_zero_reading_rules(values, status):
+    rows = [{"MfId": GAS, "Mt": START + timedelta(seconds=30 + i * 60), "Mv": value}
+            for i, value in enumerate(values)]
+    result = interval_consumption(make_series(rows, (GAS,), "Asia/Shanghai")[GAS], START, END,
+                                  max_gap_seconds=180, interpolate=True, estimate=True)
+    assert result["status"] == status
+    assert result["value"] == (Decimal(0) if status == "estimated" else None)
+
+
+@pytest.mark.parametrize("offset", [-300, 300])
+def test_estimation_requires_readings_covering_some_of_the_task(offset):
+    rows = [{"MfId": GAS, "Mt": START + timedelta(seconds=offset + i * 30), "Mv": 100 + i}
+            for i in range(2)]
+    result = interval_consumption(make_series(rows, (GAS,), "Asia/Shanghai")[GAS], START, END,
+                                  max_gap_seconds=180, interpolate=True, estimate=True)
+    assert result["value"] is None and result["status"] == "missing"
+
+
+def test_estimation_does_not_hide_counter_reset_after_a_long_gap_or_same_time_conflict():
+    rows = [{"MfId": GAS, "Mt": START + timedelta(minutes=i), "Mv": value}
+            for i, value in [(0, 100), (4, 110), (6, 99)]]
+    def calc(data):
+        return interval_consumption(make_series(data, (GAS,), "Asia/Shanghai")[GAS],
+            START, START + timedelta(minutes=6), max_gap_seconds=180, interpolate=True, estimate=True)
+    assert calc(rows)["status"] == "counter_reset"
+    assert calc(rows[:2] + [{**rows[1], "Mv": 120}])["status"] == "invalid_reading"
+
+
+def test_estimation_respects_interpolation_disabled_and_applies_factor_once():
+    rows = [{"MfId": GAS, "Mt": START + timedelta(seconds=30 + i * 60), "Mv": 100 + i * 2}
+            for i in range(2)]
+    series = make_series(rows, (GAS,), "Asia/Shanghai")[GAS]
+    strict = interval_consumption(series, START, END, max_gap_seconds=180, interpolate=False, estimate=True)
+    assert strict["value"] is None and strict["status"] == "missing"
+    estimated = interval_consumption(series, START, END, max_gap_seconds=180,
+                                     interpolate=True, estimate=True, factor=Decimal("2"))
+    assert estimated["value"] == Decimal("8")
 
 
 def test_units_and_device_binding_are_required():

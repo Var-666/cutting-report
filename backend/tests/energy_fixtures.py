@@ -41,6 +41,15 @@ def readings():
             for key, rate in zip((GAS, *ELECTRIC), (1, 2, 3, 4)) for i in range(3)]
 
 
+def sparse_november_readings():
+    samples = [("01:15:00", "191592.38"), ("01:16:00", "191593.03"),
+               ("01:17:00", "191593.42"), ("01:18:00", "191594.11"),
+               ("01:23:00", "191595.52"), ("01:28:00", "191596.8"),
+               ("01:29:00", "191596.83"), ("01:41:00", "191600.19")]
+    return [{"MfId": GAS, "Mt": f"2026-11-07T{stamp}+08:00", "Mv": value}
+            for stamp, value in samples]
+
+
 class MeterStub:
     def __init__(self, rows=None, error=None):
         self.rows = readings() if rows is None else rows

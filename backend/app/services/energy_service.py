@@ -15,6 +15,7 @@ from app.services.equipment_service import mock_energy, sort_equipment_records
 
 STATUS_TEXT = {
     "measured": "实测边界读数差值", "interpolated": "实测读数插值估算",
+    "estimated": "累计读数估算；缺失首尾按已覆盖时段的平均速率补齐",
     "missing": "缺少区间边界读数", "gap": "采样间隔过大",
     "counter_reset": "累计表回零或读数倒退", "invalid_reading": "读数无效或同刻冲突",
     "unconfigured": "参数编号或单位未确认", "unmapped": "设备未绑定仪表",
@@ -74,7 +75,7 @@ def sampling_notice(settings, historical_gap):
 
 
 def interval_consumption(series, start, end, *, max_gap_seconds, interpolate, factor=Decimal("1"),
-                         sampling_change_at=None, new_max_gap_seconds=180):
+                         sampling_change_at=None, new_max_gap_seconds=180, estimate=False):
     points, invalid = series
     result = {"value": None, "status": "missing"}
     if invalid:
@@ -82,11 +83,16 @@ def interval_consumption(series, start, end, *, max_gap_seconds, interpolate, fa
     times = [stamp for stamp, _ in points]
     left = bisect_right(times, start) - 1
     right = bisect_left(times, end)
-    if left < 0 or right >= len(points):
+    allow_estimate = estimate and interpolate
+    if (left < 0 or right >= len(points)) and not allow_estimate:
         return result
+    left, right = max(0, left), min(right, len(points) - 1)
     selected = points[left:right + 1]
+    if len(selected) < 2:
+        return result
     if any(value is None for _, value in selected):
         return {**result, "status": "invalid_reading"}
+    sparse = False
     for (t0, v0), (t1, v1) in zip(selected, selected[1:]):
         if v1 < v0:
             return {**result, "status": "counter_reset"}
@@ -96,7 +102,9 @@ def interval_consumption(series, start, end, *, max_gap_seconds, interpolate, fa
         old_gap = max(0, (before_end - t0).total_seconds())
         new_gap = max(0, (t1 - max(t0, sampling_change_at)).total_seconds()) if sampling_change_at else 0
         if old_gap > max_gap_seconds or new_gap > new_max_gap_seconds:
-            return {**result, "status": "gap"}
+            if not allow_estimate:
+                return {**result, "status": "gap"}
+            sparse = True
     estimated = start not in times or end not in times
     if estimated and not interpolate:
         return result
@@ -110,19 +118,49 @@ def interval_consumption(series, start, end, *, max_gap_seconds, interpolate, fa
         ratio = Decimal(str((stamp - t0).total_seconds())) / Decimal(str((t1 - t0).total_seconds()))
         return v0 + (v1 - v0) * ratio
 
+    covered_start = max(start, selected[0][0])
+    covered_end = min(end, selected[-1][0])
+    if covered_end <= covered_start:
+        return result
+    partial = covered_start != start or covered_end != end
     try:
-        start_value, end_value = boundary(start), boundary(end)
-        consumption = ((end_value - start_value) * factor).quantize(Decimal("0.001"))
+        start_value, end_value = boundary(covered_start), boundary(covered_end)
+        covered_seconds = Decimal(str((covered_end - covered_start).total_seconds()))
+        task_seconds = Decimal(str((end - start).total_seconds()))
+        observed = (end_value - start_value) * factor
+        consumption = observed * task_seconds / covered_seconds if partial else observed
+        consumption = consumption.quantize(Decimal("0.001"))
     except ArithmeticError:
         return {**result, "status": "invalid_reading"}
+    estimation = {}
+    if sparse or partial:
+        estimation = {
+            "estimation_method": "average_rate" if partial else "cumulative_difference",
+            "covered_start": covered_start, "covered_end": covered_end,
+            "covered_seconds": covered_seconds, "task_seconds": task_seconds,
+            "observed_consumption": observed,
+            "observed_start_reading": start_value, "observed_end_reading": end_value,
+        }
     return {
         "value": consumption,
-        "status": "interpolated" if estimated else "measured",
-        "start_reading": start_value, "end_reading": end_value,
+        "status": "estimated" if sparse or partial else "interpolated" if estimated else "measured",
+        "start_reading": start_value if covered_start == start else None,
+        "end_reading": end_value if covered_end == end else None,
         "first_sample_time": selected[0][0], "first_sample_value": selected[0][1],
         "last_sample_time": selected[-1][0], "last_sample_value": selected[-1][1],
         "sample_count": len(selected), "conversion_factor": factor,
+        **estimation,
     }
+
+
+def task_energy_note(gas, meters, electric_status):
+    note = f"气耗：{STATUS_TEXT[gas['status']]}；电耗：{STATUS_TEXT[electric_status]}"
+    for label, channel in [("气表", gas), *[(f"电表{index}", meter) for index, meter in enumerate(meters, 1)]]:
+        if channel.get("status") == "estimated":
+            note += (f"；{label}有效时段 {channel['covered_start']:%Y-%m-%d %H:%M:%S}"
+                     f"～{channel['covered_end']:%Y-%m-%d %H:%M:%S}"
+                     f"（覆盖{channel['covered_seconds']}秒 / 任务{channel['task_seconds']}秒）")
+    return note
 
 
 @dataclass
@@ -232,7 +270,7 @@ class EquipmentEnergyService:
             def calculate(key, factor):
                 return {"parameter_id": key, **interval_consumption(series[key], start, end,
                     max_gap_seconds=cfg.energy_max_gap_seconds,
-                    interpolate=cfg.energy_allow_interpolation, factor=factor, **policy)}
+                    interpolate=cfg.energy_allow_interpolation, factor=factor, estimate=True, **policy)}
 
             gas = calculate(gas_id, gas_factor) if gas_ready else {"value": None, "status": "unconfigured"}
             electricity = [calculate(key, electric_factor) for key in electric_ids] if electric_ready else []
@@ -242,18 +280,20 @@ class EquipmentEnergyService:
                 electric_status = "unconfigured"
             elif electric_status is None:
                 electric_value = sum((item["value"] for item in electricity), Decimal("0"))
-                electric_status = "interpolated" if any(item["status"] == "interpolated" for item in electricity) else "measured"
+                electric_status = ("estimated" if any(item["status"] == "estimated" for item in electricity)
+                                   else "interpolated" if any(item["status"] == "interpolated" for item in electricity) else "measured")
             details.update(gas={**gas, "unit": units["gas"]}, electricity={"meters": electricity, "unit": units["electricity"]})
             output.append(replace(row, gas_consumption=gas["value"], electricity_consumption=electric_value,
                 gas_data_status=gas["status"], electricity_data_status=electric_status, energy_details=details,
-                energy_note=f"气耗：{STATUS_TEXT[gas['status']]}；电耗：{STATUS_TEXT[electric_status]}"))
+                energy_note=task_energy_note(gas, electricity, electric_status)))
 
         available = sum(row.gas_consumption is not None for row in output) + sum(row.electricity_consumption is not None for row in output)
         mode = "metered" if available == 2 * len(output) else "partial" if available else "unavailable"
         notice = "按已绑定设备的实际 START_TIME / END_TIME 计算累计读数差值；汇总仅覆盖有效任务区间（含期间待机），不是整日总耗量。"
         if cfg.energy_allow_interpolation:
-            notice += "边界非采样时刻采用线性插值并标为估算。"
-        notice += sampling_notice(cfg, cfg.energy_max_gap_seconds)
+            notice += "边界非采样时刻采用线性插值；采样稀疏时使用累计读数差，首尾缺数按平均速率估算，并保留覆盖时段。"
+        else:
+            notice += sampling_notice(cfg, cfg.energy_max_gap_seconds)
         if mode != "metered":
             notice += "部分或全部读数缺失；仅汇总已匹配记录，不将缺失计为零。"
         return EnergyResult(sort_equipment_records(output), mode, notice, units)

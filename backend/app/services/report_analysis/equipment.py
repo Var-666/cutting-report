@@ -31,6 +31,7 @@ def _equipment_task_rows(records: list[EquipmentRecord]) -> list[dict]:
             "gas_consumption": row.gas_consumption,
             "electricity_data_status": row.electricity_data_status,
             "gas_data_status": row.gas_data_status,
+            **({"energy_note": row.energy_note} if "estimated" in {row.gas_data_status, row.electricity_data_status} else {}),
         }
         for row in records
     ]
@@ -106,8 +107,8 @@ def build_context(
     units = energy_units or ({"gas": "Nm³", "electricity": "kWh"} if energy_data_mode == "mock" else {"gas": "单位待确认", "electricity": "单位待确认"})
     gas_count = sum(row.gas_consumption is not None for row in records)
     electric_count = sum(row.electricity_consumption is not None for row in records)
-    gas_estimates = sum(row.gas_data_status == "interpolated" for row in records)
-    electric_estimates = sum(row.electricity_data_status == "interpolated" for row in records)
+    gas_estimates = sum(row.gas_data_status in {"interpolated", "estimated"} for row in records)
+    electric_estimates = sum(row.electricity_data_status in {"interpolated", "estimated"} for row in records)
     overlap_count = sum(
         "overlap" in {row.gas_data_status, row.electricity_data_status}
         for row in records

@@ -171,19 +171,6 @@ test('home comparison distinguishes tiny changes, true equality and unavailable 
   } finally { home.close() }
 })
 
-test('cards and the welcome banner have distinct light surfaces with dark theme overrides', () => {
-  const css = read('assets/soybean.css')
-  const template = parse(read('views/AdminHomeView.vue')).descriptor.template.content
-  assert.match(template, /class="card-wrapper bg-container home-welcome"/)
-  assert.match(css, /\.card-wrapper \{ border:1px solid var\(--theme-border-color\);/)
-  assert.match(css, /linear-gradient\(105deg, color-mix\(in srgb, rgb\(var\(--primary-color\)\) 11%, rgb\(var\(--container-bg-color\)\)\)/)
-  assert.match(css, /\.home-welcome\.card-wrapper \{[^}]*border-color:rgb\(var\(--primary-color\) \/ \.2\);/s)
-  const dark = css.match(/\.dark \.home-welcome\.card-wrapper \{([^}]+)\}/)[1]
-  assert.match(dark, /--container-bg-color/)
-  assert.match(dark, /--layout-bg-color/)
-  assert.doesNotMatch(dark, /#[a-f0-9]+/i)
-})
-
 // The old action slot is ignored by NAlert; its removal must preserve rendered UI.
 test('removing the unsupported alert action slot preserves the home error output', async () => {
   const render = slots => renderToString(Vue.createSSRApp({ render: () => Vue.h(NAlert, { title: '部分概览数据读取失败', type: 'error', role: 'alert' }, slots) }))

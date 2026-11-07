@@ -18,10 +18,8 @@ import { getEnergyMonth } from '../api/energy.ts'
 import { getLeadershipReport, listReports } from '../api/cutting.ts'
 import { reportToday } from '../api/reportDates.ts'
 import AppIcon from '../components/AppIcon.vue'
-import homeWelcomeIllustration from '../assets/home-welcome-illustration.png'
 import HomeKpiCard from '../components/HomeKpiCard.vue'
 import HomeSectionHeader from '../components/HomeSectionHeader.vue'
-import { session } from '../state/session'
 import { formatChineseDate, formatChineseDateTime, formatChineseMonth } from '../utils/dateDisplay.ts'
 import { formatDeviceDisplay } from '../utils/deviceDisplay.ts'
 import { useAppStore } from '../state/app.ts'
@@ -43,12 +41,10 @@ const incidents = ref<AlarmIncident[]>([])
 const recentReports = ref<ReportJob[]>([])
 const historyTotal = ref(0)
 const error = ref('')
-const currentTime = ref(new Date())
 const trendElement = ref<HTMLElement | null>(null)
 const statusElement = ref<HTMLElement | null>(null)
 let trendChart: ECharts | null = null
 let statusChart: ECharts | null = null
-let clockTimer: number | null = null
 
 const total = computed(() => overview.value?.current_month_total || { task_count: 0, cut_length_m: 0, work_time_seconds: 0 })
 const previousTotal = computed<Partial<LeadershipReport['current_month_total']>>(() => overview.value?.comparison_total || {})
@@ -60,8 +56,6 @@ const energyConnected = computed(() => energy.value?.energy_connected !== false)
 const electricity = computed(() => energySummary.value.electricity?.value)
 const gas = computed(() => energySummary.value.gas?.value)
 const openAlarms = computed(() => incidents.value.filter((item) => item.status === 'open'))
-const displayDate = computed(() => new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short', timeZone: 'Asia/Shanghai' }).format(currentTime.value))
-const displayTime = computed(() => new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZone: 'Asia/Shanghai' }).format(currentTime.value))
 const metricSeries = computed(() => ({
   tasks: dailyRecords.value.map((item) => item.task_count),
   length: dailyRecords.value.map((item) => item.cut_length_m),
@@ -180,10 +174,8 @@ watch([theme, () => app.reducedMotion, trendElement, statusElement], () => rende
 
 onMounted(() => {
   loadDashboard()
-  clockTimer = window.setInterval(() => { currentTime.value = new Date() }, 1000)
 })
 onBeforeUnmount(() => {
-  window.clearInterval(clockTimer ?? undefined)
   chartResizeObserver.disconnect()
   trendChart?.dispose()
   statusChart?.dispose()
@@ -192,16 +184,10 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="min-h-500px flex-col-stretch gap-16px overflow-hidden bg-layout lt-sm:overflow-auto">
-    <NCard :bordered="false" size="small" class="card-wrapper bg-container home-welcome">
-      <div class="flex-y-center justify-between gap-16px">
-        <div class="min-w-0 flex-col-stretch gap-12px">
-          <h1 class="m-0 text-22px font-semibold">生产指挥中心</h1>
-          <NText depth="3">{{ session.user?.display_name }}，欢迎回来</NText>
-          <div class="flex-y-center flex-wrap gap-8px text-12px text-gray-500 dark:text-gray-400"><AppIcon name="calendar" :size="16" tone="current" />{{ displayDate }}<time>{{ displayTime }}</time></div>
-        </div>
-        <img :src="homeWelcomeIllustration" alt="" width="800" height="600" class="h-auto w-120px shrink-0 object-contain sm:w-200px">
-      </div>
-    </NCard>
+    <header class="home-heading">
+      <h1>生产指挥中心</h1>
+      <time :datetime="reportDate">{{ formatChineseDate(reportDate) }}</time>
+    </header>
 
     <NAlert v-if="error" title="部分概览数据读取失败" type="error" role="alert">
       {{ error }}
@@ -215,7 +201,6 @@ onBeforeUnmount(() => {
         <div class="min-w-0 flex-col-stretch justify-center gap-8px p-16px" aria-label="生产天数与能耗">
           <div class="flex-y-center justify-between gap-8px border border-solid border-[var(--theme-divider-color)] rd-12px px-12px py-8px">
             <div class="flex-col-stretch gap-4px"><NText depth="3" class="text-12px">生产天数</NText><NSkeleton v-if="overviewLoading" height="24px" width="48px" /><NText v-else class="text-18px font-medium">{{ overview ? activeDays : '--' }} <NText depth="3" class="text-12px">天</NText></NText></div>
-            <NTag v-if="!overviewLoading && overview" round size="small" :bordered="false" :type="activeDays ? 'success' : 'default'">{{ activeDays ? '本月有记录' : '本月暂无记录' }}</NTag>
           </div>
           <div class="grid grid-cols-2 gap-8px">
             <div v-for="item in [{ label: '电耗', icon: 'zap', value: electricity, unit: energy?.units?.electricity || 'kWh' }, { label: '气耗', icon: 'wind', value: gas, unit: energy?.units?.gas || 'Nm³' }]" :key="item.label" class="min-w-0 border border-dashed border-[var(--theme-divider-color)] rd-12px px-12px py-8px" :aria-label="item.label">
@@ -304,3 +289,9 @@ onBeforeUnmount(() => {
     </section>
   </div>
 </template>
+
+<style scoped>
+.home-heading { display:flex; align-items:center; justify-content:space-between; gap:16px; min-height:40px; }
+.home-heading h1 { margin:0; font-size:20px; font-weight:600; }
+.home-heading time { color:var(--text-color-3); font-size:var(--font-auxiliary); }
+</style>

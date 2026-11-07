@@ -15,7 +15,6 @@ import { useRoute, useRouter } from 'vue-router'
 import { NAutoComplete, NTag } from 'naive-ui'
 import CatalogTreeNode from '../components/CatalogTreeNode.vue'
 import AppIcon from '../components/AppIcon.vue'
-import heroImage from '../assets/home-laser-cutting.webp'
 import { parseCuttingInstructionFilename } from '../utils/cuttingInstructionName.ts'
 import { cuttingFileKey as fileKey } from '../utils/cuttingDispatchBatch.ts'
 import { formatChineseDateTime } from '../utils/dateDisplay.ts'
@@ -94,8 +93,6 @@ const {
 })
 
 const selectedFileCount = computed(() => selectedFiles.value.size)
-const selectedFileItems = computed(() => [...selectedFiles.value.values()])
-const selectedMachine = computed(() => machines.value.find((machine) => machine.machine_ip === dispatchForm.machineIp))
 const historyMachineIps = computed(() => [...new Set([
   ...(trend.value?.machine_ips || []), ...machines.value.map(machine => machine.machine_ip),
   ...(systemStatus.value?.magic_box?.machine_ips || []),
@@ -109,13 +106,6 @@ function machineName(machineIp: string) {
   }
   return names[machineIp] || machines.value.find((machine) => machine.machine_ip === machineIp)?.server_name || '未命名机床'
 }
-
-const activeDispatchStep = computed(() => {
-  if (pushBatch.resultsReady) return 4
-  if (pushBatch.visible) return 3
-  if (selectedFileCount.value) return 2
-  return 1
-})
 
 function showNotice(message: string, type = 'info') {
   notice.value = message
@@ -306,23 +296,14 @@ const fileTableColumns = [
 </script>
 
 <template>
-  <section class="page-hero dispatch-hero" :style="{ '--dispatch-hero-image': `url(${heroImage})` }">
-    <div class="dispatch-hero__copy">
-      <span class="eyebrow">CUTTING FILE DISPATCH</span>
-      <h1>文件派发</h1>
-      <div class="dispatch-source-status" aria-label="文件派发服务状态">
-        <span><i :class="{ ready: systemStatus?.can_push }"></i>{{ systemStatus?.pdm?.label || (statusError ? '数据源检查失败' : '正在检查数据源') }}</span>
-        <span>{{ systemStatus?.file_source?.label || (statusError ? '文件服务状态未确认' : '文件服务检查中') }}</span>
-        <span>{{ systemStatus?.safe_mode ? '安全联调模式' : '生产数据模式' }}</span>
-      </div>
+  <header class="dispatch-heading">
+    <h1>文件派发</h1>
+    <div class="dispatch-source-status" aria-label="文件派发服务状态">
+      <span><i :class="{ ready: systemStatus?.can_push }"></i>{{ systemStatus?.pdm?.label || (statusError ? '数据源检查失败' : '正在检查数据源') }}</span>
+      <span>{{ systemStatus?.file_source?.label || (statusError ? '文件服务状态未确认' : '文件服务检查中') }}</span>
+      <span>{{ systemStatus?.safe_mode ? '安全联调模式' : '生产数据模式' }}</span>
     </div>
-  </section>
-
-  <div class="dispatch-flow" aria-label="文件派发流程">
-    <div v-for="step in [{ number: 1, title: '选择项目目录' }, { number: 2, title: '选择文件' }, { number: 3, title: '确认派发' }, { number: 4, title: '完成派发' }]" :key="step.number" :class="{ active: activeDispatchStep === step.number, complete: activeDispatchStep > step.number }">
-      <i><AppIcon v-if="activeDispatchStep > step.number" name="check" size="17" /> <template v-else>{{ step.number }}</template></i><span><strong>{{ step.title }}</strong></span>
-    </div>
-  </div>
+  </header>
 
   <div v-if="statusError" class="dispatch-notice error" role="alert">
     <span>{{ statusError }}</span>
@@ -336,11 +317,11 @@ const fileTableColumns = [
   <div class="dispatch-workspace download-workspace">
     <aside class="panel directory-panel">
       <div class="panel-title">
-        <div><span class="dispatch-section-icon"><AppIcon name="briefcase" size="17" /></span><small>01</small><h2>项目目录</h2></div>
+        <div><span class="dispatch-section-icon"><AppIcon name="briefcase" size="17" /></span><h2>项目目录</h2></div>
         <p>{{ projectOptions.length }} 个支持项目</p>
       </div>
       <div class="project-search">
-        <label for="project-selector">支持项目 <small>输入项目名称或船号搜索</small></label>
+        <label for="project-selector">支持项目</label>
         <!-- Suggestions omit label so selecting a project keeps the search text editable. -->
         <NAutoComplete v-model:value="projectSearch" class="project-selector" :input-props="{ id: 'project-selector', 'aria-label': '搜索并选择支持项目', name: 'cutting_project' }" :options="projectSuggestions" :get-show="() => true" :render-label="option => (option as { displayLabel: string }).displayLabel" :menu-props="{ class: 'dispatch-project-menu', style: { width: 'max-content', maxWidth: 'calc(100vw - 24px)' } }" clearable show-empty :disabled="projectLoading || !projectOptions.length" :placeholder="projectLoading ? '正在读取项目…' : projectOptions.length ? '输入项目名称或船号…' : '暂无支持项目'" @select="openSelectedProject">
           <template #empty>没有匹配的支持项目</template>
@@ -368,7 +349,7 @@ const fileTableColumns = [
 
     <section class="panel dispatch-files-panel">
       <div class="panel-title">
-        <div><span class="dispatch-section-icon blue"><AppIcon name="file" size="17" /></span><small>02</small><h2>目录文件</h2></div>
+        <div><span class="dispatch-section-icon blue"><AppIcon name="file" size="17" /></span><h2>目录文件</h2></div>
         <p>{{ selectedCatalog ? `共 ${total} 条 · 当前第 ${page} 页` : '请选择左侧目录' }}</p>
       </div>
       <div class="selected-directory"><span>当前位置</span><strong>{{ selectedPath }}</strong></div>
@@ -402,32 +383,10 @@ const fileTableColumns = [
       <p v-if="systemStatus && !systemStatus.can_push" class="dispatch-download-hint">当前文件来源或魔盒服务不可用，暂不可派发。</p>
     </section>
 
-    <aside class="panel dispatch-confirm-panel">
-      <div class="panel-title">
-        <div><span class="dispatch-section-icon cyan"><AppIcon name="send" size="17" /></span><small>03</small><h2>派发确认</h2></div>
-      </div>
-      <div class="dispatch-confirm-content">
-        <span class="confirm-label">已选择文件</span>
-        <p class="confirm-total"><strong>{{ selectedFileCount }}</strong> 项</p>
-        <div class="confirm-file-list" :class="{ empty: !selectedFileCount }">
-          <template v-if="selectedFileCount">
-            <span v-for="file in selectedFileItems.slice(0, 5)" :key="fileKey(file)" :title="file.document_no || file.physical_file_name || undefined">{{ file.document_no || file.physical_file_name }}</span>
-            <NButton v-if="selectedFileCount > 5" attr-type="button" @click="openPushBatch">其余 {{ selectedFileCount - 5 }} 项 · 展开全部</NButton>
-          </template>
-          <template v-else><AppIcon name="file" size="23" /><span>请从目录文件中选择待派发文件</span></template>
-        </div>
-        <div class="confirm-machine">
-          <label for="dispatch-machine"><AppIcon name="settings" size="16" />目标机床</label>
-          <AppSelect id="dispatch-machine" v-model="dispatchForm.machineIp" :disabled="!machines.length || pushBatch.saving"><option value="" disabled>请选择目标机床</option><option v-for="machine in machines" :key="machine.machine_ip" :value="machine.machine_ip">{{ machineName(machine.machine_ip) }} · {{ machine.machine_ip }}（{{ machine.online ? '在线' : '待确认' }}）</option></AppSelect>
-          <small><i :class="{ ready: selectedMachine?.online }"></i>{{ selectedMachine ? `${machineName(selectedMachine.machine_ip)} · ${selectedMachine.online ? '机床在线' : '未从列表确认在线'}` : systemStatus?.file_source?.label || '请选择接收文件的机床' }}</small>
-        </div>
-        <NButton class="confirm-dispatch-button" attr-type="button" :disabled="!selectedFileCount || loading || pushBatch.saving || !systemStatus?.can_push || !dispatchForm.machineIp" @click="openPushBatch"><AppIcon name="send" size="18" tone="light" />设置参数并派发</NButton>
-      </div>
-    </aside>
   </div>
 
   <section class="panel dispatch-history-panel" :aria-busy="historyLoading">
-    <div class="panel-title"><div><span class="dispatch-section-icon green"><AppIcon name="check" size="17" /></span><small>04</small><h2>派发记录</h2></div></div>
+    <div class="panel-title"><div><span class="dispatch-section-icon green"><AppIcon name="check" size="17" /></span><h2>派发记录</h2></div></div>
     <DispatchHistoryTrend :trend="trend" :filters="trendFilters" :loading="trendLoading" :error="trendError" :selected-day="selectedHistoryDay" :selected-date-type="historyDateType" :machine-ips="historyMachineIps" :machine-name="machineName" :disabled="!!operatingId || pushBatch.saving" @apply="applyHistoryFilters" @select-day="selectHistoryDay" @clear="clearHistoryFilters" @retry="loadTrend()" />
     <p class="dispatch-history-scope">当前明细：{{ historySelectionLabel }}<template v-if="trendFilters.machine_ip"> · {{ machineName(trendFilters.machine_ip) }}（{{ trendFilters.machine_ip }}）</template></p>
     <div v-if="historyError" class="global-error" role="alert"><span>派发记录读取失败：{{ historyError }}</span><NButton attr-type="button" :disabled="historyLoading" @click="loadHistory()">重试</NButton></div>
@@ -462,6 +421,9 @@ const fileTableColumns = [
 </template>
 
 <style scoped>
+.dispatch-heading { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px 16px; min-height:40px; }
+.dispatch-heading h1 { margin:0; font-size:20px; font-weight:600; }
+
 .retry-dispatch-dialog{width:min(480px,calc(100vw - 32px));padding:24px}.retry-dispatch-dialog footer{display:flex;justify-content:flex-end;gap:10px;margin-top:20px}
 
 .dispatch-project-name { color:var(--muted); font-size:var(--font-auxiliary); white-space:nowrap; }
@@ -469,14 +431,6 @@ const fileTableColumns = [
 .dispatch-stage-badge span { color:rgb(var(--warning-color)); font-size:var(--font-auxiliary); font-weight:700; letter-spacing:2px; }
 .dispatch-stage-badge strong { margin:4px 0; color:var(--text-color-1); font-size:13px; }
 .dispatch-stage-badge small { color:var(--text-color-3); }
-.dispatch-flow { display:grid; margin-bottom:22px; border:1px solid var(--line); background:rgb(var(--container-bg-color)); }
-.dispatch-flow > div { position:relative; min-height:82px; display:flex; align-items:center; gap:12px; padding:17px 20px; border-right:1px solid var(--line); }
-.dispatch-flow > div:last-child { border-right:0; }
-.dispatch-flow > div::after { content:'›'; position:absolute; right:-7px; z-index:1; color:var(--text-color-3); background:rgb(var(--container-bg-color)); font-size:24px; }
-.dispatch-flow > div:last-child::after { display:none; }
-.dispatch-flow i { display:grid; place-items:center; flex:0 0 auto; border:1px solid var(--theme-border-color); border-radius:50%; font-style:normal; }
-.dispatch-flow span { display:flex; flex-direction:column; }
-.dispatch-flow .active i { color:var(--theme-on-primary-color); }
 .dispatch-notice { display:flex; align-items:center; gap:12px; margin-bottom:22px; padding:13px 16px; color:var(--text-color-1); background:rgb(var(--info-color) / .1); font-size:12px; }
 .dispatch-notice.error { color:rgb(var(--error-color)); background:rgb(var(--error-color) / .1); }
 .dispatch-notice button { min-height:30px; margin-left:auto; padding:0 8px; }
@@ -575,20 +529,12 @@ const fileTableColumns = [
 .history-actions button { min-height:30px; padding:0 9px; white-space:nowrap; }
 .filename-standard { display:inline-flex; padding:3px 7px; border-radius:999px; white-space:nowrap; font-size:var(--font-auxiliary); }
 @media (max-width:1000px) {
-  .dispatch-hero { align-items:flex-start; flex-direction:column; justify-content:center; padding:28px 0; }
   .dispatch-stage-badge { width:100%; min-width:0; }
-  .dispatch-flow { grid-template-columns:1fr 1fr; }
-  .dispatch-flow > div:nth-child(2) { border-right:0; }
-  .dispatch-flow > div:nth-child(-n+2) { border-bottom:1px solid var(--line); }
   .dispatch-workspace,.dispatch-workspace.download-workspace,.dispatch-workspace.push-workspace { grid-template-columns:1fr; }
   .directory-scroll { max-height:420px; }
   .push-file-filter { grid-template-columns:1fr 1fr; }
 }
 @media (max-width:560px) {
-  .dispatch-flow { grid-template-columns:1fr; }
-  .dispatch-flow > div { border-right:0; border-bottom:1px solid var(--line); }
-  .dispatch-flow > div:last-child { border-bottom:0; }
-  .dispatch-flow > div::after { display:none; }
   .file-name-search { align-items:stretch; flex-direction:column; gap:7px; }
   .file-name-search > div { width:100%; }
   .download-batch-toolbar { align-items:stretch; flex-direction:column; }
@@ -598,33 +544,18 @@ const fileTableColumns = [
 }
 
 /* 与生产指挥中心统一的文件派发视觉层 */
-.dispatch-hero { position:relative; min-height:160px; display:grid; grid-template-columns:minmax(460px,1fr) 330px; align-items:center; overflow:hidden; padding:24px; border:1px solid var(--theme-border-color); border-radius:14px; background:linear-gradient(90deg,rgb(var(--container-bg-color) / 0.98) 0%,rgb(var(--container-bg-color) / 0.9) 43%,rgb(var(--container-bg-color) / 0.04) 70%),var(--dispatch-hero-image) center 53%/cover no-repeat; box-shadow:var(--theme-shadow); animation:surface-in .46s cubic-bezier(.2,.75,.25,1) both; gap:24px; }
-.dispatch-hero::after { content:""; position:absolute; inset:0; pointer-events:none; background:transparent; }
-.dispatch-hero__copy { position:relative; z-index:1; }
-.dispatch-hero .eyebrow { display:block; margin:0 0 4px; color:rgb(var(--info-color)); font-size:var(--font-auxiliary); font-weight:700; letter-spacing:1.4px; }
-.dispatch-hero h1 { margin:0 0 7px; color:var(--text-color-1); font-size:var(--font-page-title); line-height:1.08; letter-spacing:1px; }
 .dispatch-source-status { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; margin:12px 0 0; }
 .dispatch-source-status span { display:inline-flex; align-items:center; gap:6px; padding:4px 8px; color:var(--text-color-2); border:1px solid var(--theme-border-color); border-radius:999px; background:rgb(var(--container-bg-color)); font-size:var(--font-auxiliary); }
-.dispatch-source-status i,.confirm-machine small i { width:7px; height:7px; display:inline-block; flex:0 0 auto; border-radius:50%; background:rgb(var(--warning-color)); box-shadow:var(--theme-shadow); }
-.dispatch-source-status i.ready,.confirm-machine small i.ready { background:rgb(var(--success-color)); box-shadow:var(--theme-shadow); }
-.dispatch-flow { grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; overflow:hidden; margin:16px 0 0; border-color:var(--theme-border-color); border-radius:11px; box-shadow:var(--theme-shadow); padding:16px; }
-.dispatch-flow>div { min-height:64px; gap:13px; padding:12px 28px; border-right:0; background:rgb(var(--container-bg-color)); }
-.dispatch-flow>div::after { content:""; width:82px; height:1px; right:-39px; background:rgb(var(--container-bg-color)); }
-.dispatch-flow i { width:32px; height:32px; color:var(--text-color-3); border-color:var(--theme-border-color); font-size:14px; font-weight:700; }
-.dispatch-flow strong { color:var(--text-color-1); font-size:12px; }
-.dispatch-flow .active { background:rgb(var(--container-bg-color)); }
-.dispatch-flow .active i { border-color:rgb(var(--primary-color)); background:rgb(var(--primary-color)); box-shadow:var(--theme-shadow); }
-.dispatch-flow .complete i { color:var(--theme-on-primary-color); border-color:var(--theme-border-color); background:rgb(var(--info-color)); }
+.dispatch-source-status i { width:7px; height:7px; display:inline-block; flex:0 0 auto; border-radius:50%; background:rgb(var(--warning-color)); box-shadow:var(--theme-shadow); }
+.dispatch-source-status i.ready { background:rgb(var(--success-color)); box-shadow:var(--theme-shadow); }
 .dispatch-notice { margin:10px 0 0; border:1px solid var(--theme-border-color); border-left:3px solid var(--theme-border-color); border-radius:8px; }
 .dispatch-notice.error { border-color:rgb(var(--error-color)); border-left-color:rgb(var(--error-color)); }
 .dispatch-workspace.download-workspace { grid-template-columns:280px minmax(0,1fr); gap:12px; margin-top:12px; align-items:stretch; }
 .dispatch-workspace>.panel { margin-bottom:0; }
 .dispatch-workspace>.panel,.dispatch-history-panel { overflow:hidden; border:1px solid var(--theme-border-color); border-radius:11px; box-shadow:var(--theme-shadow); animation:surface-in .44s cubic-bezier(.2,.75,.25,1) both; }
 .dispatch-files-panel { animation-delay:.05s!important; }
-.dispatch-confirm-panel { animation-delay:.1s!important; }
 .panel-title { min-height:48px; padding:0 16px; border-bottom:1px solid var(--theme-border-color); background:rgb(var(--container-bg-color)); }
 .panel-title>div { gap:7px; }
-.panel-title>div>small { color:var(--text-color-3); font-size:var(--font-auxiliary); font-weight:700; }
 .panel-title h2 { color:var(--text-color-1); font-size:14px; }
 .panel-title>p { color:var(--text-color-3); font-size:var(--font-auxiliary); }
 .dispatch-section-icon { width:27px!important; height:27px!important; display:grid!important; place-items:center; padding:0!important; color:rgb(var(--info-color))!important; border:0!important; border-radius:8px!important; background:rgb(var(--info-color) / .1)!important; font-size:inherit!important; }
@@ -663,59 +594,20 @@ const fileTableColumns = [
 .filename-standard.warning { color:rgb(var(--warning-color)); background:rgb(var(--warning-color) / .1); }
 .dispatch-pagination { padding:9px 13px 0; }
 .dispatch-download-hint { margin:11px 14px 13px; font-size:var(--font-auxiliary); line-height:1.55; }
-.dispatch-confirm-panel { min-width:0; grid-column:1/-1; align-self:start; }
-.dispatch-confirm-content { display:grid; grid-template-columns:140px minmax(240px,1fr) minmax(230px,.8fr) 210px; align-items:center; gap:16px; height:auto; padding:16px; box-sizing:border-box; }
-.confirm-label { color:var(--text-color-3); font-size:var(--font-auxiliary); font-weight:700; }
-.confirm-label { align-self:end; }
-.confirm-total { grid-column:1; margin:0; color:var(--text-color-1); font-size:12px; }
-.confirm-total strong { margin-right:3px; color:var(--text-color-1); font-size:25px; font-variant-numeric:tabular-nums; }
-.confirm-file-list { grid-column:2; grid-row:1/3; min-height:86px; display:flex; flex-direction:column; gap:7px; padding:10px 12px; border:1px solid var(--theme-border-color); border-radius:7px; background:rgb(var(--container-bg-color)); }
-.confirm-file-list>span { overflow:hidden; color:var(--text-color-2); text-overflow:ellipsis; white-space:nowrap; font-size:var(--font-auxiliary); }
-.confirm-file-list>button { align-self:flex-end; min-height:22px; margin-top:auto; padding:0; }
-.confirm-file-list.empty { align-items:center; justify-content:center; gap:8px; color:var(--text-color-3); text-align:center; }
-.confirm-file-list.empty>span { color:var(--text-color-3); white-space:normal; line-height:1.5; }
-.confirm-machine { grid-column:3; grid-row:1/3; margin:0; padding:0; border:0; }
-.confirm-machine label { display:flex; align-items:center; gap:6px; margin-bottom:8px; color:var(--text-color-1); font-size:var(--font-auxiliary); font-weight:700; }
-.confirm-machine .app-select { width:100%; }
-.confirm-machine small { display:flex; align-items:flex-start; gap:6px; margin-top:8px; color:var(--text-color-3); font-size:var(--font-auxiliary); line-height:1.45; }
-.confirm-machine small i { margin-top:3px; }
-.confirm-dispatch-button { min-height:40px; display:flex; align-items:center; justify-content:center; grid-column:4; grid-row:1/3; gap:7px; margin:0; padding:0 12px; }
-.confirm-dispatch-button:hover:not(:disabled) { transform:translateY(-1px); }
-.confirm-dispatch-button:disabled { cursor:not-allowed; }
 .dispatch-history-panel { --content-table-font-size:13px; --content-table-header-font-size:12px; margin-top:24px; }
 .history-table th { color:var(--theme-on-primary-color); background:var(--theme-table-header-color); }
 .history-table .dispatch-project-name { font-size:12px; }
 .dispatch-empty-history i { color:rgb(var(--info-color)); border:0; background:rgb(var(--info-color) / .1); }
-
-@media (max-width:1120px) {
-  .dispatch-confirm-content { grid-template-columns:120px minmax(220px,1fr) minmax(210px,.8fr) 190px; }
-}
 @media (max-width:1000px) {
-  .dispatch-hero { grid-template-columns:1fr 260px; padding:24px; }
-  .dispatch-flow { grid-template-columns:repeat(2,1fr); }
-  .dispatch-flow>div:nth-child(2) { border-right:0; }
   .dispatch-workspace.download-workspace { grid-template-columns:1fr; }
   .download-workspace .dispatch-files-panel { min-height:0; }
   .directory-panel { display:flex; flex-direction:column; }
-  .dispatch-confirm-panel { grid-column:auto; }
-  .dispatch-confirm-content { grid-template-columns:120px minmax(220px,1fr) minmax(220px,1fr); }
-  .confirm-dispatch-button { grid-column:1/-1; grid-row:auto; margin-top:0; }
   .directory-scroll { position:static; min-height:220px; max-height:410px; flex:0 1 auto; }
 }
 @media (max-width:680px) {
-  .dispatch-hero { grid-template-columns:1fr; min-height:190px; padding:24px; background:linear-gradient(90deg,rgb(var(--container-bg-color) / 0.97),rgb(var(--container-bg-color) / 0.88)),var(--dispatch-hero-image) center/cover; gap:24px; }
-  .dispatch-hero h1 { font-size:var(--font-page-title-mobile); }
-  .dispatch-hero__copy>p { font-size:12px; }
   .dispatch-source-status { gap:8px; margin:12px 0 0; }
-  .dispatch-flow { grid-template-columns:1fr; margin:16px 0 0; padding:16px; gap:8px; }
-  .dispatch-flow>div { min-height:58px; padding:10px 18px; border-bottom:1px solid var(--theme-border-color); }
-  .dispatch-flow>div::after { display:none; }
   .file-name-search { align-items:stretch; gap:8px; padding:16px; }
   .download-batch-toolbar { align-items:stretch; gap:8px; padding:12px 16px; }
-  .dispatch-confirm-content { display:flex; height:auto; gap:16px; padding:16px; }
-  .confirm-file-list { min-height:100px; }
-  .confirm-machine { margin-top:13px; padding-top:12px; border-top:1px solid var(--theme-border-color); }
-  .confirm-dispatch-button { margin-top:14px; }
   .mobile-selection-bar-spacer { display:block; height:calc(72px + env(safe-area-inset-bottom)); }
   .mobile-selection-bar { position:fixed; z-index:950; right:0; bottom:0; left:0; display:grid; grid-template-columns:auto auto minmax(0,1fr); align-items:center; gap:8px; padding:10px max(12px,env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left)); border-top:1px solid var(--theme-border-color); background:rgb(var(--container-bg-color)); box-shadow:var(--theme-shadow); }
   .mobile-selection-bar>span { min-width:54px; display:flex; align-items:baseline; gap:3px; color:var(--text-color-3); white-space:nowrap; }
@@ -726,7 +618,7 @@ const fileTableColumns = [
   .mobile-selection-bar button:disabled { cursor:not-allowed; }
 }
 @media (prefers-reduced-motion:reduce) {
-  .dispatch-hero,.dispatch-workspace>.panel,.dispatch-history-panel { animation:none; }
+  .dispatch-workspace>.panel,.dispatch-history-panel { animation:none; }
 }
 .dispatch-history-scope { margin:0; padding:12px 16px; border-bottom:1px solid var(--theme-border-color); color:var(--text-color-2); font-size:var(--font-auxiliary); }
 .history-table :is(code,.dispatch-status,.history-actions button) { font-size:inherit; }

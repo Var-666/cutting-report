@@ -330,7 +330,6 @@ test('workshop dashboard uses verified confirmation metrics and responsive home 
   const structureScript = structure.scriptSetup.content
   const structureStyles = structure.styles.map((style) => style.content).join('\n')
 
-  assert.match(template, /class="[^"]*report-hero-query[^"]*workshop-query-shell[^"]*"/)
   assert.equal((template.match(/class="workshop-kpi /g) || []).length, 5)
   assert.match(template, /<AppIcon name="tasks"/)
   assert.match(template, /<AppIcon name="clock"/)
@@ -361,7 +360,6 @@ test('workshop dashboard uses verified confirmation metrics and responsive home 
   assert.match(structureStyles, /@media\(max-width:1100px\)\{\.workshop-structure__grid\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/)
   assert.match(structureStyles, /@media\(max-width:760px\)\{\.workshop-structure__grid\{grid-template-columns:1fr\}/)
   assert.match(styles, /grid-template-columns:repeat\(5,minmax\(0,1fr\)\)/)
-  assert.match(styles, /@media\(max-width:560px\)[\s\S]*\.workshop-query-shell \.report-query,\.workshop-kpis/)
 })
 
 test('home panels expose independent loading states', () => {

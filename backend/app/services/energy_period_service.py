@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 from app.models.domain import to_primitive
 from app.services.energy_api import EnergyApiClient, EnergyApiError
 from app.services.energy_service import (
-    STATUS_TEXT, interval_consumption, local_time, make_series, sampling_policy,
+    STATUS_TEXT, interval_consumption, local_time, make_series, sampling_policy, task_energy_note,
 )
 from app.services.equipment_service import sort_equipment_records, summarize_equipment
 
@@ -410,6 +410,7 @@ class EnergyPeriodService:
                     max_gap_seconds=self.settings.energy_report_max_gap_seconds,
                     interpolate=self.settings.energy_allow_interpolation,
                     factor=Decimal(factor),
+                    estimate=True,
                     **sampling_policy(self.settings),
                 )
                 return {"parameter_id": key, **measured}
@@ -419,7 +420,8 @@ class EnergyPeriodService:
                       for key in self.electricity_ids]
             electric_failure = next((meter["status"] for meter in meters if meter["value"] is None), None)
             electric_status = electric_failure or (
-                "interpolated" if any(meter["status"] == "interpolated" for meter in meters) else "measured"
+                "estimated" if any(meter["status"] == "estimated" for meter in meters)
+                else "interpolated" if any(meter["status"] == "interpolated" for meter in meters) else "measured"
             )
             electric_value = None if electric_failure else sum(
                 (meter["value"] for meter in meters), Decimal("0")
@@ -438,7 +440,7 @@ class EnergyPeriodService:
                 electricity_consumption=electric_value,
                 gas_data_status=gas["status"],
                 electricity_data_status=electric_status,
-                energy_note=f"气耗：{STATUS_TEXT[gas['status']]}；电耗：{STATUS_TEXT[electric_status]}",
+                energy_note=task_energy_note(gas, meters, electric_status),
                 energy_details=details,
             ))
 

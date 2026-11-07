@@ -16,7 +16,7 @@ from app.models.domain import to_primitive
 from app.services.energy_api import EnergyApiError
 from app.services.energy_period_service import EnergyPeriodService, restore_task_energy_records
 from app.workers.energy_history_worker import EnergyHistoryWorker
-from tests.energy_fixtures import record, GAS, ELECTRIC, MeterStub
+from tests.energy_fixtures import record, GAS, ELECTRIC, MeterStub, sparse_november_readings
 
 
 def test_hourly_day_and_persisted_month_without_equipment_or_tasks(tmp_path, state_database):
@@ -429,8 +429,48 @@ def test_unified_tasks_apply_transition_by_actual_task_time(tmp_path, state_data
     client.rows = [row for row in client.rows
                    if not start < datetime.fromisoformat(row["Mt"]) < start + timedelta(minutes=4)]
     result = energy.get_task_day(date(2026, 9, 4), [task])
-    assert result["records"][0]["gas_consumption"] is None
-    assert result["records"][0]["gas_data_status"] == "gap"
+    assert result["records"][0]["gas_consumption"] == 3
+    assert result["records"][0]["gas_data_status"] == "estimated"
+
+
+def test_task_sparse_estimates_survive_api_serialization_restore_summary_and_analysis(tmp_path, state_database):
+    from app.models.energy_contracts import TaskEnergyReport
+    from app.services.report_analysis.equipment import build_context
+    energy, _ = service(tmp_path, state_database, rows=sparse_november_readings(),
+        energy_sampling_change_at="2026-09-04")
+    task = record(production_time=datetime(2026, 11, 7, 1, 14, 31),
+                  production_end_time=datetime(2026, 11, 7, 1, 41, 4))
+    report = energy.get_task_day(date(2026, 11, 7), [task])
+    assert TaskEnergyReport.model_validate(report).records[0].gas_data_status == "estimated"
+    row = report["records"][0]
+    assert row["gas_consumption"] == 7.975
+    assert row["gas_data_status"] == "estimated"
+    assert row["energy_details"]["gas"]["covered_start"] == "2026-11-07T01:15:00"
+    assert report["summary"]["total_gas_consumption"] == 7.975
+    assert report["summary"]["estimated_record_count"] == 1
+    restored = restore_task_energy_records([task], report)
+    assert restored[0].gas_consumption == Decimal("7.975")
+    assert restored[0].energy_details == row["energy_details"]
+    assert "2026-11-07 01:15:00～2026-11-07 01:41:00" in row["energy_note"]
+    context = build_context("2026-11-07", restored, energy_data_mode="partial", energy_units=report["units"])
+    gas_fact = next(fact for fact in context["facts"] if fact["id"] == "F003")
+    assert "估算 1 项" in gas_fact["source"]
+    assert context["tables"][0]["rows"][0]["energy_note"] == row["energy_note"]
+
+
+@pytest.mark.parametrize("missing_meter", [False, True])
+def test_sparse_task_electricity_sums_estimates_only_when_all_meters_exist(tmp_path, state_database, missing_meter):
+    ids = (GAS, *ELECTRIC[:-1]) if missing_meter else (GAS, *ELECTRIC)
+    rows = [{**sample, "MfId": key} for key in ids for sample in sparse_november_readings()]
+    energy, _ = service(tmp_path, state_database, rows=rows, energy_sampling_change_at="2026-09-04")
+    task = record(production_time=datetime(2026, 11, 7, 1, 14, 31),
+                  production_end_time=datetime(2026, 11, 7, 1, 41, 4))
+    report = energy.get_task_day(date(2026, 11, 7), [task])
+    row = report["records"][0]
+    assert row["gas_consumption"] == 7.975
+    assert row["electricity_consumption"] == (None if missing_meter else 23.925)
+    assert row["electricity_data_status"] == ("missing" if missing_meter else "estimated")
+    assert report["summary"]["total_electricity_consumption"] == row["electricity_consumption"]
 
 
 def test_disabled_or_missing_login_never_fetches_or_invents_data(tmp_path, state_database):

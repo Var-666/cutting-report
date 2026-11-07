@@ -50,7 +50,7 @@ const batchTableColumns = [
   <NModal :show="pushBatch.visible" :mask-closable="!pushBatch.saving" :close-on-esc="!pushBatch.saving" @update:show="visible => { if (!visible) emit('close') }">
       <div class="push-batch-dialog" role="dialog" aria-modal="true" aria-labelledby="push-batch-title" tabindex="-1">
         <header class="push-batch-header">
-          <div><span>FILE DISPATCH</span><h2 id="push-batch-title">{{ pushBatch.items.length === 1 ? '文件派发确认' : '批量派发确认' }}</h2></div>
+          <h2 id="push-batch-title">{{ pushBatch.items.length === 1 ? '文件派发确认' : '批量派发确认' }}</h2>
           <NButton attr-type="button" :disabled="pushBatch.saving" aria-label="关闭批量推送窗口" @click="emit('close')">×</NButton>
         </header>
 
@@ -100,8 +100,7 @@ const batchTableColumns = [
 .push-batch-backdrop { position:fixed; z-index:1000; inset:0; display:grid; place-items:center; padding:24px; background:rgb(var(--inverted-bg-color) / .6); }
 .push-batch-dialog { width:min(1180px,100%); max-height:calc(100vh - 48px); display:flex; flex-direction:column; overflow:hidden; color:var(--text-color-1); background:rgb(var(--container-bg-color)); }
 .push-batch-header { display:flex; align-items:flex-start; justify-content:space-between; gap:24px; padding:20px 24px; }
-.push-batch-header span { color:rgb(var(--info-color)); font-size:var(--font-auxiliary); font-weight:700; letter-spacing:2px; }
-.push-batch-header h2 { margin:3px 0 4px; font-size:20px; }
+.push-batch-header h2 { margin:0; font-size:20px; }
 .push-batch-header p { margin:0; color:var(--text-color-3); font-size:var(--font-auxiliary); }
 .push-batch-header button { width:34px; min-height:34px; flex:0 0 34px; padding:0; line-height:1; }
 .push-batch-content { min-height:0; overflow:auto; padding:20px 24px; }

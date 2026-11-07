@@ -68,7 +68,7 @@ def summarize_equipment(
         "gas_missing_count": len(records) - len(gas_values),
         "electricity_missing_count": len(records) - len(electricity_values),
         "estimated_record_count": sum(
-            row.gas_data_status == "interpolated" or row.electricity_data_status == "interpolated"
+            row.gas_data_status in {"interpolated", "estimated"} or row.electricity_data_status in {"interpolated", "estimated"}
             for row in records
         ),
         "has_energy_data": any(

@@ -184,8 +184,8 @@ const summaryTableColumns = [
         <template #c3="{ row }">{{ row.segment_name?.trim() || '--' }}</template>
         <template #c4="{ row }">{{ formatChineseDateTime(row.production_time) }}</template>
         <template #c5="{ row }">{{ duration(row.work_time) }}</template>
-        <template #c6="{ row }">{{ format(row.electricity_consumption) }}</template>
-        <template #c7="{ row }">{{ format(row.gas_consumption) }}</template>
+        <template #c6="{ row }"><span :title="row.energy_note || ''">{{ format(row.electricity_consumption) }}</span></template>
+        <template #c7="{ row }"><span :title="row.energy_note || ''">{{ format(row.gas_consumption) }}</span></template>
         <template #summary-c0>汇总</template>
         <template #summary-c1></template>
         <template #summary-c2></template>
