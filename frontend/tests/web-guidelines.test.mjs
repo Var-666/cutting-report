@@ -36,7 +36,7 @@ test('critical forms have names, inline alerts, and unsaved-change protection', 
   assert.match(designer, /role="tabpanel"/)
 })
 
-test('modal workflows trap focus and data grids label editable controls', () => {
+test('modal workflows delegate focus to Naive UI and label editable controls', () => {
   const accounts = source('views/AdminAccountsView.vue')
   const dispatch = source('components/dispatch/DispatchBatchDialog.vue')
   const workshop = source('components/workshop/WorkshopBatchConfirmationDialog.vue')
@@ -62,6 +62,9 @@ test('global interaction styles preserve visible focus and touch behavior', () =
   assert.match(css, /overscroll-behavior:contain/)
   assert.match(css, /env\(safe-area-inset-top\)/)
   assert.match(period, /:aria-labelledby="`\$\{labelId\} \$\{valueId\}`"/)
+  const device = source('components/DeviceSwitcher.vue')
+  assert.match(device, /<AppSelect[^>]*aria-label="按设备类型选择产线或设备"/)
+  assert.doesNotMatch(device, /:input-props=/)
 })
 
 

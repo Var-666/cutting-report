@@ -10,6 +10,7 @@ export function useEnergyReportSummary(pageActive: Ref<boolean>, initialDate: st
   const summaryPeriodStart = ref(recentTwelveMonthStart(initialDate))
   const summaryPeriodEnd = ref(initialDate)
   const summaryLoading = ref(false)
+  const summaryRefreshError = ref('')
   let backgroundController: AbortController | null = null
   let refreshController: AbortController | null = null
   let refreshRequestSequence = 0
@@ -48,11 +49,12 @@ export function useEnergyReportSummary(pageActive: Ref<boolean>, initialDate: st
       try {
         const refreshed = await getEnergyMonthlyRange(requestedStart, requestedEnd, { force: true, signal: controller.signal })
         if (!current() || controller.signal.aborted) return
+        summaryRefreshError.value = ''
         await applyMonthlySummary(refreshed)
       } catch (caught) {
         const exception = toError(caught)
         if (exception.name === 'AbortError') return
-        // Keep the last valid summary and retry within the existing attempt limit.
+        if (current() && !controller.signal.aborted) summaryRefreshError.value = exception.message
       } finally {
         if (refreshController === controller) {
           refreshController = null
@@ -71,6 +73,7 @@ export function useEnergyReportSummary(pageActive: Ref<boolean>, initialDate: st
 
   function resetSummaryScope(selectedDate: string) {
     pauseSummary()
+    summaryRefreshError.value = ''
     summaryRefreshCount = 0
     const recentStart = recentTwelveMonthStart(selectedDate)
     if (summaryPeriodStart.value !== recentStart || summaryPeriodEnd.value !== selectedDate) monthlyReport.value = null
@@ -79,6 +82,7 @@ export function useEnergyReportSummary(pageActive: Ref<boolean>, initialDate: st
   }
 
   function loadInitialSummary(force: boolean, signal: AbortSignal) {
+    summaryRefreshError.value = ''
     const requestedStart = summaryPeriodStart.value
     const requestedEnd = summaryPeriodEnd.value
     const sequence = refreshRequestSequence
@@ -98,15 +102,19 @@ export function useEnergyReportSummary(pageActive: Ref<boolean>, initialDate: st
       .then(() => getEnergyMonthlyRange(requestedStart, requestedEnd, { signal: syncController.signal }))
       .then(async summaryResult => {
         if (!current() || syncController.signal.aborted) return
+        summaryRefreshError.value = ''
         await applyMonthlySummary(summaryResult)
       })
-      .catch(() => {})
+      .catch(caught => {
+        const exception = toError(caught)
+        if (current() && !syncController.signal.aborted && exception.name !== 'AbortError') summaryRefreshError.value = exception.message
+      })
       .finally(() => { if (backgroundController === syncController) backgroundController = null })
     return request
   }
 
   return {
-    monthlyReport, summaryPeriodStart, summaryPeriodEnd, summaryLoading,
+    monthlyReport, summaryPeriodStart, summaryPeriodEnd, summaryLoading, summaryRefreshError,
     resetSummaryScope, loadInitialSummary, applyMonthlySummary, scheduleSummaryRefresh, pauseSummary,
   }
 }

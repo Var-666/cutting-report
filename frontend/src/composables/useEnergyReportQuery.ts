@@ -24,7 +24,7 @@ export function useEnergyReportQuery() {
   const error = ref('')
   const pageActive = ref(true)
   const {
-    monthlyReport, summaryPeriodStart, summaryPeriodEnd, summaryLoading,
+    monthlyReport, summaryPeriodStart, summaryPeriodEnd, summaryLoading, summaryRefreshError,
     resetSummaryScope, loadInitialSummary, applyMonthlySummary, scheduleSummaryRefresh, pauseSummary,
   } = useEnergyReportSummary(pageActive, today)
   let controller: AbortController | null = null
@@ -292,7 +292,7 @@ export function useEnergyReportQuery() {
 
   return {
     anchorDate, periodStart, periodEnd, appliedPeriodStart, appliedPeriodEnd,
-    summaryPeriodStart, summaryPeriodEnd, taskDay, monthlyReport, chartType, loading, summaryLoading,
+    summaryPeriodStart, summaryPeriodEnd, taskDay, monthlyReport, chartType, loading, summaryLoading, summaryRefreshError,
     error, pageActive, rangeQueryApplied, dateQueryDirty, analysisReady,
     loadRange, loadDefaultRanges, changeChartType, initializeReport, retryReport, refreshAnalysisReport,
   }

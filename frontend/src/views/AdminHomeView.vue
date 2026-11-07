@@ -190,7 +190,7 @@ onBeforeUnmount(() => {
     </header>
 
     <NAlert v-if="error" title="部分概览数据读取失败" type="error" role="alert">
-      {{ error }}
+      <div class="flex-y-center flex-wrap gap-12px"><span>{{ error }}</span><NButton size="small" :disabled="overviewLoading || historyLoading || energyLoading || alarmLoading" @click="loadDashboard">重新读取概览</NButton></div>
     </NAlert>
 
     <NCard :bordered="false" class="card-wrapper bg-container" content-style="padding: 0">

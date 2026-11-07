@@ -309,7 +309,7 @@ const fileTableColumns = [
     <span>{{ statusError }}</span>
     <NButton attr-type="button" :disabled="statusLoading" @click="loadRuntimeStatus({ force: true })">重新检查</NButton>
   </div>
-  <div v-if="notice" class="dispatch-notice" :class="{ error: noticeType === 'error' }" role="status">
+  <div v-if="notice" class="dispatch-notice" :class="{ error: noticeType === 'error' }" :role="noticeType === 'error' ? 'alert' : 'status'">
     <span>{{ notice }}</span>
     <NButton attr-type="button" @click="notice = ''">关闭</NButton>
   </div>
@@ -360,7 +360,7 @@ const fileTableColumns = [
       <div v-if="fileError" class="dispatch-notice error" role="alert"><span>文件读取失败：{{ fileError }}{{ rows.length ? '；当前仍显示上次查询结果。' : '' }}</span><NButton :disabled="loading" @click="applyFileSearch">重试</NButton></div>
       <div class="download-batch-toolbar" aria-live="polite">
         <span>已选择 <strong>{{ selectedFileCount }}</strong> / 100 项<small>全选包含所有分页</small></span>
-        <div><NButton attr-type="button" :disabled="!selectedFileCount || pushBatch.saving" @click="clearSelectedFiles">清空选择</NButton><NButton class="primary" attr-type="button" :disabled="!selectedFileCount || loading || pushBatch.saving || !systemStatus?.can_push" @click="openPushBatch" type="primary">设置参数并派发</NButton></div>
+        <div><NButton attr-type="button" :disabled="!selectedFileCount || pushBatch.saving" @click="clearSelectedFiles">清空选择</NButton><NButton class="primary" attr-type="button" aria-label="批量设置参数并派发已选文件" :disabled="!selectedFileCount || loading || pushBatch.saving || !systemStatus?.can_push" @click="openPushBatch" type="primary">设置参数并派发</NButton></div>
       </div>
       <div class="dispatch-table-wrap" :aria-busy="loading">
         <div v-if="loading" class="dispatch-loading" role="status">{{ selectingAll ? '正在选择所有分页的文件…' : `正在加载第 ${requestedPage} 页…` }}</div>
@@ -400,7 +400,7 @@ const fileTableColumns = [
   <aside v-if="selectedFileCount && !pushBatch.visible" class="mobile-selection-bar" aria-label="已选文件操作">
     <span><small>已选</small><strong>{{ selectedFileCount }}</strong><small>/ 100 项</small></span>
     <NButton attr-type="button" :disabled="pushBatch.saving" @click="clearSelectedFiles">清空</NButton>
-    <NButton class="primary" attr-type="button" :disabled="loading || pushBatch.saving || !systemStatus?.can_push" @click="openPushBatch" type="primary"><AppIcon name="send" size="16" tone="light" />设置参数并派发</NButton>
+    <NButton class="primary" attr-type="button" aria-label="批量设置参数并派发已选文件" :disabled="loading || pushBatch.saving || !systemStatus?.can_push" @click="openPushBatch" type="primary"><AppIcon name="send" size="16" tone="light" />设置参数并派发</NButton>
   </aside>
 
     <NModal :show="!!retryDispatch" @update:show="visible => { if (!visible) retryDispatch = null }">
@@ -427,12 +427,8 @@ const fileTableColumns = [
 .retry-dispatch-dialog{width:min(480px,calc(100vw - 32px));padding:24px}.retry-dispatch-dialog footer{display:flex;justify-content:flex-end;gap:10px;margin-top:20px}
 
 .dispatch-project-name { color:var(--muted); font-size:var(--font-auxiliary); white-space:nowrap; }
-.dispatch-stage-badge { min-width:310px; display:flex; flex-direction:column; padding:17px 20px; border:1px solid var(--theme-border-color); border-right:4px solid var(--theme-border-color); background:rgb(var(--warning-color) / .1); box-shadow:var(--theme-shadow); }
-.dispatch-stage-badge span { color:rgb(var(--warning-color)); font-size:var(--font-auxiliary); font-weight:700; letter-spacing:2px; }
-.dispatch-stage-badge strong { margin:4px 0; color:var(--text-color-1); font-size:13px; }
-.dispatch-stage-badge small { color:var(--text-color-3); }
-.dispatch-notice { display:flex; align-items:center; gap:12px; margin-bottom:22px; padding:13px 16px; color:var(--text-color-1); background:rgb(var(--info-color) / .1); font-size:12px; }
-.dispatch-notice.error { color:rgb(var(--error-color)); background:rgb(var(--error-color) / .1); }
+.dispatch-notice { display:flex; align-items:center; gap:12px; margin-bottom:22px; padding:13px 16px; color:var(--text-color-1); background:rgb(var(--info-color) / .1); font-size:12px; margin:10px 0 0; border:1px solid var(--theme-border-color); border-left:3px solid var(--theme-border-color); border-radius:8px; }
+.dispatch-notice.error { color:rgb(var(--error-color)); background:rgb(var(--error-color) / .1); border-color:rgb(var(--error-color)); border-left-color:rgb(var(--error-color)); }
 .dispatch-notice button { min-height:30px; margin-left:auto; padding:0 8px; }
 .dispatch-workspace { display:grid; grid-template-columns:minmax(0,1.8fr) minmax(300px,.72fr); gap:24px; align-items:start; margin:24px 0 0; }
 .dispatch-workspace.push-workspace { grid-template-columns:1fr; align-items:stretch; }
@@ -470,7 +466,6 @@ const fileTableColumns = [
 .file-name-search > div { width:min(430px,100%); }
 .file-name-search label { margin:0; flex:0 0 auto; }
 .download-batch-toolbar { display:flex; align-items:center; justify-content:space-between; gap:14px; border-bottom:1px solid var(--theme-border-color); }
-.download-batch-toolbar > span small { font-size:inherit; }
 .download-batch-toolbar > span { color:var(--muted); font-size:var(--font-auxiliary); }
 .download-batch-toolbar > span strong { margin:0 3px; color:var(--blue); font-size:15px; font-variant-numeric:tabular-nums; }
 .download-batch-toolbar > span small { margin-left:10px; color:rgb(var(--warning-color)); font-size:inherit; }
@@ -484,7 +479,7 @@ const fileTableColumns = [
 .source-file-table thead .file-download-cell { z-index:2; }
 .source-file-table tbody tr:hover .file-download-cell { background:rgb(var(--layout-bg-color)); }
 .source-file-table tbody tr.selected .file-download-cell { background:rgb(var(--layout-bg-color)); }
-.dispatch-download-hint { color:var(--muted); }
+.dispatch-download-hint { color:var(--muted); margin:11px 14px 13px; font-size:var(--font-auxiliary); line-height:1.55; }
 .dispatch-table { width:100%; border-collapse:collapse; }
 .dispatch-table th,.dispatch-table td { border-bottom:1px solid var(--theme-border-color); text-align:left; font-size:var(--font-auxiliary); }
 .dispatch-table th { color:var(--theme-on-primary-color); background:var(--theme-table-header-color); font-size:var(--font-auxiliary); letter-spacing:.4px; }
@@ -493,32 +488,13 @@ const fileTableColumns = [
 .download-check-cell { width:100%; display:flex; align-items:center; justify-content:center; }
 .download-check-cell input { display:block; margin:auto; accent-color:var(--blue); cursor:pointer; }
 .download-check-cell input:disabled { cursor:not-allowed; }
-.check-column { width:42px; text-align:center!important; }
 .file-name-cell { white-space:nowrap; }
 .file-name-cell strong,.file-name-cell small { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .file-name-cell strong { color:var(--navy); font-size:var(--font-auxiliary); }
 .file-name-cell small { max-width:270px; margin-top:4px; color:var(--text-color-3); font:9px ui-monospace,SFMono-Regular,Menlo,monospace; }
 .file-extension { color:var(--text-color-2); font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
-.push-file-picker { min-width:0; display:flex; flex-direction:column; }
-.push-file-filter { display:grid; grid-template-columns:minmax(180px,1.2fr) minmax(150px,.9fr) minmax(190px,1.1fr) auto; align-items:end; gap:10px; padding:16px 18px; border-bottom:1px solid var(--theme-border-color); background:var(--theme-hover-color); }
-.push-file-filter label > span { display:block; margin-bottom:6px; color:var(--text-color-2); font-size:var(--font-auxiliary); font-weight:700; }
-.push-file-filter input,.push-file-filter .app-select { width:100%; min-width:0; }
-.push-filter-actions { display:flex; justify-content:flex-end; gap:7px; }
-.push-filter-actions button { min-height:38px; padding:0 13px; }
-.push-filter-actions .primary { color:var(--theme-on-primary-color); border-color:var(--blue); background:var(--blue); }
-.push-file-table tbody tr { cursor:pointer; }
-.push-check-cell { width:48px; text-align:center!important; }
-.push-check-cell input { display:block; width:15px; height:15px; margin:auto; accent-color:var(--blue); cursor:pointer; }
-.push-file-origin { max-width:245px; }
-.push-file-origin strong,.push-file-origin small { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.push-file-origin strong { color:var(--navy); font-size:var(--font-auxiliary); }
-.push-file-origin small { max-width:230px; margin-top:4px; color:var(--muted); font-size:var(--font-auxiliary); }
-.push-file-picker .dispatch-table-wrap { min-height:210px; flex:1 1 auto; }
 :deep(.dispatch-status) { display:inline-flex; padding:4px 8px; white-space:nowrap; }
 .dispatch-empty-row { padding:32px!important; color:var(--muted); text-align:center!important; }
-.dispatch-pagination { display:flex; align-items:center; justify-content:flex-end; gap:12px; color:var(--muted); font-size:var(--font-auxiliary); }
-.dispatch-pagination button { min-height:30px; padding:0 12px; }
-.dispatch-pagination button:disabled { cursor:not-allowed; }
 .dispatch-empty-history { min-height:160px; display:flex; align-items:center; justify-content:center; flex-direction:column; padding:30px; color:var(--muted); text-align:center; }
 .dispatch-empty-history i { width:38px; height:38px; display:grid; place-items:center; margin-bottom:10px; border-radius:50%; font-style:normal; font-size:18px; }
 .dispatch-empty-history strong { color:var(--text-color-2); font-size:13px; }
@@ -527,29 +503,23 @@ const fileTableColumns = [
 .history-table code { color:var(--blue); font-size:var(--font-auxiliary); }
 .history-actions { display:flex; align-items:center; justify-content:center; gap:6px; }
 .history-actions button { min-height:30px; padding:0 9px; white-space:nowrap; }
-.filename-standard { display:inline-flex; padding:3px 7px; border-radius:999px; white-space:nowrap; font-size:var(--font-auxiliary); }
+.filename-standard { display:inline-flex; padding:3px 7px; border-radius:999px; white-space:nowrap; font-size:var(--font-auxiliary); color:rgb(var(--success-color)); background:rgb(var(--success-color) / .1); }
 @media (max-width:1000px) {
-  .dispatch-stage-badge { width:100%; min-width:0; }
   .dispatch-workspace,.dispatch-workspace.download-workspace,.dispatch-workspace.push-workspace { grid-template-columns:1fr; }
   .directory-scroll { max-height:420px; }
-  .push-file-filter { grid-template-columns:1fr 1fr; }
 }
 @media (max-width:560px) {
   .file-name-search { align-items:stretch; flex-direction:column; gap:7px; }
   .file-name-search > div { width:100%; }
   .download-batch-toolbar { align-items:stretch; flex-direction:column; }
   .download-batch-toolbar > div button { flex:1; }
-  .push-file-filter { grid-template-columns:1fr; }
-  .push-filter-actions button { flex:1; }
 }
 
 /* 与生产指挥中心统一的文件派发视觉层 */
-.dispatch-source-status { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; margin:12px 0 0; }
+.dispatch-source-status { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0 0; }
 .dispatch-source-status span { display:inline-flex; align-items:center; gap:6px; padding:4px 8px; color:var(--text-color-2); border:1px solid var(--theme-border-color); border-radius:999px; background:rgb(var(--container-bg-color)); font-size:var(--font-auxiliary); }
 .dispatch-source-status i { width:7px; height:7px; display:inline-block; flex:0 0 auto; border-radius:50%; background:rgb(var(--warning-color)); box-shadow:var(--theme-shadow); }
 .dispatch-source-status i.ready { background:rgb(var(--success-color)); box-shadow:var(--theme-shadow); }
-.dispatch-notice { margin:10px 0 0; border:1px solid var(--theme-border-color); border-left:3px solid var(--theme-border-color); border-radius:8px; }
-.dispatch-notice.error { border-color:rgb(var(--error-color)); border-left-color:rgb(var(--error-color)); }
 .dispatch-workspace.download-workspace { grid-template-columns:280px minmax(0,1fr); gap:12px; margin-top:12px; align-items:stretch; }
 .dispatch-workspace>.panel { margin-bottom:0; }
 .dispatch-workspace>.panel,.dispatch-history-panel { overflow:hidden; border:1px solid var(--theme-border-color); border-radius:11px; box-shadow:var(--theme-shadow); animation:surface-in .44s cubic-bezier(.2,.75,.25,1) both; }
@@ -590,10 +560,7 @@ const fileTableColumns = [
 .file-download-cell { display:inline-flex; align-items:center; gap:8px; max-width:100%; }
 .file-download-cell :deep(.n-button) { flex-shrink:0; }
 .file-download-cell button { min-height:29px; padding:4px 8px; }
-.filename-standard { color:rgb(var(--success-color)); background:rgb(var(--success-color) / .1); }
 .filename-standard.warning { color:rgb(var(--warning-color)); background:rgb(var(--warning-color) / .1); }
-.dispatch-pagination { padding:9px 13px 0; }
-.dispatch-download-hint { margin:11px 14px 13px; font-size:var(--font-auxiliary); line-height:1.55; }
 .dispatch-history-panel { --content-table-font-size:13px; --content-table-header-font-size:12px; margin-top:24px; }
 .history-table th { color:var(--theme-on-primary-color); background:var(--theme-table-header-color); }
 .history-table .dispatch-project-name { font-size:12px; }

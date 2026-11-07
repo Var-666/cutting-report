@@ -106,7 +106,8 @@ function renderCharts() {
       grid: { left: 110, right: 60, top: 14, bottom: 24 },
       xAxis: {
         type: 'value',
-        axisLabel: { color: chartTheme.vars.value.textColor3, fontSize: 12 },
+        splitNumber: 3,
+        axisLabel: { color: chartTheme.vars.value.textColor3, fontSize: 12, hideOverlap: true },
         splitLine: { lineStyle: { color: chartTheme.vars.value.dividerColor } },
       },
       yAxis: {

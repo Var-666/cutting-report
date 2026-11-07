@@ -116,6 +116,7 @@ def test_source_package_keeps_soybean_build_configuration_and_license(tmp_path):
     for name in (
         "docs/deployment/配置参考.md", "docs/project/功能与接口参考.md", "docs/README.md",
         "AGENTS.md", "docs/project/architecture.md", "docs/project/progress.md",
+        "docs/project/ui-refactor-verification.md",
         "docs/design/API契约与迁移约定.md",
     ):
         assert payload[name] == b"fixture"

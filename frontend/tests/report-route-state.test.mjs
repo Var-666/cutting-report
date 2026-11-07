@@ -160,8 +160,8 @@ async function mountReport(t, kind, { query = {}, refreshing = false, syncing = 
   const source = viewSource(kind === 'leadership' ? 'LeadershipReportView.vue' : kind === 'workshop' ? 'WorkshopView.vue' : 'EnergyPeriodReportView.vue').replace(/^import .*$/gm, '')
   const data = kind === 'leadership' ? 'report' : 'taskDay'
   const load = kind === 'leadership' ? 'loadReport' : 'loadRange'
-  const exposed = kind === 'workshop' ? 'data: result, filters, appliedRouteState, loading, error, initializeReport'
-    : `data: ${data}, load: ${load}, periodStart, periodEnd, appliedPeriodStart, appliedPeriodEnd, chartType, changeChartType, loading, error, pageActive, dateQueryDirty, exportReport${kind === 'leadership' ? ', refreshLoading, monthlyLoading, retryReport, monthlyPeriodStart, monthlyPeriodEnd, refreshAnalysisReport' : ', monthlyReport, summaryPeriodStart, summaryPeriodEnd, loadDefaultRanges, periodPanel, refreshAnalysisReport'}`
+  const exposed = kind === 'workshop' ? 'data: result, filters, appliedRouteState, loading, error, initializeReport, applyTaskFilters, changePage, exportReport, refreshAnalysisReport, analysisReady'
+    : `data: ${data}, load: ${load}, periodStart, periodEnd, appliedPeriodStart, appliedPeriodEnd, chartType, changeChartType, loading, error, pageActive, dateQueryDirty, exportReport${kind === 'leadership' ? ', refreshLoading, monthlyLoading, retryReport, monthlyPeriodStart, monthlyPeriodEnd, refreshAnalysisReport' : ', monthlyReport, summaryPeriodStart, summaryPeriodEnd, summaryRefreshError, loadDefaultRanges, periodPanel, refreshAnalysisReport'}`
   const setup = scriptFunction(...Object.keys(bindings), `${source}\nreturn { ${exposed} }`)
   const page = { setup() { mounts++; state = setup(...Object.values(bindings)); return () => Vue.h('div') } }
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/report', name, component: page }, { path: '/other', component: { render: () => Vue.h('div') } }] })
@@ -176,6 +176,38 @@ async function mountReport(t, kind, { query = {}, refreshing = false, syncing = 
   await flushReport()
   return { state, router, pending, requests, held, timers, chartUpdates, exports, clock, unmount, mounts: () => mounts, fire() { const [id, callback] = timers.entries().next().value; timers.delete(id); return callback() } }
 }
+
+test('workshop date drafts retain the successful result and do not reach pagination, export or analysis refresh', async t => {
+  const page = await mountReport(t, 'workshop', { query: rangeA })
+  page.state.data.value = { ...emptyWorkshop(rangeA.start, rangeA.end), items: [{ task_id: 'retained' }] }
+  page.state.filters.startDate = rangeB.start
+  page.state.filters.endDate = rangeB.end
+  await flushReport()
+  assert.equal(page.state.data.value.items[0]?.task_id, 'retained')
+  page.state.exportReport('pdf')
+  assert.equal(page.exports.at(-1)[1].period_start, rangeA.start)
+  assert.equal(page.exports.at(-1)[1].period_end, rangeA.end)
+  page.held.workshop = true
+  page.state.applyTaskFilters()
+  await flushReport()
+  page.pending.at(-1).reject(new Error('source offline'))
+  await flushReport()
+  assert.equal(page.state.data.value.items[0]?.task_id, 'retained')
+  assert.equal(page.state.appliedRouteState.startDate, rangeA.start)
+  const pagination = page.state.changePage(2)
+  await flushReport()
+  let call = page.pending.at(-1)
+  assert.equal(call.start, rangeA.start)
+  call.resolve({ ...emptyWorkshop(rangeA.start, rangeA.end), page: 2 })
+  await pagination; await flushReport()
+  assert.equal(page.state.filters.startDate, rangeB.start)
+  const refresh = page.state.refreshAnalysisReport()
+  await flushReport()
+  call = page.pending.at(-1)
+  assert.equal(call.start, rangeA.start)
+  call.resolve(emptyWorkshop(rangeA.start, rangeA.end))
+  await refresh
+})
 
 for (const kind of ['workshop', 'equipment']) {
   test(`${kind}: an empty current day never falls back to the latest historical production date`, async t => {
@@ -374,6 +406,7 @@ test('equipment summary: failures retain data and the attempt cap survives react
     await poll
   }
   assert.equal(state.monthlyReport.value, previous)
+  assert.equal(state.summaryRefreshError.value, 'meter unavailable')
   assert.equal(requests.filter(call => call.type === 'summary' && call.force).length, 600)
   assert.equal(timers.size, 0)
   for (let index = 0; index < 2; index++) { await router.push('/other'); await router.push('/report'); await flushReport() }
@@ -382,6 +415,7 @@ test('equipment summary: failures retain data and the attempt cap survives react
   held.summary = false
   state.periodStart.value = '2026-09-15'
   await state.loadDefaultRanges(); await flushReport()
+  assert.equal(state.summaryRefreshError.value, '')
   assert.equal(timers.size, 1, 'a new summary scope has its own replenishment budget')
 })
 

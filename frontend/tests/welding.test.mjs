@@ -127,12 +127,50 @@ function view(readReport, options = {}) {
     reportToday: () => '2026-10-26', getWeldingReport: readReport,
     deviceSelection: { id: 'welding', items: [{ id: 'welding', type: 'welding', enabled: options.enabled ?? true }] }, weldingTitles, weldingKpis, weldingColumns, weldingColumnLayout, weldingDisplay, weldingQuery,
   }
-  return { ...scriptFunction(...Object.keys(bindings), `${script}; return { read, submit, changePage, changePageSize, report, loading, error, activeQuery, draft, detailJob, goToPart, actionError };`)(...Object.values(bindings)), cleanup }
+  return { ...scriptFunction(...Object.keys(bindings), `${script}; return { read, submit, changePage, changePageSize, report, loading, error, activeQuery, draft, detailJob, goToPart, actionError, filtersDirty, appliedQueryLabel };`)(...Object.values(bindings)), cleanup }
 }
 
 const period = { start: '2026-10-26', end: '2026-10-26' }
 const busyResponse = (retryAfter = '1') => Response.json({ detail: '焊接数据查询请求繁忙，请稍后重试。' }, { status: 503, headers: { 'Retry-After': retryAfter } })
 const settle = () => new Promise(resolve => setImmediate(resolve))
+
+test('pending welding filters compare effective conditions and commit only after success', async t => {
+  let fail = false
+  const calls = []
+  const page = view(async (_kind, values) => {
+    calls.push(values)
+    if (fail) throw new Error('查询失败')
+    return { query: { ...values }, data_version: 'v1', meta: {} }
+  })
+  t.after(() => page.cleanup.forEach(cleanup => cleanup()))
+  assert.equal(page.filtersDirty.value, false)
+  page.draft.device_no = '0'
+  assert.equal(page.filtersDirty.value, true)
+  await page.submit()
+  assert.equal(page.filtersDirty.value, false)
+  assert.match(page.appliedQueryLabel.value, /2026-10-26 至 2026-10-26 · 设备 0/)
+  page.draft.device_no = 0
+  page.draft.page = 4
+  page.draft.page_size = 20
+  page.draft.project_no = 'ignored on jobs'
+  assert.equal(page.filtersDirty.value, false, 'numeric strings, pagination and unsupported filters are equivalent')
+  page.draft.robot_no = 2
+  fail = true
+  await page.submit()
+  assert.equal(page.filtersDirty.value, true)
+  assert.equal(page.activeQuery.value.robot_no, '')
+  assert.equal(page.report.value.data_version, 'v1')
+  assert.equal(page.error.value, '查询失败')
+  fail = false
+  await page.changePage(2)
+  assert.equal(calls.at(-1).robot_no, '', 'pagination does not submit the draft')
+  assert.equal(page.filtersDirty.value, true)
+  await page.submit()
+  assert.equal(page.filtersDirty.value, false)
+  assert.match(page.appliedQueryLabel.value, /机器人 2/)
+  page.draft.start = 'invalid'
+  assert.equal(page.filtersDirty.value, true, 'invalid dates must not normalize into an applied range')
+})
 
 function snapshotWaitTimers(t) {
   const timers = new Map()
@@ -838,8 +876,30 @@ function mountWeldingDisplay(t, readReport) {
   return {
     text: () => nodes().filter(node => node.type === Vue.Text || typeof node.type === 'string').map(node => typeof node.children === 'string' ? node.children : '').join(' '),
     submit: () => nodes().find(node => node.type === 'form').props.onSubmit({ preventDefault() {} }),
+    selectDevice: value => nodes().find(node => node.props?.['onUpdate:modelValue']).props['onUpdate:modelValue'](value),
   }
 }
+
+test('welding displays edited filters beside the applied result through loading and failure', async t => {
+  const calls = []
+  const page = mountWeldingDisplay(t, (_kind, values) => new Promise((resolve, reject) => calls.push({ values, resolve, reject })))
+  const result = call => ({ query: call.values, data_version: 'v1', summary: { job_count: 1 }, items: [{ id: 1, serial_number: '旧结果' }], total: 1, meta: { quality: {}, notices: [], devices: [] } })
+  calls[0].resolve(result(calls[0])); await flushWelding()
+  assert.match(page.text(), /当前结果：2026-10-26 至 2026-10-26 · 全部设备/)
+  assert.doesNotMatch(page.text(), /筛选条件已修改/)
+  page.selectDevice(7); await flushWelding()
+  assert.match(page.text(), /筛选条件已修改，当前仍展示上次成功查询结果/)
+  page.submit(); await flushWelding()
+  assert.match(page.text(), /当前展示上次结果/)
+  calls[1].reject(new Error('offline')); await flushWelding()
+  assert.match(page.text(), /筛选条件已修改/)
+  assert.match(page.text(), /当前结果：2026-10-26 至 2026-10-26 · 全部设备/)
+  assert.match(page.text(), /旧结果/)
+  page.submit(); await flushWelding()
+  calls[2].resolve(result(calls[2])); await flushWelding()
+  assert.doesNotMatch(page.text(), /筛选条件已修改/)
+  assert.match(page.text(), /当前结果：2026-10-26 至 2026-10-26 · 设备 7/)
+})
 
 test('cached welding data stays visible through manual refresh, replacement and query failure', async t => {
   const clock = snapshotWaitTimers(t)

@@ -231,12 +231,14 @@ test('business tables use shared Naive controls while chart data retains accessi
   assert.doesNotMatch(css, /resize:/)
 })
 
-test('report and management table padding does not override the shared inline track padding', () => {
+test('report tables inherit shared cell padding while management previews keep their vertical spacing', () => {
   for (const name of ['EnergyPeriodReportView', 'WorkshopView']) {
     const source = readFileSync(new URL(`../src/views/${name}.vue`, import.meta.url), 'utf8')
     assert.doesNotMatch(source, /padding:\s*6px\s+8px\b/)
-    assert.match(source, /padding-block:6px/)
+    assert.match(source, /<AppReportTable/)
   }
+  const shared = readFileSync(new URL('../src/components/AppReportTable.vue', import.meta.url), 'utf8')
+  assert.match(shared, /padding:var\(--table-cell-padding\)/)
   const styles = readFileSync(new URL('../src/assets/style.css', import.meta.url), 'utf8')
   assert.match(styles, /\.management-page \.designer-preview-table th\{padding-block:10px!important;/)
 })

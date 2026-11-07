@@ -66,6 +66,25 @@ const qualityLabels = { invalid_time_rows: '区间候选记录中结束时间无
 function queryKey(values: WeldingQuery) {
   return JSON.stringify([props.kind, deviceSelection.id, parseWeldingRouteQuery(weldingRouteQuery({}, values), props.kind, today)])
 }
+const filtersDirty = computed(() => !queryDateRange({ start: draft.start, end: draft.end }) ||
+  queryKey({ ...draft, page: 1, page_size: 10 }) !== queryKey({
+    ...(activeQuery.value || parseWeldingRouteQuery(route.query, props.kind, today)), page: 1, page_size: 10,
+  }))
+const appliedQueryLabel = computed(() => {
+  if (!activeQuery.value) return ''
+  const query = parseWeldingRouteQuery(weldingRouteQuery({}, activeQuery.value), props.kind, today)
+  const labels = { robot_no: '机器人', weld_type: '焊接类型', state: '作业状态代码', part_state: '工件状态代码', serial_number: '流水号', project_no: '项目', section_no: '分段', part_no: '工件' } as const
+  return [
+    `${query.start} 至 ${query.end}`,
+    query.device_no === '' ? '全部设备' : `设备 ${query.device_no}`,
+    ...Object.entries(labels).flatMap(([key, label]) => {
+      const value = query[key as keyof typeof labels]
+      return value === '' ? [] : [`${label} ${value}`]
+    }),
+    ...(query.anomalies_only ? ['仅异常候选'] : []),
+    `${{ time: '时间／设备', length: '长度', id: '主键／设备' }[query.sort_by]}${query.descending ? '降序' : '升序'}`,
+  ].join(' · ')
+})
 function read(values: WeldingQuery, force = false, syncRoute = true) {
   const key = queryKey(values)
   if (pendingRead?.key === key && !controller?.signal.aborted) return pendingRead.promise
@@ -245,7 +264,7 @@ onBeforeUnmount(() => { disposed = true; cancel() })
     <section class="panel welding-report-header">
       <header class="welding-heading"><h1>{{ title }}</h1></header>
       <section v-if="sourceEnabled" class="welding-filter-panel" aria-label="焊接报表查询条件">
-      <form @submit.prevent="submit(true)">
+      <form aria-label="焊接报表查询" :aria-busy="loading" @submit.prevent="submit(true)">
         <div class="welding-filters">
           <ReportPeriodPicker v-model:start-date="draft.start" v-model:end-date="draft.end" :anchor-date="today" :disabled="loading" @apply="submit(true)" @validation-error="actionError = $event" />
           <label><span>设备</span><AppSelect v-model="draft.device_no" aria-label="设备"><option value="">全部设备</option><option v-for="device in report?.meta?.devices || []" :key="device" :value="device">设备 {{ device }}</option></AppSelect></label>
@@ -264,7 +283,7 @@ onBeforeUnmount(() => { disposed = true; cancel() })
           <NCheckbox v-if="kind === 'jobs'" v-model:checked="draft.anomalies_only" class="welding-check">仅异常候选</NCheckbox>
         </div>
       </form>
-
+      <p v-if="filtersDirty" class="welding-query-pending" role="status">筛选条件已修改{{ report ? '，当前仍展示上次成功查询结果' : '，请查询报表' }}</p>
       </section>
     </section>
     <ReportFeedback v-if="!sourceEnabled" title="焊接数据库尚未启用" message="请先保存数据库连接参数并启用小组立焊接线。" action-label="配置数据库" @action="router.push('/admin/settings/database')" />
@@ -273,6 +292,7 @@ onBeforeUnmount(() => { disposed = true; cancel() })
     <ReportFeedback v-if="actionError" type="error" title="操作未完成" :message="actionError" dismissible @dismiss="actionError = ''" />
     <ReportFeedback v-if="actionNotice" title="操作完成" :message="actionNotice" dismissible @dismiss="actionNotice = ''" />
     <div v-if="report && activeQuery" class="welding-freshness" role="status">
+      <span class="welding-applied-query">当前结果：{{ appliedQueryLabel }}</span>
       <span class="welding-freshness-date"><AppIcon name="clock" :size="14" tone="current" />数据更新：{{ report.meta.report_data?.data_as_of || report.meta.calculated_at }}</span>
       <NTag v-if="loading" size="small" type="info" :bordered="false">正在更新，当前展示上次结果</NTag>
       <template v-if="report.meta.report_data">
@@ -324,6 +344,8 @@ onBeforeUnmount(() => { disposed = true; cancel() })
 .welding-check { min-height:var(--control-height); display:flex; align-items:center; }
 .welding-freshness { display:flex; align-items:center; gap:var(--space-2) var(--space-4); flex-wrap:wrap; font-size:var(--font-auxiliary); color:var(--text-color-3); }
 .welding-freshness-date { display:inline-flex; align-items:center; gap:var(--space-2); }
+.welding-query-pending { margin:var(--space-3) 0 0; color:rgb(var(--warning-color)); font-size:var(--font-auxiliary); }
+.welding-applied-query { flex-basis:100%; color:var(--text-color-2); overflow-wrap:anywhere; }
 .welding-detail-table { min-width:0; border-radius:var(--report-panel-radius); }
 .welding-detail-header { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); flex-wrap:wrap; padding:var(--space-4); background:var(--panel-heading-bg); border-bottom:1px solid var(--theme-divider-color); }
 .welding-detail-header>span,.welding-quality p { font-size:var(--font-auxiliary); color:var(--text-color-3); line-height:1.8; }

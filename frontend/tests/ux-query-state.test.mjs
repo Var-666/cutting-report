@@ -134,7 +134,59 @@ test('initial alarm failure renders unknown instead of healthy empty states and 
   fail = false
   await page.loadData()
   const recoveredText = await renderedText()
-  assert.match(recoveredText, /状态正常/)
+  assert.match(recoveredText, /暂无未解除告警/)
+  assert.match(recoveredText, /运行中/)
   assert.match(recoveredText, /暂无告警/)
   assert.doesNotMatch(recoveredText, /读取失败|状态未知/)
+})
+
+test('no open alarms does not imply that monitoring is running', async () => {
+  const page = alarmQuery({ getAlarmStatus: async () => ({ enabled: false, worker_running: false }),
+    listAlarmIncidentPage: async () => ({ items: [], page: 1 }), listAlarmReportPage: async () => ({ items: [], page: 1 }) })
+  await page.loadData()
+  const render = scriptFunction('Vue', compile(parse(source).descriptor.template.content, { prefixIdentifiers: true }).code)(Vue)
+  const app = Vue.createSSRApp({ setup: () => page, render })
+  app.config.warnHandler = () => {}
+  for (const name of ['NButton', 'NRadioGroup', 'NRadioButton']) app.component(name, { render() { return Vue.h('div', this.$slots.default?.()) } })
+  app.component('AppIcon', { render: () => null })
+  const text = (await renderToString(app)).replace(/<[^>]*>/g, '')
+  assert.match(text, /未启用/)
+  assert.match(text, /暂无未解除告警/)
+  assert.match(text, /监控服务状态见页头/)
+  assert.doesNotMatch(text, /系统将持续监控|状态正常/)
+})
+
+test('home overview failures expose a retry action and successful rereads clear the error', async () => {
+  let fail = true
+  let reads = 0
+  const descriptor = parse(readFileSync(new URL('../src/views/AdminHomeView.vue', import.meta.url), 'utf8')).descriptor
+  const code = descriptor.scriptSetup.content.replace(/^import .*$/gm, '')
+  const bindings = { ...Vue, onMounted() {}, onBeforeUnmount() {}, watch() {}, use() {},
+    BarChart: {}, LineChart: {}, PieChart: {}, GridComponent: {}, LegendComponent: {}, TooltipComponent: {}, CanvasRenderer: {},
+    useAppStore: () => ({ reducedMotion: true }), useThemeVars: () => Vue.ref({}), reportToday: () => '2026-11-07',
+    ResizeObserver: class { observe() {} disconnect() {} },
+    getLeadershipReport: async () => { reads++; if (fail) throw new Error('生产源离线'); return { current_month_total: { task_count: 7 }, daily_records: [] } },
+    getEnergyMonth: async () => ({ summary: {} }), listReports: async () => ({ items: [], total: 0 }),
+    getAlarmStatus: async () => ({}), listAlarmIncidents: async () => [],
+    formatChineseDate: String, formatChineseDateTime: String, formatChineseMonth: String, formatDeviceDisplay: String,
+  }
+  const names = [...code.matchAll(/^(?:const|let|(?:async )?function) (\w+)/gm)].map(match => match[1])
+  const page = scriptFunction(...Object.keys(bindings), `${code}; return { ${names.join(',')} };`)(...Object.values(bindings))
+  const render = scriptFunction('Vue', compile(descriptor.template.content, { prefixIdentifiers: true }).code)(Vue)
+  const app = Vue.createSSRApp({ setup: () => ({ ...page, formatChineseDate: String }), render })
+  // NAlert supports its default slot; an unsupported action slot must not hide the retry.
+  for (const name of ['NAlert', 'NCard', 'NText', 'NTag', 'NEmpty', 'NSpin', 'NSkeleton', 'NStatistic', 'NNumberAnimation', 'HomeKpiCard', 'HomeSectionHeader', 'AppIcon', 'RouterLink']) {
+    app.component(name, { inheritAttrs: false, setup: (_props, { attrs, slots }) => () => Vue.h('div', [attrs.title, slots.header?.(), slots.default?.()]) })
+  }
+  app.component('NButton', { setup: (_props, { attrs, slots }) => () => Vue.h('button', attrs, slots.default?.()) })
+  await page.loadDashboard()
+  let html = await renderToString(app)
+  assert.match(html, /生产源离线/)
+  assert.match(html, /<button[^>]*>重新读取概览<\/button>/)
+  fail = false
+  await page.loadDashboard()
+  html = await renderToString(app)
+  assert.equal(reads, 2)
+  assert.equal(page.overview.value.current_month_total.task_count, 7)
+  assert.doesNotMatch(html, /生产源离线|重新读取概览/)
 })

@@ -79,7 +79,9 @@ function mountDialog(t, files = [file('one'), file('two')]) {
 test('batch dialog renders recognition/results separately and edits quantities and machine selection', async t => {
   const dialog = mountDialog(t)
   for (const label of ['文件名', '命名检查', '识别材质', '识别板厚（mm）', '分段名', '参数核对', '派发状态', '任务编号', '处理说明', '20kW 切割机', '30kW 切割机']) assert.ok(dialog.text().includes(label), label)
-  assert.equal(dialog.nodes().filter(node => node.tag === 'td').length, 26)
+  assert.ok(dialog.field('Z806C080A001.gen 材质'))
+  assert.ok(dialog.field('Z806C080A001.gen 板厚'))
+  assert.ok(dialog.field('Z806C080A001.gen 数量'))
   const machine = dialog.nodes().find(node => node.tag === 'select')
   machine.props.onChange({ target: { value: '10.147.1.38' } }); await flush()
   assert.equal(dialog.inputs.dispatchForm.machineIp, '10.147.1.38')

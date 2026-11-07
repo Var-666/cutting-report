@@ -61,15 +61,15 @@ const {
   openCorrection, closeCorrection, selectCorrectionReason, submitCorrection,
 } = useWorkshopCorrection({
   isWorker, user: () => props.user, filters, rowDate, showConfirmationFeedback,
-  refresh: () => load(result.value.page, { silent: true, ensureReport: false }),
+  refresh: () => load(result.value.page, { silent: true, ensureReport: false, useAppliedFilters: !isWorker.value }),
 })
 
 const analysisReady = computed(() => Boolean(
   pageActive.value
   && !isWorker.value
   && result.value.report
-  && result.value.report.period_start === filters.startDate
-  && result.value.report.period_end === filters.endDate
+  && result.value.report.period_start === appliedRouteState.startDate
+  && result.value.report.period_end === appliedRouteState.endDate
   && !loading.value
 ))
 const workshopMetrics = computed(() => {
@@ -162,8 +162,11 @@ watch(() => [filters.reportDate, filters.startDate, filters.endDate], () => {
   filters.confirmationStatus = 'all'
   clearSelectedTasks()
   batchConfirmation.visible = false
-  result.value = { analysis_source_version: '', report: null, items: [], total: 0, page: 1, page_size: pageSize, project_names: [], confirmed_count: 0, worker_summaries: [], duration_distribution: [], status_distribution: [], top_cut_length_tasks: [] }
+  if (isWorker.value) clearReport()
 })
+function clearReport() {
+  result.value = { analysis_source_version: '', report: null, items: [], total: 0, page: 1, page_size: pageSize, project_names: [], confirmed_count: 0, worker_summaries: [], duration_distribution: [], status_distribution: [], top_cut_length_tasks: [] }
+}
 watch(() => [filters.projectName, filters.confirmationStatus], () => {
   if (restoringRouteState) return
   clearSelectedTasks()
@@ -211,7 +214,7 @@ async function load(page = 1, { silent = false, ensureReport = true, force = fal
     }
     const current = isWorker.value
       ? query.reportDate === filters.reportDate
-      : query.startDate === filters.startDate && query.endDate === filters.endDate
+      : useAppliedFilters || (query.startDate === filters.startDate && query.endDate === filters.endDate)
     if (pageActive.value && !signal.aborted && sequence === requestSequence && current) {
       result.value = data
       if (!isWorker.value) {
@@ -221,7 +224,7 @@ async function load(page = 1, { silent = false, ensureReport = true, force = fal
           projectName: query.projectName,
           confirmationStatus: query.confirmationStatus,
           page: data.page,
-          defaultView: defaultReportView.value,
+          defaultView: useAppliedFilters ? appliedRouteState.defaultView : defaultReportView.value,
         })
       }
       reconcileVisibleTaskSelection(data.items || [])
@@ -241,7 +244,7 @@ async function load(page = 1, { silent = false, ensureReport = true, force = fal
 
 function refreshAnalysisReport() {
   if (!pageActive.value || isWorker.value || loading.value) return
-  return load(result.value.page, { ensureReport: false, force: true })
+  return load(result.value.page, { ensureReport: false, force: true, useAppliedFilters: true })
 }
 
 function applyTaskFilters() {
@@ -251,16 +254,16 @@ function applyTaskFilters() {
 }
 
 function changePage(page: number) {
-  load(page, { syncRoute: !isWorker.value })
+  return load(page, { syncRoute: !isWorker.value, useAppliedFilters: !isWorker.value })
 }
 
 function exportReport(format: ExportFormat = 'html') {
   emit('export', {
     report_type: 'workshop',
-    report_date: isWorker.value ? filters.reportDate : filters.startDate,
-    period_start: isWorker.value ? filters.reportDate : filters.startDate,
-    period_end: isWorker.value ? filters.reportDate : filters.endDate,
-    project_code: isWorker.value ? null : filters.projectName || null,
+    report_date: isWorker.value ? filters.reportDate : appliedRouteState.startDate,
+    period_start: isWorker.value ? filters.reportDate : appliedRouteState.startDate,
+    period_end: isWorker.value ? filters.reportDate : appliedRouteState.endDate,
+    project_code: isWorker.value ? null : appliedRouteState.projectName || null,
     ship_no: null,
     parameters: { chart_type: chartType.value },
   }, format)
@@ -303,6 +306,7 @@ async function initializeReport({ restoreQuery = false } = {}) {
       : selectedDate
     if (!pageActive.value || signal.aborted || sequence !== requestSequence) return
     if (reportDate) {
+      if (!isWorker.value && (filters.startDate !== reportDate || filters.endDate !== reportDate)) clearReport()
       filters.reportDate = reportDate
       filters.startDate = reportDate
       filters.endDate = reportDate
@@ -326,6 +330,7 @@ async function initializeReport({ restoreQuery = false } = {}) {
 
 async function restoreRouteState() {
   if (isWorker.value || route.name !== 'workshop-report') return false
+  if (result.value.report && sameRouteQuery(route.query, routeStateQuery())) return false
   const requested = requestedRouteState()
   await applyRequestedRouteState(requested)
 
@@ -467,7 +472,7 @@ const workerTableColumns = [
       v-if="error && result.report"
       type="error"
       :title="isWorker ? '任务操作未完成' : '车间报表读取失败'"
-      :message="error"
+      :message="`${error}；当前仍显示上次成功查询结果。`"
       action-label="重新查询"
       dismissible
       @action="applyTaskFilters"
@@ -582,12 +587,12 @@ const workerTableColumns = [
     <AnalysisPanel
       v-if="!isWorker"
       report-type="workshop"
-      :report-date="filters.startDate"
-      :period-start="filters.startDate"
-      :period-end="filters.endDate"
+      :report-date="appliedRouteState.startDate"
+      :period-start="appliedRouteState.startDate"
+      :period-end="appliedRouteState.endDate"
       :ready="analysisReady"
       :data-version="result.analysis_source_version || ''"
-      :version-check-enabled="defaultReportView"
+      :version-check-enabled="appliedRouteState.defaultView"
       @refresh-report="refreshAnalysisReport"
     />
   </div>
@@ -600,9 +605,8 @@ const workerTableColumns = [
 .workshop-heading h2 { margin:0; font-size:20px; font-weight:600; }
 .workshop-heading span { color:var(--text-color-3); font-size:var(--font-auxiliary); }
 .workshop-dashboard--worker .workshop-query-panel { display:block; padding:0; border:0; background:transparent; }
-@media (max-width:1000px) { .workshop-query-panel { grid-template-columns:minmax(0,1fr); gap:12px; } }
-.global-error{margin:10px 0 0;border-radius:9px}.workshop-kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:16px;margin:16px 0}.workshop-kpi{--kpi-color:rgb(var(--info-color));--kpi-soft:rgb(var(--info-color) / .1);position:relative;min-width:0;min-height:108px;padding:12px;border:1px solid var(--theme-border-color);border-top:2px solid var(--kpi-color);border-radius:10px;background:rgb(var(--container-bg-color));box-shadow:var(--theme-shadow);transition:transform .18s ease,box-shadow .18s ease;animation:surface-in .42s cubic-bezier(.2,.75,.25,1) both;display:grid;grid-template-columns:35px minmax(0,1fr);align-items:center;gap:8px 12px}.workshop-kpi:hover{transform:translateY(-2px);box-shadow:var(--theme-shadow)}.workshop-kpi:nth-child(2){animation-delay:.04s}.workshop-kpi:nth-child(3){animation-delay:.08s}.workshop-kpi:nth-child(4){animation-delay:.12s}.workshop-kpi:nth-child(5){animation-delay:.16s}.workshop-kpi.kpi-amber{--kpi-color:rgb(var(--warning-color));--kpi-soft:rgb(var(--warning-color) / .1)}.workshop-kpi.kpi-green{--kpi-color:rgb(var(--success-color));--kpi-soft:rgb(var(--success-color) / .1)}.workshop-kpi.kpi-red{--kpi-color:var(--text-color-3);--kpi-soft:rgb(var(--info-color) / .1)}.workshop-kpi.kpi-violet{--kpi-color:rgb(var(--primary-color));--kpi-soft:rgb(var(--primary-color) / .1)}.workshop-kpi__icon{position:relative;z-index:1;width:35px;height:35px;display:grid;place-items:center;flex:0 0 auto;color:var(--kpi-color);border-radius:50%;background:var(--kpi-soft);transition:transform .2s ease}.workshop-kpi:hover .workshop-kpi__icon{transform:scale(1.08) rotate(-3deg)}.workshop-kpi>div{display:contents}.workshop-kpi>div>span{display:block;color:var(--text-color-1);font-size:var(--font-auxiliary);font-weight:700;white-space:normal;overflow-wrap:anywhere;grid-column:2}.workshop-kpi p{margin:0;color:var(--text-color-1);font-size:var(--font-auxiliary);grid-column:1/-1;min-width:0;overflow-wrap:anywhere}.workshop-kpi p strong{font-size:21px}.workshop-kpi p small{margin-left:2px;color:var(--muted);font-size:var(--font-auxiliary)}.workshop-kpi em{display:block;color:var(--muted);font-style:normal;font-size:var(--font-auxiliary);grid-column:1/-1;min-width:0;white-space:normal;overflow-wrap:anywhere;line-height:1.6}.workshop-sparkline{width:58px;height:25px;opacity:.72;grid-column:1/-1;justify-self:end}
-:deep(.workshop-panel),:deep(.worker-time-summary){margin-bottom:24px;border:1px solid var(--theme-border-color);border-radius:var(--report-panel-radius);box-shadow:var(--theme-shadow)}:deep(.workshop-panel .report-trend-panel__heading),:deep(.worker-time-summary .report-trend-panel__heading){min-height:47px;padding:0 16px;border-bottom:1px solid var(--theme-border-color);background:rgb(var(--container-bg-color))}:deep(.workshop-panel .report-trend-panel__heading>div),:deep(.worker-time-summary .report-trend-panel__heading>div){gap:8px}:deep(.workshop-panel .report-trend-panel__heading>div>span),:deep(.worker-time-summary .report-trend-panel__heading>div>span){width:28px;height:24px;display:grid;place-items:center;padding:0;color:rgb(var(--info-color));border:0;border-radius:7px;background:rgb(var(--info-color) / .1);font-size:var(--font-auxiliary);font-weight:700}:deep(.workshop-panel .report-trend-panel__heading h2),:deep(.worker-time-summary .report-trend-panel__heading h2){color:var(--text-color-1);font-size:14px}:deep(.workshop-panel .report-trend-panel__heading p),:deep(.worker-time-summary .report-trend-panel__heading p){color:var(--muted);font-size:var(--font-auxiliary)}.workshop-filters{grid-template-columns:1.2fr 1fr auto!important;gap:16px;padding:16px;border-bottom:1px solid var(--theme-border-color)}.workshop-dashboard--worker .workshop-filters{grid-template-columns:1fr 1fr 1fr auto!important}.workshop-filters label span{margin-bottom:5px;font-size:var(--font-auxiliary)}.workshop-filters>button{min-height:38px;display:flex;align-items:center;justify-content:center;gap:6px;padding:0 15px}.workshop-report-state,.workshop-empty-report{margin:0 16px 8px;padding:8px 12px;border:0;border-radius:7px;background:rgb(var(--container-bg-color));font-size:var(--font-auxiliary)}.workshop-report-state strong,.workshop-empty-report strong{font-size:var(--font-auxiliary)}.workshop-summary{padding:0 16px 16px;font-size:var(--font-auxiliary)}:deep(.workshop-panel .report-trend-panel__table),:deep(.worker-time-summary .report-trend-panel__table){overflow-x:auto;border-color:var(--theme-border-color);border-radius:7px}.workshop-table th,.workshop-table td{height:36px;padding-block:6px;font-size:var(--font-auxiliary)}.workshop-table thead th{color:var(--text-color-1)!important;background:rgb(var(--info-color))!important;font-size:var(--font-auxiliary)!important}.workshop-table tbody tr:hover{background:rgb(var(--info-color) / .1)}.pending-confirmation{display:inline-flex;align-items:center;justify-content:center;min-height:22px;padding:0 9px;border-radius:999px;background:rgb(var(--warning-color) / .1);color:rgb(var(--warning-color));font-weight:700}.confirm-cell{white-space:nowrap}.confirmation-person{display:inline-flex;align-items:center;gap:8px;width:auto}.confirmed-mark{display:inline-flex;flex-direction:row;white-space:nowrap;color:rgb(var(--success-color))}.confirmed-mark small{margin:0 0 0 8px}.history-pagination{min-height:45px;padding:7px 14px;border-top:1px solid var(--theme-border-color);background:rgb(var(--container-bg-color))}.history-page-buttons button{min-height:30px}.worker-time-table th,.worker-time-table td{height:36px;padding-block:6px;font-size:var(--font-auxiliary)}.worker-time-table thead th{background:rgb(var(--info-color))}.workshop-batch-actions{margin:0 14px 9px;border:1px solid var(--theme-border-color);border-radius:7px}
+@media (max-width:1000px) { .workshop-query-panel { grid-template-columns:minmax(0,1fr); gap:12px; } }.workshop-kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:16px;margin:16px 0}.workshop-kpi{--kpi-color:rgb(var(--info-color));--kpi-soft:rgb(var(--info-color) / .1);position:relative;min-width:0;min-height:108px;padding:12px;border:1px solid var(--theme-border-color);border-top:2px solid var(--kpi-color);border-radius:10px;background:rgb(var(--container-bg-color));box-shadow:var(--theme-shadow);transition:transform .18s ease,box-shadow .18s ease;animation:surface-in .42s cubic-bezier(.2,.75,.25,1) both;display:grid;grid-template-columns:35px minmax(0,1fr);align-items:center;gap:8px 12px}.workshop-kpi:hover{transform:translateY(-2px);box-shadow:var(--theme-shadow)}.workshop-kpi:nth-child(2){animation-delay:.04s}.workshop-kpi:nth-child(3){animation-delay:.08s}.workshop-kpi:nth-child(4){animation-delay:.12s}.workshop-kpi:nth-child(5){animation-delay:.16s}.workshop-kpi.kpi-amber{--kpi-color:rgb(var(--warning-color));--kpi-soft:rgb(var(--warning-color) / .1)}.workshop-kpi.kpi-green{--kpi-color:rgb(var(--success-color));--kpi-soft:rgb(var(--success-color) / .1)}.workshop-kpi.kpi-red{--kpi-color:var(--text-color-3);--kpi-soft:rgb(var(--info-color) / .1)}.workshop-kpi.kpi-violet{--kpi-color:rgb(var(--primary-color));--kpi-soft:rgb(var(--primary-color) / .1)}.workshop-kpi__icon{position:relative;z-index:1;width:35px;height:35px;display:grid;place-items:center;flex:0 0 auto;color:var(--kpi-color);border-radius:50%;background:var(--kpi-soft);transition:transform .2s ease}.workshop-kpi:hover .workshop-kpi__icon{transform:scale(1.08) rotate(-3deg)}.workshop-kpi>div{display:contents}.workshop-kpi>div>span{display:block;color:var(--text-color-1);font-size:var(--font-auxiliary);font-weight:700;white-space:normal;overflow-wrap:anywhere;grid-column:2}.workshop-kpi p{margin:0;color:var(--text-color-1);font-size:var(--font-auxiliary);grid-column:1/-1;min-width:0;overflow-wrap:anywhere}.workshop-kpi p strong{font-size:21px}.workshop-kpi p small{margin-left:2px;color:var(--muted);font-size:var(--font-auxiliary)}.workshop-kpi em{display:block;color:var(--muted);font-style:normal;font-size:var(--font-auxiliary);grid-column:1/-1;min-width:0;white-space:normal;overflow-wrap:anywhere;line-height:1.6}.workshop-sparkline{width:58px;height:25px;opacity:.72;grid-column:1/-1;justify-self:end}
+:deep(.workshop-panel),:deep(.worker-time-summary){margin-bottom:24px;border:1px solid var(--theme-border-color);border-radius:var(--report-panel-radius);box-shadow:var(--theme-shadow)}:deep(.workshop-panel .report-trend-panel__heading),:deep(.worker-time-summary .report-trend-panel__heading){min-height:47px;padding:0 16px;border-bottom:1px solid var(--theme-border-color);background:rgb(var(--container-bg-color))}:deep(.workshop-panel .report-trend-panel__heading>div),:deep(.worker-time-summary .report-trend-panel__heading>div){gap:8px}:deep(.workshop-panel .report-trend-panel__heading>div>span),:deep(.worker-time-summary .report-trend-panel__heading>div>span){width:28px;height:24px;display:grid;place-items:center;padding:0;color:rgb(var(--info-color));border:0;border-radius:7px;background:rgb(var(--info-color) / .1);font-size:var(--font-auxiliary);font-weight:700}:deep(.workshop-panel .report-trend-panel__heading h2),:deep(.worker-time-summary .report-trend-panel__heading h2){color:var(--text-color-1);font-size:14px}:deep(.workshop-panel .report-trend-panel__heading p),:deep(.worker-time-summary .report-trend-panel__heading p){color:var(--muted);font-size:var(--font-auxiliary)}.workshop-filters{grid-template-columns:1.2fr 1fr auto!important;gap:16px;padding:16px;border-bottom:1px solid var(--theme-border-color)}.workshop-dashboard--worker .workshop-filters{grid-template-columns:1fr 1fr 1fr auto!important}.workshop-filters label span{margin-bottom:5px;font-size:var(--font-auxiliary)}.workshop-filters>button{min-height:38px;display:flex;align-items:center;justify-content:center;gap:6px;padding:0 15px}.workshop-report-state,.workshop-empty-report{margin:0 16px 8px;padding:8px 12px;border:0;border-radius:7px;background:rgb(var(--container-bg-color));font-size:var(--font-auxiliary)}.workshop-report-state strong,.workshop-empty-report strong{font-size:var(--font-auxiliary)}.workshop-summary{padding:0 16px 16px;font-size:var(--font-auxiliary)}:deep(.workshop-panel .report-trend-panel__table),:deep(.worker-time-summary .report-trend-panel__table){overflow-x:auto;border-color:var(--theme-border-color);border-radius:7px}.pending-confirmation{display:inline-flex;align-items:center;justify-content:center;min-height:22px;padding:0 9px;border-radius:999px;background:rgb(var(--warning-color) / .1);color:rgb(var(--warning-color));font-weight:700}.confirm-cell{white-space:nowrap}.confirmation-person{display:inline-flex;align-items:center;gap:8px;width:auto}.confirmed-mark{display:inline-flex;flex-direction:row;white-space:nowrap;color:rgb(var(--success-color))}.confirmed-mark small{margin:0 0 0 8px}.workshop-batch-actions{margin:0 14px 9px;border:1px solid var(--theme-border-color);border-radius:7px}
 @media(max-width:1120px){.workshop-kpis{grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:16px 0}.workshop-kpi:last-child{grid-column:1/-1}}
 @media(max-width:900px){.workshop-filters,.workshop-dashboard--worker .workshop-filters{grid-template-columns:1fr 1fr!important}}
 @media(max-width:560px){.workshop-kpis,.workshop-filters,.workshop-dashboard--worker .workshop-filters{grid-template-columns:1fr!important}.workshop-kpi:last-child{grid-column:auto}.workshop-report-state,.workshop-empty-report{align-items:flex-start;flex-direction:column;margin:0 16px 8px;padding:8px 12px}}
@@ -610,18 +614,4 @@ const workerTableColumns = [
 
 
 /* Match the table and panel density used by the other management reports. */
-.workshop-table th,
-.workshop-table td,
-.worker-time-table th,
-.worker-time-table td { height:35px; }
-.workshop-table thead th,
-.worker-time-table thead th {
-  color:var(--report-table-head-ink)!important;
-  background:var(--report-table-head-bg)!important;
-  font-size:var(--font-auxiliary)!important;
-}
-.workshop-table tbody td,
-.workshop-table tbody th,
-.worker-time-table tbody td,
-.worker-time-table tbody th { font-size:var(--font-auxiliary)!important; }
 </style>

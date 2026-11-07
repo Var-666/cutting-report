@@ -31,6 +31,7 @@ tmp/
 /docs/project/*
 !/docs/project/architecture.md
 !/docs/project/progress.md
+!/docs/project/ui-refactor-verification.md
 !/docs/project/功能与接口参考.md
 !/docs/project/multi-line-report-data.md
 !/docs/project/welding-integration.md

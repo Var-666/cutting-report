@@ -48,7 +48,7 @@ const batchTableColumns = [
 
 <template>
   <NModal :show="pushBatch.visible" :mask-closable="!pushBatch.saving" :close-on-esc="!pushBatch.saving" @update:show="visible => { if (!visible) emit('close') }">
-      <div class="push-batch-dialog" role="dialog" aria-modal="true" aria-labelledby="push-batch-title" tabindex="-1">
+      <div class="push-batch-dialog" role="dialog" aria-modal="true" aria-labelledby="push-batch-title" :aria-busy="pushBatch.saving" tabindex="-1">
         <header class="push-batch-header">
           <h2 id="push-batch-title">{{ pushBatch.items.length === 1 ? '文件派发确认' : '批量派发确认' }}</h2>
           <NButton attr-type="button" :disabled="pushBatch.saving" aria-label="关闭批量推送窗口" @click="emit('close')">×</NButton>
@@ -97,11 +97,9 @@ const batchTableColumns = [
 </template>
 
 <style scoped>
-.push-batch-backdrop { position:fixed; z-index:1000; inset:0; display:grid; place-items:center; padding:24px; background:rgb(var(--inverted-bg-color) / .6); }
-.push-batch-dialog { width:min(1180px,100%); max-height:calc(100vh - 48px); display:flex; flex-direction:column; overflow:hidden; color:var(--text-color-1); background:rgb(var(--container-bg-color)); }
-.push-batch-header { display:flex; align-items:flex-start; justify-content:space-between; gap:24px; padding:20px 24px; }
+.push-batch-dialog { width:min(1180px,100%); max-height:calc(100vh - 48px); display:flex; flex-direction:column; overflow:hidden; color:var(--text-color-1); background:rgb(var(--container-bg-color)); border:1px solid var(--theme-border-color); border-radius:14px; box-shadow:var(--theme-popover-shadow); }
+.push-batch-header { display:flex; align-items:flex-start; justify-content:space-between; gap:24px; padding:20px 24px; color:var(--text-color-1); background:var(--theme-table-header-color); }
 .push-batch-header h2 { margin:0; font-size:20px; }
-.push-batch-header p { margin:0; color:var(--text-color-3); font-size:var(--font-auxiliary); }
 .push-batch-header button { width:34px; min-height:34px; flex:0 0 34px; padding:0; line-height:1; }
 .push-batch-content { min-height:0; overflow:auto; padding:20px 24px; }
 .push-batch-common { display:grid; grid-template-columns:minmax(280px,1.2fr) minmax(230px,.8fr) minmax(170px,.55fr); align-items:end; gap:16px; margin-bottom:18px; padding:16px; }
@@ -118,7 +116,6 @@ const batchTableColumns = [
 .push-batch-progress > div { display:flex; align-items:center; justify-content:space-between; gap:15px; }
 .push-batch-progress strong { min-width:0; overflow:hidden; color:var(--text-color-1); text-overflow:ellipsis; white-space:nowrap; font-size:var(--font-auxiliary); }
 .push-batch-progress span,.push-batch-progress small { color:var(--text-color-3); font-size:var(--font-auxiliary); }
-.push-batch-progress progress { width:100%; height:7px; margin:8px 0 4px; accent-color:var(--cyan); }
 .push-batch-table-wrap { overflow:auto; max-height:410px; border:1px solid var(--theme-border-color); }
 .push-batch-table { width:100%; min-width:0; }
 .push-batch-table :deep(.n-data-table-td) { white-space:nowrap; }
@@ -144,7 +141,7 @@ const batchTableColumns = [
 .push-batch-safety p { margin:0; }
 .push-batch-safety label { display:flex; align-items:center; gap:7px; margin-top:8px; color:rgb(var(--success-color)); font-weight:700; }
 .push-batch-safety input { width:15px; height:15px; accent-color:var(--blue); }
-.filename-standard { display:inline-flex; padding:3px 7px; border-radius:999px; white-space:nowrap; font-size:var(--font-auxiliary); }
+.filename-standard { display:inline-flex; padding:3px 7px; border-radius:999px; white-space:nowrap; font-size:var(--font-auxiliary); color:rgb(var(--success-color)); background:rgb(var(--success-color) / .1); }
 .push-batch-footer { display:flex; align-items:center; justify-content:space-between; gap:20px; padding:15px 24px; border-top:1px solid var(--theme-border-color); background:rgb(var(--info-color) / .1); }
 .push-batch-footer > span { color:var(--text-color-3); font-size:var(--font-auxiliary); line-height:1.5; }
 .push-batch-footer > div { display:flex; flex:0 0 auto; gap:8px; margin-left:auto; }
@@ -155,7 +152,6 @@ const batchTableColumns = [
   .push-batch-summary { grid-column:1/-1; }
 }
 @media (max-width:560px) {
-  .push-batch-backdrop { padding:0; }
   .push-batch-dialog { width:100%; max-height:100vh; min-height:100vh; }
   .push-batch-header,.push-batch-content,.push-batch-footer { padding-left:15px; padding-right:15px; }
   .push-batch-common { grid-template-columns:1fr; gap:16px; padding:16px; }
@@ -164,11 +160,7 @@ const batchTableColumns = [
   .push-batch-footer > div { display:grid; grid-template-columns:1fr 1fr; margin-left:0; }
   .push-batch-footer > div .primary { grid-column:1/-1; }
 }
-.filename-standard { color:rgb(var(--success-color)); background:rgb(var(--success-color) / .1); }
 .filename-standard.warning { color:rgb(var(--warning-color)); background:rgb(var(--warning-color) / .1); }
-.push-batch-backdrop { backdrop-filter:blur(5px); }
-.push-batch-dialog { border:1px solid var(--theme-border-color); border-radius:14px; box-shadow:var(--theme-popover-shadow); }
-.push-batch-header { color:var(--text-color-1); background:var(--theme-table-header-color); }
 .push-batch-summary,.push-batch-error,.push-batch-progress { border-radius:7px; }
 .push-batch-table-wrap { border-radius:8px; }
 </style>

@@ -8,6 +8,7 @@
 | --- | --- |
 | [项目说明](../README.md) | 项目用途、本地开发、依赖与构建入口 |
 | [开发规范](../AGENTS.md) | 开发边界、测试策略、表格与主题规范 |
+| [前端验收](project/ui-refactor-verification.md) | 本轮界面、交互、状态和可访问性检查证据及边界 |
 | [系统架构](project/architecture.md) | 当前模块、Runtime、数据源与后台角色职责 |
 | [功能与接口](project/功能与接口参考.md) | 统计口径、确认、派发、回调、分析及导出 |
 | [报表缓存与快照](project/multi-line-report-data.md) | 多产线复用、快照身份、新鲜度与刷新 |

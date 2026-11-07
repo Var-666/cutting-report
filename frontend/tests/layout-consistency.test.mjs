@@ -3,7 +3,10 @@ import { scriptFunction } from './typescript-helpers.mjs'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { readFileSync } from 'node:fs'
-import { parse } from '@vue/compiler-sfc'
+import { compileScript, parse } from '@vue/compiler-sfc'
+import * as Vue from 'vue'
+import { renderToString } from '@vue/server-renderer'
+import { useEnergyReportData } from '../src/composables/useEnergyReportData.ts'
 import { computed, reactive } from 'vue'
 import { transformSync } from 'esbuild'
 import { getAutomationConfiguration, saveAutomationConfiguration } from '../src/api/automation.ts'
@@ -290,14 +293,13 @@ test('leadership dashboard uses verified comparison data and the home visual bas
   const script = leadership.scriptSetup.content
   const styles = leadership.styles.map((style) => style.content).join('\n')
 
-  assert.match(template, /class="[^"]*page-hero[^"]*report-hero--query[^"]*leadership-hero[^"]*"/)
+  assert.match(template, /<h1>领导报表<\/h1>/)
   assert.equal((template.match(/class="leadership-kpi /g) || []).length, 4)
   assert.match(template, /<AnalysisPanel/)
   assert.doesNotMatch(template, /leadership-analysis/)
   assert.match(leadershipDataScript, /report\.value\?\.comparison_total/)
   assert.match(leadershipDataScript, /function changeRate\(current: unknown, previous: unknown\)/)
   assert.match(leadershipDataScript, /defaultMonthlyView\.value \? '较上月' : '较对比区间'/)
-  assert.match(styles, /--leadership-hero-image/)
   assert.match(styles, /grid-template-columns:repeat\(4,minmax\(0,1fr\)\)/)
 })
 
@@ -307,7 +309,7 @@ test('equipment dashboard uses verified energy metrics and responsive home visua
   const script = equipment.scriptSetup.content
   const styles = equipment.styles.map((style) => style.content).join('\n')
 
-  assert.match(template, /class="[^"]*report-hero-query[^"]*device-query-shell[^"]*"/)
+  assert.match(template, /aria-label="设备报表查询条件"/)
   assert.equal((template.match(/class="device-kpi /g) || []).length, 5)
   assert.match(template, /<AppIcon name="zap"/)
   assert.match(template, /<AppIcon name="wind"/)
@@ -415,7 +417,7 @@ test('workshop report includes the confirmed-worker interval summary', () => {
   assert.match(template, /number="02"[\s\S]*title="工人工时汇总"/)
   assert.doesNotMatch(template, /<section class="panel workshop-panel"|class="panel worker-time-summary"/)
   assert.doesNotMatch(template, /所选区间暂无工人确认数据/)
-  assert.ok(template.indexOf('worker-time-summary') > template.indexOf('class="workshop-table"'))
+  assert.match(template, /<AppReportTable :columns="workerTableColumns" :items="result.worker_summaries"/)
   assert.match(css, /\.panel, \.job-card\s*\{[^}]*margin-bottom: 22px;/)
   assert.doesNotMatch(css, /\.worker-time-summary\s*\{[^}]*margin:/)
   assert.match(trendStyles, /\.report-trend-panel__content--fit-table \.report-trend-panel__table\s*\{[^}]*height:auto;[^}]*max-height:none;/)
@@ -439,7 +441,6 @@ test('device report is one page with task details and a default monthly summary'
 
   assert.match(container.template.content, /<EnergyPeriodReportView[\s\S]*@export="exportReport"/)
   assert.doesNotMatch(container.template.content, /EquipmentReportView|reportTab|KeepAlive/)
-  assert.match(energy.template.content, /<section class="[^"]*page-hero[^"]*report-hero--query[^"]*equipment-hero[^"]*">/)
   assert.match(energy.template.content, /<StandardReportQuery/)
   assert.doesNotMatch(energy.template.content, /报表类型|任务生产报表|change-report-tab/)
   assert.match(descriptor('StandardReportQuery', 'components').template.content, /<span><AppIcon name="chart"[^>]*\/>图表类型<\/span>/)
@@ -463,7 +464,6 @@ test('device report is one page with task details and a default monthly summary'
   assert.doesNotMatch(energy.template.content, /电耗覆盖|气耗覆盖|保存状态/)
   assert.match(energy.template.content, /#empty>\{\{ summaryLoading/)
   assert.doesNotMatch(energy.template.content, /任务结束/)
-  assert.doesNotMatch(energy.template.content, /数据状态/)
   assert.match(energy.template.content, /#empty>\{\{ loading/)
   assert.doesNotMatch(energy.template.content, /scope="row" colspan="5"/)
   assert.equal((energy.template.content.match(/#summary-c0>汇总/g) || []).length, 2)
@@ -540,10 +540,9 @@ test('alarm center uses source timestamps and presents the latest evidenced mode
   const script = alarm.scriptSetup.content
   const styles = alarm.styles.map((style) => style.content).join('\n')
 
-  assert.match(template, /class="page-hero report-hero alarm-hero"/)
-  assert.match(template, /class="leadership-kpis alarm-kpis"/)
-  assert.equal((template.match(/class="panel alarm-list"/g) || []).length, 2)
-  assert.match(template, /class="alarm-refresh-button"/)
+  assert.match(template, /<h1>智能告警中心<\/h1>/)
+  assert.match(template, /aria-label="告警监控概况"/)
+  assert.match(template, /按告警级别筛选/)
   assert.match(script, /title: "告警时间"[\s\S]*title: "发现时间"/)
   assert.match(template, /formatShortDateTime\(item\.first_start_time\)/)
   assert.match(template, /同步游标[\s\S]*ALARM_INFO_ID/)
@@ -569,7 +568,6 @@ test('alarm center uses source timestamps and presents the latest evidenced mode
   assert.match(template, /:items="reportItems"/)
   assert.match(template, /@page="changeReportPage"/)
   assert.match(template, /:total="reportSummary.total"[^>]*:page="reportPage"/)
-  assert.equal((template.match(/class="alarm-empty-state"/g) || []).length, 6)
   assert.match(template, /告警事件读取失败[\s\S]*当前告警状态未知/)
   assert.match(template, /告警报告读取失败/)
   assert.match(template, /当前设备暂无告警记录/)
@@ -673,8 +671,8 @@ test('all standard report analyses follow the selected report range', () => {
   assert.match(leadership.template.content, /:summary-period-end="monthlyPeriodEnd"/)
   assert.doesNotMatch(leadership.template.content, /<AnalysisPanel v-else|区间智能分析将在导出报告时生成/)
   assert.match(workshop.template.content, /<AnalysisPanel[\s\S]*v-if="!isWorker"[\s\S]*report-type="workshop"/)
-  assert.match(workshop.template.content, /:period-start="filters\.startDate"/)
-  assert.match(workshop.template.content, /:period-end="filters\.endDate"/)
+  assert.match(workshop.template.content, /:period-start="appliedRouteState\.startDate"/)
+  assert.match(workshop.template.content, /:period-end="appliedRouteState\.endDate"/)
   assert.doesNotMatch(workshop.template.content, /filters\.startDate === filters\.endDate/)
   assert.match(equipment.template.content, /<AnalysisPanel[\s\S]*report-type="equipment"/)
   assert.match(equipment.template.content, /:period-start="rangeQueryApplied \? appliedPeriodStart : ''"/)
@@ -865,12 +863,38 @@ test('long-lived page polling is serialized and cancelled when the page leaves',
   assert.match(reportCenter, /onBeforeUnmount\(\(\) => \{[\s\S]*pageActive = false[\s\S]*stopPolling\(\)/)
 })
 
-test('energy report omits calculation-method and complete-day explanations', () => {
-  const energy = descriptor('EnergyPeriodReportView')
-  const template = energy.template.content
-
-  assert.doesNotMatch(template, /完整|部分合计|energy_notice|storage_notice|energy-method-note/)
-  assert.doesNotMatch(template, /累计读数差值|采样规则|线性插值/)
+test('energy rows expose distinct statuses and their basis while missing readings stay missing', async () => {
+  const empty = { render: () => null }
+  const records = ['measured', 'interpolated', 'estimated', 'missing', 'counter_reset', 'mock'].map((status, index) => ({
+    task_id: String(index), gas_data_status: status, electricity_data_status: 'measured',
+    gas_consumption: ['missing', 'counter_reset'].includes(status) ? null : 1,
+    energy_note: status === 'estimated' ? '平均速率补齐；有效时段 08:00～08:30（覆盖1800秒 / 任务3600秒）' : status,
+  }))
+  const bindings = { ...Vue, useEnergyReportData, formatChineseDateTime: value => value || '--',
+    useEnergyReportQuery: () => Object.fromEntries(Object.entries({ taskDay: { records }, monthlyReport: null,
+      anchorDate: '2026-11-07', periodStart: '2026-11-07', periodEnd: '2026-11-07',
+      appliedPeriodStart: '2026-11-07', appliedPeriodEnd: '2026-11-07', summaryPeriodStart: '2025-12-01', summaryPeriodEnd: '2026-11-07',
+      loading: false, summaryLoading: false, error: '月度统计不可用', chartType: 'bar_line',
+    }).map(([key, value]) => [key, Vue.ref(value)])),
+    useEnergyReportCharts: () => ({ stopResizeListening() {}, disposeCharts() {} }), AnalysisPanel: empty, AppIcon: empty, MetricSparkline: empty, StandardReportQuery: empty,
+    ReportFeedback: { props: ['title', 'message'], setup: props => () => Vue.h('p', `${props.title} ${props.message}`) },
+    ReportTrendPanel: { inheritAttrs: false, setup: (_props, { slots }) => () => Vue.h('section', slots.table?.()) },
+    AppReportTable: { props: ['items', 'columns'], setup: (props, { slots }) => () => Vue.h('table', props.items.map(row => Vue.h('tr', props.columns.map(column => Vue.h('td', slots[column.key]?.({ row })))))) },
+    NPopover: { setup: (_props, { slots }) => () => Vue.h('div', [slots.trigger?.(), slots.default?.()]) },
+  }
+  const code = compileScript(descriptor('EnergyPeriodReportView'), { id: 'energy-status-display', inlineTemplate: true }).content
+    .replace(/import\s*\{([^}]+)\}\s*from\s*['"]vue['"]/g, (_, names) => {
+      for (const name of names.split(',')) { const [original, alias = original] = name.trim().split(/\s+as\s+/); bindings[alias] = Vue[original] }
+      return ''
+    }).replace(/^import .*$/gm, '').replace('export default', 'return')
+  const Page = scriptFunction(...Object.keys(bindings), code)(...Object.values(bindings))
+  const app = Vue.createSSRApp(Page)
+  app.component('NButton', { setup: (_props, { attrs, slots }) => () => Vue.h('button', attrs, slots.default?.()) })
+  const html = await renderToString(app)
+  for (const text of ['气：实测', '气：插值', '气：估算', '气：缺失', '气：读数倒退', '气：模拟', '平均速率补齐', '覆盖1800秒 / 任务3600秒']) assert.ok(html.includes(text), text)
+  assert.match(html, /aria-label="查看任务 2 能耗依据：电耗实测，气耗估算"/)
+  assert.equal((html.match(/<td>--<\/td>/g) || []).length >= 2, true)
+  assert.ok(html.includes('设备报表更新失败 月度统计不可用；当前保留已成功加载的数据。'))
 })
 
 test('scrollable report tables do not add duplicate previous and next pagination', () => {
