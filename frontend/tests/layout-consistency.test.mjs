@@ -863,11 +863,13 @@ test('long-lived page polling is serialized and cancelled when the page leaves',
   assert.match(reportCenter, /onBeforeUnmount\(\(\) => \{[\s\S]*pageActive = false[\s\S]*stopPolling\(\)/)
 })
 
-test('energy rows expose distinct statuses and their basis while missing readings stay missing', async () => {
+test('energy rows show numeric values without an extra explanation column and preserve missing readings', async () => {
   const empty = { render: () => null }
+  const tables = []
   const records = ['measured', 'interpolated', 'estimated', 'missing', 'counter_reset', 'mock'].map((status, index) => ({
     task_id: String(index), gas_data_status: status, electricity_data_status: 'measured',
-    gas_consumption: ['missing', 'counter_reset'].includes(status) ? null : 1,
+    electricity_consumption: 27.4,
+    gas_consumption: ['missing', 'counter_reset'].includes(status) ? null : index === 0 ? 0 : 1,
     energy_note: status === 'estimated' ? '平均速率补齐；有效时段 08:00～08:30（覆盖1800秒 / 任务3600秒）' : status,
   }))
   const bindings = { ...Vue, useEnergyReportData, formatChineseDateTime: value => value || '--',
@@ -879,8 +881,10 @@ test('energy rows expose distinct statuses and their basis while missing reading
     useEnergyReportCharts: () => ({ stopResizeListening() {}, disposeCharts() {} }), AnalysisPanel: empty, AppIcon: empty, MetricSparkline: empty, StandardReportQuery: empty,
     ReportFeedback: { props: ['title', 'message'], setup: props => () => Vue.h('p', `${props.title} ${props.message}`) },
     ReportTrendPanel: { inheritAttrs: false, setup: (_props, { slots }) => () => Vue.h('section', slots.table?.()) },
-    AppReportTable: { props: ['items', 'columns'], setup: (props, { slots }) => () => Vue.h('table', props.items.map(row => Vue.h('tr', props.columns.map(column => Vue.h('td', slots[column.key]?.({ row })))))) },
-    NPopover: { setup: (_props, { slots }) => () => Vue.h('div', [slots.trigger?.(), slots.default?.()]) },
+    AppReportTable: { props: ['items', 'columns'], setup: (props, { slots }) => {
+      tables.push(props.columns)
+      return () => Vue.h('table', props.items.map((row, index) => Vue.h('tr', props.columns.map(column => Vue.h('td', slots[column.key]?.({ row, index }))))))
+    } },
   }
   const code = compileScript(descriptor('EnergyPeriodReportView'), { id: 'energy-status-display', inlineTemplate: true }).content
     .replace(/import\s*\{([^}]+)\}\s*from\s*['"]vue['"]/g, (_, names) => {
@@ -891,9 +895,14 @@ test('energy rows expose distinct statuses and their basis while missing reading
   const app = Vue.createSSRApp(Page)
   app.component('NButton', { setup: (_props, { attrs, slots }) => () => Vue.h('button', attrs, slots.default?.()) })
   const html = await renderToString(app)
-  for (const text of ['气：实测', '气：插值', '气：估算', '气：缺失', '气：读数倒退', '气：模拟', '平均速率补齐', '覆盖1800秒 / 任务3600秒']) assert.ok(html.includes(text), text)
-  assert.match(html, /aria-label="查看任务 2 能耗依据：电耗实测，气耗估算"/)
-  assert.equal((html.match(/<td>--<\/td>/g) || []).length >= 2, true)
+  assert.deepEqual(tables[0].map(column => column.title), ['序号', '工程号', '船名', '分段名', '任务开始', '切割时长', '电耗', '气耗'])
+  assert.equal((html.match(/<span title="[^"]*">27\.4<\/span>/g) || []).length, records.length)
+  assert.match(html, /<span title="measured">0\.0<\/span>/)
+  assert.match(html, /<span title="interpolated">1\.0<\/span>/)
+  assert.match(html, /<span title="平均速率补齐；有效时段 08:00～08:30（覆盖1800秒 \/ 任务3600秒）">1\.0<\/span>/)
+  assert.match(html, /<span title="missing">--<\/span>/)
+  assert.match(html, /<span title="counter_reset">--<\/span>/)
+  assert.doesNotMatch(html, /能耗依据|按有效任务汇总|气：/)
   assert.ok(html.includes('设备报表更新失败 月度统计不可用；当前保留已成功加载的数据。'))
 })
 

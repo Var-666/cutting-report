@@ -6,7 +6,6 @@ import AppReportTable from '../components/AppReportTable.vue'
 import type { ReportCreateRequest } from '../types/reports'
 
 import type { ExportFormat } from '../types/api'
-import { NPopover } from 'naive-ui'
 
 
 import { nextTick, onActivated, onBeforeUnmount, onDeactivated, watch } from 'vue'
@@ -39,13 +38,6 @@ const energyChartOptions = [
   { value: 'bar', label: '双柱状图' },
   { value: 'line', label: '双折线图' },
 ]
-const energyStatusLabels: Record<string, string> = {
-  measured: '实测', interpolated: '插值', estimated: '估算', missing: '缺失',
-  gap: '采样缺口', counter_reset: '读数倒退', invalid_reading: '读数异常',
-  unconfigured: '参数未配置', unmapped: '未绑定仪表', invalid_interval: '时间异常',
-  overlap: '任务重叠', unavailable: '不可用', mock: '模拟',
-}
-function energyStatusLabel(status: string) { return energyStatusLabels[status] || status || '状态未知' }
 const summaryTitle = '近12个月月度能耗汇总'
 const summaryDateHeading = '月份'
 const summaryChartLabel = '月度能耗图'
@@ -94,8 +86,7 @@ const taskTableColumns = [
   { key: 'c4', title: "任务开始", width: 184, align: 'left' },
   { key: 'c5', title: "切割时长", width: 96, align: 'center' },
   { key: 'c6', title: "电耗", width: 80, align: 'right' },
-  { key: 'c7', title: "气耗", width: 80, align: 'right' },
-  { key: 'c8', title: "能耗依据", width: 240, align: 'left', ellipsis: false }
+  { key: 'c7', title: "气耗", width: 80, align: 'right' }
 ] as const
 
 const summaryTableColumns = [
@@ -195,12 +186,6 @@ const summaryTableColumns = [
         <template #c5="{ row }">{{ duration(row.work_time) }}</template>
         <template #c6="{ row }"><span :title="row.energy_note || ''">{{ format(row.electricity_consumption) }}</span></template>
         <template #c7="{ row }"><span :title="row.energy_note || ''">{{ format(row.gas_consumption) }}</span></template>
-        <template #c8="{ row }">
-          <NPopover trigger="click" placement="bottom" :style="{ maxWidth: 'min(480px, calc(100vw - 32px))' }">
-            <template #trigger><NButton text size="small" class="energy-basis-trigger" :aria-label="`查看任务 ${row.task_id} 能耗依据：电耗${energyStatusLabel(row.electricity_data_status)}，气耗${energyStatusLabel(row.gas_data_status)}`">电：{{ energyStatusLabel(row.electricity_data_status) }} · 气：{{ energyStatusLabel(row.gas_data_status) }} · 依据</NButton></template>
-            <p class="energy-basis-note">{{ row.energy_note || '当前任务未提供详细能耗依据。' }}</p>
-          </NPopover>
-        </template>
         <template #summary-c0>汇总</template>
         <template #summary-c1></template>
         <template #summary-c2></template>
@@ -209,7 +194,6 @@ const summaryTableColumns = [
         <template #summary-c5>{{ duration(summary.total_work_time) }}</template>
         <template #summary-c6>{{ format(summary.total_electricity_consumption) }}</template>
         <template #summary-c7>{{ format(summary.total_gas_consumption) }}</template>
-        <template #summary-c8>按有效任务汇总</template>
         <template #empty>{{ loading ? '正在查询…' : '所选区间暂无任务' }}</template>
       </AppReportTable>
     </template>
@@ -266,8 +250,6 @@ const summaryTableColumns = [
 </template>
 
 <style scoped>
-.energy-basis-trigger { font-size:var(--font-auxiliary); white-space:nowrap; }
-.energy-basis-note { margin:0; font-size:var(--font-body); line-height:1.7; white-space:normal; overflow-wrap:anywhere; }
 .device-report-shell>.page-hero{position:relative;min-height:174px;display:flex;align-items:center;overflow:hidden;padding:25px 30px;border:1px solid var(--theme-border-color);border-radius:14px;background:linear-gradient(90deg,rgb(var(--container-bg-color) / 0.99) 0%,rgb(var(--container-bg-color) / 0.92) 39%,rgb(var(--container-bg-color) / 0.08) 69%),url('../assets/home-laser-cutting.webp') center 51%/cover no-repeat;box-shadow:var(--theme-shadow);animation:surface-in .46s cubic-bezier(.2,.75,.25,1) both}.device-report-shell>.page-hero::after{content:"";position:absolute;inset:0;pointer-events:none;background:transparent}.device-hero__copy{position:relative;z-index:1;max-width:540px}.device-breadcrumb{display:block;margin-bottom:7px;color:rgb(var(--info-color));font-size:var(--font-auxiliary)}.device-title-row{display:flex;align-items:flex-end;gap:14px}.device-title-row h2{margin:0;color:var(--text-color-1);font-size:var(--font-page-title);line-height:1.08;letter-spacing:1px}.device-title-row>span{padding-bottom:5px;color:rgb(var(--info-color));font-size:var(--font-auxiliary);font-weight:700;letter-spacing:3px}.device-query-shell{margin:10px 0;border:1px solid var(--theme-border-color)}.device-query-shell .report-query{width:100%;grid-template-columns:minmax(320px,1fr) minmax(180px,.55fr) 128px 128px;padding:0;border:0;background:transparent;box-shadow:none}.device-query-shell :deep(.report-period-picker){grid-column:auto}.device-query-shell :deep(.report-period-picker__trigger),.device-query-shell .report-query>button{height:38px;min-height:38px;border-radius:6px;font-size:var(--font-auxiliary)}.device-query-shell .report-query>button.primary{display:flex;align-items:center;justify-content:center;gap:6px;border-color:var(--theme-border-color);background:rgb(var(--info-color));box-shadow:var(--theme-shadow)}.device-kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:16px;margin:16px 0}.device-kpi{--kpi-color:rgb(var(--info-color));--kpi-soft:rgb(var(--info-color) / .1);position:relative;min-width:0;min-height:108px;padding:12px;border:1px solid var(--theme-border-color);border-top:2px solid var(--kpi-color);border-radius:10px;background:rgb(var(--container-bg-color));box-shadow:var(--theme-shadow);transition:transform .18s ease,box-shadow .18s ease;animation:surface-in .42s cubic-bezier(.2,.75,.25,1) both;display:grid;grid-template-columns:35px minmax(0,1fr);align-items:center;gap:8px 12px}.device-kpi:hover{transform:translateY(-2px);box-shadow:var(--theme-shadow)}.device-kpi:nth-child(2){animation-delay:.04s}.device-kpi:nth-child(3){animation-delay:.08s}.device-kpi:nth-child(4){animation-delay:.12s}.device-kpi:nth-child(5){animation-delay:.16s}.device-kpi.kpi-red{--kpi-color:var(--text-color-3);--kpi-soft:rgb(var(--info-color) / .1)}.device-kpi.kpi-teal{--kpi-color:rgb(var(--info-color));--kpi-soft:rgb(var(--info-color) / .1)}.device-kpi.kpi-violet{--kpi-color:rgb(var(--primary-color));--kpi-soft:rgb(var(--primary-color) / .1)}.device-kpi.kpi-cyan{--kpi-color:rgb(var(--info-color));--kpi-soft:rgb(var(--info-color) / .1)}.device-kpi__icon{position:relative;z-index:1;width:35px;height:35px;display:grid;place-items:center;flex:0 0 auto;color:var(--kpi-color);border-radius:50%;background:var(--kpi-soft);transition:transform .2s ease}.device-kpi:hover .device-kpi__icon{transform:scale(1.08) rotate(-3deg)}.device-kpi>div{display:contents}.device-kpi>div>span{display:block;color:var(--text-color-1);font-size:var(--font-auxiliary);font-weight:700;white-space:normal;overflow-wrap:anywhere;grid-column:2}.device-kpi p{margin:0;color:var(--text-color-1);font-size:var(--font-auxiliary);grid-column:1/-1;min-width:0;overflow-wrap:anywhere}.device-kpi p strong{font-size:21px}.device-kpi p.device-duration strong{font-size:17px}.device-kpi p small{margin-left:2px;color:var(--muted);font-size:var(--font-auxiliary)}.device-kpi em{display:block;color:var(--muted);font-style:normal;font-size:var(--font-auxiliary);grid-column:1/-1;min-width:0;white-space:normal;overflow-wrap:anywhere;line-height:1.6}.device-sparkline{width:58px;height:25px;opacity:.72;grid-column:1/-1;justify-self:end}
 :deep(.report-trend-panel){margin-bottom:24px;border:1px solid var(--theme-border-color);border-radius:var(--report-panel-radius);box-shadow:var(--theme-shadow)}:deep(.report-trend-panel__heading){min-height:47px;padding:0 16px;border-bottom:1px solid var(--theme-border-color);background:rgb(var(--container-bg-color))}:deep(.report-trend-panel__heading>div){gap:8px}:deep(.report-trend-panel__heading>div>span){width:28px;height:24px;display:grid;place-items:center;padding:0;color:rgb(var(--info-color));border:0;border-radius:7px;background:rgb(var(--info-color) / .1);font-size:var(--font-auxiliary);font-weight:700}:deep(.report-trend-panel__heading h2){color:var(--text-color-1);font-size:14px}:deep(.report-trend-panel__heading small){color:var(--muted);font-size:var(--font-auxiliary);font-weight:400}:deep(.report-trend-panel__heading p){color:var(--muted);font-size:var(--font-auxiliary)}:deep(.report-trend-panel__content){gap:16px}:deep(.report-trend-panel__chart),:deep(.report-trend-panel__table){height:var(--report-trend-height);overflow:hidden;border-color:var(--theme-border-color);border-radius:6px}
 @media(max-width:1120px){.device-kpis{grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:16px 0}.device-kpi:last-child{grid-column:1/-1}}
