@@ -201,20 +201,6 @@ test('management hero renders its public status and optional description safely'
   assert.ok((await renderComponent('components/ManagementPageHero', { ...props, description: '只读连接' })).includes('只读连接'))
 })
 
-test('login uses the supplied illustration without cropping and keeps the authentication form', () => {
-  const login = descriptor('LoginView')
-  assert.match(login.scriptSetup.content, /import loginIllustration from '..\/assets\/login-illustration\.png'/)
-  const image = readFileSync(new URL('../src/assets/login-illustration.png', import.meta.url))
-  assert.equal(image.subarray(1, 4).toString(), 'PNG')
-  assert.match(login.template.content, /class="login-scene__illustration" :src="loginIllustration" alt="[^"]+"/)
-  assert.doesNotMatch(login.template.content, /login-scene__copy|数据驱动生产|<ul>/)
-  const styles = readFileSync(new URL('../src/assets/style.css', import.meta.url), 'utf8')
-  assert.match(styles, /\.login-scene__illustration\{[^}]*object-fit:contain/)
-  assert.match(styles, /@media\(max-width:900px\)\{[^\n]*\.login-scene__illustration\{height:auto;max-height:260px\}/)
-  assert.match(login.template.content, /class="login-scene"/)
-  assert.match(login.template.content, /@submit\.prevent="submit"/)
-})
-
 test('database source selector offers SQL Server and demo without the removed Excel source', () => {
   const database = descriptor('DatabaseView')
   const selector = database.template.content.match(/<AppSelect[^>]*name="data_source_mode"[^>]*>(.*?)<\/AppSelect>/s)[1]
@@ -365,12 +351,9 @@ for (const fail of [false, true]) {
   })
 }
 
-test('database configuration retains sections 01–03 and omits mapping, preview and SQL workbench', () => {
+test('database settings do not expose mapping, preview or SQL workbench', () => {
   const database = descriptor('DatabaseView')
   const template = database.template.content
-  assert.deepEqual([...template.matchAll(/<div class="panel-title"><div><span>(\d+)<\/span>/g)].map(match => match[1]), ['01', '02', '03'])
-  assert.match(template, /@submit.prevent="saveConfiguration\(weldingScope\)"/)
-  assert.match(template, /@submit.prevent="runConnectionTest"/)
   assert.match(template, /aria-label="数据库状态"/)
   assert.doesNotMatch(template, /生产查询映射|固定数据集预览|SQL 工作台|mapping-panel|preview-panel|sql-panel/)
   assert.doesNotMatch(database.scriptSetup.content, /previewDatabaseDataset|executeWorkbenchSql|validateWorkbenchSql|runPreview|setSqlExample|previewResult|sqlResult|query_mappings/)

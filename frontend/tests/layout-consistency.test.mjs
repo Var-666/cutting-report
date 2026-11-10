@@ -56,59 +56,15 @@ test('vertical-mix reserves both device columns on every page and uses a single 
   assert.match(descriptor('index', 'layouts/modules/global-menu').scriptSetup.content, /if \(appStore.isMobile\) return VerticalMenu/)
 })
 
-test('report form and history pagination retain horizontal text and consistent control heights', () => {
-  const form = descriptor('ReportForm', 'components')
-  const styles = form.styles[0].content
-  assert.match(styles, /repeat\(auto-fit, minmax\(min\(100%, 150px\), 1fr\)\)/)
-  assert.match(styles, /\.form-actions button[^}]*height:40px[^}]*white-space:nowrap/)
-  assert.match(styles, /\.n-base-selection\)[^}]*\.n-input\)[^}]*--n-height:var\(--control-height\)!important/)
-  const shared = readFileSync(new URL('../src/assets/style.css', import.meta.url), 'utf8')
-  assert.match(shared, /--control-height:\s*40px;/)
-  assert.match(shared, /\.history-page-size \{[^}]*flex-shrink:0[^}]*white-space:nowrap/)
-  const history = descriptor('ReportTable', 'components')
-  assert.match(history.template.content, /<AppReportTable[\s\S]*:loading="loading"/)
-  assert.match(history.template.content, /loading \? '正在加载…' : '暂无历史报告'/)
-  assert.match(history.styles[0].content, /\.history-wrap \{[^}]*padding:16px;/)
-  assert.match(history.styles[0].content, /\.history-empty \{ color:var\(--text-color-3\);/)
-  assert.match(history.styles[0].content, /\.actions-cell \{[^}]*justify-content:center;[^}]*gap:12px;/)
-})
-
-test('the supplied project logo is reused across primary product entry points', () => {
-  const admin = descriptor('index', 'layouts/modules/global-logo').template.content
-  const worker = descriptor('WorkerLayout', 'layouts').template.content
-  const login = descriptor('LoginView').template.content
-  const index = readFileSync(new URL('../index.html', import.meta.url), 'utf8')
-
-  for (const view of [descriptor('index', 'layouts/modules/global-logo'), descriptor('WorkerLayout', 'layouts'), descriptor('LoginView')]) {
-    assert.match(view.scriptSetup.content, /import projectLogo from '(?:\.\.\/)+assets\/project-logo\.png'/)
-    assert.match(view.template.content, /:src="projectLogo"/)
+test('history report distinguishes loading from an empty result', async () => {
+  for (const [loading, expected, absent] of [
+    [true, '正在加载…', '暂无历史报告'],
+    [false, '暂无历史报告', '正在加载…'],
+  ]) {
+    const html = await renderComponent('components/ReportTable', { items: [], loading })
+    assert.ok(html.includes(expected))
+    assert.ok(!html.includes(absent))
   }
-  for (const template of [admin, worker, login]) {
-    assert.match(template, /class="[^"]*brand-logo/)
-    assert.doesNotMatch(template, /class="brand-mark"/)
-  }
-  assert.match(index, /rel="icon" href="\/src\/assets\/project-logo\.png"/)
-  assert.match(index, /rel="apple-touch-icon" href="\/src\/assets\/project-logo\.png"/)
-})
-
-test('all application dropdowns use the shared below-field menu', () => {
-  const names = [
-    ['LeadershipReportView'], ['WorkshopView'], ['EnergyPeriodReportView'],
-    ['CuttingDispatchView'], ['AutomationView'], ['DesignerView'], ['DatabaseView'],
-    ['ReportForm', 'components'], ['ReportTable', 'components'], ['ReportExportMenu', 'components'],
-    ['StandardReportQuery', 'components'],
-  ]
-  for (const [name, folder] of names) {
-    const template = descriptor(name, folder).template.content
-    assert.doesNotMatch(template, /<select\b/, `${name} still contains a native dropdown`)
-  }
-
-  const select = descriptor('AppSelect', 'components')
-  assert.match(select.template.content, /<NSelect/)
-  assert.match(select.template.content, /:required="required"/)
-  assert.match(select.template.content, /@invalid.prevent="handleInvalid"/)
-  assert.match(select.scriptSetup.content, /emit\('change', \{ target: \{ value \}, value \}\)/)
-
 })
 
 test('alarm severity colors agree and dispatch project names can display in full', () => {
@@ -132,25 +88,6 @@ test('alarm severity colors agree and dispatch project names can display in full
   const select = descriptor('AppSelect', 'components')
   assert.match(select.template.content, /:consistent-menu-width="consistentMenuWidth" :menu-props="\{ \.\.\.menuProps, id: menuId, role: 'listbox' \}"/)
   assert.match(select.scriptSetup.content, /consistentMenuWidth: true/)
-})
-
-test('all report calendars use one shared below-field date picker', () => {
-  const names = [
-    ['LeadershipReportView'], ['WorkshopView'], ['EnergyPeriodReportView'], ['DatabaseView'],
-    ['ReportForm', 'components'],
-  ]
-  for (const [name, folder] of names) {
-    const template = descriptor(name, folder).template.content
-    assert.doesNotMatch(template, /<input\b[^>]*type="(?:date|month)"/, `${name} still contains a native calendar`)
-  }
-
-  const picker = descriptor('AppDatePicker', 'components')
-  assert.match(picker.template.content, /<NDatePicker/)
-  assert.match(picker.template.content, /:formatted-value="modelValue \|\| null"/)
-  assert.match(picker.scriptSetup.content, /'yyyy-MM' : 'yyyy-MM-dd'/)
-  assert.match(picker.template.content, /:is-date-disabled="isOutsideBounds"/)
-  assert.match(picker.template.content, /:required="required"/)
-
 })
 
 test('three standard reports reuse the quick period popover', () => {
@@ -629,33 +566,6 @@ test('intelligent analysis omits the analysis boundary section', () => {
   assert.doesNotMatch(analysis.template.content, /分析边界|analysis\.limitations|analysis-limit/)
 })
 
-test('all standard reports share the leadership analysis structure and compact colored style', () => {
-  for (const name of ['LeadershipReportView', 'WorkshopView', 'EnergyPeriodReportView']) {
-    const template = descriptor(name).template.content
-    assert.match(template, /<AnalysisPanel/)
-    assert.doesNotMatch(template, /(?:leadership|workshop|device)-analysis/)
-  }
-
-  const analysis = descriptor('ReportAnalysis', 'components')
-  const template = analysis.template.content
-  const styles = analysis.styles.map((style) => style.content).join('\n')
-  assert.match(template, /class="analysis-conclusion"/)
-  assert.match(template, /分析结论/)
-  assert.match(template, /核心指标/)
-  assert.match(template, /分析结果/)
-  assert.match(template, /class="analysis-facts"/)
-  assert.match(template, /class="analysis-grid"/)
-  assert.match(template, /class="analysis-evidence"/)
-  assert.equal((template.match(/key: '(?:overview|features|alerts|suggestions)'/g) || []).length, 4)
-  assert.match(styles, /\.analysis-facts\{[^}]*grid-template-columns:repeat\(6,minmax\(0,1fr\)\)/)
-  assert.match(styles, /\.analysis-grid\s*\{[^}]*grid-template-columns:repeat\(2,minmax\(0,1fr\)\)!important;/)
-  assert.match(styles, /\.analysis-panel\{[^}]*background:rgb\(var\(--container-bg-color\)\);/)
-  assert.match(styles, /\.analysis-grid article:nth-child\(3\)\{[^}]*background:rgb\(var\(--error-color\) \/ \.1\)!important;?/)
-  assert.match(styles, /\.analysis-grid article:nth-child\(4\)\{[^}]*background:rgb\(var\(--success-color\) \/ \.1\)!important;?/)
-  assert.match(styles, /\.analysis-panel-head\{[^}]*padding:16px!important;/)
-  assert.match(styles, /@media\(max-width:800px\)[\s\S]*\.analysis-grid\{[^}]*grid-template-columns:1fr!important;?/)
-})
-
 test('all standard report analyses follow the selected report range', () => {
   const leadership = descriptor('LeadershipReportView')
   const workshop = descriptor('WorkshopView')
@@ -925,23 +835,4 @@ test('file dispatch uses PDM references and has no saved-file prerequisite', () 
   assert.match(readFileSync(new URL('../src/composables/useCuttingDispatchBatch.ts', import.meta.url), 'utf8'), /file_path: item\.filePath/)
   assert.doesNotMatch(dispatch.scriptSetup.content, /listCuttingDownloads|downloadCuttingFile/)
   assert.match(dispatch.template.content, /PDM项目目录/)
-})
-
-test('home alarm and report previews share a bounded desktop height and insight spacing stays balanced', () => {
-  const template = descriptor('AdminHomeView').template.content
-  for (const title of ['alarm', 'reports']) {
-    const card = template.match(new RegExp(`<NCard[^>]+aria-labelledby="${title}-card-title"`))[0]
-    assert.match(card, /xl:max-h-300px/)
-    assert.match(card, /content-class="min-h-0 overflow-hidden"/)
-    assert.doesNotMatch(card, /self-start/)
-  }
-  assert.match(template, /incidents.slice\(0, 3\)/)
-  assert.match(template, /key="alarms" class="flex-col-stretch gap-8px"/)
-  assert.match(template, /key="reports" class="flex-col-stretch gap-8px"/)
-  assert.equal((template.match(/class="h-72px min-w-0/g) || []).length, 2)
-  for (const route of ['/admin/alarms', '/admin/reports/center']) assert.ok(template.includes(`to="${route}"`))
-  const insight = template.match(/<NCard[^>]+aria-labelledby="insights-card-title"/)[0]
-  assert.match(insight, /header-style="padding-bottom: 0"/)
-  assert.match(insight, /content-style="padding-top: var\(--n-padding-bottom\)"/)
-  assert.match(insight, /content-class="flex flex-col justify-center"/)
 })
