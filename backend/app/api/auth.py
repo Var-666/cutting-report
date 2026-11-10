@@ -183,13 +183,10 @@ def _verify_current_admin_password(
     if admin.get("auth_source") == "hr_database":
         try:
             directory = runtime_state(request).worker_auth
-            group_no = (admin.get("group_no") or "").strip()
-            if not group_no:
-                person = directory.find_person(admin.get("external_id") or "")
-                if person is None:
-                    raise AuthenticationError("HR人员不存在或账号不可用")
-                group_no = person["group_no"]
-            identity = directory.authenticate(group_no, plaintext)
+            person = directory.find_person(admin.get("external_id") or "")
+            if person is None:
+                raise AuthenticationError("HR人员不存在或账号不可用")
+            identity = directory.authenticate(person["group_no"], plaintext)
         except AuthenticationError as exc:
             raise HTTPException(status_code=401, detail="当前管理员密码错误") from exc
         except WorkerAuthenticationUnavailableError as exc:

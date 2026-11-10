@@ -147,7 +147,8 @@ def duration_context():
 
 
 @pytest.mark.parametrize('summary', ['任务耗时约60分钟。', '任务耗时1小时。', '任务耗时3600秒。', '任务耗时01:00:00。',
-                                      '建议分2步核查。', '重点核对这2类记录。'])
+                                      '任务耗时1:00:00。', '建议分2步核查。', '重点核对这2类记录。',
+                                      '请检查以下 2 点信息。', '开始记录为2026-11-10T10:30:00。'])
 def test_brief_accepts_equivalent_duration_and_prose_numbering(duration_context, summary):
     from app.services.report_analysis.brief_validation import validate_brief
     assert validate_brief(draft() | {'summary': summary}, duration_context)['summary'] == summary
@@ -158,6 +159,23 @@ def test_brief_rejects_wrong_counts_durations_and_clock_times(duration_context, 
     from app.services.report_analysis.brief_validation import validate_brief
     with pytest.raises(ValueError, match='数量|时长'):
         validate_brief(draft() | {'summary': summary}, duration_context)
+
+
+@pytest.mark.parametrize('summary', ['任务耗时00:00:01。', '任务耗时01:01:00。', '任务耗时00:60:00。',
+                                      '任务耗时01:00:60。', '任务耗时-60分钟。', '任务耗时约-60分钟。',
+                                      '任务耗时-约60分钟。', '任务耗时负60分钟。', '任务耗时− 01:00:00。',
+                                      '任务耗时－1小时。'])
+def test_brief_checks_entire_clock_duration_and_rejects_negative_time(duration_context, summary):
+    from app.services.report_analysis.brief_validation import validate_brief
+    with pytest.raises(ValueError, match='时长'):
+        validate_brief(draft() | {'summary': summary}, duration_context)
+
+
+def test_clock_duration_can_exceed_twenty_four_hours(duration_context):
+    from app.services.report_analysis.brief_validation import validate_brief
+    duration_context['facts'] = []
+    duration_context['tables'][0]['rows'][0]['work_time'] = 360123
+    assert validate_brief(draft() | {'summary': '累计切割时长100:02:03。'}, duration_context)
 
 
 def test_internal_fact_ids_do_not_authorize_business_numbers():
@@ -175,7 +193,8 @@ def test_brief_accepts_small_procedural_stage_counts(summary):
 
 
 @pytest.mark.parametrize('summary', ['存在2处待核实记录。', '涉及4类问题。', '生产分为2个阶段。',
-                                      '建议分999999个阶段核查。'])
+                                      '建议分999999个阶段核查。', '发现2类异常任务。', '本期存在2点异常。',
+                                      '已完成2步加工。', '已核对2类异常任务。'])
 def test_procedural_exemptions_do_not_authorize_business_counts(summary):
     from app.services.report_analysis.brief_validation import validate_brief
     with pytest.raises(ValueError, match='数量'):

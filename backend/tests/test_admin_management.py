@@ -1,5 +1,6 @@
 from threading import BoundedSemaphore
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.api.workloads import authentication_requests
@@ -51,12 +52,15 @@ class _HrDirectory:
         return {
             "external_id": external_id,
             "company_no": "C0007",
-            "group_no": "G0021",
+            "group_no": "G0001" if external_id == "7001" else "G0021",
             "display_name": "张三",
         }
 
     def authenticate(self, group_no, password):
         self.auth_calls.append((group_no, password))
+        if group_no != 'G0001' or password != 'hr-password':
+            from app.database.identity_security import AuthenticationError
+            raise AuthenticationError('集团工号或密码错误')
         return {
             "external_id": "7001",
             "company_no": "C0001",
@@ -118,14 +122,16 @@ def test_wrong_current_password_cannot_grant_admin(monkeypatch) -> None:
     assert repository.grants == []
 
 
-def test_hr_admin_password_is_verified_against_hr_before_grant(monkeypatch) -> None:
+@pytest.mark.parametrize('stored_group_no', [None, 'G0001', 'G-old'])
+@pytest.mark.parametrize(('password', 'expected_status'), [('hr-password', 201), ('wrong-password', 401)])
+def test_hr_admin_password_is_verified_against_hr_before_grant(monkeypatch, stored_group_no, password, expected_status) -> None:
     # Dependency HR revalidation must release its slot before endpoint reauthentication.
     monkeypatch.setattr(authentication_requests, "_slots", BoundedSemaphore(1))
     current = {
         **_local_admin(),
         "user_id": "usr_current_hr_admin",
         "username": "G0001",
-        "group_no": "G0001",
+        "group_no": stored_group_no,
         "company_no": "C0001",
         "external_id": "7001",
         "auth_source": "hr_database",
@@ -139,12 +145,14 @@ def test_hr_admin_password_is_verified_against_hr_before_grant(monkeypatch) -> N
 
     response = client.post(
         "/api/v1/auth/admins",
-        json={"external_id": "9123", "current_password": "hr-password"},
+        json={"external_id": "9123", "current_password": password},
     )
 
-    assert response.status_code == 201
-    assert directory.auth_calls == [("G0001", "hr-password")]
+    assert response.status_code == expected_status
+    assert directory.auth_calls == [("G0001", password)]
     assert directory.session_calls == [("7001", True)]
+    assert directory.find_calls == (['7001', '9123'] if expected_status == 201 else ['7001'])
+    assert bool(repository.grants) == (expected_status == 201)
 
 
 def test_anonymous_user_cannot_manage_admin_permissions(monkeypatch) -> None:
@@ -190,4 +198,17 @@ def test_legacy_hr_admin_cannot_reauthenticate_as_another_identity(monkeypatch):
     with pytest.raises(HTTPException) as error:
         auth._verify_current_admin_password(SimpleNamespace(), {'auth_source': 'hr_database', 'external_id': 'person',
             'group_no': None}, SecretStr('hr-password'))
+    assert error.value.status_code == 401
+
+
+def test_hr_admin_cannot_use_stored_group_when_current_person_is_unavailable(monkeypatch):
+    from types import SimpleNamespace
+    from pydantic import SecretStr
+    from fastapi import HTTPException
+    from app.api import auth
+    directory = SimpleNamespace(find_person=lambda key: None)
+    monkeypatch.setattr(auth, 'runtime_state', lambda request: SimpleNamespace(worker_auth=directory))
+    with pytest.raises(HTTPException) as error:
+        auth._verify_current_admin_password(SimpleNamespace(), {'auth_source': 'hr_database', 'external_id': 'person',
+            'group_no': 'G-old'}, SecretStr('hr-password'))
     assert error.value.status_code == 401

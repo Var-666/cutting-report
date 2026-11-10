@@ -32,24 +32,34 @@ def _duration_seconds(value: object) -> set[Decimal]:
 
 _DURATION_NUMBER = r'\d[\d,]*(?:\.\d+)?'
 _DURATION_PATTERN = re.compile(
-    rf'(?P<approx>约\s*)?(?P<duration>'
+    rf'(?P<sign>[-−－负]\s*)?(?P<approx>约\s*)?(?:'
+    rf'(?P<clock>(?<![\d:T])\d+:\d{{2}}:\d{{2}})(?![\d:])|(?P<duration>'
     rf'{_DURATION_NUMBER}\s*小时(?:\s*{_DURATION_NUMBER}\s*分钟?)?(?:\s*{_DURATION_NUMBER}\s*秒)?|'
-    rf'{_DURATION_NUMBER}\s*分钟(?:\s*{_DURATION_NUMBER}\s*秒)?|{_DURATION_NUMBER}\s*秒)'
+    rf'{_DURATION_NUMBER}\s*分钟(?:\s*{_DURATION_NUMBER}\s*秒)?|{_DURATION_NUMBER}\s*秒))'
 )
 
 
 def _check_durations(text: str, durations: set[Decimal]) -> str:
     parts, end, approximate = [], 0, False
     for match in _DURATION_PATTERN.finditer(text):
+        if match['sign']:
+            raise ValueError('分析时长不能为负数')
         between = text[end:match.start()]
         # A shared “约” applies only to adjacent items in the same duration list.
         approximate = bool(match['approx']) or (approximate and re.fullmatch(r'\s*(?:和|及|与|、|，|,)\s*', between) is not None)
-        total = Decimal(0)
-        for number, unit in re.findall(rf'({_DURATION_NUMBER})\s*(小时|分钟?|秒)', match['duration']):
-            amount = Decimal(number.replace(',', ''))
-            scale = {'小时': 3600, '分钟': 60, '分': 60, '秒': 1}[unit]
-            total += amount * scale
-        tolerance = Decimal(1).scaleb(amount.as_tuple().exponent) * scale / 2 if approximate else Decimal(0)
+        if match['clock']:
+            hours, minutes, seconds = map(Decimal, match['clock'].split(':'))
+            if minutes >= 60 or seconds >= 60:
+                raise ValueError('分析时长格式无效')
+            total, precision = hours * 3600 + minutes * 60 + seconds, Decimal(1)
+        else:
+            total = Decimal(0)
+            for number, unit in re.findall(rf'({_DURATION_NUMBER})\s*(小时|分钟?|秒)', match['duration']):
+                amount = Decimal(number.replace(',', ''))
+                scale = {'小时': 3600, '分钟': 60, '分': 60, '秒': 1}[unit]
+                total += amount * scale
+            precision = Decimal(1).scaleb(amount.as_tuple().exponent) * scale
+        tolerance = precision / 2 if approximate else Decimal(0)
         if not any(abs(total - seconds) <= tolerance for seconds in durations):
             raise ValueError('分析时长与输入不符')
         parts.append(between)
@@ -109,8 +119,8 @@ def validate_brief(content: object, context: dict) -> dict:
         if not set(re.findall(r'\d{4}-\d{2}-\d{2}', text)) <= allowed_dates:
             raise ValueError('分析包含输入中不存在的日期')
         quantities = _check_durations(text, durations)
-        quantities = re.sub(r'(?<!\d)[1-3]\s*(?=步|类|点)', '', quantities)
-        quantities = re.sub(r'((?:分(?:为|成)?|按)\s*)[1-3]\s*(?=(?:个\s*)?阶段\s*(?:(?:进行|开展)\s*)?(?:核查|核对|检查|排查))', r'\1', quantities)
+        quantities = re.sub(r'((?:分(?:为|成)?|按)\s*)[1-3]\s*(?=(?:个\s*)?(?:步|阶段)\s*(?:(?:进行|开展)\s*)?(?:核查|核对|检查|排查))', r'\1', quantities)
+        quantities = re.sub(r'((?:建议|请|重点|优先)\s*(?:核查|核对|检查|排查)\s*(?:这|以下)?\s*)[1-3]\s*(?=类|点)', r'\1', quantities)
         if not _numbers(quantities) <= allowed_numbers:
             raise ValueError('分析包含输入中不存在的数量')
     return AnalysisBrief(**draft.model_dump(exclude={'findings'}), findings=findings,
