@@ -75,7 +75,7 @@ def test_nested_analysis_preserves_shorter_export_deadline(tmp_path, clock):
 
 @pytest.mark.parametrize("fails", [False, True])
 def test_timing_log_accounts_for_waits_on_success_and_failure(tmp_path, clock, caplog, fails):
-    settings = Settings(project_root=tmp_path)
+    settings = Settings(project_root=tmp_path, device_id="Cutter01")
     caplog.set_level(logging.INFO, logger=analysis_execution.__name__)
     try:
         with analysis_operation(settings, "leadership", "2026-10", request_id="timing-request"):
