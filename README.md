@@ -102,7 +102,7 @@ Docker 的 Python/Node 基础镜像使用摘要固定，Debian 系统包使用�
 
 升级已有系统前按对应文档备份并核对迁移条件，保留原配置与数据卷。
 
-车间、文件派发和告警已采用 Pydantic/OpenAPI 生成前端类型，前端使用 Node.js >=22.18。在 `frontend/` 运行 `pnpm run api:generate` 更新 `src/api/generated/`，运行 `pnpm run api:check` 检查是否过期。生成脚本使用根目录 `.venv`，也可通过 `PYTHON` 指定已安装后端依赖的解释器；不启动 Web/Worker、不连接数据库。修改对应后端模型后重新生成，不手改生成文件；API contracts CI 会检查漂移。其他接口目前仍沿用既有类型维护方式。
+车间、文件派发和告警已采用 Pydantic/OpenAPI 生成前端类型，前端使用 Node.js >=22.18。在 `frontend/` 运行 `pnpm run api:generate` 更新 `src/api/generated/`，运行 `pnpm run api:check` 检查是否过期。生成脚本优先使用显式 `PYTHON`，否则依次探测根目录 `.venv`、`backend/.venv`，选择能加载契约导出依赖的环境，均不可用时使用系统 Python；不启动 Web/Worker、不连接数据库。修改对应后端模型后重新生成，不手改生成文件；API contracts CI 会检查漂移。其他接口目前仍沿用既有类型维护方式。
 
 应用状态结构由 `backend/app/database/postgres_migrations/` 的追加编号迁移管理。Web/Worker 使用 cutting_app 校验现成 Schema，只有独立维护命令使用 cutting_migrator 升级；正常启动不执行 DDL。
 

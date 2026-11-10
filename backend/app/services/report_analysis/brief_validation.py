@@ -30,13 +30,31 @@ def _duration_seconds(value: object) -> set[Decimal]:
     return set()
 
 
-def _check_duration(match: re.Match, durations: set[Decimal]) -> str:
-    amount = Decimal(match['amount'].replace(',', ''))
-    scale = {'小时': 3600, '分钟': 60, '秒': 1}[match['unit']]
-    tolerance = Decimal(1).scaleb(amount.as_tuple().exponent) * scale / 2 if match['approx'] else Decimal(0)
-    if not any(abs(amount * scale - seconds) <= tolerance for seconds in durations):
-        raise ValueError('分析时长与输入不符')
-    return ''
+_DURATION_NUMBER = r'\d[\d,]*(?:\.\d+)?'
+_DURATION_PATTERN = re.compile(
+    rf'(?P<approx>约\s*)?(?P<duration>'
+    rf'{_DURATION_NUMBER}\s*小时(?:\s*{_DURATION_NUMBER}\s*分钟?)?(?:\s*{_DURATION_NUMBER}\s*秒)?|'
+    rf'{_DURATION_NUMBER}\s*分钟(?:\s*{_DURATION_NUMBER}\s*秒)?|{_DURATION_NUMBER}\s*秒)'
+)
+
+
+def _check_durations(text: str, durations: set[Decimal]) -> str:
+    parts, end, approximate = [], 0, False
+    for match in _DURATION_PATTERN.finditer(text):
+        between = text[end:match.start()]
+        # A shared “约” applies only to adjacent items in the same duration list.
+        approximate = bool(match['approx']) or (approximate and re.fullmatch(r'\s*(?:和|及|与|、|，|,)\s*', between) is not None)
+        total = Decimal(0)
+        for number, unit in re.findall(rf'({_DURATION_NUMBER})\s*(小时|分钟?|秒)', match['duration']):
+            amount = Decimal(number.replace(',', ''))
+            scale = {'小时': 3600, '分钟': 60, '分': 60, '秒': 1}[unit]
+            total += amount * scale
+        tolerance = Decimal(1).scaleb(amount.as_tuple().exponent) * scale / 2 if approximate else Decimal(0)
+        if not any(abs(total - seconds) <= tolerance for seconds in durations):
+            raise ValueError('分析时长与输入不符')
+        parts.append(between)
+        end = match.end()
+    return ''.join(parts) + text[end:]
 
 
 def validate_brief(content: object, context: dict) -> dict:
@@ -90,8 +108,7 @@ def validate_brief(content: object, context: dict) -> dict:
             raise ValueError('分析变化方向或百分比与事实不符')
         if not set(re.findall(r'\d{4}-\d{2}-\d{2}', text)) <= allowed_dates:
             raise ValueError('分析包含输入中不存在的日期')
-        quantities = re.sub(r'(?P<approx>约\s*)?(?P<amount>\d[\d,]*(?:\.\d+)?)\s*(?P<unit>小时|分钟|秒)',
-                            lambda match: _check_duration(match, durations), text)
+        quantities = _check_durations(text, durations)
         quantities = re.sub(r'(?<!\d)[1-3]\s*(?=步|类|点)', '', quantities)
         if not _numbers(quantities) <= allowed_numbers:
             raise ValueError('分析包含输入中不存在的数量')

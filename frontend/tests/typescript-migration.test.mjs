@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { join } from 'node:path'
 import test from 'node:test'
 import ts from 'typescript'
 import { parse } from '@vue/compiler-sfc'
@@ -55,4 +56,29 @@ test('production builds require type checking and the frontend suite before bund
 test('script fixtures ignore non-identifier module exports without shifting bindings', () => {
   const run = scriptFunction('first', 'module.exports', 'last', 'return [first, last]')
   assert.deepEqual(run(1, {}, 3), [1, 3])
+})
+
+test('contract generation selects a usable environment and honors an explicit Python', () => {
+  const source = readFileSync(new URL('../scripts/generate-api.mjs', import.meta.url), 'utf8')
+  const selection = source.slice(source.indexOf('const venvs'), source.indexOf('\ntry {'))
+  const select = scriptFunction('root', 'process', 'join', 'existsSync', 'spawnSync', `${selection}; return python`)
+  const root = '/project'
+  const primary = join(root, '.venv/bin/python')
+  const backend = join(root, 'backend/.venv/bin/python')
+  for (const [env, available, usable, expected] of [
+    [{ PYTHON: '/explicit/python' }, [], [], '/explicit/python'],
+    [{}, [primary, backend], [primary, backend], primary],
+    [{}, [backend], [backend], backend],
+    [{}, [primary, backend], [backend], backend],
+    [{}, [primary], [], 'python3'],
+    [{}, [], [], 'python3'],
+  ]) {
+    const probed = []
+    const python = select(root, { env, platform: 'linux' }, join, path => available.includes(path), path => {
+      probed.push(path)
+      return { status: usable.includes(path) ? 0 : 1 }
+    })
+    assert.equal(python, expected)
+    if (env.PYTHON) assert.deepEqual(probed, [])
+  }
 })

@@ -268,7 +268,7 @@
     <details open><summary>分析依据</summary>
       {% if brief.scope.comparison_start %}<p>比较周期：{{ brief.scope.comparison_start }} 至 {{ brief.scope.comparison_end }}</p>{% endif %}
       {% for limitation in brief.data_quality %}<p>{{ limitation }}</p>{% endfor %}
-      {% for fact in report.analysis.facts %}<p>{{ fact.label }}：{{ fact.value }} · {{ fact.source }}</p>{% endfor %}
+      {% for fact in report.analysis.facts %}<p>{{ fact.label }}：{{ fact.value }}</p>{% endfor %}
     </details>
     {% else %}
     {% if report.analysis.facts %}<section class="analysis-facts">{% for fact in report.analysis.facts %}<div class="analysis-fact"><span class="fact-id">{{ fact.id }}</span><span class="label"> · {{ fact.label }}</span><strong>{{ fact.value }}</strong></div>{% endfor %}</section>{% endif %}

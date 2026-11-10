@@ -9,8 +9,11 @@ import { createClient } from '@hey-api/openapi-ts'
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const check = process.argv.includes('--check')
 const temporary = mkdtempSync(join(tmpdir(), 'cutting-contracts-'))
-const venv = join(root, '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python')
-const python = process.env.PYTHON || (existsSync(venv) ? venv : process.platform === 'win32' ? 'python' : 'python3')
+const venvs = ['.venv', 'backend/.venv'].map(directory =>
+  join(root, directory, process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python'))
+const python = process.env.PYTHON || venvs.find(candidate => existsSync(candidate) && spawnSync(candidate,
+  ['-c', 'import runpy, sys; runpy.run_path(sys.argv[1])', join(root, 'scripts/export_api_contracts.py')],
+  { stdio: 'ignore' }).status === 0) || (process.platform === 'win32' ? 'python' : 'python3')
 try {
   const schema = join(temporary, 'openapi.json')
   const exported = spawnSync(python, [join(root, 'scripts/export_api_contracts.py'), schema], { stdio: 'inherit' })

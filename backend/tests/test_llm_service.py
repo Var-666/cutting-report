@@ -173,3 +173,36 @@ def test_brief_accepts_minutes_and_decimal_hours_from_authoritative_seconds(dura
     assert validate_brief(draft() | {'summary': '该任务耗时59分钟。'}, context)
     context['tables'][0]['rows'][0]['work_time'] = 5400
     assert validate_brief(draft() | {'summary': '该任务耗时1.5小时。'}, context)
+
+
+@pytest.mark.parametrize(('seconds', 'summary'), [
+    ([3600, 3560], '切割时长分别约60分钟和59分钟。'),
+    ([3600, 3560, 3500], '切割时长分别约60分钟、59分钟及58分钟。'),
+    ([7160], '该任务耗时1小时59分钟20秒。'),
+    ([7160], '该任务耗时1 小时 59 分 20 秒。'),
+    ([7160], '该任务耗时约1小时59分钟。'),
+    ([7160], '该任务耗时119分钟20秒。'),
+    ([5400], '该任务耗时1小时30分钟。'),
+])
+def test_brief_accepts_compound_durations_and_shared_approximation(duration_context, seconds, summary):
+    from app.services.report_analysis.brief_validation import validate_brief
+    duration_context['facts'] = []
+    duration_context['tables'] = [dict(name='时长汇总', rows=[dict(work_time=value) for value in seconds])]
+    assert validate_brief(draft() | {'summary': summary}, duration_context)['summary'] == summary
+
+
+@pytest.mark.parametrize('summary', [
+    '任务耗时1小时59分钟。',
+    '任务耗时约1小时58分钟。',
+    '任务耗时约1小时59分钟50秒。',
+    '任务耗时约60分钟和58分钟。',
+    '任务耗时约60分钟。另一任务耗时59分钟。',
+    '任务耗时约60分钟，另一个任务耗时59分钟。',
+    '任务耗时约60分钟，另有2项待确认。',
+])
+def test_brief_keeps_duration_precision_and_approximation_scope(duration_context, summary):
+    from app.services.report_analysis.brief_validation import validate_brief
+    duration_context['facts'] = []
+    duration_context['tables'] = [dict(name='时长汇总', rows=[dict(work_time=value) for value in [3600, 3560, 7160]])]
+    with pytest.raises(ValueError, match='时长|数量'):
+        validate_brief(draft() | {'summary': summary}, duration_context)

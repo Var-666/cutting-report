@@ -141,8 +141,8 @@ def test_automation_prepares_body_independently_of_attachment_and_rejects_invali
 
 
 @pytest.mark.parametrize("report_type", ["leadership", "workshop", "equipment"])
-@pytest.mark.parametrize("empty", [False, True])
-def test_archived_report_becomes_readable_email(tmp_path, report_type, empty):
+@pytest.mark.parametrize(("empty", "with_brief"), [(False, False), (True, False), (False, True)])
+def test_archived_report_becomes_readable_email(tmp_path, report_type, empty, with_brief):
     root = Path(__file__).resolve().parents[2]
     cfg = replace(settings, project_root=tmp_path, data_source_mode="demo")
     renderer = ReportService(cfg)
@@ -183,6 +183,13 @@ def test_archived_report_becomes_readable_email(tmp_path, report_type, empty):
                             ], 1)],
                          overview="分析说明 <script>不能执行</script>", features="特征", alerts="关注点", suggestions="建议"),
     }
+    if with_brief:
+        report['analysis'].update(mode='model', brief=dict(
+            scope=dict(period_start='2026-11-08', period_end='2026-11-08',
+                       comparison_start='2026-11-07', comparison_end='2026-11-07'),
+            headline='本期生产简报', summary='生产记录已汇总。',
+            key_metric_ids=['F001', 'F002', 'F003'], findings=[], actions=[],
+            data_quality=['工人工时仅包含已确认任务。']))
     html = renderer.environment.get_template("report.html.j2").render(
         report=report, echarts_source=(root / "vendor/echarts.min.js").read_text(encoding="utf-8"),
         demo_mode=True, device_name="切割机01", energy_connected=False,
@@ -201,11 +208,15 @@ def test_archived_report_becomes_readable_email(tmp_path, report_type, empty):
         assert content.startswith(b"\x89PNG\r\n\x1a\n")
     assert "测试生产报告" in email.html and "切割机01" in email.html
     assert "演示数据 · 非生产统计" in email.html
-    assert "智能分析暂不可用" in email.html and "&lt;script&gt;不能执行&lt;/script&gt;" in email.html
+    if with_brief:
+        assert all(text in html and text in email.html for text in
+                   ['本期生产简报', '分析依据', '2026-11-07', '工人工时仅包含已确认任务。', '任务数比上一周期'])
+    else:
+        assert "智能分析暂不可用" in email.html and "&lt;script&gt;不能执行&lt;/script&gt;" in email.html
     assert "报告结束" in email.html
     assert "<script" not in email.html and "<canvas" not in email.html and "<link" not in email.html
     assert path.read_text(encoding="utf-8") == html
-    assert "应隐藏的来源说明" not in html and "来源：" not in email.html
+    assert "应隐藏的来源说明" not in html and "应隐藏的来源说明" not in email.html and "来源：" not in email.html
     if not empty and report_type in {"leadership", "workshop"}:
         assert email.html.count(remark) == 1, "print-only tables must not duplicate records"
     if not empty and report_type in {"workshop", "equipment"}:
@@ -240,17 +251,21 @@ def test_archived_report_becomes_readable_email(tmp_path, report_type, empty):
                 if not empty:
                     for document in [reference, page]:
                         cards = document.locator('.analysis-fact')
-                        assert cards.count() == 6
+                        assert cards.count() == (3 if with_brief else 6)
                         boxes = [card.bounding_box() for card in cards.all()]
-                        columns = 3 if width > 1000 else 2
+                        columns = sum(abs(box['y'] - boxes[0]['y']) < 1 for box in boxes) if with_brief else (3 if width > 1000 else 2)
                         assert all(abs(box['y'] - boxes[0]['y']) < 1 for box in boxes[:columns])
-                        assert boxes[1]['x'] - boxes[0]['x'] - boxes[0]['width'] >= 10
-                        assert boxes[columns]['y'] - boxes[0]['y'] - boxes[0]['height'] >= 10
+                        if columns > 1:
+                            assert boxes[1]['x'] - boxes[0]['x'] - boxes[0]['width'] >= 10
+                        if len(boxes) > columns:
+                            assert boxes[columns]['y'] - boxes[0]['y'] - boxes[0]['height'] >= 10
                         assert all(box['width'] > 80 for box in boxes)
                         assert cards.evaluate_all('nodes => nodes.every(node => node.scrollWidth <= node.clientWidth + 1)')
                 assert abs(page.locator('.page').bounding_box()['width'] - reference.locator('.page').bounding_box()['width']) < 1
                 assert page.locator('table:not([role="presentation"]) td').evaluate_all("cells => cells.every(cell => getComputedStyle(cell).whiteSpace === 'nowrap')")
                 for selector in [".cover-brand", ".cover-title h1", ".cover-title p", ".metrics", ".metric strong", "h2", ".analysis-card.features", ".analysis-card.alerts", ".analysis-mode"]:
+                    if with_brief and selector in {'.analysis-card.features', '.analysis-card.alerts'}:
+                        continue
                     styles = "element => Object.fromEntries(['fontFamily','fontSize','fontWeight','color','backgroundColor','backgroundImage'].map(key => [key,getComputedStyle(element)[key]]))"
                     assert page.locator(selector).first.evaluate(styles) == reference.locator(selector).first.evaluate(styles), selector
                 if page.locator('thead th').count():
