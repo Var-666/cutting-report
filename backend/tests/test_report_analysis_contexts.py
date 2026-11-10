@@ -196,3 +196,16 @@ def test_long_task_candidates_do_not_lose_associations_beyond_preview_limit():
     assert len(context['anomalies']) == len(context['_references']['C_duration']) == 8
     fact = next(f for f in context['facts'] if f['id'] == 'F006')
     assert '共 8 项' in fact['source'] and '最多展示 5 项' in fact['source']
+
+
+def test_task_change_facts_explicitly_name_total_tasks():
+    from app.services.report_analysis.workshop import build_context as workshop_context
+    from app.services.report_analysis.equipment import build_context as equipment_context
+    cases = analysis_cases()
+    for kind, builder, key in [('workshop', workshop_context, 'workshop'), ('equipment', equipment_context, 'equipment_partial')]:
+        records = cases[key][1][1][:2]
+        context = builder('2026-08-18', records, comparison_records=[records[0]] * 11, comparison_date='2026-08-17')
+        value = next(f['value'] for f in context['facts'] if f['id'] == 'F005')
+        assert '任务总数比上一周期下降 81.8%' in value
+        if kind == 'workshop':
+            assert value.startswith('待确认 1 项；任务总数')

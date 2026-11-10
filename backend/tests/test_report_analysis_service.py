@@ -1011,3 +1011,51 @@ def test_model_output_with_fabricated_statistics_is_rejected(state_database, tmp
             "SELECT COUNT(*) FROM report_analyses WHERE report_type = 'leadership'"
         ).fetchone()['count']
     assert count == 0
+
+
+@pytest.mark.parametrize(('kind', 'period', 'ongoing'), [
+    ('workshop', '2026-11-10', True),
+    ('equipment', '2026-11-09 至 2026-11-11', True),
+    ('leadership', '2026-11', True),
+    ('workshop', '2026-11-09', False),
+    ('workshop', '2026-11-11', False),
+])
+def test_ongoing_period_notice_uses_configured_timezone(state_database, tmp_path, monkeypatch, kind, period, ongoing):
+    from datetime import timezone
+    from app.services.report_analysis.brief import period_scope
+    _, service = _services(state_database, tmp_path)
+    class Clock:
+        @staticmethod
+        def now(zone):
+            return datetime(2026, 11, 9, 16, 30, tzinfo=timezone.utc).astimezone(zone)
+    monkeypatch.setattr('app.services.report_analysis_service.datetime', Clock)
+    context = build_workshop_context('2026-11-10', [])
+    context['scope'] = period_scope(kind, period)
+    result = service._analyze(report_type=kind, report_date=period, context=context, force=False)
+    notices = [item for item in result.brief['data_quality'] if '当前统计周期尚未结束' in item]
+    assert bool(notices) is ongoing
+    if ongoing:
+        assert '进度参考' in notices[0] and '不代表全天最终产出下降' in notices[0]
+
+
+def test_finishing_period_invalidates_ongoing_notice_without_busting_same_day_cache(state_database, tmp_path, monkeypatch):
+    from datetime import timezone
+    _, service = _services(state_database, tmp_path)
+    now = [datetime(2026, 11, 9, 16, 30, tzinfo=timezone.utc)]
+    class Clock:
+        @staticmethod
+        def now(zone):
+            return now[0].astimezone(zone)
+    monkeypatch.setattr('app.services.report_analysis_service.datetime', Clock)
+    context = build_workshop_context('2026-11-10', [])
+    def analyze():
+        return service._analyze(report_type='workshop', report_date='2026-11-10', context=context, force=False)
+    first = analyze()
+    now[0] += timedelta(hours=1)
+    cached = analyze()
+    assert not first.cached and cached.cached
+    assert sum('当前统计周期尚未结束' in item for item in cached.brief['data_quality']) == 1
+    now[0] = datetime(2026, 11, 10, 16, 0, tzinfo=timezone.utc)
+    completed = analyze()
+    assert not completed.cached
+    assert not any('当前统计周期尚未结束' in item for item in completed.brief['data_quality'])

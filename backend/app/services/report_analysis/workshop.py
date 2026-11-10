@@ -141,7 +141,7 @@ def build_context(
         _fact(
             "F005",
             "待确认任务与数量变化",
-            f"{unconfirmed} 项待确认，比上一周期{_change_label(task_change)}",
+            f"待确认 {unconfirmed} 项；任务总数比上一周期{_change_label(task_change)}",
             "；".join(trend_evidence),
         ),
         _fact(

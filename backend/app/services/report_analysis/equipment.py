@@ -211,7 +211,7 @@ def build_context(
         _fact(
             "F005",
             "任务变化与切割时间",
-            f"比上一周期{_change_label(task_change)}，{len(anomalies)} 项切割时间较长",
+            f"任务总数比上一周期{_change_label(task_change)}；{len(anomalies)} 项切割时间较长",
             "；".join(task_trend_evidence)
             + f"；按切割时间分布筛出的较长任务共 {len(anomalies)} 项，最多展示 5 项：{anomaly_details}",
         ),

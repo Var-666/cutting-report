@@ -332,6 +332,12 @@ class ReportAnalysisService:
                 "大模型智能分析未启用，请先完成配置。"
             )
         context['scope'].update(device_id=self.settings.device_id, line_name=self.settings.device_name)
+        ongoing_notice = '当前统计周期尚未结束（包含今日实时数据），与上一完整周期的任务量对比仅作进度参考，不代表全天最终产出下降。'
+        quality = [item for item in context['data_quality'] if item != ongoing_notice]
+        today = datetime.now(self.timezone).date().isoformat()
+        if context['scope']['period_start'] <= today <= context['scope']['period_end']:
+            quality.append(ongoing_notice)
+        context['data_quality'] = quality
         for references in context['_references'].values():
             for reference in references:
                 reference.update(device_id=self.settings.device_id,

@@ -133,3 +133,43 @@ def test_brief_rejects_cross_period_cross_line_links_and_reversed_changes():
     context['facts'].append(dict(id='F099', label='任务变化', value='下降 5.0%', source='上一可比周期'))
     with pytest.raises(ValueError, match='变化方向'):
         validate_brief(output | {'summary': '任务数上升5.0%。'}, context)
+
+
+@pytest.fixture
+def duration_context():
+    from datetime import date, datetime
+    from decimal import Decimal
+    from app.models.domain import WorkshopRecord
+    from app.services.report_analysis.common import normalize_analysis_context
+    row = WorkshopRecord('task-A', 'P', None, None, 'program', Decimal('10'), Decimal('0'), Decimal('3600'),
+        production_date=date(2026, 11, 10), production_time=datetime(2026, 11, 10, 10, 30))
+    return normalize_analysis_context(build_context('2026-11-10', [row]))[0]
+
+
+@pytest.mark.parametrize('summary', ['任务耗时约60分钟。', '任务耗时1小时。', '任务耗时3600秒。', '任务耗时01:00:00。',
+                                      '建议分2步核查。', '重点核对这2类记录。'])
+def test_brief_accepts_equivalent_duration_and_prose_numbering(duration_context, summary):
+    from app.services.report_analysis.brief_validation import validate_brief
+    assert validate_brief(draft() | {'summary': summary}, duration_context)['summary'] == summary
+
+
+@pytest.mark.parametrize('summary', ['本期有2项任务。', '任务耗时59分钟。', '任务耗时约90分钟。', '任务耗时10.5小时。'])
+def test_brief_rejects_wrong_counts_durations_and_clock_times(duration_context, summary):
+    from app.services.report_analysis.brief_validation import validate_brief
+    with pytest.raises(ValueError, match='数量|时长'):
+        validate_brief(draft() | {'summary': summary}, duration_context)
+
+
+def test_internal_fact_ids_do_not_authorize_business_numbers():
+    from app.services.report_analysis.brief_validation import _numbers
+    assert _numbers('F002 F012 Cutter02') == set()
+    assert _numbers('待确认2项，覆盖率40.0%') == {2, 40}
+
+
+def test_brief_accepts_minutes_and_decimal_hours_from_authoritative_seconds(duration_context):
+    from app.services.report_analysis.brief_validation import validate_brief
+    context = duration_context
+    context['tables'][0]['rows'][0]['work_time'] = 3540
+    assert validate_brief(draft() | {'summary': '该任务耗时59分钟。'}, context)
+    context['tables'][0]['rows'][0]['work_time'] = 5400
+    assert validate_brief(draft() | {'summary': '该任务耗时1.5小时。'}, context)

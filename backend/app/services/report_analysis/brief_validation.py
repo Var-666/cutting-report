@@ -10,7 +10,33 @@ from app.services.report_analysis.brief import model_context
 
 
 def _numbers(text: str) -> set[Decimal]:
-    return {Decimal(number.replace(',', '')) for number in re.findall(r'(?<![A-Za-z])\d[\d,]*(?:\.\d+)?', text)}
+    return {Decimal(number.replace(',', '')) for number in re.findall(r'(?<![A-Za-z0-9_.])\d[\d,]*(?:\.\d+)?', text)}
+
+
+def _duration_seconds(value: object) -> set[Decimal]:
+    if isinstance(value, dict):
+        durations = set()
+        for key, item in value.items():
+            if key in {'work_time', 'work_time_seconds', 'total_work_time_seconds'} and isinstance(item, (int, float)):
+                durations.add(Decimal(str(item)))
+            elif isinstance(item, (dict, list)) or key in {'value', 'source'}:
+                durations.update(_duration_seconds(item))
+        return durations
+    if isinstance(value, list):
+        return set().union(*(_duration_seconds(item) for item in value if isinstance(item, (dict, list))))
+    if isinstance(value, str):
+        return {Decimal(hours) * 3600 + Decimal(minutes) * 60 + Decimal(seconds)
+                for hours, minutes, seconds in re.findall(r'(?<!\d)(\d+):([0-5]\d):([0-5]\d)(?!\d)', value)}
+    return set()
+
+
+def _check_duration(match: re.Match, durations: set[Decimal]) -> str:
+    amount = Decimal(match['amount'].replace(',', ''))
+    scale = {'小时': 3600, '分钟': 60, '秒': 1}[match['unit']]
+    tolerance = Decimal(1).scaleb(amount.as_tuple().exponent) * scale / 2 if match['approx'] else Decimal(0)
+    if not any(abs(amount * scale - seconds) <= tolerance for seconds in durations):
+        raise ValueError('分析时长与输入不符')
+    return ''
 
 
 def validate_brief(content: object, context: dict) -> dict:
@@ -41,9 +67,11 @@ def validate_brief(content: object, context: dict) -> dict:
             raise ValueError('建议必须关联真实发现')
         if any(term in action.detail for term in ('加强生产管理', '持续关注相关指标', '进一步提高工作效率')):
             raise ValueError('建议缺少具体跟进对象和动作')
-    authoritative = json.dumps(model_context(context), ensure_ascii=False)
+    model_input = model_context(context)
+    authoritative = json.dumps(model_input, ensure_ascii=False)
     # shortcut: token checks do not establish causality; add targeted checks for concrete false claims.
     allowed_numbers = _numbers(authoritative)
+    durations = _duration_seconds(model_input)
     direction_pattern = r'(上升|增长|增加|下降|减少|降低)\s*(\d+(?:\.\d+)?)%'
     def direction_key(direction, amount):
         return (1 if direction in {'上升', '增长', '增加'} else -1, Decimal(amount))
@@ -60,9 +88,12 @@ def validate_brief(content: object, context: dict) -> dict:
         if any(direction_key(direction, amount) not in allowed_changes
                for direction, amount in re.findall(direction_pattern, text)):
             raise ValueError('分析变化方向或百分比与事实不符')
-        if not _numbers(text) <= allowed_numbers:
-            raise ValueError('分析包含输入中不存在的数量')
         if not set(re.findall(r'\d{4}-\d{2}-\d{2}', text)) <= allowed_dates:
             raise ValueError('分析包含输入中不存在的日期')
+        quantities = re.sub(r'(?P<approx>约\s*)?(?P<amount>\d[\d,]*(?:\.\d+)?)\s*(?P<unit>小时|分钟|秒)',
+                            lambda match: _check_duration(match, durations), text)
+        quantities = re.sub(r'(?<!\d)[1-3]\s*(?=步|类|点)', '', quantities)
+        if not _numbers(quantities) <= allowed_numbers:
+            raise ValueError('分析包含输入中不存在的数量')
     return AnalysisBrief(**draft.model_dump(exclude={'findings'}), findings=findings,
                          scope=context['scope'], data_quality=context['data_quality']).model_dump()
