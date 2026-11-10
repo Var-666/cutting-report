@@ -16,6 +16,7 @@ from app.services import analysis_execution, llm_service
 from app.services.alarm_analysis_service import AlarmAnalysisService
 from app.services.analysis_execution import analysis_operation
 from app.services.llm_service import AnalysisOutputValidationError, LlmService, _LlmCapacity
+from app.services.report_analysis.workshop import build_context
 from app.core.request_cancellation import (
     SqlRequestCancelled, bind_request_id, reset_request_id, sql_request_cancellations,
 )
@@ -44,14 +45,14 @@ def mock_http(monkeypatch, handler):
 
 
 def envelope(scenario='report'):
-    content = ({key: '分析' for key in ('overview', 'features', 'alerts', 'suggestions')}
+    content = (dict(headline='无任务记录', summary='本期无有效任务，无法评价生产表现。', key_metric_ids=[], findings=[], actions=[])
                if scenario == 'report' else {'summary': '无告警', 'findings': [], 'actions': [], 'limitations': []})
     return {'choices': [{'message': {'content': json.dumps(content)}}], 'usage': {'total_tokens': 9}}
 
 
 def analyze(state_database, settings, scenario='report'):
     if scenario == 'report':
-        return LlmService(settings, database=state_database).analyze_context('workshop', {'facts': []})
+        return LlmService(settings, database=state_database).analyze_context('workshop', build_context('2026-08-18', []))
     return AlarmAnalysisService(settings, database=state_database).analyze([])
 
 

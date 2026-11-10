@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import statistics
+from calendar import monthrange
+from datetime import timedelta
 
 from app.models.domain import LeadershipReportResult, to_primitive
+from app.services.report_analysis.brief import add_candidates
 from app.services.report_analysis.common import (
     _change,
     _change_label,
@@ -17,15 +20,23 @@ from app.services.report_analysis.common import (
 def build_context(report: LeadershipReportResult, monthly_records: list) -> dict:
     summary_rows = monthly_records
     current = report.current_month_total
-    previous_candidates = [
-        item
-        for item in report.monthly_records
-        if item.period_start < report.report_month
-    ]
-    previous = report.comparison_total or max(
-        previous_candidates, key=lambda item: item.period_start, default=None
-    )
     range_mode = report.period_start is not None and report.period_end is not None
+    previous_month = (report.report_month.replace(day=1) - timedelta(days=1)).replace(day=1)
+    previous = None
+    comparison_start = comparison_end = None
+    if range_mode:
+        if (report.comparison_total is not None and report.comparison_start and report.comparison_end
+            and report.comparison_end == report.period_start - timedelta(days=1)
+            and report.comparison_end - report.comparison_start == report.period_end - report.period_start):
+            previous = report.comparison_total
+            comparison_start, comparison_end = report.comparison_start, report.comparison_end
+    else:
+        previous = next((r for r in report.monthly_records if r.period_start == previous_month), None)
+        if previous is not None:
+            comparison_start = previous_month
+            comparison_end = previous_month.replace(day=monthrange(previous_month.year, previous_month.month)[1])
+    year_ago = report.year_ago_total if (not range_mode and report.year_ago_total
+        and report.year_ago_total.period_start == report.report_month.replace(year=report.report_month.year - 1)) else None
     period_label = (
         f"{report.period_start.isoformat()} 至 {report.period_end.isoformat()}"
         if range_mode
@@ -34,8 +45,8 @@ def build_context(report: LeadershipReportResult, monthly_records: list) -> dict
     period_name = "区间" if range_mode else "当月"
     month_change = _change(current.task_count, previous.task_count) if previous else None
     year_change = (
-        _change(current.task_count, report.year_ago_total.task_count)
-        if report.year_ago_total
+        _change(current.task_count, year_ago.task_count)
+        if year_ago
         else None
     )
     length_month_change = (
@@ -67,13 +78,13 @@ def build_context(report: LeadershipReportResult, monthly_records: list) -> dict
             if deviation > 0 and item.task_count > daily_threshold
         ]
     previous_label = (
-        f"{report.comparison_start.isoformat()} 至 {report.comparison_end.isoformat()}"
-        if report.comparison_start and report.comparison_end
+        f"{comparison_start.isoformat()} 至 {comparison_end.isoformat()}"
+        if comparison_start and comparison_end
         else "上一对比周期"
     )
     year_ago_label = (
         report.report_month.replace(year=report.report_month.year - 1).isoformat()[:7]
-        if report.year_ago_total
+        if year_ago
         else "上年同期"
     )
     project_value = (
@@ -125,8 +136,8 @@ def build_context(report: LeadershipReportResult, monthly_records: list) -> dict
             _change_label(month_change),
             (
                 f"当前 {current.task_count} 项；{previous_label} "
-                f"{previous.task_count if previous else 0} 项；任务数环比 {_change_label(month_change)}；"
-                f"切割长度环比 {_change_label(length_month_change)}"
+                f"{previous.task_count if previous else 0} 项；任务数比上一可比周期 {_change_label(month_change)}；"
+                f"切割长度比上一可比周期 {_change_label(length_month_change)}"
                 if previous
                 else "未取得上一可比周期数据，任务数和切割长度均无法比较"
             ),
@@ -137,8 +148,8 @@ def build_context(report: LeadershipReportResult, monthly_records: list) -> dict
             _change_label(year_change),
             (
                 f"当前 {current.task_count} 项；{year_ago_label} "
-                f"{report.year_ago_total.task_count} 项；任务数同比 {_change_label(year_change)}"
-                if report.year_ago_total
+                f"{year_ago.task_count} 项；任务数同比 {_change_label(year_change)}"
+                if year_ago
                 else "未取得上年同期数据，任务数无法同比"
             ),
         ),
@@ -149,7 +160,16 @@ def build_context(report: LeadershipReportResult, monthly_records: list) -> dict
             f"任务最多工程：{project_value}；{anomaly_source}",
         ),
     ]
+    facts.extend([
+        _fact("F007", f"{period_name}坡口长度", f"{_number(current.groove_length_m)} 米", f"报表周期 {period_label}；坡口长度合计"),
+        _fact("F008", "上一可比周期的生产汇总",
+              f"切割长度 {_number(previous.cut_length_m)} 米；坡口长度 {_number(previous.groove_length_m)} 米；切割时长 {_duration(previous.work_time_seconds)}" if previous else "无法比较",
+              previous_label if previous else "未取得明确可比周期数据"),
+    ])
     context = {
+        "current_task_count": current.task_count,
+        "distribution_coverage": {"project_groups": len(report.project_distribution), "shown": len(projects)},
+        "data_quality": ["每日分布仅反映有记录的生产日；无记录日期不推断为停机。"],
         "facts": facts,
         "report_month": period_label,
         "tables": [
@@ -160,6 +180,9 @@ def build_context(report: LeadershipReportResult, monthly_records: list) -> dict
             ),
         ],
         "comparisons": {
+            "comparison_date": f"{comparison_start.isoformat()} 至 {comparison_end.isoformat()}" if comparison_start else None,
+            "groove_change_percent": _change(current.groove_length_m, previous.groove_length_m) if previous else None,
+            "work_time_change_percent": _change(current.work_time_seconds, previous.work_time_seconds) if previous else None,
             "task_mom_percent": round(month_change, 1) if month_change is not None else None,
             "cut_length_mom_percent": round(length_month_change, 1) if length_month_change is not None else None,
             "task_yoy_percent": round(year_change, 1) if year_change is not None else None,
@@ -168,4 +191,4 @@ def build_context(report: LeadershipReportResult, monthly_records: list) -> dict
         "anomalies": daily_anomalies,
         "daily_sample_count": len(daily_counts),
     }
-    return context
+    return add_candidates(context, 'leadership')

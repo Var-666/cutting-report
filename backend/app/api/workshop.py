@@ -1,6 +1,6 @@
 from __future__ import annotations
 from datetime import date
-from typing import Literal
+from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from app.api.workloads import query_requests
 from app.api.devices import device_state, device_settings
@@ -82,9 +82,9 @@ def list_tasks(request: Request, report_date: date, project_name: str | None=Que
     return _envelope(request, _invoke(_service(request).list_tasks, report_date=report_date, project_name=project_name, confirmation_status=confirmation_status, sort_mode=sort_mode, page=page, page_size=page_size, warmup=warmup, user=user))
 
 @query_requests.route(router.get('/range', response_model=ApiEnvelope[WorkshopResult], response_model_exclude_unset=True))
-def list_range_tasks(request: Request, start_date: date, end_date: date, project_name: str | None=Query(default=None, max_length=128), confirmation_status: Literal['all', 'confirmed', 'unconfirmed']='all', page: int=Query(default=1, ge=1), page_size: int=Query(default=10, ge=10, le=100), _: dict=Depends(require_admin)) -> dict:
+def list_range_tasks(request: Request, start_date: date, end_date: date, project_name: str | None=Query(default=None, max_length=128), task_id: Annotated[str | None, Query(max_length=128)]=None, confirmation_status: Literal['all', 'confirmed', 'unconfirmed']='all', page: int=Query(default=1, ge=1), page_size: int=Query(default=10, ge=10, le=100), _: dict=Depends(require_admin)) -> dict:
     try:
-        return _envelope(request, _invoke(_service(request).list_range_tasks, value_error_status=422, start_date=start_date, end_date=end_date, project_name=project_name, confirmation_status=confirmation_status, page=page, page_size=page_size))
+        return _envelope(request, _invoke(_service(request).list_range_tasks, value_error_status=422, start_date=start_date, end_date=end_date, project_name=project_name, confirmation_status=confirmation_status, page=page, page_size=page_size, task_id=task_id))
     except SqlServerConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 

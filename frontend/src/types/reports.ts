@@ -28,6 +28,7 @@ export interface WorkshopQuery {
 export interface WorkshopRangeQuery extends Omit<WorkshopQuery, 'reportDate'> {
   startDate: string;
   endDate: string;
+  taskId?: string;
 }
 export interface ReportDefinition {
   definition_id: string;

@@ -3,6 +3,7 @@ import type { AnalysisResult } from '../types/reports'
 import { computed } from 'vue'
 import { NAlert, NButton, NCollapse, NCollapseItem } from 'naive-ui'
 import AppIcon from './AppIcon.vue'
+import CuttingAnalysisBrief from './CuttingAnalysisBrief.vue'
 import { compactAnalysisFactLabel, compactAnalysisFactValue } from '../utils/analysisFactDisplay.ts'
 import { formatDeviceDisplay } from '../utils/deviceDisplay.ts'
 
@@ -77,6 +78,8 @@ const conclusionText = computed(() => plainAnalysisText(props.analysis?.overview
       <span>{{ error }}</span><NButton attr-type="button" @click="emit('retry')">重试</NButton>
     </NAlert>
     <template v-if="analysis">
+      <CuttingAnalysisBrief v-if="analysis.brief" :brief="analysis.brief" :facts="analysis.facts" :generated-at="analysis.generated_at" />
+      <template v-else>
       <section class="analysis-conclusion" aria-labelledby="analysis-conclusion-title">
         <span class="analysis-conclusion__icon"><AppIcon name="sparkles" :size="31" tone="current" /></span>
         <div class="analysis-conclusion__copy">
@@ -122,6 +125,7 @@ const conclusionText = computed(() => plainAnalysisText(props.analysis?.overview
           </article>
         </div>
       </NCollapseItem></NCollapse>
+      </template>
       <p class="analysis-time">生成时间：{{ analysis.generated_at || '--' }}</p>
     </template>
     <div v-else-if="!loading && !error" class="analysis-state">{{ emptyMessage }}</div>

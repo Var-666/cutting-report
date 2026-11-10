@@ -134,4 +134,4 @@ def _work_time_outliers(
         }
         for row in sorted(valid, key=lambda item: item.work_time or 0, reverse=True)
         if float(row.work_time or 0) > threshold
-    ][:5]
+    ]

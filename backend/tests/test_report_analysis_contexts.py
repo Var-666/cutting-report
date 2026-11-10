@@ -70,24 +70,18 @@ def analysis_cases():
     }
 
 
-EXPECTED_INPUT_VERSIONS = {'leadership_month': 'ddcdfbf06c3b1994d9d78b5e1e8906c1af22fca6835f0e9bd50ba14c5d4cc7ba',
- 'leadership_range': '34dd72a928e9de71e80aa9b3967562335b6ed426cadc8fff6393530d4df75d85',
- 'leadership_empty': '3e8359da13c91fe6202cd7f237d59f1b83d4ec3be63ae66cb7d47d15526f8c92',
- 'workshop': '2f4411fb10d90477d42c19464079072e6829b2617cab12dd50c8767d77fcd72c',
- 'workshop_empty': 'a63b3f2e1af1eba217a50ac816c976cbbfb0158d2a6442c3ba5738388f5259c8',
- 'equipment_partial': '1a8ce1563347f8234af64aac8e3c95de36bd9f83814a2d2bda8dfccf191dde15',
- 'equipment_mock': 'fefd04dcfa83c28d0b20de1940da79e4d0e5aad58d10b14a91705f2ee2f67d2d',
- 'equipment_empty': '3544a1314de3396e9f262b86dd46b0f1c58f28c554ea1e58978cb17e2f006ff3'}
-
-
 @pytest.mark.parametrize('case', analysis_cases())
-def test_report_model_input_and_source_versions_match_expected(tmp_path, monkeypatch, case):
+def test_report_context_has_scope_and_valid_candidate_evidence(tmp_path, monkeypatch, case):
     kind, args, kwargs = analysis_cases()[case]
     service = ReportAnalysisService(Settings(project_root=tmp_path, data_source_mode='demo'), SimpleNamespace(database=None))
     captured = []
     monkeypatch.setattr(service, '_analyze', lambda **values: captured.append(values))
     getattr(service, f'analyze_{kind}')(*args, **kwargs)
-    assert generate_data_version(captured[0]) == EXPECTED_INPUT_VERSIONS[case]
+    context = captured[0]['context']
+    assert context['scope']['report_type'] == kind
+    assert all(set(c['evidence_ids']) <= {f['id'] for f in context['facts']} for c in context['candidates'])
+    assert set(context['_references']) == {c['id'] for c in context['candidates']}
+    assert len(generate_data_version(context)) == 64
 
 
 @pytest.mark.parametrize('case', ['workshop', 'equipment_partial'])
@@ -95,7 +89,7 @@ def test_model_request_links_outlier_tasks_to_details_and_energy_statuses(state_
     submitted = []
     def respond(request):
         submitted.append(json.loads(request.content)['messages'])
-        content = {key: key for key in ('overview', 'features', 'alerts', 'suggestions')}
+        content = dict(headline='本期生产情况', summary='任务记录需结合确认及仪表覆盖理解。', key_metric_ids=[], findings=[], actions=[])
         return httpx.Response(200, json={'choices': [{'message': {'content': json.dumps(content)}}]})
     client = httpx.Client
     monkeypatch.setattr('app.services.llm_service.httpx.Client',
@@ -113,11 +107,13 @@ def test_model_request_links_outlier_tasks_to_details_and_energy_statuses(state_
 
     assert result.mode == 'model' and len(submitted) == 1
     payload = json.loads(submitted[0][1]['content'])
-    assert set(payload) == {'report_type', 'report_date', 'report_month', 'facts', 'tables'}
-    assert len(payload['facts']) == 6 and len(payload['tables']) == 2
+    assert {'scope', 'facts', 'candidates', 'tables', 'data_quality'} <= payload.keys()
+    assert len(payload['facts']) >= 6 and len(payload['tables']) == 2
     table = payload['tables'][0]
     assert table['row_count'] == len(records)
-    assert [row['task_id'] for row in table['rows']] == [record.task_id for record in records]
+    assert set(row['task_id'] for row in table['rows']) <= {record.task_id for record in records}
+    assert table['sample_count'] <= table['row_count']
+    assert '样本' in table['coverage']
     rows = {row['task_id']: row for row in table['rows']}
     longest = max(records, key=lambda record: record.work_time)
     fact_id = 'F006' if kind == 'workshop' else 'F005'
@@ -125,6 +121,8 @@ def test_model_request_links_outlier_tasks_to_details_and_energy_statuses(state_
     assert f"任务 {longest.task_id} 工时" in fact['source']
     assert rows[longest.task_id]['segment_name'] == longest.segment_name
     for record in records:
+        if record.task_id not in rows:
+            continue
         row = rows[record.task_id]
         assert row['project_code'] == record.project_code and row['ship_no'] == record.ship_no
         if kind == 'workshop':
@@ -139,3 +137,62 @@ def test_model_request_links_outlier_tasks_to_details_and_energy_statuses(state_
         assert rows[records[0].task_id]['gas_consumption'] is None
         assert rows[records[1].task_id]['gas_consumption'] == 0
         assert 'excluded-from-model' not in submitted[0][1]['content']
+
+
+def test_leadership_requires_real_comparison_dates_for_custom_ranges():
+    from app.services.report_analysis.leadership import build_context
+    report = analysis_cases()['leadership_month'][1][0]
+    month = build_context(report, report.monthly_records)
+    assert month['scope'] | {} == dict(report_type='leadership', period_start='2026-08-01', period_end='2026-08-31',
+        period_mode='month', comparison_start='2026-07-01', comparison_end='2026-07-31')
+    for end in [date(2026, 8, 1), date(2026, 8, 18)]:
+        custom = build_context(replace(report, period_start=date(2026, 8, 1), period_end=end), report.monthly_records)
+        assert custom['scope']['period_end'] == end.isoformat()
+        assert 'comparison_start' not in custom['scope']
+        assert custom['comparisons']['task_yoy_percent'] is None
+        assert all(c['id'] != 'C_comparison' for c in custom['candidates'])
+    stale = replace(report, monthly_records=[replace(report.monthly_records[0], period_start=date(2026, 6, 1))])
+    assert 'comparison_start' not in build_context(stale, stale.monthly_records)['scope']
+
+
+def test_workshop_links_keep_all_pending_tasks_while_model_input_is_bounded():
+    from app.services.report_analysis.workshop import build_context
+    from app.services.report_analysis.brief import model_context
+    original = analysis_cases()['workshop'][1][1][0]
+    records = [replace(original, task_id=f'task-{index}', confirmed_by=None, production_date=date(2026, 8, 18)) for index in range(250)]
+    context = build_context('2026-08-18 至 2026-08-20', records)
+    assert len(context['_references']['C_confirmation']) == 250
+    candidate = next(c for c in context['candidates'] if c['id'] == 'C_confirmation')
+    assert candidate['reference_count'] == 250 and len(candidate['reference_sample']) == 3
+    table = model_context(context)['tables'][0]
+    assert table['row_count'] == 250 and table['sample_count'] <= 9
+    confirmed = build_context('2026-08-18', [replace(original, confirmed_by='工人')])
+    assert 'C_confirmation' not in confirmed['_references']
+    assert 'C_production' in confirmed['_references']
+    assert build_context('2026-08-18', [])['candidates'] == []
+
+
+def test_energy_coverage_estimates_and_unavailable_are_separate_candidates():
+    from app.services.report_analysis.equipment import build_context
+    original = analysis_cases()['equipment_partial'][1][1][0]
+    complete = replace(original, gas_consumption=Decimal('1'), electricity_consumption=Decimal('2'),
+        gas_data_status='metered', electricity_data_status='metered')
+    context = build_context('2026-08-18', [complete], energy_data_mode='metered')
+    assert 'C_energy_quality' not in context['_references']
+    assert next(f['value'] for f in context['facts'] if f['id'] == 'F011') == '100.0%'
+    estimated = build_context('2026-08-18', [replace(complete, gas_data_status='estimated')], energy_data_mode='partial')
+    assert len(estimated['_references']['C_energy_estimates']) == 1
+    missing = build_context('2026-08-18', [original], energy_data_mode='unavailable')
+    assert len(missing['_references']['C_energy_quality']) == 1
+    assert next(f['value'] for f in missing['facts'] if f['id'] == 'F003') == '缺失'
+    assert any('不等于零' in item for item in missing['data_quality'])
+
+
+def test_long_task_candidates_do_not_lose_associations_beyond_preview_limit():
+    from app.services.report_analysis.workshop import build_context
+    original = analysis_cases()['workshop'][1][1][0]
+    records = [replace(original, task_id=f'task-{i}', work_time=Decimal('60' if i < 100 else '3600')) for i in range(108)]
+    context = build_context('2026-08-18', records)
+    assert len(context['anomalies']) == len(context['_references']['C_duration']) == 8
+    fact = next(f for f in context['facts'] if f['id'] == 'F006')
+    assert '共 8 项' in fact['source'] and '最多展示 5 项' in fact['source']

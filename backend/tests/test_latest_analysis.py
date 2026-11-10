@@ -21,6 +21,7 @@ from app.services.llm_service import background_llm_work
 from app.services.query_service import QueryService
 from app.services.report_analysis_service import AnalysisUnavailableError, ReportAnalysisService
 from tests.analysis_fakes import model_analysis
+from app.services.report_analysis.workshop import build_context as build_workshop_context
 from tests.test_report_analysis_service import _services
 
 
@@ -59,9 +60,12 @@ def test_page_reads_previous_success_during_refresh_then_replaces_it_without_cal
     report_date = '2026-10' if report_type == 'leadership' else '2026-10-21'
 
     def generate(round_name, publish_latest=True):
+        context = build_workshop_context('2026-10-21', [])
+        context['scope']['report_type'] = report_type
+        context['round'] = round_name
         with background_llm_work():
             return service._analyze(report_type=report_type, report_date=report_date,
-                                    context={'facts': [], 'round': round_name}, force=True,
+                                    context=context, force=True,
                                     publish_latest=publish_latest)
 
     app = FastAPI()

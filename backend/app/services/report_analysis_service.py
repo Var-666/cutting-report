@@ -331,6 +331,12 @@ class ReportAnalysisService:
             raise AnalysisUnavailableError(
                 "大模型智能分析未启用，请先完成配置。"
             )
+        context['scope'].update(device_id=self.settings.device_id, line_name=self.settings.device_name)
+        for references in context['_references'].values():
+            for reference in references:
+                reference.update(device_id=self.settings.device_id,
+                                 period_start=context['scope']['period_start'],
+                                 period_end=context['scope']['period_end'])
         primitive_context, canonical = normalize_analysis_context(context)
         input_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
         data_version = source_data_version or input_hash

@@ -4,6 +4,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 from app.models.domain import WorkshopRecord
+from app.services.report_analysis.brief import add_candidates
 from app.services.report_analysis.common import (
     _change,
     _change_label,
@@ -106,7 +107,7 @@ def build_context(
     anomaly_details = (
         "、".join(
             f"任务 {item['task_id']} 工时 {_duration(item['work_time'])}"
-            for item in anomalies
+            for item in anomalies[:5]
         )
         if anomalies
         else "0 项"
@@ -172,4 +173,4 @@ def build_context(
         "project_distribution": projects[:10],
         "anomalies": anomalies,
     }
-    return context
+    return add_candidates(context, 'workshop', records)

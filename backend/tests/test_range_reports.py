@@ -463,5 +463,47 @@ def test_pipeline_exports_the_selected_range(state_database,
     assert "2026-08-18 至 2026-08-20" in html
     assert expected_heading in html
     if report_type == "workshop":
-        assert "工人工时汇总" not in html
+        assert ">工人工时汇总</h2>" not in html
         assert "所选区间暂无工人确认数据" not in html
+
+
+def test_workshop_task_link_filters_real_id_within_original_period(state_database, tmp_path):
+    settings, metadata, pipeline = _pipeline(state_database, tmp_path)
+    _, records = pipeline.range_service.workshop_records(date(2026, 8, 18), date(2026, 8, 20))
+    assert records
+    from app.services.workshop_service import WorkshopService
+    service = WorkshopService(None, None, settings, range_report_service=pipeline.range_service)
+    query = dict(start_date=date(2026, 8, 18), end_date=date(2026, 8, 20), project_name=None,
+        confirmation_status='all', page=1, page_size=10, task_id=records[0].task_id)
+    linked = service.list_range_tasks(**query)
+    assert linked['total'] == 1
+    assert linked['items'][0]['task_id'] == records[0].task_id
+    assert service.list_range_tasks(**(query | {'task_id': 'not-in-scope'}))['total'] == 0
+    assert service.list_range_tasks(**(query | {'start_date': date(2026, 8, 21), 'end_date': date(2026, 8, 22)}))['total'] == 0
+
+
+@pytest.mark.parametrize('kind', ['leadership', 'workshop', 'equipment'])
+def test_html_export_displays_dynamic_brief_and_keeps_backend_evidence(state_database, tmp_path, kind):
+    from app.models.domain import AnalysisResult
+    from app.services.report_analysis.brief_validation import validate_brief
+    settings, metadata, pipeline = _pipeline(state_database, tmp_path)
+    def model(report_type, context):
+        candidate = context['candidates'][0]
+        brief = validate_brief(dict(headline='测试数据生产简报', summary='根据本期真实统计口径解释生产记录。',
+            key_metric_ids=candidate['evidence_ids'][:2], findings=[dict(candidate_id=candidate['id'], title='测试发现', detail='关联记录可供核对。',
+                evidence_ids=candidate['evidence_ids'])], actions=[]), context)
+        return AnalysisResult(status='success', overview=brief['summary'], features='', alerts='', suggestions='', brief=brief)
+    pipeline.analysis_service.llm.analyze_context = model
+    now = datetime.now(ZoneInfo(settings.timezone)).isoformat(timespec='seconds')
+    metadata.create_job(report_id='brief-export', report_type=kind, report_date='2026-08-18',
+        period_start='2026-08-18', period_end='2026-08-20', project_code=None, ship_no=None,
+        request_id='brief-export-test', created_at=now, parameters={'chart_type': 'bar_line'})
+    pipeline.run(metadata.claim_next_job(now))
+    saved = metadata.get_job('brief-export')
+    assert saved['status'] == 'completed', saved
+    html = (settings.reports_dir / saved['relative_path']).read_text()
+    assert '测试数据生产简报' in html and '测试发现' in html
+    assert '<summary>分析依据</summary>' in html
+    assert 'analysis-card overview' not in html
+    assert '<h3>建议跟进</h3>' not in html
+    assert html.count('<div class="analysis-fact">') == 2

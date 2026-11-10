@@ -12,6 +12,7 @@ from app.services.llm_service import (
     _LlmCapacity, background_llm_work, llm_capacity, post_llm_json,
 )
 from app.services.alarm_analysis_service import AlarmAnalysisService
+from app.services.report_analysis.workshop import build_context
 from app.core.request_cancellation import (
     SqlRequestCancelled, bind_request_id, reset_request_id, sql_request_cancellations,
 )
@@ -29,7 +30,9 @@ def test_report_input_budget_rejects_before_network(state_database, tmp_path, mo
         raise AssertionError('network must not be called for oversized input')
     monkeypatch.setattr('app.services.llm_service.httpx.Client', fail)
     with pytest.raises(AnalysisInputTooLarge):
-        service.analyze_context('leadership', {'tables': [{'x': 'x' * 2000}]})
+        context = build_context('2026-08-18', [])
+        context['tables'] = [{'name': '大输入', 'rows': [{'x': 'x' * 2000}]}]
+        service.analyze_context('workshop', context)
 
 
 def test_alarm_input_budget_rejects_before_network(state_database, tmp_path, monkeypatch):
@@ -189,7 +192,7 @@ def test_model_output_budget_rejects_oversized_content(state_database, tmp_path,
         def post(self, *args, **kwargs): return Response()
     monkeypatch.setattr("app.services.llm_service.httpx.Client", Client)
     with pytest.raises(Exception, match="超过配置容量"):
-        LlmService(settings, database=state_database).analyze_context("leadership", {"facts": []})
+        LlmService(settings, database=state_database).analyze_context("workshop", build_context("2026-08-18", []))
 
 
 def test_streaming_model_response_has_one_total_deadline():

@@ -25,6 +25,7 @@ import StandardReportQuery from '../components/StandardReportQuery.vue'
 import WorkshopStructureCharts from '../components/WorkshopStructureCharts.vue'
 import { reportToday, taskProductionDate } from '../api/reportDates.ts'
 import { formatChineseDate, formatChineseDateTime } from '../utils/dateDisplay.ts'
+import { getDeviceId } from '../api/deviceContext.ts'
 import { useDeviceSwitchQuery } from '../composables/useDeviceSwitchQuery.ts'
 import { mergeOwnedQuery, queryChoice, queryDateRange, queryPositiveInteger, queryText, sameRouteQuery } from '../utils/reportRouteState.ts'
 
@@ -38,8 +39,8 @@ const route = useRoute()
 const router = useRouter()
 const today = reportToday()
 const pageSize = 10
-const filters = reactive({ reportDate: today, startDate: today, endDate: today, projectName: '', confirmationStatus: 'all' })
-const appliedRouteState = reactive({ startDate: today, endDate: today, projectName: '', confirmationStatus: 'all', page: 1, defaultView: true })
+const filters = reactive({ reportDate: today, startDate: today, endDate: today, projectName: '', taskId: '', confirmationStatus: 'all' })
+const appliedRouteState = reactive({ startDate: today, endDate: today, projectName: '', taskId: '', confirmationStatus: 'all', page: 1, defaultView: true })
 const result = ref<WorkshopResult>({ analysis_source_version: '', report: null, items: [], total: 0, page: 1, page_size: pageSize, project_names: [], confirmed_count: 0, worker_summaries: [], duration_distribution: [], status_distribution: [], top_cut_length_tasks: [] })
 const loading = ref(false)
 const error = ref('')
@@ -99,13 +100,15 @@ let requestSequence = 0
 let routeStateReady = false
 let restoringRouteState = false
 
-const routeQueryKeys = ['start', 'end', 'project', 'confirmation', 'page', 'chart']
+const routeQueryKeys = ['start', 'end', 'project', 'confirmation', 'page', 'chart', 'task', 'task_line']
 
 function routeStateQuery() {
   return mergeOwnedQuery(route.query, routeQueryKeys, {
     start: appliedRouteState.defaultView ? '' : appliedRouteState.startDate,
     end: appliedRouteState.defaultView ? '' : appliedRouteState.endDate,
     project: appliedRouteState.projectName,
+    task: appliedRouteState.taskId,
+    task_line: appliedRouteState.taskId ? getDeviceId() : '',
     confirmation: appliedRouteState.confirmationStatus === 'all' ? '' : appliedRouteState.confirmationStatus,
     page: appliedRouteState.page === 1 ? '' : appliedRouteState.page,
     chart: chartType.value === 'bar_line' ? '' : chartType.value,
@@ -114,6 +117,8 @@ function routeStateQuery() {
 
 useDeviceSwitchQuery(isWorker.value ? 'worker-tasks' : 'workshop-report', () => ({
   ...routeStateQuery(),
+  task: '',
+  task_line: '',
   start: isWorker.value ? filters.reportDate : appliedRouteState.startDate,
   end: isWorker.value ? filters.reportDate : appliedRouteState.endDate,
 }))
@@ -198,6 +203,7 @@ async function load(page = 1, { silent = false, ensureReport = true, force = fal
       ...filters,
       ...(!isWorker.value && useAppliedFilters ? {
         startDate: appliedRouteState.startDate, endDate: appliedRouteState.endDate,
+        taskId: appliedRouteState.taskId,
         projectName: appliedRouteState.projectName, confirmationStatus: appliedRouteState.confirmationStatus,
       } : {}),
       sortMode: props.mode,
@@ -221,6 +227,7 @@ async function load(page = 1, { silent = false, ensureReport = true, force = fal
         Object.assign(appliedRouteState, {
           startDate: query.startDate,
           endDate: query.endDate,
+          taskId: query.taskId,
           projectName: query.projectName,
           confirmationStatus: query.confirmationStatus,
           page: data.page,
@@ -248,6 +255,7 @@ function refreshAnalysisReport() {
 }
 
 function applyTaskFilters() {
+  filters.taskId = ''
   defaultReportView.value = false
   clearSelectedTasks()
   load(1, { force: true, syncRoute: !isWorker.value })
@@ -274,6 +282,7 @@ function requestedRouteState() {
   return {
     range,
     chartType: queryChoice(route.query.chart, ['bar_line', 'bar', 'line', 'area'], 'bar_line'),
+    taskId: range && queryText(route.query.task_line) === getDeviceId() ? queryText(route.query.task).trim() : '',
     projectName: range ? queryText(route.query.project).trim() : '',
     confirmationStatus: range ? queryChoice(route.query.confirmation, ['all', 'unconfirmed', 'confirmed'], 'all') : 'all',
     page: range ? queryPositiveInteger(route.query.page) : 1,
@@ -287,6 +296,7 @@ async function applyRequestedRouteState(state: ReturnType<typeof requestedRouteS
     if (isWorker.value) filters.reportDate = state.range.start
     filters.startDate = state.range.start
     filters.endDate = state.range.end
+    filters.taskId = state.taskId
     filters.projectName = state.projectName
     filters.confirmationStatus = state.confirmationStatus
   }
@@ -312,6 +322,7 @@ async function initializeReport({ restoreQuery = false } = {}) {
       filters.endDate = reportDate
     }
     if (!isWorker.value) {
+      filters.taskId = ''
       filters.projectName = ''
       filters.confirmationStatus = 'all'
     }
@@ -347,6 +358,7 @@ async function restoreRouteState() {
     !result.value.report
     || appliedRouteState.startDate !== requested.range.start
     || appliedRouteState.endDate !== requested.range.end
+    || appliedRouteState.taskId !== requested.taskId
     || appliedRouteState.projectName !== requested.projectName
     || appliedRouteState.confirmationStatus !== requested.confirmationStatus
     || appliedRouteState.page !== requested.page
@@ -539,6 +551,7 @@ const workerTableColumns = [
         <NButton attr-type="submit" :disabled="loading || !result.report"><AppIcon name="sparkles" size="14" tone="current" />{{ loading ? '筛选中' : '筛选明细' }}</NButton>
       </form>
       <div v-if="result.report" class="workshop-report-state"><strong>{{ isWorker ? formatChineseDate(result.report.report_date) : `${formatChineseDate(result.report.period_start)} 至 ${formatChineseDate(result.report.period_end)}` }} 车间报表</strong><span>{{ isWorker ? `生成人：${result.report.generated_by_name || '--'} · 生成时间：${time(result.report.generated_at)} · ` : '' }}总任务 {{ result.report.item_count }} 项 · 已确认 {{ result.report.confirmed_count }} 项</span></div>
+      <div v-if="!isWorker && appliedRouteState.taskId" class="workshop-summary" role="status">正在定位任务 {{ appliedRouteState.taskId }}；范围内没有该任务时显示空结果。<NButton text @click="applyTaskFilters">清除任务定位</NButton></div>
       <div v-if="result.report" class="workshop-summary">当前筛选返回 {{ result.total }} 项任务，所选工程号已确认 {{ result.confirmed_count }} 项</div>
       <div v-if="isWorker && result.report" class="workshop-batch-actions"><span>已选择 <strong>{{ selectedTaskCount }}</strong> 项待确认任务</span><div><NButton attr-type="button" :disabled="!selectedTaskCount || batchConfirmation.saving" @click="clearSelectedTasks">清空选择</NButton><NButton class="primary" attr-type="button" :disabled="!selectedTaskCount || loading || batchConfirmation.saving" @click="openBatchConfirmation()" type="primary">确认选中任务</NButton></div></div>
     </template>

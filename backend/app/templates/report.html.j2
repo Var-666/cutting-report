@@ -42,6 +42,13 @@
     tbody tr { background:#fff; } tbody tr:hover { background:#f3f8fa; } tfoot th { color:#16455f; background:#eaf3f6; border-top:2px solid #84aab9; }
     .empty { min-height:120px; display:grid; place-items:center; padding:28px; color:var(--muted); background:var(--soft); text-align:center; }.notice { margin:10px 0; padding:11px 14px; color:#71511d; border-left:4px solid var(--amber); background:#fff7e8; }.notice.error { color:#87353a; border-left-color:var(--danger); background:#fff1f2; }
     .analysis-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:-2px 0 12px; padding:10px 12px; border:1px solid var(--line); background:var(--soft); }.analysis-mode { display:inline-flex; align-items:center; padding:4px 10px; color:#875700; border:1px solid #e6c579; background:#fff4d6; font-size:11px; font-weight:700; }.analysis-mode.model { color:#087443; border-color:#9cd8b9; background:#e9f8f0; }.analysis-facts { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); margin-bottom:12px; border:1px solid var(--line); background:#fff; }.analysis-fact { min-width:0; padding:12px; border-right:1px solid var(--line); border-top:3px solid var(--blue); }.analysis-fact:nth-child(2){border-top-color:var(--teal)}.analysis-fact:nth-child(3){border-top-color:#6576bf}.analysis-fact:nth-child(4){border-top-color:#3b83b0}.analysis-fact:nth-child(5){border-top-color:var(--amber)}.analysis-fact:nth-child(6){border-top-color:var(--danger);border-right:0}.analysis-fact .fact-id { color:var(--blue); font-size:10px; font-weight:800; }.analysis-fact .label{display:inline;font-size:10px}.analysis-fact strong,.analysis-fact small { display:block; margin-top:4px; overflow-wrap:anywhere; }.analysis-fact strong { color:var(--navy); font-size:15px; }.analysis-fact small { color:var(--muted); font-size:9px; line-height:1.45; }
+    .analysis-section--brief > p { margin:8px 0; }
+    .analysis-section--brief h3 { margin:12px 0 6px; }
+    .analysis-section--brief .analysis-facts { grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; border:0; }
+    .analysis-section--brief .analysis-fact { border:1px solid var(--line); border-top:3px solid var(--blue); }
+    .analysis-section--brief .analysis-card { min-height:0; margin:8px 0; }
+    .analysis-section--brief details { margin-top:12px; font-size:11px; }
+    .analysis-section--brief details p { margin:4px 0; line-height:1.5; }
     .analysis-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }.analysis-card { min-height:124px; padding:15px 17px; border:1px solid #cfe0e8; background:#eff6fa; }.analysis-card.features{border-color:#cde4e2;background:#edf8f7}.analysis-card.alerts{border-color:#edd4d6;background:#fff1f2}.analysis-card.suggestions{border-color:#cfe2da;background:#eef8f4}.analysis-card h3 { margin:0 0 8px; color:var(--blue); font-size:14px; }.analysis-card.features h3{color:var(--teal)}.analysis-card.alerts h3{color:var(--danger)}.analysis-card.suggestions h3{color:var(--green)}.analysis-card p { margin:0; color:#49677a; white-space:pre-wrap; }
     .data-chart-grid { display:grid; grid-template-columns:minmax(360px,.9fr) minmax(0,1.2fr); gap:12px; align-items:start; }.data-chart-grid .table-wrap { height:300px; max-height:300px; }.data-chart-grid table { min-width:760px; table-layout:auto; }.equipment-grid .table-wrap { height:532px; max-height:532px; }.equipment-grid table { min-width:940px; }.chart-stack { display:grid; gap:12px; }.chart-stack .chart { height:260px; }
     .print-tip { margin:0 0 12px; color:var(--muted); text-align:right; font-size:11px; } .report-footer { display:flex; justify-content:space-between; gap:20px; padding:16px 38px; color:var(--muted); border-top:1px solid var(--line); background:var(--soft); font-size:11px; }
@@ -242,13 +249,29 @@
     {% endif %}
 
     {% if report.analysis %}
-    <section class="analysis-section">
+    <section class="analysis-section{{ ' analysis-section--brief' if report.analysis.brief else '' }}">
     <h2>{{ '四' if report.meta.report_type in ['leadership', 'workshop', 'equipment'] else '三' }}、智能分析</h2>
     <div class="analysis-head">
       {% set analysis_mode = report.analysis.mode or 'model' %}
       <span class="analysis-mode {{ analysis_mode }}">{{ '大模型分析' if analysis_mode == 'model' else '智能分析暂不可用' }}</span>
       <span class="label">生成时间：{{ report.analysis.generated_at or '--' }}{{ '· 已使用缓存' if report.analysis.cached else '' }}</span>
     </div>
+    {% if report.analysis.brief %}
+    {% set brief = report.analysis.brief %}
+    <p class="label">统计周期：{{ brief.scope.period_start }} 至 {{ brief.scope.period_end }}</p>
+    <h3>{{ brief.headline }}</h3><p>{{ brief.summary }}</p>
+    {% if brief.key_metric_ids %}<section class="analysis-facts">{% for fact in report.analysis.facts if fact.id in brief.key_metric_ids %}<div class="analysis-fact"><span class="label">{{ fact.label }}</span><strong>{{ fact.value }}</strong></div>{% endfor %}</section>{% endif %}
+    {% if brief.findings %}<h3>关键发现</h3>{% for finding in brief.findings %}
+    <article class="analysis-card"><h3>{{ finding.title }}</h3><p>{{ finding.detail }}</p>
+      {% if finding.reference_count %}<p class="label">关联记录 {{ finding.reference_count }} 项；预览前 {{ [3, finding.reference_count]|min }} 项：{% for ref in finding.references[:3] %}{{ ref.label }}{{ '、' if not loop.last else '' }}{% endfor %}。完整关联请在系统智能分析中查看。</p>{% endif %}
+    </article>{% endfor %}{% endif %}
+    {% if brief.actions %}<h3>建议跟进</h3>{% for action in brief.actions %}<article class="analysis-card"><h3>{{ action.title }}</h3><p>{{ action.detail }}</p></article>{% endfor %}{% endif %}
+    <details open><summary>分析依据</summary>
+      {% if brief.scope.comparison_start %}<p>比较周期：{{ brief.scope.comparison_start }} 至 {{ brief.scope.comparison_end }}</p>{% endif %}
+      {% for limitation in brief.data_quality %}<p>{{ limitation }}</p>{% endfor %}
+      {% for fact in report.analysis.facts %}<p>{{ fact.label }}：{{ fact.value }} · {{ fact.source }}</p>{% endfor %}
+    </details>
+    {% else %}
     {% if report.analysis.facts %}<section class="analysis-facts">{% for fact in report.analysis.facts %}<div class="analysis-fact"><span class="fact-id">{{ fact.id }}</span><span class="label"> · {{ fact.label }}</span><strong>{{ fact.value }}</strong><small>来源：{{ fact.source or '当前报表数据' }}</small></div>{% endfor %}</section>{% endif %}
     <section class="analysis-grid">
       <article class="analysis-card overview"><h3>生产概况</h3><p>{{ report.analysis.overview }}</p></article>
@@ -256,6 +279,7 @@
       <article class="analysis-card alerts"><h3>异常与关注点</h3><p>{{ report.analysis.alerts }}</p></article>
       <article class="analysis-card suggestions"><h3>生产管理建议</h3><p>{{ report.analysis.suggestions }}</p></article>
     </section>
+    {% endif %}
     </section>
     {% endif %}
   </main>

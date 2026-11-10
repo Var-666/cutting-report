@@ -1,143 +1,135 @@
 import json
+from dataclasses import replace
 
 import pytest
 
 from app.config import Settings
-from app.services.llm_service import (
-    AnalysisOutputValidationError,
-    LlmService,
-)
+from app.services.llm_service import AnalysisOutputValidationError, LlmService
 from app.services.llm_prompts import analysis_system_prompt
+from app.services.report_analysis.workshop import build_context
 
 
 def _model_response(monkeypatch, raw_content):
     requests = []
-
     class FakeResponse:
         def raise_for_status(self):
-            return None
-
+            pass
         def json(self):
-            return {"choices": [{"message": {"content": raw_content}}]}
-
+            return {'choices': [{'message': {'content': raw_content}}]}
     class FakeClient:
         def __init__(self, **_kwargs):
             pass
-
         def __enter__(self):
             return self
-
         def __exit__(self, *_args):
-            return None
-
+            pass
         def post(self, _url, **kwargs):
-            requests.append(kwargs["json"])
+            requests.append(kwargs['json'])
             return FakeResponse()
-
-    monkeypatch.setattr("app.services.llm_service.httpx.Client", FakeClient)
+    monkeypatch.setattr('app.services.llm_service.httpx.Client', FakeClient)
     return requests
 
 
 def _service(state_database, tmp_path):
-    return LlmService(Settings(
-        project_root=tmp_path,
-        llm_enabled=True,
-        llm_api_key="test-key",
-        llm_base_url="http://llm.test",
-    ), database=state_database)
+    return LlmService(Settings(project_root=tmp_path, llm_enabled=True, llm_api_key='test-key',
+                              llm_base_url='http://llm.test'), database=state_database)
 
 
-def test_model_analysis_uses_first_result_without_content_guardrails_or_repair(state_database, tmp_path, monkeypatch):
-    content = {
-        "overview": "完成 999 项任务，没有事实引用。" + "分析说明。" * 100,
-        "features": "任务数显著增长，原因是订单增加。",
-        "alerts": "设备故障已经发生。",
-        "suggestions": "建议继续观察。",
-    }
-    requests = _model_response(monkeypatch, json.dumps(content))
+def draft(**changes):
+    return dict(headline='当前周期无任务记录', summary='无有效数据，无法评价生产表现。',
+                key_metric_ids=[], findings=[], actions=[], **changes)
 
-    result = _service(state_database, tmp_path).analyze_context("leadership", {"facts": []})
 
-    assert result.mode == "model"
-    assert {key: getattr(result, key) for key in content} == content
+def test_cutting_empty_brief_and_empty_actions_are_valid(state_database, tmp_path, monkeypatch):
+    requests = _model_response(monkeypatch, json.dumps(draft()))
+    result = _service(state_database, tmp_path).analyze_context('workshop', build_context('2026-08-18', []))
+    assert result.brief['headline'] == '当前周期无任务记录'
+    assert result.brief['findings'] == result.brief['actions'] == []
+    assert result.overview == result.brief['summary']
+    assert len(requests) == 1
+    submitted = json.loads(requests[0]['messages'][1]['content'])
+    assert {'scope', 'facts', 'candidates', 'tables', 'data_quality'} <= submitted.keys()
+    assert '_references' not in submitted
+
+
+@pytest.mark.parametrize(('raw', 'fragment'), [
+    ('not json', 'JSON'),
+    (json.dumps({'overview': '旧结构'}), '校验失败'),
+    (json.dumps(draft() | {'headline': ' '}), '为空'),
+    (json.dumps(draft() | {'key_metric_ids': ['F999']}), '指标引用'),
+    (json.dumps(draft() | {'findings': [{'candidate_id': 'C_fake', 'title': '发现', 'detail': '解释', 'evidence_ids': ['F001']}]}), '候选引用'),
+    (json.dumps(draft() | {'actions': [{'candidate_id': 'C_fake', 'title': '核对', 'detail': '核对记录'}]}), '关联真实发现'),
+    (json.dumps(draft() | {'summary': '本期有999999项任务。'}), '数量'),
+    (json.dumps(draft() | {'summary': '2026-18-08记录完整。'}), '日期'),
+    (json.dumps(draft() | {'findings': '发现'}), '校验失败'),
+])
+def test_cutting_invalid_output_is_rejected_without_repair(state_database, tmp_path, monkeypatch, raw, fragment):
+    requests = _model_response(monkeypatch, raw)
+    with pytest.raises(AnalysisOutputValidationError, match=fragment):
+        _service(state_database, tmp_path).analyze_context('workshop', build_context('2026-08-18', []))
     assert len(requests) == 1
 
 
-@pytest.mark.parametrize('report_type', ['leadership', 'workshop', 'equipment', 'welding'])
-def test_model_receives_facts_report_tables_and_scope(state_database, tmp_path, monkeypatch, report_type):
-    content = {key: key for key in ("overview", "features", "alerts", "suggestions")}
+def test_finding_evidence_and_business_links_are_bound_by_server():
+    from app.models.domain import WorkshopRecord
+    from app.services.report_analysis.brief_validation import validate_brief
+    record = WorkshopRecord('real-task', 'P1', None, None, 'program', None, None, None)
+    context = build_context('2026-08-18', [record])
+    output = dict(headline='确认归属待补齐', summary='已有切割记录，人员归属尚未登记。', key_metric_ids=['F004'],
+        findings=[dict(candidate_id='C_confirmation', title='待登记确认', detail='请核对完成记录及工时归属。', evidence_ids=['F004', 'F005'])],
+        actions=[dict(candidate_id='C_confirmation', title='核对完成人', detail='核对关联任务的实际完成人后登记确认。')])
+    result = validate_brief(output, context)
+    assert result['findings'][0]['references'][0]['id'] == 'real-task'
+    output['findings'][0]['evidence_ids'] = ['F001']
+    with pytest.raises(ValueError, match='事实引用'):
+        validate_brief(output, context)
+    output['findings'][0]['evidence_ids'] = ['F999']
+    with pytest.raises(ValueError, match='事实引用'):
+        validate_brief(output, context)
+    output['findings'][0]['task_id'] = 'invented'
+    with pytest.raises(ValueError):
+        validate_brief(output, context)
+
+
+def test_welding_keeps_four_fields_and_original_model_input(state_database, tmp_path, monkeypatch):
+    content = {key: '焊接分析' for key in ('overview', 'features', 'alerts', 'suggestions')}
     requests = _model_response(monkeypatch, json.dumps(content))
-    context = {
-        "report_month": "2026-08",
-        "facts": [{"id": "F001", "value": "10 项"}],
-        "tables": [
-            {
-                "name": "区间每日明细",
-                "row_count": 1,
-                "rows": [{"period_start": "2026-08-01", "task_count": 10}],
-            }
-        ],
-        "raw_records": [{"unvalidated_metric": 999}],
-    }
-
-    _service(state_database, tmp_path).analyze_context(report_type, context)
-
-    assert requests[0]['messages'][0] == {'role': 'system', 'content': analysis_system_prompt(report_type)}
-    submitted = json.loads(requests[0]["messages"][1]["content"])
-    assert set(submitted) == {
-        "report_type",
-        "report_date",
-        "report_month",
-        "facts",
-        "tables",
-    }
-    assert submitted["facts"] == context["facts"]
-    assert submitted['report_type'] == report_type
-    assert submitted["tables"] == context["tables"]
-    assert "raw_records" not in submitted
+    result = _service(state_database, tmp_path).analyze_context('welding', {'facts': [], 'tables': [], 'raw_records': ['excluded']})
+    assert result.brief is None
+    assert result.overview == '焊接分析'
+    assert 'raw_records' not in json.loads(requests[0]['messages'][1]['content'])
+    _model_response(monkeypatch, json.dumps({'overview': ''}))
+    with pytest.raises(AnalysisOutputValidationError, match='四段内容'):
+        _service(state_database, tmp_path).analyze_context('welding', {'facts': []})
 
 
-@pytest.mark.parametrize(
-    ("raw_content", "error_fragment"),
-    [
-        ("not json", "JSON"),
-        (json.dumps({"overview": "已有分析"}), "四段内容"),
-        (json.dumps({"overview": "", "features": "a", "alerts": "b", "suggestions": "c"}), "四段内容"),
-    ],
-)
-def test_only_unrenderable_model_results_are_rejected(state_database,
-    tmp_path, monkeypatch, raw_content, error_fragment
-):
-    requests = _model_response(monkeypatch, raw_content)
-
-    with pytest.raises(AnalysisOutputValidationError, match=error_fragment):
-        _service(state_database, tmp_path).analyze_context("leadership", {"facts": []})
-
-    assert len(requests) == 1
+def test_cutting_prompts_choose_dynamic_findings_and_respect_business_boundaries():
+    for kind in ('leadership', 'workshop', 'equipment'):
+        prompt = analysis_system_prompt(kind)
+        assert all(field in prompt for field in ('headline', 'summary', 'candidate_id', 'evidence_ids', 'key_metric_ids'))
+        assert '四个非空' not in prompt
+        assert '待核实原因不能写成事实' in prompt
+    assert '等长周期' in analysis_system_prompt('leadership')
+    assert '不表示切割未完成' in analysis_system_prompt('workshop')
+    assert '不等于模拟数据' in analysis_system_prompt('equipment')
 
 
-def test_report_prompts_match_the_four_section_ui_and_available_facts():
-    prompts = {
-        report_type: analysis_system_prompt(report_type)
-        for report_type in ("leadership", "workshop", "equipment")
-    }
-    for prompt in prompts.values():
-        assert all(field in prompt for field in ("overview", "features", "alerts", "suggestions"))
-        assert "没有对比数据就不写升降" in prompt
-        assert "只返回 JSON 对象" in prompt
-        assert "每段通常写两句，必要时三句" in prompt
-        assert "先核对什么、核对后如何跟进" in prompt
-        assert "不要只写一句指标复述" in prompt
-        assert "两张表的完整查询结果" in prompt
-        assert "不得自行重算并推翻 facts" in prompt
-
-    assert "记录天数不足" in prompts["leadership"]
-    assert "不要把缺失当成工程集中" in prompts["leadership"]
-    assert "订单、交付" in prompts["leadership"]
-    assert "待工人确认" in prompts["workshop"]
-    assert "人员效率低" in prompts["workshop"]
-    assert "不自行给数据来源分类" in prompts["equipment"]
-    assert "不等于模拟数据" in prompts["equipment"]
-    assert "不要笼统说已记录数值只能作为参考" in prompts["equipment"]
-    assert "合计未覆盖全部任务" in prompts["equipment"]
-    assert "实测、模拟还是不可用" not in prompts["equipment"]
+def test_brief_rejects_cross_period_cross_line_links_and_reversed_changes():
+    from app.models.domain import WorkshopRecord
+    from app.services.report_analysis.brief_validation import validate_brief
+    row = WorkshopRecord('real-task', 'P1', None, None, None, None, None, None)
+    context = build_context('2026-08-18', [row])
+    output = dict(headline='人员归属待补齐', summary='需核对已有切割记录。', key_metric_ids=[],
+        findings=[dict(candidate_id='C_confirmation', title='待确认', detail='核对任务确认记录。', evidence_ids=['F004'])], actions=[])
+    reference = context['_references']['C_confirmation'][0]
+    reference['device_id'] = 'another-line'
+    with pytest.raises(ValueError, match='产线或周期'):
+        validate_brief(output, context)
+    reference['device_id'] = ''
+    reference['production_date'] = '2026-08-19'
+    with pytest.raises(ValueError, match='产线或周期'):
+        validate_brief(output, context)
+    reference['production_date'] = '2026-08-18'
+    context['facts'].append(dict(id='F099', label='任务变化', value='下降 5.0%', source='上一可比周期'))
+    with pytest.raises(ValueError, match='变化方向'):
+        validate_brief(output | {'summary': '任务数上升5.0%。'}, context)

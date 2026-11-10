@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, JsonValue
 
 from app.models.domain import LeadershipSnapshotState
+from app.models.analysis_brief import AnalysisBrief
 
 
 class AnalysisFact(BaseModel):
@@ -31,6 +32,7 @@ class ReportAnalysis(BaseModel):
     generated_at: str | None
     cached: bool
     error: str | None = None
+    brief: AnalysisBrief | None = None
 
 
 class AnalysisVersion(BaseModel):

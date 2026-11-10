@@ -137,7 +137,7 @@ async function mountReport(t, kind, { query = {}, refreshing = false, syncing = 
   }
   const bindings = {
     ...Vue, useRoute, useRouter, defineProps: () => ({ mode, user: { user_id: 'admin-1', role: 'admin' } }), defineEmits: () => (...args) => exports.push(args),
-    useWorkshopConfirmation, useWorkshopCorrection,
+    useWorkshopConfirmation, useWorkshopCorrection, getDeviceId: () => 'Cutter01',
     listWorkshopRangeTasks: (query, options) => read('workshop', query.startDate, query.endDate, options),
     listWorkshopTasks: (query, options) => read('workshop', query.reportDate, query.reportDate, options),
     generateWorkshopDailyReport: async () => ({}),

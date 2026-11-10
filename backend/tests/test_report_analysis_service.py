@@ -35,6 +35,7 @@ from app.services.report_analysis_service import (
     workshop_analysis_source_version,
 )
 from tests.analysis_fakes import model_analysis
+from app.services.report_analysis.workshop import build_context as build_workshop_context
 from app.core.report_deadline import ReportOperationTimeout, report_deadline
 from app.core.request_cancellation import (
     SqlRequestCancelled, bind_request_id, reset_request_id, sql_request_cancellations,
@@ -158,7 +159,7 @@ def test_three_report_types_use_model_results_with_report_facts(state_database, 
         equipment_analysis,
     ))
     for result in (leadership_analysis, workshop_analysis, equipment_analysis):
-        assert [fact["id"] for fact in result.facts] == [f"F{index:03}" for index in range(1, 7)]
+        assert {f"F{index:03}" for index in range(1, 7)} <= {fact["id"] for fact in result.facts}
         assert all(fact.get("id") and fact.get("source") for fact in result.facts)
         assert all("（" not in fact["value"] and "）" not in fact["value"] for fact in result.facts)
         referenced = result.overview + result.features + result.alerts + result.suggestions
@@ -311,7 +312,7 @@ def test_delayed_cache_write_cannot_replace_a_newer_completed_analysis(state_dat
     def analyze(force):
         with background_llm_work():
             return service._analyze(report_type='workshop', report_date='2026-10-19',
-                                    context={'facts': []}, force=force)
+                                    context=build_workshop_context('2026-10-19', []), force=force)
 
     monkeypatch.setattr('app.services.report_analysis_service.datetime', Clock)
     monkeypatch.setattr(service.llm, 'analyze_context', model)
@@ -681,7 +682,7 @@ def test_versions_change_when_previously_unwatched_report_values_change(state_da
     assert equipment_before.data_version != equipment_after.data_version
 
 
-def test_empty_reports_keep_six_facts_without_inventing_comparisons(state_database, tmp_path):
+def test_empty_reports_keep_authoritative_facts_without_inventing_comparisons(state_database, tmp_path):
     settings, service = _services(state_database, tmp_path)
     report = LeadershipReportService(settings, client=source_client(settings)).fetch(date(2026, 8, 1))
     empty_total = replace(report.current_month_total, task_count=0)
@@ -702,7 +703,7 @@ def test_empty_reports_keep_six_facts_without_inventing_comparisons(state_databa
         service.analyze_equipment("2026-08-01", []),
     ]
     for result in results:
-        assert len(result.facts) == 6
+        assert len(result.facts) >= 6
         references = set(re.findall(r"\[(F\d{3})\]", result.overview + result.features + result.alerts + result.suggestions))
         assert references <= {fact["id"] for fact in result.facts}
     leader_facts = {fact["id"]: fact["value"] for fact in results[0].facts}
@@ -718,7 +719,7 @@ def test_energy_quality_counts_a_task_once_even_with_multiple_issues(state_datab
     bundle = QueryService(settings, client=source_client(settings)).fetch_report_data(ReportFilter(report_date=date(2026, 8, 18)))
     row = replace(bundle.equipment_records[0], gas_consumption=None, electricity_consumption=None, gas_data_status="overlap", electricity_data_status="gap")
     result = service.analyze_equipment("2026-08-18", [row])
-    quality = result.facts[-1]
+    quality = next(fact for fact in result.facts if fact["id"] == "F006")
     assert quality["id"] == "F006"
     assert quality["value"] == "1 项"
     assert "仪表记录时间重叠 1 项" in quality["source"]
@@ -782,7 +783,7 @@ def test_partial_energy_does_not_claim_a_missing_channel_has_meter_data(state_da
     assert "数据来源 实际仪表数据" not in facts["F004"]["source"]
 
 
-def test_model_receives_six_facts_and_two_complete_report_tables(state_database, tmp_path, monkeypatch):
+def test_context_keeps_full_tables_and_facts_before_model_sampling(state_database, tmp_path, monkeypatch):
     settings, service = _services(state_database, tmp_path)
     report = LeadershipReportService(settings, client=source_client(settings)).fetch(date(2026, 8, 1))
     bundle = QueryService(settings, client=source_client(settings)).fetch_report_data(
@@ -852,7 +853,7 @@ def test_model_receives_six_facts_and_two_complete_report_tables(state_database,
     assert "energy_details" not in equipment_tables[0]["rows"][0]
 
     for report_type, result in results.items():
-        assert len(contexts[report_type]["facts"]) == len(result.facts) == 6
+        assert len(contexts[report_type]["facts"]) == len(result.facts) >= 6
         assert all(table["row_count"] == len(table["rows"]) for table in contexts[report_type]["tables"])
         assert result.mode == "model"
 
@@ -942,14 +943,14 @@ def test_response_header_timeout_is_explained_and_all_report_types_can_recover(s
         if len(attempts) == 1:
             # The deployed failure occurs before any response headers arrive.
             raise httpx.ReadTimeout('The read operation timed out', request=request)
-        content = {field: '连接恢复后的分析。' for field in ('overview', 'features', 'alerts', 'suggestions')}
+        content = dict(headline='连接恢复后的分析', summary='本期暂无任务。', key_metric_ids=[], findings=[], actions=[])
         return httpx.Response(200, json={'choices': [{'message': {'content': json.dumps(content)}}]})
 
     transport = httpx.MockTransport(respond)
     monkeypatch.setattr('app.services.llm_service.httpx.Client',
                         lambda **kwargs: original_client(transport=transport, **kwargs))
     parameters = dict(report_type=report_type, report_date='2026-10-13',
-                      context={'report_date': '2026-10-13', 'facts': [], 'tables': []}, force=False)
+                      context=build_workshop_context('2026-10-13', []), force=False)
     with pytest.raises(AnalysisUnavailableError, match='模型响应超时'):
         service._analyze(**parameters)
     assert service._analyze(**parameters).cached is False
@@ -957,7 +958,7 @@ def test_response_header_timeout_is_explained_and_all_report_types_can_recover(s
     assert len(attempts) == 2
 
 
-def test_model_output_is_used_without_content_rejection(state_database, tmp_path, monkeypatch):
+def test_model_output_with_fabricated_statistics_is_rejected(state_database, tmp_path, monkeypatch):
     settings, service = _services(state_database, tmp_path)
     model_settings = replace(
         settings,
@@ -1001,13 +1002,12 @@ def test_model_output_is_used_without_content_rejection(state_database, tmp_path
     monkeypatch.setattr("app.services.llm_service.httpx.Client", FakeClient)
     report = LeadershipReportService(settings, client=source_client(settings)).fetch(date(2026, 8, 1))
 
-    result = service.analyze_leadership(report)
-    assert result.overview == "本期完成 999 项任务 [F001]。"
-    assert result.mode == "model"
+    with pytest.raises(AnalysisUnavailableError, match='未返回可展示'):
+        service.analyze_leadership(report)
     assert calls == 1
 
     with state_database.connect() as connection:
         count = connection.execute(
             "SELECT COUNT(*) FROM report_analyses WHERE report_type = 'leadership'"
         ).fetchone()['count']
-    assert count == 1
+    assert count == 0

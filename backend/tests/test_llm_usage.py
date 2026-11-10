@@ -58,7 +58,7 @@ def test_report_model_request_is_counted_even_when_provider_omits_usage(state_da
             return ModelResponse()
 
     monkeypatch.setattr("app.services.llm_service.httpx.Client", Client)
-    LlmService(settings, database=state_database).analyze_context("leadership", {"facts": []})
+    LlmService(settings, database=state_database).analyze_context("welding", {"facts": []})
     assert LlmUsageRepository(state_database).summary() == {
         "call_count": 1, "metered_count": 0, "total_tokens": 0,
     }
@@ -126,7 +126,7 @@ def test_failed_http_attempt_counts_without_inventing_tokens(state_database, tmp
 
     monkeypatch.setattr("app.services.llm_service.httpx.Client", Client)
     with pytest.raises(RuntimeError, match="connection failed"):
-        LlmService(settings, database=state_database).analyze_context("leadership", {"facts": []})
+        LlmService(settings, database=state_database).analyze_context("welding", {"facts": []})
     assert LlmUsageRepository(state_database).summary() == {
         "call_count": 1, "metered_count": 0, "total_tokens": 0,
     }
@@ -159,7 +159,7 @@ def test_real_streamed_model_response_succeeds_and_records_usage(state_database,
     monkeypatch.setattr("app.services.llm_service.httpx.Client",
                         lambda **kwargs: original_client(transport=transport, **kwargs))
     if scenario == "report":
-        assert LlmService(settings, database=state_database).analyze_context("leadership", {"facts": []}).status == "success"
+        assert LlmService(settings, database=state_database).analyze_context("welding", {"facts": []}).status == "success"
     else:
         assert AlarmAnalysisService(settings, database=state_database).analyze([])["summary"] == "无告警"
     assert body.closed

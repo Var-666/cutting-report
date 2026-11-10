@@ -20,6 +20,8 @@ from app.config import Settings
 from app.database.postgres import PostgresDatabase
 from app.models.domain import AnalysisResult
 from app.services.llm_prompts import analysis_system_prompt
+from app.services.report_analysis.brief import model_context
+from app.services.report_analysis.brief_validation import validate_brief
 from app.services.llm_usage_service import record_llm_call
 from app.core.request_cancellation import SqlRequestCancelled, current_request_id, sql_request_cancellations
 from app.core.report_deadline import ensure_time_remaining, operation_deadline, remaining_seconds
@@ -333,7 +335,7 @@ class LlmService:
         if not self.settings.llm_enabled:
             raise RuntimeError("LLM service is disabled")
         user_content = json.dumps(
-            {
+            model_context(context) if report_type in {'leadership', 'workshop', 'equipment'} else {
                 "report_type": report_type,
                 "report_date": context.get("report_date"),
                 "report_month": context.get("report_month"),
@@ -368,6 +370,18 @@ class LlmService:
             content = json.loads(raw_content)
         except (json.JSONDecodeError, TypeError) as exc:
             raise AnalysisOutputValidationError("大模型未返回可展示的 JSON 分析结果") from exc
+        if report_type in {'leadership', 'workshop', 'equipment'}:
+            try:
+                brief = validate_brief(content, context)
+            except ValueError as exc:
+                raise AnalysisOutputValidationError(f"大模型简报校验失败：{exc}") from exc
+            return AnalysisResult(
+                status='success', mode='model', brief=brief,
+                overview=brief['summary'],
+                features='\n'.join(f"{item['title']}：{item['detail']}" for item in brief['findings']),
+                alerts='',
+                suggestions='\n'.join(f"{item['title']}：{item['detail']}" for item in brief['actions']),
+            )
         if not _required_content(content):
             raise AnalysisOutputValidationError("大模型分析结果缺少页面所需的四段内容")
         return AnalysisResult(

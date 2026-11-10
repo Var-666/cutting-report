@@ -138,12 +138,14 @@ class WorkshopService:
             'current_user': user,
         }
 
-    def list_range_tasks(self, start_date: date, end_date: date, project_name: str | None, confirmation_status: Literal['all', 'confirmed', 'unconfirmed'], page: int, page_size: int):
+    def list_range_tasks(self, start_date: date, end_date: date, project_name: str | None, confirmation_status: Literal['all', 'confirmed', 'unconfirmed'], page: int, page_size: int, task_id: str | None = None):
         bundle, records = self.range_report_service.workshop_records(start_date, end_date)
         analysis_source_version = _workshop_analysis_source_version(analysis_period_label(start_date, end_date), records)
         project_names = sorted({row.project_code for row in records if row.project_code})
         if project_name:
             records = [row for row in records if row.project_code == project_name]
+        if task_id is not None:
+            records = [row for row in records if row.task_id == task_id]
         worker_summaries = build_worker_work_summaries(records)
         if confirmation_status == 'confirmed':
             records = [row for row in records if row.confirmed_by]

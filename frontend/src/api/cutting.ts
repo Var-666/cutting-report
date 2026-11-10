@@ -32,7 +32,7 @@ export function listWorkshopTasks({ reportDate, projectName = '', confirmationSt
   return reportCache.read(key, (signal) => request<WorkshopResult>(`/api/v1/workshop/tasks?${query}`, { signal }), { ttl: REPORT_VIEW_CACHE_TTL, force, signal })
 }
 
-export function listWorkshopRangeTasks({ startDate, endDate, projectName = '', confirmationStatus = 'all', page = 1, pageSize = 10 }: WorkshopRangeQuery, { force = false, signal }: ReadOptions = {}) {
+export function listWorkshopRangeTasks({ startDate, endDate, projectName = '', taskId = '', confirmationStatus = 'all', page = 1, pageSize = 10 }: WorkshopRangeQuery, { force = false, signal }: ReadOptions = {}) {
   const query = new URLSearchParams({
     start_date: startDate,
     end_date: endDate,
@@ -41,6 +41,7 @@ export function listWorkshopRangeTasks({ startDate, endDate, projectName = '', c
     page_size: String(pageSize),
   })
   if (projectName) query.set('project_name', projectName)
+  if (taskId) query.set('task_id', taskId)
   const key = `workshop:range:${query}`
   return reportCache.read(key, (requestSignal) => request<WorkshopResult>(`/api/v1/workshop/range?${query}`, { signal: requestSignal }), { ttl: REPORT_VIEW_CACHE_TTL, force, signal })
 }

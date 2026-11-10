@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+from dataclasses import replace
 from datetime import date, timedelta
 from typing import Literal
 
@@ -159,6 +160,10 @@ def _analyze_report(payload: AnalysisRequest, request: Request) -> dict:
                 report = device_state(request).range_report_service.leadership(
                     payload.period_start, payload.period_end
                 )
+                comparison_start, comparison_end = previous_equal_range(payload.period_start, payload.period_end)
+                comparison = device_state(request).range_report_service.leadership(comparison_start, comparison_end)
+                report = replace(report, comparison_total=comparison.current_month_total,
+                                 comparison_start=comparison_start, comparison_end=comparison_end)
             else:
                 report = device_state(request).leadership_report_service.fetch(
                     payload.report_date.replace(day=1)

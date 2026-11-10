@@ -183,6 +183,7 @@ class AnalysisResult:
     data_version: str | None = None
     generated_at: str | None = None
     cached: bool = False
+    brief: dict[str, Any] | None = None
 
 
 @dataclass(slots=True)

@@ -415,6 +415,37 @@ export type AlarmStatus = {
 };
 
 /**
+ * AnalysisBrief
+ */
+export type AnalysisBrief = {
+    /**
+     * Headline
+     */
+    headline: string;
+    /**
+     * Summary
+     */
+    summary: string;
+    /**
+     * Key Metric Ids
+     */
+    key_metric_ids: Array<string>;
+    /**
+     * Findings
+     */
+    findings: Array<BriefFinding>;
+    /**
+     * Actions
+     */
+    actions: Array<BriefAction>;
+    scope: BriefScope;
+    /**
+     * Data Quality
+     */
+    data_quality: Array<string>;
+};
+
+/**
  * AnalysisFact
  */
 export type AnalysisFact = {
@@ -1770,6 +1801,146 @@ export type BatchCreationResult = {
      * Failed Count
      */
     failed_count: number;
+};
+
+/**
+ * BriefAction
+ */
+export type BriefAction = {
+    /**
+     * Candidate Id
+     */
+    candidate_id: string;
+    /**
+     * Title
+     */
+    title: string;
+    /**
+     * Detail
+     */
+    detail: string;
+};
+
+/**
+ * BriefFinding
+ */
+export type BriefFinding = {
+    /**
+     * Candidate Id
+     */
+    candidate_id: string;
+    /**
+     * Title
+     */
+    title: string;
+    /**
+     * Detail
+     */
+    detail: string;
+    /**
+     * Evidence Ids
+     */
+    evidence_ids: Array<string>;
+    /**
+     * References
+     */
+    references: Array<BusinessReference>;
+    /**
+     * Reference Count
+     */
+    reference_count: number;
+};
+
+/**
+ * BriefScope
+ */
+export type BriefScope = {
+    /**
+     * Report Type
+     */
+    report_type: 'leadership' | 'workshop' | 'equipment';
+    /**
+     * Device Id
+     */
+    device_id?: string;
+    /**
+     * Line Name
+     */
+    line_name?: string;
+    /**
+     * Period Start
+     */
+    period_start: string;
+    /**
+     * Period End
+     */
+    period_end: string;
+    /**
+     * Period Mode
+     */
+    period_mode: 'month' | 'day' | 'range';
+    /**
+     * Comparison Start
+     */
+    comparison_start?: string | null;
+    /**
+     * Comparison End
+     */
+    comparison_end?: string | null;
+};
+
+/**
+ * BusinessReference
+ */
+export type BusinessReference = {
+    /**
+     * Kind
+     */
+    kind: 'task' | 'equipment' | 'project' | 'date';
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Label
+     */
+    label: string;
+    /**
+     * Device Id
+     */
+    device_id?: string;
+    /**
+     * Period Start
+     */
+    period_start?: string;
+    /**
+     * Period End
+     */
+    period_end?: string;
+    /**
+     * Production Date
+     */
+    production_date?: string | null;
+    /**
+     * Project Code
+     */
+    project_code?: string | null;
+    /**
+     * Program No
+     */
+    program_no?: string | null;
+    /**
+     * Work Time
+     */
+    work_time?: number | null;
+    /**
+     * Confirmation
+     */
+    confirmation?: string | null;
+    /**
+     * Energy Status
+     */
+    energy_status?: string | null;
 };
 
 /**
@@ -4874,6 +5045,7 @@ export type ReportAnalysis = {
      * Error
      */
     error?: string | null;
+    brief?: AnalysisBrief | null;
 };
 
 /**
@@ -7856,6 +8028,10 @@ export type ListRangeTasksApiV1WorkshopRangeGetData = {
          * Project Name
          */
         project_name?: string | null;
+        /**
+         * Task Id
+         */
+        task_id?: string | null;
         /**
          * Confirmation Status
          */
