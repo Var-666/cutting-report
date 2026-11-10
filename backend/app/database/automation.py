@@ -543,20 +543,27 @@ class AutomationRepository(PostgresRepository):
             )
         return True
 
-    def list_deliveries(self, *, page: int, page_size: int) -> tuple[list[dict], int]:
+    def list_deliveries(self, *, page: int, page_size: int, search: str = "") -> tuple[list[dict], int]:
+        source = """
+            FROM email_deliveries AS d
+            JOIN scheduled_report_runs AS r ON r.run_id = d.run_id
+            JOIN reports AS p ON p.report_id = d.report_id
+        """
+        parameters: tuple = ()
+        if search.strip():
+            source += "WHERE strpos(lower(concat_ws(' ', r.schedule_name, d.subject, r.recipients_json)), lower(%s)) > 0"
+            parameters = (search.strip(),)
         with self.connect() as connection:
-            total = int(connection.execute("SELECT COUNT(*) AS count FROM email_deliveries").fetchone()['count'])
+            total = int(connection.execute(f"SELECT COUNT(*) AS count {source}", parameters).fetchone()['count'])
             rows = connection.execute(
-                """
+                f"""
                 SELECT d.*, r.schedule_name, r.report_type, r.report_date, r.trigger_type,
                        p.filename, p.relative_path, p.generated_at
-                FROM email_deliveries AS d
-                JOIN scheduled_report_runs AS r ON r.run_id = d.run_id
-                JOIN reports AS p ON p.report_id = d.report_id
+                {source}
                 ORDER BY d.created_at DESC
                 LIMIT %s OFFSET %s
                 """,
-                (page_size, (page - 1) * page_size),
+                (*parameters, page_size, (page - 1) * page_size),
             ).fetchall()
         return [self._decode_delivery(row) for row in rows], total
 

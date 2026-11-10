@@ -21,6 +21,8 @@ from app.database.retention import RetentionRepository
 from app.database.workshop import WorkshopRepository
 from app.database.users import UserRepository
 from app.database.sessions import SessionRepository
+from app.database.sso import SsoRequestRepository
+from app.services.sso_service import SsoService
 from app.database.postgres import PostgresDatabase
 from app.services.retention_service import RetentionService
 from app.services.worker_auth_service import WorkerAuthService
@@ -76,6 +78,7 @@ class ApplicationRuntime:
     workshop: WorkshopRepository
     users: UserRepository
     sessions: SessionRepository
+    sso: SsoService
     definitions: DefinitionRepository
     automation: AutomationRepository
     automation_runtime: AutomationRuntime
@@ -164,7 +167,7 @@ def _build_runtime(settings: Settings, database: PostgresDatabase, *, role: Lite
         return client
 
     automation_runtime = AutomationRuntime(settings)
-    email_service = EmailService(settings, runtime=automation_runtime)
+    email_service = EmailService(settings, runtime=automation_runtime, pdf_service=pdf_service)
     worker_auth = WorkerAuthService(settings, repository=HrRepository(sql_client(database_sources, settings.worker_source_key, settings.worker_database_auth_enabled)))
     pdm = (
         SqlServerPdmRepository(settings, client=sql_client(database_sources, settings.file_source_key, True))
@@ -234,6 +237,7 @@ def _build_runtime(settings: Settings, database: PostgresDatabase, *, role: Lite
         database=database, metadata=metadata, llm_usage=llm_usage,
         report_snapshots=report_snapshots, workshop=workshop,
         users=UserRepository(database), sessions=SessionRepository(database),
+        sso=SsoService(settings, SsoRequestRepository(database), UserRepository(database)),
         definitions=definitions, automation=automation, automation_runtime=automation_runtime,
         database_runtime=database_runtime,
         configuration_diagnostics=ConfigurationDiagnostics(settings, automation_runtime, database_runtime=database_runtime),

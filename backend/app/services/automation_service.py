@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from datetime import date, datetime, time, timedelta
 from typing import TYPE_CHECKING, Any
+from time import monotonic
 from uuid import uuid4
 
 from app.core.sql_capacity import sql_identity
@@ -246,24 +247,24 @@ class AutomationService:
             )
 
     def process_next_email(self, now: datetime) -> bool:
+        started = monotonic()
         delivery = self.repository.claim_delivery(now.isoformat(timespec="seconds"))
         if delivery is None:
             return False
         runtime_settings, _ = self.runtime.snapshot()
         send_started = False
         try:
-            attachment = None
-            if delivery.get("attach_report"):
-                root = self.settings.reports_dir.resolve()
-                path = (root / delivery["relative_path"]).resolve()
-                if not path.is_relative_to(root) or not path.is_file():
-                    raise FileNotFoundError("报表附件不存在")
-                attachment = path.read_bytes()
+            root = self.settings.reports_dir.resolve()
+            path = (root / delivery["relative_path"]).resolve()
+            if not path.is_relative_to(root) or not path.is_file():
+                raise FileNotFoundError("报表文件不存在")
+            attachment = path.read_bytes() if delivery.get("attach_report") else None
             send_started = True
             message_id = self.email_service.send(
-                delivery, attachment, settings_snapshot=runtime_settings
+                delivery, attachment, settings_snapshot=runtime_settings, report_path=path
             )
         except Exception as exc:
+            now += timedelta(seconds=max(0, monotonic() - started))
             delay = min(
                 runtime_settings.email_retry_base_seconds
                 * (2 ** max(0, int(delivery["attempt_count"]) - 1)),
@@ -290,6 +291,7 @@ class AutomationService:
             return True
         # SMTP success followed by a database failure is an unknown durable
         # outcome. Leave 'sending' for restart reconciliation; never retry it.
+        now += timedelta(seconds=max(0, monotonic() - started))
         self.repository.mark_delivery_sent(
             delivery, message_id=message_id, now=now.isoformat(timespec="seconds")
         )

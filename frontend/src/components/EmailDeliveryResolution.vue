@@ -101,6 +101,7 @@ onUnmounted(() => { mounted = false; active = false; auditController?.abort(); e
 <template>
   <section class="panel resolution-panel" aria-labelledby="resolution-title">
     <header><h2 id="resolution-title">邮件结果核对 · {{ delivery.schedule_name }}</h2><NButton attr-type="button" :disabled="saving" @click="close" :loading="saving">关闭</NButton></header>
+    <p>邮件主题：{{ delivery.subject }}</p>
     <p class="message-id">Message-ID：{{ delivery.message_id || '无历史 Message-ID，无法核对提交' }}</p>
     <form v-if="delivery.status === 'unknown' && !resolved" @submit.prevent="submit">
       <p>请先按 Message-ID 核对邮件服务器记录，再选择每位收件人的结果。保存核对不会发送邮件；确认未接收后仍需单独手动重试。</p>

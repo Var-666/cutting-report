@@ -21,6 +21,11 @@ import { useUnsavedChanges } from '../composables/useUnsavedChanges.ts'
 const confirm = useConfirm()
 const status = ref<AutomationStatus | null>(null)
 const schedules = ref<AutomationSchedule[]>([])
+const scheduleSearch = ref('')
+const appliedScheduleSearch = ref('')
+const visibleSchedules = computed(() => schedules.value.filter(item => item.name?.toLocaleLowerCase().includes(appliedScheduleSearch.value.toLocaleLowerCase())))
+function searchSchedules() { appliedScheduleSearch.value = scheduleSearch.value.trim() }
+function clearScheduleSearch() { scheduleSearch.value = ''; appliedScheduleSearch.value = '' }
 let loadSequence = 0
 let disposed = false
 const loading = ref(false)
@@ -41,6 +46,7 @@ const {
 })
 const {
   deliveries, deliveryPage, deliveryTotal, deliveryLoading, selectedDelivery,
+  deliverySearch, appliedDeliverySearch, searchDeliveries, clearDeliverySearch,
   resolutionDirty, pageCount, loadDeliveries, changeDeliveryPage, retry,
   openDelivery, deliveryResolved, pauseDeliveries,
 } = useAutomationDeliveries({ message, error, refresh: loadAll, isDisposed: () => disposed, confirm })
@@ -194,20 +200,20 @@ onBeforeUnmount(() => {
     </div>
 
     <section class="panel automation-list" aria-labelledby="automation-schedules-title">
-      <div class="panel-title"><div><span><AppIcon name="tasks" tone="muted" :size="17" /></span><h2 id="automation-schedules-title">定时任务</h2></div><p>{{ status ? `${schedules.length} 个计划` : loading ? '正在读取' : '暂不可用' }}<span class="table-scroll-hint">左右滑动查看完整表格</span></p></div>
+      <div class="panel-title"><div><span><AppIcon name="tasks" tone="muted" :size="17" /></span><h2 id="automation-schedules-title">定时任务</h2></div><div class="automation-list-tools"><form class="automation-search" role="search" aria-label="定时任务检索" @submit.prevent="searchSchedules"><NInput v-model:value="scheduleSearch" clearable size="small" :maxlength="200" placeholder="检索任务名称" :input-props="{ 'aria-label': '任务名称关键词' }" @clear="clearScheduleSearch" /><NButton attr-type="submit" size="small">检索</NButton></form><p>{{ status ? `${visibleSchedules.length}${appliedScheduleSearch ? ` / ${schedules.length}` : ''} 个计划` : loading ? '正在读取' : '暂不可用' }}</p></div></div>
       <div v-if="loading && !schedules.length" class="empty" role="status">正在读取定时任务…</div>
       <div v-else-if="!status && error" class="configuration-load-error" role="alert"><span>定时任务暂时无法读取。</span><NButton attr-type="button" @click="loadAll">重新读取</NButton></div>
       <div v-else class="automation-table-wrap">
-        <AutomationScheduleTable :schedules="schedules" :loading="loading" :report-labels="reportLabels" :schedule-labels="scheduleLabels" @run="runNow" @edit="editSchedule" @remove="remove" />
+        <AutomationScheduleTable :schedules="visibleSchedules" :searching="!!appliedScheduleSearch" :loading="loading" :report-labels="reportLabels" :schedule-labels="scheduleLabels" @run="runNow" @edit="editSchedule" @remove="remove" />
       </div>
     </section>
 
     <section class="panel automation-list" aria-labelledby="automation-deliveries-title">
-      <div class="panel-title"><div><span><AppIcon name="send" tone="muted" :size="17" /></span><h2 id="automation-deliveries-title">邮件发送记录</h2></div><p>失败可重发，未知结果先核对<span class="table-scroll-hint">左右滑动查看完整表格</span></p></div>
+      <div class="panel-title"><div><span><AppIcon name="send" tone="muted" :size="17" /></span><h2 id="automation-deliveries-title">邮件发送记录</h2></div><div class="automation-list-tools"><form class="automation-search" role="search" aria-label="邮件发送记录检索" @submit.prevent="searchDeliveries"><NInput v-model:value="deliverySearch" clearable size="small" :maxlength="200" placeholder="任务名、邮件主题或收件人" :input-props="{ 'aria-label': '邮件记录关键词' }" @clear="clearDeliverySearch" /><NButton attr-type="submit" size="small" :loading="deliveryLoading">检索</NButton></form><p>失败可重发，未知结果先核对</p></div></div>
       <div v-if="deliveryLoading && !deliveries.length" class="empty" role="status">正在读取邮件发送记录…</div>
       <div v-else-if="error && !deliveries.length" class="configuration-load-error" role="alert"><span>邮件发送记录暂时无法读取。</span><NButton attr-type="button" @click="loadAll">重新读取</NButton></div>
       <div v-else class="automation-table-wrap delivery-table-wrap">
-        <AutomationDeliveryTable :deliveries="deliveries" :delivery-total="deliveryTotal" :delivery-page="deliveryPage" :delivery-loading="deliveryLoading" :paginate="!!status" :delivery-labels="deliveryLabels" @page="changeDeliveryPage" @retry="retry" @open="openDelivery" />
+        <AutomationDeliveryTable :deliveries="deliveries" :searching="!!appliedDeliverySearch" :delivery-total="deliveryTotal" :delivery-page="deliveryPage" :delivery-loading="deliveryLoading" :paginate="!!status" :delivery-labels="deliveryLabels" @page="changeDeliveryPage" @retry="retry" @open="openDelivery" />
       </div>
     </section>
     <EmailDeliveryResolution v-if="selectedDelivery" :key="selectedDelivery.delivery_id" :delivery="selectedDelivery" @dirty="resolutionDirty = $event" @resolved="deliveryResolved" @close="selectedDelivery = null; resolutionDirty = false" />
@@ -273,13 +279,23 @@ onBeforeUnmount(() => {
 .configuration-load-error { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin: 18px; padding: 12px; border: 1px solid rgb(var(--error-color)); border-radius: 7px; color: rgb(var(--error-color)); background: rgb(var(--error-color) / .1); font-size: 12px; }
 .configuration-load-error button { min-height: 32px; padding: 0 10px; }
 .automation-page .empty { padding: 30px 18px; color: var(--muted); font-size: 12px; line-height: 1.6; text-align: center; }
-.automation-table-wrap { min-width: 0; padding: 0 16px; }
+.automation-table-wrap { min-width: 0; padding: 16px; }
+.automation-table-wrap :deep(.app-report-pagination) { padding: 16px 0 0; }
+.automation-list-tools { min-width: 0; display: flex; align-items: center; gap: 12px; }
+.automation-search { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.automation-search :deep(.n-input) { width: 260px; max-width: 100%; min-width: 0; }
+.automation-search :deep(.n-button) { flex-shrink: 0; }
+/* Keep legacy panel-title span typography out of Naive search controls. */
+.automation-search :deep(span) { font-size: inherit; font-weight: inherit; color: inherit; }
 @media (max-width: 1100px) {
   .automation-workspace { grid-template-columns: 1fr; }
   .configuration-grid { grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); gap: 18px; }
   .smtp-configuration-card { padding-top: 0; padding-left: 18px; border-top: 0; border-left: 1px solid var(--theme-border-color); }
 }
 @media (max-width: 760px) {
+  .automation-list-tools, .automation-search { width: 100%; }
+  .automation-list-tools { flex-wrap: wrap; }
+  .automation-search :deep(.n-input) { flex: 1; width: auto; }
   .automation-page .panel-title { align-items: flex-start; flex-direction: column; justify-content: center; gap: 5px; padding-block: 12px; }
   .automation-page .panel-title p { text-align: left; }
   .automation-page .panel-title .table-scroll-hint { display: inline-block; margin-left: 10px; color: var(--muted); font-size: var(--font-auxiliary); font-weight: 400; }

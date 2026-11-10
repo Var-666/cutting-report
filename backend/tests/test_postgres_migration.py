@@ -59,7 +59,7 @@ def test_schema_all_tables_constraints_indexes_and_repeated_install(postgres):
         expected=json.loads((DIRECTORY/'schema.json').read_text())
         assert len(tables)==expected['tables']
         assert {'users','cutting_dispatches','workshop_reports','_postgres_schema_migrations'} <= tables
-        assert connection.execute("SELECT count(*) AS n FROM pg_indexes WHERE schemaname='app_state'").fetchone()['n']==103
+        assert connection.execute("SELECT count(*) AS n FROM pg_indexes WHERE schemaname='app_state'").fetchone()['n']==expected['indexes']
         connection.execute('DROP INDEX idx_background_tasks_ready')
     with pytest.raises(MigrationError,match='结构漂移'): apply_migrations(database)
 
@@ -112,7 +112,7 @@ def test_archive_migration_appends_to_existing_003_without_changing_state(postgr
         patch.setattr(migrations,'validate_schema',original_schema)
         assert len(apply_migrations(database))==3
     with database.connect() as connection:connection.execute('INSERT INTO llm_usage_totals(id) VALUES (1)')
-    assert len(apply_migrations(database))==6
+    assert len(apply_migrations(database))==len(migrations.VERSIONS)
     with database.connect() as connection:
         assert connection.execute('SELECT id FROM llm_usage_totals').fetchall()==[{'id':1}]
 
@@ -120,6 +120,7 @@ def test_archive_migration_appends_to_existing_003_without_changing_state(postgr
 @pytest.mark.parametrize(('baseline','fingerprint','location'),[
     (4,'d8d2181d194738d72ceb9029b7ec31ada66cac21b9157a49687ad9439ba1e5f2',None),
     (5,'10a49c5d5b0abba14d009aa7704f2dc6e59636396b1a74c29cc8f2978c107181','18600-2 / 船体 / Gen指令'),
+    (6,'9973144f7c70422993ec68bd47a1ae1eab84b2944a8e2434867f846c22ea9440',None),
 ])
 def test_file_location_migration_preserves_existing_dispatches(postgres,monkeypatch,baseline,fingerprint,location):
     import hashlib
@@ -143,7 +144,7 @@ def test_file_location_migration_preserves_existing_dispatches(postgres,monkeypa
         if baseline==5:
             target.execute('UPDATE cutting_dispatches SET file_location=%s',(location,))
         before=target.execute('SELECT * FROM cutting_dispatches').fetchone()
-    assert len(apply_migrations(database))==6
+    assert len(apply_migrations(database))==len(migrations.VERSIONS)
     with database.connect() as connection:
         assert connection.execute('SELECT * FROM cutting_dispatches').fetchone()=={**before,'file_location':location,'processing_finished_at':None,'processing_finish_by':None,'completion_received_at':None}
 

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { readFileSync } from 'node:fs'
 import { parse } from '@vue/compiler-sfc'
+import { renderComponent } from './vue-component-helpers.mjs'
 
 function source(path) {
   return readFileSync(new URL(`../src/${path}`, import.meta.url), 'utf8')
@@ -40,13 +41,19 @@ test('administrator management follows the shared settings UI baseline', () => {
   assert.doesNotMatch(styles, /\.panel-title\s*\{/)
 })
 
-test('login uses one account form and routes by the automatically resolved role', () => {
-  const login = parse(source('views/LoginView.vue')).descriptor
+test('login offers group numbers for HR accounts and keeps local administrator modes', async () => {
+  const login = await renderComponent('views/LoginView', { workerDatabaseAuthEnabled: true })
+  assert.match(login, /系统登录/)
+  assert.match(login, /集团工号 \/ 管理员账号/)
+  assert.match(login, /自动识别账号权限并进入对应页面/)
+  assert.doesNotMatch(login, /公司工号/)
 
-  assert.match(login.template.content, /系统登录/)
-  assert.match(login.template.content, /公司工号 \/ 管理员账号/)
-  assert.match(login.template.content, /自动识别账号权限并进入对应页面/)
-  assert.match(login.scriptSetup.content, /loginAccount\(/)
-  assert.doesNotMatch(login.template.content, /login-tabs|HR账号登录|应急管理员登录/)
-  assert.doesNotMatch(login.scriptSetup.content, /hrLoginAccount|mode = ref/)
+  const local = await renderComponent('views/LoginView')
+  assert.match(local, /使用管理员账号和密码登录/)
+  assert.doesNotMatch(local, /集团工号/)
+
+  const setup = await renderComponent('views/LoginView', { setupRequired: true, workerDatabaseAuthEnabled: true })
+  assert.match(setup, /初始化管理员/)
+  assert.match(setup, /创建并登录/)
+  assert.doesNotMatch(setup, /集团工号/)
 })

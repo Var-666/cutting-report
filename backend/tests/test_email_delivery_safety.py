@@ -11,6 +11,7 @@ from app.database.automation import AutomationRepository
 from app.services.email_service import (
     EmailService, EmailDeliveryFailure, EmailDeliveryUnknown, EmailRecipientsRefused,
 )
+from app.services.email_report import EmailReport
 from tests.automation_fixtures import complete_report, NOW, STAMP
 
 
@@ -36,6 +37,7 @@ def smtp_service(monkeypatch, responses, *, quit_error=False):
             return result
 
     monkeypatch.setattr("app.services.email_service.smtplib.SMTP", SMTP)
+    monkeypatch.setattr("app.services.pdf_service.PdfService.render_email", lambda self, path: EmailReport("<h1>日报</h1>", {}))
     configured = replace(settings, smtp_enabled=True, smtp_host="smtp.example.com",
                          smtp_from_email="report@example.com", smtp_username="", smtp_use_tls=False,
                          smtp_use_ssl=False)

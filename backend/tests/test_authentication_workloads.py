@@ -38,7 +38,7 @@ def test_eight_expensive_authentications_leave_local_and_cached_hr_business_requ
     hr_token, _ = repository.create_session(hr_user['user_id'], now=now, hours=1)
     source = FakeSqlServerClient([_valid_row()])
     service = WorkerAuthService(_enabled_settings(), source)
-    service.authenticate('C0007', 'password')  # Prime the real HR status cache.
+    service.authenticate('G0021', 'password')  # Prime the real HR status cache.
     release, all_entered = Event(), Event()
     lock = Lock()
     calls = 0
@@ -59,7 +59,7 @@ def test_eight_expensive_authentications_leave_local_and_cached_hr_business_requ
         slow_path, slow_payload = '/api/v1/auth/login', {'username': 'local-admin', 'password': 'test-password'}
     else:
         monkeypatch.setattr(source, 'fetch_all', lambda *args: block(original_fetch, *args))
-        slow_path, slow_payload = '/api/v1/auth/hr-login', {'company_no': 'C0007', 'password': 'password'}
+        slow_path, slow_payload = '/api/v1/auth/hr-login', {'group_no': 'G0021', 'password': 'password'}
 
     monkeypatch.setattr(auth, 'settings', replace(settings, worker_database_auth_enabled=True))
     monkeypatch.setattr(app.state, 'workshop', repository, raising=False)
@@ -103,8 +103,8 @@ def test_eight_expensive_authentications_leave_local_and_cached_hr_business_requ
                     assert len(responses) == 28 and all(response.status_code == 200 for response in responses)
                     with anyio.fail_after(2):
                         for path, payload in [('/api/v1/auth/login', slow_payload if blocking_kind == 'password' else {'username': 'a', 'password': 'b'}),
-                                              ('/api/v1/auth/hr-login', {'company_no': 'C0007', 'password': 'password'}),
-                                              ('/api/v1/auth/worker-login', {'company_no': 'C0007', 'password': 'password'}),
+                                              ('/api/v1/auth/hr-login', {'group_no': 'G0021', 'password': 'password'}),
+                                              ('/api/v1/auth/worker-login', {'group_no': 'G0021', 'password': 'password'}),
                                               ('/api/v1/auth/bootstrap', {'username': 'another-admin', 'display_name': '管理员', 'password': 'test-password'}),
                                               ('/api/v1/auth/users', {'username': 'another-worker', 'display_name': '工人', 'password': 'test-password'}),
                                               ('/api/v1/auth/admins', {'external_id': '9123', 'current_password': 'test-password'}),
@@ -113,6 +113,8 @@ def test_eight_expensive_authentications_leave_local_and_cached_hr_business_requ
                             assert response.status_code == 503, (path, response.text)
                             assert response.headers['retry-after'] == '1'
                         assert (await client.get('/api/v1/auth/hr-directory?query=张', headers=local_headers)).status_code == 503
+                        for path in ('/api/v1/auth/sso/login', '/api/v1/auth/sso/callback'):
+                            assert (await client.get(path)).status_code == 503
                         forced = await client.post('/api/v1/requests/pending/cancel', headers=hr_headers)
                         assert forced.status_code == 503 and 'X-Session-Expired' not in forced.headers
                         assert (await client.get('/api/v1/devices', headers={'Cookie': ''})).status_code == 401

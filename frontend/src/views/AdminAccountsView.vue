@@ -103,7 +103,7 @@ onMounted(loadAdmins)
 
 const adminTableColumns = [
   { key: 'c0', title: '姓名', width: 96, align: 'left', fixed: 'left' },
-  { key: 'c1', title: '公司工号', width: 128, align: 'left' },
+  { key: 'c1', title: '登录账号', width: 128, align: 'left' },
   { key: 'c2', title: '身份来源', width: 136, align: 'center' },
   { key: 'c3', title: '授权信息', minWidth: 280, align: 'left' },
   { key: 'c4', title: '操作', width: 112, align: 'center', fixed: 'right', ellipsis: false },
@@ -115,7 +115,7 @@ const adminTableColumns = [
     <ManagementPageHero
       eyebrow="ACCESS CONTROL"
       title="管理员管理"
-      description="从 HR 人员库授权管理员，登录继续使用本人公司工号和 HR 原密码。"
+      description="从 HR 人员库授权管理员，登录使用本人集团工号和 HR 原密码。"
       icon="user"
       status-label="HR 身份认证"
       :status-value="`${admins.length} 位管理员`"
@@ -134,7 +134,7 @@ const adminTableColumns = [
       <div class="history-wrap account-table-wrap">
         <AppReportTable :columns="adminTableColumns" :items="admins" :row-key="admin => admin.user_id" :paginate="false" :loading="loading" aria-label="现有管理员">
           <template #c0="{ row: admin }"><strong>{{ admin.display_name }}</strong></template>
-          <template #c1="{ row: admin }">{{ admin.company_no || admin.username }}</template>
+          <template #c1="{ row: admin }">{{ admin.group_no || admin.username }}</template>
           <template #c2="{ row: admin }"><span class="source-badge" :class="admin.auth_source">{{ admin.auth_source === 'hr_database' ? 'HR 数据库' : '本地应急账号' }}</span></template>
           <template #c3="{ row: admin }">{{ admin.permission_changed_by ? `${admin.permission_changed_by} · ${formatTime(admin.permission_changed_at)}` : formatTime(admin.created_at) }}</template>
           <template #c4="{ row: admin }">
@@ -154,14 +154,14 @@ const adminTableColumns = [
     </section>
 
     <section class="panel account-panel">
-      <div class="panel-title"><div><span>02</span><h2>从 HR 人员库添加</h2></div><p>按姓名或公司工号搜索</p></div>
+      <div class="panel-title"><div><span>02</span><h2>从 HR 人员库添加</h2></div><p>按姓名、集团工号或公司工号搜索</p></div>
       <form class="hr-search" @submit.prevent="search">
         <label><span>HR 人员</span><NInput clearable v-model:value.trim="keyword" name="hr_keyword" :maxlength="64" autocomplete="off" spellcheck="false" placeholder="例如：张三或 10086…" required :input-props="{ 'name': 'hr_keyword', 'autocomplete': 'off', 'spellcheck': false, 'required': true }" /></label>
         <NButton class="primary" attr-type="submit" :disabled="searching" type="primary" :loading="searching">{{ searching ? '搜索中' : '搜索' }}</NButton>
       </form>
       <div v-if="results.length" class="search-results">
         <article v-for="person in results" :key="person.external_id">
-          <div><strong>{{ person.display_name }}</strong><span>{{ person.company_no }}</span><small>{{ person.group_no || '未设置集团工号' }}</small></div>
+          <div><strong>{{ person.display_name }}</strong><span>{{ person.group_no }}</span><small>公司工号：{{ person.company_no }}</small></div>
           <NButton
             attr-type="button"
             :disabled="adminExternalIds.has(String(person.external_id))"
@@ -169,14 +169,14 @@ const adminTableColumns = [
           >{{ adminExternalIds.has(String(person.external_id)) ? '已是管理员' : '授予管理员权限' }}</NButton>
         </article>
       </div>
-      <p v-else-if="!searching && keyword" class="search-hint">没有搜索结果时，请检查姓名或公司工号后重新搜索。</p>
+      <p v-else-if="!searching && keyword" class="search-hint">没有搜索结果时，请检查姓名或工号后重新搜索。</p>
       <p v-else class="search-hint">被授权人员无需设置新密码，仍使用 HR 数据库中的原密码登录。</p>
     </section>
 
     <NModal :show="dialogOpen" :mask-closable="!dialog.saving" :close-on-esc="!dialog.saving" @update:show="visible => { if (!visible) closeDialog() }">
       <div class="permission-dialog" role="dialog" aria-modal="true" aria-labelledby="permission-dialog-title" tabindex="-1">
         <header><div><small>SECURITY CHECK</small><h2 id="permission-dialog-title">{{ dialog.action === 'grant' ? '确认授予管理员权限' : '确认撤销管理员权限' }}</h2></div><NButton attr-type="button" aria-label="关闭" :disabled="dialog.saving" @click="closeDialog" :loading="dialog.saving">×</NButton></header>
-        <p>操作对象：<strong>{{ dialog.target?.display_name }}</strong>（{{ dialog.target?.company_no || (dialog.target && 'username' in dialog.target ? dialog.target.username : undefined) }}）</p>
+        <p>操作对象：<strong>{{ dialog.target?.display_name }}</strong>（{{ dialog.target?.group_no || (dialog.target && 'username' in dialog.target ? dialog.target.username : undefined) }}）</p>
         <label><span>当前管理员密码</span><NInput v-model:value="dialog.password" name="current_admin_password" type="password" show-password-on="click" :maxlength="128" autocomplete="current-password" required data-dialog-initial-focus @keyup.enter="confirmPermissionChange" :input-props="{ 'name': 'current_admin_password', 'autocomplete': 'current-password', 'required': true }" /><small>用于确认是当前登录管理员本人操作，不会保存该密码。</small></label>
         <p v-if="dialog.error" class="dialog-error" role="alert">{{ dialog.error }}</p>
         <footer><NButton attr-type="button" :disabled="dialog.saving" @click="closeDialog" :loading="dialog.saving">取消</NButton><NButton class="primary" attr-type="button" :disabled="dialog.saving || !dialog.password" @click="confirmPermissionChange" type="primary">{{ dialog.saving ? '验证并提交中' : '验证密码并确认' }}</NButton></footer>

@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { NTag } from 'naive-ui'
+import { NButton, NTag } from 'naive-ui'
 import AppReportTable from '../AppReportTable.vue'
 import { formatChineseDateTime as formatDateTime } from '../../utils/dateDisplay'
 import type { AutomationSchedule } from '../../types/automation'
 import { formatDeviceDisplay } from '../../utils/deviceDisplay'
 
-defineProps<{ schedules: AutomationSchedule[]; loading: boolean; reportLabels: Record<string,string>; scheduleLabels: Record<string,string> }>()
+defineProps<{ schedules: AutomationSchedule[]; loading: boolean; searching?: boolean; reportLabels: Record<string,string>; scheduleLabels: Record<string,string> }>()
 const emit = defineEmits<{ run: [item: AutomationSchedule]; edit: [item: AutomationSchedule]; remove: [item: AutomationSchedule] }>()
 
 function scheduleText(item: AutomationSchedule) {
@@ -26,7 +26,7 @@ const scheduleTableColumns = [
 </script>
 
 <template>
-  <AppReportTable :columns="scheduleTableColumns" :items="schedules" :row-key="item => item.schedule_id" :paginate="false" :max-height="340" :loading="loading" aria-label="定时任务列表">
+  <AppReportTable :columns="scheduleTableColumns" :items="schedules" :row-key="item => item.schedule_id" :paginate="false" :max-height="null" :loading="loading" aria-label="定时任务列表">
           <template #c0="{ row: item }"><NTag class="schedule-status" :class="{ enabled: item.enabled }" size="small" :type="item.enabled ? 'success' : 'default'">{{ item.enabled ? '启用' : '停用' }}</NTag></template>
           <template #c1="{ row: item }"><div class="task-cell"><strong>{{ item.name }}</strong><small>{{ formatDeviceDisplay(item.device_id) }}</small><small>{{ scheduleLabels[item.last_status || ''] || item.last_status || '尚未执行' }}</small></div></template>
           <template #c2="{ row: item }">{{ reportLabels[item.report_type] }}</template>
@@ -35,7 +35,7 @@ const scheduleTableColumns = [
           <template #c5="{ row: item }"><span :title="item.recipients.join(', ')">{{ item.recipients.length }} 人</span></template>
           <template #c6="{ row: item }">{{ item.sent_count || 0 }} / {{ item.failed_count || 0 }}</template>
           <template #c7="{ row: item }"><div class="row-actions"><NButton attr-type="button" @click="emit('run', item)">立即执行</NButton><NButton attr-type="button" @click="emit('edit', item)">编辑</NButton><NButton attr-type="button" class="danger" @click="emit('remove', item)">删除</NButton></div></template>
-          <template #empty>尚未创建定时任务，可在上方设置并创建。</template>
+          <template #empty>{{ searching ? '未找到匹配的定时任务。' : '尚未创建定时任务，可在上方设置并创建。' }}</template>
         </AppReportTable>
 </template>
 

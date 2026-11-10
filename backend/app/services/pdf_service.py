@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import base64
+import json
 import logging
 import multiprocessing as mp
 import os
 import signal
 import subprocess
 import threading
+from tempfile import TemporaryDirectory
 from contextlib import contextmanager
 from time import monotonic
 
@@ -14,20 +17,24 @@ from app.core.request_cancellation import (
 )
 from pathlib import Path
 from app.core.process_lock import FileLock
+from app.services.email_report import EmailReport, render_email_report
 
 
 class PdfRenderError(RuntimeError):
     pass
 
 
-def _render_pdf_child(html_path: str, temporary_path: str) -> None:
+def _render_pdf_child(html_path: str, temporary_path: str, email: bool = False) -> None:
     """Run Chromium outside the server process so the parent can terminate it."""
     if os.name == "posix":
         try:
             os.setsid()
         except OSError:
             logging.getLogger(__name__).debug("could not create PDF renderer process group", exc_info=True)
-    PdfService._render_with_playwright(Path(html_path), Path(temporary_path))
+    if email:
+        render_email_report(Path(html_path), Path(temporary_path))
+    else:
+        PdfService._render_with_playwright(Path(html_path), Path(temporary_path))
 
 
 class PdfService:
@@ -139,6 +146,24 @@ class PdfService:
                 ) from exc
         return pdf_path
 
+    def render_email(self, html_path: Path) -> EmailReport:
+        with self._render_slot(), TemporaryDirectory(prefix="report-email-") as directory:
+            output = Path(directory) / "email.json"
+            try:
+                if self.operation_timeout_seconds is None:
+                    render_email_report(html_path, output)
+                else:
+                    self._render_in_process(html_path, output, email=True)
+                self._check_cancelled()
+                result = json.loads(output.read_text(encoding="utf-8"))
+                return EmailReport(result["html"], {
+                    cid: base64.b64decode(data) for cid, data in result["images"].items()
+                })
+            except Exception as exc:
+                if isinstance(exc, (SqlRequestCancelled, PdfRenderError)):
+                    raise
+                raise PdfRenderError("邮件正文生成失败，请确认服务器已安装 Playwright Chromium。") from exc
+
     @staticmethod
     def _render_with_playwright(html_path: Path, temporary_path: Path) -> None:
         try:
@@ -200,12 +225,12 @@ class PdfService:
             finally:
                 browser.close()
 
-    def _render_in_process(self, html_path: Path, temporary_path: Path) -> None:
+    def _render_in_process(self, html_path: Path, temporary_path: Path, *, email: bool = False) -> None:
         process = None
         try:
             process = mp.get_context("spawn").Process(
                 target=_render_pdf_child,
-                args=(str(html_path), str(temporary_path)),
+                args=(str(html_path), str(temporary_path), True) if email else (str(html_path), str(temporary_path)),
                 name="pdf-renderer",
             )
             process.start()

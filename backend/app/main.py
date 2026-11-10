@@ -58,6 +58,18 @@ logging.basicConfig(
 )
 
 
+def _redact_sso_callback(record: logging.LogRecord) -> bool:
+    # Uvicorn includes query strings in access logs; authorization codes are credentials.
+    if isinstance(record.args, tuple) and len(record.args) == 5:
+        path = str(record.args[2]).partition('?')[0]
+        if path.endswith('/api/v1/auth/sso/callback'):
+            record.args = (*record.args[:2], path, *record.args[3:])
+    return True
+
+
+logging.getLogger('uvicorn.access').addFilter(_redact_sso_callback)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Dispatch recovery is safe only after the previous Web process has exited.

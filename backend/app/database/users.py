@@ -13,14 +13,16 @@ class UserRepository(PostgresRepository):
         keys = set(row.keys())
         auth_source = row["auth_source"] if "auth_source" in keys else "local"
         company_no = row["company_no"] if "company_no" in keys else None
+        group_no = row["group_no"] if "group_no" in keys else None
         return {
             "user_id": row["user_id"],
-            "username": company_no if auth_source == "hr_database" else row["username"],
+            "username": ((group_no or "").strip() or (company_no or "").strip() or row["username"])
+            if auth_source == "hr_database" else row["username"],
             "display_name": row["display_name"],
             "role": row["role"],
             "auth_source": auth_source,
             "external_id": row["external_id"] if "external_id" in keys else None,
-            "group_no": row["group_no"] if "group_no" in keys else None,
+            "group_no": group_no,
             "company_no": company_no,
             "active": bool(row["active"]),
             "created_at": row["created_at"],
@@ -183,6 +185,19 @@ class UserRepository(PostgresRepository):
             ).fetchall()
         return [self.public_user(row) for row in rows]
 
+    def active_user(self, user_id: str) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute('SELECT * FROM users WHERE user_id=%s AND active=1 FOR SHARE', (user_id,)).fetchone()
+        return self.public_user(row) if row else None
+
+    def active_external_user(self, external_id: str) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM users WHERE auth_source='hr_database' AND external_id=%s AND active=1 FOR SHARE",
+                (external_id,),
+            ).fetchone()
+        return self.public_user(row) if row else None
+
     def verify_local_user_password(self, user_id: str, password: str) -> bool:
         with self.connect() as connection:
             row = connection.execute(
@@ -233,7 +248,8 @@ class UserRepository(PostgresRepository):
         external_id = identity["external_id"].strip()
         company_no = identity["company_no"].strip()
         display_name = identity["display_name"].strip()
-        if not external_id or not company_no or not display_name:
+        group_no = (identity.get("group_no") or "").strip()
+        if not external_id or not company_no or not display_name or not group_no:
             raise ValueError("HR人员信息不完整")
 
         with self.connect() as connection:
@@ -258,7 +274,7 @@ class UserRepository(PostgresRepository):
                     """,
                     (
                         display_name,
-                        identity.get("group_no", "").strip(),
+                        group_no,
                         company_no,
                         now,
                         user_id,
@@ -279,7 +295,7 @@ class UserRepository(PostgresRepository):
                         f"hr:{external_id}",
                         display_name,
                         external_id,
-                        identity.get("group_no", "").strip(),
+                        group_no,
                         company_no,
                         now,
                         now,

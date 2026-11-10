@@ -24,7 +24,7 @@ docker compose -f compose.yaml -f compose.offline.yaml run --rm --no-deps -T mig
   python scripts/manage_postgres.py status
 ```
 
-已有`001_initial`至`006_dispatch_completion`及指纹保持不变，只能追加新迁移，不删除版本行、修改已发布脚本或让请求临时建表。PG中原有历史导入元数据表及退役审计继续保留，不影响正常业务，也不代表仍运行SQLite。
+已有`001_initial`至`006_dispatch_completion`脚本保持不变；当前追加`007_sso_requests`并更新总结构指纹，保存SSO一次性登录请求。只能追加新迁移，不删除版本行、修改已发布脚本或让请求临时建表。PG中原有历史导入元数据表及退役审计继续保留，不影响正常业务，也不代表仍运行SQLite。
 
 原生维护使用相同脚本；仅在维护终端配置`cutting_migrator`及对应密码，不把密码放命令参数或共享脚本。维护错误不打印驱动凭据，不将失败标记为成功。
 

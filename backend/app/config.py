@@ -11,6 +11,7 @@ from pathlib import Path
 from app.configuration_sources import load_environment
 
 from app.device_config import ProductionLineInstance
+from app.models.sso import account_bindings, http_url
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -247,8 +248,20 @@ class Settings:
     sql_workbench_max_rows: int = configuration_field("SQL_WORKBENCH_MAX_ROWS", lambda: _as_int("SQL_WORKBENCH_MAX_ROWS", 200))
     auth_session_hours: int = configuration_field("AUTH_SESSION_HOURS", lambda: _as_int("AUTH_SESSION_HOURS", 12))
     auth_cookie_secure: bool = configuration_field("AUTH_COOKIE_SECURE", lambda: _as_bool("AUTH_COOKIE_SECURE", False))
+    sso_enabled: bool = configuration_field('SSO_ENABLED', lambda: _as_bool('SSO_ENABLED', False))
+    sso_issuer: str = configuration_field('SSO_ISSUER', lambda: _environment.get().get('SSO_ISSUER', ''))
+    sso_client_id: str = configuration_field('SSO_CLIENT_ID', lambda: _environment.get().get('SSO_CLIENT_ID', ''))
+    sso_client_secret: str = configuration_field('SSO_CLIENT_SECRET', lambda: _environment.get().get('SSO_CLIENT_SECRET', ''), hidden=True)
+    sso_redirect_uri: str = configuration_field('SSO_REDIRECT_URI', lambda: _environment.get().get('SSO_REDIRECT_URI', ''))
+    sso_account_bindings_json: str = configuration_field('SSO_ACCOUNT_BINDINGS_JSON', lambda: _environment.get().get('SSO_ACCOUNT_BINDINGS_JSON', '[]'), hidden=True)
 
     def __post_init__(self) -> None:
+        account_bindings(self.sso_account_bindings_json)
+        if self.sso_enabled:
+            if not http_url(self.sso_issuer, issuer=True) or not http_url(self.sso_redirect_uri):
+                raise ValueError('启用 SSO 必须配置有效的 SSO_ISSUER 和 SSO_REDIRECT_URI，不能包含凭据或片段')
+            if not self.sso_client_id.strip() or not self.sso_client_secret.strip():
+                raise ValueError('启用 SSO 必须配置 SSO_CLIENT_ID 和 SSO_CLIENT_SECRET')
         if self.magic_box_callback_enabled and not self.magic_box_callback_allowed_ips:
             raise ValueError('启用魔盒回调必须配置 MAGIC_BOX_CALLBACK_ALLOWED_IPS')
         for value in self.magic_box_callback_allowed_ips:

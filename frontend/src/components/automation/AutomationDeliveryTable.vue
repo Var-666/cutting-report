@@ -1,13 +1,20 @@
 <script setup lang="ts">
-import { NTag } from 'naive-ui'
+import { NButton, NTag } from 'naive-ui'
 import AppReportTable from '../AppReportTable.vue'
 import { formatChineseDateTime as formatDateTime } from '../../utils/dateDisplay'
 import type { EmailDelivery } from '../../types/automation'
 import { formatChineseDate } from '../../utils/dateDisplay'
 
-defineProps<{ deliveries: EmailDelivery[]; deliveryTotal: number; deliveryPage: number; deliveryLoading: boolean; paginate: boolean; deliveryLabels: Record<string,string> }>()
+defineProps<{ deliveries: EmailDelivery[]; deliveryTotal: number; deliveryPage: number; deliveryLoading: boolean; paginate: boolean; searching?: boolean; deliveryLabels: Record<string,string> }>()
 const emit = defineEmits<{ page: [page: number]; retry: [item: EmailDelivery]; open: [item: EmailDelivery] }>()
 
+function recipientsText(item: EmailDelivery) {
+  const labels: Record<string, string> = { accepted: '服务器已接受', unknown: '结果待核对', not_accepted: '服务器未接收（人工核对）', refused: '服务器拒收' }
+  return [...new Set([...item.recipients, ...Object.keys(item.recipient_results || {})])].map(address => {
+    const result = item.recipient_results?.[address]
+    return result ? `${address}（${labels[result.status] || result.status}${result.code ? ` ${result.code}` : ''}）` : address
+  }).join('；')
+}
 
 const deliveryTableColumns = [
   { key: 'c0', title: '创建时间', width: 184, align: 'left' },
@@ -22,16 +29,16 @@ const deliveryTableColumns = [
 </script>
 
 <template>
-  <AppReportTable :columns="deliveryTableColumns" :items="deliveries" :row-key="item => item.delivery_id" :paginate="paginate" :total="deliveryTotal" :page="deliveryPage" :page-size="20" :page-sizes="[]" :max-height="440" :loading="deliveryLoading" aria-label="邮件发送记录" @page="emit('page', $event)">
+  <AppReportTable :columns="deliveryTableColumns" :items="deliveries" :row-key="item => item.delivery_id" :paginate="paginate" :total="deliveryTotal" :page="deliveryPage" :page-size="20" :page-sizes="[]" :max-height="null" :loading="deliveryLoading" aria-label="邮件发送记录" @page="emit('page', $event)">
           <template #c0="{ row: item }">{{ formatDateTime(item.created_at) }}</template>
-          <template #c1="{ row: item }"><div class="task-cell"><strong>{{ item.schedule_name }}</strong><small :title="item.subject">{{ item.subject }}</small></div></template>
+          <template #c1="{ row: item }"><strong :title="item.subject">{{ item.schedule_name }}</strong></template>
           <template #c2="{ row: item }">{{ formatChineseDate(item.report_date) }}</template>
-          <template #c3="{ row: item }"><div class="recipient-cell"><span>{{ item.recipients.join(', ') }}</span><small v-for="(result, address) in item.recipient_results" :key="address" :title="`${address}：${result.status}`">{{ address }}：{{ result.status === 'accepted' ? '服务器已接受' : result.status === 'unknown' ? '结果待核对' : result.status === 'not_accepted' ? '服务器未接收（人工核对）' : '服务器拒收' }}{{ result.code ? `（${result.code}）` : '' }}</small></div></template>
+          <template #c3="{ row: item }">{{ recipientsText(item) }}</template>
           <template #c4="{ row: item }"><NTag class="delivery-status" :class="item.status" size="small" :type="item.status === 'sent' ? 'success' : item.status === 'failed' ? 'error' : item.status === 'unknown' ? 'warning' : 'info'">{{ deliveryLabels[item.status] || item.status }}</NTag></template>
           <template #c5="{ row: item }">{{ item.attempt_count }} / {{ item.max_attempts }}</template>
           <template #c6="{ row: item }"><span class="error-cell" :title="item.last_error || ''">{{ item.sent_at ? formatDateTime(item.sent_at) : item.last_error || '—' }}</span></template>
-          <template #c7="{ row: item }"><div class="delivery-actions"><NButton v-if="item.status === 'failed'" attr-type="button" @click="emit('retry', item)">重新发送</NButton><NButton attr-type="button" @click="emit('open', item)">{{ item.status === 'unknown' ? '核对结果' : '核对记录' }}</NButton><small v-if="item.status === 'unknown'" :title="item.message_id || undefined">{{ item.message_id || '无历史 Message-ID' }}</small></div></template>
-          <template #empty>尚无邮件发送记录，任务执行后会显示在这里。</template>
+          <template #c7="{ row: item }"><div class="delivery-actions"><NButton v-if="item.status === 'failed'" attr-type="button" @click="emit('retry', item)">重新发送</NButton><NButton attr-type="button" @click="emit('open', item)">{{ item.status === 'unknown' ? '核对结果' : '核对记录' }}</NButton></div></template>
+          <template #empty>{{ searching ? '未找到匹配的邮件发送记录。' : '尚无邮件发送记录，任务执行后会显示在这里。' }}</template>
         </AppReportTable>
 </template>
 

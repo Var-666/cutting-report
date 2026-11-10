@@ -3,10 +3,12 @@ from __future__ import annotations
 import smtplib
 from email.message import EmailMessage
 from email.utils import formataddr, make_msgid
+from pathlib import Path
 from time import monotonic
 
 from app.config import Settings
 from app.services.automation_runtime import AutomationRuntime
+from app.services.pdf_service import PdfService
 
 
 class EmailConfigurationError(RuntimeError):
@@ -30,10 +32,15 @@ class EmailRecipientsRefused(EmailDeliveryFailure):
 
 class EmailService:
     def __init__(
-        self, settings: Settings, runtime: AutomationRuntime | None = None
+        self, settings: Settings, runtime: AutomationRuntime | None = None,
+        *, pdf_service: PdfService | None = None,
     ) -> None:
         self.settings = settings
         self.runtime = runtime or AutomationRuntime(settings)
+        self.pdf_service = pdf_service or PdfService(
+            operation_timeout_seconds=settings.pdf_render_timeout_seconds,
+            coordination_path=settings.data_dir / ".coordination" / "pdf-render.lock",
+        )
 
     @staticmethod
     def _configured(settings: Settings) -> bool:
@@ -66,6 +73,7 @@ class EmailService:
         attachment: bytes | None,
         *,
         settings_snapshot: Settings | None = None,
+        report_path: Path | None = None,
     ) -> str:
         settings = settings_snapshot or self.runtime.snapshot()[0]
         if not self._configured(settings):
@@ -90,6 +98,15 @@ class EmailService:
                 ]
             )
         )
+        if report_path is not None:
+            try:
+                report = self.pdf_service.render_email(report_path)
+                message.add_alternative(report.html, subtype="html")
+                html_part = message.get_payload()[-1]
+                for cid, content in report.images.items():
+                    html_part.add_related(content, maintype="image", subtype="png", cid=f"<{cid}>", disposition="inline")
+            except Exception as exc:
+                raise EmailDeliveryFailure("邮件正文生成失败，尚未提交 SMTP") from exc
         if attachment is not None:
             message.add_attachment(
                 attachment,

@@ -578,6 +578,21 @@ export type ApiEnvelopeAlarmStatus = {
 };
 
 /**
+ * ApiEnvelope[AuthStatus]
+ */
+export type ApiEnvelopeAuthStatus = {
+    /**
+     * Success
+     */
+    success: true;
+    data: AuthStatus;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
  * ApiEnvelope[AutomationConfiguration]
  */
 export type ApiEnvelopeAutomationConfiguration = {
@@ -1511,6 +1526,75 @@ export type ApiEnvelopeListAlarmReport = {
      * Request Id
      */
     request_id: string;
+};
+
+/**
+ * AuthStatus
+ */
+export type AuthStatus = {
+    /**
+     * Setup Required
+     */
+    setup_required: boolean;
+    /**
+     * Worker Database Auth Enabled
+     */
+    worker_database_auth_enabled: boolean;
+    /**
+     * Sso Enabled
+     */
+    sso_enabled: boolean;
+    /**
+     * Authenticated
+     */
+    authenticated: boolean;
+    user: AuthUser | null;
+};
+
+/**
+ * AuthUser
+ */
+export type AuthUser = {
+    /**
+     * User Id
+     */
+    user_id: string;
+    /**
+     * Username
+     */
+    username: string;
+    /**
+     * Display Name
+     */
+    display_name: string;
+    /**
+     * Role
+     */
+    role: 'admin' | 'worker';
+    /**
+     * Active
+     */
+    active: boolean;
+    /**
+     * Auth Source
+     */
+    auth_source: string;
+    /**
+     * External Id
+     */
+    external_id: string | null;
+    /**
+     * Group No
+     */
+    group_no: string | null;
+    /**
+     * Company No
+     */
+    company_no: string | null;
+    /**
+     * Created At
+     */
+    created_at: string;
 };
 
 /**
@@ -7786,6 +7870,31 @@ export type WeldingConnectionRequestWritable = {
     timezone?: string;
 };
 
+export type AuthStatusApiV1AuthStatusGetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/status';
+};
+
+export type AuthStatusApiV1AuthStatusGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type AuthStatusApiV1AuthStatusGetError = AuthStatusApiV1AuthStatusGetErrors[keyof AuthStatusApiV1AuthStatusGetErrors];
+
+export type AuthStatusApiV1AuthStatusGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeAuthStatus;
+};
+
+export type AuthStatusApiV1AuthStatusGetResponse = AuthStatusApiV1AuthStatusGetResponses[keyof AuthStatusApiV1AuthStatusGetResponses];
+
 export type ProductionLinesApiV1ProductionLinesGetData = {
     body?: never;
     path?: never;
@@ -9568,6 +9677,10 @@ export type ListDeliveriesApiV1AutomationDeliveriesGetData = {
          * Page Size
          */
         page_size?: number;
+        /**
+         * Search
+         */
+        search?: string;
     };
     url: '/api/v1/automation/deliveries';
 };

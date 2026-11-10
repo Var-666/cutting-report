@@ -6,7 +6,7 @@ from pathlib import Path
 from psycopg import Connection
 
 DIRECTORY = Path(__file__).parent
-VERSIONS = ('001_initial', '002_runtime', '003_consumer_scaling', '004_legacy_workshop_audits', '005_dispatch_file_location', '006_dispatch_completion')
+VERSIONS = ('001_initial', '002_runtime', '003_consumer_scaling', '004_legacy_workshop_audits', '005_dispatch_file_location', '006_dispatch_completion', '007_sso_requests')
 # Serializes schema installation and stopped-Consumer maintenance; released by transaction/OS exit.
 MIGRATION_LOCK = 740314001
 

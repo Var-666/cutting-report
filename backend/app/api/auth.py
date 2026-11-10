@@ -3,10 +3,12 @@ from __future__ import annotations
 import secrets
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field, SecretStr, field_validator
 from starlette.concurrency import run_in_threadpool
+from starlette.responses import RedirectResponse
 
 from app.api.workloads import authentication_requests
 from app.api.runtime import application_state, runtime_state
@@ -16,11 +18,16 @@ from app.core.request_cancellation import (
 )
 from app.database.workshop import AuthenticationError
 from app.services.worker_auth_service import WorkerAuthenticationUnavailableError
+from app.services.sso_service import SsoError
+from app.models.contracts import ApiEnvelope
+from app.models.sso import AuthStatus
 
 
 SESSION_COOKIE = "cutting_session"
 SESSION_EXPIRED_HEADER = {"X-Session-Expired": "1"}
 router = APIRouter(prefix="/api/v1/auth", tags=["authentication"])
+status_router = APIRouter(tags=['authentication'])
+SSO_BROWSER_COOKIE = 'cutting_sso_browser'
 
 
 class LoginRequest(BaseModel):
@@ -42,15 +49,15 @@ class LocalAccountRequest(BaseModel):
 
 
 class WorkerLoginRequest(BaseModel):
-    company_no: str = Field(min_length=1, max_length=64)
+    group_no: str = Field(min_length=1, max_length=64)
     password: str = Field(min_length=1, max_length=128)
 
-    @field_validator("company_no")
+    @field_validator("group_no")
     @classmethod
-    def strip_company_no(cls, value: str) -> str:
+    def strip_group_no(cls, value: str) -> str:
         cleaned = value.strip()
         if not cleaned:
-            raise ValueError("公司工号不能为空")
+            raise ValueError("集团工号不能为空")
         return cleaned
 
 
@@ -175,10 +182,14 @@ def _verify_current_admin_password(
     plaintext = password.get_secret_value()
     if admin.get("auth_source") == "hr_database":
         try:
-            identity = runtime_state(request).worker_auth.authenticate(
-                admin.get("company_no") or admin.get("username") or "",
-                plaintext,
-            )
+            directory = runtime_state(request).worker_auth
+            group_no = (admin.get("group_no") or "").strip()
+            if not group_no:
+                person = directory.find_person(admin.get("external_id") or "")
+                if person is None:
+                    raise AuthenticationError("HR人员不存在或账号不可用")
+                group_no = person["group_no"]
+            identity = directory.authenticate(group_no, plaintext)
         except AuthenticationError as exc:
             raise HTTPException(status_code=401, detail="当前管理员密码错误") from exc
         except WorkerAuthenticationUnavailableError as exc:
@@ -196,17 +207,52 @@ def _verify_current_admin_password(
         raise HTTPException(status_code=401, detail="当前管理员密码错误")
 
 
-@router.get("/status")
+@status_router.get('/status', response_model=None, responses={200: {'model': ApiEnvelope[AuthStatus]}})
+@router.get('/status', response_model=None, responses={200: {'model': ApiEnvelope[AuthStatus]}})
 def auth_status(request: Request, user: dict | None = Depends(optional_user)) -> dict:
     return _envelope(
         request,
         {
             "setup_required": _users(request).admin_count() == 0,
             "worker_database_auth_enabled": getattr(runtime_state(request), "settings", settings).worker_database_auth_enabled,
+            "sso_enabled": getattr(application_state(request), 'sso', None) is not None and application_state(request).sso.settings.sso_enabled,
             "authenticated": user is not None,
             "user": user,
         },
     )
+
+
+@authentication_requests.route(router.get('/sso/login', response_class=RedirectResponse, status_code=302))
+def sso_login(request: Request, return_to: str = '/') -> RedirectResponse:
+    service = application_state(request).sso
+    try:
+        login = service.begin(return_to, request.cookies.get(SSO_BROWSER_COOKIE))
+    except SsoError as exc:
+        return RedirectResponse('/login?' + urlencode({'sso_error': exc.code}), status_code=302,
+                                headers={'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer'})
+    response = RedirectResponse(login.url, status_code=302,
+                                headers={'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer'})
+    response.set_cookie(SSO_BROWSER_COOKIE, login.browser, max_age=300, httponly=True,
+                        secure=service.settings.auth_cookie_secure, samesite='lax', path='/api/v1/auth/sso')
+    return response
+
+
+@authentication_requests.route(router.get('/sso/callback', response_class=RedirectResponse, status_code=302))
+def sso_callback(request: Request) -> RedirectResponse:
+    try:
+        service = application_state(request).sso
+        if any(len(request.query_params.getlist(key)) > 1 for key in ('code', 'state', 'error')):
+            raise SsoError('state')
+        result = service.finish(state=request.query_params.get('state', ''),
+            browser=request.cookies.get(SSO_BROWSER_COOKIE, ''), code=request.query_params.get('code', ''),
+            error=request.query_params.get('error', ''), worker_auth=runtime_state(request).worker_auth)
+    except SsoError as exc:
+        return RedirectResponse('/login?' + urlencode({'sso_error': exc.code}), status_code=302,
+                                headers={'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer'})
+    response = RedirectResponse(result.return_to, status_code=302,
+                                headers={'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer'})
+    _set_session_cookie(response, result.token)
+    return response
 
 
 @authentication_requests.route(router.post("/bootstrap"))
@@ -274,7 +320,7 @@ def worker_login(
 ) -> dict:
     try:
         identity = runtime_state(request).worker_auth.authenticate(
-            payload.company_no, payload.password
+            payload.group_no, payload.password
         )
     except AuthenticationError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc

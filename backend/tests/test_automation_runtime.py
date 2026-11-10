@@ -84,9 +84,9 @@ def test_email_service_uses_latest_smtp_configuration_per_delivery(monkeypatch) 
     assert "new@example.com" in calls[1]["from"]
 
 
-def test_automation_enable_and_retry_delay_use_live_configuration() -> None:
+def test_automation_enable_and_retry_delay_use_live_configuration(tmp_path) -> None:
     initial = replace(
-        settings, automation_enabled=False, email_retry_base_seconds=60
+        settings, project_root=tmp_path, automation_enabled=False, email_retry_base_seconds=60
     )
     runtime = AutomationRuntime(initial)
 
@@ -99,13 +99,14 @@ def test_automation_enable_and_retry_delay_use_live_configuration() -> None:
             return []
 
         def claim_delivery(self, _now):
-            return {"delivery_id": "delivery-1", "attempt_count": 2, "attach_report": False}
+            return {"delivery_id": "delivery-1", "attempt_count": 2, "attach_report": False, "relative_path": "r.html"}
 
         def mark_delivery_failed(self, _delivery, *, error, next_attempt_at, now):
             self.retry_at = next_attempt_at
 
     class FailingEmail:
-        def send(self, _delivery, _attachment, *, settings_snapshot):
+        def send(self, _delivery, _attachment, *, settings_snapshot, report_path):
+            assert report_path.read_text() == "<h1>日报</h1>"
             raise EmailDeliveryFailure("SMTP connection unavailable before submission")
 
     repository = Repository()
@@ -114,6 +115,8 @@ def test_automation_enable_and_retry_delay_use_live_configuration() -> None:
     service.runtime = runtime
     service.repository = repository
     service.email_service = FailingEmail()
+    initial.reports_dir.mkdir(parents=True)
+    (initial.reports_dir / "r.html").write_text("<h1>日报</h1>")
     now = datetime(2026, 9, 23, 12, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
 
     assert service.process_due_schedules(now) == 0

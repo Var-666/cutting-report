@@ -124,7 +124,7 @@ def test_successful_login_replaces_previous_disabled_cache():
     auth = WorkerAuthService(_enabled_settings(), source)
     assert not auth.session_identity_available("9123")
     source.rows = [_valid_row()]
-    assert auth.authenticate("C0007", "password")["external_id"] == "9123"
+    assert auth.authenticate("G0021", "password")["external_id"] == "9123"
     assert auth.session_identity_available("9123")
     assert len(source.calls) == 2
 

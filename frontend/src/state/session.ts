@@ -11,6 +11,7 @@ export const session = reactive({
   ready: false,
   setupRequired: false,
   workerDatabaseAuthEnabled: false,
+  ssoEnabled: false,
   user: null as User | null,
   systemInfo: null as SystemHealth | null,
   error: '',
@@ -47,6 +48,7 @@ export async function loadSession({ force = false } = {}) {
       if (generation !== sessionGeneration) return session
       session.setupRequired = status.setup_required
       session.workerDatabaseAuthEnabled = Boolean(status.worker_database_auth_enabled)
+      session.ssoEnabled = Boolean(status.sso_enabled)
       session.user = status.user
       preloadDeviceReports(status.user, generation)
     } catch (exception) {

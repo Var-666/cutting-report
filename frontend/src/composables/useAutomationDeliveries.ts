@@ -15,13 +15,15 @@ export function useAutomationDeliveries({ message, error, refresh, isDisposed, c
   const deliveryPage = ref(1)
   const deliveryTotal = ref(0)
   const deliveryLoading = ref(false)
+  const deliverySearch = ref('')
+  const appliedDeliverySearch = ref('')
   let deliveryController: AbortController | null = null
   let deliverySequence = 0
   const selectedDelivery = ref<EmailDelivery | null>(null)
   const resolutionDirty = ref(false)
   const pageCount = computed(() => Math.max(1, Math.ceil(deliveryTotal.value / 20)))
 
-  async function loadDeliveries(page = deliveryPage.value) {
+  async function loadDeliveries(page = deliveryPage.value, search = appliedDeliverySearch.value) {
     if (isDisposed() || !Number.isSafeInteger(page)) return
     let target = Math.min(Math.max(page, 1), pageCount.value)
     deliveryController?.abort()
@@ -31,22 +33,33 @@ export function useAutomationDeliveries({ message, error, refresh, isDisposed, c
     deliveryLoading.value = true
     error.value = ''
     const current = () => !isDisposed() && !controller.signal.aborted && sequence === deliverySequence
+    const query = search.trim()
     try {
-      let data = await listEmailDeliveries({ page: target, pageSize: 20 }, { signal: controller.signal })
+      let data = await listEmailDeliveries({ page: target, pageSize: 20, search: query }, { signal: controller.signal })
       while (current() && target > Math.max(1, Math.ceil(data.total / 20))) {
         target = Math.max(1, Math.ceil(data.total / 20))
-        data = await listEmailDeliveries({ page: target, pageSize: 20 }, { signal: controller.signal })
+        data = await listEmailDeliveries({ page: target, pageSize: 20, search: query }, { signal: controller.signal })
       }
       if (!current()) return
       deliveries.value = data.items
       deliveryTotal.value = data.total
       deliveryPage.value = data.page
+      appliedDeliverySearch.value = query
     } catch (caught) {
       const exception = toError(caught)
       if (current() && exception.name !== 'AbortError') error.value = exception.message
     } finally {
       if (sequence === deliverySequence) { deliveryLoading.value = false; deliveryController = null }
     }
+  }
+
+  function searchDeliveries() {
+    return loadDeliveries(1, deliverySearch.value)
+  }
+
+  function clearDeliverySearch() {
+    deliverySearch.value = ''
+    return loadDeliveries(1, '')
   }
 
   function changeDeliveryPage(page: number) {
@@ -83,5 +96,5 @@ export function useAutomationDeliveries({ message, error, refresh, isDisposed, c
     deliveryController?.abort()
   }
 
-  return { deliveries, deliveryPage, deliveryTotal, deliveryLoading, selectedDelivery, resolutionDirty, pageCount, loadDeliveries, changeDeliveryPage, retry, openDelivery, deliveryResolved, pauseDeliveries }
+  return { deliveries, deliveryPage, deliveryTotal, deliveryLoading, deliverySearch, appliedDeliverySearch, searchDeliveries, clearDeliverySearch, selectedDelivery, resolutionDirty, pageCount, loadDeliveries, changeDeliveryPage, retry, openDelivery, deliveryResolved, pauseDeliveries }
 }

@@ -51,7 +51,9 @@ def test_hr_admin_permission_mapping_keeps_hr_password_external(tmp_path: Path, 
         ).fetchone()
     assert row["password_hash"] == ""
 
-    refreshed = repository.upsert_external_worker(**identity, now=now)
+    refreshed = repository.upsert_external_worker(**{**identity, "group_no": "G0022"}, now=now)
+    assert refreshed["user_id"] == granted["user_id"]
+    assert refreshed["username"] == "G0022"
     assert refreshed["role"] == "admin"
     admins = repository.list_admins()
     mapped = next(item for item in admins if item["user_id"] == granted["user_id"])
@@ -295,7 +297,7 @@ def test_external_worker_is_upserted_without_storing_hr_password(tmp_path: Path,
         now=now,
     )
 
-    assert worker["username"] == "C0007"
+    assert worker["username"] == "G0021"
     assert worker["external_id"] == "9123"
     assert worker["auth_source"] == "hr_database"
     assert worker["role"] == "worker"
@@ -307,18 +309,26 @@ def test_external_worker_is_upserted_without_storing_hr_password(tmp_path: Path,
     assert stored["username"] == "hr:9123"
     assert stored["password_hash"] == ""
     with pytest.raises(AuthenticationError):
-        repository.authenticate("C0007", "any-password")
+        repository.authenticate("G0021", "any-password")
+
+    token, _ = repository.create_session(worker["user_id"], now=datetime.fromisoformat(now), hours=2)
+    repository.confirm_task(task_id="existing-hr-task", user=worker, now=now)
+    original_confirmation = repository.get_confirmations(["existing-hr-task"])["existing-hr-task"]
 
     updated = repository.upsert_external_worker(
         external_id="9123",
         company_no="C0008",
-        group_no="G0021",
+        group_no="G0022",
         display_name="张三（新姓名）",
         now="2026-08-24T10:00:00+08:00",
     )
     assert updated["user_id"] == worker["user_id"]
-    assert updated["username"] == "C0008"
+    assert updated["username"] == "G0022"
     assert updated["display_name"] == "张三（新姓名）"
+    assert repository.user_for_session(token, now=now)["username"] == "G0022"
+    assert repository.get_confirmations(["existing-hr-task"])["existing-hr-task"] == {
+        **original_confirmation, "worker_company_no": "C0008",
+    }
     repository.confirm_task(task_id="hr-task", user=updated, now=now)
     assert repository.get_confirmations(["hr-task"])["hr-task"]["worker_company_no"] == "C0008"
 
@@ -458,3 +468,28 @@ def test_batch_confirmation_is_atomic_when_one_task_has_another_worker(
     )
     assert [item["task_id"] for item in confirmations] == ["task-1", "task-3"]
     assert all(item["worker_name"] == "张三" for item in confirmations)
+
+
+@pytest.mark.parametrize(('group_no', 'company_no', 'expected'), [(None, 'C001', 'C001'), ('', 'C001', 'C001'),
+    ('  ', 'C001', 'C001'), (None, None, 'hr:legacy'), ('G001', 'C001', 'G001')])
+def test_legacy_hr_public_user_keeps_nonempty_username(group_no, company_no, expected):
+    from app.database.users import UserRepository
+    row = dict(user_id='legacy-hr', username='hr:legacy', display_name='测试工人', role='worker',
+        auth_source='hr_database', external_id='legacy', group_no=group_no, company_no=company_no,
+        active=1, created_at='2026-01-01T00:00:00')
+    public = UserRepository.public_user(row)
+    assert public['username'] == expected
+    assert public['group_no'] == group_no and public['role'] == 'worker'
+    assert UserRepository.public_user(row | {'auth_source': 'local'})['username'] == 'hr:legacy'
+
+
+@pytest.mark.parametrize('group_no', [None, '', '  '])
+def test_grant_admin_rejects_missing_group_number_before_writing(monkeypatch, group_no):
+    from app.database.users import UserRepository
+    repository = UserRepository(None)
+    def unexpected_connection():
+        raise AssertionError('无效HR身份不得启动写事务')
+    monkeypatch.setattr(repository, 'connect', unexpected_connection)
+    with pytest.raises(ValueError, match='HR人员信息不完整'):
+        repository.grant_external_admin(identity=dict(external_id='person', company_no='C001', group_no=group_no,
+            display_name='测试人员'), operator={}, now='2026-11-10T10:00:00')

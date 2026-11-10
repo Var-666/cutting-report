@@ -326,7 +326,7 @@ const reportTableColumns = [
           <span class="empty-icon"><AppIcon name="check" size="24" /></span><strong>当前筛选下暂无告警</strong><span>{{ onlyOpen ? '当前没有状态异常的告警。' : activeSeverity === 'all' ? '当前设备暂无告警记录。' : '当前级别暂无告警。' }}监控服务状态见页头。</span>
         </div>
         <div v-else class="alarm-table-wrap">
-          <AppReportTable :columns="incidentTableColumns" :items="filteredIncidents" :total="incidentSummary.total" :page="incidentPage" :page-size="incidentPageSize" :page-sizes="[]" @page="changeIncidentPage" :row-key="item => item.incident_id" aria-label="切割机告警事件" :loading="loading">
+          <AppReportTable :columns="incidentTableColumns" :items="filteredIncidents" :total="incidentSummary.total" :page="incidentPage" :page-size="incidentPageSize" :page-sizes="[]" :max-height="null" @page="changeIncidentPage" :row-key="item => item.incident_id" aria-label="切割机告警事件" :loading="loading">
         <template #c0="{ row: item }"><NTag class="severity-badge" :class="item.severity" size="small" :type="item.severity === 'critical' ? 'error' : item.severity === 'high' ? 'warning' : 'info'">{{ severityLabels[item.severity] || item.severity }}</NTag></template>
         <template #c1="{ row: item }">{{ formatDeviceDisplay(item.machine_no) || '--' }}</template>
         <template #c2="{ row: item }"><strong class="alarm-name">{{ item.alarm_desc || '--' }}</strong><small>{{ item.alarm_code || item.alarm_type || '--' }}</small></template>

@@ -33,7 +33,8 @@ def test_schema_status_and_consumer_maintenance_preserve_pg_records(postgres_sta
         if action == 'prepare-consumers':
             assert payload['consumer_cutover'] == dict(background=0, reports=0, energy=0, unverified_source=0)
         else:
-            assert len(payload['postgres_versions']) == 6
+            from app.database.postgres_migrations import VERSIONS
+            assert len(payload['postgres_versions']) == len(VERSIONS)
     with database.connect() as connection:
         assert connection.execute('SELECT id FROM llm_usage_totals').fetchall() == [{'id': 1}]
     assert command(postgres_state[1], 'status').returncode == 0

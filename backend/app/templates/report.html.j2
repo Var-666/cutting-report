@@ -41,7 +41,7 @@
     th,td { height:42px; padding:8px 10px; border-bottom:1px solid #e0e8ec; text-align:right; vertical-align:middle; } th { color:#315568; background:#dceaf0; font-weight:700; } thead th { position:sticky; top:0; z-index:3; } tfoot th { position:sticky; bottom:0; z-index:2; } th:first-child,td:first-child,th:nth-child(2),td:nth-child(2) { text-align:left; }
     tbody tr { background:#fff; } tbody tr:hover { background:#f3f8fa; } tfoot th { color:#16455f; background:#eaf3f6; border-top:2px solid #84aab9; }
     .empty { min-height:120px; display:grid; place-items:center; padding:28px; color:var(--muted); background:var(--soft); text-align:center; }.notice { margin:10px 0; padding:11px 14px; color:#71511d; border-left:4px solid var(--amber); background:#fff7e8; }.notice.error { color:#87353a; border-left-color:var(--danger); background:#fff1f2; }
-    .analysis-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:-2px 0 12px; padding:10px 12px; border:1px solid var(--line); background:var(--soft); }.analysis-mode { display:inline-flex; align-items:center; padding:4px 10px; color:#875700; border:1px solid #e6c579; background:#fff4d6; font-size:11px; font-weight:700; }.analysis-mode.model { color:#087443; border-color:#9cd8b9; background:#e9f8f0; }.analysis-facts { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); margin-bottom:12px; border:1px solid var(--line); background:#fff; }.analysis-fact { min-width:0; padding:12px; border-right:1px solid var(--line); border-top:3px solid var(--blue); }.analysis-fact:nth-child(2){border-top-color:var(--teal)}.analysis-fact:nth-child(3){border-top-color:#6576bf}.analysis-fact:nth-child(4){border-top-color:#3b83b0}.analysis-fact:nth-child(5){border-top-color:var(--amber)}.analysis-fact:nth-child(6){border-top-color:var(--danger);border-right:0}.analysis-fact .fact-id { color:var(--blue); font-size:10px; font-weight:800; }.analysis-fact .label{display:inline;font-size:10px}.analysis-fact strong,.analysis-fact small { display:block; margin-top:4px; overflow-wrap:anywhere; }.analysis-fact strong { color:var(--navy); font-size:15px; }.analysis-fact small { color:var(--muted); font-size:9px; line-height:1.45; }
+    .analysis-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:-2px 0 12px; padding:10px 12px; border:1px solid var(--line); background:var(--soft); }.analysis-mode { display:inline-flex; align-items:center; padding:4px 10px; color:#875700; border:1px solid #e6c579; background:#fff4d6; font-size:11px; font-weight:700; }.analysis-mode.model { color:#087443; border-color:#9cd8b9; background:#e9f8f0; }.analysis-facts { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin-bottom:12px; }.analysis-fact { min-width:0; padding:12px; border:1px solid var(--line); border-top:3px solid var(--blue); background:#fff; }.analysis-fact:nth-child(2){border-top-color:var(--teal)}.analysis-fact:nth-child(3){border-top-color:#6576bf}.analysis-fact:nth-child(4){border-top-color:#3b83b0}.analysis-fact:nth-child(5){border-top-color:var(--amber)}.analysis-fact:nth-child(6){border-top-color:var(--danger)}.analysis-fact .fact-id { color:var(--blue); font-size:10px; font-weight:800; }.analysis-fact .label{display:inline;font-size:10px}.analysis-fact strong { display:block; margin-top:4px; color:var(--navy); font-size:15px; overflow-wrap:anywhere; }
     .analysis-section--brief > p { margin:8px 0; }
     .analysis-section--brief h3 { margin:12px 0 6px; }
     .analysis-section--brief .analysis-facts { grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; border:0; }
@@ -56,7 +56,7 @@
     html.report-printing .data-chart-grid,html.report-printing .data-chart-grid.equipment-grid { display:block!important; }
     html.report-printing .chart-stack { display:block!important; }
     html.report-printing .chart,html.report-printing .chart-stack .chart { width:100%!important; height:58mm!important; margin-bottom:5mm!important; }
-    @media (max-width:1000px) { .cover-main{grid-template-columns:1fr}.cover-folio{grid-template-columns:repeat(4,minmax(0,1fr));border-left:0;border-top:1px solid rgba(255,255,255,.16)}.meta,.metrics { grid-template-columns:repeat(2,1fr); }.metric:nth-child(2){border-right:0}.secondary,.analysis-grid,.analysis-facts,.data-chart-grid { grid-template-columns:1fr; }.analysis-fact{border-right:0;border-bottom:1px solid var(--line)}.data-chart-grid .table-wrap,.equipment-grid .table-wrap { height:auto; max-height:none; } main,.cover-brand,.cover-title { padding-left:20px; padding-right:20px; } }
+    @media (max-width:1000px) { .cover-main{grid-template-columns:1fr}.cover-folio{grid-template-columns:repeat(4,minmax(0,1fr));border-left:0;border-top:1px solid rgba(255,255,255,.16)}.meta,.metrics { grid-template-columns:repeat(2,1fr); }.metric:nth-child(2){border-right:0}.secondary,.analysis-grid,.data-chart-grid { grid-template-columns:1fr; }.analysis-facts{grid-template-columns:repeat(2,minmax(0,1fr))}.data-chart-grid .table-wrap,.equipment-grid .table-wrap { height:auto; max-height:none; } main,.cover-brand,.cover-title { padding-left:20px; padding-right:20px; } }
     @media print {
       @page { size:A4 landscape; margin:9mm 9mm 13mm; }
       html,body { width:auto; min-width:0; background:#fff; font-size:8.5pt; }
@@ -118,7 +118,6 @@
       }
       .secondary { grid-template-columns:repeat(3,minmax(0,1fr)); }
       .analysis-facts { grid-template-columns:repeat(3,minmax(0,1fr)); }
-      .analysis-fact:nth-child(3){border-right:0}.analysis-fact:nth-child(6){border-right:0}
       .analysis-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
       .analysis-card{min-height:0;padding:3mm 3.5mm}
     }
@@ -272,7 +271,7 @@
       {% for fact in report.analysis.facts %}<p>{{ fact.label }}：{{ fact.value }} · {{ fact.source }}</p>{% endfor %}
     </details>
     {% else %}
-    {% if report.analysis.facts %}<section class="analysis-facts">{% for fact in report.analysis.facts %}<div class="analysis-fact"><span class="fact-id">{{ fact.id }}</span><span class="label"> · {{ fact.label }}</span><strong>{{ fact.value }}</strong><small>来源：{{ fact.source or '当前报表数据' }}</small></div>{% endfor %}</section>{% endif %}
+    {% if report.analysis.facts %}<section class="analysis-facts">{% for fact in report.analysis.facts %}<div class="analysis-fact"><span class="fact-id">{{ fact.id }}</span><span class="label"> · {{ fact.label }}</span><strong>{{ fact.value }}</strong></div>{% endfor %}</section>{% endif %}
     <section class="analysis-grid">
       <article class="analysis-card overview"><h3>生产概况</h3><p>{{ report.analysis.overview }}</p></article>
       <article class="analysis-card features"><h3>数据特征</h3><p>{{ report.analysis.features }}</p></article>

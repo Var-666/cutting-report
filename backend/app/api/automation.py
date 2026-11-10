@@ -224,9 +224,10 @@ def list_deliveries(
     request: Request,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
+    search: str = Query(default="", max_length=200),
 ) -> dict:
     items, total = application_state(request).automation.list_deliveries(
-        page=page, page_size=page_size
+        page=page, page_size=page_size, search=search.strip()
     )
     return _envelope(
         request,

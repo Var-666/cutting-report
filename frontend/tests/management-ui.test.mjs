@@ -28,7 +28,7 @@ async function mountAutomation(t, { confirm = async () => true } = {}) {
     ...Vue, useConfirm: () => confirm, useUnsavedChanges() {}, deviceSelection: Vue.reactive({ id: 'Cutter02', items: [{ id: 'Cutter02' }] }),
     getAutomationConfiguration: async () => ({}),
     getAutomationStatus: async () => { calls.status++; return { revision: calls.status } },
-    listAutomationSchedules: async () => { calls.schedules++; return { items: [{ schedule_id: 'saved' }] } },
+    listAutomationSchedules: async () => { calls.schedules++; return { items: [{ schedule_id: 'saved', name: '每日车间报表' }, { schedule_id: 'monthly', name: '月报 Summary' }] } },
     listEmailDeliveries: (query, options) => {
       if (!held) { calls.emails.push({ ...query, signal: options.signal }); return Promise.resolve(result(query.page)) }
       return new Promise((resolve, reject) => calls.emails.push({ ...query, signal: options.signal, resolve: (total = 60) => resolve(result(query.page, total)), reject }))
@@ -39,7 +39,7 @@ async function mountAutomation(t, { confirm = async () => true } = {}) {
   }
   Object.assign(bindings, automationHooks(bindings))
   const code = descriptor('AutomationView').scriptSetup.content.replace(/^import .*$/gm, '')
-  const setup = scriptFunction(...Object.keys(bindings), `${code}; return { loadDeliveries, changeDeliveryPage, deliveryPage, deliveries, deliveryTotal, deliveryLoading, pageCount, error, loadAll, retry, submit, submitConfiguration, remove, runNow, deliveryResolved, openDelivery, selectedDelivery, resolutionDirty, form }`)
+  const setup = scriptFunction(...Object.keys(bindings), `${code}; return { loadDeliveries, changeDeliveryPage, deliveryPage, deliveries, deliveryTotal, deliveryLoading, deliverySearch, appliedDeliverySearch, searchDeliveries, clearDeliverySearch, scheduleSearch, appliedScheduleSearch, visibleSchedules, searchSchedules, clearScheduleSearch, pageCount, error, loadAll, retry, submit, submitConfiguration, remove, runNow, deliveryResolved, openDelivery, selectedDelivery, resolutionDirty, form }`)
   let state
   const renderer = Vue.createRenderer({ createComment: () => ({}), createText: () => ({}), createElement: () => ({}), insert() {}, remove() {}, setText() {}, setElementText() {}, parentNode: () => null, nextSibling: () => null, patchProp() {} })
   const app = renderer.createApp({ setup() { state = setup(...Object.values(bindings)); return () => null } })
@@ -50,6 +50,63 @@ async function mountAutomation(t, { confirm = async () => true } = {}) {
   await flushAutomation()
   return { state, calls, unmount, hold() { held = true } }
 }
+
+test('automation search applies task names and keeps delivery search across paging and refresh', async t => {
+  const { state, calls } = await mountAutomation(t)
+  state.scheduleSearch.value = ' summary '
+  state.searchSchedules()
+  assert.deepEqual(state.visibleSchedules.value.map(item => item.schedule_id), ['monthly'])
+  state.clearScheduleSearch()
+  assert.equal(state.visibleSchedules.value.length, 2)
+  await state.changeDeliveryPage(2)
+  state.deliverySearch.value = ' TARGET@example.com '
+  await state.searchDeliveries()
+  assert.equal(calls.emails.at(-1).page, 1)
+  assert.equal(calls.emails.at(-1).search, 'TARGET@example.com')
+  assert.equal(state.appliedDeliverySearch.value, 'TARGET@example.com')
+  state.deliverySearch.value = 'not applied'
+  await state.changeDeliveryPage(2)
+  await state.loadAll()
+  assert.equal(calls.emails.at(-1).page, 2)
+  assert.equal(calls.emails.at(-1).search, 'TARGET@example.com')
+  await state.clearDeliverySearch()
+  assert.equal(calls.emails.at(-1).search, '')
+  assert.equal(state.deliveryPage.value, 1)
+})
+
+test('automation search rejects stale results and preserves the applied query on failure', async t => {
+  const { state, calls, hold } = await mountAutomation(t)
+  hold()
+  state.deliverySearch.value = 'old'
+  const old = state.searchDeliveries()
+  state.deliverySearch.value = 'new'
+  const current = state.searchDeliveries()
+  assert.equal(calls.emails.at(-2).signal.aborted, true)
+  calls.emails.at(-1).resolve()
+  await current
+  calls.emails.at(-2).resolve()
+  await old
+  assert.equal(state.appliedDeliverySearch.value, 'new')
+  state.deliverySearch.value = 'failed'
+  const failure = state.searchDeliveries()
+  calls.emails.at(-1).reject(new Error('search failed'))
+  await failure
+  assert.equal(state.appliedDeliverySearch.value, 'new')
+  assert.match(state.error.value, /search failed/)
+})
+
+test('automation recipients appear once and keep accepted recipients after partial refusal', async () => {
+  const html = await renderComponent('components/automation/AutomationDeliveryTable', {
+    deliveries: [{ delivery_id: 'd1', schedule_name: '日报', subject: '自定义主题', recipients: ['retry@example.com'],
+      recipient_results: { 'accepted@example.com': { status: 'accepted' }, 'retry@example.com': { status: 'refused', code: 450 } }, status: 'failed' }],
+    deliveryTotal: 1, deliveryPage: 1, deliveryLoading: false, paginate: true, deliveryLabels: { failed: '发送失败' },
+  })
+  assert.equal((html.match(/retry@example.com/g) || []).length, 1)
+  assert.equal((html.match(/accepted@example.com/g) || []).length, 1)
+  assert.ok(html.includes('服务器已接受') && html.includes('服务器拒收 450'))
+  assert.ok(html.includes('title="自定义主题"'))
+  assert.doesNotMatch(html, /<small[^>]*>自定义主题/)
+})
 
 test('email paging: latest request wins and page is committed together with records', async t => {
   const { state, calls, hold } = await mountAutomation(t)
@@ -361,10 +418,10 @@ test('all seven migrated settings tables render their fields and controls throug
   const { NTag, NButton } = await import('naive-ui')
   const cases = [
     ['AdminAccountsView', 'adminTableColumns', { admins: [
-      { user_id: 'self', display_name: '本人', company_no: '001', auth_source: 'hr_database' },
-      { user_id: 'other', display_name: '同事', company_no: '002', auth_source: 'hr_database' },
+      { user_id: 'self', display_name: '本人', group_no: 'G001', company_no: '001', auth_source: 'hr_database' },
+      { user_id: 'other', display_name: '同事', group_no: 'G002', company_no: '002', auth_source: 'hr_database' },
       { user_id: 'local', display_name: '应急管理员', username: 'admin', auth_source: 'local' },
-    ], session: { user: { user_id: 'self' } }, formatTime: () => '2026年10月28日', openDialog() {} }, ['本人', '同事', '应急管理员', 'HR 数据库', '本地应急账号', '受保护']],
+    ], session: { user: { user_id: 'self' } }, formatTime: () => '2026年10月28日', openDialog() {} }, ['本人', '同事', 'G001', 'G002', '应急管理员', 'admin', 'HR 数据库', '本地应急账号', '受保护']],
     ...[1, 2].map(count => {
       const consumers = Object.fromEntries(Array.from({ length: count }, (_, index) => [`consumer-${index + 1}`, {
         status: 'pending', value: `consumer-${index + 1}-host<script>unsafe</script>`, source: `Consumer ${index + 1}快照`,
@@ -384,14 +441,21 @@ test('all seven migrated settings tables render their fields and controls throug
     }),
     ['ModelUsageView', 'periodTableColumns', { periods: [{ period: '2026-10-28', call_count: 1240, input_tokens: null, output_tokens: 0, total_tokens: 0, metered_count: 1200, failed_count: 40 }], report: { granularity: 'day' }, number: value => value == null ? '—' : value.toLocaleString('zh-CN') }, ['2026年10月28日', '1,240', '1,200', '—', '40']],
     ['ModelUsageView', 'breakdownTableColumns', { report: { breakdown: [{ scene: 'workshop', model: '<script>unsafe</script>', call_count: 10, input_tokens: 0, output_tokens: null, total_tokens: 0, metered_count: 8 }] }, sceneName: () => '车间报表', number: value => value == null ? '—' : String(value) }, ['车间报表', '&lt;script&gt;unsafe&lt;/script&gt;', '—']],
-    ['AutomationView', 'scheduleTableColumns', { schedules: [{ schedule_id: 'schedule', enabled: true, name: '每日车间', device_id: 'Cutter01', report_type: 'workshop', recipients: ['one@example.com'], sent_count: 12, failed_count: 1 }], reportLabels: { workshop: '车间报表' }, scheduleLabels: {}, formatDeviceDisplay: () => '20KW切割机', scheduleText: () => '每天18:00', formatDateTime: () => '2026年10月28日 18:00:00', runNow() {}, editSchedule() {}, remove() {} }, ['每日车间', '20KW切割机', '每天18:00', '立即执行', '编辑', '删除']],
+    ['AutomationView', 'scheduleTableColumns', { schedules: [{ schedule_id: 'schedule', enabled: true, name: '每日车间', device_id: 'Cutter01', report_type: 'workshop', frequency: 'daily', run_time: '18:00', recipients: ['one@example.com'], sent_count: 12, failed_count: 1 }], reportLabels: { workshop: '车间报表' }, scheduleLabels: {} }, ['每日车间', '20KW切割机', '每日 18:00', '立即执行', '编辑', '删除']],
     ['AutomationView', 'deliveryTableColumns', { deliveries: [
       { delivery_id: 'failed', schedule_name: '邮件失败', recipients: ['one@example.com'], recipient_results: {}, status: 'failed', attempt_count: 1, max_attempts: 3, last_error: '连接失败' },
       { delivery_id: 'unknown', schedule_name: '邮件待核对', recipients: ['two@example.com'], recipient_results: { 'two@example.com': { status: 'unknown' } }, status: 'unknown', message_id: '<mail-id>' },
-    ], status: {}, deliveryTotal: 41, deliveryPage: 2, deliveryLoading: false, deliveryLabels: { failed: '发送失败', unknown: '结果待核对' }, formatDateTime: () => '2026年10月28日 18:00:00', retry() {}, openDelivery() {}, changeDeliveryPage() {} }, ['one@example.com', 'two@example.com', '连接失败', '重新发送', '核对记录', '核对结果', '结果待核对', '&lt;mail-id&gt;']],
+    ], status: {}, deliveryTotal: 41, deliveryPage: 2, deliveryLoading: false, deliveryLabels: { failed: '发送失败', unknown: '结果待核对' } }, ['one@example.com', 'two@example.com', '连接失败', '重新发送', '核对记录', '核对结果', '结果待核对']],
     ['DesignerView', 'previewTableColumns', { queryPreview: Vue.ref({ columns: [{ field: 'name', label: '名称', type: 'text' }, { field: 'date', label: '日期', type: 'date' }, { field: 'time', label: '时间', type: 'datetime' }, { field: 'value', label: '数值', type: 'number' }, { field: 'duration', label: '时长', type: 'duration' }], items: [{ name: '<b>工件</b>', date: '2026-10-28', time: '2026-10-28T08:00:00', value: 0, duration: 12.5 }] }) }, ['&lt;b&gt;工件&lt;/b&gt;', '2026年10月28日', '08:00:00', '12.5']],
   ]
   for (const [viewName, columnName, state, expected] of cases) {
+    if (viewName === 'AutomationView') {
+      const name = columnName === 'scheduleTableColumns' ? 'AutomationScheduleTable' : 'AutomationDeliveryTable'
+      const html = await renderComponent(`components/automation/${name}`, { ...state, loading: false, paginate: true })
+      for (const value of expected) assert.ok(html.includes(value), `${name} shows ${value}`)
+      assert.doesNotMatch(html, /max-height:(340|440)px/, 'automation tables grow with the page')
+      continue
+    }
     const view = viewName === 'AutomationView'
       ? descriptor(`automation/${columnName === 'scheduleTableColumns' ? 'AutomationScheduleTable' : 'AutomationDeliveryTable'}`, 'components')
       : viewName === 'DesignerView' ? descriptor('designer/DesignerQueryPreview', 'components')

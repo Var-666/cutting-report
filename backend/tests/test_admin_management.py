@@ -25,7 +25,7 @@ class _AdminRepository:
         return {
             "user_id": "usr_hr_admin",
             **identity,
-            "username": identity["company_no"],
+            "username": identity["group_no"],
             "role": "admin",
             "auth_source": "hr_database",
             "active": True,
@@ -55,12 +55,12 @@ class _HrDirectory:
             "display_name": "张三",
         }
 
-    def authenticate(self, company_no, password):
-        self.auth_calls.append((company_no, password))
+    def authenticate(self, group_no, password):
+        self.auth_calls.append((group_no, password))
         return {
             "external_id": "7001",
-            "company_no": company_no,
-            "group_no": "G0001",
+            "company_no": "C0001",
+            "group_no": group_no,
             "display_name": "当前管理员",
         }
 
@@ -124,7 +124,8 @@ def test_hr_admin_password_is_verified_against_hr_before_grant(monkeypatch) -> N
     current = {
         **_local_admin(),
         "user_id": "usr_current_hr_admin",
-        "username": "C0001",
+        "username": "G0001",
+        "group_no": "G0001",
         "company_no": "C0001",
         "external_id": "7001",
         "auth_source": "hr_database",
@@ -142,7 +143,7 @@ def test_hr_admin_password_is_verified_against_hr_before_grant(monkeypatch) -> N
     )
 
     assert response.status_code == 201
-    assert directory.auth_calls == [("C0001", "hr-password")]
+    assert directory.auth_calls == [("G0001", "hr-password")]
     assert directory.session_calls == [("7001", True)]
 
 
@@ -160,3 +161,33 @@ def test_anonymous_user_cannot_manage_admin_permissions(monkeypatch) -> None:
     )
 
     assert response.status_code == 401
+
+
+def test_legacy_hr_admin_uses_current_hr_group_number_for_password_check(monkeypatch):
+    from types import SimpleNamespace
+    from pydantic import SecretStr
+    from app.api import auth
+    calls = []
+    directory = SimpleNamespace(
+        find_person=lambda external_id: calls.append(('find', external_id)) or {'group_no': 'G-current'},
+        authenticate=lambda group_no, password: calls.append(('authenticate', group_no, password)) or {'external_id': 'person'},
+    )
+    monkeypatch.setattr(auth, 'runtime_state', lambda request: SimpleNamespace(worker_auth=directory))
+    auth._verify_current_admin_password(SimpleNamespace(), {'auth_source': 'hr_database', 'external_id': 'person',
+        'company_no': 'C-old', 'group_no': None}, SecretStr('hr-password'))
+    assert calls == [('find', 'person'), ('authenticate', 'G-current', 'hr-password')]
+
+
+def test_legacy_hr_admin_cannot_reauthenticate_as_another_identity(monkeypatch):
+    import pytest
+    from types import SimpleNamespace
+    from pydantic import SecretStr
+    from fastapi import HTTPException
+    from app.api import auth
+    directory = SimpleNamespace(find_person=lambda external_id: {'group_no': 'G-current'},
+        authenticate=lambda group_no, password: {'external_id': 'someone-else'})
+    monkeypatch.setattr(auth, 'runtime_state', lambda request: SimpleNamespace(worker_auth=directory))
+    with pytest.raises(HTTPException) as error:
+        auth._verify_current_admin_password(SimpleNamespace(), {'auth_source': 'hr_database', 'external_id': 'person',
+            'group_no': None}, SecretStr('hr-password'))
+    assert error.value.status_code == 401

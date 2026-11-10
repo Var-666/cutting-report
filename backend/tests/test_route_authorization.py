@@ -143,6 +143,7 @@ def test_anonymous_requests_cannot_reach_management_endpoints(
     path: str, monkeypatch
 ) -> None:
     monkeypatch.setattr(app.state, "workshop", _SessionStub(), raising=False)
+    monkeypatch.setattr(app.state, "settings", settings, raising=False)
 
     response = TestClient(app).get(path)
 
@@ -205,8 +206,8 @@ def test_unified_login_rejects_a_legacy_local_worker_when_hr_credentials_fail(mo
             }
 
     class _WorkerAuth:
-        def authenticate(self, company_no, password):
-            raise AuthenticationError("公司工号或密码错误")
+        def authenticate(self, group_no, password):
+            raise AuthenticationError("集团工号或密码错误")
 
     class _Request:
         state = SimpleNamespace()
@@ -255,7 +256,7 @@ def test_unified_login_accepts_local_admin_without_contacting_hr(monkeypatch) ->
             return "local-session-token", "2026-09-12T09:00:00+08:00"
 
     class _UnusedWorkerAuth:
-        def authenticate(self, company_no, password):
+        def authenticate(self, group_no, password):
             raise AssertionError("本地管理员登录不应访问HR数据库")
 
     monkeypatch.setattr(
@@ -284,7 +285,7 @@ def test_unified_login_accepts_hr_account_and_keeps_granted_role(monkeypatch) ->
             assert identity["external_id"] == "9123"
             return {
                 "user_id": "usr_hr_admin",
-                "username": identity["company_no"],
+                "username": identity["group_no"],
                 "display_name": identity["display_name"],
                 "role": "admin",
                 "auth_source": "hr_database",
@@ -295,8 +296,8 @@ def test_unified_login_accepts_hr_account_and_keeps_granted_role(monkeypatch) ->
             return "hr-session-token", "2026-09-12T09:00:00+08:00"
 
     class _WorkerAuth:
-        def authenticate(self, company_no, password):
-            assert (company_no, password) == ("C0007", "p")
+        def authenticate(self, group_no, password):
+            assert (group_no, password) == ("G0021", "p")
             return {
                 "external_id": "9123",
                 "company_no": "C0007",
@@ -313,18 +314,20 @@ def test_unified_login_accepts_hr_account_and_keeps_granted_role(monkeypatch) ->
 
     response = TestClient(app).post(
         "/api/v1/auth/login",
-        json={"username": "C0007", "password": "p"},
+        json={"username": "G0021", "password": "p"},
     )
 
     assert response.status_code == 200
     assert response.json()["data"]["user"]["role"] == "admin"
+    assert response.json()["data"]["user"]["username"] == "G0021"
     assert response.cookies.get("cutting_session") == "hr-session-token"
 
 
-def test_worker_login_creates_a_session_from_hr_identity(monkeypatch) -> None:
+@pytest.mark.parametrize("path", ["/api/v1/auth/hr-login", "/api/v1/auth/worker-login"])
+def test_worker_login_creates_a_session_from_hr_identity(monkeypatch, path) -> None:
     class _WorkerAuthStub:
-        def authenticate(self, company_no, password):
-            assert company_no == "C0007"
+        def authenticate(self, group_no, password):
+            assert group_no == "G0021"
             assert password == "plain-password"
             return {
                 "external_id": "9123",
@@ -339,7 +342,7 @@ def test_worker_login_creates_a_session_from_hr_identity(monkeypatch) -> None:
             assert "password" not in identity
             return {
                 "user_id": "usr_hr_worker",
-                "username": "C0007",
+                "username": "G0021",
                 "display_name": "张三",
                 "role": "worker",
                 "auth_source": "hr_database",
@@ -355,13 +358,21 @@ def test_worker_login_creates_a_session_from_hr_identity(monkeypatch) -> None:
     )
 
     response = TestClient(app).post(
-        "/api/v1/auth/worker-login",
-        json={"company_no": "C0007", "password": "plain-password"},
+        path,
+        json={"group_no": " G0021 ", "password": "plain-password"},
     )
 
     assert response.status_code == 200
     assert response.json()["data"]["user"]["role"] == "worker"
     assert response.cookies.get("cutting_session") == "safe-session-token"
+
+
+@pytest.mark.parametrize("path", ["/api/v1/auth/hr-login", "/api/v1/auth/worker-login"])
+@pytest.mark.parametrize("account", [{}, {"company_no": "C0007"}, {"group_no": " "}, {"group_no": "G" * 65}])
+def test_hr_login_requires_a_valid_group_number(path, account) -> None:
+    response = TestClient(app).post(path, json={**account, "password": "password"})
+
+    assert response.status_code == 422
 
 
 @pytest.mark.parametrize("path", ["/admin/home", "/admin/reports/leadership"])

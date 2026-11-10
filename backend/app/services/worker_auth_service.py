@@ -51,21 +51,22 @@ class WorkerAuthService:
         external_id = str(row.get("external_id") or "").strip()
         display_name = str(row.get("display_name") or "").strip()
         company_no = str(row.get("company_no") or "").strip()
-        if not available or not external_id or not display_name or not company_no:
+        group_no = str(row.get("group_no") or "").strip()
+        if not available or not external_id or not display_name or not company_no or not group_no:
             return None
         return {
             "external_id": external_id,
             "company_no": company_no,
-            "group_no": str(row.get("group_no") or "").strip(),
+            "group_no": group_no,
             "display_name": display_name,
         }
 
-    def authenticate(self, company_no: str, password: str) -> dict[str, str]:
+    def authenticate(self, group_no: str, password: str) -> dict[str, str]:
         self._ensure_enabled()
 
-        normalized_company_no = company_no.strip()
+        normalized_group_no = group_no.strip()
         try:
-            rows = self.repository.authentication_rows(normalized_company_no, password)
+            rows = self.repository.authentication_rows(normalized_group_no, password)
         except (SqlRequestCancelled, SqlCapacityError, ReportOperationTimeout):
             raise
         except Exception as exc:
@@ -73,17 +74,17 @@ class WorkerAuthService:
                 "HR人员数据库暂时不可用"
             ) from exc
 
-        # 公司工号必须唯一。重复账号和密码错误都使用相同的对外提示，
+        # 集团工号必须唯一。重复账号和密码错误都使用相同的对外提示，
         # 避免泄露账号是否存在。
         if len(rows) != 1:
-            raise AuthenticationError("公司工号或密码错误")
+            raise AuthenticationError("集团工号或密码错误")
 
         row = rows[0]
         password_matches = _state_text(row.get("password_matches")) == "1"
         identity = self._identity_from_row(row)
         # HR 的 _Locked 不参与本系统登录；仍校验密码和账号可用状态。
         if not password_matches or identity is None:
-            raise AuthenticationError("公司工号或密码错误")
+            raise AuthenticationError("集团工号或密码错误")
         self._cache_session_check(identity["external_id"], True, self.settings.worker_database_session_check_seconds)
         return identity
 

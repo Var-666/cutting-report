@@ -35,6 +35,8 @@ def workflow(tmp_path, state_database):
                                  trigger_type="scheduled", now=STAMP,
                                  next_run_at="2026-10-01T09:00:00+08:00")
     cfg = cutting_settings(project_root=tmp_path)
+    cfg.reports_dir.mkdir(parents=True, exist_ok=True)
+    (cfg.reports_dir / "r.html").write_text("<h1>测试报表</h1>", encoding="utf-8")
     service = AutomationService(cfg, repository, metadata, object(),
         line_services=as_line_services({"Cutter01": SimpleNamespace(settings=cfg, pipeline=object())}))
     return repository, metadata, service, run

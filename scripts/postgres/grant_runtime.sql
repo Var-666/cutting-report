@@ -9,6 +9,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
   app_state.analysis_generations,
   app_state.analysis_source_versions,
   app_state.auth_sessions,
+  app_state.sso_requests,
   app_state.background_schedules,
   app_state.background_tasks,
   app_state.cutting_dispatches,

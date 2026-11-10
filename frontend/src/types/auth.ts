@@ -24,11 +24,7 @@ export interface Authentication {
   user: User;
   expires_at: string;
 }
-export interface AuthStatus {
-  setup_required: boolean;
-  worker_database_auth_enabled: boolean;
-  user: User | null;
-}
+export type AuthStatus = import('../api/generated/types.gen').AuthStatus
 export interface HrPerson {
   external_id: string;
   display_name: string;
