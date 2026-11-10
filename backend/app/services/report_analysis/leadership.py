@@ -157,7 +157,7 @@ def build_context(report: LeadershipReportResult, monthly_records: list) -> dict
             "F006",
             "工程号与任务较多的日期",
             f"{project_value}，任务较多的日期 {anomaly_value}",
-            f"任务最多工程：{project_value}；{anomaly_source}",
+            f"{'工程信息缺口' if projects and projects[0]['project_name'] == '未标注工程' else '任务最多工程'}：{project_value}；{anomaly_source}",
         ),
     ]
     facts.extend([

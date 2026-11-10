@@ -186,17 +186,28 @@ class UserRepository(PostgresRepository):
         return [self.public_user(row) for row in rows]
 
     def active_user(self, user_id: str) -> dict[str, Any] | None:
+        # SSO keeps this lock through profile refresh; avoid SHARE-to-UPDATE upgrades.
         with self.connect() as connection:
-            row = connection.execute('SELECT * FROM users WHERE user_id=%s AND active=1 FOR SHARE', (user_id,)).fetchone()
+            row = connection.execute('SELECT * FROM users WHERE user_id=%s AND active=1 FOR UPDATE', (user_id,)).fetchone()
         return self.public_user(row) if row else None
 
     def active_external_user(self, external_id: str) -> dict[str, Any] | None:
         with self.connect() as connection:
             row = connection.execute(
-                "SELECT * FROM users WHERE auth_source='hr_database' AND external_id=%s AND active=1 FOR SHARE",
+                "SELECT * FROM users WHERE auth_source='hr_database' AND external_id=%s AND active=1 FOR UPDATE",
                 (external_id,),
             ).fetchone()
         return self.public_user(row) if row else None
+
+    def refresh_external_profile(self, user_id: str, identity: dict[str, str], *, now: str) -> bool:
+        with self.connect() as connection:
+            return connection.execute(
+                """UPDATE users SET display_name=%s, group_no=%s, company_no=%s, updated_at=%s
+                   WHERE user_id=%s AND auth_source='hr_database' AND external_id=%s AND active=1
+                   RETURNING user_id""",
+                (identity['display_name'], identity['group_no'], identity['company_no'], now,
+                 user_id, identity['external_id']),
+            ).fetchone() is not None
 
     def verify_local_user_password(self, user_id: str, password: str) -> bool:
         with self.connect() as connection:

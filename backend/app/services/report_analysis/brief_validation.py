@@ -110,6 +110,7 @@ def validate_brief(content: object, context: dict) -> dict:
             raise ValueError('分析包含输入中不存在的日期')
         quantities = _check_durations(text, durations)
         quantities = re.sub(r'(?<!\d)[1-3]\s*(?=步|类|点)', '', quantities)
+        quantities = re.sub(r'((?:分(?:为|成)?|按)\s*)[1-3]\s*(?=(?:个\s*)?阶段\s*(?:(?:进行|开展)\s*)?(?:核查|核对|检查|排查))', r'\1', quantities)
         if not _numbers(quantities) <= allowed_numbers:
             raise ValueError('分析包含输入中不存在的数量')
     return AnalysisBrief(**draft.model_dump(exclude={'findings'}), findings=findings,

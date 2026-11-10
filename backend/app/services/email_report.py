@@ -116,7 +116,7 @@ EMAIL_DOCUMENT = """({mobileLayouts, breakpoint, pageInset}) => {
         }
         if (grid) {
             const columns = mobileLayouts[source.dataset.emailLayout];
-            if (columns) responsive.push(`.${key},.${key}>tbody{display:block!important;width:100%!important;} .${key}>tbody>tr{display:contents!important;} .${key}>tbody>tr>.email-cell{display:inline-block!important;width:calc(${100 / columns}% - ${gap}px)!important;height:auto!important;margin:${rowGap / 2}px ${gap / 2}px!important;vertical-align:top!important;box-sizing:border-box!important;} .${key}>tbody>tr>td:not(.email-cell){display:none!important;}`);
+            if (columns) responsive.push(`.${key},.${key}>tbody{display:block!important;width:100%!important;} .${key}>tbody>tr{display:block!important;} .${key}>tbody>tr>.email-cell{display:inline-block!important;width:calc(${100 / columns}% - ${gap}px)!important;height:auto!important;margin:${rowGap / 2}px ${gap / 2}px!important;vertical-align:top!important;box-sizing:border-box!important;} .${key}>tbody>tr>td:not(.email-cell){display:none!important;}`);
         }
         target.append(table);
     }
@@ -153,7 +153,10 @@ EMAIL_DOCUMENT = """({mobileLayouts, breakpoint, pageInset}) => {
             element.style.marginRight = 'auto';
         }
         if (node.matches('.table-wrap')) element.style.width = '100%';
-        if (node.matches('.table-wrap')) element.style.height = style.height;
+        if (node.matches('.table-wrap')) {
+            element.style.height = 'auto';
+            element.style.maxHeight = 'none';
+        }
         if (node.matches('table')) {
             element.style.width = '100%';
             element.style.minWidth = style.minWidth;

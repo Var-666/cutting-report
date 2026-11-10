@@ -167,9 +167,11 @@ class SsoService:
         if user is None:
             raise SsoError('account')
         user_id = user['user_id']
+        identity = None
         if user['auth_source'] == 'hr_database':
             try:
-                if not worker_auth.session_identity_available(user['external_id'] or '', force=True):
+                identity = worker_auth.find_person(user['external_id'] or '')
+                if identity is None:
                     raise SsoError('account')
             except WorkerAuthenticationUnavailableError:
                 raise SsoError('unavailable') from None
@@ -178,6 +180,8 @@ class SsoService:
         with UnitOfWork(self.users.database) as unit:
             current_user = self._account(unit.users, claims['sub'])
             if current_user is None or current_user['user_id'] != user_id:
+                raise SsoError('account')
+            if identity is not None and not unit.users.refresh_external_profile(user_id, identity, now=now.isoformat(timespec='seconds')):
                 raise SsoError('account')
             token, _ = unit.sessions.create_session(user_id, now=now, hours=self.settings.auth_session_hours)
         return SsoSession(token, safe_return_to(flow['return_to']))

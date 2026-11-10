@@ -152,6 +152,6 @@ class WorkerAuthService:
             raise WorkerAuthenticationUnavailableError(
                 "HR人员数据库暂时不可用"
             ) from exc
-        if len(rows) != 1:
-            return None
-        return self._identity_from_row(rows[0])
+        identity = self._identity_from_row(rows[0]) if len(rows) == 1 else None
+        self._cache_session_check(external_id.strip(), identity is not None, self.settings.worker_database_session_check_seconds)
+        return identity

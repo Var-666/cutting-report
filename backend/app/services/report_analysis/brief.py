@@ -86,8 +86,13 @@ def add_candidates(context: dict, kind: str, records: list | None = None) -> dic
         if projects:
             top = projects[0]
             related = [r for r in records if (r.project_code or r.ship_no or '未标注工程') == top['project_name']]
-            context['facts'].append(_fact('F010', '任务最多工程', f"{top['project_name']} · {top['task_count']} 项", '按本期完整任务集合分组；工程号为空时保留船名或缺失标记。'))
-            add('C_project', 'distribution', '工程任务分布', ['F010'], [task(r) for r in related], boundary='未标注工程不是实际工程。')
+            if top['project_name'] == '未标注工程':
+                quality.append('部分任务工程信息未填写；缺失工程信息不能解释为工程集中。')
+                context['facts'].append(_fact('F010', '工程信息缺口', f"{top['task_count']} 项任务工程号未填写", quality[-1]))
+                add('C_project_missing', 'data_quality', '工程信息缺口', ['F010'], [task(r) for r in related], boundary=quality[-1], priority=2)
+            else:
+                context['facts'].append(_fact('F010', '任务最多工程', f"{top['project_name']} · {top['task_count']} 项", '按本期完整任务集合分组；工程号为空时保留船名。'))
+                add('C_project', 'distribution', '工程任务分布', ['F010'], [task(r) for r in related])
         outlier_ids = {r['task_id'] for r in context['anomalies']}
         if outlier_ids:
             add('C_duration', 'duration', '切割时间较长的任务', ['F006' if kind == 'workshop' else 'F005'],

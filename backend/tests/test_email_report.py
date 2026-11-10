@@ -110,6 +110,35 @@ def test_large_email_omits_repeated_default_styles_and_preserves_all_cells(tmp_p
     assert len(email.html.encode('utf-8')) < 3_000_000
 
 
+def test_email_expands_long_tables_and_remains_readable_without_responsive_styles(tmp_path):
+    from playwright.sync_api import sync_playwright
+    path = tmp_path / 'scrolling-report.html'
+    rows = ''.join(f'<tr><td>记录 {index}</td></tr>' for index in range(60))
+    path.write_text('''<style>.data-chart-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+        .table-wrap{height:300px;max-height:300px;overflow:auto}td{height:30px}
+        @media(max-width:760px){.data-chart-grid{grid-template-columns:1fr}}</style>
+        <div class="data-chart-grid"><div class="table-wrap"><table>''' + rows + '''</table></div>
+        <div>图表位置</div></div><p class="mail-tail">报表结束</p>''', encoding='utf-8')
+    email = PdfService(operation_timeout_seconds=30).render_email(path)
+    assert 'display:contents' not in email.html
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        try:
+            page = browser.new_page()
+            for responsive in [True, False]:
+                page.set_content(email.html)
+                if not responsive:
+                    page.locator('style').evaluate_all('nodes => nodes.forEach(node => node.remove())')
+                for width in [1440, 375]:
+                    page.set_viewport_size(dict(width=width, height=900))
+                    assert page.locator('.table-wrap tr').count() == 60
+                    assert page.locator('.table-wrap').evaluate('node => node.scrollHeight <= node.clientHeight + 1')
+                    last_row = page.locator('.table-wrap tr').last.bounding_box()
+                    assert page.locator('.mail-tail').bounding_box()['y'] >= last_row['y'] + last_row['height']
+        finally:
+            browser.close()
+
+
 @pytest.mark.parametrize("relative_path", ["r.html", "../outside.html", "missing.html"])
 @pytest.mark.parametrize("attach", [True, False])
 def test_automation_prepares_body_independently_of_attachment_and_rejects_invalid_paths(tmp_path, relative_path, attach):

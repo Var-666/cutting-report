@@ -88,6 +88,7 @@ def build_context(
         if projects
         else "暂无工程数据"
     )
+    project_note = f"{'工程信息缺口' if projects and projects[0]['project_name'] == '未标注工程' else '任务最多工程'}：{primary_project}"
     trend_evidence = [f"待确认 {unconfirmed} 项"]
     if previous_count is not None:
         trend_evidence.append(
@@ -147,9 +148,9 @@ def build_context(
         _fact(
             "F006",
             "切割时间与工程",
-            f"{len(anomalies)} 项切割时间较长，{primary_project}",
+            f"{len(anomalies)} 项切割时间较长，{project_note}",
             f"按切割时间分布筛出的较长任务共 {len(anomalies)} 项，最多展示 5 项："
-            f"{anomaly_details}；任务最多工程：{primary_project}",
+            f"{anomaly_details}；{project_note}",
         ),
     ]
     context = {

@@ -166,6 +166,22 @@ def test_internal_fact_ids_do_not_authorize_business_numbers():
     assert _numbers('待确认2项，覆盖率40.0%') == {2, 40}
 
 
+@pytest.mark.parametrize('summary', ['建议分2个阶段核查。', '建议分为 2 个阶段进行核对。',
+                                      '可按2阶段开展排查。'])
+def test_brief_accepts_small_procedural_stage_counts(summary):
+    from app.services.report_analysis.brief_validation import validate_brief
+    context = build_context('2026-11-09', [])
+    assert validate_brief(draft() | {'summary': summary}, context)['summary'] == summary
+
+
+@pytest.mark.parametrize('summary', ['存在2处待核实记录。', '涉及4类问题。', '生产分为2个阶段。',
+                                      '建议分999999个阶段核查。'])
+def test_procedural_exemptions_do_not_authorize_business_counts(summary):
+    from app.services.report_analysis.brief_validation import validate_brief
+    with pytest.raises(ValueError, match='数量'):
+        validate_brief(draft() | {'summary': summary}, build_context('2026-11-09', []))
+
+
 def test_brief_accepts_minutes_and_decimal_hours_from_authoritative_seconds(duration_context):
     from app.services.report_analysis.brief_validation import validate_brief
     context = duration_context

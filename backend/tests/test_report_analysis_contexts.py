@@ -172,6 +172,36 @@ def test_workshop_links_keep_all_pending_tasks_while_model_input_is_bounded():
     assert build_context('2026-08-18', [])['candidates'] == []
 
 
+@pytest.mark.parametrize('kind', ['workshop', 'equipment'])
+@pytest.mark.parametrize('missing_top', [False, True])
+def test_missing_project_groups_are_quality_candidates_with_complete_links(kind, missing_top):
+    from app.services.report_analysis import workshop, equipment
+    original = analysis_cases()['workshop' if kind == 'workshop' else 'equipment_partial'][1][1][0]
+    records = [replace(original, task_id=f'project-{index}', ship_no=None,
+                       project_code=None if (index < 3) == missing_top else 'P-real') for index in range(4)]
+    context = (workshop if kind == 'workshop' else equipment).build_context('2026-08-18', records)
+    fact = next(f for f in context['facts'] if f['id'] == 'F010')
+    if missing_top:
+        assert fact['label'] == '工程信息缺口' and '3 项' in fact['value']
+        assert 'C_project' not in context['_references']
+        candidate = next(c for c in context['candidates'] if c['id'] == 'C_project_missing')
+        assert candidate['category'] == 'data_quality' and candidate['evidence_ids'] == ['F010']
+        assert {ref['id'] for ref in context['_references']['C_project_missing']} == {'project-0', 'project-1', 'project-2'}
+        assert any('不能解释为工程集中' in item for item in context['data_quality'])
+        assert not any('任务最多工程' in f['label'] + f['value'] + f['source'] for f in context['facts'])
+    else:
+        assert fact['label'] == '任务最多工程' and 'P-real' in fact['value']
+        assert 'C_project' in context['_references']
+
+
+def test_leadership_missing_project_evidence_does_not_claim_project_concentration():
+    from app.services.report_analysis.leadership import build_context
+    report = analysis_cases()['leadership_month'][1][0]
+    context = build_context(report, report.monthly_records)
+    assert 'C_project_missing' in context['_references'] and 'C_project' not in context['_references']
+    assert not any('任务最多工程' in f['label'] + f['value'] + f['source'] for f in context['facts'])
+
+
 def test_energy_coverage_estimates_and_unavailable_are_separate_candidates():
     from app.services.report_analysis.equipment import build_context
     original = analysis_cases()['equipment_partial'][1][1][0]

@@ -91,7 +91,8 @@ def sso(postgres_state, signing_key, monkeypatch):
     requests = SsoRequestRepository(database)
     provider = Provider(signing_key)
     service = SsoService(cfg, requests, users, transport=httpx.MockTransport(provider.request))
-    directory = SimpleNamespace(session_identity_available=lambda *_args, **_kwargs: True,
+    directory = SimpleNamespace(find_person=lambda _key: dict(hr),
+                                session_identity_available=lambda *_args, **_kwargs: True,
                                 cached_session_identity_available=lambda *_args, **_kwargs: None)
     app = FastAPI()
     app.include_router(auth.router)
@@ -201,12 +202,12 @@ def test_missing_or_disabled_account_is_not_created_or_reactivated(sso, subject)
 def test_hr_availability_is_checked_before_issuing_a_session(sso, subject):
     if subject == '9123':
         sso.service.bindings = {}
-    sso.directory.session_identity_available = lambda *_args, **_kwargs: False
+    sso.directory.find_person = lambda *_args, **_kwargs: None
     assert sso.client.get(sso.provider.callback(begin(sso), sub=subject)).headers['location'] == '/login?sso_error=account'
 
     def unavailable(*args, **kwargs):
         raise WorkerAuthenticationUnavailableError('private database details')
-    sso.directory.session_identity_available = unavailable
+    sso.directory.find_person = unavailable
     response = sso.client.get(sso.provider.callback(begin(sso), sub=subject))
     assert response.headers['location'] == '/login?sso_error=unavailable'
     assert 'cutting_session' not in sso.client.cookies
@@ -220,12 +221,12 @@ def test_hr_subject_logs_into_existing_account_without_manual_binding(sso, role)
                                        now=datetime.now(timezone.utc).isoformat())
     before = sso.users.list_users()
     calls = []
-    sso.directory.session_identity_available = lambda key, **kwargs: calls.append((key, kwargs)) or True
+    sso.directory.find_person = lambda key: calls.append(key) or dict(sso.hr)
     response = sso.client.get(sso.provider.callback(begin(sso, '/'), sub='9123'))
     assert response.headers['location'] == '/'
     current = sso.client.get('/api/v1/auth/status').json()['data']['user']
     assert current['user_id'] == sso.hr['user_id'] and current['role'] == role
-    assert calls[0] == ('9123', {'force': True})
+    assert calls[0] == '9123'
     assert sso.users.list_users() == before
 
 
@@ -253,9 +254,9 @@ def test_hr_auto_matching_never_reactivates_disabled_accounts(sso, during_hr_che
     def disable(*args, **kwargs):
         with sso.database.connect() as connection:
             connection.execute('UPDATE users SET active=0 WHERE user_id=%s', (sso.hr['user_id'],))
-        return True
+        return dict(sso.hr)
     if during_hr_check:
-        sso.directory.session_identity_available = disable
+        sso.directory.find_person = disable
     else:
         disable()
     response = sso.client.get(sso.provider.callback(begin(sso), sub='9123'))
@@ -264,16 +265,69 @@ def test_hr_auto_matching_never_reactivates_disabled_accounts(sso, during_hr_che
     assert 'cutting_session' not in sso.client.cookies
 
 
-def test_hr_identity_is_rechecked_after_external_verification(sso):
-    sso.service.bindings = {}
+@pytest.mark.parametrize('subject', ['9123', 'hr-1'])
+def test_hr_identity_is_rechecked_after_external_verification(sso, subject):
+    if subject == '9123':
+        sso.service.bindings = {}
     def change_identity(*args, **kwargs):
         with sso.database.connect() as connection:
             connection.execute('UPDATE users SET external_id=%s WHERE user_id=%s', ('another-person', sso.hr['user_id']))
-        return True
-    sso.directory.session_identity_available = change_identity
-    response = sso.client.get(sso.provider.callback(begin(sso), sub='9123'))
+        return dict(sso.hr)
+    sso.directory.find_person = change_identity
+    response = sso.client.get(sso.provider.callback(begin(sso), sub=subject))
     assert response.headers['location'] == '/login?sso_error=account'
     assert 'cutting_session' not in sso.client.cookies
+
+
+@pytest.mark.parametrize('subject', ['9123', 'hr-1'])
+@pytest.mark.parametrize('role', ['worker', 'admin'])
+def test_sso_refreshes_existing_hr_profile_and_preserves_identity_and_role(sso, subject, role):
+    if subject == '9123':
+        sso.service.bindings = {}
+    if role == 'admin':
+        sso.users.grant_external_admin(identity=sso.hr, operator=sso.admin, now=datetime.now(timezone.utc).isoformat())
+    current_hr = sso.hr | dict(group_no='G-NEW', company_no='C-NEW', display_name='更新姓名')
+    sso.directory.find_person = lambda key: current_hr if key == '9123' else None
+    before_count = len(sso.users.list_users())
+    response = sso.client.get(sso.provider.callback(begin(sso, '/'), sub=subject))
+    assert response.headers['location'] == '/'
+    current = sso.client.get('/api/v1/auth/status').json()['data']['user']
+    assert current['user_id'] == sso.hr['user_id'] and current['role'] == role
+    assert current['group_no'] == current['username'] == 'G-NEW'
+    assert current['company_no'] == 'C-NEW' and current['display_name'] == '更新姓名'
+    assert len(sso.users.list_users()) == before_count
+    if role == 'admin':
+        from pydantic import SecretStr
+        from app.database.identity_security import AuthenticationError
+        def authenticate(group_no, password):
+            if group_no != 'G-NEW' or password != 'correct-password':
+                raise AuthenticationError('账号或密码错误')
+            return current_hr
+        sso.directory.authenticate = authenticate
+        auth._verify_current_admin_password(SimpleNamespace(app=sso.client.app, state=SimpleNamespace()), current, SecretStr('correct-password'))
+
+
+def test_sso_profile_refresh_rolls_back_if_session_creation_fails(sso, monkeypatch):
+    sso.directory.find_person = lambda key: sso.hr | dict(group_no='G-NEW')
+    def fail(*args, **kwargs):
+        raise RuntimeError('session failed')
+    monkeypatch.setattr(SessionRepository, 'create_session', fail)
+    with pytest.raises(RuntimeError, match='session failed'):
+        sso.client.get(sso.provider.callback(begin(sso), sub='hr-1'))
+    assert sso.users.active_user(sso.hr['user_id']) == sso.hr
+
+
+def test_concurrent_sso_profile_refreshes_finish_without_lock_upgrade_deadlocks(sso):
+    callbacks = [parse_qs(urlsplit(sso.provider.callback(begin(sso), sub='hr-1')).query) for _ in range(2)]
+    browser = sso.client.cookies.get(auth.SSO_BROWSER_COOKIE)
+    sso.directory.find_person = lambda key: sso.hr | dict(group_no='G-NEW')
+    def finish(params):
+        return sso.service.finish(state=params['state'][0], browser=browser, code=params['code'][0],
+                                  error='', worker_auth=sso.directory)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(finish, callbacks))
+    assert len({result.token for result in results}) == 2
+    assert sso.users.active_user(sso.hr['user_id'])['group_no'] == 'G-NEW'
 
 
 def test_cancellation_and_duplicate_parameters_do_not_exchange_a_code(sso):

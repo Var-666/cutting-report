@@ -32,6 +32,18 @@ def test_worker_auth_uses_group_number_and_keeps_password_out_of_select() -> Non
     assert "locked_value" not in sql
 
 
+def test_fresh_hr_profile_read_replaces_a_stale_session_availability():
+    client = FakeSqlServerClient([])
+    service = WorkerAuthService(_enabled_settings(), client=client)
+    assert service.session_identity_available('9123') is False
+    client.rows = [_valid_row()]
+    assert service.find_person('9123')['group_no'] == 'G0021'
+    assert service.cached_session_identity_available('9123') is True
+    client.rows = []
+    assert service.find_person('9123') is None
+    assert service.cached_session_identity_available('9123') is False
+
+
 @pytest.mark.parametrize(
     "rows",
     [
