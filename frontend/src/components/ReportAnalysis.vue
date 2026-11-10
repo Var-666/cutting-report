@@ -48,7 +48,9 @@ function sectionBody(value: unknown) {
   return text.slice(firstBreak + 1).trim()
 }
 
-const conclusionTitle = computed(() => sectionLead(props.analysis?.alerts || props.analysis?.overview, '生产运行分析已完成'))
+const analysisAvailable = computed(() => props.analysis?.mode === 'model' && props.analysis.status === 'success')
+const conclusionTitle = computed(() => analysisAvailable.value
+  ? sectionLead(props.analysis?.alerts || props.analysis?.overview, '生产运行分析已完成') : '智能分析暂不可用')
 const conclusionText = computed(() => plainAnalysisText(props.analysis?.overview || props.analysis?.features))
 </script>
 
@@ -63,8 +65,8 @@ const conclusionText = computed(() => plainAnalysisText(props.analysis?.overview
         </div>
       </div>
       <div class="analysis-actions">
-        <span v-if="analysis" class="analysis-mode model">
-          AI 分析<small v-if="analysis.cached">已缓存</small>
+        <span v-if="analysis" class="analysis-mode" :class="{ model: analysisAvailable, unavailable: !analysisAvailable }">
+          {{ analysisAvailable ? 'AI 分析' : '智能分析暂不可用' }}<small v-if="analysis.cached">已缓存</small>
         </span>
         <NButton attr-type="button" class="analysis-reload" :disabled="loading || !ready" @click="emit('reload')" :loading="loading">
           <AppIcon v-if="!loading" name="activity" :size="14" tone="current" />
@@ -78,18 +80,19 @@ const conclusionText = computed(() => plainAnalysisText(props.analysis?.overview
       <span>{{ error }}</span><NButton attr-type="button" @click="emit('retry')">重试</NButton>
     </NAlert>
     <template v-if="analysis">
-      <CuttingAnalysisBrief v-if="analysis.brief" :brief="analysis.brief" :facts="analysis.facts" :generated-at="analysis.generated_at" />
+      <CuttingAnalysisBrief v-if="analysis.brief && analysisAvailable" :brief="analysis.brief" :facts="analysis.facts" :generated-at="analysis.generated_at" />
       <template v-else>
       <section class="analysis-conclusion" aria-labelledby="analysis-conclusion-title">
-        <span class="analysis-conclusion__icon"><AppIcon name="sparkles" :size="31" tone="current" /></span>
+        <span class="analysis-conclusion__icon"><AppIcon name="sparkles" :size="31" tone="light" /></span>
         <div class="analysis-conclusion__copy">
-          <span>分析结论 <small>AI 生成</small></span>
+          <span>分析结论 <small v-if="analysisAvailable">AI 生成</small></span>
           <h3 id="analysis-conclusion-title">{{ conclusionTitle }}</h3>
           <p>{{ conclusionText }}</p>
         </div>
-        <blockquote>内容由 AI 生成。<br>具体结论请结合报表与现场记录核实。</blockquote>
+        <blockquote v-if="analysisAvailable">内容由 AI 生成。<br>具体结论请结合报表与现场记录核实。</blockquote>
       </section>
 
+      <template v-if="analysisAvailable">
       <div class="analysis-section-heading"><div><AppIcon name="chart" :size="19" tone="current" /><h3>核心指标</h3></div><span>当前分析周期</span></div>
       <div v-if="analysis.facts?.length" class="analysis-facts">
         <article v-for="(fact, index) in analysis.facts" :key="fact.id ?? undefined">
@@ -116,6 +119,7 @@ const conclusionText = computed(() => plainAnalysisText(props.analysis?.overview
           </div>
         </article>
       </div>
+      </template>
       <NCollapse v-if="analysis.facts?.length" class="analysis-evidence"><NCollapseItem name="evidence"><template #header><AppIcon name="database" :size="17" tone="current" />查看模型输入数据（{{ analysis.facts.length }} 项）</template>
         <div class="evidence-list">
           <article v-for="fact in analysis.facts" :key="`evidence-${fact.id}`">
@@ -139,6 +143,7 @@ const conclusionText = computed(() => plainAnalysisText(props.analysis?.overview
 .analysis-panel-head h2{margin:2px 0 0!important;color:var(--text-color-1)!important;font-size:14px!important}.analysis-kicker{color:var(--analysis-blue);font-size:var(--font-auxiliary)!important;font-weight:800;letter-spacing:.12em}
 .analysis-actions{display:flex;align-items:center;gap:8px;flex-shrink:0}.analysis-actions button,.analysis-error button{min-height:34px!important;padding:0 12px!important}
 .analysis-mode{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;color:rgb(var(--info-color));border:1px solid var(--theme-border-color);border-radius:999px;background:rgb(var(--info-color) / .1);font-weight:700;white-space:normal;overflow-wrap:anywhere;max-width:100%}.analysis-mode.model{color:var(--analysis-green);border-color:var(--theme-border-color);background:rgb(var(--success-color) / .1)}.analysis-mode small{padding-left:8px;border-left:1px solid currentColor;font-size:var(--font-auxiliary);opacity:.72}
+.analysis-mode.unavailable{color:rgb(var(--warning-color));background:rgb(var(--warning-color) / .1)}
 .analysis-reload{display:inline-flex;align-items:center;justify-content:center;gap:7px}
 .analysis-state{padding:40px 24px;color:var(--text-color-2);text-align:center;background:rgb(var(--container-bg-color))}.analysis-error{display:flex;align-items:center;justify-content:center;gap:16px;margin:24px;padding:16px;color:rgb(var(--error-color));background:rgb(var(--error-color) / .1)}
 .analysis-conclusion{display:grid;grid-template-columns:58px minmax(0,1fr) minmax(250px,.42fr);align-items:center;gap:16px;margin:16px;padding:16px;border:1px solid var(--theme-border-color);border-radius:var(--report-panel-radius);background:rgb(var(--container-bg-color));box-shadow:var(--theme-shadow)}

@@ -38,3 +38,14 @@ test('welding/historical analysis still renders its four original fields', async
   const html = await renderComponent('components/ReportAnalysis', { analysis: { ...analysis, brief: null, overview: '焊接概况', features: '工艺结构', alerts: '数据待核对', suggestions: '核对焊接记录' }, loading: false, ready: true })
   for (const text of ['焊接概况', '工艺结构', '数据待核对', '核对焊接记录']) assert.ok(html.includes(text))
 })
+
+for (const [mode, status] of [['unavailable', 'unavailable'], ['model', 'error']]) {
+  test(`unavailable analysis does not claim model success (${mode}/${status})`, async () => {
+    const html = await renderComponent('components/ReportAnalysis', {
+      analysis: { ...analysis, brief: null, mode, status, overview: '模型暂不可用。', features: '', alerts: '', suggestions: '', cached: false }, loading: false, ready: true,
+    })
+    assert.ok(html.includes('智能分析暂不可用'))
+    assert.match(html, /class="[^"]*\bunavailable\b[^"]*"/)
+    assert.doesNotMatch(html, /class="[^"]*\bmodel\b[^"]*"|AI 生成|生产运行分析已完成|核心指标|分析结果/)
+  })
+}
