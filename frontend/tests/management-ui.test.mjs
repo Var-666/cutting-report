@@ -221,23 +221,69 @@ test('database source selector offers SQL Server and demo without the removed Ex
   assert.deepEqual([...selector.matchAll(/<option value="([^"]+)"/g)].map((match) => match[1]), ['demo', 'sqlserver'])
 })
 
-test('welding connection uses the same source card grid and full-width field layout as SQL Server', () => {
-  const database = descriptor('DatabaseView')
-  const grid = database.template.content.slice(database.template.content.indexOf('class="saved-source-grid"'), database.template.content.indexOf('<div class="configuration-actions">'))
-  assert.match(grid, /fieldset v-for="source in configurationSources"/)
-  assert.match(grid, /class="welding-connection"/)
-  const welding = grid.slice(grid.indexOf('<fieldset v-if="databaseConfiguration.welding"'))
-  assert.doesNotMatch(welding, /class="connection-form"/)
-  assert.doesNotMatch(welding, /<button|测试焊接只读连接|保存焊接连接/)
-  assert.match(database.template.content, /class="configuration-switches"[\s\S]*name="weld_enabled"/)
-  assert.match(welding, /name="weld_host"[^>]*:required="databaseConfiguration.welding.enabled"[^>]*placeholder="请输入地址，例如 10.147.1.21"/)
-  assert.match(welding, /name="weld_password"[^>]*:required="databaseConfiguration.welding.enabled && !databaseConfiguration.welding.password_configured"/)
-  assert.match(database.template.content, /v-if="source.configured">已登记数据源连接/)
-  assert.match(database.template.content, /连接参数尚未保存完整/)
-  assert.match(database.styles[0].content, /\.saved-source-grid fieldset \{ min-width:0; display:grid; grid-template-columns:minmax\(0,1fr\) 92px;/)
-  assert.match(database.styles[0].content, /\.saved-source-grid--welding \{ grid-template-columns:1fr;/)
-  assert.match(database.styles[0].content, /\.saved-source-grid \{ display:grid; grid-template-columns:repeat\(2,minmax\(0,1fr\)\);/)
-  assert.match(database.styles[0].content, /@media \(max-width:1100px\) \{ \.saved-source-grid \{ grid-template-columns:1fr;/)
+test('database connection table edits isolated drafts and preserves SQL and welding save contracts', async () => {
+  const connection = { host: 'saved-host', port: 1433, database: 'production', username: 'reader', password_configured: true,
+    driver: 'ODBC Driver 18 for SQL Server', encrypt: true, trust_server_certificate: false }
+  const current = { data_source_mode: 'demo', worker_database_auth_enabled: false, file_database_enabled: false,
+    production: { ...connection }, worker: { ...connection }, file: { ...connection },
+    welding: { enabled: false, host: 'welding-host', port: 3306, database: 'weld', username: 'reader', password_configured: true, timezone: 'Asia/Shanghai' } }
+  const selection = Vue.reactive({ id: 'Cutter01', items: [{ id: 'Cutter01', type: 'cutting' }, { id: 'welding', type: 'welding' }] })
+  const calls = { sql: [], welding: [] }
+  let permitClose = false
+  let failSave = false
+  let guard
+  const bindings = { ...Vue, onMounted() {}, onBeforeUnmount() {}, useUnsavedChanges() {},
+    registerDeviceSwitchGuard: (_name, handler) => { guard = handler; return () => {} },
+    useConfirm: () => async () => permitClose, selectedLineType, formatTableDateValue: String,
+    deviceSelection: selection, loadDevices: async () => {},
+    getDatabaseConfiguration: async () => structuredClone(current),
+    getDatabaseStatus: async () => ({ mode: 'demo', driver: connection.driver }),
+    saveDatabaseConfiguration: async body => { calls.sql.push(structuredClone(body)); if (failSave) throw Error('保存失败'); return { message: '已保存' } },
+    saveWeldingConfiguration: async body => { calls.welding.push(structuredClone(body)); return { message: '已保存' } },
+  }
+  const script = descriptor('DatabaseView').scriptSetup.content.replace(/^import[\s\S]*?from ['"][^'"]+['"]\s*$/gm, '')
+  const page = scriptFunction(...Object.keys(bindings), `${script}; return { databaseConfiguration, configurationError, savedConnections, editor, editorDirty, editConnection, closeEditor, saveEditor, loadConfiguration }`)(...Object.values(bindings))
+  await page.loadConfiguration()
+  assert.deepEqual(page.savedConnections.value.map(row => row.label), ['生产报表库', '工人 HR 库', '切割文件库', '小组立焊接线'])
+  page.editConnection('production')
+  assert.equal(page.editor.value.profile.password, '')
+  page.editor.value.profile.host = 'unsaved-host'
+  page.editorDirty.value = true
+  assert.equal(page.databaseConfiguration.value.production.host, 'saved-host')
+  assert.equal(await guard(), false)
+  await page.closeEditor()
+  assert.ok(page.editor.value)
+  permitClose = true
+  await page.closeEditor()
+  assert.equal(page.editor.value, null)
+  assert.equal(calls.sql.length, 0)
+  page.editConnection('worker')
+  page.editor.value.profile.host = 'edited-worker'
+  await page.saveEditor()
+  assert.equal(calls.sql[0].worker.host, 'edited-worker')
+  assert.equal(calls.sql[0].production.host, 'saved-host')
+  assert.equal(calls.sql[0].worker.password, null)
+  assert.equal(page.editor.value, null)
+  page.editConnection('welding')
+  page.editor.value.profile.timezone = 'UTC'
+  page.editor.value.profile.password = 'new-private'
+  await page.saveEditor()
+  assert.equal(calls.welding[0].timezone, 'UTC')
+  assert.equal(calls.welding[0].password, 'new-private')
+  assert.equal(calls.sql.length, 1)
+  assert.equal(page.editor.value, null)
+  failSave = true
+  page.editConnection('production')
+  page.editor.value.profile.host = 'failed-host'
+  page.editorDirty.value = true
+  await page.saveEditor()
+  assert.equal(page.editor.value.profile.host, 'failed-host')
+  assert.equal(page.databaseConfiguration.value.production.host, 'saved-host')
+  assert.equal(page.configurationError.value, '保存失败')
+  await page.closeEditor()
+  selection.id = 'welding'
+  await Vue.nextTick()
+  assert.deepEqual(page.savedConnections.value.map(row => row.engine), ['MySQL'])
 })
 
 test('database save reloads active settings and status without a restart prompt', async () => {

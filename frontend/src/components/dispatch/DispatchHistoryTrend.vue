@@ -139,6 +139,8 @@ onBeforeUnmount(dispose)
 .dispatch-trend__filters label,.dispatch-trend__day { display:flex; align-items:center; gap:8px; min-width:0; color:var(--text-color-2); font-size:var(--font-auxiliary); }
 .dispatch-trend__filters .app-select { width:240px; }
 .dispatch-trend__filters :deep(.n-button),.dispatch-trend__filters :deep(.n-base-selection) { min-height:40px; }
+/* Naive's inline height also controls the inner label's vertical alignment. */
+.dispatch-trend__filters :deep(.n-base-selection) { --n-height:var(--control-height)!important; }
 .dispatch-trend__day { margin-top:12px; }
 .dispatch-trend__day .app-select { width:260px; }
 .dispatch-trend__note { margin:12px 0 0; line-height:1.6; }

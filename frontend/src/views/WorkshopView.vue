@@ -454,8 +454,9 @@ const workerTableColumns = [
     <WorkshopCorrectionDialog :correction="correction" v-model:action="correction.action" v-model:worker-id="correction.workerId" v-model:reason="correction.reason" :is-worker="isWorker" :available-workers="availableWorkers" :visible-correction-reason-presets="visibleCorrectionReasonPresets" @close="closeCorrection" @submit="submitCorrection" @reason="selectCorrectionReason" />
 
   <div class="workshop-dashboard" :class="isWorker ? 'workshop-dashboard--worker' : 'workshop-dashboard--manager'">
-    <section class="workshop-query-panel">
-      <header class="workshop-heading">
+    <section class="workshop-query-panel" :class="{ 'page-hero report-hero report-hero--query': !isWorker }">
+      <header class="workshop-heading" :class="{ 'report-hero-copy': !isWorker }">
+        <span v-if="!isWorker" class="report-hero-eyebrow">WORKSHOP PRODUCTION</span>
         <h2>{{ isWorker ? '我的任务确认' : '车间报表' }}</h2>
         <span v-if="isWorker">{{ user.display_name }}</span>
       </header>
@@ -464,7 +465,7 @@ const workerTableColumns = [
         v-model:start-date="filters.startDate"
         v-model:end-date="filters.endDate"
         v-model:chart-type="chartType"
-        class="workshop-query-shell"
+        class="workshop-query-shell report-hero-query"
         aria-label="车间报表查询条件"
         :anchor-date="filters.reportDate"
         :loading="loading"
@@ -614,6 +615,8 @@ const workerTableColumns = [
 
 <style scoped>
 .workshop-query-panel { display:grid; grid-template-columns:140px minmax(0,1fr); align-items:center; gap:16px; padding:16px; border:1px solid var(--theme-border-color); border-radius:var(--report-panel-radius); background:rgb(var(--container-bg-color)); }
+.workshop-dashboard--manager .workshop-query-panel { position:relative; overflow:hidden; border-radius:14px; background:linear-gradient(90deg,rgb(var(--container-bg-color) / .98) 0%,rgb(var(--container-bg-color) / .91) 39%,rgb(var(--container-bg-color) / .04) 72%),url('../assets/home-laser-cutting.webp') center 48%/cover no-repeat; box-shadow:var(--theme-shadow); }
+.workshop-dashboard--manager .workshop-heading { position:relative; z-index:1; }
 .workshop-heading { display:flex; align-items:center; justify-content:space-between; gap:16px; min-height:40px; }
 .workshop-heading h2 { margin:0; font-size:20px; font-weight:600; }
 .workshop-heading span { color:var(--text-color-3); font-size:var(--font-auxiliary); }
