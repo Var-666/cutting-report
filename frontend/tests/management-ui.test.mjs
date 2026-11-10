@@ -232,7 +232,8 @@ test('database connection table edits isolated drafts and preserves SQL and weld
   let permitClose = false
   let failSave = false
   let guard
-  const bindings = { ...Vue, onMounted() {}, onBeforeUnmount() {}, useUnsavedChanges() {},
+  let unsaved
+  const bindings = { ...Vue, onMounted() {}, onBeforeUnmount() {}, useUnsavedChanges: source => { unsaved = source },
     registerDeviceSwitchGuard: (_name, handler) => { guard = handler; return () => {} },
     useConfirm: () => async () => permitClose, selectedLineType, formatTableDateValue: String,
     deviceSelection: selection, loadDevices: async () => {},
@@ -242,13 +243,18 @@ test('database connection table edits isolated drafts and preserves SQL and weld
     saveWeldingConfiguration: async body => { calls.welding.push(structuredClone(body)); return { message: '已保存' } },
   }
   const script = descriptor('DatabaseView').scriptSetup.content.replace(/^import[\s\S]*?from ['"][^'"]+['"]\s*$/gm, '')
-  const page = scriptFunction(...Object.keys(bindings), `${script}; return { databaseConfiguration, configurationError, savedConnections, editor, editorDirty, editConnection, closeEditor, saveEditor, loadConfiguration }`)(...Object.values(bindings))
+  const page = scriptFunction(...Object.keys(bindings), `${script}; return { databaseConfiguration, configurationError, savedConnections, editor, editorDirty, hasUnsavedChanges, editConnection, closeEditor, saveEditor, loadConfiguration }`)(...Object.values(bindings))
   await page.loadConfiguration()
+  assert.equal(unsaved.value, false)
+  page.hasUnsavedChanges.value = true
+  assert.equal(unsaved.value, true)
+  page.hasUnsavedChanges.value = false
   assert.deepEqual(page.savedConnections.value.map(row => row.label), ['生产报表库', '工人 HR 库', '切割文件库', '小组立焊接线'])
   page.editConnection('production')
   assert.equal(page.editor.value.profile.password, '')
   page.editor.value.profile.host = 'unsaved-host'
   page.editorDirty.value = true
+  assert.equal(unsaved.value, true)
   assert.equal(page.databaseConfiguration.value.production.host, 'saved-host')
   assert.equal(await guard(), false)
   await page.closeEditor()
@@ -256,6 +262,7 @@ test('database connection table edits isolated drafts and preserves SQL and weld
   permitClose = true
   await page.closeEditor()
   assert.equal(page.editor.value, null)
+  assert.equal(unsaved.value, false)
   assert.equal(calls.sql.length, 0)
   page.editConnection('worker')
   page.editor.value.profile.host = 'edited-worker'
