@@ -245,7 +245,6 @@ test('report analysis uses server source versions and starts immediately', () =>
   assert.match(script, /dataVersion: analysisDataVersion\.value \|\| undefined/)
   assert.doesNotMatch(script, /报表数据分析|guardrail_fallback|simulated_fallback|降级/)
   assert.match(analysis.template.content, /<ReportAnalysis[^>]*:analysis="analysis"/)
-  assert.match(descriptor('ReportAnalysis', 'components').template.content, /class="analysis-mode model"[\s\S]*AI 分析/)
   assert.match(script, /const targetKey = requestKey\(\)[\s\S]*if \(!props\.ready \|\| !props\.reportDate\)/)
   assert.match(script, /if \(!props\.reportDate \|\| queryScope\(\) !== displayedScope\) \{[\s\S]*analysis\.value = null/)
 
