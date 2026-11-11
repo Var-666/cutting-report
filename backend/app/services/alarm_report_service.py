@@ -15,6 +15,28 @@ from app.services.analysis_display import analysis_cover
 from app.services.pdf_service import PdfService
 
 
+ALARM_REPORT_RATE_LIMITED = "模型接口限流"
+ALARM_REPORT_FAILED = "告警报告生成失败"
+_PUBLIC_REPORT_ERRORS = {
+    ALARM_REPORT_RATE_LIMITED,
+    ALARM_REPORT_FAILED,
+    "大模型告警分析未启用",
+    "模型服务不可用",
+    "模型输出格式错误",
+    "报告生成中断，已恢复待处理事件",
+}
+
+
+def alarm_report_error_message(error: str | None) -> str | None:
+    if not error:
+        return None
+    if error in _PUBLIC_REPORT_ERRORS:
+        return error
+    if re.match(r"Client error '429\b", error):
+        return ALARM_REPORT_RATE_LIMITED
+    return ALARM_REPORT_FAILED
+
+
 class AlarmReportService:
     def __init__(self, settings: Settings, pdf_service: PdfService) -> None:
         self.settings = settings

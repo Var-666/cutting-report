@@ -10,10 +10,14 @@ from datetime import datetime, timedelta
 from typing import Any, Callable, Protocol
 from uuid import uuid4
 
+import httpx
+
 from app.config import Settings
 from app.database.alarms import AlarmRepository, AlarmLeaseLostError
 from app.services.alarm_analysis_service import AlarmAnalysisService
-from app.services.alarm_report_service import AlarmReportService
+from app.services.alarm_report_service import (
+    ALARM_REPORT_FAILED, ALARM_REPORT_RATE_LIMITED, AlarmReportService, alarm_report_error_message,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -260,17 +264,22 @@ class AlarmMonitorService:
             if isinstance(exc, AlarmLeaseLostError):
                 logger.warning("discarded alarm report after losing execution ownership", extra={"report_id": report_id})
                 raise
-            self.repository.fail_report(report_id, str(exc), lease_owner=owner, lease_now=lease_now())
-            logger.exception(
-                "alarm report generation failed",
-                extra={"report_id": report_id, "incident_count": len(incidents)},
+            status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
+            message = (
+                ALARM_REPORT_RATE_LIMITED if status == 429
+                else alarm_report_error_message(str(exc)) or ALARM_REPORT_FAILED
+            )
+            self.repository.fail_report(report_id, message, lease_owner=owner, lease_now=lease_now())
+            logger.error(
+                "alarm report generation failed: report_id=%s incident_count=%d upstream_status=%s",
+                report_id, len(incidents), status, exc_info=status != 429,
             )
             return {
                 "status": "completed",
                 "sync_status": "completed",
                 "report_status": "failed",
                 "report_id": report_id,
-                "report_error": str(exc),
+                "report_error": message,
                 "records": ingestion["records"],
                 "new_incidents": ingestion["created_incidents"],
                 "reported_incidents": 0,

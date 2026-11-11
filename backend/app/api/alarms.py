@@ -15,6 +15,7 @@ from app.models.contracts import ApiEnvelope
 from app.models.alarm_contracts import (
     AlarmStatus, AlarmIncident, AlarmIncidentPage, AlarmReport, AlarmReportPage,
 )
+from app.services.alarm_report_service import alarm_report_error_message
 
 
 router = APIRouter(
@@ -90,6 +91,8 @@ def page_alarm_incidents(
     )
     for incident in result["items"]:
         has_html = incident.pop("report_has_html", False)
+        if incident.get("report_error_message"):
+            incident["report_error_message"] = alarm_report_error_message(incident["report_error_message"])
         incident["report_view_url"] = (
             _device_url(request, f"/api/v1/alarms/reports/{incident['pdf_report_id']}/view")
             if incident["report_status"] == "completed" and has_html
@@ -110,6 +113,8 @@ def list_alarm_reports(
         limit, monitor_start_at=device_settings(request).alarm_monitor_start_at
     )
     for report in reports:
+        if report.get("error_message"):
+            report["error_message"] = alarm_report_error_message(report["error_message"])
         if report["status"] == "completed":
             report["download_url"] = _device_url(request, f"/api/v1/alarms/reports/{report['report_id']}/pdf")
             report["view_url"] = _device_url(request, f"/api/v1/alarms/reports/{report['report_id']}/view")
@@ -132,6 +137,8 @@ def page_alarm_reports(
         page_size=page_size,
     )
     for report in result["items"]:
+        if report.get("error_message"):
+            report["error_message"] = alarm_report_error_message(report["error_message"])
         if report["status"] == "completed":
             report["download_url"] = _device_url(request, f"/api/v1/alarms/reports/{report['report_id']}/pdf")
             report["view_url"] = _device_url(request, f"/api/v1/alarms/reports/{report['report_id']}/view")

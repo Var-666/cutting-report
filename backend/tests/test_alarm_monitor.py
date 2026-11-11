@@ -842,7 +842,8 @@ def test_incident_page_exposes_report_state_without_a_recent_report_limit(state_
     )
     with repository.connect() as connection:
         # Cover legacy/inconsistent associations without changing failure recovery.
-        connection.execute("UPDATE alarm_reports SET status = 'failed', error_message = '模型服务不可用' WHERE report_id = 'legacy-failed'")
+        connection.execute("UPDATE alarm_reports SET status = 'failed', error_message = %s WHERE report_id = 'legacy-failed'",
+                           ("Client error '429 Too Many Requests' for url 'https://provider.invalid/chat/completions'",))
         connection.execute("UPDATE alarm_reports SET status = 'completed' WHERE report_id = 'no-file'")
         connection.execute("UPDATE alarm_incidents SET pdf_report_id = 'missing' WHERE incident_id = %s", (incidents["5"]["incident_id"],))
     for index in range(51):
@@ -862,13 +863,18 @@ def test_incident_page_exposes_report_state_without_a_recent_report_limit(state_
     assert by_code["1"]["status"] == "open", "report completion cannot resolve the equipment alarm"
     assert by_code["2"]["report_status"] == "generating"
     assert by_code["3"]["report_status"] == "failed"
-    assert by_code["3"]["report_error_message"] == "模型服务不可用"
+    assert by_code["3"]["report_error_message"] == "模型接口限流"
     assert by_code["4"]["report_status"] == "completed"
     assert by_code["5"]["report_status"] is None
     assert by_code["5"]["pdf_report_id"] == "missing"
     assert by_code["6"]["pdf_report_id"] is None
     assert all(by_code[code]["report_view_url"] is None for code in ["2", "3", "4", "5", "6"])
     assert all("report_has_html" not in item for item in result["items"])
+    for reports in (alarm_api.list_alarm_reports(request, limit=100)["data"],
+                    alarm_api.page_alarm_reports(request, page=1, page_size=100)["data"]["items"]):
+        legacy = next(report for report in reports if report["report_id"] == "legacy-failed")
+        assert legacy["error_message"] == "模型接口限流"
+        assert "download_url" not in legacy and "view_url" not in legacy
 
 
 def test_alarm_report_page_returns_ten_items_and_full_counts(state_database, tmp_path) -> None:

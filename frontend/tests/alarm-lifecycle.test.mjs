@@ -15,7 +15,7 @@ import { formatDeviceDisplay } from '../src/utils/deviceDisplay.ts'
 const source = readFileSync(new URL('../src/views/AlarmCenterView.vue', import.meta.url), 'utf8')
 const script = parse(source).descriptor.scriptSetup.content.replace(/^import .*$/gm, '')
 
-test('alarm page uses the device alias in every displayed section while preserving PDF destinations', async () => {
+test('alarm page preserves PDF links and shows a failed report without file actions', async () => {
   const incident = { incident_id: 'incident', machine_no: 'Cutter01', severity: 'warning', status: 'open', alarm_desc: '水冷机报警', pdf_report_id: 'report', report_status: 'completed', report_view_url: '/api/reports/Cutter01/view' }
   const report = {
     report_id: 'report', machine_no: 'Cutter01', incident_ids: ['incident'], status: 'completed', model_status: 'model',
@@ -29,9 +29,11 @@ test('alarm page uses the device alias in every displayed section while preservi
     },
   }
   const originalReport = structuredClone(report)
-  const bindings = { ...Vue, heroImage: '', AppIcon: { render: () => null }, alarmConfidencePercent, latestModelAlarmReport, formatChineseDateTime, formatDeviceDisplay, incident, report }
+  const failed = { report_id: 'failed', machine_no: 'Cutter01', incident_ids: ['incident'], status: 'failed',
+    created_at: '2026-10-08T09:00:00+08:00', error_message: '模型接口限流' }
+  const bindings = { ...Vue, heroImage: '', AppIcon: { render: () => null }, alarmConfidencePercent, latestModelAlarmReport, formatChineseDateTime, formatDeviceDisplay, incident, report, failed }
   const names = [...script.matchAll(/^(?:const|let|(?:async )?function) (\w+)/gm)].map((match) => match[1])
-  const setup = scriptFunction(...Object.keys(bindings), `${script}\nstatus.value = { machine_nos: ['Cutter01'] }; incidents.value = [incident]; reports.value = [report]; reportItems.value = [report]; return { ${names.join(',')}, heroImage, AppIcon, alarmConfidencePercent, formatDeviceDisplay };`)
+  const setup = scriptFunction(...Object.keys(bindings), `${script}\nstatus.value = { machine_nos: ['Cutter01'] }; incidents.value = [incident]; reports.value = [report]; reportItems.value = [report, failed]; return { ${names.join(',')}, heroImage, AppIcon, alarmConfidencePercent, formatDeviceDisplay };`)
   const render = scriptFunction('Vue', compile(parse(source).descriptor.template.content, { prefixIdentifiers: true }).code)(Vue)
   const app = Vue.createSSRApp({ setup: () => setup(...Object.values(bindings)), render })
   app.component('AppIcon', bindings.AppIcon)
@@ -47,6 +49,13 @@ test('alarm page uses the device alias in every displayed section while preservi
   assert.match(text, /置信度 60%/)
   assert.match(html, /href="\/api\/reports\/Cutter01\/download"/)
   assert.match(html, /href="\/api\/reports\/Cutter01\/view"/)
+  const failedRow = [...html.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/g)].find(([, row]) => row.includes('模型接口限流'))?.[1]
+  assert.ok(failedRow)
+  const cells = [...failedRow.matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/g)].map(([, cell]) => cell)
+  assert.match(cells[0], /20KW切割机_告警报告_20261008(?!\.pdf)/)
+  assert.match(cells[4], /生成失败/)
+  assert.match(cells[4], /模型接口限流/)
+  assert.doesNotMatch(cells[5], /href=|模型接口限流|下载|预览/)
   assert.deepEqual(report, originalReport)
 })
 

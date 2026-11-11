@@ -5,6 +5,7 @@ from datetime import timedelta
 from threading import Event
 from types import SimpleNamespace
 
+import httpx
 import pytest
 
 from app.config import settings
@@ -60,6 +61,28 @@ def test_restart_recovers_report_associations_and_completes_once(repository):
     assert restarted.list_unreported_incidents() == []
     assert service.run_once(NOW + timedelta(seconds=3))["report_status"] == "idle"
     assert len(restarted.list_reports()) == 1
+
+
+def test_rate_limited_report_is_safely_recorded_and_retried_on_next_scan(repository):
+    service = monitor(repository, Source())
+    analyze = service.analyzer.analyze
+    response = httpx.Response(429, request=httpx.Request("POST", "https://provider.invalid/chat/completions"))
+    service.analyzer.analyze = lambda _: response.raise_for_status()
+
+    failed = service.run_once(NOW)
+    assert failed["sync_status"] == "completed"
+    assert failed["report_status"] == "failed"
+    assert failed["report_error"] == "模型接口限流"
+    report_id = failed["report_id"]
+    assert repository.get_report(report_id)["error_message"] == "模型接口限流"
+    assert repository.list_unreported_incidents()
+
+    service.analyzer.analyze = analyze
+    retried = service.run_once(NOW + timedelta(minutes=5))
+    assert retried["report_id"] == report_id
+    assert retried["report_status"] == "completed"
+    assert repository.get_report(report_id)["error_message"] is None
+    assert len(repository.list_reports()) == 1
 
 
 def test_expired_owner_cannot_renew_ingest_complete_fail_or_clear_new_lease(repository):

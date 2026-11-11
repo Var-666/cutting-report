@@ -116,7 +116,7 @@ function possibleCause(item: AlarmIncident) {
 }
 
 function reportName(item: AlarmReport) {
-  return formatDeviceDisplay(item.pdf_filename || `${item.machine_no || '设备'}_告警报告_${String(item.created_at || '').slice(0, 10).replaceAll('-', '')}.pdf`)
+  return formatDeviceDisplay(item.pdf_filename || `${item.machine_no || '设备'}_告警报告_${String(item.created_at || '').slice(0, 10).replaceAll('-', '')}`)
 }
 
 function incidentReportDisplay(item: AlarmIncident) {
@@ -436,8 +436,17 @@ const reportTableColumns = [
         <template #c1="{ row: item }">{{ item.incident_ids.length }} 项 · {{ formatDeviceDisplay(item.machine_no) || '--' }}</template>
         <template #c2="{ row: item }">{{ formatShortDateTime(item.created_at) }}</template>
         <template #c3="{ row: item }">{{ formatBytes(item.file_size) }}</template>
-        <template #c4="{ row: item }"><span class="report-status" :class="item.status">{{ reportStatusLabels[item.status] || item.status }}</span></template>
-        <template #c5="{ row: item }"><div class="report-actions"><template v-if="item.status === 'completed'"><a :href="item.download_url || undefined">下载</a><a :href="item.view_url || undefined" target="_blank" rel="noopener">预览</a></template><span v-else :title="item.error_message || ''">{{ item.error_message || '--' }}</span></div></template>
+        <template #c4="{ row: item }">
+          <span class="report-status" :class="item.status">{{ reportStatusLabels[item.status] || item.status }}</span>
+          <span v-if="item.status === 'failed' && item.error_message" class="report-failure-reason"> · {{ item.error_message }}</span>
+        </template>
+        <template #c5="{ row: item }">
+          <div v-if="item.status === 'completed' && (item.download_url || item.view_url)" class="report-actions">
+            <a v-if="item.download_url" :href="item.download_url">下载</a>
+            <a v-if="item.view_url" :href="item.view_url" target="_blank" rel="noopener">预览</a>
+          </div>
+          <span v-else>—</span>
+        </template>
       </AppReportTable>
       </div>
 
@@ -454,6 +463,7 @@ const reportTableColumns = [
 @media(max-width:900px){.alarm-page,.alarm-content-grid{gap:12px}.alarm-hero{min-height:200px;padding:24px}.alarm-hero__slogan{display:none}.alarm-insights{display:grid;grid-template-columns:repeat(3,1fr);padding-bottom:10px}.alarm-insights>header{grid-column:1/-1}}
 @media(max-width:620px){.alarm-hero{padding:22px 18px;background:linear-gradient(90deg,rgb(var(--container-bg-color) / 0.96),rgb(var(--container-bg-color) / 0.88)),var(--alarm-hero-image) center/cover}.alarm-hero h1{font-size:var(--font-page-title-mobile)}.alarm-hero__copy>p:last-child{font-size:12px}.monitor-card{width:100%;max-width:none;box-sizing:border-box}.alarm-section-head{position:relative;align-items:flex-start}.alarm-section-title{width:100%}.alarm-refresh-button{position:absolute;right:14px}.alarm-insights{display:block}.alarm-empty-state{min-height:104px;padding:22px 16px}}
 .alarm-ai-panel{display:block;padding-bottom:0}
+.report-failure-reason { color:var(--text-color-2); }
 .alarm-ai-columns{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:start;gap:16px;padding:13px 15px 0}
 .alarm-ai-columns>.alarm-ai-section{min-width:0;padding:0}
 .alarm-ai-columns>.alarm-ai-section:only-child{grid-column:1/-1}
