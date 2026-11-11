@@ -221,7 +221,8 @@ def test_role_diagnostics_include_all_snapshots_and_public_health_never_leaks_fi
     finally:runtime.database_runtime.close();runtime.database.close()
 
 
-def test_consumer_owns_energy_recovery_and_hot_rebuild_keeps_inflight_claim(postgres_state,tmp_path,monkeypatch):
+@pytest.mark.parametrize("updates", [{"REPORT_BACKGROUND_REFRESH_SECONDS": 60}, {"LLM_MODEL": "hot-model"}])
+def test_consumer_owns_energy_recovery_and_hot_rebuild_keeps_inflight_claim(postgres_state,tmp_path,monkeypatch,updates):
     from app.services.database_runtime import database_context
     cfg=state_settings(configuration(tmp_path,real=True,energy_api_enabled=True),postgres_state)
     consumer=WorkerProcess(cfg);scheduler=SchedulerProcess(cfg)
@@ -235,7 +236,7 @@ def test_consumer_owns_energy_recovery_and_hot_rebuild_keeps_inflight_claim(post
             consumer.runtime.database_runtime.save_lines(database_context(consumer.runtime).catalog)
             # Force a real services rebuild without changing the history source identity.
             from app.services.runtime_settings_store import write_runtime_env
-            write_runtime_env(cfg.runtime_settings_env_path,{'REPORT_BACKGROUND_REFRESH_SECONDS':60})
+            write_runtime_env(cfg.runtime_settings_env_path,updates)
             consumer._initialize_lines()
         new=database_context(consumer.runtime).lines['Cutter01'].cutting().energy_history_worker
         assert new is not old and new.source_key==old.source_key

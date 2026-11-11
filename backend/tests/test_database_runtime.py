@@ -133,7 +133,8 @@ def test_worker_sees_same_published_values_but_diagnostics_does_not_reload(postg
 
 
 @pytest.mark.parametrize('values', [{'PRODUCTION_LINES_JSON': 'bad'}, {'DATABASE_SOURCES_JSON': 'bad'},
-                                  {'WORKER_DATABASE_AUTH_ENABLED': 'bad'}, {'APP_DATA_SOURCE_MODE': 'unknown'}])
+                                  {'WORKER_DATABASE_AUTH_ENABLED': 'bad'}, {'APP_DATA_SOURCE_MODE': 'unknown'},
+                                  {'LLM_MODEL': 'x' * 257}])
 def test_invalid_reload_keeps_last_snapshot_and_recovers(environment, values):
     cfg, state = environment
     old = database_context(state)

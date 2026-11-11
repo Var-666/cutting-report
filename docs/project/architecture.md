@@ -37,7 +37,7 @@ FastAPI API → Service → Repository / 外部客户端
 - Web只挂载`app.state.runtime`。API通过`application_state`获取共享资源，`runtime_state`固定单请求的数据库服务快照，`device_state`校验唯一有效的`device_id`；Worker在新操作边界固定快照。在途操作继续使用原服务引用。
 - `DatabaseRuntime`和`AutomationRuntime`管理不可变配置快照。保存复用进程锁、锁内读改写、空密码保留、候选校验及原子文件发布；失败保留旧快照，不关闭仍被在途请求引用的连接池。
 - 配置解析由`configuration_sources`统一维护，优先级为`data/settings.env > 进程环境 > .env > 默认值`；业务使用传入Settings，不另读环境。
-- 产线目录、连接及自动化/SMTP按现有白名单热加载；SQL容量、PG连接、AI和其他冷参数按[配置参考](../deployment/配置参考.md)重启生效。只读诊断使用`inspect()`，不触发配置发布；比较四角色实际快照，不把目标值冒充已生效值。
+- 产线目录、连接、自动化/SMTP及模型 ID 按现有白名单热加载。SQL容量、PG连接和其他冷参数按[配置参考](../deployment/配置参考.md)重启生效。只读诊断使用`inspect()`，不触发配置发布；比较四角色实际快照，不把目标值冒充已生效值。
 
 ## 产线、设备与权限
 

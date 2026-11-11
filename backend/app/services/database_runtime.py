@@ -17,6 +17,7 @@ from app.services.database_configuration import (
 from app.core.process_lock import settings_file_lock
 from app.services.automation_runtime import AutomationRuntime
 from app.models.database_sources import DatabaseSourceConfig, DatabaseSourceRequest
+from app.models.configuration_contracts import LlmConfigurationRequest
 from app.database.source_registry import (
     DatabaseSourceRegistry, SourceConflict, SourceNotFound, source_configs_json,
 )
@@ -42,12 +43,12 @@ class DatabaseServices:
 
 DATABASE_FIELDS = {'data_source_mode', 'worker_database_auth_enabled', 'file_database_enabled',
                    'database_sources_json', 'production_lines_json', 'worker_source_key', 'file_source_key', 'dispatch_source_key',
-                   'report_background_refresh_seconds'}
+                   'report_background_refresh_seconds', 'llm_model'}
 DATABASE_SETTINGS = {item.metadata['env']: item.name for item in fields(Settings) if item.name in DATABASE_FIELDS}
 DATABASE_DIAGNOSTIC_KEYS = set(DATABASE_SETTINGS) | {'APP_EFFECTIVE_DATA_SOURCE_MODE'}
 
 
-def parse_database_settings(base: Settings, values: dict[str, object]) -> Settings:
+def parse_database_settings(base: Settings, values: dict[str, object], *, current_model: str | None = None) -> Settings:
     changes = {}
     for key, name in DATABASE_SETTINGS.items():
         if key not in values:
@@ -65,6 +66,23 @@ def parse_database_settings(base: Settings, values: dict[str, object]) -> Settin
             raise ValueError('数据库配置不能包含控制字符')
         changes[name] = value
     updated = replace(base, **changes)
+    if 'LLM_MODEL' in values:
+        model = LlmConfigurationRequest(
+            enabled=values.get('LLM_ENABLED', base.llm_enabled),
+            base_url=values.get('LLM_BASE_URL', base.llm_base_url),
+            api_key=values.get('LLM_API_KEY') or base.llm_api_key,
+            model=values['LLM_MODEL'],
+        )
+        if model.enabled and not model.model:
+            raise ValueError('模型 ID 不能为空')
+        key = model.api_key.get_secret_value() if model.api_key is not None else ''
+        # A provider change must not send its model ID to the still-active old endpoint.
+        active_model = model.model if (
+            model.enabled, model.base_url, key
+        ) == (base.llm_enabled, base.llm_base_url.rstrip('/'), base.llm_api_key) else (
+            base.llm_model if current_model is None else current_model
+        )
+        updated = replace(updated, llm_model=active_model)
     load_line_catalog(updated.production_lines_json)
     return updated
 
@@ -121,7 +139,7 @@ class DatabaseRuntime:
             return None
 
     def prepare(self, values: dict[str, object]) -> DatabaseServices:
-        updated = parse_database_settings(self._base, values)
+        updated = parse_database_settings(self._base, values, current_model=self._context.settings.llm_model)
         if updated == self._context.settings:
             return self._context
         previous = self._context
@@ -278,6 +296,7 @@ class DatabaseRuntime:
 
     def publish(self, context: DatabaseServices, values: dict[str, object]) -> None:
         with runtime_settings_lock:
+            model_source = self._sources.get('LLM_MODEL', 'default')
             context.database_sources.capacity.register_sources(context.database_sources.configs())
             if context is not self._context:
                 self._automation_runtime.apply(source='data/settings.env', **{
@@ -287,6 +306,8 @@ class DatabaseRuntime:
                 self._revision += 1
             self._sources = {key: 'data/settings.env' if key in values else source
                              for key, source in self._base_sources.items()}
+            if 'LLM_MODEL' in values and str(values['LLM_MODEL']).strip() != context.settings.llm_model:
+                self._sources['LLM_MODEL'] = model_source
             self._loaded_at = datetime.now(timezone.utc).isoformat()
             self._file_version = self._version()
             self._error = None
@@ -302,10 +323,10 @@ class DatabaseRuntime:
                         self.publish(context, values)
             except ValueError:
                 self._file_version = version
-                self._error = '数据库配置无效，保留上次运行快照'
+                self._error = '运行配置无效，保留上次运行快照'
             except Exception:
                 # Parser, filesystem and service errors must never reveal connection credentials.
-                self._error = '数据库配置暂无法加载，保留上次运行快照'
+                self._error = '运行配置暂无法加载，保留上次运行快照'
             return self._context
 
     def inspect(self) -> dict:

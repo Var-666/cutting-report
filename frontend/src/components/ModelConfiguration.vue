@@ -60,7 +60,8 @@ async function save() {
     if (disposed) return
     configuration.value = result
     draft.api_key = ''
-    message.value = '模型配置已保存。'
+    message.value = result.restart_required ? '模型配置已保存，相关连接配置待重启生效。'
+      : result.enabled ? '模型已切换，新发起的智能分析将使用所选模型。' : '模型配置已保存。'
   } catch (caught) {
     if (!disposed) error.value = toError(caught).message
   } finally {
@@ -85,7 +86,7 @@ onBeforeUnmount(() => { disposed = true; controller.abort() })
       <span v-if="configuration">当前 Web 模型 <strong>{{ configuration.active_enabled ? configuration.active_model || '未配置' : '未启用' }}</strong></span>
     </header>
     <NAlert v-if="configuration?.restart_required" type="warning" :show-icon="false">
-      已保存配置待重启生效，请重启 Web、Scheduler、全部 Consumer 和 Automation。各进程生效状态可在“配置诊断”中查看。
+      接口地址、密钥或启用状态有变更，需重启 Web、Scheduler、全部 Consumer 和 Automation 后连同模型一起生效。各进程状态可在“配置诊断”中查看。
     </NAlert>
     <NAlert v-if="error" type="error" :show-icon="false">
       {{ error }} <NButton v-if="!configuration" text @click="load" :disabled="busy">重新读取</NButton>

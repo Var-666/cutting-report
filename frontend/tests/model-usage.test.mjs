@@ -95,7 +95,7 @@ function mountModelConfiguration(api) {
   }
 }
 
-test('model configuration selects a catalog model, preserves blank secrets and shows pending restart', async () => {
+test('model selection uses server credentials and displays the new active model after saving', async () => {
   const current = { enabled: true, base_url: 'https://maas-api.cmhk.com/v1', model: 'model-a',
     active_enabled: true, active_base_url: 'https://maas-api.cmhk.com/v1', active_model: 'model-a',
     api_key_configured: true, restart_required: false }
@@ -110,7 +110,7 @@ test('model configuration selects a catalog model, preserves blank secrets and s
     },
     saveLlmConfiguration: async payload => {
       requests.push(payload)
-      return { ...current, model: payload.model, restart_required: true }
+      return { ...current, model: payload.model, active_model: payload.model, restart_required: false }
     },
   })
   try {
@@ -126,8 +126,9 @@ test('model configuration selects a catalog model, preserves blank secrets and s
     await view.save()
     assert.equal(requests.at(-1).model, 'model-b')
     assert.equal(requests.at(-1).api_key, undefined)
-    assert.ok(view.text().includes('待重启生效'))
-    assert.match(view.text(), /当前 Web 模型\s*model-a/)
+    assert.ok(view.text().includes('模型已切换'))
+    assert.match(view.text(), /当前 Web 模型\s*model-b/)
+    assert.ok(!view.text().includes('需重启 Web'))
     failCatalog = true
     await view.click('刷新模型列表')
     assert.ok(view.text().includes('读取模型列表认证失败'))

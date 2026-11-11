@@ -14,7 +14,7 @@ router = APIRouter(prefix="/api/v1/configuration", tags=["configuration"], depen
 
 
 def llm_configuration_service(request: Request) -> LlmConfigurationService:
-    return LlmConfigurationService(runtime_state(request).settings)
+    return LlmConfigurationService(runtime_state(request).settings, application_state(request).database_runtime)
 
 
 @router.get("/llm", response_model=ApiEnvelope[LlmConfiguration])

@@ -275,6 +275,7 @@ class ConfigurationDiagnostics:
                          "valid": key not in invalid and not errors, "process_mismatch": mismatch,
                          "restart_required": (not hot or key == 'DATABASE_SOURCES_JSON') and 'pending' in statuses,
                          "rule": "连接参数按新操作热加载；sql_max_concurrent 重启 Web/Scheduler/Consumer/Automation 生效，实际容量见数据库资源诊断" if key == 'DATABASE_SOURCES_JSON' else
+                         "模型 ID 按新操作热加载，在途分析沿用原模型；接口地址、密钥或启用状态变更时随连接配置重启生效" if key == 'LLM_MODEL' and database_hot else
                          "保存后新请求和后台操作自动加载；在途操作保留旧配置，无需重启容器" if database_hot else
                          "保存后由各进程下一轮自动化/邮件操作加载；在途操作保留旧快照" if hot else
                          ("数据库声明参数，实际连接及继承来源见 connections.*；" if "SQLSERVER_" in key else "")

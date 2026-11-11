@@ -1,7 +1,8 @@
-"""Read model catalogs and save model settings for the next process start."""
+"""Read model catalogs and publish model selection at operation boundaries."""
 from __future__ import annotations
 
 import json
+from typing import TYPE_CHECKING
 
 import httpx
 
@@ -12,14 +13,18 @@ from app.services.runtime_settings_store import (
     RuntimeSettingsSaveError, read_runtime_env, runtime_settings_lock, write_runtime_env,
 )
 
+if TYPE_CHECKING:
+    from app.services.database_runtime import DatabaseRuntime
+
 
 class ModelCatalogError(RuntimeError):
     pass
 
 
 class LlmConfigurationService:
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, runtime: DatabaseRuntime | None = None) -> None:
         self.settings = settings
+        self.runtime = runtime
 
     def _saved(self) -> LlmConfigurationRequest:
         try:
@@ -35,7 +40,7 @@ class LlmConfigurationService:
 
     def _view(self, saved: LlmConfigurationRequest) -> dict:
         key = saved.api_key.get_secret_value() if saved.api_key is not None else ""
-        current = self.settings
+        current = self.runtime.current_context.settings if self.runtime is not None else self.settings
         return dict(
             enabled=saved.enabled, base_url=saved.base_url, model=saved.model,
             api_key_configured=bool(key), active_enabled=current.llm_enabled,
@@ -65,10 +70,19 @@ class LlmConfigurationService:
                 values["LLM_BASE_URL"] = candidate.base_url
             if submitted_key:
                 values["LLM_API_KEY"] = submitted_key
+            merged = {**read_runtime_env(path), **values}
+            prepared = None
+            if self.runtime is not None:
+                try:
+                    prepared = self.runtime.prepare(merged)
+                except Exception:
+                    raise RuntimeSettingsSaveError("模型配置暂无法应用，保留当前模型") from None
             try:
                 write_runtime_env(path, values)
             except (OSError, ValueError):
                 raise RuntimeSettingsSaveError("模型配置保存失败") from None
+            if self.runtime is not None and prepared is not None:
+                self.runtime.publish(prepared, merged)
             return self._view(candidate)
 
     def models(self, payload: LlmCatalogRequest) -> dict:

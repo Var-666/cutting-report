@@ -140,8 +140,8 @@ def _build_runtime(settings: Settings, database: PostgresDatabase, *, role: Lite
                               snapshots=report_snapshots, coordination=coordination)
         return ProductionLineRuntime(line, service)
 
-    builders = {"cutting": (cutting, ("data_source_mode", "report_background_refresh_seconds"), ("bm",)),
-                "welding": (welding, ("report_background_refresh_seconds",), ())}
+    builders = {"cutting": (cutting, ("data_source_mode", "report_background_refresh_seconds", "llm_model"), ("bm",)),
+                "welding": (welding, ("report_background_refresh_seconds", "llm_model"), ())}
 
     def build_lines(configuration: Settings, catalog: ProductionLineCatalog, sources: DatabaseSourceRegistry,
                     previous: DatabaseServices | None = None) -> dict[str, ProductionLineRuntime]:
