@@ -94,7 +94,7 @@ def check_contract(response, model):
 
 def test_configuration_and_automation_documented_responses_match_http_payloads(contract_http):
     from app.models.contracts import Items, Page
-    from app.models.configuration_contracts import DatabaseConfiguration, DatabaseStatus, ConfigurationSaved, ConfigurationDiagnostics
+    from app.models.configuration_contracts import DatabaseConfiguration, DatabaseStatus, ConfigurationSaved, ConfigurationDiagnostics, LlmConfiguration
     from app.models.automation_contracts import AutomationConfiguration, AutomationStatus, AutomationSchedule, EmailDelivery, ScheduledRun
     client = contract_http
     check_contract(client.get('/api/v1/database/status'), DatabaseStatus)
@@ -113,6 +113,10 @@ def test_configuration_and_automation_documented_responses_match_http_payloads(c
     check_contract(client.post(f"/api/v1/automation/schedules/{schedule['schedule_id']}/run"), ScheduledRun)
     check_contract(client.get('/api/v1/automation/deliveries?page=1&page_size=5'), Page[EmailDelivery])
     check_contract(client.get('/api/v1/configuration/diagnostics'), ConfigurationDiagnostics)
+    check_contract(client.get('/api/v1/configuration/llm'), LlmConfiguration)
+    check_contract(client.put('/api/v1/configuration/llm', json={
+        'enabled': False, 'base_url': 'https://maas-api.cmhk.com/v1', 'model': 'configured-model',
+    }), LlmConfiguration)
 
 
 def test_cutting_reports_and_state_dependent_job_responses_match_contracts(contract_http):

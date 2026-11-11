@@ -61,6 +61,22 @@ export function getConfigurationDiagnostics({ signal }: ReadOptions = {}) {
   return request<ConfigurationDiagnostics>('/api/v1/configuration/diagnostics', { signal })
 }
 
+export function getLlmConfiguration({ signal }: ReadOptions = {}) {
+  return request<import('./generated/types.gen').LlmConfiguration>('/api/v1/configuration/llm', { signal })
+}
+
+export function saveLlmConfiguration(payload: import('./generated/types.gen').LlmConfigurationRequestWritable, { signal }: ReadOptions = {}) {
+  return request<import('./generated/types.gen').LlmConfiguration>('/api/v1/configuration/llm', {
+    method: 'PUT', body: JSON.stringify(payload), signal,
+  })
+}
+
+export function listLlmModels(payload: import('./generated/types.gen').LlmCatalogRequestWritable, { signal }: ReadOptions = {}) {
+  return request<import('./generated/types.gen').LlmModelCatalog>('/api/v1/configuration/llm/models', {
+    method: 'POST', body: JSON.stringify(payload), signal,
+  })
+}
+
 // Additional sources share generated contracts; no arbitrary query API is exposed.
 export function listDatabaseSources() {
   return request<import('./generated/types.gen').ItemsDatabaseSourceView>('/api/v1/database/sources')

@@ -116,6 +116,8 @@ async def safe_connection_validation(request: Request, exc: RequestValidationErr
             [{'loc': error['loc'], 'type': error['type'], 'input_type': type(error.get('input')).__name__}
              for error in errors[:10]], values,
         )
+    if request.url.path.startswith('/api/v1/configuration/llm'):
+        return JSONResponse(status_code=422, content={'success': False, 'error': {'code': 'VALIDATION_ERROR', 'message': '模型配置无效，请检查接口地址、模型 ID 和密钥'}})
     if request.url.path.startswith(('/api/v1/welding', '/api/v1/database/welding/', '/api/v1/database/sources')) or request.url.path == '/api/v1/database/configuration':
         return JSONResponse(status_code=422, content={'success': False, 'error': {'code': 'VALIDATION_ERROR', 'message': '请求参数无效，请检查日期、筛选或连接配置'}})
     return await request_validation_exception_handler(request, exc)

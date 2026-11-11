@@ -1058,6 +1058,36 @@ export type ApiEnvelopeLeadershipReport = {
 };
 
 /**
+ * ApiEnvelope[LlmConfiguration]
+ */
+export type ApiEnvelopeLlmConfiguration = {
+    /**
+     * Success
+     */
+    success: true;
+    data: LlmConfiguration;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
+ * ApiEnvelope[LlmModelCatalog]
+ */
+export type ApiEnvelopeLlmModelCatalog = {
+    /**
+     * Success
+     */
+    success: true;
+    data: LlmModelCatalog;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
  * ApiEnvelope[MachineResult]
  */
 export type ApiEnvelopeMachineResult = {
@@ -4558,6 +4588,90 @@ export type LeadershipSnapshotState = {
 };
 
 /**
+ * LlmCatalogRequest
+ */
+export type LlmCatalogRequest = {
+    /**
+     * Base Url
+     */
+    base_url: string;
+    /**
+     * Api Key
+     */
+    api_key?: null;
+};
+
+/**
+ * LlmConfiguration
+ */
+export type LlmConfiguration = {
+    /**
+     * Enabled
+     */
+    enabled: boolean;
+    /**
+     * Base Url
+     */
+    base_url: string;
+    /**
+     * Model
+     */
+    model: string;
+    /**
+     * Api Key Configured
+     */
+    api_key_configured: boolean;
+    /**
+     * Active Enabled
+     */
+    active_enabled: boolean;
+    /**
+     * Active Base Url
+     */
+    active_base_url: string;
+    /**
+     * Active Model
+     */
+    active_model: string;
+    /**
+     * Restart Required
+     */
+    restart_required: boolean;
+};
+
+/**
+ * LlmConfigurationRequest
+ */
+export type LlmConfigurationRequest = {
+    /**
+     * Base Url
+     */
+    base_url: string;
+    /**
+     * Api Key
+     */
+    api_key?: null;
+    /**
+     * Enabled
+     */
+    enabled: boolean;
+    /**
+     * Model
+     */
+    model: string;
+};
+
+/**
+ * LlmModelCatalog
+ */
+export type LlmModelCatalog = {
+    /**
+     * Models
+     */
+    models: Array<string>;
+};
+
+/**
  * MachineApplication
  */
 export type MachineApplication = {
@@ -7799,6 +7913,42 @@ export type DatabaseSourceRequestWritable = {
 };
 
 /**
+ * LlmCatalogRequest
+ */
+export type LlmCatalogRequestWritable = {
+    /**
+     * Base Url
+     */
+    base_url: string;
+    /**
+     * Api Key
+     */
+    api_key?: string | null;
+};
+
+/**
+ * LlmConfigurationRequest
+ */
+export type LlmConfigurationRequestWritable = {
+    /**
+     * Base Url
+     */
+    base_url: string;
+    /**
+     * Api Key
+     */
+    api_key?: string | null;
+    /**
+     * Enabled
+     */
+    enabled: boolean;
+    /**
+     * Model
+     */
+    model: string;
+};
+
+/**
  * SavedConnectionRequest
  */
 export type SavedConnectionRequestWritable = {
@@ -9792,6 +9942,81 @@ export type DeliveryResolutionsApiV1AutomationDeliveriesDeliveryIdResolutionsGet
 };
 
 export type DeliveryResolutionsApiV1AutomationDeliveriesDeliveryIdResolutionsGetResponse = DeliveryResolutionsApiV1AutomationDeliveriesDeliveryIdResolutionsGetResponses[keyof DeliveryResolutionsApiV1AutomationDeliveriesDeliveryIdResolutionsGetResponses];
+
+export type GetLlmConfigurationApiV1ConfigurationLlmGetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/configuration/llm';
+};
+
+export type GetLlmConfigurationApiV1ConfigurationLlmGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type GetLlmConfigurationApiV1ConfigurationLlmGetError = GetLlmConfigurationApiV1ConfigurationLlmGetErrors[keyof GetLlmConfigurationApiV1ConfigurationLlmGetErrors];
+
+export type GetLlmConfigurationApiV1ConfigurationLlmGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeLlmConfiguration;
+};
+
+export type GetLlmConfigurationApiV1ConfigurationLlmGetResponse = GetLlmConfigurationApiV1ConfigurationLlmGetResponses[keyof GetLlmConfigurationApiV1ConfigurationLlmGetResponses];
+
+export type SaveLlmConfigurationApiV1ConfigurationLlmPutData = {
+    body: LlmConfigurationRequestWritable;
+    path?: never;
+    query?: never;
+    url: '/api/v1/configuration/llm';
+};
+
+export type SaveLlmConfigurationApiV1ConfigurationLlmPutErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type SaveLlmConfigurationApiV1ConfigurationLlmPutError = SaveLlmConfigurationApiV1ConfigurationLlmPutErrors[keyof SaveLlmConfigurationApiV1ConfigurationLlmPutErrors];
+
+export type SaveLlmConfigurationApiV1ConfigurationLlmPutResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeLlmConfiguration;
+};
+
+export type SaveLlmConfigurationApiV1ConfigurationLlmPutResponse = SaveLlmConfigurationApiV1ConfigurationLlmPutResponses[keyof SaveLlmConfigurationApiV1ConfigurationLlmPutResponses];
+
+export type ListLlmModelsApiV1ConfigurationLlmModelsPostData = {
+    body: LlmCatalogRequestWritable;
+    path?: never;
+    query?: never;
+    url: '/api/v1/configuration/llm/models';
+};
+
+export type ListLlmModelsApiV1ConfigurationLlmModelsPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ListLlmModelsApiV1ConfigurationLlmModelsPostError = ListLlmModelsApiV1ConfigurationLlmModelsPostErrors[keyof ListLlmModelsApiV1ConfigurationLlmModelsPostErrors];
+
+export type ListLlmModelsApiV1ConfigurationLlmModelsPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeLlmModelCatalog;
+};
+
+export type ListLlmModelsApiV1ConfigurationLlmModelsPostResponse = ListLlmModelsApiV1ConfigurationLlmModelsPostResponses[keyof ListLlmModelsApiV1ConfigurationLlmModelsPostResponses];
 
 export type ConfigurationDiagnosticsApiV1ConfigurationDiagnosticsGetData = {
     body?: never;

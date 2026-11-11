@@ -18,6 +18,7 @@ import AppDatePicker from '../components/AppDatePicker.vue'
 import AppSelect from '../components/AppSelect.vue'
 import AppReportTable from '../components/AppReportTable.vue'
 import ManagementPageHero from '../components/ManagementPageHero.vue'
+import ModelConfiguration from '../components/ModelConfiguration.vue'
 
 use([BarChart, LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
 
@@ -169,6 +170,8 @@ const breakdownTableColumns = [
 <template>
   <div class="model-usage-page management-page" :aria-busy="loading">
     <ManagementPageHero eyebrow="MODEL USAGE" title="模型用量" description="查看每日、每月 token 消耗趋势，按业务场景和模型汇总使用情况。" icon="sparkles" status-label="统计口径" status-value="供应商实际返回用量" status-note="缓存命中不新增调用，不估算缺失 token" tone="teal" />
+
+    <ModelConfiguration />
 
     <NCard class="usage-filter-panel" :bordered="false" aria-label="用量查询条件">
       <form class="usage-filters" @submit.prevent="query">

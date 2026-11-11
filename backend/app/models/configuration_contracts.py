@@ -1,7 +1,66 @@
 """Configuration response schemas; secrets are represented only by presence flags."""
 from typing import Literal
+from urllib.parse import urlsplit
 
-from pydantic import BaseModel, JsonValue, Field
+from pydantic import BaseModel, JsonValue, Field, SecretStr, field_validator
+
+
+class LlmCatalogRequest(BaseModel):
+    base_url: str = Field(max_length=2048)
+    api_key: SecretStr | None = Field(default=None, max_length=4096)
+
+    @field_validator("base_url")
+    @classmethod
+    def validate_base_url(cls, value: str) -> str:
+        value = value.strip().rstrip("/")
+        if not value:
+            return value
+        try:
+            parsed = urlsplit(value)
+            parsed.port
+        except ValueError:
+            raise ValueError("请输入有效的模型接口地址") from None
+        if (parsed.scheme not in {"http", "https"} or not parsed.hostname
+                or parsed.username is not None or parsed.password is not None
+                or parsed.query or parsed.fragment or any(character.isspace() for character in value)
+                or any(ord(character) < 32 for character in value)):
+            raise ValueError("请输入有效的模型接口地址")
+        return value
+
+    @field_validator("api_key")
+    @classmethod
+    def validate_api_key(cls, value: SecretStr | None) -> SecretStr | None:
+        if value is not None and any(character in value.get_secret_value() for character in ("\r", "\n", "\x00")):
+            raise ValueError("接口密钥不能包含换行或空字符")
+        return value
+
+
+class LlmConfigurationRequest(LlmCatalogRequest):
+    enabled: bool
+    model: str = Field(max_length=256)
+
+    @field_validator("model")
+    @classmethod
+    def validate_model(cls, value: str) -> str:
+        value = value.strip()
+        if any(ord(character) < 32 for character in value):
+            raise ValueError("模型 ID 不能包含控制字符")
+        return value
+
+
+class LlmConfiguration(BaseModel):
+    enabled: bool
+    base_url: str
+    model: str
+    api_key_configured: bool
+    active_enabled: bool
+    active_base_url: str
+    active_model: str
+    restart_required: bool
+
+
+class LlmModelCatalog(BaseModel):
+    models: list[str]
 
 
 class SavedConnection(BaseModel):

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import * as Vue from 'vue'
-import { parse } from '@vue/compiler-sfc'
+import { compileScript, parse } from '@vue/compiler-sfc'
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8')
 const source = read('../src/views/ModelUsageView.vue')
@@ -41,6 +41,96 @@ function mount(getReport) {
 
 const result = (marker = 1) => ({ summary: { call_count: 21, metered_count: 20 }, series: [{ period: '2026-10-12', call_count: 21, total_tokens: 0, input_tokens: 0, output_tokens: 0 }], marker })
 const flush = async () => { await Promise.resolve(); await Vue.nextTick(); await Promise.resolve() }
+
+function mountModelConfiguration(api) {
+  const element = (tag, name) => ({
+    inheritAttrs: false, props: ['value', 'options', 'disabled'],
+    setup: (props, { slots, attrs, emit }) => () => Vue.h(tag, {
+      ...attrs, value: props.value, disabled: props.disabled,
+      onChange: event => emit('update:value', event.target.value),
+    }, name === 'select' ? props.options?.map(option => Vue.h('option', { value: option.value }, option.label)) : slots.default?.()),
+  })
+  const bindings = { ...api, NCard: element('section'), NAlert: element('div'), NInput: element('input'),
+    NSelect: element('select', 'select'), NSwitch: element('input'), NButton: element('button'),
+    toError: value => value instanceof Error ? value : new Error(String(value)) }
+  const compiled = compileScript(parse(read('../src/components/ModelConfiguration.vue')).descriptor, {
+    id: 'model-configuration-test', inlineTemplate: true,
+  }).content.replace(/import\s*\{([^}]+)\}\s*from\s*['"]vue['"]/g, (_, names) => {
+    for (const name of names.split(',')) {
+      const [original, alias = original] = name.trim().split(/\s+as\s+/)
+      bindings[alias] = Vue[original]
+    }
+    return ''
+  }).replace(/^import .*$/gm, '').replace('export default', 'return')
+  const component = scriptFunction(...Object.keys(bindings), compiled)(...Object.values(bindings))
+  const renderer = Vue.createRenderer({
+    createElement: tag => ({ tag, props: {}, children: [] }), createText: text => ({ text }), createComment: () => ({}),
+    insert(node, parent) { parent.children.push(node) }, remove() {}, patchProp(node, key, _, value) { node.props[key] = value },
+    setText(node, text) { node.text = text }, setElementText(node, text) { node.text = text; node.children = [] },
+    parentNode: () => null, nextSibling: () => null,
+  })
+  const root = { children: [] }
+  const app = renderer.createApp(component)
+  app.mount(root)
+  const all = node => [node, ...(node.children || []).flatMap(all)]
+  const text = node => (node.text || '') + (node.children || []).map(text).join('')
+  return { app, text: () => text(root),
+    find: predicate => all(root).find(predicate),
+    async fill(label, value) {
+      const input = all(root).find(node => node.props?.['aria-label'] === label)
+      assert.ok(input, label)
+      input.props.onChange({ target: { value } })
+      await flush()
+    },
+    async click(label) {
+      const button = all(root).find(node => node.tag === 'button' && text(node) === label)
+      assert.ok(button, label)
+      button.props.onClick()
+      await flush()
+    },
+    async save() {
+      all(root).find(node => node.tag === 'form').props.onSubmit({ preventDefault() {} })
+      await flush()
+    },
+  }
+}
+
+test('model configuration selects a catalog model, preserves blank secrets and shows pending restart', async () => {
+  const current = { enabled: true, base_url: 'https://maas-api.cmhk.com/v1', model: 'model-a',
+    active_enabled: true, active_base_url: 'https://maas-api.cmhk.com/v1', active_model: 'model-a',
+    api_key_configured: true, restart_required: false }
+  const requests = []
+  let failCatalog = false
+  const view = mountModelConfiguration({
+    getLlmConfiguration: async () => current,
+    listLlmModels: async payload => {
+      requests.push(payload)
+      if (failCatalog) throw new Error('读取模型列表认证失败')
+      return { models: ['model-a', 'model-b'] }
+    },
+    saveLlmConfiguration: async payload => {
+      requests.push(payload)
+      return { ...current, model: payload.model, restart_required: true }
+    },
+  })
+  try {
+    await flush()
+    assert.ok(view.text().includes('model-a'))
+    await view.click('获取模型列表')
+    assert.equal(requests.at(-1).api_key, undefined)
+    assert.ok(view.text().includes('model-b'))
+    await view.fill('分析模型', 'model-b')
+    await view.save()
+    assert.equal(requests.at(-1).model, 'model-b')
+    assert.equal(requests.at(-1).api_key, undefined)
+    assert.ok(view.text().includes('待重启生效'))
+    assert.match(view.text(), /当前 Web 模型\s*model-a/)
+    failCatalog = true
+    await view.click('获取模型列表')
+    assert.ok(view.text().includes('读取模型列表认证失败'))
+    assert.equal(view.find(node => node.tag === 'select').props.value, 'model-b')
+  } finally { view.app.unmount() }
+})
 
 test('model usage remains a settings destination and uses the shared authenticated API', () => {
   assert.match(read('../src/router/index.ts'), /path: 'model-usage'[\s\S]*ModelUsageView\.vue/)
