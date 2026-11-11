@@ -97,25 +97,19 @@ const findings = computed(() => props.brief.findings.map(finding => {
     appearance,
     tone: decline ? 'brief-tone-error' : appearance?.tone === 'warning' ? 'brief-tone-warning' : '',
     decline,
-    preview: finding.references.slice(0, 3),
-    linkLabel: finding.references.every(reference => reference.kind === 'task') ? '查看全部关联任务' : '查看全部关联记录',
   }
 }))
 const linkedFindings = computed(() => findings.value.filter(item => item.finding.references.length))
-const actions = computed(() => props.brief.actions.map(action => ({
-  action,
-  related: linkedFindings.value.find(item => item.finding.candidate_id === action.candidate_id)?.finding,
-})))
 const recordCount = computed(() => new Set(linkedFindings.value.flatMap(({ finding }) =>
   finding.references.map(reference => `${reference.kind}:${reference.id}`))).size)
-const evidenceRows = computed(() => linkedFindings.value.map(({ finding, preview }) => {
-  const first = preview[0]
+const evidenceRows = computed(() => linkedFindings.value.map(({ finding }) => {
+  const first = finding.references[0]
   const project = finding.references.length === 1 && first?.kind === 'project'
     ? props.leadershipReport?.project_distribution.find(row => row.project_name === first.id) : undefined
   const tasks = finding.references.filter(reference => reference.kind === 'task').length
   return {
     finding,
-    label: preview.map(reference => reference.label).join('、'),
+    label: finding.references.slice(0, 3).map(reference => reference.label).join('、'),
     count: project ? `${project.task_count} 项` : tasks ? `${tasks} 项` : '—',
     totals: project ? `切割长度 ${lengthFormat.format(project.cut_length_m)} 米 · 切割时长 ${duration(project.work_time_seconds)}` : '—',
     detail: finding.title,
@@ -182,7 +176,7 @@ function openTask(reference: BusinessReference) {
     <section v-if="findings.length || periodNotice" aria-label="关键发现">
       <h3 class="brief-section-title">关键发现</h3>
       <div class="brief-findings">
-        <article v-for="{ finding, appearance, tone, decline, preview, linkLabel } in findings" :key="finding.candidate_id"
+        <article v-for="{ finding, appearance, tone, decline } in findings" :key="finding.candidate_id"
           class="brief-finding" :class="tone">
           <header class="brief-card-heading">
             <AppIcon :name="appearance?.icon || 'activity'" :size="22" tone="current" />
@@ -191,14 +185,6 @@ function openTask(reference: BusinessReference) {
           </header>
           <p v-if="appearance" class="brief-finding-title">{{ finding.title }}</p>
           <p class="brief-card-copy">{{ finding.detail }}</p>
-          <div v-if="preview.length" class="brief-links">
-            <AppIcon name="file" :size="15" tone="current" />
-            <template v-for="reference in preview" :key="`${reference.kind}:${reference.id}`">
-              <NButton v-if="canOpen(reference)" text type="info" @click="openTask(reference)">任务 {{ reference.label }}</NButton>
-              <span v-else>{{ reference.label }}</span>
-            </template>
-            <NButton text type="info" @click="selected = finding">{{ linkLabel }}（{{ finding.reference_count }} 项）</NButton>
-          </div>
         </article>
         <article v-if="periodNotice" class="brief-finding brief-tone-warning">
           <header class="brief-card-heading">
@@ -211,15 +197,12 @@ function openTask(reference: BusinessReference) {
       </div>
     </section>
 
-    <section v-if="actions.length" aria-label="建议跟进">
+    <section v-if="brief.actions.length" aria-label="建议跟进">
       <h3 class="brief-section-title">建议跟进</h3>
       <div class="brief-followup">
-        <article v-for="({ action, related }, index) in actions" :key="`${action.candidate_id}:${index}`" class="brief-action">
-          <span class="brief-action-icon"><AppIcon :name="related ? 'activity' : 'check'" :size="23" tone="current" /></span>
+        <article v-for="(action, index) in brief.actions" :key="`${action.candidate_id}:${index}`" class="brief-action">
+          <span class="brief-action-icon"><AppIcon name="check" :size="23" tone="current" /></span>
           <div><h4>{{ action.title }}</h4><p class="brief-card-copy">{{ action.detail }}</p></div>
-          <NButton v-if="related" size="small" type="info" @click="selected = related">
-            查看关联 <AppIcon name="chevron-right" :size="15" tone="current" />
-          </NButton>
         </article>
       </div>
     </section>
@@ -330,11 +313,6 @@ function openTask(reference: BusinessReference) {
 .brief-tone-warning .brief-status { background:var(--brief-accent); color:var(--analysis-warning-ink); }
 .brief-finding-title { margin:0; font-weight:700; line-height:1.55; }
 .brief-card-copy { margin:0; color:var(--text-color-2); line-height:1.65; white-space:pre-wrap; }
-.brief-links {
-  display:flex; flex-wrap:wrap; align-items:center; gap:6px 10px; margin-top:auto; padding:9px;
-  background:color-mix(in srgb, var(--analysis-accent) 7%, var(--analysis-surface)); border-radius:7px; font-size:var(--font-auxiliary);
-}
-.brief-links :deep(.n-button) { white-space:normal; max-width:100%; text-align:left; }
 .brief-action { display:flex; align-items:center; gap:12px; padding:12px 14px; border-left:3px solid var(--brief-accent); }
 .brief-action-icon { flex:none; border-radius:50%; }
 .brief-action > div { min-width:0; flex:1; }
@@ -365,7 +343,5 @@ function openTask(reference: BusinessReference) {
   .brief-metric-icon .app-icon { width:19px; height:19px; }
   .brief-metric dt { align-self:center; }
   .brief-metric dd { grid-column:1/-1; font-size:18px; }
-  .brief-action { display:grid; grid-template-columns:40px minmax(0,1fr); }
-  .brief-action :deep(.n-button) { grid-column:2; justify-self:start; }
 }
 </style>

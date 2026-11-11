@@ -12,15 +12,26 @@ const brief = {
 }
 const analysis = { status: 'success', mode: 'model', overview: '旧适配文本', features: '', alerts: '', suggestions: '', facts: [{ id: 'F004', label: '工人确认率', value: '50.0%', source: '当前报表' }], cached: true, generated_at: '2026-08-20 12:00', data_version: 'v', brief }
 
-test('cutting brief renders dynamic prose, actual period and preview count without fixed KPI cards', async () => {
+test('cutting brief renders dynamic prose and the actual period without fixed KPI cards', async () => {
   const html = await renderComponent('components/ReportAnalysis', { analysis, ready: true, loading: false })
   assert.ok(html.includes(brief.headline) && html.includes(brief.summary))
   assert.match(html, /class="[^"]*\bmodel\b[^"]*"[^>]*>\s*AI 分析/)
   assert.ok(html.includes('2026-08-18 至 2026-08-20'))
-  assert.ok(html.includes('查看全部关联任务（5 项）'))
+  assert.ok(html.includes('查看记录（5 项）'))
   assert.ok(!html.includes('real-task-5'))
   assert.ok(!html.includes('核心指标') && !html.includes('建议跟进') && !html.includes('旧适配文本'))
   assert.ok(!html.includes('C_confirmation') && !html.includes('F004'))
+})
+
+test('a finding and its follow-up share one record entry in the evidence table', async () => {
+  const reportBrief = {
+    ...brief,
+    actions: [{ candidate_id: 'C_confirmation', title: '核对工人确认记录', detail: '向当班人员核对实际完成人。' }],
+  }
+  const html = await renderComponent('components/CuttingAnalysisBrief', { brief: reportBrief, facts: analysis.facts })
+  assert.ok(html.includes('核对工人确认记录'))
+  assert.equal(html.split('查看记录（5 项）').length - 1, 1)
+  assert.doesNotMatch(html, /查看全部关联任务|查看全部关联记录|查看关联/)
 })
 
 test('empty findings and actions leave no placeholder headings; selected metrics bind backend facts', async () => {

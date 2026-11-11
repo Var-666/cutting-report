@@ -71,7 +71,6 @@
         </h4>
         {% if appearance and appearance[0] != finding.title %}<p class="analysis-finding-title">{{ finding.title }}</p>{% endif %}
         <p>{{ finding.detail }}</p>
-        {% if finding.references %}<p class="analysis-links">关联记录 {{ finding.reference_count }} 项 · {{ finding.references[:3]|map(attribute='label')|join('、') }}</p>{% endif %}
       </article>
       {% endfor %}
       {% if notices.ongoing %}<article class="analysis-card period"><h4>{{ metric_icon('calendar') }}周期说明 <span class="analysis-card-status">周期未结束</span></h4><p>{{ notices.ongoing }}</p></article>{% endif %}

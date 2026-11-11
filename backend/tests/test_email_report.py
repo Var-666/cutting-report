@@ -290,6 +290,9 @@ def test_archived_report_becomes_readable_email(tmp_path, report_type, empty, wi
             assert page.locator("h2").all_text_contents() == reference.locator("h2").all_text_contents()
             if with_brief:
                 for document in [reference, page]:
+                    label = 'P-001' if report_type == 'leadership' else 'TASK-001'
+                    assert document.get_by_role('table', name='分析关联记录').get_by_text(label, exact=True).count() == 1
+                    assert document.get_by_text(f'关联记录 1 项 · {label}', exact=True).count() == 0
                     assert document.locator('.analysis-summary li').all_text_contents() == [
                         '生产记录已汇总。', '当前周期对比仅作进度参考。',
                     ]
