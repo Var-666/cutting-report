@@ -213,12 +213,24 @@ def test_archived_report_becomes_readable_email(tmp_path, report_type, empty, wi
                          overview="分析说明 <script>不能执行</script>", features="特征", alerts="关注点", suggestions="建议"),
     }
     if with_brief:
+        reference = dict(kind='project', id='P-001', label='P-001') if report_type == 'leadership' else dict(
+            kind='task', id='TASK-001', label='TASK-001')
+        if report_type == 'leadership':
+            report['leadership']['daily_records'].append(dict(totals, period_start='2026-11-09', remark='次日记录'))
+            report['leadership']['project_distribution'] = [
+                dict(project_name='P-001', task_count=1, cut_length_m=120.5, work_time_seconds=3600)]
+            report['analysis']['facts'].append(dict(id='F007', label='当月坡口长度', value='10.0 米'))
         report['analysis'].update(mode='model', brief=dict(
             scope=dict(period_start='2026-11-08', period_end='2026-11-08',
                        comparison_start='2026-11-07', comparison_end='2026-11-07'),
             headline='本期生产简报', summary='生产记录已汇总。',
-            key_metric_ids=['F001', 'F002', 'F003'], findings=[], actions=[],
-            data_quality=['工人工时仅包含已确认任务。']))
+            key_metric_ids=['F001', 'F002', 'F003'],
+            findings=[
+                dict(candidate_id='C_comparison', title='生产规模变化', detail='本期统计供核对。', references=[], reference_count=0),
+                dict(candidate_id='C_project', title='可核对的关联记录', detail='见下方依据。', references=[reference], reference_count=1),
+            ],
+            actions=[dict(title='核对生产记录', detail='确认来源与日期。')],
+            data_quality=['工人工时仅包含已确认任务。', '当前统计周期尚未结束，仅作进度参考。']))
     html = renderer.environment.get_template("report.html.j2").render(
         report=report, echarts_source=(root / "vendor/echarts.min.js").read_text(encoding="utf-8"),
         demo_mode=True, device_name="切割机01", energy_connected=False,
@@ -231,6 +243,8 @@ def test_archived_report_becomes_readable_email(tmp_path, report_type, empty, wi
     # Exercise the same isolated Chromium path and capacity used by Automation.
     email = PdfService(operation_timeout_seconds=30).render_email(path)
     expected_images = (0 if empty else 2) if report_type == "leadership" else ((0 if empty else 1) if report_type == "workshop" else (1 if empty else 2))
+    if with_brief and report_type == "leadership":
+        expected_images += 4
     assert len(email.images) == expected_images
     for cid, content in email.images.items():
         assert f'cid:{cid}' in email.html
@@ -239,7 +253,8 @@ def test_archived_report_becomes_readable_email(tmp_path, report_type, empty, wi
     assert "演示数据 · 非生产统计" in email.html
     if with_brief:
         assert all(text in html and text in email.html for text in
-                   ['本期生产简报', '分析依据', '2026-11-07', '工人工时仅包含已确认任务。', '任务数比上一周期'])
+                   ['本期生产简报', '分析依据 / 关联记录', '关键发现', '建议跟进', '可核对的关联记录',
+                    '周期未结束', '2026-11-07', '工人工时仅包含已确认任务。', '任务数比上一周期'])
     else:
         assert "智能分析暂不可用" in email.html and "&lt;script&gt;不能执行&lt;/script&gt;" in email.html
     assert "报告结束" in email.html
@@ -280,7 +295,8 @@ def test_archived_report_becomes_readable_email(tmp_path, report_type, empty, wi
                 if not empty:
                     for document in [reference, page]:
                         cards = document.locator('.analysis-fact')
-                        assert cards.count() == (3 if with_brief else 6)
+                        expected_cards = 4 if with_brief else 6
+                        assert cards.count() == expected_cards
                         boxes = [card.bounding_box() for card in cards.all()]
                         columns = sum(abs(box['y'] - boxes[0]['y']) < 1 for box in boxes) if with_brief else (3 if width > 1000 else 2)
                         assert all(abs(box['y'] - boxes[0]['y']) < 1 for box in boxes[:columns])

@@ -15,30 +15,6 @@ test('report model text uses the same device alias without changing numeric form
   assert.equal(format('Cutter02电耗 12.345 kWh'), '30KW切割机电耗 12.3 kWh')
 })
 
-test('analysis text is visible by default without a collapsed-card action', () => {
-  assert.doesNotMatch(source, /class="analysis-expand"|isLongSection\(|isSectionExpanded\(/)
-  for (const selector of ['.analysis-grid h4', '.analysis-grid p']) {
-    const rule = source.slice(source.indexOf(`${selector}{`)).split('}')[0]
-    assert.match(rule, /display:block/)
-    assert.match(rule, /overflow:visible/)
-    assert.match(rule, /overflow-wrap:anywhere/)
-  }
-  assert.doesNotMatch(source, /-webkit-line-clamp:2|analysis-expand|is-expanded/)
-  for (const selector of ['.analysis-facts span:not(.analysis-fact-icon)', '.analysis-facts strong']) {
-    const rule = source.slice(source.indexOf(`${selector}{`)).split('}')[0]
-    assert.match(rule, /overflow:visible/)
-    assert.match(rule, /white-space:normal/)
-    assert.match(rule, /overflow-wrap:anywhere/)
-  }
-  assert.match(source, /\.analysis-facts article\{[^}]*overflow:visible/)
-})
-
-test('single-sentence analysis is not repeated as both heading and body', () => {
-  assert.match(source, /<p v-if="sectionBody\(analysis\[section\.key\]\)"/)
-  assert.doesNotMatch(source, /sectionBody\(analysis\[section\.key\]\) \|\| plainAnalysisText/)
-  assert.match(source, /if \(firstBreak < 0 \|\| firstBreak >= text\.length - 1\) return ''/)
-})
-
 test('model-only analysis hides reference codes but keeps evidence available', () => {
   assert.doesNotMatch(source, /<sup v-for="citation in sectionCitations/)
   assert.match(source, /查看模型输入数据/)
@@ -77,16 +53,6 @@ test('analysis checks for newer report data and asks the current report to sync 
   }
   const workshop = readFileSync(new URL('../src/views/WorkshopView.vue', import.meta.url), 'utf8')
   assert.match(workshop, /const analysisReady = computed\([\s\S]*&& !loading\.value/)
-})
-
-test('core metric cards omit technical source labels while evidence keeps traceability', () => {
-  assert.doesNotMatch(source, /<small>\{\{ fact\.source \|\| '当前报表数据' \}\}<\/small>/)
-  assert.match(source, /<small>来源：\{\{ fact\.source \|\| '当前报表数据' \}\}<\/small>/)
-  assert.match(source, /\.analysis-facts article\{[^}]*min-height:104px[^}]*align-items:center/)
-  assert.match(source, /\.analysis-facts strong\{[^}]*font-size:18px!important/)
-  assert.match(source, /compactAnalysisFactValue\(formatAnalysisText\(fact\.value\)\)/)
-  assert.match(source, /compactAnalysisFactLabel\(fact\.label, fact\.value\)/)
-  assert.match(source, /<span>\{\{ formatAnalysisText\(fact\.value\) \}\}<\/span>/)
 })
 
 test('compound fact values stay compact in metric cards while the detail remains available', () => {

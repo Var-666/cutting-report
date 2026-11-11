@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { AnalysisRequest, AnalysisResult } from '../types/reports'
+import type { AnalysisRequest, AnalysisResult, LeadershipReport } from '../types/reports'
 import type { PropType } from 'vue'
 
 import { toError } from '../utils/errors'
@@ -21,6 +21,7 @@ const props = defineProps({
   dataVersion: { type: String, default: '' },
   summaryDataVersion: { type: String, default: '' },
   versionCheckEnabled: { type: Boolean, default: false },
+  leadershipReport: { type: Object as PropType<LeadershipReport | null>, default: null },
 })
 const emit = defineEmits<{ 'refresh-report': [] }>()
 const SOURCE_CHECK_INTERVAL_MS = 300_000
@@ -261,5 +262,5 @@ onBeforeUnmount(() => { pauseAnalysis(); unsubscribeDevice() })
 </script>
 
 <template>
-  <ReportAnalysis :analysis="analysis" :loading="loading" :reading-latest="readingLatest" :error="error" :ready="ready" :empty-message="versionCheckEnabled && ready ? '后台尚无已完成的分析，生成后将自动显示。' : '报表数据加载后将自动生成分析。'" @reload="reloadAnalysis" @retry="retryAnalysis" />
+  <ReportAnalysis :analysis="analysis" :leadership-report="analysisDataVersion && analysis?.data_version === analysisDataVersion ? leadershipReport : null" :loading="loading" :reading-latest="readingLatest" :error="error" :ready="ready" :empty-message="versionCheckEnabled && ready ? '后台尚无已完成的分析，生成后将自动显示。' : '报表数据加载后将自动生成分析。'" @reload="reloadAnalysis" @retry="retryAnalysis" />
 </template>

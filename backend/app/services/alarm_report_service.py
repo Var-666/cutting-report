@@ -11,6 +11,7 @@ from typing import Any
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from app.config import Settings
+from app.services.analysis_display import analysis_cover
 from app.services.pdf_service import PdfService
 
 
@@ -37,6 +38,7 @@ class AlarmReportService:
         html = template.render(
             report_id=report_id,
             machine_no=machine_no,
+            cover=analysis_cover(self.settings.project_root),
             analysis=analysis,
             generated_at=generated_at.strftime("%Y-%m-%d %H:%M:%S"),
             severity_labels={"warning": "提示", "high": "高", "critical": "严重"},

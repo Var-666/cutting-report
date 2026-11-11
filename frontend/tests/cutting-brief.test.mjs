@@ -29,6 +29,51 @@ test('empty findings and actions leave no placeholder headings; selected metrics
   assert.ok(html.includes('工人确认率') && html.includes('50.0%'))
 })
 
+test('leadership cards show authoritative metrics, actual trends and project evidence', async () => {
+  const scope = { ...brief.scope, report_type: 'leadership', comparison_start: '2026-08-15', comparison_end: '2026-08-17' }
+  const project = { ...reference, kind: 'project', id: 'P-01', label: 'P-01' }
+  const reportBrief = {
+    ...brief, scope, key_metric_ids: ['F001', 'F002', 'F003'],
+    findings: [{ ...brief.findings[0], references: [project], reference_count: 1 }],
+    data_quality: ['当前统计周期尚未结束，仅作进度参考。'],
+  }
+  const facts = [
+    ['F001', '区间任务数', '5 项'], ['F002', '区间切割长度', '12.0 米'],
+    ['F003', '区间切割时长', '01:00:00'], ['F007', '区间坡口长度', '2.0 米'],
+  ].map(([id, label, value]) => ({ id, label, value }))
+  const total = { task_count: 5, cut_length_m: 12, work_time_seconds: 3600, groove_length_m: 2 }
+  const leadershipReport = {
+    daily_records: [
+      { ...total, task_count: 2, period_start: '2026-08-18' },
+      { ...total, task_count: 3, period_start: '2026-08-19' },
+    ],
+    current_month_total: total, comparison_total: { ...total, task_count: 10, cut_length_m: 16 },
+    comparison_start: scope.comparison_start, comparison_end: scope.comparison_end,
+    project_distribution: [{ project_name: 'P-01', task_count: 3, cut_length_m: 8, work_time_seconds: 1800 }],
+  }
+  const html = await renderComponent('components/CuttingAnalysisBrief', { brief: reportBrief, facts, leadershipReport })
+  for (const text of ['区间坡口长度', '-50.0%', '-25.0%', '基于最近 2 个有效数据点', '周期未结束', '分析依据 / 关联记录', '切割长度 8.0 米 · 切割时长 00:30:00']) {
+    assert.ok(html.includes(text), text)
+  }
+})
+
+test('welding analysis uses only the matching report snapshot for indicators', async () => {
+  const weldingReport = {
+    data_version: 'current', query: { start: '2026-08-18', end: '2026-08-20' }, daily: [],
+    summary: { job_count: 4, weld_length_m: 12.3, involved_part_count: 3, working_hours: 1 },
+    meta: { notices: ['按作业结束时间计入生产日。'] },
+  }
+  const input = { ...analysis, brief: null, facts: [], overview: '焊接生产概况。' }
+  for (const matches of [true, false]) {
+    const html = await renderComponent('components/ReportAnalysis', {
+      analysis: { ...input, data_version: matches ? 'current' : 'old' }, weldingReport, ready: true, loading: false,
+    })
+    assert.equal(html.includes('焊接作业次数'), matches)
+    assert.equal(html.includes('分析依据'), matches)
+    assert.ok(html.includes('焊接生产概况'))
+  }
+})
+
 test('task navigation preserves real ID and original range and rejects another production line', () => {
   assert.deepEqual(analysisTaskLocation(reference, 'Cutter01'), { name: 'workshop-report', query: { start: '2026-08-18', end: '2026-08-20', task: 'real-task-1', task_line: 'Cutter01' } })
   assert.equal(analysisTaskLocation(reference, 'Cutter02'), null)
@@ -37,7 +82,8 @@ test('task navigation preserves real ID and original range and rejects another p
 
 test('welding/historical analysis still renders its four original fields', async () => {
   const html = await renderComponent('components/ReportAnalysis', { analysis: { ...analysis, brief: null, overview: '焊接概况', features: '工艺结构', alerts: '数据待核对', suggestions: '核对焊接记录' }, loading: false, ready: true })
-  for (const text of ['焊接概况', '工艺结构', '数据待核对', '核对焊接记录']) assert.ok(html.includes(text))
+  for (const text of ['焊接概况', '工艺结构', '数据待核对', '核对焊接记录']) assert.equal(html.split(text).length - 1, 1)
+  assert.ok(html.includes('关键发现') && html.includes('建议跟进'))
 })
 
 for (const [mode, status] of [['unavailable', 'unavailable'], ['model', 'error']]) {

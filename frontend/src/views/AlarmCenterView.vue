@@ -62,6 +62,25 @@ const incidentPageCount = computed(() => incidentSummary.value.page_count || 1)
 const reportPageCount = computed(() => reportSummary.value.page_count || 1)
 const latestAiReport = computed(() => latestModelAlarmReport(reports.value))
 const latestAiAnalysis = computed(() => latestAiReport.value?.analysis || null)
+const analysisCounts = computed(() => {
+  const facts = latestAiAnalysis.value?.facts ?? []
+  return [
+    { title: '关联告警', icon: 'bell', count: facts.length, tone: 'info' },
+    ...['critical', 'high', 'warning'].map(severity => ({
+      title: severityLabels[severity], icon: 'alert',
+      count: facts.filter(fact => fact.severity === severity).length,
+      tone: severity === 'critical' ? 'error' : 'warning',
+    })),
+  ]
+})
+const analysisColumns = [
+  { key: 'id', title: '证据', align: 'left' },
+  { key: 'c1', title: '告警', align: 'left' },
+  { key: 'c2', title: '设备', align: 'left' },
+  { key: 'c3', title: '级别', align: 'center' },
+  { key: 'c4', title: '开始时间', align: 'left' },
+  { key: 'c5', title: '状态', align: 'center' },
+] as const
 
 function formatDateTime(value: unknown) {
   return formatChineseDateTime(value)
@@ -355,10 +374,16 @@ const reportTableColumns = [
             <p>{{ formatDeviceDisplay(latestAiAnalysis.summary) }}</p>
             <a v-if="latestAiReport.view_url" :href="latestAiReport.view_url" target="_blank" rel="noopener">查看完整报告</a>
           </div>
+          <dl class="alarm-ai-metrics" aria-label="关联告警指标">
+            <div v-for="metric in analysisCounts" :key="metric.title" class="alarm-ai-metric" :class="`alarm-ai-metric--${metric.tone}`">
+              <span><AppIcon :name="metric.icon" size="21" tone="current" /></span>
+              <dt>{{ metric.title }}</dt><dd>{{ metric.count }}<small> 条</small></dd>
+            </div>
+          </dl>
 
           <div v-if="latestAiAnalysis.findings.length || latestAiAnalysis.actions.length" class="alarm-ai-columns">
             <section v-if="latestAiAnalysis.findings.length" class="alarm-ai-section" aria-labelledby="alarm-ai-findings-title">
-              <h3 id="alarm-ai-findings-title">分析发现</h3>
+              <h3 id="alarm-ai-findings-title">关键发现</h3>
               <article v-for="(finding, index) in latestAiAnalysis.findings" :key="`${finding.title}-${index}`" class="alarm-ai-finding" :class="finding.severity">
                 <header><strong>{{ formatDeviceDisplay(finding.title) }}</strong><span v-if="alarmConfidencePercent(finding.confidence) !== null">置信度 {{ alarmConfidencePercent(finding.confidence) }}%</span></header>
                 <p>{{ formatDeviceDisplay(finding.analysis) }}</p>
@@ -368,17 +393,19 @@ const reportTableColumns = [
             </section>
 
             <section v-if="latestAiAnalysis.actions.length" class="alarm-ai-section alarm-ai-actions" aria-labelledby="alarm-ai-actions-title">
-              <h3 id="alarm-ai-actions-title">建议措施</h3>
+              <h3 id="alarm-ai-actions-title">建议跟进</h3>
               <ol><li v-for="(action, index) in latestAiAnalysis.actions" :key="`${action.priority}-${index}`"><span>{{ priorityLabel(action.priority) }}</span><p>{{ formatDeviceDisplay(action.action) }}</p><small>依据 {{ evidenceLabel(action.evidence_ids) }}</small></li></ol>
             </section>
           </div>
 
-          <NCollapse v-if="latestAiAnalysis.facts.length" class="alarm-ai-evidence"><NCollapseItem name="evidence"><template #header>查看证据记录（{{ latestAiAnalysis.facts.length }} 条）</template>
-            <article v-for="fact in latestAiAnalysis.facts" :key="fact.id">
-              <strong>[{{ fact.id }}] {{ formatDeviceDisplay(fact.alarm_desc || fact.alarm_class) }}</strong>
-              <span>{{ formatDeviceDisplay(fact.machine_no) }} · {{ severityLabels[fact.severity] || fact.severity }} · {{ fact.alarm_code || '无编码' }}</span>
-              <small>{{ formatDateTime(fact.start_time) }} · {{ fact.status === 'open' ? '未解除' : '已解除' }}</small>
-            </article>
+          <NCollapse v-if="latestAiAnalysis.facts.length" class="alarm-ai-evidence" :default-expanded-names="['evidence']"><NCollapseItem name="evidence"><template #header>分析依据 / 关联告警（{{ latestAiAnalysis.facts.length }} 条）</template>
+            <AppReportTable :columns="analysisColumns" :items="latestAiAnalysis.facts" :row-key="fact => fact.id" :paginate="false" aria-label="告警分析依据">
+              <template #c1="{ row }">{{ formatDeviceDisplay(row.alarm_desc || row.alarm_class) }} · {{ row.alarm_code || '无编码' }}</template>
+              <template #c2="{ row }">{{ formatDeviceDisplay(row.machine_no) }}</template>
+              <template #c3="{ row }">{{ severityLabels[row.severity] || row.severity }}</template>
+              <template #c4="{ row }">{{ formatDateTime(row.start_time) }}</template>
+              <template #c5="{ row }">{{ row.status === 'open' ? '未解除' : '已解除' }}</template>
+            </AppReportTable>
           </NCollapseItem></NCollapse>
 
           <section v-if="latestAiAnalysis.limitations.length" class="alarm-ai-limitations" aria-labelledby="alarm-ai-limitations-title">
@@ -446,6 +473,38 @@ const reportTableColumns = [
 .alarm-page .alarm-ai-empty>span:last-child,.alarm-page .alarm-empty-state>span:not(.spinner):not(.empty-icon){font-size:14px}
 .alarm-page .alarm-ai-finding>header,.alarm-page .alarm-insights>header{flex-wrap:wrap}
 .alarm-page .alarm-ai-evidence article{overflow-wrap:anywhere}
+.alarm-ai-panel { container:alarm-analysis / inline-size; }
+.alarm-ai-panel .alarm-ai-summary {
+  position:relative; isolation:isolate; overflow:hidden; margin:12px;
+  border:1px solid var(--theme-border-color); border-radius:var(--report-panel-radius);
+  background:color-mix(in srgb, rgb(var(--info-color)) 5%, rgb(var(--container-bg-color)));
+}
+.alarm-ai-summary::before {
+  content:''; position:absolute; z-index:-1; inset:0 0 0 auto; width:34%;
+  background:linear-gradient(95deg, rgb(var(--container-bg-color)), rgb(var(--container-bg-color) / .15)),
+    url('../assets/home-laser-cutting.webp') 78% 57% / auto 165% no-repeat;
+}
+.alarm-ai-summary > p { max-width:78%; }
+.alarm-ai-metrics { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin:0 12px; }
+.alarm-ai-metric {
+  --alarm-analysis-accent:var(--info-color);
+  min-width:0; display:grid; grid-template-columns:38px minmax(0,1fr); gap:2px 10px; padding:12px;
+  border:1px solid var(--theme-border-color); border-radius:var(--report-panel-radius);
+  background:rgb(var(--container-bg-color)); box-shadow:var(--theme-shadow);
+}
+.alarm-ai-metric--error { --alarm-analysis-accent:var(--error-color); }
+.alarm-ai-metric--warning { --alarm-analysis-accent:var(--warning-color); }
+.alarm-ai-metric > span { grid-row:1/3; display:grid; place-items:center; border-radius:8px; color:rgb(var(--alarm-analysis-accent)); background:rgb(var(--alarm-analysis-accent) / .1); }
+.alarm-ai-metric dt { font-size:var(--font-auxiliary); color:var(--text-color-2); }
+.alarm-ai-metric dd { margin:0; font-weight:700; font-size:var(--font-kpi-value); line-height:1.2; }
+.alarm-ai-metric dd small { font-size:var(--font-auxiliary); }
+.alarm-ai-section > h3 { border-left:4px solid rgb(var(--info-color)); padding-left:8px; }
+.alarm-ai-evidence { padding:12px; }
+@container alarm-analysis (max-width:620px) {
+  .alarm-ai-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .alarm-ai-summary::before { opacity:.2; }
+  .alarm-ai-summary > p { max-width:100%; }
+}
 .alarm-page .alarm-table-wrap:not(.report-table-wrap) :is(.alarm-name,td small,.severity-badge,.incident-state,.report-status){font-size:inherit}
 @media (max-width:560px){.alarm-table-wrap{padding:12px}}
 </style>

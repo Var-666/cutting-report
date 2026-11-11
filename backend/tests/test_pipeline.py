@@ -111,9 +111,10 @@ def test_demo_pipeline_generates_offline_report(state_database,
     assert "大模型分析" in html
     assert "模拟大模型分析" not in html
     assert "分析边界" not in html
-    assert html.count('class="analysis-fact"') == 6
-    assert 'class="analysis-card alerts"' in html
-    assert 'class="analysis-card suggestions"' in html
+    assert "本期生产记录已整理" in html
+    assert "分析依据" in html
+    analysis_metric = {"leadership": "当月坡口长度", "workshop": "工人确认率", "equipment": "已匹配任务电耗"}
+    assert analysis_metric[report_type] in html
     assert "2026年8月18日" in html
     if report_type in {"workshop", "equipment"}:
         assert 'class="screen-only"' in html
@@ -141,7 +142,6 @@ def test_demo_pipeline_generates_offline_report(state_database,
         assert "CUT-01" not in html
         assert "设备数量" not in html
         assert "切割长度</small>" not in html
-        assert "当前关注项需结合现场记录核对" in html
     assert completed["task_count"] > 0
 
 

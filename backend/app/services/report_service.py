@@ -11,6 +11,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from app.config import Settings
 from app.database.postgres import execution_owner
+from app.services.analysis_display import analysis_cover, analysis_metrics
 
 
 class ReportRenderError(RuntimeError):
@@ -72,6 +73,7 @@ class ReportService:
             loader=FileSystemLoader(template_dir),
             autoescape=select_autoescape(["html", "xml", "j2"]),
         )
+        self.environment.globals.update(analysis_metrics=analysis_metrics, analysis_cover=lambda: analysis_cover(settings.project_root))
         self.environment.filters["number"] = format_number
         self.environment.filters["duration"] = format_duration
         self.environment.filters["chinese_month"] = format_chinese_month

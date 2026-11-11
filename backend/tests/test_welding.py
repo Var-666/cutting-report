@@ -255,13 +255,19 @@ def test_analysis_version_ignores_paging_but_tracks_filters_and_association():
 
 def test_exports_cover_all_filters_escape_text_and_enforce_limits(tmp_path):
     data = report_data()
+    data['data_version'] = 'matching'
     class Service:
         def report(self, kind, selected, *, export_limit):
             assert kind == 'jobs' and export_limit in (5001, 100001)
             return data
+        def cached_analysis(self, version):
+            if version == 'matching':
+                return {'mode': 'model', 'status': 'success', 'overview': '焊接产出简报',
+                        'features': '工艺分布', 'alerts': '数据核查', 'suggestions': '核对记录'}
     class Pdf:
         def render(self, path):
             assert '&lt;script&gt;' in path.read_text()
+            assert '焊接产出简报' in path.read_text()
             result = path.with_suffix('.pdf')
             result.write_bytes(b'%PDF-test')
             return result
@@ -270,8 +276,12 @@ def test_exports_cover_all_filters_escape_text_and_enforce_limits(tmp_path):
     assert csv.startswith(b'\xef\xbb\xbf') and '工件流水号' in csv.decode('utf-8-sig')
     html, _ = export.generate('jobs', query(), 'html')
     assert b'&lt;script&gt;' in html and b'<script>alert' not in html
+    assert '焊接产出简报' in html.decode()
     pdf, media = export.generate('jobs', query(), 'pdf')
     assert pdf == b'%PDF-test' and media == 'application/pdf'
+    data['data_version'] = 'changed'
+    html, _ = export.generate('jobs', query(), 'html')
+    assert '焊接产出简报' not in html.decode()
     data['total'] = 5001
     with pytest.raises(ValueError, match='超过5,000'):
         export.generate('jobs', query(), 'html')

@@ -1,7 +1,9 @@
+{% from 'report_analysis.html.j2' import render_analysis %}
 <!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{{ title }}</title>
 <style>
 body{font:13px/1.65 system-ui,"Noto Sans CJK SC",sans-serif;color:#243447;margin:28px}h1{font-size:24px}dl{display:grid;grid-template-columns:110px 1fr;gap:5px 12px}dt{color:#53677b}dd{margin:0;overflow-wrap:anywhere}table{border-collapse:collapse;width:100%;font-size:11px}th,td{padding:8px;border-bottom:1px solid #dce3eb;text-align:right;overflow-wrap:anywhere}th{background:#edf2f8}td:first-child{text-align:left}thead{display:table-header-group}.chart{height:240px}.scroll{overflow:auto}.quality{padding:12px;background:#f3f6fa}@page{size:A4 landscape;margin:14mm}@media print{body{margin:0}tr{break-inside:avoid}.scroll{overflow:visible}#trend{break-inside:avoid}}
+{% include "analysis_cards.css.j2" %}
 </style></head><body>
 <h1>小组立焊接线 · {{ title }}</h1>
 <dl>{% for label,value in metadata %}<dt>{{ label }}</dt><dd>{{ value }}</dd>{% endfor %}</dl>
@@ -14,4 +16,11 @@ echarts.init(document.getElementById('trend'),null,{renderer:'svg'}).setOption({
 </script>{% endif %}
 <h2>{{ title }}（{{ report.total }}行）</h2><div class="scroll"><table><thead><tr>{% for key,label in columns %}<th>{{ label }}</th>{% endfor %}</tr></thead><tbody>
 {% for row in report['items'] %}<tr>{% for key,label in columns %}<td>{{ row.get(key) if row.get(key) is not none else '待核实/未记录' }}</td>{% endfor %}</tr>{% else %}<tr><td colspan="{{ columns|length }}">当前筛选条件下暂无数据</td></tr>{% endfor %}
-</tbody></table></div></body></html>
+</tbody></table></div>
+<section aria-label="智能分析">
+  <h2>智能分析</h2>
+  {% if analysis and analysis.mode == 'model' and analysis.status == 'success' %}
+  {{ render_analysis(analysis, 'welding', report, '小组立焊接线', report.query.start, report.query.end) }}
+  {% else %}<p>暂无与本次导出数据匹配的分析结果。</p>{% endif %}
+</section>
+</body></html>

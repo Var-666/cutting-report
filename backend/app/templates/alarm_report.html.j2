@@ -1,7 +1,9 @@
+{% from 'report_analysis.html.j2' import metric_icon %}
 <!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ machine_no }} 智能告警报告</title>
   <style>
     @page { size: A4 landscape; margin: 12mm; }
@@ -15,19 +17,19 @@
     .risk-warning { background: #b7791f; }
     .risk-high { background: #c05621; }
     .risk-critical { background: #c62828; }
-    .summary { padding: 12px 14px; background: #fff5f5; border-left: 4px solid #c62828; line-height: 1.65; }
     table { width: 100%; border-collapse: collapse; table-layout: fixed; }
     th, td { border: 1px solid #d7dde5; padding: 7px 8px; vertical-align: top; word-break: break-word; }
     th { background: #eef2f6; text-align: left; color: #304254; }
     .sev-critical { color: #b91c1c; font-weight: 700; }
     .sev-high { color: #c05621; font-weight: 700; }
     .sev-warning { color: #9a6700; font-weight: 700; }
-    .card { border: 1px solid #d7dde5; border-radius: 6px; padding: 9px 11px; margin-bottom: 8px; break-inside: avoid; }
-    .card-title { font-weight: 700; margin-bottom: 5px; }
     ol, ul { margin: 6px 0; padding-left: 22px; }
     li { margin: 4px 0; line-height: 1.55; }
     .muted { color: #667085; }
     .footer { margin-top: 16px; padding-top: 8px; border-top: 1px solid #d7dde5; color: #667085; font-size: 10px; }
+    {% include "analysis_cards.css.j2" %}
+    @media screen { body { padding:16px; max-width:1380px; margin:auto; } }
+    @media (max-width:600px) { .header { align-items:flex-start; gap:8px; flex-direction:column; }.meta { text-align:left; } }
   </style>
 </head>
 <body>
@@ -43,10 +45,45 @@
     </div>
   </div>
 
-  <h2>告警摘要</h2>
-  <div class="summary">{{ analysis.summary }}</div>
+  <main class="analysis-layout">
+    <section class="analysis-banner" aria-label="分析结论"{% if cover %} style="--analysis-cover:url('{{ cover }}')"{% endif %}>
+      <h3>告警分析结论</h3>
+      <p>{{ analysis.summary }}</p>
+    </section>
+    <div class="analysis-facts" aria-label="关联告警指标">
+      <div class="analysis-fact">{{ metric_icon('tasks') }}<span class="label">关联告警</span><strong>{{ analysis.facts|length }} 条</strong></div>
+      {% for severity in ['critical','high','warning'] %}
+      <div class="analysis-fact">{{ metric_icon('chart') }}<span class="label">{{ severity_labels[severity] }}</span>
+        <strong>{{ analysis.facts|selectattr('severity','equalto',severity)|list|length }} 条</strong></div>
+      {% endfor %}
+    </div>
 
-  <h2>新告警明细</h2>
+    {% if analysis.findings %}
+    <h2 class="analysis-subheading">关键发现</h2>
+    <div class="analysis-findings">
+      {% for finding in analysis.findings %}
+      <article class="analysis-card {{ 'alerts' if finding.severity == 'critical' else 'period' }}">
+        <h4><span class="sev-{{ finding.severity }}">{{ severity_labels.get(finding.severity, finding.severity) }}</span> · {{ finding.title }}</h4>
+        <p>{{ finding.analysis }}</p>
+        {% if finding.possible_causes %}<p>可能原因：{{ finding.possible_causes|join('；') }} · 置信度 {{ finding.confidence }}</p>{% endif %}
+        {% if finding.evidence_ids %}<p class="analysis-links">依据 {{ finding.evidence_ids|join('、') }}</p>{% endif %}
+      </article>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if analysis.actions %}
+    <h2 class="analysis-subheading">建议跟进</h2>
+    <div class="analysis-followup">{% for action in analysis.actions %}
+      <article class="analysis-card suggestions"><h4>优先级 {{ action.priority }}</h4><p>{{ action.action }}</p>
+        {% if action.evidence_ids %}<p class="analysis-links">依据 {{ action.evidence_ids|join('、') }}</p>{% endif %}
+      </article>
+    {% endfor %}</div>
+    {% endif %}
+
+    <section class="analysis-records">
+      <h2 class="analysis-subheading">分析依据 / 关联告警</h2>
+      <div class="table-wrap">
   <table>
     <thead>
       <tr>
@@ -68,32 +105,20 @@
         <td class="sev-{{ fact.severity }}">{{ severity_labels.get(fact.severity, fact.severity) }}</td>
         <td>{{ fact.alarm_code }}</td>
         <td>{{ fact.alarm_class }}</td>
-        <td>{{ fact.alarm_desc }}</td>
+        <td title="{{ fact.alarm_desc }}">{{ fact.alarm_desc }}</td>
         <td>{{ fact.start_time }}</td>
         <td>{{ "未解除" if fact.status == "open" else "已解除" }}</td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
-
-  <h2>智能分析</h2>
-  {% for finding in analysis.findings %}
-  <div class="card">
-    <div class="card-title"><span class="sev-{{ finding.severity }}">{{ severity_labels.get(finding.severity, finding.severity) }}</span> · {{ finding.title }}</div>
-    <div>{{ finding.analysis }}</div>
-    {% if finding.possible_causes %}<div class="muted">可能原因：{{ finding.possible_causes | join("；") }}；置信度：{{ finding.confidence }}</div>{% endif %}
-  </div>
-  {% endfor %}
-
-  <h2>建议措施</h2>
-  <ol>
-    {% for action in analysis.actions %}
-    <li>优先级 {{ action.priority }}：{{ action.action }}{% if action.evidence_ids %}（{{ action.evidence_ids | join(", ") }}）{% endif %}</li>
-    {% endfor %}
-  </ol>
-
-  <h2>分析边界</h2>
-  <ul>{% for item in analysis.limitations %}<li>{{ item }}</li>{% endfor %}</ul>
+      </div>
+      {% if analysis.limitations %}
+      <h3>分析边界</h3>
+      <ul>{% for item in analysis.limitations %}<li>{{ item }}</li>{% endfor %}</ul>
+      {% endif %}
+    </section>
+  </main>
 
   <div class="footer">本报告由系统依据数据库告警记录自动生成。大模型结论仅用于辅助排查，安全处置以现场规程和授权人员判断为准。</div>
 </body>

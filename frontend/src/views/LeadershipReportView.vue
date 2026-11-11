@@ -236,6 +236,7 @@ const monthlyTableColumns = [
     :summary-period-end="monthlyPeriodEnd"
     :ready="analysisReady"
     :data-version="report?.analysis_source_version || ''"
+    :leadership-report="report"
     :summary-data-version="monthlyReport?.analysis_summary_source_version || ''"
     :version-check-enabled="defaultMonthlyView"
     @refresh-report="refreshAnalysisReport"

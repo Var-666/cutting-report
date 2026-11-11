@@ -503,7 +503,6 @@ def test_html_export_displays_dynamic_brief_and_keeps_backend_evidence(state_dat
     assert saved['status'] == 'completed', saved
     html = (settings.reports_dir / saved['relative_path']).read_text()
     assert '测试数据生产简报' in html and '测试发现' in html
-    assert '<summary>分析依据</summary>' in html
+    assert '分析依据' in html
     assert 'analysis-card overview' not in html
     assert '<h3>建议跟进</h3>' not in html
-    assert html.count('<div class="analysis-fact">') == 2

@@ -1,16 +1,21 @@
 <script setup lang="ts">
-import type { AnalysisResult } from '../types/reports'
+import type { AnalysisResult, LeadershipReport } from '../types/reports'
+import type { WeldingReport } from '../types/welding'
 import { computed } from 'vue'
 import { NAlert, NButton, NCollapse, NCollapseItem } from 'naive-ui'
 import AppIcon from './AppIcon.vue'
 import CuttingAnalysisBrief from './CuttingAnalysisBrief.vue'
+import MetricSparkline from './MetricSparkline.vue'
 import { compactAnalysisFactLabel, compactAnalysisFactValue } from '../utils/analysisFactDisplay.ts'
 import { formatDeviceDisplay } from '../utils/deviceDisplay.ts'
+import { weldingKpis, weldingMetricSeries } from '../utils/weldingReport.ts'
 
 const props = withDefaults(defineProps<{
   analysis: AnalysisResult | null
   loading: boolean
   ready: boolean
+  leadershipReport?: LeadershipReport | null
+  weldingReport?: WeldingReport | null
   readingLatest?: boolean
   error?: string
   actionLabel?: string
@@ -50,8 +55,17 @@ function sectionBody(value: unknown) {
 
 const analysisAvailable = computed(() => props.analysis?.mode === 'model' && props.analysis.status === 'success')
 const conclusionTitle = computed(() => analysisAvailable.value
-  ? sectionLead(props.analysis?.alerts || props.analysis?.overview, '生产运行分析已完成') : '智能分析暂不可用')
-const conclusionText = computed(() => plainAnalysisText(props.analysis?.overview || props.analysis?.features))
+  ? sectionLead(props.analysis?.overview, '生产运行分析已完成') : '智能分析暂不可用')
+const conclusionText = computed(() => analysisAvailable.value
+  ? sectionBody(props.analysis?.overview) : plainAnalysisText(props.analysis?.overview || props.analysis?.features))
+const welding = computed(() => props.weldingReport && props.analysis?.data_version === props.weldingReport.data_version
+  ? props.weldingReport : null)
+const weldingMetrics = computed(() => welding.value ? weldingKpis('daily', welding.value).map((metric, index) => ({
+  ...metric,
+  icon: ['tasks', 'ruler', 'grid', 'clock'][index],
+  values: weldingMetricSeries(welding.value, metric.key),
+  display: typeof metric.value === 'number' ? metric.value.toLocaleString('zh-CN', { maximumFractionDigits: 2 }) : metric.value ?? '—',
+})) : [])
 </script>
 
 <template>
@@ -80,21 +94,28 @@ const conclusionText = computed(() => plainAnalysisText(props.analysis?.overview
       <span>{{ error }}</span><NButton attr-type="button" @click="emit('retry')">重试</NButton>
     </NAlert>
     <template v-if="analysis">
-      <CuttingAnalysisBrief v-if="analysis.brief && analysisAvailable" :brief="analysis.brief" :facts="analysis.facts" :generated-at="analysis.generated_at" />
+      <CuttingAnalysisBrief v-if="analysis.brief && analysisAvailable" :brief="analysis.brief" :facts="analysis.facts" :generated-at="analysis.generated_at" :leadership-report="leadershipReport" />
       <template v-else>
-      <section class="analysis-conclusion" aria-labelledby="analysis-conclusion-title">
+      <section class="analysis-conclusion" :class="{ 'analysis-conclusion--report': analysisAvailable }" aria-labelledby="analysis-conclusion-title">
         <span class="analysis-conclusion__icon"><AppIcon name="sparkles" :size="31" tone="light" /></span>
         <div class="analysis-conclusion__copy">
           <span>分析结论 <small v-if="analysisAvailable">AI 生成</small></span>
+          <p v-if="welding" class="analysis-scope">{{ welding.query.start }} 至 {{ welding.query.end }}</p>
           <h3 id="analysis-conclusion-title">{{ conclusionTitle }}</h3>
           <p>{{ conclusionText }}</p>
         </div>
-        <blockquote v-if="analysisAvailable">内容由 AI 生成。<br>具体结论请结合报表与现场记录核实。</blockquote>
       </section>
 
       <template v-if="analysisAvailable">
-      <div class="analysis-section-heading"><div><AppIcon name="chart" :size="19" tone="current" /><h3>核心指标</h3></div><span>当前分析周期</span></div>
-      <div v-if="analysis.facts?.length" class="analysis-facts">
+      <div v-if="weldingMetrics.length" class="analysis-facts analysis-facts--welding" aria-label="关键指标">
+        <article v-for="metric in weldingMetrics" :key="metric.key">
+          <span class="analysis-fact-icon"><AppIcon :name="metric.icon" :size="21" tone="current" /></span>
+          <div><span>{{ metric.title }}</span><strong>{{ metric.display }}<small v-if="typeof metric.value === 'number'"> {{ metric.unit }}</small></strong></div>
+          <MetricSparkline v-if="metric.values.filter(value => value !== null).length > 1" class="analysis-sparkline"
+            :values="metric.values" :label="`${metric.title}每日趋势`" :variant="metric.key === 'job_count' ? 'bar' : 'line'" />
+        </article>
+      </div>
+      <div v-else-if="analysis.facts?.length" class="analysis-facts" aria-label="关键指标">
         <article v-for="(fact, index) in analysis.facts" :key="fact.id ?? undefined">
           <span class="analysis-fact-icon"><AppIcon :name="['tasks','ruler','clock','chart','trend','database'][index % 6]" :size="19" tone="current" /></span>
           <div>
@@ -104,23 +125,28 @@ const conclusionText = computed(() => plainAnalysisText(props.analysis?.overview
         </article>
       </div>
 
-      <div class="analysis-section-heading analysis-section-heading--results"><div><AppIcon name="sparkles" :size="19" tone="current" /><h3>分析结果</h3></div><span>可在下方查看模型输入数据</span></div>
+      <div v-if="analysis.features || analysis.alerts" class="analysis-section-heading"><div><h3>关键发现</h3></div></div>
       <div class="analysis-grid">
         <article v-for="section in [
-          { key: 'overview', title: '生产概况', icon: 'chart' },
           { key: 'features', title: '变化情况', icon: 'trend' },
           { key: 'alerts', title: '需要关注', icon: 'alert' },
-          { key: 'suggestions', title: '建议怎么做', icon: 'lightbulb' },
-        ] as const" :key="section.key">
+        ].filter(section => section.key === 'features' ? analysis?.features : analysis?.alerts)" :key="section.key">
           <header><h3><AppIcon :name="section.icon" size="20" tone="current" />{{ section.title }}</h3></header>
           <div class="analysis-card-copy">
-            <h4>{{ sectionLead(analysis[section.key], section.title) }}</h4>
-            <p v-if="sectionBody(analysis[section.key])">{{ sectionBody(analysis[section.key]) }}</p>
+            <h4>{{ sectionLead(section.key === 'features' ? analysis.features : analysis.alerts, section.title) }}</h4>
+            <p>{{ sectionBody(section.key === 'features' ? analysis.features : analysis.alerts) }}</p>
           </div>
         </article>
       </div>
+      <template v-if="analysis.suggestions">
+        <div class="analysis-section-heading"><div><h3>建议跟进</h3></div></div>
+        <div class="analysis-grid analysis-followup">
+          <article><h3><AppIcon name="check" size="20" tone="current" />{{ sectionLead(analysis.suggestions) }}</h3><p>{{ sectionBody(analysis.suggestions) }}</p></article>
+        </div>
       </template>
-      <NCollapse v-if="analysis.facts?.length" class="analysis-evidence"><NCollapseItem name="evidence"><template #header><AppIcon name="database" :size="17" tone="current" />查看模型输入数据（{{ analysis.facts.length }} 项）</template>
+      </template>
+      <NCollapse v-if="analysis.facts?.length || welding?.meta.notices.length" class="analysis-evidence"><NCollapseItem name="evidence"><template #header><AppIcon name="database" :size="17" tone="current" />分析依据<span v-if="analysis.facts?.length"> · 查看模型输入数据（{{ analysis.facts.length }} 项）</span></template>
+        <ul v-if="welding?.meta.notices.length" class="analysis-notices"><li v-for="notice in welding.meta.notices" :key="notice">{{ notice }}</li></ul>
         <div class="evidence-list">
           <article v-for="fact in analysis.facts" :key="`evidence-${fact.id}`">
             <strong>{{ fact.id }} · {{ fact.label }}</strong>
@@ -146,19 +172,71 @@ const conclusionText = computed(() => plainAnalysisText(props.analysis?.overview
 .analysis-mode.unavailable{color:rgb(var(--warning-color));background:rgb(var(--warning-color) / .1)}
 .analysis-reload{display:inline-flex;align-items:center;justify-content:center;gap:7px}
 .analysis-state{padding:40px 24px;color:var(--text-color-2);text-align:center;background:rgb(var(--container-bg-color))}.analysis-error{display:flex;align-items:center;justify-content:center;gap:16px;margin:24px;padding:16px;color:rgb(var(--error-color));background:rgb(var(--error-color) / .1)}
-.analysis-conclusion{display:grid;grid-template-columns:58px minmax(0,1fr) minmax(250px,.42fr);align-items:center;gap:16px;margin:16px;padding:16px;border:1px solid var(--theme-border-color);border-radius:var(--report-panel-radius);background:rgb(var(--container-bg-color));box-shadow:var(--theme-shadow)}
-.analysis-conclusion__icon{width:50px;height:50px;display:grid;place-items:center;border-radius:50%;background:rgb(var(--primary-color));box-shadow:var(--theme-shadow)}.analysis-conclusion__copy{min-width:0}.analysis-conclusion__copy>span{color:var(--analysis-indigo);font-size:var(--font-auxiliary);font-weight:700}.analysis-conclusion__copy>span small{margin-left:8px;padding:4px 8px;color:var(--analysis-blue);border-radius:999px;background:rgb(var(--info-color) / .1);font-size:var(--font-auxiliary)}.analysis-conclusion h3{margin:4px 0 4px;color:var(--analysis-navy);font-size:14px;line-height:1.6}.analysis-conclusion p{margin:0;color:var(--text-color-2);font-size:var(--font-auxiliary);line-height:1.6}.analysis-conclusion blockquote{margin:0;padding:4px 0 4px 20px;color:var(--text-color-2);border-left:1px solid var(--theme-border-color);font-size:var(--font-auxiliary);line-height:1.6}
-.analysis-section-heading{min-height:38px;display:flex;align-items:center;justify-content:space-between;gap:20px;padding:0 16px;color:var(--text-color-1)}.analysis-section-heading>div{display:flex;align-items:center;gap:8px}.analysis-section-heading h3{margin:0;color:var(--text-color-1);font-size:14px}.analysis-section-heading>span{color:var(--text-color-2);font-size:var(--font-auxiliary)}.analysis-section-heading--results{margin-top:4px}
-.analysis-facts{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px!important;padding:0 16px 16px!important}.analysis-facts article{--fact-color:var(--analysis-blue);--fact-soft:rgb(var(--info-color) / .1);position:relative;min-width:0;min-height:104px;display:grid;grid-template-columns:29px minmax(0,1fr);align-items:center;gap:8px;overflow:visible;padding:12px!important;border:1px solid var(--theme-border-color);border-top:2px solid var(--fact-color);border-radius:var(--report-panel-radius);background:rgb(var(--container-bg-color));box-shadow:var(--theme-shadow)}
-.analysis-facts article:nth-child(2){--fact-color:var(--analysis-teal);--fact-soft:rgb(var(--info-color) / .1)}.analysis-facts article:nth-child(3){--fact-color:var(--analysis-indigo);--fact-soft:rgb(var(--primary-color) / .1)}.analysis-facts article:nth-child(4){--fact-color:rgb(var(--primary-color));--fact-soft:rgb(var(--primary-color) / .1)}.analysis-facts article:nth-child(5){--fact-color:var(--text-color-2);--fact-soft:rgb(var(--info-color) / .1)}.analysis-facts article:nth-child(6){--fact-color:rgb(var(--primary-color));--fact-soft:rgb(var(--primary-color) / .1)}.analysis-facts article>div{min-width:0;display:contents}.analysis-fact-icon{width:28px;height:28px;display:grid!important;place-items:center;color:var(--fact-color)!important;border-radius:7px;background:var(--fact-soft)}.analysis-facts span:not(.analysis-fact-icon){grid-column:2;display:block;overflow:visible;color:var(--text-color-1);font-size:var(--font-auxiliary)!important;text-overflow:clip;white-space:normal;overflow-wrap:anywhere}.analysis-facts span b{float:right;margin:0;padding:2px 5px;color:var(--analysis-blue);border:1px solid var(--theme-border-color);border-radius:4px;background:rgb(var(--info-color) / .1);font-size:var(--font-auxiliary)}.analysis-facts strong{grid-column:1/-1;min-width:0;display:block;margin-top:0;overflow:visible;color:var(--text-color-1);font-size:18px!important;text-overflow:clip;white-space:normal;overflow-wrap:anywhere}
-.analysis-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:12px!important;padding:0 16px 16px!important}.analysis-grid article{min-height:112px!important;padding:16px!important;border:1px solid var(--theme-border-color)!important;border-radius:var(--report-panel-radius)!important;background:rgb(var(--primary-color) / .1)!important}.analysis-grid article:nth-child(2){border-color:var(--theme-border-color)!important;background:rgb(var(--info-color) / .1)!important}.analysis-grid article:nth-child(3){border-color:var(--theme-border-color)!important;background:rgb(var(--error-color) / .1)!important}.analysis-grid article:nth-child(4){border-color:var(--theme-border-color)!important;background:rgb(var(--success-color) / .1)!important}.analysis-grid article>header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.analysis-grid h3{display:flex;align-items:center;gap:7px;margin:0 0 8px;color:var(--analysis-blue);font-size:14px!important}.analysis-card-copy{min-width:0}.analysis-grid h4{display:block;margin:0 0 4px;overflow:visible;overflow-wrap:anywhere;color:var(--text-color-1);font-size:13px;line-height:1.6}.analysis-grid article:nth-child(2) h3{color:var(--analysis-teal)}.analysis-grid article:nth-child(3) h3{color:var(--analysis-red)}.analysis-grid article:nth-child(4) h3{color:var(--analysis-green)}.analysis-grid p{display:block;margin:0;overflow:visible;color:var(--text-color-2)!important;font-size:13px!important;line-height:1.6!important;overflow-wrap:anywhere;white-space:pre-wrap}.analysis-evidence{margin:0 16px 16px!important;border:1px solid var(--theme-border-color);border-radius:8px;background:rgb(var(--info-color) / .1)}.analysis-evidence summary{min-height:39px;display:flex;align-items:center;gap:8px;padding:0 16px;color:var(--text-color-1);cursor:pointer;font-size:var(--font-auxiliary);font-weight:700}.evidence-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1px;border-top:1px solid var(--theme-border-color);background:rgb(var(--container-bg-color))}.evidence-list article{display:grid;gap:4px;padding:12px 16px;background:rgb(var(--container-bg-color))}.evidence-list article strong{color:var(--text-color-1);font-size:var(--font-auxiliary)}.evidence-list article span{color:var(--text-color-1);font-size:var(--font-auxiliary);font-weight:700}.evidence-list article small{color:var(--text-color-2);font-size:var(--font-auxiliary);line-height:1.5}.analysis-time{margin:0;padding:0 16px 16px!important;color:var(--text-color-2);text-align:right;font-size:var(--font-auxiliary)!important}
-.analysis-facts article:last-child strong{overflow:visible;font-size:15px!important;line-height:1.3;white-space:normal;overflow-wrap:anywhere}
-.analysis-conclusion__copy,.analysis-conclusion blockquote,.analysis-evidence .evidence-list article{min-width:0;overflow-wrap:anywhere}
-@media(max-width:1180px){.analysis-facts{grid-template-columns:repeat(3,minmax(0,1fr))}}
-@media(max-width:800px){.analysis-panel-head{align-items:flex-start;flex-direction:column;padding:16px}.analysis-actions{width:100%;justify-content:space-between}.analysis-conclusion{grid-template-columns:50px 1fr}.analysis-conclusion blockquote{grid-column:1/-1;padding:9px 0 0;border-top:1px solid var(--theme-border-color);border-left:0}.analysis-grid{grid-template-columns:1fr!important}.evidence-list{grid-template-columns:1fr}}
-@media(max-width:720px){.analysis-actions{display:grid;grid-template-columns:1fr;gap:8px}.analysis-mode,.analysis-reload{width:100%;justify-content:center}.analysis-conclusion{margin:16px;padding:16px;gap:16px;border-radius:var(--report-panel-radius)}.analysis-conclusion__icon{width:44px;height:44px}.analysis-section-heading{padding:0 16px}.analysis-facts{grid-template-columns:repeat(2,minmax(0,1fr));padding:0 12px 9px!important}.analysis-grid{padding:0 16px 16px!important;gap:12px}.analysis-evidence{margin:0 16px 16px!important}}
-@media(max-width:440px){.analysis-facts{grid-template-columns:1fr;gap:12px;padding:0 16px 16px}}
-@container analysis-panel (max-width:900px){.analysis-facts{grid-template-columns:repeat(3,minmax(0,1fr))}}
-@container analysis-panel (max-width:600px){.analysis-facts{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@container analysis-panel (max-width:360px){.analysis-facts{grid-template-columns:1fr}}
+.analysis-conclusion {
+  position:relative; isolation:isolate; display:flex; align-items:flex-start; gap:12px;
+  margin:12px; padding:14px 16px; overflow:hidden; border:1px solid var(--theme-border-color);
+  border-radius:var(--report-panel-radius); background:rgb(var(--container-bg-color)); box-shadow:var(--theme-shadow);
+}
+.analysis-conclusion--report { background:color-mix(in srgb, rgb(var(--info-color)) 5%, rgb(var(--container-bg-color))); }
+.analysis-conclusion--report::before {
+  content:''; position:absolute; z-index:-1; inset:0 0 0 auto; width:34%;
+  background:linear-gradient(95deg, rgb(var(--container-bg-color)) 0%, rgb(var(--container-bg-color) / .1) 100%),
+    url('../assets/home-laser-cutting.webp') 78% 57% / auto 165% no-repeat;
+}
+.analysis-conclusion__icon,.analysis-fact-icon {
+  display:grid; place-items:center; flex:none; width:38px; height:38px; border-radius:9px;
+  color:var(--analysis-blue); background:rgb(var(--info-color) / .11);
+}
+.analysis-conclusion__copy { min-width:0; max-width:84%; overflow-wrap:anywhere; }
+.analysis-conclusion__copy > span,.analysis-scope { color:var(--text-color-2); font-size:var(--font-auxiliary); }
+.analysis-conclusion__copy > span small { margin-left:6px; color:var(--analysis-blue); font-size:inherit; }
+.analysis-conclusion h3 { margin:4px 0; font-size:20px; line-height:1.4; }
+.analysis-conclusion p { margin:0; color:var(--text-color-2); line-height:1.65; }
+.analysis-section-heading { margin:12px 12px 8px; padding-left:8px; border-left:4px solid rgb(var(--info-color)); }
+.analysis-section-heading h3 { margin:0; font-size:var(--font-section-title); }
+.analysis-facts,.analysis-grid { display:grid; gap:12px; padding:0 12px 12px; }
+.analysis-facts { grid-template-columns:repeat(3,minmax(0,1fr)); }
+.analysis-facts--welding { grid-template-columns:repeat(4,minmax(0,1fr)); }
+.analysis-facts article,.analysis-grid article,.analysis-evidence {
+  min-width:0; padding:12px; border:1px solid var(--theme-border-color);
+  border-radius:var(--report-panel-radius); background:rgb(var(--container-bg-color)); box-shadow:var(--theme-shadow);
+}
+.analysis-facts article { display:grid; grid-template-columns:38px minmax(0,1fr); align-items:center; gap:8px; }
+.analysis-facts article > div { min-width:0; overflow-wrap:anywhere; }
+.analysis-facts article > div > span { font-size:var(--font-auxiliary); color:var(--text-color-2); }
+.analysis-facts strong { display:block; font-size:var(--font-kpi-value); line-height:1.2; font-variant-numeric:tabular-nums; }
+.analysis-facts small { font-size:var(--font-auxiliary); }
+.analysis-sparkline { grid-column:1/-1; width:68px; height:24px; justify-self:end; --kpi-color:rgb(var(--info-color)); }
+.analysis-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+.analysis-grid article { background:color-mix(in srgb, rgb(var(--info-color)) 5%, rgb(var(--container-bg-color))); }
+.analysis-grid article:only-child,.analysis-followup article { grid-column:1/-1; }
+.analysis-grid article:nth-child(2) { background:color-mix(in srgb, rgb(var(--warning-color)) 6%, rgb(var(--container-bg-color))); }
+.analysis-followup article { background:color-mix(in srgb, rgb(var(--success-color)) 5%, rgb(var(--container-bg-color))); }
+.analysis-grid h3 { display:flex; align-items:center; gap:7px; margin:0 0 6px; font-size:14px; }
+.analysis-grid h3 .app-icon { color:var(--analysis-blue); flex:none; }
+.analysis-grid h4 { margin:0 0 4px; font-size:var(--font-body); overflow-wrap:anywhere; }
+.analysis-grid p { margin:0; color:var(--text-color-2); line-height:1.65; overflow-wrap:anywhere; white-space:pre-wrap; }
+.analysis-grid p:empty { display:none; }
+.analysis-evidence { margin:0 12px 12px; }
+.analysis-notices { padding-left:20px; line-height:1.65; }
+.evidence-list { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px 16px; }
+.evidence-list article { min-width:0; display:grid; gap:4px; overflow-wrap:anywhere; font-size:var(--font-auxiliary); }
+.evidence-list article small { color:var(--text-color-2); }
+.analysis-time{margin:0;padding:0 16px 16px!important;color:var(--text-color-2);text-align:right;font-size:var(--font-auxiliary)!important}
+@media(max-width:720px) {
+  .analysis-panel-head { align-items:flex-start; flex-direction:column; gap:12px; }
+  .analysis-actions { width:100%; justify-content:space-between; flex-wrap:wrap; }
+}
+@container analysis-panel (max-width:850px) {
+  .analysis-facts { grid-template-columns:repeat(2,minmax(0,1fr)); }
+}
+@container analysis-panel (max-width:540px) {
+  .analysis-conclusion--report::before { opacity:.2; width:48%; }
+  .analysis-conclusion__copy { max-width:100%; }
+  .analysis-conclusion h3 { font-size:var(--font-section-title); }
+  .analysis-facts article { grid-template-columns:30px minmax(0,1fr); padding:8px; }
+  .analysis-fact-icon { width:30px; height:30px; }
+  .analysis-facts strong { font-size:18px; }
+  .analysis-grid,.evidence-list { grid-template-columns:1fr; }
+}
 </style>

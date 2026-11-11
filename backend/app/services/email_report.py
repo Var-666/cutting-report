@@ -14,7 +14,7 @@ class EmailReport:
 
 
 # Inline the archived document's own styles; only translate unsupported layout.
-LAYOUT_NODES = '.cover-brand,.brand-mark,.cover-main,.cover-folio,.meta,.metrics,.secondary,.analysis-head,.analysis-facts,.analysis-grid,.data-chart-grid,.chart-stack,.report-footer,.content-grid'
+LAYOUT_NODES = '.cover-brand,.brand-mark,.cover-main,.cover-folio,.meta,.metrics,.secondary,.analysis-head,.analysis-facts,.analysis-grid,.analysis-findings,.analysis-followup,.data-chart-grid,.chart-stack,.report-footer,.content-grid'
 
 EMAIL_DOCUMENT = """({mobileLayouts, breakpoint, pageInset}) => {
     const output = document.implementation.createHTMLDocument(document.title);
@@ -69,7 +69,7 @@ EMAIL_DOCUMENT = """({mobileLayouts, breakpoint, pageInset}) => {
     function layout(source, target, style) {
         const nodes = Array.from(source.children);
         const grid = style.display === 'grid';
-        const tracks = grid ? style.gridTemplateColumns.split(' ').map(Number.parseFloat) : nodes.map(node => node.getBoundingClientRect().width);
+        const tracks = grid ? style.gridTemplateColumns.split(' ').map(Number.parseFloat).filter(width => width > 0) : nodes.map(node => node.getBoundingClientRect().width);
         const count = tracks.length;
         const gap = Number.parseFloat(style.columnGap) || 0;
         const rowGap = Number.parseFloat(style.rowGap) || 0;
@@ -120,16 +120,16 @@ EMAIL_DOCUMENT = """({mobileLayouts, breakpoint, pageInset}) => {
         }
         target.append(table);
     }
-    const allowed = new Set(['div','header','footer','main','section','article','h1','h2','h3','p','span','small','strong','b','em','i','br','table','colgroup','col','thead','tbody','tfoot','tr','th','td','ul','ol','li','dl','dt','dd']);
+    const allowed = new Set(['div','header','footer','main','section','article','h1','h2','h3','h4','p','span','small','strong','b','em','i','br','table','colgroup','col','thead','tbody','tfoot','tr','th','td','ul','ol','li','dl','dt','dd']);
     function copy(node, tag = null) {
         if (node.nodeType === Node.TEXT_NODE) return output.createTextNode(node.textContent);
         if (node.nodeType !== Node.ELEMENT_NODE) return null;
-        if (node.matches('script,style,link,meta,iframe,object,embed,form,button,input,img,svg,canvas,.print-only')) return null;
+        if (node.matches('script,style,link,meta,iframe,object,embed,form,button,input,img,svg,canvas,.print-only,.analysis-metric-icon')) return null;
         if (node.dataset.emailCid) {
             const frame = output.createElement('div');
             frame.className = node.className;
             const style = apply(node,frame);
-            frame.style.width = '100%';
+            frame.style.width = node.matches('.analysis-sparkline') ? style.width : '100%';
             frame.style.height = style.height;
             const image = output.createElement('img');
             image.src = 'cid:' + node.dataset.emailCid;
@@ -162,7 +162,10 @@ EMAIL_DOCUMENT = """({mobileLayouts, breakpoint, pageInset}) => {
             element.style.minWidth = style.minWidth;
             element.style.tableLayout = style.tableLayout;
         }
-        if (node.matches('th,td')) element.style.height = style.height;
+        if (node.matches('th,td')) {
+            element.style.height = style.height;
+            if (node.style.width) element.style.width = node.style.width;
+        }
         if (node.matches('col')) element.style.width = node.style.width;
         if (node.matches('.brand-mark,.brand-mark i')) {
             element.style.width = style.width;
@@ -253,7 +256,7 @@ def render_email_report(html_path: Path, output_path: Path) -> None:
             })""", LAYOUT_NODES)
             page.set_viewport_size({"width": 375, "height": 900})
             mobile_layouts = page.evaluate("""selector => Object.fromEntries(Array.from(document.querySelectorAll(selector),node => [
-                node.dataset.emailLayout, getComputedStyle(node).gridTemplateColumns.split(' ').length
+                node.dataset.emailLayout, getComputedStyle(node).gridTemplateColumns.split(' ').map(Number.parseFloat).filter(width => width > 0).length
             ]))""", LAYOUT_NODES)
             page_inset = page.evaluate("document.querySelector('.page')?.getBoundingClientRect().left || 0")
             breakpoint = page.evaluate(r"""() => Math.max(0,...Array.from(document.styleSheets).flatMap(sheet =>
@@ -270,7 +273,7 @@ def render_email_report(html_path: Path, output_path: Path) -> None:
                 });
                 await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
             }""")
-            for index, chart in enumerate(page.locator('.chart').all()):
+            for index, chart in enumerate(page.locator('.chart,.analysis-sparkline').all()):
                 cid = f"report-chart-{index}@cutting-report"
                 surface = chart.locator("canvas,svg").first
                 images[cid] = base64.b64encode(surface.screenshot(type="png", timeout=30_000)).decode("ascii")

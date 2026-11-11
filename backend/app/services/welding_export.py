@@ -5,11 +5,11 @@ import io
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from jinja2 import Environment, FileSystemLoader, select_autoescape
-
 from app.config import Settings
+from app.models.domain import to_primitive
 from app.models.welding import ReportType, WeldingQuery
 from app.services.pdf_service import PdfService
+from app.services.report_service import ReportService
 from app.services.welding_service import WeldingService
 
 
@@ -82,10 +82,13 @@ class WeldingExport:
                     ('统计说明', '长度单位m；按结束时间归属；工件长度为累计值；未知状态待核实')]
         if format == 'csv':
             return csv_bytes(COLUMNS[kind], report['items'], metadata), 'text/csv; charset=utf-8'
-        environment = Environment(loader=FileSystemLoader(Path(__file__).parents[1] / 'templates'), autoescape=select_autoescape(['html', 'j2']))
+        version = report.get('data_version')
+        analysis = self.service.cached_analysis(version) if version else None
+        environment = ReportService(self.settings).environment
         chart_path = self.settings.project_root / 'vendor' / 'echarts.min.js'
         html = environment.get_template('welding_report.html.j2').render(
             title=REPORT_TITLES[kind], columns=COLUMNS[kind], report=report, metadata=metadata,
+            analysis=to_primitive(analysis),
             echarts=chart_path.read_text(encoding='utf-8') if chart_path.is_file() else '',
         )
         return html.encode('utf-8'), 'text/html; charset=utf-8'

@@ -1,22 +1,137 @@
 <script setup lang="ts">
-import type { AnalysisBrief, AnalysisFact, BriefFinding, BusinessReference } from '../api/generated/types.gen'
+import type { AnalysisBrief, AnalysisFact, BriefFinding, BusinessReference, LeadershipPeriodRecord, LeadershipReport } from '../api/generated/types.gen'
 import { computed, shallowRef, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { NButton, NCollapse, NCollapseItem, NModal } from 'naive-ui'
+import AppIcon from './AppIcon.vue'
 import AppReportTable from './AppReportTable.vue'
+import MetricSparkline from './MetricSparkline.vue'
 import { getDeviceId } from '../api/deviceContext.ts'
 import { analysisTaskLocation } from '../utils/analysisReferences.ts'
 
-const props = defineProps<{ brief: AnalysisBrief; facts: AnalysisFact[]; generatedAt?: string | null }>()
+const props = defineProps<{
+  brief: AnalysisBrief
+  facts: AnalysisFact[]
+  generatedAt?: string | null
+  leadershipReport?: LeadershipReport | null
+}>()
 const router = useRouter()
 const selected = shallowRef<BriefFinding | null>(null)
 const referencePage = shallowRef(1)
 const visibleReferences = computed(() => selected.value?.references.slice((referencePage.value - 1) * 10, referencePage.value * 10) || [])
-watch(selected, () => { referencePage.value = 1 })
-const metrics = computed(() => props.brief.key_metric_ids.flatMap(id => props.facts.filter(fact => fact.id === id)))
-const previews = computed(() => props.brief.findings.map(finding => ({ ...finding, preview: finding.references.slice(0, 3) })))
 const taskCount = computed(() => selected.value?.references.filter(reference => reference.kind === 'task').length || 0)
-const columns = [
+watch(selected, () => { referencePage.value = 1 })
+watch(() => props.brief, () => { selected.value = null })
+
+const lengthFormat = new Intl.NumberFormat('zh-CN', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+const leadershipMetrics = {
+  F001: { field: 'task_count', icon: 'tasks' },
+  F002: { field: 'cut_length_m', icon: 'ruler' },
+  F003: { field: 'work_time_seconds', icon: 'clock' },
+  F007: { field: 'groove_length_m', icon: 'ruler' },
+} as const
+const reportMetricIcons = {
+  workshop: { F001: 'tasks', F002: 'ruler', F003: 'clock', F004: 'check' },
+  equipment: { F001: 'tasks', F002: 'clock', F003: 'wind', F004: 'zap' },
+} satisfies Record<string, Record<string, string>>
+
+function duration(seconds: number) {
+  const whole = Math.round(seconds)
+  return [Math.floor(whole / 3600), Math.floor(whole / 60) % 60, whole % 60]
+    .map(part => String(part).padStart(2, '0')).join(':')
+}
+
+function metricNote(field: keyof LeadershipPeriodRecord, report: LeadershipReport, sampleDays: number) {
+  const current = report.current_month_total
+  if (field === 'work_time_seconds' && sampleDays) return { label: '有记录日均', value: duration(current.work_time_seconds / sampleDays) }
+  if (field === 'groove_length_m' && sampleDays) return { label: '有记录日均', value: `${lengthFormat.format(current.groove_length_m / sampleDays)} 米` }
+  if (field !== 'task_count' && field !== 'cut_length_m') return null
+  const scope = props.brief.scope
+  const previous = scope.comparison_start === report.comparison_start && scope.comparison_end === report.comparison_end
+    ? report.comparison_total : null
+  if (!scope.comparison_start || !previous || previous[field] <= 0) return null
+  const change = (current[field] / previous[field] - 1) * 100
+  return {
+    label: scope.period_mode === 'month' ? '较上月' : '较对比周期',
+    value: `${change > 0 ? '+' : ''}${change.toFixed(1)}%`,
+    direction: change < 0 ? 'down' : change > 0 ? 'up' : '',
+  }
+}
+
+const factById = computed(() => new Map(props.facts.map(fact => [fact.id, fact])))
+const metrics = computed(() => {
+  const kind = props.brief.scope.report_type
+  const isLeadership = kind === 'leadership'
+  const primary = Object.keys(isLeadership ? leadershipMetrics : reportMetricIcons[kind])
+  const ids = primary.some(id => factById.value.has(id)) ? primary : props.brief.key_metric_ids
+  const report = isLeadership ? props.leadershipReport : null
+  const rows = report ? [...report.daily_records].sort((a, b) => a.period_start.localeCompare(b.period_start)) : []
+  const sampleDays = rows.filter(row => row.task_count > 0).length
+  const icons: Record<string, string> = isLeadership ? {} : reportMetricIcons[kind]
+  return ids.flatMap(id => {
+    const fact = factById.value.get(id)
+    if (!fact) return []
+    const definition = isLeadership ? leadershipMetrics[id as keyof typeof leadershipMetrics] : undefined
+    const note = report && definition ? metricNote(definition.field, report, sampleDays) : null
+    const values = definition ? rows.map(row => row[definition.field]) : []
+    const value = String(fact.value ?? '—')
+    const parts = /^([\d,.]+)\s+(\S+)$/.exec(value.trim())
+    return [{ id, label: fact.label, value: parts?.[1] ?? value, unit: parts?.[2], icon: definition?.icon ?? icons[id] ?? 'chart', values, note }]
+  })
+})
+const summaryLines = computed(() => props.brief.summary.split(/\n+/).map(line => line.trim()).filter(Boolean))
+const periodNotice = computed(() => props.brief.data_quality.find(item => item.includes('当前统计周期尚未结束')))
+const findingStyles: Record<string, { label: string; icon: string; tone: string }> = {
+  C_comparison: { label: '生产规模变化', icon: 'trend', tone: 'info' },
+  C_project: { label: '工程任务分布', icon: 'grid', tone: 'info' },
+  C_project_missing: { label: '工程信息缺口', icon: 'alert', tone: 'warning' },
+  C_confirmation: { label: '确认状态', icon: 'tasks', tone: 'warning' },
+  C_energy_quality: { label: '能耗记录', icon: 'zap', tone: 'warning' },
+}
+const findings = computed(() => props.brief.findings.map(finding => {
+  const appearance = findingStyles[finding.candidate_id]
+  const decline = props.brief.scope.report_type === 'leadership' && finding.candidate_id === 'C_comparison'
+    && String(factById.value.get('F004')?.value ?? '').startsWith('下降')
+  return {
+    finding,
+    appearance,
+    tone: decline ? 'brief-tone-error' : appearance?.tone === 'warning' ? 'brief-tone-warning' : '',
+    decline,
+    preview: finding.references.slice(0, 3),
+    linkLabel: finding.references.every(reference => reference.kind === 'task') ? '查看全部关联任务' : '查看全部关联记录',
+  }
+}))
+const linkedFindings = computed(() => findings.value.filter(item => item.finding.references.length))
+const actions = computed(() => props.brief.actions.map(action => ({
+  action,
+  related: linkedFindings.value.find(item => item.finding.candidate_id === action.candidate_id)?.finding,
+})))
+const recordCount = computed(() => new Set(linkedFindings.value.flatMap(({ finding }) =>
+  finding.references.map(reference => `${reference.kind}:${reference.id}`))).size)
+const evidenceRows = computed(() => linkedFindings.value.map(({ finding, preview }) => {
+  const first = preview[0]
+  const project = finding.references.length === 1 && first?.kind === 'project'
+    ? props.leadershipReport?.project_distribution.find(row => row.project_name === first.id) : undefined
+  const tasks = finding.references.filter(reference => reference.kind === 'task').length
+  return {
+    finding,
+    label: preview.map(reference => reference.label).join('、'),
+    count: project ? `${project.task_count} 项` : tasks ? `${tasks} 项` : '—',
+    totals: project ? `切割长度 ${lengthFormat.format(project.cut_length_m)} 米 · 切割时长 ${duration(project.work_time_seconds)}` : '—',
+    detail: finding.title,
+  }
+}))
+const selectedProject = computed(() => selected.value?.references.length === 1
+  && selected.value.references[0]?.kind === 'project'
+  ? evidenceRows.value.find(row => row.finding === selected.value) : undefined)
+const evidenceColumns = [
+  { key: 'c0', title: '关联对象', align: 'left' },
+  { key: 'c1', title: '关联记录', align: 'left', ellipsis: false },
+  { key: 'c2', title: '任务数', align: 'right' },
+  { key: 'c3', title: '关键数据', align: 'left' },
+  { key: 'c4', title: '说明', align: 'left' },
+] as const
+const referenceColumns = [
   { key: 'label', title: '关联对象', align: 'left' },
   { key: 'production_date', title: '生产日期', align: 'left' },
   { key: 'project_code', title: '工程号', align: 'left' },
@@ -25,52 +140,125 @@ const columns = [
   { key: 'energy_status', title: '能耗记录状态', align: 'left' },
   { key: 'c6', title: '操作', align: 'center', ellipsis: false },
 ] as const
-function canOpen(reference: BusinessReference) { return Boolean(analysisTaskLocation(reference, getDeviceId())) }
+
+function canOpen(reference: BusinessReference) {
+  return Boolean(analysisTaskLocation(reference, getDeviceId()))
+}
+
 function openTask(reference: BusinessReference) {
   const location = analysisTaskLocation(reference, getDeviceId())
   if (!location) return
   selected.value = null
   void router.push(location)
 }
-watch(() => props.brief, () => { selected.value = null })
 </script>
 
 <template>
   <div class="cutting-brief">
-    <p class="brief-period">{{ brief.scope.line_name }} · {{ brief.scope.period_start }} 至 {{ brief.scope.period_end }}</p>
     <section class="brief-conclusion" aria-label="分析结论">
-      <h3>{{ brief.headline }}</h3><p>{{ brief.summary }}</p>
+      <p class="brief-period">{{ brief.scope.line_name }} · {{ brief.scope.period_start }} 至 {{ brief.scope.period_end }}</p>
+      <h3>{{ brief.headline }}</h3>
+      <ul class="brief-summary">
+        <li v-for="(line, index) in summaryLines" :key="index">{{ line }}</li>
+      </ul>
     </section>
+
     <dl v-if="metrics.length" class="brief-metrics" aria-label="关键指标">
-      <div v-for="fact in metrics" :key="fact.id || fact.label"><dt>{{ fact.label }}</dt><dd>{{ fact.value }}</dd></div>
-    </dl>
-    <section v-if="previews.length" class="brief-findings" aria-label="关键发现">
-      <h3>关键发现</h3>
-      <article v-for="finding in previews" :key="finding.candidate_id">
-        <h4>{{ finding.title }}</h4><p>{{ finding.detail }}</p>
-        <div v-if="finding.reference_count" class="brief-links">
-          <template v-for="reference in finding.preview" :key="`${reference.kind}:${reference.id}`">
-            <NButton v-if="canOpen(reference)" text type="primary" @click="openTask(reference)">任务 {{ reference.label }}</NButton>
-            <span v-else>{{ reference.label }}</span>
-          </template>
-          <NButton text type="primary" @click="selected = finding">{{ finding.references.every(r => r.kind === 'task') ? '查看全部关联任务' : '查看全部关联记录' }}（{{ finding.reference_count }} 项）</NButton>
+      <div v-for="metric in metrics" :key="metric.id" class="brief-metric">
+        <span class="brief-metric-icon"><AppIcon :name="metric.icon" :size="24" tone="current" /></span>
+        <dt>{{ metric.label }}</dt>
+        <dd>{{ metric.value }}<small v-if="metric.unit">{{ metric.unit }}</small></dd>
+        <div v-if="metric.note || metric.values.length > 1" class="brief-metric-foot">
+          <span v-if="metric.note" class="brief-metric-note">
+            {{ metric.note.label }}
+            <strong :class="metric.note.direction">{{ metric.note.value }}</strong>
+          </span>
+          <MetricSparkline v-if="metric.values.length > 1" class="brief-sparkline" :class="{ 'brief-sparkline--groove': metric.id === 'F007' }"
+            :values="metric.values" :label="`${metric.label}每日趋势`" :variant="metric.id === 'F001' ? 'bar' : 'line'" />
         </div>
-      </article>
+      </div>
+    </dl>
+
+    <section v-if="findings.length || periodNotice" aria-label="关键发现">
+      <h3 class="brief-section-title">关键发现</h3>
+      <div class="brief-findings">
+        <article v-for="{ finding, appearance, tone, decline, preview, linkLabel } in findings" :key="finding.candidate_id"
+          class="brief-finding" :class="tone">
+          <header class="brief-card-heading">
+            <AppIcon :name="appearance?.icon || 'activity'" :size="22" tone="current" />
+            <h4>{{ appearance?.label || finding.title }}</h4>
+            <span v-if="decline" class="brief-status">任务数下降</span>
+          </header>
+          <p v-if="appearance" class="brief-finding-title">{{ finding.title }}</p>
+          <p class="brief-card-copy">{{ finding.detail }}</p>
+          <div v-if="preview.length" class="brief-links">
+            <AppIcon name="file" :size="15" tone="current" />
+            <template v-for="reference in preview" :key="`${reference.kind}:${reference.id}`">
+              <NButton v-if="canOpen(reference)" text type="primary" @click="openTask(reference)">任务 {{ reference.label }}</NButton>
+              <span v-else>{{ reference.label }}</span>
+            </template>
+            <NButton text type="primary" @click="selected = finding">{{ linkLabel }}（{{ finding.reference_count }} 项）</NButton>
+          </div>
+        </article>
+        <article v-if="periodNotice" class="brief-finding brief-tone-warning">
+          <header class="brief-card-heading">
+            <AppIcon name="calendar" :size="22" tone="current" />
+            <h4>周期说明</h4>
+            <span class="brief-status">周期未结束</span>
+          </header>
+          <p class="brief-card-copy">{{ periodNotice }}</p>
+        </article>
+      </div>
     </section>
-    <section v-if="brief.actions.length" class="brief-followup" aria-label="建议跟进">
-      <h3>建议跟进</h3>
-      <article v-for="(action, index) in brief.actions" :key="`${action.candidate_id}:${index}`"><h4>{{ action.title }}</h4><p>{{ action.detail }}</p></article>
+
+    <section v-if="actions.length" aria-label="建议跟进">
+      <h3 class="brief-section-title">建议跟进</h3>
+      <div class="brief-followup">
+        <article v-for="({ action, related }, index) in actions" :key="`${action.candidate_id}:${index}`" class="brief-action">
+          <span class="brief-action-icon"><AppIcon :name="related ? 'activity' : 'check'" :size="23" tone="current" /></span>
+          <div><h4>{{ action.title }}</h4><p class="brief-card-copy">{{ action.detail }}</p></div>
+          <NButton v-if="related" size="small" type="primary" secondary @click="selected = related">
+            查看关联 <AppIcon name="chevron-right" :size="15" tone="current" />
+          </NButton>
+        </article>
+      </div>
     </section>
-    <NCollapse class="brief-evidence"><NCollapseItem title="分析依据" name="evidence">
-      <p>统计周期：{{ brief.scope.period_start }} 至 {{ brief.scope.period_end }}</p>
-      <p v-if="brief.scope.comparison_start">比较周期：{{ brief.scope.comparison_start }} 至 {{ brief.scope.comparison_end }}</p>
-      <ul><li v-for="item in brief.data_quality" :key="item">{{ item }}</li></ul>
-      <dl class="brief-facts"><div v-for="fact in facts" :key="fact.id || fact.label"><dt>{{ fact.label }} · {{ fact.value }}</dt><dd>{{ fact.source }}</dd></div></dl>
-    </NCollapseItem></NCollapse>
-    <NModal :show="Boolean(selected)" preset="card" title="关联业务记录" class="brief-record-modal" style="width:min(1100px, calc(100vw - 32px))" @update:show="shown => { if (!shown) selected = null }">
+
+    <NCollapse class="brief-evidence" :default-expanded-names="['records']">
+      <NCollapseItem v-if="evidenceRows.length" name="records">
+        <template #header>
+          <span class="brief-evidence-title"><AppIcon name="database" :size="17" />分析依据 / 关联记录 <span>（{{ recordCount }} 项）</span></span>
+        </template>
+        <AppReportTable :columns="evidenceColumns" :items="evidenceRows" :paginate="false"
+          :row-key="row => row.finding.candidate_id" aria-label="分析关联记录">
+          <template #c0="{ row }"><span class="brief-record-label">{{ row.label }}</span></template>
+          <template #c1="{ row }"><NButton text type="primary" @click="selected = row.finding">查看记录（{{ row.finding.reference_count }} 项）</NButton></template>
+          <template #c2="{ row }">{{ row.count }}</template>
+          <template #c3="{ row }">{{ row.totals }}</template>
+          <template #c4="{ row }">{{ row.detail }}</template>
+        </AppReportTable>
+      </NCollapseItem>
+      <NCollapseItem :title="evidenceRows.length ? '模型输入与数据说明' : '分析依据'" name="evidence">
+        <p class="brief-card-copy">统计周期：{{ brief.scope.period_start }} 至 {{ brief.scope.period_end }}</p>
+        <p v-if="brief.scope.comparison_start" class="brief-card-copy">比较周期：{{ brief.scope.comparison_start }} 至 {{ brief.scope.comparison_end }}</p>
+        <ul class="brief-quality"><li v-for="item in brief.data_quality" :key="item">{{ item }}</li></ul>
+        <dl class="brief-facts">
+          <div v-for="fact in facts" :key="fact.id || fact.label"><dt>{{ fact.label }} · {{ fact.value }}</dt><dd>{{ fact.source }}</dd></div>
+        </dl>
+      </NCollapseItem>
+    </NCollapse>
+
+    <NModal :show="Boolean(selected)" preset="card" title="关联业务记录" class="brief-record-modal"
+      style="width:min(1100px, calc(100vw - 32px))" @update:show="shown => { if (!shown) selected = null }">
       <template v-if="selected">
-        <p>分析时记录，共 {{ selected.reference_count }} 项关联，其中任务 {{ taskCount }} 项。生成时间：{{ generatedAt || '--' }}。点击“查看当前任务”按原产线和周期重新查询。</p>
-        <AppReportTable :columns="columns" :items="visibleReferences" :total="selected.references.length" :page="referencePage" :page-sizes="[]" @page="referencePage = $event" :row-key="row => `${row.kind}:${row.id}`" :page-size="10">
+        <p class="brief-card-copy">分析时记录，共 {{ selected.reference_count }} 项关联<span v-if="taskCount">，其中任务 {{ taskCount }} 项</span>。生成时间：{{ generatedAt || '--' }}。</p>
+        <div v-if="selectedProject" class="brief-project-record">
+          <strong>{{ selectedProject.label }}</strong>
+          <p class="brief-card-copy">{{ selected.detail }}</p>
+          <p v-if="selectedProject.totals !== '—'" class="brief-card-copy">任务数 {{ selectedProject.count }} · {{ selectedProject.totals }}</p>
+        </div>
+        <AppReportTable v-else :columns="referenceColumns" :items="visibleReferences" :total="selected.references.length" :page="referencePage"
+          :page-sizes="[]" @page="referencePage = $event" :row-key="row => `${row.kind}:${row.id}`" :page-size="10">
           <template #c6="{ row }"><NButton v-if="canOpen(row)" text type="primary" @click="openTask(row)">查看当前任务</NButton><span v-else>—</span></template>
         </AppReportTable>
       </template>
@@ -79,20 +267,106 @@ watch(() => props.brief, () => { selected.value = null })
 </template>
 
 <style scoped>
-.cutting-brief { padding:16px; font-size:13px; color:var(--text-color-1); overflow-wrap:anywhere; }
-.brief-period { margin:0 0 12px; color:var(--text-color-2); font-size:var(--font-auxiliary); }
-.brief-conclusion h3 { margin:0 0 8px; font-size:20px; line-height:1.5; }
-p { margin:0; max-width:75ch; line-height:1.8; white-space:pre-wrap; }
-.brief-findings,.brief-followup,.brief-evidence { margin-top:24px; }
-.brief-findings>h3,.brief-followup>h3 { margin:0 0 12px; font-size:var(--font-section-title); }
-article+article { margin-top:16px; }
-h4 { margin:0 0 4px; font-size:13px; font-weight:600; }
-.brief-links { display:flex; flex-wrap:wrap; align-items:center; gap:8px 16px; margin-top:8px; font-size:var(--font-auxiliary); color:var(--text-color-2); }
-.brief-metrics { display:flex; flex-wrap:wrap; gap:16px 24px; margin:16px 0 0; }
-.brief-metrics dt { color:var(--text-color-2); font-size:var(--font-auxiliary); }
-.brief-metrics dd { margin:4px 0 0; font-size:20px; font-weight:600; font-variant-numeric:tabular-nums; }
-.brief-facts div+div { margin-top:12px; }.brief-facts dt { font-weight:600; }.brief-facts dd { margin:4px 0 0; color:var(--text-color-2); }
-.brief-evidence { padding-top:12px; border-top:1px solid var(--theme-border-color); font-size:var(--font-auxiliary); }
-.brief-evidence li { margin-bottom:8px; line-height:1.7; }
-@media(max-width:600px) { .brief-conclusion h3 { font-size:var(--font-section-title); }.brief-metrics { flex-direction:column; } }
+.cutting-brief {
+  --brief-surface: rgb(var(--container-bg-color));
+  --brief-accent: var(--info-color);
+  display:grid; gap:16px; padding:12px; min-width:0;
+  color:var(--text-color-1); font-size:var(--font-body); overflow-wrap:anywhere;
+  background:color-mix(in srgb, var(--brief-surface) 70%, rgb(var(--layout-bg-color)));
+}
+.brief-conclusion,.brief-metric,.brief-finding,.brief-action,.brief-evidence {
+  min-width:0; border:1px solid var(--theme-border-color); border-radius:var(--report-panel-radius);
+  background:var(--brief-surface); box-shadow:var(--theme-shadow);
+}
+.brief-conclusion {
+  --brief-hero-bg:color-mix(in srgb, rgb(var(--brief-accent)) 5%, var(--brief-surface));
+  position:relative; isolation:isolate; overflow:hidden; padding:14px 16px; background:var(--brief-hero-bg);
+}
+.brief-conclusion::before {
+  content:''; position:absolute; z-index:-1; inset:0 0 0 auto; width:34%;
+  background:linear-gradient(95deg, var(--brief-hero-bg) 0%, rgb(var(--container-bg-color) / .78) 36%, rgb(var(--container-bg-color) / .07) 100%),
+    url('../assets/home-laser-cutting.webp') 78% 57% / auto 165% no-repeat;
+}
+.brief-period { margin:0 0 7px; color:var(--text-color-2); font-size:var(--font-auxiliary); }
+.brief-conclusion h3,.brief-section-title { position:relative; margin:0; padding-left:12px; font-weight:700; }
+.brief-conclusion h3 { max-width:88%; font-size:20px; line-height:1.4; }
+.brief-conclusion h3::before,.brief-section-title::before {
+  content:''; position:absolute; inset:.15em auto .15em 0; width:4px; border-radius:3px; background:rgb(var(--brief-accent));
+}
+.brief-summary { max-width:78%; margin:6px 0 0; padding-left:24px; line-height:1.65; }
+.brief-summary li::marker { color:rgb(var(--brief-accent)); }
+.brief-metrics { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%,170px),1fr)); gap:12px; margin:0; }
+.brief-metric { display:grid; grid-template-columns:40px minmax(0,1fr); column-gap:12px; align-content:start; padding:12px; }
+.brief-metric-icon,.brief-action-icon {
+  display:grid; place-items:center; width:40px; height:40px; border-radius:9px;
+  color:rgb(var(--brief-accent)); background:rgb(var(--brief-accent) / .11);
+}
+.brief-metric-icon { grid-row:1/3; }
+.brief-metric dt { font-size:var(--font-auxiliary); font-weight:600; }
+.brief-metric dd { margin:2px 0 0; font-size:var(--font-kpi-value); font-weight:750; line-height:1.16; font-variant-numeric:tabular-nums; }
+.brief-metric dd small { margin-left:5px; font-size:var(--font-auxiliary); font-weight:600; }
+.brief-metric-foot { grid-column:1/-1; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:4px 8px; margin-top:10px; }
+.brief-metric-note { display:flex; align-items:baseline; flex-wrap:wrap; gap:4px; padding:3px 8px; border-radius:999px; background:rgb(var(--brief-accent) / .07); color:var(--text-color-2); font-size:var(--font-auxiliary); }
+.brief-metric-note strong { color:var(--text-color-1); }
+.brief-metric-note .up { color:color-mix(in srgb, rgb(var(--success-color)) 75%, var(--text-color-1)); }
+.brief-metric-note .down { color:color-mix(in srgb, rgb(var(--error-color)) 75%, var(--text-color-1)); }
+.brief-sparkline { width:68px; height:24px; margin-left:auto; --kpi-color:rgb(var(--brief-accent)); }
+.brief-sparkline--groove { --kpi-color:rgb(var(--success-color)); }
+.brief-section-title { margin-bottom:8px; font-size:var(--font-section-title); }
+.brief-findings,.brief-followup { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:12px; }
+.brief-findings:has(> :nth-child(3)) { grid-template-columns:repeat(3, minmax(0,1fr)); }
+.brief-findings:has(> :only-child),.brief-followup:has(> :only-child) { grid-template-columns:1fr; }
+.brief-finding,.brief-action {
+  padding:12px 14px;
+  border-color:color-mix(in srgb, rgb(var(--brief-accent)) 20%, var(--theme-border-color));
+  background:linear-gradient(125deg, rgb(var(--brief-accent) / .07), rgb(var(--brief-accent) / .025)), var(--brief-surface);
+}
+.brief-tone-warning { --brief-accent:var(--warning-color); }
+.brief-tone-error { --brief-accent:var(--error-color); }
+.brief-card-heading { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+.brief-card-heading .app-icon { flex:none; color:rgb(var(--brief-accent)); }
+.brief-card-heading h4,.brief-action h4 { margin:0; color:var(--text-color-1); font-size:14px; font-weight:700; }
+.brief-status,.brief-record-label {
+  padding:2px 7px; border-radius:6px; background:rgb(var(--brief-accent) / .12);
+  color:color-mix(in srgb, rgb(var(--brief-accent)) 68%, var(--text-color-1));
+  font-size:var(--font-auxiliary); font-weight:600; white-space:nowrap;
+}
+.brief-finding-title { margin:0 0 4px; font-weight:600; line-height:1.55; }
+.brief-card-copy { margin:0; color:var(--text-color-2); line-height:1.65; white-space:pre-wrap; }
+.brief-links {
+  display:flex; flex-wrap:wrap; align-items:center; gap:6px 10px; margin-top:8px; padding:7px 8px;
+  background:rgb(var(--brief-accent) / .07); border-radius:7px; font-size:var(--font-auxiliary);
+}
+.brief-links :deep(.n-button) { white-space:normal; max-width:100%; text-align:left; }
+.brief-action { display:flex; align-items:center; gap:12px; }
+.brief-action-icon { flex:none; border-radius:50%; }
+.brief-action > div { min-width:0; flex:1; }
+.brief-action .brief-card-copy { margin-top:4px; }
+.brief-evidence { padding:10px 12px; }
+.brief-evidence-title { display:flex; align-items:center; flex-wrap:wrap; gap:4px 7px; font-size:14px; font-weight:700; }
+.brief-evidence-title > span { font-size:var(--font-auxiliary); font-weight:400; }
+.brief-quality { padding-left:20px; line-height:1.65; }
+.brief-facts { margin-bottom:0; }
+.brief-facts div + div { margin-top:8px; }
+.brief-facts dt { font-weight:600; }
+.brief-facts dd { margin:3px 0 0; color:var(--text-color-2); }
+.brief-project-record { display:grid; gap:6px; margin-top:12px; padding:12px; border-radius:var(--card-radius); background:rgb(var(--info-color) / .07); }
+@container analysis-panel (max-width:850px) {
+  .brief-metrics,.brief-findings:has(> :nth-child(3)) { grid-template-columns:repeat(2, minmax(0,1fr)); }
+  .brief-followup { grid-template-columns:1fr; }
+}
+@container analysis-panel (max-width:540px) {
+  .brief-conclusion { padding:12px; }
+  .brief-conclusion::before { opacity:.2; width:48%; }
+  .brief-conclusion h3,.brief-summary { max-width:100%; }
+  .brief-conclusion h3 { font-size:var(--font-section-title); }
+  .brief-findings,.brief-findings:has(> :nth-child(3)) { grid-template-columns:1fr; }
+  .brief-metric { grid-template-columns:26px minmax(0,1fr); padding:8px; gap:4px 7px; }
+  .brief-metric-icon { grid-row:1; width:26px; height:26px; }
+  .brief-metric-icon .app-icon { width:19px; height:19px; }
+  .brief-metric dt { align-self:center; }
+  .brief-metric dd { grid-column:1/-1; font-size:18px; }
+  .brief-action { display:grid; grid-template-columns:40px minmax(0,1fr); }
+  .brief-action :deep(.n-button) { grid-column:2; justify-self:start; }
+}
 </style>
