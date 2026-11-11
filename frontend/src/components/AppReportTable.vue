@@ -29,22 +29,32 @@ const slots = defineSlots<{
 } & { empty?: () => VNode[] }>()
 const root = ref<HTMLElement>()
 const fittedWidths = ref<Record<string, number>>({})
+const controlWidths = ref<Record<string, number>>({})
 const resizedWidths = ref<Record<string, number>>({})
+const containerWidth = ref(0)
 const rowRevision = ref(0)
 // Naive's opened tooltip can retain its old trigger slot when a row is replaced.
 watch(() => props.items, () => { rowRevision.value += 1 })
 function fitColumns() {
   if (!props.autoFit || !root.value || props.loading) return
+  containerWidth.value = Math.max(0, (root.value.clientWidth || 0) - 2)
   const widths: Record<string, number> = {}
+  const minimums: Record<string, number> = {}
   for (const content of root.value.querySelectorAll<HTMLElement>('[data-fit-column]')) {
     const cell = content.closest('td,th')
     if (!cell) continue
     const style = getComputedStyle(cell)
     const key = content.dataset.fitColumn!
+    const hasControls = Boolean(content.querySelector('button, a[href], input, select, textarea, [role="checkbox"], [role="combobox"]'))
+    const plainControlCell = content.classList.contains('app-report-table-cell--controls') && !hasControls
+    content.classList.toggle('app-report-table-cell--text', plainControlCell)
+    content.title = plainControlCell ? content.textContent?.trim() || '' : ''
     const width = Math.ceil(content.getBoundingClientRect().width + parseFloat(style.paddingLeft) + parseFloat(style.paddingRight) + 2)
-    widths[key] = Math.max(widths[key] || 0, content.classList.contains('app-report-table-cell--controls') ? width : Math.min(360, width))
+    widths[key] = Math.max(widths[key] || 0, hasControls ? width : Math.min(360, width))
+    if (hasControls) minimums[key] = Math.max(minimums[key] || 0, width)
   }
   if (JSON.stringify(widths) !== JSON.stringify(fittedWidths.value)) fittedWidths.value = widths
+  if (JSON.stringify(minimums) !== JSON.stringify(controlWidths.value)) controlWidths.value = minimums
 }
 let observer: ResizeObserver | undefined
 onMounted(() => {
@@ -59,29 +69,43 @@ onBeforeUnmount(() => observer?.disconnect())
 function rememberColumnWidth(_width: number, width: number, column: DataTableBaseColumn) {
   if (props.autoFit) resizedWidths.value = { ...resizedWidths.value, [column.key]: width }
 }
-const columns = computed<DataTableColumns<T>>(() => props.columns.map(column => {
-  const ellipsis = typeof column.ellipsis === 'object' ? column.ellipsis : {}
-  return {
-    resizable: column.ellipsis !== false,
-    ...column,
-    className: [column.className, resizedWidths.value[column.key] ? 'app-report-table-column--resized' : ''].filter(Boolean).join(' '),
-    ellipsis: column.ellipsis === false || column.ellipsis === true ? column.ellipsis : {
-      ...ellipsis,
-      tooltip: ellipsis.tooltip === false ? false : {
-        key: rowRevision.value,
-        style: { maxWidth: 'min(640px, calc(100vw - 32px))', whiteSpace: 'normal', overflowWrap: 'anywhere' },
-        ...(typeof ellipsis.tooltip === 'object' ? ellipsis.tooltip : {}),
+const columns = computed<DataTableColumns<T>>(() => {
+  const fitted = props.columns.map(column => {
+    const ellipsis = typeof column.ellipsis === 'object' ? column.ellipsis : {}
+    return {
+      resizable: true,
+      ...column,
+      className: [column.className, resizedWidths.value[column.key] ? 'app-report-table-column--resized' : ''].filter(Boolean).join(' '),
+      ellipsis: column.ellipsis === false || column.ellipsis === true ? column.ellipsis : {
+        ...ellipsis,
+        tooltip: ellipsis.tooltip === false ? false : {
+          key: rowRevision.value,
+          style: { maxWidth: 'min(640px, calc(100vw - 32px))', whiteSpace: 'normal', overflowWrap: 'anywhere' },
+          ...(typeof ellipsis.tooltip === 'object' ? ellipsis.tooltip : {}),
+        },
       },
-    },
-    ...(props.autoFit ? { width: resizedWidths.value[column.key] ?? fittedWidths.value[column.key] ?? 80, minWidth: undefined, maxWidth: undefined } : {}),
-    titleAlign: column.align || 'left',
-    title: props.autoFit ? (titleColumn: DataTableBaseColumn) => h('span', { 'data-fit-column': column.key }, slots[`header-${column.key}` as `header-c${number}`]?.() ?? (typeof column.title === 'function' ? column.title(titleColumn) : column.title)) : slots[`header-${column.key}` as `header-c${number}`] ? () => slots[`header-${column.key}` as `header-c${number}`]!() : column.title,
-    render: slots[column.key as `c${number}`] || column.render ? (row: T, index: number) => h('span', {
-      class: ['app-report-table-cell', { 'app-report-table-cell--controls': column.ellipsis === false }],
-      'data-fit-column': props.autoFit ? column.key : undefined,
-    }, slots[column.key as `c${number}`]?.({ row, index }) ?? column.render?.(row, index)) : column.render,
-  }
-}))
+      ...(props.autoFit ? {
+        width: Math.max(resizedWidths.value[column.key] ?? fittedWidths.value[column.key] ?? 80, controlWidths.value[column.key] || 0),
+        minWidth: controlWidths.value[column.key] || 40,
+        maxWidth: undefined,
+      } : {}),
+      titleAlign: column.align || 'left',
+      title: props.autoFit ? (titleColumn: DataTableBaseColumn) => h('span', { 'data-fit-column': column.key }, slots[`header-${column.key}` as `header-c${number}`]?.() ?? (typeof column.title === 'function' ? column.title(titleColumn) : column.title)) : slots[`header-${column.key}` as `header-c${number}`] ? () => slots[`header-${column.key}` as `header-c${number}`]!() : column.title,
+      render: slots[column.key as `c${number}`] || column.render ? (row: T, index: number) => h('span', {
+        class: ['app-report-table-cell', { 'app-report-table-cell--controls': column.ellipsis === false }],
+        'data-fit-column': props.autoFit ? column.key : undefined,
+      }, slots[column.key as `c${number}`]?.({ row, index }) ?? column.render?.(row, index)) : column.render,
+    }
+  })
+  if (!props.autoFit) return fitted
+  const total = fitted.reduce((sum, column) => sum + Number(column.width), 0)
+  const remaining = Math.max(0, containerWidth.value - total)
+  const automaticWidth = fitted.reduce((sum, column) => sum + (resizedWidths.value[column.key] ? 0 : Number(column.width)), 0)
+  return fitted.map(column => ({
+    ...column,
+    width: Number(column.width) + (resizedWidths.value[column.key] || !automaticWidth ? 0 : remaining * Number(column.width) / automaticWidth),
+  }))
+})
 const tableWidth = computed(() => columns.value.reduce((sum, column) => sum + Number(column.width ?? column.minWidth ?? 128), 0))
 const createSummary: DataTableCreateSummary<T> = () => [Object.fromEntries(columns.value.map(column => {
   const key = 'key' in column ? column.key : ''
@@ -103,6 +127,8 @@ const createSummary: DataTableCreateSummary<T> = () => [Object.fromEntries(colum
 :deep(.app-report-table-cell){display:inline-flex;align-items:center;gap:var(--space-2);vertical-align:middle;white-space:nowrap}
 :deep(.app-report-table-cell--controls){max-width:100%}
 .app-report-table--auto-fit :deep([data-fit-column]){display:inline-flex;width:max-content;max-width:none}
+.app-report-table--auto-fit :deep(.app-report-table-cell--text){display:inline-block;max-width:100%;overflow:hidden;text-overflow:ellipsis}
+.app-report-table--auto-fit :deep(td:not(.app-report-table-column--resized) .app-report-table-cell--text){max-width:min(100%,330px)}
 .app-report-table--auto-fit :deep(td:not(.app-report-table-column--resized) .n-ellipsis){max-width:min(100%,330px)}
 .app-report-table{width:100%;min-width:0}.app-report-table--flex{height:100%;display:flex;flex-direction:column}.app-report-table--flex :deep(.n-data-table){flex:1;min-height:0}.pagination-control{width:100%;height:100%;min-width:0;padding:0}.pagination-control:focus-visible{outline:2px solid rgb(var(--primary-color));outline-offset:2px}:deep(.n-data-table-tr.selected .n-data-table-td){background:color-mix(in srgb, rgb(var(--primary-color)) 8%, var(--n-td-color))}:deep(.n-data-table-tr.invalid .n-data-table-td){background:color-mix(in srgb, rgb(var(--error-color)) 8%, var(--n-td-color))}.app-report-pagination{display:flex;align-items:center;justify-content:space-between;gap:var(--space-3);padding:14px var(--space-4);flex-wrap:wrap;color:var(--text-color-2);font-size:var(--font-table-head)}:deep(.n-data-table-td){height:var(--table-row-height);font-size:var(--font-auxiliary);font-variant-numeric:tabular-nums;vertical-align:middle;padding:var(--table-cell-padding);border-right-color:color-mix(in srgb, var(--n-merged-border-color) 35%, transparent);}:deep(.n-data-table-th){font-size:var(--font-table-head);vertical-align:middle;padding:var(--table-cell-padding);border-right-color:color-mix(in srgb, var(--n-merged-border-color) 35%, transparent);}:deep(.n-data-table-td--summary){position:sticky;bottom:0;z-index:2;background:var(--n-td-color);font-weight:600}:deep(.n-data-table-td--summary.n-data-table-td--fixed-left){z-index:3}@media(max-width:600px){.app-report-table.welding-table-wrap :deep(.n-data-table-td--fixed-left),.app-report-table.welding-table-wrap :deep(.n-data-table-th--fixed-left){position:static!important}.app-report-table :deep(.n-data-table-td--fixed-right),.app-report-table :deep(.n-data-table-th--fixed-right){position:static!important}.app-report-pagination{align-items:flex-start;flex-direction:column}:deep(.n-pagination){flex-wrap:wrap}}
 </style>

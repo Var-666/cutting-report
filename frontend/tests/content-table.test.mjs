@@ -1,7 +1,78 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { readFileSync, readdirSync } from 'node:fs'
+import * as Vue from 'vue'
+import { createSharedDataTable } from './data-table-helpers.mjs'
 import { contentFit, contentTable, contentWidthUnits, distributeColumnWidths, tableColumnWeight } from '../src/directives/contentTable.ts'
+
+test('shared table bounds error text, permits operation resizing and retains resized widths on refresh', async t => {
+  const originalStyle = globalThis.getComputedStyle
+  const originalObserver = globalThis.ResizeObserver
+  globalThis.getComputedStyle = () => ({ paddingLeft: '14px', paddingRight: '14px' })
+  globalThis.ResizeObserver = class { observe() {} disconnect() {} }
+  t.after(() => {
+    globalThis.getComputedStyle = originalStyle
+    globalThis.ResizeObserver = originalObserver
+  })
+  const measured = (key, width, hasControls = false) => {
+    const classes = new Set(['app-report-table-cell--controls'])
+    return {
+      dataset: { fitColumn: key }, textContent: '模型接口错误 '.repeat(100),
+      closest: () => ({}), querySelector: () => hasControls ? {} : null,
+      getBoundingClientRect: () => ({ width }),
+      classList: { contains: name => classes.has(name), toggle: (name, enabled) => enabled ? classes.add(name) : classes.delete(name) },
+    }
+  }
+  const error = measured('c1', 2000)
+  const cells = [measured('c0', 100), error, measured('c1', 90, true), measured('c2', 410, true)]
+  let table
+  let resize
+  const DataTable = createSharedDataTable({
+    NDataTable: {
+      props: ['columns', 'data'], emits: ['unstableColumnResize'],
+      setup(props, { emit }) {
+        table = props
+        resize = (width, column) => emit('unstableColumnResize', width, width, column)
+        return () => Vue.h('div')
+      },
+    },
+  })
+  let availableWidth = 0
+  const renderer = Vue.createRenderer({
+    createElement: () => ({ querySelectorAll: () => cells, get clientWidth() { return availableWidth } }),
+    createText: () => ({}), createComment: () => ({}), insert() {}, remove() {}, patchProp() {},
+    setText() {}, setElementText() {}, parentNode: () => null, nextSibling: () => null,
+  })
+  const items = Vue.ref([{ id: 'first' }])
+  const definitions = [
+    { key: 'c0', title: '名称', resizable: false },
+    { key: 'c1', title: '操作', ellipsis: false, fixed: 'right' },
+    { key: 'c2', title: '编辑控件', ellipsis: false },
+  ]
+  const app = renderer.createApp({ render: () => Vue.h(DataTable, {
+    columns: definitions, items: items.value, rowKey: row => row.id, paginate: false,
+  }) })
+  app.mount({})
+  t.after(() => app.unmount())
+  await Vue.nextTick()
+  assert.equal(table.columns[1].width, 360)
+  assert.equal(table.columns[1].minWidth, 120, 'the real buttons set the minimum width')
+  assert.equal(table.columns[1].resizable, true)
+  assert.equal(table.columns[0].resizable, false, 'explicit caller choices remain supported')
+  assert.equal(table.columns[2].width, 440, 'wide editing controls remain fully usable')
+  assert.equal(error.title, error.textContent.trim())
+
+  resize(520, table.columns[1])
+  await Vue.nextTick()
+  availableWidth = 1202
+  items.value = [{ id: 'refreshed' }]
+  await Vue.nextTick()
+  assert.equal(table.columns[1].width, 520)
+  assert.equal(table.columns.reduce((sum, column) => sum + column.width, 0), 1200)
+  resize(180, table.columns[1])
+  await Vue.nextTick()
+  assert.equal(table.columns[1].width, 180, 'an operation column can also be narrowed')
+})
 
 test('report, welding, dispatch and settings columns share compact and flexible width rules', () => {
   for (const label of ['序号', '工程号', '船号', '分段名', '任务数', '长度(m)', '切割时长', '累计作业用时(h)', '源表速度(mm/min)', '参与工件数', '操作', '焊接类型', '状态', '版本', '魔盒UUID', '工件流水号', '机器人', '输入 token', '日期', '月份', '年月', '统计周期', '报告周期', '任务开始', '生成时间', '下次执行', '设备']) {
