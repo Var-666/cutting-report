@@ -27,6 +27,7 @@ async function load() {
     if (disposed) return
     configuration.value = result
     Object.assign(draft, { enabled: result.enabled, base_url: result.base_url, model: result.model, api_key: '' })
+    if (result.base_url && result.api_key_configured) await readModels()
   } catch (caught) {
     if (!disposed) error.value = toError(caught).message
   } finally {
@@ -104,7 +105,7 @@ onBeforeUnmount(() => { disposed = true; controller.abort() })
           placeholder="选择或输入模型 ID" aria-label="分析模型" />
       </label>
       <div class="model-configuration-actions">
-        <NButton attr-type="button" @click="readModels" :loading="catalogLoading" :disabled="busy || !draft.base_url">获取模型列表</NButton>
+        <NButton attr-type="button" @click="readModels" :loading="catalogLoading" :disabled="busy || !draft.base_url">刷新模型列表</NButton>
         <NButton attr-type="submit" type="primary" :loading="saving" :disabled="busy">保存配置</NButton>
       </div>
     </form>

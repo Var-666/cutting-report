@@ -58,11 +58,15 @@ class LlmConfigurationService:
             if payload.enabled and not key:
                 raise ValueError("启用智能分析时必须配置接口密钥")
             candidate = payload.model_copy(update={"api_key": saved.api_key}) if not submitted_key else payload
+            values = {"LLM_MODEL": candidate.model}
+            if candidate.enabled != saved.enabled:
+                values["LLM_ENABLED"] = str(candidate.enabled).lower()
+            if candidate.base_url != saved.base_url:
+                values["LLM_BASE_URL"] = candidate.base_url
+            if submitted_key:
+                values["LLM_API_KEY"] = submitted_key
             try:
-                write_runtime_env(path, {
-                    "LLM_ENABLED": str(candidate.enabled).lower(), "LLM_BASE_URL": candidate.base_url,
-                    "LLM_MODEL": candidate.model, "LLM_API_KEY": key,
-                })
+                write_runtime_env(path, values)
             except (OSError, ValueError):
                 raise RuntimeSettingsSaveError("模型配置保存失败") from None
             return self._view(candidate)

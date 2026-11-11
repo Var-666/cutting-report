@@ -56,6 +56,16 @@ def test_failed_save_keeps_the_previous_file(service, monkeypatch):
     assert path.read_bytes() == before
 
 
+def test_selecting_model_keeps_environment_credentials_out_of_saved_overrides(service):
+    result = service.save(LlmConfigurationRequest(
+        enabled=service.settings.llm_enabled, base_url=service.settings.llm_base_url, model="chosen-model",
+    ))
+    values = read_runtime_env(service.settings.runtime_settings_env_path)
+    assert values == {"LLM_MODEL": "chosen-model"}
+    assert result["api_key_configured"] and result["restart_required"]
+    assert service.configuration()["base_url"] == service.settings.llm_base_url
+
+
 def test_catalog_uses_saved_credentials_with_get_and_does_not_save_drafts(service, monkeypatch):
     requested = []
     def respond(request):

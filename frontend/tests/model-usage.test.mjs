@@ -116,7 +116,10 @@ test('model configuration selects a catalog model, preserves blank secrets and s
   try {
     await flush()
     assert.ok(view.text().includes('model-a'))
-    await view.click('获取模型列表')
+    assert.deepEqual(requests, [{ base_url: current.base_url, api_key: undefined }])
+    assert.ok(view.text().includes('model-b'))
+    await view.click('刷新模型列表')
+    assert.equal(requests.length, 2)
     assert.equal(requests.at(-1).api_key, undefined)
     assert.ok(view.text().includes('model-b'))
     await view.fill('分析模型', 'model-b')
@@ -126,11 +129,26 @@ test('model configuration selects a catalog model, preserves blank secrets and s
     assert.ok(view.text().includes('待重启生效'))
     assert.match(view.text(), /当前 Web 模型\s*model-a/)
     failCatalog = true
-    await view.click('获取模型列表')
+    await view.click('刷新模型列表')
     assert.ok(view.text().includes('读取模型列表认证失败'))
     assert.equal(view.find(node => node.tag === 'select').props.value, 'model-b')
   } finally { view.app.unmount() }
 })
+
+for (const configured of [{ base_url: '', api_key_configured: true }, { base_url: 'https://provider.invalid/v1', api_key_configured: false }]) {
+  test(`model catalog waits for missing configuration (${JSON.stringify(configured)})`, async () => {
+    let requests = 0
+    const view = mountModelConfiguration({
+      getLlmConfiguration: async () => ({ ...configured, enabled: false, model: '', active_enabled: false, restart_required: false }),
+      listLlmModels: async () => { requests++; return { models: [] } },
+    })
+    try {
+      await flush()
+      assert.equal(requests, 0)
+      assert.ok(view.text().includes('智能分析模型'))
+    } finally { view.app.unmount() }
+  })
+}
 
 test('model usage remains a settings destination and uses the shared authenticated API', () => {
   assert.match(read('../src/router/index.ts'), /path: 'model-usage'[\s\S]*ModelUsageView\.vue/)
