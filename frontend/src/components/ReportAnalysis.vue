@@ -130,7 +130,8 @@ const weldingMetrics = computed(() => welding.value ? weldingKpis('daily', weldi
         <article v-for="section in [
           { key: 'features', title: '变化情况', icon: 'trend' },
           { key: 'alerts', title: '需要关注', icon: 'alert' },
-        ].filter(section => section.key === 'features' ? analysis?.features : analysis?.alerts)" :key="section.key">
+        ].filter(section => section.key === 'features' ? analysis?.features : analysis?.alerts)" :key="section.key"
+          :class="{ 'analysis-grid-alert': section.key === 'alerts' }">
           <header><h3><AppIcon :name="section.icon" size="20" tone="current" />{{ section.title }}</h3></header>
           <div class="analysis-card-copy">
             <h4>{{ sectionLead(section.key === 'features' ? analysis.features : analysis.alerts, section.title) }}</h4>
@@ -163,55 +164,66 @@ const weldingMetrics = computed(() => welding.value ? weldingKpis('daily', weldi
 </template>
 
 <style scoped>
-.analysis-panel{--analysis-navy:color-mix(in srgb,rgb(var(--primary-color)) 45%,var(--text-color-1));--analysis-blue:color-mix(in srgb,rgb(var(--info-color)) 45%,var(--text-color-1));--analysis-teal:var(--analysis-blue);--analysis-green:color-mix(in srgb,rgb(var(--success-color)) 45%,var(--text-color-1));--analysis-red:color-mix(in srgb,rgb(var(--error-color)) 45%,var(--text-color-1));--analysis-indigo:var(--analysis-navy);container:analysis-panel / inline-size;overflow:hidden;margin-bottom:0!important;padding:0;border:1px solid var(--theme-border-color)!important;border-radius:var(--report-panel-radius)!important;background:rgb(var(--container-bg-color));box-shadow:var(--theme-shadow)!important}
-.analysis-panel-head{min-height:66px;display:flex;align-items:center;justify-content:space-between;gap:24px;padding:16px!important;border-bottom:1px solid var(--theme-border-color);background:var(--panel-heading-bg)!important}
-.analysis-panel-title{display:flex;align-items:center;gap:12px}.analysis-panel-icon{width:38px!important;height:38px!important;display:grid;place-items:center;flex:0 0 auto;color:var(--analysis-indigo);border-radius:50%;background:rgb(var(--primary-color) / .1)}
+.analysis-panel {
+  --analysis-blue:color-mix(in srgb,var(--analysis-accent) 80%,var(--text-color-1));
+  --analysis-green:color-mix(in srgb,rgb(var(--success-color)) 45%,var(--text-color-1));
+  container:analysis-panel / inline-size; overflow:hidden; margin-bottom:0; padding:0;
+  border:1px solid var(--analysis-border); border-radius:var(--report-panel-radius);
+  background:var(--analysis-panel-bg); box-shadow:var(--analysis-shadow);
+}
+.analysis-panel-head{min-height:76px;display:flex;align-items:center;justify-content:space-between;gap:24px;padding:16px;border-bottom:1px solid var(--analysis-border)}
+.analysis-panel-title{display:flex;align-items:center;gap:12px}
+.analysis-panel-icon{width:38px;height:38px;display:grid;place-items:center;flex:none;color:var(--analysis-blue);border-radius:10px;background:color-mix(in srgb,var(--analysis-accent) 12%,var(--analysis-surface))}
 .analysis-panel-head h2{margin:2px 0 0!important;color:var(--text-color-1)!important;font-size:14px!important}.analysis-kicker{color:var(--analysis-blue);font-size:var(--font-auxiliary)!important;font-weight:800;letter-spacing:.12em}
 .analysis-actions{display:flex;align-items:center;gap:8px;flex-shrink:0}.analysis-actions button,.analysis-error button{min-height:34px!important;padding:0 12px!important}
-.analysis-mode{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;color:rgb(var(--info-color));border:1px solid var(--theme-border-color);border-radius:999px;background:rgb(var(--info-color) / .1);font-weight:700;white-space:normal;overflow-wrap:anywhere;max-width:100%}.analysis-mode.model{color:var(--analysis-green);border-color:var(--theme-border-color);background:rgb(var(--success-color) / .1)}.analysis-mode small{padding-left:8px;border-left:1px solid currentColor;font-size:var(--font-auxiliary);opacity:.72}
+.analysis-mode{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;color:var(--analysis-blue);border:1px solid var(--theme-border-color);border-radius:999px;background:rgb(var(--info-color) / .1);font-weight:700;white-space:normal;overflow-wrap:anywhere;max-width:100%}.analysis-mode.model{color:var(--analysis-green);border-color:color-mix(in srgb,rgb(var(--success-color)) 26%,var(--analysis-surface));background:color-mix(in srgb,rgb(var(--success-color)) 9%,var(--analysis-surface))}.analysis-mode small{padding-left:8px;border-left:1px solid currentColor;font-size:var(--font-auxiliary)}
 .analysis-mode.unavailable{color:rgb(var(--warning-color));background:rgb(var(--warning-color) / .1)}
-.analysis-reload{display:inline-flex;align-items:center;justify-content:center;gap:7px}
+.analysis-reload :deep(.n-button__content) { gap:6px; }
 .analysis-state{padding:40px 24px;color:var(--text-color-2);text-align:center;background:rgb(var(--container-bg-color))}.analysis-error{display:flex;align-items:center;justify-content:center;gap:16px;margin:24px;padding:16px;color:rgb(var(--error-color));background:rgb(var(--error-color) / .1)}
 .analysis-conclusion {
   position:relative; isolation:isolate; display:flex; align-items:flex-start; gap:12px;
   margin:12px; padding:14px 16px; overflow:hidden; border:1px solid var(--theme-border-color);
   border-radius:var(--report-panel-radius); background:rgb(var(--container-bg-color)); box-shadow:var(--theme-shadow);
 }
-.analysis-conclusion--report { background:color-mix(in srgb, rgb(var(--info-color)) 5%, rgb(var(--container-bg-color))); }
+.analysis-conclusion--report {
+  border-color:color-mix(in srgb,var(--analysis-accent) 22%,var(--analysis-surface));
+  background:linear-gradient(105deg,var(--analysis-hero-start),var(--analysis-hero-end));
+  box-shadow:none;
+}
 .analysis-conclusion--report::before {
   content:''; position:absolute; z-index:-1; inset:0 0 0 auto; width:34%;
-  background:linear-gradient(95deg, rgb(var(--container-bg-color)) 0%, rgb(var(--container-bg-color) / .1) 100%),
+  background:linear-gradient(95deg,var(--analysis-hero-end),transparent 46%),
     url('../assets/home-laser-cutting.webp') 78% 57% / auto 165% no-repeat;
 }
 .analysis-conclusion__icon,.analysis-fact-icon {
   display:grid; place-items:center; flex:none; width:38px; height:38px; border-radius:9px;
-  color:var(--analysis-blue); background:rgb(var(--info-color) / .11);
+  color:var(--analysis-blue); background:color-mix(in srgb,var(--analysis-accent) 11%,var(--analysis-surface));
 }
-.analysis-conclusion__copy { min-width:0; max-width:84%; overflow-wrap:anywhere; }
+.analysis-conclusion__copy { min-width:0; max-width:62%; overflow-wrap:anywhere; }
 .analysis-conclusion__copy > span,.analysis-scope { color:var(--text-color-2); font-size:var(--font-auxiliary); }
 .analysis-conclusion__copy > span small { margin-left:6px; color:var(--analysis-blue); font-size:inherit; }
 .analysis-conclusion h3 { margin:4px 0; font-size:20px; line-height:1.4; }
 .analysis-conclusion p { margin:0; color:var(--text-color-2); line-height:1.65; }
-.analysis-section-heading { margin:12px 12px 8px; padding-left:8px; border-left:4px solid rgb(var(--info-color)); }
+.analysis-section-heading { margin:12px 12px 8px; padding-left:8px; border-left:4px solid var(--analysis-accent); }
 .analysis-section-heading h3 { margin:0; font-size:var(--font-section-title); }
 .analysis-facts,.analysis-grid { display:grid; gap:12px; padding:0 12px 12px; }
 .analysis-facts { grid-template-columns:repeat(3,minmax(0,1fr)); }
 .analysis-facts--welding { grid-template-columns:repeat(4,minmax(0,1fr)); }
 .analysis-facts article,.analysis-grid article,.analysis-evidence {
   min-width:0; padding:12px; border:1px solid var(--theme-border-color);
-  border-radius:var(--report-panel-radius); background:rgb(var(--container-bg-color)); box-shadow:var(--theme-shadow);
+  border-radius:var(--report-panel-radius); background:var(--analysis-surface); box-shadow:var(--analysis-shadow);
 }
 .analysis-facts article { display:grid; grid-template-columns:38px minmax(0,1fr); align-items:center; gap:8px; }
 .analysis-facts article > div { min-width:0; overflow-wrap:anywhere; }
 .analysis-facts article > div > span { font-size:var(--font-auxiliary); color:var(--text-color-2); }
 .analysis-facts strong { display:block; font-size:var(--font-kpi-value); line-height:1.2; font-variant-numeric:tabular-nums; }
 .analysis-facts small { font-size:var(--font-auxiliary); }
-.analysis-sparkline { grid-column:1/-1; width:68px; height:24px; justify-self:end; --kpi-color:rgb(var(--info-color)); }
+.analysis-sparkline { grid-column:1/-1; width:68px; height:24px; justify-self:end; --kpi-color:var(--analysis-accent); }
 .analysis-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
-.analysis-grid article { background:color-mix(in srgb, rgb(var(--info-color)) 5%, rgb(var(--container-bg-color))); }
+.analysis-grid article { border-top:3px solid var(--analysis-accent); box-shadow:none; }
 .analysis-grid article:only-child,.analysis-followup article { grid-column:1/-1; }
-.analysis-grid article:nth-child(2) { background:color-mix(in srgb, rgb(var(--warning-color)) 6%, rgb(var(--container-bg-color))); }
-.analysis-followup article { background:color-mix(in srgb, rgb(var(--success-color)) 5%, rgb(var(--container-bg-color))); }
+.analysis-grid .analysis-grid-alert { border-top-color:var(--analysis-warning-accent); }
+.analysis-followup article { border-top:1px solid var(--theme-border-color); border-left:3px solid var(--analysis-accent); }
 .analysis-grid h3 { display:flex; align-items:center; gap:7px; margin:0 0 6px; font-size:14px; }
 .analysis-grid h3 .app-icon { color:var(--analysis-blue); flex:none; }
 .analysis-grid h4 { margin:0 0 4px; font-size:var(--font-body); overflow-wrap:anywhere; }
@@ -229,6 +241,8 @@ const weldingMetrics = computed(() => welding.value ? weldingKpis('daily', weldi
 }
 @container analysis-panel (max-width:850px) {
   .analysis-facts { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .analysis-conclusion--report::before { opacity:.24; }
+  .analysis-conclusion__copy { max-width:100%; }
 }
 @container analysis-panel (max-width:540px) {
   .analysis-conclusion--report::before { opacity:.2; width:48%; }

@@ -223,7 +223,7 @@ def test_archived_report_becomes_readable_email(tmp_path, report_type, empty, wi
         report['analysis'].update(mode='model', brief=dict(
             scope=dict(period_start='2026-11-08', period_end='2026-11-08',
                        comparison_start='2026-11-07', comparison_end='2026-11-07'),
-            headline='本期生产简报', summary='生产记录已汇总。',
+            headline='本期生产简报', summary='生产记录已汇总。\n当前周期对比仅作进度参考。',
             key_metric_ids=['F001', 'F002', 'F003'],
             findings=[
                 dict(candidate_id='C_comparison', title='生产规模变化', detail='本期统计供核对。', references=[], reference_count=0),
@@ -288,6 +288,20 @@ def test_archived_report_becomes_readable_email(tmp_path, report_type, empty, wi
             page = browser.new_page()
             page.set_content(preview)
             assert page.locator("h2").all_text_contents() == reference.locator("h2").all_text_contents()
+            if with_brief:
+                for document in [reference, page]:
+                    assert document.locator('.analysis-summary li').all_text_contents() == [
+                        '生产记录已汇总。', '当前周期对比仅作进度参考。',
+                    ]
+                    assert document.locator('.analysis-card.period').evaluate(
+                        'card => getComputedStyle(card).borderTopColor',
+                    ) == 'rgb(247, 144, 9)'
+                    assert document.locator('.analysis-banner').evaluate(
+                        'banner => getComputedStyle(banner).backgroundColor',
+                    ) == 'rgb(230, 237, 255)'
+                    assert document.locator('.analysis-mode.model').evaluate(
+                        'badge => getComputedStyle(badge).display',
+                    ) == 'inline-block'
             for width in [1440, 1100, 820, 375]:
                 reference.set_viewport_size({"width": width, "height": 900})
                 page.set_viewport_size({"width": width, "height": 900})

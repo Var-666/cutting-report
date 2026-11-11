@@ -43,7 +43,7 @@ EMAIL_DOCUMENT = """({mobileLayouts, breakpoint, pageInset}) => {
             const value = style.getPropertyValue(property);
             if (inherited.has(property) && parent?.getPropertyValue(property) === value && !pseudo) continue;
             if (defaults[property] === value) continue;
-            if (property.startsWith('margin-') && value === '0px' && !source.matches('body,p,h1,h2,h3,ul,ol,dl,dd')) continue;
+            if (property.startsWith('margin-') && value === '0px' && !source.matches('body,p,h1,h2,h3,h4,ul,ol,dl,dd')) continue;
             if (property.startsWith('padding-') && value === '0px' && !source.matches('ul,ol')) continue;
             target.style.setProperty(property, value);
         }
@@ -75,6 +75,7 @@ EMAIL_DOCUMENT = """({mobileLayouts, breakpoint, pageInset}) => {
         const rowGap = Number.parseFloat(style.rowGap) || 0;
         const total = tracks.reduce((sum,value) => sum + value,0);
         const table = presentation();
+        if (source.matches('.analysis-facts,.analysis-findings,.analysis-followup')) table.style.borderCollapse = 'separate';
         const key = 'email-layout-' + source.dataset.emailLayout;
         table.className = key;
         nodes.forEach((node,index) => {
@@ -146,6 +147,7 @@ EMAIL_DOCUMENT = """({mobileLayouts, breakpoint, pageInset}) => {
         }
         const style = apply(node,element);
         if (tag === 'td') element.style.display = 'table-cell';
+        if (node.matches('summary')) element.style.display = 'block';
         if (node.matches('.page')) {
             element.style.width = '100%';
             element.style.maxWidth = style.width;

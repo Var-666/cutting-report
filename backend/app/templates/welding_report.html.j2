@@ -18,9 +18,8 @@ echarts.init(document.getElementById('trend'),null,{renderer:'svg'}).setOption({
 {% for row in report['items'] %}<tr>{% for key,label in columns %}<td>{{ row.get(key) if row.get(key) is not none else '待核实/未记录' }}</td>{% endfor %}</tr>{% else %}<tr><td colspan="{{ columns|length }}">当前筛选条件下暂无数据</td></tr>{% endfor %}
 </tbody></table></div>
 <section aria-label="智能分析">
-  <h2>智能分析</h2>
   {% if analysis and analysis.mode == 'model' and analysis.status == 'success' %}
   {{ render_analysis(analysis, 'welding', report, '小组立焊接线', report.query.start, report.query.end) }}
-  {% else %}<p>暂无与本次导出数据匹配的分析结果。</p>{% endif %}
+  {% else %}<h2>智能分析</h2><p>暂无与本次导出数据匹配的分析结果。</p>{% endif %}
 </section>
 </body></html>

@@ -243,16 +243,17 @@
     {% endif %}
 
     {% if report.analysis %}
-    <section class="analysis-section{{ ' analysis-section--brief' if report.analysis.brief else '' }}">
-    <h2>{{ '四' if report.meta.report_type in ['leadership', 'workshop', 'equipment'] else '三' }}、智能分析</h2>
+    <section class="analysis-section" aria-label="智能分析">
+    {% set analysis_title = ('四' if report.meta.report_type in ['leadership', 'workshop', 'equipment'] else '三') ~ '、智能分析' %}
+    {% set analysis_mode = (report.analysis.mode or 'model') if report.analysis.status|default('success') == 'success' else 'unavailable' %}
+    {% if analysis_mode == 'model' %}
+    {{ render_analysis(report.analysis, report.meta.report_type, report, device_name, report.meta.period_start, report.meta.period_end, analysis_title) }}
+    {% else %}
+    <h2>{{ analysis_title }}</h2>
     <div class="analysis-head">
-      {% set analysis_mode = (report.analysis.mode or 'model') if report.analysis.status|default('success') == 'success' else 'unavailable' %}
-      <span class="analysis-mode {{ analysis_mode }}">{{ '大模型分析' if analysis_mode == 'model' else '智能分析暂不可用' }}</span>
+      <span class="analysis-mode {{ analysis_mode }}">智能分析暂不可用</span>
       <span class="label">生成时间：{{ report.analysis.generated_at or '--' }}{{ '· 已使用缓存' if report.analysis.cached else '' }}</span>
     </div>
-    {% if analysis_mode == 'model' and report.analysis.status|default('success') == 'success' %}
-    {{ render_analysis(report.analysis, report.meta.report_type, report, device_name, report.meta.period_start, report.meta.period_end) }}
-    {% else %}
     {% if report.analysis.facts %}<section class="analysis-facts">{% for fact in report.analysis.facts %}<div class="analysis-fact"><span class="fact-id">{{ fact.id }}</span><span class="label"> · {{ fact.label }}</span><strong>{{ fact.value }}</strong></div>{% endfor %}</section>{% endif %}
     <section class="analysis-grid">
       <article class="analysis-card overview"><h3>生产概况</h3><p>{{ report.analysis.overview }}</p></article>

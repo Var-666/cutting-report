@@ -4,6 +4,9 @@
   {% elif name == 'ruler' %}<path d="M3 8h18v8H3zm4 0v4m5-4v4m5-4v4"/>
   {% elif name == 'clock' %}<circle cx="12" cy="12" r="9"/><path d="M12 7v5l4 2"/>
   {% elif name == 'grid' %}<path d="M4 4h6v6H4zm10 0h6v6h-6zM4 14h6v6H4zm10 0h6v6h-6z"/>
+  {% elif name == 'calendar' %}<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4m10-4v4M3 10h18"/>
+  {% elif name == 'trend' %}<path d="m3 16 6-6 4 4 7-7m-5 0h5v5"/>
+  {% elif name == 'alert' %}<path d="M12 4 2.5 20h19L12 4Zm0 6v4m0 3h.01"/>
   {% elif name == 'check' %}<circle cx="12" cy="12" r="9"/><path d="m8 12 2.5 2.5L16 9"/>
   {% elif name == 'wind' %}<path d="M3 8h10a3 3 0 1 0-3-3M3 12h15a3 3 0 1 1-3 3M3 16h6"/>
   {% elif name == 'zap' %}<path d="m13 2-9 12h8l-1 8 9-12h-8Z"/>
@@ -11,25 +14,35 @@
 </svg></span>
 {%- endmacro %}
 
-{% macro render_analysis(analysis, kind, report, line_name, period_start, period_end) %}
+{% macro render_analysis(analysis, kind, report, line_name, period_start, period_end, title='智能分析') %}
 {% set brief = analysis.brief %}
 {% set scope = brief.scope if brief else {} %}
 {% set metrics = analysis_metrics(analysis, kind, report) %}
 {% set cover = analysis_cover() %}
 <div class="analysis-layout">
+  <header class="analysis-head">
+    <h2>{{ title }}</h2>
+    <div><span class="analysis-mode model">大模型分析{% if analysis.cached %}<small>已缓存</small>{% endif %}</span></div>
+  </header>
   <section class="analysis-banner" aria-label="分析结论"{% if cover %} style="--analysis-cover:url('{{ cover }}')"{% endif %}>
     <p class="analysis-scope">{{ line_name }} · {{ scope.period_start or period_start }} 至 {{ scope.period_end or period_end }}</p>
     <h3>{{ brief.headline if brief else '分析结论' }}</h3>
-    <p>{{ brief.summary if brief else analysis.overview }}</p>
+    {% if brief %}
+    <ul class="analysis-summary">{% for line in brief.summary.splitlines() if line.strip() %}<li>{{ line.strip() }}</li>{% endfor %}</ul>
+    {% else %}<p>{{ analysis.overview }}</p>{% endif %}
   </section>
   {% if metrics %}<section class="analysis-facts" aria-label="关键指标">
     {% for metric in metrics %}<div class="analysis-fact">
       {{ metric_icon(metric.icon) }}<span class="label">{{ metric.label }}</span><strong>{{ metric.value if metric.value is not none else '—' }}</strong>
       {% if metric.note or metric.points %}<div class="analysis-metric-foot">
         {% if metric.note %}<span class="analysis-note">{{ metric.note }} <b class="{{ metric.direction }}">{{ metric.comparison }}</b></span>{% endif %}
-        {% if metric.points %}<span class="analysis-sparkline" role="img" aria-label="{{ metric.label }}每日趋势">
+        {% if metric.points %}<span class="analysis-sparkline{{ ' analysis-sparkline--groove' if metric.id == 'F007' else '' }}" role="img" aria-label="{{ metric.label }}每日趋势">
           <svg viewBox="0 0 66 23" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+            {% if metric.icon == 'tasks' %}
+            {% for x,y in metric.points %}<line x1="{{ x }}" x2="{{ x }}" y1="{{ [y, 20]|min }}" y2="21" stroke-width="3" stroke-linecap="round"/>{% endfor %}
+            {% else %}
             <polyline points="{% for x,y in metric.points %}{{ x }},{{ y }} {% endfor %}"/>
+            {% endif %}
           </svg>
         </span>{% endif %}
       </div>{% endif %}
@@ -41,22 +54,33 @@
     {% for item in brief.data_quality if '当前统计周期尚未结束' in item %}{% set notices.ongoing = item %}{% endfor %}
     {% set facts = analysis.facts|selectattr('id','equalto','F004')|list %}
     {% set decline = kind == 'leadership' and facts and (facts[0].value|string).startswith('下降') %}
+    {% set finding_styles = {
+      'C_comparison': ('生产规模变化', 'trend'), 'C_project': ('工程任务分布', 'grid'),
+      'C_project_missing': ('工程信息缺口', 'alert'), 'C_confirmation': ('确认状态', 'tasks'),
+      'C_energy_quality': ('能耗记录', 'zap')
+    } %}
     {% if brief.findings or notices.ongoing %}
     <h3 class="analysis-subheading">关键发现</h3>
     <div class="analysis-findings">
       {% for finding in brief.findings %}
-      <article class="analysis-card{{ ' alerts' if finding.candidate_id == 'C_comparison' and decline else '' }}">
-        <h4>{{ finding.title }}</h4><p>{{ finding.detail }}</p>
+      {% set appearance = finding_styles.get(finding.candidate_id) %}
+      {% set is_decline = finding.candidate_id == 'C_comparison' and decline %}
+      <article class="analysis-card{{ ' alerts' if is_decline else ' period' if finding.candidate_id in ['C_project_missing', 'C_confirmation', 'C_energy_quality'] else '' }}">
+        <h4>{{ metric_icon(appearance[1] if appearance else 'chart') }}{{ appearance[0] if appearance else finding.title }}
+          {% if is_decline %}<span class="analysis-card-status">任务数下降</span>{% endif %}
+        </h4>
+        {% if appearance and appearance[0] != finding.title %}<p class="analysis-finding-title">{{ finding.title }}</p>{% endif %}
+        <p>{{ finding.detail }}</p>
         {% if finding.references %}<p class="analysis-links">关联记录 {{ finding.reference_count }} 项 · {{ finding.references[:3]|map(attribute='label')|join('、') }}</p>{% endif %}
       </article>
       {% endfor %}
-      {% if notices.ongoing %}<article class="analysis-card period"><h4>周期说明 · 周期未结束</h4><p>{{ notices.ongoing }}</p></article>{% endif %}
+      {% if notices.ongoing %}<article class="analysis-card period"><h4>{{ metric_icon('calendar') }}周期说明 <span class="analysis-card-status">周期未结束</span></h4><p>{{ notices.ongoing }}</p></article>{% endif %}
     </div>
     {% endif %}
     {% if brief.actions %}
     <h3 class="analysis-subheading">建议跟进</h3>
     <div class="analysis-followup">{% for action in brief.actions %}
-      <article class="analysis-card suggestions"><h4>{{ action.title }}</h4><p>{{ action.detail }}</p></article>
+      <article class="analysis-card suggestions"><h4>{{ metric_icon('check') }}{{ action.title }}</h4><p>{{ action.detail }}</p></article>
     {% endfor %}</div>
     {% endif %}
   {% else %}
@@ -84,7 +108,7 @@
         {% set project = projects|selectattr('project_name','equalto',reference.id)|first if finding.references|length == 1 and reference.kind == 'project' else none %}
         {% set labels = finding.references[:3]|map(attribute='label')|join('、') %}
         {% set tasks = finding.references|selectattr('kind','equalto','task')|list|length %}
-        <tr><td title="{{ labels }}">{{ labels }}</td><td>{{ finding.reference_count }} 项</td>
+        <tr><td title="{{ labels }}"><span class="analysis-record-label">{{ labels }}</span></td><td>{{ finding.reference_count }} 项</td>
           <td>{{ (project.task_count ~ ' 项') if project else (tasks ~ ' 项') if tasks else '—' }}</td>
           <td>{% if project %}切割长度 {{ project.cut_length_m|number }} 米 · 切割时长 {{ project.work_time_seconds|duration }}{% else %}—{% endif %}</td>
           <td title="{{ finding.title }}">{{ finding.title }}</td></tr>
@@ -103,5 +127,6 @@
     </div>
   </details>
   {% endif %}
+  <p class="analysis-time">生成时间：{{ analysis.generated_at or '--' }}</p>
 </div>
 {% endmacro %}

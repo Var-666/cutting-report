@@ -194,10 +194,10 @@ function openTask(reference: BusinessReference) {
           <div v-if="preview.length" class="brief-links">
             <AppIcon name="file" :size="15" tone="current" />
             <template v-for="reference in preview" :key="`${reference.kind}:${reference.id}`">
-              <NButton v-if="canOpen(reference)" text type="primary" @click="openTask(reference)">任务 {{ reference.label }}</NButton>
+              <NButton v-if="canOpen(reference)" text type="info" @click="openTask(reference)">任务 {{ reference.label }}</NButton>
               <span v-else>{{ reference.label }}</span>
             </template>
-            <NButton text type="primary" @click="selected = finding">{{ linkLabel }}（{{ finding.reference_count }} 项）</NButton>
+            <NButton text type="info" @click="selected = finding">{{ linkLabel }}（{{ finding.reference_count }} 项）</NButton>
           </div>
         </article>
         <article v-if="periodNotice" class="brief-finding brief-tone-warning">
@@ -217,7 +217,7 @@ function openTask(reference: BusinessReference) {
         <article v-for="({ action, related }, index) in actions" :key="`${action.candidate_id}:${index}`" class="brief-action">
           <span class="brief-action-icon"><AppIcon :name="related ? 'activity' : 'check'" :size="23" tone="current" /></span>
           <div><h4>{{ action.title }}</h4><p class="brief-card-copy">{{ action.detail }}</p></div>
-          <NButton v-if="related" size="small" type="primary" secondary @click="selected = related">
+          <NButton v-if="related" size="small" type="info" @click="selected = related">
             查看关联 <AppIcon name="chevron-right" :size="15" tone="current" />
           </NButton>
         </article>
@@ -232,7 +232,7 @@ function openTask(reference: BusinessReference) {
         <AppReportTable :columns="evidenceColumns" :items="evidenceRows" :paginate="false"
           :row-key="row => row.finding.candidate_id" aria-label="分析关联记录">
           <template #c0="{ row }"><span class="brief-record-label">{{ row.label }}</span></template>
-          <template #c1="{ row }"><NButton text type="primary" @click="selected = row.finding">查看记录（{{ row.finding.reference_count }} 项）</NButton></template>
+          <template #c1="{ row }"><NButton text type="info" @click="selected = row.finding">查看记录（{{ row.finding.reference_count }} 项）</NButton></template>
           <template #c2="{ row }">{{ row.count }}</template>
           <template #c3="{ row }">{{ row.totals }}</template>
           <template #c4="{ row }">{{ row.detail }}</template>
@@ -268,81 +268,78 @@ function openTask(reference: BusinessReference) {
 
 <style scoped>
 .cutting-brief {
-  --brief-surface: rgb(var(--container-bg-color));
-  --brief-accent: var(--info-color);
-  display:grid; gap:16px; padding:12px; min-width:0;
+  --brief-accent: var(--analysis-accent);
+  display:grid; gap:16px; padding:12px 14px 16px; min-width:0;
   color:var(--text-color-1); font-size:var(--font-body); overflow-wrap:anywhere;
-  background:color-mix(in srgb, var(--brief-surface) 70%, rgb(var(--layout-bg-color)));
 }
 .brief-conclusion,.brief-metric,.brief-finding,.brief-action,.brief-evidence {
   min-width:0; border:1px solid var(--theme-border-color); border-radius:var(--report-panel-radius);
-  background:var(--brief-surface); box-shadow:var(--theme-shadow);
+  background:var(--analysis-surface);
 }
 .brief-conclusion {
-  --brief-hero-bg:color-mix(in srgb, rgb(var(--brief-accent)) 5%, var(--brief-surface));
-  position:relative; isolation:isolate; overflow:hidden; padding:14px 16px; background:var(--brief-hero-bg);
+  position:relative; isolation:isolate; overflow:hidden; padding:16px;
+  border-color:color-mix(in srgb, var(--brief-accent) 22%, var(--analysis-surface));
+  background:linear-gradient(105deg, var(--analysis-hero-start), var(--analysis-hero-end));
 }
 .brief-conclusion::before {
   content:''; position:absolute; z-index:-1; inset:0 0 0 auto; width:34%;
-  background:linear-gradient(95deg, var(--brief-hero-bg) 0%, rgb(var(--container-bg-color) / .78) 36%, rgb(var(--container-bg-color) / .07) 100%),
+  background:linear-gradient(95deg, var(--analysis-hero-end) 0%, transparent 46%),
     url('../assets/home-laser-cutting.webp') 78% 57% / auto 165% no-repeat;
 }
 .brief-period { margin:0 0 7px; color:var(--text-color-2); font-size:var(--font-auxiliary); }
 .brief-conclusion h3,.brief-section-title { position:relative; margin:0; padding-left:12px; font-weight:700; }
-.brief-conclusion h3 { max-width:88%; font-size:20px; line-height:1.4; }
+.brief-conclusion h3 { max-width:68%; font-size:21px; line-height:1.35; }
 .brief-conclusion h3::before,.brief-section-title::before {
-  content:''; position:absolute; inset:.15em auto .15em 0; width:4px; border-radius:3px; background:rgb(var(--brief-accent));
+  content:''; position:absolute; inset:.15em auto .15em 0; width:4px; border-radius:3px; background:var(--brief-accent);
 }
-.brief-summary { max-width:78%; margin:6px 0 0; padding-left:24px; line-height:1.65; }
-.brief-summary li::marker { color:rgb(var(--brief-accent)); }
+.brief-summary { max-width:68%; margin:8px 0 0; padding-left:24px; line-height:1.65; }
+.brief-summary li::marker { color:var(--brief-accent); }
 .brief-metrics { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%,170px),1fr)); gap:12px; margin:0; }
-.brief-metric { display:grid; grid-template-columns:40px minmax(0,1fr); column-gap:12px; align-content:start; padding:12px; }
+.brief-metric { display:grid; grid-template-columns:40px minmax(0,1fr); column-gap:12px; align-content:start; padding:14px 12px; box-shadow:var(--analysis-shadow); }
 .brief-metric-icon,.brief-action-icon {
   display:grid; place-items:center; width:40px; height:40px; border-radius:9px;
-  color:rgb(var(--brief-accent)); background:rgb(var(--brief-accent) / .11);
+  color:var(--brief-accent); background:color-mix(in srgb, var(--brief-accent) 11%, var(--analysis-surface));
 }
 .brief-metric-icon { grid-row:1/3; }
 .brief-metric dt { font-size:var(--font-auxiliary); font-weight:600; }
 .brief-metric dd { margin:2px 0 0; font-size:var(--font-kpi-value); font-weight:750; line-height:1.16; font-variant-numeric:tabular-nums; }
 .brief-metric dd small { margin-left:5px; font-size:var(--font-auxiliary); font-weight:600; }
 .brief-metric-foot { grid-column:1/-1; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:4px 8px; margin-top:10px; }
-.brief-metric-note { display:flex; align-items:baseline; flex-wrap:wrap; gap:4px; padding:3px 8px; border-radius:999px; background:rgb(var(--brief-accent) / .07); color:var(--text-color-2); font-size:var(--font-auxiliary); }
+.brief-metric-note { display:flex; align-items:baseline; flex-wrap:wrap; gap:4px; padding:3px 8px; border-radius:999px; background:var(--analysis-panel-bg); color:var(--text-color-2); font-size:var(--font-auxiliary); }
 .brief-metric-note strong { color:var(--text-color-1); }
 .brief-metric-note .up { color:color-mix(in srgb, rgb(var(--success-color)) 75%, var(--text-color-1)); }
 .brief-metric-note .down { color:color-mix(in srgb, rgb(var(--error-color)) 75%, var(--text-color-1)); }
-.brief-sparkline { width:68px; height:24px; margin-left:auto; --kpi-color:rgb(var(--brief-accent)); }
+.brief-sparkline { width:68px; height:24px; margin-left:auto; --kpi-color:var(--brief-accent); }
 .brief-sparkline--groove { --kpi-color:rgb(var(--success-color)); }
 .brief-section-title { margin-bottom:8px; font-size:var(--font-section-title); }
 .brief-findings,.brief-followup { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:12px; }
 .brief-findings:has(> :nth-child(3)) { grid-template-columns:repeat(3, minmax(0,1fr)); }
 .brief-findings:has(> :only-child),.brief-followup:has(> :only-child) { grid-template-columns:1fr; }
-.brief-finding,.brief-action {
-  padding:12px 14px;
-  border-color:color-mix(in srgb, rgb(var(--brief-accent)) 20%, var(--theme-border-color));
-  background:linear-gradient(125deg, rgb(var(--brief-accent) / .07), rgb(var(--brief-accent) / .025)), var(--brief-surface);
-}
-.brief-tone-warning { --brief-accent:var(--warning-color); }
-.brief-tone-error { --brief-accent:var(--error-color); }
-.brief-card-heading { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
-.brief-card-heading .app-icon { flex:none; color:rgb(var(--brief-accent)); }
+.brief-finding { display:flex; flex-direction:column; gap:6px; padding:12px 14px; border-top:3px solid var(--brief-accent); }
+.brief-tone-warning { --brief-accent:var(--analysis-warning-accent); }
+.brief-tone-error { --brief-accent:var(--analysis-error-accent); }
+.brief-card-heading { display:flex; align-items:center; flex-wrap:wrap; gap:6px 8px; }
+.brief-card-heading .app-icon { flex:none; color:var(--brief-accent); }
 .brief-card-heading h4,.brief-action h4 { margin:0; color:var(--text-color-1); font-size:14px; font-weight:700; }
 .brief-status,.brief-record-label {
-  padding:2px 7px; border-radius:6px; background:rgb(var(--brief-accent) / .12);
-  color:color-mix(in srgb, rgb(var(--brief-accent)) 68%, var(--text-color-1));
+  padding:2px 7px; border-radius:5px; background:color-mix(in srgb, var(--brief-accent) 12%, var(--analysis-surface));
+  color:color-mix(in srgb, var(--brief-accent) 68%, var(--text-color-1));
   font-size:var(--font-auxiliary); font-weight:600; white-space:nowrap;
 }
-.brief-finding-title { margin:0 0 4px; font-weight:600; line-height:1.55; }
+.brief-tone-error .brief-status { background:var(--brief-accent); color:var(--analysis-error-ink); }
+.brief-tone-warning .brief-status { background:var(--brief-accent); color:var(--analysis-warning-ink); }
+.brief-finding-title { margin:0; font-weight:700; line-height:1.55; }
 .brief-card-copy { margin:0; color:var(--text-color-2); line-height:1.65; white-space:pre-wrap; }
 .brief-links {
-  display:flex; flex-wrap:wrap; align-items:center; gap:6px 10px; margin-top:8px; padding:7px 8px;
-  background:rgb(var(--brief-accent) / .07); border-radius:7px; font-size:var(--font-auxiliary);
+  display:flex; flex-wrap:wrap; align-items:center; gap:6px 10px; margin-top:auto; padding:9px;
+  background:color-mix(in srgb, var(--analysis-accent) 7%, var(--analysis-surface)); border-radius:7px; font-size:var(--font-auxiliary);
 }
 .brief-links :deep(.n-button) { white-space:normal; max-width:100%; text-align:left; }
-.brief-action { display:flex; align-items:center; gap:12px; }
+.brief-action { display:flex; align-items:center; gap:12px; padding:12px 14px; border-left:3px solid var(--brief-accent); }
 .brief-action-icon { flex:none; border-radius:50%; }
 .brief-action > div { min-width:0; flex:1; }
 .brief-action .brief-card-copy { margin-top:4px; }
-.brief-evidence { padding:10px 12px; }
+.brief-evidence { padding:10px 12px; box-shadow:var(--analysis-shadow); }
 .brief-evidence-title { display:flex; align-items:center; flex-wrap:wrap; gap:4px 7px; font-size:14px; font-weight:700; }
 .brief-evidence-title > span { font-size:var(--font-auxiliary); font-weight:400; }
 .brief-quality { padding-left:20px; line-height:1.65; }
@@ -354,6 +351,8 @@ function openTask(reference: BusinessReference) {
 @container analysis-panel (max-width:850px) {
   .brief-metrics,.brief-findings:has(> :nth-child(3)) { grid-template-columns:repeat(2, minmax(0,1fr)); }
   .brief-followup { grid-template-columns:1fr; }
+  .brief-conclusion::before { opacity:.26; width:44%; }
+  .brief-conclusion h3,.brief-summary { max-width:100%; }
 }
 @container analysis-panel (max-width:540px) {
   .brief-conclusion { padding:12px; }
