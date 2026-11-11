@@ -1085,7 +1085,7 @@ test('shared table exposes native resize and full-text tooltips while keeping ac
   await renderToString(Vue.createSSRApp({ render: () => h(Table, { columns, items: [], rowKey: row => row.id, paginate: false }, slots) }))
   assert.equal(received[0].resizable, true)
   assert.ok(received[0].ellipsis.tooltip)
-  assert.equal(received[1].resizable, false)
+  assert.equal(received[1].resizable, true)
   assert.equal(received[1].ellipsis, false)
   assert.equal(received[2].resizable, false)
   const text = await renderToString(Vue.createSSRApp({ render: () => received[0].render({ id: 1 }, 0) }))
@@ -1096,9 +1096,10 @@ test('shared table exposes native resize and full-text tooltips while keeping ac
   assert.equal(columns[0].resizable, undefined, 'caller definitions stay unchanged')
 })
 
-test('shared tables fit page content, cap text, include totals and preserve dragged widths', async () => {
-  let received, observer, disconnected = false
-  let measurements = [['c0', 900], ['c1', 320], ['c2', 520, true]]
+test('shared tables cap errors, preserve controls and dragged widths, and fill the container', async () => {
+  let received, observer, contents, disconnected = false
+  let availableWidth = 0
+  let measurements = [['c0', 900], ['c1', 320], ['c2', 520, true], ['c2', 2000, false]]
   const DataTable = Vue.defineComponent({
     props: ['columns', 'data', 'scrollX', 'onUnstableColumnResize'],
     setup(props) { received = props; return () => h('div', props.columns.map(column => String(column.width))) },
@@ -1108,8 +1109,10 @@ test('shared tables fit page content, cap text, include totals and preserve drag
     ResizeObserver: class { constructor(callback) { observer = callback } observe() {} disconnect() { disconnected = true } },
   })
   const renderer = Vue.createRenderer({
-    createElement: () => ({ querySelectorAll: () => measurements.map(([key, width, controls]) => ({
-      dataset: { fitColumn: key }, classList: { contains: () => Boolean(controls) },
+    createElement: () => ({ get clientWidth() { return availableWidth }, querySelectorAll: () => contents = measurements.map(([key, width, controls]) => ({
+      dataset: { fitColumn: key }, textContent: '模型接口错误 '.repeat(100),
+      querySelector: () => controls ? {} : null,
+      classList: { contains: () => key === 'c2', toggle() {} },
       closest: () => ({}), getBoundingClientRect: () => ({ width }),
     })) }),
     createComment: () => ({}), createText: () => ({}), insert() {}, remove() {}, setText() {}, setElementText() {},
@@ -1124,6 +1127,9 @@ test('shared tables fit page content, cap text, include totals and preserve drag
   try {
     await Vue.nextTick()
     assert.deepEqual(received.columns.map(column => column.width), [360, 350, 550])
+    assert.equal(received.columns[2].minWidth, 550, 'wide controls remain fully usable')
+    const error = contents.find(content => content.dataset.fitColumn === 'c2' && !content.querySelector())
+    assert.equal(error.title, error.textContent.trim())
     assert.equal(received.scrollX, 1260)
     assert.ok(received.columns[0].ellipsis.tooltip)
     received.onUnstableColumnResize(630, 630, received.columns[0])
@@ -1141,6 +1147,13 @@ test('shared tables fit page content, cap text, include totals and preserve drag
     measurements = [['c0', 32], ['c1', 24], ['c2', 24]]
     await Vue.nextTick(); await Vue.nextTick()
     assert.deepEqual(received.columns.map(column => column.width), [630, 54, 54])
+    received.onUnstableColumnResize(180, 180, received.columns[2])
+    availableWidth = 1202
+    observer()
+    await Vue.nextTick(); await Vue.nextTick()
+    assert.equal(received.columns[0].width, 630)
+    assert.equal(received.columns[2].width, 180, 'an operation column can be resized')
+    assert.equal(received.columns.reduce((sum, column) => sum + column.width, 0), 1200)
   } finally { app.unmount() }
   assert.equal(disconnected, true)
 })
