@@ -17,13 +17,12 @@ from app.services.report_snapshots import SnapshotRefreshBusy, SnapshotRefreshRe
 from app.api.workloads import query_requests, snapshot_requests, analysis_requests, pdf_requests
 from app.config import settings
 from app.models.domain import to_primitive
-from app.models.welding import WeldingAnalysisRequest, WeldingQuery
+from app.models.welding import WeldingAnalysisRequest, WeldingQuery, ReportType
 from app.models.contracts import ApiEnvelope
 from app.models.report_contracts import ReportAnalysis
 from app.models.welding_contracts import WeldingDailyReport, WeldingJobsReport, WeldingPartsReport, WeldingEquipmentReport, WeldingPart, WeldingHealth
 from app.database.welding import WeldingUnavailable
-from app.services.analysis_execution import analysis_operation
-from app.services.llm_service import LlmService
+from app.services.report_analysis_service import AnalysisDataVersionMismatch, AnalysisUnavailableError
 from app.services.pdf_service import PdfRenderError
 from app.core.request_cancellation import SqlRequestCancelled
 from app.services.welding_export import WeldingExport, csv_bytes, COLUMNS
@@ -74,8 +73,8 @@ def source_errors():
         raise HTTPException(status_code=503, detail='PDF生成失败或服务繁忙，请重试或导出HTML') from None
 
 
-def parse_query(request: Request) -> WeldingQuery:
-    ignored = {'format', 'report_type', 'refresh'}
+def parse_query(request: Request, *, ignore_version: bool = False) -> WeldingQuery:
+    ignored = {'format', 'report_type', 'refresh'} | ({'data_version'} if ignore_version else set())
     values = {}
     for key in request.query_params:
         entries = request.query_params.getlist(key)
@@ -200,29 +199,22 @@ async def analysis(request: Request, payload: WeldingAnalysisRequest):
     instance = service(request)
     with source_errors():
         report = await _read_page(instance, payload.report_type, payload.query, request)
-    return response(request, await analysis_requests.run_sync(_analyze, instance, report, payload, application_state(request).database, _request=request))
+    return response(request, await analysis_requests.run_sync(_analyze, instance, report, payload, _request=request))
 
 
-def _analyze(instance, report: dict, payload: WeldingAnalysisRequest, database):
-    if report['data_version'] != payload.data_version:
-        raise HTTPException(status_code=409, detail='报表数据已更新，请刷新后重新生成分析')
-    if not instance.settings.llm_enabled:
-        raise HTTPException(status_code=503, detail='智能分析模型尚未启用，常规报表可继续使用')
-    cached = instance.cached_analysis(report['data_version'])
-    if cached is not None:
-        return {**to_primitive(cached), 'cached': True}
-    context = {'report_date': f'{payload.query.start} 至 {payload.query.end}',
-               'facts': [{'label': key, 'value': value} for key, value in report['summary'].items()],
-               'tables': [{'name': '按日汇总', 'rows': report['daily']}, {'name': '设备机器人工位', 'rows': report['equipment']},
-                          {'name': '统计口径和数据质量', 'rows': [report['meta']]}]}
+@query_requests.route(router.get('/analysis/latest', response_model=None, responses={200: {'model': ApiEnvelope[ReportAnalysis | None]}}))
+def latest_analysis(request: Request, data_version: str = Query(pattern=r'^[0-9a-f]{64}$'), report_type: ReportType = 'daily'):
+    instance = service(request)
+    query = parse_query(request, ignore_version=True)
+    return response(request, instance.cached_analysis(data_version, kind=report_type, query=query, historical=True))
+
+
+def _analyze(instance: WeldingService, report: dict, payload: WeldingAnalysisRequest):
     try:
-        with analysis_operation(instance.settings, 'welding', context['report_date']):
-            result = LlmService(instance.settings, database).analyze_context('welding', context)
+        return instance.analyze_report(payload.report_type, payload.query, report, payload.data_version)
+    except AnalysisDataVersionMismatch as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    except AnalysisUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc), headers={'Retry-After': '60'}) from None
     except SqlRequestCancelled:
         raise
-    except Exception:
-        raise HTTPException(status_code=503, detail='智能分析暂不可用，请稍后重试；常规报表不受影响') from None
-    result.data_version = report['data_version']
-    result.generated_at = report['meta']['calculated_at']
-    instance.remember_analysis(report['data_version'], result)
-    return result

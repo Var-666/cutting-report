@@ -149,6 +149,16 @@ def test_model_change_updates_each_process_and_keeps_old_operations_and_caches(p
         )
         old_welding = previous[0].lines["welding"].service
         old_welding.remember_analysis("unchanged-data", "old-welding-analysis")
+        from app.models.welding import WeldingQuery
+        selected = WeldingQuery(start=date(2026, 11, 11), end=date(2026, 11, 11))
+        old_welding.analysis_metadata.save_analysis(
+            cache_key=old_welding._analysis_key('a' * 64, 'daily', selected), report_type='welding_daily',
+            report_date='2026-11-11 至 2026-11-11', input_hash='old-welding-input', data_version='a' * 64,
+            status='success', mode='model', model_name='old-model', prompt_version=PROMPT_VERSION,
+            generated_at='2026-11-11T10:00:00+08:00', reuse_key=old_welding._analysis_scope('daily', selected),
+            result=dict(status='success', mode='model', overview='旧焊接模型结果',
+                        data_version='a' * 64, generated_at='2026-11-11T10:00:00+08:00'),
+        )
         app = FastAPI()
         app.state.runtime = runtimes[0]
         app.include_router(router)
@@ -184,12 +194,18 @@ def test_model_change_updates_each_process_and_keeps_old_operations_and_caches(p
                 assert cutting.alarm_monitor_service.analyzer.settings.llm_model == "new-model"
                 assert retained.lines[key].cutting().pipeline.settings.llm_model == "old-model"
         fresh = database_context(runtimes[0])
-        assert fresh.lines["Cutter01"].cutting().report_analysis_service.latest_default_analysis(
+        cached = fresh.lines["Cutter01"].cutting().report_analysis_service.latest_default_analysis(
             "workshop", date(2026, 11, 11),
-        ) is None
+        )
+        assert cached.overview == '旧模型结果' and cached.cache_note
         assert old.report_analysis_service.latest_default_analysis("workshop", date(2026, 11, 11)).overview == "旧模型结果"
         assert fresh.lines["welding"].service.cached_analysis("unchanged-data") is None
         assert old_welding.cached_analysis("unchanged-data") == "old-welding-analysis"
+        new_welding = fresh.lines['welding'].service
+        assert new_welding.cached_analysis('a' * 64, kind='daily', query=selected) is None
+        reused = new_welding.cached_analysis('a' * 64, kind='daily', query=selected, historical=True)
+        assert reused['overview'] == '旧焊接模型结果' and reused['cache_note']
+        assert reused['generated_at'] == '2026-11-11T10:00:00+08:00'
         effective = runtimes[0].configuration_diagnostics.report({
             "state": "running", "owner": "test-consumer",
             "configuration": runtimes[1].configuration_diagnostics.observed("test-consumer"),

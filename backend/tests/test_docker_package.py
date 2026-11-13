@@ -43,6 +43,14 @@ def test_offline_postgres_uses_the_exported_version_tag_without_pulling():
     assert offline['pull_policy'] == 'never'
 
 
+def test_completion_date_reconciliation_is_available_in_image_and_offline_package():
+    script = 'scripts/reconcile_cutting_completion_dates.py'
+    assert script in packager.FILES
+    assert f'COPY --chown=app:app {script} ./{script}' in (ROOT / 'Dockerfile').read_text()
+    app = yaml.safe_load((ROOT / 'compose.offline.yaml').read_text())['services']['app']
+    assert f'./{script}:/app/{script}:ro,z' in app['volumes']
+
+
 @pytest.mark.parametrize("name", [
     "backend/app/__pycache__/config.pyc", "frontend/src/.env", "frontend/src/.env.production",
     "frontend/public/TASK.xlsx", "frontend/dist/data.db", "frontend/dist/app.js.map",

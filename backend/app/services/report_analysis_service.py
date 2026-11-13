@@ -29,6 +29,7 @@ from app.services.llm_service import (
 )
 from app.services.analysis_execution import (
     analysis_observation, analysis_operation, analysis_prepared, analysis_queue_remaining, analysis_stage,
+    current_analysis_id,
 )
 from app.core.report_deadline import ReportOperationTimeout, ensure_time_remaining, remaining_seconds
 from app.core.request_cancellation import SqlRequestCancelled, current_request_id, sql_request_cancellations
@@ -39,6 +40,7 @@ from app.services.report_analysis.common import (
 from app.services.report_analysis.leadership import build_context as build_leadership_context
 from app.services.report_analysis.workshop import build_context as build_workshop_context
 from app.services.report_analysis.equipment import build_context as build_equipment_context
+from app.services.report_analysis.brief import period_scope
 
 
 logger = logging.getLogger(__name__)
@@ -148,9 +150,20 @@ def _report_analysis_operation(report_type: str):
         def wrapped(self, *args, **kwargs):
             value = args[0] if args else kwargs.get("report", kwargs.get("report_date", ""))
             report_date = str(value.report_month) if report_type == "leadership" else str(value)
-            with analysis_operation(self.settings, report_type, report_date,
-                                    background=is_background_llm_work()):
-                return method(self, *args, **kwargs)
+            reuse_key, _ = self._reuse_identity(report_type, value, kwargs)
+            kwargs['_reuse_key'] = reuse_key
+            try:
+                with analysis_operation(self.settings, report_type, report_date,
+                                        background=is_background_llm_work()):
+                    return method(self, *args, **kwargs)
+            except (AnalysisUnavailableError, ReportOperationTimeout):
+                cached = self.cached_analysis(report_type, value, **kwargs)
+                if cached:
+                    analysis_observation(cache='historical')
+                    logger.info('analysis reused after refresh failure: device=%s report_type=%s report_date=%s',
+                                self.settings.device_id, report_type, report_date)
+                    return cached
+                raise
         return wrapped
     return decorate
 
@@ -163,6 +176,57 @@ class ReportAnalysisService:
         self.timezone = ZoneInfo(settings.timezone)
         self._generation_guard = threading.Lock()
         self._generation_locks: dict[str, dict] = {}
+
+    def _reuse_identity(self, report_type: str, value, options: dict) -> tuple[str, str | None]:
+        label = str(value)
+        if report_type == 'leadership':
+            label = (analysis_period_label(value.period_start, value.period_end)
+                     if value.period_start and value.period_end else value.report_month.strftime('%Y-%m'))
+        scope = period_scope(report_type, label)
+        filters = {key: item for key, item in (options.get('cache_filters') or {}).items() if item is not None and item != ''}
+        end = date.fromisoformat(scope['period_end'])
+        end_month = end.year * 12 + end.month - 1
+        default_months = [f'{month // 12:04d}-{month % 12 + 1:02d}' for month in range(end_month - 11, end_month + 1)]
+        months = []
+        if report_type != 'workshop':
+            first, last = filters.pop('summary_period_start', None), filters.pop('summary_period_end', None)
+            if first and last:
+                start_month = int(str(first)[:4]) * 12 + int(str(first)[5:7]) - 1
+                last_month = int(str(last)[:4]) * 12 + int(str(last)[5:7]) - 1
+                months = [f'{month // 12:04d}-{month % 12 + 1:02d}' for month in range(start_month, last_month + 1)]
+            else:
+                rows = options.get('monthly_records') if report_type == 'leadership' else options.get('energy_summary_rows')
+                if rows is not None:
+                    months = sorted({str(row.get('period_start') or row.get('month') or row.get('report_date'))[:7]
+                                     for row in to_primitive(rows) if row.get('period_start') or row.get('month') or row.get('report_date')})
+                else:
+                    months = default_months
+        units = (options.get('energy_units') or {}) if report_type == 'equipment' else {}
+        summary_rows = options.get('energy_summary_rows') or []
+        if report_type == 'leadership':
+            summary_rows = options.get('monthly_records')
+            if summary_rows is None:
+                summary_rows = value.monthly_records
+        row_months = sorted({str(row.get('period_start') or row.get('month') or row.get('report_date'))[:7]
+                             for row in to_primitive(summary_rows)
+                             if row.get('period_start') or row.get('month') or row.get('report_date')})
+        identity = dict(scope=scope, filters=filters, summary_months=months, units=units, date_basis='end_time',
+                        machine_no=self.settings.report_machine_no, summary_row_months=row_months)
+        key = generate_data_version(identity)
+        default = scope['period_mode'] in {'month', 'day'} and not filters and (report_type == 'workshop' or months == default_months)
+        lookup = scope['period_start'][:7] if report_type == 'leadership' else scope['period_start']
+        return key, lookup if default else None
+
+    def cached_analysis(self, report_type: str, value, **options) -> AnalysisResult | None:
+        reuse_key, default_date = self._reuse_identity(report_type, value, options)
+        cached = self.metadata.get_reusable_analysis(reuse_key)
+        if cached is None and default_date is not None:
+            cached = self.metadata.get_latest_analysis(report_type=report_type, report_date=default_date,
+                model_name=self.settings.llm_model, prompt_version=PROMPT_VERSION, historical=True, legacy_only=True)
+        if cached is None:
+            return None
+        cached['cache_note'] = '沿用同一报表范围的历史成功分析；分析依据为原生成时的数据，请结合本次报表核对。'
+        return self._cached_result(cached)
 
     @contextmanager
     def _process_generation(self, cache_key: str, priority):
@@ -288,6 +352,15 @@ class ReportAnalysisService:
             report_type=report_type, report_date=lookup_date,
             model_name=self.settings.llm_model, prompt_version=PROMPT_VERSION,
         )
+        if cached is None:
+            cached = self.metadata.get_latest_analysis(report_type=report_type, report_date=lookup_date,
+                model_name=self.settings.llm_model, prompt_version=PROMPT_VERSION, historical=True)
+            if cached:
+                cached['cache_note'] = '正在更新分析，继续展示同一报表范围的历史成功结果。'
+        elif cached.get('data_version'):
+            current = self.metadata.get_analysis_source_version(report_type=report_type, report_date=lookup_date)
+            if current and current['data_version'] != cached['data_version']:
+                cached['cache_note'] = '数据已更新，当前沿用历史成功分析；原生成时间和分析依据保持不变。'
         return self._cached_result(cached) if cached else None
 
     @staticmethod
@@ -326,6 +399,7 @@ class ReportAnalysisService:
         force: bool,
         source_data_version: str | None = None,
         publish_latest: bool = False,
+        reuse_key: str | None = None,
     ) -> AnalysisResult:
         if not self.settings.llm_enabled:
             raise AnalysisUnavailableError(
@@ -348,7 +422,7 @@ class ReportAnalysisService:
         data_version = source_data_version or input_hash
         engine = f"model:{self.settings.llm_model}"
         cache_key = hashlib.sha256(
-            f"{self.settings.device_id}|{self.settings.source_fingerprint}|{PROMPT_VERSION}|{report_type}|{report_date}|{engine}|{data_version}|{input_hash}".encode(
+            f"{self.settings.device_id}|{self.settings.source_fingerprint}|{PROMPT_VERSION}|{report_type}|{report_date}|{engine}|{data_version}|{input_hash}|{reuse_key or ''}".encode(
                 "utf-8"
             )
         ).hexdigest()
@@ -420,7 +494,8 @@ class ReportAnalysisService:
                     message = "无法连接模型接口，请检查网络或联系管理员。"
                 raise AnalysisUnavailableError(message) from exc
             except AnalysisOutputValidationError as exc:
-                logger.warning("LLM analysis response cannot be displayed: %s", exc)
+                logger.warning("LLM analysis response cannot be displayed: device=%s report_type=%s report_date=%s analysis_id=%s reason=%s",
+                               self.settings.device_id, report_type, report_date, current_analysis_id(), exc)
                 raise AnalysisUnavailableError(
                     "大模型未返回可展示的分析结果，请重试。"
                 ) from exc
@@ -450,6 +525,7 @@ class ReportAnalysisService:
                 result=payload,
                 generated_at=result.generated_at,
                 publish_latest=publish_latest,
+                reuse_key=reuse_key,
             )
             return result
 
@@ -462,6 +538,8 @@ class ReportAnalysisService:
         expected_data_version: str | None = None,
         force: bool = False,
         publish_latest: bool = False,
+        cache_filters: dict | None = None,
+        _reuse_key: str | None = None,
     ) -> AnalysisResult:
         summary_rows = report.monthly_records if monthly_records is None else monthly_records
         source_data_version = combined_analysis_source_version(
@@ -477,6 +555,7 @@ class ReportAnalysisService:
             force=force,
             source_data_version=source_data_version,
             publish_latest=publish_latest,
+            reuse_key=_reuse_key,
         )
 
     @_report_analysis_operation("workshop")
@@ -492,6 +571,8 @@ class ReportAnalysisService:
         expected_data_version: str | None = None,
         force: bool = False,
         publish_latest: bool = False,
+        cache_filters: dict | None = None,
+        _reuse_key: str | None = None,
     ) -> AnalysisResult:
         source_data_version = combined_analysis_source_version(
             workshop_analysis_source_version(report_date, records)
@@ -511,6 +592,7 @@ class ReportAnalysisService:
             force=force,
             source_data_version=source_data_version,
             publish_latest=publish_latest,
+            reuse_key=_reuse_key,
         )
 
     @_report_analysis_operation("equipment")
@@ -531,6 +613,8 @@ class ReportAnalysisService:
         expected_data_version: str | None = None,
         force: bool = False,
         publish_latest: bool = False,
+        cache_filters: dict | None = None,
+        _reuse_key: str | None = None,
     ) -> AnalysisResult:
         if source_data_version is not None:
             source_data_version = combined_analysis_source_version(
@@ -556,4 +640,5 @@ class ReportAnalysisService:
             force=force,
             source_data_version=source_data_version,
             publish_latest=publish_latest,
+            reuse_key=_reuse_key,
         )

@@ -36,17 +36,8 @@ from app.services.report_generation.custom import prepare_report as prepare_cust
 logger = logging.getLogger(__name__)
 
 
-def _unavailable_analysis(settings: Settings) -> AnalysisResult:
-    """Keep deterministic report delivery independent from model availability."""
-    return AnalysisResult(
-        status="unavailable",
-        overview="确定性报表已生成，但大模型分析暂不可用。",
-        features="本区域未生成模型判断，页面中的指标、图表和明细仍可使用。",
-        alerts="当前没有可用的 AI 结论，不能据此判断异常、原因或趋势。",
-        suggestions="请稍后重试智能分析，并结合本报告的确定性指标和明细进行核对。",
-        mode="unavailable",
-        generated_at=datetime.now(ZoneInfo(settings.timezone)).isoformat(timespec="seconds"),
-    )
+class ReportAnalysisPendingError(RuntimeError):
+    """Keep the job queued until a usable model result or matching cache exists."""
 
 
 class ReportPipelineCancelled(RuntimeError):
@@ -102,35 +93,39 @@ class ReportPipeline:
         if self._cancellation_check is not None and self._cancellation_check():
             raise ReportPipelineCancelled("报表生成已因服务停止而取消")
 
-    def _analyze_or_unavailable(
+    def _analyze_or_wait(
         self,
         analyze: Callable[[], AnalysisResult],
         *,
         report_id: str,
         report_type: str,
+        cached: Callable[[], AnalysisResult | None] | None = None,
     ) -> AnalysisResult:
         self._ensure_active()
-        if not self.settings.llm_enabled:
-            return _unavailable_analysis(self.settings)
+        if cached is not None:
+            previous = cached()
+            if previous is not None:
+                return previous
         try:
             return analyze()
-        except (ReportPipelineCancelled, ReportOperationTimeout, SqlRequestCancelled):
+        except (ReportPipelineCancelled, SqlRequestCancelled):
             raise
-        except AnalysisUnavailableError:
+        except (AnalysisUnavailableError, ReportOperationTimeout) as exc:
             logger.warning(
-                "report AI analysis unavailable; continuing deterministic report",
+                "report awaiting successful analysis: report_id=%s report_type=%s reason=%s",
+                report_id, report_type, exc,
                 extra={"report_id": report_id, "report_type": report_type},
             )
-            return _unavailable_analysis(self.settings)
-        except Exception:
+            raise ReportAnalysisPendingError(str(exc)) from exc
+        except Exception as exc:
             # This callback contains only AI preparation/inference. Required
             # report queries and rendering remain outside this failure boundary.
             logger.exception(
-                "report AI preparation failed; continuing deterministic report",
+                "report AI preparation failed; waiting before publication",
                 extra={"report_id": report_id, "report_type": report_type},
             )
             self._ensure_active()
-            return _unavailable_analysis(self.settings)
+            raise ReportAnalysisPendingError('分析数据准备尚未完成，等待自动重试') from exc
 
     def run(
         self,
@@ -147,7 +142,7 @@ class ReportPipeline:
                 self._ensure_active()
                 report_type = job.get("report_type") or "workshop"
                 update_status = partial(self.metadata.update_status, job["report_id"])
-                analyze = partial(self._analyze_or_unavailable, report_id=job["report_id"], report_type=report_type)
+                analyze = partial(self._analyze_or_wait, report_id=job["report_id"], report_type=report_type)
                 if report_type == "custom" and job.get("definition_id"):
                     prepared = prepare_custom_report(
                         job, settings=self.settings,

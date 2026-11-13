@@ -41,11 +41,11 @@ def test_periodic_rounds_are_durable_device_scoped_and_do_not_duplicate_reconcil
         from datetime import date
         current._schedule_analysis("workshop", (date(2026, 10, 24),))
         current._schedule_analysis("workshop", (date(2026, 10, 24),))
-    assert process.repository.task_counts()["pending"] == len(rows) + 4
+    assert process.repository.task_counts() == {"pending": len(rows) + 2, "completed": 2}
     replacement = SchedulerProcess(configured)
     replacement._schedule()
     assert replacement.repository.task_counts() == process.repository.task_counts()
-    assert replacement.repository.task_counts()["pending"] == len(rows) + 4
+    assert replacement.repository.task_counts()["pending"] == len(rows) + 2
     now[0] += 301
     replacement._schedule()
     with process.repository.connect() as connection:
@@ -201,22 +201,25 @@ def test_idle_schedule_stays_in_memory_and_due_rounds_keep_the_same_cadence(post
             monkeypatch.setattr(line.service.leadership_report_service, 'needs_bootstrap', probe)
             bootstraps.append(probe)
     process._schedule()
-    assert calls['schedule'].call_count == 8
+    assert calls['schedule'].call_count == 9
     assert calls['enqueue'].call_count == calls['request_snapshot_refresh'].call_count == 4
     with process.repository.connect() as connection:
         connection.execute("UPDATE background_tasks SET status='completed'")
     before = {key: value.call_count for key, value in calls.items()}
     statements = trace_sql(process.repository.database, monkeypatch)
-    for _ in range(299):
+    for second in range(1, 300):
+        statements.clear()
         clock[0] += 1
         clock[1] += 1
         process._schedule()
-    assert {key: value.call_count for key, value in calls.items()} == before
-    assert not statements  # Includes bootstrap and queue checks, not just write transactions.
+        if second % 60:
+            assert not statements  # Only the one-minute monitor is due before report refresh.
+    assert calls['schedule'].call_count == before['schedule'] + 4
+    assert all(calls[key].call_count == before[key] for key in ('enqueue', 'request_snapshot_refresh', 'snapshot_refresh_due'))
     clock[0] += 1
     clock[1] += 1
     process._schedule()
-    assert calls['schedule'].call_count == 14
+    assert calls['schedule'].call_count == 20
     assert calls['request_snapshot_refresh'].call_count == 8
     assert calls['enqueue'].call_count == 4
     assert all(probe.call_count == 2 for probe in bootstraps)
@@ -427,7 +430,7 @@ def test_hotadded_shared_source_lines_plan_changes_and_retirement_keep_state_bou
     process.runtime.database_runtime.save_lines(catalog)
     process._schedule()
     assert process._next_due['current_refresh:Cutter01'] is untouched
-    assert len(process._next_due) == 16
+    assert len(process._next_due) == 17
     with process.repository.connect() as connection:
         assert {row['device_id'] for row in connection.execute('SELECT DISTINCT device_id FROM background_tasks')} >= {'Cutter03', 'weld-2'}
     retired = catalog.model_copy(update={'lines': tuple(line.model_copy(update={'enabled': False}) if line.id == 'weld-2' else line for line in catalog.lines)})
@@ -435,11 +438,11 @@ def test_hotadded_shared_source_lines_plan_changes_and_retirement_keep_state_bou
     request = Mock(wraps=process.repository.request_snapshot_refresh)
     monkeypatch.setattr(process.repository, 'request_snapshot_refresh', request)
     process._schedule()
-    assert len(process._next_due) == 12
+    assert len(process._next_due) == 13
     assert request.call_count == 0
     process.runtime.database_runtime.save_lines(catalog)
     process._schedule()
-    assert len(process._next_due) == 16
+    assert len(process._next_due) == 17
     assert request.call_count == 0  # Re-enabling finds already persisted work.
     old_keys = {key for key in process._next_due if key.startswith('report_snapshot:')}
     source = database_context(process.runtime).database_sources.get('welding-production')
@@ -455,7 +458,7 @@ def test_hotadded_shared_source_lines_plan_changes_and_retirement_keep_state_bou
         clock[0] += 86400
         clock[1] += 86400
         process._schedule()
-        assert len(process._next_due) == 15
+        assert len(process._next_due) == 16
         assert len(process._reconciled) == 6
         expected = {process.repository.snapshot_task_key(line_id, payload)
                     for line_id, item in report_providers(database_context(process.runtime)) for payload, _ in item.refresh_plan()}

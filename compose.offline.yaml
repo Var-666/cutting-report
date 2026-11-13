@@ -9,6 +9,7 @@ services:
       - ./backend:/app/backend:ro,z
       - ./frontend/dist:/app/frontend/dist:ro,z
       - ./scripts/manage_postgres.py:/app/scripts/manage_postgres.py:ro,z
+      - ./scripts/reconcile_cutting_completion_dates.py:/app/scripts/reconcile_cutting_completion_dates.py:ro,z
       - ./vendor:/app/vendor:ro,z
   scheduler:
     pull_policy: never

@@ -53,7 +53,7 @@ def prepare_report(
     analysis_service: ReportAnalysisService,
     ensure_active: Callable[[], None],
     update_status: Callable[[str, str], None],
-    analyze: Callable[[Callable[[], AnalysisResult]], AnalysisResult],
+    analyze: Callable[..., AnalysisResult],
 ) -> PreparedReport:
     ensure_active()
     timezone = ZoneInfo(settings.timezone)
@@ -82,9 +82,15 @@ def prepare_report(
             analysis_report = replace(leadership, period_start=None, period_end=None)
         return analysis_service.analyze_leadership(
             analysis_report, monthly_records=leadership.monthly_records,
+            cache_filters=dict(zip(('summary_period_start', 'summary_period_end'),
+                                   (day.isoformat() for day in _recent_twelve_month_period(job, period_end)))),
         )
 
-    analysis = analyze(analyze_leadership)
+    cache_report = leadership if _is_range_job(job) else replace(leadership, period_start=None, period_end=None)
+    analysis = analyze(analyze_leadership, cached=lambda: analysis_service.cached_analysis('leadership', cache_report,
+        monthly_records=leadership.monthly_records,
+        cache_filters=dict(zip(('summary_period_start', 'summary_period_end'),
+                               (day.isoformat() for day in _recent_twelve_month_period(job, period_end))))))
     generated_at = datetime.now(timezone)
     report = {
         "meta": report_meta(

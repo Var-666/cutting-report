@@ -99,7 +99,7 @@ def test_automation_enable_and_retry_delay_use_live_configuration(tmp_path) -> N
             return []
 
         def claim_delivery(self, _now):
-            return {"delivery_id": "delivery-1", "attempt_count": 2, "attach_report": False, "relative_path": "r.html"}
+            return {"delivery_id": "delivery-1", "attempt_count": 2, "attach_report": False, "relative_path": "r.html", 'ai_status': 'success'}
 
         def mark_delivery_failed(self, _delivery, *, error, next_attempt_at, now):
             self.retry_at = next_attempt_at

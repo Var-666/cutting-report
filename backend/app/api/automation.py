@@ -219,6 +219,14 @@ def run_schedule(schedule_id: str, request: Request) -> dict:
     return _envelope(request, run)
 
 
+@router.get("/runs/{run_id}", response_model=ApiEnvelope[ScheduledRun])
+def get_run(run_id: str, request: Request) -> dict:
+    run = application_state(request).automation_service.run_progress(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="执行记录不存在")
+    return _envelope(request, run)
+
+
 @router.get("/deliveries", response_model=None, responses={200: {"model": ApiEnvelope[Page[EmailDelivery]]}})
 def list_deliveries(
     request: Request,

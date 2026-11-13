@@ -11,7 +11,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from app.config import Settings
 from app.database.postgres import execution_owner
-from app.services.analysis_display import analysis_cover, analysis_metrics
+from app.services.analysis_display import analysis_cover, analysis_metrics, analysis_reference_label
 
 
 class ReportRenderError(RuntimeError):
@@ -43,7 +43,7 @@ def _date_parts(value: Any) -> tuple[str, int, int | None] | None:
 
 def format_chinese_month(value: Any) -> str:
     parts = _date_parts(value)
-    return f"{parts[0]}年{parts[1]}月" if parts else "--"
+    return f"{parts[0]}年{parts[1]:02d}月" if parts else "--"
 
 
 def format_chinese_date(value: Any) -> str:
@@ -79,6 +79,7 @@ class ReportService:
         self.environment.filters["chinese_month"] = format_chinese_month
         self.environment.filters["chinese_date"] = format_chinese_date
         self.environment.filters["chinese_datetime"] = format_chinese_datetime
+        self.environment.filters['analysis_reference_label'] = analysis_reference_label
 
     def render(
         self,

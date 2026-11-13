@@ -64,7 +64,7 @@ def prepare_report(
     analysis_service: ReportAnalysisService,
     ensure_active: Callable[[], None],
     update_status: Callable[[str, str], None],
-    analyze: Callable[[Callable[[], AnalysisResult]], AnalysisResult],
+    analyze: Callable[..., AnalysisResult],
 ) -> PreparedReport:
     ensure_active()
     timezone = ZoneInfo(settings.timezone)
@@ -93,6 +93,9 @@ def prepare_report(
     chart_type = _chart_type(job)
     charts = chart_service.build_energy_period(task_report, month_report, chart_type)
     summary = task_report["summary"]
+    cache_filters = ({'daily_summary_month': report_month} if legacy_day else
+                     dict(zip(('summary_period_start', 'summary_period_end'),
+                              (day.isoformat() for day in _recent_twelve_month_period(job, period_end)))))
     update_status("analyzing", "正在生成智能分析")
 
     def analyze_equipment() -> AnalysisResult:
@@ -122,13 +125,16 @@ def prepare_report(
             energy_units=task_report["units"],
             energy_notice=task_report.get("energy_notice") or "",
             energy_summary_rows=month_report["rows"],
+            cache_filters=cache_filters,
             comparison_records=comparison_records,
             comparison_date=_period_label(comparison_start, comparison_end),
             year_ago_records=year_ago_records,
             year_ago_date=year_ago_date.isoformat() if year_ago_date else None,
         )
 
-    analysis = analyze(analyze_equipment)
+    analysis = analyze(analyze_equipment, cached=lambda: analysis_service.cached_analysis('equipment',
+        _period_label(period_start, period_end), energy_units=task_report['units'], energy_summary_rows=month_report['rows'],
+        cache_filters=cache_filters))
     ensure_active()
     generated_at = datetime.now(timezone)
     filters = {

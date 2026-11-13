@@ -18,7 +18,7 @@ import ReportExportMenu from '../components/ReportExportMenu.vue'
 import WeldingCharts from '../components/WeldingCharts.vue'
 import WeldingTable from '../components/WeldingTable.vue'
 import WeldingRecord from '../components/WeldingRecord.vue'
-import { analyzeWelding, downloadWelding, getWeldingPart, getWeldingReport, weldingQuery } from '../api/welding.ts'
+import { analyzeWelding, getLatestWeldingAnalysis, downloadWelding, getWeldingPart, getWeldingReport, weldingQuery } from '../api/welding.ts'
 import { reportToday } from '../api/reportDates.ts'
 import { queryDateRange, sameRouteQuery } from '../utils/reportRouteState.ts'
 import { parseWeldingRouteQuery, weldingRouteQuery } from '../utils/weldingRouteState.ts'
@@ -47,6 +47,9 @@ const detailError = ref('')
 const seamPage = ref(1)
 const sourceEnabled = computed(() => deviceSelection.items?.find(item => item.id === deviceSelection.id)?.enabled !== false)
 let controller: AbortController | undefined, detailController: AbortController | undefined, exportController: AbortController | undefined, analysisController: AbortController | undefined
+let analysisCacheController: AbortController | undefined
+let analysisSequence = 0
+let analysisCacheKey = ''
 let disposed = false
 let appliedKind: WeldingReportKind | undefined
 let appliedLine = ''
@@ -100,12 +103,12 @@ async function load(values: WeldingQuery, force: boolean, syncRoute: boolean, ba
   clearTimeout(refreshTimer)
   if (!background) refreshPollCount = 0
   controller?.abort()
-  if (!background) analysisController?.abort()
+  const sameAnalysisScope = activeQuery.value && analysisScope(values) === analysisScope(activeQuery.value, appliedKind || props.kind, appliedLine)
+  if (!background) { analysisController?.abort(); analysisCacheController?.abort(); analysisSequence += 1; analyzing.value = false }
   const run = ++generation
   controller = new AbortController()
   loading.value = !background
   error.value = ''
-  if (!background) { analysis.value = null; analysisError.value = '' }
   if (!sourceEnabled.value) {
     report.value = null
     activeQuery.value = null
@@ -115,11 +118,19 @@ async function load(values: WeldingQuery, force: boolean, syncRoute: boolean, ba
   try {
     const value = await getWeldingReport(props.kind, values, controller.signal, force)
     if (disposed || run !== generation || line !== deviceSelection.id || kind !== props.kind || selectedLineType(deviceSelection.items, deviceSelection.id) !== 'welding') return
-    if (background && value.data_version !== report.value?.data_version) { analysisController?.abort(); analysis.value = null; analysisError.value = '' }
+    if (background && value.data_version !== report.value?.data_version) {
+      analysisController?.abort(); analysisSequence += 1; analyzing.value = false
+    }
+    if (!sameAnalysisScope) { analysis.value = null; analysisError.value = ''; analysisCacheKey = '' }
     report.value = value
     activeQuery.value = value.query
     appliedKind = kind
     appliedLine = line
+    if (analysis.value && analysis.value.data_version !== value.data_version) {
+      analysis.value = { ...analysis.value, cached: true,
+        cache_note: '数据已更新，暂显示上次成功分析；分析依据为原生成时的数据，请结合本次报表核对。' }
+    }
+    void readAnalysisCache(value)
     const query = weldingRouteQuery(route.query, parseWeldingRouteQuery(weldingRouteQuery({}, value.query), kind, today))
     if (!background && !sameRouteQuery(query, route.query)) {
       if (syncRoute) await router.push({ query })
@@ -204,22 +215,56 @@ async function exportSeams() {
 async function runAnalysis() {
   if (!report.value || !activeQuery.value || analyzing.value) return
   analysisController = new AbortController()
+  const current = analysisController
+  analysisCacheController?.abort()
+  const sequence = ++analysisSequence
+  const scope = analysisScope(activeQuery.value)
   analyzing.value = true
   analysisError.value = ''
   const version = report.value.data_version
   try {
     const result = await analyzeWelding(reportKind.value, activeQuery.value, version, analysisController.signal)
-    if (report.value?.data_version === version) analysis.value = result
+    if (!disposed && !current.signal.aborted && sequence === analysisSequence && activeQuery.value
+        && scope === analysisScope(activeQuery.value) && report.value?.data_version === version) analysis.value = result
   } catch (caught) {
     const exception = toError(caught)
-    if (exception.name !== 'AbortError') analysisError.value = exception.message }
-  finally { analyzing.value = false }
+    if (!disposed && sequence === analysisSequence && exception.name !== 'AbortError') analysisError.value = exception.message }
+  finally { if (sequence === analysisSequence) analyzing.value = false }
+}
+
+function analysisScope(values: WeldingQuery, kind = props.kind, line = deviceSelection.id) {
+  const normalized = weldingQuery({ anomalies_only: false, ...values })
+  if (kind === 'parts') { normalized.part_state = normalized.part_state ?? normalized.state; delete normalized.state }
+  return JSON.stringify([line, kind, Object.entries(normalized)
+    .filter(([name]) => !['page', 'page_size', 'sort_by', 'descending'].includes(name))
+    .map(([name, value]) => [name, String(value)]).sort(([a], [b]) => a.localeCompare(b))])
+}
+
+async function readAnalysisCache(value: WeldingReport) {
+  if (analyzing.value) return
+  const scope = analysisScope(value.query)
+  const key = `${scope}:${value.data_version}`
+  if (key === analysisCacheKey && !analysisCacheController?.signal.aborted) return
+  analysisCacheKey = key
+  analysisCacheController?.abort()
+  const current = analysisCacheController = new AbortController()
+  const sequence = ++analysisSequence
+  try {
+    const cached = await getLatestWeldingAnalysis(reportKind.value, value.query, value.data_version, current.signal)
+    if (!disposed && !current.signal.aborted && sequence === analysisSequence && activeQuery.value
+        && analysisScope(activeQuery.value) === scope && cached) { analysis.value = cached; analysisError.value = '' }
+  } catch (caught) {
+    if (!disposed && !current.signal.aborted && sequence === analysisSequence) {
+      analysisCacheKey = ''
+      analysisError.value = `历史分析读取失败：${toError(caught).message}`
+    }
+  }
 }
 function cancel() {
   clearTimeout(refreshTimer)
   generation += 1
   detailGeneration += 1
-  for (const request of [controller, detailController, exportController, analysisController]) request?.abort()
+  for (const request of [controller, detailController, exportController, analysisController, analysisCacheController]) request?.abort()
 }
 watch(detailOpen, open => { if (!open) { detailController?.abort(); detailGeneration += 1 } })
 function restoreRouteState() {

@@ -289,6 +289,9 @@ class AutomationRepository(PostgresRepository):
                 """,
                 (status, error, now, run_id),
             )
+            if status == 'failed':
+                connection.execute("""UPDATE email_deliveries SET status='failed',last_error=%s,updated_at=%s
+                    WHERE run_id=%s AND status='analysis_wait'""", (error, now, run_id))
             if row and row["schedule_id"]:
                 connection.execute(
                     """
@@ -306,10 +309,17 @@ class AutomationRepository(PostgresRepository):
             if existing is not None:
                 return AutomationRepository(self.database, connection=connection).delivery_for_report(report_id)
             run = connection.execute(
-                "SELECT * FROM scheduled_report_runs WHERE report_id = %s", (report_id,)
+                "SELECT * FROM scheduled_report_runs WHERE report_id = %s FOR UPDATE", (report_id,)
             ).fetchone()
             if run is None:
                 return None
+            waiting = connection.execute("SELECT delivery_id FROM email_deliveries WHERE run_id=%s AND status='analysis_wait' FOR UPDATE",
+                (run['run_id'],)).fetchone()
+            if waiting:
+                connection.execute("""UPDATE email_deliveries SET report_id=%s,status='pending',last_error=NULL,
+                    next_attempt_at=%s,updated_at=%s WHERE delivery_id=%s""", (report_id, now, now, waiting['delivery_id']))
+                AutomationRepository(self.database, connection=connection).mark_run(run['run_id'], 'email_pending', now=now)
+                return AutomationRepository(self.database, connection=connection).delivery_for_report(report_id)
             delivery_id = f"mail_{uuid4().hex[:18]}"
             connection.execute(
                 """
@@ -352,10 +362,11 @@ class AutomationRepository(PostgresRepository):
             row = connection.execute(
                 """
                 SELECT d.*, r.schedule_name, r.report_type, r.report_date, r.attach_report,
-                       p.filename, p.relative_path, p.generated_at
+                       p.filename, p.relative_path, p.generated_at, j.ai_status
                 FROM email_deliveries AS d
                 JOIN scheduled_report_runs AS r ON r.run_id = d.run_id
                 JOIN reports AS p ON p.report_id = d.report_id
+                JOIN report_jobs AS j ON j.report_id = d.report_id
                 WHERE d.status IN ('pending', 'retry_wait') AND d.next_attempt_at <= %s
                 ORDER BY d.next_attempt_at, d.created_at
                 LIMIT 1 FOR UPDATE OF d SKIP LOCKED
@@ -379,6 +390,39 @@ class AutomationRepository(PostgresRepository):
             item["message_id"] = row["message_id"] or f"<{row['delivery_id']}@cutting-report.local>"
             item["attempt_count"] = int(item["attempt_count"]) + 1
             return self._decode_delivery(item)
+
+    def rebuild_unanalyzed_delivery(self, delivery: dict, *, now: str) -> None:
+        from app.database.metadata import MetadataRepository
+        with self.connect() as connection:
+            row = connection.execute("SELECT * FROM email_deliveries WHERE delivery_id=%s AND status='sending' FOR UPDATE",
+                (delivery['delivery_id'],)).fetchone()
+            if row is None or row['report_id'] != delivery['report_id']:
+                raise LookupError('邮件已不在本次发送状态，拒绝重新生成')
+            repository = AutomationRepository(self.database, connection=connection)
+            results = json.loads(row['recipient_results_json'])
+            if any(result.get('status') == 'unknown' for result in results.values()):
+                repository.mark_delivery_unknown(delivery, now=now)
+                return
+            if any(result.get('status') == 'accepted' for result in results.values()):
+                repository.mark_delivery_failed({**delivery, 'attempt_count': delivery['max_attempts']},
+                    error='旧报告缺少成功分析，部分收件人已接收或结果未知；已停止自动重生成，请核对记录',
+                    next_attempt_at=now, now=now)
+                return
+            run = repository.get_run(row['run_id'], for_update=True)
+            old = MetadataRepository(self.database, connection=connection).get_job(run['report_id'])
+            report_id = f'rpt_{uuid4().hex}'
+            metadata = MetadataRepository(self.database, connection=connection, device_id=run['device_id'])
+            metadata.create_job(report_id=report_id, device_id=run['device_id'], report_date=old['report_date'],
+                report_type=old['report_type'], project_code=old['project_code'], ship_no=old['ship_no'],
+                request_id=old['request_id'], created_at=now, parameters=json.loads(old['parameters_json'] or '{}'),
+                period_start=old['period_start'], period_end=old['period_end'])
+            connection.execute("UPDATE report_jobs SET ai_status='waiting',stage_message='等待成功分析后重新生成报告' WHERE report_id=%s",
+                (report_id,))
+            connection.execute("""UPDATE scheduled_report_runs SET report_id=%s,status='generating',last_error=NULL,updated_at=%s
+                WHERE run_id=%s""", (report_id, now, run['run_id']))
+            connection.execute("""UPDATE email_deliveries SET status='analysis_wait',attempt_count=GREATEST(attempt_count-1,0),
+                execution_owner=NULL,last_error='旧报告缺少成功分析，等待重新生成',updated_at=%s WHERE delivery_id=%s""",
+                (now, row['delivery_id']))
 
     def mark_delivery_sent(self, delivery: dict, *, message_id: str, now: str) -> None:
         with self.connect() as connection:
@@ -580,7 +624,7 @@ class AutomationRepository(PostgresRepository):
                 """
                 SELECT COUNT(*) AS total,
                        SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END) AS sent,
-                       SUM(CASE WHEN status IN ('pending', 'sending', 'retry_wait') THEN 1 ELSE 0 END) AS pending,
+                       SUM(CASE WHEN status IN ('pending', 'sending', 'retry_wait', 'analysis_wait') THEN 1 ELSE 0 END) AS pending,
                        SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed,
                        SUM(CASE WHEN status = 'unknown' THEN 1 ELSE 0 END) AS unknown
                 FROM email_deliveries

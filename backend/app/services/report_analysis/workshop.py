@@ -89,7 +89,9 @@ def build_context(
         else "暂无工程数据"
     )
     project_note = f"{'工程信息缺口' if projects and projects[0]['project_name'] == '未标注工程' else '任务最多工程'}：{primary_project}"
-    trend_evidence = [f"待确认 {unconfirmed} 项"]
+    pending_share = f"{unconfirmed / len(records) * 100:.1f}%" if records else None
+    pending_label = f"待确认 {unconfirmed} 项" + (f"，占全部任务 {pending_share}" if pending_share is not None else '')
+    trend_evidence = [pending_label]
     if previous_count is not None:
         trend_evidence.append(
             f"当前 {len(records)} 项；{comparison_date or '上一可比周期'} "
@@ -142,7 +144,7 @@ def build_context(
         _fact(
             "F005",
             "待确认任务与数量变化",
-            f"待确认 {unconfirmed} 项；任务总数比上一周期{_change_label(task_change)}",
+            f"{pending_label}；任务总数比上一周期{_change_label(task_change)}",
             "；".join(trend_evidence),
         ),
         _fact(

@@ -5,7 +5,7 @@ import { formatChineseDateTime as formatDateTime } from '../../utils/dateDisplay
 import type { AutomationSchedule } from '../../types/automation'
 import { formatDeviceDisplay } from '../../utils/deviceDisplay'
 
-defineProps<{ schedules: AutomationSchedule[]; loading: boolean; searching?: boolean; reportLabels: Record<string,string>; scheduleLabels: Record<string,string> }>()
+defineProps<{ schedules: AutomationSchedule[]; loading: boolean; searching?: boolean; runningScheduleIds?: string[]; reportLabels: Record<string,string>; scheduleLabels: Record<string,string> }>()
 const emit = defineEmits<{ run: [item: AutomationSchedule]; edit: [item: AutomationSchedule]; remove: [item: AutomationSchedule] }>()
 
 function scheduleText(item: AutomationSchedule) {
@@ -34,7 +34,7 @@ const scheduleTableColumns = [
           <template #c4="{ row: item }">{{ formatDateTime(item.next_run_at) }}</template>
           <template #c5="{ row: item }"><span :title="item.recipients.join(', ')">{{ item.recipients.length }} 人</span></template>
           <template #c6="{ row: item }">{{ item.sent_count || 0 }} / {{ item.failed_count || 0 }}</template>
-          <template #c7="{ row: item }"><div class="row-actions"><NButton attr-type="button" @click="emit('run', item)">立即执行</NButton><NButton attr-type="button" @click="emit('edit', item)">编辑</NButton><NButton attr-type="button" class="danger" @click="emit('remove', item)">删除</NButton></div></template>
+          <template #c7="{ row: item }"><div class="row-actions"><NButton attr-type="button" :loading="runningScheduleIds?.includes(item.schedule_id)" :disabled="runningScheduleIds?.includes(item.schedule_id)" @click="emit('run', item)">{{ runningScheduleIds?.includes(item.schedule_id) ? '执行中' : '立即执行' }}</NButton><NButton attr-type="button" @click="emit('edit', item)">编辑</NButton><NButton attr-type="button" class="danger" @click="emit('remove', item)">删除</NButton></div></template>
           <template #empty>{{ searching ? '未找到匹配的定时任务。' : '尚未创建定时任务，可在上方设置并创建。' }}</template>
         </AppReportTable>
 </template>

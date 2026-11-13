@@ -25,8 +25,8 @@
     .cover-brand strong,.cover-brand small { display:block; }.cover-brand strong { font-size:16px; letter-spacing:.06em; }.cover-brand small { margin-top:2px; color:#b9d7e5; font-size:10px; letter-spacing:.08em; }
     .cover-main { display:grid; grid-template-columns:minmax(0,1fr) 380px; min-height:174px; background:linear-gradient(112deg,var(--navy) 0 64%,#165b78 64% 100%); }
     .cover-title { align-self:center; padding:32px 38px 36px; }.cover-title h1 { margin:0; font-size:34px; line-height:1.18; letter-spacing:.08em; }.cover-title p { max-width:720px; margin:10px 0 0; color:#c8dce6; font-size:13px; }
-    .cover-folio { display:grid; grid-template-columns:1fr 1fr; align-content:center; margin:0; padding:26px 38px 26px 32px; border-left:1px solid rgba(255,255,255,.16); background:linear-gradient(135deg,rgba(255,255,255,.06),rgba(255,255,255,.015)); }
-    .cover-folio div { min-width:0; padding:10px 12px; border-bottom:1px solid rgba(255,255,255,.12); }.cover-folio dt { color:#a9cad8; font-size:10px; }.cover-folio dd { margin:4px 0 0; overflow:hidden; font-size:12px; font-weight:600; text-overflow:ellipsis; white-space:nowrap; font-variant-numeric:tabular-nums; }
+    .cover-folio { display:grid; grid-template-columns:1fr; align-content:center; margin:0; padding:26px 38px 26px 32px; border-left:1px solid rgba(255,255,255,.16); background:linear-gradient(135deg,rgba(255,255,255,.06),rgba(255,255,255,.015)); }
+    .cover-folio div { display:grid; grid-template-columns:64px minmax(0,1fr); align-items:baseline; gap:8px; min-width:0; padding:6px 0; border-bottom:1px solid rgba(255,255,255,.12); }.cover-folio dt { color:#a9cad8; font-size:10px; }.cover-folio dd { min-width:0; margin:0; font-size:12px; font-weight:600; overflow-wrap:anywhere; font-variant-numeric:tabular-nums; }
     main { padding:26px 38px 40px; }
     h2 { display:flex; align-items:center; gap:12px; margin:32px 0 14px; padding:0 0 10px; color:var(--navy); border-bottom:1px solid var(--line); font-size:18px; line-height:1.35; }
     h2::after { content:""; width:52px; height:3px; order:-1; flex:0 0 auto; background:linear-gradient(90deg,var(--blue),var(--teal)); }
@@ -50,13 +50,14 @@
     html.report-printing .data-chart-grid,html.report-printing .data-chart-grid.equipment-grid { display:block!important; }
     html.report-printing .chart-stack { display:block!important; }
     html.report-printing .chart,html.report-printing .chart-stack .chart { width:100%!important; height:58mm!important; margin-bottom:5mm!important; }
-    @media (max-width:1000px) { .cover-main{grid-template-columns:1fr}.cover-folio{grid-template-columns:repeat(4,minmax(0,1fr));border-left:0;border-top:1px solid rgba(255,255,255,.16)}.meta,.metrics { grid-template-columns:repeat(2,1fr); }.metric:nth-child(2){border-right:0}.secondary,.analysis-grid,.data-chart-grid { grid-template-columns:1fr; }.analysis-facts{grid-template-columns:repeat(2,minmax(0,1fr))}.data-chart-grid .table-wrap,.equipment-grid .table-wrap { height:auto; max-height:none; } main,.cover-brand,.cover-title { padding-left:20px; padding-right:20px; } }
+    @media (max-width:1000px) { .cover-main{grid-template-columns:1fr}.cover-folio{grid-template-columns:repeat(2,minmax(0,1fr));column-gap:20px;border-left:0;border-top:1px solid rgba(255,255,255,.16)}.meta,.metrics { grid-template-columns:repeat(2,1fr); }.metric:nth-child(2){border-right:0}.secondary,.analysis-grid,.data-chart-grid { grid-template-columns:1fr; }.analysis-facts{grid-template-columns:repeat(2,minmax(0,1fr))}.data-chart-grid .table-wrap,.equipment-grid .table-wrap { height:auto; max-height:none; } main,.cover-brand,.cover-title { padding-left:20px; padding-right:20px; } }
+    @media (max-width:600px) { .cover-folio{grid-template-columns:1fr;padding:12px 20px} }
     @media print {
       @page { size:A4 landscape; margin:9mm 9mm 13mm; }
       html,body { width:auto; min-width:0; background:#fff; font-size:8.5pt; }
       body::before{display:none}.page { width:100%; margin:0; overflow:visible; border:0; box-shadow:none; }
       .report-cover { print-color-adjust:exact; -webkit-print-color-adjust:exact; }
-      .cover-brand{min-height:13mm;padding:0 7mm}.brand-mark{width:9mm;height:9mm;padding:2mm}.cover-main{min-height:39mm;grid-template-columns:minmax(0,1fr) 83mm}.cover-title{padding:7mm}.cover-title h1{font-size:23pt}.cover-title p{margin-top:2mm;font-size:8pt}.cover-folio{padding:5mm 6mm}.cover-folio div{padding:2mm 2.5mm}
+      .cover-brand{min-height:13mm;padding:0 7mm}.brand-mark{width:9mm;height:9mm;padding:2mm}.cover-main{min-height:39mm;grid-template-columns:minmax(0,1fr) 83mm}.cover-title{padding:7mm}.cover-title h1{font-size:23pt}.cover-title p{margin-top:2mm;font-size:8pt}.cover-folio{grid-template-columns:1fr;padding:5mm 6mm}.cover-folio div{padding:2mm 2.5mm}
       .report-cover,th,.metrics,.analysis-facts,.analysis-card { print-color-adjust:exact; -webkit-print-color-adjust:exact; }
       main { padding:6mm 0 4mm; }
       .report-footer { padding:4mm 0 0; background:#fff; }
@@ -249,18 +250,18 @@
     {% if analysis_mode == 'model' %}
     {{ render_analysis(report.analysis, report.meta.report_type, report, device_name, report.meta.period_start, report.meta.period_end, analysis_title) }}
     {% else %}
-    <h2>{{ analysis_title }}</h2>
-    <div class="analysis-head">
-      <span class="analysis-mode {{ analysis_mode }}">智能分析暂不可用</span>
-      <span class="label">生成时间：{{ report.analysis.generated_at or '--' }}{{ '· 已使用缓存' if report.analysis.cached else '' }}</span>
-    </div>
-    {% if report.analysis.facts %}<section class="analysis-facts">{% for fact in report.analysis.facts %}<div class="analysis-fact"><span class="fact-id">{{ fact.id }}</span><span class="label"> · {{ fact.label }}</span><strong>{{ fact.value }}</strong></div>{% endfor %}</section>{% endif %}
-    <section class="analysis-grid">
-      <article class="analysis-card overview"><h3>生产概况</h3><p>{{ report.analysis.overview }}</p></article>
-      <article class="analysis-card features"><h3>数据特征</h3><p>{{ report.analysis.features }}</p></article>
-      <article class="analysis-card alerts"><h3>异常与关注点</h3><p>{{ report.analysis.alerts }}</p></article>
-      <article class="analysis-card suggestions"><h3>生产管理建议</h3><p>{{ report.analysis.suggestions }}</p></article>
+    <div class="analysis-layout">
+    <header class="analysis-head"><h2>{{ analysis_title }}</h2><div><span class="analysis-mode unavailable">未生成分析</span></div></header>
+    <section class="analysis-banner" role="status">
+      <h3>智能分析暂不可用</h3>
+      <p>{{ report.analysis.overview }}</p>
+      <p>{{ report.analysis.features }}</p>
+      <p>{{ report.analysis.alerts }}</p>
+      <p>{{ report.analysis.suggestions }}</p>
     </section>
+    {% if report.analysis.facts %}<section class="analysis-facts">{% for fact in report.analysis.facts %}<div class="analysis-fact"><span class="fact-id">{{ fact.id }}</span><span class="label"> · {{ fact.label }}</span><strong>{{ fact.value }}</strong></div>{% endfor %}</section>{% endif %}
+    <p class="analysis-time">生成时间：{{ report.analysis.generated_at or '--' }}{{ ' · 已使用缓存' if report.analysis.cached else '' }}</p>
+    </div>
     {% endif %}
     </section>
     {% endif %}

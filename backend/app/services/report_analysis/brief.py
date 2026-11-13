@@ -7,6 +7,7 @@ from datetime import date
 
 from app.models.domain import production_day
 from app.services.report_analysis.common import _fact
+from app.services.analysis_display import analysis_reference_label
 
 
 def period_scope(kind: str, label: str) -> dict:
@@ -49,11 +50,13 @@ def add_candidates(context: dict, kind: str, records: list | None = None) -> dic
 
     def task(row):
         stamp = production_day(row)
-        return ref('task', row.task_id, production_date=stamp.isoformat() if stamp else None,
+        reference = ref('task', row.task_id, production_date=stamp.isoformat() if stamp else None,
             project_code=row.project_code, program_no=getattr(row, 'program_no', None),
             work_time=float(row.work_time) if row.work_time is not None else None,
             confirmation=('已确认' if row.confirmed_by else '待确认') if kind == 'workshop' else None,
             energy_status=f"气耗：{row.gas_data_status}；电耗：{row.electricity_data_status}" if kind == 'equipment' else None)
+        reference['label'] = analysis_reference_label({**reference, 'segment_name': row.segment_name})
+        return reference
 
     count = context.get('task_count')
     if kind == 'leadership':

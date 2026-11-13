@@ -250,7 +250,7 @@ def test_fresh_example_bootstraps_explicit_demo_without_legacy_config(postgres_s
     assert not context.lines['welding'].config.enabled
 
 
-def test_upgrade_keeps_existing_latest_analysis_in_the_bound_source(state_database, postgres_state, tmp_path):
+def test_completion_date_upgrade_isolates_old_analysis_in_the_bound_source(state_database, postgres_state, tmp_path):
     from app.database.metadata import MetadataRepository
     cfg = configuration(tmp_path)
     from app.database.source_registry import DatabaseSourceRegistry
@@ -263,8 +263,9 @@ def test_upgrade_keeps_existing_latest_analysis_in_the_bound_source(state_databa
     for _ in range(2):
         runtime = build_runtime(state_settings(cfg,postgres_state), role='web')
         selected = database_context(runtime).lines['Cutter01'].cutting().metadata
-        assert selected.get_latest_analysis(**query)['overview'] == '保留已有分析'
-        assert selected.get_analysis_source_version(report_type='workshop', report_date='2026-11-01')['data_version'] == 'old-version'
+        assert selected.get_latest_analysis(**query) is None
+        assert selected.get_analysis_source_version(report_type='workshop', report_date='2026-11-01') is None
+        assert legacy.get_latest_analysis(**query)['overview'] == '保留已有分析'
         runtime.database_runtime.close()
 
 

@@ -114,5 +114,6 @@ def test_analysis_api_includes_data_preparation_in_deadline_and_reports_timeout(
     with pytest.raises(HTTPException) as error:
         analysis_api.analyze_report(payload, SimpleNamespace(state=SimpleNamespace(request_id="api-request")))
     assert error.value.status_code == 503
-    assert "总等待时限" in error.value.detail
+    assert "正在等待成功的智能分析结果" in error.value.detail
+    assert error.value.headers['Retry-After'] == '60'
     assert report_deadline.remaining_seconds() is None

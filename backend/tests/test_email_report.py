@@ -85,7 +85,7 @@ def test_retry_wait_starts_after_slow_report_preparation(tmp_path, monkeypatch):
     service.settings = cfg
     service.runtime = AutomationRuntime(cfg)
     service.repository = SimpleNamespace(
-        claim_delivery=lambda now: {'delivery_id': 'd1', 'attempt_count': 1, 'relative_path': 'r.html', 'attach_report': False},
+        claim_delivery=lambda now: {'delivery_id': 'd1', 'attempt_count': 1, 'relative_path': 'r.html', 'attach_report': False, 'ai_status': 'success'},
         mark_delivery_failed=lambda *a, **k: failures.append(k),
     )
 
@@ -148,7 +148,7 @@ def test_automation_prepares_body_independently_of_attachment_and_rejects_invali
     report.write_text("<h1>日报</h1>", encoding="utf-8")
     (tmp_path / "outside.html").write_text("private")
     sent, failed = [], []
-    delivery = {"delivery_id": "d1", "attempt_count": 1, "relative_path": relative_path, "attach_report": attach}
+    delivery = {"delivery_id": "d1", "attempt_count": 1, "relative_path": relative_path, "attach_report": attach, 'ai_status': 'success'}
     service = object.__new__(AutomationService)
     service.settings = cfg
     service.runtime = AutomationRuntime(cfg)
@@ -214,7 +214,7 @@ def test_archived_report_becomes_readable_email(tmp_path, report_type, empty, wi
     }
     if with_brief:
         reference = dict(kind='project', id='P-001', label='P-001') if report_type == 'leadership' else dict(
-            kind='task', id='TASK-001', label='TASK-001')
+            kind='task', id='TASK-001', label='TASK-001', project_code='P-001', program_no='程序01')
         if report_type == 'leadership':
             report['leadership']['daily_records'].append(dict(totals, period_start='2026-11-09', remark='次日记录'))
             report['leadership']['project_distribution'] = [
@@ -237,7 +237,7 @@ def test_archived_report_becomes_readable_email(tmp_path, report_type, empty, wi
     )
     if empty and report_type == "workshop":
         # A template style change must reach mail without a second theme update.
-        html = html.replace("</head>", "<style>.page{width:min(1280px,calc(100% - 40px));margin-top:28px;margin-bottom:28px}.cover-title h1{font-size:31px;color:#d9eff9}.metric strong{font-size:23px}.analysis-card.features{background:#e6f2ea}</style></head>")
+        html = html.replace("</head>", "<style>.page{width:min(1280px,calc(100% - 40px));margin-top:28px;margin-bottom:28px}.cover-title h1{font-size:31px;color:#d9eff9}.metric strong{font-size:23px}.analysis-layout .analysis-banner{background:#e6f2ea}</style></head>")
     path = tmp_path / "report.html"
     path.write_text(html, encoding="utf-8")
     # Exercise the same isolated Chromium path and capacity used by Automation.
@@ -252,6 +252,8 @@ def test_archived_report_becomes_readable_email(tmp_path, report_type, empty, wi
     assert "测试生产报告" in email.html and "切割机01" in email.html
     assert "演示数据 · 非生产统计" in email.html
     if with_brief:
+        if report_type != 'leadership':
+            assert '程序 程序01 · 工程 P-001' in html and '程序 程序01 · 工程 P-001' in email.html
         assert all(text in html and text in email.html for text in
                    ['本期生产简报', '分析依据 / 关联记录', '关键发现', '建议跟进', '可核对的关联记录',
                     '周期未结束', '2026-11-07', '工人工时仅包含已确认任务。', '任务数比上一周期'])
@@ -288,9 +290,23 @@ def test_archived_report_becomes_readable_email(tmp_path, report_type, empty, wi
             page = browser.new_page()
             page.set_content(preview)
             assert page.locator("h2").all_text_contents() == reference.locator("h2").all_text_contents()
+            if not with_brief:
+                for document in [reference, page]:
+                    analysis = document.get_by_role('region', name='智能分析')
+                    assert analysis.get_by_role('heading', name='智能分析暂不可用').count() == 1
+                    assert analysis.get_by_role('heading').all_text_contents() == ['四、智能分析', '智能分析暂不可用']
+                    assert analysis.locator('.analysis-banner p').all_text_contents() == [
+                        '分析说明 <script>不能执行</script>', '特征', '关注点', '建议',
+                    ]
+                    assert analysis.locator('.analysis-layout').evaluate(
+                        'panel => getComputedStyle(panel).borderRadius',
+                    ) == '10px'
+                    assert analysis.get_by_role('heading', name='四、智能分析').evaluate(
+                        'heading => getComputedStyle(heading).textAlign',
+                    ) in {'left', 'start'}
             if with_brief:
                 for document in [reference, page]:
-                    label = 'P-001' if report_type == 'leadership' else 'TASK-001'
+                    label = 'P-001' if report_type == 'leadership' else '程序 程序01 · 工程 P-001'
                     assert document.get_by_role('table', name='分析关联记录').get_by_text(label, exact=True).count() == 1
                     assert document.get_by_text(f'关联记录 1 项 · {label}', exact=True).count() == 0
                     assert document.locator('.analysis-summary li').all_text_contents() == [
@@ -305,17 +321,29 @@ def test_archived_report_becomes_readable_email(tmp_path, report_type, empty, wi
                     assert document.locator('.analysis-mode.model').evaluate(
                         'badge => getComputedStyle(badge).display',
                     ) == 'inline-block'
-            for width in [1440, 1100, 820, 375]:
+            for width in [1440, 1100, 980, 820, 600, 375]:
                 reference.set_viewport_size({"width": width, "height": 900})
                 page.set_viewport_size({"width": width, "height": 900})
                 assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+                for document in [reference, page]:
+                    assert document.locator('.cover-folio').evaluate(
+                        'node => Array.from(node.querySelectorAll("dd,td.email-cell")).every(cell => cell.scrollWidth <= cell.clientWidth + 1)',
+                    ), 'report period, ID and generation time must remain readable'
+                    if with_brief:
+                        records = document.get_by_role('table', name='分析关联记录')
+                        assert records.locator('th,td').evaluate_all(
+                            'cells => cells.every(cell => cell.scrollWidth <= cell.clientWidth + 1)',
+                        ), 'linked records must scroll instead of squeezing their contents'
                 if not empty:
+                    column_count = '''nodes => nodes.filter(node =>
+                        Math.abs(node.getBoundingClientRect().top - nodes[0].getBoundingClientRect().top) < 1).length'''
+                    assert page.locator('.analysis-fact').evaluate_all(column_count) == reference.locator('.analysis-fact').evaluate_all(column_count), 'email must keep the report column count at the current width'
                     for document in [reference, page]:
                         cards = document.locator('.analysis-fact')
                         expected_cards = 4 if with_brief else 6
                         assert cards.count() == expected_cards
                         boxes = [card.bounding_box() for card in cards.all()]
-                        columns = sum(abs(box['y'] - boxes[0]['y']) < 1 for box in boxes) if with_brief else (3 if width > 1000 else 2)
+                        columns = sum(abs(box['y'] - boxes[0]['y']) < 1 for box in boxes)
                         assert all(abs(box['y'] - boxes[0]['y']) < 1 for box in boxes[:columns])
                         if columns > 1:
                             assert boxes[1]['x'] - boxes[0]['x'] - boxes[0]['width'] >= 10
@@ -325,9 +353,7 @@ def test_archived_report_becomes_readable_email(tmp_path, report_type, empty, wi
                         assert cards.evaluate_all('nodes => nodes.every(node => node.scrollWidth <= node.clientWidth + 1)')
                 assert abs(page.locator('.page').bounding_box()['width'] - reference.locator('.page').bounding_box()['width']) < 1
                 assert page.locator('table:not([role="presentation"]) td').evaluate_all("cells => cells.every(cell => getComputedStyle(cell).whiteSpace === 'nowrap')")
-                for selector in [".cover-brand", ".cover-title h1", ".cover-title p", ".metrics", ".metric strong", "h2", ".analysis-card.features", ".analysis-card.alerts", ".analysis-mode"]:
-                    if with_brief and selector in {'.analysis-card.features', '.analysis-card.alerts'}:
-                        continue
+                for selector in [".cover-brand", ".cover-title h1", ".cover-title p", ".metrics", ".metric strong", "h2", ".analysis-banner", ".analysis-layout", ".analysis-time", ".analysis-mode"]:
                     styles = "element => Object.fromEntries(['fontFamily','fontSize','fontWeight','color','backgroundColor','backgroundImage'].map(key => [key,getComputedStyle(element)[key]]))"
                     assert page.locator(selector).first.evaluate(styles) == reference.locator(selector).first.evaluate(styles), selector
                 if page.locator('thead th').count():

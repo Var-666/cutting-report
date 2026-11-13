@@ -45,6 +45,10 @@ export function runAutomationSchedule(scheduleId: string) {
   })
 }
 
+export function getAutomationRun(runId: string, { signal }: ReadOptions = {}) {
+  return request<ScheduledRun>(`/api/v1/automation/runs/${encodeURIComponent(runId)}`, { signal })
+}
+
 export function listEmailDeliveries({ page = 1, pageSize = 20, search = '' } = {}, { signal }: ReadOptions = {}) {
   const query = new URLSearchParams({ page: String(page), page_size: String(pageSize) })
   if (search.trim()) query.set('search', search.trim())

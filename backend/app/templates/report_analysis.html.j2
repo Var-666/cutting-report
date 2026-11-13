@@ -24,6 +24,7 @@
     <h2>{{ title }}</h2>
     <div><span class="analysis-mode model">大模型分析{% if analysis.cached %}<small>已缓存</small>{% endif %}</span></div>
   </header>
+  {% if analysis.cache_note %}<p class="analysis-cache-note">{{ analysis.cache_note }}</p>{% endif %}
   <section class="analysis-banner" aria-label="分析结论"{% if cover %} style="--analysis-cover:url('{{ cover }}')"{% endif %}>
     <p class="analysis-scope">{{ line_name }} · {{ scope.period_start or period_start }} 至 {{ scope.period_end or period_end }}</p>
     <h3>{{ brief.headline if brief else '分析结论' }}</h3>
@@ -103,9 +104,9 @@
       <thead><tr><th style="width:21%">关联对象</th><th style="width:13%">记录数</th><th style="width:12%">任务数</th><th style="width:29%">关键数据</th><th>说明</th></tr></thead>
       <tbody>{% for finding in linked %}
         {% set reference = finding.references[0] %}
-        {% set projects = report.leadership.project_distribution|default([]) if report.leadership is defined else [] %}
+        {% set projects = report.leadership.project_distribution|default([]) if report.leadership is defined and not analysis.cache_note else [] %}
         {% set project = projects|selectattr('project_name','equalto',reference.id)|first if finding.references|length == 1 and reference.kind == 'project' else none %}
-        {% set labels = finding.references[:3]|map(attribute='label')|join('、') %}
+        {% set labels = finding.references[:3]|map('analysis_reference_label')|unique|join('；') ~ (' 等' if finding.reference_count > 3 else '') %}
         {% set tasks = finding.references|selectattr('kind','equalto','task')|list|length %}
         <tr><td title="{{ labels }}"><span class="analysis-record-label">{{ labels }}</span></td><td>{{ finding.reference_count }} 项</td>
           <td>{{ (project.task_count ~ ' 项') if project else (tasks ~ ' 项') if tasks else '—' }}</td>

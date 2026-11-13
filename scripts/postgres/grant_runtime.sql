@@ -15,6 +15,8 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
   app_state.cutting_dispatches,
   app_state.cutting_downloads,
   app_state.cutting_file_dispatch_status,
+  app_state.database_monitors,
+  app_state.database_monitor_incidents,
   app_state.email_deliveries,
   app_state.email_delivery_resolutions,
   app_state.energy_daily_snapshots,

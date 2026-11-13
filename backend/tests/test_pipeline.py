@@ -12,8 +12,17 @@ from tests.line_fixtures import cutting_settings, source_client
 from app.database.metadata import MetadataRepository
 from app.database.workshop import WorkshopRepository
 from app.models.domain import ReportFilter
-from app.services.pipeline import ReportPipeline
+from app.services.pipeline import ReportPipeline, ReportAnalysisPendingError
 from tests.analysis_fakes import model_analysis
+
+
+def test_export_months_use_two_digits(tmp_path: Path) -> None:
+    from app.services.report_service import ReportService
+
+    template = ReportService(cutting_settings(project_root=tmp_path)).environment.from_string("{{ month|chinese_month }}")
+    for value, expected in [("2026-09-01", "2026年09月"), ("2026-8", "2026年08月"),
+                            ("2026-11", "2026年11月"), (None, "--")]:
+        assert template.render(month=value) == expected
 
 
 @pytest.mark.parametrize(
@@ -145,7 +154,7 @@ def test_demo_pipeline_generates_offline_report(state_database,
     assert completed["task_count"] > 0
 
 
-def test_pipeline_completes_deterministic_report_when_ai_is_unavailable(state_database, tmp_path: Path) -> None:
+def test_pipeline_waits_without_publishing_when_no_analysis_cache_exists(state_database, tmp_path: Path) -> None:
     vendor_dir = tmp_path / "vendor"
     vendor_dir.mkdir()
     (vendor_dir / "echarts.min.js").write_text(
@@ -175,17 +184,13 @@ def test_pipeline_completes_deterministic_report_when_ai_is_unavailable(state_da
     job = metadata.claim_next_job(now)
     assert job is not None
 
-    pipeline.run(job)
-
-    completed = metadata.get_job("rpt_ai_unavailable")
-    assert completed is not None
-    assert completed["status"] == "completed"
-    assert completed["ai_status"] == "unavailable"
-    html = (test_settings.reports_dir / completed["relative_path"]).read_text(
-        encoding="utf-8"
-    )
-    assert "智能分析暂不可用" in html
-    assert "确定性报表已生成" in html
+    with pytest.raises(ReportAnalysisPendingError):
+        pipeline.run(job)
+    metadata.defer_analysis(job['report_id'], '等待启用模型')
+    waiting = metadata.get_job(job['report_id'])
+    assert waiting['status'] == 'pending' and waiting['ai_status'] == 'waiting'
+    assert waiting['relative_path'] is None
+    assert metadata.claim_next_job(now) is None
 
 
 @pytest.mark.parametrize("report_type", ["leadership", "equipment"])
@@ -239,7 +244,7 @@ def test_range_export_keeps_the_recent_twelve_month_summary(state_database,
         encoding="utf-8"
     )
     assert "2026-08-17 至 2026-08-18" in html
-    assert "2025年9月" in html
+    assert ("2025年09月" if report_type == "leadership" else "2025年9月") in html
     if report_type == "leadership":
         assert "近 12 个月按月对比与趋势" in html
     else:
@@ -261,7 +266,7 @@ def report_flow(state_database, tmp_path, monkeypatch):
         (6, date(2024, 2, 29), "Cutter02", 2),
         (7, date(2024, 2, 29), "Cutter01", 1),
     ):
-        # The Feb 1 task started the previous day; OP_DATE owns the report day.
+        # The Feb 1 task started the previous day; its end time owns the report day.
         start = datetime(2024, 1, 31, 23, 50) if task_id == 3 else datetime.combine(stamp, datetime.min.time())
         end = datetime.combine(stamp, datetime.min.time()).replace(hour=1)
         source_rows.append(dict(task_id=task_id, project_code="PJT-A", ship_no="PJT-A",

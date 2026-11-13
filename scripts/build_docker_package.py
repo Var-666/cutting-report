@@ -35,7 +35,7 @@ FILES = (
     "docs/project/welding-integration.md",
     "scripts/README.md", "scripts/check_energy.py",
     "scripts/check_welding.py",
-    "scripts/manage_postgres.py", "scripts/postgres/10-roles.sql",
+    "scripts/manage_postgres.py", "scripts/reconcile_cutting_completion_dates.py", "scripts/postgres/10-roles.sql",
     "scripts/postgres/grant_runtime.sql",
     "docs/deployment/PostgreSQL状态库迁移.md",
     "docs/deployment/PostgreSQL并发与队列容量验证.md",

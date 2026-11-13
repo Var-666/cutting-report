@@ -41,7 +41,7 @@ def _workshop_bundle(records: list[WorkshopRecord], data_updated_at: datetime | 
                 task_id=row.task_id, project_code=row.project_code, ship_no=row.ship_no,
                 segment_name=row.segment_name, program_no=row.program_no,
                 cut_length=row.cut_length, groove_length=row.groove_length,
-                work_time=row.work_time, production_time=row.production_time,
+                work_time=row.work_time, production_time=row.production_time, production_date=row.production_date,
             )
             for row in records
         ],
@@ -60,7 +60,7 @@ def prepare_report(
     analysis_service: ReportAnalysisService,
     ensure_active: Callable[[], None],
     update_status: Callable[[str, str], None],
-    analyze: Callable[[Callable[[], AnalysisResult]], AnalysisResult],
+    analyze: Callable[..., AnalysisResult],
 ) -> PreparedReport:
     ensure_active()
     timezone = ZoneInfo(settings.timezone)
@@ -151,6 +151,7 @@ def prepare_report(
                 return analysis_service.analyze_workshop(
                     _period_label(period_start, period_end),
                     bundle.workshop_records,
+                    cache_filters={'project_code': filters.project_code, 'ship_no': filters.ship_no},
                     comparison_records=previous_records,
                     comparison_date=_period_label(comparison_start, comparison_end),
                     year_ago_records=year_ago_records,
@@ -173,6 +174,7 @@ def prepare_report(
                 return analysis_service.analyze_workshop(
                     filters.report_date.isoformat(),
                     bundle.workshop_records,
+                    cache_filters={'project_code': filters.project_code, 'ship_no': filters.ship_no},
                     comparison_records=(
                         previous_records
                         if previous_report
@@ -210,7 +212,10 @@ def prepare_report(
                 query_service=query_service, analysis_service=analysis_service,
             )
 
-    analysis = analyze(analyze_daily)
+    cache_kind = 'workshop' if report_type == 'workshop' else 'equipment'
+    cache_period = _period_label(period_start, period_end) if range_job else filters.report_date.isoformat()
+    analysis = analyze(analyze_daily, cached=lambda: analysis_service.cached_analysis(cache_kind, cache_period,
+        cache_filters={'project_code': filters.project_code, 'ship_no': filters.ship_no}, energy_units=energy_units))
     ensure_active()
     generated_at = datetime.now(timezone)
     report = {

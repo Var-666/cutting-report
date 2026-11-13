@@ -164,6 +164,8 @@ def test_workshop_links_keep_all_pending_tasks_while_model_input_is_bounded():
     assert len(context['_references']['C_confirmation']) == 250
     candidate = next(c for c in context['candidates'] if c['id'] == 'C_confirmation')
     assert candidate['reference_count'] == 250 and len(candidate['reference_sample']) == 3
+    assert all('程序 program.gen' in ref['label'] and '分段 S1' in ref['label'] for ref in context['_references']['C_confirmation'])
+    assert [ref['id'] for ref in context['_references']['C_confirmation']] == [f'task-{index}' for index in range(250)]
     table = model_context(context)['tables'][0]
     assert table['row_count'] == 250 and table['sample_count'] <= 9
     confirmed = build_context('2026-08-18', [replace(original, confirmed_by='工人')])
@@ -238,4 +240,34 @@ def test_task_change_facts_explicitly_name_total_tasks():
         value = next(f['value'] for f in context['facts'] if f['id'] == 'F005')
         assert '任务总数比上一周期下降 81.8%' in value
         if kind == 'workshop':
-            assert value.startswith('待确认 1 项；任务总数')
+            assert value.startswith('待确认 1 项，占全部任务 50.0%；任务总数')
+
+
+@pytest.mark.parametrize(('positive', 'summary', 'valid'), [
+    (False, '坡口长度下降37.5%。', True),
+    (False, '切割时长减少20%。', True),
+    (False, '坡口长度下降38%。', True),
+    (False, '坡口长度增长37.5%。', False),
+    (False, '切割时长增加20%。', False),
+    (False, '坡口长度下降39%。', False),
+    (True, '坡口长度增长25%。', True),
+    (True, '切割时长增加20%。', True),
+    (True, '坡口长度降低25%。', False),
+    (True, '切割时长减少20%。', False),
+])
+def test_structured_leadership_changes_are_validated_with_direction_and_rounding(positive, summary, valid):
+    from app.services.report_analysis.leadership import build_context
+    from app.services.report_analysis.common import normalize_analysis_context
+    from app.services.report_analysis.brief_validation import validate_brief
+    report = analysis_cases()['leadership_month'][1][0]
+    previous = replace(report.monthly_records[0], groove_length_m=Decimal('80'), work_time_seconds=5000)
+    current = replace(report.current_month_total, groove_length_m=Decimal('100' if positive else '50'),
+                      work_time_seconds=6000 if positive else 4000)
+    report = replace(report, current_month_total=current, monthly_records=[previous, current])
+    context = normalize_analysis_context(build_context(report, report.monthly_records))[0]
+    output = dict(headline='本期生产规模变化', summary=summary, key_metric_ids=[], findings=[], actions=[])
+    if valid:
+        assert validate_brief(output, context)['summary'] == summary
+    else:
+        with pytest.raises(ValueError, match='变化方向'):
+            validate_brief(output, context)

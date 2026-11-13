@@ -19,8 +19,14 @@ from app.database.report_snapshots import ReportKey, fingerprint
 from app.services.report_snapshots import ReportData, ReportSnapshotService
 from app.database.mysql import MySqlSession
 from app.database.welding import WeldingRepository, WeldingUnavailable, aggregate_sort_key
+from app.database.metadata import MetadataRepository
 from app.models.domain import to_primitive
 from app.models.welding import ReportType, WeldingQuery, WELD_TYPES
+from app.services.llm_prompts import PROMPT_VERSION
+from app.services.llm_service import LlmService
+from app.services.analysis_execution import analysis_operation
+from app.services.report_analysis_service import AnalysisDataVersionMismatch, AnalysisUnavailableError
+from app.core.request_cancellation import SqlRequestCancelled
 
 
 logger = logging.getLogger(__name__)
@@ -97,19 +103,47 @@ def summary_values(row: dict) -> dict:
 
 
 class WeldingService:
-    def __init__(self, settings: Settings, repository: WeldingRepository, *, snapshots=None, coordination=None) -> None:
+    def __init__(self, settings: Settings, repository: WeldingRepository, *, snapshots=None, coordination=None,
+                 analyses: MetadataRepository | None = None) -> None:
         self.settings = settings
         self.repository = repository
+        self.analysis_metadata = analyses
         self._analyses = OrderedDict()
         self._analysis_lock = Lock()
         self._statistics = QueryCache[Any](limit=32)
         self.snapshot_service = ReportSnapshotService(self.settings, snapshots, coordination, unavailable_errors=(WeldingUnavailable,)) if snapshots else None
         self.report_provider = self
 
-    def cached_analysis(self, version: str):
+    @staticmethod
+    def _analysis_scope(kind: ReportType, query: WeldingQuery) -> str:
+        if kind == 'parts':
+            query = query.model_copy(update={'part_state': query.part_state if query.part_state is not None else query.state, 'state': None})
+        return fingerprint((kind, query.model_dump(mode='json', exclude={'page', 'page_size', 'sort_by', 'descending'})))
+
+    def _analysis_key(self, version: str, kind: ReportType, query: WeldingQuery) -> str:
+        source = self.analysis_metadata.analysis_scope if self.analysis_metadata else (self.settings.device_id, self.settings.source_fingerprint)
+        return fingerprint((source, self._analysis_scope(kind, query),
+                            self.settings.llm_model, PROMPT_VERSION, version))
+
+    def cached_analysis(self, version: str, *, kind: ReportType | None = None, query: WeldingQuery | None = None,
+                        historical: bool = False):
+        key = self._analysis_key(version, kind, query) if kind is not None and query is not None else version
         with self._analysis_lock:
-            value = self._analyses.get(version)
-            return value[1] if value and monotonic() - value[0] < 300 else None
+            value = self._analyses.get(key)
+            if value and monotonic() - value[0] < 300:
+                return deepcopy(value[1])
+        if self.analysis_metadata is None or kind is None or query is None:
+            return None
+        label = f'{query.start} 至 {query.end}'
+        cached = self.analysis_metadata.get_analysis(key, report_type=f'welding_{kind}', report_date=label, data_version=version)
+        if cached and cached.get('status') == 'success' and cached.get('mode') == 'model':
+            return {**cached, 'cached': True}
+        if historical:
+            cached = self.analysis_metadata.get_reusable_analysis(self._analysis_scope(kind, query))
+            if cached:
+                return {**cached, 'cached': True,
+                    'cache_note': '沿用同一焊接报表范围的历史成功分析；分析依据为原生成时的数据，请结合本次报表核对。'}
+        return None
 
     def remember_analysis(self, version: str, result) -> None:
         with self._analysis_lock:
@@ -117,6 +151,44 @@ class WeldingService:
             self._analyses.move_to_end(version)
             while len(self._analyses) > 16:
                 self._analyses.popitem(last=False)
+
+    def analyze_report(self, kind: ReportType, query: WeldingQuery, report: dict, expected_version: str):
+        version = report['data_version']
+        if version != expected_version:
+            raise AnalysisDataVersionMismatch('报表数据已更新，请刷新后重新生成分析')
+        cached = self.cached_analysis(version, kind=kind, query=query)
+        if cached is not None:
+            return cached
+        try:
+            if not self.settings.llm_enabled:
+                raise AnalysisUnavailableError('智能分析模型尚未启用')
+            context = {'report_date': f'{query.start} 至 {query.end}',
+                'facts': [{'label': key, 'value': value} for key, value in report['summary'].items()],
+                'tables': [{'name': '按日汇总', 'rows': report['daily']}, {'name': '设备机器人工位', 'rows': report['equipment']},
+                           {'name': '统计口径和数据质量', 'rows': [report['meta']]}]}
+            with analysis_operation(self.settings, 'welding', context['report_date']):
+                result = LlmService(self.settings, self.analysis_metadata.database if self.analysis_metadata else None).analyze_context('welding', context)
+                if result.status != 'success' or result.mode != 'model':
+                    raise AnalysisUnavailableError('模型未返回成功分析')
+        except SqlRequestCancelled:
+            raise
+        except Exception as exc:
+            cached = self.cached_analysis(version, kind=kind, query=query, historical=True)
+            if cached:
+                return cached
+            logger.warning('welding analysis waiting: line=%s type=%s start=%s end=%s error_type=%s',
+                self.settings.device_id, kind, query.start, query.end, type(exc).__name__)
+            raise AnalysisUnavailableError('正在等待成功的焊接智能分析结果，请稍后重试。') from None
+        result.data_version = version
+        result.generated_at = datetime.now(ZoneInfo(self.settings.weld_db_timezone)).isoformat(timespec='seconds')
+        result.cached = False
+        if self.analysis_metadata is not None:
+            self.analysis_metadata.save_analysis(cache_key=self._analysis_key(version, kind, query), report_type=f'welding_{kind}',
+                report_date=context['report_date'], input_hash=fingerprint(context), data_version=version, status='success', mode='model',
+                model_name=self.settings.llm_model, prompt_version=PROMPT_VERSION, result=to_primitive(result), generated_at=result.generated_at,
+                reuse_key=self._analysis_scope(kind, query))
+        self.remember_analysis(self._analysis_key(version, kind, query), {**to_primitive(result), 'cached': True})
+        return result
 
     def report(self, kind: ReportType, query: WeldingQuery, *, export_limit: int | None = None, dashboard: bool = False, force: bool = False, live: bool = False) -> dict:
         started = monotonic()

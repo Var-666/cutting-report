@@ -50,7 +50,8 @@ def analysis_operation(settings: Settings, report_type: str, report_date: str,
         with operation_deadline(budget):
             ensure_time_remaining()
             yield
-            ensure_time_remaining()
+            if execution.cache != 'historical':
+                ensure_time_remaining()
     except BaseException as exc:
         outcome = type(exc).__name__
         raise

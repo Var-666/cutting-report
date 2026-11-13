@@ -20,12 +20,19 @@ function automationHooks(bindings) {
 }
 
 const flushAutomation = async () => { await new Promise(resolve => setImmediate(resolve)); await Vue.nextTick() }
-async function mountAutomation(t, { confirm = async () => true } = {}) {
-  const calls = { status: 0, schedules: 0, emails: [], actions: [] }
+async function mountAutomation(t, { confirm = async () => true, run, readRun } = {}) {
+  const calls = { status: 0, schedules: 0, emails: [], actions: [], runReads: [] }
+  const timers = new Map()
+  const activated = []
+  const deactivated = []
+  let timerId = 0
   let held = false
   const result = (page, total = 60) => ({ items: total ? [{ delivery_id: `page-${page}` }] : [], total, page, page_size: 20 })
   const bindings = {
     ...Vue, useConfirm: () => confirm, useUnsavedChanges() {}, deviceSelection: Vue.reactive({ id: 'Cutter02', items: [{ id: 'Cutter02' }] }),
+    setTimeout: callback => { timers.set(++timerId, callback); return timerId }, clearTimeout: id => timers.delete(id),
+    onActivated: callback => { activated.push(callback); Vue.onActivated(callback) },
+    onDeactivated: callback => { deactivated.push(callback); Vue.onDeactivated(callback) },
     getAutomationConfiguration: async () => ({}),
     getAutomationStatus: async () => { calls.status++; return { revision: calls.status } },
     listAutomationSchedules: async () => { calls.schedules++; return { items: [{ schedule_id: 'saved', name: '每日车间报表' }, { schedule_id: 'monthly', name: '月报 Summary' }] } },
@@ -34,12 +41,14 @@ async function mountAutomation(t, { confirm = async () => true } = {}) {
       return new Promise((resolve, reject) => calls.emails.push({ ...query, signal: options.signal, resolve: (total = 60) => resolve(result(query.page, total)), reject }))
     },
     saveAutomationSchedule: async () => calls.actions.push('save'), retryEmailDelivery: async () => calls.actions.push('retry'),
-    deleteAutomationSchedule: async () => calls.actions.push('delete'), runAutomationSchedule: async () => { calls.actions.push('run'); return { status: 'queued' } },
+    deleteAutomationSchedule: async () => calls.actions.push('delete'),
+    runAutomationSchedule: async id => { calls.actions.push('run'); return run ? run(id) : { schedule_id: id, run_id: `run-${id}`, status: 'queued' } },
+    getAutomationRun: async (id, options) => { calls.runReads.push({ id, signal: options.signal }); return readRun ? readRun(id, options) : { run_id: id, status: 'sent' } },
     saveAutomationConfiguration: async () => { calls.actions.push('config'); return { message: 'saved' } },
   }
   Object.assign(bindings, automationHooks(bindings))
   const code = descriptor('AutomationView').scriptSetup.content.replace(/^import .*$/gm, '')
-  const setup = scriptFunction(...Object.keys(bindings), `${code}; return { loadDeliveries, changeDeliveryPage, deliveryPage, deliveries, deliveryTotal, deliveryLoading, deliverySearch, appliedDeliverySearch, searchDeliveries, clearDeliverySearch, scheduleSearch, appliedScheduleSearch, visibleSchedules, searchSchedules, clearScheduleSearch, pageCount, error, loadAll, retry, submit, submitConfiguration, remove, runNow, deliveryResolved, openDelivery, selectedDelivery, resolutionDirty, form }`)
+  const setup = scriptFunction(...Object.keys(bindings), `${code}; return { loadDeliveries, changeDeliveryPage, deliveryPage, deliveries, deliveryTotal, deliveryLoading, deliverySearch, appliedDeliverySearch, searchDeliveries, clearDeliverySearch, scheduleSearch, appliedScheduleSearch, visibleSchedules, searchSchedules, clearScheduleSearch, pageCount, error, loadAll, retry, submit, submitConfiguration, remove, runNow, executions, runningScheduleIds, deliveryResolved, openDelivery, selectedDelivery, resolutionDirty, form, deliveryLabels }`)
   let state
   const renderer = Vue.createRenderer({ createComment: () => ({}), createText: () => ({}), createElement: () => ({}), insert() {}, remove() {}, setText() {}, setElementText() {}, parentNode: () => null, nextSibling: () => null, patchProp() {} })
   const app = renderer.createApp({ setup() { state = setup(...Object.values(bindings)); return () => null } })
@@ -48,8 +57,117 @@ async function mountAutomation(t, { confirm = async () => true } = {}) {
   const unmount = () => { if (mounted) { mounted = false; app.unmount() } }
   t.after(unmount)
   await flushAutomation()
-  return { state, calls, unmount, hold() { held = true } }
+  return { state, calls, unmount, timers, hold() { held = true },
+    pause: () => deactivated.forEach(callback => callback()), resume: () => activated.forEach(callback => callback()),
+    poll: async () => { const callbacks = [...timers.values()]; timers.clear(); callbacks.forEach(callback => callback()); await flushAutomation() },
+  }
 }
+
+test('run now immediately shows submission, blocks duplicate clicks and follows this run until sent', async t => {
+  let submit
+  let stage = 'generating'
+  const { state, calls, poll, timers } = await mountAutomation(t, {
+    run: () => new Promise(resolve => { submit = resolve }),
+    readRun: async id => ({ run_id: id, status: stage }),
+  })
+  const item = { schedule_id: 'saved', name: '日报' }
+  const pending = state.runNow(item)
+  assert.equal(state.executions.saved.status, 'submitting')
+  assert.deepEqual(state.runningScheduleIds.value, ['saved'])
+  await state.runNow(item)
+  assert.deepEqual(calls.actions, ['run'])
+  submit({ run_id: 'exact-run', status: 'queued' })
+  await pending
+  for (const status of ['generating', 'email_pending', 'sending', 'retry_wait', 'sent']) {
+    stage = status
+    await poll()
+    assert.equal(state.executions.saved.status, status)
+    assert.equal(calls.runReads.at(-1).id, 'exact-run')
+  }
+  assert.deepEqual(state.runningScheduleIds.value, [])
+  assert.equal(timers.size, 0)
+})
+
+test('run progress keeps concurrent schedules isolated and stops on failure or unknown result', async t => {
+  const { state, poll, timers } = await mountAutomation(t, {
+    readRun: async id => ({ status: id === 'run-first' ? 'failed' : 'unknown', last_error: `${id} error`, schedule_id: null }),
+  })
+  await state.runNow({ schedule_id: 'first', name: '日报' })
+  await state.runNow({ schedule_id: 'second', name: '月报' })
+  assert.deepEqual(state.runningScheduleIds.value, ['first', 'second'])
+  await poll()
+  assert.equal(state.executions.first.status, 'failed')
+  assert.equal(state.executions.second.status, 'unknown')
+  assert.equal(state.executions.first.last_error, 'run-first error')
+  assert.equal(state.executions.second.schedule_id, 'second')
+  assert.deepEqual(state.runningScheduleIds.value, [])
+  assert.equal(timers.size, 0)
+})
+
+test('progress read failures keep the run active and recover without resubmitting', async t => {
+  let fail = true
+  const { state, calls, poll } = await mountAutomation(t, {
+    readRun: async () => { if (fail) throw new Error('offline'); return { status: 'sent' } },
+  })
+  await state.runNow({ schedule_id: 'saved', name: '日报' })
+  await poll()
+  assert.match(state.executions.saved.monitoring_error, /offline/)
+  assert.deepEqual(state.runningScheduleIds.value, ['saved'])
+  fail = false
+  await poll()
+  assert.equal(state.executions.saved.status, 'sent')
+  assert.equal(state.executions.saved.monitoring_error, '')
+  assert.deepEqual(calls.actions, ['run'])
+})
+
+test('submission errors are visible locally and do not start polling or retry the POST', async t => {
+  const { state, calls, timers } = await mountAutomation(t, { run: async () => { throw new Error('unavailable') } })
+  await state.runNow({ schedule_id: 'saved', name: '日报' })
+  assert.equal(state.executions.saved.status, 'submission_failed')
+  assert.match(state.executions.saved.last_error, /提交未确认.*unavailable/)
+  assert.deepEqual(state.runningScheduleIds.value, [])
+  assert.equal(timers.size, 0)
+  assert.deepEqual(calls.actions, ['run'])
+})
+
+test('leaving cancels progress reads, returning resumes and unmount ignores late responses', async t => {
+  const reads = []
+  const { state, calls, poll, pause, resume, timers, unmount } = await mountAutomation(t, {
+    readRun: (id, options) => new Promise(resolve => reads.push({ resolve, signal: options.signal })),
+  })
+  await state.runNow({ schedule_id: 'saved', name: '日报' })
+  await poll()
+  pause()
+  assert.equal(reads[0].signal.aborted, true)
+  assert.equal(timers.size, 0)
+  resume()
+  await poll()
+  reads[0].resolve({ status: 'failed' })
+  await flushAutomation()
+  assert.equal(state.executions.saved.status, 'queued')
+  unmount()
+  assert.equal(reads[1].signal.aborted, true)
+  reads[1].resolve({ status: 'sent' })
+  await flushAutomation()
+  assert.equal(state.executions.saved.status, 'queued')
+  assert.equal(timers.size, 0)
+  assert.equal(calls.runReads.length, 2)
+})
+
+test('execution progress renders stages, terminal errors and safe text without estimated percentages', async () => {
+  for (const [status, label] of [['submitting', '正在提交任务'], ['queued', '等待后台准备报表'],
+    ['generating', '正在生成报表'], ['sending', '正在发送邮件'], ['sent', '邮件已发送'],
+    ['failed', '执行失败'], ['unknown', '发送结果待核对']]) {
+    const html = await renderComponent('components/automation/AutomationRunProgress', {
+      execution: { schedule_name: '<script>日报</script>', schedule_id: 'saved', status, last_error: '错误说明' },
+    })
+    assert.ok(html.includes(label), status)
+    assert.ok(html.includes('提交任务') && html.includes('生成报表') && html.includes('发送邮件'))
+    assert.ok(html.includes('&lt;script&gt;日报&lt;/script&gt;'))
+    assert.ok(html.includes('错误说明'))
+    assert.doesNotMatch(html, /\d+(?:\.\d+)?%<\//)
+  }
+})
 
 test('automation search applies task names and keeps delivery search across paging and refresh', async t => {
   const { state, calls } = await mountAutomation(t)
@@ -106,6 +224,19 @@ test('automation recipients appear once and keep accepted recipients after parti
   assert.ok(html.includes('服务器已接受') && html.includes('服务器拒收 450'))
   assert.ok(html.includes('title="自定义主题"'))
   assert.doesNotMatch(html, /<small[^>]*>自定义主题/)
+})
+
+test('legacy mail waiting for analysis remains visible without a resend action', async t => {
+  const { state } = await mountAutomation(t)
+  const html = await renderComponent('components/automation/AutomationDeliveryTable', {
+    deliveries: [{ delivery_id: 'waiting-analysis', schedule_name: '日报', subject: '日报',
+      recipients: ['manager@example.com'], recipient_results: {}, status: 'analysis_wait',
+      last_error: '旧报告缺少成功分析，等待重新生成' }],
+    deliveryTotal: 1, deliveryPage: 1, deliveryLoading: false, paginate: true, deliveryLabels: state.deliveryLabels,
+  })
+  assert.ok(html.includes('等待分析生成') && html.includes('等待重新生成'))
+  assert.ok(html.includes('核对记录'))
+  assert.ok(!html.includes('重新发送'))
 })
 
 test('email paging: latest request wins and page is committed together with records', async t => {

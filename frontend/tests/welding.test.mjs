@@ -12,7 +12,7 @@ import { createMemoryHistory, createRouter, RouterView, useRoute, useRouter } fr
 import { parse, compileScript, compileTemplate } from '@vue/compiler-sfc'
 import { lineHome, productionGroups, selectedLineType } from '../src/utils/productionLines.ts'
 import { adminMenus } from '../src/router/menus.ts'
-import { analyzeWelding, downloadWelding, getWeldingPart, getWeldingReport, weldingQuery } from '../src/api/welding.ts'
+import { analyzeWelding, getLatestWeldingAnalysis, downloadWelding, getWeldingPart, getWeldingReport, weldingQuery } from '../src/api/welding.ts'
 import { weldingColumns, weldingVisibleColumns, weldingColumnLayout, weldingDisplay, weldingKpis, weldingTitles, weldingDescriptions } from '../src/utils/weldingReport.ts'
 import { weldingRoutes } from '../src/router/weldingRoutes.ts'
 import { setDeviceCatalog, selectDevice } from '../src/api/deviceContext.ts'
@@ -124,7 +124,7 @@ function view(readReport, options = {}) {
   const bindings = {
     selectedLineType, computed, reactive, ref, watch: (source, callback, config) => { if (options.watchers) { options.watchers.push({ source, callback }); if (config?.immediate) callback(source()) } }, onBeforeUnmount: fn => cleanup.push(fn),
     defineProps: () => ({ kind: options.kind || 'jobs' }), useRoute: () => options.route || ({ query: {} }), useRouter: () => options.router || ({ push() {}, replace() {} }), queryDateRange, sameRouteQuery, parseWeldingRouteQuery, weldingRouteQuery,
-    reportToday: () => '2026-10-26', getWeldingReport: readReport,
+    reportToday: () => '2026-10-26', getWeldingReport: readReport, getLatestWeldingAnalysis: async () => null,
     deviceSelection: { id: 'welding', items: [{ id: 'welding', type: 'welding', enabled: options.enabled ?? true }] }, weldingTitles, weldingKpis, weldingColumns, weldingColumnLayout, weldingDisplay, weldingQuery,
   }
   return { ...scriptFunction(...Object.keys(bindings), `${script}; return { read, submit, changePage, changePageSize, report, loading, error, activeQuery, draft, detailJob, goToPart, actionError, filtersDirty, appliedQueryLabel };`)(...Object.values(bindings)), cleanup }
@@ -345,8 +345,8 @@ test('welding route parsing validates all boundaries, preserves numeric zero and
 })
 
 const flushWelding = async () => { await settle(); await Vue.nextTick() }
-async function mountWelding(t, kind = 'jobs', query = {}) {
-  const calls = [], downloads = [], analyses = []
+async function mountWelding(t, kind = 'jobs', query = {}, analysisOptions = {}) {
+  const calls = [], downloads = [], analyses = [], cacheReads = []
   let held = false, state
   const selection = Vue.reactive({ id: 'welding', items: [{ id: 'welding', type: 'welding' }, { id: 'line-b', type: 'welding' }, { id: 'Cutter01', type: 'cutting' }] })
   let router
@@ -364,11 +364,19 @@ async function mountWelding(t, kind = 'jobs', query = {}) {
       return new Promise((resolve, reject) => { call.resolve = () => resolve(response); call.reject = reject })
     },
     downloadWelding: async (url, filename) => downloads.push({ url: new URL(url, 'http://test'), filename }),
-    analyzeWelding: async (kind, query, version) => { analyses.push({ kind, query: { ...query }, version }); return { overview: 'ok' } },
+    getLatestWeldingAnalysis: async (kind, query, version, signal) => {
+      cacheReads.push({ kind, query: { ...query }, version, line: selection.id, signal })
+      return analysisOptions.read ? analysisOptions.read(kind, query, version, signal) : null
+    },
+    analyzeWelding: async (kind, query, version, signal) => {
+      analyses.push({ kind, query: { ...query }, version })
+      return analysisOptions.analyze ? analysisOptions.analyze(kind, query, version, signal)
+        : { overview: 'ok', status: 'success', mode: 'model', data_version: version }
+    },
     getWeldingPart: async (id, page) => ({ part: { id }, seams: { page, items: [] } }),
   }
   const code = parse(source('views/WeldingReportView.vue')).descriptor.scriptSetup.content.replace(/^import .*$/gm, '')
-  const setup = scriptFunction(...Object.keys(bindings), `${code}; return { draft, activeQuery, report, submit, changePage, changePageSize, loading, error, exportReport, runAnalysis, analysis, openDetail, details, detailJob, goToPart }`)
+  const setup = scriptFunction(...Object.keys(bindings), `${code}; return { draft, activeQuery, report, submit, changePage, changePageSize, loading, error, exportReport, runAnalysis, analysis, analysisError, openDetail, details, detailJob, goToPart }`)
   const page = { setup() { state = setup(...Object.values(bindings)); return () => null } }
   router = createRouter({ history: createMemoryHistory(), routes: ['dashboard', 'daily', 'parts', 'jobs', 'equipment'].map(kind => ({ path: kind === 'dashboard' ? '/admin/welding/home' : `/admin/welding/reports/${kind}`, name: `welding-${kind}`, meta: { kind }, component: page })) })
   await router.push({ name: `welding-${kind}`, query })
@@ -379,8 +387,59 @@ async function mountWelding(t, kind = 'jobs', query = {}) {
   const unmount = () => { if (mounted) { mounted = false; app.unmount() } }
   t.after(unmount)
   await flushWelding()
-  return { state, calls, router, selection, downloads, analyses, unmount, hold() { held = true } }
+  return { state, calls, router, selection, downloads, analyses, cacheReads, unmount, hold() { held = true } }
 }
+
+test('welding reopens persistent success without generating analysis and retains it after refresh failure', async t => {
+  const original = { status: 'success', mode: 'model', overview: '历史焊接结论', generated_at: '2026-10-26T08:00:00+08:00',
+    data_version: 'old-version', cached: true, cache_note: '沿用历史成功分析' }
+  const { state, cacheReads, analyses } = await mountWelding(t, 'jobs', {}, {
+    read: async () => original, analyze: async () => { throw new Error('model unavailable') },
+  })
+  assert.equal(state.analysis.value.overview, original.overview)
+  assert.equal(cacheReads.length, 1)
+  assert.equal(analyses.length, 0, 'a page read must not generate model calls')
+  await state.runAnalysis()
+  assert.equal(state.analysis.value.generated_at, original.generated_at)
+  assert.equal(state.analysis.value.data_version, original.data_version)
+  assert.equal(state.analysisError.value, 'model unavailable')
+})
+
+test('same-scope report changes keep old analysis while cache refreshes and changed filters reject late cache', async t => {
+  const pending = []
+  let first = true
+  const original = { overview: '原焊接结论', status: 'success', mode: 'model', data_version: 'version-1',
+    generated_at: '2026-10-26T08:00:00+08:00', cached: true }
+  const { state, calls } = await mountWelding(t, 'jobs', {}, { read: () => {
+    if (first) { first = false; return original }
+    return new Promise(resolve => pending.push(resolve))
+  } })
+  await state.submit()
+  assert.equal(calls.length, 2)
+  assert.equal(state.analysis.value.overview, original.overview)
+  assert.ok(state.analysis.value.cache_note.includes('数据已更新'))
+  state.draft.robot_no = '2'
+  await state.submit()
+  assert.equal(state.analysis.value, null)
+  pending[0]({ ...original, overview: 'late old filter' })
+  await flushWelding()
+  assert.equal(state.analysis.value, null)
+  pending[1](null)
+})
+
+test('switching welding lines or unmounting rejects late model and cache results', async t => {
+  let finishModel
+  const { state, selection, unmount } = await mountWelding(t, 'jobs', {}, {
+    analyze: () => new Promise(resolve => { finishModel = resolve }),
+  })
+  const generating = state.runAnalysis()
+  selection.id = 'line-b'
+  await flushWelding()
+  finishModel({ overview: 'late previous line', data_version: 'version-1' })
+  await generating
+  assert.notEqual(state.analysis.value?.overview, 'late previous line')
+  unmount()
+})
 
 for (const kind of ['dashboard', 'daily', 'parts', 'jobs', 'equipment']) {
   test(`welding ${kind}: copied links restore supported filters and pagination with exactly one request`, async t => {
@@ -642,12 +701,31 @@ test('source, authentication and network failures remain visible without replay'
   }
 })
 
+test('latest welding analysis reads cache with the applied scope and cancellation without a model request', async t => {
+  const current = new AbortController()
+  const fetchMock = t.mock.method(globalThis, 'fetch', async (url, options) => {
+    const parsed = new URL(url, 'http://localhost')
+    assert.equal(parsed.pathname, '/api/v1/welding/analysis/latest')
+    assert.equal(options.method || 'GET', 'GET')
+    assert.equal(options.headers['X-Production-Line'], 'welding')
+    assert.equal(options.signal, current.signal)
+    assert.equal(parsed.searchParams.get('device_no'), '0')
+    assert.equal(parsed.searchParams.get('report_type'), 'jobs')
+    assert.equal(parsed.searchParams.get('data_version'), 'a'.repeat(64))
+    assert.ok(!parsed.searchParams.has('serial_number'))
+    return new Response(JSON.stringify({ success: true, data: null }), { headers: { 'Content-Type': 'application/json' } })
+  })
+  assert.equal(await getLatestWeldingAnalysis('jobs', { ...period, device_no: 0, serial_number: '' }, 'a'.repeat(64), current.signal), null)
+  assert.equal(fetchMock.mock.callCount(), 1)
+})
+
 test('reports, details, downloads and analysis never replay a capacity rejection', async t => {
   for (const read of [
     ...['dashboard', 'daily', 'parts', 'jobs', 'equipment'].map(kind => () => getWeldingReport(kind, period)),
     () => getWeldingPart(1, 1),
     () => downloadWelding('/api/v1/welding/export', 'report.pdf'),
     () => analyzeWelding('jobs', period, 'version'),
+    () => getLatestWeldingAnalysis('jobs', period, 'version'),
   ]) {
     const fetchMock = t.mock.method(globalThis, 'fetch', async () => busyResponse())
     await assert.rejects(read(), /请求繁忙/)
@@ -844,7 +922,7 @@ function mountWeldingDisplay(t, readReport) {
   const stub = { setup: (_props, { attrs, slots }) => () => h('div', [attrs.title, attrs.message, slots.default?.()]) }
   const bindings = {
     ...Vue, useRoute: () => ({ query: {} }), useRouter: () => ({ push() {}, replace() {} }),
-    reportToday: () => period.start, getWeldingReport: readReport, selectedLineType, queryDateRange, sameRouteQuery,
+    reportToday: () => period.start, getWeldingReport: readReport, getLatestWeldingAnalysis: async () => null, weldingQuery, selectedLineType, queryDateRange, sameRouteQuery,
     parseWeldingRouteQuery, weldingRouteQuery, weldingTitles, weldingDescriptions,
     deviceSelection: reactive({ id: 'welding', items: [{ id: 'welding', type: 'welding', enabled: true }] }),
     NModal: stub, NTag: stub, ReportPeriodPicker: stub, AppIcon: stub, HomeSectionHeader: stub,
@@ -1189,6 +1267,7 @@ test('independent welding home waits for its catalog, keeps successful data on f
   const bindings = { ...Vue, deviceSelection: selection, selectedLineType, parseWeldingRouteQuery,
     useRoute: () => route, useRouter: () => ({ push() {} }), reportToday: () => '2026-10-26',
     useReportChartTheme: () => ({ colors: ref({}), vars: ref({}) }), onBeforeUnmount: fn => cleanup.push(fn),
+    getLatestWeldingAnalysis: async () => null,
     getWeldingReport: (kind, query, signal) => new Promise((resolve, reject) => calls.push({ kind, query, signal, resolve, reject })),
   }
   const script = parse(source('views/WeldingHomeView.vue')).descriptor.scriptSetup.content.replace(/^import .*$/gm, '')

@@ -139,6 +139,19 @@ class AutomationService:
         # Worker reconciliation prepares the report; HTTP only reserves durable work.
         return self.repository.get_run(run["run_id"])
 
+    def run_progress(self, run_id: str) -> dict | None:
+        run = self.repository.get_run(run_id)
+        if run is None or not run["report_id"]:
+            return run
+        delivery = self.repository.delivery_for_report(run["report_id"])
+        if delivery is not None:
+            return {**run, "status": "email_pending" if delivery["status"] == "pending" else delivery["status"],
+                    "last_error": delivery["last_error"]}
+        job = self.metadata.get_job(run['report_id'])
+        if job and job['status'] == 'pending' and job.get('ai_status') == 'waiting':
+            return {**run, 'status': 'analysis_wait', 'last_error': None}
+        return run
+
     def _create_report_job(self, run: dict, now: datetime) -> bool:
         try:
             lines = self.database_runtime.snapshot().lines if self.database_runtime else self.line_services
@@ -254,6 +267,9 @@ class AutomationService:
         runtime_settings, _ = self.runtime.snapshot()
         send_started = False
         try:
+            if delivery.get('ai_status') != 'success':
+                self.repository.rebuild_unanalyzed_delivery(delivery, now=now.isoformat(timespec='seconds'))
+                return True
             root = self.settings.reports_dir.resolve()
             path = (root / delivery["relative_path"]).resolve()
             if not path.is_relative_to(root) or not path.is_file():

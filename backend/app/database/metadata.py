@@ -133,7 +133,8 @@ class MetadataRepository(PostgresRepository):
             row = connection.execute(
                 """
                 SELECT * FROM report_jobs
-                WHERE status = 'pending' AND (%s::text IS NULL OR device_id = %s)
+                WHERE status = 'pending' AND analysis_next_attempt <= EXTRACT(EPOCH FROM clock_timestamp())
+                  AND (%s::text IS NULL OR device_id = %s)
                 ORDER BY created_at ASC
                 LIMIT 1 FOR UPDATE SKIP LOCKED
                 """, (self.device_id, self.device_id),
@@ -151,6 +152,20 @@ class MetadataRepository(PostgresRepository):
             if updated.rowcount != 1:
                 return None
             return {**dict(row), "execution_owner": execution_owner()}
+
+    def defer_analysis(self, report_id: str, reason: str) -> None:
+        with self.connect() as connection:
+            updated = connection.execute('''UPDATE report_jobs SET status='pending',ai_status='waiting',
+                stage_message='等待智能分析完成，系统将自动重试',
+                analysis_next_attempt=EXTRACT(EPOCH FROM clock_timestamp()) + LEAST(3600, 60 * POWER(2, LEAST(analysis_attempts, 6))),
+                analysis_attempts=analysis_attempts+1, execution_owner=NULL, started_at=NULL,
+                error_code='ANALYSIS_WAITING',error_message=%s
+                WHERE report_id=%s AND (%s::text IS NULL OR device_id=%s)
+                  AND status IN ('querying','calculating','analyzing','rendering')
+                  AND (%s::text IS NULL OR execution_owner=%s)''',
+                (reason[:500], report_id, self.device_id, self.device_id, execution_owner(), execution_owner()))
+            if updated.rowcount != 1:
+                raise ExecutionLeaseLost('报表任务已不属于当前 Consumer，拒绝延后')
 
     def update_status(
         self,
@@ -269,19 +284,34 @@ class MetadataRepository(PostgresRepository):
 
     def get_latest_analysis(
         self, *, report_type: str, report_date: str, model_name: str, prompt_version: str,
+        historical: bool = False, legacy_only: bool = False,
     ) -> dict[str, Any] | None:
         with self.connect() as connection:
             row = connection.execute(
                 """
-                SELECT result_json FROM report_analyses
+                SELECT result_json,model_name,prompt_version FROM report_analyses
                 WHERE display_scope = %s AND report_type = %s AND report_date = %s
-                  AND model_name = %s AND prompt_version = %s AND mode = 'model'
+                  AND (%s OR (model_name = %s AND prompt_version = %s)) AND mode = 'model' AND status='success'
+                  AND (NOT %s OR reuse_key IS NULL)
                 ORDER BY generated_at DESC, insertion_order DESC LIMIT 1
                 """,
-                (self.analysis_scope, report_type, report_date, model_name, prompt_version),
+                (self.analysis_scope, report_type, report_date, historical, model_name, prompt_version, legacy_only),
             ).fetchone()
             value = json.loads(row["result_json"]) if row else None
             return value if isinstance(value, dict) else None
+
+    def get_reusable_analysis(self, reuse_key: str) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute('''SELECT result_json,model_name FROM report_analyses
+                WHERE reuse_scope=%s AND reuse_key=%s AND status='success' AND mode='model'
+                ORDER BY generated_at DESC,insertion_order DESC LIMIT 1''', (self.analysis_scope, reuse_key)).fetchone()
+            if row is None:
+                return None
+            value = json.loads(row['result_json'])
+            if not isinstance(value, dict) or value.get('status') != 'success' or value.get('mode') != 'model':
+                return None
+            value['cache_note'] = '本次更新尚未完成，沿用历史成功分析；分析依据为原生成时的数据，请结合本次报表核对。'
+            return value
 
     def get_analysis_source_version(
         self,
@@ -341,14 +371,15 @@ class MetadataRepository(PostgresRepository):
         result: dict[str, Any],
         generated_at: str,
         publish_latest: bool = False,
+        reuse_key: str | None = None,
     ) -> None:
         with self.connect() as connection:
             connection.execute(
                 """
                 INSERT INTO report_analyses (
                     cache_key, report_type, report_date, input_hash, data_version, status, mode,
-                    model_name, prompt_version, result_json, generated_at, display_scope
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    model_name, prompt_version, result_json, generated_at, display_scope, reuse_scope, reuse_key
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT(cache_key) DO UPDATE SET
                     input_hash = excluded.input_hash,
                     data_version = excluded.data_version,
@@ -358,7 +389,9 @@ class MetadataRepository(PostgresRepository):
                     prompt_version = excluded.prompt_version,
                     result_json = excluded.result_json,
                     generated_at = excluded.generated_at,
-                    display_scope = COALESCE(excluded.display_scope, report_analyses.display_scope)
+                    display_scope = COALESCE(excluded.display_scope, report_analyses.display_scope),
+                    reuse_scope=COALESCE(excluded.reuse_scope, report_analyses.reuse_scope),
+                    reuse_key=COALESCE(excluded.reuse_key, report_analyses.reuse_key)
                 WHERE excluded.generated_at >= report_analyses.generated_at
                 """,
                 (
@@ -374,6 +407,8 @@ class MetadataRepository(PostgresRepository):
                     json.dumps(result, ensure_ascii=False),
                     generated_at,
                     self.analysis_scope if publish_latest else None,
+                    self.analysis_scope if reuse_key else None,
+                    reuse_key,
                 ),
             )
 

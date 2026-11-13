@@ -81,8 +81,10 @@ def test_finding_evidence_and_business_links_are_bound_by_server():
     result = validate_brief(output, context)
     assert result['findings'][0]['references'][0]['id'] == 'real-task'
     output['findings'][0]['evidence_ids'] = ['F001']
-    with pytest.raises(ValueError, match='事实引用'):
+    with pytest.raises(ValueError, match='事实引用') as caught:
         validate_brief(output, context)
+    for identifier in ('C_confirmation', 'F001', 'F004', 'F005'):
+        assert identifier in str(caught.value)
     output['findings'][0]['evidence_ids'] = ['F999']
     with pytest.raises(ValueError, match='事实引用'):
         validate_brief(output, context)
@@ -216,10 +218,17 @@ def test_brief_accepts_minutes_and_decimal_hours_from_authoritative_seconds(dura
     ([7160], '该任务耗时1小时59分钟20秒。'),
     ([7160], '该任务耗时1 小时 59 分 20 秒。'),
     ([7160], '该任务耗时约1小时59分钟。'),
+    ([7160], '该任务耗时1小时59分钟。'),
     ([7160], '该任务耗时119分钟20秒。'),
     ([5400], '该任务耗时1小时30分钟。'),
+    ([3600, 3560], '任务耗时约60分钟。另一任务耗时59分钟。'),
+    ([3600, 3560], '任务耗时约60分钟，另一个任务耗时59分钟。'),
+    ([3655], '该任务耗时1小时。'),
+    ([3655], '该任务耗时61分钟。'),
+    ([3655], '该任务耗时1.02小时。'),
+    ([3630], '该任务耗时61分钟。'),
 ])
-def test_brief_accepts_compound_durations_and_shared_approximation(duration_context, seconds, summary):
+def test_brief_accepts_compound_durations_and_rounded_units(duration_context, seconds, summary):
     from app.services.report_analysis.brief_validation import validate_brief
     duration_context['facts'] = []
     duration_context['tables'] = [dict(name='时长汇总', rows=[dict(work_time=value) for value in seconds])]
@@ -227,17 +236,134 @@ def test_brief_accepts_compound_durations_and_shared_approximation(duration_cont
 
 
 @pytest.mark.parametrize('summary', [
-    '任务耗时1小时59分钟。',
     '任务耗时约1小时58分钟。',
     '任务耗时约1小时59分钟50秒。',
     '任务耗时约60分钟和58分钟。',
-    '任务耗时约60分钟。另一任务耗时59分钟。',
-    '任务耗时约60分钟，另一个任务耗时59分钟。',
     '任务耗时约60分钟，另有2项待确认。',
 ])
-def test_brief_keeps_duration_precision_and_approximation_scope(duration_context, summary):
+def test_brief_keeps_duration_precision_and_business_counts(duration_context, summary):
     from app.services.report_analysis.brief_validation import validate_brief
     duration_context['facts'] = []
     duration_context['tables'] = [dict(name='时长汇总', rows=[dict(work_time=value) for value in [3600, 3560, 7160]])]
     with pytest.raises(ValueError, match='时长|数量'):
         validate_brief(draft() | {'summary': summary}, duration_context)
+
+
+@pytest.mark.parametrize('summary', ['该任务耗时60分钟。', '该任务耗时1.01小时。', '该任务耗时01:00:00。'])
+def test_brief_rejects_duration_outside_display_precision(summary):
+    from app.services.report_analysis.brief_validation import validate_brief
+    context = build_context('2026-11-10', [])
+    context['facts'] = []
+    context['tables'] = [dict(name='时长汇总', rows=[dict(work_time=3655)])]
+    with pytest.raises(ValueError, match='时长'):
+        validate_brief(draft() | {'summary': summary}, context)
+
+
+@pytest.mark.parametrize('summary', ['切割长度9,714米。', '切割长度9,714.2米。', '任务数上升12%。',
+                                      '任务数上升12.3%。', '任务数变化约12%。', '气耗12.3Nm³。', '电耗12kWh。'])
+def test_brief_accepts_metric_rounding_at_display_precision(duration_context, summary):
+    from app.services.report_analysis.brief_validation import validate_brief
+    duration_context['facts'].extend([
+        dict(id='F098', label='长度', value='9,714.2 米', source='任务长度合计'),
+        dict(id='F099', label='任务变化', value='上升 12.34%', source='上一可比周期'),
+        dict(id='F096', label='气耗', value='12.34 Nm³', source='有记录任务'),
+        dict(id='F097', label='电耗', value='12.34 kWh', source='有记录任务'),
+    ])
+    assert validate_brief(draft() | {'summary': summary}, duration_context)['summary'] == summary
+
+
+@pytest.mark.parametrize('summary', ['切割长度9,715米。', '切割长度9,714.3米。', '任务数下降12%。',
+                                      '任务数上升13%。', '覆盖率13%。', '切割长度12米。', '切割长度2项。'])
+def test_brief_rejects_wrong_rounding_direction_units_and_counts(duration_context, summary):
+    from app.services.report_analysis.brief_validation import validate_brief
+    duration_context['facts'].extend([
+        dict(id='F098', label='长度', value='9,714.2 米', source='任务长度合计'),
+        dict(id='F099', label='任务变化', value='上升 12.34%', source='上一可比周期'),
+    ])
+    with pytest.raises(ValueError, match='数量|变化方向'):
+        validate_brief(draft() | {'summary': summary}, duration_context)
+
+
+def test_pending_share_uses_all_tasks_and_supports_rounded_percentage():
+    from app.services.report_analysis.brief_validation import validate_brief
+    from app.services.report_analysis.common import normalize_analysis_context
+    from app.models.domain import WorkshopRecord
+    records = [WorkshopRecord(str(index), 'P', None, None, None, None, None, None,
+                              confirmed_by='工人' if index else None) for index in range(3)]
+    context = normalize_analysis_context(build_context('2026-11-10', records))[0]
+    pending = next(fact for fact in context['facts'] if fact['id'] == 'F005')
+    assert '待确认 1 项，占全部任务 33.3%' in pending['value']
+    for summary in ['待确认任务占比33.3%。', '待确认任务约占33%。']:
+        assert validate_brief(draft() | {'summary': summary}, context)
+    with pytest.raises(ValueError, match='数量'):
+        validate_brief(draft() | {'summary': '待确认任务占比34%。'}, context)
+    empty = build_context('2026-11-10', [])
+    assert '占全部任务' not in next(fact for fact in empty['facts'] if fact['id'] == 'F005')['value']
+    with pytest.raises(ValueError, match='数量'):
+        validate_brief(draft() | {'summary': '待确认任务占比33%。'}, empty)
+
+
+@pytest.mark.parametrize('summary', ['任务数上升约5%。', '任务数增长 5 %。', '任务数增加5％。',
+                                      '任务数增长了大约5%。', '任务数上升-5%。'])
+def test_change_direction_cannot_be_bypassed_by_natural_percent_format(summary):
+    from app.services.report_analysis.brief_validation import validate_brief
+    context = build_context('2026-11-09', [])
+    context['facts'].append(dict(id='F099', label='任务变化', value='下降 5.0%', source='上一可比周期'))
+    with pytest.raises(ValueError, match='变化方向'):
+        validate_brief(draft() | {'summary': summary}, context)
+
+
+@pytest.mark.parametrize('summary', ['任务数下降约5%。', '任务数减少 5 %。', '任务数降低5％。', '任务数减少了大约5%。'])
+def test_equivalent_percent_formats_keep_the_same_direction(summary):
+    from app.services.report_analysis.brief_validation import validate_brief
+    context = build_context('2026-11-09', [])
+    context['facts'].append(dict(id='F099', label='任务变化', value='下降 5.0%', source='上一可比周期'))
+    assert validate_brief(draft() | {'summary': summary}, context)['summary'] == summary
+
+
+def test_reference_error_details_are_bounded_and_escape_untrusted_identifiers():
+    from app.models.domain import WorkshopRecord
+    from app.services.report_analysis.brief_validation import validate_brief
+    context = build_context('2026-08-18', [WorkshopRecord('task', 'P', None, None, None, None, None, None)])
+    output = draft() | {'findings': [dict(candidate_id='C_confirmation', title='确认信息待核对', detail='核对确认记录。',
+        evidence_ids=['F999\n' + 'X' * 1000] * 100)]}
+    with pytest.raises(ValueError, match='事实引用') as caught:
+        validate_brief(output, context)
+    assert len(str(caught.value)) < 600
+    assert '\n' not in str(caught.value)
+    assert 'F999\\n' in str(caught.value)
+
+
+def test_schema_error_reports_fields_without_logging_model_content():
+    from app.services.report_analysis.brief_validation import validate_brief
+    output = draft() | {'findings': 'sensitive-model-content-must-not-be-logged', 'unexpected': 'X' * 10000}
+    with pytest.raises(ValueError, match='结构校验失败') as caught:
+        validate_brief(output, build_context('2026-11-09', []))
+    message = str(caught.value)
+    assert 'findings' in message and 'unexpected' in message
+    assert 'sensitive-model-content' not in message and 'X' * 100 not in message
+    assert len(message) < 1000
+
+
+@pytest.mark.parametrize(('seconds', 'summary', 'valid'), [
+    (3655, '切割时长约1小时。', True),
+    (1800, '切割时长约1小时。', False),
+    (4000, '切割时长1小时。', False),
+    (3600, '切割时长约0小时。', False),
+    (0, '切割时长0秒。', True),
+    (100, '切割时长102秒。', False),
+    (500, '切割时长约0.14小时。', True),
+    (490, '切割时长约0.14小时。', False),
+    (6000, '切割时长约1.7小时。', True),
+    (5999, '切割时长约1.7小时。', False),
+])
+def test_rounded_duration_must_also_stay_within_two_percent(seconds, summary, valid):
+    from app.services.report_analysis.brief_validation import validate_brief
+    context = build_context('2026-11-09', [])
+    context['facts'] = []
+    context['tables'] = [dict(name='时长汇总', rows=[dict(work_time=seconds)])]
+    if valid:
+        assert validate_brief(draft() | {'summary': summary}, context)
+    else:
+        with pytest.raises(ValueError, match='时长'):
+            validate_brief(draft() | {'summary': summary}, context)

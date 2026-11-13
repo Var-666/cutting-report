@@ -111,7 +111,7 @@ class RetentionRepository(PostgresRepository):
                       AND NOT EXISTS (
                           SELECT 1 FROM email_deliveries AS delivery
                           WHERE delivery.report_id = j.report_id
-                            AND delivery.status IN ('pending', 'sending', 'retry_wait', 'unknown')
+                            AND delivery.status IN ('pending', 'sending', 'retry_wait', 'unknown', 'analysis_wait')
                       )
                     ORDER BY COALESCE(j.finished_at, j.created_at), j.report_id
                     LIMIT %s

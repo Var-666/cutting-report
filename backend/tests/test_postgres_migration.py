@@ -117,6 +117,52 @@ def test_archive_migration_appends_to_existing_003_without_changing_state(postgr
         assert connection.execute('SELECT id FROM llm_usage_totals').fetchall()==[{'id':1}]
 
 
+def test_monitor_migration_preserves_existing_007_state(postgres, monkeypatch):
+    import hashlib
+    import app.database.postgres_migrations as migrations
+    database, _, _ = postgres
+    def old_schema(connection):
+        digest = hashlib.sha256(json.dumps(migrations.catalog(connection), sort_keys=True).encode()).hexdigest()
+        assert digest == '822f84c9bcf72b534b8589ef5faef6e3be040d9c01d297a2f7b5ff11a4e2ef96'
+        return connection.execute('SELECT version,checksum FROM _postgres_schema_migrations ORDER BY version').fetchall()
+    with monkeypatch.context() as patch:
+        patch.setattr(migrations, 'VERSIONS', migrations.VERSIONS[:7])
+        patch.setattr(migrations, 'validate_schema', old_schema)
+        assert len(apply_migrations(database)) == 7
+    with database.connect() as connection:
+        connection.execute('INSERT INTO llm_usage_totals(id) VALUES (1)')
+    assert len(apply_migrations(database)) == len(migrations.VERSIONS)
+    with database.connect() as connection:
+        assert connection.execute('SELECT id FROM llm_usage_totals').fetchall() == [{'id': 1}]
+        assert connection.execute('SELECT * FROM database_monitors').fetchall() == []
+
+
+def test_analysis_delivery_migration_preserves_008_jobs_and_success_cache(postgres, monkeypatch):
+    import hashlib
+    import app.database.postgres_migrations as migrations
+    database, _, _ = postgres
+    def old_schema(connection):
+        digest = hashlib.sha256(json.dumps(migrations.catalog(connection), sort_keys=True).encode()).hexdigest()
+        assert digest == '37cc8d656bdc1fd49a122bd77bfa7e7baa6086b8554eea229a20afb9abb267a0'
+        return connection.execute('SELECT version,checksum FROM _postgres_schema_migrations ORDER BY version').fetchall()
+    with monkeypatch.context() as patch:
+        patch.setattr(migrations, 'VERSIONS', migrations.VERSIONS[:8])
+        patch.setattr(migrations, 'validate_schema', old_schema)
+        assert len(apply_migrations(database)) == 8
+    with database.connect() as connection:
+        connection.execute("""INSERT INTO report_analyses(cache_key,report_type,report_date,input_hash,data_version,
+            status,mode,prompt_version,result_json,generated_at) VALUES ('old','workshop','2026-11-12','hash','version',
+            'success','model','old-prompt','{}','2026-11-12T09:55:00+08:00')""")
+        connection.execute("""INSERT INTO report_jobs(report_id,device_id,status,stage_message,report_date,created_at,request_id)
+            VALUES ('waiting','Cutter01','pending','等待生成','2026-11-12','2026-11-12T10:00:00+08:00','request')""")
+    assert len(apply_migrations(database)) == len(migrations.VERSIONS)
+    with database.connect() as connection:
+        row = connection.execute("SELECT * FROM report_analyses WHERE cache_key='old'").fetchone()
+        assert row['generated_at'] == '2026-11-12T09:55:00+08:00' and row['reuse_scope'] is None and row['reuse_key'] is None
+        row = connection.execute("SELECT * FROM report_jobs WHERE report_id='waiting'").fetchone()
+        assert row['status'] == 'pending' and row['analysis_attempts'] == 0 and row['analysis_next_attempt'] == 0
+
+
 @pytest.mark.parametrize(('baseline','fingerprint','location'),[
     (4,'d8d2181d194738d72ceb9029b7ec31ada66cac21b9157a49687ad9439ba1e5f2',None),
     (5,'10a49c5d5b0abba14d009aa7704f2dc6e59636396b1a74c29cc8f2978c107181','18600-2 / 船体 / Gen指令'),

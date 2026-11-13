@@ -83,7 +83,7 @@ class WeldingExport:
         if format == 'csv':
             return csv_bytes(COLUMNS[kind], report['items'], metadata), 'text/csv; charset=utf-8'
         version = report.get('data_version')
-        analysis = self.service.cached_analysis(version) if version else None
+        analysis = self.service.cached_analysis(version, kind=kind, query=query, historical=True) if version else None
         environment = ReportService(self.settings).environment
         chart_path = self.settings.project_root / 'vendor' / 'echarts.min.js'
         html = environment.get_template('welding_report.html.j2').render(

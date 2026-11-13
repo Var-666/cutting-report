@@ -84,7 +84,7 @@ class EquipmentRecord:
 
 
 def production_day(record: Any) -> date | None:
-    """OP_DATE is the business day; event time is only a legacy fallback."""
+    """Source queries supply the completion date; start-time fallback is for legacy records only."""
     stamp = getattr(record, "production_date", None)
     if stamp is not None:
         return stamp
@@ -184,6 +184,7 @@ class AnalysisResult:
     generated_at: str | None = None
     cached: bool = False
     brief: dict[str, Any] | None = None
+    cache_note: str | None = None
 
 
 @dataclass(slots=True)

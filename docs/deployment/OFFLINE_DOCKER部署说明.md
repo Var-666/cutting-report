@@ -52,6 +52,21 @@ bash scripts/linux/update_offline_docker.sh /实际旧部署目录 /data
 
 普通更新不能只替换backend、只重建Web或运行旧的start脚本代替备份和迁移。前端、各角色及部署清单使用同一份发布程序。
 
+## 切割任务改按结束日期统计
+
+新版本的切割领导、车间、设备任务统一归到实际结束日期；跨午夜、跨月任务完整计入结束日/月。领导统计快照和切割分析范围已更新，旧口径的缓存不直接复用。已归档文件及已发送邮件需重新生成。
+
+已有历史车间日报须执行一次归属校正。使用现行更新流程完成备份、部署新程序后，停止四个应用角色，保留PostgreSQL运行；以下命令逐一替换 `Cutter01` 为现场已登记的切割产线ID：
+
+```bash
+docker compose -f compose.yaml -f compose.offline.yaml stop app scheduler worker automation
+docker compose -f compose.yaml -f compose.offline.yaml run --rm --no-deps -T app python scripts/reconcile_cutting_completion_dates.py --line Cutter01
+docker compose -f compose.yaml -f compose.offline.yaml run --rm --no-deps -T app python scripts/reconcile_cutting_completion_dates.py --line Cutter01 --apply
+docker compose -f compose.yaml -f compose.offline.yaml up -d --no-build --pull never app scheduler worker automation
+```
+
+第一条校正命令只预览；核对 `changed_tasks/merged_snapshots/unresolved_tasks` 后再提交。工具按当前产线绑定的SQL Server只读获取任务结束日期，仅调整本设备的PostgreSQL日报归属；每条产线一次事务，目标日期不存在时建立日报，重复任务快照合并，原确认人、确认时间、任务身份和审计保留。重复执行不会重复迁移；源模式或重复快照的生产字段不一致时停止并提示任务ID，整条产线事务回滚，保留原生产字段、确认和审计；不凭确认归属选择旧工时覆盖新值。`unresolved_tasks>0` 时退出码为2：源任务不存在、未完成或没有有效结束时间，工具保留其原记录，须现场核对，不推测日期或删除确认。原生部署停服后使用相同Python脚本和配置。
+
 ## 结果核对与失败处理
 
 ```bash

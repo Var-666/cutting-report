@@ -64,6 +64,77 @@ def _unique_snapshot_records(
 
 
 class WorkshopReportRepository(WorkshopScopeRepository):
+    def completion_date_task_ids(self) -> list[str]:
+        with self.connect() as connection:
+            rows = connection.execute('''SELECT DISTINCT i.task_id FROM workshop_report_items i
+                JOIN workshop_reports r ON r.report_id=i.report_id
+                WHERE sqlite_nocase(r.scope_machine_no)=sqlite_nocase(%s) AND r.source_mode='sqlserver'
+                ORDER BY i.task_id''', (self.require_scope(),)).fetchall()
+        return [row['task_id'] for row in rows]
+
+    def reconcile_completion_dates(self, dates: dict[str, date], *, apply: bool = False) -> dict[str, int]:
+        """Reassign verified source tasks atomically; confirmation and audit times stay intact."""
+        result = {'changed_tasks': 0, 'merged_snapshots': 0}
+        if not dates:
+            return result
+        with self.connect() as connection:
+            self.lock_scope(connection)
+            rows = connection.execute('''SELECT i.*, r.report_date FROM workshop_report_items i
+                JOIN workshop_reports r ON r.report_id=i.report_id
+                WHERE sqlite_nocase(r.scope_machine_no)=sqlite_nocase(%s) AND r.source_mode='sqlserver'
+                  AND i.task_id=ANY(%s) ORDER BY i.task_id,r.report_date,i.report_item_id''',
+                (self.require_scope(), list(dates))).fetchall()
+            grouped: dict[str, list] = {}
+            for row in rows:
+                grouped.setdefault(row['task_id'], []).append(row)
+            touched = set()
+            for task_id, snapshots in grouped.items():
+                day = dates[task_id].isoformat()
+                if len(snapshots) == 1 and snapshots[0]['report_date'] == day and snapshots[0]['production_date'] == day:
+                    continue
+                target = connection.execute('''SELECT * FROM workshop_reports WHERE report_date=%s
+                    AND sqlite_nocase(scope_machine_no)=sqlite_nocase(%s)''', (day, self.require_scope())).fetchone()
+                if target and target['source_mode'] != 'sqlserver':
+                    raise DailyReportSourceMismatchError('目标日期包含其他来源日报，拒绝混合')
+                confirmation = connection.execute('''SELECT report_id FROM workshop_confirmations
+                    WHERE task_id=%s AND sqlite_nocase(scope_machine_no)=sqlite_nocase(%s)''',
+                    (task_id, self.require_scope())).fetchone()
+                old_reports = {row['report_id'] for row in snapshots}
+                if confirmation and confirmation['report_id'] and confirmation['report_id'] not in old_reports:
+                    raise DailyReportSourceMismatchError('任务确认指向其他来源日报，拒绝校正')
+                canonical = next((row for row in snapshots if confirmation and row['report_id'] == confirmation['report_id']),
+                                 max(snapshots, key=lambda row: row['snapshot_revision']))
+                comparable = {field: canonical[field] for field in (
+                    'project_name', 'segment_name', 'program_no', 'cut_length', 'groove_length',
+                    'work_time', 'production_time', 'remark', 'ship_no')}
+                if any(not _snapshot_values_equal(row, comparable) for row in snapshots):
+                    raise DailyReportRecordMismatchError(f'任务 {task_id} 的历史生产字段不一致，已停止校正并保留快照，请核对源数据')
+                result['changed_tasks'] += 1
+                result['merged_snapshots'] += len(snapshots) - 1
+                if not apply:
+                    continue
+                if target is None:
+                    target = {'report_id': f'wdr_{uuid4().hex[:16]}'}
+                    connection.execute('''INSERT INTO workshop_reports (report_id,report_date,source_mode,scope_machine_no,
+                        item_count,generated_by_id,generated_by_name,generated_at,created_at,snapshot_revision_floor)
+                        SELECT %s,%s,source_mode,scope_machine_no,0,generated_by_id,generated_by_name,generated_at,
+                            created_at,snapshot_revision_floor FROM workshop_reports WHERE report_id=%s''',
+                        (target['report_id'], day, canonical['report_id']))
+                connection.execute('DELETE FROM workshop_report_items WHERE report_item_id=ANY(%s)',
+                    ([row['report_item_id'] for row in snapshots if row['report_item_id'] != canonical['report_item_id']],))
+                ordinal = connection.execute('SELECT COALESCE(MAX(ordinal),0)+1 AS ordinal FROM workshop_report_items WHERE report_id=%s',
+                    (target['report_id'],)).fetchone()['ordinal']
+                connection.execute('''UPDATE workshop_report_items SET report_id=%s,production_date=%s,
+                    ordinal=%s,snapshot_revision=%s WHERE report_item_id=%s''',
+                    (target['report_id'], day, ordinal, max(row['snapshot_revision'] for row in snapshots) + 1, canonical['report_item_id']))
+                connection.execute('''UPDATE workshop_confirmations SET report_id=%s WHERE task_id=%s
+                    AND sqlite_nocase(scope_machine_no)=sqlite_nocase(%s)''', (target['report_id'], task_id, self.require_scope()))
+                touched.update(old_reports | {target['report_id']})
+            if touched:
+                connection.execute('''UPDATE workshop_reports r SET item_count=(SELECT COUNT(*) FROM workshop_report_items i
+                    WHERE i.report_id=r.report_id) WHERE r.report_id=ANY(%s)''', (list(touched),))
+        return result
+
     @staticmethod
     def _report_dict(row: dict[str, Any] | None) -> dict[str, Any] | None:
         if row is None:

@@ -14,12 +14,12 @@ class EmailReport:
 
 
 # Inline the archived document's own styles; only translate unsupported layout.
-LAYOUT_NODES = '.cover-brand,.brand-mark,.cover-main,.cover-folio,.meta,.metrics,.secondary,.analysis-head,.analysis-facts,.analysis-grid,.analysis-findings,.analysis-followup,.data-chart-grid,.chart-stack,.report-footer,.content-grid'
+LAYOUT_NODES = '.cover-brand,.brand-mark,.cover-main,.cover-folio,.cover-folio>div,.meta,.metrics,.secondary,.analysis-head,.analysis-facts,.analysis-grid,.analysis-findings,.analysis-followup,.data-chart-grid,.chart-stack,.report-footer,.content-grid'
 
-EMAIL_DOCUMENT = """({mobileLayouts, breakpoint, pageInset}) => {
+EMAIL_DOCUMENT = """({layoutProfiles, pageInset}) => {
     const output = document.implementation.createHTMLDocument(document.title);
     output.documentElement.lang = document.documentElement.lang;
-    const responsive = [];
+    const responsive = new Map(layoutProfiles.map(profile => [profile.maxWidth, []]));
     const properties = [
         'box-sizing','color','background-color','background-image','font-family','font-size',
         'font-weight','font-style','line-height','letter-spacing','text-align','white-space',
@@ -116,8 +116,13 @@ EMAIL_DOCUMENT = """({mobileLayouts, breakpoint, pageInset}) => {
             table.style.height = `${height}px`;
         }
         if (grid) {
-            const columns = mobileLayouts[source.dataset.emailLayout];
-            if (columns) responsive.push(`.${key},.${key}>tbody{display:block!important;width:100%!important;} .${key}>tbody>tr{display:block!important;} .${key}>tbody>tr>.email-cell{display:inline-block!important;width:calc(${100 / columns}% - ${gap}px)!important;height:auto!important;margin:${rowGap / 2}px ${gap / 2}px!important;vertical-align:top!important;box-sizing:border-box!important;} .${key}>tbody>tr>td:not(.email-cell){display:none!important;}`);
+            let previousColumns = count;
+            for (const profile of layoutProfiles) {
+                const columns = profile.layouts[source.dataset.emailLayout];
+                if (!columns || columns === previousColumns) continue;
+                previousColumns = columns;
+                responsive.get(profile.maxWidth).push(`.${key}{display:block!important;width:calc(100% + ${gap}px)!important;margin:-${rowGap / 2}px -${gap / 2}px!important;} .${key}>tbody{display:block!important;width:100%!important;} .${key}>tbody>tr{display:block!important;} .${key}>tbody>tr>.email-cell{display:inline-block!important;width:calc(${100 / columns}% - ${gap}px)!important;height:auto!important;margin:${rowGap / 2}px ${gap / 2}px!important;vertical-align:top!important;box-sizing:border-box!important;} .${key}>tbody>tr>td:not(.email-cell){display:none!important;}`);
+            }
         }
         target.append(table);
     }
@@ -234,7 +239,9 @@ EMAIL_DOCUMENT = """({mobileLayouts, breakpoint, pageInset}) => {
     }
     const root = getComputedStyle(document.documentElement);
     for (const property of root) if (property.startsWith('--')) output.documentElement.style.setProperty(property,root.getPropertyValue(property));
-    mobile.textContent += `@media(max-width:${breakpoint}px){${responsive.join('')}}`;
+    for (const [maxWidth, rules] of responsive) {
+        if (rules.length) mobile.textContent += `@media(max-width:${maxWidth}px){${rules.join('')}}`;
+    }
     output.head.append(mobile);
     return '<!doctype html>' + output.documentElement.outerHTML;
 }"""
@@ -256,14 +263,39 @@ def render_email_report(html_path: Path, output_path: Path) -> None:
             page.evaluate("""selector => document.querySelectorAll(selector).forEach((node,index) => {
                 node.dataset.emailLayout = String(index + 1);
             })""", LAYOUT_NODES)
-            page.set_viewport_size({"width": 375, "height": 900})
-            mobile_layouts = page.evaluate("""selector => Object.fromEntries(Array.from(document.querySelectorAll(selector),node => [
-                node.dataset.emailLayout, getComputedStyle(node).gridTemplateColumns.split(' ').map(Number.parseFloat).filter(width => width > 0).length
-            ]))""", LAYOUT_NODES)
-            page_inset = page.evaluate("document.querySelector('.page')?.getBoundingClientRect().left || 0")
-            breakpoint = page.evaluate(r"""() => Math.max(0,...Array.from(document.styleSheets).flatMap(sheet =>
+            breakpoints = page.evaluate(r"""() => Array.from(document.styleSheets).flatMap(sheet =>
                 Array.from(sheet.cssRules,rule => rule.type === CSSRule.MEDIA_RULE && !rule.conditionText.includes('print')
-                    ? Number.parseFloat(rule.conditionText.match(/max-width:\s*([0-9.]+)/)?.[1] || '0') : 0)))""")
+                    ? Number.parseFloat(rule.conditionText.match(/max-width:\s*([0-9.]+)/)?.[1] || '0') : 0))""")
+            boundaries = sorted({320, 1440, *(int(value) for value in breakpoints if 320 <= value < 1440),
+                                 *(int(value) + 1 for value in breakpoints if 320 <= value < 1440)})
+            layouts = {}
+
+            def sample(width: int) -> dict:
+                if width not in layouts:
+                    page.set_viewport_size({"width": width, "height": 900})
+                    layouts[width] = page.evaluate("""selector => Object.fromEntries(Array.from(document.querySelectorAll(selector),node => [
+                        node.dataset.emailLayout, getComputedStyle(node).gridTemplateColumns.split(' ').map(Number.parseFloat).filter(width => width > 0).length
+                    ]))""", LAYOUT_NODES)
+                return layouts[width]
+
+            def find_column_changes(left: int, right: int) -> None:
+                if sample(left) == sample(right) or right - left <= 1:
+                    return
+                middle = (left + right) // 2
+                find_column_changes(left, middle)
+                find_column_changes(middle, right)
+
+            # Include auto-fit column changes between the template's media breakpoints.
+            for left, right in zip(boundaries, boundaries[1:]):
+                find_column_changes(left, right)
+            profiles = []
+            for width, columns in sorted(layouts.items()):
+                if profiles and profiles[-1]["layouts"] == columns:
+                    profiles[-1]["maxWidth"] = width
+                else:
+                    profiles.append({"maxWidth": width, "layouts": columns})
+            page.set_viewport_size({"width": 375, "height": 900})
+            page_inset = page.evaluate("document.querySelector('.page')?.getBoundingClientRect().left || 0")
             page.set_viewport_size({"width": 1440, "height": 900})
             page.evaluate("""async () => {
                 await document.fonts.ready;
@@ -280,7 +312,7 @@ def render_email_report(html_path: Path, output_path: Path) -> None:
                 surface = chart.locator("canvas,svg").first
                 images[cid] = base64.b64encode(surface.screenshot(type="png", timeout=30_000)).decode("ascii")
                 chart.evaluate("(element, cid) => { element.dataset.emailCid = cid; }", cid)
-            document = page.evaluate(EMAIL_DOCUMENT, {"mobileLayouts": mobile_layouts, "breakpoint": breakpoint, "pageInset": page_inset})
+            document = page.evaluate(EMAIL_DOCUMENT, {"layoutProfiles": list(reversed(profiles[:-1])), "pageInset": page_inset})
         finally:
             browser.close()
     output_path.write_text(json.dumps({"html": document, "images": images}), encoding="utf-8")

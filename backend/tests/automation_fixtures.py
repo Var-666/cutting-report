@@ -46,4 +46,4 @@ def complete_report(metadata, report_id):
     metadata.save_report(report_id=report_id, filename="r.html", relative_path="r.html",
                          file_size=1, sha256="a" * 64, task_count=1, generated_at=STAMP,
                          system_version="test")
-    metadata.update_status(report_id, "completed", "completed", finished_at=STAMP)
+    metadata.update_status(report_id, "completed", "completed", ai_status='success', finished_at=STAMP)

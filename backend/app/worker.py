@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 
 from app.config import Settings, settings, consumer_identity
 from app.core.sql_capacity import sql_identity
+from app.database.coordination import periodic_analysis_task
 from app.database.postgres import ExecutionLeaseLost, execution_scope
 from app.services.application_runtime import ApplicationRuntime, build_runtime
 from app.services.database_runtime import database_context
@@ -194,6 +195,10 @@ class WorkerProcess:
     def _handle(self, task: dict) -> None:
         with sql_identity(task["device_id"] or None):
             kind, payload = task["kind"], task["payload"]
+            if kind == 'database_monitor':
+                if time() - task['created_at'] < self.runtime.database_monitor.INTERVAL:
+                    self.runtime.database_monitor.run_once(task['created_at'])
+                return
             if kind == "retention":
                 if self.runtime.retention_worker.enabled:
                     self.runtime.retention_service.cleanup_expired()
@@ -220,6 +225,13 @@ class WorkerProcess:
             fingerprint = payload.get("source_fingerprint")
             if not fingerprint or fingerprint != line.settings.source_fingerprint:
                 raise TaskSourceUnavailable('任务来源缺失或已变化，必须核对后重新入队')
+            periodic = periodic_analysis_task(kind, payload) or (
+                kind in {'current_refresh', 'leadership_refresh'}
+                and task['dedup_key'].startswith(f'{kind}:{task["device_id"]}:'))
+            if periodic and time() - task['created_at'] >= max(30, line.settings.report_background_refresh_seconds):
+                logger.info('expired periodic task skipped: task=%s kind=%s device=%s',
+                            task['task_id'], kind, task['device_id'])
+                return
             line.background.handle_background(kind, payload)
 
     def run(self) -> None:

@@ -58,7 +58,7 @@ const conclusionTitle = computed(() => analysisAvailable.value
   ? sectionLead(props.analysis?.overview, '生产运行分析已完成') : '智能分析暂不可用')
 const conclusionText = computed(() => analysisAvailable.value
   ? sectionBody(props.analysis?.overview) : plainAnalysisText(props.analysis?.overview || props.analysis?.features))
-const welding = computed(() => props.weldingReport && props.analysis?.data_version === props.weldingReport.data_version
+const welding = computed(() => props.weldingReport && !props.analysis?.cache_note && props.analysis?.data_version === props.weldingReport.data_version
   ? props.weldingReport : null)
 const weldingMetrics = computed(() => welding.value ? weldingKpis('daily', welding.value).map((metric, index) => ({
   ...metric,
@@ -90,11 +90,12 @@ const weldingMetrics = computed(() => welding.value ? weldingKpis('daily', weldi
     </div>
 
     <div v-if="loading && !analysis" class="analysis-state">{{ readingLatest ? '正在读取最近一次已完成的分析…' : '正在整理报表指标并生成分析…' }}</div>
-    <NAlert v-else-if="error" type="error" class="analysis-error" role="alert">
+    <NAlert v-else-if="error" :type="analysis || error.includes('正在等待成功') ? 'warning' : 'error'" class="analysis-error" role="alert">
       <span>{{ error }}</span><NButton attr-type="button" @click="emit('retry')">重试</NButton>
     </NAlert>
+    <NAlert v-if="analysis?.cache_note" type="warning" class="analysis-error" role="status">{{ analysis.cache_note }}</NAlert>
     <template v-if="analysis">
-      <CuttingAnalysisBrief v-if="analysis.brief && analysisAvailable" :brief="analysis.brief" :facts="analysis.facts" :generated-at="analysis.generated_at" :leadership-report="leadershipReport" />
+      <CuttingAnalysisBrief v-if="analysis.brief && analysisAvailable" :brief="analysis.brief" :facts="analysis.facts" :generated-at="analysis.generated_at" :leadership-report="analysis.cache_note ? null : leadershipReport" />
       <template v-else>
       <section class="analysis-conclusion" :class="{ 'analysis-conclusion--report': analysisAvailable }" aria-labelledby="analysis-conclusion-title">
         <span class="analysis-conclusion__icon"><AppIcon name="sparkles" :size="31" tone="light" /></span>

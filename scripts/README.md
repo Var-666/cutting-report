@@ -10,6 +10,7 @@
 | `linux/install_kylin.sh`、`start_kylin.sh` | 麒麟原生安装及按web/scheduler/worker/automation角色启动 |
 | `migrate_production_lines.py` | 一次性转换旧连接/设备配置，保护密码、原子写入；发现旧SQLite库拒绝操作，不连接生产库 |
 | `manage_postgres.py` | PG结构安装、状态校验及停机Consumer协议维护，不支持SQLite导入 |
+| `reconcile_cutting_completion_dates.py` | 按真实结束日校正历史车间日报，默认预览；`--line`限定切割产线，`--apply`停机提交并保留确认及审计。操作见[离线部署](../docs/deployment/OFFLINE_DOCKER部署说明.md#切割任务改按结束日期统计) |
 | `check_energy.py` | 切割能管只读诊断，必须显式指定`--device-id` |
 | `check_welding.py` | 焊接源库只读核验，必须显式指定`--line-id` |
 | `prepare_alarm_monitor.py` | 告警预览与显式维护；`--apply`不是迁移步骤，不能用于跳过归属校验 |

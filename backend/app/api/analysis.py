@@ -133,7 +133,7 @@ def analyze_report(payload: AnalysisRequest, request: Request) -> dict:
                                 request_id=request.state.request_id):
             return _analyze_report(payload, request)
     except ReportOperationTimeout as exc:
-        raise HTTPException(status_code=503, detail="智能分析超过总等待时限，请稍后重试。") from exc
+        raise HTTPException(status_code=503, detail="正在等待成功的智能分析结果，稍后自动重试。", headers={'Retry-After': '60'}) from exc
 
 
 def _analyze_report(payload: AnalysisRequest, request: Request) -> dict:
@@ -192,6 +192,7 @@ def _analyze_report(payload: AnalysisRequest, request: Request) -> dict:
                 expected_data_version=payload.data_version,
                 force=payload.force,
                 publish_latest=_is_default_view(payload),
+                cache_filters={'summary_period_start': summary_start.isoformat(), 'summary_period_end': summary_end.isoformat()},
             )
         elif payload.report_type == "workshop":
             if payload.period_start is not None and payload.period_end is not None:
@@ -345,6 +346,7 @@ def _analyze_report(payload: AnalysisRequest, request: Request) -> dict:
                 year_ago_records=year_ago_records,
                 year_ago_date=year_ago_label,
                 source_data_version=equipment_analysis_source_version(task_report),
+                cache_filters={'summary_period_start': summary_start.isoformat(), 'summary_period_end': summary_end.isoformat()},
                 expected_data_version=payload.data_version,
                 force=payload.force,
                 publish_latest=_is_default_view(payload),
@@ -354,7 +356,7 @@ def _analyze_report(payload: AnalysisRequest, request: Request) -> dict:
     except AnalysisDataVersionMismatch as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except AnalysisUnavailableError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise HTTPException(status_code=503, detail="正在等待成功的智能分析结果，稍后自动重试。", headers={'Retry-After': '60'}) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except SqlServerConfigurationError as exc:

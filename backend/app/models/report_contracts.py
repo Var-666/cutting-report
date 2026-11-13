@@ -33,6 +33,7 @@ class ReportAnalysis(BaseModel):
     cached: bool
     error: str | None = None
     brief: AnalysisBrief | None = None
+    cache_note: str | None = None
 
 
 class AnalysisVersion(BaseModel):

@@ -86,6 +86,7 @@ class SchedulerProcess:
                 for payload, interval in provider.refresh_plan():
                     self._schedule_snapshot(line_id, payload, interval)
             self.schedule("retention", "", {}, max(1, self.settings.retention_cleanup_interval_hours) * 3600)
+            self.schedule("database_monitor", "", {}, 60)
             if self.runtime.download_cleanup_worker.enabled:
                 self.schedule("download_cleanup", "", {}, 86400)
         finally:

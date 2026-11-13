@@ -1,9 +1,6 @@
 WITH source AS (
     SELECT
-        COALESCE(
-            TRY_CONVERT(date, NULLIF(LTRIM(RTRIM([OP_DATE])), ''), 23),
-            CONVERT(date, [START_TIME])
-        ) AS production_date
+        TRY_CONVERT(date, NULLIF(LTRIM(RTRIM(CONVERT(varchar(64), [END_TIME], 126))), '')) AS production_date
     FROM [dbo].[task]
     WHERE [STATUS] = 2
       AND COALESCE([WORK_TIME], 0) >= 0

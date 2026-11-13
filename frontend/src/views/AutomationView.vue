@@ -14,6 +14,7 @@ import { deviceSelection } from '../state/devices.ts'
 import ManagementPageHero from '../components/ManagementPageHero.vue'
 import AppIcon from '../components/AppIcon.vue'
 import AutomationScheduleTable from '../components/automation/AutomationScheduleTable.vue'
+import AutomationRunProgress from '../components/automation/AutomationRunProgress.vue'
 import AutomationDeliveryTable from '../components/automation/AutomationDeliveryTable.vue'
 import EmailDeliveryResolution from '../components/EmailDeliveryResolution.vue'
 import { useUnsavedChanges } from '../composables/useUnsavedChanges.ts'
@@ -38,7 +39,7 @@ const {
   configuration, selectTls, selectSsl, loadConfiguration, submitConfiguration,
 } = useAutomationConfiguration({ hasUnsavedChanges, refresh: loadAll })
 const {
-  saving, editingId, form, changeReportType, resetForm,
+  saving, editingId, form, executions, runningScheduleIds, changeReportType, resetForm,
   editSchedule, submit, runNow, remove,
 } = useAutomationSchedules({
   hasUnsavedChanges, message, error, refresh: loadAll, confirm,
@@ -53,7 +54,7 @@ const {
 useUnsavedChanges(computed(() => hasUnsavedChanges.value || resolutionDirty.value), '自动化配置还有未保存的修改，确定离开吗？')
 const reportLabels: Record<string, string> = { leadership: '领导报表', workshop: '车间报表', equipment: '设备报表' }
 const deliveryLabels: Record<string, string> = {
-  pending: '等待发送', sending: '发送中', retry_wait: '等待重试', sent: '已发送', failed: '发送失败', unknown: '结果待核对',
+  pending: '等待发送', sending: '发送中', retry_wait: '等待重试', analysis_wait: '等待分析生成', sent: '已发送', failed: '发送失败', unknown: '结果待核对',
 }
 const scheduleLabels: Record<string, string> = { ...deliveryLabels, queued: '等待生成报表' }
 
@@ -204,7 +205,8 @@ onBeforeUnmount(() => {
       <div v-if="loading && !schedules.length" class="empty" role="status">正在读取定时任务…</div>
       <div v-else-if="!status && error" class="configuration-load-error" role="alert"><span>定时任务暂时无法读取。</span><NButton attr-type="button" @click="loadAll">重新读取</NButton></div>
       <div v-else class="automation-table-wrap">
-        <AutomationScheduleTable :schedules="visibleSchedules" :searching="!!appliedScheduleSearch" :loading="loading" :report-labels="reportLabels" :schedule-labels="scheduleLabels" @run="runNow" @edit="editSchedule" @remove="remove" />
+        <AutomationRunProgress v-for="execution in executions" :key="execution.schedule_id" :execution="execution" />
+        <AutomationScheduleTable :schedules="visibleSchedules" :searching="!!appliedScheduleSearch" :loading="loading" :running-schedule-ids="runningScheduleIds" :report-labels="reportLabels" :schedule-labels="scheduleLabels" @run="runNow" @edit="editSchedule" @remove="remove" />
       </div>
     </section>
 

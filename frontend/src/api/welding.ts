@@ -52,6 +52,11 @@ export function getWeldingPart(id: number, page: number, signal?: AbortSignal) {
 export function analyzeWelding(reportType: Exclude<WeldingReportKind, 'dashboard'>, query: WeldingQuery, version: string, signal?: AbortSignal) {
   return request<WeldingAnalysis>('/api/v1/welding/analysis', { method: 'POST', body: JSON.stringify({ report_type: reportType, query: weldingQuery(query), data_version: version }), signal })
 }
+export function getLatestWeldingAnalysis(reportType: Exclude<WeldingReportKind, 'dashboard'>, values: WeldingQuery, version: string, signal?: AbortSignal) {
+  const query = new URLSearchParams(Object.entries({ ...weldingQuery(values), report_type: reportType, data_version: version })
+    .map(([name, value]) => [name, String(value)]))
+  return request<WeldingAnalysis | null>(`/api/v1/welding/analysis/latest?${query}`, { signal })
+}
 export async function downloadWelding(url: string, filename: string, signal?: AbortSignal) {
   throwIfAborted(signal)
   const { blob } = await request(url, { signal, responseType: 'blob' })

@@ -9,7 +9,7 @@ function parseDateParts(value: unknown) {
 
 export function formatChineseMonth(value: unknown, fallback = '--') {
   const parts = parseDateParts(value)
-  return parts ? `${parts.year}年${parts.month}月` : fallback
+  return parts ? `${parts.year}年${String(parts.month).padStart(2, '0')}月` : fallback
 }
 
 export function formatChineseDate(value: unknown, fallback = '--') {

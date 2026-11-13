@@ -110,7 +110,9 @@ def test_configuration_and_automation_documented_responses_match_http_payloads(c
         'recipients': ['contract@example.com'],
     }), AutomationSchedule)
     check_contract(client.get('/api/v1/automation/schedules'), Items[AutomationSchedule])
-    check_contract(client.post(f"/api/v1/automation/schedules/{schedule['schedule_id']}/run"), ScheduledRun)
+    run = check_contract(client.post(f"/api/v1/automation/schedules/{schedule['schedule_id']}/run"), ScheduledRun)
+    assert check_contract(client.get(f"/api/v1/automation/runs/{run['run_id']}"), ScheduledRun) == run
+    assert client.get('/api/v1/automation/runs/missing').status_code == 404
     check_contract(client.get('/api/v1/automation/deliveries?page=1&page_size=5'), Page[EmailDelivery])
     check_contract(client.get('/api/v1/configuration/diagnostics'), ConfigurationDiagnostics)
     check_contract(client.get('/api/v1/configuration/llm'), LlmConfiguration)

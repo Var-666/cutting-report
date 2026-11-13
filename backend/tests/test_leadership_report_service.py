@@ -44,6 +44,13 @@ def test_demo_report_has_daily_total_and_twelve_months(tmp_path) -> None:
     assert result.snapshot.source == "demo"
 
 
+def test_completion_date_policy_does_not_reuse_operation_date_snapshot_identity(tmp_path):
+    service = LeadershipReportService(cutting_settings(project_root=tmp_path))
+    identity = service.source_identity()
+    service.SNAPSHOT_VERSION = 3
+    assert service.source_identity() != identity
+
+
 def test_project_mapping_upgrade_rebuilds_snapshots_with_the_old_mapping(tmp_path, monkeypatch, state_database):
     settings = cutting_settings(project_root=tmp_path, demo_mode=False, data_source_mode="sqlserver")
     snapshots = LeadershipSnapshotRepository(state_database)

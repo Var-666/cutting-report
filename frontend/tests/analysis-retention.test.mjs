@@ -4,19 +4,21 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 import { createActivationTimer } from '../src/utils/activationTimer.ts'
+import { renderComponent } from './vue-component-helpers.mjs'
 
 const source = readFileSync(new URL('../src/components/AnalysisPanel.vue', import.meta.url), 'utf8')
 
-test('analysis omits the previous-result notice and retains loading and error feedback', () => {
-  const presentation = readFileSync(new URL('../src/components/ReportAnalysis.vue', import.meta.url), 'utf8')
-  const template = presentation.match(/<template>([\s\S]*?)<\/template>/)[1]
-  assert.doesNotMatch(template, /上次分析时间|此结果基于上次数据|后台新结果完成后自动更新|等待更新/)
-  assert.match(template, /v-if="loading && !analysis" class="analysis-state"/)
-  const errorAlert = template.match(/<NAlert\b[^>]*v-else-if="error"[^>]*>/)?.[0] || ''
-  assert.match(errorAlert, /class="analysis-error"/)
-  assert.match(errorAlert, /type="error"/)
-  assert.match(errorAlert, /role="alert"/)
-  assert.match(template, /<template v-if="analysis">/)
+test('historical analysis remains visible with its cache label and update feedback', async () => {
+  const html = await renderComponent('components/ReportAnalysis', { analysis: {
+    status: 'success', mode: 'model', overview: '已有成功分析。生产记录需要核对。', features: '', alerts: '', suggestions: '',
+    facts: [], cached: true, cache_note: '沿用历史成功分析，原生成时间保持不变。', generated_at: '2026-11-12T09:55:00+08:00',
+  }, error: '本次更新正在等待模型', ready: true, loading: false })
+  assert.match(html, /已有成功分析/)
+  assert.match(html, /沿用历史成功分析/)
+  assert.match(html, /09:55:00/)
+  assert.match(html, /已缓存/)
+  assert.match(html, /本次更新正在等待模型/)
+  assert.doesNotMatch(html, /智能分析暂不可用/)
 })
 
 test('visible analysis checks every five minutes, refreshes only changed data and stops when deactivated', async () => {
@@ -65,6 +67,7 @@ function panelFixture({ defaultView = true, read, analyze } = {}) {
   const props = { reportType: 'workshop', reportDate: '2026-10-21', ready: true, dataVersion: 'v1', versionCheckEnabled: defaultView }
   let device = 'Cutter01', subscriber
   const reads = [], calls = []
+  let now = 1_000_000
   const context = vm.createContext({
     defineProps: () => props, defineEmits: () => () => {},
     ref: value => ({ value }), computed: fn => ({ get value() { return fn() } }),
@@ -73,11 +76,11 @@ function panelFixture({ defaultView = true, read, analyze } = {}) {
     createActivationTimer: () => ({ isActive: () => true, cancel() {} }),
     getLatestAnalysis: (query, options) => { reads.push({ query, options }); return read(query, options) },
     analyzeReport: (query, options) => { calls.push({ query, options }); return analyze(query, options) },
-    document: { visibilityState: 'visible' }, AbortController, console,
+    document: { visibilityState: 'visible' }, AbortController, console, Date: { now: () => now },
   })
   runTypeScript(source.match(/<script setup(?: lang="ts")?>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm, '')
     + '\nthis.panel = { loadAnalysis, scheduleAutomaticAnalysis, pollLatestAnalysis, reloadAnalysis, retryAnalysis, analysis, loading, readingLatest, error }', context)
-  return { ...context.panel, props, reads, calls, switchDevice(id) { device = id; subscriber() } }
+  return { ...context.panel, props, reads, calls, advance(ms) { now += ms }, switchDevice(id) { device = id; subscriber() } }
 }
 
 const flush = () => new Promise(resolve => setImmediate(resolve))
@@ -99,17 +102,17 @@ test('entering a default page displays the previous success and polls for the ne
   assert.equal(panel.reads.length, 2)
 })
 
-test('an empty default cache waits for the background result and never falls back to a page model call', async () => {
+test('an empty default cache explicitly prepares the first analysis once', async () => {
   let latest = null
-  const panel = panelFixture({ read: async () => latest })
+  const panel = panelFixture({ read: async () => latest, analyze: async () => result('09:55') })
   await panel.loadAnalysis()
-  assert.equal(panel.analysis.value, null)
+  assert.equal(panel.analysis.value.overview, '09:55')
   assert.equal(panel.loading.value, false)
   latest = result('10:00')
   panel.pollLatestAnalysis()
   await flush()
   assert.equal(panel.analysis.value.overview, '10:00')
-  assert.equal(panel.calls.length, 0)
+  assert.equal(panel.calls.length, 1)
 })
 
 test('a failed result read keeps the last success and retry still only reads the cache', async () => {
@@ -140,7 +143,7 @@ test('manual refresh calls the model and an older background snapshot cannot rep
 
 test('switching device or day aborts an old snapshot read and prevents its late result from returning', async () => {
   const pending = []
-  const panel = panelFixture({ read: () => new Promise(resolve => pending.push(resolve)) })
+  const panel = panelFixture({ read: () => new Promise(resolve => pending.push(resolve)), analyze: async () => null })
   panel.scheduleAutomaticAnalysis()
   panel.switchDevice('Cutter02')
   panel.scheduleAutomaticAnalysis()
@@ -169,6 +172,40 @@ test('custom report queries retain on-demand analysis rather than taking the def
   answer = result('09:55', 'matching cached input after a data correction')
   await panel.loadAnalysis()
   assert.equal(panel.analysis.value.overview, answer.overview, 'a custom query must use its matching input cache even if it was generated earlier')
+})
+
+for (const defaultView of [true, false]) test(`cold analysis retries after backoff instead of every poll (default=${defaultView})`, async () => {
+  let unavailable = true
+  const panel = panelFixture({ defaultView, read: async () => null, analyze: async () => {
+    if (unavailable) throw Object.assign(new Error('正在等待成功的智能分析结果'), { status: 503, retryAfterMs: 60_000 })
+    return result('10:00')
+  } })
+  await panel.loadAnalysis()
+  assert.equal(panel.calls.length, 1)
+  panel.pollLatestAnalysis()
+  await flush()
+  assert.equal(panel.calls.length, 1)
+  panel.advance(60_000)
+  unavailable = false
+  panel.pollLatestAnalysis()
+  await flush()
+  assert.equal(panel.calls.length, 2)
+  assert.equal(panel.analysis.value.overview, '10:00')
+  panel.pollLatestAnalysis()
+  await flush()
+  assert.equal(panel.calls.length, 2, 'an existing successful result must survive an empty latest read')
+})
+
+test('waiting report and automation progress keep waiting visible without download or mail completion', async () => {
+  const job = await renderComponent('components/ReportJobStatus', { job: { report_id: 'waiting', report_type: 'leadership', status: 'pending',
+    stage_message: '等待智能分析完成，系统将自动重试', ai_status: 'waiting' } })
+  assert.match(job, /等待智能分析完成/)
+  assert.doesNotMatch(job, /打开报告|下载 HTML|暂不可用/)
+  const execution = await renderComponent('components/automation/AutomationRunProgress', { execution: {
+    schedule_id: 'schedule', schedule_name: '每日生产报告', status: 'analysis_wait',
+  } })
+  assert.match(execution, /等待智能分析成功，后台将自动重试/)
+  assert.doesNotMatch(execution, /邮件已发送|执行失败/)
 })
 
 test('same-query update and failure retain the previous result; device or range changes clear it', async () => {

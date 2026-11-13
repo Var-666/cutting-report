@@ -958,7 +958,7 @@ def test_response_header_timeout_is_explained_and_all_report_types_can_recover(s
     assert len(attempts) == 2
 
 
-def test_model_output_with_fabricated_statistics_is_rejected(state_database, tmp_path, monkeypatch):
+def test_model_output_with_fabricated_statistics_is_rejected(state_database, tmp_path, monkeypatch, caplog):
     settings, service = _services(state_database, tmp_path)
     model_settings = replace(
         settings,
@@ -975,10 +975,9 @@ def test_model_output_with_fabricated_statistics_is_rejected(state_database, tmp
 
         def json(self):
             content = {
-                "overview": "本期完成 999 项任务 [F001]。",
-                "features": "任务趋势需要关注 [F004]。",
-                "alerts": "任务数据存在风险 [F001]。",
-                "suggestions": "建议复核任务记录 [F001]。",
+                "headline": "本期生产任务已汇总",
+                "summary": "本期完成 999999 项任务。",
+                "key_metric_ids": [], "findings": [], "actions": [],
             }
             return {"choices": [{"message": {"content": json.dumps(content)}}]}
 
@@ -1005,6 +1004,9 @@ def test_model_output_with_fabricated_statistics_is_rejected(state_database, tmp
     with pytest.raises(AnalysisUnavailableError, match='未返回可展示'):
         service.analyze_leadership(report)
     assert calls == 1
+    assert 'device=Cutter01 report_type=leadership report_date=2026-08 analysis_id=' in caplog.text
+    assert '分析包含输入中不存在的数量' in caplog.text
+    assert model_settings.llm_api_key not in caplog.text
 
     with state_database.connect() as connection:
         count = connection.execute(

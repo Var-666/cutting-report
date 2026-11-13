@@ -78,6 +78,7 @@ RUN playwright install --with-deps chromium \
 COPY --chown=app:app backend ./backend
 COPY --chown=app:app scripts/check_welding.py ./scripts/check_welding.py
 COPY --chown=app:app scripts/manage_postgres.py ./scripts/manage_postgres.py
+COPY --chown=app:app scripts/reconcile_cutting_completion_dates.py ./scripts/reconcile_cutting_completion_dates.py
 COPY --chown=app:app scripts/migrate_production_lines.py ./scripts/migrate_production_lines.py
 COPY --chown=app:app scripts/postgres ./scripts/postgres
 COPY --from=frontend-builder --chown=app:app /build/frontend/dist ./frontend/dist

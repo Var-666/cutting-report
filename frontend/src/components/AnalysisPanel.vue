@@ -42,6 +42,7 @@ let sourceCheckController: AbortController | null = null
 let sourceCheckTimer: number | null = null
 let resultCheckTimer: number | null = null
 let refreshRequestedKey = ''
+let nextAnalysisRetryAt = 0
 const activationTimer = createActivationTimer({
   setTimer: (callback, delay) => window.setTimeout(callback, delay),
   clearTimer: (timer) => window.clearTimeout(timer),
@@ -125,10 +126,7 @@ async function loadAnalysis(force = false, targetKey = requestKey()) {
   readingLatest.value = latestOnly
   error.value = ''
   try {
-    const result = latestOnly ? await getLatestAnalysis({
-      reportType: props.reportType,
-      reportDate: props.reportDate,
-    }, { signal }) : await analyzeReport({
+    const generate = () => analyzeReport({
       reportType: props.reportType,
       reportDate: props.reportDate,
       periodStart: props.periodStart || undefined,
@@ -138,17 +136,29 @@ async function loadAnalysis(force = false, targetKey = requestKey()) {
       dataVersion: analysisDataVersion.value || undefined,
       force,
     }, { signal })
+    let result = latestOnly ? await getLatestAnalysis({
+      reportType: props.reportType,
+      reportDate: props.reportDate,
+    }, { signal }) : await generate()
+    if (latestOnly && !result && !analysis.value && !signal.aborted) {
+      readingLatest.value = false
+      result = await generate()
+    }
     if (activationTimer.isActive() && !signal.aborted && sequence === requestSequence) {
       if (result && (!latestOnly || !analysis.value?.generated_at || !result.generated_at
           || result.generated_at >= analysis.value.generated_at)) analysis.value = result
       displayedRequestKey = targetKey
       displayedScope = queryScope()
+      nextAnalysisRetryAt = 0
     }
   } catch (caught) {
     const exception = toError(caught)
     if (exception.name !== 'AbortError' && sequence === requestSequence) {
       if (exception.status === 409) requestReportRefresh(targetKey)
-      else error.value = exception.message
+      else {
+        error.value = exception.message
+        if (exception.status === 503) nextAnalysisRetryAt = Date.now() + (exception.retryAfterMs || 60_000)
+      }
     }
   } finally {
     if (sequence === requestSequence) {
@@ -161,8 +171,10 @@ async function loadAnalysis(force = false, targetKey = requestKey()) {
 }
 
 function pollLatestAnalysis() {
-  if (!activationTimer.isActive() || document.visibilityState !== 'visible'
-      || !props.versionCheckEnabled || loading.value || sourceCheckController) return
+  if (!activationTimer.isActive() || document.visibilityState !== 'visible' || !props.ready
+      || loading.value || sourceCheckController) return
+  if (nextAnalysisRetryAt && Date.now() < nextAnalysisRetryAt) return
+  if (!props.versionCheckEnabled && (!nextAnalysisRetryAt || Date.now() < nextAnalysisRetryAt)) return
   void loadAnalysis(false)
 }
 
@@ -199,6 +211,7 @@ function scheduleAutomaticAnalysis() {
   activeRequestKey = ''
   loading.value = false
   if (queryScope() !== displayedScope) {
+    nextAnalysisRetryAt = 0
     analysis.value = null
     displayedRequestKey = ''
   }
@@ -262,5 +275,5 @@ onBeforeUnmount(() => { pauseAnalysis(); unsubscribeDevice() })
 </script>
 
 <template>
-  <ReportAnalysis :analysis="analysis" :leadership-report="analysisDataVersion && analysis?.data_version === analysisDataVersion ? leadershipReport : null" :loading="loading" :reading-latest="readingLatest" :error="error" :ready="ready" :empty-message="versionCheckEnabled && ready ? '后台尚无已完成的分析，生成后将自动显示。' : '报表数据加载后将自动生成分析。'" @reload="reloadAnalysis" @retry="retryAnalysis" />
+  <ReportAnalysis :analysis="analysis" :leadership-report="analysisDataVersion && analysis?.data_version === analysisDataVersion ? leadershipReport : null" :loading="loading" :reading-latest="readingLatest" :error="error" :ready="ready" :empty-message="versionCheckEnabled && ready ? '正在等待首份成功分析，完成后将自动展示。' : '报表数据加载后将自动生成分析。'" @reload="reloadAnalysis" @retry="retryAnalysis" />
 </template>

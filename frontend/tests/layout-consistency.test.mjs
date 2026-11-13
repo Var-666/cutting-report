@@ -745,14 +745,25 @@ test('cached report resources pause on deactivation and cache is bounded', () =>
   }
 })
 
-test('long-lived page polling is serialized and cancelled when the page leaves', () => {
+test('long-lived page polling is serialized and cancelled when the page leaves', async () => {
   const alarm = descriptor('AlarmCenterView').scriptSetup.content
   const workshop = descriptor('WorkshopView').scriptSetup.content
   const reportCenter = descriptor('ReportCenterView').scriptSetup.content
   const api = readFileSync(new URL('../src/api/alarms.ts', import.meta.url), 'utf8')
 
   assert.doesNotMatch(alarm, /setInterval\(loadData/)
-  assert.match(alarm, /if \(!pageActive \|\| requestController\) return/)
+  const loadAlarm = alarm.slice(alarm.indexOf('async function loadData('), alarm.indexOf('async function selectPanel('))
+  for (const [pageActive, panel, busy] of [[false, 'equipment', false], [true, 'database', false], [true, 'equipment', true], [true, 'equipment', false]]) {
+    let calls = 0
+    const response = { items: [], page: 1 }
+    const bindings = { pageActive, activePanel: Vue.ref(panel), requestController: busy ? new AbortController() : null,
+      requestSequence: 0, incidentPageSize: 15, reportPageSize: 10, toError: value => value }
+    for (const key of ['incidentPage', 'reportPage', 'loading', 'error', 'onlyOpen', 'activeSeverity', 'status', 'incidents', 'incidentSummary', 'reports', 'reportItems', 'reportSummary', 'currentTime']) bindings[key] = Vue.ref(key.endsWith('Page') ? 1 : null)
+    for (const key of ['getAlarmStatus', 'listAlarmIncidentPage', 'listAlarmReports', 'listAlarmReportPage']) bindings[key] = async () => { calls += 1; return response }
+    const load = scriptFunction(...Object.keys(bindings), `${loadAlarm}; return loadData`)(...Object.values(bindings))
+    await load()
+    assert.equal(calls, pageActive && panel === 'equipment' && !busy ? 4 : 0)
+  }
   assert.match(alarm, /requestController\?\.abort\(\)/)
   assert.match(alarm, /await loadData\(\)[\s\S]*scheduleRefresh\(\)/)
   assert.match(api, /getAlarmStatus\(\{ signal \}: ReadOptions = \{\}\)/)

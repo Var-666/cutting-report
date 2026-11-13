@@ -159,7 +159,7 @@ def build_device_runtime(
     snapshots: LeadershipSnapshotRepository, pdf_service: PdfService,
     *, client: SqlServerClient | None = None, task_queue: CoordinationRepository | None = None, ship_names: ShipNameService | None = None,
 ) -> DeviceRuntime:
-    metadata = MetadataRepository(database, device_id=settings.device_id, analysis_scope=f"{settings.device_id}:{settings.source_fingerprint}")
+    metadata = MetadataRepository(database, device_id=settings.device_id, analysis_scope=f"{settings.device_id}:{settings.source_fingerprint}:end-time-v1")
     workshop = WorkshopReportRepository(database, scope_machine_no=settings.report_machine_no)
     pipeline = ReportPipeline(settings, metadata, definitions, workshop_repository=workshop,
                               query_service=QueryService(settings, client=client, ship_names=ship_names,

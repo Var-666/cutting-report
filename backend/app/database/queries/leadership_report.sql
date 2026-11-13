@@ -19,10 +19,7 @@ SELECT
 INTO #filtered_tasks
 FROM [dbo].[task] AS t
 CROSS APPLY (
-    SELECT COALESCE(
-        TRY_CONVERT(date, NULLIF(LTRIM(RTRIM(t.[OP_DATE])), ''), 23),
-        CONVERT(date, t.[START_TIME])
-    ) AS production_date
+    SELECT TRY_CONVERT(date, NULLIF(LTRIM(RTRIM(CONVERT(varchar(64), t.[END_TIME], 126))), '')) AS production_date
 ) AS calculated
 WHERE t.[STATUS] = 2
   AND COALESCE(t.[WORK_TIME], 0) >= 0

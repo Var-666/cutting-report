@@ -40,3 +40,22 @@ class CuttingQueryRepository:
         if isinstance(value, date):
             return value
         return date.fromisoformat(str(value)[:10])
+
+    def task_completion_dates(self, task_ids: list[str]) -> dict[str, date]:
+        dates: dict[str, date] = {}
+        for offset in range(0, len(task_ids), 500):
+            batch = task_ids[offset:offset + 500]
+            rows = self.client.fetch_all(f'''SELECT CONVERT(varchar(64), TASK_ID) AS task_id,
+                TRY_CONVERT(date, NULLIF(LTRIM(RTRIM(CONVERT(varchar(64), END_TIME, 126))), '')) AS production_date FROM dbo.task
+                WHERE UPPER(LTRIM(RTRIM(MACHINE_NO)))=UPPER(?) AND STATUS=2
+                  AND COALESCE(WORK_TIME,0)>=0 AND TASK_ID IN ({','.join('?' for _ in batch)})''',
+                (self.machine_no, *batch))
+            for row in rows:
+                value = row['production_date']
+                if value is not None:
+                    value = value.date() if isinstance(value, datetime) else date.fromisoformat(str(value)[:10])
+                    task_id = str(row['task_id'])
+                    if task_id in dates and dates[task_id] != value:
+                        raise ValueError('同一任务存在冲突结束日期，拒绝校正')
+                    dates[task_id] = value
+        return dates

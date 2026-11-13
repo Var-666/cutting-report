@@ -11,11 +11,13 @@ from app.services.device_runtime import DeviceRuntime, build_device_runtime
 from app.database.metadata import MetadataRepository
 from app.database.llm_usage import LlmUsageRepository
 from app.database.leadership_snapshots import LeadershipSnapshotRepository
-from app.database.report_snapshots import ReportSnapshotRepository
+from app.database.report_snapshots import ReportSnapshotRepository, fingerprint
 from app.database.automation import AutomationRepository
 from app.database.definitions import DefinitionRepository
 from app.database.dispatch import DispatchRepository
 from app.database.downloads import DownloadRepository
+from app.database.database_monitors import DatabaseMonitorRepository
+from app.services.database_monitor_service import DatabaseMonitorService
 from app.database.pdm import MockPdmRepository, SqlServerPdmRepository
 from app.database.retention import RetentionRepository
 from app.database.workshop import WorkshopRepository
@@ -91,6 +93,7 @@ class ApplicationRuntime:
     retention_service: RetentionService
     retention_worker: RetentionWorker
     download_cleanup_worker: DownloadCleanupWorker
+    database_monitor: DatabaseMonitorService
 
 
 def build_runtime(settings: Settings, *, role: Literal["web", "scheduler", "worker", "automation"]) -> ApplicationRuntime:
@@ -136,8 +139,10 @@ def _build_runtime(settings: Settings, database: PostgresDatabase, *, role: Lite
 
     def welding(configuration: Settings, line: ProductionLineInstance, sources: DatabaseSourceRegistry, ship_names: ShipNameService | None, previous: ProductionLineRuntime | None) -> ProductionLineRuntime:
         cfg = settings_for_line(configuration, line, sources.fingerprint(line.source_key))
+        analyses = MetadataRepository(database, device_id=line.id,
+            analysis_scope=f'welding:{line.id}:{cfg.source_fingerprint}:{fingerprint((cfg.weld_db_timezone, line.device_nos))}')
         service = WeldingService(cfg, WeldingRepository(cast(MySqlClient, sources.client(line.source_key)), device_nos=line.device_nos),
-                              snapshots=report_snapshots, coordination=coordination)
+                              snapshots=report_snapshots, coordination=coordination, analyses=analyses)
         return ProductionLineRuntime(line, service)
 
     builders = {"cutting": (cutting, ("data_source_mode", "report_background_refresh_seconds", "llm_model"), ("bm",)),
@@ -245,4 +250,5 @@ def _build_runtime(settings: Settings, database: PostgresDatabase, *, role: Lite
         dispatches=dispatches, pdf_service=pdf_service,
         retention_service=retention_service, retention_worker=retention_worker,
         download_cleanup_worker=download_cleanup_worker,
+        database_monitor=DatabaseMonitorService(DatabaseMonitorRepository(database), settings.timezone),
     )

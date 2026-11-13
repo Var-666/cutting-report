@@ -1,6 +1,9 @@
 from dataclasses import replace
 from datetime import date, datetime
 from decimal import Decimal
+from pathlib import Path
+import re
+import sqlite3
 from types import SimpleNamespace
 
 import pytest
@@ -18,6 +21,38 @@ from app.services.report_analysis_service import workshop_analysis_source_versio
 DAY = date(2026, 9, 30)
 START = datetime(2026, 9, 29, 23, 30)
 END = datetime(2026, 9, 30, 1)
+
+
+@pytest.mark.parametrize('source', ['summary_base', 'workshop', 'equipment', 'leadership_report',
+    'leadership_projects', 'equipment_month_work_time', 'list_projects', 'list_ships', 'latest_production_date'])
+def test_source_queries_assign_cross_day_and_cross_month_tasks_to_completion_day(source):
+    query = (Path(__file__).parents[1] / 'app/database/queries' / f'{source}.sql').read_text()
+    # Exercise the production date expression using SQLite's date conversion;
+    # the SQL Server batch, driver and query plan still require site validation.
+    line = next(line for line in query.splitlines() if ' AS production_date' in line)
+    expression = line.split(' AS production_date')[0].strip().removeprefix('SELECT ')
+    expression = expression.replace('TRY_CONVERT(date,', 'date(')
+    expression = re.sub(r'CONVERT\(varchar\(64\),\s*([^(),]+),\s*126\)', r'CAST(\1 AS TEXT)', expression)
+    rows = [
+        ('midnight', '2026-09-29', '2026-09-29 23:30:00', '2026-09-30 01:00:00'),
+        ('month-end', '2026-09-30', '2026-09-30 23:30:00', '2026-10-01 00:00:00'),
+        ('year-end', '2026-12-31', '2026-12-31 23:30:00', '2027-01-01 00:30:00'),
+        ('conflicting-op-date', '2026-10-02', '2026-09-30 23:30:00', '2026-10-01 00:30:00'),
+        ('no-end', '2026-09-30', '2026-09-30 10:00:00', None),
+        ('invalid-end', '2026-09-30', '2026-09-30 10:00:00', 'invalid'),
+        ('blank-end', '2026-09-30', '2026-09-30 10:00:00', '   '),
+    ]
+    with sqlite3.connect(':memory:') as connection:
+        connection.execute('CREATE TABLE task (id TEXT, OP_DATE TEXT, START_TIME TEXT, END_TIME TEXT)')
+        connection.executemany('INSERT INTO task VALUES (?, ?, ?, ?)', rows)
+        result = dict(connection.execute(f'SELECT id, {expression} AS production_date FROM task AS t'))
+        assert result == dict(zip([row[0] for row in rows],
+            ['2026-09-30', '2026-10-01', '2027-01-01', '2026-10-01', None, None, None]))
+        daily = dict(connection.execute(f'''WITH source AS (SELECT {expression} AS production_date FROM task AS t)
+            SELECT production_date, COUNT(*) FROM source
+            WHERE production_date >= ? AND production_date < ? GROUP BY production_date''',
+            ('2026-10-01', '2026-11-01')))
+        assert daily == {'2026-10-01': 2}
 
 
 def source_row():
@@ -87,6 +122,13 @@ def test_equipment_daily_rows_keep_cross_day_task_in_selected_day():
     assert result["period_report"]["rows"][0]["report_date"] == DAY.isoformat()
     assert result["period_report"]["rows"][0]["task_count"] == 1
     assert result["period_report"]["total_task_count"] == 1
+
+
+def test_workshop_export_retains_completion_day_alongside_actual_start_time():
+    from app.services.report_generation.workshop import _workshop_bundle
+    bundle = _workshop_bundle([workshop_record()], END)
+    assert bundle.summary_records[0].production_date == DAY
+    assert bundle.summary_records[0].production_time == START
 
 
 def test_daily_snapshot_restart_and_legacy_migration_preserve_business_date_and_confirmation(state_database, tmp_path):

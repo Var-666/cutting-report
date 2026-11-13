@@ -4,10 +4,7 @@
 */
 WITH task_source AS (
     SELECT
-        COALESCE(
-            TRY_CONVERT(date, NULLIF(LTRIM(RTRIM(t.[OP_DATE])), ''), 23),
-            CONVERT(date, t.[START_TIME])
-        ) AS production_date,
+        TRY_CONVERT(date, NULLIF(LTRIM(RTRIM(CONVERT(varchar(64), t.[END_TIME], 126))), '')) AS production_date,
         COALESCE(NULLIF(LTRIM(RTRIM(t.[PROJECT_NAME])), ''), NULLIF(LTRIM(RTRIM(t.[PROJECT_CODE])), ''), N'未标注工程') AS project_name,
         CONVERT(decimal(38, 3), COALESCE(t.[OP_LENGTH_CUT], 0)) AS cut_length_mm,
         CONVERT(decimal(38, 0), COALESCE(t.[WORK_TIME], 0)) AS work_time_seconds

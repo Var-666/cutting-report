@@ -9,10 +9,22 @@ from tests.line_fixtures import cutting_settings, source_client
 from app.database.metadata import MetadataRepository
 from app.models.domain import ReportFilter
 from app.services.llm_service import AnalysisOutputValidationError, LlmRequestTimeout
-from app.services.pipeline import ReportPipeline, ReportPipelineCancelled
+from app.services.pipeline import ReportPipeline, ReportPipelineCancelled, ReportAnalysisPendingError
 from app.core.report_deadline import ReportOperationTimeout
 from app.core.request_cancellation import SqlRequestCancelled
 from tests.analysis_fakes import model_analysis
+
+
+def test_unavailable_analysis_log_identifies_the_report_and_reason(tmp_path, caplog):
+    from app.services.report_analysis_service import AnalysisUnavailableError
+    pipeline = ReportPipeline.__new__(ReportPipeline)
+    pipeline.settings = cutting_settings(project_root=tmp_path, llm_enabled=True)
+    pipeline._cancellation_check = None
+    def unavailable():
+        raise AnalysisUnavailableError('模型响应超时')
+    with pytest.raises(ReportAnalysisPendingError):
+        pipeline._analyze_or_wait(unavailable, report_id='report-to-diagnose', report_type='leadership')
+    assert 'report_id=report-to-diagnose report_type=leadership reason=模型响应超时' in caplog.text
 
 
 SCENARIOS = [(kind, interval) for kind in ("leadership", "workshop", "equipment")
@@ -130,18 +142,21 @@ def test_optional_ai_failure_does_not_discard_complete_factual_report(state_data
         return model_analysis(kind, context)
 
     monkeypatch.setattr(pipeline.analysis_service.llm, "analyze_context", model)
+    has_optional_history = report_type != "leadership" or interval
+    waiting = failure != 'history' or has_optional_history
+    if waiting:
+        with pytest.raises(ReportAnalysisPendingError):
+            pipeline.run(job)
+        assert pipeline.metadata.get_job(job['report_id'])['relative_path'] is None
+        assert actual_facts == {}
+        return
     pipeline.run(job)
     completed = pipeline.metadata.get_job(job["report_id"])
     # The file is rendered by the actual template, rather than faking completion.
     assert completed["status"] == "completed"
     assert completed["task_count"] > 0
     html = (pipeline.settings.reports_dir / completed["relative_path"]).read_text()
-    has_optional_history = report_type != "leadership" or interval
-    unavailable = failure != "history" or has_optional_history
-    assert completed["ai_status"] == ("unavailable" if unavailable else "success")
-    if unavailable:
-        assert "智能分析暂不可用" in html
-        assert "确定性报表已生成" in html
+    assert completed["ai_status"] == 'success'
     assert "报告结束" in html
     assert actual_facts == expected_facts
     if failure == "disabled":
@@ -170,6 +185,67 @@ def test_required_source_failure_still_prevents_report_publication(state_databas
 def test_control_signals_in_ai_preparation_are_not_degraded(state_database, tmp_path, monkeypatch, error):
     pipeline, job = pipeline_job(state_database, tmp_path, "equipment", False)
     intercept_history(monkeypatch, pipeline, "equipment", False, error)
-    with pytest.raises(error, match="source unavailable"):
+    with pytest.raises(ReportAnalysisPendingError if error is ReportOperationTimeout else error, match="source unavailable"):
         pipeline.run(job)
     assert pipeline.metadata.get_job(job["report_id"])["status"] != "completed"
+
+
+@pytest.mark.parametrize(('report_type', 'interval'), SCENARIOS)
+def test_report_uses_matching_success_before_optional_queries_or_model(state_database, tmp_path, monkeypatch, report_type, interval):
+    pipeline, job = pipeline_job(state_database, tmp_path, report_type, interval)
+    if report_type == 'leadership' and not interval:
+        from pathlib import Path
+        pipeline.settings.echarts_vendor_path.write_text((Path(__file__).parents[2] / 'vendor/echarts.min.js').read_text())
+    pipeline.analysis_service.llm.analyze_context = model_analysis
+    pipeline.run(job)
+    original = pipeline.metadata.get_job(job['report_id'])
+    original_html = (pipeline.settings.reports_dir / original['relative_path']).read_text()
+    monkeypatch.setattr(pipeline.analysis_service.llm, 'analyze_context', lambda *_: pytest.fail('cached report must not wait on a model'))
+    intercept_history(monkeypatch, pipeline, report_type, interval, OSError)
+    pipeline.metadata.create_job(report_id='cached-report', device_id='Cutter01', report_type=report_type,
+        report_date=job['report_date'], project_code=None, ship_no=None, request_id='cached-report',
+        created_at=job['created_at'], period_start=job.get('period_start'), period_end=job.get('period_end'))
+    retry = pipeline.metadata.claim_next_job(job['created_at'])
+    pipeline.run(retry)
+    completed = pipeline.metadata.get_job('cached-report')
+    assert completed['status'] == 'completed' and completed['ai_status'] == 'success'
+    html = (pipeline.settings.reports_dir / completed['relative_path']).read_text()
+    assert '沿用同一报表范围的历史成功分析' in html
+    assert '智能分析暂不可用' not in html
+    assert '本期生产记录已整理' in html and '本期生产记录已整理' in original_html
+    assert 'class="analysis-sparkline"' not in html
+    if report_type == 'leadership' and not interval:
+        from app.services.pdf_service import PdfService
+        email = PdfService(operation_timeout_seconds=30).render_email(pipeline.settings.reports_dir / completed['relative_path'])
+        assert '沿用同一报表范围的历史成功分析' in email.html
+        assert '本期生产记录已整理' in email.html
+        assert '智能分析暂不可用' not in email.html
+
+
+def test_waiting_report_survives_consumer_restart_and_publishes_only_after_model_recovers(state_database, tmp_path):
+    from unittest.mock import Mock
+    from app.workers.report_worker import ReportWorker
+    pipeline, job = pipeline_job(state_database, tmp_path, 'workshop', False)
+    metadata = pipeline.metadata
+    automation = Mock()
+    def unavailable(*_):
+        raise LlmRequestTimeout('fixture model outage')
+    pipeline.analysis_service.llm.analyze_context = unavailable
+    worker = ReportWorker(pipeline.settings, metadata, pipeline=pipeline, automation_service=automation)
+    worker._process_report(job, ZoneInfo(pipeline.settings.timezone))
+    waiting = metadata.get_job(job['report_id'])
+    assert waiting['status'] == 'pending' and waiting['ai_status'] == 'waiting'
+    assert list(pipeline.settings.reports_dir.rglob('*.html')) == []
+    automation.report_completed.assert_not_called()
+    automation.report_failed.assert_not_called()
+    with metadata.connect() as connection:
+        connection.execute('UPDATE report_jobs SET analysis_next_attempt=0 WHERE report_id=%s', (job['report_id'],))
+    pipeline.analysis_service.llm.analyze_context = model_analysis
+    restarted = ReportWorker(pipeline.settings, metadata, pipeline=pipeline, automation_service=automation)
+    restarted._process_report(metadata.claim_next_job(job['created_at']), ZoneInfo(pipeline.settings.timezone))
+    completed = metadata.get_job(job['report_id'])
+    assert completed['status'] == 'completed' and completed['ai_status'] == 'success'
+    html = (pipeline.settings.reports_dir / completed['relative_path']).read_text()
+    assert '本期生产记录已整理' in html and '智能分析暂不可用' not in html
+    automation.report_completed.assert_called_once()
+    automation.report_failed.assert_not_called()

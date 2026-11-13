@@ -5,10 +5,7 @@
 */
 WITH task_source AS (
     SELECT
-        COALESCE(
-            TRY_CONVERT(date, NULLIF(LTRIM(RTRIM(t.[OP_DATE])), ''), 23),
-            CONVERT(date, t.[START_TIME])
-        ) AS production_date,
+        TRY_CONVERT(date, NULLIF(LTRIM(RTRIM(CONVERT(varchar(64), t.[END_TIME], 126))), '')) AS production_date,
         NULLIF(LTRIM(RTRIM(t.[MACHINE_NO])), '') AS equipment_id,
         CONVERT(decimal(18, 3), COALESCE(t.[WORK_TIME], 0)) AS work_time_seconds
     FROM [dbo].[task] AS t

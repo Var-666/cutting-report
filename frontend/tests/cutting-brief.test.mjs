@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { renderComponent } from './vue-component-helpers.mjs'
-import { analysisTaskLocation } from '../src/utils/analysisReferences.ts'
+import { analysisTaskLocation, analysisReferenceLabel } from '../src/utils/analysisReferences.ts'
 
 const reference = { kind: 'task', id: 'real-task-1', label: 'real-task-1', device_id: 'Cutter01', period_start: '2026-08-18', period_end: '2026-08-20', production_date: '2026-08-19' }
 const brief = {
@@ -21,6 +21,24 @@ test('cutting brief renders dynamic prose and the actual period without fixed KP
   assert.ok(!html.includes('real-task-5'))
   assert.ok(!html.includes('核心指标') && !html.includes('建议跟进') && !html.includes('旧适配文本'))
   assert.ok(!html.includes('C_confirmation') && !html.includes('F004'))
+})
+
+test('task references show business names for cached IDs and retain exact navigation', async () => {
+  const task = { ...reference, id: '30984', label: '30984', project_code: 'CMYZ0170', program_no: '806C-01.gen' }
+  assert.equal(analysisReferenceLabel(task), '程序 806C-01.gen · 工程 CMYZ0170')
+  assert.equal(analysisReferenceLabel({ ...task, label: '程序 806C-01.gen · 工程 CMYZ0170 · 分段 806C' }),
+    '程序 806C-01.gen · 工程 CMYZ0170 · 分段 806C')
+  const html = await renderComponent('components/CuttingAnalysisBrief', { brief: { ...brief,
+    findings: [{ ...brief.findings[0], references: [task], reference_count: 1 }] }, facts: [] })
+  assert.ok(html.includes('806C-01.gen') && html.includes('CMYZ0170'))
+  assert.ok(!html.includes('30984'))
+  assert.equal(analysisTaskLocation(task, 'Cutter01').query.task, '30984')
+})
+
+test('missing task business fields use a readable notice and project names remain unchanged', () => {
+  assert.equal(analysisReferenceLabel(reference), '2026-08-19 切割任务（业务信息未填写）')
+  assert.equal(analysisReferenceLabel({ ...reference, production_date: null }), '切割任务（业务信息未填写）')
+  assert.equal(analysisReferenceLabel({ ...reference, kind: 'project', id: 'P-01', label: 'P-01' }), 'P-01')
 })
 
 test('a finding and its follow-up share one record entry in the evidence table', async () => {
@@ -83,6 +101,18 @@ test('welding analysis uses only the matching report snapshot for indicators', a
     assert.equal(html.includes('分析依据'), matches)
     assert.ok(html.includes('焊接生产概况'))
   }
+})
+
+test('historical welding analysis preserves its evidence and time without new metrics at the same data version', async () => {
+  const html = await renderComponent('components/ReportAnalysis', {
+    analysis: { ...analysis, brief: null, overview: '原有焊接分析', data_version: 'current',
+      cache_note: '沿用历史成功分析', facts: [{ label: '原有作业次数', value: '3' }] },
+    weldingReport: { data_version: 'current', query: { start: '2026-08-18', end: '2026-08-20' }, daily: [],
+      summary: { job_count: 987654321, weld_length_m: 12.3, involved_part_count: 3, working_hours: 1 }, meta: { notices: [] } },
+    ready: true, loading: false,
+  })
+  for (const text of ['原有焊接分析', '沿用历史成功分析', '原有作业次数', analysis.generated_at]) assert.ok(html.includes(text), text)
+  assert.ok(!html.includes('987654321') && !html.includes('焊接作业次数'))
 })
 
 test('task navigation preserves real ID and original range and rejects another production line', () => {

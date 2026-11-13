@@ -23,6 +23,7 @@ from app.api.downloads import router as downloads_router
 from app.api.conditions import router as conditions_router
 from app.api.auth import SESSION_COOKIE, router as auth_router
 from app.api.alarms import router as alarms_router
+from app.api.database_monitors import router as database_monitors_router
 from app.api.llm_usage import router as llm_usage_router
 from app.api.designer import router as designer_router
 from app.api.equipment import router as equipment_router
@@ -118,6 +119,8 @@ async def safe_connection_validation(request: Request, exc: RequestValidationErr
         )
     if request.url.path.startswith('/api/v1/configuration/llm'):
         return JSONResponse(status_code=422, content={'success': False, 'error': {'code': 'VALIDATION_ERROR', 'message': '模型配置无效，请检查接口地址、模型 ID 和密钥'}})
+    if request.url.path.startswith('/api/v1/database-monitors'):
+        return JSONResponse(status_code=422, content={'success': False, 'error': {'code': 'VALIDATION_ERROR', 'message': '请填写名称、有效的服务器 IP 地址和 1～65535 的整数端口'}})
     if request.url.path.startswith(('/api/v1/welding', '/api/v1/database/welding/', '/api/v1/database/sources')) or request.url.path == '/api/v1/database/configuration':
         return JSONResponse(status_code=422, content={'success': False, 'error': {'code': 'VALIDATION_ERROR', 'message': '请求参数无效，请检查日期、筛选或连接配置'}})
     return await request_validation_exception_handler(request, exc)
@@ -222,6 +225,7 @@ app.include_router(welding_router)
 app.include_router(reports_router)
 app.include_router(auth_router)
 app.include_router(alarms_router)
+app.include_router(database_monitors_router)
 app.include_router(llm_usage_router)
 app.include_router(options_router)
 app.include_router(database_router)

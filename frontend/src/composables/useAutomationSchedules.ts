@@ -1,7 +1,7 @@
 import type { Ref } from 'vue'
-import type { AutomationSchedule, SchedulePayload } from '../types/automation'
-import { reactive, ref, watch } from 'vue'
-import { deleteAutomationSchedule, runAutomationSchedule, saveAutomationSchedule } from '../api/automation'
+import type { AutomationExecution, AutomationSchedule, SchedulePayload } from '../types/automation'
+import { computed, onActivated, onBeforeUnmount, onDeactivated, reactive, ref, watch } from 'vue'
+import { deleteAutomationSchedule, getAutomationRun, runAutomationSchedule, saveAutomationSchedule } from '../api/automation'
 import { deviceSelection } from '../state/devices'
 import { toError } from '../utils/errors'
 
@@ -15,6 +15,60 @@ export function useAutomationSchedules({ hasUnsavedChanges, message, error, refr
 }) {
   const saving = ref(false)
   const editingId = ref('')
+  const executions = reactive<Record<string, AutomationExecution>>({})
+  const runningScheduleIds = computed(() => Object.values(executions).filter(isRunning).map(item => item.schedule_id))
+  const timers = new Map<string, ReturnType<typeof setTimeout>>()
+  const controllers = new Map<string, AbortController>()
+  let active = true
+  let disposed = false
+
+  function isRunning(execution: AutomationExecution) {
+    return !['sent', 'failed', 'unknown', 'submission_failed'].includes(execution.status)
+  }
+
+  function schedulePoll(execution: AutomationExecution) {
+    if (!active || !execution.run_id || !isRunning(execution)) return
+    const id = execution.schedule_id
+    clearTimeout(timers.get(id))
+    timers.set(id, setTimeout(() => { timers.delete(id); void pollExecution(execution) }, 2000))
+  }
+
+  async function pollExecution(execution: AutomationExecution) {
+    if (!active || !execution.run_id) return
+    const id = execution.schedule_id
+    const controller = new AbortController()
+    controllers.set(id, controller)
+    try {
+      const run = await getAutomationRun(execution.run_id, { signal: controller.signal })
+      if (!active || controller.signal.aborted || executions[id] !== execution) return
+      const changed = execution.status !== run.status
+      Object.assign(execution, { status: run.status, last_error: run.last_error, monitoring_error: '' })
+      if (changed) await refresh()
+    } catch (caught) {
+      if (active && !controller.signal.aborted && executions[id] === execution) {
+        execution.monitoring_error = `进度暂时读取失败：${toError(caught).message}。正在重新读取，请勿重复执行。`
+      }
+    } finally {
+      if (controllers.get(id) === controller) {
+        controllers.delete(id)
+        schedulePoll(execution)
+      }
+    }
+  }
+
+  function pauseExecutions() {
+    active = false
+    timers.forEach(timer => clearTimeout(timer))
+    timers.clear()
+    controllers.forEach(controller => controller.abort())
+    controllers.clear()
+  }
+  onDeactivated(pauseExecutions)
+  onActivated(() => {
+    active = true
+    Object.values(executions).forEach(schedulePoll)
+  })
+  onBeforeUnmount(() => { disposed = true; pauseExecutions() })
   const emptyForm = (): Omit<Required<SchedulePayload>, 'recipients' | 'weekday'> & { recipients_text: string; weekday: number } => ({
     device_id: deviceSelection.id,
     name: '每日车间报表',
@@ -103,16 +157,25 @@ export function useAutomationSchedules({ hasUnsavedChanges, message, error, refr
   }
 
   async function runNow(item: AutomationSchedule) {
+    if (disposed || runningScheduleIds.value.includes(item.schedule_id)) return
+    const execution = reactive<AutomationExecution>({
+      schedule_id: item.schedule_id, schedule_name: item.name, status: 'submitting',
+    })
+    executions[item.schedule_id] = execution
     error.value = ''
     message.value = ''
     try {
       const run = await runAutomationSchedule(item.schedule_id)
-      if (run.status === 'failed') throw new Error(run.last_error || '报表任务创建失败')
+      if (disposed) return
+      Object.assign(execution, { run_id: run.run_id, status: run.status, last_error: run.last_error })
+      schedulePoll(execution)
       message.value = `已提交“${item.name}”，报表生成后将自动发送。`
       await refresh()
     } catch (caught) {
-      const exception = toError(caught)
-      error.value = exception.message
+      if (!disposed) {
+        execution.status = 'submission_failed'
+        execution.last_error = `提交未确认：${toError(caught).message}。请先查看发送记录，避免重复执行。`
+      }
     }
   }
 
@@ -131,5 +194,5 @@ export function useAutomationSchedules({ hasUnsavedChanges, message, error, refr
 
   watch(() => deviceSelection.id, (id) => { if (!form.device_id) form.device_id = id })
 
-  return { saving, editingId, form, changeReportType, resetForm, editSchedule, submit, runNow, remove }
+  return { saving, editingId, form, executions, runningScheduleIds, changeReportType, resetForm, editSchedule, submit, runNow, remove }
 }

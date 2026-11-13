@@ -7,7 +7,7 @@ import AppIcon from './AppIcon.vue'
 import AppReportTable from './AppReportTable.vue'
 import MetricSparkline from './MetricSparkline.vue'
 import { getDeviceId } from '../api/deviceContext.ts'
-import { analysisTaskLocation } from '../utils/analysisReferences.ts'
+import { analysisTaskLocation, analysisReferenceLabel } from '../utils/analysisReferences.ts'
 
 const props = defineProps<{
   brief: AnalysisBrief
@@ -109,7 +109,8 @@ const evidenceRows = computed(() => linkedFindings.value.map(({ finding }) => {
   const tasks = finding.references.filter(reference => reference.kind === 'task').length
   return {
     finding,
-    label: finding.references.slice(0, 3).map(reference => reference.label).join('、'),
+    label: [...new Set(finding.references.slice(0, 3).map(analysisReferenceLabel))].join('；')
+      + (finding.reference_count > 3 ? ' 等' : ''),
     count: project ? `${project.task_count} 项` : tasks ? `${tasks} 项` : '—',
     totals: project ? `切割长度 ${lengthFormat.format(project.cut_length_m)} 米 · 切割时长 ${duration(project.work_time_seconds)}` : '—',
     detail: finding.title,
@@ -126,7 +127,7 @@ const evidenceColumns = [
   { key: 'c4', title: '说明', align: 'left' },
 ] as const
 const referenceColumns = [
-  { key: 'label', title: '关联对象', align: 'left' },
+  { key: 'id', title: '记录编号', align: 'left' },
   { key: 'production_date', title: '生产日期', align: 'left' },
   { key: 'project_code', title: '工程号', align: 'left' },
   { key: 'program_no', title: '程序号', align: 'left' },

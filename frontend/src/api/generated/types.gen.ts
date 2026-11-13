@@ -788,6 +788,51 @@ export type ApiEnvelopeDatabaseConfiguration = {
 };
 
 /**
+ * ApiEnvelope[DatabaseMonitorDeleted]
+ */
+export type ApiEnvelopeDatabaseMonitorDeleted = {
+    /**
+     * Success
+     */
+    success: true;
+    data: DatabaseMonitorDeleted;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
+ * ApiEnvelope[DatabaseMonitorList]
+ */
+export type ApiEnvelopeDatabaseMonitorList = {
+    /**
+     * Success
+     */
+    success: true;
+    data: DatabaseMonitorList;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
+ * ApiEnvelope[DatabaseMonitorSaved]
+ */
+export type ApiEnvelopeDatabaseMonitorSaved = {
+    /**
+     * Success
+     */
+    success: true;
+    data: DatabaseMonitorSaved;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
  * ApiEnvelope[DatabasePreview]
  */
 export type ApiEnvelopeDatabasePreview = {
@@ -1141,6 +1186,21 @@ export type ApiEnvelopePageCuttingFile = {
      */
     success: true;
     data: PageCuttingFile;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
+ * ApiEnvelope[Page[DatabaseMonitorIncident]]
+ */
+export type ApiEnvelopePageDatabaseMonitorIncident = {
+    /**
+     * Success
+     */
+    success: true;
+    data: PageDatabaseMonitorIncident;
     /**
      * Request Id
      */
@@ -2939,6 +2999,162 @@ export type DatabaseConfigurationRequest = {
     worker: SavedConnectionRequest;
     file: SavedConnectionRequest;
     welding?: WeldingConnectionRequest | null;
+};
+
+/**
+ * DatabaseMonitor
+ */
+export type DatabaseMonitor = {
+    /**
+     * Monitor Id
+     */
+    monitor_id: string;
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Ip
+     */
+    ip: string;
+    /**
+     * Port
+     */
+    port: number;
+    /**
+     * Enabled
+     */
+    enabled: boolean;
+    /**
+     * State
+     */
+    state: 'unknown' | 'healthy' | 'suspect' | 'down' | 'recovering' | 'paused';
+    /**
+     * Last Checked At
+     */
+    last_checked_at: number | null;
+    /**
+     * Last Success At
+     */
+    last_success_at: number | null;
+    /**
+     * Failure Started At
+     */
+    failure_started_at: number | null;
+    /**
+     * Failures
+     */
+    failures: number;
+    /**
+     * Successes
+     */
+    successes: number;
+    /**
+     * Last Error
+     */
+    last_error: string | null;
+};
+
+/**
+ * DatabaseMonitorDeleted
+ */
+export type DatabaseMonitorDeleted = {
+    /**
+     * Deleted
+     */
+    deleted: boolean;
+};
+
+/**
+ * DatabaseMonitorIncident
+ */
+export type DatabaseMonitorIncident = {
+    /**
+     * Incident Id
+     */
+    incident_id: string;
+    /**
+     * Monitor Id
+     */
+    monitor_id: string;
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Ip
+     */
+    ip: string;
+    /**
+     * Port
+     */
+    port: number;
+    /**
+     * Started At
+     */
+    started_at: number;
+    /**
+     * Confirmed At
+     */
+    confirmed_at: number;
+    /**
+     * Ended At
+     */
+    ended_at: number | null;
+    /**
+     * End Reason
+     */
+    end_reason: 'recovered' | 'paused' | 'changed' | 'deleted' | null;
+    /**
+     * Last Error
+     */
+    last_error: string;
+};
+
+/**
+ * DatabaseMonitorInput
+ */
+export type DatabaseMonitorInput = {
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Ip
+     */
+    ip: string;
+    /**
+     * Port
+     */
+    port: number;
+    /**
+     * Enabled
+     */
+    enabled?: boolean;
+};
+
+/**
+ * DatabaseMonitorList
+ */
+export type DatabaseMonitorList = {
+    /**
+     * Items
+     */
+    items: Array<DatabaseMonitor>;
+    /**
+     * Timezone
+     */
+    timezone: string;
+};
+
+/**
+ * DatabaseMonitorSaved
+ */
+export type DatabaseMonitorSaved = {
+    /**
+     * Monitor Id
+     */
+    monitor_id: string;
 };
 
 /**
@@ -4891,6 +5107,28 @@ export type PageCuttingFile = {
 };
 
 /**
+ * Page[DatabaseMonitorIncident]
+ */
+export type PageDatabaseMonitorIncident = {
+    /**
+     * Items
+     */
+    items: Array<DatabaseMonitorIncident>;
+    /**
+     * Total
+     */
+    total: number;
+    /**
+     * Page
+     */
+    page: number;
+    /**
+     * Page Size
+     */
+    page_size: number;
+};
+
+/**
  * Page[EmailDelivery]
  */
 export type PageEmailDelivery = {
@@ -5244,6 +5482,10 @@ export type ReportAnalysis = {
      */
     error?: string | null;
     brief?: AnalysisBrief | null;
+    /**
+     * Cache Note
+     */
+    cache_note?: string | null;
 };
 
 /**
@@ -8045,6 +8287,150 @@ export type AuthStatusApiV1AuthStatusGetResponses = {
 
 export type AuthStatusApiV1AuthStatusGetResponse = AuthStatusApiV1AuthStatusGetResponses[keyof AuthStatusApiV1AuthStatusGetResponses];
 
+export type ListMonitorsApiV1DatabaseMonitorsGetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/database-monitors';
+};
+
+export type ListMonitorsApiV1DatabaseMonitorsGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ListMonitorsApiV1DatabaseMonitorsGetError = ListMonitorsApiV1DatabaseMonitorsGetErrors[keyof ListMonitorsApiV1DatabaseMonitorsGetErrors];
+
+export type ListMonitorsApiV1DatabaseMonitorsGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeDatabaseMonitorList;
+};
+
+export type ListMonitorsApiV1DatabaseMonitorsGetResponse = ListMonitorsApiV1DatabaseMonitorsGetResponses[keyof ListMonitorsApiV1DatabaseMonitorsGetResponses];
+
+export type CreateMonitorApiV1DatabaseMonitorsPostData = {
+    body: DatabaseMonitorInput;
+    path?: never;
+    query?: never;
+    url: '/api/v1/database-monitors';
+};
+
+export type CreateMonitorApiV1DatabaseMonitorsPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type CreateMonitorApiV1DatabaseMonitorsPostError = CreateMonitorApiV1DatabaseMonitorsPostErrors[keyof CreateMonitorApiV1DatabaseMonitorsPostErrors];
+
+export type CreateMonitorApiV1DatabaseMonitorsPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeDatabaseMonitorSaved;
+};
+
+export type CreateMonitorApiV1DatabaseMonitorsPostResponse = CreateMonitorApiV1DatabaseMonitorsPostResponses[keyof CreateMonitorApiV1DatabaseMonitorsPostResponses];
+
+export type DeleteMonitorApiV1DatabaseMonitorsMonitorIdDeleteData = {
+    body?: never;
+    path: {
+        /**
+         * Monitor Id
+         */
+        monitor_id: string;
+    };
+    query?: never;
+    url: '/api/v1/database-monitors/{monitor_id}';
+};
+
+export type DeleteMonitorApiV1DatabaseMonitorsMonitorIdDeleteErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type DeleteMonitorApiV1DatabaseMonitorsMonitorIdDeleteError = DeleteMonitorApiV1DatabaseMonitorsMonitorIdDeleteErrors[keyof DeleteMonitorApiV1DatabaseMonitorsMonitorIdDeleteErrors];
+
+export type DeleteMonitorApiV1DatabaseMonitorsMonitorIdDeleteResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeDatabaseMonitorDeleted;
+};
+
+export type DeleteMonitorApiV1DatabaseMonitorsMonitorIdDeleteResponse = DeleteMonitorApiV1DatabaseMonitorsMonitorIdDeleteResponses[keyof DeleteMonitorApiV1DatabaseMonitorsMonitorIdDeleteResponses];
+
+export type UpdateMonitorApiV1DatabaseMonitorsMonitorIdPutData = {
+    body: DatabaseMonitorInput;
+    path: {
+        /**
+         * Monitor Id
+         */
+        monitor_id: string;
+    };
+    query?: never;
+    url: '/api/v1/database-monitors/{monitor_id}';
+};
+
+export type UpdateMonitorApiV1DatabaseMonitorsMonitorIdPutErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type UpdateMonitorApiV1DatabaseMonitorsMonitorIdPutError = UpdateMonitorApiV1DatabaseMonitorsMonitorIdPutErrors[keyof UpdateMonitorApiV1DatabaseMonitorsMonitorIdPutErrors];
+
+export type UpdateMonitorApiV1DatabaseMonitorsMonitorIdPutResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeDatabaseMonitorSaved;
+};
+
+export type UpdateMonitorApiV1DatabaseMonitorsMonitorIdPutResponse = UpdateMonitorApiV1DatabaseMonitorsMonitorIdPutResponses[keyof UpdateMonitorApiV1DatabaseMonitorsMonitorIdPutResponses];
+
+export type IncidentsApiV1DatabaseMonitorsIncidentsPageGetData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Page
+         */
+        page?: number;
+        /**
+         * Page Size
+         */
+        page_size?: number;
+    };
+    url: '/api/v1/database-monitors/incidents/page';
+};
+
+export type IncidentsApiV1DatabaseMonitorsIncidentsPageGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type IncidentsApiV1DatabaseMonitorsIncidentsPageGetError = IncidentsApiV1DatabaseMonitorsIncidentsPageGetErrors[keyof IncidentsApiV1DatabaseMonitorsIncidentsPageGetErrors];
+
+export type IncidentsApiV1DatabaseMonitorsIncidentsPageGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopePageDatabaseMonitorIncident;
+};
+
+export type IncidentsApiV1DatabaseMonitorsIncidentsPageGetResponse = IncidentsApiV1DatabaseMonitorsIncidentsPageGetResponses[keyof IncidentsApiV1DatabaseMonitorsIncidentsPageGetResponses];
+
 export type ProductionLinesApiV1ProductionLinesGetData = {
     body?: never;
     path?: never;
@@ -9815,6 +10201,36 @@ export type RunScheduleApiV1AutomationSchedulesScheduleIdRunPostResponses = {
 
 export type RunScheduleApiV1AutomationSchedulesScheduleIdRunPostResponse = RunScheduleApiV1AutomationSchedulesScheduleIdRunPostResponses[keyof RunScheduleApiV1AutomationSchedulesScheduleIdRunPostResponses];
 
+export type GetRunApiV1AutomationRunsRunIdGetData = {
+    body?: never;
+    path: {
+        /**
+         * Run Id
+         */
+        run_id: string;
+    };
+    query?: never;
+    url: '/api/v1/automation/runs/{run_id}';
+};
+
+export type GetRunApiV1AutomationRunsRunIdGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type GetRunApiV1AutomationRunsRunIdGetError = GetRunApiV1AutomationRunsRunIdGetErrors[keyof GetRunApiV1AutomationRunsRunIdGetErrors];
+
+export type GetRunApiV1AutomationRunsRunIdGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeScheduledRun;
+};
+
+export type GetRunApiV1AutomationRunsRunIdGetResponse = GetRunApiV1AutomationRunsRunIdGetResponses[keyof GetRunApiV1AutomationRunsRunIdGetResponses];
+
 export type ListDeliveriesApiV1AutomationDeliveriesGetData = {
     body?: never;
     path?: never;
@@ -10753,6 +11169,40 @@ export type AnalysisApiV1WeldingAnalysisPostResponses = {
 };
 
 export type AnalysisApiV1WeldingAnalysisPostResponse = AnalysisApiV1WeldingAnalysisPostResponses[keyof AnalysisApiV1WeldingAnalysisPostResponses];
+
+export type LatestAnalysisApiV1WeldingAnalysisLatestGetData = {
+    body?: never;
+    path?: never;
+    query: {
+        /**
+         * Data Version
+         */
+        data_version: string;
+        /**
+         * Report Type
+         */
+        report_type?: 'daily' | 'parts' | 'jobs' | 'equipment';
+    };
+    url: '/api/v1/welding/analysis/latest';
+};
+
+export type LatestAnalysisApiV1WeldingAnalysisLatestGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type LatestAnalysisApiV1WeldingAnalysisLatestGetError = LatestAnalysisApiV1WeldingAnalysisLatestGetErrors[keyof LatestAnalysisApiV1WeldingAnalysisLatestGetErrors];
+
+export type LatestAnalysisApiV1WeldingAnalysisLatestGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeUnionReportAnalysisNoneType;
+};
+
+export type LatestAnalysisApiV1WeldingAnalysisLatestGetResponse = LatestAnalysisApiV1WeldingAnalysisLatestGetResponses[keyof LatestAnalysisApiV1WeldingAnalysisLatestGetResponses];
 
 export type GetLeadershipReportApiV1LeadershipReportGetData = {
     body?: never;

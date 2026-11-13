@@ -253,6 +253,28 @@ def test_analysis_version_ignores_paging_but_tracks_filters_and_association():
     assert WeldingService.version(changed) != version
 
 
+def test_export_reuses_persisted_success_after_restart_without_mixing_current_metrics(state_database, tmp_path, monkeypatch):
+    from app.database.metadata import MetadataRepository
+    from app.models.domain import AnalysisResult, to_primitive
+    cfg = welding_settings(project_root=tmp_path, llm_enabled=True)
+    def build():
+        return WeldingService(cfg, None, analyses=MetadataRepository(state_database, device_id=cfg.device_id, analysis_scope='welding:export'))
+    monkeypatch.setattr('app.services.welding_service.LlmService.analyze_context', lambda *_: AnalysisResult(
+        status='success', overview='原有焊接分析', features='原有特征', alerts='原有关注', suggestions='核对记录',
+        facts=[{'label': '原有作业次数', 'value': 3}]))
+    original = {**report_data(), 'equipment': [], 'data_version': 'a' * 64}
+    first = to_primitive(build().analyze_report('jobs', query(), original, 'a' * 64))
+    restarted = build()
+    current = {**report_data(), 'equipment': [], 'data_version': 'b' * 64}
+    current['summary']['job_count'] = 987654321
+    restarted.report = lambda *_args, **_kwargs: current
+    content, _ = WeldingExport(cfg, restarted, None).generate('jobs', query(), 'html')
+    html = content.decode()
+    assert '原有焊接分析' in html and '历史成功分析' in html
+    assert first['generated_at'] in html and '原有作业次数' in html
+    assert '焊接作业次数' not in html and '987654321' not in html
+
+
 def test_exports_cover_all_filters_escape_text_and_enforce_limits(tmp_path):
     data = report_data()
     data['data_version'] = 'matching'
@@ -260,7 +282,7 @@ def test_exports_cover_all_filters_escape_text_and_enforce_limits(tmp_path):
         def report(self, kind, selected, *, export_limit):
             assert kind == 'jobs' and export_limit in (5001, 100001)
             return data
-        def cached_analysis(self, version):
+        def cached_analysis(self, version, **options):
             if version == 'matching':
                 return {'mode': 'model', 'status': 'success', 'overview': '焊接产出简报',
                         'features': '工艺分布', 'alerts': '数据核查', 'suggestions': '核对记录'}
@@ -296,7 +318,9 @@ def api(state_database):
     app.include_router(router)
     app.include_router(lines_router)
     app.dependency_overrides[require_admin] = lambda: {'role': 'admin'}
-    instance = SimpleNamespace(settings=welding_settings(llm_enabled=False), snapshot_service=None)
+    from app.database.metadata import MetadataRepository
+    instance = WeldingService(welding_settings(llm_enabled=False), None,
+        analyses=MetadataRepository(state_database, device_id='welding', analysis_scope='welding:test'))
     app.state.lines = {'welding': runtime_line(instance, 'welding')}
     app.state.catalog = load_line_catalog(instance.settings.production_lines_json)
     return TestClient(app, headers={'X-Production-Line': 'welding'})
@@ -334,12 +358,14 @@ def test_ai_input_version_and_unavailable_model(api):
     assert api.post('/api/v1/welding/analysis', json=body).status_code == 503
     prompt = analysis_system_prompt('welding')
     assert '毫米' not in prompt and '长度单位米' in prompt and '派发' in prompt
-    assert analysis_system_prompt('equipment').startswith('你是切割生产报表')
+    assert analysis_system_prompt('equipment') != prompt and '切割生产' in analysis_system_prompt('equipment')
 
 
 def test_ai_uses_only_aggregate_context_and_reuses_verified_version(api, monkeypatch):
     from app.models.domain import AnalysisResult
-    instance = WeldingService(welding_settings(weld_enabled=True, llm_enabled=True), None)
+    from app.database.metadata import MetadataRepository
+    instance = WeldingService(welding_settings(weld_enabled=True, llm_enabled=True), None,
+        analyses=MetadataRepository(api.app.state.database, device_id='welding', analysis_scope='welding:test'))
     data = report_data()
     data.update(data_version='a' * 64, equipment=[])
     instance.report = lambda *args, **kwargs: data
@@ -597,7 +623,7 @@ def test_pdf_and_ai_release_welding_capacity_before_slow_processing(api, monkeyp
     def model(*args):
         slow()
         return AnalysisResult(status='success', overview='ok', features='ok', alerts='ok', suggestions='ok')
-    monkeypatch.setattr(welding.LlmService, 'analyze_context', model)
+    monkeypatch.setattr('app.services.welding_service.LlmService.analyze_context', model)
 
     async def exercise():
         async with httpx.AsyncClient(headers={'X-Production-Line': 'welding'}, transport=httpx.ASGITransport(app=api.app), base_url='http://test') as client:

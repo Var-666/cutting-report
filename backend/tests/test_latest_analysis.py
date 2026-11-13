@@ -118,7 +118,8 @@ def test_page_reads_previous_success_during_refresh_then_replaces_it_without_cal
     assert other_service.latest_default_analysis(report_type, date(2026, 10, 21)) is None
     assert service.latest_default_analysis(report_type, date(2026, 11, 21)) is None
     runtime.report_analysis_service = ReportAnalysisService(replace(settings, llm_model='another-model'), metadata)
-    assert read() is None, 'results from a different configured model must not be presented as current'
+    assert read()['overview'] == '10:00'
+    assert read()['cache_note'], 'old model results remain available with an explicit historical-cache label'
 
 
 @pytest.mark.parametrize('payload, expected', [

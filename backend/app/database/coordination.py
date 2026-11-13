@@ -14,6 +14,12 @@ from app.database.postgres_migrations import MIGRATION_LOCK
 
 logger = logging.getLogger(__name__)
 
+PERIODIC_ANALYSIS_KINDS = frozenset({'analysis_leadership', 'analysis_workshop', 'analysis_equipment'})
+
+
+def periodic_analysis_task(kind: str, payload: dict) -> bool:
+    return kind in PERIODIC_ANALYSIS_KINDS and bool(payload.get('date') and payload.get('source_fingerprint'))
+
 
 class CoordinationRepository(PostgresRepository):
     def register_model_waiter(self, waiter_id: str, expires_at: float) -> None:
@@ -113,6 +119,11 @@ class CoordinationRepository(PostgresRepository):
         now = time()
         with self.connect() as connection:
             lock_key(connection, 'background:admission')
+            if key is None and periodic_analysis_task(kind, payload):
+                connection.execute("""UPDATE background_tasks SET status='completed', updated_at=%s,
+                    last_error='SUPERSEDED' || CASE WHEN last_error IS NULL THEN '' ELSE ':' || last_error END
+                    WHERE kind=%s AND device_id=%s AND payload::jsonb=%s::jsonb
+                      AND status IN ('pending','deferred')""", (now, kind, device_id, json.dumps(payload)))
             count = connection.execute("SELECT COUNT(*) AS count FROM background_tasks WHERE status='pending'").fetchone()['count']
             status = "pending" if count < capacity else "deferred"
             added = connection.execute("""
@@ -164,11 +175,14 @@ class CoordinationRepository(PostgresRepository):
 
     def finish_task(self, task: dict, owner: str, error: str | None = None) -> float | None:
         delay = min(30 * 2 ** min(task["attempts"] - 1, 7), 3600) if error else 0
+        exhausted = (periodic_analysis_task(task['kind'], task['payload'])
+                     and task['attempts'] >= 2 and error != 'EXECUTOR_ADMISSION')
+        status = 'blocked' if error and (error == 'SOURCE_UNVERIFIED' or exhausted) else 'deferred' if error else 'completed'
         with self._owned_connection(owner) as connection:
             now = time()
             updated = connection.execute("""UPDATE background_tasks SET status=%s, owner=NULL, claim_token=NULL, updated_at=%s, next_attempt=%s, last_error=%s
                 WHERE task_id=%s AND owner=%s AND attempts=%s AND claim_token=%s AND status='running'""",
-                ("blocked" if error == 'SOURCE_UNVERIFIED' else "deferred" if error else "completed", now, now + delay, error, task["task_id"], owner, task['attempts'], task['claim_token']))
+                (status, now, now + delay, error, task["task_id"], owner, task['attempts'], task['claim_token']))
         return now if updated.rowcount else None
 
     def recover_tasks(self, owner: str) -> None:

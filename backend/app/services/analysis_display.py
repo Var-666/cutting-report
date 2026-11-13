@@ -24,6 +24,19 @@ WELDING_FIELDS = (
 )
 
 
+def analysis_reference_label(reference: dict) -> str:
+    label = str(reference.get('label') or '').strip()
+    if reference.get('kind') != 'task' or (label and label != str(reference.get('id') or '')):
+        return label or str(reference.get('id') or '—')
+    parts = [f'{name} {str(reference[field]).strip()}' for field, name in (
+        ('program_no', '程序'), ('project_code', '工程'), ('segment_name', '分段'))
+        if reference.get(field) and str(reference[field]).strip()]
+    if parts:
+        return ' · '.join(parts)
+    day = str(reference.get('production_date') or '').strip()
+    return (f'{day} ' if day else '') + '切割任务（业务信息未填写）'
+
+
 @lru_cache(maxsize=4)
 def analysis_cover(project_root: Path) -> str:
     source = project_root / 'frontend/src/assets/home-laser-cutting.webp'
@@ -48,6 +61,8 @@ def _sparkline(rows: list[dict], field: str) -> list[tuple[float, float]]:
 
 def analysis_metrics(analysis: dict, kind: str, report: dict) -> list[dict]:
     if kind == 'welding':
+        if analysis.get('cache_note'):
+            return []
         rows = sorted(report.get('daily', []), key=lambda row: row['production_date'])
         metrics = []
         for key, label, unit, icon in WELDING_FIELDS:
@@ -64,7 +79,7 @@ def analysis_metrics(analysis: dict, kind: str, report: dict) -> list[dict]:
     icons = CUTTING_ICONS.get(kind, {})
     primary = LEADERSHIP_FIELDS if kind == 'leadership' else icons
     ids = primary if any(identifier in fact_by_id for identifier in primary) else brief['key_metric_ids']
-    leadership = report.get('leadership') or {}
+    leadership = {} if analysis.get('cache_note') else report.get('leadership') or {}
     rows = sorted(leadership.get('daily_records', []), key=lambda row: row['period_start'])
     days = sum(row.get('task_count', 0) > 0 for row in rows)
     scope = brief['scope']

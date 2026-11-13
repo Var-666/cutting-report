@@ -7,10 +7,7 @@ WITH task_source AS (
     SELECT
         t.*,
         COALESCE(NULLIF(LTRIM(RTRIM(t.[PROJECT_NAME])), ''), NULLIF(LTRIM(RTRIM(t.[PROJECT_CODE])), '')) AS project_number,
-        COALESCE(
-            TRY_CONVERT(date, NULLIF(LTRIM(RTRIM(t.[OP_DATE])), ''), 23),
-            CONVERT(date, t.[START_TIME])
-        ) AS production_date
+        TRY_CONVERT(date, NULLIF(LTRIM(RTRIM(CONVERT(varchar(64), t.[END_TIME], 126))), '')) AS production_date
     FROM [dbo].[task] AS t
     WHERE t.[STATUS] = 2
       AND COALESCE(t.[WORK_TIME], 0) >= 0
