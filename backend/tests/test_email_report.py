@@ -1,4 +1,5 @@
 from dataclasses import replace
+from contextlib import closing
 from datetime import datetime
 from email import policy
 from email.parser import BytesParser
@@ -38,8 +39,9 @@ def test_email_contains_html_related_images_and_optional_original_attachment(tmp
     monkeypatch.setattr("app.services.email_service.smtplib.SMTP", SMTP)
     cfg = replace(settings, project_root=tmp_path, smtp_enabled=True, smtp_host="smtp.test",
                   smtp_from_email="report@example.com", smtp_username="", smtp_use_tls=False, smtp_use_ssl=False)
-    image = b"\x89PNG\r\n\x1a\nimage"
-    renderer = SimpleNamespace(render_email=lambda path: EmailReport('<h1>车间日报</h1><img src="cid:chart@test">', {"chart@test": image}))
+    images = {f"report-page-{number}@test": b"\x89PNG\r\n\x1a\n" + bytes([number]) for number in (1, 2)}
+    renderer = SimpleNamespace(render_email=lambda path: EmailReport(
+        '<h1>车间日报</h1>' + ''.join(f'<img src="cid:{cid}">' for cid in images), images))
     original = b"<html>original report with scripts</html>"
     delivery = {"message_id": "<stable@test>", "recipients": ["manager@example.com"], "subject": "日报",
                 "schedule_name": "车间日报", "report_date": "2026-11-08", "filename": "车间日报.html"}
@@ -47,12 +49,13 @@ def test_email_contains_html_related_images_and_optional_original_attachment(tmp
     assert service.send(delivery, original if attach else None, report_path=tmp_path / "report.html") == "<stable@test>"
     message = sent[0]
     assert "车间日报" in message.get_body(preferencelist=("plain",)).get_content()
-    assert 'src="cid:chart@test"' in message.get_body(preferencelist=("html",)).get_content()
+    assert all(f'src="cid:{cid}"' in message.get_body(preferencelist=("html",)).get_content() for cid in images)
     related = [part for part in message.walk() if part.get_content_type() == "image/png"]
-    assert len(related) == 1
-    assert related[0]["Content-ID"] == "<chart@test>"
-    assert related[0].get_content_disposition() == "inline"
-    assert related[0].get_payload(decode=True) == image
+    assert len(related) == len(images)
+    for part, (cid, image) in zip(related, images.items()):
+        assert part["Content-ID"] == f"<{cid}>"
+        assert part.get_content_disposition() == "inline"
+        assert part.get_payload(decode=True) == image
     attachments = list(message.iter_attachments())
     assert len(attachments) == int(attach)
     if attach:
@@ -99,42 +102,61 @@ def test_retry_wait_starts_after_slow_report_preparation(tmp_path, monkeypatch):
     assert failures[0]['next_attempt_at'] == (NOW + timedelta(seconds=180)).isoformat(timespec='seconds')
 
 
-def test_large_email_omits_repeated_default_styles_and_preserves_all_cells(tmp_path):
+def test_large_email_keeps_complete_continuous_pdf_without_rebuilding_table_cells(tmp_path):
+    import pypdfium2 as pdfium
     path = tmp_path / 'large.html'
     row = '<tr>' + '<td>工程号-0001</td>' * 12 + '</tr>'
     path.write_text('<html><head><style>body{margin:0;color:#203b4d;font:14px/1.6 Arial}table{border-collapse:collapse;width:100%}td{height:42px;padding:8px 10px;border-bottom:1px solid #e0e8ec;white-space:nowrap}</style></head><body><table><tbody>' + row * 1000 + '</tbody></table></body></html>', encoding='utf-8')
-    email = PdfService(operation_timeout_seconds=30).render_email(path)
-    assert email.html.count('<td') == 12000
-    assert email.html.count('工程号-0001') == 12000
-    assert 'box-shadow: none' not in email.html and 'max-height: none' not in email.html
-    assert len(email.html.encode('utf-8')) < 3_000_000
+    service = PdfService(operation_timeout_seconds=30)
+    email = service.render_email(path)
+    with pdfium.PdfDocument(service.render(path)) as document:
+        assert len(document) == 1 and len(email.images) > 1
+        count = 0
+        for page in document:
+            with closing(page), closing(page.get_textpage()) as textpage:
+                count += textpage.get_text_range().count('工程号-0001')
+        assert count == 12000
+    assert email.html.count('<img') == len(email.images)
+    assert len(email.html.encode('utf-8')) < 100_000
 
 
-def test_email_expands_long_tables_and_remains_readable_without_responsive_styles(tmp_path):
+def test_email_pdf_pages_keep_long_tables_without_client_responsive_styles(tmp_path):
+    import base64
+    import pypdfium2 as pdfium
     from playwright.sync_api import sync_playwright
     path = tmp_path / 'scrolling-report.html'
     rows = ''.join(f'<tr><td>记录 {index}</td></tr>' for index in range(60))
     path.write_text('''<style>.data-chart-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
         .table-wrap{height:300px;max-height:300px;overflow:auto}td{height:30px}
-        @media(max-width:760px){.data-chart-grid{grid-template-columns:1fr}}</style>
+        @media(max-width:760px){.data-chart-grid{grid-template-columns:1fr}}
+        @media print{.data-chart-grid{display:block}.table-wrap{height:auto;max-height:none;overflow:visible}}</style>
         <div class="data-chart-grid"><div class="table-wrap"><table>''' + rows + '''</table></div>
         <div>图表位置</div></div><p class="mail-tail">报表结束</p>''', encoding='utf-8')
-    email = PdfService(operation_timeout_seconds=30).render_email(path)
+    service = PdfService(operation_timeout_seconds=30)
+    email = service.render_email(path)
+    with pdfium.PdfDocument(service.render(path)) as document:
+        assert len(document) == 1 and email.images
+        with closing(document[len(document) - 1]) as last, closing(last.get_textpage()) as textpage:
+            assert '记录 59' in textpage.get_text_range()
+    preview = email.html
+    for cid, content in email.images.items():
+        preview = preview.replace(f'cid:{cid}', 'data:image/png;base64,' + base64.b64encode(content).decode('ascii'))
     assert 'display:contents' not in email.html
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
         try:
             page = browser.new_page()
             for responsive in [True, False]:
-                page.set_content(email.html)
+                page.set_content(preview)
                 if not responsive:
                     page.locator('style').evaluate_all('nodes => nodes.forEach(node => node.remove())')
                 for width in [1440, 375]:
                     page.set_viewport_size(dict(width=width, height=900))
-                    assert page.locator('.table-wrap tr').count() == 60
-                    assert page.locator('.table-wrap').evaluate('node => node.scrollHeight <= node.clientHeight + 1')
-                    last_row = page.locator('.table-wrap tr').last.bounding_box()
-                    assert page.locator('.mail-tail').bounding_box()['y'] >= last_row['y'] + last_row['height']
+                    assert page.locator('img').count() == len(email.images)
+                    assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+                    images = page.locator('img').all()
+                    assert all(images[index + 1].bounding_box()['y'] >= image.bounding_box()['y'] + image.bounding_box()['height']
+                               for index, image in enumerate(images[:-1]))
         finally:
             browser.close()
 
@@ -171,7 +193,7 @@ def test_automation_prepares_body_independently_of_attachment_and_rejects_invali
 
 @pytest.mark.parametrize("report_type", ["leadership", "workshop", "equipment"])
 @pytest.mark.parametrize(("empty", "with_brief"), [(False, False), (True, False), (False, True)])
-def test_archived_report_becomes_readable_email(tmp_path, report_type, empty, with_brief):
+def test_archived_report_becomes_pdf_page_email(tmp_path, report_type, empty, with_brief):
     root = Path(__file__).resolve().parents[2]
     cfg = replace(settings, project_root=tmp_path, data_source_mode="demo")
     renderer = ReportService(cfg)
@@ -186,7 +208,7 @@ def test_archived_report_becomes_readable_email(tmp_path, report_type, empty, wi
     chart = {"animation": False, "xAxis": {"data": ["11-08"]}, "yAxis": {},
              "series": [{"type": "bar", "data": [120.5]}]}
     report = {
-        "meta": dict(report_type=report_type, title="测试生产报告", report_id="report-test",
+        "meta": dict(report_type=report_type, title='测试生产报告 "<邮件>"', report_id="report-test",
                      period_start="2026-11-08", period_end="2026-11-08", generated_at=now.isoformat(),
                      system_version="test", data_updated_at=now.isoformat(), custom_period=False),
         "filters": {"project_code": None, "ship_no": None},
@@ -235,154 +257,101 @@ def test_archived_report_becomes_readable_email(tmp_path, report_type, empty, wi
         report=report, echarts_source=(root / "vendor/echarts.min.js").read_text(encoding="utf-8"),
         demo_mode=True, device_name="切割机01", energy_connected=False,
     )
-    if empty and report_type == "workshop":
-        # A template style change must reach mail without a second theme update.
-        html = html.replace("</head>", "<style>.page{width:min(1280px,calc(100% - 40px));margin-top:28px;margin-bottom:28px}.cover-title h1{font-size:31px;color:#d9eff9}.metric strong{font-size:23px}.analysis-layout .analysis-banner{background:#e6f2ea}</style></head>")
     path = tmp_path / "report.html"
     path.write_text(html, encoding="utf-8")
-    # Exercise the same isolated Chromium path and capacity used by Automation.
-    email = PdfService(operation_timeout_seconds=30).render_email(path)
-    expected_images = (0 if empty else 2) if report_type == "leadership" else ((0 if empty else 1) if report_type == "workshop" else (1 if empty else 2))
-    if with_brief and report_type == "leadership":
-        expected_images += 4
-    assert len(email.images) == expected_images
-    for cid, content in email.images.items():
-        assert f'cid:{cid}' in email.html
-        assert content.startswith(b"\x89PNG\r\n\x1a\n")
-    assert "测试生产报告" in email.html and "切割机01" in email.html
-    assert "演示数据 · 非生产统计" in email.html
-    if with_brief:
-        if report_type != 'leadership':
-            assert '程序 程序01 · 工程 P-001' in html and '程序 程序01 · 工程 P-001' in email.html
-        assert all(text in html and text in email.html for text in
-                   ['本期生产简报', '分析依据 / 关联记录', '关键发现', '建议跟进', '可核对的关联记录',
-                    '周期未结束', '2026-11-07', '工人工时仅包含已确认任务。', '任务数比上一周期'])
-    else:
-        assert "智能分析暂不可用" in email.html and "&lt;script&gt;不能执行&lt;/script&gt;" in email.html
-    assert "报告结束" in email.html
-    assert "<script" not in email.html and "<canvas" not in email.html and "<link" not in email.html
+    service = PdfService(operation_timeout_seconds=30)
+    email = service.render_email(path)
+    reference_pdf = service.render(path)
     assert path.read_text(encoding="utf-8") == html
-    assert "应隐藏的来源说明" not in html and "应隐藏的来源说明" not in email.html and "来源：" not in email.html
-    if not empty and report_type in {"leadership", "workshop"}:
-        assert email.html.count(remark) == 1, "print-only tables must not duplicate records"
-    if not empty and report_type in {"workshop", "equipment"}:
-        assert email.html.count("测试船名") == 1
-    if empty and report_type in {"leadership", "workshop"}:
-        assert "暂无" in email.html
+    assert "<script" not in email.html and "<canvas" not in email.html
+    assert "http://" not in email.html and "https://" not in email.html
+    assert '&quot;&lt;邮件&gt;&quot;' in email.html
+
     import base64
+    from io import BytesIO
+    import pypdfium2 as pdfium
+    from PIL import Image, ImageChops
     from playwright.sync_api import sync_playwright
+
+    texts = []
+    with pdfium.PdfDocument(reference_pdf) as document:
+        assert len(document) == 1 and email.images
+        assert list(email.images) == [f"report-page-{index + 1}@cutting-report" for index in range(len(email.images))]
+        fragments = []
+        for index, (cid, content) in enumerate(email.images.items()):
+            assert f'src="cid:{cid}"' in email.html
+            assert f'连续内容 {index + 1}' in email.html
+            with Image.open(BytesIO(content)) as actual:
+                assert actual.format == "PNG" and actual.height <= 4096
+                fragments.append(actual.convert('RGB'))
+        with closing(document[0]) as page, closing(page.get_textpage()) as textpage:
+            texts.append(textpage.get_text_range())
+            with closing(page.render(scale=2)) as bitmap, bitmap.to_pil() as expected:
+                combined = Image.new('RGB', (fragments[0].width, sum(image.height for image in fragments)))
+                top = 0
+                for fragment in fragments:
+                    combined.paste(fragment, (0, top)); top += fragment.height
+                assert combined.size == expected.size
+                assert ImageChops.difference(combined, expected.convert('RGB')).getbbox() is None
+                combined.close()
+        for fragment in fragments:
+            fragment.close()
+    assert 'padding:0;border:0;font-size:0;line-height:0' in email.html and '共 1 页' not in email.html
+    text = "".join(texts).replace(" ", "").replace("\r", "").replace("\n", "")
+    assert "测试生产报告" in text and "切割机01" in text
+    assert "演示数据" in text and "非生产统计" in text and "报告结束" in text
+    assert "应隐藏的来源说明" not in text
+    if report_type == 'leadership':
+        assert '生产执行摘要' in text and '生产趋势与周期对比' in text and 'AI智能生产洞察' in text
+    if with_brief:
+        assert "本期生产简报" in text and "可核对的关联记录" in text
+    else:
+        assert "智能分析暂不可用" in text
+    if empty and report_type in {"leadership", "workshop"}:
+        assert "暂无" in text
+    if not empty and report_type in {"leadership", "workshop"}:
+        assert "备注" not in text and remark not in text
+        if with_brief and report_type == "leadership":
+            assert "次日记录" not in text
+    if not empty and report_type == "workshop":
+        assert "TASK-001" in text
+    if not empty and report_type == "equipment":
+        assert "测试船名" in text
 
     preview = email.html
     for cid, content in email.images.items():
         preview = preview.replace(f"cid:{cid}", "data:image/png;base64," + base64.b64encode(content).decode("ascii"))
     (tmp_path / "email-preview.html").write_text(preview, encoding="utf-8")
-    labels = {
-        "leadership": ["完成任务", "切割长度", "坡口长度", "切割时长"],
-        "workshop": ["任务数量", "总切割长度", "总坡口长度", "总切割时长"],
-        "equipment": ["任务数量", "切割时长", "任务气耗合计", "任务电耗合计"],
-    }[report_type]
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
         try:
-            reference = browser.new_page()
-            reference.set_content(html, wait_until="load")
-            reference.wait_for_function("window.__REPORT_READY__ === true")
             page = browser.new_page()
             page.set_content(preview)
-            assert page.locator("h2").all_text_contents() == reference.locator("h2").all_text_contents()
-            if not with_brief:
-                for document in [reference, page]:
-                    analysis = document.get_by_role('region', name='智能分析')
-                    assert analysis.get_by_role('heading', name='智能分析暂不可用').count() == 1
-                    assert analysis.get_by_role('heading').all_text_contents() == ['四、智能分析', '智能分析暂不可用']
-                    assert analysis.locator('.analysis-banner p').all_text_contents() == [
-                        '分析说明 <script>不能执行</script>', '特征', '关注点', '建议',
-                    ]
-                    assert analysis.locator('.analysis-layout').evaluate(
-                        'panel => getComputedStyle(panel).borderRadius',
-                    ) == '10px'
-                    assert analysis.get_by_role('heading', name='四、智能分析').evaluate(
-                        'heading => getComputedStyle(heading).textAlign',
-                    ) in {'left', 'start'}
-            if with_brief:
-                for document in [reference, page]:
-                    label = 'P-001' if report_type == 'leadership' else '程序 程序01 · 工程 P-001'
-                    assert document.get_by_role('table', name='分析关联记录').get_by_text(label, exact=True).count() == 1
-                    assert document.get_by_text(f'关联记录 1 项 · {label}', exact=True).count() == 0
-                    assert document.locator('.analysis-summary li').all_text_contents() == [
-                        '生产记录已汇总。', '当前周期对比仅作进度参考。',
-                    ]
-                    assert document.locator('.analysis-card.period').evaluate(
-                        'card => getComputedStyle(card).borderTopColor',
-                    ) == 'rgb(247, 144, 9)'
-                    assert document.locator('.analysis-banner').evaluate(
-                        'banner => getComputedStyle(banner).backgroundColor',
-                    ) == 'rgb(230, 237, 255)'
-                    assert document.locator('.analysis-mode.model').evaluate(
-                        'badge => getComputedStyle(badge).display',
-                    ) == 'inline-block'
-            for width in [1440, 1100, 980, 820, 600, 375]:
-                reference.set_viewport_size({"width": width, "height": 900})
+            page.wait_for_function("Array.from(document.images).every(image => image.complete && image.naturalWidth > 0)")
+            for width in [1440, 375]:
                 page.set_viewport_size({"width": width, "height": 900})
                 assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
-                for document in [reference, page]:
-                    assert document.locator('.cover-folio').evaluate(
-                        'node => Array.from(node.querySelectorAll("dd,td.email-cell")).every(cell => cell.scrollWidth <= cell.clientWidth + 1)',
-                    ), 'report period, ID and generation time must remain readable'
-                    if with_brief:
-                        records = document.get_by_role('table', name='分析关联记录')
-                        assert records.locator('th,td').evaluate_all(
-                            'cells => cells.every(cell => cell.scrollWidth <= cell.clientWidth + 1)',
-                        ), 'linked records must scroll instead of squeezing their contents'
-                if not empty:
-                    column_count = '''nodes => nodes.filter(node =>
-                        Math.abs(node.getBoundingClientRect().top - nodes[0].getBoundingClientRect().top) < 1).length'''
-                    assert page.locator('.analysis-fact').evaluate_all(column_count) == reference.locator('.analysis-fact').evaluate_all(column_count), 'email must keep the report column count at the current width'
-                    for document in [reference, page]:
-                        cards = document.locator('.analysis-fact')
-                        expected_cards = 4 if with_brief else 6
-                        assert cards.count() == expected_cards
-                        boxes = [card.bounding_box() for card in cards.all()]
-                        columns = sum(abs(box['y'] - boxes[0]['y']) < 1 for box in boxes)
-                        assert all(abs(box['y'] - boxes[0]['y']) < 1 for box in boxes[:columns])
-                        if columns > 1:
-                            assert boxes[1]['x'] - boxes[0]['x'] - boxes[0]['width'] >= 10
-                        if len(boxes) > columns:
-                            assert boxes[columns]['y'] - boxes[0]['y'] - boxes[0]['height'] >= 10
-                        assert all(box['width'] > 80 for box in boxes)
-                        assert cards.evaluate_all('nodes => nodes.every(node => node.scrollWidth <= node.clientWidth + 1)')
-                assert abs(page.locator('.page').bounding_box()['width'] - reference.locator('.page').bounding_box()['width']) < 1
-                assert page.locator('table:not([role="presentation"]) td').evaluate_all("cells => cells.every(cell => getComputedStyle(cell).whiteSpace === 'nowrap')")
-                for selector in [".cover-brand", ".cover-title h1", ".cover-title p", ".metrics", ".metric strong", "h2", ".analysis-banner", ".analysis-layout", ".analysis-time", ".analysis-mode"]:
-                    styles = "element => Object.fromEntries(['fontFamily','fontSize','fontWeight','color','backgroundColor','backgroundImage'].map(key => [key,getComputedStyle(element)[key]]))"
-                    assert page.locator(selector).first.evaluate(styles) == reference.locator(selector).first.evaluate(styles), selector
-                if page.locator('thead th').count():
-                    assert page.locator('thead th').first.evaluate(styles) == reference.locator('thead th').first.evaluate(styles)
-                    assert abs(page.locator('thead th').first.bounding_box()['height'] - reference.locator('thead th').first.bounding_box()['height']) < 1
-                for original_table, email_table in zip(reference.locator('.table-wrap > table').all(),page.locator('.table-wrap > table').all()):
-                    assert abs(original_table.bounding_box()['width'] - email_table.bounding_box()['width']) < 1
-                for original_chart, email_chart in zip(reference.locator('.chart').all(), page.locator('.chart').all()):
-                    assert abs(original_chart.bounding_box()['height'] - email_chart.bounding_box()['height']) < 1
-                    assert email_chart.evaluate(styles) == original_chart.evaluate(styles)
-                if width > 1000:
-                    for original_grid, email_grid in zip(reference.locator('.data-chart-grid').all(), page.locator('.data-chart-grid').all()):
-                        original_widths = original_grid.evaluate('node => Array.from(node.children,child => child.getBoundingClientRect().width)')
-                        email_widths = email_grid.locator(':scope > table > tbody > tr > .email-cell').evaluate_all('nodes => nodes.map(node => node.getBoundingClientRect().width)')
-                        assert all(abs(original - converted) < 1 for original, converted in zip(original_widths,email_widths))
-                metrics = [page.get_by_text(label, exact=True).first.locator("..").bounding_box() for label in labels]
-                original_metrics = [reference.get_by_text(label, exact=True).first.locator("..").bounding_box() for label in labels]
-                original_accents = reference.locator('.metric').evaluate_all("nodes => nodes.map(node => getComputedStyle(node,'::before').backgroundColor)")
-                assert page.locator('.metric').evaluate_all("nodes => nodes.map(node => getComputedStyle(node).borderTopColor)") == original_accents
-                for metric, original_metric in zip(metrics, original_metrics):
-                    assert abs(metric["height"] - original_metric["height"]) < 2
-                assert max(item["width"] for item in metrics) - min(item["width"] for item in metrics) < 1
-                assert abs(metrics[0]["y"] - metrics[1]["y"]) < 1
-                assert abs(metrics[2]["y"] - metrics[3]["y"]) < 1
-                if width > 1000:
-                    assert abs(metrics[0]["y"] - metrics[3]["y"]) < 1
-                    assert metrics[3]["x"] > metrics[2]["x"] > metrics[1]["x"] > metrics[0]["x"]
-                else:
-                    assert metrics[2]["y"] >= metrics[0]["y"] + metrics[0]["height"] - 1
+                assert page.locator("img").count() == len(email.images)
+                assert page.locator("img").evaluate_all("images => images.every(image => Math.abs(image.width / image.height - image.naturalWidth / image.naturalHeight) < 0.01)")
                 page.screenshot(path=str(tmp_path / f"email-{width}.png"), full_page=True)
         finally:
             browser.close()
+
+
+def test_pdf_page_conversion_failure_releases_capacity_and_removes_temporary_pdf(tmp_path, monkeypatch):
+    temporary_pdfs = []
+
+    def invalid_pdf(source, target):
+        target.write_bytes(b"not a PDF")
+        temporary_pdfs.append(target)
+
+    monkeypatch.setattr(PdfService, "_render_with_playwright", invalid_pdf)
+    path = tmp_path / "report.html"
+    path.write_text("<h1>original report</h1>")
+    service = PdfService(max_waiters=0)
+    with pytest.raises(PdfRenderError, match="邮件正文生成失败"):
+        service.render_email(path)
+    assert temporary_pdfs and all(not path.exists() for path in temporary_pdfs)
+    assert path.read_text() == "<h1>original report</h1>"
+    with service._render_slot():
+        pass

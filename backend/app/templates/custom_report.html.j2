@@ -1,3 +1,4 @@
+{% from 'industrial_chrome.html.j2' import report_brand %}
 <!doctype html>
 <html lang="zh-CN">
 <head>
@@ -22,8 +23,6 @@
     table { width:100%; min-width:680px; border-collapse:collapse; white-space:nowrap; } th,td { padding:{% if report.custom.template.table_density == 'compact' %}7px 9px{% elif report.custom.template.table_density == 'comfortable' %}13px 14px{% else %}10px 12px{% endif %}; border-bottom:1px solid #e5eaee; text-align:right; } th:first-child,td:first-child { text-align:left; } thead { position:sticky; top:0; z-index:2; } th { color:#fff; background:var(--primary); font-weight:600; } tbody tr:nth-child(even) { background:#f7fafc; }
     .empty { padding:40px; color:var(--muted); text-align:center; }.footer { padding:18px 38px; color:var(--muted); border-top:1px solid var(--line); text-align:center; font-size:12px; }
     .print-only { display:none; }
-    html.report-printing .content-grid,html.report-printing .content-grid.split,html.report-printing .content-grid.chart_first,html.report-printing .content-grid.table_first { display:block!important; }
-    html.report-printing .chart { width:100%!important; height:58mm!important; }
     @media (max-width:900px) { .meta,.metrics { grid-template-columns:repeat(2,1fr); }.content-grid.split { grid-template-columns:1fr; } main,header { padding-left:20px; padding-right:20px; } }
     @media print {
       @page { size:A4 landscape; margin:9mm; }
@@ -67,11 +66,13 @@
         vertical-align:top;
       }
     }
+    {% include "industrial_report.css.j2" %}
   </style>
 </head>
-<body>
-<div class="page">
-  <header>
+<body class="industrial-report report-custom" style="--industrial-cover:url('{{ analysis_cover() }}')">
+<div class="page industrial-document">
+  {{ report_brand(demo_mode) }}
+  <header class="industrial-hero">
     <small>{{ report.custom.template.logo_text }}</small>
     <h1>{{ report.custom.template.title_prefix }} · {{ report.meta.title }}</h1>
     <p>设备：{{ device_name }}</p>
@@ -81,7 +82,7 @@
     {% if demo_mode %}<p role="note" style="padding:12px;border:2px solid #b45309;color:#92400e;background:#fffbeb;font-weight:700">演示数据 · 非生产统计，请勿用于生产决策。</p>{% endif %}
     {% if report.custom.template.show_meta %}
     <section class="meta">
-      <div><span>报告周期</span>{{ report.meta.report_date }}</div>
+      <div><span>报告周期</span>{% if report.meta.custom_period %}{{ report.meta.period_start }}{% if report.meta.period_end != report.meta.period_start %} 至 {{ report.meta.period_end }}{% endif %}{% else %}{{ report.meta.report_date }}{% endif %}</div>
       <div><span>查询任务</span>{{ report.query_task.name }} · V{{ report.query_task.version }}</div>
       <div><span>模板版本</span>{{ report.template_meta.name }} · V{{ report.template_meta.version }}</div>
       <div><span>生成时间</span>{{ report.meta.generated_at }}</div>
@@ -158,5 +159,6 @@
   });
 </script>
 {% endif %}
+{% include "industrial_report.js.j2" %}
 </body>
 </html>

@@ -19,12 +19,13 @@ import httpx
 from app.config import Settings
 from app.database.postgres import PostgresDatabase
 from app.models.domain import AnalysisResult
+from app.models.analysis_brief import BriefInput
 from app.services.llm_prompts import analysis_system_prompt
 from app.services.report_analysis.brief import model_context
 from app.services.report_analysis.brief_validation import validate_brief
 from app.services.llm_usage_service import record_llm_call
 from app.core.request_cancellation import SqlRequestCancelled, current_request_id, sql_request_cancellations
-from app.core.report_deadline import ensure_time_remaining, operation_deadline, remaining_seconds
+from app.core.report_deadline import ReportOperationTimeout, ensure_time_remaining, operation_deadline, remaining_seconds
 from app.services.analysis_execution import analysis_observation, analysis_queue_remaining, analysis_stage, current_analysis_id
 from app.services.model_coordination import model_slot
 
@@ -319,6 +320,28 @@ class AnalysisOutputValidationError(ValueError):
     """The model response cannot populate the four analysis sections."""
 
 
+def analysis_error_message(error: Exception) -> str:
+    """Describe failures without exposing provider bodies, URLs or credentials."""
+    if isinstance(error, (AnalysisInputTooLarge, AnalysisCapacityError)):
+        return str(error)
+    if isinstance(error, ReportOperationTimeout):
+        return "智能分析处理超时（包含数据准备、排队和模型调用），请稍后重试。"
+    if isinstance(error, (LlmRequestTimeout, httpx.TimeoutException, TimeoutError)):
+        return "模型响应超时，请稍后重试。"
+    if isinstance(error, AnalysisOutputValidationError):
+        return "模型返回的分析未通过格式或数据校验，请重试。"
+    if isinstance(error, httpx.HTTPStatusError):
+        status = error.response.status_code
+        if status == 429:
+            return "模型接口限流，请稍后重试。"
+        if status in {401, 403}:
+            return "模型接口认证失败，请管理员检查密钥和访问权限。"
+        return f"模型接口返回错误（HTTP {status}），请稍后重试。"
+    if isinstance(error, httpx.HTTPError):
+        return "无法连接模型接口，请检查网络或联系管理员。"
+    return "大模型智能分析暂不可用，请稍后重试。"
+
+
 def _required_content(content: Any) -> bool:
     return isinstance(content, dict) and all(
         isinstance(content.get(key), str) and content[key].strip()
@@ -334,15 +357,32 @@ class LlmService:
     def analyze_context(self, report_type: str, context: dict[str, Any]) -> AnalysisResult:
         if not self.settings.llm_enabled:
             raise RuntimeError("LLM service is disabled")
-        user_content = json.dumps(
-            model_context(context) if report_type in {'leadership', 'workshop', 'equipment'} else {
+        cutting = report_type in {'leadership', 'workshop', 'equipment'}
+        model_input = model_context(context) if cutting else {
                 "report_type": report_type,
                 "report_date": context.get("report_date"),
                 "report_month": context.get("report_month"),
                 "facts": context.get("facts", []),
                 "tables": context.get("tables", []),
-            }, ensure_ascii=False,
-        )
+            }
+        if cutting:
+            schema = BriefInput.model_json_schema()
+            finding = schema['$defs']['BriefFindingInput']['properties']
+            finding.pop('evidence_ids')
+            candidate_ids = [item['id'] for item in model_input['candidates']]
+            if candidate_ids:
+                finding['candidate_id']['enum'] = candidate_ids
+                schema['$defs']['BriefAction']['properties']['candidate_id']['enum'] = candidate_ids
+            else:
+                schema['properties']['findings']['maxItems'] = 0
+                schema['properties']['actions']['maxItems'] = 0
+            fact_ids = [item['id'] for item in model_input['facts']]
+            if fact_ids:
+                schema['properties']['key_metric_ids']['items']['enum'] = fact_ids
+            else:
+                schema['properties']['key_metric_ids']['maxItems'] = 0
+            model_input['output_schema'] = schema
+        user_content = json.dumps(model_input, ensure_ascii=False)
         if len(user_content) > self.settings.llm_max_input_chars:
             raise AnalysisInputTooLarge("智能分析输入超过配置容量，请缩小报表范围后重试。")
         analysis_observation(input_chars=len(user_content))
@@ -360,10 +400,39 @@ class LlmService:
             "Content-Type": "application/json",
         }
         url = self.settings.llm_base_url.rstrip("/") + "/chat/completions"
-        with httpx.Client(timeout=self.settings.llm_timeout) as client:
-            response_body = request_llm_json(self.settings, client, url, headers=headers,
-                                            database=self.database, payload=payload, scene=report_type)
-        raw_content = response_body["choices"][0]["message"]["content"]
+        with operation_deadline(self.settings.llm_queue_timeout_seconds + self.settings.llm_timeout), \
+                httpx.Client(timeout=self.settings.llm_timeout) as client:
+            for attempt in range(2):
+                response_body = request_llm_json(self.settings, client, url, headers=headers,
+                                                database=self.database, payload=payload, scene=report_type)
+                try:
+                    raw_content = response_body['choices'][0]['message']['content']
+                except (KeyError, IndexError, TypeError) as exc:
+                    raise AnalysisOutputValidationError('大模型响应缺少分析正文') from exc
+                try:
+                    result = self._analysis_result(report_type, context, raw_content)
+                    logger.info('model output validated: analysis_id=%s device=%s scene=%s output_attempts=%d',
+                                current_analysis_id() or '-', self.settings.device_id, report_type, attempt + 1)
+                    return result
+                except AnalysisOutputValidationError as exc:
+                    if attempt or not isinstance(raw_content, str):
+                        raise
+                    feedback = ('上次输出未通过校验。只修正以下问题，重新返回符合output_schema的完整JSON；'
+                                '不要改变权威数据，不要照抄错误数值。切割简报的业务数字和时长使用{{F001}}形式的事实占位符，'
+                                '不适合引用的数字请改用不带数字的准确表述；省略evidence_ids，由后端绑定。'
+                                f'校验原因：{str(exc)[:600]}') if cutting else (
+                                '上次输出未通过校验，请仅基于原始数据重新返回JSON，包含四个非空字符串'
+                                f'overview、features、alerts、suggestions。校验原因：{str(exc)[:600]}')
+                    if len(user_content) + len(raw_content) + len(feedback) > self.settings.llm_max_input_chars:
+                        raise
+                    ensure_time_remaining()
+                    logger.warning('model output correction scheduled: analysis_id=%s device=%s scene=%s reason=%s',
+                                   current_analysis_id() or '-', self.settings.device_id, report_type, str(exc)[:600])
+                    payload['messages'].extend([{'role': 'assistant', 'content': raw_content},
+                                                {'role': 'user', 'content': feedback}])
+                    analysis_observation(input_chars=len(user_content) + len(raw_content) + len(feedback))
+
+    def _analysis_result(self, report_type: str, context: dict[str, Any], raw_content: Any) -> AnalysisResult:
         if not isinstance(raw_content, str) or len(raw_content) > self.settings.llm_max_output_chars:
             raise AnalysisOutputValidationError("大模型返回内容超过配置容量")
         try:

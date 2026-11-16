@@ -73,6 +73,61 @@ def test_report_request_normalizes_and_limits_inclusive_period() -> None:
         )
 
 
+@pytest.mark.parametrize(("body", "stored_period", "effective_period"), [
+    ({"report_type": "leadership", "report_date": "2026-11-01"},
+     (None, None), ("2026-11-01", "2026-11-30")),
+    ({"report_type": "leadership", "report_date": "2026-11-01", "period_start": None, "period_end": None},
+     (None, None), ("2026-11-01", "2026-11-30")),
+    ({"report_type": "leadership", "report_date": "2026-11-01", "period_start": None},
+     (None, None), ("2026-11-01", "2026-11-30")),
+    ({"report_type": "leadership", "report_date": "2026-11-01", "period_start": None, "period_end": "2026-11-13"},
+     ("2026-11-01", "2026-11-13"), ("2026-11-01", "2026-11-13")),
+    ({"report_type": "leadership", "period_start": "2026-11-01", "period_end": "2026-11-13"},
+     ("2026-11-01", "2026-11-13"), ("2026-11-01", "2026-11-13")),
+    ({"report_type": "leadership", "period_start": "2026-11-01", "period_end": "2026-11-01"},
+     ("2026-11-01", "2026-11-01"), ("2026-11-01", "2026-11-01")),
+    ({"report_type": "leadership", "period_start": "2026-11-01"},
+     ("2026-11-01", "2026-11-01"), ("2026-11-01", "2026-11-01")),
+    ({"report_type": "leadership", "report_date": "2026-11-01", "period_end": "2026-11-13"},
+     ("2026-11-01", "2026-11-13"), ("2026-11-01", "2026-11-13")),
+    ({"report_type": "workshop", "report_date": "2026-11-01"},
+     (None, None), ("2026-11-01", "2026-11-01")),
+    ({"report_type": "workshop", "report_date": "2026-11-01", "period_start": None, "period_end": None},
+     (None, None), ("2026-11-01", "2026-11-01")),
+    ({"report_type": "equipment", "report_date": "2026-11-01"},
+     (None, None), ("2026-11-01", "2026-11-01")),
+    ({"report_type": "equipment", "report_date": "2026-11-01", "period_start": None, "period_end": None},
+     (None, None), ("2026-11-01", "2026-11-01")),
+])
+def test_report_creation_preserves_monthly_and_explicit_range_semantics(body, stored_period, effective_period):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from app.api import reports
+    from app.api.auth import require_admin
+    from app.services.report_generation.common import _job_period
+
+    jobs = []
+    app = FastAPI()
+    app.include_router(reports.router)
+    app.dependency_overrides[require_admin] = lambda: {"role": "admin"}
+    app.state.lines = as_line_services({"Cutter01": SimpleNamespace(
+        settings=cutting_settings(),
+        metadata=SimpleNamespace(create_job=lambda **job: jobs.append(job))
+    )})
+
+    @app.middleware("http")
+    async def request_context(request, call_next):
+        request.state.request_id = "report-period-regression"
+        return await call_next(request)
+
+    with TestClient(app) as client:
+        response = client.post("/api/v1/reports?device_id=Cutter01", json=body)
+    assert response.status_code == 202, response.text
+    job, = jobs
+    assert (job["period_start"], job["period_end"]) == stored_period
+    assert tuple(day.isoformat() for day in _job_period(job)) == effective_period
+
+
 def test_previous_comparison_uses_an_equal_non_overlapping_period() -> None:
     assert previous_equal_range(date(2026, 8, 18), date(2026, 8, 20)) == (
         date(2026, 8, 15),
@@ -209,6 +264,7 @@ def test_analysis_api_returns_503_without_a_model_result(state_database,
 
     assert caught.value.status_code == 503
     assert "大模型智能分析暂不可用" in caught.value.detail
+    assert caught.value.headers['Retry-After'] == '60'
 
 
 def test_analysis_version_check_reads_only_sqlite_metadata() -> None:

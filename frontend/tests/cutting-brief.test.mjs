@@ -111,7 +111,8 @@ test('historical welding analysis preserves its evidence and time without new me
       summary: { job_count: 987654321, weld_length_m: 12.3, involved_part_count: 3, working_hours: 1 }, meta: { notices: [] } },
     ready: true, loading: false,
   })
-  for (const text of ['原有焊接分析', '沿用历史成功分析', '原有作业次数', analysis.generated_at]) assert.ok(html.includes(text), text)
+  for (const text of ['原有焊接分析', '原有作业次数', analysis.generated_at]) assert.ok(html.includes(text), text)
+  assert.ok(!html.includes('沿用历史成功分析'))
   assert.ok(!html.includes('987654321') && !html.includes('焊接作业次数'))
 })
 

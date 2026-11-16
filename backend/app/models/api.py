@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -15,6 +15,14 @@ class ReportCreateRequest(BaseModel):
     ship_no: str | None = Field(default=None, max_length=128)
     definition_id: str | None = Field(default=None, max_length=80)
     parameters: dict[str, str | int | float | bool | None] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_empty_period(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            return {key: item for key, item in value.items()
+                    if key not in {"period_start", "period_end"} or item is not None}
+        return value
 
     @field_validator("project_code", "ship_no")
     @classmethod
@@ -43,9 +51,10 @@ class ReportCreateRequest(BaseModel):
                 "设备任务能耗查询区间最长为 31 天；"
                 "近 12 个月趋势请使用设备报表默认月度汇总"
             )
-        self.report_date = start
-        self.period_start = start
-        self.period_end = end
+        # Derived dates must not mark an omitted range as explicitly submitted.
+        object.__setattr__(self, "report_date", start)
+        object.__setattr__(self, "period_start", start)
+        object.__setattr__(self, "period_end", end)
         if self.report_type == "custom" and not self.definition_id:
             raise ValueError("自定义报表必须选择报表定义")
         if self.report_type != "custom" and self.definition_id:

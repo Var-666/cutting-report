@@ -9,7 +9,7 @@ class BriefFindingInput(BaseModel):
     candidate_id: str
     title: str = Field(min_length=1)
     detail: str = Field(min_length=1)
-    evidence_ids: list[str]
+    evidence_ids: list[str] = Field(default_factory=list)
 
 
 class BriefAction(BaseModel):
@@ -55,6 +55,7 @@ class BusinessReference(BaseModel):
 
 
 class BriefFinding(BriefFindingInput):
+    evidence_ids: list[str]
     references: list[BusinessReference]
     reference_count: int
 

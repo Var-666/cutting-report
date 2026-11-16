@@ -60,4 +60,14 @@ function rowKey(row: object) {
   </div>
 </template>
 
-<style scoped>.welding-statistics{display:flex;flex-direction:column;gap:16px;min-width:0}.welding-statistics :deep(.report-trend-panel){margin-bottom:0}.welding-chart-empty{height:100%;display:flex;align-items:center;justify-content:center}</style>
+<style scoped>
+.welding-statistics { display:flex; flex-direction:column; gap:24px; min-width:0; }
+.welding-statistics :deep(.report-trend-panel) { margin-bottom:0; border:1px solid var(--theme-border-color); box-shadow:var(--theme-shadow); }
+.welding-statistics :deep(.report-trend-panel__heading) { min-height:47px; padding:0 16px; border-bottom:1px solid var(--theme-border-color); background:rgb(var(--container-bg-color)); }
+.welding-statistics :deep(.report-trend-panel__heading>div) { gap:8px; }
+.welding-statistics :deep(.report-trend-panel__heading>div>span) { width:28px; height:24px; display:grid; place-items:center; padding:0; border:0; border-radius:7px; background:rgb(var(--info-color) / .1); color:rgb(var(--info-color)); font-size:var(--font-auxiliary); font-weight:700; }
+.welding-statistics :deep(.report-trend-panel__heading h2) { font-size:14px; }
+.welding-statistics :deep(.report-trend-panel__heading small) { font-weight:400; }
+.welding-statistics :deep(.report-trend-panel__chart),.welding-statistics :deep(.report-trend-panel__table) { border-radius:6px; }
+.welding-chart-empty { height:100%; display:flex; align-items:center; justify-content:center; }
+</style>

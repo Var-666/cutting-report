@@ -114,6 +114,31 @@ def test_analysis_api_includes_data_preparation_in_deadline_and_reports_timeout(
     with pytest.raises(HTTPException) as error:
         analysis_api.analyze_report(payload, SimpleNamespace(state=SimpleNamespace(request_id="api-request")))
     assert error.value.status_code == 503
-    assert "正在等待成功的智能分析结果" in error.value.detail
+    assert "智能分析处理超时" in error.value.detail
+    assert "数据准备、排队和模型调用" in error.value.detail
     assert error.value.headers['Retry-After'] == '60'
     assert report_deadline.remaining_seconds() is None
+
+
+@pytest.mark.parametrize('kind', ['leadership', 'workshop', 'equipment'])
+@pytest.mark.parametrize('message', ['模型响应超时，请稍后重试。', '模型接口限流，请稍后重试。',
+                                  '模型接口认证失败，请管理员检查密钥和访问权限。',
+                                  '模型返回的分析未通过格式或数据校验，请重试。'])
+def test_analysis_api_preserves_failure_reason_and_retry_header(monkeypatch, kind, message):
+    from app.services.report_analysis_service import AnalysisUnavailableError
+
+    def fail(*args, **kwargs):
+        raise AnalysisUnavailableError(message)
+
+    state = SimpleNamespace(report_analysis_service=SimpleNamespace(
+        analyze_leadership=fail, analyze_workshop=fail, analyze_equipment=fail),
+        leadership_report_service=SimpleNamespace(fetch=fail),
+        workshop=SimpleNamespace(get_daily_report_records=fail),
+        query_service=SimpleNamespace(fetch_equipment_data=fail))
+    monkeypatch.setattr(analysis_api, 'device_state', lambda request: state)
+    payload = analysis_api.AnalysisRequest(report_type=kind, report_date='2026-11-12')
+    with pytest.raises(HTTPException) as error:
+        analysis_api._analyze_report(payload, SimpleNamespace())
+    assert error.value.status_code == 503
+    assert error.value.detail == message
+    assert error.value.headers['Retry-After'] == '60'

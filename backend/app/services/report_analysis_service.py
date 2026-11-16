@@ -25,7 +25,7 @@ from app.models.domain import (
 )
 from app.services.llm_service import (
     AnalysisCapacityError, AnalysisInputTooLarge, AnalysisOutputValidationError,
-    LlmRequestTimeout, LlmService, generation_priority, is_background_llm_work,
+    LlmRequestTimeout, LlmService, analysis_error_message, generation_priority, is_background_llm_work,
 )
 from app.services.analysis_execution import (
     analysis_observation, analysis_operation, analysis_prepared, analysis_queue_remaining, analysis_stage,
@@ -480,25 +480,11 @@ class ReportAnalysisService:
                     "report model request failed: device=%s report_type=%s report_date=%s error_type=%s upstream_status=%s",
                     self.settings.device_id, report_type, report_date, type(exc).__name__, status,
                 )
-                if isinstance(exc, AnalysisCapacityError):
-                    message = str(exc)
-                elif isinstance(exc, (LlmRequestTimeout, httpx.TimeoutException)):
-                    message = "模型响应超时，请稍后重试。"
-                elif status == 429:
-                    message = "模型接口限流，请稍后重试。"
-                elif status in {401, 403}:
-                    message = "模型接口认证失败，请管理员检查密钥和访问权限。"
-                elif status is not None:
-                    message = f"模型接口返回错误（HTTP {status}），请稍后重试。"
-                else:
-                    message = "无法连接模型接口，请检查网络或联系管理员。"
-                raise AnalysisUnavailableError(message) from exc
+                raise AnalysisUnavailableError(analysis_error_message(exc)) from exc
             except AnalysisOutputValidationError as exc:
                 logger.warning("LLM analysis response cannot be displayed: device=%s report_type=%s report_date=%s analysis_id=%s reason=%s",
                                self.settings.device_id, report_type, report_date, current_analysis_id(), exc)
-                raise AnalysisUnavailableError(
-                    "大模型未返回可展示的分析结果，请重试。"
-                ) from exc
+                raise AnalysisUnavailableError(analysis_error_message(exc)) from exc
             except Exception as exc:
                 logger.exception("LLM analysis failed")
                 raise AnalysisUnavailableError(

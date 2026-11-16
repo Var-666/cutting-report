@@ -39,7 +39,7 @@ test('sidebar exposes admin routes, excludes redirects and preserves scroll for 
     assert.ok(item.icon, `${item.label} needs a menu icon to keep icon and text columns aligned`)
     return item.children ? [...(item.routeName ? [item.routeName] : []), ...flatten(item.children)] : item.key
   })
-  assert.deepEqual(flatten(menus), ['admin-home', 'leadership-report', 'workshop-report', 'equipment-report', 'report-center', 'alarm-center', 'cutting-dispatch', 'database', 'configuration-diagnostics', 'automation', 'admin-accounts', 'model-usage'])
+  assert.deepEqual(flatten(menus), ['admin-home', 'leadership-report', 'workshop-report', 'equipment-report', 'report-center', 'alarm-center', 'cutting-dispatch', 'pdm-statistics', 'database', 'configuration-diagnostics', 'automation', 'admin-accounts', 'model-usage'])
   const adminRoutes = router.routes.find(route => route.path === '/admin').children
   assert.equal(adminRoutes.find(route => route.path === 'designer').redirect, '/admin/settings')
   assert.equal(adminRoutes.find(route => route.path === 'settings').children.find(route => route.path === 'report-design').redirect, '/admin/settings')

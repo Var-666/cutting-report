@@ -51,8 +51,8 @@ def format_chinese_date(value: Any) -> str:
     if not parts:
         return "--"
     if parts[2] is None:
-        return f"{parts[0]}年{parts[1]}月"
-    return f"{parts[0]}年{parts[1]}月{parts[2]}日"
+        return f"{parts[0]}年{parts[1]:02d}月"
+    return f"{parts[0]}年{parts[1]:02d}月{parts[2]:02d}日"
 
 
 def format_chinese_datetime(value: Any) -> str:

@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 from app.config import Settings
 from app.database.definitions import DefinitionRepository
 from app.services.custom_report_service import CustomReportService
-from app.services.report_generation.common import PreparedReport, report_meta
+from app.services.report_generation.common import PreparedReport, _is_range_job, _job_period, report_meta
 
 
 def prepare_report(
@@ -31,6 +31,8 @@ def prepare_report(
         raise ValueError("报表定义引用的查询任务或模板不可用")
 
     report_date = date.fromisoformat(job["report_date"])
+    range_job = _is_range_job(job)
+    period_start, period_end = _job_period(job)
     parameters = json.loads(job.get("parameters_json") or "{}")
     update_status("calculating", "正在查询并计算完整自定义指标")
     with closing(custom_report_service.iter_rows(
@@ -40,6 +42,8 @@ def prepare_report(
         project_code=job.get("project_code"),
         ship_no=job.get("ship_no"),
         parameters=parameters,
+        period_start=period_start if range_job else None,
+        period_end=period_end if range_job else None,
     )) as rows:
         custom = custom_report_service.build_report_data(
             definition=definition, query_task=query_task, template=template, rows=rows,
@@ -69,6 +73,7 @@ def prepare_report(
         },
         "filters": {
             "report_date": job["report_date"],
+            **({"period_start": period_start.isoformat(), "period_end": period_end.isoformat()} if range_job else {}),
             "project_code": job.get("project_code"),
             "ship_no": job.get("ship_no"),
             "parameters": parameters,

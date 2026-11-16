@@ -217,9 +217,9 @@ def test_report_uses_matching_success_before_optional_queries_or_model(state_dat
     if report_type == 'leadership' and not interval:
         from app.services.pdf_service import PdfService
         email = PdfService(operation_timeout_seconds=30).render_email(pipeline.settings.reports_dir / completed['relative_path'])
-        assert '沿用同一报表范围的历史成功分析' in email.html
-        assert '本期生产记录已整理' in email.html
-        assert '智能分析暂不可用' not in email.html
+        assert email.images
+        assert all(f'src="cid:{cid}"' in email.html for cid in email.images)
+        assert all(image.startswith(b'\x89PNG\r\n\x1a\n') for image in email.images.values())
 
 
 def test_waiting_report_survives_consumer_restart_and_publishes_only_after_model_recovers(state_database, tmp_path):

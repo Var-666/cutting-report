@@ -71,6 +71,12 @@ const router = createRouter({
           meta: { title: '智能告警中心', icon: 'bell', line: 'cutting' },
         },
         cuttingRoutes,
+        {
+          path: 'pdm-statistics',
+          name: 'pdm-statistics',
+          component: () => import('../views/PdmStatisticsView.vue'),
+          meta: { title: 'PDM 资料统计', icon: 'file' },
+        },
         weldingRoutes,
         {
           path: 'settings',

@@ -8,13 +8,13 @@ import { renderComponent } from './vue-component-helpers.mjs'
 
 const source = readFileSync(new URL('../src/components/AnalysisPanel.vue', import.meta.url), 'utf8')
 
-test('historical analysis remains visible with its cache label and update feedback', async () => {
+test('historical analysis keeps its timestamp and update errors without a cache warning banner', async () => {
   const html = await renderComponent('components/ReportAnalysis', { analysis: {
     status: 'success', mode: 'model', overview: '已有成功分析。生产记录需要核对。', features: '', alerts: '', suggestions: '',
     facts: [], cached: true, cache_note: '沿用历史成功分析，原生成时间保持不变。', generated_at: '2026-11-12T09:55:00+08:00',
   }, error: '本次更新正在等待模型', ready: true, loading: false })
   assert.match(html, /已有成功分析/)
-  assert.match(html, /沿用历史成功分析/)
+  assert.doesNotMatch(html, /沿用历史成功分析|原生成时间保持不变/)
   assert.match(html, /09:55:00/)
   assert.match(html, /已缓存/)
   assert.match(html, /本次更新正在等待模型/)

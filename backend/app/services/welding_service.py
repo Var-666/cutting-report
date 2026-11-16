@@ -23,7 +23,7 @@ from app.database.metadata import MetadataRepository
 from app.models.domain import to_primitive
 from app.models.welding import ReportType, WeldingQuery, WELD_TYPES
 from app.services.llm_prompts import PROMPT_VERSION
-from app.services.llm_service import LlmService
+from app.services.llm_service import AnalysisOutputValidationError, LlmService, analysis_error_message
 from app.services.analysis_execution import analysis_operation
 from app.services.report_analysis_service import AnalysisDataVersionMismatch, AnalysisUnavailableError
 from app.core.request_cancellation import SqlRequestCancelled
@@ -176,9 +176,11 @@ class WeldingService:
             cached = self.cached_analysis(version, kind=kind, query=query, historical=True)
             if cached:
                 return cached
-            logger.warning('welding analysis waiting: line=%s type=%s start=%s end=%s error_type=%s',
-                self.settings.device_id, kind, query.start, query.end, type(exc).__name__)
-            raise AnalysisUnavailableError('正在等待成功的焊接智能分析结果，请稍后重试。') from None
+            message = str(exc) if isinstance(exc, AnalysisUnavailableError) else analysis_error_message(exc)
+            logger.warning('welding analysis failed: line=%s type=%s start=%s end=%s error_type=%s reason=%s',
+                self.settings.device_id, kind, query.start, query.end, type(exc).__name__,
+                str(exc) if isinstance(exc, AnalysisOutputValidationError) else message)
+            raise AnalysisUnavailableError(message) from None
         result.data_version = version
         result.generated_at = datetime.now(ZoneInfo(self.settings.weld_db_timezone)).isoformat(timespec='seconds')
         result.cached = False

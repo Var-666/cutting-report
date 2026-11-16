@@ -102,7 +102,7 @@ def test_throttled_calls_recover_with_honest_usage_and_no_capacity_held_during_b
     assert {row['scene'] for row in rows} == {'workshop' if scenario == 'report' else 'alarm'}
     logs = [record.getMessage() for record in caplog.records if record.name == llm_service.__name__]
     assert len([line for line in logs if line.startswith('model HTTP attempt:')]) == 3
-    assert 'attempts=3 outcome=success' in logs[-1]
+    assert any('attempts=3 outcome=success' in line for line in logs)
     assert 'upstream_request_id=provider-429' in caplog.text
     assert 'sensitive upstream body' not in caplog.text
     assert settings.llm_api_key not in caplog.text
@@ -146,7 +146,7 @@ def test_only_explicit_throttling_is_retried(state_database, settings, clock, mo
 
 
 @pytest.mark.parametrize('malformed', ['envelope', 'analysis'])
-def test_invalid_model_output_does_not_trigger_more_generation(state_database, settings, clock, monkeypatch, malformed):
+def test_invalid_output_has_one_correction_but_invalid_envelopes_are_not_retried(state_database, settings, clock, monkeypatch, malformed):
     requests = []
 
     def respond(request):
@@ -158,6 +158,71 @@ def test_invalid_model_output_does_not_trigger_more_generation(state_database, s
     mock_http(monkeypatch, respond)
     with pytest.raises(AnalysisOutputValidationError):
         analyze(state_database, settings)
+    assert len(requests) == (1 if malformed == 'envelope' else 2)
+
+
+@pytest.mark.parametrize('failure', ['quantity', 'evidence', 'duration', 'json', 'blank'])
+def test_validation_feedback_recovers_once_with_grounded_values_and_honest_usage(state_database, settings, clock, monkeypatch, failure):
+    from dataclasses import replace
+    from decimal import Decimal
+    from app.models.domain import WorkshopRecord
+    from app.services.report_analysis.common import normalize_analysis_context
+    row = WorkshopRecord('task', 'P', None, None, 'program', Decimal('1712.1'), Decimal('185.6'), Decimal('31807'))
+    context = normalize_analysis_context(build_context('2026-08-18', [row]))[0]
+    content = dict(headline='生产记录', summary='核对实际生产记录。', key_metric_ids=[],
+                   findings=[dict(candidate_id='C_production', title='生产记录', detail='核对记录。')], actions=[])
+    broken = dict(content)
+    if failure == 'quantity': broken['summary'] = '切割长度999999米。'
+    if failure == 'duration': broken['summary'] = '切割时长999小时。'
+    if failure == 'evidence': broken['findings'] = [content['findings'][0] | {'evidence_ids': ['F999']}]
+    raw = 'not JSON' if failure == 'json' else ' ' if failure == 'blank' else json.dumps(broken)
+    requests = []
+    def respond(request):
+        requests.append(json.loads(request.content))
+        clock.now += 5
+        valid = dict(content, summary='切割长度{{F002}}；切割时长{{F003}}。')
+        output = raw if len(requests) == 1 else json.dumps(valid)
+        return httpx.Response(200, json={'choices': [{'message': {'content': output}}],
+                                       'usage': {'prompt_tokens': 10, 'completion_tokens': 5, 'total_tokens': 15}})
+    mock_http(monkeypatch, respond)
+    result = LlmService(settings, database=state_database).analyze_context('workshop', context)
+    assert result.overview == '切割长度1,712.1 米；切割时长08:50:07。'
+    assert result.brief['findings'][0]['evidence_ids'] == ['F001', 'F002', 'F003']
+    assert len(requests) == 2
+    assert requests[1]['messages'][-2] == {'role': 'assistant', 'content': raw}
+    assert '校验原因' in requests[1]['messages'][-1]['content']
+    assert requests[0]['messages'] == requests[1]['messages'][:2]
+    schema = json.loads(requests[0]['messages'][1]['content'])['output_schema']
+    assert schema['$defs']['BriefFindingInput']['properties']['candidate_id']['enum'] == [item['id'] for item in context['candidates']]
+    assert 'evidence_ids' not in schema['$defs']['BriefFindingInput']['properties']
+    assert LlmUsageRepository(state_database).summary()['call_count'] == 2
+    assert LlmUsageRepository(state_database).summary()['total_tokens'] == 30
+
+
+def test_output_correction_shares_the_original_deadline(state_database, settings, clock, monkeypatch):
+    from dataclasses import replace
+    requests = []
+    def respond(request):
+        requests.append(request)
+        if len(requests) == 1:
+            clock.now += 4
+            return httpx.Response(200, json={'choices': [{'message': {'content': '{}'}}]})
+        assert request.extensions['timeout']['read'] == 2
+        return httpx.Response(200, json=envelope())
+    mock_http(monkeypatch, respond)
+    analyze(state_database, replace(settings, llm_queue_timeout_seconds=1, llm_timeout=5))
+    assert len(requests) == 2
+
+
+def test_output_correction_respects_input_capacity_before_a_second_call(state_database, settings, clock, monkeypatch):
+    from dataclasses import replace
+    requests = []
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(200, json={'choices': [{'message': {'content': 'x' * 10000}}]})
+    mock_http(monkeypatch, respond)
+    with pytest.raises(AnalysisOutputValidationError):
+        analyze(state_database, replace(settings, llm_max_input_chars=10000))
     assert len(requests) == 1
 
 

@@ -12,6 +12,7 @@ from typing import Any, Iterable, Iterator
 from app.config import Settings
 from app.database.sqlserver import SqlServerClient
 from app.services.sql_workbench_service import SqlWorkbenchService
+from app.services.range_report_service import validate_report_range
 from app.core.report_deadline import ensure_time_remaining
 
 
@@ -58,10 +59,17 @@ class CustomReportService:
         project_code: str | None,
         ship_no: str | None,
         parameters: dict[str, Any],
+        period_start: date | None = None,
+        period_end: date | None = None,
     ) -> tuple[str, tuple[Any, ...]]:
         validated = self.validator.validate(sql_text)
         if "machine_no" not in PARAMETER_PATTERN.findall(validated.formatted_sql):
             raise ValueError("自定义 SQL 未声明 :machine_no 设备参数，不能用于当前设备")
+        if (
+            period_start is not None and period_end is not None
+            and not {"period_start", "period_end"}.issubset(PARAMETER_PATTERN.findall(validated.formatted_sql))
+        ):
+            raise ValueError("自定义区间查询必须同时声明 :period_start 和 :period_end")
         available = {
             "report_date": report_date,
             "period_start": report_date,
@@ -71,6 +79,8 @@ class CustomReportService:
             **parameters,
             "machine_no": self.settings.report_machine_no,
         }
+        if period_start is not None and period_end is not None:
+            available.update(period_start=period_start, period_end=period_end + timedelta(days=1))
         values: list[Any] = []
 
         def replace(match: re.Match[str]) -> str:
@@ -131,14 +141,21 @@ class CustomReportService:
         project_code: str | None = None,
         ship_no: str | None = None,
         parameters: dict[str, Any] | None = None,
+        period_start: date | None = None,
+        period_end: date | None = None,
     ) -> Iterator[dict[str, Any]]:
         ensure_time_remaining()
+        if period_start is not None or period_end is not None:
+            if period_start is None or period_end is None:
+                raise ValueError("开始日期和结束日期必须同时提供")
+            validate_report_range(period_start, period_end)
         if self.settings.effective_data_source_mode == "demo":
             yield from self._demo_rows(query_task["columns"], report_date, 10)
             return
         sql, values = self._compile(
             query_task["sql_text"], report_date=report_date, period_type=period_type,
             project_code=project_code, ship_no=ship_no, parameters=parameters or {},
+            period_start=period_start, period_end=period_end,
         )
         source = self.client.iter_rows(sql, values)
         with closing(source):

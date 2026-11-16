@@ -3,6 +3,7 @@ from datetime import date
 from unittest.mock import Mock
 
 import pytest
+import httpx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -143,3 +144,31 @@ def test_latest_endpoint_is_read_only_and_returns_original_analysis_after_restar
 def test_historical_export_metrics_do_not_mix_new_report_values():
     from app.services.analysis_display import analysis_metrics
     assert analysis_metrics({'cache_note': '历史成功分析', 'facts': []}, 'welding', report('b')) == []
+
+
+@pytest.mark.parametrize('failure, expected', [
+    (httpx.ReadTimeout('secret-provider-detail'), '模型响应超时'),
+    (httpx.ConnectError('secret-provider-detail'), '无法连接模型接口'),
+    (AnalysisOutputValidationError('secret-provider-detail'), '未通过格式或数据校验'),
+    (ReportOperationTimeout('secret-provider-detail'), '智能分析处理超时'),
+    *[(httpx.HTTPStatusError('secret-provider-detail', request=httpx.Request('POST', 'http://model.test'),
+                            response=httpx.Response(status)), message)
+      for status, message in [(429, '限流'), (401, '认证失败'), (503, 'HTTP 503')]],
+    ('disabled', '模型尚未启用'),
+])
+def test_cold_welding_analysis_explains_failure_without_provider_details(analysis_service, failure, expected):
+    from app.api.welding import _analyze, WeldingAnalysisRequest
+    build, model = analysis_service
+    service = build()
+    if failure == 'disabled':
+        service.settings = replace(service.settings, llm_enabled=False)
+    else:
+        model.side_effect = failure
+    payload = WeldingAnalysisRequest(report_type='daily', query=QUERY, data_version='a' * 64)
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException) as caught:
+        _analyze(service, report(), payload)
+    assert caught.value.status_code == 503
+    assert expected in caught.value.detail
+    assert 'secret-provider-detail' not in caught.value.detail
+    assert caught.value.headers['Retry-After'] == '60'

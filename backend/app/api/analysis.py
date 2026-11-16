@@ -27,6 +27,7 @@ from app.services.report_analysis_service import (
 )
 from app.core.request_cancellation import SqlRequestCancelled
 from app.services.analysis_execution import analysis_operation
+from app.services.llm_service import analysis_error_message
 from app.core.report_deadline import ReportOperationTimeout
 
 
@@ -133,7 +134,7 @@ def analyze_report(payload: AnalysisRequest, request: Request) -> dict:
                                 request_id=request.state.request_id):
             return _analyze_report(payload, request)
     except ReportOperationTimeout as exc:
-        raise HTTPException(status_code=503, detail="正在等待成功的智能分析结果，稍后自动重试。", headers={'Retry-After': '60'}) from exc
+        raise HTTPException(status_code=503, detail=analysis_error_message(exc), headers={'Retry-After': '60'}) from exc
 
 
 def _analyze_report(payload: AnalysisRequest, request: Request) -> dict:
@@ -356,7 +357,7 @@ def _analyze_report(payload: AnalysisRequest, request: Request) -> dict:
     except AnalysisDataVersionMismatch as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except AnalysisUnavailableError as exc:
-        raise HTTPException(status_code=503, detail="正在等待成功的智能分析结果，稍后自动重试。", headers={'Retry-After': '60'}) from exc
+        raise HTTPException(status_code=503, detail=str(exc), headers={'Retry-After': '60'}) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except SqlServerConfigurationError as exc:

@@ -39,6 +39,7 @@ from app.api.devices import router as devices_router
 from app.api.runtime import application_state, runtime_state
 from app.api.welding import router as welding_router
 from app.api.production_lines import router as production_lines_router
+from app.api.pdm_statistics import router as pdm_statistics_router
 from app.services.application_runtime import build_runtime
 from app.core.sql_capacity import SqlCapacityError, sql_identity
 from app.core.report_deadline import ReportOperationTimeout
@@ -167,7 +168,7 @@ async def request_id_middleware(request: Request, call_next):
             line = context.lines.get(selected)
             if line is not None:
                 sql_line, source_key = line.config.id, line.config.source_key
-        elif request.url.path.startswith('/api/v1/cutting'):
+        elif request.url.path.startswith(('/api/v1/cutting', '/api/v1/pdm-statistics')):
             context = await run_in_threadpool(runtime_state, request)
             source_key = (context.settings.dispatch_source_key if request.url.path.endswith(('/machines', '/status'))
                           else context.settings.file_source_key)
@@ -221,6 +222,7 @@ async def unexpected_error_handler(request: Request, exc: Exception):
 
 app.include_router(devices_router)
 app.include_router(production_lines_router)
+app.include_router(pdm_statistics_router)
 app.include_router(welding_router)
 app.include_router(reports_router)
 app.include_router(auth_router)

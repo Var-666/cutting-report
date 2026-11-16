@@ -196,10 +196,13 @@ def test_task_detail_input_version_excludes_previous_latest_and_cached_analysis(
     monkeypatch.setattr(service.llm, 'analyze_context', model)
     with monkeypatch.context() as previous:
         previous.setattr('app.services.report_analysis_service.PROMPT_VERSION', 'report-analysis-v22-full-report-tables')
-        service.analyze_workshop(selected.isoformat(), records, publish_latest=True)
+        previous_result = service.analyze_workshop(selected.isoformat(), records, publish_latest=True)
         assert service.latest_default_analysis('workshop', selected) is not None
     assert PROMPT_VERSION != 'report-analysis-v22-full-report-tables'
-    assert service.latest_default_analysis('workshop', selected) is None
+    historical = service.latest_default_analysis('workshop', selected)
+    assert historical.cached and historical.cache_note
+    assert historical.generated_at == previous_result.generated_at
+    assert historical.data_version == previous_result.data_version
     generated = service.analyze_workshop(selected.isoformat(), records, publish_latest=True)
     cached = service.analyze_workshop(selected.isoformat(), records)
     assert not generated.cached and cached.cached and len(calls) == 2
@@ -1001,9 +1004,9 @@ def test_model_output_with_fabricated_statistics_is_rejected(state_database, tmp
     monkeypatch.setattr("app.services.llm_service.httpx.Client", FakeClient)
     report = LeadershipReportService(settings, client=source_client(settings)).fetch(date(2026, 8, 1))
 
-    with pytest.raises(AnalysisUnavailableError, match='未返回可展示'):
+    with pytest.raises(AnalysisUnavailableError, match='未通过格式或数据校验'):
         service.analyze_leadership(report)
-    assert calls == 1
+    assert calls == 2
     assert 'device=Cutter01 report_type=leadership report_date=2026-08 analysis_id=' in caplog.text
     assert '分析包含输入中不存在的数量' in caplog.text
     assert model_settings.llm_api_key not in caplog.text

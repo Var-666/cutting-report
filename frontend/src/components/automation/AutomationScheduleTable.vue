@@ -10,7 +10,7 @@ const emit = defineEmits<{ run: [item: AutomationSchedule]; edit: [item: Automat
 
 function scheduleText(item: AutomationSchedule) {
   if (item.frequency === 'weekly') return `每周${'一二三四五六日'[(item.weekday || 1) - 1]} ${item.run_time}`
-  if (item.frequency === 'monthly') return `每月 ${item.month_day} 日 ${item.run_time}`
+  if (item.frequency === 'monthly') return `每月 ${String(item.month_day).padStart(2, '0')} 日 ${item.run_time}`
   return `每日 ${item.run_time}`
 }
 const scheduleTableColumns = [

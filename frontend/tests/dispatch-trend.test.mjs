@@ -242,13 +242,13 @@ test('history success time displays the same configured day as the trend and fil
     historyTotal: 1, historyPage: 1, historyPageSize: 10, projectOptions: [], machineName: () => '测试机床', loading: false, timezone: 'Asia/Shanghai' }
   const html = await renderComponent('components/dispatch/DispatchHistoryTable', props)
   assert.ok(html.includes('成功派发时间'))
-  assert.ok(html.includes('2026年11月2日 00:30:00'))
+  assert.ok(html.includes('2026年11月02日 00:30:00'))
 })
 
 for (const [value, timezone, expected] of [
-  ['2026-11-06T00:47:03+08:00', 'Asia/Shanghai', '2026年11月6日 00:47:03'],
-  ['2026-11-05T16:30:00Z', 'Asia/Shanghai', '2026年11月6日 00:30:00'],
-  ['2026-11-06T00:47:03+08:00', 'America/Los_Angeles', '2026年11月5日 08:47:03'],
+  ['2026-11-06T00:47:03+08:00', 'Asia/Shanghai', '2026年11月06日 00:47:03'],
+  ['2026-11-05T16:30:00Z', 'Asia/Shanghai', '2026年11月06日 00:30:00'],
+  ['2026-11-06T00:47:03+08:00', 'America/Los_Angeles', '2026年11月05日 08:47:03'],
   [null, 'Asia/Shanghai', '--'],
   [undefined, 'Asia/Shanghai', '--'],
   ['bad-time', 'Asia/Shanghai', '--'],
@@ -336,5 +336,5 @@ test('completed badge shows its finish time in the same configured timezone as t
     historyTotal:1,historyPage:1,historyPageSize:10,projectOptions:[],machineName:()=> '切割机',loading:false,timezone:'America/Los_Angeles',
   })
   assert.ok(html.includes('已派发') && html.includes('已完成'))
-  assert.ok(html.includes('2026年11月4日 08:30:00'))
+  assert.ok(html.includes('2026年11月04日 08:30:00'))
 })

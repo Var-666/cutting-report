@@ -32,7 +32,7 @@ def _render_pdf_child(html_path: str, temporary_path: str, email: bool = False) 
         except OSError:
             logging.getLogger(__name__).debug("could not create PDF renderer process group", exc_info=True)
     if email:
-        render_email_report(Path(html_path), Path(temporary_path))
+        PdfService._render_email_with_pdf(Path(html_path), Path(temporary_path))
     else:
         PdfService._render_with_playwright(Path(html_path), Path(temporary_path))
 
@@ -151,7 +151,7 @@ class PdfService:
             output = Path(directory) / "email.json"
             try:
                 if self.operation_timeout_seconds is None:
-                    render_email_report(html_path, output)
+                    self._render_email_with_pdf(html_path, output)
                 else:
                     self._render_in_process(html_path, output, email=True)
                 self._check_cancelled()
@@ -162,7 +162,14 @@ class PdfService:
             except Exception as exc:
                 if isinstance(exc, (SqlRequestCancelled, PdfRenderError)):
                     raise
-                raise PdfRenderError("邮件正文生成失败，请确认服务器已安装 Playwright Chromium。") from exc
+                raise PdfRenderError("邮件正文生成失败，请确认 PDF 渲染和转图片依赖已安装。") from exc
+
+    @staticmethod
+    def _render_email_with_pdf(html_path: Path, output: Path) -> None:
+        with TemporaryDirectory(prefix="report-email-pdf-") as directory:
+            pdf_path = Path(directory) / "report.pdf"
+            PdfService._render_with_playwright(html_path, pdf_path)
+            render_email_report(pdf_path, output)
 
     @staticmethod
     def _render_with_playwright(html_path: Path, temporary_path: Path) -> None:
@@ -181,14 +188,14 @@ class PdfService:
                 page.set_content(html, wait_until="load", timeout=30_000)
                 page.add_style_tag(content="""
                     @media print {
+                        @page { size:auto; margin:0; }
+                        @page leadership { size:auto; margin:0; }
+                        html,body { margin:0; padding:0; page:auto!important; }
+                        /* A continuous PDF uses its content height, without chapter page breaks. */
+                        * { break-before:auto!important; break-after:auto!important; }
                         .screen-only { display:table!important; }
                         .print-only { display:none!important; }
                         tfoot { display:table-row-group!important; }
-                        .analysis-fact { break-inside:avoid; padding:6px 10px; }
-                        .analysis-fact .label { display:inline; }
-                        .analysis-facts { gap:6px; }
-                        .analysis-grid { gap:8px; }
-                        .analysis-card { padding:10px 12px; }
                     }
                 """)
                 if "window.__REPORT_READY__" in html:
@@ -196,6 +203,7 @@ class PdfService:
                 page.evaluate("""async () => {
                     await document.fonts.ready;
                     document.documentElement.classList.add('report-printing');
+                    if (window.prepareIndustrialReport) await window.prepareIndustrialReport();
                     document.querySelectorAll('.chart').forEach(element => {
                         const chart = window.echarts?.getInstanceByDom(element);
                         if (chart) {
@@ -205,22 +213,19 @@ class PdfService:
                     });
                     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
                 }""")
+                size = page.evaluate("""() => {
+                    const root = document.querySelector('.leadership-print') || document.querySelector('.industrial-document') || document.querySelector('.page') || document.body;
+                    const rect = root.getBoundingClientRect();
+                    return {width: Math.ceil(Math.max(rect.width, root.scrollWidth) + Math.max(0, rect.left) * 2),
+                            height: Math.ceil(Math.max(rect.height, root.scrollHeight) + Math.max(0, rect.top) + 4)};
+                }""")
                 page.pdf(
                     path=str(temporary_path),
-                    landscape=True,
+                    width=f"{max(240, size['width'])}px",
+                    height=f"{max(240, size['height'])}px",
                     print_background=True,
-                    prefer_css_page_size=True,
-                    format="A4",
-                    display_header_footer=True,
-                    header_template="<div></div>",
-                    footer_template="""
-                        <div style="width:100%;display:flex;justify-content:space-between;
-                            padding:0 10mm;color:#6b8291;font-size:8px;
-                            font-family:'Microsoft YaHei','PingFang SC',sans-serif;">
-                          <span>切割生产智能产报系统</span>
-                          <span><span class="pageNumber"></span> / <span class="totalPages"></span></span>
-                        </div>
-                    """,
+                    prefer_css_page_size=False,
+                    display_header_footer=False,
                 )
             finally:
                 browser.close()

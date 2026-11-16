@@ -1,0 +1,132 @@
+{% from 'report_analysis.html.j2' import metric_icon %}
+{% from 'industrial_chrome.html.j2' import report_brand %}
+{% set leadership = report.leadership %}
+{% set total = leadership.current_month_total %}
+{% set analysis = report.analysis %}
+{% set brief = analysis.brief if analysis else none %}
+{% set period = report.meta.period_start if report.meta.period_start == report.meta.period_end else report.meta.period_start ~ ' 至 ' ~ report.meta.period_end %}
+{% set cover = analysis_cover() %}
+{% macro section_title(title, english='') -%}
+<h2 class="lp-heading"><span>{{ title }}</span>{% if english %}<small>{{ english }}</small>{% endif %}</h2>
+{%- endmacro %}
+{% macro production_table(rows, totals, monthly=false) -%}
+<table class="lp-table" aria-label="{{ '月度生产明细' if monthly else '每日生产明细' }}">
+  <colgroup><col style="width:6%"><col style="width:22%"><col style="width:10%"><col style="width:22%"><col style="width:20%"><col style="width:20%"></colgroup>
+  <thead><tr><th>序号</th><th>{{ '月份' if monthly else '日期' }}</th><th>任务数</th><th>切割长度（米）</th><th>坡口长度（米）</th><th>切割时长</th></tr></thead>
+  <tbody>{% for row in rows %}<tr><td>{{ loop.index }}</td><td>{{ row.period_start|chinese_month if monthly else row.period_start|chinese_date }}</td><td>{{ row.task_count }}</td><td>{{ row.cut_length_m|number }}</td><td>{{ row.groove_length_m|number }}</td><td>{{ row.work_time_seconds|duration }}</td></tr>{% endfor %}</tbody>
+  <tfoot><tr><th></th><th>汇总</th><th>{{ totals.task_count }}</th><th>{{ totals.cut_length_m|number }}</th><th>{{ totals.groove_length_m|number }}</th><th>{{ totals.work_time_seconds|duration }}</th></tr></tfoot>
+</table>
+{%- endmacro %}
+{% macro hero(title, english, photo=false) -%}
+<div class="lp-hero{{ ' lp-hero--photo' if photo and cover else '' }}"{% if photo and cover %} style="--lp-cover:url('{{ cover }}')"{% endif %}>
+  <h1>{{ title }}</h1><p>{{ english }}</p>
+</div>
+{%- endmacro %}
+<div class="leadership-print" aria-label="领导报表打印版">
+  {{ report_brand(demo_mode) }}
+  <section class="lp-sheet lp-overview">
+    {{ hero(report.meta.title, 'AI-POWERED PRODUCTION INTELLIGENCE') }}
+    <div class="lp-context">
+      <div>{{ metric_icon('grid') }}<span>设备<strong>{{ device_name }}</strong></span></div>
+      <div>{{ metric_icon('calendar') }}<span>报告周期<strong>{{ period }}</strong></span></div>
+      <div><span>工程号<strong>{{ report.filters.project_code or '全部' }}</strong></span></div>
+      <div><span>船名<strong>{{ report.filters.ship_no or '全部' }}</strong></span></div>
+    </div>
+    <div class="lp-folio"><span>报告编号：{{ report.meta.report_id }}</span><span>生成时间：{{ report.meta.generated_at|replace('T',' ') }}</span><span>版本：{{ report.meta.system_version }}</span></div>
+    {% if demo_mode %}<p class="lp-demo">演示数据 · 非生产统计，请勿用于生产决策。</p>{% endif %}
+
+    {{ section_title('生产执行摘要', 'EXECUTIVE SUMMARY') }}
+    <div class="lp-executive">
+      <div class="lp-executive-icon">{{ metric_icon('tasks' if total.task_count else 'calendar') }}</div>
+      <div>
+        <h3>{% if brief and not analysis.cache_note %}{{ brief.headline }}{% elif not total.task_count %}当前区间暂无已完成任务{% else %}本期生产记录已汇总{% endif %}</h3>
+        {% if brief and not analysis.cache_note %}<p>{{ brief.summary.splitlines()|first }}</p>
+        {% else %}<p>{{ period }}，共记录 {{ total.task_count }} 项已完成任务，切割长度 {{ total.cut_length_m|number }} 米。</p>{% endif %}
+        <p class="lp-boundary">{{ metric_icon('alert') }}仅依据有效生产记录统计；设备运行与排产情况需结合现场记录确认。</p>
+      </div>
+    </div>
+
+    {{ section_title('核心生产指标（本期）', 'KEY PRODUCTION KPI') }}
+    <div class="lp-kpis">
+      {% for icon,label,value,unit in [('tasks','完成任务',total.task_count,'项'),('ruler','切割长度',total.cut_length_m|number,'米'),('trend','坡口长度',total.groove_length_m|number,'米'),('clock','切割时长',total.work_time_seconds|duration,'')] %}
+      <div class="lp-kpi">{{ metric_icon(icon) }}<span>{{ label }}</span><p><strong>{{ value }}</strong>{% if unit %}<small>{{ unit }}</small>{% endif %}</p></div>
+      {% endfor %}
+    </div>
+
+    {{ section_title('区间每日明细与趋势' if report.meta.custom_period else '当月明细与趋势', 'DAILY PRODUCTION TREND') }}
+    <div class="lp-daily-grid">
+      <div class="lp-chart-panel">{% if leadership.daily_records %}<div id="lp-daily-chart" class="chart lp-chart"></div>{% else %}<div class="lp-empty">{{ metric_icon('chart') }}<strong>当前区间暂无可视化数据</strong><span>{{ period }}</span></div>{% endif %}</div>
+      <aside class="lp-insights"><h3>{{ metric_icon('trend') }}生产记录概览</h3>
+        <p><b>有效任务</b><span>{{ total.task_count }} 项</span></p>
+        <p><b>生产日期</b><span>{{ leadership.daily_records|length }} 个有记录日期</span></p>
+        <p><b>累计切割时长</b><span>{{ total.work_time_seconds|duration }}</span></p>
+        <small>无记录日期不推断为停机；累计作业工时不等于设备开机时间。</small>
+      </aside>
+    </div>
+    {% if leadership.daily_records %}<div class="lp-daily-detail">{{ production_table(leadership.daily_records, total) }}</div>{% endif %}
+    <p class="lp-method">统计口径：STATUS = 2 且 WORK_TIME ≥ 0；负工时异常任务整条剔除，按实际结束日期归属。</p>
+  </section>
+
+  <section class="lp-sheet lp-trends">
+    {{ hero('生产趋势与周期对比', 'PRODUCTION PERFORMANCE & TRENDS', true) }}
+    {% set months = leadership.monthly_records %}
+    {% set chronological = months|sort(attribute='period_start') %}
+    <div class="lp-period-strip"><span>{{ metric_icon('calendar') }}近 12 个月{% if chronological %}：{{ chronological[0].period_start|chinese_month }} 至 {{ chronological[-1].period_start|chinese_month }}{% endif %}</span><span>{{ device_name }}</span></div>
+    {{ section_title('近 12 个月生产趋势', 'PRODUCTION TREND') }}
+    <div class="lp-chart-panel lp-monthly-panel">{% if months %}<div id="lp-monthly-chart" class="chart lp-chart"></div>{% else %}<div class="lp-empty">{{ metric_icon('chart') }}<strong>近 12 个月暂无月度趋势数据</strong></div>{% endif %}</div>
+    {% if months %}
+    {% set length_peak = months|sort(attribute='cut_length_m')|last %}
+    {% set task_peak = months|sort(attribute='task_count')|last %}
+    <div class="lp-month-insights">
+      <div>{{ metric_icon('trend') }}<b>切割长度峰值</b><span>{{ length_peak.period_start|chinese_month }}<strong>{{ length_peak.cut_length_m|number }} 米</strong></span></div>
+      <div>{{ metric_icon('tasks') }}<b>任务数峰值</b><span>{{ task_peak.period_start|chinese_month }}<strong>{{ task_peak.task_count }} 项</strong></span></div>
+      <div>{{ metric_icon('calendar') }}<b>最近月份记录</b><span>{{ chronological[-1].period_start|chinese_month }}<strong>{{ chronological[-1].task_count }} 项</strong></span></div>
+    </div>
+    {% endif %}
+    {{ section_title('近 12 个月生产数据明细') }}
+    {% if months %}<div class="lp-daily-detail">{{ production_table(months, leadership.twelve_month_total, true) }}</div>{% else %}<p class="lp-empty">当前区间暂无已完成任务。</p>{% endif %}
+    <p class="lp-method">当前未结束月份仅反映已记录的生产进度，不直接与完整月份判断生产表现。</p>
+  </section>
+
+  {% if analysis %}
+  {% set scope = brief.scope if brief else {} %}
+  <section class="lp-sheet lp-analysis">
+    {{ hero('AI 智能生产洞察', 'INTELLIGENCE & DECISION INSIGHTS', true) }}
+    <div class="lp-analysis-status"><span>{{ '大模型分析' if analysis.mode == 'model' else '未生成分析' }}{{ ' · 已缓存' if analysis.cached else '' }}</span><span>生成时间：{{ analysis.generated_at or '--' }}</span></div>
+    <div class="lp-conclusion"><span>{{ metric_icon('trend') }}AI 核心结论</span>
+      <h3>{{ brief.headline if brief else '分析结论' if analysis.mode == 'model' else '智能分析暂不可用' }}</h3>
+      <p>{{ brief.summary if brief else analysis.overview }}</p>
+      <small>{{ device_name }} · {{ scope.period_start or report.meta.period_start }} 至 {{ scope.period_end or report.meta.period_end }}</small>
+    </div>
+
+    {% if (brief and brief.findings) or (not brief and analysis.features) %}
+    <section class="lp-analysis-group"><h2>关键发现</h2><div class="lp-analysis-body">
+      {% if brief %}{% for finding in brief.findings %}<article class="lp-finding"><h3>{{ finding.title }}</h3><p>{{ finding.detail }}</p>
+        {% if finding.references %}<p class="lp-references">关联记录（{{ finding.reference_count }} 项）：{% for reference in finding.references %}{{ reference|analysis_reference_label }}{{ '；' if not loop.last else '' }}{% endfor %}</p>{% endif %}
+      </article>{% endfor %}{% else %}<p>{{ analysis.features }}</p>{% endif %}
+    </div></section>
+    {% endif %}
+
+    {% if analysis.facts %}
+    <section class="lp-analysis-group"><h2>数据证据</h2><div class="lp-analysis-body lp-evidence">
+      <div class="lp-evidence-primary">{% for fact in analysis.facts if fact.id in ['F001', 'F002', 'F003', 'F007'] %}<div><span>{{ fact.label }}</span><strong>{{ fact.value }}</strong></div>{% endfor %}</div>
+      {% for fact in analysis.facts if fact.id not in ['F001', 'F002', 'F003', 'F007'] %}<div class="lp-evidence-secondary"><span>{{ fact.label }}</span><strong>{{ fact.value }}</strong></div>{% endfor %}
+      {% if scope.comparison_start %}<p>比较周期：{{ scope.comparison_start }} 至 {{ scope.comparison_end }}</p>{% endif %}
+    </div></section>
+    {% endif %}
+
+    {% if (brief and brief.data_quality) or (not brief and analysis.alerts) %}
+    <section class="lp-analysis-group lp-quality"><h2>分析边界与待核实事项</h2><div class="lp-analysis-body">
+      {% if brief %}<ul>{% for item in brief.data_quality %}<li>{{ item }}</li>{% endfor %}</ul>{% else %}<p>{{ analysis.alerts }}</p>{% endif %}
+    </div></section>
+    {% endif %}
+
+    {% if (brief and brief.actions) or (not brief and analysis.suggestions) %}
+    <section class="lp-analysis-group lp-actions"><h2>管理关注建议</h2><div class="lp-analysis-body">
+      {% if brief %}{% for action in brief.actions %}<article class="lp-finding"><h3>{{ metric_icon('check') }}{{ action.title }}</h3><p>{{ action.detail }}</p></article>{% endfor %}{% else %}<p>{{ analysis.suggestions }}</p>{% endif %}
+    </div></section>
+    {% endif %}
+  </section>
+  {% endif %}
+  <p class="lp-end">本报告由切割生产智能产报系统生成 · 报告结束<span>{{ report.meta.report_id }}</span></p>
+</div>

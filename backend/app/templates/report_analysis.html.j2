@@ -24,7 +24,6 @@
     <h2>{{ title }}</h2>
     <div><span class="analysis-mode model">大模型分析{% if analysis.cached %}<small>已缓存</small>{% endif %}</span></div>
   </header>
-  {% if analysis.cache_note %}<p class="analysis-cache-note">{{ analysis.cache_note }}</p>{% endif %}
   <section class="analysis-banner" aria-label="分析结论"{% if cover %} style="--analysis-cover:url('{{ cover }}')"{% endif %}>
     <p class="analysis-scope">{{ line_name }} · {{ scope.period_start or period_start }} 至 {{ scope.period_end or period_end }}</p>
     <h3>{{ brief.headline if brief else '分析结论' }}</h3>

@@ -306,15 +306,17 @@ onBeforeUnmount(() => { disposed = true; cancel() })
 
 <template>
   <div class="welding-page">
-    <section class="panel welding-report-header">
-      <header class="welding-heading"><h1>{{ title }}</h1></header>
-      <section v-if="sourceEnabled" class="welding-filter-panel" aria-label="焊接报表查询条件">
+    <section class="page-hero report-hero report-hero--query welding-report-header">
+      <div class="report-hero-copy"><span class="report-hero-eyebrow">WELDING PRODUCTION</span><h1>{{ title }}</h1></div>
+      <section v-if="sourceEnabled" class="report-hero-query welding-filter-panel" aria-label="焊接报表查询条件">
       <form aria-label="焊接报表查询" :aria-busy="loading" @submit.prevent="submit(true)">
         <div class="welding-filters">
           <ReportPeriodPicker v-model:start-date="draft.start" v-model:end-date="draft.end" :anchor-date="today" :disabled="loading" @apply="submit(true)" @validation-error="actionError = $event" />
-          <label><span>设备</span><AppSelect v-model="draft.device_no" aria-label="设备"><option value="">全部设备</option><option v-for="device in report?.meta?.devices || []" :key="device" :value="device">设备 {{ device }}</option></AppSelect></label>
-          <NButton class="welding-query-submit" attr-type="submit" type="primary" :theme-overrides="{ iconSizeMedium: '15px', iconMarginMedium: '0 8px 0 0' }" :loading="loading" :disabled="loading"><template #icon><AppIcon name="search" :size="15" tone="current" /></template>{{ loading ? '查询中' : '查询报表' }}</NButton>
+          <label><span><AppIcon name="factory" :size="13" tone="current" />设备</span><AppSelect v-model="draft.device_no" aria-label="设备"><option value="">全部设备</option><option v-for="device in report?.meta?.devices || []" :key="device" :value="device">设备 {{ device }}</option></AppSelect></label>
+          <NButton class="welding-query-submit" attr-type="submit" type="primary" :theme-overrides="{ iconSizeMedium: '15px', iconMarginMedium: '0 8px 0 0' }" :loading="loading" :disabled="loading"><template #icon><AppIcon name="search" :size="15" tone="current" /></template>{{ loading ? '查询中' : report ? '更新报表' : '查询报表' }}</NButton>
           <ReportExportMenu :formats="['csv', 'html', 'pdf']" :disabled="!report || loading" :loading="exporting" @select="exportReport" />
+        </div>
+        <div class="welding-filter-actions">
           <NButton attr-type="button" :aria-expanded="showAdvanced" aria-controls="welding-advanced" @click="showAdvanced = !showAdvanced">{{ showAdvanced ? '收起筛选' : '更多筛选' }}</NButton>
           <NButton attr-type="button" :disabled="loading" @click="resetFilters">重置</NButton>
         </div>
@@ -367,48 +369,44 @@ onBeforeUnmount(() => { disposed = true; cancel() })
 </template>
 
 <style scoped>
-.welding-heading { display:flex; align-items:center; min-height:40px; padding:12px 24px; }
-.welding-heading h1 { margin:0; font-size:20px; font-weight:600; }
-
 .welding-page { display:flex; flex-direction:column; gap:var(--space-4); min-width:0; }
 .welding-page>.panel { margin-bottom:0; }
 .welding-page>.report-feedback { margin:0; }
-.welding-report-header { border-radius:var(--report-panel-radius); container:welding-report / inline-size; }
-.welding-filter-panel { padding:var(--space-4) var(--space-6); border-top:1px solid var(--theme-divider-color); container:welding-query / inline-size; }
-.welding-filters { display:grid; grid-template-columns:minmax(240px,1fr) minmax(140px,180px) 112px 132px 104px 72px; gap:var(--space-3); align-items:end; }
+.welding-report-header { border:1px solid var(--theme-border-color); border-radius:14px; background:linear-gradient(90deg,rgb(var(--container-bg-color) / .98),rgb(var(--container-bg-color) / .91) 39%,rgb(var(--container-bg-color) / .04) 72%),url('../assets/home-laser-cutting.webp') center 48%/cover no-repeat; box-shadow:var(--theme-shadow); }
+.welding-filter-panel { container:welding-query / inline-size; }
+.welding-filters { display:grid; grid-template-columns:minmax(220px,1fr) 110px 110px 132px; gap:var(--space-2); align-items:end; }
 .welding-filters>* { min-width:0; }
 .welding-filters>.report-period-picker { grid-column:auto; }
 .welding-filters>.n-button { height:var(--control-height); }
 .welding-filters>.welding-query-submit { padding:0 16px; gap:0; justify-content:center; width:100%; min-height:var(--control-height); }
-.welding-filters :deep(.report-period-picker__trigger) { height:var(--control-height); min-height:var(--control-height); }
+.welding-filters :deep(.report-period-picker__trigger),.welding-filters :deep(.n-base-selection) { height:var(--control-height); min-height:var(--control-height); border-radius:var(--control-radius); background:rgb(var(--info-color) / .1); }
+.welding-filters :deep(.report-export-menu .n-base-selection) { background:var(--theme-input-color); }
 /* AppSelect sets its Naive height inline; keep this override within the query controls. */
 .welding-filter-panel :deep(.n-base-selection) { --n-height:var(--control-height)!important; }
 .welding-filters label,.welding-advanced label { display:flex; flex-direction:column; gap:var(--space-2); min-width:0; }
 .welding-filters label>span,.welding-advanced label>span { font-size:var(--font-control); color:var(--text-color-2); }
+.welding-filters label>span,.welding-filters :deep(.report-period-picker__label) { display:flex; align-items:center; gap:4px; height:16px; color:rgb(var(--info-color)); font-size:var(--font-control); font-weight:700; line-height:16px; }
+.welding-filter-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:12px; }
 .welding-advanced { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:var(--space-3); align-items:end; margin-top:var(--space-4); padding-top:var(--space-4); border-top:1px solid var(--theme-divider-color); }
 .welding-check { min-height:var(--control-height); display:flex; align-items:center; }
 .welding-freshness { display:flex; align-items:center; gap:var(--space-2) var(--space-4); flex-wrap:wrap; font-size:var(--font-auxiliary); color:var(--text-color-3); }
 .welding-freshness-date { display:inline-flex; align-items:center; gap:var(--space-2); }
-.welding-query-pending { margin:var(--space-3) 0 0; color:rgb(var(--warning-color)); font-size:var(--font-auxiliary); }
+.welding-filter-panel .welding-query-pending { margin:var(--space-3) 0 0; color:rgb(var(--warning-color)); font-size:var(--font-auxiliary); }
 .welding-applied-query { flex-basis:100%; color:var(--text-color-2); overflow-wrap:anywhere; }
-.welding-detail-table { min-width:0; border-radius:var(--report-panel-radius); }
-.welding-detail-header { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); flex-wrap:wrap; padding:var(--space-4); background:var(--panel-heading-bg); border-bottom:1px solid var(--theme-divider-color); }
+.welding-detail-table { min-width:0; border:1px solid var(--theme-border-color); border-radius:var(--report-panel-radius); box-shadow:var(--theme-shadow); }
+.welding-detail-header { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); flex-wrap:wrap; padding:12px 16px; background:rgb(var(--container-bg-color)); border-bottom:1px solid var(--theme-border-color); }
 .welding-detail-header>span,.welding-quality p { font-size:var(--font-auxiliary); color:var(--text-color-3); line-height:1.8; }
-.welding-quality { padding:var(--space-4); border-radius:var(--report-panel-radius); }
+.welding-quality { padding:var(--space-4); border:1px solid var(--theme-border-color); border-radius:var(--report-panel-radius); box-shadow:var(--theme-shadow); }
 .welding-quality summary { font-size:var(--font-body); font-weight:600; cursor:pointer; }
 .welding-quality dl { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:var(--space-2) var(--space-4); font-size:var(--font-auxiliary); max-width:600px; }
 .welding-quality dt { color:var(--text-color-2); }
 .welding-quality dd { margin:0; text-align:right; font-variant-numeric:tabular-nums; }
-@container welding-query (max-width:1040px) {
-  .welding-filters { grid-template-columns:repeat(4,minmax(0,1fr)); }
-  .welding-filters>.report-period-picker { grid-column:span 3; }
-}
 @container welding-query (max-width:600px) {
   .welding-filters { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .welding-filters>.report-period-picker,.welding-filters>label { grid-column:span 2; }
-}
-@container welding-report (max-width:600px) {
-  .welding-filter-panel { padding:var(--space-4); }
   .welding-advanced { grid-template-columns:minmax(0,1fr); }
+}
+@media (max-width:720px) {
+  .welding-report-header { background:linear-gradient(90deg,rgb(var(--container-bg-color) / .97),rgb(var(--container-bg-color) / .89)),url('../assets/home-laser-cutting.webp') center/cover; }
 }
 </style>

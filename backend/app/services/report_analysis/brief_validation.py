@@ -24,17 +24,31 @@ def _matches_precision(number: str, values: set[Decimal]) -> bool:
 _QUANTITY_PATTERN = re.compile(r'(?<![A-Za-z0-9_.])(?P<number>\d[\d,]*(?:\.\d+)?)\s*(?P<unit>%|米|Nm³|kWh)')
 
 
-def _check_rounded_quantities(text: str, authoritative: str, change_percentages: set[Decimal]) -> str:
-    values: dict[str, set[Decimal]] = {'%': {abs(value) for value in change_percentages}}
+def _check_rounded_quantities(text: str, authoritative: str, change_percentages: set[Decimal], lengths: set[Decimal]) -> str:
+    values: dict[str, set[Decimal]] = {'%': {abs(value) for value in change_percentages}, '米': set(lengths)}
     for match in _QUANTITY_PATTERN.finditer(authoritative):
         values.setdefault(match['unit'], set()).add(Decimal(match['number'].replace(',', '')))
 
     def checked(match: re.Match) -> str:
         if not _matches_precision(match['number'], values.get(match['unit'], set())):
-            raise ValueError('分析数量或单位与输入不符')
+            raise ValueError(f'分析数量或单位与输入不符：生成={match["number"][:32]}{match["unit"]}')
         return ''
 
     return _QUANTITY_PATTERN.sub(checked, text)
+
+
+def _length_values(value: object) -> set[Decimal]:
+    if isinstance(value, dict):
+        lengths = set()
+        for key, item in value.items():
+            if key in {'cut_length', 'groove_length', 'cut_length_m', 'groove_length_m'} and type(item) in (int, float):
+                lengths.add(Decimal(str(item)))
+            elif isinstance(item, (dict, list)):
+                lengths.update(_length_values(item))
+        return lengths
+    if isinstance(value, list):
+        return set().union(*(_length_values(item) for item in value if isinstance(item, (dict, list))))
+    return set()
 
 
 def _duration_seconds(value: object) -> set[Decimal]:
@@ -87,7 +101,7 @@ def _check_durations(text: str, durations: set[Decimal]) -> str:
             and abs(total - seconds) <= abs(seconds) * Decimal('0.02')
             for seconds in durations)
         if not valid:
-            raise ValueError('分析时长与输入不符')
+            raise ValueError(f'分析时长与输入不符：生成={(match["clock"] or match["duration"])[:48]}')
         parts.append(between)
         end = match.end()
     return ''.join(parts) + text[end:]
@@ -111,7 +125,8 @@ def validate_brief(content: object, context: dict) -> dict:
         if candidate is None or finding.candidate_id in selected:
             raise ValueError('分析候选引用不存在或重复')
         allowed_evidence = set(candidate['evidence_ids']) & facts.keys()
-        if not finding.evidence_ids or not set(finding.evidence_ids) <= allowed_evidence:
+        evidence = finding.evidence_ids if 'evidence_ids' in finding.model_fields_set else candidate['evidence_ids']
+        if not evidence or not set(evidence) <= allowed_evidence:
             received = json.dumps([identifier[:32] for identifier in finding.evidence_ids[:8]], ensure_ascii=True)
             raise ValueError(f'发现包含无效事实引用：candidate={candidate["id"]} allowed={sorted(allowed_evidence)} received={received}')
         selected.add(finding.candidate_id)
@@ -121,7 +136,8 @@ def validate_brief(content: object, context: dict) -> dict:
                or (ref.get('production_date') and not scope['period_start'] <= ref['production_date'] <= scope['period_end'])
                for ref in references):
             raise ValueError('业务关联不属于当前产线或周期')
-        findings.append(dict(**finding.model_dump(), references=references, reference_count=len(references)))
+        findings.append(dict(**finding.model_dump(exclude={'evidence_ids'}), evidence_ids=evidence,
+                             references=references, reference_count=len(references)))
     for action in draft.actions:
         if action.candidate_id not in selected:
             raise ValueError('建议必须关联真实发现')
@@ -132,6 +148,7 @@ def validate_brief(content: object, context: dict) -> dict:
     # shortcut: token checks do not establish causality; add targeted checks for concrete false claims.
     allowed_numbers = _numbers(authoritative)
     durations = _duration_seconds(model_input)
+    lengths = _length_values(model_input)
     direction_pattern = r'(上升|增长|增加|下降|减少|降低)(?:了)?\s*(?:大约为|约为|大约|约|接近|近)?\s*([+-]?\d[\d,]*(?:\.\d+)?)\s*%'
     def direction_key(direction, amount):
         return (1 if direction in {'上升', '增长', '增加'} else -1, Decimal(amount.replace(',', '')))
@@ -142,13 +159,26 @@ def validate_brief(content: object, context: dict) -> dict:
                           if key.endswith('_percent') and type(value) in (int, float)}
     allowed_changes.update((1 if value > 0 else -1, abs(value)) for value in change_percentages if value != 0)
     allowed_dates = set(re.findall(r'\d{4}-\d{2}-\d{2}', authoritative))
-    prose = [draft.headline, draft.summary]
-    prose += [text for finding in draft.findings for text in (finding.title, finding.detail)]
-    prose += [text for action in draft.actions for text in (action.title, action.detail)]
-    for text in prose:
+    def render_fact(match: re.Match) -> str:
+        identifier = match[1]
+        if identifier not in facts:
+            raise ValueError(f'正文引用的事实不存在：{identifier[:32]}')
+        return str(facts[identifier]['value'])
+
+    result = draft.model_dump(exclude={'findings'})
+    prose = [result, *findings, *result['actions']]
+    for item in prose:
+        for key in ('headline', 'summary', 'title', 'detail'):
+            if key in item:
+                item[key] = re.sub(r'\{\{(F\d{3})\}\}', render_fact, item[key])
+    texts = [prose[0]['headline'], prose[0]['summary']]
+    texts += [text for item in prose[1:] for text in (item['title'], item['detail'])]
+    for text in texts:
         text = text.replace('％', '%').replace('−', '-').replace('－', '-')
         if not text.strip():
             raise ValueError('分析结论或正文为空')
+        if '{{' in text or '}}' in text:
+            raise ValueError('正文事实占位符格式无效')
         if re.search(r'\b[FC]\d{3}\b|\bC_[a-z_]+\b', text):
             raise ValueError('正文不应展示内部引用编号')
         for direction, amount in re.findall(direction_pattern, text):
@@ -158,10 +188,10 @@ def validate_brief(content: object, context: dict) -> dict:
         if not set(re.findall(r'\d{4}-\d{2}-\d{2}', text)) <= allowed_dates:
             raise ValueError('分析包含输入中不存在的日期')
         quantities = _check_durations(text, durations)
-        quantities = _check_rounded_quantities(quantities, authoritative, change_percentages)
+        quantities = _check_rounded_quantities(quantities, authoritative, change_percentages, lengths)
         quantities = re.sub(r'((?:分(?:为|成)?|按)\s*)[1-3]\s*(?=(?:个\s*)?(?:步|阶段)\s*(?:(?:进行|开展)\s*)?(?:核查|核对|检查|排查))', r'\1', quantities)
         quantities = re.sub(r'((?:建议|请|重点|优先)\s*(?:核查|核对|检查|排查)\s*(?:这|以下)?\s*)[1-3]\s*(?=类|点)', r'\1', quantities)
         if not _numbers(quantities) <= allowed_numbers:
             raise ValueError('分析包含输入中不存在的数量')
-    return AnalysisBrief(**draft.model_dump(exclude={'findings'}), findings=findings,
+    return AnalysisBrief(**result, findings=findings,
                          scope=context['scope'], data_quality=context['data_quality']).model_dump()

@@ -62,7 +62,7 @@ def add_candidates(context: dict, kind: str, records: list | None = None) -> dic
     if kind == 'leadership':
         count = context['current_task_count']
         if scope.get('comparison_start'):
-            add('C_comparison', 'comparison', '与上一可比周期的生产规模变化', ['F001', 'F002', 'F003', 'F004', 'F007', 'F008'],
+            add('C_comparison', 'comparison', '生产规模的周期对比', ['F001', 'F002', 'F003', 'F004', 'F005', 'F007', 'F008'],
                 boundary='变化不代表订单、产能或效率变化；以明确比较日期为准。')
         if context['daily_sample_count']:
             add('C_daily', 'distribution', '周期内每日任务分布', ['F001', 'F006'],
@@ -81,7 +81,7 @@ def add_candidates(context: dict, kind: str, records: list | None = None) -> dic
         if records:
             dates = Counter(production_day(r).isoformat() for r in records if production_day(r))
             context['daily_distribution'] = [dict(date=stamp, task_count=count) for stamp, count in sorted(dates.items())]
-            add('C_production', 'production', '本期实际切割记录', ['F001', 'F002', 'F003'] if kind == 'workshop' else ['F001', 'F002'],
+            add('C_production', 'production', '本期实际切割记录', ['F001', 'F002', 'F003'] if kind == 'workshop' else ['F001', 'F002', 'F005'],
                 [ref('date', production_day(r).isoformat()) for r in records if production_day(r)])
         if comparison.get('comparison_date'):
             add('C_comparison', 'comparison', '与上一可比周期的任务变化', ['F005'], boundary='只比较任务量，不推断效率或能耗改善。')
@@ -96,6 +96,8 @@ def add_candidates(context: dict, kind: str, records: list | None = None) -> dic
             else:
                 context['facts'].append(_fact('F010', '任务最多工程', f"{top['project_name']} · {top['task_count']} 项", '按本期完整任务集合分组；工程号为空时保留船名。'))
                 add('C_project', 'distribution', '工程任务分布', ['F010'], [task(r) for r in related])
+            if kind == 'equipment' and records:
+                next(candidate for candidate in candidates if candidate['id'] == 'C_production')['evidence_ids'].append('F010')
         outlier_ids = {r['task_id'] for r in context['anomalies']}
         if outlier_ids:
             add('C_duration', 'duration', '切割时间较长的任务', ['F006' if kind == 'workshop' else 'F005'],

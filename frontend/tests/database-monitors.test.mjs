@@ -17,7 +17,7 @@ test('monitor table renders real states, complete text and management actions', 
   rows[2].failure_started_at = 940
   const html = await renderComponent('components/DatabaseMonitorTable', { ...props, items: rows })
   for (const text of ['端口可达', '异常待确认', '连接不可用', '恢复确认中', '状态未知', '已暂停', '编辑', '暂停', '启用', '删除', rows[2].name, rows[2].last_error, '3 分钟']) assert.ok(html.includes(text), text)
-  assert.match(html, /1970年1月1日 08:16:40/)
+  assert.match(html, /1970年01月01日 08:16:40/)
   assert.doesNotMatch(html, /<br\b/)
 })
 

@@ -1,11 +1,16 @@
 from contextlib import closing, contextmanager
-from datetime import date
+from datetime import date, timedelta
+import json
+from types import SimpleNamespace
 
 import pytest
 
 from tests.line_fixtures import cutting_settings, source_client
 from app.database.sqlserver import SqlServerClient
 from app.services.custom_report_service import CustomReportService
+from app.services.report_generation.custom import prepare_report
+from app.services.report_service import ReportService
+from app.models.designer import TemplateConfig
 from app.core.report_deadline import report_deadline
 
 
@@ -18,6 +23,79 @@ DEFINITION = {"visual_config": {
     "chart": {"value_fields": ["amount"]},
 }}
 TEMPLATE = {"config": {"primary_color": "blue", "accent_color": "orange"}}
+
+
+@pytest.mark.parametrize("period_type", ["day", "month"])
+@pytest.mark.parametrize("explicit_range", [False, True])
+def test_custom_report_query_and_display_use_the_same_period(tmp_path, period_type, explicit_range):
+    settings = cutting_settings(project_root=tmp_path, data_source_mode="sqlserver", demo_mode=False)
+    service = CustomReportService(settings, client=source_client(settings))
+    query = {**QUERY, "enabled": True, "query_task_id": "q", "name": "产量", "version": 1,
+             "sql_text": "SELECT TASK_ID AS amount FROM dbo.task WHERE MACHINE_NO = :machine_no "
+                         "AND END_TIME >= :period_start AND END_TIME < :period_end"}
+    definition = {**DEFINITION, "enabled": True, "is_builtin": False, "name": "自定义产量",
+                  "query_task_id": "q", "template_id": "t", "period_type": period_type}
+    template = {"config": TemplateConfig().model_dump(), "enabled": True, "template_id": "t", "name": "模板", "version": 1}
+    start, end = date(2026, 11, 1), date(2026, 11, 3)
+    job = {"report_id": "custom-period", "report_type": "custom", "definition_id": "custom",
+           "report_date": start.isoformat()}
+    if explicit_range:
+        job.update(period_start=start.isoformat(), period_end=end.isoformat(),
+                   parameters_json=json.dumps({"period_start": "2025-01-01", "period_end": "2025-01-02"}))
+    expected_end = end + timedelta(days=1) if explicit_range else date(2026, 12, 1) if period_type == "month" else start + timedelta(days=1)
+    source_days = [date(2026, 10, 31), start, date(2026, 11, 2), end, date(2026, 12, 1)]
+    calls = []
+
+    def rows(sql, values):
+        calls.append(values)
+        machine, first, last = values
+        assert machine == settings.report_machine_no
+        return iter({"amount": 1} for day in source_days if first <= day < last)
+
+    service.client.iter_rows = rows
+    prepared = prepare_report(job, settings=settings, custom_report_service=service,
+        definitions=SimpleNamespace(get_definition=lambda _: definition, get_query_task=lambda _: query,
+                                    get_template=lambda _: template),
+        ensure_active=lambda: None, update_status=lambda *_: None)
+    assert calls == [(settings.report_machine_no, start, expected_end)]
+    assert prepared.task_count == (3 if explicit_range or period_type == "month" else 1)
+    html = ReportService(settings).environment.get_template("custom_report.html.j2").render(
+        report=prepared.report, device_name="测试切割机", demo_mode=False, echarts="")
+    if explicit_range:
+        assert prepared.report["filters"]["period_start"] == start.isoformat()
+        assert prepared.report["filters"]["period_end"] == end.isoformat()
+        assert "2026-11-01 至 2026-11-03" in html
+    else:
+        assert "2026-11-01" in html
+
+
+@pytest.mark.parametrize(("start", "end", "message"), [
+    (date(2026, 11, 1), None, "必须同时提供"),
+    (date(2026, 11, 3), date(2026, 11, 1), "不能早于"),
+    (date(2025, 1, 1), date(2026, 1, 2), "最长为"),
+])
+def test_custom_range_validation_precedes_source_query(tmp_path, start, end, message):
+    service = CustomReportService(cutting_settings(project_root=tmp_path), client=None)
+    with pytest.raises(ValueError, match=message):
+        list(service.iter_rows(QUERY, report_date=date(2026, 11, 1), period_type="day",
+                               period_start=start, period_end=end))
+
+
+@pytest.mark.parametrize(("start", "end"), [
+    (date(2026, 10, 31), date(2026, 11, 1)),
+    (date(2024, 2, 28), date(2024, 3, 1)),
+])
+def test_custom_range_handles_month_boundaries_and_requires_query_bounds(tmp_path, start, end):
+    settings = cutting_settings(project_root=tmp_path, data_source_mode="sqlserver", demo_mode=False)
+    service = CustomReportService(settings, client=source_client(settings))
+    seen = []
+    service.client.iter_rows = lambda sql, values: (seen.append(values) or (row for row in ()))
+    query = {**QUERY, "sql_text": QUERY["sql_text"] + " AND END_TIME >= :period_start AND END_TIME < :period_end"}
+    list(service.iter_rows(query, report_date=start, period_type="day", period_start=start, period_end=end))
+    assert seen == [(settings.report_machine_no, start, end + timedelta(days=1))]
+    with pytest.raises(ValueError, match="必须同时声明"):
+        list(service.iter_rows(QUERY, report_date=start, period_type="day", period_start=start, period_end=end))
+    assert len(seen) == 1
 
 
 def test_full_metrics_do_not_depend_on_display_limit(tmp_path):

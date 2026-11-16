@@ -10,6 +10,7 @@ import { useEnergyReportData } from '../src/composables/useEnergyReportData.ts'
 import { computed, reactive } from 'vue'
 import { transformSync } from 'esbuild'
 import { getAutomationConfiguration, saveAutomationConfiguration } from '../src/api/automation.ts'
+import { createPinia, setActivePinia } from 'pinia'
 
 function descriptor(name, folder = 'views') {
   const source = readFileSync(new URL(`../src/${folder}/${name}.vue`, import.meta.url), 'utf8')
@@ -317,17 +318,22 @@ test('home quick access retains the three report destinations with semantic them
   assert.match(home.template.content, /hover:bg-primary\/10/)
 })
 
-test('home KPI and production ring show verified data instead of decorative placeholders', () => {
+test('home KPI and production ring show verified data instead of decorative placeholders', async () => {
   const home = descriptor('AdminHomeView')
-  const kpi = descriptor('HomeKpiCard', 'components')
   const template = home.template.content
   const script = home.scriptSetup.content
 
   assert.equal((template.match(/<HomeKpiCard /g) || []).length, 3)
   assert.match(template, /grid-cols-1 sm:grid-cols-2 xl:grid-cols-4/)
   assert.match(template, /aria-label="生产天数与能耗"/)
-  assert.match(kpi.template.content, /<MetricSparkline[^>]+variant="bar"[^>]+:values="series"/)
-  assert.match(kpi.template.content, /<NBadge dot[^>]+:processing="!loading && numericValue !== null && !app.reducedMotion"/)
+  setActivePinia(createPinia())
+  const card = await renderComponent('components/HomeKpiCard', { title: '任务数', value: 6, series: [1, 2, 3] })
+  assert.equal((card.match(/<rect\b/g) || []).length, 3)
+  assert.match(card, /任务数趋势，基于最近 3 个有效数据点/)
+  assert.match(card, /n-badge/)
+  const reportCard = await renderComponent('components/HomeKpiCard', { title: '任务数', value: 6, series: [1, 2, 3], variant: 'report' })
+  assert.match(reportCard, /data-sparkline__line/)
+  assert.doesNotMatch(reportCard, /<rect\b/)
   assert.match(script, /dailyRecords\.value\.map\(\(item\) => item\.cut_length_m\)/)
   assert.match(script, /Number\(previous\) <= 0\) return \{ text: '暂无上月对比'/)
   assert.match(script, /percent\}% 较上月/)

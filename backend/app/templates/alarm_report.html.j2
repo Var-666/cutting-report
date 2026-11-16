@@ -1,4 +1,5 @@
 {% from 'report_analysis.html.j2' import metric_icon %}
+{% from 'industrial_chrome.html.j2' import report_brand %}
 <!doctype html>
 <html lang="zh-CN">
 <head>
@@ -30,15 +31,19 @@
     {% include "analysis_cards.css.j2" %}
     @media screen { body { padding:16px; max-width:1380px; margin:auto; } }
     @media (max-width:600px) { .header { align-items:flex-start; gap:8px; flex-direction:column; }.meta { text-align:left; } }
+    {% include "industrial_report.css.j2" %}
   </style>
 </head>
-<body>
-  <div class="header">
+<body class="industrial-report report-alarm" style="--industrial-cover:url('{{ cover }}')">
+<div class="page industrial-document">
+  {{ report_brand(demo_mode|default(false)) }}
+<div class="industrial-content">
+  <div class="header industrial-hero">
     <div>
       <h1>{{ machine_no }} 智能告警报告</h1>
       <div class="muted">仅在发现新的告警问题时自动生成</div>
     </div>
-    <div class="meta">
+    <div class="alarm-meta">
       <div>报告编号：{{ report_id }}</div>
       <div>生成时间：{{ generated_at }}</div>
       <div><span class="risk risk-{{ analysis.overall_risk }}">风险：{{ severity_labels.get(analysis.overall_risk, analysis.overall_risk) }}</span></div>
@@ -120,6 +125,9 @@
     </section>
   </main>
 
-  <div class="footer">本报告由系统依据数据库告警记录自动生成。大模型结论仅用于辅助排查，安全处置以现场规程和授权人员判断为准。</div>
+</div>
+  <div class="footer">本报告由系统依据数据库告警记录自动生成。大模型结论仅用于辅助排查，安全处置以现场规程和授权人员判断为准。 · 报告结束</div>
+</div>
+{% include "industrial_report.js.j2" %}
 </body>
 </html>

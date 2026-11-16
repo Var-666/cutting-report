@@ -93,7 +93,6 @@ const weldingMetrics = computed(() => welding.value ? weldingKpis('daily', weldi
     <NAlert v-else-if="error" :type="analysis || error.includes('正在等待成功') ? 'warning' : 'error'" class="analysis-error" role="alert">
       <span>{{ error }}</span><NButton attr-type="button" @click="emit('retry')">重试</NButton>
     </NAlert>
-    <NAlert v-if="analysis?.cache_note" type="warning" class="analysis-error" role="status">{{ analysis.cache_note }}</NAlert>
     <template v-if="analysis">
       <CuttingAnalysisBrief v-if="analysis.brief && analysisAvailable" :brief="analysis.brief" :facts="analysis.facts" :generated-at="analysis.generated_at" :leadership-report="analysis.cache_note ? null : leadershipReport" />
       <template v-else>

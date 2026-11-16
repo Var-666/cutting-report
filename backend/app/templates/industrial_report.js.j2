@@ -1,0 +1,36 @@
+<script>
+window.prepareIndustrialReport = async () => {
+  await document.fonts.ready;
+  const root = document.querySelector('.leadership-print') || document.querySelector('.industrial-document');
+  if (!root) return;
+  if (window.matchMedia('print').matches) {
+    let width = root.getBoundingClientRect().width;
+    const inset = parseFloat(getComputedStyle(root.querySelector('main') || root).paddingLeft) * 2 + 4;
+    root.querySelectorAll('table').forEach(table => {
+      if (!table.getClientRects().length || table.closest('.print-only') || table.classList.contains('lp-table')) return;
+      table.querySelectorAll('colgroup').forEach(group => { group.style.display = 'none'; });
+      table.style.width = 'max-content';
+      width = Math.max(width, table.scrollWidth + inset);
+      table.style.width = '100%';
+    });
+    root.style.width = `${Math.ceil(width)}px`;
+  }
+  document.querySelectorAll('.chart').forEach(element => {
+    const chart = window.echarts?.getInstanceByDom(element);
+    if (!chart || !element.getClientRects().length) return;
+    if (!element.id.startsWith('lp-')) {
+      chart.setOption({ backgroundColor: '#ffffff', animation: false, textStyle: {color: '#405a80', fontFamily: 'Microsoft YaHei, PingFang SC, sans-serif'} });
+    }
+    chart.resize({animation: {duration: 0}});
+  });
+  await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+};
+window.prepareIndustrialReport();
+window.addEventListener('beforeprint', () => window.prepareIndustrialReport());
+window.addEventListener('resize', () => window.prepareIndustrialReport());
+window.addEventListener('afterprint', () => {
+  const root = document.querySelector('.leadership-print') || document.querySelector('.industrial-document');
+  if (root) root.style.width = '';
+  window.prepareIndustrialReport();
+});
+</script>

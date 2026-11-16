@@ -8,6 +8,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { computed, h, reactive, ref } from 'vue'
 import * as Vue from 'vue'
+import { createPinia, setActivePinia } from 'pinia'
 import { createMemoryHistory, createRouter, RouterView, useRoute, useRouter } from 'vue-router'
 import { parse, compileScript, compileTemplate } from '@vue/compiler-sfc'
 import { lineHome, productionGroups, selectedLineType } from '../src/utils/productionLines.ts'
@@ -19,10 +20,37 @@ import { setDeviceCatalog, selectDevice } from '../src/api/deviceContext.ts'
 import { reportCache } from '../src/api/reportCache.ts'
 import { queryDateRange, sameRouteQuery } from '../src/utils/reportRouteState.ts'
 import { parseWeldingRouteQuery, weldingRouteQuery } from '../src/utils/weldingRouteState.ts'
+import { formatChineseDate } from '../src/utils/dateDisplay.ts'
 
 const source = path => readFileSync(new URL(`../src/${path}`, import.meta.url), 'utf8')
 test.beforeEach(() => setDeviceCatalog({ default_device_id: 'welding', items: [{ id: 'welding', name: '焊接', type: 'welding' }] }))
 afterEach(() => reportCache.clear())
+
+test('welding KPI layouts preserve zero, missing and pending measurements with their scope notes', async () => {
+  setActivePinia(createPinia())
+  for (const variant of ['home', 'report']) {
+    const html = await renderComponent('components/HomeKpiCard', {
+      title: '焊接长度', value: 0, unit: 'm', precision: 2, variant,
+      trendLabel: '仅使用长度、用时均有效的作业',
+    })
+    assert.match(html, /aria-label="焊接长度：0\.00 m"/)
+    assert.ok(html.includes('仅使用长度、用时均有效的作业'))
+    assert.ok(!html.includes('暂无趋势'))
+    const missing = await renderComponent('components/HomeKpiCard', { title: '焊接长度', value: null, variant })
+    assert.match(missing, /aria-label="焊接长度：-- /)
+    const loading = await renderComponent('components/HomeKpiCard', { title: '焊接长度', value: null, loading: true, variant })
+    assert.match(loading, /aria-label="焊接长度：正在加载"/)
+  }
+  const pending = await renderComponent('components/WeldingKpiCards', {
+    kind: 'parts', loading: false,
+    report: { summary: { involved_part_count: 3, part_row_count: 4, part_actual_length_m: null }, daily: [],
+      meta: { pending_metrics: { part_actual_length_m: '工件归属待核实' }, ambiguous_part_count: 1 } },
+  })
+  assert.ok(pending.includes('累计实际焊接长度：待核实 m'))
+  assert.ok(pending.includes('口径待核实'))
+  assert.ok(pending.includes('工件累计值；归属不明确时待核实'))
+  assert.ok(pending.includes('参与流水号存在多条工件归属'))
+})
 
 test('device types contain independent welding lines without adding a third navigation level', () => {
   const items = [{ id: 'Cutter01', name: '20KW' }, { id: 'Cutter02', name: '30KW' }, { id: 'welding', type: 'welding', name: '小组立焊接线' }, { id: 'other-welding', type: 'welding', name: '另一焊接线' }]
@@ -1265,20 +1293,21 @@ test('independent welding home waits for its catalog, keeps successful data on f
   const route = reactive({ query: {} })
   const calls = [], cleanup = [], scope = Vue.effectScope()
   const bindings = { ...Vue, deviceSelection: selection, selectedLineType, parseWeldingRouteQuery,
-    useRoute: () => route, useRouter: () => ({ push() {} }), reportToday: () => '2026-10-26',
+    useRoute: () => route, useRouter: () => ({ push() {} }), reportToday: () => '2026-09-06', formatChineseDate,
     useReportChartTheme: () => ({ colors: ref({}), vars: ref({}) }), onBeforeUnmount: fn => cleanup.push(fn),
     getLatestWeldingAnalysis: async () => null,
     getWeldingReport: (kind, query, signal) => new Promise((resolve, reject) => calls.push({ kind, query, signal, resolve, reject })),
   }
   const script = parse(source('views/WeldingHomeView.vue')).descriptor.scriptSetup.content.replace(/^import .*$/gm, '')
-  const setup = scriptFunction(...Object.keys(bindings), `${script}; return { load, report, error };`)
+  const setup = scriptFunction(...Object.keys(bindings), `${script}; return { load, report, error, displayDate };`)
   const home = scope.run(() => setup(...Object.values(bindings)))
+  assert.equal(home.displayDate, '2026年09月06日')
   assert.equal(calls.length, 0)
   selection.items = [{ id: 'welding', type: 'welding', enabled: true }]
   await Vue.nextTick()
   assert.equal(calls.length, 1)
   assert.equal(calls[0].kind, 'dashboard')
-  assert.equal(calls[0].query.start, '2026-10-20')
+  assert.equal(calls[0].query.start, '2026-08-31')
   assert.equal(calls[0].query.page_size, 10)
   calls[0].resolve({ today: { job_count: 0 }, meta: {} })
   await settle()

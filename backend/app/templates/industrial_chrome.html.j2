@@ -1,0 +1,7 @@
+{% macro report_brand(demo=false) -%}
+<div class="industrial-brand">
+  <span class="industrial-logo" aria-hidden="true"><i></i><i></i><i></i></span>
+  <div><strong>切割生产智能产报系统</strong><small>Production Reporting System</small></div>
+  <span class="industrial-brand-tag">{{ '演示数据' if demo else '工业生产智能洞察' }}</span>
+</div>
+{%- endmacro %}

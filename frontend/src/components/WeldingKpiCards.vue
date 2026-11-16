@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import type { WeldingReport, WeldingReportKind } from '../types/welding'
 import { computed } from 'vue'
-import { NCard } from 'naive-ui'
 import HomeKpiCard from './HomeKpiCard.vue'
 import { weldingKpis, weldingMetricSeries } from '../utils/weldingReport'
 
@@ -21,30 +20,31 @@ function note(key: string) {
 </script>
 
 <template>
-  <NCard :bordered="false" class="card-wrapper welding-kpi-panel" content-style="padding: 0">
+  <div class="welding-kpi-panel" :class="{ 'card-wrapper welding-kpi-panel--home': kind === 'dashboard' }">
   <section class="welding-kpis" :class="{ 'welding-kpis--report': kind !== 'dashboard' }" aria-label="焊接生产指标" :aria-busy="loading">
     <div v-for="card in cards" :key="card.key" class="welding-kpi">
-      <HomeKpiCard class="welding-kpi-content" :title="card.title" :icon="icons[card.key]" :color="`rgb(var(--${colors[card.key]}-color))`" :value="card.value" :unit="card.unit" :precision="['m', 'h', 'm/h'].includes(card.unit) ? 2 : 0" :loading="loading && !report" :status="card.pending ? '口径待核实' : ''" :trend-label="note(card.key)" :series="weldingMetricSeries(report, card.key).some(value => value !== null) ? weldingMetricSeries(report, card.key) : []" />
+      <HomeKpiCard :variant="kind === 'dashboard' ? 'home' : 'report'" :title="card.title" :icon="kind === 'dashboard' ? '' : icons[card.key]" :color="`rgb(var(--${colors[card.key]}-color))`" :value="card.value" :unit="card.unit" :precision="['m', 'h', 'm/h'].includes(card.unit) ? 2 : 0" :loading="loading && !report" :status="card.pending ? '口径待核实' : ''" :trend-label="note(card.key)" :series="weldingMetricSeries(report, card.key).some(value => value !== null) ? weldingMetricSeries(report, card.key) : []" />
     </div>
   </section>
-  </NCard>
+  </div>
 </template>
 
 <style scoped>
 .welding-kpi-panel { container:welding-kpis / inline-size; }
+.welding-kpi-panel--home { background:rgb(var(--container-bg-color)); overflow:hidden; }
 .welding-kpis { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); min-width:0; }
-.welding-kpi { min-width:0; border-right:1px solid var(--theme-divider-color); }
-.welding-kpi:last-child { border-right:0; }
-.welding-kpis--report { --font-home-kpi-value:var(--font-kpi-value); }
-.welding-kpis--report .welding-kpi-content { min-height:152px; }
+.welding-kpi { min-width:0; }
+.welding-kpi-panel--home .welding-kpi { border-right:1px solid var(--theme-divider-color); }
+.welding-kpi-panel--home .welding-kpi:last-child { border-right:0; }
+.welding-kpis--report { gap:16px; }
 @container welding-kpis (max-width:900px) {
   .welding-kpis { grid-template-columns:repeat(2,minmax(0,1fr)); }
-  .welding-kpi:nth-child(2) { border-right:0; }
-  .welding-kpi:nth-child(-n+2) { border-bottom:1px solid var(--theme-divider-color); }
+  .welding-kpi-panel--home .welding-kpi:nth-child(2) { border-right:0; }
+  .welding-kpi-panel--home .welding-kpi:nth-child(-n+2) { border-bottom:1px solid var(--theme-divider-color); }
 }
 @container welding-kpis (max-width:480px) {
   .welding-kpis { grid-template-columns:1fr; }
-  .welding-kpi { border-right:0; border-bottom:1px solid var(--theme-divider-color); }
-  .welding-kpi:last-child { border-bottom:0; }
+  .welding-kpi-panel--home .welding-kpi { border-right:0; border-bottom:1px solid var(--theme-divider-color); }
+  .welding-kpi-panel--home .welding-kpi:last-child { border-bottom:0; }
 }
 </style>

@@ -1,0 +1,71 @@
+body.industrial-report { --ink:#071d46; --navy:#053263; --blue:#0057ef; --teal:#00afb8; --line:#c8d9f2; --line-strong:#8eaeda; --soft:#f2f6ff; --muted:#5e769c; margin:0; padding:0; color:var(--ink); background:#eaf0fa; font:14px/1.55 "Microsoft YaHei","PingFang SC","Noto Sans CJK SC",Arial,sans-serif; }
+.industrial-report * { box-sizing:border-box; }
+.industrial-report::before { display:none; }
+.industrial-report .industrial-document { width:min(1180px,calc(100% - 32px)); margin:20px auto; padding:0; border:0; border-radius:0; overflow:visible; background:#fff; box-shadow:0 8px 32px #103a6820; }
+.industrial-brand { display:flex; align-items:center; gap:12px; min-height:64px; padding:12px 28px; color:#fff; background:linear-gradient(118deg,#022957,#093f78 66%,#032e60); }
+.industrial-brand strong { display:block; font-size:18px; letter-spacing:.5px; }.industrial-brand small { display:block; font-size:12px; letter-spacing:.3px; }
+.industrial-logo { display:flex; flex-shrink:0; align-items:flex-end; gap:4px; height:32px; transform:skew(-12deg); }.industrial-logo i { display:block; width:6px; height:12px; background:#10ccdf; }.industrial-logo i:nth-child(2){height:20px}.industrial-logo i:nth-child(3){height:32px}
+.industrial-brand-tag { margin-left:auto; color:#c6f7ff; font-size:12px; }
+.industrial-report .industrial-hero,.industrial-report .report-cover { position:relative; padding:24px 28px 20px; border:0; border-bottom:1px solid var(--line); color:var(--ink); background:linear-gradient(90deg,#fff 38%,#ffffffd9 67%,#ffffff26),var(--industrial-cover,none) right 60%/70% auto no-repeat; }
+.industrial-report .industrial-hero::before { content:""; position:absolute; left:16px; top:26px; width:5px; height:40px; border-radius:2px; background:linear-gradient(var(--blue),#05bfc5); }
+.industrial-report .industrial-hero h1,.industrial-report .cover-title h1 { margin:0; color:var(--ink); font-size:32px; line-height:1.25; letter-spacing:.4px; }
+.industrial-report .industrial-hero p,.industrial-report .cover-title p { margin:8px 0 0; color:#54709b; font-size:13px; }
+.industrial-report .cover-brand { display:none; }.industrial-report .cover-main { display:block; min-height:0; padding:0; background:none; }.industrial-report .cover-title { padding:0; }.industrial-report .cover-title p:last-child{display:none}
+.industrial-report .cover-folio { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:2px 24px; margin:18px 0 0; padding:12px 16px; border:1px solid var(--line); border-radius:8px; background:#eef5ffdd; }
+.industrial-report .cover-folio div { display:flex; gap:12px; padding:3px 0; border:0; }.industrial-report .cover-folio dt{min-width:56px;color:var(--muted);font-size:12px}.industrial-report .cover-folio dd{margin:0;color:var(--ink);font-size:12px;overflow-wrap:anywhere}
+.industrial-report main,.industrial-report .industrial-content { padding:16px 28px 24px; }
+.industrial-report h2 { display:flex; align-items:baseline; gap:10px; margin:24px 0 12px; padding:0 0 8px; border:0; border-bottom:1px solid #94afd5; color:var(--ink); font-size:21px; line-height:1.35; break-after:avoid; }
+.industrial-report h2::before { content:""; display:inline-block; flex-shrink:0; width:18px; height:10px; transform:skew(-25deg); background:linear-gradient(90deg,#0057ef 40%,transparent 40% 60%,#0057ef 60%); }.industrial-report h2::after{display:none}
+.industrial-report .meta,.industrial-report .industrial-meta { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:0; padding:12px 4px; margin:0 0 16px; border:1px solid var(--line); border-radius:8px; background:linear-gradient(110deg,#fff,#edf4ff); }
+.industrial-report .meta>div,.industrial-report .industrial-meta>div { min-width:0; min-height:0; padding:4px 12px; border:0; border-right:1px solid var(--line); overflow-wrap:anywhere; font-size:13px; }.industrial-report .meta>div:last-child,.industrial-report .industrial-meta>div:last-child{border-right:0}
+.industrial-report .meta span,.industrial-report .industrial-meta span{display:block;margin-bottom:4px;color:var(--muted);font-size:12px}
+.industrial-report .metrics,.industrial-report .industrial-kpis { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; border:0; background:none; }
+.industrial-report .metric,.industrial-report .industrial-kpi { --kpi-accent:#0878ff; position:relative; min-width:0; padding:16px; border:0; border-right:1px solid var(--line); border-bottom:4px solid #0878ff45; border-radius:0 0 8px 8px; background:linear-gradient(#fff,#f1f6ff); }
+.industrial-report .metric::before{display:none}.industrial-report .metric:nth-child(2),.industrial-report .industrial-kpi:nth-child(2){--kpi-accent:#00afb8;border-bottom-color:#00afb84d}.industrial-report .metric:nth-child(3),.industrial-report .industrial-kpi:nth-child(3){--kpi-accent:#7955ec;border-bottom-color:#7955ec4d}.industrial-report .metric:nth-child(4),.industrial-report .industrial-kpi:nth-child(4){--kpi-accent:#ee9a0a;border-bottom-color:#ee9a0a4d;border-right:0}
+.industrial-report .metric small,.industrial-report .industrial-kpi small{color:var(--muted);font-size:12px}.industrial-report .metric strong,.industrial-report .industrial-kpi strong{display:block;margin:8px 0 4px;overflow:visible;white-space:normal;color:var(--ink);font-size:28px;line-height:1.2;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.industrial-report .secondary { border:1px solid var(--line); border-radius:8px; background:#eff5ff; }.industrial-report .secondary>div{border-color:var(--line)}
+.industrial-report .table-wrap,.industrial-report .scroll { max-width:100%; height:auto; max-height:none; overflow:auto; border:1px solid var(--line); border-radius:8px; background:#fff; }
+.industrial-report table { width:100%; min-width:max-content; table-layout:auto; border-collapse:collapse; white-space:nowrap; font-size:13px; font-variant-numeric:tabular-nums; }
+.industrial-report th,.industrial-report td { height:auto; padding:8px 10px; border:0; border-bottom:1px solid #dfe9f8; text-align:right; white-space:nowrap; overflow-wrap:normal; word-break:normal; vertical-align:middle; }
+.industrial-report thead th { position:static; background:linear-gradient(110deg,#155da9,#073d7d); color:#fff; font-size:12px; font-weight:700; }.industrial-report tbody tr:nth-child(even){background:#edf3fb}.industrial-report tbody tr:nth-child(odd){background:#fff}
+.industrial-report tfoot th { position:static; border-top:1px solid #72a6ed; background:#d9eaff; color:#0043bb; font-size:13px; }.industrial-report th:first-child,.industrial-report td:first-child { text-align:left; }
+.industrial-report .chart { width:100%; min-width:0; height:260px; margin:0 0 12px; border:1px solid var(--line); border-radius:8px; background:#fff; }
+.industrial-report .content-grid,.industrial-report .data-chart-grid { display:block; }.industrial-report .chart-card { margin-bottom:12px; border:1px solid var(--line); border-radius:8px; }.industrial-report .chart-card .chart{margin:0;border:0}.industrial-report .chart-title{padding:10px 14px;color:var(--navy);font-weight:700;background:#eef5ff}
+.industrial-report .content-grid.table_first { display:flex; flex-direction:column; }.industrial-report .content-grid.table_first>.table-wrap,.industrial-report .content-grid.table_first>.chart-card { width:100%; }.industrial-report .content-grid.table_first>.chart-card { order:2; }
+.industrial-report .notice,.industrial-report .quality { margin:12px 0; padding:12px 16px; border:1px solid var(--line); border-left:4px solid var(--teal); border-radius:8px; background:#f1f7ff; font-size:12px; color:#46658d; }.industrial-report .notice.error{border-left-color:#d9555d;background:#fff3f1;color:#8e3b3b}
+.industrial-report .demo-notice { padding:8px 12px; border:1px solid #f1d49a; border-left:3px solid #db930d; border-radius:4px; color:#865800; background:#fff7e7; font-size:12px; }
+.industrial-report .empty { display:grid; place-items:center; min-height:100px; padding:24px; background:#f5f8ff; color:#6c82a7; text-align:center; border-radius:8px; }
+.industrial-report .analysis-layout { --analysis-ink:#071d46; --analysis-muted:#4d6791; --analysis-border:#c8d9f2; --analysis-blue:#0057ef; margin:20px 0 0; padding:0; border:0; border-radius:0; background:#fff; }
+.industrial-report .analysis-layout .analysis-head { margin:0 0 12px; padding:0 0 8px; border-bottom:1px solid #94afd5; }.industrial-report .analysis-layout .analysis-head h2{font-size:21px}
+.industrial-report .analysis-layout .analysis-banner { padding:20px; color:#fff; border:0; border-radius:10px; background:linear-gradient(115deg,#053060,#164a91); }.industrial-report .analysis-banner::before{display:none}.industrial-report .analysis-banner h3{max-width:none;padding:0;border:0;color:#fff;font-size:26px}.industrial-report .analysis-banner p,.industrial-report .analysis-banner .analysis-scope,.industrial-report .analysis-summary{max-width:100%;color:#daebff;font-size:14px;line-height:1.6}.industrial-report .analysis-summary li::marker{color:#10ccdf}
+.industrial-report .analysis-layout .analysis-fact,.industrial-report .analysis-layout .analysis-card,.industrial-report .analysis-layout .analysis-records{border:1px solid var(--line);border-radius:8px;box-shadow:none;background:linear-gradient(110deg,#fff,#f2f6ff)}.industrial-report .analysis-layout .analysis-card.suggestions{border-left:3px solid #00aaa5;background:linear-gradient(110deg,#fff,#effafa)}.industrial-report .analysis-layout .analysis-card.alerts{border-left:3px solid #e39733;background:linear-gradient(110deg,#fff,#fff6ec)}
+.industrial-report .analysis-layout .analysis-fact strong { font-size:24px; }.industrial-report .analysis-layout .analysis-findings,.industrial-report .analysis-layout .analysis-followup{display:block}.industrial-report .analysis-card{margin-bottom:12px}.industrial-report .analysis-subheading{margin:20px 0 12px;color:var(--ink);font-size:19px;border-color:#0057ef}
+.industrial-report .analysis-evidence-list { column-count:1; }.industrial-report .analysis-records th,.industrial-report .analysis-records td{white-space:nowrap;overflow:visible;text-overflow:clip}.industrial-report .analysis-record-label{white-space:nowrap}
+.industrial-report .report-remark,.industrial-report .print-tip { display:none; }
+.industrial-report .energy-label { display:inline; margin-left:4px; }
+.industrial-report .footer,.industrial-report .report-footer { display:flex; flex-wrap:wrap; justify-content:space-between; gap:8px 20px; margin:0; padding:16px 28px; color:#6480a8; border:0; border-top:1px solid var(--line); background:#fff; font-size:11px; }
+.industrial-report .industrial-metadata { display:grid; grid-template-columns:110px minmax(0,1fr); gap:6px 12px; margin:0 0 20px; padding:16px; border:1px solid var(--line); border-radius:8px; background:#f2f6ff;font-size:12px}.industrial-metadata dt{color:#5e769c}.industrial-metadata dd{margin:0;overflow-wrap:anywhere}
+@media screen and (max-width:700px) {
+  .industrial-report .industrial-document { width:calc(100% - 16px); margin:8px auto; }
+  .industrial-report main,.industrial-report .industrial-content { padding:12px; }
+  .industrial-brand { padding:12px;gap:8px}.industrial-brand strong{font-size:15px}.industrial-brand-tag{display:none}
+  .industrial-report .industrial-hero,.industrial-report .report-cover{padding:20px 20px 16px;background-image:linear-gradient(#ffffffde,#ffffffef),var(--industrial-cover,none)}.industrial-report .industrial-hero h1,.industrial-report .cover-title h1{font-size:25px}.industrial-report .industrial-hero::before{left:8px;top:22px}
+  .industrial-report .metrics,.industrial-report .industrial-kpis,.industrial-report .meta,.industrial-report .industrial-meta,.industrial-report .cover-folio{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .industrial-report .metric strong,.industrial-report .industrial-kpi strong{font-size:23px}.industrial-report .metric{padding:12px}.industrial-report .chart{height:230px}
+}
+@media print {
+  @page { size:auto; margin:0; }
+  .industrial-report { background:#fff; }
+  .industrial-report .industrial-document { width:281mm; max-width:none; margin:0; border:0; box-shadow:none; }
+  .industrial-report main,.industrial-report .industrial-content { padding:4mm 6mm 6mm; }
+  .industrial-report .industrial-brand{min-height:16mm;padding:3mm 6mm}.industrial-report .industrial-brand strong{font-size:12pt}.industrial-report .industrial-brand small{font-size:8pt}
+  .industrial-report .industrial-hero,.industrial-report .report-cover{padding:6mm}.industrial-report .industrial-hero::before{left:3mm;top:7mm;height:12mm}.industrial-report .industrial-hero h1,.industrial-report .cover-title h1{font-size:25pt}
+  .industrial-report .table-wrap,.industrial-report .scroll { height:auto; max-height:none; overflow:visible; border-radius:0; }
+  /* Keep the complete table; legacy templates also contain obsolete page-sized copies. */
+  .industrial-report .screen-only { display:table!important; }.industrial-report .print-only { display:none!important; }
+  .industrial-report table{min-width:0;table-layout:auto;font-size:9pt}.industrial-report th,.industrial-report td{padding:1.5mm 2mm;white-space:nowrap;overflow-wrap:normal;word-break:normal}.industrial-report thead th{font-size:8pt}
+  .industrial-report .metric strong{font-size:23pt}.industrial-report .metric small{font-size:9pt}
+  .industrial-report .chart,.industrial-report .chart-stack .chart{height:58mm;break-after:auto}
+  .industrial-report .analysis-layout .analysis-banner{padding:5mm}.industrial-report .analysis-banner h3{font-size:20pt}.industrial-report .analysis-banner p,.industrial-report .analysis-summary{font-size:10pt}.industrial-report .analysis-layout .analysis-fact strong{font-size:18pt}
+  .industrial-report,.industrial-report .industrial-document,.industrial-report .industrial-brand,.industrial-report th { print-color-adjust:exact;-webkit-print-color-adjust:exact; }
+}

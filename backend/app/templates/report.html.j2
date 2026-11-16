@@ -1,4 +1,5 @@
 {% from 'report_analysis.html.j2' import render_analysis %}
+{% from 'industrial_chrome.html.j2' import report_brand %}
 {% macro energy_cell(row, kind) -%}
 {% set status = row[kind ~ '_data_status'] %}
 {% set value = row[kind ~ '_consumption'] %}
@@ -37,6 +38,7 @@
     .metric strong { display:block; margin:5px 0 3px; overflow:hidden; color:var(--navy); font-size:25px; line-height:1.25; text-overflow:ellipsis; white-space:nowrap; font-variant-numeric:tabular-nums; }.metric small { color:var(--muted); font-size:11px; }
     .secondary { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); margin-top:10px; border:1px solid var(--line); background:var(--soft); }.secondary div { padding:11px 16px; border-right:1px solid var(--line); }.secondary div:last-child{border-right:0}
     .section-note { margin:-4px 0 12px; color:var(--muted); font-size:11px; }.energy-label { display:block; color:var(--muted); font-size:9px; }
+    .demo-notice { padding:12px; border:2px solid #b45309; color:#92400e; background:#fffbeb; font-weight:700; }
     .chart { width:100%; height:300px; border:1px solid var(--line); background:#fff; }
     .table-wrap { overflow:auto; border:1px solid var(--line); background:#fff; } table { width:100%; border-collapse:collapse; white-space:nowrap; font-variant-numeric:tabular-nums; }
     th,td { height:42px; padding:8px 10px; border-bottom:1px solid #e0e8ec; text-align:right; vertical-align:middle; } th { color:#315568; background:#dceaf0; font-weight:700; } thead th { position:sticky; top:0; z-index:3; } tfoot th { position:sticky; bottom:0; z-index:2; } th:first-child,td:first-child,th:nth-child(2),td:nth-child(2) { text-align:left; }
@@ -47,80 +49,17 @@
     .data-chart-grid { display:grid; grid-template-columns:minmax(360px,.9fr) minmax(0,1.2fr); gap:12px; align-items:start; }.data-chart-grid .table-wrap { height:300px; max-height:300px; }.data-chart-grid table { min-width:760px; table-layout:auto; }.equipment-grid .table-wrap { height:532px; max-height:532px; }.equipment-grid table { min-width:940px; }.chart-stack { display:grid; gap:12px; }.chart-stack .chart { height:260px; }
     .print-tip { margin:0 0 12px; color:var(--muted); text-align:right; font-size:11px; } .report-footer { display:flex; justify-content:space-between; gap:20px; padding:16px 38px; color:var(--muted); border-top:1px solid var(--line); background:var(--soft); font-size:11px; }
     .print-only { display:none; }
-    html.report-printing .data-chart-grid,html.report-printing .data-chart-grid.equipment-grid { display:block!important; }
-    html.report-printing .chart-stack { display:block!important; }
-    html.report-printing .chart,html.report-printing .chart-stack .chart { width:100%!important; height:58mm!important; margin-bottom:5mm!important; }
     @media (max-width:1000px) { .cover-main{grid-template-columns:1fr}.cover-folio{grid-template-columns:repeat(2,minmax(0,1fr));column-gap:20px;border-left:0;border-top:1px solid rgba(255,255,255,.16)}.meta,.metrics { grid-template-columns:repeat(2,1fr); }.metric:nth-child(2){border-right:0}.secondary,.analysis-grid,.data-chart-grid { grid-template-columns:1fr; }.analysis-facts{grid-template-columns:repeat(2,minmax(0,1fr))}.data-chart-grid .table-wrap,.equipment-grid .table-wrap { height:auto; max-height:none; } main,.cover-brand,.cover-title { padding-left:20px; padding-right:20px; } }
     @media (max-width:600px) { .cover-folio{grid-template-columns:1fr;padding:12px 20px} }
-    @media print {
-      @page { size:A4 landscape; margin:9mm 9mm 13mm; }
-      html,body { width:auto; min-width:0; background:#fff; font-size:8.5pt; }
-      body::before{display:none}.page { width:100%; margin:0; overflow:visible; border:0; box-shadow:none; }
-      .report-cover { print-color-adjust:exact; -webkit-print-color-adjust:exact; }
-      .cover-brand{min-height:13mm;padding:0 7mm}.brand-mark{width:9mm;height:9mm;padding:2mm}.cover-main{min-height:39mm;grid-template-columns:minmax(0,1fr) 83mm}.cover-title{padding:7mm}.cover-title h1{font-size:23pt}.cover-title p{margin-top:2mm;font-size:8pt}.cover-folio{grid-template-columns:1fr;padding:5mm 6mm}.cover-folio div{padding:2mm 2.5mm}
-      .report-cover,th,.metrics,.analysis-facts,.analysis-card { print-color-adjust:exact; -webkit-print-color-adjust:exact; }
-      main { padding:6mm 0 4mm; }
-      .report-footer { padding:4mm 0 0; background:#fff; }
-      .print-tip { display:none; }
-      .screen-only { display:none!important; }
-      .print-only { display:block!important; }
-      .print-table-page { display:block; width:100%; break-before:page; page-break-before:always; break-inside:avoid; page-break-inside:avoid; }
-      .print-table-chunk { display:table; width:100%!important; margin:0; table-layout:fixed!important; break-inside:avoid; page-break-inside:avoid; }
-      h2 { margin:7mm 0 3.5mm; break-after:avoid-page; page-break-after:avoid; }
-      .meta,.metrics,.secondary,.analysis-card,.analysis-fact,.notice { break-inside:avoid; page-break-inside:avoid; }
-      .meta div{padding:2.6mm 3mm}.metric { padding:3.6mm 4mm; }
-      .metric strong { font-size:17pt; }
-      .data-chart-grid,.data-chart-grid.equipment-grid {
-        display:block;
-        break-inside:auto;
-        page-break-inside:auto;
-      }
-      .chart-stack { display:block; }
-      .chart,.chart-stack .chart {
-        width:100%;
-        height:58mm;
-        margin:0 0 5mm;
-        break-inside:avoid;
-        page-break-inside:avoid;
-      }
-      .table-wrap,.data-chart-grid .table-wrap,.equipment-grid .table-wrap {
-        width:100%;
-        height:auto;
-        max-height:none;
-        overflow:visible;
-        border-radius:0;
-        break-inside:auto;
-        page-break-inside:auto;
-      }
-      table,.data-chart-grid table,.equipment-grid table {
-        width:100%;
-        min-width:0;
-        table-layout:fixed;
-        white-space:normal;
-        font-size:7.5pt;
-      }
-      thead { display:table-header-group; }
-      tbody { display:table-row-group; }
-      tfoot { display:table-footer-group; }
-      thead th,tfoot th { position:static; }
-      tr { break-inside:avoid; page-break-inside:avoid; }
-      th,td {
-        height:auto;
-        padding:2.2mm 1.6mm;
-        overflow-wrap:anywhere;
-        word-break:break-word;
-        vertical-align:top;
-      }
-      .secondary { grid-template-columns:repeat(3,minmax(0,1fr)); }
-      .analysis-facts { grid-template-columns:repeat(3,minmax(0,1fr)); }
-      .analysis-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
-      .analysis-card{min-height:0;padding:3mm 3.5mm}
-    }
     {% include "analysis_cards.css.j2" %}
+    {% include "report_print.css.j2" %}
+    {% include "industrial_report.css.j2" %}
+    {% if report.meta.report_type == 'leadership' %}{% include "leadership_print.css.j2" %}{% endif %}
   </style>
 </head>
-<body class="report-{{ report.meta.report_type }}">
-<div class="page">
+<body class="industrial-report report-{{ report.meta.report_type }}" style="--industrial-cover:url('{{ analysis_cover() }}')">
+<div class="page industrial-document">
+  {{ report_brand(demo_mode) }}
   <header class="report-cover">
     <div class="cover-brand">
       <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
@@ -141,7 +80,7 @@
     </div>
   </header>
   <main>
-    {% if demo_mode %}<p role="note" style="padding:12px;border:2px solid #b45309;color:#92400e;background:#fffbeb;font-weight:700">演示数据 · 非生产统计，请勿用于生产决策。</p>{% endif %}
+    {% if demo_mode %}<p role="note" class="demo-notice">演示数据 · 非生产统计，请勿用于生产决策。</p>{% endif %}
     <p class="print-tip">可使用浏览器打印功能输出纸质报告或 PDF</p>
     <section class="meta">
       <div><span class="label">工程号</span>{{ report.filters.project_code or '全部' }}</div>
@@ -159,30 +98,36 @@
       <div class="metric"><small>切割时长</small><strong>{{ report.leadership.current_month_total.work_time_seconds|duration }}</strong><small>HH:mm:ss</small></div>
     </section>
 
+    <section class="report-section">
     <h2>二、{{ '区间每日明细与趋势' if report.meta.custom_period else '当月明细与趋势' }}</h2>
     <p class="section-note">统计口径：STATUS = 2 且 WORK_TIME ≥ 0；负工时异常任务整条剔除。</p>
     <div class="data-chart-grid">
       {% if report.leadership.daily_records %}<div id="leadership-daily-chart" class="chart"></div>{% else %}<div class="empty">当前区间暂无可视化数据。</div>{% endif %}
       <div class="table-wrap">
       {% if report.leadership.daily_records %}
-      <table><colgroup><col style="width:4%"><col style="width:16%"><col style="width:8%"><col style="width:16%"><col style="width:16%"><col style="width:15%"><col style="width:25%"></colgroup><thead><tr><th>序号</th><th>日期</th><th>任务数</th><th>切割长度（米）</th><th>坡口长度（米）</th><th>切割时长</th><th>备注</th></tr></thead>
-      <tbody>{% for row in report.leadership.daily_records %}<tr><td>{{ loop.index }}</td><td>{{ row.period_start|chinese_date }}</td><td>{{ row.task_count }}</td><td>{{ row.cut_length_m|number }}</td><td>{{ row.groove_length_m|number }}</td><td>{{ row.work_time_seconds|duration }}</td><td>{{ row.remark or '--' }}</td></tr>{% endfor %}</tbody>
+      <table class="leadership-table"><colgroup><col style="width:4%"><col style="width:16%"><col style="width:8%"><col style="width:16%"><col style="width:16%"><col style="width:15%"><col class="report-remark" style="width:25%"></colgroup><thead><tr><th>序号</th><th>日期</th><th>任务数</th><th>切割长度（米）</th><th>坡口长度（米）</th><th>切割时长</th><th class="report-remark">备注</th></tr></thead>
+      <tbody>{% for row in report.leadership.daily_records %}<tr><td>{{ loop.index }}</td><td>{{ row.period_start|chinese_date }}</td><td>{{ row.task_count }}</td><td>{{ row.cut_length_m|number }}</td><td>{{ row.groove_length_m|number }}</td><td>{{ row.work_time_seconds|duration }}</td><td class="report-remark">{{ row.remark or '--' }}</td></tr>{% endfor %}</tbody>
       <tfoot><tr><th></th><th>汇总</th><th>{{ report.leadership.current_month_total.task_count }}</th><th>{{ report.leadership.current_month_total.cut_length_m|number }}</th><th>{{ report.leadership.current_month_total.groove_length_m|number }}</th><th>{{ report.leadership.current_month_total.work_time_seconds|duration }}</th><th>--</th></tr></tfoot></table>
       {% else %}<div class="empty">所选区间暂无已完成任务。</div>{% endif %}
       </div>
     </div>
 
+    </section>
+
+    <section class="report-section">
     <h2>三、近 12 个月按月对比与趋势</h2>
     <div class="data-chart-grid">
       {% if report.leadership.monthly_records %}<div id="leadership-monthly-chart" class="chart"></div>{% else %}<div class="empty">近 12 个月暂无月度趋势数据。</div>{% endif %}
       <div class="table-wrap">
       {% if report.leadership.monthly_records %}
-      <table><colgroup><col style="width:4%"><col style="width:16%"><col style="width:8%"><col style="width:16%"><col style="width:16%"><col style="width:15%"><col style="width:25%"></colgroup><thead><tr><th>序号</th><th>月份</th><th>任务数</th><th>切割长度（米）</th><th>坡口长度（米）</th><th>切割时长</th><th>备注</th></tr></thead>
-      <tbody>{% for row in report.leadership.monthly_records %}<tr><td>{{ loop.index }}</td><td>{{ row.period_start|chinese_month }}</td><td>{{ row.task_count }}</td><td>{{ row.cut_length_m|number }}</td><td>{{ row.groove_length_m|number }}</td><td>{{ row.work_time_seconds|duration }}</td><td>{{ row.remark or '--' }}</td></tr>{% endfor %}</tbody>
+      <table class="leadership-table"><colgroup><col style="width:4%"><col style="width:16%"><col style="width:8%"><col style="width:16%"><col style="width:16%"><col style="width:15%"><col class="report-remark" style="width:25%"></colgroup><thead><tr><th>序号</th><th>月份</th><th>任务数</th><th>切割长度（米）</th><th>坡口长度（米）</th><th>切割时长</th><th class="report-remark">备注</th></tr></thead>
+      <tbody>{% for row in report.leadership.monthly_records %}<tr><td>{{ loop.index }}</td><td>{{ row.period_start|chinese_month }}</td><td>{{ row.task_count }}</td><td>{{ row.cut_length_m|number }}</td><td>{{ row.groove_length_m|number }}</td><td>{{ row.work_time_seconds|duration }}</td><td class="report-remark">{{ row.remark or '--' }}</td></tr>{% endfor %}</tbody>
       <tfoot><tr><th></th><th>汇总</th><th>{{ report.leadership.twelve_month_total.task_count }}</th><th>{{ report.leadership.twelve_month_total.cut_length_m|number }}</th><th>{{ report.leadership.twelve_month_total.groove_length_m|number }}</th><th>{{ report.leadership.twelve_month_total.work_time_seconds|duration }}</th><th>--</th></tr></tfoot></table>
       {% else %}<div class="empty">当前区间暂无已完成任务。</div>{% endif %}
       </div>
     </div>
+
+    </section>
 
     {% elif report.meta.report_type == 'workshop' %}
     <h2>一、车间生产指标</h2>
@@ -203,9 +148,9 @@
     <div class="data-chart-grid">
       {% if report.summary.task_count %}<div id="length-chart" class="chart"></div>{% else %}<div class="empty">当前条件下暂无可视化数据。</div>{% endif %}
       <div class="table-wrap">
-      {% if report.workshop_records %}<table class="screen-only"><colgroup><col style="width:3%"><col style="width:6%"><col style="width:7%"><col style="width:7%"><col style="width:6%"><col style="width:15%"><col style="width:8%"><col style="width:8%"><col style="width:8%"><col style="width:12%"><col style="width:10%"><col style="width:10%"></colgroup><thead><tr><th>序号</th><th>任务ID</th><th>工程号</th><th>船名</th><th>分段</th><th>程序号</th><th>切割长度（米）</th><th>坡口长度（米）</th><th>切割时长</th><th>时间</th><th>待确认</th><th>备注</th></tr></thead>
-      <tbody>{% for row in report.workshop_records %}<tr><td>{{ loop.index }}</td><td>{{ row.task_id }}</td><td>{{ (row.project_code or '').strip() or '非船' }}</td><td>{{ (row.ship_no or '').strip() or '非船' }}</td><td>{{ (row.segment_name or '').strip() or '非船' }}</td><td>{{ row.program_no or '--' }}</td><td>{{ row.cut_length|number }}</td><td>{{ row.groove_length|number }}</td><td>{{ row.work_time|duration }}</td><td>{{ row.production_time|chinese_datetime }}</td><td>{{ '✓ ' ~ row.confirmed_by if row.confirmed_by else '待确认' }}</td><td>{{ row.remark or '--' }}</td></tr>{% endfor %}</tbody></table>
-      <div class="print-only">{% for chunk in report.workshop_records|batch(14) %}{% set chunk_index = loop.index0 %}<section class="print-table-page"><table class="print-table-chunk"><colgroup><col style="width:3%"><col style="width:6%"><col style="width:7%"><col style="width:7%"><col style="width:6%"><col style="width:15%"><col style="width:8%"><col style="width:8%"><col style="width:8%"><col style="width:12%"><col style="width:10%"><col style="width:10%"></colgroup><thead><tr><th>序号</th><th>任务ID</th><th>工程号</th><th>船名</th><th>分段</th><th>程序号</th><th>切割长度（米）</th><th>坡口长度（米）</th><th>切割时长</th><th>时间</th><th>待确认</th><th>备注</th></tr></thead><tbody>{% for row in chunk %}<tr><td>{{ chunk_index * 14 + loop.index }}</td><td>{{ row.task_id }}</td><td>{{ (row.project_code or '').strip() or '非船' }}</td><td>{{ (row.ship_no or '').strip() or '非船' }}</td><td>{{ (row.segment_name or '').strip() or '非船' }}</td><td>{{ row.program_no or '--' }}</td><td>{{ row.cut_length|number }}</td><td>{{ row.groove_length|number }}</td><td>{{ row.work_time|duration }}</td><td>{{ row.production_time|chinese_datetime }}</td><td>{{ '✓ ' ~ row.confirmed_by if row.confirmed_by else '待确认' }}</td><td>{{ row.remark or '--' }}</td></tr>{% endfor %}</tbody></table></section>{% endfor %}</div>
+      {% if report.workshop_records %}<table class="screen-only"><colgroup><col style="width:3%"><col style="width:6%"><col style="width:7%"><col style="width:7%"><col style="width:6%"><col style="width:15%"><col style="width:8%"><col style="width:8%"><col style="width:8%"><col style="width:12%"><col style="width:10%"><col class="report-remark" style="width:10%"></colgroup><thead><tr><th>序号</th><th>任务ID</th><th>工程号</th><th>船名</th><th>分段</th><th>程序号</th><th>切割长度（米）</th><th>坡口长度（米）</th><th>切割时长</th><th>时间</th><th>待确认</th><th class="report-remark">备注</th></tr></thead>
+      <tbody>{% for row in report.workshop_records %}<tr><td>{{ loop.index }}</td><td>{{ row.task_id }}</td><td>{{ (row.project_code or '').strip() or '非船' }}</td><td>{{ (row.ship_no or '').strip() or '非船' }}</td><td>{{ (row.segment_name or '').strip() or '非船' }}</td><td>{{ row.program_no or '--' }}</td><td>{{ row.cut_length|number }}</td><td>{{ row.groove_length|number }}</td><td>{{ row.work_time|duration }}</td><td>{{ row.production_time|chinese_datetime }}</td><td>{{ '✓ ' ~ row.confirmed_by if row.confirmed_by else '待确认' }}</td><td class="report-remark">{{ row.remark or '--' }}</td></tr>{% endfor %}</tbody></table>
+      <div class="print-only">{% for chunk in report.workshop_records|batch(14) %}{% set chunk_index = loop.index0 %}<section class="print-table-page"><table class="print-table-chunk"><colgroup><col style="width:3%"><col style="width:6%"><col style="width:7%"><col style="width:7%"><col style="width:6%"><col style="width:15%"><col style="width:8%"><col style="width:8%"><col style="width:8%"><col style="width:12%"><col style="width:10%"><col class="report-remark" style="width:10%"></colgroup><thead><tr><th>序号</th><th>任务ID</th><th>工程号</th><th>船名</th><th>分段</th><th>程序号</th><th>切割长度（米）</th><th>坡口长度（米）</th><th>切割时长</th><th>时间</th><th>待确认</th><th class="report-remark">备注</th></tr></thead><tbody>{% for row in chunk %}<tr><td>{{ chunk_index * 14 + loop.index }}</td><td>{{ row.task_id }}</td><td>{{ (row.project_code or '').strip() or '非船' }}</td><td>{{ (row.ship_no or '').strip() or '非船' }}</td><td>{{ (row.segment_name or '').strip() or '非船' }}</td><td>{{ row.program_no or '--' }}</td><td>{{ row.cut_length|number }}</td><td>{{ row.groove_length|number }}</td><td>{{ row.work_time|duration }}</td><td>{{ row.production_time|chinese_datetime }}</td><td>{{ '✓ ' ~ row.confirmed_by if row.confirmed_by else '待确认' }}</td><td class="report-remark">{{ row.remark or '--' }}</td></tr>{% endfor %}</tbody></table></section>{% endfor %}</div>
       {% else %}<div class="empty">当前条件下暂无车间生产数据。</div>{% endif %}
       </div>
     </div>
@@ -268,6 +213,7 @@
   </main>
   <footer class="report-footer"><span>本报告由切割生产智能产报系统生成 · 报告结束</span><span>报告编号：{{ report.meta.report_id }}</span></footer>
 </div>
+{% if report.meta.report_type == 'leadership' %}{% include "leadership_print.html.j2" %}{% endif %}
 <script>{{ echarts_source|safe }}</script>
 <script>
   const charts = [];
@@ -280,6 +226,30 @@
   const monthlyTrendChart = echarts.init(document.getElementById('leadership-monthly-chart'));
   monthlyTrendChart.setOption({{ report.charts.monthly_trend|tojson }}); charts.push(monthlyTrendChart);
   {% endif %}
+  const prepareLeadershipCharts = () => {
+    const render = (id, option, monthly) => {
+      const element = document.getElementById(id);
+      if (!element || echarts.getInstanceByDom(element)) return;
+      option.animation = false;
+      option.backgroundColor = 'transparent';
+      option.textStyle = { ...option.textStyle, color: '#385480', fontSize: 10 };
+      option.grid = { left: 48, right: 44, top: 45, bottom: 28 };
+      option.legend = { ...option.legend, top: 5, itemWidth: 13, itemHeight: 8, textStyle: { fontSize: 9, color: '#405a80' } };
+      const axes = Array.isArray(option.yAxis) ? option.yAxis : [option.yAxis];
+      axes.forEach(axis => { axis.nameTextStyle = { fontSize: 9, color: '#405a80' }; axis.axisLabel = { ...axis.axisLabel, fontSize: 9 }; });
+      option.xAxis.axisLabel = { ...option.xAxis.axisLabel, fontSize: 8, hideOverlap: true };
+      option.series.forEach((series, index) => {
+        const color = ['#0869c5', monthly ? '#00aaa5' : '#8a6aea', monthly ? '#005bff' : '#f39b00'][index % 3];
+        series.itemStyle = { ...series.itemStyle, color };
+        if (series.type === 'line') series.lineStyle = { ...series.lineStyle, color, width: 2 };
+      });
+      const chart = echarts.init(element, null, { renderer: 'svg' });
+      chart.setOption(option); charts.push(chart);
+    };
+    {% if report.leadership.daily_records %}render('lp-daily-chart', {{ report.charts.daily_trend|tojson }}, false);{% endif %}
+    {% if report.leadership.monthly_records %}render('lp-monthly-chart', {{ report.charts.monthly_trend|tojson }}, true);{% endif %}
+  };
+  prepareLeadershipCharts();
   {% elif report.meta.report_type == 'workshop' and report.summary.task_count %}
   const lengthChart = echarts.init(document.getElementById('length-chart'));
   lengthChart.setOption({{ report.charts.length_combo|tojson }}); charts.push(lengthChart);
@@ -294,6 +264,7 @@
   const resizeCharts = () => charts.forEach(chart => chart.resize());
   const preparePrint = () => {
     document.documentElement.classList.add('report-printing');
+    {% if report.meta.report_type == 'leadership' %}prepareLeadershipCharts();{% endif %}
     void document.body.offsetWidth;
     charts.forEach(chart => {
       chart.resize();
@@ -319,5 +290,6 @@
     window.__REPORT_READY__ = true;
   })));
 </script>
+{% include "industrial_report.js.j2" %}
 </body>
 </html>

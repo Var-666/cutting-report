@@ -1238,6 +1238,36 @@ export type ApiEnvelopePageReportJob = {
 };
 
 /**
+ * ApiEnvelope[PdmBranchOptions]
+ */
+export type ApiEnvelopePdmBranchOptions = {
+    /**
+     * Success
+     */
+    success: true;
+    data: PdmBranchOptions;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
+ * ApiEnvelope[PdmStatisticsReport]
+ */
+export type ApiEnvelopePdmStatisticsReport = {
+    /**
+     * Success
+     */
+    success: true;
+    data: PdmStatisticsReport;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
  * ApiEnvelope[PublicLineCatalog]
  */
 export type ApiEnvelopePublicLineCatalog = {
@@ -5173,6 +5203,200 @@ export type PageReportJob = {
 };
 
 /**
+ * PdmBranchFilters
+ */
+export type PdmBranchFilters = {
+    /**
+     * Types
+     */
+    types?: Array<string>;
+    /**
+     * Projects
+     */
+    projects?: Array<string>;
+    /**
+     * Professions
+     */
+    professions?: Array<string>;
+    /**
+     * Levels
+     */
+    levels?: Array<string>;
+    /**
+     * Areas
+     */
+    areas?: Array<string>;
+    /**
+     * Manufactory
+     */
+    manufactory?: Array<string>;
+    /**
+     * Batches
+     */
+    batches?: Array<string>;
+    /**
+     * Classifications
+     */
+    classifications?: Array<string>;
+    /**
+     * Weights
+     */
+    weights?: Array<string>;
+    /**
+     * Responsible People
+     */
+    responsible_people?: Array<string> | null;
+};
+
+/**
+ * PdmBranchOptions
+ */
+export type PdmBranchOptions = {
+    /**
+     * Projects
+     */
+    projects?: Array<PdmOption>;
+    /**
+     * Professions
+     */
+    professions?: Array<PdmOption>;
+    /**
+     * Levels
+     */
+    levels?: Array<PdmOption>;
+    /**
+     * Areas
+     */
+    areas?: Array<PdmOption>;
+    /**
+     * Manufactory
+     */
+    manufactory?: Array<PdmOption>;
+    /**
+     * Batches
+     */
+    batches?: Array<PdmOption>;
+    /**
+     * Classifications
+     */
+    classifications?: Array<PdmOption>;
+    /**
+     * Weights
+     */
+    weights?: Array<PdmOption>;
+    /**
+     * Responsible People
+     */
+    responsible_people?: Array<PdmOption>;
+};
+
+/**
+ * PdmCounts
+ */
+export type PdmCounts = {
+    /**
+     * Total
+     */
+    total: number;
+    /**
+     * Completed
+     */
+    completed: number;
+    /**
+     * On Time
+     */
+    on_time: number;
+    /**
+     * Total Rate
+     */
+    total_rate: number | null;
+    /**
+     * On Time Rate
+     */
+    on_time_rate: number | null;
+};
+
+/**
+ * PdmOption
+ */
+export type PdmOption = {
+    /**
+     * Value
+     */
+    value: string;
+    /**
+     * Label
+     */
+    label: string;
+};
+
+/**
+ * PdmOptionsQuery
+ */
+export type PdmOptionsQuery = {
+    /**
+     * Kind
+     */
+    kind: 'equipment' | 'drawing';
+    filters?: PdmBranchFilters;
+};
+
+/**
+ * PdmReportSummaries
+ */
+export type PdmReportSummaries = {
+    equipment?: PdmCounts | null;
+    drawing?: PdmCounts | null;
+};
+
+/**
+ * PdmStatisticsQuery
+ */
+export type PdmStatisticsQuery = {
+    /**
+     * Document Kinds
+     */
+    document_kinds: Array<'equipment' | 'drawing'>;
+    /**
+     * Start Date
+     */
+    start_date: string;
+    /**
+     * End Date
+     */
+    end_date: string;
+    /**
+     * Group By
+     */
+    group_by?: 'summary' | 'project' | 'profession';
+    equipment?: PdmBranchFilters;
+    drawing?: PdmBranchFilters;
+};
+
+/**
+ * PdmStatisticsReport
+ */
+export type PdmStatisticsReport = {
+    /**
+     * Start Date
+     */
+    start_date: string;
+    /**
+     * End Date
+     */
+    end_date: string;
+    /**
+     * Group By
+     */
+    group_by: 'summary' | 'project' | 'profession';
+    summaries: PdmReportSummaries;
+    /**
+     * Tables
+     */
+    tables: Array<PdmSummaryTable>;
+};
+
+/**
  * PdmStatus
  */
 export type PdmStatus = {
@@ -5188,6 +5412,79 @@ export type PdmStatus = {
      * Label
      */
     label: string;
+};
+
+/**
+ * PdmSummaryRow
+ */
+export type PdmSummaryRow = {
+    /**
+     * Total
+     */
+    total: number;
+    /**
+     * Completed
+     */
+    completed: number;
+    /**
+     * On Time
+     */
+    on_time: number;
+    /**
+     * Total Rate
+     */
+    total_rate: number | null;
+    /**
+     * On Time Rate
+     */
+    on_time_rate: number | null;
+    /**
+     * Category
+     */
+    category: string;
+    /**
+     * Group Id
+     */
+    group_id?: string;
+    /**
+     * Group Name
+     */
+    group_name?: string;
+    /**
+     * Subtotal
+     */
+    subtotal?: boolean;
+};
+
+/**
+ * PdmSummaryTable
+ */
+export type PdmSummaryTable = {
+    /**
+     * Key
+     */
+    key: string;
+    /**
+     * Kind
+     */
+    kind: 'equipment' | 'drawing';
+    /**
+     * Title
+     */
+    title: string;
+    /**
+     * Scope Label
+     */
+    scope_label: string;
+    /**
+     * Group Label
+     */
+    group_label: string | null;
+    /**
+     * Rows
+     */
+    rows: Array<PdmSummaryRow>;
+    totals: PdmCounts;
 };
 
 /**
@@ -8430,6 +8727,56 @@ export type IncidentsApiV1DatabaseMonitorsIncidentsPageGetResponses = {
 };
 
 export type IncidentsApiV1DatabaseMonitorsIncidentsPageGetResponse = IncidentsApiV1DatabaseMonitorsIncidentsPageGetResponses[keyof IncidentsApiV1DatabaseMonitorsIncidentsPageGetResponses];
+
+export type OptionsApiV1PdmStatisticsOptionsPostData = {
+    body: PdmOptionsQuery;
+    path?: never;
+    query?: never;
+    url: '/api/v1/pdm-statistics/options';
+};
+
+export type OptionsApiV1PdmStatisticsOptionsPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type OptionsApiV1PdmStatisticsOptionsPostError = OptionsApiV1PdmStatisticsOptionsPostErrors[keyof OptionsApiV1PdmStatisticsOptionsPostErrors];
+
+export type OptionsApiV1PdmStatisticsOptionsPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopePdmBranchOptions;
+};
+
+export type OptionsApiV1PdmStatisticsOptionsPostResponse = OptionsApiV1PdmStatisticsOptionsPostResponses[keyof OptionsApiV1PdmStatisticsOptionsPostResponses];
+
+export type ReportApiV1PdmStatisticsReportPostData = {
+    body: PdmStatisticsQuery;
+    path?: never;
+    query?: never;
+    url: '/api/v1/pdm-statistics/report';
+};
+
+export type ReportApiV1PdmStatisticsReportPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ReportApiV1PdmStatisticsReportPostError = ReportApiV1PdmStatisticsReportPostErrors[keyof ReportApiV1PdmStatisticsReportPostErrors];
+
+export type ReportApiV1PdmStatisticsReportPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopePdmStatisticsReport;
+};
+
+export type ReportApiV1PdmStatisticsReportPostResponse = ReportApiV1PdmStatisticsReportPostResponses[keyof ReportApiV1PdmStatisticsReportPostResponses];
 
 export type ProductionLinesApiV1ProductionLinesGetData = {
     body?: never;

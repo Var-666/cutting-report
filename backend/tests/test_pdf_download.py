@@ -1,6 +1,5 @@
 from tests.line_fixtures import as_line_services, runtime_line
 from dataclasses import replace
-import inspect
 from types import SimpleNamespace
 from urllib.parse import unquote
 
@@ -96,8 +95,16 @@ def test_cached_pdf_does_not_need_to_launch_a_browser(tmp_path):
     assert PdfService().render(html) == pdf
 
 
-def test_pdf_renderer_adds_a_consistent_page_footer():
-    source = inspect.getsource(PdfService.render)
-    assert "display_header_footer=True" in source
-    assert 'class="pageNumber"' in source
-    assert 'class="totalPages"' in source
+def test_pdf_uses_one_continuous_page_without_chapter_breaks_or_page_numbers(tmp_path):
+    import pypdfium2 as pdfium
+    source = tmp_path / 'continuous.html'
+    source.write_text('<style>@page{size:A4}h2{break-before:page}</style>'
+                      + ''.join(f'<h2>章节{index}</h2><p>完整内容</p>' for index in range(30))
+                      + '<p>末尾校验标记</p>')
+    pdf = PdfService(operation_timeout_seconds=30).render(source)
+    with pdfium.PdfDocument(pdf) as document:
+        assert len(document) == 1
+        page = document[0]
+        assert page.get_height() > 842
+        text = page.get_textpage().get_text_range()
+        assert '章节0' in text and '章节29' in text and '末尾校验标记' in text

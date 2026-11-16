@@ -63,11 +63,11 @@ def test_cutting_empty_brief_and_empty_actions_are_valid(state_database, tmp_pat
     (json.dumps(draft() | {'summary': '2026-18-08记录完整。'}), '日期'),
     (json.dumps(draft() | {'findings': '发现'}), '校验失败'),
 ])
-def test_cutting_invalid_output_is_rejected_without_repair(state_database, tmp_path, monkeypatch, raw, fragment):
+def test_cutting_persistently_invalid_output_is_rejected_after_one_correction(state_database, tmp_path, monkeypatch, raw, fragment):
     requests = _model_response(monkeypatch, raw)
     with pytest.raises(AnalysisOutputValidationError, match=fragment):
         _service(state_database, tmp_path).analyze_context('workshop', build_context('2026-08-18', []))
-    assert len(requests) == 1
+    assert len(requests) == 2
 
 
 def test_finding_evidence_and_business_links_are_bound_by_server():
@@ -91,6 +91,29 @@ def test_finding_evidence_and_business_links_are_bound_by_server():
     output['findings'][0]['task_id'] = 'invented'
     with pytest.raises(ValueError):
         validate_brief(output, context)
+
+
+def test_fact_placeholders_and_omitted_evidence_are_bound_without_model_arithmetic(duration_context):
+    from app.services.report_analysis.brief_validation import validate_brief
+    context = duration_context
+    finding = dict(candidate_id='C_production', title='生产记录', detail='切割长度{{F002}}，切割时长{{F003}}。')
+    output = draft() | {'headline': '本期任务数{{F001}}', 'summary': '切割时长为{{F003}}。',
+                        'findings': [finding], 'actions': [dict(candidate_id='C_production', title='核对记录', detail='核对切割长度{{F002}}对应的任务记录。')]}
+    result = validate_brief(output, context)
+    assert result['headline'] == '本期任务数1 项'
+    assert result['summary'] == '切割时长为01:00:00。'
+    assert result['findings'][0]['detail'] == '切割长度10.0 米，切割时长01:00:00。'
+    assert result['actions'][0]['detail'] == '核对切割长度10.0 米对应的任务记录。'
+    assert result['findings'][0]['evidence_ids'] == ['F001', 'F002', 'F003']
+    assert '{{' not in json.dumps(result, ensure_ascii=False)
+    assert output['findings'][0] == finding, 'binding must not rewrite the raw model output'
+
+
+@pytest.mark.parametrize('summary', ['引用{{F999}}。', '引用{{F001.value}}。', '引用{{不存在}}。'])
+def test_unknown_or_malformed_fact_placeholders_are_rejected(summary):
+    from app.services.report_analysis.brief_validation import validate_brief
+    with pytest.raises(ValueError, match='事实|占位符'):
+        validate_brief(draft() | {'summary': summary}, build_context('2026-08-18', []))
 
 
 def test_welding_keeps_four_fields_and_original_model_input(state_database, tmp_path, monkeypatch):
@@ -332,6 +355,58 @@ def test_reference_error_details_are_bounded_and_escape_untrusted_identifiers():
     assert len(str(caught.value)) < 600
     assert '\n' not in str(caught.value)
     assert 'F999\\n' in str(caught.value)
+
+
+@pytest.mark.parametrize('field', ['cut_length_m', 'groove_length_m', 'cut_length', 'groove_length'])
+@pytest.mark.parametrize('summary', ['明细长度为1,712.1米。', '明细长度约1,712米。'])
+def test_brief_accepts_lengths_from_typed_model_input_rows(field, summary):
+    from app.services.report_analysis.brief_validation import validate_brief
+    context = build_context('2026-11-13', [])
+    context['tables'] = [dict(name='每日明细', rows=[{field: 1712.1, 'task_count': 27}])]
+    assert validate_brief(draft() | {'summary': summary}, context)['summary'] == summary
+    for invalid in ['明细长度为1,712.2米。', '明细长度为27米。', '明细电耗为1,712.1kWh。']:
+        with pytest.raises(ValueError, match='数量或单位'):
+            validate_brief(draft() | {'summary': invalid}, context)
+
+
+def test_equipment_production_can_reference_provided_trends_and_project_facts():
+    from datetime import date
+    from decimal import Decimal
+    from app.models.domain import EquipmentRecord
+    from app.services.report_analysis.equipment import build_context as equipment_context
+    from app.services.report_analysis.brief_validation import validate_brief
+    from app.services.report_analysis.common import normalize_analysis_context
+    row = EquipmentRecord('task', 'machine', 'project', None, None, Decimal('1712.1'), Decimal('31807'),
+        None, None, production_date=date(2026, 11, 13))
+    context = normalize_analysis_context(equipment_context('2026-11-13', [row]))[0]
+    finding = dict(candidate_id='C_production', title='任务及工程分布', detail='结合任务变化核对工程记录。',
+                   evidence_ids=['F001', 'F002', 'F005', 'F010'])
+    output = draft() | {'findings': [finding]}
+    result = validate_brief(output, context)
+    assert result['findings'][0]['evidence_ids'] == finding['evidence_ids']
+    assert result['findings'][0]['references'][0]['kind'] == 'date'
+    assert result['findings'][0]['references'][0]['id'] == '2026-11-13'
+    for invalid in ['F003', 'F999']:
+        with pytest.raises(ValueError, match='事实引用'):
+            validate_brief(output | {'findings': [finding | {'evidence_ids': ['F001', invalid]}]}, context)
+
+
+def test_leadership_comparison_can_reference_previous_period_and_year():
+    from datetime import date
+    from decimal import Decimal
+    from app.models.domain import LeadershipPeriodRecord, LeadershipReportResult
+    from app.services.report_analysis.leadership import build_context as leadership_context
+    from app.services.report_analysis.brief_validation import validate_brief
+    current = LeadershipPeriodRecord(date(2026, 11, 1), 269, Decimal('17481.1'), Decimal('1572.8'), 399069)
+    previous = replace(current, period_start=date(2026, 10, 1), task_count=1051)
+    year_ago = replace(current, period_start=date(2025, 11, 1), task_count=300)
+    report = LeadershipReportResult(current.period_start, 'demo', [], [current, previous], current, current,
+                                    year_ago_total=year_ago)
+    context = leadership_context(report, report.monthly_records)
+    finding = dict(candidate_id='C_comparison', title='可比周期生产规模', detail='结合上一周期和去年同期记录核对变化。',
+                   evidence_ids=['F001', 'F002', 'F004', 'F005'])
+    result = validate_brief(draft() | {'findings': [finding]}, context)
+    assert result['findings'][0]['evidence_ids'] == finding['evidence_ids']
 
 
 def test_schema_error_reports_fields_without_logging_model_content():

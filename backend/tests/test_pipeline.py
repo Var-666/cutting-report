@@ -16,13 +16,24 @@ from app.services.pipeline import ReportPipeline, ReportAnalysisPendingError
 from tests.analysis_fakes import model_analysis
 
 
-def test_export_months_use_two_digits(tmp_path: Path) -> None:
+@pytest.mark.parametrize(("filter_name", "value", "expected"), [
+    ("chinese_month", "2026-09-01", "2026年09月"),
+    ("chinese_month", "2026-8", "2026年08月"),
+    ("chinese_month", "2026-11", "2026年11月"),
+    ("chinese_date", "2026-09-01", "2026年09月01日"),
+    ("chinese_date", "2026-1-2", "2026年01月02日"),
+    ("chinese_date", "2026-8", "2026年08月"),
+    ("chinese_date", "2026-11-12", "2026年11月12日"),
+    ("chinese_datetime", "2026-09-01T08:03:04+08:00", "2026年09月01日 08:03:04"),
+    ("chinese_datetime", "2026-1-2 3:4:5", "2026年01月02日 03:04:05"),
+    ("chinese_datetime", "2026-09-01 08:03", "2026年09月01日 08:03:00"),
+    *[(name, None, "--") for name in ("chinese_month", "chinese_date", "chinese_datetime")],
+])
+def test_export_dates_use_two_digits(tmp_path: Path, filter_name: str, value, expected: str) -> None:
     from app.services.report_service import ReportService
 
-    template = ReportService(cutting_settings(project_root=tmp_path)).environment.from_string("{{ month|chinese_month }}")
-    for value, expected in [("2026-09-01", "2026年09月"), ("2026-8", "2026年08月"),
-                            ("2026-11", "2026年11月"), (None, "--")]:
-        assert template.render(month=value) == expected
+    template = ReportService(cutting_settings(project_root=tmp_path)).environment.from_string("{{ value|" + filter_name + " }}")
+    assert template.render(value=value) == expected
 
 
 @pytest.mark.parametrize(
@@ -107,24 +118,21 @@ def test_demo_pipeline_generates_offline_report(state_database,
     assert expected_chart in html
     assert "报告结束" in html
     assert "window.echarts" in html
-    assert "@page { size:A4 landscape" in html
     assert "window.__REPORT_READY__ = true" in html
     assert "report-printing" in html
     assert 'class="report-cover"' in html
     assert 'class="cover-folio"' in html
     assert 'class="report-footer"' in html
-    assert "--navy:#123b57" in html
-    assert "background:#dceaf0" in html
-    assert "tbody tr:nth-child(even)" not in html
     assert '"areaStyle"' in html
     assert "大模型分析" in html
     assert "模拟大模型分析" not in html
-    assert "分析边界" not in html
+    if report_type == 'leadership':
+        assert "分析边界与待核实事项" in html
     assert "本期生产记录已整理" in html
     assert "分析依据" in html
     analysis_metric = {"leadership": "当月坡口长度", "workshop": "工人确认率", "equipment": "已匹配任务电耗"}
     assert analysis_metric[report_type] in html
-    assert "2026年8月18日" in html
+    assert "2026年08月18日" in html
     if report_type in {"workshop", "equipment"}:
         assert 'class="screen-only"' in html
         assert 'class="print-table-page"' in html
@@ -244,13 +252,13 @@ def test_range_export_keeps_the_recent_twelve_month_summary(state_database,
         encoding="utf-8"
     )
     assert "2026-08-17 至 2026-08-18" in html
-    assert ("2025年09月" if report_type == "leadership" else "2025年9月") in html
+    assert "2025年09月" in html
     if report_type == "leadership":
         assert "近 12 个月按月对比与趋势" in html
     else:
         assert "近 12 个月月度能耗汇总" in html
         assert "<th>序号</th><th>月份</th>" in html
-        assert "<td>1</td><td>2025年9月</td>" in html
+        assert "<td>1</td><td>2025年09月</td>" in html
 
 
 @pytest.fixture

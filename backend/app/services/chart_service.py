@@ -275,7 +275,7 @@ class ChartService:
         daily_trend = {
             "tooltip": {"trigger": "axis"},
             "legend": {"data": ["切割长度", "坡口长度", "切割工时"]},
-            "grid": {"left": 62, "right": 70, "bottom": 62, "top": 52},
+            "grid": {"left": 62, "right": 70, "bottom": 36, "top": 36},
             "xAxis": {
                 "type": "category",
                 "data": [item.period_start.strftime("%m-%d") for item in daily],
@@ -310,7 +310,7 @@ class ChartService:
         monthly_trend = {
             "tooltip": {"trigger": "axis"},
             "legend": {"data": ["切割长度", "坡口长度", "完成任务"]},
-            "grid": {"left": 62, "right": 70, "bottom": 62, "top": 52},
+            "grid": {"left": 62, "right": 70, "bottom": 36, "top": 36},
             "xAxis": {
                 "type": "category",
                 "data": [item.period_start.strftime("%Y-%m") for item in monthly],

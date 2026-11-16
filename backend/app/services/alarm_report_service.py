@@ -61,6 +61,7 @@ class AlarmReportService:
             report_id=report_id,
             machine_no=machine_no,
             cover=analysis_cover(self.settings.project_root),
+            demo_mode=self.settings.effective_data_source_mode == 'demo',
             analysis=analysis,
             generated_at=generated_at.strftime("%Y-%m-%d %H:%M:%S"),
             severity_labels={"warning": "提示", "high": "高", "critical": "严重"},
