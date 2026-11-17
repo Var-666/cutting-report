@@ -20,7 +20,8 @@ const props = withDefaults(defineProps<{
   error?: string
   actionLabel?: string
   emptyMessage?: string
-}>(), { readingLatest: false, error: '', actionLabel: '重新分析', emptyMessage: '报表数据加载后将自动生成分析。' })
+  showMetrics?: boolean
+}>(), { readingLatest: false, error: '', actionLabel: '重新分析', emptyMessage: '报表数据加载后将自动生成分析。', showMetrics: true })
 const emit = defineEmits<{ reload: []; retry: [] }>()
 
 function formatAnalysisText(value: unknown) {
@@ -107,7 +108,7 @@ const weldingMetrics = computed(() => welding.value ? weldingKpis('daily', weldi
       </section>
 
       <template v-if="analysisAvailable">
-      <div v-if="weldingMetrics.length" class="analysis-facts analysis-facts--welding" aria-label="关键指标">
+      <div v-if="showMetrics && weldingMetrics.length" class="analysis-facts analysis-facts--welding" aria-label="关键指标">
         <article v-for="metric in weldingMetrics" :key="metric.key">
           <span class="analysis-fact-icon"><AppIcon :name="metric.icon" :size="21" tone="current" /></span>
           <div><span>{{ metric.title }}</span><strong>{{ metric.display }}<small v-if="typeof metric.value === 'number'"> {{ metric.unit }}</small></strong></div>
@@ -115,7 +116,7 @@ const weldingMetrics = computed(() => welding.value ? weldingKpis('daily', weldi
             :values="metric.values" :label="`${metric.title}每日趋势`" :variant="metric.key === 'job_count' ? 'bar' : 'line'" />
         </article>
       </div>
-      <div v-else-if="analysis.facts?.length" class="analysis-facts" aria-label="关键指标">
+      <div v-else-if="showMetrics && analysis.facts?.length" class="analysis-facts" aria-label="关键指标">
         <article v-for="(fact, index) in analysis.facts" :key="fact.id ?? undefined">
           <span class="analysis-fact-icon"><AppIcon :name="['tasks','ruler','clock','chart','trend','database'][index % 6]" :size="19" tone="current" /></span>
           <div>

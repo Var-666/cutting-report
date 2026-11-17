@@ -69,7 +69,10 @@ export function useAutomationSchedules({ hasUnsavedChanges, message, error, refr
     Object.values(executions).forEach(schedulePoll)
   })
   onBeforeUnmount(() => { disposed = true; pauseExecutions() })
-  const emptyForm = (): Omit<Required<SchedulePayload>, 'recipients' | 'weekday'> & { recipients_text: string; weekday: number } => ({
+  const recipientInputVisible = ref(false)
+  const recipientDraft = ref('')
+  const recipientError = ref('')
+  const emptyForm = (): Omit<Required<SchedulePayload>, 'weekday'> & { weekday: number } => ({
     device_id: deviceSelection.id,
     name: '每日车间报表',
     report_type: 'workshop',
@@ -78,7 +81,7 @@ export function useAutomationSchedules({ hasUnsavedChanges, message, error, refr
     weekday: 1,
     month_day: 1,
     report_period: 'previous_day',
-    recipients_text: '',
+    recipients: [],
     subject_template: '{report_name} - {report_date}',
     chart_type: 'bar_line',
     attach_report: true,
@@ -87,6 +90,35 @@ export function useAutomationSchedules({ hasUnsavedChanges, message, error, refr
   })
   const form = reactive(emptyForm())
 
+  function cancelRecipientInput() {
+    recipientInputVisible.value = false
+    recipientDraft.value = ''
+    recipientError.value = ''
+  }
+
+  function addRecipient() {
+    const addresses = recipientDraft.value.split(/[\n,;，；]+/).map(item => item.trim().toLowerCase()).filter(Boolean)
+    if (!addresses.length || addresses.some(address => address.length > 320 || !/^[^\s@,;，；]+@[^\s@,;，；]+$/.test(address))) {
+      recipientError.value = '请输入有效的邮箱地址'
+      return false
+    }
+    const recipients = [...new Set([...form.recipients, ...addresses])]
+    if (recipients.length > 20) {
+      recipientError.value = '最多添加 20 个收件人'
+      return false
+    }
+    form.recipients = recipients
+    hasUnsavedChanges.value = true
+    cancelRecipientInput()
+    return true
+  }
+
+  function removeRecipient(address: string) {
+    form.recipients = form.recipients.filter(item => item !== address)
+    hasUnsavedChanges.value = true
+    recipientError.value = ''
+  }
+
   function changeReportType() {
     const periods: NonNullable<SchedulePayload['report_period']>[] = form.report_type === 'leadership' ? ['previous_month', 'current_month'] : ['previous_day', 'current_day']
     if (!periods.includes(form.report_period)) form.report_period = periods[0]
@@ -94,12 +126,14 @@ export function useAutomationSchedules({ hasUnsavedChanges, message, error, refr
   }
 
   function resetForm() {
+    cancelRecipientInput()
     editingId.value = ''
     Object.assign(form, emptyForm())
     hasUnsavedChanges.value = false
   }
 
   function editSchedule(item: AutomationSchedule) {
+    cancelRecipientInput()
     editingId.value = item.schedule_id
     Object.assign(form, {
       device_id: item.device_id,
@@ -110,7 +144,7 @@ export function useAutomationSchedules({ hasUnsavedChanges, message, error, refr
       weekday: item.weekday || 1,
       month_day: item.month_day || 1,
       report_period: item.report_period,
-      recipients_text: item.recipients.join('\n'),
+      recipients: [...item.recipients],
       subject_template: item.subject_template,
       chart_type: item.chart_type,
       attach_report: item.attach_report,
@@ -130,7 +164,7 @@ export function useAutomationSchedules({ hasUnsavedChanges, message, error, refr
       weekday: form.frequency === 'weekly' ? Number(form.weekday) : null,
       month_day: form.frequency === 'monthly' ? Number(form.month_day) : null,
       report_period: form.report_period,
-      recipients: form.recipients_text.split(/[\n,;]+/).map((item) => item.trim()).filter(Boolean),
+      recipients: [...form.recipients],
       subject_template: form.subject_template,
       chart_type: form.chart_type,
       attach_report: form.attach_report,
@@ -140,6 +174,12 @@ export function useAutomationSchedules({ hasUnsavedChanges, message, error, refr
   }
 
   async function submit() {
+    if (recipientDraft.value.trim() && !addRecipient()) return
+    if (!form.recipients.length) {
+      recipientInputVisible.value = true
+      recipientError.value = '至少添加一个收件人'
+      return
+    }
     saving.value = true
     error.value = ''
     message.value = ''
@@ -194,5 +234,6 @@ export function useAutomationSchedules({ hasUnsavedChanges, message, error, refr
 
   watch(() => deviceSelection.id, (id) => { if (!form.device_id) form.device_id = id })
 
-  return { saving, editingId, form, executions, runningScheduleIds, changeReportType, resetForm, editSchedule, submit, runNow, remove }
+  return { saving, editingId, form, executions, runningScheduleIds, changeReportType, resetForm, editSchedule, submit, runNow, remove,
+    recipientInputVisible, recipientDraft, recipientError, addRecipient, removeRecipient, cancelRecipientInput }
 }

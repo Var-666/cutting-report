@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { NTimePicker } from 'naive-ui'
+import { NTag, NTimePicker } from 'naive-ui'
 import { useConfirm } from '../composables/useConfirm.ts'
 import { useAutomationConfiguration } from '../composables/useAutomationConfiguration'
 import { useAutomationSchedules } from '../composables/useAutomationSchedules'
@@ -41,6 +41,7 @@ const {
 const {
   saving, editingId, form, executions, runningScheduleIds, changeReportType, resetForm,
   editSchedule, submit, runNow, remove,
+  recipientInputVisible, recipientDraft, recipientError, addRecipient, removeRecipient, cancelRecipientInput,
 } = useAutomationSchedules({
   hasUnsavedChanges, message, error, refresh: loadAll, confirm,
   scrollToEditor: () => nextTick(() => editorSection.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })),
@@ -185,7 +186,19 @@ onBeforeUnmount(() => {
             <label v-if="form.frequency === 'monthly'" class="wide"><span>每月执行日</span><NInputNumber v-model:value="form.month_day" name="month_day" inputmode="numeric" autocomplete="off" :min="1" :max="28" @update:value="hasUnsavedChanges = true" :input-props="{ 'name': 'month_day', 'inputmode': 'numeric', 'autocomplete': 'off' }" :precision="0" /></label>
             <label><span>图表类型</span><AppSelect v-model="form.chart_type" name="chart_type" @change="hasUnsavedChanges = true"><option value="bar_line">柱线组合</option><option value="bar">柱状图</option><option value="line">折线图</option><option value="area">面积图</option></AppSelect></label>
             <label><span>最大尝试次数</span><NInputNumber v-model:value="form.max_attempts" name="max_attempts" inputmode="numeric" autocomplete="off" :min="1" :max="10" @update:value="hasUnsavedChanges = true" :input-props="{ 'name': 'max_attempts', 'inputmode': 'numeric', 'autocomplete': 'off' }" :precision="0" /></label>
-            <label class="wide"><span>收件人</span><NInput v-model:value="form.recipients_text" name="recipients" inputmode="email" autocomplete="off" spellcheck="false" required placeholder="例如：manager@example.com" type="textarea" show-count :autosize="{ minRows: 3, maxRows: 8 }" :input-props="{ 'name': 'recipients', 'inputmode': 'email', 'autocomplete': 'off', 'spellcheck': false, 'required': true }" /><small>每行一个邮箱，或用逗号分隔。</small></label>
+            <div class="recipient-field wide" role="group" aria-labelledby="recipient-label">
+              <div id="recipient-label" class="recipient-heading">收件人 <span>{{ form.recipients.length }} / 20</span></div>
+              <div class="recipient-tags">
+                <NTag v-for="address in form.recipients" :key="address" closable :disabled="saving" :title="address" @close="removeRecipient(address)"><span class="recipient-address">{{ address }}</span></NTag>
+                <NButton v-if="!recipientInputVisible" attr-type="button" dashed size="small" :disabled="saving || form.recipients.length >= 20" @click="recipientInputVisible = true">＋ 添加邮箱</NButton>
+              </div>
+              <div v-if="recipientInputVisible" class="recipient-entry">
+                <NInput v-model:value="recipientDraft" autofocus :disabled="saving" :status="recipientError ? 'error' : undefined" placeholder="例如：manager@example.com" :input-props="{ name: 'recipient', inputmode: 'email', autocomplete: 'off', spellcheck: false, 'aria-label': '收件人邮箱', 'aria-invalid': !!recipientError, 'aria-describedby': recipientError ? 'recipient-error' : undefined }" @update:value="recipientError = ''" @keydown.enter.prevent="!$event.isComposing && addRecipient()" @keydown.esc.prevent="cancelRecipientInput" />
+                <NButton attr-type="button" :disabled="saving" @click="addRecipient">添加</NButton>
+                <NButton attr-type="button" :disabled="saving" @click="cancelRecipientInput">取消</NButton>
+              </div>
+              <p v-if="recipientError" id="recipient-error" class="recipient-error" role="alert">{{ recipientError }}</p>
+            </div>
             <label class="wide"><span>邮件主题</span><NInput v-model:value.trim="form.subject_template" name="subject_template" autocomplete="off" required :input-props="{ 'name': 'subject_template', 'autocomplete': 'off', 'required': true }" /><small>可用：{report_name}、{report_type}、{report_date}</small></label>
             <div class="automation-switches wide">
               <NCheckbox v-model:checked="form.attach_report" name="attach_report" @update:checked="hasUnsavedChanges = true" >附加 HTML 报表</NCheckbox>
@@ -274,7 +287,16 @@ onBeforeUnmount(() => {
 .automation-actions > div { display: flex; gap: 8px; margin-left: auto; }
 .automation-form { gap: 14px; }
 .automation-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 12px; }
-.automation-form textarea { width: 100%; min-height: 80px; resize: vertical; padding: 9px 10px; border: 1px solid var(--theme-border-color); border-radius: 7px; color: var(--ink); background: rgb(var(--container-bg-color)); font: inherit; font-size: var(--font-auxiliary); }
+.recipient-field { min-width: 0; }
+.recipient-heading { display: flex; justify-content: space-between; margin-bottom: 8px; color: var(--text-color-2); font-size: var(--font-auxiliary); font-weight: 650; }
+.recipient-heading > span { color: var(--text-color-3); font-weight: 400; }
+.recipient-tags { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; max-height: 160px; overflow-y: auto; padding: 4px; }
+.recipient-tags :deep(.n-tag) { max-width: 100%; }
+.recipient-tags :deep(.n-tag__content) { min-width: 0; }
+.recipient-address { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recipient-entry { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.recipient-entry :deep(.n-input) { flex: 1 1 200px; min-width: 0; }
+.recipient-error { margin: 8px 0 0; color: rgb(var(--error-color)); font-size: var(--font-auxiliary); }
 .automation-switches { display: flex; flex-wrap: wrap; gap: 12px 18px; padding: 12px; border-radius: 7px; background: rgb(var(--info-color) / .1); }
 .automation-switches label { display: flex; align-items: center; gap: 7px; color: var(--text-color-2); font-size: var(--font-auxiliary); }
 .automation-switches input { width: 16px; height: 16px; accent-color: var(--cyan); }

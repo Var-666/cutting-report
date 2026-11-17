@@ -28,12 +28,12 @@ def _leadership_data(
 ) -> LeadershipReportResult:
     """Adapt the legacy month query to the common period report shape."""
     if _is_range_job(job):
-        primary = range_service.leadership(period_start, period_end)
+        primary = range_service.leadership(period_start, period_end, force=True)
         _, summary_end = _recent_twelve_month_period(job, period_end)
-        monthly_leadership = leadership_service.fetch(summary_end)
+        monthly_leadership = leadership_service.fetch(summary_end, force=True)
     else:
         # Keep the aggregated month query and its natural-month comparisons.
-        monthly_leadership = leadership_service.fetch(period_start)
+        monthly_leadership = leadership_service.fetch(period_start, force=True)
         primary = monthly_leadership
     return replace(
         primary,

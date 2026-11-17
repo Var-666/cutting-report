@@ -1,123 +1,100 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
-import { NAlert } from 'naive-ui'
-import HomeKpiCard from '../components/HomeKpiCard.vue'
-import PdmFilterBar from '../components/pdm/PdmFilterBar.vue'
-import PdmSummaryTable from '../components/pdm/PdmSummaryTable.vue'
-import { getPdmOptions, getPdmReport } from '../api/pdmStatistics'
-import type { PdmStatisticsReport, PdmSummaryTable as SummaryTable } from '../api/generated/types.gen'
-import { clonePdmFilters, createPdmFilters, pdmDocumentKinds, pdmPreferences } from '../utils/pdmFilters'
-import type { PdmDocumentKind, PdmFilterOptions, PdmFilters } from '../utils/pdmFilters'
+import { computed, onBeforeUnmount, onMounted, shallowRef } from 'vue'
+import { NAlert, NButton } from 'naive-ui'
+import PdmCompletionCards from '../components/pdm/PdmCompletionCards.vue'
+import PdmReportPanel from '../components/pdm/PdmReportPanel.vue'
+import ReportPanelState from '../components/ReportPanelState.vue'
+import { getPdmOverview, getPdmReport } from '../api/pdmStatistics'
+import type { PdmReportSummaries } from '../api/generated/types.gen'
+import { createPdmFilters, pdmDocumentKinds, pdmPreferences } from '../utils/pdmFilters'
+import type { PdmDocumentKind, PdmFilters } from '../utils/pdmFilters'
+import { pdmReportRegion, pdmReportSections } from '../utils/pdmReport'
+import type { PdmReportRegion } from '../utils/pdmReport'
 import { createStorage } from '../utils/storage'
 import { session } from '../state/session'
 
 const storage = createStorage<{ selection: unknown }>('local', `cutting:pdm:${session.user?.user_id || ''}:`)
-const draft = ref(createPdmFilters(storage.get('selection')))
-const applied = ref<PdmFilters | null>(null)
-const options = ref<PdmFilterOptions>({})
-const optionsStatus = shallowRef<'loading' | 'ready' | 'error'>('loading')
-const optionsError = shallowRef('')
-const report = shallowRef<PdmStatisticsReport | null>(null)
-const querying = shallowRef(false)
-const reportError = shallowRef('')
-const retryOptions = shallowRef(0)
-let reportController: AbortController | undefined
-const ownerScopes = new Map<PdmDocumentKind, string>()
+const initialFilters = createPdmFilters(storage.get('selection'))
+const overview = shallowRef<PdmReportSummaries | null>(null)
+const overviewLoading = shallowRef(true)
+const overviewError = shallowRef('')
+const regions = shallowRef<PdmReportRegion[]>([])
+const panelsLoading = shallowRef(true)
+const panelsError = shallowRef('')
+const activeKind = shallowRef<PdmDocumentKind>('equipment')
+const visibleRegions = computed(() => regions.value.filter(region => region.section.kind === activeKind.value))
+const activeKindLabel = computed(() => pdmDocumentKinds.find(kind => kind.value === activeKind.value)?.label)
+let overviewController: AbortController | undefined
+let panelsController: AbortController | undefined
 
-function scope(kind: PdmDocumentKind) {
-  const branch = draft.value[kind]
-  return JSON.stringify([branch.types.slice().sort(), branch.projects.slice().sort(), branch.professions.slice().sort()])
+function updateRegion(replacement: PdmReportRegion) {
+  regions.value = regions.value.map(region => region.section.key === replacement.section.key ? replacement : region)
 }
-function filterKey(filters: PdmFilters) {
-  const snapshot = clonePdmFilters(filters)
-  snapshot.documentKinds.sort()
-  for (const kind of snapshot.documentKinds) {
-    const branch = snapshot[kind]
-    for (const key of Object.keys(branch) as (keyof typeof branch)[]) branch[key]?.sort()
+function remember(filters: PdmFilters) {
+  const saved = createPdmFilters(storage.get('selection'))
+  for (const kind of filters.documentKinds) {
+    saved[kind].projects = [...filters[kind].projects]
+    saved[kind].professions = [...filters[kind].professions]
   }
-  return JSON.stringify(snapshot)
+  storage.set('selection', pdmPreferences(saved))
 }
-const pending = computed(() => applied.value !== null && filterKey(draft.value) !== filterKey(applied.value))
-watch(() => pdmPreferences(draft.value), value => storage.set('selection', value), { deep: true })
-
-watch(() => JSON.stringify([draft.value.documentKinds, scope('equipment'), scope('drawing'), retryOptions.value]), async (_, __, onCleanup) => {
+async function loadPanels() {
+  panelsController?.abort()
   const controller = new AbortController()
-  let active = true
-  onCleanup(() => { active = false; controller.abort() })
-  optionsStatus.value = 'loading'
-  optionsError.value = ''
+  panelsController = controller
+  panelsLoading.value = true
+  panelsError.value = ''
   try {
-    const loaded = await Promise.all(draft.value.documentKinds.map(async kind => ({ kind, scope: scope(kind), value: await getPdmOptions(kind, clonePdmFilters(draft.value)[kind], controller.signal) })))
-    if (!active) return
-    const next = clonePdmFilters(draft.value)
-    const available = { ...options.value }
-    for (const item of loaded) {
-      available[item.kind] = item.value
-      const branch = next[item.kind]
-      branch.projects = branch.projects.filter(id => item.value.projects?.some(option => option.value === id))
-      branch.professions = branch.professions.filter(id => item.value.professions?.some(option => option.value === id))
-      const people = item.value.responsible_people?.map(option => option.value) || []
-      branch.responsiblePeople = ownerScopes.get(item.kind) === item.scope && branch.responsiblePeople !== null
-        ? branch.responsiblePeople.filter(value => people.includes(value)) : people
-      ownerScopes.set(item.kind, item.scope)
-    }
-    options.value = available
-    draft.value = next
-    optionsStatus.value = 'ready'
+    const result = await getPdmReport(initialFilters, controller.signal)
+    if (controller !== panelsController) return
+    regions.value = pdmReportSections.map(section => pdmReportRegion(section, initialFilters, result))
   } catch (error) {
-    if (!active) return
-    optionsError.value = error instanceof Error ? error.message : String(error)
-    optionsStatus.value = 'error'
-  }
-}, { immediate: true })
-
-async function query(filters: PdmFilters) {
-  reportController?.abort()
-  const controller = new AbortController()
-  reportController = controller
-  querying.value = true
-  reportError.value = ''
-  try {
-    const result = await getPdmReport(filters, controller.signal)
-    if (controller !== reportController) return
-    report.value = result
-    applied.value = clonePdmFilters(filters)
-  } catch (error) {
-    if (controller !== reportController || controller.signal.aborted) return
-    reportError.value = error instanceof Error ? error.message : String(error)
+    if (controller !== panelsController || controller.signal.aborted) return
+    panelsError.value = error instanceof Error ? error.message : String(error)
   } finally {
-    if (controller === reportController) querying.value = false
+    if (controller === panelsController) panelsLoading.value = false
   }
 }
-onBeforeUnmount(() => { reportController?.abort(); reportController = undefined })
-const tables = computed<SummaryTable[]>(() => report.value?.tables || draft.value.documentKinds.map(kind => ({
-  key: `${kind}:summary`, kind, title: kind === 'equipment' ? '设备资料计划完成汇总表' : '详设图纸计划完成汇总表', scope_label: '所有项目', group_label: null,
-  rows: [], totals: { total: 0, completed: 0, on_time: 0, total_rate: null, on_time_rate: null },
-})))
-const cards = computed(() => pdmDocumentKinds.map(kind => ({ ...kind, totals: report.value?.summaries[kind.value] })))
+async function loadOverview() {
+  overviewController?.abort()
+  const controller = new AbortController()
+  overviewController = controller
+  overviewLoading.value = true
+  overviewError.value = ''
+  try {
+    const result = await getPdmOverview(controller.signal)
+    if (controller === overviewController) overview.value = result
+  } catch (error) {
+    if (controller !== overviewController || controller.signal.aborted) return
+    overviewError.value = error instanceof Error ? error.message : String(error)
+  } finally {
+    if (controller === overviewController) overviewLoading.value = false
+  }
+}
+onMounted(() => { void loadOverview(); void loadPanels() })
+onBeforeUnmount(() => {
+  panelsController?.abort(); panelsController = undefined
+  overviewController?.abort(); overviewController = undefined
+})
 </script>
 
 <template>
   <section class="pdm-page">
     <header class="pdm-page__heading"><h1>PDM 资料统计</h1></header>
-    <div class="pdm-page__cards">
-      <HomeKpiCard v-for="card in cards" :key="card.value" :title="`${card.label}完成率`" :value="card.totals?.total_rate ?? null" unit="%" :precision="2" variant="report" :icon="card.value === 'equipment' ? 'briefcase' : 'file'" :color="card.value === 'equipment' ? 'rgb(var(--info-color))' : 'rgb(var(--success-color))'" :loading="querying && !report"
-        :trend-label="card.totals ? `已完成 ${card.totals.completed} / 总数 ${card.totals.total} · 按计划完成 ${card.totals.on_time}` : '选择时间段后查询'" />
-    </div>
-    <PdmFilterBar v-model="draft" :options="options" :status="optionsStatus" :error="optionsError" :pending="pending" :querying="querying" @submit="query" @retry="retryOptions++" />
-    <p class="pdm-page__basis">有计划日期时按计划日期筛选；仅有实际日期时按实际日期筛选并计为按时完成。两个日期都为空的记录，每个区间均计入总数和未完成数。完成状态截至所选结束日判断。</p>
-    <NAlert v-if="reportError" type="error" title="统计查询失败">{{ reportError }}<span v-if="report">，下方保留上一次成功查询结果。</span></NAlert>
-    <div class="pdm-page__tables" :aria-busy="querying">
-      <PdmSummaryTable v-for="table in tables" :key="table.key" :table="table" :start-date="report?.start_date || ''" :end-date="report?.end_date || ''" :queried="report !== null" />
-    </div>
+    <PdmCompletionCards :overview="overview" :loading="overviewLoading" :active-kind="activeKind" @select="activeKind = $event" />
+    <NAlert v-if="overviewError" type="error" title="全部数据统计加载失败">{{ overviewError }}<NButton size="small" :loading="overviewLoading" @click="loadOverview">重试</NButton></NAlert>
+    <ReportPanelState v-if="panelsLoading" type="loading" title="正在读取当月统计数据" message="各表加载后可分别打开筛选。" />
+    <ReportPanelState v-else-if="panelsError" type="error" title="统计查询失败" :message="panelsError" action-label="重新查询" @action="loadPanels" />
+    <section v-if="!panelsLoading && !panelsError" class="pdm-page__tables" :aria-label="`${activeKindLabel}统计`">
+      <h2>{{ activeKindLabel }}统计</h2>
+      <PdmReportPanel v-for="region in visibleRegions" :key="region.section.key" :region="region" @update="updateRegion" @remember="remember" />
+    </section>
   </section>
 </template>
 
 <style scoped>
 .pdm-page{display:grid;gap:var(--space-4);min-width:1000px;padding-block:var(--space-4)}
 .pdm-page__heading h1{margin:0;font-size:var(--font-page-title);font-weight:600;color:var(--text-color-1)}
-.pdm-page__cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-4)}
-.pdm-page__cards :deep(.home-kpi--report){min-height:180px;padding:var(--space-6);--font-home-kpi-value:30px}
 .pdm-page__tables{display:grid;gap:var(--space-6)}
-.pdm-page__basis{margin:0;color:var(--text-color-3);font-size:var(--font-auxiliary)}
+.pdm-page__tables h2{margin:0;color:var(--text-color-1);font-size:var(--font-section-title);font-weight:600}
 </style>

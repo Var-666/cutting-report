@@ -11,7 +11,7 @@ from app.core.sql_capacity import SqlCapacityError
 from app.database.pdm_statistics import PdmStatisticsRepository
 from app.database.sqlserver import SqlServerClient, SqlServerConfigurationError
 from app.models.contracts import ApiEnvelope
-from app.models.pdm_statistics import PdmBranchOptions, PdmOptionsQuery, PdmStatisticsQuery, PdmStatisticsReport
+from app.models.pdm_statistics import PdmBranchOptions, PdmOptionsQuery, PdmReportSummaries, PdmStatisticsQuery, PdmStatisticsReport
 from app.services.pdm_statistics import PdmStatisticsService
 
 router = APIRouter(prefix='/api/v1/pdm-statistics', tags=['pdm-statistics'], dependencies=[Depends(require_admin)])
@@ -55,6 +55,16 @@ def report(payload: PdmStatisticsQuery, request: Request):
     current = service(request)
     try:
         data = current.report(payload)
+    except Exception as exc:
+        query_error(exc)
+    return {'success': True, 'data': data, 'request_id': request.state.request_id}
+
+
+@query_requests.route(router.get('/overview', response_model=ApiEnvelope[PdmReportSummaries]))
+def overview(request: Request):
+    current = service(request)
+    try:
+        data = current.overview()
     except Exception as exc:
         query_error(exc)
     return {'success': True, 'data': data, 'request_id': request.state.request_id}

@@ -1,93 +1,52 @@
-{% from 'report_analysis.html.j2' import metric_icon %}
-{% from 'industrial_chrome.html.j2' import report_brand %}
+{% from 'industrial_chrome.html.j2' import report_brand, report_heading, section_title, hero, executive, kpi %}
 <!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ machine_no }} 智能告警报告</title>
-  <style>
-    @page { size: A4 landscape; margin: 12mm; }
-    * { box-sizing: border-box; }
-    body { margin: 0; color: #182230; font-family: "Microsoft YaHei", "PingFang SC", sans-serif; font-size: 12px; }
-    .header { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 3px solid #c62828; padding-bottom: 10px; margin-bottom: 14px; }
-    h1 { margin: 0; font-size: 25px; color: #9b1c1c; }
-    h2 { margin: 15px 0 8px; font-size: 16px; color: #26384a; }
-    .meta { color: #5f6b7a; text-align: right; line-height: 1.7; }
-    .risk { display: inline-block; padding: 4px 10px; border-radius: 14px; font-weight: 700; color: white; background: #c62828; }
-    .risk-warning { background: #b7791f; }
-    .risk-high { background: #c05621; }
-    .risk-critical { background: #c62828; }
-    table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-    th, td { border: 1px solid #d7dde5; padding: 7px 8px; vertical-align: top; word-break: break-word; }
-    th { background: #eef2f6; text-align: left; color: #304254; }
-    .sev-critical { color: #b91c1c; font-weight: 700; }
-    .sev-high { color: #c05621; font-weight: 700; }
-    .sev-warning { color: #9a6700; font-weight: 700; }
-    ol, ul { margin: 6px 0; padding-left: 22px; }
-    li { margin: 4px 0; line-height: 1.55; }
-    .muted { color: #667085; }
-    .footer { margin-top: 16px; padding-top: 8px; border-top: 1px solid #d7dde5; color: #667085; font-size: 10px; }
-    {% include "analysis_cards.css.j2" %}
-    @media screen { body { padding:16px; max-width:1380px; margin:auto; } }
-    @media (max-width:600px) { .header { align-items:flex-start; gap:8px; flex-direction:column; }.meta { text-align:left; } }
-    {% include "industrial_report.css.j2" %}
-  </style>
+  <style>{% include 'industrial_report.css.j2' %}</style>
 </head>
-<body class="industrial-report report-alarm" style="--industrial-cover:url('{{ cover }}')">
-<div class="page industrial-document">
+<body class="industrial-report report-alarm">
+<div class="leadership-print industrial-document">
   {{ report_brand(demo_mode|default(false)) }}
-<div class="industrial-content">
-  <div class="header industrial-hero">
-    <div>
-      <h1>{{ machine_no }} 智能告警报告</h1>
-      <div class="muted">仅在发现新的告警问题时自动生成</div>
+  <section class="lp-sheet lp-overview">
+    {{ report_heading(machine_no ~ ' 智能告警报告',
+      [('grid','设备',machine_no), ('calendar','生成时间',generated_at), ('alert','风险等级',severity_labels.get(analysis.overall_risk, analysis.overall_risk)), ('tasks','关联告警',analysis.facts|length ~ ' 条')],
+      [('报告编号',report_id), ('生成时间',generated_at)], demo_mode|default(false)) }}
+    {{ executive('告警记录已汇总', analysis.summary, '仅在发现新的告警问题时自动生成；处置以现场规程和授权人员判断为准。') }}
+    {{ section_title('核心告警指标', 'KEY ALARM KPI') }}
+    <div class="lp-kpis">
+      {{ kpi('tasks', '关联告警', analysis.facts|length, '条') }}
+      {% for severity in ['critical','high','warning'] %}{{ kpi('alert', severity_labels[severity], analysis.facts|selectattr('severity','equalto',severity)|list|length, '条') }}{% endfor %}
     </div>
-    <div class="alarm-meta">
-      <div>报告编号：{{ report_id }}</div>
-      <div>生成时间：{{ generated_at }}</div>
-      <div><span class="risk risk-{{ analysis.overall_risk }}">风险：{{ severity_labels.get(analysis.overall_risk, analysis.overall_risk) }}</span></div>
-    </div>
-  </div>
-
-  <main class="analysis-layout">
-    <section class="analysis-banner" aria-label="分析结论"{% if cover %} style="--analysis-cover:url('{{ cover }}')"{% endif %}>
-      <h3>告警分析结论</h3>
-      <p>{{ analysis.summary }}</p>
-    </section>
-    <div class="analysis-facts" aria-label="关联告警指标">
-      <div class="analysis-fact">{{ metric_icon('tasks') }}<span class="label">关联告警</span><strong>{{ analysis.facts|length }} 条</strong></div>
-      {% for severity in ['critical','high','warning'] %}
-      <div class="analysis-fact">{{ metric_icon('chart') }}<span class="label">{{ severity_labels[severity] }}</span>
-        <strong>{{ analysis.facts|selectattr('severity','equalto',severity)|list|length }} 条</strong></div>
-      {% endfor %}
-    </div>
-
+  </section>
+  <section class="lp-sheet lp-analysis" aria-label="智能分析">
+    {{ hero('AI 智能生产洞察', 'INTELLIGENCE & DECISION INSIGHTS', cover) }}
+    <div class="lp-analysis-status"><span>大模型分析 · 风险：<strong class="sev-{{ analysis.overall_risk }}">{{ severity_labels.get(analysis.overall_risk, analysis.overall_risk) }}</strong></span><span>生成时间：{{ generated_at }}</span></div>
+    <div class="lp-conclusion"><span>AI 核心结论</span><h3>告警分析结论</h3><p>{{ analysis.summary }}</p><small>{{ machine_no }}</small></div>
     {% if analysis.findings %}
-    <h2 class="analysis-subheading">关键发现</h2>
-    <div class="analysis-findings">
+    <section class="lp-analysis-group"><h2>关键发现</h2><div class="lp-analysis-body">
       {% for finding in analysis.findings %}
-      <article class="analysis-card {{ 'alerts' if finding.severity == 'critical' else 'period' }}">
-        <h4><span class="sev-{{ finding.severity }}">{{ severity_labels.get(finding.severity, finding.severity) }}</span> · {{ finding.title }}</h4>
+      <article class="lp-finding">
+        <h3><span class="sev-{{ finding.severity }}">{{ severity_labels.get(finding.severity, finding.severity) }}</span> · {{ finding.title }}</h3>
         <p>{{ finding.analysis }}</p>
         {% if finding.possible_causes %}<p>可能原因：{{ finding.possible_causes|join('；') }} · 置信度 {{ finding.confidence }}</p>{% endif %}
-        {% if finding.evidence_ids %}<p class="analysis-links">依据 {{ finding.evidence_ids|join('、') }}</p>{% endif %}
+        {% if finding.evidence_ids %}<p class="lp-references">依据 {{ finding.evidence_ids|join('、') }}</p>{% endif %}
       </article>
       {% endfor %}
-    </div>
+    </div></section>
     {% endif %}
 
     {% if analysis.actions %}
-    <h2 class="analysis-subheading">建议跟进</h2>
-    <div class="analysis-followup">{% for action in analysis.actions %}
-      <article class="analysis-card suggestions"><h4>优先级 {{ action.priority }}</h4><p>{{ action.action }}</p>
-        {% if action.evidence_ids %}<p class="analysis-links">依据 {{ action.evidence_ids|join('、') }}</p>{% endif %}
+    <section class="lp-analysis-group lp-actions"><h2>管理关注建议</h2><div class="lp-analysis-body">{% for action in analysis.actions %}
+      <article class="lp-finding"><h3>优先级 {{ action.priority }}</h3><p>{{ action.action }}</p>
+        {% if action.evidence_ids %}<p class="lp-references">依据 {{ action.evidence_ids|join('、') }}</p>{% endif %}
       </article>
-    {% endfor %}</div>
+    {% endfor %}</div></section>
     {% endif %}
 
-    <section class="analysis-records">
-      <h2 class="analysis-subheading">分析依据 / 关联告警</h2>
+    <section class="lp-analysis-group"><h2>数据证据 / 关联告警</h2><div class="lp-analysis-body">
       <div class="table-wrap">
   <table>
     <thead>
@@ -118,16 +77,15 @@
     </tbody>
   </table>
       </div>
-      {% if analysis.limitations %}
-      <h3>分析边界</h3>
+    </div></section>
+    {% if analysis.limitations %}
+    <section class="lp-analysis-group lp-quality"><h2>分析边界与待核实事项</h2><div class="lp-analysis-body">
       <ul>{% for item in analysis.limitations %}<li>{{ item }}</li>{% endfor %}</ul>
-      {% endif %}
-    </section>
-  </main>
-
+    </div></section>
+    {% endif %}
+  </section>
+  <p class="lp-end">本报告由系统依据数据库告警记录自动生成。大模型结论仅用于辅助排查，安全处置以现场规程和授权人员判断为准。 · 报告结束<span>{{ report_id }}</span></p>
 </div>
-  <div class="footer">本报告由系统依据数据库告警记录自动生成。大模型结论仅用于辅助排查，安全处置以现场规程和授权人员判断为准。 · 报告结束</div>
-</div>
-{% include "industrial_report.js.j2" %}
+{% include 'industrial_report.js.j2' %}
 </body>
 </html>

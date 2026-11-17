@@ -268,11 +268,14 @@ def test_export_reuses_persisted_success_after_restart_without_mixing_current_me
     current = {**report_data(), 'equipment': [], 'data_version': 'b' * 64}
     current['summary']['job_count'] = 987654321
     restarted.report = lambda *_args, **_kwargs: current
+    monkeypatch.setattr('app.services.welding_service.LlmService.analyze_context',
+                        lambda *_: (_ for _ in ()).throw(TimeoutError('fixture model outage')))
     content, _ = WeldingExport(cfg, restarted, None).generate('jobs', query(), 'html')
     html = content.decode()
-    assert '原有焊接分析' in html and '历史成功分析' in html
+    assert '原有焊接分析' in html
     assert first['generated_at'] in html and '原有作业次数' in html
-    assert '焊接作业次数' not in html and '987654321' not in html
+    analysis_html = html.split('aria-label="智能分析"', 1)[1]
+    assert '987654321' in html and '987654321' not in analysis_html
 
 
 def test_exports_cover_all_filters_escape_text_and_enforce_limits(tmp_path):
@@ -282,7 +285,7 @@ def test_exports_cover_all_filters_escape_text_and_enforce_limits(tmp_path):
         def report(self, kind, selected, *, export_limit):
             assert kind == 'jobs' and export_limit in (5001, 100001)
             return data
-        def cached_analysis(self, version, **options):
+        def analyze_report(self, kind, selected, report, version):
             if version == 'matching':
                 return {'mode': 'model', 'status': 'success', 'overview': '焊接产出简报',
                         'features': '工艺分布', 'alerts': '数据核查', 'suggestions': '核对记录'}
@@ -567,7 +570,7 @@ def test_snapshot_queue_rejection_is_not_reported_as_preparation(api):
     assert 'Retry-After' not in result.headers
 
 
-@pytest.mark.parametrize('stage', ['pdf', 'analysis'])
+@pytest.mark.parametrize('stage', ['pdf', 'html', 'analysis'])
 def test_pdf_and_ai_release_welding_capacity_before_slow_processing(api, monkeypatch, tmp_path, stage):
     import asyncio
     import anyio
@@ -627,8 +630,8 @@ def test_pdf_and_ai_release_welding_capacity_before_slow_processing(api, monkeyp
 
     async def exercise():
         async with httpx.AsyncClient(headers={'X-Production-Line': 'welding'}, transport=httpx.ASGITransport(app=api.app), base_url='http://test') as client:
-            if stage == 'pdf':
-                operation = client.get('/api/v1/welding/export?report_type=jobs&format=pdf&start=2026-10-01&end=2026-10-31')
+            if stage in ('pdf', 'html'):
+                operation = client.get(f'/api/v1/welding/export?report_type=jobs&format={stage}&start=2026-10-01&end=2026-10-31')
             else:
                 operation = client.post('/api/v1/welding/analysis', json={'query': query().model_dump(mode='json'), 'report_type': 'jobs', 'data_version': 'a' * 64})
             task = asyncio.create_task(operation)
@@ -638,6 +641,7 @@ def test_pdf_and_ai_release_welding_capacity_before_slow_processing(api, monkeyp
                         await anyio.sleep(0.001)
                 assert pool._slots.acquire(blocking=False)
                 pool._slots.release()
+                assert not welding.analysis_requests._slots.acquire(blocking=False)
                 with anyio.fail_after(1):
                     response = await client.get('/api/v1/welding/jobs?start=2026-10-01&end=2026-10-31')
                 assert response.status_code == 200 and response.json()['data']['data_version'] == 'a' * 64
@@ -647,8 +651,12 @@ def test_pdf_and_ai_release_welding_capacity_before_slow_processing(api, monkeyp
             assert result.status_code == 200
             if stage == 'pdf':
                 assert result.content == b'%PDF-test'
+            elif stage == 'html':
+                assert result.headers['content-type'].startswith('text/html')
             else:
                 assert result.json()['data']['overview'] == 'ok'
+            assert welding.analysis_requests._slots.acquire(blocking=False)
+            welding.analysis_requests._slots.release()
     anyio.run(exercise)
 
 

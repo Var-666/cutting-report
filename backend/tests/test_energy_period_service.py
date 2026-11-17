@@ -65,7 +65,7 @@ def test_complete_month_sums_all_days_and_both_channels(tmp_path, state_database
 def test_month_includes_configured_machine_daily_cutting_time(tmp_path, state_database):
     energy, _ = service(tmp_path, state_database)
     energy.query_service = SimpleNamespace(
-        fetch_equipment_month_metrics=lambda _month: {
+        fetch_equipment_month_metrics=lambda _month, *, force=False: {
             "2026-08-17": {
                 "work_time_seconds": Decimal("900"),
                 "task_count": 2,
@@ -92,7 +92,7 @@ def test_twelve_month_summary_uses_one_metrics_query_and_saved_energy(tmp_path, 
     energy.get_day(DAY)
     calls = []
 
-    def fetch_metrics(start_date, end_exclusive):
+    def fetch_metrics(start_date, end_exclusive, *, force=False):
         calls.append((start_date, end_exclusive))
         return {
             DAY.isoformat(): {

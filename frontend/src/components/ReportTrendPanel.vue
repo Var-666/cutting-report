@@ -9,6 +9,7 @@ const props = defineProps({
   note: { type: String, default: '' },
   chartLabel: { type: String, default: '' },
   showChart: { type: Boolean, default: true },
+  showTable: { type: Boolean, default: true },
   fitTableContent: { type: Boolean, default: false },
   height: { type: Number, default: 300 },
   loading: Boolean,
@@ -40,9 +41,10 @@ defineExpose({ getChartElement: () => chartElement.value })
 <template>
   <section class="panel report-trend-panel" :style="{ '--report-trend-height': `${height}px` }" :aria-labelledby="titleId">
     <header class="panel-title report-trend-panel__heading">
-      <div><span>{{ number }}</span><h2 :id="titleId">{{ title }}</h2><small v-if="subtitle">{{ subtitle }}</small></div>
+      <div><span v-if="number">{{ number }}</span><h2 :id="titleId">{{ title }}</h2><small v-if="subtitle">{{ subtitle }}</small></div>
       <p v-if="loading && hasData" class="report-trend-panel__activity"><span class="spinner dark"></span>正在更新</p>
       <p v-else-if="note">{{ note }}</p>
+      <slot name="actions" />
     </header>
     <slot name="summary" />
     <div class="report-trend-panel__body">
@@ -50,13 +52,14 @@ defineExpose({ getChartElement: () => chartElement.value })
         class="report-trend-panel__content"
         :class="{
           'report-trend-panel__content--table-only': !showChart,
-          'report-trend-panel__content--fit-table': !showChart && fitTableContent,
+          'report-trend-panel__content--chart-only': !showTable,
+          'report-trend-panel__content--fit-table': fitTableContent,
           'is-obscured': state,
         }"
         :aria-hidden="state ? 'true' : undefined"
       >
         <div v-if="showChart" ref="chartElement" class="report-trend-panel__chart" role="img" :aria-label="chartLabel"><slot name="chart" /></div>
-        <div class="report-trend-panel__table"><slot name="table" /></div>
+        <div v-if="showTable" class="report-trend-panel__table"><slot name="table" /></div>
       </div>
       <ReportPanelState v-if="state" v-bind="state" class="report-trend-panel__state" @action="$emit('retry')" />
     </div>
@@ -75,7 +78,7 @@ defineExpose({ getChartElement: () => chartElement.value })
 .report-trend-panel__content { grid-area:1/1; display:grid; grid-template-columns:minmax(0,2fr) minmax(0,3fr); gap:var(--space-4); align-items:stretch; padding:var(--report-panel-padding); }
 .report-trend-panel__content.is-obscured{visibility:hidden;pointer-events:none}
 .report-trend-panel__state{grid-area:1/1;z-index:2;margin:var(--report-panel-padding);border:1px solid var(--theme-border-color);border-radius:var(--card-radius)}
-.report-trend-panel__content--table-only { grid-template-columns:minmax(0,1fr); }
+.report-trend-panel__content--table-only,.report-trend-panel__content--chart-only { grid-template-columns:minmax(0,1fr); }
 .report-trend-panel__chart,.report-trend-panel__table { min-width:0; height:var(--report-trend-height); border:1px solid var(--theme-border-color); background:rgb(var(--container-bg-color)); }
 .report-trend-panel__chart { width:100%; }
 .report-trend-panel__table { max-height:var(--report-trend-height); overflow:auto; scrollbar-gutter:stable; }

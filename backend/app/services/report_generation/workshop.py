@@ -80,6 +80,7 @@ def prepare_report(
                 period_end,
                 project_code=filters.project_code,
                 ship_no=filters.ship_no,
+                force=True,
             )
             workshop_records = sort_workshop_by_recency(
                 workshop_records, settings.timezone

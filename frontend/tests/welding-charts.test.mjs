@@ -2,14 +2,56 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import * as Vue from 'vue'
-import { parse } from '@vue/compiler-sfc'
+import { parse, compileScript } from '@vue/compiler-sfc'
+import { renderToString } from '@vue/server-renderer'
 import { init, use } from 'echarts/core'
 import { BarChart, LineChart, PieChart } from 'echarts/charts'
 import { GridComponent, LegendComponent, TooltipComponent, DataZoomComponent } from 'echarts/components'
 import { SVGRenderer } from 'echarts/renderers'
 import { scriptFunction } from './typescript-helpers.mjs'
 import { weldingTrendOption, weldingProcessOption, weldingLengthOption } from '../src/utils/weldingChartOptions.ts'
-import { weldingProcessRows, weldingMetricSeries } from '../src/utils/weldingReport.ts'
+import { weldingProcessRows, weldingMetricSeries, weldingDisplay } from '../src/utils/weldingReport.ts'
+
+test('each welding report has one distinct chart and only distinct grouped data beside it', async () => {
+  const bindings = {
+    ...Vue, weldingProcessRows, weldingDisplay, weldingTrendOption, weldingLengthOption, weldingProcessOption,
+    useReportChartTheme: () => ({ colors: Vue.ref({ primary: 'blue', secondary: 'green' }), vars: Vue.ref({}) }),
+    ReportTrendPanel: { props: ['title', 'showTable'], setup: (props, { slots }) => () => Vue.h('section', [
+      Vue.h('h2', props.title), slots.chart?.(), props.showTable ? slots.table?.() : null,
+    ]) },
+    AppReportTable: { setup: () => () => Vue.h('table') },
+    WeldingChart: { props: ['label'], setup: props => () => Vue.h('div', { role: 'img', 'aria-label': props.label }) },
+    NEmpty: { props: ['description'], setup: props => () => Vue.h('p', props.description) },
+  }
+  const descriptor = parse(readFileSync(new URL('../src/components/WeldingCharts.vue', import.meta.url), 'utf8')).descriptor
+  const script = compileScript(descriptor, { id: 'welding-chart-layout', inlineTemplate: true }).content
+    .replace(/import\s*\{([^}]+)\}\s*from\s*['"]vue['"]/g, (_, names) => {
+      for (const name of names.split(',')) { const [original, alias = original] = name.trim().split(/\s+as\s+/); bindings[alias] = Vue[original] }
+      return ''
+    }).replace(/^import .*$/gm, '').replace('export default', 'return')
+  const Charts = scriptFunction(...Object.keys(bindings), script)(...Object.values(bindings))
+  const render = props => renderToString(Vue.createSSRApp(Charts, props))
+  const report = {
+    daily: [{ production_date: '2026-11-17', job_count: 2, weld_length_m: 10 }],
+    device_distribution: [{ device_no: 1, weld_length_m: 10 }],
+    equipment: [{ device_no: 1, robot_no: 1, job_count: 2, weld_length_m: 10 }],
+    projects: [{ project_no: 'P1', part_count: 2, cumulative_actual_length_m: 10 }],
+    summary: { flat_length_m: 10 },
+  }
+  for (const [kind, title, grouped] of [
+    ['daily', '每日焊接趋势', false], ['parts', '项目工件分布', true],
+    ['jobs', '焊接工艺结构', true], ['equipment', '设备产出对比', false],
+  ]) {
+    const html = await render({ kind, report })
+    assert.ok(html.includes(title))
+    assert.equal((html.match(/<h2\b/g) || []).length, 1)
+    assert.equal(html.includes('<table'), grouped)
+    for (const other of ['每日焊接趋势', '项目工件分布', '焊接工艺结构', '设备产出对比'].filter(value => value !== title)) assert.ok(!html.includes(other))
+    assert.ok(!html.includes('焊接作业趋势') && !html.includes('设备生产贡献') && !html.includes('机器人工位分析'))
+  }
+  const empty = await render({ kind: 'jobs', report: { ...report, summary: {} } })
+  assert.ok(empty.includes('暂无有效工艺长度数据'))
+})
 
 const flush = async () => { await Vue.nextTick(); await new Promise(resolve => setImmediate(resolve)) }
 function mountChart(t) {

@@ -83,13 +83,13 @@ def prepare_report(
             raise ValueError("设备报表导出月份无效") from None
 
     update_status("calculating", "正在计算任务与能耗")
-    equipment, task_report = range_service.equipment_tasks(period_start, period_end)
+    equipment, task_report = range_service.equipment_tasks(period_start, period_end, force=True)
     if legacy_day:
         # The old daily format includes daily totals for one selected month.
-        month_report = energy_period_service.get_month(report_month)
+        month_report = energy_period_service.get_month(report_month, force=True)
     else:
         summary_start, summary_end = _recent_twelve_month_period(job, period_end)
-        month_report = energy_period_service.get_monthly_range(summary_start, summary_end)
+        month_report = energy_period_service.get_monthly_range(summary_start, summary_end, force=True)
     chart_type = _chart_type(job)
     charts = chart_service.build_energy_period(task_report, month_report, chart_type)
     summary = task_report["summary"]

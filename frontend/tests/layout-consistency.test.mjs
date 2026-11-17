@@ -153,6 +153,16 @@ test('refreshing a populated report retains its chart and rows instead of showin
   assert.ok(!html.includes('aria-hidden="true"'))
 })
 
+test('chart-only report panels omit the duplicate table and preserve the default table slot', async () => {
+  for (const showTable of [undefined, false]) {
+    const html = await renderComponent('components/ReportTrendPanel', {
+      number: '', title: '每日焊接趋势', hasData: true, ...(showTable === undefined ? {} : { showTable }),
+    }, { chart: () => '每日趋势图', table: () => '图旁重复明细' })
+    assert.ok(html.includes('每日趋势图'))
+    assert.equal(html.includes('图旁重复明细'), showTable !== false)
+  }
+})
+
 test('report export feedback can retry the exact last request', () => {
   const exportSource = readFileSync(new URL('../src/composables/useReportExport.ts', import.meta.url), 'utf8')
   assert.match(exportSource, /lastRequest = \{ payload, format \}/)

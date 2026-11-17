@@ -187,15 +187,15 @@ class QueryService:
         }
 
     def fetch_equipment_month_metrics(
-        self, report_month: date
+        self, report_month: date, *, force: bool = False
     ) -> dict[str, dict[str, Decimal | int]]:
         """Return configured-machine task counts and cutting seconds by day."""
         month_start = report_month.replace(day=1)
         month_end = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1)
-        return self.fetch_equipment_range_metrics(month_start, month_end)
+        return self.fetch_equipment_range_metrics(month_start, month_end, force=force)
 
     def fetch_equipment_range_metrics(
-        self, start_date: date, end_exclusive: date
+        self, start_date: date, end_exclusive: date, *, force: bool = False
     ) -> dict[str, dict[str, Decimal | int]]:
         """Return cached daily equipment metrics for a range."""
         if end_exclusive <= start_date:
@@ -212,7 +212,7 @@ class QueryService:
             now = monotonic()
             with self._equipment_metrics_cache_lock:
                 cached = self._equipment_metrics_cache.get(key)
-                if cached and cached[0] > now:
+                if not force and cached and cached[0] > now:
                     return cached[1]
             result = self._fetch_equipment_range_metrics_uncached(
                 start_date, end_exclusive

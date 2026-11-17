@@ -122,9 +122,9 @@ class RangeReportService:
             )
         )
 
-    def summary_bundle(self, start_date: date, end_date: date) -> QueryBundle:
+    def summary_bundle(self, start_date: date, end_date: date, *, force: bool = False) -> QueryBundle:
         return self.query_service.fetch_summary_data(
-            report_filter(start_date, end_date)
+            report_filter(start_date, end_date), force=force
         )
 
     def workshop_bundle(
@@ -134,6 +134,7 @@ class RangeReportService:
         *,
         project_code: str | None = None,
         ship_no: str | None = None,
+        force: bool = False,
     ) -> QueryBundle:
         return self.query_service.fetch_workshop_data(
             report_filter(
@@ -141,13 +142,14 @@ class RangeReportService:
                 end_date,
                 project_code=project_code,
                 ship_no=ship_no,
-            )
+            ),
+            force=force,
         )
 
     def leadership(
-        self, start_date: date, end_date: date
+        self, start_date: date, end_date: date, *, force: bool = False
     ) -> LeadershipReportResult:
-        bundle = self.summary_bundle(start_date, end_date)
+        bundle = self.summary_bundle(start_date, end_date, force=force)
         by_day: dict[date, list] = defaultdict(list)
         by_month: dict[date, list] = defaultdict(list)
         by_project: dict[str, list] = defaultdict(list)
@@ -218,12 +220,14 @@ class RangeReportService:
         *,
         project_code: str | None = None,
         ship_no: str | None = None,
+        force: bool = False,
     ) -> tuple[QueryBundle, list[WorkshopRecord]]:
         bundle = self.workshop_bundle(
             start_date,
             end_date,
             project_code=project_code,
             ship_no=ship_no,
+            force=force,
         )
         confirmations = self.confirmations.get_confirmations(
             [str(row.task_id) for row in bundle.workshop_records]

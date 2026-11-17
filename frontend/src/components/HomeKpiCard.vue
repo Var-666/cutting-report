@@ -31,11 +31,11 @@ const formattedValue = computed(() => numericValue.value === null ? props.value 
       <div class="home-kpi__title flex-y-center gap-field"><span v-if="icon" class="home-kpi__icon"><AppIcon :name="icon" :size="variant === 'report' ? 22 : 18" tone="current" :style="{ color }" /></span><NBadge v-else dot :color="color" :processing="!loading && numericValue !== null && !app.reducedMotion" aria-hidden="true" /><NText depth="2" class="text-auxiliary">{{ title }}</NText></div>
       <NTag v-if="!loading && status" size="small" :bordered="false" :type="direction === 'up' ? 'success' : direction === 'down' ? 'error' : 'default'" :aria-label="status">{{ status.replace(' 较上月', '') }}</NTag>
     </div>
-    <NStatistic tabular-nums :value="loading || (numericValue !== null && !app.reducedMotion) ? undefined : formattedValue" :theme-overrides="{ valueFontSize: 'var(--font-home-kpi-value)', valueFontWeight: '600' }">
+    <slot name="value"><NStatistic tabular-nums :value="loading || (numericValue !== null && !app.reducedMotion) ? undefined : formattedValue" :theme-overrides="{ valueFontSize: 'var(--font-home-kpi-value)', valueFontWeight: '600' }">
       <NSkeleton v-if="loading" height="36px" width="60%" aria-label="正在获取生产数据" role="status" />
       <NNumberAnimation v-else-if="numericValue !== null && !app.reducedMotion" :from="0" :to="numericValue" :precision="precision" show-separator />
       <template #suffix><NText v-if="unit && !loading" depth="2" class="text-auxiliary">{{ unit }}</NText></template>
-    </NStatistic>
+    </NStatistic></slot>
     <div class="home-kpi__trend flex-y-center justify-between gap-field">
       <NText depth="2" class="text-auxiliary">{{ trendLabel }}</NText>
       <NSkeleton v-if="loading" height="28px" width="76px" />

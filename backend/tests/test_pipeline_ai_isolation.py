@@ -172,7 +172,7 @@ def test_required_source_failure_still_prevents_report_publication(state_databas
     pipeline, job = pipeline_job(state_database, tmp_path, report_type, interval)
     if report_type == "leadership" and not interval:
         monkeypatch.setattr(pipeline.leadership_service, "fetch",
-                            lambda *args: (_ for _ in ()).throw(OSError("source unavailable")))
+                            lambda *args, **kwargs: (_ for _ in ()).throw(OSError("source unavailable")))
     else:
         intercept_history(monkeypatch, pipeline, report_type, interval, OSError, fail_primary=True)
     with pytest.raises(OSError, match="source unavailable"):
@@ -191,7 +191,7 @@ def test_control_signals_in_ai_preparation_are_not_degraded(state_database, tmp_
 
 
 @pytest.mark.parametrize(('report_type', 'interval'), SCENARIOS)
-def test_report_uses_matching_success_before_optional_queries_or_model(state_database, tmp_path, monkeypatch, report_type, interval):
+def test_report_checks_current_analysis_and_falls_back_after_optional_failure(state_database, tmp_path, monkeypatch, report_type, interval):
     pipeline, job = pipeline_job(state_database, tmp_path, report_type, interval)
     if report_type == 'leadership' and not interval:
         from pathlib import Path
@@ -201,7 +201,13 @@ def test_report_uses_matching_success_before_optional_queries_or_model(state_dat
     original = pipeline.metadata.get_job(job['report_id'])
     original_html = (pipeline.settings.reports_dir / original['relative_path']).read_text()
     monkeypatch.setattr(pipeline.analysis_service.llm, 'analyze_context', lambda *_: pytest.fail('cached report must not wait on a model'))
-    intercept_history(monkeypatch, pipeline, report_type, interval, OSError)
+    history_calls = intercept_history(monkeypatch, pipeline, report_type, interval, OSError)
+    analyses = []
+    render = pipeline.report_service.render
+    def capture_analysis(*, report, **kwargs):
+        analyses.append(report['analysis'])
+        return render(report=report, **kwargs)
+    monkeypatch.setattr(pipeline.report_service, 'render', capture_analysis)
     pipeline.metadata.create_job(report_id='cached-report', device_id='Cutter01', report_type=report_type,
         report_date=job['report_date'], project_code=None, ship_no=None, request_id='cached-report',
         created_at=job['created_at'], period_start=job.get('period_start'), period_end=job.get('period_end'))
@@ -210,7 +216,9 @@ def test_report_uses_matching_success_before_optional_queries_or_model(state_dat
     completed = pipeline.metadata.get_job('cached-report')
     assert completed['status'] == 'completed' and completed['ai_status'] == 'success'
     html = (pipeline.settings.reports_dir / completed['relative_path']).read_text()
-    assert '沿用同一报表范围的历史成功分析' in html
+    has_optional_history = report_type != 'leadership' or interval
+    assert len(history_calls) == (1 if has_optional_history else 0)
+    assert analyses[0]['cached'] and bool(analyses[0].get('cache_note')) == has_optional_history
     assert '智能分析暂不可用' not in html
     assert '本期生产记录已整理' in html and '本期生产记录已整理' in original_html
     assert 'class="analysis-sparkline"' not in html

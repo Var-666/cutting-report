@@ -116,6 +116,18 @@ test('historical welding analysis preserves its evidence and time without new me
   assert.ok(!html.includes('987654321') && !html.includes('焊接作业次数'))
 })
 
+test('welding analysis can omit repeated metric cards while retaining conclusions and evidence', async () => {
+  const html = await renderComponent('components/ReportAnalysis', {
+    analysis: { ...analysis, brief: null, data_version: 'current', overview: '区间焊接结论',
+      facts: [{ id: 'F001', label: '作业依据', value: '4 次', source: '作业表' }] },
+    weldingReport: { data_version: 'current', query: { start: '2026-11-01', end: '2026-11-17' }, daily: [],
+      summary: { job_count: 4 }, meta: { notices: ['按结束时间归日'] } },
+    showMetrics: false, ready: true, loading: false,
+  })
+  assert.ok(!html.includes('aria-label="关键指标"'))
+  for (const text of ['区间焊接结论', '分析依据', '查看模型输入数据（1 项）', analysis.generated_at]) assert.ok(html.includes(text), text)
+})
+
 test('task navigation preserves real ID and original range and rejects another production line', () => {
   assert.deepEqual(analysisTaskLocation(reference, 'Cutter01'), { name: 'workshop-report', query: { start: '2026-08-18', end: '2026-08-20', task: 'real-task-1', task_line: 'Cutter01' } })
   assert.equal(analysisTaskLocation(reference, 'Cutter02'), null)

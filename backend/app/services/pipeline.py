@@ -22,7 +22,7 @@ from app.services.energy_period_service import EnergyPeriodService
 from app.services.leadership_report_service import LeadershipReportService
 from app.services.query_service import QueryService
 from app.services.range_report_service import RangeReportService
-from app.services.report_analysis_service import AnalysisUnavailableError, ReportAnalysisService
+from app.services.report_analysis_service import AnalysisDataVersionMismatch, AnalysisUnavailableError, ReportAnalysisService
 from app.core.report_deadline import ReportOperationTimeout, ensure_time_remaining, report_deadline
 from app.core.request_cancellation import SqlRequestCancelled
 from app.services.report_service import ReportService
@@ -102,24 +102,26 @@ class ReportPipeline:
         cached: Callable[[], AnalysisResult | None] | None = None,
     ) -> AnalysisResult:
         self._ensure_active()
-        if cached is not None:
-            previous = cached()
-            if previous is not None:
-                return previous
         try:
             return analyze()
-        except (ReportPipelineCancelled, SqlRequestCancelled):
+        except (ReportPipelineCancelled, SqlRequestCancelled, AnalysisDataVersionMismatch):
             raise
-        except (AnalysisUnavailableError, ReportOperationTimeout) as exc:
-            logger.warning(
-                "report awaiting successful analysis: report_id=%s report_type=%s reason=%s",
-                report_id, report_type, exc,
-                extra={"report_id": report_id, "report_type": report_type},
-            )
-            raise ReportAnalysisPendingError(str(exc)) from exc
         except Exception as exc:
             # This callback contains only AI preparation/inference. Required
             # report queries and rendering remain outside this failure boundary.
+            if cached is not None:
+                previous = cached()
+                if previous is not None:
+                    logger.warning('report analysis failed; reusing historical success: report_id=%s report_type=%s reason=%s',
+                                   report_id, report_type, exc)
+                    return previous
+            if isinstance(exc, (AnalysisUnavailableError, ReportOperationTimeout)):
+                logger.warning(
+                    "report awaiting successful analysis: report_id=%s report_type=%s reason=%s",
+                    report_id, report_type, exc,
+                    extra={"report_id": report_id, "report_type": report_type},
+                )
+                raise ReportAnalysisPendingError(str(exc)) from exc
             logger.exception(
                 "report AI preparation failed; waiting before publication",
                 extra={"report_id": report_id, "report_type": report_type},

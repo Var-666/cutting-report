@@ -4,22 +4,31 @@ window.prepareIndustrialReport = async () => {
   const root = document.querySelector('.leadership-print') || document.querySelector('.industrial-document');
   if (!root) return;
   if (window.matchMedia('print').matches) {
-    let width = root.getBoundingClientRect().width;
-    const inset = parseFloat(getComputedStyle(root.querySelector('main') || root).paddingLeft) * 2 + 4;
     root.querySelectorAll('table').forEach(table => {
       if (!table.getClientRects().length || table.closest('.print-only') || table.classList.contains('lp-table')) return;
       table.querySelectorAll('colgroup').forEach(group => { group.style.display = 'none'; });
+      table.style.zoom = '';
       table.style.width = 'max-content';
-      width = Math.max(width, table.scrollWidth + inset);
-      table.style.width = '100%';
+      const width = table.parentElement.clientWidth;
+      const scale = Math.min(1, width / table.scrollWidth);
+      table.style.zoom = scale;
+      table.style.width = `${width / scale}px`;
     });
-    root.style.width = `${Math.ceil(width)}px`;
   }
   document.querySelectorAll('.chart').forEach(element => {
     const chart = window.echarts?.getInstanceByDom(element);
     if (!chart || !element.getClientRects().length) return;
     if (!element.id.startsWith('lp-')) {
-      chart.setOption({ backgroundColor: '#ffffff', animation: false, textStyle: {color: '#405a80', fontFamily: 'Microsoft YaHei, PingFang SC, sans-serif'} });
+      const option = chart.getOption();
+      const rotated = option.xAxis?.some(axis => axis.axisLabel?.rotate);
+      chart.setOption({
+        backgroundColor: 'transparent', animation: false,
+        textStyle: {color: '#385480', fontSize: 10, fontFamily: 'Microsoft YaHei, PingFang SC, sans-serif'},
+        grid: {left: 48, right: 44, top: 45, bottom: rotated ? 48 : 28},
+        legend: (option.legend || []).map(legend => ({...legend, top: 5, itemWidth: 13, itemHeight: 8, textStyle: {fontSize: 9, color: '#405a80'}})),
+        xAxis: (option.xAxis || []).map(axis => ({axisLabel: {...axis.axisLabel, fontSize: 8, hideOverlap: true, width: 90, overflow: 'truncate'}})),
+        yAxis: (option.yAxis || []).map(axis => ({nameTextStyle: {fontSize: 9, color: '#405a80'}, axisLabel: {...axis.axisLabel, fontSize: 9}})),
+      });
     }
     chart.resize({animation: {duration: 0}});
   });
@@ -30,7 +39,11 @@ window.addEventListener('beforeprint', () => window.prepareIndustrialReport());
 window.addEventListener('resize', () => window.prepareIndustrialReport());
 window.addEventListener('afterprint', () => {
   const root = document.querySelector('.leadership-print') || document.querySelector('.industrial-document');
-  if (root) root.style.width = '';
+  root?.querySelectorAll('table').forEach(table => {
+    table.style.zoom = '';
+    table.style.width = '';
+    table.querySelectorAll('colgroup').forEach(group => { group.style.display = ''; });
+  });
   window.prepareIndustrialReport();
 });
 </script>

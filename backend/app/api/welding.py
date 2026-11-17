@@ -67,6 +67,8 @@ def source_errors():
         raise HTTPException(status_code=503, detail=str(exc), headers={'X-Welding-Error': 'snapshot_queue_full'}) from None
     except WeldingUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc), headers={'X-Welding-Error': exc.category}) from None
+    except AnalysisUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc), headers={'Retry-After': '60'}) from None
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
     except PdfRenderError:
@@ -188,7 +190,9 @@ async def export(request: Request, report_type: Literal['daily', 'parts', 'jobs'
     instance = service(request)
     exporter = WeldingExport(instance.settings, instance, application_state(request).pdf_service)
     with source_errors():
-        content, media = await query_requests.run_sync(exporter.prepare, report_type, query, format, _request=request)
+        report = await query_requests.run_sync(exporter.read_report, report_type, query, format, _request=request)
+        preparation = query_requests if format == 'csv' else analysis_requests
+        content, media = await preparation.run_sync(exporter.prepare_report, report_type, query, format, report, _request=request)
         if format == 'pdf':
             content, media = await pdf_requests.run_sync(exporter.render_pdf, content, _request=request)
     return Response(content, media_type=media, headers={'Content-Disposition': f'attachment; filename="welding-{report_type}-{query.start}-{query.end}.{format}"'})

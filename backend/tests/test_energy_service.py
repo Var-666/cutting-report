@@ -393,7 +393,7 @@ def test_unified_device_page_export_and_analysis_share_meter_values(state_databa
     monkeypatch.setattr(
         pipeline.query_service,
         "fetch_equipment_month_metrics",
-        lambda _month: {
+        lambda _month, *, force=False: {
             START.date().isoformat(): {
                 "task_count": 1,
                 "work_time_seconds": Decimal("30"),
@@ -403,7 +403,7 @@ def test_unified_device_page_export_and_analysis_share_meter_values(state_databa
     monkeypatch.setattr(
         pipeline.query_service,
         "fetch_equipment_range_metrics",
-        lambda _start, _end: {
+        lambda _start, _end, *, force=False: {
             START.date().isoformat(): {
                 "task_count": 1,
                 "work_time_seconds": Decimal("30"),

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue'
 import type { PdmSummaryTable } from '../../api/generated/types.gen'
+import { unassignedPdmRows } from '../../utils/pdmReport'
 
 const props = defineProps<{ table: PdmSummaryTable; startDate: string; endDate: string; queried: boolean }>()
 const element = ref<HTMLTableElement | null>(null)
@@ -8,6 +9,7 @@ const widths = ref<number[]>([])
 let stopResize: (() => void) | undefined
 const labelColumns = computed(() => props.table.group_label ? 2 : 1)
 const columnCount = computed(() => labelColumns.value + 5)
+const unassignedTotal = computed(() => unassignedPdmRows(props.table))
 const rows = computed(() => props.table.rows.map((row, index, all) => ({ ...row,
   firstInCategory: index === 0 || all[index - 1].category !== row.category,
   categorySpan: all.filter(item => item.category === row.category).length,
@@ -56,12 +58,14 @@ onBeforeUnmount(() => stopResize?.())
       </tbody>
       <tfoot v-if="queried && !table.group_label"><tr><th scope="row">总计</th><td>{{ table.totals.total }}</td><td>{{ table.totals.completed }}</td><td>{{ table.totals.on_time }}</td><td>{{ rate(table.totals.on_time_rate) }}</td><td>{{ rate(table.totals.total_rate) }}</td></tr></tfoot>
     </table>
+    <p v-if="queried && unassignedTotal > 0" class="pdm-summary__note" role="note">有 {{ unassignedTotal }} 份文档{{ table.group_label === '专业' ? '的专业未对应固定的八项专业' : '的项目信息缺失' }}，已计入总计，未分配到{{ table.group_label }}行。</p>
   </div>
 </template>
 
 <style scoped>
 /* The supplied report requires merged, multi-level headers and vertical category groups. */
-.pdm-summary-wrap{min-width:0;overflow-x:auto;background:rgb(var(--container-bg-color))}
+.pdm-summary-wrap{min-width:0;overflow-x:auto;scrollbar-width:none;background:rgb(var(--container-bg-color))}
+.pdm-summary-wrap::-webkit-scrollbar{display:none}
 .pdm-summary{width:100%;table-layout:fixed;border-collapse:collapse;color:var(--text-color-1);font-size:var(--font-body);font-variant-numeric:tabular-nums}
 .pdm-summary th,.pdm-summary td{height:36px;padding:var(--space-2) var(--space-3);border:1px solid var(--theme-border-color);text-align:center;font-weight:400;vertical-align:middle}
 .pdm-summary thead th{position:relative;background:var(--theme-table-header-color);font-weight:500}
@@ -72,6 +76,7 @@ onBeforeUnmount(() => stopResize?.())
 .pdm-summary td{white-space:nowrap}
 .pdm-summary__subtotal td,.pdm-summary__subtotal .pdm-summary__name,.pdm-summary tfoot th,.pdm-summary tfoot td{font-weight:600}
 .pdm-summary td.pdm-summary__empty{height:110px;color:var(--text-color-3)}
+.pdm-summary__note{margin:0;padding:var(--space-3);color:var(--text-color-2);font-size:var(--font-body)}
 .pdm-summary__resize{position:absolute;right:-4px;top:0;bottom:0;z-index:1;width:8px;cursor:col-resize;touch-action:none}
 .pdm-summary__resize:focus-visible{outline:2px solid rgb(var(--primary-color))}
 .pdm-summary__sr-label{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}

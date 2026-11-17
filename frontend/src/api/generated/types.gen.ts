@@ -1253,6 +1253,21 @@ export type ApiEnvelopePdmBranchOptions = {
 };
 
 /**
+ * ApiEnvelope[PdmReportSummaries]
+ */
+export type ApiEnvelopePdmReportSummaries = {
+    /**
+     * Success
+     */
+    success: true;
+    data: PdmReportSummaries;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
  * ApiEnvelope[PdmStatisticsReport]
  */
 export type ApiEnvelopePdmStatisticsReport = {
@@ -5366,6 +5381,10 @@ export type PdmStatisticsQuery = {
      */
     end_date: string;
     /**
+     * Date Basis
+     */
+    date_basis?: 'plan' | 'actual';
+    /**
      * Group By
      */
     group_by?: 'summary' | 'project' | 'profession';
@@ -5385,6 +5404,10 @@ export type PdmStatisticsReport = {
      * End Date
      */
     end_date: string;
+    /**
+     * Date Basis
+     */
+    date_basis?: 'plan' | 'actual';
     /**
      * Group By
      */
@@ -8777,6 +8800,31 @@ export type ReportApiV1PdmStatisticsReportPostResponses = {
 };
 
 export type ReportApiV1PdmStatisticsReportPostResponse = ReportApiV1PdmStatisticsReportPostResponses[keyof ReportApiV1PdmStatisticsReportPostResponses];
+
+export type OverviewApiV1PdmStatisticsOverviewGetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/pdm-statistics/overview';
+};
+
+export type OverviewApiV1PdmStatisticsOverviewGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type OverviewApiV1PdmStatisticsOverviewGetError = OverviewApiV1PdmStatisticsOverviewGetErrors[keyof OverviewApiV1PdmStatisticsOverviewGetErrors];
+
+export type OverviewApiV1PdmStatisticsOverviewGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopePdmReportSummaries;
+};
+
+export type OverviewApiV1PdmStatisticsOverviewGetResponse = OverviewApiV1PdmStatisticsOverviewGetResponses[keyof OverviewApiV1PdmStatisticsOverviewGetResponses];
 
 export type ProductionLinesApiV1ProductionLinesGetData = {
     body?: never;

@@ -421,7 +421,7 @@ async function mountWelding(t, kind = 'jobs', query = {}, analysisOptions = {}) 
 test('welding reopens persistent success without generating analysis and retains it after refresh failure', async t => {
   const original = { status: 'success', mode: 'model', overview: '历史焊接结论', generated_at: '2026-10-26T08:00:00+08:00',
     data_version: 'old-version', cached: true, cache_note: '沿用历史成功分析' }
-  const { state, cacheReads, analyses } = await mountWelding(t, 'jobs', {}, {
+  const { state, cacheReads, analyses } = await mountWelding(t, 'daily', {}, {
     read: async () => original, analyze: async () => { throw new Error('model unavailable') },
   })
   assert.equal(state.analysis.value.overview, original.overview)
@@ -438,7 +438,7 @@ test('same-scope report changes keep old analysis while cache refreshes and chan
   let first = true
   const original = { overview: '原焊接结论', status: 'success', mode: 'model', data_version: 'version-1',
     generated_at: '2026-10-26T08:00:00+08:00', cached: true }
-  const { state, calls } = await mountWelding(t, 'jobs', {}, { read: () => {
+  const { state, calls } = await mountWelding(t, 'daily', {}, { read: () => {
     if (first) { first = false; return original }
     return new Promise(resolve => pending.push(resolve))
   } })
@@ -446,7 +446,7 @@ test('same-scope report changes keep old analysis while cache refreshes and chan
   assert.equal(calls.length, 2)
   assert.equal(state.analysis.value.overview, original.overview)
   assert.ok(state.analysis.value.cache_note.includes('数据已更新'))
-  state.draft.robot_no = '2'
+  state.draft.device_no = '2'
   await state.submit()
   assert.equal(state.analysis.value, null)
   pending[0]({ ...original, overview: 'late old filter' })
@@ -457,7 +457,7 @@ test('same-scope report changes keep old analysis while cache refreshes and chan
 
 test('switching welding lines or unmounting rejects late model and cache results', async t => {
   let finishModel
-  const { state, selection, unmount } = await mountWelding(t, 'jobs', {}, {
+  const { state, selection, unmount } = await mountWelding(t, 'daily', {}, {
     analyze: () => new Promise(resolve => { finishModel = resolve }),
   })
   const generating = state.runAnalysis()
@@ -468,6 +468,14 @@ test('switching welding lines or unmounting rejects late model and cache results
   assert.notEqual(state.analysis.value?.overview, 'late previous line')
   unmount()
 })
+
+for (const kind of ['parts', 'jobs', 'equipment']) {
+  test(`${kind} reads statistics without fetching a hidden analysis`, async t => {
+    const { state, cacheReads } = await mountWelding(t, kind)
+    await state.submit()
+    assert.equal(cacheReads.length, 0)
+  })
+}
 
 for (const kind of ['dashboard', 'daily', 'parts', 'jobs', 'equipment']) {
   test(`welding ${kind}: copied links restore supported filters and pagination with exactly one request`, async t => {
@@ -946,7 +954,7 @@ test('new line types keep registered labels and destinations', () => {
   assert.equal(productionGroups([{ ...items[0], type_name: '' }])[0].name, 'coating')
 })
 
-function mountWeldingDisplay(t, readReport) {
+function mountWeldingDisplay(t, readReport, kind = 'jobs') {
   const stub = { setup: (_props, { attrs, slots }) => () => h('div', [attrs.title, attrs.message, slots.default?.()]) }
   const bindings = {
     ...Vue, useRoute: () => ({ query: {} }), useRouter: () => ({ push() {}, replace() {} }),
@@ -954,7 +962,8 @@ function mountWeldingDisplay(t, readReport) {
     parseWeldingRouteQuery, weldingRouteQuery, weldingTitles, weldingDescriptions,
     deviceSelection: reactive({ id: 'welding', items: [{ id: 'welding', type: 'welding', enabled: true }] }),
     NModal: stub, NTag: stub, ReportPeriodPicker: stub, AppIcon: stub, HomeSectionHeader: stub,
-    ReportAnalysis: stub, AppSelect: stub, ReportFeedback: stub, ReportPanelState: stub, ReportExportMenu: stub,
+    ReportAnalysis: { props: ['showMetrics'], setup: props => () => h('section', ['智能分析', props.showMetrics === false ? '' : '分析指标卡']) },
+    AppSelect: stub, ReportFeedback: stub, ReportPanelState: stub, ReportExportMenu: stub,
     WeldingCharts: stub, WeldingRecord: stub,
     WeldingKpiCards: { props: ['report'], setup: props => () => h('div', `作业次数：${props.report?.summary.job_count ?? '--'}`) },
     WeldingTable: { props: ['items'], setup: props => () => h('div', props.items.map(row => row.serial_number).join('、')) },
@@ -971,7 +980,7 @@ function mountWeldingDisplay(t, readReport) {
   const Page = scriptFunction(...Object.keys(bindings), code)(...Object.values(bindings))
   const renderer = Vue.createRenderer({ createElement: () => ({ style: {} }), createComment: () => ({}), createText: () => ({}),
     insert() {}, remove() {}, setText() {}, setElementText() {}, parentNode: () => null, nextSibling: () => null, patchProp() {} })
-  const app = renderer.createApp({ render: () => h(Page, { kind: 'jobs' }) })
+  const app = renderer.createApp({ render: () => h(Page, { kind }) })
   for (const name of ['NButton', 'NInput', 'NInputNumber', 'NCheckbox']) app.component(name, stub)
   app.mount({})
   t.after(() => app.unmount())
@@ -984,6 +993,21 @@ function mountWeldingDisplay(t, readReport) {
     submit: () => nodes().find(node => node.type === 'form').props.onSubmit({ preventDefault() {} }),
     selectDevice: value => nodes().find(node => node.props?.['onUpdate:modelValue']).props['onUpdate:modelValue'](value),
   }
+}
+
+for (const kind of ['daily', 'parts', 'jobs', 'equipment']) {
+  test(`${kind} displays its details with overall metrics and analysis only on daily`, async t => {
+    const page = mountWeldingDisplay(t, async (_kind, query) => ({
+      query, data_version: 'v1', summary: { job_count: 3 }, items: [{ id: 1, serial_number: '当前明细' }], total: 1,
+      meta: { quality: {}, notices: [], devices: [] },
+    }), kind)
+    await flushWelding()
+    assert.ok(page.text().includes('当前明细'))
+    assert.equal(page.text().includes('作业次数：3'), kind === 'daily')
+    assert.equal(page.text().includes('智能分析'), kind === 'daily')
+    assert.ok(!page.text().includes('分析指标卡'))
+    assert.ok(page.text().includes('统计口径与数据核查'))
+  })
 }
 
 test('welding displays edited filters beside the applied result through loading and failure', async t => {
@@ -1010,7 +1034,7 @@ test('welding displays edited filters beside the applied result through loading 
 test('cached welding data stays visible through manual refresh, replacement and query failure', async t => {
   const clock = snapshotWaitTimers(t)
   const calls = []
-  const page = mountWeldingDisplay(t, (kind, values, signal, force) => new Promise((resolve, reject) => calls.push({ values, signal, force, resolve, reject })))
+  const page = mountWeldingDisplay(t, (kind, values, signal, force) => new Promise((resolve, reject) => calls.push({ values, signal, force, resolve, reject })), 'daily')
   const result = (call, count, refreshing = false) => ({ query: call.values, data_version: String(count),
     summary: { job_count: count }, items: count ? [{ id: 1, serial_number: `任务${count}` }] : [], total: count ? 1 : 0,
     meta: { quality: {}, notices: [], devices: [], report_data: { data_as_of: '2026-10-26T08:00:00Z', refreshing } } })

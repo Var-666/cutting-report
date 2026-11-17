@@ -43,7 +43,7 @@ def style_report_html(kind: str, directory: Path) -> Path:
         if weld_kind in {'daily', 'equipment'}:
             payload['items'][0]['device_no'] = BUSINESS_MARKER if weld_kind == 'equipment' else 0
             if weld_kind == 'daily': payload['meta']['notices'].append(BUSINESS_MARKER)
-        instance = SimpleNamespace(report=lambda *a, **kw: payload, cached_analysis=lambda *a, **kw: analysis)
+        instance = SimpleNamespace(report=lambda *a, **kw: payload, analyze_report=lambda *a, **kw: analysis)
         html = WeldingExport(welding_settings(project_root=root), instance, PdfService()).prepare(weld_kind, query, 'html')[0].decode()
     elif kind == 'alarm':
         payload = dict(summary='发现需要现场核查的告警记录。', overall_risk='high',

@@ -64,10 +64,16 @@ class WeldingExport:
         return self.render_pdf(content) if format == 'pdf' else (content, media)
 
     def prepare(self, kind: ReportType, query: WeldingQuery, format: str) -> tuple[bytes, str]:
+        return self.prepare_report(kind, query, format, self.read_report(kind, query, format))
+
+    def read_report(self, kind: ReportType, query: WeldingQuery, format: str) -> dict:
         limit = 100000 if format == 'csv' else 5000
         report = self.service.report(kind, query, export_limit=limit + 1)
         if report['total'] > limit or len(report['items']) > limit:
             raise ValueError(f'当前筛选结果超过{limit:,}行，请缩小日期或筛选范围后导出')
+        return report
+
+    def prepare_report(self, kind: ReportType, query: WeldingQuery, format: str, report: dict) -> tuple[bytes, str]:
         applied = report['query']
         filters = [f'日期：{applied["start"]} 至 {applied["end"]}']
         for key, label in [('device_no', '设备'), ('robot_no', '机器人'), ('weld_type', '工艺代码'), ('state', '作业状态代码'),
@@ -83,7 +89,7 @@ class WeldingExport:
         if format == 'csv':
             return csv_bytes(COLUMNS[kind], report['items'], metadata), 'text/csv; charset=utf-8'
         version = report.get('data_version')
-        analysis = self.service.cached_analysis(version, kind=kind, query=query, historical=True) if version else None
+        analysis = self.service.analyze_report(kind, query, report, version) if version else None
         environment = ReportService(self.settings).environment
         chart_path = self.settings.project_root / 'vendor' / 'echarts.min.js'
         html = environment.get_template('welding_report.html.j2').render(

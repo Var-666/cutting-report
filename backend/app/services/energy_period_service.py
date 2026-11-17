@@ -451,7 +451,7 @@ class EnergyPeriodService:
         warning = "存在时间重叠任务，相关行未计入汇总。" if conflicts else ""
         return result(output, mode, "", warning)
 
-    def get_month(self, report_month, *, month_metrics=None):
+    def get_month(self, report_month, *, month_metrics=None, force=False):
         year, month = map(int, report_month.split("-"))
         count = calendar.monthrange(year, month)[1]
         metrics_supplied = month_metrics is not None
@@ -460,7 +460,7 @@ class EnergyPeriodService:
         if self.query_service and not metrics_supplied:
             if hasattr(self.query_service, "fetch_equipment_month_metrics"):
                 month_metrics = self.query_service.fetch_equipment_month_metrics(
-                    date(year, month, 1)
+                    date(year, month, 1), force=force
                 )
             else:
                 month_metrics = {
@@ -505,7 +505,7 @@ class EnergyPeriodService:
             "resync_dates": resync_dates,
             **self.metadata(), "storage_notice": ""})
 
-    def get_monthly_range(self, start_date: date, end_date: date):
+    def get_monthly_range(self, start_date: date, end_date: date, *, force=False):
         if end_date < start_date:
             raise ValueError("结束日期不能早于开始日期")
         month_count = (
@@ -521,12 +521,12 @@ class EnergyPeriodService:
         if self.query_service:
             if hasattr(self.query_service, "fetch_equipment_range_metrics"):
                 metrics = self.query_service.fetch_equipment_range_metrics(
-                    start_date, end_date + timedelta(days=1)
+                    start_date, end_date + timedelta(days=1), force=force
                 )
             else:
                 current = start_date.replace(day=1)
                 while current <= end_date:
-                    metrics.update(self.query_service.fetch_equipment_month_metrics(current))
+                    metrics.update(self.query_service.fetch_equipment_month_metrics(current, force=force))
                     current = (current.replace(day=28) + timedelta(days=4)).replace(day=1)
 
         selected_daily_rows = []

@@ -97,7 +97,7 @@ def test_leadership_daily_totals_and_workshop_trend_use_business_day_without_sta
                if key not in {"equipment_id", "production_end_time"}})]
     records.append(replace(records[0], task_id="date-only", production_time=None))
     service = RangeReportService(settings,
-        SimpleNamespace(fetch_summary_data=lambda _: QueryBundle(records, [], [])), object(), object())
+        SimpleNamespace(fetch_summary_data=lambda _, **kwargs: QueryBundle(records, [], [])), object(), object())
     report = service.leadership(DAY, DAY)
     assert report.current_month_total.task_count == 2
     assert len(report.daily_records) == 1

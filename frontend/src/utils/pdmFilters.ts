@@ -1,5 +1,5 @@
 import { queryDate } from './reportRouteState'
-import type { PdmBranchFilters as ApiBranchFilters, PdmBranchOptions } from '../api/generated/types.gen'
+import type { PdmBranchFilters as ApiBranchFilters, PdmBranchOptions, PdmStatisticsQuery } from '../api/generated/types.gen'
 
 export const pdmDocumentKinds = [
   { value: 'equipment', label: '设备资料' },
@@ -12,6 +12,7 @@ export type PdmBranchFilters = Required<Omit<ApiBranchFilters, 'responsible_peop
 export interface PdmFilters {
   documentKinds: PdmDocumentKind[]
   groupBy: 'summary' | 'project' | 'profession'
+  dateBasis: NonNullable<PdmStatisticsQuery['date_basis']>
   startDate: string
   endDate: string
   equipment: PdmBranchFilters
@@ -45,13 +46,20 @@ function rememberedBranch(value: unknown): Pick<PdmBranchFilters, 'projects' | '
   return { projects: strings(record.projects), professions: strings(record.professions) }
 }
 
+export function pdmCurrentMonth(now = new Date()) {
+  const date = now.toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })
+  const [year, month] = date.split('-').map(Number)
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate()
+  return { startDate: `${date.slice(0, 7)}-01`, endDate: `${date.slice(0, 7)}-${lastDay}` }
+}
+
 export function createPdmFilters(preferences?: unknown): PdmFilters {
   const saved = preferences && typeof preferences === 'object' ? preferences as Record<string, unknown> : {}
   const branch = (kind: PdmDocumentKind): PdmBranchFilters => ({
     types: [], levels: [], areas: [], manufactory: [], batches: [], classifications: [], weights: [], responsiblePeople: null,
     ...rememberedBranch(saved[kind]),
   })
-  return { documentKinds: ['equipment', 'drawing'], groupBy: 'summary', startDate: '', endDate: '', equipment: branch('equipment'), drawing: branch('drawing') }
+  return { documentKinds: ['equipment', 'drawing'], groupBy: 'summary', dateBasis: 'plan', ...pdmCurrentMonth(), equipment: branch('equipment'), drawing: branch('drawing') }
 }
 
 export function pdmPreferences(filters: PdmFilters): PdmPreferences {

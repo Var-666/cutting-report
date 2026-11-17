@@ -21,7 +21,7 @@ function automationHooks(bindings) {
 
 const flushAutomation = async () => { await new Promise(resolve => setImmediate(resolve)); await Vue.nextTick() }
 async function mountAutomation(t, { confirm = async () => true, run, readRun } = {}) {
-  const calls = { status: 0, schedules: 0, emails: [], actions: [], runReads: [] }
+  const calls = { status: 0, schedules: 0, emails: [], actions: [], runReads: [], savedSchedules: [] }
   const timers = new Map()
   const activated = []
   const deactivated = []
@@ -40,7 +40,7 @@ async function mountAutomation(t, { confirm = async () => true, run, readRun } =
       if (!held) { calls.emails.push({ ...query, signal: options.signal }); return Promise.resolve(result(query.page)) }
       return new Promise((resolve, reject) => calls.emails.push({ ...query, signal: options.signal, resolve: (total = 60) => resolve(result(query.page, total)), reject }))
     },
-    saveAutomationSchedule: async () => calls.actions.push('save'), retryEmailDelivery: async () => calls.actions.push('retry'),
+    saveAutomationSchedule: async (body, id) => { calls.actions.push('save'); calls.savedSchedules.push({ body, id }) }, retryEmailDelivery: async () => calls.actions.push('retry'),
     deleteAutomationSchedule: async () => calls.actions.push('delete'),
     runAutomationSchedule: async id => { calls.actions.push('run'); return run ? run(id) : { schedule_id: id, run_id: `run-${id}`, status: 'queued' } },
     getAutomationRun: async (id, options) => { calls.runReads.push({ id, signal: options.signal }); return readRun ? readRun(id, options) : { run_id: id, status: 'sent' } },
@@ -48,7 +48,7 @@ async function mountAutomation(t, { confirm = async () => true, run, readRun } =
   }
   Object.assign(bindings, automationHooks(bindings))
   const code = descriptor('AutomationView').scriptSetup.content.replace(/^import .*$/gm, '')
-  const setup = scriptFunction(...Object.keys(bindings), `${code}; return { loadDeliveries, changeDeliveryPage, deliveryPage, deliveries, deliveryTotal, deliveryLoading, deliverySearch, appliedDeliverySearch, searchDeliveries, clearDeliverySearch, scheduleSearch, appliedScheduleSearch, visibleSchedules, searchSchedules, clearScheduleSearch, pageCount, error, loadAll, retry, submit, submitConfiguration, remove, runNow, executions, runningScheduleIds, deliveryResolved, openDelivery, selectedDelivery, resolutionDirty, form, deliveryLabels }`)
+  const setup = scriptFunction(...Object.keys(bindings), `${code}; return { loadDeliveries, changeDeliveryPage, deliveryPage, deliveries, deliveryTotal, deliveryLoading, deliverySearch, appliedDeliverySearch, searchDeliveries, clearDeliverySearch, scheduleSearch, appliedScheduleSearch, visibleSchedules, searchSchedules, clearScheduleSearch, pageCount, error, loadAll, retry, submit, submitConfiguration, remove, runNow, executions, runningScheduleIds, deliveryResolved, openDelivery, selectedDelivery, resolutionDirty, form, deliveryLabels, editSchedule, resetForm, hasUnsavedChanges, recipientInputVisible, recipientDraft, recipientError, addRecipient, removeRecipient, cancelRecipientInput }`)
   let state
   const renderer = Vue.createRenderer({ createComment: () => ({}), createText: () => ({}), createElement: () => ({}), insert() {}, remove() {}, setText() {}, setElementText() {}, parentNode: () => null, nextSibling: () => null, patchProp() {} })
   const app = renderer.createApp({ setup() { state = setup(...Object.values(bindings)); return () => null } })
@@ -226,6 +226,62 @@ test('automation recipients appear once and keep accepted recipients after parti
   assert.doesNotMatch(html, /<small[^>]*>自定义主题/)
 })
 
+test('recipient tags normalize pasted addresses, deduplicate, remove and save an unfinished entry', async t => {
+  const { state, calls } = await mountAutomation(t)
+  state.recipientInputVisible.value = true
+  state.recipientDraft.value = ' ONE@example.com，two@example.com;one@example.com；three@example.com '
+  assert.equal(state.addRecipient(), true)
+  assert.deepEqual(state.form.recipients, ['one@example.com', 'two@example.com', 'three@example.com'])
+  assert.equal(state.recipientDraft.value, '')
+  assert.equal(state.recipientInputVisible.value, false)
+  assert.equal(state.hasUnsavedChanges.value, true)
+  state.removeRecipient('two@example.com')
+  state.recipientDraft.value = 'four@example.com'
+  await state.submit()
+  assert.deepEqual(calls.savedSchedules[0].body.recipients, ['one@example.com', 'three@example.com', 'four@example.com'])
+  assert.deepEqual(state.form.recipients, [])
+})
+
+test('empty, invalid and oversized recipient lists block saving without losing the draft', async t => {
+  const { state, calls } = await mountAutomation(t)
+  await state.submit()
+  assert.match(state.recipientError.value, /至少添加一个/)
+  assert.equal(state.recipientInputVisible.value, true)
+  for (const value of ['not-an-email', 'one@example.com two@example.com', 'a@@example.com', 'one@example.com，invalid', `${'a'.repeat(310)}@example.com`]) {
+    state.recipientDraft.value = value
+    await state.submit()
+    assert.match(state.recipientError.value, /有效的邮箱/)
+    assert.equal(state.recipientDraft.value, value)
+    assert.deepEqual(state.form.recipients, [])
+  }
+  state.form.recipients = Array.from({ length: 20 }, (_, i) => `user${i}@example.com`)
+  state.recipientDraft.value = 'extra@example.com'
+  await state.submit()
+  assert.match(state.recipientError.value, /最多添加 20/)
+  assert.equal(state.form.recipients.length, 20)
+  assert.equal(calls.savedSchedules.length, 0)
+  state.recipientDraft.value = 'USER0@example.com'
+  assert.equal(state.addRecipient(), true, 'an existing address does not exceed the limit')
+})
+
+test('editing and resetting recipients clear drafts and do not mutate saved schedules', async t => {
+  const { state } = await mountAutomation(t)
+  const saved = { schedule_id: 'saved', recipients: ['one@example.com', 'two@example.com'] }
+  state.recipientDraft.value = 'unfinished'
+  state.editSchedule(saved)
+  assert.deepEqual(state.form.recipients, saved.recipients)
+  assert.equal(state.recipientDraft.value, '')
+  state.removeRecipient('one@example.com')
+  assert.deepEqual(saved.recipients, ['one@example.com', 'two@example.com'])
+  state.recipientDraft.value = 'cancel@example.com'
+  state.cancelRecipientInput()
+  assert.equal(state.recipientDraft.value, '')
+  assert.deepEqual(state.form.recipients, ['two@example.com'])
+  state.resetForm()
+  assert.deepEqual(state.form.recipients, [])
+  assert.equal(state.recipientError.value, '')
+})
+
 test('legacy mail waiting for analysis remains visible without a resend action', async t => {
   const { state } = await mountAutomation(t)
   const html = await renderComponent('components/automation/AutomationDeliveryTable', {
@@ -306,6 +362,7 @@ test('automation mutations still refresh status, schedules and current email pag
   const { state, calls } = await mountAutomation(t)
   await state.changeDeliveryPage(2)
   await state.retry({ delivery_id: 'failed' })
+  state.form.recipients = ['one@example.com']
   await state.submit()
   await state.submitConfiguration()
   await state.runNow({ schedule_id: 'saved', name: 'saved' })

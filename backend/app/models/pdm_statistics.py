@@ -68,6 +68,7 @@ class PdmStatisticsQuery(BaseModel):
     document_kinds: list[PdmKind] = Field(min_length=1, max_length=2)
     start_date: date
     end_date: date
+    date_basis: Literal['plan', 'actual'] = 'plan'
     group_by: Literal['summary', 'project', 'profession'] = 'summary'
     equipment: PdmBranchFilters = Field(default_factory=PdmBranchFilters)
     drawing: PdmBranchFilters = Field(default_factory=PdmBranchFilters)
@@ -133,6 +134,7 @@ class PdmReportSummaries(BaseModel):
 class PdmStatisticsReport(BaseModel):
     start_date: date
     end_date: date
+    date_basis: Literal['plan', 'actual'] = 'plan'
     group_by: Literal['summary', 'project', 'profession']
     summaries: PdmReportSummaries
     tables: list[PdmSummaryTable]

@@ -195,12 +195,17 @@ test('cached tables disconnect and restore exactly one ResizeObserver', () => {
   }
 })
 
-test('business tables use shared Naive controls while chart data retains accessible semantic tables', () => {
+test('business tables use shared Naive controls except dedicated semantic reports and chart data', () => {
   let count = 0
   for (const folder of ['views', 'components']) {
     const dir = new URL(`../src/${folder}/`, import.meta.url)
     for (const name of readdirSync(dir, { recursive: true }).filter((name) => name.endsWith('.vue'))) {
       let source = readFileSync(new URL(name, dir), 'utf8')
+      if (folder === 'components' && name === 'pdm/PdmSummaryTable.vue') {
+        // The supplied PDM report needs merged headers; pdm-statistics tests cover its rendering.
+        assert.doesNotMatch(source, /v-content-table/, name)
+        continue
+      }
       if (folder === 'views' && name === 'WeldingHomeView.vue') {
         const disclosures = [...source.matchAll(/<details\b[\s\S]*?<\/details>/g)]
         assert.equal(disclosures.length, 3)

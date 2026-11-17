@@ -11,13 +11,31 @@ const props = withDefaults(defineProps<{
   error?: string
   pending?: boolean
   querying?: boolean
+  kind?: PdmDocumentKind
+  fixedGroupBy?: PdmFilters['groupBy']
 }>(), { options: () => ({}), status: 'unavailable', error: '', pending: false, querying: false })
 const emit = defineEmits<{ submit: [filters: PdmFilters]; retry: [] }>()
 const id = useId()
 const validationError = shallowRef('')
-const visibleKinds = computed(() => pdmDocumentKinds.filter(item => filters.value.documentKinds.includes(item.value)))
+const visibleKinds = computed(() => pdmDocumentKinds.filter(item => props.kind ? item.value === props.kind : filters.value.documentKinds.includes(item.value)))
 const period = computed<[string, string] | null>(() => filters.value.startDate && filters.value.endDate ? [filters.value.startDate, filters.value.endDate] : null)
 const staticFields = new Set<PdmFilterField>(['types', 'manufactory'])
+const groupingHint = computed(() => filters.value.groupBy === 'project'
+  ? '每个所选项目生成一张表，表内按专业展开；项目未选时，按当前范围内的项目分别生成。点击查询后更新。'
+  : filters.value.groupBy === 'profession'
+    ? '每个所选专业生成一张表，表内按项目展开；专业未选时，按当前范围内的固定专业分别生成。点击查询后更新。'
+    : '')
+
+function fieldsFor(kind: PdmDocumentKind) {
+  const fields = [...pdmFilterFields[kind]]
+  if (filters.value.groupBy === 'profession') [fields[1], fields[2]] = [fields[2], fields[1]]
+  return fields
+}
+function fieldLabel(field: { key: PdmFilterField; label: string }) {
+  if (filters.value.groupBy === 'summary' || !['projects', 'professions'].includes(field.key)) return field.label
+  const outer = filters.value.groupBy === 'project' ? 'projects' : 'professions'
+  return `${field.label}（${field.key === outer ? '每项一张表' : '表内明细'}）`
+}
 
 function optionsFor(kind: PdmDocumentKind, field: PdmFilterField): PdmOption[] {
   if (field === 'types') return pdmTypeOptions[kind]
@@ -32,7 +50,7 @@ function setField(kind: PdmDocumentKind, field: PdmFilterField, values: string[]
   const next = clonePdmFilters(filters.value)
   next[kind][field] = [...values]
   if (field === 'types' || field === 'projects') {
-    for (const key of ['professions', 'levels', 'areas', 'manufactory', 'batches', 'classifications', 'weights'] as const) next[kind][key] = []
+    for (const key of ['levels', 'areas', 'manufactory', 'batches', 'classifications', 'weights'] as const) next[kind][key] = []
     next[kind].responsiblePeople = null
   }
   filters.value = next
@@ -52,24 +70,30 @@ function submit() {
 
 <template>
   <form class="pdm-filters" aria-label="PDM资料筛选" :aria-busy="status === 'loading'" @submit.prevent="submit">
-    <div class="pdm-filters__common">
-      <NFormItem label="文档类型" :label-for="`${id}-kinds`" :show-feedback="false">
+    <div class="pdm-filters__common" :class="{ 'pdm-filters__common--single': kind, 'pdm-filters__common--fixed': kind && fixedGroupBy }">
+      <NFormItem v-if="!kind" label="文档类型" :label-for="`${id}-kinds`" :show-feedback="false">
         <NSelect :value="filters.documentKinds" :options="pdmDocumentKinds.slice()" multiple filterable :clearable="false" size="large" :max-tag-count="1" :input-props="{ id: `${id}-kinds`, 'aria-label': '文档类型' }" @update:value="setKinds" />
       </NFormItem>
-      <NFormItem label="统计方式" :show-feedback="false">
+      <NFormItem v-if="!fixedGroupBy" label="统计方式" :show-feedback="false">
         <NRadioGroup :value="filters.groupBy" size="large" aria-label="统计方式" @update:value="value => { if (value === 'summary' || value === 'project' || value === 'profession') filters = { ...filters, groupBy: value } }">
           <NRadioButton value="summary">统计所有数据</NRadioButton><NRadioButton value="project">按项目统计</NRadioButton><NRadioButton value="profession">按专业统计</NRadioButton>
+        </NRadioGroup>
+      </NFormItem>
+      <NFormItem label="日期依据" :show-feedback="false">
+        <NRadioGroup :value="filters.dateBasis" size="large" aria-label="日期依据" @update:value="value => { if (value === 'plan' || value === 'actual') filters = { ...filters, dateBasis: value } }">
+          <NRadioButton value="plan">计划日期</NRadioButton><NRadioButton value="actual">实际日期</NRadioButton>
         </NRadioGroup>
       </NFormItem>
       <NFormItem class="pdm-filters__period" label="时间段" :show-feedback="false">
         <NDatePicker :formatted-value="period" type="daterange" value-format="yyyy-MM-dd" format="yyyy-MM-dd" size="large" clearable :input-readonly="false" start-placeholder="开始日期" end-placeholder="结束日期" :status="validationError ? 'error' : undefined" @update:formatted-value="setPeriod" />
       </NFormItem>
     </div>
+    <p v-if="groupingHint" class="pdm-filters__grouping" role="status">{{ groupingHint }}</p>
 
     <section v-for="kind in visibleKinds" :key="kind.value" class="pdm-filters__branch" :aria-labelledby="`${id}-${kind.value}`">
       <h2 :id="`${id}-${kind.value}`">{{ kind.label }}</h2>
       <div class="pdm-filters__fields">
-        <NFormItem v-for="field in pdmFilterFields[kind.value]" :key="field.key" :label="field.label" :label-for="`${id}-${kind.value}-${field.key}`" :show-feedback="false">
+        <NFormItem v-for="field in fieldsFor(kind.value)" :key="field.key" :label="fieldLabel(field)" :label-for="`${id}-${kind.value}-${field.key}`" :show-feedback="false">
           <NSelect :value="filters[kind.value][field.key]" :options="optionsFor(kind.value, field.key)" multiple filterable clearable size="large" :max-tag-count="1"
             :disabled="!staticFields.has(field.key) && status !== 'ready'" :loading="!staticFields.has(field.key) && status === 'loading'"
             :placeholder="!staticFields.has(field.key) && status !== 'ready' ? status === 'loading' ? '正在加载' : status === 'error' ? '选项加载失败' : '待接入 PDM' : field.key === 'responsiblePeople' ? '请选择负责人' : '全部'"
@@ -85,13 +109,16 @@ function submit() {
     <NAlert v-if="status === 'unavailable'" type="info" :show-icon="false">PDM 数据源尚未启用，请在数据库配置中启用文件库连接。</NAlert>
     <NAlert v-else-if="status === 'error'" type="error" title="筛选选项加载失败"><span>{{ error }}</span><NButton text @click="emit('retry')">重试</NButton></NAlert>
     <p v-if="validationError" class="pdm-filters__error" role="alert">{{ validationError }}</p>
-    <footer class="pdm-filters__footer"><span v-if="pending" role="status">筛选条件已修改，查询后更新结果</span><NButton attr-type="submit" type="primary" size="large" :disabled="status !== 'ready'" :loading="querying">查询</NButton></footer>
+    <footer class="pdm-filters__footer"><span v-if="pending" role="status">筛选条件已修改，查询后更新结果</span><slot name="actions" /><NButton attr-type="submit" type="primary" size="large" :disabled="status !== 'ready'" :loading="querying">查询</NButton></footer>
   </form>
 </template>
 
 <style scoped>
-.pdm-filters{display:grid;gap:var(--space-4);padding:var(--space-4);border:1px solid var(--theme-border-color);border-radius:var(--report-panel-radius);background:rgb(var(--container-bg-color));}
-.pdm-filters__common{display:grid;grid-template-columns:minmax(200px,1fr) auto minmax(300px,1.4fr);gap:var(--space-4);align-items:start}
+.pdm-filters{display:grid;gap:var(--space-4)}
+.pdm-filters__common{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-4);align-items:start}
+.pdm-filters__common--single .pdm-filters__period{grid-column:1/-1}
+.pdm-filters__common--fixed{grid-template-columns:auto minmax(300px,1fr)}
+.pdm-filters__common--fixed .pdm-filters__period{grid-column:auto}
 .pdm-filters__fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--space-4)}
 .pdm-filters__branch{min-width:0;padding-top:var(--space-4);border-top:1px solid var(--theme-divider-color)}
 .pdm-filters__branch h2{margin:0 0 var(--space-3);font-size:var(--font-section-title);color:var(--text-color-1);font-weight:600}
@@ -102,4 +129,5 @@ function submit() {
 .pdm-filters__footer{display:flex;justify-content:flex-end;align-items:center;gap:var(--space-4)}
 .pdm-filters__footer>span{margin-right:auto;color:rgb(var(--warning-color));font-size:var(--font-control)}
 .pdm-filters__error{margin:0;color:rgb(var(--error-color));font-size:var(--font-control)}
+.pdm-filters__grouping{margin:0;color:var(--text-color-2);font-size:var(--font-control)}
 </style>
