@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, h, ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { useBoolean } from '@sa/hooks';
 import { SimpleScrollbar } from '@sa/materials';
@@ -9,10 +9,8 @@ import { useRouteStore } from '@/store/modules/route';
 import { useThemeStore } from '@/store/modules/theme';
 import { useRouterPush } from '@/hooks/common/router';
 import { useMenu } from '../context';
-import AppIcon from '@/components/AppIcon.vue';
 import { useDeviceSelection } from '@/composables/useDeviceSelection.ts';
 import GlobalLogo from '../../global-logo/index.vue';
-import { productionGroups } from '@/utils/productionLines.ts';
 
 defineOptions({
   name: 'VerticalMixMenu'
@@ -24,24 +22,13 @@ const themeStore = useThemeStore();
 const routeStore = useRouteStore();
 const { routerPushByKeyWithMetaQuery } = useRouterPush();
 const { bool: drawerVisible, setBool: setDrawerVisible } = useBoolean();
-const { deviceSelection, switching, switchDevice, loadDevices } = useDeviceSelection();
+const { deviceSelection, switching, loadDevices } = useDeviceSelection();
 const { selectedKey } = useMenu();
 
-const activeDevice = computed(() => deviceSelection.items.find(item => item.id === deviceSelection.id));
-const deviceMenus = computed(() => productionGroups(deviceSelection.items).map(group => ({
-  key: `type:${group.id}`,
-  label: group.name,
-  icon: () => h(AppIcon, { name: group.id === 'cutting' ? 'zap' : 'factory', size: 20, tone: 'current' }),
-  children: group.items.map(item => ({
-    key: item.id,
-    label: item.name,
-    disabled: switching.value,
-    icon: () => h(AppIcon, { name: group.id === 'cutting' ? 'zap' : 'factory', size: 20, tone: 'current' })
-  }))
-})));
 const expandedTypes = ref(['type:cutting', 'type:welding']);
+const firstProductionKey = computed(() => routeStore.primaryMenus.find(menu => menu.key.startsWith('type:'))?.key);
 
-const showDrawer = computed(() => drawerVisible.value || appStore.mixSiderFixed);
+const showDrawer = computed(() => routeStore.secondaryMenus.length > 0 && (drawerVisible.value || appStore.mixSiderFixed));
 
 function handleResetActiveMenu() {
   setDrawerVisible(false);
@@ -72,27 +59,32 @@ watch(
       <DarkModeContainer id="admin-device-rail" class="device-rail h-full flex-col-stretch" :style="{ width: (appStore.siderCollapse ? themeStore.sider.mixCollapsedWidth : Math.max(themeStore.sider.mixWidth, themeStore.sider.mixChildMenuWidth)) + 'px' }" @mouseenter="setDrawerVisible(true)" @focusin="setDrawerVisible(true)">
         <GlobalLogo :show-title="false" :style="{ height: themeStore.header.height + 'px' }" />
         <SimpleScrollbar>
-          <nav aria-label="切换产线设备" :aria-busy="switching || deviceSelection.loading">
+          <nav aria-label="公共功能与生产产线" :aria-busy="switching || deviceSelection.loading">
             <NMenu
               v-model:expanded-keys="expandedTypes"
               mode="vertical"
-              :value="deviceSelection.id"
-              :options="deviceMenus"
+              :value="routeStore.primaryKey"
+              :options="routeStore.primaryMenus"
+              :node-props="option => ({ class: firstProductionKey && (option.key === firstProductionKey || option.key === 'pdm-statistics') ? 'menu-scope-divider' : undefined })"
               :collapsed="appStore.siderCollapse"
               :collapsed-width="themeStore.sider.mixCollapsedWidth"
               :collapsed-icon-size="20"
               :indent="18"
-              @update:value="switchDevice"
+              @update:value="routerPushByKeyWithMetaQuery"
             />
             <span v-if="deviceSelection.loading" class="device-rail-state" role="status">加载中…</span>
             <div v-else-if="deviceSelection.error" class="device-rail-state" role="alert" :title="deviceSelection.error">加载失败<NButton attr-type="button" @click="loadDevices()">重试</NButton></div>
             <span v-else-if="deviceSelection.ready && !deviceSelection.items.length" class="device-rail-state" role="status">暂无设备</span>
           </nav>
         </SimpleScrollbar>
+        <NMenu v-if="routeStore.settingsMenu" class="shared-settings" mode="vertical" :value="routeStore.primaryKey"
+          :options="[{ ...routeStore.settingsMenu, children: undefined }]" :collapsed="appStore.siderCollapse"
+          :collapsed-width="themeStore.sider.mixCollapsedWidth" :collapsed-icon-size="20" :indent="18"
+          @update:value="routerPushByKeyWithMetaQuery" />
       </DarkModeContainer>
       <div
         class="relative h-full transition-width-300"
-        :style="{ width: appStore.mixSiderFixed ? themeStore.sider.mixChildMenuWidth + 'px' : '0px' }"
+        :style="{ width: appStore.mixSiderFixed && routeStore.secondaryMenus.length ? themeStore.sider.mixChildMenuWidth + 'px' : '0px' }"
       >
         <DarkModeContainer
           class="device-menu absolute-lt h-full flex-col-stretch nowrap-hidden shadow-sm transition-all-300"
@@ -101,7 +93,7 @@ watch(
           :aria-hidden="!showDrawer || undefined"
         >
           <header class="device-menu-heading flex-y-center justify-between px-12px" :style="{ height: themeStore.header.height + 'px' }">
-            <h2 class="device-menu-title" :title="activeDevice?.name">{{ activeDevice?.name || '产线设备' }}</h2>
+            <h2 class="device-menu-title" :title="routeStore.section === 'settings' ? '系统设置' : routeStore.activeLine?.name">{{ routeStore.section === 'settings' ? '系统设置' : routeStore.activeLine?.name || '产线功能' }}</h2>
             <PinToggler
               :pin="appStore.mixSiderFixed"
               @click="appStore.toggleMixSiderFixed"
@@ -112,7 +104,7 @@ watch(
               v-model:expanded-keys="expandedKeys"
               mode="vertical"
               :value="selectedKey"
-              :options="routeStore.menus"
+              :options="routeStore.secondaryMenus"
               :indent="18"
               @update:value="routerPushByKeyWithMetaQuery"
             />
@@ -124,6 +116,8 @@ watch(
 </template>
 
 <style scoped>
+.shared-settings { flex-shrink:0; border-top:1px solid var(--theme-border-color); }
+.device-rail :deep(.menu-scope-divider) { margin-top:var(--space-3); padding-top:var(--space-3); border-top:1px solid var(--theme-border-color); }
 .device-rail { flex-shrink:0; border-right:1px solid var(--theme-border-color); }
 .device-rail :deep(.soybean-brand) { padding:0; }
 .device-rail-state button:focus-visible { outline:2px solid rgb(var(--primary-color)); outline-offset:2px; }

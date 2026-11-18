@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 
 LINE_TYPES = {
-    'cutting': {'type_name': '切割', 'home_path': '/admin/home',
+    'cutting': {'type_name': '切割', 'home_path': '/admin/cutting/home',
                 'capabilities': ['reports', 'alarms', 'dispatch', 'settings'],
                 'api_modules': ('cutting', 'downloads', 'alarms', 'automation', 'workshop',
                                 'leadership-report', 'equipment-report', 'energy-report', 'analysis',

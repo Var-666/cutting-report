@@ -11,16 +11,15 @@ export function weldingQuery<T extends object>(values: T): Partial<T> {
   return Object.fromEntries(Object.entries(values).filter(([, value]) => value !== '' && value !== null && value !== undefined)) as Partial<T>
 }
 
-export function getWeldingReport<K extends WeldingReportKind>(kind: K, values: WeldingQuery, signal?: AbortSignal, force = false) {
+export function getWeldingReport<K extends WeldingReportKind>(kind: K, values: WeldingQuery, signal?: AbortSignal, force = false, { lineId = getDeviceId(), onPreparing, refresh = force }: { lineId?: string; onPreparing?: () => void; refresh?: boolean } = {}) {
   const filters = { anomalies_only: false, page: 1, page_size: 20, sort_by: 'time', descending: true, ...weldingQuery(values) }
   if (kind === 'dashboard') Object.assign(filters, { page: 1, page_size: 10, sort_by: 'time', descending: true })
   const key = new URLSearchParams(Object.entries(filters).map(([name, value]) => [name, String(value)]))
   key.sort()
-  return reportCache.read(`welding:${getDeviceId()}:${kind}:${key}`, sharedSignal => readWeldingReport(kind, values, sharedSignal, force), { signal, force, ttl: 3000 })
+  return reportCache.read(`welding:${lineId}:${kind}:${key}`, sharedSignal => readWeldingReport(kind, values, sharedSignal, refresh, lineId, onPreparing), { signal, force, ttl: 3000 })
 }
 
-async function readWeldingReport<K extends WeldingReportKind>(kind: K, values: WeldingQuery, signal?: AbortSignal, force = false) {
-  const lineId = getDeviceId()
+async function readWeldingReport<K extends WeldingReportKind>(kind: K, values: WeldingQuery, signal: AbortSignal | undefined, force: boolean, lineId: string, onPreparing?: () => void) {
   if (!lineId) throw new Error('请先选择焊接产线')
   const query = new URLSearchParams(Object.entries({ ...weldingQuery(values), ...(force ? { refresh: 'true' } : {}) }).map(([key, value]) => [key, String(value)]))
   const deadline = Date.now() + 180000
@@ -35,6 +34,7 @@ async function readWeldingReport<K extends WeldingReportKind>(kind: K, values: W
       const error = caught as ApiError
       if (!error || error.status !== 503 || error.code !== 'snapshot_refresh_busy' || Date.now() >= deadline) throw caught
       preparingError = error
+      onPreparing?.()
       // A forced request may already have refreshed one dashboard period; waiting must reuse it.
       query.delete('refresh')
       await new Promise<void>((resolve, reject) => {

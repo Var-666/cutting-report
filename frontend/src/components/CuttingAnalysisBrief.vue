@@ -120,7 +120,7 @@ const selectedProject = computed(() => selected.value?.references.length === 1
   && selected.value.references[0]?.kind === 'project'
   ? evidenceRows.value.find(row => row.finding === selected.value) : undefined)
 const evidenceColumns = [
-  { key: 'c0', title: '关联对象', align: 'left' },
+  { key: 'c0', title: '关联对象', align: 'left', ellipsis: false },
   { key: 'c1', title: '关联记录', align: 'left', ellipsis: false },
   { key: 'c2', title: '任务数', align: 'right' },
   { key: 'c3', title: '关键数据', align: 'left' },
@@ -215,7 +215,7 @@ function openTask(reference: BusinessReference) {
         </template>
         <AppReportTable :columns="evidenceColumns" :items="evidenceRows" :paginate="false"
           :row-key="row => row.finding.candidate_id" aria-label="分析关联记录">
-          <template #c0="{ row }"><span class="brief-record-label">{{ row.label }}</span></template>
+          <template #c0="{ row }">{{ row.label }}</template>
           <template #c1="{ row }"><NButton text type="info" @click="selected = row.finding">查看记录（{{ row.finding.reference_count }} 项）</NButton></template>
           <template #c2="{ row }">{{ row.count }}</template>
           <template #c3="{ row }">{{ row.totals }}</template>
@@ -305,7 +305,7 @@ function openTask(reference: BusinessReference) {
 .brief-card-heading { display:flex; align-items:center; flex-wrap:wrap; gap:6px 8px; }
 .brief-card-heading .app-icon { flex:none; color:var(--brief-accent); }
 .brief-card-heading h4,.brief-action h4 { margin:0; color:var(--text-color-1); font-size:14px; font-weight:700; }
-.brief-status,.brief-record-label {
+.brief-status {
   padding:2px 7px; border-radius:5px; background:color-mix(in srgb, var(--brief-accent) 12%, var(--analysis-surface));
   color:color-mix(in srgb, var(--brief-accent) 68%, var(--text-color-1));
   font-size:var(--font-auxiliary); font-weight:600; white-space:nowrap;

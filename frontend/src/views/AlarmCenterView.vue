@@ -1,7 +1,6 @@
 <script setup lang="ts">
-import { NCollapse, NCollapseItem, NTag, NRadioGroup, NRadioButton } from 'naive-ui'
+import { NCollapse, NCollapseItem, NTag } from 'naive-ui'
 import AppReportTable from '../components/AppReportTable.vue'
-import DatabaseMonitorPanel from '../components/DatabaseMonitorPanel.vue'
 import type { AlarmIncident, AlarmIncidentSummary, AlarmReport, AlarmStatus } from '../types/alarms'
 
 import { toError } from '../utils/errors'
@@ -14,7 +13,6 @@ import { formatChineseDateTime } from '../utils/dateDisplay.ts'
 import { formatDeviceDisplay } from '../utils/deviceDisplay.ts'
 
 const status = ref<AlarmStatus | null>(null)
-const activePanel = ref('equipment')
 const incidents = ref<AlarmIncident[]>([])
 const reports = ref<AlarmReport[]>([])
 const reportItems = ref<AlarmReport[]>([])
@@ -188,7 +186,7 @@ function stopRefreshTimer() {
 
 function scheduleRefresh() {
   stopRefreshTimer()
-  if (!pageActive || activePanel.value !== 'equipment') return
+  if (!pageActive) return
   refreshTimer = window.setTimeout(async () => {
     refreshTimer = null
     await loadData()
@@ -197,7 +195,7 @@ function scheduleRefresh() {
 }
 
 async function loadData({ incidentPage: targetIncidentPage = incidentPage.value, reportPage: targetReportPage = reportPage.value }: { incidentPage?: number; reportPage?: number } = {}) {
-  if (!pageActive || activePanel.value !== 'equipment' || requestController) return
+  if (!pageActive || requestController) return
   const controller = new AbortController()
   const sequence = ++requestSequence
   requestController = controller
@@ -236,17 +234,6 @@ async function loadData({ incidentPage: targetIncidentPage = incidentPage.value,
       loading.value = false
     }
   }
-}
-
-async function selectPanel(value: string) {
-  if (activePanel.value === value) return
-  activePanel.value = value
-  stopRefreshTimer()
-  requestSequence += 1
-  requestController?.abort()
-  requestController = null
-  loading.value = false
-  if (value === 'equipment') { await loadData(); scheduleRefresh() }
 }
 
 onMounted(async () => {
@@ -292,11 +279,6 @@ const reportTableColumns = [
 
 <template>
   <div class="alarm-page">
-    <NRadioGroup :value="activePanel" name="alarm-category" aria-label="告警类别" @update:value="selectPanel($event as string)">
-      <NRadioButton value="equipment">设备告警</NRadioButton><NRadioButton value="database">数据库监控</NRadioButton>
-    </NRadioGroup>
-    <DatabaseMonitorPanel v-if="activePanel === 'database'" />
-    <template v-else>
     <section class="page-hero report-hero alarm-hero" :style="{ '--alarm-hero-image': `url(${heroImage})` }">
       <div class="alarm-hero__copy">
         <p class="eyebrow">INTELLIGENT ALARM CENTER</p>
@@ -469,7 +451,6 @@ const reportTableColumns = [
       </div>
 
     </section>
-    </template>
   </div>
 </template>
 

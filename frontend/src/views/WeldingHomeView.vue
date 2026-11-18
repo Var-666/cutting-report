@@ -102,7 +102,7 @@ onBeforeUnmount(() => { disposed = true; generation += 1; clearTimeout(timer); c
 <template>
   <div class="welding-home">
     <header class="welding-home-heading">
-      <h1>生产指挥中心</h1>
+      <h1>产线概览</h1>
       <div class="welding-home-actions">
         <time :datetime="today">{{ displayDate }}</time>
         <NButton size="small" :disabled="loading || !sourceEnabled" :loading="loading" @click="load(true)"><template #icon><AppIcon name="activity" :size="16" tone="current" /></template>刷新概览</NButton>

@@ -93,9 +93,9 @@ onBeforeUnmount(() => {
   <div class="automation-page management-page">
     <ManagementPageHero
       eyebrow="REPORT AUTOMATION"
-      title="报表自动化"
+      title="报表推送"
       description="按计划生成生产报表，自动发送邮件，并追踪每次发送结果。"
-      icon="activity"
+      icon="send"
       status-label="SMTP 服务"
       :status-value="status ? status.smtp?.configured ? '邮件参数已配置' : '等待配置' : loading ? '正在读取' : '状态待检查'"
       :status-note="status?.smtp?.configured ? `${status.smtp.host}:${status.smtp.port}` : '配置发件服务器后即可发送报表'"
@@ -105,7 +105,7 @@ onBeforeUnmount(() => {
     <div v-if="message" class="automation-message success" role="status" aria-live="polite">{{ message }}</div>
     <div v-if="error" class="automation-message error" role="alert">{{ error }}，请检查配置或稍后重试。</div>
 
-    <section class="automation-kpis" aria-label="报表自动化概况" :aria-busy="loading">
+    <section class="automation-kpis" aria-label="报表推送概况" :aria-busy="loading">
       <article><span class="kpi-icon"><AppIcon name="calendar" tone="muted" :size="20" /></span><div><span>已启用计划</span><strong>{{ status ? status.summary?.schedule_enabled || 0 : '—' }}</strong></div></article>
       <article><span class="kpi-icon"><AppIcon name="clock" tone="muted" :size="20" /></span><div><span>等待 / 重试</span><strong>{{ status ? status.summary?.delivery_pending || 0 : '—' }}</strong></div></article>
       <article><span class="kpi-icon"><AppIcon name="send" tone="muted" :size="20" /></span><div><span>已发送</span><strong>{{ status ? status.summary?.delivery_sent || 0 : '—' }}</strong></div></article>

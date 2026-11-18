@@ -185,7 +185,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="min-h-500px flex-col-stretch gap-16px overflow-hidden bg-layout lt-sm:overflow-auto">
     <header class="home-heading">
-      <h1>生产指挥中心</h1>
+      <h1>产线概览</h1>
       <time :datetime="reportDate">{{ formatChineseDate(reportDate) }}</time>
     </header>
 

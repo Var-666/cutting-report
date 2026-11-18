@@ -21,10 +21,10 @@ function useMixMenu() {
   const { selectedKey } = useMenu();
   const { routerPushByKeyWithMetaQuery } = useRouterPush();
 
-  const allMenus = computed<App.Global.Menu[]>(() => routeStore.menus);
+  const allMenus = computed<App.Global.Menu[]>(() => routeStore.navigationMenus);
 
   const firstLevelMenus = computed<App.Global.Menu[]>(() =>
-    routeStore.menus.map(menu => {
+    routeStore.navigationMenus.map(menu => {
       const { children: _, ...rest } = menu;
 
       return rest;
@@ -38,7 +38,7 @@ function useMixMenu() {
   }
 
   function getActiveFirstLevelMenuKey() {
-    const [firstLevelRouteName] = routeStore.getSelectedMenuKeyPath(selectedKey.value);
+    const [firstLevelRouteName] = routeStore.getSelectedMenuKeyPath(selectedKey.value, routeStore.navigationMenus);
 
     setActiveFirstLevelMenuKey(firstLevelRouteName);
   }
@@ -72,7 +72,7 @@ function useMixMenu() {
   }
 
   function getActiveSecondLevelMenuKey() {
-    const secondLevelRouteName = routeStore.getSelectedMenuKeyPath(selectedKey.value)[1] || '';
+    const secondLevelRouteName = routeStore.getSelectedMenuKeyPath(selectedKey.value, routeStore.navigationMenus)[1] || '';
 
     setActiveSecondLevelMenuKey(secondLevelRouteName);
   }
@@ -132,7 +132,7 @@ function useMixMenu() {
   }
 
   watch(
-    () => route.name,
+    [() => route.name, () => routeStore.navigationMenus],
     () => {
       getActiveFirstLevelMenuKey();
       // if there are child level menus, get the active second level menu key

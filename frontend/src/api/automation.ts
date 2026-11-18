@@ -4,23 +4,26 @@ import type { AutomationConfiguration, AutomationSchedule, DeliveryResolutionReq
 import type { Items, Page, ReadOptions } from '../types/api'
 import { request } from './client.ts'
 
+const headers = { 'X-Production-Line': '' }
+
 export function getAutomationStatus() {
-  return request<AutomationStatus>('/api/v1/automation/status')
+  return request<AutomationStatus>('/api/v1/automation/status', { headers })
 }
 
 export function getAutomationConfiguration() {
-  return request<AutomationConfiguration>('/api/v1/automation/configuration')
+  return request<AutomationConfiguration>('/api/v1/automation/configuration', { headers })
 }
 
 export function saveAutomationConfiguration(payload: AutomationConfigurationRequest) {
   return request<SaveResult>('/api/v1/automation/configuration', {
+    headers,
     method: 'PUT',
     body: JSON.stringify(payload),
   })
 }
 
 export function listAutomationSchedules() {
-  return request<Items<AutomationSchedule>>('/api/v1/automation/schedules')
+  return request<Items<AutomationSchedule>>('/api/v1/automation/schedules', { headers })
 }
 
 export function saveAutomationSchedule(payload: SchedulePayload, scheduleId = '') {
@@ -28,6 +31,7 @@ export function saveAutomationSchedule(payload: SchedulePayload, scheduleId = ''
     ? `/api/v1/automation/schedules/${encodeURIComponent(scheduleId)}`
     : '/api/v1/automation/schedules'
   return request<AutomationSchedule>(url, {
+    headers,
     method: scheduleId ? 'PUT' : 'POST',
     body: JSON.stringify(payload),
   })
@@ -35,38 +39,42 @@ export function saveAutomationSchedule(payload: SchedulePayload, scheduleId = ''
 
 export function deleteAutomationSchedule(scheduleId: string) {
   return request<Deleted>(`/api/v1/automation/schedules/${encodeURIComponent(scheduleId)}`, {
+    headers,
     method: 'DELETE',
   })
 }
 
 export function runAutomationSchedule(scheduleId: string) {
   return request<ScheduledRun>(`/api/v1/automation/schedules/${encodeURIComponent(scheduleId)}/run`, {
+    headers,
     method: 'POST',
   })
 }
 
 export function getAutomationRun(runId: string, { signal }: ReadOptions = {}) {
-  return request<ScheduledRun>(`/api/v1/automation/runs/${encodeURIComponent(runId)}`, { signal })
+  return request<ScheduledRun>(`/api/v1/automation/runs/${encodeURIComponent(runId)}`, { signal, headers })
 }
 
 export function listEmailDeliveries({ page = 1, pageSize = 20, search = '' } = {}, { signal }: ReadOptions = {}) {
   const query = new URLSearchParams({ page: String(page), page_size: String(pageSize) })
   if (search.trim()) query.set('search', search.trim())
-  return request<Page<EmailDelivery>>(`/api/v1/automation/deliveries?${query}`, { signal })
+  return request<Page<EmailDelivery>>(`/api/v1/automation/deliveries?${query}`, { signal, headers })
 }
 
 export function retryEmailDelivery(deliveryId: string) {
   return request<Queued>(`/api/v1/automation/deliveries/${encodeURIComponent(deliveryId)}/retry`, {
+    headers,
     method: 'POST',
   })
 }
 
 export function resolveEmailDelivery(deliveryId: string, payload: DeliveryResolutionRequest) {
   return request<Resolved>(`/api/v1/automation/deliveries/${encodeURIComponent(deliveryId)}/resolve`, {
+    headers,
     method: 'POST', body: JSON.stringify(payload),
   })
 }
 
 export function listEmailDeliveryResolutions(deliveryId: string, { signal }: ReadOptions = {}) {
-  return request<Items<EmailResolution>>(`/api/v1/automation/deliveries/${encodeURIComponent(deliveryId)}/resolutions`, { signal })
+  return request<Items<EmailResolution>>(`/api/v1/automation/deliveries/${encodeURIComponent(deliveryId)}/resolutions`, { signal, headers })
 }

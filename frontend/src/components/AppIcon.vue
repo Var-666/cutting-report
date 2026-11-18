@@ -71,6 +71,9 @@ const iconStyle = computed(() => ({
     <template v-else-if="name === 'ruler'"><path d="M3 8v8h18V8Z"/><path d="M7 8v4M11 8v2M15 8v4M19 8v2"/></template>
     <template v-else-if="name === 'clock'"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></template>
     <template v-else-if="name === 'factory'"><path d="M3 21V9l6 3V8l6 4V5h6v16Z"/><path d="M7 17h2M12 17h2M17 17h2"/></template>
+    <!-- Laser Cutter and Welding line icons from Icon Pantry (https://iconpantry.com/license). -->
+    <template v-else-if="name === 'laser-cutter'"><path d="M8 2h8v5l-2 3h-4L8 7Zm4 8v7M2 19.5h8m4 0h8M8.5 16 7 14.5m8.5 1.5 1.5-1.5"/></template>
+    <template v-else-if="name === 'welding-torch'"><path d="M3 6.5 6.5 3l6 6L9 12.5Zm8 4.5 3.5 3.5M10 18h12m-4.5-5.5 2-2m-1.5 5h3m-6-4V9"/></template>
     <template v-else-if="name === 'zap'"><path d="m13 2-9 12h8l-1 8 9-12h-8Z"/></template>
     <template v-else-if="name === 'wind'"><path d="M3 8h10a3 3 0 1 0-3-3M3 12h15a3 3 0 1 1-3 3M3 16h6"/></template>
     <template v-else-if="name === 'trend'"><path d="M3 20V10M3 20h18"/><path d="m6 15 4-4 3 3 6-7"/><path d="M15 7h4v4"/></template>

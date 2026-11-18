@@ -23,17 +23,18 @@ const { selectedKey } = useMenu();
 const inverted = computed(() => !themeStore.darkMode && themeStore.sider.inverted);
 
 const expandedKeys = ref<string[]>([]);
+const firstProductionKey = computed(() => routeStore.primaryMenus.find(menu => menu.key.startsWith('type:'))?.key);
 
 function updateExpandedKeys() {
   if (appStore.siderCollapse || !selectedKey.value) {
     expandedKeys.value = [];
     return;
   }
-  expandedKeys.value = routeStore.getSelectedMenuKeyPath(selectedKey.value);
+  expandedKeys.value = routeStore.getSelectedMenuKeyPath(selectedKey.value, routeStore.navigationMenus);
 }
 
 watch(
-  () => route.name,
+  [() => route.name, () => routeStore.navigationMenus, () => appStore.siderCollapse],
   () => {
     updateExpandedKeys();
   },
@@ -51,7 +52,8 @@ watch(
         :collapsed="appStore.siderCollapse"
         :collapsed-width="themeStore.sider.collapsedWidth"
         :collapsed-icon-size="22"
-        :options="routeStore.menus"
+        :options="routeStore.navigationMenus"
+        :node-props="option => ({ class: firstProductionKey && (option.key === firstProductionKey || option.key === 'pdm-statistics') ? 'menu-scope-divider' : undefined })"
         :inverted="inverted"
         :indent="18"
         @update:value="routerPushByKeyWithMetaQuery"
@@ -60,4 +62,6 @@ watch(
   </Teleport>
 </template>
 
-<style scoped></style>
+<style scoped>
+:deep(.menu-scope-divider) { margin-top:var(--space-3); padding-top:var(--space-3); border-top:1px solid var(--theme-border-color); }
+</style>

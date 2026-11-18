@@ -13,7 +13,7 @@ import { parseWeldingRouteQuery } from '../utils/weldingRouteState.ts'
 export const reportPreload = reactive({ identity: '', items: [] as { key: string; label: string; status: string }[] })
 let generation = 0
 let completion: Promise<PromiseSettledResult<void>[]> | null = null
-const weldingPages: Record<string, WeldingReportKind> = { '/admin/home': 'dashboard', '/admin/welding/home': 'dashboard',
+const weldingPages: Record<string, WeldingReportKind> = { '/admin/welding/home': 'dashboard',
   '/admin/welding/reports/daily': 'daily', '/admin/welding/reports/jobs': 'jobs',
   '/admin/welding/reports/parts': 'parts', '/admin/welding/reports/equipment': 'equipment' }
 
@@ -68,7 +68,7 @@ export function startReportPreload(
     ? new Set(user.role === 'admin' ? ['welding'] : [])
     : user.role === 'worker'
     ? new Set(['workshop'])
-    : pathname === '/admin/home'
+    : pathname === '/admin/cutting/home'
       ? new Set(['leadership', 'history'])
       : pathname.startsWith('/admin/reports/leadership')
         ? new Set(['leadership'])

@@ -73,7 +73,7 @@ export function useAutomationSchedules({ hasUnsavedChanges, message, error, refr
   const recipientDraft = ref('')
   const recipientError = ref('')
   const emptyForm = (): Omit<Required<SchedulePayload>, 'weekday'> & { weekday: number } => ({
-    device_id: deviceSelection.id,
+    device_id: deviceSelection.items.find(line => !line.type || line.type === 'cutting')?.id || '',
     name: '每日车间报表',
     report_type: 'workshop',
     frequency: 'daily',
@@ -232,7 +232,7 @@ export function useAutomationSchedules({ hasUnsavedChanges, message, error, refr
     }
   }
 
-  watch(() => deviceSelection.id, (id) => { if (!form.device_id) form.device_id = id })
+  watch(() => deviceSelection.items, () => { if (!form.device_id) form.device_id = emptyForm().device_id })
 
   return { saving, editingId, form, executions, runningScheduleIds, changeReportType, resetForm, editSchedule, submit, runNow, remove,
     recipientInputVisible, recipientDraft, recipientError, addRecipient, removeRecipient, cancelRecipientInput }

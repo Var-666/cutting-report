@@ -13,11 +13,13 @@ import { getWeldingReport } from '../src/api/welding.ts'
 import { parseWeldingRouteQuery } from '../src/utils/weldingRouteState.ts'
 
 const originalFetch = globalThis.fetch
+const originalLocation = Object.getOwnPropertyDescriptor(globalThis, 'location')
 const admin = { user_id: 'admin-1', role: 'admin' }
 const today = reportToday()
 const month = today.slice(0, 7)
 const response = (data) => ({ ok: true, json: async () => ({ success: true, data }) })
 function mockApi(override = () => undefined) {
+  Object.defineProperty(globalThis, 'location', { configurable: true, value: { pathname: '/admin/cutting/home', search: '' } })
   const calls = []
   if (!getDeviceId()) setDeviceCatalog({ default_device_id: 'Cutter01', items: [{ id: 'Cutter01' }] })
   globalThis.fetch = async (url, options) => {
@@ -31,7 +33,7 @@ function mockApi(override = () => undefined) {
   }
   return calls
 }
-afterEach(() => { stopReportPreload(); resetDeviceContext(); globalThis.fetch = originalFetch })
+afterEach(() => { stopReportPreload(); resetDeviceContext(); globalThis.fetch = originalFetch; if (originalLocation) Object.defineProperty(globalThis, 'location', originalLocation); else delete globalThis.location })
 
 test('restored welding sessions preload only their homepage and share the page read', async () => {
   let complete
@@ -39,6 +41,7 @@ test('restored welding sessions preload only their homepage and share the page r
     if (url === '/api/v1/production-lines') return response({ default_device_id: 'welding', items: [{ id: 'welding', type: 'welding' }] })
     if (url.includes('/welding/dashboard?')) return new Promise(resolve => { complete = resolve })
   })
+  globalThis.location.pathname = '/admin/welding/home'
   await loadSession({ force: true })
   await new Promise(resolve => setImmediate(resolve))
   const page = getWeldingReport('dashboard', parseWeldingRouteQuery({}, 'dashboard', today))
@@ -132,7 +135,7 @@ test('manager background refresh reads applied filters and retains visible data 
 
 test('admin home warms only its own overview and history', async () => {
   const calls = mockApi()
-  const completion = startReportPreload(admin, { pathname: '/admin/home' })
+  const completion = startReportPreload(admin, { pathname: '/admin/cutting/home' })
   await completion
   assert.equal(calls.length, 2)
   await Promise.all([api.getLeadershipReport(month), api.listReports({ page: 1, pageSize: 10 })])
@@ -182,7 +185,7 @@ test('one unavailable report does not stop others; failed pages can retry', asyn
   mockApi((url) => {
     if (fail && url.includes('leadership-report')) return Promise.reject(new Error('offline'))
   })
-  await startReportPreload(admin, { pathname: '/admin/home' })
+  await startReportPreload(admin, { pathname: '/admin/cutting/home' })
   assert.equal(reportPreload.items.find((i) => i.key === 'leadership').status, 'failed')
   assert.equal(reportPreload.items.filter((i) => i.status === 'ready').length, 1)
   fail = false
@@ -206,14 +209,14 @@ test('logout during latest-date request prevents follow-on warmup even if fetch 
 
 test('different accounts do not reuse the previous account report cache', async () => {
   const calls = mockApi()
-  await startReportPreload(admin, { pathname: '/admin/home' })
-  await startReportPreload({ ...admin, user_id: 'admin-2' }, { pathname: '/admin/home' })
+  await startReportPreload(admin, { pathname: '/admin/cutting/home' })
+  await startReportPreload({ ...admin, user_id: 'admin-2' }, { pathname: '/admin/cutting/home' })
   assert.equal(calls.filter((c) => c.url.includes('leadership-report')).length, 2)
 })
 
 test('forced leadership reads bypass preload cache; daily snapshots invalidate monthly totals', async () => {
   const calls = mockApi()
-  await startReportPreload(admin, { pathname: '/admin/home' })
+  await startReportPreload(admin, { pathname: '/admin/cutting/home' })
   await api.getLeadershipReport(month, { force: true })
   await api.getLeadershipReport(month)
   await api.getEnergyMonth(month)
@@ -361,4 +364,12 @@ test('file pages do not start unrelated report preload jobs', async () => {
   assert.deepEqual(result, [])
   assert.deepEqual(reportPreload.items, [])
   assert.equal(calls.length, 0)
+})
+
+for (const type of ['cutting', 'welding']) test(`shared home never preloads the remembered ${type} line`, async () => {
+  const calls = mockApi()
+  setDeviceCatalog({ default_device_id: 'remembered', items: [{ id: 'remembered', type }] })
+  await startReportPreload(admin, { pathname: '/admin/home' })
+  assert.equal(calls.length, 0)
+  assert.deepEqual(reportPreload.items, [])
 })

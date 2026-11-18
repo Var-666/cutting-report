@@ -15,6 +15,14 @@ from app.services.production_lines import registered_lines, supports_path
 from tests.line_fixtures import configuration
 
 
+def test_public_line_homes_are_distinct_from_the_shared_home(tmp_path):
+    catalog = load_line_catalog(configuration(tmp_path, welding=True).production_lines_json)
+    items = registered_lines(SimpleNamespace(catalog=catalog))
+    assert {item['home_path'] for item in items if item['type'] == 'cutting'} == {'/admin/cutting/home'}
+    assert {item['home_path'] for item in items if item['type'] == 'welding'} == {'/admin/welding/home'}
+    assert all(item['home_path'] != '/admin/home' for item in items)
+
+
 @pytest.mark.parametrize('line,path,allowed', [
     ('welding', '/api/v1/welding/jobs', True), ('welding', '/api/v1/cutting/dispatch', False),
     ('welding', '/api/v1/reports', False), ('Cutter01', '/api/v1/reports', True),

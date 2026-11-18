@@ -1,5 +1,12 @@
 import type { RouteRecordName, RouteRecordRaw } from 'vue-router'
 export interface AdminMenu { key: RouteRecordName; label: string; icon?: string; routeName?: RouteRecordName; children?: AdminMenu[] }
+export function navigationSection(path: string) {
+  if (path === '/admin/home') return 'home'
+  if (path === '/admin/automation') return 'automation'
+  if (path === '/admin/pdm-statistics') return 'pdm'
+  if (path === '/admin/settings' || path?.startsWith('/admin/settings/')) return 'settings'
+  return 'line'
+}
 export function adminMenus(routes: readonly RouteRecordRaw[], parent = '/admin', line = 'cutting'): AdminMenu[] {
   return routes.filter((route) => !route.redirect && (!route.meta?.line || route.meta.line === line)).flatMap((route) => {
     const path = `${parent}/${route.path}`.replace(/\/$/, '')

@@ -297,7 +297,7 @@ const fileTableColumns = [
 
 <template>
   <header class="dispatch-heading">
-    <h1>文件派发</h1>
+    <div class="dispatch-title"><h1>文件派发</h1><span>切割产线共享</span></div>
     <div class="dispatch-source-status" aria-label="文件派发服务状态">
       <span><i :class="{ ready: systemStatus?.can_push }"></i>{{ systemStatus?.pdm?.label || (statusError ? '数据源检查失败' : '正在检查数据源') }}</span>
       <span>{{ systemStatus?.file_source?.label || (statusError ? '文件服务状态未确认' : '文件服务检查中') }}</span>
@@ -421,6 +421,8 @@ const fileTableColumns = [
 </template>
 
 <style scoped>
+.dispatch-title { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
+.dispatch-title>span { font-size:var(--font-auxiliary); color:var(--text-color-3); }
 .dispatch-heading { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px 16px; min-height:40px; }
 .dispatch-heading h1 { margin:0; font-size:20px; font-weight:600; }
 

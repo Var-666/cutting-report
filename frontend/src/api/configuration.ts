@@ -8,13 +8,14 @@ export function getDatabaseStatus() {
   return request<DatabaseStatus>('/api/v1/database/status')
 }
 
-export function getDatabaseConfiguration() {
-  return request<DatabaseConfigurationData>('/api/v1/database/configuration')
+export function getDatabaseConfiguration(lineId?: string) {
+  return request<DatabaseConfigurationData>('/api/v1/database/configuration', { headers: lineId ? { 'X-Production-Line': lineId } : {} })
 }
 
-export function saveDatabaseConfiguration(payload: DatabaseConfigurationRequest) {
+export function saveDatabaseConfiguration(payload: DatabaseConfigurationRequest, lineId?: string) {
   return request<SaveResult>('/api/v1/database/configuration', {
     method: 'PUT',
+    headers: lineId ? { 'X-Production-Line': lineId } : {},
     body: JSON.stringify(payload),
   }).then((result) => {
     reportCache.clear()
@@ -22,9 +23,10 @@ export function saveDatabaseConfiguration(payload: DatabaseConfigurationRequest)
   })
 }
 
-export function testDatabaseConnection(connection: ConnectionTestRequest) {
+export function testDatabaseConnection(connection: ConnectionTestRequest, lineId?: string) {
   return request<ConnectionTestResult>('/api/v1/database/test-connection', {
     method: 'POST',
+    headers: lineId ? { 'X-Production-Line': lineId } : {},
     body: JSON.stringify(connection),
   })
 }
@@ -51,9 +53,9 @@ export function executeWorkbenchSql({ sql, maxRows, token }: { sql: string; maxR
   })
 }
 
-export function testWeldingConnection(payload: WeldingConnectionRequest) { return request<ConnectionTestResult>('/api/v1/database/welding/test-connection', { method: 'POST', body: JSON.stringify(payload) }) }
-export function saveWeldingConfiguration(payload: WeldingConnectionRequest) {
-  return request<SaveResult>('/api/v1/database/welding/configuration', { method: 'PUT', body: JSON.stringify(payload) })
+export function testWeldingConnection(payload: WeldingConnectionRequest, lineId?: string) { return request<ConnectionTestResult>('/api/v1/database/welding/test-connection', { method: 'POST', headers: lineId ? { 'X-Production-Line': lineId } : {}, body: JSON.stringify(payload) }) }
+export function saveWeldingConfiguration(payload: WeldingConnectionRequest, lineId?: string) {
+  return request<SaveResult>('/api/v1/database/welding/configuration', { method: 'PUT', headers: lineId ? { 'X-Production-Line': lineId } : {}, body: JSON.stringify(payload) })
     .then(result => { reportCache.clear(); return result })
 }
 

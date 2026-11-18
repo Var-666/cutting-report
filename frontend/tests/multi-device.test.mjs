@@ -2,8 +2,10 @@ import { scriptFunction } from './typescript-helpers.mjs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { navigationSection } from '../src/router/menus.ts'
 import { lineHome, selectedLineType } from '../src/utils/productionLines.ts'
 import { ref } from 'vue'
+import { isNavigationFailure, NavigationFailureType } from 'vue-router'
 import { getDeviceId, deviceUrl, selectDevice, setDeviceCatalog, resetDeviceContext, registerDeviceSwitchQuery, deviceSwitchQuery, registerDeviceSwitchGuard, allowDeviceSwitch } from '../src/api/deviceContext.ts'
 import { createReportCache, reportCache } from '../src/api/reportCache.ts'
 import { listWorkshopTasks, createReport, getDeviceCatalog } from '../src/api/reports.ts'
@@ -199,13 +201,13 @@ test('both device selectors preserve displayed filters before switching and reje
   const changes = []
   let completeNavigation
   let failNavigation = false
-  const route = { name: 'workshop-report', query: { project: 'P1' } }
+  const route = { path: '/admin/reports/workshop', name: 'workshop-report', query: { project: 'P1' } }
   const router = { replace: to => {
     changes.push(to)
     if (failNavigation) return Promise.reject(new Error('navigation failed'))
     return new Promise(resolve => { completeNavigation = resolve })
   } }
-  const api = scriptFunction('allowDeviceSwitch', 'ref', 'onMounted', 'useRoute', 'useRouter', 'deviceSwitchQuery', 'changeDevice', 'deviceSelection', 'loadDevices', 'lineHome', 'selectedLineType', `${script}\nreturn useDeviceSelection()`)(async () => true, ref, () => {}, () => route, () => router, () => ({ start_date: '2026-10-12' }), id => { selection.id = id }, selection, () => {}, lineHome, selectedLineType)
+  const api = scriptFunction('allowDeviceSwitch', 'ref', 'onMounted', 'useRoute', 'useRouter', 'deviceSwitchQuery', 'changeDevice', 'deviceSelection', 'loadDevices', 'lineHome', 'selectedLineType', 'navigationSection', 'isNavigationFailure', 'NavigationFailureType', `${script}\nreturn useDeviceSelection()`)(async () => true, ref, () => {}, () => route, () => router, () => ({ start_date: '2026-10-12' }), id => { selection.id = id }, selection, () => {}, lineHome, selectedLineType, navigationSection, isNavigationFailure, NavigationFailureType)
   await api.switchDevice('Cutter01')
   assert.equal(changes.length, 0)
   const pending = api.switchDevice('Cutter02')

@@ -10,6 +10,7 @@ import ThemeSettings from '../components/ThemeSettings.vue'
 import { useDialogFocus } from '../composables/useDialogFocus.ts'
 import { useAppStore } from '../state/app.ts'
 import { useThemeStore } from '../store/modules/theme'
+import { useRouteStore } from '../store/modules/route'
 import { deviceSelection } from '../state/devices.ts'
 import { endSession } from '../state/session'
 import { GLOBAL_HEADER_MENU_ID } from '../constants/app'
@@ -24,11 +25,12 @@ import AdminPageView from './AdminPageView.vue'
 const appStore = useAppStore()
 const GlobalMenu = defineAsyncComponent(() => import('./modules/global-menu/index.vue'))
 const themeStore = useThemeStore()
+const routeStore = useRouteStore()
 const route = useRoute()
 const router = useRouter()
 const sider = ref(null)
 const { childLevelMenus, isActiveFirstLevelMenuHasChildren } = provideMixMenuContext()
-const devicePage = computed(() => route.path === '/admin/home' || route.path.startsWith('/admin/reports') || route.path.startsWith('/admin/alarms') || route.path.startsWith('/admin/welding'))
+const devicePage = computed(() => routeStore.section === 'line' && route.name !== 'cutting-dispatch')
 const mobileMenuOpen = computed(() => appStore.isMobile && !appStore.siderCollapse)
 const breadcrumbs = computed(() => route.matched.filter((record, index, records) => record.meta.title && record.path !== records[index + 1]?.path))
 const transitionName = computed(() => !appStore.reducedMotion && themeStore.page.animate ? themeStore.page.animateMode : '')
@@ -119,7 +121,7 @@ function getSiderAndCollapsedWidth(isCollapsed: boolean) {
   const isMixMode = isVerticalMix.value || isTopHybridSidebarFirst.value || isVerticalHybridHeaderFirst.value;
   let finalWidth = isVerticalMix.value && !isCollapsed ? Math.max(themeMixWidth, mixChildMenuWidth) : isMixMode ? mixWidth : width;
 
-  if (isVerticalMix.value && appStore.mixSiderFixed) {
+  if (isVerticalMix.value && appStore.mixSiderFixed && routeStore.secondaryMenus.length) {
     finalWidth += mixChildMenuWidth;
   }
 
@@ -143,9 +145,10 @@ function getSiderAndCollapsedWidth(isCollapsed: boolean) {
       <template #header>
         <div class="soybean-header">
           <GlobalLogo v-if="headerProps.showLogo && !appStore.isMobile" :show-title="false" />
-          <MenuToggler v-if="headerProps.showMenuToggler || appStore.isMobile" :collapsed="appStore.siderCollapse" :aria-label="isVerticalMix && !appStore.isMobile ? (appStore.siderCollapse ? '展开设备栏' : '收起设备栏') : (appStore.siderCollapse ? '展开菜单' : '收起菜单')" :aria-expanded="!appStore.siderCollapse" :aria-controls="isVerticalMix && !appStore.isMobile ? 'admin-device-rail' : 'admin-navigation'" @click="appStore.toggleSiderCollapse" />
+          <MenuToggler v-if="headerProps.showMenuToggler || appStore.isMobile" :collapsed="appStore.siderCollapse" :aria-label="isVerticalMix && !appStore.isMobile ? (appStore.siderCollapse ? '展开主导航' : '收起主导航') : (appStore.siderCollapse ? '展开菜单' : '收起菜单')" :aria-expanded="!appStore.siderCollapse" :aria-controls="isVerticalMix && !appStore.isMobile ? 'admin-device-rail' : 'admin-navigation'" @click="appStore.toggleSiderCollapse" />
           <div v-if="headerProps.showMenu" :id="GLOBAL_HEADER_MENU_ID" class="h-full flex-y-center flex-1-hidden" />
           <NBreadcrumb v-else-if="themeStore.header.breadcrumb.visible" class="soybean-breadcrumb" aria-label="当前位置">
+            <NBreadcrumbItem v-if="routeStore.section === 'line'">{{ routeStore.activeLine?.name }}</NBreadcrumbItem>
             <NBreadcrumbItem v-for="item in breadcrumbs" :key="item.path">
               <span class="flex-y-center gap-6px"><AppIcon v-if="themeStore.header.breadcrumb.showIcon && item.meta.icon" :name="item.meta.icon" :size="18" tone="current" />{{ item.meta.title }}</span>
             </NBreadcrumbItem>
@@ -153,7 +156,7 @@ function getSiderAndCollapsedWidth(isCollapsed: boolean) {
           <div class="soybean-header-actions">
             <ThemeHeaderTools />
             <ThemeSettings />
-            <DeviceSwitcher v-if="!isVerticalMix || appStore.isMobile" />
+            <DeviceSwitcher v-if="routeStore.section === 'line' && (!isVerticalMix || appStore.isMobile)" />
             <NButton quaternary class="soybean-logout" aria-label="退出登录" @click="logout"><template #icon><AppIcon name="logout" :size="20" tone="current" /></template><span class="lt-sm:hidden">退出登录</span></NButton>
           </div>
         </div>

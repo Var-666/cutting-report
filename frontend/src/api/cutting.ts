@@ -3,6 +3,7 @@ import type { ConfirmationAudit, TaskConfirmation, AnalysisRequest, AnalysisResu
 import type { Items, Page, ReadOptions } from '../types/api'
 import { reportCache } from './reportCache.ts'
 import { request } from './client.ts'
+import { getDeviceId } from './deviceContext.ts'
 
 const REPORT_VIEW_CACHE_TTL = 5 * 60 * 1000
 
@@ -112,9 +113,10 @@ export function listShips(reportDate: string, projectCode: string, { signal }: R
   return request<Items<string>>(`/api/v1/options/ships?${query}`, { signal })
 }
 
-export function getLeadershipReport(reportMonth: string, { force = false, signal }: ReadOptions = {}) {
+export function getLeadershipReport(reportMonth: string, { force = false, signal, lineId = getDeviceId() }: ReadOptions & { lineId?: string } = {}) {
   const query = new URLSearchParams({ report_month: reportMonth })
-  return reportCache.read(`leadership:${reportMonth}`, (signal) => request<LeadershipReport>(`/api/v1/leadership-report?${query}`, { signal }), { ttl: REPORT_VIEW_CACHE_TTL, force, signal })
+  if (lineId) query.set('device_id', lineId)
+  return reportCache.read(`leadership:${lineId}:${reportMonth}`, (signal) => request<LeadershipReport>(`/api/v1/leadership-report?${query}`, { signal, headers: { 'X-Production-Line': lineId } }), { ttl: REPORT_VIEW_CACHE_TTL, force, signal })
 }
 
 export function getLeadershipRange(startDate: string, endDate: string, { force = false, signal }: ReadOptions = {}) {

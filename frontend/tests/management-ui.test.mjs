@@ -417,7 +417,7 @@ test('database connection table edits isolated drafts and preserves SQL and weld
     saveWeldingConfiguration: async body => { calls.welding.push(structuredClone(body)); return { message: '已保存' } },
   }
   const script = descriptor('DatabaseView').scriptSetup.content.replace(/^import[\s\S]*?from ['"][^'"]+['"]\s*$/gm, '')
-  const page = scriptFunction(...Object.keys(bindings), `${script}; return { databaseConfiguration, configurationError, savedConnections, editor, editorDirty, hasUnsavedChanges, editConnection, closeEditor, saveEditor, loadConfiguration }`)(...Object.values(bindings))
+  const page = scriptFunction(...Object.keys(bindings), `${script}; return { databaseConfiguration, configurationError, savedConnections, editor, editorDirty, hasUnsavedChanges, editConnection, closeEditor, saveEditor, loadConfiguration, configurationLine, selectConfigurationLine }`)(...Object.values(bindings))
   await page.loadConfiguration()
   assert.equal(unsaved.value, false)
   page.hasUnsavedChanges.value = true
@@ -430,7 +430,8 @@ test('database connection table edits isolated drafts and preserves SQL and weld
   page.editorDirty.value = true
   assert.equal(unsaved.value, true)
   assert.equal(page.databaseConfiguration.value.production.host, 'saved-host')
-  assert.equal(await guard(), false)
+  await page.selectConfigurationLine('welding')
+  assert.equal(page.configurationLine.value, '')
   await page.closeEditor()
   assert.ok(page.editor.value)
   permitClose = true
@@ -462,7 +463,7 @@ test('database connection table edits isolated drafts and preserves SQL and weld
   assert.equal(page.databaseConfiguration.value.production.host, 'saved-host')
   assert.equal(page.configurationError.value, '保存失败')
   await page.closeEditor()
-  selection.id = 'welding'
+  await page.selectConfigurationLine('welding')
   await Vue.nextTick()
   assert.deepEqual(page.savedConnections.value.map(row => row.engine), ['MySQL'])
 })
@@ -526,9 +527,9 @@ for (const fail of [false, true]) {
     const bindings = { computed, reactive, ref, watch() {}, onMounted() {}, onBeforeUnmount() {}, registerDeviceSwitchGuard: () => () => {}, useConfirm: () => async () => true, useUnsavedChanges() {}, formatTableDateValue: String,
       deviceSelection: selection, getDatabaseConfiguration: () => new Promise((resolve, reject) => { settle = fail ? reject : resolve }) }
     const script = descriptor('DatabaseView').scriptSetup.content.replace(/^import[\s\S]*?from ['"][^'"]+['"]\s*$/gm, '')
-    const page = scriptFunction(...Object.keys(bindings), `${script}\nreturn { databaseConfiguration, configurationError, configurationLoading, loadConfiguration }`)(...Object.values(bindings))
+    const page = scriptFunction(...Object.keys(bindings), `${script}\nreturn { databaseConfiguration, configurationError, configurationLoading, loadConfiguration, configurationLine }`)(...Object.values(bindings))
     const reading = page.loadConfiguration()
-    selection.id = 'Cutter02'
+    page.configurationLine.value = 'Cutter02'
     page.databaseConfiguration.value = { selected: 'Cutter02' }
     page.configurationError.value = 'current-error'
     settle(fail ? Error('old-error') : { production: {}, worker: {}, file: {} })
@@ -578,9 +579,9 @@ test('shared connection test selects SQL Server or MySQL without saving either d
   assert.equal(page.dataSources.value.length, 2)
   selection.id = 'welding'
   page.testSource.value = 'sqlserver'
-  assert.deepEqual(page.dataSources.value, [{ source: 'welding' }])
+  assert.deepEqual(page.dataSources.value, [{ source: 'production' }, { source: 'welding' }])
   await page.runConnectionTest()
-  assert.equal(calls[2][0], 'welding')
+  assert.equal(calls[2][0], 'sqlserver')
   const testSection = view.template.content.slice(view.template.content.indexOf('class="panel db-panel"'))
   assert.match(testSection, /name="test_source"[\s\S]*value="sqlserver"[\s\S]*value="welding"/)
   assert.match(testSection, /v-model:value="activeTestConnection.host"/)
@@ -594,7 +595,7 @@ for (const [reportType, period] of [['leadership', 'current_month'], ['leadershi
     const scope = Vue.effectScope()
     const script = descriptor('AutomationView').scriptSetup.content.replace(/^import .*$/gm, '')
     const bindings = {
-      ...Vue, onMounted() {}, onBeforeUnmount() {}, useConfirm: () => async () => true, useUnsavedChanges() {}, deviceSelection: Vue.reactive({ id: 'Cutter02' }),
+      ...Vue, onMounted() {}, onBeforeUnmount() {}, useConfirm: () => async () => true, useUnsavedChanges() {}, deviceSelection: Vue.reactive({ id: 'Cutter02', items: [{ id: 'Cutter02', type: 'cutting' }] }),
       saveAutomationSchedule: async (body, id) => saved.push({ body, id }),
       getAutomationStatus: async () => ({}), listAutomationSchedules: async () => ({ items: [] }),
       listEmailDeliveries: async () => ({ items: [], total: 0, page: 1, page_size: 20 }),

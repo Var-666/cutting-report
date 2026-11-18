@@ -9,10 +9,10 @@ import { readFileSync } from 'node:fs'
 import { computed, h, reactive, ref } from 'vue'
 import * as Vue from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
-import { createMemoryHistory, createRouter, RouterView, useRoute, useRouter } from 'vue-router'
+import { createMemoryHistory, createRouter, isNavigationFailure, NavigationFailureType, RouterView, useRoute, useRouter } from 'vue-router'
 import { parse, compileScript, compileTemplate } from '@vue/compiler-sfc'
 import { lineHome, productionGroups, selectedLineType } from '../src/utils/productionLines.ts'
-import { adminMenus } from '../src/router/menus.ts'
+import { adminMenus, navigationSection } from '../src/router/menus.ts'
 import { analyzeWelding, getLatestWeldingAnalysis, downloadWelding, getWeldingPart, getWeldingReport, weldingQuery } from '../src/api/welding.ts'
 import { weldingColumns, weldingVisibleColumns, weldingColumnLayout, weldingDisplay, weldingKpis, weldingTitles, weldingDescriptions } from '../src/utils/weldingReport.ts'
 import { weldingRoutes } from '../src/router/weldingRoutes.ts'
@@ -66,7 +66,7 @@ test('cross-line switching enters the correct home and restores selection if nav
   const destinations = []
   let cancel = false
   const router = { replace: async to => { destinations.push(to); return cancel ? { type: 4 } : undefined } }
-  const bindings = { lineHome, selectedLineType, ref, onMounted() {}, useRoute: () => ({ name: 'admin-home', query: {} }), useRouter: () => router,
+  const bindings = { lineHome, selectedLineType, navigationSection, isNavigationFailure, NavigationFailureType, ref, onMounted() {}, useRoute: () => ({ name: 'admin-home', query: {} }), useRouter: () => router,
     allowDeviceSwitch: async () => true, deviceSwitchQuery: () => null, changeDevice: id => { selection.id = id }, deviceSelection: selection, loadDevices() {} }
   const app = scriptFunction(...Object.keys(bindings), `${script}; return useDeviceSelection();`)(...Object.values(bindings))
   await app.switchDevice('welding')
@@ -74,7 +74,7 @@ test('cross-line switching enters the correct home and restores selection if nav
   assert.equal(destinations.at(-1), '/admin/welding/home')
   await app.switchDevice('Cutter02')
   assert.equal(selection.id, 'Cutter02')
-  assert.equal(destinations.at(-1), '/admin/home')
+  assert.equal(destinations.at(-1), '/admin/cutting/home')
   await app.switchDevice('other-welding')
   assert.equal(selection.id, 'other-welding')
   assert.equal(destinations.at(-1), '/admin/welding/home')
@@ -932,7 +932,7 @@ test('router resolves registered line types without requiring a fixed welding ID
     deviceSelection: selection, changeDevice: id => { selection.id = id }, selectedLineType, lineHome }
   scriptFunction(...Object.keys(bindings), guard)(...Object.values(bindings))
   const route = line => ({ meta: {}, matched: [{ meta: { role: 'admin' } }, { meta: { line } }] })
-  assert.equal(await beforeEach(route('welding')), '/admin/home')
+  assert.equal(await beforeEach(route('welding')), '/admin/cutting/home')
   assert.equal(selection.id, 'Cutter01')
   selection.id = 'weld-2'
   assert.equal(await beforeEach(route('welding')), true)

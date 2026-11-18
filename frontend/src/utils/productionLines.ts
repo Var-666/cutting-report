@@ -1,8 +1,12 @@
 import type { ProductionLine } from '../types/devices'
 
-const lineTypes: Record<string, { name: string; home: string }> = {
-  cutting: { name: '切割', home: '/admin/home' },
-  welding: { name: '焊接', home: '/admin/welding/home' },
+const lineTypes: Record<string, { name: string; home: string; icon: string }> = {
+  cutting: { name: '切割', home: '/admin/cutting/home', icon: 'laser-cutter' },
+  welding: { name: '焊接', home: '/admin/welding/home', icon: 'welding-torch' },
+}
+
+export function productionLineIcon(type: string) {
+  return lineTypes[type]?.icon || 'factory'
 }
 
 export function productionGroups(items: ProductionLine[]) {

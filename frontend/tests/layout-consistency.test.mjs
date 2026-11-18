@@ -24,7 +24,7 @@ const leadershipQueryScript = readFileSync(new URL('../src/composables/useLeader
 const leadershipDataScript = readFileSync(new URL('../src/composables/useLeadershipReportData.ts', import.meta.url), 'utf8')
 const leadershipChartsScript = readFileSync(new URL('../src/composables/useLeadershipReportCharts.ts', import.meta.url), 'utf8')
 
-test('vertical-mix reserves both device columns on every page and uses a single mobile drawer', () => {
+test('vertical-mix reserves its secondary column only for a module with children', () => {
   const layout = descriptor('AdminLayout', 'layouts')
   const script = layout.scriptSetup.content.slice(layout.scriptSetup.content.indexOf('function getSiderAndCollapsedWidth'))
   const themeStore = { sider: { width: 220, collapsedWidth: 64, mixWidth: 64, mixCollapsedWidth: 48, mixChildMenuWidth: 180 } }
@@ -32,9 +32,14 @@ test('vertical-mix reserves both device columns on every page and uses a single 
   const isVerticalMix = computed(() => true)
   const inactive = computed(() => false)
   const code = transformSync(script, { loader: 'ts' }).code
-  const width = scriptFunction('themeStore', 'appStore', 'isVerticalMix', 'isTopHybridSidebarFirst', 'isTopHybridHeaderFirst', 'isVerticalHybridHeaderFirst', `${code}\nreturn getSiderAndCollapsedWidth`)(themeStore, appStore, isVerticalMix, inactive, inactive, inactive)
+  const routeStore = reactive({ secondaryMenus: [{}] })
+  const width = scriptFunction('routeStore', 'themeStore', 'appStore', 'isVerticalMix', 'isTopHybridSidebarFirst', 'isTopHybridHeaderFirst', 'isVerticalHybridHeaderFirst', `${code}\nreturn getSiderAndCollapsedWidth`)(routeStore, themeStore, appStore, isVerticalMix, inactive, inactive, inactive)
   assert.equal(width(false), 360)
   assert.equal(width(true), 228)
+  routeStore.secondaryMenus = []
+  assert.equal(width(false), 180)
+  assert.equal(width(true), 48)
+  routeStore.secondaryMenus = [{}]
   appStore.mixSiderFixed = false
   assert.equal(width(false), 180)
   assert.equal(width(true), 48)
@@ -42,14 +47,14 @@ test('vertical-mix reserves both device columns on every page and uses a single 
   assert.equal(width(false), 220)
   assert.equal(width(true), 64)
   const menu = descriptor('vertical-mix-menu', 'layouts/modules/global-menu/modules')
-  assert.match(menu.template.content, /:options="routeStore.menus"/)
-  assert.match(menu.template.content, /:options="deviceMenus"/)
-  assert.match(menu.template.content, /:value="deviceSelection.id"/)
+  assert.match(menu.template.content, /:options="routeStore.secondaryMenus"/)
+  assert.match(menu.template.content, /:options="routeStore.primaryMenus"/)
+  assert.match(menu.template.content, /:value="routeStore.primaryKey"/)
   assert.match(menu.template.content, /v-model:expanded-keys="expandedTypes"/)
   assert.match(menu.template.content, /Math.max\(themeStore.sider.mixWidth, themeStore.sider.mixChildMenuWidth\)/)
   assert.match(menu.styles[0].content, /\.n-submenu-children/)
   assert.match(menu.styles[0].content, /\.n-submenu-children\)::before[^}]*z-index:1/)
-  assert.match(menu.scriptSetup.content, /showDrawer = computed\(\(\) => drawerVisible.value \|\| appStore.mixSiderFixed\)/)
+
   assert.doesNotMatch(menu.scriptSetup.content, /if \(appStore.siderCollapse/)
   assert.match(menu.template.content, /:collapsed="appStore.siderCollapse"/)
   assert.match(descriptor('menu-toggler', 'components/common').template.content, /:tooltip-content="\(\$attrs\['aria-label'\]/)
@@ -768,8 +773,8 @@ test('long-lived page polling is serialized and cancelled when the page leaves',
   const api = readFileSync(new URL('../src/api/alarms.ts', import.meta.url), 'utf8')
 
   assert.doesNotMatch(alarm, /setInterval\(loadData/)
-  const loadAlarm = alarm.slice(alarm.indexOf('async function loadData('), alarm.indexOf('async function selectPanel('))
-  for (const [pageActive, panel, busy] of [[false, 'equipment', false], [true, 'database', false], [true, 'equipment', true], [true, 'equipment', false]]) {
+  const loadAlarm = alarm.slice(alarm.indexOf('async function loadData('), alarm.indexOf('onMounted('))
+  for (const [pageActive, panel, busy] of [[false, 'equipment', false], [true, 'equipment', true], [true, 'equipment', false]]) {
     let calls = 0
     const response = { items: [], page: 1 }
     const bindings = { pageActive, activePanel: Vue.ref(panel), requestController: busy ? new AbortController() : null,

@@ -29,8 +29,20 @@ const router = createRouter({
         {
           path: 'home',
           name: 'admin-home',
+          component: () => import('../views/SystemHomeView.vue'),
+          meta: { title: '首页', icon: 'home' },
+        },
+        {
+          path: 'automation',
+          name: 'automation',
+          component: () => import('../views/AutomationView.vue'),
+          meta: { title: '报表推送', icon: 'send' },
+        },
+        {
+          path: 'cutting/home',
+          name: 'cutting-home',
           component: () => import('../views/AdminHomeView.vue'),
-          meta: { title: '系统首页', icon: 'home', line: 'cutting' },
+          meta: { title: '产线概览', icon: 'home', line: 'cutting' },
         },
         {
           path: 'reports',
@@ -75,7 +87,7 @@ const router = createRouter({
           path: 'pdm-statistics',
           name: 'pdm-statistics',
           component: () => import('../views/PdmStatisticsView.vue'),
-          meta: { title: 'PDM 资料统计', icon: 'file' },
+          meta: { title: 'PDM 资料管理', icon: 'file' },
         },
         weldingRoutes,
         {
@@ -95,18 +107,19 @@ const router = createRouter({
               meta: { title: '数据库配置', icon: 'database' },
             },
             {
+              path: 'database-monitors',
+              name: 'database-monitors',
+              component: () => import('../components/DatabaseMonitorPanel.vue'),
+              meta: { title: '数据库监控', icon: 'activity' },
+            },
+            {
               path: 'configuration-diagnostics',
               name: 'configuration-diagnostics',
               component: () => import('../views/ConfigurationDiagnosticsView.vue'),
               meta: { title: '配置诊断', icon: 'settings' },
             },
             { path: 'report-design', redirect: '/admin/settings' },
-            {
-              path: 'automation',
-              name: 'automation',
-              component: () => import('../views/AutomationView.vue'),
-              meta: { title: '报表自动化', icon: 'activity', line: 'cutting' },
-            },
+            { path: 'automation', redirect: { name: 'automation' } },
             {
               path: 'admins',
               name: 'admin-accounts',
@@ -123,7 +136,6 @@ const router = createRouter({
         },
         { path: 'database', redirect: '/admin/settings/database' },
         { path: 'designer', redirect: '/admin/settings' },
-        { path: 'automation', redirect: '/admin/settings/automation' },
         { path: 'admins', redirect: '/admin/settings/admins' },
       ],
     },

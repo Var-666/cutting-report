@@ -100,7 +100,7 @@ function updateExpandedKeys() {
 }
 
 watch(
-  () => route.name,
+  [() => route.name, () => routeStore.navigationMenus, () => appStore.siderCollapse],
   () => {
     updateExpandedKeys();
   },
