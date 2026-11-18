@@ -5,6 +5,16 @@ export type ClientOptions = {
 };
 
 /**
+ * AcknowledgeIncident
+ */
+export type AcknowledgeIncident = {
+    /**
+     * Note
+     */
+    note?: string | null;
+};
+
+/**
  * AlarmAction
  */
 export type AlarmAction = {
@@ -983,6 +993,21 @@ export type ApiEnvelopeEquipmentReport = {
 };
 
 /**
+ * ApiEnvelope[Incident]
+ */
+export type ApiEnvelopeIncident = {
+    /**
+     * Success
+     */
+    success: true;
+    data: Incident;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
  * ApiEnvelope[Items[AutomationSchedule]]
  */
 export type ApiEnvelopeItemsAutomationSchedule = {
@@ -1133,6 +1158,21 @@ export type ApiEnvelopeLlmModelCatalog = {
 };
 
 /**
+ * ApiEnvelope[LogPage]
+ */
+export type ApiEnvelopeLogPage = {
+    /**
+     * Success
+     */
+    success: true;
+    data: LogPage;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
  * ApiEnvelope[MachineResult]
  */
 export type ApiEnvelopeMachineResult = {
@@ -1156,6 +1196,36 @@ export type ApiEnvelopeMyConfirmedTasks = {
      */
     success: true;
     data: MyConfirmedTasks;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
+ * ApiEnvelope[OperationsOverview]
+ */
+export type ApiEnvelopeOperationsOverview = {
+    /**
+     * Success
+     */
+    success: true;
+    data: OperationsOverview;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
+ * ApiEnvelope[OperationsStatus]
+ */
+export type ApiEnvelopeOperationsStatus = {
+    /**
+     * Success
+     */
+    success: true;
+    data: OperationsStatus;
     /**
      * Request Id
      */
@@ -1216,6 +1286,21 @@ export type ApiEnvelopePageEmailDelivery = {
      */
     success: true;
     data: PageEmailDelivery;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
+ * ApiEnvelope[Page[Incident]]
+ */
+export type ApiEnvelopePageIncident = {
+    /**
+     * Success
+     */
+    success: true;
+    data: PageIncident;
     /**
      * Request Id
      */
@@ -1313,6 +1398,21 @@ export type ApiEnvelopeQueued = {
 };
 
 /**
+ * ApiEnvelope[RelatedOperation]
+ */
+export type ApiEnvelopeRelatedOperation = {
+    /**
+     * Success
+     */
+    success: true;
+    data: RelatedOperation;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
  * ApiEnvelope[ReportAccepted]
  */
 export type ApiEnvelopeReportAccepted = {
@@ -1351,6 +1451,21 @@ export type ApiEnvelopeReportJob = {
      */
     success: true;
     data: ReportJob;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
+ * ApiEnvelope[ReportedIssue]
+ */
+export type ApiEnvelopeReportedIssue = {
+    /**
+     * Success
+     */
+    success: true;
+    data: ReportedIssue;
     /**
      * Request Id
      */
@@ -1621,6 +1736,24 @@ export type ApiEnvelopeWorkshopResult = {
      */
     success: true;
     data: WorkshopResult;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
+ * ApiEnvelope[bool]
+ */
+export type ApiEnvelopeBool = {
+    /**
+     * Success
+     */
+    success: true;
+    /**
+     * Data
+     */
+    data: boolean;
     /**
      * Request Id
      */
@@ -2106,6 +2239,20 @@ export type BriefScope = {
      * Comparison End
      */
     comparison_end?: string | null;
+};
+
+/**
+ * BrowserIssue
+ */
+export type BrowserIssue = {
+    /**
+     * Kind
+     */
+    kind: 'vue' | 'javascript' | 'promise' | 'api';
+    /**
+     * Request Id
+     */
+    request_id?: string | null;
 };
 
 /**
@@ -4648,6 +4795,98 @@ export type HttpValidationError = {
 };
 
 /**
+ * Incident
+ */
+export type Incident = {
+    /**
+     * Incident Id
+     */
+    incident_id: string;
+    /**
+     * Fingerprint
+     */
+    fingerprint: string;
+    /**
+     * Error Code
+     */
+    error_code: string;
+    /**
+     * Level
+     */
+    level: 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR' | 'CRITICAL';
+    /**
+     * Component
+     */
+    component: string;
+    /**
+     * Role
+     */
+    role: 'web' | 'scheduler' | 'worker' | 'automation';
+    /**
+     * Instance Id
+     */
+    instance_id: string | null;
+    /**
+     * Line Id
+     */
+    line_id: string | null;
+    /**
+     * Source Id
+     */
+    source_id: string | null;
+    /**
+     * Resource Id
+     */
+    resource_id: string | null;
+    /**
+     * Message
+     */
+    message: string;
+    /**
+     * Context
+     */
+    context: {
+        [key: string]: string;
+    };
+    /**
+     * First Seen At
+     */
+    first_seen_at: string;
+    /**
+     * Last Seen At
+     */
+    last_seen_at: string;
+    /**
+     * Occurrences
+     */
+    occurrences: number;
+    /**
+     * Status
+     */
+    status: 'open' | 'acknowledged' | 'recovered';
+    /**
+     * Acknowledged At
+     */
+    acknowledged_at: string | null;
+    /**
+     * Acknowledged By
+     */
+    acknowledged_by: string | null;
+    /**
+     * Note
+     */
+    note: string | null;
+    /**
+     * Recovered At
+     */
+    recovered_at: string | null;
+    /**
+     * Recovery Evidence
+     */
+    recovery_evidence: string | null;
+};
+
+/**
  * Items[AutomationSchedule]
  */
 export type ItemsAutomationSchedule = {
@@ -4933,6 +5172,133 @@ export type LlmModelCatalog = {
 };
 
 /**
+ * LogPage
+ */
+export type LogPage = {
+    /**
+     * Items
+     */
+    items: Array<LogRecord>;
+    /**
+     * Next Cursor
+     */
+    next_cursor: string | null;
+    /**
+     * Coverage Warnings
+     */
+    coverage_warnings: Array<'retention' | 'scan_limit' | 'rotation' | 'segment' | 'coverage' | 'unavailable'>;
+    /**
+     * Earliest Scanned At
+     */
+    earliest_scanned_at: string | null;
+    /**
+     * Latest Scanned At
+     */
+    latest_scanned_at: string | null;
+};
+
+/**
+ * LogRecord
+ */
+export type LogRecord = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Timestamp
+     */
+    timestamp: string;
+    /**
+     * Level
+     */
+    level: 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR' | 'CRITICAL';
+    /**
+     * Role
+     */
+    role: 'web' | 'scheduler' | 'worker' | 'automation';
+    /**
+     * Instance Id
+     */
+    instance_id: string;
+    /**
+     * Logger
+     */
+    logger: string;
+    /**
+     * Component
+     */
+    component: string;
+    /**
+     * Message
+     */
+    message: string;
+    /**
+     * Request Id
+     */
+    request_id?: string | null;
+    /**
+     * Analysis Id
+     */
+    analysis_id?: string | null;
+    /**
+     * Task Id
+     */
+    task_id?: string | null;
+    /**
+     * Report Id
+     */
+    report_id?: string | null;
+    /**
+     * Line Id
+     */
+    line_id?: string | null;
+    /**
+     * Source Id
+     */
+    source_id?: string | null;
+    /**
+     * Resource Id
+     */
+    resource_id?: string | null;
+    /**
+     * Related Kind
+     */
+    related_kind?: string | null;
+    /**
+     * Stage
+     */
+    stage?: string | null;
+    /**
+     * Error Code
+     */
+    error_code?: string | null;
+    /**
+     * Duration Ms
+     */
+    duration_ms?: number | null;
+    exception?: SafeException | null;
+};
+
+/**
+ * LogTotals
+ */
+export type LogTotals = {
+    /**
+     * Errors
+     */
+    errors: number;
+    /**
+     * Warnings
+     */
+    warnings: number;
+    /**
+     * Complete
+     */
+    complete: boolean;
+};
+
+/**
  * MachineApplication
  */
 export type MachineApplication = {
@@ -5044,6 +5410,28 @@ export type MagicBoxTaskFinishedRequest = {
 };
 
 /**
+ * MonitorStatus
+ */
+export type MonitorStatus = {
+    /**
+     * Monitor Id
+     */
+    monitor_id: string;
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * State
+     */
+    state: 'unknown' | 'healthy' | 'suspect' | 'down' | 'recovering' | 'paused';
+    /**
+     * Last Checked At
+     */
+    last_checked_at: number | null;
+};
+
+/**
  * MyConfirmedTask
  */
 export type MyConfirmedTask = {
@@ -5105,6 +5493,60 @@ export type MyConfirmedTasks = {
      * End Date
      */
     end_date: string;
+};
+
+/**
+ * OperationsOverview
+ */
+export type OperationsOverview = {
+    /**
+     * Open Incidents
+     */
+    open_incidents: number | null;
+    log_totals: LogTotals | null;
+    /**
+     * Recent
+     */
+    recent: Array<Incident> | null;
+    /**
+     * Recurring
+     */
+    recurring: Array<Incident> | null;
+    runtime: OperationsStatus;
+};
+
+/**
+ * OperationsStatus
+ */
+export type OperationsStatus = {
+    /**
+     * Observed At
+     */
+    observed_at: string;
+    /**
+     * Roles
+     */
+    roles: Array<RoleStatus>;
+    /**
+     * Postgres
+     */
+    postgres: 'healthy' | 'abnormal' | 'unknown' | 'paused';
+    /**
+     * Consumers Ready
+     */
+    consumers_ready: number | null;
+    /**
+     * Consumers Expected
+     */
+    consumers_expected: number;
+    /**
+     * Monitors
+     */
+    monitors: Array<MonitorStatus> | null;
+    /**
+     * Work
+     */
+    work: Array<WorkStatus> | null;
 };
 
 /**
@@ -5181,6 +5623,28 @@ export type PageEmailDelivery = {
      * Items
      */
     items: Array<EmailDelivery>;
+    /**
+     * Total
+     */
+    total: number;
+    /**
+     * Page
+     */
+    page: number;
+    /**
+     * Page Size
+     */
+    page_size: number;
+};
+
+/**
+ * Page[Incident]
+ */
+export type PageIncident = {
+    /**
+     * Items
+     */
+    items: Array<Incident>;
     /**
      * Total
      */
@@ -5736,6 +6200,36 @@ export type RecipientResult = {
 };
 
 /**
+ * RelatedOperation
+ */
+export type RelatedOperation = {
+    /**
+     * Kind
+     */
+    kind: 'reports' | 'background' | 'automation' | 'email' | 'database-monitor' | 'dispatch';
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Status
+     */
+    status: string;
+    /**
+     * Line Id
+     */
+    line_id: string | null;
+    /**
+     * Report Id
+     */
+    report_id: string | null;
+    /**
+     * Stage
+     */
+    stage: string | null;
+};
+
+/**
  * ReportAccepted
  */
 export type ReportAccepted = {
@@ -6012,6 +6506,16 @@ export type ReportJob = {
 };
 
 /**
+ * ReportedIssue
+ */
+export type ReportedIssue = {
+    /**
+     * Accepted
+     */
+    accepted: boolean;
+};
+
+/**
  * Resolved
  */
 export type Resolved = {
@@ -6101,6 +6605,58 @@ export type RevokeTaskRequest = {
      * Reason
      */
     reason: string;
+};
+
+/**
+ * RoleStatus
+ */
+export type RoleStatus = {
+    /**
+     * Role
+     */
+    role: 'web' | 'scheduler' | 'worker' | 'automation';
+    /**
+     * Instance Id
+     */
+    instance_id?: string | null;
+    /**
+     * State
+     */
+    state: 'healthy' | 'abnormal' | 'unknown' | 'paused';
+    /**
+     * Detail
+     */
+    detail: string;
+    /**
+     * Heartbeat At
+     */
+    heartbeat_at?: string | null;
+    /**
+     * Heartbeat Age Seconds
+     */
+    heartbeat_age_seconds?: number | null;
+    /**
+     * Stalled Workers
+     */
+    stalled_workers?: Array<string>;
+    /**
+     * Configuration State
+     */
+    configuration_state?: 'healthy' | 'abnormal' | 'unknown';
+};
+
+/**
+ * SafeException
+ */
+export type SafeException = {
+    /**
+     * Type
+     */
+    type: string;
+    /**
+     * Frames
+     */
+    frames: Array<StackFrame>;
 };
 
 /**
@@ -6435,6 +6991,24 @@ export type SqlValidateRequest = {
      * Sql
      */
     sql: string;
+};
+
+/**
+ * StackFrame
+ */
+export type StackFrame = {
+    /**
+     * File
+     */
+    file: string;
+    /**
+     * Function
+     */
+    function: string;
+    /**
+     * Line
+     */
+    line: number;
 };
 
 /**
@@ -7923,6 +8497,24 @@ export type WeldingSummary = {
 };
 
 /**
+ * WorkStatus
+ */
+export type WorkStatus = {
+    /**
+     * Group
+     */
+    group: 'background' | 'reports' | 'automation' | 'email';
+    /**
+     * Status
+     */
+    status: string;
+    /**
+     * Count
+     */
+    count: number;
+};
+
+/**
  * WorkbenchQueryResult
  */
 export type WorkbenchQueryResult = {
@@ -8750,6 +9342,360 @@ export type IncidentsApiV1DatabaseMonitorsIncidentsPageGetResponses = {
 };
 
 export type IncidentsApiV1DatabaseMonitorsIncidentsPageGetResponse = IncidentsApiV1DatabaseMonitorsIncidentsPageGetResponses[keyof IncidentsApiV1DatabaseMonitorsIncidentsPageGetResponses];
+
+export type OverviewApiV1OperationsOverviewGetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/operations/overview';
+};
+
+export type OverviewApiV1OperationsOverviewGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type OverviewApiV1OperationsOverviewGetError = OverviewApiV1OperationsOverviewGetErrors[keyof OverviewApiV1OperationsOverviewGetErrors];
+
+export type OverviewApiV1OperationsOverviewGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeOperationsOverview;
+};
+
+export type OverviewApiV1OperationsOverviewGetResponse = OverviewApiV1OperationsOverviewGetResponses[keyof OverviewApiV1OperationsOverviewGetResponses];
+
+export type StatusApiV1OperationsStatusGetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/operations/status';
+};
+
+export type StatusApiV1OperationsStatusGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type StatusApiV1OperationsStatusGetError = StatusApiV1OperationsStatusGetErrors[keyof StatusApiV1OperationsStatusGetErrors];
+
+export type StatusApiV1OperationsStatusGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeOperationsStatus;
+};
+
+export type StatusApiV1OperationsStatusGetResponse = StatusApiV1OperationsStatusGetResponses[keyof StatusApiV1OperationsStatusGetResponses];
+
+export type PendingNoticeApiV1OperationsPendingNoticeGetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/operations/pending-notice';
+};
+
+export type PendingNoticeApiV1OperationsPendingNoticeGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type PendingNoticeApiV1OperationsPendingNoticeGetError = PendingNoticeApiV1OperationsPendingNoticeGetErrors[keyof PendingNoticeApiV1OperationsPendingNoticeGetErrors];
+
+export type PendingNoticeApiV1OperationsPendingNoticeGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeBool;
+};
+
+export type PendingNoticeApiV1OperationsPendingNoticeGetResponse = PendingNoticeApiV1OperationsPendingNoticeGetResponses[keyof PendingNoticeApiV1OperationsPendingNoticeGetResponses];
+
+export type IncidentsApiV1OperationsIncidentsGetData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Start
+         */
+        start?: string | null;
+        /**
+         * End
+         */
+        end?: string;
+        /**
+         * Level
+         */
+        level?: 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR' | 'CRITICAL' | null;
+        /**
+         * Component
+         */
+        component?: string | null;
+        /**
+         * Line Id
+         */
+        line_id?: string | null;
+        /**
+         * Error Code
+         */
+        error_code?: string | null;
+        /**
+         * Keyword
+         */
+        keyword?: string | null;
+        /**
+         * Status
+         */
+        status?: 'open' | 'acknowledged' | 'recovered' | null;
+        /**
+         * Page
+         */
+        page?: number;
+        /**
+         * Page Size
+         */
+        page_size?: number;
+    };
+    url: '/api/v1/operations/incidents';
+};
+
+export type IncidentsApiV1OperationsIncidentsGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type IncidentsApiV1OperationsIncidentsGetError = IncidentsApiV1OperationsIncidentsGetErrors[keyof IncidentsApiV1OperationsIncidentsGetErrors];
+
+export type IncidentsApiV1OperationsIncidentsGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopePageIncident;
+};
+
+export type IncidentsApiV1OperationsIncidentsGetResponse = IncidentsApiV1OperationsIncidentsGetResponses[keyof IncidentsApiV1OperationsIncidentsGetResponses];
+
+export type IncidentApiV1OperationsIncidentsIncidentIdGetData = {
+    body?: never;
+    path: {
+        /**
+         * Incident Id
+         */
+        incident_id: string;
+    };
+    query?: never;
+    url: '/api/v1/operations/incidents/{incident_id}';
+};
+
+export type IncidentApiV1OperationsIncidentsIncidentIdGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type IncidentApiV1OperationsIncidentsIncidentIdGetError = IncidentApiV1OperationsIncidentsIncidentIdGetErrors[keyof IncidentApiV1OperationsIncidentsIncidentIdGetErrors];
+
+export type IncidentApiV1OperationsIncidentsIncidentIdGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeIncident;
+};
+
+export type IncidentApiV1OperationsIncidentsIncidentIdGetResponse = IncidentApiV1OperationsIncidentsIncidentIdGetResponses[keyof IncidentApiV1OperationsIncidentsIncidentIdGetResponses];
+
+export type AcknowledgeApiV1OperationsIncidentsIncidentIdAcknowledgePostData = {
+    body: AcknowledgeIncident;
+    path: {
+        /**
+         * Incident Id
+         */
+        incident_id: string;
+    };
+    query?: never;
+    url: '/api/v1/operations/incidents/{incident_id}/acknowledge';
+};
+
+export type AcknowledgeApiV1OperationsIncidentsIncidentIdAcknowledgePostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type AcknowledgeApiV1OperationsIncidentsIncidentIdAcknowledgePostError = AcknowledgeApiV1OperationsIncidentsIncidentIdAcknowledgePostErrors[keyof AcknowledgeApiV1OperationsIncidentsIncidentIdAcknowledgePostErrors];
+
+export type AcknowledgeApiV1OperationsIncidentsIncidentIdAcknowledgePostResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeIncident;
+};
+
+export type AcknowledgeApiV1OperationsIncidentsIncidentIdAcknowledgePostResponse = AcknowledgeApiV1OperationsIncidentsIncidentIdAcknowledgePostResponses[keyof AcknowledgeApiV1OperationsIncidentsIncidentIdAcknowledgePostResponses];
+
+export type LogsApiV1OperationsLogsGetData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Start
+         */
+        start?: string;
+        /**
+         * End
+         */
+        end?: string;
+        /**
+         * Level
+         */
+        level?: 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR' | 'CRITICAL' | null;
+        /**
+         * Component
+         */
+        component?: string | null;
+        /**
+         * Line Id
+         */
+        line_id?: string | null;
+        /**
+         * Error Code
+         */
+        error_code?: string | null;
+        /**
+         * Keyword
+         */
+        keyword?: string | null;
+        /**
+         * Role
+         */
+        role?: 'web' | 'scheduler' | 'worker' | 'automation' | null;
+        /**
+         * Instance Id
+         */
+        instance_id?: string | null;
+        /**
+         * Resource Id
+         */
+        resource_id?: string | null;
+        /**
+         * Source Id
+         */
+        source_id?: string | null;
+        /**
+         * Request Id
+         */
+        request_id?: string | null;
+        /**
+         * Analysis Id
+         */
+        analysis_id?: string | null;
+        /**
+         * Task Id
+         */
+        task_id?: string | null;
+        /**
+         * Report Id
+         */
+        report_id?: string | null;
+        /**
+         * Cursor
+         */
+        cursor?: string | null;
+        /**
+         * Limit
+         */
+        limit?: number;
+    };
+    url: '/api/v1/operations/logs';
+};
+
+export type LogsApiV1OperationsLogsGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type LogsApiV1OperationsLogsGetError = LogsApiV1OperationsLogsGetErrors[keyof LogsApiV1OperationsLogsGetErrors];
+
+export type LogsApiV1OperationsLogsGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeLogPage;
+};
+
+export type LogsApiV1OperationsLogsGetResponse = LogsApiV1OperationsLogsGetResponses[keyof LogsApiV1OperationsLogsGetResponses];
+
+export type BrowserApiV1OperationsBrowserPostData = {
+    body: BrowserIssue;
+    path?: never;
+    query?: never;
+    url: '/api/v1/operations/browser';
+};
+
+export type BrowserApiV1OperationsBrowserPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type BrowserApiV1OperationsBrowserPostError = BrowserApiV1OperationsBrowserPostErrors[keyof BrowserApiV1OperationsBrowserPostErrors];
+
+export type BrowserApiV1OperationsBrowserPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeReportedIssue;
+};
+
+export type BrowserApiV1OperationsBrowserPostResponse = BrowserApiV1OperationsBrowserPostResponses[keyof BrowserApiV1OperationsBrowserPostResponses];
+
+export type RelatedApiV1OperationsRelatedKindIdentifierGetData = {
+    body?: never;
+    path: {
+        /**
+         * Kind
+         */
+        kind: 'reports' | 'background' | 'automation' | 'email' | 'database-monitor' | 'dispatch';
+        /**
+         * Identifier
+         */
+        identifier: string;
+    };
+    query?: never;
+    url: '/api/v1/operations/related/{kind}/{identifier}';
+};
+
+export type RelatedApiV1OperationsRelatedKindIdentifierGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type RelatedApiV1OperationsRelatedKindIdentifierGetError = RelatedApiV1OperationsRelatedKindIdentifierGetErrors[keyof RelatedApiV1OperationsRelatedKindIdentifierGetErrors];
+
+export type RelatedApiV1OperationsRelatedKindIdentifierGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeRelatedOperation;
+};
+
+export type RelatedApiV1OperationsRelatedKindIdentifierGetResponse = RelatedApiV1OperationsRelatedKindIdentifierGetResponses[keyof RelatedApiV1OperationsRelatedKindIdentifierGetResponses];
 
 export type OptionsApiV1PdmStatisticsOptionsPostData = {
     body: PdmOptionsQuery;

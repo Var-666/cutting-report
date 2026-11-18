@@ -1,3 +1,4 @@
+import logging
 import smtplib
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -129,7 +130,8 @@ def ready(workflow, recipients=None):
     return repository, service, report_id
 
 
-def test_partial_refusal_retries_only_rejected_recipients_with_same_message_id(workflow, monkeypatch):
+def test_partial_refusal_retries_only_rejected_recipients_with_same_message_id(workflow, monkeypatch, caplog):
+    caplog.set_level(logging.INFO, logger='app.services.automation_service')
     repository, service, report_id = ready(workflow, ["a@example.com", "b@example.com"])
     email, configured, sent = smtp_service(monkeypatch, [{"b@example.com": (450, b"later")}, {}])
     service.email_service = email
@@ -149,14 +151,22 @@ def test_partial_refusal_retries_only_rejected_recipients_with_same_message_id(w
     final = repository.delivery_for_report(report_id)
     assert final["status"] == "sent"
     assert all(value["status"] == "accepted" for value in final["recipient_results"].values())
+    logs = [record.operations_fields for record in caplog.records if hasattr(record, 'operations_fields')]
+    assert [(item['error_code'], item['resource_id'], item['report_id'], item['line_id']) for item in logs] == [
+        ('SMTP_ATTEMPT_FAILED', first['delivery_id'], report_id, 'Cutter01'),
+        ('SMTP_ACCEPTED', first['delivery_id'], report_id, 'Cutter01'),
+    ]
 
 
-def test_success_then_database_failure_is_not_automatically_resent(workflow, monkeypatch):
+def test_success_then_database_failure_is_not_automatically_resent(workflow, monkeypatch, caplog):
+    caplog.set_level(logging.INFO, logger='app.services.automation_service')
     repository, service, report_id = ready(workflow)
     service.email_service = SimpleNamespace(send=lambda job, *args, **kwargs: job["message_id"])
     monkeypatch.setattr(repository, "mark_delivery_sent", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("disk failure")))
     with pytest.raises(RuntimeError, match="disk failure"):
         service.process_next_email(NOW)
+    assert not any(getattr(record, 'operations_fields', {}).get('error_code') == 'SMTP_ACCEPTED'
+                   for record in caplog.records)
     assert repository.delivery_for_report(report_id)["status"] == "sending"
     restarted = AutomationRepository(repository.database)
     assert restarted.delivery_for_report(report_id)["status"] == "sending", "Web schema initialization must not disturb live SMTP"

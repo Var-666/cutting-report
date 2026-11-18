@@ -361,7 +361,7 @@ class AutomationRepository(PostgresRepository):
         with self.connect() as connection:
             row = connection.execute(
                 """
-                SELECT d.*, r.schedule_name, r.report_type, r.report_date, r.attach_report,
+                SELECT d.*, r.schedule_name, r.report_type, r.report_date, r.attach_report, r.device_id,
                        p.filename, p.relative_path, p.generated_at, j.ai_status
                 FROM email_deliveries AS d
                 JOIN scheduled_report_runs AS r ON r.run_id = d.run_id

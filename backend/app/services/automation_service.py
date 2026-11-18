@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 from time import monotonic
 from uuid import uuid4
 
+from app.core.operations_logging import event
 from app.core.sql_capacity import sql_identity
 from app.config import Settings
 from app.database.automation import AutomationRepository
@@ -287,10 +288,12 @@ class AutomationService:
                 3600,
             )
             retry_at = now + timedelta(seconds=delay)
-            logger.warning(
-                "email delivery failed delivery_id=%s attempt=%s error_type=%s",
-                delivery["delivery_id"], delivery["attempt_count"], type(exc).__name__,
-            )
+            unknown = send_started and not isinstance(exc, (EmailRecipientsRefused, EmailDeliveryFailure, EmailConfigurationError))
+            event(logger, logging.WARNING if unknown else logging.ERROR,
+                  '邮件发送结果待核对' if unknown else '邮件发送尝试失败',
+                  error_code='SMTP_OUTCOME_UNKNOWN' if unknown else 'SMTP_ATTEMPT_FAILED',
+                  resource_id=delivery['delivery_id'], report_id=delivery.get('report_id'), related_kind='email',
+                  line_id=delivery.get('device_id'), duration_ms=(monotonic() - started) * 1000, exc_info=True)
             if isinstance(exc, EmailRecipientsRefused):
                 self.repository.mark_delivery_refused(
                     delivery, exc.recipients, message_id=exc.message_id,
@@ -311,4 +314,7 @@ class AutomationService:
         self.repository.mark_delivery_sent(
             delivery, message_id=message_id, now=now.isoformat(timespec="seconds")
         )
+        event(logger, logging.INFO, '邮件已由 SMTP 接收并确认入库', error_code='SMTP_ACCEPTED',
+              resource_id=delivery['delivery_id'], report_id=delivery.get('report_id'), related_kind='email',
+              line_id=delivery.get('device_id'), duration_ms=(monotonic() - started) * 1000)
         return True

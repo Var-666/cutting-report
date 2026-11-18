@@ -8,9 +8,10 @@ from dataclasses import dataclass, field
 from time import monotonic
 from uuid import uuid4
 
+from app.core.operations_logging import event
 from app.config import Settings
 from app.core.report_deadline import ensure_time_remaining, operation_deadline, remaining_seconds
-from app.core.request_cancellation import current_request_id
+from app.core.request_cancellation import SqlRequestCancelled, current_request_id
 
 
 logger = logging.getLogger(__name__)
@@ -54,6 +55,10 @@ def analysis_operation(settings: Settings, report_type: str, report_date: str,
                 ensure_time_remaining()
     except BaseException as exc:
         outcome = type(exc).__name__
+        if isinstance(exc, Exception) and not isinstance(exc, SqlRequestCancelled):
+            event(logger, logging.ERROR, '智能分析流程失败', error_code='ANALYSIS_FAILED',
+                  incident=True, exc_info=True, analysis_id=execution.analysis_id, line_id=settings.device_id,
+                  stage=report_type, resource_id=report_type, duration_ms=(monotonic() - execution.started) * 1000)
         raise
     finally:
         total = monotonic() - execution.started
@@ -73,6 +78,9 @@ def analysis_operation(settings: Settings, report_type: str, report_date: str,
             execution.promoted, execution.input_chars, execution.analysis_id, execution.model_attempts,
             round(stages.get("retry_wait", 0) * 1000),
         )
+        if outcome == 'success':
+            event(logger, logging.INFO, '智能分析流程完成', analysis_id=execution.analysis_id,
+                  line_id=settings.device_id, stage=report_type, duration_ms=total * 1000)
         _execution.reset(token)
 
 

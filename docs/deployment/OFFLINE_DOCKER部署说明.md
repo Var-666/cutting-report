@@ -78,6 +78,8 @@ docker compose exec automation python -m app.automation_worker --health
 curl --fail http://127.0.0.1:8088/api/v1/health
 ```
 
+四个应用角色共用 `cutting_logs:/app/logs`。运维中心读取卷内的 `operations/`，Docker 仍按原有 `json-file` 配置保存各容器标准输出。升级前应用编号迁移。按角色和实例排查、设置保留期及巡检方式见[配置参考](配置参考.md#系统运维日志与保留)。
+
 容器健康只证明应用/状态库与相应角色可用，生产SQL、HR、PDM、能管、魔盒、模型和邮件须按现场业务核验；不能把开关开启或`SELECT 1`成功等同于联调完成。
 
 脚本失败会打印阶段和备份位置；新应用启动或健康失败会停止新角色。保留输出和备份，核对原因后处理，不删除卷、Schema版本或租约强行重试。升级后已有业务写入时，不直接恢复旧备份或只换旧源码；回退按[迁移说明](PostgreSQL状态库迁移.md#备份与回退)核对数据及外部副作用。

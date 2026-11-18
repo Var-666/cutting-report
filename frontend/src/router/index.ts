@@ -91,6 +91,17 @@ const router = createRouter({
         },
         weldingRoutes,
         {
+          path: 'operations',
+          component: () => import('../layouts/SettingsLayout.vue'),
+          meta: { title: '系统运维', icon: 'activity' },
+          children: [
+            { path: '', name: 'operations', component: () => import('../views/OperationsOverviewView.vue'), meta: { title: '运维概览', icon: 'activity' } },
+            { path: 'incidents', name: 'operations-incidents', component: () => import('../views/OperationsRecordsView.vue'), props: { mode: 'incidents' }, meta: { title: '异常事件', icon: 'bell' } },
+            { path: 'logs', name: 'operations-logs', component: () => import('../views/OperationsRecordsView.vue'), props: { mode: 'logs' }, meta: { title: '运行日志', icon: 'file' } },
+            { path: 'status', name: 'operations-status', component: () => import('../views/OperationsOverviewView.vue'), props: { statusOnly: true }, meta: { title: '运行状态', icon: 'activity' } },
+          ],
+        },
+        {
           path: 'settings',
           component: () => import('../layouts/SettingsLayout.vue'),
           meta: { title: '系统设置', icon: 'settings' },

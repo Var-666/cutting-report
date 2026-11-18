@@ -7,6 +7,7 @@ import type { LayoutMode } from '../vendor/soybean-admin/types'
 import AppIcon from '../components/AppIcon.vue'
 import DeviceSwitcher from '../components/DeviceSwitcher.vue'
 import ThemeSettings from '../components/ThemeSettings.vue'
+import OperationsNotice from '../components/operations/OperationsNotice.vue'
 import { useDialogFocus } from '../composables/useDialogFocus.ts'
 import { useAppStore } from '../state/app.ts'
 import { useThemeStore } from '../store/modules/theme'
@@ -154,6 +155,7 @@ function getSiderAndCollapsedWidth(isCollapsed: boolean) {
             </NBreadcrumbItem>
           </NBreadcrumb>
           <div class="soybean-header-actions">
+            <OperationsNotice />
             <ThemeHeaderTools />
             <ThemeSettings />
             <DeviceSwitcher v-if="routeStore.section === 'line' && (!isVerticalMix || appStore.isMobile)" />

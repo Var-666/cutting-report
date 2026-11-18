@@ -172,7 +172,7 @@ export function useMenu() {
 
     const routeName = (hideInMenu ? activeMenu : name) || name;
 
-    return routeName === 'settings' ? '/admin/settings' : routeName;
+    return ['settings', 'operations'].includes(routeName) ? `/admin/${routeName}` : routeName;
   });
 
   return {

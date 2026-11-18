@@ -39,7 +39,6 @@ def test_callback_validation_logs_field_errors_without_request_secrets(
     app.add_exception_handler(RequestValidationError, safe_connection_validation)
     app.dependency_overrides[require_callback_source] = lambda: None
     app.include_router(callback_router)
-    fields = list(body) if isinstance(body, dict) else []
     if isinstance(body, dict):
         body = {**body, 'password':'private-body-secret', 'taskName':'实际完成任务',
                 'taskIdentifier':'dsp_actual_task', 'thickness':12, 'material':body.get('material', 'A0')}
@@ -51,27 +50,17 @@ def test_callback_validation_logs_field_errors_without_request_secrets(
     detail = response.json()['detail'][0]
     assert detail['loc'] == (['body', field] if field else ['body'])
     assert detail['type'] == error_type
-    records = [record for record in caplog.records if '魔盒完成通知校验失败' in record.message]
+    records = [record for record in caplog.records if '魔盒完成通知参数校验失败' in record.message]
     assert len(records) == 1
     message = records[0].message
-    assert '192.0.2.10' in message and content_type in message
-    assert error_type in message and input_type in message
-    assert 'body_fields=' in message
-    for key in fields:
-        assert key in message
-    if field:
-        assert field in message
-    if invalid_value:
-        assert invalid_value in message
-    if fields:
-        assert 'callback_body=' in message
-        for value in ('实际完成任务', 'dsp_actual_task', "'thickness': 12"):
-            assert value in message
-    for secret in ('private-body-secret', 'private-header-secret'):
-        assert secret not in message
+    assert records[0].operations_fields['error_code'] == 'CALLBACK_VALIDATION'
+    for sensitive in ('192.0.2.10', content_type, '实际完成任务', 'dsp_actual_task',
+                      'private-body-secret', 'private-header-secret', invalid_value):
+        if sensitive:
+            assert sensitive not in message
 
 
-def test_failed_callback_task_preview_is_bounded_and_does_not_dump_nested_values(caplog):
+def test_failed_callback_logs_no_raw_task_fields_or_nested_values(caplog):
     from fastapi.exceptions import RequestValidationError
     from app.main import safe_connection_validation
     from app.api.cutting import require_callback_source
@@ -86,10 +75,9 @@ def test_failed_callback_task_preview_is_bounded_and_does_not_dump_nested_values
             'taskName':'a' * 512 + 'hidden-overflow', 'material':{'password':'nested-secret'},
         })
     assert response.status_code == 422
-    message = next(record.message for record in caplog.records if '魔盒完成通知校验失败' in record.message)
-    assert "'finish_by': '机床(10.1.133.197)'" in message
-    assert "'material': {'type': 'dict'}" in message
-    assert 'hidden-overflow' not in message and 'nested-secret' not in message
+    message = next(record.message for record in caplog.records if '魔盒完成通知参数校验失败' in record.message)
+    for value in ('10.1.133.197', 'material', 'hidden-overflow', 'nested-secret'):
+        assert value not in message
 
 
 def test_other_validation_failures_keep_the_existing_response_and_do_not_log_callbacks(caplog):
@@ -105,7 +93,7 @@ def test_other_validation_failures_keep_the_existing_response_and_do_not_log_cal
         response = client.get('/api/v1/other', params={'count':'bad-number'})
     assert response.status_code == 422
     assert response.json()['detail'][0]['loc'] == ['query', 'count']
-    assert not any('魔盒完成通知校验失败' in record.message for record in caplog.records)
+    assert not any('魔盒完成通知参数校验失败' in record.message for record in caplog.records)
 
 
 @pytest.fixture

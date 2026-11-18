@@ -4,6 +4,7 @@ export function navigationSection(path: string) {
   if (path === '/admin/home') return 'home'
   if (path === '/admin/automation') return 'automation'
   if (path === '/admin/pdm-statistics') return 'pdm'
+  if (path === '/admin/operations' || path?.startsWith('/admin/operations/')) return 'operations'
   if (path === '/admin/settings' || path?.startsWith('/admin/settings/')) return 'settings'
   return 'line'
 }

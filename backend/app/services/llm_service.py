@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
+from app.core.operations_logging import event
 from app.config import Settings
 from app.database.postgres import PostgresDatabase
 from app.models.domain import AnalysisResult
@@ -310,6 +311,18 @@ def request_llm_json(
                         _wait_for_retry(delay)
     except BaseException as exc:
         outcome = type(exc).__name__
+        if isinstance(exc, Exception) and not isinstance(exc, SqlRequestCancelled):
+            code = 'MODEL_REQUEST_FAILED'
+            if isinstance(exc, httpx.HTTPStatusError):
+                code = {401: 'MODEL_AUTH_FAILED', 403: 'MODEL_AUTH_FAILED',
+                        429: 'MODEL_RATE_LIMITED'}.get(exc.response.status_code, code)
+            elif isinstance(exc, (TimeoutError, httpx.TimeoutException, ReportOperationTimeout)):
+                code = 'MODEL_TIMEOUT'
+            elif isinstance(exc, AnalysisCapacityError):
+                code = 'MODEL_CAPACITY'
+            event(logger, logging.WARNING if code in ('MODEL_RATE_LIMITED', 'MODEL_CAPACITY') else logging.ERROR,
+                  '模型请求失败', error_code=code, analysis_id=analysis_id, line_id=settings.device_id,
+                  stage=scene, resource_id=scene, incident=True, exc_info=True)
         raise
     finally:
         logger.info("model request completed: analysis_id=%s device=%s scene=%s attempts=%d outcome=%s",
@@ -415,6 +428,10 @@ class LlmService:
                                 current_analysis_id() or '-', self.settings.device_id, report_type, attempt + 1)
                     return result
                 except AnalysisOutputValidationError as exc:
+                    event(logger, logging.ERROR if attempt else logging.WARNING, '模型输出校验失败',
+                          error_code='MODEL_OUTPUT_INVALID', incident=bool(attempt),
+                          analysis_id=current_analysis_id(), line_id=self.settings.device_id,
+                          stage=report_type, resource_id=report_type)
                     if attempt or not isinstance(raw_content, str):
                         raise
                     feedback = ('上次输出未通过校验。只修正以下问题，重新返回符合output_schema的完整JSON；'

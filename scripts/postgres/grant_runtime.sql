@@ -27,6 +27,8 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
   app_state.llm_usage_tracking,
   app_state.llm_waiters,
   app_state.process_leases,
+  app_state.operations_samples,
+  app_state.system_incidents,
   app_state.query_tasks,
   app_state.report_analyses,
   app_state.report_definitions,

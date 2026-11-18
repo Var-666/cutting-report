@@ -1,11 +1,16 @@
 """Atomic monitor configuration, result fencing and incident transitions."""
+import logging
 from time import time
 from uuid import uuid4
 
 from psycopg.errors import UniqueViolation
 
+from app.core.operations_logging import event
 from app.database.postgres import PostgresRepository
 from app.models.database_monitor import DatabaseMonitorInput
+
+
+logger = logging.getLogger(__name__)
 
 
 class MonitorNotFound(ValueError):
@@ -63,6 +68,7 @@ class DatabaseMonitorRepository(PostgresRepository):
                                (now, uuid4().hex, monitor_id))
 
     def record(self, expected: dict, error: str | None, checked_at: float) -> bool:
+        recovered = None
         with self.connect() as connection:
             row = connection.execute('SELECT * FROM database_monitors WHERE monitor_id=%s FOR UPDATE', (expected['monitor_id'],)).fetchone()
             if (row is None or row['deleted_at'] is not None or not row['enabled'] or row['revision'] != expected['revision']
@@ -78,18 +84,31 @@ class DatabaseMonitorRepository(PostgresRepository):
             if error and failures >= 3 and not incident:
                 incident = uuid4().hex
                 connection.execute('''INSERT INTO database_monitor_incidents
-                    (incident_id,monitor_id,name,ip,port,started_at,confirmed_at,last_error) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)''',
-                    (incident, row['monitor_id'], row['name'], row['ip'], row['port'], started, checked_at, error))
-            if incident and error:
-                connection.execute('UPDATE database_monitor_incidents SET last_error=%s WHERE incident_id=%s', (error, incident))
+                    (incident_id,monitor_id,name,ip,port,started_at,confirmed_at,last_error,failure_count,last_failed_at)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''',
+                    (incident, row['monitor_id'], row['name'], row['ip'], row['port'], started, checked_at,
+                     error, failures, checked_at))
+            elif incident and error:
+                connection.execute('''UPDATE database_monitor_incidents
+                    SET last_error=%s,last_failed_at=GREATEST(last_failed_at,%s),failure_count=failure_count+1
+                    WHERE incident_id=%s''', (error, checked_at, incident))
             if incident and successes >= 2:
                 self._end_incident(connection, row, 'recovered', checked_at)
+                recovered = incident
                 incident = None
             connection.execute('''UPDATE database_monitors SET last_checked_at=%s,last_success_at=%s,failure_started_at=%s,
                 failures=%s,successes=%s,last_error=%s,open_incident_id=%s WHERE monitor_id=%s''',
                 (checked_at, checked_at if error is None else row['last_success_at'],
                  started if not incident else (row['failure_started_at'] or started), failures, successes, error, incident, row['monitor_id']))
-            return True
+        if error:
+            event(logger, logging.WARNING, '数据源 TCP 检测失败',
+                  error_code='DATABASE_TCP_DOWN' if incident else 'DATABASE_TCP_PROBE_FAILED',
+                  source_id=expected['monitor_id'], resource_id=incident,
+                  related_kind='database-monitor' if incident else None)
+        elif recovered:
+            event(logger, logging.INFO, '数据源 TCP 监控确认恢复', error_code='DATABASE_TCP_RECOVERED',
+                  source_id=expected['monitor_id'], resource_id=recovered, related_kind='database-monitor')
+        return True
 
     def incidents(self, page: int, page_size: int) -> dict:
         with self.connect(repeatable_read=True) as connection:

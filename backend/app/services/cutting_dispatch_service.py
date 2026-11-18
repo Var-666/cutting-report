@@ -7,6 +7,9 @@ import logging
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
+import logging
+
+from app.core.operations_logging import event
 from app.config import Settings
 from app.database.dispatch import DispatchRepository, dispatch_retry_safe
 from app.database.pdm import PdmRepository
@@ -20,6 +23,8 @@ from app.services.magic_box_service import (
 )
 from app.core.report_deadline import operation_deadline
 
+
+logger = logging.getLogger(__name__)
 
 class CuttingDispatchError(RuntimeError):
     pass
@@ -614,6 +619,8 @@ class CuttingDispatchService:
                     count=int(item["quantity"]),
                 )
             except MagicBoxError as exc:
+                event(logger, logging.ERROR, '切割文件上传失败或结果待核对', error_code='DISPATCH_UPLOAD',
+                      resource_id=dispatch_id, related_kind='dispatch', stage='upload', incident=True, exc_info=True)
                 self._transition(dispatch_id, expected={"pushing"}, status="push_failed", stage="upload_unknown" if exc.outcome_unknown else "upload_failed", last_error=str(exc), now=self._now())
                 raise
             except Exception:
@@ -630,12 +637,16 @@ class CuttingDispatchService:
         try:
             client.assign_task(task_identifier=item["task_identifier"], machine_ip=item["machine_ip"])
         except MagicBoxError as exc:
+            event(logger, logging.ERROR, '派发指派失败或结果待核对', error_code='DISPATCH_ASSIGN',
+                  resource_id=dispatch_id, related_kind='dispatch', stage='assign', incident=True, exc_info=True)
             self._transition(dispatch_id, expected={"pushing"}, status="push_failed", stage="assign_unknown" if exc.outcome_unknown else "assign_failed", last_error=str(exc), now=self._now())
             raise
         except Exception:
             self._transition(dispatch_id, expected={"pushing"}, status="push_failed", stage="assign_unknown", last_error="指派过程中异常退出，远端结果未知", now=self._now())
             raise
         item = self._transition(dispatch_id, expected={"pushing"}, status="sent", stage="complete", now=self._now())
+        event(logger, logging.INFO, '切割文件派发完成', error_code='DISPATCH_SENT',
+              resource_id=dispatch_id, related_kind='dispatch', stage='complete')
         result = self._decorate_dispatch(item)
         if self.downloads is not None and item.get("download_id"):
             result["local_file_cleanup"] = self.downloads.delete_after_push(

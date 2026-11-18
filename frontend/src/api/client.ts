@@ -1,4 +1,5 @@
 import type { ApiError, ApiResponse, RequestOptions } from '../types/api'
+import { reportApiFailure } from './browserObservations.ts'
 import { deviceUrl, getDeviceId } from './deviceContext.ts'
 import { createRequestCancellation } from './requestCancellation.ts'
 import { notifySessionExpired } from './sessionExpiry.ts'
@@ -21,6 +22,7 @@ export async function request<T = unknown>(url: string, options: RequestOptions 
         ...cancellation.headers,
       },
     })
+    if (!response.ok) reportApiFailure(url, response.status, response.headers?.get?.('X-Request-ID') ?? cancellation.requestId)
     if (options.responseType === 'blob' && response.ok) return { blob: await response.blob(), headers: response.headers }
     let payload: ApiResponse<T>
     try {

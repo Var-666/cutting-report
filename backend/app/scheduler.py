@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 
 from app.config import Settings, settings
 from app.database.postgres import execution_scope, ExecutionLeaseLost
+from app.core.operations_logging import configured_logging, event
 from app.services.application_runtime import build_runtime
 from app.services.database_runtime import database_context
 from app.services.production_reports import report_providers
@@ -36,6 +37,7 @@ class SchedulerProcess:
         self.owner = None
         self.stop_event = Event()
         self._closed = False
+        self.operations_collector = None
         self._next_heartbeat = 0.0
         self._next_due = {}
         self._reconciled = {}
@@ -136,6 +138,8 @@ class SchedulerProcess:
                 try:
                     self.tick()
                 except ExecutionLeaseLost:
+                    event(logging.getLogger('app.leases'), logging.ERROR, 'scheduler 执行租约失效',
+                          error_code='EXECUTION_LEASE_LOST', incident=True)
                     break
                 except Exception:
                     logger.exception('Scheduler cycle failed')
@@ -151,6 +155,8 @@ class SchedulerProcess:
             if self.owner: self.repository.release('scheduler', self.owner)
         finally:
             self.runtime.database_runtime.close()
+            if self.operations_collector:
+                self.operations_collector.stop()
             self.runtime.database.close()
 
 
@@ -159,11 +165,13 @@ def main():
     parser.add_argument('--health', action='store_true')
     args = parser.parse_args()
     if args.health: return role_health(settings, 'scheduler')
-    logging.basicConfig(level=logging.INFO)
-    process = SchedulerProcess(settings)
-    for signum in (signal.SIGTERM, signal.SIGINT):
-        signal.signal(signum, lambda *_: process.stop_event.set())
-    process.run()
+    with configured_logging(settings.logs_dir, 'scheduler', 'scheduler', settings.operations_log_retention_days) as logs:
+        process = SchedulerProcess(settings)
+        process.operations_collector = process.runtime.operations.collect(logs)
+        for signum in (signal.SIGTERM, signal.SIGINT):
+            signal.signal(signum, lambda *_: process.stop_event.set())
+        with process.operations_collector:
+            process.run()
     return 0
 
 

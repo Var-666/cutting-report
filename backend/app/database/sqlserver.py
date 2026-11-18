@@ -4,10 +4,16 @@ from contextlib import contextmanager
 from math import ceil
 from typing import Any, Iterator
 
+import logging
+
+from app.core.operations_logging import event
 from app.models.database_sources import DatabaseSourceConfig
-from app.core.request_cancellation import cancellable_cursor
-from app.core.report_deadline import ensure_time_remaining, remaining_seconds
+from app.core.request_cancellation import SqlRequestCancelled, cancellable_cursor
+from app.core.report_deadline import ReportOperationTimeout, ensure_time_remaining, remaining_seconds
 from app.core.sql_capacity import SqlCapacity, default_sql_capacity
+
+
+logger = logging.getLogger(__name__)
 
 
 class SqlServerConfigurationError(RuntimeError):
@@ -78,7 +84,12 @@ class SqlServerClient:
         options = {'readonly': True}
         self.connection_config()
         with self.capacity.slot(self.settings, probe=self._probe):
-            connection = pyodbc.connect(self._connection_string(), **options)
+            try:
+                connection = pyodbc.connect(self._connection_string(), **options)
+            except pyodbc.Error:
+                event(logger, logging.ERROR, 'SQL Server 连接失败', error_code='SQLSERVER_CONNECT_FAILED',
+                      source_id=self.source, incident=not self._probe, exc_info=True)
+                raise
             try:
                 query_timeout = self.connection_config()["query_timeout"]
                 remaining = remaining_seconds()
@@ -86,6 +97,10 @@ class SqlServerClient:
                     query_timeout = max(1, min(query_timeout, ceil(remaining)))
                 connection.timeout = int(query_timeout)
                 yield connection
+            except pyodbc.Error:
+                event(logger, logging.ERROR, 'SQL Server 查询失败', error_code='SQLSERVER_QUERY_FAILED',
+                      source_id=self.source, incident=not self._probe, exc_info=True)
+                raise
             finally:
                 connection.close()
 
@@ -94,7 +109,14 @@ class SqlServerClient:
             from app.database.sqlserver_legacy import fetch_all
             self.connection_config()  # Reject disabled sources before starting a child.
             with self.capacity.slot(self.settings, probe=self._probe):
-                return fetch_all(self.settings, sql, parameters)
+                try:
+                    return fetch_all(self.settings, sql, parameters)
+                except (SqlRequestCancelled, ReportOperationTimeout):
+                    raise
+                except Exception:
+                    event(logger, logging.ERROR, 'SQL Server 兼容连接或查询失败', error_code='SQLSERVER_LEGACY_FAILED',
+                          source_id=self.source, incident=not self._probe, exc_info=True)
+                    raise
         with self.connect() as connection:
             with cancellable_cursor(connection) as cursor:
                 cursor.execute(sql, parameters)

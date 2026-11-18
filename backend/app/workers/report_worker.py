@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 from contextlib import nullcontext
 from collections.abc import Callable
 
+from app.core.operations_logging import event, operation_context
 from app.core.sql_capacity import sql_identity
 from app.config import Settings
 from app.database.metadata import MetadataRepository
@@ -143,71 +144,74 @@ class ReportWorker:
     @background_llm_work()
     def _process_report(self, job: dict, timezone: ZoneInfo) -> None:
         report_id = job["report_id"]
-        try:
-            logger.info("report generation started", extra={"report_id": report_id})
-            pipelines = self.pipelines() if callable(self.pipelines) else self.pipelines
-            pipeline = self.pipeline if pipelines is None else pipelines[job["device_id"]]
-            run = pipeline.run
-            parameters = inspect.signature(run).parameters
-            with sql_identity(job["device_id"]):
-                if "cancellation_check" in parameters:
-                    run(job, cancellation_check=self.stop_event.is_set)
+        started = monotonic()
+        with operation_context(report_id=report_id, line_id=job.get('device_id'),
+                               request_id=job.get('request_id'), related_kind='reports'):
+            try:
+                event(logger, logging.INFO, "开始生成报表")
+                pipelines = self.pipelines() if callable(self.pipelines) else self.pipelines
+                pipeline = self.pipeline if pipelines is None else pipelines[job["device_id"]]
+                run = pipeline.run
+                parameters = inspect.signature(run).parameters
+                with sql_identity(job["device_id"]):
+                    if "cancellation_check" in parameters:
+                        run(job, cancellation_check=self.stop_event.is_set)
+                    else:
+                        # Keep small test doubles and older integrations compatible while
+                        # the concrete pipeline receives cooperative shutdown checkpoints.
+                        run(job)
+            except ReportAnalysisPendingError as exc:
+                while not self.stop_event.is_set():
+                    try:
+                        self.metadata.defer_analysis(report_id, str(exc))
+                        break
+                    except ExecutionLeaseLost:
+                        raise
+                    except Exception:
+                        logger.exception('analysis waiting status write failed', extra={'report_id': report_id})
+                        self.stop_event.wait(self.settings.worker_poll_seconds)
                 else:
-                    # Keep small test doubles and older integrations compatible while
-                    # the concrete pipeline receives cooperative shutdown checkpoints.
-                    run(job)
-        except ReportAnalysisPendingError as exc:
-            while not self.stop_event.is_set():
-                try:
-                    self.metadata.defer_analysis(report_id, str(exc))
-                    break
-                except ExecutionLeaseLost:
-                    raise
-                except Exception:
-                    logger.exception('analysis waiting status write failed', extra={'report_id': report_id})
-                    self.stop_event.wait(self.settings.worker_poll_seconds)
-            else:
+                    return
+                logger.info('report deferred pending analysis: report_id=%s', report_id)
                 return
-            logger.info('report deferred pending analysis: report_id=%s', report_id)
-            return
-        except ReportPipelineCancelled:
-            if self.stop_event.is_set():
-                logger.info("report generation cancelled during worker shutdown", extra={"report_id": report_id})
+            except ReportPipelineCancelled:
+                if self.stop_event.is_set():
+                    logger.info("report generation cancelled during worker shutdown", extra={"report_id": report_id})
+                    return
+                raise
+            except ExecutionLeaseLost:
+                raise
+            except Exception as exc:
+                event(logger, logging.ERROR, '报表生成失败', error_code='REPORT_GENERATION_FAILED', exc_info=True)
+                while not self.stop_event.is_set():
+                    try:
+                        self.metadata.update_status(
+                            report_id, "failed", "报告生成失败，请联系管理员",
+                            finished_at=datetime.now(timezone).isoformat(timespec="seconds"),
+                            error_code="REPORT_GENERATION_FAILED", error_message=str(exc)[:500],
+                        )
+                        break
+                    except ExecutionLeaseLost:
+                        raise
+                    except Exception:
+                        logger.exception("report failure status write failed", extra={"report_id": report_id})
+                        self.stop_event.wait(self.settings.worker_poll_seconds)
+                else:
+                    return
+                if self.automation_service is not None:
+                    try:
+                        self.automation_service.report_failed(
+                            report_id, str(exc)[:500], datetime.now(timezone)
+                        )
+                    except Exception:
+                        logger.exception("automation failure callback failed", extra={"report_id": report_id})
                 return
-            raise
-        except ExecutionLeaseLost:
-            raise
-        except Exception as exc:
-            logger.exception("report generation failed", extra={"report_id": report_id})
-            while not self.stop_event.is_set():
-                try:
-                    self.metadata.update_status(
-                        report_id, "failed", "报告生成失败，请联系管理员",
-                        finished_at=datetime.now(timezone).isoformat(timespec="seconds"),
-                        error_code="REPORT_GENERATION_FAILED", error_message=str(exc)[:500],
-                    )
-                    break
-                except ExecutionLeaseLost:
-                    raise
-                except Exception:
-                    logger.exception("report failure status write failed", extra={"report_id": report_id})
-                    self.stop_event.wait(self.settings.worker_poll_seconds)
-            else:
-                return
+
+            # The pipeline already committed the completed artifact. Delivery failure
+            # must not rewrite it as failed; reconciliation will retry the outbox.
             if self.automation_service is not None:
                 try:
-                    self.automation_service.report_failed(
-                        report_id, str(exc)[:500], datetime.now(timezone)
-                    )
+                    self.automation_service.report_completed(report_id, datetime.now(timezone))
                 except Exception:
-                    logger.exception("automation failure callback failed", extra={"report_id": report_id})
-            return
-
-        # The pipeline already committed the completed artifact. Delivery failure
-        # must not rewrite it as failed; reconciliation will retry the outbox.
-        if self.automation_service is not None:
-            try:
-                self.automation_service.report_completed(report_id, datetime.now(timezone))
-            except Exception:
-                logger.exception("automation completion callback failed", extra={"report_id": report_id})
-        logger.info("report generation completed", extra={"report_id": report_id})
+                    logger.exception("automation completion callback failed", extra={"report_id": report_id})
+            event(logger, logging.INFO, "报表生成完成", duration_ms=(monotonic() - started) * 1000)

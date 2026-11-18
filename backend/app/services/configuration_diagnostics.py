@@ -149,6 +149,11 @@ class ConfigurationDiagnostics:
         self.loaded_at = datetime.now(timezone.utc).isoformat()
         self.version = uuid4().hex[:12]
 
+    def load_state(self) -> str:
+        hot = self.runtime.inspect()
+        database = self.database_runtime.inspect() if self.database_runtime else {}
+        return 'abnormal' if hot.get('error') or database.get('error') else 'healthy'
+
     def observed(self, comparison_key: str) -> dict:
         hot = self.runtime.inspect()
         database = self.database_runtime.inspect() if self.database_runtime else None

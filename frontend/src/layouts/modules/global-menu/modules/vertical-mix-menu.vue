@@ -34,6 +34,12 @@ function handleResetActiveMenu() {
   setDrawerVisible(false);
 }
 
+const secondaryTitle = computed(() => {
+  if (routeStore.section === 'settings') return '系统设置'
+  if (routeStore.section === 'operations') return '系统运维'
+  return routeStore.activeLine?.name || '产线功能'
+})
+
 const expandedKeys = ref<string[]>([]);
 
 function updateExpandedKeys() {
@@ -93,7 +99,7 @@ watch(
           :aria-hidden="!showDrawer || undefined"
         >
           <header class="device-menu-heading flex-y-center justify-between px-12px" :style="{ height: themeStore.header.height + 'px' }">
-            <h2 class="device-menu-title" :title="routeStore.section === 'settings' ? '系统设置' : routeStore.activeLine?.name">{{ routeStore.section === 'settings' ? '系统设置' : routeStore.activeLine?.name || '产线功能' }}</h2>
+            <h2 class="device-menu-title" :title="secondaryTitle">{{ secondaryTitle }}</h2>
             <PinToggler
               :pin="appStore.mixSiderFixed"
               @click="appStore.toggleMixSiderFixed"

@@ -95,8 +95,9 @@ class PostgresDatabase:
         self.close()
 
     @contextmanager
-    def connect(self, *, repeatable_read: bool = False) -> Iterator[Connection]:
-        with self.pool.connection(timeout=self.timeout) as connection, connection.transaction():
+    def connect(self, *, repeatable_read: bool = False, checkout_timeout: float | None = None) -> Iterator[Connection]:
+        timeout = self.timeout if checkout_timeout is None else min(self.timeout, checkout_timeout)
+        with self.pool.connection(timeout=timeout) as connection, connection.transaction():
             if repeatable_read:
                 connection.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ')
             require_execution_lease(connection, self)

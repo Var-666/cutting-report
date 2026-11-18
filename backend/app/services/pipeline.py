@@ -6,6 +6,8 @@ from collections.abc import Callable
 from functools import partial
 from zoneinfo import ZoneInfo
 
+from app.core.operations_logging import event
+from app.database.postgres import ExecutionLeaseLost
 from app.config import Settings
 from app.database.energy import EnergyReportRepository
 from app.database.metadata import MetadataRepository
@@ -139,11 +141,17 @@ class ReportPipeline:
             raise ValueError("报表任务与执行设备不一致")
         previous_check = self._cancellation_check
         self._cancellation_check = cancellation_check
+        stage = 'querying'
+
+        def update_status(status, message, **kwargs):
+            nonlocal stage
+            stage = status
+            return self.metadata.update_status(job['report_id'], status, message, **kwargs)
+
         try:
             with report_deadline(self.settings.report_operation_timeout_seconds):
                 self._ensure_active()
                 report_type = job.get("report_type") or "workshop"
-                update_status = partial(self.metadata.update_status, job["report_id"])
                 analyze = partial(self._analyze_or_wait, report_id=job["report_id"], report_type=report_type)
                 if report_type == "custom" and job.get("definition_id"):
                     prepared = prepare_custom_report(
@@ -185,10 +193,18 @@ class ReportPipeline:
                         ensure_active=self._ensure_active, update_status=update_status,
                         analyze=analyze,
                     )
+                stage = "rendering"
                 self._render_and_complete(
                     job=job, report=prepared.report, generated_at=prepared.generated_at,
                     task_count=prepared.task_count, analysis_status=prepared.analysis_status,
                 )
+        except (ReportPipelineCancelled, SqlRequestCancelled, ReportAnalysisPendingError, ExecutionLeaseLost):
+            raise
+        except Exception as exc:
+            code = 'REPORT_TIMEOUT' if isinstance(exc, ReportOperationTimeout) else 'REPORT_STAGE_FAILED'
+            event(logger, logging.ERROR, '报表阶段执行失败', error_code=code, stage=stage,
+                  report_id=job['report_id'], line_id=self.settings.device_id, exc_info=True)
+            raise
         finally:
             self._cancellation_check = previous_check
 

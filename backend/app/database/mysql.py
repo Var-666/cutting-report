@@ -10,6 +10,7 @@ from time import monotonic
 from typing import Any, Iterator
 from uuid import uuid4
 
+from app.core.operations_logging import event, operation_context
 from app.models.database_sources import DatabaseSourceConfig
 from app.core.report_deadline import remaining_seconds
 from app.core.request_cancellation import SqlRequestCancelled, current_request_id, sql_request_cancellations
@@ -50,7 +51,8 @@ class MySqlSession:
             return rows
         except Exception as exc:
             failed = True
-            logger.warning('mysql query failed request_id=%s id=%s type=%s errno=%s elapsed_ms=%d', current_request_id.get(), query_id, type(exc).__name__, getattr(exc, 'errno', None), round((monotonic() - started) * 1000))
+            event(logger, logging.ERROR, 'MySQL 查询失败', error_code='MYSQL_QUERY_FAILED', incident=True,
+                  exc_info=True, duration_ms=(monotonic() - started) * 1000)
             raise
         finally:
             try:
@@ -142,7 +144,7 @@ class MySqlClient:
             raise MySqlUnavailable(f'{self.label}连接配置无效，请检查后端配置')
         if not self.config.enabled:
             raise MySqlUnavailable(f'{self.label}数据源尚未启用')
-        with self.capacity.slot(self.config, pool=self._pool_slots, probe=self._probe):
+        with operation_context(source_id=self.config.id), self.capacity.slot(self.config, pool=self._pool_slots, probe=self._probe):
             with self._snapshot() as session:
                 yield session
 
@@ -169,7 +171,9 @@ class MySqlClient:
         except Exception as exc:
             # Driver messages can contain credentials, SQL values and host addresses.
             discard_pool = True
-            logger.warning('mysql source failure request_id=%s type=%s errno=%s', current_request_id.get(), type(exc).__name__, getattr(exc, 'errno', None))
+            code = 'MYSQL_POOL_EXHAUSTED' if type(exc).__name__ == 'PoolError' else 'MYSQL_SOURCE_FAILED'
+            event(logger, logging.WARNING if code == 'MYSQL_POOL_EXHAUSTED' else logging.ERROR,
+                  'MySQL 数据源操作失败', error_code=code, source_id=self.config.id if self.config else None, incident=not self._probe, exc_info=True)
             code = getattr(exc, 'errno', None)
             if type(exc).__name__ == 'PoolError':
                 discard_pool = False

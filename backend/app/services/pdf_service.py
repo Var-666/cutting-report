@@ -17,6 +17,7 @@ from app.core.request_cancellation import (
 )
 from pathlib import Path
 from app.core.process_lock import FileLock
+from app.core.operations_logging import event
 from app.services.email_report import EmailReport, render_email_report
 
 
@@ -138,9 +139,11 @@ class PdfService:
                     temporary_path.unlink(missing_ok=True)
                 except OSError:
                     logging.getLogger(__name__).exception("PDF temporary file cleanup failed")
+                if not isinstance(exc, SqlRequestCancelled):
+                    event(logging.getLogger(__name__), logging.ERROR, 'PDF 渲染失败', error_code='PDF_RENDER_FAILED',
+                          report_id=html_path.stem, related_kind='reports', stage='rendering', incident=True, exc_info=True)
                 if isinstance(exc, (SqlRequestCancelled, PdfRenderError)):
                     raise
-                logging.getLogger(__name__).exception("PDF rendering failed")
                 raise PdfRenderError(
                     "PDF 生成失败，请确认服务器已安装 Playwright Chromium。"
                 ) from exc

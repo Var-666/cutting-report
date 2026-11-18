@@ -36,13 +36,14 @@ function setupMenus(router, deviceSelection) {
   return scriptFunction(...Object.keys(bindings), `${script}; return useRouteStore`)(...Object.values(bindings))()
 }
 
-test('public routes have stable primary selection and only settings expands a secondary menu', async () => {
+test('public routes have stable primary selection and operations and settings expand their own secondary menus', async () => {
   const router = setupRouter(), selected = selection()
   const menus = setupMenus(router, selected)
   selected.id = 'weld-a'
   for (const [path, key, secondary] of [
     ['/admin/home', 'admin-home', false], ['/admin/pdm-statistics', 'pdm-statistics', false],
     ['/admin/automation', 'automation', false], ['/admin/settings/database', '/admin/settings', true],
+    ['/admin/operations', '/admin/operations', true], ['/admin/operations/logs', '/admin/operations', true],
   ]) {
     await router.push(path)
     assert.equal(menus.primaryKey, key)
@@ -50,9 +51,11 @@ test('public routes have stable primary selection and only settings expands a se
     assert.equal(selected.id, 'weld-a')
     assert.ok(!menus.secondaryMenus.some(menu => ['admin-home', 'automation', 'pdm-statistics', '/admin/settings'].includes(menu.key)))
   }
+  assert.ok(menus.secondaryMenus.some(menu => menu.key === 'operations-incidents'))
+  await router.push('/admin/settings/database')
   assert.ok(menus.secondaryMenus.some(menu => menu.key === 'database-monitors'))
-  assert.deepEqual(menus.primaryMenus.map(menu => menu.key), ['admin-home', 'automation', 'type:cutting', 'type:welding', 'pdm-statistics'])
-  assert.deepEqual(menus.navigationMenus.map(menu => menu.key), ['admin-home', 'automation', 'type:cutting', 'type:welding', 'pdm-statistics', '/admin/settings'])
+  assert.deepEqual(menus.primaryMenus.map(menu => menu.key), ['admin-home', 'automation', 'type:cutting', 'type:welding', 'pdm-statistics', '/admin/operations'])
+  assert.deepEqual(menus.navigationMenus.map(menu => menu.key), ['admin-home', 'automation', 'type:cutting', 'type:welding', 'pdm-statistics', '/admin/operations', '/admin/settings'])
   for (const [key, icon] of [['type:cutting', 'laser-cutter'], ['type:welding', 'welding-torch']]) {
     const group = menus.primaryMenus.find(menu => menu.key === key)
     assert.equal(group.icon().props.name, icon)

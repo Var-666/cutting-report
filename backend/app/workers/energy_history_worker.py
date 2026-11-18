@@ -3,8 +3,10 @@ from __future__ import annotations
 import logging
 import threading
 from datetime import date, timedelta
+from zoneinfo import ZoneInfo
 
 from app.config import Settings
+from app.core.operations_logging import event
 from app.services.energy_period_service import EnergyPeriodService
 
 
@@ -106,14 +108,19 @@ class EnergyHistoryWorker:
             if month == self.service.now().date().replace(day=1):
                 delay = 60
         except Exception as exc:
-            logger.exception("energy history month synchronization failed",
-                             extra={"report_month": month.isoformat()})
+            repeated = claim["attempt_count"] >= 2
+            event(logger, logging.ERROR if repeated else logging.WARNING, '能耗历史同步失败',
+                  error_code='ENERGY_HISTORY_SYNC_FAILED', incident=repeated, exc_info=True,
+                  line_id=self.settings.device_id, source_id=f'energy:{self.source_key}',
+                  resource_id=month.isoformat(), stage='energy_sync')
             error_code = type(exc).__name__[:80]
             delay = min(30 * 2 ** min(max(claim["attempt_count"] - 1, 0), 7), 3600)
         now = self.service.now()
+        # Queue deadlines stay in application-local time. Completion evidence must survive cross-role reads in UTC.
+        completed_at = now.replace(tzinfo=ZoneInfo(self.settings.timezone))
         self._pending_finish = (
             claim, (now + timedelta(seconds=delay)).isoformat(timespec="seconds"),
-            now.isoformat(timespec="seconds"), error_code,
+            completed_at.isoformat(timespec="seconds"), error_code,
         )
         self._flush_pending_finish()
 

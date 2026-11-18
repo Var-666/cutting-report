@@ -11,6 +11,7 @@ from threading import Event, Lock
 from time import monotonic
 from typing import TYPE_CHECKING
 
+from app.core.operations_logging import event
 from app.core.process_lock import FileLock
 from app.core.report_deadline import ReportOperationTimeout, ensure_time_remaining, remaining_seconds
 from app.core.request_cancellation import SqlRequestCancelled, current_request_id, sql_request_cancellations
@@ -235,8 +236,9 @@ class SqlCapacity:
                                identity.line_id or '-', round((monotonic()-started)*1000))
             raise
         except SqlCapacityError as exc:
-            logger.warning('sql rejected source=%s line=%s reason=%s wait_ms=%d', source,
-                           identity.line_id or '-', exc.reason, round((monotonic()-started)*1000))
+            event(logger, logging.WARNING, 'SQL 执行资源暂不可用', error_code='SQL_' + exc.reason.upper(),
+                  source_id=source, line_id=identity.line_id, incident=not probe,
+                  duration_ms=(monotonic() - started) * 1000)
             raise
         finally:
             sql_request_cancellations.unregister(request_id, waiter)

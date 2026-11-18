@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import secrets
+import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from urllib.parse import urlencode
@@ -10,6 +11,7 @@ from pydantic import BaseModel, Field, SecretStr, field_validator
 from starlette.concurrency import run_in_threadpool
 from starlette.responses import RedirectResponse
 
+from app.core.operations_logging import event
 from app.api.workloads import authentication_requests
 from app.api.runtime import application_state, runtime_state
 from app.config import settings
@@ -22,6 +24,8 @@ from app.services.sso_service import SsoError
 from app.models.contracts import ApiEnvelope
 from app.models.sso import AuthStatus
 
+
+logger = logging.getLogger(__name__)
 
 SESSION_COOKIE = "cutting_session"
 SESSION_EXPIRED_HEADER = {"X-Session-Expired": "1"}
@@ -190,6 +194,8 @@ def _verify_current_admin_password(
         except AuthenticationError as exc:
             raise HTTPException(status_code=401, detail="当前管理员密码错误") from exc
         except WorkerAuthenticationUnavailableError as exc:
+            event(logger, logging.ERROR, '登录依赖的身份数据源不可用', error_code='LOGIN_SOURCE_UNAVAILABLE',
+                  incident=True, exc_info=True)
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         if not secrets.compare_digest(
             str(identity.get("external_id") or ""),
@@ -244,6 +250,9 @@ def sso_callback(request: Request) -> RedirectResponse:
             browser=request.cookies.get(SSO_BROWSER_COOKIE, ''), code=request.query_params.get('code', ''),
             error=request.query_params.get('error', ''), worker_auth=runtime_state(request).worker_auth)
     except SsoError as exc:
+        if exc.code in ('state', 'token', 'unavailable'):
+            event(logger, logging.WARNING, 'SSO 回调校验或身份交换失败',
+                  error_code='SSO_' + exc.code.upper(), incident=True)
         return RedirectResponse('/login?' + urlencode({'sso_error': exc.code}), status_code=302,
                                 headers={'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer'})
     response = RedirectResponse(result.return_to, status_code=302,
@@ -291,6 +300,8 @@ def login(payload: LoginRequest, request: Request, response: Response) -> dict:
         except AuthenticationError as exc:
             raise HTTPException(status_code=401, detail="账号或密码错误") from exc
         except WorkerAuthenticationUnavailableError as exc:
+            event(logger, logging.ERROR, '登录依赖的身份数据源不可用', error_code='LOGIN_SOURCE_UNAVAILABLE',
+                  incident=True, exc_info=True)
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         user = _users(request).upsert_external_worker(
             **identity,

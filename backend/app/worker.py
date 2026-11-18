@@ -14,6 +14,7 @@ from app.config import Settings, settings, consumer_identity
 from app.core.sql_capacity import sql_identity
 from app.database.coordination import periodic_analysis_task
 from app.database.postgres import ExecutionLeaseLost, execution_scope
+from app.core.operations_logging import configured_logging, event, operation_context
 from app.services.application_runtime import ApplicationRuntime, build_runtime
 from app.services.database_runtime import database_context
 from app.services.llm_service import background_llm_work, generation_priority
@@ -42,6 +43,7 @@ class WorkerProcess:
         self.repository = self.runtime.coordination
         self.owner = None
         self._closed = False
+        self.operations_collector = None
         self.stop_event = Event()
         self.analysis = BoundedExecutor(configuration.consumer_analysis_concurrency, 0, "background-analysis")
         self.operations = BoundedExecutor(configuration.consumer_operation_concurrency, 0, "background-operation")
@@ -138,34 +140,40 @@ class WorkerProcess:
 
     @background_llm_work()
     def _execute(self, task: dict) -> None:
-        error = None
-        started = monotonic()
-        snapshot = task['kind'] == 'report_snapshot_refresh'
-        report_type = None
-        try:
-            if snapshot:
-                report_type = task['payload'].get('report_type')
-                query = task['payload'].get('query') or {}
-                logger.info('report snapshot refresh started: task=%s device=%s report_type=%s start=%s end=%s',
-                            task['task_id'], task['device_id'], report_type,
-                            query.get('start'), query.get('end'))
-            if task["kind"].startswith("analysis_"):
-                priority = Event()
-                priority.set()
-                with generation_priority(priority):
+        with operation_context(task_id=task['task_id'], line_id=task['device_id'],
+                               resource_id=task['task_id'], related_kind='background'):
+            error = None
+            started = monotonic()
+            snapshot = task['kind'] == 'report_snapshot_refresh'
+            report_type = None
+            event(logger, logging.INFO, '后台任务开始', stage=task['kind'])
+            try:
+                if snapshot:
+                    report_type = task['payload'].get('report_type')
+                    query = task['payload'].get('query') or {}
+                    logger.info('report snapshot refresh started: task=%s device=%s report_type=%s start=%s end=%s',
+                                task['task_id'], task['device_id'], report_type,
+                                query.get('start'), query.get('end'))
+                if task["kind"].startswith("analysis_"):
+                    priority = Event()
+                    priority.set()
+                    with generation_priority(priority):
+                        self._handle(task)
+                else:
                     self._handle(task)
-            else:
-                self._handle(task)
-        except Exception as exc:
-            error = 'SOURCE_UNVERIFIED' if isinstance(exc, TaskSourceUnavailable) else type(exc).__name__
-            logger.exception("background task failed: task=%s kind=%s device=%s", task["task_id"], task["kind"], task["device_id"])
-        finally:
-            if snapshot:
-                logger.info('report snapshot refresh finished: task=%s device=%s report_type=%s outcome=%s elapsed_ms=%s',
-                            task['task_id'], task['device_id'], report_type,
-                            'failed' if error else 'completed', round((monotonic() - started) * 1000))
-            with self._lock:
-                self._completed.append((task, error))
+            except Exception as exc:
+                error = 'SOURCE_UNVERIFIED' if isinstance(exc, TaskSourceUnavailable) else type(exc).__name__
+                event(logger, logging.ERROR, '后台任务执行失败', error_code='TASK_ATTEMPT_FAILED',
+                      stage=task['kind'], exc_info=True, duration_ms=(monotonic() - started) * 1000)
+            finally:
+                if snapshot:
+                    logger.info('report snapshot refresh finished: task=%s device=%s report_type=%s outcome=%s elapsed_ms=%s',
+                                task['task_id'], task['device_id'], report_type,
+                                'failed' if error else 'completed', round((monotonic() - started) * 1000))
+                if not error:
+                    event(logger, logging.INFO, '后台任务完成', stage=task['kind'], duration_ms=(monotonic() - started) * 1000)
+                with self._lock:
+                    self._completed.append((task, error))
 
     def _flush_completions(self) -> int:
         completed = 0
@@ -203,6 +211,10 @@ class WorkerProcess:
                 if self.runtime.retention_worker.enabled:
                     self.runtime.retention_service.cleanup_expired()
                 self.repository.cleanup_completed()
+                try:
+                    self.runtime.operations.cleanup(datetime.now(ZoneInfo(self.settings.timezone)), self.settings.retention_cleanup_batch_size)
+                except Exception:
+                    event(logger, logging.WARNING, '运维历史清理失败', error_code='OPERATIONS_RETENTION', exc_info=True)
                 return
             if kind == "download_cleanup":
                 database_context(self.runtime).file_downloads.cleanup_expired()
@@ -241,7 +253,8 @@ class WorkerProcess:
                 try:
                     self.tick()
                 except ExecutionLeaseLost:
-                    logger.exception("Worker execution lease lost")
+                    event(logging.getLogger('app.leases'), logging.ERROR, 'Consumer 执行租约失效', error_code='EXECUTION_LEASE_LOST',
+                          resource_id=self.instance_id, incident=True, exc_info=True)
                     break
                 except Exception:
                     logger.exception("Worker consumer cycle failed")
@@ -270,6 +283,8 @@ class WorkerProcess:
                 except ExecutionLeaseLost:
                     pass
         finally:
+            if self.operations_collector:
+                self.operations_collector.stop()
             self.runtime.database.close()
 
 
@@ -279,11 +294,13 @@ def main() -> int:
     args = parser.parse_args()
     if args.health:
         return role_health(settings, f'worker:{consumer_identity(settings)}')
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
-    worker = WorkerProcess(settings)
-    for signum in (signal.SIGTERM, signal.SIGINT):
-        signal.signal(signum, lambda *_: worker.stop_event.set())
-    worker.run()
+    with configured_logging(settings.logs_dir, 'worker', consumer_identity(settings), settings.operations_log_retention_days) as logs:
+        process = WorkerProcess(settings)
+        process.operations_collector = process.runtime.operations.collect(logs)
+        for signum in (signal.SIGTERM, signal.SIGINT):
+            signal.signal(signum, lambda *_: process.stop_event.set())
+        with process.operations_collector:
+            process.run()
     return 0
 
 

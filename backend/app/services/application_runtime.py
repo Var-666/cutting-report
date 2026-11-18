@@ -3,6 +3,9 @@ from __future__ import annotations
 from copy import copy
 from dataclasses import dataclass, replace
 from typing import Literal, cast
+import logging
+
+from app.core.operations_logging import event
 
 from app.config import Settings, settings_for_line
 from app.device_config import ProductionLineCatalog, ProductionLineInstance, load_line_catalog
@@ -43,6 +46,7 @@ from app.workers.download_cleanup_worker import DownloadCleanupWorker
 from app.database.coordination import CoordinationRepository
 from app.core.sql_capacity import SqlCapacity
 from app.services.worker_status import WorkerStatusReader
+from app.services.operations_service import OperationsService
 from app.services.database_runtime import DatabaseRuntime, DatabaseServices, source_bindings, validate_sources
 from app.database.welding import WeldingRepository
 from app.database.mysql import MySqlClient
@@ -94,14 +98,20 @@ class ApplicationRuntime:
     retention_worker: RetentionWorker
     download_cleanup_worker: DownloadCleanupWorker
     database_monitor: DatabaseMonitorService
+    operations: OperationsService
 
 
 def build_runtime(settings: Settings, *, role: Literal["web", "scheduler", "worker", "automation"]) -> ApplicationRuntime:
     settings.ensure_runtime_dirs()
     database = PostgresDatabase(settings)
     try:
-        database.__enter__()
-        database.check_runtime()
+        try:
+            database.__enter__()
+            database.check_runtime()
+        except Exception:
+            event(logging.getLogger('app.postgres'), logging.CRITICAL, 'PostgreSQL 状态库初始化或结构校验失败',
+                  error_code='POSTGRES_STARTUP_FAILED', exc_info=True)
+            raise
         return _build_runtime(settings, database, role=role)
     except BaseException:
         database.close()
@@ -237,18 +247,22 @@ def _build_runtime(settings: Settings, database: PostgresDatabase, *, role: Lite
         settings, automation, metadata, email_service, runtime=automation_runtime,
         database_runtime=database_runtime,
     )
+    monitor = DatabaseMonitorService(DatabaseMonitorRepository(database), settings.timezone)
+    diagnostics = ConfigurationDiagnostics(settings, automation_runtime, database_runtime=database_runtime)
+    reader = WorkerStatusReader(database, expected_consumers=settings.consumer_replicas)
     return ApplicationRuntime(
-        coordination=coordination, worker_status_reader=WorkerStatusReader(database, expected_consumers=settings.consumer_replicas),
+        coordination=coordination, worker_status_reader=reader,
         database=database, metadata=metadata, llm_usage=llm_usage,
         report_snapshots=report_snapshots, workshop=workshop,
         users=UserRepository(database), sessions=SessionRepository(database),
         sso=SsoService(settings, SsoRequestRepository(database), UserRepository(database)),
         definitions=definitions, automation=automation, automation_runtime=automation_runtime,
         database_runtime=database_runtime,
-        configuration_diagnostics=ConfigurationDiagnostics(settings, automation_runtime, database_runtime=database_runtime),
+        configuration_diagnostics=diagnostics,
         automation_service=automation_service, email_service=email_service,
         dispatches=dispatches, pdf_service=pdf_service,
         retention_service=retention_service, retention_worker=retention_worker,
         download_cleanup_worker=download_cleanup_worker,
-        database_monitor=DatabaseMonitorService(DatabaseMonitorRepository(database), settings.timezone),
+        database_monitor=monitor,
+        operations=OperationsService(settings, database, coordination, reader, monitor, diagnostics, role),
     )

@@ -5,6 +5,7 @@ from threading import Barrier
 from time import time
 from types import SimpleNamespace
 import errno
+import logging
 import socket
 
 from fastapi import FastAPI
@@ -34,11 +35,12 @@ def monitor(state_database, monkeypatch):
     return service, repository, clock
 
 
-def test_failure_confirmation_recovery_dedup_and_history(monitor, monkeypatch):
+def test_failure_confirmation_recovery_dedup_and_history(monitor, monkeypatch, caplog):
     service, repository, clock = monitor
     identifier = repository.save(target())
     assert service.list()[0]['state'] == 'unknown'
     error = ['连接超时']
+    caplog.set_level(logging.INFO, logger='app.database.database_monitors')
     monkeypatch.setattr(service, 'probe', lambda *_: error[0])
     for expected in ['suspect', 'suspect', 'down', 'down']:
         service.run_once(clock[0])
@@ -50,15 +52,28 @@ def test_failure_confirmation_recovery_dedup_and_history(monitor, monkeypatch):
     assert history['total'] == 1
     event = history['items'][0]
     assert event['started_at'] == 1000 and event['confirmed_at'] == 1120 and event['ended_at'] is None
+    assert event['failure_count'] == 4 and event['last_failed_at'] == 1180
+    failure_logs = [record.operations_fields for record in caplog.records
+                    if getattr(record, 'operations_fields', {}).get('error_code') == 'DATABASE_TCP_DOWN']
+    assert [item['resource_id'] for item in failure_logs] == [event['incident_id']] * 2
     assert service.list()[0]['failures'] == 4
     error[0] = None
     service.run_once(clock[0])
     assert service.list()[0]['state'] == 'recovering'
+    clock[0] += 181
+    assert service.list()[0]['state'] == 'unknown'
+    service.run_once(clock[0])
+    assert service.list()[0]['state'] == 'recovering'
+    assert not any(getattr(record, 'operations_fields', {}).get('error_code') == 'DATABASE_TCP_RECOVERED'
+                   for record in caplog.records)
     clock[0] += 60
     service.run_once(clock[0])
     assert service.list()[0]['state'] == 'healthy'
     event = repository.incidents(1, 15)['items'][0]
     assert event['end_reason'] == 'recovered' and event['ended_at'] == clock[0]
+    recovery_logs = [record.operations_fields for record in caplog.records
+                     if getattr(record, 'operations_fields', {}).get('error_code') == 'DATABASE_TCP_RECOVERED']
+    assert [item['resource_id'] for item in recovery_logs] == [event['incident_id']]
     assert service.list()[0]['failure_started_at'] is None
     repository.delete(identifier)
     assert service.list() == [] and repository.incidents(1, 15)['total'] == 1

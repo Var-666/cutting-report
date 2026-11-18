@@ -24,15 +24,21 @@ export const useRouteStore = defineStore('theme-route-adapter', () => {
     return convert(adminMenus(router.options.routes.find(item => item.path === '/admin')?.children || [], '/admin', selectedLineType(deviceSelection.items, deviceSelection.id)))
   })
   const section = computed(() => navigationSection(router.currentRoute.value.path))
-  const sharedKeys = new Set(['admin-home', 'automation', 'pdm-statistics', '/admin/settings'])
+  const sharedKeys = new Set(['admin-home', 'automation', 'pdm-statistics', '/admin/settings', '/admin/operations'])
   const sharedMenus = computed(() => menus.value.filter(menu => sharedKeys.has(menu.key)))
   const lineMenus = computed(() => menus.value.filter(menu => !sharedKeys.has(menu.key)))
   const settingsMenu = computed(() => sharedMenus.value.find(menu => menu.key === '/admin/settings'))
-  const secondaryMenus = computed(() => section.value === 'settings' ? settingsMenu.value?.children || [] : section.value === 'line' ? lineMenus.value : [])
+  const operationsMenu = computed(() => sharedMenus.value.find(menu => menu.key === '/admin/operations'))
+  const secondaryMenus = computed(() => {
+    if (section.value === 'settings') return settingsMenu.value?.children || []
+    if (section.value === 'operations') return operationsMenu.value?.children || []
+    return section.value === 'line' ? lineMenus.value : []
+  })
   const activeLine = computed(() => deviceSelection.items.find(item => item.id === deviceSelection.id))
   const primaryKey = computed(() => {
     if (section.value === 'line') return `line:${deviceSelection.id}`
     if (section.value === 'settings') return '/admin/settings'
+    if (section.value === 'operations') return '/admin/operations'
     return String(router.currentRoute.value.name)
   })
   function lineGroups(expandCurrent: boolean): App.Global.Menu[] {
@@ -54,6 +60,7 @@ export const useRouteStore = defineStore('theme-route-adapter', () => {
       ...sharedMenus.value.filter(menu => menu.key === 'admin-home' || menu.key === 'automation'),
       ...lineGroups(expandCurrent),
       ...sharedMenus.value.filter(menu => menu.key === 'pdm-statistics'),
+      ...(operationsMenu.value ? [expandCurrent ? operationsMenu.value : { ...operationsMenu.value, children: undefined }] : []),
     ]
   }
   const primaryMenus = computed(() => primaryNavigation(false))

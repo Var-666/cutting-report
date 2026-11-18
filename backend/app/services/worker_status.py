@@ -1,10 +1,14 @@
 from dataclasses import replace
 import json
+import logging
 from threading import Lock
 from time import monotonic
 
+from app.core.operations_logging import event
 from app.database.coordination import CoordinationRepository
 from app.database.postgres import PostgresDatabase
+
+logger = logging.getLogger('app.postgres')
 
 ROLES = ('scheduler', 'worker', 'automation')
 
@@ -68,6 +72,9 @@ class WorkerStatusReader:
                         'email_alive':bool(roles['automation'].get('email_alive')) and roles['automation']['state']=='running',
                         'scheduler_alive':role_ready('scheduler',roles['scheduler'])}
                 except Exception:
+                    if self._cached.get('database_available') is not False:
+                        event(logger, logging.ERROR, 'PostgreSQL 状态库不可用', error_code='POSTGRES_UNAVAILABLE',
+                              incident=True, exc_info=True)
                     self._cached = {'state':'unavailable','report_alive':False,'database_available':False,
                                     'roles':{role:{'state':'unavailable'} for role in ROLES}}
                 self._next_read = monotonic()+2

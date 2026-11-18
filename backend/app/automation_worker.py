@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 
 from app.config import settings
 from app.database.postgres import execution_scope, ExecutionLeaseLost
+from app.core.operations_logging import configured_logging, event
 from app.services.application_runtime import build_runtime
 from app.services.worker_status import role_health
 
@@ -28,6 +29,7 @@ class AutomationProcess:
         self.owner = None
         self.stop_event = threading.Event()
         self._closed = False
+        self.operations_collector = None
         self._status_lock = threading.Lock()
         self._progress = {}
         self.threads = [threading.Thread(target=self._owned, args=(handler,), name=name, daemon=True)
@@ -85,7 +87,10 @@ class AutomationProcess:
             self.start()
             while not self.stop_event.wait(5):
                 try: self._heartbeat()
-                except ExecutionLeaseLost: break
+                except ExecutionLeaseLost:
+                    event(logging.getLogger('app.leases'), logging.ERROR, 'automation 执行租约失效',
+                          error_code='EXECUTION_LEASE_LOST', incident=True)
+                    break
                 except Exception: logger.exception('Automation heartbeat failed')
         finally: self.stop()
 
@@ -100,6 +105,8 @@ class AutomationProcess:
             if self.owner and not any(t.is_alive() for t in self.threads): self.repository.release('automation',self.owner)
         finally:
             self.runtime.database_runtime.close()
+            if self.operations_collector:
+                self.operations_collector.stop()
             self.runtime.database.close()
 
     def _automation_loop(self) -> None:
@@ -159,11 +166,13 @@ def main():
     parser.add_argument('--health',action='store_true')
     args = parser.parse_args()
     if args.health: return role_health(settings,'automation')
-    logging.basicConfig(level=logging.INFO)
-    process = AutomationProcess(settings)
-    for signum in (signal.SIGTERM, signal.SIGINT):
-        signal.signal(signum,lambda *_: process.stop_event.set())
-    process.run()
+    with configured_logging(settings.logs_dir, 'automation', 'automation', settings.operations_log_retention_days) as logs:
+        process = AutomationProcess(settings)
+        process.operations_collector = process.runtime.operations.collect(logs)
+        for signum in (signal.SIGTERM, signal.SIGINT):
+            signal.signal(signum, lambda *_: process.stop_event.set())
+        with process.operations_collector:
+            process.run()
     return 0
 
 

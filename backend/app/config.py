@@ -208,6 +208,8 @@ class Settings:
 
     # Unified operational-data retention. A value of 0 disables cleanup for
     # that category without disabling the remaining policies.
+    operations_log_retention_days: int = configuration_field("OPERATIONS_LOG_RETENTION_DAYS", lambda: max(1, min(90, _as_int("OPERATIONS_LOG_RETENTION_DAYS", 14))))
+    operations_incident_retention_days: int = configuration_field("OPERATIONS_INCIDENT_RETENTION_DAYS", lambda: max(1, _as_int("OPERATIONS_INCIDENT_RETENTION_DAYS", 180)))
     report_retention_days: int = configuration_field("REPORT_RETENTION_DAYS", lambda: _as_int("REPORT_RETENTION_DAYS", 365))
     analysis_retention_days: int = configuration_field("ANALYSIS_RETENTION_DAYS", lambda: _as_int("ANALYSIS_RETENTION_DAYS", 90))
     alarm_retention_days: int = configuration_field("ALARM_RETENTION_DAYS", lambda: _as_int("ALARM_RETENTION_DAYS", 30))

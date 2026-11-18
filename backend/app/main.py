@@ -4,6 +4,7 @@ from starlette.concurrency import run_in_threadpool
 
 import logging
 import uuid
+from time import monotonic
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
@@ -24,6 +25,7 @@ from app.api.conditions import router as conditions_router
 from app.api.auth import SESSION_COOKIE, router as auth_router
 from app.api.alarms import router as alarms_router
 from app.api.database_monitors import router as database_monitors_router
+from app.api.operations import router as operations_router
 from app.api.llm_usage import router as llm_usage_router
 from app.api.designer import router as designer_router
 from app.api.equipment import router as equipment_router
@@ -41,6 +43,7 @@ from app.api.welding import router as welding_router
 from app.api.production_lines import router as production_lines_router
 from app.api.pdm_statistics import router as pdm_statistics_router
 from app.services.application_runtime import build_runtime
+from app.core.operations_logging import configured_logging, event, operation_context
 from app.core.sql_capacity import SqlCapacityError, sql_identity
 from app.core.report_deadline import ReportOperationTimeout
 from app.core.process_lock import FileLock
@@ -54,10 +57,7 @@ from anyio import CapacityLimiter, to_thread
 _health_threads = CapacityLimiter(2)
 
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s %(message)s",
-)
+logger = logging.getLogger(__name__)
 
 
 def _redact_sso_callback(record: logging.LogRecord) -> bool:
@@ -79,15 +79,18 @@ async def lifespan(app: FastAPI):
     if not lock.acquire(blocking=False):
         raise RuntimeError("已有 Web 进程运行；请保持单 Web，后台角色独立启动")
     try:
-        runtime = build_runtime(settings, role="web")
-        app.state.runtime = runtime
-        yield
-    finally:
-        if hasattr(app.state, "runtime"):
+        with configured_logging(settings.logs_dir, 'web', 'web', settings.operations_log_retention_days) as logs:
+            runtime = build_runtime(settings, role="web")
+            app.state.runtime = runtime
             try:
-                app.state.runtime.database_runtime.close()
+                with runtime.operations.collect(logs):
+                    yield
             finally:
-                app.state.runtime.database.close()
+                try:
+                    runtime.database_runtime.close()
+                finally:
+                    runtime.database.close()
+    finally:
         lock.release()
 
 
@@ -103,21 +106,9 @@ app = FastAPI(
 @app.exception_handler(RequestValidationError)
 async def safe_connection_validation(request: Request, exc: RequestValidationError):
     if request.url.path == '/api/v1/magic-box/callbacks/task-finished':
-        errors = exc.errors()
-        # Retain task fields before discarding the failed request, without credentials or nested payloads.
-        values = {
-            key: value[:512] if isinstance(value, str) else value if isinstance(value, (int, float, bool, type(None))) else {'type': type(value).__name__}
-            for key, value in (exc.body.items() if isinstance(exc.body, dict) else [])
-            if key.replace('_', '').casefold() in {'finishby', 'finishtime', 'taskidentifier', 'taskname', 'material', 'thickness'}
-        }
-        logging.getLogger(__name__).warning(
-            '魔盒完成通知校验失败 source_ip=%s content_type=%r body_type=%s body_fields=%r errors=%r callback_body=%r',
-            request.client.host if request.client else '', request.headers.get('content-type', '')[:120],
-            type(exc.body).__name__,
-            [key[:80] for key in list(exc.body)[:20]] if isinstance(exc.body, dict) else [],
-            [{'loc': error['loc'], 'type': error['type'], 'input_type': type(error.get('input')).__name__}
-             for error in errors[:10]], values,
-        )
+        event(logger, logging.WARNING, '魔盒完成通知参数校验失败', error_code='CALLBACK_VALIDATION')
+    if request.url.path.startswith('/api/v1/operations'):
+        return JSONResponse(status_code=422, content={'success': False, 'error': {'code': 'VALIDATION_ERROR', 'message': '运维请求参数无效'}})
     if request.url.path.startswith('/api/v1/configuration/llm'):
         return JSONResponse(status_code=422, content={'success': False, 'error': {'code': 'VALIDATION_ERROR', 'message': '模型配置无效，请检查接口地址、模型 ID 和密钥'}})
     if request.url.path.startswith('/api/v1/database-monitors'):
@@ -139,11 +130,10 @@ if settings.cors_origins:
 @app.middleware("http")
 async def request_id_middleware(request: Request, call_next):
     # A client scope can restrict capabilities, but never grants access or replaces role checks.
-    line_id = request.headers.get('X-Production-Line')
-    if line_id:
-        context = await run_in_threadpool(runtime_state, request)
-    if line_id and not supports_path(context, line_id, request.url.path, request.method):
-        return JSONResponse(status_code=403, content={'success': False, 'error': {'code': 'LINE_CAPABILITY_DENIED', 'message': '当前产线不支持此功能'}})
+    if request.url.path == '/api/v1/operations/browser' and request.method == 'POST':
+        length = request.headers.get('content-length', '')
+        if request.headers.get('transfer-encoding') or not length.isascii() or not length.isdigit() or len(length) > 3 or int(length) > 512:
+            return JSONResponse(status_code=413, content={'detail': '前端错误摘要超过大小限制'})
     supplied_request_id = request.headers.get("X-Request-ID", "")
     request_id = (
         supplied_request_id
@@ -156,10 +146,15 @@ async def request_id_middleware(request: Request, call_next):
     )
     request.state.execution_id = execution_id
     token = bind_request_id(execution_id)
+    started = monotonic()
+    sql_line = source_key = None
     try:
+        line_id = None if request.url.path.startswith('/api/v1/operations') else request.headers.get('X-Production-Line')
+        if line_id:
+            context = await run_in_threadpool(runtime_state, request)
+            if not supports_path(context, line_id, request.url.path, request.method):
+                return JSONResponse(status_code=403, content={'success': False, 'error': {'code': 'LINE_CAPABILITY_DENIED', 'message': '当前产线不支持此功能'}})
         selected = line_id or request.query_params.get('device_id')
-        sql_line = None
-        source_key = None
         if selected and request.url.path.startswith(('/api/v1/workshop', '/api/v1/leadership-report',
                 '/api/v1/equipment-report', '/api/v1/energy-report', '/api/v1/analysis', '/api/v1/welding',
                 '/api/v1/options', '/api/v1/projects', '/api/v1/ships', '/api/v1/reports', '/api/v1/designer',
@@ -172,10 +167,30 @@ async def request_id_middleware(request: Request, call_next):
             context = await run_in_threadpool(runtime_state, request)
             source_key = (context.settings.dispatch_source_key if request.url.path.endswith(('/machines', '/status'))
                           else context.settings.file_source_key)
-        with sql_identity(sql_line, source_key):
+        with sql_identity(sql_line, source_key), operation_context(request_id=request_id, line_id=sql_line, source_id=source_key):
             response = await call_next(request)
+            route = getattr(request.scope.get('route'), 'name', None)
+            if (route and request.url.path.startswith('/api/v1/')
+                    and not request.url.path.startswith('/api/v1/operations') and request.url.path != '/api/v1/health'
+                    and not getattr(request.state, 'operation_timeout_logged', False)
+                    and 'X-SQL-Resource-Error' not in response.headers):
+                status = response.status_code
+                transient = status in (503, 504)
+                operations = getattr(application_state(request), 'operations', None)
+                repeated = operations is not None and operations.repeated_http_failure(route, sql_line, source_key, status)
+                if status >= 500:
+                    code = {503: 'HTTP_UNAVAILABLE', 504: 'HTTP_TIMEOUT'}.get(status, 'HTTP_SERVER_ERROR')
+                    event(logger, logging.WARNING if transient else logging.ERROR, 'HTTP 接口返回服务端错误',
+                          error_code=code, resource_id=route, incident=repeated or not transient,
+                          duration_ms=(monotonic() - started) * 1000)
         response.headers["X-Request-ID"] = request_id
         return response
+    except Exception:
+        with operation_context(request_id=request_id, line_id=sql_line, source_id=source_key):
+            event(logger, logging.ERROR, 'HTTP 请求发生未处理异常', error_code='INTERNAL_ERROR',
+                  incident=True, exc_info=True, resource_id=getattr(request.scope.get('route'), 'name', None),
+                  duration_ms=(monotonic() - started) * 1000)
+        raise
     finally:
         reset_request_id(token)
         sql_request_cancellations.finish(execution_id)
@@ -202,6 +217,9 @@ async def sql_request_cancelled_handler(request: Request, exc: SqlRequestCancell
 
 @app.exception_handler(ReportOperationTimeout)
 async def operation_timeout_handler(request: Request, exc: ReportOperationTimeout):
+    request.state.operation_timeout_logged = True
+    event(logger, logging.WARNING, '请求执行超过期限', error_code='OPERATION_TIMEOUT', incident=True,
+          resource_id=getattr(request.scope.get('route'), 'name', None))
     return JSONResponse(status_code=504,
         content={'success': False, 'error': {'code': 'OPERATION_TIMEOUT', 'message': str(exc)},
                  'request_id': getattr(request.state, 'request_id', 'unknown')})
@@ -209,13 +227,14 @@ async def operation_timeout_handler(request: Request, exc: ReportOperationTimeou
 
 @app.exception_handler(Exception)
 async def unexpected_error_handler(request: Request, exc: Exception):
-    logging.getLogger(__name__).exception("unhandled request error")
+    request_id = getattr(request.state, 'request_id', 'unknown')
     return JSONResponse(
         status_code=500,
+        headers={'X-Request-ID': request_id},
         content={
             "success": False,
             "error": {"code": "INTERNAL_ERROR", "message": "系统处理失败，请联系管理员。"},
-            "request_id": getattr(request.state, "request_id", "unknown"),
+            "request_id": request_id,
         },
     )
 
@@ -228,6 +247,7 @@ app.include_router(reports_router)
 app.include_router(auth_router)
 app.include_router(alarms_router)
 app.include_router(database_monitors_router)
+app.include_router(operations_router)
 app.include_router(llm_usage_router)
 app.include_router(options_router)
 app.include_router(database_router)

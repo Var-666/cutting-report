@@ -1,9 +1,13 @@
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
+from app.core.operations_logging import configured_logging, operation_context
+from app.database.operations import OperationsRepository
+from app.models.operations import IncidentFilters
 from app.services.energy_api import EnergyApiError
+from app.services.operations_service import BUSINESS_ERROR_CODES, RECOVERY_EVIDENCE
 from app.workers.energy_history_worker import EnergyHistoryWorker
 from tests.energy_period_fixtures import NOW, service
 
@@ -40,6 +44,44 @@ def test_failed_month_does_not_drop_other_months_and_backoff_survives_requests(t
     assert retry["attempt_count"] == 2
     assert retry["last_error_code"] == "EnergyApiError"
     assert calls == [date(2026, 8, 1), date(2026, 7, 1)]
+
+
+def test_repeated_energy_failure_links_to_task_and_recovers_only_for_that_source(tmp_path, state_database, monkeypatch):
+    worker, now = worker_and_clock(tmp_path, state_database)
+    now[0] = datetime.now(UTC)
+    month = worker.service.now().date().replace(day=1)
+    assert worker.schedule_range(month, month)
+
+    def unavailable(_):
+        raise EnergyApiError("platform unavailable")
+
+    monkeypatch.setattr(worker.service, 'sync_month', unavailable)
+    repository = OperationsRepository(state_database)
+    failure_code = 'ENERGY_HISTORY_SYNC_FAILED'
+    with configured_logging(tmp_path, 'worker', 'energy-test') as logs:
+        worker._process(worker._claim())
+        assert logs.incidents.empty()
+        now[0] += timedelta(seconds=31)
+        with operation_context(task_id='energy-task-retry', related_kind='background'):
+            worker._process(worker._claim())
+        item = logs.incidents.get_nowait()
+        assert item['error_code'] == failure_code and item['resource_id'] == month.isoformat()
+        assert item['task_id'] == 'energy-task-retry'
+        other = {**item, 'id': 'other-energy-failure', 'source_id': 'energy:' + '0' * 64}
+        repository.record([item, other])
+
+    assert repository.list(IncidentFilters(error_code=failure_code, status='open'))['total'] == 2
+    assert not repository.business_status(now[0].isoformat(), BUSINESS_ERROR_CODES)[1]
+    now[0] += timedelta(seconds=61)
+    monkeypatch.setattr(worker.service, 'sync_month', lambda _: 1)
+    worker._process(worker._claim())
+    _, recoveries = repository.business_status(now[0].isoformat(), BUSINESS_ERROR_CODES)
+    evidence, = recoveries
+    assert evidence['recovered_at'] == now[0].replace(microsecond=0)
+    evidence['evidence'] = RECOVERY_EVIDENCE[evidence['component']]
+    repository.observe([], [], recoveries, now[0])
+    assert repository.get(item['id'])['status'] == 'recovered'
+    assert repository.get(other['id'])['status'] == 'open'
 
 
 def test_restart_recovers_running_claim_and_fences_late_completion(tmp_path, state_database):
