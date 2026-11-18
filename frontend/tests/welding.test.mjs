@@ -149,7 +149,9 @@ test('a successful JSON response cannot be downloaded as a PDF', async t => {
 function view(readReport, options = {}) {
   const script = parse(source('views/WeldingReportView.vue')).descriptor.scriptSetup.content.replace(/^import .*$/gm, '')
   const cleanup = []
+  const { setTimeout, clearTimeout } = options.clock ?? globalThis
   const bindings = {
+    setTimeout, clearTimeout,
     selectedLineType, computed, reactive, ref, watch: (source, callback, config) => { if (options.watchers) { options.watchers.push({ source, callback }); if (config?.immediate) callback(source()) } }, onBeforeUnmount: fn => cleanup.push(fn),
     defineProps: () => ({ kind: options.kind || 'jobs' }), useRoute: () => options.route || ({ query: {} }), useRouter: () => options.router || ({ push() {}, replace() {} }), queryDateRange, sameRouteQuery, parseWeldingRouteQuery, weldingRouteQuery,
     reportToday: () => '2026-10-26', getWeldingReport: readReport, getLatestWeldingAnalysis: async () => null,
@@ -203,15 +205,20 @@ test('pending welding filters compare effective conditions and commit only after
 function snapshotWaitTimers(t) {
   const timers = new Map()
   let clock = 0, sequence = 0
-  t.mock.method(Date, 'now', () => clock)
-  t.mock.method(globalThis, 'setTimeout', (callback, delay) => { timers.set(++sequence, { callback, delay }); return sequence })
-  t.mock.method(globalThis, 'clearTimeout', id => timers.delete(id))
-  return { timers, advance(milliseconds) { clock += milliseconds }, fire() { const [id, timer] = timers.entries().next().value; timers.delete(id); clock += timer.delay; timer.callback() } }
+  const setTimeout = (callback, delay) => { timers.set(++sequence, { callback, delay }); return sequence }
+  const clearTimeout = id => timers.delete(id)
+  // Only the HTTP retry tests need global timers. Page tests inject a clock into the view.
+  if (t) {
+    t.mock.method(Date, 'now', () => clock)
+    t.mock.method(globalThis, 'setTimeout', setTimeout)
+    t.mock.method(globalThis, 'clearTimeout', clearTimeout)
+  }
+  return { timers, setTimeout, clearTimeout, advance(milliseconds) { clock += milliseconds }, fire() { const [id, timer] = timers.entries().next().value; timers.delete(id); clock += timer.delay; timer.callback() } }
 }
 const preparingResponse = () => Response.json({ detail: '统计正在生成，请稍后重试' }, { status: 503, headers: { 'Retry-After': '1', 'X-Welding-Error': 'snapshot_refresh_busy' } })
 
 for (const kind of ['dashboard', 'daily', 'parts', 'jobs', 'equipment']) test(`${kind} keeps its snapshot visible and replaces it when background refresh finishes without applying draft edits`, async t => {
-  const clock = snapshotWaitTimers(t)
+  const clock = snapshotWaitTimers()
   const calls = []
   let complete
   const app = view((kind, values, signal, force) => {
@@ -219,7 +226,7 @@ for (const kind of ['dashboard', 'daily', 'parts', 'jobs', 'equipment']) test(`$
     return calls.length === 1
       ? Promise.resolve({ query: values, data_version: 'previous', meta: { report_data: { refreshing: true } } })
       : new Promise(resolve => { complete = resolve })
-  }, { kind })
+  }, { kind, clock })
   t.after(() => app.cleanup.forEach(cleanup => cleanup()))
   await app.read({ ...period, device_no: 0 })
   assert.equal(app.loading.value, false)
@@ -239,9 +246,9 @@ for (const kind of ['dashboard', 'daily', 'parts', 'jobs', 'equipment']) test(`$
 })
 
 test('a new homepage filter or unmount cancels background checks and ignores late results', async t => {
-  const clock = snapshotWaitTimers(t)
+  const clock = snapshotWaitTimers()
   const calls = []
-  const app = view((kind, values, signal) => new Promise(resolve => calls.push({ values, signal, resolve })), { kind: 'dashboard' })
+  const app = view((kind, values, signal) => new Promise(resolve => calls.push({ values, signal, resolve })), { kind: 'dashboard', clock })
   const first = app.read({ ...period, device_no: 0 })
   calls[0].resolve({ query: calls[0].values, data_version: 'old', meta: { report_data: { refreshing: true } } })
   await first
@@ -258,15 +265,19 @@ test('a new homepage filter or unmount cancels background checks and ignores lat
 })
 
 test('background snapshot checks stop at the same bounded count as cutting reports', async t => {
-  const clock = snapshotWaitTimers(t)
+  const clock = snapshotWaitTimers()
   let calls = 0
   const app = view(async (kind, values) => {
     calls += 1
     return { query: values, data_version: 'previous', meta: { report_data: { refreshing: true } } }
-  })
+  }, { clock })
   t.after(() => app.cleanup.forEach(cleanup => cleanup()))
   await app.read(period)
-  for (let index = 0; index < 75; index += 1) { clock.fire(); await settle() }
+  for (let index = 0; index < 75; index += 1) {
+    assert.equal(clock.timers.size, 1)
+    clock.fire()
+    await settle()
+  }
   assert.equal(calls, 76)
   assert.equal(clock.timers.size, 0)
   assert.equal(app.loading.value, false)
@@ -954,9 +965,10 @@ test('new line types keep registered labels and destinations', () => {
   assert.equal(productionGroups([{ ...items[0], type_name: '' }])[0].name, 'coating')
 })
 
-function mountWeldingDisplay(t, readReport, kind = 'jobs') {
+function mountWeldingDisplay(t, readReport, kind = 'jobs', { setTimeout, clearTimeout } = globalThis) {
   const stub = { setup: (_props, { attrs, slots }) => () => h('div', [attrs.title, attrs.message, slots.default?.()]) }
   const bindings = {
+    setTimeout, clearTimeout,
     ...Vue, useRoute: () => ({ query: {} }), useRouter: () => ({ push() {}, replace() {} }),
     reportToday: () => period.start, getWeldingReport: readReport, getLatestWeldingAnalysis: async () => null, weldingQuery, selectedLineType, queryDateRange, sameRouteQuery,
     parseWeldingRouteQuery, weldingRouteQuery, weldingTitles, weldingDescriptions,
@@ -1032,9 +1044,9 @@ test('welding displays edited filters beside the applied result through loading 
 })
 
 test('cached welding data stays visible through manual refresh, replacement and query failure', async t => {
-  const clock = snapshotWaitTimers(t)
+  const clock = snapshotWaitTimers()
   const calls = []
-  const page = mountWeldingDisplay(t, (kind, values, signal, force) => new Promise((resolve, reject) => calls.push({ values, signal, force, resolve, reject })), 'daily')
+  const page = mountWeldingDisplay(t, (kind, values, signal, force) => new Promise((resolve, reject) => calls.push({ values, signal, force, resolve, reject })), 'daily', clock)
   const result = (call, count, refreshing = false) => ({ query: call.values, data_version: String(count),
     summary: { job_count: count }, items: count ? [{ id: 1, serial_number: `任务${count}` }] : [], total: count ? 1 : 0,
     meta: { quality: {}, notices: [], devices: [], report_data: { data_as_of: '2026-10-26T08:00:00Z', refreshing } } })
@@ -1083,7 +1095,7 @@ test('cached welding data stays visible through manual refresh, replacement and 
 })
 
 test('explicit refresh requests fresh statistics while initial reads and pagination reuse snapshots', async t => {
-  const clock = snapshotWaitTimers(t)
+  const clock = snapshotWaitTimers()
   const urls = []
   t.mock.method(globalThis, 'fetch', async url => { urls.push(new URL(url, 'http://test')); return Response.json({ success: true, data: {} }) })
   await getWeldingReport('daily', period)
@@ -1093,7 +1105,7 @@ test('explicit refresh requests fresh statistics while initial reads and paginat
   assert.equal(urls[1].searchParams.get('start'), period.start)
   const calls = []
   const meta = { source: 'snapshot', stale: true, refreshing: true, data_as_of: '2026-10-26T08:00:00Z' }
-  const app = view(async (kind, values, signal, force) => { calls.push(force); return { query: values, data_version: 'same', meta: { report_data: meta } } })
+  const app = view(async (kind, values, signal, force) => { calls.push(force); return { query: values, data_version: 'same', meta: { report_data: meta } } }, { clock })
   t.after(() => app.cleanup.forEach(cleanup => cleanup()))
   await app.read(period)
   assert.equal(calls[0], false)
