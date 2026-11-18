@@ -302,9 +302,11 @@ def test_archived_report_becomes_pdf_page_email(tmp_path, report_type, empty, wi
     assert "演示数据" in text and "非生产统计" in text and "报告结束" in text
     assert "应隐藏的来源说明" not in text
     if report_type == 'leadership':
-        assert '生产执行摘要' in text and '生产趋势与周期对比' in text and 'AI智能生产洞察' in text
+        assert '近12个月生产趋势' in text and 'AI智能生产洞察' in text
     if with_brief:
-        assert "本期生产简报" in text and "可核对的关联记录" in text
+        assert text.count('生产执行摘要') == 1 and text.count('本期生产简报') == 1
+        assert text.count('生产记录已汇总。当前周期对比仅作进度参考。') == 1
+        assert '可核对的关联记录' in text
     else:
         assert "智能分析暂不可用" in text
     if empty and report_type in {"leadership", "workshop"}:

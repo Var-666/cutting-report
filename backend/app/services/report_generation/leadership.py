@@ -19,6 +19,7 @@ from app.services.report_generation.common import (
     _job_period,
     _recent_twelve_month_period,
     report_meta,
+    report_reference_at,
 )
 
 
@@ -63,7 +64,11 @@ def prepare_report(
     charts = chart_service.build_leadership(leadership, chart_type)
     ensure_active()
 
-    update_status("calculating", "正在计算月度汇总")
+    update_status("calculating", "正在计算月季年同期对比")
+    closing_comparison = range_service.cutting_closing_comparison(
+        period_start, period_end, report_reference_at(job, settings.timezone), grouping="month_quarter_year",
+    )
+    ensure_active()
     update_status("analyzing", "正在生成智能分析")
 
     def analyze_leadership() -> AnalysisResult:
@@ -114,6 +119,7 @@ def prepare_report(
             "electricity": "数据库原始单位",
         },
         "leadership": to_primitive(leadership),
+        "closing_comparison": closing_comparison,
         "charts": charts,
         "visualization": {"chart_type": chart_type},
         "analysis": to_primitive(analysis),

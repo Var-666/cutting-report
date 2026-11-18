@@ -282,8 +282,9 @@ def test_exports_cover_all_filters_escape_text_and_enforce_limits(tmp_path):
     data = report_data()
     data['data_version'] = 'matching'
     class Service:
-        def report(self, kind, selected, *, export_limit):
+        def report(self, kind, selected, *, export_limit, include_closing_comparison):
             assert kind == 'jobs' and export_limit in (5001, 100001)
+            assert include_closing_comparison is (export_limit == 5001)
             return data
         def analyze_report(self, kind, selected, report, version):
             if version == 'matching':

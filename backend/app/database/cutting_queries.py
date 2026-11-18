@@ -41,6 +41,12 @@ class CuttingQueryRepository:
             return value
         return date.fromisoformat(str(value)[:10])
 
+    def cutting_closing_days(self, start: datetime, end: datetime) -> list[dict[str, Any]]:
+        return self.client.fetch_all(
+            (QUERY_DIR / 'cutting_closing_days.sql').read_text(encoding='utf-8'),
+            (self.machine_no, 24 - start.hour, start.replace(tzinfo=None), end.replace(tzinfo=None)),
+        )
+
     def task_completion_dates(self, task_ids: list[str]) -> dict[str, date]:
         dates: dict[str, date] = {}
         for offset in range(0, len(task_ids), 500):

@@ -1,5 +1,6 @@
 {% from 'report_analysis.html.j2' import render_analysis %}
-{% from 'industrial_chrome.html.j2' import report_brand, report_heading, section_title, executive, kpi %}
+{% from 'industrial_chrome.html.j2' import attention_badge, report_brand, report_heading, section_title, executive, kpi %}
+{% from 'closing_comparison.html.j2' import render_closing_comparison %}
 <!doctype html>
 <html lang="zh-CN">
 <head>
@@ -9,6 +10,9 @@
   <style>{% include 'industrial_report.css.j2' %}</style>
 </head>
 <body class="industrial-report report-{{ report.meta.report_type }}">
+{% set analysis = report.analysis %}
+{% set brief = analysis.brief if analysis else none %}
+{% set summary_shown = brief and not analysis.cache_note and analysis.mode|default('model') == 'model' and analysis.status|default('success') == 'success' %}
 {% if report.meta.report_type == 'leadership' %}
   {% include 'leadership_print.html.j2' %}
 {% else %}
@@ -21,10 +25,30 @@
       [('报告编号',report.meta.report_id), ('生成时间',report.meta.generated_at|replace('T',' ')), ('版本',report.meta.system_version)], demo_mode) }}
     <p class="lp-method">数据更新时间：{{ report.meta.data_updated_at or '--' }} · {{ '自定义区间' if report.meta.custom_period else '标准报告周期' }}</p>
     {% set task_count = report.summary.task_count if report.meta.report_type == 'workshop' else report.equipment_summary.task_count %}
-    {% set brief = report.analysis.brief if report.analysis else none %}
-    {{ executive(brief.headline if brief and not report.analysis.cache_note else '本期生产记录已汇总' if task_count else '当前区间暂无已完成任务',
-      brief.summary.splitlines()|first if brief and not report.analysis.cache_note else period ~ '，共记录 ' ~ task_count ~ ' 项切割任务。',
-      '仅依据有效生产记录统计；累计作业工时不等于设备开机时间，缺失能耗不作零。' if report.meta.report_type == 'equipment' else '切割记录与工人确认分别统计；未确认不表示切割未完成。') }}
+    {% if summary_shown %}{{ executive(brief.headline, brief.summary) }}{% endif %}
+    {% if report.meta.report_type == 'workshop' and report.data_quality %}
+    {{ section_title('数据质量提示') }}
+    {% for item in report.data_quality %}
+    <div class="notice lp-tone-{{ 'critical' if item.level == 'error' else 'warning' }}">
+      <strong>{{ '优先核查' if item.level == 'error' else '待核查' }}</strong> · {{ item.task_id or '未定位任务' }}：{{ item.message }}
+    </div>
+    {% endfor %}
+    {% endif %}
+    {% if report.closing_comparison is defined %}
+      {% if report.meta.report_type == 'workshop' %}
+      {{ render_closing_comparison(report.closing_comparison,
+        [('task_count','任务数（项）','count'), ('cut_length_m','切割长度（米）','number'),
+         ('groove_length_m','坡口长度（米）','number'), ('work_time_seconds','切割工时','duration')],
+        '按实际完工时间归属', '累计和同期均应用本报表的设备、工程号及船名筛选。') }}
+      {% else %}
+      {{ render_closing_comparison(report.closing_comparison,
+        [('task_count','设备任务数（项）','count'), ('work_time_seconds','切割工时','duration'),
+         ('electricity','仪表电耗（' ~ report.units.electricity ~ '）','number'),
+         ('gas','仪表气耗（' ~ report.units.gas ~ '）','number')],
+        '设备任务按实际完工时间归属',
+        '仪表能耗累计已保存的有效小时，含待机时段。覆盖不足时标出有效小时数和应覆盖小时数，仅在可比区间完整时计算能耗变化率。') }}
+      {% endif %}
+    {% endif %}
     {% if report.meta.report_type == 'workshop' %}
     {{ section_title('核心生产指标（本期）', 'KEY PRODUCTION KPI') }}
     <div class="lp-kpis">
@@ -39,8 +63,8 @@
       <div><span class="label">平均切割时长</span>{{ report.summary.avg_work_time|duration }}</div>
     </section>
 
-    {% if report.data_quality %}{{ section_title('数据质量提示') }}{% for item in report.data_quality %}<div class="notice {{ 'error' if item.level == 'error' else '' }}">{{ item.task_id or '未定位任务' }}：{{ item.message }}</div>{% endfor %}{% endif %}
     {{ section_title('车间生产明细与趋势', 'PRODUCTION DETAILS & TRENDS') }}
+    <p class="lp-method">切割记录与工人确认分别统计。待确认任务仍计入已完成的切割任务。</p>
     <div class="data-chart-grid">
       {% if report.summary.task_count %}<div id="length-chart" class="chart"></div>{% else %}<div class="empty">当前条件下暂无可视化数据。</div>{% endif %}
       <div class="table-wrap">
@@ -52,14 +76,19 @@
     {% if report.worker_summaries %}{{ section_title('工人工时汇总') }}<div class="table-wrap"><table><thead><tr><th>序号</th><th>工号</th><th>姓名</th><th>已确认任务</th><th>切割长度（米）</th><th>切割时长</th><th>工时占比</th><th>最后确认时间</th></tr></thead><tbody>{% for worker in report.worker_summaries %}<tr><td>{{ loop.index }}</td><td>{{ worker.company_no or '--' }}</td><td>{{ worker.worker_name }}</td><td>{{ worker.confirmed_task_count }}</td><td>{{ worker.total_cut_length|number }}</td><td>{{ worker.total_work_time_seconds|duration }}</td><td>{{ worker.work_time_share|number }}%</td><td>{{ worker.last_confirmed_at|chinese_datetime }}</td></tr>{% endfor %}</tbody></table></div>{% endif %}
     {% else %}
     {{ section_title('核心生产指标（本期）', 'KEY PRODUCTION KPI') }}
-    {% if not energy_connected %}<p class="notice">能耗暂未接入，电耗与气耗暂无数据。</p>{% endif %}
+    {% if not energy_connected %}<p class="notice lp-tone-warning"><strong>能耗暂未接入</strong> · 电耗与气耗暂无数据。</p>{% endif %}
     <div class="lp-kpis">
       {{ kpi('tasks', '任务数量', report.equipment_summary.task_count, '项') }}
       {{ kpi('clock', '切割时长', report.equipment_summary.total_work_time|duration) }}
       {{ kpi('wind', '任务气耗合计', report.equipment_summary.total_gas_consumption|number, report.units.gas) }}
       {{ kpi('zap', '任务电耗合计', report.equipment_summary.total_electricity_consumption|number, report.units.electricity) }}
     </div>
-    <p class="lp-method">气耗已匹配 {{ report.equipment_summary.gas_record_count }}/{{ report.equipment_summary.task_count }} 项；电耗已匹配 {{ report.equipment_summary.electricity_record_count }}/{{ report.equipment_summary.task_count }} 项。</p>
+    <p class="lp-method">
+      {% for channel, matched in [('气耗', report.equipment_summary.gas_record_count), ('电耗', report.equipment_summary.electricity_record_count)] %}
+      {{ channel }}已匹配 {{ matched }}/{{ task_count }} 项{% if energy_connected and matched < task_count %} {{ attention_badge('匹配不全') }}{% endif %}{{ '；' if not loop.last else '。' }}
+      {% endfor %}
+      缺失能耗不作零。累计作业工时不等于设备开机时间。
+    </p>
     {{ section_title('区间任务能耗明细' if report.meta.custom_period else '当日任务能耗明细', 'TASK ENERGY DETAILS') }}
     <div class="data-chart-grid equipment-grid">
       {% if report.equipment_records %}<div id="equipment-detail-chart" class="chart"></div>{% else %}<div class="empty">所选区间暂无任务。</div>{% endif %}
@@ -83,7 +112,7 @@
     {% endif %}
 
   </section>
-  {% if report.analysis %}{{ render_analysis(report.analysis, report.meta.report_type, report, device_name, report.meta.period_start, report.meta.period_end) }}{% endif %}
+  {% if analysis %}{{ render_analysis(analysis, report, report.meta.period_start, report.meta.period_end, summary_shown) }}{% endif %}
   <p class="lp-end">本报告由切割生产智能产报系统生成 · 报告结束<span>{{ report.meta.report_id }}</span></p>
 </div>
 {% endif %}

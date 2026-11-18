@@ -1,5 +1,6 @@
 {% from 'report_analysis.html.j2' import render_analysis %}
-{% from 'industrial_chrome.html.j2' import report_brand, report_heading, section_title, executive, kpi %}
+{% from 'industrial_chrome.html.j2' import attention_badge, report_brand, report_heading, section_title, kpi %}
+{% from 'closing_comparison.html.j2' import render_closing_comparison %}
 <!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{{ title }}</title>
 <style>{% include 'industrial_report.css.j2' %}</style></head>
@@ -10,10 +11,13 @@
 {{ report_heading('小组立焊接线 · ' ~ title,
   [('grid','产线','小组立焊接线'), ('calendar','报告周期',report.query.start ~ ' 至 ' ~ report.query.end), ('grid','数据来源','MySQL'), ('clock','生产时区',report.meta.timezone)],
   [('生成时间',report.meta.calculated_at), ('数据更新时间',report.meta.data_updated_at)]) }}
-<dl class="lp-metadata">{% for label,value in metadata if label not in ['报表','数据来源','生成时间','生产时区','数据更新时间'] %}<dt>{{ label }}</dt><dd>{{ value }}</dd>{% endfor %}</dl>
-{{ executive('本期焊接生产记录已汇总' if report.total else '当前条件下暂无焊接生产记录',
-  '区间焊接长度 ' ~ report.summary.weld_length_m ~ ' m，累计作业用时 ' ~ report.summary.working_hours ~ ' h。',
-  '工件长度为累计值；累计作业用时不等于设备开机时间，未记录不作零。') }}
+{% if filters %}<p class="lp-method">筛选条件：{{ filters|join('；') }}</p>{% endif %}
+{% if report.closing_comparison is defined %}
+{{ render_closing_comparison(report.closing_comparison,
+  [('part_row_count','参与工件记录数（件）','count')] if kind == 'parts' else
+  [('job_count','焊接作业次数（次）','count'), ('weld_length_m','焊接长度（米）','number'), ('working_hours','累计作业用时（小时）','number')],
+  '按焊接作业结束时间归属', '累计和同期均应用本报表的筛选条件。') }}
+{% endif %}
 {{ section_title('核心生产指标（本期）', 'KEY PRODUCTION KPI') }}
 <div class="lp-kpis">
   {{ kpi('tasks', '焊接作业次数', report.summary.job_count if report.summary.job_count is not none else '待核实/未记录', '次') }}
@@ -21,7 +25,20 @@
   {{ kpi('grid', '参与工件数', report.summary.involved_part_count, '件') }}
   {{ kpi('clock', '累计作业用时', report.summary.working_hours, 'h') }}
 </div>
-<div class="notice">{% for notice in report.meta.notices %}<div>{{ notice }}</div>{% endfor %}<div>异常原因计数：{{ report.meta.quality }}；未关联工件流水号：{{ report.meta.unlinked_part_count }}</div></div>
+{% set quality_labels = {'invalid_time_rows':'时间无效', 'invalid_serial_rows':'流水号无效',
+                         'invalid_length_rows':'长度无效', 'invalid_duration_rows':'用时无效',
+                         'unverified_state_rows':'状态待确认', 'invalid_part_rows':'工件数据待核查',
+                         'unlinked_part_count':'未关联工件流水号', 'ambiguous_part_count':'工件归属待核查'} %}
+{% set quality_counts = dict(report.meta.quality, unlinked_part_count=report.meta.unlinked_part_count,
+                             ambiguous_part_count=report.meta.ambiguous_part_count|default(0)) %}
+<p class="lp-method">数据质量与关联计数：
+  {% for key, count in quality_counts.items() %}
+  {% set label = quality_labels.get(key, key) ~ ' ' ~ count %}
+  {{ attention_badge(label) if count else label }}{{ '；' if not loop.last else '。' }}
+  {% endfor %}
+</p>
+{% for notice in report.meta.notices %}<p class="lp-method">{{ notice }}</p>{% endfor %}
+<p class="lp-method">累计作业用时不等于设备开机时间，未记录的数据不作零。</p>
 {% if echarts %}{{ section_title('区间每日生产趋势', 'DAILY PRODUCTION TREND') }}<div id="trend" class="chart" role="img" aria-label="按日焊接长度趋势"></div>
 <script>{{ echarts|safe }}</script><script>
 const trend={{ report.daily|tojson }};
@@ -32,7 +49,7 @@ echarts.init(document.getElementById('trend'),null,{renderer:'svg'}).setOption({
 </tbody></table></div>
 
 </section>
-{{ render_analysis(analysis, 'welding', report, '小组立焊接线', report.query.start, report.query.end) }}
+{{ render_analysis(analysis, report, report.query.start, report.query.end) }}
 <p class="lp-end">小组立焊接线 · 工业生产智能洞察报告 · 报告结束</p>
 </div>
 {% include 'industrial_report.js.j2' %}

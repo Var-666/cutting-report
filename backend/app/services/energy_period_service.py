@@ -5,7 +5,9 @@ from dataclasses import replace
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
 from hashlib import sha256
+from itertools import islice
 import json
+import logging
 import threading
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -18,6 +20,7 @@ from app.services.energy_service import (
 from app.services.equipment_service import sort_equipment_records, summarize_equipment
 
 
+logger = logging.getLogger(__name__)
 LABELS = {**STATUS_TEXT, "partial": "已有数据", "pending": "时段未结束",
           "future": "日期未到", "not_queried": "尚未查询", "missing": "缺少有效边界读数"}
 CHANNELS = ("gas", "electricity")
@@ -309,6 +312,39 @@ class EnergyPeriodService:
         report["sample_counts"] = {key: len(points) for key, (points, _) in series.items()}
         return report
 
+    def closing_meter_coverage(self, windows):
+        """Read valid saved hours and their coverage for each 17:00 window."""
+        hours = {}
+        if self.settings.energy_connected and windows:
+            first = min(start.date() for start, _ in windows)
+            last = max(end.date() for _, end in windows)
+            sources = {
+                day.isoformat(): self.day_source_key(day)
+                for day in (first + timedelta(days=offset) for offset in range((last - first).days + 1))
+            }
+            months = {(source, stamp[:7]) for stamp, source in sources.items()}
+            for source, month in sorted(months):
+                for snapshot in self.repository.list_month(source, month):
+                    if sources.get(snapshot["report_date"]) == source:
+                        hours.update({row["start"]: row for row in snapshot["rows"]})
+        result = {}
+        for window in windows:
+            start, end = (value.replace(tzinfo=None) for value in window)
+            count = (end - start) // timedelta(hours=1)
+            rows = [hours.get((start + timedelta(hours=offset)).isoformat()) for offset in range(count)]
+            channels = {}
+            for channel in CHANNELS:
+                values = [Decimal(str(row[channel]["value"])) for row in rows
+                          if row and row[channel]["status"] in {"measured", "interpolated"}
+                          and row[channel]["value"] is not None]
+                channels[channel] = {
+                    "value": sum(values) if values else None,
+                    "valid_count": len(values),
+                    "expected_count": count,
+                }
+            result[window] = channels
+        return result
+
     def get_task_day(self, report_date: date, records, *, force=False):
         return self.get_task_range(report_date, report_date, records, force=force)
 
@@ -316,6 +352,27 @@ class EnergyPeriodService:
         report = self._calculate_task_report(start_date, records, force=force)
         report["period_start"] = start_date.isoformat()
         report["period_end"] = end_date.isoformat()
+        summary = report["summary"]
+        if report["energy_connected"] and (
+            summary["electricity_missing_count"] or summary["gas_missing_count"] or report["excluded_task_count"]
+        ):
+            incomplete = (row for row in report["records"]
+                          if row["electricity_consumption"] is None or row["gas_consumption"] is None)
+            samples = [
+                {
+                    "start": row["production_time"], "end": row["production_end_time"],
+                    "electricity": row["electricity_data_status"], "gas": row["gas_data_status"],
+                    "electricity_meters": [(meter["status"], meter.get("sample_count")) for meter in
+                                           row["energy_details"].get("electricity", {}).get("meters", [])],
+                }
+                for row in islice(incomplete, 5)
+            ]
+            logger.info(
+                "task_energy_incomplete line=%s start=%s end=%s electricity_missing=%d gas_missing=%d "
+                "excluded=%d warning=%r samples=%r",
+                self.settings.device_id, start_date, end_date, summary["electricity_missing_count"],
+                summary["gas_missing_count"], report["excluded_task_count"], report["warning"], samples,
+            )
         return report
 
     def _calculate_task_report(self, report_date: date, records, *, force=False):

@@ -22,6 +22,7 @@ from app.services.report_generation.common import (
     _recent_twelve_month_period,
     _year_ago,
     report_meta,
+    report_reference_at,
 )
 
 
@@ -84,6 +85,9 @@ def prepare_report(
 
     update_status("calculating", "正在计算任务与能耗")
     equipment, task_report = range_service.equipment_tasks(period_start, period_end, force=True)
+    closing_comparison = range_service.cutting_closing_comparison(
+        period_start, period_end, report_reference_at(job, settings.timezone), include_meter_energy=True,
+    )
     if legacy_day:
         # The old daily format includes daily totals for one selected month.
         month_report = energy_period_service.get_month(report_month, force=True)
@@ -157,6 +161,7 @@ def prepare_report(
         "filters": filters,
         "units": task_report["units"],
         "energy_notice": task_report.get("energy_notice") or "",
+        "closing_comparison": closing_comparison,
         "equipment_summary": summary,
         "equipment_records": task_report.get("records") or [],
         "energy_month": month_report,

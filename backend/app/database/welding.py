@@ -29,14 +29,16 @@ def valid_time(column: str) -> str:
 JOB_FIELDS = 'id, serial_number, device_no, robot_no, riser_no, welding_seam_no, weld_task_serial_number, weld_type, weld_speed, weld_lenght, wrap_angle_lenght, used_time, start_time, end_time, state, update_date'
 PART_FIELDS = 'id, serial_number, project_no, project_name, section_no, part_no, device_no, theory_lenght, reality_lenght, weld_rate, arc_rate, used_time, weld_used_time, start_time, end_time, state, update_date'
 SEAM_FIELDS = 'id, serial_number, device_no, robot_no, riser_no, welding_seam_no, theory_lenght, reality_lenght, used_time, start_time, end_time, state, update_date'
+CLOSING_JOB_METRICS = ('job_count', 'weld_length_m', 'working_hours')
 
 
 def device_scope(column: str, device_nos: tuple[int, ...]) -> str:
     return f" AND {column} IN ({','.join('%s' for _ in device_nos)})" if device_nos else ""
 
 
-def job_conditions(query: WeldingQuery, alias: str = 'j', device_nos: tuple[int, ...] = ()) -> tuple[str, tuple]:
-    start, end = query.bounds
+def job_conditions(query: WeldingQuery, alias: str = 'j', device_nos: tuple[int, ...] = (), *,
+                   bounds: tuple[str, str] | None = None) -> tuple[str, tuple]:
+    start, end = bounds or query.bounds
     clauses = [f'{alias}.end_time >= %s', f'{alias}.end_time < %s']
     values: list[Any] = [start, end]
     if device_nos:
@@ -72,8 +74,9 @@ def job_source(query: WeldingQuery, device_nos: tuple[int, ...] = ()) -> tuple[s
     return f'({sql}) j', values
 
 
-def job_rows(query: WeldingQuery, alias: str = 'j', device_nos: tuple[int, ...] = ()) -> tuple[str, tuple]:
-    where, values = job_conditions(query, alias, device_nos)
+def job_rows(query: WeldingQuery, alias: str = 'j', device_nos: tuple[int, ...] = (), *,
+             bounds: tuple[str, str] | None = None) -> tuple[str, tuple]:
+    where, values = job_conditions(query, alias, device_nos, bounds=bounds)
     # LIMIT prevents derived-table merging so validation runs once per source row.
     return (f'SELECT serial_number, device_no, robot_no, end_time, weld_type, weld_lenght, used_time, '
             f'{valid_time(f"{alias}.end_time")} AS valid_end_time, {valid_serial(f"{alias}.serial_number")} AS valid_serial_number '
@@ -125,6 +128,13 @@ class WeldingRepository:
     def daily(self, session: MySqlSession, query: WeldingQuery) -> list[dict]:
         source, values = job_source(query, self.device_nos)
         return session.fetch(f'SELECT LEFT(j.end_time, 10) AS production_date, {job_aggregate()} FROM {source} WHERE j.valid_end_time GROUP BY LEFT(j.end_time, 10) ORDER BY production_date', values, limit=367)
+
+    def closing_job_days(self, session: MySqlSession, query: WeldingQuery, bounds: tuple[str, str]) -> list[dict]:
+        source, params = job_rows(query, device_nos=self.device_nos, bounds=bounds)
+        expressions = job_aggregates()
+        metrics = ', '.join(f'{expressions[key]} AS {key}' for key in CLOSING_JOB_METRICS)
+        return session.fetch(f'''SELECT DATE(DATE_ADD(j.end_time, INTERVAL 7 HOUR)) AS business_date, {metrics}
+            FROM ({source}) j WHERE j.valid_end_time GROUP BY business_date''', params, limit=63)
 
     def equipment(self, session: MySqlSession, query: WeldingQuery) -> list[dict]:
         source, values = job_source(query, self.device_nos)
@@ -207,8 +217,8 @@ class WeldingRepository:
             values += own_values
         return conditions, values
 
-    def part_scope(self, query: WeldingQuery) -> tuple[str, tuple]:
-        where, values = self.conditions(query.model_copy(update={'state': None}), 'part_job')
+    def part_scope(self, query: WeldingQuery, *, bounds: tuple[str, str] | None = None) -> tuple[str, tuple]:
+        where, values = job_conditions(query.model_copy(update={'state': None}), 'part_job', self.device_nos, bounds=bounds)
         fields = ', '.join(f'source_part.{field}' for field in PART_FIELDS.split(', '))
         # Keep every owner of an involved serial until after ownership is counted.
         return (f'''WITH involved AS (
@@ -217,6 +227,12 @@ class WeldingRepository:
             scoped_parts AS (SELECT {fields}, i.has_valid_job FROM weld_part_info_table source_part
                 JOIN involved i ON i.serial_number = source_part.serial_number
                 WHERE {valid_serial('source_part.serial_number')}{device_scope('source_part.device_no', self.device_nos)} LIMIT 18446744073709551615)''', (*values, *self.device_nos))
+
+    def closing_part_count(self, session: MySqlSession, query: WeldingQuery, bounds: tuple[str, str]) -> int:
+        scope, values = self.part_scope(query, bounds=bounds)
+        own, own_values = self.part_filters(query)
+        return session.fetch(f'{scope} SELECT COUNT(*) AS total FROM scoped_parts p WHERE p.has_valid_job AND ({own or "1=1"})',
+                             (*values, *own_values), limit=1)[0]['total']
 
     def part_statistics(self, session: MySqlSession, query: WeldingQuery) -> tuple[list[dict], dict]:
         scope, values = self.part_scope(query)

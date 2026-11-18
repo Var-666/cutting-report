@@ -28,6 +28,7 @@ def analysis_arguments():
 
 def job(kind, interval):
     return dict(report_id='fresh-export', report_type=kind, report_date=DAY.isoformat(), project_code=None, ship_no=None,
+        created_at='2026-11-16T17:05:00+08:00',
         **(dict(period_start=DAY.isoformat(), period_end=DAY.isoformat()) if interval else {}))
 
 
@@ -43,6 +44,10 @@ def test_leadership_export_refreshes_both_period_and_month_trend(tmp_path, monke
         datetime(2026, 11, 16, 8), production_date=DAY)
     monkeypatch.setattr(query, '_sqlserver_summary_data', lambda filters: QueryBundle(
         [replace(summary, task_id=f'task-{i}') for i in range(current_count)], [], []))
+    monkeypatch.setattr(query.repository, 'cutting_closing_days', lambda start, end: [{
+        'business_date': DAY, 'task_count': current_count, 'cut_length_m': current_count * 10,
+        'groove_length_m': current_count, 'work_time_seconds': current_count * 60,
+    }])
     def monthly(month):
         total = dict(task_count=current_count, cut_length_m=Decimal(current_count * 10),
             groove_length_m=Decimal(current_count), work_time_seconds=current_count * 60)
@@ -58,6 +63,7 @@ def test_leadership_export_refreshes_both_period_and_month_trend(tmp_path, monke
     assert prepared.task_count == 8
     assert prepared.report['leadership']['current_month_total']['task_count'] == 8
     assert prepared.report['leadership']['monthly_records'][0]['task_count'] == 8
+    assert prepared.report['closing_comparison'][0]['totals']['task_count'] == 8
 
 
 @pytest.mark.parametrize('interval', [False, True])
@@ -72,6 +78,10 @@ def test_equipment_export_refreshes_task_rows_and_month_counts(tmp_path, monkeyp
         None, None, production_time=datetime(2026, 11, 16, 8), production_date=DAY)
     monkeypatch.setattr(query, '_sqlserver_equipment_data', lambda filters: EquipmentQueryResult(
         [replace(record, task_id=f'task-{i}') for i in range(current_count)], datetime(2026, 11, 16, 10)))
+    monkeypatch.setattr(query.repository, 'cutting_closing_days', lambda start, end: [{
+        'business_date': DAY, 'task_count': current_count, 'cut_length_m': current_count * 10,
+        'groove_length_m': 0, 'work_time_seconds': current_count * 60,
+    }])
     metric_calls = []
     def metrics(start, end):
         metric_calls.append((start, end))
@@ -90,4 +100,6 @@ def test_equipment_export_refreshes_task_rows_and_month_counts(tmp_path, monkeyp
     assert prepared.report['energy_month']['total_task_count'] == 8
     assert prepared.report['energy_month']['total_work_time_seconds'] == 480
     assert prepared.report['equipment_summary']['total_electricity_consumption'] is None
+    assert prepared.report['closing_comparison'][0]['totals']['work_time_seconds'] == 480
+    assert prepared.report['closing_comparison'][0]['totals']['electricity'] is None
     assert len(metric_calls) == 2

@@ -9,7 +9,8 @@ from copy import deepcopy
 from collections import OrderedDict
 from threading import Lock
 from time import monotonic, time
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
+from decimal import Decimal
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
@@ -18,7 +19,7 @@ from app.services.query_cache import QueryCache
 from app.database.report_snapshots import ReportKey, fingerprint
 from app.services.report_snapshots import ReportData, ReportSnapshotService
 from app.database.mysql import MySqlSession
-from app.database.welding import WeldingRepository, WeldingUnavailable, aggregate_sort_key
+from app.database.welding import CLOSING_JOB_METRICS, WeldingRepository, WeldingUnavailable, aggregate_sort_key
 from app.database.metadata import MetadataRepository
 from app.models.domain import to_primitive
 from app.models.welding import ReportType, WeldingQuery, WELD_TYPES
@@ -26,6 +27,7 @@ from app.services.llm_prompts import PROMPT_VERSION
 from app.services.llm_service import AnalysisOutputValidationError, LlmService, analysis_error_message
 from app.services.analysis_execution import analysis_operation
 from app.services.report_analysis_service import AnalysisDataVersionMismatch, AnalysisUnavailableError
+from app.services.report_closing_comparison import Totals, Window, closing_comparison, sum_daily_totals
 from app.core.request_cancellation import SqlRequestCancelled
 
 
@@ -192,7 +194,28 @@ class WeldingService:
         self.remember_analysis(self._analysis_key(version, kind, query), {**to_primitive(result), 'cached': True})
         return result
 
-    def report(self, kind: ReportType, query: WeldingQuery, *, export_limit: int | None = None, dashboard: bool = False, force: bool = False, live: bool = False) -> dict:
+    def _closing_comparison(self, session: MySqlSession, kind: ReportType, query: WeldingQuery, reference_at: datetime) -> list[dict]:
+        def bounds(start: datetime, end: datetime) -> tuple[str, str]:
+            return start.strftime('%Y-%m-%d %H:%M:%S'), end.strftime('%Y-%m-%d %H:%M:%S')
+
+        def load(windows: tuple[Window, ...]) -> dict[Window, Totals]:
+            if kind == 'parts':
+                return {window: {'part_row_count': self.repository.closing_part_count(session, query, bounds(*window))}
+                        for window in windows}
+            rows = self.repository.closing_job_days(session, query, bounds(
+                min(start for start, _ in windows), max(end for _, end in windows)
+            ))
+            days = {date.fromisoformat(str(row['business_date'])): {
+                'job_count': int(row['job_count']),
+                'weld_length_m': Decimal(str(row['weld_length_m'])),
+                'working_hours': Decimal(str(row['working_hours'])),
+            } for row in rows}
+            return {window: sum_daily_totals(window, days, CLOSING_JOB_METRICS) for window in windows}
+
+        return closing_comparison(query.start, query.end, reference_at, self.settings.weld_db_timezone, load)
+
+    def report(self, kind: ReportType, query: WeldingQuery, *, export_limit: int | None = None, dashboard: bool = False, force: bool = False,
+               live: bool = False, include_closing_comparison: bool = False) -> dict:
         started = monotonic()
         repo = self.repository
         if kind == 'parts':
@@ -208,6 +231,7 @@ class WeldingService:
             statistics.meta['stale'] |= today_data.meta['stale']
             statistics.meta['refreshing'] |= today_data.meta['refreshing']
         scope = repo.client.snapshot() if statistics is None or kind in ('jobs', 'parts') else nullcontext(None)
+        comparison = None
         with scope as session:
             if statistics is not None:
                 common = statistics.payload['common']
@@ -237,6 +261,8 @@ class WeldingService:
             else:
                 raw, total = self._aggregate_rows(kind, query, daily, equipment, export_limit)
             rows = [mapped_row(row, kind) for row in raw] if kind in ('parts', 'jobs') else raw
+            if include_closing_comparison and export_limit is not None and total < export_limit:
+                comparison = self._closing_comparison(session, kind, query, datetime.now(ZoneInfo(self.settings.weld_db_timezone)))
         meta = {
             'line_key': self.settings.device_id, 'timezone': self.settings.weld_db_timezone,
             'calculated_at': datetime.now(ZoneInfo(self.settings.weld_db_timezone)).isoformat(),
@@ -267,6 +293,8 @@ class WeldingService:
                                 'projects_truncated': len(projects) > 100, 'speed_distribution': speeds,
                                 'items': rows, 'total': total, 'meta': meta})
         payload['data_version'] = self.version(payload)
+        if comparison is not None:
+            payload['closing_comparison'] = comparison
         if statistics is not None:
             payload['meta']['calculated_at'] = statistics.meta['refreshed_at']
             payload['meta']['report_data'] = {**statistics.meta, 'report_type': kind, 'data_version': payload['data_version'],

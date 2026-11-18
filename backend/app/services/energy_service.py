@@ -89,7 +89,7 @@ def interval_consumption(series, start, end, *, max_gap_seconds, interpolate, fa
     left, right = max(0, left), min(right, len(points) - 1)
     selected = points[left:right + 1]
     if len(selected) < 2:
-        return result
+        return {**result, "sample_count": len(selected)}
     if any(value is None for _, value in selected):
         return {**result, "status": "invalid_reading"}
     sparse = False

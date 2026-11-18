@@ -5,6 +5,7 @@ import calendar
 import json
 from dataclasses import dataclass
 from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 from app.config import Settings
 
@@ -58,6 +59,11 @@ def _job_period(job: dict) -> tuple[date, date]:
 
 def _is_range_job(job: dict) -> bool:
     return bool(job.get("period_start") and job.get("period_end"))
+
+
+def report_reference_at(job: dict, timezone: str) -> datetime:
+    created_at = job.get("created_at")
+    return datetime.fromisoformat(str(created_at)) if created_at else datetime.now(ZoneInfo(timezone))
 
 
 def _period_label(start: date, end: date) -> str:

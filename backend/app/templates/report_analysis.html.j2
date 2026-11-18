@@ -1,31 +1,46 @@
-{% from 'industrial_chrome.html.j2' import metric_icon, hero %}
+{% from 'industrial_chrome.html.j2' import attention_badge, metric_icon, hero %}
 
-{% macro render_analysis(analysis, kind, report, line_name, period_start, period_end, title='AI 智能生产洞察') %}
+{% macro render_analysis(analysis, report, period_start, period_end, summary_shown=false) %}
 {% set available = analysis and analysis.mode|default('model') == 'model' and analysis.status|default('success') == 'success' %}
 {% set brief = analysis.brief if available else none %}
 {% set scope = brief.scope if brief else {} %}
 {% set facts = analysis.facts|default([]) if analysis else [] %}
-{% set quality = brief.data_quality if brief else report.meta.notices|default([]) %}
+{% if summary_shown %}
+{% set overview_facts = {'leadership':['F001','F002','F003','F007'],
+                         'workshop':[] if report.data_quality else ['F001','F002','F003'],
+                         'equipment':['F001','F002','F003','F004']} %}
+{% set facts = facts|rejectattr('id', 'in', overview_facts.get(report.meta.report_type, []))|list %}
+{% endif %}
+{% set quality = brief.data_quality|unique|list if brief else [] %}
 <section class="lp-sheet lp-analysis" aria-label="智能分析">
-  {{ hero(title, 'INTELLIGENCE & DECISION INSIGHTS', analysis_cover()) }}
+  {{ hero('AI 智能生产洞察', 'INTELLIGENCE & DECISION INSIGHTS', analysis_cover()) }}
   <div class="lp-analysis-status"><span>{{ '大模型分析' if available else '未生成分析' }}{{ ' · 已缓存' if analysis and analysis.cached else '' }}</span><span>生成时间：{{ analysis.generated_at or '--' if analysis else '--' }}</span></div>
+  {% if not summary_shown %}
   <div class="lp-conclusion"><span>{{ metric_icon('trend') }}AI 核心结论</span>
     <h3>{{ brief.headline if brief else '分析结论' if available else '智能分析暂不可用' }}</h3>
     <p>{{ brief.summary if brief else analysis.overview if analysis else '暂无与本次导出数据匹配的分析结果。' }}</p>
-    <small>{{ line_name }} · {{ scope.period_start or period_start }} 至 {{ scope.period_end or period_end }}</small>
+    {% if scope.period_start and (scope.period_start != period_start or scope.period_end != period_end) %}
+    <small>分析周期 {{ scope.period_start }} 至 {{ scope.period_end }}</small>
+    {% endif %}
   </div>
+  {% endif %}
 
   {% if (brief and brief.findings) or (not brief and analysis and analysis.features) %}
   <section class="lp-analysis-group"><h2>关键发现</h2><div class="lp-analysis-body">
-    {% if brief %}{% for finding in brief.findings %}<article class="lp-finding"><h3>{{ finding.title }}</h3><p>{{ finding.detail }}</p>
+    {% set attention_labels = {'C_project_missing':'待核查', 'C_duration':'待核查', 'C_energy_quality':'待核查',
+                               'C_confirmation':'待确认', 'C_energy_estimates':'含估算'} %}
+    {% if brief %}{% for finding in brief.findings %}
+    {% set label = attention_labels.get(finding.candidate_id|default('')) %}
+    <article class="lp-finding"><h3>{% if label %}{{ attention_badge(label) }}{% endif %}<span>{{ finding.title }}</span></h3><p>{{ finding.detail }}</p>
       {% if finding.references %}<p class="lp-references">关联记录（{{ finding.reference_count }} 项）：{% for reference in finding.references %}{{ reference|analysis_reference_label }}{{ '；' if not loop.last else '' }}{% endfor %}</p>{% endif %}
     </article>{% endfor %}{% else %}<p>{{ analysis.features }}</p>{% endif %}
   </div></section>
   {% endif %}
 
   {% if facts %}
+  {% set primary = facts|selectattr('id', 'in', ['F001', 'F002', 'F003', 'F007'])|list %}
   <section class="lp-analysis-group"><h2>数据证据 / 分析依据</h2><div class="lp-analysis-body lp-evidence">
-    <div class="lp-evidence-primary">{% for fact in facts if fact.id in ['F001', 'F002', 'F003', 'F007'] %}<div><span>{{ fact.label }}</span><strong>{{ fact.value }}</strong></div>{% endfor %}</div>
+    {% if primary %}<div class="lp-evidence-primary">{% for fact in primary %}<div><span>{{ fact.label }}</span><strong>{{ fact.value }}</strong></div>{% endfor %}</div>{% endif %}
     {% for fact in facts if fact.id not in ['F001', 'F002', 'F003', 'F007'] %}<div class="lp-evidence-secondary"><span>{{ fact.label }}</span><strong>{{ fact.value }}</strong></div>{% endfor %}
     {% if scope.comparison_start %}<p>比较周期：{{ scope.comparison_start }} 至 {{ scope.comparison_end }}</p>{% endif %}
   </div></section>

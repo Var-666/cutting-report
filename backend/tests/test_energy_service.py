@@ -7,12 +7,14 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 from io import BytesIO
 import json
+from types import SimpleNamespace
 from urllib.error import URLError
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
 from app.services.energy_api import EnergyApiClient, EnergyApiError, EnergyAuthenticationError
+from app.services.energy_period_service import EnergyPeriodService
 from app.services.energy_service import EquipmentEnergyService, interval_consumption, make_series
 from app.services.equipment_service import summarize_equipment
 from app.core.report_deadline import report_deadline
@@ -367,6 +369,30 @@ def test_invalid_config_fails_closed(changes):
     assert not stub.calls
 
 
+def test_task_energy_logs_which_electric_meter_lacks_samples_without_fabricating_total(caplog):
+    start = datetime(2026, 11, 18, 2, 39, 31)
+    end = datetime(2026, 11, 18, 2, 52, 55)
+    stamps = (datetime(2026, 11, 18, 2, 41), datetime(2026, 11, 18, 2, 50))
+    rows = [
+        {"MfId": meter, "Mt": stamp.isoformat(), "Mv": 100 + minute * 9}
+        for meter in (GAS, *ELECTRIC)
+        for minute, stamp in enumerate(stamps)
+        if meter != ELECTRIC[-1] or minute == 0
+    ]
+    cfg = configured(energy_sampling_change_at="2026-09-04")
+    service = EnergyPeriodService(cfg, SimpleNamespace(), client=MeterStub(rows))
+    with caplog.at_level("INFO", logger="app.services.energy_period_service"):
+        result = service.get_task_day(start.date(), [record(production_time=start, production_end_time=end)])
+
+    assert result["records"][0]["electricity_consumption"] is None
+    assert result["records"][0]["gas_consumption"] == 13.4
+    assert result["warning"] == ""
+    assert "task_energy_incomplete" in caplog.text and "electricity_missing=1 gas_missing=0" in caplog.text
+    assert "'electricity_meters': [('estimated', 2), ('estimated', 2), ('missing', 1)]" in caplog.text
+    assert "2026-11-18T02:39:31" in caplog.text and "2026-11-18T02:52:55" in caplog.text
+    assert cfg.energy_api_password not in caplog.text and ELECTRIC[-1] not in caplog.text
+
+
 def test_unified_device_page_export_and_analysis_share_meter_values(state_database, tmp_path, monkeypatch):
     from types import SimpleNamespace
     from app.api.analysis import AnalysisRequest, analyze_report
@@ -390,6 +416,9 @@ def test_unified_device_page_export_and_analysis_share_meter_values(state_databa
     pipeline.energy_period_service.client = MeterStub()
     rows = [record()]
     monkeypatch.setattr(pipeline.query_service, "fetch_equipment_data", lambda filters, force=False: EquipmentQueryResult(rows, END))
+    monkeypatch.setattr(pipeline.query_service.repository, "cutting_closing_days", lambda start, end: [
+        dict(business_date=START.date(), task_count=1, cut_length_m=100, groove_length_m=0, work_time_seconds=30)
+    ])
     monkeypatch.setattr(
         pipeline.query_service,
         "fetch_equipment_month_metrics",
@@ -444,7 +473,7 @@ def test_unified_device_page_export_and_analysis_share_meter_values(state_databa
     assert Decimal(page_analysis_facts["F003"].split()[0]) == 2
     assert Decimal(page_analysis_facts["F004"].split()[0]) == 18
     assert page_analysis_facts["F006"] == "0 项"
-    assert len(page_analysis_facts) == 6
+    assert page_analysis_facts["F011"] == page_analysis_facts["F012"] == "100.0%"
     rendered = []
     original_render = pipeline.report_service.render
 
@@ -466,6 +495,8 @@ def test_unified_device_page_export_and_analysis_share_meter_values(state_databa
     html = (cfg.reports_dir / job["relative_path"]).read_text(encoding="utf-8")
     assert "稳定模拟数据" not in html
     assert "已匹配 1/1 项" in html
+    assert "<th>电耗（kWh）</th><th>气耗（Nm³）</th>" in html
+    assert "<td>18.0</td><td>2.0</td>" in html
     assert "月度每日能耗汇总" in html
     assert "<th>任务数</th><th>切割时长</th>" in html
     assert "<th>汇总</th><th>1</th><th>00:00:30</th>" in html

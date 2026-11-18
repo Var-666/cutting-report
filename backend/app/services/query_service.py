@@ -17,6 +17,7 @@ from app.services.query_cache import QueryCache as _QueryCache
 from app.database.sqlserver import SqlServerClient, SqlServerConfigurationError
 from app.models.domain import (
     EquipmentRecord,
+    LeadershipPeriodRecord,
     QueryBundle,
     ReportFilter,
     SummaryBaseRecord,
@@ -392,6 +393,51 @@ class QueryService:
         if self.settings.effective_data_source_mode == "demo":
             return on_or_before
         return self.repository.latest_production_date(on_or_before)
+
+    def fetch_cutting_closing_days(
+        self, start: datetime, end: datetime, *, project_code: str | None = None, ship_no: str | None = None,
+    ) -> list[LeadershipPeriodRecord]:
+        sqlserver = self.settings.effective_data_source_mode == "sqlserver"
+        if sqlserver and not (project_code or ship_no):
+            return [
+                LeadershipPeriodRecord(
+                    period_start=_date(row["business_date"]),
+                    task_count=int(row["task_count"]),
+                    cut_length_m=Decimal(str(row["cut_length_m"])),
+                    groove_length_m=Decimal(str(row["groove_length_m"])),
+                    work_time_seconds=int(row["work_time_seconds"]),
+                )
+                for row in self.repository.cutting_closing_days(start, end)
+            ]
+        filters = ReportFilter(
+            report_date=start.date(), period_end=end.date(), project_code=project_code, ship_no=ship_no
+        )
+        bundle = self.fetch_summary_data(filters, force=True)
+        days: dict[date, LeadershipPeriodRecord] = {}
+        shift = timedelta(hours=24 - start.hour)
+        for row in bundle.summary_records:
+            # summary_base.sql reads END_TIME into source_updated_at.
+            completed_at = row.source_updated_at if sqlserver else (
+                row.production_time + timedelta(seconds=float(row.work_time or 0)) if row.production_time else None
+            )
+            if completed_at is None:
+                continue
+            try:
+                stamp = datetime.fromisoformat(str(completed_at))
+            except ValueError:
+                continue
+            stamp = stamp.astimezone(start.tzinfo) if stamp.tzinfo else stamp.replace(tzinfo=start.tzinfo)
+            if not start <= stamp < end:
+                continue
+            day = (stamp + shift).date()
+            if day not in days:
+                days[day] = LeadershipPeriodRecord(day, 0, Decimal("0"), Decimal("0"), 0)
+            total = days[day]
+            total.task_count += 1
+            total.cut_length_m += row.cut_length or Decimal("0")
+            total.groove_length_m += row.groove_length or Decimal("0")
+            total.work_time_seconds += int(row.work_time or 0)
+        return list(days.values())
 
     def _read_query(self, name: str) -> str:
         sql = (self.query_dir / name).read_text(encoding="utf-8")

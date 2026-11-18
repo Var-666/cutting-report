@@ -23,13 +23,13 @@ BUSINESS_MARKER = '完整业务内容校验标记'
 
 def style_report_html(kind: str, directory: Path) -> Path:
     root = Path(__file__).resolve().parents[2]
-    cfg = cutting_settings(project_root=root, data_source_mode='demo')
+    cfg = cutting_settings(project_root=root, data_source_mode='demo', report_max_detail_rows=1)
     renderer = ReportService(cfg)
     analysis = dict(mode='model', status='success', overview='本期生产记录已汇总。', features='统计覆盖所选日期。',
                     alerts='无设备开机时长，不推断利用率。', suggestions='核对生产来源与工程归属。', facts=[], cached=False)
     if kind.startswith('welding-'):
         weld_kind = kind.removeprefix('welding-')
-        query = WeldingQuery(start=date(2026, 11, 1), end=date(2026, 11, 13))
+        query = WeldingQuery(start=date(2026, 11, 1), end=date(2026, 11, 13), device_no=0)
         summary = dict(job_count=1, involved_part_count=1, working_hours=2.5, weld_length_m=125.6)
         row = dict(id=1, production_date='2026-11-12', end_time='2026-11-12 10:00:00', start_time='2026-11-12 08:00:00',
                    serial_number=BUSINESS_MARKER, project_no='PROJECT-001', project_name='长工程名称用于确认导出内容不被裁切',
@@ -39,15 +39,16 @@ def style_report_html(kind: str, directory: Path) -> Path:
         payload = dict(query=query.model_dump(mode='json'), total=1, items=[row], summary=summary,
                        daily=[dict(production_date='2026-11-12', **summary)], data_version='a' * 64,
                        meta=dict(calculated_at='2026-11-13 11:00:00', timezone='Asia/Shanghai', data_updated_at='2026-11-12 10:00:00',
-                                 notices=['仅使用已记录的焊接生产数据。'], quality={'需复核': 1}, unlinked_part_count=0))
+                                 notices=['仅使用已记录的焊接生产数据。'],
+                                 quality={'invalid_length_rows': 1, 'invalid_duration_rows': 0}, unlinked_part_count=0))
         if weld_kind in {'daily', 'equipment'}:
             payload['items'][0]['device_no'] = BUSINESS_MARKER if weld_kind == 'equipment' else 0
             if weld_kind == 'daily': payload['meta']['notices'].append(BUSINESS_MARKER)
         instance = SimpleNamespace(report=lambda *a, **kw: payload, analyze_report=lambda *a, **kw: analysis)
         html = WeldingExport(welding_settings(project_root=root), instance, PdfService()).prepare(weld_kind, query, 'html')[0].decode()
     elif kind == 'alarm':
-        payload = dict(summary='发现需要现场核查的告警记录。', overall_risk='high',
-                       facts=[dict(id='A001', machine_no='20KW切割机', severity='high', alarm_code='E001',
+        payload = dict(summary='发现需要现场核查的告警记录。', overall_risk='critical',
+                       facts=[dict(id='A001', machine_no='20KW切割机', severity='critical', alarm_code='E001',
                                    alarm_class='运行提示', alarm_desc=BUSINESS_MARKER + '：核对当前状态与现场记录。',
                                    start_time='2026-11-12 10:00:00', status='open')],
                        findings=[dict(severity='high', title='现场状态核查', analysis='结合告警发生时间核查状态。',
@@ -84,7 +85,13 @@ def style_report_html(kind: str, directory: Path) -> Path:
         if kind == 'leadership':
             leader = LeadershipReportService(cfg).fetch(date(2026, 11, 1))
             payload.update(leadership=to_primitive(leader), charts=ChartService().build_leadership(leader))
-            payload['analysis']['features'] = BUSINESS_MARKER
+            analysis['facts'] = [
+                dict(id='F001', label='当月任务数', value='100 项'),
+                dict(id='F006', label='工程号与任务较多的日期', value='工程 P01'),
+            ]
+            analysis['brief'] = dict(
+                headline='领导简报结论', summary='优先核对工程归属。\n确认后更新汇总。', scope={}, data_quality=[],
+                findings=[dict(candidate_id='C_project', title='工程任务分布', detail=BUSINESS_MARKER)], actions=[])
         elif kind == 'custom':
             query = dict(name='产量查询', query_task_id='q', version=1,
                          columns=[dict(field='name', label='业务名称', type='text'), dict(field='amount', label='产量', type='number')])
@@ -94,10 +101,20 @@ def style_report_html(kind: str, directory: Path) -> Path:
             template_meta = dict(name='生产报表模板', template_id='t', version=1, config=TemplateConfig(layout='table_first').model_dump())
             payload.update(definition=definition, query_task=query, template_meta=template_meta,
                 custom=CustomReportService(cfg).build_report_data(definition=definition, query_task=query,
-                    template=template_meta, rows=[dict(name=BUSINESS_MARKER, amount=125.6)]))
+                    template=template_meta, rows=[dict(name=BUSINESS_MARKER, amount=125.6), dict(name='超出明细上限', amount=42)]))
             template = 'custom_report.html.j2'
+        elif kind == 'workshop':
+            payload['data_quality'] = [dict(level='error', task_id='TASK-001', message='发现负数数据；对应字段不计入统计。')]
+            analysis['brief'] = dict(
+                headline='本期生产记录已汇总', summary='切割工时存在需要复核的记录。', scope={}, data_quality=[],
+                findings=[dict(candidate_id='C_production', title='本期实际切割记录', detail='按有效任务汇总。'),
+                          dict(candidate_id='C_duration', title='切割时间较长的任务', detail='建议核对任务起止时间。')],
+                actions=[dict(title='核对任务工时', detail='核对时间记录与现场生产安排。')])
+        elif kind == 'equipment':
+            payload['equipment_summary'].update(total_electricity_consumption=30, electricity_record_count=1)
+            payload['equipment_records'][0]['electricity_consumption'] = 30
         html = renderer.environment.get_template(template).render(report=payload,
-            echarts_source=cfg.echarts_vendor_path.read_text(), demo_mode=True, device_name='20KW切割机', energy_connected=False)
+            echarts_source=cfg.echarts_vendor_path.read_text(), demo_mode=True, device_name='20KW切割机', energy_connected=kind == 'equipment')
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f'{kind}.html'
     path.write_text(html, encoding='utf-8')

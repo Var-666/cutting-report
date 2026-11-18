@@ -1,4 +1,5 @@
-{% from 'industrial_chrome.html.j2' import report_brand, report_heading, section_title, hero, executive, kpi %}
+{% from 'industrial_chrome.html.j2' import attention_badge, report_brand, report_heading, section_title, hero, executive, kpi %}
+{% from 'closing_comparison.html.j2' import render_closing_comparison %}
 <!doctype html>
 <html lang="zh-CN">
 <head>
@@ -12,24 +13,31 @@
   {{ report_brand(demo_mode|default(false)) }}
   <section class="lp-sheet lp-overview">
     {{ report_heading(machine_no ~ ' 智能告警报告',
-      [('grid','设备',machine_no), ('calendar','生成时间',generated_at), ('alert','风险等级',severity_labels.get(analysis.overall_risk, analysis.overall_risk)), ('tasks','关联告警',analysis.facts|length ~ ' 条')],
-      [('报告编号',report_id), ('生成时间',generated_at)], demo_mode|default(false)) }}
-    {{ executive('告警记录已汇总', analysis.summary, '仅在发现新的告警问题时自动生成；处置以现场规程和授权人员判断为准。') }}
+      [('alert','风险等级',attention_badge(severity_labels.get(analysis.overall_risk, analysis.overall_risk), analysis.overall_risk)),
+       ('calendar','生成时间',generated_at)],
+      [('报告编号',report_id)], demo_mode|default(false)) }}
+    {{ executive('告警分析结论', analysis.summary, '仅在发现新的告警问题时自动生成。') }}
+    {% if closing_comparison is defined and closing_comparison is not none %}
+    {{ render_closing_comparison(closing_comparison,
+      [('incident_count','新增事件（条）','count'), ('critical_count','严重告警（条）','count'), ('high_count','高风险告警（条）','count')],
+      '按告警事件首次开始时间归属', '统计本报告涉及设备已同步的告警事件。超出监控或保留范围、同步尚未完成的区间显示数据不足。') }}
+    {% endif %}
     {{ section_title('核心告警指标', 'KEY ALARM KPI') }}
     <div class="lp-kpis">
       {{ kpi('tasks', '关联告警', analysis.facts|length, '条') }}
-      {% for severity in ['critical','high','warning'] %}{{ kpi('alert', severity_labels[severity], analysis.facts|selectattr('severity','equalto',severity)|list|length, '条') }}{% endfor %}
+      {% for severity in ['critical','high','warning'] %}
+      {% set count = analysis.facts|selectattr('severity','equalto',severity)|list|length %}
+      {{ kpi('alert', severity_labels[severity], count, '条', tone=severity if count else '') }}
+      {% endfor %}
     </div>
   </section>
   <section class="lp-sheet lp-analysis" aria-label="智能分析">
     {{ hero('AI 智能生产洞察', 'INTELLIGENCE & DECISION INSIGHTS', cover) }}
-    <div class="lp-analysis-status"><span>大模型分析 · 风险：<strong class="sev-{{ analysis.overall_risk }}">{{ severity_labels.get(analysis.overall_risk, analysis.overall_risk) }}</strong></span><span>生成时间：{{ generated_at }}</span></div>
-    <div class="lp-conclusion"><span>AI 核心结论</span><h3>告警分析结论</h3><p>{{ analysis.summary }}</p><small>{{ machine_no }}</small></div>
     {% if analysis.findings %}
     <section class="lp-analysis-group"><h2>关键发现</h2><div class="lp-analysis-body">
       {% for finding in analysis.findings %}
       <article class="lp-finding">
-        <h3><span class="sev-{{ finding.severity }}">{{ severity_labels.get(finding.severity, finding.severity) }}</span> · {{ finding.title }}</h3>
+        <h3>{{ attention_badge(severity_labels.get(finding.severity, finding.severity), finding.severity) }}<span>{{ finding.title }}</span></h3>
         <p>{{ finding.analysis }}</p>
         {% if finding.possible_causes %}<p>可能原因：{{ finding.possible_causes|join('；') }} · 置信度 {{ finding.confidence }}</p>{% endif %}
         {% if finding.evidence_ids %}<p class="lp-references">依据 {{ finding.evidence_ids|join('、') }}</p>{% endif %}
@@ -66,7 +74,7 @@
       <tr>
         <td>[{{ fact.id }}]</td>
         <td>{{ fact.machine_no }}</td>
-        <td class="sev-{{ fact.severity }}">{{ severity_labels.get(fact.severity, fact.severity) }}</td>
+        <td>{{ attention_badge(severity_labels.get(fact.severity, fact.severity), fact.severity) }}</td>
         <td>{{ fact.alarm_code }}</td>
         <td>{{ fact.alarm_class }}</td>
         <td title="{{ fact.alarm_desc }}">{{ fact.alarm_desc }}</td>

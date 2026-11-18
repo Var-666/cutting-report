@@ -800,6 +800,19 @@ class AlarmRepository(PostgresRepository):
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def closing_incidents(self, machines: list[str], start: datetime, end: datetime) -> list[dict]:
+        # Stored start times may use either a space or T before the time of day.
+        with self.connect() as connection:
+            rows = connection.execute("""
+                SELECT i.first_start_time, i.severity
+                FROM alarm_incidents i
+                WHERE i.machine_no = ANY(%s) AND i.first_start_time >= %s AND i.first_start_time < %s
+                  AND EXISTS (SELECT 1 FROM alarm_source_events e
+                              WHERE e.incident_id = i.incident_id AND e.source_name = %s)
+                """, (machines, start.date().isoformat(), (end.date() + timedelta(days=1)).isoformat(),
+                      self.source_name)).fetchall()
+        return [dict(row) for row in rows]
+
     def page_incidents(
         self,
         *,

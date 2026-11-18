@@ -111,6 +111,26 @@ def test_real_mysql_metrics_boundaries_and_invalid_dates(weld_mysql):
     assert february['summary']['job_count'] == 0 and february['summary']['invalid_time_rows'] == 1
 
 
+def test_real_mysql_export_closes_at_17_and_counts_parts_per_window(weld_mysql, monkeypatch):
+    from app.services.welding_export import WeldingExport
+
+    jobs = weld_mysql.report('jobs', period(), export_limit=5001, include_closing_comparison=True)
+    today = jobs['closing_comparison'][0]
+    assert today['end'].isoformat(timespec='minutes') == '2026-10-01T17:00+08:00'
+    assert today['totals']['job_count'] == 5
+    assert jobs['summary']['job_count'] == 6
+    device = weld_mysql.report('equipment', period(device_no=0), export_limit=5001, include_closing_comparison=True)
+    assert device['closing_comparison'][0]['totals']['weld_length_m'] == 4
+    parts = weld_mysql.report('parts', WeldingQuery(start=date(2026, 10, 1), end=date(2026, 10, 2), state=3),
+                              export_limit=5001, include_closing_comparison=True)
+    assert [column['totals'] for column in parts['closing_comparison']] == [{'part_row_count': 1}] * 3
+    monkeypatch.setattr(weld_mysql, 'analyze_report', lambda *args: None)
+    content, media = WeldingExport(weld_mysql.settings, weld_mysql, None).generate('jobs', period(), 'html')
+    assert media.startswith('text/html')
+    html = content.decode('utf-8')
+    assert '日、周、月同期对比' in html and '2026-10-01 17:00' in html
+
+
 def test_real_mysql_filters_page_state_and_association(weld_mysql):
     report = weld_mysql.report('jobs', period(device_no=0, robot_no=0, page_size=1))
     assert report['total'] == 1 and report['items'][0]['id'] == 6

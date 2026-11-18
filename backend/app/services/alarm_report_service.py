@@ -55,6 +55,7 @@ class AlarmReportService:
         analysis: dict[str, Any],
         generated_at: datetime,
         execution_id: str | None = None,
+        comparison: list[dict] | None = None,
     ) -> dict[str, Any]:
         template = self.environment.get_template("alarm_report.html.j2")
         html = template.render(
@@ -64,6 +65,7 @@ class AlarmReportService:
             demo_mode=self.settings.effective_data_source_mode == 'demo',
             analysis=analysis,
             generated_at=generated_at.strftime("%Y-%m-%d %H:%M:%S"),
+            closing_comparison=comparison,
             severity_labels={"warning": "提示", "high": "高", "critical": "严重"},
         )
         folder = self.settings.reports_dir / "alarms" / f"{generated_at:%Y}" / f"{generated_at:%m}"

@@ -28,6 +28,7 @@ from app.services.report_generation.common import (
     _period_label,
     _year_ago,
     report_meta,
+    report_reference_at,
 )
 from app.services.report_generation.equipment import analyze_legacy_daily
 from app.services.statistics_service import StatisticsService, build_worker_work_summaries
@@ -116,6 +117,10 @@ def prepare_report(
     ensure_active()
     update_status("calculating", "正在计算统计指标")
     statistics = statistics_service.calculate(bundle.summary_records)
+    closing_comparison = range_service.cutting_closing_comparison(
+        period_start, period_end, report_reference_at(job, settings.timezone),
+        project_code=filters.project_code, ship_no=filters.ship_no,
+    )
     chart_type = _chart_type(job)
     charts = chart_service.build(
         statistics.valid_summary_records,
@@ -235,6 +240,7 @@ def prepare_report(
         },
         "energy_notice": energy_notice,
         "summary": to_primitive(statistics.summary),
+        "closing_comparison": closing_comparison,
         "equipment_summary": to_primitive(equipment_summary),
         "data_quality": to_primitive(statistics.data_quality),
         "attention_items": to_primitive(statistics.attention_items),

@@ -9,6 +9,7 @@ from time import monotonic
 from datetime import datetime, timedelta
 from typing import Any, Callable, Protocol
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -18,6 +19,7 @@ from app.services.alarm_analysis_service import AlarmAnalysisService
 from app.services.alarm_report_service import (
     ALARM_REPORT_FAILED, ALARM_REPORT_RATE_LIMITED, AlarmReportService, alarm_report_error_message,
 )
+from app.services.report_closing_comparison import Totals, Window, closing_comparison, sum_daily_totals
 
 
 logger = logging.getLogger(__name__)
@@ -112,6 +114,41 @@ class AlarmMonitorService:
     def _check_lease(self, owner: str, lease_now: Callable[[], datetime], lost: threading.Event) -> None:
         if lost.is_set() or not self.repository.renew_lease(owner, lease_now(), ttl_seconds=self.LEASE_TTL_SECONDS):
             raise AlarmLeaseLostError("告警租约失效，停止后续分析和渲染")
+
+    def _closing_comparison(self, machines: list[str], now: datetime, caught_up: bool) -> list[dict]:
+        zone = now.tzinfo or ZoneInfo(self.settings.timezone)
+        reference = now.replace(tzinfo=zone)
+        monitor_start = datetime.fromisoformat(self.settings.alarm_monitor_start_at)
+        covered_from = monitor_start.astimezone(zone) if monitor_start.tzinfo else monitor_start.replace(tzinfo=zone)
+        if self.settings.alarm_retention_days > 0:
+            covered_from = max(covered_from, reference - timedelta(days=self.settings.alarm_retention_days))
+        metrics = ("incident_count", "critical_count", "high_count")
+
+        def load(windows: tuple[Window, ...]) -> dict[Window, Totals]:
+            totals = {window: dict.fromkeys(metrics) for window in windows}
+            covered = [window for window in windows if caught_up and window[0] >= covered_from]
+            if not covered:
+                return totals
+            start = min(left for left, _ in covered)
+            end = max(right for _, right in covered)
+            days = {}
+            for row in self.repository.closing_incidents(machines, start, end):
+                try:
+                    stamp = datetime.fromisoformat(row["first_start_time"])
+                except ValueError:
+                    continue
+                stamp = stamp.astimezone(zone) if stamp.tzinfo else stamp.replace(tzinfo=zone)
+                if not start <= stamp < end:
+                    continue
+                day = (stamp + timedelta(hours=24 - start.hour)).date()
+                values = days.setdefault(day, dict.fromkeys(metrics, 0))
+                values["incident_count"] += 1
+                values["critical_count"] += int(row["severity"] == "critical")
+                values["high_count"] += int(row["severity"] == "high")
+            totals.update({window: sum_daily_totals(window, days, metrics) for window in covered})
+            return totals
+
+        return closing_comparison(reference.date() - timedelta(days=1), reference.date(), reference, zone, load)
 
     def _run_owned(self, now: datetime, owner: str,
                    lease_now: Callable[[], datetime], lost: threading.Event) -> dict[str, Any]:
@@ -229,7 +266,8 @@ class AlarmMonitorService:
         incident_ids = sorted(item["incident_id"] for item in incidents)
         emission_key = hashlib.sha256("\n".join(incident_ids).encode("utf-8")).hexdigest()
         proposed_id = f"alarm_{now:%Y%m%d_%H%M%S}_{uuid4().hex[:6]}"
-        machine_no = ", ".join(sorted({item["machine_no"] for item in incidents}))
+        machines = sorted({item["machine_no"] for item in incidents})
+        machine_no = ", ".join(machines)
         report_id = self.repository.reserve_report(
             proposed_report_id=proposed_id,
             emission_key=emission_key,
@@ -249,6 +287,7 @@ class AlarmMonitorService:
                 analysis=analysis,
                 generated_at=now,
                 execution_id=owner,
+                comparison=self._closing_comparison(machines, now, next_cursor >= high_water),
             )
             self.repository.complete_report(
                 report_id,

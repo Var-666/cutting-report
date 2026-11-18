@@ -68,33 +68,36 @@ class WeldingExport:
 
     def read_report(self, kind: ReportType, query: WeldingQuery, format: str) -> dict:
         limit = 100000 if format == 'csv' else 5000
-        report = self.service.report(kind, query, export_limit=limit + 1)
+        report = self.service.report(kind, query, export_limit=limit + 1, include_closing_comparison=format != 'csv')
         if report['total'] > limit or len(report['items']) > limit:
             raise ValueError(f'当前筛选结果超过{limit:,}行，请缩小日期或筛选范围后导出')
         return report
 
     def prepare_report(self, kind: ReportType, query: WeldingQuery, format: str, report: dict) -> tuple[bytes, str]:
         applied = report['query']
-        filters = [f'日期：{applied["start"]} 至 {applied["end"]}']
+        filters = []
         for key, label in [('device_no', '设备'), ('robot_no', '机器人'), ('weld_type', '工艺代码'), ('state', '作业状态代码'),
                            ('part_state', '工件状态代码'), ('project_no', '项目'), ('section_no', '分段'), ('part_no', '工件编号'), ('serial_number', '流水号')]:
             if applied.get(key) is not None and applied.get(key) != '':
                 filters.append(f'{label}：{applied[key]}')
         if applied.get('anomalies_only'):
             filters.append('仅异常候选记录')
-        metadata = [('报表', REPORT_TITLES[kind]), ('数据来源', '小组立焊接线 / MySQL'),
-                    ('筛选条件', '；'.join(filters) + '；导出全部筛选结果'), ('生成时间', report['meta']['calculated_at']),
-                    ('生产时区', report['meta']['timezone']), ('数据更新时间', str(report['meta']['data_updated_at'])),
-                    ('统计说明', '长度单位m；按结束时间归属；工件长度为累计值；未知状态待核实')]
         if format == 'csv':
+            date_filter = f'日期：{applied["start"]} 至 {applied["end"]}'
+            metadata = [('报表', REPORT_TITLES[kind]), ('数据来源', '小组立焊接线 / MySQL'),
+                        ('筛选条件', '；'.join([date_filter, *filters, '导出全部筛选结果'])),
+                        ('生成时间', report['meta']['calculated_at']), ('生产时区', report['meta']['timezone']),
+                        ('数据更新时间', str(report['meta']['data_updated_at'])),
+                        ('统计说明', '长度单位m；按结束时间归属；工件长度为累计值；未知状态待核实')]
             return csv_bytes(COLUMNS[kind], report['items'], metadata), 'text/csv; charset=utf-8'
         version = report.get('data_version')
         analysis = self.service.analyze_report(kind, query, report, version) if version else None
         environment = ReportService(self.settings).environment
         chart_path = self.settings.project_root / 'vendor' / 'echarts.min.js'
         html = environment.get_template('welding_report.html.j2').render(
-            title=REPORT_TITLES[kind], columns=COLUMNS[kind], report=report, metadata=metadata,
+            title=REPORT_TITLES[kind], columns=COLUMNS[kind], report=report, filters=filters,
             analysis=to_primitive(analysis),
+            kind=kind,
             echarts=chart_path.read_text(encoding='utf-8') if chart_path.is_file() else '',
         )
         return html.encode('utf-8'), 'text/html; charset=utf-8'

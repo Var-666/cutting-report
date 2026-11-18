@@ -1,0 +1,50 @@
+{% from 'industrial_chrome.html.j2' import attention_badge, section_title %}
+{% macro closing_range(start, end) -%}
+  <time datetime="{{ start.isoformat() }}">{{ start.strftime('%Y-%m-%d %H:%M') }}</time> 至 <time datetime="{{ end.isoformat() }}">{{ end.strftime('%Y-%m-%d %H:%M') }}</time>
+{%- endmacro %}
+
+{% macro render_closing_comparison(columns, metrics, attribution, note='', title='日、周、月同期对比', calendar_note='周从周一开始。') %}
+{% set highlight_percent = 20 %}
+{{ section_title(title) }}
+{% if columns %}
+{% set shortened = (columns|map(attribute='comparable_end')|list) != (columns|map(attribute='end')|list) %}
+<div class="table-wrap lp-closing-comparison" tabindex="0" role="region" aria-label="{{ title }}">
+  <table aria-label="{{ title }}">
+    <thead><tr><th scope="col">指标</th>{% for column in columns %}<th scope="col">{{ column.label }}</th>{% endfor %}</tr></thead>
+    <tbody>
+      <tr><th scope="row">统计区间</th>{% for column in columns %}<td>{{ closing_range(column.start, column.end) }}</td>{% endfor %}</tr>
+      <tr><th scope="row">对比基准</th>{% for column in columns %}<td>{{ column.comparison_label }}</td>{% endfor %}</tr>
+      <tr><th scope="row">对比区间</th>{% for column in columns %}<td>{{ closing_range(column.comparison_start, column.comparison_end) }}</td>{% endfor %}</tr>
+      {% if shortened %}
+      <tr><th scope="row">本期可比区间</th>{% for column in columns %}<td>{{ closing_range(column.start, column.comparable_end) }}</td>{% endfor %}</tr>
+      {% endif %}
+      {% for key,label,format in metrics %}
+      <tr><th scope="row">{{ label }}</th>
+        {% for column in columns %}
+        {% set value = column.totals[key] %}
+        {% set previous = column.previous_totals[key] %}
+        {% set change = column.changes[key] %}
+        {% set meter = column.meter_coverage.get(key) if column.meter_coverage is defined else none %}
+        {% set display_value = meter.value if meter else value %}
+        <td>{{ '—' if display_value is none else display_value|duration if format == 'duration' else display_value|number if format == 'number' else display_value }}
+          {% if value is none %}
+          <span class="lp-closing-change">{{ attention_badge(meter.valid_count ~ '/' ~ meter.expected_count ~ ' 小时' if meter else '数据不完整') }}</span>
+          {% endif %}
+          {% if change is not none %}
+          {% set significant = change[:-1]|float|abs >= highlight_percent %}
+          <span class="lp-closing-change{{ ' lp-closing-change--large' if significant else '' }}">较同期 {{ change }}</span>
+          {% elif value is not none %}
+          <span class="lp-closing-change">{% if previous is none or column.comparable_totals[key] is none %}{{ attention_badge('同期数据不足') }}{% else %}同期为 0{% endif %}</span>
+          {% endif %}
+        </td>
+        {% endfor %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+<p class="lp-method">{{ attribution }}，区间含开始、截至时刻归入下一业务日。{{ calendar_note }}{% if shortened %} 累计显示完整统计区间，变化按本期可比区间计算。{% endif %}{% if note %} {{ note }}{% endif %} 涨跌达到 {{ highlight_percent }}% 时用紫红色突出。</p>
+{% else %}
+<p class="lp-method">所选期间内暂无可用于对比的已截止业务日。</p>
+{% endif %}
+{% endmacro %}

@@ -29,10 +29,50 @@ def test_all_report_styles_keep_complete_html_pdf_and_continuous_email(tmp_path,
                 document = page.locator('.industrial-document:visible')
                 assert document.bounding_box()['width'] == pytest.approx(820 if width == 1440 else width - 16)
                 assert document.locator('h1').first.evaluate('(el) => parseFloat(getComputedStyle(el).fontSize)') == pytest.approx(36 if width == 1440 else 25)
-                assert document.get_by_text('生产执行摘要', exact=True).count() == 1
+                assert document.get_by_text('生产执行摘要', exact=True).count() == int(kind in {'leadership', 'workshop', 'alarm', 'custom'})
                 assert document.locator('.lp-kpis').count() == 1
                 assert document.locator('.lp-kpi strong').first.evaluate('(el) => parseFloat(getComputedStyle(el).fontSize)') == pytest.approx(23 * 4 / 3, abs=.001)
                 assert BUSINESS_MARKER in page.locator('body').inner_text()
+                if kind == 'leadership':
+                    assert document.get_by_text('领导简报结论', exact=True).count() == 1
+                    assert document.get_by_text('优先核对工程归属。 确认后更新汇总。', exact=True).count() == 1
+                    assert document.get_by_text('当月任务数', exact=True).count() == 0
+                    assert document.get_by_text('工程号与任务较多的日期', exact=True).count() == 1
+                elif kind == 'workshop':
+                    priority = document.get_by_text('优先核查', exact=True)
+                    assert priority.bounding_box()['y'] < document.get_by_role(
+                        'heading', name='核心生产指标（本期）', exact=False).bounding_box()['y']
+                    assert priority.evaluate(
+                        '(el) => getComputedStyle(el.parentElement).backgroundColor') == 'rgb(255, 241, 242)'
+                    findings = document.locator('.lp-finding h3')
+                    assert findings.filter(has_text='本期实际切割记录').inner_text() == '本期实际切割记录'
+                    assert findings.filter(has_text='切割时间较长的任务').get_by_text('待核查', exact=True).evaluate(
+                        '(el) => getComputedStyle(el).backgroundColor') == 'rgb(254, 243, 199)'
+                elif kind == 'equipment':
+                    assert document.get_by_text('匹配不全', exact=True).evaluate(
+                        '(el) => getComputedStyle(el).backgroundColor') == 'rgb(254, 243, 199)'
+                    assert '电耗已匹配 1/1 项' in document.inner_text()
+                elif kind == 'alarm':
+                    assert document.get_by_text('发现需要现场核查的告警记录。', exact=True).count() == 1
+                    assert document.get_by_text('风险等级', exact=False).count() == 1
+                    assert document.locator('.lp-context').get_by_text('严重', exact=True).evaluate(
+                        '(el) => getComputedStyle(el).backgroundColor') == 'rgb(255, 241, 242)'
+                    assert document.locator('.lp-finding').get_by_text('高', exact=True).evaluate(
+                        '(el) => getComputedStyle(el).backgroundColor') == 'rgb(255, 237, 213)'
+                    alarm_kpis = document.locator('.lp-kpi')
+                    assert alarm_kpis.filter(has_text='严重').evaluate(
+                        '(el) => getComputedStyle(el).backgroundColor') == 'rgb(255, 241, 242)'
+                    assert alarm_kpis.filter(has_text='高').evaluate(
+                        '(el) => getComputedStyle(el).backgroundColor') == 'rgba(0, 0, 0, 0)'
+                elif kind.startswith('welding-'):
+                    assert document.get_by_text('仅使用已记录的焊接生产数据。', exact=True).count() == 1
+                    assert document.get_by_text('筛选条件：设备：0', exact=True).count() == 1
+                    assert document.get_by_text('长度无效 1', exact=True).evaluate(
+                        '(el) => getComputedStyle(el).backgroundColor') == 'rgb(254, 243, 199)'
+                    assert '用时无效 0' in document.inner_text()
+                elif kind == 'custom':
+                    assert document.get_by_text('查询共 2 行', exact=False).count() == 1
+                    assert '明细与图表仅展示按查询返回顺序的前 1 行' in document.inner_text()
                 assert page.locator('table:visible th,table:visible td').evaluate_all(
                     "cells => cells.every(cell => getComputedStyle(cell).whiteSpace === 'nowrap')")
                 if kind == 'custom':
@@ -57,6 +97,8 @@ def test_all_report_styles_keep_complete_html_pdf_and_continuous_email(tmp_path,
             assert page.get_width() == pytest.approx(210 * 72 / 25.4, abs=1)
             text = textpage.get_text_range().replace(' ', '').replace('\r', '').replace('\n', '')
             assert BUSINESS_MARKER in text and '报告结束' in text
+            if kind == 'workshop':
+                assert '优先核查' in text and '待核查' in text
     email = service.render_email(source)
     assert email.images and '连续内容' in email.html
     assert 'padding:0;border:0;font-size:0;line-height:0' in email.html

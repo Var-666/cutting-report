@@ -19,6 +19,28 @@ from app.services.alarm_monitor_service import AlarmMonitorService
 TZ = ZoneInfo("Asia/Shanghai")
 
 
+def test_alarm_closing_comparison_counts_first_start_with_coverage(state_database, tmp_path):
+    repository = AlarmRepository(state_database, source_name="production")
+    repository.initialize()
+    now = datetime(2026, 11, 17, 17, 5, tzinfo=TZ)
+    settings = cutting_settings(project_root=tmp_path, alarm_monitor_start_at="2026-11-15 17:00:00")
+    rows = [
+        alarm(1, start_time="2026-11-16 16:59:59", alarm_code=3101),
+        alarm(2, start_time="2026-11-16T17:00:00", alarm_code=3102, description="急停"),
+        alarm(3, start_time="2026-11-17 17:00:00", alarm_code=3103),
+        {**alarm(4, start_time="2026-11-17 09:00:00"), "machine_no": "另一台设备"},
+    ]
+    repository.ingest(rows, now=now, cursor=4, debounce_minutes=10, monitor_start_at=settings.alarm_monitor_start_at)
+    service = AlarmMonitorService(settings, repository, None, None, None)
+    today, week, month = service._closing_comparison(["20kw切割机"], now, True)
+    assert today["totals"] == dict(incident_count=1, critical_count=1, high_count=0)
+    assert today["previous_totals"]["incident_count"] == 1
+    assert week["totals"]["incident_count"] == 2
+    assert week["previous_totals"]["incident_count"] is None
+    assert month["totals"]["incident_count"] is None
+    assert service._closing_comparison(["20kw切割机"], now, False)[0]["totals"]["incident_count"] is None
+
+
 def test_recent_recheck_does_not_skip_incremental_backlog(state_database, tmp_path):
     repository = AlarmRepository(state_database, source_name="production")
     repository.initialize()

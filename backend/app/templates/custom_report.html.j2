@@ -16,8 +16,11 @@
       [('grid','设备',device_name), ('calendar','报告周期',period), ('grid','查询任务',report.query_task.name ~ ' · V' ~ report.query_task.version), ('grid','模板版本',report.template_meta.name ~ ' · V' ~ report.template_meta.version)] if report.custom.template.show_meta else [],
       [('报告编号',report.meta.report_id), ('生成时间',report.meta.generated_at|replace('T',' ')), ('版本',report.meta.system_version)] if report.custom.template.show_meta else [], demo_mode) }}
     <p class="lp-method">{{ report.custom.template.logo_text }} · {{ report.definition.description or '配置驱动的自定义生产报表' }}</p>
-    {{ executive('查询结果已汇总' if report.custom.total_row_count else '当前条件下暂无生产记录',
-      '查询共 ' ~ report.custom.total_row_count ~ ' 行，核心指标按完整查询计算。', '统计内容依据当前报表定义和已应用筛选条件。') }}
+    {% set detail = '查询共 ' ~ report.custom.total_row_count ~ ' 行，核心指标按完整查询计算。' %}
+    {% if report.custom.truncated %}
+    {% set detail = detail ~ '明细与图表仅展示按查询返回顺序的前 ' ~ report.custom.rows|length ~ ' 行。' %}
+    {% endif %}
+    {{ executive('查询结果已汇总' if report.custom.total_row_count else '当前条件下暂无生产记录', detail) }}
     {% if report.custom.metrics %}
     {{ section_title('核心生产指标（本期）', 'KEY PRODUCTION KPI') }}
     <div class="lp-kpis">
@@ -25,9 +28,6 @@
     </div>
     {% endif %}
     {{ section_title('数据明细与趋势', 'PRODUCTION DETAILS & TRENDS') }}
-    {% if report.custom.truncated %}
-    <p role="note">查询共 {{ report.custom.total_row_count }} 行，核心指标按完整查询计算；明细与图表仅展示按查询返回顺序的前 {{ report.custom.rows|length }} 行。</p>
-    {% endif %}
     <section class="content-grid {{ report.custom.template.layout }}">
       {% if report.custom.chart.series %}
       <div class="chart-card"><div class="chart-title">{{ report.custom.chart_title }}</div><div id="custom-chart" class="chart" aria-label="{{ report.custom.chart_title }}"></div></div>
