@@ -38,6 +38,8 @@ HTTP_FAILURE_WINDOW = 60
 HTTP_FAILURE_THRESHOLD = 3
 HTTP_FAILURE_MAX_SCOPES = 512
 TCP_FAILURE_MESSAGES = frozenset({'连接超时', '端口拒绝连接', '网络或主机不可达', '连接失败'})
+# Allow two 30-second samples after the 30-second lease expires, with one interval of slack.
+CONSUMER_LOSS_HEARTBEAT_WINDOW_SECONDS = 120
 
 
 class OperationsService:
@@ -154,6 +156,10 @@ class OperationsService:
         observations = []
         for row in runtime['roles']:
             role, instance = row['role'], row['instance_id']
+            if instance and row['detail'] == 'lost':
+                age = row['heartbeat_age_seconds']
+                if age is None or age >= CONSUMER_LOSS_HEARTBEAT_WINDOW_SECONDS:
+                    continue
             configuration = row['configuration_state']
             if role != 'worker' or instance:
                 item = self._item(now, 'CONFIGURATION_LOAD_FAILED', '运行角色配置加载失败',

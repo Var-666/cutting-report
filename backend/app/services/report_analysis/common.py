@@ -135,3 +135,24 @@ def _work_time_outliers(
         for row in sorted(valid, key=lambda item: item.work_time or 0, reverse=True)
         if float(row.work_time or 0) > threshold
     ]
+
+
+def task_quality_issues(records: list) -> list[tuple[object, list[str]]]:
+    issues = []
+    for row in records:
+        cut, work = row.cut_length, row.work_time
+        groove = getattr(row, 'groove_length', None)
+        reasons = []
+        if any(value is not None and value < 0 for value in (cut, groove, work)):
+            reasons.append('长度或用时为负数')
+        if work is not None and work > 0 and cut == 0 and not groove:
+            reasons.append('有用时但切割长度为零')
+        if work is not None and work > 0 and cut is None:
+            reasons.append('有用时但切割长度缺失')
+        if (cut is not None and cut > 0 or groove is not None and groove > 0) and (work is None or work <= 0):
+            reasons.append('有长度但用时缺失或非正')
+        if work is not None and 0 < work < 60:
+            reasons.append('用时不足一分钟，需核对是否试切或短作业')
+        if reasons:
+            issues.append((row, reasons))
+    return issues

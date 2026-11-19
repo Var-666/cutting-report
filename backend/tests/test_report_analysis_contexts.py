@@ -116,7 +116,7 @@ def test_model_request_links_outlier_tasks_to_details_and_energy_statuses(state_
     assert '样本' in table['coverage']
     rows = {row['task_id']: row for row in table['rows']}
     longest = max(records, key=lambda record: record.work_time)
-    fact_id = 'F006' if kind == 'workshop' else 'F005'
+    fact_id = 'F006' if kind == 'workshop' else 'F013'
     fact = next(fact for fact in payload['facts'] if fact['id'] == fact_id)
     assert f"任务 {longest.task_id} 工时" in fact['source']
     assert rows[longest.task_id]['segment_name'] == longest.segment_name
@@ -237,10 +237,12 @@ def test_task_change_facts_explicitly_name_total_tasks():
     for kind, builder, key in [('workshop', workshop_context, 'workshop'), ('equipment', equipment_context, 'equipment_partial')]:
         records = cases[key][1][1][:2]
         context = builder('2026-08-18', records, comparison_records=[records[0]] * 11, comparison_date='2026-08-17')
-        value = next(f['value'] for f in context['facts'] if f['id'] == 'F005')
+        value = next(f['value'] for f in context['facts'] if f['id'] == ('F014' if kind == 'workshop' else 'F005'))
         assert '任务总数比上一周期下降 81.8%' in value
         if kind == 'workshop':
-            assert value.startswith('待确认 1 项，占全部任务 50.0%；任务总数')
+            pending = next(f['value'] for f in context['facts'] if f['id'] == 'F005')
+            assert pending == '待确认 1 项，占全部任务 50.0%'
+            assert 'C_comparison' not in context['_references']
 
 
 @pytest.mark.parametrize(('positive', 'summary', 'valid'), [

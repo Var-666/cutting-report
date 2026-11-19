@@ -19,7 +19,7 @@ from app.services.alarm_analysis_service import AlarmAnalysisService
 from app.services.alarm_report_service import (
     ALARM_REPORT_FAILED, ALARM_REPORT_RATE_LIMITED, AlarmReportService, alarm_report_error_message,
 )
-from app.services.report_closing_comparison import Totals, Window, closing_comparison, sum_daily_totals
+from app.services.report_closing_comparison import Totals, Window, closing_comparison, closing_bucket, sum_closing_totals
 
 
 logger = logging.getLogger(__name__)
@@ -131,7 +131,7 @@ class AlarmMonitorService:
                 return totals
             start = min(left for left, _ in covered)
             end = max(right for _, right in covered)
-            days = {}
+            buckets = {}
             for row in self.repository.closing_incidents(machines, start, end):
                 try:
                     stamp = datetime.fromisoformat(row["first_start_time"])
@@ -140,12 +140,11 @@ class AlarmMonitorService:
                 stamp = stamp.astimezone(zone) if stamp.tzinfo else stamp.replace(tzinfo=zone)
                 if not start <= stamp < end:
                     continue
-                day = (stamp + timedelta(hours=24 - start.hour)).date()
-                values = days.setdefault(day, dict.fromkeys(metrics, 0))
+                values = buckets.setdefault(closing_bucket(stamp), dict.fromkeys(metrics, 0))
                 values["incident_count"] += 1
                 values["critical_count"] += int(row["severity"] == "critical")
                 values["high_count"] += int(row["severity"] == "high")
-            totals.update({window: sum_daily_totals(window, days, metrics) for window in covered})
+            totals.update({window: sum_closing_totals(window, buckets, metrics) for window in covered})
             return totals
 
         return closing_comparison(reference.date() - timedelta(days=1), reference.date(), reference, zone, load)

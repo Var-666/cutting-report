@@ -46,7 +46,7 @@ const historyTableColumns = [
 </script>
 
 <template>
-  <AppReportTable :columns="historyTableColumns" :items="histories" :total="historyTotal" :page="historyPage" :page-size="historyPageSize" :page-sizes="[]" @page="emit('page', $event)" :row-key="item => item.dispatch_id" :loading="loading">
+  <AppReportTable :columns="historyTableColumns" :items="histories" :total="historyTotal" :page="historyPage" :page-size="historyPageSize" @page="emit('page', $event)" :row-key="item => item.dispatch_id" :loading="loading">
         <template #c0="{ row: item }">{{ item.ship_no || projectOptions.find(project => project.project_id === item.project_id)?.ship_no || '--' }}</template>
         <template #c1="{ row: item }">{{ item.segment_name || parseCuttingInstructionFilename(item.document_no)?.intermediateProduct || '--' }}</template>
         <template #c2="{ row: item }">{{ item.document_no }}</template>

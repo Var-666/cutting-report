@@ -17,7 +17,7 @@ const props = defineProps({
   loading: Boolean,
   paginate: { type: Boolean, default: true },
 })
-const emit = defineEmits<{ page: [page: number]; 'page-size': [size: number]; detail: [row: WeldingJobRow | WeldingPartRow]; copy: [value: string] }>()
+const emit = defineEmits<{ page: [page: number]; detail: [row: WeldingJobRow | WeldingPartRow]; copy: [value: string] }>()
 const columns = computed(() => {
   const fields = props.kind === 'seams' ? weldingColumns.seams : weldingColumns[props.kind].filter(([key]) => weldingVisibleColumns[props.kind].includes(key))
   const values: DataTableBaseColumn<WeldingRow>[] = fields.map(([key, title], index): DataTableBaseColumn<WeldingRow> => ({ key, title, ...weldingColumnLayout[key], fixed: index === 0 ? 'left' : undefined, titleAlign: weldingColumnLayout[key].align, ellipsis: { tooltip: true },
@@ -40,7 +40,7 @@ const rowKey = (row: WeldingRow) => 'id' in row ? row.id : 'production_date' in 
 </script>
 
 <template>
-  <AppReportTable class="welding-table-wrap" :columns="columns" :items="items" :row-key="rowKey" :total="total" :page="page" :page-size="pageSize" :loading="loading" :paginate="paginate" :page-sizes="[]" :max-height="paginate ? null : undefined" @page="emit('page', $event)" @page-size="emit('page-size', $event)" />
+  <AppReportTable class="welding-table-wrap" :columns="columns" :items="items" :row-key="rowKey" :total="total" :page="page" :page-size="pageSize" :loading="loading" :paginate="paginate" :max-height="paginate ? null : undefined" @page="emit('page', $event)" />
 </template>
 
 <style scoped>.welding-table-wrap :deep(.welding-state){display:flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap}</style>

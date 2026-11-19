@@ -129,12 +129,13 @@ class WeldingRepository:
         source, values = job_source(query, self.device_nos)
         return session.fetch(f'SELECT LEFT(j.end_time, 10) AS production_date, {job_aggregate()} FROM {source} WHERE j.valid_end_time GROUP BY LEFT(j.end_time, 10) ORDER BY production_date', values, limit=367)
 
-    def closing_job_days(self, session: MySqlSession, query: WeldingQuery, bounds: tuple[str, str]) -> list[dict]:
+    def closing_job_totals(self, session: MySqlSession, query: WeldingQuery, bounds: tuple[str, str]) -> list[dict]:
         source, params = job_rows(query, device_nos=self.device_nos, bounds=bounds)
         expressions = job_aggregates()
         metrics = ', '.join(f'{expressions[key]} AS {key}' for key in CLOSING_JOB_METRICS)
-        return session.fetch(f'''SELECT DATE(DATE_ADD(j.end_time, INTERVAL 7 HOUR)) AS business_date, {metrics}
-            FROM ({source}) j WHERE j.valid_end_time GROUP BY business_date''', params, limit=63)
+        return session.fetch(f'''SELECT CONCAT(LEFT(j.end_time, 10),
+                CASE WHEN SUBSTRING(j.end_time, 12, 2) >= '17' THEN ' 17:00:00' ELSE ' 00:00:00' END) AS bucket_start, {metrics}
+            FROM ({source}) j WHERE j.valid_end_time GROUP BY bucket_start''', params, limit=126)
 
     def equipment(self, session: MySqlSession, query: WeldingQuery) -> list[dict]:
         source, values = job_source(query, self.device_nos)

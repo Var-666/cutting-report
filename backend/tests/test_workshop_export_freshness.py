@@ -1,12 +1,12 @@
 """A new workshop export must not reuse a consumer's older production query."""
 from dataclasses import replace
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
 
-from app.models.domain import AnalysisResult, QueryBundle, WorkshopRecord
+from app.models.domain import AnalysisResult, QueryBundle, SummaryBaseRecord, WorkshopRecord
 from app.services.chart_service import ChartService
 from app.services.query_service import QueryService
 from app.services.range_report_service import RangeReportService
@@ -35,6 +35,17 @@ def test_new_export_reads_eight_tasks_after_consumer_cached_two(tmp_path, monkey
         return source
     monkeypatch.setattr(consumer_query, '_sqlserver_workshop_data', fetch)
     monkeypatch.setattr(web_query, '_sqlserver_workshop_data', fetch)
+    comparison_calls = []
+    def summary(filters):
+        comparison_calls.append(filters)
+        assert filters.start_date < selected and filters.end_date == end
+        assert filters.project_code == 'P1' and filters.ship_no is None
+        return QueryBundle([SummaryBaseRecord(
+            row.task_id, row.project_code, row.ship_no, row.segment_name, row.program_no,
+            row.cut_length, row.groove_length, row.work_time, row.production_time,
+            row.production_time + timedelta(seconds=int(row.work_time)),
+        ) for row in source.workshop_records], [], [])
+    monkeypatch.setattr(consumer_query, '_sqlserver_summary_data', summary)
     confirmations = SimpleNamespace(get_confirmations=lambda ids: {'task-8': dict(worker_id='worker', worker_name='工人甲',
         worker_company_no='001', confirmed_at='2026-11-16T10:00:00')})
     consumer_range = RangeReportService(cfg, consumer_query, confirmations, None)
@@ -57,6 +68,8 @@ def test_new_export_reads_eight_tasks_after_consumer_cached_two(tmp_path, monkey
     assert prepared.report['worker_summaries'][0]['confirmed_task_count'] == 1
     assert prepared.report['meta']['data_updated_at'].startswith('2026-11-16T10:00:00')
     assert len(calls) == 3
+    assert len(comparison_calls) == 1
+    assert prepared.report['closing_comparison'][-1]['totals']['task_count'] == 8
     html = ReportService(cfg).environment.get_template('report.html.j2').render(report=prepared.report,
         echarts_source='', device_name='切割一线', demo_mode=False, energy_connected=False)
     assert all(f'task-{index}' in html for index in range(1, 9))

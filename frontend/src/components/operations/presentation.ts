@@ -8,7 +8,9 @@ export function incidentLogQuery(item: Incident): LogQuery {
   const start = Math.max(Date.parse(item.first_seen_at) - padding, end - 90 * 86400_000)
   const { related_kind: kind, report_id, task_id, analysis_id, request_id } = item.context
   let correlation: LogQuery
-  if (item.resource_id && ['database-monitor', 'dispatch', 'email'].includes(kind)) {
+  if (item.resource_id && item.error_code.endsWith('_DATA_QUALITY')) {
+    correlation = { resource_id: item.resource_id, line_id: item.line_id, source_id: item.source_id, error_code: item.error_code }
+  } else if (item.resource_id && ['database-monitor', 'dispatch', 'email'].includes(kind)) {
     correlation = { resource_id: item.resource_id }
   } else if (report_id) correlation = { report_id }
   else if (task_id) correlation = { task_id }

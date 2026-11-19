@@ -4,14 +4,17 @@ from calendar import monthrange
 from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from hashlib import sha256
+import logging
 from pathlib import Path
 from threading import Lock
 from time import monotonic
 from zoneinfo import ZoneInfo
 
 from app.config import Settings
+from app.core.operations_logging import data_quality
 from app.services.cache_revision import CacheRevision
 from app.services.query_cache import QueryCache
+from app.services.report_snapshots import observe_report_snapshot
 from app.database.leadership_snapshots import (
     LeadershipMonthSnapshot,
     LeadershipSnapshotRepository,
@@ -27,6 +30,7 @@ from app.models.domain import (
 
 ZERO = Decimal("0")
 METER_PRECISION = Decimal("0.001")
+logger = logging.getLogger(__name__)
 
 
 def _decimal(value: object) -> Decimal:
@@ -136,6 +140,12 @@ class LeadershipReportService:
         # Missing or expired snapshots are checked again quickly while the worker
         # refreshes them. Fresh results retain the normal in-process TTL.
         selected = snapshots.get(month_start)
+        if selected is not None:
+            scope = month_start.isoformat()
+            month_end = month_start.replace(day=monthrange(month_start.year, month_start.month)[1])
+            observe_report_snapshot(line_id=self.settings.device_id, source_id=self.source_identity(),
+                                    report_type='leadership', start=scope, end=month_end.isoformat(),
+                                    scope=('leadership', scope), data_as_of=selected.data_as_of.isoformat(), stale=result.snapshot.stale)
         remaining_seconds = (
             int(
                 (
@@ -220,6 +230,19 @@ class LeadershipReportService:
         snapshots: dict[date, LeadershipMonthSnapshot] = {}
         for report_month in self._months_between(range_start, range_end):
             daily = daily_by_month.get(report_month, [])
+            projects = projects_by_month.get(report_month, [])
+            daily_count = sum(item.task_count for item in daily)
+            project_count = sum(item.task_count for item in projects)
+            mismatch = daily_count != project_count
+            day = report_month.isoformat()
+            month_end = report_month.replace(day=monthrange(report_month.year, report_month.month)[1])
+            data_quality(logger, 'REPORT_AGGREGATE_DATA_QUALITY',
+                         '领导报表按日和按工程的任务数不一致' if mismatch else '同口径生产任务数已核对一致',
+                         scope=(day,), level=logging.ERROR if mismatch else logging.INFO,
+                         state='count_mismatch' if mismatch else 'verified', line_id=self.settings.device_id,
+                         source_id=self.source_identity(), stage='leadership', period_start=day,
+                         period_end=month_end.isoformat(), data_as_of=now.isoformat(),
+                         daily_count=daily_count, grouped_count=project_count)
             ttl_seconds = (
                 self.current_refresh_seconds
                 if report_month >= current_month

@@ -45,6 +45,8 @@ class LogRecord(BaseModel):
     error_code: str | None = None
     duration_ms: float | None = None
     exception: SafeException | None = None
+    data_quality: dict[Literal['state', 'period_start', 'period_end', 'data_as_of', 'missing_count', 'estimated_count',
+                              'data_version', 'summary_count', 'daily_count', 'grouped_count'], str] | None = None
 
 
 class LogPage(Items[LogRecord]):
@@ -70,7 +72,7 @@ class TimeFilters(BaseModel):
         return self
 
 
-class LogFilters(TimeFilters):
+class LogSelection(TimeFilters):
     role: Role | None = None
     instance_id: str | None = Field(None, max_length=128)
     resource_id: str | None = Field(None, max_length=128)
@@ -79,17 +81,6 @@ class LogFilters(TimeFilters):
     analysis_id: str | None = Field(None, max_length=128)
     task_id: str | None = Field(None, max_length=128)
     report_id: str | None = Field(None, max_length=128)
-    cursor: str | None = Field(None, max_length=110)
-    limit: int = Field(50, ge=1, le=100)
-
-    @model_validator(mode='after')
-    def check_cursor(self):
-        if self.cursor:
-            instant, _, identifier = self.cursor.partition('/')
-            value = datetime.fromisoformat(instant)
-            if value.tzinfo is None or not self.start <= value <= self.end or not safe_id(identifier):
-                raise ValueError('日志游标无效或不在查询时间范围内')
-        return self
 
     def matches(self, item: LogRecord):
         for name in ('level', 'role', 'instance_id', 'component', 'line_id', 'error_code', 'resource_id', 'source_id',
@@ -102,11 +93,31 @@ class LogFilters(TimeFilters):
         return self.keyword is None or self.keyword.casefold() in item.message.casefold()
 
 
+class LogFilters(LogSelection):
+    cursor: str | None = Field(None, max_length=110)
+    limit: int = Field(50, ge=1, le=100)
+
+    @model_validator(mode='after')
+    def check_cursor(self):
+        if self.cursor:
+            instant, _, identifier = self.cursor.partition('/')
+            value = datetime.fromisoformat(instant)
+            if value.tzinfo is None or not self.start <= value <= self.end or not safe_id(identifier):
+                raise ValueError('日志游标无效或不在查询时间范围内')
+        return self
+
+
 class IncidentFilters(TimeFilters):
     start: AwareDatetime | None = None
     status: IncidentStatus | None = None
-    page: int = Field(1, ge=1, le=100)
+    page: int = Field(1, ge=1, le=300)
     page_size: int = Field(30, ge=1, le=100)
+
+    @model_validator(mode='after')
+    def check_page_limit(self):
+        if self.page_size != 10 and self.page > 100:
+            raise ValueError('每页 10 条时最多查询 300 页，其他页长最多查询 100 页')
+        return self
 
 
 class Incident(BaseModel):

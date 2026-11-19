@@ -4,25 +4,29 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
+import logging
 from pathlib import Path
 from threading import Lock
 from time import monotonic
 from zoneinfo import ZoneInfo
 
 from app.config import Settings
+from app.core.operations_logging import data_quality
 from app.database.cutting_queries import CuttingQueryRepository
 from app.services.ship_name_service import ShipNameService
 from app.services.cache_revision import CacheRevision
 from app.services.query_cache import QueryCache as _QueryCache
+from app.services.report_closing_comparison import Totals, closing_bucket
 from app.database.sqlserver import SqlServerClient, SqlServerConfigurationError
 from app.models.domain import (
     EquipmentRecord,
-    LeadershipPeriodRecord,
     QueryBundle,
     ReportFilter,
     SummaryBaseRecord,
     WorkshopRecord,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -347,6 +351,7 @@ class QueryService:
             (row.get("source_updated_at") for row in rows if row.get("source_updated_at")),
             default=None,
         )
+        self._observe_query_quality('equipment', filters, rows, records, latest_update)
         return EquipmentQueryResult(records, latest_update)
 
     def list_projects(self, filters: ReportFilter) -> list[str]:
@@ -394,27 +399,25 @@ class QueryService:
             return on_or_before
         return self.repository.latest_production_date(on_or_before)
 
-    def fetch_cutting_closing_days(
+    def fetch_cutting_closing_totals(
         self, start: datetime, end: datetime, *, project_code: str | None = None, ship_no: str | None = None,
-    ) -> list[LeadershipPeriodRecord]:
+    ) -> dict[datetime, Totals]:
         sqlserver = self.settings.effective_data_source_mode == "sqlserver"
         if sqlserver and not (project_code or ship_no):
-            return [
-                LeadershipPeriodRecord(
-                    period_start=_date(row["business_date"]),
+            return {
+                datetime.fromisoformat(str(row["bucket_start"])).replace(tzinfo=start.tzinfo): dict(
                     task_count=int(row["task_count"]),
                     cut_length_m=Decimal(str(row["cut_length_m"])),
                     groove_length_m=Decimal(str(row["groove_length_m"])),
                     work_time_seconds=int(row["work_time_seconds"]),
                 )
-                for row in self.repository.cutting_closing_days(start, end)
-            ]
+                for row in self.repository.cutting_closing_totals(start, end)
+            }
         filters = ReportFilter(
             report_date=start.date(), period_end=end.date(), project_code=project_code, ship_no=ship_no
         )
         bundle = self.fetch_summary_data(filters, force=True)
-        days: dict[date, LeadershipPeriodRecord] = {}
-        shift = timedelta(hours=24 - start.hour)
+        buckets: dict[datetime, Totals] = {}
         for row in bundle.summary_records:
             # summary_base.sql reads END_TIME into source_updated_at.
             completed_at = row.source_updated_at if sqlserver else (
@@ -429,15 +432,13 @@ class QueryService:
             stamp = stamp.astimezone(start.tzinfo) if stamp.tzinfo else stamp.replace(tzinfo=start.tzinfo)
             if not start <= stamp < end:
                 continue
-            day = (stamp + shift).date()
-            if day not in days:
-                days[day] = LeadershipPeriodRecord(day, 0, Decimal("0"), Decimal("0"), 0)
-            total = days[day]
-            total.task_count += 1
-            total.cut_length_m += row.cut_length or Decimal("0")
-            total.groove_length_m += row.groove_length or Decimal("0")
-            total.work_time_seconds += int(row.work_time or 0)
-        return list(days.values())
+            total = buckets.setdefault(closing_bucket(stamp), dict(task_count=0, cut_length_m=Decimal("0"),
+                groove_length_m=Decimal("0"), work_time_seconds=0))
+            total["task_count"] += 1
+            total["cut_length_m"] += row.cut_length or Decimal("0")
+            total["groove_length_m"] += row.groove_length or Decimal("0")
+            total["work_time_seconds"] += int(row.work_time or 0)
+        return buckets
 
     def _read_query(self, name: str) -> str:
         sql = (self.query_dir / name).read_text(encoding="utf-8")
@@ -446,6 +447,24 @@ class QueryService:
                 f"{name} 尚未映射实际 SQL Server 表结构，不能关闭演示模式"
             )
         return sql
+
+    def _observe_query_quality(self, kind: str, filters: ReportFilter, rows, records, latest_update):
+        seen = set()
+        invalid = 0
+        for raw, record in zip(rows, records, strict=True):
+            task_id = record.task_id.strip()
+            day = record.production_date
+            if raw['task_id'] is None or not task_id or task_id in seen or day is None or not filters.start_date <= day <= filters.end_date:
+                invalid += 1
+            seen.add(task_id)
+        start, end = filters.start_date.isoformat(), filters.end_date.isoformat()
+        message = '报表源数据含缺失或重复任务编号、无效统计日期' if invalid else '报表源任务编号和统计日期校验通过'
+        data_quality(logger, 'REPORT_QUERY_DATA_QUALITY', message,
+                     scope=(kind, start, end, filters.project_code, filters.ship_no, self.settings.report_machine_no),
+                     level=logging.ERROR if invalid else logging.INFO, state='invalid_report_rows' if invalid else 'verified',
+                     line_id=self.settings.device_id, source_id=self.settings.source_fingerprint, stage=kind,
+                     period_start=start, period_end=end, summary_count=len(records), missing_count=invalid,
+                     data_as_of=latest_update.isoformat() if isinstance(latest_update, datetime) else None)
 
     def _sqlserver_summary_data(self, filters: ReportFilter) -> QueryBundle:
         timezone = ZoneInfo(self.settings.timezone)
@@ -525,6 +544,7 @@ class QueryService:
             (row.get("source_updated_at") for row in rows if row.get("source_updated_at")),
             default=None,
         )
+        self._observe_query_quality('workshop', filters, rows, records, latest_update)
         return QueryBundle([], records, [], latest_update)
 
     def _demo_data(self, filters: ReportFilter) -> QueryBundle:

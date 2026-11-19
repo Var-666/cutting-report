@@ -10,7 +10,7 @@ import ReportTable from '../components/ReportTable.vue'
 import ManagementPageHero from '../components/ManagementPageHero.vue'
 import { createReport, getReportStatus, listProjects, listReports, listShips } from '../api/cutting.ts'
 import { listPublishedDefinitions } from '../api/designer.ts'
-import { mergeOwnedQuery, queryChoice, queryPositiveInteger, sameRouteQuery } from '../utils/reportRouteState.ts'
+import { mergeOwnedQuery, queryPositiveInteger, sameRouteQuery } from '../utils/reportRouteState.ts'
 
 defineProps({
   fixedReportType: { type: String, default: '' },
@@ -35,9 +35,9 @@ const generating = ref(false)
 const loadingHistory = ref(false)
 const error = ref('')
 const historyPage = ref(1)
-const historyPageSize = ref(10)
+const pageSize = 10
 const historyTotal = ref(0)
-const historyTotalPages = computed(() => Math.max(1, Math.ceil(historyTotal.value / historyPageSize.value)))
+const historyTotalPages = computed(() => Math.max(1, Math.ceil(historyTotal.value / pageSize)))
 let pollTimer: number | null = null
 let pollController: AbortController | null = null
 let pollSequence = 0
@@ -48,17 +48,9 @@ let routeStateReady = false
 
 const routeQueryKeys = ['page', 'page_size']
 
-function requestedHistoryState() {
-  return {
-    page: queryPositiveInteger(route.query.page),
-    pageSize: Number(queryChoice(route.query.page_size, ['10', '20', '50'], '10')),
-  }
-}
-
 async function syncHistoryRouteState() {
   const query = mergeOwnedQuery(route.query, routeQueryKeys, {
     page: historyPage.value === 1 ? '' : historyPage.value,
-    page_size: historyPageSize.value === 10 ? '' : historyPageSize.value,
   })
   if (sameRouteQuery(query, route.query)) return
   await router.push({ query })
@@ -72,7 +64,7 @@ function stopPolling() {
   pollController = null
 }
 
-async function loadHistory(page = historyPage.value, force = false, { pageSize = historyPageSize.value, syncRoute = false } = {}) {
+async function loadHistory(page = historyPage.value, force = false, { syncRoute = false } = {}) {
   if (!pageActive) return
   historyController?.abort()
   const controller = new AbortController()
@@ -84,7 +76,6 @@ async function loadHistory(page = historyPage.value, force = false, { pageSize =
     if (!pageActive || controller.signal.aborted || sequence !== historySequence) return
     history.value = data.items
     historyPage.value = data.page
-    historyPageSize.value = data.page_size
     historyTotal.value = data.total
     if (syncRoute) await syncHistoryRouteState()
   } catch (caught) {
@@ -103,10 +94,6 @@ async function loadHistory(page = historyPage.value, force = false, { pageSize =
 function changeHistoryPage(page: number) {
   const target = Math.min(Math.max(Number(page), 1), historyTotalPages.value)
   if (target !== historyPage.value) loadHistory(target, false, { syncRoute: true })
-}
-
-function changeHistoryPageSize(pageSize: string | number) {
-  loadHistory(1, false, { pageSize: Number(pageSize), syncRoute: true })
 }
 
 async function loadProjects(reportDate: string) {
@@ -218,21 +205,18 @@ watch(
   },
 )
 watch(
-  () => [route.query.page, route.query.page_size],
+  () => route.query.page,
   async () => {
     if (!pageActive || !routeStateReady || route.name !== 'report-center') return
-    const requested = requestedHistoryState()
-    if (requested.page !== historyPage.value || requested.pageSize !== historyPageSize.value) {
-      await loadHistory(requested.page, false, { pageSize: requested.pageSize })
-    }
+    const requested = queryPositiveInteger(route.query.page)
+    if (requested !== historyPage.value) await loadHistory(requested)
   },
 )
 
 onMounted(async () => {
   pageActive = true
-  const requested = requestedHistoryState()
   await Promise.all([
-    loadHistory(requested.page, false, { pageSize: requested.pageSize }),
+    loadHistory(queryPositiveInteger(route.query.page)),
     loadCustomDefinitions(),
   ])
   routeStateReady = true
@@ -295,10 +279,8 @@ onBeforeUnmount(() => {
       :items="history"
       :loading="loadingHistory"
       :page="historyPage"
-      :page-size="historyPageSize"
       :total="historyTotal"
       @page-change="changeHistoryPage"
-      @page-size-change="changeHistoryPageSize"
     />
   </section>
   </div>

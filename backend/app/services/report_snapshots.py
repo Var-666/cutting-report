@@ -13,6 +13,7 @@ from app.database.report_snapshots import ReportKey, ReportSnapshot, ReportSnaps
 from app.services.cache_revision import CacheRevision
 from app.core.process_lock import FileLock
 from app.services.query_cache import QueryCache
+from app.core.operations_logging import data_quality
 from app.core.report_deadline import ensure_time_remaining
 from app.core.request_cancellation import SqlRequestCancelled, current_request_id, sql_request_cancellations
 
@@ -32,6 +33,20 @@ class SnapshotRefreshRejected(RuntimeError):
 class ReportData:
     payload: object
     meta: dict
+
+
+def observe_report_snapshot(*, line_id, source_id, report_type, start, end, scope, data_as_of, stale, failed=False):
+    if failed:
+        state = 'refresh_failed'
+        level = logging.ERROR if stale else logging.WARNING
+        message = '报表快照已过期且刷新未成功' if stale else '报表刷新未成功，仍在使用有效快照'
+    elif stale:
+        state, level, message = 'stale', logging.WARNING, '报表正在使用已过期的数据快照'
+    else:
+        state, level, message = 'verified', logging.INFO, '同一报表范围已取得有效快照'
+    data_quality(logger, 'REPORT_SNAPSHOT_DATA_QUALITY', message, scope=scope, level=level, state=state,
+                 line_id=line_id, source_id=source_id, stage=report_type,
+                 period_start=start, period_end=end, data_as_of=data_as_of)
 
 
 class ReportSnapshotService:
@@ -68,12 +83,18 @@ class ReportSnapshotService:
         return record, source
 
     def _result(self, snapshot: ReportSnapshot, source: str, *, refreshing: bool = False, error: bool = False) -> ReportData:
+        stale = snapshot.expires_at <= datetime.now(timezone.utc)
+        key = snapshot.key
+        if stale or error or source == 'database':
+            observe_report_snapshot(line_id=key.line_id, source_id=key.source_fingerprint, report_type=key.report_type,
+                                    start=key.period_start, end=key.period_end, scope=key.values,
+                                    data_as_of=snapshot.data_as_of.isoformat(), stale=stale, failed=error)
         # Storage checksum; providers retain their own public report/AI version.
         return ReportData(deepcopy(snapshot.payload), {
             'line_id': snapshot.key.line_id, 'report_type': snapshot.key.report_type,
             'data_version': snapshot.data_version, 'data_as_of': snapshot.data_as_of.isoformat(),
             'refreshed_at': snapshot.refreshed_at.isoformat(), 'expires_at': snapshot.expires_at.isoformat(),
-            'source': source, 'stale': snapshot.expires_at <= datetime.now(timezone.utc),
+            'source': source, 'stale': stale,
             'refreshing': refreshing, 'refresh_failed': error,
         })
 

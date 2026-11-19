@@ -6,7 +6,7 @@ from collections import Counter
 from datetime import date
 
 from app.models.domain import production_day
-from app.services.report_analysis.common import _fact
+from app.services.report_analysis.common import _fact, _table, _duration, _number, _change_label, task_quality_issues
 from app.services.analysis_display import analysis_reference_label
 
 
@@ -36,11 +36,11 @@ def add_candidates(context: dict, kind: str, records: list | None = None) -> dic
     candidates, links = [], {}
     context['candidates'], context['_references'] = candidates, links
 
-    def add(identifier, category, title, evidence, references=(), boundary='', priority=1):
+    def add(identifier, category, title, evidence, references=(), boundary='', priority=1, required=False):
         unique = {(ref['kind'], ref['id']): ref for ref in references}
         references = list(unique.values())
         candidates.append(dict(id=identifier, category=category, title=title, evidence_ids=evidence,
-            priority=priority, boundary=boundary, reference_count=len(references),
+            priority=priority, boundary=boundary, required=required, reference_count=len(references),
             reference_sample=[dict(kind=r['kind'], id=r['id'], label=r['label']) for r in references[:3]],
             sample_coverage='业务对象仅预览前3项；完整关联由后端保留。'))
         links[identifier] = references
@@ -83,8 +83,14 @@ def add_candidates(context: dict, kind: str, records: list | None = None) -> dic
             context['daily_distribution'] = [dict(date=stamp, task_count=count) for stamp, count in sorted(dates.items())]
             add('C_production', 'production', '本期实际切割记录', ['F001', 'F002', 'F003'] if kind == 'workshop' else ['F001', 'F002', 'F005'],
                 [ref('date', production_day(r).isoformat()) for r in records if production_day(r)])
-        if comparison.get('comparison_date'):
-            add('C_comparison', 'comparison', '与上一可比周期的任务变化', ['F005'], boundary='只比较任务量，不推断效率或能耗改善。')
+        if records and comparison.get('comparison_date'):
+            production = next(candidate for candidate in candidates if candidate['id'] == 'C_production')
+            production['boundary'] = '生产概况与周期变化合并叙述；只比较任务量，不推断效率或能耗改善。'
+            if kind == 'workshop':
+                production['evidence_ids'].append('F014')
+                context['facts'].append(_fact('F014', '任务总数的可比周期变化',
+                    f"任务总数比上一周期{_change_label(context['comparisons'].get('task_change_percent'))}",
+                    f"当前 {len(records)} 项；比较周期 {comparison['comparison_date']}"))
         projects = context['project_distribution']
         if projects:
             top = projects[0]
@@ -100,7 +106,7 @@ def add_candidates(context: dict, kind: str, records: list | None = None) -> dic
                 next(candidate for candidate in candidates if candidate['id'] == 'C_production')['evidence_ids'].append('F010')
         outlier_ids = {r['task_id'] for r in context['anomalies']}
         if outlier_ids:
-            add('C_duration', 'duration', '切割时间较长的任务', ['F006' if kind == 'workshop' else 'F005'],
+            add('C_duration', 'duration', '切割时间较长的任务', ['F006' if kind == 'workshop' else 'F013'],
                 [task(r) for r in records if r.task_id in outlier_ids],
                 boundary='按本期切割时长四分位距筛选；时长较长不代表加工异常或人员效率低。')
         if kind == 'workshop':
@@ -129,9 +135,29 @@ def add_candidates(context: dict, kind: str, records: list | None = None) -> dic
             if estimated:
                 add('C_energy_estimates', 'estimation', '含按仪表读数估算的能耗', ['F003', 'F004', 'F011', 'F012'],
                     [task(r) for r in estimated], boundary='说明计算方式，不称为模拟数据。')
-            if records:
+            if len({r.equipment_id for r in records if r.equipment_id}) > 1:
                 add('C_equipment', 'distribution', '设备任务及切割时长分布', ['F001', 'F002'],
                     [ref('equipment', r.equipment_id) for r in records if r.equipment_id])
+    issues = task_quality_issues(records or [])
+    if issues:
+        counts = Counter(reason for _, reasons in issues for reason in reasons)
+        value = f'共 {len(issues)} 项待核查任务；' + '；'.join(f'{reason} {count} 项' for reason, count in counts.items())
+        context['facts'].append(_fact('F020', '任务长度与用时待核查', value,
+            '按完整任务集合逐项检查；同一任务可命中多条规则，任务总数去重，分类数量不可相加。'))
+        references, rows = [], []
+        for row, reasons in issues:
+            reference = task(row)
+            reference['label'] += f" · 切割长度 {_number(row.cut_length)} 米" if row.cut_length is not None else ' · 切割长度未记录'
+            reference['label'] += f" · 用时 {_duration(row.work_time)}" if row.work_time is not None else ' · 用时未记录'
+            references.append(reference)
+            rows.append(dict(task_id=row.task_id, program_no=getattr(row, 'program_no', None),
+                             cut_length=row.cut_length, groove_length=getattr(row, 'groove_length', None),
+                             work_time=row.work_time, reasons=reasons))
+        context['tables'].append(_table('长度与用时待核查任务', rows))
+        boundary = '必须解释全部待核查类别，正文引用{{F020}}并给出核对方向；短时或零长度是核查候选，不直接认定设备故障。坡口长度为零本身不是异常。'
+        add('C_task_quality', 'data_quality', '任务长度与用时待核查', ['F020'], references,
+            boundary=boundary, priority=4, required=True)
+        quality.append('长度与用时待核查记录保留在原生产统计中；不足一分钟沿用现有时长分组，仅供核查，不作加工合格与否的判定。')
     if not count:
         quality.append('当前周期无有效任务记录，无法据此评价生产表现。')
     return context

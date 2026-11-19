@@ -23,6 +23,30 @@ from tests.line_fixtures import cutting_settings
 ZONE = ZoneInfo("Asia/Shanghai")
 
 
+def test_week_and_month_exclude_the_previous_calendar_evening(tmp_path, monkeypatch):
+    cfg = cutting_settings(project_root=tmp_path, data_source_mode="sqlserver")
+    query = QueryService(cfg)
+    stamps = ["2026-10-31 23:59:59", "2026-11-01 00:00:00", "2026-11-15 23:59:59",
+              "2026-11-16 00:00:00", "2026-11-17 16:59:59", "2026-11-17 17:00:00",
+              "2026-11-18 16:59:59", "2026-11-18 17:00:00"]
+    monkeypatch.setattr(query, "fetch_summary_data", lambda *args, **kwargs: SimpleNamespace(summary_records=[
+        SimpleNamespace(source_updated_at=stamp, cut_length=10, groove_length=1, work_time=60) for stamp in stamps
+    ]))
+    columns = RangeReportService(cfg, query, None, None).cutting_closing_comparison(
+        date(2026, 11, 18), date(2026, 11, 18), datetime(2026, 11, 18, 18, tzinfo=ZONE), project_code="P1"
+    )
+    today, week, month = columns
+    assert [column["totals"]["task_count"] for column in columns] == [2, 4, 6]
+    assert [column["totals"]["cut_length_m"] for column in columns] == [20, 40, 60]
+    assert today["start"] == datetime(2026, 11, 17, 17, tzinfo=ZONE)
+    assert week["start"] == datetime(2026, 11, 16, tzinfo=ZONE)
+    assert month["start"] == datetime(2026, 11, 1, tzinfo=ZONE)
+    assert week["comparison_start"] == datetime(2026, 11, 9, tzinfo=ZONE)
+    assert month["comparison_start"] == datetime(2026, 10, 1, tzinfo=ZONE)
+    assert week["comparison_end"] == datetime(2026, 11, 11, 17, tzinfo=ZONE)
+    assert month["comparison_end"] == datetime(2026, 10, 18, 17, tzinfo=ZONE)
+
+
 def test_cutting_cutoff_uses_actual_end_time_and_half_open_intervals(tmp_path, monkeypatch):
     cfg = cutting_settings(project_root=tmp_path)
     query = QueryService(cfg)
@@ -48,8 +72,10 @@ def test_cutting_cutoff_uses_actual_end_time_and_half_open_intervals(tmp_path, m
     assert today["totals"] == dict(task_count=2, cut_length_m=40, groove_length_m=0, work_time_seconds=120)
     assert today["changes"]["task_count"] == "+100.0%"
     assert week["totals"]["task_count"] == month["totals"]["task_count"] == 3
-    assert week["start"] == datetime(2026, 11, 15, 17, tzinfo=ZONE)
-    assert week["comparison_start"] == datetime(2026, 11, 8, 17, tzinfo=ZONE)
+    assert week["start"] == datetime(2026, 11, 16, 0, tzinfo=ZONE)
+    assert week["comparison_start"] == datetime(2026, 11, 9, 0, tzinfo=ZONE)
+    assert month["start"] == datetime(2026, 11, 1, 0, tzinfo=ZONE)
+    assert month["comparison_start"] == datetime(2026, 10, 1, 0, tzinfo=ZONE)
     assert week["comparison_end"] == datetime(2026, 11, 10, 17, tzinfo=ZONE)
     assert month["comparison_end"] == datetime(2026, 10, 17, 17, tzinfo=ZONE)
     assert today["end"] == datetime(2026, 11, 17, 17, tzinfo=ZONE)
@@ -66,7 +92,7 @@ def test_cutting_daily_comparison_queries_one_device_and_compares_equal_month_le
 
     def fetch_all(sql, params):
         calls.append(params)
-        return [dict(business_date=day, task_count=count, cut_length_m=count * 20, groove_length_m=0,
+        return [dict(bucket_start=datetime.combine(day, datetime.min.time()), task_count=count, cut_length_m=count * 20, groove_length_m=0,
                      work_time_seconds=count * 60) for day, count in [
             (date(2026, 2, 28), 4), (date(2026, 3, 28), 6), (date(2026, 3, 30), 1), (date(2026, 3, 31), 5),
         ]]
@@ -76,7 +102,7 @@ def test_cutting_daily_comparison_queries_one_device_and_compares_equal_month_le
     today, week, month = ranges.cutting_closing_comparison(
         date(2026, 3, 1), date(2026, 3, 31), datetime(2026, 4, 3, 18, tzinfo=ZONE)
     )
-    assert calls == [(cfg.report_machine_no, 7, datetime(2026, 1, 31, 17), datetime(2026, 3, 31, 17))]
+    assert calls == [(cfg.report_machine_no, datetime(2026, 2, 1), datetime(2026, 3, 31, 17))]
     assert today["label"] == "当日"
     assert today["changes"]["task_count"] == "+400.0%"
     assert week["changes"]["task_count"] is None
@@ -93,7 +119,7 @@ def test_leadership_month_quarter_year_totals_and_comparisons(tmp_path):
 
     def fetch_all(sql, params):
         calls.append(params)
-        return [dict(business_date=day, task_count=count, cut_length_m=count * 20, groove_length_m=0,
+        return [dict(bucket_start=datetime.combine(day, datetime.min.time()), task_count=count, cut_length_m=count * 20, groove_length_m=0,
                      work_time_seconds=count * 60) for day, count in [
             (date(2025, 11, 18), 2), (date(2026, 8, 18), 3), (date(2026, 10, 18), 4), (date(2026, 11, 18), 8),
         ]]
@@ -104,7 +130,7 @@ def test_leadership_month_quarter_year_totals_and_comparisons(tmp_path):
         date(2026, 11, 1), date(2026, 11, 30), datetime(2026, 11, 18, 17, 5, tzinfo=ZONE),
         grouping="month_quarter_year",
     )
-    assert calls == [(cfg.report_machine_no, 7, datetime(2024, 12, 31, 17), datetime(2026, 11, 18, 17))]
+    assert calls == [(cfg.report_machine_no, datetime(2024, 12, 31, 17), datetime(2026, 11, 18, 17))]
     assert [(column["label"], column["comparison_label"]) for column in columns] == [
         ("本月", "上月同期"), ("本季度", "上季度同期"), ("本年", "上年同期"),
     ]
@@ -160,22 +186,44 @@ def test_comparison_highlights_large_changes_and_keeps_missing_data_distinct(tmp
     start = end - timedelta(days=1)
     column = dict(label="今日", start=start, end=end, comparable_end=end, comparison_label="上一业务日",
                   comparison_start=start - timedelta(days=1), comparison_end=start,
-                  totals=dict(tasks=5, cut=12, groove=11.99, work=10, electricity=2, gas=None),
-                  previous_totals=dict(tasks=10, cut=10, groove=10, work=10, electricity=None, gas=3),
-                  comparable_totals=dict(tasks=5, cut=12, groove=11.99, work=10, electricity=2, gas=None),
-                  changes=dict(tasks="-50.0%", cut="+20.0%", groove="+19.9%", work="0.0%", electricity=None, gas=None))
+                  totals=dict(task_count=5, cut_length_m=12, groove_length_m=11.99, work_time_seconds=10, electricity=2, gas=None),
+                  previous_totals=dict(task_count=10, cut_length_m=10, groove_length_m=10, work_time_seconds=10, electricity=None, gas=3),
+                  comparable_totals=dict(task_count=5, cut_length_m=12, groove_length_m=11.99, work_time_seconds=10, electricity=2, gas=None),
+                  changes=dict(task_count="-50.0%", cut_length_m="+20.0%", groove_length_m="+19.9%", work_time_seconds="0.0%", electricity=None, gas=None))
     renderer = ReportService(cutting_settings(project_root=tmp_path))
     render = renderer.environment.get_template("closing_comparison.html.j2").module.render_closing_comparison
-    table = render([column], [("tasks", "任务数", "count"), ("cut", "切割长度", "number"),
-                              ("groove", "坡口长度", "number"), ("work", "切割工时", "duration"), ("electricity", "电耗", "number"),
+    table = render([column], [("task_count", "任务数", "count"), ("cut_length_m", "切割长度", "number"),
+                              ("groove_length_m", "坡口长度", "number"), ("work_time_seconds", "切割工时", "duration"), ("electricity", "电耗", "number"),
                               ("gas", "气耗", "number")], "")
 
-    assert "lp-closing-change--large\">较同期 -50.0%</span>" in table
-    assert "lp-closing-change--large\">较同期 +20.0%</span>" in table
-    assert "lp-closing-change\">较同期 +19.9%</span>" in table
-    assert "lp-closing-change\">较同期 0.0%</span>" in table
+    assert 'lp-closing-change--unfavorable" title="不利变化">-50.0%</span>' in table
+    assert 'lp-closing-change--favorable" title="有利变化">+20.0%</span>' in table
+    assert "lp-closing-change\">+19.9%</span>" in table
+    assert "lp-closing-change\">0.0%</span>" in table
     assert "lp-tone-warning\">同期数据不足</span>" in table
     assert "lp-tone-warning\">数据不完整</span>" in table
+
+
+@pytest.mark.parametrize("metric", ["task_count", "cut_length_m", "groove_length_m", "job_count", "weld_length_m", "part_row_count",
+                                   "incident_count", "critical_count", "high_count", "work_time_seconds", "working_hours", "electricity", "gas"])
+def test_comparison_colors_follow_metric_direction_and_threshold(tmp_path, metric):
+    render = ReportService(cutting_settings(project_root=tmp_path)).environment.get_template(
+        "closing_comparison.html.j2").module.render_closing_comparison
+    end = datetime(2026, 11, 18, 17, tzinfo=ZONE)
+    start = end - timedelta(days=1)
+    lower_is_better = metric in {"incident_count", "critical_count", "high_count"}
+    neutral = metric in {"work_time_seconds", "working_hours", "electricity", "gas"}
+    for delta in ["+20.0%", "-20.0%", "+19.9%", "-19.9%", "0.0%"]:
+        column = dict(label="今日", start=start, end=end, comparable_end=end, comparison_label="上一业务日",
+                      comparison_start=start - timedelta(days=1), comparison_end=start,
+                      totals={metric: 10}, previous_totals={metric: 10}, comparable_totals={metric: 10}, changes={metric: delta})
+        html = render([column], [(metric, "指标", "number")], "")
+        significant = abs(float(delta[:-1])) >= 20 and not neutral
+        favorable = significant and (delta.startswith('-') if lower_is_better else delta.startswith('+'))
+        assert ('lp-closing-change--favorable' in html) == favorable
+        assert ('lp-closing-change--unfavorable' in html) == (significant and not favorable)
+        assert f'>{delta}</span>' in html
+        assert '较同期' not in html
 
 
 def test_workshop_closing_comparison_keeps_ship_filter_and_cutoff(tmp_path, monkeypatch):
@@ -196,11 +244,12 @@ def test_workshop_closing_comparison_keeps_ship_filter_and_cutoff(tmp_path, monk
         date(2026, 11, 17), date(2026, 11, 17), datetime(2026, 11, 17, 17, 5, tzinfo=ZONE),
         project_code="P1", ship_no="船名",
     )[0]
-    assert calls == [(date(2026, 9, 30), date(2026, 11, 17), "P1", "船名", True)]
+    assert calls == [(date(2026, 10, 1), date(2026, 11, 17), "P1", "船名", True)]
     assert today["totals"] == dict(task_count=1, cut_length_m=30, groove_length_m=2, work_time_seconds=120)
 
 
-def test_equipment_meter_cutoff_returns_known_hours_without_crossing_17(tmp_path):
+@pytest.mark.parametrize("start_hour,expected_hours", [(17, 24), (0, 41)])
+def test_equipment_meter_cutoff_returns_known_hours_without_crossing_17(tmp_path, start_hour, expected_hours):
     cfg = cutting_settings(project_root=tmp_path)
     calls = []
 
@@ -209,8 +258,8 @@ def test_equipment_meter_cutoff_returns_known_hours_without_crossing_17(tmp_path
         return snapshots
 
     service = EnergyPeriodService(cfg, SimpleNamespace(list_month=list_month))
-    start = datetime(2026, 11, 16, 17, tzinfo=ZONE)
-    end = start + timedelta(days=1)
+    start = datetime(2026, 11, 16, start_hour, tzinfo=ZONE)
+    end = datetime(2026, 11, 17, 17, tzinfo=ZONE)
     snapshots = [service.blank_day(day) for day in (start.date(), end.date())]
     for snapshot in snapshots:
         for slot in snapshot["rows"]:
@@ -219,8 +268,8 @@ def test_equipment_meter_cutoff_returns_known_hours_without_crossing_17(tmp_path
     snapshots[1]["rows"][5]["gas"] = {"value": None, "status": "missing"}
     snapshots[1]["rows"][17]["electricity"] = {"value": 999, "status": "measured"}
     assert service.closing_meter_coverage(((start, end),))[(start, end)] == {
-        "electricity": {"value": 48, "valid_count": 24, "expected_count": 24},
-        "gas": {"value": 23, "valid_count": 23, "expected_count": 24},
+        "electricity": {"value": expected_hours * 2, "valid_count": expected_hours, "expected_count": expected_hours},
+        "gas": {"value": expected_hours - 1, "valid_count": expected_hours - 1, "expected_count": expected_hours},
     }
     assert calls == ["2026-11"]
 
@@ -260,7 +309,7 @@ def test_generated_cutting_export_renders_its_own_comparison(kind, own_metrics, 
         report=prepared.report, echarts_source="", demo_mode=True, device_name="切割演示", energy_connected=cfg.energy_connected
     )
     table = html.split('<table aria-label="日、周、月同期对比">', 1)[1].split("</table>", 1)[0]
-    for expected in ("今日", "本周累计", "本月累计", "2026-11-17 17:00", *own_metrics):
+    for expected in ("今日", "本周累计", "本月累计", "2026-11-17 17:00", "2026-11-16 00:00", "2026-11-01 00:00", *own_metrics):
         assert expected in table
     if kind == "equipment":
         today = prepared.report["closing_comparison"][0]

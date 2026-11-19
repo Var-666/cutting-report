@@ -21,6 +21,44 @@ def _matches_precision(number: str, values: set[Decimal]) -> bool:
                and value.quantize(precision, rounding=ROUND_HALF_UP) == amount) for value in values)
 
 
+_WELDING_SCOPE = r'(?:(?P<scope>本期|本次查询|所选期间|全线|汇总|\d{4}-\d{2}-\d{2})[\s,，:：]*)?'
+_WELDING_CLAIMS = {
+    'job_count': re.compile(_WELDING_SCOPE + r'(?:焊接)?作业(?:总数|数量|数|量)?[\s：:为约共计达]*(?P<amount>-?[0-9][0-9,]{0,19})\s*(?:条|项|个)'),
+    'weld_length_m': re.compile(_WELDING_SCOPE + r'焊(?:接)?(?:总)?长度[\s：:为约共计达]*(?P<amount>-?[0-9][0-9,]{0,19}(?:\.\d{1,8})?)\s*(?:米|m\b)'),
+    'working_hours': re.compile(_WELDING_SCOPE + r'(?:作业用时|作业工时|工作时长|工作用时)[\s：:为约共计达]*(?P<amount>-?[0-9][0-9,]{0,19}(?:\.\d{1,8})?)\s*(?:小时|h\b)'),
+}
+
+
+def validate_welding_quantities(content: dict, context: dict) -> None:
+    """Check explicit metrics against values from the supplied report's comparable tables."""
+    summary = {item['label']: item['value'] for item in context['facts']}
+    rows = [summary]
+    for table in context['tables']:
+        if isinstance(table['rows'], list):
+            rows.extend(table['rows'])
+    text = '\n'.join(content[key] for key in ('overview', 'features', 'alerts', 'suggestions'))
+    for metric, pattern in _WELDING_CLAIMS.items():
+        for claim in pattern.finditer(text):
+            scope = claim['scope']
+            if scope is None:
+                evidence = rows
+            elif scope[0].isdigit():
+                evidence = [row for row in rows if row.get('production_date') == scope]
+            else:
+                evidence = [summary]
+            values = {Decimal(str(value)) for row in evidence if type(value := row.get(metric)) in (int, float)}
+            if not _matches_precision(claim['amount'], values):
+                raise ValueError('焊接分析中的数量与报表事实不符')
+    quality_terms = {'invalid_length_rows': ('长度',), 'invalid_duration_rows': ('用时', '时长', '工时'),
+                     'invalid_serial_rows': ('流水号',), 'invalid_time_rows': ('时间', '日期'),
+                     'invalid_part_rows': ('工件',), 'unverified_state_rows': ('状态',)}
+    for table in context['tables']:
+        for row in table['rows'] if isinstance(table['rows'], list) else []:
+            for key, terms in quality_terms.items():
+                if row.get('quality', {}).get(key, 0) and not any(term in content['alerts'] for term in terms):
+                    raise ValueError(f'焊接异常分析遗漏{terms[0]}问题，请在alerts说明已知异常及待核查方向')
+
+
 _QUANTITY_PATTERN = re.compile(r'(?<![A-Za-z0-9_.])(?P<number>\d[\d,]*(?:\.\d+)?)\s*(?P<unit>%|米|Nm³|kWh)')
 
 
@@ -138,6 +176,16 @@ def validate_brief(content: object, context: dict) -> dict:
             raise ValueError('业务关联不属于当前产线或周期')
         findings.append(dict(**finding.model_dump(exclude={'evidence_ids'}), evidence_ids=evidence,
                              references=references, reference_count=len(references)))
+    required = {identifier for identifier, candidate in candidates.items() if candidate.get('required')}
+    if not required <= selected:
+        raise ValueError(f'必须分析待核查记录：{sorted(required - selected)}，并在该发现正文引用{{{{F020}}}}')
+    for finding in draft.findings:
+        if candidates[finding.candidate_id].get('required') and '{{F020}}' not in finding.detail:
+            raise ValueError('异常分析正文必须引用{{F020}}，完整覆盖各类待核查记录')
+    titles = [re.sub(r'\W', '', finding.title) for finding in draft.findings]
+    details = [re.sub(r'\W', '', finding.detail) for finding in draft.findings]
+    if len(set(titles)) != len(titles) or len(set(details)) != len(details):
+        raise ValueError('关键发现重复，请合并同一问题的描述与关联依据')
     for action in draft.actions:
         if action.candidate_id not in selected:
             raise ValueError('建议必须关联真实发现')

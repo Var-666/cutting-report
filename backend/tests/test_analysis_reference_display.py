@@ -26,7 +26,7 @@ def test_archived_analysis_formats_old_cached_references_and_escapes_names(tmp_p
         findings=[dict(candidate_id='C_confirmation', title='待工人确认', detail='核对确认归属。',
                        references=references, reference_count=len(references))])
     template = service.environment.from_string('''{% from 'report_analysis.html.j2' import render_analysis with context %}
-        {{ render_analysis(analysis, 'workshop', report, '切割一线', '2026-11-12', '2026-11-12') }}''')
+        {{ render_analysis(analysis, report, '2026-11-12', '2026-11-12') }}''')
     html = template.render(analysis=dict(brief=brief, facts=[], generated_at='2026-11-12', cached=True,
         cache_note='数据已更新，当前沿用历史成功分析；原生成时间和分析依据保持不变。'), report={})
     assert 'CMYZ0170' in html and '&lt;程序A&gt;.gen' in html

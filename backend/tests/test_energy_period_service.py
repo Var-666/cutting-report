@@ -3,6 +3,7 @@ from tests.line_fixtures import as_line_services, runtime_line
 from dataclasses import replace
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+import logging
 import re
 from types import SimpleNamespace
 
@@ -293,11 +294,15 @@ def test_sample_gap_and_counter_reset_are_not_consumption(tmp_path, state_databa
     assert report["rows"][0]["electricity"]["value"] is None
 
 
-def test_real_zero_is_not_missing(tmp_path, state_database):
+def test_real_zero_is_not_missing(tmp_path, state_database, caplog):
+    caplog.set_level(logging.INFO, logger='app.services.energy_period_service')
     energy, _ = service(tmp_path, state_database, rows=[{**row, "Mv": "100"} for row in samples()])
     report = energy.get_day(DAY)
     assert report["summary"]["electricity"]["value"] == 0
     assert report["summary"]["electricity"]["status"] == "measured"
+    [observation] = [record for record in caplog.records if hasattr(record, 'operations_quality')]
+    assert observation.levelno == logging.INFO
+    assert observation.operations_quality['missing_count'] == 0
 
 
 def test_current_day_ignores_unfinished_hours_and_future_dates(tmp_path, state_database):
@@ -327,7 +332,8 @@ def test_full_calendar_month_including_leap_year(tmp_path, state_database, month
     assert not client.calls
 
 
-def test_api_failure_or_data_regression_preserves_snapshot(tmp_path, state_database):
+def test_api_failure_or_data_regression_preserves_snapshot(tmp_path, state_database, caplog):
+    caplog.set_level(logging.INFO, logger='app.services.energy_period_service')
     energy, client = service(tmp_path, state_database)
     original = energy.get_day(DAY)
     client.error = EnergyApiError("能管接口连接失败")
@@ -340,6 +346,14 @@ def test_api_failure_or_data_regression_preserves_snapshot(tmp_path, state_datab
     assert not result["sync_ok"]
     assert "有效时段减少" in result["warning"]
     assert energy.get_month("2026-08")["rows"][17]["electricity"]["value"] == 864
+    client.rows = samples()
+    assert energy.get_day(DAY, force=True)['sync_ok']
+    observations = [record for record in caplog.records if hasattr(record, 'operations_quality')]
+    assert [record.operations_quality['state'] for record in observations] == [
+        'verified', 'source_failed', 'coverage_regressed', 'verified',
+    ]
+    assert observations[1].levelno == logging.WARNING
+    assert observations[1].operations_quality['data_as_of'] == original['updated_at']
 
 
 def test_equal_coverage_does_not_erase_previously_valid_hours(tmp_path, state_database):

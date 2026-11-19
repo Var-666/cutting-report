@@ -26,7 +26,7 @@ function duration(value: number | null) {
 </script>
 
 <template>
-  <AppReportTable :columns="columns" :items="rows" :loading="loading" :total="rows.length" :paginate="false" :page-sizes="[]" :row-key="item => item.monitor_id" aria-label="数据库端口监控">
+  <AppReportTable :columns="columns" :items="rows" :loading="loading" :total="rows.length" :paginate="false" :row-key="item => item.monitor_id" aria-label="数据库端口监控">
     <template #c0="{ row }">{{ row.name }}</template>
     <template #c1="{ row }">{{ row.ip }}</template>
     <template #c2="{ row }">{{ row.port }}</template>

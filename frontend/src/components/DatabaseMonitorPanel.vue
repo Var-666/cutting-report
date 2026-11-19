@@ -134,7 +134,7 @@ onBeforeUnmount(() => { active = false; clearTimeout(timer); controller?.abort()
     <NAlert v-if="error" type="error" role="alert" title="监控数据读取失败">{{ error }}；当前连接状态无法确认。<NButton size="small" :loading="loading" @click="load()">重试</NButton></NAlert>
     <DatabaseMonitorTable :items="items" :loading="loading" :busy="busy" :now="now" :timezone="timezone" :unavailable="Boolean(error)" @edit="open" @toggle="toggle" @delete="remove" />
     <h2>故障记录</h2>
-    <AppReportTable :columns="historyColumns" :items="incidents" :loading="loading" :total="total" :page="page" :page-size="15" :page-sizes="[]" :row-key="item => item.incident_id" aria-label="数据库故障记录" @page="load">
+    <AppReportTable :columns="historyColumns" :items="incidents" :loading="loading" :total="total" :page="page" :page-size="10" :row-key="item => item.incident_id" aria-label="数据库故障记录" @page="load">
       <template #c0="{ row }">{{ row.name }}</template>
       <template #c1="{ row }">{{ row.ip.includes(':') ? `[${row.ip}]:${row.port}` : `${row.ip}:${row.port}` }}</template>
       <template #c2="{ row }">{{ stamp(row.started_at) }}</template>

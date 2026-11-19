@@ -35,7 +35,7 @@ const scheduleTableColumns = [
           <template #c5="{ row: item }"><span :title="item.recipients.join(', ')">{{ item.recipients.length }} 人</span></template>
           <template #c6="{ row: item }">{{ item.sent_count || 0 }} / {{ item.failed_count || 0 }}</template>
           <template #c7="{ row: item }"><div class="row-actions"><NButton attr-type="button" :loading="runningScheduleIds?.includes(item.schedule_id)" :disabled="runningScheduleIds?.includes(item.schedule_id)" @click="emit('run', item)">{{ runningScheduleIds?.includes(item.schedule_id) ? '执行中' : '立即执行' }}</NButton><NButton attr-type="button" @click="emit('edit', item)">编辑</NButton><NButton attr-type="button" class="danger" @click="emit('remove', item)">删除</NButton></div></template>
-          <template #empty>{{ searching ? '未找到匹配的定时任务。' : '尚未创建定时任务，可在上方设置并创建。' }}</template>
+          <template #empty>{{ searching ? '未找到匹配的定时任务。' : '尚未创建定时任务。点击「新建定时任务」添加计划。' }}</template>
         </AppReportTable>
 </template>
 

@@ -11,10 +11,9 @@ const props = defineProps({
   items: { type: Array as PropType<ReportJob[]>, default: () => [] },
   loading: Boolean,
   page: { type: Number, default: 1 },
-  pageSize: { type: Number, default: 10 },
   total: { type: Number, default: 0 },
 })
-const emit = defineEmits<{ 'page-change': [page: number]; 'page-size-change': [size: string | number] }>()
+const emit = defineEmits<{ 'page-change': [page: number] }>()
 
 
 const statusText = {
@@ -60,7 +59,7 @@ const reportTableColumns = [
 
 <template>
   <div class="history-wrap">
-    <AppReportTable :columns="reportTableColumns" :items="items" :total="total" :page="page" :page-size="pageSize" :page-sizes="[10, 20, 50]" @page="emit('page-change', $event)" @page-size="emit('page-size-change', $event)" :row-key="item => item.report_id" :loading="loading">
+    <AppReportTable :columns="reportTableColumns" :items="items" :total="total" :page="page" @page="emit('page-change', $event)" :row-key="item => item.report_id" :loading="loading">
         <template #c0="{ row: item }">{{ item.report_title || reportTypeText[item.report_type] || '车间报表' }}</template>
         <template #c1="{ row: item }">{{ reportPeriod(item) }}</template>
         <template #c2="{ row: item }">{{ display(item.project_code) }}</template>

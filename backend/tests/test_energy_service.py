@@ -147,6 +147,34 @@ def test_exact_energy_uses_actual_end_time_and_configured_meter_sum():
     assert summary["gas_missing_count"] == 0
 
 
+def test_equipment_energy_reports_failed_fetch_and_verified_recovery(caplog):
+    meter = MeterStub(error=EnergyApiError('能管接口暂不可用'))
+    service = EquipmentEnergyService(configured(), meter)
+    with caplog.at_level('INFO', logger='app.services.energy_service'):
+        assert service.enrich([record()]).mode == 'unavailable'
+        meter.error = None
+        assert service.enrich([record()], force=True).mode == 'metered'
+    failed, recovered = [item for item in caplog.records if hasattr(item, 'operations_quality')]
+    assert failed.operations_quality['state'] == 'source_failed'
+    assert recovered.operations_quality['state'] == 'verified'
+    assert failed.operations_fields['resource_id'] == recovered.operations_fields['resource_id']
+
+
+def test_cached_meter_readings_cannot_emit_new_recovery_evidence(caplog):
+    cfg = configured()
+    opener = OpenerStub(login(), readings(), readings())
+    service = EquipmentEnergyService(cfg, EnergyApiClient(cfg, opener=opener))
+    with caplog.at_level('INFO', logger='app.services.energy_service'):
+        assert service.enrich([record()]).mode == 'metered'
+        caplog.clear()
+        assert service.enrich([record()]).mode == 'metered'
+        assert not [item for item in caplog.records if hasattr(item, 'operations_quality')]
+        assert service.enrich([record()], force=True).mode == 'metered'
+    verified, = [item for item in caplog.records if hasattr(item, 'operations_quality')]
+    assert verified.operations_quality['state'] == 'verified'
+    assert len(opener.requests) == 3
+
+
 def test_interpolation_is_labelled_and_can_be_disabled():
     source = record(production_time=START + timedelta(seconds=15), production_end_time=START + timedelta(seconds=90))
     result = EquipmentEnergyService(configured(), MeterStub()).enrich([source])
@@ -416,8 +444,8 @@ def test_unified_device_page_export_and_analysis_share_meter_values(state_databa
     pipeline.energy_period_service.client = MeterStub()
     rows = [record()]
     monkeypatch.setattr(pipeline.query_service, "fetch_equipment_data", lambda filters, force=False: EquipmentQueryResult(rows, END))
-    monkeypatch.setattr(pipeline.query_service.repository, "cutting_closing_days", lambda start, end: [
-        dict(business_date=START.date(), task_count=1, cut_length_m=100, groove_length_m=0, work_time_seconds=30)
+    monkeypatch.setattr(pipeline.query_service.repository, "cutting_closing_totals", lambda start, end: [
+        dict(bucket_start=START.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None), task_count=1, cut_length_m=100, groove_length_m=0, work_time_seconds=30)
     ])
     monkeypatch.setattr(
         pipeline.query_service,

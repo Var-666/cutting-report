@@ -21,6 +21,7 @@ from app.models.domain import (
     EquipmentRecord,
     LeadershipReportResult,
     WorkshopRecord,
+    ReportFilter,
     to_primitive,
 )
 from app.services.llm_service import (
@@ -28,8 +29,8 @@ from app.services.llm_service import (
     LlmRequestTimeout, LlmService, analysis_error_message, generation_priority, is_background_llm_work,
 )
 from app.services.analysis_execution import (
-    analysis_observation, analysis_operation, analysis_prepared, analysis_queue_remaining, analysis_stage,
-    current_analysis_id,
+    AnalysisDataVersionMismatch, analysis_observation, analysis_operation, analysis_prepared, analysis_queue_remaining, analysis_stage,
+    current_analysis_id, observe_analysis_quality,
 )
 from app.core.report_deadline import ReportOperationTimeout, ensure_time_remaining, remaining_seconds
 from app.core.request_cancellation import SqlRequestCancelled, current_request_id, sql_request_cancellations
@@ -41,6 +42,7 @@ from app.services.report_analysis.leadership import build_context as build_leade
 from app.services.report_analysis.workshop import build_context as build_workshop_context
 from app.services.report_analysis.equipment import build_context as build_equipment_context
 from app.services.report_analysis.brief import period_scope
+from app.services.query_service import QueryService
 
 
 logger = logging.getLogger(__name__)
@@ -62,10 +64,6 @@ def _present_analysis(result: AnalysisResult) -> AnalysisResult:
 
 def analysis_period_label(start: date, end: date) -> str:
     return start.isoformat() if start == end else f"{start.isoformat()} 至 {end.isoformat()}"
-
-
-class AnalysisDataVersionMismatch(ValueError):
-    """The report shown by the browser is no longer the authoritative version."""
 
 
 class AnalysisUnavailableError(RuntimeError):
@@ -169,9 +167,10 @@ def _report_analysis_operation(report_type: str):
 
 
 class ReportAnalysisService:
-    def __init__(self, settings: Settings, metadata: MetadataRepository) -> None:
+    def __init__(self, settings: Settings, metadata: MetadataRepository, *, query_service: QueryService | None = None) -> None:
         self.settings = settings
         self.metadata = metadata
+        self.query_service = query_service
         self.llm = LlmService(settings, metadata.database)
         self.timezone = ZoneInfo(settings.timezone)
         self._generation_guard = threading.Lock()
@@ -426,6 +425,12 @@ class ReportAnalysisService:
                 "utf-8"
             )
         ).hexdigest()
+        scope = context['scope']
+
+        def observe_quality(*, verified):
+            observe_analysis_quality(self.settings, report_type, scope['period_start'], scope['period_end'],
+                                     reuse_key or report_type, data_version, verified=verified)
+
         analysis_prepared()
         self.metadata.save_analysis_source_version(
             report_type=report_type,
@@ -482,6 +487,7 @@ class ReportAnalysisService:
                 )
                 raise AnalysisUnavailableError(analysis_error_message(exc)) from exc
             except AnalysisOutputValidationError as exc:
+                observe_quality(verified=False)
                 logger.warning("LLM analysis response cannot be displayed: device=%s report_type=%s report_date=%s analysis_id=%s reason=%s",
                                self.settings.device_id, report_type, report_date, current_analysis_id(), exc)
                 raise AnalysisUnavailableError(analysis_error_message(exc)) from exc
@@ -513,6 +519,7 @@ class ReportAnalysisService:
                 publish_latest=publish_latest,
                 reuse_key=reuse_key,
             )
+            observe_quality(verified=True)
             return result
 
     @_report_analysis_operation("leadership")
@@ -533,7 +540,13 @@ class ReportAnalysisService:
             analysis_table_source_version(summary_rows),
         )
         _require_current_data_version(expected_data_version, source_data_version)
-        context = build_leadership_context(report, summary_rows)
+        records = None
+        if self.query_service is not None:
+            scope = period_scope('leadership', analysis_period_label(report.period_start, report.period_end)
+                                 if report.period_start and report.period_end else report.report_month.strftime('%Y-%m'))
+            records = self.query_service.fetch_summary_data(ReportFilter(report_date=date.fromisoformat(scope['period_start']),
+                period_start=date.fromisoformat(scope['period_start']), period_end=date.fromisoformat(scope['period_end'])), force=force).summary_records
+        context = build_leadership_context(report, summary_rows, records)
         return self._analyze(
             report_type="leadership",
             report_date=context["report_month"],

@@ -4,13 +4,19 @@ from bisect import bisect_left, bisect_right
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
+from hashlib import sha256
+import json
+import logging
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from app.config import Settings
+from app.core.operations_logging import data_quality
 from app.models.domain import EquipmentRecord
-from app.services.energy_api import EnergyApiClient, EnergyApiError
+from app.services.energy_api import EnergyApiClient, EnergyApiError, read_energy_with_freshness
 from app.services.equipment_service import mock_energy, sort_equipment_records
+
+logger = logging.getLogger(__name__)
 
 
 STATUS_TEXT = {
@@ -163,6 +169,33 @@ def task_energy_note(gas, meters, electric_status):
     return note
 
 
+def observe_task_energy(cfg, source_key, usable, cutoff, start_date, end_date, *, records=None, channels=('gas', 'electricity')):
+    if records is None:
+        state, message, level = 'source_failed', '任务能耗取数失败，仪表数据不可用', logging.ERROR
+        missing = estimates = None
+    else:
+        compared = [row for row in records if row.task_id in usable and usable[row.task_id][1] <= cutoff]
+        if not compared:
+            return
+        states = [getattr(row, f'{channel}_data_status') for row in compared for channel in channels]
+        valid = ('measured', 'estimated', 'interpolated')
+        missing = sum(state not in valid for state in states)
+        estimates = sum(state in ('estimated', 'interpolated') for state in states)
+        if 'counter_reset' in states:
+            state, message, level = 'counter_reset', '任务能耗受累计读数回退影响', logging.ERROR
+        elif missing:
+            state, message = 'missing_readings', '已结束任务缺少有效能耗读数'
+            level = logging.ERROR if missing == len(states) else logging.WARNING
+        elif len(compared) == len(usable):
+            state, message, level = 'verified', '同范围任务能耗已重新完成取数和覆盖校验', logging.INFO
+        else:
+            return
+    scope = sorted((str(task), start.isoformat(), end.isoformat()) for task, (start, end) in usable.items())
+    data_quality(logger, 'ENERGY_TASK_DATA_QUALITY', message, scope=scope, level=level, state=state, line_id=cfg.device_id,
+                 source_id=f'energy:{source_key}', stage='energy_tasks', period_start=start_date.isoformat(),
+                 period_end=end_date.isoformat(), missing_count=missing, estimated_count=estimates)
+
+
 @dataclass
 class EnergyResult:
     records: list[EquipmentRecord]
@@ -248,11 +281,18 @@ class EquipmentEnergyService:
         series = {}
         if usable:
             padding = timedelta(seconds=max(cfg.energy_max_gap_seconds, policy.get("new_max_gap_seconds", 0)))
+            first = min(start for start, _ in usable.values())
+            last = max(end for _, end in usable.values())
+            cutoff = datetime.now(ZoneInfo(cfg.timezone)).replace(tzinfo=None) - padding
+            source_scope = (cfg.energy_api_base_url.rstrip('/'), cfg.energy_api_username, ids, cfg.timezone,
+                            units, cfg.energy_gas_factor, cfg.energy_electricity_factor, cfg.energy_max_gap_seconds,
+                            cfg.energy_allow_interpolation, policy)
+            source_key = sha256(json.dumps(source_scope, default=str, sort_keys=True).encode()).hexdigest()
             try:
-                readings = self.client.fetch(ids, min(t[0] for t in usable.values()) - padding,
-                                             max(t[1] for t in usable.values()) + padding, force=force)
+                readings, fresh = read_energy_with_freshness(self.client, ids, first - padding, last + padding, force=force)
                 series = make_series(readings, ids, cfg.timezone)
             except EnergyApiError as exc:
+                observe_task_energy(cfg, source_key, usable, cutoff, first.date(), last.date())
                 return unavailable(str(exc))
 
         output = []
@@ -287,6 +327,9 @@ class EquipmentEnergyService:
                 gas_data_status=gas["status"], electricity_data_status=electric_status, energy_details=details,
                 energy_note=task_energy_note(gas, electricity, electric_status)))
 
+        if usable and fresh:
+            channels = tuple(channel for channel, ready in (('gas', gas_ready), ('electricity', electric_ready)) if ready)
+            observe_task_energy(cfg, source_key, usable, cutoff, first.date(), last.date(), records=output, channels=channels)
         available = sum(row.gas_consumption is not None for row in output) + sum(row.electricity_consumption is not None for row in output)
         mode = "metered" if available == 2 * len(output) else "partial" if available else "unavailable"
         notice = "按已绑定设备的实际 START_TIME / END_TIME 计算累计读数差值；汇总仅覆盖有效任务区间（含期间待机），不是整日总耗量。"

@@ -159,7 +159,7 @@ def test_sqlserver_holds_one_permit_until_the_connection_or_stream_closes(tmp_pa
         assert kwargs == {'readonly': True}
         if mode == 'connect_failure': raise TimeoutError('connect timeout')
         return connection
-    monkeypatch.setitem(sys.modules, 'pyodbc', SimpleNamespace(connect=connect))
+    monkeypatch.setitem(sys.modules, 'pyodbc', SimpleNamespace(connect=connect, Error=TimeoutError))
     client = SqlServerClient(config, capacity=resource)
     with sql_identity('line-a'):
         if mode == 'stream':

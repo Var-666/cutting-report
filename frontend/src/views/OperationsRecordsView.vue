@@ -21,6 +21,8 @@ const selectedLog = shallowRef<LogRecord | null>(null)
 const error = shallowRef('')
 const loading = shallowRef(false)
 let controller: AbortController | null = null
+const exportRequest = shallowRef<AbortController | null>(null)
+const exportFeedback = shallowRef<{ type: 'info' | 'warning' | 'error'; text: string } | null>(null)
 const draft = reactive<LogQuery & IncidentQuery>({})
 const range = shallowRef<[number, number] | null>(null)
 const applied = shallowRef<LogQuery & IncidentQuery>({})
@@ -53,6 +55,7 @@ const coverage = {
   coverage: '当前日志段无法确认覆盖整个起始时段',
   unavailable: '共享日志目录暂不可用',
 }
+const exportCoverage = { ...coverage, record_limit: '已达单次导出条数上限，请缩短时间范围或增加筛选条件' }
 
 function snapshotRange() {
   const end = Date.now()
@@ -62,6 +65,8 @@ function apply(value: [number, number] | null = range.value) {
   if (draft.keyword?.trim().length === 1) { error.value = '关键字至少需要 2 个字符。'; return }
   const [start, end] = value || snapshotRange()
   if (end <= start || end - start > 90 * 86400_000) { error.value = '请选择最长 90 天的有效时间范围。'; return }
+  exportRequest.value?.abort()
+  exportFeedback.value = null
   const base = {
     component: draft.component?.trim(), level: draft.level, line_id: draft.line_id,
     error_code: draft.error_code?.trim(), keyword: draft.keyword?.trim(),
@@ -85,13 +90,13 @@ async function load(target: number) {
   error.value = ''
   try {
     if (modeAtStart === 'logs') {
-      const page = await operations.logs({ ...applied.value, cursor: cursors.value[target - 1] }, active.signal)
+      const page = await operations.logs({ ...applied.value, limit: 10, cursor: cursors.value[target - 1] }, active.signal)
       if (active.signal.aborted) return
       logPage.value = page
       logIndex.value = target - 1
       cursors.value = [...cursors.value.slice(0, target), ...(page.next_cursor ? [page.next_cursor] : [])]
     } else {
-      const page = await operations.incidents({ ...applied.value, page: target, page_size: 30 }, active.signal)
+      const page = await operations.incidents({ ...applied.value, page: target, page_size: 10 }, active.signal)
       if (!active.signal.aborted) incidentPage.value = page
     }
   } catch (caught) {
@@ -107,6 +112,37 @@ function refresh() {
     cursors.value = [null]
     void load(1)
   } else void load(isLogs.value ? logIndex.value + 1 : incidentPage.value?.page ?? 1)
+}
+
+async function exportLogs() {
+  if (exportRequest.value) return
+  const active = new AbortController()
+  exportRequest.value = active
+  exportFeedback.value = null
+  try {
+    const { blob, headers } = await operations.exportLogs(applied.value, active.signal)
+    if (active.signal.aborted) return
+    if (blob.type.split(';')[0] !== 'application/x-ndjson') throw new Error('服务器未返回 JSONL 日志文件')
+    if (blob.size) {
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = headers.get('Content-Disposition')?.match(/filename="([^"]+)"/)?.[1] || 'operations-logs.jsonl'
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 60_000)
+    }
+    const flags = headers.get('X-Log-Coverage-Warnings')?.split(',') ?? []
+    const warnings = Object.entries(exportCoverage).filter(([key]) => flags.includes(key)).map(([, message]) => message)
+    const summary = blob.size ? '日志已导出' : '当前筛选范围内没有可导出的日志'
+    const text = [summary, ...warnings].join('。') + '。'
+    exportFeedback.value = { type: warnings.length ? 'warning' : 'info', text }
+  } catch (caught) {
+    if (!active.signal.aborted) exportFeedback.value = { type: 'error', text: `日志导出失败。${String(caught)}` }
+  } finally {
+    exportRequest.value = null
+  }
 }
 
 function close() {
@@ -136,7 +172,10 @@ watch(() => [mode, route.fullPath], () => {
   apply()
 }, { immediate: true })
 
-onBeforeUnmount(() => controller?.abort())
+onBeforeUnmount(() => {
+  controller?.abort()
+  exportRequest.value?.abort()
+})
 </script>
 
 <template>
@@ -155,10 +194,13 @@ onBeforeUnmount(() => controller?.abort())
         <div class="actions">
           <NButton type="primary" attr-type="submit">查询</NButton>
           <NButton @click="refresh" :disabled="loading">刷新</NButton>
+          <NButton v-if="isLogs" attr-type="button" :loading="!!exportRequest" :disabled="loading || !logPage || !!error"
+            title="导出已应用筛选条件下的日志" @click="exportLogs">导出日志</NButton>
         </div>
       </form>
     </NCard>
     <NAlert v-if="error" type="error">{{ error }}</NAlert>
+    <NAlert v-if="isLogs && exportFeedback" :type="exportFeedback.type" role="status">{{ exportFeedback.text }}</NAlert>
     <NAlert v-if="isLogs && logPage?.coverage_warnings.length" type="warning" title="查询范围受限">
       {{ logPage.coverage_warnings.map(key => coverage[key]).join('。') }}。
       <span v-if="logPage.earliest_scanned_at">已扫描 {{ stamp(logPage.earliest_scanned_at) }} 至 {{ stamp(logPage.latest_scanned_at) }}。</span>
@@ -180,7 +222,7 @@ onBeforeUnmount(() => controller?.abort())
       </div>
     </template>
     <AppReportTable v-else :items="incidentPage?.items" :columns="incidentColumns" :row-key="row => row.incident_id"
-      :loading="loading" :page="incidentPage?.page ?? 1" :page-size="30" :page-sizes="[30]"
+      :loading="loading" :page="incidentPage?.page ?? 1" :page-size="10"
       :total="Math.min(3000, incidentPage?.total ?? 0)" @page="load">
       <template #c0="{ row }">{{ stamp(row.last_seen_at) }}</template>
       <template #c1="{ row }"><NTag size="small" :type="tone(row.level)">{{ row.level }}</NTag></template>

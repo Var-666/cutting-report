@@ -21,7 +21,7 @@ const error = ref('')
 const activeSeverity = ref('all')
 const onlyOpen = ref(false)
 const incidentPage = ref(1)
-const incidentPageSize = 15
+const incidentPageSize = 10
 const reportPage = ref(1)
 const reportPageSize = 10
 const reportSummary = ref({ total: 0, completed_count: 0, page_count: 1 })
@@ -345,7 +345,7 @@ const reportTableColumns = [
           <span class="empty-icon"><AppIcon name="check" size="24" /></span><strong>当前筛选下暂无告警</strong><span>{{ onlyOpen ? '当前没有状态异常的告警。' : activeSeverity === 'all' ? '当前设备暂无告警记录。' : '当前级别暂无告警。' }}监控服务状态见页头。</span>
         </div>
         <div v-else class="alarm-table-wrap">
-          <AppReportTable :columns="incidentTableColumns" :items="filteredIncidents" :total="incidentSummary.total" :page="incidentPage" :page-size="incidentPageSize" :page-sizes="[]" :max-height="null" @page="changeIncidentPage" :row-key="item => item.incident_id" aria-label="切割机告警事件" :loading="loading">
+          <AppReportTable :columns="incidentTableColumns" :items="filteredIncidents" :total="incidentSummary.total" :page="incidentPage" :page-size="incidentPageSize" :max-height="null" @page="changeIncidentPage" :row-key="item => item.incident_id" aria-label="切割机告警事件" :loading="loading">
         <template #c0="{ row: item }"><NTag class="severity-badge" :class="item.severity" size="small" :type="item.severity === 'critical' ? 'error' : item.severity === 'high' ? 'warning' : 'info'">{{ severityLabels[item.severity] || item.severity }}</NTag></template>
         <template #c1="{ row: item }">{{ formatDeviceDisplay(item.machine_no) || '--' }}</template>
         <template #c2="{ row: item }"><strong class="alarm-name">{{ item.alarm_desc || '--' }}</strong><small>{{ item.alarm_code || item.alarm_type || '--' }}</small></template>
@@ -431,7 +431,7 @@ const reportTableColumns = [
         <span class="empty-icon"><AppIcon name="file" size="24" /></span><strong>暂无实体告警报告</strong><span>发现新的告警问题后，系统将在这里生成对应的 PDF 报告。</span>
       </div>
       <div v-else class="alarm-table-wrap report-table-wrap">
-        <AppReportTable :columns="reportTableColumns" :items="reportItems" :total="reportSummary.total" :page="reportPage" :page-size="reportPageSize" :page-sizes="[]" @page="changeReportPage" :row-key="item => item.report_id" aria-label="实体告警报告" :loading="loading">
+        <AppReportTable :columns="reportTableColumns" :items="reportItems" :total="reportSummary.total" :page="reportPage" :page-size="reportPageSize" @page="changeReportPage" :row-key="item => item.report_id" aria-label="实体告警报告" :loading="loading">
         <template #c0="{ row: item }"><span class="report-name"><AppIcon name="file" size="16" tone="red" />{{ reportName(item) }}</span></template>
         <template #c1="{ row: item }">{{ item.incident_ids.length }} 项 · {{ formatDeviceDisplay(item.machine_no) || '--' }}</template>
         <template #c2="{ row: item }">{{ formatShortDateTime(item.created_at) }}</template>

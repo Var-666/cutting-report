@@ -8,13 +8,28 @@ from dataclasses import dataclass, field
 from time import monotonic
 from uuid import uuid4
 
-from app.core.operations_logging import event
+from app.core.operations_logging import data_quality, event
 from app.config import Settings
 from app.core.report_deadline import ensure_time_remaining, operation_deadline, remaining_seconds
 from app.core.request_cancellation import SqlRequestCancelled, current_request_id
 
 
 logger = logging.getLogger(__name__)
+
+
+class AnalysisDataVersionMismatch(ValueError):
+    """The report shown by the browser is no longer the authoritative version."""
+
+
+def observe_analysis_quality(settings, report_type, start, end, scope, version, *, verified, analysis_id=None):
+    if not verified and (execution := _execution.get()) is not None:
+        execution.output_rejected = True
+    data_quality(logger, 'ANALYSIS_DATA_QUALITY',
+                 '同一报表版本的分析已生成并通过校验' if verified else '分析输出未通过来源事实或格式校验',
+                 scope=(report_type, start, end, scope, version), level=logging.INFO if verified else logging.ERROR,
+                 state='verified' if verified else 'output_rejected',
+                 line_id=settings.device_id, source_id=settings.source_fingerprint, stage=report_type,
+                 analysis_id=analysis_id or current_analysis_id(), period_start=start, period_end=end, data_version=version)
 
 
 @dataclass
@@ -27,6 +42,7 @@ class AnalysisExecution:
     input_chars: int = 0
     analysis_id: str = field(default_factory=lambda: uuid4().hex)
     model_attempts: int = 0
+    output_rejected: bool = False
 
 
 _execution: ContextVar[AnalysisExecution | None] = ContextVar("analysis_execution", default=None)
@@ -55,9 +71,12 @@ def analysis_operation(settings: Settings, report_type: str, report_date: str,
                 ensure_time_remaining()
     except BaseException as exc:
         outcome = type(exc).__name__
-        if isinstance(exc, Exception) and not isinstance(exc, SqlRequestCancelled):
+        if isinstance(exc, AnalysisDataVersionMismatch):
+            event(logger, logging.INFO, '报表版本已变化，分析请求需要刷新数据', error_code='ANALYSIS_REPORT_VERSION_CHANGED',
+                  analysis_id=execution.analysis_id, line_id=settings.device_id, stage=report_type)
+        elif isinstance(exc, Exception) and not isinstance(exc, SqlRequestCancelled):
             event(logger, logging.ERROR, '智能分析流程失败', error_code='ANALYSIS_FAILED',
-                  incident=True, exc_info=True, analysis_id=execution.analysis_id, line_id=settings.device_id,
+                  incident=not execution.output_rejected, exc_info=True, analysis_id=execution.analysis_id, line_id=settings.device_id,
                   stage=report_type, resource_id=report_type, duration_ms=(monotonic() - execution.started) * 1000)
         raise
     finally:

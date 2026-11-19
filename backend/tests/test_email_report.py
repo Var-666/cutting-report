@@ -253,6 +253,15 @@ def test_archived_report_becomes_pdf_page_email(tmp_path, report_type, empty, wi
             ],
             actions=[dict(title='核对生产记录', detail='确认来源与日期。')],
             data_quality=['工人工时仅包含已确认任务。', '当前统计周期尚未结束，仅作进度参考。']))
+        if report_type == 'workshop':
+            record.update(cut_length=0, groove_length=0, work_time=51)
+            report['summary'].update(total_cut_length=0, total_groove_length=0, total_work_time=51,
+                                     avg_cut_length=0, avg_groove_length=0, avg_work_time=51)
+            quality = '有用时但切割长度为零，需核对原始计数及试切记录。'
+            report['analysis']['facts'].append(dict(id='F020', label='任务数据待核查', value=quality))
+            report['analysis']['brief']['findings'].append(dict(candidate_id='C_task_quality',
+                title='核对零长度任务', detail=quality, evidence_ids=['F020'], reference_count=1,
+                references=[dict(reference, label='程序01 · 切割长度 0.0 米 · 用时 00:00:51')]))
     html = renderer.environment.get_template("report.html.j2").render(
         report=report, echarts_source=(root / "vendor/echarts.min.js").read_text(encoding="utf-8"),
         demo_mode=True, device_name="切割机01", energy_connected=False,
@@ -317,6 +326,9 @@ def test_archived_report_becomes_pdf_page_email(tmp_path, report_type, empty, wi
             assert "次日记录" not in text
     if not empty and report_type == "workshop":
         assert "TASK-001" in text
+        if with_brief:
+            assert text.count('有用时但切割长度为零，需核对原始计数及试切记录。') == 1
+            assert '核对零长度任务' in text and '用时00:00:51' in text
     if not empty and report_type == "equipment":
         assert "测试船名" in text
 

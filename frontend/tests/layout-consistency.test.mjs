@@ -682,7 +682,7 @@ test('cutting list pagination is rendered once by the shared Naive component', (
   }
   const report = descriptor('ReportTable', 'components').template.content
   assert.match(report, /@page="emit\('page-change', \$event\)"/)
-  assert.match(report, /@page-size="emit\('page-size-change', \$event\)"/)
+  assert.doesNotMatch(report, /@page-size|:page-sizes/)
   const shared = descriptor('AppReportTable', 'components').template.content
   assert.equal((shared.match(/<NPagination/g) || []).length, 1)
   assert.match(shared, /:item-count="total"/)
@@ -778,7 +778,7 @@ test('long-lived page polling is serialized and cancelled when the page leaves',
     let calls = 0
     const response = { items: [], page: 1 }
     const bindings = { pageActive, activePanel: Vue.ref(panel), requestController: busy ? new AbortController() : null,
-      requestSequence: 0, incidentPageSize: 15, reportPageSize: 10, toError: value => value }
+      requestSequence: 0, incidentPageSize: 10, reportPageSize: 10, toError: value => value }
     for (const key of ['incidentPage', 'reportPage', 'loading', 'error', 'onlyOpen', 'activeSeverity', 'status', 'incidents', 'incidentSummary', 'reports', 'reportItems', 'reportSummary', 'currentTime']) bindings[key] = Vue.ref(key.endsWith('Page') ? 1 : null)
     for (const key of ['getAlarmStatus', 'listAlarmIncidentPage', 'listAlarmReports', 'listAlarmReportPage']) bindings[key] = async () => { calls += 1; return response }
     const load = scriptFunction(...Object.keys(bindings), `${loadAlarm}; return loadData`)(...Object.values(bindings))

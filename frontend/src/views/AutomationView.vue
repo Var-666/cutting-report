@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { NTag, NTimePicker } from 'naive-ui'
+import { NAlert, NDrawer, NDrawerContent, NTag, NTimePicker } from 'naive-ui'
 import { useConfirm } from '../composables/useConfirm.ts'
 import { useAutomationConfiguration } from '../composables/useAutomationConfiguration'
 import { useAutomationSchedules } from '../composables/useAutomationSchedules'
@@ -8,10 +8,10 @@ import { useAutomationDeliveries } from '../composables/useAutomationDeliveries'
 import type { AutomationSchedule, AutomationStatus } from '../types/automation'
 
 import { toError } from '../utils/errors'
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { getAutomationStatus, listAutomationSchedules } from '../api/automation.ts'
 import { deviceSelection } from '../state/devices.ts'
-import ManagementPageHero from '../components/ManagementPageHero.vue'
+import HomeKpiCard from '../components/HomeKpiCard.vue'
 import AppIcon from '../components/AppIcon.vue'
 import AutomationScheduleTable from '../components/automation/AutomationScheduleTable.vue'
 import AutomationRunProgress from '../components/automation/AutomationRunProgress.vue'
@@ -32,27 +32,64 @@ let disposed = false
 const loading = ref(false)
 const message = ref('')
 const error = ref('')
-const editorSection = ref<HTMLElement | null>(null)
-const hasUnsavedChanges = ref(false)
+const activePanel = ref<'configuration' | 'schedule' | null>(null)
+const configurationDirty = ref(false)
+const scheduleDirty = ref(false)
 const {
   configurationLoading, configurationLoaded, configurationSaving, configurationMessage, configurationError,
   configuration, selectTls, selectSsl, loadConfiguration, submitConfiguration,
-} = useAutomationConfiguration({ hasUnsavedChanges, refresh: loadAll })
+} = useAutomationConfiguration({ hasUnsavedChanges: configurationDirty, refresh: loadAll })
 const {
-  saving, editingId, form, executions, runningScheduleIds, changeReportType, resetForm,
-  editSchedule, submit, runNow, remove,
+  saving, editingId, form, executions, runningScheduleIds, changeReportType, resetForm, scheduleError,
+  editSchedule: fillSchedule, submit: saveSchedule, runNow, remove,
   recipientInputVisible, recipientDraft, recipientError, addRecipient, removeRecipient, cancelRecipientInput,
-} = useAutomationSchedules({
-  hasUnsavedChanges, message, error, refresh: loadAll, confirm,
-  scrollToEditor: () => nextTick(() => editorSection.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })),
-})
+} = useAutomationSchedules({ hasUnsavedChanges: scheduleDirty, message, error, refresh: loadAll, confirm })
 const {
   deliveries, deliveryPage, deliveryTotal, deliveryLoading, selectedDelivery,
   deliverySearch, appliedDeliverySearch, searchDeliveries, clearDeliverySearch,
   resolutionDirty, pageCount, loadDeliveries, changeDeliveryPage, retry,
   openDelivery, deliveryResolved, pauseDeliveries,
 } = useAutomationDeliveries({ message, error, refresh: loadAll, isDisposed: () => disposed, confirm })
+const scheduleHasDraft = computed(() => scheduleDirty.value || Boolean(recipientDraft.value.trim()))
+const hasUnsavedChanges = computed(() => configurationDirty.value || scheduleHasDraft.value)
 useUnsavedChanges(computed(() => hasUnsavedChanges.value || resolutionDirty.value), '自动化配置还有未保存的修改，确定离开吗？')
+
+async function openScheduleEditor(item?: AutomationSchedule) {
+  const sameDraft = editingId.value === (item?.schedule_id ?? '')
+  if (!sameDraft && scheduleHasDraft.value && !await confirm('切换任务会丢弃当前未保存的修改，确定继续吗？')) return
+  if (!sameDraft || !scheduleHasDraft.value) {
+    if (item) fillSchedule(item)
+    else resetForm()
+  }
+  activePanel.value = 'schedule'
+}
+
+async function submit() {
+  if (await saveSchedule()) activePanel.value = null
+}
+
+async function cancelScheduleEditing() {
+  if (scheduleHasDraft.value && !await confirm('确定放弃这次任务编辑？')) return
+  resetForm()
+  activePanel.value = null
+}
+
+const smtp = computed(() => {
+  if (!status.value) return { label: loading.value ? '正在读取' : '状态未知', type: 'default' as const }
+  if (!status.value.smtp?.enabled) return { label: '发送已停用', type: 'default' as const }
+  return status.value.smtp.configured
+    ? { label: '已配置', type: 'success' as const }
+    : { label: '待配置', type: 'warning' as const }
+})
+const metrics = computed(() => {
+  const summary = status.value?.summary
+  return [
+    { title: '已启用计划', value: summary?.schedule_enabled, icon: 'calendar', color: 'rgb(var(--primary-color))' },
+    { title: '等待 / 重试', value: summary?.delivery_pending, icon: 'clock', color: 'rgb(var(--warning-color))' },
+    { title: '已发送', value: summary?.delivery_sent, icon: 'send', color: 'rgb(var(--success-color))' },
+    { title: '失败 / 待核对', value: summary && `${summary.delivery_failed} / ${summary.delivery_unknown}`, icon: 'alert', color: 'rgb(var(--error-color))' },
+  ]
+})
 const reportLabels: Record<string, string> = { leadership: '领导报表', workshop: '车间报表', equipment: '设备报表' }
 const deliveryLabels: Record<string, string> = {
   pending: '等待发送', sending: '发送中', retry_wait: '等待重试', analysis_wait: '等待分析生成', sent: '已发送', failed: '发送失败', unknown: '结果待核对',
@@ -91,61 +128,67 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="automation-page management-page">
-    <ManagementPageHero
-      eyebrow="REPORT AUTOMATION"
-      title="报表推送"
-      description="按计划生成生产报表，自动发送邮件，并追踪每次发送结果。"
-      icon="send"
-      status-label="SMTP 服务"
-      :status-value="status ? status.smtp?.configured ? '邮件参数已配置' : '等待配置' : loading ? '正在读取' : '状态待检查'"
-      :status-note="status?.smtp?.configured ? `${status.smtp.host}:${status.smtp.port}` : '配置发件服务器后即可发送报表'"
-      :tone="status?.smtp?.configured ? 'green' : loading ? 'blue' : 'amber'"
-    />
+    <header class="automation-header">
+      <div class="automation-heading">
+        <span class="automation-heading-icon"><AppIcon name="send" :size="24" tone="current" /></span>
+        <div>
+          <h1>报表推送</h1>
+          <div class="automation-status">
+            <NTag size="small" :bordered="false" :type="smtp.type">SMTP {{ smtp.label }}</NTag>
+            <span v-if="status?.smtp?.configured" class="smtp-address">{{ status.smtp.host }}:{{ status.smtp.port }}</span>
+            <NTag v-if="status && !status.automation_enabled" size="small" type="warning" :bordered="false">自动化已暂停</NTag>
+          </div>
+        </div>
+      </div>
+      <div class="automation-toolbar">
+        <NButton size="large" aria-haspopup="dialog" @click="activePanel = 'configuration'">
+          <template #icon><AppIcon name="settings" tone="current" /></template>运行与邮件参数
+        </NButton>
+        <NButton size="large" type="primary" aria-haspopup="dialog" @click="openScheduleEditor()">
+          <template #icon><AppIcon name="calendar" tone="current" /></template>新建定时任务
+        </NButton>
+      </div>
+    </header>
 
-    <div v-if="message" class="automation-message success" role="status" aria-live="polite">{{ message }}</div>
-    <div v-if="error" class="automation-message error" role="alert">{{ error }}，请检查配置或稍后重试。</div>
-
-    <section class="automation-kpis" aria-label="报表推送概况" :aria-busy="loading">
-      <article><span class="kpi-icon"><AppIcon name="calendar" tone="muted" :size="20" /></span><div><span>已启用计划</span><strong>{{ status ? status.summary?.schedule_enabled || 0 : '—' }}</strong></div></article>
-      <article><span class="kpi-icon"><AppIcon name="clock" tone="muted" :size="20" /></span><div><span>等待 / 重试</span><strong>{{ status ? status.summary?.delivery_pending || 0 : '—' }}</strong></div></article>
-      <article><span class="kpi-icon"><AppIcon name="send" tone="muted" :size="20" /></span><div><span>已发送</span><strong>{{ status ? status.summary?.delivery_sent || 0 : '—' }}</strong></div></article>
-      <article><span class="kpi-icon"><AppIcon name="alert" tone="muted" :size="20" /></span><div><span>失败 / 待核对</span><strong>{{ status ? status.summary?.delivery_failed || 0 : '—' }} <em>/</em> {{ status ? status.summary?.delivery_unknown || 0 : '—' }}</strong></div></article>
+    <section class="automation-overview" aria-label="报表推送概况" :aria-busy="loading">
+      <HomeKpiCard v-for="metric in metrics" :key="metric.title" v-bind="metric" class="automation-metric"
+        :value="metric.value ?? null" :loading="loading && !status" trend-label="" />
     </section>
 
-    <div class="automation-workspace">
-      <section class="panel automation-settings" aria-labelledby="automation-settings-title">
-        <div class="panel-title">
-          <div><span><AppIcon name="settings" tone="muted" :size="17" /></span><h2 id="automation-settings-title">运行与邮件参数</h2></div>
-          <p>保存后即时生效</p>
-        </div>
-        <div v-if="configurationLoading" class="empty" role="status">正在读取自动化配置…</div>
+    <NAlert v-if="message" type="success" role="status">{{ message }}</NAlert>
+    <NAlert v-if="error" type="error" role="alert">{{ error }}</NAlert>
+
+    <NDrawer :show="activePanel === 'configuration'" width="min(640px, 100vw)" aria-label="运行与邮件参数" :mask-closable="false" :close-on-esc="!configurationSaving"
+      @update:show="shown => { if (!shown) activePanel = null }">
+      <NDrawerContent title="运行与邮件参数" :closable="!configurationSaving" :body-content-style="{ padding: 'var(--space-4)' }">
+        <div v-if="configurationLoading" class="automation-empty" role="status">正在读取自动化配置…</div>
         <div v-else-if="!configurationLoaded" class="configuration-load-error" role="alert">
           <span>{{ configurationError || '自动化配置读取失败' }}</span>
           <NButton attr-type="button" @click="loadConfiguration">重新读取</NButton>
         </div>
-        <form v-else class="configuration-form" @submit.prevent="submitConfiguration" @input.capture="hasUnsavedChanges = true" @change.capture="hasUnsavedChanges = true">
+        <form v-else id="automation-configuration-form" class="configuration-form" @submit.prevent="submitConfiguration" @input.capture="configurationDirty = true" @change.capture="configurationDirty = true">
           <div class="configuration-notice">
             <AppIcon name="check" tone="muted" :size="18" />
-            <span>保存后用于新任务与新邮件，正在执行的任务不受影响。</span>
+            <span>保存后即时生效，适用于之后启动的任务和邮件。</span>
           </div>
 
           <div class="configuration-grid">
             <fieldset class="configuration-card">
               <legend>任务引擎</legend>
-              <NCheckbox v-model:checked="configuration.automation_enabled" name="automation_enabled" @update:checked="hasUnsavedChanges = true"  class="setting-switch"><span><strong>启用报表自动化</strong><small>关闭后保留计划，暂停自动执行</small></span></NCheckbox>
+              <NCheckbox v-model:checked="configuration.automation_enabled" name="automation_enabled" @update:checked="configurationDirty = true"  class="setting-switch"><span><strong>启用报表自动化</strong><small>关闭后保留计划，暂停自动执行</small></span></NCheckbox>
               <div class="setting-fields two-columns">
-                <label><span>计划扫描间隔（秒）</span><NInputNumber v-model:value="configuration.automation_scan_seconds" name="automation_scan_seconds" inputmode="numeric" autocomplete="off" :min="1" :max="3600" :step="1" required @update:value="hasUnsavedChanges = true" :input-props="{ 'name': 'automation_scan_seconds', 'inputmode': 'numeric', 'autocomplete': 'off', 'required': true }" :precision="0" /><small>建议 15 秒，范围 1–3600 秒</small></label>
-                <label><span>重试基准间隔（秒）</span><NInputNumber v-model:value="configuration.email_retry_base_seconds" name="email_retry_base_seconds" inputmode="numeric" autocomplete="off" :min="1" :max="86400" :step="1" required @update:value="hasUnsavedChanges = true" :input-props="{ 'name': 'email_retry_base_seconds', 'inputmode': 'numeric', 'autocomplete': 'off', 'required': true }" :precision="0" /><small>后续重试间隔逐次延长</small></label>
+                <label><span>计划扫描间隔（秒）</span><NInputNumber v-model:value="configuration.automation_scan_seconds" name="automation_scan_seconds" inputmode="numeric" autocomplete="off" :min="1" :max="3600" :step="1" required @update:value="configurationDirty = true" :input-props="{ 'name': 'automation_scan_seconds', 'inputmode': 'numeric', 'autocomplete': 'off', 'required': true }" :precision="0" /><small>建议 15 秒，范围 1–3600 秒</small></label>
+                <label><span>重试基准间隔（秒）</span><NInputNumber v-model:value="configuration.email_retry_base_seconds" name="email_retry_base_seconds" inputmode="numeric" autocomplete="off" :min="1" :max="86400" :step="1" required @update:value="configurationDirty = true" :input-props="{ 'name': 'email_retry_base_seconds', 'inputmode': 'numeric', 'autocomplete': 'off', 'required': true }" :precision="0" /><small>后续重试间隔逐次延长</small></label>
               </div>
             </fieldset>
 
             <fieldset class="configuration-card smtp-configuration-card">
               <legend>SMTP 邮件服务</legend>
-              <NCheckbox v-model:checked="configuration.smtp_enabled" name="smtp_enabled" @update:checked="hasUnsavedChanges = true"  class="setting-switch"><span><strong>启用 SMTP 发送</strong><small>关闭时仍可编辑并保存参数</small></span></NCheckbox>
+              <NCheckbox v-model:checked="configuration.smtp_enabled" name="smtp_enabled" @update:checked="configurationDirty = true"  class="setting-switch"><span><strong>启用 SMTP 发送</strong><small>关闭时仍可编辑并保存参数</small></span></NCheckbox>
               <div class="setting-fields smtp-fields">
                 <label class="span-two"><span>SMTP 服务器</span><NInput v-model:value.trim="configuration.smtp_host" name="smtp_host" autocomplete="off" spellcheck="false" :required="configuration.smtp_enabled" :maxlength="255" placeholder="例如：mail.example.com" aria-describedby="smtp-host-hint" :input-props="{ 'name': 'smtp_host', 'autocomplete': 'off', 'spellcheck': false, 'required': configuration.smtp_enabled, 'aria-describedby': 'smtp-host-hint' }" /><small id="smtp-host-hint">填写服务器域名或 IP，不填 https:// 或网页路径。</small></label>
-                <label><span>端口</span><NInputNumber v-model:value="configuration.smtp_port" name="smtp_port" inputmode="numeric" autocomplete="off" :min="1" :max="65535" required @update:value="hasUnsavedChanges = true" :input-props="{ 'name': 'smtp_port', 'inputmode': 'numeric', 'autocomplete': 'off', 'required': true }" :precision="0" /></label>
-                <label><span>超时（秒）</span><NInputNumber v-model:value="configuration.smtp_timeout_seconds" name="smtp_timeout_seconds" inputmode="numeric" autocomplete="off" :min="1" :max="300" :step="1" required @update:value="hasUnsavedChanges = true" :input-props="{ 'name': 'smtp_timeout_seconds', 'inputmode': 'numeric', 'autocomplete': 'off', 'required': true }" :precision="0" /></label>
+                <label><span>端口</span><NInputNumber v-model:value="configuration.smtp_port" name="smtp_port" inputmode="numeric" autocomplete="off" :min="1" :max="65535" required @update:value="configurationDirty = true" :input-props="{ 'name': 'smtp_port', 'inputmode': 'numeric', 'autocomplete': 'off', 'required': true }" :precision="0" /></label>
+                <label><span>超时（秒）</span><NInputNumber v-model:value="configuration.smtp_timeout_seconds" name="smtp_timeout_seconds" inputmode="numeric" autocomplete="off" :min="1" :max="300" :step="1" required @update:value="configurationDirty = true" :input-props="{ 'name': 'smtp_timeout_seconds', 'inputmode': 'numeric', 'autocomplete': 'off', 'required': true }" :precision="0" /></label>
                 <label><span>登录账号</span><NInput v-model:value.trim="configuration.smtp_username" name="smtp_username" :maxlength="255" autocomplete="username" spellcheck="false" placeholder="填写邮箱账号，免认证时可留空" :input-props="{ 'name': 'smtp_username', 'autocomplete': 'username', 'spellcheck': false }" /></label>
                 <label><span>登录密码</span><NInput v-model:value="configuration.smtp_password" name="smtp_password" type="password" show-password-on="click" :maxlength="256" autocomplete="new-password" :placeholder="configuration.smtp_password_configured ? '已配置，留空保留原密码' : '邮箱密码或客户端专用密码'" :input-props="{ 'name': 'smtp_password', 'autocomplete': 'new-password' }" /></label>
                 <label><span>发件人邮箱</span><NInput v-model:value.trim="configuration.smtp_from_email" name="smtp_from_email" inputmode="email" spellcheck="false" autocomplete="off" :required="configuration.smtp_enabled" :maxlength="320" placeholder="例如：reports@example.com" :input-props="{ 'name': 'smtp_from_email', type: 'email', 'inputmode': 'email', 'spellcheck': false, 'autocomplete': 'off', 'required': configuration.smtp_enabled }" /></label>
@@ -153,39 +196,42 @@ onBeforeUnmount(() => {
               </div>
               <div class="security-options">
                 <span>连接安全</span>
-                <NCheckbox v-model:checked="configuration.smtp_use_tls" name="smtp_use_tls" @update:checked="selectTls(); hasUnsavedChanges = true" >STARTTLS</NCheckbox>
-                <NCheckbox v-model:checked="configuration.smtp_use_ssl" name="smtp_use_ssl" @update:checked="selectSsl(); hasUnsavedChanges = true" >SSL/TLS</NCheckbox>
+                <NCheckbox v-model:checked="configuration.smtp_use_tls" name="smtp_use_tls" @update:checked="selectTls(); configurationDirty = true" >STARTTLS</NCheckbox>
+                <NCheckbox v-model:checked="configuration.smtp_use_ssl" name="smtp_use_ssl" @update:checked="selectSsl(); configurationDirty = true" >SSL/TLS</NCheckbox>
                 <small>按邮箱管理员提供的方式选择；两项互斥，也可都不选。</small>
               </div>
             </fieldset>
           </div>
 
-          <div v-if="configurationMessage" class="configuration-feedback success" role="status" aria-live="polite">{{ configurationMessage }}</div>
-          <div v-if="configurationError" class="configuration-feedback error" role="alert">{{ configurationError }}，请检查参数后重试。</div>
-          <div class="configuration-actions">
-            <span>密码不回显，留空保留已保存的密码。</span>
-            <NButton attr-type="submit" class="primary" :disabled="configurationSaving" type="primary" :loading="configurationSaving">{{ configurationSaving ? '保存中…' : '保存自动化参数' }}</NButton>
-          </div>
         </form>
-      </section>
+        <template v-if="configurationLoaded && !configurationLoading" #footer>
+          <div class="drawer-footer">
+            <NAlert v-if="configurationError" type="error" role="alert">{{ configurationError }}</NAlert>
+            <NAlert v-if="configurationMessage && !configurationDirty" type="success" role="status">{{ configurationMessage }}</NAlert>
+            <div class="drawer-actions">
+              <span>密码留空会保留已保存的密码。</span>
+              <NButton attr-type="submit" form="automation-configuration-form" type="primary" :disabled="configurationSaving" :loading="configurationSaving">保存自动化参数</NButton>
+            </div>
+          </div>
+        </template>
+      </NDrawerContent>
+    </NDrawer>
 
-      <section ref="editorSection" class="panel automation-editor" aria-labelledby="automation-editor-title">
-        <div class="panel-title">
-          <div><span><AppIcon name="calendar" tone="muted" :size="17" /></span><h2 id="automation-editor-title">{{ editingId ? '编辑定时任务' : '新建定时任务' }}</h2></div>
-          <p>{{ editingId ? '修改后保存生效' : '设置报表与发送计划' }}</p>
-        </div>
-        <form class="automation-form" @submit.prevent="submit" @input.capture="hasUnsavedChanges = true" @change.capture="hasUnsavedChanges = true">
+    <NDrawer :show="activePanel === 'schedule'" width="min(640px, 100vw)" :aria-label="editingId ? '编辑定时任务' : '新建定时任务'" :mask-closable="false" :close-on-esc="!saving"
+      @update:show="shown => { if (!shown) activePanel = null }">
+      <NDrawerContent :title="editingId ? '编辑定时任务' : '新建定时任务'" :closable="!saving" :body-content-style="{ padding: 'var(--space-4)' }">
+        <form id="automation-schedule-form" class="automation-form" @submit.prevent="submit" @input.capture="scheduleDirty = true" @change.capture="scheduleDirty = true">
           <div class="automation-fields">
             <label class="wide"><span>任务名称</span><NInput v-model:value.trim="form.name" name="schedule_name" autocomplete="off" required :maxlength="80" :input-props="{ 'name': 'schedule_name', 'autocomplete': 'off', 'required': true }" /></label>
-            <label><span>设备</span><AppSelect v-model="form.device_id" name="schedule_device" required @change="hasUnsavedChanges = true"><option v-for="item in deviceSelection.items.filter(item => !item.type || item.type === 'cutting')" :key="item.id" :value="item.id">{{ item.name }}</option></AppSelect><small>计划固定使用此设备。</small></label>
+            <label><span>设备</span><AppSelect v-model="form.device_id" name="schedule_device" required @change="scheduleDirty = true"><option v-for="item in deviceSelection.items.filter(item => !item.type || item.type === 'cutting')" :key="item.id" :value="item.id">{{ item.name }}</option></AppSelect><small>计划固定使用此设备。</small></label>
             <label><span>报表类型</span><AppSelect v-model="form.report_type" name="report_type" @change="changeReportType"><option v-for="(label,key) in reportLabels" :key="key" :value="key">{{ label }}</option></AppSelect></label>
-            <label><span>报表期间</span><AppSelect v-model="form.report_period" name="report_period" @change="hasUnsavedChanges = true"><template v-if="form.report_type === 'leadership'"><option value="previous_month">上月</option><option value="current_month">本月</option></template><template v-else><option value="previous_day">前一日</option><option value="current_day">当日</option></template></AppSelect></label>
-            <label><span>执行频率</span><AppSelect v-model="form.frequency" name="frequency" @change="hasUnsavedChanges = true"><option value="daily">每日</option><option value="weekly">每周</option><option value="monthly">每月</option></AppSelect></label>
-            <label><span>执行时间</span><NTimePicker v-model:formatted-value="form.run_time" name="run_time" autocomplete="off" required @update:formatted-value="hasUnsavedChanges = true" format="HH:mm" value-format="HH:mm" :clearable="false" input-readonly /></label>
-            <label v-if="form.frequency === 'weekly'" class="wide"><span>星期</span><AppSelect v-model.number="form.weekday" name="weekday" @change="hasUnsavedChanges = true"><option v-for="(day,index) in ['一','二','三','四','五','六','日']" :key="day" :value="index + 1">星期{{ day }}</option></AppSelect></label>
-            <label v-if="form.frequency === 'monthly'" class="wide"><span>每月执行日</span><NInputNumber v-model:value="form.month_day" name="month_day" inputmode="numeric" autocomplete="off" :min="1" :max="28" @update:value="hasUnsavedChanges = true" :input-props="{ 'name': 'month_day', 'inputmode': 'numeric', 'autocomplete': 'off' }" :precision="0" /></label>
-            <label><span>图表类型</span><AppSelect v-model="form.chart_type" name="chart_type" @change="hasUnsavedChanges = true"><option value="bar_line">柱线组合</option><option value="bar">柱状图</option><option value="line">折线图</option><option value="area">面积图</option></AppSelect></label>
-            <label><span>最大尝试次数</span><NInputNumber v-model:value="form.max_attempts" name="max_attempts" inputmode="numeric" autocomplete="off" :min="1" :max="10" @update:value="hasUnsavedChanges = true" :input-props="{ 'name': 'max_attempts', 'inputmode': 'numeric', 'autocomplete': 'off' }" :precision="0" /></label>
+            <label><span>报表期间</span><AppSelect v-model="form.report_period" name="report_period" @change="scheduleDirty = true"><template v-if="form.report_type === 'leadership'"><option value="previous_month">上月</option><option value="current_month">本月</option></template><template v-else><option value="previous_day">前一日</option><option value="current_day">当日</option></template></AppSelect></label>
+            <label><span>执行频率</span><AppSelect v-model="form.frequency" name="frequency" @change="scheduleDirty = true"><option value="daily">每日</option><option value="weekly">每周</option><option value="monthly">每月</option></AppSelect></label>
+            <label><span>执行时间</span><NTimePicker v-model:formatted-value="form.run_time" name="run_time" autocomplete="off" required @update:formatted-value="scheduleDirty = true" format="HH:mm" value-format="HH:mm" :clearable="false" input-readonly /></label>
+            <label v-if="form.frequency === 'weekly'" class="wide"><span>星期</span><AppSelect v-model.number="form.weekday" name="weekday" @change="scheduleDirty = true"><option v-for="(day,index) in ['一','二','三','四','五','六','日']" :key="day" :value="index + 1">星期{{ day }}</option></AppSelect></label>
+            <label v-if="form.frequency === 'monthly'" class="wide"><span>每月执行日</span><NInputNumber v-model:value="form.month_day" name="month_day" inputmode="numeric" autocomplete="off" :min="1" :max="28" @update:value="scheduleDirty = true" :input-props="{ 'name': 'month_day', 'inputmode': 'numeric', 'autocomplete': 'off' }" :precision="0" /></label>
+            <label><span>图表类型</span><AppSelect v-model="form.chart_type" name="chart_type" @change="scheduleDirty = true"><option value="bar_line">柱线组合</option><option value="bar">柱状图</option><option value="line">折线图</option><option value="area">面积图</option></AppSelect></label>
+            <label><span>最大尝试次数</span><NInputNumber v-model:value="form.max_attempts" name="max_attempts" inputmode="numeric" autocomplete="off" :min="1" :max="10" @update:value="scheduleDirty = true" :input-props="{ 'name': 'max_attempts', 'inputmode': 'numeric', 'autocomplete': 'off' }" :precision="0" /></label>
             <div class="recipient-field wide" role="group" aria-labelledby="recipient-label">
               <div id="recipient-label" class="recipient-heading">收件人 <span>{{ form.recipients.length }} / 20</span></div>
               <div class="recipient-tags">
@@ -193,7 +239,7 @@ onBeforeUnmount(() => {
                 <NButton v-if="!recipientInputVisible" attr-type="button" dashed size="small" :disabled="saving || form.recipients.length >= 20" @click="recipientInputVisible = true">＋ 添加邮箱</NButton>
               </div>
               <div v-if="recipientInputVisible" class="recipient-entry">
-                <NInput v-model:value="recipientDraft" autofocus :disabled="saving" :status="recipientError ? 'error' : undefined" placeholder="例如：manager@example.com" :input-props="{ name: 'recipient', inputmode: 'email', autocomplete: 'off', spellcheck: false, 'aria-label': '收件人邮箱', 'aria-invalid': !!recipientError, 'aria-describedby': recipientError ? 'recipient-error' : undefined }" @update:value="recipientError = ''" @keydown.enter.prevent="!$event.isComposing && addRecipient()" @keydown.esc.prevent="cancelRecipientInput" />
+                <NInput v-model:value="recipientDraft" autofocus :disabled="saving" :status="recipientError ? 'error' : undefined" placeholder="例如：manager@example.com" :input-props="{ name: 'recipient', inputmode: 'email', autocomplete: 'off', spellcheck: false, 'aria-label': '收件人邮箱', 'aria-invalid': !!recipientError, 'aria-describedby': recipientError ? 'recipient-error' : undefined }" @update:value="recipientError = ''" @keydown.enter.prevent="!$event.isComposing && addRecipient()" @keydown.esc.stop.prevent="cancelRecipientInput" />
                 <NButton attr-type="button" :disabled="saving" @click="addRecipient">添加</NButton>
                 <NButton attr-type="button" :disabled="saving" @click="cancelRecipientInput">取消</NButton>
               </div>
@@ -201,17 +247,25 @@ onBeforeUnmount(() => {
             </div>
             <label class="wide"><span>邮件主题</span><NInput v-model:value.trim="form.subject_template" name="subject_template" autocomplete="off" required :input-props="{ 'name': 'subject_template', 'autocomplete': 'off', 'required': true }" /><small>可用：{report_name}、{report_type}、{report_date}</small></label>
             <div class="automation-switches wide">
-              <NCheckbox v-model:checked="form.attach_report" name="attach_report" @update:checked="hasUnsavedChanges = true" >附加 HTML 报表</NCheckbox>
-              <NCheckbox v-model:checked="form.enabled" name="schedule_enabled" @update:checked="hasUnsavedChanges = true" >启用定时任务</NCheckbox>
+              <NCheckbox v-model:checked="form.attach_report" name="attach_report" @update:checked="scheduleDirty = true" >附加 HTML 报表</NCheckbox>
+              <NCheckbox v-model:checked="form.enabled" name="schedule_enabled" @update:checked="scheduleDirty = true" >启用定时任务</NCheckbox>
             </div>
           </div>
-          <div class="automation-actions wide">
-            <span>邮件失败独立重试，不重复生成报表。</span>
-            <div><NButton v-if="editingId" attr-type="button" class="secondary" @click="resetForm">取消编辑</NButton><NButton attr-type="submit" class="primary" :disabled="saving" type="primary" :loading="saving">{{ saving ? '保存中…' : editingId ? '保存修改' : '创建任务' }}</NButton></div>
-          </div>
         </form>
-      </section>
-    </div>
+        <template #footer>
+          <div class="drawer-footer">
+            <NAlert v-if="scheduleError" type="error" role="alert">{{ scheduleError }}</NAlert>
+            <div class="drawer-actions">
+              <span>邮件发送失败时会单独重试。</span>
+              <div>
+                <NButton :disabled="saving" @click="cancelScheduleEditing">取消</NButton>
+                <NButton attr-type="submit" form="automation-schedule-form" type="primary" :disabled="saving" :loading="saving">{{ editingId ? '保存修改' : '创建任务' }}</NButton>
+              </div>
+            </div>
+          </div>
+        </template>
+      </NDrawerContent>
+    </NDrawer>
 
     <section class="panel automation-list" aria-labelledby="automation-schedules-title">
       <div class="panel-title"><div><span><AppIcon name="tasks" tone="muted" :size="17" /></span><h2 id="automation-schedules-title">定时任务</h2></div><div class="automation-list-tools"><form class="automation-search" role="search" aria-label="定时任务检索" @submit.prevent="searchSchedules"><NInput v-model:value="scheduleSearch" clearable size="small" :maxlength="200" placeholder="检索任务名称" :input-props="{ 'aria-label': '任务名称关键词' }" @clear="clearScheduleSearch" /><NButton attr-type="submit" size="small">检索</NButton></form><p>{{ status ? `${visibleSchedules.length}${appliedScheduleSearch ? ` / ${schedules.length}` : ''} 个计划` : loading ? '正在读取' : '暂不可用' }}</p></div></div>
@@ -219,7 +273,7 @@ onBeforeUnmount(() => {
       <div v-else-if="!status && error" class="configuration-load-error" role="alert"><span>定时任务暂时无法读取。</span><NButton attr-type="button" @click="loadAll">重新读取</NButton></div>
       <div v-else class="automation-table-wrap">
         <AutomationRunProgress v-for="execution in executions" :key="execution.schedule_id" :execution="execution" />
-        <AutomationScheduleTable :schedules="visibleSchedules" :searching="!!appliedScheduleSearch" :loading="loading" :running-schedule-ids="runningScheduleIds" :report-labels="reportLabels" :schedule-labels="scheduleLabels" @run="runNow" @edit="editSchedule" @remove="remove" />
+        <AutomationScheduleTable :schedules="visibleSchedules" :searching="!!appliedScheduleSearch" :loading="loading" :running-schedule-ids="runningScheduleIds" :report-labels="reportLabels" :schedule-labels="scheduleLabels" @run="runNow" @edit="openScheduleEditor" @remove="remove" />
       </div>
     </section>
 
@@ -236,109 +290,106 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.automation-page { --automation-border: var(--theme-border-color); }
-.automation-page .panel-title { gap: 12px; }
-.automation-page .panel-title p { margin: 0; font-size: var(--font-auxiliary); line-height: 1.5; text-align: right; }
-.table-scroll-hint { display: none; }
-.automation-message, .configuration-feedback { padding: 12px 14px; border: 1px solid; border-radius: 7px; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
-.automation-message.success, .configuration-feedback.success { color: rgb(var(--success-color)); border-color: rgb(var(--success-color)); background: rgb(var(--success-color) / .1); }
-.automation-message.error, .configuration-feedback.error { color: rgb(var(--error-color)); border-color: rgb(var(--error-color)); background: rgb(var(--error-color) / .1); }
-.automation-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
-.automation-page .automation-kpis article { min-width: 0; display: flex; align-items: center; gap: 14px; padding: 16px 18px; border: 1px solid var(--automation-border); border-radius: 10px; background: rgb(var(--container-bg-color)); box-shadow: var(--theme-shadow); }
-.automation-kpis article > div { min-width: 0; }
-.automation-kpis .kpi-icon { width: 38px; height: 38px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 9px; background: rgb(var(--info-color) / .1); }
-.automation-kpis span { color: var(--muted); font-size: var(--font-auxiliary); }
-.automation-page .automation-kpis strong { display: block; margin-top: 5px; color: var(--text-color-1); font-size: 24px; line-height: 1.25; font-variant-numeric: tabular-nums; }
-.automation-kpis em { color: var(--text-color-3); font-size: 18px; font-style: normal; font-weight: 400; }
-.automation-workspace { min-width: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; gap: 12px; }
-.automation-workspace > .panel { display: flex; flex-direction: column; min-width: 0; margin: 0; border-color: var(--automation-border); border-radius: 10px; background: rgb(var(--container-bg-color)); box-shadow: var(--theme-shadow); }
-.automation-settings, .automation-editor, .automation-list { min-width: 0; overflow: hidden; }
-.automation-page > :deep(.resolution-panel) { margin-top: 0; }
-.automation-editor { scroll-margin-top: 82px; }
-.configuration-form, .automation-form { display: flex; flex-direction: column; flex: 1; padding: 18px; background: rgb(var(--container-bg-color)); }
-.configuration-notice { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 18px; padding: 10px 12px; border-radius: 7px; color: var(--muted); background: rgb(var(--primary-color) / .1); font-size: var(--font-auxiliary); line-height: 1.6; }
-.configuration-notice .app-icon { flex: 0 0 auto; margin-top: 1px; }
-.configuration-grid { display: grid; gap: 18px; margin-bottom: 16px; }
-.configuration-card { min-width: 0; margin: 0; padding: 0; border: 0; }
-.configuration-card legend { margin-bottom: 12px; padding: 0; color: var(--text-color-1); font-size: 13px; font-weight: 700; }
-.smtp-configuration-card { padding-top: 16px; border-top: 1px solid var(--theme-border-color); }
-.setting-switch { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; padding: 10px 12px; border: 1px solid var(--theme-border-color); border-radius: 7px; background: rgb(var(--info-color) / .1); }
-.setting-switch strong, .setting-switch small { display: block; }
-.setting-switch strong { color: var(--text-color-1); font-size: 12px; }
-.setting-switch small { margin-top: 3px; color: var(--muted); font-size: var(--font-auxiliary); line-height: 1.5; }
-.setting-switch > input { width: 18px; height: 18px; flex: 0 0 auto; accent-color: var(--cyan); }
-.setting-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-.setting-fields .span-two, .automation-form .wide { grid-column: 1 / -1; }
-.setting-fields label, .automation-fields > label { min-width: 0; }
-.setting-fields label > span, .automation-form label > span { display: block; margin-bottom: 6px; color: var(--text-color-2); font-size: var(--font-auxiliary); font-weight: 650; }
-.setting-fields input, .automation-form input { width: 100%; height: 36px; min-width: 0; padding: 0 10px; }
-.automation-form :deep(.app-select) { height: 36px; }
-.setting-fields small, .automation-form small { display: block; margin-top: 5px; color: var(--muted); font-size: var(--font-auxiliary); line-height: 1.5; overflow-wrap: anywhere; }
-.security-options { display: flex; align-items: center; flex-wrap: wrap; gap: 9px 14px; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--theme-border-color); color: var(--text-color-2); font-size: var(--font-auxiliary); }
-.security-options > span { font-weight: 650; }
-.security-options label { display: flex; align-items: center; gap: 6px; }
-.security-options input { width: 16px; height: 16px; accent-color: var(--cyan); }
-.security-options small { flex: 1 1 100%; color: var(--muted); font-size: var(--font-auxiliary); line-height: 1.5; }
-.configuration-feedback { margin-top: 14px; }
-.configuration-actions, .automation-actions { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-top: auto; padding-top: 14px; border-top: 1px solid var(--theme-border-color); }
-.configuration-actions > span, .automation-actions > span { color: var(--muted); font-size: var(--font-auxiliary); line-height: 1.5; }
-.configuration-actions button, .automation-actions button { min-height: 36px; padding: 0 14px; }
-.configuration-actions button { margin-left: auto; }
-.automation-actions > div { display: flex; gap: 8px; margin-left: auto; }
-.automation-form { gap: 14px; }
-.automation-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 12px; }
-.recipient-field { min-width: 0; }
-.recipient-heading { display: flex; justify-content: space-between; margin-bottom: 8px; color: var(--text-color-2); font-size: var(--font-auxiliary); font-weight: 650; }
-.recipient-heading > span { color: var(--text-color-3); font-weight: 400; }
-.recipient-tags { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; max-height: 160px; overflow-y: auto; padding: 4px; }
-.recipient-tags :deep(.n-tag) { max-width: 100%; }
-.recipient-tags :deep(.n-tag__content) { min-width: 0; }
-.recipient-address { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.recipient-entry { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
-.recipient-entry :deep(.n-input) { flex: 1 1 200px; min-width: 0; }
-.recipient-error { margin: 8px 0 0; color: rgb(var(--error-color)); font-size: var(--font-auxiliary); }
-.automation-switches { display: flex; flex-wrap: wrap; gap: 12px 18px; padding: 12px; border-radius: 7px; background: rgb(var(--info-color) / .1); }
-.automation-switches label { display: flex; align-items: center; gap: 7px; color: var(--text-color-2); font-size: var(--font-auxiliary); }
-.automation-switches input { width: 16px; height: 16px; accent-color: var(--cyan); }
-.configuration-load-error { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin: 18px; padding: 12px; border: 1px solid rgb(var(--error-color)); border-radius: 7px; color: rgb(var(--error-color)); background: rgb(var(--error-color) / .1); font-size: 12px; }
-.configuration-load-error button { min-height: 32px; padding: 0 10px; }
-.automation-page .empty { padding: 30px 18px; color: var(--muted); font-size: 12px; line-height: 1.6; text-align: center; }
-.automation-table-wrap { min-width: 0; padding: 16px; }
-.automation-table-wrap :deep(.app-report-pagination) { padding: 16px 0 0; }
-.automation-list-tools { min-width: 0; display: flex; align-items: center; gap: 12px; }
-.automation-search { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.automation-search :deep(.n-input) { width: 260px; max-width: 100%; min-width: 0; }
-.automation-search :deep(.n-button) { flex-shrink: 0; }
-/* Keep legacy panel-title span typography out of Naive search controls. */
-.automation-search :deep(span) { font-size: inherit; font-weight: inherit; color: inherit; }
-@media (max-width: 1100px) {
-  .automation-workspace { grid-template-columns: 1fr; }
-  .configuration-grid { grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); gap: 18px; }
-  .smtp-configuration-card { padding-top: 0; padding-left: 18px; border-top: 0; border-left: 1px solid var(--theme-border-color); }
+.automation-page.management-page { gap: var(--space-4); }
+.automation-header {
+  display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:var(--space-4);
+  padding:var(--space-6); border:1px solid var(--theme-border-color); border-radius:var(--report-panel-radius);
+  background:linear-gradient(100deg, rgb(var(--primary-color) / .07), transparent 45%), rgb(var(--container-bg-color));
+  box-shadow:var(--theme-shadow);
 }
+.automation-heading { display:flex; align-items:flex-start; gap:var(--space-3); min-width:0; }
+.automation-heading > div { min-width:0; }
+.automation-heading-icon {
+  flex:0 0 auto; display:grid; place-items:center; width:44px; height:44px;
+  border-radius:var(--card-radius); color:rgb(var(--primary-color)); background:rgb(var(--primary-color) / .12);
+}
+.automation-heading h1 { margin:0 0 var(--space-2); font-size:24px; font-weight:700; line-height:1.3; }
+.automation-toolbar, .automation-status { display:flex; flex-wrap:wrap; align-items:center; gap:var(--space-2); min-width:0; }
+.smtp-address { color:var(--text-color-3); font-size:var(--font-auxiliary); overflow-wrap:anywhere; }
+.automation-overview { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:var(--space-3); }
+.automation-overview :deep(.automation-metric) {
+  min-height:104px; justify-content:start; gap:var(--space-2); border-radius:var(--card-radius);
+  border:1px solid var(--theme-border-color); background:rgb(var(--container-bg-color)); box-shadow:var(--theme-shadow);
+}
+.automation-overview :deep(.home-kpi__trend) { display:none; }
+.automation-page .panel-title { gap:var(--space-3); padding:var(--space-3) var(--space-4); background:transparent; }
+.automation-page .panel-title h2 { font-size:var(--font-section-title); }
+.automation-page .panel-title p { margin:0; font-size:var(--font-auxiliary); line-height:1.5; text-align:right; }
+.automation-list, .automation-table-wrap { min-width:0; }
+.automation-table-wrap { padding:var(--space-2) var(--space-4) var(--space-4); }
+.automation-table-wrap :deep(.app-report-pagination) { padding:var(--space-4) 0 0; }
+.automation-list-tools, .automation-search { display:flex; align-items:center; gap:var(--space-2); min-width:0; }
+.automation-search :deep(.n-input) { width:260px; max-width:100%; min-width:0; }
+.automation-search :deep(.n-button) { flex-shrink:0; }
+/* Keep panel-title typography out of Naive search controls. */
+.automation-search :deep(span) { font-size:inherit; font-weight:inherit; color:inherit; }
+
+.configuration-form, .automation-form, .configuration-grid, .drawer-footer { display:grid; gap:var(--space-4); }
+.configuration-notice, .automation-switches {
+  display:flex; align-items:center; gap:var(--space-2); padding:var(--space-3); border-radius:var(--card-radius);
+  background:rgb(var(--primary-color) / .08); color:var(--text-color-2); font-size:var(--font-auxiliary);
+}
+.configuration-notice .app-icon { flex:0 0 auto; }
+.configuration-card { min-width:0; margin:0; padding:0; border:0; }
+.configuration-card legend { margin-bottom:var(--space-3); padding:0; font-size:var(--font-section-title); font-weight:650; }
+.smtp-configuration-card { padding-top:var(--space-3); border-top:1px solid var(--theme-divider-color); }
+.setting-switch {
+  display:flex; align-items:center; gap:var(--space-2); width:100%; margin-bottom:var(--space-3); padding:var(--space-3);
+  border:1px solid var(--theme-border-color); border-radius:var(--card-radius); background:var(--theme-hover-color);
+}
+.setting-switch strong, .setting-switch small { display:block; font-size:var(--font-auxiliary); }
+.setting-switch small { margin-top:var(--space-1); color:var(--text-color-3); }
+.setting-fields, .automation-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:var(--space-3); }
+.setting-fields .span-two, .automation-form .wide { grid-column:1 / -1; }
+.setting-fields label, .automation-fields > label { display:grid; align-content:start; min-width:0; gap:var(--space-1); }
+.setting-fields label > span, .automation-fields > label > span, .recipient-heading {
+  color:var(--text-color-2); font-size:var(--font-auxiliary); font-weight:650;
+}
+.setting-fields small, .automation-form small, .security-options small, .drawer-actions > span {
+  color:var(--text-color-3); font-size:var(--font-auxiliary); line-height:1.5; overflow-wrap:anywhere;
+}
+.security-options {
+  display:flex; align-items:center; flex-wrap:wrap; gap:var(--space-2) var(--space-3); margin-top:var(--space-3);
+  padding-top:var(--space-3); border-top:1px solid var(--theme-divider-color);
+  color:var(--text-color-2); font-size:var(--font-auxiliary);
+}
+.security-options > span { font-weight:650; }
+.security-options small { flex-basis:100%; }
+.drawer-footer { width:100%; min-width:0; gap:var(--space-2); }
+.drawer-actions, .drawer-actions > div { display:flex; align-items:center; flex-wrap:wrap; gap:var(--space-2); }
+.drawer-actions { justify-content:space-between; }
+.drawer-actions > span { flex:1 1 180px; }
+.drawer-actions .n-button { min-height:36px; }
+.drawer-actions > .n-button, .drawer-actions > div { margin-inline-start:auto; }
+.recipient-field { min-width:0; }
+.recipient-heading { display:flex; justify-content:space-between; margin-bottom:var(--space-2); }
+.recipient-heading > span { color:var(--text-color-3); font-weight:400; }
+.recipient-tags { display:flex; align-items:center; flex-wrap:wrap; gap:var(--space-2); max-height:160px; overflow-y:auto; padding:var(--space-1); }
+.recipient-tags :deep(.n-tag) { max-width:100%; }
+.recipient-tags :deep(.n-tag__content) { min-width:0; }
+.recipient-address { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.recipient-entry { display:flex; flex-wrap:wrap; gap:var(--space-2); margin-top:var(--space-2); }
+.recipient-entry :deep(.n-input) { flex:1 1 200px; min-width:0; }
+.recipient-error { margin:var(--space-2) 0 0; color:rgb(var(--error-color)); font-size:var(--font-auxiliary); }
+.automation-switches { flex-wrap:wrap; gap:var(--space-3); }
+.configuration-load-error {
+  display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:var(--space-3); padding:var(--space-4);
+  color:rgb(var(--error-color)); font-size:var(--font-body);
+}
+.automation-empty, .automation-page .empty { padding:var(--space-6) var(--space-4); color:var(--text-color-3); font-size:var(--font-auxiliary); text-align:center; }
 @media (max-width: 760px) {
-  .automation-list-tools, .automation-search { width: 100%; }
-  .automation-list-tools { flex-wrap: wrap; }
-  .automation-search :deep(.n-input) { flex: 1; width: auto; }
-  .automation-page .panel-title { align-items: flex-start; flex-direction: column; justify-content: center; gap: 5px; padding-block: 12px; }
-  .automation-page .panel-title p { text-align: left; }
-  .automation-page .panel-title .table-scroll-hint { display: inline-block; margin-left: 10px; color: var(--muted); font-size: var(--font-auxiliary); font-weight: 400; }
-  .automation-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .automation-page .automation-kpis article { gap: 10px; padding: 14px 12px; }
-  .automation-kpis .kpi-icon { width: 32px; height: 32px; }
-  .configuration-grid { grid-template-columns: 1fr; }
-  .smtp-configuration-card { padding-top: 16px; padding-left: 0; border-top: 1px solid var(--theme-border-color); border-left: 0; }
-  .configuration-form, .automation-form { padding: 16px; }
+  .automation-header { padding:var(--space-4); }
+  .automation-overview { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .automation-list-tools, .automation-search { width:100%; }
+  .automation-list-tools { flex-wrap:wrap; }
+  .automation-search :deep(.n-input) { flex:1; width:auto; }
+  .automation-page .panel-title { align-items:flex-start; flex-direction:column; }
+  .automation-page .panel-title p { text-align:left; }
 }
-@media (max-width: 560px) {
-  .automation-page .automation-kpis article { gap: 8px; padding: 12px 10px; }
-  .automation-kpis .kpi-icon { width: 28px; height: 28px; }
-  .automation-page .automation-kpis strong { font-size: 22px; }
-  .setting-fields, .automation-fields { grid-template-columns: 1fr; }
-  .setting-fields .span-two, .automation-form .wide { grid-column: auto; }
-  .configuration-actions, .automation-actions { align-items: stretch; flex-direction: column; }
-  .configuration-actions button, .automation-actions > div { width: 100%; margin-left: 0; }
-  .automation-actions button { flex: 1; }
-  .automation-pagination { padding-inline: 12px; }
+@media (max-width: 500px) {
+  .automation-toolbar { width:100%; }
+  .automation-toolbar > * { flex:1; }
+  .setting-fields, .automation-fields { grid-template-columns:minmax(0,1fr); }
+  .drawer-actions > span { flex-basis:100%; }
 }
 </style>

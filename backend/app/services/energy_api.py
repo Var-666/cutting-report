@@ -145,33 +145,32 @@ class EnergyApiClient:
                     raise
 
     def fetch(self, ids: tuple[str, ...], start: datetime, end: datetime, *, force=False) -> list[dict]:
-        return self._fetch_chunked(
-            ids, start, end, force=force, chunk_size=timedelta(hours=24)
-        )
+        return self.fetch_observed(ids, start, end, force=force)[0]
 
     def fetch_month(
         self, ids: tuple[str, ...], start: datetime, end: datetime, *, force=False
     ) -> list[dict]:
         """Read historical meter values in week-sized requests for backfill."""
-        return self._fetch_chunked(
-            ids, start, end, force=force, chunk_size=timedelta(days=7)
-        )
+        return self.fetch_observed(ids, start, end, force=force, monthly=True)[0]
 
-    def _fetch_chunked(
+    def fetch_observed(
         self,
         ids: tuple[str, ...],
         start: datetime,
         end: datetime,
         *,
-        force: bool,
-        chunk_size: timedelta,
-    ) -> list[dict]:
+        force: bool = False,
+        monthly: bool = False,
+    ) -> tuple[list[dict], bool]:
+        """Only a complete source read supplies current data quality evidence."""
+        chunk_size = timedelta(days=7 if monthly else 1)
         if not ids or end <= start or end - start > timedelta(days=367):
             raise EnergyApiError("能管查询参数或时间区间无效（最多 366 天）")
         with self._lock:
             if self._failure and not force and time.monotonic() < self._failure[0]:
                 raise EnergyApiError(self._failure[1])
         collected = []
+        fresh = True
         cursor = start.replace(microsecond=0)
         # Include fractional end seconds rather than rounding the boundary down.
         end = end.replace(microsecond=0) + (timedelta(seconds=1) if end.microsecond else timedelta())
@@ -183,6 +182,7 @@ class EnergyApiClient:
                 with self._lock:
                     cached = self._cache.get(key)
                     if cached and not force and time.monotonic() < cached[0]:
+                        fresh = False
                         rows = cached[1]
                         self._cache.move_to_end(key)
                     else:
@@ -206,4 +206,12 @@ class EnergyApiClient:
                             self._cache.popitem(last=False)
             collected.extend(rows)
             cursor = stop
-        return deepcopy(collected)
+        return deepcopy(collected), fresh
+
+
+def read_energy_with_freshness(client, ids, start, end, *, force=False, monthly=False):
+    observed = getattr(client, 'fetch_observed', None)
+    if observed is not None:
+        return observed(ids, start, end, force=force, monthly=monthly)
+    fetch = getattr(client, 'fetch_month', client.fetch) if monthly else client.fetch
+    return fetch(ids, start, end, force=force), True

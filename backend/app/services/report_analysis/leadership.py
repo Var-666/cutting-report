@@ -17,7 +17,7 @@ from app.services.report_analysis.common import (
 )
 
 
-def build_context(report: LeadershipReportResult, monthly_records: list) -> dict:
+def build_context(report: LeadershipReportResult, monthly_records: list, task_records: list | None = None) -> dict:
     summary_rows = monthly_records
     current = report.current_month_total
     range_mode = report.period_start is not None and report.period_end is not None
@@ -191,4 +191,4 @@ def build_context(report: LeadershipReportResult, monthly_records: list) -> dict
         "anomalies": daily_anomalies,
         "daily_sample_count": len(daily_counts),
     }
-    return add_candidates(context, 'leadership')
+    return add_candidates(context, 'leadership', task_records)

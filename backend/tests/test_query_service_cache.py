@@ -16,6 +16,27 @@ def _service(tmp_path: Path) -> QueryService:
     return QueryService(cfg, client=source_client(cfg))
 
 
+@pytest.mark.parametrize('kind', ['workshop', 'equipment'])
+def test_report_query_observes_invalid_rows_and_confirms_successful_empty_result(tmp_path, monkeypatch, caplog, kind):
+    service = _service(tmp_path)
+    day = date(2026, 8, 25)
+    rows = [{'task_id': 'example-task', 'production_date': day}, {'task_id': 'example-task', 'production_date': day},
+            {'task_id': None, 'production_date': day}, {'task_id': 'another-task', 'production_date': day + timedelta(days=1)}]
+    monkeypatch.setattr(service.client, 'fetch_all', lambda *_: rows)
+    read = getattr(service, f'fetch_{kind}_data')
+    filters = ReportFilter(report_date=day)
+    with caplog.at_level('INFO', logger='app.services.query_service'):
+        read(filters)
+        rows.clear()
+        read(filters, force=True)
+    failed, recovered = [item for item in caplog.records if hasattr(item, 'operations_quality')]
+    assert failed.operations_quality['state'] == 'invalid_report_rows'
+    assert failed.operations_quality['missing_count'] == 3
+    assert recovered.operations_quality['state'] == 'verified'
+    assert recovered.operations_quality['summary_count'] == 0
+    assert failed.operations_fields['resource_id'] == recovered.operations_fields['resource_id']
+
+
 @pytest.mark.parametrize('kind', ['projects', 'ships'])
 def test_cutting_options_keep_source_scope_and_bound_filter_parameters(tmp_path, monkeypatch, kind):
     service = _service(tmp_path)

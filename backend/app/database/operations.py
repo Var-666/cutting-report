@@ -16,6 +16,8 @@ def fingerprint(item):
     if item.get('error_code') == 'POSTGRES_UNAVAILABLE':
         return sha256(b'POSTGRES_UNAVAILABLE').hexdigest()
     identity = [item.get(key) for key in ('error_code', 'component', 'role', 'line_id', 'source_id', 'resource_id')]
+    if item.get('quality_observation'):
+        identity[2] = None  # The same data scope may be checked by Web and Consumer.
     return sha256(json.dumps(identity, separators=(',', ':')).encode()).hexdigest()
 
 
@@ -35,6 +37,9 @@ class OperationsRepository(PostgresRepository):
     def _record(connection, item, *, observed=False):
         context = {key: item[key] for key in ('request_id', 'analysis_id', 'task_id', 'report_id', 'stage', 'related_kind')
                    if item.get(key)}
+        quality = bool(item.get('quality_observation'))
+        if quality:
+            context.update(item['data_quality'])
         timestamp = item['timestamp']
         source_count = item.get('source_count')
         identity = fingerprint(item)
@@ -49,6 +54,9 @@ class OperationsRepository(PostgresRepository):
                 last_seen_at=GREATEST(system_incidents.last_seen_at,excluded.last_seen_at),
                 occurrences=CASE WHEN %s THEN GREATEST(system_incidents.occurrences,excluded.occurrences)
                                  ELSE system_incidents.occurrences+1 END,
+                level=CASE WHEN %s AND system_incidents.level='WARNING' AND excluded.level='ERROR'
+                           THEN excluded.level ELSE system_incidents.level END,
+                role=CASE WHEN %s AND excluded.last_seen_at >= system_incidents.last_seen_at THEN excluded.role ELSE system_incidents.role END,
                 instance_id=CASE WHEN excluded.last_seen_at >= system_incidents.last_seen_at THEN excluded.instance_id ELSE system_incidents.instance_id END,
                 message=CASE WHEN excluded.last_seen_at >= system_incidents.last_seen_at THEN excluded.message ELSE system_incidents.message END,
                 context=CASE WHEN excluded.last_seen_at >= system_incidents.last_seen_at THEN excluded.context ELSE system_incidents.context END
@@ -56,14 +64,34 @@ class OperationsRepository(PostgresRepository):
                 OR (%s AND excluded.occurrences > system_incidents.occurrences)
         """, (item.get('id') or uuid4().hex, identity, *(item.get(key) for key in INCIDENT_COLUMNS),
               Jsonb(context), item.get('source_first_at') or timestamp, timestamp, source_count or 1,
-              identity, timestamp, source_count is not None, observed, source_count is not None))
+              identity, timestamp, source_count is not None, quality, quality, observed, source_count is not None))
 
     def record(self, items):
         with self.connect() as connection:
             self._limits(connection)
             # A consistent order reduces contention across Consumer batches.
             for item in sorted(items, key=lambda item: (fingerprint(item), item['timestamp'])):
-                self._record(connection, item)
+                if item.get('quality_observation'):
+                    self._observe_quality(connection, item)
+                else:
+                    self._record(connection, item)
+
+    def _observe_quality(self, connection, item):
+        timestamp = item['timestamp']
+        if isinstance(timestamp, str):
+            timestamp = datetime.fromisoformat(timestamp)
+            item = {**item, 'timestamp': timestamp}
+        healthy = item['level'] == 'INFO'
+        applied = connection.execute("""
+            INSERT INTO operations_samples(sample_key,healthy,bucket,streak,observed_at) VALUES (%s,%s,%s,1,%s)
+            ON CONFLICT(sample_key) DO UPDATE SET healthy=excluded.healthy,bucket=excluded.bucket,observed_at=excluded.observed_at
+            WHERE operations_samples.observed_at<excluded.observed_at RETURNING sample_key
+        """, ('quality:' + fingerprint(item), healthy, int(timestamp.timestamp()) // 30, timestamp)).fetchone()
+        if applied:
+            if healthy:
+                self._recover(connection, item, item['message'])
+            else:
+                self._record(connection, {**item, 'source_count': 1}, observed=True)
 
     @staticmethod
     def _recover(connection, item, evidence):
@@ -82,7 +110,7 @@ class OperationsRepository(PostgresRepository):
             if not connection.execute("SELECT pg_try_advisory_xact_lock(740314010) AS locked").fetchone()['locked']:
                 return
             if not connection.execute("""
-                INSERT INTO operations_samples VALUES ('cycle',true,%s,1)
+                INSERT INTO operations_samples(sample_key,healthy,bucket,streak) VALUES ('cycle',true,%s,1)
                 ON CONFLICT(sample_key) DO UPDATE SET bucket=excluded.bucket
                 WHERE operations_samples.bucket<excluded.bucket RETURNING bucket
             """, (bucket,)).fetchone():
@@ -93,7 +121,7 @@ class OperationsRepository(PostgresRepository):
                     connection.execute('DELETE FROM operations_samples WHERE sample_key=%s', (sample_key,))
                     continue
                 state = connection.execute("""
-                    INSERT INTO operations_samples VALUES (%s,%s,%s,1)
+                    INSERT INTO operations_samples(sample_key,healthy,bucket,streak) VALUES (%s,%s,%s,1)
                     ON CONFLICT(sample_key) DO UPDATE SET healthy=excluded.healthy,bucket=excluded.bucket,
                         streak=CASE WHEN operations_samples.healthy=excluded.healthy
                             AND excluded.bucket-operations_samples.bucket<=2

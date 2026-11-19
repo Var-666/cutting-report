@@ -210,10 +210,9 @@ def build_context(
         ),
         _fact(
             "F005",
-            "任务变化与切割时间",
-            f"任务总数比上一周期{_change_label(task_change)}；{len(anomalies)} 项切割时间较长",
-            "；".join(task_trend_evidence)
-            + f"；按切割时间分布筛出的较长任务共 {len(anomalies)} 项，最多展示 5 项：{anomaly_details}",
+            "任务总数的可比周期变化",
+            f"任务总数比上一周期{_change_label(task_change)}",
+            "；".join(task_trend_evidence),
         ),
         _fact(
             "F006",
@@ -224,6 +223,8 @@ def build_context(
             f"仪表记录时间重叠 {overlap_count} 项，仪表记录不完整 {sampling_issue_count} 项，"
             f"任务起止时间有问题 {invalid_interval_count} 项；另含未设置仪表或未关联设备的记录",
         ),
+        _fact('F013', '切割时间较长的任务', f'{len(anomalies)} 项切割时间较长',
+              f'按本期切割时间分布筛选；最多展示 5 项：{anomaly_details}'),
     ]
     context = {
         "facts": facts,

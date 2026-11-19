@@ -2,6 +2,7 @@ from collections import Counter
 from contextlib import contextmanager
 from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
+import logging
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -92,6 +93,25 @@ def test_paging_uses_one_live_count_with_identical_predicates_and_keeps_cached_s
     assert ('j.state = %s' if kind == 'jobs' else 'p.state = %s') in rows_sql
     assert 'LIMIT %s OFFSET %s' in rows_sql and ', id DESC' in rows_sql
     assert second['meta']['report_data']['details_source'] == 'database'
+
+
+def test_welding_report_distinguishes_zero_activity_from_unusable_source_records(configured, monkeypatch, caplog):
+    _, _, _, source, service = configured
+    caplog.set_level(logging.INFO, logger='app.services.welding_service')
+    statistics = source.statistics
+    invalid_rows = 0
+
+    def stub(session, selected):
+        summary, _, _, _, association = statistics(session, selected)
+        return {**summary, 'job_count': 0, 'source_rows': invalid_rows, 'invalid_time_rows': invalid_rows}, [], [], [], association
+
+    monkeypatch.setattr(source, 'statistics', stub)
+    assert service.report('daily', query(), live=True)['summary']['job_count'] == 0
+    invalid_rows = 4
+    assert service.report('daily', query(), live=True)['summary']['job_count'] == 0
+    verified, invalid = [record for record in caplog.records if hasattr(record, 'operations_quality')]
+    assert verified.levelno == logging.INFO and verified.operations_quality['state'] == 'verified'
+    assert invalid.levelno == logging.ERROR and invalid.operations_quality['missing_count'] == 4
 
 
 @pytest.mark.parametrize(('legacy', 'part_state', 'expected'), [(0, None, 0), (3, None, 3), (4, 0, 0), (4, 3, 3), (None, None, None)])

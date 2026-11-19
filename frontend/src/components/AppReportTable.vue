@@ -9,7 +9,7 @@ const props = defineProps({
   items: { type: Array as PropType<T[]>, default: () => [] },
   total: { type: Number, default: 0 },
   page: { type: Number, default: 1 },
-  pageSize: { type: Number, default: 20 },
+  pageSize: { type: Number, default: 10 },
   loading: Boolean,
   autoFit: { type: Boolean, default: true },
   paginate: { type: Boolean, default: true },
@@ -19,9 +19,8 @@ const props = defineProps({
   summary: Boolean,
   flexHeight: Boolean,
   maxHeight: { type: Number as PropType<number | null>, default: 540 },
-  pageSizes: { type: Array as PropType<number[]>, default: () => [20, 50, 100] },
 })
-const emit = defineEmits<{ page: [page: number]; 'page-size': [size: number] }>()
+const emit = defineEmits<{ page: [page: number] }>()
 const slots = defineSlots<{
   [name: `c${number}`]: (props: { row: T; index: number }) => VNode[]
 } & {
@@ -115,7 +114,7 @@ const createSummary: DataTableCreateSummary<T> = () => [Object.fromEntries(colum
 <template>
   <div ref="root" role="group" class="app-report-table" :class="{ 'app-report-table--flex': flexHeight, 'app-report-table--auto-fit': autoFit }">
     <NDataTable table-layout="fixed" remote size="small" :columns="columns" :data="items" :row-key="rowKey" :row-class-name="rowClassName" :summary="summary ? createSummary : undefined" :loading="loading" :scroll-x="tableWidth" :max-height="flexHeight ? undefined : maxHeight ?? undefined" :flex-height="flexHeight" :single-line="false" :pagination="false" @unstable-column-resize="rememberColumnWidth"><template #empty><slot name="empty">暂无数据</slot></template></NDataTable>
-    <div v-if="paginate" class="app-report-pagination"><span>共 {{ total }} 条</span><NPagination :page="page" :page-size="pageSize" :item-count="total" :page-slot="5" :page-sizes="pageSizes" :show-size-picker="pageSizes.length > 0" :disabled="loading" @update:page="emit('page', $event)" @update:page-size="emit('page-size', $event)">
+    <div v-if="paginate" class="app-report-pagination"><span>共 {{ total }} 条</span><NPagination :page="page" :page-size="pageSize" :item-count="total" :page-slot="5" :disabled="loading" @update:page="emit('page', $event)">
       <template #prev><NButton class="pagination-control" text attr-type="button" aria-label="上一页" :disabled="loading || page <= 1">‹</NButton></template>
       <template #next><NButton class="pagination-control" text attr-type="button" aria-label="下一页" :disabled="loading || page >= Math.max(1, Math.ceil(total / pageSize))">›</NButton></template>
       <template #label="{ type, node, active }"><NButton class="pagination-control" text attr-type="button" :aria-label="type === 'page' ? `第 ${node} 页` : type === 'fast-forward' ? '向后翻页' : '向前翻页'" :aria-current="type === 'page' && active ? 'page' : undefined" :disabled="loading">{{ type === 'page' ? node : '…' }}</NButton></template>

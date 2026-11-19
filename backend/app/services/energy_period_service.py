@@ -12,10 +12,12 @@ import threading
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
+from app.core.operations_logging import data_quality
 from app.models.domain import to_primitive
-from app.services.energy_api import EnergyApiClient, EnergyApiError
+from app.services.energy_api import EnergyApiClient, EnergyApiError, read_energy_with_freshness
 from app.services.energy_service import (
     STATUS_TEXT, interval_consumption, local_time, make_series, sampling_policy, task_energy_note,
+    observe_task_energy,
 )
 from app.services.equipment_service import sort_equipment_records, summarize_equipment
 
@@ -237,6 +239,35 @@ class EnergyPeriodService:
             ttl = min(60, ttl)
         return not 0 <= age < ttl
 
+    def _observe_day(self, report_date, source_key, report, *, failure=None, padding=timedelta()):
+        if failure:
+            state, message = failure
+            level = (logging.WARNING if report and not self._snapshot_due(report_date, report, self.now())
+                     else logging.ERROR)
+            missing = estimated = None
+            data_as_of = report.get('updated_at') if report else None
+        else:
+            cutoff = (self.now() - padding).isoformat()
+            closed = [row for row in report['rows'] if row['end'] <= cutoff]
+            channels = [row[channel] for row in closed for channel in CHANNELS]
+            if not channels:
+                return
+            missing = sum(value['value'] is None for value in channels)
+            estimated = sum(value['status'] in ('estimated', 'interpolated') for value in channels)
+            data_as_of = max((row['end'] for row in closed if any(row[channel]['value'] is not None for channel in CHANNELS)),
+                             default=None)
+            if any(value['status'] == 'counter_reset' for value in channels):
+                state, message, level = 'counter_reset', '能耗累计读数回退，部分时段无法确认', logging.ERROR
+            elif missing:
+                state, message = 'missing_readings', '应有采样的能耗时段缺少有效读数'
+                level = logging.ERROR if missing == len(channels) else logging.WARNING
+            else:
+                state, message, level = 'verified', '受影响日已重新确认全部到期能耗时段', logging.INFO
+        day = report_date.isoformat()
+        data_quality(logger, 'ENERGY_DAY_DATA_QUALITY', message, scope=(day,), level=level, state=state,
+                     line_id=self.settings.device_id, source_id=f'energy:{source_key}', stage='energy_day',
+                     period_start=day, period_end=day, data_as_of=data_as_of, missing_count=missing, estimated_count=estimated)
+
     @staticmethod
     def _loses_known_values(cached, report):
         if not cached:
@@ -259,6 +290,9 @@ class EnergyPeriodService:
                 return to_primitive({**self.blank_day(report_date), **self.metadata(), "warning": "未来日期不查询。"})
             error = self.configuration_error()
             if error:
+                if self.settings.energy_connected and self.settings.energy_api_enabled:
+                    self._observe_day(report_date, source_key, cached,
+                                      failure=('configuration_invalid', '已启用的能耗查询配置未通过校验'))
                 return to_primitive(self._failed(report_date, cached, error))
             if cached and not force and not self._snapshot_due(report_date, cached, now):
                 return {**cached, **self.metadata(), "is_today": report_date == now.date(), "from_cache": True}
@@ -268,22 +302,29 @@ class EnergyPeriodService:
             padding = timedelta(seconds=max(self.settings.energy_report_max_gap_seconds,
                                             sampling_policy(self.settings).get("new_max_gap_seconds", 0)))
             try:
-                readings = self.client.fetch((self.gas_id, *self.electricity_ids), start - padding,
-                                             min(end + padding, now), force=force)
+                readings, fresh = read_energy_with_freshness(self.client, (self.gas_id, *self.electricity_ids),
+                                                             start - padding, min(end + padding, now), force=force)
                 report = self.calculate_day(report_date, readings)
             except EnergyApiError as exc:
+                message = '能耗平台取数失败，已保留原快照' if cached else '能耗平台取数失败，当前日数据不可用'
+                self._observe_day(report_date, source_key, cached, failure=('source_failed', message))
                 message = str(exc)
                 if outdated:
                     message += " 该日旧快照已保留，但尚未通过新采样规则校验，请重新同步。"
                 return to_primitive(self._failed(report_date, cached, message))
             # A transient empty/partial response must not silently erase known data.
             if self._loses_known_values(cached, report):
+                if fresh:
+                    self._observe_day(report_date, source_key, cached,
+                                      failure=('coverage_regressed', '能耗有效时段减少，已保留原快照'))
                 return to_primitive(self._failed(report_date, cached, "本次返回的有效时段减少，已保留原记录，请核对平台数据。"))
             report.update(updated_at=now.isoformat(timespec="seconds"), saved=True, sync_ok=True)
             report = to_primitive(report)
             if not self.repository.save_day(source_key, report, previous=cached):
                 latest = self.repository.get_day(source_key, report_date.isoformat())
                 return {**latest, **self.metadata(), "from_cache": True}
+            if fresh:
+                self._observe_day(report_date, source_key, report, padding=padding)
             return {**report, **self.metadata(), "from_cache": False}
 
     def calculate_day(self, report_date, readings):
@@ -349,7 +390,7 @@ class EnergyPeriodService:
         return self.get_task_range(report_date, report_date, records, force=force)
 
     def get_task_range(self, start_date: date, end_date: date, records, *, force=False):
-        report = self._calculate_task_report(start_date, records, force=force)
+        report = self._calculate_task_report(start_date, end_date, records, force=force)
         report["period_start"] = start_date.isoformat()
         report["period_end"] = end_date.isoformat()
         summary = report["summary"]
@@ -375,7 +416,7 @@ class EnergyPeriodService:
             )
         return report
 
-    def _calculate_task_report(self, report_date: date, records, *, force=False):
+    def _calculate_task_report(self, report_date: date, end_date: date, records, *, force=False):
         """Calculate task consumption only for the configured physical machine."""
         units = self.metadata()["units"]
         source_records = list(records)
@@ -435,14 +476,17 @@ class EnergyPeriodService:
         ids = (self.gas_id, *self.electricity_ids)
         series = {}
         if usable:
+            first = min(item[0] for item in usable.values())
+            last = max(item[1] for item in usable.values())
+            source_key = self.history_source_key
             padding = timedelta(seconds=max(self.settings.energy_report_max_gap_seconds,
                                             sampling_policy(self.settings).get("new_max_gap_seconds", 0)))
+            cutoff = self.now() - padding
             try:
-                readings = self.client.fetch(ids, min(item[0] for item in usable.values()) - padding,
-                                             max(item[1] for item in usable.values()) + padding,
-                                             force=force)
+                readings, fresh = read_energy_with_freshness(self.client, ids, first - padding, last + padding, force=force)
                 series = make_series(readings, ids, self.settings.timezone)
             except EnergyApiError as exc:
+                observe_task_energy(self.settings, source_key, usable, cutoff, report_date, end_date)
                 message = str(exc)
                 unavailable = [replace(row, gas_data_status="unavailable",
                                        electricity_data_status="unavailable", energy_note=message)
@@ -505,6 +549,8 @@ class EnergyPeriodService:
             row.electricity_consumption is not None for row in output
         )
         mode = "metered" if available == 2 * len(output) else "partial" if available else "unavailable"
+        if usable and fresh:
+            observe_task_energy(self.settings, source_key, usable, cutoff, report_date, end_date, records=output)
         warning = "存在时间重叠任务，相关行未计入汇总。" if conflicts else ""
         return result(output, mode, "", warning)
 
@@ -666,16 +712,17 @@ class EnergyPeriodService:
                     sampling_policy(self.settings).get("new_max_gap_seconds", 0),
                 )
             )
-            fetch = getattr(self.client, "fetch_month", self.client.fetch)
-            readings = fetch(
+            readings, fresh = read_energy_with_freshness(
+                self.client,
                 (self.gas_id, *self.electricity_ids),
                 start - padding,
                 min(end + padding, now),
-                force=force,
+                force=force, monthly=True,
             )
             updated_at = now.isoformat(timespec="seconds")
             saved_count = 0
             for stamp in missing:
+                source_key = self.day_source_key(stamp)
                 day_start = datetime.combine(stamp, time.min)
                 day_end = day_start + timedelta(days=1)
                 day_readings = []
@@ -689,15 +736,22 @@ class EnergyPeriodService:
                 # Do not turn a truncated/partial monthly response into a
                 # permanent empty snapshot. A later background pass must retry it.
                 if not day_readings:
+                    if fresh:
+                        self._observe_day(stamp, source_key, self.blank_day(stamp), padding=padding)
                     continue
                 report = self.calculate_day(stamp, day_readings)
                 if all(
                     report["summary"][channel]["value"] is None
                     for channel in CHANNELS
                 ):
+                    if fresh:
+                        self._observe_day(stamp, source_key, report, padding=padding)
                     continue
-                cached = self.repository.get_day(self.day_source_key(stamp), stamp.isoformat())
+                cached = self.repository.get_day(source_key, stamp.isoformat())
                 if self._loses_known_values(cached, report):
+                    if fresh:
+                        self._observe_day(stamp, source_key, cached,
+                                          failure=('coverage_regressed', '能耗有效时段减少，已保留原快照'))
                     continue
                 report.update(
                     updated_at=updated_at,
@@ -705,6 +759,8 @@ class EnergyPeriodService:
                     sync_ok=True,
                     is_today=stamp == today,
                 )
-                if self.repository.save_day(self.day_source_key(stamp), to_primitive(report), previous=cached):
+                if self.repository.save_day(source_key, to_primitive(report), previous=cached):
                     saved_count += 1
+                    if fresh:
+                        self._observe_day(stamp, source_key, report, padding=padding)
             return saved_count

@@ -7,11 +7,9 @@ from app.models.domain import WorkshopRecord
 from app.services.report_analysis.brief import add_candidates
 from app.services.report_analysis.common import (
     _change,
-    _change_label,
     _duration,
     _fact,
     _number,
-    _plain_language,
     _project_distribution,
     _table,
     _work_time_outliers,
@@ -83,30 +81,8 @@ def build_context(
     year_ago_count = len(year_ago_records) if year_ago_records is not None else None
     year_change = _change(len(records), year_ago_count) if year_ago_count is not None else None
     unconfirmed = len(records) - confirmed
-    primary_project = (
-        f"{_plain_language(projects[0]['project_name'])} · {projects[0]['task_count']} 项"
-        if projects
-        else "暂无工程数据"
-    )
-    project_note = f"{'工程信息缺口' if projects and projects[0]['project_name'] == '未标注工程' else '任务最多工程'}：{primary_project}"
     pending_share = f"{unconfirmed / len(records) * 100:.1f}%" if records else None
     pending_label = f"待确认 {unconfirmed} 项" + (f"，占全部任务 {pending_share}" if pending_share is not None else '')
-    trend_evidence = [pending_label]
-    if previous_count is not None:
-        trend_evidence.append(
-            f"当前 {len(records)} 项；{comparison_date or '上一可比周期'} "
-            f"{previous_count} 项；任务数环比 {_change_label(task_change)}；"
-            f"切割长度环比 {_change_label(cut_change)}"
-        )
-    else:
-        trend_evidence.append("未取得上一可比周期数据，环比无法比较")
-    if year_ago_count is not None:
-        trend_evidence.append(
-            f"{year_ago_date or '上年同期'} {year_ago_count} 项；"
-            f"任务数同比 {_change_label(year_change)}"
-        )
-    else:
-        trend_evidence.append("未取得上年同期数据，同比无法比较")
     anomaly_details = (
         "、".join(
             f"任务 {item['task_id']} 工时 {_duration(item['work_time'])}"
@@ -143,16 +119,15 @@ def build_context(
         ),
         _fact(
             "F005",
-            "待确认任务与数量变化",
-            f"{pending_label}；任务总数比上一周期{_change_label(task_change)}",
-            "；".join(trend_evidence),
+            "待确认任务",
+            pending_label,
+            f'已确认 {confirmed} 项；{pending_label}；未确认仅表示人员与工时归属未登记。',
         ),
         _fact(
             "F006",
-            "切割时间与工程",
-            f"{len(anomalies)} 项切割时间较长，{project_note}",
-            f"按切割时间分布筛出的较长任务共 {len(anomalies)} 项，最多展示 5 项："
-            f"{anomaly_details}；{project_note}",
+            "切割时间较长的任务",
+            f"{len(anomalies)} 项切割时间较长",
+            f"按切割时间分布筛出的较长任务共 {len(anomalies)} 项，最多展示 5 项：{anomaly_details}",
         ),
     ]
     context = {

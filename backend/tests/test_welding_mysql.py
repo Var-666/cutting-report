@@ -4,7 +4,8 @@ from tests.postgres_fixtures import state_settings
 Run with WELD_TEST_MYSQL_PORT=<local-test-port> pytest backend/tests/test_welding_mysql.py.
 """
 import os
-from datetime import date
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -129,6 +130,38 @@ def test_real_mysql_export_closes_at_17_and_counts_parts_per_window(weld_mysql, 
     assert media.startswith('text/html')
     html = content.decode('utf-8')
     assert '日、周、月同期对比' in html and '2026-10-01 17:00' in html
+
+
+def test_real_mysql_week_and_month_start_at_midnight(weld_mysql):
+    import mysql.connector
+
+    stamps = ['2026-10-31 23:59:59', '2026-11-01 00:00:00', '2026-11-15 23:59:59',
+              '2026-11-16 00:00:00', '2026-11-17 17:00:00', '2026-11-18 16:59:59', '2026-11-18 17:00:00']
+    root = mysql.connector.connect(host='127.0.0.1', port=int(os.environ['WELD_TEST_MYSQL_PORT']), user='root',
+                                   password='weld-local-test-only', database='codex_welding_test')
+    cursor = root.cursor()
+    try:
+        cursor.executemany('''INSERT INTO weld_info_table
+            (id,serial_number,device_no,weld_type,weld_lenght,used_time,end_time)
+            VALUES (%s,%s,0,1,1000,3600,%s)''', [(200 + i, f'boundary-{i}', stamp) for i, stamp in enumerate(stamps)])
+        cursor.executemany('INSERT INTO weld_part_info_table (id,serial_number,device_no) VALUES (%s,%s,0)',
+                           [(200 + i, f'boundary-{i}') for i in range(len(stamps))])
+        root.commit()
+        selected = WeldingQuery(start=date(2026, 11, 18), end=date(2026, 11, 18), device_no=0)
+        now = datetime(2026, 11, 18, 18, tzinfo=ZoneInfo('Asia/Shanghai'))
+        with weld_mysql.repository.client.snapshot() as session:
+            for kind in ['daily', 'jobs', 'equipment', 'parts']:
+                columns = weld_mysql._closing_comparison(session, kind, selected, now)
+                metric = 'part_row_count' if kind == 'parts' else 'job_count'
+                assert [column['totals'][metric] for column in columns] == [2, 3, 5]
+                assert columns[1]['start'].isoformat() == '2026-11-16T00:00:00+08:00'
+                assert columns[2]['start'].isoformat() == '2026-11-01T00:00:00+08:00'
+    finally:
+        cursor.execute('DELETE FROM weld_info_table WHERE id >= 200')
+        cursor.execute('DELETE FROM weld_part_info_table WHERE id >= 200')
+        root.commit()
+        cursor.close()
+        root.close()
 
 
 def test_real_mysql_filters_page_state_and_association(weld_mysql):

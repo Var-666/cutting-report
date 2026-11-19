@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { observeBrowserErrors, reportApiFailure } from '../src/api/browserObservations.ts'
+import { operations } from '../src/api/operations.ts'
 import { incidentLogQuery } from '../src/components/operations/presentation.ts'
 
 test('browser observations upload allowlisted summaries once and do not retry', async t => {
@@ -45,6 +46,30 @@ test('incident log links keep the business identity and include the verified rec
   assert.equal(mail.report_id, undefined)
   const task = incidentLogQuery({ ...event, context: { related_kind: 'background', task_id: 'task-a' } })
   assert.equal(task.task_id, 'task-a')
+  const quality = incidentLogQuery({ ...event, error_code: 'ANALYSIS_DATA_QUALITY', resource_id: 'scope-id',
+    context: { analysis_id: 'old-analysis', request_id: 'old-request' } })
+  assert.equal(quality.resource_id, 'scope-id')
+  assert.equal(quality.error_code, 'ANALYSIS_DATA_QUALITY')
+  assert.equal(quality.role, undefined)
+  assert.equal(quality.analysis_id, undefined)
   const historical = incidentLogQuery({ ...event, first_seen_at: '2026-01-01T10:00:00Z' })
   assert.equal(Date.parse(historical.end) - Date.parse(historical.start), 90 * 86400_000)
+})
+
+test('log export sends the selected filters and preserves the download coverage warning', async t => {
+  const content = '{"report_id":"report-a","message":"查询异常"}\n'
+  const signal = new AbortController().signal
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    const request = new URL(url, 'https://test.invalid')
+    assert.equal(request.pathname, '/api/v1/operations/logs/export')
+    assert.deepEqual(Object.fromEntries(request.searchParams), { report_id: 'report-a', level: 'ERROR', keyword: '查询异常' })
+    assert.equal(options.credentials, 'same-origin')
+    assert.equal(options.signal, signal)
+    return new Response(content, { headers: {
+      'Content-Type': 'application/x-ndjson', 'X-Log-Coverage-Warnings': 'record_limit',
+    } })
+  })
+  const result = await operations.exportLogs({ report_id: 'report-a', level: 'ERROR', keyword: '查询异常' }, signal)
+  assert.equal(await result.blob.text(), content)
+  assert.equal(result.headers.get('X-Log-Coverage-Warnings'), 'record_limit')
 })

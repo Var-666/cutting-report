@@ -11,6 +11,7 @@ export function useAutomationDeliveries({ message, error, refresh, isDisposed, c
   isDisposed: () => boolean
   confirm: (message: string) => Promise<boolean>
 }) {
+  const pageSize = 10
   const deliveries = ref<EmailDelivery[]>([])
   const deliveryPage = ref(1)
   const deliveryTotal = ref(0)
@@ -21,7 +22,7 @@ export function useAutomationDeliveries({ message, error, refresh, isDisposed, c
   let deliverySequence = 0
   const selectedDelivery = ref<EmailDelivery | null>(null)
   const resolutionDirty = ref(false)
-  const pageCount = computed(() => Math.max(1, Math.ceil(deliveryTotal.value / 20)))
+  const pageCount = computed(() => Math.max(1, Math.ceil(deliveryTotal.value / pageSize)))
 
   async function loadDeliveries(page = deliveryPage.value, search = appliedDeliverySearch.value) {
     if (isDisposed() || !Number.isSafeInteger(page)) return
@@ -35,10 +36,10 @@ export function useAutomationDeliveries({ message, error, refresh, isDisposed, c
     const current = () => !isDisposed() && !controller.signal.aborted && sequence === deliverySequence
     const query = search.trim()
     try {
-      let data = await listEmailDeliveries({ page: target, pageSize: 20, search: query }, { signal: controller.signal })
-      while (current() && target > Math.max(1, Math.ceil(data.total / 20))) {
-        target = Math.max(1, Math.ceil(data.total / 20))
-        data = await listEmailDeliveries({ page: target, pageSize: 20, search: query }, { signal: controller.signal })
+      let data = await listEmailDeliveries({ page: target, pageSize, search: query }, { signal: controller.signal })
+      while (current() && target > Math.max(1, Math.ceil(data.total / pageSize))) {
+        target = Math.max(1, Math.ceil(data.total / pageSize))
+        data = await listEmailDeliveries({ page: target, pageSize, search: query }, { signal: controller.signal })
       }
       if (!current()) return
       deliveries.value = data.items

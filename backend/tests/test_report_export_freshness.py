@@ -44,8 +44,8 @@ def test_leadership_export_refreshes_both_period_and_month_trend(tmp_path, monke
         datetime(2026, 11, 16, 8), production_date=DAY)
     monkeypatch.setattr(query, '_sqlserver_summary_data', lambda filters: QueryBundle(
         [replace(summary, task_id=f'task-{i}') for i in range(current_count)], [], []))
-    monkeypatch.setattr(query.repository, 'cutting_closing_days', lambda start, end: [{
-        'business_date': DAY, 'task_count': current_count, 'cut_length_m': current_count * 10,
+    monkeypatch.setattr(query.repository, 'cutting_closing_totals', lambda start, end: [{
+        'bucket_start': datetime.combine(DAY, datetime.min.time()), 'task_count': current_count, 'cut_length_m': current_count * 10,
         'groove_length_m': current_count, 'work_time_seconds': current_count * 60,
     }])
     def monthly(month):
@@ -78,8 +78,8 @@ def test_equipment_export_refreshes_task_rows_and_month_counts(tmp_path, monkeyp
         None, None, production_time=datetime(2026, 11, 16, 8), production_date=DAY)
     monkeypatch.setattr(query, '_sqlserver_equipment_data', lambda filters: EquipmentQueryResult(
         [replace(record, task_id=f'task-{i}') for i in range(current_count)], datetime(2026, 11, 16, 10)))
-    monkeypatch.setattr(query.repository, 'cutting_closing_days', lambda start, end: [{
-        'business_date': DAY, 'task_count': current_count, 'cut_length_m': current_count * 10,
+    monkeypatch.setattr(query.repository, 'cutting_closing_totals', lambda start, end: [{
+        'bucket_start': datetime.combine(DAY, datetime.min.time()), 'task_count': current_count, 'cut_length_m': current_count * 10,
         'groove_length_m': 0, 'work_time_seconds': current_count * 60,
     }])
     metric_calls = []

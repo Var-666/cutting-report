@@ -32,7 +32,7 @@ export function useCuttingFileBrowser({ pageActive, systemStatus, isDispatching,
   const loading = ref(false)
   const page = ref(1)
   const requestedPage = ref(1)
-  const pageSize = 20
+  const pageSize = 10
   const total = ref(0)
   const projectOptions = ref<CuttingProject[]>([])
   const projectSearch = ref('')

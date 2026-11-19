@@ -1,4 +1,5 @@
 """Global operations routes and authenticated, bounded browser observations."""
+from datetime import UTC
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response
@@ -10,7 +11,7 @@ from app.api.runtime import application_state
 from app.api.workloads import RequestWorkload
 from app.models.contracts import ApiEnvelope, Page
 from app.models.operations import (
-    AcknowledgeIncident, BrowserIssue, Incident, IncidentFilters, LogFilters, LogPage,
+    AcknowledgeIncident, BrowserIssue, Incident, IncidentFilters, LogFilters, LogPage, LogSelection,
     OperationsOverview, OperationsStatus, RelatedKind, RelatedOperation, ReportedIssue,
 )
 
@@ -18,6 +19,7 @@ router = APIRouter(prefix='/api/v1/operations', tags=['operations'])
 reads = RequestWorkload(2, '运维查询')
 Identifier = Annotated[str, Path(pattern=r'^[0-9a-f]{32}$')]
 Admin = Annotated[dict, Depends(require_admin)]
+NDJSON = 'application/x-ndjson'
 
 
 def envelope(request, data):
@@ -72,6 +74,20 @@ async def acknowledge(request: Request, admin: Admin, incident_id: Identifier, p
 @router.get('/logs', response_model=ApiEnvelope[LogPage])
 async def logs(request: Request, admin: Admin, filters: Annotated[LogFilters, Query()]):
     return await read(request, application_state(request).operations.logs.query, filters)
+
+
+@router.get('/logs/export', response_class=Response, responses={200: {
+    'content': {NDJSON: {'schema': {'type': 'string', 'format': 'binary'}}},
+    'headers': {'X-Log-Coverage-Warnings': {'schema': {'type': 'string'}}},
+}})
+async def export_logs(request: Request, admin: Admin, filters: Annotated[LogSelection, Query()]):
+    content, warnings = await reads.run_sync(application_state(request).operations.logs.export, filters, _request=request)
+    stamp = filters.end.astimezone(UTC).strftime('%Y%m%dT%H%M%SZ')
+    return Response(content, media_type=NDJSON, headers={
+        'Content-Disposition': f'attachment; filename="operations-logs-{stamp}.jsonl"',
+        'Cache-Control': 'no-store',
+        'X-Log-Coverage-Warnings': ','.join(warnings),
+    })
 
 
 @router.post('/browser', response_model=ApiEnvelope[ReportedIssue])

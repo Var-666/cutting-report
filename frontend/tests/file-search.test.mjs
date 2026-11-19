@@ -468,6 +468,23 @@ function fileSelection(files = [], { total = files.length, listFiles } = {}) {
 const selectableFile = (id, documentNo = 'S806C080A001.gen') => ({ document_id: String(id), version_id: 'v1', normalized_path: `files/${id}.gen`, document_no: documentNo, path_available: true })
 const checkboxEvent = checked => checked
 
+test('directory file results fetch ten rows per page with the applied filter', async () => {
+  const files = Array.from({ length: 23 }, (_, index) => selectableFile(index))
+  const calls = []
+  const selection = fileSelection([], { listFiles: async ({ page, pageSize, keyword }) => {
+    calls.push([page, pageSize, keyword])
+    return { items: files.slice((page - 1) * pageSize, page * pageSize), total: files.length }
+  } })
+  selection.fileKeyword.value = '装配'
+  await selection.applyFileSearch()
+  assert.equal(selection.rows.value.length, 10)
+  await selection.changePage(2)
+  assert.equal(selection.rows.value[0].document_id, '10')
+  await selection.changePage(3)
+  assert.equal(selection.rows.value.length, 3)
+  assert.deepEqual(calls, [[1, 10, '装配'], [2, 10, '装配'], [3, 10, '装配']])
+})
+
 test('select-all includes nonstandard names and skips unavailable paths; clearing affects the loaded directory scope', async () => {
   const files = [selectableFile(1), selectableFile(2, 'custom-cutting.gen'), { ...selectableFile(3), path_available: false }]
   const selection = fileSelection(files)

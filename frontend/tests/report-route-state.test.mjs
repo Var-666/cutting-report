@@ -70,7 +70,8 @@ test('report views restore only applied state and keep worker task routing uncha
 
   assert.match(center, /const routeQueryKeys = \['page', 'page_size'\]/)
   assert.match(center, /loadHistory\(target, false, \{ syncRoute: true \}\)/)
-  assert.match(center, /pageSize: Number\(queryChoice\(route\.query\.page_size/)
+  assert.match(center, /const pageSize = 10/)
+  assert.doesNotMatch(center, /route\.query\.page_size/)
 })
 
 test('standard reports distinguish edited dates from the last successfully applied range', () => {

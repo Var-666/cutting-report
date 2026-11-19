@@ -87,6 +87,7 @@ const findingStyles: Record<string, { label: string; icon: string; tone: string 
   C_project_missing: { label: '工程信息缺口', icon: 'alert', tone: 'warning' },
   C_confirmation: { label: '确认状态', icon: 'tasks', tone: 'warning' },
   C_energy_quality: { label: '能耗记录', icon: 'zap', tone: 'warning' },
+  C_task_quality: { label: '任务数据核查', icon: 'alert', tone: 'warning' },
 }
 const findings = computed(() => props.brief.findings.map(finding => {
   const appearance = findingStyles[finding.candidate_id]
@@ -242,7 +243,7 @@ function openTask(reference: BusinessReference) {
           <p v-if="selectedProject.totals !== '—'" class="brief-card-copy">任务数 {{ selectedProject.count }} · {{ selectedProject.totals }}</p>
         </div>
         <AppReportTable v-else :columns="referenceColumns" :items="visibleReferences" :total="selected.references.length" :page="referencePage"
-          :page-sizes="[]" @page="referencePage = $event" :row-key="row => `${row.kind}:${row.id}`" :page-size="10">
+          @page="referencePage = $event" :row-key="row => `${row.kind}:${row.id}`" :page-size="10">
           <template #c6="{ row }"><NButton v-if="canOpen(row)" text type="primary" @click="openTask(row)">查看当前任务</NButton><span v-else>—</span></template>
         </AppReportTable>
       </template>

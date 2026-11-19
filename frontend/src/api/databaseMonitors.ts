@@ -20,5 +20,5 @@ export function deleteDatabaseMonitor(id: string) {
 }
 
 export function listDatabaseMonitorIncidents(page = 1, { signal }: ReadOptions = {}) {
-  return request<PageDatabaseMonitorIncident>(`/api/v1/database-monitors/incidents/page?page=${page}&page_size=15`, { signal })
+  return request<PageDatabaseMonitorIncident>(`/api/v1/database-monitors/incidents/page?page=${page}&page_size=10`, { signal })
 }

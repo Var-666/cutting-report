@@ -82,6 +82,48 @@ def test_log_instance_filter_applies_before_scan_budget(tmp_path, monkeypatch):
     assert [item['message'] for item in result['items']] == ['第一实例异常']
 
 
+def test_data_quality_tracks_one_incident_across_roles_and_requires_matching_recovery(postgres_state, tmp_path):
+    database, _, _ = postgres_state
+    repo = OperationsRepository(database)
+    logger = logging.getLogger('app.test_operations')
+    code = 'ENERGY_DAY_DATA_QUALITY'
+
+    def observation(role, day, level, state):
+        with configured_logging(tmp_path, role, 'instance-' + role) as logs:
+            operations_logging.data_quality(logger, code, '测试数据状态', scope=(day,), state=state,
+                                            level=level, line_id='cut-a', source_id='energy:test', stage='energy_day',
+                                            period_start=day, period_end=day, missing_count=10 if level >= logging.WARNING else 0)
+            return logs.incidents.get_nowait()
+
+    day = '2026-08-18'
+    first = observation('web', day, logging.WARNING, 'source_failed')
+    repo.record([first])
+    original, = repo.list(IncidentFilters(error_code=code))['items']
+    assert original['level'] == 'WARNING' and original['context']['missing_count'] == '10'
+    repo.record([observation('worker', day, logging.ERROR, 'missing_readings'),
+                 observation('worker', day, logging.ERROR, 'missing_readings')])
+    repo.record([observation('worker', '2026-08-19', logging.INFO, 'verified')])
+    incident, = repo.list(IncidentFilters(error_code=code))['items']
+    assert incident['incident_id'] == original['incident_id'] and incident['occurrences'] == 1
+    assert (incident['role'], incident['instance_id'], incident['level'], incident['status']) == ('worker', 'instance-worker', 'ERROR', 'open')
+    assert incident['last_seen_at'] > original['last_seen_at']
+
+    success = observation('worker', day, logging.INFO, 'verified')
+    repo.record([success])
+    repo.record([first])
+    assert repo.get(original['incident_id'])['status'] == 'recovered'
+    repo.record([observation('web', day, logging.ERROR, 'counter_reset')])
+    again, = repo.list(IncidentFilters(error_code=code, status='open'))['items']
+    assert again['incident_id'] != original['incident_id']
+    logs = OperationsLogQuery(tmp_path, 14)
+    selection = LogFilters(start=datetime.fromisoformat(first['timestamp']), error_code=code, resource_id=again['resource_id'])
+    rows = logs.query(selection)['items']
+    assert {row['data_quality']['state'] for row in rows} == {'source_failed', 'missing_readings', 'verified', 'counter_reset'}
+    exported, warnings = logs.export(selection)
+    assert not warnings
+    assert [json.loads(line)['data_quality'] for line in exported.splitlines()] == [row['data_quality'] for row in rows]
+
+
 def test_historical_log_window_prioritizes_nearby_segments_at_scan_limit(tmp_path, monkeypatch):
     from app.services import operations_log_query
 
@@ -204,6 +246,86 @@ def test_log_query_keeps_failure_and_recovery_for_the_same_resource(tmp_path):
         ]
         response = client.get('/api/v1/operations/logs', params={'resource_id': 'fault-a', 'source_id': 'target-b'})
         assert response.status_code == 200 and not response.json()['data']['items']
+
+
+def test_incident_pagination_preserves_three_thousand_record_range_at_ten_rows():
+    requests = []
+
+    def list_incidents(filters):
+        requests.append((filters.page, filters.page_size))
+        return dict(items=[], page=filters.page, page_size=filters.page_size, total=2993)
+
+    web = FastAPI()
+    web.state.runtime = SimpleNamespace(operations=SimpleNamespace(repository=SimpleNamespace(list=list_incidents)))
+    web.dependency_overrides[require_user] = lambda: {'role': 'admin', 'user_id': 'admin'}
+    web.include_router(router)
+
+    @web.middleware('http')
+    async def context(request: Request, call_next):
+        request.state.request_id = 'test'
+        return await call_next(request)
+
+    with TestClient(web) as client:
+        endpoint = '/api/v1/operations/incidents'
+        assert client.get(endpoint, params={'page': 300, 'page_size': 10}).json()['data']['page'] == 300
+        assert client.get(endpoint, params={'page': 301, 'page_size': 10}).status_code == 422
+        assert client.get(endpoint, params={'page': 101, 'page_size': 30}).status_code == 422
+        assert requests == [(300, 10)]
+
+
+def test_admin_exports_filtered_logs_across_pages(tmp_path, monkeypatch):
+    from app.services import operations_log_query
+
+    logger = logging.getLogger('app.test_operations')
+    with configured_logging(tmp_path, 'worker', 'consumer-a'):
+        for index in range(3):
+            try:
+                raise RuntimeError('private-connection-password')
+            except RuntimeError:
+                event(logger, logging.ERROR, f'测试报表 {index}', report_id='report-a',
+                      error_code='REPORT_TEST', exc_info=True)
+        event(logger, logging.ERROR, '其他报表', report_id='report-b', error_code='REPORT_TEST')
+    segment, = operations_logging.log_paths(tmp_path / 'operations')
+    rows = [json.loads(raw) for raw in segment.read_text().splitlines()]
+    for row in rows:
+        row['unsupported_field'] = 'private-extra-field'
+    segment.write_text(''.join(json.dumps(row) + '\n' for row in rows))
+
+    web = FastAPI()
+    web.state.runtime = SimpleNamespace(operations=SimpleNamespace(logs=OperationsLogQuery(tmp_path, 14)))
+    web.include_router(router)
+
+    @web.middleware('http')
+    async def context(request: Request, call_next):
+        request.state.request_id = 'test'
+        return await call_next(request)
+
+    query = dict(role='worker', instance_id='consumer-a', report_id='report-a', keyword='测试')
+    endpoint = '/api/v1/operations/logs/export'
+    with TestClient(web) as client:
+        web.dependency_overrides[require_user] = lambda: {'role': 'worker', 'user_id': 'worker'}
+        assert client.get(endpoint, params=query).status_code == 403
+        web.dependency_overrides[require_user] = lambda: {'role': 'admin', 'user_id': 'admin'}
+        page = client.get('/api/v1/operations/logs', params={**query, 'limit': 1}).json()['data']
+        assert page['next_cursor']
+
+        response = client.get(endpoint, params=query)
+        assert response.status_code == 200
+        assert response.headers['Content-Type'] == 'application/x-ndjson'
+        assert response.headers['Content-Disposition'].endswith('.jsonl"')
+        assert response.headers['Cache-Control'] == 'no-store'
+        assert 'private-' not in response.text
+        exported = [json.loads(raw) for raw in response.text.splitlines()]
+        assert [row['message'] for row in exported] == ['测试报表 2', '测试报表 1', '测试报表 0']
+        assert exported[0]['id'] == page['items'][0]['id']
+        assert all(row['exception']['type'] == 'RuntimeError' and row['exception']['frames'] for row in exported)
+
+        monkeypatch.setattr(operations_log_query, 'MAX_EXPORT_RECORDS', 2)
+        limited = client.get(endpoint, params=query)
+        assert limited.text.splitlines() == response.text.splitlines()[:2]
+        assert 'record_limit' in limited.headers['X-Log-Coverage-Warnings'].split(',')
+        assert client.get(endpoint, params={**query, 'report_id': 'missing'}).content == b''
+        assert client.get(endpoint, params={**query, 'keyword': '测'}).status_code == 422
 
 
 def test_web_repeated_transient_failures_become_incidents(tmp_path, monkeypatch):
@@ -583,6 +705,72 @@ def test_consumer_shortfall_and_lease_recovery_use_distinct_instance_evidence(po
         assert repo.get(lease['incident_id'])['status'] == 'open'
         sample()
         assert repo.get(lease['incident_id'])['status'] == 'recovered'
+    finally:
+        runtime.database_runtime.close()
+        runtime.database.close()
+
+
+def test_consumer_health_sampling_ignores_historical_leases(postgres_state, monkeypatch):
+    from app.services import operations_service, worker_status
+
+    database, cfg, _ = postgres_state
+    runtime = build_runtime(cfg, role='web')
+    clock = datetime.now(UTC)
+
+    class TestClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return clock
+
+    monkeypatch.setattr(operations_service, 'datetime', TestClock)
+    monkeypatch.setattr(worker_status, 'monotonic', lambda: clock.timestamp())
+    service = runtime.operations
+    repo = service.repository
+
+    def sample():
+        nonlocal clock
+        service.discover()
+        clock += timedelta(seconds=30)
+
+    def health_incidents():
+        rows = repo.list(IncidentFilters(error_code='PROCESS_UNHEALTHY', end=clock))['items']
+        return {row['instance_id']: row for row in rows if row['role'] == 'worker'}
+
+    try:
+        for instance in ('historical', 'existing-incident', 'recent', 'stopped', 'healthy'):
+            lease = f'worker:{instance}'
+            owner = runtime.coordination.acquire(lease, ttl=30)
+            assert runtime.coordination.renew(lease, owner, ttl=30, status={'report_alive': True})
+            if instance == 'stopped':
+                runtime.coordination.release(lease, owner)
+        with database.connect() as connection:
+            connection.execute("""UPDATE process_leases SET expires_at=EXTRACT(EPOCH FROM clock_timestamp())-1
+                WHERE name IN ('worker:historical','worker:existing-incident','worker:recent')""")
+            connection.execute("""UPDATE process_leases SET heartbeat_at=heartbeat_at-3600,expires_at=expires_at-3600
+                WHERE name IN ('worker:historical','worker:existing-incident')""")
+        repo.record([dict(timestamp=clock, error_code='PROCESS_UNHEALTHY', component='health', role='worker',
+                          instance_id='existing-incident', resource_id='existing-incident', level='ERROR', message='失联')])
+
+        sample()
+        sample()
+        incidents = health_incidents()
+        assert set(incidents) == {'existing-incident', 'recent'}
+        assert incidents['existing-incident']['occurrences'] == 1
+        assert incidents['existing-incident']['status'] == incidents['recent']['status'] == 'open'
+        assert not repo.list(IncidentFilters(error_code='CONSUMER_CAPACITY', end=clock))['total']
+
+        with database.connect() as connection:
+            connection.execute("""UPDATE process_leases SET heartbeat_at=heartbeat_at-3600,expires_at=expires_at-3600
+                WHERE name='worker:recent'""")
+        sample()
+        assert health_incidents()['recent']['occurrences'] == 1
+
+        owner = runtime.coordination.acquire('worker:recent', ttl=30)
+        assert runtime.coordination.renew('worker:recent', owner, ttl=30, status={'report_alive': True})
+        sample()
+        assert health_incidents()['recent']['status'] == 'open'
+        sample()
+        assert health_incidents()['recent']['status'] == 'recovered'
     finally:
         runtime.database_runtime.close()
         runtime.database.close()

@@ -76,7 +76,7 @@ class ReportPipeline:
         self.leadership_service = LeadershipReportService(settings, client=self.query_service.client)
         self.statistics_service = StatisticsService()
         self.chart_service = ChartService(settings.chart_top_n)
-        self.analysis_service = ReportAnalysisService(settings, metadata)
+        self.analysis_service = ReportAnalysisService(settings, metadata, query_service=self.query_service)
         self.report_service = ReportService(settings)
         self.custom_report_service = CustomReportService(settings, client=self.query_service.client)
         if workshop_repository is None:

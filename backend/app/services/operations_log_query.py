@@ -6,10 +6,11 @@ import os
 import stat
 
 from app.core.operations_logging import MAX_FILE_BYTES, MAX_INSTANCES, log_instance_suffix, log_paths, log_root
-from app.models.operations import LogRecord
+from app.models.operations import LogFilters, LogRecord, LogSelection
 
 MAX_SCAN_BYTES = 64 * 1024 * 1024
 MAX_LINE_BYTES = 8192
+MAX_EXPORT_RECORDS = 2000
 
 
 class OperationsLogQuery:
@@ -17,7 +18,17 @@ class OperationsLogQuery:
         self.root = log_root(logs_dir)
         self.retention_days = retention_days
 
-    def query(self, filters, *, totals=False):
+    def export(self, selection: LogSelection) -> tuple[str, list[str]]:
+        result = self.query(LogFilters(**selection.model_dump()), row_limit=MAX_EXPORT_RECORDS)
+        warnings = result['coverage_warnings']
+        if result['next_cursor']:
+            warnings.append('record_limit')
+        content = ''.join(LogRecord.model_validate(row).model_dump_json(exclude_none=True) + '\n'
+                          for row in result['items'])
+        return content, warnings
+
+    def query(self, filters: LogFilters, *, totals=False, row_limit: int | None = None):
+        limit = filters.limit if row_limit is None else row_limit
         cutoff = datetime.now(UTC) - timedelta(days=self.retention_days)
         issues = set()
         if filters.start < cutoff:
@@ -96,7 +107,7 @@ class OperationsLogQuery:
                         warnings += item.level == 'WARNING'
                         continue
                     entry = (*key, raw)
-                    if len(results) < filters.limit + 1:
+                    if len(results) < limit + 1:
                         heapq.heappush(results, entry)
                     else:
                         heapq.heappushpop(results, entry)
@@ -112,7 +123,7 @@ class OperationsLogQuery:
             if earliest is None:
                 return None
             return dict(errors=errors, warnings=warnings, complete=not issues)
-        rows = [json.loads(raw) for _, _, raw in sorted(results, reverse=True)[:filters.limit]]
-        cursor = f'{rows[-1]["timestamp"]}/{rows[-1]["id"]}' if len(results) > filters.limit else None
+        rows = [json.loads(raw) for _, _, raw in sorted(results, reverse=True)[:limit]]
+        cursor = f'{rows[-1]["timestamp"]}/{rows[-1]["id"]}' if len(results) > limit else None
         return dict(items=rows, next_cursor=cursor, coverage_warnings=sorted(issues),
                     earliest_scanned_at=earliest, latest_scanned_at=latest)

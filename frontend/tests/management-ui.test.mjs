@@ -20,14 +20,14 @@ function automationHooks(bindings) {
 }
 
 const flushAutomation = async () => { await new Promise(resolve => setImmediate(resolve)); await Vue.nextTick() }
-async function mountAutomation(t, { confirm = async () => true, run, readRun } = {}) {
+async function mountAutomation(t, { confirm = async () => true, run, readRun, save } = {}) {
   const calls = { status: 0, schedules: 0, emails: [], actions: [], runReads: [], savedSchedules: [] }
   const timers = new Map()
   const activated = []
   const deactivated = []
   let timerId = 0
   let held = false
-  const result = (page, total = 60) => ({ items: total ? [{ delivery_id: `page-${page}` }] : [], total, page, page_size: 20 })
+  const result = (page, total = 60) => ({ items: total ? [{ delivery_id: `page-${page}` }] : [], total, page, page_size: 10 })
   const bindings = {
     ...Vue, useConfirm: () => confirm, useUnsavedChanges() {}, deviceSelection: Vue.reactive({ id: 'Cutter02', items: [{ id: 'Cutter02' }] }),
     setTimeout: callback => { timers.set(++timerId, callback); return timerId }, clearTimeout: id => timers.delete(id),
@@ -40,7 +40,7 @@ async function mountAutomation(t, { confirm = async () => true, run, readRun } =
       if (!held) { calls.emails.push({ ...query, signal: options.signal }); return Promise.resolve(result(query.page)) }
       return new Promise((resolve, reject) => calls.emails.push({ ...query, signal: options.signal, resolve: (total = 60) => resolve(result(query.page, total)), reject }))
     },
-    saveAutomationSchedule: async (body, id) => { calls.actions.push('save'); calls.savedSchedules.push({ body, id }) }, retryEmailDelivery: async () => calls.actions.push('retry'),
+    saveAutomationSchedule: async (body, id) => { calls.actions.push('save'); calls.savedSchedules.push({ body, id }); await save?.() }, retryEmailDelivery: async () => calls.actions.push('retry'),
     deleteAutomationSchedule: async () => calls.actions.push('delete'),
     runAutomationSchedule: async id => { calls.actions.push('run'); return run ? run(id) : { schedule_id: id, run_id: `run-${id}`, status: 'queued' } },
     getAutomationRun: async (id, options) => { calls.runReads.push({ id, signal: options.signal }); return readRun ? readRun(id, options) : { run_id: id, status: 'sent' } },
@@ -48,7 +48,7 @@ async function mountAutomation(t, { confirm = async () => true, run, readRun } =
   }
   Object.assign(bindings, automationHooks(bindings))
   const code = descriptor('AutomationView').scriptSetup.content.replace(/^import .*$/gm, '')
-  const setup = scriptFunction(...Object.keys(bindings), `${code}; return { loadDeliveries, changeDeliveryPage, deliveryPage, deliveries, deliveryTotal, deliveryLoading, deliverySearch, appliedDeliverySearch, searchDeliveries, clearDeliverySearch, scheduleSearch, appliedScheduleSearch, visibleSchedules, searchSchedules, clearScheduleSearch, pageCount, error, loadAll, retry, submit, submitConfiguration, remove, runNow, executions, runningScheduleIds, deliveryResolved, openDelivery, selectedDelivery, resolutionDirty, form, deliveryLabels, editSchedule, resetForm, hasUnsavedChanges, recipientInputVisible, recipientDraft, recipientError, addRecipient, removeRecipient, cancelRecipientInput }`)
+  const setup = scriptFunction(...Object.keys(bindings), `${code}; return { loadDeliveries, changeDeliveryPage, deliveryPage, deliveries, deliveryTotal, deliveryLoading, deliverySearch, appliedDeliverySearch, searchDeliveries, clearDeliverySearch, scheduleSearch, appliedScheduleSearch, visibleSchedules, searchSchedules, clearScheduleSearch, pageCount, error, loadAll, retry, submit, submitConfiguration, remove, runNow, executions, runningScheduleIds, deliveryResolved, openDelivery, selectedDelivery, resolutionDirty, form, deliveryLabels, openScheduleEditor, resetForm, hasUnsavedChanges, configurationDirty, activePanel, scheduleError, recipientInputVisible, recipientDraft, recipientError, addRecipient, removeRecipient, cancelRecipientInput }`)
   let state
   const renderer = Vue.createRenderer({ createComment: () => ({}), createText: () => ({}), createElement: () => ({}), insert() {}, remove() {}, setText() {}, setElementText() {}, parentNode: () => null, nextSibling: () => null, patchProp() {} })
   const app = renderer.createApp({ setup() { state = setup(...Object.values(bindings)); return () => null } })
@@ -268,7 +268,7 @@ test('editing and resetting recipients clear drafts and do not mutate saved sche
   const { state } = await mountAutomation(t)
   const saved = { schedule_id: 'saved', recipients: ['one@example.com', 'two@example.com'] }
   state.recipientDraft.value = 'unfinished'
-  state.editSchedule(saved)
+  await state.openScheduleEditor(saved)
   assert.deepEqual(state.form.recipients, saved.recipients)
   assert.equal(state.recipientDraft.value, '')
   state.removeRecipient('one@example.com')
@@ -280,6 +280,28 @@ test('editing and resetting recipients clear drafts and do not mutate saved sche
   state.resetForm()
   assert.deepEqual(state.form.recipients, [])
   assert.equal(state.recipientError.value, '')
+})
+
+test('schedule drawer keeps its draft on failure and closes after save without clearing configuration edits', async t => {
+  let fail = true
+  const { state, calls } = await mountAutomation(t, { save: async () => { if (fail) throw new Error('保存失败') } })
+  assert.equal(state.activePanel.value, null)
+  state.configurationDirty.value = true
+  await state.openScheduleEditor()
+  assert.equal(state.activePanel.value, 'schedule')
+  state.form.name = '装配车间日报'
+  state.recipientDraft.value = 'manager@example.com'
+  await state.submit()
+  assert.equal(state.activePanel.value, 'schedule')
+  assert.equal(state.scheduleError.value, '保存失败')
+  assert.equal(state.form.name, '装配车间日报')
+  assert.deepEqual(state.form.recipients, ['manager@example.com'])
+  fail = false
+  await state.submit()
+  assert.equal(state.activePanel.value, null)
+  assert.equal(state.scheduleError.value, '')
+  assert.equal(calls.savedSchedules[1].id, '')
+  assert.equal(state.hasUnsavedChanges.value, true)
 })
 
 test('legacy mail waiting for analysis remains visible without a resend action', async t => {
@@ -308,6 +330,7 @@ test('email paging: latest request wins and page is committed together with reco
   assert.equal(state.deliveryPage.value, 3)
   assert.equal(state.deliveries.value[0].delivery_id, 'page-3')
   assert.equal(state.deliveryLoading.value, false)
+  assert.deepEqual(calls.emails.map(call => call.pageSize), [10, 10, 10])
   assert.equal(calls.status, 1)
   assert.equal(calls.schedules, 1)
 })
@@ -322,7 +345,7 @@ test('email paging: repeated clicks and invalid targets are ignored; failure kee
   assert.equal(state.deliveryPage.value, 1)
   assert.equal(state.deliveries.value[0].delivery_id, 'page-1')
   assert.match(state.error.value, /email read failed/)
-  state.changeDeliveryPage(0); state.changeDeliveryPage(4); state.changeDeliveryPage(1)
+  state.changeDeliveryPage(0); state.changeDeliveryPage(7); state.changeDeliveryPage(1)
   assert.equal(calls.emails.length, 2)
 })
 
@@ -331,7 +354,7 @@ test('email paging: a shrinking final page is re-read at a valid page, including
   await state.changeDeliveryPage(3)
   hold()
   const pending = state.loadDeliveries()
-  calls.emails[2].resolve(21)
+  calls.emails[2].resolve(11)
   await flushAutomation()
   assert.equal(calls.emails[3].page, 2)
   assert.equal(state.deliveryPage.value, 3, 'keep the valid old page until replacement succeeds')
@@ -598,16 +621,16 @@ for (const [reportType, period] of [['leadership', 'current_month'], ['leadershi
       ...Vue, onMounted() {}, onBeforeUnmount() {}, useConfirm: () => async () => true, useUnsavedChanges() {}, deviceSelection: Vue.reactive({ id: 'Cutter02', items: [{ id: 'Cutter02', type: 'cutting' }] }),
       saveAutomationSchedule: async (body, id) => saved.push({ body, id }),
       getAutomationStatus: async () => ({}), listAutomationSchedules: async () => ({ items: [] }),
-      listEmailDeliveries: async () => ({ items: [], total: 0, page: 1, page_size: 20 }),
+      listEmailDeliveries: async () => ({ items: [], total: 0, page: 1, page_size: 10 }),
     }
     Object.assign(bindings, automationHooks(bindings))
-    const page = scope.run(() => scriptFunction(...Object.keys(bindings), `${script}\nreturn { form, editSchedule, changeReportType, submit, hasUnsavedChanges }`)(...Object.values(bindings)))
+    const page = scope.run(() => scriptFunction(...Object.keys(bindings), `${script}\nreturn { form, openScheduleEditor, changeReportType, submit, hasUnsavedChanges }`)(...Object.values(bindings)))
     try {
       const item = { schedule_id: 'schedule-1', device_id: 'Cutter02', name: 'Saved plan', report_type: reportType, report_period: period, frequency: 'weekly', run_time: '16:30', weekday: 2, month_day: null, recipients: ['worker@example.com'], subject_template: '{report_name}', chart_type: 'line', attach_report: true, max_attempts: 3, enabled: true }
       // Make every case cross a type boundary before editing, then flush real watchers.
       page.form.report_type = reportType === 'leadership' ? 'workshop' : 'leadership'
       await Vue.nextTick()
-      page.editSchedule(item)
+      await page.openScheduleEditor(item)
       await Vue.nextTick()
       assert.equal(page.form.report_period, period)
       page.form.name = 'Renamed plan'

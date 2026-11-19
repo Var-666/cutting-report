@@ -5278,6 +5278,12 @@ export type LogRecord = {
      */
     duration_ms?: number | null;
     exception?: SafeException | null;
+    /**
+     * Data Quality
+     */
+    data_quality?: {
+        [key: string]: string;
+    } | null;
 };
 
 /**
@@ -9637,6 +9643,92 @@ export type LogsApiV1OperationsLogsGetResponses = {
 };
 
 export type LogsApiV1OperationsLogsGetResponse = LogsApiV1OperationsLogsGetResponses[keyof LogsApiV1OperationsLogsGetResponses];
+
+export type ExportLogsApiV1OperationsLogsExportGetData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Start
+         */
+        start?: string;
+        /**
+         * End
+         */
+        end?: string;
+        /**
+         * Level
+         */
+        level?: 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR' | 'CRITICAL' | null;
+        /**
+         * Component
+         */
+        component?: string | null;
+        /**
+         * Line Id
+         */
+        line_id?: string | null;
+        /**
+         * Error Code
+         */
+        error_code?: string | null;
+        /**
+         * Keyword
+         */
+        keyword?: string | null;
+        /**
+         * Role
+         */
+        role?: 'web' | 'scheduler' | 'worker' | 'automation' | null;
+        /**
+         * Instance Id
+         */
+        instance_id?: string | null;
+        /**
+         * Resource Id
+         */
+        resource_id?: string | null;
+        /**
+         * Source Id
+         */
+        source_id?: string | null;
+        /**
+         * Request Id
+         */
+        request_id?: string | null;
+        /**
+         * Analysis Id
+         */
+        analysis_id?: string | null;
+        /**
+         * Task Id
+         */
+        task_id?: string | null;
+        /**
+         * Report Id
+         */
+        report_id?: string | null;
+    };
+    url: '/api/v1/operations/logs/export';
+};
+
+export type ExportLogsApiV1OperationsLogsExportGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ExportLogsApiV1OperationsLogsExportGetError = ExportLogsApiV1OperationsLogsExportGetErrors[keyof ExportLogsApiV1OperationsLogsExportGetErrors];
+
+export type ExportLogsApiV1OperationsLogsExportGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: Blob | File;
+};
+
+export type ExportLogsApiV1OperationsLogsExportGetResponse = ExportLogsApiV1OperationsLogsExportGetResponses[keyof ExportLogsApiV1OperationsLogsExportGetResponses];
 
 export type BrowserApiV1OperationsBrowserPostData = {
     body: BrowserIssue;

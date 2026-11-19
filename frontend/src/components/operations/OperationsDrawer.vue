@@ -20,6 +20,15 @@ const copied = shallowRef(false)
 const visible = computed(() => !!(incidentId || log))
 const record = computed(() => incident.value || log)
 const context = computed(() => incident.value?.context ?? log)
+const dataLabels = {
+  period_start: '影响开始日期', period_end: '影响结束日期', data_as_of: '数据截至时间',
+  missing_count: '缺失项数', estimated_count: '插值及估算项数', data_version: '报表版本',
+  summary_count: '汇总作业数', daily_count: '按日合计', grouped_count: '按设备或工程合计',
+} as const
+const dataDetails = computed(() => (Object.keys(dataLabels) as Array<keyof typeof dataLabels>).flatMap(key => {
+  const value = incident.value?.context[key] ?? log?.data_quality?.[key]
+  return value == null ? [] : [{ label: dataLabels[key], value: key === 'data_as_of' ? value.replace('T', ' ') : value }]
+}))
 const linkedRecord = computed(() => {
   const kind = incident.value?.context.related_kind || log?.related_kind
   const id = kind === 'reports' ? context.value?.report_id || record.value?.resource_id
@@ -122,6 +131,9 @@ watch(() => log?.id, () => { copied.value = false })
             <dt>报表 ID</dt><dd>{{ context?.report_id || '—' }}</dd>
             <dt v-if="record.resource_id">关联资源 ID</dt><dd v-if="record.resource_id">{{ record.resource_id }}</dd>
             <dt v-if="context?.stage">阶段</dt><dd v-if="context?.stage">{{ context.stage }}</dd>
+            <template v-for="detail in dataDetails" :key="detail.label">
+              <dt>{{ detail.label }}</dt><dd>{{ detail.value }}</dd>
+            </template>
           </dl>
           <section v-if="linkedRecord">
             <h4>关联业务记录</h4>

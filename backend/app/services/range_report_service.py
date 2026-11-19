@@ -28,7 +28,7 @@ from app.services.energy_period_service import (
 )
 from app.services.equipment_service import summarize_equipment
 from app.services.query_service import EquipmentQueryResult, QueryService
-from app.services.report_closing_comparison import ClosingGrouping, Totals, Window, closing_comparison, sum_daily_totals
+from app.services.report_closing_comparison import ClosingGrouping, Totals, Window, closing_comparison, sum_closing_totals
 
 
 MAX_REPORT_RANGE_DAYS = 366
@@ -225,13 +225,8 @@ class RangeReportService:
         def load(windows: tuple[Window, ...]) -> dict[Window, Totals]:
             start = min(left for left, _ in windows)
             end = max(right for _, right in windows)
-            days = {
-                row.period_start: {name: getattr(row, name) for name in metrics}
-                for row in self.query_service.fetch_cutting_closing_days(
-                    start, end, project_code=project_code, ship_no=ship_no
-                )
-            }
-            totals = {window: sum_daily_totals(window, days, metrics) for window in windows}
+            buckets = self.query_service.fetch_cutting_closing_totals(start, end, project_code=project_code, ship_no=ship_no)
+            totals = {window: sum_closing_totals(window, buckets, metrics) for window in windows}
             if include_meter_energy:
                 meter_coverage.update(self.energy_period_service.closing_meter_coverage(windows))
                 for window, channels in meter_coverage.items():

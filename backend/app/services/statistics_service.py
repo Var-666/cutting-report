@@ -10,6 +10,7 @@ from app.models.domain import (
     SummaryMetrics,
     WorkshopRecord,
 )
+from app.services.report_analysis.common import task_quality_issues
 
 
 NUMERIC_FIELDS = ("cut_length", "groove_length", "work_time")
@@ -185,6 +186,10 @@ class StatisticsService:
             unique_records[record.task_id] = record
 
         valid_records = list(unique_records.values())
+        for record, reasons in task_quality_issues(valid_records):
+            reasons = [reason for reason in reasons if reason != '长度或用时为负数']
+            if reasons:
+                quality.append(AttentionItem('warning', 'task_quality', record.task_id, '；'.join(reasons)))
         cut_values = _valid_values(valid_records, "cut_length")
         groove_values = _valid_values(valid_records, "groove_length")
         work_values = _valid_values(valid_records, "work_time")

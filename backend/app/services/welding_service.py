@@ -15,6 +15,7 @@ from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
 from app.config import Settings
+from app.core.operations_logging import data_quality, event
 from app.services.query_cache import QueryCache
 from app.database.report_snapshots import ReportKey, fingerprint
 from app.services.report_snapshots import ReportData, ReportSnapshotService
@@ -25,13 +26,14 @@ from app.models.domain import to_primitive
 from app.models.welding import ReportType, WeldingQuery, WELD_TYPES
 from app.services.llm_prompts import PROMPT_VERSION
 from app.services.llm_service import AnalysisOutputValidationError, LlmService, analysis_error_message
-from app.services.analysis_execution import analysis_operation
+from app.services.analysis_execution import analysis_operation, current_analysis_id, observe_analysis_quality
 from app.services.report_analysis_service import AnalysisDataVersionMismatch, AnalysisUnavailableError
-from app.services.report_closing_comparison import Totals, Window, closing_comparison, sum_daily_totals
+from app.services.report_closing_comparison import Totals, Window, closing_comparison, sum_closing_totals
 from app.core.request_cancellation import SqlRequestCancelled
 
 
 logger = logging.getLogger(__name__)
+WELDING_PROMPT_VERSION = f'{PROMPT_VERSION}:scoped-quantities'
 
 
 PENDING_METRICS = {
@@ -125,7 +127,7 @@ class WeldingService:
     def _analysis_key(self, version: str, kind: ReportType, query: WeldingQuery) -> str:
         source = self.analysis_metadata.analysis_scope if self.analysis_metadata else (self.settings.device_id, self.settings.source_fingerprint)
         return fingerprint((source, self._analysis_scope(kind, query),
-                            self.settings.llm_model, PROMPT_VERSION, version))
+                            self.settings.llm_model, WELDING_PROMPT_VERSION, version))
 
     def cached_analysis(self, version: str, *, kind: ReportType | None = None, query: WeldingQuery | None = None,
                         historical: bool = False):
@@ -157,10 +159,17 @@ class WeldingService:
     def analyze_report(self, kind: ReportType, query: WeldingQuery, report: dict, expected_version: str):
         version = report['data_version']
         if version != expected_version:
+            event(logger, logging.INFO, '焊接报表版本已变化，分析请求需要刷新数据', error_code='ANALYSIS_REPORT_VERSION_CHANGED',
+                  line_id=self.settings.device_id, stage=f'welding_{kind}')
             raise AnalysisDataVersionMismatch('报表数据已更新，请刷新后重新生成分析')
         cached = self.cached_analysis(version, kind=kind, query=query)
         if cached is not None:
             return cached
+
+        def observe_quality(*, verified, analysis_id=None):
+            observe_analysis_quality(self.settings, f'welding_{kind}', query.start.isoformat(), query.end.isoformat(),
+                                     self._analysis_scope(kind, query), version, verified=verified, analysis_id=analysis_id)
+
         try:
             if not self.settings.llm_enabled:
                 raise AnalysisUnavailableError('智能分析模型尚未启用')
@@ -169,8 +178,14 @@ class WeldingService:
                 'tables': [{'name': '按日汇总', 'rows': report['daily']}, {'name': '设备机器人工位', 'rows': report['equipment']},
                            {'name': '统计口径和数据质量', 'rows': [report['meta']]}]}
             with analysis_operation(self.settings, 'welding', context['report_date']):
-                result = LlmService(self.settings, self.analysis_metadata.database if self.analysis_metadata else None).analyze_context('welding', context)
+                analysis_id = current_analysis_id()
+                try:
+                    result = LlmService(self.settings, self.analysis_metadata.database if self.analysis_metadata else None).analyze_context('welding', context)
+                except AnalysisOutputValidationError:
+                    observe_quality(verified=False)
+                    raise
                 if result.status != 'success' or result.mode != 'model':
+                    observe_quality(verified=False)
                     raise AnalysisUnavailableError('模型未返回成功分析')
         except SqlRequestCancelled:
             raise
@@ -189,9 +204,10 @@ class WeldingService:
         if self.analysis_metadata is not None:
             self.analysis_metadata.save_analysis(cache_key=self._analysis_key(version, kind, query), report_type=f'welding_{kind}',
                 report_date=context['report_date'], input_hash=fingerprint(context), data_version=version, status='success', mode='model',
-                model_name=self.settings.llm_model, prompt_version=PROMPT_VERSION, result=to_primitive(result), generated_at=result.generated_at,
+                model_name=self.settings.llm_model, prompt_version=WELDING_PROMPT_VERSION, result=to_primitive(result), generated_at=result.generated_at,
                 reuse_key=self._analysis_scope(kind, query))
         self.remember_analysis(self._analysis_key(version, kind, query), {**to_primitive(result), 'cached': True})
+        observe_quality(verified=True, analysis_id=analysis_id)
         return result
 
     def _closing_comparison(self, session: MySqlSession, kind: ReportType, query: WeldingQuery, reference_at: datetime) -> list[dict]:
@@ -202,15 +218,15 @@ class WeldingService:
             if kind == 'parts':
                 return {window: {'part_row_count': self.repository.closing_part_count(session, query, bounds(*window))}
                         for window in windows}
-            rows = self.repository.closing_job_days(session, query, bounds(
+            rows = self.repository.closing_job_totals(session, query, bounds(
                 min(start for start, _ in windows), max(end for _, end in windows)
             ))
-            days = {date.fromisoformat(str(row['business_date'])): {
+            buckets = {datetime.fromisoformat(str(row['bucket_start'])).replace(tzinfo=windows[0][0].tzinfo): {
                 'job_count': int(row['job_count']),
                 'weld_length_m': Decimal(str(row['weld_length_m'])),
                 'working_hours': Decimal(str(row['working_hours'])),
             } for row in rows}
-            return {window: sum_daily_totals(window, days, CLOSING_JOB_METRICS) for window in windows}
+            return {window: sum_closing_totals(window, buckets, CLOSING_JOB_METRICS) for window in windows}
 
         return closing_comparison(query.start, query.end, reference_at, self.settings.weld_db_timezone, load)
 
@@ -425,6 +441,23 @@ class WeldingService:
             raise ValueError('设备机器人工位组合超过上限，请缩小筛选范围')
         if len(devices) > 1000:
             raise WeldingUnavailable('源库设备目录超过支持范围，请联系管理员核查')
+        daily_count = sum(row['job_count'] for row in daily)
+        equipment_count = sum(row['job_count'] for row in equipment)
+        total = summary['job_count']
+        invalid = summary['invalid_time_rows']
+        if daily_count != total or equipment_count != total:
+            message, state, level = '焊接作业汇总、按日和设备作业数不一致', 'count_mismatch', logging.ERROR
+        elif invalid:
+            message, state = '源端作业存在无效结束时间，无法计入报表', 'invalid_source_time'
+            level = logging.WARNING if total else logging.ERROR
+        else:
+            message, state, level = '同口径焊接作业数已核对一致', 'verified', logging.INFO
+        data_quality(logger, 'REPORT_AGGREGATE_DATA_QUALITY', message,
+                     scope=query.model_dump(mode='json', exclude={'page', 'page_size', 'sort_by', 'descending'}),
+                     level=level, state=state,
+                     line_id=self.settings.device_id, source_id=self.source_identity(), stage='welding_statistics',
+                     period_start=query.start.isoformat(), period_end=query.end.isoformat(),
+                     summary_count=int(total), daily_count=int(daily_count), grouped_count=int(equipment_count), missing_count=int(invalid))
         result = summary_values(summary), [summary_values(row) for row in daily], [summary_values(row) for row in equipment], devices, association
         logger.info('welding common statistics line=%s start=%s end=%s elapsed_ms=%d',
                     self.settings.device_id, query.start, query.end, round((monotonic() - started) * 1000))

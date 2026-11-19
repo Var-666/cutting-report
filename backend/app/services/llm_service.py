@@ -23,7 +23,7 @@ from app.models.domain import AnalysisResult
 from app.models.analysis_brief import BriefInput
 from app.services.llm_prompts import analysis_system_prompt
 from app.services.report_analysis.brief import model_context
-from app.services.report_analysis.brief_validation import validate_brief
+from app.services.report_analysis.brief_validation import validate_brief, validate_welding_quantities
 from app.services.llm_usage_service import record_llm_call
 from app.core.request_cancellation import SqlRequestCancelled, current_request_id, sql_request_cancellations
 from app.core.report_deadline import ReportOperationTimeout, ensure_time_remaining, operation_deadline, remaining_seconds
@@ -429,7 +429,7 @@ class LlmService:
                     return result
                 except AnalysisOutputValidationError as exc:
                     event(logger, logging.ERROR if attempt else logging.WARNING, '模型输出校验失败',
-                          error_code='MODEL_OUTPUT_INVALID', incident=bool(attempt),
+                          error_code='MODEL_OUTPUT_INVALID',
                           analysis_id=current_analysis_id(), line_id=self.settings.device_id,
                           stage=report_type, resource_id=report_type)
                     if attempt or not isinstance(raw_content, str):
@@ -470,6 +470,11 @@ class LlmService:
             )
         if not _required_content(content):
             raise AnalysisOutputValidationError("大模型分析结果缺少页面所需的四段内容")
+        if report_type == 'welding':
+            try:
+                validate_welding_quantities(content, context)
+            except ValueError as exc:
+                raise AnalysisOutputValidationError(str(exc)) from exc
         return AnalysisResult(
             status="success",
             overview=content["overview"],

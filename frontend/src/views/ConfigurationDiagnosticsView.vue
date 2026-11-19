@@ -16,7 +16,7 @@ const error = ref('')
 const category = ref('')
 const search = ref('')
 const page = ref(1)
-const pageSize = ref(10)
+const pageSize = 10
 const roles = ['web', 'worker', 'scheduler', 'automation'] as const
 const labels = { web: 'Web', worker: 'Consumer', scheduler: 'Scheduler', automation: 'Automation' }
 const consumerVersions = computed(() => Object.entries(report.value?.processes.consumers || {}))
@@ -28,8 +28,8 @@ const rows = computed(() => (report.value?.items || []).filter(item =>
   && (!category.value || item.category === category.value)
   && item.key.toLowerCase().includes(search.value.trim().toLowerCase()),
 ))
-const visibleRows = computed(() => rows.value.slice((page.value - 1) * pageSize.value, page.value * pageSize.value))
-watch([category, search, pageSize, report], () => { page.value = 1 })
+const visibleRows = computed(() => rows.value.slice((page.value - 1) * pageSize, page.value * pageSize))
+watch([category, search, report], () => { page.value = 1 })
 let controller: AbortController | undefined
 let sequence = 0
 
@@ -90,7 +90,7 @@ const diagnosticsTableColumns = [
           <NButton :loading="loading" :disabled="loading" @click="load">刷新快照</NButton>
         </div>
         <div class="diagnostics-table">
-          <AppReportTable :columns="diagnosticsTableColumns" :items="visibleRows" :row-key="row => row.key" :total="rows.length" :page="page" :page-size="pageSize" :page-sizes="[10, 20, 50]" :loading="loading" aria-label="各应用实例配置来源和生效状态及异常配置项分页" @page="page = $event" @page-size="pageSize = $event">
+          <AppReportTable :columns="diagnosticsTableColumns" :items="visibleRows" :row-key="row => row.key" :total="rows.length" :page="page" :page-size="pageSize" :loading="loading" aria-label="各应用实例配置来源和生效状态及异常配置项分页" @page="page = $event">
             <template #c0="{ row }"><div class="diagnostic-cell"><strong :title="row.key">{{ row.key }}</strong><small :title="row.category">{{ row.category }}</small></div></template>
             <template v-for="(role, index) in roles" :key="role" #[`c${index+1}`]="{ row }">
               <div v-if="role === 'worker' && Object.keys(row.processes.consumers || {}).length" class="diagnostic-consumers">

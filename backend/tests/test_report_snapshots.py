@@ -1,5 +1,6 @@
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+import logging
 import multiprocessing as mp
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -62,7 +63,8 @@ def test_snapshot_key_isolates_every_data_boundary(tmp_path, postgres_state, cha
     assert repo.get(key(**changes)) is None
 
 
-def test_l1_restart_revision_force_and_stale_policy(tmp_path, postgres_state):
+def test_l1_restart_revision_force_and_stale_policy(tmp_path, postgres_state, caplog):
+    caplog.set_level(logging.INFO, logger='app.services.report_snapshots')
     settings, repo, coordination = infrastructure(postgres_state[1], postgres_state[0])
     service = ReportSnapshotService(settings, repo, coordination)
     calls = []
@@ -82,6 +84,8 @@ def test_l1_restart_revision_force_and_stale_policy(tmp_path, postgres_state):
     service.revision.publish()
     stale = service.read(key(), lambda: pytest.fail('expired requests must enqueue once'), ttl=300)
     assert stale.meta['stale'] and stale.meta['refreshing'] and stale.meta['data_as_of']
+    assert caplog.records[-1].operations_quality['state'] == 'stale'
+    assert caplog.records[-1].levelno == logging.WARNING
     for _ in range(3):
         service.read(key(), load, ttl=300)
     assert coordination.task_counts() == {'pending': 1}
@@ -89,6 +93,8 @@ def test_l1_restart_revision_force_and_stale_policy(tmp_path, postgres_state):
         raise ConnectionError('source disconnected')
     fallback = service.read(key(), fail, ttl=300, force=True)
     assert fallback.meta['stale'] and fallback.meta['refresh_failed']
+    assert caplog.records[-1].operations_quality['state'] == 'refresh_failed'
+    assert caplog.records[-1].levelno == logging.ERROR
     assert repo.get(key()).data_version == old.data_version
     with pytest.raises(ConnectionError):
         service.read(key(), fail, ttl=300, force=True, background=True)
@@ -96,6 +102,8 @@ def test_l1_restart_revision_force_and_stale_policy(tmp_path, postgres_state):
     service.revision.publish()
     with pytest.raises(ConnectionError):
         service.read(key(), fail, ttl=300)
+    assert not service.read(key(), load, ttl=300).meta['stale']
+    assert caplog.records[-1].operations_quality['state'] == 'verified'
 
 
 def _concurrent_read(root, start, entered, release, counter, output, force=False):

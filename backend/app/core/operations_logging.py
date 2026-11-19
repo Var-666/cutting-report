@@ -29,6 +29,9 @@ MAX_FILE_BYTES = 2 * 1024 * 1024
 MAX_INSTANCES = 32
 FIELDS = ('request_id', 'analysis_id', 'task_id', 'report_id', 'line_id', 'source_id',
           'stage', 'error_code', 'resource_id', 'related_kind')
+QUALITY_FIELDS = ('state', 'period_start', 'period_end', 'data_as_of', 'missing_count', 'estimated_count',
+                  'data_version', 'summary_count', 'daily_count', 'grouped_count')
+QUALITY_VALUE = re.compile(r'[A-Za-z0-9_.:+-]{1,160}')
 _context: ContextVar[dict] = ContextVar('operations_log_context', default={})
 
 
@@ -46,6 +49,17 @@ def event(logger, level, message, *, error_code=None, incident=False, exc_info=F
     logger.log(level, message, exc_info=exc_info, extra={
         'operations_message': message, 'operations_incident': incident,
         'operations_fields': {**fields, 'error_code': error_code},
+    }, stacklevel=2)
+
+
+def data_quality(logger, code, message, *, scope, level, state, line_id, source_id, stage, analysis_id=None, **details):
+    """Observe an actual data result, or record recovery after a successful validation."""
+    resource = sha256(json.dumps(scope, separators=(',', ':'), sort_keys=True).encode()).hexdigest()
+    logger.log(level, message, extra={
+        'operations_message': message,
+        'operations_quality': {'state': state, **details},
+        'operations_fields': {'error_code': code, 'line_id': line_id, 'source_id': source_id,
+                              'resource_id': resource, 'stage': stage, 'analysis_id': analysis_id},
     }, stacklevel=2)
 
 
@@ -70,6 +84,9 @@ def safe_record(record, role, instance):
         captured['request_id'] = log_request_id(captured['request_id'])
     if type(fields.get('duration_ms')) in (int, float) and 0 <= fields['duration_ms'] < 1e10:
         captured['duration_ms'] = round(fields['duration_ms'], 1)
+    if (quality := getattr(record, 'operations_quality', None)) is not None:
+        captured['data_quality'] = {key: str(value) for key in QUALITY_FIELDS
+                                    if (value := quality.get(key)) is not None and QUALITY_VALUE.fullmatch(str(value))}
     source = safe_id(record.name) or 'logging'
     component = source.removeprefix('app.')
     message = getattr(record, 'operations_message', None)
@@ -201,9 +218,10 @@ class OperationsLogging(logging.Handler):
             self.items.put_nowait(item)
         except Full:
             self.dropped += 1
-        if getattr(record, 'operations_incident', False) and item.get('error_code'):
+        quality = 'data_quality' in item
+        if item.get('error_code') and (quality or getattr(record, 'operations_incident', False)):
             try:
-                self.incidents.put_nowait(item)
+                self.incidents.put_nowait({**item, 'quality_observation': True} if quality else item)
             except Full:
                 self.incident_dropped += 1
 

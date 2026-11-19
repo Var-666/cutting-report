@@ -51,7 +51,7 @@ test('monitor API sends the intended endpoint without credentials or probe reque
     await deleteDatabaseMonitor('one')
     await listDatabaseMonitorIncidents(2)
     assert.deepEqual(calls.map(call => call.method || 'GET'), ['GET', 'POST', 'PUT', 'DELETE', 'GET'])
-    assert.match(calls[4].url, /incidents\/page\?page=2&page_size=15/)
+    assert.match(calls[4].url, /incidents\/page\?page=2&page_size=10/)
     assert.deepEqual(JSON.parse(calls[1].body), { name: '生产库', ip: '192.0.2.1', port: 1433 })
     assert.equal(JSON.parse(calls[2].body).enabled, false)
   } finally { globalThis.fetch = original }

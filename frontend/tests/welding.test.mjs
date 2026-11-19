@@ -157,7 +157,7 @@ function view(readReport, options = {}) {
     reportToday: () => '2026-10-26', getWeldingReport: readReport, getLatestWeldingAnalysis: async () => null,
     deviceSelection: { id: 'welding', items: [{ id: 'welding', type: 'welding', enabled: options.enabled ?? true }] }, weldingTitles, weldingKpis, weldingColumns, weldingColumnLayout, weldingDisplay, weldingQuery,
   }
-  return { ...scriptFunction(...Object.keys(bindings), `${script}; return { read, submit, changePage, changePageSize, report, loading, error, activeQuery, draft, detailJob, goToPart, actionError, filtersDirty, appliedQueryLabel };`)(...Object.values(bindings)), cleanup }
+  return { ...scriptFunction(...Object.keys(bindings), `${script}; return { read, submit, changePage, report, loading, error, activeQuery, draft, detailJob, goToPart, actionError, filtersDirty, appliedQueryLabel };`)(...Object.values(bindings)), cleanup }
 }
 
 const period = { start: '2026-10-26', end: '2026-10-26' }
@@ -415,7 +415,7 @@ async function mountWelding(t, kind = 'jobs', query = {}, analysisOptions = {}) 
     getWeldingPart: async (id, page) => ({ part: { id }, seams: { page, items: [] } }),
   }
   const code = parse(source('views/WeldingReportView.vue')).descriptor.scriptSetup.content.replace(/^import .*$/gm, '')
-  const setup = scriptFunction(...Object.keys(bindings), `${code}; return { draft, activeQuery, report, submit, changePage, changePageSize, loading, error, exportReport, runAnalysis, analysis, analysisError, openDetail, details, detailJob, goToPart }`)
+  const setup = scriptFunction(...Object.keys(bindings), `${code}; return { draft, activeQuery, report, submit, changePage, loading, error, exportReport, runAnalysis, analysis, analysisError, openDetail, details, detailJob, goToPart }`)
   const page = { setup() { state = setup(...Object.values(bindings)); return () => null } }
   router = createRouter({ history: createMemoryHistory(), routes: ['dashboard', 'daily', 'parts', 'jobs', 'equipment'].map(kind => ({ path: kind === 'dashboard' ? '/admin/welding/home' : `/admin/welding/reports/${kind}`, name: `welding-${kind}`, meta: { kind }, component: page })) })
   await router.push({ name: `welding-${kind}`, query })
@@ -582,8 +582,8 @@ test('jobs state keeps its meaning and ignores a parts state from a copied link'
   assert.equal('part_state' in router.currentRoute.value.query, false)
 })
 
-test('welding queries: successful submit, sorting and pagination sync URL while preserving unsubmitted drafts', async t => {
-  const page = await mountWelding(t, 'jobs', { ...period, unrelated: 'keep' })
+test('welding queries: successful submit, sorting and ten-row pagination sync URL while preserving unsubmitted drafts', async t => {
+  const page = await mountWelding(t, 'jobs', { ...period, page_size: '50', unrelated: 'keep' })
   const { state, calls, router, hold } = page
   Object.assign(state.draft, { device_no: 0, robot_no: 0, weld_type: 2, state: 3, serial_number: 'S', anomalies_only: true, sort_by: 'length', descending: false })
   assert.equal(router.currentRoute.value.query.serial_number, undefined)
@@ -597,18 +597,15 @@ test('welding queries: successful submit, sorting and pagination sync URL while 
   for (const [key, value] of Object.entries({ device_no: '0', robot_no: '0', weld_type: '2', state: '3', serial_number: 'S', anomalies_only: 'true', sort_by: 'length', descending: 'false', unrelated: 'keep' })) assert.equal(router.currentRoute.value.query[key], value)
   const second = state.changePage(3)
   assert.equal(calls[2].query.serial_number, 'S')
+  assert.equal(calls[2].query.page_size, 10)
   calls[2].resolve(); await second; await flushWelding()
   assert.equal(router.currentRoute.value.query.page, '3')
-  const resized = state.changePageSize(50)
-  assert.equal(calls[3].query.page, 1)
-  assert.equal(calls[3].query.serial_number, 'S')
-  calls[3].resolve(); await resized; await flushWelding()
   assert.equal(router.currentRoute.value.query.page_size, '10')
   assert.equal(state.draft.serial_number, 'unsaved')
   const failed = state.changePage(2)
-  calls[4].reject(new Error('query failed')); await failed
-  assert.equal(router.currentRoute.value.query.page, '1')
-  assert.equal(state.activeQuery.value.page, 1)
+  calls[3].reject(new Error('query failed')); await failed
+  assert.equal(router.currentRoute.value.query.page, '3')
+  assert.equal(state.activeQuery.value.page, 3)
   assert.match(state.error.value, /query failed/)
 })
 
@@ -914,7 +911,6 @@ test('unsubmitted filters and pagination cannot send a request without a valid p
   let calls = 0
   const app = view(async () => { calls += 1 })
   app.changePage(2)
-  app.changePageSize(50)
   assert.equal(calls, 0)
   for (const range of [
     { start: '', end: period.end }, { start: period.start, end: '' },
@@ -1150,11 +1146,13 @@ test('shared cutting table renders escaped cells, header controls, summary and e
   assert.match(await render([]), /当前无任务/)
 })
 
-test('shared pagination forwards page and size changes once and respects loading', async () => {
+test('shared pagination defaults to ten rows, forwards page changes and respects loading', async () => {
   const Pagination = Vue.defineComponent({
-    props: ['page', 'pageSize', 'itemCount', 'disabled', 'showSizePicker'], emits: ['update:page', 'update:page-size'],
+    props: ['page', 'pageSize', 'itemCount', 'disabled', 'showSizePicker'], emits: ['update:page'],
     setup(props, { emit }) {
-      if (!props.disabled) { emit('update:page', props.page + 1); if (props.showSizePicker) emit('update:page-size', 50) }
+      assert.equal(props.pageSize, 10)
+      assert.ok(!props.showSizePicker)
+      if (!props.disabled) emit('update:page', props.page + 1)
       return () => null
     },
   })
@@ -1162,11 +1160,11 @@ test('shared pagination forwards page and size changes once and respects loading
   for (const loading of [false, true]) {
     const events = []
     const app = Vue.createSSRApp({ render: () => h(Table, { columns: [{ key: 'c0', title: '任务', width: 160 }],
-      items: [], rowKey: row => row.id, total: 100, page: 2, pageSize: 20, loading,
-      onPage: value => events.push(['page', value]), 'onPage-size': value => events.push(['size', value]) }) })
+      items: [], rowKey: row => row.id, total: 100, page: 2, loading,
+      onPage: value => events.push(value) }) })
     setupCssr(app)
     await renderToString(app)
-    assert.deepEqual(events, loading ? [] : [['page', 3], ['size', 50]])
+    assert.deepEqual(events, loading ? [] : [3])
   }
 })
 
@@ -1374,7 +1372,7 @@ test('welding paginated details use ten rows without an internal height limit or
     }
   }
   const table = source('components/WeldingTable.vue')
-  assert.match(table, /:page-sizes="\[\]"/)
+  assert.doesNotMatch(table, /:page-sizes|@page-size/)
   assert.match(table, /:max-height="paginate \? null : undefined"/)
   const styles = parse(source('views/WeldingReportView.vue')).descriptor.styles[0].content
   assert.doesNotMatch(styles, /--n-color(?:-hover|-focus|-pressed)?:/)

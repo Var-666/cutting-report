@@ -5,6 +5,11 @@
 {% set brief = analysis.brief if available else none %}
 {% set scope = brief.scope if brief else {} %}
 {% set facts = analysis.facts|default([]) if analysis else [] %}
+{% if brief %}
+{% set used = namespace(ids=[]) %}
+{% for finding in brief.findings %}{% set used.ids = used.ids + finding.evidence_ids|default([]) %}{% endfor %}
+{% set facts = facts|rejectattr('id', 'in', used.ids)|list %}
+{% endif %}
 {% if summary_shown %}
 {% set overview_facts = {'leadership':['F001','F002','F003','F007'],
                          'workshop':[] if report.data_quality else ['F001','F002','F003'],
@@ -27,7 +32,7 @@
 
   {% if (brief and brief.findings) or (not brief and analysis and analysis.features) %}
   <section class="lp-analysis-group"><h2>关键发现</h2><div class="lp-analysis-body">
-    {% set attention_labels = {'C_project_missing':'待核查', 'C_duration':'待核查', 'C_energy_quality':'待核查',
+    {% set attention_labels = {'C_project_missing':'待核查', 'C_duration':'待核查', 'C_energy_quality':'待核查', 'C_task_quality':'待核查',
                                'C_confirmation':'待确认', 'C_energy_estimates':'含估算'} %}
     {% if brief %}{% for finding in brief.findings %}
     {% set label = attention_labels.get(finding.candidate_id|default('')) %}

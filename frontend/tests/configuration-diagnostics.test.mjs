@@ -76,7 +76,7 @@ test('each Consumer keeps its own status and configuration version', async () =>
   } finally { page.app.unmount() }
 })
 
-test('abnormal rows paginate after filtering and filters, page size and refresh reset the page', async () => {
+test('abnormal rows paginate in tens after filtering and filters and refresh reset the page', async () => {
   let result = { ...data, items: [
     ...data.items.filter(item => item.status !== 'error'),
     { key: 'OPTIONAL_KEY', category: '数据库连接配置', status: 'unconfigured' },
@@ -100,9 +100,8 @@ test('abnormal rows paginate after filtering and filters, page size and refresh 
     assert.equal(page.state.rows.value.length, 3)
     page.state.category.value = ''
     page.state.search.value = ''
-    page.state.pageSize.value = 20
     await flush()
-    assert.equal(page.state.visibleRows.value.length, 20)
+    assert.equal(page.state.visibleRows.value.length, 10)
     page.state.page.value = 2
     result = { ...data, items: [] }
     await page.state.load()
@@ -115,7 +114,8 @@ test('abnormal rows paginate after filtering and filters, page size and refresh 
 test('diagnostics omits the explanation, aligns cells left and spaces values, sources and badges', () => {
   assert.doesNotMatch(descriptor.template.content, /report\.precedence|report\.notes|生效状态<\/span>|全部状态/)
   assert.match(descriptor.template.content, /:items="visibleRows"[\s\S]*:total="rows.length"/)
-  assert.match(descriptor.template.content, /@page="page = \$event" @page-size="pageSize = \$event"/)
+  assert.match(descriptor.template.content, /@page="page = \$event"/)
+  assert.doesNotMatch(descriptor.template.content, /@page-size|:page-sizes/)
   assert.match(descriptor.template.content, /class="diagnostic-value"[\s\S]*class="diagnostic-source"[\s\S]*来源：/)
   assert.match(descriptor.template.content, /<template v-for="\(role, index\)[\s\S]*?class="diagnostic-cell"><NTag[^>]+>[\s\S]*?<\/NTag><span class="diagnostic-value"/)
   assert.match(descriptor.styles[0].content, /\.diagnostic-cell\{[^}]*gap:12px/)

@@ -5,16 +5,16 @@ import { deleteAutomationSchedule, getAutomationRun, runAutomationSchedule, save
 import { deviceSelection } from '../state/devices'
 import { toError } from '../utils/errors'
 
-export function useAutomationSchedules({ hasUnsavedChanges, message, error, refresh, scrollToEditor, confirm }: {
+export function useAutomationSchedules({ hasUnsavedChanges, message, error, refresh, confirm }: {
   hasUnsavedChanges: Ref<boolean>
   message: Ref<string>
   error: Ref<string>
   refresh: () => Promise<void>
-  scrollToEditor: () => void
   confirm: (message: string) => Promise<boolean>
 }) {
   const saving = ref(false)
   const editingId = ref('')
+  const scheduleError = ref('')
   const executions = reactive<Record<string, AutomationExecution>>({})
   const runningScheduleIds = computed(() => Object.values(executions).filter(isRunning).map(item => item.schedule_id))
   const timers = new Map<string, ReturnType<typeof setTimeout>>()
@@ -127,6 +127,7 @@ export function useAutomationSchedules({ hasUnsavedChanges, message, error, refr
 
   function resetForm() {
     cancelRecipientInput()
+    scheduleError.value = ''
     editingId.value = ''
     Object.assign(form, emptyForm())
     hasUnsavedChanges.value = false
@@ -134,6 +135,8 @@ export function useAutomationSchedules({ hasUnsavedChanges, message, error, refr
 
   function editSchedule(item: AutomationSchedule) {
     cancelRecipientInput()
+    scheduleError.value = ''
+    hasUnsavedChanges.value = false
     editingId.value = item.schedule_id
     Object.assign(form, {
       device_id: item.device_id,
@@ -151,7 +154,6 @@ export function useAutomationSchedules({ hasUnsavedChanges, message, error, refr
       max_attempts: item.max_attempts,
       enabled: item.enabled,
     })
-    scrollToEditor()
   }
 
   function payload() {
@@ -174,6 +176,8 @@ export function useAutomationSchedules({ hasUnsavedChanges, message, error, refr
   }
 
   async function submit() {
+    if (saving.value) return false
+    scheduleError.value = ''
     if (recipientDraft.value.trim() && !addRecipient()) return
     if (!form.recipients.length) {
       recipientInputVisible.value = true
@@ -188,9 +192,10 @@ export function useAutomationSchedules({ hasUnsavedChanges, message, error, refr
       message.value = editingId.value ? '定时任务已更新' : '定时任务已创建'
       resetForm()
       await refresh()
+      return true
     } catch (caught) {
-      const exception = toError(caught)
-      error.value = exception.message
+      scheduleError.value = toError(caught).message
+      return false
     } finally {
       saving.value = false
     }
@@ -234,6 +239,6 @@ export function useAutomationSchedules({ hasUnsavedChanges, message, error, refr
 
   watch(() => deviceSelection.items, () => { if (!form.device_id) form.device_id = emptyForm().device_id })
 
-  return { saving, editingId, form, executions, runningScheduleIds, changeReportType, resetForm, editSchedule, submit, runNow, remove,
+  return { saving, editingId, form, executions, runningScheduleIds, changeReportType, resetForm, editSchedule, submit, runNow, remove, scheduleError,
     recipientInputVisible, recipientDraft, recipientError, addRecipient, removeRecipient, cancelRecipientInput }
 }

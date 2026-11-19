@@ -29,7 +29,7 @@ const deliveryTableColumns = [
 </script>
 
 <template>
-  <AppReportTable :columns="deliveryTableColumns" :items="deliveries" :row-key="item => item.delivery_id" :paginate="paginate" :total="deliveryTotal" :page="deliveryPage" :page-size="20" :page-sizes="[]" :max-height="null" :loading="deliveryLoading" aria-label="邮件发送记录" @page="emit('page', $event)">
+  <AppReportTable :columns="deliveryTableColumns" :items="deliveries" :row-key="item => item.delivery_id" :paginate="paginate" :total="deliveryTotal" :page="deliveryPage" :page-size="10" :max-height="null" :loading="deliveryLoading" aria-label="邮件发送记录" @page="emit('page', $event)">
           <template #c0="{ row: item }">{{ formatDateTime(item.created_at) }}</template>
           <template #c1="{ row: item }"><strong :title="item.subject">{{ item.schedule_name }}</strong></template>
           <template #c2="{ row: item }">{{ formatChineseDate(item.report_date) }}</template>

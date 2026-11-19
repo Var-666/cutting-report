@@ -19,6 +19,22 @@ from app.services.alarm_monitor_service import AlarmMonitorService
 TZ = ZoneInfo("Asia/Shanghai")
 
 
+def test_alarm_closing_totals_use_calendar_week_and_month_boundaries(tmp_path):
+    cfg = cutting_settings(project_root=tmp_path, alarm_monitor_start_at="2026-09-01 00:00:00")
+    stamps = ["2026-10-31 23:59:59", "2026-11-01 00:00:00", "2026-11-15 23:59:59",
+              "2026-11-16 00:00:00", "2026-11-17 17:00:00", "2026-11-18 16:59:59", "2026-11-18 17:00:00"]
+    repository = SimpleNamespace(closing_incidents=lambda *args: [
+        dict(first_start_time=stamp, severity="high") for stamp in stamps
+    ])
+    service = AlarmMonitorService(cfg, repository, None, None, None)
+    columns = service._closing_comparison(["20kw切割机"], datetime(2026, 11, 18, 18, tzinfo=TZ), True)
+    assert [column["totals"]["incident_count"] for column in columns] == [2, 3, 5]
+    assert columns[1]["start"] == datetime(2026, 11, 16, tzinfo=TZ)
+    assert columns[2]["start"] == datetime(2026, 11, 1, tzinfo=TZ)
+    assert all(column["totals"]["incident_count"] is None for column in
+               service._closing_comparison(["20kw切割机"], datetime(2026, 11, 18, 18, tzinfo=TZ), False))
+
+
 def test_alarm_closing_comparison_counts_first_start_with_coverage(state_database, tmp_path):
     repository = AlarmRepository(state_database, source_name="production")
     repository.initialize()

@@ -1,7 +1,8 @@
 from tests.postgres_fixtures import state_settings
 from contextlib import contextmanager
 from dataclasses import replace
-from datetime import date
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 from types import SimpleNamespace
 
 import pytest
@@ -32,6 +33,37 @@ def mysql_client(cfg=None):
 
 def query(**kwargs):
     return WeldingQuery(start=date(2026, 10, 1), end=date(2026, 10, 31), **kwargs)
+
+
+def test_closing_job_aggregation_keeps_midnight_and_17_buckets_separate(monkeypatch):
+    import sqlite3
+
+    stamps = ['2026-10-31 23:59:59', '2026-11-01 00:00:00', '2026-11-01 23:59:59',
+              '2026-11-02 00:00:00', '2026-11-02 17:00:00', '2026-11-03 16:59:59', '2026-11-03 17:00:00']
+    selected = WeldingQuery(start=date(2026, 11, 3), end=date(2026, 11, 3), device_no=0)
+    with sqlite3.connect(':memory:') as connection:
+        connection.row_factory = sqlite3.Row
+        connection.create_function('CONCAT', 2, lambda left, right: left + right)
+        connection.execute('CREATE TABLE jobs (end_time TEXT, valid_end_time INT, weld_lenght INT, used_time INT)')
+        connection.executemany('INSERT INTO jobs VALUES (?,1,1000,3600)', [(stamp,) for stamp in stamps])
+        monkeypatch.setattr('app.database.welding.job_rows', lambda query, *, device_nos, bounds: (
+            'SELECT * FROM jobs WHERE end_time >= ? AND end_time < ?', bounds))
+
+        def fetch(sql, params, *, limit):
+            # Execute the repository's aggregation; only adapt MySQL's LEFT spelling for SQLite.
+            sql = sql.replace('LEFT(j.end_time, 10)', 'SUBSTR(j.end_time, 1, 10)')
+            return [dict(row) for row in connection.execute(sql, params)]
+
+        repository = WeldingRepository(None)
+        service = WeldingService(welding_settings(), repository)
+        now = datetime(2026, 11, 3, 18, tzinfo=ZoneInfo('Asia/Shanghai'))
+        for kind in ['daily', 'jobs', 'equipment']:
+            columns = service._closing_comparison(SimpleNamespace(fetch=fetch), kind, selected, now)
+            assert [column['totals']['job_count'] for column in columns] == [2, 3, 5]
+            assert [column['totals']['weld_length_m'] for column in columns] == [2, 3, 5]
+            assert [column['totals']['working_hours'] for column in columns] == [2, 3, 5]
+            assert columns[1]['start'].isoformat() == '2026-11-02T00:00:00+08:00'
+            assert columns[2]['start'].isoformat() == '2026-11-01T00:00:00+08:00'
 
 
 def test_interval_and_pagination_validation():

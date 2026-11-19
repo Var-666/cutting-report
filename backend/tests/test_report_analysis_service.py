@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 from decimal import Decimal
 import json
+import logging
 import re
 import sqlite3
 import time
@@ -19,7 +20,7 @@ from app.models.domain import AnalysisResult, ReportFilter
 from app.services.equipment_service import mock_energy, sort_equipment_records
 from app.services.leadership_report_service import LeadershipReportService
 from app.services.llm_service import (
-    AnalysisCapacityError, AnalysisInputTooLarge, LlmRequestTimeout, LlmService,
+    AnalysisCapacityError, AnalysisInputTooLarge, AnalysisOutputValidationError, LlmRequestTimeout, LlmService,
     _LlmCapacity, background_llm_work, llm_capacity,
 )
 from app.services.query_service import QueryService
@@ -209,7 +210,8 @@ def test_task_detail_input_version_excludes_previous_latest_and_cached_analysis(
     assert service.latest_default_analysis('workshop', selected).data_version == generated.data_version
 
 
-def test_visible_report_version_must_match_analysis_source(state_database, tmp_path: Path) -> None:
+def test_visible_report_version_must_match_analysis_source(state_database, tmp_path: Path, caplog) -> None:
+    caplog.set_level(logging.INFO, logger='app.services.analysis_execution')
     settings, service = _services(state_database, tmp_path)
     report = LeadershipReportService(settings, client=source_client(settings)).fetch(date(2026, 8, 1))
     primary_version = leadership_analysis_source_version(report)
@@ -231,6 +233,9 @@ def test_visible_report_version_must_match_analysis_source(state_database, tmp_p
                 primary_version, "0" * 64
             ),
         )
+    mismatch, = [record for record in caplog.records
+                 if getattr(record, 'operations_fields', {}).get('error_code') == 'ANALYSIS_REPORT_VERSION_CHANGED']
+    assert not mismatch.operations_incident
 
     report_date = date(2026, 8, 18)
     records = QueryService(settings, client=source_client(settings)).fetch_report_data(
@@ -893,6 +898,42 @@ def test_failed_model_call_is_not_cached_and_next_request_retries(state_database
     assert recovered.mode == "model"
     assert recovered.cached is False
     assert calls == 2
+
+
+def test_analysis_output_quality_recovers_after_publishing_validated_same_version(state_database, tmp_path, monkeypatch, caplog):
+    settings, service = _services(state_database, tmp_path)
+    report = LeadershipReportService(settings, client=source_client(settings)).fetch(date(2026, 8, 1))
+    caplog.set_level(logging.INFO, logger='app.services.analysis_execution')
+
+    def invalid(*args):
+        raise AnalysisOutputValidationError('报表中没有这个数字')
+
+    monkeypatch.setattr(service.llm, 'analyze_context', invalid)
+    with pytest.raises(AnalysisUnavailableError):
+        service.analyze_leadership(report, publish_latest=True)
+    assert service.latest_default_analysis('leadership', date(2026, 8, 1)) is None
+    monkeypatch.setattr(service.llm, 'analyze_context', model_analysis)
+    result = service.analyze_leadership(report, publish_latest=True)
+    failed, recovered = [record for record in caplog.records if hasattr(record, 'operations_quality')]
+    assert failed.operations_quality['state'] == 'output_rejected'
+    assert recovered.operations_quality['state'] == 'verified'
+    assert failed.operations_quality['data_version'] == recovered.operations_quality['data_version'] == result.data_version
+    assert failed.operations_fields['resource_id'] == recovered.operations_fields['resource_id']
+
+
+def test_welding_analysis_rejects_claims_missing_in_reporting_facts(tmp_path):
+    llm = LlmService(cutting_settings(project_root=tmp_path), None)
+    context = {'facts': [{'label': 'job_count', 'value': 20}], 'tables': [{'rows': [
+        {'production_date': '2026-08-18', 'job_count': 3, 'weld_length_m': 12.56},
+        {'production_date': '2026-08-19', 'job_count': 17},
+    ]}]}
+    valid = dict(overview='本期作业数为 20 条。2026-08-18 作业 3 条，焊接长度约 12.6 米。',
+                 features='作业分布已汇总。', alerts='工件完成数待核对。', suggestions='核对工件与作业关联。')
+    assert llm._analysis_result('welding', context, json.dumps(valid)).status == 'success'
+    for claim in ('作业数量 200 条。', '焊接长度 18 米。', '工作时长为 0 小时。',
+                  '本期作业 3 条。', '2026-08-18 作业 17 条。'):
+        with pytest.raises(AnalysisOutputValidationError, match='与报表事实不符'):
+            llm._analysis_result('welding', context, json.dumps({**valid, 'overview': claim}))
 
 
 @pytest.mark.parametrize('error, message', [

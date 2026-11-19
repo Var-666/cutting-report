@@ -364,7 +364,7 @@ const fileTableColumns = [
       </div>
       <div class="dispatch-table-wrap" :aria-busy="loading">
         <div v-if="loading" class="dispatch-loading" role="status">{{ selectingAll ? '正在选择所有分页的文件…' : `正在加载第 ${requestedPage} 页…` }}</div>
-        <AppReportTable :flex-height="rows.length === 0" :max-height="null" :columns="fileTableColumns" :items="rows" :total="total" :page="page" :page-size="pageSize" :page-sizes="[]" @page="changePage" :row-key="row => fileKey(row)" aria-label="文件查询结果" :row-class-name="row => (selectedFiles.has(fileKey(row))) ? 'selected' : ''" :loading="loading">
+        <AppReportTable :flex-height="rows.length === 0" :max-height="null" :columns="fileTableColumns" :items="rows" :total="total" :page="page" :page-size="pageSize" @page="changePage" :row-key="row => fileKey(row)" aria-label="文件查询结果" :row-class-name="row => (selectedFiles.has(fileKey(row))) ? 'selected' : ''" :loading="loading">
         <template #header-c0><div class="download-check-cell"><NCheckbox :checked="allCatalogFilesSelected" :indeterminate="someCatalogFilesSelected" :disabled="!total || !systemStatus?.can_push || loading || pushBatch.saving" aria-label="全选当前目录所有分页的可派发文件" @update:checked="toggleCatalogFiles($event)" /></div></template>
         <template #c0="{ row }"><div class="download-check-cell"><NCheckbox :checked="selectedFiles.has(fileKey(row))" :disabled="loading || pushBatch.saving || !row.path_available || !systemStatus?.can_push" :aria-label="`选择文件 ${row.document_no}`" @update:checked="setFileSelected(row, $event)" /></div></template>
         <template #c1="{ row }"><div class="file-name-cell"><strong>{{ row.document_no }}</strong></div></template>
