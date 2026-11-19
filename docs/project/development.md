@@ -66,7 +66,7 @@ pnpm run dev
 
 ## 前端页面布局
 
-- 普通页面复用 `page-heading`、`page-heading__title` 和 `page-heading__actions`：桌面标题 28px、窄屏 22px，标题和辅助操作按可用宽度换行。门户插画及报表头图保留独立构图；继续使用既有主题变量、间距和圆角。
+- 普通页面复用 `page-heading`、`page-heading__title` 和 `page-heading__actions`；报表头图标题复用 `report-hero-copy`。两者均沿用桌面 28px、窄屏 22px 的字号变量，允许标题换行，保留门户插画和报表头图。切割报表的紧凑 KPI 复用 `report-kpi-card` 的卡片与图标样式，业务指标布局和数据由页面维护。
 - `StandardReportQuery` 按查询容器宽度排列 40px 控件；`ReportTrendPanel` 在窄屏保留时间范围和更新提示。`HomeKpiCard` 区分真实零值、加载骨架和无数据，失败和快照状态由页面反馈说明。`AppReportTable` 允许分页换行，表头、数据和汇总仍保持单行。
 
 ## 测试与构建

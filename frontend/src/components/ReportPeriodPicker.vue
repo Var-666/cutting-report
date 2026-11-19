@@ -260,7 +260,7 @@ onBeforeUnmount(pause)
 .report-period-picker__hint { color:var(--text-color-2); }
 .report-period-picker__error { color:rgb(var(--error-color)); }
 .report-period-picker__panel > footer { display:flex; justify-content:flex-end; gap:9px; padding:12px 17px 15px; border-top:1px solid var(--theme-border-color); }
-.report-period-picker__panel > footer button { min-width:82px; min-height:38px; }
+.report-period-picker__panel > footer button { min-width:82px; min-height:var(--control-height); }
 @media (max-width:560px) {
   .report-period-picker { grid-column:auto; }
   .report-period-picker__presets { grid-template-columns:repeat(2,minmax(0,1fr)); }

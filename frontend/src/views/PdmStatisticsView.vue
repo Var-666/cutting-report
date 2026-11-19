@@ -118,7 +118,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.pdm-page{display:grid;gap:var(--space-4);min-width:1000px;padding-block:var(--space-4)}
-.pdm-page__tables{display:grid;gap:var(--space-6)}
+.pdm-page{display:grid;grid-template-columns:minmax(0,1fr);gap:var(--space-4);padding-block:var(--space-4)}
+.pdm-page__tables{display:grid;grid-template-columns:minmax(0,1fr);gap:var(--space-6)}
 .pdm-page__tables h2{margin:0;color:var(--text-color-1);font-size:var(--font-section-title);font-weight:600}
 </style>

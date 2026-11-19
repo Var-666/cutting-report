@@ -5,14 +5,11 @@ import test from 'node:test'
 import * as Vue from 'vue'
 import { renderToString } from '@vue/server-renderer'
 import { NAlert, NConfigProvider, darkTheme, useThemeVars } from 'naive-ui'
-import { createPinia, setActivePinia } from 'pinia'
 import { createGenerator } from 'unocss'
 import { loadConfigFromFile } from 'vite'
 import { fileURLToPath } from 'node:url'
 import { parse } from '@vue/compiler-sfc'
 import { sparklineGeometry } from '../src/utils/sparkline.ts'
-import { renderComponent } from './vue-component-helpers.mjs'
-import { useAppStore } from '../src/state/app.ts'
 
 const read = (path) => readFileSync(new URL(`../src/${path}`, import.meta.url), 'utf8')
 const { config: unoConfig } = await loadConfigFromFile({ command: 'build', mode: 'test' }, fileURLToPath(new URL('../uno.config.ts', import.meta.url)))
@@ -112,16 +109,6 @@ test('home failure and empty data preserve successful independent modules and fi
     assert.equal(home.state.energyLoading.value, false)
     assert.equal(home.state.total.value.task_count, 0)
   } finally { home.close() }
-})
-
-test('home KPI distinguishes measured values, zero, missing and loading states', async () => {
-  setActivePinia(createPinia())
-  useAppStore().reducedMotion = true
-  const render = props => renderComponent('components/HomeKpiCard', { title: '切割长度', unit: '米', precision: 1, ...props })
-  assert.match(await render({ value: 9714.2 }), /aria-label="切割长度：9,714\.2 米"/)
-  assert.match(await render({ value: 0 }), /aria-label="切割长度：0\.0 米"/)
-  assert.match(await render({ value: null }), /aria-label="切割长度：暂无数据"/)
-  assert.match(await render({ value: null, loading: true }), /aria-label="正在获取生产数据"/)
 })
 
 test('home bars and comparisons react independently to returned production data', async () => {

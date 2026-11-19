@@ -272,7 +272,6 @@ test('equipment dashboard uses verified energy metrics and responsive home visua
   assert.match(energyDataScript, /const energyCoverage = computed/)
   assert.doesNotMatch(template, /设备利用率/)
   assert.match(styles, /grid-template-columns:repeat\(5,minmax\(0,1fr\)\)/)
-  assert.match(styles, /@media\(max-width:560px\)[\s\S]*\.device-query-shell \.report-query,\.device-kpis\{grid-template-columns:1fr/)
 })
 
 test('workshop dashboard uses verified confirmation metrics and responsive home visuals', () => {

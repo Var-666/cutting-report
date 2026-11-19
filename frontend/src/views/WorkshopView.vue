@@ -513,28 +513,28 @@ const workerTableColumns = [
     />
 
     <section v-if="!isWorker" class="workshop-kpis" aria-label="车间任务概况" :aria-busy="loading">
-      <article class="workshop-kpi kpi-blue">
-        <span class="workshop-kpi__icon"><AppIcon name="tasks" size="21" tone="current" /></span>
+      <article class="workshop-kpi report-kpi-card kpi-blue">
+        <span class="report-kpi-card__icon"><AppIcon name="tasks" size="21" tone="current" /></span>
         <div><span>全部任务</span><p><strong>{{ result.report ? workshopMetrics.taskCount : '--' }}</strong> <small>项</small></p><em>当前查询区间</em></div>
         <MetricSparkline class="workshop-sparkline" :values="workshopMetricSeries.tasks" label="每日任务数量趋势" />
       </article>
-      <article class="workshop-kpi kpi-amber">
-        <span class="workshop-kpi__icon"><AppIcon name="clock" size="21" tone="current" /></span>
+      <article class="workshop-kpi report-kpi-card kpi-amber">
+        <span class="report-kpi-card__icon"><AppIcon name="clock" size="21" tone="current" /></span>
         <div><span>待确认</span><p><strong>{{ result.report ? workshopMetrics.pendingCount : '--' }}</strong> <small>项</small></p><em>等待工人确认</em></div>
         <MetricSparkline class="workshop-sparkline" :values="workshopMetricSeries.pending" label="每日待确认任务趋势" />
       </article>
-      <article class="workshop-kpi kpi-green">
-        <span class="workshop-kpi__icon"><AppIcon name="check" size="21" tone="current" /></span>
+      <article class="workshop-kpi report-kpi-card kpi-green">
+        <span class="report-kpi-card__icon"><AppIcon name="check" size="21" tone="current" /></span>
         <div><span>已确认</span><p><strong>{{ result.report ? workshopMetrics.confirmedCount : '--' }}</strong> <small>项</small></p><em>已登记完成人</em></div>
         <MetricSparkline class="workshop-sparkline" :values="workshopMetricSeries.confirmed" label="每日已确认任务趋势" />
       </article>
-      <article class="workshop-kpi kpi-red">
-        <span class="workshop-kpi__icon"><AppIcon name="briefcase" size="21" tone="current" /></span>
+      <article class="workshop-kpi report-kpi-card kpi-red">
+        <span class="report-kpi-card__icon"><AppIcon name="briefcase" size="21" tone="current" /></span>
         <div><span>涉及工程</span><p><strong>{{ result.report ? workshopMetrics.projectCount : '--' }}</strong> <small>个</small></p><em>当前区间范围</em></div>
         <MetricSparkline class="workshop-sparkline" :values="workshopMetricSeries.projects" label="每日涉及工程趋势" />
       </article>
-      <article class="workshop-kpi kpi-violet">
-        <span class="workshop-kpi__icon"><AppIcon name="activity" size="21" tone="current" /></span>
+      <article class="workshop-kpi report-kpi-card kpi-violet">
+        <span class="report-kpi-card__icon"><AppIcon name="activity" size="21" tone="current" /></span>
         <div><span>确认率</span><p><strong>{{ result.report ? number(workshopMetrics.confirmationRate) : '--' }}</strong> <small>%</small></p><em>按区间任务计算</em></div>
         <MetricSparkline class="workshop-sparkline" :values="workshopMetricSeries.confirmationRate" label="每日任务确认率趋势" />
       </article>
@@ -641,12 +641,12 @@ const workerTableColumns = [
 .workshop-heading h2 { margin:0; font-size:20px; font-weight:600; }
 .workshop-heading span { color:var(--text-color-3); font-size:var(--font-auxiliary); }
 .workshop-dashboard--worker .workshop-query-panel { display:block; padding:0; border:0; background:transparent; }
-@media (max-width:1000px) { .workshop-query-panel { grid-template-columns:minmax(0,1fr); gap:12px; } }.workshop-kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:16px;margin:16px 0}.workshop-kpi{--kpi-color:rgb(var(--info-color));--kpi-soft:rgb(var(--info-color) / .1);position:relative;min-width:0;min-height:108px;padding:12px;border:1px solid var(--theme-border-color);border-top:2px solid var(--kpi-color);border-radius:10px;background:rgb(var(--container-bg-color));box-shadow:var(--theme-shadow);transition:transform .18s ease,box-shadow .18s ease;animation:surface-in .42s cubic-bezier(.2,.75,.25,1) both;display:grid;grid-template-columns:35px minmax(0,1fr);align-items:center;gap:8px 12px}.workshop-kpi:hover{transform:translateY(-2px);box-shadow:var(--theme-shadow)}.workshop-kpi:nth-child(2){animation-delay:.04s}.workshop-kpi:nth-child(3){animation-delay:.08s}.workshop-kpi:nth-child(4){animation-delay:.12s}.workshop-kpi:nth-child(5){animation-delay:.16s}.workshop-kpi.kpi-amber{--kpi-color:rgb(var(--warning-color));--kpi-soft:rgb(var(--warning-color) / .1)}.workshop-kpi.kpi-green{--kpi-color:rgb(var(--success-color));--kpi-soft:rgb(var(--success-color) / .1)}.workshop-kpi.kpi-red{--kpi-color:var(--text-color-3);--kpi-soft:rgb(var(--info-color) / .1)}.workshop-kpi.kpi-violet{--kpi-color:rgb(var(--primary-color));--kpi-soft:rgb(var(--primary-color) / .1)}.workshop-kpi__icon{position:relative;z-index:1;width:35px;height:35px;display:grid;place-items:center;flex:0 0 auto;color:var(--kpi-color);border-radius:50%;background:var(--kpi-soft);transition:transform .2s ease}.workshop-kpi:hover .workshop-kpi__icon{transform:scale(1.08) rotate(-3deg)}.workshop-kpi>div{display:contents}.workshop-kpi>div>span{display:block;color:var(--text-color-1);font-size:var(--font-auxiliary);font-weight:700;white-space:normal;overflow-wrap:anywhere;grid-column:2}.workshop-kpi p{margin:0;color:var(--text-color-1);font-size:var(--font-auxiliary);grid-column:1/-1;min-width:0;overflow-wrap:anywhere}.workshop-kpi p strong{font-size:21px}.workshop-kpi p small{margin-left:2px;color:var(--muted);font-size:var(--font-auxiliary)}.workshop-kpi em{display:block;color:var(--muted);font-style:normal;font-size:var(--font-auxiliary);grid-column:1/-1;min-width:0;white-space:normal;overflow-wrap:anywhere;line-height:1.6}.workshop-sparkline{width:58px;height:25px;opacity:.72;grid-column:1/-1;justify-self:end}
+@media (max-width:1000px) { .workshop-query-panel { grid-template-columns:minmax(0,1fr); gap:12px; } }.workshop-kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:16px;margin:16px 0}.workshop-kpi{--kpi-color:rgb(var(--info-color));--kpi-soft:rgb(var(--info-color) / .1);transition:transform .18s ease,box-shadow .18s ease;animation:surface-in .42s cubic-bezier(.2,.75,.25,1) both}.workshop-kpi:hover{transform:translateY(-2px);box-shadow:var(--theme-shadow)}.workshop-kpi:nth-child(2){animation-delay:.04s}.workshop-kpi:nth-child(3){animation-delay:.08s}.workshop-kpi:nth-child(4){animation-delay:.12s}.workshop-kpi:nth-child(5){animation-delay:.16s}.workshop-kpi.kpi-amber{--kpi-color:rgb(var(--warning-color));--kpi-soft:rgb(var(--warning-color) / .1)}.workshop-kpi.kpi-green{--kpi-color:rgb(var(--success-color));--kpi-soft:rgb(var(--success-color) / .1)}.workshop-kpi.kpi-red{--kpi-color:var(--text-color-3);--kpi-soft:rgb(var(--info-color) / .1)}.workshop-kpi.kpi-violet{--kpi-color:rgb(var(--primary-color));--kpi-soft:rgb(var(--primary-color) / .1)}.workshop-kpi:hover .report-kpi-card__icon{transform:scale(1.08) rotate(-3deg)}.workshop-kpi>div{display:contents}.workshop-kpi>div>span{display:block;color:var(--text-color-1);font-size:var(--font-auxiliary);font-weight:700;white-space:normal;overflow-wrap:anywhere;grid-column:2}.workshop-kpi p{margin:0;color:var(--text-color-1);font-size:var(--font-auxiliary);grid-column:1/-1;min-width:0;overflow-wrap:anywhere}.workshop-kpi p strong{font-size:21px}.workshop-kpi p small{margin-left:2px;color:var(--muted);font-size:var(--font-auxiliary)}.workshop-kpi em{display:block;color:var(--muted);font-style:normal;font-size:var(--font-auxiliary);grid-column:1/-1;min-width:0;white-space:normal;overflow-wrap:anywhere;line-height:1.6}.workshop-sparkline{width:58px;height:25px;opacity:.72;grid-column:1/-1;justify-self:end}
 :deep(.workshop-panel),:deep(.worker-time-summary){margin-bottom:24px;border:1px solid var(--theme-border-color);border-radius:var(--report-panel-radius);box-shadow:var(--theme-shadow)}.workshop-filters{grid-template-columns:1.2fr 1fr auto!important;gap:16px;padding:16px;border-bottom:1px solid var(--theme-border-color)}.workshop-dashboard--worker .workshop-filters{grid-template-columns:1fr 1fr 1fr auto!important}.workshop-filters label span{margin-bottom:5px;font-size:var(--font-auxiliary)}.workshop-filters>button{min-height:38px;display:flex;align-items:center;justify-content:center;gap:6px;padding:0 15px}.workshop-report-state,.workshop-empty-report{margin:0 16px 8px;padding:8px 12px;border:0;font-size:var(--font-auxiliary)}.workshop-report-state strong,.workshop-empty-report strong{font-size:var(--font-auxiliary)}.workshop-summary{padding:0 16px 16px;font-size:var(--font-auxiliary)}:deep(.workshop-panel .report-trend-panel__table),:deep(.worker-time-summary .report-trend-panel__table){overflow-x:auto;border-color:var(--theme-border-color);border-radius:7px}.pending-confirmation{display:inline-flex;align-items:center;justify-content:center;min-height:22px;padding:0 9px;border-radius:999px;background:rgb(var(--warning-color) / .1);color:rgb(var(--warning-color));font-weight:700}.confirm-cell{white-space:nowrap}.confirmation-person{display:inline-flex;align-items:center;gap:8px;width:auto}.confirmed-mark{display:inline-flex;flex-direction:row;white-space:nowrap;color:rgb(var(--success-color))}.confirmed-mark small{margin:0 0 0 8px}.workshop-batch-actions{margin:0 14px 9px;border:1px solid var(--theme-border-color);border-radius:7px}
 @media(max-width:1120px){.workshop-kpis{grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:16px 0}.workshop-kpi:last-child{grid-column:1/-1}}
 @media(max-width:900px){.workshop-filters,.workshop-dashboard--worker .workshop-filters{grid-template-columns:1fr 1fr!important}}
 @media(max-width:560px){.workshop-kpis,.workshop-filters,.workshop-dashboard--worker .workshop-filters{grid-template-columns:1fr!important}.workshop-kpi:last-child{grid-column:auto}.workshop-report-state,.workshop-empty-report{align-items:flex-start;flex-direction:column;margin:0 16px 8px;padding:8px 12px}}
-@media(prefers-reduced-motion:reduce){.workshop-kpi{animation:none}.workshop-kpi{transition:none;display:grid;grid-template-columns:35px minmax(0,1fr);align-items:center;gap:8px 12px;padding:12px}}
+@media(prefers-reduced-motion:reduce){.workshop-kpi{animation:none}.workshop-kpi{transition:none}}
 
 
 /* Match the table and panel density used by the other management reports. */

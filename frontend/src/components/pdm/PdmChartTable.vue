@@ -44,6 +44,7 @@ onBeforeUnmount(() => observer?.disconnect())
 </script>
 
 <template>
+  <div class="pdm-chart-scroll" role="group" :aria-label="`${panel.table.scope_label}图表与明细，可横向滚动`" tabindex="0">
   <ReportTrendPanel class="pdm-chart-table" :class="{ 'pdm-chart-table--grouped': panel.table.group_label }" number="" :title="panel.table.scope_label"
     :subtitle="`${panel.filters.dateBasis === 'actual' ? '实际日期' : '计划日期'} · ${panel.filters.startDate} ～ ${panel.filters.endDate}`" fit-table-content :height="300" :has-data="true" :loading="loading"
     :chart-label="`${panel.table.title} · ${panel.table.scope_label}完成率对比`">
@@ -57,9 +58,14 @@ onBeforeUnmount(() => observer?.disconnect())
     </template>
     <template #table><div ref="tableElement"><PdmSummaryTable :table="panel.table" :start-date="panel.filters.startDate" :end-date="panel.filters.endDate" :queried="true" :expanded-categories="expandedCategories" @toggle-category="toggleCategory" /></div></template>
   </ReportTrendPanel>
+  </div>
 </template>
 
 <style scoped>
+.pdm-chart-scroll{min-width:0;overflow-x:auto}
+.pdm-chart-scroll:focus-visible{outline:2px solid rgb(var(--primary-color));outline-offset:-2px}
+.pdm-chart-table{min-width:1000px}
+.pdm-chart-table :deep(.report-trend-panel__body > .report-trend-panel__content){grid-template-columns:minmax(0,2fr) minmax(0,3fr)}
 .pdm-chart-table :deep(.report-trend-panel__chart){align-self:center}
 .pdm-chart-table--grouped :deep(.report-trend-panel__chart){height:auto;align-self:stretch;border:0;background:none}
 /* Keep short project groups tall enough for their matching chart without adding a table scrollbar. */

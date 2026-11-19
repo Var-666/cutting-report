@@ -37,10 +37,12 @@ test('welding KPI layouts preserve zero, missing and pending measurements with t
     assert.match(html, /aria-label="焊接长度：0\.00 m"/)
     assert.ok(html.includes('仅使用长度、用时均有效的作业'))
     assert.ok(!html.includes('暂无趋势'))
-    const missing = await renderComponent('components/HomeKpiCard', { title: '焊接长度', value: null, variant })
-    assert.match(missing, /aria-label="焊接长度：-- /)
-    const loading = await renderComponent('components/HomeKpiCard', { title: '焊接长度', value: null, loading: true, variant })
+    const missing = await renderComponent('components/HomeKpiCard', { title: '焊接长度', value: null, unit: 'm', variant })
+    assert.match(missing, /aria-label="焊接长度：暂无数据"/)
+    assert.ok(!missing.includes('>m<'))
+    const loading = await renderComponent('components/HomeKpiCard', { title: '焊接长度', value: null, unit: 'm', loading: true, variant })
     assert.match(loading, /aria-label="焊接长度：正在加载"/)
+    assert.match(loading, /aria-label="正在获取生产数据"/)
   }
   const pending = await renderComponent('components/WeldingKpiCards', {
     kind: 'parts', loading: false,

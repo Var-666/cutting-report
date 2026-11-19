@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { readFileSync } from 'node:fs'
+import { createPinia, setActivePinia } from 'pinia'
+import { renderComponent } from './vue-component-helpers.mjs'
+import { useAppStore } from '../src/state/app.ts'
 
 function source(path) {
   return readFileSync(new URL(`../src/${path}`, import.meta.url), 'utf8')
@@ -78,5 +81,24 @@ test('welding home offers equivalent chart tables and mobile welding tables rele
   const table = source('components/AppReportTable.vue')
   assert.match(table, /@media\(max-width:600px\)[\s\S]*welding-table-wrap :deep\(\.n-data-table-td--fixed-left\)[^{]*\{position:static!important\}/)
   assert.doesNotMatch(table, /not\(\.welding-table-wrap\)/)
-  assert.match(source('components/HomeKpiCard.vue'), /formattedValue} \$\{unit}/)
+})
+
+test('KPI text and accessible labels distinguish measured values, zero, missing and loading states', async () => {
+  setActivePinia(createPinia())
+  useAppStore().reducedMotion = true
+  const render = props => renderComponent('components/HomeKpiCard', { title: '切割长度', unit: '米', precision: 1, ...props })
+  for (const [value, display] of [[9714.2, '9,714.2'], [0, '0.0']]) {
+    const html = await render({ value })
+    assert.ok(html.includes(`aria-label="切割长度：${display} 米"`))
+    assert.ok(html.includes(`>${display}<`))
+    assert.ok(html.includes('>米<'))
+  }
+  const missing = await render({ value: null })
+  assert.match(missing, /aria-label="切割长度：暂无数据"/)
+  assert.ok(missing.includes('>暂无数据<'))
+  assert.ok(!missing.includes('>米<'))
+  const loading = await render({ value: 0, loading: true })
+  assert.match(loading, /aria-label="切割长度：正在加载"/)
+  assert.match(loading, /aria-label="正在获取生产数据"/)
+  assert.ok(!loading.includes('>0.0<') && !loading.includes('>米<'))
 })

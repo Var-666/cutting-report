@@ -38,7 +38,7 @@ const cards = computed(() => pdmDocumentKinds.map(kind => {
 </template>
 
 <style scoped>
-.pdm-completion-cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-4)}
+.pdm-completion-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,330px),1fr));gap:var(--space-4)}
 .pdm-completion-cards :deep(.home-kpi--report){min-height:180px;padding:var(--space-6)}
 .pdm-completion-cards__choice{cursor:pointer}
 .pdm-completion-cards__choice.is-active{outline:2px solid rgb(var(--primary-color));outline-offset:2px}
@@ -50,4 +50,5 @@ const cards = computed(() => pdmDocumentKinds.map(kind => {
 .pdm-completion-cards__rate--warning dd{color:rgb(var(--warning-color))}
 .pdm-completion-cards__rate small{margin-left:4px;font-size:var(--font-auxiliary);font-weight:400}
 .pdm-completion-cards__missing{color:var(--text-color-3)}
+@media(max-width:560px){.pdm-completion-cards :deep(.home-kpi--report){padding:var(--space-4)}.pdm-completion-cards__rates{gap:var(--space-2)}}
 </style>

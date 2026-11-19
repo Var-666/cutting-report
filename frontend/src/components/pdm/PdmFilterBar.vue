@@ -116,7 +116,7 @@ function submit() {
 </template>
 
 <style scoped>
-.pdm-filters{display:grid;gap:var(--space-4)}
+.pdm-filters{display:grid;gap:var(--space-4);container-type:inline-size}
 .pdm-filters__common{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-4);align-items:start}
 .pdm-filters__common--single .pdm-filters__period{grid-column:1/-1}
 .pdm-filters__common--fixed{grid-template-columns:auto minmax(300px,1fr)}
@@ -133,4 +133,8 @@ function submit() {
 .pdm-filters__footer>span{margin-right:auto;color:rgb(var(--warning-color));font-size:var(--font-control)}
 .pdm-filters__error{margin:0;color:rgb(var(--error-color));font-size:var(--font-control)}
 .pdm-filters__grouping{margin:0;color:var(--text-color-2);font-size:var(--font-control)}
+@container (max-width:520px){
+  .pdm-filters__common,.pdm-filters__common--fixed,.pdm-filters__fields{grid-template-columns:minmax(0,1fr)}
+  .pdm-filters__footer{flex-wrap:wrap}
+}
 </style>
