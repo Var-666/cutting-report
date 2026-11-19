@@ -32,6 +32,6 @@ export function useDeviceSelection() {
       changeDevice(id)
     } finally { switching.value = false }
   }
-  onMounted(loadDevices)
+  onMounted(() => { if (!deviceSelection.error) void loadDevices() })
   return { deviceSelection, switching, switchDevice, enterLine: (id: string) => switchDevice(id, true), loadDevices }
 }

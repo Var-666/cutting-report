@@ -1363,12 +1363,12 @@ test('independent welding home waits for its catalog, keeps successful data on f
     useRoute: () => route, useRouter: () => ({ push() {} }), reportToday: () => '2026-09-06', formatChineseDate,
     useReportChartTheme: () => ({ colors: ref({}), vars: ref({}) }), onBeforeUnmount: fn => cleanup.push(fn),
     getLatestWeldingAnalysis: async () => null,
-    getWeldingReport: (kind, query, signal) => new Promise((resolve, reject) => calls.push({ kind, query, signal, resolve, reject })),
+    getWeldingReport: (kind, query, signal, force, options) => new Promise((resolve, reject) => calls.push({ kind, query, signal, options, resolve, reject })),
   }
   const script = parse(source('views/WeldingHomeView.vue')).descriptor.scriptSetup.content.replace(/^import .*$/gm, '')
-  const setup = scriptFunction(...Object.keys(bindings), `${script}; return { load, report, error, displayDate };`)
+  const setup = scriptFunction(...Object.keys(bindings), `${script}; return { load, report, error, displayDate, preparing, reportQuery, trendTitle };`)
   const home = scope.run(() => setup(...Object.values(bindings)))
-  assert.equal(home.displayDate, '2026年09月06日')
+  assert.equal(home.displayDate.value, '2026年09月06日')
   assert.equal(calls.length, 0)
   selection.items = [{ id: 'welding', type: 'welding', enabled: true }]
   await Vue.nextTick()
@@ -1376,24 +1376,40 @@ test('independent welding home waits for its catalog, keeps successful data on f
   assert.equal(calls[0].kind, 'dashboard')
   assert.equal(calls[0].query.start, '2026-08-31')
   assert.equal(calls[0].query.page_size, 10)
+  calls[0].options.onPreparing()
+  assert.equal(home.preparing.value, true)
   calls[0].resolve({ today: { job_count: 0 }, meta: {} })
   await settle()
+  assert.equal(home.preparing.value, false)
   route.query = { unrelated: 'navigation-state' }
   await Vue.nextTick()
   assert.equal(calls.length, 1, 'unrelated URL changes must not reset a successful homepage or restart polling')
   assert.equal(home.report.value.today.job_count, 0)
   const failed = home.load(true)
+  await home.load(true)
+  assert.equal(calls.length, 2, 'refresh clicks in flight share the existing feedback')
   calls[1].reject(new Error('source unavailable'))
   await failed
   assert.equal(home.report.value.today.job_count, 0)
   assert.equal(home.error.value, 'source unavailable')
   const late = home.load(true)
-  selection.items[0].enabled = false
+  selection.items.push({ id: 'welding-other', type: 'welding', enabled: true })
+  selection.id = 'welding-other'
+  route.query = { start: '2026-08-01', end: '2026-08-03', device_no: '0', unrelated: 'navigation-state' }
   await Vue.nextTick()
   assert.equal(calls[2].signal.aborted, true)
+  assert.equal(calls[3].options.lineId, 'welding-other')
+  calls[3].resolve({ today: { job_count: 3 }, query: calls[3].query, meta: {} })
+  await settle()
   calls[2].resolve({ today: { job_count: 999 }, meta: {} })
   await late
+  assert.equal(home.report.value.today.job_count, 3)
+  assert.equal(home.trendTitle.value, '区间生产趋势')
+  assert.deepEqual(home.reportQuery.value, { start: '2026-08-01', end: '2026-08-03', device_no: '0' })
+  selection.items[1].enabled = false
+  await Vue.nextTick()
   assert.equal(home.report.value, null)
+  assert.equal(calls.length, 4)
   cleanup.forEach(fn => fn()); scope.stop()
 })
 

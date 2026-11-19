@@ -11,7 +11,7 @@ import AppIcon from '../components/AppIcon.vue'
 import ProductionOverviewCard from '../components/ProductionOverviewCard.vue'
 import ReportPanelState from '../components/ReportPanelState.vue'
 
-const { month, rows, refresh } = useProductionOverview(() => deviceSelection.items)
+const { month, rows, refresh, refreshingAll } = useProductionOverview(() => deviceSelection.items)
 const { enterLine, switching } = useDeviceSelection()
 const period = computed(() => overviewPeriod(month.value))
 const groups = computed(() => productionGroups(rows.value.map(row => row.line))
@@ -20,8 +20,7 @@ const currentLine = computed(() => deviceSelection.items.find(line => line.id ==
 const groupFilter = ref('all')
 const activeGroup = computed(() => groups.value.some(group => group.id === groupFilter.value) ? groupFilter.value : 'all')
 const visibleGroups = computed(() => groups.value.filter(group => activeGroup.value === 'all' || group.id === activeGroup.value))
-const refreshing = computed(() => rows.value.some(row => row.loading))
-const canRefresh = computed(() => rows.value.some(row => row.line.enabled))
+const canRefresh = computed(() => rows.value.some(row => row.line.enabled && !row.loading))
 const overviewHeading = ref<HTMLElement | null>(null)
 const shortcuts = [
   { route: 'pdm-statistics', icon: 'file', label: 'PDM 资料管理', description: '设备资料与详设图纸' },
@@ -78,11 +77,11 @@ function focusOverview() {
             <NButton v-for="group in groups" :key="group.id" size="small" :aria-pressed="activeGroup === group.id"
               quaternary @click="groupFilter = group.id">{{ group.name }}</NButton>
           </div>
-          <NButton :loading="refreshing" :disabled="!canRefresh || refreshing" @click="refresh()">刷新总览</NButton>
+          <NButton :loading="refreshingAll" :disabled="!canRefresh || refreshingAll" @click="refresh()">刷新总览</NButton>
         </div>
       </header>
-      <ReportPanelState v-if="deviceSelection.error" type="error" title="产线目录读取失败" :message="deviceSelection.error" action-label="重试" @action="loadDevices({ includeLines: true })" />
-      <ReportPanelState v-else-if="!deviceSelection.ready" type="loading" title="正在读取产线目录…" />
+      <ReportPanelState v-if="deviceSelection.error" type="error" title="产线目录读取失败" :message="rows.length ? '仍可使用上次读取的产线目录。' : '暂时无法获取产线，请重试。'" action-label="重试" @action="loadDevices({ force: true, includeLines: true })" />
+      <ReportPanelState v-else-if="deviceSelection.loading || !deviceSelection.ready" type="loading" title="正在读取产线目录…" />
       <ReportPanelState v-else-if="!rows.length" title="暂无产线" message="当前未登记生产产线" />
       <div v-if="visibleGroups.length" class="overview-board">
         <section v-for="group in visibleGroups" :key="group.id" class="overview-group"
@@ -93,7 +92,7 @@ function focusOverview() {
             <span>{{ group.rows.length }} 条产线</span>
           </header>
           <div class="overview-group-cards">
-            <ProductionOverviewCard v-for="row in group.rows" :key="row.line.id" :row="row" @enter="enterLine(row.line.id)" @retry="refresh(row.line.id)" />
+            <ProductionOverviewCard v-for="row in group.rows" :key="row.line.id" :row="row" :switching="switching" @enter="enterLine(row.line.id)" @retry="refresh(row.line.id)" />
           </div>
         </section>
       </div>

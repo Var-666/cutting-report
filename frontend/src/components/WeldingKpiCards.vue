@@ -9,7 +9,7 @@ const cards = computed(() => weldingKpis(props.kind, props.report))
 const icons: Record<string, string> = { weld_length_m: 'ruler', part_actual_length_m: 'ruler', job_count: 'tasks', involved_part_count: 'grid', working_hours: 'clock', part_row_count: 'file', ambiguous_part_count: 'search', device_count: 'factory', robot_station_count: 'grid', output_per_hour: 'trend' }
 const colors: Record<string, string> = { weld_length_m: 'success', part_actual_length_m: 'success', job_count: 'primary', involved_part_count: 'info', working_hours: 'warning', part_row_count: 'primary', ambiguous_part_count: 'warning', device_count: 'primary', robot_station_count: 'info', output_per_hour: 'warning' }
 function note(key: string) {
-  if (key === 'involved_part_count') return '按区间流水号去重，日数不可累加'
+  if (key === 'involved_part_count') return props.kind === 'dashboard' ? '按当日有效流水号去重' : '按区间流水号去重，日数不可累加'
   if (key === 'part_actual_length_m') return '工件累计值；归属不明确时待核实'
   if (key === 'part_row_count') return '当前筛选范围内的工件记录'
   if (key === 'ambiguous_part_count') return '参与流水号存在多条工件归属'

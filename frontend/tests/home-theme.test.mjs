@@ -10,6 +10,8 @@ import { loadConfigFromFile } from 'vite'
 import { fileURLToPath } from 'node:url'
 import { parse } from '@vue/compiler-sfc'
 import { sparklineGeometry } from '../src/utils/sparkline.ts'
+import { cuttingOverviewFreshness } from '../src/api/productionOverview.ts'
+import { REPORT_POLL_LIMIT, reportIsRefreshing, waitForReportPoll } from '../src/api/reportRequests.ts'
 
 const read = (path) => readFileSync(new URL(`../src/${path}`, import.meta.url), 'utf8')
 const { config: unoConfig } = await loadConfigFromFile({ command: 'build', mode: 'test' }, fileURLToPath(new URL('../uno.config.ts', import.meta.url)))
@@ -41,6 +43,7 @@ function mountHome(overrides = {}) {
   const bindings = {
     ...Vue, use: () => {}, BarChart: {}, LineChart: {}, PieChart: {}, GridComponent: {}, LegendComponent: {}, TooltipComponent: {}, CanvasRenderer: {},
     useAppStore: () => appState, useThemeVars: () => theme,
+    cuttingOverviewFreshness, REPORT_POLL_LIMIT, reportIsRefreshing, waitForReportPoll, deviceSelection: { id: 'cutting' },
     reportToday: () => '2026-10-23', session: { systemInfo: {}, user: {} },
     formatChineseDate: String, formatChineseDateTime: String, formatChineseMonth: String, formatDeviceDisplay: String,
     getLeadershipReport: async () => ({ current_month_total: { task_count: 0, cut_length_m: 0, work_time_seconds: 0 }, daily_records: [] }),
@@ -51,7 +54,7 @@ function mountHome(overrides = {}) {
   }
   const source = parse(read('views/AdminHomeView.vue')).descriptor.scriptSetup.content.replace(/^import .*$/gm, '')
   const entries = Object.entries(bindings).filter(([key]) => /^[\w$]+$/.test(key))
-  const setup = scriptFunction(...entries.map(([key]) => key), `${source}\nreturn { overviewLoading, historyLoading, energyLoading, alarmLoading, overview, total, error, recentReports, loadDashboard, workHours, workUnit, trendElement, statusElement, metricSeries, comparisonStatus, taskComparison, lengthComparison, timeComparison, insightTrend }`)
+  const setup = scriptFunction(...entries.map(([key]) => key), `${source}\nreturn { overviewLoading, historyLoading, energyLoading, alarmLoading, overview, total, error, recentReports, loadDashboard, workHours, workUnit, trendElement, statusElement, metricSeries, comparisonStatus, taskComparison, lengthComparison, timeComparison, insightTrend, overviewPreparing, electricity }`)
   const renderer = Vue.createRenderer({
     createComment: () => ({}), createText: () => ({}), createElement: () => ({}), insert() {}, remove() {}, setText() {}, setElementText() {}, parentNode: () => null, nextSibling: () => null, patchProp() {},
   })
@@ -100,7 +103,7 @@ test('home failure and empty data preserve successful independent modules and fi
   const home = mountHome({ getLeadershipReport: async () => { throw new Error('生产数据读取失败') }, listReports: async () => ({ items: [{ report_id: 'r1' }], total: 1 }) })
   try {
     await flush()
-    assert.equal(home.state.error.value, '生产数据读取失败')
+    assert.equal(home.state.error.value, '生产统计')
     assert.equal(home.state.overview.value, null)
     assert.equal(home.state.recentReports.value.length, 1)
     assert.equal(home.state.historyLoading.value, false)
@@ -109,6 +112,55 @@ test('home failure and empty data preserve successful independent modules and fi
     assert.equal(home.state.energyLoading.value, false)
     assert.equal(home.state.total.value.task_count, 0)
   } finally { home.close() }
+})
+
+test('cutting retries only the failed module and does not turn missing work time into zero', async () => {
+  let fail = true
+  let productionReads = 0
+  const energyModes = []
+  const home = mountHome({
+    getLeadershipReport: async () => { productionReads++; return { current_month_total: { task_count: 1, cut_length_m: 0, work_time_seconds: null } } },
+    getEnergyMonth: async (month, { mode }) => {
+      energyModes.push(mode)
+      if (fail) throw new Error('能源接口不可用')
+      return { summary: { electricity: { value: 0 } } }
+    },
+  })
+  try {
+    await flush()
+    assert.equal(home.state.error.value, '能耗')
+    assert.equal(home.state.workHours.value, null)
+    assert.equal(home.state.workUnit.value, '')
+    fail = false
+    await Promise.all([home.state.loadDashboard(true), home.state.loadDashboard(true)])
+    assert.equal(home.state.electricity.value, 0)
+    assert.equal(home.state.error.value, '')
+    assert.equal(productionReads, 1)
+    assert.deepEqual(energyModes, ['read', 'refresh'])
+  } finally { home.close() }
+})
+
+test('cutting keeps a cold placeholder out of the KPI and cancels late snapshot updates on leave', async () => {
+  let finishWait, finishPoll, signal
+  const home = mountHome({
+    waitForReportPoll: () => new Promise(resolve => { finishWait = resolve }),
+    getLeadershipReport: async (month, options) => {
+      signal = options.signal
+      return options.mode === 'poll' ? new Promise(resolve => { finishPoll = resolve }) : {
+        current_month_total: { task_count: 0 }, snapshot: { stale: true, refreshing: true, data_as_of: null },
+      }
+    },
+  })
+  await flush()
+  assert.equal(home.state.overviewPreparing.value, true)
+  assert.equal(home.state.overview.value, null)
+  finishWait()
+  await flush()
+  home.close()
+  assert.equal(signal.aborted, true)
+  finishPoll({ current_month_total: { task_count: 8 }, snapshot: { data_as_of: '2026-10-23' } })
+  await flush()
+  assert.equal(home.state.overview.value, null)
 })
 
 test('home bars and comparisons react independently to returned production data', async () => {

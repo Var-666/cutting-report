@@ -79,6 +79,21 @@ test('a missing cutting snapshot is preparing rather than a month with zero prod
   assert.ok(value.metrics.every(metric => metric.value === null))
 })
 
+test('overview never presents welding generation time as the snapshot cutoff', async t => {
+  let meta = { timezone: 'Asia/Tokyo', calculated_at: '2026-11-17T08:00:00+09:00', report_data: { stale: true } }
+  t.mock.method(globalThis, 'fetch', async () => response({ summary: { job_count: 0, weld_length_m: null }, meta }))
+  const signal = new AbortController().signal
+  const historical = await getProductionOverview(lines[2], '2026-11', signal, true)
+  assert.equal(historical.dataAsOf, null)
+  assert.equal(historical.calculatedAt, null)
+  assert.equal(historical.empty, true)
+  assert.deepEqual(historical.metrics.slice(0, 2).map(metric => metric.value), [0, null])
+  meta = { ...meta, report_data: null }
+  const generated = await getProductionOverview(lines[2], '2026-11', signal, true)
+  assert.equal(generated.dataAsOf, null)
+  assert.equal(generated.calculatedAt, meta.calculated_at)
+})
+
 function controller(read) {
   let today = '2026-11-17'
   const timers = new Map(), intervals = new Map()
@@ -114,6 +129,8 @@ test('overview limits concurrency, skips disabled lines and retains results afte
     assert.equal(state.rows.value[1].error, '二线不可用')
     assert.equal(state.rows.value[0].data.metrics[0].value, 0)
     state.refresh('c1')
+    state.refresh('c1')
+    assert.equal(pending.length, 5, 'rapid re-clicks do not enqueue another refresh')
     pending[4].reject(Error('重试失败')); await flush()
     assert.equal(state.rows.value[0].data.dataAsOf, '2026-11-17T08:00:00+08:00')
     assert.equal(state.rows.value[0].error, '重试失败')
@@ -124,6 +141,51 @@ test('overview limits concurrency, skips disabled lines and retains results afte
     state.items.value = [{ ...lines[0], enabled: false }]; await flush()
     assert.equal(state.rows.value[0].loading, false)
     assert.equal(pending.length, 6)
+  } finally { state.close() }
+})
+
+test('catalog changes cancel only the affected row and ignore a late result after rebinding', async () => {
+  const pending = []
+  const state = controller((line, month, signal, force, preparing, mode) => new Promise(resolve => pending.push({ line, month, signal, mode, resolve })))
+  try {
+    state.items.value = lines.slice(0, 2)
+    await flush()
+    pending[0].resolve(data())
+    await flush()
+    const retained = state.rows.value[0].data
+    const old = pending[1]
+    state.items.value = [{ ...lines[0], name: '切割更名' }, { ...lines[1], source_key: 'replacement' }]
+    await flush()
+    assert.equal(state.rows.value[0].data, retained)
+    assert.equal(state.rows.value[0].line.name, '切割更名')
+    assert.equal(old.signal.aborted, true)
+    const newest = pending.at(-1)
+    assert.equal(newest.line.source_key, 'replacement')
+    assert.equal(newest.mode, 'reload')
+    newest.resolve(data({ dataAsOf: '2026-11-18T08:00:00+08:00' }))
+    await flush()
+    old.resolve(data({ dataAsOf: '2026-11-01T08:00:00+08:00' }))
+    await flush()
+    assert.equal(state.rows.value[1].data.dataAsOf, '2026-11-18T08:00:00+08:00')
+    assert.equal(pending.filter(call => call.line.id === 'c1').length, 1)
+  } finally { state.close() }
+})
+
+test('a second global refresh cannot restart a completed line while the first batch is active', async () => {
+  const pending = []
+  const state = controller((line, month, signal, force, preparing, mode) => mode === 'refresh'
+    ? new Promise(resolve => pending.push({ id: line.id, resolve })) : Promise.resolve(data()))
+  try {
+    await flush()
+    state.refresh()
+    assert.equal(state.refreshingAll.value, true)
+    pending[0].resolve(data())
+    await flush()
+    state.refresh()
+    pending[1].resolve(data()); await flush()
+    pending[2].resolve(data()); pending[3].resolve(data()); await flush()
+    assert.deepEqual(pending.map(call => call.id), lines.map(line => line.id))
+    assert.equal(state.refreshingAll.value, false)
   } finally { state.close() }
 })
 
@@ -162,16 +224,24 @@ test('overview cards render disabled, loading, preparing, empty and retained fai
   setActivePinia(createPinia())
   const row = { line: lines[0], data: null, loading: false, preparing: false, error: '' }
   for (const [changes, expected] of [
+    [{}, '尚未读取生产数据'],
     [{ line: { ...lines[0], enabled: false } }, '产线未启用'],
     [{ loading: true }, '正在读取本月生产数据'],
     [{ loading: true, preparing: true }, '生产数据准备中'],
     [{ error: '源库不可用' }, '生产数据读取失败'],
     [{ data: data() }, '本月暂无生产记录'],
-    [{ data: data({ metrics: [{ title: '任务数', value: null, unit: '项', precision: 0 }], empty: false, stale: true }), error: '失败' }, '刷新失败，保留上次结果'],
+    [{ data: data({ preparing: true, empty: false, refreshing: true }) }, '生产数据准备中'],
+    [{ data: data({ stale: true }) }, '历史结果待更新'],
+    [{ data: data({ dataAsOf: null, calculatedAt: '2026-11-17T08:00:00+08:00' }) }, '统计生成'],
+    [{ data: data({ metrics: [{ title: '任务数', value: null, unit: '项', precision: 0 }], empty: false, stale: true, refreshFailed: true, refreshing: true }), error: '失败' }, '刷新失败，保留上次结果'],
   ]) {
     const html = await renderComponent('components/ProductionOverviewCard', { row: { ...row, ...changes } })
     assert.ok(html.includes(expected), expected)
     if (changes.error && !changes.data) assert.ok(!html.includes('任务数：0'))
-    if (changes.data?.stale) assert.ok(html.includes('数据待更新') && html.includes('任务数：暂无数据'))
+    if (changes.data?.preparing) assert.ok(!html.includes('任务数：0'))
+    if (changes.error && changes.data) {
+      assert.ok(html.includes('任务数：暂无数据'))
+      assert.doesNotMatch(html, /历史结果待更新|后台更新中|生产数据读取失败/)
+    }
   }
 })

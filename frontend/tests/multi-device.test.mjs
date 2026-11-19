@@ -97,6 +97,28 @@ test('a fresh session follows the catalog default instead of assuming Cutter01',
   assert.equal(url.searchParams.get('device_id'), 'Cutter01', 'the backend default must not redirect an explicit selection')
 })
 
+test('the production directory preserves its last usable catalog and supports retrying a failed read', async t => {
+  let failed = true
+  const fetch = t.mock.method(globalThis, 'fetch', async url => {
+    assert.equal(url, '/api/v1/production-lines')
+    if (failed) return new Response(JSON.stringify({ detail: '目录暂不可用' }), { status: 500, headers: { 'Content-Type': 'application/json' } })
+    return response(catalog)
+  })
+  await loadDevices({ includeLines: true })
+  assert.equal(deviceSelection.ready, false)
+  assert.equal(deviceSelection.error, '目录暂不可用')
+  failed = false
+  await loadDevices({ includeLines: true, force: true })
+  assert.equal(deviceSelection.ready, true)
+  assert.equal(deviceSelection.id, catalog.default_device_id)
+  assert.equal(deviceSelection.error, '')
+  failed = true
+  await loadDevices({ includeLines: true, force: true })
+  assert.deepEqual(deviceSelection.items, catalog.items)
+  assert.equal(deviceSelection.error, '目录暂不可用')
+  assert.equal(fetch.mock.callCount(), 3)
+})
+
 for (const outcome of ['success', 'failure']) {
   test(`a late device catalog ${outcome} after logout cannot overwrite the next session`, async (t) => {
     const pending = []

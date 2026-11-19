@@ -15,5 +15,8 @@ test('statistics freshness renders the original Beijing timestamp and distinct r
     assert.match(html, /<button[^>]*disabled/)
     if (changes.refresh_failed) assert.ok(!html.includes('后台更新中'))
   }
+  const unknown = await renderComponent('components/ReportDataStatus', { meta: { report_data: { ...report, data_as_of: null } }, label: '统计截止' })
+  assert.match(unknown, /统计截止.*未知/)
+  assert.doesNotMatch(unknown, /<time\b|2026年11月19日/)
   assert.ok(!(await renderComponent('components/ReportDataStatus')).includes('更新于'))
 })

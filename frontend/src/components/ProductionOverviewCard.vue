@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { OverviewRow } from '../composables/useProductionOverview.ts'
+import { computed } from 'vue'
 import { NAlert, NButton, NTag } from 'naive-ui'
 import AppIcon from './AppIcon.vue'
 import HomeKpiCard from './HomeKpiCard.vue'
@@ -7,8 +8,20 @@ import ReportPanelState from './ReportPanelState.vue'
 import { formatChineseDateTime } from '../utils/dateDisplay.ts'
 import { productionLineIcon } from '../utils/productionLines.ts'
 
-defineProps<{ row: OverviewRow }>()
+const props = defineProps<{ row: OverviewRow; switching?: boolean }>()
 defineEmits<{ enter: []; retry: [] }>()
+
+const result = computed(() => props.row.data?.preparing ? null : props.row.data)
+const timestamp = computed(() => result.value?.dataAsOf || result.value?.calculatedAt)
+const status = computed(() => {
+  const { row } = props
+  if (row.loading) return { text: '正在更新', type: 'info' } as const
+  if (row.error || result.value?.refreshFailed) return { text: '刷新失败，保留上次结果', type: 'warning' } as const
+  if (result.value?.refreshing) return { text: '后台更新中', type: 'info' } as const
+  if (result.value?.stale) return { text: '历史结果待更新', type: 'warning' } as const
+  if (result.value?.empty) return { text: '本月暂无生产记录', type: 'default' } as const
+  return null
+})
 </script>
 
 <template>
@@ -19,13 +32,13 @@ defineEmits<{ enter: []; retry: [] }>()
       </span>
       <h4 class="overview-card-title">{{ row.line.name }}</h4>
       <NButton class="overview-enter" size="small" quaternary
-        :aria-label="`进入产线：${row.line.name}`" @click="$emit('enter')">
+        :disabled="switching" :aria-label="`进入产线：${row.line.name}`" @click="$emit('enter')">
         进入产线<AppIcon name="chevron-right" :size="14" tone="current" />
       </NButton>
     </header>
     <div class="overview-card-body">
-      <div v-if="row.line.enabled && row.data" class="overview-metrics">
-        <HomeKpiCard v-for="(metric, index) in row.data.metrics" :key="metric.title"
+      <div v-if="row.line.enabled && result" class="overview-metrics">
+        <HomeKpiCard v-for="(metric, index) in result.metrics" :key="metric.title"
           :class="{ 'overview-output': index === 1 }" :title="metric.title" :value="metric.value"
           :unit="metric.unit" :precision="metric.precision" color="rgb(var(--overview-accent))"
           :icon="['tasks', 'ruler', 'clock'][index]" trend-label="" />
@@ -33,29 +46,25 @@ defineEmits<{ enter: []; retry: [] }>()
       <p v-else-if="!row.line.enabled" class="overview-line-state" role="status">
         <NTag size="small" :bordered="false">产线未启用</NTag>
       </p>
-      <ReportPanelState v-else-if="row.loading" class="overview-line-state" type="loading"
-        :title="row.preparing ? '生产数据准备中…' : '正在读取本月生产数据…'" />
-      <NAlert v-if="row.error" type="error" role="alert" :title="row.data ? '刷新失败，保留上次结果' : '生产数据读取失败'">
-        <div class="overview-error"><span>{{ row.error }}</span><NButton size="small" :disabled="row.loading" @click="$emit('retry')">重试</NButton></div>
+      <NAlert v-else-if="row.error" type="error" role="alert" title="生产数据读取失败">
+        <div class="overview-error"><span>当前无可用结果</span><NButton size="small" :aria-label="`重试读取：${row.line.name}`" @click="$emit('retry')">重试</NButton></div>
       </NAlert>
+      <ReportPanelState v-else-if="row.loading || row.preparing || row.data?.preparing" class="overview-line-state" type="loading"
+        :title="row.preparing || row.data?.preparing ? '生产数据准备中…' : '正在读取本月生产数据…'" />
+      <p v-else class="overview-line-state" role="status">尚未读取生产数据</p>
     </div>
-    <footer v-if="row.line.enabled && row.data" class="overview-details">
+    <footer v-if="row.line.enabled && result" class="overview-details">
       <div class="overview-card-meta" role="status">
         <div class="overview-statuses">
-          <NTag v-if="row.data.preparing" size="small" type="info" :bordered="false">生产数据准备中</NTag>
-          <NTag v-if="row.data.demo" size="small" type="warning" :bordered="false">演示数据</NTag>
-          <NTag v-if="row.data.stale" size="small" type="warning" :bordered="false">数据待更新</NTag>
-          <NTag v-if="row.data.refreshFailed" size="small" type="warning" :bordered="false">后台刷新失败</NTag>
-          <NTag v-else-if="row.data.refreshing" size="small" type="info" :bordered="false">后台更新中</NTag>
-          <NTag v-if="row.data.empty" size="small" :bordered="false">本月暂无生产记录</NTag>
-          <span v-if="row.loading">{{ row.preparing ? '生产数据准备中…' : '正在更新…' }}</span>
-          <NButton v-if="row.data.refreshFailed" size="tiny" :disabled="row.loading" @click="$emit('retry')">重新读取</NButton>
+          <NTag v-if="result.demo" size="small" type="warning" :bordered="false">演示数据</NTag>
+          <NTag v-if="status" size="small" :type="status.type" :bordered="false">{{ status.text }}</NTag>
+          <NButton v-if="!row.loading && (row.error || result.refreshFailed)" size="tiny" :aria-label="`重试读取：${row.line.name}`" @click="$emit('retry')">重试</NButton>
         </div>
-        <span class="overview-timestamp">
+        <span class="overview-timestamp" :title="result.source === 'cache' || result.source === 'snapshot' ? '使用已保存的统计结果；时间不是源表最后写入时间' : '时间不是源表最后写入时间'">
           <AppIcon name="clock" :size="14" tone="current" />
-          更新于 <time v-if="row.data.dataAsOf" :datetime="row.data.dataAsOf">{{ formatChineseDateTime(row.data.dataAsOf, '--', 'Asia/Shanghai') }}</time><span v-else>未提供</span>
+          {{ result.calculatedAt ? '统计生成' : '统计截止' }} <time v-if="timestamp" :datetime="timestamp">{{ formatChineseDateTime(timestamp, '未知', 'Asia/Shanghai') }}</time><span v-else>未知</span>
         </span>
-        <span>{{ row.data.timezone ? `统计时区：${row.data.timezone}` : '按切割报表生产日期统计' }}</span>
+        <span>{{ result.timezone ? `统计时区：${result.timezone}` : '按切割报表生产日期统计' }}</span>
       </div>
     </footer>
   </article>
