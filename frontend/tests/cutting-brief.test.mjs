@@ -17,20 +17,21 @@ test('cutting brief renders dynamic prose and the actual period without fixed KP
   assert.ok(html.includes(brief.headline) && html.includes(brief.summary))
   assert.match(html, /class="[^"]*\bmodel\b[^"]*"[^>]*>\s*AI 分析/)
   assert.ok(html.includes('2026-08-18 至 2026-08-20'))
-  assert.ok(html.includes('查看记录（5 项）'))
+  assert.ok(html.includes('分析依据 / 关联记录'))
+  assert.ok(!html.includes('查看记录（5 项）'))
   assert.ok(!html.includes('real-task-5'))
   assert.ok(!html.includes('核心指标') && !html.includes('建议跟进') && !html.includes('旧适配文本'))
   assert.ok(!html.includes('C_confirmation') && !html.includes('F004'))
 })
 
-test('task references show business names for cached IDs and retain exact navigation', async () => {
+test('task references stay out of the initial brief while retaining business labels and exact navigation', async () => {
   const task = { ...reference, id: '30984', label: '30984', project_code: 'CMYZ0170', program_no: '806C-01.gen' }
   assert.equal(analysisReferenceLabel(task), '程序 806C-01.gen · 工程 CMYZ0170')
   assert.equal(analysisReferenceLabel({ ...task, label: '程序 806C-01.gen · 工程 CMYZ0170 · 分段 806C' }),
     '程序 806C-01.gen · 工程 CMYZ0170 · 分段 806C')
   const html = await renderComponent('components/CuttingAnalysisBrief', { brief: { ...brief,
     findings: [{ ...brief.findings[0], references: [task], reference_count: 1 }] }, facts: [] })
-  assert.ok(html.includes('806C-01.gen') && html.includes('CMYZ0170'))
+  assert.ok(!html.includes('806C-01.gen') && !html.includes('CMYZ0170'))
   assert.ok(!html.includes('30984'))
   assert.equal(analysisTaskLocation(task, 'Cutter01').query.task, '30984')
 })
@@ -41,14 +42,15 @@ test('missing task business fields use a readable notice and project names remai
   assert.equal(analysisReferenceLabel({ ...reference, kind: 'project', id: 'P-01', label: 'P-01' }), 'P-01')
 })
 
-test('a finding and its follow-up share one record entry in the evidence table', async () => {
+test('a finding and its follow-up retain one collapsed record section', async () => {
   const reportBrief = {
     ...brief,
     actions: [{ candidate_id: 'C_confirmation', title: '核对工人确认记录', detail: '向当班人员核对实际完成人。' }],
   }
   const html = await renderComponent('components/CuttingAnalysisBrief', { brief: reportBrief, facts: analysis.facts })
   assert.ok(html.includes('核对工人确认记录'))
-  assert.equal(html.split('查看记录（5 项）').length - 1, 1)
+  assert.equal(html.split('分析依据 / 关联记录').length - 1, 1)
+  assert.ok(!html.includes('查看记录（5 项）'))
   assert.doesNotMatch(html, /查看全部关联任务|查看全部关联记录|查看关联/)
 })
 
@@ -58,7 +60,7 @@ test('empty findings and actions leave no placeholder headings; selected metrics
   assert.ok(html.includes('工人确认率') && html.includes('50.0%'))
 })
 
-test('leadership cards show authoritative metrics, actual trends and project evidence', async () => {
+test('leadership cards show authoritative metrics and actual trends with project evidence collapsed', async () => {
   const scope = { ...brief.scope, report_type: 'leadership', comparison_start: '2026-08-15', comparison_end: '2026-08-17' }
   const project = { ...reference, kind: 'project', id: 'P-01', label: 'P-01' }
   const reportBrief = {
@@ -81,9 +83,10 @@ test('leadership cards show authoritative metrics, actual trends and project evi
     project_distribution: [{ project_name: 'P-01', task_count: 3, cut_length_m: 8, work_time_seconds: 1800 }],
   }
   const html = await renderComponent('components/CuttingAnalysisBrief', { brief: reportBrief, facts, leadershipReport })
-  for (const text of ['区间坡口长度', '-50.0%', '-25.0%', '基于最近 2 个有效数据点', '周期未结束', '分析依据 / 关联记录', '切割长度 8.0 米 · 切割时长 00:30:00']) {
+  for (const text of ['区间坡口长度', '-50.0%', '-25.0%', '基于最近 2 个有效数据点', '周期未结束', '分析依据 / 关联记录']) {
     assert.ok(html.includes(text), text)
   }
+  assert.ok(!html.includes('P-01') && !html.includes('切割长度 8.0 米 · 切割时长 00:30:00'))
 })
 
 test('welding analysis uses only the matching report snapshot for indicators', async () => {

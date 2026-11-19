@@ -26,6 +26,6 @@ defineEmits<{ action: []; dismiss: [] }>()
 </template>
 
 <style scoped>
-.report-feedback{margin:16px 0;overflow-wrap:anywhere}.report-feedback__content{display:flex;align-items:center;justify-content:space-between;gap:12px}.report-feedback__content>span{min-width:0}.report-feedback__actions{display:flex;gap:8px;flex-shrink:0}
+.report-feedback{margin:16px 0;overflow-wrap:anywhere}.report-feedback__content{display:flex;align-items:center;gap:12px}.report-feedback__content>span{min-width:0}.report-feedback__actions{display:flex;gap:8px;flex-shrink:0}
 @media(max-width:640px){.report-feedback__content{align-items:flex-start;flex-direction:column}.report-feedback__actions{flex-wrap:wrap}}
 </style>

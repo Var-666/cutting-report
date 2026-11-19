@@ -9533,6 +9533,12 @@ export type IncidentsApiV1OperationsIncidentsGetData = {
          */
         status?: 'open' | 'acknowledged' | 'recovered' | null;
         /**
+         * Min Level
+         *
+         * ERROR 及以上，包括 ERROR 和 CRITICAL
+         */
+        min_level?: 'ERROR' | null;
+        /**
          * Page
          */
         page?: number;

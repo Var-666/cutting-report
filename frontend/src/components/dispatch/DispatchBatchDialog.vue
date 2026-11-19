@@ -111,7 +111,7 @@ const batchTableColumns = [
 .push-batch-summary strong { color:var(--blue); font-size:22px; }
 .push-batch-summary span { font-size:var(--font-auxiliary); }
 .push-batch-summary small { width:100%; color:var(--text-color-3); font-size:var(--font-auxiliary); }
-.push-batch-error { margin-bottom:14px; padding:10px 13px; color:rgb(var(--error-color)); border-left:3px solid rgb(var(--error-color)); background:rgb(var(--error-color) / .1); font-size:var(--font-auxiliary); }
+.push-batch-error { margin-bottom:14px; padding:4px 0; color:rgb(var(--error-color)); font-size:var(--font-auxiliary); }
 .push-batch-progress { margin-bottom:14px; padding:11px 13px; background:rgb(var(--info-color) / .1); }
 .push-batch-progress > div { display:flex; align-items:center; justify-content:space-between; gap:15px; }
 .push-batch-progress strong { min-width:0; overflow:hidden; color:var(--text-color-1); text-overflow:ellipsis; white-space:nowrap; font-size:var(--font-auxiliary); }

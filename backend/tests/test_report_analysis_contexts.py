@@ -192,8 +192,22 @@ def test_missing_project_groups_are_quality_candidates_with_complete_links(kind,
         assert any('不能解释为工程集中' in item for item in context['data_quality'])
         assert not any('任务最多工程' in f['label'] + f['value'] + f['source'] for f in context['facts'])
     else:
-        assert fact['label'] == '任务最多工程' and 'P-real' in fact['value']
+        assert fact['label'] == '工程任务集中度' and '3 项，占全部任务 75.0%' in fact['value']
+        assert 'P-real' not in fact['value']
         assert 'C_project' in context['_references']
+        assert len(context['_references']['C_project']) == 3
+
+
+def test_leadership_project_findings_describe_concentration_and_keep_names_in_references():
+    from app.services.report_analysis.leadership import build_context
+    original = analysis_cases()['leadership_month'][1][0]
+    project = replace(original.project_distribution[0], project_name='PROJECT-PRIVATE-NAME')
+    report = replace(original, project_distribution=[project])
+    context = build_context(report, report.monthly_records)
+    fact = next(fact for fact in context['facts'] if fact['id'] == 'F006')
+    assert '任务最多工程' in fact['value'] and '占本期任务' in fact['value']
+    assert 'PROJECT-PRIVATE-NAME' not in fact['value']
+    assert context['_references']['C_project'][0]['id'] == 'PROJECT-PRIVATE-NAME'
 
 
 def test_leadership_missing_project_evidence_does_not_claim_project_concentration():

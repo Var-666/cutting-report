@@ -88,8 +88,8 @@ def build_context(report: LeadershipReportResult, monthly_records: list, task_re
         else "上年同期"
     )
     project_value = (
-        f"{'工程号未填写' if projects[0]['project_name'] == '未标注工程' else projects[0]['project_name']} "
-        f"{projects[0]['task_count']} 项"
+        f"{'工程号未填写' if projects[0]['project_name'] == '未标注工程' else '任务最多工程'} "
+        f"{projects[0]['task_count']} 项，占本期任务 {projects[0]['task_count'] / current.task_count * 100:.1f}%"
         if projects and current.task_count
         else "暂无工程数据"
     )
@@ -155,7 +155,7 @@ def build_context(report: LeadershipReportResult, monthly_records: list, task_re
         ),
         _fact(
             "F006",
-            "工程号与任务较多的日期",
+            "工程信息缺口与日分布" if projects and projects[0]['project_name'] == '未标注工程' else "工程任务集中度与日分布",
             f"{project_value}，任务较多的日期 {anomaly_value}",
             f"{'工程信息缺口' if projects and projects[0]['project_name'] == '未标注工程' else '任务最多工程'}：{project_value}；{anomaly_source}",
         ),

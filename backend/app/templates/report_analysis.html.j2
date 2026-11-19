@@ -12,11 +12,15 @@
 {% endif %}
 {% if summary_shown %}
 {% set overview_facts = {'leadership':['F001','F002','F003','F007'],
-                         'workshop':[] if report.data_quality else ['F001','F002','F003'],
+                         'workshop':['F001','F002','F003'],
                          'equipment':['F001','F002','F003','F004']} %}
 {% set facts = facts|rejectattr('id', 'in', overview_facts.get(report.meta.report_type, []))|list %}
 {% endif %}
 {% set quality = brief.data_quality|unique|list if brief else [] %}
+{% set task_quality = report.data_quality|default([]) %}
+{% if brief and brief.findings|selectattr('candidate_id', 'equalto', 'C_task_quality')|list %}
+{% set task_quality = [] %}
+{% endif %}
 <section class="lp-sheet lp-analysis" aria-label="智能分析">
   {{ hero('AI 智能生产洞察', 'INTELLIGENCE & DECISION INSIGHTS', analysis_cover()) }}
   <div class="lp-analysis-status"><span>{{ '大模型分析' if available else '未生成分析' }}{{ ' · 已缓存' if analysis and analysis.cached else '' }}</span><span>生成时间：{{ analysis.generated_at or '--' if analysis else '--' }}</span></div>
@@ -37,7 +41,6 @@
     {% if brief %}{% for finding in brief.findings %}
     {% set label = attention_labels.get(finding.candidate_id|default('')) %}
     <article class="lp-finding"><h3>{% if label %}{{ attention_badge(label) }}{% endif %}<span>{{ finding.title }}</span></h3><p>{{ finding.detail }}</p>
-      {% if finding.references %}<p class="lp-references">关联记录（{{ finding.reference_count }} 项）：{% for reference in finding.references %}{{ reference|analysis_reference_label }}{{ '；' if not loop.last else '' }}{% endfor %}</p>{% endif %}
     </article>{% endfor %}{% else %}<p>{{ analysis.features }}</p>{% endif %}
   </div></section>
   {% endif %}
@@ -51,9 +54,10 @@
   </div></section>
   {% endif %}
 
-  {% if quality or (not brief and analysis and analysis.alerts) %}
+  {% if quality or task_quality or (not brief and analysis and analysis.alerts) %}
   <section class="lp-analysis-group lp-quality"><h2>分析边界与待核实事项</h2><div class="lp-analysis-body">
     {% if quality %}<ul>{% for item in quality %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
+    {% if task_quality %}<ul>{% for group in task_quality|groupby('message') %}<li>{% if group.list|selectattr('level', 'equalto', 'error')|list %}需优先核查：{% endif %}{{ group.list|length }} 项记录：{{ group.grouper }}</li>{% endfor %}</ul>{% endif %}
     {% if not brief and analysis and analysis.alerts %}<p>{{ analysis.alerts }}</p>{% endif %}
   </div></section>
   {% endif %}

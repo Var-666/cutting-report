@@ -14,6 +14,11 @@ const overview = shallowRef<OperationsOverview | null>(null)
 const status = shallowRef<OperationsStatus | null>(null)
 const error = shallowRef('')
 const loading = shallowRef(false)
+const rolePage = shallowRef(1)
+const rolePageSize = 10
+const roleCount = computed(() => status.value?.roles.length ?? 0)
+const roleItems = computed(() => status.value?.roles.slice((rolePage.value - 1) * rolePageSize, rolePage.value * rolePageSize) ?? [])
+watch(roleCount, count => { rolePage.value = Math.min(rolePage.value, Math.max(1, Math.ceil(count / rolePageSize))) })
 let active: AbortController | null = null
 let timer: ReturnType<typeof setTimeout> | undefined
 let mounted = true
@@ -111,9 +116,6 @@ onBeforeUnmount(() => { mounted = false; active?.abort(); clearTimeout(timer) })
     </OperationsPageHeader>
     <NAlert v-if="error" type="error" title="本次刷新失败">{{ error }}</NAlert>
     <NAlert v-else-if="status?.postgres === 'abnormal'" type="error" title="PostgreSQL 状态库不可用">角色和业务状态暂不可确认。</NAlert>
-    <NAlert v-else-if="!statusOnly && (overview?.open_incidents ?? 0) > 0" type="warning">
-      当前有 {{ overview?.open_incidents }} 条<RouterLink class="inline-link" :to="{ name: 'operations-incidents', query: { status: 'open' } }">待处理异常</RouterLink>。
-    </NAlert>
     <section v-if="!statusOnly" class="cards" aria-label="运维统计">
       <RouterLink v-for="card in cards" :key="card.title" :to="card.to" class="metric-link">
         <HomeKpiCard :title="card.title" :value="card.value" :icon="card.icon" :color="card.color" :trend-label="card.help"
@@ -151,7 +153,8 @@ onBeforeUnmount(() => { mounted = false; active?.abort(); clearTimeout(timer) })
             <NTag size="small" :type="stateTone(status?.postgres || 'unknown')">PostgreSQL {{ health[status?.postgres || 'unknown'] }}</NTag>
           </template>
           <p v-if="status" class="secondary">正常 Consumer {{ status.consumers_ready ?? '未知' }} / 期望 {{ status.consumers_expected }}</p>
-          <AppReportTable :items="status?.roles" :columns="roleColumns" :row-key="row => row.role + ':' + (row.instance_id || '')" :paginate="false">
+          <AppReportTable :items="roleItems" :columns="roleColumns" :row-key="row => row.role + ':' + (row.instance_id || '')"
+            :total="roleCount" :page="rolePage" :page-size="rolePageSize" @page="rolePage = $event">
             <template #c0="{ row }">{{ roles[row.role] }}</template>
             <template #c1="{ row }">{{ row.instance_id || (row.role === 'worker' ? '汇总' : '主实例') }}</template>
             <template #c2="{ row }"><NTag size="small" :type="stateTone(row.state)">{{ row.state === 'abnormal' ? roleDetails[row.detail] || health[row.state] : health[row.state] }}</NTag></template>
@@ -191,6 +194,7 @@ onBeforeUnmount(() => { mounted = false; active?.abort(); clearTimeout(timer) })
 
 <style scoped>
 .operations, .runtime { display:grid; gap:var(--space-4); min-width:0; }
+.runtime { grid-template-columns:minmax(0,1fr); }
 .links { display:flex; align-items:center; flex-wrap:wrap; gap:var(--space-2); margin-top:var(--space-3); }
 .secondary { color:var(--text-color-3); font-size:var(--font-auxiliary); }
 .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%, 176px),1fr)); gap:var(--space-3); }

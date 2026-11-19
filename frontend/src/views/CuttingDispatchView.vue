@@ -429,8 +429,8 @@ const fileTableColumns = [
 .retry-dispatch-dialog{width:min(480px,calc(100vw - 32px));padding:24px}.retry-dispatch-dialog footer{display:flex;justify-content:flex-end;gap:10px;margin-top:20px}
 
 .dispatch-project-name { color:var(--muted); font-size:var(--font-auxiliary); white-space:nowrap; }
-.dispatch-notice { display:flex; align-items:center; gap:12px; margin-bottom:22px; padding:13px 16px; color:var(--text-color-1); background:rgb(var(--info-color) / .1); font-size:12px; margin:10px 0 0; border:1px solid var(--theme-border-color); border-left:3px solid var(--theme-border-color); border-radius:8px; }
-.dispatch-notice.error { color:rgb(var(--error-color)); background:rgb(var(--error-color) / .1); border-color:rgb(var(--error-color)); border-left-color:rgb(var(--error-color)); }
+.dispatch-notice { display:flex; align-items:center; gap:12px; margin-bottom:22px; padding:4px 0; color:var(--text-color-1); font-size:12px; margin:10px 0 0; }
+.dispatch-notice.error { color:rgb(var(--error-color)); }
 .dispatch-notice button { min-height:30px; margin-left:auto; padding:0 8px; }
 .dispatch-workspace { display:grid; grid-template-columns:minmax(0,1.8fr) minmax(300px,.72fr); gap:24px; align-items:start; margin:24px 0 0; }
 .dispatch-workspace.push-workspace { grid-template-columns:1fr; align-items:stretch; }

@@ -140,10 +140,35 @@ def test_archived_findings_keep_anomalies_without_repeating_evidence_values(tmp_
     template = service.environment.from_string("""{% from 'report_analysis.html.j2' import render_analysis %}
         {{ render_analysis(analysis, report, '2026-11-18', '2026-11-18') }}""")
     fact = next(item for item in context['facts'] if item['id'] == 'F020')
-    html = template.render(analysis=dict(brief=brief, facts=[fact], mode='model', status='success', cached=False), report={})
+    html = template.render(analysis=dict(brief=brief, facts=[fact], mode='model', status='success', cached=False),
+        report=dict(data_quality=[dict(level='warning', task_id='31519', message='回退核查标记')]))
     assert html.count(fact['value']) == 1
-    if kind != 'equipment':
-        assert '31519.gen' in html and '31490.gen' in html
+    assert '31519.gen' not in html and '31490.gen' not in html
     assert brief['findings'][0]['reference_count'] == 2
     assert '数据证据 / 分析依据' not in html
     assert '待核查' in html
+    assert '回退核查标记' not in html
+
+
+@pytest.mark.parametrize('analysis', [None, dict(mode='model', overview='生产汇总', features='按本期记录统计。', alerts='核对来源。')])
+def test_legacy_or_unavailable_analysis_groups_quality_without_exposing_task_ids(tmp_path, analysis):
+    service = ReportService(cutting_settings(project_root=tmp_path))
+    template = service.environment.from_string("""{% from 'report_analysis.html.j2' import render_analysis %}
+        {{ render_analysis(analysis, report, '2026-11-18', '2026-11-18') }}""")
+    report = dict(data_quality=[
+        *[dict(level='warning', task_id=f'INTERNAL-{i}', message='用时不足一分钟，需核对试切记录。') for i in range(5)],
+        dict(level='error', task_id='INTERNAL-6', message='有用时但切割长度为零。')])
+    html = template.render(analysis=analysis, report=report)
+    assert '5 项记录：用时不足一分钟' in html
+    assert '需优先核查：1 项记录：有用时但切割长度为零' in html
+    assert 'INTERNAL-' not in html
+    assert html.count('用时不足一分钟') == 1
+    assert html.index('用时不足一分钟') > html.index('分析边界与待核实事项')
+
+
+def test_workshop_report_puts_quality_in_analysis_instead_of_repeated_banners(tmp_path):
+    from tests.report_style_fixtures import style_report_html
+    html = style_report_html('workshop', tmp_path).read_text()
+    assert '数据质量提示' not in html
+    assert '需优先核查：1 项记录：发现负数数据' in html
+    assert html.index('发现负数数据') > html.index('aria-label="智能分析"')

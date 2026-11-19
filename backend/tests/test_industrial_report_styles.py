@@ -6,6 +6,29 @@ from app.services.pdf_service import PdfService
 from tests.report_style_fixtures import BUSINESS_MARKER, STYLE_KINDS, style_report_html
 
 
+def test_disconnected_energy_notice_keeps_text_without_a_colored_strip(tmp_path):
+    from playwright.sync_api import sync_playwright
+
+    source = style_report_html('equipment', tmp_path, energy_connected=False)
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        try:
+            page = browser.new_page()
+            page.route('**/*', lambda route: route.abort())
+            page.set_content(source.read_text(), wait_until='load')
+            notice = page.locator('.notice')
+            assert '能耗暂未接入' in notice.inner_text()
+            for media, width in [('screen', 1440), ('screen', 375), ('print', 794)]:
+                page.set_viewport_size(dict(width=width, height=900))
+                page.emulate_media(media=media)
+                assert notice.evaluate("""item => {
+                    const style = getComputedStyle(item);
+                    return style.backgroundColor === 'rgba(0, 0, 0, 0)' && style.borderLeftWidth === '0px';
+                }""")
+        finally:
+            browser.close()
+
+
 @pytest.mark.parametrize('kind', STYLE_KINDS)
 def test_all_report_styles_keep_complete_html_pdf_and_continuous_email(tmp_path, kind):
     import pypdfium2 as pdfium
@@ -39,11 +62,10 @@ def test_all_report_styles_keep_complete_html_pdf_and_continuous_email(tmp_path,
                     assert document.get_by_text('当月任务数', exact=True).count() == 0
                     assert document.get_by_text('工程号与任务较多的日期', exact=True).count() == 1
                 elif kind == 'workshop':
-                    priority = document.get_by_text('优先核查', exact=True)
-                    assert priority.bounding_box()['y'] < document.get_by_role(
+                    priority = document.locator('.lp-analysis').get_by_text('需优先核查：1 项记录：发现负数数据', exact=False)
+                    assert priority.bounding_box()['y'] > document.get_by_role(
                         'heading', name='核心生产指标（本期）', exact=False).bounding_box()['y']
-                    assert priority.evaluate(
-                        '(el) => getComputedStyle(el.parentElement).backgroundColor') == 'rgb(255, 241, 242)'
+                    assert document.get_by_role('heading', name='数据质量提示', exact=True).count() == 0
                     findings = document.locator('.lp-finding h3')
                     assert findings.filter(has_text='本期实际切割记录').inner_text() == '本期实际切割记录'
                     assert findings.filter(has_text='切割时间较长的任务').get_by_text('待核查', exact=True).evaluate(

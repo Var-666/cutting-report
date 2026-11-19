@@ -110,6 +110,7 @@ class LogFilters(LogSelection):
 class IncidentFilters(TimeFilters):
     start: AwareDatetime | None = None
     status: IncidentStatus | None = None
+    min_level: Literal['ERROR'] | None = Field(None, description='ERROR 及以上，包括 ERROR 和 CRITICAL')
     page: int = Field(1, ge=1, le=300)
     page_size: int = Field(30, ge=1, le=100)
 

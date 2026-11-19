@@ -23,7 +23,7 @@
     "src/layouts/modules/theme-drawer/modules/general/modules/watermark-settings.vue": "e88940c6d2848f1710aaf0c60aa8721e7d5d1c26cbb2ec66e3d86efa66fd9ddf",
     "src/layouts/modules/theme-drawer/modules/general/modules/global-settings.vue": "f64ee3934f11f755a10adb5a645b3e8fa9cab0118d8bbd2deaf5e7f3577cd220",
     "src/layouts/modules/theme-drawer/modules/preset/modules/theme-preset.vue": "7319eb9d2ac006e438bf1127b17664690535be96a52bfa3273254789d05f674f",
-    "src/store/modules/theme/shared.ts": "1e5694ddabe59c187638d636a6bf538f541a5fd110376388ed81dcd214e864d8",
+    "src/store/modules/theme/shared.ts": "7b0d8cddfe7528074422f75f119b412c5392796b30ca22b9850f1d4a3dac753a",
     "src/theme/settings.ts": "7a5b45a26198db32086a1a2ba628a8ade30115d966ec9d9ad2f740cdc2dfa6ee",
     "src/theme/vars.ts": "ffee3850149a3533d283b251949fa3e5536dda7577dd0ad6abd877611bdc1519",
     "src/theme/preset/azir.json": "b3bd32f157145fc83482b929ff935982e354e8a5be840acfadd5c82126a6fa0f",
@@ -33,6 +33,7 @@
   },
   "application_customizations": [
     "src/theme/settings.ts: default vertical-mix layout, 64px rail, 48px collapsed rail and 180px child menu",
-    "src/theme/settings.ts and src/store/modules/theme/shared.ts: light canvas rgb(241, 245, 249), including legacy default canvas tokens from cached settings and upstream presets"
+    "src/theme/settings.ts and src/store/modules/theme/shared.ts: light canvas rgb(241, 245, 249), including legacy default canvas tokens from cached settings and upstream presets",
+    "src/store/modules/theme/shared.ts: shared Alert tokens use transparent backgrounds and no borders, with compact text and icons instead of full-width notice strips"
   ]
 }

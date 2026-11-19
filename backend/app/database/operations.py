@@ -157,6 +157,8 @@ class OperationsRepository(PostgresRepository):
             if value is not None:
                 where.append(f'{name}=%s')
                 values.append(value)
+        if filters.min_level == 'ERROR':
+            where.append("level IN ('ERROR', 'CRITICAL')")
         if filters.keyword:
             where.append('strpos(lower(message),lower(%s))>0')
             values.append(filters.keyword)

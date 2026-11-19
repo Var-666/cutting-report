@@ -100,7 +100,9 @@ def add_candidates(context: dict, kind: str, records: list | None = None) -> dic
                 context['facts'].append(_fact('F010', '工程信息缺口', f"{top['task_count']} 项任务工程号未填写", quality[-1]))
                 add('C_project_missing', 'data_quality', '工程信息缺口', ['F010'], [task(r) for r in related], boundary=quality[-1], priority=2)
             else:
-                context['facts'].append(_fact('F010', '任务最多工程', f"{top['project_name']} · {top['task_count']} 项", '按本期完整任务集合分组；工程号为空时保留船名。'))
+                context['facts'].append(_fact('F010', '工程任务集中度',
+                    f"任务最多工程 {top['task_count']} 项，占全部任务 {top['task_count'] / len(records) * 100:.1f}%",
+                    '按本期完整任务集合分组；工程号为空时保留船名，具体归属保留在关联记录中。'))
                 add('C_project', 'distribution', '工程任务分布', ['F010'], [task(r) for r in related])
             if kind == 'equipment' and records:
                 next(candidate for candidate in candidates if candidate['id'] == 'C_production')['evidence_ids'].append('F010')

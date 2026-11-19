@@ -20,6 +20,81 @@ function automationHooks(bindings) {
 }
 
 const flushAutomation = async () => { await new Promise(resolve => setImmediate(resolve)); await Vue.nextTick() }
+
+test('incident filters default to errors and above while explicit levels and logs remain selectable', async t => {
+  for (const [mode, query] of [['incidents', {}], ['incidents', { level: 'WARNING' }], ['logs', {}]]) {
+    await t.test(`${mode} ${query.level || 'default'}`, async t => {
+      const requests = []
+      const cleanup = []
+      const bindings = { ...Vue, defineProps: () => ({ mode }), useRoute: () => ({ query, fullPath: '/fixture' }),
+        onBeforeUnmount: callback => cleanup.push(callback), deviceSelection: { items: [] },
+        roles: {}, incidentStatus: {},
+        operations: {
+          incidents: async query => { requests.push(query); return { items: [], total: 0, page: 1, page_size: 10 } },
+          logs: async query => { requests.push(query); return { items: [], coverage_warnings: [], next_cursor: null } },
+        },
+      }
+      const code = descriptor('OperationsRecordsView').scriptSetup.content.replace(/^import .*$/gm, '')
+      const setup = scriptFunction(...Object.keys(bindings), `${code}; return { levelSelection, apply, resetDraft, openFilters }`)
+      const scope = Vue.effectScope()
+      const state = scope.run(() => setup(...Object.values(bindings)))
+      t.after(() => { cleanup.forEach(callback => callback()); scope.stop() })
+      await flushAutomation()
+      assert.equal(requests[0].min_level, mode === 'incidents' && !query.level ? 'ERROR' : undefined)
+      assert.equal(requests[0].level, query.level)
+      state.levelSelection.value = null
+      state.apply(); await flushAutomation()
+      assert.equal(requests.at(-1).min_level, undefined)
+      assert.equal(requests.at(-1).level, undefined)
+      state.openFilters()
+      assert.equal(state.levelSelection.value, undefined, 'reopening preserves the applied all-level selection')
+      if (mode === 'incidents') {
+        state.levelSelection.value = 'ERROR_PLUS'
+        state.apply(); await flushAutomation()
+        assert.equal(requests.at(-1).min_level, 'ERROR')
+        state.levelSelection.value = 'WARNING'
+        state.apply(); await flushAutomation()
+        assert.equal(requests.at(-1).level, 'WARNING')
+        assert.equal(requests.at(-1).min_level, undefined)
+      }
+      state.resetDraft()
+      assert.equal(state.levelSelection.value, mode === 'incidents' ? 'ERROR_PLUS' : undefined)
+    })
+  }
+})
+
+test('runtime roles paginate locally and retain or clamp the page after status refreshes', async t => {
+  let items = Array.from({ length: 25 }, (_, index) => ({ role: 'worker', instance_id: `consumer-${index}` }))
+  let requests = 0
+  const cleanup = []
+  const bindings = { ...Vue, defineProps: () => ({ statusOnly: true }), links: [],
+    onBeforeUnmount: callback => cleanup.push(callback), setTimeout: () => 1, clearTimeout() {},
+    operations: { status: async () => { requests++; return { roles: items } } },
+  }
+  const code = descriptor('OperationsOverviewView').scriptSetup.content.replace(/^import .*$/gm, '')
+  const setup = scriptFunction(...Object.keys(bindings), `${code}; return { rolePage, roleItems, roleCount, refresh }`)
+  const scope = Vue.effectScope()
+  const state = scope.run(() => setup(...Object.values(bindings)))
+  t.after(() => { cleanup.forEach(callback => callback()); scope.stop() })
+  await flushAutomation()
+  assert.equal(state.roleItems.value.length, 10)
+  assert.equal(state.roleCount.value, 25)
+  state.rolePage.value = 3
+  assert.deepEqual(state.roleItems.value.map(row => row.instance_id), items.slice(20).map(row => row.instance_id))
+  assert.equal(requests, 1, 'changing pages does not query the server')
+  await state.refresh()
+  assert.equal(state.rolePage.value, 3, 'periodic refreshes preserve the current page')
+  items = items.slice(0, 12)
+  await state.refresh(); await Vue.nextTick()
+  assert.equal(state.rolePage.value, 2)
+  assert.equal(state.roleItems.value.length, 2)
+  items = []
+  await state.refresh(); await Vue.nextTick()
+  assert.equal(state.rolePage.value, 1)
+  assert.equal(state.roleCount.value, 0)
+  assert.deepEqual(state.roleItems.value, [])
+})
+
 async function mountAutomation(t, { confirm = async () => true, run, readRun, save, scheduleItems } = {}) {
   const calls = { status: 0, schedules: 0, emails: [], actions: [], runReads: [], savedSchedules: [] }
   const timers = new Map()

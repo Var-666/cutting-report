@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { buildSync, transformSync } from 'esbuild'
 import * as Vue from 'vue'
 import { createPinia, defineStore, setActivePinia } from 'pinia'
-import { NConfigProvider, darkTheme, useThemeVars } from 'naive-ui'
+import { NAlert, NConfigProvider, darkTheme, useThemeVars } from 'naive-ui'
 import { renderToString } from '@vue/server-renderer'
 import { defu } from 'defu'
 import { resetSetupStore } from '../src/store/plugins/index.ts'
@@ -147,6 +147,26 @@ test('semantic colors, recommendation algorithm, custom tokens and Naive radius 
       assert.equal(resolved.primaryColor, store.themeColor)
       assert.equal(resolved.borderRadius, '11px')
       assert.ok(resolved.cardColor)
+    }
+  } finally { app.close() }
+})
+
+test('status feedback keeps readable text and actions without colored strips in either theme', async () => {
+  const app = mountTheme()
+  try {
+    for (const dark of [false, true]) {
+      for (const type of ['default', 'info', 'success', 'warning', 'error']) {
+        const html = await renderToString(Vue.createSSRApp({ render: () => Vue.h(NConfigProvider,
+          { theme: dark ? darkTheme : null, themeOverrides: app.store.naiveTheme },
+          { default: () => Vue.h(NAlert, { type, title: '处理结果', role: type === 'error' ? 'alert' : 'status' },
+            { default: () => ['详细原因仍可查看', Vue.h('button', '重试')] }) }) }))
+        assert.match(html, /--n-color:transparent/)
+        assert.match(html, /--n-border:none/)
+        assert.match(html, /处理结果/)
+        assert.match(html, /详细原因仍可查看/)
+        assert.match(html, /<button>重试<\/button>/)
+        assert.match(html, /role="alert"/)
+      }
     }
   } finally { app.close() }
 })

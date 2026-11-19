@@ -34,6 +34,14 @@ const filtersOpen = shallowRef(false)
 const filterError = shallowRef('')
 const title = computed(() => isLogs.value ? '运行日志' : '异常事件')
 const levels = (['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'] as const).map(value => ({ value, label: value }))
+const levelOptions = computed(() => isLogs.value ? levels : [{ value: 'ERROR_PLUS', label: '错误及以上（ERROR、CRITICAL）' }, ...levels])
+const levelSelection = computed({
+  get: () => draft.min_level === 'ERROR' ? 'ERROR_PLUS' : draft.level,
+  set: (value: string | null) => {
+    draft.min_level = value === 'ERROR_PLUS' ? 'ERROR' : undefined
+    draft.level = levels.find(option => option.value === value)?.value
+  },
+})
 const options = (labels: Record<string, string>) => Object.entries(labels).map(([value, label]) => ({ value, label }))
 const lines = computed(() => deviceSelection.items.map(line => ({ value: line.id, label: line.name })))
 type FilterField = 'component' | 'error_code' | 'keyword' | 'instance_id' | 'request_id' | 'analysis_id' | 'task_id' | 'report_id' | 'resource_id' | 'source_id'
@@ -53,7 +61,7 @@ const timeLabel = computed(() => {
 const filterTags = computed(() => {
   const { level, role, status, line_id: line } = applied.value
   return [
-    { key: 'level', label: '级别', value: level },
+    { key: 'level', label: '级别', value: applied.value.min_level ? '错误及以上（ERROR、CRITICAL）' : level },
     { key: 'role', label: '运行角色', value: role && roles[role] },
     { key: 'status', label: '状态', value: status && incidentStatus[status] },
     { key: 'line_id', label: '产线', value: line && (lines.value.find(item => item.value === line)?.label || line) },
@@ -85,7 +93,7 @@ function snapshotRange() {
 }
 function resetDraft() {
   for (const field of fields) draft[field.key] = undefined
-  Object.assign(draft, { level: undefined, role: undefined, line_id: undefined, status: undefined })
+  Object.assign(draft, { level: undefined, min_level: isLogs.value ? undefined : 'ERROR', role: undefined, line_id: undefined, status: undefined })
   range.value = null
   filterError.value = ''
 }
@@ -110,7 +118,7 @@ function apply(value: [number, number] | null = range.value) {
     ? { ...base, role: draft.role, instance_id: draft.instance_id?.trim(), request_id: draft.request_id?.trim(),
       analysis_id: draft.analysis_id?.trim(), task_id: draft.task_id?.trim(), report_id: draft.report_id?.trim(),
       resource_id: draft.resource_id?.trim(), source_id: draft.source_id?.trim() }
-    : { ...base, status: draft.status }
+    : { ...base, status: draft.status, min_level: draft.min_level }
   appliedRange.value = value
   filtersOpen.value = false
   incidentPage.value = null
@@ -202,6 +210,7 @@ watch(() => [mode, route.fullPath], () => {
     draft[field.key] = typeof value === 'string' ? value : undefined
   }
   draft.level = levels.find(option => option.value === route.query.level)?.value
+  draft.min_level = !isLogs.value && !draft.level ? 'ERROR' : undefined
   const role = route.query.role
   draft.role = role === 'web' || role === 'scheduler' || role === 'worker' || role === 'automation' ? role : undefined
   draft.line_id = typeof route.query.line_id === 'string' ? route.query.line_id : undefined
@@ -245,7 +254,7 @@ onBeforeUnmount(() => {
         <label class="date"><span>时间范围</span><NDatePicker v-model:value="range" type="datetimerange" clearable start-placeholder="开始时间" end-placeholder="结束时间" />
           <small>{{ isLogs ? '留空使用最近 24 小时' : '留空使用最近 30 天，待处理和已确认不限起始时间' }}</small>
         </label>
-        <label><span>级别</span><NSelect v-model:value="draft.level" :options="levels" clearable /></label>
+        <label><span>级别</span><NSelect v-model:value="levelSelection" :options="levelOptions" clearable placeholder="全部级别" /></label>
         <label v-if="isLogs"><span>运行角色</span><NSelect v-model:value="draft.role" :options="options(roles)" clearable /></label>
         <label v-else><span>状态</span><NSelect v-model:value="draft.status" :options="options(incidentStatus)" clearable /></label>
         <label><span>产线</span><NSelect v-model:value="draft.line_id" :options="lines" filterable clearable /></label>

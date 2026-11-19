@@ -260,6 +260,12 @@ export function getNaiveTheme(
     LoadingBar: {
       colorLoading
     },
+    Alert: {
+      color: 'transparent', colorInfo: 'transparent', colorSuccess: 'transparent', colorWarning: 'transparent', colorError: 'transparent',
+      border: 'none', borderInfo: 'none', borderSuccess: 'none', borderWarning: 'none', borderError: 'none',
+      padding: '4px 0', iconSize: '16px', iconMargin: '6px 8px 0px 0px',
+      fontSize: '13px', lineHeight: '1.6'
+    },
     Tag: {
       borderRadius: `${settings.themeRadius}px`
     }

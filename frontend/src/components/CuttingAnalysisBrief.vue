@@ -209,7 +209,7 @@ function openTask(reference: BusinessReference) {
       </div>
     </section>
 
-    <NCollapse class="brief-evidence" :default-expanded-names="['records']">
+    <NCollapse class="brief-evidence">
       <NCollapseItem v-if="evidenceRows.length" name="records">
         <template #header>
           <span class="brief-evidence-title"><AppIcon name="database" :size="17" />分析依据 / 关联记录 <span>（{{ recordCount }} 项）</span></span>

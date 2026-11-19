@@ -53,7 +53,8 @@ def test_portrait_report_preserves_full_daily_table_and_historical_long_analysis
                 texts.append(text.get_text_range().replace(' ', '').replace('\r', '').replace('\n', ''))
     printed = ''.join(texts)
     assert all(f'2026年10月{day:02d}日' in printed for day in range(1, 32))
-    assert '分析末尾校验标记' in printed and '行动校验标记' in printed and '工程校验标记' in printed
+    assert '分析末尾校验标记' in printed and '行动校验标记' in printed
+    assert '工程校验标记' not in printed
     assert printed.count('历史分析标题校验标记') == 1
     assert '沿用历史成功分析' not in printed and '不要输出的备注' not in printed
     assert '2026-11-12' in printed

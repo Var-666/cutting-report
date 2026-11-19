@@ -423,6 +423,33 @@ def test_workshop_conflicts_stay_expected_and_server_failures_are_correlated(tmp
         assert row['id'] == incident['id']
 
 
+def test_incident_minimum_error_level_filters_counts_and_pages(postgres_state):
+    database, _, _ = postgres_state
+    repository = OperationsRepository(database)
+    now = datetime.now(UTC) - timedelta(minutes=1)
+    repository.record([dict(timestamp=now, level=level, error_code='FILTER_TEST', component='fixture',
+                            role='worker', resource_id=level, message='测试异常')
+                       for level in ('WARNING', 'ERROR', 'CRITICAL')])
+    web = FastAPI()
+    web.state.runtime = SimpleNamespace(operations=SimpleNamespace(repository=repository))
+    web.include_router(router)
+    @web.middleware('http')
+    async def request_id(request: Request, call_next):
+        request.state.request_id = 'web_filter_test'
+        return await call_next(request)
+    web.dependency_overrides[require_user] = lambda: {'role': 'admin', 'user_id': 'admin'}
+    with TestClient(web) as client:
+        url = '/api/v1/operations/incidents'
+        pages = [client.get(url, params=dict(min_level='ERROR', page_size=1, page=page)) for page in (1, 2)]
+        assert all(response.status_code == 200 for response in pages)
+        results = [response.json()['data'] for response in pages]
+        assert all(result['total'] == 2 for result in results)
+        assert {result['items'][0]['level'] for result in results} == {'ERROR', 'CRITICAL'}
+        assert client.get(url).json()['data']['total'] == 3
+        assert client.get(url, params={'level': 'WARNING'}).json()['data']['total'] == 1
+        assert client.get(url, params={'min_level': 'WARNING'}).status_code == 422
+
+
 def test_incident_concurrency_confirmation_recovery_and_admin_routes(postgres_state):
     database, cfg, _ = postgres_state
     repository = OperationsRepository(database)

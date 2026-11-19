@@ -21,7 +21,7 @@ STYLE_KINDS = ['leadership', 'workshop', 'equipment', 'custom', 'alarm',
 BUSINESS_MARKER = '完整业务内容校验标记'
 
 
-def style_report_html(kind: str, directory: Path) -> Path:
+def style_report_html(kind: str, directory: Path, *, energy_connected: bool | None = None) -> Path:
     root = Path(__file__).resolve().parents[2]
     cfg = cutting_settings(project_root=root, data_source_mode='demo', report_max_detail_rows=1)
     renderer = ReportService(cfg)
@@ -114,7 +114,8 @@ def style_report_html(kind: str, directory: Path) -> Path:
             payload['equipment_summary'].update(total_electricity_consumption=30, electricity_record_count=1)
             payload['equipment_records'][0]['electricity_consumption'] = 30
         html = renderer.environment.get_template(template).render(report=payload,
-            echarts_source=cfg.echarts_vendor_path.read_text(), demo_mode=True, device_name='20KW切割机', energy_connected=kind == 'equipment')
+            echarts_source=cfg.echarts_vendor_path.read_text(), demo_mode=True, device_name='20KW切割机',
+            energy_connected=kind == 'equipment' if energy_connected is None else energy_connected)
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f'{kind}.html'
     path.write_text(html, encoding='utf-8')

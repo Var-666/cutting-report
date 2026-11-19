@@ -328,7 +328,7 @@ def test_archived_report_becomes_pdf_page_email(tmp_path, report_type, empty, wi
         assert "TASK-001" in text
         if with_brief:
             assert text.count('有用时但切割长度为零，需核对原始计数及试切记录。') == 1
-            assert '核对零长度任务' in text and '用时00:00:51' in text
+            assert '核对零长度任务' in text and '用时00:00:51' not in text
     if not empty and report_type == "equipment":
         assert "测试船名" in text
 

@@ -2,7 +2,19 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { observeBrowserErrors, reportApiFailure } from '../src/api/browserObservations.ts'
 import { operations } from '../src/api/operations.ts'
-import { incidentLogQuery } from '../src/components/operations/presentation.ts'
+import { incidentExplanation, incidentLogQuery, operationStages } from '../src/components/operations/presentation.ts'
+
+test('incident explanations describe impact and action without treating missing energy as zero', () => {
+  const energy = incidentExplanation('ENERGY_TASK_DATA_QUALITY', '已结束任务缺少有效能耗读数')
+  assert.match(energy.meaning, /电耗或气耗读数/)
+  assert.match(energy.impact, /缺失值不按零/)
+  assert.match(energy.action, /仪表绑定、采样记录及任务起止时间/)
+  assert.equal(operationStages.current_refresh, '生产统计刷新')
+  const unknown = incidentExplanation('CUSTOM_FAILURE', '某业务查询失败')
+  assert.equal(unknown.meaning, '某业务查询失败')
+  assert.match(unknown.impact, /需结合/)
+  assert.match(unknown.action, /技术详情/)
+})
 
 test('browser observations upload allowlisted summaries once and do not retry', async t => {
   const calls = []

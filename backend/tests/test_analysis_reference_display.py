@@ -18,7 +18,7 @@ def test_reference_label_keeps_business_context_instead_of_raw_task_id(reference
     assert analysis_reference_label(reference) == expected
 
 
-def test_archived_analysis_formats_old_cached_references_and_escapes_names(tmp_path):
+def test_archived_analysis_keeps_findings_without_printing_reference_rosters(tmp_path):
     service = ReportService(cutting_settings(project_root=tmp_path))
     reference = dict(kind='task', id='30984', label='30984', program_no='<程序A>.gen', project_code='CMYZ0170')
     references = [reference, *[dict(kind='task', id=str(index), label=f'完整关联程序{index}.gen') for index in range(2, 6)]]
@@ -29,7 +29,8 @@ def test_archived_analysis_formats_old_cached_references_and_escapes_names(tmp_p
         {{ render_analysis(analysis, report, '2026-11-12', '2026-11-12') }}''')
     html = template.render(analysis=dict(brief=brief, facts=[], generated_at='2026-11-12', cached=True,
         cache_note='数据已更新，当前沿用历史成功分析；原生成时间和分析依据保持不变。'), report={})
-    assert 'CMYZ0170' in html and '&lt;程序A&gt;.gen' in html
-    assert '30984' not in html and '<程序A>' not in html
-    assert all(f'完整关联程序{index}.gen' in html for index in range(2, 6))
+    assert '核对确认归属。' in html and '待工人确认' in html
+    assert 'CMYZ0170' not in html and '程序A' not in html and '30984' not in html
+    assert all(f'完整关联程序{index}.gen' not in html for index in range(2, 6))
+    assert len(brief['findings'][0]['references']) == 5
     assert '沿用历史成功分析' not in html and '2026-11-12' in html

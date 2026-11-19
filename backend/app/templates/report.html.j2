@@ -26,14 +26,6 @@
     <p class="lp-method">数据更新时间：{{ report.meta.data_updated_at or '--' }} · {{ '自定义区间' if report.meta.custom_period else '标准报告周期' }}</p>
     {% set task_count = report.summary.task_count if report.meta.report_type == 'workshop' else report.equipment_summary.task_count %}
     {% if summary_shown %}{{ executive(brief.headline, brief.summary) }}{% endif %}
-    {% if report.meta.report_type == 'workshop' and report.data_quality %}
-    {{ section_title('数据质量提示') }}
-    {% for item in report.data_quality %}
-    <div class="notice lp-tone-{{ 'critical' if item.level == 'error' else 'warning' }}">
-      <strong>{{ '优先核查' if item.level == 'error' else '待核查' }}</strong> · {{ item.task_id or '未定位任务' }}：{{ item.message }}
-    </div>
-    {% endfor %}
-    {% endif %}
     {% if report.closing_comparison is defined %}
       {% if report.meta.report_type == 'workshop' %}
       {{ render_closing_comparison(report.closing_comparison,
@@ -112,7 +104,7 @@
     {% endif %}
 
   </section>
-  {% if analysis %}{{ render_analysis(analysis, report, report.meta.period_start, report.meta.period_end, summary_shown) }}{% endif %}
+  {% if analysis or report.data_quality %}{{ render_analysis(analysis, report, report.meta.period_start, report.meta.period_end, summary_shown) }}{% endif %}
   <p class="lp-end">本报告由切割生产智能产报系统生成 · 报告结束<span>{{ report.meta.report_id }}</span></p>
 </div>
 {% endif %}

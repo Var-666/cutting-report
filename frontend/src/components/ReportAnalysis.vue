@@ -180,7 +180,7 @@ const weldingMetrics = computed(() => welding.value ? weldingKpis('daily', weldi
 .analysis-mode{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;color:var(--analysis-blue);border:1px solid var(--theme-border-color);border-radius:999px;background:rgb(var(--info-color) / .1);font-weight:700;white-space:normal;overflow-wrap:anywhere;max-width:100%}.analysis-mode.model{color:var(--analysis-green);border-color:color-mix(in srgb,rgb(var(--success-color)) 26%,var(--analysis-surface));background:color-mix(in srgb,rgb(var(--success-color)) 9%,var(--analysis-surface))}.analysis-mode small{padding-left:8px;border-left:1px solid currentColor;font-size:var(--font-auxiliary)}
 .analysis-mode.unavailable{color:rgb(var(--warning-color));background:rgb(var(--warning-color) / .1)}
 .analysis-reload :deep(.n-button__content) { gap:6px; }
-.analysis-state{padding:40px 24px;color:var(--text-color-2);text-align:center;background:rgb(var(--container-bg-color))}.analysis-error{display:flex;align-items:center;justify-content:center;gap:16px;margin:24px;padding:16px;color:rgb(var(--error-color));background:rgb(var(--error-color) / .1)}
+.analysis-state{padding:40px 24px;color:var(--text-color-2);text-align:center;background:rgb(var(--container-bg-color))}.analysis-error{display:flex;align-items:center;justify-content:center;gap:16px;margin:24px;padding:4px 0;color:rgb(var(--error-color));}
 .analysis-conclusion {
   position:relative; isolation:isolate; display:flex; align-items:flex-start; gap:12px;
   margin:12px; padding:14px 16px; overflow:hidden; border:1px solid var(--theme-border-color);

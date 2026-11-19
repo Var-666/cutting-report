@@ -328,7 +328,7 @@ onBeforeUnmount(() => {
 .configuration-form, .automation-form, .configuration-grid, .drawer-footer { display:grid; gap:var(--space-4); }
 .configuration-notice, .automation-switches {
   display:flex; align-items:center; gap:var(--space-2); padding:var(--space-3); border-radius:var(--card-radius);
-  background:rgb(var(--primary-color) / .08); color:var(--text-color-2); font-size:var(--font-auxiliary);
+  color:var(--text-color-2); font-size:var(--font-auxiliary);
 }
 .configuration-notice .app-icon { flex:0 0 auto; }
 .configuration-card { min-width:0; margin:0; padding:0; border:0; }
