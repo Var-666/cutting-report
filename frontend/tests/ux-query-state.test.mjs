@@ -9,6 +9,8 @@ import { renderToString } from '@vue/server-renderer'
 import { alarmConfidencePercent, latestModelAlarmReport } from '../src/utils/alarmAnalysis.ts'
 import { formatChineseDateTime } from '../src/utils/dateDisplay.ts'
 import { formatDeviceDisplay } from '../src/utils/deviceDisplay.ts'
+import { cuttingOverviewFreshness } from '../src/api/productionOverview.ts'
+import { REPORT_POLL_LIMIT, reportIsRefreshing, waitForReportPoll } from '../src/api/reportRequests.ts'
 
 function directoryQuery(listFiles) {
   const source = readFileSync(new URL('../src/composables/useCuttingFileBrowser.ts', import.meta.url), 'utf8')
@@ -164,6 +166,7 @@ test('home overview failures expose a retry action and successful rereads clear 
   const bindings = { ...Vue, onMounted() {}, onBeforeUnmount() {}, watch() {}, use() {},
     BarChart: {}, LineChart: {}, PieChart: {}, GridComponent: {}, LegendComponent: {}, TooltipComponent: {}, CanvasRenderer: {},
     useAppStore: () => ({ reducedMotion: true }), useThemeVars: () => Vue.ref({}), reportToday: () => '2026-11-07',
+    cuttingOverviewFreshness, REPORT_POLL_LIMIT, reportIsRefreshing, waitForReportPoll, deviceSelection: { id: 'cutting' },
     ResizeObserver: class { observe() {} disconnect() {} },
     getLeadershipReport: async () => { reads++; if (fail) throw new Error('生产源离线'); return { current_month_total: { task_count: 7 }, daily_records: [] } },
     getEnergyMonth: async () => ({ summary: {} }), listReports: async () => ({ items: [], total: 0 }),
@@ -178,15 +181,20 @@ test('home overview failures expose a retry action and successful rereads clear 
   for (const name of ['NAlert', 'NCard', 'NText', 'NTag', 'NEmpty', 'NSpin', 'NSkeleton', 'NStatistic', 'NNumberAnimation', 'HomeKpiCard', 'HomeSectionHeader', 'AppIcon', 'RouterLink']) {
     app.component(name, { inheritAttrs: false, setup: (_props, { attrs, slots }) => () => Vue.h('div', [attrs.title, slots.header?.(), slots.default?.()]) })
   }
-  app.component('NButton', { setup: (_props, { attrs, slots }) => () => Vue.h('button', attrs, slots.default?.()) })
+  let retry
+  app.component('NButton', { setup: (_props, { attrs, slots }) => () => {
+    if (typeof attrs.onClick === 'function') retry = attrs.onClick
+    return Vue.h('button', attrs, slots.default?.())
+  } })
   await page.loadDashboard()
   let html = await renderToString(app)
-  assert.match(html, /生产源离线/)
-  assert.match(html, /<button[^>]*>重新读取概览<\/button>/)
+  assert.match(html, /生产统计未能更新/)
+  assert.doesNotMatch(html, /生产源离线/)
+  assert.match(html, /<button[^>]*>重试失败项目<\/button>/)
   fail = false
-  await page.loadDashboard()
+  await retry()
   html = await renderToString(app)
   assert.equal(reads, 2)
   assert.equal(page.overview.value.current_month_total.task_count, 7)
-  assert.doesNotMatch(html, /生产源离线|重新读取概览/)
+  assert.doesNotMatch(html, /生产统计未能更新|重试失败项目/)
 })
