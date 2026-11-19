@@ -123,7 +123,6 @@ watch(
 
 <style scoped>
 .shared-settings { flex-shrink:0; border-top:1px solid var(--theme-border-color); }
-.device-rail :deep(.menu-scope-divider) { margin-top:var(--space-3); padding-top:var(--space-3); border-top:1px solid var(--theme-border-color); }
 .device-rail { flex-shrink:0; border-right:1px solid var(--theme-border-color); }
 .device-rail :deep(.soybean-brand) { padding:0; }
 .device-rail-state button:focus-visible { outline:2px solid rgb(var(--primary-color)); outline-offset:2px; }

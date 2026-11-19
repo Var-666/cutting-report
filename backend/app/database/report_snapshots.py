@@ -46,6 +46,17 @@ class ReportSnapshot:
 
 class ReportSnapshotRepository(PostgresRepository):
 
+    def invalidate(self, line_id: str, source_fingerprint: str, report_types: tuple[str, ...],
+                   *, start: str | None = None, end: str | None = None) -> None:
+        with self.connect() as connection:
+            connection.execute('''UPDATE report_snapshots SET expires_at =
+                to_char((refreshed_at::timestamptz - interval '1 microsecond') AT TIME ZONE 'UTC',
+                        'YYYY-MM-DD"T"HH24:MI:SS.US') || '+00:00'
+                WHERE line_id=%s AND source_fingerprint=%s AND report_type=ANY(%s)
+                AND (%s::text IS NULL OR period_end >= %s)
+                AND (%s::text IS NULL OR period_start <= %s)''',
+                (line_id, source_fingerprint, list(report_types), start, start, end, end))
+
     def get(self, key: ReportKey) -> ReportSnapshot | None:
         with self.connect() as connection:
             row = connection.execute('''SELECT * FROM report_snapshots WHERE

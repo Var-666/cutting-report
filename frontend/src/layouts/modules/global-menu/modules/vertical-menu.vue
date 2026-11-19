@@ -61,7 +61,3 @@ watch(
     </SimpleScrollbar>
   </Teleport>
 </template>
-
-<style scoped>
-:deep(.menu-scope-divider) { margin-top:var(--space-3); padding-top:var(--space-3); border-top:1px solid var(--theme-border-color); }
-</style>

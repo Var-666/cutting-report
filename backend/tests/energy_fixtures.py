@@ -23,7 +23,7 @@ def configured(**changes):
         energy_equipment_ids=("Cutter01",), energy_gas_parameter_id=GAS,
         energy_electricity_parameter_ids=ELECTRIC, energy_gas_unit="Nm³",
         energy_electricity_unit="kWh", energy_gas_factor="1", energy_electricity_factor="1",
-        energy_max_gap_seconds=300, energy_allow_interpolation=True, energy_cache_seconds=60,
+        energy_max_gap_seconds=300, energy_allow_interpolation=True,
         energy_sampling_change_at="")
     return replace(cfg, **changes)
 

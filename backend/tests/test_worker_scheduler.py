@@ -36,6 +36,7 @@ def test_periodic_rounds_are_durable_device_scoped_and_do_not_duplicate_reconcil
             continue
         assert Counter(row["kind"] for row in rows if row["device_id"] == device_id) == {
             "current_refresh": 1, "leadership_refresh": 3,
+            "report_snapshot_refresh": 6 if line.settings.energy_connected else 3,
         }
         current = process.runtime.database_runtime.snapshot().lines[device_id].service.current_report_refresh_worker
         from datetime import date
@@ -157,6 +158,7 @@ def clock(monkeypatch):
             return datetime.fromtimestamp(value[0], tz)
     monkeypatch.setattr('app.scheduler.datetime', ClockDateTime)
     monkeypatch.setattr('app.services.welding_service.datetime', ClockDateTime)
+    monkeypatch.setattr('app.services.production_reports.datetime', ClockDateTime)
     monkeypatch.setattr('app.scheduler.time', lambda: value[0])
     monkeypatch.setattr('app.scheduler.monotonic', lambda: value[1])
     monkeypatch.setattr('app.worker.monotonic', lambda: value[1])
@@ -202,7 +204,8 @@ def test_idle_schedule_stays_in_memory_and_due_rounds_keep_the_same_cadence(post
             bootstraps.append(probe)
     process._schedule()
     assert calls['schedule'].call_count == 9
-    assert calls['enqueue'].call_count == calls['request_snapshot_refresh'].call_count == 4
+    assert calls['enqueue'].call_count == 4
+    assert calls['request_snapshot_refresh'].call_count == 14
     with process.repository.connect() as connection:
         connection.execute("UPDATE background_tasks SET status='completed'")
     before = {key: value.call_count for key, value in calls.items()}
@@ -220,7 +223,7 @@ def test_idle_schedule_stays_in_memory_and_due_rounds_keep_the_same_cadence(post
     clock[1] += 1
     process._schedule()
     assert calls['schedule'].call_count == 20
-    assert calls['request_snapshot_refresh'].call_count == 8
+    assert calls['request_snapshot_refresh'].call_count == 28
     assert calls['enqueue'].call_count == 4
     assert all(probe.call_count == 2 for probe in bootstraps)
 
@@ -430,7 +433,7 @@ def test_hotadded_shared_source_lines_plan_changes_and_retirement_keep_state_bou
     process.runtime.database_runtime.save_lines(catalog)
     process._schedule()
     assert process._next_due['current_refresh:Cutter01'] is untouched
-    assert len(process._next_due) == 17
+    assert len(process._next_due) == 31
     with process.repository.connect() as connection:
         assert {row['device_id'] for row in connection.execute('SELECT DISTINCT device_id FROM background_tasks')} >= {'Cutter03', 'weld-2'}
     retired = catalog.model_copy(update={'lines': tuple(line.model_copy(update={'enabled': False}) if line.id == 'weld-2' else line for line in catalog.lines)})
@@ -438,17 +441,17 @@ def test_hotadded_shared_source_lines_plan_changes_and_retirement_keep_state_bou
     request = Mock(wraps=process.repository.request_snapshot_refresh)
     monkeypatch.setattr(process.repository, 'request_snapshot_refresh', request)
     process._schedule()
-    assert len(process._next_due) == 13
+    assert len(process._next_due) == 26
     assert request.call_count == 0
     process.runtime.database_runtime.save_lines(catalog)
     process._schedule()
-    assert len(process._next_due) == 17
+    assert len(process._next_due) == 31
     assert request.call_count == 0  # Re-enabling finds already persisted work.
-    old_keys = {key for key in process._next_due if key.startswith('report_snapshot:')}
+    old_keys = {key for key in process._next_due if key.startswith(('report_snapshot:welding:', 'report_snapshot:weld-2:'))}
     source = database_context(process.runtime).database_sources.get('welding-production')
     process.runtime.database_runtime.save_source(DatabaseSourceRequest.model_validate({**source.model_dump(), 'host': 'new.test'}))
     process._schedule()
-    assert request.call_count == 8
+    assert request.call_count == 10
     assert not old_keys.intersection(process._next_due)
     assert process._next_due['current_refresh:Cutter01'] is untouched
     provider = database_context(process.runtime).lines['weld-2'].report_provider
@@ -458,7 +461,7 @@ def test_hotadded_shared_source_lines_plan_changes_and_retirement_keep_state_bou
         clock[0] += 86400
         clock[1] += 86400
         process._schedule()
-        assert len(process._next_due) == 16
+        assert len(process._next_due) == 30
         assert len(process._reconciled) == 6
         expected = {process.repository.snapshot_task_key(line_id, payload)
                     for line_id, item in report_providers(database_context(process.runtime)) for payload, _ in item.refresh_plan()}
@@ -477,6 +480,8 @@ def test_snapshot_plan_parameters_and_intervals_remain_independent_and_capacity_
     original = process.repository.request_snapshot_refresh
     attempts = []
     def reject_once(line_id, selected, *, interval):
+        if line_id != 'welding':
+            return original(line_id, selected, interval=interval)
         attempts.append(selected)
         return False if len(attempts) == 1 else original(line_id, selected, interval=interval)
     monkeypatch.setattr(process.repository, 'request_snapshot_refresh', reject_once)
@@ -485,8 +490,8 @@ def test_snapshot_plan_parameters_and_intervals_remain_independent_and_capacity_
     process._schedule()
     assert len(attempts) == 3 and attempts[-1] == payload
     with process.repository.connect() as connection:
-        assert connection.execute("SELECT COUNT(*) FROM background_tasks WHERE kind='report_snapshot_refresh'").fetchone()['count'] == 2
-        connection.execute("UPDATE background_tasks SET status='completed' WHERE kind='report_snapshot_refresh'")
+        assert connection.execute("SELECT COUNT(*) FROM background_tasks WHERE kind='report_snapshot_refresh' AND device_id='welding'").fetchone()['count'] == 2
+        connection.execute("UPDATE background_tasks SET status='completed' WHERE kind='report_snapshot_refresh' AND device_id='welding'")
     clock[0] += 30
     clock[1] += 30
     process._schedule()

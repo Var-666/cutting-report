@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import math
+from calendar import monthrange
 from contextlib import nullcontext
 from copy import deepcopy
 from collections import OrderedDict
@@ -343,12 +344,6 @@ class WeldingService:
         filters = query.model_dump(mode='json', exclude=excluded)
         return ReportKey(self.settings.device_id, 'statistics' if not page and self.snapshot_eligible(query) else report_type, query.start.isoformat(), query.end.isoformat(), filters, self.source_identity())
 
-    def _snapshot_ttl(self, query: WeldingQuery) -> int:
-        if not self.snapshot_eligible(query):
-            return max(1, min(30, self.settings.report_data_cache_seconds))
-        today = datetime.now(ZoneInfo(self.settings.weld_db_timezone)).date()
-        return max(30, self.settings.report_background_refresh_seconds) if query.end >= today.replace(day=1) else max(30, self.settings.leadership_report_history_cache_seconds)
-
     def _load_statistics_snapshot(self, query: WeldingQuery, report_type: str) -> dict:
         with self.repository.client.snapshot() as session:
             info = self.repository.source_info(session)
@@ -376,7 +371,7 @@ class WeldingService:
         else:
             load = lambda: self._load_statistics_snapshot(query, report_type)
         data = self.snapshot_service.read(self._snapshot_key(query, report_type), load,
-                                          ttl=self._snapshot_ttl(query), force=force, requested_at=requested_at,
+                                          force=force, requested_at=requested_at,
                                           background=requested_at is not None, background_only=report_type == 'dashboard' or page_kind is not None)
         if page_kind in ('daily', 'equipment'):
             payload = data.payload
@@ -422,8 +417,10 @@ class WeldingService:
             return []
         today = datetime.now(ZoneInfo(self.settings.weld_db_timezone)).date()
         homepage = WeldingQuery(start=today - timedelta(days=6), end=today, page_size=10)
-        # The daily snapshot also serves equipment; keep the homepage ahead of heavier part work.
-        queries = [(homepage, 'dashboard')] + [(WeldingQuery(start=today, end=today, page_size=10), f'page:{kind}') for kind in ('daily', 'jobs', 'parts')]
+        month = datetime.now(ZoneInfo(self.settings.timezone)).date().replace(day=1)
+        overview = WeldingQuery(start=month, end=month.replace(day=monthrange(month.year, month.month)[1]), page_size=10)
+        # Warm the portal's full-month overview as well as the welding homepage and default pages.
+        queries = [(homepage, 'dashboard'), (overview, 'page:daily')] + [(WeldingQuery(start=today, end=today, page_size=10), f'page:{kind}') for kind in ('daily', 'jobs', 'parts')]
         return [(self.snapshot_service.task_payload(self._snapshot_key(query, kind)),
                  max(30, self.settings.report_background_refresh_seconds)) for query, kind in queries]
 

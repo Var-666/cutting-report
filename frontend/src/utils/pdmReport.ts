@@ -25,6 +25,7 @@ export const pdmReportSections: readonly PdmReportSection[] = [
 ]
 
 export interface PdmReportRegion {
+  meta?: PdmStatisticsReport['meta']
   section: PdmReportSection
   filters: PdmFilters
   panels: PdmPanelData[]
@@ -39,7 +40,7 @@ export function pdmReportRegion(section: PdmReportSection, filters: PdmFilters, 
   const queried = !!report && report.group_by === section.groupBy
   const panels = queried ? pdmPanelResults(report, applied, options).filter(panel => section.groupBy === 'summary'
     ? panel.table.key === section.key : panel.table.key.startsWith(`${section.key}:`)) : []
-  return { section, filters: applied, panels, queried,
+  return { section, filters: applied, panels, queried, ...(queried && report?.meta ? { meta: report.meta } : {}),
     omittedGroups: queried ? unassignedPdmGroups(report).find(item => item.value === section.kind)?.total ?? 0 : 0 }
 }
 
@@ -69,6 +70,17 @@ export function pdmDetailCharts(table: PdmSummaryTable): PdmSummaryTable[] {
     key: `${table.key}:${subtotal.category}`, title: subtotal.category,
     rows: table.rows.filter(row => row.category === subtotal.category && !row.subtotal), totals: subtotal,
   }))
+}
+
+export function pdmVisibleProjects(table: PdmSummaryTable, expandedCategories: readonly string[]): PdmSummaryTable {
+  if (table.group_label !== '项目') return table
+  const counts = new Map<string, number>()
+  return { ...table, rows: table.rows.filter(row => {
+    if (row.subtotal || expandedCategories.includes(row.category)) return true
+    const count = (counts.get(row.category) || 0) + 1
+    counts.set(row.category, count)
+    return count <= 10
+  }) }
 }
 
 export function pdmCompletionChartOption(table: PdmSummaryTable, colors: { onTime: string; total: string; text: string; border: string; divider: string }, detail = false): EChartsOption {

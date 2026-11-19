@@ -3,6 +3,7 @@ from datetime import date
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from app.models.report_data import ReportMeta
 
 PdmKind = Literal['equipment', 'drawing']
 Selection = Annotated[list[Annotated[str, Field(max_length=200)]], Field(max_length=2000)]
@@ -99,6 +100,7 @@ class PdmBranchOptions(BaseModel):
     classifications: list[PdmOption] = Field(default_factory=list)
     weights: list[PdmOption] = Field(default_factory=list)
     responsible_people: list[PdmOption] = Field(default_factory=list)
+    meta: ReportMeta | None = None
 
 
 class PdmCounts(BaseModel):
@@ -131,6 +133,10 @@ class PdmReportSummaries(BaseModel):
     drawing: PdmCounts | None = None
 
 
+class PdmOverviewReport(PdmReportSummaries):
+    meta: ReportMeta | None = None
+
+
 class PdmStatisticsReport(BaseModel):
     start_date: date
     end_date: date
@@ -138,3 +144,4 @@ class PdmStatisticsReport(BaseModel):
     group_by: Literal['summary', 'project', 'profession']
     summaries: PdmReportSummaries
     tables: list[PdmSummaryTable]
+    meta: ReportMeta | None = None

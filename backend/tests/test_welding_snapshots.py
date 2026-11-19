@@ -1,4 +1,5 @@
 from collections import Counter
+from calendar import monthrange
 from contextlib import contextmanager
 from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
@@ -335,9 +336,13 @@ def test_refresh_plan_warms_each_default_page_with_homepage_first(configured, mo
             return datetime(selected.year, selected.month, selected.day, tzinfo=zone)
     monkeypatch.setattr('app.services.welding_service.datetime', Clock)
     plan = service.refresh_plan()
+    month_start = selected.replace(day=1)
+    month_end = selected.replace(day=monthrange(selected.year, selected.month)[1])
     periods = [(payload['query']['start'], payload['query']['end']) for payload, _ in plan]
-    assert periods == [((selected - timedelta(days=6)).isoformat(), selected.isoformat()), *[(selected.isoformat(), selected.isoformat())] * 3]
-    assert [payload['report_type'] for payload, _ in plan] == ['dashboard', 'page:daily', 'page:jobs', 'page:parts']
+    assert periods == [((selected - timedelta(days=6)).isoformat(), selected.isoformat()),
+                       (month_start.isoformat(), month_end.isoformat()), *[(selected.isoformat(), selected.isoformat())] * 3]
+    assert [payload['report_type'] for payload, _ in plan] == ['dashboard', 'page:daily', 'page:daily', 'page:jobs', 'page:parts']
+    assert all(interval == max(30, cfg.report_background_refresh_seconds) for _, interval in plan)
     owner = queue.acquire('worker:test-consumer', ttl=30)
     for payload, interval in plan:
         assert queue.request_snapshot_refresh(cfg.device_id, payload, interval=interval)
@@ -348,6 +353,10 @@ def test_refresh_plan_warms_each_default_page_with_homepage_first(configured, mo
     before = source.calls.copy()
     source.down = True
     restarted = WeldingService(cfg, source, snapshots=snapshots, coordination=queue)
+    overview = restarted.page('daily', WeldingQuery(start=month_start, end=month_end, page_size=10))
+    assert overview['summary']['job_count'] == 3
+    assert overview['meta']['report_data']['source'] == 'snapshot'
+    assert not overview['meta']['report_data']['stale']
     for kind in ('dashboard', 'daily', 'jobs', 'parts', 'equipment'):
         current = WeldingQuery(start=selected - timedelta(days=6) if kind == 'dashboard' else selected,
                                end=selected, page_size=10)
@@ -555,11 +564,14 @@ def test_exports_bypass_snapshots_and_do_not_replace_current_page_version(config
     assert snapshots.get(service._snapshot_key(query(), 'page:jobs')).data_version == stored.data_version
 
 
-def test_worker_uses_registry_dedup_capacity_and_current_database_context(configured):
+def test_worker_uses_registry_dedup_capacity_and_current_database_context(configured, monkeypatch):
     cfg, _, _, _, _ = configured
     runtime = build_runtime(cfg, role='worker')
     current = database_context(runtime)
     current.lines['welding'].service.repository = Source()
+    for line in current.lines.values():
+        if line.config.type != 'welding':
+            monkeypatch.setattr(line.report_provider, 'refresh_plan', lambda: [])
     process = WorkerProcess(cfg, runtime)
     try:
         SchedulerProcess(cfg, runtime)._schedule()
@@ -611,13 +623,19 @@ def test_hot_configuration_never_reuses_previous_source_snapshots(configured, mo
     assert old.report('daily', query())['data_version'] == expected['data_version']
 
 
-def test_existing_configuration_controls_current_history_and_filtered_freshness(configured):
+@pytest.mark.parametrize('current_seconds, history_seconds', [(600, 86400), (73, 119), (0, 0)])
+def test_existing_configuration_controls_current_history_and_filtered_freshness(configured, current_seconds, history_seconds):
     cfg, _, _, _, service = configured
-    today = datetime.now(ZoneInfo(cfg.weld_db_timezone)).date()
-    assert service._snapshot_ttl(WeldingQuery(start=today, end=today)) == max(30, cfg.report_background_refresh_seconds)
+    from app.services.leadership_report_service import LeadershipReportService
+    from app.services.report_cache_policy import report_ttl
+    cfg = replace(cfg, leadership_report_cache_seconds=current_seconds,
+                  leadership_report_history_cache_seconds=history_seconds, report_background_refresh_seconds=317)
+    service = WeldingService(cfg, Source())
+    cutting = LeadershipReportService(cfg)
+    today = datetime.now(ZoneInfo(cfg.timezone)).date()
+    assert report_ttl(service.settings, today) == cutting.current_refresh_seconds == (current_seconds or 300)
     previous = today.replace(day=1) - timedelta(days=1)
-    assert service._snapshot_ttl(WeldingQuery(start=previous, end=previous)) == cfg.leadership_report_history_cache_seconds
-    assert service._snapshot_ttl(WeldingQuery(start=today, end=today, device_no=0)) == 30
+    assert report_ttl(service.settings, previous) == cutting.history_refresh_seconds == (history_seconds or 86400)
     for field, value in [('source_fingerprint', 'another-user'), ('source_fingerprint', 'rotated-test-only'), ('weld_db_timezone', 'UTC')]:
         changed = WeldingService(replace(cfg, **{field: value}), Source())
         assert changed.source_identity() != service.source_identity()
@@ -649,11 +667,14 @@ def test_legacy_refresh_tasks_are_skipped_before_opening_mysql(configured, kind,
     assert f'skipping superseded welding statistics refresh: report_type={kind}' in caplog.text
 
 
-def test_upgrade_drains_old_aggregate_tasks_before_building_the_new_homepage(configured, caplog):
+def test_upgrade_drains_old_aggregate_tasks_before_building_the_new_homepage(configured, caplog, monkeypatch):
     cfg, _, _, _, _ = configured
     runtime = build_runtime(cfg, role='worker')
     current = database_context(runtime)
     source = Source()
+    for line in current.lines.values():
+        if line.config.type != 'welding':
+            monkeypatch.setattr(line.report_provider, 'refresh_plan', lambda: [])
     current.lines['welding'].service.repository = source
     service = current.lines['welding'].service
     queue = runtime.coordination

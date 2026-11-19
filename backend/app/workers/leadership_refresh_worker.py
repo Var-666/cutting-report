@@ -27,11 +27,13 @@ class LeadershipRefreshWorker:
         service: LeadershipReportService,
         analysis_service: ReportAnalysisService | None = None,
         task_queue=None,
+        report_provider=None,
     ) -> None:
         self.settings = settings
         self.service = service
         self.analysis_service = analysis_service
         self.task_queue = task_queue
+        self.report_provider = report_provider
         self.stop_event = threading.Event()
         self.wake_event = threading.Event()
         self._lock = threading.Lock()
@@ -127,8 +129,12 @@ class LeadershipRefreshWorker:
                     self._running.discard(report_month)
 
     @background_llm_work()
-    def _refresh(self, report_month: date, bootstrap: bool) -> None:
-        count = self.service.refresh(report_month, bootstrap=bootstrap)
+    def _refresh(self, report_month: date, bootstrap: bool, *, requested_at: float | None = None) -> None:
+        if self.report_provider is not None and self.report_provider.snapshot_service is not None:
+            self.report_provider.refresh_summary('leadership', {'report_month': report_month}, requested_at=requested_at)
+            count = len(self.service.fetch(report_month).monthly_records)
+        else:
+            count = self.service.refresh(report_month, bootstrap=bootstrap)
         logger.info(
             "leadership snapshots refreshed",
             extra={

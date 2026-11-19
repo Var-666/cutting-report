@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 from app.core.operations_logging import data_quality
 from app.models.domain import to_primitive
 from app.services.energy_api import EnergyApiClient, EnergyApiError, read_energy_with_freshness
+from app.services.report_cache_policy import report_ttl
 from app.services.energy_service import (
     STATUS_TEXT, interval_consumption, local_time, make_series, sampling_policy, task_energy_note,
     observe_task_energy,
@@ -101,6 +102,7 @@ class EnergyPeriodService:
         self.query_service = query_service
         self._lock = threading.RLock()
         self._month_sync_locks = [threading.Lock() for _ in range(12)]
+        self.on_snapshot_saved = None
 
     def now(self):
         stamp = self.clock()
@@ -234,9 +236,7 @@ class EnergyPeriodService:
             age = (now - datetime.fromisoformat(cached["updated_at"])).total_seconds()
         except (KeyError, TypeError, ValueError):
             return True
-        ttl = self.settings.energy_report_snapshot_ttl_seconds
-        if report_date == now.date():
-            ttl = min(60, ttl)
+        ttl = report_ttl(self.settings, report_date, today=now.date())
         return not 0 <= age < ttl
 
     def _observe_day(self, report_date, source_key, report, *, failure=None, padding=timedelta()):
@@ -323,6 +323,8 @@ class EnergyPeriodService:
             if not self.repository.save_day(source_key, report, previous=cached):
                 latest = self.repository.get_day(source_key, report_date.isoformat())
                 return {**latest, **self.metadata(), "from_cache": True}
+            if self.on_snapshot_saved is not None:
+                self.on_snapshot_saved(report_date, report_date)
             if fresh:
                 self._observe_day(report_date, source_key, report, padding=padding)
             return {**report, **self.metadata(), "from_cache": False}
@@ -763,4 +765,6 @@ class EnergyPeriodService:
                     saved_count += 1
                     if fresh:
                         self._observe_day(stamp, source_key, report, padding=padding)
+            if saved_count and self.on_snapshot_saved is not None:
+                self.on_snapshot_saved(month_start, last_day)
             return saved_count

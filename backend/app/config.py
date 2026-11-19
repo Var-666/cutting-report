@@ -120,7 +120,6 @@ class Settings:
     energy_api_username: str = configuration_field("ENERGY_API_USERNAME", lambda: _environment.get().get("ENERGY_API_USERNAME", "").strip())
     energy_api_password: str = configuration_field("ENERGY_API_PASSWORD", lambda: _environment.get().get("ENERGY_API_PASSWORD", ""), hidden=True)
     energy_api_timeout: float = configuration_field("ENERGY_API_TIMEOUT_SECONDS", lambda: _as_float("ENERGY_API_TIMEOUT_SECONDS", 10))
-    energy_cache_seconds: int = configuration_field("ENERGY_CACHE_SECONDS", lambda: _as_int("ENERGY_CACHE_SECONDS", 60))
     energy_equipment_ids: tuple[str, ...] = ()
     energy_gas_parameter_id: str = ""
     energy_electricity_parameter_ids: tuple[str, ...] = ()
@@ -142,7 +141,6 @@ class Settings:
     energy_report_equipment_ids: tuple[str, ...] = ()
     energy_report_electricity_parameter_ids: tuple[str, ...] = ()
     energy_report_max_gap_seconds: int = configuration_field("ENERGY_REPORT_MAX_GAP_SECONDS", lambda: _as_int("ENERGY_REPORT_MAX_GAP_SECONDS", 1800))
-    energy_report_snapshot_ttl_seconds: int = configuration_field("ENERGY_REPORT_SNAPSHOT_TTL_SECONDS", lambda: _as_int("ENERGY_REPORT_SNAPSHOT_TTL_SECONDS", 3600))
 
     worker_database_auth_enabled: bool = configuration_field("WORKER_DATABASE_AUTH_ENABLED", lambda: _as_bool(
         "WORKER_DATABASE_AUTH_ENABLED", False

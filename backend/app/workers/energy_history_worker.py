@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 from app.config import Settings
 from app.core.operations_logging import event
 from app.services.energy_period_service import EnergyPeriodService
+from app.services.report_cache_policy import report_ttl, report_refresh_seconds
 
 
 logger = logging.getLogger(__name__)
@@ -104,9 +105,9 @@ class EnergyHistoryWorker:
             saved = self.service.sync_month(month)
             logger.info("energy history month synchronized",
                         extra={"report_month": month.isoformat(), "saved_days": saved})
-            delay = max(60, self.settings.energy_report_snapshot_ttl_seconds)
+            delay = report_ttl(self.settings, month, today=self.service.now().date())
             if month == self.service.now().date().replace(day=1):
-                delay = 60
+                delay = report_refresh_seconds(self.settings)
         except Exception as exc:
             repeated = claim["attempt_count"] >= 2
             event(logger, logging.ERROR if repeated else logging.WARNING, '能耗历史同步失败',

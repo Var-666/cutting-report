@@ -13,6 +13,7 @@ import AnalysisPanel from '../components/AnalysisPanel.vue'
 import AppIcon from '../components/AppIcon.vue'
 import MetricSparkline from '../components/MetricSparkline.vue'
 import ReportFeedback from '../components/ReportFeedback.vue'
+import ReportDataStatus from '../components/ReportDataStatus.vue'
 import ReportTrendPanel from '../components/ReportTrendPanel.vue'
 import StandardReportQuery from '../components/StandardReportQuery.vue'
 import { formatChineseDateTime } from '../utils/dateDisplay.ts'
@@ -128,6 +129,7 @@ const summaryTableColumns = [
       />
     </section>
 
+    <ReportDataStatus :meta="taskDay?.meta" :busy="loading" @refresh="refreshAnalysisReport" />
     <ReportFeedback v-if="loading && taskDay" type="info" title="设备报表正在后台更新" message="当前显示上次加载的数据，更新完成后自动替换。" />
     <ReportFeedback v-if="error && (taskDay || monthlyReport)" type="error" title="设备报表更新失败" :message="`${error}；当前保留已成功加载的数据。`" action-label="重新查询" dismissible @action="retryReport" @dismiss="error = ''" />
     <ReportFeedback v-if="!energyConnected" type="info" title="能耗暂未接入" message="当前设备暂未接入电表和气表，生产任务与工时正常统计。" />
@@ -199,7 +201,8 @@ const summaryTableColumns = [
     </template>
     </ReportTrendPanel>
 
-    <ReportFeedback v-if="summaryRefreshError && monthlyReport" type="warning" title="月度能耗后台更新失败" :message="`${summaryRefreshError}；当前保留已有汇总。`" action-label="重新查询" @action="initializeReport()" />
+    <ReportDataStatus :meta="monthlyReport?.meta" :busy="summaryLoading" @refresh="refreshAnalysisReport" />
+    <ReportFeedback v-if="summaryRefreshError && monthlyReport" type="warning" title="月度能耗后台更新失败" :message="`${summaryRefreshError}；当前保留已有汇总。`" action-label="重新查询" @action="refreshAnalysisReport" />
     <ReportTrendPanel
       :height="245"
       ref="periodPanel"
@@ -213,7 +216,7 @@ const summaryTableColumns = [
       :error="!monthlyReport ? error : ''"
       :empty-title="summaryEmptyText"
       empty-message="当前月份范围没有可展示的能耗汇总。"
-      @retry="initializeReport"
+      @retry="refreshAnalysisReport"
     >
     <template #table><AppReportTable flex-height :columns="summaryTableColumns" :items="summaryRows" :row-key="row => row.report_date" :paginate="false" :aria-label="summaryTableLabel" summary>
         <template #header-c1>{{ summaryDateHeading }}</template>

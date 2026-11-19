@@ -2,6 +2,7 @@ import type { TaskEnergyReport } from '../types/energy'
 import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getEnergyMonthlyRange, getEnergyRange, getTaskEnergyDay } from '../api/energy'
+import { pollReportUpdates } from '../api/reportRequests'
 import { reportToday } from '../api/reportDates'
 import { useDeviceSwitchQuery } from './useDeviceSwitchQuery'
 import { useEnergyReportSummary } from './useEnergyReportSummary'
@@ -28,6 +29,7 @@ export function useEnergyReportQuery() {
     resetSummaryScope, loadInitialSummary, applyMonthlySummary, scheduleSummaryRefresh, pauseSummary,
   } = useEnergyReportSummary(pageActive, today)
   let controller: AbortController | null = null
+  let taskRefreshController: AbortController | null = null
   let requestSequence = 0
   let routeStateReady = false
 
@@ -57,6 +59,8 @@ export function useEnergyReportQuery() {
   function cancelReportRequest() {
     requestSequence += 1
     controller?.abort()
+    taskRefreshController?.abort()
+    taskRefreshController = null
     controller = null
     loading.value = false
     summaryLoading.value = false
@@ -80,6 +84,16 @@ export function useEnergyReportQuery() {
 
   function requestIsCurrent(sequence: number, signal: AbortSignal) {
     return pageActive.value && !signal.aborted && sequence === requestSequence
+  }
+  function pollTaskReport(initial: TaskEnergyReport, read: (signal: AbortSignal) => Promise<TaskEnergyReport>, sequence: number) {
+    taskRefreshController?.abort()
+    const current = new AbortController()
+    taskRefreshController = current
+    void pollReportUpdates(initial, () => read(current.signal), value => {
+      if (requestIsCurrent(sequence, current.signal)) taskDay.value = value
+    }, current.signal).catch(caught => {
+      if (requestIsCurrent(sequence, current.signal)) error.value = toError(caught).message
+    }).finally(() => { if (taskRefreshController === current) taskRefreshController = null })
   }
   const analysisReady = computed(() => Boolean(
     pageActive.value
@@ -106,6 +120,7 @@ export function useEnergyReportQuery() {
       const result = await getEnergyRange(requestedStart, requestedEnd, { force, signal })
       if (!requestIsCurrent(sequence, signal)) return
       taskDay.value = result.task_report
+      pollTaskReport(result.task_report, async signal => (await getEnergyRange(requestedStart, requestedEnd, { mode: 'poll', signal })).task_report, sequence)
       appliedPeriodStart.value = requestedStart
       appliedPeriodEnd.value = requestedEnd
       rangeQueryApplied.value = true
@@ -147,6 +162,8 @@ export function useEnergyReportQuery() {
           period_start: selectedDate,
           period_end: selectedDate,
         }
+        pollTaskReport(taskDay.value, async signal => ({ ...await getTaskEnergyDay(selectedDate, { mode: 'poll', signal }),
+          period_start: selectedDate, period_end: selectedDate }), sequence)
         await nextTick()
 
       })
@@ -222,7 +239,7 @@ export function useEnergyReportQuery() {
   }
 
   function retryReport() {
-    return rangeQueryApplied.value ? loadRange(false) : initializeReport()
+    return rangeQueryApplied.value ? loadRange(true) : loadDefaultRanges(true)
   }
 
   async function refreshRangeAnalysisReport() {
@@ -241,7 +258,9 @@ export function useEnergyReportQuery() {
       ])
       if (!requestIsCurrent(sequence, signal)) return
       taskDay.value = rangeResult.task_report
-      await applyMonthlySummary(summaryResult)
+      pollTaskReport(rangeResult.task_report, async signal => (await getEnergyRange(appliedPeriodStart.value, appliedPeriodEnd.value,
+        { mode: 'poll', signal })).task_report, sequence)
+      await applyMonthlySummary(summaryResult, true)
       await nextTick()
 
     } catch (caught) {

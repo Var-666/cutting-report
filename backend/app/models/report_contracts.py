@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, JsonValue
 
 from app.models.domain import LeadershipSnapshotState
+from app.models.report_data import ReportMeta
 from app.models.analysis_brief import AnalysisBrief
 
 
@@ -58,6 +59,7 @@ class ProjectDistribution(BaseModel):
 
 
 class LeadershipReport(BaseModel):
+    meta: ReportMeta | None = None
     report_month: date
     source_mode: str
     daily_records: list[LeadershipPeriodRecord]

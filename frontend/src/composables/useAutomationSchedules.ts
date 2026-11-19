@@ -1,7 +1,7 @@
 import type { Ref } from 'vue'
 import type { AutomationExecution, AutomationSchedule, SchedulePayload } from '../types/automation'
 import { computed, onActivated, onBeforeUnmount, onDeactivated, reactive, ref, watch } from 'vue'
-import { deleteAutomationSchedule, getAutomationRun, runAutomationSchedule, saveAutomationSchedule } from '../api/automation'
+import { cancelAutomationRun, deleteAutomationSchedule, getAutomationRun, runAutomationSchedule, saveAutomationSchedule } from '../api/automation'
 import { deviceSelection } from '../state/devices'
 import { toError } from '../utils/errors'
 
@@ -17,17 +17,22 @@ export function useAutomationSchedules({ hasUnsavedChanges, message, error, refr
   const scheduleError = ref('')
   const executions = reactive<Record<string, AutomationExecution>>({})
   const runningScheduleIds = computed(() => Object.values(executions).filter(isRunning).map(item => item.schedule_id))
+  const cancellableScheduleIds = computed(() => Object.values(executions).filter(canCancel).map(item => item.schedule_id))
   const timers = new Map<string, ReturnType<typeof setTimeout>>()
   const controllers = new Map<string, AbortController>()
   let active = true
   let disposed = false
 
   function isRunning(execution: AutomationExecution) {
-    return !['sent', 'failed', 'unknown', 'submission_failed'].includes(execution.status)
+    return !['sent', 'failed', 'unknown', 'cancelled', 'submission_failed'].includes(execution.status)
+  }
+
+  function canCancel(execution: AutomationExecution) {
+    return !!execution.run_id && ['queued', 'generating', 'analysis_wait', 'email_pending', 'retry_wait'].includes(execution.status)
   }
 
   function schedulePoll(execution: AutomationExecution) {
-    if (!active || !execution.run_id || !isRunning(execution)) return
+    if (!active || !execution.run_id || !isRunning(execution) || execution.cancelling) return
     const id = execution.schedule_id
     clearTimeout(timers.get(id))
     timers.set(id, setTimeout(() => { timers.delete(id); void pollExecution(execution) }, 2000))
@@ -224,6 +229,43 @@ export function useAutomationSchedules({ hasUnsavedChanges, message, error, refr
     }
   }
 
+  function restoreExecutions(items: AutomationSchedule[]) {
+    for (const item of items) {
+      const id = item.active_manual_run_id
+      const status = item.active_manual_run_status
+      const current = executions[item.schedule_id]
+      if (!id || !status || (current && (current.run_id === id || isRunning(current)))) continue
+      const execution = reactive<AutomationExecution>({ run_id: id, schedule_id: item.schedule_id, schedule_name: item.name, status })
+      executions[item.schedule_id] = execution
+      schedulePoll(execution)
+    }
+  }
+
+  async function cancelExecution(execution: AutomationExecution) {
+    const id = execution.schedule_id
+    const runId = execution.run_id
+    if (!runId || !canCancel(execution) || execution.cancelling || disposed) return
+    execution.cancelling = true
+    clearTimeout(timers.get(id))
+    timers.delete(id)
+    controllers.get(id)?.abort()
+    controllers.delete(id)
+    error.value = ''
+    message.value = ''
+    try {
+      const result = await cancelAutomationRun(runId)
+      if (disposed) return
+      Object.assign(execution, { status: result.status, last_error: result.last_error, monitoring_error: '' })
+      message.value = `已取消“${execution.schedule_name}”的本次发送。`
+      await refresh()
+    } catch (caught) {
+      if (!disposed) error.value = toError(caught).message
+    } finally {
+      execution.cancelling = false
+      schedulePoll(execution)
+    }
+  }
+
   async function remove(item: AutomationSchedule) {
     if (!await confirm(`确定删除定时任务“${item.name}”？历史发送记录会保留。`)) return
     try {
@@ -239,6 +281,7 @@ export function useAutomationSchedules({ hasUnsavedChanges, message, error, refr
 
   watch(() => deviceSelection.items, () => { if (!form.device_id) form.device_id = emptyForm().device_id })
 
-  return { saving, editingId, form, executions, runningScheduleIds, changeReportType, resetForm, editSchedule, submit, runNow, remove, scheduleError,
+  return { saving, editingId, form, executions, runningScheduleIds, cancellableScheduleIds, changeReportType, resetForm, editSchedule, submit, runNow, remove, scheduleError,
+    restoreExecutions, cancelExecution,
     recipientInputVisible, recipientDraft, recipientError, addRecipient, removeRecipient, cancelRecipientInput }
 }

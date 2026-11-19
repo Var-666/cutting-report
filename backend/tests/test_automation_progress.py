@@ -1,8 +1,10 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
+import pytest
 
 from app.api.auth import require_admin
 from app.api.automation import router
+from app.database.automation import AutomationRepository
 from tests.automation_fixtures import complete_report, NOW, STAMP
 
 
@@ -48,8 +50,14 @@ def test_run_progress_http_requires_admin_and_returns_only_requested_run(workflo
     app.dependency_overrides[require_admin] = forbidden
     with TestClient(app) as client:
         assert client.get(f"/api/v1/automation/runs/{run['run_id']}").status_code == 403
+        assert client.post(f"/api/v1/automation/runs/{run['run_id']}/cancel").status_code == 403
         app.dependency_overrides[require_admin] = lambda: {'role': 'admin'}
         assert client.get('/api/v1/automation/runs/missing').status_code == 404
+        assert client.post('/api/v1/automation/runs/missing/cancel').status_code == 404
+        assert client.post(f"/api/v1/automation/runs/{run['run_id']}/cancel").status_code == 409
+        manual = service.run_now(run['schedule_id'], NOW)
+        cancelled = client.post(f"/api/v1/automation/runs/{manual['run_id']}/cancel")
+        assert cancelled.status_code == 200 and cancelled.json()['data']['status'] == 'cancelled'
         response = client.get(f"/api/v1/automation/runs/{run['run_id']}")
         assert response.status_code == 200
         assert response.json()['data'] == run
@@ -67,3 +75,63 @@ def test_run_progress_reports_analysis_wait_without_sending_or_failing(workflow)
     assert service.run_progress(run['run_id'])['status'] == 'analysis_wait'
     assert repository.get_run(run['run_id'])['status'] == 'generating'
     assert repository.delivery_for_report(report_id) is None
+
+
+@pytest.mark.parametrize('phase', ['queued', 'generating', 'email_pending', 'retry_wait'])
+def test_cancel_manual_run_survives_late_report_callbacks(workflow, phase):
+    repository, metadata, service, automatic = workflow
+    run = service.run_now(automatic['schedule_id'], NOW)
+    run_id = run['run_id']
+    report_id = None
+    if phase != 'queued':
+        assert service._create_report_job(run, NOW)
+        report_id = repository.get_run(run_id)['report_id']
+    if phase in ('email_pending', 'retry_wait'):
+        complete_report(metadata, report_id)
+        service.report_completed(report_id, NOW)
+    if phase == 'retry_wait':
+        delivery = repository.claim_delivery(STAMP)
+        repository.mark_delivery_failed(delivery, error='retry', next_attempt_at=STAMP, now=STAMP)
+    [schedule] = repository.list_schedules()
+    assert schedule['active_manual_run_id'] == run_id
+    assert schedule['active_manual_run_status'] == phase
+    assert service.cancel_run(run_id, NOW)['status'] == 'cancelled'
+    assert service.cancel_run(run_id, NOW)['status'] == 'cancelled'
+    if report_id:
+        if phase == 'generating':
+            complete_report(metadata, report_id)
+        service.report_completed(report_id, NOW)
+        service.report_failed(report_id, 'late callback', NOW)
+        delivery = repository.delivery_for_report(report_id)
+        if phase == 'generating':
+            assert delivery is None
+        else:
+            assert delivery['status'] == 'cancelled'
+            assert not repository.retry_delivery(delivery['delivery_id'], now=STAMP)
+    else:
+        assert not service._create_report_job(run, NOW)
+    assert all(item['run_id'] != run_id for item in repository.incomplete_runs())
+    assert repository.claim_delivery(STAMP) is None
+    assert service.run_progress(run_id)['status'] == 'cancelled'
+    assert repository.get_run(automatic['run_id'])['status'] == 'queued'
+    assert repository.list_schedules()[0]['active_manual_run_id'] is None
+
+
+def test_cancel_refuses_concurrent_smtp_claim_and_keeps_unknown_outcome(workflow):
+    repository, metadata, service, automatic = workflow
+    run = service.run_now(automatic['schedule_id'], NOW)
+    service._create_report_job(run, NOW)
+    report_id = repository.get_run(run['run_id'])['report_id']
+    complete_report(metadata, report_id)
+    service.report_completed(report_id, NOW)
+    with repository.connect() as connection:
+        claimed = AutomationRepository(repository.database, connection=connection).claim_delivery(STAMP)
+        with pytest.raises(ValueError, match='状态正在更新'):
+            service.cancel_run(run['run_id'], NOW)
+    with pytest.raises(ValueError, match='进入发送'):
+        service.cancel_run(run['run_id'], NOW)
+    assert service.run_progress(run['run_id'])['status'] == 'sending'
+    repository.mark_delivery_unknown(claimed, now=STAMP)
+    with pytest.raises(ValueError, match='无法取消'):
+        service.cancel_run(run['run_id'], NOW)
+    assert service.run_progress(run['run_id'])['status'] == 'unknown'

@@ -14,6 +14,7 @@ from app.config import Settings
 from app.core.operations_logging import data_quality
 from app.services.cache_revision import CacheRevision
 from app.services.query_cache import QueryCache
+from app.services.report_cache_policy import report_cache_seconds
 from app.services.report_snapshots import observe_report_snapshot
 from app.database.leadership_snapshots import (
     LeadershipMonthSnapshot,
@@ -72,6 +73,7 @@ class LeadershipReportService:
         self._cache_lock = Lock()
         self._query_cache = QueryCache[LeadershipReportResult]()
         self._cache: dict[tuple, tuple[float, float, LeadershipReportResult]] = {}
+        self.on_snapshot_saved = None
 
     def fetch(
         self, report_month: date, *, force: bool = False
@@ -121,6 +123,8 @@ class LeadershipReportService:
         if self.snapshots is not None:
             self.snapshots.upsert_many(list(snapshots.values()))
             self.cache_revision.publish()
+            if self.on_snapshot_saved is not None:
+                self.on_snapshot_saved()
         with self._cache_lock:
             self._cache.clear()
         self._query_cache.clear()
@@ -313,13 +317,11 @@ class LeadershipReportService:
 
     @property
     def current_refresh_seconds(self) -> int:
-        value = self.settings.leadership_report_cache_seconds
-        return value if value > 0 else 300
+        return report_cache_seconds(self.settings)
 
     @property
     def history_refresh_seconds(self) -> int:
-        value = self.settings.leadership_report_history_cache_seconds
-        return value if value > 0 else 86400
+        return report_cache_seconds(self.settings, historical=True)
 
     @staticmethod
     def _months_between(range_start: date, range_end: date) -> list[date]:

@@ -29,6 +29,8 @@ from app.config import Settings, settings
 from app.database.sqlserver import SqlServerClient, SqlServerConfigurationError
 from app.models.domain import ReportFilter, to_primitive
 from app.models.contracts import ApiEnvelope, Items
+from app.models.configuration_contracts import ReportCacheConfiguration
+from app.services.report_cache_policy import REPORT_CACHE_FIELDS
 from app.models.database_sources import DatabaseSourceConfig, DatabaseSourceRequest, DatabaseSourceView, SourceEnabledRequest, SourceDeleted
 from app.database.source_registry import SourceNotFound, SourceConflict
 from app.services.database_configuration import test_source_connection, SourceConnectionError
@@ -47,6 +49,29 @@ router = APIRouter(
     tags=["database"],
     dependencies=[Depends(require_admin)],
 )
+
+
+@router.get('/report-cache', response_model=ApiEnvelope[ReportCacheConfiguration])
+def get_report_cache_configuration(request: Request):
+    cfg = runtime_state(request).settings
+    data = {field: getattr(cfg, name) for field, name in REPORT_CACHE_FIELDS.items()}
+    data['refresh_seconds'] = max(30, data['refresh_seconds'])
+    return {'success': True, 'data': data, 'request_id': request.state.request_id}
+
+
+@router.put('/report-cache', response_model=ApiEnvelope[ConfigurationSaved])
+def save_report_cache_configuration(payload: ReportCacheConfiguration, request: Request):
+    try:
+        application_state(request).database_runtime.save_report_cache(payload)
+    except RuntimeSettingsSaveError:
+        raise HTTPException(status_code=500, detail='统计缓存配置保存失败，当前运行配置未改变') from None
+    except ValueError:
+        raise HTTPException(status_code=422, detail='统计缓存配置无效，当前运行配置未改变') from None
+    except Exception:
+        raise HTTPException(status_code=503, detail='统计缓存配置暂无法加载，当前运行配置未改变') from None
+    return {'success': True, 'data': {'saved': True, 'restart_required': False,
+        'path': 'data/settings.env', 'message': '统计缓存配置已保存并热加载，各业务的新操作使用统一规则。'},
+        'request_id': request.state.request_id}
 
 
 @router.get('/resources', response_model=ApiEnvelope[ResourceReport])

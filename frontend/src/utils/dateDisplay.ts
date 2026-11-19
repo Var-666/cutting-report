@@ -19,7 +19,17 @@ export function formatChineseDate(value: unknown, fallback = '--') {
   return `${parts.year}年${String(parts.month).padStart(2, '0')}月${String(parts.day).padStart(2, '0')}日`
 }
 
-export function formatChineseDateTime(value: unknown, fallback = '--') {
+export function formatChineseDateTime(value: unknown, fallback = '--', timeZone?: string) {
+  if (timeZone && /(?:Z|[+-]\d{2}:?\d{2})$/i.test(String(value))) {
+    const instant = new Date(String(value))
+    if (!Number.isFinite(instant.getTime())) return fallback
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone, year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+    }).formatToParts(instant)
+    const part = (type: Intl.DateTimeFormatPartTypes) => parts.find(item => item.type === type)?.value
+    return `${part('year')}年${part('month')}月${part('day')}日 ${part('hour')}:${part('minute')}:${part('second')}`
+  }
   const date = formatChineseDate(value, '')
   if (!date) return fallback
   const match = String(value).match(TIME_PARTS)

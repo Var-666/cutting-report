@@ -6,6 +6,7 @@ import { getLeadershipRange, getLeadershipReport } from '../api/cutting'
 import { recentTwelveMonthStart, reportToday } from '../api/reportDates'
 import { mergeOwnedQuery, queryChoice, queryDateRange, sameRouteQuery } from '../utils/reportRouteState'
 import { toError } from '../utils/errors'
+import { REPORT_POLL_INTERVAL, REPORT_POLL_LIMIT } from '../api/reportRequests'
 
 export function useLeadershipReportQuery({ route, router, today, routeRange, pageActive, renderCharts }: {
   route: RouteLocationNormalizedLoaded
@@ -192,7 +193,7 @@ export function useLeadershipReportQuery({ route, router, today, routeRange, pag
   function scheduleRefreshPoll(reset = false) {
     stopRefreshPoll()
     if (reset) refreshPollCount = 0
-    if (!pageActive.value || !snapshot.value.refreshing) {
+    if (!pageActive.value || !snapshot.value.refreshing || report.value?.meta?.report_data?.refresh_failed) {
       refreshLoading.value = false
       return
     }
@@ -212,8 +213,8 @@ export function useLeadershipReportQuery({ route, router, today, routeRange, pag
       const signal = controller.signal
       try {
         const result = requestedDefaultView
-          ? await getLeadershipReport(requestedStart.slice(0, 7), { force: true, signal })
-          : await getLeadershipRange(requestedStart, requestedEnd, { force: true, signal })
+          ? await getLeadershipReport(requestedStart.slice(0, 7), { mode: 'poll', signal })
+          : await getLeadershipRange(requestedStart, requestedEnd, { mode: 'poll', signal })
         if (!requestIsCurrent(sequence, signal)) return
         report.value = result
         if (requestedDefaultView) monthlyReport.value = result
@@ -221,7 +222,7 @@ export function useLeadershipReportQuery({ route, router, today, routeRange, pag
         if (!requestIsCurrent(sequence, signal)) return
         renderCharts({ monthly: requestedDefaultView })
         refreshPollCount += 1
-        if (snapshot.value.refreshing && refreshPollCount < 75) {
+        if (snapshot.value.refreshing && refreshPollCount < REPORT_POLL_LIMIT) {
           scheduleRefreshPoll()
         } else {
           refreshLoading.value = false
@@ -235,11 +236,11 @@ export function useLeadershipReportQuery({ route, router, today, routeRange, pag
       } finally {
         if (requestController === controller) requestController = null
       }
-    }, 2000)
+    }, REPORT_POLL_INTERVAL)
   }
 
   function retryReport() {
-    return report.value ? loadReport(false) : loadDefaultReport()
+    return report.value ? loadReport(true) : loadDefaultReport(true)
   }
 
   async function refreshRangeAnalysisReport() {

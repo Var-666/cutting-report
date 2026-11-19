@@ -142,7 +142,7 @@ class AutomationService:
 
     def run_progress(self, run_id: str) -> dict | None:
         run = self.repository.get_run(run_id)
-        if run is None or not run["report_id"]:
+        if run is None or run['status'] == 'cancelled' or not run["report_id"]:
             return run
         delivery = self.repository.delivery_for_report(run["report_id"])
         if delivery is not None:
@@ -152,6 +152,9 @@ class AutomationService:
         if job and job['status'] == 'pending' and job.get('ai_status') == 'waiting':
             return {**run, 'status': 'analysis_wait', 'last_error': None}
         return run
+
+    def cancel_run(self, run_id: str, now: datetime) -> dict | None:
+        return self.repository.cancel_manual_run(run_id, now=now.isoformat(timespec='seconds'))
 
     def _create_report_job(self, run: dict, now: datetime) -> bool:
         try:

@@ -56,12 +56,13 @@ def _workshop_trend(records: list) -> list[dict]:
 
 
 class WorkshopService:
-    def __init__(self, reports, confirmations, settings, *, query_service=None, range_report_service=None):
+    def __init__(self, reports, confirmations, settings, *, query_service=None, range_report_service=None, report_provider=None):
         self.reports = reports
         self.confirmations = confirmations
         self.settings = settings
         self.query_service = query_service
         self.range_report_service = range_report_service
+        self.report_provider = report_provider
 
     def my_confirmed_tasks(self, start_date: date, end_date: date, page: int, page_size: int, user: dict):
         validate_report_range(start_date, end_date)
@@ -138,8 +139,13 @@ class WorkshopService:
             'current_user': user,
         }
 
-    def list_range_tasks(self, start_date: date, end_date: date, project_name: str | None, confirmation_status: Literal['all', 'confirmed', 'unconfirmed'], page: int, page_size: int, task_id: str | None = None):
-        bundle, records = self.range_report_service.workshop_records(start_date, end_date)
+    def list_range_tasks(self, start_date: date, end_date: date, project_name: str | None, confirmation_status: Literal['all', 'confirmed', 'unconfirmed'], page: int, page_size: int, task_id: str | None = None, refresh: bool = False):
+        metadata = None
+        if self.report_provider is not None and self.report_provider.snapshot_service is not None:
+            bundle, metadata = self.report_provider.workshop_source(start_date, end_date, force=refresh)
+            records = self.range_report_service.with_workshop_confirmations(bundle.workshop_records)
+        else:
+            bundle, records = self.range_report_service.workshop_records(start_date, end_date)
         analysis_source_version = _workshop_analysis_source_version(analysis_period_label(start_date, end_date), records)
         project_names = sorted({row.project_code for row in records if row.project_code})
         if project_name:
@@ -159,6 +165,7 @@ class WorkshopService:
         start = (page - 1) * page_size
         visible = records[start:start + page_size]
         return {
+            **({'meta': {'report_data': metadata}} if metadata else {}),
             'report': {'report_date': start_date.isoformat(), 'period_start': start_date.isoformat(), 'period_end': end_date.isoformat(), 'scope_machine_no': self.settings.report_machine_no, 'item_count': total, 'confirmed_count': sum((bool(row.confirmed_by) for row in records)), 'generated_at': to_primitive(bundle.data_updated_at)},
             'items': to_primitive(visible),
             'total': total,

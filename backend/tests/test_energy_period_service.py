@@ -239,7 +239,7 @@ def test_force_and_expired_cache_fetch_again(tmp_path, state_database):
     energy.get_day(DAY, force=True)
     assert len(client.calls) == 2
     assert client.calls[-1][-1] is True
-    energy.clock = lambda: NOW + timedelta(hours=2)
+    energy.clock = lambda: NOW + timedelta(hours=25)
     energy.get_day(DAY)
     assert len(client.calls) == 3
 

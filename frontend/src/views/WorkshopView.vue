@@ -20,6 +20,8 @@ import AnalysisPanel from '../components/AnalysisPanel.vue'
 import AppIcon from '../components/AppIcon.vue'
 import MetricSparkline from '../components/MetricSparkline.vue'
 import ReportFeedback from '../components/ReportFeedback.vue'
+import ReportDataStatus from '../components/ReportDataStatus.vue'
+import { pollReportUpdates } from '../api/reportRequests'
 import ReportTrendPanel from '../components/ReportTrendPanel.vue'
 import StandardReportQuery from '../components/StandardReportQuery.vue'
 import WorkshopStructureCharts from '../components/WorkshopStructureCharts.vue'
@@ -95,6 +97,7 @@ const workshopMetricSeries = computed(() => {
   }
 })
 let refreshTimer: number | null = null
+let statisticsPollController: AbortController | null = null
 let requestController: AbortController | null = null
 let requestSequence = 0
 let routeStateReady = false
@@ -132,6 +135,8 @@ async function syncRouteState() {
 
 function beginRequest() {
   requestController?.abort()
+  statisticsPollController?.abort()
+  statisticsPollController = null
   requestController = new AbortController()
   return { sequence: ++requestSequence, signal: requestController.signal }
 }
@@ -235,6 +240,18 @@ async function load(page = 1, { silent = false, ensureReport = true, force = fal
         })
       }
       reconcileVisibleTaskSelection(data.items || [])
+      if (!isWorker.value && data.meta?.report_data?.refreshing) {
+        const pollController = new AbortController()
+        statisticsPollController = pollController
+        void pollReportUpdates(data, () => listWorkshopRangeTasks(query, { mode: 'poll', signal: pollController.signal }), updated => {
+          if (pageActive.value && !pollController.signal.aborted && sequence === requestSequence) {
+            result.value = updated
+            reconcileVisibleTaskSelection(updated.items || [])
+          }
+        }, pollController.signal).catch(caught => {
+          if (pageActive.value && !pollController.signal.aborted && sequence === requestSequence) error.value = toError(caught).message
+        }).finally(() => { if (statisticsPollController === pollController) statisticsPollController = null })
+      }
       if (syncRoute) await syncRouteState()
     }
   } catch (caught) {
@@ -370,6 +387,8 @@ async function restoreRouteState() {
 }
 
 function pausePage() {
+  statisticsPollController?.abort()
+  statisticsPollController = null
   if (!pageActive.value) return
   pageActive.value = false
   requestSequence += 1
@@ -480,6 +499,7 @@ const workerTableColumns = [
       />
     </section>
 
+    <ReportDataStatus v-if="!isWorker" :meta="result.meta" :busy="loading" @refresh="refreshAnalysisReport" />
     <ReportFeedback v-if="!isWorker && loading && result.report" type="info" title="车间报表正在后台更新" message="当前显示上次加载的数据，更新完成后自动替换。" />
     <ReportFeedback
       v-if="error && result.report"

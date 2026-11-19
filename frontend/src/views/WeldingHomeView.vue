@@ -2,7 +2,7 @@
 import type { WeldingReport, WeldingJobRow } from '../types/welding'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import { NButton, NCard, NEmpty, NModal, NTag } from 'naive-ui'
+import { NButton, NCard, NEmpty, NModal } from 'naive-ui'
 import AppIcon from '../components/AppIcon.vue'
 import HomeSectionHeader from '../components/HomeSectionHeader.vue'
 import WeldingKpiCards from '../components/WeldingKpiCards.vue'
@@ -10,10 +10,12 @@ import WeldingChart from '../components/WeldingChart.vue'
 import WeldingTable from '../components/WeldingTable.vue'
 import WeldingRecord from '../components/WeldingRecord.vue'
 import ReportFeedback from '../components/ReportFeedback.vue'
+import ReportDataStatus from '../components/ReportDataStatus.vue'
 import ReportPanelState from '../components/ReportPanelState.vue'
 import { getWeldingReport } from '../api/welding'
+import { REPORT_POLL_INTERVAL, REPORT_POLL_LIMIT } from '../api/reportRequests'
 import { reportToday } from '../api/reportDates'
-import { formatChineseDate } from '../utils/dateDisplay'
+import { formatChineseDate, formatChineseDateTime } from '../utils/dateDisplay'
 import { deviceSelection } from '../state/devices'
 import { selectedLineType } from '../utils/productionLines'
 import { parseWeldingRouteQuery } from '../utils/weldingRouteState'
@@ -70,12 +72,12 @@ async function load(force = false, background = false) {
   loading.value = !background
   error.value = ''
   try {
-    const value = await getWeldingReport('dashboard', query.value, controller.signal, force)
+    const value = await getWeldingReport('dashboard', query.value, controller.signal, force, { mode: background ? 'poll' : force ? 'refresh' : 'read' })
     if (disposed || run !== generation || deviceSelection.id !== line) return
     report.value = value
-    if (value.meta.report_data?.refreshing && pollCount < 75) {
+    if (value.meta.report_data?.refreshing && !value.meta.report_data.refresh_failed && pollCount < REPORT_POLL_LIMIT) {
       pollCount += 1
-      timer = setTimeout(() => { void load(false, true) }, 5000)
+      timer = setTimeout(() => { void load(false, true) }, REPORT_POLL_INTERVAL)
     }
   } catch (caught) {
     const exception = toError(caught)
@@ -114,7 +116,7 @@ onBeforeUnmount(() => { disposed = true; generation += 1; clearTimeout(timer); c
     <ReportFeedback v-if="notice" title="操作提示" :message="notice" dismissible @dismiss="notice = ''" />
     <WeldingKpiCards v-if="sourceEnabled" kind="dashboard" :report="report" :loading="loading" />
     <template v-if="report">
-      <div class="welding-home-meta" role="status"><AppIcon name="clock" :size="14" tone="current" /><span>数据更新：{{ report.meta.report_data?.data_as_of || report.meta.calculated_at }}</span><NTag v-if="report.meta.report_data?.refresh_failed" size="small" type="warning" :bordered="false">刷新失败，保留上次结果</NTag><NTag v-else-if="report.meta.report_data?.refreshing" size="small" type="info" :bordered="false">后台更新中</NTag><NTag v-if="report.meta.report_data?.stale" size="small" type="warning" :bordered="false">数据待更新</NTag><span>趋势与结构：{{ query.start }} 至 {{ query.end }}{{ query.device_no !== '' ? ` · 设备 ${query.device_no}` : '' }}</span></div>
+      <div class="welding-home-meta" role="status"><ReportDataStatus v-if="report.meta.report_data" :meta="report.meta" :busy="loading" @refresh="load(true)" /><span v-else>数据更新：{{ formatChineseDateTime(report.meta.calculated_at, '--', 'Asia/Shanghai') }}</span><span>趋势与结构：{{ query.start }} 至 {{ query.end }}{{ query.device_no !== '' ? ` · 设备 ${query.device_no}` : '' }}</span></div>
       <section class="welding-home-grid" aria-label="生产趋势与工艺结构">
         <NCard :bordered="false" size="small" class="card-wrapper">
           <template #header><HomeSectionHeader title="近七天生产趋势" icon="trend" to="/admin/welding/reports/daily" action="生产统计" /></template>

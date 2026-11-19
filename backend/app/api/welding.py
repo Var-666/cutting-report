@@ -13,7 +13,7 @@ from pydantic import ValidationError
 from app.api.auth import require_admin
 from app.api.runtime import application_state, runtime_state
 from app.services.production_lines import resolve_line_service
-from app.services.report_snapshots import SnapshotRefreshBusy, SnapshotRefreshRejected
+from app.services.report_snapshots import SnapshotRefreshBusy, SnapshotRefreshRejected, SnapshotRefreshFailed
 from app.api.workloads import query_requests, snapshot_requests, analysis_requests, pdf_requests
 from app.config import settings
 from app.models.domain import to_primitive
@@ -61,12 +61,14 @@ def service(request: Request) -> WeldingService:
 def source_errors():
     try:
         yield
+    except SnapshotRefreshFailed as exc:
+        raise HTTPException(status_code=503, detail=str(exc), headers={'X-Report-Error': 'source_unavailable'}) from None
     except SnapshotRefreshBusy as exc:
-        raise HTTPException(status_code=503, detail=str(exc), headers={'Retry-After': '1', 'X-Welding-Error': 'snapshot_refresh_busy'}) from None
+        raise HTTPException(status_code=503, detail=str(exc), headers={'Retry-After': '5', 'X-Report-Error': 'snapshot_refresh_busy', 'X-Welding-Error': 'snapshot_refresh_busy'}) from None
     except SnapshotRefreshRejected as exc:
-        raise HTTPException(status_code=503, detail=str(exc), headers={'X-Welding-Error': 'snapshot_queue_full'}) from None
+        raise HTTPException(status_code=503, detail=str(exc), headers={'X-Report-Error': 'snapshot_queue_full', 'X-Welding-Error': 'snapshot_queue_full'}) from None
     except WeldingUnavailable as exc:
-        raise HTTPException(status_code=503, detail=str(exc), headers={'X-Welding-Error': exc.category}) from None
+        raise HTTPException(status_code=503, detail=str(exc), headers={'X-Report-Error': exc.category, 'X-Welding-Error': exc.category}) from None
     except AnalysisUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc), headers={'Retry-After': '60'}) from None
     except ValueError as exc:

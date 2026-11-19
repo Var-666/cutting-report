@@ -1,11 +1,11 @@
 import type { ConfirmTaskRequest, ConfirmTasksRequest, RevokeTaskRequest, CorrectTaskRequest, ConfirmationBatch, WorkshopReportInfo, LatestProductionDate, ReportAccepted, AnalysisRequest as ApiAnalysisRequest, AnalysisVersion, MyConfirmedTasks, MyConfirmedTasksApiV1WorkshopMyConfirmedTasksGetData } from './generated/types.gen'
 import type { ConfirmationAudit, TaskConfirmation, AnalysisRequest, AnalysisResult, LeadershipReport, ReportCreateRequest, ReportJob, WorkshopQuery, WorkshopRangeQuery, WorkshopResult } from '../types/reports'
 import type { Items, Page, ReadOptions } from '../types/api'
-import { reportCache } from './reportCache.ts'
+import { reportCache, REPORT_VIEW_CACHE_TTL } from './reportCache.ts'
+import { readReport } from './reportRequests.ts'
 import { request } from './client.ts'
 import { getDeviceId } from './deviceContext.ts'
 
-const REPORT_VIEW_CACHE_TTL = 5 * 60 * 1000
 
 export type MyConfirmedTasksQuery = NonNullable<MyConfirmedTasksApiV1WorkshopMyConfirmedTasksGetData['query']>
 export function listMyConfirmedTasks(query: MyConfirmedTasksQuery, { signal }: ReadOptions = {}) {
@@ -33,7 +33,7 @@ export function listWorkshopTasks({ reportDate, projectName = '', confirmationSt
   return reportCache.read(key, (signal) => request<WorkshopResult>(`/api/v1/workshop/tasks?${query}`, { signal }), { ttl: REPORT_VIEW_CACHE_TTL, force, signal })
 }
 
-export function listWorkshopRangeTasks({ startDate, endDate, projectName = '', taskId = '', confirmationStatus = 'all', page = 1, pageSize = 10 }: WorkshopRangeQuery, { force = false, signal }: ReadOptions = {}) {
+export function listWorkshopRangeTasks({ startDate, endDate, projectName = '', taskId = '', confirmationStatus = 'all', page = 1, pageSize = 10 }: WorkshopRangeQuery, { force = false, signal, mode, onPreparing }: ReadOptions = {}) {
   const query = new URLSearchParams({
     start_date: startDate,
     end_date: endDate,
@@ -44,7 +44,11 @@ export function listWorkshopRangeTasks({ startDate, endDate, projectName = '', t
   if (projectName) query.set('project_name', projectName)
   if (taskId) query.set('task_id', taskId)
   const key = `workshop:range:${query}`
-  return reportCache.read(key, (requestSignal) => request<WorkshopResult>(`/api/v1/workshop/range?${query}`, { signal: requestSignal }), { ttl: REPORT_VIEW_CACHE_TTL, force, signal })
+  return readReport(key, (sharedSignal, refresh, lineId) => {
+    const selected = new URLSearchParams(query)
+    if (refresh) selected.set('refresh', 'true')
+    return request<WorkshopResult>(`/api/v1/workshop/range?${selected}`, { signal: sharedSignal, headers: { 'X-Production-Line': lineId } })
+  }, { signal, mode: mode ?? (force ? 'refresh' : 'read'), onPreparing })
 }
 
 export function generateWorkshopDailyReport(reportDate: string, { signal }: ReadOptions = {}) {
@@ -113,15 +117,23 @@ export function listShips(reportDate: string, projectCode: string, { signal }: R
   return request<Items<string>>(`/api/v1/options/ships?${query}`, { signal })
 }
 
-export function getLeadershipReport(reportMonth: string, { force = false, signal, lineId = getDeviceId() }: ReadOptions & { lineId?: string } = {}) {
+export function getLeadershipReport(reportMonth: string, { force = false, signal, lineId = getDeviceId(), mode, onPreparing }: ReadOptions & { lineId?: string } = {}) {
   const query = new URLSearchParams({ report_month: reportMonth })
   if (lineId) query.set('device_id', lineId)
-  return reportCache.read(`leadership:${lineId}:${reportMonth}`, (signal) => request<LeadershipReport>(`/api/v1/leadership-report?${query}`, { signal, headers: { 'X-Production-Line': lineId } }), { ttl: REPORT_VIEW_CACHE_TTL, force, signal })
+  return readReport(`leadership:${lineId}:${reportMonth}`, (sharedSignal, refresh) => {
+    const selected = new URLSearchParams(query)
+    if (refresh) selected.set('refresh', 'true')
+    return request<LeadershipReport>(`/api/v1/leadership-report?${selected}`, { signal: sharedSignal, headers: { 'X-Production-Line': lineId } })
+  }, { signal, mode: mode ?? (force ? 'refresh' : 'read'), cacheScope: lineId, onPreparing })
 }
 
-export function getLeadershipRange(startDate: string, endDate: string, { force = false, signal }: ReadOptions = {}) {
+export function getLeadershipRange(startDate: string, endDate: string, { force = false, signal, mode, onPreparing }: ReadOptions = {}) {
   const query = new URLSearchParams({ start_date: startDate, end_date: endDate })
-  return reportCache.read(`leadership:range:${query}`, (requestSignal) => request<LeadershipReport>(`/api/v1/leadership-report?${query}`, { signal: requestSignal }), { ttl: REPORT_VIEW_CACHE_TTL, force, signal })
+  return readReport(`leadership:range:${query}`, (sharedSignal, refresh, lineId) => {
+    const selected = new URLSearchParams(query)
+    if (refresh) selected.set('refresh', 'true')
+    return request<LeadershipReport>(`/api/v1/leadership-report?${selected}`, { signal: sharedSignal, headers: { 'X-Production-Line': lineId } })
+  }, { signal, mode: mode ?? (force ? 'refresh' : 'read'), onPreparing })
 }
 
 export function analyzeReport({ reportType, reportDate, periodStart, periodEnd, summaryPeriodStart, summaryPeriodEnd, dataVersion, force = false }: AnalysisRequest, { signal }: ReadOptions = {}) {

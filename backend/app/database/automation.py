@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from psycopg import Connection
-from psycopg.errors import UniqueViolation
+from psycopg.errors import LockNotAvailable, UniqueViolation
 
 from typing import Any
 from uuid import uuid4
@@ -127,10 +127,19 @@ class AutomationRepository(PostgresRepository):
                 SELECT s.*,
                        COUNT(r.run_id) AS run_count,
                        SUM(CASE WHEN r.status = 'sent' THEN 1 ELSE 0 END) AS sent_count,
-                       SUM(CASE WHEN r.status = 'failed' THEN 1 ELSE 0 END) AS failed_count
+                       SUM(CASE WHEN r.status = 'failed' THEN 1 ELSE 0 END) AS failed_count,
+                       active.run_id AS active_manual_run_id, active.status AS active_manual_run_status
                 FROM report_schedules AS s
                 LEFT JOIN scheduled_report_runs AS r ON r.schedule_id = s.schedule_id
-                GROUP BY s.schedule_id
+                LEFT JOIN LATERAL (
+                    SELECT run.run_id, CASE WHEN d.status='pending' THEN 'email_pending'
+                                           ELSE COALESCE(d.status, run.status) END AS status
+                    FROM scheduled_report_runs run LEFT JOIN email_deliveries d ON d.run_id=run.run_id
+                    WHERE run.schedule_id=s.schedule_id AND run.trigger_type='manual'
+                      AND run.status IN ('queued','generating','email_pending','retry_wait')
+                    ORDER BY run.scheduled_for DESC LIMIT 1
+                ) active ON true
+                GROUP BY s.schedule_id, active.run_id, active.status
                 ORDER BY s.enabled DESC, s.next_run_at, s.created_at DESC
                 """
             ).fetchall()
@@ -243,6 +252,28 @@ class AutomationRepository(PostgresRepository):
         item["attach_report"] = bool(item["attach_report"])
         return item
 
+    def cancel_manual_run(self, run_id: str, *, now: str) -> dict | None:
+        try:
+            with self.connect() as connection:
+                repository = AutomationRepository(self.database, connection=connection)
+                run = repository.get_run(run_id, for_update=True)
+                if run is None or run['status'] == 'cancelled':
+                    return run
+                if run['trigger_type'] != 'manual' or run['status'] not in ('queued', 'generating', 'email_pending', 'retry_wait'):
+                    raise ValueError('当前执行状态无法取消，请刷新后查看进度')
+                # SMTP updates its delivery row first. A concurrent sender wins the claim without blocking on this run lock.
+                delivery = connection.execute('SELECT status FROM email_deliveries WHERE run_id=%s FOR UPDATE NOWAIT',
+                                              (run_id,)).fetchone()
+                if delivery is not None:
+                    if delivery['status'] not in ('pending', 'retry_wait', 'analysis_wait'):
+                        raise ValueError('当前邮件已进入发送或结果确认阶段，请刷新后查看状态')
+                    connection.execute("""UPDATE email_deliveries SET status='cancelled',updated_at=%s,last_error=NULL
+                        WHERE run_id=%s""", (now, run_id))
+                repository.mark_run(run_id, 'cancelled', now=now)
+                return repository.get_run(run_id)
+        except LockNotAvailable as exc:
+            raise ValueError('邮件状态正在更新，请刷新后查看是否仍可取消') from exc
+
     def incomplete_runs(self, limit: int = 100) -> list[dict]:
         """Find committed runs interrupted between durable workflow steps."""
         with self.connect() as connection:
@@ -252,7 +283,7 @@ class AutomationRepository(PostgresRepository):
                 FROM scheduled_report_runs r
                 LEFT JOIN report_jobs j ON j.report_id = r.report_id
                 WHERE (r.status = 'queued' AND r.report_id IS NULL)
-                   OR (j.status = 'completed'
+                   OR (r.status <> 'cancelled' AND j.status = 'completed'
                        AND EXISTS (SELECT 1 FROM reports p WHERE p.report_id = r.report_id)
                        AND NOT EXISTS (
                            SELECT 1 FROM email_deliveries d WHERE d.report_id = r.report_id
@@ -280,15 +311,15 @@ class AutomationRepository(PostgresRepository):
     def mark_run(self, run_id: str, status: str, *, now: str, error: str | None = None) -> None:
         with self.connect() as connection:
             row = connection.execute(
-                "SELECT schedule_id FROM scheduled_report_runs WHERE run_id = %s", (run_id,)
-            ).fetchone()
-            connection.execute(
                 """
                 UPDATE scheduled_report_runs
-                SET status = %s, last_error = %s, updated_at = %s WHERE run_id = %s
+                SET status = %s, last_error = %s, updated_at = %s
+                WHERE run_id = %s AND status <> 'cancelled' RETURNING schedule_id
                 """,
                 (status, error, now, run_id),
-            )
+            ).fetchone()
+            if row is None:
+                return
             if status == 'failed':
                 connection.execute("""UPDATE email_deliveries SET status='failed',last_error=%s,updated_at=%s
                     WHERE run_id=%s AND status='analysis_wait'""", (error, now, run_id))
@@ -311,7 +342,7 @@ class AutomationRepository(PostgresRepository):
             run = connection.execute(
                 "SELECT * FROM scheduled_report_runs WHERE report_id = %s FOR UPDATE", (report_id,)
             ).fetchone()
-            if run is None:
+            if run is None or run['status'] == 'cancelled':
                 return None
             waiting = connection.execute("SELECT delivery_id FROM email_deliveries WHERE run_id=%s AND status='analysis_wait' FOR UPDATE",
                 (run['run_id'],)).fetchone()

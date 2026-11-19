@@ -11,6 +11,7 @@ import ManagementPageHero from '../components/ManagementPageHero.vue'
 import AppReportTable from '../components/AppReportTable.vue'
 import { NButton, NCheckbox, NInput, NInputNumber, NModal, NTag } from 'naive-ui'
 import DatabaseSourcesPanel from '../components/DatabaseSourcesPanel.vue'
+import ReportCacheSettings from '../components/ReportCacheSettings.vue'
 import { useConfirm } from '../composables/useConfirm.ts'
 import { useUnsavedChanges } from '../composables/useUnsavedChanges.ts'
 
@@ -362,6 +363,7 @@ async function selectConfigurationLine(id: string) {
     </article>
   </section>
 
+  <ReportCacheSettings />
   <DatabaseSourcesPanel />
 
   <section class="panel db-panel">

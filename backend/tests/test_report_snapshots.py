@@ -32,6 +32,26 @@ def record(report_key=None, **changes):
     return replace(ReportSnapshot(report_key or key(), payload, fingerprint(payload), now, now, now + timedelta(seconds=300)), **changes)
 
 
+def test_unified_policy_hot_change_rechecks_original_completion_time(tmp_path, postgres_state):
+    from app.services.report_cache_policy import report_ttl
+    cfg, snapshots, queue = infrastructure(postgres_state[1], postgres_state[0])
+    service = ReportSnapshotService(cfg, snapshots, queue)
+    today = datetime.now(timezone.utc).date()
+    selected = replace(key(), period_start=today.isoformat(), period_end=today.isoformat())
+    first = service.read(selected, lambda: {'count': 7})
+    saved = snapshots.get(selected)
+    old = datetime.now(timezone.utc) - timedelta(seconds=200)
+    saved = replace(saved, data_as_of=old, refreshed_at=old,
+                    expires_at=old + timedelta(seconds=report_ttl(cfg, today)))
+    snapshots.save(saved)
+    updated = ReportSnapshotService(replace(cfg, leadership_report_cache_seconds=73), snapshots, queue)
+    result = updated.read(selected, lambda: pytest.fail('a policy change must return retained data and queue refresh'))
+    assert result.payload == first.payload
+    assert result.meta['stale'] and result.meta['refreshing']
+    assert result.meta['refreshed_at'] == old.isoformat()
+    assert result.meta['expires_at'] == (old + timedelta(seconds=73)).isoformat()
+
+
 def test_snapshot_is_additive_atomic_versioned_and_bounded(tmp_path, postgres_state):
     settings, repo, _ = infrastructure(postgres_state[1], postgres_state[0])
     with repo.connect() as connection:

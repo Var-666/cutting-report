@@ -1,7 +1,4 @@
-.task-cell { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
-.task-cell small { color: var(--muted); font-size: var(--font-auxiliary); }
 .error-cell { color: var(--muted); white-space: nowrap; }
-.row-actions, .delivery-actions { display: flex; align-items: center; justify-content: center; gap: 6px; }
+.delivery-actions { display: flex; align-items: center; justify-content: center; gap: 6px; }
 .delivery-actions button { flex-shrink: 0; }
-.row-actions button, .delivery-actions button { min-height: 30px; padding: 0 9px; white-space: nowrap; }
-.row-actions .danger { color: rgb(var(--error-color)); border-color: rgb(var(--error-color)); background: rgb(var(--error-color) / .1); }
+.delivery-actions button { min-height: 30px; padding: 0 9px; white-space: nowrap; }

@@ -1338,14 +1338,14 @@ export type ApiEnvelopePdmBranchOptions = {
 };
 
 /**
- * ApiEnvelope[PdmReportSummaries]
+ * ApiEnvelope[PdmOverviewReport]
  */
-export type ApiEnvelopePdmReportSummaries = {
+export type ApiEnvelopePdmOverviewReport = {
     /**
      * Success
      */
     success: true;
-    data: PdmReportSummaries;
+    data: PdmOverviewReport;
     /**
      * Request Id
      */
@@ -1436,6 +1436,21 @@ export type ApiEnvelopeReportAnalysis = {
      */
     success: true;
     data: ReportAnalysis;
+    /**
+     * Request Id
+     */
+    request_id: string;
+};
+
+/**
+ * ApiEnvelope[ReportCacheConfiguration]
+ */
+export type ApiEnvelopeReportCacheConfiguration = {
+    /**
+     * Success
+     */
+    success: true;
+    data: ReportCacheConfiguration;
     /**
      * Request Id
      */
@@ -2085,6 +2100,14 @@ export type AutomationSchedule = {
      * Failed Count
      */
     failed_count?: number | null;
+    /**
+     * Active Manual Run Id
+     */
+    active_manual_run_id?: string | null;
+    /**
+     * Active Manual Run Status
+     */
+    active_manual_run_status?: string | null;
 };
 
 /**
@@ -4268,6 +4291,7 @@ export type EnergyChannel = {
  * EnergyDayReport
  */
 export type EnergyDayReport = {
+    meta?: ReportMeta | null;
     units: EnergyUnits;
     /**
      * Notice
@@ -4362,6 +4386,7 @@ export type EnergyHour = {
  * EnergyMonthReport
  */
 export type EnergyMonthReport = {
+    meta?: ReportMeta | null;
     units: EnergyUnits;
     /**
      * Notice
@@ -4436,6 +4461,7 @@ export type EnergyMonthReport = {
  * EnergyPeriodReport
  */
 export type EnergyPeriodReport = {
+    meta?: ReportMeta | null;
     units: EnergyUnits;
     /**
      * Notice
@@ -4550,6 +4576,7 @@ export type EnergyPeriodRow = {
  * EnergyRangeReport
  */
 export type EnergyRangeReport = {
+    meta?: ReportMeta | null;
     task_report: TaskEnergyReport;
     period_report: TaskEnergyPeriodReport;
 };
@@ -4656,6 +4683,7 @@ export type EquipmentRecord = {
  * EquipmentReport
  */
 export type EquipmentReport = {
+    meta?: ReportMeta | null;
     /**
      * Report Date
      */
@@ -5002,6 +5030,7 @@ export type LeadershipRefreshRequest = {
  * LeadershipReport
  */
 export type LeadershipReport = {
+    meta?: ReportMeta | null;
     /**
      * Report Month
      */
@@ -5773,6 +5802,7 @@ export type PdmBranchOptions = {
      * Responsible People
      */
     responsible_people?: Array<PdmOption>;
+    meta?: ReportMeta | null;
 };
 
 /**
@@ -5824,6 +5854,15 @@ export type PdmOptionsQuery = {
      */
     kind: 'equipment' | 'drawing';
     filters?: PdmBranchFilters;
+};
+
+/**
+ * PdmOverviewReport
+ */
+export type PdmOverviewReport = {
+    equipment?: PdmCounts | null;
+    drawing?: PdmCounts | null;
+    meta?: ReportMeta | null;
 };
 
 /**
@@ -5887,6 +5926,7 @@ export type PdmStatisticsReport = {
      * Tables
      */
     tables: Array<PdmSummaryTable>;
+    meta?: ReportMeta | null;
 };
 
 /**
@@ -6309,6 +6349,28 @@ export type ReportAnalysis = {
 };
 
 /**
+ * ReportCacheConfiguration
+ */
+export type ReportCacheConfiguration = {
+    /**
+     * Current Seconds
+     */
+    current_seconds: number;
+    /**
+     * History Seconds
+     */
+    history_seconds: number;
+    /**
+     * Query Seconds
+     */
+    query_seconds: number;
+    /**
+     * Refresh Seconds
+     */
+    refresh_seconds: number;
+};
+
+/**
  * ReportCreateRequest
  */
 export type ReportCreateRequest = {
@@ -6509,6 +6571,13 @@ export type ReportJob = {
      * Generated At
      */
     generated_at?: string | null;
+};
+
+/**
+ * ReportMeta
+ */
+export type ReportMeta = {
+    report_data: ReportDataMeta;
 };
 
 /**
@@ -7063,6 +7132,7 @@ export type TaskConfirmation = {
  * TaskEnergyPeriodReport
  */
 export type TaskEnergyPeriodReport = {
+    meta?: ReportMeta | null;
     /**
      * Period Start
      */
@@ -7107,6 +7177,7 @@ export type TaskEnergyPeriodReport = {
  * TaskEnergyReport
  */
 export type TaskEnergyReport = {
+    meta?: ReportMeta | null;
     /**
      * Report Date
      */
@@ -8686,6 +8757,7 @@ export type WorkshopResult = {
      * Page Size
      */
     page_size: number;
+    meta?: ReportMeta | null;
     report: WorkshopReportInfo | null;
     /**
      * Project Names
@@ -9792,7 +9864,12 @@ export type RelatedApiV1OperationsRelatedKindIdentifierGetResponse = RelatedApiV
 export type OptionsApiV1PdmStatisticsOptionsPostData = {
     body: PdmOptionsQuery;
     path?: never;
-    query?: never;
+    query?: {
+        /**
+         * Refresh
+         */
+        refresh?: boolean;
+    };
     url: '/api/v1/pdm-statistics/options';
 };
 
@@ -9817,7 +9894,12 @@ export type OptionsApiV1PdmStatisticsOptionsPostResponse = OptionsApiV1PdmStatis
 export type ReportApiV1PdmStatisticsReportPostData = {
     body: PdmStatisticsQuery;
     path?: never;
-    query?: never;
+    query?: {
+        /**
+         * Refresh
+         */
+        refresh?: boolean;
+    };
     url: '/api/v1/pdm-statistics/report';
 };
 
@@ -9842,7 +9924,12 @@ export type ReportApiV1PdmStatisticsReportPostResponse = ReportApiV1PdmStatistic
 export type OverviewApiV1PdmStatisticsOverviewGetData = {
     body?: never;
     path?: never;
-    query?: never;
+    query?: {
+        /**
+         * Refresh
+         */
+        refresh?: boolean;
+    };
     url: '/api/v1/pdm-statistics/overview';
 };
 
@@ -9859,7 +9946,7 @@ export type OverviewApiV1PdmStatisticsOverviewGetResponses = {
     /**
      * Successful Response
      */
-    200: ApiEnvelopePdmReportSummaries;
+    200: ApiEnvelopePdmOverviewReport;
 };
 
 export type OverviewApiV1PdmStatisticsOverviewGetResponse = OverviewApiV1PdmStatisticsOverviewGetResponses[keyof OverviewApiV1PdmStatisticsOverviewGetResponses];
@@ -10122,6 +10209,10 @@ export type ListRangeTasksApiV1WorkshopRangeGetData = {
          * Page Size
          */
         page_size?: number;
+        /**
+         * Refresh
+         */
+        refresh?: boolean;
     };
     url: '/api/v1/workshop/range';
 };
@@ -10968,6 +11059,56 @@ export type ViewAlarmReportApiV1AlarmsReportsReportIdViewGetResponses = {
     200: unknown;
 };
 
+export type GetReportCacheConfigurationApiV1DatabaseReportCacheGetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/database/report-cache';
+};
+
+export type GetReportCacheConfigurationApiV1DatabaseReportCacheGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type GetReportCacheConfigurationApiV1DatabaseReportCacheGetError = GetReportCacheConfigurationApiV1DatabaseReportCacheGetErrors[keyof GetReportCacheConfigurationApiV1DatabaseReportCacheGetErrors];
+
+export type GetReportCacheConfigurationApiV1DatabaseReportCacheGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeReportCacheConfiguration;
+};
+
+export type GetReportCacheConfigurationApiV1DatabaseReportCacheGetResponse = GetReportCacheConfigurationApiV1DatabaseReportCacheGetResponses[keyof GetReportCacheConfigurationApiV1DatabaseReportCacheGetResponses];
+
+export type SaveReportCacheConfigurationApiV1DatabaseReportCachePutData = {
+    body: ReportCacheConfiguration;
+    path?: never;
+    query?: never;
+    url: '/api/v1/database/report-cache';
+};
+
+export type SaveReportCacheConfigurationApiV1DatabaseReportCachePutErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type SaveReportCacheConfigurationApiV1DatabaseReportCachePutError = SaveReportCacheConfigurationApiV1DatabaseReportCachePutErrors[keyof SaveReportCacheConfigurationApiV1DatabaseReportCachePutErrors];
+
+export type SaveReportCacheConfigurationApiV1DatabaseReportCachePutResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeConfigurationSaved;
+};
+
+export type SaveReportCacheConfigurationApiV1DatabaseReportCachePutResponse = SaveReportCacheConfigurationApiV1DatabaseReportCachePutResponses[keyof SaveReportCacheConfigurationApiV1DatabaseReportCachePutResponses];
+
 export type ResourceStatusApiV1DatabaseResourcesGetData = {
     body?: never;
     path?: never;
@@ -11663,6 +11804,36 @@ export type GetRunApiV1AutomationRunsRunIdGetResponses = {
 };
 
 export type GetRunApiV1AutomationRunsRunIdGetResponse = GetRunApiV1AutomationRunsRunIdGetResponses[keyof GetRunApiV1AutomationRunsRunIdGetResponses];
+
+export type CancelRunApiV1AutomationRunsRunIdCancelPostData = {
+    body?: never;
+    path: {
+        /**
+         * Run Id
+         */
+        run_id: string;
+    };
+    query?: never;
+    url: '/api/v1/automation/runs/{run_id}/cancel';
+};
+
+export type CancelRunApiV1AutomationRunsRunIdCancelPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type CancelRunApiV1AutomationRunsRunIdCancelPostError = CancelRunApiV1AutomationRunsRunIdCancelPostErrors[keyof CancelRunApiV1AutomationRunsRunIdCancelPostErrors];
+
+export type CancelRunApiV1AutomationRunsRunIdCancelPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeScheduledRun;
+};
+
+export type CancelRunApiV1AutomationRunsRunIdCancelPostResponse = CancelRunApiV1AutomationRunsRunIdCancelPostResponses[keyof CancelRunApiV1AutomationRunsRunIdCancelPostResponses];
 
 export type ListDeliveriesApiV1AutomationDeliveriesGetData = {
     body?: never;
@@ -12913,6 +13084,10 @@ export type GetEnergyMonthApiV1EnergyReportMonthGetData = {
          * Report Month
          */
         report_month: string;
+        /**
+         * Refresh
+         */
+        refresh?: boolean;
     };
     url: '/api/v1/energy-report/month';
 };
@@ -12947,6 +13122,10 @@ export type GetEnergyMonthlyRangeApiV1EnergyReportMonthlyRangeGetData = {
          * End Date
          */
         end_date: string;
+        /**
+         * Refresh
+         */
+        refresh?: boolean;
     };
     url: '/api/v1/energy-report/monthly-range';
 };

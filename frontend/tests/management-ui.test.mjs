@@ -20,7 +20,7 @@ function automationHooks(bindings) {
 }
 
 const flushAutomation = async () => { await new Promise(resolve => setImmediate(resolve)); await Vue.nextTick() }
-async function mountAutomation(t, { confirm = async () => true, run, readRun, save } = {}) {
+async function mountAutomation(t, { confirm = async () => true, run, readRun, save, scheduleItems } = {}) {
   const calls = { status: 0, schedules: 0, emails: [], actions: [], runReads: [], savedSchedules: [] }
   const timers = new Map()
   const activated = []
@@ -35,7 +35,7 @@ async function mountAutomation(t, { confirm = async () => true, run, readRun, sa
     onDeactivated: callback => { deactivated.push(callback); Vue.onDeactivated(callback) },
     getAutomationConfiguration: async () => ({}),
     getAutomationStatus: async () => { calls.status++; return { revision: calls.status } },
-    listAutomationSchedules: async () => { calls.schedules++; return { items: [{ schedule_id: 'saved', name: '每日车间报表' }, { schedule_id: 'monthly', name: '月报 Summary' }] } },
+    listAutomationSchedules: async () => { calls.schedules++; return { items: scheduleItems ?? [{ schedule_id: 'saved', name: '每日车间报表' }, { schedule_id: 'monthly', name: '月报 Summary' }] } },
     listEmailDeliveries: (query, options) => {
       if (!held) { calls.emails.push({ ...query, signal: options.signal }); return Promise.resolve(result(query.page)) }
       return new Promise((resolve, reject) => calls.emails.push({ ...query, signal: options.signal, resolve: (total = 60) => resolve(result(query.page, total)), reject }))
@@ -43,12 +43,13 @@ async function mountAutomation(t, { confirm = async () => true, run, readRun, sa
     saveAutomationSchedule: async (body, id) => { calls.actions.push('save'); calls.savedSchedules.push({ body, id }); await save?.() }, retryEmailDelivery: async () => calls.actions.push('retry'),
     deleteAutomationSchedule: async () => calls.actions.push('delete'),
     runAutomationSchedule: async id => { calls.actions.push('run'); return run ? run(id) : { schedule_id: id, run_id: `run-${id}`, status: 'queued' } },
+    cancelAutomationRun: async id => { calls.actions.push(`cancel:${id}`); return { run_id: id, status: 'cancelled' } },
     getAutomationRun: async (id, options) => { calls.runReads.push({ id, signal: options.signal }); return readRun ? readRun(id, options) : { run_id: id, status: 'sent' } },
     saveAutomationConfiguration: async () => { calls.actions.push('config'); return { message: 'saved' } },
   }
   Object.assign(bindings, automationHooks(bindings))
   const code = descriptor('AutomationView').scriptSetup.content.replace(/^import .*$/gm, '')
-  const setup = scriptFunction(...Object.keys(bindings), `${code}; return { loadDeliveries, changeDeliveryPage, deliveryPage, deliveries, deliveryTotal, deliveryLoading, deliverySearch, appliedDeliverySearch, searchDeliveries, clearDeliverySearch, scheduleSearch, appliedScheduleSearch, visibleSchedules, searchSchedules, clearScheduleSearch, pageCount, error, loadAll, retry, submit, submitConfiguration, remove, runNow, executions, runningScheduleIds, deliveryResolved, openDelivery, selectedDelivery, resolutionDirty, form, deliveryLabels, openScheduleEditor, resetForm, hasUnsavedChanges, configurationDirty, activePanel, scheduleError, recipientInputVisible, recipientDraft, recipientError, addRecipient, removeRecipient, cancelRecipientInput }`)
+  const setup = scriptFunction(...Object.keys(bindings), `${code}; return { loadDeliveries, changeDeliveryPage, deliveryPage, deliveries, deliveryTotal, deliveryLoading, deliverySearch, appliedDeliverySearch, searchDeliveries, clearDeliverySearch, scheduleSearch, appliedScheduleSearch, visibleSchedules, searchSchedules, clearScheduleSearch, pageCount, error, loadAll, retry, submit, submitConfiguration, remove, runNow, cancelExecution, executions, runningScheduleIds, cancellableScheduleIds, deliveryResolved, openDelivery, selectedDelivery, resolutionDirty, form, deliveryLabels, openScheduleEditor, resetForm, hasUnsavedChanges, configurationDirty, activePanel, scheduleError, recipientInputVisible, recipientDraft, recipientError, addRecipient, removeRecipient, cancelRecipientInput }`)
   let state
   const renderer = Vue.createRenderer({ createComment: () => ({}), createText: () => ({}), createElement: () => ({}), insert() {}, remove() {}, setText() {}, setElementText() {}, parentNode: () => null, nextSibling: () => null, patchProp() {} })
   const app = renderer.createApp({ setup() { state = setup(...Object.values(bindings)); return () => null } })
@@ -157,16 +158,47 @@ test('leaving cancels progress reads, returning resumes and unmount ignores late
 test('execution progress renders stages, terminal errors and safe text without estimated percentages', async () => {
   for (const [status, label] of [['submitting', '正在提交任务'], ['queued', '等待后台准备报表'],
     ['generating', '正在生成报表'], ['sending', '正在发送邮件'], ['sent', '邮件已发送'],
-    ['failed', '执行失败'], ['unknown', '发送结果待核对']]) {
+    ['failed', '执行失败'], ['unknown', '发送结果待核对'], ['cancelled', '已取消发送']]) {
     const html = await renderComponent('components/automation/AutomationRunProgress', {
       execution: { schedule_name: '<script>日报</script>', schedule_id: 'saved', status, last_error: '错误说明' },
     })
     assert.ok(html.includes(label), status)
-    assert.ok(html.includes('提交任务') && html.includes('生成报表') && html.includes('发送邮件'))
+    if (['submitting', 'queued', 'generating', 'sending'].includes(status)) {
+      assert.ok(html.includes('提交任务') && html.includes('生成报表') && html.includes('发送邮件'))
+    }
     assert.ok(html.includes('&lt;script&gt;日报&lt;/script&gt;'))
     assert.ok(html.includes('错误说明'))
     assert.doesNotMatch(html, /\d+(?:\.\d+)?%<\//)
   }
+})
+
+test('restored manual runs can stop sending and ignore an aborted late progress read', async t => {
+  let resolveRead
+  const { state, calls, timers, poll } = await mountAutomation(t, {
+    scheduleItems: [{ schedule_id: 'saved', name: '日报', active_manual_run_id: 'manual-1', active_manual_run_status: 'generating' }],
+    readRun: () => new Promise(resolve => { resolveRead = resolve }),
+  })
+  assert.deepEqual(state.cancellableScheduleIds.value, ['saved'])
+  poll()
+  await state.cancelExecution(state.executions.saved)
+  assert.deepEqual(calls.actions, ['cancel:manual-1'])
+  assert.equal(calls.runReads[0].signal.aborted, true)
+  resolveRead({ status: 'sending' })
+  await flushAutomation()
+  assert.equal(state.executions.saved.status, 'cancelled')
+  assert.equal(state.runningScheduleIds.value.length, 0)
+  assert.equal(timers.size, 0)
+})
+
+test('automation schedule cards show task details and cancellation for its run', async () => {
+  const schedule = { schedule_id: 'schedule', enabled: true, name: '每日车间', device_id: 'Cutter01', report_type: 'workshop', frequency: 'daily', run_time: '18:00', recipients: ['one@example.com'], sent_count: 12, failed_count: 1 }
+  const html = await renderComponent('components/automation/AutomationScheduleCards', {
+    schedules: [schedule], runningScheduleIds: ['schedule'], cancellableScheduleIds: ['schedule'],
+    executions: { schedule: { schedule_id: 'schedule', schedule_name: schedule.name, status: 'generating' } },
+    reportLabels: { workshop: '车间报表' }, scheduleLabels: {},
+  })
+  for (const value of ['每日车间', '20KW切割机', '每日 18:00', '执行中', '取消发送', '编辑', '删除']) assert.ok(html.includes(value))
+  assert.doesNotMatch(html, /<table/)
 })
 
 test('automation search applies task names and keeps delivery search across paging and refresh', async t => {
@@ -214,14 +246,17 @@ test('automation search rejects stale results and preserves the applied query on
 })
 
 test('automation recipients appear once and keep accepted recipients after partial refusal', async () => {
+  const delivery = { delivery_id: 'd1', schedule_name: '日报', subject: '自定义主题', recipients: ['retry@example.com'],
+    recipient_results: { 'accepted@example.com': { status: 'accepted' }, 'retry@example.com': { status: 'refused', code: 450 } }, status: 'failed' }
   const html = await renderComponent('components/automation/AutomationDeliveryTable', {
-    deliveries: [{ delivery_id: 'd1', schedule_name: '日报', subject: '自定义主题', recipients: ['retry@example.com'],
-      recipient_results: { 'accepted@example.com': { status: 'accepted' }, 'retry@example.com': { status: 'refused', code: 450 } }, status: 'failed' }],
+    deliveries: [delivery],
     deliveryTotal: 1, deliveryPage: 1, deliveryLoading: false, paginate: true, deliveryLabels: { failed: '发送失败' },
   })
-  assert.equal((html.match(/retry@example.com/g) || []).length, 1)
-  assert.equal((html.match(/accepted@example.com/g) || []).length, 1)
-  assert.ok(html.includes('服务器已接受') && html.includes('服务器拒收 450'))
+  assert.ok(html.includes('查看全部 2 位收件人'))
+  const expanded = await renderComponent('components/automation/AutomationRecipientTags', { delivery })
+  assert.equal((expanded.match(/>retry@example.com</g) || []).length, 1)
+  assert.equal((expanded.match(/>accepted@example.com</g) || []).length, 1)
+  assert.ok(expanded.includes('服务器已接受') && expanded.includes('服务器拒收 450'))
   assert.ok(html.includes('title="自定义主题"'))
   assert.doesNotMatch(html, /<small[^>]*>自定义主题/)
 })
@@ -659,7 +694,7 @@ for (const [reportType, period] of [['leadership', 'current_month'], ['leadershi
   })
 }
 
-test('all seven migrated settings tables render their fields and controls through Naive UI', async () => {
+test('migrated settings tables render their fields and controls through Naive UI', async () => {
   const [{ compile, parse: parseTemplate }, { renderToString }, { setup: setupCssr }, { SharedDataTable }, dateDisplay] = await Promise.all([
     import('@vue/compiler-dom'), import('@vue/server-renderer'), import('@css-render/vue3-ssr'), import('./data-table-helpers.mjs'), import('../src/utils/dateDisplay.ts'),
   ])
@@ -689,7 +724,6 @@ test('all seven migrated settings tables render their fields and controls throug
     }),
     ['ModelUsageView', 'periodTableColumns', { periods: [{ period: '2026-10-28', call_count: 1240, input_tokens: null, output_tokens: 0, total_tokens: 0, metered_count: 1200, failed_count: 40 }], report: { granularity: 'day' }, number: value => value == null ? '—' : value.toLocaleString('zh-CN') }, ['2026年10月28日', '1,240', '1,200', '—', '40']],
     ['ModelUsageView', 'breakdownTableColumns', { report: { breakdown: [{ scene: 'workshop', model: '<script>unsafe</script>', call_count: 10, input_tokens: 0, output_tokens: null, total_tokens: 0, metered_count: 8 }] }, sceneName: () => '车间报表', number: value => value == null ? '—' : String(value) }, ['车间报表', '&lt;script&gt;unsafe&lt;/script&gt;', '—']],
-    ['AutomationView', 'scheduleTableColumns', { schedules: [{ schedule_id: 'schedule', enabled: true, name: '每日车间', device_id: 'Cutter01', report_type: 'workshop', frequency: 'daily', run_time: '18:00', recipients: ['one@example.com'], sent_count: 12, failed_count: 1 }], reportLabels: { workshop: '车间报表' }, scheduleLabels: {} }, ['每日车间', '20KW切割机', '每日 18:00', '立即执行', '编辑', '删除']],
     ['AutomationView', 'deliveryTableColumns', { deliveries: [
       { delivery_id: 'failed', schedule_name: '邮件失败', recipients: ['one@example.com'], recipient_results: {}, status: 'failed', attempt_count: 1, max_attempts: 3, last_error: '连接失败' },
       { delivery_id: 'unknown', schedule_name: '邮件待核对', recipients: ['two@example.com'], recipient_results: { 'two@example.com': { status: 'unknown' } }, status: 'unknown', message_id: '<mail-id>' },
@@ -698,15 +732,13 @@ test('all seven migrated settings tables render their fields and controls throug
   ]
   for (const [viewName, columnName, state, expected] of cases) {
     if (viewName === 'AutomationView') {
-      const name = columnName === 'scheduleTableColumns' ? 'AutomationScheduleTable' : 'AutomationDeliveryTable'
+      const name = 'AutomationDeliveryTable'
       const html = await renderComponent(`components/automation/${name}`, { ...state, loading: false, paginate: true })
       for (const value of expected) assert.ok(html.includes(value), `${name} shows ${value}`)
       assert.doesNotMatch(html, /max-height:(340|440)px/, 'automation tables grow with the page')
       continue
     }
-    const view = viewName === 'AutomationView'
-      ? descriptor(`automation/${columnName === 'scheduleTableColumns' ? 'AutomationScheduleTable' : 'AutomationDeliveryTable'}`, 'components')
-      : viewName === 'DesignerView' ? descriptor('designer/DesignerQueryPreview', 'components')
+    const view = viewName === 'DesignerView' ? descriptor('designer/DesignerQueryPreview', 'components')
       : descriptor(viewName)
     const script = view.scriptSetup.content
     const bindings = { ...Vue, ...dateDisplay, ...state, loading: false, paginate: true }
@@ -736,7 +768,7 @@ test('all seven migrated settings tables render their fields and controls throug
     } else assert.doesNotMatch(html, /class="n-pagination(?:\s|")/)
     if (['diagnosticsTableColumns', 'breakdownTableColumns'].includes(columnName)) assert.doesNotMatch(html, /<script>unsafe/)
     if (columnName === 'diagnosticsTableColumns') assert.ok(!html.includes('aggregate-host'), 'render the actual Consumer instances')
-    const height = { periodTableColumns: 330, scheduleTableColumns: 340, deliveryTableColumns: 440 }[columnName]
+    const height = { periodTableColumns: 330, deliveryTableColumns: 440 }[columnName]
     if (height) assert.ok(html.includes(`max-height:${height}px`), 'scroll height is handled by NDataTable')
   }
 })

@@ -137,6 +137,17 @@ def test_cutting_reports_and_state_dependent_job_responses_match_contracts(contr
         ('energy-report/month', {'report_month': '2026-08'}, EnergyMonthReport),
         ('energy-report/monthly-range', {'start_date': '2026-08-01', 'end_date': '2026-08-20'}, EnergyPeriodReport),
     ]:
+        response = client.get(f'/api/v1/{path}', params={**params, **query})
+        assert response.status_code == 503 and response.headers['X-Report-Error'] == 'snapshot_refresh_busy'
+        from app.services.database_runtime import database_context
+        from app.services.production_reports import report_provider
+        runtime = client.app.state.runtime
+        owner = runtime.coordination.acquire('worker:contract', ttl=30)
+        task = runtime.coordination.claim_task(owner, analysis=False)
+        provider = report_provider(database_context(runtime), task['device_id'])
+        provider.refresh_summary(task['payload']['report_type'], task['payload']['query'], requested_at=task['created_at'])
+        runtime.coordination.finish_task(task, owner)
+        runtime.coordination.release('worker:contract', owner)
         check_contract(client.get(f'/api/v1/{path}', params={**params, **query}), model)
     accepted = check_contract(client.post('/api/v1/reports', params=params, json={
         'report_type': 'workshop', 'report_date': '2026-08-18',

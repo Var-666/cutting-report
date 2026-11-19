@@ -1,6 +1,7 @@
 from datetime import date, datetime, timedelta
 
 from tests.energy_period_fixtures import DAY, START, samples, service
+from app.services.report_cache_policy import report_ttl
 
 
 def test_saved_partial_day_is_completed_after_snapshot_ttl(tmp_path, state_database):
@@ -11,7 +12,7 @@ def test_saved_partial_day_is_completed_after_snapshot_ttl(tmp_path, state_datab
     partial = energy.get_day(DAY)
     assert partial["summary"]["gas"]["status"] == "partial"
     client.rows = samples()
-    now[0] += timedelta(seconds=energy.settings.energy_report_snapshot_ttl_seconds + 1)
+    now[0] += timedelta(seconds=report_ttl(energy.settings, DAY, today=now[0].date()) + 1)
     assert energy.sync_month(DAY) == 1
     completed = energy.repository.get_day(energy.day_source_key(DAY), DAY.isoformat())
     assert completed["summary"]["gas"]["value"] == 96

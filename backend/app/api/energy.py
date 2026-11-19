@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.api.workloads import query_requests
 from app.api.devices import device_state
+from app.api.report_reads import statistics_page
 from app.api.auth import require_admin
 from app.database.sqlserver import SqlServerConfigurationError
 from app.models.domain import ReportFilter, to_primitive
@@ -39,6 +40,9 @@ def get_energy_day(request: Request, report_date: date | None = None, refresh: b
     selected = report_date or service.now().date()
     if not 1900 <= selected.year <= 2100:
         raise HTTPException(status_code=422, detail="日期需在 1900—2100 年之间")
+    data = statistics_page(request, 'energy:day', {'report_date': selected}, refresh=refresh)
+    if data is not None:
+        return {'success': True, 'data': data, 'request_id': request.state.request_id}
     data = service.get_day(selected, force=refresh)
     return {"success": True, "data": data, "request_id": request.state.request_id}
 
@@ -49,6 +53,9 @@ def get_task_energy_day(request: Request, report_date: date | None = None, refre
     selected = report_date or service.now().date()
     if not 1900 <= selected.year <= 2100:
         raise HTTPException(status_code=422, detail="日期需在 1900—2100 年之间")
+    data = statistics_page(request, 'energy:tasks', {'report_date': selected}, refresh=refresh)
+    if data is not None:
+        return {'success': True, 'data': _add_analysis_source_version(data), 'request_id': request.state.request_id}
     try:
         equipment = device_state(request).query_service.fetch_equipment_data(
             ReportFilter(report_date=selected), force=refresh
@@ -67,19 +74,29 @@ def get_task_energy_day(request: Request, report_date: date | None = None, refre
 
 
 @query_requests.route(router.get("/month", response_model=None, responses={200: {"model": ApiEnvelope[EnergyMonthReport]}}))
-def get_energy_month(request: Request, report_month: str = Query(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")):
+def get_energy_month(request: Request, report_month: str = Query(pattern=r"^\d{4}-(0[1-9]|1[0-2])$"), refresh: bool = False):
     try:
         selected = date.fromisoformat(report_month + "-01")
         if not 1900 <= selected.year <= 2100:
             raise ValueError()
     except ValueError:
         raise HTTPException(status_code=422, detail="月份无效") from None
-    data = device_state(request).energy_period_service.get_month(report_month)
+    data = statistics_page(request, 'energy:month', {'report_month': report_month}, refresh=refresh)
+    if data is None:
+        data = device_state(request).energy_period_service.get_month(report_month)
     return {"success": True, "data": data, "request_id": request.state.request_id}
 
 
 @query_requests.route(router.get("/monthly-range", response_model=None, responses={200: {"model": ApiEnvelope[EnergyPeriodReport]}}))
-def get_energy_monthly_range(request: Request, start_date: date, end_date: date):
+def get_energy_monthly_range(request: Request, start_date: date, end_date: date, refresh: bool = False):
+    data = statistics_page(request, 'energy:monthly-range', {'start': start_date, 'end': end_date}, refresh=refresh)
+    if data is not None:
+        worker = device_state(request).energy_history_worker
+        if data.get('missing_day_count', 0):
+            worker.schedule_range(start_date, end_date)
+            data['syncing'] = worker.is_syncing_range(start_date, end_date)
+        data['analysis_source_version'] = analysis_table_source_version(data.get('rows') or [])
+        return {'success': True, 'data': data, 'request_id': request.state.request_id}
     try:
         data = device_state(request).energy_period_service.get_monthly_range(
             start_date, end_date
@@ -112,6 +129,12 @@ def get_energy_range(
     end_date: date,
     refresh: bool = False,
 ):
+    data = statistics_page(request, 'energy:range', {'start': start_date, 'end': end_date}, refresh=refresh)
+    if data is not None:
+        data['task_report']['meta'] = data['meta']
+        data['period_report']['meta'] = data['meta']
+        _add_analysis_source_version(data['task_report'])
+        return {'success': True, 'data': data, 'request_id': request.state.request_id}
     try:
         data = device_state(request).range_report_service.equipment(
             start_date, end_date, force=refresh

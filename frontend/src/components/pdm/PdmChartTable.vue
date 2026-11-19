@@ -3,13 +3,19 @@ import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vu
 import ReportTrendPanel from '../ReportTrendPanel.vue'
 import PdmCompletionChart from './PdmCompletionChart.vue'
 import PdmSummaryTable from './PdmSummaryTable.vue'
-import { pdmDetailCharts } from '../../utils/pdmReport'
+import { pdmDetailCharts, pdmVisibleProjects } from '../../utils/pdmReport'
 import type { PdmPanelData } from '../../utils/pdmReport'
 
 const props = defineProps<{ panel: PdmPanelData; loading: boolean }>()
 const tableElement = ref<HTMLElement | null>(null)
 const layout = shallowRef<{ height: number; groups: { category: string; top: number; height: number }[] }>({ height: 0, groups: [] })
-const charts = computed(() => pdmDetailCharts(props.panel.table))
+const expandedCategories = ref<string[]>([])
+const visibleTable = computed(() => pdmVisibleProjects(props.panel.table, expandedCategories.value))
+const charts = computed(() => pdmDetailCharts(visibleTable.value))
+function toggleCategory(category: string) {
+  expandedCategories.value = expandedCategories.value.includes(category)
+    ? expandedCategories.value.filter(value => value !== category) : [...expandedCategories.value, category]
+}
 let observer: ResizeObserver | undefined
 
 function measure() {
@@ -22,7 +28,7 @@ function measure() {
     const cell = row.cells[0]
     if (cell?.scope !== 'rowgroup') return []
     const first = row.getBoundingClientRect(), last = rows[index + cell.rowSpan - 1].getBoundingClientRect()
-    return [{ category: cell.textContent?.trim() || '', top: first.top - bounds.top, height: last.bottom - first.top }]
+    return [{ category: cell.dataset.category || '', top: first.top - bounds.top, height: last.bottom - first.top }]
   })
   layout.value = { height: bounds.height, groups }
 }
@@ -33,6 +39,7 @@ function chartStyle(category: string) {
 }
 onMounted(() => { observer = new ResizeObserver(measure); observer.observe(tableElement.value!); measure() })
 watch(() => props.panel.table, measure, { flush: 'post' })
+watch(() => props.panel.table, () => { expandedCategories.value = [] })
 onBeforeUnmount(() => observer?.disconnect())
 </script>
 
@@ -48,7 +55,7 @@ onBeforeUnmount(() => observer?.disconnect())
       </div>
       <PdmCompletionChart v-else :table="panel.table" />
     </template>
-    <template #table><div ref="tableElement"><PdmSummaryTable :table="panel.table" :start-date="panel.filters.startDate" :end-date="panel.filters.endDate" :queried="true" /></div></template>
+    <template #table><div ref="tableElement"><PdmSummaryTable :table="panel.table" :start-date="panel.filters.startDate" :end-date="panel.filters.endDate" :queried="true" :expanded-categories="expandedCategories" @toggle-category="toggleCategory" /></div></template>
   </ReportTrendPanel>
 </template>
 

@@ -53,7 +53,7 @@ defineEmits<{ enter: []; retry: [] }>()
         </div>
         <span class="overview-timestamp">
           <AppIcon name="clock" :size="14" tone="current" />
-          更新于 <time v-if="row.data.dataAsOf" :datetime="row.data.dataAsOf">{{ formatChineseDateTime(row.data.dataAsOf) }}</time><span v-else>未提供</span>
+          更新于 <time v-if="row.data.dataAsOf" :datetime="row.data.dataAsOf">{{ formatChineseDateTime(row.data.dataAsOf, '--', 'Asia/Shanghai') }}</time><span v-else>未提供</span>
         </span>
         <span>{{ row.data.timezone ? `统计时区：${row.data.timezone}` : '按切割报表生产日期统计' }}</span>
       </div>

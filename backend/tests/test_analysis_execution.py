@@ -89,8 +89,8 @@ def test_timing_log_accounts_for_waits_on_success_and_failure(tmp_path, clock, c
                 raise ValueError("sensitive model content must not be logged")
     except ValueError:
         pass
-    assert len(caplog.records) == 1
-    message = caplog.records[0].getMessage()
+    timing, = [record for record in caplog.records if record.msg.startswith('report analysis timing:')]
+    message = timing.getMessage()
     for field in ("request_id=timing-request", "device=Cutter01", "total_ms=15000", "prepare_ms=2000",
                   "cache_ms=1000", "same_version_wait_ms=3000", "capacity_wait_ms=4000", "model_ms=5000",
                   "finalize_ms=0", "promoted=True", "input_chars=123"):

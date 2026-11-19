@@ -72,6 +72,8 @@ class AutomationSchedule(BaseModel):
     run_count: int | None = None
     sent_count: int | None = None
     failed_count: int | None = None
+    active_manual_run_id: str | None = None
+    active_manual_run_status: str | None = None
 
 
 class ScheduledRun(BaseModel):

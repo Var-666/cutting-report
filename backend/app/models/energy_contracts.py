@@ -1,5 +1,6 @@
 """Equipment and metering JSON, including unavailable channels and optional range data."""
 from pydantic import BaseModel, ConfigDict, JsonValue
+from app.models.report_data import ReportMeta
 
 
 class EnergyUnits(BaseModel):
@@ -59,6 +60,7 @@ class EquipmentSummary(BaseModel):
 
 
 class TaskEnergyReport(BaseModel):
+    meta: ReportMeta | None = None
     report_date: str
     records: list[EquipmentRecord]
     summary: EquipmentSummary
@@ -77,6 +79,7 @@ class TaskEnergyReport(BaseModel):
 
 
 class EnergyMetadata(BaseModel):
+    meta: ReportMeta | None = None
     units: EnergyUnits
     notice: str
     source_name: str
@@ -140,6 +143,7 @@ class EnergyPeriodRow(EnergySummary):
 
 
 class TaskEnergyPeriodReport(BaseModel):
+    meta: ReportMeta | None = None
     period_start: str
     period_end: str
     rows: list[EnergyPeriodRow]
@@ -160,11 +164,13 @@ class EnergyPeriodReport(TaskEnergyPeriodReport, EnergyMetadata):
 
 
 class EnergyRangeReport(BaseModel):
+    meta: ReportMeta | None = None
     task_report: TaskEnergyReport
     period_report: TaskEnergyPeriodReport
 
 
 class EquipmentReport(BaseModel):
+    meta: ReportMeta | None = None
     report_date: str | None
     records: list[EquipmentRecord]
     summary: EquipmentSummary

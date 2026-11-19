@@ -2,6 +2,7 @@
 from datetime import date
 from pydantic import BaseModel
 from app.models.contracts import Page
+from app.models.report_data import ReportMeta
 
 
 class WorkshopTask(BaseModel):
@@ -84,6 +85,7 @@ class WorkshopUser(BaseModel):
 
 
 class WorkshopResult(Page[WorkshopTask]):
+    meta: ReportMeta | None = None
     report: WorkshopReportInfo | None
     project_names: list[str]
     confirmed_count: int

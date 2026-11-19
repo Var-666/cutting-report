@@ -6,8 +6,13 @@ def model_analysis(_report_type: str, context: dict) -> AnalysisResult:
     period = context.get("report_month") or context.get("report_date") or "当前周期"
     if 'scope' in context:
         from app.services.report_analysis.brief_validation import validate_brief
+        findings = [
+            dict(candidate_id=candidate['id'], title=candidate['title'],
+                 detail='{{F020}}。请核对原始任务记录。')
+            for candidate in context['candidates'] if candidate.get('required')
+        ]
         brief = validate_brief(dict(headline='本期生产记录已整理', summary=f'{period}：请结合实际周期和数据覆盖理解生产情况。',
-            key_metric_ids=[], findings=[], actions=[]), context)
+            key_metric_ids=[], findings=findings, actions=[]), context)
         return AnalysisResult(status='success', mode='model', overview=brief['summary'], features='', alerts='', suggestions='', brief=brief)
     return AnalysisResult(
         status="success",

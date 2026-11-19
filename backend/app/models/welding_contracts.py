@@ -4,21 +4,7 @@ from typing import Generic, Literal, TypeVar
 from pydantic import BaseModel
 
 from app.models.welding import WeldingQuery
-
-
-class ReportDataMeta(BaseModel):
-    line_id: str
-    report_type: str
-    data_version: str
-    data_as_of: str
-    refreshed_at: str
-    expires_at: str
-    source: Literal['snapshot', 'cache', 'database']
-    stale: bool
-    refreshing: bool
-    refresh_failed: bool
-    details_source: Literal['snapshot', 'cache', 'database'] | None = None
-    today_data_as_of: str | None = None
+from app.models.report_data import ReportDataMeta
 
 
 class WeldingMetrics(BaseModel):

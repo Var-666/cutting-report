@@ -119,7 +119,7 @@ def test_successful_partial_fetch_remains_scheduled_without_spinning(tmp_path, s
     worker._process(worker._claim())
     assert worker._claim() is None
     assert not worker.is_syncing_range(date(2026, 8, 1), date(2026, 8, 31))
-    now[0] += timedelta(seconds=worker.settings.energy_report_snapshot_ttl_seconds)
+    now[0] += timedelta(seconds=worker.settings.leadership_report_history_cache_seconds)
     assert worker._claim()["report_month"] == "2026-08-01"
 
 

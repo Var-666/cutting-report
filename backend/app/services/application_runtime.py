@@ -142,7 +142,10 @@ def _build_runtime(settings: Settings, database: PostgresDatabase, *, role: Lite
         cfg = replace(cfg, alarm_source_name=f'{line.id}:{sources.connection_identity(line.source_key)}')
         client = sources.client(line.source_key) if cfg.effective_data_source_mode == "sqlserver" else None
         service = build_device_runtime(cfg, database, definitions, leadership_snapshots, pdf_service,
-                                    client=cast(SqlServerClient, client), task_queue=coordination, ship_names=ship_names)
+                                    client=cast(SqlServerClient, client), task_queue=coordination, ship_names=ship_names,
+                                    statistics_snapshots=report_snapshots,
+                                    statistics_source=fingerprint((sources.fingerprint(line.source_key),
+                                        sources.fingerprint('bm') if any(source.id == 'bm' for source in sources.configs()) else None)))
         if previous:
             service.reuse_pending(previous.cutting())
         return ProductionLineRuntime(line, service, background=service, pipeline=service.pipeline)
@@ -155,8 +158,10 @@ def _build_runtime(settings: Settings, database: PostgresDatabase, *, role: Lite
                               snapshots=report_snapshots, coordination=coordination, analyses=analyses)
         return ProductionLineRuntime(line, service)
 
-    builders = {"cutting": (cutting, ("data_source_mode", "report_background_refresh_seconds", "llm_model"), ("bm",)),
-                "welding": (welding, ("report_background_refresh_seconds", "llm_model"), ())}
+    from app.services.report_cache_policy import REPORT_CACHE_FIELDS
+    cache_fields = tuple(REPORT_CACHE_FIELDS.values())
+    builders = {"cutting": (cutting, ("data_source_mode", "llm_model", *cache_fields), ("bm",)),
+                "welding": (welding, ("llm_model", *cache_fields), ())}
 
     def build_lines(configuration: Settings, catalog: ProductionLineCatalog, sources: DatabaseSourceRegistry,
                     previous: DatabaseServices | None = None) -> dict[str, ProductionLineRuntime]:
@@ -180,6 +185,16 @@ def _build_runtime(settings: Settings, database: PostgresDatabase, *, role: Lite
         if not isinstance(client, SqlServerClient):
             raise ValueError("HR、文件及魔盒配置必须绑定 SQL Server 数据源")
         return client
+
+    def shared_reports(configuration: Settings, sources: DatabaseSourceRegistry):
+        from app.database.pdm_statistics import PdmStatisticsRepository
+        from app.services.pdm_statistics import PdmStatisticsService, PDM_STATISTICS_SCOPE
+        if not configuration.file_database_enabled:
+            return {}
+        service = PdmStatisticsService(PdmStatisticsRepository(sql_client(sources, configuration.file_source_key, True)),
+            settings=configuration, snapshots=report_snapshots, coordination=coordination,
+            source_identity=sources.fingerprint(configuration.file_source_key))
+        return {PDM_STATISTICS_SCOPE: service}
 
     automation_runtime = AutomationRuntime(settings)
     email_service = EmailService(settings, runtime=automation_runtime, pdf_service=pdf_service)
@@ -236,11 +251,13 @@ def _build_runtime(settings: Settings, database: PostgresDatabase, *, role: Lite
             updated_dispatch = CuttingDispatchService(configuration, updated_pdm, dispatches, file_source, updated_downloads, updated_magic)
         return DatabaseServices(settings=configuration, catalog=updated_catalog, lines=updated_lines,
             worker_auth=previous.worker_auth if auth_unchanged else WorkerAuthService(configuration, repository=HrRepository(sql_client(sources, configuration.worker_source_key, configuration.worker_database_auth_enabled))),
-            file_downloads=updated_downloads, database_sources=sources, cutting_dispatch=updated_dispatch)
+            file_downloads=updated_downloads, database_sources=sources, cutting_dispatch=updated_dispatch,
+            shared_reports=shared_reports(configuration, sources))
 
     context = DatabaseServices(
         settings=settings, catalog=catalog, lines=lines, worker_auth=worker_auth,
         file_downloads=file_downloads, cutting_dispatch=cutting_dispatch, database_sources=database_sources,
+        shared_reports=shared_reports(settings, database_sources),
     )
     database_runtime = DatabaseRuntime(settings, context, rebuild_database_services, automation_runtime)
     automation_service = AutomationService(

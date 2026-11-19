@@ -309,12 +309,16 @@ class CoordinationRepository(PostgresRepository):
             # An active task cannot be refreshed until it completes, then waits its full interval.
             return row['updated_at'] + interval if row['status'] in ('completed', 'blocked') else time() + interval
 
-    def request_snapshot_refresh(self, line_id: str, payload: dict, *, interval: float | None = None) -> bool:
+    def request_snapshot_refresh(self, line_id: str, payload: dict, *, interval: float | None = None, retry_failed: bool = False) -> bool:
         key = self.snapshot_task_key(line_id, payload)
         now = time()
         with self.connect() as connection:
             lock_key(connection, 'background:admission')
-            existing = connection.execute('SELECT status, updated_at FROM background_tasks WHERE dedup_key=%s', (key,)).fetchone()
+            existing = connection.execute('SELECT status, updated_at, last_error FROM background_tasks WHERE dedup_key=%s', (key,)).fetchone()
+            if retry_failed and existing and existing['last_error'] and existing['status'] in ('pending', 'deferred'):
+                return connection.execute('''UPDATE background_tasks SET attempts=0, next_attempt=%s,
+                    updated_at=%s, last_error=NULL WHERE dedup_key=%s AND status IN ('pending','deferred')
+                    AND last_error IS NOT NULL''', (now, now, key)).rowcount == 1
             if existing and (existing['status'] not in ('completed', 'blocked') or interval is not None and existing['updated_at'] + interval > now):
                 return False
             active = connection.execute("SELECT COUNT(*) AS count FROM background_tasks WHERE kind='report_snapshot_refresh' AND status IN ('pending','running','deferred')").fetchone()['count']

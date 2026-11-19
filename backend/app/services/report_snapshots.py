@@ -2,17 +2,19 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 import logging
 from time import monotonic, sleep, time
 from typing import Callable
+from zoneinfo import ZoneInfo
 
 from app.database.report_snapshots import ReportKey, ReportSnapshot, ReportSnapshotRepository, fingerprint
 from app.services.cache_revision import CacheRevision
 from app.core.process_lock import FileLock
 from app.services.query_cache import QueryCache
+from app.services.report_cache_policy import report_ttl
 from app.core.operations_logging import data_quality
 from app.core.report_deadline import ensure_time_remaining
 from app.core.request_cancellation import SqlRequestCancelled, current_request_id, sql_request_cancellations
@@ -26,6 +28,10 @@ class SnapshotRefreshBusy(RuntimeError):
 
 
 class SnapshotRefreshRejected(RuntimeError):
+    pass
+
+
+class SnapshotRefreshFailed(RuntimeError):
     pass
 
 
@@ -98,16 +104,33 @@ class ReportSnapshotService:
             'refreshing': refreshing, 'refresh_failed': error,
         })
 
-    def read(self, key: ReportKey, load: Callable[[], dict], *, ttl: int, force: bool = False,
-             requested_at: float | None = None, background: bool = False, background_only: bool = False) -> ReportData:
+    def read(self, key: ReportKey, load: Callable[[], dict], *, ttl: int | None = None, force: bool = False,
+             requested_at: float | None = None, background: bool = False, background_only: bool = False,
+             expire_at_midnight: bool = False) -> ReportData:
+        unified_policy = ttl is None
+        ttl = report_ttl(self.settings, key.period_end or None) if unified_policy else ttl
+        def effective(record):
+            if record is not None and unified_policy and record.expires_at >= record.refreshed_at:
+                record = replace(record, expires_at=record.refreshed_at + timedelta(seconds=max(1, ttl)))
+            if record is not None and expire_at_midnight:
+                local = record.refreshed_at.astimezone(ZoneInfo(self.settings.timezone))
+                if key.period_end >= local.date().isoformat():
+                    midnight = (local + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+                    record = replace(record, expires_at=min(record.expires_at, midnight))
+            return record
         requested_at = time() if requested_at is None else requested_at
         record, source = self._get(key)
+        record = effective(record)
         now = datetime.now(timezone.utc)
         payload = self.task_payload(key)
         refreshing, failed = self.coordination.snapshot_refresh_status(key.line_id, payload) if self.coordination else (False, False)
         if background_only and not background and self.coordination:
-            if force or record is None or record.expires_at <= now:
-                self.coordination.request_snapshot_refresh(key.line_id, payload)
+            if failed and not force:
+                if record:
+                    return self._result(record, source, refreshing=refreshing, error=True)
+                raise SnapshotRefreshFailed('统计刷新失败，请手动重试')
+            if (not refreshing or force and failed) and (force or record is None or record.expires_at <= now):
+                self.coordination.request_snapshot_refresh(key.line_id, payload, **({'retry_failed': True} if force else {}))
                 refreshing, failed = self.coordination.snapshot_refresh_status(key.line_id, payload)
             if record:
                 return self._result(record, source, refreshing=refreshing, error=failed or (force or record.expires_at <= now) and not refreshing)
@@ -135,7 +158,7 @@ class ReportSnapshotService:
             sleep(0.05)
         try:
             # Re-read after the OS lock: Web and Worker share the same singleflight.
-            latest = self.repository.get(key)
+            latest = effective(self.repository.get(key))
             now = datetime.now(timezone.utc)
             if latest and latest.expires_at > now and (not force or background and not background_only or latest.refreshed_at.timestamp() >= requested_at):
                 return self._result(latest, 'snapshot')
@@ -149,6 +172,7 @@ class ReportSnapshotService:
             refreshed_at = datetime.now(timezone.utc)
             snapshot = ReportSnapshot(key, result, fingerprint(result), data_as_of, refreshed_at,
                                       refreshed_at + timedelta(seconds=max(1, ttl)))
+            snapshot = effective(snapshot)
             self.repository.save(snapshot)
             self.revision.publish()
             return self._result(snapshot, 'database')

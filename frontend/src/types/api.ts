@@ -20,6 +20,8 @@ export interface ReadOptions {
   signal?: AbortSignal;
   force?: boolean;
   warmup?: boolean;
+  mode?: 'read' | 'reload' | 'refresh' | 'poll';
+  onPreparing?: () => void;
 }
 export interface Page<T> {
   items: T[];

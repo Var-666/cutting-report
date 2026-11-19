@@ -4,6 +4,7 @@ import { RouterLink } from 'vue-router'
 import { NAlert, NButton, NCard, NEmpty, NSpin, NTag } from 'naive-ui'
 import AppReportTable from '../components/AppReportTable.vue'
 import HomeKpiCard from '../components/HomeKpiCard.vue'
+import OperationsPageHeader from '../components/operations/OperationsPageHeader.vue'
 import { health, incidentStatus, links, roles, stamp, tone, workGroup, workStatus } from '../components/operations/presentation'
 import type { OperationsOverview, OperationsStatus } from '../api/generated/types.gen'
 import { operations } from '../api/operations'
@@ -57,6 +58,7 @@ const roleDetails: Record<string, string> = {
   degraded: '就绪检查异常', unavailable: '暂不可用', capacity_shortfall: '正常实例不足',
 }
 const configurationLabels = { healthy: '加载正常', abnormal: '加载失败', unknown: '无有效快照' }
+const shortcuts = [...links, { name: 'operations-incidents', label: '异常事件' }, { name: 'operations-logs', label: '运行日志' }]
 function stateTone(state: string) {
   if (state === 'healthy') return 'success'
   if (['abnormal', 'down'].includes(state)) return 'error'
@@ -96,35 +98,38 @@ onBeforeUnmount(() => { mounted = false; active?.abort(); clearTimeout(timer) })
 
 <template>
   <div class="management-page operations" :aria-busy="loading">
-    <header class="header">
-      <h1>{{ statusOnly ? '运行状态' : '运维概览' }}</h1>
-      <div class="refresh">
-        <span v-if="status">更新于 {{ stamp(status.observed_at) }}</span>
+    <OperationsPageHeader :title="statusOnly ? '运行状态' : '运维概览'" icon="activity">
+      <template #actions>
+        <span v-if="status" class="secondary">更新于 {{ stamp(status.observed_at) }}</span>
         <NButton size="small" :loading="loading" @click="refresh">刷新</NButton>
-      </div>
-    </header>
-    <nav class="links" aria-label="运维管理入口">
-      <RouterLink v-for="link in links" :key="link.name" :to="{ name: link.name }">{{ link.label }}</RouterLink>
-      <RouterLink :to="{ name: 'operations-incidents' }">异常事件</RouterLink>
-      <RouterLink :to="{ name: 'operations-logs' }">运行日志</RouterLink>
-    </nav>
+      </template>
+      <nav class="links" aria-label="运维管理入口">
+        <RouterLink v-for="link in shortcuts" :key="link.name" :to="{ name: link.name }" custom v-slot="{ href, navigate }">
+          <NButton tag="a" :href="href" size="small" @click="navigate">{{ link.label }}</NButton>
+        </RouterLink>
+      </nav>
+    </OperationsPageHeader>
     <NAlert v-if="error" type="error" title="本次刷新失败">{{ error }}</NAlert>
     <NAlert v-else-if="status?.postgres === 'abnormal'" type="error" title="PostgreSQL 状态库不可用">角色和业务状态暂不可确认。</NAlert>
     <NAlert v-else-if="!statusOnly && (overview?.open_incidents ?? 0) > 0" type="warning">
-      当前有 {{ overview?.open_incidents }} 条<RouterLink :to="{ name: 'operations-incidents', query: { status: 'open' } }">待处理异常</RouterLink>。
+      当前有 {{ overview?.open_incidents }} 条<RouterLink class="inline-link" :to="{ name: 'operations-incidents', query: { status: 'open' } }">待处理异常</RouterLink>。
     </NAlert>
     <section v-if="!statusOnly" class="cards" aria-label="运维统计">
-      <RouterLink v-for="card in cards" :key="card.title" :to="card.to">
+      <RouterLink v-for="card in cards" :key="card.title" :to="card.to" class="metric-link">
         <HomeKpiCard :title="card.title" :value="card.value" :icon="card.icon" :color="card.color" :trend-label="card.help"
           :loading="loading && !status" variant="report" class="summary-card" />
       </RouterLink>
     </section>
     <NCard v-if="!statusOnly" size="small" title="最近异常">
-      <template #header-extra><RouterLink :to="{ name: 'operations-incidents' }">查看全部</RouterLink></template>
+      <template #header-extra>
+        <RouterLink :to="{ name: 'operations-incidents' }" custom v-slot="{ href, navigate }">
+          <NButton tag="a" :href="href" size="small" @click="navigate">查看全部</NButton>
+        </RouterLink>
+      </template>
       <AppReportTable :items="overview?.recent ?? []" :columns="incidentColumns" :row-key="row => row.incident_id" :paginate="false" :loading="loading && !overview">
         <template #c0="{ row }">{{ stamp(row.last_seen_at) }}</template>
         <template #c1="{ row }"><NTag size="small" :type="tone(row.level)">{{ row.level }}</NTag></template>
-        <template #c2="{ row }"><RouterLink :to="{ name: 'operations-incidents', query: { incident: row.incident_id } }">{{ row.message }}</RouterLink></template>
+        <template #c2="{ row }"><RouterLink class="inline-link" :to="{ name: 'operations-incidents', query: { incident: row.incident_id } }">{{ row.message }}</RouterLink></template>
         <template #c3="{ row }">{{ row.occurrences }}</template>
         <template #c4="{ row }">{{ incidentStatus[row.status] }}</template>
         <template #empty><NEmpty :description="overview?.recent ? '暂无异常事件' : '事件状态未知'" /></template>
@@ -134,7 +139,7 @@ onBeforeUnmount(() => { mounted = false; active?.abort(); clearTimeout(timer) })
       <ul class="recurring">
         <li v-for="item in overview.recurring" :key="item.incident_id">
           <NTag size="small" :type="tone(item.level)">{{ item.level }}</NTag>
-          <RouterLink :to="{ name: 'operations-incidents', query: { incident: item.incident_id } }">{{ item.message }}</RouterLink>
+          <RouterLink class="inline-link" :to="{ name: 'operations-incidents', query: { incident: item.incident_id } }">{{ item.message }}</RouterLink>
           <span>{{ item.occurrences }} 次 · {{ stamp(item.last_seen_at) }}</span>
         </li>
       </ul>
@@ -185,14 +190,16 @@ onBeforeUnmount(() => { mounted = false; active?.abort(); clearTimeout(timer) })
 </template>
 
 <style scoped>
-.operations, .runtime { display:grid; gap:12px; min-width:0; }
-.header, .refresh, .links { display:flex; align-items:center; flex-wrap:wrap; gap:8px 16px; }
-.header { justify-content:space-between; }
-.header h1 { margin:0; font-size:var(--font-page-title); }
-.refresh, .secondary { color:var(--text-color-3); font-size:var(--font-auxiliary); }
-.cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; }
-.cards a { min-width:0; }
-.summary-card { min-height:114px; }
+.operations, .runtime { display:grid; gap:var(--space-4); min-width:0; }
+.links { display:flex; align-items:center; flex-wrap:wrap; gap:var(--space-2); margin-top:var(--space-3); }
+.secondary { color:var(--text-color-3); font-size:var(--font-auxiliary); }
+.cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%, 176px),1fr)); gap:var(--space-3); }
+.metric-link { display:flex; min-width:0; color:inherit; text-decoration:none; border-radius:var(--report-panel-radius); }
+.summary-card { width:100%; min-height:114px; }
+.inline-link { color:rgb(var(--primary-color)); text-decoration:none; }
+.inline-link:hover { text-decoration:underline; }
+.inline-link:focus-visible, .metric-link:focus-visible { outline:2px solid rgb(var(--primary-color)); outline-offset:2px; }
+.metric-link:hover .summary-card { border-color:var(--kpi-color); }
 .recurring { display:grid; gap:8px; margin:0; padding:0; list-style:none; }
 .recurring li { display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; }
 .recurring span { color:var(--text-color-3); font-size:var(--font-auxiliary); }

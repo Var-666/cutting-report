@@ -2,15 +2,52 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createPinia, defineStore, setActivePinia } from 'pinia'
 import { effectScope, nextTick, ref } from 'vue'
+import * as Vue from 'vue'
+import { parse } from '@vue/compiler-sfc'
+import { readFileSync } from 'node:fs'
+import { scriptFunction } from './typescript-helpers.mjs'
 import { init, use } from 'echarts/core'
 import { BarChart } from 'echarts/charts'
 import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
 import { SVGRenderer } from 'echarts/renderers'
 import { renderComponent } from './vue-component-helpers.mjs'
-import { clonePdmFilters, createPdmFilters, pdmCurrentMonth, pdmPreferences, validatePdmFilters } from '../src/utils/pdmFilters.ts'
+import { clonePdmFilters, createPdmFilters, pdmCurrentMonth, pdmDocumentKinds, pdmPreferences, validatePdmFilters } from '../src/utils/pdmFilters.ts'
 import { getPdmOverview, pdmQuery } from '../src/api/pdmStatistics.ts'
-import { pdmCompletionChartOption, pdmDetailCharts, pdmReportRegion, pdmReportSections, unassignedPdmGroups } from '../src/utils/pdmReport.ts'
+import { pdmCompletionChartOption, pdmDetailCharts, pdmReportRegion, pdmReportSections, pdmVisibleProjects, unassignedPdmGroups } from '../src/utils/pdmReport.ts'
 import { usePdmFilterOptions } from '../src/composables/usePdmFilterOptions.ts'
+import { reportCache } from '../src/api/reportCache.ts'
+import { pollReportUpdates } from '../src/api/reportRequests.ts'
+
+test.afterEach(() => reportCache.clear())
+
+test('default PDM background updates leave independently queried tables intact and stop on leaving', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const report = total => ({ group_by: 'summary', summaries: { equipment: totals, drawing: totals },
+    tables: [{ ...table(), totals: { ...totals, total } }], meta: { report_data: { refreshing: true } } })
+  const cleanup = []
+  let calls = 0
+  const bindings = { ...Vue, onMounted() {}, onBeforeUnmount: fn => cleanup.push(fn),
+    createStorage: () => ({ get() {}, set() {} }), session: { user: null },
+    createPdmFilters, pdmDocumentKinds, pdmPreferences, pdmReportRegion, pdmReportSections, pollReportUpdates,
+    getPdmReport: async () => report(++calls), getPdmOverview: async () => ({}),
+  }
+  const source = parse(readFileSync(new URL('../src/views/PdmStatisticsView.vue', import.meta.url), 'utf8')).descriptor.scriptSetup.content
+    .replace(/^import .*$/gm, '')
+  const page = scriptFunction(...Object.keys(bindings), `${source}; return { regions, loadPanels, updateRegion }`)(...Object.values(bindings))
+  const flush = () => new Promise(setImmediate)
+  await page.loadPanels()
+  const filters = createPdmFilters()
+  filters.equipment.projects = ['custom-project']
+  const custom = pdmReportRegion(pdmReportSections[0], filters, report(99))
+  page.updateRegion(custom)
+  t.mock.timers.tick(5000); await flush()
+  assert.equal(page.regions.value[0], custom)
+  assert.equal(page.regions.value[0].panels[0].table.totals.total, 99)
+  assert.equal(calls, 2)
+  cleanup.forEach(fn => fn())
+  t.mock.timers.tick(5000); await flush()
+  assert.equal(calls, 2, 'leaving cancels the next background read')
+})
 
 const totals = { total: 4, completed: 2, on_time: 1, total_rate: 50, on_time_rate: 25 }
 function table(grouped = false) {
@@ -105,8 +142,7 @@ test('all equipment and drawing templates retain every category and the document
       assert.equal(/<tfoot\b/.test(html), !group)
       assert.equal([...html.matchAll(/>总计</g)].length, group ? labels.length : 1)
       assert.match(html, /colspan="2" scope="colgroup"[^>]*>完成率/)
-      let previous = -1
-      for (const category of labels) { const next = html.indexOf(`>${category}</th>`); assert.ok(next > previous); previous = next }
+      assert.deepEqual([...html.matchAll(/scope="rowgroup"[^>]*data-category="([^"]+)"/g)].map(match => match[1]), labels)
     }
   }
 })
@@ -120,11 +156,50 @@ test('zero denominator stays unavailable and initial empty table explains query 
   assert.ok(empty.includes('选择时间段及筛选条件后查询'))
 })
 
+test('each project category defaults to ten rows, expands independently and retains full totals and missing-data notes', async () => {
+  const value = table(true); value.group_label = '项目'
+  const categories = ['技术协议-按设备计', '技术协议-按协议计', '设备认可图', '设备工作资料', '设备完工资料']
+  value.rows = categories.flatMap(category => [
+    ...Array.from({ length: 12 }, (_, index) => ({ category, group_id: `p${index}`, group_name: `项目${index + 1}`, subtotal: false, ...totals })),
+    { category, group_id: '', group_name: '总计', subtotal: true, total: 48, completed: 24, on_time: 12, total_rate: 50, on_time_rate: 25 },
+  ])
+  value.totals = { total: 240, completed: 120, on_time: 60, total_rate: 50, on_time_rate: 25 }
+  const original = structuredClone(value)
+  for (const expandedCategories of [[], [categories[0]], categories, []]) {
+    const visible = pdmVisibleProjects(value, expandedCategories)
+    const html = await renderComponent('components/pdm/PdmSummaryTable', { table: value, startDate: '2026-11-01', endDate: '2026-11-30', queried: true, expandedCategories })
+    assert.equal((html.match(/aria-expanded=/g) || []).length, 5)
+    assert.equal((html.match(/aria-expanded="true"/g) || []).length, expandedCategories.length)
+    assert.equal((html.match(/>总计</g) || []).length, expandedCategories.length)
+    assert.equal((html.match(/aria-label="还有2个项目未显示"/g) || []).length, 5 - expandedCategories.length)
+    assert.equal((html.match(/colspan="6" class="pdm-summary__ellipsis"/g) || []).length, 5 - expandedCategories.length)
+    assert.doesNotMatch(html, /未分配到项目行/)
+    for (const category of categories) {
+      const count = expandedCategories.includes(category) ? 12 : 10
+      const rows = visible.rows.filter(row => row.category === category)
+      assert.equal(rows.length, count + 1)
+      assert.equal(rows.at(-1).subtotal, true)
+      assert.equal(rows.at(-1).total, 48)
+      const chart = pdmDetailCharts(visible).find(chart => chart.title === category)
+      assert.equal(chart.rows.length, count)
+      assert.equal(chart.totals.total, 48)
+    }
+    assert.deepEqual(value, original)
+  }
+  const small = { ...value, rows: value.rows.filter(row => row.subtotal || row.group_id === 'p0') }
+  const html = await renderComponent('components/pdm/PdmSummaryTable', { table: small, startDate: '', endDate: '', queried: true })
+  assert.doesNotMatch(html, /展开全部/)
+  assert.equal((html.match(/>总计</g) || []).length, 5)
+  const profession = table(true)
+  assert.equal(pdmVisibleProjects(profession, []), profession)
+  assert.equal(pdmVisibleProjects(value, []).rows.length, 55)
+})
+
 test('documents outside the fixed profession rows remain explained outside the template', async () => {
   const value = table(true)
   value.totals = { ...totals, total: 7 }
   const html = await renderComponent('components/pdm/PdmSummaryTable', { table: value, startDate: '2026-11-01', endDate: '2026-11-30', queried: true })
-  assert.match(html, /<\/table>\s*<p[^>]*role="note"[^>]*>有 3 份文档/)
+  assert.match(html.replaceAll('<!---->', ''), /<\/table>\s*<p[^>]*role="note"[^>]*>有 3 份文档/)
   assert.ok(html.includes('已计入总计，未分配到专业行'))
   value.totals = totals
   const assigned = await renderComponent('components/pdm/PdmSummaryTable', { table: value, startDate: '2026-11-01', endDate: '2026-11-30', queried: true })
@@ -136,7 +211,7 @@ test('missing project records are explained without adding rows to the project t
   value.group_label = '项目'; value.rows[0].group_name = '项目一'
   value.totals = { ...totals, total: 6 }
   const html = await renderComponent('components/pdm/PdmSummaryTable', { table: value, startDate: '2026-11-01', endDate: '2026-11-30', queried: true })
-  assert.match(html, /<\/table>\s*<p[^>]*role="note"[^>]*>有 2 份文档的项目信息缺失/)
+  assert.match(html.replaceAll('<!---->', ''), /<\/table>\s*<p[^>]*role="note"[^>]*>有 2 份文档的项目信息缺失/)
   assert.ok(html.includes('未分配到项目行'))
   assert.doesNotMatch(html, /未填写/)
 })
@@ -250,6 +325,8 @@ test('popup option loading stays independent, cancels closed requests and ignore
     assert.equal(second.status.value, 'ready')
     showB.value = false; await flush()
     showB.value = true; await flush()
+    assert.equal(requests.length, 3, 'reopening an unchanged selector reuses its valid cache')
+    second.retry(); await flush()
     requests[3].resolve(new Response(JSON.stringify({ detail: '模拟选项查询失败' }), { status: 502, headers: { 'Content-Type': 'application/json' } }))
     await flush()
     assert.equal(second.status.value, 'error')
@@ -258,8 +335,54 @@ test('popup option loading stays independent, cancels closed requests and ignore
     second.retry(); await flush()
     complete(requests[4], ['丙', '丁']); await flush()
     assert.equal(second.status.value, 'ready')
-    assert.deepEqual(b.value.drawing.responsiblePeople, ['丙', '丁'])
+    assert.deepEqual(b.value.drawing.responsiblePeople, ['丙'], 'retry retains the current selection')
   } finally { scope.stop(); globalThis.fetch = original }
+})
+
+test('stale selector options update in place, preserve owner selections and stop on refresh failure', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const urls = []
+  const replies = [
+    { people: ['甲', '乙'], refreshing: true },
+    { people: ['甲', '乙', '丙'], refreshing: true, refresh_failed: true },
+    { people: ['甲', '乙', '丙'], refreshing: false },
+  ]
+  t.mock.method(globalThis, 'fetch', async url => {
+    urls.push(String(url))
+    const reply = replies.shift()
+    assert.ok(reply)
+    return Response.json({ success: true, data: { projects: [], professions: [],
+      responsible_people: reply.people.map(value => ({ value, label: value })),
+      meta: { report_data: { stale: true, ...reply } } } })
+  })
+  const scope = effectScope(), draft = ref(createPdmFilters()), visible = ref(true)
+  let options
+  scope.run(() => { options = usePdmFilterOptions(draft, visible, 'equipment') })
+  const flush = async () => { await nextTick(); await new Promise(setImmediate) }
+  try {
+    await flush()
+    assert.deepEqual(draft.value.equipment.responsiblePeople, ['甲', '乙'])
+    draft.value.equipment.responsiblePeople = ['乙']
+    t.mock.timers.tick(5000); await flush()
+    assert.deepEqual(draft.value.equipment.responsiblePeople, ['乙'])
+    assert.equal(options.options.value.equipment.responsible_people.length, 3)
+    assert.equal(options.status.value, 'error')
+    assert.match(options.error.value, /刷新失败/)
+    t.mock.timers.tick(10000); await flush()
+    assert.equal(urls.length, 2, 'failed refresh stops automatic polling')
+    options.retry(); await flush()
+    assert.match(urls[2], /refresh=true/)
+    assert.equal(options.status.value, 'ready')
+    visible.value = false; await flush()
+  } finally { scope.stop() }
+})
+
+test('filter popup identifies stale option data and exposes an explicit refresh action', async () => {
+  const html = await renderComponent('components/pdm/PdmFilterBar', { modelValue: createPdmFilters(), kind: 'equipment', status: 'ready',
+    options: { equipment: { meta: { report_data: { data_as_of: '2026-11-19T02:21:57Z', stale: true, refreshing: true } } } } })
+  assert.ok(html.includes('设备资料筛选选项更新时间'))
+  assert.ok(html.includes('2026年11月19日 10:21:57'))
+  assert.ok(html.includes('数据待更新') && html.includes('后台更新中'))
 })
 
 test('popup retains valid selected professions and clears only unavailable ones after project changes', async () => {

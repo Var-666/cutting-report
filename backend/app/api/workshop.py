@@ -22,6 +22,7 @@ from app.models.workshop_requests import (
 )
 from app.services.workshop_service import WorkshopService, WorkshopTaskNotFoundError, _workshop_trend
 from app.services.workshop_sorting import sort_workshop_by_recency
+from app.services.report_snapshots import SnapshotRefreshBusy, SnapshotRefreshRejected, SnapshotRefreshFailed
 
 router = APIRouter(prefix='/api/v1/workshop', tags=['workshop-confirmation'], dependencies=[Depends(require_user), Depends(device_state)])
 
@@ -37,12 +38,19 @@ def _service(request: Request) -> WorkshopService:
     confirmations = runtime.confirmations if hasattr(runtime, 'confirmations') else reports
     return WorkshopService(reports, confirmations, device_settings(request),
                            query_service=getattr(runtime, 'query_service', None),
-                           range_report_service=getattr(runtime, 'range_report_service', None))
+                           range_report_service=getattr(runtime, 'range_report_service', None),
+                           report_provider=getattr(runtime, 'report_provider', None))
 
 
 def _invoke(operation, *, value_error_status=None, **kwargs):
     try:
         return operation(**kwargs)
+    except SnapshotRefreshBusy as exc:
+        raise HTTPException(status_code=503, detail=str(exc), headers={'Retry-After': '5', 'X-Report-Error': 'snapshot_refresh_busy'}) from None
+    except SnapshotRefreshRejected as exc:
+        raise HTTPException(status_code=503, detail=str(exc), headers={'X-Report-Error': 'snapshot_queue_full'}) from None
+    except SnapshotRefreshFailed as exc:
+        raise HTTPException(status_code=503, detail=str(exc), headers={'X-Report-Error': 'source_unavailable'}) from None
     except (WorkshopTaskNotFoundError, ConfirmationNotFoundError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ConfirmationPermissionError as exc:
@@ -82,9 +90,9 @@ def list_tasks(request: Request, report_date: date, project_name: str | None=Que
     return _envelope(request, _invoke(_service(request).list_tasks, report_date=report_date, project_name=project_name, confirmation_status=confirmation_status, sort_mode=sort_mode, page=page, page_size=page_size, warmup=warmup, user=user))
 
 @query_requests.route(router.get('/range', response_model=ApiEnvelope[WorkshopResult], response_model_exclude_unset=True))
-def list_range_tasks(request: Request, start_date: date, end_date: date, project_name: str | None=Query(default=None, max_length=128), task_id: Annotated[str | None, Query(max_length=128)]=None, confirmation_status: Literal['all', 'confirmed', 'unconfirmed']='all', page: int=Query(default=1, ge=1), page_size: int=Query(default=10, ge=10, le=100), _: dict=Depends(require_admin)) -> dict:
+def list_range_tasks(request: Request, start_date: date, end_date: date, project_name: str | None=Query(default=None, max_length=128), task_id: Annotated[str | None, Query(max_length=128)]=None, confirmation_status: Literal['all', 'confirmed', 'unconfirmed']='all', page: int=Query(default=1, ge=1), page_size: int=Query(default=10, ge=10, le=100), refresh: bool=False, _: dict=Depends(require_admin)) -> dict:
     try:
-        return _envelope(request, _invoke(_service(request).list_range_tasks, value_error_status=422, start_date=start_date, end_date=end_date, project_name=project_name, confirmation_status=confirmation_status, page=page, page_size=page_size, task_id=task_id))
+        return _envelope(request, _invoke(_service(request).list_range_tasks, value_error_status=422, start_date=start_date, end_date=end_date, project_name=project_name, confirmation_status=confirmation_status, page=page, page_size=page_size, task_id=task_id, refresh=refresh))
     except SqlServerConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 

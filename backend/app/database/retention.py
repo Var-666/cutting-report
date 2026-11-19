@@ -9,7 +9,7 @@ from app.database.dispatch import UNRESOLVED_DISPATCH_SQL
 
 
 REPORT_TERMINAL_STATUSES = ("completed", "failed")
-AUTOMATION_TERMINAL_STATUSES = ("sent", "failed")
+AUTOMATION_TERMINAL_STATUSES = ("sent", "failed", "cancelled")
 DISPATCH_TERMINAL_STATUSES = (
     "sent",
     "download_failed",

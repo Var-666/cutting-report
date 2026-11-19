@@ -3,7 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
-from app.models.domain import ReportFilter
+from pydantic import TypeAdapter
+from app.models.domain import EquipmentRecord, ReportFilter
 from app.services.leadership_report_service import _previous_month
 from typing import TYPE_CHECKING
 
@@ -129,19 +130,24 @@ class DeviceRuntime:
     def handle_background(self, kind: str, payload: dict) -> None:
         current = self.current_report_refresh_worker
         if kind == "current_refresh":
-            current.run_once(date.fromisoformat(payload["date"]))
+            current.run_once(date.fromisoformat(payload["date"]), requested_at=payload.get('requested_at'))
             self.query_service.cache_revision.publish()
         elif kind == "leadership_refresh":
-            self.leadership_refresh_worker._refresh(date.fromisoformat(payload["date"]), payload["bootstrap"])
+            self.leadership_refresh_worker._refresh(date.fromisoformat(payload["date"]), payload["bootstrap"], requested_at=payload.get('requested_at'))
         elif kind == "analysis_leadership":
             self.leadership_refresh_worker._analyze(date.fromisoformat(payload["date"]))
         elif kind == "analysis_workshop":
             current._analyze_workshop(date.fromisoformat(payload["date"]))
         elif kind == "analysis_equipment":
             selected = date.fromisoformat(payload["date"])
-            equipment = self.query_service.fetch_equipment_data(ReportFilter(report_date=selected))
-            task_report = self.energy_period_service.get_task_day(selected, equipment.records)
-            current._analyze_equipment(selected, equipment.records, task_report)
+            if self.report_provider.snapshot_service is not None:
+                task_report = self.report_provider.fetch_summary('energy:tasks', {'report_date': selected}).payload
+                records = TypeAdapter(list[EquipmentRecord]).validate_python(task_report['records'])
+            else:
+                equipment = self.query_service.fetch_equipment_data(ReportFilter(report_date=selected))
+                task_report = self.energy_period_service.get_task_day(selected, equipment.records)
+                records = equipment.records
+            current._analyze_equipment(selected, records, task_report)
         elif kind == "alarm":
             self.alarm_monitor_service.run_once(datetime.now(ZoneInfo(self.settings.timezone)))
         elif kind == "energy_sync":
@@ -158,6 +164,7 @@ def build_device_runtime(
     settings: Settings, database: PostgresDatabase, definitions: DefinitionRepository,
     snapshots: LeadershipSnapshotRepository, pdf_service: PdfService,
     *, client: SqlServerClient | None = None, task_queue: CoordinationRepository | None = None, ship_names: ShipNameService | None = None,
+    statistics_snapshots=None, statistics_source: str | None = None,
 ) -> DeviceRuntime:
     metadata = MetadataRepository(database, device_id=settings.device_id, analysis_scope=f"{settings.device_id}:{settings.source_fingerprint}:end-time-v1")
     workshop = WorkshopReportRepository(database, scope_machine_no=settings.report_machine_no)
@@ -171,15 +178,17 @@ def build_device_runtime(
     alarms.initialize()
     monitor = AlarmMonitorService(settings, alarms, SqlServerAlarmSource(settings, client=client),
                                   AlarmAnalysisService(settings, database), AlarmReportService(settings, pdf_service))
+    provider = CuttingReportProvider(leadership, pipeline=pipeline, snapshots=statistics_snapshots,
+        coordination=task_queue, source_identity=statistics_source)
     return DeviceRuntime(
         settings=settings, metadata=metadata, workshop=workshop,
         confirmations=ConfirmationRepository(database, scope_machine_no=settings.report_machine_no),
         pipeline=pipeline, leadership_report_service=leadership, report_analysis_service=analysis,
-        leadership_refresh_worker=LeadershipRefreshWorker(settings, leadership, analysis, task_queue=task_queue),
+        leadership_refresh_worker=LeadershipRefreshWorker(settings, leadership, analysis, task_queue=task_queue, report_provider=provider),
         current_report_refresh_worker=CurrentReportRefreshWorker(settings, pipeline.query_service, pipeline.range_service,
-                                   pipeline.energy_period_service, analysis, task_queue=task_queue),
+                                   pipeline.energy_period_service, analysis, task_queue=task_queue, report_provider=provider),
         energy_history_worker=EnergyHistoryWorker(settings, pipeline.energy_period_service, managed=task_queue is not None),
         alarm_repository=alarms, alarm_monitor_service=monitor,
         alarm_worker=AlarmWorker(settings, monitor, managed=task_queue is not None),
-        report_provider=CuttingReportProvider(leadership),
+        report_provider=provider,
     )

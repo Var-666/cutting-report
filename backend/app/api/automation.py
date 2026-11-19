@@ -227,6 +227,17 @@ def get_run(run_id: str, request: Request) -> dict:
     return _envelope(request, run)
 
 
+@router.post('/runs/{run_id}/cancel', response_model=ApiEnvelope[ScheduledRun])
+def cancel_run(run_id: str, request: Request) -> dict:
+    try:
+        run = application_state(request).automation_service.cancel_run(run_id, _now())
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if run is None:
+        raise HTTPException(status_code=404, detail='执行记录不存在')
+    return _envelope(request, run)
+
+
 @router.get("/deliveries", response_model=None, responses={200: {"model": ApiEnvelope[Page[EmailDelivery]]}})
 def list_deliveries(
     request: Request,

@@ -6,4 +6,5 @@ export type AutomationExecution = Pick<ScheduledRun, 'schedule_name' | 'status'>
   & Partial<Pick<ScheduledRun, 'run_id' | 'last_error'>> & {
   schedule_id: string
   monitoring_error?: string
+  cancelling?: boolean
 }

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, shallowRef, useId } from 'vue'
 import { NAlert, NButton, NDatePicker, NFormItem, NRadioButton, NRadioGroup, NSelect } from 'naive-ui'
+import ReportDataStatus from '../ReportDataStatus.vue'
 import type { PdmDocumentKind, PdmFilterField, PdmFilterOptions, PdmFilters, PdmOption } from '../../utils/pdmFilters'
 import { clonePdmFilters, pdmDocumentKinds, pdmFilterFields, pdmTypeOptions, validatePdmFilters } from '../../utils/pdmFilters'
 
@@ -92,6 +93,7 @@ function submit() {
 
     <section v-for="kind in visibleKinds" :key="kind.value" class="pdm-filters__branch" :aria-labelledby="`${id}-${kind.value}`">
       <h2 :id="`${id}-${kind.value}`">{{ kind.label }}</h2>
+      <ReportDataStatus :meta="options[kind.value]?.meta" :busy="status === 'loading'" :aria-label="`${kind.label}筛选选项更新时间`" @refresh="emit('retry')" />
       <div class="pdm-filters__fields">
         <NFormItem v-for="field in fieldsFor(kind.value)" :key="field.key" :label="fieldLabel(field)" :label-for="`${id}-${kind.value}-${field.key}`" :show-feedback="false">
           <NSelect :value="filters[kind.value][field.key]" :options="optionsFor(kind.value, field.key)" multiple filterable clearable size="large" :max-tag-count="1"
@@ -122,6 +124,7 @@ function submit() {
 .pdm-filters__fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--space-4)}
 .pdm-filters__branch{min-width:0;padding-top:var(--space-4);border-top:1px solid var(--theme-divider-color)}
 .pdm-filters__branch h2{margin:0 0 var(--space-3);font-size:var(--font-section-title);color:var(--text-color-1);font-weight:600}
+.pdm-filters__branch > .report-data-status{margin-bottom:var(--space-3)}
 .pdm-filters :deep(.n-form-item),.pdm-filters :deep(.n-form-item-blank){min-width:0}
 .pdm-filters :deep(.n-form-item-label){font-size:var(--font-control);color:var(--text-color-2)}
 .pdm-filters :deep(.n-select),.pdm-filters :deep(.n-date-picker){width:100%;min-width:0}

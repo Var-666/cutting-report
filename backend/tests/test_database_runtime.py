@@ -36,6 +36,72 @@ def payload(cfg):
     return database.DatabaseConfigurationRequest.model_validate(values)
 
 
+def test_report_cache_save_hotloads_all_lines_and_preserves_inflight_snapshot(environment):
+    from app.models.configuration_contracts import ReportCacheConfiguration
+    cfg, runtime = environment
+    original = database_context(runtime)
+    write_runtime_env(cfg.runtime_settings_env_path, {'CUSTOM': 'keep'})
+    result = database.save_report_cache_configuration(ReportCacheConfiguration(
+        current_seconds=73, history_seconds=119, query_seconds=0, refresh_seconds=37), request(runtime))
+    updated = database_context(runtime)
+    assert result['data']['restart_required'] is False
+    assert read_runtime_env(cfg.runtime_settings_env_path)['CUSTOM'] == 'keep'
+    assert original.settings.leadership_report_cache_seconds == 600
+    assert updated.settings.leadership_report_cache_seconds == 73
+    for ident, line in updated.lines.items():
+        assert line is not original.lines[ident]
+        assert line.settings.leadership_report_cache_seconds == 73
+        assert line.settings.leadership_report_history_cache_seconds == 119
+        assert line.settings.report_data_cache_seconds == 0
+        assert line.settings.report_background_refresh_seconds == 37
+    assert database.get_report_cache_configuration(request(runtime))['data'] == {
+        'current_seconds': 73, 'history_seconds': 119, 'query_seconds': 0, 'refresh_seconds': 37}
+
+
+@pytest.mark.parametrize('failed_write, status', [('app.services.database_runtime.write_runtime_env', 500),
+    ('app.services.database_runtime.CacheRevision.publish', 503)])
+def test_report_cache_write_failure_keeps_file_and_published_services(environment, monkeypatch, failed_write, status):
+    from app.models.configuration_contracts import ReportCacheConfiguration
+    cfg, runtime = environment
+    original = database_context(runtime)
+    write_runtime_env(cfg.runtime_settings_env_path, {'CUSTOM': 'keep'})
+    before = cfg.runtime_settings_env_path.read_bytes()
+    def fail(*args):
+        raise OSError('test write failure')
+    monkeypatch.setattr(failed_write, fail)
+    with pytest.raises(HTTPException) as error:
+        database.save_report_cache_configuration(ReportCacheConfiguration(
+            current_seconds=73, history_seconds=119, query_seconds=0, refresh_seconds=37), request(runtime))
+    assert error.value.status_code == status
+    assert runtime.database_runtime.current_context is original
+    assert cfg.runtime_settings_env_path.read_bytes() == before
+
+
+def test_report_cache_policy_reaches_all_background_roles_at_new_operation_boundary(environment, postgres_state):
+    from app.models.configuration_contracts import ReportCacheConfiguration
+    cfg, web = environment
+    roles = [build_runtime(state_settings(cfg, postgres_state), role=role)
+             for role in ('scheduler', 'worker', 'automation')]
+    original = [database_context(runtime) for runtime in roles]
+    try:
+        database.save_report_cache_configuration(ReportCacheConfiguration(
+            current_seconds=97, history_seconds=777, query_seconds=0, refresh_seconds=41), request(web))
+        for runtime, before in zip(roles, original):
+            assert runtime.database_runtime.current_context is before
+            updated = database_context(runtime)
+            assert before.settings.leadership_report_cache_seconds == 600
+            assert updated.settings.leadership_report_cache_seconds == 97
+            assert updated.settings.leadership_report_history_cache_seconds == 777
+            assert updated.settings.report_data_cache_seconds == 0
+            assert updated.settings.report_background_refresh_seconds == 41
+            observed = runtime.configuration_diagnostics.observed('test-owner')
+            assert observed
+    finally:
+        for runtime in roles:
+            runtime.database_runtime.close()
+            runtime.database.close()
+
+
 def test_runtime_graph_uses_fixed_repositories_and_immutable_snapshot(environment):
     _, runtime = environment
     context = database_context(runtime)
@@ -134,7 +200,8 @@ def test_worker_sees_same_published_values_but_diagnostics_does_not_reload(postg
 
 @pytest.mark.parametrize('values', [{'PRODUCTION_LINES_JSON': 'bad'}, {'DATABASE_SOURCES_JSON': 'bad'},
                                   {'WORKER_DATABASE_AUTH_ENABLED': 'bad'}, {'APP_DATA_SOURCE_MODE': 'unknown'},
-                                  {'LLM_MODEL': 'x' * 257}])
+                                  {'LLM_MODEL': 'x' * 257}, {'LEADERSHIP_REPORT_CACHE_SECONDS': '-1'},
+                                  {'LEADERSHIP_REPORT_HISTORY_CACHE_SECONDS': 'bad'}, {'REPORT_DATA_CACHE_SECONDS': '2147483648'}])
 def test_invalid_reload_keeps_last_snapshot_and_recovers(environment, values):
     cfg, state = environment
     old = database_context(state)

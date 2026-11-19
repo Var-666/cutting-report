@@ -198,7 +198,7 @@ class EnergyApiClient:
                     with self._lock:
                         self._failure = None
                         self._cache[key] = (
-                            time.monotonic() + max(0, self.settings.energy_cache_seconds),
+                            time.monotonic() + max(0, self.settings.report_data_cache_seconds),
                             rows,
                         )
                         self._cache.move_to_end(key)

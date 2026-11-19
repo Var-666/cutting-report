@@ -179,7 +179,7 @@ def test_alarm_retention_uses_occurrence_and_preserves_reports_with_unresolved_m
     assert alarms.list_reports() == []
 
 
-@pytest.mark.parametrize("delivery_status", ["pending", "unknown"])
+@pytest.mark.parametrize("delivery_status", ["pending", "unknown", "cancelled"])
 def test_unified_retention_removes_only_expired_terminal_data(state_database, tmp_path, delivery_status) -> None:
     (
         database,
@@ -439,7 +439,11 @@ def test_unified_retention_removes_only_expired_terminal_data(state_database, tm
         now=OLD,
     )
     assert old_run is not None
-    automation.mark_run(old_run["run_id"], "failed", now=OLD, error="old")
+    cancelled = delivery_status == "cancelled"
+    if cancelled:
+        assert automation.cancel_manual_run(old_run["run_id"], now=OLD)["status"] == "cancelled"
+    else:
+        automation.mark_run(old_run["run_id"], "failed", now=OLD, error="old")
 
     metadata.create_job(
         report_id="pending-delivery-report",
@@ -467,6 +471,8 @@ def test_unified_retention_removes_only_expired_terminal_data(state_database, tm
     )
     pending_file = cfg.reports_dir / "2025" / "01" / "pending.html"
     pending_file.write_text("pending", encoding="utf-8")
+    pending_pdf = pending_file.with_suffix(".pdf")
+    pending_pdf.write_bytes(b"pdf")
     pending_run = automation.reserve_run(
         schedule,
         scheduled_for="2025-01-02T08:00:00+08:00",
@@ -488,6 +494,8 @@ def test_unified_retention_removes_only_expired_terminal_data(state_database, tm
     if delivery_status == "unknown":
         delivery = automation.claim_delivery(OLD)
         automation.mark_delivery_unknown(delivery, now=OLD)
+    elif cancelled:
+        assert automation.cancel_manual_run(pending_run["run_id"], now=OLD)["status"] == "cancelled"
 
     with database.connect() as connection:
         connection.execute(
@@ -505,7 +513,7 @@ def test_unified_retention_removes_only_expired_terminal_data(state_database, tm
 
     result = RetentionService(cfg, retention).cleanup_expired(now=NOW)
     assert result["records"] == {
-        "reports": 1,
+        "reports": 2 if cancelled else 1,
         "automation_runs": 1,
         "workshop_reports": 1,
         "workshop_items": 2,
@@ -519,11 +527,12 @@ def test_unified_retention_removes_only_expired_terminal_data(state_database, tm
         "confirmation_audits": 1,
         "admin_audits": 1,
     }
-    assert result["files"] == {"deleted": 4, "missing": 0, "failed": 0}
+    assert result["files"] == {"deleted": 6 if cancelled else 4, "missing": 0, "failed": 0}
     assert metadata.get_job("old-report") is None
     assert metadata.get_job("active-report") is not None
-    assert metadata.get_job("pending-delivery-report") is not None
-    assert pending_file.is_file()
+    assert (metadata.get_job("pending-delivery-report") is None) == cancelled
+    assert pending_file.is_file() != cancelled
+    assert pending_pdf.is_file() != cancelled
     assert not old_html.exists() and not old_pdf.exists()
     assert not alarm_html.exists() and not alarm_pdf.exists()
     assert active_alarm_html.is_file() and active_alarm_pdf.is_file()

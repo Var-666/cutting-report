@@ -2,6 +2,7 @@
 import type { PropType } from 'vue'
 import type { WeldingAnalysis, WeldingPart, WeldingQuery, WeldingReport, WeldingReportKind, WeldingJobRow, WeldingPartRow } from '../types/welding'
 import { toError } from '../utils/errors'
+import { REPORT_POLL_INTERVAL, REPORT_POLL_LIMIT } from '../api/reportRequests'
 import { selectedLineType } from '../utils/productionLines.ts'
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -13,8 +14,11 @@ import WeldingKpiCards from '../components/WeldingKpiCards.vue'
 import ReportAnalysis from '../components/ReportAnalysis.vue'
 import AppSelect from '../components/AppSelect.vue'
 import ReportFeedback from '../components/ReportFeedback.vue'
+import ReportDataStatus from '../components/ReportDataStatus.vue'
+import { formatChineseDateTime } from '../utils/dateDisplay'
 import ReportPanelState from '../components/ReportPanelState.vue'
 import ReportExportMenu from '../components/ReportExportMenu.vue'
+import ReportFilterDialog from '../components/ReportFilterDialog.vue'
 import WeldingCharts from '../components/WeldingCharts.vue'
 import WeldingTable from '../components/WeldingTable.vue'
 import WeldingRecord from '../components/WeldingRecord.vue'
@@ -59,7 +63,9 @@ let pendingRead: { key: string; promise: Promise<void> } | null | undefined
 let refreshTimer: ReturnType<typeof setTimeout> | undefined
 let refreshPollCount = 0
 const reportKind = computed(() => props.kind === 'dashboard' ? 'jobs' : props.kind)
-const showAdvanced = ref(draft.anomalies_only || draft.sort_by !== 'time' || !draft.descending || [draft.robot_no, draft.weld_type, draft.state, draft.part_state, draft.serial_number, draft.project_no, draft.section_no, draft.part_no].some(value => value !== ''))
+const usesFilterDialog = computed(() => ['jobs', 'parts', 'equipment'].includes(props.kind))
+const filtersOpen = ref(false)
+let beforeFilters: WeldingQuery | null = null
 const analysisError = ref('')
 const title = computed(() => weldingTitles[props.kind])
 const sourceLabels: Record<string, string> = { weld_info_table: '作业', weld_part_info_table: '工件', welding_seam_info_table: '焊缝' }
@@ -116,7 +122,7 @@ async function load(values: WeldingQuery, force: boolean, syncRoute: boolean, ba
     return
   }
   try {
-    const value = await getWeldingReport(props.kind, values, controller.signal, force)
+    const value = await getWeldingReport(props.kind, values, controller.signal, force, { mode: background ? 'poll' : force ? 'refresh' : 'read' })
     if (disposed || run !== generation || line !== deviceSelection.id || kind !== props.kind || selectedLineType(deviceSelection.items, deviceSelection.id) !== 'welding') return
     if (background && value.data_version !== report.value?.data_version) {
       analysisController?.abort(); analysisSequence += 1; analyzing.value = false
@@ -136,9 +142,9 @@ async function load(values: WeldingQuery, force: boolean, syncRoute: boolean, ba
       if (syncRoute) await router.push({ query })
       else await router.replace({ query })
     }
-    if (run === generation && value.meta?.report_data?.refreshing && refreshPollCount < 75) {
+    if (run === generation && value.meta?.report_data?.refreshing && !value.meta.report_data.refresh_failed && refreshPollCount < REPORT_POLL_LIMIT) {
       refreshPollCount += 1
-      refreshTimer = setTimeout(() => { if (!disposed && run === generation) void load(values, false, false, true) }, 5000)
+      refreshTimer = setTimeout(() => { if (!disposed && run === generation) void load(values, false, false, true) }, REPORT_POLL_INTERVAL)
     }
   } catch (caught) {
     const exception = toError(caught)
@@ -153,9 +159,28 @@ function submit(force = false) {
   actionError.value = ''
   return read({ ...draft, ...range, page: 1, page_size: 10 }, force)
 }
+function openFilters() {
+  beforeFilters = { ...draft }
+  actionError.value = ''
+  filtersOpen.value = true
+}
+function cancelFilters() {
+  if (beforeFilters) Object.assign(draft, beforeFilters)
+  beforeFilters = null
+  actionError.value = ''
+  filtersOpen.value = false
+}
+function applyFilters() {
+  const pending = submit(true)
+  if (pending && filtersOpen.value) {
+    beforeFilters = null
+    filtersOpen.value = false
+  }
+}
 function resetFilters() {
   Object.assign(draft, parseWeldingRouteQuery({}, props.kind, today))
-  return submit(true)
+  if (filtersOpen.value) actionError.value = ''
+  else return submit(true)
 }
 function changePage(page: number) { if (!activeQuery.value) return; return read({ ...activeQuery.value, page }) }
 function goToPart() {
@@ -269,6 +294,8 @@ watch(detailOpen, open => { if (!open) { detailController?.abort(); detailGenera
 function restoreRouteState() {
   if (disposed) return
   if (!sourceEnabled.value) {
+    beforeFilters = null
+    filtersOpen.value = false
     cancel()
     loading.value = false
     report.value = null
@@ -289,6 +316,8 @@ function restoreRouteState() {
     return
   }
   if (pendingRead?.key === key && !controller?.signal.aborted) return pendingRead.promise
+  beforeFilters = null
+  filtersOpen.value = false
   if (!sameScope) {
     cancel()
     report.value = null
@@ -308,18 +337,20 @@ onBeforeUnmount(() => { disposed = true; cancel() })
     <section class="page-hero report-hero report-hero--query welding-report-header">
       <div class="report-hero-copy"><span class="report-hero-eyebrow">WELDING PRODUCTION</span><h1>{{ title }}</h1></div>
       <section v-if="sourceEnabled" class="report-hero-query welding-filter-panel" aria-label="焊接报表查询条件">
-      <form aria-label="焊接报表查询" :aria-busy="loading" @submit.prevent="submit(true)">
+      <div v-if="usesFilterDialog" class="welding-toolbar">
+        <NButton type="primary" aria-haspopup="dialog" @click="openFilters">
+          <template #icon><AppIcon name="search" :size="16" tone="current" /></template>筛选
+        </NButton>
+        <NButton :disabled="!activeQuery || loading" :loading="loading" @click="activeQuery && read(activeQuery, true)">刷新</NButton>
+        <ReportExportMenu :formats="['csv', 'html', 'pdf']" :disabled="!report || loading" :loading="exporting" @select="exportReport" />
+      </div>
+      <ReportFilterDialog :show="filtersOpen" :inline="!usesFilterDialog" :title="`${title}筛选`" @update:show="visible => { if (!visible) cancelFilters() }">
+      <form class="welding-query-form" aria-label="焊接报表查询" :aria-busy="loading" @submit.prevent="applyFilters">
         <div class="welding-filters">
-          <ReportPeriodPicker v-model:start-date="draft.start" v-model:end-date="draft.end" :anchor-date="today" :disabled="loading" @apply="submit(true)" @validation-error="actionError = $event" />
+          <ReportPeriodPicker v-model:start-date="draft.start" v-model:end-date="draft.end" :anchor-date="today" :disabled="loading" @apply="!usesFilterDialog && submit(true)" @validation-error="actionError = $event" />
           <label><span><AppIcon name="factory" :size="13" tone="current" />设备</span><AppSelect v-model="draft.device_no" aria-label="设备"><option value="">全部设备</option><option v-for="device in report?.meta?.devices || []" :key="device" :value="device">设备 {{ device }}</option></AppSelect></label>
-          <NButton class="welding-query-submit" attr-type="submit" type="primary" :theme-overrides="{ iconSizeMedium: '15px', iconMarginMedium: '0 8px 0 0' }" :loading="loading" :disabled="loading"><template #icon><AppIcon name="search" :size="15" tone="current" /></template>{{ loading ? '查询中' : report ? '更新报表' : '查询报表' }}</NButton>
-          <ReportExportMenu :formats="['csv', 'html', 'pdf']" :disabled="!report || loading" :loading="exporting" @select="exportReport" />
         </div>
-        <div class="welding-filter-actions">
-          <NButton attr-type="button" :aria-expanded="showAdvanced" aria-controls="welding-advanced" @click="showAdvanced = !showAdvanced">{{ showAdvanced ? '收起筛选' : '更多筛选' }}</NButton>
-          <NButton attr-type="button" :disabled="loading" @click="resetFilters">重置</NButton>
-        </div>
-        <div v-show="showAdvanced" id="welding-advanced" class="welding-advanced">
+        <div class="welding-advanced">
           <label v-if="['jobs', 'equipment'].includes(kind)"><span>机器人编号</span><NInputNumber size="large" :value="draft.robot_no === '' ? null : Number(draft.robot_no)" @update:value="draft.robot_no = $event ?? ''" :min="0" :step="1" placeholder="全部" :precision="0" /></label>
           <label v-if="['jobs', 'equipment'].includes(kind)"><span>焊接类型</span><AppSelect v-model="draft.weld_type" aria-label="焊接类型"><option value="">全部工艺</option><option :value="0">平焊包角</option><option :value="1">平焊</option><option :value="2">立焊包角</option><option :value="3">立焊</option></AppSelect></label>
           <template v-if="kind === 'parts'"><label><span>项目编号</span><NInput size="large" v-model:value.trim="draft.project_no" :maxlength="255" placeholder="精确匹配" /></label><label><span>分段号</span><NInput size="large" v-model:value.trim="draft.section_no" :maxlength="255" /></label><label><span>工件编号</span><NInput size="large" v-model:value.trim="draft.part_no" :maxlength="255" /></label></template>
@@ -328,24 +359,28 @@ onBeforeUnmount(() => { disposed = true; cancel() })
           <NCheckbox v-model:checked="draft.descending" class="welding-check">降序</NCheckbox>
           <NCheckbox v-if="kind === 'jobs'" v-model:checked="draft.anomalies_only" class="welding-check">仅异常候选</NCheckbox>
         </div>
+        <ReportFeedback v-if="filtersOpen && actionError" type="error" title="筛选条件无效" :message="actionError" />
+        <div class="welding-filter-actions">
+          <NButton attr-type="button" :disabled="loading" @click="resetFilters">重置</NButton>
+          <NButton v-if="usesFilterDialog" attr-type="button" @click="cancelFilters">取消</NButton>
+          <NButton attr-type="submit" type="primary" :loading="loading" :disabled="loading">{{ usesFilterDialog ? '应用筛选' : report ? '更新报表' : '查询报表' }}</NButton>
+          <ReportExportMenu v-if="!usesFilterDialog" :formats="['csv', 'html', 'pdf']" :disabled="!report || loading" :loading="exporting" @select="exportReport" />
+        </div>
       </form>
-      <p v-if="filtersDirty" class="welding-query-pending" role="status">筛选条件已修改{{ report ? '，当前仍展示上次成功查询结果' : '，请查询报表' }}</p>
+      </ReportFilterDialog>
+      <p v-if="filtersDirty && !filtersOpen" class="welding-query-pending" role="status">筛选条件已修改{{ report ? '，当前仍展示上次成功查询结果' : '，请查询报表' }}</p>
       </section>
     </section>
     <ReportFeedback v-if="!sourceEnabled" title="焊接数据库尚未启用" message="请先保存数据库连接参数并启用小组立焊接线。" action-label="配置数据库" @action="router.push('/admin/settings/database')" />
     <ReportFeedback v-else-if="error" type="error" title="焊接数据读取失败" :message="`${error}${report ? '；当前保留上次成功查询结果。' : ''}`" action-label="重试" @action="submit(true)" />
     <ReportPanelState v-else-if="loading && !report" type="loading" class="card-wrapper" title="正在读取焊接数据" message="首次统计可能需要较长时间，准备完成后会自动显示，请勿重复刷新。" />
-    <ReportFeedback v-if="actionError" type="error" title="操作未完成" :message="actionError" dismissible @dismiss="actionError = ''" />
+    <ReportFeedback v-if="actionError && !filtersOpen" type="error" title="操作未完成" :message="actionError" dismissible @dismiss="actionError = ''" />
     <ReportFeedback v-if="actionNotice" title="操作完成" :message="actionNotice" dismissible @dismiss="actionNotice = ''" />
     <div v-if="report && activeQuery" class="welding-freshness" role="status">
       <span class="welding-applied-query">当前结果：{{ appliedQueryLabel }}</span>
-      <span class="welding-freshness-date"><AppIcon name="clock" :size="14" tone="current" />数据更新：{{ report.meta.report_data?.data_as_of || report.meta.calculated_at }}</span>
+      <ReportDataStatus v-if="report.meta.report_data" :meta="report.meta" :busy="loading" @refresh="load(activeQuery, true, false)" />
+      <span v-else class="welding-freshness-date"><AppIcon name="clock" :size="14" tone="current" />数据更新：{{ formatChineseDateTime(report.meta.calculated_at, '--', 'Asia/Shanghai') }}</span>
       <NTag v-if="loading" size="small" type="info" :bordered="false">正在更新，当前展示上次结果</NTag>
-      <template v-if="report.meta.report_data">
-        <NTag v-if="report.meta.report_data.refreshing" size="small" type="info" :bordered="false">后台刷新排队中</NTag>
-        <NTag v-if="report.meta.report_data.refresh_failed" size="small" type="warning" :bordered="false">刷新失败，保留上次统计</NTag>
-        <NTag v-else-if="report.meta.report_data.stale" size="small" type="warning" :bordered="false">统计已过期，等待更新</NTag>
-      </template>
       <span v-if="report.meta.ambiguous_part_count">工件关联待核实：{{ report.meta.ambiguous_part_count }} 个流水号</span>
     </div>
     <WeldingKpiCards v-if="sourceEnabled && kind === 'daily'" :kind="kind" :report="report" :loading="loading" />
@@ -373,20 +408,19 @@ onBeforeUnmount(() => { disposed = true; cancel() })
 .welding-page>.report-feedback { margin:0; }
 .welding-report-header { border:1px solid var(--theme-border-color); border-radius:14px; background:linear-gradient(90deg,rgb(var(--container-bg-color) / .98),rgb(var(--container-bg-color) / .91) 39%,rgb(var(--container-bg-color) / .04) 72%),url('../assets/home-laser-cutting.webp') center 48%/cover no-repeat; box-shadow:var(--theme-shadow); }
 .welding-filter-panel { container:welding-query / inline-size; }
-.welding-filters { display:grid; grid-template-columns:minmax(220px,1fr) 110px 110px 132px; gap:var(--space-2); align-items:end; }
+.welding-query-form { display:grid; gap:var(--space-3); }
+.welding-filters { display:grid; grid-template-columns:minmax(0,1fr) minmax(118px,1fr); gap:var(--space-3); align-items:end; }
 .welding-filters>* { min-width:0; }
-.welding-filters>.report-period-picker { grid-column:auto; }
-.welding-filters>.n-button { height:var(--control-height); }
-.welding-filters>.welding-query-submit { padding:0 16px; gap:0; justify-content:center; width:100%; min-height:var(--control-height); }
 .welding-filters :deep(.report-period-picker__trigger),.welding-filters :deep(.n-base-selection) { height:var(--control-height); min-height:var(--control-height); border-radius:var(--control-radius); background:rgb(var(--info-color) / .1); }
-.welding-filters :deep(.report-export-menu .n-base-selection) { background:var(--theme-input-color); }
 /* AppSelect sets its Naive height inline; keep this override within the query controls. */
 .welding-filter-panel :deep(.n-base-selection) { --n-height:var(--control-height)!important; }
 .welding-filters label,.welding-advanced label { display:flex; flex-direction:column; gap:var(--space-2); min-width:0; }
 .welding-filters label>span,.welding-advanced label>span { font-size:var(--font-control); color:var(--text-color-2); }
 .welding-filters label>span,.welding-filters :deep(.report-period-picker__label) { display:flex; align-items:center; gap:4px; height:16px; color:rgb(var(--info-color)); font-size:var(--font-control); font-weight:700; line-height:16px; }
-.welding-filter-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:12px; }
-.welding-advanced { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:var(--space-3); align-items:end; margin-top:var(--space-4); padding-top:var(--space-4); border-top:1px solid var(--theme-divider-color); }
+.welding-toolbar, .welding-filter-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; align-items:center; gap:var(--space-2); }
+.welding-toolbar > .report-export-menu, .welding-filter-actions > .report-export-menu { width:132px; }
+.welding-toolbar > .n-button, .welding-filter-actions > .n-button { height:var(--control-height); }
+.welding-advanced { display:grid; grid-template-columns:repeat(auto-fit,minmax(145px,1fr)); gap:var(--space-3); align-items:end; }
 .welding-check { min-height:var(--control-height); display:flex; align-items:center; }
 .welding-freshness { display:flex; align-items:center; gap:var(--space-2) var(--space-4); flex-wrap:wrap; font-size:var(--font-auxiliary); color:var(--text-color-3); }
 .welding-freshness-date { display:inline-flex; align-items:center; gap:var(--space-2); }
@@ -401,8 +435,7 @@ onBeforeUnmount(() => { disposed = true; cancel() })
 .welding-quality dt { color:var(--text-color-2); }
 .welding-quality dd { margin:0; text-align:right; font-variant-numeric:tabular-nums; }
 @container welding-query (max-width:600px) {
-  .welding-filters { grid-template-columns:repeat(2,minmax(0,1fr)); }
-  .welding-filters>.report-period-picker,.welding-filters>label { grid-column:span 2; }
+  .welding-filters { grid-template-columns:minmax(0,1fr); }
   .welding-advanced { grid-template-columns:minmax(0,1fr); }
 }
 @media (max-width:720px) {

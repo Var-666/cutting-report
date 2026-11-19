@@ -13,6 +13,7 @@ import { useRoute, useRouter } from 'vue-router'
 import AnalysisPanel from '../components/AnalysisPanel.vue'
 import MetricSparkline from '../components/MetricSparkline.vue'
 import ReportFeedback from '../components/ReportFeedback.vue'
+import ReportDataStatus from '../components/ReportDataStatus.vue'
 import ReportTrendPanel from '../components/ReportTrendPanel.vue'
 import StandardReportQuery from '../components/StandardReportQuery.vue'
 import AppIcon from '../components/AppIcon.vue'
@@ -162,7 +163,8 @@ const monthlyTableColumns = [
 
   <ReportFeedback v-if="loading && report" type="info" title="领导报表正在后台更新" message="当前显示上次加载的数据，更新完成后自动替换。" />
   <ReportFeedback v-if="error && report" type="error" title="报表更新失败" :message="error" action-label="重新查询" dismissible @action="retryReport" @dismiss="error = ''" />
-  <ReportFeedback v-if="report && (snapshot.stale || snapshot.refreshing)" :type="snapshot.stale ? 'warning' : 'info'" :title="snapshot.stale ? '当前统计已过期' : '后台刷新中'" :message="`统计截止：${snapshot.data_as_of || '未记录'}；${snapshot.refreshing ? '后台更新完成后自动替换。' : '当前保留上次统计，可重新查询。'}`" :action-label="snapshot.refreshing || loading ? '' : '重新查询'" @action="retryReport" />
+  <ReportDataStatus :meta="report?.meta" :busy="loading" @refresh="refreshAnalysisReport" />
+  <ReportFeedback v-if="report && !report.meta?.report_data && (snapshot.stale || snapshot.refreshing)" :type="snapshot.stale ? 'warning' : 'info'" :title="snapshot.stale ? '当前统计已过期' : '后台刷新中'" :message="`统计截止：${snapshot.data_as_of || '未记录'}；${snapshot.refreshing ? '后台更新完成后自动替换。' : '当前保留上次统计，可重新查询。'}`" :action-label="snapshot.refreshing || loading ? '' : '重新查询'" @action="retryReport" />
 
   <section class="leadership-kpis" aria-label="区间汇总" :aria-busy="loading">
     <article class="leadership-kpi kpi-blue">

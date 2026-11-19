@@ -4,6 +4,36 @@ import { createReportCache } from '../src/api/reportCache.ts'
 import { recentTwelveMonthStart, reportToday } from '../src/api/reportDates.ts'
 import { createActivationBinding, createActivationTimer } from '../src/utils/activationTimer.ts'
 
+test('server expiry bounds every statistics browser cache', async () => {
+  let now = Date.parse('2026-11-19T02:00:00Z')
+  let calls = 0
+  const cache = createReportCache({ now: () => now })
+  const load = async () => ({ meta: { report_data: { expires_at: '2026-11-19T02:00:30Z', stale: false } }, count: ++calls })
+  await cache.read('statistics', load, { ttl: 300000 })
+  now += 29999
+  assert.equal((await cache.read('statistics', load, { ttl: 300000 })).count, 1)
+  now += 1
+  assert.equal((await cache.read('statistics', load, { ttl: 300000 })).count, 2)
+})
+
+test('preparing, stale, refreshing and failed statistics cannot become five-minute cache hits', async () => {
+  for (const flag of ['preparing', 'stale', 'refreshing', 'refresh_failed']) {
+    const cache = createReportCache()
+    let calls = 0
+    const load = async () => ({ meta: { report_data: { [flag]: true } }, count: ++calls })
+    await cache.read(flag, load, { ttl: 300000 })
+    assert.equal((await cache.read(flag, load, { ttl: 300000 })).count, 2, flag)
+  }
+})
+
+test('shared business caches do not change with the selected production line', async () => {
+  let selected = 'cutting'
+  const cache = createReportCache({ scope: () => selected })
+  await cache.read('pdm', async () => 1, { cacheScope: '@pdm-statistics' })
+  selected = 'welding'
+  assert.equal(await cache.read('pdm', () => assert.fail('shared scope missed'), { cacheScope: '@pdm-statistics' }), 1)
+})
+
 function deferred() {
   let resolve
   const promise = new Promise((done) => { resolve = done })

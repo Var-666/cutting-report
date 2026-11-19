@@ -1,7 +1,22 @@
 import { getDeviceId } from './deviceContext.ts'
+export const REPORT_VIEW_CACHE_TTL = 5 * 60 * 1000
+
 // Session-local read cache. Never persist production data to browser storage.
 interface PendingRead { controller: AbortController; force: boolean; settled: boolean; subscribers: number; promise: Promise<unknown> }
-interface CacheOptions { ttl?: number; force?: boolean; signal?: AbortSignal }
+interface CacheOptions { ttl?: number; force?: boolean; signal?: AbortSignal; cacheScope?: string }
+
+function cacheLifetime(data: unknown, ttl: number, now: number) {
+  if (!data || typeof data !== 'object') return ttl
+  const root = data as Record<string, unknown>
+  if (root.syncing) return 0
+  const meta = root.meta && typeof root.meta === 'object' ? root.meta as Record<string, unknown> : undefined
+  const report = meta?.report_data ?? root.snapshot
+  if (!report || typeof report !== 'object') return ttl
+  const state = report as Record<string, unknown>
+  if (state.stale || state.refreshing || state.refresh_failed || state.preparing) return 0
+  const expires = typeof state.expires_at === 'string' ? Date.parse(state.expires_at) : NaN
+  return Number.isFinite(expires) ? Math.max(0, Math.min(ttl, expires - now)) : ttl
+}
 
 export function createReportCache({ now = Date.now, limit = 128, scope = () => '' }: { now?: () => number; limit?: number; scope?: () => string } = {}) {
   const entries = new Map<string, { data: unknown; expires: number }>()
@@ -44,8 +59,8 @@ export function createReportCache({ now = Date.now, limit = 128, scope = () => '
     }
   }
 
-  function read<T>(key: string, loader: (signal: AbortSignal) => Promise<T>, { ttl = 30000, force = false, signal }: CacheOptions = {}): Promise<T> {
-    key = `${key}|device:${scope()}`
+  function read<T>(key: string, loader: (signal: AbortSignal) => Promise<T>, { ttl = 30000, force = false, signal, cacheScope }: CacheOptions = {}): Promise<T> {
+    key = `${key}|device:${cacheScope ?? scope()}`
     if (signal?.aborted) return Promise.reject(aborted())
     const cached = entries.get(key)
     if (!force && cached && cached.expires > now()) {
@@ -68,7 +83,8 @@ export function createReportCache({ now = Date.now, limit = 128, scope = () => '
         return loader(current.controller.signal)
       }).then((data) => {
         if (current.controller.signal.aborted || pending.get(key) !== current) throw aborted()
-        entries.set(key, { data, expires: now() + ttl })
+        const remaining = cacheLifetime(data, ttl, now())
+        if (remaining > 0) entries.set(key, { data, expires: now() + remaining })
         while (entries.size > limit) entries.delete(entries.keys().next().value as string)
         return data
       }).finally(() => {

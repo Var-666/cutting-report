@@ -5,7 +5,8 @@ import * as Vue from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { getProductionOverview, overviewPeriod } from '../src/api/productionOverview.ts'
 import { getDeviceId, resetDeviceContext, setDeviceCatalog } from '../src/api/deviceContext.ts'
-import { reportCache } from '../src/api/reportCache.ts'
+import { createReportCache, reportCache } from '../src/api/reportCache.ts'
+import { REPORT_POLL_INTERVAL, REPORT_POLL_LIMIT } from '../src/api/reportRequests.ts'
 import { renderComponent } from './vue-component-helpers.mjs'
 import { scriptFunction } from './typescript-helpers.mjs'
 
@@ -27,12 +28,14 @@ test('month bounds cover leap years and year changes', () => {
 
 test('overview reads explicit lines independently of selection and isolates same-source caches', async t => {
   setDeviceCatalog({ default_device_id: 'w1', items: lines })
+  let now = 0
+  t.mock.method(reportCache, 'read', createReportCache({ now: () => now, scope: getDeviceId }).read)
   const calls = []
   t.mock.method(globalThis, 'fetch', async (url, options) => {
     const target = options.headers['X-Production-Line']
     calls.push({ url: new URL(url, 'http://test'), target })
-    if (target.startsWith('c')) return response({ current_month_total: { task_count: target === 'c1' ? 11 : 22, cut_length_m: 12, work_time_seconds: 7200 }, snapshot: { data_as_of: '2026-11-17', stale: true, refreshing: false } })
-    return response({ summary: { job_count: target === 'w1' ? 33 : 44, weld_length_m: 45, working_hours: 6 }, meta: { timezone: 'Asia/Tokyo', calculated_at: '2026-11-17', report_data: { data_as_of: '2026-11-16', stale: true, refreshing: false, refresh_failed: true } } })
+    if (target.startsWith('c')) return response({ current_month_total: { task_count: target === 'c1' ? 11 : 22, cut_length_m: 12, work_time_seconds: 7200 }, snapshot: { data_as_of: '2026-11-17', stale: false, refreshing: false } })
+    return response({ summary: { job_count: target === 'w1' ? 33 : 44, weld_length_m: 45, working_hours: 6 }, meta: { timezone: 'Asia/Tokyo', calculated_at: '2026-11-17', report_data: { data_as_of: '2026-11-16', stale: false, refreshing: false, refresh_failed: false } } })
   })
   const values = await Promise.all(lines.map(line => getProductionOverview(line, '2026-11', new AbortController().signal, true)))
   assert.deepEqual(values.map(value => value.metrics[0].value), [11, 22, 33, 44])
@@ -46,9 +49,26 @@ test('overview reads explicit lines independently of selection and isolates same
   }
   assert.equal(values[2].dataAsOf, '2026-11-16')
   assert.equal(values[2].timezone, 'Asia/Tokyo')
-  assert.equal(values[2].refreshFailed, true)
+  assert.equal(values[2].refreshFailed, false)
   await getProductionOverview(lines[0], '2026-11', new AbortController().signal)
   assert.equal(calls.length, 4)
+  now = 3001
+  await Promise.all(lines.map(line => getProductionOverview(line, '2026-11', new AbortController().signal)))
+  assert.equal(calls.length, 4, 'cutting and welding both retain the five-minute browser cache')
+  now = 300000
+  await Promise.all(lines.map(line => getProductionOverview(line, '2026-11', new AbortController().signal)))
+  assert.equal(calls.length, 8, 'both line types expire at the same five-minute boundary')
+})
+
+test('overview timestamps display the same Beijing time for UTC and offset snapshots', async () => {
+  setActivePinia(createPinia())
+  for (const [line, timestamp] of [[lines[0], '2026-11-19T10:21:57+08:00'], [lines[2], '2026-11-19T02:21:57+00:00']]) {
+    const html = await renderComponent('components/ProductionOverviewCard', {
+      row: { line, loading: false, preparing: false, error: '', data: data({ dataAsOf: timestamp }) },
+    })
+    assert.ok(html.includes('2026年11月19日 10:21:57'))
+    assert.ok(html.includes(`datetime="${timestamp}"`))
+  }
 })
 
 test('a missing cutting snapshot is preparing rather than a month with zero production', async t => {
@@ -65,7 +85,7 @@ function controller(read) {
   let timerId = 0, mounted, dispose
   const items = Vue.ref(lines)
   const script = readFileSync(new URL('../src/composables/useProductionOverview.ts', import.meta.url), 'utf8').replace(/^import .*$/gm, '').replace(/^export /gm, '')
-  const bindings = { ref: Vue.ref, watch: Vue.watch, onMounted: callback => { mounted = callback }, onBeforeUnmount: callback => { dispose = callback }, getProductionOverview: read,
+  const bindings = { REPORT_POLL_INTERVAL, REPORT_POLL_LIMIT, ref: Vue.ref, watch: Vue.watch, onMounted: callback => { mounted = callback }, onBeforeUnmount: callback => { dispose = callback }, getProductionOverview: read,
     reportToday: () => today, toError: value => value, setTimeout: callback => { timers.set(++timerId, callback); return timerId }, clearTimeout: id => timers.delete(id),
     setInterval: callback => { intervals.set(++timerId, callback); return timerId }, clearInterval: id => intervals.delete(id) }
   const scope = Vue.effectScope()

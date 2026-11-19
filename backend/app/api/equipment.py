@@ -10,6 +10,7 @@ from app.core.report_deadline import ReportOperationTimeout
 from app.core.sql_capacity import SqlCapacityError
 from app.api.workloads import query_requests
 from app.api.devices import device_state, device_settings
+from app.api.report_reads import statistics_page
 from app.api.auth import require_admin
 from app.config import settings
 from app.database.sqlserver import SqlServerConfigurationError
@@ -39,6 +40,10 @@ def get_equipment_report(
     report_date: date | None = Query(default=None),
     refresh: bool = Query(default=False, description="忽略缓存并重新查询"),
 ) -> dict:
+    selected = report_date or datetime.now(ZoneInfo(device_settings(request).timezone)).date()
+    data = statistics_page(request, 'equipment', {'report_date': selected}, refresh=refresh)
+    if data is not None:
+        return {'success': True, 'data': data, 'request_id': request.state.request_id}
     try:
         selected_date = report_date
         if selected_date is None:

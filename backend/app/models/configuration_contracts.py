@@ -101,6 +101,13 @@ class ConfigurationSaved(BaseModel):
     message: str
 
 
+class ReportCacheConfiguration(BaseModel):
+    current_seconds: int = Field(ge=0, le=2147483647)
+    history_seconds: int = Field(ge=0, le=2147483647)
+    query_seconds: int = Field(ge=0, le=2147483647)
+    refresh_seconds: int = Field(ge=30, le=2147483647)
+
+
 class ConnectionTestResult(BaseModel):
     connected: bool
     elapsed_ms: float

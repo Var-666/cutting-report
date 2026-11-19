@@ -1,5 +1,7 @@
 html, body, #app, .n-config-provider { height:100%; }
 html, body { color:rgb(var(--base-text-color)); background:rgb(var(--layout-bg-color)); }
+html, #admin-main, #worker-main { scrollbar-width:none; scrollbar-gutter:auto; }
+html::-webkit-scrollbar, #admin-main::-webkit-scrollbar, #worker-main::-webkit-scrollbar { display:none; }
 .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; border:0; }
 .soybean-shell { height:100dvh; min-height:0; display:block; background:rgb(var(--layout-bg-color)); }
 .soybean-layout { height:100%; }
@@ -18,6 +20,8 @@ html, body { color:rgb(var(--base-text-color)); background:rgb(var(--layout-bg-c
 .soybean-brand .brand-logo { width:32px; height:32px; filter:none; }
 .soybean-brand strong { font-size:16px; white-space:nowrap; }
 .soybean-menu-scroll { flex:1; min-height:0; }
+#admin-navigation .n-menu .menu-scope-divider { margin-top:calc(var(--space-3) + var(--space-3) + 1px); }
+#admin-navigation .n-menu .menu-scope-divider::before { content:''; position:absolute; inset-inline:0; top:calc(0px - var(--space-3) - 1px); border-top:1px solid var(--theme-border-color); pointer-events:none; }
 .soybean-page { min-width:0; padding:16px; }
 .app-shell .admin-main { width:100%; max-width:none; margin:0; }
 .soybean-page > * { min-width:0; }

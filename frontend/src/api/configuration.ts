@@ -4,6 +4,16 @@ import type { ReadOptions } from '../types/api'
 import { reportCache } from './reportCache.ts'
 import { request } from './client.ts'
 
+export function getReportCacheConfiguration(signal?: AbortSignal) {
+  return request<import('./generated/types.gen').ReportCacheConfiguration>('/api/v1/database/report-cache', { signal })
+}
+
+export function saveReportCacheConfiguration(payload: import('./generated/types.gen').ReportCacheConfiguration, signal?: AbortSignal) {
+  return request<SaveResult>('/api/v1/database/report-cache', {
+    method: 'PUT', body: JSON.stringify(payload), signal,
+  }).then(result => { reportCache.clear(); return result })
+}
+
 export function getDatabaseStatus() {
   return request<DatabaseStatus>('/api/v1/database/status')
 }

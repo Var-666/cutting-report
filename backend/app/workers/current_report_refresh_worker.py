@@ -5,11 +5,12 @@ import threading
 from collections import deque
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from time import monotonic
+from time import monotonic, time
 from zoneinfo import ZoneInfo
+from pydantic import TypeAdapter
 
 from app.config import Settings
-from app.models.domain import ReportFilter
+from app.models.domain import EquipmentRecord, ReportFilter
 from app.services.energy_period_service import EnergyPeriodService, restore_task_energy_records
 from app.services.query_service import QueryService
 from app.services.llm_service import background_llm_work
@@ -45,6 +46,7 @@ class CurrentReportRefreshWorker:
     energy_service: EnergyPeriodService
     analysis_service: ReportAnalysisService
     task_queue: object | None = None
+    report_provider: object | None = None
 
     def __post_init__(self) -> None:
         self.stop_event = threading.Event()
@@ -92,7 +94,7 @@ class CurrentReportRefreshWorker:
             self.stop_event.wait(max(1, interval - (monotonic() - started)))
 
     @background_llm_work()
-    def run_once(self, today: date) -> None:
+    def run_once(self, today: date, *, requested_at: float | None = None) -> None:
         latest = self.query_service.latest_production_date(today, force=True) or today
         for name, refresh in (
             ("workshop", self._refresh_workshop),
@@ -101,20 +103,28 @@ class CurrentReportRefreshWorker:
             if self.stop_event.is_set():
                 break
             try:
-                refresh(latest)
+                refresh(latest, requested_at=requested_at)
             except Exception:
                 logger.exception("%s background refresh failed", name)
 
-    def _refresh_workshop(self, selected: date) -> None:
-        self.query_service.fetch_workshop_data(ReportFilter(report_date=selected), force=True)
+    def _refresh_workshop(self, selected: date, *, requested_at: float | None = None) -> None:
+        if self.report_provider is not None and self.report_provider.snapshot_service is not None:
+            self.report_provider.refresh_summary('workshop:source', {'report_date': selected}, requested_at=requested_at)
+        else:
+            self.query_service.fetch_workshop_data(ReportFilter(report_date=selected), force=True)
         self._schedule_analysis("workshop", (selected,))
 
     def _analyze_workshop(self, selected: date) -> None:
-        _, records = self.range_service.workshop_records(selected, selected)
+        def records_for(day):
+            if self.report_provider is not None and self.report_provider.snapshot_service is not None:
+                bundle, _ = self.report_provider.workshop_source(day, day, requested_at=time())
+                return self.range_service.with_workshop_confirmations(bundle.workshop_records)
+            return self.range_service.workshop_records(day, day)[1]
+        records = records_for(selected)
         previous = selected - timedelta(days=1)
         year_ago = _year_ago(selected)
-        _, previous_records = self.range_service.workshop_records(previous, previous)
-        _, year_ago_records = self.range_service.workshop_records(year_ago, year_ago)
+        previous_records = records_for(previous)
+        year_ago_records = records_for(year_ago)
         self.analysis_service.analyze_workshop(
             selected.isoformat(),
             records,
@@ -126,7 +136,14 @@ class CurrentReportRefreshWorker:
             publish_latest=True,
         )
 
-    def _refresh_equipment(self, selected: date) -> None:
+    def _refresh_equipment(self, selected: date, *, requested_at: float | None = None) -> None:
+        if self.report_provider is not None and self.report_provider.snapshot_service is not None:
+            query = {'report_date': selected}
+            self.report_provider.refresh_summary('energy:tasks', query, requested_at=requested_at)
+            task_report = self.report_provider.fetch_summary('energy:tasks', query).payload
+            records = TypeAdapter(list[EquipmentRecord]).validate_python(task_report['records'])
+            self._schedule_analysis('equipment', (selected, records, task_report))
+            return
         equipment = self.query_service.fetch_equipment_data(
             ReportFilter(report_date=selected), force=True
         )

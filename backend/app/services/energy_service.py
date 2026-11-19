@@ -202,6 +202,7 @@ class EnergyResult:
     mode: str
     notice: str
     units: dict[str, str]
+    source_failed: bool = False
 
 
 class EquipmentEnergyService:
@@ -221,10 +222,10 @@ class EquipmentEnergyService:
                          gas_data_status="missing", electricity_data_status="missing",
                          energy_note=None, energy_details={}) for row in records]
 
-        def unavailable(message):
+        def unavailable(message, *, source_failed=False):
             return EnergyResult(sort_equipment_records([
                 replace(row, gas_data_status="unavailable", electricity_data_status="unavailable", energy_note=message)
-                for row in clean]), "unavailable", message + "；缺失值不作为零值或模拟值。", units)
+                for row in clean]), "unavailable", message + "；缺失值不作为零值或模拟值。", units, source_failed)
 
         if not cfg.energy_connected:
             return unavailable("暂未接入")
@@ -293,7 +294,7 @@ class EquipmentEnergyService:
                 series = make_series(readings, ids, cfg.timezone)
             except EnergyApiError as exc:
                 observe_task_energy(cfg, source_key, usable, cutoff, first.date(), last.date())
-                return unavailable(str(exc))
+                return unavailable(str(exc), source_failed=True)
 
         output = []
         for row in clean:

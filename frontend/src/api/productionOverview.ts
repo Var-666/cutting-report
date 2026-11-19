@@ -19,9 +19,10 @@ export function overviewPeriod(month: string) {
   return { start: `${month}-01`, end: new Date(Date.UTC(year, number, 0)).toISOString().slice(0, 10) }
 }
 
-export async function getProductionOverview(line: ProductionLine, month: string, signal: AbortSignal, force = false, onPreparing?: () => void): Promise<ProductionOverview> {
+export async function getProductionOverview(line: ProductionLine, month: string, signal: AbortSignal, force = false, onPreparing?: () => void, mode: 'read' | 'reload' | 'refresh' | 'poll' = force ? 'poll' : 'read'): Promise<ProductionOverview> {
   if (line.type === 'cutting') {
-    const report = await getLeadershipReport(month, { lineId: line.id, signal, force })
+    const report = await getLeadershipReport(month, { lineId: line.id, signal, mode, onPreparing })
+    const meta = report.meta?.report_data
     const total = report.current_month_total
     const preparing = Boolean(report.snapshot.stale && !report.snapshot.data_as_of)
     return {
@@ -30,12 +31,12 @@ export async function getProductionOverview(line: ProductionLine, month: string,
         { title: '切割长度', value: preparing ? null : total.cut_length_m ?? null, unit: '米', precision: 2 },
         { title: '加工工时', value: preparing || total.work_time_seconds == null ? null : total.work_time_seconds / 3600, unit: '小时', precision: 2 },
       ],
-      dataAsOf: report.snapshot.data_as_of ?? null, timezone: null, stale: report.snapshot.stale ?? false,
-      refreshing: report.snapshot.refreshing ?? false, refreshFailed: false, empty: !preparing && total.task_count === 0, preparing,
+      dataAsOf: meta?.data_as_of ?? report.snapshot.data_as_of ?? null, timezone: null, stale: meta?.stale ?? report.snapshot.stale ?? false,
+      refreshing: meta?.refreshing ?? report.snapshot.refreshing ?? false, refreshFailed: meta?.refresh_failed ?? false, empty: !preparing && total.task_count === 0, preparing,
       demo: report.source_mode === 'demo',
     }
   }
-  const report = await getWeldingReport('daily', { ...overviewPeriod(month), page: 1, page_size: 10 }, signal, force, { lineId: line.id, onPreparing, refresh: false })
+  const report = await getWeldingReport('daily', { ...overviewPeriod(month), page: 1, page_size: 10 }, signal, force, { lineId: line.id, onPreparing, mode })
   const meta = report.meta.report_data
   return {
     metrics: [

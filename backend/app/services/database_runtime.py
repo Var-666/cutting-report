@@ -18,6 +18,9 @@ from app.core.process_lock import settings_file_lock
 from app.services.automation_runtime import AutomationRuntime
 from app.models.database_sources import DatabaseSourceConfig, DatabaseSourceRequest
 from app.models.configuration_contracts import LlmConfigurationRequest
+from app.models.configuration_contracts import ReportCacheConfiguration
+from app.services.report_cache_policy import REPORT_CACHE_FIELDS
+from app.services.cache_revision import CacheRevision
 from app.database.source_registry import (
     DatabaseSourceRegistry, SourceConflict, SourceNotFound, source_configs_json,
 )
@@ -27,6 +30,7 @@ if TYPE_CHECKING:
     from app.services.cutting_dispatch_service import CuttingDispatchService
     from app.services.file_download_service import FileDownloadService
     from app.services.worker_auth_service import WorkerAuthService
+    from app.services.production_reports import ProductionReportProvider
 
 
 @dataclass(frozen=True)
@@ -39,11 +43,13 @@ class DatabaseServices:
     file_downloads: FileDownloadService
     cutting_dispatch: CuttingDispatchService
     database_sources: DatabaseSourceRegistry = field(default_factory=DatabaseSourceRegistry)
+    shared_reports: dict[str, ProductionReportProvider] = field(default_factory=dict)
 
 
 DATABASE_FIELDS = {'data_source_mode', 'worker_database_auth_enabled', 'file_database_enabled',
                    'database_sources_json', 'production_lines_json', 'worker_source_key', 'file_source_key', 'dispatch_source_key',
                    'report_background_refresh_seconds', 'llm_model'}
+DATABASE_FIELDS.update(REPORT_CACHE_FIELDS.values())
 DATABASE_SETTINGS = {item.metadata['env']: item.name for item in fields(Settings) if item.name in DATABASE_FIELDS}
 DATABASE_DIAGNOSTIC_KEYS = set(DATABASE_SETTINGS) | {'APP_EFFECTIVE_DATA_SOURCE_MODE'}
 
@@ -58,10 +64,12 @@ def parse_database_settings(base: Settings, values: dict[str, object], *, curren
             if value.lower() not in {'1', 'true', 'yes', 'on', '0', 'false', 'no', 'off'}:
                 raise ValueError('数据库启用状态无效')
             value = value.lower() in {'1', 'true', 'yes', 'on'}
-        elif name == 'report_background_refresh_seconds':
+        elif name in REPORT_CACHE_FIELDS.values():
             value = int(value)
             if value < 0:
-                raise ValueError('后台刷新间隔不能为负数')
+                raise ValueError('统计缓存及刷新参数不能为负数')
+            if value > 2147483647:
+                raise ValueError('统计缓存及刷新参数超出范围')
         if isinstance(value, str) and any(char in value for char in ('\r', '\n', '\x00')):
             raise ValueError('数据库配置不能包含控制字符')
         changes[name] = value
@@ -147,6 +155,15 @@ class DatabaseRuntime:
             previous=previous.database_sources, bindings=source_bindings(updated, load_line_catalog(updated.production_lines_json)))
         validate_sources(updated, load_line_catalog(updated.production_lines_json), registry)
         context = self._build(updated, registry)
+        if any(getattr(context.settings, name) != getattr(previous.settings, name)
+               for name in REPORT_CACHE_FIELDS.values()):
+            # Finish fallible revision writes before a save replaces the settings file.
+            scopes = [context.settings, *(line.settings for line in context.lines.values()),
+                      *(replace(context.settings, device_id=scope) for scope in context.shared_reports)]
+            for cfg in scopes:
+                CacheRevision(cfg, 'report-snapshots').publish()
+                CacheRevision(cfg, 'production').publish()
+                CacheRevision(cfg, 'leadership').publish()
         return replace(context, database_sources=registry)
 
     def _saved_sources(self, saved: dict) -> DatabaseSourceRegistry:
@@ -276,6 +293,19 @@ class DatabaseRuntime:
             except (OSError, ValueError):
                 raise RuntimeSettingsSaveError('运行配置保存失败') from None
             self.publish(prepared, merged)
+
+    def save_report_cache(self, payload: ReportCacheConfiguration) -> None:
+        path = self._base.runtime_settings_env_path
+        keys = {item.name: item.metadata['env'] for item in fields(Settings) if 'env' in item.metadata}
+        values = {keys[name]: getattr(payload, field) for field, name in REPORT_CACHE_FIELDS.items()}
+        with runtime_settings_lock, settings_file_lock(path):
+            saved = read_runtime_env(path)
+            prepared = self.prepare({**saved, **values})
+            try:
+                write_runtime_env(path, values)
+            except (OSError, ValueError):
+                raise RuntimeSettingsSaveError('运行配置保存失败') from None
+            self.publish(prepared, {**saved, **values})
 
     def save_lines(self, catalog: ProductionLineCatalog) -> None:
         path = self._base.runtime_settings_env_path

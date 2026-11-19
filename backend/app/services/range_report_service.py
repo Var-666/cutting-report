@@ -258,11 +258,12 @@ class RangeReportService:
             ship_no=ship_no,
             force=force,
         )
-        confirmations = self.confirmations.get_confirmations(
-            [str(row.task_id) for row in bundle.workshop_records]
-        )
+        return bundle, self.with_workshop_confirmations(bundle.workshop_records)
+
+    def with_workshop_confirmations(self, records: list[WorkshopRecord]) -> list[WorkshopRecord]:
+        confirmations = self.confirmations.get_confirmations([str(row.task_id) for row in records])
         rows = []
-        for row in bundle.workshop_records:
+        for row in records:
             confirmation = confirmations.get(str(row.task_id))
             rows.append(
                 replace(
@@ -283,7 +284,7 @@ class RangeReportService:
                     ),
                 )
             )
-        return bundle, rows
+        return rows
 
     @staticmethod
     def _energy_channel(records: list[EquipmentRecord], field: str) -> dict:

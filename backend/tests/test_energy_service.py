@@ -151,9 +151,11 @@ def test_equipment_energy_reports_failed_fetch_and_verified_recovery(caplog):
     meter = MeterStub(error=EnergyApiError('能管接口暂不可用'))
     service = EquipmentEnergyService(configured(), meter)
     with caplog.at_level('INFO', logger='app.services.energy_service'):
-        assert service.enrich([record()]).mode == 'unavailable'
+        unavailable = service.enrich([record()])
+        assert unavailable.mode == 'unavailable' and unavailable.source_failed
         meter.error = None
-        assert service.enrich([record()], force=True).mode == 'metered'
+        available = service.enrich([record()], force=True)
+        assert available.mode == 'metered' and not available.source_failed
     failed, recovered = [item for item in caplog.records if hasattr(item, 'operations_quality')]
     assert failed.operations_quality['state'] == 'source_failed'
     assert recovered.operations_quality['state'] == 'verified'
@@ -376,6 +378,7 @@ def test_failure_and_disabled_api_never_fall_back_to_mock():
     for cfg, stub in [(configured(), MeterStub(error=EnergyApiError("内网不可达"))), (configured(energy_api_enabled=False), MeterStub())]:
         result = EquipmentEnergyService(cfg, stub).enrich([source])
         assert result.mode == "unavailable"
+        assert result.source_failed is cfg.energy_api_enabled
         assert result.records[0].gas_consumption is None
         assert result.records[0].electricity_consumption is None
         assert summarize_equipment(result.records)["total_gas_consumption"] is None
@@ -601,4 +604,4 @@ def test_analysis_does_not_report_missing_energy_as_zero(state_database, tmp_pat
     assert facts["F003"] == "缺失"
     assert facts["F004"] == "缺失"
     assert facts["F006"] == "1 项"
-    assert len(facts) == 6
+    assert "共 1 项待核查任务" in facts["F020"]

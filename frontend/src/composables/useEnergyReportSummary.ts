@@ -4,6 +4,7 @@ import { nextTick, ref } from 'vue'
 import { getEnergyDay, getEnergyMonthlyRange } from '../api/energy'
 import { recentTwelveMonthStart } from '../api/reportDates'
 import { toError } from '../utils/errors'
+import { REPORT_POLL_INTERVAL, REPORT_POLL_LIMIT } from '../api/reportRequests'
 
 export function useEnergyReportSummary(pageActive: Ref<boolean>, initialDate: string) {
   const monthlyReport = ref<EnergyPeriodReport | null>(null)
@@ -25,16 +26,23 @@ export function useEnergyReportSummary(pageActive: Ref<boolean>, initialDate: st
     refreshController = null
   }
 
-  async function applyMonthlySummary(summaryResult: EnergyPeriodReport) {
+  async function applyMonthlySummary(summaryResult: EnergyPeriodReport, restart = false) {
     if (!pageActive.value) return
+    if (restart) {
+      stopSummaryRefresh()
+      summaryRefreshCount = 0
+      summaryRefreshError.value = ''
+    }
     monthlyReport.value = summaryResult
     await nextTick()
     scheduleSummaryRefresh(summaryResult)
   }
 
   function scheduleSummaryRefresh(summaryResult: EnergyPeriodReport) {
-    if (summaryRefreshTimer || refreshController || !pageActive.value || !summaryResult?.syncing
-        || !summaryResult?.missing_day_count || summaryRefreshCount >= 600) return
+    const state = summaryResult?.meta?.report_data
+    if (summaryRefreshTimer || refreshController || !pageActive.value || state?.refresh_failed || summaryRefreshError.value
+        || !(state?.refreshing || summaryResult?.syncing && summaryResult?.missing_day_count)
+        || summaryRefreshCount >= REPORT_POLL_LIMIT) return
     const requestedStart = summaryPeriodStart.value
     const requestedEnd = summaryPeriodEnd.value
     const sequence = refreshRequestSequence
@@ -46,11 +54,13 @@ export function useEnergyReportSummary(pageActive: Ref<boolean>, initialDate: st
       summaryRefreshCount += 1
       const controller = new AbortController()
       refreshController = controller
+      let succeeded = false
       try {
-        const refreshed = await getEnergyMonthlyRange(requestedStart, requestedEnd, { force: true, signal: controller.signal })
+        const refreshed = await getEnergyMonthlyRange(requestedStart, requestedEnd, { mode: 'poll', signal: controller.signal })
         if (!current() || controller.signal.aborted) return
         summaryRefreshError.value = ''
         await applyMonthlySummary(refreshed)
+        succeeded = true
       } catch (caught) {
         const exception = toError(caught)
         if (exception.name === 'AbortError') return
@@ -58,10 +68,10 @@ export function useEnergyReportSummary(pageActive: Ref<boolean>, initialDate: st
       } finally {
         if (refreshController === controller) {
           refreshController = null
-          if (current() && !controller.signal.aborted) scheduleSummaryRefresh(monthlyReport.value || summaryResult)
+          if (succeeded && current() && !controller.signal.aborted) scheduleSummaryRefresh(monthlyReport.value || summaryResult)
         }
       }
-    }, 1000)
+    }, REPORT_POLL_INTERVAL)
   }
 
   function pauseSummary() {
@@ -91,7 +101,7 @@ export function useEnergyReportSummary(pageActive: Ref<boolean>, initialDate: st
     const request = getEnergyMonthlyRange(requestedStart, requestedEnd, { force, signal })
       .then(async summaryResult => {
         if (!current() || signal.aborted) return
-        await applyMonthlySummary(summaryResult)
+        await applyMonthlySummary(summaryResult, true)
       })
       .finally(() => { if (current() && !signal.aborted) summaryLoading.value = false })
 

@@ -221,9 +221,10 @@ class WorkerProcess:
                 return
             if kind == 'report_snapshot_refresh':
                 context = database_context(self.runtime)
-                if task['device_id'] not in context.lines or not context.lines[task['device_id']].config.enabled:
+                try:
+                    provider = report_provider(context, task['device_id'])
+                except (KeyError, ValueError):
                     return
-                provider = report_provider(context, task['device_id'])
                 # Queued work from an old connection must not populate the new source's snapshots.
                 if not payload.get('source_fingerprint') or payload['source_fingerprint'] != provider.source_identity():
                     raise TaskSourceUnavailable('快照任务来源缺失或已变化，必须重新入队')
@@ -244,7 +245,7 @@ class WorkerProcess:
                 logger.info('expired periodic task skipped: task=%s kind=%s device=%s',
                             task['task_id'], kind, task['device_id'])
                 return
-            line.background.handle_background(kind, payload)
+            line.background.handle_background(kind, {**payload, 'requested_at': task['created_at']})
 
     def run(self) -> None:
         try:

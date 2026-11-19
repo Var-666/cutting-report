@@ -1,4 +1,5 @@
 import { reportModuleBindings } from './report-module-helpers.mjs'
+import { pollReportUpdates } from '../src/api/reportRequests.ts'
 import { useWorkshopConfirmation } from '../src/composables/useWorkshopConfirmation.ts'
 import { useWorkshopCorrection } from '../src/composables/useWorkshopCorrection.ts'
 import { renderComponent } from './vue-component-helpers.mjs'
@@ -131,13 +132,13 @@ async function mountReport(t, kind, { query = {}, refreshing = false, syncing = 
   const previousWindow = globalThis.window
   globalThis.window = { setTimeout: callback => { timers.set(++timerId, callback); return timerId }, clearTimeout: id => timers.delete(id), addEventListener() {}, removeEventListener() {} }
   const read = (type, start, end, options = {}) => {
-    requests.push({ type, start, end, force: options.force })
+    requests.push({ type, start, end, force: options.force, ...(options.mode ? { mode: options.mode } : {}) })
     if (!held[type]) return Promise.resolve(type === 'workshop' ? emptyWorkshop(start, end)
       : { ...reportResult(start, end, 'initial', refreshing), ...(type === 'summary' ? { syncing, missing_day_count: syncing ? 2 : 0 } : {}) })
     return new Promise((resolve, reject) => pending.push({ type, start, end, signal: options.signal, resolve: data => resolve(type === 'range' && kind === 'equipment' ? { task_report: data } : data), reject }))
   }
   const bindings = {
-    ...Vue, useRoute, useRouter, defineProps: () => ({ mode, user: { user_id: 'admin-1', role: 'admin' } }), defineEmits: () => (...args) => exports.push(args),
+    ...Vue, pollReportUpdates, useRoute, useRouter, defineProps: () => ({ mode, user: { user_id: 'admin-1', role: 'admin' } }), defineEmits: () => (...args) => exports.push(args),
     useWorkshopConfirmation, useWorkshopCorrection, getDeviceId: () => 'Cutter01',
     listWorkshopRangeTasks: (query, options) => read('workshop', query.startDate, query.endDate, options),
     listWorkshopTasks: (query, options) => read('workshop', query.reportDate, query.reportDate, options),
@@ -162,7 +163,7 @@ async function mountReport(t, kind, { query = {}, refreshing = false, syncing = 
   const data = kind === 'leadership' ? 'report' : 'taskDay'
   const load = kind === 'leadership' ? 'loadReport' : 'loadRange'
   const exposed = kind === 'workshop' ? 'data: result, filters, appliedRouteState, loading, error, initializeReport, applyTaskFilters, changePage, exportReport, refreshAnalysisReport, analysisReady'
-    : `data: ${data}, load: ${load}, periodStart, periodEnd, appliedPeriodStart, appliedPeriodEnd, chartType, changeChartType, loading, error, pageActive, dateQueryDirty, exportReport${kind === 'leadership' ? ', refreshLoading, monthlyLoading, retryReport, monthlyPeriodStart, monthlyPeriodEnd, refreshAnalysisReport' : ', monthlyReport, summaryPeriodStart, summaryPeriodEnd, summaryRefreshError, loadDefaultRanges, periodPanel, refreshAnalysisReport'}`
+    : `data: ${data}, load: ${load}, periodStart, periodEnd, appliedPeriodStart, appliedPeriodEnd, chartType, changeChartType, loading, error, pageActive, dateQueryDirty, exportReport${kind === 'leadership' ? ', refreshLoading, monthlyLoading, retryReport, monthlyPeriodStart, monthlyPeriodEnd, refreshAnalysisReport' : ', monthlyReport, summaryPeriodStart, summaryPeriodEnd, summaryRefreshError, loadDefaultRanges, periodPanel, refreshAnalysisReport, retryReport'}`
   const setup = scriptFunction(...Object.keys(bindings), `${source}\nreturn { ${exposed} }`)
   const page = { setup() { mounts++; state = setup(...Object.values(bindings)); return () => Vue.h('div') } }
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/report', name, component: page }, { path: '/other', component: { render: () => Vue.h('div') } }] })
@@ -177,6 +178,97 @@ async function mountReport(t, kind, { query = {}, refreshing = false, syncing = 
   await flushReport()
   return { state, router, pending, requests, held, timers, chartUpdates, exports, clock, unmount, mounts: () => mounts, fire() { const [id, callback] = timers.entries().next().value; timers.delete(id); return callback() } }
 }
+
+for (const kind of ['leadership', 'equipment']) test(`${kind}: retrying a cold failure explicitly requests one refresh`, async t => {
+  const type = kind === 'leadership' ? 'monthly' : 'tasks'
+  const page = await mountReport(t, kind, { hold: { [type]: true } })
+  page.pending[0].reject(new Error('cold source failed'))
+  await flushReport()
+  const retry = page.state.retryReport()
+  assert.equal(page.requests.filter(call => call.type === type).at(-1).force, true)
+  page.pending[1].resolve(reportResult())
+  await retry
+  assert.equal(page.state.error.value, '')
+})
+
+test('equipment manual range refresh polls its task result while retaining date drafts', async t => {
+  const page = await mountReport(t, 'equipment', { query: rangeA })
+  const clock = globalThis.window
+  t.mock.method(globalThis, 'setTimeout', clock.setTimeout)
+  t.mock.method(globalThis, 'clearTimeout', clock.clearTimeout)
+  page.held.range = true
+  page.held.summary = true
+  const refresh = page.state.refreshAnalysisReport()
+  page.pending[0].resolve({ ...reportResult(rangeA.start, rangeA.end, 'retained'), meta: { report_data: { refreshing: true } } })
+  page.pending[1].resolve(reportResult())
+  await refresh
+  page.state.periodStart.value = '2026-09-01'
+  page.fire(); await flushReport()
+  const poll = page.pending.at(-1)
+  assert.equal(page.requests.at(-1).mode, 'poll')
+  assert.equal(poll.start, rangeA.start)
+  poll.resolve({ ...reportResult(rangeA.start, rangeA.end, 'updated'), meta: { report_data: { refreshing: false } } })
+  await flushReport()
+  assert.equal(page.state.data.value.id, 'updated')
+  assert.equal(page.state.periodStart.value, '2026-09-01')
+  assert.equal(page.timers.size, 0)
+})
+
+test('equipment primary statistics replace background results without applying edited dates', async t => {
+  const page = await mountReport(t, 'equipment', { hold: { tasks: true } })
+  const clock = globalThis.window
+  t.mock.method(globalThis, 'setTimeout', clock.setTimeout)
+  t.mock.method(globalThis, 'clearTimeout', clock.clearTimeout)
+  page.pending[0].resolve({ ...reportResult(), id: 'old', meta: { report_data: { refreshing: true } } })
+  await flushReport()
+  assert.equal(page.state.data.value.id, 'old')
+  assert.equal(page.timers.size, 1)
+  page.state.periodStart.value = '2026-09-01'
+  page.fire(); await flushReport()
+  const poll = page.pending.at(-1)
+  assert.equal(poll.start, '2026-10-27')
+  assert.equal(page.requests.at(-1).mode, 'poll')
+  poll.resolve({ ...reportResult(), id: 'updated', meta: { report_data: { refreshing: false } } })
+  await flushReport()
+  assert.equal(page.state.data.value.id, 'updated')
+  assert.equal(page.state.periodStart.value, '2026-09-01')
+  assert.equal(page.state.appliedPeriodStart.value, '2026-10-27')
+  assert.equal(page.timers.size, 0)
+})
+
+test('equipment primary statistics abort their background request on leaving and reject its late result', async t => {
+  const page = await mountReport(t, 'equipment', { hold: { tasks: true } })
+  const clock = globalThis.window
+  t.mock.method(globalThis, 'setTimeout', clock.setTimeout)
+  t.mock.method(globalThis, 'clearTimeout', clock.clearTimeout)
+  page.pending[0].resolve({ ...reportResult(), id: 'old', meta: { report_data: { refreshing: true } } })
+  await flushReport()
+  page.fire(); await flushReport()
+  const poll = page.pending.at(-1)
+  page.unmount()
+  assert.equal(poll.signal.aborted, true)
+  poll.resolve({ ...reportResult(), id: 'late', meta: { report_data: { refreshing: false } } })
+  await flushReport()
+  assert.equal(page.state.data.value.id, 'old')
+  assert.equal(page.timers.size, 0)
+})
+
+test('manager workshop statistics stop background reads when the page leaves', async t => {
+  const page = await mountReport(t, 'workshop', { query: rangeA, hold: { workshop: true } })
+  const clock = globalThis.window
+  t.mock.method(globalThis, 'setTimeout', clock.setTimeout)
+  t.mock.method(globalThis, 'clearTimeout', clock.clearTimeout)
+  page.pending[0].resolve({ ...emptyWorkshop(rangeA.start, rangeA.end), meta: { report_data: { refreshing: true } } })
+  await flushReport()
+  assert.equal(page.timers.size, 1)
+  page.fire(); await flushReport()
+  const poll = page.pending.at(-1)
+  page.unmount()
+  assert.equal(poll.signal.aborted, true)
+  poll.resolve({ ...emptyWorkshop(rangeA.start, rangeA.end), items: [{ task_id: 'late' }] })
+  await flushReport()
+  assert.equal(page.state.data.value.items.length, 0)
+})
 
 test('workshop date drafts retain the successful result and do not reach pagination, export or analysis refresh', async t => {
   const page = await mountReport(t, 'workshop', { query: rangeA })
@@ -396,28 +488,42 @@ test('equipment summary: KeepAlive resumes one missing-data poll and completion 
   assert.equal(timers.size, 0, 'completed summaries do not resume polling')
 })
 
-test('equipment summary: failures retain data and the attempt cap survives reactivation', async t => {
+test('equipment summary: source failure retains data and stops checks across reactivation', async t => {
   const page = await mountReport(t, 'equipment', { syncing: true })
   const { state, router, held, pending, timers, requests } = page
   const previous = state.monthlyReport.value
   held.summary = true
-  for (let attempt = 0; attempt < 600; attempt++) {
-    const poll = page.fire()
-    pending.at(-1).reject(new Error('meter unavailable'))
-    await poll
-  }
+  const poll = page.fire()
+  pending.at(-1).reject(new Error('meter unavailable'))
+  await poll
   assert.equal(state.monthlyReport.value, previous)
   assert.equal(state.summaryRefreshError.value, 'meter unavailable')
-  assert.equal(requests.filter(call => call.type === 'summary' && call.force).length, 600)
+  assert.equal(requests.filter(call => call.type === 'summary' && call.mode === 'poll').length, 1)
   assert.equal(timers.size, 0)
   for (let index = 0; index < 2; index++) { await router.push('/other'); await router.push('/report'); await flushReport() }
-  assert.equal(requests.filter(call => call.type === 'summary' && call.force).length, 600)
+  assert.equal(requests.filter(call => call.type === 'summary' && call.mode === 'poll').length, 1)
   assert.equal(timers.size, 0)
   held.summary = false
   state.periodStart.value = '2026-09-15'
   await state.loadDefaultRanges(); await flushReport()
   assert.equal(state.summaryRefreshError.value, '')
   assert.equal(timers.size, 1, 'a new summary scope has its own replenishment budget')
+})
+
+test('equipment summary: the 75-check preparation cap survives reactivation', async t => {
+  const page = await mountReport(t, 'equipment', { syncing: true })
+  const { state, router, held, pending, timers, requests } = page
+  held.summary = true
+  for (let attempt = 0; attempt < 75; attempt++) {
+    assert.equal(timers.size, 1)
+    const poll = page.fire()
+    pending.at(-1).resolve({ ...state.monthlyReport.value, syncing: true, missing_day_count: 1 })
+    await poll
+  }
+  assert.equal(timers.size, 0)
+  assert.equal(requests.filter(call => call.type === 'summary' && call.mode === 'poll').length, 75)
+  await router.push('/other'); await router.push('/report'); await flushReport()
+  assert.equal(timers.size, 0)
 })
 
 test('equipment summary: a new summary interval and unmount invalidate old responses and timers', async t => {
