@@ -128,11 +128,11 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="automation-page management-page">
-    <header class="automation-header">
+    <header class="page-heading automation-header">
       <div class="automation-heading">
         <span class="automation-heading-icon"><AppIcon name="send" :size="24" tone="current" /></span>
         <div>
-          <h1>报表推送</h1>
+          <h1 class="page-heading__title">报表推送</h1>
           <div class="automation-status">
             <NTag size="small" :bordered="false" :type="smtp.type">SMTP {{ smtp.label }}</NTag>
             <span v-if="status?.smtp?.configured" class="smtp-address">{{ status.smtp.host }}:{{ status.smtp.port }}</span>
@@ -140,7 +140,7 @@ onBeforeUnmount(() => {
           </div>
         </div>
       </div>
-      <div class="automation-toolbar">
+      <div class="page-heading__actions automation-toolbar">
         <NButton size="large" aria-haspopup="dialog" @click="activePanel = 'configuration'">
           <template #icon><AppIcon name="settings" tone="current" /></template>运行与邮件参数
         </NButton>
@@ -293,8 +293,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .automation-page.management-page { gap: var(--space-4); }
 .automation-header {
-  display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:var(--space-4);
-  padding:var(--space-6); border:1px solid var(--theme-border-color); border-radius:var(--report-panel-radius);
+  padding:var(--space-4); border:1px solid var(--theme-border-color); border-radius:var(--report-panel-radius);
   background:linear-gradient(100deg, rgb(var(--primary-color) / .07), transparent 45%), rgb(var(--container-bg-color));
   box-shadow:var(--theme-shadow);
 }
@@ -304,15 +303,13 @@ onBeforeUnmount(() => {
   flex:0 0 auto; display:grid; place-items:center; width:44px; height:44px;
   border-radius:var(--card-radius); color:rgb(var(--primary-color)); background:rgb(var(--primary-color) / .12);
 }
-.automation-heading h1 { margin:0 0 var(--space-2); font-size:24px; font-weight:700; line-height:1.3; }
-.automation-toolbar, .automation-status { display:flex; flex-wrap:wrap; align-items:center; gap:var(--space-2); min-width:0; }
+.automation-status { display:flex; flex-wrap:wrap; align-items:center; gap:var(--space-2); margin-top:var(--space-2); }
 .smtp-address { color:var(--text-color-3); font-size:var(--font-auxiliary); overflow-wrap:anywhere; }
 .automation-overview { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:var(--space-3); }
 .automation-overview :deep(.automation-metric) {
   min-height:104px; justify-content:start; gap:var(--space-2); border-radius:var(--card-radius);
   border:1px solid var(--theme-border-color); background:rgb(var(--container-bg-color)); box-shadow:var(--theme-shadow);
 }
-.automation-overview :deep(.home-kpi__trend) { display:none; }
 .automation-page .panel-title { gap:var(--space-3); padding:var(--space-3) var(--space-4); background:transparent; }
 .automation-page .panel-title h2 { font-size:var(--font-section-title); }
 .automation-page .panel-title p { margin:0; font-size:var(--font-auxiliary); line-height:1.5; text-align:right; }

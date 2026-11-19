@@ -11,6 +11,8 @@ import { loadConfigFromFile } from 'vite'
 import { fileURLToPath } from 'node:url'
 import { parse } from '@vue/compiler-sfc'
 import { sparklineGeometry } from '../src/utils/sparkline.ts'
+import { renderComponent } from './vue-component-helpers.mjs'
+import { useAppStore } from '../src/state/app.ts'
 
 const read = (path) => readFileSync(new URL(`../src/${path}`, import.meta.url), 'utf8')
 const { config: unoConfig } = await loadConfigFromFile({ command: 'build', mode: 'test' }, fileURLToPath(new URL('../uno.config.ts', import.meta.url)))
@@ -112,17 +114,14 @@ test('home failure and empty data preserve successful independent modules and fi
   } finally { home.close() }
 })
 
-test('home KPI keeps precision and separators with reduced motion, and missing values stay unknown', () => {
-  const props = Vue.reactive({ value: 9714.2, precision: 1 })
-  const source = parse(read('components/HomeKpiCard.vue')).descriptor.scriptSetup.content.replace(/^import .*$/gm, '')
-  const setup = scriptFunction('computed', 'defineProps', 'useAppStore', `${source}\nreturn { numericValue, formattedValue }`)
-  const state = setup(Vue.computed, () => props, () => ({ reducedMotion: true }))
-  assert.equal(state.formattedValue.value, '9,714.2')
-  props.value = 0
-  assert.equal(state.formattedValue.value, '0.0')
-  props.value = null
-  assert.equal(state.numericValue.value, null)
-  assert.equal(state.formattedValue.value, '--')
+test('home KPI distinguishes measured values, zero, missing and loading states', async () => {
+  setActivePinia(createPinia())
+  useAppStore().reducedMotion = true
+  const render = props => renderComponent('components/HomeKpiCard', { title: '切割长度', unit: '米', precision: 1, ...props })
+  assert.match(await render({ value: 9714.2 }), /aria-label="切割长度：9,714\.2 米"/)
+  assert.match(await render({ value: 0 }), /aria-label="切割长度：0\.0 米"/)
+  assert.match(await render({ value: null }), /aria-label="切割长度：暂无数据"/)
+  assert.match(await render({ value: null, loading: true }), /aria-label="正在获取生产数据"/)
 })
 
 test('home bars and comparisons react independently to returned production data', async () => {

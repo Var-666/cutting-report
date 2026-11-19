@@ -103,7 +103,7 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="pdm-page">
-    <header class="pdm-page__heading"><h1>PDM 资料统计</h1></header>
+    <header class="page-heading"><h1 class="page-heading__title">PDM 资料统计</h1></header>
     <PdmCompletionCards :overview="overview" :loading="overviewLoading" :active-kind="activeKind" @select="activeKind = $event" />
     <ReportDataStatus :meta="overview?.meta" :busy="overviewLoading" @refresh="loadOverview('refresh')" />
     <NAlert v-if="overviewError" type="error" title="全部数据统计加载失败">{{ overviewError }}<NButton size="small" :loading="overviewLoading" @click="loadOverview('refresh')">重试</NButton></NAlert>
@@ -119,7 +119,6 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .pdm-page{display:grid;gap:var(--space-4);min-width:1000px;padding-block:var(--space-4)}
-.pdm-page__heading h1{margin:0;font-size:var(--font-page-title);font-weight:600;color:var(--text-color-1)}
 .pdm-page__tables{display:grid;gap:var(--space-6)}
 .pdm-page__tables h2{margin:0;color:var(--text-color-1);font-size:var(--font-section-title);font-weight:600}
 </style>

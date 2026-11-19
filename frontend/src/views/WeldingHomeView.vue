@@ -103,9 +103,9 @@ onBeforeUnmount(() => { disposed = true; generation += 1; clearTimeout(timer); c
 
 <template>
   <div class="welding-home">
-    <header class="welding-home-heading">
-      <h1>产线概览</h1>
-      <div class="welding-home-actions">
+    <header class="page-heading">
+      <h1 class="page-heading__title">产线概览</h1>
+      <div class="page-heading__actions welding-home-actions">
         <time :datetime="today">{{ displayDate }}</time>
         <NButton size="small" :disabled="loading || !sourceEnabled" :loading="loading" @click="load(true)"><template #icon><AppIcon name="activity" :size="16" tone="current" /></template>刷新概览</NButton>
       </div>
@@ -169,9 +169,6 @@ onBeforeUnmount(() => { disposed = true; generation += 1; clearTimeout(timer); c
 <style scoped>
 .welding-home { display:flex; flex-direction:column; gap:var(--space-4); min-width:0; container:welding-home / inline-size; }
 .welding-home>.report-feedback { margin:0; }
-.welding-home-heading { display:flex; align-items:center; justify-content:space-between; gap:16px; min-height:40px; }
-.welding-home-heading h1 { margin:0; font-size:20px; font-weight:600; }
-.welding-home-actions { display:flex; align-items:center; gap:12px; }
 .welding-home-actions time { color:var(--text-color-3); font-size:var(--font-auxiliary); }
 .welding-home-grid { display:grid; grid-template-columns:minmax(0,2fr) minmax(0,1fr); gap:var(--space-4); }
 .welding-home-grid>* { min-width:0; }
@@ -198,7 +195,6 @@ onBeforeUnmount(() => { disposed = true; generation += 1; clearTimeout(timer); c
 @container welding-home (max-width:1200px) { .welding-home-bottom { grid-template-columns:minmax(0,1fr); } .welding-home-links { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 @container welding-home (max-width:760px) { .welding-home-grid { grid-template-columns:minmax(0,1fr); } }
 @container welding-home (max-width:560px) {
-  .welding-home-heading { align-items:flex-start; flex-direction:column; gap:8px; }
   .welding-home-actions { width:100%; justify-content:space-between; }
   .welding-home-links { grid-template-columns:minmax(0,1fr); }
   .welding-home-meta { align-items:flex-start; }

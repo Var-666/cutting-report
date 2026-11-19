@@ -64,6 +64,11 @@ pnpm run dev
 
 生成 PDF 需要 Playwright Chromium 和中文字体，安装步骤见 [PDF 运行环境](../deployment/配置参考.md#pdf-运行环境)。
 
+## 前端页面布局
+
+- 普通页面复用 `page-heading`、`page-heading__title` 和 `page-heading__actions`：桌面标题 28px、窄屏 22px，标题和辅助操作按可用宽度换行。门户插画及报表头图保留独立构图；继续使用既有主题变量、间距和圆角。
+- `StandardReportQuery` 按查询容器宽度排列 40px 控件；`ReportTrendPanel` 在窄屏保留时间范围和更新提示。`HomeKpiCard` 区分真实零值、加载骨架和无数据，失败和快照状态由页面反馈说明。`AppReportTable` 允许分页换行，表头、数据和汇总仍保持单行。
+
 ## 测试与构建
 
 日常修改按影响范围执行定向测试；下列路径替换为实际受影响的测试文件或用例。

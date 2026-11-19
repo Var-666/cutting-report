@@ -155,7 +155,8 @@ test('refreshing a populated report retains its chart and rows instead of showin
   }, { chart: () => '现有图表', table: () => '现有明细' })
   for (const text of ['正在更新', '现有图表', '现有明细', '每日产量']) assert.ok(html.includes(text))
   assert.ok(!html.includes('正在读取报表数据'))
-  assert.ok(!html.includes('aria-hidden="true"'))
+  assert.doesNotMatch(html, /aria-hidden="true"[^>]*>\s*(?:<[^>]+>\s*)*现有图表/)
+  assert.match(html, /role="status"[^>]*>.*?正在更新/)
 })
 
 test('chart-only report panels omit the duplicate table and preserve the default table slot', async () => {

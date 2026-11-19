@@ -406,7 +406,7 @@ onBeforeUnmount(() => { disposed = true; cancel() })
 .welding-page { display:flex; flex-direction:column; gap:var(--space-4); min-width:0; }
 .welding-page>.panel { margin-bottom:0; }
 .welding-page>.report-feedback { margin:0; }
-.welding-report-header { border:1px solid var(--theme-border-color); border-radius:14px; background:linear-gradient(90deg,rgb(var(--container-bg-color) / .98),rgb(var(--container-bg-color) / .91) 39%,rgb(var(--container-bg-color) / .04) 72%),url('../assets/home-laser-cutting.webp') center 48%/cover no-repeat; box-shadow:var(--theme-shadow); }
+.welding-report-header { border:1px solid var(--theme-border-color); border-radius:var(--report-panel-radius); background:linear-gradient(90deg,rgb(var(--container-bg-color) / .98),rgb(var(--container-bg-color) / .91) 39%,rgb(var(--container-bg-color) / .04) 72%),url('../assets/home-laser-cutting.webp') center 48%/cover no-repeat; box-shadow:var(--theme-shadow); }
 .welding-filter-panel { container:welding-query / inline-size; }
 .welding-query-form { display:grid; gap:var(--space-3); }
 .welding-filters { display:grid; grid-template-columns:minmax(0,1fr) minmax(118px,1fr); gap:var(--space-3); align-items:end; }

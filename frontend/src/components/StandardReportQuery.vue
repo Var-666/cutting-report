@@ -110,17 +110,10 @@ async function applyPeriod() {
 .standard-report-query__submit { grid-area:query; width:100%; height:var(--control-height); min-height:var(--control-height); align-self:start; margin-top:var(--space-6); padding:0 var(--space-3); border-radius:var(--control-radius); font-size:var(--font-control); }
 .standard-report-query__export { grid-area:export; align-self:start; margin-top:var(--space-6); }
 .standard-report-query__export :deep(.n-base-selection) { height:var(--control-height); min-height:var(--control-height); border-radius:var(--control-radius); font-size:var(--font-control); font-weight:700; }
-@media (max-width:900px) {
+@container (max-width:599px) {
   .standard-report-query { grid-template-columns:minmax(0,1fr) 110px 132px; grid-template-areas:"period period period" "chart query export"; }
 }
-@media (max-width:700px) {
-  .standard-report-query { grid-template-columns:minmax(0,1fr) minmax(0,1fr); grid-template-areas:"period period" "chart chart" "query export"; }
-  .standard-report-query__submit,.standard-report-query__export { margin-top:0; }
-}
-@media (max-width:560px) {
-  .standard-report-query { grid-template-columns:1fr; grid-template-areas:"period" "chart" "query" "export"; gap:var(--space-2); }
-}
-@container (max-width:560px) {
+@container (max-width:440px) {
   .standard-report-query { grid-template-columns:minmax(0,1fr) minmax(0,1fr); grid-template-areas:"period period" "chart chart" "query export"; }
   .standard-report-query__submit,.standard-report-query__export { margin-top:0; }
 }

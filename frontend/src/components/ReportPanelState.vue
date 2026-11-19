@@ -25,8 +25,8 @@ defineEmits<{ action: [] }>()
 </template>
 
 <style scoped>
-.report-panel-state{min-width:0;display:flex;align-items:center;justify-content:center;gap:12px;padding:28px;color:var(--text-color-3);text-align:left;background:rgb(var(--container-bg-color))}
-.report-panel-state>div{min-width:0;max-width:430px;overflow-wrap:anywhere}.report-panel-state strong{display:block;color:var(--text-color-1);font-size:13px}.report-panel-state p{margin:4px 0 0;color:var(--muted);font-size:var(--font-auxiliary);line-height:1.6}
+.report-panel-state{min-width:0;display:flex;align-items:center;justify-content:center;gap:var(--space-3);padding:var(--space-6) var(--space-4);color:var(--text-color-3);text-align:left;background:rgb(var(--container-bg-color))}
+.report-panel-state>div{min-width:0;max-width:430px;overflow-wrap:anywhere}.report-panel-state strong{display:block;color:var(--text-color-1);font-size:var(--font-body)}.report-panel-state p{margin:var(--space-1) 0 0;color:var(--muted);font-size:var(--font-auxiliary);line-height:1.6}
 .report-panel-state :deep(.n-alert){flex:1}.report-panel-state>.n-button{flex-shrink:0}
-@media(max-width:560px){.report-panel-state{align-items:flex-start;flex-direction:column;padding:20px}.report-panel-state>.n-button{width:100%;margin:4px 0 0}}
+@media(max-width:560px){.report-panel-state{align-items:flex-start;flex-direction:column;padding:var(--space-4)}.report-panel-state>.n-button{width:100%}}
 </style>

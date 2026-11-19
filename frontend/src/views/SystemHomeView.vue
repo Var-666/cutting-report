@@ -63,7 +63,7 @@ function focusOverview() {
       </nav>
     </div>
     <section class="production-overview" aria-labelledby="production-overview">
-      <header class="overview-heading">
+      <header class="page-heading overview-heading">
         <div class="overview-heading-copy">
           <h2 id="production-overview" ref="overviewHeading" tabindex="-1">生产总览</h2>
           <p class="overview-period">
@@ -72,7 +72,7 @@ function focusOverview() {
             <span class="overview-period-dates">{{ period.start }} 至 {{ period.end }}</span>
           </p>
         </div>
-        <div class="overview-actions">
+        <div class="page-heading__actions overview-actions">
           <div v-if="groups.length > 1" class="overview-filter" role="group" aria-label="按产线类型查看">
             <NButton size="small" :aria-pressed="activeGroup === 'all'" quaternary @click="groupFilter = 'all'">全部</NButton>
             <NButton v-for="group in groups" :key="group.id" size="small" :aria-pressed="activeGroup === group.id"
@@ -102,8 +102,8 @@ function focusOverview() {
 </template>
 
 <style scoped>
-.system-home { display:grid; gap:24px; min-width:0; container-type:inline-size; }
-.portal-top { display:grid; grid-template-columns:minmax(0, 1fr) minmax(240px, 26%); gap:16px; }
+.system-home { display:grid; gap:var(--space-6); min-width:0; container-type:inline-size; }
+.portal-top { display:grid; grid-template-columns:minmax(0, 1fr) minmax(240px, 26%); gap:var(--space-4); }
 .portal-hero {
   display:flex; align-items:center; min-height:248px; min-width:0;
   padding:24px clamp(24px, 3.2cqi, 40px); border-radius:var(--report-panel-radius);
@@ -117,11 +117,11 @@ function focusOverview() {
 .portal-hero h1 { margin:0; font-size:clamp(28px, 4cqi, 44px); font-weight:700; line-height:1.18; }
 .portal-hero p { margin:8px 0 24px; font-size:var(--font-body); line-height:1.65; color:#e0e9f3; }
 .portal-actions { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
-.portal-enter { max-width:100%; min-height:40px; }
+.portal-enter { max-width:100%; min-height:var(--control-height); }
 .portal-enter :deep(.n-button__content) { min-width:0; gap:8px; }
 .portal-enter-label { min-width:0; overflow:hidden; text-overflow:ellipsis; }
 .portal-jump {
-  display:inline-flex; align-items:center; gap:8px; min-height:40px; padding-inline:12px;
+  display:inline-flex; align-items:center; gap:var(--space-2); min-height:var(--control-height); padding-inline:var(--space-3);
   border:1px solid rgb(255 255 255 / .28); border-radius:var(--control-radius);
   background:rgb(17 30 44 / .48); color:inherit; text-decoration:none;
 }
@@ -147,14 +147,12 @@ function focusOverview() {
 .shortcut-copy strong { font-weight:600; }
 .shortcut-copy span,.shortcut-arrow { color:var(--text-color-3); }
 .shortcut-copy span { font-size:var(--font-auxiliary); }
-.production-overview { display:grid; gap:16px; min-width:0; }
-.overview-heading { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; min-width:0; }
+.production-overview { display:grid; gap:var(--space-4); min-width:0; }
 .overview-heading-copy { display:grid; gap:4px; }
 .overview-heading h2 { margin:0; font-size:24px; font-weight:700; scroll-margin-block-start:16px; }
 .overview-heading h2:focus-visible { outline:2px solid rgb(var(--primary-color)); outline-offset:4px; }
 .overview-period { display:flex; align-items:center; flex-wrap:wrap; gap:4px 8px; margin:0; font-size:var(--font-auxiliary); color:var(--text-color-2); }
 .overview-period-dates { color:var(--text-color-3); font-variant-numeric:tabular-nums; }
-.overview-actions { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
 .overview-filter { display:flex; flex-wrap:wrap; align-items:center; gap:4px; padding:4px; border:1px solid var(--theme-border-color); border-radius:var(--card-radius); background:rgb(var(--container-bg-color)); }
 .overview-filter :deep(.n-button) { min-width:48px; }
 .overview-filter :deep(.n-button[aria-pressed="true"]) { color:var(--text-color-1); background:rgb(var(--primary-color) / .14); font-weight:600; }

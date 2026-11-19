@@ -172,6 +172,6 @@ test('overview cards render disabled, loading, preparing, empty and retained fai
     const html = await renderComponent('components/ProductionOverviewCard', { row: { ...row, ...changes } })
     assert.ok(html.includes(expected), expected)
     if (changes.error && !changes.data) assert.ok(!html.includes('任务数：0'))
-    if (changes.data?.stale) assert.ok(html.includes('数据待更新') && html.includes('任务数：--'))
+    if (changes.data?.stale) assert.ok(html.includes('数据待更新') && html.includes('任务数：暂无数据'))
   }
 })

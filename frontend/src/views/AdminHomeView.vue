@@ -184,8 +184,8 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="min-h-500px flex-col-stretch gap-16px overflow-hidden bg-layout lt-sm:overflow-auto">
-    <header class="home-heading">
-      <h1>产线概览</h1>
+    <header class="page-heading">
+      <h1 class="page-heading__title">产线概览</h1>
       <time :datetime="reportDate">{{ formatChineseDate(reportDate) }}</time>
     </header>
 
@@ -291,7 +291,5 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.home-heading { display:flex; align-items:center; justify-content:space-between; gap:16px; min-height:40px; }
-.home-heading h1 { margin:0; font-size:20px; font-weight:600; }
-.home-heading time { color:var(--text-color-3); font-size:var(--font-auxiliary); }
+.page-heading time { color:var(--text-color-3); font-size:var(--font-auxiliary); }
 </style>

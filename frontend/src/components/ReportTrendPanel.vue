@@ -42,7 +42,7 @@ defineExpose({ getChartElement: () => chartElement.value })
   <section class="panel report-trend-panel" :style="{ '--report-trend-height': `${height}px` }" :aria-labelledby="titleId">
     <header class="panel-title report-trend-panel__heading">
       <div><span v-if="number">{{ number }}</span><h2 :id="titleId">{{ title }}</h2><small v-if="subtitle">{{ subtitle }}</small></div>
-      <p v-if="loading && hasData" class="report-trend-panel__activity"><span class="spinner dark"></span>正在更新</p>
+      <p v-if="loading && hasData" class="report-trend-panel__activity" role="status"><span class="spinner dark" aria-hidden="true"></span>正在更新</p>
       <p v-else-if="note">{{ note }}</p>
       <slot name="actions" />
     </header>
@@ -69,11 +69,13 @@ defineExpose({ getChartElement: () => chartElement.value })
 
 <style scoped>
 .report-trend-panel { --report-panel-padding:var(--space-4); border-radius:var(--report-panel-radius); margin-bottom:var(--space-6); overflow:hidden; container:report-panel / inline-size; }
-.report-trend-panel__heading { gap:var(--space-4); flex-wrap:wrap; }
-.report-trend-panel__heading > div { min-width:0; flex-wrap:wrap; row-gap:var(--space-2); padding-block:var(--space-3); }
+.report-trend-panel__heading { min-height:48px; gap:var(--space-2) var(--space-4); padding:var(--space-2) var(--report-panel-padding); flex-wrap:wrap; }
+.report-trend-panel__heading > div { min-width:0; flex-wrap:wrap; gap:var(--space-1) var(--space-2); }
+.report-trend-panel__heading > div > span { width:28px; height:var(--space-6); display:grid; place-items:center; border-radius:7px; background:rgb(var(--info-color) / .1); color:rgb(var(--info-color)); font-size:var(--font-auxiliary); font-weight:700; }
 .report-trend-panel__heading h2 { min-width:0; overflow-wrap:anywhere; line-height:1.4; }
 .report-trend-panel__heading small { color:var(--muted); font-size:var(--font-auxiliary); }
-.report-trend-panel__activity{display:flex;align-items:center;gap:7px;color:rgb(var(--info-color))!important;font-weight:700}.report-trend-panel__activity .spinner{width:13px;height:13px}
+.report-trend-panel__heading > p { display:block; margin:0; }
+.report-trend-panel__heading > .report-trend-panel__activity{display:flex;align-items:center;gap:var(--space-2);color:rgb(var(--info-color))!important;font-weight:700}.report-trend-panel__activity .spinner{width:13px;height:13px}
 .report-trend-panel__body{display:grid;min-height:var(--report-trend-height)}
 .report-trend-panel__content { grid-area:1/1; display:grid; grid-template-columns:minmax(0,2fr) minmax(0,3fr); gap:var(--space-4); align-items:stretch; padding:var(--report-panel-padding); }
 .report-trend-panel__content.is-obscured{visibility:hidden;pointer-events:none}
