@@ -21,7 +21,7 @@ DEPLOYMENT_ENV_FILE = ".env.deploy"
 FILES = (
     "Dockerfile", "compose.yaml", "compose.offline.yaml", ".dockerignore", ".env.example", "README.md",
     "README-DOCKER.md", "AGENTS.md", "docs/README.md",
-    "docs/project/architecture.md", "docs/project/progress.md",
+    "docs/project/architecture.md", "docs/project/progress.md", "docs/project/development.md",
     "docs/project/ui-refactor-verification.md",
     "backend/pyproject.toml", "backend/uv.lock", "backend/.python-version",
     "frontend/package.json", "frontend/pnpm-lock.yaml", "frontend/pnpm-workspace.yaml", "frontend/index.html",

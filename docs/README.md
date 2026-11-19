@@ -6,7 +6,8 @@
 
 | 文档 | 内容 |
 | --- | --- |
-| [项目说明](../README.md) | 项目用途、本地开发、依赖与构建入口 |
+| [项目说明](../README.md) | 项目用途、主要功能、快速启动与文档入口 |
+| [开发指南](project/development.md) | 环境准备、本地启动、定向测试与依赖维护 |
 | [开发规范](../AGENTS.md) | 开发边界、测试策略、表格与主题规范 |
 | [前端验收](project/ui-refactor-verification.md) | 本轮界面、交互、状态和可访问性检查证据及边界 |
 | [系统架构](project/architecture.md) | 当前模块、Runtime、数据源与后台角色职责 |
