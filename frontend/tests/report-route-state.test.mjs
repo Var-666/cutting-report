@@ -1,5 +1,5 @@
 import { reportModuleBindings } from './report-module-helpers.mjs'
-import { pollReportUpdates } from '../src/api/reportRequests.ts'
+import { REPORT_POLL_INTERVAL, pollReportUpdates } from '../src/api/reportRequests.ts'
 import { useWorkshopConfirmation } from '../src/composables/useWorkshopConfirmation.ts'
 import { useWorkshopCorrection } from '../src/composables/useWorkshopCorrection.ts'
 import { renderComponent } from './vue-component-helpers.mjs'
@@ -106,6 +106,16 @@ test('cached report query controls remain busy without showing a loading spinner
 })
 
 const flushReport = async () => { await new Promise(resolve => setImmediate(resolve)); await Vue.nextTick() }
+function mockReportPollTimers(t, page) {
+  const clock = globalThis.window
+  const nativeSetTimeout = globalThis.setTimeout
+  const nativeClearTimeout = globalThis.clearTimeout
+  // Vite and the test runner may schedule their own timers while the page is mounted.
+  t.mock.method(globalThis, 'setTimeout', (callback, delay, ...args) => delay === REPORT_POLL_INTERVAL
+    ? clock.setTimeout(callback, delay, ...args) : nativeSetTimeout(callback, delay, ...args))
+  t.mock.method(globalThis, 'clearTimeout', timer => page.timers.has(timer)
+    ? clock.clearTimeout(timer) : nativeClearTimeout(timer))
+}
 const rangeA = { start: '2026-09-01', end: '2026-09-02' }
 const rangeB = { start: '2026-09-03', end: '2026-09-04' }
 function reportResult(start = '2026-10-01', end = '2026-10-27', id = 'initial', refreshing = false) {
@@ -193,9 +203,7 @@ for (const kind of ['leadership', 'equipment']) test(`${kind}: retrying a cold f
 
 test('equipment manual range refresh polls its task result while retaining date drafts', async t => {
   const page = await mountReport(t, 'equipment', { query: rangeA })
-  const clock = globalThis.window
-  t.mock.method(globalThis, 'setTimeout', clock.setTimeout)
-  t.mock.method(globalThis, 'clearTimeout', clock.clearTimeout)
+  mockReportPollTimers(t, page)
   page.held.range = true
   page.held.summary = true
   const refresh = page.state.refreshAnalysisReport()
@@ -207,6 +215,8 @@ test('equipment manual range refresh polls its task result while retaining date 
   const poll = page.pending.at(-1)
   assert.equal(page.requests.at(-1).mode, 'poll')
   assert.equal(poll.start, rangeA.start)
+  const unrelatedTimer = setTimeout(() => {}, 60_000)
+  t.after(() => clearTimeout(unrelatedTimer))
   poll.resolve({ ...reportResult(rangeA.start, rangeA.end, 'updated'), meta: { report_data: { refreshing: false } } })
   await flushReport()
   assert.equal(page.state.data.value.id, 'updated')
@@ -216,9 +226,7 @@ test('equipment manual range refresh polls its task result while retaining date 
 
 test('equipment primary statistics replace background results without applying edited dates', async t => {
   const page = await mountReport(t, 'equipment', { hold: { tasks: true } })
-  const clock = globalThis.window
-  t.mock.method(globalThis, 'setTimeout', clock.setTimeout)
-  t.mock.method(globalThis, 'clearTimeout', clock.clearTimeout)
+  mockReportPollTimers(t, page)
   page.pending[0].resolve({ ...reportResult(), id: 'old', meta: { report_data: { refreshing: true } } })
   await flushReport()
   assert.equal(page.state.data.value.id, 'old')
@@ -238,9 +246,7 @@ test('equipment primary statistics replace background results without applying e
 
 test('equipment primary statistics abort their background request on leaving and reject its late result', async t => {
   const page = await mountReport(t, 'equipment', { hold: { tasks: true } })
-  const clock = globalThis.window
-  t.mock.method(globalThis, 'setTimeout', clock.setTimeout)
-  t.mock.method(globalThis, 'clearTimeout', clock.clearTimeout)
+  mockReportPollTimers(t, page)
   page.pending[0].resolve({ ...reportResult(), id: 'old', meta: { report_data: { refreshing: true } } })
   await flushReport()
   page.fire(); await flushReport()
@@ -255,9 +261,7 @@ test('equipment primary statistics abort their background request on leaving and
 
 test('manager workshop statistics stop background reads when the page leaves', async t => {
   const page = await mountReport(t, 'workshop', { query: rangeA, hold: { workshop: true } })
-  const clock = globalThis.window
-  t.mock.method(globalThis, 'setTimeout', clock.setTimeout)
-  t.mock.method(globalThis, 'clearTimeout', clock.clearTimeout)
+  mockReportPollTimers(t, page)
   page.pending[0].resolve({ ...emptyWorkshop(rangeA.start, rangeA.end), meta: { report_data: { refreshing: true } } })
   await flushReport()
   assert.equal(page.timers.size, 1)
