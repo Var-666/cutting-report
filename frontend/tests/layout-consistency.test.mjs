@@ -647,7 +647,7 @@ test('switching cached workshop and equipment reports does not force another que
   const workshop = descriptor('WorkshopView')
   const equipment = descriptor('EnergyPeriodReportView')
   const preload = readFileSync(new URL('../src/state/reportPreload.ts', import.meta.url), 'utf8')
-  const api = readFileSync(new URL('../src/api/cutting.ts', import.meta.url), 'utf8')
+  const cache = readFileSync(new URL('../src/api/reportCache.ts', import.meta.url), 'utf8')
 
   assert.match(workshop.scriptSetup.content, /force = false/)
   assert.match(workshop.scriptSetup.content, /if \(!pageActive\.value \|\| !isWorker\.value \|\| refreshTimer\) return/)
@@ -655,7 +655,7 @@ test('switching cached workshop and equipment reports does not force another que
   assert.doesNotMatch(equipment.scriptSetup.content, /onActivated\([\s\S]{0,300}getEnergyRange/)
   assert.match(preload, /listWorkshopRangeTasks\(\{ startDate: reportDate, endDate: reportDate \}\)/)
   assert.doesNotMatch(preload, /getEnergyRange\(recentTwelveMonthStart/)
-  assert.match(api, /REPORT_VIEW_CACHE_TTL = 5 \* 60 \* 1000/)
+  assert.match(cache, /REPORT_VIEW_CACHE_TTL = 5 \* 60 \* 1000/)
 })
 
 test('workshop pagination does not invalidate an unchanged analysis context', () => {
@@ -819,7 +819,7 @@ test('energy rows show numeric values without an extra explanation column and pr
       appliedPeriodStart: '2026-11-07', appliedPeriodEnd: '2026-11-07', summaryPeriodStart: '2025-12-01', summaryPeriodEnd: '2026-11-07',
       loading: false, summaryLoading: false, error: '月度统计不可用', chartType: 'bar_line',
     }).map(([key, value]) => [key, Vue.ref(value)])),
-    useEnergyReportCharts: () => ({ stopResizeListening() {}, disposeCharts() {} }), AnalysisPanel: empty, AppIcon: empty, MetricSparkline: empty, StandardReportQuery: empty,
+    useEnergyReportCharts: () => ({ stopResizeListening() {}, disposeCharts() {} }), AnalysisPanel: empty, AppIcon: empty, MetricSparkline: empty, StandardReportQuery: empty, ReportDataStatus: empty,
     ReportFeedback: { props: ['title', 'message'], setup: props => () => Vue.h('p', `${props.title} ${props.message}`) },
     ReportTrendPanel: { inheritAttrs: false, setup: (_props, { slots }) => () => Vue.h('section', slots.table?.()) },
     AppReportTable: { props: ['items', 'columns'], setup: (props, { slots }) => {

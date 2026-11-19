@@ -225,7 +225,8 @@ test('forced leadership reads bypass preload cache; daily snapshots invalidate m
   assert.equal(calls.filter((c) => c.url.includes('leadership-report')).length, 2)
   assert.ok(calls.filter((c) => c.url.includes('leadership-report')).every((c) => (c.options.method || 'GET') === 'GET'))
   assert.equal(calls.filter((c) => c.url.includes('energy-report/month?')).length, 2)
-  assert.equal(calls.filter((c) => c.url.includes('refresh=true')).length, 1)
+  assert.deepEqual(calls.filter((c) => c.url.includes('refresh=true')).map(c => c.url.split('?')[0]),
+    ['/api/v1/leadership-report', '/api/v1/energy-report/day'])
 })
 
 test('a forced energy range refresh replaces the normal cached view', async () => {
