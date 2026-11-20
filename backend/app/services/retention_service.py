@@ -38,6 +38,8 @@ class RetentionService:
         parent = candidate.parent.resolve()
         if not parent.is_relative_to(root):
             raise ValueError("报告清理路径越界")
+        if candidate.suffix == ".pdf":
+            candidate.with_suffix(".pdf.source").unlink(missing_ok=True)
         if candidate.is_symlink():
             existed = True
             candidate.unlink()

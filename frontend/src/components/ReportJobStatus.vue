@@ -15,6 +15,8 @@ const steps = [
 const rank: Record<string, number> = { pending: 0, querying: 1, calculating: 2, analyzing: 3, rendering: 4, completed: 5, failed: -1 }
 const reportTypeText = { leadership: '领导报表', workshop: '车间报表', equipment: '设备报表', custom: '自定义报表' }
 const aiStatusText: Record<string, string> = { success: '已生成', unavailable: '暂不可用', skipped: '未启用' }
+const statusText = { pending: '后台排队', querying: '查询中', calculating: '统计中', analyzing: '分析中',
+  rendering: '生成 HTML', completed: 'HTML 已归档', failed: '失败' }
 
 </script>
 
@@ -23,9 +25,9 @@ const aiStatusText: Record<string, string> = { success: '已生成', unavailable
     <div class="job-heading">
       <div>
         <span class="eyebrow">当前生成任务 · {{ (job.report_type && reportTypeText[job.report_type]) || '报表' }}</span>
-        <h2>{{ job.stage_message }}</h2>
+        <h2>{{ job.stage_message || '报告已进入后台队列' }}</h2>
       </div>
-      <NTag class="status-pill" :data-status="job.status" :type="job.status === 'failed' ? 'error' : job.status === 'completed' ? 'success' : 'info'" size="small">{{ job.status }}</NTag>
+      <NTag class="status-pill" :data-status="job.status" :type="job.status === 'failed' ? 'error' : job.status === 'completed' ? 'success' : 'info'" size="small">{{ job.ai_status === 'waiting' ? '等待智能分析' : statusText[job.status] }}</NTag>
     </div>
     <NSteps v-if="job.status !== 'failed'" class="report-job-steps" size="small" :current="rank[job.status] || 0" :status="job.status === 'completed' ? 'finish' : 'process'">
       <NStep v-for="[status, label] in steps" :key="status" :title="label" />

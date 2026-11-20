@@ -209,6 +209,7 @@ def test_slow_smtp_cannot_starve_next_schedule_scan():
 def test_email_consumer_recovers_after_one_claim_error():
     recovered = Event()
     calls = []
+    reconciliations = []
 
     class Automation:
         def reconcile_runs(self, now):
@@ -221,10 +222,12 @@ def test_email_consumer_recovers_after_one_claim_error():
             calls.append(now)
             if len(calls) == 1:
                 raise RuntimeError("temporary outbox fault")
+            assert len(reconciliations) == 2
             recovered.set()
             return False
 
     worker = automation_process(replace(settings, worker_poll_seconds=0.01), Automation())
+    worker.runtime.automation.recover_interrupted_deliveries = lambda: reconciliations.append(True)
     try:
         worker.start()
         assert recovered.wait(1), "one outbox fault must not permanently stop delivery"

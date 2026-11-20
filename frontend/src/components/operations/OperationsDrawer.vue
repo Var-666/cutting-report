@@ -134,6 +134,9 @@ watch(() => log?.id, () => { copied.value = false })
             <template v-if="log">
               <dt>时间</dt><dd>{{ stamp(log.timestamp) }}</dd>
               <dt>耗时</dt><dd>{{ log.duration_ms == null ? '—' : log.duration_ms + ' ms' }}</dd>
+              <dt v-if="log.run_id">计划执行 ID</dt><dd v-if="log.run_id">{{ log.run_id }}</dd>
+              <dt v-if="log.attempt != null">发送尝试</dt><dd v-if="log.attempt != null">{{ log.attempt }}</dd>
+              <dt v-if="log.error_type">错误类型</dt><dd v-if="log.error_type">{{ log.error_type }}</dd>
             </template>
             <template v-for="detail in dataDetails" :key="detail.label">
               <dt>{{ detail.label }}</dt><dd>{{ detail.value }}</dd>

@@ -128,6 +128,39 @@ def test_report_creation_preserves_monthly_and_explicit_range_semantics(body, st
     assert tuple(day.isoformat() for day in _job_period(job)) == effective_period
 
 
+def test_report_creation_replay_is_atomic_and_scoped_to_admin_line_and_payload(state_database):
+    from concurrent.futures import ThreadPoolExecutor
+    from uuid import uuid4
+
+    from app.api.reports import create_report
+
+    def request(line):
+        metadata = MetadataRepository(state_database, device_id=line)
+        state = SimpleNamespace(lines=as_line_services({
+            line: SimpleNamespace(settings=cutting_settings(device_id=line), metadata=metadata),
+        }))
+        return SimpleNamespace(headers={}, query_params={'device_id': line}, app=SimpleNamespace(state=state),
+                               state=SimpleNamespace(request_id='idempotency-regression'))
+
+    selected = request('Cutter01')
+    payload = ReportCreateRequest(report_type='leadership', report_date='2026-11-01', parameters={'chart_type': 'line'})
+    key = uuid4()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda _: create_report(payload, selected, {'user_id': 'admin-1'}, key), range(2)))
+    assert results[0] == results[1]
+    initial = results[0]['data']['report_id']
+    metadata = MetadataRepository(state_database, device_id='Cutter01')
+    assert metadata.list_reports(page=1, page_size=10)[1] == 1
+    assert metadata.get_job(initial)['status'] == 'pending'
+
+    with pytest.raises(HTTPException) as conflict:
+        create_report(payload.model_copy(update={'project_code': 'different'}), selected, {'user_id': 'admin-1'}, key)
+    assert conflict.value.status_code == 409
+    other = create_report(payload, selected, {'user_id': 'admin-2'}, key)['data']['report_id']
+    another_line = create_report(payload, request('Cutter02'), {'user_id': 'admin-1'}, key)['data']['report_id']
+    assert len({initial, other, another_line}) == 3
+
+
 def test_previous_comparison_uses_an_equal_non_overlapping_period() -> None:
     assert previous_equal_range(date(2026, 8, 18), date(2026, 8, 20)) == (
         date(2026, 8, 15),
@@ -521,6 +554,40 @@ def test_pipeline_exports_the_selected_range(state_database,
     if report_type == "workshop":
         assert ">工人工时汇总</h2>" not in html
         assert "所选区间暂无工人确认数据" not in html
+
+
+@pytest.mark.parametrize('committed', [False, True])
+def test_archive_is_removed_only_after_confirmed_rollback(state_database, tmp_path, monkeypatch, committed):
+    from app.database.unit_of_work import UnitOfWork
+
+    settings, metadata, pipeline = _pipeline(state_database, tmp_path)
+    now = datetime.now(ZoneInfo(settings.timezone))
+    metadata.create_job(report_id='archive-commit', report_type='leadership', report_date=now.date().isoformat(),
+                        project_code=None, ship_no=None, request_id='archive', created_at=now.isoformat())
+    job = metadata.claim_next_job(now.isoformat())
+    archive = settings.reports_dir / 'archive-commit.html'
+
+    def render(**_kwargs):
+        archive.write_text('<p>报告结束</p>', encoding='utf-8')
+        return dict(relative_path=archive.name, filename=archive.name, sha256='test-digest', file_size=archive.stat().st_size)
+
+    original_exit = UnitOfWork.__exit__
+    def finish(self, *_args):
+        error = OSError('database commit reply lost')
+        original_exit(self, None, None, None) if committed else original_exit(self, type(error), error, None)
+        raise error
+
+    monkeypatch.setattr(pipeline.report_service, 'render', render)
+    monkeypatch.setattr(UnitOfWork, '__exit__', finish)
+    def publish():
+        pipeline._render_and_complete(job=job, report={}, generated_at=now, task_count=1, analysis_status='success')
+    if committed:
+        publish()
+        assert metadata.get_job(job['report_id'])['status'] == 'completed' and archive.exists()
+    else:
+        with pytest.raises(OSError, match='commit reply'):
+            publish()
+        assert metadata.get_job(job['report_id'])['relative_path'] is None and not archive.exists()
 
 
 def test_workshop_task_link_filters_real_id_within_original_period(state_database, tmp_path):

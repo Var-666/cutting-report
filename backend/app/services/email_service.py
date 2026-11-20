@@ -100,7 +100,7 @@ class EmailService:
         )
         if report_path is not None:
             try:
-                report = self.pdf_service.render_email(report_path)
+                report = self.pdf_service.render_email(report_path, source_hash=delivery.get("sha256"))
                 message.add_alternative(report.html, subtype="html")
                 html_part = message.get_payload()[-1]
                 for cid, content in report.images.items():
@@ -139,7 +139,17 @@ class EmailService:
                 if settings.smtp_username:
                     client.login(settings.smtp_username, settings.smtp_password)
                     prepare_socket(client, required=True)
-                submitted = True
+                data = getattr(client, "data", None)
+                if callable(data):
+                    def submit_data(*args, **kwargs):
+                        nonlocal submitted
+                        prepare_socket(client, required=True)
+                        submitted = True
+                        return data(*args, **kwargs)
+
+                    client.data = submit_data
+                else:
+                    submitted = True
                 try:
                     refused = client.send_message(message) or {}
                 except smtplib.SMTPRecipientsRefused as exc:

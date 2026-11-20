@@ -1,6 +1,7 @@
 from dataclasses import replace
 from contextlib import closing
 from datetime import datetime
+from hashlib import sha256
 from email import policy
 from email.parser import BytesParser
 from pathlib import Path
@@ -40,7 +41,7 @@ def test_email_contains_html_related_images_and_optional_original_attachment(tmp
     cfg = replace(settings, project_root=tmp_path, smtp_enabled=True, smtp_host="smtp.test",
                   smtp_from_email="report@example.com", smtp_username="", smtp_use_tls=False, smtp_use_ssl=False)
     images = {f"report-page-{number}@test": b"\x89PNG\r\n\x1a\n" + bytes([number]) for number in (1, 2)}
-    renderer = SimpleNamespace(render_email=lambda path: EmailReport(
+    renderer = SimpleNamespace(render_email=lambda path, **kwargs: EmailReport(
         '<h1>车间日报</h1>' + ''.join(f'<img src="cid:{cid}">' for cid in images), images))
     original = b"<html>original report with scripts</html>"
     delivery = {"message_id": "<stable@test>", "recipients": ["manager@example.com"], "subject": "日报",
@@ -64,7 +65,7 @@ def test_email_contains_html_related_images_and_optional_original_attachment(tmp
 
 
 def test_render_failure_is_retryable_and_does_not_connect_to_smtp(tmp_path, monkeypatch):
-    def fail(path):
+    def fail(path, **kwargs):
         raise PdfRenderError("Chromium failed")
 
     monkeypatch.setattr("app.services.email_service.smtplib.SMTP", lambda *a, **k: pytest.fail("SMTP must not be contacted"))
@@ -82,13 +83,15 @@ def test_retry_wait_starts_after_slow_report_preparation(tmp_path, monkeypatch):
     monkeypatch.setattr('app.services.automation_service.monotonic', lambda: next(ticks))
     cfg = replace(settings, project_root=tmp_path, email_retry_base_seconds=60)
     cfg.reports_dir.mkdir()
-    (cfg.reports_dir / 'r.html').write_text('<h1>report</h1>')
+    archive = b'<h1>report</h1>'
+    (cfg.reports_dir / 'r.html').write_bytes(archive)
     failures = []
     service = object.__new__(AutomationService)
     service.settings = cfg
     service.runtime = AutomationRuntime(cfg)
     service.repository = SimpleNamespace(
-        claim_delivery=lambda now: {'delivery_id': 'd1', 'attempt_count': 1, 'relative_path': 'r.html', 'attach_report': False, 'ai_status': 'success'},
+        claim_delivery=lambda now: {'delivery_id': 'd1', 'attempt_count': 1, 'relative_path': 'r.html', 'attach_report': False,
+                                    'ai_status': 'success', 'sha256': sha256(archive).hexdigest()},
         mark_delivery_failed=lambda *a, **k: failures.append(k),
     )
 
@@ -170,13 +173,14 @@ def test_automation_prepares_body_independently_of_attachment_and_rejects_invali
     report.write_text("<h1>日报</h1>", encoding="utf-8")
     (tmp_path / "outside.html").write_text("private")
     sent, failed = [], []
-    delivery = {"delivery_id": "d1", "attempt_count": 1, "relative_path": relative_path, "attach_report": attach, 'ai_status': 'success'}
+    delivery = {"delivery_id": "d1", "attempt_count": 1, "relative_path": relative_path, "attach_report": attach,
+                'ai_status': 'success', 'sha256': sha256(report.read_bytes()).hexdigest()}
     service = object.__new__(AutomationService)
     service.settings = cfg
     service.runtime = AutomationRuntime(cfg)
     service.repository = SimpleNamespace(
         claim_delivery=lambda now: delivery,
-        mark_delivery_sent=lambda *a, **k: None,
+        mark_delivery_sent=lambda *a, **k: True,
         mark_delivery_failed=lambda *a, **k: failed.append(k),
         mark_delivery_unknown=lambda *a, **k: pytest.fail("preparation is safe to retry"),
     )

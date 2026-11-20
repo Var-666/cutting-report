@@ -18,6 +18,22 @@ class ReportRenderError(RuntimeError):
     pass
 
 
+def archived_report_path(root: Path, record: dict, *, verify_hash: bool = False) -> Path:
+    relative = record.get("relative_path")
+    if relative:
+        root = root.resolve()
+        path = (root / relative).resolve()
+        if path.is_relative_to(root) and path.suffix == ".html" and path.is_file():
+            size = path.stat().st_size
+            if size > 0 and record.get("file_size") in (None, size):
+                if not verify_hash or not record.get("sha256"):
+                    return path
+                with path.open("rb") as stream:
+                    if hashlib.file_digest(stream, "sha256").hexdigest() == record["sha256"]:
+                        return path
+    raise FileNotFoundError("归档 HTML 文件缺失或不完整")
+
+
 def format_number(value: Any) -> str:
     if value is None:
         return "--"

@@ -1,31 +1,36 @@
 <script setup lang="ts">
 import { toError } from '../utils/errors'
 
-import { ref } from 'vue'
+import { onBeforeUnmount, onDeactivated, ref } from 'vue'
 import { downloadReportPdf } from '../api/reportExport.ts'
 
 const props = defineProps({ reportId: { type: String, required: true }, compact: Boolean })
 const loading = ref(false)
 const error = ref('')
+let controller: AbortController | undefined
 
 async function download() {
   if (loading.value) return
   loading.value = true
   error.value = ''
+  controller = new AbortController()
   try {
-    await downloadReportPdf(props.reportId)
+    await downloadReportPdf(props.reportId, { signal: controller.signal })
   } catch (caught) {
     const exception = toError(caught)
-    error.value = exception.message
+    if (exception.name !== 'AbortError') error.value = `${exception.message}。可重试 PDF，或下载已归档的 HTML。`
   } finally {
     loading.value = false
+    controller = undefined
   }
 }
+onDeactivated(() => controller?.abort())
+onBeforeUnmount(() => controller?.abort())
 </script>
 
 <template>
   <span class="pdf-download" :class="{ 'pdf-download--compact': compact }">
-    <NButton attr-type="button" :class="{ compact }" :text="compact" :loading="loading" :disabled="loading" @click="download">{{ loading ? '生成 PDF…' : '下载 PDF' }}</NButton>
+    <NButton attr-type="button" :class="{ compact }" :text="compact" :loading="loading" :disabled="loading" @click="download">{{ loading ? '准备 PDF…' : '下载 PDF' }}</NButton>
     <span v-if="error" class="pdf-error" role="alert" :title="error">{{ error }}</span>
   </span>
 </template>

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import date, datetime, time, timedelta
+from hashlib import sha256
 from typing import TYPE_CHECKING, Any
 from time import monotonic
 from uuid import uuid4
@@ -18,6 +19,7 @@ from app.services.email_service import (
     EmailRecipientsRefused,
 )
 from app.services.automation_runtime import AutomationRuntime
+from app.services.report_service import archived_report_path
 
 if TYPE_CHECKING:
     from app.services.database_runtime import DatabaseRuntime
@@ -119,9 +121,10 @@ class AutomationService:
                 )
                 if run and self._create_report_job(run, now):
                     count += 1
-            except Exception:
-                logger.exception("automation schedule reservation failed",
-                                 extra={"schedule_id": schedule["schedule_id"]})
+            except Exception as exc:
+                event(logger, logging.ERROR, '自动计划入队失败', error_code='AUTOMATION_SCHEDULE_FAILED',
+                      resource_id=schedule['schedule_id'], line_id=schedule.get('device_id'), stage='scheduling',
+                      error_type=type(exc).__name__)
         return count
 
     def run_now(self, schedule_id: str, now: datetime) -> dict | None:
@@ -211,8 +214,9 @@ class AutomationService:
                 elif item["report_status"] == "failed":
                     self.report_failed(item["report_id"], item["error_message"] or "报表生成失败", now)
                     recovered += 1
-            except Exception:
-                logger.exception("automation run recovery failed", extra={"run_id": item["run_id"]})
+            except Exception as exc:
+                event(logger, logging.ERROR, '自动计划恢复失败', error_code='AUTOMATION_RECOVERY_FAILED',
+                      run_id=item['run_id'], report_id=item['report_id'], stage='recovery', error_type=type(exc).__name__)
         return recovered
 
     def _ensure_workshop_report(self, run: dict, now: datetime, device: DeviceRuntime) -> None:
@@ -270,21 +274,25 @@ class AutomationService:
             return False
         runtime_settings, _ = self.runtime.snapshot()
         send_started = False
+        stage = 'preparing'
         try:
             if delivery.get('ai_status') != 'success':
                 self.repository.rebuild_unanalyzed_delivery(delivery, now=now.isoformat(timespec='seconds'))
                 return True
-            root = self.settings.reports_dir.resolve()
-            path = (root / delivery["relative_path"]).resolve()
-            if not path.is_relative_to(root) or not path.is_file():
-                raise FileNotFoundError("报表文件不存在")
-            attachment = path.read_bytes() if delivery.get("attach_report") else None
+            stage = 'archive'
+            path = archived_report_path(self.settings.reports_dir, delivery)
+            content = path.read_bytes()
+            if sha256(content).hexdigest() != delivery["sha256"]:
+                raise OSError("归档 HTML 校验失败")
+            attachment = content if delivery.get("attach_report") else None
             send_started = True
+            stage = 'smtp'
             message_id = self.email_service.send(
                 delivery, attachment, settings_snapshot=runtime_settings, report_path=path
             )
         except Exception as exc:
-            now += timedelta(seconds=max(0, monotonic() - started))
+            elapsed = max(0, monotonic() - started)
+            now += timedelta(seconds=elapsed)
             delay = min(
                 runtime_settings.email_retry_base_seconds
                 * (2 ** max(0, int(delivery["attempt_count"]) - 1)),
@@ -296,7 +304,8 @@ class AutomationService:
                   '邮件发送结果待核对' if unknown else '邮件发送尝试失败',
                   error_code='SMTP_OUTCOME_UNKNOWN' if unknown else 'SMTP_ATTEMPT_FAILED',
                   resource_id=delivery['delivery_id'], report_id=delivery.get('report_id'), related_kind='email',
-                  line_id=delivery.get('device_id'), duration_ms=(monotonic() - started) * 1000, exc_info=True)
+                  line_id=delivery.get('device_id'), run_id=delivery.get('run_id'), stage=stage,
+                  attempt=delivery['attempt_count'], error_type=type(exc).__name__, duration_ms=elapsed * 1000)
             if isinstance(exc, EmailRecipientsRefused):
                 self.repository.mark_delivery_refused(
                     delivery, exc.recipients, message_id=exc.message_id,
@@ -307,17 +316,29 @@ class AutomationService:
                 self.repository.mark_delivery_unknown(delivery, now=now.isoformat(timespec="seconds"))
             else:
                 self.repository.mark_delivery_failed(
-                    delivery, error=str(exc), next_attempt_at=retry_at.isoformat(timespec="seconds"),
+                    delivery, error=str(exc) if isinstance(exc, (EmailDeliveryFailure, EmailConfigurationError))
+                    else ("归档 HTML 缺失、损坏或暂时无法读取，尚未提交 SMTP" if stage == 'archive'
+                          else "邮件准备暂时失败，尚未提交 SMTP"),
+                    next_attempt_at=retry_at.isoformat(timespec="seconds"),
                     now=now.isoformat(timespec="seconds"),
                 )
             return True
         # SMTP success followed by a database failure is an unknown durable
         # outcome. Leave 'sending' for restart reconciliation; never retry it.
         now += timedelta(seconds=max(0, monotonic() - started))
-        self.repository.mark_delivery_sent(
-            delivery, message_id=message_id, now=now.isoformat(timespec="seconds")
-        )
-        event(logger, logging.INFO, '邮件已由 SMTP 接收并确认入库', error_code='SMTP_ACCEPTED',
+        try:
+            complete = self.repository.mark_delivery_sent(
+                delivery, message_id=message_id, now=now.isoformat(timespec="seconds")
+            )
+        except Exception as exc:
+            event(logger, logging.ERROR, 'SMTP 已接收，状态提交待核对', error_code='SMTP_PERSISTENCE_UNCERTAIN',
+                  resource_id=delivery['delivery_id'], report_id=delivery.get('report_id'), related_kind='email',
+                  line_id=delivery.get('device_id'), run_id=delivery.get('run_id'), stage='persisting',
+                  attempt=delivery['attempt_count'], error_type=type(exc).__name__, duration_ms=(monotonic() - started) * 1000)
+            raise
+        event(logger, logging.INFO, '邮件已由 SMTP 接收并确认入库' if complete else '部分收件人被 SMTP 永久拒收',
+              error_code='SMTP_ACCEPTED' if complete else 'SMTP_PARTIAL_REFUSAL',
               resource_id=delivery['delivery_id'], report_id=delivery.get('report_id'), related_kind='email',
-              line_id=delivery.get('device_id'), duration_ms=(monotonic() - started) * 1000)
+              line_id=delivery.get('device_id'), run_id=delivery.get('run_id'), stage='sent' if complete else 'failed',
+              attempt=delivery['attempt_count'], duration_ms=(monotonic() - started) * 1000)
         return True

@@ -10,6 +10,8 @@ import ReportTable from '../components/ReportTable.vue'
 import ManagementPageHero from '../components/ManagementPageHero.vue'
 import { createReport, getReportStatus, listProjects, listReports, listShips } from '../api/cutting.ts'
 import { listPublishedDefinitions } from '../api/designer.ts'
+import { createReportKey } from '../api/reportExport.ts'
+import { getDeviceId } from '../api/deviceContext.ts'
 import { mergeOwnedQuery, queryPositiveInteger, sameRouteQuery } from '../utils/reportRouteState.ts'
 
 defineProps({
@@ -45,6 +47,8 @@ let historyController: AbortController | null = null
 let historySequence = 0
 let pageActive = false
 let routeStateReady = false
+let awaitingCreate: { payload: string; deviceId: string; key: string } | undefined
+const pollRetryMessage = '暂时无法读取任务进度，正在重新连接。也可刷新历史查看。'
 
 const routeQueryKeys = ['page', 'page_size']
 
@@ -148,16 +152,29 @@ async function loadCustomDefinitions() {
 }
 
 async function generate(form: ReportCreateRequest) {
+  if (generating.value) return
   stopPolling()
   error.value = ''
   generating.value = true
+  const deviceId = getDeviceId()
+  const payload = JSON.stringify(form)
+  if (awaitingCreate?.payload !== payload || awaitingCreate.deviceId !== deviceId) {
+    awaitingCreate = { payload, deviceId, key: createReportKey() }
+  }
   try {
-    currentJob.value = await createReport(form)
+    const created = await createReport(form, { deviceId, idempotencyKey: awaitingCreate.key })
+    awaitingCreate = undefined
+    if (!pageActive || getDeviceId() !== deviceId) return
+    currentJob.value = created
     await router.replace({ query: { ...route.query, job: currentJob.value.report_id } })
     await pollStatus(currentJob.value.report_id)
   } catch (caught) {
     const exception = toError(caught)
-    error.value = exception.message
+    if (!pageActive || getDeviceId() !== deviceId) return
+    const status = (exception as { status?: number }).status
+    if (status && status < 500 && status !== 408 && status !== 429) awaitingCreate = undefined
+    error.value = awaitingCreate ? `${exception.message}。可刷新历史或再次提交相同条件确认创建结果。` : exception.message
+    if (awaitingCreate) void loadHistory(1, true)
     generating.value = false
   }
 }
@@ -174,6 +191,7 @@ async function pollStatus(reportId: string) {
     const job = await getReportStatus(reportId, { signal: controller.signal })
     if (!pageActive || controller.signal.aborted || sequence !== pollSequence) return
     currentJob.value = job
+    if (error.value === pollRetryMessage) error.value = ''
     const terminal = ['completed', 'failed'].includes(job.status)
     if (terminal) {
       generating.value = false
@@ -187,7 +205,10 @@ async function pollStatus(reportId: string) {
   } catch (caught) {
     const exception = toError(caught)
     if (exception.name !== 'AbortError' && pageActive && sequence === pollSequence) {
-      error.value = exception.message
+      const status = (exception as { status?: number }).status
+      const transient = !status || status >= 500 || status === 408 || status === 429
+      error.value = transient ? pollRetryMessage : exception.message
+      if (transient) pollTimer = window.setTimeout(() => pollStatus(reportId), 5000)
       generating.value = false
     }
   } finally {
@@ -198,6 +219,13 @@ async function pollStatus(reportId: string) {
 watch(
   () => route.query.job,
   (reportId) => {
+    if (!reportId && currentJob.value) {
+      stopPolling()
+      currentJob.value = null
+      generating.value = false
+      if (error.value === pollRetryMessage) error.value = ''
+      return
+    }
     if (typeof reportId === 'string' && reportId && reportId !== currentJob.value?.report_id) {
       stopPolling()
       pollStatus(reportId)
@@ -270,7 +298,7 @@ onBeforeUnmount(() => {
     />
   </section>
 
-  <div v-if="error" class="global-error" role="alert"><strong>操作未完成</strong><span>{{ error }}，请检查报表条件后重试。</span><NButton attr-type="button" @click="error = ''">关闭</NButton></div>
+  <div v-if="error" class="global-error" role="alert"><strong>操作提示</strong><span>{{ error }}</span><NButton attr-type="button" @click="error = ''">关闭</NButton></div>
   <ReportJobStatus :job="currentJob" />
 
   <section class="panel history-panel">

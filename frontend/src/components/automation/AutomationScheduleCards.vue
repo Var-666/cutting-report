@@ -40,7 +40,7 @@ function scheduleText(item: AutomationSchedule) {
           </dd>
         </div>
         <div><dt>收件人</dt><dd :title="item.recipients.join('、')">{{ item.recipients.length }}<small>人</small></dd></div>
-        <div><dt>已发送</dt><dd>{{ item.sent_count || 0 }}</dd></div>
+        <div><dt>SMTP 已接收</dt><dd>{{ item.sent_count || 0 }}</dd></div>
         <div><dt>发送失败</dt><dd :class="{ 'card-failed': item.failed_count }">{{ item.failed_count || 0 }}</dd></div>
       </dl>
       <AutomationRunProgress v-if="executions?.[item.schedule_id]" :execution="executions[item.schedule_id]"

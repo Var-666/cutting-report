@@ -1,5 +1,6 @@
 """Shared recovery workflow, registered through the test conftest plugin list."""
 from datetime import datetime
+from hashlib import sha256
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
@@ -13,6 +14,7 @@ from app.services.automation_service import AutomationService
 
 NOW = datetime(2026, 9, 30, 9, tzinfo=ZoneInfo("Asia/Shanghai"))
 STAMP = NOW.isoformat(timespec="seconds")
+ARCHIVED_HTML = "<h1>测试报表</h1>".encode()
 
 
 @pytest.fixture
@@ -36,7 +38,7 @@ def workflow(tmp_path, state_database):
                                  next_run_at="2026-10-01T09:00:00+08:00")
     cfg = cutting_settings(project_root=tmp_path)
     cfg.reports_dir.mkdir(parents=True, exist_ok=True)
-    (cfg.reports_dir / "r.html").write_text("<h1>测试报表</h1>", encoding="utf-8")
+    (cfg.reports_dir / "r.html").write_bytes(ARCHIVED_HTML)
     service = AutomationService(cfg, repository, metadata, object(),
         line_services=as_line_services({"Cutter01": SimpleNamespace(settings=cfg, pipeline=object())}))
     return repository, metadata, service, run
@@ -44,6 +46,6 @@ def workflow(tmp_path, state_database):
 
 def complete_report(metadata, report_id):
     metadata.save_report(report_id=report_id, filename="r.html", relative_path="r.html",
-                         file_size=1, sha256="a" * 64, task_count=1, generated_at=STAMP,
+                         file_size=len(ARCHIVED_HTML), sha256=sha256(ARCHIVED_HTML).hexdigest(), task_count=1, generated_at=STAMP,
                          system_version="test")
     metadata.update_status(report_id, "completed", "completed", ai_status='success', finished_at=STAMP)

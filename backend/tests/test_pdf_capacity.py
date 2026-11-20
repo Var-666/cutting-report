@@ -136,10 +136,8 @@ def test_unexpected_html_decode_error_cleans_temp_and_closes_browser(tmp_path, m
 
     html = tmp_path / 'broken.html'
     html.write_bytes(b'\xff')
-    temporary = tmp_path / '.broken.pdf.tmp'
-    temporary.write_bytes(b'partial')
     closed = []
-    page = SimpleNamespace(route=lambda *args: None, emulate_media=lambda **kwargs: None)
+    page = SimpleNamespace(on=lambda *args: None, route=lambda *args: None, emulate_media=lambda **kwargs: None)
     browser = SimpleNamespace(new_page=lambda **kwargs: page, close=lambda: closed.append(True))
 
     @contextmanager
@@ -151,7 +149,7 @@ def test_unexpected_html_decode_error_cleans_temp_and_closes_browser(tmp_path, m
     with pytest.raises(PdfRenderError):
         renderer.render(html)
     assert closed == [True]
-    assert not temporary.exists()
+    assert not list(tmp_path.glob('.broken-*'))
     assert not html.with_suffix('.pdf').exists()
     with renderer._render_slot():
         pass

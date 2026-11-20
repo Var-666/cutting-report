@@ -150,7 +150,7 @@ test('legacy export cancellation stays silent in the page workflow', async t => 
   const cleanup = [], destinations = []
   let finish
   const source = readFileSync(new URL('../src/composables/useReportExport.ts', import.meta.url), 'utf8').replace(/^import .*$/gm, '').replace('export function', 'function')
-  const bindings = { ...Vue, throwIfAborted, AbortController: function () { return legacyController() }, onBeforeUnmount: fn => cleanup.push(fn), onDeactivated: fn => cleanup.push(fn), useRouter: () => ({ push: value => destinations.push(value) }), createReport: () => new Promise(resolve => { finish = resolve }) }
+  const bindings = { ...Vue, throwIfAborted, createReportKey: () => 'test-key', getDeviceId: () => 'Cutter01', AbortController: function () { return legacyController() }, onBeforeUnmount: fn => cleanup.push(fn), onDeactivated: fn => cleanup.push(fn), useRouter: () => ({ push: value => destinations.push(value) }), createReport: () => new Promise(resolve => { finish = resolve }) }
   const state = scriptFunction(...Object.keys(bindings), `${source};return useReportExport()`)(...Object.values(bindings))
   const pending = state.exportReport({ report_type: 'workshop', report_date: '2026-10-27' })
   cleanup[0]()
@@ -159,4 +159,35 @@ test('legacy export cancellation stays silent in the page workflow', async t => 
   assert.equal(state.error.value, '')
   assert.equal(state.exporting.value, false)
   assert.deepEqual(destinations, [])
+})
+
+test('timed out creation reuses its key and a failed PDF retries only the existing archive', async () => {
+  const source = readFileSync(new URL('../src/composables/useReportExport.ts', import.meta.url), 'utf8')
+    .replace(/^import .*$/gm, '').replace('export function', 'function')
+  const creates = [], polls = [], downloads = []
+  const bindings = {
+    ...Vue, throwIfAborted, getDeviceId: () => 'Cutter01', createReportKey: () => 'operation-key', useRouter: () => ({}),
+    onBeforeUnmount() {}, onDeactivated() {},
+    createReport: async (_form, options) => {
+      creates.push({ key: options.idempotencyKey, line: options.deviceId })
+      if (creates.length === 1) throw new Error('提交响应丢失')
+      return { report_id: 'existing' }
+    },
+    waitForReport: async id => { polls.push(id) },
+    downloadReportPdf: async id => {
+      downloads.push(id)
+      if (downloads.length === 1) throw new Error('Chromium 超时')
+    },
+  }
+  const state = scriptFunction(...Object.keys(bindings), `${source};return useReportExport()`)(...Object.values(bindings))
+  await state.exportReport({ report_type: 'workshop', report_date: '2026-11-20' }, 'pdf')
+  assert.equal(state.retryLabel.value, '确认创建结果')
+  await state.retryExport()
+  assert.equal(state.retryLabel.value, '重试下载 PDF')
+  assert.match(state.error.value, /已归档的 HTML/)
+  await state.retryExport()
+  assert.deepEqual(creates, [{ key: 'operation-key', line: 'Cutter01' }, { key: 'operation-key', line: 'Cutter01' }])
+  assert.deepEqual(polls, ['existing'])
+  assert.deepEqual(downloads, ['existing', 'existing'])
+  assert.match(state.progress.value, /已交给浏览器下载/)
 })

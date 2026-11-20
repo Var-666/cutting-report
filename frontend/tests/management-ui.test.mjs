@@ -232,7 +232,7 @@ test('leaving cancels progress reads, returning resumes and unmount ignores late
 
 test('execution progress renders stages, terminal errors and safe text without estimated percentages', async () => {
   for (const [status, label] of [['submitting', '正在提交任务'], ['queued', '等待后台准备报表'],
-    ['generating', '正在生成报表'], ['sending', '正在发送邮件'], ['sent', '邮件已发送'],
+    ['generating', '正在生成报表'], ['sending', '正在发送邮件'], ['sent', 'SMTP 已接收'],
     ['failed', '执行失败'], ['unknown', '发送结果待核对'], ['cancelled', '已取消发送']]) {
     const html = await renderComponent('components/automation/AutomationRunProgress', {
       execution: { schedule_name: '<script>日报</script>', schedule_id: 'saved', status, last_error: '错误说明' },

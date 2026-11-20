@@ -25,6 +25,7 @@ export function incidentLogQuery(item: Incident): LogQuery {
 export const incidentStatus = { open: '待处理', acknowledged: '已确认', recovered: '已恢复' }
 export const incidentLevels = { DEBUG: '调试', INFO: '提示', WARNING: '警告', ERROR: '错误', CRITICAL: '严重错误' }
 export const operationStages: Record<string, string> = {
+  archive: '核对归档文件', smtp: '提交 SMTP', persisting: '保存投递结果', recovery: '恢复任务',
   workshop: '车间生产统计', equipment: '设备统计', leadership: '领导报表',
   current_refresh: '生产统计刷新', leadership_refresh: '领导报表刷新', report_snapshot_refresh: '统计数据更新',
   energy_tasks: '任务能耗统计', energy_day: '每日能耗统计', energy_sync: '历史能耗同步',

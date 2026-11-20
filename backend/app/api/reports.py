@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import calendar
+import json
+import logging
 import uuid
 from datetime import date, datetime
+from hashlib import sha256
 from pathlib import Path
 from urllib.parse import urlencode
-from typing import Literal
+from typing import Annotated, Literal
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from starlette.concurrency import run_in_threadpool
 
@@ -17,10 +20,12 @@ from app.api.workloads import pdf_requests
 from app.api.devices import device_state, device_settings
 from app.api.auth import require_admin
 from app.config import settings
+from app.core.operations_logging import event, operation_context
 from app.models.api import ReportCreateRequest
 from app.models.contracts import ApiEnvelope, Page
 from app.models.report_contracts import ReportAccepted, ReportJob
 from app.services.pdf_service import PdfRenderError
+from app.services.report_service import archived_report_path
 from app.services.custom_report_service import PARAMETER_PATTERN
 
 
@@ -30,6 +35,7 @@ router = APIRouter(
     dependencies=[Depends(require_admin)],
 )
 view_router = APIRouter(tags=["reports"], dependencies=[Depends(require_admin)])
+logger = logging.getLogger(__name__)
 
 
 def _request_id(request: Request) -> str:
@@ -66,7 +72,14 @@ def _serialize_job(job: dict) -> dict:
         "ai_status": job.get("ai_status"),
         "error": None,
     }
+    result['device_id'] = job['device_id']
     if job["status"] == "completed":
+        try:
+            archived_report_path(settings.reports_dir, job)
+        except OSError:
+            message = "归档 HTML 文件缺失或不完整，请重新生成报告。"
+            result.update(status="failed", stage_message=message, error={"code": "REPORT_FILE_UNAVAILABLE", "message": message})
+            return result
         result.update(
             {
                 "filename": job.get("filename"),
@@ -82,7 +95,6 @@ def _serialize_job(job: dict) -> dict:
             "code": job.get("error_code") or "REPORT_GENERATION_FAILED",
             "message": job.get("stage_message") or "报告生成失败",
         }
-    result['device_id'] = job['device_id']
     for field in ('view_url', 'download_url'):
         if result.get(field):
             result[field] += '?' + urlencode({'device_id': result['device_id']})
@@ -94,40 +106,54 @@ view_router.dependencies.append(Depends(device_state))
 
 
 @router.post("", status_code=202, response_model=None, responses={202: {"model": ApiEnvelope[ReportAccepted]}})
-def create_report(payload: ReportCreateRequest, request: Request) -> dict:
+def create_report(payload: ReportCreateRequest, request: Request,
+                  user: Annotated[dict, Depends(require_admin)],
+                  idempotency_key: Annotated[uuid.UUID | None, Header()] = None) -> dict:
     now = datetime.now(ZoneInfo(settings.timezone))
+    line_id = device_settings(request).device_id
     report_id = f"rpt_{now:%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:6]}"
+    if idempotency_key is not None:
+        identity = json.dumps([user["user_id"], line_id, idempotency_key.hex])
+        report_id = f"rpt_{sha256(identity.encode()).hexdigest()}"
+    explicit_period = bool({"period_start", "period_end"} & payload.model_fields_set)
+    fields = {
+        "report_date": payload.report_date.isoformat(),
+        "project_code": payload.project_code, "ship_no": payload.ship_no,
+        "report_type": payload.report_type, "definition_id": payload.definition_id,
+        "period_start": payload.period_start.isoformat() if explicit_period else None,
+        "period_end": payload.period_end.isoformat() if explicit_period else None,
+    }
+    metadata = device_state(request).metadata
+    existing = metadata.get_job(report_id) if idempotency_key is not None else None
     definition = None
-    if payload.report_type == "custom":
+    if existing is None and payload.report_type == "custom":
         definition = application_state(request).definitions.get_definition(payload.definition_id)
         if not definition or definition["is_builtin"] or not definition["enabled"]:
             raise HTTPException(status_code=400, detail="报表定义不存在或尚未启用")
         query = application_state(request).definitions.get_query_task(definition['query_task_id'])
         if query is None or 'machine_no' not in PARAMETER_PATTERN.findall(query['sql_text']):
             raise HTTPException(status_code=400, detail='该自定义报表尚未声明设备参数，请更新 SQL 定义')
-    explicit_period = bool(
-        {"period_start", "period_end"} & payload.model_fields_set
-    )
-    device_state(request).metadata.create_job(
-        report_id=report_id,
-        report_date=payload.report_date.isoformat(),
-        project_code=payload.project_code,
-        ship_no=payload.ship_no,
-        request_id=_request_id(request),
-        created_at=now.isoformat(timespec="seconds"),
-        report_type=payload.report_type,
-        definition_id=payload.definition_id,
-        report_title=definition["name"] if definition else None,
-        parameters=payload.parameters,
-        period_start=payload.period_start.isoformat() if explicit_period else None,
-        period_end=payload.period_end.isoformat() if explicit_period else None,
-    )
+    if existing is None:
+        created = metadata.create_job(
+            report_id=report_id, request_id=_request_id(request), created_at=now.isoformat(timespec="seconds"),
+            report_title=definition["name"] if definition else None, parameters=payload.parameters,
+            **({"allow_existing": True} if idempotency_key is not None else {}), **fields,
+        )
+        if idempotency_key is not None and not created:
+            existing = metadata.get_job(report_id)
+            if existing is None:
+                raise HTTPException(status_code=409, detail="暂时无法确认任务，请到生成与历史查看")
+    if existing is not None and (
+        any(existing[key] != value for key, value in fields.items())
+        or json.dumps(json.loads(existing["parameters_json"]), sort_keys=True) != json.dumps(payload.parameters, sort_keys=True)
+    ):
+        raise HTTPException(status_code=409, detail="此创建请求已用于不同报表条件")
     return {
         "success": True,
         "data": {
             "report_id": report_id,
             "status": "pending",
-            "status_url": f"/api/v1/reports/{report_id}/status" + ("?" + urlencode({"device_id": device_settings(request).device_id})),
+            "status_url": f"/api/v1/reports/{report_id}/status?" + urlencode({"device_id": line_id}),
         },
         "request_id": _request_id(request),
     }
@@ -180,12 +206,14 @@ def _resolve_report_file(request: Request, report_id: str) -> tuple[dict, Path]:
     if job is None:
         raise HTTPException(status_code=404, detail="报告不存在")
     relative_path = job.get("relative_path")
-    if not relative_path:
+    if job["status"] != "completed" or not relative_path:
         raise HTTPException(status_code=404, detail="报告文件尚未生成")
-    root = settings.reports_dir.resolve()
-    path = (root / relative_path).resolve()
-    if not path.is_relative_to(root) or not path.is_file():
-        raise HTTPException(status_code=404, detail="报告文件不存在")
+    try:
+        path = archived_report_path(settings.reports_dir, job, verify_hash=True)
+    except OSError as exc:
+        event(logger, logging.WARNING, "归档 HTML 无法下载", error_code="REPORT_FILE_UNAVAILABLE",
+              report_id=report_id, line_id=job.get("device_id"), stage="download", related_kind="reports")
+        raise HTTPException(status_code=404, detail="归档 HTML 文件缺失或不完整，请重新生成报告") from exc
     return job, path
 
 
@@ -198,7 +226,8 @@ async def download_report(
     job, path = await run_in_threadpool(_resolve_report_file, request, report_id)
     if format == "pdf":
         try:
-            path = await pdf_requests.run_sync(application_state(request).pdf_service.render, path, _request=request)
+            with operation_context(report_id=report_id, line_id=job.get("device_id"), related_kind="reports"):
+                path = await pdf_requests.run_sync(application_state(request).pdf_service.render, path, _request=request)
         except PdfRenderError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         filename = Path(job["filename"]).with_suffix(".pdf").name

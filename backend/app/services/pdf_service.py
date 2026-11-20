@@ -5,11 +5,13 @@ import json
 import logging
 import multiprocessing as mp
 import os
+import shutil
 import signal
 import subprocess
 import threading
 from tempfile import TemporaryDirectory
 from contextlib import contextmanager
+from hashlib import file_digest
 from time import monotonic
 
 from app.core.request_cancellation import (
@@ -25,6 +27,33 @@ class PdfRenderError(RuntimeError):
     pass
 
 
+def _file_hash(path: Path) -> str:
+    with path.open("rb") as source:
+        return file_digest(source, "sha256").hexdigest()
+
+
+def _pdf_stamp(path: Path, source_hash: str) -> str:
+    info = path.stat()
+    return f"{source_hash}:{info.st_ino}:{info.st_size}:{info.st_mtime_ns}"
+
+
+def _check_pdf(path: Path) -> None:
+    import pypdfium2 as pdfium
+
+    try:
+        with path.open("rb") as stream:
+            if not stream.read(8).startswith(b"%PDF-"):
+                raise ValueError("missing PDF header")
+            stream.seek(max(0, path.stat().st_size - 1024))
+            if not stream.read().rstrip().endswith(b"%%EOF"):
+                raise ValueError("missing PDF trailer")
+        with pdfium.PdfDocument(path) as document:
+            if len(document) == 0:
+                raise ValueError("empty document")
+    except (OSError, ValueError, pdfium.PdfiumError) as exc:
+        raise PdfRenderError("PDF 渲染未生成完整文件，请稍后重试。") from exc
+
+
 def _render_pdf_child(html_path: str, temporary_path: str, email: bool = False) -> None:
     """Run Chromium outside the server process so the parent can terminate it."""
     if os.name == "posix":
@@ -32,10 +61,26 @@ def _render_pdf_child(html_path: str, temporary_path: str, email: bool = False) 
             os.setsid()
         except OSError:
             logging.getLogger(__name__).debug("could not create PDF renderer process group", exc_info=True)
-    if email:
-        PdfService._render_email_with_pdf(Path(html_path), Path(temporary_path))
-    else:
-        PdfService._render_with_playwright(Path(html_path), Path(temporary_path))
+    output = Path(temporary_path)
+    parent = mp.parent_process()
+    rendered = threading.Event()
+    if parent is not None:
+        def watch_parent() -> None:
+            while not rendered.wait(0.2):
+                if not parent.is_alive():
+                    shutil.rmtree(output.parent, ignore_errors=True)
+                    if os.name == "posix" and os.getpgrp() == os.getpid():
+                        os.killpg(os.getpgrp(), signal.SIGKILL)
+                    os._exit(1)
+
+        threading.Thread(target=watch_parent, daemon=True).start()
+    try:
+        if email:
+            PdfService._render_email_with_pdf(Path(html_path), output)
+        else:
+            PdfService._render_with_playwright(Path(html_path), output)
+    finally:
+        rendered.set()
 
 
 class PdfService:
@@ -115,64 +160,83 @@ class PdfService:
             self._slots.release()
 
     def render(self, html_path: Path) -> Path:
-        # The isolated renderer preserves display_header_footer=True with the
-        # <span class="pageNumber"></span> / <span class="totalPages"></span>
-        # footer for every production PDF.
         self._check_cancelled()
         pdf_path = html_path.with_suffix(".pdf")
-        if pdf_path.is_file() and pdf_path.stat().st_mtime_ns >= html_path.stat().st_mtime_ns:
-            return pdf_path
+        stamp = pdf_path.with_suffix(".pdf.source")
 
-        with self._render_slot():
-            if pdf_path.is_file() and pdf_path.stat().st_mtime_ns >= html_path.stat().st_mtime_ns:
-                return pdf_path
-            temporary_path = pdf_path.with_name(f".{pdf_path.name}.tmp")
+        def cache_hit(source_hash: str) -> bool:
             try:
-                if self.operation_timeout_seconds is None:
-                    self._render_with_playwright(html_path, temporary_path)
-                else:
-                    self._render_in_process(html_path, temporary_path)
-                self._check_cancelled()
-                os.replace(temporary_path, pdf_path)
-            except Exception as exc:
-                try:
-                    temporary_path.unlink(missing_ok=True)
-                except OSError:
-                    logging.getLogger(__name__).exception("PDF temporary file cleanup failed")
-                if not isinstance(exc, SqlRequestCancelled):
-                    event(logging.getLogger(__name__), logging.ERROR, 'PDF 渲染失败', error_code='PDF_RENDER_FAILED',
-                          report_id=html_path.stem, related_kind='reports', stage='rendering', incident=True, exc_info=True)
-                if isinstance(exc, (SqlRequestCancelled, PdfRenderError)):
-                    raise
-                raise PdfRenderError(
-                    "PDF 生成失败，请确认服务器已安装 Playwright Chromium。"
-                ) from exc
+                return stamp.read_text(encoding="ascii") == _pdf_stamp(pdf_path, source_hash)
+            except (OSError, UnicodeError):
+                return False
+
+        try:
+            source_hash = _file_hash(html_path)
+            if cache_hit(source_hash):
+                return pdf_path
+            with self._render_slot():
+                source_hash = _file_hash(html_path)
+                if cache_hit(source_hash):
+                    return pdf_path
+                with TemporaryDirectory(prefix=f".{html_path.stem}-", dir=html_path.parent) as directory:
+                    work = Path(directory)
+                    temporary_path = work / "report.pdf"
+                    snapshot = work / "report.html"
+                    snapshot.write_bytes(html_path.read_bytes())
+                    if _file_hash(snapshot) != source_hash:
+                        raise PdfRenderError("归档 HTML 已更新，请重新下载 PDF。")
+                    if self.operation_timeout_seconds is None:
+                        self._render_with_playwright(snapshot, temporary_path)
+                    else:
+                        self._render_in_process(snapshot, temporary_path)
+                    self._check_cancelled()
+                    _check_pdf(temporary_path)
+                    if _file_hash(html_path) != source_hash:
+                        raise PdfRenderError("归档 HTML 已更新，请重新下载 PDF。")
+                    marker = work / "source"
+                    marker.write_text(_pdf_stamp(temporary_path, source_hash), encoding="ascii")
+                    os.replace(temporary_path, pdf_path)
+                    os.replace(marker, stamp)
+        except SqlRequestCancelled:
+            raise
+        except Exception as exc:
+            event(logging.getLogger(__name__), logging.ERROR, 'PDF 渲染失败', error_code='PDF_RENDER_FAILED',
+                  related_kind='reports', stage='rendering', incident=True, exc_info=True)
+            if isinstance(exc, PdfRenderError):
+                raise
+            raise PdfRenderError("PDF 生成失败，请确认归档 HTML 与服务器 Chromium 可用。") from exc
         return pdf_path
 
-    def render_email(self, html_path: Path) -> EmailReport:
+    def render_email(self, html_path: Path, *, source_hash: str | None = None) -> EmailReport:
         with self._render_slot(), TemporaryDirectory(prefix="report-email-") as directory:
             output = Path(directory) / "email.json"
             try:
+                snapshot = Path(directory) / "report.html"
+                snapshot.write_bytes(html_path.read_bytes())
+                if source_hash and _file_hash(snapshot) != source_hash:
+                    raise PdfRenderError("归档 HTML 已更新，暂不能生成匹配的邮件正文。")
                 if self.operation_timeout_seconds is None:
-                    self._render_email_with_pdf(html_path, output)
+                    self._render_email_with_pdf(snapshot, output)
                 else:
-                    self._render_in_process(html_path, output, email=True)
+                    self._render_in_process(snapshot, output, email=True)
                 self._check_cancelled()
                 result = json.loads(output.read_text(encoding="utf-8"))
                 return EmailReport(result["html"], {
                     cid: base64.b64decode(data) for cid, data in result["images"].items()
                 })
             except Exception as exc:
-                if isinstance(exc, (SqlRequestCancelled, PdfRenderError)):
+                if isinstance(exc, SqlRequestCancelled):
                     raise
+                if isinstance(exc, PdfRenderError):
+                    raise PdfRenderError(f"邮件正文生成失败：{exc}") from exc
                 raise PdfRenderError("邮件正文生成失败，请确认 PDF 渲染和转图片依赖已安装。") from exc
 
     @staticmethod
     def _render_email_with_pdf(html_path: Path, output: Path) -> None:
-        with TemporaryDirectory(prefix="report-email-pdf-") as directory:
-            pdf_path = Path(directory) / "report.pdf"
-            PdfService._render_with_playwright(html_path, pdf_path)
-            render_email_report(pdf_path, output)
+        pdf_path = output.with_suffix(".pdf")
+        PdfService._render_with_playwright(html_path, pdf_path)
+        _check_pdf(pdf_path)
+        render_email_report(pdf_path, output)
 
     @staticmethod
     def _render_with_playwright(html_path: Path, temporary_path: Path) -> None:
@@ -184,6 +248,8 @@ class PdfService:
             browser = playwright.chromium.launch(headless=True)
             try:
                 page = browser.new_page(viewport={"width": 1380, "height": 900})
+                script_errors = []
+                page.on("pageerror", lambda _error: script_errors.append(True))
                 # Reports contain their charts and assets; no network access is needed.
                 page.route("**/*", lambda route: route.abort())
                 page.emulate_media(media="print")
@@ -203,7 +269,7 @@ class PdfService:
                 """)
                 if "window.__REPORT_READY__" in html:
                     page.wait_for_function("window.__REPORT_READY__ === true", timeout=30_000)
-                page.evaluate("""async () => {
+                ready = page.evaluate("""async () => {
                     await document.fonts.ready;
                     document.documentElement.classList.add('report-printing');
                     if (window.prepareIndustrialReport) await window.prepareIndustrialReport();
@@ -215,7 +281,12 @@ class PdfService:
                         }
                     });
                     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                    return document.body.innerText.trim() !== '' && [...document.querySelectorAll('.chart[id]')]
+                        .filter(element => element.getClientRects().length && getComputedStyle(element).visibility === 'visible')
+                        .every(element => Boolean(window.echarts?.getInstanceByDom(element)));
                 }""")
+                if script_errors or not ready:
+                    raise PdfRenderError("报表内容或图表未完整加载，请重试或下载已归档 HTML。")
                 size = page.evaluate("""() => {
                     const root = document.querySelector('.leadership-print') || document.querySelector('.industrial-document') || document.querySelector('.page') || document.body;
                     const rect = root.getBoundingClientRect();

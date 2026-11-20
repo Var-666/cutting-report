@@ -13,7 +13,7 @@ const stages: Record<string, { label: string; completed: number }> = {
   email_pending: { label: '报表已生成，等待发送邮件…', completed: 2 },
   sending: { label: '正在发送邮件…', completed: 2 },
   retry_wait: { label: '发送失败，等待自动重试…', completed: 2 },
-  sent: { label: '邮件已发送', completed: 3 },
+  sent: { label: 'SMTP 已接收', completed: 3 },
   cancelled: { label: '已取消发送', completed: 0 },
   failed: { label: '执行失败', completed: 0 },
   unknown: { label: '发送结果待核对，请在邮件发送记录中处理', completed: 2 },

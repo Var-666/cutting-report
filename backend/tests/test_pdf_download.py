@@ -1,5 +1,7 @@
 from tests.line_fixtures import as_line_services, runtime_line
 from dataclasses import replace
+from concurrent.futures import ThreadPoolExecutor
+import os
 from types import SimpleNamespace
 from urllib.parse import unquote
 
@@ -16,7 +18,7 @@ from app.services.pdf_service import PdfRenderError, PdfService
 def report_client(tmp_path, monkeypatch):
     html = tmp_path / "saved.html"
     html.write_text("<h1>车间日报</h1>", encoding="utf-8")
-    job = {"relative_path": html.name, "filename": "车间日报_2026-08-18.html"}
+    job = {"relative_path": html.name, "filename": "车间日报_2026-08-18.html", "status": "completed"}
     calls = []
 
     def render(path):
@@ -87,12 +89,50 @@ def test_pdf_cannot_resolve_a_report_outside_the_report_directory(report_client,
     assert calls == []
 
 
-def test_cached_pdf_does_not_need_to_launch_a_browser(tmp_path):
+def test_completed_record_with_a_missing_archive_is_unavailable_in_status_and_history(report_client):
+    client, job, calls, html = report_client
+    job.update(report_id="saved", device_id="Cutter01", stage_message="报告生成成功", report_date="2026-08-18",
+               project_code=None, ship_no=None, created_at="2026-08-18T09:00:00+08:00", file_size=html.stat().st_size)
+    from app.api import reports
+
+    assert reports._serialize_job(job)["status"] == 'completed'
+    html.unlink()
+    item = reports._serialize_job(job)
+    assert item['status'] == 'failed' and item['error']['code'] == 'REPORT_FILE_UNAVAILABLE'
+    assert 'download_url' not in item and 'view_url' not in item
+    assert client.get('/api/v1/reports/saved/download?device_id=Cutter01').status_code == 404
+    assert job['status'] == 'completed'
+    assert calls == []
+
+
+def test_pdf_cache_matches_html_content_even_when_timestamps_match(tmp_path):
     html = tmp_path / "report.html"
-    html.write_text("report")
-    pdf = html.with_suffix(".pdf")
-    pdf.write_bytes(b"%PDF-1.7\nexisting report")
-    assert PdfService().render(html) == pdf
+    html.write_text("<p>报表数值 111</p>")
+    stamp = html.stat()
+    service = PdfService(operation_timeout_seconds=30)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first, second = list(pool.map(service.render, (html, html)))
+    assert first == second
+    first_pdf = first.read_bytes()
+    inode = first.stat().st_ino
+    assert service.render(html).stat().st_ino == inode
+    html.write_text("<p>报表数值 222</p>")
+    os.utime(html, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+    assert service.render(html).read_bytes() != first_pdf
+    assert service.render(html).stat().st_ino != inode
+
+
+def test_incomplete_pdf_and_missing_chart_are_never_published(tmp_path, monkeypatch):
+    html = tmp_path / "report.html"
+    html.write_text('<p>有效报表</p><div class="chart" id="missing"></div>')
+    with pytest.raises(PdfRenderError, match="图表"):
+        PdfService().render(html)
+    renderer = PdfService()
+    monkeypatch.setattr(renderer, "_render_with_playwright", lambda _, output: output.write_bytes(b"%PDF-1.7\npartial"))
+    with pytest.raises(PdfRenderError, match="完整文件"):
+        renderer.render(html)
+    assert not list(tmp_path.glob('.report-*'))
+    assert not html.with_suffix('.pdf').exists()
 
 
 def test_pdf_uses_one_continuous_page_without_chapter_breaks_or_page_numbers(tmp_path):

@@ -147,14 +147,21 @@ class AutomationProcess:
 
     def _email_loop(self) -> None:
         timezone = ZoneInfo(self.settings.timezone)
+        reconcile = False
         while not self.stop_event.is_set():
             try:
+                if reconcile:
+                    # This thread is the only SMTP consumer under the lease.
+                    self._checkpoint("email", "recovering")
+                    self.runtime.automation.recover_interrupted_deliveries()
+                    reconcile = False
                 self._checkpoint("email", "delivery")
                 if self.automation_service.process_next_email(datetime.now(timezone)):
                     continue
             except ExecutionLeaseLost:
                 raise
             except Exception:
+                reconcile = True
                 logger.exception("email queue processing failed")
             finally:
                 self._checkpoint("email", "idle")

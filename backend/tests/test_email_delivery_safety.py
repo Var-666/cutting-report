@@ -38,7 +38,7 @@ def smtp_service(monkeypatch, responses, *, quit_error=False):
             return result
 
     monkeypatch.setattr("app.services.email_service.smtplib.SMTP", SMTP)
-    monkeypatch.setattr("app.services.pdf_service.PdfService.render_email", lambda self, path: EmailReport("<h1>日报</h1>", {}))
+    monkeypatch.setattr("app.services.pdf_service.PdfService.render_email", lambda self, path, **kwargs: EmailReport("<h1>日报</h1>", {}))
     configured = replace(settings, smtp_enabled=True, smtp_host="smtp.example.com",
                          smtp_from_email="report@example.com", smtp_username="", smtp_use_tls=False,
                          smtp_use_ssl=False)
@@ -116,6 +116,33 @@ def test_smtp_stages_share_one_wall_clock_budget(monkeypatch):
     assert sent == []
 
 
+@pytest.mark.parametrize('enters_data', [False, True])
+def test_disconnect_before_data_is_retryable_but_lost_data_reply_is_unknown(monkeypatch, enters_data):
+    configured = replace(settings, smtp_enabled=True, smtp_host='smtp.invalid', smtp_from_email='report@example.com',
+                         smtp_use_tls=False, smtp_use_ssl=False, smtp_username='')
+    class SMTP:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def data(self, _body):
+            raise smtplib.SMTPServerDisconnected('no DATA reply')
+
+        def send_message(self, message):
+            if enters_data:
+                return self.data(message.as_bytes())
+            raise smtplib.SMTPServerDisconnected('no RCPT reply')
+
+    monkeypatch.setattr(smtplib, 'SMTP', SMTP)
+    with pytest.raises(EmailDeliveryUnknown if enters_data else EmailDeliveryFailure):
+        EmailService(configured).send(delivery(), None)
+
+
 def ready(workflow, recipients=None):
     repository, metadata, service, run = workflow
     assert service._create_report_job(run, NOW)
@@ -156,6 +183,42 @@ def test_partial_refusal_retries_only_rejected_recipients_with_same_message_id(w
         ('SMTP_ATTEMPT_FAILED', first['delivery_id'], report_id, 'Cutter01'),
         ('SMTP_ACCEPTED', first['delivery_id'], report_id, 'Cutter01'),
     ]
+
+
+def test_mixed_refusal_automatically_retries_only_4xx_and_keeps_partial_failure(workflow, monkeypatch):
+    repository, service, report_id = ready(workflow, ['a@example.com', 'b@example.com', 'c@example.com'])
+    email, configured, sent = smtp_service(monkeypatch, [{
+        'b@example.com': (450, b'temporary'), 'c@example.com': (550, b'permanent'),
+    }, {}])
+    service.email_service = email
+    service.runtime.apply(smtp_enabled=True, smtp_host=configured.smtp_host, smtp_from_email=configured.smtp_from_email,
+                          smtp_username='', smtp_use_tls=False, smtp_use_ssl=False)
+    assert service.process_next_email(NOW)
+    first = repository.delivery_for_report(report_id)
+    assert first['status'] == 'retry_wait' and first['recipients'] == ['b@example.com']
+    assert service.process_next_email(NOW + timedelta(hours=2))
+    final = repository.delivery_for_report(report_id)
+    assert final['status'] == 'failed' and final['recipients'] == ['c@example.com']
+    assert final['recipient_results'] == {
+        'a@example.com': {'status': 'accepted'}, 'b@example.com': {'status': 'accepted'},
+        'c@example.com': {'status': 'refused', 'code': 550},
+    }
+    assert sent[1]['To'] == 'b@example.com'
+    assert sent[0]['Message-ID'] == sent[1]['Message-ID']
+    assert not service.process_next_email(NOW + timedelta(hours=4))
+
+
+def test_corrupted_html_is_stopped_before_submitting_any_email(workflow):
+    repository, service, report_id = ready(workflow)
+    path = service.settings.reports_dir / 'r.html'
+    data = path.read_bytes()
+    path.write_bytes(data.replace(b'h1', b'h2'))
+    def reject(*_args, **_kwargs):
+        pytest.fail('SMTP must never receive an unverified archive')
+    service.email_service = SimpleNamespace(send=reject)
+    assert service.process_next_email(NOW)
+    record = repository.delivery_for_report(report_id)
+    assert record['status'] == 'retry_wait' and '尚未提交 SMTP' in record['last_error']
 
 
 def test_success_then_database_failure_is_not_automatically_resent(workflow, monkeypatch, caplog):

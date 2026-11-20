@@ -85,13 +85,13 @@ const metrics = computed(() => {
   return [
     { title: '已启用计划', value: summary?.schedule_enabled, icon: 'calendar', color: 'rgb(var(--primary-color))' },
     { title: '等待 / 重试', value: summary?.delivery_pending, icon: 'clock', color: 'rgb(var(--warning-color))' },
-    { title: '已发送', value: summary?.delivery_sent, icon: 'send', color: 'rgb(var(--success-color))' },
+    { title: 'SMTP 已接收', value: summary?.delivery_sent, icon: 'send', color: 'rgb(var(--success-color))' },
     { title: '失败 / 待核对', value: summary && `${summary.delivery_failed} / ${summary.delivery_unknown}`, icon: 'alert', color: 'rgb(var(--error-color))' },
   ]
 })
 const reportLabels: Record<string, string> = { leadership: '领导报表', workshop: '车间报表', equipment: '设备报表' }
 const deliveryLabels: Record<string, string> = {
-  pending: '等待发送', sending: '发送中', retry_wait: '等待重试', analysis_wait: '等待分析生成', sent: '已发送', failed: '发送失败', unknown: '结果待核对', cancelled: '已取消',
+  pending: '等待发送', sending: '发送中', retry_wait: '等待重试', analysis_wait: '等待分析生成', sent: 'SMTP 已接收', failed: '发送失败', unknown: '结果待核对', cancelled: '已取消',
 }
 const scheduleLabels: Record<string, string> = { ...deliveryLabels, queued: '等待生成报表' }
 

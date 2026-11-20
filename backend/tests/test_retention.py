@@ -148,6 +148,7 @@ def test_alarm_retention_uses_occurrence_and_preserves_reports_with_unresolved_m
         html.parent.mkdir(parents=True, exist_ok=True)
         html.write_text("report", encoding="utf-8")
         html.with_suffix(".pdf").write_bytes(b"pdf")
+        html.with_suffix(".pdf.source").write_text("cache signature")
         alarms.complete_report(identifier, analysis={}, model_status="model",
             completed_at=NOW.isoformat(), html_relative_path=f"alarms/{identifier}.html",
             pdf_relative_path=f"alarms/{identifier}.pdf", pdf_filename=f"{identifier}.pdf",
@@ -169,6 +170,8 @@ def test_alarm_retention_uses_occurrence_and_preserves_reports_with_unresolved_m
         assert alarms.get_report(identifier) is not None
     assert (cfg.reports_dir / "alarms/shared.pdf").is_file()
     assert not (cfg.reports_dir / "alarms/expired.pdf").exists()
+    assert (cfg.reports_dir / "alarms/shared.pdf.source").is_file()
+    assert not (cfg.reports_dir / "alarms/expired.pdf.source").exists()
 
     # A shared report is retained until every member is resolved and expired.
     with database.connect() as connection:

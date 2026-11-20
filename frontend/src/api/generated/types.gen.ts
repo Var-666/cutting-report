@@ -5280,6 +5280,10 @@ export type LogRecord = {
      */
     report_id?: string | null;
     /**
+     * Run Id
+     */
+    run_id?: string | null;
+    /**
      * Line Id
      */
     line_id?: string | null;
@@ -5303,6 +5307,14 @@ export type LogRecord = {
      * Error Code
      */
     error_code?: string | null;
+    /**
+     * Error Type
+     */
+    error_type?: string | null;
+    /**
+     * Attempt
+     */
+    attempt?: number | null;
     /**
      * Duration Ms
      */
@@ -13267,6 +13279,12 @@ export type ListReportsApiV1ReportsGetResponse = ListReportsApiV1ReportsGetRespo
 
 export type CreateReportApiV1ReportsPostData = {
     body: ReportCreateRequest;
+    headers?: {
+        /**
+         * Idempotency-Key
+         */
+        'idempotency-key'?: string | null;
+    };
     path?: never;
     query?: never;
     url: '/api/v1/reports';

@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 from app.core.operations_logging import event
 from app.database.postgres import ExecutionLeaseLost
 from app.config import Settings
+from app.database.automation import AutomationRepository
 from app.database.energy import EnergyReportRepository
 from app.database.metadata import MetadataRepository
 from app.database.definitions import DefinitionRepository
@@ -202,8 +203,9 @@ class ReportPipeline:
             raise
         except Exception as exc:
             code = 'REPORT_TIMEOUT' if isinstance(exc, ReportOperationTimeout) else 'REPORT_STAGE_FAILED'
+            exc.report_stage = stage
             event(logger, logging.ERROR, '报表阶段执行失败', error_code=code, stage=stage,
-                  report_id=job['report_id'], line_id=self.settings.device_id, exc_info=True)
+                  report_id=job['report_id'], line_id=self.settings.device_id, error_type=type(exc).__name__)
             raise
         finally:
             self._cancellation_check = previous_check
@@ -219,6 +221,11 @@ class ReportPipeline:
     ) -> None:
         self._ensure_active()
         report_id = job["report_id"]
+        rendered_analysis = report.get("analysis")
+        if analysis_status == "success" and isinstance(rendered_analysis, dict) and rendered_analysis.get("status") != "success":
+            if AutomationRepository(self.database).get_run_for_report(report_id) is not None:
+                raise ReportAnalysisPendingError("归档报告尚无与本次数据匹配的成功分析，等待自动重试")
+            analysis_status = rendered_analysis["status"]
         self.metadata.update_status(
             report_id,
             "rendering",
@@ -230,19 +237,34 @@ class ReportPipeline:
             report=report,
             generated_at=generated_at,
         )
-        self._ensure_active()
-        with UnitOfWork(self.database, self.settings.timezone, device_id=self.settings.device_id, scope_machine_no=self.settings.report_machine_no) as unit:
-            unit.metadata.save_report(
-                report_id=report_id,
-                task_count=task_count,
-                generated_at=generated_at.isoformat(timespec="seconds"),
-                system_version=self.settings.app_version,
-                **file_info,
-            )
-            unit.metadata.update_status(
-                report_id,
-                "completed",
-                "报告生成成功",
-                ai_status=analysis_status,
-                finished_at=generated_at.isoformat(timespec="seconds"),
-            )
+        try:
+            self._ensure_active()
+            with UnitOfWork(self.database, self.settings.timezone, device_id=self.settings.device_id, scope_machine_no=self.settings.report_machine_no) as unit:
+                unit.metadata.save_report(
+                    report_id=report_id,
+                    task_count=task_count,
+                    generated_at=generated_at.isoformat(timespec="seconds"),
+                    system_version=self.settings.app_version,
+                    **file_info,
+                )
+                unit.metadata.update_status(
+                    report_id,
+                    "completed",
+                    "报告生成成功",
+                    ai_status=analysis_status,
+                    finished_at=generated_at.isoformat(timespec="seconds"),
+                )
+        except Exception:
+            # The commit reply can be lost. Remove the attempt file only after
+            # PostgreSQL confirms it was never published.
+            try:
+                published = self.metadata.get_job(report_id)
+                if published and published.get("relative_path") == file_info["relative_path"]:
+                    if published["status"] == "completed" and published.get("sha256") == file_info["sha256"]:
+                        return
+                else:
+                    (self.settings.reports_dir / file_info["relative_path"]).unlink(missing_ok=True)
+            except Exception as cleanup:
+                event(logger, logging.WARNING, '归档结果待核对', error_code='REPORT_ARCHIVE_UNCERTAIN',
+                      report_id=report_id, line_id=self.settings.device_id, stage='archiving', error_type=type(cleanup).__name__)
+            raise

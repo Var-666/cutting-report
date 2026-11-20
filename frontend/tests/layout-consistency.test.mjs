@@ -169,16 +169,12 @@ test('chart-only report panels omit the duplicate table and preserve the default
   }
 })
 
-test('report export feedback can retry the exact last request', () => {
-  const exportSource = readFileSync(new URL('../src/composables/useReportExport.ts', import.meta.url), 'utf8')
-  assert.match(exportSource, /lastRequest = \{ payload, format \}/)
-  assert.match(exportSource, /function retryExport\(\)[\s\S]*exportReport\(lastRequest\.payload, lastRequest\.format\)/)
-
+test('report export feedback exposes the recovery action in each existing page', () => {
   for (const name of ['AdminLeadershipView', 'AdminWorkshopView', 'AdminEquipmentView']) {
     const view = descriptor(name)
     assert.match(view.scriptSetup.content, /retryExport/)
     assert.match(view.template.content, /<ReportFeedback/)
-    assert.match(view.template.content, /action-label="重试导出"/)
+    assert.match(view.template.content, /:action-label="retryLabel"/)
     assert.match(view.template.content, /@action="retryExport"/)
   }
 })

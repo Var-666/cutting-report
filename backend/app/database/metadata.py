@@ -101,16 +101,17 @@ class MetadataRepository(PostgresRepository):
         period_start: str | None = None,
         period_end: str | None = None,
         device_id: str | None = None,
-    ) -> None:
+        allow_existing: bool = False,
+    ) -> bool:
         with self.connect() as connection:
-            connection.execute(
+            inserted = connection.execute(
                 """
                 INSERT INTO report_jobs (
                     report_id, report_type, status, stage_message, report_date, project_code,
                     ship_no, created_at, request_id, definition_id, report_title, parameters_json,
                     period_start, period_end, device_id
                 ) VALUES (%s, %s, 'pending', '等待生成', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """,
+                """ + (" ON CONFLICT (report_id) DO NOTHING" if allow_existing else ""),
                 (
                     report_id,
                     report_type,
@@ -127,6 +128,7 @@ class MetadataRepository(PostgresRepository):
                     self.require_device_id(device_id),
                 ),
             )
+            return inserted.rowcount == 1
 
     def claim_next_job(self, started_at: str) -> dict[str, Any] | None:
         with self.connect() as connection:
@@ -443,11 +445,11 @@ class MetadataRepository(PostgresRepository):
             ).fetchone()['count']
             rows = connection.execute(
                 f"""
-                SELECT j.*, r.filename, r.file_size, r.task_count, r.generated_at
+                SELECT j.*, r.filename, r.relative_path, r.file_size, r.task_count, r.generated_at
                 FROM report_jobs j
                 LEFT JOIN reports r ON r.report_id = j.report_id
                 {where}
-                ORDER BY j.created_at DESC
+                ORDER BY j.created_at DESC, j.report_id DESC
                 LIMIT %s OFFSET %s
                 """,
                 [*parameters, page_size, (page - 1) * page_size],

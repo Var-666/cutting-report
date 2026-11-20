@@ -172,7 +172,8 @@ class ReportWorker:
                         self.stop_event.wait(self.settings.worker_poll_seconds)
                 else:
                     return
-                logger.info('report deferred pending analysis: report_id=%s', report_id)
+                event(logger, logging.INFO, '报表延期等待智能分析', error_code='ANALYSIS_WAITING', stage='analyzing',
+                      duration_ms=(monotonic() - started) * 1000)
                 return
             except ReportPipelineCancelled:
                 if self.stop_event.is_set():
@@ -182,13 +183,21 @@ class ReportWorker:
             except ExecutionLeaseLost:
                 raise
             except Exception as exc:
-                event(logger, logging.ERROR, '报表生成失败', error_code='REPORT_GENERATION_FAILED', exc_info=True)
+                stage = getattr(exc, "report_stage", None)
+                code, message = {
+                    "querying": ("REPORT_QUERY_FAILED", "查询生产数据失败，请联系管理员"),
+                    "calculating": ("REPORT_CALCULATION_FAILED", "计算报表指标失败，请联系管理员"),
+                    "analyzing": ("REPORT_ANALYSIS_FAILED", "整理智能分析失败，请联系管理员"),
+                    "rendering": ("REPORT_ARCHIVE_FAILED", "生成或归档 HTML 失败，请联系管理员"),
+                }.get(stage, ("REPORT_GENERATION_FAILED", "报告生成失败，请联系管理员"))
+                event(logger, logging.ERROR, '报表生成失败', error_code=code, stage=stage,
+                      error_type=type(exc).__name__, duration_ms=(monotonic() - started) * 1000)
                 while not self.stop_event.is_set():
                     try:
                         self.metadata.update_status(
-                            report_id, "failed", "报告生成失败，请联系管理员",
+                            report_id, "failed", message,
                             finished_at=datetime.now(timezone).isoformat(timespec="seconds"),
-                            error_code="REPORT_GENERATION_FAILED", error_message=str(exc)[:500],
+                            error_code=code, error_message=message,
                         )
                         break
                     except ExecutionLeaseLost:
@@ -201,7 +210,7 @@ class ReportWorker:
                 if self.automation_service is not None:
                     try:
                         self.automation_service.report_failed(
-                            report_id, str(exc)[:500], datetime.now(timezone)
+                            report_id, message, datetime.now(timezone)
                         )
                     except Exception:
                         logger.exception("automation failure callback failed", extra={"report_id": report_id})

@@ -81,7 +81,7 @@ class AlarmReportService:
             pdf_path = self.pdf_service.render(html_path)
             content = pdf_path.read_bytes()
         except Exception:
-            self._remove_paths([temporary_path, html_path, html_path.with_suffix(".pdf"),
+            self._remove_paths([temporary_path, html_path, html_path.with_suffix(".pdf"), html_path.with_suffix(".pdf.source"),
                                 folder / f".{stem}.pdf.tmp"])
             raise
         safe_machine = "".join(char for char in machine_no if char not in '\\/:*?"<>|')[:40]
@@ -109,4 +109,6 @@ class AlarmReportService:
             if not path.is_relative_to(root):
                 raise ValueError("告警报告清理路径越界")
             paths.append(path)
+            if key == "pdf_relative_path":
+                paths.append(path.with_suffix(".pdf.source"))
         self._remove_paths(paths)

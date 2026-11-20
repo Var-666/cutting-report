@@ -8,6 +8,7 @@ import pytest
 from app.database.coordination import CoordinationRepository
 from app.database.postgres import execution_scope
 from app.services.pipeline import ReportPipeline
+from app.services.pipeline import ReportAnalysisPendingError
 from app.services.query_service import QueryService
 from app.services.llm_service import LlmRequestTimeout
 from app.workers.report_worker import ReportWorker
@@ -126,6 +127,18 @@ def test_sent_unknown_and_inflight_legacy_mail_are_never_requeued(workflow, stat
     assert repository.get_run(run['run_id'])['report_id'] == old_id
     assert repository.delivery_for_report(old_id)['status'] == status
     service.email_service.send.assert_not_called()
+
+
+def test_automation_waits_if_the_matching_ai_analysis_was_excluded_from_the_archive(workflow):
+    repository, metadata, service, run = workflow
+    assert service._create_report_job(run, NOW)
+    pipeline = ReportPipeline(service.settings, metadata)
+    job = metadata.claim_next_job(STAMP)
+    with pytest.raises(ReportAnalysisPendingError, match='匹配'):
+        pipeline._render_and_complete(job=job, report={'analysis': {'status': 'unavailable'}},
+                                       generated_at=NOW, task_count=1, analysis_status='success')
+    assert metadata.get_job(job['report_id'])['relative_path'] is None
+    assert repository.claim_delivery(STAMP) is None
 
 
 def test_parallel_delivery_consumers_create_only_one_replacement(workflow):

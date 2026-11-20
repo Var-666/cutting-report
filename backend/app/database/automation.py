@@ -352,7 +352,7 @@ class AutomationRepository(PostgresRepository):
                 AutomationRepository(self.database, connection=connection).mark_run(run['run_id'], 'email_pending', now=now)
                 return AutomationRepository(self.database, connection=connection).delivery_for_report(report_id)
             delivery_id = f"mail_{uuid4().hex[:18]}"
-            connection.execute(
+            inserted = connection.execute(
                 """
                 INSERT INTO email_deliveries (
                     delivery_id, run_id, report_id, recipients_json, subject,
@@ -364,13 +364,14 @@ class AutomationRepository(PostgresRepository):
                     subject, run["max_attempts"], now, now, now,
                 ),
             )
-            connection.execute(
-                """
-                UPDATE scheduled_report_runs SET status = 'email_pending', updated_at = %s
-                WHERE run_id = %s
-                """,
-                (now, run["run_id"]),
-            )
+            if inserted.rowcount == 1:
+                connection.execute(
+                    """
+                    UPDATE scheduled_report_runs SET status = 'email_pending', updated_at = %s
+                    WHERE run_id = %s
+                    """,
+                    (now, run["run_id"]),
+                )
         return self.delivery_for_report(report_id)
 
     def delivery_for_report(self, report_id: str) -> dict | None:
@@ -393,7 +394,7 @@ class AutomationRepository(PostgresRepository):
             row = connection.execute(
                 """
                 SELECT d.*, r.schedule_name, r.report_type, r.report_date, r.attach_report, r.device_id,
-                       p.filename, p.relative_path, p.generated_at, j.ai_status
+                       p.filename, p.relative_path, p.file_size, p.sha256, p.generated_at, j.ai_status
                 FROM email_deliveries AS d
                 JOIN scheduled_report_runs AS r ON r.run_id = d.run_id
                 JOIN reports AS p ON p.report_id = d.report_id
@@ -455,22 +456,27 @@ class AutomationRepository(PostgresRepository):
                 execution_owner=NULL,last_error='旧报告缺少成功分析，等待重新生成',updated_at=%s WHERE delivery_id=%s""",
                 (now, row['delivery_id']))
 
-    def mark_delivery_sent(self, delivery: dict, *, message_id: str, now: str) -> None:
+    def mark_delivery_sent(self, delivery: dict, *, message_id: str, now: str) -> bool:
         with self.connect() as connection:
             results = dict(delivery.get("recipient_results", {}))
             results.update({recipient: {"status": "accepted"} for recipient in delivery["recipients"]})
+            remaining = [recipient for recipient, result in results.items() if result["status"] == "refused"]
+            status = "failed" if remaining else "sent"
+            error = "部分收件人被 SMTP 永久拒收，其他收件人已由 SMTP 接收" if remaining else None
             updated = connection.execute(
                 """
                 UPDATE email_deliveries
-                SET status = 'sent', message_id = %s, last_error = NULL,
+                SET status = %s, message_id = %s, last_error = %s, recipients_json = %s,
                     sent_at = %s, updated_at = %s, recipient_results_json = %s
                 WHERE delivery_id = %s AND status = 'sending'
                 """,
-                (message_id, now, now, json.dumps(results), delivery["delivery_id"]),
+                (status, message_id, error, json.dumps(remaining or delivery["recipients"]),
+                 now if not remaining else None, now, json.dumps(results), delivery["delivery_id"]),
             )
             if updated.rowcount != 1:
                 raise LookupError("邮件不在发送状态，拒绝写入迟到结果")
-            AutomationRepository(self.database, connection=connection).mark_run(delivery["run_id"], "sent", now=now)
+            AutomationRepository(self.database, connection=connection).mark_run(delivery["run_id"], status, now=now, error=error)
+            return not remaining
 
     def mark_delivery_failed(
         self, delivery: dict, *, error: str, next_attempt_at: str, now: str
@@ -494,24 +500,30 @@ class AutomationRepository(PostgresRepository):
 
     def mark_delivery_refused(self, delivery: dict, refused: dict, *, message_id: str,
                              next_attempt_at: str, now: str) -> None:
+        if not any(recipient in refused for recipient in delivery["recipients"]):
+            raise ValueError("SMTP 拒收结果没有匹配的收件人")
         results = dict(delivery.get("recipient_results", {}))
         remaining = []
         for recipient in delivery["recipients"]:
             if recipient in refused:
-                remaining.append(recipient)
-                results[recipient] = {"status": "refused", "code": int(refused[recipient][0])}
+                code = int(refused[recipient][0])
+                if 400 <= code < 500:
+                    remaining.append(recipient)
+                results[recipient] = {"status": "refused", "code": code}
             else:
                 results[recipient] = {"status": "accepted"}
-        if not remaining:
-            raise ValueError("SMTP 拒收结果没有匹配的收件人")
+        rejected = [recipient for recipient, result in results.items() if result["status"] == "refused"]
         with self.connect() as connection:
             connection.execute(
                 """UPDATE email_deliveries SET recipients_json = %s, recipient_results_json = %s,
                    message_id = %s WHERE delivery_id = %s AND status = 'sending'""",
-                (json.dumps(remaining), json.dumps(results), message_id, delivery["delivery_id"]),
+                (json.dumps(remaining or rejected), json.dumps(results), message_id, delivery["delivery_id"]),
             )
+            attempt = delivery if remaining else {**delivery, 'attempt_count': delivery['max_attempts']}
             AutomationRepository(self.database, connection=connection).mark_delivery_failed(
-                delivery, error="SMTP 拒收收件人，仅重试拒收部分", next_attempt_at=next_attempt_at, now=now
+                attempt, error=("SMTP 部分或全部拒收，仅自动重试临时拒收地址" if remaining
+                                else "SMTP 永久拒收收件人，已停止自动重试"),
+                next_attempt_at=next_attempt_at, now=now,
             )
 
     def mark_delivery_unknown(self, delivery: dict, *, now: str) -> None:
@@ -545,7 +557,7 @@ class AutomationRepository(PostgresRepository):
                                                 for value in decisions.values()):
             raise ValueError("收件人核对结果重复或无效")
         with self.connect() as connection:
-            row = connection.execute("SELECT * FROM email_deliveries WHERE delivery_id=%s",
+            row = connection.execute("SELECT * FROM email_deliveries WHERE delivery_id=%s FOR UPDATE",
                                      (delivery_id,)).fetchone()
             if row is None:
                 raise LookupError("邮件发送记录不存在")
@@ -563,6 +575,8 @@ class AutomationRepository(PostgresRepository):
                                      for recipient, outcome in decisions.items()}}
             remaining = [recipient for recipient in delivery["recipients"]
                          if decisions.get(recipient) == "not_accepted"]
+            remaining.extend(recipient for recipient, result in previous.items()
+                             if result["status"] == "refused" and recipient not in decisions)
             status = "failed" if remaining else "sent"
             error = "人工核对服务器确认未接收，等待人工重试" if remaining else None
             connection.execute("""
@@ -597,18 +611,16 @@ class AutomationRepository(PostgresRepository):
     def retry_delivery(self, delivery_id: str, *, now: str) -> bool:
         with self.connect() as connection:
             row = connection.execute(
-                "SELECT run_id FROM email_deliveries WHERE delivery_id = %s AND status = 'failed'", (delivery_id,)
-            ).fetchone()
-            if row is None:
-                return False
-            connection.execute(
                 """
                 UPDATE email_deliveries
                 SET status = 'pending', attempt_count = 0, next_attempt_at = %s,
                     last_error = NULL, updated_at = %s WHERE delivery_id = %s
+                    AND status = 'failed' RETURNING run_id
                 """,
                 (now, now, delivery_id),
-            )
+            ).fetchone()
+            if row is None:
+                return False
             connection.execute(
                 """
                 UPDATE scheduled_report_runs SET status = 'email_pending',

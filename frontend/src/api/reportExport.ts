@@ -1,23 +1,25 @@
 import type { ReadOptions } from '../types/api'
-import { deviceUrl } from './deviceContext.ts'
+import { request } from './client.ts'
 import { createReport, getReportStatus } from './cutting.ts'
 import { throwIfAborted } from '../utils/abort.ts'
+import { waitForReportPoll } from './reportRequests.ts'
 
-export async function downloadReportPdf(reportId: string, { signal }: ReadOptions = {}) {
+export function createReportKey() {
+  // getRandomValues is also available on the HTTP intranet.
+  return Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('')
+}
+
+export async function downloadReportPdf(reportId: string, { signal, deviceId }: ReadOptions & { deviceId?: string } = {}) {
   throwIfAborted(signal)
-  const response = await fetch(deviceUrl(`/api/v1/reports/${encodeURIComponent(reportId)}/download?format=pdf`), {
-    credentials: 'same-origin', signal,
+  const { blob, headers } = await request(`/api/v1/reports/${encodeURIComponent(reportId)}/download?format=pdf`, {
+    signal, responseType: 'blob', headers: deviceId ? { 'X-Production-Line': deviceId } : undefined,
   })
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({}))
-    throw new Error(payload?.error?.message || payload?.detail || 'PDF 下载失败，请稍后重试')
-  }
-  if (!response.headers.get('content-type')?.includes('application/pdf')) {
+  if (!headers.get('content-type')?.includes('application/pdf')) {
     throw new Error('服务器未返回 PDF 文件，请重试')
   }
-  const blob = await response.blob()
   throwIfAborted(signal)
-  const disposition = response.headers.get('content-disposition') || ''
+  if (!blob.size) throw new Error('PDF 文件为空，请重试')
+  const disposition = headers.get('content-disposition') || ''
   const encodedName = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1]
   const plainName = disposition.match(/filename="([^"]+)"/i)?.[1]
   const filename = encodedName ? decodeURIComponent(encodedName) : (plainName || `${reportId}.pdf`)
@@ -31,22 +33,28 @@ export async function downloadReportPdf(reportId: string, { signal }: ReadOption
   setTimeout(() => URL.revokeObjectURL(url), 60_000)
 }
 
-export async function waitForReport(reportId: string, { signal, onStatus = () => {}, timeoutMs = 300_000 }: ReadOptions & { onStatus?: (message: string) => void; timeoutMs?: number } = {}) {
+export async function waitForReport(reportId: string, { signal, deviceId, onStatus = () => {}, timeoutMs = 300_000 }: ReadOptions & { deviceId?: string; onStatus?: (message: string) => void; timeoutMs?: number } = {}) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     throwIfAborted(signal)
-    const job = await getReportStatus(reportId, { signal })
+    let job
+    try {
+      job = await getReportStatus(reportId, { signal, deviceId })
+    } catch (error) {
+      throwIfAborted(signal)
+      const status = (error as { status?: number })?.status
+      if (status && status < 500 && status !== 408 && status !== 429) throw error
+      onStatus('暂时无法读取进度，正在重新连接…')
+      await waitForReportPoll(signal)
+      continue
+    }
     throwIfAborted(signal)
     onStatus(job.stage_message || '正在生成报告…')
     if (job.status === 'completed') return job
     if (job.status === 'failed') throw new Error(job.error?.message || '报告生成失败')
-    await new Promise<void>((resolve, reject) => {
-      const abort = () => { clearTimeout(timer); reject(new DOMException('已取消导出等待', 'AbortError')) }
-      const timer = setTimeout(() => { signal?.removeEventListener('abort', abort); resolve() }, 1000)
-      signal?.addEventListener('abort', abort, { once: true })
-    })
+    await waitForReportPoll(signal)
   }
-  throw new Error('报告仍在生成，请稍后到“生成与历史”下载 PDF。')
+  throw new Error('已停止等待进度，可在“生成与历史”查看任务或下载 PDF。')
 }
 
 export { createReport }

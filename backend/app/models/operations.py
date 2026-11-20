@@ -37,12 +37,15 @@ class LogRecord(BaseModel):
     analysis_id: str | None = None
     task_id: str | None = None
     report_id: str | None = None
+    run_id: str | None = None
     line_id: str | None = None
     source_id: str | None = None
     resource_id: str | None = None
     related_kind: str | None = None
     stage: str | None = None
     error_code: str | None = None
+    error_type: str | None = None
+    attempt: int | None = None
     duration_ms: float | None = None
     exception: SafeException | None = None
     data_quality: dict[Literal['state', 'period_start', 'period_end', 'data_as_of', 'missing_count', 'estimated_count',

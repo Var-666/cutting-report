@@ -33,6 +33,13 @@ def test_report_period_resolves_without_locale_assumptions() -> None:
     assert report_date_for({"report_period": "previous_month"}, scheduled_for) == date(2025, 12, 1)
 
 
+def test_schedule_rollover_and_leap_day_keep_existing_calendar_rules():
+    schedule = {"frequency": "monthly", "run_time": "08:00", "month_day": 28, "report_period": "previous_month"}
+    assert next_run_at(schedule, datetime(2027, 12, 28, 9, tzinfo=TZ)) == datetime(2028, 1, 28, 8, tzinfo=TZ)
+    assert next_run_at(schedule, datetime(2028, 1, 28, 9, tzinfo=TZ)) == datetime(2028, 2, 28, 8, tzinfo=TZ)
+    assert report_date_for({"report_period": "previous_day"}, datetime(2028, 3, 1, 8, tzinfo=TZ)) == date(2028, 2, 29)
+
+
 def test_schedule_and_email_retry_history_are_persisted(state_database, tmp_path) -> None:
     database_path = tmp_path / "metadata.db"
     metadata = MetadataRepository(state_database, device_id='Cutter01')

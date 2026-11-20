@@ -90,15 +90,19 @@ export function listWorkshopConfirmationAudits({ reportDate, taskId, limit = 30 
   return request<Items<ConfirmationAudit>>(`/api/v1/workshop/confirmation-audits?${query}`)
 }
 
-export function createReport(form: ReportCreateRequest) {
+export function createReport(form: ReportCreateRequest, { idempotencyKey, deviceId }: { idempotencyKey?: string; deviceId?: string } = {}) {
   return request<ReportAccepted>('/api/v1/reports', {
     method: 'POST',
     body: JSON.stringify(form),
+    headers: { ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
+      ...(deviceId ? { 'X-Production-Line': deviceId } : {}) },
   }).then((data) => { reportCache.invalidate('history:'); return data })
 }
 
-export function getReportStatus(reportId: string, { signal }: ReadOptions = {}) {
-  return request<ReportJob>(`/api/v1/reports/${encodeURIComponent(reportId)}/status`, { signal })
+export function getReportStatus(reportId: string, { signal, deviceId }: ReadOptions & { deviceId?: string } = {}) {
+  return request<ReportJob>(`/api/v1/reports/${encodeURIComponent(reportId)}/status`, {
+    signal, headers: deviceId ? { 'X-Production-Line': deviceId } : undefined,
+  })
 }
 
 export function listReports({ page = 1, pageSize = 20, force = false, signal }: ReadOptions & { page?: number; pageSize?: number } = {}) {

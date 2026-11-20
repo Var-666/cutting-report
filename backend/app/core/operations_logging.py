@@ -28,7 +28,7 @@ FILE_NAME = re.compile(r'(web|scheduler|worker|automation)-[0-9a-f]{24}\.jsonl(?
 MAX_FILE_BYTES = 2 * 1024 * 1024
 MAX_INSTANCES = 32
 FIELDS = ('request_id', 'analysis_id', 'task_id', 'report_id', 'line_id', 'source_id',
-          'stage', 'error_code', 'resource_id', 'related_kind')
+          'stage', 'error_code', 'resource_id', 'related_kind', 'run_id', 'error_type')
 QUALITY_FIELDS = ('state', 'period_start', 'period_end', 'data_as_of', 'missing_count', 'estimated_count',
                   'data_version', 'summary_count', 'daily_count', 'grouped_count')
 QUALITY_VALUE = re.compile(r'[A-Za-z0-9_.:+-]{1,160}')
@@ -84,6 +84,8 @@ def safe_record(record, role, instance):
         captured['request_id'] = log_request_id(captured['request_id'])
     if type(fields.get('duration_ms')) in (int, float) and 0 <= fields['duration_ms'] < 1e10:
         captured['duration_ms'] = round(fields['duration_ms'], 1)
+    if type(fields.get('attempt')) is int and 0 <= fields['attempt'] <= 1000000:
+        captured['attempt'] = fields['attempt']
     if (quality := getattr(record, 'operations_quality', None)) is not None:
         captured['data_quality'] = {key: str(value) for key in QUALITY_FIELDS
                                     if (value := quality.get(key)) is not None and QUALITY_VALUE.fullmatch(str(value))}
