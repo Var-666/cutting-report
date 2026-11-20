@@ -19,6 +19,8 @@ const emit = defineEmits<{ submit: [filters: PdmFilters]; retry: [] }>()
 const id = useId()
 const validationError = shallowRef('')
 const visibleKinds = computed(() => pdmDocumentKinds.filter(item => props.kind ? item.value === props.kind : filters.value.documentKinds.includes(item.value)))
+const canQuery = computed(() => props.status !== 'unavailable' && visibleKinds.value.length > 0
+  && visibleKinds.value.every(item => props.options[item.value]))
 const period = computed<[string, string] | null>(() => filters.value.startDate && filters.value.endDate ? [filters.value.startDate, filters.value.endDate] : null)
 const staticFields = new Set<PdmFilterField>(['types', 'manufactory'])
 const groupingHint = computed(() => filters.value.groupBy === 'project'
@@ -47,9 +49,10 @@ function setKinds(values: PdmDocumentKind[]) {
   filters.value = { ...filters.value, documentKinds: [...values] }
   validationError.value = ''
 }
-function setField(kind: PdmDocumentKind, field: PdmFilterField, values: string[]) {
+function setField(kind: PdmDocumentKind, field: PdmFilterField, values: string[] | null) {
   const next = clonePdmFilters(filters.value)
-  next[kind][field] = [...values]
+  if (field === 'responsiblePeople') next[kind].responsiblePeople = values
+  else next[kind][field] = values ?? []
   if (field === 'types' || field === 'projects') {
     for (const key of ['levels', 'areas', 'manufactory', 'batches', 'classifications', 'weights'] as const) next[kind][key] = []
     next[kind].responsiblePeople = null
@@ -62,7 +65,7 @@ function setPeriod(value: string | [string, string] | null) {
   validationError.value = ''
 }
 function submit() {
-  if (props.status !== 'ready') return
+  if (!canQuery.value || props.querying) return
   validationError.value = validatePdmFilters(filters.value)
   if (!validationError.value) emit('submit', clonePdmFilters(filters.value))
 }
@@ -93,16 +96,16 @@ function submit() {
 
     <section v-for="kind in visibleKinds" :key="kind.value" class="pdm-filters__branch" :aria-labelledby="`${id}-${kind.value}`">
       <h2 :id="`${id}-${kind.value}`">{{ kind.label }}</h2>
-      <ReportDataStatus :meta="options[kind.value]?.meta" :busy="status === 'loading'" :aria-label="`${kind.label}筛选选项更新时间`" @refresh="emit('retry')" />
+      <ReportDataStatus :meta="options[kind.value]?.meta" :busy="status === 'loading'" :aria-label="`${kind.label}筛选选项状态`" @refresh="emit('retry')" />
       <div class="pdm-filters__fields">
         <NFormItem v-for="field in fieldsFor(kind.value)" :key="field.key" :label="fieldLabel(field)" :label-for="`${id}-${kind.value}-${field.key}`" :show-feedback="false">
-          <NSelect :value="filters[kind.value][field.key]" :options="optionsFor(kind.value, field.key)" multiple filterable clearable size="large" :max-tag-count="1"
-            :disabled="!staticFields.has(field.key) && status !== 'ready'" :loading="!staticFields.has(field.key) && status === 'loading'"
-            :placeholder="!staticFields.has(field.key) && status !== 'ready' ? status === 'loading' ? '正在加载' : status === 'error' ? '选项加载失败' : '待接入 PDM' : field.key === 'responsiblePeople' ? '请选择负责人' : '全部'"
+          <NSelect :value="filters[kind.value][field.key] ?? []" :options="optionsFor(kind.value, field.key)" multiple filterable clearable size="large" :max-tag-count="1"
+            :disabled="!staticFields.has(field.key) && !canQuery" :loading="!staticFields.has(field.key) && status === 'loading' && !canQuery"
+            :placeholder="!staticFields.has(field.key) && !canQuery ? status === 'loading' ? '正在加载' : status === 'error' ? '选项加载失败' : '待接入 PDM' : field.key === 'responsiblePeople' && filters[kind.value].responsiblePeople !== null ? '未选择负责人' : '全部'"
             :input-props="{ id: `${id}-${kind.value}-${field.key}`, 'aria-label': `${kind.label}${field.label}` }"
-            @update:value="values => setField(kind.value, field.key, values)">
+            @update:value="values => setField(kind.value, field.key, values ?? [])">
             <template #empty>当前范围暂无可选项</template>
-            <template #action><div class="pdm-filters__select-actions"><NButton text size="small" @click="setField(kind.value, field.key, optionsFor(kind.value, field.key).map(item => item.value))">全选</NButton><NButton text size="small" @click="setField(kind.value, field.key, [])">清空</NButton></div></template>
+            <template #action><div class="pdm-filters__select-actions"><NButton text size="small" @click="setField(kind.value, field.key, field.key === 'responsiblePeople' ? null : optionsFor(kind.value, field.key).map(item => item.value))">全选</NButton><NButton text size="small" @click="setField(kind.value, field.key, [])">清空</NButton></div></template>
           </NSelect>
         </NFormItem>
       </div>
@@ -111,7 +114,7 @@ function submit() {
     <NAlert v-if="status === 'unavailable'" type="info" :show-icon="false">PDM 数据源尚未启用，请在数据库配置中启用文件库连接。</NAlert>
     <NAlert v-else-if="status === 'error'" type="error" title="筛选选项加载失败"><span>{{ error }}</span><NButton text @click="emit('retry')">重试</NButton></NAlert>
     <p v-if="validationError" class="pdm-filters__error" role="alert">{{ validationError }}</p>
-    <footer class="pdm-filters__footer"><span v-if="pending" role="status">筛选条件已修改，查询后更新结果</span><slot name="actions" /><NButton attr-type="submit" type="primary" size="large" :disabled="status !== 'ready'" :loading="querying">查询</NButton></footer>
+    <footer class="pdm-filters__footer"><span v-if="pending" role="status">筛选条件已修改，查询后更新结果</span><slot name="actions" /><NButton attr-type="submit" type="primary" size="large" :disabled="!canQuery" :loading="querying">查询</NButton></footer>
   </form>
 </template>
 

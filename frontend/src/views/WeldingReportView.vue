@@ -15,7 +15,6 @@ import ReportAnalysis from '../components/ReportAnalysis.vue'
 import AppSelect from '../components/AppSelect.vue'
 import ReportFeedback from '../components/ReportFeedback.vue'
 import ReportDataStatus from '../components/ReportDataStatus.vue'
-import { formatChineseDateTime } from '../utils/dateDisplay'
 import ReportPanelState from '../components/ReportPanelState.vue'
 import ReportExportMenu from '../components/ReportExportMenu.vue'
 import ReportFilterDialog from '../components/ReportFilterDialog.vue'
@@ -71,8 +70,6 @@ const filtersOpen = ref(false)
 let beforeFilters: WeldingQuery | null = null
 const analysisError = ref('')
 const title = computed(() => weldingTitles[props.kind])
-const sourceLabels: Record<string, string> = { weld_info_table: '作业', weld_part_info_table: '工件', welding_seam_info_table: '焊缝' }
-const sourceUpdated = computed(() => Object.entries(report.value?.meta?.data_updated_at || {}).map(([key, value]) => `${sourceLabels[key]}：${value || '未记录'}`).join('；'))
 const qualityLabels = { invalid_time_rows: '区间候选记录中结束时间无效', invalid_serial_rows: '流水号无效', invalid_length_rows: '长度为空或非正', invalid_duration_rows: '用时为空或非正', unverified_state_rows: '状态含义待确认' }
 
 function queryKey(values: WeldingQuery) {
@@ -146,7 +143,7 @@ async function load(values: WeldingQuery, force: boolean, syncRoute: boolean, ba
       if (syncRoute) await router.push({ query })
       else await router.replace({ query })
     }
-    if (run === generation && value.meta?.report_data?.refreshing && !value.meta.report_data.refresh_failed && refreshPollCount < REPORT_POLL_LIMIT) {
+    if (run === generation && value.meta?.report_data?.refreshing && refreshPollCount < REPORT_POLL_LIMIT) {
       refreshPollCount += 1
       refreshTimer = setTimeout(() => { if (!disposed && run === generation) void load(values, false, false, true) }, REPORT_POLL_INTERVAL)
     }
@@ -365,7 +362,10 @@ onBeforeUnmount(() => { disposed = true; cancel() })
       <form class="welding-query-form" aria-label="焊接报表查询" :aria-busy="loading" @submit.prevent="applyFilters">
         <div class="welding-filters">
           <ReportPeriodPicker v-model:start-date="draft.start" v-model:end-date="draft.end" :anchor-date="today" :disabled="loading" @apply="!usesFilterDialog && submit(true)" @validation-error="actionError = $event" />
-          <label><span><AppIcon name="factory" :size="13" tone="current" />设备</span><AppSelect v-model="draft.device_no" aria-label="设备"><option value="">全部设备</option><option v-for="device in report?.meta?.devices || []" :key="device" :value="device">设备 {{ device }}</option></AppSelect></label>
+          <label><span><AppIcon name="factory" :size="13" tone="current" />设备</span>
+            <NInputNumber v-if="report?.meta?.pending_metrics?.device_directory" size="large" :value="draft.device_no === '' ? null : Number(draft.device_no)" @update:value="draft.device_no = $event ?? ''" :min="0" :step="1" placeholder="输入设备编号，留空查询全部" aria-label="设备编号" />
+            <AppSelect v-else v-model="draft.device_no" aria-label="设备"><option value="">全部设备</option><option v-for="device in report?.meta?.devices || []" :key="device" :value="device">设备 {{ device }}</option></AppSelect>
+          </label>
         </div>
         <div class="welding-advanced">
           <label v-if="['jobs', 'equipment'].includes(kind)"><span>机器人编号</span><NInputNumber size="large" :value="draft.robot_no === '' ? null : Number(draft.robot_no)" @update:value="draft.robot_no = $event ?? ''" :min="0" :step="1" placeholder="全部" :precision="0" /></label>
@@ -394,22 +394,22 @@ onBeforeUnmount(() => { disposed = true; cancel() })
     <ReportFeedback v-if="actionError && !filtersOpen" type="error" title="操作未完成" :message="actionError" dismissible @dismiss="actionError = ''" />
     <div v-if="report && activeQuery" class="welding-freshness" role="status">
       <span class="welding-applied-query" :title="deviceSelection.items?.find(line => line.id === appliedLine)?.name || appliedLine">当前结果：{{ appliedQueryLabel }}</span>
-      <ReportDataStatus v-if="report.meta.report_data" :meta="report.meta" label="统计截止" :busy="loading" @refresh="read(activeQuery, true, false)" />
-      <span v-else class="welding-freshness-date"><AppIcon name="clock" :size="14" tone="current" />统计生成：{{ formatChineseDateTime(report.meta.calculated_at, '未知', 'Asia/Shanghai') }}</span>
+      <ReportDataStatus v-if="report.meta.report_data" :meta="report.meta" :busy="loading" @refresh="read(activeQuery, true, false)" />
       <NTag v-if="loading" size="small" type="info" :bordered="false">正在更新，当前展示上次结果</NTag>
       <span v-if="report.meta.ambiguous_part_count">工件关联待核实：{{ report.meta.ambiguous_part_count }} 个流水号</span>
     </div>
     <WeldingKpiCards v-if="sourceEnabled && kind === 'daily'" :kind="kind" :report="report" :loading="loading" />
     <template v-if="report && activeQuery">
-
+      <ReportFeedback v-if="kind === 'equipment' && report.meta.pending_metrics?.device_distribution" type="warning" title="设备分布" :message="report.meta.pending_metrics.device_distribution" />
+      <ReportFeedback v-if="kind === 'equipment' && report.meta.pending_metrics?.equipment_groups" type="warning" title="机器人工位明细" :message="report.meta.pending_metrics.equipment_groups" />
       <ReportFeedback v-if="!report.summary.job_count" title="当前区间暂无可归属的作业记录" message="可调整日期或设备后重新查询；无效时间候选记录见数据核查说明。" />
       <WeldingCharts v-else :kind="kind" :report="report" :loading="loading" />
       <section class="panel welding-detail-table"><div class="welding-detail-header"><HomeSectionHeader :title="kind === 'parts' ? '工件生产明细' : kind === 'jobs' ? '焊接作业明细' : kind === 'equipment' ? '机器人工位明细' : '每日生产明细'" icon="tasks" /><span>{{ activeQuery.start }} 至 {{ activeQuery.end }} · {{ report.total }} 条记录</span></div><WeldingTable :kind="reportKind" :items="report.items" :total="report.total" :page="activeQuery.page" :page-size="activeQuery.page_size" :loading="loading" @page="changePage" @detail="openDetail" @copy="copy" /></section>
       <details v-if="kind === 'jobs' && report.speed_distribution?.length" class="panel welding-quality"><summary>源表速度分布（mm/min）</summary><dl><template v-for="band in report.speed_distribution" :key="band.speed_band"><dt>{{ band.speed_band }}</dt><dd>{{ band.job_count }} 次</dd></template></dl><p>只统计可归属生产日的作业；不将字段均值作为整线速度。</p></details>
       <ReportAnalysis v-if="kind === 'daily'" :analysis="analysis" :welding-report="report" :show-metrics="false" :loading="analyzing" :error="analysisError" :ready="!loading && Boolean(report.summary.job_count)" :action-label="analysis ? '重新生成分析' : '生成当前区间分析'" empty-message="点击“生成当前区间分析”，查看产出趋势、工艺结构和数据核查建议。" @reload="runAnalysis" @retry="runAnalysis" />
-      <details class="panel welding-quality"><summary>统计口径与数据核查</summary><p v-for="notice in report.meta.notices" :key="notice">{{ notice }}</p><dl><template v-for="(label, key) in qualityLabels" :key="key"><dt>{{ label }}</dt><dd>{{ report.meta.quality[key] ?? '未提供' }}</dd></template><dt>未关联工件的有效流水号</dt><dd>{{ report.meta.unlinked_part_count ?? '未提供' }}</dd><dt>待核查关联流水号</dt><dd>{{ report.meta.ambiguous_part_count ?? '未提供' }}</dd></dl><p v-if="report.projects_truncated">项目图展示工件数最多的前100个项目，可按项目筛选查看。</p><p>源库最新更新时间：{{ sourceUpdated }}</p><p v-if="report.meta.source_info_as_of">源信息采样：{{ report.meta.source_info_as_of }}</p><p>本次计算：{{ report.meta.calculated_at }}<template v-if="report.meta.report_data">；统计截止：{{ report.meta.report_data.data_as_of }}</template></p></details>
+      <details class="panel welding-quality"><summary>统计口径与数据核查</summary><p v-for="notice in report.meta.notices" :key="notice">{{ notice }}</p><dl><template v-for="(label, key) in qualityLabels" :key="key"><dt>{{ label }}</dt><dd>{{ report.meta.quality[key] ?? '未提供' }}</dd></template><dt>未关联工件的有效流水号</dt><dd>{{ report.meta.unlinked_part_count ?? '未提供' }}</dd><dt>待核查关联流水号</dt><dd>{{ report.meta.ambiguous_part_count ?? '未提供' }}</dd></dl><p v-if="report.projects_truncated">项目图展示工件数最多的前100个项目，可按项目筛选查看。</p></details>
     </template>
-    <NDrawer v-model:show="detailOpen" width="min(1200px, 100vw)" :aria-label="detailTitle">
+    <NDrawer v-model:show="detailOpen" :width="detailJob ? 'min(760px, 100vw)' : 'min(1200px, 100vw)'" :aria-label="detailTitle">
       <NDrawerContent :title="detailTitle" closable>
       <ReportFeedback v-if="detailError" type="error" title="详情读取失败" :message="detailError" action-label="重试" @action="detailPart && openDetail(detailPart, seamPage)" />
       <ReportFeedback v-if="seamExportError" type="error" title="焊缝 CSV 导出失败" :message="seamExportError" action-label="重试导出" @action="exportSeams" />
@@ -442,7 +442,6 @@ onBeforeUnmount(() => { disposed = true; cancel() })
 .welding-advanced { display:grid; grid-template-columns:repeat(auto-fit,minmax(145px,1fr)); gap:var(--space-3); align-items:end; }
 .welding-check { min-height:var(--control-height); display:flex; align-items:center; }
 .welding-freshness { display:flex; align-items:center; gap:var(--space-2) var(--space-4); flex-wrap:wrap; font-size:var(--font-auxiliary); color:var(--text-color-3); }
-.welding-freshness-date { display:inline-flex; align-items:center; gap:var(--space-2); }
 .welding-filter-panel .welding-query-pending { margin:var(--space-3) 0 0; color:rgb(var(--warning-color)); font-size:var(--font-auxiliary); }
 .welding-applied-query { flex-basis:100%; color:var(--text-color-2); overflow-wrap:anywhere; }
 .welding-detail-table { min-width:0; border:1px solid var(--theme-border-color); border-radius:var(--report-panel-radius); box-shadow:var(--theme-shadow); }

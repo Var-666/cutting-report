@@ -305,7 +305,5 @@ class WeldingRepository:
     def source_info(self, session: MySqlSession) -> dict:
         scope = device_scope("device_no", self.device_nos)
         rows = session.fetch(f'SELECT device_no FROM weld_info_table WHERE device_no >= 0{scope} GROUP BY device_no ORDER BY device_no LIMIT 1001', self.device_nos, limit=1001)
-        if len(rows) > 1000:
-            raise WeldingUnavailable('源库设备目录超过支持范围，请联系管理员核查')
         updated = {table: session.fetch(f'SELECT MAX(update_date) AS updated_at FROM {table} WHERE 1=1{scope}', self.device_nos, limit=1)[0]['updated_at'] for table in TABLES}
-        return {'devices': [row['device_no'] for row in rows], 'updated_at': updated}
+        return {'devices': [row['device_no'] for row in rows[:1000]], 'updated_at': updated, 'devices_truncated': len(rows) > 1000}

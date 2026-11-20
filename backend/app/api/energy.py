@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 
 def _add_analysis_source_version(task_report: dict) -> dict:
+    task_report.pop("source_failed", None)
     task_report["analysis_source_version"] = equipment_analysis_source_version(
         task_report
     )

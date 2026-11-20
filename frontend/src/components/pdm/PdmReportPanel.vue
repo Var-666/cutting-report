@@ -24,6 +24,7 @@ const { options, status, error, retry } = usePdmFilterOptions(draft, visible, pr
 
 function openFilters() {
   draft.value = clonePdmFilters(props.region.filters)
+  draft.value[props.region.section.kind].responsiblePeople = null
   queryError.value = ''
   visible.value = true
 }

@@ -47,18 +47,23 @@ test('PDM uses the shared HTTP preparation code and sends manual refresh only on
   assert.equal(urls[1].searchParams.has('refresh'), false)
 })
 
-test('background result polling preserves the first result, publishes replacements and stops on failure', async t => {
+test('background result polling continues through active retries and stops on a terminal failure', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] })
   const old = { meta: { report_data: { refreshing: true } }, count: 1 }
   const updated = []
-  const pending = pollReportUpdates(old, async () => ({ meta: { report_data: { refreshing: false } }, count: 2 }), value => updated.push(value))
+  const replies = [{ meta: { report_data: { refreshing: true, refresh_failed: true } }, count: 1 },
+    { meta: { report_data: { refreshing: false } }, count: 2 }]
+  const pending = pollReportUpdates(old, async () => replies.shift(), value => updated.push(value))
   assert.deepEqual(updated, [])
   t.mock.timers.tick(5000)
+  await flush()
+  assert.equal(updated[0].count, 1)
+  t.mock.timers.tick(5000)
   await pending
-  assert.equal(updated[0].count, 2)
+  assert.equal(updated[1].count, 2)
   assert.equal(old.count, 1)
-  await pollReportUpdates({ meta: { report_data: { refreshing: true, refresh_failed: true } } },
-    () => assert.fail('source failures must not continue polling'), () => assert.fail())
+  await pollReportUpdates({ meta: { report_data: { refreshing: false, refresh_failed: true } } },
+    () => assert.fail('terminal failures must not continue polling'), () => assert.fail())
 })
 
 test('only explicit refresh asks for source refresh and preparation polls never repeat it', async t => {
@@ -93,7 +98,7 @@ test('preparation is bounded to 75 five-second waits', async t => {
   assert.equal(calls, 76)
 })
 
-test('cancellation clears the shared preparation wait; source and capacity failures do not retry', async t => {
+test('cancellation clears the shared preparation wait and source failures do not retry', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] })
   const controller = new AbortController()
   let calls = 0
@@ -105,9 +110,29 @@ test('cancellation clears the shared preparation wait; source and capacity failu
   t.mock.timers.tick(5000)
   await flush()
   assert.equal(calls, 1)
-  for (const code of ['snapshot_queue_full', 'source_unavailable']) {
-    let failures = 0
-    await assert.rejects(readReport(code, async () => { failures++; throw Object.assign(new Error(code), { status: 503, code }) }), { message: code })
-    assert.equal(failures, 1)
+  await assert.rejects(readReport('source', async () => {
+    calls++
+    throw Object.assign(new Error('源库暂不可用'), { status: 503, code: 'source_unavailable' })
+  }), /源库暂不可用/)
+  assert.equal(calls, 2)
+})
+
+test('report reads wait for temporary HTTP capacity errors and cap retries', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const calls = []
+  const headers = ['X-SQL-Resource-Error', 'X-Workload-Error', 'X-Report-Error']
+  const codes = ['queue_timeout', 'queue_full', 'snapshot_queue_full']
+  t.mock.method(globalThis, 'fetch', async url => {
+    const index = calls.length
+    calls.push(new URL(url, 'http://test').searchParams.get('refresh'))
+    return Response.json({ detail: '队列繁忙' }, { status: 503, headers: { [headers[index]]: codes[index], 'Retry-After': '1' } })
+  })
+  const pending = getPdmOverview(undefined, { mode: 'refresh' })
+  const rejected = assert.rejects(pending, /队列繁忙/)
+  for (let i = 0; i < 2; i++) {
+    await flush()
+    t.mock.timers.tick(5000)
   }
+  await rejected
+  assert.deepEqual(calls, ['true', 'true', 'true'], 'queue rejection has not accepted the refresh')
 })

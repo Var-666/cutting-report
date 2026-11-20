@@ -57,10 +57,10 @@ export function useProductionOverview(lines: () => ProductionLine[]) {
         if (current(row, requestedMonth)) row.preparing = true
       }, mode)
       if (!current(row, requestedMonth)) return
-      row.preparing = data.preparing && data.refreshing && !data.refreshFailed
+      row.preparing = data.preparing && data.refreshing
       if (!data.preparing) row.data = data
       if (data.preparing && !row.preparing) row.error = '后台更新未完成，请重试。'
-      if (data.refreshing && !data.refreshFailed) {
+      if (data.refreshing) {
         const attempts = polls.get(row) ?? 0
         if (attempts >= REPORT_POLL_LIMIT) row.error = '已停止自动检查，请重试。'
         else {

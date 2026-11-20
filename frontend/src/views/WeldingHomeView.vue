@@ -15,7 +15,7 @@ import ReportPanelState from '../components/ReportPanelState.vue'
 import { getWeldingReport } from '../api/welding'
 import { REPORT_POLL_INTERVAL, REPORT_POLL_LIMIT } from '../api/reportRequests'
 import { reportToday } from '../api/reportDates'
-import { formatChineseDate, formatChineseDateTime } from '../utils/dateDisplay'
+import { formatChineseDate } from '../utils/dateDisplay'
 import { deviceSelection } from '../state/devices'
 import { selectedLineType } from '../utils/productionLines'
 import { parseWeldingRouteQuery } from '../utils/weldingRouteState'
@@ -110,7 +110,7 @@ async function load(force = false, background = false) {
     })
     if (!current()) return
     report.value = value
-    if (value.meta.report_data?.refreshing && !value.meta.report_data.refresh_failed) {
+    if (value.meta.report_data?.refreshing) {
       if (pollCount >= REPORT_POLL_LIMIT) error.value = '等待生产数据更新超时。'
       else {
         pollCount += 1
@@ -157,7 +157,7 @@ onBeforeUnmount(() => { disposed = true; generation += 1; clearTimeout(timer); c
     <ReportFeedback v-if="notice" title="操作提示" :message="notice" dismissible @dismiss="notice = ''" />
     <WeldingKpiCards v-if="sourceEnabled" kind="dashboard" :report="report" :loading="loading" :title="report ? `当日指标按焊接生产日统计（${report.meta.timezone || '时区未提供'}），不随趋势区间变化` : undefined" />
     <template v-if="report">
-      <div class="welding-home-meta"><ReportDataStatus v-if="report.meta.report_data" :meta="statusMeta" :busy="loading" label="统计截止" @refresh="load(true)" /><span v-else role="status">统计生成：{{ formatChineseDateTime(report.meta.calculated_at, '未知', 'Asia/Shanghai') }}</span><span :title="`焊接生产时区：${report.meta.timezone || '未知'}`">区间统计：{{ rangeLabel }}</span></div>
+      <div class="welding-home-meta"><ReportDataStatus v-if="report.meta.report_data" :meta="statusMeta" :busy="loading" @refresh="load(true)" /><span :title="`焊接生产时区：${report.meta.timezone || '未知'}`">区间统计：{{ rangeLabel }}</span></div>
       <section class="welding-home-grid" aria-label="生产趋势与工艺结构">
         <NCard :bordered="false" size="small" class="card-wrapper">
           <template #header><HomeSectionHeader :title="trendTitle" icon="trend" :to="reportLink('daily')" action="生产统计" /></template>
@@ -173,6 +173,7 @@ onBeforeUnmount(() => { disposed = true; generation += 1; clearTimeout(timer); c
       <section class="welding-home-grid" aria-label="设备贡献与数据核查">
         <NCard :bordered="false" size="small" class="card-wrapper">
           <template #header><HomeSectionHeader title="设备产出对比" icon="factory" :to="reportLink('equipment')" action="查看设备效能报表" /></template>
+          <p v-if="report?.meta?.pending_metrics?.device_distribution" class="welding-home-note">{{ report.meta.pending_metrics.device_distribution }}</p>
           <div class="welding-home-chart"><WeldingChart v-if="devices.length" :option="deviceOption" label="按累计焊接长度排序的设备产出" /><NEmpty v-else description="暂无设备产出数据" /></div>
           <details v-if="devices.length" class="welding-chart-data"><summary>查看设备产出数据</summary><div class="welding-chart-data-scroll" role="region" aria-label="设备产出数据" tabindex="0"><table><caption>各设备累计焊接长度（{{ applied.start }} 至 {{ applied.end }}）</caption><thead><tr><th scope="col">设备</th><th scope="col">焊接长度(m)</th></tr></thead><tbody><tr v-for="row in devices" :key="String(row.device_no)"><th scope="row" :title="`设备 ${row.device_no ?? '未记录'}`"><span>设备 {{ row.device_no ?? '未记录' }}</span></th><td :title="weldingDisplay(row.weld_length_m, 'weld_length_m')"><span>{{ weldingDisplay(row.weld_length_m, 'weld_length_m') }}</span></td></tr></tbody></table></div></details>
         </NCard>

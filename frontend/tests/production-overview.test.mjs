@@ -60,17 +60,6 @@ test('overview reads explicit lines independently of selection and isolates same
   assert.equal(calls.length, 8, 'both line types expire at the same five-minute boundary')
 })
 
-test('overview timestamps display the same Beijing time for UTC and offset snapshots', async () => {
-  setActivePinia(createPinia())
-  for (const [line, timestamp] of [[lines[0], '2026-11-19T10:21:57+08:00'], [lines[2], '2026-11-19T02:21:57+00:00']]) {
-    const html = await renderComponent('components/ProductionOverviewCard', {
-      row: { line, loading: false, preparing: false, error: '', data: data({ dataAsOf: timestamp }) },
-    })
-    assert.ok(html.includes('2026年11月19日 10:21:57'))
-    assert.ok(html.includes(`datetime="${timestamp}"`))
-  }
-})
-
 test('a missing cutting snapshot is preparing rather than a month with zero production', async t => {
   t.mock.method(globalThis, 'fetch', async () => response({ current_month_total: { task_count: 0, cut_length_m: 0, work_time_seconds: 0 }, snapshot: { data_as_of: null, stale: true, refreshing: true } }))
   const value = await getProductionOverview(lines[0], '2026-11', new AbortController().signal)
@@ -232,11 +221,11 @@ test('overview cards render disabled, loading, preparing, empty and retained fai
     [{ data: data() }, '本月暂无生产记录'],
     [{ data: data({ preparing: true, empty: false, refreshing: true }) }, '生产数据准备中'],
     [{ data: data({ stale: true }) }, '历史结果待更新'],
-    [{ data: data({ dataAsOf: null, calculatedAt: '2026-11-17T08:00:00+08:00' }) }, '统计生成'],
     [{ data: data({ metrics: [{ title: '任务数', value: null, unit: '项', precision: 0 }], empty: false, stale: true, refreshFailed: true, refreshing: true }), error: '失败' }, '刷新失败，保留上次结果'],
   ]) {
     const html = await renderComponent('components/ProductionOverviewCard', { row: { ...row, ...changes } })
     assert.ok(html.includes(expected), expected)
+    assert.doesNotMatch(html, /统计截止|统计生成|统计时区/)
     if (changes.error && !changes.data) assert.ok(!html.includes('任务数：0'))
     if (changes.data?.preparing) assert.ok(!html.includes('任务数：0'))
     if (changes.error && changes.data) {
@@ -244,4 +233,8 @@ test('overview cards render disabled, loading, preparing, empty and retained fai
       assert.doesNotMatch(html, /历史结果待更新|后台更新中|生产数据读取失败/)
     }
   }
+  const healthy = await renderComponent('components/ProductionOverviewCard', { row: {
+    ...row, data: data({ empty: false, calculatedAt: '2026-11-17T08:00:00+08:00' }),
+  } })
+  assert.doesNotMatch(healthy, /<footer\b|统计生成|统计截止/)
 })

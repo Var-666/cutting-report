@@ -173,7 +173,7 @@ footer { padding:23px; color:var(--text-color-3); text-align:center; font-size:1
 .report-query label > span { display:block; margin-bottom:7px; color:var(--text-color-3); font-size:11px; font-weight:700; }
 .leadership-kpis { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:22px; }
 .leadership-kpis article { min-height:126px; padding:21px 22px; border-top:3px solid var(--cyan); background:rgb(var(--container-bg-color)); box-shadow:var(--theme-shadow); }
-.leadership-kpis span { display:block; color:var(--muted); font-size:11px; }.leadership-kpis strong { display:inline-block; margin-top:13px; color:var(--navy); font-size:25px; font-variant-numeric:tabular-nums; }.leadership-kpis small { margin-left:7px; color:var(--muted); font-size:11px; }
+.leadership-kpis strong { display:inline-block; margin-top:13px; color:var(--navy); font-size:25px; font-variant-numeric:tabular-nums; }.leadership-kpis small { margin-left:7px; color:var(--muted); font-size:11px; }
 .leadership-table { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; }
 .leadership-table th,.leadership-table td { height:47px; padding:10px 12px; border-bottom:1px solid var(--theme-border-color); text-align:right; vertical-align:middle; font-size:13px; }
 .leadership-table thead th { color:var(--text-color-1); background:var(--theme-table-header-color); font-size:11px; font-weight:600; letter-spacing:.4px; }

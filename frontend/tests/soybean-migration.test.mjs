@@ -30,7 +30,7 @@ function setupControl(name, props, attrs = {}, slots = {}) {
 
 test('sidebar exposes admin routes, excludes redirects and preserves scroll for query changes', () => {
   const source = readFileSync(new URL('../src/router/index.ts', import.meta.url), 'utf8')
-  const expression = source.slice(source.indexOf('const router = createRouter('), source.indexOf('\nrouter.beforeEach'))
+  const expression = source.match(/^const router = createRouter\([\s\S]*?^\}\)/m)[0]
   const scrolls = []
   const document = { querySelector: () => ({ scrollTo: (value) => scrolls.push(value) }) }
   const router = scriptFunction('createRouter', 'createWebHistory', 'cuttingRoutes', 'weldingRoutes', 'document', `${expression}\nreturn router`)((options) => options, () => ({}), cuttingRoutes, weldingRoutes, document)

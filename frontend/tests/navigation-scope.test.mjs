@@ -22,7 +22,7 @@ const selection = () => reactive({ id: 'cut-a', items: [
 
 function setupRouter() {
   const source = read('router/index.ts')
-  const expression = source.slice(source.indexOf('const router = createRouter('), source.indexOf('\nrouter.beforeEach'))
+  const expression = source.match(/^const router = createRouter\([\s\S]*?^\}\)/m)[0]
   const options = scriptFunction('createRouter', 'createWebHistory', 'cuttingRoutes', 'weldingRoutes', `${expression}; return router`)(value => value, () => null, cuttingRoutes, weldingRoutes)
   const empty = defineComponent({ render: () => null })
   function stubComponents(routes) { return routes.map(route => ({ ...route, ...(route.component ? { component: empty } : {}), children: route.children && stubComponents(route.children) })) }

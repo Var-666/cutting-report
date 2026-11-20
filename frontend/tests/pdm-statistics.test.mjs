@@ -309,7 +309,7 @@ test('popup option loading stays independent, cancels closed requests and ignore
     showA.value = true; await flush()
     assert.equal(requests.length, 1)
     complete(requests[0], ['甲', '乙']); await flush()
-    assert.deepEqual(a.value.equipment.responsiblePeople, ['甲', '乙'])
+    assert.equal(a.value.equipment.responsiblePeople, null)
     assert.equal(first.status.value, 'ready')
     assert.equal(b.value.drawing.responsiblePeople, null)
     showB.value = true; await flush()
@@ -320,26 +320,30 @@ test('popup option loading stays independent, cancels closed requests and ignore
     assert.equal(b.value.drawing.responsiblePeople, null)
     showB.value = true; await flush()
     complete(requests[2], ['丙']); await flush()
-    assert.deepEqual(b.value.drawing.responsiblePeople, ['丙'])
-    assert.deepEqual(a.value.equipment.responsiblePeople, ['甲', '乙'])
+    assert.equal(b.value.drawing.responsiblePeople, null)
+    assert.equal(a.value.equipment.responsiblePeople, null)
     assert.equal(second.status.value, 'ready')
     showB.value = false; await flush()
     showB.value = true; await flush()
     assert.equal(requests.length, 3, 'reopening an unchanged selector reuses its valid cache')
+    b.value.drawing.responsiblePeople = ['丙']
     second.retry(); await flush()
     requests[3].resolve(new Response(JSON.stringify({ detail: '模拟选项查询失败' }), { status: 502, headers: { 'Content-Type': 'application/json' } }))
     await flush()
     assert.equal(second.status.value, 'error')
     assert.match(second.error.value, /模拟选项查询失败/)
+    assert.equal(second.options.value.drawing.responsible_people[0].value, '丙')
     assert.deepEqual(b.value.drawing.responsiblePeople, ['丙'])
     second.retry(); await flush()
     complete(requests[4], ['丙', '丁']); await flush()
     assert.equal(second.status.value, 'ready')
     assert.deepEqual(b.value.drawing.responsiblePeople, ['丙'], 'retry retains the current selection')
+    b.value.drawing.projects = ['p1']; await flush()
+    assert.equal(second.options.value.drawing, undefined, 'a new scope cannot reuse unrelated options')
   } finally { scope.stop(); globalThis.fetch = original }
 })
 
-test('stale selector options update in place, preserve owner selections and stop on refresh failure', async t => {
+test('stale selector options update in place and preserve selections through automatic retries', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] })
   const urls = []
   const replies = [
@@ -361,28 +365,26 @@ test('stale selector options update in place, preserve owner selections and stop
   const flush = async () => { await nextTick(); await new Promise(setImmediate) }
   try {
     await flush()
-    assert.deepEqual(draft.value.equipment.responsiblePeople, ['甲', '乙'])
+    assert.equal(draft.value.equipment.responsiblePeople, null)
     draft.value.equipment.responsiblePeople = ['乙']
     t.mock.timers.tick(5000); await flush()
     assert.deepEqual(draft.value.equipment.responsiblePeople, ['乙'])
     assert.equal(options.options.value.equipment.responsible_people.length, 3)
-    assert.equal(options.status.value, 'error')
-    assert.match(options.error.value, /刷新失败/)
-    t.mock.timers.tick(10000); await flush()
-    assert.equal(urls.length, 2, 'failed refresh stops automatic polling')
-    options.retry(); await flush()
-    assert.match(urls[2], /refresh=true/)
+    assert.equal(options.status.value, 'ready')
+    t.mock.timers.tick(5000); await flush()
+    assert.equal(urls.length, 3)
+    assert.doesNotMatch(urls[2], /refresh=true/)
     assert.equal(options.status.value, 'ready')
     visible.value = false; await flush()
   } finally { scope.stop() }
 })
 
-test('filter popup identifies stale option data and exposes an explicit refresh action', async () => {
+test('filter popup shows refresh feedback without the option timestamp', async () => {
   const html = await renderComponent('components/pdm/PdmFilterBar', { modelValue: createPdmFilters(), kind: 'equipment', status: 'ready',
     options: { equipment: { meta: { report_data: { data_as_of: '2026-11-19T02:21:57Z', stale: true, refreshing: true } } } } })
-  assert.ok(html.includes('设备资料筛选选项更新时间'))
-  assert.ok(html.includes('2026年11月19日 10:21:57'))
-  assert.ok(html.includes('数据待更新') && html.includes('后台更新中'))
+  assert.ok(html.includes('设备资料筛选选项状态'))
+  assert.ok(html.includes('后台更新中'))
+  assert.doesNotMatch(html, /2026年11月19日|数据待更新/)
 })
 
 test('popup retains valid selected professions and clears only unavailable ones after project changes', async () => {
@@ -462,14 +464,14 @@ test('every popup opening selects all owners while cancelling leaves applied con
   scope.run(() => usePdmFilterOptions(draft, visible, 'equipment'))
   try {
     await flush()
-    assert.deepEqual(draft.value.equipment.responsiblePeople, ['甲', '乙'])
+    assert.equal(draft.value.equipment.responsiblePeople, null)
     draft.value.equipment.responsiblePeople = ['甲']
     draft.value.equipment.types = ['设备技术协议-按设备统计']; await flush()
-    assert.deepEqual(draft.value.equipment.responsiblePeople, ['甲', '乙'])
+    assert.equal(draft.value.equipment.responsiblePeople, null)
     visible.value = false; await flush()
     draft.value = clonePdmFilters(applied)
     visible.value = true; await flush()
-    assert.deepEqual(draft.value.equipment.responsiblePeople, ['甲', '乙'])
+    assert.equal(draft.value.equipment.responsiblePeople, null)
     assert.deepEqual(applied.equipment.types, [])
     assert.deepEqual(applied.equipment.responsiblePeople, ['甲'])
   } finally { scope.stop(); globalThis.fetch = original }
@@ -606,6 +608,12 @@ test('query contract keeps both kinds, grouping and explicit empty owner selecti
   assert.deepEqual(payload.document_kinds, ['equipment', 'drawing'])
   assert.deepEqual(payload.equipment.responsible_people, [])
   assert.equal(payload.drawing.responsible_people, null)
+  filters.equipment.projects = ['p1']
+  filters.equipment.responsiblePeople = Array.from({ length: 1800 }, (_, index) => String(index))
+  assert.match(validatePdmFilters(filters), /1800/)
+  filters.equipment.responsiblePeople = null
+  assert.equal(validatePdmFilters(filters), '')
+  assert.deepEqual(pdmQuery(filters).equipment.projects, ['p1'])
   assert.equal(payload.group_by, 'profession')
   assert.equal(payload.date_basis, 'plan')
   filters.dateBasis = 'actual'
@@ -631,4 +639,14 @@ test('global cards load both kinds through a separate request without report fil
 test('filter panels display both sets of required fields and source failures', async () => {
   const html = await renderComponent('components/pdm/PdmFilterBar', { modelValue: createPdmFilters(), status: 'error', error: 'PDM连接失败' })
   for (const label of ['设备资料', '详设图纸', '资料类型', '详设类型', '设备等级', '设备区域', '是否厂商表', '图纸批次', '图纸区域', '图纸类别', '权重', '负责人', '统计所有数据', '按项目统计', '按专业统计', '计划日期', '实际日期', 'PDM连接失败']) assert.ok(html.includes(label), label)
+})
+
+test('option load errors keep the query available only when it has same-scope options', async () => {
+  const props = { modelValue: createPdmFilters(), kind: 'equipment', status: 'error', error: '选项刷新失败' }
+  const disabled = await renderComponent('components/pdm/PdmFilterBar', props)
+  const retained = await renderComponent('components/pdm/PdmFilterBar', { ...props, options: { equipment: { projects: [] } } })
+  const submit = html => html.match(/<button\b[^>]*type="submit"[^>]*>/)?.[0]
+  const disabledAttribute = /\sdisabled(?:=""|(?=\s|>))/
+  assert.match(submit(disabled), disabledAttribute)
+  assert.doesNotMatch(submit(retained), disabledAttribute)
 })

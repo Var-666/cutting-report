@@ -5,17 +5,16 @@ import { NAlert, NButton, NTag } from 'naive-ui'
 import AppIcon from './AppIcon.vue'
 import HomeKpiCard from './HomeKpiCard.vue'
 import ReportPanelState from './ReportPanelState.vue'
-import { formatChineseDateTime } from '../utils/dateDisplay.ts'
 import { productionLineIcon } from '../utils/productionLines.ts'
 
 const props = defineProps<{ row: OverviewRow; switching?: boolean }>()
 defineEmits<{ enter: []; retry: [] }>()
 
 const result = computed(() => props.row.data?.preparing ? null : props.row.data)
-const timestamp = computed(() => result.value?.dataAsOf || result.value?.calculatedAt)
 const status = computed(() => {
   const { row } = props
   if (row.loading) return { text: '正在更新', type: 'info' } as const
+  if (result.value?.refreshing && result.value.refreshFailed && !row.error) return { text: '正在重试', type: 'warning' } as const
   if (row.error || result.value?.refreshFailed) return { text: '刷新失败，保留上次结果', type: 'warning' } as const
   if (result.value?.refreshing) return { text: '后台更新中', type: 'info' } as const
   if (result.value?.stale) return { text: '历史结果待更新', type: 'warning' } as const
@@ -53,19 +52,10 @@ const status = computed(() => {
         :title="row.preparing || row.data?.preparing ? '生产数据准备中…' : '正在读取本月生产数据…'" />
       <p v-else class="overview-line-state" role="status">尚未读取生产数据</p>
     </div>
-    <footer v-if="row.line.enabled && result" class="overview-details">
-      <div class="overview-card-meta" role="status">
-        <div class="overview-statuses">
-          <NTag v-if="result.demo" size="small" type="warning" :bordered="false">演示数据</NTag>
-          <NTag v-if="status" size="small" :type="status.type" :bordered="false">{{ status.text }}</NTag>
-          <NButton v-if="!row.loading && (row.error || result.refreshFailed)" size="tiny" :aria-label="`重试读取：${row.line.name}`" @click="$emit('retry')">重试</NButton>
-        </div>
-        <span class="overview-timestamp" :title="result.source === 'cache' || result.source === 'snapshot' ? '使用已保存的统计结果；时间不是源表最后写入时间' : '时间不是源表最后写入时间'">
-          <AppIcon name="clock" :size="14" tone="current" />
-          {{ result.calculatedAt ? '统计生成' : '统计截止' }} <time v-if="timestamp" :datetime="timestamp">{{ formatChineseDateTime(timestamp, '未知', 'Asia/Shanghai') }}</time><span v-else>未知</span>
-        </span>
-        <span>{{ result.timezone ? `统计时区：${result.timezone}` : '按切割报表生产日期统计' }}</span>
-      </div>
+    <footer v-if="row.line.enabled && result && (result.demo || status)" class="overview-details" role="status">
+      <NTag v-if="result.demo" size="small" type="warning" :bordered="false">演示数据</NTag>
+      <NTag v-if="status" size="small" :type="status.type" :bordered="false">{{ status.text }}</NTag>
+      <NButton v-if="!row.loading && (row.error || result.refreshFailed)" size="tiny" :aria-label="`重试读取：${row.line.name}`" @click="$emit('retry')">重试</NButton>
     </footer>
   </article>
 </template>
@@ -110,10 +100,6 @@ const status = computed(() => {
 .overview-metrics :deep(.home-kpi__trend) { display:none; }
 .overview-line-state { margin:0; padding:0; }
 .overview-details { padding:8px 16px; border-top:1px solid var(--theme-divider-color); }
-.overview-card-meta { display:flex; flex-wrap:wrap; gap:2px 8px; align-items:center; text-align:start; font-size:var(--font-auxiliary); color:var(--text-color-3); }
-.overview-timestamp,.overview-statuses,.overview-error { display:flex; align-items:center; flex-wrap:wrap; gap:4px; }
-.overview-timestamp time { font-variant-numeric:tabular-nums; }
-.overview-statuses { flex-basis:100%; padding-bottom:4px; }
-.overview-statuses:empty { display:none; }
+.overview-details,.overview-error { display:flex; align-items:center; flex-wrap:wrap; gap:var(--space-1); }
 .overview-error { justify-content:space-between; gap:8px; overflow-wrap:anywhere; }
 </style>

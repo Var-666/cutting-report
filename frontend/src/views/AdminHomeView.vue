@@ -101,13 +101,6 @@ const timeComparison = computed(() => comparisonStatus(total.value.work_time_sec
 const overviewStatus = computed(() => !overview.value ? '' : moduleErrors.value.production ? '保留上次结果'
   : overviewLoading.value || overviewFreshness.value.refreshing ? '正在更新' : overview.value.source_mode === 'demo' ? '演示数据'
   : overviewFreshness.value.stale ? '历史结果' : total.value.task_count === 0 ? '本月无生产记录' : '')
-const overviewTimeLabel = computed(() => `统计月份：${formatChineseMonth(reportMonth.value)}；统计截止：${formatChineseDateTime(overviewFreshness.value.dataAsOf, '未知', 'Asia/Shanghai')}`)
-const energyTimeLabel = computed(() => {
-  const meta = energy.value?.meta?.report_data
-  const state = moduleErrors.value.energy ? energy.value ? '保留上次结果；' : '读取失败；'
-    : energyLoading.value || meta?.refreshing ? '正在更新；' : meta?.stale ? '历史结果；' : ''
-  return `${state}本月能耗统计截止：${formatChineseDateTime(meta?.data_as_of, '未知', 'Asia/Shanghai')}`
-})
 const insightTrend = computed(() => {
   if (lengthComparison.value.direction === 'flat') return lengthComparison.value.text === '暂无上月对比' ? '暂无可比较的切割长度数据' : '切割长度与上月持平'
   return `切割长度${lengthComparison.value.direction === 'up' ? '高于' : '低于'}上月 ${lengthComparison.value.text.match(/<?\d+(?:\.\d+)?%/)?.[0] || ''}`
@@ -211,14 +204,14 @@ async function loadDashboard(retry = false) {
       const state = overviewFreshness.value
       overviewPreparing.value = state.preparing && state.refreshing
       if (!state.preparing) overview.value = data
-      if (state.refreshFailed || (state.preparing && !state.refreshing)) throw new Error('生产统计未更新')
+      if (!state.refreshing && (state.refreshFailed || state.preparing)) throw new Error('生产统计未更新')
       return state.refreshing
     }))
   if (monthChanged || shouldRead('energy', energyLoading)) pending.push(readModule('energy', energyLoading, mode,
     (signal, readMode) => getEnergyMonth(month, { signal, mode: readMode }),
     data => {
       energy.value = data
-      if (data.meta?.report_data?.refresh_failed) throw new Error('能耗未更新')
+      if (data.meta?.report_data?.refresh_failed && !reportIsRefreshing(data)) throw new Error('能耗未更新')
       return reportIsRefreshing(data)
     }))
   if (shouldRead('history', historyLoading)) pending.push(readModule('history', historyLoading, 'read',
@@ -247,7 +240,7 @@ onBeforeUnmount(() => {
   <div class="min-h-500px flex-col-stretch gap-16px overflow-hidden bg-layout lt-sm:overflow-auto">
     <header class="page-heading">
       <h1 class="page-heading__title">产线概览</h1>
-      <time :datetime="reportDate" :title="overviewTimeLabel">{{ formatChineseDate(reportDate) }}</time>
+      <time :datetime="reportDate">{{ formatChineseDate(reportDate) }}</time>
     </header>
 
     <NAlert v-if="error" title="部分概览数据读取失败" type="error" role="alert">
@@ -255,11 +248,11 @@ onBeforeUnmount(() => {
     </NAlert>
 
     <NCard :bordered="false" class="card-wrapper bg-container" content-style="padding: 0">
-      <section class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4" aria-label="本月生产概况" :title="overviewTimeLabel">
+      <section class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4" aria-label="本月生产概况">
         <HomeKpiCard class="border-0 border-b border-solid border-[var(--theme-divider-color)] sm:border-r xl:border-b-0" title="本月任务" :value="overview ? total.task_count : null" unit="项" :status="overviewStatus || (overview ? taskComparison.text : '')" :direction="overviewStatus ? 'flat' : taskComparison.direction" :series="metricSeries.tasks" :loading="(overviewLoading || overviewPreparing) && !overview" />
         <HomeKpiCard class="border-0 border-b border-solid border-[var(--theme-divider-color)] xl:border-r xl:border-b-0" title="切割长度" color="rgb(var(--success-color))" :value="overview ? total.cut_length_m : null" :precision="1" unit="米" :status="overview ? lengthComparison.text : ''" :direction="lengthComparison.direction" :series="metricSeries.length" :loading="(overviewLoading || overviewPreparing) && !overview" />
         <HomeKpiCard class="border-0 border-b border-solid border-[var(--theme-divider-color)] sm:border-b-0 sm:border-r" title="设备工时" color="rgb(var(--info-color))" :value="workHours" :unit="workUnit" :status="overview ? timeComparison.text : ''" :direction="timeComparison.direction" :series="metricSeries.hours" :loading="(overviewLoading || overviewPreparing) && !overview" />
-        <div class="min-w-0 flex-col-stretch justify-center gap-8px p-16px" aria-label="生产天数与能耗" :title="energyTimeLabel">
+        <div class="min-w-0 flex-col-stretch justify-center gap-8px p-16px" aria-label="生产天数与能耗">
           <div class="flex-y-center justify-between gap-8px border border-solid border-[var(--theme-divider-color)] rd-12px px-12px py-8px">
             <div class="flex-col-stretch gap-4px"><NText depth="3" class="text-12px">生产天数</NText><NSkeleton v-if="(overviewLoading || overviewPreparing) && !overview" height="24px" width="48px" /><NText v-else class="text-18px font-medium">{{ overview ? activeDays : '暂无数据' }} <NText v-if="overview" depth="3" class="text-12px">天</NText></NText></div>
           </div>

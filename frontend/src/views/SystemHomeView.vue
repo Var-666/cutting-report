@@ -143,8 +143,8 @@ function focusOverview() {
 .shortcut-arrow { color:var(--text-color-3); }
 .production-overview { display:grid; gap:var(--space-4); min-width:0; }
 .overview-heading-copy { display:grid; gap:4px; }
-.overview-heading h2 { margin:0; font-size:24px; font-weight:700; scroll-margin-block-start:16px; }
-.overview-heading h2:focus-visible { outline:2px solid rgb(var(--primary-color)); outline-offset:4px; }
+.overview-heading h2 { width:fit-content; margin:0; font-size:24px; font-weight:700; scroll-margin-block-start:16px; }
+.overview-heading h2:focus { outline:2px solid rgb(var(--primary-color)); outline-offset:4px; border-radius:var(--control-radius); }
 .overview-period { display:flex; align-items:center; flex-wrap:wrap; gap:4px 8px; margin:0; font-size:var(--font-auxiliary); color:var(--text-color-2); }
 .overview-period-dates { color:var(--text-color-3); font-variant-numeric:tabular-nums; }
 .overview-filter { display:flex; flex-wrap:wrap; align-items:center; gap:4px; padding:4px; border:1px solid var(--theme-border-color); border-radius:var(--card-radius); background:rgb(var(--container-bg-color)); }

@@ -19,6 +19,7 @@ from app.services.energy_service import EquipmentEnergyService, interval_consump
 from app.services.equipment_service import summarize_equipment
 from app.core.report_deadline import report_deadline
 from tests.analysis_fakes import model_analysis
+from tests.energy_period_fixtures import samples
 
 
 class OpenerStub:
@@ -348,13 +349,19 @@ def test_units_and_device_binding_are_required():
     assert unmapped.gas_consumption is None
 
 
-def test_overlap_including_filtered_context_is_not_double_counted():
-    first = record()
-    other = record("other", production_time=START + timedelta(seconds=10))
-    stub = MeterStub()
+@pytest.mark.parametrize("seconds,conflict", [(4, False), (14, False), (60, False), (61, True)])
+def test_overlap_tolerance_applies_to_other_tasks_in_filtered_context(seconds, conflict):
+    end = START + timedelta(minutes=5)
+    first = record(production_end_time=end)
+    other = record("other", production_time=end - timedelta(seconds=seconds), production_end_time=end)
+    stub = MeterStub(samples(START, minutes=1))
     result = EquipmentEnergyService(configured(), stub).enrich([first], context_records=[first, other])
-    assert result.records[0].gas_data_status == "overlap"
-    assert not stub.calls
+    if conflict:
+        assert result.records[0].gas_data_status == "overlap"
+        assert not stub.calls
+    else:
+        assert result.records[0].gas_data_status == "measured"
+        assert result.records[0].gas_consumption == 5
 
 
 @pytest.mark.parametrize("end", [None, START, START - timedelta(seconds=1)])

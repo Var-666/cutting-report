@@ -18,7 +18,7 @@ from app.services.energy_api import EnergyApiClient, EnergyApiError, read_energy
 from app.services.report_cache_policy import report_ttl
 from app.services.energy_service import (
     STATUS_TEXT, interval_consumption, local_time, make_series, sampling_policy, task_energy_note,
-    observe_task_energy,
+    observe_task_energy, overlapping_energy_tasks,
 )
 from app.services.equipment_service import sort_equipment_records, summarize_equipment
 
@@ -268,17 +268,6 @@ class EnergyPeriodService:
                      line_id=self.settings.device_id, source_id=f'energy:{source_key}', stage='energy_day',
                      period_start=day, period_end=day, data_as_of=data_as_of, missing_count=missing, estimated_count=estimated)
 
-    @staticmethod
-    def _loses_known_values(cached, report):
-        if not cached:
-            return False
-        new_rows = {row["start"]: row for row in report["rows"]}
-        return any(
-            old[channel]["value"] is not None
-            and new_rows.get(old["start"], {}).get(channel, {}).get("value") is None
-            for old in cached["rows"] for channel in CHANNELS
-        )
-
     def get_day(self, report_date: date, *, force=False):
         with self._lock:
             source_key = self.day_source_key(report_date)
@@ -312,12 +301,6 @@ class EnergyPeriodService:
                 if outdated:
                     message += " 该日旧快照已保留，但尚未通过新采样规则校验，请重新同步。"
                 return to_primitive(self._failed(report_date, cached, message))
-            # A transient empty/partial response must not silently erase known data.
-            if self._loses_known_values(cached, report):
-                if fresh:
-                    self._observe_day(report_date, source_key, cached,
-                                      failure=('coverage_regressed', '能耗有效时段减少，已保留原快照'))
-                return to_primitive(self._failed(report_date, cached, "本次返回的有效时段减少，已保留原记录，请核对平台数据。"))
             report.update(updated_at=now.isoformat(timespec="seconds"), saved=True, sync_ok=True)
             report = to_primitive(report)
             if not self.repository.save_day(source_key, report, previous=cached):
@@ -466,13 +449,7 @@ class EnergyPeriodService:
                 continue
             intervals[row.task_id] = (start, end)
 
-        conflicts = set()
-        last_end, last_id = None, None
-        for task_id, (start, end) in sorted(intervals.items(), key=lambda item: item[1][0]):
-            if last_end is not None and start < last_end:
-                conflicts.update((last_id, task_id))
-            if last_end is None or end > last_end:
-                last_end, last_id = end, task_id
+        conflicts = overlapping_energy_tasks(intervals)
         usable = {task_id: interval for task_id, interval in intervals.items() if task_id not in conflicts}
 
         ids = (self.gas_id, *self.electricity_ids)
@@ -493,7 +470,7 @@ class EnergyPeriodService:
                 unavailable = [replace(row, gas_data_status="unavailable",
                                        electricity_data_status="unavailable", energy_note=message)
                                for row in clean]
-                return result(unavailable, "unavailable", "", message)
+                return {**result(unavailable, "unavailable", "", message), "source_failed": True}
 
         output = []
         for row in clean:
@@ -700,7 +677,7 @@ class EnergyPeriodService:
                 source_key = self.day_source_key(stamp)
                 cached = self.repository.get_day(source_key, stamp.isoformat())
                 if force or self._snapshot_due(stamp, cached, now):
-                    missing.append(stamp)
+                    missing.append((stamp, cached))
                 stamp += timedelta(days=1)
             if not missing:
                 return 0
@@ -723,7 +700,7 @@ class EnergyPeriodService:
             )
             updated_at = now.isoformat(timespec="seconds")
             saved_count = 0
-            for stamp in missing:
+            for stamp, cached in missing:
                 source_key = self.day_source_key(stamp)
                 day_start = datetime.combine(stamp, time.min)
                 day_end = day_start + timedelta(days=1)
@@ -748,12 +725,6 @@ class EnergyPeriodService:
                 ):
                     if fresh:
                         self._observe_day(stamp, source_key, report, padding=padding)
-                    continue
-                cached = self.repository.get_day(source_key, stamp.isoformat())
-                if self._loses_known_values(cached, report):
-                    if fresh:
-                        self._observe_day(stamp, source_key, cached,
-                                          failure=('coverage_regressed', '能耗有效时段减少，已保留原快照'))
                     continue
                 report.update(
                     updated_at=updated_at,

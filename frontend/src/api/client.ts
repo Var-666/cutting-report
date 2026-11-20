@@ -24,6 +24,7 @@ export async function request<T = unknown>(url: string, options: RequestOptions 
       },
     })
     const reportCode = response.headers?.get?.('X-Report-Error') || response.headers?.get?.('X-Welding-Error')
+      || response.headers?.get?.('X-Workload-Error') || response.headers?.get?.('X-SQL-Resource-Error')
     if (!response.ok && !(response.status === 503 && reportCode === 'snapshot_refresh_busy')) reportApiFailure(url, response.status, response.headers?.get?.('X-Request-ID') ?? cancellation.requestId)
     if (options.responseType === 'blob' && response.ok) return { blob: await response.blob(), headers: response.headers }
     let payload: ApiResponse<T>

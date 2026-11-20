@@ -125,15 +125,15 @@ class CuttingReportProvider:
         if report_type == 'energy:tasks':
             source = self.pipeline.query_service.fetch_equipment_data(ReportFilter(report_date=start), force=True)
             result = energy.get_task_day(start, source.records, force=True)
-            if result.get('warning') and not result.get('configuration_error'):
+            if result.get('source_failed'):
                 raise ConnectionError('能耗取数失败，保留原统计结果')
             result['data_updated_at'] = to_primitive(source.data_updated_at)
             return result
         if report_type == 'energy:range':
             result = ranges.equipment(start, end, force=True)
-            if result['task_report'].get('warning') and not result['task_report'].get('configuration_error'):
+            if result['task_report'].get('source_failed'):
                 raise ConnectionError('能耗取数失败，保留原统计结果')
-            return result
+            return to_primitive(result)
         if report_type == 'energy:month':
             return energy.get_month(start.strftime('%Y-%m'), force=True)
         if report_type == 'energy:monthly-range':

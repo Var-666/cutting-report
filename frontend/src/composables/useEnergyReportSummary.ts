@@ -40,7 +40,7 @@ export function useEnergyReportSummary(pageActive: Ref<boolean>, initialDate: st
 
   function scheduleSummaryRefresh(summaryResult: EnergyPeriodReport) {
     const state = summaryResult?.meta?.report_data
-    if (summaryRefreshTimer || refreshController || !pageActive.value || state?.refresh_failed || summaryRefreshError.value
+    if (summaryRefreshTimer || refreshController || !pageActive.value || summaryRefreshError.value
         || !(state?.refreshing || summaryResult?.syncing && summaryResult?.missing_day_count)
         || summaryRefreshCount >= REPORT_POLL_LIMIT) return
     const requestedStart = summaryPeriodStart.value

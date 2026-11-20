@@ -125,7 +125,7 @@ class ReportSnapshotService:
         payload = self.task_payload(key)
         refreshing, failed = self.coordination.snapshot_refresh_status(key.line_id, payload) if self.coordination else (False, False)
         if background_only and not background and self.coordination:
-            if failed and not force:
+            if failed and not refreshing and not force:
                 if record:
                     return self._result(record, source, refreshing=refreshing, error=True)
                 raise SnapshotRefreshFailed('统计刷新失败，请手动重试')

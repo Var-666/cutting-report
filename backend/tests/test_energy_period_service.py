@@ -332,7 +332,7 @@ def test_full_calendar_month_including_leap_year(tmp_path, state_database, month
     assert not client.calls
 
 
-def test_api_failure_or_data_regression_preserves_snapshot(tmp_path, state_database, caplog):
+def test_api_failure_preserves_snapshot_but_successful_empty_read_is_missing(tmp_path, state_database, caplog):
     caplog.set_level(logging.INFO, logger='app.services.energy_period_service')
     energy, client = service(tmp_path, state_database)
     original = energy.get_day(DAY)
@@ -343,20 +343,22 @@ def test_api_failure_or_data_regression_preserves_snapshot(tmp_path, state_datab
     assert "上次已保存" in result["warning"]
     client.error, client.rows = None, []
     result = energy.get_day(DAY, force=True)
-    assert not result["sync_ok"]
-    assert "有效时段减少" in result["warning"]
-    assert energy.get_month("2026-08")["rows"][17]["electricity"]["value"] == 864
+    assert result["sync_ok"]
+    assert result["summary"]["electricity"]["value"] is None
+    assert result["summary"]["gas"]["value"] is None
+    assert energy.get_month("2026-08")["rows"][17]["electricity"]["value"] is None
     client.rows = samples()
     assert energy.get_day(DAY, force=True)['sync_ok']
     observations = [record for record in caplog.records if hasattr(record, 'operations_quality')]
     assert [record.operations_quality['state'] for record in observations] == [
-        'verified', 'source_failed', 'coverage_regressed', 'verified',
+        'verified', 'source_failed', 'missing_readings', 'verified',
     ]
     assert observations[1].levelno == logging.WARNING
     assert observations[1].operations_quality['data_as_of'] == original['updated_at']
 
 
-def test_equal_coverage_does_not_erase_previously_valid_hours(tmp_path, state_database):
+@pytest.mark.parametrize("backfill", [False, True])
+def test_partial_refresh_publishes_available_hours_and_leaves_missing_blank(tmp_path, state_database, backfill):
     # Both queries have 23 good gas hours, but the missing hour has moved.
     def omit_hour(hour):
         return [row for row in samples() if not (row["MfId"] == GAS and
@@ -365,9 +367,18 @@ def test_equal_coverage_does_not_erase_previously_valid_hours(tmp_path, state_da
     original = energy.get_day(DAY)
     assert original["summary"]["gas"]["valid_count"] == 23
     client.rows = omit_hour(2)
-    refreshed = energy.get_day(DAY, force=True)
-    assert not refreshed["sync_ok"]
-    assert refreshed["rows"][2]["gas"]["value"] == 4
+    if backfill:
+        assert energy.sync_month(DAY, force=True) == 1
+        refreshed = energy.get_day(DAY)
+    else:
+        refreshed = energy.get_day(DAY, force=True)
+    assert refreshed["sync_ok"]
+    assert refreshed["rows"][1]["gas"]["status"] == "measured"
+    assert refreshed["rows"][2]["gas"]["value"] is None
+    assert refreshed["rows"][2]["electricity"]["value"] == 36
+    assert refreshed["summary"]["gas"]["valid_count"] == 23
+    assert refreshed["summary"]["electricity"]["status"] == "measured"
+    assert energy.get_month("2026-08")["summary"]["gas"]["value"] == 92
 
 
 def test_source_changes_do_not_reuse_old_meter_results(tmp_path, state_database):
@@ -382,6 +393,21 @@ def test_source_changes_do_not_reuse_old_meter_results(tmp_path, state_database)
         other = EnergyPeriodService(replace(energy.settings, **{key: value}), energy.repository, clock=lambda: NOW)
         assert other.source_key != energy.source_key
         assert other.get_month("2026-08")["saved_day_count"] == 0
+
+
+def test_month_backfill_preserves_newer_concurrent_day_snapshot(tmp_path, state_database, monkeypatch):
+    energy, client = service(tmp_path, state_database)
+    snapshot = to_primitive(energy.calculate_day(DAY, []))
+    snapshot.update(updated_at=NOW.isoformat(), saved=True, sync_ok=True)
+    fetch = client.fetch
+
+    def fetch_after_day_write(*args, **kwargs):
+        energy.repository.save_day(energy.day_source_key(DAY), snapshot)
+        return fetch(*args, **kwargs)
+
+    monkeypatch.setattr(client, 'fetch', fetch_after_day_write)
+    assert energy.sync_month(DAY, force=True) == 0
+    assert energy.repository.get_day(energy.day_source_key(DAY), DAY.isoformat()) == snapshot
 
 
 def test_transition_preserves_history_but_revalidates_changed_days(tmp_path, state_database):
@@ -535,7 +561,7 @@ def test_snapshots_do_not_contain_credentials(tmp_path, state_database):
 
 
 def test_day_month_routes_and_bad_month(tmp_path, state_database):
-    energy, _ = service(tmp_path, state_database)
+    energy, meter = service(tmp_path, state_database)
     app = FastAPI()
     app.state.energy_period_service = energy
     app.state.lines = as_line_services({"Cutter01": app.state})
@@ -581,6 +607,12 @@ def test_day_month_routes_and_bad_month(tmp_path, state_database):
     assert result.status_code == 200
     assert result.json()["data"]["records"][0]["electricity_consumption"] == 18
     assert result.json()["data"]["summary"]["task_count"] == 1
+    meter.error = EnergyApiError("能管接口连接失败")
+    result = client.get("/api/v1/energy-report/tasks?report_date=2026-08-18&device_id=Cutter01")
+    assert result.status_code == 200
+    task_report = result.json()["data"]
+    assert task_report["warning"] == "能管接口连接失败"
+    assert "source_failed" not in task_report
     for value in ("2026-13", "2026-1", "0000-01", "invalid"):
         assert client.get("/api/v1/energy-report/month", params={"device_id": "Cutter01", "report_month": value}).status_code == 422
     assert client.get(

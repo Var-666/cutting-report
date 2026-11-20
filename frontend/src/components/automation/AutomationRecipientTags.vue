@@ -4,21 +4,22 @@ import { NButton, NPopover, NTag } from 'naive-ui'
 import type { EmailDelivery } from '../../types/automation'
 
 const props = defineProps<{ delivery: Pick<EmailDelivery, 'recipients' | 'recipient_results'>; compact?: boolean }>()
-const labels: Record<string, string> = { accepted: '服务器已接受', unknown: '结果待核对', not_accepted: '服务器未接收（人工核对）', refused: '服务器拒收' }
+const labels: Record<string, string> = { unknown: '结果待核对', not_accepted: '服务器未接收（人工核对）', refused: '服务器拒收' }
 const tones: Record<string, 'success' | 'warning' | 'error' | undefined> = { accepted: 'success', unknown: 'warning', not_accepted: 'error', refused: 'error' }
 const recipients = computed(() => [...new Set([...props.delivery.recipients, ...Object.keys(props.delivery.recipient_results || {})])].map(address => {
   const result = props.delivery.recipient_results?.[address]
   const status = result?.status
-  const detail = status ? `${labels[status] || status}${result?.code ? ` ${result.code}` : ''}` : ''
+  const detail = status && status !== 'accepted' ? `${labels[status] || status}${result?.code ? ` ${result.code}` : ''}` : ''
   const type: 'success' | 'warning' | 'error' | 'default' = tones[status || ''] ?? 'default'
-  return { address, detail, title: detail ? `${address} · ${detail}` : address, type }
+  const title = detail ? `${address} · ${detail}` : address
+  return { address, detail, title, type, accessibleLabel: status === 'accepted' ? `${address} · 已接收` : title }
 }))
 </script>
 
 <template>
   <div class="recipient-list" :class="{ 'recipient-list--compact': compact }" aria-label="收件人">
     <NTag v-for="item in (compact ? recipients.slice(0, 1) : recipients)" :key="item.address" size="small" :type="item.type"
-      :title="item.title" :aria-label="item.title">
+      :title="item.title" :aria-label="item.accessibleLabel">
       <span class="recipient-address">{{ item.address }}</span><span v-if="!compact && item.detail" class="recipient-result">{{ item.detail }}</span>
     </NTag>
     <NPopover v-if="compact && recipients.length > 1" trigger="click" placement="bottom-start"

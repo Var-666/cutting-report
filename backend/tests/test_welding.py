@@ -572,6 +572,37 @@ def test_report_passes_the_same_snapshot_count_to_paginated_jobs():
     assert report['items'][0]['id'] == 2 and report['data_version']
 
 
+def test_oversized_welding_groups_preserve_daily_totals_and_limit_equipment_exports(monkeypatch):
+    class Session:
+        def fetch(self, sql, *args, **kwargs):
+            if 'GROUP BY device_no' in sql:
+                return [{'device_no': number} for number in range(1001)]
+            assert 'MAX(update_date)' in sql
+            return [{'updated_at': None}]
+
+    @contextmanager
+    def snapshot():
+        yield Session()
+
+    repository = WeldingRepository(SimpleNamespace(snapshot=snapshot))
+    summary = dict.fromkeys(('invalid_time_rows', 'invalid_serial_rows', 'invalid_length_rows',
+                             'invalid_duration_rows', 'unverified_state_rows'), 0)
+    summary.update(job_count=10001)
+    daily = [{'production_date': '2026-10-31', 'job_count': 10001}]
+    equipment = [{'device_no': 0, 'robot_no': number, 'job_count': 1} for number in range(10001)]
+    devices = [{'device_no': number, 'job_count': 1} for number in range(1001)]
+    monkeypatch.setattr(repository, 'statistics', lambda *_: (summary, daily, equipment, devices, {'unlinked': 0, 'ambiguous': 0}))
+    service = WeldingService(welding_settings(), repository)
+
+    report = service.report('daily', query())
+    assert report['summary']['job_count'] == report['items'][0]['job_count'] == 10001
+    assert len(report['meta']['devices']) == len(report['device_distribution']) == 1000
+    assert {'device_directory', 'device_distribution', 'equipment_groups'} <= report['meta']['pending_metrics'].keys()
+    assert service.report('equipment', query())['total'] == 10000
+    with pytest.raises(ValueError, match='缩小筛选范围后导出'):
+        service.report('equipment', query(), export_limit=100000)
+
+
 def test_http_source_error_keeps_safe_category_without_retry_header(api):
     def failed(*args, **kwargs):
         raise WeldingUnavailable('焊接SQL执行失败', category='sql_error')
@@ -590,7 +621,7 @@ def test_snapshot_preparation_has_a_distinct_reason_from_queue_or_database_failu
     result = api.get('/api/v1/welding/jobs?start=2026-10-01&end=2026-10-02')
     assert result.status_code == 503
     assert result.headers['X-Welding-Error'] == 'snapshot_refresh_busy'
-    assert result.headers['Retry-After'] == '1'
+    assert result.headers['Retry-After'] == '5'
 
 
 def test_snapshot_queue_rejection_is_not_reported_as_preparation(api):

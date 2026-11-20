@@ -198,7 +198,7 @@ export function useLeadershipReportQuery({ route, router, today, routeRange, pag
   function scheduleRefreshPoll(reset = false) {
     stopRefreshPoll()
     if (reset) refreshPollCount = 0
-    if (!pageActive.value || !snapshot.value.refreshing || report.value?.meta?.report_data?.refresh_failed) {
+    if (!pageActive.value || !snapshot.value.refreshing) {
       refreshLoading.value = false
       return
     }

@@ -28,11 +28,26 @@ STATUS_TEXT = {
     "invalid_interval": "缺少或异常的实际起止时间", "overlap": "同一计量设备任务区间重叠",
     "unavailable": "能管数据不可用", "mock": "模拟数据",
 }
+TASK_OVERLAP_TOLERANCE = timedelta(minutes=1)
 
 
 def local_time(value, timezone: str) -> datetime:
     parsed = value if isinstance(value, datetime) else datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     return parsed.astimezone(ZoneInfo(timezone)).replace(tzinfo=None) if parsed.tzinfo else parsed
+
+
+def overlapping_energy_tasks(intervals: dict[str, tuple[datetime, datetime]]) -> set[str]:
+    conflicts = set()
+    latest = None
+    for task_id, (start, end) in sorted(intervals.items(), key=lambda item: item[1][0]):
+        # A short task cannot share more than the tolerance, even inside a longer task.
+        if end - start <= TASK_OVERLAP_TOLERANCE:
+            continue
+        if latest is not None and latest[0] - start > TASK_OVERLAP_TOLERANCE:
+            conflicts.update((latest[1], task_id))
+        if latest is None or end > latest[0]:
+            latest = (end, task_id)
+    return conflicts
 
 
 def make_series(rows, ids, timezone):
@@ -258,7 +273,7 @@ class EquipmentEnergyService:
 
         intervals = {}
         reference = context_records if context_records is not None else records
-        # Aliases share one meter set; never count overlapping tasks twice.
+        # Aliases share one meter set and use the same overlap tolerance.
         for row in reference:
             if row.equipment_id not in cfg.energy_equipment_ids:
                 continue
@@ -270,13 +285,7 @@ class EquipmentEnergyService:
             except (TypeError, ValueError, OverflowError):
                 continue
             intervals[row.task_id] = (start, end)
-        conflicts = set()
-        last_end, last_id = None, None
-        for task_id, (start, end) in sorted(intervals.items(), key=lambda item: item[1][0]):
-            if last_end is not None and start < last_end:
-                conflicts.update((last_id, task_id))
-            if last_end is None or end > last_end:
-                last_end, last_id = end, task_id
+        conflicts = overlapping_energy_tasks(intervals)
         usable = {row.task_id: intervals[row.task_id] for row in clean
                   if row.task_id in intervals and row.task_id not in conflicts and row.equipment_id in cfg.energy_equipment_ids}
         series = {}

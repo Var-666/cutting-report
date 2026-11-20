@@ -12,14 +12,14 @@ export interface ReportReadOptions {
 }
 export const REPORT_POLL_INTERVAL = 5000
 export const REPORT_POLL_LIMIT = 75
+const RETRYABLE_CAPACITY_ERRORS = new Set(['queue_full', 'queue_timeout', 'snapshot_queue_full'])
 
 export function reportIsRefreshing(value: unknown): boolean {
   if (!value || typeof value !== 'object' || !('meta' in value)) return false
   const meta = value.meta
   if (!meta || typeof meta !== 'object' || !('report_data' in meta)) return false
   const state = meta.report_data
-  return Boolean(state && typeof state === 'object' && 'refreshing' in state && state.refreshing
-    && !('refresh_failed' in state && state.refresh_failed))
+  return Boolean(state && typeof state === 'object' && 'refreshing' in state && state.refreshing)
 }
 
 export async function pollReportUpdates<T>(initial: T, load: () => Promise<T>, update: (value: T) => void,
@@ -34,11 +34,11 @@ export async function pollReportUpdates<T>(initial: T, load: () => Promise<T>, u
   }
 }
 
-export function waitForReportPoll(signal?: AbortSignal): Promise<void> {
+export function waitForReportPoll(signal?: AbortSignal, delay = REPORT_POLL_INTERVAL): Promise<void> {
   throwIfAborted(signal)
   return new Promise((resolve, reject) => {
     const cancel = () => { clearTimeout(timer); signal?.removeEventListener('abort', cancel); reject(new DOMException('请求已取消', 'AbortError')) }
-    const timer = setTimeout(() => { signal?.removeEventListener('abort', cancel); resolve() }, REPORT_POLL_INTERVAL)
+    const timer = setTimeout(() => { signal?.removeEventListener('abort', cancel); resolve() }, delay)
     signal?.addEventListener('abort', cancel, { once: true })
     if (signal?.aborted) cancel()
   })
@@ -49,13 +49,22 @@ export function readReport<T>(key: string, load: (signal: AbortSignal, refresh: 
   const scope = cacheScope ?? getDeviceId()
   return reportCache.read(key, async sharedSignal => {
     let refresh = mode === 'refresh'
-    for (let attempt = 0; ; attempt++) {
+    let preparationChecks = 0
+    let capacityRetries = 0
+    for (;;) {
       throwIfAborted(sharedSignal)
       try { return await load(sharedSignal, refresh, scope) }
       catch (caught) {
         throwIfAborted(sharedSignal)
         const error = caught as ApiError
-        if (error?.status !== 503 || error.code !== 'snapshot_refresh_busy' || attempt >= REPORT_POLL_LIMIT) throw caught
+        if (error?.status !== 503) throw caught
+        if (error.code && RETRYABLE_CAPACITY_ERRORS.has(error.code) && capacityRetries < 2) {
+          capacityRetries++
+          await waitForReportPoll(sharedSignal, Math.min(10_000, Math.max(REPORT_POLL_INTERVAL, error.retryAfterMs || 0)))
+          continue
+        }
+        if (error.code !== 'snapshot_refresh_busy' || preparationChecks >= REPORT_POLL_LIMIT) throw caught
+        preparationChecks++
         refresh = false
         onPreparing?.()
         await waitForReportPoll(sharedSignal)

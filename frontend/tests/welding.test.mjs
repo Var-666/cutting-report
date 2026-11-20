@@ -21,7 +21,7 @@ import { reportCache } from '../src/api/reportCache.ts'
 import { REPORT_POLL_INTERVAL, REPORT_POLL_LIMIT } from '../src/api/reportRequests.ts'
 import { queryDateRange, sameRouteQuery } from '../src/utils/reportRouteState.ts'
 import { parseWeldingRouteQuery, weldingRouteQuery } from '../src/utils/weldingRouteState.ts'
-import { formatChineseDate, formatChineseDateTime } from '../src/utils/dateDisplay.ts'
+import { formatChineseDate } from '../src/utils/dateDisplay.ts'
 
 const source = path => readFileSync(new URL(`../src/${path}`, import.meta.url), 'utf8')
 test.beforeEach(() => setDeviceCatalog({ default_device_id: 'welding', items: [{ id: 'welding', name: '焊接', type: 'welding' }] }))
@@ -996,13 +996,15 @@ test('new line types keep registered labels and destinations', () => {
 
 async function mountWeldingDisplay(t, readReport, kind = 'jobs', { setTimeout, clearTimeout } = globalThis) {
   const stub = { setup: (_props, { attrs, slots }) => () => h('div', [attrs.title, attrs.message, slots.default?.()]) }
+  const drawer = { ...stub }
   const bindings = {
-    setTimeout, clearTimeout, REPORT_POLL_INTERVAL, REPORT_POLL_LIMIT, formatChineseDateTime,
+    setTimeout, clearTimeout, REPORT_POLL_INTERVAL, REPORT_POLL_LIMIT,
     ...Vue, useRoute: () => ({ query: {} }), useRouter: () => ({ push() {}, replace() {} }),
     reportToday: () => period.start, getWeldingReport: readReport, getLatestWeldingAnalysis: async () => null, weldingQuery, selectedLineType, queryDateRange, sameRouteQuery,
     parseWeldingRouteQuery, weldingRouteQuery, weldingTitles,
     deviceSelection: reactive({ id: 'welding', items: [{ id: 'welding', type: 'welding', enabled: true }] }),
-    NDrawer: stub, NDrawerContent: stub, NTag: stub, NButton: stub, ReportPeriodPicker: stub, AppIcon: stub, HomeSectionHeader: stub,
+    NDrawer: drawer, NDrawerContent: stub, NTag: stub, NButton: stub, ReportPeriodPicker: stub, AppIcon: stub, HomeSectionHeader: stub,
+    getWeldingPart: async id => ({ part: { id }, items: [], total: 0 }),
     ReportAnalysis: { props: ['showMetrics'], setup: props => () => h('section', ['智能分析', props.showMetrics === false ? '' : '分析指标卡']) },
     AppSelect: stub, ReportFeedback: stub, ReportPanelState: stub, ReportExportMenu: stub, ReportFilterDialog: stub,
     WeldingCharts: stub, WeldingRecord: stub,
@@ -1037,7 +1039,28 @@ async function mountWeldingDisplay(t, readReport, kind = 'jobs', { setTimeout, c
     text: () => nodes().filter(node => node.type === Vue.Text || typeof node.type === 'string').map(node => typeof node.children === 'string' ? node.children : '').join(' '),
     submit: () => nodes().find(node => node.type === 'form').props.onSubmit({ preventDefault() {} }),
     selectDevice: value => nodes().find(node => node.props?.['onUpdate:modelValue']).props['onUpdate:modelValue'](value),
+    openDetail: row => nodes().find(node => node.type === bindings.WeldingTable && node.props.onDetail).props.onDetail(row),
+    detailDrawer: () => nodes().find(node => node.type === drawer).props,
   }
+}
+
+for (const [kind, row, label, width] of [
+  ['jobs', { id: 1, weld_type_label: '角焊' }, '焊接作业详情', 'min(760px, 100vw)'],
+  ['parts', { id: 2, project_no: 'P1' }, '工件与焊缝详情', 'min(1200px, 100vw)'],
+]) {
+  test(`welding detail drawer fits the ${kind} report`, async t => {
+    const page = await mountWeldingDisplay(t, async (_kind, query) => ({
+      query, data_version: 'v1', summary: { job_count: 1 }, items: [row], total: 1,
+      meta: { quality: {}, notices: [], devices: [] },
+    }), kind)
+    await flushWelding()
+    await page.openDetail(row)
+    await flushWelding()
+    const drawer = page.detailDrawer()
+    assert.equal(drawer.show, true)
+    assert.equal(drawer['aria-label'], label)
+    assert.equal(drawer.width, width)
+  })
 }
 
 for (const kind of ['daily', 'parts', 'jobs', 'equipment']) {
@@ -1088,7 +1111,7 @@ test('cached welding data stays visible through manual refresh, replacement and 
   calls[0].resolve(result(calls[0], 3)); await flushWelding()
   assert.match(page.text(), /作业次数：3/)
   assert.match(page.text(), /任务3/)
-  assert.match(page.text(), /2026年10月26日 16:00:00/)
+  assert.doesNotMatch(page.text(), /统计截止|统计生成|2026年10月26日 16:00:00/)
   assert.doesNotMatch(page.text(), /正在读取焊接数据/)
 
   page.submit(); await flushWelding()
@@ -1105,10 +1128,11 @@ test('cached welding data stays visible through manual refresh, replacement and 
   const failed = result(calls[2], 3, true)
   failed.meta.report_data.refresh_failed = true
   calls[2].resolve(failed); await flushWelding()
-  assert.match(page.text(), /刷新失败，保留上次结果/)
+  assert.match(page.text(), /正在重试，保留上次结果/)
   assert.match(page.text(), /任务3/)
-  assert.equal(clock.timers.size, 0)
-  page.submit(); await flushWelding()
+  assert.equal(clock.timers.size, 1)
+  clock.fire(); await flushWelding()
+  assert.equal(calls[3].force, false)
   calls[3].resolve(result(calls[3], 9)); await flushWelding()
   assert.match(page.text(), /作业次数：9/)
   assert.match(page.text(), /任务9/)

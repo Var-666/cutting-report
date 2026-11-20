@@ -105,7 +105,6 @@ onBeforeUnmount(() => { mounted = false; active?.abort(); clearTimeout(timer) })
   <div class="management-page operations" :aria-busy="loading">
     <OperationsPageHeader :title="statusOnly ? '运行状态' : '运维概览'" icon="activity">
       <template #actions>
-        <span v-if="status" class="secondary">更新于 {{ stamp(status.observed_at) }}</span>
         <NButton size="small" :loading="loading" @click="refresh">刷新</NButton>
       </template>
       <nav class="links" aria-label="运维管理入口">

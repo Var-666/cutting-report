@@ -568,7 +568,7 @@ const workerTableColumns = [
       />
     </section>
 
-    <ReportDataStatus v-if="!isWorker" :meta="result.meta" label="统计截止" :busy="loading" @refresh="refreshAnalysisReport" />
+    <ReportDataStatus v-if="!isWorker" :meta="result.meta" :busy="loading" @refresh="refreshAnalysisReport" />
     <ReportFeedback v-if="!isWorker && loading && result.report" type="info" title="车间报表正在后台更新" message="当前显示上次加载的数据，更新完成后自动替换。" />
     <ReportFeedback
       v-if="error && result.report"

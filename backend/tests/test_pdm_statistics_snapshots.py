@@ -128,21 +128,31 @@ def test_shared_provider_lookup_does_not_require_a_production_line(configured):
     assert all(interval == 300 for _, interval in plan)
 
 
-def test_failed_cold_source_stops_automatic_waits_and_explicit_retry_reuses_the_task(configured, monkeypatch):
-    _, source, _, queue, service = configured
+def test_cold_source_waits_for_retry_and_stops_on_terminal_failure(configured, monkeypatch):
+    _, _, _, queue, service = configured
     with pytest.raises(SnapshotRefreshBusy):
         service.overview()
     owner = queue.acquire('worker:test-pdm', ttl=30)
     task = queue.claim_task(owner, analysis=False)
     queue.finish_task(task, owner, 'SourceUnavailable')
     for _ in range(2):
-        with pytest.raises(SnapshotRefreshFailed):
+        with pytest.raises(SnapshotRefreshBusy):
             service.overview()
+    assert queue.task_counts() == {'deferred': 1}
+    from app.database import coordination
+    current = coordination.time()
+    monkeypatch.setattr(coordination, 'time', lambda: current + 31)
+    assert queue.renew('worker:test-pdm', owner, ttl=120)
+    queue.admit_deferred()
+    retry = queue.claim_task(owner, analysis=False)
+    assert retry['task_id'] == task['task_id'] and retry['attempts'] == 2
+    queue.finish_task(retry, owner, 'SOURCE_UNVERIFIED')
+    with pytest.raises(SnapshotRefreshFailed):
+        service.overview()
     with pytest.raises(SnapshotRefreshBusy):
         service.overview(force=True)
     queue.admit_deferred()
     retry = queue.claim_task(owner, analysis=False)
-    assert retry['task_id'] == task['task_id']
     assert retry['attempts'] == 1
     service.refresh_summary(retry['payload']['report_type'], retry['payload']['query'], requested_at=retry['created_at'])
     queue.finish_task(retry, owner)

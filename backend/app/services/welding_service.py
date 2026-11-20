@@ -304,6 +304,17 @@ class WeldingService:
                 common = self._cached_statistics(('common', key), lambda: self._common_statistics(session, query), use_cache=use_cache)
                 projects, speeds, totals = self._cached_statistics((kind, key), lambda: self._report_statistics(session, kind, query), use_cache=use_cache)
             summary, daily, equipment, devices, association = common
+            limits = {}
+            if len(equipment) > 10000:
+                if kind == 'equipment' and export_limit is not None:
+                    raise ValueError('机器人工位超过 10000 组，请缩小筛选范围后导出')
+                equipment = equipment[:10000]
+                limits['equipment_groups'] = '机器人工位明细最多展示 10000 组，请缩小筛选范围查看完整明细。'
+            if len(devices) > 1000:
+                devices = devices[:1000]
+                limits['device_distribution'] = '设备分布仅展示按设备编号排列的前 1000 台。'
+            if info.get('devices_truncated'):
+                limits['device_directory'] = '设备目录超过 1000 台，请直接按设备编号筛选。'
             summary.update(totals)
             if dashboard and statistics is None:
                 today = datetime.now(ZoneInfo(self.settings.weld_db_timezone)).date()
@@ -322,16 +333,16 @@ class WeldingService:
             'calculated_at': datetime.now(ZoneInfo(self.settings.weld_db_timezone)).isoformat(),
             'data_updated_at': to_primitive(info['updated_at']), 'devices': info['devices'],
             'units': {'length': 'm', 'working_hours': 'h', 'speed': 'mm/min', 'output_per_hour': 'm/h'},
-            'pending_metrics': PENDING_METRICS,
+            'pending_metrics': {**PENDING_METRICS, **limits},
             'quality': {key: summary[key] for key in ('invalid_time_rows', 'invalid_serial_rows', 'invalid_length_rows', 'invalid_duration_rows', 'unverified_state_rows')},
             'unlinked_part_count': association['unlinked'], 'ambiguous_part_count': association['ambiguous'],
             'notices': ['按作业结束时间计入生产日；作业统计包含所有已记录状态，状态业务含义待确认。',
                         '工件字段为累计值，不能当作所选区间新增产出；机器人编号按作业表统计，跨表映射待核实。',
                         '各异常原因可重叠；无法归入时间区间的记录仅在源库核验报告统计。',
-                        '速度分布使用源表记录，不代表整线实测平均速度。'],
+                        '速度分布使用源表记录，不代表整线实测平均速度。', *limits.values()],
         }
         if kind == 'parts' and summary.get('ambiguous_part_rows'):
-            meta['pending_metrics'] = {**PENDING_METRICS, 'part_actual_length_m': '工件流水号存在多条归属，累计总长度暂待核实'}
+            meta['pending_metrics']['part_actual_length_m'] = '工件流水号存在多条归属，累计总长度暂待核实'
         if kind == 'parts':
             meta['quality']['invalid_part_rows'] = summary['invalid_part_rows']
             meta['notices'].append(f'当前涉及工件中有{summary["invalid_part_rows"]}条比率或耗时关系异常候选；原始明细保留，不据此判定质量。')
@@ -471,19 +482,17 @@ class WeldingService:
     def _common_statistics(self, session: MySqlSession, query: WeldingQuery) -> tuple[dict, list[dict], list[dict], list[dict], dict]:
         started = monotonic()
         summary, daily, equipment, devices, association = self.repository.statistics(session, query)
-        if len(equipment) > 10000:
-            raise ValueError('设备机器人工位组合超过上限，请缩小筛选范围')
-        if len(devices) > 1000:
-            raise WeldingUnavailable('源库设备目录超过支持范围，请联系管理员核查')
         daily_count = sum(row['job_count'] for row in daily)
         equipment_count = sum(row['job_count'] for row in equipment)
         total = summary['job_count']
         invalid = summary['invalid_time_rows']
-        if daily_count != total or equipment_count != total:
+        if daily_count != total or (len(equipment) <= 10000 and equipment_count != total):
             message, state, level = '焊接作业汇总、按日和设备作业数不一致', 'count_mismatch', logging.ERROR
         elif invalid:
             message, state = '源端作业存在无效结束时间，无法计入报表', 'invalid_source_time'
             level = logging.WARNING if total else logging.ERROR
+        elif len(equipment) > 10000:
+            message, state, level = '汇总与按日作业数一致，机器人工位分组超出展示上限', 'verified', logging.INFO
         else:
             message, state, level = '同口径焊接作业数已核对一致', 'verified', logging.INFO
         data_quality(logger, 'REPORT_AGGREGATE_DATA_QUALITY', message,

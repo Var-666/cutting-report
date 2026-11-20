@@ -79,5 +79,9 @@ export function validatePdmFilters(filters: PdmFilters): string {
   if (!filters.documentKinds.length) return '请至少选择一种文档类型'
   if (!queryDate(filters.startDate) || !queryDate(filters.endDate)) return '请选择或输入完整的起止日期'
   if (filters.endDate < filters.startDate) return '结束日期不能早于开始日期'
+  for (const kind of filters.documentKinds) {
+    const count = Object.values(filters[kind]).reduce((total, values) => total + new Set(values).size, 0)
+    if (count > 1800) return '筛选项超过 1800 项，请缩小筛选范围'
+  }
   return ''
 }
