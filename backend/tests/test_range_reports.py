@@ -476,7 +476,7 @@ def test_leadership_page_versions_cover_both_analysis_tables(state_database, tmp
     ("report_type", "expected_heading", "project_code", "expected_tasks"),
     [
         ("leadership", "区间每日明细与趋势", None, 42),
-        ("workshop", "车间生产明细与图表", "A002", 21),
+        ("workshop", "车间生产明细与趋势", "A002", 21),
         ("equipment", "区间任务能耗明细", None, 42),
     ],
 )

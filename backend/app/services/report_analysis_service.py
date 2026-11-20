@@ -383,7 +383,7 @@ class ReportAnalysisService:
                 report_date=report_date,
                 data_version=data_version,
             )
-        if not cached:
+        if not cached or cached.get("data_version") not in (None, data_version):
             return None
         cached["data_version"] = data_version
         analysis_observation(cache="hit")
@@ -399,6 +399,7 @@ class ReportAnalysisService:
         source_data_version: str | None = None,
         publish_latest: bool = False,
         reuse_key: str | None = None,
+        record_source_version: bool = True,
     ) -> AnalysisResult:
         if not self.settings.llm_enabled:
             raise AnalysisUnavailableError(
@@ -432,12 +433,13 @@ class ReportAnalysisService:
                                      reuse_key or report_type, data_version, verified=verified)
 
         analysis_prepared()
-        self.metadata.save_analysis_source_version(
-            report_type=report_type,
-            report_date=report_date,
-            data_version=data_version,
-            updated_at=datetime.now(self.timezone).isoformat(timespec="seconds"),
-        )
+        if record_source_version:
+            self.metadata.save_analysis_source_version(
+                report_type=report_type,
+                report_date=report_date,
+                data_version=data_version,
+                updated_at=datetime.now(self.timezone).isoformat(timespec="seconds"),
+            )
         if not force:
             cached = self._get_cached_analysis(
                 cache_key=cache_key,
@@ -592,6 +594,10 @@ class ReportAnalysisService:
             source_data_version=source_data_version,
             publish_latest=publish_latest,
             reuse_key=_reuse_key,
+            record_source_version=not any(
+                value and (key != 'confirmation_status' or value != 'all')
+                for key, value in (cache_filters or {}).items()
+            ),
         )
 
     @_report_analysis_operation("equipment")

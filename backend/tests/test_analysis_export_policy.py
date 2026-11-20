@@ -13,6 +13,7 @@ from app.models.domain import EquipmentRecord, WorkshopRecord
 from app.services.leadership_report_service import LeadershipReportService
 from app.services.llm_service import LlmRequestTimeout
 from app.services.pipeline import ReportPipeline, ReportPipelineCancelled, ReportAnalysisPendingError
+from app.services.report_generation.common import report_analysis_payload
 from app.services.report_analysis_service import AnalysisUnavailableError, ReportAnalysisService, AnalysisDataVersionMismatch
 from tests.analysis_fakes import model_analysis
 from tests.line_fixtures import cutting_settings
@@ -68,6 +69,7 @@ def test_export_reuses_exact_input_regenerates_changes_and_falls_back_only_after
     service, pipeline, model = analysis_export
     first = export(pipeline, operation(service, kind, 2))
     assert not first.cached and model.call_count == 1
+    assert report_analysis_payload(first)['data_version'] == first.data_version
     same = export(pipeline, operation(service, kind, 2))
     assert same.cached and not same.cache_note and model.call_count == 1
     changed = export(pipeline, operation(service, kind, 8))
@@ -80,10 +82,55 @@ def test_export_reuses_exact_input_regenerates_changes_and_falls_back_only_after
     assert failed.cached and failed.cache_note
     assert (failed.generated_at, failed.data_version, failed.facts, failed.brief) == (
         changed.generated_at, changed.data_version, changed.facts, changed.brief)
+    assert report_analysis_payload(failed)['status'] == 'unavailable'
+    assert '历史分析' in report_analysis_payload(failed)['overview']
     model.side_effect = model_analysis
     recovered = export(pipeline, operation(service, kind, 9))
     assert model.call_count == 4 and not recovered.cached and not recovered.cache_note
     assert recovered.data_version != changed.data_version
+    assert report_analysis_payload(recovered)['data_version'] == recovered.data_version
+
+
+def test_cutting_cache_does_not_relabel_a_stale_payload_as_a_current_result(analysis_export):
+    service, pipeline, model = analysis_export
+    current = export(pipeline, operation(service, 'workshop', 8))
+    service.metadata.get_analysis.side_effect = None
+    service.metadata.get_analysis.return_value = {
+        **report_analysis_payload(current), 'data_version': 'stale-without-cache-note',
+    }
+    updated = export(pipeline, operation(service, 'workshop', 8))
+    assert model.call_count == 2
+    assert not updated.cached and updated.data_version == current.data_version
+
+
+def test_workshop_scoped_analysis_never_replaces_default_version_or_reuses_other_ranges(state_database, tmp_path):
+    cfg = cutting_settings(project_root=tmp_path, llm_enabled=True)
+    date_label = '2026-08-18'
+    make = lambda device, scope: ReportAnalysisService(replace(cfg, device_id=device),
+        MetadataRepository(state_database, device_id=device, analysis_scope=scope))
+    service = make(cfg.device_id, 'workshop-source-A')
+    other_line = make('Cutter02', 'workshop-source-B')
+    service.llm.analyze_context = Mock(side_effect=model_analysis)
+    other_line.llm.analyze_context = Mock(side_effect=AssertionError('model unavailable'))
+    t8 = WorkshopRecord('T-8', 'P1', None, None, None, None, None, None, confirmed_by='工人甲')
+    t9 = replace(t8, task_id='T-9')
+    default = service.analyze_workshop(date_label, [t8, t9], publish_latest=True)
+    filters = {'project_code': 'P1', 'task_id': 'T-8', 'confirmation_status': 'confirmed'}
+    selected = service.analyze_workshop(date_label, [t8], cache_filters=filters)
+    exact = service.analyze_workshop(date_label, [t8], cache_filters=filters)
+    assert exact.cached and exact.data_version == selected.data_version != default.data_version
+    assert service.metadata.get_analysis_source_version(report_type='workshop', report_date=date_label)['data_version'] == default.data_version
+    for differing in ({**filters, 'task_id': 'T-9'}, {**filters, 'confirmation_status': 'unconfirmed'}):
+        assert service.cached_analysis('workshop', date_label, cache_filters=differing) is None
+    assert other_line.cached_analysis('workshop', date_label, cache_filters=filters) is None
+    changed = replace(t8, cut_length=8)
+    service.llm.analyze_context.side_effect = LlmRequestTimeout('fixture outage')
+    history = service.analyze_workshop(date_label, [changed], cache_filters=filters)
+    assert history.cache_note and history.data_version == selected.data_version
+    assert history.generated_at == selected.generated_at and history.facts == selected.facts
+    service.llm.analyze_context.side_effect = model_analysis
+    latest = service.analyze_workshop(date_label, [changed], cache_filters=filters)
+    assert not latest.cached and latest.data_version != selected.data_version
 
 
 @pytest.mark.parametrize('error', [AnalysisUnavailableError, ReportOperationTimeout, OSError])

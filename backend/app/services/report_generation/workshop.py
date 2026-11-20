@@ -82,6 +82,7 @@ def prepare_report(
         task_id=parameters.get('task_id'), confirmation_status=parameters.get('confirmation_status', 'all'),
     ).model_dump(exclude_defaults=True) if report_type == 'workshop' and range_job else {}
     cache_filters = {'project_code': filters.project_code, 'ship_no': filters.ship_no, **detail_filters}
+    range_filters = {'project_code': filters.project_code, **detail_filters}
     if report_type == "workshop":
         if range_job:
             source_bundle, workshop_records = range_service.workshop_records(
@@ -91,7 +92,7 @@ def prepare_report(
                 ship_no=filters.ship_no,
                 force=True,
             )
-            workshop_records = sort_workshop_by_recency(filter_workshop_records(workshop_records, **detail_filters), settings.timezone)
+            workshop_records = sort_workshop_by_recency(filter_workshop_records(workshop_records, **range_filters), settings.timezone)
             bundle = _workshop_bundle(workshop_records, source_bundle.data_updated_at)
         else:
             workshop_report, workshop_records = (
@@ -109,9 +110,7 @@ def prepare_report(
             ):
                 raise ValueError("请先生成当日车间报表，再进行导出")
             workshop_records = query_service.enrich_ship_names(workshop_records)
-            workshop_records = [row for row in workshop_records
-                if (not filters.project_code or row.project_code == filters.project_code)
-                and (not filters.ship_no or row.ship_no == filters.ship_no)]
+            workshop_records = filter_workshop_records(workshop_records, **cache_filters)
             bundle = _workshop_bundle(workshop_records, datetime.fromisoformat(workshop_report['generated_at']))
     else:
         bundle = query_service.fetch_report_data(filters)
@@ -164,9 +163,9 @@ def prepare_report(
                     _period_label(period_start, period_end),
                     bundle.workshop_records,
                     cache_filters=cache_filters,
-                    comparison_records=filter_workshop_records(previous_records, **detail_filters),
+                    comparison_records=filter_workshop_records(previous_records, **range_filters),
                     comparison_date=_period_label(comparison_start, comparison_end),
-                    year_ago_records=filter_workshop_records(year_ago_records, **detail_filters),
+                    year_ago_records=filter_workshop_records(year_ago_records, **range_filters),
                     year_ago_date=_period_label(year_ago_start, year_ago_end),
                 )
             else:
@@ -186,9 +185,9 @@ def prepare_report(
                 return analysis_service.analyze_workshop(
                     filters.report_date.isoformat(),
                     bundle.workshop_records,
-                    cache_filters={'project_code': filters.project_code, 'ship_no': filters.ship_no},
+                    cache_filters=cache_filters,
                     comparison_records=(
-                        previous_records
+                        filter_workshop_records(previous_records, **cache_filters)
                         if previous_report
                         and previous_report.get("scope_machine_no")
                         == settings.report_machine_no
@@ -202,7 +201,7 @@ def prepare_report(
                         else None
                     ),
                     year_ago_records=(
-                        year_ago_records
+                        filter_workshop_records(year_ago_records, **cache_filters)
                         if year_ago_report
                         and year_ago_report.get("scope_machine_no")
                         == settings.report_machine_no

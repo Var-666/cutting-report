@@ -30,7 +30,8 @@ def test_week_and_month_exclude_the_previous_calendar_evening(tmp_path, monkeypa
               "2026-11-16 00:00:00", "2026-11-17 16:59:59", "2026-11-17 17:00:00",
               "2026-11-18 16:59:59", "2026-11-18 17:00:00"]
     monkeypatch.setattr(query, "fetch_summary_data", lambda *args, **kwargs: SimpleNamespace(summary_records=[
-        SimpleNamespace(source_updated_at=stamp, cut_length=10, groove_length=1, work_time=60) for stamp in stamps
+        SimpleNamespace(project_code="P1", source_updated_at=stamp, cut_length=10, groove_length=1, work_time=60)
+        for stamp in stamps
     ]))
     columns = RangeReportService(cfg, query, None, None).cutting_closing_comparison(
         date(2026, 11, 18), date(2026, 11, 18), datetime(2026, 11, 18, 18, tzinfo=ZONE), project_code="P1"
@@ -234,8 +235,9 @@ def test_workshop_closing_comparison_keeps_ship_filter_and_cutoff(tmp_path, monk
     def fetch(filters, *, force):
         calls.append((filters.start_date, filters.end_date, filters.project_code, filters.ship_no, force))
         return SimpleNamespace(summary_records=[
-            SimpleNamespace(source_updated_at=stamp, cut_length=30, groove_length=2, work_time=120)
-            for stamp in ("2026-11-16 17:00:00", "2026-11-17 17:00:00")
+            SimpleNamespace(project_code=project, source_updated_at=stamp, cut_length=30, groove_length=2, work_time=120)
+            for project, stamp in (("P1", "2026-11-16 17:00:00"), ("P1", "2026-11-17 17:00:00"),
+                                   ("p1", "2026-11-17 17:00:00"))
         ])
 
     monkeypatch.setattr(query, "fetch_summary_data", fetch)

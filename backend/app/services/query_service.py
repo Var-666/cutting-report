@@ -419,6 +419,8 @@ class QueryService:
         bundle = self.fetch_summary_data(filters, force=True)
         buckets: dict[datetime, Totals] = {}
         for row in bundle.summary_records:
+            if project_code and row.project_code != project_code:
+                continue
             # summary_base.sql reads END_TIME into source_updated_at.
             completed_at = row.source_updated_at if sqlserver else (
                 row.production_time + timedelta(seconds=float(row.work_time or 0)) if row.production_time else None

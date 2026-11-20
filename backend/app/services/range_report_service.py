@@ -36,9 +36,11 @@ MAX_LIVE_ENERGY_RANGE_DAYS = 31
 
 
 def filter_workshop_records(records: list[WorkshopRecord], *, project_code: str | None = None,
-                            task_id: str | None = None, confirmation_status: str = 'all') -> list[WorkshopRecord]:
+                            task_id: str | None = None, confirmation_status: str = 'all',
+                            ship_no: str | None = None) -> list[WorkshopRecord]:
     return [row for row in records if (not project_code or row.project_code == project_code)
             and (not task_id or row.task_id == task_id)
+            and (not ship_no or row.ship_no == ship_no)
             and (confirmation_status == 'all' or bool(row.confirmed_by) == (confirmation_status == 'confirmed'))]
 
 

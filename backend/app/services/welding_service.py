@@ -34,7 +34,7 @@ from app.core.request_cancellation import SqlRequestCancelled
 
 
 logger = logging.getLogger(__name__)
-WELDING_PROMPT_VERSION = f'{PROMPT_VERSION}:scoped-evidence-v2'
+WELDING_PROMPT_VERSION = f'{PROMPT_VERSION}:scoped-evidence-v3'
 
 WELDING_EVIDENCE = {
     'job_count': ('可归属生产日的作业', '次'),
@@ -188,12 +188,20 @@ class WeldingService:
             if not self.settings.llm_enabled:
                 raise AnalysisUnavailableError('智能分析模型尚未启用')
             values = {**report['summary'], **report['meta'].get('quality', {})}
+            for key in WELDING_EVIDENCE.keys() & values.keys():
+                value = values[key]
+                if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+                    values[key] = None
             evidence = {key: {'id': f'F{index:03d}', 'display_label': label, 'unit': unit}
                         for index, (key, (label, unit)) in enumerate(WELDING_EVIDENCE.items(), 1)
-                        if type(values.get(key)) in (int, float)}
+                        if values.get(key) is not None}
+            scope = query.model_dump(mode='json', exclude={'page', 'page_size', 'sort_by', 'descending'})
+            if kind == 'parts':
+                scope['part_state'] = query.part_state if query.part_state is not None else query.state
+                scope['state'] = None
             context = {'report_date': f'{query.start} 至 {query.end}',
                 'facts': [{'label': key, 'value': value, **evidence.get(key, {})} for key, value in values.items()],
-                'tables': [{'name': '已应用查询范围', 'rows': [query.model_dump(mode='json', exclude={'page', 'page_size', 'sort_by', 'descending'})]},
+                'tables': [{'name': '已应用查询范围', 'rows': [scope]},
                            {'name': '按日汇总', 'rows': report['daily']}, {'name': '设备机器人工位', 'rows': report['equipment']},
                            {'name': '统计口径和数据质量', 'rows': [report['meta']]}]}
             with analysis_operation(self.settings, 'welding', context['report_date']):
@@ -218,8 +226,16 @@ class WeldingService:
                 str(exc) if isinstance(exc, AnalysisOutputValidationError) else message)
             raise AnalysisUnavailableError(message) from None
         result.data_version = version
+        source = [self.settings.device_name, context['report_date']]
+        for key, label in (('device_no', '设备'), ('robot_no', '机器人'), ('project_no', '工程'),
+                           ('section_no', '分段'), ('part_no', '工件'), ('serial_number', '流水号'),
+                           ('weld_type', '焊接类型'), ('state', '作业状态'), ('part_state', '工件状态')):
+            if scope[key] is not None and scope[key] != '':
+                source.append(f'{label} {scope[key]}')
+        if scope['anomalies_only']:
+            source.append('仅异常候选')
         result.facts = [{'id': fact['id'], 'label': fact['display_label'], 'value': fact['value'],
-                         'unit': fact['unit'], 'source': f'{self.settings.device_name} · {query.start} 至 {query.end}'}
+                         'unit': fact['unit'], 'source': ' · '.join(source)}
                         for fact in context['facts'] if 'id' in fact]
         result.generated_at = datetime.now(ZoneInfo(self.settings.weld_db_timezone)).isoformat(timespec='seconds')
         result.cached = False

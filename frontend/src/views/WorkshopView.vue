@@ -113,6 +113,7 @@ let requestController: AbortController | null = null
 let requestSequence = 0
 let routeStateReady = false
 let restoringRouteState = false
+let requestPending = false
 let retryFailedLoad: (() => Promise<void>) | null = null
 
 const routeQueryKeys = ['start', 'end', 'project', 'confirmation', 'page', 'chart', 'task', 'task_line']
@@ -145,11 +146,18 @@ async function syncRouteState() {
   await router.push({ query })
 }
 
+async function changeChartType(value: string) {
+  chartType.value = value
+  const query = mergeOwnedQuery(route.query, ['chart'], { chart: value === 'bar_line' ? '' : value })
+  if (routeStateReady && pageActive.value && !sameRouteQuery(query, route.query)) await router.push({ query })
+}
+
 function beginRequest() {
   requestController?.abort()
   statisticsPollController?.abort()
   statisticsPollController = null
   requestController = new AbortController()
+  requestPending = true
   return { sequence: ++requestSequence, signal: requestController.signal }
 }
 
@@ -244,6 +252,7 @@ async function load(page = 1, { silent = false, ensureReport = true, force = fal
     }
     const current = !isWorker.value || query.reportDate === filters.reportDate
     if (pageActive.value && !signal.aborted && sequence === requestSequence && current) {
+      requestPending = false
       result.value = data
       if (!isWorker.value) {
         Object.assign(appliedRouteState, {
@@ -282,6 +291,7 @@ async function load(page = 1, { silent = false, ensureReport = true, force = fal
     }
   } finally {
     if (sequence === requestSequence) {
+      requestPending = false
       if (!silent) loading.value = false
       requestController = null
       if (isWorker.value && pageActive.value && !signal.aborted) emit('refreshed')
@@ -414,15 +424,20 @@ async function restoreRouteState() {
   return false
 }
 
+function cancelPendingRead() {
+  requestSequence += 1
+  requestController?.abort()
+  requestController = null
+  requestPending = false
+  loading.value = false
+}
+
 function pausePage() {
   statisticsPollController?.abort()
   statisticsPollController = null
   if (!pageActive.value) return
   pageActive.value = false
-  requestSequence += 1
-  requestController?.abort()
-  requestController = null
-  loading.value = false
+  cancelPendingRead()
   stopRefreshTimer()
   pauseFeedback()
 }
@@ -453,11 +468,14 @@ onDeactivated(pausePage)
 onUnmounted(() => {
   pausePage()
 })
-watch(chartType, async () => {
-  if (routeStateReady && !restoringRouteState && !isWorker.value) await syncRouteState()
-})
-watch(() => route.query, async () => {
-  if (routeStateReady && pageActive.value && !isWorker.value && route.name === 'workshop-report') await restoreRouteState()
+watch(() => route.query, async (query, previous) => {
+  if (!routeStateReady || !pageActive.value || isWorker.value || route.name !== 'workshop-report') return
+  if (routeQueryKeys.every(key => key === 'chart' || queryText(query[key]) === queryText(previous[key]))) {
+    chartType.value = requestedRouteState().chartType
+    return
+  }
+  if (requestPending) cancelPendingRead()
+  await restoreRouteState()
 }, { deep: true })
 
 const taskTableColumns = computed(() => [
@@ -511,7 +529,7 @@ const workerTableColumns = [
         v-if="!isWorker"
         v-model:start-date="filters.startDate"
         v-model:end-date="filters.endDate"
-        v-model:chart-type="chartType"
+        :chart-type="chartType"
         class="workshop-query-shell report-hero-query"
         aria-label="车间报表查询条件"
         :anchor-date="filters.reportDate"
@@ -523,6 +541,7 @@ const workerTableColumns = [
         :export-disabled="loading || !result.report"
         :exporting="exporting"
         @submit="applyTaskFilters"
+        @update:chart-type="changeChartType"
         @export="exportReport"
         @validation-error="error = $event"
       />

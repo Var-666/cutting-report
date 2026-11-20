@@ -32,8 +32,13 @@ def test_new_export_reads_fresh_tasks_in_the_applied_scope(tmp_path, monkeypatch
     calls = []
     def fetch(filters):
         calls.append(filters)
-        assert filters.start_date == selected and filters.end_date == end
         assert filters.project_code in {None, 'P1'} and filters.ship_no is None
+        if filters.end_date < selected:
+            return replace(source, workshop_records=[
+                replace(record, task_id='task-8', project_code='p1'),
+                replace(record, task_id='task-7'),
+            ])
+        assert filters.start_date == selected and filters.end_date == end
         return source
     monkeypatch.setattr(consumer_query, '_sqlserver_workshop_data', fetch)
     monkeypatch.setattr(web_query, '_sqlserver_workshop_data', fetch)
@@ -53,7 +58,9 @@ def test_new_export_reads_fresh_tasks_in_the_applied_scope(tmp_path, monkeypatch
     consumer_range = RangeReportService(cfg, consumer_query, confirmations, None)
     web_range = RangeReportService(cfg, web_query, confirmations, None)
     assert len(consumer_range.workshop_records(selected, end, project_code='P1')[1]) == 2
-    source = replace(source, workshop_records=rows, data_updated_at=datetime(2026, 11, 16, 10))
+    # SQL Server may match this casing under its collation, while the page uses the exact project key.
+    source = replace(source, workshop_records=rows + [replace(record, task_id='other-project', project_code='p1')],
+                     data_updated_at=datetime(2026, 11, 16, 10))
     page = WorkshopService(None, confirmations, cfg, range_report_service=web_range)
     task_id = 'task-8' if filtered else None
     confirmation_status = 'confirmed' if filtered else 'all'
@@ -68,19 +75,29 @@ def test_new_export_reads_fresh_tasks_in_the_applied_scope(tmp_path, monkeypatch
     def cached(*args, **kwargs):
         cache_requests.append(kwargs['cache_filters'])
         return analysis
+    def analyze_workshop(period, records, **kwargs):
+        assert period == (selected.isoformat() if selected == end else f'{selected} 至 {end}')
+        assert {row.task_id for row in records} == {row['task_id'] for row in visible['items']}
+        expected = [] if filtered else ['task-7']
+        assert [row.task_id for row in kwargs['comparison_records']] == expected
+        assert [row.task_id for row in kwargs['year_ago_records']] == expected
+        return analysis
+    def execute(run, *, cached):
+        assert cached() is analysis
+        return run()
     prepared = prepare_report(dict(report_id='fresh-export', report_type='workshop', report_date=selected.isoformat(),
         period_start=selected.isoformat(), period_end=end.isoformat(), project_code='P1', ship_no=None,
         parameters_json=json.dumps({'task_id': task_id, 'confirmation_status': confirmation_status})), 'workshop',
         settings=cfg, workshop_repository=None, range_service=consumer_range, query_service=consumer_query,
         statistics_service=StatisticsService(), chart_service=ChartService(),
-        analysis_service=SimpleNamespace(cached_analysis=cached),
-        ensure_active=lambda: None, update_status=lambda *a: None, analyze=lambda run, *, cached: cached())
+        analysis_service=SimpleNamespace(cached_analysis=cached, analyze_workshop=analyze_workshop),
+        ensure_active=lambda: None, update_status=lambda *a: None, analyze=execute)
     assert prepared.task_count == visible['total']
     assert {row['task_id'] for row in prepared.report['workshop_records']} == {row['task_id'] for row in visible['items']}
     assert prepared.report['summary']['total_cut_length'] == (10 if filtered else 80)
     assert prepared.report['worker_summaries'][0]['confirmed_task_count'] == 1
     assert prepared.report['meta']['data_updated_at'].startswith('2026-11-16T10:00:00')
-    assert len(calls) == 3
+    assert len(calls) == 5
     assert cache_requests == [{'project_code': 'P1', 'ship_no': None, **(
         {'task_id': 'task-8', 'confirmation_status': 'confirmed'} if filtered else {})}]
     assert len(comparison_calls) == (0 if filtered else 1)
@@ -91,4 +108,5 @@ def test_new_export_reads_fresh_tasks_in_the_applied_scope(tmp_path, monkeypatch
     html = ReportService(cfg).environment.get_template('report.html.j2').render(report=prepared.report,
         echarts_source='', device_name='切割一线', demo_mode=False, energy_connected=False)
     assert 'task-8' in html
+    assert 'other-project' not in html
     assert all((f'task-{index}' in html) == (not filtered) for index in range(1, 8))

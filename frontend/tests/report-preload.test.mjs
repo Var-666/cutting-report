@@ -73,7 +73,7 @@ test('worker load syncs a nonempty snapshot while background polling remains rea
   const rows = (count) => ({ report: { item_count: count }, items: [], page: 1, page_size: 10 })
   const bindings = {
     isWorker: ref(true), filters: { reportDate: today }, props: { mode: 'worker' },
-    defaultReportView: ref(true), retryFailedLoad: null,
+    defaultReportView: ref(true), retryFailedLoad: null, requestPending: false,
     beginRequest: () => ({ sequence: 1, signal }), requestSequence: 1, requestController: null,
     pageActive: ref(true), loading: ref(false), error: ref(''), result: ref(rows(1)),
     listWorkshopTasks: async (_query, options) => { calls.push(['read', options]); return rows(calls.length > 1 ? 2 : 1) },
@@ -112,7 +112,7 @@ test('manager background refresh reads applied filters and retains visible data 
   let resolve, reject, query
   const bindings = {
     isWorker: ref(false), filters: { ...applied, projectName: '尚未提交的草稿' }, appliedRouteState: { ...applied },
-    queryDateRange, retryFailedLoad: null,
+    queryDateRange, retryFailedLoad: null, requestPending: false,
     props: { mode: 'manager' }, beginRequest: () => ({ sequence: 1, signal: new AbortController().signal }),
     requestSequence: 1, requestController: null, pageActive: ref(true), loading: ref(false), error: ref(''),
     result: ref(previous), defaultReportView: ref(false), reconcileVisibleTaskSelection() {},

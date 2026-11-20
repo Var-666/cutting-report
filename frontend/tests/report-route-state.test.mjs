@@ -162,7 +162,7 @@ async function mountReport(t, kind, { query = {}, refreshing = false, syncing = 
   const source = viewSource(kind === 'leadership' ? 'LeadershipReportView.vue' : kind === 'workshop' ? 'WorkshopView.vue' : 'EnergyPeriodReportView.vue').replace(/^import .*$/gm, '')
   const data = kind === 'leadership' ? 'report' : 'taskDay'
   const load = kind === 'leadership' ? 'loadReport' : 'loadRange'
-  const exposed = kind === 'workshop' ? 'data: result, filters, appliedRouteState, loading, error, initializeReport, applyTaskFilters, changePage, exportReport, refreshAnalysisReport, analysisReady'
+  const exposed = kind === 'workshop' ? 'data: result, filters, appliedRouteState, loading, error, initializeReport, applyTaskFilters, changePage, changeChartType, exportReport, refreshAnalysisReport, analysisReady'
     : `data: ${data}, load: ${load}, periodStart, periodEnd, appliedPeriodStart, appliedPeriodEnd, chartType, changeChartType, loading, error, pageActive, dateQueryDirty, exportReport${kind === 'leadership' ? ', refreshLoading, monthlyLoading, retryReport, monthlyPeriodStart, monthlyPeriodEnd, refreshAnalysisReport' : ', monthlyReport, summaryPeriodStart, summaryPeriodEnd, summaryRefreshError, loadDefaultRanges, periodPanel, refreshAnalysisReport, retryReport'}`
   const setup = scriptFunction(...Object.keys(bindings), `${source}\nreturn { ${exposed} }`)
   const page = { setup() { mounts++; state = setup(...Object.values(bindings)); return () => Vue.h('div') } }
@@ -294,6 +294,36 @@ test('workshop date drafts retain the successful result and do not reach paginat
   assert.equal(call.start, rangeA.start)
   call.resolve(emptyWorkshop(rangeA.start, rangeA.end))
   await refresh
+})
+
+test('workshop chart changes preserve a pending linked task and the previous successful export scope', async t => {
+  const page = await mountReport(t, 'workshop', { query: rangeA })
+  const { state, router, pending } = page
+  page.held.workshop = true
+  const scoped = { ...rangeB, project: 'P1', task: 'T-8', task_line: 'Cutter01', confirmation: 'confirmed' }
+  await router.push({ query: scoped })
+  await flushReport()
+  assert.equal(pending.length, 1)
+  await state.changeChartType('line')
+  await flushReport()
+  assert.deepEqual(router.currentRoute.value.query, { ...scoped, chart: 'line' })
+  assert.equal(pending.length, 1)
+  assert.equal(pending[0].signal.aborted, false)
+  pending[0].reject(new Error('数据源暂不可用'))
+  await flushReport()
+  state.exportReport('html')
+  assert.equal(page.exports.at(-1)[1].period_start, rangeA.start)
+  assert.equal(page.exports.at(-1)[1].parameters.task_id, undefined)
+  assert.equal(state.appliedRouteState.taskId, '')
+  await router.push({ query: { ...scoped, project: 'P2' } })
+  await flushReport()
+  await router.push({ query: rangeA })
+  await flushReport()
+  assert.equal(pending[1].signal.aborted, true)
+  pending[1].resolve({ ...emptyWorkshop(rangeB.start, rangeB.end), items: [{ task_id: 'T-8' }] })
+  await flushReport()
+  assert.deepEqual(state.data.value.items, [])
+  assert.equal(state.appliedRouteState.startDate, rangeA.start)
 })
 
 for (const kind of ['workshop', 'equipment']) {

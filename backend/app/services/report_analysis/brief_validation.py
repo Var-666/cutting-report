@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from decimal import Decimal, ROUND_HALF_UP
 from pydantic import ValidationError
@@ -21,11 +22,27 @@ def _matches_precision(number: str, values: set[Decimal]) -> bool:
                and value.quantize(precision, rounding=ROUND_HALF_UP) == amount) for value in values)
 
 
-_WELDING_SCOPE = r'(?:(?P<scope>本期|本次查询|所选期间|全线|汇总|\d{4}-\d{2}-\d{2})[\s,，:：]*)?'
+_WELDING_DATE = r'\d{4}-\d{2}-\d{2}'
+_WELDING_SCOPE = (
+    rf'(?:(?P<scope>本期|本次查询|所选期间|全线|汇总|{_WELDING_DATE}(?:\s*[至到~～]\s*{_WELDING_DATE})?)[\s,，:：的]*)?'
+    r'(?:设备\s*#?\s*(?P<device>\d+)(?![\d-])号?[\s,，:：的]*)?'
+)
+_WELDING_AMOUNT = r'[\s：:为约共计达]*(?P<amount>-?[0-9][0-9,]{0,19}(?:\.\d{1,8})?)\s*'
+_WELDING_REFERENCE = re.compile(r'\[(F\d+)\]')
 _WELDING_CLAIMS = {
-    'job_count': re.compile(_WELDING_SCOPE + r'(?:焊接)?作业(?:总数|数量|数|量)?[\s：:为约共计达]*(?P<amount>-?[0-9][0-9,]{0,19})\s*(?:条|项|个)'),
-    'weld_length_m': re.compile(_WELDING_SCOPE + r'焊(?:接)?(?:总)?长度[\s：:为约共计达]*(?P<amount>-?[0-9][0-9,]{0,19}(?:\.\d{1,8})?)\s*(?:米|m\b)'),
-    'working_hours': re.compile(_WELDING_SCOPE + r'(?:作业用时|作业工时|工作时长|工作用时)[\s：:为约共计达]*(?P<amount>-?[0-9][0-9,]{0,19}(?:\.\d{1,8})?)\s*(?:小时|h\b)'),
+    key: re.compile(_WELDING_SCOPE + label + _WELDING_AMOUNT + unit)
+    for key, label, unit in (
+        ('job_count', r'(?:可归属生产日的)?(?:焊接)?作业(?:总数|数量|次数|数|量)?', r'(?:次|条|项|个)'),
+        ('weld_length_m', r'(?:有效)?焊(?:接)?(?:总)?长度', r'(?:米|m\b)'),
+        ('working_hours', r'(?:有效)?(?:作业用时|作业工时|工作时长|工作用时)', r'(?:小时|h\b)'),
+        ('involved_part_count', r'(?:去重)?参与工件(?:总数|数量|数)?', r'(?:件|个)'),
+        ('invalid_time_rows', r'时间异常(?:候选)?', r'条'),
+        ('invalid_length_rows', r'长度异常(?:候选)?', r'条'),
+        ('invalid_duration_rows', r'用时异常(?:候选)?', r'条'),
+        ('invalid_serial_rows', r'无效流水号(?:候选)?', r'条'),
+        ('unverified_state_rows', r'状态含义待核实', r'条'),
+        ('invalid_part_rows', r'工件记录异常(?:候选)?', r'条'),
+    )
 }
 
 
@@ -37,21 +54,44 @@ def validate_welding_quantities(content: dict, context: dict) -> None:
         if isinstance(table['rows'], list):
             rows.extend(table['rows'])
     text = '\n'.join(content[key] for key in ('overview', 'features', 'alerts', 'suggestions'))
-    evidence_ids = {fact['id'] for fact in context['facts'] if fact.get('id')}
-    if evidence_ids:
-        cited_ids = set(re.findall(r'\[(F\d+)\]', text))
-        if not cited_ids or not cited_ids <= evidence_ids:
-            raise ValueError('焊接分析需引用输入中存在的事实编号')
+    facts_by_id = {fact['id']: fact for fact in context['facts'] if fact.get('id')}
+    cited_ids = set(_WELDING_REFERENCE.findall(text))
+    if (facts_by_id and not cited_ids) or cited_ids - facts_by_id.keys():
+        raise ValueError('焊接分析需引用输入中存在的事实编号')
+    query = next((row for row in rows if 'start' in row and 'end' in row), {})
     for metric, pattern in _WELDING_CLAIMS.items():
         for claim in pattern.finditer(text):
             scope = claim['scope']
-            if scope is None:
-                evidence = rows
-            elif scope[0].isdigit():
-                evidence = [row for row in rows if row.get('production_date') == scope]
+            dates = re.findall(_WELDING_DATE, scope or '')
+            query_dates = (query.get('start'), query.get('end'))
+            if len(dates) == 2 and tuple(dates) != query_dates:
+                raise ValueError('焊接分析的日期范围与报表事实不符')
+            day = dates[0] if len(dates) == 1 and query_dates != (dates[0], dates[0]) else None
+            device = int(claim['device']) if claim['device'] is not None else None
+            suffix = re.match(r'[ \t,，]*(?:\[F\d+\][ \t]*)+', text[claim.end():])
+            references = _WELDING_REFERENCE.findall(suffix[0]) if suffix else []
+            if references:
+                if (day or (device is not None and device != query.get('device_no'))
+                        or any(facts_by_id[ref]['label'] != metric for ref in references)):
+                    raise ValueError('焊接分析的引用与指标或统计范围不符')
+                value = Decimal(str(facts_by_id[references[0]]['value']))
+                amount = claim['amount']
+                if Decimal(amount.replace(',', '')) != value and ('约' not in claim[0] or not _matches_precision(amount, {value})):
+                    raise ValueError('焊接分析中的数量与报表事实不符')
+                continue
+            if device is not None:
+                evidence = [row for row in rows if row.get('device_no') == device and
+                            (row.get('production_date') == day if day else 'production_date' not in row)]
+                if not day and device == query.get('device_no'):
+                    evidence.append(summary)
+            elif day:
+                evidence = [row for row in rows if row.get('production_date') == day]
+            elif scope is None:
+                evidence = [summary] if facts_by_id else rows
             else:
                 evidence = [summary]
-            values = {Decimal(str(value)) for row in evidence if type(value := row.get(metric)) in (int, float)}
+            values = {Decimal(str(value)) for row in evidence if type(value := row.get(metric)) in (int, float)
+                      and math.isfinite(value) and value >= 0}
             if not _matches_precision(claim['amount'], values):
                 raise ValueError('焊接分析中的数量与报表事实不符')
     quality_terms = {'invalid_length_rows': ('长度',), 'invalid_duration_rows': ('用时', '时长', '工时'),
@@ -60,7 +100,7 @@ def validate_welding_quantities(content: dict, context: dict) -> None:
     for table in context['tables']:
         for row in table['rows'] if isinstance(table['rows'], list) else []:
             for key, terms in quality_terms.items():
-                if row.get('quality', {}).get(key, 0) and not any(term in content['alerts'] for term in terms):
+                if (row.get('quality', {}).get(key) or 0) > 0 and not any(term in content['alerts'] for term in terms):
                     raise ValueError(f'焊接异常分析遗漏{terms[0]}问题，请在alerts说明已知异常及待核查方向')
 
 
