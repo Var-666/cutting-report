@@ -11,6 +11,7 @@ import type { PropType } from 'vue'
 import type { ExportFormat } from '../types/api'
 import type { User } from '../types/auth'
 import type { WorkshopResult, WorkshopTask } from '../types/reports'
+import type { WorkshopAnalysisScope } from '../api/generated/types.gen'
 
 import { toError } from '../utils/errors'
 import { computed, nextTick, onActivated, onDeactivated, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
@@ -53,6 +54,16 @@ const isWorker = computed(() => props.mode === 'worker')
 const dateQueryDirty = computed(() => !isWorker.value && (
   filters.startDate !== appliedRouteState.startDate || filters.endDate !== appliedRouteState.endDate
 ))
+const workshopScope = computed<WorkshopAnalysisScope>(() => ({
+  project_code: appliedRouteState.projectName || undefined,
+  task_id: appliedRouteState.taskId || undefined,
+  confirmation_status: appliedRouteState.confirmationStatus === 'confirmed' || appliedRouteState.confirmationStatus === 'unconfirmed'
+    ? appliedRouteState.confirmationStatus : undefined,
+}))
+const detailScopeLabel = computed(() => [
+  appliedRouteState.projectName ? `工程 ${appliedRouteState.projectName}` : '全部工程',
+  workshopScope.value.confirmation_status === 'confirmed' ? '已确认' : workshopScope.value.confirmation_status === 'unconfirmed' ? '未确认' : '全部确认状态',
+].join(' · '))
 const {
   selectableTasks, selectedTasks, batchConfirmation, confirmationFeedback, batchDialogOpen, selectedTaskCount,
   allVisibleTasksSelected, someVisibleTasksSelected, clearSelectedTasks, setTaskSelected, toggleVisibleTasks,
@@ -82,8 +93,8 @@ const workshopMetrics = computed(() => {
     taskCount,
     confirmedCount,
     pendingCount: Math.max(0, taskCount - confirmedCount),
-    projectCount: result.value.project_names?.length || 0,
-    confirmationRate: taskCount ? Math.round((confirmedCount / taskCount) * 1000) / 10 : 0,
+    projectCount: result.value.report?.project_count ?? null,
+    confirmationRate: taskCount ? Math.round((confirmedCount / taskCount) * 1000) / 10 : null,
   }
 })
 const workshopMetricSeries = computed(() => {
@@ -102,6 +113,7 @@ let requestController: AbortController | null = null
 let requestSequence = 0
 let routeStateReady = false
 let restoringRouteState = false
+let retryFailedLoad: (() => Promise<void>) | null = null
 
 const routeQueryKeys = ['start', 'end', 'project', 'confirmation', 'page', 'chart', 'task', 'task_line']
 
@@ -193,8 +205,19 @@ function duration(value: unknown) {
 function time(value: unknown) { return formatChineseDateTime(value) }
 function rowDate(row: WorkshopTask) { return taskProductionDate(row, filters.reportDate) }
 
-async function load(page = 1, { silent = false, ensureReport = true, force = false, syncRoute = false, useAppliedFilters = false } = {}) {
-  if (!isWorker.value && filters.endDate < filters.startDate) {
+async function load(page = 1, { silent = false, ensureReport = true, force = false, syncRoute = false, useAppliedFilters = false,
+  scope = undefined as typeof filters | undefined, defaultView = undefined as boolean | undefined } = {}) {
+  const appliedDefaultView = defaultView ?? (useAppliedFilters ? appliedRouteState.defaultView : defaultReportView.value)
+  const submitted = scope ?? {
+    ...filters,
+    ...(!isWorker.value && useAppliedFilters ? {
+      startDate: appliedRouteState.startDate, endDate: appliedRouteState.endDate,
+      taskId: appliedRouteState.taskId,
+      projectName: appliedRouteState.projectName, confirmationStatus: appliedRouteState.confirmationStatus,
+    } : {}),
+  }
+  if (!isWorker.value && !queryDateRange({ start: submitted.startDate, end: submitted.endDate })) {
+    retryFailedLoad = null
     error.value = '结束日期不能早于开始日期'
     return
   }
@@ -202,15 +225,11 @@ async function load(page = 1, { silent = false, ensureReport = true, force = fal
   if (!silent) {
     loading.value = true
     error.value = ''
+    retryFailedLoad = null
   }
   try {
     const query = {
-      ...filters,
-      ...(!isWorker.value && useAppliedFilters ? {
-        startDate: appliedRouteState.startDate, endDate: appliedRouteState.endDate,
-        taskId: appliedRouteState.taskId,
-        projectName: appliedRouteState.projectName, confirmationStatus: appliedRouteState.confirmationStatus,
-      } : {}),
+      ...submitted,
       sortMode: props.mode,
       page,
       pageSize: result.value.page_size,
@@ -223,9 +242,7 @@ async function load(page = 1, { silent = false, ensureReport = true, force = fal
       if (!pageActive.value || signal.aborted || sequence !== requestSequence) return
       data = await listWorkshopTasks(query, { force: true, signal })
     }
-    const current = isWorker.value
-      ? query.reportDate === filters.reportDate
-      : useAppliedFilters || (query.startDate === filters.startDate && query.endDate === filters.endDate)
+    const current = !isWorker.value || query.reportDate === filters.reportDate
     if (pageActive.value && !signal.aborted && sequence === requestSequence && current) {
       result.value = data
       if (!isWorker.value) {
@@ -236,7 +253,7 @@ async function load(page = 1, { silent = false, ensureReport = true, force = fal
           projectName: query.projectName,
           confirmationStatus: query.confirmationStatus,
           page: data.page,
-          defaultView: useAppliedFilters ? appliedRouteState.defaultView : defaultReportView.value,
+          defaultView: appliedDefaultView,
         })
       }
       reconcileVisibleTaskSelection(data.items || [])
@@ -249,14 +266,20 @@ async function load(page = 1, { silent = false, ensureReport = true, force = fal
             reconcileVisibleTaskSelection(updated.items || [])
           }
         }, pollController.signal).catch(caught => {
-          if (pageActive.value && !pollController.signal.aborted && sequence === requestSequence) error.value = toError(caught).message
+          if (pageActive.value && !pollController.signal.aborted && sequence === requestSequence) {
+            retryFailedLoad = () => load(data.page, { force: true, useAppliedFilters: true })
+            error.value = toError(caught).message
+          }
         }).finally(() => { if (statisticsPollController === pollController) statisticsPollController = null })
       }
       if (syncRoute) await syncRouteState()
     }
   } catch (caught) {
     const exception = toError(caught)
-    if (exception.name !== 'AbortError' && sequence === requestSequence && !silent) error.value = exception.message
+    if (exception.name !== 'AbortError' && sequence === requestSequence && !silent) {
+      retryFailedLoad = () => load(page, { ensureReport, force: true, syncRoute, scope: submitted, defaultView: appliedDefaultView })
+      error.value = exception.message
+    }
   } finally {
     if (sequence === requestSequence) {
       if (!silent) loading.value = false
@@ -278,6 +301,10 @@ function applyTaskFilters() {
   load(1, { force: true, syncRoute: !isWorker.value })
 }
 
+function retryReport() {
+  if (!loading.value) return retryFailedLoad ? retryFailedLoad() : applyTaskFilters()
+}
+
 function changePage(page: number) {
   return load(page, { syncRoute: !isWorker.value, useAppliedFilters: !isWorker.value })
 }
@@ -290,7 +317,8 @@ function exportReport(format: ExportFormat = 'html') {
     period_end: isWorker.value ? filters.reportDate : appliedRouteState.endDate,
     project_code: isWorker.value ? null : appliedRouteState.projectName || null,
     ship_no: null,
-    parameters: { chart_type: chartType.value },
+    parameters: { chart_type: chartType.value, ...(!isWorker.value && workshopScope.value.task_id ? { task_id: workshopScope.value.task_id } : {}),
+      ...(!isWorker.value && workshopScope.value.confirmation_status ? { confirmation_status: workshopScope.value.confirmation_status } : {}) },
   }, format)
 }
 
@@ -491,6 +519,7 @@ const workerTableColumns = [
         :show-loading="!result.report"
         :has-data="Boolean(result.report)"
         :date-dirty="dateQueryDirty"
+        :applied-range="result.report ? `${appliedRouteState.startDate} 至 ${appliedRouteState.endDate}` : ''"
         :export-disabled="loading || !result.report"
         :exporting="exporting"
         @submit="applyTaskFilters"
@@ -499,7 +528,7 @@ const workerTableColumns = [
       />
     </section>
 
-    <ReportDataStatus v-if="!isWorker" :meta="result.meta" :busy="loading" @refresh="refreshAnalysisReport" />
+    <ReportDataStatus v-if="!isWorker" :meta="result.meta" label="统计截止" :busy="loading" @refresh="refreshAnalysisReport" />
     <ReportFeedback v-if="!isWorker && loading && result.report" type="info" title="车间报表正在后台更新" message="当前显示上次加载的数据，更新完成后自动替换。" />
     <ReportFeedback
       v-if="error && result.report"
@@ -508,7 +537,7 @@ const workerTableColumns = [
       :message="`${error}；当前仍显示上次成功查询结果。`"
       action-label="重新查询"
       dismissible
-      @action="applyTaskFilters"
+      @action="retryReport"
       @dismiss="error = ''"
     />
 
@@ -530,12 +559,12 @@ const workerTableColumns = [
       </article>
       <article class="workshop-kpi report-kpi-card kpi-red">
         <span class="report-kpi-card__icon"><AppIcon name="briefcase" size="21" tone="current" /></span>
-        <div><span>涉及工程</span><p><strong>{{ result.report ? workshopMetrics.projectCount : '--' }}</strong> <small>个</small></p><em>当前区间范围</em></div>
+        <div><span>涉及工程</span><p><strong>{{ workshopMetrics.projectCount ?? '--' }}</strong> <small v-if="workshopMetrics.projectCount != null">个</small></p><em>当前区间范围</em></div>
         <MetricSparkline class="workshop-sparkline" :values="workshopMetricSeries.projects" label="每日涉及工程趋势" />
       </article>
       <article class="workshop-kpi report-kpi-card kpi-violet">
         <span class="report-kpi-card__icon"><AppIcon name="activity" size="21" tone="current" /></span>
-        <div><span>确认率</span><p><strong>{{ result.report ? number(workshopMetrics.confirmationRate) : '--' }}</strong> <small>%</small></p><em>按区间任务计算</em></div>
+        <div><span>确认率</span><p><strong>{{ number(workshopMetrics.confirmationRate) }}</strong> <small v-if="workshopMetrics.confirmationRate != null">%</small></p><em>按区间任务计算</em></div>
         <MetricSparkline class="workshop-sparkline" :values="workshopMetricSeries.confirmationRate" label="每日任务确认率趋势" />
       </article>
     </section>
@@ -562,7 +591,7 @@ const workerTableColumns = [
     :empty-title="isWorker ? '当前没有待确认任务' : '当前条件下暂无任务'"
     :empty-message="isWorker ? '所选日期或筛选条件下没有需要展示的任务。' : '可以调整统计区间或筛选条件后重新查询。'"
     fit-table-content
-    @retry="applyTaskFilters"
+    @retry="retryReport"
   >
     <template #summary>
       <form class="workshop-filters" :class="{ manager: !isWorker }" @submit.prevent="applyTaskFilters">
@@ -573,7 +602,7 @@ const workerTableColumns = [
       </form>
       <div v-if="result.report" class="workshop-report-state"><strong>{{ isWorker ? formatChineseDate(result.report.report_date) : `${formatChineseDate(result.report.period_start)} 至 ${formatChineseDate(result.report.period_end)}` }} 车间报表</strong><span>{{ isWorker ? `生成人：${result.report.generated_by_name || '--'} · 生成时间：${time(result.report.generated_at)} · ` : '' }}总任务 {{ result.report.item_count }} 项 · 已确认 {{ result.report.confirmed_count }} 项</span></div>
       <div v-if="!isWorker && appliedRouteState.taskId" class="workshop-summary" role="status">正在定位任务 {{ appliedRouteState.taskId }}；范围内没有该任务时显示空结果。<NButton text @click="applyTaskFilters">清除任务定位</NButton></div>
-      <div v-if="result.report" class="workshop-summary">当前筛选返回 {{ result.total }} 项任务，所选工程号已确认 {{ result.confirmed_count }} 项</div>
+      <div v-if="result.report" class="workshop-summary">{{ !isWorker ? `${detailScopeLabel} · ` : '' }}当前结果 {{ result.total }} 项任务 · 已确认 {{ result.confirmed_count }} 项</div>
       <div v-if="isWorker && result.report" class="workshop-batch-actions"><span>已选择 <strong>{{ selectedTaskCount }}</strong> 项待确认任务</span><div><NButton attr-type="button" :disabled="!selectedTaskCount || batchConfirmation.saving" @click="clearSelectedTasks">清空选择</NButton><NButton class="primary" attr-type="button" :disabled="!selectedTaskCount || loading || batchConfirmation.saving" @click="openBatchConfirmation()" type="primary">确认选中任务</NButton></div></div>
     </template>
     <template #table>
@@ -626,6 +655,7 @@ const workerTableColumns = [
       :period-end="appliedRouteState.endDate"
       :ready="analysisReady"
       :data-version="result.analysis_source_version || ''"
+      :workshop-scope="workshopScope"
       :version-check-enabled="appliedRouteState.defaultView"
       @refresh-report="refreshAnalysisReport"
     />

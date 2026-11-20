@@ -679,7 +679,8 @@ test('welding exports, analysis and part drilldown use the successful snapshot a
     assert.equal(url.searchParams.get('start'), '2026-09-01')
     assert.equal(url.searchParams.get('device_no'), '0')
     assert.equal(url.searchParams.get('serial_number'), 'S')
-    assert.equal(url.searchParams.get('page'), '2')
+    assert.equal(url.searchParams.get('page'), null)
+    assert.equal(url.searchParams.get('page_size'), null)
     assert.match(filename, /2026-09-01-2026-09-02/)
   }
   assert.deepEqual(analyses[0], { kind: 'jobs', query: { ...state.activeQuery.value }, version: 'version-1' })

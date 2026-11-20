@@ -11,7 +11,7 @@ from app.models.workshop_requests import (
 from app.services.statistics_service import build_top_cut_length_tasks, build_worker_work_summaries, build_workshop_task_distributions
 from app.services.report_analysis_service import analysis_period_label, workshop_analysis_source_version
 from app.services.workshop_sorting import sort_workshop_by_recency
-from app.services.range_report_service import validate_report_range
+from app.services.range_report_service import filter_workshop_records, validate_report_range
 
 
 class WorkshopTaskNotFoundError(ValueError):
@@ -146,17 +146,10 @@ class WorkshopService:
             records = self.range_report_service.with_workshop_confirmations(bundle.workshop_records)
         else:
             bundle, records = self.range_report_service.workshop_records(start_date, end_date)
-        analysis_source_version = _workshop_analysis_source_version(analysis_period_label(start_date, end_date), records)
         project_names = sorted({row.project_code for row in records if row.project_code})
-        if project_name:
-            records = [row for row in records if row.project_code == project_name]
-        if task_id is not None:
-            records = [row for row in records if row.task_id == task_id]
+        records = filter_workshop_records(records, project_code=project_name, task_id=task_id, confirmation_status=confirmation_status)
+        analysis_source_version = _workshop_analysis_source_version(analysis_period_label(start_date, end_date), records)
         worker_summaries = build_worker_work_summaries(records)
-        if confirmation_status == 'confirmed':
-            records = [row for row in records if row.confirmed_by]
-        elif confirmation_status == 'unconfirmed':
-            records = [row for row in records if not row.confirmed_by]
         distributions = build_workshop_task_distributions(records)
         top_cut_length_tasks = build_top_cut_length_tasks(records)
         trend = _workshop_trend(records)
@@ -166,7 +159,7 @@ class WorkshopService:
         visible = records[start:start + page_size]
         return {
             **({'meta': {'report_data': metadata}} if metadata else {}),
-            'report': {'report_date': start_date.isoformat(), 'period_start': start_date.isoformat(), 'period_end': end_date.isoformat(), 'scope_machine_no': self.settings.report_machine_no, 'item_count': total, 'confirmed_count': sum((bool(row.confirmed_by) for row in records)), 'generated_at': to_primitive(bundle.data_updated_at)},
+            'report': {'report_date': start_date.isoformat(), 'period_start': start_date.isoformat(), 'period_end': end_date.isoformat(), 'scope_machine_no': self.settings.report_machine_no, 'item_count': total, 'confirmed_count': sum((bool(row.confirmed_by) for row in records)), 'project_count': len({row.project_code for row in records if row.project_code}), 'generated_at': to_primitive(bundle.data_updated_at)},
             'items': to_primitive(visible),
             'total': total,
             'page': page,

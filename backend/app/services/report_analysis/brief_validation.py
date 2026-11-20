@@ -37,6 +37,11 @@ def validate_welding_quantities(content: dict, context: dict) -> None:
         if isinstance(table['rows'], list):
             rows.extend(table['rows'])
     text = '\n'.join(content[key] for key in ('overview', 'features', 'alerts', 'suggestions'))
+    evidence_ids = {fact['id'] for fact in context['facts'] if fact.get('id')}
+    if evidence_ids:
+        cited_ids = set(re.findall(r'\[(F\d+)\]', text))
+        if not cited_ids or not cited_ids <= evidence_ids:
+            raise ValueError('焊接分析需引用输入中存在的事实编号')
     for metric, pattern in _WELDING_CLAIMS.items():
         for claim in pattern.finditer(text):
             scope = claim['scope']

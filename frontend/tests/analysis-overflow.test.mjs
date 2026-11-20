@@ -10,9 +10,12 @@ const source = readFileSync(new URL('../src/components/ReportAnalysis.vue', impo
 
 test('report model text uses the same device alias without changing numeric formatting or evidence', () => {
   const formatter = source.slice(source.indexOf('function formatAnalysisText('), source.indexOf('function plainAnalysisText('))
-  const format = scriptFunction('formatDeviceDisplay', `${formatter}; return formatAnalysisText`)(formatDeviceDisplay)
+  const createFormatter = scriptFunction('formatDeviceDisplay', 'props', `${formatter}; return formatAnalysisText`)
+  const format = createFormatter(formatDeviceDisplay, {})
   assert.equal(format('Cutter01电耗 1,234.567 kWh [F001]'), '20KW切割机电耗 1,234.6 kWh [F001]')
   assert.equal(format('Cutter02电耗 12.345 kWh'), '30KW切割机电耗 12.3 kWh')
+  const welding = createFormatter(formatDeviceDisplay, { weldingReport: {} })
+  assert.equal(welding('区间焊接长度 12.345 m [F002]'), '区间焊接长度 12.345 m [F002]')
 })
 
 test('model-only analysis hides reference codes but keeps evidence available', () => {

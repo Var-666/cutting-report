@@ -518,6 +518,7 @@ export type AnalysisRequest = {
      * Summary Period End
      */
     summary_period_end?: string | null;
+    workshop_scope?: WorkshopAnalysisScope | null;
     /**
      * Data Version
      */
@@ -8688,6 +8689,24 @@ export type WorkerSummary = {
 };
 
 /**
+ * WorkshopAnalysisScope
+ */
+export type WorkshopAnalysisScope = {
+    /**
+     * Project Code
+     */
+    project_code?: string | null;
+    /**
+     * Task Id
+     */
+    task_id?: string | null;
+    /**
+     * Confirmation Status
+     */
+    confirmation_status?: 'all' | 'confirmed' | 'unconfirmed';
+};
+
+/**
  * WorkshopReportInfo
  */
 export type WorkshopReportInfo = {
@@ -8735,6 +8754,10 @@ export type WorkshopReportInfo = {
      * Period End
      */
     period_end?: string | null;
+    /**
+     * Project Count
+     */
+    project_count?: number | null;
 };
 
 /**

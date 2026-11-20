@@ -75,23 +75,13 @@ test('report views restore only applied state and keep worker task routing uncha
   assert.doesNotMatch(center, /route\.query\.page_size/)
 })
 
-test('standard reports distinguish edited dates from the last successfully applied range', () => {
-  const querySource = readFileSync(new URL('../src/components/StandardReportQuery.vue', import.meta.url), 'utf8')
-  const query = parse(querySource).descriptor
-  const leadership = viewSource('LeadershipReportView.vue')
-  const equipment = viewSource('EnergyPeriodReportView.vue')
-  const workshop = viewSource('WorkshopView.vue')
-
-  assert.match(query.scriptSetup.content, /dateDirty: Boolean/)
-  assert.match(query.template.content, /v-if="dateDirty && !loading"/)
-  assert.match(query.template.content, /role="status"/)
-  assert.match(query.template.content, /所选区间尚未加载成功，可重新查询/)
-  assert.match(leadershipQuerySource, /periodStart\.value !== appliedPeriodStart\.value \|\| periodEnd\.value !== appliedPeriodEnd\.value/)
-  assert.match(workshop, /filters\.startDate !== appliedRouteState\.startDate \|\| filters\.endDate !== appliedRouteState\.endDate/)
-  for (const name of ['LeadershipReportView.vue', 'EnergyPeriodReportView.vue', 'WorkshopView.vue']) {
-    const source = readFileSync(new URL(`../src/views/${name}`, import.meta.url), 'utf8')
-    assert.match(source, /:date-dirty="dateQueryDirty"/)
-  }
+test('standard reports distinguish edited dates from the last successfully applied range', async () => {
+  const props = { startDate: '2026-11-05', endDate: '2026-11-05', chartType: 'bar_line', appliedRange: '2026年11月4日' }
+  const edited = await renderComponent('components/StandardReportQuery', { ...props, dateDirty: true, hasData: true })
+  assert.match(edited, /role="status"[^>]*>[^<]*2026年11月4日/)
+  const cold = await renderComponent('components/StandardReportQuery', { ...props, dateDirty: true })
+  assert.doesNotMatch(cold, /2026年11月4日/)
+  assert.match(cold, /所选区间尚未成功查询/)
 })
 
 test('cached report query controls remain busy without showing a loading spinner', async () => {
@@ -705,12 +695,13 @@ for (const kind of ['leadership', 'equipment']) test(`${kind}: chart changes dur
   const old = state.load()
   await state.changeChartType('line')
   await flushReport()
-  assert.deepEqual(router.currentRoute.value.query, { ...rangeB, chart: 'line' })
-  assert.equal(pending[0].signal.aborted, true)
-  pending[1].resolve(reportResult(rangeB.start, rangeB.end, 'with-chart'))
-  await flushReport()
-  pending[0].resolve(reportResult(rangeB.start, rangeB.end, 'before-chart'))
+  assert.deepEqual(router.currentRoute.value.query, { ...rangeA, chart: 'line' })
+  assert.equal(pending[0].signal.aborted, false)
+  assert.equal(pending.length, 1)
+  pending[0].resolve(reportResult(rangeB.start, rangeB.end, 'with-chart'))
   await old
+  await flushReport()
+  assert.deepEqual(router.currentRoute.value.query, { ...rangeB, chart: 'line' })
   assert.equal(state.data.value.id, 'with-chart')
   assert.equal(state.loading.value, false)
 })

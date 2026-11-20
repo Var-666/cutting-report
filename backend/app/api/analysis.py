@@ -16,9 +16,9 @@ from app.api.auth import require_admin
 from app.database.sqlserver import SqlServerConfigurationError
 from app.models.domain import ReportFilter, to_primitive
 from app.models.contracts import ApiEnvelope
-from app.models.report_contracts import ReportAnalysis, AnalysisVersion
+from app.models.report_contracts import ReportAnalysis, AnalysisVersion, WorkshopAnalysisScope
 from app.services.energy_period_service import restore_task_energy_records
-from app.services.range_report_service import previous_equal_range, validate_report_range
+from app.services.range_report_service import filter_workshop_records, previous_equal_range, validate_report_range
 from app.services.report_analysis_service import (
     AnalysisDataVersionMismatch,
     AnalysisUnavailableError,
@@ -62,6 +62,7 @@ class AnalysisRequest(BaseModel):
     period_end: date | None = None
     summary_period_start: date | None = None
     summary_period_end: date | None = None
+    workshop_scope: WorkshopAnalysisScope | None = None
     data_version: str | None = Field(
         default=None,
         pattern=ANALYSIS_DATA_VERSION_PATTERN,
@@ -74,7 +75,8 @@ router.dependencies.append(Depends(device_state))
 
 def _is_default_view(payload: AnalysisRequest) -> bool:
     if payload.report_type == "workshop":
-        return payload.period_start is None or payload.period_start == payload.period_end == payload.report_date
+        return not (payload.workshop_scope and payload.workshop_scope.model_dump(exclude_defaults=True)) and (
+            payload.period_start is None or payload.period_start == payload.period_end == payload.report_date)
     if payload.period_start is not None:
         return False
     summary_start, summary_end = _summary_period(payload, payload.report_date)
@@ -155,6 +157,9 @@ def _analyze_report(payload: AnalysisRequest, request: Request) -> dict:
             except ValueError as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
         service = device_state(request).report_analysis_service
+        workshop_filters = payload.workshop_scope.model_dump(exclude_defaults=True) if payload.workshop_scope else {}
+        if workshop_filters and (payload.report_type != 'workshop' or payload.period_start is None or payload.period_end is None):
+            raise HTTPException(status_code=422, detail='车间筛选必须与车间报表的起止日期一起提供。')
         report_date = payload.report_date.isoformat()
         if payload.report_type == "leadership":
             if payload.period_start is not None and payload.period_end is not None:
@@ -215,14 +220,15 @@ def _analyze_report(payload: AnalysisRequest, request: Request) -> dict:
                 )
                 analysis = service.analyze_workshop(
                     _period_label(period_start, period_end),
-                    records,
-                    comparison_records=previous_records,
+                    filter_workshop_records(records, **workshop_filters),
+                    comparison_records=filter_workshop_records(previous_records, **workshop_filters),
                     comparison_date=_period_label(comparison_start, comparison_end),
-                    year_ago_records=year_ago_records,
+                    year_ago_records=filter_workshop_records(year_ago_records, **workshop_filters),
                     year_ago_date=_period_label(year_ago_start, year_ago_end),
                     expected_data_version=payload.data_version,
                     force=payload.force,
                     publish_latest=_is_default_view(payload),
+                    cache_filters=workshop_filters,
                 )
             else:
                 report, records = device_state(request).workshop.get_daily_report_records(

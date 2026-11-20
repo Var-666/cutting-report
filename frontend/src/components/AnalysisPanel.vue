@@ -20,6 +20,7 @@ const props = defineProps({
   ready: { type: Boolean, default: false },
   dataVersion: { type: String, default: '' },
   summaryDataVersion: { type: String, default: '' },
+  workshopScope: { type: Object as PropType<AnalysisRequest['workshopScope']>, default: undefined },
   versionCheckEnabled: { type: Boolean, default: false },
   leadershipReport: { type: Object as PropType<LeadershipReport | null>, default: null },
 })
@@ -54,7 +55,7 @@ const analysisDataVersion = computed(() => {
 })
 
 function queryScope() {
-  return JSON.stringify([deviceId.value, props.reportType, props.reportDate, props.periodStart, props.periodEnd, props.summaryPeriodStart, props.summaryPeriodEnd, props.versionCheckEnabled])
+  return JSON.stringify([deviceId.value, props.reportType, props.reportDate, props.periodStart, props.periodEnd, props.summaryPeriodStart, props.summaryPeriodEnd, props.versionCheckEnabled, props.workshopScope])
 }
 
 function requestKey() {
@@ -68,6 +69,7 @@ function requestKey() {
     props.summaryPeriodEnd,
     props.versionCheckEnabled,
     analysisDataVersion.value,
+    props.workshopScope,
   ])
 }
 
@@ -134,6 +136,7 @@ async function loadAnalysis(force = false, targetKey = requestKey()) {
       summaryPeriodStart: props.summaryPeriodStart || undefined,
       summaryPeriodEnd: props.summaryPeriodEnd || undefined,
       dataVersion: analysisDataVersion.value || undefined,
+      workshopScope: props.workshopScope,
       force,
     }, { signal })
     let result = latestOnly ? await getLatestAnalysis({
@@ -144,7 +147,7 @@ async function loadAnalysis(force = false, targetKey = requestKey()) {
       readingLatest.value = false
       result = await generate()
     }
-    if (activationTimer.isActive() && !signal.aborted && sequence === requestSequence) {
+    if (activationTimer.isActive() && !signal.aborted && sequence === requestSequence && targetKey === requestKey()) {
       if (result && (!latestOnly || !analysis.value?.generated_at || !result.generated_at
           || result.generated_at >= analysis.value.generated_at)) analysis.value = result
       displayedRequestKey = targetKey
@@ -243,6 +246,7 @@ watch(
     props.dataVersion,
     props.summaryDataVersion,
     props.versionCheckEnabled,
+    props.workshopScope,
   ],
   scheduleAutomaticAnalysis,
   { immediate: true },
@@ -275,5 +279,5 @@ onBeforeUnmount(() => { pauseAnalysis(); unsubscribeDevice() })
 </script>
 
 <template>
-  <ReportAnalysis :analysis="analysis" :leadership-report="analysisDataVersion && analysis?.data_version === analysisDataVersion ? leadershipReport : null" :loading="loading" :reading-latest="readingLatest" :error="error" :ready="ready" :empty-message="versionCheckEnabled && ready ? '正在等待首份成功分析，完成后将自动展示。' : '报表数据加载后将自动生成分析。'" @reload="reloadAnalysis" @retry="retryAnalysis" />
+  <ReportAnalysis :analysis="analysis" :report-version="analysisDataVersion" :leadership-report="analysisDataVersion && analysis?.data_version === analysisDataVersion ? leadershipReport : null" :loading="loading" :reading-latest="readingLatest" :error="error" :ready="ready" :empty-message="versionCheckEnabled && ready ? '正在等待首份成功分析，完成后将自动展示。' : '报表数据加载后将自动生成分析。'" @reload="reloadAnalysis" @retry="retryAnalysis" />
 </template>

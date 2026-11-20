@@ -14,9 +14,8 @@ test('historical analysis keeps its timestamp and update errors without a cache 
     facts: [], cached: true, cache_note: '沿用历史成功分析，原生成时间保持不变。', generated_at: '2026-11-12T09:55:00+08:00',
   }, error: '本次更新正在等待模型', ready: true, loading: false })
   assert.match(html, /已有成功分析/)
-  assert.doesNotMatch(html, /沿用历史成功分析|原生成时间保持不变/)
+  assert.match(html, /title="沿用历史成功分析，原生成时间保持不变。"[^>]*>历史统计/)
   assert.match(html, /09:55:00/)
-  assert.match(html, /已缓存/)
   assert.match(html, /本次更新正在等待模型/)
   assert.doesNotMatch(html, /智能分析暂不可用/)
 })

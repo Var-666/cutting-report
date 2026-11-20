@@ -136,7 +136,7 @@ export function getLeadershipRange(startDate: string, endDate: string, { force =
   }, { signal, mode: mode ?? (force ? 'refresh' : 'read'), onPreparing })
 }
 
-export function analyzeReport({ reportType, reportDate, periodStart, periodEnd, summaryPeriodStart, summaryPeriodEnd, dataVersion, force = false }: AnalysisRequest, { signal }: ReadOptions = {}) {
+export function analyzeReport({ reportType, reportDate, periodStart, periodEnd, summaryPeriodStart, summaryPeriodEnd, dataVersion, workshopScope, force = false }: AnalysisRequest, { signal }: ReadOptions = {}) {
   return request<AnalysisResult>('/api/v1/analysis', {
     method: 'POST',
     signal,
@@ -148,6 +148,7 @@ export function analyzeReport({ reportType, reportDate, periodStart, periodEnd, 
       summary_period_start: summaryPeriodStart,
       summary_period_end: summaryPeriodEnd,
       data_version: dataVersion || undefined,
+      workshop_scope: workshopScope,
       force,
     } satisfies ApiAnalysisRequest),
   })

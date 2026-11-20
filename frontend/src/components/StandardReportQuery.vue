@@ -28,6 +28,7 @@ const props = defineProps({
   showLoading: { type: Boolean, default: true },
   hasData: Boolean,
   dateDirty: Boolean,
+  appliedRange: { type: String, default: '' },
   exportDisabled: Boolean,
   exporting: Boolean,
   ariaLabel: { type: String, default: '报表查询条件' },
@@ -50,13 +51,13 @@ const chartTypeModel = computed({
 
 async function applyPeriod() {
   await nextTick()
-  emit('submit')
+  if (!props.loading) emit('submit')
 }
 </script>
 
 <template>
   <section class="standard-report-query-shell" :aria-label="ariaLabel">
-    <form class="standard-report-query" :aria-busy="loading" @submit.prevent="emit('submit')">
+    <form class="standard-report-query" :aria-busy="loading" @submit.prevent="!loading && emit('submit')">
       <div class="standard-report-query__period">
         <ReportPeriodPicker
           v-model:start-date="startDateModel"
@@ -67,7 +68,7 @@ async function applyPeriod() {
           @apply="applyPeriod"
           @validation-error="emit('validation-error', $event)"
         />
-        <p v-if="dateDirty && !loading" class="standard-report-query__pending" role="status" aria-live="polite">所选区间尚未加载成功，可重新查询</p>
+        <p v-if="dateDirty && !loading" class="standard-report-query__pending" role="status" aria-live="polite" :title="hasData ? appliedRange : undefined">{{ hasData && appliedRange ? `仍显示 ${appliedRange}` : '所选区间尚未成功查询' }}</p>
       </div>
       <label class="standard-report-query__chart">
         <span><AppIcon name="chart" size="13" tone="current" />图表类型</span>

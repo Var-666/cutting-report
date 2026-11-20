@@ -35,6 +35,13 @@ MAX_REPORT_RANGE_DAYS = 366
 MAX_LIVE_ENERGY_RANGE_DAYS = 31
 
 
+def filter_workshop_records(records: list[WorkshopRecord], *, project_code: str | None = None,
+                            task_id: str | None = None, confirmation_status: str = 'all') -> list[WorkshopRecord]:
+    return [row for row in records if (not project_code or row.project_code == project_code)
+            and (not task_id or row.task_id == task_id)
+            and (confirmation_status == 'all' or bool(row.confirmed_by) == (confirmation_status == 'confirmed'))]
+
+
 def validate_report_range(start_date: date, end_date: date) -> None:
     if end_date < start_date:
         raise ValueError("结束日期不能早于开始日期")

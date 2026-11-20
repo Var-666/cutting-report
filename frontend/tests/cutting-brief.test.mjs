@@ -101,7 +101,7 @@ test('welding analysis uses only the matching report snapshot for indicators', a
       analysis: { ...input, data_version: matches ? 'current' : 'old' }, weldingReport, ready: true, loading: false,
     })
     assert.equal(html.includes('焊接作业次数'), matches)
-    assert.equal(html.includes('分析依据'), matches)
+    assert.equal(html.includes('历史统计'), !matches)
     assert.ok(html.includes('焊接生产概况'))
   }
 })
@@ -115,7 +115,7 @@ test('historical welding analysis preserves its evidence and time without new me
     ready: true, loading: false,
   })
   for (const text of ['原有焊接分析', '原有作业次数', analysis.generated_at]) assert.ok(html.includes(text), text)
-  assert.ok(!html.includes('沿用历史成功分析'))
+  assert.match(html, /title="沿用历史成功分析"[^>]*>历史统计/)
   assert.ok(!html.includes('987654321') && !html.includes('焊接作业次数'))
 })
 

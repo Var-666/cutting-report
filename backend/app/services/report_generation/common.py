@@ -8,6 +8,15 @@ from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 from app.config import Settings
+from app.models.domain import AnalysisResult, to_primitive
+
+
+def report_analysis_payload(analysis: AnalysisResult | dict | None, *, data_version: str | None = None) -> dict | None:
+    result = to_primitive(analysis)
+    if result and (result.get('cache_note') or (data_version and result.get('data_version') != data_version)):
+        return to_primitive(AnalysisResult(status='unavailable', mode='unavailable',
+            overview='历史分析与本次导出统计不匹配，未纳入本次报表。', features='', alerts='', suggestions=''))
+    return result
 
 
 @dataclass(frozen=True)

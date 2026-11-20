@@ -31,6 +31,7 @@ export function useEnergyReportQuery() {
   let controller: AbortController | null = null
   let taskRefreshController: AbortController | null = null
   let requestSequence = 0
+  let requestRange: string | null = null
   let routeStateReady = false
 
   const routeQueryKeys = ['start', 'end', 'chart']
@@ -62,6 +63,7 @@ export function useEnergyReportQuery() {
     taskRefreshController?.abort()
     taskRefreshController = null
     controller = null
+    requestRange = null
     loading.value = false
     summaryLoading.value = false
   }
@@ -69,7 +71,6 @@ export function useEnergyReportQuery() {
   async function changeChartType(value: string) {
     chartType.value = value
     const query = mergeOwnedQuery(route.query, ['chart'], { chart: value === 'bar_line' ? '' : value })
-    if (loading.value) Object.assign(query, { start: periodStart.value, end: periodEnd.value })
     if (pageActive.value && !sameRouteQuery(query, route.query)) await router.push({ query })
   }
 
@@ -114,6 +115,7 @@ export function useEnergyReportQuery() {
       return
     }
     const { sequence, signal } = beginRequest({ preserveSummary: true })
+    requestRange = `${requestedStart}:${requestedEnd}`
     loading.value = true
     error.value = ''
     try {
@@ -141,6 +143,7 @@ export function useEnergyReportQuery() {
 
   async function loadDefaultRanges(force = false) {
     const { sequence, signal } = beginRequest()
+    requestRange = ''
     loading.value = true
     summaryLoading.value = true
     error.value = ''
@@ -189,14 +192,14 @@ export function useEnergyReportQuery() {
 
   async function initializeReport({ restoreQuery = false } = {}) {
     if (!pageActive.value) return
-    const requestedQuery = route.query
     const requestedRange = restoreQuery ? queryDateRange(route.query, { maxDays: 31 }) : null
     const selectedDate = reportToday()
     anchorDate.value = selectedDate
     periodStart.value = selectedDate
     periodEnd.value = selectedDate
     await loadDefaultRanges()
-    if (requestedRange && pageActive.value && route.query === requestedQuery) {
+    const currentRange = queryDateRange(route.query, { maxDays: 31 })
+    if (requestedRange && pageActive.value && requestedRange.start === currentRange?.start && requestedRange.end === currentRange.end) {
       periodStart.value = requestedRange.start
       periodEnd.value = requestedRange.end
       await loadRange(false, { syncRoute: false })
@@ -205,10 +208,12 @@ export function useEnergyReportQuery() {
 
   async function restoreRouteState({ preserveDraft = false } = {}) {
     if (route.name !== 'equipment-report') return false
-    cancelReportRequest()
     const range = queryDateRange(route.query, { maxDays: 31 })
     const nextChartType = queryChoice(route.query.chart, ['bar_line', 'bar', 'line'], 'bar_line')
     chartType.value = nextChartType
+    const routeRangeKey = range ? `${range.start}:${range.end}` : ''
+    if (loading.value && (preserveDraft || requestRange === routeRangeKey)) return true
+    if (loading.value) cancelReportRequest()
 
     if (range) {
       const needsLoad = !taskDay.value || !monthlyReport.value || !rangeQueryApplied.value || appliedPeriodStart.value !== range.start || appliedPeriodEnd.value !== range.end
@@ -239,7 +244,7 @@ export function useEnergyReportQuery() {
   }
 
   function retryReport() {
-    return rangeQueryApplied.value ? loadRange(true) : loadDefaultRanges(true)
+    return rangeQueryApplied.value || (dateQueryDirty.value && queryDateRange({ start: periodStart.value, end: periodEnd.value }, { maxDays: 31 })) ? loadRange(true) : loadDefaultRanges(true)
   }
 
   async function refreshRangeAnalysisReport() {

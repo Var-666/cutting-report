@@ -4,6 +4,7 @@ from datetime import date
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
+from app.models.report_contracts import WorkshopAnalysisScope
 
 
 class ReportCreateRequest(BaseModel):
@@ -38,6 +39,11 @@ class ReportCreateRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_custom_definition(self):
+        if self.report_type == 'workshop':
+            scope = WorkshopAnalysisScope(task_id=self.parameters.get('task_id'),
+                confirmation_status=self.parameters.get('confirmation_status', 'all'))
+            if scope.model_dump(exclude_defaults=True) and not {'period_start', 'period_end'} & self.model_fields_set:
+                raise ValueError('车间明细筛选须提供报表区间')
         start = self.period_start or self.report_date
         end = self.period_end or start
         if start is None:

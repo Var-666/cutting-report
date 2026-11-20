@@ -16,6 +16,7 @@ const props = withDefaults(defineProps<{
   ready: boolean
   leadershipReport?: LeadershipReport | null
   weldingReport?: WeldingReport | null
+  reportVersion?: string
   readingLatest?: boolean
   error?: string
   actionLabel?: string
@@ -25,6 +26,7 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{ reload: []; retry: [] }>()
 
 function formatAnalysisText(value: unknown) {
+  if (props.weldingReport) return formatDeviceDisplay(value)
   return formatDeviceDisplay(value).replace(/-?\d[\d,]*\.\d{2,}/g, (raw) => {
     const numeric = Number(raw.replaceAll(',', ''))
     if (!Number.isFinite(numeric)) return raw
@@ -37,7 +39,8 @@ function formatAnalysisText(value: unknown) {
 }
 
 function plainAnalysisText(value: unknown) {
-  return formatAnalysisText(value).replace(/\[(F\d{3})\]/g, '').replace(/\s+/g, ' ').trim()
+  return formatAnalysisText(value).replace(/\[(F\d{3})\]/g, (match, id) =>
+    props.analysis?.facts?.some(fact => fact.id === id) ? match : '').replace(/\s+/g, ' ').trim()
 }
 
 function sectionLead(value: unknown, fallback = '数据分析结论') {
@@ -55,6 +58,8 @@ function sectionBody(value: unknown) {
 }
 
 const analysisAvailable = computed(() => props.analysis?.mode === 'model' && props.analysis.status === 'success')
+const historical = computed(() => Boolean(props.analysis && (props.analysis.cache_note ||
+  ((props.reportVersion || props.weldingReport?.data_version) && props.analysis.data_version !== (props.reportVersion || props.weldingReport?.data_version)))))
 const conclusionTitle = computed(() => analysisAvailable.value
   ? sectionLead(props.analysis?.overview, '生产运行分析已完成') : '智能分析暂不可用')
 const conclusionText = computed(() => analysisAvailable.value
@@ -81,7 +86,7 @@ const weldingMetrics = computed(() => welding.value ? weldingKpis('daily', weldi
       </div>
       <div class="analysis-actions">
         <span v-if="analysis" class="analysis-mode" :class="{ model: analysisAvailable, unavailable: !analysisAvailable }">
-          {{ analysisAvailable ? 'AI 分析' : '智能分析暂不可用' }}<small v-if="analysis.cached">已缓存</small>
+          {{ analysisAvailable ? 'AI 分析' : '智能分析暂不可用' }}<small v-if="historical" :title="analysis.cache_note || '分析依据为原生成时的数据，不代表当前报表'">历史统计</small><small v-else-if="analysis.cached">已缓存</small>
         </span>
         <NButton attr-type="button" class="analysis-reload" :disabled="loading || !ready" @click="emit('reload')" :loading="loading">
           <AppIcon v-if="!loading" name="activity" :size="14" tone="current" />
@@ -95,7 +100,7 @@ const weldingMetrics = computed(() => welding.value ? weldingKpis('daily', weldi
       <span>{{ error }}</span><NButton attr-type="button" @click="emit('retry')">重试</NButton>
     </NAlert>
     <template v-if="analysis">
-      <CuttingAnalysisBrief v-if="analysis.brief && analysisAvailable" :brief="analysis.brief" :facts="analysis.facts" :generated-at="analysis.generated_at" :leadership-report="analysis.cache_note ? null : leadershipReport" />
+      <CuttingAnalysisBrief v-if="analysis.brief && analysisAvailable" :brief="analysis.brief" :facts="analysis.facts" :generated-at="analysis.generated_at" :leadership-report="historical ? null : leadershipReport" />
       <template v-else>
       <section class="analysis-conclusion" :class="{ 'analysis-conclusion--report': analysisAvailable }" aria-labelledby="analysis-conclusion-title">
         <span class="analysis-conclusion__icon"><AppIcon name="sparkles" :size="31" tone="light" /></span>
@@ -152,8 +157,8 @@ const weldingMetrics = computed(() => welding.value ? weldingKpis('daily', weldi
         <div class="evidence-list">
           <article v-for="fact in analysis.facts" :key="`evidence-${fact.id}`">
             <strong>{{ fact.id }} · {{ fact.label }}</strong>
-            <span>{{ formatAnalysisText(fact.value) }}</span>
-            <small>来源：{{ fact.source || '当前报表数据' }}</small>
+            <span>{{ formatAnalysisText(fact.value) }}<template v-if="fact.unit"> {{ fact.unit }}</template></span>
+            <small>来源：{{ fact.source || (historical ? '原分析输入（来源未记录）' : '当前报表数据') }}</small>
           </article>
         </div>
       </NCollapseItem></NCollapse>

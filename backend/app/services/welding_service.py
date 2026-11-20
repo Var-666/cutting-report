@@ -34,7 +34,20 @@ from app.core.request_cancellation import SqlRequestCancelled
 
 
 logger = logging.getLogger(__name__)
-WELDING_PROMPT_VERSION = f'{PROMPT_VERSION}:scoped-quantities'
+WELDING_PROMPT_VERSION = f'{PROMPT_VERSION}:scoped-evidence-v2'
+
+WELDING_EVIDENCE = {
+    'job_count': ('可归属生产日的作业', '次'),
+    'weld_length_m': ('有效焊接长度', 'm'),
+    'involved_part_count': ('去重参与工件', '件'),
+    'working_hours': ('有效作业用时', 'h'),
+    'invalid_time_rows': ('时间异常候选', '条'),
+    'invalid_length_rows': ('长度异常候选', '条'),
+    'invalid_duration_rows': ('用时异常候选', '条'),
+    'invalid_serial_rows': ('无效流水号候选', '条'),
+    'unverified_state_rows': ('状态含义待核实', '条'),
+    'invalid_part_rows': ('工件记录异常候选', '条'),
+}
 
 
 PENDING_METRICS = {
@@ -174,9 +187,14 @@ class WeldingService:
         try:
             if not self.settings.llm_enabled:
                 raise AnalysisUnavailableError('智能分析模型尚未启用')
+            values = {**report['summary'], **report['meta'].get('quality', {})}
+            evidence = {key: {'id': f'F{index:03d}', 'display_label': label, 'unit': unit}
+                        for index, (key, (label, unit)) in enumerate(WELDING_EVIDENCE.items(), 1)
+                        if type(values.get(key)) in (int, float)}
             context = {'report_date': f'{query.start} 至 {query.end}',
-                'facts': [{'label': key, 'value': value} for key, value in report['summary'].items()],
-                'tables': [{'name': '按日汇总', 'rows': report['daily']}, {'name': '设备机器人工位', 'rows': report['equipment']},
+                'facts': [{'label': key, 'value': value, **evidence.get(key, {})} for key, value in values.items()],
+                'tables': [{'name': '已应用查询范围', 'rows': [query.model_dump(mode='json', exclude={'page', 'page_size', 'sort_by', 'descending'})]},
+                           {'name': '按日汇总', 'rows': report['daily']}, {'name': '设备机器人工位', 'rows': report['equipment']},
                            {'name': '统计口径和数据质量', 'rows': [report['meta']]}]}
             with analysis_operation(self.settings, 'welding', context['report_date']):
                 analysis_id = current_analysis_id()
@@ -200,6 +218,9 @@ class WeldingService:
                 str(exc) if isinstance(exc, AnalysisOutputValidationError) else message)
             raise AnalysisUnavailableError(message) from None
         result.data_version = version
+        result.facts = [{'id': fact['id'], 'label': fact['display_label'], 'value': fact['value'],
+                         'unit': fact['unit'], 'source': f'{self.settings.device_name} · {query.start} 至 {query.end}'}
+                        for fact in context['facts'] if 'id' in fact]
         result.generated_at = datetime.now(ZoneInfo(self.settings.weld_db_timezone)).isoformat(timespec='seconds')
         result.cached = False
         if self.analysis_metadata is not None:

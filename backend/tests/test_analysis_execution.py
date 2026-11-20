@@ -6,6 +6,7 @@ from fastapi import HTTPException
 
 from app.api import analysis as analysis_api
 from app.config import Settings
+from app.models.domain import AnalysisResult, WorkshopRecord
 from app.services import analysis_execution, llm_service
 from app.core import report_deadline
 from app.services.analysis_execution import (
@@ -142,3 +143,26 @@ def test_analysis_api_preserves_failure_reason_and_retry_header(monkeypatch, kin
     assert error.value.status_code == 503
     assert error.value.detail == message
     assert error.value.headers['Retry-After'] == '60'
+
+
+def test_workshop_analysis_filters_each_period_and_does_not_publish_filtered_results(monkeypatch):
+    def row(task_id, project, worker):
+        return WorkshopRecord(task_id, project, None, None, None, None, None, None, confirmed_by=worker)
+
+    selected = row('T-8', 'P1', 'W1')
+    rows = [selected, row('T-9', 'P1', None), row('T-10', 'P2', 'W1')]
+    def analyze(period, records, **options):
+        assert period == '2026-11-12'
+        assert records == options['comparison_records'] == options['year_ago_records'] == [selected]
+        assert options['cache_filters'] == {'project_code': 'P1', 'task_id': 'T-8', 'confirmation_status': 'confirmed'}
+        assert options['publish_latest'] is False
+        return AnalysisResult(status='success', overview='已确认任务', features='', alerts='', suggestions='')
+
+    state = SimpleNamespace(report_analysis_service=SimpleNamespace(analyze_workshop=analyze),
+                            range_report_service=SimpleNamespace(workshop_records=lambda *_: (None, rows)))
+    monkeypatch.setattr(analysis_api, 'device_state', lambda request: state)
+    payload = analysis_api.AnalysisRequest(report_type='workshop', report_date='2026-11-12',
+        period_start='2026-11-12', period_end='2026-11-12',
+        workshop_scope={'project_code': 'P1', 'task_id': 'T-8', 'confirmation_status': 'confirmed'})
+    request = SimpleNamespace(state=SimpleNamespace(request_id='scoped-workshop'))
+    assert analysis_api._analyze_report(payload, request)['data']['overview'] == '已确认任务'

@@ -2,6 +2,10 @@ import type { Ref } from 'vue'
 import type { LeadershipPeriodRecord, LeadershipReport } from '../types/reports'
 import { computed } from 'vue'
 
+type LeadershipTrendRecord = Pick<LeadershipPeriodRecord, 'period_start'> & {
+  [Metric in 'cut_length_m' | 'groove_length_m' | 'work_time_seconds']: number | null
+}
+
 export function useLeadershipReportData({ report, monthlyReport, appliedPeriodStart, appliedPeriodEnd, defaultMonthlyView }: {
   report: Ref<LeadershipReport | null>
   monthlyReport: Ref<LeadershipReport | null>
@@ -10,14 +14,14 @@ export function useLeadershipReportData({ report, monthlyReport, appliedPeriodSt
   defaultMonthlyView: Ref<boolean>
 }) {
   const dailyRecords = computed(() => report.value?.daily_records || [])
-  const dailyChartRecords = computed<LeadershipPeriodRecord[]>(() => {
+  const dailyChartRecords = computed(() => {
     if (!report.value) return []
     const byDate = new Map(dailyRecords.value.map(row => [row.period_start, row]))
-    const rows: LeadershipPeriodRecord[] = []
+    const rows: LeadershipTrendRecord[] = []
     const end = Date.parse(`${appliedPeriodEnd.value}T00:00:00Z`)
     for (let day = Date.parse(`${appliedPeriodStart.value}T00:00:00Z`); day <= end; day += 86_400_000) {
       const date = new Date(day).toISOString().slice(0, 10)
-      rows.push(byDate.get(date) || { period_start: date, task_count: 0, cut_length_m: 0, groove_length_m: 0, work_time_seconds: 0, remark: null })
+      rows.push(byDate.get(date) || { period_start: date, cut_length_m: null, groove_length_m: null, work_time_seconds: null })
     }
     return rows
   })
@@ -31,13 +35,13 @@ export function useLeadershipReportData({ report, monthlyReport, appliedPeriodSt
     }
   })
   const monthlyRecords = computed(() => monthlyReport.value?.monthly_records || [])
-  const total = computed(() => report.value?.current_month_total || {
+  const total = computed(() => (report.value?.snapshot?.stale && !report.value.snapshot.data_as_of ? null : report.value?.current_month_total) || {
     task_count: null,
     cut_length_m: null,
     groove_length_m: null,
     work_time_seconds: null,
   })
-  const monthlyTotal = computed(() => monthlyReport.value?.twelve_month_total || {
+  const monthlyTotal = computed(() => (monthlyReport.value?.snapshot?.stale && !monthlyReport.value.snapshot.data_as_of ? null : monthlyReport.value?.twelve_month_total) || {
     task_count: null,
     cut_length_m: null,
     groove_length_m: null,
@@ -46,8 +50,9 @@ export function useLeadershipReportData({ report, monthlyReport, appliedPeriodSt
   const comparisonTotal = computed(() => report.value?.comparison_total || null)
 
   function roundNumber(value: unknown, digits = 1) {
+    if (value == null || value === '' || !Number.isFinite(Number(value))) return null
     const factor = 10 ** digits
-    return Math.round((Number(value || 0) + Number.EPSILON) * factor) / factor
+    return Math.round((Number(value) + Number.EPSILON) * factor) / factor
   }
 
   function formatLength(value: unknown) {
@@ -68,10 +73,10 @@ export function useLeadershipReportData({ report, monthlyReport, appliedPeriodSt
   }
 
   function changeRate(current: unknown, previous: unknown) {
-    if (previous === null || previous === undefined) return null
-    const currentValue = Number(current || 0)
-    const previousValue = Number(previous || 0)
-    if (!previousValue) return currentValue ? { value: 100, direction: 'up' } : { value: 0, direction: 'flat' }
+    if ([current, previous].some(value => value == null || value === '' || !Number.isFinite(Number(value)))) return null
+    const currentValue = Number(current)
+    const previousValue = Number(previous)
+    if (!previousValue) return null
     const rate = Math.round(((currentValue - previousValue) / Math.abs(previousValue)) * 100)
     return { value: Math.abs(rate), direction: rate > 0 ? 'up' : rate < 0 ? 'down' : 'flat' }
   }

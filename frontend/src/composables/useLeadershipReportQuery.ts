@@ -35,6 +35,7 @@ export function useLeadershipReportQuery({ route, router, today, routeRange, pag
   let refreshPollCount = 0
   let requestController: AbortController | null = null
   let requestSequence = 0
+  let requestRange: string | null = null
   const routeQueryKeys = ['start', 'end', 'chart']
   const dateQueryDirty = computed(() => (
     periodStart.value !== appliedPeriodStart.value || periodEnd.value !== appliedPeriodEnd.value
@@ -59,6 +60,7 @@ export function useLeadershipReportQuery({ route, router, today, routeRange, pag
     requestSequence += 1
     requestController?.abort()
     requestController = null
+    requestRange = null
     loading.value = false
     monthlyLoading.value = false
     refreshLoading.value = false
@@ -67,7 +69,6 @@ export function useLeadershipReportQuery({ route, router, today, routeRange, pag
   async function changeChartType(value: string) {
     chartType.value = value
     const query = mergeOwnedQuery(route.query, ['chart'], { chart: value === 'bar_line' ? '' : value })
-    if (loading.value) Object.assign(query, { start: periodStart.value, end: periodEnd.value })
     if (pageActive.value && !sameRouteQuery(query, route.query)) await router.push({ query })
   }
 
@@ -91,6 +92,7 @@ export function useLeadershipReportQuery({ route, router, today, routeRange, pag
       return
     }
     const { sequence, signal } = beginRequest()
+    requestRange = `${requestedStart}:${requestedEnd}`
     loading.value = true
     error.value = ''
     try {
@@ -118,10 +120,12 @@ export function useLeadershipReportQuery({ route, router, today, routeRange, pag
 
   async function restoreRouteState({ preserveDraft = false } = {}) {
     if (route.name !== 'leadership-report') return false
-    cancelReportRequest()
     const range = queryDateRange(route.query)
     const nextChartType = queryChoice(route.query.chart, ['bar_line', 'bar', 'line', 'area'], 'bar_line')
     chartType.value = nextChartType
+    const routeRangeKey = range ? `${range.start}:${range.end}` : ''
+    if (loading.value && (preserveDraft || requestRange === routeRangeKey)) return true
+    if (loading.value) cancelReportRequest()
 
     if (range) {
       const needsLoad = !report.value || defaultMonthlyView.value || appliedPeriodStart.value !== range.start || appliedPeriodEnd.value !== range.end
@@ -150,6 +154,7 @@ export function useLeadershipReportQuery({ route, router, today, routeRange, pag
   async function loadDefaultReport(force = false) {
     const currentDay = reportToday()
     const { sequence, signal } = beginRequest()
+    requestRange = ''
     loading.value = true
     monthlyLoading.value = true
     error.value = ''
@@ -228,7 +233,7 @@ export function useLeadershipReportQuery({ route, router, today, routeRange, pag
           refreshLoading.value = false
         }
       } catch (caught) {
-      const exception = toError(caught)
+        const exception = toError(caught)
         if (sequence === requestSequence) {
           refreshLoading.value = false
           if (exception.name !== 'AbortError') error.value = exception.message
@@ -240,11 +245,13 @@ export function useLeadershipReportQuery({ route, router, today, routeRange, pag
   }
 
   function retryReport() {
-    return report.value ? loadReport(true) : loadDefaultReport(true)
+    return queryDateRange({ start: periodStart.value, end: periodEnd.value }) && (dateQueryDirty.value || !defaultMonthlyView.value)
+      ? loadReport(true) : loadDefaultReport(true)
   }
 
   async function refreshRangeAnalysisReport() {
     const { sequence, signal } = beginRequest()
+    requestRange = `${appliedPeriodStart.value}:${appliedPeriodEnd.value}`
     loading.value = true
     monthlyLoading.value = true
     error.value = ''

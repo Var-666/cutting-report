@@ -1,4 +1,5 @@
 import type { Ref } from 'vue'
+import type { useLeadershipReportData } from './useLeadershipReportData'
 import type { LeadershipPeriodRecord, LeadershipReport } from '../types/reports'
 import type { BarSeriesOption, LineSeriesOption, EChartsOption } from 'echarts'
 import type { EChartsType as ECharts } from 'echarts/core'
@@ -14,11 +15,11 @@ import { useReportChartTheme } from './useReportChartTheme'
 export function useLeadershipReportCharts({ report, monthlyReport, dailyChartRecords, monthlyRecords, chartType, pageActive, roundNumber, formatLength }: {
   report: Ref<LeadershipReport | null>
   monthlyReport: Ref<LeadershipReport | null>
-  dailyChartRecords: Ref<LeadershipPeriodRecord[]>
+  dailyChartRecords: ReturnType<typeof useLeadershipReportData>['dailyChartRecords']
   monthlyRecords: Ref<LeadershipPeriodRecord[]>
   chartType: Ref<string>
   pageActive: Ref<boolean>
-  roundNumber: (value: unknown, digits?: number) => number
+  roundNumber: (value: unknown, digits?: number) => number | null
   formatLength: (value: unknown) => string
 }) {
   use([BarChart, LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
@@ -66,7 +67,7 @@ export function useLeadershipReportCharts({ report, monthlyReport, dailyChartRec
         series: ([
           { name: '切割长度', type: 'bar', data: records.map((row) => roundNumber(row.cut_length_m)), tooltip: { valueFormatter: (value) => `${formatLength(value)} 米` }, itemStyle: { color: chartTheme.colors.value.primary } },
           { name: '坡口长度', type: 'bar', data: records.map((row) => roundNumber(row.groove_length_m)), tooltip: { valueFormatter: (value) => `${formatLength(value)} 米` }, itemStyle: { color: chartTheme.colors.value.secondary } },
-          { name: '切割工时', type: 'line', yAxisIndex: 1, smooth: true, data: records.map((row) => roundNumber(Number(row.work_time_seconds) / 3600)), tooltip: { valueFormatter: (value) => `${formatLength(value)} 小时` }, itemStyle: { color: chartTheme.colors.value.accent } },
+          { name: '切割工时', type: 'line', yAxisIndex: 1, smooth: true, data: records.map(({ work_time_seconds }) => work_time_seconds == null ? null : roundNumber(work_time_seconds / 3600)), tooltip: { valueFormatter: (value) => `${formatLength(value)} 小时` }, itemStyle: { color: chartTheme.colors.value.accent } },
         ] satisfies TrendSeries[]).map(applyChartType),
       }, true)
     }

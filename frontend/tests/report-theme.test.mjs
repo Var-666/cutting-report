@@ -183,7 +183,7 @@ test('leadership charts retain the original daily and monthly metrics and unit a
 })
 
 
-test('leadership daily chart includes every calendar day and zero-task days while date labels stay automatic', async () => {
+test('leadership daily chart includes every calendar day and distinguishes missing values from verified zero', async () => {
   const rows = [
     { period_start: '2026-10-01', task_count: 3, cut_length_m: 30, groove_length_m: 0, work_time_seconds: 3600 },
     { period_start: '2026-10-03', task_count: 4, cut_length_m: 40, groove_length_m: 2, work_time_seconds: 7200 },
@@ -198,8 +198,9 @@ test('leadership daily chart includes every calendar day and zero-task days whil
     assert.equal(daily.xAxis.data.length, 28)
     assert.deepEqual(daily.xAxis.data.slice(0, 4), ['10-01', '10-02', '10-03', '10-04'])
     assert.equal(daily.xAxis.data.at(-1), '10-28')
-    assert.deepEqual(daily.series[0].data.slice(0, 4), [30, 0, 40, 0])
-    assert.deepEqual(daily.series[2].data.slice(0, 4), [1, 0, 2, 0])
+    assert.deepEqual(daily.series[0].data.slice(0, 4), [30, null, 40, null])
+    assert.deepEqual(daily.series[1].data.slice(0, 4), [0, null, 2, null])
+    assert.deepEqual(daily.series[2].data.slice(0, 4), [1, null, 2, null])
     assert.deepEqual(daily.xAxis.axisLabel, { hideOverlap: true })
     assert.deepEqual(page.state.report.value.daily_records, rows, 'calendar padding must not alter the source or table records')
     page.state.appliedPeriodStart.value = '2024-02-28'

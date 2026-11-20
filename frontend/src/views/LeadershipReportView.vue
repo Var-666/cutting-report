@@ -112,7 +112,7 @@ watch(chartType, async () => {
 watch(() => route.query, async (query, previous) => {
   if (routeStateReady && pageActive.value && route.name === 'leadership-report') {
     const preserveDraft = query.start === previous.start && query.end === previous.end
-    if (!await restoreRouteState({ preserveDraft })) scheduleRefreshPoll()
+    if (!await restoreRouteState({ preserveDraft }) && !preserveDraft) scheduleRefreshPoll()
   }
 }, { deep: true })
 
@@ -153,6 +153,7 @@ const monthlyTableColumns = [
       :show-loading="!report"
       :has-data="Boolean(report)"
       :date-dirty="dateQueryDirty"
+      :applied-range="report && snapshot.data_as_of ? `${appliedPeriodStart} 至 ${appliedPeriodEnd}` : ''"
       :export-disabled="loading || !report || !snapshot.data_as_of || snapshot.refreshing"
       :exporting="exporting"
       @submit="loadReport(false)"
@@ -162,8 +163,8 @@ const monthlyTableColumns = [
   </section>
 
   <ReportFeedback v-if="loading && report" type="info" title="领导报表正在后台更新" message="当前显示上次加载的数据，更新完成后自动替换。" />
-  <ReportFeedback v-if="error && report" type="error" title="报表更新失败" :message="error" action-label="重新查询" dismissible @action="retryReport" @dismiss="error = ''" />
-  <ReportDataStatus :meta="report?.meta" :busy="loading" @refresh="refreshAnalysisReport" />
+  <ReportFeedback v-if="error && report" type="error" title="报表更新失败" :message="`${error}；仍显示 ${appliedPeriodStart} 至 ${appliedPeriodEnd} 的结果。`" action-label="重新查询" dismissible @action="retryReport" @dismiss="error = ''" />
+  <ReportDataStatus :meta="report?.meta" label="统计截止" :busy="loading" @refresh="refreshAnalysisReport" />
   <ReportFeedback v-if="report && !report.meta?.report_data && (snapshot.stale || snapshot.refreshing)" :type="snapshot.stale ? 'warning' : 'info'" :title="snapshot.stale ? '当前统计已过期' : '后台刷新中'" :message="`统计截止：${snapshot.data_as_of || '未记录'}；${snapshot.refreshing ? '后台更新完成后自动替换。' : '当前保留上次统计，可重新查询。'}`" :action-label="snapshot.refreshing || loading ? '' : '重新查询'" @action="retryReport" />
 
   <section class="leadership-kpis" aria-label="区间汇总" :aria-busy="loading">
@@ -189,7 +190,7 @@ const monthlyTableColumns = [
     </article>
   </section>
 
-  <ReportTrendPanel ref="dailyPanel" number="01" title="区间每日明细与趋势" subtitle="查看所选时间段内每日任务与加工指标变化" chart-label="区间每日趋势图" :height="245" :loading="!report && (loading || refreshLoading)" :has-data="dailyRecords.length > 0" :empty="Boolean(report) && !dailyRecords.length" :error="!report ? error : ''" loading-title="正在读取区间生产数据" loading-message="正在汇总任务、切割长度、坡口长度和切割时长。" empty-title="所选区间暂无已完成任务" empty-message="请调整日期范围，或等待生产数据完成后重新查询。" @retry="retryReport">
+  <ReportTrendPanel ref="dailyPanel" number="01" title="区间每日明细与趋势" :subtitle="snapshot.data_as_of ? `${appliedPeriodStart} 至 ${appliedPeriodEnd}` : '按生产日统计'" chart-label="区间每日趋势图" :height="245" :loading="!snapshot.data_as_of && (loading || refreshLoading)" :has-data="dailyRecords.length > 0" :empty="Boolean(snapshot.data_as_of) && !dailyRecords.length" :error="!snapshot.data_as_of ? error : ''" loading-title="正在读取区间生产数据" loading-message="正在汇总任务、切割长度、坡口长度和切割时长。" empty-title="所选区间暂无已完成任务" empty-message="请调整日期范围，或等待生产数据完成后重新查询。" @retry="retryReport">
     <template #table>
         <AppReportTable flex-height :columns="dailyTableColumns" :items="dailyRecords" :row-key="row => row.period_start" :paginate="false" summary>
         <template #c0="{ row, index: rowIndex }">{{ rowIndex + 1 }}</template>

@@ -11,6 +11,7 @@ import { resetDeviceContext, setDeviceCatalog, selectDevice, getDeviceId } from 
 import { deviceSelection } from '../src/state/devices.ts'
 import { getWeldingReport } from '../src/api/welding.ts'
 import { parseWeldingRouteQuery } from '../src/utils/weldingRouteState.ts'
+import { queryDateRange } from '../src/utils/reportRouteState.ts'
 
 const originalFetch = globalThis.fetch
 const originalLocation = Object.getOwnPropertyDescriptor(globalThis, 'location')
@@ -72,6 +73,7 @@ test('worker load syncs a nonempty snapshot while background polling remains rea
   const rows = (count) => ({ report: { item_count: count }, items: [], page: 1, page_size: 10 })
   const bindings = {
     isWorker: ref(true), filters: { reportDate: today }, props: { mode: 'worker' },
+    defaultReportView: ref(true), retryFailedLoad: null,
     beginRequest: () => ({ sequence: 1, signal }), requestSequence: 1, requestController: null,
     pageActive: ref(true), loading: ref(false), error: ref(''), result: ref(rows(1)),
     listWorkshopTasks: async (_query, options) => { calls.push(['read', options]); return rows(calls.length > 1 ? 2 : 1) },
@@ -105,17 +107,18 @@ test('snapshot synchronization forwards cancellation and invalidates the task ca
 test('manager background refresh reads applied filters and retains visible data until success or failure', async () => {
   const source = readFileSync(new URL('../src/views/WorkshopView.vue', import.meta.url), 'utf8')
   const loadSource = source.slice(source.indexOf('async function load('), source.indexOf('\nfunction refreshAnalysisReport('))
-  const applied = { startDate: today, endDate: today, projectName: '已查询工程', confirmationStatus: 'all' }
+  const applied = { startDate: today, endDate: today, taskId: 'task-8', projectName: '已查询工程', confirmationStatus: 'confirmed' }
   const previous = { report: { item_count: 1 }, items: [{ task_id: 'cached' }], page: 2, page_size: 10 }
   let resolve, reject, query
   const bindings = {
     isWorker: ref(false), filters: { ...applied, projectName: '尚未提交的草稿' }, appliedRouteState: { ...applied },
+    queryDateRange, retryFailedLoad: null,
     props: { mode: 'manager' }, beginRequest: () => ({ sequence: 1, signal: new AbortController().signal }),
     requestSequence: 1, requestController: null, pageActive: ref(true), loading: ref(false), error: ref(''),
     result: ref(previous), defaultReportView: ref(false), reconcileVisibleTaskSelection() {},
     listWorkshopRangeTasks: value => { query = value; return new Promise((a, b) => { resolve = a; reject = b }) },
   }
-  const load = scriptFunction(...Object.keys(bindings), `${loadSource}; return load`)(...Object.values(bindings))
+  const { load, retry } = scriptFunction(...Object.keys(bindings), `${loadSource}; return { load, retry: () => retryFailedLoad() }`)(...Object.values(bindings))
   const refresh = load(2, { ensureReport: false, useAppliedFilters: true })
   assert.equal(query.projectName, applied.projectName)
   assert.equal(query.page, 2)
@@ -131,6 +134,13 @@ test('manager background refresh reads applied filters and retains visible data 
   assert.equal(bindings.result.value.items[0].task_id, 'updated')
   assert.equal(bindings.loading.value, false)
   assert.equal(bindings.error.value, '后台更新失败')
+  const retried = retry()
+  assert.equal(query.taskId, 'task-8')
+  assert.equal(query.projectName, applied.projectName)
+  assert.equal(query.confirmationStatus, 'confirmed')
+  assert.equal(query.page, 2)
+  resolve(previous)
+  await retried
 })
 
 test('admin home warms only its own overview and history', async () => {

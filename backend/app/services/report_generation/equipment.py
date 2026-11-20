@@ -13,6 +13,7 @@ from app.services.query_service import QueryService
 from app.services.range_report_service import RangeReportService, previous_equal_range
 from app.services.report_analysis_service import ReportAnalysisService
 from app.services.report_generation.common import (
+    report_analysis_payload,
     PreparedReport,
     _chart_type,
     _is_range_job,
@@ -167,7 +168,7 @@ def prepare_report(
         "energy_month": month_report,
         "charts": charts,
         "visualization": {"chart_type": chart_type},
-        "analysis": to_primitive(analysis),
+        "analysis": report_analysis_payload(analysis),
     }
     return PreparedReport(
         report=report,

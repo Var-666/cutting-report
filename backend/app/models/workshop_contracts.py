@@ -36,6 +36,7 @@ class WorkshopReportInfo(BaseModel):
     generated_at: str | None
     period_start: str | None = None
     period_end: str | None = None
+    project_count: int | None = None
 
 
 class DistributionItem(BaseModel):

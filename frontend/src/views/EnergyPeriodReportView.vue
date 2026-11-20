@@ -121,6 +121,7 @@ const summaryTableColumns = [
         :show-loading="!taskDay"
         :has-data="Boolean(taskDay)"
         :date-dirty="dateQueryDirty"
+        :applied-range="taskDay ? `${appliedPeriodStart} 至 ${appliedPeriodEnd}` : ''"
         :export-disabled="loading || !taskDay"
         :exporting="exporting"
         @submit="loadRange(true)"
@@ -129,7 +130,7 @@ const summaryTableColumns = [
       />
     </section>
 
-    <ReportDataStatus :meta="taskDay?.meta" :busy="loading" @refresh="refreshAnalysisReport" />
+    <ReportDataStatus :meta="taskDay?.meta" label="统计截止" :busy="loading" @refresh="refreshAnalysisReport" />
     <ReportFeedback v-if="loading && taskDay" type="info" title="设备报表正在后台更新" message="当前显示上次加载的数据，更新完成后自动替换。" />
     <ReportFeedback v-if="error && (taskDay || monthlyReport)" type="error" title="设备报表更新失败" :message="`${error}；当前保留已成功加载的数据。`" action-label="重新查询" dismissible @action="retryReport" @dismiss="error = ''" />
     <ReportFeedback v-if="!energyConnected" type="info" title="能耗暂未接入" message="当前设备暂未接入电表和气表，生产任务与工时正常统计。" />
@@ -201,7 +202,7 @@ const summaryTableColumns = [
     </template>
     </ReportTrendPanel>
 
-    <ReportDataStatus :meta="monthlyReport?.meta" :busy="summaryLoading" @refresh="refreshAnalysisReport" />
+    <ReportDataStatus :meta="monthlyReport?.meta" label="统计截止" :busy="summaryLoading" @refresh="refreshAnalysisReport" />
     <ReportFeedback v-if="summaryRefreshError && monthlyReport" type="warning" title="月度能耗后台更新失败" :message="`${summaryRefreshError}；当前保留已有汇总。`" action-label="重新查询" @action="refreshAnalysisReport" />
     <ReportTrendPanel
       :height="245"

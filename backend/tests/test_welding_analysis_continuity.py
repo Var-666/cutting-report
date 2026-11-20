@@ -15,6 +15,7 @@ from app.models.welding import WeldingQuery
 from app.services.welding_service import WeldingService
 from app.services.report_analysis_service import AnalysisUnavailableError, AnalysisDataVersionMismatch
 from app.services.llm_service import AnalysisOutputValidationError
+from app.services.report_analysis.brief_validation import validate_welding_quantities
 from app.core.report_deadline import ReportOperationTimeout
 from app.core.request_cancellation import SqlRequestCancelled
 from tests.line_fixtures import welding_settings, runtime_line
@@ -53,6 +54,25 @@ def test_success_survives_restart_memory_expiry_and_paging_without_calling_model
     assert cached['data_version'] == first['data_version'] and cached['facts'] == first['facts']
     assert not cached.get('cache_note')
     assert model.call_count == 1
+
+
+def test_welding_evidence_keeps_zero_and_requires_a_known_reference(analysis_service):
+    build, model = analysis_service
+    source = report()
+    source['summary'].update(working_hours=0, involved_part_count=None)
+    selected = QUERY.model_copy(update={'device_no': 0})
+    result = to_primitive(build().analyze_report('jobs', selected, source, 'a' * 64))
+    facts = {fact['id']: fact for fact in result['facts']}
+    assert set(facts) == {'F001', 'F002', 'F004'}
+    assert facts['F004']['value'] == 0 and facts['F004']['unit'] == 'h'
+    assert QUERY.start.isoformat() in facts['F004']['source']
+    context = model.call_args.args[1]
+    assert context['tables'][0]['rows'][0]['device_no'] == 0
+    content = dict(overview='区间作业次数3次 [F001]。', features='', alerts='', suggestions='复核作业记录。')
+    validate_welding_quantities(content, context)
+    for mention in ('', '[F999]'):
+        with pytest.raises(ValueError, match='事实编号'):
+            validate_welding_quantities({**content, 'overview': f'区间作业次数3次 {mention}。'}, context)
 
 
 @pytest.mark.parametrize('failure', [TimeoutError, AnalysisOutputValidationError, ReportOperationTimeout, 'disabled'])

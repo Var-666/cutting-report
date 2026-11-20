@@ -57,6 +57,7 @@ let analysisCacheKey = ''
 let disposed = false
 let appliedKind: WeldingReportKind | undefined
 let appliedLine = ''
+let failedRead: { values: WeldingQuery; syncRoute: boolean } | null = null
 let generation = 0
 let detailGeneration = 0
 let pendingRead: { key: string; promise: Promise<void> } | null | undefined
@@ -115,6 +116,7 @@ async function load(values: WeldingQuery, force: boolean, syncRoute: boolean, ba
   controller = new AbortController()
   loading.value = !background
   error.value = ''
+  failedRead = null
   if (!sourceEnabled.value) {
     report.value = null
     activeQuery.value = null
@@ -148,7 +150,10 @@ async function load(values: WeldingQuery, force: boolean, syncRoute: boolean, ba
     }
   } catch (caught) {
     const exception = toError(caught)
-    if (run === generation && exception.name !== 'AbortError') error.value = exception.message
+    if (run === generation && exception.name !== 'AbortError') {
+      failedRead = { values, syncRoute }
+      error.value = exception.message
+    }
   } finally {
     if (run === generation) loading.value = false
   }
@@ -158,6 +163,9 @@ function submit(force = false) {
   if (!range) { actionError.value = '请选择有效日期区间，最长366天'; return }
   actionError.value = ''
   return read({ ...draft, ...range, page: 1, page_size: 10 }, force)
+}
+function retryReport() {
+  return failedRead ? read(failedRead.values, true, failedRead.syncRoute) : submit(true)
 }
 function openFilters() {
   beforeFilters = { ...draft }
@@ -219,7 +227,8 @@ async function exportReport(format: string) {
   exporting.value = true
   actionError.value = ''
   try {
-    const query = new URLSearchParams(Object.entries({ ...weldingQuery(activeQuery.value), report_type: reportKind.value, format }).map(([key, value]) => [key, String(value)]))
+    const { page: _page, page_size: _pageSize, ...filters } = activeQuery.value
+    const query = new URLSearchParams(Object.entries({ ...weldingQuery(filters), report_type: reportKind.value, format }).map(([key, value]) => [key, String(value)]))
     await downloadWelding(`/api/v1/welding/export?${query}`, `小组立焊接线-${title.value}-${activeQuery.value.start}-${activeQuery.value.end}.${format}`, exportController.signal)
   } catch (caught) {
     const exception = toError(caught)
@@ -237,7 +246,7 @@ async function exportSeams() {
   finally { exporting.value = false }
 }
 async function runAnalysis() {
-  if (!report.value || !activeQuery.value || analyzing.value) return
+  if (!report.value || !activeQuery.value || loading.value || analyzing.value) return
   analysisController = new AbortController()
   const current = analysisController
   analysisCacheController?.abort()
@@ -276,7 +285,7 @@ async function readAnalysisCache(value: WeldingReport) {
   try {
     const cached = await getLatestWeldingAnalysis(reportKind.value, value.query, value.data_version, current.signal)
     if (!disposed && !current.signal.aborted && sequence === analysisSequence && activeQuery.value
-        && analysisScope(activeQuery.value) === scope && cached) { analysis.value = cached; analysisError.value = '' }
+        && analysisScope(activeQuery.value) === scope && report.value?.data_version === value.data_version && cached) { analysis.value = cached; analysisError.value = '' }
   } catch (caught) {
     if (!disposed && !current.signal.aborted && sequence === analysisSequence) {
       analysisCacheKey = ''
@@ -328,7 +337,9 @@ function restoreRouteState() {
   if (selectedLineType(deviceSelection.items, deviceSelection.id) !== 'welding') return
   return read(values, false, false)
 }
-watch(() => [props.kind, sourceEnabled.value, deviceSelection.id, selectedLineType(deviceSelection.items, deviceSelection.id), route.query], restoreRouteState, { immediate: true })
+watch(() => JSON.stringify([props.kind, sourceEnabled.value, deviceSelection.id,
+  selectedLineType(deviceSelection.items, deviceSelection.id), parseWeldingRouteQuery(route.query, props.kind, today)]),
+  restoreRouteState, { immediate: true })
 onBeforeUnmount(() => { disposed = true; cancel() })
 </script>
 
@@ -372,14 +383,14 @@ onBeforeUnmount(() => { disposed = true; cancel() })
       </section>
     </section>
     <ReportFeedback v-if="!sourceEnabled" title="焊接数据库尚未启用" message="请先保存数据库连接参数并启用小组立焊接线。" action-label="配置数据库" @action="router.push('/admin/settings/database')" />
-    <ReportFeedback v-else-if="error" type="error" title="焊接数据读取失败" :message="`${error}${report ? '；当前保留上次成功查询结果。' : ''}`" action-label="重试" @action="submit(true)" />
+    <ReportFeedback v-else-if="error" type="error" title="焊接数据读取失败" :message="`${error}${report ? '；当前保留上次成功查询结果。' : ''}`" action-label="重试" @action="retryReport" />
     <ReportPanelState v-else-if="loading && !report" type="loading" class="card-wrapper" title="正在读取焊接数据" message="首次统计可能需要较长时间，准备完成后会自动显示，请勿重复刷新。" />
     <ReportFeedback v-if="actionError && !filtersOpen" type="error" title="操作未完成" :message="actionError" dismissible @dismiss="actionError = ''" />
     <ReportFeedback v-if="actionNotice" title="操作完成" :message="actionNotice" dismissible @dismiss="actionNotice = ''" />
     <div v-if="report && activeQuery" class="welding-freshness" role="status">
-      <span class="welding-applied-query">当前结果：{{ appliedQueryLabel }}</span>
-      <ReportDataStatus v-if="report.meta.report_data" :meta="report.meta" :busy="loading" @refresh="load(activeQuery, true, false)" />
-      <span v-else class="welding-freshness-date"><AppIcon name="clock" :size="14" tone="current" />数据更新：{{ formatChineseDateTime(report.meta.calculated_at, '--', 'Asia/Shanghai') }}</span>
+      <span class="welding-applied-query" :title="deviceSelection.items?.find(line => line.id === appliedLine)?.name || appliedLine">当前结果：{{ appliedQueryLabel }}</span>
+      <ReportDataStatus v-if="report.meta.report_data" :meta="report.meta" label="统计截止" :busy="loading" @refresh="read(activeQuery, true, false)" />
+      <span v-else class="welding-freshness-date"><AppIcon name="clock" :size="14" tone="current" />统计生成：{{ formatChineseDateTime(report.meta.calculated_at, '未知', 'Asia/Shanghai') }}</span>
       <NTag v-if="loading" size="small" type="info" :bordered="false">正在更新，当前展示上次结果</NTag>
       <span v-if="report.meta.ambiguous_part_count">工件关联待核实：{{ report.meta.ambiguous_part_count }} 个流水号</span>
     </div>

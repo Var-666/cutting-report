@@ -2,6 +2,7 @@
 from dataclasses import replace
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -18,7 +19,8 @@ from tests.line_fixtures import cutting_settings
 
 
 @pytest.mark.parametrize('end', [date(2026, 11, 16), date(2026, 11, 17)])
-def test_new_export_reads_eight_tasks_after_consumer_cached_two(tmp_path, monkeypatch, end):
+@pytest.mark.parametrize('filtered', [False, True])
+def test_new_export_reads_fresh_tasks_in_the_applied_scope(tmp_path, monkeypatch, end, filtered):
     selected = date(2026, 11, 16)
     cfg = cutting_settings(project_root=tmp_path, data_source_mode='sqlserver', report_data_cache_seconds=600)
     record = WorkshopRecord(task_id='task-1', project_code='P1', ship_no=None, segment_name='S1', program_no='A.gen',
@@ -53,23 +55,40 @@ def test_new_export_reads_eight_tasks_after_consumer_cached_two(tmp_path, monkey
     assert len(consumer_range.workshop_records(selected, end, project_code='P1')[1]) == 2
     source = replace(source, workshop_records=rows, data_updated_at=datetime(2026, 11, 16, 10))
     page = WorkshopService(None, confirmations, cfg, range_report_service=web_range)
-    visible = page.list_range_tasks(selected, end, 'P1', 'all', 1, 10)
-    assert visible['total'] == 8
+    task_id = 'task-8' if filtered else None
+    confirmation_status = 'confirmed' if filtered else 'all'
+    visible = page.list_range_tasks(selected, end, 'P1', confirmation_status, 1, 10, task_id=task_id)
+    assert visible['total'] == (1 if filtered else 8)
+    assert visible['report']['project_count'] == 1
+    if filtered:
+        unfiltered = page.list_range_tasks(selected, end, 'P1', 'all', 1, 10)
+        assert visible['analysis_source_version'] != unfiltered['analysis_source_version']
     analysis = AnalysisResult(status='success', overview='保留成功分析', features='', alerts='', suggestions='')
+    cache_requests = []
+    def cached(*args, **kwargs):
+        cache_requests.append(kwargs['cache_filters'])
+        return analysis
     prepared = prepare_report(dict(report_id='fresh-export', report_type='workshop', report_date=selected.isoformat(),
-        period_start=selected.isoformat(), period_end=end.isoformat(), project_code='P1', ship_no=None), 'workshop',
+        period_start=selected.isoformat(), period_end=end.isoformat(), project_code='P1', ship_no=None,
+        parameters_json=json.dumps({'task_id': task_id, 'confirmation_status': confirmation_status})), 'workshop',
         settings=cfg, workshop_repository=None, range_service=consumer_range, query_service=consumer_query,
         statistics_service=StatisticsService(), chart_service=ChartService(),
-        analysis_service=SimpleNamespace(cached_analysis=lambda *a, **kw: analysis),
+        analysis_service=SimpleNamespace(cached_analysis=cached),
         ensure_active=lambda: None, update_status=lambda *a: None, analyze=lambda run, *, cached: cached())
     assert prepared.task_count == visible['total']
     assert {row['task_id'] for row in prepared.report['workshop_records']} == {row['task_id'] for row in visible['items']}
-    assert prepared.report['summary']['total_cut_length'] == 80
+    assert prepared.report['summary']['total_cut_length'] == (10 if filtered else 80)
     assert prepared.report['worker_summaries'][0]['confirmed_task_count'] == 1
     assert prepared.report['meta']['data_updated_at'].startswith('2026-11-16T10:00:00')
     assert len(calls) == 3
-    assert len(comparison_calls) == 1
-    assert prepared.report['closing_comparison'][-1]['totals']['task_count'] == 8
+    assert cache_requests == [{'project_code': 'P1', 'ship_no': None, **(
+        {'task_id': 'task-8', 'confirmation_status': 'confirmed'} if filtered else {})}]
+    assert len(comparison_calls) == (0 if filtered else 1)
+    if filtered:
+        assert not prepared.report['closing_comparison']
+    else:
+        assert prepared.report['closing_comparison'][-1]['totals']['task_count'] == 8
     html = ReportService(cfg).environment.get_template('report.html.j2').render(report=prepared.report,
         echarts_source='', device_name='切割一线', demo_mode=False, energy_connected=False)
-    assert all(f'task-{index}' in html for index in range(1, 9))
+    assert 'task-8' in html
+    assert all((f'task-{index}' in html) == (not filtered) for index in range(1, 8))

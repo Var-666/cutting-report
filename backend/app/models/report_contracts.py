@@ -2,11 +2,17 @@
 from datetime import date
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, JsonValue
+from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from app.models.domain import LeadershipSnapshotState
 from app.models.report_data import ReportMeta
 from app.models.analysis_brief import AnalysisBrief
+
+
+class WorkshopAnalysisScope(BaseModel):
+    project_code: str | None = Field(default=None, max_length=128)
+    task_id: str | None = Field(default=None, max_length=128)
+    confirmation_status: Literal['all', 'confirmed', 'unconfirmed'] = 'all'
 
 
 class AnalysisFact(BaseModel):

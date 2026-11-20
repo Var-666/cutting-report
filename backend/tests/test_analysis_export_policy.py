@@ -118,7 +118,7 @@ def test_cancellation_never_returns_history(analysis_export, error):
 
 @pytest.mark.parametrize('kind', ['daily', 'jobs', 'parts', 'equipment'])
 @pytest.mark.parametrize('format', ['html', 'pdf'])
-def test_welding_export_uses_current_version_and_history_only_after_model_failure(tmp_path, monkeypatch, kind, format):
+def test_welding_export_keeps_history_for_viewing_and_uses_only_matching_analysis_in_file(tmp_path, monkeypatch, kind, format):
     from app.models.domain import AnalysisResult
     from app.models.welding import WeldingQuery
     from app.services.welding_export import WeldingExport
@@ -152,7 +152,8 @@ def test_welding_export_uses_current_version_and_history_only_after_model_failur
     count, version = 9, 'c' * 64
     model.side_effect = TimeoutError('fixture model outage')
     failed = exporter.prepare(kind, query, format)[0].decode()
-    assert model.call_count == 3 and '本次分析8项' in failed
+    assert model.call_count == 3 and '本次分析8项' not in failed
+    assert '历史分析与本次导出统计不匹配' in failed
     historical = service.cached_analysis(version, kind=kind, query=query, historical=True)
     assert historical['cache_note']
     assert (historical['data_version'], historical['generated_at'], historical['facts']) == (

@@ -6,9 +6,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from app.config import Settings
-from app.models.domain import to_primitive
 from app.models.welding import ReportType, WeldingQuery
 from app.services.pdf_service import PdfService
+from app.services.report_generation.common import report_analysis_payload
 from app.services.report_service import ReportService
 from app.services.welding_service import WeldingService
 
@@ -96,7 +96,7 @@ class WeldingExport:
         chart_path = self.settings.project_root / 'vendor' / 'echarts.min.js'
         html = environment.get_template('welding_report.html.j2').render(
             title=REPORT_TITLES[kind], columns=COLUMNS[kind], report=report, filters=filters,
-            analysis=to_primitive(analysis),
+            analysis=report_analysis_payload(analysis, data_version=version),
             kind=kind,
             echarts=chart_path.read_text(encoding='utf-8') if chart_path.is_file() else '',
         )

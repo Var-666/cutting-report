@@ -1,5 +1,5 @@
 export type { WorkshopTask, WorkshopReportInfo, WorkshopResult, DistributionItem, TopCutTask, TaskConfirmation, ConfirmationAudit, WorkerSummary } from '../api/generated/types.gen'
-import type { ReportCreateRequest as ApiReportCreateRequest, ReportJob } from '../api/generated/types.gen'
+import type { ReportCreateRequest as ApiReportCreateRequest, ReportJob, WorkshopAnalysisScope } from '../api/generated/types.gen'
 export type { ReportJob, AnalysisFact, ReportAnalysis as AnalysisResult, LeadershipReport, LeadershipPeriodRecord, LeadershipSnapshotState as SnapshotState } from '../api/generated/types.gen'
 export type ReportType = NonNullable<ApiReportCreateRequest['report_type']>
 export type ReportStatus = ReportJob['status']
@@ -14,6 +14,7 @@ export interface AnalysisRequest {
   periodEnd?: string;
   summaryPeriodStart?: string;
   summaryPeriodEnd?: string;
+  workshopScope?: WorkshopAnalysisScope;
   dataVersion?: string;
   force?: boolean;
 }

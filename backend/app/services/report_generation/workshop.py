@@ -15,15 +15,18 @@ from app.models.domain import (
     WorkshopRecord,
     to_primitive,
 )
+from app.models.report_contracts import WorkshopAnalysisScope
 from app.services.chart_service import ChartService
 from app.services.equipment_service import summarize_equipment
 from app.services.query_service import QueryService
-from app.services.range_report_service import RangeReportService, previous_equal_range
+from app.services.range_report_service import RangeReportService, filter_workshop_records, previous_equal_range
 from app.services.report_analysis_service import ReportAnalysisService
 from app.services.report_generation.common import (
+    report_analysis_payload,
     PreparedReport,
     _chart_type,
     _is_range_job,
+    _job_parameters,
     _job_period,
     _period_label,
     _year_ago,
@@ -74,6 +77,11 @@ def prepare_report(
         period_start=period_start if range_job else None,
         period_end=period_end if range_job else None,
     )
+    parameters = _job_parameters(job)
+    detail_filters = WorkshopAnalysisScope(
+        task_id=parameters.get('task_id'), confirmation_status=parameters.get('confirmation_status', 'all'),
+    ).model_dump(exclude_defaults=True) if report_type == 'workshop' and range_job else {}
+    cache_filters = {'project_code': filters.project_code, 'ship_no': filters.ship_no, **detail_filters}
     if report_type == "workshop":
         if range_job:
             source_bundle, workshop_records = range_service.workshop_records(
@@ -83,9 +91,7 @@ def prepare_report(
                 ship_no=filters.ship_no,
                 force=True,
             )
-            workshop_records = sort_workshop_by_recency(
-                workshop_records, settings.timezone
-            )
+            workshop_records = sort_workshop_by_recency(filter_workshop_records(workshop_records, **detail_filters), settings.timezone)
             bundle = _workshop_bundle(workshop_records, source_bundle.data_updated_at)
         else:
             workshop_report, workshop_records = (
@@ -117,7 +123,7 @@ def prepare_report(
     ensure_active()
     update_status("calculating", "正在计算统计指标")
     statistics = statistics_service.calculate(bundle.summary_records)
-    closing_comparison = range_service.cutting_closing_comparison(
+    closing_comparison = [] if detail_filters else range_service.cutting_closing_comparison(
         period_start, period_end, report_reference_at(job, settings.timezone),
         project_code=filters.project_code, ship_no=filters.ship_no,
     )
@@ -157,10 +163,10 @@ def prepare_report(
                 return analysis_service.analyze_workshop(
                     _period_label(period_start, period_end),
                     bundle.workshop_records,
-                    cache_filters={'project_code': filters.project_code, 'ship_no': filters.ship_no},
-                    comparison_records=previous_records,
+                    cache_filters=cache_filters,
+                    comparison_records=filter_workshop_records(previous_records, **detail_filters),
                     comparison_date=_period_label(comparison_start, comparison_end),
-                    year_ago_records=year_ago_records,
+                    year_ago_records=filter_workshop_records(year_ago_records, **detail_filters),
                     year_ago_date=_period_label(year_ago_start, year_ago_end),
                 )
             else:
@@ -221,7 +227,7 @@ def prepare_report(
     cache_kind = 'workshop' if report_type == 'workshop' else 'equipment'
     cache_period = _period_label(period_start, period_end) if range_job else filters.report_date.isoformat()
     analysis = analyze(analyze_daily, cached=lambda: analysis_service.cached_analysis(cache_kind, cache_period,
-        cache_filters={'project_code': filters.project_code, 'ship_no': filters.ship_no}, energy_units=energy_units))
+        cache_filters=cache_filters, energy_units=energy_units))
     ensure_active()
     generated_at = datetime.now(timezone)
     report = {
@@ -232,7 +238,7 @@ def prepare_report(
             generated_at=generated_at,
             data_updated_at=bundle.data_updated_at,
         ),
-        "filters": to_primitive(filters),
+        "filters": {**to_primitive(filters), **detail_filters},
         "units": {
             "length": "米",
             "work_time": "HH:mm:ss",
@@ -257,7 +263,7 @@ def prepare_report(
         ),
         "charts": charts,
         "visualization": {"chart_type": chart_type},
-        "analysis": to_primitive(analysis),
+        "analysis": report_analysis_payload(analysis),
     }
     return PreparedReport(
         report=report,

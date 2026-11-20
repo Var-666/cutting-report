@@ -128,7 +128,7 @@ const evidenceColumns = [
   { key: 'c4', title: '说明', align: 'left' },
 ] as const
 const referenceColumns = [
-  { key: 'id', title: '记录编号', align: 'left' },
+  { key: 'c0', title: '记录编号', align: 'left' },
   { key: 'production_date', title: '生产日期', align: 'left' },
   { key: 'project_code', title: '工程号', align: 'left' },
   { key: 'program_no', title: '程序号', align: 'left' },
@@ -244,6 +244,7 @@ function openTask(reference: BusinessReference) {
         </div>
         <AppReportTable v-else :columns="referenceColumns" :items="visibleReferences" :total="selected.references.length" :page="referencePage"
           @page="referencePage = $event" :row-key="row => `${row.kind}:${row.id}`" :page-size="10">
+          <template #c0="{ row }"><span :title="[row.id, row.device_id, row.production_date].filter(Boolean).join(' · ')">{{ row.id }}</span></template>
           <template #c6="{ row }"><NButton v-if="canOpen(row)" text type="primary" @click="openTask(row)">查看当前任务</NButton><span v-else>—</span></template>
         </AppReportTable>
       </template>
