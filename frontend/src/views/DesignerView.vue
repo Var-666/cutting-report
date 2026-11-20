@@ -2,13 +2,14 @@
 import { useDesignerQueryPreview } from '../composables/useDesignerQueryPreview'
 import type { DesignerDefinition, DesignerResource, DesignerResources, QueryTask, ReportTemplate } from '../types/designer'
 import { toError } from '../utils/errors'
-import { nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { deleteDesignerResource, listDesignerResources, saveDesignerResource } from '../api/designer.ts'
 import DesignerQueryEditor from '../components/designer/DesignerQueryEditor.vue'
 import DesignerDefinitionEditor from '../components/designer/DesignerDefinitionEditor.vue'
 import DesignerTemplateEditor from '../components/designer/DesignerTemplateEditor.vue'
 import ManagementPageHero from '../components/ManagementPageHero.vue'
+import { useConfirm } from '../composables/useConfirm'
 import { useUnsavedChanges } from '../composables/useUnsavedChanges.ts'
 
 const emit = defineEmits<{ 'definitions-change': [] }>()
@@ -20,7 +21,6 @@ const tabs = [
 const route = useRoute()
 const router = useRouter()
 const activeTab = ref(tabs.some((item) => item.id === route.query.tab) ? route.query.tab : 'queries')
-const hasUnsavedChanges = ref(false)
 const adminToken = ref('')
 const queryTasks = ref<QueryTask[]>([])
 const templates = ref<ReportTemplate[]>([])
@@ -34,11 +34,21 @@ const error = ref('')
 const notice = ref('')
 const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })
 const { queryValidation, queryPreview, validateQuery, previewQuery } = useDesignerQueryPreview({ queryDraft, adminToken, today, error, notice })
-useUnsavedChanges(hasUnsavedChanges, '报表设计中还有未保存的修改，确定离开吗？')
+const drafts = { 'query-tasks': queryDraft, templates: templateDraft, definitions: definitionDraft }
+const savedDrafts = reactive({ 'query-tasks': 'null', templates: 'null', definitions: 'null' })
+const resourceLabels = { 'query-tasks': '查询任务', templates: '报表模板', definitions: '报表定义' }
+function isDirty(resource: keyof DesignerResources) {
+  return JSON.stringify(drafts[resource].value) !== savedDrafts[resource]
+}
+function markSaved(resource: keyof DesignerResources) {
+  savedDrafts[resource] = JSON.stringify(drafts[resource].value)
+}
+const hasUnsavedChanges = computed(() => isDirty('query-tasks') || isDirty('templates') || isDirty('definitions'))
+const canDiscard = useUnsavedChanges(hasUnsavedChanges, '离开将丢弃尚未保存的报表设计。', saving)
+const confirm = useConfirm()
+let disposed = false
+onBeforeUnmount(() => { disposed = true })
 
-watch([queryDraft, templateDraft, definitionDraft], () => {
-  hasUnsavedChanges.value = true
-}, { deep: true })
 watch(activeTab, (tab) => {
   if (route.query.tab === tab) return
   router.replace({ query: { ...route.query, tab } })
@@ -115,6 +125,7 @@ function blankDefinition(): DesignerDefinition {
 }
 
 async function loadResources() {
+  if (loading.value) return
   loading.value = true
   error.value = ''
   try {
@@ -123,14 +134,13 @@ async function loadResources() {
       listDesignerResources('templates', adminToken.value),
       listDesignerResources('definitions', adminToken.value),
     ])
+    if (disposed) return
     queryTasks.value = queries.items
     templates.value = templateData.items
     definitions.value = definitionData.items
-    if (!queryDraft.value) queryDraft.value = blankQuery()
-    if (!templateDraft.value) templateDraft.value = blankTemplate()
-    if (!definitionDraft.value) definitionDraft.value = blankDefinition()
-    await nextTick()
-    hasUnsavedChanges.value = false
+    if (!queryDraft.value) { queryDraft.value = blankQuery(); markSaved('query-tasks') }
+    if (!templateDraft.value) { templateDraft.value = blankTemplate(); markSaved('templates') }
+    if (!definitionDraft.value) { definitionDraft.value = blankDefinition(); markSaved('definitions') }
   } catch (caught) {
     const exception = toError(caught)
     error.value = exception.message
@@ -139,22 +149,47 @@ async function loadResources() {
   }
 }
 
-function mayReplaceDraft() { return !hasUnsavedChanges.value || window.confirm('当前设计有未保存的修改，确定放弃吗？') }
-function chooseQuery(item: QueryTask) { if (!mayReplaceDraft()) return; queryDraft.value = clone(item); queryValidation.value = null; queryPreview.value = null; error.value = ''; notice.value = ''; nextTick(() => { hasUnsavedChanges.value = false }) }
-function chooseTemplate(item: ReportTemplate) { if (!mayReplaceDraft()) return; templateDraft.value = clone(item); error.value = ''; notice.value = ''; nextTick(() => { hasUnsavedChanges.value = false }) }
-function chooseDefinition(item: DesignerDefinition) { if (!mayReplaceDraft()) return; definitionDraft.value = clone(item); error.value = ''; notice.value = ''; nextTick(() => { hasUnsavedChanges.value = false }) }
+async function mayReplaceDraft(resource: keyof DesignerResources) {
+  return await canDiscard(`替换当前${resourceLabels[resource]}将丢弃该草稿的修改。`, isDirty(resource))
+}
+async function chooseQuery(item?: QueryTask) {
+  if (!await mayReplaceDraft('query-tasks') || disposed || saving.value) return
+  queryDraft.value = item ? clone(item) : blankQuery()
+  markSaved('query-tasks')
+  queryValidation.value = null
+  queryPreview.value = null
+  error.value = ''
+  notice.value = ''
+}
+async function chooseTemplate(item?: ReportTemplate, copy = false) {
+  if (!await mayReplaceDraft('templates') || disposed || saving.value) return
+  templateDraft.value = item && !copy ? clone(item) : blankTemplate(item ?? null)
+  if (copy) savedDrafts.templates = JSON.stringify(blankTemplate())
+  else markSaved('templates')
+  error.value = ''
+  notice.value = ''
+}
+async function chooseDefinition(item?: DesignerDefinition) {
+  if (!await mayReplaceDraft('definitions') || disposed || saving.value) return
+  definitionDraft.value = item ? clone(item) : blankDefinition()
+  markSaved('definitions')
+  error.value = ''
+  notice.value = ''
+}
 
 async function saveResource(resource: keyof DesignerResources, draft: DesignerResource, idKey: string) {
+  if (saving.value || loading.value) return
   saving.value = true; error.value = ''; notice.value = ''
   try {
     const id = String(Reflect.get(draft, idKey) || '')
     const saved = await saveDesignerResource(resource, draft, id, adminToken.value)
+    if (disposed) return
     if (resource === 'query-tasks' && 'sql_text' in saved) queryDraft.value = clone(saved)
     if (resource === 'templates' && 'config' in saved) templateDraft.value = clone(saved)
     if (resource === 'definitions' && 'visual_config' in saved) definitionDraft.value = clone(saved)
     notice.value = '保存成功，配置版本已更新'
+    markSaved(resource)
     await loadResources()
-    hasUnsavedChanges.value = false
     if (resource === 'definitions') emit('definitions-change')
   } catch (caught) {
     const exception = toError(caught)
@@ -163,16 +198,23 @@ async function saveResource(resource: keyof DesignerResources, draft: DesignerRe
 
 async function removeResource(resource: keyof DesignerResources, draft: DesignerResource, idKey: string) {
   const id = String(Reflect.get(draft, idKey) || '')
-  if (!id || draft.is_builtin || !window.confirm(`确认删除“${draft.name}”？`)) return
+  if (!id || draft.is_builtin || loading.value || saving.value) return
+  const name = JSON.parse(savedDrafts[resource])?.name || draft.name
+  if (!await confirm({
+    title: `删除${resourceLabels[resource]}？`,
+    content: `将删除“${name}”。仍被其他设计引用的资源受系统限制。${isDirty(resource) ? '删除成功后，当前草稿也会丢弃。' : ''}`,
+    positiveText: `删除${resourceLabels[resource]}`, type: 'error',
+  }) || disposed || saving.value || drafts[resource].value !== draft) return
   saving.value = true; error.value = ''; notice.value = ''
   try {
     await deleteDesignerResource(resource, id, adminToken.value)
+    if (disposed) return
     notice.value = '删除成功'
     if (resource === 'query-tasks') queryDraft.value = blankQuery()
     if (resource === 'templates') templateDraft.value = blankTemplate()
     if (resource === 'definitions') { definitionDraft.value = blankDefinition(); emit('definitions-change') }
+    markSaved(resource)
     await loadResources()
-    hasUnsavedChanges.value = false
   } catch (caught) {
     const exception = toError(caught)
     error.value = exception.message } finally { saving.value = false }
@@ -183,22 +225,13 @@ onMounted(loadResources)
 
 <template>
   <div class="management-page designer-page">
-  <ManagementPageHero
-    eyebrow="REPORT DESIGN STUDIO"
-    title="报表定义与查询任务管理"
-    description="将只读 SQL、字段指标、图表和离线 HTML 模板组合为可发布的新报表。"
-    icon="grid"
-    status-label="设计流程"
-    status-value="查询 · 定义 · 模板"
-    status-note="配置驱动，发布后进入统一报表生成管线"
-    tone="violet"
-  />
+  <ManagementPageHero title="报表定义与查询任务管理" />
   <section class="designer-access-strip">
     <div><strong>管理访问</strong><span>SQL Server 模式下，加载与保存设计资源需要管理员令牌。</span></div>
-    <label class="designer-token"><span>管理员令牌</span><input v-model="adminToken" name="designer_admin_token" type="password" autocomplete="current-password" placeholder="SQL Server 模式需填写…" @change="loadResources" /></label>
+    <label class="designer-token"><span>管理员令牌</span><input v-model="adminToken" name="designer_admin_token" type="password" autocomplete="current-password" placeholder="SQL Server 模式需填写…" :disabled="saving || loading" @change="loadResources" /></label>
   </section>
 
-  <section class="panel designer-shell">
+  <section class="panel designer-shell" :inert="saving" :aria-busy="saving">
     <div class="designer-tabs" role="tablist">
       <button v-for="(tab, index) in tabs" :id="`designer-tab-${tab.id}`" :key="tab.id" type="button" role="tab" :aria-selected="activeTab === tab.id" :aria-controls="`designer-panel-${tab.id}`" :tabindex="activeTab === tab.id ? 0 : -1" :class="{ active: activeTab === tab.id }" @click="selectTab(tab.id)" @keydown="moveTab($event, index)">{{ tab.label }}</button>
     </div>
@@ -207,7 +240,7 @@ onMounted(loadResources)
 
     <div v-if="activeTab === 'queries'" id="designer-panel-queries" class="designer-workspace" role="tabpanel" aria-labelledby="designer-tab-queries">
       <aside class="designer-list">
-        <div class="designer-list-head"><strong>查询任务</strong><button type="button" @click="queryDraft = blankQuery()">新建</button></div>
+        <div class="designer-list-head"><strong>查询任务</strong><button type="button" @click="chooseQuery()">新建</button></div>
         <button v-for="item in queryTasks" :key="item.query_task_id" type="button" class="designer-list-item" :class="{ active: queryDraft?.query_task_id === item.query_task_id }" @click="chooseQuery(item)">
           <strong>{{ item.name }}</strong><span>{{ item.code }} · V{{ item.version }}</span><i :class="{ enabled: item.enabled }"></i>
         </button>
@@ -218,7 +251,7 @@ onMounted(loadResources)
 
     <div v-else-if="activeTab === 'definitions'" id="designer-panel-definitions" class="designer-workspace" role="tabpanel" aria-labelledby="designer-tab-definitions">
       <aside class="designer-list">
-        <div class="designer-list-head"><strong>报表定义</strong><button type="button" @click="definitionDraft = blankDefinition()">新建</button></div>
+        <div class="designer-list-head"><strong>报表定义</strong><button type="button" @click="chooseDefinition()">新建</button></div>
         <button v-for="item in definitions" :key="item.definition_id" type="button" class="designer-list-item" :class="{ active: definitionDraft?.definition_id === item.definition_id }" @click="chooseDefinition(item)"><strong>{{ item.name }}</strong><span>{{ item.is_builtin ? '内置报表' : item.query_task_name }} · V{{ item.version }}</span><i :class="{ enabled: item.enabled }"></i></button>
       </aside>
       <DesignerDefinitionEditor v-model="definitionDraft" :saving="saving" :query-tasks="queryTasks" :templates="templates" @save="saveResource('definitions', $event, 'definition_id')" @remove="removeResource('definitions', $event, 'definition_id')" />
@@ -226,10 +259,10 @@ onMounted(loadResources)
 
     <div v-else id="designer-panel-templates" class="designer-workspace template-workspace" role="tabpanel" aria-labelledby="designer-tab-templates">
       <aside class="designer-list">
-        <div class="designer-list-head"><strong>报表模板</strong><button type="button" @click="templateDraft = blankTemplate()">新建</button></div>
+        <div class="designer-list-head"><strong>报表模板</strong><button type="button" @click="chooseTemplate()">新建</button></div>
         <button v-for="item in templates" :key="item.template_id" type="button" class="designer-list-item" :class="{ active: templateDraft?.template_id === item.template_id }" @click="chooseTemplate(item)"><strong>{{ item.name }}</strong><span>{{ item.code }} · V{{ item.version }}</span><i :class="{ enabled: item.enabled }"></i></button>
       </aside>
-      <DesignerTemplateEditor v-model="templateDraft" :saving="saving" @copy="templateDraft = blankTemplate($event)" @save="saveResource('templates', $event, 'template_id')" @remove="removeResource('templates', $event, 'template_id')" />
+      <DesignerTemplateEditor v-model="templateDraft" :saving="saving" @copy="chooseTemplate($event, true)" @save="saveResource('templates', $event, 'template_id')" @remove="removeResource('templates', $event, 'template_id')" />
     </div>
   </section>
   </div>

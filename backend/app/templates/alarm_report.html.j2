@@ -22,7 +22,7 @@
       [('incident_count','新增事件（条）','count'), ('critical_count','严重告警（条）','count'), ('high_count','高风险告警（条）','count')],
       '按告警事件首次开始时间归属', '统计本报告涉及设备已同步的告警事件。超出监控或保留范围、同步尚未完成的区间显示数据不足。') }}
     {% endif %}
-    {{ section_title('核心告警指标', 'KEY ALARM KPI') }}
+    {{ section_title('核心告警指标') }}
     <div class="lp-kpis">
       {{ kpi('tasks', '关联告警', analysis.facts|length, '条') }}
       {% for severity in ['critical','high','warning'] %}
@@ -32,7 +32,7 @@
     </div>
   </section>
   <section class="lp-sheet lp-analysis" aria-label="智能分析">
-    {{ hero('AI 智能生产洞察', 'INTELLIGENCE & DECISION INSIGHTS', cover) }}
+    {{ hero('AI 告警分析', cover) }}
     {% if analysis.findings %}
     <section class="lp-analysis-group"><h2>关键发现</h2><div class="lp-analysis-body">
       {% for finding in analysis.findings %}
@@ -92,7 +92,7 @@
     </div></section>
     {% endif %}
   </section>
-  <p class="lp-end">本报告由系统依据数据库告警记录自动生成。大模型结论仅用于辅助排查，安全处置以现场规程和授权人员判断为准。 · 报告结束<span>{{ report_id }}</span></p>
+  <p class="lp-end">大模型结论仅用于辅助排查，安全处置以现场规程和授权人员判断为准。 · 报告结束<span>{{ report_id }}</span></p>
 </div>
 {% include 'industrial_report.js.j2' %}
 </body>

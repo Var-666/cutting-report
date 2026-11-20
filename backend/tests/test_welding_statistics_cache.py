@@ -74,11 +74,11 @@ def query(**kwargs):
 
 @pytest.fixture
 def aggregate_groups():
-    daily = [{'production_date': f'2026-10-0{day}', 'weld_length_m': length}
+    daily = [{'production_date': f'2026-10-0{day}', 'weld_length_m': length, 'job_count': int(day <= 3)}
              for day, length in ((1, 4), (2, None), (3, 0), (4, 4))]
-    equipment = [{'device_no': device, 'robot_no': robot, 'weld_length_m': length}
-                 for device, robot, length in ((None, None, 4), (None, 0, 4), (0, None, 4), (0, 0, 4),
-                                               (0, 2, None), (2, None, 0), (2, 0, 4), (2, 3, 4))]
+    equipment = [{'device_no': device, 'robot_no': robot, 'weld_length_m': length, 'job_count': int(index < 3)}
+                 for index, (device, robot, length) in enumerate(((None, None, 4), (None, 0, 4), (0, None, 4), (0, 0, 4),
+                                                                 (0, 2, None), (2, None, 0), (2, 0, 4), (2, 3, 4)))]
     return daily, equipment
 
 

@@ -95,7 +95,7 @@ test('runtime roles paginate locally and retain or clamp the page after status r
   assert.deepEqual(state.roleItems.value, [])
 })
 
-async function mountAutomation(t, { confirm = async () => true, run, readRun, save, scheduleItems } = {}) {
+async function mountAutomation(t, { confirm = async () => true, run, readRun, save, toggle, scheduleItems } = {}) {
   const calls = { status: 0, schedules: 0, emails: [], actions: [], runReads: [], savedSchedules: [] }
   const timers = new Map()
   const activated = []
@@ -104,7 +104,7 @@ async function mountAutomation(t, { confirm = async () => true, run, readRun, sa
   let held = false
   const result = (page, total = 60) => ({ items: total ? [{ delivery_id: `page-${page}` }] : [], total, page, page_size: 10 })
   const bindings = {
-    ...Vue, useConfirm: () => confirm, useUnsavedChanges() {}, deviceSelection: Vue.reactive({ id: 'Cutter02', items: [{ id: 'Cutter02' }] }),
+    ...Vue, useConfirm: () => confirm, useUnsavedChanges: (dirty, _message, busy) => (content, changed = dirty.value) => !busy.value && (!changed || confirm(content)), deviceSelection: Vue.reactive({ id: 'Cutter02', items: [{ id: 'Cutter02' }] }),
     setTimeout: callback => { timers.set(++timerId, callback); return timerId }, clearTimeout: id => timers.delete(id),
     onActivated: callback => { activated.push(callback); Vue.onActivated(callback) },
     onDeactivated: callback => { deactivated.push(callback); Vue.onDeactivated(callback) },
@@ -117,6 +117,7 @@ async function mountAutomation(t, { confirm = async () => true, run, readRun, sa
     },
     saveAutomationSchedule: async (body, id) => { calls.actions.push('save'); calls.savedSchedules.push({ body, id }); await save?.() }, retryEmailDelivery: async () => calls.actions.push('retry'),
     deleteAutomationSchedule: async () => calls.actions.push('delete'),
+    setAutomationScheduleEnabled: async (id, payload) => { calls.actions.push([id, payload]); return toggle(id, payload) },
     runAutomationSchedule: async id => { calls.actions.push('run'); return run ? run(id) : { schedule_id: id, run_id: `run-${id}`, status: 'queued' } },
     cancelAutomationRun: async id => { calls.actions.push(`cancel:${id}`); return { run_id: id, status: 'cancelled' } },
     getAutomationRun: async (id, options) => { calls.runReads.push({ id, signal: options.signal }); return readRun ? readRun(id, options) : { run_id: id, status: 'sent' } },
@@ -124,7 +125,7 @@ async function mountAutomation(t, { confirm = async () => true, run, readRun, sa
   }
   Object.assign(bindings, automationHooks(bindings))
   const code = descriptor('AutomationView').scriptSetup.content.replace(/^import .*$/gm, '')
-  const setup = scriptFunction(...Object.keys(bindings), `${code}; return { loadDeliveries, changeDeliveryPage, deliveryPage, deliveries, deliveryTotal, deliveryLoading, deliverySearch, appliedDeliverySearch, searchDeliveries, clearDeliverySearch, scheduleSearch, appliedScheduleSearch, visibleSchedules, searchSchedules, clearScheduleSearch, pageCount, error, loadAll, retry, submit, submitConfiguration, remove, runNow, cancelExecution, executions, runningScheduleIds, cancellableScheduleIds, deliveryResolved, openDelivery, selectedDelivery, resolutionDirty, form, deliveryLabels, openScheduleEditor, resetForm, hasUnsavedChanges, configurationDirty, activePanel, scheduleError, recipientInputVisible, recipientDraft, recipientError, addRecipient, removeRecipient, cancelRecipientInput }`)
+  const setup = scriptFunction(...Object.keys(bindings), `${code}; return { loadDeliveries, changeDeliveryPage, deliveryPage, deliveries, deliveryTotal, deliveryLoading, deliverySearch, appliedDeliverySearch, searchDeliveries, clearDeliverySearch, scheduleSearch, appliedScheduleSearch, visibleSchedules, searchSchedules, clearScheduleSearch, pageCount, error, loadAll, retry, submit, submitConfiguration, remove, toggleSchedule, updatingScheduleIds, runNow, cancelExecution, executions, runningScheduleIds, cancellableScheduleIds, deliveryResolved, openDelivery, selectedDelivery, resolutionDirty, form, deliveryLabels, openScheduleEditor, resetForm, hasUnsavedChanges, configurationDirty, activePanel, scheduleError, recipientInputVisible, recipientDraft, recipientError, addRecipient, removeRecipient, cancelRecipientInput }`)
   let state
   const renderer = Vue.createRenderer({ createComment: () => ({}), createText: () => ({}), createElement: () => ({}), insert() {}, remove() {}, setText() {}, setElementText() {}, parentNode: () => null, nextSibling: () => null, patchProp() {} })
   const app = renderer.createApp({ setup() { state = setup(...Object.values(bindings)); return () => null } })
@@ -272,8 +273,35 @@ test('automation schedule cards show task details and cancellation for its run',
     executions: { schedule: { schedule_id: 'schedule', schedule_name: schedule.name, status: 'generating' } },
     reportLabels: { workshop: '车间报表' }, scheduleLabels: {},
   })
-  for (const value of ['每日车间', '20KW切割机', '每日 18:00', '执行中', '取消发送', '编辑', '删除']) assert.ok(html.includes(value))
+  for (const value of ['每日车间', '20KW切割机', '每日 18:00', '执行中', '取消发送', '编辑', '暂停', 'aria-label="删除 每日车间"']) assert.ok(html.includes(value))
   assert.doesNotMatch(html, /<table/)
+  const paused = await renderComponent('components/automation/AutomationScheduleCards', {
+    schedules: [{ ...schedule, enabled: false, next_run_at: '2026-11-20T18:00:00+08:00' }], reportLabels: { workshop: '车间报表' }, scheduleLabels: {},
+  })
+  assert.match(paused, />暂停</)
+  assert.match(paused, />恢复</)
+  assert.doesNotMatch(paused, /<time|已暂停/)
+})
+
+test('pause and restore send only the enabled flag and keep the card after success or failure', async t => {
+  const items = [{ schedule_id: 'saved', name: '日报', enabled: true, next_run_at: 'old' }]
+  let finish
+  const { state, calls } = await mountAutomation(t, { scheduleItems: items, toggle: (_id, { enabled }) => {
+    if (enabled) throw new Error('暂时无法恢复')
+    return new Promise(resolve => { finish = resolve })
+  } })
+  const pause = state.toggleSchedule(state.visibleSchedules.value[0])
+  assert.equal(state.updatingScheduleIds.has('saved'), true)
+  assert.equal(state.visibleSchedules.value[0].enabled, true)
+  await state.toggleSchedule(state.visibleSchedules.value[0])
+  finish({ enabled: false, next_run_at: 'old' })
+  await pause
+  assert.equal(state.visibleSchedules.value[0].enabled, false)
+  await state.toggleSchedule(state.visibleSchedules.value[0])
+  assert.equal(state.error.value, '暂时无法恢复')
+  assert.equal(state.visibleSchedules.value[0].enabled, false)
+  assert.equal(state.updatingScheduleIds.has('saved'), false)
+  assert.deepEqual(calls.actions, [['saved', { enabled: false }], ['saved', { enabled: true }]])
 })
 
 test('automation search applies task names and keeps delivery search across paging and refresh', async t => {
@@ -513,13 +541,12 @@ test('settings entry redirects to database and omits the repeated overview page'
   assert.doesNotMatch(router, /SettingsHomeView/)
 })
 
-test('management hero renders its public status and optional description safely', async () => {
-  const props = { eyebrow: 'DATABASE', title: '数据库配置', statusValue: '运行中',
-    statusLabel: '数据库状态', statusNote: '<script>unsafe</script>' }
-  const html = await renderComponent('components/ManagementPageHero', props)
-  for (const value of ['数据库配置', '数据库状态', '运行中', '&lt;script&gt;unsafe&lt;/script&gt;']) assert.ok(html.includes(value))
-  assert.ok(!html.includes('<script>unsafe</script>'))
-  assert.ok((await renderComponent('components/ManagementPageHero', { ...props, description: '只读连接' })).includes('只读连接'))
+test('management heading renders an accessible title and optional controls', async () => {
+  const props = { title: '数据库配置' }
+  const html = await renderComponent('components/ManagementPageHero', props, { actions: () => Vue.h('button', '刷新连接状态') })
+  assert.match(html, /<h1[^>]*>数据库配置<\/h1>/)
+  assert.match(html, /<button>刷新连接状态<\/button>/)
+  assert.doesNotMatch(await renderComponent('components/ManagementPageHero', props), /刷新连接状态/)
 })
 
 test('database source selector offers SQL Server and demo without the removed Excel source', () => {
@@ -540,7 +567,7 @@ test('database connection table edits isolated drafts and preserves SQL and weld
   let failSave = false
   let guard
   let unsaved
-  const bindings = { ...Vue, onMounted() {}, onBeforeUnmount() {}, useUnsavedChanges: source => { unsaved = source },
+  const bindings = { ...Vue, onMounted() {}, onBeforeUnmount() {}, useUnsavedChanges: (source, _message, busy) => { unsaved = source; return (_content, changed = source.value) => !busy.value && (!changed || permitClose) },
     registerDeviceSwitchGuard: (_name, handler) => { guard = handler; return () => {} },
     useConfirm: () => async () => permitClose, selectedLineType, formatTableDateValue: String,
     deviceSelection: selection, loadDevices: async () => {},
@@ -579,12 +606,16 @@ test('database connection table edits isolated drafts and preserves SQL and weld
   assert.equal(calls.sql[0].production.host, 'saved-host')
   assert.equal(calls.sql[0].worker.password, null)
   assert.equal(page.editor.value, null)
+  page.databaseConfiguration.value.data_source_mode = 'sqlserver'
+  page.hasUnsavedChanges.value = true
   page.editConnection('welding')
   page.editor.value.profile.timezone = 'UTC'
   page.editor.value.profile.password = 'new-private'
   await page.saveEditor()
   assert.equal(calls.welding[0].timezone, 'UTC')
   assert.equal(calls.welding[0].password, 'new-private')
+  assert.equal(page.databaseConfiguration.value.data_source_mode, 'sqlserver')
+  assert.equal(page.hasUnsavedChanges.value, true)
   assert.equal(calls.sql.length, 1)
   assert.equal(page.editor.value, null)
   failSave = true
@@ -728,7 +759,7 @@ for (const [reportType, period] of [['leadership', 'current_month'], ['leadershi
     const scope = Vue.effectScope()
     const script = descriptor('AutomationView').scriptSetup.content.replace(/^import .*$/gm, '')
     const bindings = {
-      ...Vue, onMounted() {}, onBeforeUnmount() {}, useConfirm: () => async () => true, useUnsavedChanges() {}, deviceSelection: Vue.reactive({ id: 'Cutter02', items: [{ id: 'Cutter02', type: 'cutting' }] }),
+      ...Vue, onMounted() {}, onBeforeUnmount() {}, useConfirm: () => async () => true, useUnsavedChanges: () => () => true, deviceSelection: Vue.reactive({ id: 'Cutter02', items: [{ id: 'Cutter02', type: 'cutting' }] }),
       saveAutomationSchedule: async (body, id) => saved.push({ body, id }),
       getAutomationStatus: async () => ({}), listAutomationSchedules: async () => ({ items: [] }),
       listEmailDeliveries: async () => ({ items: [], total: 0, page: 1, page_size: 10 }),
@@ -896,14 +927,13 @@ test('automation configuration keeps TLS modes exclusive and preserves empty-pas
 
 function designerPage(t, overrides = {}) {
   const events = [], apiCalls = [], scope = Vue.effectScope()
-  const previousWindow = globalThis.window
   let guard
-  globalThis.window = { confirm: () => false }
-  t.after(() => { scope.stop(); globalThis.window = previousWindow })
+  t.after(() => scope.stop())
   const bindings = {
-    ...Vue, onMounted() {}, defineEmits: () => (...args) => events.push(args),
+    ...Vue, onMounted() {}, onBeforeUnmount() {}, defineEmits: () => (...args) => events.push(args),
     useRoute: () => ({ query: {} }), useRouter: () => ({ replace() {} }),
-    useUnsavedChanges: value => { guard = value },
+    useUnsavedChanges: value => { guard = value; return (_content, changed = value.value) => !changed },
+    useConfirm: () => async () => false,
     listDesignerResources: async () => ({ items: [] }),
     saveDesignerResource: async (kind, draft, id, token) => { apiCalls.push({ kind, draft, id, token }); return { ...draft, version: 2 } },
     validateDesignerSql: async () => ({ formatted_sql: 'SELECT 1 AS value', tables: ['task'] }),
@@ -917,7 +947,7 @@ function designerPage(t, overrides = {}) {
   return { ...state, events, apiCalls, get guard() { return guard } }
 }
 
-test('designer keeps one page-owned dirty guard across editor drafts and resets it after saving a definition', async t => {
+test('designer keeps dirty query and template changes after saving only the definition', async t => {
   const page = designerPage(t)
   await page.loadResources()
   assert.equal(page.guard, page.hasUnsavedChanges)
@@ -926,13 +956,18 @@ test('designer keeps one page-owned dirty guard across editor drafts and resets 
   await Vue.nextTick()
   assert.equal(page.hasUnsavedChanges.value, true)
   const selected = page.queryDraft.value
-  page.chooseQuery({ ...selected, query_task_id: 'other' })
+  await page.chooseQuery({ ...selected, query_task_id: 'other' })
   assert.equal(page.queryDraft.value, selected, 'cancelled replacement retains the reviewed draft')
   page.templateDraft.value.config.layout = 'chart_first'
   page.definitionDraft.value.name = '报表甲'
   await Vue.nextTick()
   assert.equal(page.hasUnsavedChanges.value, true)
   await page.saveResource('definitions', page.definitionDraft.value, 'definition_id')
+  assert.equal(page.hasUnsavedChanges.value, true)
+  assert.equal(page.queryDraft.value.columns[0].label, '修改字段')
+  assert.equal(page.templateDraft.value.config.layout, 'chart_first')
+  page.queryDraft.value.columns[0].label = '日期'
+  page.templateDraft.value.config.layout = 'split'
   assert.equal(page.hasUnsavedChanges.value, false)
   assert.deepEqual(page.events, [['definitions-change']])
   assert.equal(page.definitionDraft.value.name, '报表甲')

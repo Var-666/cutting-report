@@ -31,7 +31,7 @@ test('critical forms have names, inline alerts, and unsaved-change protection', 
   assert.match(login, /name="username"[\s\S]*spellcheck: false/)
   assert.match(login, /class="login-error" role="alert" tabindex="-1"/)
   assert.match(database, /class="inline-result error" role="alert"/)
-  assert.match(automation, /useUnsavedChanges\(computed\(\(\) => hasUnsavedChanges\.value \|\| resolutionDirty\.value\)/)
+  assert.match(automation, /useUnsavedChanges\(\s*computed\(\(\) => hasUnsavedChanges\.value \|\| resolutionDirty\.value\)/)
   assert.match(automation, /name="smtp_from_email"[\s\S]*inputmode="email"/)
   assert.match(designer, /useUnsavedChanges\(hasUnsavedChanges/)
   assert.match(designer, /role="tab"[\s\S]*:aria-selected=/)

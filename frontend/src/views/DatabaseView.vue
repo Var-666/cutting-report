@@ -9,10 +9,9 @@ import { deviceSelection, loadDevices } from '../state/devices.ts'
 import { formatTableDateValue } from '../utils/dateDisplay.ts'
 import ManagementPageHero from '../components/ManagementPageHero.vue'
 import AppReportTable from '../components/AppReportTable.vue'
-import { NButton, NCheckbox, NInput, NInputNumber, NModal, NTag } from 'naive-ui'
+import { NButton, NCheckbox, NInput, NInputNumber, NDrawer, NDrawerContent, NTag } from 'naive-ui'
 import DatabaseSourcesPanel from '../components/DatabaseSourcesPanel.vue'
 import ReportCacheSettings from '../components/ReportCacheSettings.vue'
-import { useConfirm } from '../composables/useConfirm.ts'
 import { useUnsavedChanges } from '../composables/useUnsavedChanges.ts'
 
 const status = ref<DatabaseStatus | null>(null)
@@ -38,8 +37,11 @@ const hasUnsavedChanges = ref(false)
 type ConnectionEditor = { key: DatabaseSource; profile: SqlConnection } | { key: 'welding'; profile: WeldingConnection }
 const editor = ref<ConnectionEditor | null>(null)
 const editorDirty = ref(false)
-useUnsavedChanges(computed(() => hasUnsavedChanges.value || editorDirty.value), '数据库连接参数还有未保存的修改，确定离开吗？')
-const confirm = useConfirm()
+const canDiscard = useUnsavedChanges(
+  computed(() => hasUnsavedChanges.value || editorDirty.value),
+  '离开将丢弃未保存的数据库连接参数。',
+  configurationSaving,
+)
 
 const configurationSources: { key: DatabaseSource; label: string; description: string }[] = [
   { key: 'production', label: '生产报表库', description: '当前切割产线绑定的数据源 · dbo.task 等生产数据' },
@@ -145,7 +147,7 @@ async function loadConfiguration() {
 
 function editConnection(key: DatabaseSource | 'welding') {
   const configuration = databaseConfiguration.value
-  if (!configuration || configurationSaving.value) return
+  if (!configuration || configurationSaving.value || editor.value) return
   if (key === 'welding') {
     if (!configuration.welding) return
     editor.value = { key, profile: { ...configuration.welding, password: '' } }
@@ -155,7 +157,7 @@ function editConnection(key: DatabaseSource | 'welding') {
 }
 
 async function closeEditor() {
-  if (configurationSaving.value || (editorDirty.value && !await confirm('连接参数尚未保存，确定关闭吗？'))) return
+  if (!editor.value || !await canDiscard('关闭将丢弃未保存的连接参数。', editorDirty.value)) return
   editor.value = null
   editorDirty.value = false
 }
@@ -169,7 +171,9 @@ async function saveEditor() {
 }
 
 async function saveConfiguration(weldingOnly = false, edited: ConnectionEditor | null = null) {
+  if (configurationSaving.value) return false
   const line = configurationLine.value
+  const keepSharedDraft = weldingOnly && !weldingScope.value && hasUnsavedChanges.value
   configurationSaving.value = true
   configurationError.value = ''
   configurationResult.value = null
@@ -206,6 +210,14 @@ async function saveConfiguration(weldingOnly = false, edited: ConnectionEditor |
     }
     hasUnsavedChanges.value = false
     await Promise.all([loadStatus(), loadConfiguration()])
+    if (keepSharedDraft && databaseConfiguration.value && line === configurationLine.value) {
+      Object.assign(databaseConfiguration.value, {
+        data_source_mode: payload.data_source_mode,
+        worker_database_auth_enabled: payload.worker_database_auth_enabled,
+        file_database_enabled: payload.file_database_enabled,
+      })
+      hasUnsavedChanges.value = true
+    }
     await loadDevices({ force: true })
     return true
   } catch (caught) {
@@ -245,23 +257,16 @@ onMounted(async () => {
 })
 async function selectConfigurationLine(id: string) {
   if (id === configurationLine.value || configurationSaving.value || testing.value) return
-  if ((hasUnsavedChanges.value || editorDirty.value) && !await confirm('数据库连接参数还有未保存的修改，确定切换配置对象吗？')) return
+  if (!await canDiscard('切换配置对象将丢弃未保存的数据库连接参数。')) return
   configurationLine.value = id
 }
 </script>
 
 <template>
   <div class="management-page database-page">
-  <ManagementPageHero
-    eyebrow="DATABASE ADMINISTRATION"
-    title="数据库配置"
-    :description="weldingScope ? '配置当前焊接产线绑定的 MySQL 只读连接；保存后新请求生效。' : '生产报表、工人身份和切割文件使用独立数据源，连接信息由服务器环境配置统一管理。'"
-    icon="database"
-    status-label="数据访问"
-    :status-value="connectionStatus"
-    :status-note="weldingScope ? '连接测试仅验证只读事务；业务表和指标另行核验' : '仅开放 SELECT / CTE，不向生产库写入'"
-    tone="teal"
-  />
+  <ManagementPageHero title="数据库配置">
+    <template #actions><NTag size="small" :bordered="false" type="info">{{ connectionStatus }}</NTag></template>
+  </ManagementPageHero>
 
   <section class="panel saved-database-config">
     <div class="configuration-target"><label for="configuration-line">配置对象</label>
@@ -270,10 +275,10 @@ async function selectConfigurationLine(id: string) {
       </AppSelect>
       <span>共享连接修改会影响全部引用产线</span>
     </div>
-    <div class="panel-title"><div><span>01</span><h2>连接参数</h2></div><p>保存后自动热加载 · 无需重启容器</p></div>
+    <div class="panel-title"><div><h2>连接参数</h2></div><p>保存后自动热加载 · 无需重启容器</p></div>
     <div v-if="configurationLoading" class="configuration-loading">正在读取数据库配置…</div>
     <p v-else-if="!configurationLine" role="status">{{ deviceSelection.error || '暂无可配置产线' }}</p>
-    <form v-else-if="databaseConfiguration" @submit.prevent="saveConfiguration(weldingScope)" @input.capture="hasUnsavedChanges = true" @change.capture="hasUnsavedChanges = true">
+    <form v-else-if="databaseConfiguration" :inert="configurationSaving" @submit.prevent="saveConfiguration(weldingScope)" @input.capture="hasUnsavedChanges = true" @change.capture="hasUnsavedChanges = true">
       <div class="configuration-switches">
         <template v-if="!weldingScope">
         <label><span>生产数据模式</span><AppSelect v-model="databaseConfiguration.data_source_mode" name="data_source_mode" @change="hasUnsavedChanges = true"><option value="demo">演示数据</option><option value="sqlserver">SQL Server</option></AppSelect></label>
@@ -299,11 +304,12 @@ async function selectConfigurationLine(id: string) {
       </div>
     </form>
     <div v-if="configurationResult" class="inline-result success" role="status" aria-live="polite"><strong>配置已写入</strong><span>{{ configurationResult.message }}</span></div>
-    <div v-if="configurationError" class="inline-result error" role="alert"><strong>配置操作失败</strong><span>{{ configurationError }}，请检查连接参数后重试。</span></div>
+    <div v-if="configurationError && !editor" class="inline-result error" role="alert"><strong>配置操作失败</strong><span>{{ configurationError }}，请检查连接参数后重试。</span></div>
   </section>
 
-  <NModal :show="Boolean(editor)" preset="card" :title="editorTitle" class="connection-editor-modal" :style="{ width: 'min(720px, calc(100vw - 32px))' }" :mask-closable="false" :closable="!configurationSaving" :close-on-esc="!configurationSaving" @update:show="shown => { if (!shown) closeEditor() }">
-    <form v-if="editor" @submit.prevent="saveEditor" @input.capture="editorDirty = true" @change.capture="editorDirty = true">
+  <NDrawer :show="Boolean(editor)" width="min(720px, 100vw)" :aria-label="editorTitle" :mask-closable="false" :close-on-esc="!configurationSaving" @update:show="shown => { if (!shown) closeEditor() }">
+    <NDrawerContent :title="editorTitle" :closable="!configurationSaving">
+    <form v-if="editor" id="database-connection-form" @submit.prevent="saveEditor" @input.capture="editorDirty = true" @change.capture="editorDirty = true">
       <fieldset v-if="editor.key !== 'welding'" class="connection-editor-fields">
           <label><span>服务器地址</span><NInput :disabled="configurationSaving" v-model:value.trim="editor.profile.host" :name="`${editor.key}_host`" autocomplete="off" spellcheck="false" placeholder="例如：10.0.0.20…" :input-props="{ 'name': `${editor.key}_host`, 'autocomplete': 'off', 'spellcheck': false }" /></label>
           <label><span>端口</span><NInputNumber :disabled="configurationSaving" v-model:value="editor.profile.port" :name="`${editor.key}_port`" inputmode="numeric" autocomplete="off" :min="1" :max="65535" :input-props="{ 'name': `${editor.key}_port`, 'inputmode': 'numeric', 'autocomplete': 'off' }" @update:value="editorDirty = true" :precision="0" /></label>
@@ -322,18 +328,19 @@ async function selectConfigurationLine(id: string) {
           <label><span>生产时区</span><NInput :disabled="configurationSaving" v-model:value.trim="editor.profile.timezone" name="weld_timezone" autocomplete="off" :input-props="{ 'name': 'weld_timezone', 'autocomplete': 'off' }" /></label>
       </fieldset>
       <p v-if="configurationError" class="connection-editor-error" role="alert">{{ configurationError }}</p>
-      <div class="connection-editor-actions"><NButton :disabled="configurationSaving" @click="closeEditor">取消</NButton><NButton attr-type="submit" type="primary" :disabled="configurationSaving" :loading="configurationSaving">保存数据库配置</NButton></div>
     </form>
-  </NModal>
+    <template #footer>
+      <div class="connection-editor-actions"><NButton :disabled="configurationSaving" @click="closeEditor">取消</NButton><NButton attr-type="submit" form="database-connection-form" type="primary" :disabled="configurationSaving" :loading="configurationSaving">保存连接参数</NButton></div>
+    </template>
+    </NDrawerContent>
+  </NDrawer>
 
   <section class="panel database-sources-panel">
-    <div class="panel-title"><div><span>02</span><h2>业务数据源</h2></div><p>状态卡不显示账号和密码</p></div>
+    <div class="panel-title"><div><h2>业务数据源</h2></div></div>
     <div class="database-source-list">
       <article v-for="source in dataSources" :key="source.source">
         <div><strong>{{ source.label }}</strong><span :class="source.enabled && source.configured ? 'ready' : 'muted'">{{ !source.enabled ? '未启用' : source.configured ? '已配置' : '配置不完整' }}</span></div>
         <dl><div><dt>服务器</dt><dd>{{ source.host ? `${source.host}:${source.port}` : '--' }}</dd></div><div><dt>数据库</dt><dd>{{ source.database || '--' }}</dd></div></dl>
-        <small v-if="source.configured">已登记数据源连接</small>
-        <small v-else>连接参数尚未保存完整</small>
       </article>
     </div>
   </section>
@@ -367,7 +374,7 @@ async function selectConfigurationLine(id: string) {
   <DatabaseSourcesPanel />
 
   <section class="panel db-panel">
-    <div class="panel-title"><div><span>03</span><h2>连接测试</h2></div><p>凭据仅用于本次测试，不会保存</p></div>
+    <div class="panel-title"><div><h2>连接测试</h2></div><p>只读连接测试 · 凭据仅用于本次测试</p></div>
     <div class="connection-test-source"><label><span>数据库类型</span><AppSelect v-model="testSource" :disabled="testing" name="test_source"><option value="sqlserver">SQL Server</option><option value="welding">小组立焊接线 · MySQL</option></AppSelect></label></div>
     <form class="connection-form" @submit.prevent="runConnectionTest">
       <label><span>服务器地址</span><NInput v-model:value="activeTestConnection.host" name="test_host" required placeholder="例如：192.168.1.20…" autocomplete="off" spellcheck="false" :input-props="{ 'name': 'test_host', 'required': true, 'autocomplete': 'off', 'spellcheck': false }" /></label>

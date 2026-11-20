@@ -22,6 +22,7 @@ const props = defineProps({
   summaryDataVersion: { type: String, default: '' },
   workshopScope: { type: Object as PropType<AnalysisRequest['workshopScope']>, default: undefined },
   versionCheckEnabled: { type: Boolean, default: false },
+  prefetchLatest: { type: Boolean, default: false },
   leadershipReport: { type: Object as PropType<LeadershipReport | null>, default: null },
 })
 const emit = defineEmits<{ 'refresh-report': [] }>()
@@ -36,6 +37,7 @@ let requestSequence = 0
 let activeRequestKey = ''
 let displayedRequestKey = ''
 let displayedScope = ''
+let checkedCacheScope = ''
 const deviceId = ref(getDeviceId())
 const unsubscribeDevice = subscribeDevices(() => { deviceId.value = getDeviceId() })
 let requestController: AbortController | null = null
@@ -115,14 +117,16 @@ async function revalidateSource() {
 }
 
 async function loadAnalysis(force = false, targetKey = requestKey()) {
-  if (!activationTimer.isActive() || !props.ready || !props.reportDate) return
+  const latestOnly = props.versionCheckEnabled && !force
+  if (!activationTimer.isActive() || !deviceId.value || !props.reportDate
+      || (!props.ready && !(latestOnly && props.prefetchLatest))) return
+  const scope = queryScope()
   sourceCheckController?.abort()
   sourceCheckController = null
   requestController?.abort()
   requestController = new AbortController()
   const signal = requestController.signal
   const sequence = ++requestSequence
-  const latestOnly = props.versionCheckEnabled && !force
   activeRequestKey = targetKey
   loading.value = true
   readingLatest.value = latestOnly
@@ -143,20 +147,22 @@ async function loadAnalysis(force = false, targetKey = requestKey()) {
       reportType: props.reportType,
       reportDate: props.reportDate,
     }, { signal }) : await generate()
-    if (latestOnly && !result && !analysis.value && !signal.aborted) {
+    if (signal.aborted || scope !== queryScope() || sequence !== requestSequence) return
+    if (latestOnly) checkedCacheScope = scope
+    if (latestOnly && !result && !analysis.value && props.ready) {
       readingLatest.value = false
       result = await generate()
     }
     if (activationTimer.isActive() && !signal.aborted && sequence === requestSequence && targetKey === requestKey()) {
-      if (result && (!latestOnly || !analysis.value?.generated_at || !result.generated_at
+      if (result?.status === 'success' && result.mode === 'model' && (!latestOnly || !analysis.value?.generated_at || !result.generated_at
           || result.generated_at >= analysis.value.generated_at)) analysis.value = result
-      displayedRequestKey = targetKey
-      displayedScope = queryScope()
+      if (props.ready) displayedRequestKey = targetKey
+      if (analysis.value) displayedScope = scope
       nextAnalysisRetryAt = 0
     }
   } catch (caught) {
     const exception = toError(caught)
-    if (exception.name !== 'AbortError' && sequence === requestSequence) {
+    if (!signal.aborted && scope === queryScope() && exception.name !== 'AbortError' && sequence === requestSequence) {
       if (exception.status === 409) requestReportRefresh(targetKey)
       else {
         error.value = exception.message
@@ -185,39 +191,37 @@ function scheduleAutomaticAnalysis() {
   clearScheduledAnalysis()
   if (!activationTimer.isActive()) return
   const targetKey = requestKey()
+  const scope = queryScope()
   sourceCheckController?.abort()
   sourceCheckController = null
   if (targetKey !== refreshRequestedKey) refreshRequestedKey = ''
+  if (scope !== checkedCacheScope) checkedCacheScope = ''
+  if (scope !== displayedScope) {
+    analysis.value = null
+    displayedRequestKey = ''
+  }
   if (!props.ready || !props.reportDate) {
+    const canPrefetch = props.versionCheckEnabled && props.prefetchLatest && deviceId.value && props.reportDate
+    if (canPrefetch && readingLatest.value && activeRequestKey === targetKey) return
     requestController?.abort()
     requestController = null
     requestSequence += 1
     activeRequestKey = ''
     loading.value = false
-    // Pagination and cached-page deactivation can make ready false briefly even
-    // though the report range and source version are unchanged. Preserve the
-    // displayed result in that case; a changed request key still clears it.
-    if (!props.reportDate || queryScope() !== displayedScope) {
-      analysis.value = null
-      displayedRequestKey = ''
-      error.value = ''
-    }
+    readingLatest.value = false
+    if (scope !== displayedScope) error.value = ''
+    if (canPrefetch && !analysis.value && checkedCacheScope !== scope) void loadAnalysis(false, targetKey)
     return
   }
   if (targetKey === displayedRequestKey || (loading.value && targetKey === activeRequestKey)) return
 
-  // The analysis API rebuilds the authoritative data_version and checks SQLite
-  // before it can call the model. Abort an older response when the source changes.
+  // The API checks the authoritative source version before it can call the model.
   requestController?.abort()
   requestController = null
   requestSequence += 1
   activeRequestKey = ''
   loading.value = false
-  if (queryScope() !== displayedScope) {
-    nextAnalysisRetryAt = 0
-    analysis.value = null
-    displayedRequestKey = ''
-  }
+  if (scope !== displayedScope) nextAnalysisRetryAt = 0
   void loadAnalysis(false, targetKey)
 }
 
@@ -247,6 +251,7 @@ watch(
     props.summaryDataVersion,
     props.versionCheckEnabled,
     props.workshopScope,
+    props.prefetchLatest,
   ],
   scheduleAutomaticAnalysis,
   { immediate: true },
@@ -266,6 +271,7 @@ function pauseAnalysis() {
   requestSequence += 1
   activeRequestKey = ''
   loading.value = false
+  readingLatest.value = false
 }
 
 onActivated(() => {
@@ -279,5 +285,5 @@ onBeforeUnmount(() => { pauseAnalysis(); unsubscribeDevice() })
 </script>
 
 <template>
-  <ReportAnalysis :analysis="analysis" :report-version="analysisDataVersion" :leadership-report="analysisDataVersion && analysis?.data_version === analysisDataVersion ? leadershipReport : null" :loading="loading" :reading-latest="readingLatest" :error="error" :ready="ready" :empty-message="versionCheckEnabled && ready ? '正在等待首份成功分析，完成后将自动展示。' : '报表数据加载后将自动生成分析。'" @reload="reloadAnalysis" @retry="retryAnalysis" />
+  <ReportAnalysis :analysis="analysis" :report-version="analysisDataVersion" :leadership-report="analysisDataVersion && analysis?.data_version === analysisDataVersion ? leadershipReport : null" :loading="loading" :reading-latest="readingLatest" :error="error" :ready="ready" :empty-message="ready ? (versionCheckEnabled ? '正在等待首份成功分析，完成后将自动展示。' : '暂未生成分析') : '等待报表数据'" @reload="reloadAnalysis" @retry="retryAnalysis" />
 </template>

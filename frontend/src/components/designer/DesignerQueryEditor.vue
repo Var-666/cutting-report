@@ -12,7 +12,7 @@ function removeColumn(index: number) { if (!queryDraft.value) return; queryDraft
 
 <template>
   <div v-if="queryDraft" class="designer-editor">
-        <div class="designer-editor-head"><div><span>QUERY TASK</span><h3>{{ queryDraft.query_task_id ? queryDraft.name : '新建查询任务' }}</h3></div><small v-if="queryDraft.is_builtin">系统内置，只读</small></div>
+        <div class="designer-editor-head"><div><h3>{{ queryDraft.query_task_id ? queryDraft.name : '新建查询任务' }}</h3></div><small v-if="queryDraft.is_builtin">系统内置，只读</small></div>
         <div class="designer-form-grid">
           <label><span>任务名称</span><input v-model="queryDraft.name" name="query_name" autocomplete="off" :disabled="queryDraft.is_builtin" /></label>
           <label><span>任务编码</span><input v-model="queryDraft.code" name="query_code" autocomplete="off" spellcheck="false" :disabled="queryDraft.is_builtin || !!queryDraft.query_task_id" placeholder="例如：daily_quality…" /></label>
@@ -34,7 +34,7 @@ function removeColumn(index: number) { if (!queryDraft.value) return; queryDraft
           <button type="button" :disabled="queryDraft.is_builtin" @click="emit('validate')">校验 SQL</button>
           <button type="button" :disabled="!queryDraft.query_task_id" @click="emit('preview')">预览数据</button>
           <button class="primary" type="button" :disabled="saving || queryDraft.is_builtin" @click="emit('save', queryDraft)">保存任务</button>
-          <button class="danger-button" type="button" :disabled="queryDraft.is_builtin" @click="emit('remove', queryDraft)">删除</button>
+          <button class="danger-button" type="button" :disabled="queryDraft.is_builtin" @click="emit('remove', queryDraft)">删除查询任务</button>
         </div>
         <DesignerQueryPreview v-if="queryPreview" :query-preview="queryPreview" />
       </div>

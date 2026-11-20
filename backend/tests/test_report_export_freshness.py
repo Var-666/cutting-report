@@ -63,7 +63,8 @@ def test_leadership_export_refreshes_both_period_and_month_trend(tmp_path, monke
     assert prepared.task_count == 8
     assert prepared.report['leadership']['current_month_total']['task_count'] == 8
     assert prepared.report['leadership']['monthly_records'][0]['task_count'] == 8
-    assert prepared.report['closing_comparison'][0]['totals']['task_count'] == 8
+    assert prepared.report['daily_production']['totals']['task_count'] == 8
+    assert prepared.report['closing_comparison'][0]['totals']['task_count'] == 0
 
 
 @pytest.mark.parametrize('interval', [False, True])

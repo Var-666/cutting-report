@@ -415,9 +415,9 @@ def test_daily_equipment_paging_and_sort_share_one_coherent_snapshot(configured,
     cfg, snapshots, queue, source, service = configured
     caplog.set_level('INFO')
     monkeypatch.setattr(source, 'daily', lambda *_: [
-        {'production_date': f'2026-10-0{i}', 'weld_length_m': length} for i, length in [(1, 4), (2, 2), (3, 6)]])
+        {'production_date': f'2026-10-0{i}', 'weld_length_m': length, 'job_count': 1} for i, length in [(1, 4), (2, 2), (3, 6)]])
     monkeypatch.setattr(source, 'equipment', lambda *_: [
-        {'device_no': i, 'robot_no': 0, 'weld_length_m': length} for i, length in [(0, 4), (1, 2), (2, 6)]])
+        {'device_no': i, 'robot_no': 0, 'weld_length_m': length, 'job_count': 1} for i, length in [(0, 4), (1, 2), (2, 6)]])
     selected = WeldingQuery(start=date(2026, 10, 1), end=date(2026, 10, 3), serial_number='PRIVATE-SERIAL')
     service.refresh_summary('page:daily', selected.model_dump(mode='json'))
     key = service._snapshot_key(selected, 'page:daily')

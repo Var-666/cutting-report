@@ -113,10 +113,20 @@ class AutomationRepository(PostgresRepository):
                 return None
         return self.get_schedule(schedule_id)
 
-    def get_schedule(self, schedule_id: str) -> dict | None:
+    def get_schedule(self, schedule_id: str, *, for_update: bool = False) -> dict | None:
         with self.connect() as connection:
             row = connection.execute(
-                "SELECT * FROM report_schedules WHERE schedule_id = %s", (schedule_id,)
+                "SELECT * FROM report_schedules WHERE schedule_id = %s" + (" FOR UPDATE" if for_update else ""),
+                (schedule_id,),
+            ).fetchone()
+        return self._decode_schedule(row) if row else None
+
+    def set_schedule_enabled(self, schedule_id: str, enabled: bool, *, next_run_at: str, now: str) -> dict | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                """UPDATE report_schedules SET enabled = %s, next_run_at = %s, updated_at = %s
+                   WHERE schedule_id = %s RETURNING *""",
+                (int(enabled), next_run_at, now, schedule_id),
             ).fetchone()
         return self._decode_schedule(row) if row else None
 

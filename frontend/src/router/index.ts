@@ -1,6 +1,6 @@
 import { lineHome, selectedLineType } from '../utils/productionLines.ts'
 import { createRouter, createWebHistory } from 'vue-router'
-import { loadSession, roleHome, session } from '../state/session'
+import { endSession, loadSession, roleHome, session } from '../state/session'
 import { installSessionExpiryRedirect } from '../state/sessionExpiry.ts'
 import { cuttingRoutes } from './cuttingRoutes'
 import { weldingRoutes } from './weldingRoutes.ts'
@@ -87,7 +87,7 @@ const router = createRouter({
           path: 'pdm-statistics',
           name: 'pdm-statistics',
           component: () => import('../views/PdmStatisticsView.vue'),
-          meta: { title: 'PDM 资料管理', icon: 'file' },
+          meta: { title: 'CSS资料统计', icon: 'file' },
         },
         weldingRoutes,
         {
@@ -169,7 +169,24 @@ const router = createRouter({
   ],
 })
 
+let logoutRequested = false
+
+export async function logout() {
+  if (logoutRequested) return
+  logoutRequested = true
+  try {
+    // The page's leave guards run before session state is cleared.
+    await router.replace({ name: 'login' })
+  } finally {
+    logoutRequested = false
+  }
+}
+
 router.beforeEach(async (to) => {
+  if (logoutRequested && to.name === 'login') {
+    await endSession()
+    return true
+  }
   await loadSession()
 
   if (to.meta.public) {

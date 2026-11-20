@@ -12,8 +12,8 @@ const flush = async () => { await Promise.resolve(); await Vue.nextTick(); await
 function mount(overrides = {}) {
   let state
   const calls = { save: [], test: [], delete: [], toggle: [], list: 0 }
-  const bindings = { computed: Vue.computed, ref: Vue.ref, watch: Vue.watch, onMounted: Vue.onMounted,
-    useConfirm: () => async () => true, useUnsavedChanges() {},
+  const bindings = { computed: Vue.computed, nextTick: Vue.nextTick, ref: Vue.ref, watch: Vue.watch, onMounted: Vue.onMounted,
+    useConfirm: () => async () => true, useUnsavedChanges: (dirty, _message, busy) => () => !busy.value,
     listDatabaseSources: async () => { calls.list++; return { items: [{ ...row }] } },
     getDatabaseSource: async () => ({ ...row, host: 'latest-host' }),
     saveDatabaseSource: async (...args) => { calls.save.push(args); return row },
@@ -39,6 +39,7 @@ test('shared create/edit draft and tests never echo passwords or save automatica
     state.open(); state.changeEngine('mysql')
     assert.equal(state.draft.value.port, 3306)
     assert.equal(state.draft.value.readonly, true)
+    await state.close()
     state.open(row)
     assert.equal(state.draft.value.password, '')
     state.draft.value.host = 'edited-host'
@@ -103,7 +104,7 @@ test('legacy TLS is opt-in, included in test/save, and cleared for MySQL', async
   } finally { app.unmount() }
 })
 test('load failure and unsaved close are explicit; engine changes invalidate test results', async () => {
-  const { app, state } = mount({ listDatabaseSources: async () => { throw Error('读取失败') }, useConfirm: () => async () => false })
+  const { app, state } = mount({ listDatabaseSources: async () => { throw Error('读取失败') }, useUnsavedChanges: dirty => () => !dirty.value })
   try {
     await flush()
     assert.equal(state.error.value, '读取失败')

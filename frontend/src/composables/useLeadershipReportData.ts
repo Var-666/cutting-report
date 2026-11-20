@@ -87,14 +87,7 @@ export function useLeadershipReportData({ report, monthlyReport, appliedPeriodSt
     workTime: changeRate(total.value.work_time_seconds, comparisonTotal.value?.work_time_seconds),
   }))
 
-  function changeText(change: ReturnType<typeof changeRate>) {
-    return change ? `${change.value}%` : '暂无对比'
-  }
+  const comparisonLabel = computed(() => defaultMonthlyView.value ? '较上月' : '较对比区间')
 
-  function comparisonLabel(change: ReturnType<typeof changeRate>) {
-    if (!change) return '当前统计区间'
-    return defaultMonthlyView.value ? '较上月' : '较对比区间'
-  }
-
-  return { dailyRecords, dailyChartRecords, metricSeries, monthlyRecords, total, monthlyTotal, roundNumber, formatLength, formatDuration, metricChanges, changeText, comparisonLabel }
+  return { dailyRecords, dailyChartRecords, metricSeries, monthlyRecords, total, monthlyTotal, roundNumber, formatLength, formatDuration, metricChanges, comparisonLabel }
 }

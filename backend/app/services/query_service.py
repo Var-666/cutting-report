@@ -414,7 +414,8 @@ class QueryService:
                 for row in self.repository.cutting_closing_totals(start, end)
             }
         filters = ReportFilter(
-            report_date=start.date(), period_end=end.date(), project_code=project_code, ship_no=ship_no
+            report_date=start.date(), period_end=(end - timedelta(microseconds=1)).date(),
+            project_code=project_code, ship_no=ship_no,
         )
         bundle = self.fetch_summary_data(filters, force=True)
         buckets: dict[datetime, Totals] = {}

@@ -29,8 +29,8 @@ test('visible analysis checks every five minutes, refreshes only changed data an
     ref: value => ({ value }), computed: fn => ({ get value() { return fn() } }),
     watch() {}, onActivated: fn => { activate = fn }, onDeactivated: fn => { deactivate = fn }, onBeforeUnmount() {},
     getDeviceId: () => 'Cutter01', subscribeDevices: () => () => {}, createActivationTimer,
-    analyzeReport: async () => { analysisCalls += 1; return { data_version: 'v1.v1' } },
-    getLatestAnalysis: async () => { latestReads += 1; return { data_version: 'v1.v1' } },
+    analyzeReport: async () => { analysisCalls += 1; return result('10:00') },
+    getLatestAnalysis: async () => { latestReads += 1; return result('10:00') },
     getAnalysisVersion: async () => { versionChecks += 1; return { data_version: version } },
     window: {
       setInterval: (callback, delay) => { const id = intervals.size + 1; intervals.set(id, { callback, delay }); return id },
@@ -83,7 +83,54 @@ function panelFixture({ defaultView = true, read, analyze } = {}) {
 }
 
 const flush = () => new Promise(resolve => setImmediate(resolve))
-const result = (time, overview = time) => ({ overview, generated_at: `2026-10-21T${time}:00+08:00`, data_version: 'v1.v1', cached: true })
+const result = (time, overview = time) => ({ status: 'success', mode: 'model', overview, generated_at: `2026-10-21T${time}:00+08:00`, data_version: 'v1.v1', cached: true })
+
+test('default report reads its last success while production data is still loading', async () => {
+  let latest = result('09:55', '上一份成功分析')
+  let finishRead
+  let finishModel
+  const panel = panelFixture({ read: async () => latest, analyze: () => new Promise(resolve => { finishModel = resolve }) })
+  Object.assign(panel.props, { ready: false, prefetchLatest: true, dataVersion: '' })
+  panel.scheduleAutomaticAnalysis()
+  await flush()
+  assert.equal(panel.analysis.value.overview, '上一份成功分析')
+  assert.equal(panel.calls.length, 0)
+
+  latest = new Promise(resolve => { finishRead = resolve })
+  Object.assign(panel.props, { ready: true, dataVersion: 'v2' })
+  panel.scheduleAutomaticAnalysis()
+  assert.equal(panel.analysis.value.overview, '上一份成功分析')
+  finishRead({ ...result('09:57'), status: 'failed' })
+  await flush()
+  assert.equal(panel.analysis.value.overview, '上一份成功分析')
+  const updating = panel.reloadAnalysis()
+  assert.equal(panel.loading.value, true)
+  assert.equal(panel.analysis.value.overview, '上一份成功分析')
+  finishModel({ ...result('10:05', '新分析'), data_version: 'v2.v2' })
+  await updating
+  assert.equal(panel.analysis.value.overview, '新分析')
+})
+
+test('prefetch with no cache never generates before the report is ready', async () => {
+  const panel = panelFixture({ read: async () => null, analyze: async () => result('10:00') })
+  Object.assign(panel.props, { ready: false, prefetchLatest: true })
+  panel.scheduleAutomaticAnalysis()
+  await flush()
+  panel.scheduleAutomaticAnalysis()
+  assert.equal(panel.reads.length, 1)
+  assert.equal(panel.calls.length, 0)
+  panel.props.ready = true
+  panel.scheduleAutomaticAnalysis()
+  await flush()
+  assert.equal(panel.calls.length, 1)
+  assert.equal(panel.analysis.value.overview, '10:00')
+})
+
+test('a displayed analysis stays visible while the update button is busy', async () => {
+  const html = await renderComponent('components/ReportAnalysis', { analysis: result('09:55', '已有成功分析'), ready: true, loading: true })
+  assert.match(html, /已有成功分析/)
+  assert.doesNotMatch(html, /分析中|读取中|正在整理报表指标/)
+})
 
 test('entering a default page displays the previous success and polls for the next completed result', async () => {
   let latest = result('09:55')
@@ -217,7 +264,7 @@ test('same-query update and failure retain the previous result; device or range 
     watch() {}, onActivated() {}, onDeactivated() {}, onBeforeUnmount() {},
     getDeviceId: () => device, subscribeDevices: fn => { subscriber = fn; return () => {} },
     createActivationTimer: () => ({ isActive: () => true, cancel() {} }),
-    analyzeReport: () => ++calls === 1 ? Promise.resolve({ overview: 'previous', generated_at: '2026-10-14T10:00:00' }) : new Promise((_, fail) => { reject = fail }),
+    analyzeReport: () => ++calls === 1 ? Promise.resolve(result('10:00', 'previous')) : new Promise((_, fail) => { reject = fail }),
     AbortController, console,
   })
   runTypeScript(source.match(/<script setup(?: lang="ts")?>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm, '') + '\nthis.panel = { loadAnalysis, scheduleAutomaticAnalysis, analysis, error }', context)

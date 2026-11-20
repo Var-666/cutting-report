@@ -3,7 +3,6 @@ import { computed, ref, useId } from 'vue'
 import ReportPanelState from './ReportPanelState.vue'
 
 const props = defineProps({
-  number: { type: String, required: true },
   title: { type: String, required: true },
   subtitle: { type: String, default: '' },
   note: { type: String, default: '' },
@@ -17,7 +16,7 @@ const props = defineProps({
   error: { type: String, default: '' },
   hasData: Boolean,
   loadingTitle: { type: String, default: '正在读取报表数据' },
-  loadingMessage: { type: String, default: '数据返回后将自动更新图表和明细。' },
+  loadingMessage: { type: String, default: '' },
   emptyTitle: { type: String, default: '当前条件下暂无数据' },
   emptyMessage: { type: String, default: '可以调整统计区间或筛选条件后重新查询。' },
   errorTitle: { type: String, default: '等待报表数据' },
@@ -41,7 +40,7 @@ defineExpose({ getChartElement: () => chartElement.value })
 <template>
   <section class="panel report-trend-panel" :style="{ '--report-trend-height': `${height}px` }" :aria-labelledby="titleId">
     <header class="panel-title report-trend-panel__heading">
-      <div><span v-if="number">{{ number }}</span><h2 :id="titleId">{{ title }}</h2><small v-if="subtitle">{{ subtitle }}</small></div>
+      <div><h2 :id="titleId">{{ title }}</h2><small v-if="subtitle">{{ subtitle }}</small></div>
       <p v-if="loading && hasData" class="report-trend-panel__activity" role="status"><span class="spinner dark" aria-hidden="true"></span>正在更新</p>
       <p v-else-if="note">{{ note }}</p>
       <slot name="actions" />
@@ -71,7 +70,6 @@ defineExpose({ getChartElement: () => chartElement.value })
 .report-trend-panel { --report-panel-padding:var(--space-4); border-radius:var(--report-panel-radius); margin-bottom:var(--space-6); overflow:hidden; container:report-panel / inline-size; }
 .report-trend-panel__heading { min-height:48px; gap:var(--space-2) var(--space-4); padding:var(--space-2) var(--report-panel-padding); flex-wrap:wrap; }
 .report-trend-panel__heading > div { min-width:0; flex-wrap:wrap; gap:var(--space-1) var(--space-2); }
-.report-trend-panel__heading > div > span { width:28px; height:var(--space-6); display:grid; place-items:center; border-radius:7px; background:rgb(var(--info-color) / .1); color:rgb(var(--info-color)); font-size:var(--font-auxiliary); font-weight:700; }
 .report-trend-panel__heading h2 { min-width:0; overflow-wrap:anywhere; line-height:1.4; }
 .report-trend-panel__heading small { color:var(--muted); font-size:var(--font-auxiliary); }
 .report-trend-panel__heading > p { display:block; margin:0; }

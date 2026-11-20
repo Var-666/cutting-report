@@ -21,7 +21,7 @@ test('report model text uses the same device alias without changing numeric form
 test('model-only analysis hides reference codes but keeps evidence available', () => {
   assert.doesNotMatch(source, /<sup v-for="citation in sectionCitations/)
   assert.match(source, /查看模型输入数据/)
-  assert.match(source, /AI 分析/)
+  assert.match(source, /智能分析/)
   assert.match(source, /AI 生成/)
   assert.doesNotMatch(source, /根据报表生成|报表数据分析|降级分析/)
 })

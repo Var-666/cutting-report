@@ -2,7 +2,7 @@
 import type { WeldingReport, WeldingJobRow } from '../types/welding'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import { NButton, NCard, NEmpty, NModal } from 'naive-ui'
+import { NButton, NCard, NEmpty, NDrawer, NDrawerContent } from 'naive-ui'
 import AppIcon from '../components/AppIcon.vue'
 import HomeSectionHeader from '../components/HomeSectionHeader.vue'
 import WeldingKpiCards from '../components/WeldingKpiCards.vue'
@@ -19,7 +19,7 @@ import { formatChineseDate, formatChineseDateTime } from '../utils/dateDisplay'
 import { deviceSelection } from '../state/devices'
 import { selectedLineType } from '../utils/productionLines'
 import { parseWeldingRouteQuery } from '../utils/weldingRouteState'
-import { weldingDescriptions, weldingDisplay, weldingProcessRows, weldingTitles } from '../utils/weldingReport'
+import { weldingDisplay, weldingProcessRows, weldingTitles } from '../utils/weldingReport'
 import { weldingTrendOption, weldingLengthOption, weldingProcessOption } from '../utils/weldingChartOptions'
 import { useReportChartTheme } from '../composables/useReportChartTheme'
 import { toError } from '../utils/errors'
@@ -167,7 +167,6 @@ onBeforeUnmount(() => { disposed = true; generation += 1; clearTimeout(timer); c
         <NCard :bordered="false" size="small" class="card-wrapper">
           <template #header><HomeSectionHeader title="焊接工艺结构" icon="activity" :to="reportLink('jobs')" action="查看作业" /></template>
           <div class="welding-home-chart"><WeldingChart v-if="processes.some(row => row.length !== null && row.length > 0)" :option="processOption" label="按焊接长度统计的工艺结构，包含未知工艺" /><NEmpty v-else description="暂无有效工艺长度数据" /></div>
-          <p class="welding-home-note">按当前范围有效焊接长度统计，未知工艺独立保留。</p>
           <details v-if="processes.some(row => row.length !== null && row.length > 0)" class="welding-chart-data"><summary>查看工艺结构数据</summary><div class="welding-chart-data-scroll" role="region" aria-label="工艺结构数据" tabindex="0"><table><caption>各工艺焊接长度（{{ applied.start }} 至 {{ applied.end }}）</caption><thead><tr><th scope="col">焊接工艺</th><th scope="col">焊接长度(m)</th></tr></thead><tbody><tr v-for="row in processes" :key="row.key"><th scope="row" :title="row.name"><span>{{ row.name }}</span></th><td :title="weldingDisplay(row.length, 'weld_length_m')"><span>{{ weldingDisplay(row.length, 'weld_length_m') }}</span></td></tr></tbody></table></div></details>
         </NCard>
       </section>
@@ -188,22 +187,24 @@ onBeforeUnmount(() => { disposed = true; generation += 1; clearTimeout(timer); c
       <NCard v-if="report" :bordered="false" size="small" class="card-wrapper welding-recent">
         <template #header><HomeSectionHeader title="最近焊接作业" icon="tasks" :to="reportLink('jobs')" action="查看全部作业" /></template>
         <WeldingTable kind="jobs" :items="report.items.slice(0, 10)" :paginate="false" @detail="openJob" @copy="copy" />
-        <p class="welding-home-note">当前范围内最新 10 条真实记录，原始状态含义待确认。</p>
+        <p class="welding-home-note">原始状态含义待确认。</p>
       </NCard>
       <NCard :bordered="false" size="small" class="card-wrapper welding-shortcuts">
         <template #header><HomeSectionHeader title="生产报表" icon="report" /></template>
         <nav class="welding-home-links" aria-label="焊接报表快捷入口">
           <RouterLink v-for="link in links" :key="link.kind" :to="{ name: `welding-${link.kind}`, query: reportQuery }">
             <span class="welding-link-icon"><AppIcon :name="link.icon" :size="20" tone="current" /></span>
-            <div><h3>{{ weldingTitles[link.kind] }}</h3><p>{{ weldingDescriptions[link.kind] }}</p></div>
+            <strong>{{ weldingTitles[link.kind] }}</strong>
             <AppIcon name="chevron-right" :size="16" tone="current" />
           </RouterLink>
         </nav>
       </NCard>
     </div>
-    <NModal v-model:show="detailOpen" preset="card" title="焊接作业详情" :style="{ width: 'min(760px, 94vw)' }">
+    <NDrawer v-model:show="detailOpen" width="min(760px, 100vw)" aria-label="焊接作业详情">
+      <NDrawerContent title="焊接作业详情" closable>
       <template v-if="detailJob"><WeldingRecord kind="jobs" :row="detailJob" /><NButton :disabled="!detailJob.serial_number" @click="goToPart">查询该流水号的工件</NButton></template>
-    </NModal>
+      </NDrawerContent>
+    </NDrawer>
   </div>
 </template>
 
@@ -231,8 +232,7 @@ onBeforeUnmount(() => { disposed = true; generation += 1; clearTimeout(timer); c
 .welding-home-links>a:focus-visible { outline:2px solid rgb(var(--primary-color)); outline-offset:2px; }
 .welding-home-links>a>div { flex:1; min-width:0; }
 .welding-link-icon { width:36px; height:36px; flex-shrink:0; display:grid; place-items:center; border-radius:var(--card-radius); color:rgb(var(--primary-color)); background:rgb(var(--primary-color) / .1); }
-.welding-home-links h3 { font-size:var(--font-body); font-weight:500; margin:0 0 var(--space-1); }
-.welding-home-links p { font-size:var(--font-auxiliary); line-height:1.6; margin:0; color:var(--text-color-3); }
+.welding-home-links strong { font-weight:600; overflow-wrap:anywhere; }
 @container welding-home (max-width:1200px) { .welding-home-bottom { grid-template-columns:minmax(0,1fr); } .welding-home-links { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 @container welding-home (max-width:760px) { .welding-home-grid { grid-template-columns:minmax(0,1fr); } }
 @container welding-home (max-width:560px) {

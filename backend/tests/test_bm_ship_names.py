@@ -267,30 +267,33 @@ def test_snapshot_page_and_html_export_share_bm_names_and_filtered_totals(state_
 
 
 @pytest.mark.parametrize(('project','ship','segment','expected'), [
-    (None,None,None,('非船','非船','非船')),
-    ('','','',('非船','非船','非船')),
-    ('   ','   ','   ',('非船','非船','非船')),
-    (None,'已有船名','804C',('非船','已有船名','804C')),
-    ('CMYZ0170',None,None,('CMYZ0170','非船','非船')),
+    (None,None,None,(None,None,None)),
+    ('','','',(None,None,None)),
+    ('   ','   ','   ',(None,None,None)),
+    (None,'已有船名','804C',(None,'已有船名','804C')),
+    ('CMYZ0170',None,None,('CMYZ0170',None,None)),
     ('CMYZ0170','18600DWT-02','804C',('CMYZ0170','18600DWT-02','804C')),
+    ('非船','非船','非船',('非船','非船','非船')),
 ])
-def test_non_ship_labels_in_screen_and_print_tables_preserve_original_fields(project,ship,segment,expected):
-    import re
-    from pathlib import Path
+def test_report_task_fields_show_red_unknown_only_for_missing_values(project,ship,segment,expected):
     from app.services.report_service import ReportService
     from app.models.domain import to_primitive
+
     row = replace(record(),project_code=project,ship_no=ship,segment_name=segment)
     values = {**to_primitive(row), 'gas_consumption': None, 'electricity_consumption': None}
-    template = (Path(__file__).parents[1]/'app/templates/report.html.j2').read_text()
-    environment = ReportService(cutting_settings()).environment
-    # Exercise actual workshop/equipment screen and print table bodies with the same raw row.
-    bodies = re.findall(r'<tbody>(.*?)</tbody>',template,re.S)
-    checked = 0
-    for body in bodies:
-        if 'row.project_code' not in body:
-            continue
-        html = environment.from_string(body).render(report={'workshop_records':[values],'equipment_records':[values]},chunk=[values],chunk_index=0)
-        assert ''.join(f'<td>{value}</td>' for value in expected) in html
-        checked += 1
-    assert checked == 4
+    template = ReportService(cutting_settings()).environment.get_template('report.html.j2')
+    summary = dict(task_count=1, total_cut_length=0, total_groove_length=0, total_work_time=0,
+                   avg_cut_length=0, avg_groove_length=0, avg_work_time=0, total_gas_consumption=None,
+                   total_electricity_consumption=None, gas_record_count=0, electricity_record_count=0)
+    meta = dict(title='生产报表', report_id='labels', generated_at='2026-11-01T18:00:00+08:00',
+                period_start='2026-11-01', period_end='2026-11-01')
+    report = dict(summary=summary, equipment_summary=summary, filters={}, units={},
+                  energy_month=dict(rows=[], total_task_count=0, total_work_time_seconds=0,
+                                    summary=dict(electricity={'value': None}, gas={'value': None})),
+                  workshop_records=[values], equipment_records=[values],
+                  charts=dict(length_combo={}, equipment_detail={}, equipment_month={}))
+    unknown = '<span class="lp-attention-badge lp-tone-critical">未知</span>'
+    for kind in ('workshop', 'equipment'):
+        html = template.render(report={**report, 'meta': {**meta, 'report_type': kind}}, echarts_source='')
+        assert ''.join(f'<td>{value if value is not None else unknown}</td>' for value in expected) in html
     assert (row.project_code,row.ship_no,row.segment_name) == (project,ship,segment)

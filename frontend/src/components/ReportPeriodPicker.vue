@@ -210,7 +210,7 @@ onBeforeUnmount(pause)
         aria-label="选择报表统计区间"
       >
         <header>
-          <div><small>REPORT PERIOD</small><strong>选择统计区间</strong></div>
+          <strong>选择统计区间</strong>
           <NButton attr-type="button" aria-label="关闭区间选择" @click="closePanel({ focus: true })">×</NButton>
         </header>
 
@@ -248,8 +248,6 @@ onBeforeUnmount(pause)
 .report-period-picker__value { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .report-period-picker__panel { min-width:0; }
 .report-period-picker__panel > header { display:flex; align-items:center; justify-content:space-between; gap:var(--space-4); padding:15px 17px; border-bottom:1px solid var(--theme-border-color); }
-.report-period-picker__panel > header div { display:grid; gap:2px; }
-.report-period-picker__panel > header small { color:rgb(var(--info-color)); font-size:var(--font-auxiliary); font-weight:800; letter-spacing:.11em; }
 .report-period-picker__panel > header strong { color:var(--navy); font-size:var(--font-section-title); }
 .report-period-picker__panel > header button { min-width:34px; min-height:34px; padding:0; }
 .report-period-picker__presets { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:7px; padding:15px 17px 8px; }

@@ -1,5 +1,5 @@
 import type { Ref } from 'vue'
-import { reactive, ref } from 'vue'
+import { onScopeDispose, reactive, ref } from 'vue'
 import { getAutomationConfiguration, saveAutomationConfiguration } from '../api/automation'
 import { toError } from '../utils/errors'
 
@@ -26,6 +26,16 @@ export function useAutomationConfiguration({ hasUnsavedChanges, refresh }: { has
     smtp_timeout_seconds: 20,
   })
 
+  let savedConfiguration = { ...configuration }
+  let disposed = false
+  onScopeDispose(() => { disposed = true }, true)
+
+  function resetConfiguration() {
+    Object.assign(configuration, savedConfiguration)
+    configurationError.value = ''
+    hasUnsavedChanges.value = false
+  }
+
   function selectTls() {
     if (configuration.smtp_use_tls) configuration.smtp_use_ssl = false
   }
@@ -35,22 +45,25 @@ export function useAutomationConfiguration({ hasUnsavedChanges, refresh }: { has
   }
 
   async function loadConfiguration() {
+    if (disposed || configurationLoading.value || configurationSaving.value) return
     configurationLoading.value = true
     configurationError.value = ''
     try {
       const data = await getAutomationConfiguration()
-      Object.assign(configuration, data, { smtp_password: '' })
+      if (disposed) return
+      savedConfiguration = { ...configuration, ...data, smtp_password: '' }
+      resetConfiguration()
       configurationLoaded.value = true
-      hasUnsavedChanges.value = false
     } catch (caught) {
       const exception = toError(caught)
-      configurationError.value = exception.message
+      if (!disposed) configurationError.value = exception.message
     } finally {
-      configurationLoading.value = false
+      if (!disposed) configurationLoading.value = false
     }
   }
 
   async function submitConfiguration() {
+    if (disposed || configurationSaving.value || configurationLoading.value || !configurationLoaded.value) return
     configurationSaving.value = true
     configurationMessage.value = ''
     configurationError.value = ''
@@ -70,18 +83,20 @@ export function useAutomationConfiguration({ hasUnsavedChanges, refresh }: { has
         smtp_use_ssl: configuration.smtp_use_ssl,
         smtp_timeout_seconds: Number(configuration.smtp_timeout_seconds),
       })
+      if (disposed) return
       if (configuration.smtp_password) configuration.smtp_password_configured = true
       configuration.smtp_password = ''
+      savedConfiguration = { ...configuration }
       configurationMessage.value = result.message
       hasUnsavedChanges.value = false
       await refresh()
     } catch (caught) {
       const exception = toError(caught)
-      configurationError.value = exception.message
+      if (!disposed) configurationError.value = exception.message
     } finally {
-      configurationSaving.value = false
+      if (!disposed) configurationSaving.value = false
     }
   }
 
-  return { configurationLoading, configurationLoaded, configurationSaving, configurationMessage, configurationError, configuration, selectTls, selectSsl, loadConfiguration, submitConfiguration }
+  return { configurationLoading, configurationLoaded, configurationSaving, configurationMessage, configurationError, configuration, selectTls, selectSsl, loadConfiguration, submitConfiguration, resetConfiguration }
 }

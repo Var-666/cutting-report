@@ -20,7 +20,7 @@ const error = ref('')
 const message = ref('')
 const controller = new AbortController()
 const dirty = computed(() => JSON.stringify(draft.value) !== JSON.stringify(saved.value))
-useUnsavedChanges(dirty, '统计缓存配置尚未保存，确定离开吗？')
+useUnsavedChanges(dirty, '离开将丢弃尚未保存的统计缓存配置。', saving)
 async function load() {
   if (loading.value || saving.value) return
   loading.value = true

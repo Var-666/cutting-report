@@ -136,7 +136,7 @@ test('initial alarm failure renders unknown instead of healthy empty states and 
   fail = false
   await page.loadData()
   const recoveredText = await renderedText()
-  assert.match(recoveredText, /暂无未解除告警/)
+  assert.match(recoveredText, /当前筛选下暂无告警/)
   assert.match(recoveredText, /运行中/)
   assert.match(recoveredText, /暂无告警/)
   assert.doesNotMatch(recoveredText, /读取失败|状态未知/)
@@ -153,7 +153,7 @@ test('no open alarms does not imply that monitoring is running', async () => {
   app.component('AppIcon', { render: () => null })
   const text = (await renderToString(app)).replace(/<[^>]*>/g, '')
   assert.match(text, /未启用/)
-  assert.match(text, /暂无未解除告警/)
+  assert.match(text, /当前筛选下暂无告警/)
   assert.match(text, /监控服务状态见页头/)
   assert.doesNotMatch(text, /系统将持续监控|状态正常/)
 })

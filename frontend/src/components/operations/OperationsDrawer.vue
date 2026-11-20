@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, shallowRef, watch } from 'vue'
-import { RouterLink } from 'vue-router'
+import { computed, onBeforeUnmount, shallowRef, watch } from 'vue'
+import { onBeforeRouteUpdate, RouterLink } from 'vue-router'
 import { NAlert, NButton, NDrawer, NDrawerContent, NInput, NSpin, NTag } from 'naive-ui'
 import type { Incident, LogRecord, RelatedOperation } from '../../api/generated/types.gen'
 import { operations } from '../../api/operations'
 import { incidentExplanation, incidentLevels, incidentLogQuery, incidentStatus, operationStages, roles, stamp, tone, workStatus } from './presentation'
+import { useUnsavedChanges } from '../../composables/useUnsavedChanges'
 import { deviceSelection } from '../../state/devices'
 
 const { incidentId, log } = defineProps<{ incidentId: string | null; log: LogRecord | null }>()
@@ -17,8 +18,17 @@ const relatedError = shallowRef('')
 const loading = shallowRef(false)
 const saving = shallowRef(false)
 const relatedLoading = shallowRef(false)
-const copied = shallowRef(false)
+const reload = shallowRef(0)
+let disposed = false
+onBeforeUnmount(() => { disposed = true })
 const visible = computed(() => !!(incidentId || log))
+const dirty = computed(() => visible.value && Boolean(note.value))
+const canDiscard = useUnsavedChanges(dirty, '离开将丢弃尚未提交的异常确认备注。', saving)
+onBeforeRouteUpdate(() => canDiscard())
+
+async function close() {
+  if (visible.value && await canDiscard('关闭将丢弃尚未提交的异常确认备注。')) emit('close')
+}
 const record = computed(() => incident.value || log)
 const context = computed(() => incident.value?.context ?? log)
 const explanation = computed(() => record.value && (incident.value || ['WARNING', 'ERROR', 'CRITICAL'].includes(record.value.level))
@@ -50,7 +60,7 @@ function isRelatedKind(kind: string): kind is RelatedOperation['kind'] {
   return ['reports', 'background', 'automation', 'email', 'database-monitor', 'dispatch'].includes(kind)
 }
 
-watch(() => [incidentId, log?.id], async (_, __, onCleanup) => {
+watch(() => [incidentId, log?.id, reload.value], async (_, __, onCleanup) => {
   incident.value = null
   note.value = ''
   error.value = ''
@@ -90,27 +100,28 @@ async function acknowledge() {
   error.value = ''
   try {
     const updated = await operations.acknowledge(id, { note: note.value.trim() || null })
-    if (incidentId === id) incident.value = updated
+    if (disposed || incidentId !== id) return
+    incident.value = updated
+    note.value = ''
     emit('changed', updated)
   } catch (caught) {
-    if (incidentId === id) error.value = String(caught)
-  } finally { saving.value = false }
+    if (!disposed && incidentId === id) error.value = String(caught)
+  } finally { if (!disposed) saving.value = false }
 }
 
 async function copyLog() {
   if (!log) return
   try {
     await navigator.clipboard.writeText(JSON.stringify(log, null, 2))
-    copied.value = true
+    globalThis.window?.$message?.success('日志已复制')
   } catch { error.value = '复制失败，可展开结构化字段后手动复制。' }
 }
-watch(() => log?.id, () => { copied.value = false })
 </script>
 
 <template>
-  <NDrawer :show="visible" width="min(560px, 100vw)" @update:show="value => !value && emit('close')">
-    <NDrawerContent :title="incidentId ? '异常事件详情' : '运行日志详情'" closable>
-      <NAlert v-if="error" type="error" class="mb-12px">{{ error }}</NAlert>
+  <NDrawer :show="visible" width="min(560px, 100vw)" :mask-closable="!dirty && !saving" :close-on-esc="!saving" @update:show="value => { if (!value) close() }">
+    <NDrawerContent :title="incidentId ? '异常事件详情' : '运行日志详情'" :closable="!saving">
+      <NAlert v-if="error" type="error" class="mb-12px">{{ error }} <NButton v-if="incidentId && !incident && !loading" text @click="reload++">重新读取</NButton></NAlert>
       <NSpin :show="loading">
         <template v-if="record">
           <div class="headline">
@@ -167,8 +178,8 @@ watch(() => log?.id, () => { copied.value = false })
             </dl>
             <p v-else>暂无处理记录。</p>
             <template v-if="incident.status === 'open'">
-              <NInput v-model:value="note" placeholder="填写确认备注（选填）" aria-label="确认备注" maxlength="240" />
-              <NButton class="mt-8px" type="primary" :loading="saving" @click="acknowledge">确认异常</NButton>
+              <NInput v-model:value="note" :disabled="saving" placeholder="填写确认备注（选填）" aria-label="确认备注" maxlength="240" />
+              <NButton class="mt-8px" type="primary" :loading="saving" :disabled="saving" @click="acknowledge">确认已知悉</NButton>
               <p class="muted">确认表示已知悉，不代表异常已修复。</p>
             </template>
           </section>
@@ -198,8 +209,8 @@ watch(() => log?.id, () => { copied.value = false })
         </template>
       </NSpin>
       <template #footer>
-        <RouterLink v-if="incident" :to="{ name: 'operations-logs', query: logLink }" @click="emit('close')">检索相关日志</RouterLink>
-        <NButton v-if="log" @click="copyLog">{{ copied ? '已复制' : '复制日志' }}</NButton>
+        <RouterLink v-if="incident" :to="{ name: 'operations-logs', query: logLink }" :aria-disabled="saving || undefined">检索相关日志</RouterLink>
+        <NButton v-if="log" @click="copyLog">复制日志</NButton>
       </template>
     </NDrawerContent>
   </NDrawer>

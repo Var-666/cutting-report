@@ -11,7 +11,7 @@ const emit = defineEmits<{ save: [draft: ReportTemplate]; remove: [draft: Report
 
 <template>
   <div v-if="templateDraft" class="designer-editor template-editor">
-        <div class="designer-editor-head"><div><span>TEMPLATE DESIGNER</span><h3>{{ templateDraft.template_id ? templateDraft.name : '新建报表模板' }}</h3></div><button v-if="templateDraft.is_builtin" type="button" @click="emit('copy', templateDraft)">复制为新模板</button></div>
+        <div class="designer-editor-head"><div><h3>{{ templateDraft.template_id ? templateDraft.name : '新建报表模板' }}</h3></div><button v-if="templateDraft.is_builtin" type="button" @click="emit('copy', templateDraft)">复制为新模板</button></div>
         <div class="template-design-grid">
           <div>
             <div class="designer-form-grid">
@@ -27,7 +27,7 @@ const emit = defineEmits<{ save: [draft: ReportTemplate]; remove: [draft: Report
               <label><span>表格密度</span><AppSelect v-model="templateDraft.config.table_density" :disabled="templateDraft.is_builtin"><option value="compact">紧凑</option><option value="normal">标准</option><option value="comfortable">宽松</option></AppSelect></label>
               <label><span>图表高度 {{ templateDraft.config.chart_height }}px</span><input v-model.number="templateDraft.config.chart_height" name="template_chart_height" type="range" min="220" max="520" step="10" :disabled="templateDraft.is_builtin" /></label>
             </div>
-            <div class="designer-actions"><label class="switch-label"><input v-model="templateDraft.config.show_meta" name="template_show_meta" type="checkbox" :disabled="templateDraft.is_builtin" />显示报告元信息</label><label class="switch-label"><input v-model="templateDraft.enabled" name="template_enabled" type="checkbox" :disabled="templateDraft.is_builtin" />启用</label><button class="primary" type="button" :disabled="saving || templateDraft.is_builtin" @click="emit('save', templateDraft)">保存模板</button><button class="danger-button" type="button" :disabled="templateDraft.is_builtin" @click="emit('remove', templateDraft)">删除</button></div>
+            <div class="designer-actions"><label class="switch-label"><input v-model="templateDraft.config.show_meta" name="template_show_meta" type="checkbox" :disabled="templateDraft.is_builtin" />显示报告元信息</label><label class="switch-label"><input v-model="templateDraft.enabled" name="template_enabled" type="checkbox" :disabled="templateDraft.is_builtin" />启用</label><button class="primary" type="button" :disabled="saving || templateDraft.is_builtin" @click="emit('save', templateDraft)">保存模板</button><button class="danger-button" type="button" :disabled="templateDraft.is_builtin" @click="emit('remove', templateDraft)">删除报表模板</button></div>
           </div>
           <DesignerTemplatePreview :config="templateDraft.config" />
         </div>

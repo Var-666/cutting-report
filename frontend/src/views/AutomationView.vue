@@ -8,8 +8,8 @@ import { useAutomationDeliveries } from '../composables/useAutomationDeliveries'
 import type { AutomationSchedule, AutomationStatus } from '../types/automation'
 
 import { toError } from '../utils/errors'
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { getAutomationStatus, listAutomationSchedules } from '../api/automation.ts'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { getAutomationStatus, listAutomationSchedules, setAutomationScheduleEnabled } from '../api/automation.ts'
 import { deviceSelection } from '../state/devices.ts'
 import HomeKpiCard from '../components/HomeKpiCard.vue'
 import AppIcon from '../components/AppIcon.vue'
@@ -21,6 +21,7 @@ import { useUnsavedChanges } from '../composables/useUnsavedChanges.ts'
 const confirm = useConfirm()
 const status = ref<AutomationStatus | null>(null)
 const schedules = ref<AutomationSchedule[]>([])
+const updatingScheduleIds = reactive(new Set<string>())
 const scheduleSearch = ref('')
 const appliedScheduleSearch = ref('')
 const visibleSchedules = computed(() => schedules.value.filter(item => item.name?.toLocaleLowerCase().includes(appliedScheduleSearch.value.toLocaleLowerCase())))
@@ -36,7 +37,7 @@ const configurationDirty = ref(false)
 const scheduleDirty = ref(false)
 const {
   configurationLoading, configurationLoaded, configurationSaving, configurationMessage, configurationError,
-  configuration, selectTls, selectSsl, loadConfiguration, submitConfiguration,
+  configuration, selectTls, selectSsl, loadConfiguration, submitConfiguration, resetConfiguration,
 } = useAutomationConfiguration({ hasUnsavedChanges: configurationDirty, refresh: loadAll })
 const {
   saving, editingId, form, executions, runningScheduleIds, cancellableScheduleIds, changeReportType, resetForm, scheduleError,
@@ -46,16 +47,24 @@ const {
 const {
   deliveries, deliveryPage, deliveryTotal, deliveryLoading, selectedDelivery,
   deliverySearch, appliedDeliverySearch, searchDeliveries, clearDeliverySearch,
-  resolutionDirty, pageCount, loadDeliveries, changeDeliveryPage, retry,
+  resolutionDirty, resolutionSaving, pageCount, loadDeliveries, changeDeliveryPage, retry,
   openDelivery, deliveryResolved, pauseDeliveries,
 } = useAutomationDeliveries({ message, error, refresh: loadAll, isDisposed: () => disposed, confirm })
 const scheduleHasDraft = computed(() => scheduleDirty.value || Boolean(recipientDraft.value.trim()))
 const hasUnsavedChanges = computed(() => configurationDirty.value || scheduleHasDraft.value)
-useUnsavedChanges(computed(() => hasUnsavedChanges.value || resolutionDirty.value), '自动化配置还有未保存的修改，确定离开吗？')
+const panelBusy = computed(() => saving.value || configurationSaving.value)
+const canDiscard = useUnsavedChanges(
+  computed(() => hasUnsavedChanges.value || resolutionDirty.value),
+  '自动化配置或邮件核对中有未保存的修改，离开将丢弃这些内容。',
+  computed(() => panelBusy.value || resolutionSaving.value),
+)
 
 async function openScheduleEditor(item?: AutomationSchedule) {
   const sameDraft = editingId.value === (item?.schedule_id ?? '')
-  if (!sameDraft && scheduleHasDraft.value && !await confirm('切换任务会丢弃当前未保存的修改，确定继续吗？')) return
+  if (panelBusy.value || !await canDiscard(
+    '切换任务将丢弃当前未保存的任务编辑。',
+    !sameDraft && scheduleHasDraft.value,
+  )) return
   if (!sameDraft || !scheduleHasDraft.value) {
     if (item) fillSchedule(item)
     else resetForm()
@@ -67,10 +76,38 @@ async function submit() {
   if (await saveSchedule()) activePanel.value = null
 }
 
-async function cancelScheduleEditing() {
-  if (scheduleHasDraft.value && !await confirm('确定放弃这次任务编辑？')) return
-  resetForm()
+function openConfigurationEditor() {
+  if (!panelBusy.value) activePanel.value = 'configuration'
+}
+
+async function closePanel() {
+  const panel = activePanel.value
+  const changed = panel === 'schedule' ? scheduleHasDraft.value : configurationDirty.value
+  if (!panel || !await canDiscard('关闭将丢弃当前表单中未保存的修改。', changed)) return
+  if (panel === 'schedule') resetForm()
+  else if (changed) resetConfiguration()
   activePanel.value = null
+}
+
+async function toggleSchedule(item: AutomationSchedule) {
+  const id = item.schedule_id
+  if (updatingScheduleIds.has(id)) return
+  updatingScheduleIds.add(id)
+  const enabled = !item.enabled
+  message.value = ''
+  error.value = ''
+  try {
+    const saved = await setAutomationScheduleEnabled(id, { enabled })
+    if (disposed) return
+    const current = schedules.value.find(schedule => schedule.schedule_id === id)
+    if (current) Object.assign(current, { enabled: saved.enabled, next_run_at: saved.next_run_at })
+    message.value = saved.enabled ? '定时任务已恢复' : '定时任务已暂停'
+    await loadAll()
+  } catch (caught) {
+    if (!disposed) error.value = toError(caught).message
+  } finally {
+    updatingScheduleIds.delete(id)
+  }
 }
 
 const smtp = computed(() => {
@@ -141,7 +178,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
       <div class="page-heading__actions automation-toolbar">
-        <NButton size="large" aria-haspopup="dialog" @click="activePanel = 'configuration'">
+        <NButton size="large" aria-haspopup="dialog" @click="openConfigurationEditor">
           <template #icon><AppIcon name="settings" tone="current" /></template>运行与邮件参数
         </NButton>
         <NButton size="large" type="primary" aria-haspopup="dialog" @click="openScheduleEditor()">
@@ -159,14 +196,14 @@ onBeforeUnmount(() => {
     <NAlert v-if="error" type="error" role="alert">{{ error }}</NAlert>
 
     <NDrawer :show="activePanel === 'configuration'" width="min(640px, 100vw)" aria-label="运行与邮件参数" :mask-closable="false" :close-on-esc="!configurationSaving"
-      @update:show="shown => { if (!shown) activePanel = null }">
+      @update:show="shown => { if (!shown) closePanel() }">
       <NDrawerContent title="运行与邮件参数" :closable="!configurationSaving" :body-content-style="{ padding: 'var(--space-4)' }">
         <div v-if="configurationLoading" class="automation-empty" role="status">正在读取自动化配置…</div>
         <div v-else-if="!configurationLoaded" class="configuration-load-error" role="alert">
           <span>{{ configurationError || '自动化配置读取失败' }}</span>
           <NButton attr-type="button" @click="loadConfiguration">重新读取</NButton>
         </div>
-        <form v-else id="automation-configuration-form" class="configuration-form" @submit.prevent="submitConfiguration" @input.capture="configurationDirty = true" @change.capture="configurationDirty = true">
+        <form v-else id="automation-configuration-form" class="configuration-form" :inert="configurationSaving" @submit.prevent="submitConfiguration" @input.capture="configurationDirty = true" @change.capture="configurationDirty = true">
           <div class="configuration-notice">
             <AppIcon name="check" tone="muted" :size="18" />
             <span>保存后即时生效，适用于之后启动的任务和邮件。</span>
@@ -210,6 +247,7 @@ onBeforeUnmount(() => {
             <NAlert v-if="configurationMessage && !configurationDirty" type="success" role="status">{{ configurationMessage }}</NAlert>
             <div class="drawer-actions">
               <span>密码留空会保留已保存的密码。</span>
+              <NButton :disabled="configurationSaving" @click="closePanel">取消</NButton>
               <NButton attr-type="submit" form="automation-configuration-form" type="primary" :disabled="configurationSaving" :loading="configurationSaving">保存自动化参数</NButton>
             </div>
           </div>
@@ -218,9 +256,9 @@ onBeforeUnmount(() => {
     </NDrawer>
 
     <NDrawer :show="activePanel === 'schedule'" width="min(640px, 100vw)" :aria-label="editingId ? '编辑定时任务' : '新建定时任务'" :mask-closable="false" :close-on-esc="!saving"
-      @update:show="shown => { if (!shown) activePanel = null }">
+      @update:show="shown => { if (!shown) closePanel() }">
       <NDrawerContent :title="editingId ? '编辑定时任务' : '新建定时任务'" :closable="!saving" :body-content-style="{ padding: 'var(--space-4)' }">
-        <form id="automation-schedule-form" class="automation-form" @submit.prevent="submit" @input.capture="scheduleDirty = true" @change.capture="scheduleDirty = true">
+        <form id="automation-schedule-form" class="automation-form" :inert="saving" @submit.prevent="submit" @input.capture="scheduleDirty = true" @change.capture="scheduleDirty = true">
           <div class="automation-fields">
             <label class="wide"><span>任务名称</span><NInput v-model:value.trim="form.name" name="schedule_name" autocomplete="off" required :maxlength="80" :input-props="{ 'name': 'schedule_name', 'autocomplete': 'off', 'required': true }" /></label>
             <label><span>设备</span><AppSelect v-model="form.device_id" name="schedule_device" required @change="scheduleDirty = true"><option v-for="item in deviceSelection.items.filter(item => !item.type || item.type === 'cutting')" :key="item.id" :value="item.id">{{ item.name }}</option></AppSelect><small>计划固定使用此设备。</small></label>
@@ -258,7 +296,7 @@ onBeforeUnmount(() => {
             <div class="drawer-actions">
               <span>邮件发送失败时会单独重试。</span>
               <div>
-                <NButton :disabled="saving" @click="cancelScheduleEditing">取消</NButton>
+                <NButton :disabled="saving" @click="closePanel">取消</NButton>
                 <NButton attr-type="submit" form="automation-schedule-form" type="primary" :disabled="saving" :loading="saving">{{ editingId ? '保存修改' : '创建任务' }}</NButton>
               </div>
             </div>
@@ -274,19 +312,19 @@ onBeforeUnmount(() => {
       <div v-else class="automation-table-wrap">
         <AutomationScheduleCards :schedules="visibleSchedules" :searching="!!appliedScheduleSearch" :executions="executions"
           :running-schedule-ids="runningScheduleIds" :cancellable-schedule-ids="cancellableScheduleIds" :report-labels="reportLabels" :schedule-labels="scheduleLabels"
-          @run="runNow" @cancel="cancelExecution" @edit="openScheduleEditor" @remove="remove" />
+          :updating-schedule-ids="updatingScheduleIds" @run="runNow" @cancel="cancelExecution" @edit="openScheduleEditor" @toggle="toggleSchedule" @remove="remove" />
       </div>
     </section>
 
     <section class="panel automation-list" aria-labelledby="automation-deliveries-title">
-      <div class="panel-title"><div><span><AppIcon name="send" tone="muted" :size="17" /></span><h2 id="automation-deliveries-title">邮件发送记录</h2></div><div class="automation-list-tools"><form class="automation-search" role="search" aria-label="邮件发送记录检索" @submit.prevent="searchDeliveries"><NInput v-model:value="deliverySearch" clearable size="small" :maxlength="200" placeholder="任务名、邮件主题或收件人" :input-props="{ 'aria-label': '邮件记录关键词' }" @clear="clearDeliverySearch" /><NButton attr-type="submit" size="small" :loading="deliveryLoading">检索</NButton></form><p>失败可重发，未知结果先核对</p></div></div>
+      <div class="panel-title"><div><span><AppIcon name="send" tone="muted" :size="17" /></span><h2 id="automation-deliveries-title">邮件发送记录</h2></div><div class="automation-list-tools"><form class="automation-search" role="search" aria-label="邮件发送记录检索" @submit.prevent="searchDeliveries"><NInput v-model:value="deliverySearch" clearable size="small" :maxlength="200" placeholder="任务名、邮件主题或收件人" :input-props="{ 'aria-label': '邮件记录关键词' }" @clear="clearDeliverySearch" /><NButton attr-type="submit" size="small" :loading="deliveryLoading">检索</NButton></form></div></div>
       <div v-if="deliveryLoading && !deliveries.length" class="empty" role="status">正在读取邮件发送记录…</div>
       <div v-else-if="error && !deliveries.length" class="configuration-load-error" role="alert"><span>邮件发送记录暂时无法读取。</span><NButton attr-type="button" @click="loadAll">重新读取</NButton></div>
       <div v-else class="automation-table-wrap delivery-table-wrap">
         <AutomationDeliveryTable :deliveries="deliveries" :searching="!!appliedDeliverySearch" :delivery-total="deliveryTotal" :delivery-page="deliveryPage" :delivery-loading="deliveryLoading" :paginate="!!status" :delivery-labels="deliveryLabels" @page="changeDeliveryPage" @retry="retry" @open="openDelivery" />
       </div>
     </section>
-    <EmailDeliveryResolution v-if="selectedDelivery" :key="selectedDelivery.delivery_id" :delivery="selectedDelivery" @dirty="resolutionDirty = $event" @resolved="deliveryResolved" @close="selectedDelivery = null; resolutionDirty = false" />
+    <EmailDeliveryResolution v-if="selectedDelivery" :key="selectedDelivery.delivery_id" :delivery="selectedDelivery" @dirty="resolutionDirty = $event" @saving="resolutionSaving = $event" @resolved="deliveryResolved" @close="selectedDelivery = null; resolutionDirty = false" />
   </div>
 </template>
 

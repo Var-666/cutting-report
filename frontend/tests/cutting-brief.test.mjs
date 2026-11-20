@@ -15,7 +15,7 @@ const analysis = { status: 'success', mode: 'model', overview: '旧适配文本'
 test('cutting brief renders dynamic prose and the actual period without fixed KPI cards', async () => {
   const html = await renderComponent('components/ReportAnalysis', { analysis, ready: true, loading: false })
   assert.ok(html.includes(brief.headline) && html.includes(brief.summary))
-  assert.match(html, /class="[^"]*\bmodel\b[^"]*"[^>]*>\s*AI 分析/)
+  assert.match(html, /class="[^"]*\banalysis-mode\b[^"]*"[^>]*>\s*已缓存/)
   assert.ok(html.includes('2026-08-18 至 2026-08-20'))
   assert.ok(html.includes('分析依据 / 关联记录'))
   assert.ok(!html.includes('查看记录（5 项）'))

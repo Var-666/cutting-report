@@ -132,7 +132,7 @@ def test_real_mysql_export_closes_at_17_and_counts_parts_per_window(weld_mysql, 
     assert '日、周、月同期对比' in html and '2026-10-01 17:00' in html
 
 
-def test_real_mysql_week_and_month_start_at_midnight(weld_mysql):
+def test_real_mysql_week_and_month_use_complete_calendar_days(weld_mysql):
     import mysql.connector
 
     stamps = ['2026-10-31 23:59:59', '2026-11-01 00:00:00', '2026-11-15 23:59:59',
@@ -153,9 +153,10 @@ def test_real_mysql_week_and_month_start_at_midnight(weld_mysql):
             for kind in ['daily', 'jobs', 'equipment', 'parts']:
                 columns = weld_mysql._closing_comparison(session, kind, selected, now)
                 metric = 'part_row_count' if kind == 'parts' else 'job_count'
-                assert [column['totals'][metric] for column in columns] == [2, 3, 5]
+                assert [column['totals'][metric] for column in columns] == [2, 2, 4]
                 assert columns[1]['start'].isoformat() == '2026-11-16T00:00:00+08:00'
                 assert columns[2]['start'].isoformat() == '2026-11-01T00:00:00+08:00'
+                assert columns[1]['end'] == columns[2]['end'] == datetime(2026, 11, 18, tzinfo=now.tzinfo)
     finally:
         cursor.execute('DELETE FROM weld_info_table WHERE id >= 200')
         cursor.execute('DELETE FROM weld_part_info_table WHERE id >= 200')

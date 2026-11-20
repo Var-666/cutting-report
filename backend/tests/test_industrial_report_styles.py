@@ -56,6 +56,9 @@ def test_all_report_styles_keep_complete_html_pdf_and_continuous_email(tmp_path,
                 assert document.locator('.lp-kpis').count() == 1
                 assert document.locator('.lp-kpi strong').first.evaluate('(el) => parseFloat(getComputedStyle(el).fontSize)') == pytest.approx(23 * 4 / 3, abs=.001)
                 assert BUSINESS_MARKER in page.locator('body').inner_text()
+                if kind in {'workshop', 'equipment'}:
+                    unknown = document.locator('.screen-only tbody').get_by_text('未知', exact=True)
+                    assert unknown.evaluate('(el) => getComputedStyle(el).color') == 'rgb(153, 27, 27)'
                 if kind == 'leadership':
                     assert document.get_by_text('领导简报结论', exact=True).count() == 1
                     assert document.get_by_text('优先核对工程归属。 确认后更新汇总。', exact=True).count() == 1
@@ -64,7 +67,7 @@ def test_all_report_styles_keep_complete_html_pdf_and_continuous_email(tmp_path,
                 elif kind == 'workshop':
                     priority = document.locator('.lp-analysis').get_by_text('需优先核查：1 项记录：发现负数数据', exact=False)
                     assert priority.bounding_box()['y'] > document.get_by_role(
-                        'heading', name='核心生产指标（本期）', exact=False).bounding_box()['y']
+                        'heading', name='核心生产指标（今日）', exact=False).bounding_box()['y']
                     assert document.get_by_role('heading', name='数据质量提示', exact=True).count() == 0
                     findings = document.locator('.lp-finding h3')
                     assert findings.filter(has_text='本期实际切割记录').inner_text() == '本期实际切割记录'
@@ -119,6 +122,8 @@ def test_all_report_styles_keep_complete_html_pdf_and_continuous_email(tmp_path,
             assert page.get_width() == pytest.approx(210 * 72 / 25.4, abs=1)
             text = textpage.get_text_range().replace(' ', '').replace('\r', '').replace('\n', '')
             assert BUSINESS_MARKER in text and '报告结束' in text
+            if kind in {'workshop', 'equipment'}:
+                assert '未知' in text
             if kind == 'workshop':
                 assert '优先核查' in text and '待核查' in text
     email = service.render_email(source)

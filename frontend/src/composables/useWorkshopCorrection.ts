@@ -26,6 +26,10 @@ export function useWorkshopCorrection({ isWorker, user, filters, rowDate, showCo
     workers: [] as User[],
     audits: [] as ConfirmationAudit[],
   })
+  let loadSequence = 0
+  const correctionDirty = computed(() => correction.visible && (
+    Boolean(correction.reason) || correction.action !== 'revoke' || Boolean(correction.workerId)
+  ))
   const correctionDialogOpen = computed(() => correction.visible)
   const correctionReasonPresets = {
     workerRevoke: [
@@ -60,7 +64,8 @@ export function useWorkshopCorrection({ isWorker, user, filters, rowDate, showCo
   }
 
   async function openCorrection(row: WorkshopTask) {
-    if (!row.confirmed_by || (isWorker.value && !isOwnConfirmation(row))) return
+    if (correction.saving || !row.confirmed_by || (isWorker.value && !isOwnConfirmation(row))) return
+    const sequence = ++loadSequence
     Object.assign(correction, {
       visible: true,
       row,
@@ -79,20 +84,21 @@ export function useWorkshopCorrection({ isWorker, user, filters, rowDate, showCo
         listUserAccounts(),
         listWorkshopConfirmationAudits({ reportDate: rowDate(row), taskId: row.task_id }),
       ])
+      if (sequence !== loadSequence) return
       correction.workers = users.items || []
       correction.audits = auditResult.items || []
     } catch (caught) {
       const exception = toError(caught)
-      correction.error = exception.message
+      if (sequence === loadSequence) correction.error = exception.message
     } finally {
-      correction.loading = false
+      if (sequence === loadSequence) correction.loading = false
     }
   }
 
   function closeCorrection() {
     if (correction.saving) return
-    correction.visible = false
-    correction.row = null
+    loadSequence += 1
+    Object.assign(correction, { visible: false, row: null, reason: '', action: 'revoke', workerId: '', error: '' })
   }
 
   function selectCorrectionReason(reason: string) {
@@ -101,6 +107,8 @@ export function useWorkshopCorrection({ isWorker, user, filters, rowDate, showCo
   }
 
   async function submitCorrection() {
+    const row = correction.row
+    if (!row || !correction.visible || correction.saving || correction.loading) return
     const reason = correction.reason.trim()
     if (reason.length < 2) {
       correction.error = '请填写至少 2 个字的原因'
@@ -112,8 +120,6 @@ export function useWorkshopCorrection({ isWorker, user, filters, rowDate, showCo
     }
     correction.saving = true
     correction.error = ''
-    const row = correction.row
-    if (!row) return
     try {
       if (isWorker.value) {
         await revokeWorkshopTask(row.task_id, filters.reportDate, reason)
@@ -133,11 +139,11 @@ export function useWorkshopCorrection({ isWorker, user, filters, rowDate, showCo
       }
       correction.visible = false
       correction.row = null
+      correction.reason = ''
       await refresh()
     } catch (caught) {
       const exception = toError(caught)
       correction.error = exception.message
-      showConfirmationFeedback('error', '更正失败', exception.message, 7000)
     } finally {
       correction.saving = false
     }
@@ -147,7 +153,7 @@ export function useWorkshopCorrection({ isWorker, user, filters, rowDate, showCo
     if (!isWorker.value && presetReasonValues.has(correction.reason)) correction.reason = ''
   })
 
-  return { correction, correctionDialogOpen, visibleCorrectionReasonPresets, availableWorkers, isOwnConfirmation, openCorrection, closeCorrection, selectCorrectionReason, submitCorrection }
+  return { correction, correctionDirty, correctionDialogOpen, visibleCorrectionReasonPresets, availableWorkers, isOwnConfirmation, openCorrection, closeCorrection, selectCorrectionReason, submitCorrection }
 }
 
 export type WorkshopCorrectionState = ReturnType<typeof useWorkshopCorrection>['correction']

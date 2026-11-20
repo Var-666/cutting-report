@@ -78,6 +78,7 @@ function mountDialog(t, files = [file('one'), file('two')]) {
 
 test('batch dialog renders recognition/results separately and edits quantities and machine selection', async t => {
   const dialog = mountDialog(t)
+  assert.equal(dialog.state.pushBatchDirty.value, false)
   for (const label of ['文件名', '命名检查', '识别材质', '识别板厚（mm）', '分段名', '参数核对', '派发状态', '任务编号', '处理说明', '20kW 切割机', '30kW 切割机']) assert.ok(dialog.text().includes(label), label)
   assert.ok(dialog.field('Z806C080A001.gen 材质'))
   assert.ok(dialog.field('Z806C080A001.gen 板厚'))
@@ -94,6 +95,12 @@ test('batch dialog renders recognition/results separately and edits quantities a
   await dialog.fill('Z806C080A001.gen 板厚', '10')
   assert.equal(dialog.state.pushBatch.overrideConfirmed, false)
   assert.equal(dialog.button('确认并顺序派发').props.disabled, true)
+  assert.equal(dialog.state.pushBatchDirty.value, true)
+  dialog.state.closePushBatch()
+  dialog.state.openPushBatch()
+  assert.equal(dialog.state.pushBatchDirty.value, false)
+  assert.equal(dialog.inputs.dispatchForm.machineIp, '10.147.1.40')
+  assert.deepEqual(dialog.state.pushBatch.items.map(item => item.quantity), [1, 1])
 })
 
 test('manual files require all parameters and explicit review; removing a row updates selected files', async t => {

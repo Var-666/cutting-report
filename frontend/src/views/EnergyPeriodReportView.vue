@@ -17,8 +17,11 @@ import ReportDataStatus from '../components/ReportDataStatus.vue'
 import ReportTrendPanel from '../components/ReportTrendPanel.vue'
 import StandardReportQuery from '../components/StandardReportQuery.vue'
 import { formatChineseDateTime } from '../utils/dateDisplay.ts'
+import { useRoute } from 'vue-router'
+import { queryDateRange } from '../utils/reportRouteState.ts'
 defineProps({ exporting: Boolean })
 const emit = defineEmits<{ export: [payload: ReportCreateRequest, format: ExportFormat] }>()
+const route = useRoute()
 const {
   anchorDate, periodStart, periodEnd, appliedPeriodStart, appliedPeriodEnd,
   summaryPeriodStart, summaryPeriodEnd, taskDay, monthlyReport, chartType, loading, summaryLoading, summaryRefreshError,
@@ -104,8 +107,7 @@ const summaryTableColumns = [
   <div class="device-report-shell">
     <section class="page-hero report-hero report-hero--query equipment-hero">
       <div class="report-hero-copy device-hero__copy">
-        <span class="report-hero-eyebrow">EQUIPMENT INTELLIGENCE</span>
-        <h2>设备报表</h2>
+        <h1>设备报表</h1>
       </div>
       <StandardReportQuery
         v-model:start-date="periodStart"
@@ -139,12 +141,12 @@ const summaryTableColumns = [
     <section class="device-kpis" aria-label="设备区间汇总" :aria-busy="loading">
       <article class="device-kpi report-kpi-card kpi-red">
         <span class="report-kpi-card__icon"><AppIcon name="zap" size="21" tone="current" /></span>
-        <div><span>电耗</span><p><strong>{{ format(summary.total_electricity_consumption) }}</strong> <small>{{ units.electricity }}</small></p><em>区间合计</em></div>
+        <div><span>电耗</span><p><strong>{{ format(summary.total_electricity_consumption) }}</strong> <small>{{ units.electricity }}</small></p></div>
         <MetricSparkline class="device-sparkline" :values="deviceMetricSeries.electricity" label="任务电耗趋势" />
       </article>
       <article class="device-kpi report-kpi-card kpi-blue">
         <span class="report-kpi-card__icon"><AppIcon name="wind" size="21" tone="current" /></span>
-        <div><span>气耗</span><p><strong>{{ format(summary.total_gas_consumption) }}</strong> <small>{{ units.gas }}</small></p><em>区间合计</em></div>
+        <div><span>气耗</span><p><strong>{{ format(summary.total_gas_consumption) }}</strong> <small>{{ units.gas }}</small></p></div>
         <MetricSparkline class="device-sparkline" :values="deviceMetricSeries.gas" label="任务气耗趋势" />
       </article>
       <article class="device-kpi report-kpi-card kpi-teal">
@@ -159,7 +161,7 @@ const summaryTableColumns = [
       </article>
       <article class="device-kpi report-kpi-card kpi-cyan">
         <span class="report-kpi-card__icon"><AppIcon name="clock" size="21" tone="current" /></span>
-        <div><span>累计切割时长</span><p class="device-duration"><strong>{{ duration(summary.total_work_time) }}</strong></p><em>当前查询区间</em></div>
+        <div><span>累计切割时长</span><p class="device-duration"><strong>{{ duration(summary.total_work_time) }}</strong></p></div>
         <MetricSparkline class="device-sparkline" :values="deviceMetricSeries.workTime" label="单项任务切割时长趋势" />
       </article>
     </section>
@@ -167,7 +169,6 @@ const summaryTableColumns = [
     <ReportTrendPanel
       :height="245"
       ref="taskPanel"
-      number="01"
       title="区间任务能耗明细"
       :subtitle="`${appliedPeriodStart} 至 ${appliedPeriodEnd}`"
       chart-label="任务能耗图"
@@ -207,7 +208,6 @@ const summaryTableColumns = [
     <ReportTrendPanel
       :height="245"
       ref="periodPanel"
-      number="02"
       :title="summaryTitle"
       :subtitle="summarySubtitle"
       :chart-label="summaryChartLabel"
@@ -248,6 +248,7 @@ const summaryTableColumns = [
       :data-version="taskDay?.analysis_source_version || ''"
       :summary-data-version="monthlyReport?.analysis_source_version || ''"
       :version-check-enabled="!rangeQueryApplied"
+      :prefetch-latest="!queryDateRange(route.query, { maxDays: 31 })"
       @refresh-report="refreshAnalysisReport"
     />
   </div>

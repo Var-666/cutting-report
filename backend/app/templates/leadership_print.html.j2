@@ -1,8 +1,9 @@
 {% from 'report_analysis.html.j2' import render_analysis %}
 {% from 'industrial_chrome.html.j2' import report_brand, metric_icon, section_title, hero, report_heading, executive, kpi %}
-{% from 'closing_comparison.html.j2' import render_closing_comparison %}
+{% from 'closing_comparison.html.j2' import closing_range, render_closing_comparison %}
 {% set leadership = report.leadership %}
 {% set total = leadership.current_month_total %}
+{% set day = report.daily_production|default(none) %}
 {% set period = report.meta.period_start if report.meta.period_start == report.meta.period_end else report.meta.period_start ~ ' 至 ' ~ report.meta.period_end %}
 {% set cover = analysis_cover() %}
 {% macro production_table(rows, totals, monthly=false) -%}
@@ -23,18 +24,26 @@
 
     {% if report.closing_comparison is defined %}
     {{ render_closing_comparison(report.closing_comparison,
-      [('task_count','任务数（项）','count'), ('cut_length_m','切割长度（米）','number'), ('work_time_seconds','切割工时','duration')],
-      '按实际完工时间归属', title='月、季度、年同期对比', calendar_note='按自然月、自然季度和自然年累计。') }}
+      [('task_count','任务数（项）','count'), ('cut_length_m','切割长度（米）','number'),
+       ('groove_length_m','坡口长度（米）','number'), ('work_time_seconds','切割工时','duration')],
+      '按实际完工时间归属', title='月、季度、年同期对比',
+      calendar_note='月、季度和年累计完整自然日，同期按相同天数比较。') }}
     {% endif %}
 
-    {{ section_title('核心生产指标（本期）', 'KEY PRODUCTION KPI') }}
+    {{ section_title('核心生产指标（' ~ (day.label if day else '本期') ~ '）') }}
+    {% if day %}<p class="lp-method">{{ closing_range(day.start, day.end) }}</p>{% endif %}
+    {% if day or report.daily_production is undefined %}
+    {% set metrics = day.totals if day else total %}
     <div class="lp-kpis">
-      {% for icon,label,value,unit in [('tasks','完成任务',total.task_count,'项'),('ruler','切割长度',total.cut_length_m|number,'米'),('trend','坡口长度',total.groove_length_m|number,'米'),('clock','切割时长',total.work_time_seconds|duration,'')] %}
+      {% for icon,label,value,unit in [('tasks','完成任务',metrics.task_count,'项'),('ruler','切割长度',metrics.cut_length_m|number,'米'),('trend','坡口长度',metrics.groove_length_m|number,'米'),('clock','切割时长',metrics.work_time_seconds|duration,'')] %}
       {{ kpi(icon, label, value, unit) }}
       {% endfor %}
     </div>
+    {% else %}
+    <p class="empty">所选期间内暂无已截止业务日的生产指标。</p>
+    {% endif %}
 
-    {{ section_title('区间每日明细与趋势' if report.meta.custom_period else '当月明细与趋势', 'DAILY PRODUCTION TREND') }}
+    {{ section_title('区间每日明细与趋势' if report.meta.custom_period else '当月明细与趋势') }}
     <div class="lp-chart-panel">
       {% if leadership.daily_records %}<div id="lp-daily-chart" class="chart lp-chart"></div>{% else %}<div class="lp-empty">{{ metric_icon('chart') }}<strong>当前区间暂无可视化数据</strong></div>{% endif %}
     </div>
@@ -43,7 +52,7 @@
   </section>
 
   <section class="lp-sheet lp-trends">
-    {{ hero('近 12 个月生产趋势', 'PRODUCTION PERFORMANCE & TRENDS', cover) }}
+    {{ hero('近 12 个月生产趋势', cover) }}
     {% set months = leadership.monthly_records %}
     {% set chronological = months|sort(attribute='period_start') %}
     {% if chronological %}<p class="lp-method">{{ chronological[0].period_start|chinese_month }} 至 {{ chronological[-1].period_start|chinese_month }}</p>{% endif %}
@@ -62,5 +71,5 @@
   </section>
 
   {% if analysis %}{{ render_analysis(analysis, report, report.meta.period_start, report.meta.period_end, summary_shown) }}{% endif %}
-  <p class="lp-end">本报告由切割生产智能产报系统生成 · 报告结束<span>{{ report.meta.report_id }}</span></p>
+  <p class="lp-end">报告结束<span>{{ report.meta.report_id }}</span></p>
 </div>

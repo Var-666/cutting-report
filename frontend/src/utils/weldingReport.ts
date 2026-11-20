@@ -20,14 +20,6 @@ export const weldingVisibleColumns: Record<string, string[]> = {
   seams: ['riser_no', 'welding_seam_no', 'device_no', 'robot_no', 'theoretical_length_m', 'actual_length_m', 'working_hours', 'state_label'],
 }
 
-export const weldingDescriptions: Record<WeldingReportKind, string> = {
-  dashboard: '今日生产概览与近七天生产动态',
-  daily: '总览焊接生产成果，查看每日趋势与设备贡献。',
-  parts: '核对工件生产归属、累计产出与关联焊缝。',
-  jobs: '查询现场作业记录，分析工艺结构与数据异常候选。',
-  equipment: '对比设备和机器人工位的生产贡献与有效作业数据。',
-}
-
 export const weldingProcesses = [
   ['flat_length_m', '平焊'], ['flat_wrap_length_m', '平焊包角'],
   ['vertical_length_m', '立焊'], ['vertical_wrap_length_m', '立焊包角'], ['unknown_length_m', '未知工艺'],

@@ -22,7 +22,7 @@
 {% set task_quality = [] %}
 {% endif %}
 <section class="lp-sheet lp-analysis" aria-label="智能分析">
-  {{ hero('AI 智能生产洞察', 'INTELLIGENCE & DECISION INSIGHTS', analysis_cover()) }}
+  {{ hero('智能分析', analysis_cover()) }}
   <div class="lp-analysis-status"><span>{{ '大模型分析' if available else '未生成分析' }}{{ ' · 已缓存' if analysis and analysis.cached else '' }}</span><span>生成时间：{{ analysis.generated_at or '--' if analysis else '--' }}</span></div>
   {% if not summary_shown %}
   <div class="lp-conclusion"><span>{{ metric_icon('trend') }}AI 核心结论</span>

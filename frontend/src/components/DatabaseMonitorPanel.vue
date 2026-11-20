@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
+import { computed, nextTick, onMounted, onBeforeUnmount, ref } from 'vue'
 import { NAlert, NButton, NForm, NFormItem, NInput, NInputNumber, NModal } from 'naive-ui'
 import DatabaseMonitorTable from './DatabaseMonitorTable.vue'
 import AppReportTable from './AppReportTable.vue'
@@ -7,7 +7,6 @@ import type { DatabaseMonitor, DatabaseMonitorInput, DatabaseMonitorIncident } f
 import { listDatabaseMonitors, saveDatabaseMonitor, deleteDatabaseMonitor, listDatabaseMonitorIncidents } from '../api/databaseMonitors'
 import { toError } from '../utils/errors'
 import { formatChineseDateTime } from '../utils/dateDisplay'
-import { useConfirm } from '../composables/useConfirm'
 import { useUnsavedChanges } from '../composables/useUnsavedChanges'
 
 const items = ref<DatabaseMonitor[]>([])
@@ -17,6 +16,7 @@ const total = ref(0)
 const loading = ref(false)
 const busy = ref(false)
 const error = ref('')
+const operationError = ref('')
 const editorError = ref('')
 const editingId = ref<string>()
 const showEditor = ref(false)
@@ -24,8 +24,8 @@ const dirty = ref(false)
 const draft = ref({ name: '', ip: '', port: null as number | null })
 const now = ref(Date.now() / 1000)
 const timezone = ref('Asia/Shanghai')
-const confirm = useConfirm()
-useUnsavedChanges(dirty, '监控目标尚未保存，确定离开吗？')
+const canDiscard = useUnsavedChanges(dirty, '离开将丢弃未保存的监控目标。', busy)
+const addButton = ref<InstanceType<typeof NButton> | null>(null)
 let controller: AbortController | null = null
 let timer: ReturnType<typeof setTimeout> | undefined
 let active = false
@@ -68,6 +68,7 @@ async function load(targetPage = page.value) {
   }
 }
 function open(item?: DatabaseMonitor) {
+  if (busy.value || showEditor.value) return
   editingId.value = item?.monitor_id
   draft.value = { name: item?.name ?? '', ip: item?.ip ?? '', port: item?.port ?? null }
   editorError.value = ''
@@ -75,7 +76,7 @@ function open(item?: DatabaseMonitor) {
   showEditor.value = true
 }
 async function close() {
-  if (busy.value || dirty.value && !await confirm('修改尚未保存，确定关闭吗？')) return
+  if (!showEditor.value || !await canDiscard('关闭将丢弃未保存的监控目标。')) return
   showEditor.value = false
   dirty.value = false
 }
@@ -92,6 +93,7 @@ async function save() {
     await saveDatabaseMonitor({ ...draft.value, port: draft.value.port, enabled: existing?.enabled ?? true }, editingId.value)
     dirty.value = false
     showEditor.value = false
+    globalThis.window?.$message?.success('监控目标已保存')
     controller?.abort()
     controller = null
     await load()
@@ -101,24 +103,34 @@ async function save() {
 async function toggle(item: DatabaseMonitor) {
   if (busy.value) return
   busy.value = true
-  error.value = ''
+  operationError.value = ''
   try {
     const input: DatabaseMonitorInput = { name: item.name, ip: item.ip, port: item.port, enabled: !item.enabled }
     await saveDatabaseMonitor(input, item.monitor_id)
     controller?.abort(); controller = null
     await load()
-  } catch (caught) { error.value = toError(caught).message }
+  } catch (caught) { operationError.value = toError(caught).message }
   finally { busy.value = false }
 }
 async function remove(item: DatabaseMonitor) {
-  if (busy.value || !await confirm(`删除“${item.name}”的监控？故障历史会保留。`)) return
+  if (busy.value) return false
   busy.value = true
+  operationError.value = ''
   try {
     await deleteDatabaseMonitor(item.monitor_id)
+    globalThis.window?.$message?.success('监控目标已删除')
     controller?.abort(); controller = null
     await load()
-  } catch (caught) { error.value = toError(caught).message }
-  finally { busy.value = false }
+    return true
+  } catch (caught) {
+    operationError.value = toError(caught).message
+    return false
+  } finally {
+    busy.value = false
+    if (!items.value.some(target => target.monitor_id === item.monitor_id)) {
+      void nextTick(() => addButton.value?.$el?.focus())
+    }
+  }
 }
 onMounted(async () => { active = true; await load(); schedule() })
 onBeforeUnmount(() => { active = false; clearTimeout(timer); controller?.abort() })
@@ -128,11 +140,12 @@ onBeforeUnmount(() => { active = false; clearTimeout(timer); controller?.abort()
   <section class="database-monitor-panel">
     <header class="monitor-heading">
       <div><h1>数据库监控</h1><p>{{ summary }}</p></div>
-      <div class="monitor-toolbar"><NButton :loading="loading" :disabled="busy" @click="load()">刷新</NButton><NButton type="primary" :disabled="busy" @click="open()">添加监控</NButton></div>
+      <div class="monitor-toolbar"><NButton :loading="loading" :disabled="busy" @click="load()">刷新</NButton><NButton ref="addButton" type="primary" :disabled="busy" @click="open()">添加监控</NButton></div>
     </header>
-    <p class="monitor-note">每分钟检测 IP 和端口；连续失败 3 次告警，连续成功 2 次恢复。端口可达不代表数据库查询正常。</p>
+    <details class="monitor-note"><summary>TCP 检测规则</summary><p>每分钟检测一次端口。连续失败 3 次告警，连续成功 2 次恢复。业务查询状态见运行日志和异常事件。</p></details>
     <NAlert v-if="error" type="error" role="alert" title="监控数据读取失败">{{ error }}；当前连接状态无法确认。<NButton size="small" :loading="loading" @click="load()">重试</NButton></NAlert>
-    <DatabaseMonitorTable :items="items" :loading="loading" :busy="busy" :now="now" :timezone="timezone" :unavailable="Boolean(error)" @edit="open" @toggle="toggle" @delete="remove" />
+    <NAlert v-if="operationError" type="error" role="alert" title="监控操作失败">{{ operationError }}</NAlert>
+    <DatabaseMonitorTable :items="items" :loading="loading" :busy="busy" :now="now" :timezone="timezone" :unavailable="Boolean(error)" @edit="open" @toggle="toggle" :remove="remove" />
     <h2>故障记录</h2>
     <AppReportTable :columns="historyColumns" :items="incidents" :loading="loading" :total="total" :page="page" :page-size="10" :row-key="item => item.incident_id" aria-label="数据库故障记录" @page="load">
       <template #c0="{ row }">{{ row.name }}</template>
@@ -144,13 +157,13 @@ onBeforeUnmount(() => { active = false; clearTimeout(timer); controller?.abort()
       <template #c6="{ row }">{{ row.last_error }}</template>
       <template #empty>暂无故障记录</template>
     </AppReportTable>
-    <NModal :show="showEditor" preset="card" :title="editingId ? '编辑监控' : '添加监控'" style="width:min(480px, calc(100vw - 32px))" :mask-closable="false" :close-on-esc="!busy" @close="close" @esc="close">
+    <NModal :show="showEditor" preset="card" :title="editingId ? '编辑监控' : '添加监控'" style="width:min(480px, calc(100vw - 32px))" :mask-closable="false" :close-on-esc="!busy" :closable="!busy" @update:show="shown => { if (!shown) close() }">
       <NForm label-placement="top" @submit.prevent="save">
         <NFormItem label="名称" label-for="monitor-name" required><NInput v-model:value="draft.name" :input-props="{ id: 'monitor-name' }" :maxlength="80" :disabled="busy" placeholder="例如：切割生产数据库" @update:value="dirty = true" /></NFormItem>
         <NFormItem label="IP 地址" label-for="monitor-ip" required><NInput v-model:value="draft.ip" :input-props="{ id: 'monitor-ip' }" :disabled="busy" placeholder="例如：192.168.1.10" @update:value="dirty = true" /></NFormItem>
         <NFormItem label="数据库端口" label-for="monitor-port" required><NInputNumber v-model:value="draft.port" style="width:100%" :input-props="{ id: 'monitor-port' }" :min="1" :max="65535" :precision="0" :show-button="false" :disabled="busy" placeholder="填写实际端口" @update:value="dirty = true" /></NFormItem>
         <NAlert v-if="editorError" type="error" role="alert">{{ editorError }}</NAlert>
-        <footer class="monitor-toolbar"><NButton :disabled="busy" @click="close">取消</NButton><NButton type="primary" attr-type="submit" :loading="busy">保存</NButton></footer>
+        <footer class="monitor-toolbar"><NButton :disabled="busy" @click="close">取消</NButton><NButton type="primary" attr-type="submit" :disabled="busy" :loading="busy">保存监控</NButton></footer>
       </NForm>
     </NModal>
   </section>

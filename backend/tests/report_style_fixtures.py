@@ -1,5 +1,6 @@
 """Isolated report content for screen, PDF and email rendering checks."""
-from datetime import date
+from datetime import date, datetime
+from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -11,6 +12,7 @@ from app.services.chart_service import ChartService
 from app.services.custom_report_service import CustomReportService
 from app.services.leadership_report_service import LeadershipReportService
 from app.services.pdf_service import PdfService
+from app.services.report_closing_comparison import closing_comparison
 from app.services.report_service import ReportService
 from app.services.welding_export import WeldingExport
 from tests.line_fixtures import cutting_settings, welding_settings
@@ -81,6 +83,24 @@ def style_report_html(kind: str, directory: Path, *, energy_connected: bool | No
                        energy_month=dict(rows=[], total_task_count=1, total_work_time_seconds=3600,
                                          summary=dict(electricity=dict(value=None), gas=dict(value=None))),
                        charts={key: chart for key in ['length_combo', 'equipment_detail', 'equipment_month']})
+        if kind in {'leadership', 'workshop', 'equipment'}:
+            if kind != 'leadership':
+                payload[f'{kind}_records'][0]['project_code'] = None
+            closing_totals = {key: Decimal(str(value)) for key, value in totals.items()}
+            if kind == 'equipment':
+                closing_totals.update(electricity=8, gas=4)
+            selected = date(2026, 11, 12)
+            comparison = closing_comparison(selected, selected, datetime(2026, 11, 12, 18), cfg.timezone,
+                lambda windows: dict.fromkeys(windows, closing_totals),
+                grouping='month_quarter_year' if kind == 'leadership' else 'day_week_month')
+            if kind == 'leadership':
+                payload['daily_production'], *comparison = comparison
+            if kind == 'equipment':
+                for column in comparison:
+                    hours = round((column['end'] - column['start']).total_seconds() / 3600)
+                    column['meter_coverage'] = {name: dict(value=closing_totals[name], valid_count=hours, expected_count=hours)
+                                                for name in ('electricity', 'gas')}
+            payload['closing_comparison'] = comparison
         template = 'report.html.j2'
         if kind == 'leadership':
             leader = LeadershipReportService(cfg).fetch(date(2026, 11, 1))

@@ -1,24 +1,35 @@
 import { onBeforeUnmount, onDeactivated } from 'vue'
-import { useDialog } from 'naive-ui'
+import { useDialog, type DialogOptions } from 'naive-ui'
+
+export type ConfirmOptions = Pick<DialogOptions, 'title' | 'positiveText' | 'negativeText' | 'type' | 'closable' | 'maskClosable'> & {
+  content: string
+}
 
 export function useConfirm() {
   const dialog = useDialog()
-  const pending = new Set<() => void>()
-  function cancelPending() { for (const cancel of pending) cancel() }
-  onBeforeUnmount(cancelPending)
-  onDeactivated(cancelPending)
+  let cancelPending: (() => void) | undefined
+  onBeforeUnmount(() => cancelPending?.())
+  onDeactivated(() => cancelPending?.())
 
-  return (content: string) => new Promise<boolean>((resolve) => {
-    function finish(accepted: boolean) { pending.delete(cancel); resolve(accepted) }
-    function cancel() { finish(false); instance.destroy() }
-    const instance = dialog.warning({
-      title: '请确认操作', content, positiveText: '确认', negativeText: '取消',
-      maskClosable: false,
-      onPositiveClick: () => finish(true),
-      onNegativeClick: () => finish(false),
-      onClose: () => finish(false),
-      onEsc: () => finish(false),
+  return (input: string | ConfirmOptions): Promise<boolean> => {
+    if (cancelPending) return Promise.resolve(false)
+    const { type = 'warning', maskClosable = false, ...options } = typeof input === 'string' ? { content: input } : input
+    return new Promise<boolean>((resolve) => {
+      let accepted = false
+      function finish(accepted: boolean) {
+        if (cancelPending !== cancel) return
+        cancelPending = undefined
+        resolve(accepted)
+      }
+      function cancel() { finish(false); instance.destroy() }
+      const instance = dialog[type === 'default' ? 'create' : type]({
+        title: '请确认操作', positiveText: '确认', negativeText: '取消',
+        ...options,
+        type, maskClosable,
+        onPositiveClick: () => { accepted = true },
+        onAfterLeave: () => finish(accepted),
+      })
+      cancelPending = cancel
     })
-    pending.add(cancel)
-  })
+  }
 }

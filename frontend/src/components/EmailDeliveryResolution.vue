@@ -7,13 +7,12 @@ import { toError } from '../utils/errors'
 import { computed, onActivated, onDeactivated, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { listEmailDeliveryResolutions, resolveEmailDelivery } from '../api/automation.ts'
 import { formatChineseDateTime } from '../utils/dateDisplay.ts'
-import { useConfirm } from '../composables/useConfirm.ts'
+import { useUnsavedChanges } from '../composables/useUnsavedChanges.ts'
 import AutomationRecipientTags from './automation/AutomationRecipientTags.vue'
 
-const confirm = useConfirm()
 
 const props = defineProps({ delivery: { type: Object as PropType<EmailDelivery>, required: true } })
-const emit = defineEmits<{ resolved: []; close: []; dirty: [value: boolean] }>()
+const emit = defineEmits<{ resolved: []; close: []; dirty: [value: boolean]; saving: [value: boolean] }>()
 const outcomes = reactive<Record<string, RecipientOutcome>>({})
 const evidence = ref('')
 const saving = ref(false)
@@ -26,10 +25,17 @@ const pendingRecipients = computed(() => props.delivery.recipients.filter(
   (address) => props.delivery.recipient_results?.[address]?.status !== 'accepted',
 ))
 const dirty = computed(() => Boolean(evidence.value || Object.values(outcomes).some(Boolean)))
+const canDiscard = useUnsavedChanges(
+  computed(() => !resolved.value && dirty.value),
+  '关闭将丢弃当前邮件核对结果和依据。',
+  saving,
+  { guardRoute: false },
+)
 const canSubmit = computed(() => props.delivery.status === 'unknown' && props.delivery.message_id
   && pendingRecipients.value.length > 0 && evidence.value.trim()
   && pendingRecipients.value.every((address) => ['accepted', 'not_accepted'].includes(outcomes[address])))
-watch(dirty, (value) => emit('dirty', value))
+watch(dirty, value => emit('dirty', value), { flush: 'sync' })
+watch(saving, value => emit('saving', value), { flush: 'sync' })
 let active = true
 let mounted = true
 let auditController: AbortController | undefined
@@ -74,13 +80,12 @@ async function submit() {
     const exception = toError(caught)
     if (mounted) error.value = exception.message
   } finally {
-    saving.value = false
+    if (mounted) saving.value = false
   }
 }
 
 async function close() {
-  if (saving.value) return
-  if (!resolved.value && dirty.value && !await confirm('核对内容尚未保存，确定关闭吗？')) return
+  if (!await canDiscard()) return
   emit('close')
 }
 function outcomeText(status: string) {
@@ -96,7 +101,7 @@ onActivated(() => {
     loadAudit()
   }
 })
-onUnmounted(() => { mounted = false; active = false; auditController?.abort(); emit('dirty', false) })
+onUnmounted(() => { mounted = false; active = false; auditController?.abort(); emit('dirty', false); emit('saving', false) })
 </script>
 
 <template>

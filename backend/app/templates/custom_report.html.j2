@@ -22,12 +22,12 @@
     {% endif %}
     {{ executive('查询结果已汇总' if report.custom.total_row_count else '当前条件下暂无生产记录', detail) }}
     {% if report.custom.metrics %}
-    {{ section_title('核心生产指标（本期）', 'KEY PRODUCTION KPI') }}
+    {{ section_title('核心生产指标（本期）') }}
     <div class="lp-kpis">
       {% for metric in report.custom.metrics %}{{ kpi('chart', metric.label, metric.value|number, metric.unit) }}{% endfor %}
     </div>
     {% endif %}
-    {{ section_title('数据明细与趋势', 'PRODUCTION DETAILS & TRENDS') }}
+    {{ section_title('数据明细与趋势') }}
     <section class="content-grid {{ report.custom.template.layout }}">
       {% if report.custom.chart.series %}
       <div class="chart-card"><div class="chart-title">{{ report.custom.chart_title }}</div><div id="custom-chart" class="chart" aria-label="{{ report.custom.chart_title }}"></div></div>
@@ -44,7 +44,7 @@
       </div>
     </section>
   </section>
-  <p class="lp-end">本报告由配置驱动报表引擎生成 · 报告结束<span>{{ report.meta.report_id }}</span></p>
+  <p class="lp-end">报告结束<span>{{ report.meta.report_id }}</span></p>
 </div>
 <script>{{ echarts_source|safe }}</script>
 {% if report.custom.chart.series %}

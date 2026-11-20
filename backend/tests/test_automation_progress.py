@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 import pytest
@@ -6,6 +8,49 @@ from app.api.auth import require_admin
 from app.api.automation import router
 from app.database.automation import AutomationRepository
 from tests.automation_fixtures import complete_report, NOW, STAMP
+
+
+def test_pause_and_resume_schedule_preserves_runs_and_skips_missed_occurrences(workflow, monkeypatch):
+    repository, _, service, run = workflow
+    schedule_id = run['schedule_id']
+    original = repository.get_schedule(schedule_id)
+    now = NOW + timedelta(days=3)
+    monkeypatch.setattr('app.api.automation._now', lambda: now)
+    app = FastAPI()
+    app.include_router(router)
+    app.state.automation_service = service
+
+    @app.middleware('http')
+    async def request_context(request, call_next):
+        request.state.request_id = 'automation-pause-test'
+        return await call_next(request)
+
+    def forbidden():
+        raise HTTPException(status_code=403)
+
+    path = f'/api/v1/automation/schedules/{schedule_id}'
+    app.dependency_overrides[require_admin] = forbidden
+    with TestClient(app) as client:
+        assert client.patch(path, json={'enabled': False}).status_code == 403
+        app.dependency_overrides[require_admin] = lambda: {'role': 'admin'}
+        assert client.patch(path, json={'enabled': 'false'}).status_code == 422
+        assert client.patch('/api/v1/automation/schedules/missing', json={'enabled': False}).status_code == 404
+        paused = client.patch(path, json={'enabled': False}).json()['data']
+        assert paused == {**original, 'enabled': False, 'updated_at': now.isoformat()}
+        assert service.process_due_schedules(now) == 0
+        assert repository.reserve_run(original, scheduled_for=original['next_run_at'], report_date='2026-09-30',
+                                      trigger_type='scheduled', now=now.isoformat(), next_run_at=now.isoformat()) is None
+        assert repository.get_run(run['run_id']) == run
+        manual = service.run_now(schedule_id, now)
+        assert manual['trigger_type'] == 'manual'
+        resumed = client.patch(path, json={'enabled': True}).json()['data']
+        assert resumed['enabled'] is True
+        assert resumed['next_run_at'] == (now + timedelta(days=1)).isoformat()
+        assert repository.due_schedules(now.isoformat()) == []
+        assert repository.due_schedules(resumed['next_run_at'])[0]['schedule_id'] == schedule_id
+        now += timedelta(hours=1)
+        assert client.patch(path, json={'enabled': True}).json()['data'] == resumed
+        assert repository.get_run(manual['run_id']) == manual
 
 
 def test_run_progress_tracks_its_report_and_delivery_without_changing_persisted_states(workflow):

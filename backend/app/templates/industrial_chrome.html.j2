@@ -1,8 +1,8 @@
 {% macro report_brand(demo=false) -%}
 <div class="industrial-brand">
   <span class="industrial-logo" aria-hidden="true"><i></i><i></i><i></i></span>
-  <div><strong>切割生产智能产报系统</strong><small>Production Reporting System</small></div>
-  <span class="industrial-brand-tag">{{ '演示数据' if demo else '工业生产智能洞察' }}</span>
+  <strong>切割生产智能产报系统</strong>
+  {% if demo %}<span class="industrial-brand-tag">演示数据</span>{% endif %}
 </div>
 {%- endmacro %}
 
@@ -22,22 +22,22 @@
 </svg></span>
 {%- endmacro %}
 
-{% macro section_title(title, english='') -%}
-<h2 class="lp-heading"><span>{{ title }}</span>{% if english %}<small>{{ english }}</small>{% endif %}</h2>
+{% macro section_title(title) -%}
+<h2 class="lp-heading"><span>{{ title }}</span></h2>
 {%- endmacro %}
 
 {% macro attention_badge(label, tone='warning') -%}
 <span class="lp-attention-badge lp-tone-{{ tone }}">{{ label }}</span>
 {%- endmacro %}
 
-{% macro hero(title, english='AI-POWERED PRODUCTION INTELLIGENCE', cover='') -%}
+{% macro hero(title, cover='', page_title=false) -%}
 <div class="lp-hero{{ ' lp-hero--photo' if cover else '' }}"{% if cover %} style="--lp-cover:url('{{ cover }}')"{% endif %}>
-  <h1>{{ title }}</h1><p>{{ english }}</p>
+  {% if page_title %}<h1>{{ title }}</h1>{% else %}<h2>{{ title }}</h2>{% endif %}
 </div>
 {%- endmacro %}
 
 {% macro report_heading(title, context, folio, demo=false) -%}
-{{ hero(title) }}
+{{ hero(title, page_title=true) }}
 {% if context %}<div class="lp-context">
   {% for icon,label,value in context %}<div>{{ metric_icon(icon) }}<span>{{ label }}<strong>{{ value }}</strong></span></div>{% endfor %}
 </div>{% endif %}
@@ -46,7 +46,7 @@
 {%- endmacro %}
 
 {% macro executive(title, detail, boundary='') -%}
-{{ section_title('生产执行摘要', 'EXECUTIVE SUMMARY') }}
+{{ section_title('生产执行摘要') }}
 <div class="lp-executive">
   <div class="lp-executive-icon">{{ metric_icon('tasks') }}</div>
   <div><h3>{{ title }}</h3><p>{{ detail }}</p>

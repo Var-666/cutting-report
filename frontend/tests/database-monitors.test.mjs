@@ -7,7 +7,7 @@ function item(state, changes = {}) {
   return { monitor_id: state, name: `数据库-${state}`, ip: '192.0.2.10', port: 1433, enabled: true, state,
     last_checked_at: 1000, last_success_at: 1000, failure_started_at: null, failures: 0, successes: 0, last_error: null, ...changes }
 }
-const props = { loading: false, busy: false, now: 1120, timezone: 'Asia/Shanghai', unavailable: false }
+const props = { remove: async () => true, loading: false, busy: false, now: 1120, timezone: 'Asia/Shanghai', unavailable: false }
 
 test('monitor table renders real states, complete text and management actions', async () => {
   const rows = ['healthy', 'suspect', 'down', 'recovering', 'unknown'].map(state => item(state))

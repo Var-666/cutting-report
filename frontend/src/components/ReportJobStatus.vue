@@ -24,7 +24,7 @@ const statusText = { pending: '后台排队', querying: '查询中', calculating
   <section v-if="job" class="job-card" :class="{ failed: job.status === 'failed' }">
     <div class="job-heading">
       <div>
-        <span class="eyebrow">当前生成任务 · {{ (job.report_type && reportTypeText[job.report_type]) || '报表' }}</span>
+        <small v-if="job.report_type" class="job-report-type">{{ reportTypeText[job.report_type] || job.report_type }}</small>
         <h2>{{ job.stage_message || '报告已进入后台队列' }}</h2>
       </div>
       <NTag class="status-pill" :data-status="job.status" :type="job.status === 'failed' ? 'error' : job.status === 'completed' ? 'success' : 'info'" size="small">{{ job.ai_status === 'waiting' ? '等待智能分析' : statusText[job.status] }}</NTag>
@@ -43,5 +43,6 @@ const statusText = { pending: '后台排队', querying: '查询中', calculating
 </template>
 
 <style scoped>
+.job-report-type{color:var(--text-color-3);font-size:var(--font-auxiliary)}
 .report-job-steps{margin:20px 0;flex-wrap:wrap;gap:12px}
 </style>

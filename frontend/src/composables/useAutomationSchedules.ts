@@ -1,4 +1,5 @@
 import type { Ref } from 'vue'
+import type { ConfirmOptions } from './useConfirm'
 import type { AutomationExecution, AutomationSchedule, SchedulePayload } from '../types/automation'
 import { computed, onActivated, onBeforeUnmount, onDeactivated, reactive, ref, watch } from 'vue'
 import { cancelAutomationRun, deleteAutomationSchedule, getAutomationRun, runAutomationSchedule, saveAutomationSchedule } from '../api/automation'
@@ -10,7 +11,7 @@ export function useAutomationSchedules({ hasUnsavedChanges, message, error, refr
   message: Ref<string>
   error: Ref<string>
   refresh: () => Promise<void>
-  confirm: (message: string) => Promise<boolean>
+  confirm: (options: ConfirmOptions) => Promise<boolean>
 }) {
   const saving = ref(false)
   const editingId = ref('')
@@ -19,6 +20,7 @@ export function useAutomationSchedules({ hasUnsavedChanges, message, error, refr
   const runningScheduleIds = computed(() => Object.values(executions).filter(isRunning).map(item => item.schedule_id))
   const cancellableScheduleIds = computed(() => Object.values(executions).filter(canCancel).map(item => item.schedule_id))
   const timers = new Map<string, ReturnType<typeof setTimeout>>()
+  const removing = new Set<string>()
   const controllers = new Map<string, AbortController>()
   let active = true
   let disposed = false
@@ -194,12 +196,13 @@ export function useAutomationSchedules({ hasUnsavedChanges, message, error, refr
     message.value = ''
     try {
       await saveAutomationSchedule(payload(), editingId.value)
+      if (disposed) return false
       message.value = editingId.value ? '定时任务已更新' : '定时任务已创建'
       resetForm()
       await refresh()
       return true
     } catch (caught) {
-      scheduleError.value = toError(caught).message
+      if (!disposed) scheduleError.value = toError(caught).message
       return false
     } finally {
       saving.value = false
@@ -267,15 +270,23 @@ export function useAutomationSchedules({ hasUnsavedChanges, message, error, refr
   }
 
   async function remove(item: AutomationSchedule) {
-    if (!await confirm(`确定删除定时任务“${item.name}”？历史发送记录会保留。`)) return
+    const id = item.schedule_id
+    if (saving.value || disposed || removing.has(id)) return
+    removing.add(id)
     try {
-      await deleteAutomationSchedule(item.schedule_id)
-      if (editingId.value === item.schedule_id) resetForm()
+      if (!await confirm({
+        title: '删除定时任务？', content: `“${item.name}”将不再按计划运行。历史发送记录会保留。`,
+        positiveText: '删除定时任务', type: 'error',
+      }) || saving.value || disposed) return
+      await deleteAutomationSchedule(id)
+      if (disposed) return
+      if (editingId.value === id) resetForm()
       message.value = '定时任务已删除'
       await refresh()
     } catch (caught) {
-      const exception = toError(caught)
-      error.value = exception.message
+      if (!disposed) error.value = toError(caught).message
+    } finally {
+      removing.delete(id)
     }
   }
 

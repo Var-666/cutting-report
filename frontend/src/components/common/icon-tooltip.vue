@@ -27,12 +27,12 @@ if (!hasCustomTrigger.value && !props.icon && !props.localIcon) {
 </script>
 
 <template>
-  <NTooltip :placement="placement">
+  <NTooltip :placement="placement" :trigger="hasCustomTrigger ? 'hover' : 'click'">
     <template #trigger>
       <slot name="trigger">
-        <div class="cursor-pointer">
-          <SvgIcon :icon="icon" :local-icon="localIcon" />
-        </div>
+        <NButton text attr-type="button" :aria-label="desc || '查看说明'">
+          <SvgIcon :icon="icon" :local-icon="localIcon" aria-hidden="true" />
+        </NButton>
       </slot>
     </template>
     <slot>

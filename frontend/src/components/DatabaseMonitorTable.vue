@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { NButton, NTag } from 'naive-ui'
+import { NButton, NPopconfirm, NTag } from 'naive-ui'
 import AppReportTable from './AppReportTable.vue'
 import type { DatabaseMonitor } from '../api/generated/types.gen'
 import { formatChineseDateTime } from '../utils/dateDisplay'
 
-const props = defineProps<{ items: DatabaseMonitor[]; loading: boolean; busy: boolean; now: number; unavailable: boolean; timezone: string }>()
-defineEmits<{ edit: [item: DatabaseMonitor]; toggle: [item: DatabaseMonitor]; delete: [item: DatabaseMonitor] }>()
+const props = defineProps<{ items: DatabaseMonitor[]; loading: boolean; busy: boolean; now: number; unavailable: boolean; timezone: string; remove: (item: DatabaseMonitor) => Promise<boolean> }>()
+defineEmits<{ edit: [item: DatabaseMonitor]; toggle: [item: DatabaseMonitor] }>()
 const labels = { healthy: '端口可达', suspect: '异常待确认', down: '连接不可用', recovering: '恢复确认中', unknown: '状态未知', paused: '已暂停' }
 const rows = computed(() => props.items.map(item => ({ ...item, state: !item.enabled ? 'paused' as const
   : props.unavailable || item.last_checked_at === null || props.now - item.last_checked_at > 180 ? 'unknown' as const : item.state })))
@@ -38,7 +38,10 @@ function duration(value: number | null) {
     <template #c8="{ row }"><span class="monitor-actions">
       <NButton size="small" :disabled="busy" @click="$emit('edit', row)">编辑</NButton>
       <NButton size="small" :disabled="busy" @click="$emit('toggle', row)">{{ row.enabled ? '暂停' : '启用' }}</NButton>
-      <NButton size="small" type="error" secondary :disabled="busy" @click="$emit('delete', row)">删除</NButton>
+      <NPopconfirm internal-trap-focus positive-text="删除监控" negative-text="取消" :positive-button-props="{ type: 'error', disabled: busy, loading: busy }" :on-positive-click="() => remove(row)">
+        <template #trigger><NButton size="small" type="error" secondary :disabled="busy" :aria-label="`删除监控 ${row.name}`">删除</NButton></template>
+        删除“{{ row.name }}”后将停止检测，故障历史会保留。
+      </NPopconfirm>
     </span></template>
     <template #empty>暂无监控目标，点击“添加监控”开始。</template>
   </AppReportTable>

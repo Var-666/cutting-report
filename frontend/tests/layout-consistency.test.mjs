@@ -123,7 +123,7 @@ test('report panels render loading, empty and failure states with their reason a
     [{ empty: true }, '当前条件下暂无数据', 'status'],
     [{ error: '源数据库不可用' }, '源数据库不可用', 'alert'],
   ]) {
-    const html = await renderComponent('components/ReportTrendPanel', { number: '01', title: '生产趋势', ...state })
+    const html = await renderComponent('components/ReportTrendPanel', { title: '生产趋势', ...state })
     assert.ok(html.includes('生产趋势'))
     assert.ok(html.includes(expected))
     assert.ok(html.includes(`role="${role}"`))
@@ -151,7 +151,7 @@ test('standard reports expose consistent state recovery and truthful initial met
 
 test('refreshing a populated report retains its chart and rows instead of showing the initial loading state', async () => {
   const html = await renderComponent('components/ReportTrendPanel', {
-    number: '01', title: '生产趋势', loading: true, hasData: true, chartLabel: '每日产量',
+    title: '生产趋势', loading: true, hasData: true, chartLabel: '每日产量',
   }, { chart: () => '现有图表', table: () => '现有明细' })
   for (const text of ['正在更新', '现有图表', '现有明细', '每日产量']) assert.ok(html.includes(text))
   assert.ok(!html.includes('正在读取报表数据'))
@@ -162,7 +162,7 @@ test('refreshing a populated report retains its chart and rows instead of showin
 test('chart-only report panels omit the duplicate table and preserve the default table slot', async () => {
   for (const showTable of [undefined, false]) {
     const html = await renderComponent('components/ReportTrendPanel', {
-      number: '', title: '每日焊接趋势', hasData: true, ...(showTable === undefined ? {} : { showTable }),
+      title: '每日焊接趋势', hasData: true, ...(showTable === undefined ? {} : { showTable }),
     }, { chart: () => '每日趋势图', table: () => '图旁重复明细' })
     assert.ok(html.includes('每日趋势图'))
     assert.equal(html.includes('图旁重复明细'), showTable !== false)
@@ -196,7 +196,7 @@ test('report analysis uses server source versions and starts immediately', () =>
   assert.doesNotMatch(script, /报表数据分析|guardrail_fallback|simulated_fallback|降级/)
   assert.match(analysis.template.content, /<ReportAnalysis[^>]*:analysis="analysis"/)
   assert.match(script, /const targetKey = requestKey\(\)[\s\S]*if \(!props\.ready \|\| !props\.reportDate\)/)
-  assert.match(script, /if \(!props\.reportDate \|\| queryScope\(\) !== displayedScope\) \{[\s\S]*analysis\.value = null/)
+  assert.match(script, /if \(scope !== displayedScope\) \{\s*analysis\.value = null/)
 
   const expectedVersions = new Map([
     ['LeadershipReportView', /:summary-data-version="monthlyReport\?\.analysis_summary_source_version \|\| ''"/],
@@ -367,7 +367,7 @@ test('workshop report includes the confirmed-worker interval summary', () => {
   assert.equal((template.match(/:show-chart="false"/g) || []).length, 2)
   assert.equal((template.match(/fit-table-content/g) || []).length, 2)
   assert.match(template, /v-if="!isWorker && result\.worker_summaries\?\.length"[\s\S]*class="worker-time-summary"/)
-  assert.match(template, /number="02"[\s\S]*title="工人工时汇总"/)
+  assert.match(template, /title="工人工时汇总"/)
   assert.doesNotMatch(template, /<section class="panel workshop-panel"|class="panel worker-time-summary"/)
   assert.doesNotMatch(template, /所选区间暂无工人确认数据/)
   assert.match(template, /<AppReportTable :columns="workerTableColumns" :items="result.worker_summaries"/)
@@ -397,7 +397,7 @@ test('device report is one page with task details and a default monthly summary'
   assert.match(energy.template.content, /<StandardReportQuery/)
   assert.doesNotMatch(energy.template.content, /报表类型|任务生产报表|change-report-tab/)
   assert.match(descriptor('StandardReportQuery', 'components').template.content, /<span><AppIcon name="chart"[^>]*\/>图表类型<\/span>/)
-  assert.match(energy.template.content, /<h2>设备报表<\/h2>/)
+  assert.match(energy.template.content, /<h1>设备报表<\/h1>/)
   assert.match(energy.template.content, /:max-days="31"/)
   assert.match(energy.template.content, /任务能耗明细/)
   assert.match(energy.template.content, /#summary-c0>汇总<\/template>/)
@@ -498,7 +498,8 @@ test('alarm center uses source timestamps and presents the latest evidenced mode
   assert.match(template, /按告警级别筛选/)
   assert.match(script, /title: "告警时间"[\s\S]*title: "发现时间"/)
   assert.match(template, /formatShortDateTime\(item\.first_start_time\)/)
-  assert.match(template, /同步游标[\s\S]*ALARM_INFO_ID/)
+  assert.match(template, /同步游标/)
+  assert.match(template, /last_alarm_id/)
   assert.doesNotMatch(template, /已同步记录/)
   assert.match(script, /const startValue = item\?\.first_start_time/)
   assert.match(script, /item\.status === 'closed' \? item\.latest_remove_time : currentTime\.value/)
@@ -663,7 +664,7 @@ test('workshop pagination does not invalidate an unchanged analysis context', ()
 
   assert.ok(readyExpression)
   assert.match(readyExpression[1], /!loading\.value/)
-  assert.match(analysis, /if \(!props\.reportDate \|\| queryScope\(\) !== displayedScope\) \{[\s\S]*analysis\.value = null/)
+  assert.match(analysis, /if \(scope !== displayedScope\) \{\s*analysis\.value = null/)
   assert.match(template, /:page="result.page"[^>]*:page-size="result.page_size"/)
   assert.match(template, /@page="changePage"/)
 })
@@ -810,6 +811,7 @@ test('energy rows show numeric values without an extra explanation column and pr
     energy_note: status === 'estimated' ? '平均速率补齐；有效时段 08:00～08:30（覆盖1800秒 / 任务3600秒）' : status,
   }))
   const bindings = { ...Vue, useEnergyReportData, formatChineseDateTime: value => value || '--',
+    useRoute: () => ({ query: {} }), queryDateRange: () => null,
     useEnergyReportQuery: () => Object.fromEntries(Object.entries({ taskDay: { records }, monthlyReport: null,
       anchorDate: '2026-11-07', periodStart: '2026-11-07', periodEnd: '2026-11-07',
       appliedPeriodStart: '2026-11-07', appliedPeriodEnd: '2026-11-07', summaryPeriodStart: '2025-12-01', summaryPeriodEnd: '2026-11-07',

@@ -1,20 +1,16 @@
 <script setup lang="ts">
-import { RouterView, useRouter } from 'vue-router'
+import { RouterView } from 'vue-router'
 import { NButton } from 'naive-ui'
 import SoybeanAdminLayout from '../vendor/soybean-admin/index.vue'
 import projectLogo from '../assets/project-logo.png'
 import DeviceSwitcher from '../components/DeviceSwitcher.vue'
 import { useAppStore } from '../state/app.ts'
 import { deviceSelection } from '../state/devices.ts'
-import { endSession, session } from '../state/session'
+import { session } from '../state/session'
+
+import { logout } from '../router'
 
 const app = useAppStore()
-const router = useRouter()
-
-async function logout() {
-  await endSession()
-  await router.replace('/login')
-}
 </script>
 
 <template>
@@ -27,7 +23,7 @@ async function logout() {
           <div class="soybean-header-actions">
             <DeviceSwitcher />
             <span class="soybean-account">{{ session.user?.display_name }}</span>
-            <NButton quaternary size="small" @click="logout">退出</NButton>
+            <NButton quaternary size="small" @click="logout">退出登录</NButton>
           </div>
         </div>
       </template>

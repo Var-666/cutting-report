@@ -23,8 +23,8 @@ const visibleGroups = computed(() => groups.value.filter(group => activeGroup.va
 const canRefresh = computed(() => rows.value.some(row => row.line.enabled && !row.loading))
 const overviewHeading = ref<HTMLElement | null>(null)
 const shortcuts = [
-  { route: 'pdm-statistics', icon: 'file', label: 'PDM 资料管理', description: '设备资料与详设图纸' },
-  { route: 'settings', icon: 'settings', label: '系统设置', description: '数据源、监控与配置诊断' },
+  { route: 'pdm-statistics', icon: 'file', label: 'CSS资料统计' },
+  { route: 'settings', icon: 'settings', label: '系统设置' },
 ]
 
 function focusOverview() {
@@ -39,7 +39,6 @@ function focusOverview() {
       <header class="portal-hero">
         <div class="portal-hero-copy">
           <h1>生产管理门户</h1>
-          <p>查看切割与焊接产出，进入各产线的报表与管理页面。</p>
           <div class="portal-actions">
             <NButton v-if="currentLine" type="primary" class="portal-enter" :loading="switching" :disabled="switching"
               @click="enterLine(currentLine.id)">
@@ -56,7 +55,7 @@ function focusOverview() {
         <h2>公共功能</h2>
         <RouterLink v-for="item in shortcuts" :key="item.route" :to="{ name: item.route }" class="portal-shortcut">
           <span class="shortcut-icon"><AppIcon :name="item.icon" :size="20" tone="current" /></span>
-          <span class="shortcut-copy"><strong>{{ item.label }}</strong><span>{{ item.description }}</span></span>
+          <strong class="shortcut-label">{{ item.label }}</strong>
           <AppIcon name="chevron-right" :size="16" tone="current" class="shortcut-arrow" />
         </RouterLink>
       </nav>
@@ -89,7 +88,6 @@ function focusOverview() {
           :style="{ '--group-columns': Math.min(group.rows.length, 2) }" :aria-label="`${group.name}产线`">
           <header class="overview-group-heading">
             <h3><AppIcon :name="productionLineIcon(group.id)" :size="18" tone="current" />{{ group.name }}产线</h3>
-            <span>{{ group.rows.length }} 条产线</span>
           </header>
           <div class="overview-group-cards">
             <ProductionOverviewCard v-for="row in group.rows" :key="row.line.id" :row="row" :switching="switching" @enter="enterLine(row.line.id)" @retry="refresh(row.line.id)" />
@@ -114,8 +112,7 @@ function focusOverview() {
 .portal-hero-copy { min-width:0; max-width:min(480px, 70%); }
 .portal-hero-copy::before { content:""; display:block; width:28px; height:3px; margin-block-end:16px; border-radius:2px; background:#ffad63; }
 .portal-hero h1 { margin:0; font-size:clamp(28px, 4cqi, 44px); font-weight:700; line-height:1.18; }
-.portal-hero p { margin:8px 0 24px; font-size:var(--font-body); line-height:1.65; color:#e0e9f3; }
-.portal-actions { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
+.portal-actions { margin-block-start:var(--space-4); display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
 .portal-enter { max-width:100%; min-height:var(--control-height); }
 .portal-enter :deep(.n-button__content) { min-width:0; gap:8px; }
 .portal-enter-label { min-width:0; overflow:hidden; text-overflow:ellipsis; }
@@ -142,10 +139,8 @@ function focusOverview() {
 .portal-shortcut:focus-visible { outline:2px solid rgb(var(--primary-color)); outline-offset:2px; }
 .shortcut-icon { display:grid; place-items:center; height:40px; border-radius:var(--card-radius); background:rgb(var(--primary-color) / .1); color:rgb(var(--primary-color)); }
 .portal-shortcut + .portal-shortcut .shortcut-icon { background:var(--theme-hover-color); color:var(--text-color-2); }
-.shortcut-copy { display:grid; gap:4px; overflow-wrap:anywhere; }
-.shortcut-copy strong { font-weight:600; }
-.shortcut-copy span,.shortcut-arrow { color:var(--text-color-3); }
-.shortcut-copy span { font-size:var(--font-auxiliary); }
+.shortcut-label { overflow-wrap:anywhere; font-weight:600; }
+.shortcut-arrow { color:var(--text-color-3); }
 .production-overview { display:grid; gap:var(--space-4); min-width:0; }
 .overview-heading-copy { display:grid; gap:4px; }
 .overview-heading h2 { margin:0; font-size:24px; font-weight:700; scroll-margin-block-start:16px; }
@@ -186,7 +181,7 @@ function focusOverview() {
   }
   .portal-hero-copy { max-width:100%; }
   .portal-hero-copy::before { margin-block-end:12px; }
-  .portal-hero p { margin-block-end:16px; }
+
   .portal-shortcuts { padding:8px; }
   .portal-shortcuts h2 { padding-block-end:4px; }
   .portal-shortcut { grid-template-columns:28px minmax(0,1fr); gap:8px; align-content:start; }

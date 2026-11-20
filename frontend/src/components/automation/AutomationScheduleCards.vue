@@ -8,10 +8,12 @@ import { formatDeviceDisplay } from '../../utils/deviceDisplay'
 
 defineProps<{
   schedules: AutomationSchedule[]; searching?: boolean; runningScheduleIds?: string[]; cancellableScheduleIds?: string[]
+  updatingScheduleIds?: ReadonlySet<string>
   executions?: Record<string, AutomationExecution>; reportLabels: Record<string, string>; scheduleLabels: Record<string, string>
 }>()
 const emit = defineEmits<{
-  run: [item: AutomationSchedule]; cancel: [execution: AutomationExecution]; edit: [item: AutomationSchedule]; remove: [item: AutomationSchedule]
+  run: [item: AutomationSchedule]; cancel: [execution: AutomationExecution]; edit: [item: AutomationSchedule]
+  toggle: [item: AutomationSchedule]; remove: [item: AutomationSchedule]
 }>()
 
 function scheduleText(item: AutomationSchedule) {
@@ -31,11 +33,15 @@ function scheduleText(item: AutomationSchedule) {
           <h3 :title="item.name">{{ item.name }}</h3>
           <p :title="`${reportLabels[item.report_type]} · ${formatDeviceDisplay(item.device_id)}`">{{ reportLabels[item.report_type] }} · {{ formatDeviceDisplay(item.device_id) }}</p>
         </div>
-        <NTag size="small" :bordered="false" :type="item.enabled ? 'success' : 'default'">{{ item.enabled ? '启用' : '停用' }}</NTag>
+        <NTag size="small" class="card-state" :bordered="false" :type="item.enabled ? 'success' : 'default'">{{ item.enabled ? '启用' : '暂停' }}</NTag>
+        <NButton size="small" type="error" secondary class="card-remove"
+          :aria-label="`删除 ${item.name}`" :disabled="updatingScheduleIds?.has(item.schedule_id)" @click="emit('remove', item)">
+          <span aria-hidden="true">×</span>
+        </NButton>
       </header>
       <dl class="card-details">
         <div class="card-next">
-          <dt>下次执行</dt><dd><time :datetime="item.next_run_at || undefined">{{ formatDateTime(item.next_run_at) }}</time>
+          <dt>{{ item.enabled ? '下次执行' : '自动执行暂停' }}</dt><dd><time v-if="item.enabled" :datetime="item.next_run_at || undefined">{{ formatDateTime(item.next_run_at) }}</time>
             <p class="card-frequency" :aria-label="`执行计划：${scheduleText(item)}`"><AppIcon name="clock" :size="14" tone="current" />{{ scheduleText(item) }}</p>
           </dd>
         </div>
@@ -50,8 +56,8 @@ function scheduleText(item: AutomationSchedule) {
         <NButton type="primary" :disabled="runningScheduleIds?.includes(item.schedule_id)" @click="emit('run', item)">
           {{ runningScheduleIds?.includes(item.schedule_id) ? '执行中' : '立即执行' }}
         </NButton>
-        <NButton @click="emit('edit', item)">编辑</NButton>
-        <NButton type="error" quaternary @click="emit('remove', item)">删除</NButton>
+        <NButton :disabled="updatingScheduleIds?.has(item.schedule_id)" @click="emit('edit', item)">编辑</NButton>
+        <NButton secondary :loading="updatingScheduleIds?.has(item.schedule_id)" :disabled="updatingScheduleIds?.has(item.schedule_id)" @click="emit('toggle', item)">{{ item.enabled ? '暂停' : '恢复' }}</NButton>
       </footer>
     </article>
   </div>
@@ -63,6 +69,9 @@ function scheduleText(item: AutomationSchedule) {
 .schedule-card--disabled { --schedule-accent:var(--text-color-3); }
 .schedule-card:focus-within { border-color:color-mix(in srgb,var(--schedule-accent) 55%,var(--theme-border-color)); }
 .card-heading, .card-actions { display:flex; align-items:center; gap:var(--space-2); }
+.card-state, .card-remove { flex:none; justify-content:center; width:36px; height:var(--space-6); padding:0; border-radius:var(--control-radius); }
+.card-remove { border:1px solid rgb(var(--error-color) / .24); }
+.card-remove span { font-size:18px; line-height:1; }
 .card-icon { display:grid; place-items:center; width:36px; height:36px; flex:none; color:var(--schedule-accent); background:color-mix(in srgb,var(--schedule-accent) 11%,transparent); border-radius:var(--card-radius); }
 .card-title { flex:1; min-width:0; }
 .card-title h3, .card-title p { margin:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }

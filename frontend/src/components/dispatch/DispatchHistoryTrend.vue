@@ -120,7 +120,7 @@ onBeforeUnmount(dispose)
       <label><span>机床</span><AppSelect aria-label="派发记录机床" :model-value="filters.machine_ip || ''" :disabled="disabled" @update:model-value="selectMachine"><option value="">全部机床</option><option v-for="ip in machineIps" :key="ip" :value="ip">{{ machineName(ip) }} · {{ ip }}</option></AppSelect></label>
       <NButton :disabled="disabled" @click="emit('clear')">清除筛选 / 全部记录</NButton>
     </div>
-    <p class="dispatch-trend__note">派发按成功派发时间统计，完成按魔盒完成时间统计已保留的真实任务数；同一任务重试或重复回调不重复计数，后续撤销保留原成功次数。点击对应柱子或选择日期查看派发／完成明细。{{ trend?.timezone ? `时区：${trend.timezone}。` : '' }}</p>
+    <details class="dispatch-trend__note"><summary>统计口径</summary><p>派发按首次成功时间、完成按魔盒完成时间统计。同一任务的重试和重复回调只计一次，撤销保留原成功次数。{{ trend?.timezone ? `时区 ${trend.timezone}。` : '' }}</p></details>
     <p v-if="validationError" class="dispatch-trend__error" role="alert">{{ validationError }}</p>
     <div v-if="error && trend" class="dispatch-trend__error" role="alert">趋势更新失败：{{ error }}<NButton text :disabled="loading" @click="emit('retry')">重试</NButton></div>
     <ReportPanelState v-if="!trend" :type="error ? 'error' : 'loading'" :title="error ? '趋势读取失败' : '正在读取派发趋势'" :message="error" :action-label="error ? '重试' : ''" @action="emit('retry')" />

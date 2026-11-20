@@ -58,7 +58,7 @@ test('daily history and monthly schedule cards render padded dates', async () =>
   })
   assert.ok(history.includes('2026年09月01日'))
   const schedules = await renderComponent('components/automation/AutomationScheduleCards', {
-    schedules: [{ schedule_id: 'monthly', name: '月报', frequency: 'monthly', month_day: 1,
+    schedules: [{ schedule_id: 'monthly', name: '月报', frequency: 'monthly', month_day: 1, enabled: true,
       run_time: '08:00', next_run_at: '2026-09-01T08:00:00+08:00', recipients: [], report_type: 'leadership' }],
     reportLabels: { leadership: '领导月报' }, scheduleLabels: {},
   })

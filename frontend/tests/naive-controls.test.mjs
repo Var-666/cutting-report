@@ -42,21 +42,83 @@ test('feedback keeps its public actions and accessible states using Naive UI', a
 })
 
 test('Naive confirmation resolves accept/cancel and cancels pending work when its page leaves', async () => {
-  const code = readFileSync(new URL('../src/composables/useConfirm.ts', import.meta.url), 'utf8').replace(/^import .*$/gm, '').replace('export function', 'function')
+  const code = readFileSync(new URL('../src/composables/useConfirm.ts', import.meta.url), 'utf8').replace(/^import .*$/gm, '').replace(/^export /gm, '')
   let options, unmount, deactivate, destroyed = 0
   const confirm = scriptFunction('useDialog', 'onBeforeUnmount', 'onDeactivated', `${code}; return useConfirm()`)(
     () => ({ warning: value => { options = value; return { destroy() { destroyed++ } } } }),
     cb => { unmount = cb }, cb => { deactivate = cb },
   )
-  const accepted = confirm('执行此操作'); options.onPositiveClick(); assert.equal(await accepted, true)
-  const rejected = confirm('放弃修改'); options.onNegativeClick(); assert.equal(await rejected, false)
-  const closed = confirm('关闭'); options.onClose(); assert.equal(await closed, false)
-  const escaped = confirm('Escape'); options.onEsc(); assert.equal(await escaped, false)
+  const accepted = confirm('执行此操作')
+  options.onPositiveClick()
+  assert.equal(await confirm('动画退出期间重复打开'), false)
+  options.onAfterLeave()
+  assert.equal(await accepted, true)
+  const dismissed = confirm('放弃修改')
+  options.onAfterLeave()
+  assert.equal(await dismissed, false)
+  const masked = confirm({ title: '删除记录？', content: '记录 A', positiveText: '删除记录', maskClosable: true })
+  assert.equal(options.positiveText, '删除记录')
+  assert.equal(options.title, '删除记录？')
+  assert.equal(await confirm('重复打开'), false)
+  assert.equal(options.maskClosable, true)
+  options.onAfterLeave()
+  assert.equal(await masked, false)
   const pending = confirm('离开页面'); deactivate(); assert.equal(await pending, false)
   assert.equal(destroyed, 1)
   unmount(); assert.equal(destroyed, 1)
 })
 
+
+test('draft protection blocks repeated close, preserves edits on cancel, and covers route and unload', async () => {
+  const code = readFileSync(new URL('../src/composables/useUnsavedChanges.ts', import.meta.url), 'utf8')
+    .replace(/^import .*$/gm, '').replace('export function', 'function')
+  const listeners = new EventTarget()
+  let leave, mount, deactivate, resolve, options
+  const createGuard = scriptFunction(
+    'computed', 'watch', 'onMounted', 'onActivated', 'onDeactivated', 'onBeforeUnmount',
+    'onBeforeRouteLeave', 'useConfirm', 'window', `${code}; return useUnsavedChanges`,
+  )(Vue.computed, Vue.watch, callback => { mount = callback }, () => {}, callback => { deactivate = callback },
+    () => {}, callback => { leave = callback }, () => input => { options = input; return new Promise(done => { resolve = done }) }, listeners)
+  const dirty = Vue.ref(false)
+  const saving = Vue.ref(false)
+  const scope = Vue.effectScope()
+  const discard = scope.run(() => createGuard(dirty, '离开将丢弃修改。', saving))
+  const unloadAllowed = () => listeners.dispatchEvent(new Event('beforeunload', { cancelable: true }))
+  try {
+    mount()
+    assert.equal(discard(), true)
+    assert.equal(unloadAllowed(), true)
+    dirty.value = true
+    assert.equal(unloadAllowed(), false)
+    const first = discard('关闭将丢弃草稿。')
+    assert.equal(discard(), false)
+    assert.equal(leave(), false)
+    assert.equal(options.negativeText, '继续编辑')
+    assert.equal(options.positiveText, '放弃修改')
+    resolve(false)
+    assert.equal(await first, false)
+    assert.equal(dirty.value, true)
+    const navigation = leave()
+    assert.equal(leave(), navigation)
+    saving.value = true
+    resolve(true)
+    assert.equal(await navigation, false)
+    assert.equal(discard(), false)
+    saving.value = false
+    const approved = discard()
+    resolve(true)
+    assert.equal(await approved, true)
+    dirty.value = false
+    assert.equal(discard(), true)
+    assert.equal(unloadAllowed(), true)
+    dirty.value = true
+    const stale = discard()
+    deactivate()
+    resolve(true)
+    assert.equal(await stale, false)
+    assert.equal(unloadAllowed(), true)
+  } finally { scope.stop() }
+})
 
 test('migrated controls compile with native directory buttons and semantic welding disclosures', () => {
   const files = ['views/DatabaseView', 'views/AdminAccountsView', 'views/AutomationView', 'views/WeldingReportView', 'views/WeldingHomeView', 'views/WorkshopView', 'views/AlarmCenterView', 'views/CuttingDispatchView', 'views/ReportCenterView', 'components/ReportFeedback', 'components/ReportPanelState', 'components/ReportJobStatus', 'components/DownloadPdfButton', 'components/EmailDeliveryResolution', 'components/ReportPeriodPicker', 'components/CatalogTreeNode', 'components/AnalysisPanel', 'components/AppReportTable', 'components/ReportForm', 'components/dispatch/DispatchHistoryTable', 'components/automation/AutomationScheduleCards', 'components/automation/AutomationDeliveryTable', 'components/workshop/WorkshopBatchConfirmationDialog', 'components/workshop/WorkshopCorrectionDialog']

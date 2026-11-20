@@ -19,6 +19,7 @@ import { parseCuttingInstructionFilename } from '../utils/cuttingInstructionName
 import { cuttingFileKey as fileKey } from '../utils/cuttingDispatchBatch.ts'
 import { formatChineseDateTime } from '../utils/dateDisplay.ts'
 import { useConfirm } from '../composables/useConfirm.ts'
+import { useUnsavedChanges } from '../composables/useUnsavedChanges.ts'
 import { executeCuttingDispatch, getCuttingStatus, listCuttingMachines } from '../api/dispatch.ts'
 
 const confirm = useConfirm()
@@ -44,6 +45,7 @@ const machines = ref<CuttingMachine[]>([])
 const operatingId = ref('')
 const retryDispatch = ref<CuttingDispatch | null>(null)
 const retrySegment = ref('')
+const retryError = ref('')
 const notice = ref('')
 const noticeType = ref('info')
 const initialProjectId = Array.isArray(route.query.project_id)
@@ -78,7 +80,7 @@ const {
   isBusy: () => Boolean(operatingId.value || pushBatch.saving),
 })
 const {
-  bulkQuantity, pushBatch, openPushBatch, closePushBatch, removePushBatchItem, applyBulkQuantity,
+  bulkQuantity, pushBatch, pushBatchDirty, openPushBatch, closePushBatch, removePushBatchItem, applyBulkQuantity,
   invalidateBatchConfirmation, submitPushBatch, retryBatchItem, checkBatchItem, refreshBatchCatalog,
 } = useCuttingDispatchBatch({
   selectedFiles,
@@ -91,6 +93,25 @@ const {
   loadFiles,
   showNotice,
 })
+
+const retryDirty = computed(() => Boolean(retryDispatch.value && retrySegment.value))
+const dispatchBusy = computed(() => pushBatch.saving || Boolean(operatingId.value))
+const canDiscardDispatch = useUnsavedChanges(
+  computed(() => pushBatchDirty.value || retryDirty.value),
+  '离开将丢弃尚未提交的派发参数。',
+  dispatchBusy,
+)
+
+async function requestBatchClose() {
+  if (!pushBatch.visible || !await canDiscardDispatch('关闭将丢弃尚未提交的批量派发参数。', pushBatchDirty.value)) return
+  closePushBatch()
+}
+
+async function closeRetry() {
+  if (!retryDispatch.value || !await canDiscardDispatch('关闭将丢弃已填写的分段名。', retryDirty.value)) return
+  retryDispatch.value = null
+  retrySegment.value = ''
+}
 
 const selectedFileCount = computed(() => selectedFiles.value.size)
 const historyMachineIps = computed(() => [...new Set([
@@ -125,7 +146,7 @@ function rememberSelectedProject(projectId: string) {
 }
 
 function openSinglePush(file: CuttingFile) {
-  if (pushBatch.saving) return
+  if (pushBatch.visible || dispatchBusy.value) return
   selectedFiles.value = new Map([[fileKey(file), file]])
   openPushBatch()
 }
@@ -153,28 +174,41 @@ async function loadMachines({ signal }: ReadOptions = {}) {
 }
 
 async function executeSaved(item: CuttingDispatch, segmentName?: string) {
-  if (operatingId.value) return
-  if (!item.remote_task_id && !parseCuttingInstructionFilename(item.document_no) && segmentName === undefined) {
-    retryDispatch.value = item
-    retrySegment.value = ''
-    return
-  }
-  if (!await confirm(`确认执行任务 ${item.dispatch_id}？\n文件：${item.document_no}\n机床：${machineName(item.machine_ip)}`)) return
-  retryDispatch.value = null
+  if (dispatchBusy.value) return
+  if (segmentName === undefined) {
+    if (retryDispatch.value) return
+    if (!item.remote_task_id && !parseCuttingInstructionFilename(item.document_no)) {
+      retryDispatch.value = item
+      retrySegment.value = ''
+      retryError.value = ''
+      return
+    }
+    if (!await confirm({
+      title: '执行文件派发？',
+      content: `将任务 ${item.dispatch_id} 的文件“${item.document_no}”发往${machineName(item.machine_ip)}（${item.machine_ip}）。`,
+      positiveText: '执行文件派发',
+    }) || dispatchBusy.value || !pageActive.value) return
+  } else if (retryDispatch.value?.dispatch_id !== item.dispatch_id || !segmentName) return
+  retryError.value = ''
   operatingId.value = item.dispatch_id
   try {
     const completed = await executeCuttingDispatch(item.dispatch_id, segmentName)
+    if (!pageActive.value) return
+    retryDispatch.value = null
+    retrySegment.value = ''
     if (completed.local_file_cleanup?.error) {
       showNotice(`推送完成，但本地文件清理失败：${completed.local_file_cleanup.error}`, 'error')
     } else {
       showNotice(`推送完成，已删除系统中的文件副本。魔盒任务 UUID：${completed.remote_task_id}`)
     }
   } catch (caught) {
+    if (!pageActive.value) return
     const error = toError(caught)
-    showNotice(error.message, 'error')
+    if (retryDispatch.value?.dispatch_id === item.dispatch_id) retryError.value = error.message
+    else showNotice(error.message, 'error')
   } finally {
     operatingId.value = ''
-    await Promise.allSettled([refreshHistory(), refreshVisibleFileStatuses()])
+    if (pageActive.value) await Promise.allSettled([refreshHistory(), refreshVisibleFileStatuses()])
   }
 }
 
@@ -251,7 +285,9 @@ async function initializePage({ refreshProjects = true } = {}) {
 function pausePage() {
   if (!pageActive.value) return
   pageActive.value = false
+  closePushBatch()
   retryDispatch.value = null
+  retrySegment.value = ''
   lifecycleSequence += 1
   lifecycleController?.abort()
   lifecycleController = null
@@ -350,7 +386,7 @@ const fileTableColumns = [
     <section class="panel dispatch-files-panel">
       <div class="panel-title">
         <div><span class="dispatch-section-icon blue"><AppIcon name="file" size="17" /></span><h2>目录文件</h2></div>
-        <p>{{ selectedCatalog ? `共 ${total} 条 · 当前第 ${page} 页` : '请选择左侧目录' }}</p>
+        <p v-if="!selectedCatalog">请选择目录</p>
       </div>
       <div class="selected-directory"><span>当前位置</span><strong>{{ selectedPath }}</strong></div>
       <form class="file-name-search" @submit.prevent="applyFileSearch">
@@ -403,18 +439,19 @@ const fileTableColumns = [
     <NButton class="primary" attr-type="button" aria-label="批量设置参数并派发已选文件" :disabled="loading || pushBatch.saving || !systemStatus?.can_push" @click="openPushBatch" type="primary"><AppIcon name="send" size="16" tone="light" />设置参数并派发</NButton>
   </aside>
 
-    <NModal :show="!!retryDispatch" @update:show="visible => { if (!visible) retryDispatch = null }">
+    <NModal :show="!!retryDispatch" :mask-closable="false" :close-on-esc="!dispatchBusy" @update:show="visible => { if (!visible) closeRetry() }">
       <div class="retry-dispatch-dialog panel" role="dialog" aria-modal="true" aria-labelledby="retry-dispatch-title"><form @submit.prevent="retryDispatch && executeSaved(retryDispatch, retrySegment.trim())">
         <h2 id="retry-dispatch-title">补充分段名</h2>
-        <p>{{ retryDispatch?.document_no }} 为非标准文件名，请填写分段名后核对执行。</p>
-        <label><span>分段名</span><NInput v-model:value.trim="retrySegment" :maxlength="80" :input-props="{ name: 'retry_segment', required: true }" placeholder="例如：806C" /></label>
-        <footer><NButton @click="retryDispatch = null">取消</NButton><NButton type="primary" attr-type="submit" :disabled="!retrySegment.trim()">核对并继续</NButton></footer>
+        <p>{{ retryDispatch?.document_no }} 为非标准文件名。请核对分段名，文件将发往 {{ retryDispatch && machineName(retryDispatch.machine_ip) }}（{{ retryDispatch?.machine_ip }}）。</p>
+        <p v-if="retryError" role="alert">{{ retryError }}</p>
+        <label><span>分段名</span><NInput v-model:value.trim="retrySegment" :disabled="dispatchBusy" :maxlength="80" :input-props="{ name: 'retry_segment', required: true }" placeholder="例如：806C" /></label>
+        <footer><NButton :disabled="dispatchBusy" @click="closeRetry">取消</NButton><NButton type="primary" attr-type="submit" :disabled="dispatchBusy || !retrySegment.trim()" :loading="dispatchBusy">执行文件派发</NButton></footer>
       </form></div>
     </NModal>
     <DispatchBatchDialog
       :push-batch="pushBatch" v-model:machine-ip="dispatchForm.machineIp" v-model:bulk-quantity="bulkQuantity"
       :machines="machines" :machine-name="machineName" :can-push="!!systemStatus?.can_push"
-      @close="closePushBatch" @submit="submitPushBatch" @apply-quantity="applyBulkQuantity"
+      @close="requestBatchClose" @submit="submitPushBatch" @apply-quantity="applyBulkQuantity"
       @parameters-changed="invalidateBatchConfirmation" @remove="removePushBatchItem"
       @retry="retryBatchItem" @check="checkBatchItem" @refresh-catalog="refreshBatchCatalog"
     />

@@ -71,7 +71,7 @@ const diagnosticsTableColumns = [
 
 <template>
   <div class="management-page configuration-diagnostics-page" :aria-busy="loading">
-    <ManagementPageHero eyebrow="CONFIGURATION DIAGNOSTICS" title="配置诊断" description="核对实际运行快照、保存目标与配置来源。认证信息仅显示配置状态。" icon="settings" status-label="访问方式" status-value="管理员只读" tone="teal" />
+    <ManagementPageHero title="配置诊断" />
     <NAlert v-if="error" type="error" role="alert">{{ error }}<span v-if="report">以下保留上次结果。</span><NButton :disabled="loading" @click="load">重试</NButton></NAlert>
     <p v-if="loading" role="status">正在读取配置快照…</p>
     <template v-if="report">

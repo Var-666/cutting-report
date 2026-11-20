@@ -41,7 +41,7 @@ function syncDefinitionFields() {
 
 <template>
   <div v-if="definitionDraft" class="designer-editor">
-        <div class="designer-editor-head"><div><span>REPORT DEFINITION</span><h3>{{ definitionDraft.definition_id ? definitionDraft.name : '新建报表定义' }}</h3></div><small v-if="definitionDraft.is_builtin">系统内置定义保持现有专用管线</small></div>
+        <div class="designer-editor-head"><div><h3>{{ definitionDraft.definition_id ? definitionDraft.name : '新建报表定义' }}</h3></div><small v-if="definitionDraft.is_builtin">系统内置定义保持现有专用管线</small></div>
         <div class="designer-form-grid">
           <label><span>报表名称</span><input v-model="definitionDraft.name" name="definition_name" autocomplete="off" :disabled="definitionDraft.is_builtin" /></label>
           <label><span>定义编码</span><input v-model="definitionDraft.code" name="definition_code" autocomplete="off" spellcheck="false" :disabled="definitionDraft.is_builtin || !!definitionDraft.definition_id" placeholder="例如：quality_daily…" /></label>
@@ -63,6 +63,6 @@ function syncDefinitionFields() {
           </div>
           <div class="designer-check-grid"><label v-for="field in definitionFields.filter(item => item.type === 'number')" :key="field.field"><input :name="`chart_series_${field.field}`" type="checkbox" :checked="definitionDraft.visual_config.chart.value_fields.includes(field.field)" @change="toggleSeries(field.field, ($event.target as HTMLInputElement).checked)" />{{ field.label }}</label></div>
         </template>
-        <div class="designer-actions"><label class="switch-label"><input v-model="definitionDraft.enabled" name="definition_enabled" type="checkbox" :disabled="definitionDraft.is_builtin" />发布并启用</label><button class="primary" type="button" :disabled="saving || definitionDraft.is_builtin" @click="emit('save', definitionDraft)">保存定义</button><button class="danger-button" type="button" :disabled="definitionDraft.is_builtin" @click="emit('remove', definitionDraft)">删除</button></div>
+        <div class="designer-actions"><label class="switch-label"><input v-model="definitionDraft.enabled" name="definition_enabled" type="checkbox" :disabled="definitionDraft.is_builtin" />发布并启用</label><button class="primary" type="button" :disabled="saving || definitionDraft.is_builtin" @click="emit('save', definitionDraft)">保存定义</button><button class="danger-button" type="button" :disabled="definitionDraft.is_builtin" @click="emit('remove', definitionDraft)">删除报表定义</button></div>
       </div>
 </template>

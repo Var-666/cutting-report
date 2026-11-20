@@ -356,7 +356,7 @@ class EnergyPeriodService:
         return report
 
     def closing_meter_coverage(self, windows):
-        """Read valid saved hours and their coverage for each 17:00 window."""
+        """Read valid saved hours and their coverage for each comparison window."""
         hours = {}
         if self.settings.energy_connected and windows:
             first = min(start.date() for start, _ in windows)

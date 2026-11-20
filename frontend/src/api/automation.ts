@@ -1,4 +1,4 @@
-import type { AutomationConfigurationRequestWritable as AutomationConfigurationRequest, ScheduledRun, Deleted, Queued, Resolved } from './generated/types.gen'
+import type { AutomationConfigurationRequestWritable as AutomationConfigurationRequest, ScheduleEnabledRequest, ScheduledRun, Deleted, Queued, Resolved } from './generated/types.gen'
 import type { SaveResult } from '../types/configuration'
 import type { AutomationConfiguration, AutomationSchedule, DeliveryResolutionRequest, AutomationStatus, EmailDelivery, SchedulePayload, EmailResolution } from '../types/automation'
 import type { Items, Page, ReadOptions } from '../types/api'
@@ -33,6 +33,14 @@ export function saveAutomationSchedule(payload: SchedulePayload, scheduleId = ''
   return request<AutomationSchedule>(url, {
     headers,
     method: scheduleId ? 'PUT' : 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function setAutomationScheduleEnabled(scheduleId: string, payload: ScheduleEnabledRequest) {
+  return request<AutomationSchedule>(`/api/v1/automation/schedules/${encodeURIComponent(scheduleId)}`, {
+    headers,
+    method: 'PATCH',
     body: JSON.stringify(payload),
   })
 }

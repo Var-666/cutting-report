@@ -28,7 +28,8 @@ import StandardReportQuery from '../components/StandardReportQuery.vue'
 import WorkshopStructureCharts from '../components/WorkshopStructureCharts.vue'
 import { reportToday, taskProductionDate } from '../api/reportDates.ts'
 import { formatChineseDate, formatChineseDateTime } from '../utils/dateDisplay.ts'
-import { getDeviceId } from '../api/deviceContext.ts'
+import { useUnsavedChanges } from '../composables/useUnsavedChanges'
+import { getDeviceId, registerDeviceSwitchGuard } from '../api/deviceContext.ts'
 import { useDeviceSwitchQuery } from '../composables/useDeviceSwitchQuery.ts'
 import { mergeOwnedQuery, queryChoice, queryDateRange, queryPositiveInteger, queryText, sameRouteQuery } from '../utils/reportRouteState.ts'
 
@@ -71,12 +72,31 @@ const {
   closeConfirmationFeedback, submitBatchConfirmation, pauseFeedback,
 } = useWorkshopConfirmation({ isWorker, user: () => props.user, result, filters, error, load })
 const {
-  correction, correctionDialogOpen, visibleCorrectionReasonPresets, availableWorkers, isOwnConfirmation,
-  openCorrection, closeCorrection, selectCorrectionReason, submitCorrection,
+  correction, correctionDirty, correctionDialogOpen, visibleCorrectionReasonPresets, availableWorkers, isOwnConfirmation,
+  openCorrection: fillCorrection, closeCorrection, selectCorrectionReason, submitCorrection,
 } = useWorkshopCorrection({
   isWorker, user: () => props.user, filters, rowDate, showConfirmationFeedback,
   refresh: () => load(result.value.page, { silent: true, ensureReport: false, useAppliedFilters: !isWorker.value }),
 })
+
+const workshopSaving = computed(() => correction.saving || batchConfirmation.saving)
+const canDiscardCorrection = useUnsavedChanges(correctionDirty, '离开将丢弃尚未提交的任务更正。', workshopSaving)
+const unregisterSwitchGuard = registerDeviceSwitchGuard(route.name, async () => {
+  if (!await canDiscardCorrection('切换设备将丢弃尚未提交的任务更正。')) return false
+  closeCorrection()
+  closeBatchConfirmation()
+  return true
+})
+onUnmounted(unregisterSwitchGuard)
+
+async function openCorrection(row: WorkshopTask) {
+  if (correction.row?.task_id === row.task_id) return
+  if (await canDiscardCorrection('切换任务将丢弃尚未提交的更正内容。')) await fillCorrection(row)
+}
+
+async function requestCorrectionClose() {
+  if (correction.visible && await canDiscardCorrection('关闭将丢弃尚未提交的更正内容。')) closeCorrection()
+}
 
 const analysisReady = computed(() => Boolean(
   pageActive.value
@@ -439,6 +459,8 @@ function pausePage() {
   pageActive.value = false
   cancelPendingRead()
   stopRefreshTimer()
+  closeCorrection()
+  closeBatchConfirmation()
   pauseFeedback()
 }
 
@@ -516,13 +538,12 @@ const workerTableColumns = [
 
     <WorkshopBatchConfirmationDialog :batch-confirmation="batchConfirmation" :user="user" @close="closeBatchConfirmation" @submit="submitBatchConfirmation" />
 
-    <WorkshopCorrectionDialog :correction="correction" v-model:action="correction.action" v-model:worker-id="correction.workerId" v-model:reason="correction.reason" :is-worker="isWorker" :available-workers="availableWorkers" :visible-correction-reason-presets="visibleCorrectionReasonPresets" @close="closeCorrection" @submit="submitCorrection" @reason="selectCorrectionReason" />
+    <WorkshopCorrectionDialog :correction="correction" v-model:action="correction.action" v-model:worker-id="correction.workerId" v-model:reason="correction.reason" :is-worker="isWorker" :available-workers="availableWorkers" :visible-correction-reason-presets="visibleCorrectionReasonPresets" @close="requestCorrectionClose" @submit="submitCorrection" @reason="selectCorrectionReason" />
 
   <div class="workshop-dashboard" :class="isWorker ? 'workshop-dashboard--worker' : 'workshop-dashboard--manager'">
     <section class="workshop-query-panel" :class="{ 'page-hero report-hero report-hero--query': !isWorker }">
       <header class="workshop-heading" :class="{ 'report-hero-copy': !isWorker }">
-        <span v-if="!isWorker" class="report-hero-eyebrow">WORKSHOP PRODUCTION</span>
-        <h2>{{ isWorker ? '我的任务确认' : '车间报表' }}</h2>
+        <h1>{{ isWorker ? '我的任务确认' : '车间报表' }}</h1>
         <span v-if="isWorker">{{ user.display_name }}</span>
       </header>
       <StandardReportQuery
@@ -563,27 +584,27 @@ const workerTableColumns = [
     <section v-if="!isWorker" class="workshop-kpis" aria-label="车间任务概况" :aria-busy="loading">
       <article class="workshop-kpi report-kpi-card kpi-blue">
         <span class="report-kpi-card__icon"><AppIcon name="tasks" size="21" tone="current" /></span>
-        <div><span>全部任务</span><p><strong>{{ result.report ? workshopMetrics.taskCount : '--' }}</strong> <small>项</small></p><em>当前查询区间</em></div>
+        <div><span>全部任务</span><p><strong>{{ result.report ? workshopMetrics.taskCount : '--' }}</strong> <small>项</small></p></div>
         <MetricSparkline class="workshop-sparkline" :values="workshopMetricSeries.tasks" label="每日任务数量趋势" />
       </article>
       <article class="workshop-kpi report-kpi-card kpi-amber">
         <span class="report-kpi-card__icon"><AppIcon name="clock" size="21" tone="current" /></span>
-        <div><span>待确认</span><p><strong>{{ result.report ? workshopMetrics.pendingCount : '--' }}</strong> <small>项</small></p><em>等待工人确认</em></div>
+        <div><span>待确认</span><p><strong>{{ result.report ? workshopMetrics.pendingCount : '--' }}</strong> <small>项</small></p></div>
         <MetricSparkline class="workshop-sparkline" :values="workshopMetricSeries.pending" label="每日待确认任务趋势" />
       </article>
       <article class="workshop-kpi report-kpi-card kpi-green">
         <span class="report-kpi-card__icon"><AppIcon name="check" size="21" tone="current" /></span>
-        <div><span>已确认</span><p><strong>{{ result.report ? workshopMetrics.confirmedCount : '--' }}</strong> <small>项</small></p><em>已登记完成人</em></div>
+        <div><span>已确认</span><p><strong>{{ result.report ? workshopMetrics.confirmedCount : '--' }}</strong> <small>项</small></p></div>
         <MetricSparkline class="workshop-sparkline" :values="workshopMetricSeries.confirmed" label="每日已确认任务趋势" />
       </article>
       <article class="workshop-kpi report-kpi-card kpi-red">
         <span class="report-kpi-card__icon"><AppIcon name="briefcase" size="21" tone="current" /></span>
-        <div><span>涉及工程</span><p><strong>{{ workshopMetrics.projectCount ?? '--' }}</strong> <small v-if="workshopMetrics.projectCount != null">个</small></p><em>当前区间范围</em></div>
+        <div><span>涉及工程</span><p><strong>{{ workshopMetrics.projectCount ?? '--' }}</strong> <small v-if="workshopMetrics.projectCount != null">个</small></p></div>
         <MetricSparkline class="workshop-sparkline" :values="workshopMetricSeries.projects" label="每日涉及工程趋势" />
       </article>
       <article class="workshop-kpi report-kpi-card kpi-violet">
         <span class="report-kpi-card__icon"><AppIcon name="activity" size="21" tone="current" /></span>
-        <div><span>确认率</span><p><strong>{{ number(workshopMetrics.confirmationRate) }}</strong> <small v-if="workshopMetrics.confirmationRate != null">%</small></p><em>按区间任务计算</em></div>
+        <div><span>确认率</span><p><strong>{{ number(workshopMetrics.confirmationRate) }}</strong> <small v-if="workshopMetrics.confirmationRate != null">%</small></p></div>
         <MetricSparkline class="workshop-sparkline" :values="workshopMetricSeries.confirmationRate" label="每日任务确认率趋势" />
       </article>
     </section>
@@ -598,7 +619,6 @@ const workerTableColumns = [
 
     <ReportTrendPanel
     class="workshop-panel"
-    number="01"
     :title="isWorker ? '待确认任务表' : '区间车间报表'"
     :note="isWorker ? '只能确认尚未被其他工人确认的任务' : '已确认任务可撤销或改派'"
     :show-chart="false"
@@ -646,7 +666,6 @@ const workerTableColumns = [
     <ReportTrendPanel
     v-if="!isWorker && result.worker_summaries?.length"
     class="worker-time-summary"
-    number="02"
     title="工人工时汇总"
     note="按当前确认人统计，只包含已确认任务"
     :show-chart="false"
@@ -676,6 +695,7 @@ const workerTableColumns = [
       :data-version="result.analysis_source_version || ''"
       :workshop-scope="workshopScope"
       :version-check-enabled="appliedRouteState.defaultView"
+      :prefetch-latest="!queryDateRange(route.query)"
       @refresh-report="refreshAnalysisReport"
     />
   </div>
@@ -687,7 +707,7 @@ const workerTableColumns = [
 .workshop-dashboard--manager .workshop-query-panel { position:relative; overflow:hidden; border-radius:14px; background:linear-gradient(90deg,rgb(var(--container-bg-color) / .98) 0%,rgb(var(--container-bg-color) / .91) 39%,rgb(var(--container-bg-color) / .04) 72%),url('../assets/home-laser-cutting.webp') center 48%/cover no-repeat; box-shadow:var(--theme-shadow); }
 .workshop-dashboard--manager .workshop-heading { position:relative; z-index:1; }
 .workshop-heading { display:flex; align-items:center; justify-content:space-between; gap:16px; min-height:40px; }
-.workshop-heading h2 { margin:0; font-size:20px; font-weight:600; }
+.workshop-heading h1 { margin:0; font-size:20px; font-weight:600; }
 .workshop-heading span { color:var(--text-color-3); font-size:var(--font-auxiliary); }
 .workshop-dashboard--worker .workshop-query-panel { display:block; padding:0; border:0; background:transparent; }
 @media (max-width:1000px) { .workshop-query-panel { grid-template-columns:minmax(0,1fr); gap:12px; } }.workshop-kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:16px;margin:16px 0}.workshop-kpi{--kpi-color:rgb(var(--info-color));--kpi-soft:rgb(var(--info-color) / .1);transition:transform .18s ease,box-shadow .18s ease;animation:surface-in .42s cubic-bezier(.2,.75,.25,1) both}.workshop-kpi:hover{transform:translateY(-2px);box-shadow:var(--theme-shadow)}.workshop-kpi:nth-child(2){animation-delay:.04s}.workshop-kpi:nth-child(3){animation-delay:.08s}.workshop-kpi:nth-child(4){animation-delay:.12s}.workshop-kpi:nth-child(5){animation-delay:.16s}.workshop-kpi.kpi-amber{--kpi-color:rgb(var(--warning-color));--kpi-soft:rgb(var(--warning-color) / .1)}.workshop-kpi.kpi-green{--kpi-color:rgb(var(--success-color));--kpi-soft:rgb(var(--success-color) / .1)}.workshop-kpi.kpi-red{--kpi-color:var(--text-color-3);--kpi-soft:rgb(var(--info-color) / .1)}.workshop-kpi.kpi-violet{--kpi-color:rgb(var(--primary-color));--kpi-soft:rgb(var(--primary-color) / .1)}.workshop-kpi:hover .report-kpi-card__icon{transform:scale(1.08) rotate(-3deg)}.workshop-kpi>div{display:contents}.workshop-kpi>div>span{display:block;color:var(--text-color-1);font-size:var(--font-auxiliary);font-weight:700;white-space:normal;overflow-wrap:anywhere;grid-column:2}.workshop-kpi p{margin:0;color:var(--text-color-1);font-size:var(--font-auxiliary);grid-column:1/-1;min-width:0;overflow-wrap:anywhere}.workshop-kpi p strong{font-size:21px}.workshop-kpi p small{margin-left:2px;color:var(--muted);font-size:var(--font-auxiliary)}.workshop-kpi em{display:block;color:var(--muted);font-style:normal;font-size:var(--font-auxiliary);grid-column:1/-1;min-width:0;white-space:normal;overflow-wrap:anywhere;line-height:1.6}.workshop-sparkline{width:58px;height:25px;opacity:.72;grid-column:1/-1;justify-self:end}

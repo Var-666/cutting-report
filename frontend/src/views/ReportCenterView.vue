@@ -17,7 +17,6 @@ import { mergeOwnedQuery, queryPositiveInteger, sameRouteQuery } from '../utils/
 defineProps({
   fixedReportType: { type: String, default: '' },
   title: { type: String, default: '报表生成与历史' },
-  description: { type: String, default: '领导、车间、设备及自定义报表统一生成、归档和下载。' },
 })
 
 const route = useRoute()
@@ -152,7 +151,7 @@ async function loadCustomDefinitions() {
 }
 
 async function generate(form: ReportCreateRequest) {
-  if (generating.value) return
+  if (generating.value || !pageActive) return
   stopPolling()
   error.value = ''
   generating.value = true
@@ -166,6 +165,7 @@ async function generate(form: ReportCreateRequest) {
     awaitingCreate = undefined
     if (!pageActive || getDeviceId() !== deviceId) return
     currentJob.value = created
+    globalThis.window?.$message?.success('报表生成任务已提交')
     await router.replace({ query: { ...route.query, job: currentJob.value.report_id } })
     await pollStatus(currentJob.value.report_id)
   } catch (caught) {
@@ -267,21 +267,11 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="management-page report-center-page">
-    <ManagementPageHero
-      eyebrow="REPORT GENERATION"
-      :title="title"
-      :description="description"
-      icon="file"
-      status-label="生成管线"
-      status-value="HTML / PDF"
-      status-note="查询、统计、图表与归档使用同一口径"
-      tone="teal"
-    />
+    <ManagementPageHero :title="title" />
 
   <section class="panel form-panel">
     <div class="panel-title">
-      <div><span>01</span><h2>报表条件</h2></div>
-      <p>{{ fixedReportType ? '当前页面已固定报表类型' : '三类标准报表可在各自页面按自定义区间查询并导出' }}</p>
+      <div><h2>报表条件</h2></div>
     </div>
     <ReportForm
       :loading="generating"
@@ -302,7 +292,7 @@ onBeforeUnmount(() => {
   <ReportJobStatus :job="currentJob" />
 
   <section class="panel history-panel">
-    <div class="panel-title"><div><span>02</span><h2>最近生成报告</h2></div><NButton class="text-button" :disabled="loadingHistory" @click="loadHistory(historyPage, true)">刷新列表</NButton></div>
+    <div class="panel-title"><div><h2>最近生成报告</h2></div><NButton class="text-button" :disabled="loadingHistory" @click="loadHistory(historyPage, true)">刷新列表</NButton></div>
     <ReportTable
       :items="history"
       :loading="loadingHistory"

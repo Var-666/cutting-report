@@ -31,6 +31,15 @@ export function useCuttingDispatchBatch({ selectedFiles, clearSelectedFiles, dis
     nonStandardConfirmed: false,
     overrideConfirmed: false,
   })
+  const originalMachine = ref('')
+  const pushBatchDirty = computed(() => pushBatch.visible && !pushBatch.resultsReady && (
+    dispatchForm.machineIp !== originalMachine.value
+    || bulkQuantity.value !== 1 || pushBatch.nonStandardConfirmed || pushBatch.overrideConfirmed
+    || pushBatch.items.some(item =>
+      item.segmentName !== (item.parsed?.intermediateProduct ?? '')
+      || item.material !== (item.parsed?.material ?? '')
+      || item.thickness !== (item.parsed?.thickness ?? '') || item.quantity !== 1)
+  ))
   const pushBatchOpen = computed(() => pushBatch.visible)
   const invalidBatchCount = computed(() => pushBatch.items.filter((item) => batchItemError(item)).length)
   const nonStandardBatchCount = computed(() => pushBatch.items.filter((item) => !item.parsed).length)
@@ -70,6 +79,7 @@ export function useCuttingDispatchBatch({ selectedFiles, clearSelectedFiles, dis
 
 
   function openPushBatch() {
+    if (pushBatch.visible || pushBatch.saving || operatingId.value) return
     if (!selectedFiles.value.size) {
       showNotice('请先选择要推送的文件。', 'error')
       return
@@ -83,11 +93,13 @@ export function useCuttingDispatchBatch({ selectedFiles, clearSelectedFiles, dis
     pushBatch.overrideConfirmed = false
     pushBatch.resultsReady = false
     bulkQuantity.value = 1
+    originalMachine.value = dispatchForm.machineIp
     pushBatch.visible = true
   }
 
   function closePushBatch() {
-    if (pushBatch.saving) return
+    if (!pushBatch.visible || pushBatch.saving) return
+    if (!pushBatch.resultsReady) dispatchForm.machineIp = originalMachine.value
     pushBatch.visible = false
   }
 
@@ -201,7 +213,7 @@ export function useCuttingDispatchBatch({ selectedFiles, clearSelectedFiles, dis
   }
 
   async function submitPushBatch() {
-    if (pushBatch.saving) return
+    if (!pushBatch.visible || pushBatch.saving || pushBatch.resultsReady || operatingId.value) return
     pushBatch.error = ''
     if (!dispatchForm.machineIp) {
       pushBatch.error = '请选择目标机床。'
@@ -330,7 +342,7 @@ export function useCuttingDispatchBatch({ selectedFiles, clearSelectedFiles, dis
     await loadFiles(1)
   }
 
-  return { bulkQuantity, pushBatch, pushBatchOpen, invalidBatchCount, nonStandardBatchCount, overrideBatchCount, batchStatusCounts, batchItemError, hasNameMismatch, openPushBatch, closePushBatch, removePushBatchItem, applyBulkQuantity, invalidateBatchConfirmation, batchStatusLabel, isStaleFileError, submitPushBatch, retryBatchItem, checkBatchItem, refreshBatchCatalog }
+  return { bulkQuantity, pushBatch, pushBatchOpen, pushBatchDirty, invalidBatchCount, nonStandardBatchCount, overrideBatchCount, batchStatusCounts, batchItemError, hasNameMismatch, openPushBatch, closePushBatch, removePushBatchItem, applyBulkQuantity, invalidateBatchConfirmation, batchStatusLabel, isStaleFileError, submitPushBatch, retryBatchItem, checkBatchItem, refreshBatchCatalog }
 }
 
 export type PushBatchState = ReturnType<typeof useCuttingDispatchBatch>['pushBatch']

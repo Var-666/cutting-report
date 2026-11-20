@@ -110,6 +110,9 @@ def test_configuration_and_automation_documented_responses_match_http_payloads(c
         'recipients': ['contract@example.com'],
     }), AutomationSchedule)
     check_contract(client.get('/api/v1/automation/schedules'), Items[AutomationSchedule])
+    schedule_path = f"/api/v1/automation/schedules/{schedule['schedule_id']}"
+    assert check_contract(client.patch(schedule_path, json={'enabled': False}), AutomationSchedule)['enabled'] is False
+    assert check_contract(client.patch(schedule_path, json={'enabled': True}), AutomationSchedule)['enabled'] is True
     run = check_contract(client.post(f"/api/v1/automation/schedules/{schedule['schedule_id']}/run"), ScheduledRun)
     assert check_contract(client.get(f"/api/v1/automation/runs/{run['run_id']}"), ScheduledRun) == run
     assert client.get('/api/v1/automation/runs/missing').status_code == 404

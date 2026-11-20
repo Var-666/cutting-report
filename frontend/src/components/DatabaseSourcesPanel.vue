@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { DatabaseSourceRequestWritable, DatabaseSourceView, ConnectionTestResult } from '../api/generated/types.gen'
-import { computed, onMounted, ref, watch } from 'vue'
-import { NButton, NCheckbox, NInput, NInputNumber, NModal, NTag } from 'naive-ui'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { NButton, NCheckbox, NInput, NInputNumber, NDrawer, NDrawerContent, NPopconfirm, NTag } from 'naive-ui'
 import AppReportTable from './AppReportTable.vue'
 import { listDatabaseSources, getDatabaseSource, saveDatabaseSource, setDatabaseSourceEnabled, deleteDatabaseSource, testDatabaseSource } from '../api/configuration.ts'
 import { toError } from '../utils/errors'
@@ -20,7 +20,8 @@ const editing = ref(false)
 const passwordConfigured = ref(false)
 const dirty = ref(false)
 const confirm = useConfirm()
-useUnsavedChanges(dirty, '数据源连接参数尚未保存，确定离开吗？')
+const canDiscard = useUnsavedChanges(dirty, '离开将丢弃未保存的数据源连接参数。', busy)
+const addButton = ref<InstanceType<typeof NButton> | null>(null)
 const columns = [
   { key: 'c1', title: '名称 / ID', width: 180, align: 'left' as const },
   { key: 'c2', title: '数据库类型', width: 120, align: 'left' as const },
@@ -51,6 +52,7 @@ async function load() {
   finally { loading.value = false }
 }
 function open(source?: DatabaseSourceView) {
+  if (busy.value || showEditor.value) return
   draft.value = source ? fromSource(source) : defaults()
   editing.value = Boolean(source)
   passwordConfigured.value = source?.password_configured ?? false
@@ -67,7 +69,7 @@ function changeEngine(engine: Draft['engine']) {
   dirty.value = true
 }
 async function close() {
-  if (busy.value || (dirty.value && !await confirm('连接参数尚未保存，确定关闭吗？'))) return
+  if (!showEditor.value || !await canDiscard('关闭将丢弃未保存的数据源连接参数。')) return
   showEditor.value = false
   draft.value.password = ''
   dirty.value = false
@@ -82,6 +84,7 @@ async function save() {
     dirty.value = false
     draft.value.password = ''
     showEditor.value = false
+    globalThis.window?.$message?.success('数据源已保存')
     await load()
   } catch (caught) { editorError.value = toError(caught).message }
   finally { busy.value = false }
@@ -102,21 +105,41 @@ async function testConnection(source?: DatabaseSourceView) {
   } finally { busy.value = false }
 }
 async function toggle(source: DatabaseSourceView) {
+  const enabled = !source.enabled
+  const action = enabled ? '启用数据源' : '停用数据源'
+  if (busy.value) return
+  if (source.references.length && !await confirm({
+    title: `${action}？`,
+    content: `“${source.name}”的连接状态将影响以下引用：${source.references.join('、')}。`,
+    positiveText: action,
+  })) return
   if (busy.value) return
   busy.value = true
   error.value = ''
-  try { await setDatabaseSourceEnabled(source.id, !source.enabled); await load() }
+  try {
+    await setDatabaseSourceEnabled(source.id, enabled)
+    globalThis.window?.$message?.success(enabled ? '数据源已启用' : '数据源已停用')
+    await load()
+  }
   catch (caught) { error.value = toError(caught).message }
   finally { busy.value = false }
 }
 async function remove(source: DatabaseSourceView) {
-  if (busy.value || !await confirm(`删除数据源“${source.name}”？`)) return
-  if (busy.value) return
+  if (busy.value || source.references.length) return false
   busy.value = true
   error.value = ''
-  try { await deleteDatabaseSource(source.id); await load() }
-  catch (caught) { error.value = toError(caught).message }
-  finally { busy.value = false }
+  try {
+    await deleteDatabaseSource(source.id)
+    globalThis.window?.$message?.success('数据源已删除')
+    await load()
+    return true
+  } catch (caught) {
+    error.value = toError(caught).message
+    return false
+  } finally {
+    busy.value = false
+    if (!sources.value.some(item => item.id === source.id)) void nextTick(() => addButton.value?.$el?.focus())
+  }
 }
 onMounted(load)
 </script>
@@ -125,7 +148,7 @@ onMounted(load)
   <section class="panel sources-panel" :aria-busy="loading || busy">
     <div class="sources-heading">
       <div><h2>其他数据源</h2><p>登记 SQL Server 或 MySQL 连接；业务接入后由对应模块使用。</p></div>
-      <NButton type="primary" :disabled="loading || busy" @click="open()">新增数据源</NButton>
+      <NButton ref="addButton" type="primary" :disabled="loading || busy" @click="open()">新增数据源</NButton>
     </div>
     <div v-if="error" class="source-message error" role="alert">{{ error }} <NButton text :disabled="loading || busy" @click="load">重新加载</NButton></div>
     <div v-if="result && !showEditor" class="source-message" role="status">{{ result.database }} · {{ result.elapsed_ms }} ms · {{ result.message }}</div>
@@ -138,13 +161,17 @@ onMounted(load)
         <NButton size="small" :disabled="busy" @click="testConnection(row)">测试连接</NButton>
         <NButton size="small" :disabled="busy" @click="open(row)">编辑</NButton>
         <NButton size="small" :disabled="busy" @click="toggle(row)">{{ row.enabled ? '停用' : '启用' }}</NButton>
-        <NButton size="small" :disabled="busy || row.references.length > 0" @click="remove(row)">删除</NButton>
+        <NPopconfirm internal-trap-focus positive-text="删除数据源" negative-text="取消" :positive-button-props="{ type: 'error', disabled: busy, loading: busy }" :on-positive-click="() => remove(row)">
+          <template #trigger><NButton size="small" :disabled="busy || row.references.length > 0" :aria-label="`删除数据源 ${row.name}`">删除</NButton></template>
+          删除“{{ row.name }}”后，系统将移除此连接配置。
+        </NPopconfirm>
       </div></template>
       <template #c6="{ row }">{{ row.references.length ? row.references.join('、') : '—' }}</template>
       <template #empty>{{ loading ? '正在读取数据源…' : '暂无其他数据源，点击“新增数据源”登记连接。' }}</template>
     </AppReportTable>
-    <NModal :show="showEditor" preset="card" :title="title" class="source-modal" :style="{ width: 'min(720px, calc(100vw - 32px))' }" :mask-closable="false" :close-on-esc="!busy" :closable="!busy" @update:show="value => { if (!value) close() }">
-      <form class="source-form" @submit.prevent="save" @input.capture="dirty = true; result = null" @change.capture="dirty = true; result = null">
+    <NDrawer :show="showEditor" width="min(720px, 100vw)" :aria-label="title" :mask-closable="false" :close-on-esc="!busy" @update:show="value => { if (!value) close() }">
+      <NDrawerContent :title="title" :closable="!busy">
+      <form id="database-source-form" class="source-form" @submit.prevent="save" @input.capture="dirty = true; result = null" @change.capture="dirty = true; result = null">
         <fieldset :disabled="busy" class="source-fields">
           <label><span>数据源 ID</span><NInput v-model:value="draft.id" :disabled="editing || busy" :input-props="{ 'aria-label': '数据源 ID', required: true, pattern: '[a-z][a-z0-9_-]{0,63}' }" placeholder="例如 quality" /></label>
           <label><span>名称</span><NInput :disabled="busy" v-model:value="draft.name" :maxlength="128" :input-props="{ 'aria-label': '名称', required: true }" /></label>
@@ -172,9 +199,12 @@ onMounted(load)
         </fieldset>
         <p v-if="editorError" class="source-message error" role="alert">{{ editorError }}</p>
         <p v-if="result" class="source-message" role="status">{{ result.elapsed_ms }} ms · {{ result.message }}</p>
-        <div class="source-footer"><NButton :disabled="busy" @click="testConnection()">测试连接</NButton><NButton :disabled="busy" @click="close">取消</NButton><NButton attr-type="submit" type="primary" :loading="busy" :disabled="busy">保存</NButton></div>
       </form>
-    </NModal>
+      <template #footer>
+        <div class="source-footer"><NButton :disabled="busy" @click="testConnection()">测试连接</NButton><NButton :disabled="busy" @click="close">取消</NButton><NButton attr-type="submit" form="database-source-form" type="primary" :loading="busy" :disabled="busy">保存数据源</NButton></div>
+      </template>
+      </NDrawerContent>
+    </NDrawer>
   </section>
 </template>
 

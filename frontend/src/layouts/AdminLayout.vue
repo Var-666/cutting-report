@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { NBreadcrumb, NBreadcrumbItem, NButton, NWatermark } from 'naive-ui'
 import SoybeanAdminLayout from '../vendor/soybean-admin/index.vue'
 import type { LayoutMode } from '../vendor/soybean-admin/types'
@@ -13,7 +13,7 @@ import { useAppStore } from '../state/app.ts'
 import { useThemeStore } from '../store/modules/theme'
 import { useRouteStore } from '../store/modules/route'
 import { deviceSelection } from '../state/devices.ts'
-import { endSession } from '../state/session'
+import { logout } from '../router'
 import { GLOBAL_HEADER_MENU_ID } from '../constants/app'
 import { provideMixMenuContext } from './modules/global-menu/context'
 import GlobalSider from './modules/global-sider/index.vue'
@@ -28,7 +28,6 @@ const GlobalMenu = defineAsyncComponent(() => import('./modules/global-menu/inde
 const themeStore = useThemeStore()
 const routeStore = useRouteStore()
 const route = useRoute()
-const router = useRouter()
 const sider = ref(null)
 const { childLevelMenus, isActiveFirstLevelMenuHasChildren } = provideMixMenuContext()
 const devicePage = computed(() => routeStore.section === 'line' && route.name !== 'cutting-dispatch')
@@ -37,7 +36,6 @@ const breadcrumbs = computed(() => route.matched.filter((record, index, records)
 const transitionName = computed(() => !appStore.reducedMotion && themeStore.page.animate ? themeStore.page.animateMode : '')
 watch(() => route.fullPath, () => { if (appStore.isMobile) appStore.siderCollapse = true })
 useDialogFocus(mobileMenuOpen, sider, () => { appStore.siderCollapse = true })
-async function logout() { await endSession(); await router.replace('/login') }
 const layoutMode = computed(() => {
   const vertical: LayoutMode = 'vertical';
   const horizontal: LayoutMode = 'horizontal';

@@ -39,7 +39,7 @@ function dispatchLifecycle({ status, projects, listMachines, catalogs } = {}) {
   let mounted, activated, timerId = 0
   const context = vm.createContext({
     ref, reactive, computed, AbortController, fileKey, batchItemError, hasNameMismatch, batchStatusLabel, isStaleFileError,
-    useRoute: () => ({ query: {} }), useRouter: () => ({ replace() {} }), useConfirm: () => async () => true,
+    useRoute: () => ({ query: {} }), useRouter: () => ({ replace() {} }), useUnsavedChanges: () => () => true, useConfirm: () => async () => true,
     onMounted: fn => { mounted = fn }, onActivated: fn => { activated = fn }, onDeactivated() {}, onBeforeUnmount() {},
     getCuttingStatus: (_scope, options) => { calls.status.push(options); return status(options, calls.status.length) },
     listCuttingProjects: (...args) => { calls.projects += 1; return projects ? projects(...args) : Promise.resolve({ items: [{ project_id: 'P1', project_name: 'P1' }] }) },
@@ -722,6 +722,7 @@ test('any two-character material code is filled verbatim without a grade mapping
   const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
   const batch = batchWorkflow()
   const createPushBatchItem = file => {
+    batch.closePushBatch()
     batch.inputs.selectedFiles.value = new Map([[file.document_id, file]])
     batch.openPushBatch()
     return batch.pushBatch.items[0]
@@ -742,6 +743,7 @@ test('any two-character material code is filled verbatim without a grade mapping
 
 test('non-standard names require manual confirmation and keep their independent dispatch reference', async () => {
   const batch = batchWorkflow()
+  batch.closePushBatch()
   batch.inputs.selectedFiles.value = new Map([['manual', selectableFile('manual', 'custom.gen')]])
   batch.openPushBatch()
   Object.assign(batch.pushBatch.items[0], { segmentName: '806C', material: 'A0', thickness: 8 })
@@ -834,6 +836,7 @@ test('dispatch segments are recognized or required before a nonstandard file can
   const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
   const batch = batchWorkflow()
   const createPushBatchItem = file => {
+    batch.closePushBatch()
     batch.inputs.selectedFiles.value = new Map([[file.document_id, file]])
     batch.openPushBatch()
     return batch.pushBatch.items[0]
@@ -862,11 +865,11 @@ test('execute API sends the manual segment without changing the file reference',
 test('history retries require a segment for nonstandard files and cancellation never executes', async () => {
   const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
   const source = view.slice(view.indexOf('async function executeSaved('), view.indexOf('function formatTime('))
-  const calls = [], retryDispatch = ref(null), retrySegment = ref('')
+  const calls = [], retryDispatch = ref(null), retrySegment = ref(''), retryError = ref('')
   const operatingId = ref('')
   let accepted = true
   let historyRefreshes = 0, fileRefreshes = 0
-  const executeSaved = scriptFunction('confirm', 'retryDispatch', 'retrySegment', 'operatingId', 'machineName', 'parseCuttingInstructionFilename', 'executeCuttingDispatch', 'showNotice', 'refreshHistory', 'refreshVisibleFileStatuses', `${source}\nreturn executeSaved`)(async () => accepted, retryDispatch, retrySegment, operatingId, String, parseCuttingInstructionFilename, async (...args) => { calls.push(args); return { remote_task_id: 'remote' } }, () => {}, async () => { historyRefreshes++ }, async () => { fileRefreshes++ })
+  const executeSaved = scriptFunction('confirm', 'retryDispatch', 'retrySegment', 'retryError', 'dispatchBusy', 'pageActive', 'operatingId', 'machineName', 'parseCuttingInstructionFilename', 'executeCuttingDispatch', 'showNotice', 'refreshHistory', 'refreshVisibleFileStatuses', `${source}\nreturn executeSaved`)(async () => accepted, retryDispatch, retrySegment, retryError, computed(() => Boolean(operatingId.value)), ref(true), operatingId, String, parseCuttingInstructionFilename, async (...args) => { calls.push(args); return { remote_task_id: 'remote' } }, () => {}, async () => { historyRefreshes++ }, async () => { fileRefreshes++ })
   const manual = { dispatch_id: 'old-manual', document_no: 'custom.gen', machine_ip: '10.1.1.2' }
   await executeSaved(manual)
   assert.equal(calls.length, 0)
@@ -875,7 +878,7 @@ test('history retries require a segment for nonstandard files and cancellation n
   assert.deepEqual(calls, [['old-manual', '806C']])
   assert.equal(retryDispatch.value, null)
   accepted = false
-  await executeSaved(manual, '806C')
+  await executeSaved({ ...manual, remote_task_id: 'remote' })
   assert.equal(calls.length, 1)
   assert.equal(historyRefreshes, 1)
   assert.equal(fileRefreshes, 1)

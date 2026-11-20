@@ -6,7 +6,7 @@ import { REPORT_POLL_INTERVAL, REPORT_POLL_LIMIT } from '../api/reportRequests'
 import { selectedLineType } from '../utils/productionLines.ts'
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { NModal, NTag } from 'naive-ui'
+import { NDrawer, NDrawerContent, NTag } from 'naive-ui'
 import ReportPeriodPicker from '../components/ReportPeriodPicker.vue'
 import AppIcon from '../components/AppIcon.vue'
 import HomeSectionHeader from '../components/HomeSectionHeader.vue'
@@ -39,7 +39,6 @@ const activeQuery = ref<WeldingQuery | null>(null)
 const loading = ref(false)
 const error = ref('')
 const actionError = ref('')
-const actionNotice = ref('')
 const exporting = ref(false)
 const analyzing = ref(false)
 const analysis = ref<WeldingAnalysis | null>(null)
@@ -48,6 +47,9 @@ const details = ref<WeldingPart | null>(null)
 const detailJob = ref<WeldingJobRow | null>(null)
 const detailLoading = ref(false)
 const detailError = ref('')
+const seamExportError = ref('')
+const detailPart = ref<WeldingPartRow | null>(null)
+const detailTitle = computed(() => detailJob.value ? '焊接作业详情' : '工件与焊缝详情')
 const seamPage = ref(1)
 const sourceEnabled = computed(() => deviceSelection.items?.find(item => item.id === deviceSelection.id)?.enabled !== false)
 let controller: AbortController | undefined, detailController: AbortController | undefined, exportController: AbortController | undefined, analysisController: AbortController | undefined
@@ -198,7 +200,7 @@ function goToPart() {
 }
 async function copy(value: string | null | undefined) {
   if (!value) return
-  try { await navigator.clipboard.writeText(value); actionNotice.value = '流水号已复制' }
+  try { await navigator.clipboard.writeText(value); globalThis.window?.$message?.success('流水号已复制') }
   catch { actionError.value = '复制失败，请选择流水号后手动复制' }
 }
 async function openDetail(row: WeldingJobRow | WeldingPartRow, page = 1) {
@@ -208,9 +210,11 @@ async function openDetail(row: WeldingJobRow | WeldingPartRow, page = 1) {
   detailController = new AbortController()
   detailOpen.value = true
   detailError.value = ''
+  seamExportError.value = ''
   seamPage.value = page
-  if ('weld_type_label' in row) { detailJob.value = row; details.value = null; return }
+  if ('weld_type_label' in row) { detailJob.value = row; detailPart.value = null; details.value = null; return }
   detailJob.value = null
+  detailPart.value = row
   details.value = null
   detailLoading.value = true
   try {
@@ -239,10 +243,12 @@ async function exportSeams() {
   if (!details.value || exporting.value) return
   exportController = new AbortController()
   exporting.value = true
+  seamExportError.value = ''
+  const detailRun = detailGeneration
   try { await downloadWelding(`/api/v1/welding/parts/${details.value.part.id}/seams/export`, `工件-${details.value.part.id}-焊缝.csv`, exportController.signal) }
   catch (caught) {
     const exception = toError(caught)
-    if (exception.name !== 'AbortError') detailError.value = exception.message }
+    if (detailRun === detailGeneration && exception.name !== 'AbortError') seamExportError.value = exception.message }
   finally { exporting.value = false }
 }
 async function runAnalysis() {
@@ -346,7 +352,7 @@ onBeforeUnmount(() => { disposed = true; cancel() })
 <template>
   <div class="welding-page">
     <section class="page-hero report-hero report-hero--query welding-report-header">
-      <div class="report-hero-copy"><span class="report-hero-eyebrow">WELDING PRODUCTION</span><h1>{{ title }}</h1></div>
+      <div class="report-hero-copy"><h1>{{ title }}</h1></div>
       <section v-if="sourceEnabled" class="report-hero-query welding-filter-panel" aria-label="焊接报表查询条件">
       <div v-if="usesFilterDialog" class="welding-toolbar">
         <NButton type="primary" aria-haspopup="dialog" @click="openFilters">
@@ -386,7 +392,6 @@ onBeforeUnmount(() => { disposed = true; cancel() })
     <ReportFeedback v-else-if="error" type="error" title="焊接数据读取失败" :message="`${error}${report ? '；当前保留上次成功查询结果。' : ''}`" action-label="重试" @action="retryReport" />
     <ReportPanelState v-else-if="loading && !report" type="loading" class="card-wrapper" title="正在读取焊接数据" message="首次统计可能需要较长时间，准备完成后会自动显示，请勿重复刷新。" />
     <ReportFeedback v-if="actionError && !filtersOpen" type="error" title="操作未完成" :message="actionError" dismissible @dismiss="actionError = ''" />
-    <ReportFeedback v-if="actionNotice" title="操作完成" :message="actionNotice" dismissible @dismiss="actionNotice = ''" />
     <div v-if="report && activeQuery" class="welding-freshness" role="status">
       <span class="welding-applied-query" :title="deviceSelection.items?.find(line => line.id === appliedLine)?.name || appliedLine">当前结果：{{ appliedQueryLabel }}</span>
       <ReportDataStatus v-if="report.meta.report_data" :meta="report.meta" label="统计截止" :busy="loading" @refresh="read(activeQuery, true, false)" />
@@ -404,12 +409,15 @@ onBeforeUnmount(() => { disposed = true; cancel() })
       <ReportAnalysis v-if="kind === 'daily'" :analysis="analysis" :welding-report="report" :show-metrics="false" :loading="analyzing" :error="analysisError" :ready="!loading && Boolean(report.summary.job_count)" :action-label="analysis ? '重新生成分析' : '生成当前区间分析'" empty-message="点击“生成当前区间分析”，查看产出趋势、工艺结构和数据核查建议。" @reload="runAnalysis" @retry="runAnalysis" />
       <details class="panel welding-quality"><summary>统计口径与数据核查</summary><p v-for="notice in report.meta.notices" :key="notice">{{ notice }}</p><dl><template v-for="(label, key) in qualityLabels" :key="key"><dt>{{ label }}</dt><dd>{{ report.meta.quality[key] ?? '未提供' }}</dd></template><dt>未关联工件的有效流水号</dt><dd>{{ report.meta.unlinked_part_count ?? '未提供' }}</dd><dt>待核查关联流水号</dt><dd>{{ report.meta.ambiguous_part_count ?? '未提供' }}</dd></dl><p v-if="report.projects_truncated">项目图展示工件数最多的前100个项目，可按项目筛选查看。</p><p>源库最新更新时间：{{ sourceUpdated }}</p><p v-if="report.meta.source_info_as_of">源信息采样：{{ report.meta.source_info_as_of }}</p><p>本次计算：{{ report.meta.calculated_at }}<template v-if="report.meta.report_data">；统计截止：{{ report.meta.report_data.data_as_of }}</template></p></details>
     </template>
-    <NModal v-model:show="detailOpen" preset="card" :title="detailJob ? '焊接作业详情' : '工件与焊缝详情'" class="welding-modal" :style="{ width: 'min(1200px, 94vw)' }">
-      <ReportFeedback v-if="detailError" type="error" title="详情读取失败" :message="detailError" />
+    <NDrawer v-model:show="detailOpen" width="min(1200px, 100vw)" :aria-label="detailTitle">
+      <NDrawerContent :title="detailTitle" closable>
+      <ReportFeedback v-if="detailError" type="error" title="详情读取失败" :message="detailError" action-label="重试" @action="detailPart && openDetail(detailPart, seamPage)" />
+      <ReportFeedback v-if="seamExportError" type="error" title="焊缝 CSV 导出失败" :message="seamExportError" action-label="重试导出" @action="exportSeams" />
       <ReportPanelState v-if="detailLoading" type="loading" title="正在读取详情" message="正在查询，繁忙时由服务器短暂排队。" />
       <template v-if="detailJob"><WeldingRecord kind="jobs" :row="detailJob" /><NButton attr-type="button" :disabled="!detailJob.serial_number" @click="goToPart">查询该流水号的工件</NButton></template>
       <template v-if="details"><WeldingRecord kind="parts" :row="details.part" /><h3>关联焊缝记录</h3><ReportFeedback :type="details.association_status === 'pending_verification' ? 'warning' : 'info'" title="焊缝关联说明" :message="details.notice" /><NButton attr-type="button" :disabled="exporting || details.association_status === 'pending_verification'" @click="exportSeams">导出该工件全部焊缝 CSV</NButton><WeldingTable kind="seams" :items="details.items" :total="details.total" :page="seamPage" :loading="detailLoading" @page="openDetail(details.part, $event)" /></template>
-    </NModal>
+      </NDrawerContent>
+    </NDrawer>
   </div>
 </template>
 

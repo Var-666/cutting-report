@@ -34,8 +34,8 @@ test('administrator management follows the shared settings UI baseline', () => {
 
   assert.match(template, /<ManagementPageHero/)
   assert.match(template, /title="管理员管理"/)
-  assert.match(template, /status-label="HR 身份认证"/)
-  assert.match(template, /status-note="系统仅保存管理员权限映射"/)
+  assert.match(template, /姓名 \/ 集团工号 \/ 公司工号/)
+  assert.match(template, /授权后，使用集团工号和 HR 密码登录。/)
   assert.match(template, /<AppReportTable :columns="adminTableColumns"[\s\S]*:row-key="admin => admin.user_id"/)
   assert.doesNotMatch(styles, /linear-gradient\(120deg,#083e61,#0d7391\)/)
   assert.doesNotMatch(styles, /\.panel-title\s*\{/)
@@ -45,15 +45,15 @@ test('login offers group numbers for HR accounts and keeps local administrator m
   const login = await renderComponent('views/LoginView', { workerDatabaseAuthEnabled: true })
   assert.match(login, /系统登录/)
   assert.match(login, /集团工号 \/ 管理员账号/)
-  assert.match(login, /自动识别账号权限并进入对应页面/)
   assert.doesNotMatch(login, /公司工号/)
 
   const local = await renderComponent('views/LoginView')
-  assert.match(local, /使用管理员账号和密码登录/)
+  assert.match(local, /管理员账号/)
   assert.doesNotMatch(local, /集团工号/)
 
   const setup = await renderComponent('views/LoginView', { setupRequired: true, workerDatabaseAuthEnabled: true })
   assert.match(setup, /初始化管理员/)
+  assert.match(setup, /密码（至少 8 位）/)
   assert.match(setup, /创建并登录/)
   assert.doesNotMatch(setup, /集团工号/)
 })

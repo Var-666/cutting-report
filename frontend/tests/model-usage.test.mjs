@@ -50,7 +50,7 @@ function mountModelConfiguration(api) {
       onChange: event => emit('update:value', event.target.value),
     }, name === 'select' ? props.options?.map(option => Vue.h('option', { value: option.value }, option.label)) : slots.default?.()),
   })
-  const bindings = { ...api, NCard: element('section'), NAlert: element('div'), NInput: element('input'),
+  const bindings = { ...api, useUnsavedChanges() {}, NCard: element('section'), NAlert: element('div'), NInput: element('input'),
     NSelect: element('select', 'select'), NSwitch: element('input'), NButton: element('button'),
     toError: value => value instanceof Error ? value : new Error(String(value)) }
   const compiled = compileScript(parse(read('../src/components/ModelConfiguration.vue')).descriptor, {
@@ -126,7 +126,6 @@ test('model selection uses server credentials and displays the new active model 
     await view.save()
     assert.equal(requests.at(-1).model, 'model-b')
     assert.equal(requests.at(-1).api_key, undefined)
-    assert.ok(view.text().includes('模型已切换'))
     assert.match(view.text(), /当前 Web 模型\s*model-b/)
     assert.ok(!view.text().includes('需重启 Web'))
     failCatalog = true

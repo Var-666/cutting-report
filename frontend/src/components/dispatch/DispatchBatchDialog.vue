@@ -47,7 +47,7 @@ const batchTableColumns = [
 </script>
 
 <template>
-  <NModal :show="pushBatch.visible" :mask-closable="!pushBatch.saving" :close-on-esc="!pushBatch.saving" @update:show="visible => { if (!visible) emit('close') }">
+  <NModal :show="pushBatch.visible" :mask-closable="false" :close-on-esc="!pushBatch.saving" @update:show="visible => { if (!visible) emit('close') }">
       <div class="push-batch-dialog" role="dialog" aria-modal="true" aria-labelledby="push-batch-title" :aria-busy="pushBatch.saving" tabindex="-1">
         <header class="push-batch-header">
           <h2 id="push-batch-title">{{ pushBatch.items.length === 1 ? '文件派发确认' : '批量派发确认' }}</h2>

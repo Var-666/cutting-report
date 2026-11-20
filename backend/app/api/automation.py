@@ -45,6 +45,10 @@ class DeliveryResolutionRequest(BaseModel):
         return value.strip()
 
 
+class ScheduleEnabledRequest(BaseModel):
+    enabled: bool = Field(strict=True)
+
+
 class SchedulePayload(BaseModel):
     device_id: str
 
@@ -199,6 +203,14 @@ def update_schedule(
     item = application_state(request).automation.update_schedule(
         schedule_id, data, now=now.isoformat(timespec="seconds")
     )
+    if item is None:
+        raise HTTPException(status_code=404, detail="定时任务不存在")
+    return _envelope(request, item)
+
+
+@router.patch("/schedules/{schedule_id}", response_model=None, responses={200: {"model": ApiEnvelope[AutomationSchedule]}})
+def set_schedule_enabled(schedule_id: str, payload: ScheduleEnabledRequest, request: Request) -> dict:
+    item = application_state(request).automation_service.set_schedule_enabled(schedule_id, payload.enabled, _now())
     if item is None:
         raise HTTPException(status_code=404, detail="定时任务不存在")
     return _envelope(request, item)

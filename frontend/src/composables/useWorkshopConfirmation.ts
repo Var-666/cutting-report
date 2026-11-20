@@ -153,7 +153,7 @@ export function useWorkshopConfirmation({ isWorker, user, result, filters, error
       const exception = toError(caught)
       error.value = exception.message
       batchConfirmation.error = exception.message
-      showConfirmationFeedback('error', '确认失败', exception.message, 7000)
+      closeConfirmationFeedback()
     } finally {
       batchConfirmation.saving = false
     }

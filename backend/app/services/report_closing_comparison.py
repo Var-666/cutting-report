@@ -1,4 +1,4 @@
-"""Equal-progress comparisons for reports that close each production day at 17:00."""
+"""Equal-progress comparisons for production days and calendar periods."""
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
@@ -43,15 +43,22 @@ def closing_comparison(
     if grouping == "month_quarter_year" and day.year <= 2:
         return []
 
-    def window(first: date, last: date, midnight: bool) -> Window:
-        start = datetime.combine(first, time.min, zone) if midnight else datetime.combine(first - DAY, CUTOFF, zone)
-        return start, datetime.combine(last, CUTOFF, zone)
+    def business_window(date_: date) -> Window:
+        return datetime.combine(date_ - DAY, CUTOFF, zone), datetime.combine(date_, CUTOFF, zone)
 
-    def period(label: str, comparison_label: str, first: date, prior_first: date, *, midnight: bool = False):
-        prior_last = min(prior_first + (day - first), first - DAY)
-        comparable_last = first + (prior_last - prior_first)
-        return label, comparison_label, window(first, day, midnight), window(prior_first, prior_last, midnight), window(first, comparable_last, midnight)
+    calendar_end = day if day == local.date() else day + DAY
 
+    def calendar_period(label: str, comparison_label: str, first: date, prior_first: date):
+        prior_end = min(prior_first + (calendar_end - first), first)
+        comparable_end = first + (prior_end - prior_first)
+        start = datetime.combine(first, time.min, zone)
+        return (label, comparison_label, (start, datetime.combine(calendar_end, time.min, zone)),
+                (datetime.combine(prior_first, time.min, zone), datetime.combine(prior_end, time.min, zone)),
+                (start, datetime.combine(comparable_end, time.min, zone)))
+
+    today = "今日" if day == local.date() else "当日"
+    current_day = business_window(day)
+    daily = (today, "上一业务日", current_day, business_window(day - DAY), current_day)
     month = day.replace(day=1)
     prior_month = (month - DAY).replace(day=1)
     if grouping == "month_quarter_year":
@@ -60,17 +67,17 @@ def closing_comparison(
         prior_quarter = prior_quarter_end.replace(month=prior_quarter_end.month - 2, day=1)
         year = month.replace(month=1)
         periods = (
-            period("本月", "上月同期", month, prior_month),
-            period("本季度", "上季度同期", quarter, prior_quarter),
-            period("本年", "上年同期", year, year.replace(year=year.year - 1)),
+            daily,
+            calendar_period("本月", "上月同期", month, prior_month),
+            calendar_period("本季度", "上季度同期", quarter, prior_quarter),
+            calendar_period("本年", "上年同期", year, year.replace(year=year.year - 1)),
         )
     else:
         week = day - timedelta(days=day.weekday())
-        today = "今日" if day == local.date() else "当日"
         periods = (
-            period(today, "上一业务日", day, day - DAY),
-            period("本周累计", "上周同期", week, week - timedelta(days=7), midnight=True),
-            period("本月累计", "上月同期", month, prior_month, midnight=True),
+            daily,
+            calendar_period("本周累计", "上周同期", week, week - timedelta(days=7)),
+            calendar_period("本月累计", "上月同期", month, prior_month),
         )
     windows = tuple(dict.fromkeys(item for _, _, current, previous, comparable in periods for item in (current, previous, comparable)))
     totals = load_totals(windows)

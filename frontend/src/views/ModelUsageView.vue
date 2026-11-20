@@ -169,7 +169,7 @@ const breakdownTableColumns = [
 
 <template>
   <div class="model-usage-page management-page" :aria-busy="loading">
-    <ManagementPageHero eyebrow="MODEL USAGE" title="模型用量" description="查看每日、每月 token 消耗趋势，按业务场景和模型汇总使用情况。" icon="sparkles" status-label="统计口径" status-value="供应商实际返回用量" status-note="缓存命中不新增调用，不估算缺失 token" tone="teal" />
+    <ManagementPageHero title="模型用量" />
 
     <ModelConfiguration />
 
@@ -180,14 +180,16 @@ const breakdownTableColumns = [
         <label><span>业务场景</span><AppSelect v-model="draft.scene" aria-label="业务场景"><option value="">全部场景</option><option v-for="(label, value) in scenes" :key="value" :value="value">{{ label }}</option></AppSelect></label>
         <NButton attr-type="submit" type="primary" :loading="loading" :disabled="loading">{{ loading ? '正在查询…' : '查询用量' }}</NButton>
       </form>
-      <div class="usage-presets"><span>快捷区间</span><NButton @click="preset('month')">本月</NButton><NButton @click="preset('previous')">上月</NButton><NButton @click="preset('year')">今年</NButton><NButton @click="preset('twelve')">近 12 个月</NButton><small>选择后点击“查询用量”，最长 366 天。</small></div>
+      <div class="usage-presets" role="group" aria-label="快捷区间"><NButton @click="preset('month')">本月</NButton><NButton @click="preset('previous')">上月</NButton><NButton @click="preset('year')">今年</NButton><NButton @click="preset('twelve')">近 12 个月</NButton></div>
     </NCard>
 
     <NAlert v-if="error" type="error" class="usage-message error" role="alert">{{ error }}<span v-if="report">，以下保留上次成功查询的数据。</span><NButton :disabled="loading" @click="load()">重试</NButton></NAlert>
     <p v-if="loading" class="usage-message" role="status">{{ report ? '正在更新用量，暂保留已显示的数据…' : '正在读取模型用量…' }}</p>
 
     <template v-if="report && summary">
-      <div class="usage-range"><strong>{{ formatChineseDate(report.start_date) }} 至 {{ formatChineseDate(report.end_date) }}</strong><span>{{ report.scene ? sceneName(report.scene) : '全部场景' }} · {{ report.timezone }} · 按请求开始时间归属日期</span></div>
+      <div class="usage-range"><strong>{{ formatChineseDate(report.start_date) }} 至 {{ formatChineseDate(report.end_date) }}</strong><span>{{ report.scene ? sceneName(report.scene) : '全部场景' }} · {{ report.timezone }}</span>
+        <details class="usage-method"><summary>统计口径</summary><p>按请求开始时间归属日期，使用供应商实际返回的用量。缓存命中不新增调用，缺失用量不估算。</p></details>
+      </div>
       <section class="usage-kpis" aria-label="区间用量概览">
         <NCard class="usage-total" :bordered="false"><NStatistic label="已记录总 token" :value="number(summary.total_tokens)" /><small>{{ number(summary.metered_count) }} / {{ number(summary.call_count) }} 次请求返回总用量</small></NCard>
         <NCard :bordered="false"><NStatistic label="输入 token" :value="number(summary.input_tokens)" /><small>{{ number(summary.input_metered_count) }} 次返回输入分项</small></NCard>
@@ -214,7 +216,7 @@ const breakdownTableColumns = [
       </NCard>
 
       <NCard :bordered="false" aria-label="业务场景与模型消耗">
-        <header class="usage-panel-title"><div><h2>场景与模型分布</h2></div><p>按当前查询区间统计</p></header>
+        <header class="usage-panel-title"><div><h2>场景与模型分布</h2></div></header>
         <div class="history-wrap">
           <AppReportTable :columns="breakdownTableColumns" :items="report.breakdown" :row-key="row => JSON.stringify([row.scene, row.model])" :paginate="false" :loading="loading" aria-label="业务场景与模型用量明细">
             <template #c0="{ row }">{{ sceneName(row.scene) }}</template>
@@ -234,7 +236,7 @@ const breakdownTableColumns = [
 </template>
 
 <style scoped>
-.model-usage-page{display:grid;gap:16px;min-width:0}.usage-filters{display:grid;grid-template-columns:repeat(3,minmax(0,1fr)) auto;align-items:end;gap:16px}.usage-filters label{display:block;min-width:0}.usage-filters label>span{display:block;margin-bottom:6px;color:var(--text-color-3);font-size:13px}.usage-presets{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:16px;font-size:12px;color:var(--text-color-3)}.usage-presets small{margin-left:auto;font-size:var(--font-auxiliary)}.usage-range{display:flex;align-items:center;flex-wrap:wrap;gap:8px 20px;font-size:13px}.usage-range span,.usage-kpis small{color:var(--text-color-3);font-size:12px;line-height:1.7}.usage-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}.usage-kpis>.n-card{min-width:0}.usage-kpis small{display:block;margin-top:8px}.usage-kpis :deep(.n-statistic-value){overflow-wrap:anywhere;font-variant-numeric:tabular-nums}.usage-message{margin:0}.usage-message .n-button{margin-left:12px}.usage-tabs{display:flex;gap:6px}.usage-tabs .active{color:rgb(var(--primary-color))}.usage-chart{height:280px;margin-top:12px}.usage-empty{padding:20px!important;text-align:center;color:var(--text-color-3)}.usage-panel-title{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}.usage-panel-title h2{margin:0;font-size:16px;font-weight:600}
-@media(max-width:1100px){.usage-kpis,.usage-filters{grid-template-columns:repeat(2,minmax(0,1fr))}.usage-presets small{width:100%;margin-left:0}}
+.model-usage-page{display:grid;gap:16px;min-width:0}.usage-filters{display:grid;grid-template-columns:repeat(3,minmax(0,1fr)) auto;align-items:end;gap:16px}.usage-filters label{display:block;min-width:0}.usage-filters label>span{display:block;margin-bottom:6px;color:var(--text-color-3);font-size:13px}.usage-presets{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:16px;font-size:12px;color:var(--text-color-3)}.usage-range{display:flex;align-items:center;flex-wrap:wrap;gap:8px 20px;font-size:13px}.usage-range span,.usage-kpis small{color:var(--text-color-3);font-size:12px;line-height:1.7}.usage-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}.usage-kpis>.n-card{min-width:0}.usage-kpis small{display:block;margin-top:8px}.usage-kpis :deep(.n-statistic-value){overflow-wrap:anywhere;font-variant-numeric:tabular-nums}.usage-message{margin:0}.usage-message .n-button{margin-left:12px}.usage-tabs{display:flex;gap:6px}.usage-tabs .active{color:rgb(var(--primary-color))}.usage-chart{height:280px;margin-top:12px}.usage-empty{padding:20px!important;text-align:center;color:var(--text-color-3)}.usage-panel-title{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}.usage-panel-title h2{margin:0;font-size:16px;font-weight:600}
+@media(max-width:1100px){.usage-kpis,.usage-filters{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:560px){.usage-filters{grid-template-columns:1fr}.usage-kpis{gap:12px}.usage-chart{height:240px}.usage-range{align-items:flex-start;flex-direction:column}.usage-kpis :deep(.n-card__content){padding:12px}.usage-kpis :deep(.n-statistic-value__content){font-size:22px}}
 </style>

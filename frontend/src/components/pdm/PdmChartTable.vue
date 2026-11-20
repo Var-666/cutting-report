@@ -45,7 +45,7 @@ onBeforeUnmount(() => observer?.disconnect())
 
 <template>
   <div class="pdm-chart-scroll" role="group" :aria-label="`${panel.table.scope_label}图表与明细，可横向滚动`" tabindex="0">
-  <ReportTrendPanel class="pdm-chart-table" :class="{ 'pdm-chart-table--grouped': panel.table.group_label }" number="" :title="panel.table.scope_label"
+  <ReportTrendPanel class="pdm-chart-table" :class="{ 'pdm-chart-table--grouped': panel.table.group_label }" :title="panel.table.scope_label"
     :subtitle="`${panel.filters.dateBasis === 'actual' ? '实际日期' : '计划日期'} · ${panel.filters.startDate} ～ ${panel.filters.endDate}`" fit-table-content :height="300" :has-data="true" :loading="loading"
     :chart-label="`${panel.table.title} · ${panel.table.scope_label}完成率对比`">
     <template #chart>

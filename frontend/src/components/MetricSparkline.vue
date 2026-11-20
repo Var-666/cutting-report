@@ -10,15 +10,14 @@ const props = defineProps({
 })
 
 const geometry = computed(() => sparklineGeometry(props.values, { maxPoints: props.maxPoints }))
-const accessibleLabel = computed(() => geometry.value.count
-  ? `${props.label}，基于最近 ${geometry.value.count} 个有效数据点`
-  : `${props.label}，暂无趋势数据`)
+const accessibleLabel = computed(() => `${props.label}，基于最近 ${geometry.value.count} 个有效数据点`)
 </script>
 
 <template>
   <svg
+    v-if="geometry.count"
     class="data-sparkline"
-    :class="[`is-${geometry.direction}`, { 'is-empty': !geometry.count }]"
+    :class="`is-${geometry.direction}`"
     viewBox="0 0 76 28"
     role="img"
     :aria-label="accessibleLabel"
@@ -35,7 +34,6 @@ const accessibleLabel = computed(() => geometry.value.count
       :cy="geometry.lastPoint.y"
       r="2.2"
     />
-    <text v-if="!geometry.count" x="38" y="17" text-anchor="middle">暂无趋势</text>
   </svg>
 </template>
 
@@ -44,6 +42,4 @@ const accessibleLabel = computed(() => geometry.value.count
 .data-sparkline__baseline{stroke:currentColor;stroke-width:1;opacity:.14}
 .data-sparkline__line{fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;vector-effect:non-scaling-stroke}
 .data-sparkline__point{fill:rgb(var(--container-bg-color));stroke:currentColor;stroke-width:1.6;vector-effect:non-scaling-stroke}
-.data-sparkline text{fill:var(--text-color-3);font-size:var(--font-auxiliary)}
-.data-sparkline.is-empty{opacity:.76}
 </style>

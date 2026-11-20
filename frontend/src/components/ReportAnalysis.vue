@@ -80,17 +80,15 @@ const weldingMetrics = computed(() => welding.value ? weldingKpis('daily', weldi
       <div class="analysis-panel-title">
         <span class="analysis-panel-icon"><AppIcon name="sparkles" size="21" tone="current" /></span>
         <div>
-          <span class="analysis-kicker">AI REPORT ANALYSIS</span>
           <h2>智能分析</h2>
         </div>
       </div>
       <div class="analysis-actions">
-        <span v-if="analysis" class="analysis-mode" :class="{ model: analysisAvailable, unavailable: !analysisAvailable }">
-          {{ analysisAvailable ? 'AI 分析' : '智能分析暂不可用' }}<small v-if="historical" :title="analysis.cache_note || '分析依据为原生成时的数据，不代表当前报表'">历史统计</small><small v-else-if="analysis.cached">已缓存</small>
-        </span>
-        <NButton attr-type="button" class="analysis-reload" :disabled="loading || !ready" @click="emit('reload')" :loading="loading">
-          <AppIcon v-if="!loading" name="activity" :size="14" tone="current" />
-          {{ loading ? (readingLatest ? '读取中' : '分析中') : actionLabel }}
+        <span v-if="analysis && (!analysisAvailable || historical || analysis.cached)" class="analysis-mode" :class="{ model: analysisAvailable, unavailable: !analysisAvailable }"
+          :title="historical ? analysis.cache_note || '分析依据为原生成时的数据，不代表当前报表' : undefined">{{ historical ? '历史统计' : !analysisAvailable ? '智能分析暂不可用' : '已缓存' }}</span>
+        <NButton attr-type="button" class="analysis-reload" :disabled="loading || !ready" @click="emit('reload')" :loading="loading && !analysis">
+          <AppIcon v-if="!loading || analysis" name="activity" :size="14" tone="current" />
+          {{ loading && !analysis ? (readingLatest ? '读取中' : '分析中') : actionLabel }}
         </NButton>
       </div>
     </div>
@@ -180,9 +178,9 @@ const weldingMetrics = computed(() => welding.value ? weldingKpis('daily', weldi
 .analysis-panel-head{min-height:76px;display:flex;align-items:center;justify-content:space-between;gap:24px;padding:16px;border-bottom:1px solid var(--analysis-border)}
 .analysis-panel-title{display:flex;align-items:center;gap:12px}
 .analysis-panel-icon{width:38px;height:38px;display:grid;place-items:center;flex:none;color:var(--analysis-blue);border-radius:10px;background:color-mix(in srgb,var(--analysis-accent) 12%,var(--analysis-surface))}
-.analysis-panel-head h2{margin:2px 0 0!important;color:var(--text-color-1)!important;font-size:14px!important}.analysis-kicker{color:var(--analysis-blue);font-size:var(--font-auxiliary)!important;font-weight:800;letter-spacing:.12em}
+.analysis-panel-head h2{margin:2px 0 0!important;color:var(--text-color-1)!important;font-size:14px!important}
 .analysis-actions{display:flex;align-items:center;gap:8px;flex-shrink:0}.analysis-actions button,.analysis-error button{min-height:34px!important;padding:0 12px!important}
-.analysis-mode{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;color:var(--analysis-blue);border:1px solid var(--theme-border-color);border-radius:999px;background:rgb(var(--info-color) / .1);font-weight:700;white-space:normal;overflow-wrap:anywhere;max-width:100%}.analysis-mode.model{color:var(--analysis-green);border-color:color-mix(in srgb,rgb(var(--success-color)) 26%,var(--analysis-surface));background:color-mix(in srgb,rgb(var(--success-color)) 9%,var(--analysis-surface))}.analysis-mode small{padding-left:8px;border-left:1px solid currentColor;font-size:var(--font-auxiliary)}
+.analysis-mode{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;color:var(--analysis-blue);border:1px solid var(--theme-border-color);border-radius:999px;background:rgb(var(--info-color) / .1);font-weight:700;white-space:normal;overflow-wrap:anywhere;max-width:100%}.analysis-mode.model{color:var(--analysis-green);border-color:color-mix(in srgb,rgb(var(--success-color)) 26%,var(--analysis-surface));background:color-mix(in srgb,rgb(var(--success-color)) 9%,var(--analysis-surface))}
 .analysis-mode.unavailable{color:rgb(var(--warning-color));background:rgb(var(--warning-color) / .1)}
 .analysis-reload :deep(.n-button__content) { gap:6px; }
 .analysis-state{padding:40px 24px;color:var(--text-color-2);text-align:center;background:rgb(var(--container-bg-color))}.analysis-error{display:flex;align-items:center;justify-content:center;gap:16px;margin:24px;padding:4px 0;color:rgb(var(--error-color));}

@@ -6824,6 +6824,16 @@ export type SavedConnectionRequest = {
 };
 
 /**
+ * ScheduleEnabledRequest
+ */
+export type ScheduleEnabledRequest = {
+    /**
+     * Enabled
+     */
+    enabled: boolean;
+};
+
+/**
  * SchedulePayload
  */
 export type SchedulePayload = {
@@ -11755,6 +11765,36 @@ export type DeleteScheduleApiV1AutomationSchedulesScheduleIdDeleteResponses = {
 };
 
 export type DeleteScheduleApiV1AutomationSchedulesScheduleIdDeleteResponse = DeleteScheduleApiV1AutomationSchedulesScheduleIdDeleteResponses[keyof DeleteScheduleApiV1AutomationSchedulesScheduleIdDeleteResponses];
+
+export type SetScheduleEnabledApiV1AutomationSchedulesScheduleIdPatchData = {
+    body: ScheduleEnabledRequest;
+    path: {
+        /**
+         * Schedule Id
+         */
+        schedule_id: string;
+    };
+    query?: never;
+    url: '/api/v1/automation/schedules/{schedule_id}';
+};
+
+export type SetScheduleEnabledApiV1AutomationSchedulesScheduleIdPatchErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type SetScheduleEnabledApiV1AutomationSchedulesScheduleIdPatchError = SetScheduleEnabledApiV1AutomationSchedulesScheduleIdPatchErrors[keyof SetScheduleEnabledApiV1AutomationSchedulesScheduleIdPatchErrors];
+
+export type SetScheduleEnabledApiV1AutomationSchedulesScheduleIdPatchResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApiEnvelopeAutomationSchedule;
+};
+
+export type SetScheduleEnabledApiV1AutomationSchedulesScheduleIdPatchResponse = SetScheduleEnabledApiV1AutomationSchedulesScheduleIdPatchResponses[keyof SetScheduleEnabledApiV1AutomationSchedulesScheduleIdPatchResponses];
 
 export type UpdateScheduleApiV1AutomationSchedulesScheduleIdPutData = {
     body: SchedulePayload;

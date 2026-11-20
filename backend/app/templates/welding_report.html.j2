@@ -18,7 +18,7 @@
   [('job_count','焊接作业次数（次）','count'), ('weld_length_m','焊接长度（米）','number'), ('working_hours','累计作业用时（小时）','number')],
   '按焊接作业结束时间归属', '累计和同期均应用本报表的筛选条件。') }}
 {% endif %}
-{{ section_title('核心生产指标（本期）', 'KEY PRODUCTION KPI') }}
+{{ section_title('核心生产指标（本期）') }}
 <div class="lp-kpis">
   {{ kpi('tasks', '焊接作业次数', report.summary.job_count if report.summary.job_count is not none else '待核实/未记录', '次') }}
   {{ kpi('ruler', '区间焊接长度', report.summary.weld_length_m, 'm') }}
@@ -39,18 +39,18 @@
 </p>
 {% for notice in report.meta.notices %}<p class="lp-method">{{ notice }}</p>{% endfor %}
 <p class="lp-method">累计作业用时不等于设备开机时间，未记录的数据不作零。</p>
-{% if echarts %}{{ section_title('区间每日生产趋势', 'DAILY PRODUCTION TREND') }}<div id="trend" class="chart" role="img" aria-label="按日焊接长度趋势"></div>
+{% if echarts %}{{ section_title('区间每日生产趋势') }}<div id="trend" class="chart" role="img" aria-label="按日焊接长度趋势"></div>
 <script>{{ echarts|safe }}</script><script>
 const trend={{ report.daily|tojson }};
 echarts.init(document.getElementById('trend'),null,{renderer:'svg'}).setOption({animation:false,grid:{left:65,right:25,top:30,bottom:40},tooltip:{trigger:'axis'},xAxis:{type:'category',data:trend.map(r=>r.production_date)},yAxis:{type:'value',name:'焊接长度(m)'},series:[{type:'bar',data:trend.map(r=>r.weld_length_m),itemStyle:{color:'#386fc7'}}]});
 </script>{% endif %}
-{{ section_title(title ~ '（' ~ report.total ~ '行）', 'PRODUCTION DETAILS') }}<div class="scroll"><table><thead><tr>{% for key,label in columns %}<th>{{ label }}</th>{% endfor %}</tr></thead><tbody>
+{{ section_title(title ~ '（' ~ report.total ~ '行）') }}<div class="scroll"><table><thead><tr>{% for key,label in columns %}<th>{{ label }}</th>{% endfor %}</tr></thead><tbody>
 {% for row in report['items'] %}<tr>{% for key,label in columns %}<td>{{ row.get(key) if row.get(key) is not none else '待核实/未记录' }}</td>{% endfor %}</tr>{% else %}<tr><td colspan="{{ columns|length }}">当前筛选条件下暂无数据</td></tr>{% endfor %}
 </tbody></table></div>
 
 </section>
 {{ render_analysis(analysis, report, report.query.start, report.query.end) }}
-<p class="lp-end">小组立焊接线 · 工业生产智能洞察报告 · 报告结束</p>
+<p class="lp-end">报告结束</p>
 </div>
 {% include 'industrial_report.js.j2' %}
 </body></html>

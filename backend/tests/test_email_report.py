@@ -79,8 +79,8 @@ def test_render_failure_is_retryable_and_does_not_connect_to_smtp(tmp_path, monk
 def test_retry_wait_starts_after_slow_report_preparation(tmp_path, monkeypatch):
     from tests.automation_fixtures import NOW
 
-    ticks = iter([100.0, 220.0])
-    monkeypatch.setattr('app.services.automation_service.monotonic', lambda: next(ticks))
+    clock = SimpleNamespace(value=100.0)
+    monkeypatch.setattr('app.services.automation_service.monotonic', lambda: clock.value)
     cfg = replace(settings, project_root=tmp_path, email_retry_base_seconds=60)
     cfg.reports_dir.mkdir()
     archive = b'<h1>report</h1>'
@@ -96,6 +96,7 @@ def test_retry_wait_starts_after_slow_report_preparation(tmp_path, monkeypatch):
     )
 
     def render_timeout(*args, **kwargs):
+        clock.value += 120
         raise EmailDeliveryFailure('report rendering timed out')
 
     service.email_service = SimpleNamespace(send=render_timeout)
@@ -315,7 +316,8 @@ def test_archived_report_becomes_pdf_page_email(tmp_path, report_type, empty, wi
     assert "演示数据" in text and "非生产统计" in text and "报告结束" in text
     assert "应隐藏的来源说明" not in text
     if report_type == 'leadership':
-        assert '近12个月生产趋势' in text and 'AI智能生产洞察' in text
+        assert '近12个月生产趋势' in text and '智能分析' in text
+        assert '<h2>智能分析</h2>' in html
     if with_brief:
         assert text.count('生产执行摘要') == 1 and text.count('本期生产简报') == 1
         assert text.count('生产记录已汇总。当前周期对比仅作进度参考。') == 1

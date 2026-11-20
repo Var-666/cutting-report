@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { sparklineGeometry } from '../src/utils/sparkline.ts'
+import { renderComponent } from './vue-component-helpers.mjs'
 
 test('sparkline geometry is derived from values and keeps the last point', () => {
   const result = sparklineGeometry([10, 15, 12, 20])
@@ -16,6 +17,14 @@ test('sparkline handles constant, missing, and invalid values without inventing 
   assert.match(flat.path, /M.*M/)
   const empty = sparklineGeometry([null, undefined, 'invalid'])
   assert.deepEqual(empty, { path: '', lastPoint: null, bars: [], count: 0, direction: 'flat' })
+})
+
+test('indicator cards omit empty sparklines and label valid zero data', async () => {
+  const label = '每日任务数量趋势'
+  const empty = await renderComponent('components/MetricSparkline', { values: [null, undefined], label })
+  assert.doesNotMatch(empty, /<svg|暂无趋势/)
+  const valid = await renderComponent('components/MetricSparkline', { values: [0, 0], label })
+  assert.match(valid, /aria-label="每日任务数量趋势，基于最近 2 个有效数据点"/)
 })
 
 test('sparkline limits large series to the most recent samples', () => {

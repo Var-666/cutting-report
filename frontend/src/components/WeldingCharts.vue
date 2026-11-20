@@ -22,7 +22,7 @@ const panel = computed(() => {
   if (props.kind === 'parts') return { title: '项目工件分布', subtitle: '归属唯一且存在有效区间作业的工件累计产出', rows: projects.value,
     option: weldingLengthOption(projects.value.map(row => row.project_no ?? '未填写项目'), projects.value.map(row => row.cumulative_actual_length_m), colors.value.primary, '工件累计实际长度'),
     fields: [['project_no', '项目编号'], ['part_count', '工件数'], ['cumulative_actual_length_m', '累计实际长度(m)']] }
-  if (props.kind === 'equipment') return { title: '设备产出对比', subtitle: '按设备汇总有效焊接产出', rows: devices.value,
+  if (props.kind === 'equipment') return { title: '设备产出对比', rows: devices.value,
     option: weldingLengthOption(devices.value.map(row => `设备 ${row.device_no ?? '未记录'}`), devices.value.map(row => row.weld_length_m), colors.value.primary),
     fields: [] }
   if (props.kind === 'jobs') return { title: '焊接工艺结构', subtitle: '按有效焊接长度统计，未知工艺独立保留', rows: processes.value,
@@ -42,7 +42,7 @@ function rowKey(row: object) {
 
 <template>
   <div class="welding-statistics">
-    <ReportTrendPanel number="" :title="panel.title" :subtitle="panel.subtitle" :chart-label="panel.title" :show-table="panel.fields.length > 0" :height="245" :loading="loading" :empty="!panel.rows.length" :has-data="panel.rows.length > 0">
+    <ReportTrendPanel :title="panel.title" :subtitle="panel.subtitle" :chart-label="panel.title" :show-table="panel.fields.length > 0" :height="245" :loading="loading" :empty="!panel.rows.length" :has-data="panel.rows.length > 0">
       <template #chart><div v-if="kind === 'jobs' && !processes.some(row => row.length !== null && row.length > 0)" class="welding-chart-empty"><NEmpty description="暂无有效工艺长度数据" /></div><WeldingChart v-else :option="panel.option" :label="panel.title" /></template>
       <template #table><AppReportTable :columns="columns(panel.fields)" :items="panel.rows" :row-key="rowKey" :paginate="false" :max-height="245" /></template>
     </ReportTrendPanel>

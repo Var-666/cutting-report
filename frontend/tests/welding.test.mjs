@@ -14,7 +14,7 @@ import { parse, compileScript, compileTemplate } from '@vue/compiler-sfc'
 import { lineHome, productionGroups, selectedLineType } from '../src/utils/productionLines.ts'
 import { adminMenus, navigationSection } from '../src/router/menus.ts'
 import { analyzeWelding, getLatestWeldingAnalysis, downloadWelding, getWeldingPart, getWeldingReport, weldingQuery } from '../src/api/welding.ts'
-import { weldingColumns, weldingVisibleColumns, weldingColumnLayout, weldingDisplay, weldingKpis, weldingTitles, weldingDescriptions } from '../src/utils/weldingReport.ts'
+import { weldingColumns, weldingVisibleColumns, weldingColumnLayout, weldingDisplay, weldingKpis, weldingTitles } from '../src/utils/weldingReport.ts'
 import { weldingRoutes } from '../src/router/weldingRoutes.ts'
 import { setDeviceCatalog, selectDevice } from '../src/api/deviceContext.ts'
 import { reportCache } from '../src/api/reportCache.ts'
@@ -967,7 +967,7 @@ test('router resolves registered line types without requiring a fixed welding ID
   const guard = sourceCode.slice(sourceCode.indexOf('router.beforeEach('), sourceCode.indexOf('\nrouter.afterEach('))
   const selection = { id: 'Cutter01', items: [{ id: 'Cutter01', type: 'cutting' }, { id: 'weld-2', type: 'welding' }] }
   let beforeEach
-  const bindings = { router: { beforeEach: fn => { beforeEach = fn } }, loadSession: async () => {},
+  const bindings = { logoutRequested: false, router: { beforeEach: fn => { beforeEach = fn } }, loadSession: async () => {},
     session: { user: { role: 'admin' } }, roleHome: () => '/worker/tasks', loadDevices: async () => {},
     deviceSelection: selection, changeDevice: id => { selection.id = id }, selectedLineType, lineHome }
   scriptFunction(...Object.keys(bindings), guard)(...Object.values(bindings))
@@ -1000,9 +1000,9 @@ async function mountWeldingDisplay(t, readReport, kind = 'jobs', { setTimeout, c
     setTimeout, clearTimeout, REPORT_POLL_INTERVAL, REPORT_POLL_LIMIT, formatChineseDateTime,
     ...Vue, useRoute: () => ({ query: {} }), useRouter: () => ({ push() {}, replace() {} }),
     reportToday: () => period.start, getWeldingReport: readReport, getLatestWeldingAnalysis: async () => null, weldingQuery, selectedLineType, queryDateRange, sameRouteQuery,
-    parseWeldingRouteQuery, weldingRouteQuery, weldingTitles, weldingDescriptions,
+    parseWeldingRouteQuery, weldingRouteQuery, weldingTitles,
     deviceSelection: reactive({ id: 'welding', items: [{ id: 'welding', type: 'welding', enabled: true }] }),
-    NModal: stub, NTag: stub, NButton: stub, ReportPeriodPicker: stub, AppIcon: stub, HomeSectionHeader: stub,
+    NDrawer: stub, NDrawerContent: stub, NTag: stub, NButton: stub, ReportPeriodPicker: stub, AppIcon: stub, HomeSectionHeader: stub,
     ReportAnalysis: { props: ['showMetrics'], setup: props => () => h('section', ['智能分析', props.showMetrics === false ? '' : '分析指标卡']) },
     AppSelect: stub, ReportFeedback: stub, ReportPanelState: stub, ReportExportMenu: stub, ReportFilterDialog: stub,
     WeldingCharts: stub, WeldingRecord: stub,

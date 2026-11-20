@@ -59,11 +59,12 @@ def test_closing_job_aggregation_keeps_midnight_and_17_buckets_separate(monkeypa
         now = datetime(2026, 11, 3, 18, tzinfo=ZoneInfo('Asia/Shanghai'))
         for kind in ['daily', 'jobs', 'equipment']:
             columns = service._closing_comparison(SimpleNamespace(fetch=fetch), kind, selected, now)
-            assert [column['totals']['job_count'] for column in columns] == [2, 3, 5]
-            assert [column['totals']['weld_length_m'] for column in columns] == [2, 3, 5]
-            assert [column['totals']['working_hours'] for column in columns] == [2, 3, 5]
+            assert [column['totals']['job_count'] for column in columns] == [2, 2, 4]
+            assert [column['totals']['weld_length_m'] for column in columns] == [2, 2, 4]
+            assert [column['totals']['working_hours'] for column in columns] == [2, 2, 4]
             assert columns[1]['start'].isoformat() == '2026-11-02T00:00:00+08:00'
             assert columns[2]['start'].isoformat() == '2026-11-01T00:00:00+08:00'
+            assert columns[1]['end'] == columns[2]['end'] == datetime(2026, 11, 3, tzinfo=now.tzinfo)
 
 
 def test_interval_and_pagination_validation():

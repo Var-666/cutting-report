@@ -102,6 +102,16 @@ class AutomationService:
         value["next_run_at"] = next_run_at(value, now).isoformat(timespec="seconds")
         return value
 
+    def set_schedule_enabled(self, schedule_id: str, enabled: bool, now: datetime) -> dict | None:
+        with UnitOfWork(self.database, self.settings.timezone) as unit:
+            schedule = unit.automation.get_schedule(schedule_id, for_update=True)
+            if schedule is None or schedule["enabled"] == enabled:
+                return schedule
+            next_run = next_run_at(schedule, now).isoformat(timespec="seconds") if enabled else schedule["next_run_at"]
+            return unit.automation.set_schedule_enabled(
+                schedule_id, enabled, next_run_at=next_run, now=now.isoformat(timespec="seconds"),
+            )
+
     def process_due_schedules(self, now: datetime) -> int:
         runtime_settings, _ = self.runtime.snapshot()
         if not runtime_settings.automation_enabled:

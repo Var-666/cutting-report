@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { NAlert, NButton, NCard, NInput, NSelect, NSwitch } from 'naive-ui'
 import type { LlmConfiguration } from '../api/generated/types.gen'
 import { getLlmConfiguration, listLlmModels, saveLlmConfiguration } from '../api/configuration'
+import { useUnsavedChanges } from '../composables/useUnsavedChanges'
 import { toError } from '../utils/errors'
 
 const configuration = ref<LlmConfiguration | null>(null)
@@ -14,6 +15,11 @@ const catalogLoading = ref(false)
 const error = ref('')
 const message = ref('')
 const busy = computed(() => loading.value || saving.value || catalogLoading.value)
+const dirty = computed(() => configuration.value !== null && (
+  draft.enabled !== configuration.value.enabled || draft.base_url !== configuration.value.base_url
+  || draft.model !== configuration.value.model || Boolean(draft.api_key)
+))
+useUnsavedChanges(dirty, '离开将丢弃尚未保存的模型配置。', saving)
 const options = computed(() => [...new Set([...models.value, draft.model].filter(Boolean))]
   .map(model => ({ label: model, value: model })))
 const controller = new AbortController()
@@ -52,6 +58,7 @@ async function readModels() {
 }
 
 async function save() {
+  if (busy.value || !configuration.value) return
   saving.value = true
   error.value = ''
   message.value = ''
@@ -59,9 +66,8 @@ async function save() {
     const result = await saveLlmConfiguration({ ...draft, api_key: draft.api_key || undefined }, { signal: controller.signal })
     if (disposed) return
     configuration.value = result
-    draft.api_key = ''
-    message.value = result.restart_required ? '模型配置已保存，相关连接配置待重启生效。'
-      : result.enabled ? '模型已切换，新发起的智能分析将使用所选模型。' : '模型配置已保存。'
+    Object.assign(draft, { enabled: result.enabled, base_url: result.base_url, model: result.model, api_key: '' })
+    globalThis.window?.$message?.success(result.enabled ? '模型配置已保存' : '智能分析配置已保存')
   } catch (caught) {
     if (!disposed) error.value = toError(caught).message
   } finally {
