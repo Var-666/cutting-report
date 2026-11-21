@@ -81,7 +81,8 @@ test('shared modules keep their navigation selection and their own secondary men
     expect(getDeviceId()).toBe('weld-a')
   }
   expect(menus.secondaryMenus.map(menu => menu.key)).toContain('operations-incidents')
-  await router.push('/admin/settings/database')
+  await router.push('/admin/settings')
+  expect(router.currentRoute.value.path).toBe('/admin/settings/database')
   expect(menus.secondaryMenus.map(menu => menu.key)).toContain('database-monitors')
   expect(menus.secondaryMenus.find(menu => menu.key === 'configuration-diagnostics')?.routePath)
     .toBe('/admin/settings/configuration-diagnostics')

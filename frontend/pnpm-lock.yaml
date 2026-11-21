@@ -81,21 +81,12 @@ importers:
       '@vitejs/plugin-vue':
         specifier: ^5.2.1
         version: 5.2.4(vite@5.4.21(@types/node@20.19.43))(vue@3.5.41(typescript@5.9.3))
-      '@vue/compiler-dom':
-        specifier: 3.5.41
-        version: 3.5.41
-      '@vue/compiler-sfc':
-        specifier: 3.5.41
-        version: 3.5.41
       '@vue/server-renderer':
         specifier: 3.5.41
         version: 3.5.41
       '@vue/test-utils':
         specifier: 2.4.6
         version: 2.4.6
-      esbuild:
-        specifier: 0.21.5
-        version: 0.21.5
       eslint:
         specifier: ^10.15.0
         version: 10.15.0(jiti@2.7.0)
