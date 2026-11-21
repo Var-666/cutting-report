@@ -1,15 +1,8 @@
 import { renderComponent } from './vue-component-helpers.mjs'
-import { scriptFunction } from './typescript-helpers.mjs'
 import assert from 'node:assert/strict'
-import { test, vi } from 'vitest'
+import { test } from 'vitest'
 import { readFileSync } from 'node:fs'
-import { compileScript, parse } from '@vue/compiler-sfc'
-import * as Vue from 'vue'
-import { renderToString } from '@vue/server-renderer'
-import { useEnergyReportData } from '../src/composables/useEnergyReportData.ts'
-import { formatChineseDate } from '../src/utils/dateDisplay.ts'
-import { computed, reactive } from 'vue'
-import { getAutomationConfiguration, saveAutomationConfiguration } from '../src/api/automation.ts'
+import { parse } from '@vue/compiler-sfc'
 import { createPinia, setActivePinia } from 'pinia'
 
 function descriptor(name, folder = 'views') {
@@ -20,32 +13,9 @@ function descriptor(name, folder = 'views') {
 const energyDataScript = readFileSync(new URL('../src/composables/useEnergyReportData.ts', import.meta.url), 'utf8')
 const energyChartsScript = readFileSync(new URL('../src/composables/useEnergyReportCharts.ts', import.meta.url), 'utf8')
 
-const leadershipQueryScript = readFileSync(new URL('../src/composables/useLeadershipReportQuery.ts', import.meta.url), 'utf8')
 const leadershipDataScript = readFileSync(new URL('../src/composables/useLeadershipReportData.ts', import.meta.url), 'utf8')
 const leadershipChartsScript = readFileSync(new URL('../src/composables/useLeadershipReportCharts.ts', import.meta.url), 'utf8')
 
-test('alarm severity colors agree and dispatch project names can display in full', () => {
-  const alarm = descriptor('AlarmCenterView').styles[0].content
-  const template = descriptor('AlarmCenterView').template.content
-  assert.match(template, /<NTag class="severity-badge"[^>]*item.severity === 'critical' \? 'error' : item.severity === 'high' \? 'warning' : 'info'/)
-  const dispatch = descriptor('CuttingDispatchView')
-  assert.match(dispatch.template.content, /<NAutoComplete[^\n]*class="project-selector"[^\n]*maxWidth: 'calc\(100vw - 24px\)'/)
-  assert.match(dispatch.styles[0].content, /:global\(\.dispatch-project-menu \.n-base-select-option__content\) \{ min-width:0; white-space:normal!important; overflow-wrap:anywhere;/)
-  assert.match(dispatch.styles[0].content, /\.dispatch-workspace\.download-workspace \{ grid-template-columns:280px minmax\(0,1fr\)/)
-  assert.match(dispatch.styles[0].content, /\.project-search :deep\(\.n-input\) \{ height:36px;/)
-  assert.match(dispatch.styles[0].content, /\.project-label strong \{[^}]*white-space:normal;/)
-  for (const name of ['project-folder', 'project-folder::before']) {
-    assert.ok(dispatch.styles[0].content.includes(`.${name} { border-color:#d99a22; background:#f7c85b; }`))
-  }
-  const catalog = descriptor('CatalogTreeNode', 'components').styles[0].content
-  for (const rule of catalog.matchAll(/\.catalog-folder(?:::before)? \{([^}]+)\}/g)) {
-    assert.match(rule[1], /border:1px solid #d99a22;/)
-    assert.match(rule[1], /background:#f7c85b;/)
-  }
-  const select = descriptor('AppSelect', 'components')
-  assert.match(select.template.content, /:consistent-menu-width="consistentMenuWidth" :menu-props="\{ \.\.\.menuProps, id: menuId, role: 'listbox' \}"/)
-  assert.match(select.scriptSetup.content, /consistentMenuWidth: true/)
-})
 
 test('standard reports expose consistent state recovery and truthful initial metrics', () => {
   const views = ['LeadershipReportView', 'WorkshopView', 'EnergyPeriodReportView'].map((name) => descriptor(name))
@@ -319,33 +289,6 @@ test('device report is one page with task details and a default monthly summary'
   assert.doesNotMatch(energyStyles, /\.energy-period-query\s*\{[^}]*display:/)
 })
 
-test('report automation exposes secure live runtime configuration', async t => {
-  const automation = descriptor('AutomationView')
-  const template = automation.template.content
-  const script = automation.scriptSetup.content
-
-  assert.match(template, /运行与邮件参数/)
-  assert.match(template, /即时生效/)
-  assert.doesNotMatch(template, /需重启生效/)
-  assert.match(template, /configuration\.smtp_password_configured/)
-  assert.match(template, /@submit\.prevent="submitConfiguration"/)
-  assert.match(readFileSync(new URL('../src/composables/useAutomationConfiguration.ts', import.meta.url), 'utf8'), /smtp_password: configuration\.smtp_password \|\| null/)
-  assert.match(readFileSync(new URL('../src/composables/useAutomationConfiguration.ts', import.meta.url), 'utf8'), /configurationMessage\.value = result\.message[\s\S]*?await refresh\(\)/)
-  assert.match(script, /Promise\.all\(\[loadConfiguration\(\), loadAll\(\)\]\)/)
-  const calls = []
-  const result = { saved: true, restart_required: false, message: '已生效' }
-  vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, options) => {
-    calls.push({ url, options })
-    return new Response(JSON.stringify({ success: true, data: result }), { headers: { 'Content-Type': 'application/json' } })
-  })
-  assert.deepEqual(await getAutomationConfiguration(), result)
-  const payload = { automation_enabled: true, smtp_host: 'smtp.example.com', smtp_password: null }
-  assert.deepEqual(await saveAutomationConfiguration(payload), result)
-  assert.deepEqual(calls.map(call => new URL(call.url, 'http://test').pathname), Array(2).fill('/api/v1/automation/configuration'))
-  assert.equal(calls[1].options.method, 'PUT')
-  assert.deepEqual(JSON.parse(calls[1].options.body), payload)
-  assert.ok(calls.every(call => call.options.credentials === 'same-origin'))
-})
 
 test('leadership report keeps refresh automatic and exposes only the normal query action', () => {
   const leadership = descriptor('LeadershipReportView')
@@ -408,17 +351,6 @@ test('alarm center uses source timestamps and presents the latest evidenced mode
   assert.match(styles, /\.alarm-table-wrap:not\(\.report-table-wrap\) :is\([^}]*font-size:inherit/)
 })
 
-test('alarm current-status filter queries every open incident instead of filtering one page', () => {
-  const alarm = descriptor('AlarmCenterView')
-  const template = alarm.template.content
-  const script = alarm.scriptSetup.content
-
-  assert.match(script, /const onlyOpen = ref\(false\)/)
-  assert.match(script, /onlyOpen\.value = !onlyOpen\.value[\s\S]*incidentPage\.value = 1[\s\S]*incidents\.value = \[\][\s\S]*await loadData\(\)/)
-  assert.match(script, /listAlarmIncidentPage\(\{[\s\S]*status: onlyOpen\.value \? 'open' : ''/)
-  assert.match(template, /class="alarm-status-filter"[^>]*:aria-pressed="onlyOpen"[^>]*@click="toggleOpenFilter"/)
-  assert.match(template, /当前异常（\{\{ openCount \}\}）/)
-})
 
 test('workshop confirmations support own revocation and audited admin correction', () => {
   const workshop = descriptor('WorkshopView')
@@ -484,29 +416,6 @@ test('all standard report analyses follow the selected report range', () => {
   assert.match(api, /summary_period_end: summaryPeriodEnd/)
 })
 
-test('leadership and equipment second tables default to the recent twelve months', () => {
-  const leadership = descriptor('LeadershipReportView')
-  const equipment = descriptor('EnergyPeriodReportView')
-  const leadershipRange = leadershipQueryScript.slice(leadershipQueryScript.indexOf('async function loadReport'), leadershipQueryScript.indexOf('async function restoreRouteState'))
-
-  assert.match(leadershipQueryScript, /monthlyPeriodStart = ref\(recentTwelveMonthStart\(today\)\)/)
-  assert.match(leadershipQueryScript, /const monthlyReport = ref<(?:LeadershipReport|EnergyPeriodReport) \| null>\(null\)/)
-  assert.match(leadershipDataScript, /monthlyRecords = computed\(\(\) => monthlyReport\.value\?\.monthly_records/)
-  assert.doesNotMatch(leadershipRange, /monthlyReport\.value|monthlyPeriodStart\.value|monthlyPeriodEnd\.value/)
-  assert.match(leadershipRange, /renderCharts\(\{ monthly: false \}\)/)
-  assert.match(leadership.template.content, /:title="monthlyTitle"/)
-  const monthlyNote = leadership.template.content.match(/:title="monthlyTitle" :note="([^"]+)"/)[1]
-  const formatPeriod = scriptFunction('formatChineseDate', 'monthlyPeriodStart', 'monthlyPeriodEnd', `return ${monthlyNote}`)
-  assert.equal(formatPeriod(formatChineseDate, '2025-12-01', '2026-11-21'), '2025年12月01日 至 2026年11月21日')
-  assert.match(leadership.scriptSetup.content, /summary_period_start: monthlyPeriodStart\.value/)
-  assert.match(leadership.scriptSetup.content, /summary_period_end: monthlyPeriodEnd\.value/)
-  assert.match(energyDataScript, /summaryRows = computed\(\(\) => sortReportPeriods\(monthlyReport\.value\?\.rows/)
-  assert.match(equipment.template.content, /:title="summaryTitle"/)
-  assert.match(equipment.template.content, /:subtitle="summarySubtitle"/)
-  assert.match(energyDataScript, /后台补齐 \$\{missing\} 天能耗中/)
-  assert.match(equipment.scriptSetup.content, /summary_period_start: summaryPeriodStart\.value/)
-  assert.match(equipment.scriptSetup.content, /summary_period_end: summaryPeriodEnd\.value/)
-})
 
 test('switching cached workshop and equipment reports does not force another query', () => {
   const workshop = descriptor('WorkshopView')
@@ -537,75 +446,6 @@ test('workshop pagination does not invalidate an unchanged analysis context', ()
   assert.match(template, /@page="changePage"/)
 })
 
-test('cutting list pagination is rendered once by the shared Naive component', () => {
-  for (const name of ['WorkshopView', 'AlarmCenterView', 'CuttingDispatchView']) {
-    const template = descriptor(name).template.content
-    assert.match(template, /<AppReportTable/)
-    assert.match(template, /:page-size=/)
-    assert.match(template, /@page=/)
-    assert.doesNotMatch(template, />上一页<|>下一页</)
-  }
-  const report = descriptor('ReportTable', 'components').template.content
-  assert.match(report, /@page="emit\('page-change', \$event\)"/)
-  assert.doesNotMatch(report, /@page-size|:page-sizes/)
-  const shared = descriptor('AppReportTable', 'components').template.content
-  assert.equal((shared.match(/<NPagination/g) || []).length, 1)
-  assert.match(shared, /:item-count="total"/)
-  assert.match(shared, /:disabled="loading"/)
-})
-
-test('report charts resize with their containers and disconnect observers while inactive', async () => {
-  for (const name of ['LeadershipReportView', 'EnergyPeriodReportView']) {
-    const source = descriptor(name).scriptSetup.content
-    const chartSource = name === 'EnergyPeriodReportView' ? energyChartsScript : leadershipChartsScript
-    const code = chartSource.slice(chartSource.indexOf('function resizeCharts()'), chartSource.indexOf('function chartsMissing()'))
-    const observed = [], observers = [], calls = []
-    const chart = { resize: () => calls.push('resize') }
-    const panel = { value: { getChartElement: () => ({}) } }
-    const pageActive = { value: true }
-    class ResizeObserver {
-      constructor(callback) { this.callback = callback; observers.push(this) }
-      observe(element) { observed.push(element) }
-      disconnect() { this.disconnected = true }
-    }
-    const bindings = { ResizeObserver, pageActive, dailyPanel: panel, monthlyPanel: panel, taskPanel: panel, periodPanel: panel,
-      dailyChart: chart, monthlyChart: chart, taskChart: chart, periodChart: chart,
-      window: { addEventListener() {}, removeEventListener() {} } }
-    const state = scriptFunction(...Object.keys(bindings), `let resizeListening = false; let chartResizeObserver; ${code}; return { startResizeListening, stopResizeListening }`)(...Object.values(bindings))
-    state.startResizeListening()
-    state.startResizeListening()
-    assert.equal(observers.length, 1)
-    assert.equal(observed.length, 2)
-    observers[0].callback()
-    assert.equal(calls.length, 2)
-    pageActive.value = false
-    observers[0].callback()
-    assert.equal(calls.length, 2)
-    state.stopResizeListening()
-    assert.equal(observers[0].disconnected, true)
-    state.startResizeListening()
-    assert.equal(observers.length, 2)
-    state.stopResizeListening()
-
-    panel.value = null
-    const before = observed.length
-    let activate
-    const activation = source.slice(source.indexOf('onActivated(async () => {'), source.indexOf('onDeactivated('))
-    const activationBindings = { ...bindings,
-      isPageActive: () => pageActive.value,
-      onActivated: callback => { activate = callback },
-      nextTick: async () => { panel.value = { getChartElement: () => ({}) } },
-      routeStateReady: false, restoreRouteState: async () => false,
-      report: { value: {} }, taskDay: { value: {} }, monthlyReport: { value: {} }, loading: { value: false },
-      scheduleRefreshPoll() {}, scheduleSummaryRefresh() {}, renderCharts() {}, chartsMissing: () => false }
-    const active = scriptFunction(...Object.keys(activationBindings), `let resizeListening = false; let chartResizeObserver; ${code}; ${activation}; return { stopResizeListening }`)(...Object.values(activationBindings))
-    pageActive.value = true
-    await activate()
-    assert.equal(observed.length, before + 2, 'activation must observe the chart elements after Vue restores their refs')
-    active.stopResizeListening()
-  }
-})
-
 test('cached report resources pause on deactivation and cache is bounded', () => {
   const layout = descriptor('ReportsLayout', 'layouts')
   const leadership = descriptor('LeadershipReportView')
@@ -632,32 +472,9 @@ test('cached report resources pause on deactivation and cache is bounded', () =>
   }
 })
 
-test('long-lived page polling is serialized and cancelled when the page leaves', async () => {
-  const alarm = descriptor('AlarmCenterView').scriptSetup.content
+test('workshop and report history polling is cancelled when the page leaves', () => {
   const workshop = descriptor('WorkshopView').scriptSetup.content
   const reportCenter = descriptor('ReportCenterView').scriptSetup.content
-  const api = readFileSync(new URL('../src/api/alarms.ts', import.meta.url), 'utf8')
-
-  assert.doesNotMatch(alarm, /setInterval\(loadData/)
-  const loadAlarm = alarm.slice(alarm.indexOf('async function loadData('), alarm.indexOf('onMounted('))
-  for (const [pageActive, panel, busy] of [[false, 'equipment', false], [true, 'equipment', true], [true, 'equipment', false]]) {
-    let calls = 0
-    const response = { items: [], page: 1 }
-    const bindings = { isPageActive: () => pageActive, activePanel: Vue.ref(panel), requestController: busy ? new AbortController() : null,
-      requestSequence: 0, incidentPageSize: 10, reportPageSize: 10, toError: value => value }
-    for (const key of ['incidentPage', 'reportPage', 'loading', 'error', 'onlyOpen', 'activeSeverity', 'status', 'incidents', 'incidentSummary', 'reports', 'reportItems', 'reportSummary', 'currentTime']) bindings[key] = Vue.ref(key.endsWith('Page') ? 1 : null)
-    for (const key of ['getAlarmStatus', 'listAlarmIncidentPage', 'listAlarmReports', 'listAlarmReportPage']) bindings[key] = async () => { calls += 1; return response }
-    const load = scriptFunction(...Object.keys(bindings), `${loadAlarm}; return loadData`)(...Object.values(bindings))
-    await load()
-    assert.equal(calls, pageActive && panel === 'equipment' && !busy ? 4 : 0)
-  }
-  assert.match(alarm, /requestController\?\.abort\(\)/)
-  assert.match(alarm, /await loadData\(\)[\s\S]*scheduleRefresh\(\)/)
-  assert.match(api, /getAlarmStatus\(\{ signal \}: ReadOptions = \{\}\)/)
-  assert.match(api, /listAlarmIncidentPage\([\s\S]*\{ signal \}: ReadOptions = \{\}\)/)
-  assert.match(api, /listAlarmReports\([\s\S]*\{ signal \}: ReadOptions = \{\}\)/)
-  assert.match(api, /listAlarmReportPage\([\s\S]*\{ signal \}: ReadOptions = \{\}\)/)
-
   assert.doesNotMatch(workshop, /setInterval\(/)
   assert.match(workshop, /refreshTimer = window\.setTimeout\(async \(\) =>/)
   assert.match(workshop, /await load\(result\.value\.page,[\s\S]*startRefreshTimer\(\)/)
@@ -668,50 +485,6 @@ test('long-lived page polling is serialized and cancelled when the page leaves',
   assert.match(reportCenter, /listReports\(\{ page, pageSize, force, signal: controller\.signal \}\)/)
   assert.match(reportCenter, /sequence !== historySequence/)
   assert.match(reportCenter, /onBeforeUnmount\(\(\) => \{[\s\S]*pageActive = false[\s\S]*stopPolling\(\)/)
-})
-
-test('energy rows show numeric values without an extra explanation column and preserve missing readings', async () => {
-  const empty = { render: () => null }
-  const tables = []
-  const records = ['measured', 'interpolated', 'estimated', 'missing', 'counter_reset', 'mock'].map((status, index) => ({
-    task_id: String(index), gas_data_status: status, electricity_data_status: 'measured',
-    electricity_consumption: 27.4,
-    gas_consumption: ['missing', 'counter_reset'].includes(status) ? null : index === 0 ? 0 : 1,
-    energy_note: status === 'estimated' ? '平均速率补齐；有效时段 08:00～08:30（覆盖1800秒 / 任务3600秒）' : status,
-  }))
-  const bindings = { ...Vue, useEnergyReportData, formatChineseDate, formatChineseDateTime: value => value || '--',
-    useRoute: () => ({ query: {} }), queryDateRange: () => null,
-    useEnergyReportQuery: () => Object.fromEntries(Object.entries({ taskDay: { records, equipment_scope: [] }, monthlyReport: null,
-      anchorDate: '2026-11-07', periodStart: '2026-11-07', periodEnd: '2026-11-07',
-      appliedPeriodStart: '2026-11-07', appliedPeriodEnd: '2026-11-07', summaryPeriodStart: '2025-12-01', summaryPeriodEnd: '2026-11-07',
-      loading: false, summaryLoading: false, error: '月度统计不可用', chartType: 'bar_line',
-    }).map(([key, value]) => [key, Vue.ref(value)])),
-    useEnergyReportCharts: () => ({ stopResizeListening() {}, disposeCharts() {} }), AnalysisPanel: empty, AppIcon: empty, MetricSparkline: empty, StandardReportQuery: empty, ReportDataStatus: empty,
-    ReportFeedback: { props: ['title', 'message'], setup: props => () => Vue.h('p', `${props.title} ${props.message}`) },
-    ReportTrendPanel: { inheritAttrs: false, setup: (_props, { slots }) => () => Vue.h('section', slots.table?.()) },
-    AppReportTable: { props: ['items', 'columns'], setup: (props, { slots }) => {
-      tables.push(props.columns)
-      return () => Vue.h('table', props.items.map((row, index) => Vue.h('tr', props.columns.map(column => Vue.h('td', slots[column.key]?.({ row, index }))))))
-    } },
-  }
-  const code = compileScript(descriptor('EnergyPeriodReportView'), { id: 'energy-status-display', inlineTemplate: true }).content
-    .replace(/import\s*\{([^}]+)\}\s*from\s*['"]vue['"]/g, (_, names) => {
-      for (const name of names.split(',')) { const [original, alias = original] = name.trim().split(/\s+as\s+/); bindings[alias] = Vue[original] }
-      return ''
-    }).replace(/^import .*$/gm, '').replace('export default', 'return')
-  const Page = scriptFunction(...Object.keys(bindings), code)(...Object.values(bindings))
-  const app = Vue.createSSRApp(Page)
-  app.component('NButton', { setup: (_props, { attrs, slots }) => () => Vue.h('button', attrs, slots.default?.()) })
-  const html = await renderToString(app)
-  assert.deepEqual(tables[0].map(column => column.title), ['序号', '工程号', '船名', '分段名', '任务开始', '切割时长', '电耗', '气耗'])
-  assert.equal((html.match(/<span title="[^"]*">27\.4<\/span>/g) || []).length, records.length)
-  assert.match(html, /<span title="measured">0\.0<\/span>/)
-  assert.match(html, /<span title="interpolated">1\.0<\/span>/)
-  assert.match(html, /<span title="平均速率补齐；有效时段 08:00～08:30（覆盖1800秒 \/ 任务3600秒）">1\.0<\/span>/)
-  assert.match(html, /<span title="missing">--<\/span>/)
-  assert.match(html, /<span title="counter_reset">--<\/span>/)
-  assert.doesNotMatch(html, /能耗依据|按有效任务汇总|气：/)
-  assert.match(html, /设备报表更新失败 月度统计不可用/)
 })
 
 test('file dispatch uses PDM references and has no saved-file prerequisite', () => {

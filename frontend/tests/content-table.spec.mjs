@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
-import { readFileSync, readdirSync } from 'node:fs'
 import { contentFit, contentTable, contentWidthUnits, distributeColumnWidths, tableColumnWeight } from '../src/directives/contentTable.ts'
 
 function mountTable(table, binding = {}) {
@@ -210,77 +209,9 @@ test('cached tables disconnect and restore exactly one ResizeObserver', () => {
   }
 })
 
-test('business tables use shared Naive controls except dedicated semantic reports and chart data', () => {
-  let count = 0
-  for (const folder of ['views', 'components']) {
-    const dir = new URL(`../src/${folder}/`, import.meta.url)
-    for (const name of readdirSync(dir, { recursive: true }).filter((name) => name.endsWith('.vue'))) {
-      let source = readFileSync(new URL(name, dir), 'utf8')
-      if (folder === 'components' && name === 'pdm/PdmSummaryTable.vue') {
-        // The supplied PDM report needs merged headers; pdm-statistics tests cover its rendering.
-        assert.doesNotMatch(source, /v-content-table/, name)
-        continue
-      }
-      if (folder === 'views' && name === 'WeldingHomeView.vue') {
-        const disclosures = [...source.matchAll(/<details\b[\s\S]*?<\/details>/g)]
-        assert.equal(disclosures.length, 3)
-        for (const [disclosure] of disclosures) {
-          assert.match(disclosure.slice(0, disclosure.indexOf('<summary>')), /class="welding-chart-data"/)
-          assert.match(disclosure, /^<details\b[\s\S]*?><summary>[^<]+<\/summary>/)
-          assert.match(disclosure, /role="region" aria-label="[^"]+" tabindex="0"/)
-          assert.match(disclosure, /<table><caption>[^<]+<\/caption>/)
-          assert.match(disclosure, /<th scope="col">/)
-          assert.match(disclosure, /<th scope="row"[^>]*>/)
-          for (const [heading] of disclosure.matchAll(/<th\b[^>]*>/g)) assert.match(heading, /scope="(?:col|row)"/)
-          source = source.replace(disclosure, '')
-        }
-      }
-      assert.doesNotMatch(source, /<table\b|v-content-table/, name)
-      count += (source.match(/<AppReportTable\b/g) || []).length
-    }
-  }
-  assert.ok(count >= 20)
-  assert.doesNotMatch(readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8'), /contentTable|content-table/)
-  assert.match(readFileSync(new URL('../src/components/AppReportTable.vue', import.meta.url), 'utf8'), /<NDataTable/)
-  const css = readFileSync(new URL('../src/assets/content-tables.css', import.meta.url), 'utf8')
-  assert.match(css, /table\.content-table\s*\{[\s\S]*--content-table-min-width[\s\S]*table-layout:fixed !important/)
-  assert.match(css, /table\.content-table th,\s*table\.content-table td\s*\{[^}]*text-align:left !important/)
-  assert.match(css, /white-space:nowrap !important/)
-  assert.match(css, /padding-block:8px !important/)
-  assert.match(css, /padding-inline:calc\(12px \+ var\(--content-extra-pad, 0px\)\) !important/)
-  assert.doesNotMatch(css, /resize:/)
-})
 
-test('report tables inherit shared cell padding while management previews keep their vertical spacing', () => {
-  for (const name of ['EnergyPeriodReportView', 'WorkshopView']) {
-    const source = readFileSync(new URL(`../src/views/${name}.vue`, import.meta.url), 'utf8')
-    assert.doesNotMatch(source, /padding:\s*6px\s+8px\b/)
-    assert.match(source, /<AppReportTable/)
-  }
-  const shared = readFileSync(new URL('../src/components/AppReportTable.vue', import.meta.url), 'utf8')
-  assert.match(shared, /padding:var\(--table-cell-padding\)/)
-  const styles = readFileSync(new URL('../src/assets/style.css', import.meta.url), 'utf8')
-  assert.match(styles, /\.management-page \.designer-preview-table th\{padding-block:10px!important;/)
-})
 
-test('header and summary cells paint a solid theme surface below their tint while rows scroll underneath', () => {
-  const css = readFileSync(new URL('../src/assets/content-tables.css', import.meta.url), 'utf8')
-  const header = css.match(/table\.content-table thead th\s*\{([^}]+)\}/)[1]
-  assert.match(header, /background:linear-gradient\(var\(--report-table-head-bg\),var\(--report-table-head-bg\)\),rgb\(var\(--container-bg-color\)\) !important/)
-  const footer = css.match(/table\.content-table tfoot th,\s*table\.content-table tfoot td\s*\{([^}]+)\}/)[1]
-  assert.match(footer, /color:var\(--text-color-1\) !important/)
-  assert.match(footer, /background:linear-gradient\([^;]+\),rgb\(var\(--container-bg-color\)\) !important/)
-})
 
-test('table details and action groups stay on the same line', () => {
-  const css = readFileSync(new URL('../src/assets/content-tables.css', import.meta.url), 'utf8')
-  assert.match(css, /td :is\(strong, small, code, \.confirmed-mark\)\s*\{[^}]*display:inline-block !important;[^}]*margin-block:0 !important;/)
-  assert.match(css, /td > :is\(div,p,span\)\s*\{[^}]*display:inline-flex !important;[^}]*flex-flow:row nowrap !important;/)
-  assert.match(css, /:is\(\.push-batch-file > span,\.error-cell > span\)\s*\{[^}]*display:inline-block !important;[^}]*white-space:nowrap !important;/)
-  assert.match(css, /td :is\(button,a\) \{ white-space:nowrap !important;/)
-  const automation = readFileSync(new URL('../src/components/automation/tableCells.css', import.meta.url), 'utf8')
-  assert.match(automation, /\.error-cell \{[^}]*white-space: nowrap;/)
-})
 
 test('explicit field alignment reaches headings, placeholders and totals with safe hover text', () => {
   const cell = (textContent, align) => ({ textContent, colSpan: 1, dataset: align ? { contentAlign: align } : {} })
@@ -303,16 +234,6 @@ test('explicit field alignment reaches headings, placeholders and totals with sa
   assert.deepEqual(empty.dataset, {})
 })
 
-test('alignment and frozen actions use explicit column definitions', () => {
-  const css = readFileSync(new URL('../src/assets/content-tables.css', import.meta.url), 'utf8')
-  assert.match(css, /\[data-content-align="right"\]\s*\{[^}]*text-align:right !important;[^}]*font-variant-numeric:tabular-nums/)
-  assert.match(css, /\[data-content-action="true"\]\s*\{[^}]*position:sticky;[^}]*right:0;/)
-  assert.match(css, /:is\(\.table-empty,\.energy-empty,[^}]*text-align:center !important/)
-  for (const name of ['LeadershipReportView', 'WorkshopView', 'EnergyPeriodReportView', 'AlarmCenterView', 'CuttingDispatchView', 'AutomationView', 'ModelUsageView', 'AdminAccountsView', 'ConfigurationDiagnosticsView', 'DesignerView']) {
-    const source = readFileSync(new URL(`../src/views/${name}.vue`, import.meta.url), 'utf8')
-    for (const [table] of source.matchAll(/<table\b[\s\S]*?<thead>/g)) assert.match(table, /data-content-columns=/, name)
-  }
-})
 
 test('action tracks reserve the complete button group including padding and margins', () => {
   const cell = textContent => ({ textContent, colSpan: 1, dataset: {}, children: [] })

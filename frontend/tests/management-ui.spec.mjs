@@ -800,8 +800,8 @@ for (const [reportType, period] of [['leadership', 'current_month'], ['leadershi
 }
 
 test('migrated settings tables render their fields and controls through Naive UI', async () => {
-  const [{ compile, parse: parseTemplate }, { renderToString }, { setup: setupCssr }, { SharedDataTable }, dateDisplay] = await Promise.all([
-    import('@vue/compiler-dom'), import('@vue/server-renderer'), import('@css-render/vue3-ssr'), import('./data-table-helpers.mjs'), import('../src/utils/dateDisplay.ts'),
+  const [{ compile, parse: parseTemplate }, { renderToString }, { setup: setupCssr }, { default: SharedDataTable }, dateDisplay] = await Promise.all([
+    import('@vue/compiler-dom'), import('@vue/server-renderer'), import('@css-render/vue3-ssr'), import('../src/components/AppReportTable.vue'), import('../src/utils/dateDisplay.ts'),
   ])
   const { NTag, NButton } = await import('naive-ui')
   const cases = [

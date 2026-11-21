@@ -1,21 +1,27 @@
-import { scriptFunction } from './typescript-helpers.mjs'
-import { setup as setupCssr } from '@css-render/vue3-ssr'
-import { SharedDataTable } from './data-table-helpers.mjs'
-import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
-import { test } from 'vitest'
-import * as Vue from 'vue'
-import { parse } from '@vue/compiler-sfc'
-import { compile } from '@vue/compiler-dom'
-import { renderToString } from '@vue/server-renderer'
-import { alarmConfidencePercent, latestModelAlarmReport } from '../src/utils/alarmAnalysis.ts'
-import { formatChineseDateTime } from '../src/utils/dateDisplay.ts'
-import { formatDeviceDisplay } from '../src/utils/deviceDisplay.ts'
+// @vitest-environment jsdom
 
-const source = readFileSync(new URL('../src/views/AlarmCenterView.vue', import.meta.url), 'utf8')
-const script = parse(source).descriptor.scriptSetup.content.replace(/^import .*$/gm, '')
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
+import { NButton, NRadioButton, NRadioGroup } from 'naive-ui'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import { getAlarmStatus, listAlarmIncidentPage, listAlarmReportPage, listAlarmReports } from '../src/api/alarms'
+import AlarmCenterView from '../src/views/AlarmCenterView.vue'
 
-test('alarm page preserves PDF links and shows a failed report without file actions', async () => {
+vi.mock('../src/api/alarms')
+
+enableAutoUnmount(afterEach)
+beforeEach(() => {
+  vi.mocked(getAlarmStatus).mockResolvedValue({ enabled: true, worker_running: true, machine_nos: ['Cutter01'] })
+  vi.mocked(listAlarmIncidentPage).mockResolvedValue({ items: [], page: 1, all_total: 0, severity_counts: {} })
+  vi.mocked(listAlarmReportPage).mockResolvedValue({ items: [], page: 1, total: 0, completed_count: 0, page_count: 1 })
+  vi.mocked(listAlarmReports).mockResolvedValue([])
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
+})
+
+function openAlarmCenter() {
+  return mount(AlarmCenterView, { global: { components: { NButton, NRadioButton, NRadioGroup } } })
+}
+
+test('completed alarms display their evidence and PDF actions while failed reports have no file link', async () => {
   const incident = { incident_id: 'incident', machine_no: 'Cutter01', severity: 'warning', status: 'open', alarm_desc: '水冷机报警', pdf_report_id: 'report', report_status: 'completed', report_view_url: '/api/reports/Cutter01/view' }
   const report = {
     report_id: 'report', machine_no: 'Cutter01', incident_ids: ['incident'], status: 'completed', model_status: 'model',
@@ -31,35 +37,28 @@ test('alarm page preserves PDF links and shows a failed report without file acti
   const originalReport = structuredClone(report)
   const failed = { report_id: 'failed', machine_no: 'Cutter01', incident_ids: ['incident'], status: 'failed',
     created_at: '2026-10-08T09:00:00+08:00', error_message: '模型接口限流' }
-  const bindings = { ...Vue, heroImage: '', AppIcon: { render: () => null }, alarmConfidencePercent, latestModelAlarmReport, formatChineseDateTime, formatDeviceDisplay, incident, report, failed }
-  const names = [...script.matchAll(/^(?:const|let|(?:async )?function) (\w+)/gm)].map((match) => match[1])
-  const setup = scriptFunction(...Object.keys(bindings), `${script}\nstatus.value = { machine_nos: ['Cutter01'] }; incidents.value = [incident]; reports.value = [report]; reportItems.value = [report, failed]; return { ${names.join(',')}, heroImage, AppIcon, alarmConfidencePercent, formatChineseDateTime, formatDeviceDisplay };`)
-  const render = scriptFunction('Vue', compile(parse(source).descriptor.template.content, { prefixIdentifiers: true }).code)(Vue)
-  const app = Vue.createSSRApp({ setup: () => setup(...Object.values(bindings)), render })
-  app.component('AppIcon', bindings.AppIcon)
-  app.component('AppReportTable', SharedDataTable)
-  app.directive('content-table', {})
-  setupCssr(app)
-  const html = await renderToString(app)
-  const text = html.replace(/<[^>]*>/g, '')
-  assert.doesNotMatch(text, /Cutter01/, 'monitor, table, report names and model evidence must all use the same readable name')
-  assert.match(text, /20KW切割机_智能告警报告_20261007.pdf/)
-  assert.match(text, /检查20KW切割机冷却系统/)
-  assert.match(text, /\[E001\]/)
-  assert.match(text, /置信度 60%/)
-  assert.match(html, /href="\/api\/reports\/Cutter01\/download"/)
-  assert.match(html, /href="\/api\/reports\/Cutter01\/view"/)
-  const failedRow = [...html.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/g)].find(([, row]) => row.includes('模型接口限流'))?.[1]
-  assert.ok(failedRow)
-  const cells = [...failedRow.matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/g)].map(([, cell]) => cell)
-  assert.match(cells[0], /20KW切割机_告警报告_20261008(?!\.pdf)/)
-  assert.match(cells[4], /生成失败/)
-  assert.match(cells[4], /模型接口限流/)
-  assert.doesNotMatch(cells[5], /href=|模型接口限流|下载|预览/)
-  assert.deepEqual(report, originalReport)
+  vi.mocked(listAlarmIncidentPage).mockResolvedValue({ items: [incident], page: 1, severity_counts: {} })
+  vi.mocked(listAlarmReports).mockResolvedValue([report])
+  vi.mocked(listAlarmReportPage).mockResolvedValue({ items: [report, failed], page: 1, total: 2, page_count: 1 })
+  const wrapper = openAlarmCenter()
+  await flushPromises()
+  const text = wrapper.text()
+  expect(text).not.toContain('Cutter01')
+  expect(text).toContain('20KW切割机_智能告警报告_20261007.pdf')
+  expect(text).toContain('检查20KW切割机冷却系统')
+  expect(text).toContain('[E001]')
+  expect(text).toContain('置信度 60%')
+  const table = wrapper.get('[aria-label="实体告警报告"]')
+  expect(table.get('a[href="/api/reports/Cutter01/download"]').exists()).toBe(true)
+  expect(table.get('a[href="/api/reports/Cutter01/view"]').exists()).toBe(true)
+  const failedRow = table.findAll('tbody tr').find(row => row.text().includes('模型接口限流'))
+  expect(failedRow.text()).toContain('20KW切割机_告警报告_20261008')
+  expect(failedRow.text()).toContain('生成失败')
+  expect(failedRow.find('a').exists()).toBe(false)
+  expect(report).toEqual(originalReport)
 })
 
-test('incident report status is independent of alarm resolution and the recent report list', async () => {
+test('incident links follow independent report status even for an older report outside the recent list', async () => {
   const cases = [
     { incident_id: 'old-completed', pdf_report_id: 'old-report', report_status: 'completed', report_view_url: '/api/v1/alarms/reports/old-report/view', label: '查看' },
     { incident_id: 'generating', pdf_report_id: 'generating-report', report_status: 'generating', report_view_url: '/not-ready', label: '生成中' },
@@ -69,74 +68,38 @@ test('incident report status is independent of alarm resolution and the recent r
     { incident_id: 'no-file', pdf_report_id: 'no-file-report', report_status: 'completed', report_view_url: null, label: '报告不可用' },
   ]
   const items = cases.map((item) => ({ ...item, machine_no: 'Cutter01', severity: 'warning', status: 'open' }))
-  const bindings = { ...Vue, heroImage: '', AppIcon: { render: () => null }, alarmConfidencePercent, latestModelAlarmReport, formatChineseDateTime, formatDeviceDisplay, items }
-  const names = [...script.matchAll(/^(?:const|let|(?:async )?function) (\w+)/gm)].map((match) => match[1])
-  const setup = scriptFunction(...Object.keys(bindings), `${script}; incidents.value = items; return { ${names.join(',')}, heroImage, alarmConfidencePercent, formatChineseDateTime, formatDeviceDisplay };`)
-  const render = scriptFunction('Vue', compile(parse(source).descriptor.template.content, { prefixIdentifiers: true }).code)(Vue)
-  const app = Vue.createSSRApp({ setup: () => setup(...Object.values(bindings)), render })
-  app.component('AppIcon', bindings.AppIcon)
-  app.component('AppReportTable', SharedDataTable)
-  app.directive('content-table', {})
-  setupCssr(app)
-  const html = await renderToString(app)
-  const rows = [...html.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/g)].map((match) => match[1]).filter((row) => row.includes('<td'))
-  assert.equal(rows.length, cases.length)
+  vi.mocked(listAlarmIncidentPage).mockResolvedValue({ items, page: 1, severity_counts: {} })
+  const wrapper = openAlarmCenter()
+  await flushPromises()
+  const rows = wrapper.get('[aria-label="切割机告警事件"]').findAll('tbody tr')
+  expect(rows).toHaveLength(cases.length)
   for (const [index, item] of cases.entries()) {
-    assert.match(rows[index], new RegExp(item.label))
-    assert.match(rows[index], /异常/)
-    assert.match(rows[index], /待处理/, 'a generated report must never imply the alarm has been handled')
-    if (item.incident_id !== 'old-completed') assert.doesNotMatch(rows[index], /href=/, 'only completed reports with a view file are actionable')
+    expect(rows[index].text()).toContain(item.label)
+    expect(rows[index].text()).toContain('异常')
+    expect(rows[index].text()).toContain('待处理')
+    expect(rows[index].find('a').exists()).toBe(item.incident_id === 'old-completed')
   }
-  assert.match(rows[0], /href="\/api\/v1\/alarms\/reports\/old-report\/view"/, 'an older completed report remains viewable without loading it into the newest 50 reports')
-  assert.match(rows[2], /title="模型服务不可用"/)
-  assert.doesNotMatch(html, /已归档/)
+  expect(rows[0].get('a').attributes('href')).toBe('/api/v1/alarms/reports/old-report/view')
+  expect(rows[2].get('[title="模型服务不可用"]').text()).toContain('生成失败')
+  expect(wrapper.text()).not.toContain('已归档')
 })
 
-test('unmounting during alarm initialization aborts the request and cannot recreate timers', async () => {
-  let resolveStatus
-  let signal
-  const pending = new Promise((resolve) => { resolveStatus = resolve })
-  const timers = new Map()
-  let nextId = 0
-  const originalWindow = globalThis.window
-  globalThis.window = {
-    setTimeout: (callback) => { timers.set(++nextId, callback); return nextId },
-    setInterval: (callback) => { timers.set(++nextId, callback); return nextId },
-    clearTimeout: (id) => timers.delete(id),
-    clearInterval: (id) => timers.delete(id),
-  }
-  const bindings = {
-    ...Vue,
-    getAlarmStatus: ({ signal: value }) => { signal = value; return pending },
-    listAlarmIncidentPage: async () => ({ items: [], page: 1, all_total: 0 }),
-    listAlarmReportPage: async () => ({ items: [], page: 1, total: 0, completed_count: 0, page_count: 1 }),
-    listAlarmReports: async () => [],
-    heroImage: '', AppIcon: {}, alarmConfidencePercent, latestModelAlarmReport, formatChineseDateTime, formatDeviceDisplay,
-  }
-  // Execute the actual SFC setup using Vue's renderer. Only API and asset
-  // imports are supplied by the test; lifecycle and reactivity are real Vue.
-  const setup = scriptFunction(...Object.keys(bindings), script)
-  const renderer = Vue.createRenderer({
-    createComment: () => ({}), createText: () => ({}), createElement: () => ({}),
-    insert: () => {}, remove: () => {}, setText: () => {}, setElementText: () => {},
-    parentNode: () => null, nextSibling: () => null, patchProp: () => {},
-  })
-  const app = renderer.createApp({
-    setup: () => setup(...Object.values(bindings)),
-    render: () => null,
-  })
+test('leaving during initialization aborts the request and installs no later timers', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
   try {
-    app.mount({})
-    assert.ok(signal)
-    app.unmount()
-    assert.equal(signal.aborted, true)
-    resolveStatus({ enabled: true })
-    // Allow Promise.all, loadData and the asynchronous mounted callback to finish.
-    for (let index = 0; index < 5; index++) await Promise.resolve()
-    await Vue.nextTick()
-    assert.equal(timers.size, 0, 'a detached alarm page must not retain any refresh or clock timer')
+    let finish, signal
+    vi.mocked(getAlarmStatus).mockImplementation(({ signal: current }) => {
+      signal = current
+      return new Promise(resolve => { finish = resolve })
+    })
+    const wrapper = openAlarmCenter()
+    expect(wrapper.text()).toContain('正在读取')
+    wrapper.unmount()
+    expect(signal.aborted).toBe(true)
+    finish({ enabled: true })
+    await flushPromises()
+    expect(vi.getTimerCount()).toBe(0)
   } finally {
-    resolveStatus({})
-    globalThis.window = originalWindow
+    vi.useRealTimers()
   }
 })

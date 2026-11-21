@@ -215,3 +215,63 @@ test('report query changes preserve scroll and reuse the tab, then closing it re
     Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView')
   }
 })
+
+test('route guards use registered line identifiers and still enforce the user role', async () => {
+  const controls = mountSelection()
+  await router.push('/admin/welding/reports/daily')
+  expect(router.currentRoute.value.name).toBe('cutting-home')
+  expect(getDeviceId()).toBe('cut-a')
+  await controls.switchDevice('weld-a')
+  expect(router.currentRoute.value.name).toBe('welding-home')
+  expect(getDeviceId()).toBe('weld-a')
+  await router.push('/admin/welding/analysis?start=2026-09-01&end=2026-09-02')
+  expect(router.currentRoute.value.name).toBe('welding-daily')
+  expect(router.currentRoute.value.query).toMatchObject({ start: '2026-09-01', end: '2026-09-02' })
+  await router.push('/admin/cutting/home')
+  expect(router.currentRoute.value.name).toBe('welding-home')
+  await controls.switchDevice('cut-b')
+  expect(router.currentRoute.value.name).toBe('cutting-home')
+  expect(getDeviceId()).toBe('cut-b')
+  session.user = { user_id: 'worker', username: 'worker', display_name: '工人', role: 'worker', active: true }
+  await router.push('/admin/welding/reports/daily')
+  expect(router.currentRoute.value.path).toBe('/worker/tasks')
+  expect(getDeviceId()).toBe('cut-b')
+})
+
+test('a pending device navigation keeps its filters and cannot be overlapped or applied after failure', async () => {
+  const controls = mountSelection()
+  await router.push('/admin/reports/workshop?project=P1')
+  const removeQuery = registerDeviceSwitchQuery('workshop-report', () => ({ start_date: '2026-10-12' }))
+  let resolveGuard: ((allowed: boolean) => void) | undefined
+  const removeGuard = router.beforeEach(() => new Promise(resolve => { resolveGuard = resolve }))
+  try {
+    await controls.switchDevice('cut-a')
+    expect(resolveGuard).toBeUndefined()
+    const pending = controls.switchDevice('cut-b')
+    await flushPromises()
+    await controls.switchDevice('cut-b')
+    expect(controls.switching.value).toBe(true)
+    expect(getDeviceId()).toBe('cut-a')
+    if (!resolveGuard) throw new Error('Switch did not start navigation')
+    resolveGuard(true)
+    await pending
+    expect(getDeviceId()).toBe('cut-b')
+    expect(controls.switching.value).toBe(false)
+    expect(router.currentRoute.value.query).toMatchObject({ project: 'P1', start_date: '2026-10-12' })
+  } finally {
+    removeGuard()
+    removeQuery()
+  }
+
+  const stopErrors = router.onError(() => {})
+  const removeFailingGuard = router.beforeEach(() => { throw new Error('导航失败') })
+  try {
+    await expect(controls.switchDevice('weld-a')).rejects.toThrow('导航失败')
+    expect(getDeviceId()).toBe('cut-b')
+    expect(controls.switching.value).toBe(false)
+    expect(router.currentRoute.value.name).toBe('workshop-report')
+  } finally {
+    removeFailingGuard()
+    stopErrors()
+  }
+})

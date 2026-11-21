@@ -1,7 +1,4 @@
 import { renderComponent } from './vue-component-helpers.mjs'
-import { setup as setupCssr } from '@css-render/vue3-ssr'
-import { renderToString } from '@vue/server-renderer'
-import { SharedDataTable, createSharedDataTable } from './data-table-helpers.mjs'
 import { scriptFunction } from './typescript-helpers.mjs'
 import { afterEach, beforeEach, test, vi } from 'vitest'
 import assert from 'node:assert/strict'
@@ -9,12 +6,12 @@ import { readFileSync } from 'node:fs'
 import { computed, h, reactive, ref } from 'vue'
 import * as Vue from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
-import { createMemoryHistory, createRouter, isNavigationFailure, NavigationFailureType, RouterView, useRoute, useRouter } from 'vue-router'
-import { parse, compileScript, compileTemplate } from '@vue/compiler-sfc'
+import { createMemoryHistory, createRouter, RouterView, useRoute, useRouter } from 'vue-router'
+import { parse, compileScript } from '@vue/compiler-sfc'
 import { lineHome, productionGroups, selectedLineType } from '../src/utils/productionLines.ts'
-import { adminMenus, navigationSection } from '../src/router/menus.ts'
+import { adminMenus } from '../src/router/menus.ts'
 import { analyzeWelding, getLatestWeldingAnalysis, downloadWelding, getWeldingPart, getWeldingReport, weldingQuery } from '../src/api/welding.ts'
-import { weldingColumns, weldingVisibleColumns, weldingColumnLayout, weldingDisplay, weldingKpis, weldingTitles } from '../src/utils/weldingReport.ts'
+import { weldingColumns, weldingColumnLayout, weldingDisplay, weldingKpis, weldingTitles } from '../src/utils/weldingReport.ts'
 import { weldingRoutes } from '../src/router/weldingRoutes.ts'
 import { setDeviceCatalog, selectDevice } from '../src/api/deviceContext.ts'
 import { reportCache } from '../src/api/reportCache.ts'
@@ -63,32 +60,6 @@ test('device types contain independent welding lines without adding a third navi
   assert.equal(selectedLineType(items, 'Cutter01'), 'cutting')
 })
 
-test('cross-line switching enters the correct home and restores selection if navigation is cancelled', async () => {
-  const script = source('composables/useDeviceSelection.ts').replace(/^import .*$/gm, '').replace('export function', 'function')
-  const selection = { id: 'Cutter01', items: [{ id: 'Cutter01', type: 'cutting' }, { id: 'Cutter02', type: 'cutting' }, { id: 'welding', type: 'welding' }, { id: 'other-welding', type: 'welding' }] }
-  const destinations = []
-  let cancel = false
-  const router = { replace: async to => { destinations.push(to); return cancel ? { type: 4 } : undefined } }
-  const bindings = { lineHome, selectedLineType, navigationSection, isNavigationFailure, NavigationFailureType, ref, onMounted() {}, useRoute: () => ({ name: 'admin-home', path: '/admin/cutting/home', query: {} }), useRouter: () => router,
-    allowDeviceSwitch: async () => true, deviceSwitchQuery: () => null, changeDevice: id => { selection.id = id }, deviceSelection: selection, loadDevices() {} }
-  const app = scriptFunction(...Object.keys(bindings), `${script}; return useDeviceSelection();`)(...Object.values(bindings))
-  await app.switchDevice('welding')
-  assert.equal(selection.id, 'welding')
-  assert.equal(destinations.at(-1), '/admin/welding/home')
-  await app.switchDevice('Cutter02')
-  assert.equal(selection.id, 'Cutter02')
-  assert.equal(destinations.at(-1), '/admin/cutting/home')
-  await app.switchDevice('other-welding')
-  assert.equal(selection.id, 'other-welding')
-  assert.equal(destinations.at(-1), '/admin/welding/home')
-  await app.switchDevice('welding')
-  assert.equal(selection.id, 'welding')
-  await app.switchDevice('Cutter02')
-  cancel = true
-  await app.switchDevice('other-welding')
-  assert.equal(selection.id, 'Cutter02')
-  assert.equal(app.switching.value, false)
-})
 
 test('business menus isolate cutting capabilities and flatten the welding layout', () => {
   const routes = [{ path: 'alarms', name: 'alarms', meta: { line: 'cutting', title: '告警' } }, weldingRoutes,
@@ -864,16 +835,6 @@ test('a disabled welding line remains navigable without querying an unconfigured
   assert.match(source('views/WeldingReportView.vue'), /焊接数据库尚未启用[\s\S]*action-label="配置数据库"/)
 })
 
-test('welding and navigation templates compile', () => {
-  for (const path of ['views/WeldingHomeView.vue', 'views/WeldingReportView.vue', 'components/WeldingChart.vue', 'components/WeldingKpiCards.vue', 'components/WeldingRecord.vue', 'components/WeldingCharts.vue', 'components/ReportAnalysis.vue', 'components/AppReportTable.vue', 'components/WeldingTable.vue', 'components/DeviceSwitcher.vue', 'views/DatabaseView.vue', 'layouts/modules/ThemeTabs.vue', 'layouts/AdminLayout.vue', 'layouts/modules/global-menu/modules/vertical-mix-menu.vue']) {
-    const { descriptor, errors } = parse(source(path))
-    assert.deepEqual(errors, [])
-    assert.doesNotThrow(() => compileScript(descriptor, { id: path }), path)
-    const result = compileTemplate({ source: descriptor.template.content, filename: path, id: path, compilerOptions: { bindingMetadata: {} } })
-    assert.deepEqual(result.errors, [], path)
-  }
-
-})
 
 test('identical in-flight filters reuse the query and a later explicit refresh still runs', async () => {
   const pending = []
@@ -912,35 +873,6 @@ test('initial watcher and repeated submit share one active request; pagination s
   assert.equal(app.activeQuery.value.page, 2)
 })
 
-test('welding table keys and detail events respect aggregate, job, part and seam shapes', () => {
-  const script = parse(source('components/WeldingTable.vue')).descriptor.scriptSetup.content.replace(/^import .*$/gm, '')
-  for (const [kind, row, key] of [
-    ['daily', { production_date: '2026-10-01' }, '2026-10-01'],
-    ['equipment', { device_no: 0, robot_no: null }, '0:null'],
-    ['jobs', { id: 1, serial_number: null, weld_type_label: '平焊' }, 1],
-    ['parts', { id: 2, project_no: null }, 2],
-    ['seams', { id: 3, robot_no: null }, 3],
-  ]) {
-    const events = []
-    const bindings = { ...Vue, onMounted() {}, onUpdated() {}, onBeforeUnmount() {}, onActivated() {}, onDeactivated() {}, computed, h, NButton: 'button', weldingColumns, weldingVisibleColumns, weldingColumnLayout, weldingDisplay,
-      defineSlots: () => ({}), defineProps: () => ({ kind }), defineEmits: () => (...args) => events.push(args) }
-    const table = scriptFunction(...Object.keys(bindings), `${script}; return { columns, rowKey };`)(...Object.values(bindings))
-    assert.equal(table.rowKey(row), key)
-    for (const column of table.columns.value) {
-      assert.equal(column.titleAlign, column.align || 'left')
-      if (/length|hours|count|output|speed|duration|seconds|consumption|rate/.test(column.key)) assert.equal(column.align, 'right')
-      if (['state_label', 'weld_type_label', 'actions'].includes(column.key)) assert.equal(column.align, 'center')
-      if (['robot_no', 'welding_seam_no', 'serial_number', 'id'].includes(column.key)) assert.equal(column.align, 'left')
-    }
-    const action = table.columns.value.find(column => column.key === 'actions')
-    if (kind === 'jobs' || kind === 'parts') {
-      action.render(row).props.onClick()
-      assert.deepEqual(events, [['detail', row]])
-      assert.equal(action.render({ production_date: '2026-10-01' }), null)
-    } else assert.equal(action, undefined)
-  }
-})
-
 test('unsubmitted filters and pagination cannot send a request without a valid period', () => {
   let calls = 0
   const app = view(async () => { calls += 1 })
@@ -963,29 +895,6 @@ test('unsubmitted filters and pagination cannot send a request without a valid p
   assert.equal(app.actionError.value, '')
 })
 
-test('router resolves registered line types without requiring a fixed welding ID', async () => {
-  const sourceCode = source('router/index.ts')
-  const guard = sourceCode.slice(sourceCode.indexOf('router.beforeEach('), sourceCode.indexOf('\nrouter.afterEach('))
-  const selection = { id: 'Cutter01', items: [{ id: 'Cutter01', type: 'cutting' }, { id: 'weld-2', type: 'welding' }] }
-  let beforeEach
-  const bindings = { logoutRequested: false, router: { beforeEach: fn => { beforeEach = fn } }, loadSession: async () => {},
-    session: { user: { role: 'admin' } }, roleHome: () => '/worker/tasks', loadDevices: async () => {},
-    deviceSelection: selection, changeDevice: id => { selection.id = id }, selectedLineType, lineHome }
-  scriptFunction(...Object.keys(bindings), guard)(...Object.values(bindings))
-  const route = line => ({ meta: {}, matched: [{ meta: { role: 'admin' } }, { meta: { line } }] })
-  assert.equal(await beforeEach(route('welding')), '/admin/cutting/home')
-  assert.equal(selection.id, 'Cutter01')
-  selection.id = 'weld-2'
-  assert.equal(await beforeEach(route('welding')), true)
-  assert.equal(selection.id, 'weld-2')
-  assert.equal(await beforeEach(route('coating')), '/admin/welding/home')
-  assert.equal(selection.id, 'weld-2')
-  assert.equal(await beforeEach(route('cutting')), '/admin/welding/home')
-  assert.equal(selection.id, 'weld-2')
-  bindings.session.user.role = 'worker'
-  assert.equal(await beforeEach(route('welding')), '/worker/tasks')
-  assert.equal(selection.id, 'weld-2')
-})
 
 test('new line types keep registered labels and destinations', () => {
   const items = [{ id: 'paint-1', type: 'coating', type_name: '涂装', name: '涂装一线', home_path: '/admin/coating/home' }]
@@ -1186,51 +1095,7 @@ test('explicit refresh requests fresh statistics while initial reads and paginat
 })
 
 
-test('shared cutting table renders escaped cells, header controls, summary and empty state', async () => {
-  const props = { columns: [{ key: 'c0', title: '任务', width: 160, align: 'left' }, { key: 'c1', title: '长度', width: 120, align: 'right' }],
-    items: [{ id: 'task-1', program: '<script>bad</script>', length: 12 }], rowKey: row => row.id, paginate: false, summary: true }
-  const slots = { 'header-c0': () => h('input', { type: 'checkbox', 'aria-label': '选择当前页' }),
-    c0: ({ row }) => row.program, c1: ({ row }) => String(row.length),
-    'summary-c0': () => '汇总', 'summary-c1': () => '12', empty: () => '当前无任务' }
-  const render = async items => {
-    const app = Vue.createSSRApp({ render: () => h(SharedDataTable, { ...props, items }, slots) })
-    setupCssr(app)
-    return renderToString(app)
-  }
-  const html = await render(props.items)
-  assert.match(html, /n-data-table/)
-  assert.equal((html.match(/<th\b[^>]*text-align:\s*left/g) || []).length, 1)
-  assert.equal((html.match(/<th\b[^>]*text-align:\s*right/g) || []).length, 1)
-  assert.match(html, /n-data-table-td--right-align/)
-  assert.match(parse(source('components/AppReportTable.vue')).descriptor.styles[0].content, /\.app-report-table\{width:100%;min-width:0\}/)
-  assert.match(html, /aria-label="选择当前页"/)
-  assert.match(html, /&lt;script&gt;bad&lt;\/script&gt;/)
-  assert.match(html, /汇总/)
-  assert.doesNotMatch(html, /<script>bad/)
-  assert.match(await render([]), /当前无任务/)
-})
 
-test('shared pagination defaults to ten rows, forwards page changes and respects loading', async () => {
-  const Pagination = Vue.defineComponent({
-    props: ['page', 'pageSize', 'itemCount', 'disabled', 'showSizePicker'], emits: ['update:page'],
-    setup(props, { emit }) {
-      assert.equal(props.pageSize, 10)
-      assert.ok(!props.showSizePicker)
-      if (!props.disabled) emit('update:page', props.page + 1)
-      return () => null
-    },
-  })
-  const Table = createSharedDataTable({ NPagination: Pagination })
-  for (const loading of [false, true]) {
-    const events = []
-    const app = Vue.createSSRApp({ render: () => h(Table, { columns: [{ key: 'c0', title: '任务', width: 160 }],
-      items: [], rowKey: row => row.id, total: 100, page: 2, loading,
-      onPage: value => events.push(value) }) })
-    setupCssr(app)
-    await renderToString(app)
-    assert.deepEqual(events, loading ? [] : [3])
-  }
-})
 
 test('welding measurements keep fixed decimals while counts and identifiers retain their meaning', () => {
   for (const key of ['weld_length_m', 'working_hours', 'weld_speed', 'arc_rate', 'duration_seconds', 'wire_consumption']) {
@@ -1241,126 +1106,13 @@ test('welding measurements keep fixed decimals while counts and identifiers reta
   assert.equal(weldingDisplay(1240, 'robot_no'), '1240')
   assert.equal(weldingDisplay('0012', 'welding_seam_no'), '0012')
   assert.equal(weldingDisplay(null, 'arc_rate'), '待核实')
-  const styles = parse(source('components/AppReportTable.vue')).descriptor.styles[0].content
-  assert.match(styles, /n-data-table-td\)\{[^}]*font-variant-numeric:tabular-nums;[^}]*vertical-align:middle/)
 })
 
 
 
 
-test('shared report table preserves declared Naive widths across short, long and empty page data', async () => {
-  const snapshots = []
-  const DataTable = Vue.defineComponent({ props: ['columns', 'data', 'scrollX', 'tableLayout', 'rowKey'],
-    setup(props) { snapshots.push({ columns: props.columns, scrollX: props.scrollX, layout: props.tableLayout }); return () => null } })
-  const Table = createSharedDataTable({ NDataTable: DataTable })
-  const columns = [
-    { key: 'c0', title: '姓名', width: 96, align: 'left' },
-    { key: 'c1', title: '文件名', minWidth: 220, align: 'left' },
-    { key: 'c2', title: '状态', width: 104, align: 'center' },
-  ]
-  for (const items of [[], [{ id: 1, name: '张三', file: 'a.nc' }], [{ id: 2, name: '姓名'.repeat(100), file: 'file'.repeat(100) }]]) {
-    const app = Vue.createSSRApp({ render: () => h(Table, { columns, items, rowKey: row => row.id, paginate: false, autoFit: false }) })
-    await renderToString(app)
-  }
-  for (const snapshot of snapshots) {
-    assert.equal(snapshot.layout, 'fixed')
-    assert.equal(snapshot.scrollX, 420)
-    assert.deepEqual(snapshot.columns.map(column => [column.width, column.minWidth]), [[96, undefined], [undefined, 220], [104, undefined]])
-    assert.ok(snapshot.columns.every(column => column.titleAlign === column.align && column.ellipsis.tooltip))
-  }
-  assert.equal(snapshots.length, 3)
-})
 
-test('shared table exposes native resize and full-text tooltips while keeping action columns intact', async () => {
-  let received
-  let actions = 0
-  const DataTable = Vue.defineComponent({ props: ['columns'], setup(props) { received = props.columns; return () => null } })
-  const Table = createSharedDataTable({ NDataTable: DataTable })
-  const filename = 'CMYZ0204-H804C-11 804C数控切割指令完整文件名.gen'
-  const columns = [
-    { key: 'c0', title: '文件名', width: 220 },
-    { key: 'c1', title: '操作', width: 148, ellipsis: false },
-    { key: 'c2', title: '固定说明', width: 160, resizable: false },
-  ]
-  const slots = {
-    c0: () => h('strong', filename),
-    c1: () => h('button', { onClick: () => actions++ }, '设置并派发'),
-  }
-  await renderToString(Vue.createSSRApp({ render: () => h(Table, { columns, items: [], rowKey: row => row.id, paginate: false }, slots) }))
-  assert.equal(received[0].resizable, true)
-  assert.ok(received[0].ellipsis.tooltip)
-  assert.equal(received[1].resizable, true)
-  assert.equal(received[1].ellipsis, false)
-  assert.equal(received[2].resizable, false)
-  const text = await renderToString(Vue.createSSRApp({ render: () => received[0].render({ id: 1 }, 0) }))
-  assert.ok(text.includes(filename), 'the complete filename must reach the native tooltip')
-  const action = received[1].render({ id: 1 }, 0)
-  action.children[0].props.onClick()
-  assert.equal(actions, 1)
-  assert.equal(columns[0].resizable, undefined, 'caller definitions stay unchanged')
-})
 
-test('shared tables cap errors, preserve controls and dragged widths, and fill the container', async () => {
-  let received, observer, contents, disconnected = false
-  let availableWidth = 0
-  let measurements = [['c0', 900], ['c1', 320], ['c2', 520, true], ['c2', 2000, false]]
-  const DataTable = Vue.defineComponent({
-    props: ['columns', 'data', 'scrollX', 'onUnstableColumnResize'],
-    setup(props) { received = props; return () => h('div', props.columns.map(column => String(column.width))) },
-  })
-  const Table = createSharedDataTable({ NDataTable: DataTable,
-    getComputedStyle: () => ({ paddingLeft: '14px', paddingRight: '14px' }),
-    ResizeObserver: class { constructor(callback) { observer = callback } observe() {} disconnect() { disconnected = true } },
-  })
-  const renderer = Vue.createRenderer({
-    createElement: () => ({ get clientWidth() { return availableWidth }, querySelectorAll: () => contents = measurements.map(([key, width, controls]) => ({
-      dataset: { fitColumn: key }, textContent: '模型接口错误 '.repeat(100),
-      querySelector: () => controls ? {} : null,
-      classList: { contains: () => key === 'c2', toggle() {} },
-      closest: () => ({}), getBoundingClientRect: () => ({ width }),
-    })) }),
-    createComment: () => ({}), createText: () => ({}), insert() {}, remove() {}, setText() {}, setElementText() {},
-    parentNode: () => null, nextSibling: () => null, patchProp() {},
-  })
-  const rows = ref([{ id: 1 }]), loading = ref(false)
-  const app = renderer.createApp({ render: () => h(Table, {
-    columns: [{ key: 'c0', title: '文件名', width: 1000 }, { key: 'c1', title: '汇总', width: 600 }, { key: 'c2', title: '操作', ellipsis: false }],
-    items: rows.value, rowKey: row => row.id, paginate: false, summary: true, loading: loading.value,
-  }, { c0: () => '完整文件名', c2: () => h('button', '操作'), 'summary-c1': () => '完整汇总内容' }) })
-  app.mount({})
-  try {
-    await Vue.nextTick()
-    assert.deepEqual(received.columns.map(column => column.width), [360, 350, 550])
-    assert.equal(received.columns[2].minWidth, 550, 'wide controls remain fully usable')
-    const error = contents.find(content => content.dataset.fitColumn === 'c2' && !content.querySelector())
-    assert.equal(error.title, error.textContent.trim())
-    assert.equal(received.scrollX, 1260)
-    assert.ok(received.columns[0].ellipsis.tooltip)
-    received.onUnstableColumnResize(630, 630, received.columns[0])
-    measurements = [['c0', 20], ['c1', 40], ['c2', 30, true]]
-    rows.value = [{ id: 2 }]
-    await Vue.nextTick(); await Vue.nextTick()
-    assert.deepEqual(received.columns.map(column => column.width), [630, 70, 60])
-    loading.value = true
-    await Vue.nextTick()
-    measurements = [['c0', 0], ['c1', 0], ['c2', 0, true]]
-    observer()
-    assert.equal(received.columns[1].width, 70, 'loading does not shrink the visible data')
-    loading.value = false
-    rows.value = []
-    measurements = [['c0', 32], ['c1', 24], ['c2', 24]]
-    await Vue.nextTick(); await Vue.nextTick()
-    assert.deepEqual(received.columns.map(column => column.width), [630, 54, 54])
-    received.onUnstableColumnResize(180, 180, received.columns[2])
-    availableWidth = 1202
-    observer()
-    await Vue.nextTick(); await Vue.nextTick()
-    assert.equal(received.columns[0].width, 630)
-    assert.equal(received.columns[2].width, 180, 'an operation column can be resized')
-    assert.equal(received.columns.reduce((sum, column) => sum + column.width, 0), 1200)
-  } finally { app.unmount() }
-  assert.equal(disconnected, true)
-})
 
 test('welding column definitions provide bounded widths for every field', () => {
   for (const [kind, fields] of Object.entries(weldingColumns)) {
@@ -1386,76 +1138,12 @@ test('workshop columns keep short names and program codes bounded and reserve co
   assert.equal(table.taskTableColumns.value.find(column => column.key === 'c10').width, 400)
 })
 
-test('independent welding home waits for its catalog, keeps successful data on failure and ignores late disabled-source results', async () => {
-  const selection = reactive({ id: 'welding', items: [] })
-  const route = reactive({ query: {} })
-  const calls = [], cleanup = [], scope = Vue.effectScope()
-  const bindings = { ...Vue, REPORT_POLL_INTERVAL, REPORT_POLL_LIMIT, deviceSelection: selection, selectedLineType, parseWeldingRouteQuery,
-    useRoute: () => route, useRouter: () => ({ push() {} }), reportToday: () => '2026-09-06', formatChineseDate,
-    useReportChartTheme: () => ({ colors: ref({}), vars: ref({}) }), onBeforeUnmount: fn => cleanup.push(fn),
-    getLatestWeldingAnalysis: async () => null,
-    getWeldingReport: (kind, query, signal, force, options) => new Promise((resolve, reject) => calls.push({ kind, query, signal, options, resolve, reject })),
-  }
-  const script = parse(source('views/WeldingHomeView.vue')).descriptor.scriptSetup.content.replace(/^import .*$/gm, '')
-  const setup = scriptFunction(...Object.keys(bindings), `${script}; return { load, report, error, displayDate, preparing, reportQuery, trendTitle };`)
-  const home = scope.run(() => setup(...Object.values(bindings)))
-  assert.equal(home.displayDate.value, '2026年09月06日')
-  assert.equal(calls.length, 0)
-  selection.items = [{ id: 'welding', type: 'welding', enabled: true }]
-  await Vue.nextTick()
-  assert.equal(calls.length, 1)
-  assert.equal(calls[0].kind, 'dashboard')
-  assert.equal(calls[0].query.start, '2026-08-31')
-  assert.equal(calls[0].query.page_size, 10)
-  calls[0].options.onPreparing()
-  assert.equal(home.preparing.value, true)
-  calls[0].resolve({ today: { job_count: 0 }, meta: {} })
-  await settle()
-  assert.equal(home.preparing.value, false)
-  route.query = { unrelated: 'navigation-state' }
-  await Vue.nextTick()
-  assert.equal(calls.length, 1, 'unrelated URL changes must not reset a successful homepage or restart polling')
-  assert.equal(home.report.value.today.job_count, 0)
-  const failed = home.load(true)
-  await home.load(true)
-  assert.equal(calls.length, 2, 'refresh clicks in flight share the existing feedback')
-  calls[1].reject(new Error('source unavailable'))
-  await failed
-  assert.equal(home.report.value.today.job_count, 0)
-  assert.equal(home.error.value, 'source unavailable')
-  const late = home.load(true)
-  selection.items.push({ id: 'welding-other', type: 'welding', enabled: true })
-  selection.id = 'welding-other'
-  route.query = { start: '2026-08-01', end: '2026-08-03', device_no: '0', unrelated: 'navigation-state' }
-  await Vue.nextTick()
-  assert.equal(calls[2].signal.aborted, true)
-  assert.equal(calls[3].options.lineId, 'welding-other')
-  calls[3].resolve({ today: { job_count: 3 }, query: calls[3].query, meta: {} })
-  await settle()
-  calls[2].resolve({ today: { job_count: 999 }, meta: {} })
-  await late
-  assert.equal(home.report.value.today.job_count, 3)
-  assert.equal(home.trendTitle.value, '区间生产趋势')
-  assert.deepEqual(home.reportQuery.value, { start: '2026-08-01', end: '2026-08-03', device_no: '0' })
-  selection.items[1].enabled = false
-  await Vue.nextTick()
-  assert.equal(home.report.value, null)
-  assert.equal(calls.length, 4)
-  cleanup.forEach(fn => fn()); scope.stop()
-})
-
-
-test('welding paginated details use ten rows without an internal height limit or a query-only button palette', async t => {
+test('welding paginated reports and part details use ten rows', async t => {
   for (const kind of ['daily', 'parts', 'jobs', 'equipment']) {
     for (const size of [undefined, '20', '50', 'bad']) {
       assert.equal(parseWeldingRouteQuery({ page_size: size }, kind, '2026-10-30').page_size, 10)
     }
   }
-  const table = source('components/WeldingTable.vue')
-  assert.doesNotMatch(table, /:page-sizes|@page-size/)
-  assert.match(table, /:max-height="paginate \? null : undefined"/)
-  const styles = parse(source('views/WeldingReportView.vue')).descriptor.styles[0].content
-  assert.doesNotMatch(styles, /--n-color(?:-hover|-focus|-pressed)?:/)
   const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json({ part: { id: 2 }, items: [], total: 0 }))
   await getWeldingPart(2, 3)
   const url = new URL(fetchMock.mock.calls[0][0], 'http://localhost')

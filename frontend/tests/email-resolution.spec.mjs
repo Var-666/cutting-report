@@ -1,108 +1,129 @@
-import { scriptFunction } from './typescript-helpers.mjs'
-import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
-import { test } from 'vitest'
-import * as Vue from 'vue'
-import { parse } from '@vue/compiler-sfc'
+// @vitest-environment jsdom
 
-const source = readFileSync(new URL('../src/components/EmailDeliveryResolution.vue', import.meta.url), 'utf8')
-const script = parse(source).descriptor.scriptSetup.content.replace(/^import .*$/gm, '')
-function mount({ resolve = async () => ({}), list = async () => ({ items: [] }), delivery = {} } = {}) {
-  let state
-  const events = []
-  const bindings = {
-    ...Vue, useUnsavedChanges: (dirty, _message, saving) => () => !saving.value && !dirty.value,
-    defineProps: () => ({ delivery: { delivery_id: 'd1', status: 'unknown', message_id: '<stable@host>',
-      recipients: ['a@example.com', 'b@example.com'], recipient_results: {}, ...delivery } }),
-    defineEmits: () => (...args) => events.push(args),
-    listEmailDeliveryResolutions: list,
-    resolveEmailDelivery: resolve,
-    formatChineseDateTime: (value) => value,
-  }
-  const setup = scriptFunction(...Object.keys(bindings), `${script}\nreturn { outcomes, evidence, submit, error, audits, auditError, saving, resolved }`)
-  const renderer = Vue.createRenderer({
-    createComment: () => ({}), createText: () => ({}), createElement: () => ({}),
-    insert: () => {}, remove: () => {}, setText: () => {}, setElementText: () => {},
-    parentNode: () => null, nextSibling: () => null, patchProp: () => {},
-  })
-  const app = renderer.createApp({ setup() { state = setup(...Object.values(bindings)); return () => null } })
-  app.mount({})
-  return { app, state, events }
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
+import { NDialogProvider } from 'naive-ui'
+import { afterEach, expect, test, vi } from 'vitest'
+import { h } from 'vue'
+import AppSelect from '../src/components/AppSelect.vue'
+import EmailDeliveryResolution from '../src/components/EmailDeliveryResolution.vue'
+import { setupSoybeanComponents } from '../src/vendor/soybean-admin/components'
+
+const addresses = ['a@example.com', 'b@example.com']
+const delivery = {
+  delivery_id: 'd1', status: 'unknown', message_id: '<stable@host>',
+  schedule_name: '日报', subject: '统计日报', recipients: addresses, recipient_results: {},
 }
 
-test('verification requires every recipient and evidence, and preserves drafts after failure', async () => {
-  const submitted = []
-  const { app, state } = mount({ resolve: async (...args) => { submitted.push(args); throw new Error('状态冲突') } })
-  try {
-    await state.submit()
-    state.outcomes['a@example.com'] = 'accepted'
-    state.evidence.value = '服务器日志编号 123'
-    await state.submit()
-    assert.equal(submitted.length, 0)
-    state.outcomes['b@example.com'] = 'not_accepted'
-    await state.submit()
-    assert.deepEqual(submitted[0], ['d1', { message_id: '<stable@host>', evidence_note: '服务器日志编号 123',
-      outcomes: [{ recipient: 'a@example.com', outcome: 'accepted' }, { recipient: 'b@example.com', outcome: 'not_accepted' }] }])
-    assert.equal(state.evidence.value, '服务器日志编号 123')
-    assert.equal(state.outcomes['b@example.com'], 'not_accepted')
-    assert.equal(state.error.value, '状态冲突')
-    assert.equal(state.resolved.value, false)
-  } finally { app.unmount() }
+enableAutoUnmount(afterEach)
+
+function mountResolution({ send = () => Response.json({ success: true, data: {} }),
+  read = () => Response.json({ success: true, data: { items: [] } }), recipientResults = {} } = {}) {
+  const requests = []
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+    const url = String(input)
+    if (url.includes('/cancel')) return Response.json({})
+    if (url.endsWith('/d1/resolutions')) return read(init.signal)
+    if (url.endsWith('/d1/resolve') && init.method === 'POST') {
+      const body = JSON.parse(init.body)
+      requests.push(body)
+      return send()
+    }
+    throw new Error(`Unexpected request ${url}`)
+  })
+  const wrapper = mount({
+    render: () => h(NDialogProvider, {}, { default: () => h(EmailDeliveryResolution, {
+      delivery: { ...delivery, recipient_results: recipientResults },
+    }) }),
+  }, {
+    attachTo: document.body,
+    global: { plugins: [{ install: setupSoybeanComponents }], components: { AppSelect } },
+  })
+  const panel = wrapper.getComponent(EmailDeliveryResolution)
+  const field = () => panel.get('textarea[name="verification_evidence"]')
+  async function choose(address, outcome) {
+    const label = `${address} 接收结果`
+    const select = panel.findAllComponents(AppSelect).find(component =>
+      component.find('[role="combobox"]').attributes('aria-label') === label)
+    if (!select) throw new Error(`Missing recipient control ${address}`)
+    select.vm.$emit('update:modelValue', outcome)
+    await panel.vm.$nextTick()
+  }
+  return { wrapper, panel, requests, field, choose,
+    submit: () => panel.get('form').trigger('submit'),
+    button: () => panel.get('button[type="submit"]'),
+  }
+}
+
+test('verification requires every pending recipient and evidence and preserves the draft after an error', async () => {
+  const page = mountResolution({ send: () => Response.json({ detail: '状态冲突' }, { status: 409 }) })
+  await page.submit()
+  await page.choose(addresses[0], 'accepted')
+  await page.field().setValue(' 服务器日志编号 123 ')
+  await page.submit()
+  expect(page.button().element.disabled).toBe(true)
+  expect(page.requests).toEqual([])
+  await page.choose(addresses[1], 'not_accepted')
+  expect(page.button().element.disabled).toBe(false)
+  await page.submit()
+  await flushPromises()
+  expect(page.requests).toEqual([{ message_id: '<stable@host>', evidence_note: '服务器日志编号 123',
+    outcomes: [{ recipient: addresses[0], outcome: 'accepted' }, { recipient: addresses[1], outcome: 'not_accepted' }],
+  }])
+  expect(page.field().element.value).toBe(' 服务器日志编号 123 ')
+  expect(page.panel.get('[role="alert"]').text()).toContain('状态冲突')
+  expect(page.panel.text()).toContain('服务器未接收')
+  expect(page.panel.emitted('resolved')).toBeUndefined()
 })
 
-test('double submission saves once and closes verification without sending', async () => {
+test('a pending verification saves once and leaves email retry as a separate action', async () => {
   let finish
-  let calls = 0
-  const { app, state, events } = mount({ resolve: () => { calls++; return new Promise((resolve) => { finish = resolve }) } })
-  try {
-    Object.assign(state.outcomes, { 'a@example.com': 'accepted', 'b@example.com': 'not_accepted' })
-    state.evidence.value = '确认 SMTP 日志'
-    const pending = state.submit()
-    await state.submit()
-    assert.equal(calls, 1)
-    finish({ resolved: true })
-    await pending
-    assert.equal(state.resolved.value, true)
-    assert.ok(events.some(([name]) => name === 'resolved'))
-    await state.submit()
-    assert.equal(calls, 1)
-  } finally { app.unmount() }
+  const page = mountResolution({ send: () => new Promise(resolve => { finish = resolve }) })
+  await page.choose(addresses[0], 'accepted')
+  await page.choose(addresses[1], 'not_accepted')
+  await page.field().setValue('已核对 SMTP 日志')
+  await page.submit()
+  await page.submit()
+  expect(page.requests).toHaveLength(1)
+  expect(page.button().element.disabled).toBe(true)
+  finish(Response.json({ success: true, data: { resolved: true } }))
+  await flushPromises()
+  expect(page.panel.find('form').exists()).toBe(false)
+  expect(page.panel.emitted('resolved')).toEqual([[]])
+  expect(page.panel.get('[role="status"]').text()).toContain('手动重试')
+  expect(page.requests).toHaveLength(1)
 })
 
-test('unmount aborts audit read and ignores late records and submission completion', async () => {
-  let finishAudit, finishSave, signal
-  const { app, state, events } = mount({
-    list: (id, options) => { signal = options.signal; return new Promise((resolve) => { finishAudit = resolve }) },
-    resolve: () => new Promise((resolve) => { finishSave = resolve }),
+test('leaving aborts the audit request and suppresses a late save completion', async () => {
+  let finishRead, finishSave, signal
+  const page = mountResolution({
+    read: value => { signal = value; return new Promise(resolve => { finishRead = resolve }) },
+    send: () => new Promise(resolve => { finishSave = resolve }),
   })
-  Object.assign(state.outcomes, { 'a@example.com': 'accepted', 'b@example.com': 'accepted' })
-  state.evidence.value = '已核对'
-  const pending = state.submit()
-  app.unmount()
-  assert.equal(signal.aborted, true)
-  finishAudit({ items: [{ resolution_id: 'late' }] })
-  finishSave({ resolved: true })
-  await pending
-  assert.deepEqual(state.audits.value, [])
-  assert.equal(events.filter(([name]) => name === 'resolved').length, 0)
+  await page.choose(addresses[0], 'accepted')
+  await page.choose(addresses[1], 'accepted')
+  await page.field().setValue('已核对')
+  await page.submit()
+  expect(page.panel.text()).toContain('正在读取核对记录')
+  page.wrapper.unmount()
+  expect(signal.aborted).toBe(true)
+  finishRead(Response.json({ success: true, data: { items: [{ resolution_id: 'late' }] } }))
+  finishSave(Response.json({ success: true, data: { resolved: true } }))
+  await flushPromises()
+  expect(page.panel.emitted('resolved')).toBeUndefined()
 })
 
-
-test('already accepted recipients stay outside verification payload and audit failure remains visible', async () => {
-  const submitted = []
-  const { app, state } = mount({
-    delivery: { recipient_results: { 'a@example.com': { status: 'accepted' } } },
-    resolve: async (id, payload) => submitted.push(payload),
-    list: async () => { throw new Error('审计暂时不可用') },
+test('accepted recipients stay outside the payload and an audit failure stays visible after save', async () => {
+  const page = mountResolution({
+    recipientResults: { [addresses[0]]: { status: 'accepted' } },
+    read: () => Response.json({ detail: '审计暂时不可用' }, { status: 502 }),
   })
-  try {
-    await Vue.nextTick()
-    assert.equal(state.auditError.value, '审计暂时不可用')
-    state.outcomes['b@example.com'] = 'accepted'
-    state.evidence.value = '服务器确认接收'
-    await state.submit()
-    assert.deepEqual(submitted[0].outcomes, [{ recipient: 'b@example.com', outcome: 'accepted' }])
-    assert.equal(state.resolved.value, true)
-    assert.equal(state.auditError.value, '审计暂时不可用', 'audit read failure must not turn a committed verification into failure')
-  } finally { app.unmount() }
+  await flushPromises()
+  expect(page.panel.get('[role="alert"]').text()).toContain('审计暂时不可用')
+  await page.choose(addresses[1], 'accepted')
+  await page.field().setValue('服务器确认接收')
+  await page.submit()
+  await flushPromises()
+  expect(page.requests[0].outcomes).toEqual([{ recipient: addresses[1], outcome: 'accepted' }])
+  expect(page.panel.get('[role="status"]').text()).toContain('核对已保存')
+  expect(page.panel.get('[role="alert"]').text()).toContain('审计暂时不可用')
 })

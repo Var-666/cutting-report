@@ -6,7 +6,7 @@ import { createPinia } from 'pinia'
 import { afterEach, expect, test, vi } from 'vitest'
 import { nextTick } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
-import { resetDeviceContext, setDeviceCatalog } from '../src/api/deviceContext'
+import { resetDeviceContext, selectDevice, setDeviceCatalog } from '../src/api/deviceContext'
 import { reportCache } from '../src/api/reportCache'
 import AppDatePicker from '../src/components/AppDatePicker.vue'
 import AppSelect from '../src/components/AppSelect.vue'
@@ -16,9 +16,15 @@ import { useAppStore } from '../src/state/app'
 
 enableAutoUnmount(afterEach)
 afterEach(() => {
+  vi.useRealTimers()
   reportCache.clear()
   resetDeviceContext()
 })
+
+const weldLine = {
+  id: 'weld-a', name: '焊接A', type: 'welding' as const, enabled: true,
+  type_name: '焊接', source_key: 'weld-db', capabilities: [], home_path: '/home',
+}
 
 function report(query: URLSearchParams, label: string) {
   return Response.json({ success: true, data: {
@@ -33,10 +39,7 @@ function report(query: URLSearchParams, label: string) {
 }
 
 async function setup() {
-  setDeviceCatalog({ default_device_id: 'weld-a', items: [{
-    id: 'weld-a', name: '焊接A', type: 'welding', enabled: true,
-    type_name: '焊接', source_key: 'weld-db', capabilities: [], home_path: '/admin/welding/home',
-  }] })
+  setDeviceCatalog({ default_device_id: 'weld-a', items: [weldLine] })
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
   const calls: Array<{ query: URLSearchParams; scope: string | null; signal: AbortSignal | null | undefined }> = []
   let respond: (query: URLSearchParams) => Response | Promise<Response> = query =>
@@ -127,12 +130,26 @@ test('a cancelled older result cannot replace the range selected by the latest r
   expect(router.currentRoute.value.query.start).toBe('2026-09-05')
 })
 
-test('welding overview offers keyboard-accessible tables with the chart data', async () => {
-  setDeviceCatalog({ default_device_id: 'weld-a', items: [{
-    id: 'weld-a', name: '焊接A', type: 'welding', enabled: true,
-    type_name: '焊接', source_key: 'weld-db', capabilities: [], home_path: '/home',
-  }] })
+async function openWeldingOverview(path = '/home') {
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
+  const destination = { render: () => null }
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      { path: '/home', component: WeldingHomeView },
+      ...['daily', 'jobs', 'parts', 'equipment'].map(kind => ({ path: `/reports/${kind}`, name: `welding-${kind}`, component: destination })),
+    ],
+  })
+  await router.push(path)
+  const pinia = createPinia()
+  useAppStore(pinia).reducedMotion = true
+  const wrapper = mount(WeldingHomeView, { global: { plugins: [pinia, router], stubs: { WeldingChart: true } } })
+  await flushPromises()
+  return { wrapper, router }
+}
+
+test('welding overview offers keyboard-accessible tables with the chart data', async () => {
+  setDeviceCatalog({ default_device_id: 'weld-a', items: [weldLine] })
   vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
     const url = new URL(String(input), 'http://localhost')
     if (url.pathname.includes('/cancel')) return Response.json({})
@@ -145,19 +162,7 @@ test('welding overview offers keyboard-accessible tables with the chart data', a
       meta: { quality: {}, notices: [], pending_metrics: {} },
     } })
   })
-  const destination = { render: () => null }
-  const router = createRouter({
-    history: createMemoryHistory(),
-    routes: [
-      { path: '/home', component: WeldingHomeView },
-      ...['daily', 'jobs', 'parts', 'equipment'].map(kind => ({ path: `/reports/${kind}`, name: `welding-${kind}`, component: destination })),
-    ],
-  })
-  await router.push('/home?start=2026-09-01&end=2026-09-02')
-  const pinia = createPinia()
-  useAppStore(pinia).reducedMotion = true
-  const wrapper = mount(WeldingHomeView, { global: { plugins: [pinia, router], stubs: { WeldingChart: true } } })
-  await flushPromises()
+  const { wrapper } = await openWeldingOverview('/home?start=2026-09-01&end=2026-09-02')
   const regions = [
     ['查看生产趋势数据', '生产趋势数据', '每日焊接长度与作业次数'],
     ['查看工艺结构数据', '工艺结构数据', '各工艺焊接长度'],
@@ -174,4 +179,76 @@ test('welding overview offers keyboard-accessible tables with the chart data', a
   }
   expect(wrapper.get('[aria-label="生产趋势数据"] tbody').text()).toContain('4')
   expect(wrapper.get('[aria-label="设备产出数据"] tbody').text()).toContain('设备 0')
+})
+
+test('the welding overview waits for its catalog and retains a successful result through refresh failure', async () => {
+  vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] })
+  vi.setSystemTime(new Date('2026-09-06T01:00:00Z'))
+  const otherLine = { ...weldLine, id: 'weld-b', name: '焊接B', source_key: 'other-weld-db' }
+  const calls: Array<{ line: string | null; query: URLSearchParams; signal: AbortSignal | null | undefined }> = []
+  let releaseLate: ((value: Response) => void) | undefined
+  const dashboard = (query: URLSearchParams, jobs: number) => Response.json({ success: true, data: {
+    query: Object.fromEntries(query), today: { job_count: jobs }, summary: {}, total: 0, items: [],
+    meta: { quality: {}, notices: [], pending_metrics: {} },
+  } })
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+    const url = new URL(String(input), 'http://localhost')
+    if (url.pathname.includes('/cancel')) return Response.json({})
+    if (url.pathname !== '/api/v1/welding/dashboard') throw new Error(`Unexpected request ${url.pathname}`)
+    const line = new Headers(init?.headers).get('X-Production-Line')
+    calls.push({ line, query: url.searchParams, signal: init?.signal })
+    if (calls.length === 1) return Response.json({ detail: '正在准备焊接统计' }, {
+      status: 503, headers: { 'X-Welding-Error': 'snapshot_refresh_busy', 'Retry-After': '1' },
+    })
+    if (calls.length === 3) return Response.json({ detail: '数据源不可用' }, { status: 502 })
+    if (calls.length === 4) return new Promise(resolve => { releaseLate = resolve })
+    return dashboard(url.searchParams, line === 'weld-a' ? 0 : 3)
+  })
+  const { wrapper, router } = await openWeldingOverview()
+  const refresh = () => wrapper.findAll('button').find(button => button.text() === '刷新概览')!
+  const count = () => wrapper.get('[aria-label^="今日焊接作业次数："]').attributes('aria-label')
+  expect(wrapper.get('time').text()).toBe('2026年09月06日')
+  expect(calls).toHaveLength(0)
+  setDeviceCatalog({ default_device_id: 'weld-a', items: [weldLine, otherLine] })
+  await flushPromises()
+  expect(calls).toHaveLength(1)
+  expect(calls[0].query.get('start')).toBe('2026-08-31')
+  expect(calls[0].query.get('page_size')).toBe('10')
+  expect(wrapper.text()).toContain('焊接生产数据准备中')
+  await vi.advanceTimersByTimeAsync(5000)
+  await flushPromises()
+  expect(count()).toBe('今日焊接作业次数：0 次')
+  await router.push('/home?unrelated=keep')
+  await flushPromises()
+  expect(calls).toHaveLength(2)
+  await refresh().trigger('click')
+  await flushPromises()
+  expect(wrapper.text()).toContain('数据源不可用')
+  expect(count()).toBe('今日焊接作业次数：0 次')
+  await refresh().trigger('click')
+  await flushPromises()
+  await refresh().trigger('click')
+  expect(calls).toHaveLength(4)
+
+  await router.push('/home?start=2026-08-01&end=2026-08-03&device_no=0&unrelated=keep')
+  selectDevice('weld-b')
+  await flushPromises()
+  expect(calls[3].signal?.aborted).toBe(true)
+  expect(calls.at(-1)?.line).toBe('weld-b')
+  expect(count()).toBe('今日焊接作业次数：3 次')
+  expect(wrapper.text()).toContain('区间生产趋势')
+  const link = wrapper.get('nav[aria-label="焊接报表快捷入口"] a')
+  const query = new URL(link.attributes('href')!, 'http://localhost').searchParams
+  expect(Object.fromEntries(query)).toMatchObject({ start: '2026-08-01', end: '2026-08-03', device_no: '0' })
+  if (!releaseLate) throw new Error('The original request was not held')
+  releaseLate(dashboard(calls[3].query, 999))
+  await flushPromises()
+  expect(count()).toBe('今日焊接作业次数：3 次')
+
+  const readCount = calls.length
+  setDeviceCatalog({ default_device_id: 'weld-b', items: [weldLine, { ...otherLine, enabled: false }] })
+  await flushPromises()
+  expect(wrapper.text()).toContain('焊接产线未启用')
+  expect(wrapper.find('[aria-label^="今日焊接作业次数："]').exists()).toBe(false)
+  expect(calls).toHaveLength(readCount)
 })

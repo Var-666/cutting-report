@@ -61,9 +61,14 @@ test('database connection tests submit the named credentials and announce the re
 
 test('automation protects the sender draft and submits the email contract', async () => {
   let submitted: object | undefined
+  const configurationMethods: string[] = []
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
     const url = String(input)
     if (url.includes('/cancel')) return Response.json({})
+    if (url.endsWith('/configuration')) {
+      expect(init?.credentials).toBe('same-origin')
+      configurationMethods.push(init?.method ?? 'GET')
+    }
     if (url.endsWith('/configuration') && init?.method === 'PUT' && typeof init.body === 'string') {
       submitted = JSON.parse(init.body)
       return Response.json({ success: true, data: { message: '已保存邮件配置' } })
@@ -78,6 +83,8 @@ test('automation protects the sender draft and submits the email contract', asyn
   if (!open) throw new Error('Configuration button is missing')
   await open.trigger('click')
   await flushPromises()
+  expect(wrapper.text()).toContain('保存后即时生效')
+  expect(wrapper.get<HTMLInputElement>('input[name="smtp_password"]').element.value).toBe('')
   const sender = wrapper.get('input[name="smtp_from_email"]')
   expect(sender.attributes('type')).toBe('email')
   expect(sender.attributes('inputmode')).toBe('email')
@@ -87,6 +94,7 @@ test('automation protects the sender draft and submits the email contract', asyn
   expect((sender.element as HTMLInputElement).value).toBe('reports@example.com')
   await wrapper.get('form:has(input[name="smtp_from_email"])').trigger('submit')
   await flushPromises()
+  expect(configurationMethods).toEqual(['GET', 'PUT'])
   expect(submitted).toMatchObject({ smtp_from_email: 'reports@example.com', smtp_password: null })
   expect(wrapper.text()).toContain('已保存邮件配置')
   expect(window.dispatchEvent(new Event('beforeunload', { cancelable: true }))).toBe(true)

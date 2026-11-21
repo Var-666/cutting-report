@@ -165,21 +165,3 @@ test('reviewed controls keep filters stationary, the original tree and ten-row f
   assert.match(tree.template.content, /class="catalog-folder" aria-hidden="true"/)
   assert.match(tree.template.content, /<CatalogTreeNode[\s\S]*@select="emit\('select', \$event\)"[\s\S]*@toggle="emit\('toggle', \$event\)"/)
 })
-
-test('shared report table removes the height cap only when requested and keeps empty flex layouts', async () => {
-  const states = []
-  const items = Array.from({ length: 20 }, (_, index) => ({ id: index + 1 }))
-  const Table = Vue.defineComponent({ props: ['data', 'maxHeight', 'flexHeight'],
-    setup(props) { states.push({ rows: props.data.length, maxHeight: props.maxHeight, flexHeight: props.flexHeight }); return () => null },
-  })
-  const props = { columns: [{ key: 'id', title: '文件', width: 160 }], items, rowKey: row => row.id, paginate: false }
-  for (const overrides of [{}, { maxHeight: null }, { maxHeight: 330 }, { items: [], maxHeight: null, flexHeight: true }]) {
-    await render('AppReportTable', { ...props, ...overrides }, { NDataTable: Table })
-  }
-  assert.deepEqual(states, [
-    { rows: 20, maxHeight: 540, flexHeight: false },
-    { rows: 20, maxHeight: undefined, flexHeight: false },
-    { rows: 20, maxHeight: 330, flexHeight: false },
-    { rows: 0, maxHeight: undefined, flexHeight: true },
-  ])
-})

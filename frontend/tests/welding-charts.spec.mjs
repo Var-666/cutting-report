@@ -1,116 +1,119 @@
-import { test } from 'vitest'
-import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
-import * as Vue from 'vue'
-import { parse, compileScript } from '@vue/compiler-sfc'
-import { renderToString } from '@vue/server-renderer'
-import { init, use } from 'echarts/core'
-import { BarChart, LineChart, PieChart } from 'echarts/charts'
-import { GridComponent, LegendComponent, TooltipComponent, DataZoomComponent } from 'echarts/components'
-import { SVGRenderer } from 'echarts/renderers'
-import { scriptFunction } from './typescript-helpers.mjs'
-import { weldingTrendOption, weldingProcessOption, weldingLengthOption } from '../src/utils/weldingChartOptions.ts'
-import { weldingProcessRows, weldingMetricSeries, weldingDisplay } from '../src/utils/weldingReport.ts'
+// @vitest-environment jsdom
 
-test('each welding report has one distinct chart and only distinct grouped data beside it', async () => {
-  const bindings = {
-    ...Vue, weldingProcessRows, weldingDisplay, weldingTrendOption, weldingLengthOption, weldingProcessOption,
-    useReportChartTheme: () => ({ colors: Vue.ref({ primary: 'blue', secondary: 'green' }), vars: Vue.ref({}) }),
-    ReportTrendPanel: { props: ['title', 'showTable'], setup: (props, { slots }) => () => Vue.h('section', [
-      Vue.h('h2', props.title), slots.chart?.(), props.showTable ? slots.table?.() : null,
-    ]) },
-    AppReportTable: { setup: () => () => Vue.h('table') },
-    WeldingChart: { props: ['label'], setup: props => () => Vue.h('div', { role: 'img', 'aria-label': props.label }) },
-    NEmpty: { props: ['description'], setup: props => () => Vue.h('p', props.description) },
+import assert from 'node:assert/strict'
+import { enableAutoUnmount, mount } from '@vue/test-utils'
+import { init } from 'echarts/core'
+import { createPinia } from 'pinia'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import WeldingChart from '../src/components/WeldingChart.vue'
+import WeldingCharts from '../src/components/WeldingCharts.vue'
+import { useThemeStore } from '../src/store/modules/theme'
+import { weldingTrendOption, weldingProcessOption, weldingLengthOption } from '../src/utils/weldingChartOptions'
+import { weldingProcessRows, weldingMetricSeries } from '../src/utils/weldingReport'
+
+vi.mock('echarts/core', async importOriginal => {
+  const actual = await importOriginal()
+  return {
+    ...actual,
+    // jsdom has no layout. Supply dimensions while retaining ECharts' real SVG and legend state.
+    init: vi.fn((_node, theme, options) => actual.init(null, theme, { ...options, ssr: true, width: 600, height: 280 })),
   }
-  const descriptor = parse(readFileSync(new URL('../src/components/WeldingCharts.vue', import.meta.url), 'utf8')).descriptor
-  const script = compileScript(descriptor, { id: 'welding-chart-layout', inlineTemplate: true }).content
-    .replace(/import\s*\{([^}]+)\}\s*from\s*['"]vue['"]/g, (_, names) => {
-      for (const name of names.split(',')) { const [original, alias = original] = name.trim().split(/\s+as\s+/); bindings[alias] = Vue[original] }
-      return ''
-    }).replace(/^import .*$/gm, '').replace('export default', 'return')
-  const Charts = scriptFunction(...Object.keys(bindings), script)(...Object.values(bindings))
-  const render = props => renderToString(Vue.createSSRApp(Charts, props))
-  const report = {
-    daily: [{ production_date: '2026-11-17', job_count: 2, weld_length_m: 10 }],
-    device_distribution: [{ device_no: 1, weld_length_m: 10 }],
-    equipment: [{ device_no: 1, robot_no: 1, job_count: 2, weld_length_m: 10 }],
-    projects: [{ project_no: 'P1', part_count: 2, cumulative_actual_length_m: 10 }],
-    summary: { flat_length_m: 10 },
-  }
-  for (const [kind, title, grouped] of [
-    ['daily', '每日焊接趋势', false], ['parts', '项目工件分布', true],
-    ['jobs', '焊接工艺结构', true], ['equipment', '设备产出对比', false],
-  ]) {
-    const html = await render({ kind, report })
-    assert.ok(html.includes(title))
-    assert.equal((html.match(/<h2\b/g) || []).length, 1)
-    assert.equal(html.includes('<table'), grouped)
-    for (const other of ['每日焊接趋势', '项目工件分布', '焊接工艺结构', '设备产出对比'].filter(value => value !== title)) assert.ok(!html.includes(other))
-    assert.ok(!html.includes('焊接作业趋势') && !html.includes('设备生产贡献') && !html.includes('机器人工位分析'))
-  }
-  const empty = await render({ kind: 'jobs', report: { ...report, summary: {} } })
-  assert.ok(empty.includes('暂无有效工艺长度数据'))
 })
 
-const flush = async () => { await Vue.nextTick(); await new Promise(resolve => setImmediate(resolve)) }
-function mountChart(t) {
-  const props = Vue.reactive({ option: weldingTrendOption([{ production_date: '2026-10-26', weld_length_m: 12, job_count: 2 }], '#123456', '#abcdef'), label: 'trend' })
-  const darkMode = Vue.ref(false), vars = Vue.ref({ textColor2: '#333', textColor1: '#111', popoverColor: '#fff', borderColor: '#ddd' })
-  const charts = [], observers = []
-  class ResizeObserver {
-    constructor(callback) { this.callback = callback; this.nodes = []; observers.push(this) }
-    observe(node) { this.nodes.push(node) }
-    disconnect() { this.nodes = [] }
-  }
-  const bindings = {
-    ...Vue, defineProps: () => props, use, BarChart, LineChart, PieChart, GridComponent, LegendComponent, TooltipComponent, DataZoomComponent, SVGRenderer, ResizeObserver,
-    useReportChartTheme: redraw => { Vue.watch([darkMode, vars], redraw, { flush: 'post' }); return { darkMode, vars } },
-    init: (node, theme, options) => {
-      const engine = init(null, theme, { ...options, ssr: true, width: 600, height: 280 })
-      const chart = { theme, options, engine, disposals: 0, resizes: 0,
-        setOption(option, settings) { engine.setOption(option, settings) },
-        dispose() { chart.disposals++; engine.dispose() }, resize() { chart.resizes++ },
-      }
-      charts.push(chart)
-      return chart
-    },
-  }
-  const code = parse(readFileSync(new URL('../src/components/WeldingChart.vue', import.meta.url), 'utf8')).descriptor.scriptSetup.content.replace(/^import .*$/gm, '')
-  const setup = scriptFunction(...Object.keys(bindings), `${code}; return { element }`)
-  const renderer = Vue.createRenderer({ createElement: () => ({}), createComment: () => ({}), createText: () => ({}), insert() {}, remove() {}, setText() {}, setElementText() {}, parentNode: () => null, nextSibling: () => null, patchProp() {} })
-  const app = renderer.createApp({ setup() { const state = setup(...Object.values(bindings)); return () => Vue.h('div', { ref: state.element }) } })
-  app.mount({})
-  return { props, charts, observers, darkMode, unmount: () => app.unmount() }
+enableAutoUnmount(afterEach)
+beforeEach(() => {
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({ measureText: text => ({ width: text.length * 8 }) })
+})
+afterEach(() => {
+  vi.mocked(init).mockClear()
+  localStorage.clear()
+})
+
+function stubResizeObserver() {
+  const observers = []
+  vi.stubGlobal('ResizeObserver', class {
+    observe = vi.fn()
+    disconnect = vi.fn()
+    constructor(notify) { observers.push({ notify, observe: this.observe, disconnect: this.disconnect }) }
+  })
+  return observers
 }
 
-test('welding chart reuses its SVG instance, updates actual job counts and preserves legend selection', async t => {
-  const { props, charts, observers, unmount } = mountChart()
-  t.onTestFinished(unmount)
-  await flush()
-  charts[0].engine.dispatchAction({ type: 'legendUnSelect', name: '作业次数' })
-  props.option = weldingTrendOption([{ production_date: '2026-10-27', weld_length_m: 22, job_count: 3 }], '#123456', '#abcdef')
-  await flush()
-  assert.equal(charts.length, 1)
-  const option = charts[0].engine.getOption()
-  assert.deepEqual(option.series.map(series => series.data), [[22], [3]])
-  assert.equal(option.legend[0].selected['作业次数'], false)
-  observers[0].callback()
-  assert.equal(charts[0].resizes, 1)
+const report = {
+  daily: [{ production_date: '2026-11-17', job_count: 2, weld_length_m: 10 }],
+  device_distribution: [{ device_no: 1, weld_length_m: 10 }],
+  projects: [{ project_no: 'P1', part_count: 2, cumulative_actual_length_m: 10 }],
+  summary: { flat_length_m: 10 },
+}
+
+test.each([
+  ['daily', '每日焊接趋势', null], ['parts', '项目工件分布', 'P1'],
+  ['jobs', '焊接工艺结构', '平焊'], ['equipment', '设备产出对比', null],
+])('%s shows its own chart and only the distinct grouped data', (kind, title, groupedText) => {
+  stubResizeObserver()
+  const wrapper = mount(WeldingCharts, {
+    props: { kind, report },
+    global: { plugins: [createPinia()] },
+  })
+  expect(wrapper.findAll('h2').map(heading => heading.text())).toEqual([title])
+  expect(wrapper.findAllComponents(WeldingChart)).toHaveLength(1)
+  expect(wrapper.findComponent(WeldingChart).attributes('aria-label')).toBe(title)
+  expect(wrapper.find('table').exists()).toBe(Boolean(groupedText))
+  if (groupedText) expect(wrapper.get('tbody').text()).toContain(groupedText)
 })
 
-test('theme change rebuilds the chart and unmount releases the instance and observer', async t => {
-  const { charts, observers, darkMode, unmount } = mountChart()
-  await flush()
-  darkMode.value = true
-  await flush()
-  assert.equal(charts[0].disposals, 1)
-  assert.equal(charts.length, 2)
-  assert.equal(charts[1].theme, 'dark')
-  assert.equal(observers.length, 1)
-  unmount()
-  assert.equal(charts[1].disposals, 1)
-  assert.equal(observers[0].nodes.length, 0)
+test('missing process measurements show the empty message without a chart', () => {
+  stubResizeObserver()
+  const wrapper = mount(WeldingCharts, {
+    props: { kind: 'jobs', report: { ...report, summary: {} } },
+    global: { plugins: [createPinia()] },
+  })
+  expect(wrapper.text()).toContain('暂无有效工艺长度数据')
+  expect(wrapper.findComponent(WeldingChart).exists()).toBe(false)
+})
+
+function trend(date, length, jobs) {
+  return weldingTrendOption([{ production_date: date, weld_length_m: length, job_count: jobs }], '#123456', '#abcdef')
+}
+
+function mountChart() {
+  const observers = stubResizeObserver()
+  const pinia = createPinia()
+  const theme = useThemeStore(pinia)
+  theme.setThemeScheme('light')
+  const wrapper = mount(WeldingChart, {
+    props: { option: trend('2026-10-26', 12, 2), label: '生产趋势' },
+    global: { plugins: [pinia] },
+  })
+  return { wrapper, theme, observers, chart: vi.mocked(init).mock.results[0].value }
+}
+
+test('updating data preserves legend selection and the observed SVG chart instance', async () => {
+  const { wrapper, observers, chart } = mountChart()
+  expect(init).toHaveBeenCalledWith(wrapper.element, undefined, { renderer: 'svg' })
+  chart.dispatchAction({ type: 'legendUnSelect', name: '作业次数' })
+  await wrapper.setProps({ option: trend('2026-10-27', 22, 3) })
+  expect(init).toHaveBeenCalledOnce()
+  const option = chart.getOption()
+  expect(option.series.map(series => series.data)).toEqual([[22], [3]])
+  expect(option.legend[0].selected['作业次数']).toBe(false)
+  const resize = vi.spyOn(chart, 'resize')
+  observers[0].notify()
+  expect(resize).toHaveBeenCalledOnce()
+})
+
+test('changing the theme rebuilds the chart and leaving disconnects its observer', async () => {
+  const { wrapper, theme, observers, chart } = mountChart()
+  theme.setThemeScheme('dark')
+  await wrapper.vm.$nextTick()
+  expect(chart.isDisposed()).toBe(true)
+  expect(init).toHaveBeenCalledTimes(2)
+  expect(init).toHaveBeenLastCalledWith(wrapper.element, 'dark', { renderer: 'svg' })
+  expect(observers).toHaveLength(1)
+  const currentChart = vi.mocked(init).mock.results[1].value
+  wrapper.unmount()
+  expect(currentChart.isDisposed()).toBe(true)
+  expect(observers[0].disconnect).toHaveBeenCalledOnce()
 })
 
 test('process and ranking options preserve unknown types, zero values and missing data without invented trends', () => {

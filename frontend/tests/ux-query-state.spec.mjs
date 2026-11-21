@@ -173,3 +173,59 @@ test('home overview retries only the failed data and clears its error after reco
   expect(wrapper.text()).not.toContain('生产统计未能更新')
   expect(wrapper.text()).not.toContain('重试失败项目')
 })
+
+test('the open incident filter queries the full server scope and returns to page one', async () => {
+  const reads = vi.mocked(listAlarmIncidentPage)
+  reads.mockClear()
+  reads.mockImplementation(async ({ status, page }) => ({
+    items: [{
+      incident_id: `${status}-${page}`, alarm_desc: status === 'open' ? '整线未关闭事件' : `常规查询第${page}页`,
+      status: status || 'closed', severity: 'critical',
+    }],
+    page, total: 30, page_count: 3, open_count: 13, severity_counts: {},
+  }))
+  const wrapper = mountAlarm()
+  await flushPromises()
+  await wrapper.get('[aria-label="切割机告警事件"] button[aria-label="第 2 页"]').trigger('click')
+  await flushPromises()
+  expect(wrapper.text()).toContain('常规查询第2页')
+  const toggle = wrapper.findAll('button').find(button => button.text().includes('当前异常'))
+  expect(toggle.attributes('aria-pressed')).toBe('false')
+  await toggle.trigger('click')
+  await flushPromises()
+  expect(toggle.attributes('aria-pressed')).toBe('true')
+  expect(reads.mock.calls.map(([query]) => [query.status, query.page])).toEqual([['', 1], ['', 2], ['open', 1]])
+  expect(wrapper.text()).toContain('整线未关闭事件')
+  expect(wrapper.text()).not.toContain('常规查询第2页')
+  expect(wrapper.get('[aria-label="切割机告警事件"] button[aria-current="page"]').attributes('aria-label')).toBe('第 1 页')
+})
+
+test('alarm polling waits for its current result and aborts the batch on leaving', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
+  try {
+    const status = { enabled: true, worker_running: true, machine_nos: [] }
+    let resolveRefresh
+    const reads = vi.mocked(getAlarmStatus)
+    reads.mockClear()
+    reads.mockResolvedValueOnce(status).mockImplementationOnce(() => new Promise(resolve => { resolveRefresh = resolve }))
+    const wrapper = mountAlarm()
+    await flushPromises()
+    expect(reads).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(reads).toHaveBeenCalledTimes(2)
+    const { signal } = reads.mock.lastCall[0]
+    const busy = wrapper.get('button[aria-busy="true"]')
+    expect(busy.element.disabled).toBe(true)
+    await busy.trigger('click')
+    await vi.advanceTimersByTimeAsync(120_000)
+    expect(reads).toHaveBeenCalledTimes(2)
+    wrapper.unmount()
+    expect(signal.aborted).toBe(true)
+    resolveRefresh(status)
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(120_000)
+    expect(reads).toHaveBeenCalledTimes(2)
+  } finally {
+    vi.useRealTimers()
+  }
+})
